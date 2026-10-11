@@ -16,33 +16,22 @@ import (
 
 // The ops-batch identity must not reach a live daemon ──────
 //
-// [opsAuth] takes the low-priority `ops_batch` identity from the
-// PROCESS ENVIRONMENT, and docs/operations/clickhouse-ops-batch-profile.md
-// prescribes writing the pair into /etc/default/stellarindex-ops. On the
-// ansible hosts that file reaches batch jobs only (the daemons get
-// /etc/default/stellarindex). The deploy/systemd reference units share
-// it — the indexer reads its MinIO creds and the API its SEP-10 seed
-// out of the same file — so a self-hoster who follows the doc must not
-// demote the LIVE ledger sink (NewLiveSink -> Open) and the aggregator's
-// supply readers (NewExplorerReader) to the batch tier: the precise
-// inverse of what the profile exists to prevent.
+// [opsAuth] takes the low-priority `ops_batch` identity from the PROCESS ENVIRONMENT, and
+// docs/operations/clickhouse-ops-batch-profile.md prescribes writing the pair into
+// /etc/default/stellarindex-ops. The deploy/systemd reference units share that file with the
+// daemons, so a self-hoster following the doc must not demote the LIVE ledger sink
+// (NewLiveSink -> Open) or the aggregator's supply readers (NewExplorerReader) to the batch
+// tier, the inverse of what the profile exists to prevent.
 //
-// The units strip the pair with `UnsetEnvironment=`, which systemd
-// applies AFTER every Environment=/EnvironmentFile= (systemd.exec(5);
-// v235+, the Ubuntu 22.04/24.04 targets ship 249/255). This test pins
-// the GUARANTEE rather than the directive: it resolves the environment
-// each unit would hand its process when the ops env file carries the
-// pair (and, in a second pass, /etc/default/stellarindex the live-daemon
-// pair), feeds it to [chAuthFrom], and asserts the identity that comes
-// out — live_daemon (CH `default` before the live pair is rendered) for
-// the live daemons, `ops_batch` for the batch one-shots that share the
-// file (so a future over-broad strip cannot quietly re-break the batch tier in the
-// other direction).
+// The units strip the pair with `UnsetEnvironment=`, which systemd applies AFTER every
+// Environment=/EnvironmentFile= (systemd.exec(5)). This test pins the GUARANTEE rather than
+// the directive: it resolves each unit's environment, feeds it to [chAuthFrom], and asserts
+// live_daemon for the live daemons and `ops_batch` for the batch one-shots sharing the file
+// (so an over-broad strip cannot quietly re-break the batch tier).
 //
-// Deliberately NOT credited as a strip: `Environment=VAR=` neutralising.
-// systemd.exec(5) documents EnvironmentFile= as overriding Environment=,
-// so that idiom is version-dependent; UnsetEnvironment= is the only
-// directive specified to run last.
+// Deliberately NOT credited as a strip: `Environment=VAR=` neutralising, because
+// EnvironmentFile= overrides Environment= and that idiom is version-dependent;
+// UnsetEnvironment= is the only directive specified to run last.
 
 // systemdUnitDirs are the two surfaces that define how a stellarindex
 // binary is started: the self-host reference units and the units the
@@ -53,10 +42,9 @@ var systemdUnitDirs = []struct{ dir, suffix string }{
 }
 
 // nonServingCmds are the cmd/ binaries that are NOT long-running serving
-// daemons and therefore SHOULD authenticate as ops_batch when the
-// environment offers it: the admin CLI, the migrator, the SLA prober.
-// Every other cmd/stellarindex-* is treated as a live daemon; adding one
-// without classifying it here fails the test on purpose.
+// daemons and SHOULD authenticate as ops_batch when offered it: the admin CLI, the migrator,
+// the SLA prober. Every other cmd/stellarindex-* is a live daemon; an unclassified new one
+// fails the test on purpose.
 var nonServingCmds = map[string]bool{
 	"stellarindex-ops":       true, // the batch CLI — the profile's whole point
 	"stellarindex-migrate":   true, // one-shot, opens Postgres only
@@ -219,9 +207,8 @@ func requireExamined(t *testing.T, kind string, examined, want []string) {
 }
 
 // heavyJobWrapper is /usr/local/sbin/run-heavy-job.sh, rendered by
-// 14-stellarindex-services.yml. It imports ONLY the ops-batch pair from
-// the ops env file when the caller has not set it; the rest of that file
-// (MinIO reader keys, DSN) deliberately stays out of the job
+// 14-stellarindex-services.yml. It imports ONLY the ops-batch pair from the ops env file when
+// the caller has not set it; the rest (MinIO reader keys, DSN) deliberately stays out
 // (scripts/ci/run-heavy-job-test.sh pins the behaviour).
 const heavyJobWrapper = "run-heavy-job.sh"
 
@@ -306,12 +293,9 @@ func (u systemdUnit) reachesOpsViaScript(scripts map[string]opsScript) bool {
 }
 
 // resolveEnv models the environment the unit's ClickHouse-opening child
-// process sees, for the ops-batch and live-daemon pairs only: every
-// EnvironmentFile= naming the ops env file contributes `contents`, one
-// naming the live env file contributes `live`, UnsetEnvironment= is
-// applied after them (systemd.exec(5)), and then, inside the process,
-// run-heavy-job.sh imports the ops pair when unset and a script that
-// exports the ops env file loads it.
+// process sees, for the ops-batch and live-daemon pairs only: EnvironmentFile= entries
+// contribute `contents` (ops file) or `live`, UnsetEnvironment= applies after them
+// (systemd.exec(5)), and then run-heavy-job.sh imports the ops pair when unset.
 func (u systemdUnit) resolveEnv(contents, live map[string]string, scripts map[string]opsScript) map[string]string {
 	env := map[string]string{}
 	for _, f := range u.envFile {

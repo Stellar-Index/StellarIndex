@@ -162,12 +162,10 @@ func TestDecodeSwap_withFakeDecoder(t *testing.T) {
 	}
 }
 
-// TestDecodeSwap_AmbiguousBothDirectionsRefused: a
-// swap whose FOUR amounts are all non-zero satisfies both direction
-// arms; the old switch silently decoded it as 0→1, dropping the 1→0
-// leg. It must be refused as ErrAmbiguousSwapDirection — which wraps
-// ErrNonDirectionalSwap, so the dispatcher's recognized-no-op handling
-// covers it — never half-decoded into a trade.
+// TestDecodeSwap_AmbiguousBothDirectionsRefused: a swap whose FOUR amounts are all non-zero
+// satisfies both direction arms. It must be refused as ErrAmbiguousSwapDirection (which wraps
+// ErrNonDirectionalSwap, so the dispatcher's recognized-no-op handling covers it), never
+// half-decoded into a trade that drops the other leg.
 func TestDecodeSwap_AmbiguousBothDirectionsRefused(t *testing.T) {
 	prev := decodeSwapAmounts
 	defer func() { decodeSwapAmounts = prev }()
@@ -204,13 +202,10 @@ func TestDecodeSwap_AmbiguousBothDirectionsRefused(t *testing.T) {
 	}
 }
 
-// TestDecodeSwap_ThreeNonZeroLegRefused: a swap with
-// exactly THREE non-zero amounts (0_in, 1_in, 1_out) slips past the
-// all-four-only ambiguity guard, matches the first direction arm
-// (0_in>0 && 1_out>0), and would decode a trade reporting
-// the GROSS 0_in while silently dropping the 1_in leg, fabricating a
-// price into VWAP/OHLC. It must be refused as ErrAmbiguousSwapDirection,
-// exactly like its all-four sibling.
+// TestDecodeSwap_ThreeNonZeroLegRefused: a swap with exactly THREE non-zero amounts (0_in,
+// 1_in, 1_out) slips past the all-four ambiguity guard and would decode with the GROSS 0_in
+// while dropping the 1_in leg, fabricating a price into VWAP/OHLC. It must be refused as
+// ErrAmbiguousSwapDirection, like its all-four sibling.
 func TestDecodeSwap_ThreeNonZeroLegRefused(t *testing.T) {
 	prev := decodeSwapAmounts
 	defer func() { decodeSwapAmounts = prev }()
@@ -302,13 +297,9 @@ func TestBufferEvictsStaleOrphans(t *testing.T) {
 }
 
 func TestBufferBackfillOldEventsPair(t *testing.T) {
-	// Regression: when the orchestrator's backfill path replays a
-	// 6-hour-old ledger range, swap + sync events share an ancient
-	// ClosedAt. Comparing `sweepStale` against wall-clock would evict
-	// the swap as an "orphan" the moment the sync arrived, because
-	// now-5min > 6h-ago. So sweepStale
-	// uses the incoming event's ClosedAt as the reference, so
-	// same-batch correlated pairs complete regardless of age.
+	// Backfill replays old ledger ranges where swap + sync share an ancient ClosedAt.
+	// sweepStale must use the incoming event's ClosedAt as its reference, not wall-clock,
+	// or it evicts the swap as an orphan the moment the sync arrives.
 	buf := newBuffer()
 
 	oldTS := time.Now().UTC().Add(-6 * time.Hour).Format(time.RFC3339)
@@ -359,10 +350,8 @@ func TestBufferNoEvictionWithFreshEntries(t *testing.T) {
 
 // helpers
 
-// event builds a test event with the full 2-slot topic that real
-// Soroswap events carry: topic[0] = String(prefix), topic[1] =
-// Symbol(event). topic1 is the event-name SCVal blob (TopicSymbolSwap
-// etc.) — the prefix is inferred from which event-name is passed
+// event builds a test event with the 2-slot topic real Soroswap events carry: topic[0] =
+// String(prefix), topic[1] = Symbol(event). The prefix is inferred from the event name
 // (factory for new_pair, pair for everything else).
 func event(kind string, contract string, ledger uint32, tx string, op int, topic1 string) *events.Event {
 	prefix := TopicPrefixPair

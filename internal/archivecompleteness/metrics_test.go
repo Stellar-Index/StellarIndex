@@ -49,12 +49,10 @@ func TestWriteTextfile_BasicShape(t *testing.T) {
 	}
 }
 
-// TestWriteTextfile_ChecksExpectedFoundDenominator — a zero
-// archive_files_missing reading is indistinguishable from "nothing
-// was scanned" (a vacuous range) unless a denominator ships with it.
-// PopulateFromReport must carry Expected/Found onto the textfile so
-// an alert can require checkpoints_expected > 0 before trusting a
-// clean archive_files_missing reading.
+// TestWriteTextfile_ChecksExpectedFoundDenominator — a zero archive_files_missing reading is
+// indistinguishable from "nothing was scanned" (a vacuous range) without a denominator.
+// PopulateFromReport must carry Expected/Found onto the textfile so an alert can require
+// checkpoints_expected > 0 before trusting a clean reading.
 func TestWriteTextfile_ChecksExpectedFoundDenominator(t *testing.T) {
 	snap := archivecompleteness.NewMetricsSnapshot()
 	report := archivecompleteness.NewReport(100, 200)
@@ -134,17 +132,13 @@ func TestPopulateFromReport(t *testing.T) {
 	}
 }
 
-// TestPopulateFromFillResult — repair-attempts and -failures get
-// populated from a FillResult under REAL source names.
+// TestPopulateFromFillResult — repair-attempts and -failures get populated from a FillResult under
+// REAL source names.
 //
-// Failures must not land under a synthetic `multi-source-exhausted`
-// label while attempts use real source names: the two label sets
-// would never intersect, so
-// `archive-completeness.yml`'s
-// `sum by (source)(failures) / sum by (source)(attempts)` alert had
-// a permanently-zero numerator for every real source. The assertions
-// below pin the contract: one attempt per try, one failure
-// per failed try, both keyed by the source that was actually tried.
+// Failures must not land under a synthetic `multi-source-exhausted` label while attempts use real
+// source names: the label sets would never intersect, so the `archive-completeness.yml`
+// `sum by (source)(failures) / sum by (source)(attempts)` alert would have a permanently-zero
+// numerator. Pinned: one attempt per try, one failure per failed try, keyed by the source tried.
 func TestPopulateFromFillResult(t *testing.T) {
 	res := archivecompleteness.FillResult{
 		Filled:           5,

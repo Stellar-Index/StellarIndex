@@ -9,21 +9,13 @@ import (
 )
 
 // TestForwardTipStream_ResumeSkipsPreflightSnapshot pins the behaviour: on a
-// Last-Event-ID reconnect, forwardTipStream must not prepend the
-// connection's freshly-computed pre-flight snapshot ahead of the Hub's
-// replayed backlog.
+// Last-Event-ID reconnect, forwardTipStream must not prepend the connection's fresh
+// pre-flight snapshot ahead of the Hub's replayed backlog.
 //
-// firstEv is built under a connection-local [streaming.Generator] at
-// reconnect time, so its ID is newer than anything already buffered.
-// Sending it first and the (older) replay after it makes the SSE `id:`
-// sequence go backwards, and — because the LAST frame received is what a
-// client renders as current — leaves the fresher-looking-but-actually-
-// buffered event as the one displayed, i.e. a stale price rendered as
-// live.
-//
-// Unfixed code sends firstEv unconditionally; this asserts the resuming
-// connection receives ONLY the replayed backlog event, preserving ID
-// order.
+// firstEv is built under a connection-local [streaming.Generator], so its ID is newer than
+// anything buffered. Sending it before the older replay makes the SSE `id:` sequence go
+// backwards, and the LAST frame is what a client renders as current, so a stale price would
+// display as live. The resuming connection must receive ONLY the replayed backlog, in ID order.
 func TestForwardTipStream_ResumeSkipsPreflightSnapshot(t *testing.T) {
 	var s Server
 
@@ -60,11 +52,9 @@ func TestForwardTipStream_ResumeSkipsPreflightSnapshot(t *testing.T) {
 }
 
 // TestForwardTipStream_FreshConnectStillLeadsWithSnapshot is the sibling
-// case: a fresh connect (no Last-Event-ID) has nothing buffered to
-// replay ([streaming.Hub.Subscribe] skips replay when lastEventID is
-// empty), so the pre-flight snapshot must still lead — the fix must not
-// regress the "first frame doesn't wait for the next tick" behaviour the
-// snapshot exists for.
+// case: a fresh connect (no Last-Event-ID) has nothing to replay ([streaming.Hub.Subscribe]
+// skips replay when lastEventID is empty), so the pre-flight snapshot must still lead and the
+// first frame must not wait for the next tick.
 func TestForwardTipStream_FreshConnectStillLeadsWithSnapshot(t *testing.T) {
 	var s Server
 

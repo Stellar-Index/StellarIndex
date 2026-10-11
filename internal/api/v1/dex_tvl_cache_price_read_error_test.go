@@ -13,20 +13,16 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// A USD price read can fail in two ways that mean opposite things.
-// "Nobody prices this token" is a fact about the token: the leg is
-// honestly excluded as no_served_price and the figure is a lower bound.
-// "The price read ERRORED" is a fact about this refresh: the token is
-// exactly as priced as it was a minute ago, and we just could not ask.
+// A USD price read can fail in two ways that mean opposite things. "Nobody prices this token" is a
+// fact about the token: the leg is excluded as no_served_price and the figure is a lower bound.
+// "The price read ERRORED" is a fact about this refresh: the token is as priced as a minute ago and
+// we just could not ask.
 //
-// If rateFor folded both into the first, the
-// error was memoised as "unpriceable" for the whole refresh, value()
-// returned no_served_price with no error, every protocol's refresh
-// therefore SUCCEEDED, and Refresh's carry-forward — which only runs
-// when a protocol refresh returns an error — could not fire. One
-// transient Postgres error on the XLM rate silently removed every
-// XLM leg from the published DEX TVL and admitted the shrunken total as
-// fresh.
+// If rateFor folded both into the first, the error would be memoised as "unpriceable" for the whole
+// refresh, every protocol's refresh would SUCCEED, and Refresh's carry-forward (which only runs
+// when a protocol refresh returns an error) could not fire. One transient Postgres error on the
+// XLM rate would silently drop every XLM leg from the published DEX TVL and admit the shrunken
+// total as fresh.
 
 // erroringTVLPricer is stubTVLPricer with a fault that can be armed per
 // asset between refreshes, and a per-asset call count.
@@ -70,13 +66,11 @@ func (p *erroringTVLPricer) callsFor(id string) int {
 
 var errTVLPriceRead = errors.New("pq: canceling statement due to statement timeout")
 
-// priceReadErrorSources is the shared fixture with soroswap pair B's
-// first leg swapped for a WELL-FORMED token nobody prices. The shared
-// fixture's tvlTestUnpriced cannot stand in: it fails strkey validation,
-// so it is excluded as malformed_token before any price is read (see
-// dex_tvl_pools_internal_test.go) and a fault armed on it never fires.
-// Only soroswap holds the swapped-in token; its healthy figure is still
-// $25.50 because an unpriced leg contributes nothing.
+// priceReadErrorSources is the shared fixture with soroswap pair B's first leg swapped for a
+// WELL-FORMED token nobody prices. The shared tvlTestUnpriced cannot stand in: it fails strkey
+// validation, so it is excluded as malformed_token before any price is read (see
+// dex_tvl_pools_internal_test.go) and a fault armed on it never fires. Only soroswap holds the
+// swapped-in token; its healthy figure is still $25.50 because an unpriced leg contributes nothing.
 func priceReadErrorSources(t *testing.T) (DEXTVLSources, *erroringTVLPricer, string) {
 	t.Helper()
 	src := tvlTestSources()

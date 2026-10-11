@@ -200,12 +200,10 @@ func TestDEXTVLPools_EveryLegBranchIsLabelled(t *testing.T) {
 	}
 }
 
-// TestDEXTVLPools_ReconcileAtEveryLevel is the per-pool half of the
-// acceptance criterion "a reconciliation test against pool reserves"
-// — on every protocol of both fixtures, the sum of the published
-// leg usd strings is the pool's tvl_usd and the sum of the published
-// pool tvl_usd strings is the protocol's — byte-for-byte, the property
-// a consumer of the drill-down actually checks.
+// TestDEXTVLPools_ReconcileAtEveryLevel is the per-pool reconciliation test: on every protocol
+// of both fixtures, the sum of the published leg usd strings is the pool's tvl_usd and the sum
+// of the pool tvl_usd strings is the protocol's, byte-for-byte, which is what a consumer of the
+// drill-down actually checks.
 func TestDEXTVLPools_ReconcileAtEveryLevel(t *testing.T) {
 	branch, _ := tvlBranchSources()
 	for name, src := range map[string]DEXTVLSources{"shared": tvlTestSources(), "branch": branch} {
@@ -286,17 +284,11 @@ func TestDEXTVLNotDerivedReason(t *testing.T) {
 	}
 }
 
-// TestDEXTVLPools_MoneyRoundsOnceAtTheLeaf pins the reconciliation
-// contract the per-pool drill-down rests on: each valued leg is
-// published to the cent, and every figure above it is the EXACT sum of
-// the published figures beneath. Two legs worth $0.004 each are
-// therefore two published "0.00" legs, a "0.00" pool and a "0.00"
-// protocol — not a "0.01" protocol that no set of published pool rows
-// could ever add up to.
-//
-// Written against the public cache surface only, so it runs unchanged
-// against the tree before the drill-down existed, where the protocol
-// figure was the unrounded rational sum rendered once and read "0.01".
+// TestDEXTVLPools_MoneyRoundsOnceAtTheLeaf pins the reconciliation contract the per-pool
+// drill-down rests on: each valued leg is published to the cent, and every figure above it is
+// the EXACT sum of the published figures beneath. Two legs worth $0.004 each are therefore two
+// "0.00" legs, a "0.00" pool and a "0.00" protocol, not a "0.01" protocol that no set of
+// published pool rows could add up to.
 func TestDEXTVLPools_MoneyRoundsOnceAtTheLeaf(t *testing.T) {
 	// 80,000 raw XLM-SAC units at the 1e7 anchor scale × $0.5 = $0.004.
 	const subCent = 80_000

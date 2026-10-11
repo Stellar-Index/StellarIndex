@@ -42,14 +42,11 @@ func pegTestServer(t *testing.T, fx FXHistoryReader) *Server {
 	}
 }
 
-// TestFillDeclaredPegPrices_AfterSubstanceGate — the core contract of
-// the declared-peg fill: an asset whose
-// dust-authored market price the substance gate correctly withholds
-// gets its price filled from the declared fiat peg × the fresh AUD/USD
-// rate, stamped price_basis="declared_peg". The gate-then-fill ORDER
-// is what makes that possible — the fill only writes nil PriceUSD, so
-// running it before the gate would fill nothing and the gate would
-// strip a pre-existing fill.
+// TestFillDeclaredPegPrices_AfterSubstanceGate is the core contract of the declared-peg fill: an
+// asset whose dust-authored market price the substance gate withholds gets its price filled from
+// the declared fiat peg x the fresh AUD/USD rate, stamped price_basis="declared_peg". The
+// gate-then-fill ORDER matters: the fill only writes nil PriceUSD, so running it before the gate
+// would fill nothing and the gate would strip a pre-existing fill.
 func TestFillDeclaredPegPrices_AfterSubstanceGate(t *testing.T) {
 	fx := &stubFXHistory{points: []FXQuotePoint{
 		{Bucket: time.Now().UTC().Add(-24 * time.Hour), RateUSDText: "1.5267", InverseUSDText: "0.655"},
@@ -122,12 +119,11 @@ func TestFillDeclaredPegPrices_NeverOverwritesMarketPrice(t *testing.T) {
 	}
 }
 
-// TestFillDeclaredPegPrices_StaleFXDoesNotFill — the fx staleness
-// discipline: a rate older than declaredPegFXMaxAge must NOT fill; the
-// row degrades to a nil price rather than presenting a stale rate as
-// current. (In production fiatUSDPriceFor's 7-day query window already
-// filters this on the fx_quotes path; the guard also covers the
-// PriceReader fallback tier, whose stale flag that resolver discards.)
+// TestFillDeclaredPegPrices_StaleFXDoesNotFill pins fx staleness: a rate older than
+// declaredPegFXMaxAge must NOT fill; the row degrades to a nil price rather than presenting a
+// stale rate as current. (fiatUSDPriceFor's query window already filters this on the fx_quotes
+// path; the guard also covers the PriceReader fallback tier, whose stale flag the resolver
+// discards.)
 func TestFillDeclaredPegPrices_StaleFXDoesNotFill(t *testing.T) {
 	fx := &stubFXHistory{points: []FXQuotePoint{
 		{Bucket: time.Now().UTC().Add(-10 * 24 * time.Hour), RateUSDText: "1.5267", InverseUSDText: "0.655"},

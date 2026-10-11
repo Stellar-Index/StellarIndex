@@ -63,12 +63,9 @@ func TestUsdMarketValue_BadInputs(t *testing.T) {
 	}
 }
 
-// TestUsdMarketValue_NegativeSupplyRejected pins the finding-#4 guard: a
-// negative circulating supply (Σburn > Σmint data error) must NOT serve a
-// negative market_cap_usd on /v1/assets/{id}. usdMarketValue returns an
-// error — its callers (populateMarketCap, chart.go, lending.go) all leave the
-// field/point unset on error — so the field is OMITTED, not negative. Matches
-// computeMarketCapUSD's Sign()<0 → "" guard on the listing path.
+// TestUsdMarketValue_NegativeSupplyRejected pins that a negative circulating supply (burn > mint
+// data error) never serves a negative market_cap_usd on /v1/assets/{id}. usdMarketValue errors
+// and callers leave the field unset, matching computeMarketCapUSD's Sign()<0 → "" guard.
 func TestUsdMarketValue_NegativeSupplyRejected(t *testing.T) {
 	// -1 XLM raw (10^7 stroops) × $0.50 → a $-0.50 value data error.
 	if got, err := usdMarketValue(mustBigIntInternal("-10000000"), "0.50", 7); err == nil {
@@ -85,15 +82,10 @@ func TestUsdMarketValue_NegativeSupplyRejected(t *testing.T) {
 	}
 }
 
-// TestComputeMarketCapUSD_ZeroSupplyMatchesUsdMarketValue is the
-// regression: computeMarketCapUSD (the /v1/assets LISTING
-// path) and usdMarketValue (the /v1/assets/{id} DETAIL path, tested
-// above) must agree that a zero circulating supply is a legitimate
-// "0.00" reading, not an error/omitted field. Guards against
-// computeMarketCapUSD's `mc.Sign() <= 0` guard treating an exact zero
-// like a parse failure and returning "", which would show
-// market_cap_usd:"0.00" on the detail page but a missing field on the
-// listing.
+// TestComputeMarketCapUSD_ZeroSupplyMatchesUsdMarketValue pins that the listing path
+// (computeMarketCapUSD) and the detail path (usdMarketValue) agree a zero circulating supply is
+// a legitimate "0.00", not an omitted field. An exact zero must not be treated like a parse
+// failure.
 func TestComputeMarketCapUSD_ZeroSupplyMatchesUsdMarketValue(t *testing.T) {
 	got := computeMarketCapUSD("0", "0.07", 7)
 	if got != "0.00" {
@@ -101,11 +93,8 @@ func TestComputeMarketCapUSD_ZeroSupplyMatchesUsdMarketValue(t *testing.T) {
 	}
 }
 
-// TestComputeMarketCapUSD_NegativeStillRejected pins that the fix
-// narrowed the guard from `<= 0` to `< 0`, not removed it: a negative
-// result (malformed/corrupt input — never a legitimate supply or
-// price) must still return "" rather than a nonsensical negative
-// market cap.
+// TestComputeMarketCapUSD_NegativeStillRejected pins that the guard rejects only negatives
+// (corrupt input, never a legitimate supply or price): they return "", not a negative market cap.
 func TestComputeMarketCapUSD_NegativeStillRejected(t *testing.T) {
 	got := computeMarketCapUSD("-5", "1", 0)
 	if got != "" {
@@ -161,15 +150,10 @@ func TestPctChange_BadInputs(t *testing.T) {
 	}
 }
 
-// TestApplyF2Fields_SEP41LakeFlowsIncompleteOmitted pins the F2 fallback
-// guard: for a Soroban token whose lake-flows net total is negative
-// (incompletely-seeded flows — Σ(burn+clawback) > Σmint), /v1/assets/{id}
-// must OMIT total_supply/circulating_supply (both *string,omitempty) rather
-// than publish a physically-impossible negative (ADR-0003). A normal
-// positive-total token is unaffected. Mirrors SEP41Computer.Compute refusing
-// a negative total. fakeTokenSupply lives in asset_supply_test.go (same
-// package); it hand-sets Incomplete exactly as assembleTokenSupply does
-// (proven separately in the clickhouse package's source-level test).
+// TestApplyF2Fields_SEP41LakeFlowsIncompleteOmitted pins that a Soroban token whose lake-flows
+// net total is negative (incompletely seeded flows) has total_supply/circulating_supply omitted
+// rather than published as an impossible negative (ADR-0003), mirroring SEP41Computer.Compute.
+// fakeTokenSupply (asset_supply_test.go) hand-sets Incomplete as assembleTokenSupply does.
 func TestApplyF2Fields_SEP41LakeFlowsIncompleteOmitted(t *testing.T) {
 	asset, err := canonical.NewSorobanAsset(supplyContractID)
 	if err != nil {
@@ -222,11 +206,8 @@ func mustBigIntInternal(s string) *big.Int {
 	return v
 }
 
-// TestSep1DisplayToRawUnits — the SEP-1 max_supply overlay's unit
-// conversion. SEP-1 declares supply in DISPLAY units; the snapshot
-// carries RAW units. Getting this wrong understates max_supply/FDV
-// by 10^7 for every classic asset, so the scaling contract is
-// pinned here.
+// TestSep1DisplayToRawUnits pins the SEP-1 max_supply overlay's unit conversion: SEP-1 declares
+// DISPLAY units, the snapshot carries RAW units, and a mistake skews max_supply/FDV by 10^7.
 func TestSep1DisplayToRawUnits(t *testing.T) {
 	tests := []struct {
 		name     string

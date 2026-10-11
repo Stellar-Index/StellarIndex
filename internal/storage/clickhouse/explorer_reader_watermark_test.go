@@ -9,16 +9,14 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// Tests for the per-account activity watermark bound: AccountOperations'
-// key arms read `ORDER BY pk DESC LIMIT n`, which streams granules backwards
-// from the TIP until the account's rows turn up (~4 s for a 46d-idle account). With a watermark
-// row in stellar.account_activity the reader bounds EACH arm's resolve with
-// `ledger_seq <= watermark`, so the reverse read starts at the account's real
-// last activity. These pin the emitted SQL and the bind order (stubConn from
-// tx_hash_index_test.go — SQL shape assertions, same convention as
-// explorer_reader_union_bounds_test.go); the live-ClickHouse correctness proof
-// — bounded rows == unbounded rows, incl. a participant row ABOVE the sourced
-// watermark — is test/integration/clickhouse_accounts_test.go.
+// Tests for the per-account activity watermark bound: AccountOperations' key arms read
+// `ORDER BY pk DESC LIMIT n`, which streams granules backwards from the TIP until the account's
+// rows turn up (slow for a long-idle account). With a watermark row in stellar.account_activity
+// the reader bounds EACH arm's resolve with `ledger_seq <= watermark`, so the reverse read starts
+// at the account's real last activity. These pin the emitted SQL and bind order (stubConn from
+// tx_hash_index_test.go; same convention as explorer_reader_union_bounds_test.go); the
+// live-ClickHouse proof (bounded rows == unbounded rows, incl. a participant row ABOVE the sourced
+// watermark) is test/integration/clickhouse_accounts_test.go.
 
 // Query-shape classifiers for the watermark reads.
 func isAccountActivityProbe(q string) bool {
@@ -133,12 +131,10 @@ func assertArgs(t *testing.T, q string, got, want []any) {
 	}
 }
 
-// stellar.operations is ReplacingMergeTree, so an account
-// listing collapses un-merged duplicate parts on the narrow primary key —
-// never with a DISTINCT over opCols, which carries the KB-scale body_xdr. The
-// exact sourced arm uses LIMIT 1 BY; the windowed reads collapse adjacent keys
-// in Go; body_xdr is read exactly once, by the FINAL hydration (opColsLight's
-// doc measures that column at ~600ms over a 24B-row table).
+// stellar.operations is ReplacingMergeTree, so an account listing collapses un-merged duplicate
+// parts on the narrow primary key, never with a DISTINCT over opCols, which carries the large
+// body_xdr. The exact sourced arm uses LIMIT 1 BY; the windowed reads collapse adjacent keys in
+// Go; body_xdr is read exactly once, by the FINAL hydration (see opColsLight).
 func TestAccountOperations_DedupsOnThePrimaryKey(t *testing.T) {
 	const limit = 3
 	filled := make([][]any, windowRows(limit, windowFactorKeys))

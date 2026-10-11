@@ -6,47 +6,33 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// ─── Golden real-lake decode-VALUE tests ───────────────────
+// Golden real-lake decode-VALUE tests.
 //
-// CONVENTION (shared with internal/sources/aquarius/golden_realbytes_test.go
-// and mirrored on soroswap_router/real_bytes_test.go):
-//
-// A golden real-lake test captures the EXACT on-chain bytes of one
-// real event (topics_xdr + data_xdr, base64 as the r1 ClickHouse lake
-// stores them in stellar.contract_events), builds the production
-// events.Event from them, drives the REAL decoder end-to-end through
-// its two production seams —
+// CONVENTION (shared with internal/sources/aquarius/golden_realbytes_test.go and mirrored on
+// soroswap_router/real_bytes_test.go): a golden test captures the EXACT on-chain bytes of one real
+// event (topics_xdr + data_xdr, base64 as stored in stellar.contract_events), builds the
+// production events.Event, drives the REAL decoder through its two production seams
 //
 //	Decoder.Matches(ev)   // ADR-0035 contract-identity gate
 //	Decoder.Decode(ev)    // classify + body decode + consumer.Event wrap
 //
-// — and asserts the EXACT decoded FIELD VALUES of the emitted
-// consumer.Event. This closes the gap ADR-0033's recognition axis
-// (does Matches claim it?) and projection axis (does the row COUNT
-// match?) both miss: neither checks that the decoded field VALUES
-// (amounts, addresses, directions) are correct. A decoder can Match an
-// event and emit the right NUMBER of rows while putting WRONG values in
-// them, and both axes still pass. Only a golden value assertion catches
-// that.
+// and asserts the EXACT decoded FIELD VALUES. ADR-0033's recognition axis (does Matches claim it?)
+// and projection axis (does the row COUNT match?) both miss wrong values: a decoder can Match and
+// emit the right number of rows with WRONG amounts, addresses or directions. Only a golden value
+// assertion catches that.
 //
 // Rules for a fixture here:
-//   - REAL bytes only. Each fixture cites the ledger_seq, tx_hash,
-//     op_index, event_index it was captured from, so it can be re-pulled
-//     and re-verified against the lake. No hand-encoded SCVals.
-//   - Drive the production Decoder (NewDecoder()), NOT the internal
-//     decodeFlow/decodeAdminEvent helpers — those are already covered by
-//     decode_test.go / decode_admin_test.go. The value here is proving
-//     the WHOLE path (gate + classify + decode + wrap) agrees with the
-//     real chain.
-//   - Assert exact values (strkeys, amount strings, hex hashes), and
-//     prove non-vacuousness: mutating any pinned constant must fail the
-//     test (see the mutation-guard note on each test).
+//   - REAL bytes only. Each fixture cites the ledger_seq, tx_hash, op_index and event_index it
+//     was captured from so it can be re-verified against the lake. No hand-encoded SCVals.
+//   - Drive the production Decoder (NewDecoder()), not decodeFlow/decodeAdminEvent, which
+//     decode_test.go / decode_admin_test.go already cover. The value is proving the WHOLE path
+//     (gate + classify + decode + wrap) agrees with the chain.
+//   - Assert exact values (strkeys, amount strings, hex hashes) and prove non-vacuousness:
+//     mutating any pinned constant must fail the test (see the mutation-guard note on each).
 
-// TestGolden_defindexStrategyHarvest_ledger57485721 pins the decode of a
-// real BlendStrategy `harvest` event (harvest
-// was once recognise-and-dropped; the lake
-// proves 1,018 real harvests carry a decodeFlow-compatible body, whose
-// omission under-counted vault NAV by the full harvested yield).
+// TestGolden_defindexStrategyHarvest_ledger57485721 pins the decode of a real BlendStrategy
+// `harvest` event. Real harvests carry a decodeFlow-compatible body, and dropping them
+// under-counts vault NAV by the full harvested yield.
 //
 // Real bytes captured from r1's ClickHouse lake (stellar.contract_events):
 //
@@ -57,12 +43,10 @@ import (
 //	topics       [ScvString("BlendStrategy"), ScvSymbol("harvest")]
 //	data         Map{ amount: i128=2, from: Address(G…), price_per_share: i128=999999999975 }
 //
-// This is a genuine DUST harvest (amount = 2). It also exercises the
-// decode-by-name contract: the body's third field `price_per_share` is
-// NOT read by decodeFlow, and the decode must ignore it (not choke on
-// the extra field, not confuse it for `amount`). The value pinned for
-// Amount is 2 — NOT the far larger price_per_share — which is exactly
-// what an arity/positional bug would get wrong.
+// This is a genuine DUST harvest (amount = 2). It also exercises the decode-by-name contract: the
+// third field `price_per_share` is NOT read by decodeFlow and must be ignored, not mistaken for
+// `amount`. Amount is pinned to 2, not the far larger price_per_share, which is what an
+// arity/positional bug would get wrong.
 func TestGolden_defindexStrategyHarvest_ledger57485721(t *testing.T) {
 	t.Parallel()
 

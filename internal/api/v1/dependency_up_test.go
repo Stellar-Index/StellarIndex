@@ -12,14 +12,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// The API has always CHECKED its dependencies on every /v1/readyz round,
-// but the outcome existed only as JSON on an HTTP endpoint. Nothing
-// scraped it, so nothing could alert on a dependency going away.
-//
-// That mattered most for ClickHouse: postgres, redis and minio
-// each have a Prometheus exporter on r1, and ClickHouse — the raw lake
-// the ADR-0033 completeness claim rests on — has none. Its only symptom
-// would have been endpoints failing one by one.
+// The /v1/readyz dependency checks must also be exported as a metric, since nothing scrapes the
+// JSON endpoint and so nothing could alert on a dependency going away. This matters most for
+// ClickHouse: postgres, redis and minio have Prometheus exporters, but ClickHouse (the raw lake
+// the ADR-0033 completeness claim rests on) has none.
 
 type fakeCheck struct {
 	name     string
@@ -49,14 +45,10 @@ func TestReadyzPublishesDependencyUp(t *testing.T) {
 		t.Fatalf("unexpected readyz status %d", resp.StatusCode)
 	}
 
-	// Gather the family rather than reading through WithLabelValues.
-	// WithLabelValues CREATES a child on read, initialised to 0, so a
-	// series that was never published is indistinguishable from one
-	// published as 0. A guard written that way passes against code that
-	// only ever reports HEALTHY dependencies — the exact silent outage
-	// this metric exists to prevent. Verified by mutation: changing the
-	// publisher to `if r.OK { Set(1) }` does not fail a ToFloat64-based
-	// assertion, and does fail this one.
+	// Gather the family rather than reading through WithLabelValues, which CREATES a child on
+	// read initialised to 0, so a never-published series looks like one published as 0. Such a
+	// guard passes against code that only ever reports HEALTHY dependencies, the exact silent
+	// outage this metric exists to prevent (a publisher doing `if r.OK { Set(1) }` passes it).
 	got := map[string]float64{}
 	families, err := obs.Registry.Gather()
 	if err != nil {

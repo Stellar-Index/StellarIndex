@@ -246,13 +246,10 @@ func TestDecoder_failedOp_emitsNothing(t *testing.T) {
 	}
 }
 
-// TestDecoder_v0ClaimAtom_decodedAsOrderBook pins that V0
-// claim atoms (pre-CAP-27 legacy shape) are
-// decoded into a regular trade by deriving the seller G-strkey
-// from the raw ed25519 bytes. Without the V0 branch it returns
-// ErrUnknownClaimAtomType and per-claim skip drops the row,
-// leaving since-inception SDEX history with a coverage hole on
-// pre-P18 ledgers.
+// TestDecoder_v0ClaimAtom_decodedAsOrderBook pins that V0 claim atoms (pre-CAP-27 shape)
+// decode into a regular trade, deriving the seller G-strkey from the raw ed25519 bytes.
+// Without the V0 branch the per-claim skip drops the row, leaving a coverage hole in
+// since-inception history on pre-P18 ledgers.
 func TestDecoder_v0ClaimAtom_decodedAsOrderBook(t *testing.T) {
 	var pub xdr.Uint256
 	pub[0] = 0x30
@@ -308,12 +305,9 @@ func TestDecoder_zeroAmountPolicy(t *testing.T) {
 	}
 }
 
-// TestDecoder_claimIndexOverflow pins that a tradeIndex at or past
-// opIndexFanoutStride must be rejected, not folded into the OpIndex
-// range op_index fanout reserves for the NEXT op. The trades PK
-// upsert has been ON CONFLICT DO UPDATE since migration 0109, so an
-// alias would silently overwrite an unrelated trade rather than
-// collide harmlessly.
+// TestDecoder_claimIndexOverflow pins that a tradeIndex at or past opIndexFanoutStride is
+// rejected, not folded into the OpIndex range reserved for the NEXT op. The trades PK upsert
+// is ON CONFLICT DO UPDATE, so an alias would silently overwrite an unrelated trade.
 func TestDecoder_claimIndexOverflow(t *testing.T) {
 	xlm := xdr.Asset{Type: xdr.AssetTypeAssetTypeNative}
 	usdc := mkAlphanum4Asset(t, "USDC", 0x10)
@@ -335,14 +329,10 @@ func TestDecoder_Name(t *testing.T) {
 	}
 }
 
-// TestDecoder_DecodeCounted_ReportsPerClaimFailures is a
-// regression test: Decode silently drops a claim atom it cannot decode
-// (obs.SourceDecodeErrorsTotal is the only signal), so the
-// completeness census had no way to know a ledger's expected count
-// was produced from an incomplete claim set. DecodeCounted must
-// surface that count so the census can mark the ledger blind
-// (completeness.BlindTracker) instead of certifying a clean reconcile
-// on a ledger where a claim was provably dropped.
+// TestDecoder_DecodeCounted_ReportsPerClaimFailures: Decode silently drops a claim atom it
+// cannot decode, so DecodeCounted must surface the failure count. The census can then mark
+// the ledger blind (completeness.BlindTracker) instead of certifying a clean reconcile on a
+// ledger where a claim was provably dropped.
 func TestDecoder_DecodeCounted_ReportsPerClaimFailures(t *testing.T) {
 	xlm := xdr.Asset{Type: xdr.AssetTypeAssetTypeNative}
 	usdc := mkAlphanum4Asset(t, "USDC", 0x10)

@@ -14,13 +14,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// Cache half: CachedMarketsReader owns the
-// immutability of what it stores. Each of fetchPairs' / fetchPools' four
-// serving branches — (C) cold leader, (A) fresh hit, (A') stale-while-
-// revalidate, (B) cold waiter — must hand the caller rows it can scribble
-// on without the next caller seeing the scribble. The handler-level tests
-// (markets_cache_shared_rows_test.go) only reach (C) and (A); (A') and (B)
-// need the cache's internals.
+// Cache half: CachedMarketsReader owns the immutability of what it stores. Each of fetchPairs'
+// and fetchPools' four serving branches — (C) cold leader, (A) fresh hit, (A') stale-while-
+// revalidate, (B) cold waiter — must hand the caller rows it can scribble on without the next
+// caller seeing it. The handler-level tests (markets_cache_shared_rows_test.go) reach only (C)
+// and (A); (A') and (B) need the cache's internals.
 
 const ownedRowsPristine = "41.32"
 
@@ -89,12 +87,10 @@ func (u *ownedRowsUpstream) FirstTradeBatch(context.Context, [][2]string) (map[s
 	return map[string]time.Time{}, nil
 }
 
-// ownedRowsRead is one cached list method reduced to what the ownership
-// contract cares about: read the page, report its last_price, and then
-// deface the returned rows exactly the way the handlers write them
-// (element-field assignment). `addr` identifies the backing array. It
-// reports failure as an error, not t.Fatal, because the waiter test calls
-// it off the test goroutine.
+// ownedRowsRead reduces one cached list method to what the ownership contract cares about:
+// read the page, report its last_price, then deface the returned rows the way the handlers
+// write them (element-field assignment). `addr` identifies the backing array. It returns an
+// error, not t.Fatal, because the waiter test calls it off the test goroutine.
 type ownedRowsRead func(c *CachedMarketsReader) (price string, addr any, err error)
 
 func ownedRowsPairsRead(call func(*CachedMarketsReader) ([]Market, error)) ownedRowsRead {

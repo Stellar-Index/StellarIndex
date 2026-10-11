@@ -7,17 +7,13 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// The grain a chart is SERVED at has to be one whose grid fits in one
-// response: the reader caps at historyMaxPoints and drops the NEWEST
-// buckets, so an over-fine pair is answered with its oldest slice and
-// the rest of the requested window silently missing (seen in
-// production at 1y/1m: 50,000 points covering 36 of 365
-// days, ending three months before the request).
+// The grain a chart is SERVED at has to be one whose grid fits in one response: the reader
+// caps at historyMaxPoints and drops the NEWEST buckets, so an over-fine pair is answered with
+// its oldest slice and the rest of the window silently missing (1y/1m returned 36 of 365 days).
 //
-// This walks the whole prescribed timeframe table against the whole
-// served granularity set, so the expectation is the SERVED VALUE for
-// every cell rather than "1y/1m changed": a future rung or timeframe
-// that shifts a cell has to move a line here and say which.
+// This walks the whole timeframe table against the whole served granularity set, asserting the
+// SERVED VALUE for every cell, so a future rung or timeframe that shifts a cell must move a
+// line here and say which.
 func TestChartFitGranularity_EveryTimeframeAndGrain(t *testing.T) {
 	// want[timeframe][requested granularity] = served granularity.
 	// 1y/1m is the one cell that coarsens today: 365 days of minutes
@@ -29,12 +25,9 @@ func TestChartFitGranularity_EveryTimeframeAndGrain(t *testing.T) {
 		"1w":  {"1m": "1m", "15m": "15m", "1h": "1h", "4h": "4h", "1d": "1d", "1w": "1w", "1mo": "1mo"},
 		"1mo": {"1m": "1m", "15m": "15m", "1h": "1h", "4h": "4h", "1d": "1d", "1w": "1w", "1mo": "1mo"},
 		"1y":  {"1m": "15m", "15m": "15m", "1h": "1h", "4h": "4h", "1d": "1d", "1w": "1w", "1mo": "1mo"},
-		// `all` has no requested width, so nothing is decidable from
-		// the request and every grain is served as asked. Measured the
-		// same day: ?timeframe=all&granularity=1h serves 47,823 points
-		// spanning 2017-01-17 to now — complete, under the cap, and a
-		// genesis-derived grid would have counted 96,600 and wrongly
-		// coarsened it.
+		// `all` has no requested width, so nothing is decidable from the request and every
+		// grain is served as asked: all&1h is complete and under the cap, and a
+		// genesis-derived grid would overcount and wrongly coarsen it.
 		"all": {"1m": "1m", "15m": "15m", "1h": "1h", "4h": "4h", "1d": "1d", "1w": "1w", "1mo": "1mo"},
 	}
 

@@ -11,17 +11,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// The price-alert evaluator is a PRICE-SERVING surface: it reads the same
-// closed prices_1m bucket the API serves and pushes the number to a
-// customer's webhook endpoint. It consulted the thin-market substance
-// gate and the scam-issuer gate not at all, in a binary the API's seam
-// guard cannot see — so a directory-flagged issuer whose price
-// /v1/price refuses to publish could still be delivered, signed, to a
-// customer.
+// The price-alert evaluator is a PRICE-SERVING surface: it reads the same closed prices_1m
+// bucket the API serves and pushes the number to a customer's webhook. It lives in a binary the
+// API's seam guard cannot see, so without the thin-market substance gate and the scam-issuer
+// gate a directory-flagged issuer whose price /v1/price refuses to publish could still be
+// delivered, signed, to a customer.
 //
-// These tests pin both halves of the repair: the decision is consulted
-// here, and it is the PAIR decision rather than a second
-// base-only copy.
+// These tests pin that the decision is consulted here, and that it is the PAIR decision rather
+// than a second base-only copy.
 
 // alertScamDirectory flags exactly the listed G-addresses.
 type alertScamDirectory struct {
@@ -39,14 +36,13 @@ func (d *alertScamDirectory) DirectoryEntryByAddress(_ context.Context, address 
 
 const alertScamIssuer = "GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ"
 
-// TestPriceAlertSeamIsGated is this binary's half of the seam guard that
-// cmd/stellarindex-api has had since wave D. That guard parses the API's
-// main.go only, which is precisely why a whole second binary reading the
-// same closed buckets could serve them ungated and stay green.
+// TestPriceAlertSeamIsGated is this binary's half of the seam guard cmd/stellarindex-api has.
+// That guard parses the API's main.go only, so a second binary reading the same closed buckets
+// could serve them ungated and stay green.
 //
-// The subject set is derived from the STORE CALL, not from a list of
-// method names: a new price-serving reader in this binary has to read a
-// closed bucket to serve a price at all, so it cannot avoid the scan.
+// The subject set is derived from the STORE CALL, not from a list of method names: a new
+// price-serving reader here has to read a closed bucket to serve a price, so it cannot avoid
+// the scan.
 func TestPriceAlertSeamIsGated(t *testing.T) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "main.go", nil, 0)

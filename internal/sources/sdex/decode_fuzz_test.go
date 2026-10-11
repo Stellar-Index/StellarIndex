@@ -148,12 +148,11 @@ func FuzzAmountFromInt64(f *testing.F) {
 	})
 }
 
-// FuzzDecodeClaimAtom drives decodeClaimAtom over arbitrary atoms and
-// asserts: (1) it accepts exactly the atoms sdexclaim.IsRealTrade counts,
-// so the ADR-0033 census oracle equals COUNT(trades) by construction;
-// (2) every accepted atom decodes to its own exact amounts, assets and
-// maker; (3) the both-legs-non-positive no-op and unknown variants are
-// rejected with the documented sentinels, never mis-decoded.
+// FuzzDecodeClaimAtom drives decodeClaimAtom over arbitrary atoms and asserts: (1) it accepts
+// exactly the atoms sdexclaim.IsRealTrade counts, so the ADR-0033 census oracle equals
+// COUNT(trades); (2) every accepted atom decodes to its own exact amounts, assets and maker;
+// (3) both-legs-non-positive no-ops and unknown variants are rejected with the documented
+// sentinels, never mis-decoded.
 func FuzzDecodeClaimAtom(f *testing.F) {
 	iss := []byte{1, 2, 3}
 	f.Add(uint8(0), []byte{9}, false, []byte("USDC"), iss, true, []byte(nil), []byte(nil), int64(10_000_000), int64(3_000_000), uint8(0), uint16(0))
@@ -241,12 +240,10 @@ func resultArmAccepted(opType, trType xdr.OperationType) bool {
 	return opType == xdr.OperationTypeCreatePassiveSellOffer && trType == xdr.OperationTypeManageSellOffer
 }
 
-// FuzzDecodeOperationResultXDR feeds arbitrary XDR-encoded
-// OperationResults (seeded from every trade-op success shape) through the
-// production decoder and the audit seam, asserting they agree with each
-// other and with the census predicate, that each emitted trade carries its
-// own atom's exact amounts, that op_index values are unique, and that a
-// result arm foreign to the op type yields nothing.
+// FuzzDecodeOperationResultXDR feeds arbitrary XDR OperationResults (seeded from every trade-op
+// success shape) through the production decoder and the audit seam, asserting they agree with
+// each other and the census predicate, each emitted trade carries its own atom's exact amounts,
+// op_index values are unique, and a result arm foreign to the op type yields nothing.
 func FuzzDecodeOperationResultXDR(f *testing.F) {
 	for _, seed := range operationResultSeeds(f) {
 		f.Add(seed.opSel, seed.raw, uint8(2), false)

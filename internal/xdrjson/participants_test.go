@@ -137,11 +137,9 @@ func TestParticipantAccounts_NoneForSelfContained(t *testing.T) {
 	}
 }
 
-// TestParticipantAccounts_ManageDataNameLooksLikeAccount is a regression guard:
-// a manage_data DataName / value that happens to spell a valid G-strkey must
-// NOT inject that (attacker-chosen) address into another account's history. A
-// generic "any IsAccountID string field" scan added it as a participant;
-// the type-aware extractor knows manage_data carries no account field.
+// TestParticipantAccounts_ManageDataNameLooksLikeAccount guards that a manage_data DataName or
+// value spelling a valid G-strkey must NOT inject that attacker-chosen address into another
+// account's history. The type-aware extractor knows manage_data carries no account field.
 func TestParticipantAccounts_ManageDataNameLooksLikeAccount(t *testing.T) {
 	value := xdr.DataValue(gAddr2)
 	body, _ := xdr.NewOperationBody(xdr.OperationTypeManageData, xdr.ManageDataOp{
@@ -177,11 +175,10 @@ func scContract(id xdr.ContractId) xdr.ScAddress {
 	return xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &id}
 }
 
-// addrAuthEntry builds a SorobanAuthorizationEntry whose Address credential
-// names account g. Note an attacker can author this for ANY g with a garbage
-// inner signature: at the XDR-decode layer the signature is unverified (the
-// network only verifies it during apply, for consumed entries on successful
-// txs), so a decoded auth entry naming g does NOT prove g authorized anything.
+// addrAuthEntry builds a SorobanAuthorizationEntry whose Address credential names account g. An
+// attacker can author this for ANY g with a garbage signature: it is unverified at the XDR-decode
+// layer (the network checks it only during apply, for consumed entries on successful txs), so a
+// decoded auth entry naming g does NOT prove g authorized anything.
 func addrAuthEntry(t *testing.T, contractID xdr.ContractId, g string) xdr.SorobanAuthorizationEntry {
 	t.Helper()
 	acct := xdr.MustAddress(g)
@@ -216,13 +213,9 @@ func testContractID() xdr.ContractId {
 	return id
 }
 
-// TestParticipantAccounts_InvokeContractAddressVsStringArg documents the Soroban
-// InvokeContract discrimination and its final resolution. A per-TYPE
-// allowlist was added so a string arg spelling a valid G-strkey is NOT a participant while
-// an ScVal::Address arg WAS. That Address-arg inclusion was itself an injection
-// vector (args are attacker-controlled call data), so the fix now excludes BOTH:
-// the string arg (the retained free-text defense) AND the Address arg. An
-// InvokeContract op contributes no arg-derived participant at all.
+// TestParticipantAccounts_InvokeContractAddressVsStringArg pins that an InvokeContract op
+// contributes no arg-derived participant: neither a string arg spelling a valid G-strkey nor an
+// ScVal::Address arg counts, since args are attacker-controlled call data.
 func TestParticipantAccounts_InvokeContractAddressVsStringArg(t *testing.T) {
 	contractID := testContractID()
 	addrVal := addrArg(t, gAddr)
@@ -252,21 +245,13 @@ func TestParticipantAccounts_InvokeContractAddressVsStringArg(t *testing.T) {
 	}
 }
 
-// TestParticipantAccounts_InvokeContractAuthoredAuthDoesNotParticipate is the
-// unconditional regression: neither an InvokeContract Address ARG nor a self-
-// authored op.Auth Address entry naming a victim may make that victim a
-// participant. Both are attacker-controllable at the XDR-decode layer — an auth-
-// entry signature is verified only by the network during apply (and only for
-// consumed require_auth entries on SUCCESSFUL txs), while the indexer decodes
-// failed-tx op bodies too (extract.go calls this UNCONDITIONALLY). So an attacker
-// builds a failing tx carrying a victim Address arg AND an Address auth entry
-// naming the victim (garbage inner signature, no victim key needed); a consent
-// gate on op.Auth would wrongly include the victim. The correct behavior is to
-// include NEITHER.
-//
-// This subcase is red on origin/main's blanket code (the arg loop includes
-// the victim) AND on the superseded consent-gate commit (it reads the victim out
-// of op.Auth) — the stronger, unconditional property both of those miss.
+// TestParticipantAccounts_InvokeContractAuthoredAuthDoesNotParticipate is the unconditional
+// regression: neither an InvokeContract Address ARG nor a self-authored op.Auth Address entry
+// naming a victim may make that victim a participant. Both are attacker-controllable at decode
+// time: auth signatures are verified only by the network during apply (and only for consumed
+// require_auth entries on SUCCESSFUL txs), while the indexer decodes failed-tx op bodies too
+// (extract.go calls this unconditionally). A failing tx with a victim Address arg AND auth entry
+// (garbage signature, no victim key) would fool a consent gate on op.Auth. Include NEITHER.
 func TestParticipantAccounts_InvokeContractAuthoredAuthDoesNotParticipate(t *testing.T) {
 	contractID := testContractID()
 	// Victim (gAddr2) as an Address arg AND as the named authorizer in a self-

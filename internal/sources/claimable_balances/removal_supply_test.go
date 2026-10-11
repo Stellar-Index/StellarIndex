@@ -11,11 +11,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 )
 
-// This file pins a supply-drift regression: a claimed claimable balance must stop counting toward the
-// served supply aggregate. Before the removal fix the observer emitted
-// nothing for a ClaimClaimableBalance, so the created amount stayed in
-// Σ claimable forever and total/circulating supply (and market cap /
-// FDV downstream) only ever grew.
+// This file pins that a claimed claimable balance stops counting toward the served supply
+// aggregate. Without a removal observation on ClaimClaimableBalance the created amount stays
+// in Σ claimable forever and total/circulating supply (and market cap / FDV) only grow.
 
 // makeCBChangeOfType builds a claimable-balance change of the given
 // variant. Body-carrying variants (Created/Updated/State/Restored)
@@ -54,11 +52,9 @@ func makeCBChangeOfType(t *testing.T, ct xdr.LedgerEntryChangeType, balanceIDByt
 	return xdr.LedgerEntryChange{}
 }
 
-// routeLedger walks one ledger's entry-changes through the dispatcher
-// exactly as [dispatcher.Dispatcher.ProcessLedger] does — in order,
-// with a monotonic IntraLedgerSeq — and returns the Observations the
-// observer emitted. Going through the dispatcher (rather than calling
-// Decode directly) means Matches is exercised too.
+// routeLedger walks one ledger's entry-changes through the dispatcher as
+// [dispatcher.Dispatcher.ProcessLedger] does (in order, monotonic IntraLedgerSeq) and returns
+// the emitted Observations. Going through the dispatcher exercises Matches too.
 func routeLedger(t *testing.T, disp *dispatcher.Dispatcher, ledger uint32, seq *uint32, changes ...xdr.LedgerEntryChange) []Observation {
 	t.Helper()
 	var out []Observation
@@ -95,9 +91,8 @@ func routeLedger(t *testing.T, disp *dispatcher.Dispatcher, ledger uint32, seq *
 //	   ORDER BY claimable_id, ledger DESC) latest
 //	 WHERE NOT is_removal
 //
-// i.e. filter to the asset, keep the LATEST observation per
-// claimable_id (ties inside a ledger resolved by intra_ledger_seq, the
-// writer's upsert guard), then sum the ones that are not removals.
+// i.e. filter to the asset, keep the LATEST observation per claimable_id (ties inside a ledger
+// resolved by intra_ledger_seq, the writer's upsert guard), then sum the non-removals.
 func servedClaimableAggregate(obs []Observation, assetKey string) *big.Int {
 	type row struct {
 		ledger    uint32
@@ -287,12 +282,10 @@ func TestPreImageMemoIsLedgerScoped(t *testing.T) {
 	routeLedger(t, disp, 600, &seq,
 		makeCBChangeOfType(t, xdr.LedgerEntryChangeTypeLedgerEntryCreated, 0x22, "USDC", gIssuer, 10),
 	)
-	// The removal must emit nothing AND must not do so silently. Matches
-	// consults hasPreImage, which does not apply lookupPreImage's ledger
-	// guard, so this is the one shape that reaches Decode unattributable
-	// — and a dropped removal over-reports supply forever, because the
-	// removal is the only thing that stops the claimed balance being
-	// counted; it must not return (nil, nil).
+	// The removal must emit nothing AND must not do so silently. Matches consults hasPreImage,
+	// which does not apply lookupPreImage's ledger guard, so this shape reaches Decode
+	// unattributable; a dropped removal over-reports supply forever, so it must not return
+	// (nil, nil).
 	evs, err := disp.RouteEntryChange(dispatcher.LedgerEntryChangeContext{
 		Ledger:         601,
 		ClosedAt:       time.Unix(1_770_000_601, 0).UTC(),

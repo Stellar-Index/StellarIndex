@@ -123,11 +123,9 @@ func TestVWAP_AppliesOutlierFilter(t *testing.T) {
 }
 
 func TestVWAP_AllFilteredReturns422(t *testing.T) {
-	// When every trade in the window is removed by the sigma filter,
-	// the handler must distinguish "empty window" (404) from
-	// "everything filtered out" (422 — client should relax sigma).
-	// Construct a distribution where every trade is an "outlier"
-	// relative to a near-zero sigma.
+	// When the sigma filter removes every trade, the handler must distinguish "empty window"
+	// (404) from "everything filtered out" (422, client should relax sigma). The distribution
+	// makes every trade an outlier relative to a near-zero sigma.
 	baseline := []int64{100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200}
 	trades := make([]canonical.Trade, 0, len(baseline))
 	for _, p := range baseline {
@@ -211,11 +209,9 @@ func (r *pairAwareHistoryReader) TradesInRange(_ context.Context, pair canonical
 	return r.tradesByPair[pair.Base.String()+"/"+pair.Quote.String()], nil
 }
 
-// TestVWAP_StablecoinFiatProxyFallback — when the literal X/fiat:USD
-// pair has zero trades but the operator declared a USDC peg, the
-// handler retries against X/<USDC-classic> and serves the resulting
-// VWAP with flags.triangulated=true. Mirrors the stablecoin-proxy fallback of
-// /v1/price and /v1/price/tip for the /v1/vwap surface.
+// TestVWAP_StablecoinFiatProxyFallback — when the literal X/fiat:USD pair has zero trades but
+// the operator declared a USDC peg, the handler retries against X/<USDC-classic> and serves the
+// VWAP with flags.triangulated=true, mirroring /v1/price and /v1/price/tip.
 func TestVWAP_StablecoinFiatProxyFallback(t *testing.T) {
 	usdcClassic, err := canonical.ParseAsset("USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
 	if err != nil {
@@ -274,13 +270,11 @@ func TestVWAP_NoPegLeaves404(t *testing.T) {
 	}
 }
 
-// TestVWAP_CarriesNoDivergenceVerdict — the cross-reference
-// verdict compares the aggregator's shortest-window VWAP now, while
-// /v1/vwap computes over a caller-chosen [from, to) from raw trades. A
-// January window shipped today's `divergence_checked: true`, vouching for
-// a number the check never saw. With a checked, firing verdict cached under
-// every spelling, the envelope must still report neither, and the looker
-// must not be asked.
+// TestVWAP_CarriesNoDivergenceVerdict — the cross-reference verdict compares the aggregator's
+// shortest-window VWAP now, while /v1/vwap computes over a caller-chosen [from, to) from raw
+// trades, so reporting `divergence_checked: true` would vouch for a number the check never saw.
+// With a checked, firing verdict cached under every spelling, the envelope must still report
+// neither, and the looker must not be asked.
 func TestVWAP_CarriesNoDivergenceVerdict(t *testing.T) {
 	verdict := struct{ firing, checked bool }{firing: true, checked: true}
 	for _, query := range []string{
@@ -414,14 +408,12 @@ func TestVWAP_ProxyDeviationBand(t *testing.T) {
 	}
 }
 
-// TestVWAP_NonstandardDecimals_Normalizes proves /v1/vwap
-// does not decline a confirmed non-7-decimals pair — it computes
-// entirely from raw trades at query time, so the fix is to serve the
-// CORRECTED price (aggregate.AdjustPrice) rather than 422. See
-// docs/operations/runbooks/dex.md "Root cause
-// analysis". flaggedAsset is declared decimals()=18 here; base_amount =
-// 2.5*10^18, quote_amount = 1.242*10^7 (USDC, 7dp) → true price 0.4968,
-// the SAME golden case as internal/aggregate's TestAdjustPrice_Golden18DecimalToken.
+// TestVWAP_NonstandardDecimals_Normalizes: /v1/vwap computes entirely from raw trades at query
+// time, so a confirmed non-7-decimals pair is served at the CORRECTED price
+// (aggregate.AdjustPrice) rather than declined with 422. See docs/operations/runbooks/dex.md
+// "Root cause analysis". flaggedAsset is decimals()=18; base_amount = 2.5*10^18, quote_amount =
+// 1.242*10^7 (USDC, 7dp) → true price 0.4968, the SAME golden case as internal/aggregate's
+// TestAdjustPrice_Golden18DecimalToken.
 func TestVWAP_NonstandardDecimals_Normalizes(t *testing.T) {
 	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 18)
 	baseAmount, ok := new(big.Int).SetString("2500000000000000000", 10)

@@ -49,11 +49,9 @@ func newAdminTestServer(t *testing.T, subject auth.Subject, store v1.AccountStor
 	return ts
 }
 
-// newAdminTestServerWithPlatformKeys additionally wires a Postgres
-// [platform.APIKeyStore] behind APIKeyBudgets.Platform plus the account
-// store that proves a row's owner — needed for the
-// revoke-both-stores regressions, where the shared credential has a
-// durable management row alongside its Redis record.
+// newAdminTestServerWithPlatformKeys additionally wires a Postgres [platform.APIKeyStore] behind
+// APIKeyBudgets.Platform plus the account store that proves a row's owner, for the
+// revoke-both-stores tests where a credential has a management row beside its Redis record.
 func newAdminTestServerWithPlatformKeys(
 	t *testing.T, subject auth.Subject, store v1.AccountStore,
 	platformKeys platform.APIKeyStore, platformAccounts v1.PlatformAccountStore,
@@ -150,14 +148,11 @@ func TestAdminKeysCreate_Happy(t *testing.T) {
 	}
 }
 
-// TestAdminKeysCreate_RateLimitDefaultsToCaller pins that an admin
-// mint request that omits rate_limit_per_min must inherit the CALLER's
-// own ceiling, not the deployment/tier default (0), which can exceed
-// it. ClampToMinter's own-ceiling check only fires for
-// rateLimitPerMin > 0, so a scoped operator on 500/min could otherwise
-// mint an unrestricted (0 = default, potentially far higher) key by
-// simply omitting the field. The clamped value must reach the store
-// call, the response and the audit row alike.
+// TestAdminKeysCreate_RateLimitDefaultsToCaller pins that a mint request omitting
+// rate_limit_per_min inherits the caller's own ceiling, not the deployment default (0), which can
+// exceed it: ClampToMinter only checks rateLimitPerMin > 0, so omitting the field would let a
+// scoped operator mint a higher-limit key. The clamped value must reach the store call, the
+// response and the audit row alike.
 func TestAdminKeysCreate_RateLimitDefaultsToCaller(t *testing.T) {
 	store := &fakeAccountStore{
 		rec:   auth.APIKeyRecord{KeyID: "kid_minted02"},
@@ -188,11 +183,9 @@ func TestAdminKeysCreate_RateLimitDefaultsToCaller(t *testing.T) {
 	}
 }
 
-// TestAdminKeysCreate_RequiresReason pins the reason requirement.
-// Minting a privileged credential is at least as consequential as
-// setting a per-account override or killing a key, both of which hard-400
-// without an X-Reason header. Without the header the audit row would
-// record WHO minted WHAT, never WHY.
+// TestAdminKeysCreate_RequiresReason pins the X-Reason requirement: minting a privileged
+// credential is as consequential as an account override or a key kill, both of which hard-400
+// without it, and the audit row would otherwise record who minted what but never why.
 func TestAdminKeysCreate_RequiresReason(t *testing.T) {
 	store := &fakeAccountStore{rec: auth.APIKeyRecord{KeyID: "kid_x"}, plain: "p"}
 	sink := &recordingAuditSink{}
@@ -305,12 +298,9 @@ func assertPlatformKeyLive(t *testing.T, keys *fakeRegisterKeyStore, keyID strin
 	}
 }
 
-// TestAdminKeysRevoke_RevokesPostgresManagementRowToo is the
-// regression: DELETE /v1/admin/keys/{kid} must revoke the credential
-// in BOTH stores a /v1/register-minted key lives in, not just Redis —
-// otherwise the api_keys row keeps revoked_at NULL, stays listed and
-// counts toward the active-key ceiling. The row belongs to the
-// account behind identifier=acct:reg-abc123.
+// TestAdminKeysRevoke_RevokesPostgresManagementRowToo pins that DELETE /v1/admin/keys/{kid}
+// revokes a /v1/register-minted key in both stores, not just Redis; otherwise the api_keys row
+// keeps revoked_at NULL, stays listed and counts toward the active-key ceiling.
 func TestAdminKeysRevoke_RevokesPostgresManagementRowToo(t *testing.T) {
 	platformKeys, accts := seedOwnedPlatformKey("reg-abc123", "kid_shared01")
 	ts := newAdminTestServerWithPlatformKeys(t, operatorSubject(), &fakeAccountStore{}, platformKeys, accts)
@@ -374,11 +364,10 @@ func TestAdminKeysRevoke_TolerantOfRedisOnlyKey(t *testing.T) {
 	}
 }
 
-// TestAdminKeysCreate_InheritsTargetIdentifierCeiling — POST
-// /v1/admin/keys takes no monthly_quota, so a key an operator mints for
-// a metered customer's identifier must take the ceiling that
-// identifier's credentials already carry, through the production store
-// and validator. The audit row records the ceiling actually issued.
+// TestAdminKeysCreate_InheritsTargetIdentifierCeiling: POST /v1/admin/keys takes no monthly_quota,
+// so a key minted for a metered customer's identifier must take the ceiling that identifier's
+// credentials already carry, through the production store and validator. The audit row records
+// the ceiling actually issued.
 func TestAdminKeysCreate_InheritsTargetIdentifierCeiling(t *testing.T) {
 	const planQuota int64 = 250_000
 	mr := miniredis.RunT(t)
@@ -519,12 +508,10 @@ func TestAdminKeysCreate_NarrowedOperatorCannotMintAboveItsRateLimit(t *testing.
 	}
 }
 
-// The operator kill switch must not answer 204 and wrote a key.revoke
-// audit row for a revoke that matched nothing, so an on-call engineer
-// who mistyped one character of a leaked key's identifier was told the
-// incident was contained while the key kept authenticating. Driven
-// through the production store so the store's not-found contract and
-// the handler's mapping of it are proven together.
+// The operator kill switch must not answer 204 or write a key.revoke audit row for a revoke that
+// matched nothing: a mistyped identifier would tell on-call the leak was contained while the key
+// kept authenticating. Driven through the production store so its not-found contract and the
+// handler's mapping of it are proven together.
 func TestAdminKeysRevoke_TypoedIdentifierIs404WithNoAuditRow(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -639,11 +626,9 @@ func TestAdminKeysCreate_FullAccessOperatorStillDelegatesFreely(t *testing.T) {
 	}
 }
 
-// TestAdminKeysRevoke_KillsALeakedKey is the key-half regression: an
-// operator can revoke a credential belonging to somebody else. Without the kill switch
-// there was no route at all — self-service revoke is scoped to the
-// caller's own identifier, so killing a leaked key required the victim's
-// credential or a hand-edit of Redis.
+// TestAdminKeysRevoke_KillsALeakedKey pins that an operator can revoke somebody else's
+// credential. Self-service revoke is scoped to the caller's own identifier, so only this route
+// can kill a leaked key without the victim's credential or a hand-edit of Redis.
 func TestAdminKeysRevoke_KillsALeakedKey(t *testing.T) {
 	store := &recordingRevokeStore{}
 	sink := &recordingAuditSink{}

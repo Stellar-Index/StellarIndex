@@ -10,24 +10,19 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// The SEP-41 supply amount is the one value in this package that lands in
-// a NUMERIC column and drives `total_supply` — ADR-0003's invariant 1
-// applies to it verbatim: "Parsing xdr.Int128Parts to int64(parts.Lo) is
-// a bug we will find and reject in review every single time."
+// The SEP-41 supply amount lands in a NUMERIC column and drives `total_supply`, so ADR-0003's
+// money invariant applies: parsing xdr.Int128Parts to int64(parts.Lo) is a rejected bug.
 //
-// Two things make it worth fuzzing rather than table-testing:
+// Fuzzing beats table-testing here for two reasons:
 //
-//  1. The amount arrives in TWO on-wire SHAPES — a bare i128, or the
-//     CAP-67 map { amount, to_muxed_id } (decode.go:87 amountScVal). The
-//     shapes MUST agree; when they did not, 37 of 54 mints on one watched
-//     contract were dropped and mint_total went to zero.
-//     A differential target proves agreement over the whole i128 domain
-//     rather than the handful of amounts a fixture picks.
+//  1. The amount arrives in TWO on-wire SHAPES, a bare i128 or the CAP-67 map
+//     { amount, to_muxed_id } (amountScVal). They MUST agree, or mints are dropped and
+//     mint_total goes to zero. A differential target proves agreement over the whole i128
+//     domain rather than a handful of fixture amounts.
 //
-//  2. The interesting values are precisely the ones a hand-written
-//     fixture never uses: Lo above 2^63, Hi non-zero, the 2^64 carry
-//     boundary. Every one of those is a place a truncation to int64
-//     survives an amount==int64(1_000_000) test unnoticed.
+//  2. The interesting values are the ones a hand-written fixture never uses: Lo above 2^63,
+//     Hi non-zero, the 2^64 carry boundary. Each is a place an int64 truncation survives an
+//     amount==int64(1_000_000) test unnoticed.
 //
 // Runs as a plain seed-corpus test under `go test`; the generative run is
 // `go test -run=^$ -fuzz=FuzzSEP41Amount -fuzztime=20s ./internal/sources/sep41_supply/`.
@@ -100,12 +95,9 @@ func FuzzSEP41Amount(f *testing.F) {
 	})
 }
 
-// fuzzCAP67Body wraps an i128 in the real CAP-67 body shape:
-// Map { amount: i128, to_muxed_id: String }. Field ORDER is deliberately
-// amount-first here and the sibling helper in the golden test puts
-// to_muxed_id first, because the decode is by field NAME
-// (docs/architecture/ingest-pipeline.md#contract-schema-evolution) and must not depend on
-// position.
+// fuzzCAP67Body wraps an i128 in the real CAP-67 body shape: Map { amount: i128, to_muxed_id:
+// String }. Field order is deliberately amount-first here and to_muxed_id-first in the golden
+// test's helper, because decode is by field NAME and must not depend on position.
 func fuzzCAP67Body(t *testing.T, parts xdr.Int128Parts) xdr.ScVal {
 	t.Helper()
 	amountKey := xdr.ScSymbol("amount")

@@ -6,56 +6,29 @@ import (
 	"testing"
 )
 
-// [pairMarketQuery] — the single-pair summary behind /v1/pairs — must
-// keep two shape properties. Their absence makes /v1/pairs the slowest route on r1: a per-route p99 of
-// 4,875-4,950 ms against ADR-0009's 500 ms target, measured in 6-hour
-// windows both during and well away from any load event, so chronic rather
-// than an artefact. The cost is per-REQUEST, not per-cold-slot: five
-// consecutive identical ?base=crypto:BTC&quote=crypto:USDT requests measured
-// 4.55 / 4.66 / 4.44 / 4.37 s, because CachedMarketsReader.PairMarket is a
-// straight pass-through and no prewarm names the route. The endpoint stays
-// invisible in the GLOBAL p99 the status page publishes only because organic
-// traffic is ~2.5 req/h -- which is what makes a shape guard worth having
-// here: nothing in production monitoring would report the regression.
+// [pairMarketQuery] — the single-pair summary behind /v1/pairs — must keep two shape properties,
+// or /v1/pairs becomes the slowest route. The cost is per-REQUEST, not per-cold-slot, because
+// CachedMarketsReader.PairMarket is a pass-through and no prewarm names the route; low organic
+// traffic hides it from the global p99, so only a shape guard would catch a regression.
 //
-// 1. Both stored orientations are a UNION ALL of two single-direction
-// branches, never one `(A AND B) OR (B AND A)` disjunction. The planner
-// cannot drive trades_pair_ts_idx / prices_1m_pair_bucket_idx
-// (base_asset, quote_asset, ts|bucket DESC) from an OR of two different
-// equality pairs, so it falls back to the bare time index and applies
-// the pair test as a post-index filter. This is the same defect
-// [TestBothDirectionReadersUseUnionNotOr] guards for prices_1m;
-// PairMarket carried it on BOTH prices_1m subqueries AND on the trades
-// scan, and was missed by that sweep because it is not driven by
-// `ORDER BY bucket DESC LIMIT n`.
+// 1. Both stored orientations are a UNION ALL of two single-direction branches, never one
+// `(A AND B) OR (B AND A)` disjunction. The planner cannot drive trades_pair_ts_idx /
+// prices_1m_pair_bucket_idx (base_asset, quote_asset, ts|bucket DESC) from an OR of two different
+// equality pairs, so it falls back to the bare time index and filters the pair after the scan.
+// [TestBothDirectionReadersUseUnionNotOr] guards the same defect for prices_1m; PairMarket is not
+// driven by `ORDER BY bucket DESC LIMIT n`, so that guard did not cover it.
 //
-// 2. Each aggregate is bounded by the smallest window that can produce
-// it. The old form asked ONE 14-day (MarketsRecencyWindow) scan of
-// `trades` for two answers that need far less: MAX(ts) is a single
-// backwards index probe per direction, and count_24h needs 24 hours.
-// Reading 14 days for both meant crypto:BTC/crypto:USDT materialised
-// 17.2 MILLION rows to return a timestamp and a count. This half is the
-// larger win and has no prices_1m analogue, so it is pinned here.
+// 2. Each aggregate is bounded by the smallest window that can produce it. MAX(ts) is a single
+// backwards index probe per direction and count_24h needs only 24 hours; one 14-day
+// (MarketsRecencyWindow) scan of `trades` for both materialised millions of rows and could
+// exceed the API's 8-second handler ceiling on a cold read. This half has no prices_1m analogue,
+// so it is pinned here.
 //
-// Measured on r1 on an idle box, trades at 140 GB. Two
-// runs per form, so the first column is a cold buffer pool and the
-// second a warm one:
-//
-//	pair                        OLD                NEW
-//	crypto:BTC/crypto:USDT   95727.9 / 4324.3   120.3 / 107.0 ms
-//	crypto:XLM/fiat:USD       1168.6 / 1202.8    22.0 /  13.6 ms
-//	native/USDC-GA5Z…         2999.3 /  741.6    26.1 /  19.5 ms
-//	native/fiat:USD (empty)     74.5 /   63.3     2.3 /   2.4 ms
-//
-// The 95.7-second cold read is past the API's 8-second handler
-// ceiling: that request could not complete at all.
-//
-// Guarding the template text rather than a plan is deliberate, for the
-// reason [TestBothDirectionReadersUseUnionNotOr] gives: it needs no
-// database, so a regression fails in the unit suite instead of surfacing
-// as production latency. The behaviour-level counterpart — that the
-// served values are correct at the 24-hour / recency-window boundaries —
-// is TestPairMarket_BothDirectionsAndWindowBoundaries in test/integration.
+// Guarding the template text rather than a plan is deliberate, for the reason
+// [TestBothDirectionReadersUseUnionNotOr] gives: it needs no database, so a regression fails in
+// the unit suite. The behaviour-level counterpart (served values correct at the 24-hour /
+// recency-window boundaries) is TestPairMarket_BothDirectionsAndWindowBoundaries in
+// test/integration.
 func TestPairMarketQueryShape(t *testing.T) {
 	q := pairMarketQuery
 
@@ -74,10 +47,9 @@ func TestPairMarketQueryShape(t *testing.T) {
 	}
 
 	// ── correctness half: BOTH orientations must still be read ──
-	// A UNION ALL that dropped a leg would be fast and wrong, which is
-	// exactly the trade this guard exists to prevent: the SDEX decoder
-	// records XLM/USDC and USDC/XLM as separate rows, so a single-leg
-	// read silently halves count_24h and vol_24h_usd.
+	// A UNION ALL that dropped a leg would be fast and wrong, the trade this guard prevents: the
+	// SDEX decoder records XLM/USDC and USDC/XLM as separate rows, so a single-leg read silently
+	// halves count_24h and vol_24h_usd.
 	for _, leg := range []struct{ what, sql string }{
 		{"forward, trades", "base_asset = $2 AND t.quote_asset = $3"},
 		{"flipped, trades", "base_asset = $3 AND t.quote_asset = $2"},
@@ -116,12 +88,9 @@ func TestPairMarketQueryShape(t *testing.T) {
 			"Bind the 24-hour predicate into the scan itself so the planner reads " +
 			"only the last day's chunks")
 	}
-	// Every non-$1 branch (count_24h x2, vol_24h_usd x2, last_price x2)
-	// must carry its own 24-hour bound. $1/$2/$3 checks above prove the
-	// $1 branches are the ONLY 14-day reads; this proves the other six
-	// are each individually bounded rather than one of them silently
-	// reading unbounded (worse than the 14-day scan this guard replaced)
-	// or riding the 14-day window back in.
+	// Every non-$1 branch (count_24h x2, vol_24h_usd x2, last_price x2) must carry its own
+	// 24-hour bound. The $1/$2/$3 checks above prove the $1 branches are the ONLY 14-day reads;
+	// this proves none of the other six reads unbounded or rides the 14-day window back in.
 	if n := strings.Count(q, "NOW() - INTERVAL '24 hours'"); n != 6 {
 		t.Errorf("pairMarketQuery has %d \"NOW() - INTERVAL '24 hours'\" bounds, want "+
 			"6 — one on each of count_24h's two directions, vol_24h_usd's two "+
@@ -132,10 +101,8 @@ func TestPairMarketQueryShape(t *testing.T) {
 	}
 
 	// ── determinism: the last_price sort needs a total order ──
-	// `bucket DESC` alone is not one once a bucket holds both
-	// orientations — native/USDC has 1,270 such buckets in a day on r1 —
-	// so which leg won was planner-defined. Same tiebreaker, and same
-	// reasoning, as the prices_1m readers.
+	// `bucket DESC` alone is not one once a bucket holds both orientations, so which leg won
+	// would be planner-defined. Same tiebreaker, and same reasoning, as the prices_1m readers.
 	if !strings.Contains(q, "ORDER BY bucket DESC, base_asset LIMIT 1") {
 		t.Error("pairMarketQuery's last_price sort lacks the base_asset tiebreaker. " +
 			"With both directions present in one bucket the winner would be " +

@@ -147,12 +147,10 @@ func TestRouteContractCall_emptyDecoderListNoMatch(t *testing.T) {
 
 // ─── Discovery hook (event-less oracle, §"Event-less discovery") ─────────────────
 
-// TestDispatchContractCall_DiscoveryHook_FiresOnOracleCallCandidate
-// — the event-less-oracle sniffer (docs/architecture/oracle-manipulation-defense.md
-// §"Event-less discovery") must push a Hit for a call matching the oracle-suggestive
-// function-name allow-list, with ZERO ContractCallDecoders
-// registered — this is the whole point: a future Band-alike must be
-// sighted even before anyone writes a decoder for it.
+// TestDispatchContractCall_DiscoveryHook_FiresOnOracleCallCandidate — the event-less-oracle
+// sniffer (docs/architecture/oracle-manipulation-defense.md §"Event-less discovery") must push a
+// Hit for a call matching the oracle-suggestive function-name allow-list with ZERO
+// ContractCallDecoders registered, so a future Band-alike is sighted before any decoder exists.
 func TestDispatchContractCall_DiscoveryHook_FiresOnOracleCallCandidate(t *testing.T) {
 	sink := &recordingSink{}
 	d := New()
@@ -207,11 +205,9 @@ func TestDispatchContractCall_DiscoveryHook_SilentOnNonOracleFunction(t *testing
 	}
 }
 
-// TestDispatchContractCall_DiscoveryHook_FiresAlongsideRealDecoder —
-// the discovery hook and a matching ContractCallDecoder are not
-// mutually exclusive: Band's own relay() calls still get sighted
-// (same pattern as SEP-41 discovery already sighting well-known
-// tokens' events).
+// TestDispatchContractCall_DiscoveryHook_FiresAlongsideRealDecoder — the discovery hook and a
+// matching ContractCallDecoder are not mutually exclusive: Band's own relay() calls still get
+// sighted, as SEP-41 discovery sights well-known tokens' events.
 func TestDispatchContractCall_DiscoveryHook_FiresAlongsideRealDecoder(t *testing.T) {
 	sink := &recordingSink{}
 	band := &fakeContractCallDecoder{
@@ -253,13 +249,10 @@ func TestDispatchContractCall_DiscoveryHook_NilSinkIsNoop(t *testing.T) {
 
 // ─── contractCallPathActive gate ───────────────────────────────────
 
-// TestContractCallPathActive covers the ProcessLedger gate that
-// decides whether to walk each op's InvokeContract auth tree at all.
-// A gate of `len(contractCallDecoders) > 0` alone would make the
-// event-less-oracle discovery hook (living inside dispatchContractCall)
-// silently depend on Band — or some other ContractCallDecoder — being
-// registered in the running binary. A discovery sink alone must also
-// activate the walk.
+// TestContractCallPathActive covers the ProcessLedger gate deciding whether to walk each op's
+// InvokeContract auth tree at all. A gate of `len(contractCallDecoders) > 0` alone would make the
+// event-less-oracle discovery hook (inside dispatchContractCall) depend on some
+// ContractCallDecoder being registered. A discovery sink alone must also activate the walk.
 func TestContractCallPathActive(t *testing.T) {
 	tests := []struct {
 		name       string

@@ -44,12 +44,10 @@ func TestHashDBWindowVerifier_OK(t *testing.T) {
 	}
 }
 
-// TestHashDBWindowVerifier_DriftDetected is the alert path this
-// package exists to serve: the caller observes a DIFFERENT hash for a
-// ledger hashdb already has a record for — e.g. ledger 63332650's
-// class of incident (upstream rewrote an already-fetched ledger, or
-// our local copy is corrupted). Must tally as Drifted, record the
-// sequence, and AnyDrift() must report true.
+// TestHashDBWindowVerifier_DriftDetected is the alert path this package exists to serve: the
+// caller observes a different hash for a ledger hashdb already has a record for (upstream
+// rewrote an already-fetched ledger, or our local copy is corrupted). It must tally as
+// Drifted, record the sequence, and make AnyDrift() report true.
 func TestHashDBWindowVerifier_DriftDetected(t *testing.T) {
 	t.Parallel()
 	db := mkHashDB(t, 0)
@@ -140,11 +138,9 @@ func TestHashDBWindowVerifier_DriftSeqsCapped(t *testing.T) {
 	}
 }
 
-// TestHashDBWindowVerifier_Missing covers the "no baseline yet" case
-// — a ledger inside hashdb's covered range but never appended (e.g.
-// the window reaches back before hashdb was enabled). Must count as
-// Missing, NOT Drifted — Missing is "nothing to compare", a
-// fundamentally different signal than "compared and disagreed".
+// TestHashDBWindowVerifier_Missing covers "no baseline yet": a ledger inside hashdb's covered
+// range but never appended (e.g. the window reaches back before hashdb was enabled). It must
+// count as Missing, not Drifted: "nothing to compare" differs from "compared and disagreed".
 func TestHashDBWindowVerifier_Missing(t *testing.T) {
 	t.Parallel()
 	db := mkHashDB(t, 100)
@@ -191,12 +187,10 @@ func TestNewHashDBWindowVerifier_NilDB(t *testing.T) {
 	}
 }
 
-// TestHashDBWindowVerifier_HashdbIOErrorAborts confirms a genuine
-// hashdb I/O failure (as opposed to a hash mismatch) is NOT folded
-// into Drifted/Missing/OutOfRange — it's a different failure mode
-// ("we couldn't even check") and must surface as an error so the
-// caller doesn't mistake "the check never ran" for "the check ran
-// clean".
+// TestHashDBWindowVerifier_HashdbIOErrorAborts confirms a hashdb I/O failure (as opposed to a
+// hash mismatch) is not folded into Drifted/Missing/OutOfRange. It means "we couldn't even
+// check" and must surface as an error, so the caller does not mistake "the check never ran"
+// for "the check ran clean".
 func TestHashDBWindowVerifier_HashdbIOErrorAborts(t *testing.T) {
 	t.Parallel()
 	db := mkHashDB(t, 0)

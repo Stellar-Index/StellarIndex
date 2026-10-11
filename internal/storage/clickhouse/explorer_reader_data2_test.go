@@ -9,20 +9,16 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// Query-shape regressions for two ch-query-semantics defects.
-// Both are ReplacingMergeTree over-count / mis-cap defects whose live
-// proof against real un-merged parts lives in test/integration (tagged
-// integration); the stubConn harness cannot model RMT merge semantics, so
-// these assert the emitted SQL carries the dedup / distinct-cap construct the
-// fix installs — the same query-SHAPE idiom the ContractEventsRecent dedup tests use.
+// Query-shape regressions for two ReplacingMergeTree over-count / mis-cap defects. Live proof
+// against real un-merged parts lives in test/integration (tagged integration); the stubConn
+// harness cannot model RMT merge semantics, so these assert the emitted SQL carries the
+// dedup / distinct-cap construct, the same idiom the ContractEventsRecent dedup tests use.
 
-// TestContractActivitySummaryFor_DedupsRMTCount:
-// ContractActivitySummaryFor reads stellar.contract_active_ledgers (an RMT);
-// a bare count() would let overlapping-backfill duplicate parts inflate
-// ActiveLedgersTotal (a headline card number) and the daily bars up to ~2x
-// until a background merge. Both the total and the per-day aggregate must
-// count DISTINCT ledger_seq (uniqExact), matching the sibling reader
-// contractActiveLedgers' SELECT DISTINCT on this same table.
+// TestContractActivitySummaryFor_DedupsRMTCount: ContractActivitySummaryFor reads
+// stellar.contract_active_ledgers (an RMT); a bare count() lets overlapping-backfill duplicate
+// parts inflate ActiveLedgersTotal and the daily bars up to ~2x until a merge. Both the total
+// and the per-day aggregate must count DISTINCT ledger_seq (uniqExact), matching the sibling
+// reader contractActiveLedgers' SELECT DISTINCT on this table.
 func TestContractActivitySummaryFor_DedupsRMTCount(t *testing.T) {
 	conn := &stubConn{}
 	conn.respond = func(q string) (driver.Rows, error) {

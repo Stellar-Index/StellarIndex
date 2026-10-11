@@ -14,24 +14,19 @@ import (
 	"time"
 )
 
-// A database/sql driver that replays a scripted result per statement, in
-// order, and records BOTH the SQL text and the bound arguments of every
-// statement it was asked to run.
+// A database/sql driver that replays a scripted result per statement, in order, and records BOTH
+// the SQL text and the bound arguments of every statement it was asked to run.
 //
-// It is the ONLY no-database driver double in this package; unlike a
-// query-only double it records the bound arguments and can Exec. Store
-// methods whose contract lives in the PLACEHOLDER BINDING — "$1 is the
-// kind, $2 is the limit", "the ON CONFLICT guard gets this store's
-// derive_generation", "the window bound is since.UTC()" — cannot be pinned
-// without the args, and the write paths (INSERT/DELETE) need ExecContext.
-// New no-database store tests use this one; do not add a second double.
+// It is the ONLY no-database driver double in this package; it records bound arguments and can
+// Exec. Store methods whose contract lives in the PLACEHOLDER BINDING ("$1 is the kind, $2 is the
+// limit", "the ON CONFLICT guard gets this store's derive_generation", "the window bound is
+// since.UTC()") cannot be pinned without the args, and write paths need ExecContext. New
+// no-database store tests use this one; do not add a second double.
 //
-// Faithfulness to production: [scriptedConn.CheckNamedValue] accepts every
-// Go value unconverted, exactly as pgx v5's stdlib driver does (pgx encodes
-// Go values itself rather than going through database/sql's default
-// converter), so a []string arg reaches the driver as a []string here and
-// as a Postgres array in production — the reason internal/pgarray is a SCAN
-// adapter only.
+// Faithfulness to production: [scriptedConn.CheckNamedValue] accepts every Go value unconverted,
+// as pgx v5's stdlib driver does (pgx encodes values itself), so a []string arg reaches the driver
+// as a []string here and as a Postgres array in production, which is why internal/pgarray is a
+// SCAN adapter only.
 
 // scriptedResult is one statement's canned outcome: either rows (for a
 // query) or a row count (for an exec), or an error.
@@ -40,12 +35,10 @@ type scriptedResult struct {
 	rows         [][]driver.Value
 	rowsAffected int64
 	err          error
-	// stall makes this the statement the database never answers: the
-	// driver blocks until the statement's context is done and fails with
-	// that context's error, which is what a deadline cancelling a running
-	// query surfaces as. A store method that budgets a read (a
-	// sub-deadline, a fallback) has its contract in what happens NEXT,
-	// and that is unassertable with a result that returns.
+	// stall makes this the statement the database never answers: the driver blocks until the
+	// statement's context is done and fails with that context's error, as a deadline cancelling a
+	// running query does. A store method that budgets a read (sub-deadline, fallback) has its
+	// contract in what happens NEXT, which a returning result cannot assert.
 	stall bool
 	// delay holds the result back this long, as a statement that does
 	// real work before it answers.

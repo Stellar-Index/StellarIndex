@@ -14,33 +14,13 @@ import (
 // TestHandlerResponseFieldsAreDocumented closes the gap that let
 // `display_decimals` ship invisible.
 //
-// Two gates already reconcile this area and NEITHER could see it:
+// Neither existing gate sees a server-only field: lint-docs.sh compares handlers to the spec
+// at ROUTE granularity, and pkg/client's TestSDKSchemasMatchSpec reconciles two DERIVED
+// artifacts (SDK and spec), which agree on both being wrong. This compares the HANDLER
+// struct, the source of truth, to the spec.
 //
-//   - lint-docs.sh compares handlers to the spec at ROUTE granularity
-//     (method + path) — never fields.
-//   - pkg/client's TestSDKSchemasMatchSpec compares the SDK to the spec
-//     bidirectionally, which is genuinely useful but reconciles two
-//     DERIVED artifacts. When a field exists only on the server, the SDK
-//     and the spec agree — on both being wrong — and the gate stays
-//     green.
-//
-// So a server-added response field was invisible to the whole chain.
-// That is not hypothetical: the issuer's SEP-1 rounding hint moved the issuer's SEP-1 rounding
-// hint OFF `decimals` (where it inflated market_cap_usd by up to
-// 10^(7-display_decimals)× and was an issuer-controlled manipulation
-// vector) onto a new `display_decimals` field. The field never entered
-// the spec, so every SDK consumer and the generated explorer types
-// dropped it — the remediation's whole replacement surface was
-// unreachable from the published product.
-//
-// This compares the HANDLER struct, which is the source of truth, to
-// the spec.
-//
-// handlerSpecFieldPairs is every (spec schema, handler struct) pair this
-// guard reconciles. It started as a single hardcoded pair (Asset /
-// AssetDetail) — that covered the field display_decimals shipped invisible
-// on, but left every other response struct with the same blind spot. Add a
-// pair here whenever a new top-level response struct is introduced.
+// handlerSpecFieldPairs is every (spec schema, handler struct) pair this guard reconciles.
+// Add a pair here whenever a new top-level response struct is introduced.
 //
 // schema is a components.schemas name, or "METHOD /path" for a route whose
 // response schema is written inline (see specSchemaNode).
@@ -206,14 +186,11 @@ func TestHandlerResponseFieldsAreDocumented(t *testing.T) {
 }
 
 // TestOpenAPIAccountInfoStatusEnumMatchesPlatformAccountStatus is the
-// vocabulary-level counterpart to TestHandlerResponseFieldsAreDocumented
-// above: that test reconciles FIELD NAMES against the spec, but a field
-// whose name is documented can still carry an undocumented VALUE. account.go
-// serves AccountInfo.Status as string(platform.AccountStatus) verbatim
-// (account.go:267), so every platform.AccountStatus constant must appear
-// in the spec's AccountInfo.status enum or a schema-validating client
-// rejects an otherwise-successful response. The constants are read from
-// source so a new status fails here until the spec names it.
+// vocabulary-level counterpart to TestHandlerResponseFieldsAreDocumented: a documented field
+// name can still carry an undocumented VALUE. account.go serves AccountInfo.Status as
+// string(platform.AccountStatus) verbatim, so every platform.AccountStatus constant must be
+// in the spec's AccountInfo.status enum or a schema-validating client rejects the response.
+// The constants are read from source so a new status fails here until the spec names it.
 func TestOpenAPIAccountInfoStatusEnumMatchesPlatformAccountStatus(t *testing.T) {
 	want := goStringConsts(t, filepath.Join("internal", "platform"), "AccountStatus")
 	if len(want) == 0 {
@@ -278,10 +255,8 @@ func specSchemaProps(t *testing.T, locator string) map[string]bool {
 }
 
 // specSchemaNode resolves a pair locator to one flattened schema. A bare
-// name is a components.schemas entry; "METHOD /path" is a route whose 200
-// application/json body is the standard envelope, and the served struct is
-// its `data` member (array items unwrapped) — the only way an inline route
-// schema gets reconciled at all.
+// name is a components.schemas entry; "METHOD /path" is a route whose 200 body is the
+// standard envelope, and the served struct is its `data` member (array items unwrapped).
 func specSchemaNode(t *testing.T, locator string) map[string]any {
 	t.Helper()
 	doc := loadSpecDoc(t)
@@ -378,10 +353,9 @@ type specWalkOuterExported struct {
 }
 
 // TestStructJSONWalkers_MatchEncodingJSONPromotion pins the walkers to what
-// encoding/json actually serves: an embedded pointer to an exported struct
-// promotes its fields (a walker that followed only value embeds would leave
-// those fields invisible to both directions of the gate), and an
-// embedded pointer to an unexported type is dropped.
+// encoding/json actually serves: an embedded pointer to an exported struct promotes its
+// fields (value-only walkers would hide them from the gate), and an embedded pointer to an
+// unexported type is dropped.
 func TestStructJSONWalkers_MatchEncodingJSONPromotion(t *testing.T) {
 	got := structJSONTags(reflect.TypeOf(specWalkOuterExported{}))
 	if !got["promoted"] || !got["own"] || len(got) != 2 {

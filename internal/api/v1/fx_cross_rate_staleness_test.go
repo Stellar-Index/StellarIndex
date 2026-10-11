@@ -8,21 +8,17 @@ import (
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 )
 
-// staleFXAge is comfortably past the fx-cross staleness budget
-// (default 76h, pricing_guard.fx_cross_max_age_hours) — the forex
-// worker has stopped refreshing (upstream outage past its own
-// maxHeldRateAge hold, or the worker itself wedged) and nothing has
-// pruned the cached snapshot since.
+// staleFXAge is well past the fx-cross staleness budget (default 76h,
+// pricing_guard.fx_cross_max_age_hours): the forex worker has stopped refreshing (upstream
+// outage past its maxHeldRateAge hold, or the worker wedged) and nothing has pruned the
+// cached snapshot.
 
 const staleFXAge = 10 * 24 * time.Hour
 
-// TestPriceUSDAnchoredFiatCrossRejectsStaleRate — a wallet must not be
-// shown a BRL balance derived from a forex rate the worker stopped
-// refreshing over a week ago. tryUSDAnchoredFiatCross must check the
-// age of the s.Currencies.Latest() entry before using c.RateUSD; with no
-// check a wedged forex worker keeps silently
-// serving derived local-currency prices off an arbitrarily old rate
-// forever.
+// TestPriceUSDAnchoredFiatCrossRejectsStaleRate: a wallet must not be shown a BRL balance
+// derived from a forex rate the worker stopped refreshing long ago. tryUSDAnchoredFiatCross
+// must check the age of the s.Currencies.Latest() entry before using c.RateUSD, or a wedged
+// forex worker keeps serving derived local-currency prices off an arbitrarily old rate.
 func TestPriceUSDAnchoredFiatCrossRejectsStaleRate(t *testing.T) {
 	reader := &usdLegReader{usdPriceFor: "native", price: xlmUSDPrice}
 	stale := time.Now().UTC().Add(-staleFXAge)
@@ -45,12 +41,10 @@ func TestPriceUSDAnchoredFiatCrossRejectsStaleRate(t *testing.T) {
 	}
 }
 
-// TestPriceFiatCrossRateRejectsStaleRate — same discipline on the
-// fiat-vs-fiat cross-rate path. tryFiatCrossRate stamps observed_at from
-// the older leg's own timestamp, so it must also check that timestamp
-// against a bound; otherwise a currency the worker
-// hadn't refreshed in weeks is still served as a fresh derived price
-// (merely honestly labelled with its stale observed_at).
+// TestPriceFiatCrossRateRejectsStaleRate applies the same discipline to the fiat-vs-fiat
+// path. tryFiatCrossRate stamps observed_at from the older leg's timestamp, so it must also
+// bound that timestamp; otherwise a currency unrefreshed for weeks is still served as a
+// derived price, merely labelled with its stale observed_at.
 func TestPriceFiatCrossRateRejectsStaleRate(t *testing.T) {
 	reader := &usdLegReader{}
 	stale := time.Now().UTC().Add(-staleFXAge)

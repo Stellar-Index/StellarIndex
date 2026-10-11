@@ -5,26 +5,20 @@ import (
 	"testing"
 )
 
-// TestProxyQuoteLists_Lockstep pins the four places that decide "what is
-// a USD/XLM proxy" to ONE set, and pins the XLM leg to being read in
-// BOTH stored directions everywhere the catalogue prices it — the 8
-// headline-price CTEs AND the 4 price-history series CTEs.
+// TestProxyQuoteLists_Lockstep pins the four places that decide "what is a USD/XLM proxy" to ONE
+// set, and pins the XLM leg to being read in BOTH stored directions everywhere the catalogue
+// prices it: the 8 headline-price CTEs AND the 4 price-history series CTEs.
 //
-// The lists live in: the coverage tripwire (coverageQuoteProxies), the
-// transitive resolver (usdProxyQuotes + xlmQuotes), and the two
-// catalogue price derivations' literal IN-lists (assetPriceCTEs +
-// getAssetBySlugSQL). An asset "priced" by one and "priceless" by
-// another is exactly how the popular-priceless alert fires forever on
-// an asset the catalogue could price — or, as seen on r1, how an
-// asset the volume path valued at $730k/7d served no price at all.
+// The lists live in the coverage tripwire (coverageQuoteProxies), the transitive resolver
+// (usdProxyQuotes + xlmQuotes), and the two catalogue derivations' literal IN-lists
+// (assetPriceCTEs + getAssetBySlugSQL). An asset "priced" by one and "priceless" by another makes
+// the popular-priceless alert fire forever on an asset the catalogue could price, or serves no
+// price for an asset the volume path values.
 //
-// The LISTING entry is assetPriceCTEs, not listAssetsBaseSelect: the derivation
-// moved the derivation out of the per-request SELECT and into the
-// asset_price_snapshot refresh, so that is where the IN-lists now live.
-// The property under test is unchanged — the listing's price still comes
-// from exactly these quote forms in both stored directions — and
-// TestListAssetsBaseSelect_NoPerRequestPriceScan pins that the listing
-// SELECT does not grow a second, drifting copy.
+// The LISTING entry is assetPriceCTEs, not listAssetsBaseSelect: the derivation lives in the
+// asset_price_snapshot refresh, not the per-request SELECT.
+// TestListAssetsBaseSelect_NoPerRequestPriceScan pins that the listing SELECT does not grow a
+// second, drifting copy.
 func TestProxyQuoteLists_Lockstep(t *testing.T) {
 	t.Parallel()
 
@@ -50,11 +44,9 @@ func TestProxyQuoteLists_Lockstep(t *testing.T) {
 		t.Errorf("coverageQuoteProxies lacks the bound XLM forms %s", xlmQuotesBound(1))
 	}
 
-	// The XLM leg in both directions, in all 8 catalogue CTEs: the
-	// base-side arm (quote_asset IN xlm) AND the inverted arm
-	// (base_asset IN xlm). Counting the INVERTED arm is what makes this
-	// test red against a catalogue with only 4 base-side arms
-	// per query and zero inverted ones.
+	// The XLM leg in both directions, in all 8 catalogue CTEs: the base-side arm
+	// (quote_asset IN xlm) AND the inverted arm (base_asset IN xlm). Counting the INVERTED arm is
+	// what turns this red against a catalogue with only base-side arms.
 	for name, sql := range map[string]string{"listing": assetPriceCTEs, "detail": getAssetBySlugSQL} {
 		xlmList := xlmQuotesBound(1)
 		if name == "detail" {
@@ -73,12 +65,9 @@ func TestProxyQuoteLists_Lockstep(t *testing.T) {
 		}
 	}
 
-	// The four price-history SERIES queries (24h/7d, single + batch)
-	// carry one XLM-leg CTE each (asset_xlm_per_hour / _per_day). Each
-	// must read both directions too: with only the base-side arm an
-	// asset whose XLM market is SAC-as-base had a headline price (the 8
-	// arms above) but an EMPTY sparkline. Same red-maker as above —
-	// without the fix these would have 1 base-side arm and 0 inverted arms each.
+	// The four price-history SERIES queries (24h/7d, single + batch) carry one XLM-leg CTE each
+	// (asset_xlm_per_hour / _per_day). Each must read both directions too: with only the base-side
+	// arm an asset whose XLM market is SAC-as-base has a headline price but an EMPTY sparkline.
 	for name, sql := range map[string]string{
 		"history24h":      getAssetPriceHistory24hSQL,
 		"history7d":       getAssetPriceHistory7dSQL,

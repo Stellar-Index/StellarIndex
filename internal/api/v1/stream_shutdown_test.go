@@ -20,15 +20,12 @@ import (
 // exists to fail loudly rather than hang when the wiring is dropped.
 const streamDrainCeiling = 2 * time.Second
 
-// TestStreamHandlersEndOnTheShutdownDrain runs the drain through the
-// REAL v1 server and the real routes.
+// TestStreamHandlersEndOnTheShutdownDrain runs the drain through the REAL v1 server and routes.
 //
-// The streaming package's own tests prove the writer honours a Drain.
-// This proves the handlers actually hand the server's Drain to that
-// writer — the half that rots silently. A handler that keeps building
-// its StreamOptions inline still compiles, still serves, and still
-// passes every other test in this package; it just costs a 30s deploy
-// stall the first time a client is attached to it during a restart.
+// The streaming package's own tests prove the writer honours a Drain. This proves the handlers
+// hand the server's Drain to that writer, the half that rots silently: a handler building its
+// StreamOptions inline still compiles and passes every other test here, but stalls a restart
+// while a client is attached.
 func TestStreamHandlersEndOnTheShutdownDrain(t *testing.T) {
 	cases := []struct {
 		name string
@@ -54,12 +51,9 @@ func TestStreamHandlersEndOnTheShutdownDrain(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := v1.New(tc.opts)
 			ts := httptest.NewServer(srv.Handler())
-			// Registered BEFORE the stream is opened, so cleanup's LIFO
-			// order closes the client body first. httptest's Close
-			// blocks until every outstanding request returns, and the
-			// SSE handler returns only once its client is gone — the
-			// other order deadlocks the moment this test FAILS, which
-			// is exactly when its output matters.
+			// Registered BEFORE the stream is opened, so cleanup's LIFO order closes the client
+			// body first. httptest's Close blocks until every request returns and the SSE
+			// handler returns only once its client is gone; the other order deadlocks on FAIL.
 			t.Cleanup(ts.Close)
 
 			done := openTestStream(t, ts.URL+tc.path)
@@ -80,11 +74,10 @@ func TestStreamHandlersEndOnTheShutdownDrain(t *testing.T) {
 	}
 }
 
-// TestStreamDrainDoesNotAffectOrdinaryHandlers pins the SCOPE of the
-// signal: BeginStreamDrain must be invisible to every non-stream route.
-// This is the assertion that fails if the drain is ever "simplified"
-// into an http.Server.BaseContext derived from the process root
-// context, which would cancel ordinary in-flight requests at SIGTERM.
+// TestStreamDrainDoesNotAffectOrdinaryHandlers pins the SCOPE of the signal: BeginStreamDrain must
+// be invisible to every non-stream route. It fails if the drain is "simplified" into an
+// http.Server.BaseContext derived from the process root context, which would cancel ordinary
+// in-flight requests at SIGTERM.
 func TestStreamDrainDoesNotAffectOrdinaryHandlers(t *testing.T) {
 	srv := v1.New(v1.Options{})
 	ts := httptest.NewServer(srv.Handler())

@@ -18,23 +18,19 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// Every privileged mutation on this surface appends its audit row
-// best-effort: the mutation is already committed when the append runs, so a
-// failure is swallowed with a bare `logger.Warn(... "(best-effort)")`. That
-// choice is right — un-doing a committed tier change because the audit DB
-// blipped would be worse — but it means an account tier, an API credential,
-// or a public status notice can change with NO durable record of who did it
-// or why, and the only trace is one log line.
+// Every privileged mutation on this surface appends its audit row best-effort: the mutation is
+// already committed when the append runs, so a failure is swallowed with a bare
+// `logger.Warn(... "(best-effort)")`. That is right (undoing a committed tier change because the
+// audit DB blipped would be worse), but a tier, API credential or public status notice can then
+// change with NO durable record, and the only trace is one log line.
 //
-// These tests pin the observable signal that closes that hole: each surface
-// increments `stellarindex_admin_audit_write_failures_total` with ITS OWN
-// label when (and only when) its audit append fails. The label matters as
-// much as the count — an operator reconstructing the missing rows from
-// application logs needs to know which mutation class to go looking for.
+// These tests pin the signal that closes that hole: each surface increments
+// `stellarindex_admin_audit_write_failures_total` with ITS OWN label when (and only when) its audit
+// append fails. The label matters as much as the count, since an operator reconstructing the
+// missing rows from logs needs to know which mutation class to look for.
 //
-// Deliberately asserted per-surface rather than in aggregate: a single
-// increment site wired into a shared helper would satisfy a total-only
-// assertion while leaving five surfaces silent.
+// Asserted per-surface rather than in aggregate: one increment site in a shared helper would
+// satisfy a total-only assertion while leaving five surfaces silent.
 
 func auditFailureCount(t *testing.T, surface string) float64 {
 	t.Helper()
@@ -140,18 +136,15 @@ func TestAdminAuditWriteFailure_StatusNotice(t *testing.T) {
 	}
 }
 
-// TestAdminKeyBudgetClampCounter is the queued admin-clamp metric.
+// TestAdminKeyBudgetClampCounter covers the admin-clamp metric.
 //
-// `clampKeyBudgetsToTier` silently lowers every credential an account can
-// still authenticate with. The clamp is correct — the account no longer pays
-// for the throughput — but from the customer's side an unchanged key simply
-// starts 429-ing sooner, and the only prior trace was one INFO line per
-// account. Deliberately NOT alerted (downgrades are routine); the point is
-// that the rate is visible, so support can tie "my key started rate-limiting"
-// to a tier change and a mass-clamp from a bad tier map is not invisible.
+// `clampKeyBudgetsToTier` silently lowers every credential an account can still authenticate
+// with. The clamp is correct, but to the customer an unchanged key just starts 429-ing sooner.
+// Deliberately NOT alerted (downgrades are routine); the rate is visible so support can tie
+// "my key started rate-limiting" to a tier change and a mass-clamp from a bad tier map shows up.
 //
-// Asserts it counts CREDENTIALS, not clamp calls: this demotion lowers one
-// Postgres-backed and one Redis-backed key, so the counter must move by 2.
+// Asserts it counts CREDENTIALS, not clamp calls: this demotion lowers one Postgres-backed and
+// one Redis-backed key, so the counter must move by 2.
 func TestAdminKeyBudgetClampCounter(t *testing.T) {
 	before := testutil.ToFloat64(obs.AdminKeyBudgetClampsTotal.WithLabelValues("lowered"))
 	failedBefore := testutil.ToFloat64(obs.AdminKeyBudgetClampsTotal.WithLabelValues("failed"))

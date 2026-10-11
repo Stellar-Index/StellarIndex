@@ -76,11 +76,9 @@ metrics_listen = "127.0.0.1:9464"
 	}
 }
 
-// TestLoadReader_RedisClosedBucketChannel — the closed-bucket
-// stream channel must be a real config key that round-trips into
-// StorageConfig, not silently dropped, so cmd/stellarindex-aggregator
-// and cmd/stellarindex-api can wire operator-chosen channel partitioning
-// instead of the hardcoded redispub.DefaultChannel.
+// TestLoadReader_RedisClosedBucketChannel — the closed-bucket stream channel must be a real config
+// key that round-trips into StorageConfig, so the aggregator and API can use an operator-chosen
+// channel instead of the hardcoded redispub.DefaultChannel.
 func TestLoadReader_RedisClosedBucketChannel(t *testing.T) {
 	body := `
 [region]
@@ -268,11 +266,10 @@ trace_sample = 0.1
 	}
 }
 
-// TestLoadReader_retiredKeyWarnsInsteadOfFailing — deleting a field
-// from Config would turn every self-hosted deployment whose config
-// descended from an old configs/example.toml into a boot-fatal "unknown
-// keys" error. A key registered on cfg.RetiredKeys must be tolerated
-// (warn, not fail) while a genuinely unknown key next to it still errors.
+// TestLoadReader_retiredKeyWarnsInsteadOfFailing — deleting a field from Config would make every
+// deployment with an old configs/example.toml fail boot on "unknown keys". A key registered on
+// cfg.RetiredKeys must be tolerated (warn, not fail) while a genuinely unknown key beside it
+// still errors.
 func TestLoadReader_retiredKeyWarnsInsteadOfFailing(t *testing.T) {
 	const retiredPath = "external.retired_source"
 	cfg.RetiredKeys[retiredPath] = "source decommissioned in test"
@@ -360,18 +357,12 @@ func TestLoad_ExampleConfigValid(t *testing.T) {
 	}
 }
 
-// TestAnsibleFiatPegStanza_ValidAndComplete pins the r1 template's
-// declared fiat-peg map through the REAL decoder + validator, the same
-// wrapper-level protection the triangulation stanza gets in
-// internal/aggregate/orchestrator: nothing else in the build parses the
-// jinja template, so a typo'd issuer or ticker would otherwise surface
-// only as an API that refuses to boot on r1 (or, worse, a peg that
-// silently never fills). The stanza's BODY is pure TOML, but it is now
-// gated behind {% if run_aggregator %} (on for r1/pubnet, off for the lean
-// test nets) — so the extractor drops jinja control lines to reconstruct the
-// r1 render (aggregator on → body present). Pins the two operator-approved
-// entries: AUDD → AUD and, transitively via the AUDD↔AUDR par
-// corridor, AUDR → AUD.
+// TestAnsibleFiatPegStanza_ValidAndComplete pins the r1 template's declared fiat-peg map through
+// the REAL decoder + validator. Nothing else parses the jinja template, so a typo'd issuer or
+// ticker would surface only as an API that refuses to boot on r1 (or a peg that silently never
+// fills). The stanza body is pure TOML but gated behind {% if run_aggregator %}, so the extractor
+// drops jinja control lines to reconstruct the r1 render. Pins the two operator-approved entries:
+// AUDD → AUD and, transitively via the AUDD↔AUDR par corridor, AUDR → AUD.
 func TestAnsibleFiatPegStanza_ValidAndComplete(t *testing.T) {
 	wd, err := os.Getwd()
 	if err != nil {
@@ -440,12 +431,10 @@ func TestAnsibleFiatPegStanza_ValidAndComplete(t *testing.T) {
 	assertDefaultSubstancePolicy(t, "r1 [pricing_guard]", c.PricingGuard)
 }
 
-// TestAnsibleCookieDomain_DefaultsHostOnly pins the r1 template's
-// cookie_domain jinja default against config.go's documented-safe
-// default: CookieDomain's doc says empty means a host-only
-// cookie scoped to the API host, but a shipped ansible default could
-// silently override that with a shared-subdomain value whenever the
-// operator var was unset, shipping the wide cookie by default.
+// TestAnsibleCookieDomain_DefaultsHostOnly pins the r1 template's cookie_domain jinja default
+// against config.go's documented-safe default: CookieDomain empty means a host-only cookie, but a
+// shipped ansible default could override that with a shared-subdomain value whenever the operator
+// var was unset, shipping the wide cookie by default.
 func TestAnsibleCookieDomain_DefaultsHostOnly(t *testing.T) {
 	wd, err := os.Getwd()
 	if err != nil {
@@ -583,11 +572,10 @@ func TestApplyEnvOverrides(t *testing.T) {
 	}
 }
 
-// TestApplyEnvOverrides_DoesNotCorruptS3KeyNames pins that
-// S3AccessKeyEnv / S3SecretKeyEnv hold the NAME of the env
-// var carrying the credential (buildS3Client does os.Getenv on them), NOT the
-// value. ApplyEnvOverrides must NOT overwrite the name with the secret value —
-// doing so makes os.Getenv("AKIA…")→"" and silently dropped S3 static creds.
+// TestApplyEnvOverrides_DoesNotCorruptS3KeyNames pins that S3AccessKeyEnv / S3SecretKeyEnv hold the
+// NAME of the env var carrying the credential (buildS3Client does os.Getenv on them), NOT the
+// value. Overwriting the name with the secret makes os.Getenv("AKIA…") return "" and silently
+// drops S3 static creds.
 func TestApplyEnvOverrides_DoesNotCorruptS3KeyNames(t *testing.T) {
 	t.Setenv("STELLARINDEX_S3_ACCESS_KEY", "AKIAEXAMPLE")
 	t.Setenv("STELLARINDEX_S3_SECRET_KEY", "supersecret")
@@ -643,11 +631,9 @@ postgres_dsn = "postgres://valid@host/db"
 	}
 }
 
-// TestApplyEnvOverrides_ReturnsOverriddenFieldPaths — ApplyEnvOverrides
-// returns exactly the config-path of each field an env var actually
-// replaced, and nothing for vars that were unset/empty — the data
-// LoadWithEnv logs so an operator can see WHICH fields the
-// environment silently won over the TOML file.
+// TestApplyEnvOverrides_ReturnsOverriddenFieldPaths — ApplyEnvOverrides returns exactly the
+// config-path of each field an env var actually replaced, and nothing for unset/empty vars; this
+// is what LoadWithEnv logs so an operator sees WHICH fields the environment won over the TOML.
 func TestApplyEnvOverrides_ReturnsOverriddenFieldPaths(t *testing.T) {
 	t.Setenv("STELLARINDEX_POSTGRES_DSN", "postgres://from-env/db")
 	t.Setenv("STELLARINDEX_REDIS_PASSWORD", "s3cr3t")

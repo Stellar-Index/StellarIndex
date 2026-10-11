@@ -10,11 +10,10 @@ import (
 
 // Pair-leg suite.
 //
-// A gate answering a question about ONE asset makes the
-// withholding decision depend on which leg the client named first: the
-// same market, asked the other way round, was published at 200 as the
-// exact reciprocal of the number the gate had just refused. These tests
-// pin the decision as a property of the MARKET.
+// A gate asked about ONE asset makes the withholding decision depend on which leg the client
+// named first: the same market asked the other way round would be published as the exact
+// reciprocal of the number just refused. These tests pin the decision as a property of the
+// MARKET.
 
 // pairLegDirectory flags exactly the listed G-addresses and records
 // every address it was asked about.
@@ -100,11 +99,9 @@ func TestScamGateWithheldPair_EitherLeg(t *testing.T) {
 	})
 }
 
-// TestScamGateWithheldPair_ResolvesSACOnTheQuoteLeg — the canonical
-// family resolution must apply to the quote leg too. It lives inside
-// withheldLeg precisely so neither leg can be the ungated spelling: a
-// fold that resolved only the base would re-open the R8 SAC bypass one
-// orientation at a time.
+// TestScamGateWithheldPair_ResolvesSACOnTheQuoteLeg — the canonical family resolution must
+// apply to the quote leg too. It lives inside withheldLeg so neither leg can be the ungated
+// spelling; resolving only the base would re-open the SAC bypass one orientation at a time.
 //
 // NOT parallel: the alias registry is process-global.
 func TestScamGateWithheldPair_ResolvesSACOnTheQuoteLeg(t *testing.T) {

@@ -281,12 +281,11 @@ func TestSACBalanceSeedFromRow_CorruptEntryErrors(t *testing.T) {
 
 // ─── full-history windowed reduction ───────────────
 //
-// StreamSACBalanceSeedsFullHistory now bounds the ClickHouse GROUP BY to one
-// ledger window at a time and finishes the latest-write-wins reduction in Go.
-// These exercise that Go half: it must reproduce, ACROSS windows, exactly the
-// ordering the server-side argMax applies WITHIN one — in particular the
-// within-ledger tie-break, which is what stops a deleted
-// balance being resurrected into the supply seed.
+// StreamSACBalanceSeedsFullHistory bounds the ClickHouse GROUP BY to one ledger window at a time
+// and finishes the latest-write-wins reduction in Go. These exercise that Go half: it must
+// reproduce, ACROSS windows, the ordering the server-side argMax applies WITHIN one, in
+// particular the within-ledger tie-break that stops a deleted balance being resurrected into
+// the supply seed.
 
 func seedOrd(ledger, intra uint32, tx string, op int32, changeIdx uint32) lakeEntryChangeOrder {
 	return lakeEntryChangeOrder{ledgerSeq: ledger, intraLedgerSeq: intra, txHash: tx, opIndex: op, changeIndex: changeIdx}
@@ -397,13 +396,11 @@ func TestSACSeedReducer_LatestLedgerWins(t *testing.T) {
 	}
 }
 
-// TestSACSeedReducer_SameLedgerRemovalWins is the within-ledger tie-break case on the Go
-// side: one key changed TWICE in ONE ledger — live at the lower
-// intra_ledger_seq, removed at the higher. The removal is the genuine latest
-// state, so the emitted seed must be a retraction (IsRemoval=true,
-// Balance=0), never the stale live balance. Getting this backwards
-// resurrects a deleted balance into the SAC supply seed (the exact
-// resurrection bug).
+// TestSACSeedReducer_SameLedgerRemovalWins is the within-ledger tie-break on the Go side: one
+// key changed TWICE in ONE ledger, live at the lower intra_ledger_seq and removed at the higher.
+// The removal is the latest state, so the seed must be a retraction (IsRemoval=true,
+// Balance=0), never the stale live balance, which would resurrect a deleted balance into the
+// SAC supply seed.
 func TestSACSeedReducer_SameLedgerRemovalWins(t *testing.T) {
 	keyXDR := seedKeyFor(t)
 	ct := time.Date(2022, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -501,11 +498,10 @@ func TestSACSeedReducer_RepeatedOfferIsIdempotent(t *testing.T) {
 	}
 }
 
-// TestSACSeedReducer_DropsKeysTheBytePrefilterLetsThrough — the SQL prefilter
-// is a raw-byte multiSearchAny, so it admits ANY contract_data key that merely
-// mentions a watched contract (allowances, another contract's storage). Those
-// must be rejected on sight, never retained: the reducer's memory bound is the
-// whole point of the windowed rewrite.
+// TestSACSeedReducer_DropsKeysTheBytePrefilterLetsThrough — the SQL prefilter is a raw-byte
+// multiSearchAny, so it admits ANY contract_data key that merely mentions a watched contract
+// (allowances, another contract's storage). Those must be rejected on sight, never retained:
+// the reducer's memory bound is the point of the windowed design.
 func TestSACSeedReducer_DropsKeysTheBytePrefilterLetsThrough(t *testing.T) {
 	watchedContract := mustContractScAddr(t, seedSAC)
 	allowanceSym := xdr.ScSymbol("Allowance")

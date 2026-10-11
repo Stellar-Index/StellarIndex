@@ -227,17 +227,12 @@ func TestObserver_DecodeRemoved(t *testing.T) {
 	}
 }
 
-// TestObserver_CanonicalizesDashFormAssetKey is a
-// regression test. An operator may configure a SAC wrapper's asset_key in
-// the documented canonical CODE-ISSUER (dash) wire form — the same form
-// [supply].watched_classic_assets uses for the trustline / claimable /
-// LP observers, which canonicalize to CODE:ISSUER (colon) via
-// supply.CanonicalizeWatchedClassic. If NewObserver copied
-// the asset_key verbatim, the emitted Observation carried the dash
-// form and the SAC-held slice never joined the same classic asset's
-// colon-form supply in derivation → the asset was UNDER-reported. The
-// observer must canonicalize the asset_key to the colon form the sibling
-// observers produce.
+// TestObserver_CanonicalizesDashFormAssetKey: an operator may configure a SAC wrapper's asset_key
+// in the CODE-ISSUER (dash) wire form that [supply].watched_classic_assets uses, which the
+// trustline / claimable / LP observers canonicalize to CODE:ISSUER (colon) via
+// supply.CanonicalizeWatchedClassic. A verbatim copy would never join the classic asset's
+// colon-form supply in derivation and the asset would be UNDER-reported, so the observer must
+// emit the colon form its siblings produce.
 func TestObserver_CanonicalizesDashFormAssetKey(t *testing.T) {
 	const (
 		usdcDash  = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
@@ -370,26 +365,21 @@ func TestObserver_DecodeRejectsForeignBalanceShapes(t *testing.T) {
 			t.Errorf("%s: Decode = (%v, %v), want ErrUnknownValShape", name, outs, err)
 		}
 	}
-	// Every one of the above is a Matches-accepted, undecodable-value
-	// shape — the exact class UnknownValShapeDrops exists to surface, since
-	// without this counter a persistently-misconfigured pure-SEP-41 wrapper
-	// (matches every change, decodes none) was indistinguishable from
-	// occasional decode noise on any existing signal.
+	// Every one of the above is a Matches-accepted, undecodable-value shape, the class
+	// UnknownValShapeDrops exists to surface: without it a persistently misconfigured pure-SEP-41
+	// wrapper (matches every change, decodes none) looks like occasional decode noise.
 	if got := o.UnknownValShapeDrops(); got != len(shapes) {
 		t.Errorf("UnknownValShapeDrops() = %d, want %d (one per rejected shape)", got, len(shapes))
 	}
 }
 
-// TestObserver_EvictedBalanceIsObservedAsRemoval pins the eviction half of
-// the Soroban state-archival lifecycle end to end through the real
-// dispatcher.
+// TestObserver_EvictedBalanceIsObservedAsRemoval pins the eviction half of the Soroban
+// state-archival lifecycle end to end through the real dispatcher.
 //
-// A SAC balance whose TTL lapses is archived at ledger close. No
-// transaction touches it, so it appears in no transaction meta and the
-// observer would never hear about it: the holder's last write stood as
-// their current balance forever and the served SAC supply component stayed
-// permanently above the truth. The observer must see it as a removal — the
-// same absorbing "no longer live state" a deleted entry produces.
+// A SAC balance whose TTL lapses is archived at ledger close. No transaction touches it, so it is
+// in no transaction meta, and without removal handling the holder's last write would stand as their
+// balance forever and the served SAC supply component would stay above the truth. The observer must
+// see it as a removal, the same absorbing "no longer live state" a deleted entry produces.
 func TestObserver_EvictedBalanceIsObservedAsRemoval(t *testing.T) {
 	const assetKey = "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 	o, err := NewObserver(map[string]string{cSAC: assetKey})

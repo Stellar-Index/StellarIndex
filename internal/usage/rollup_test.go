@@ -303,14 +303,10 @@ func TestNewRollup_NilDeps(t *testing.T) {
 	}
 }
 
-// dupScanRedis wraps a real client and makes SCAN return every key
-// TWICE — the documented Redis behaviour when the keyspace rehashes
-// mid-cursor ("an element may be returned multiple times"). miniredis
-// never does this, which is why this defect
-// can hide: a duplicate re-read the same hash, groupDetails SUMMED
-// both, and usage_daily's GREATEST() merge froze the inflated count
-// into a CLOSED day permanently — a customer's usage history doubled
-// by a Redis implementation detail.
+// dupScanRedis wraps a real client and makes SCAN return every key TWICE, the documented Redis
+// behaviour when the keyspace rehashes mid-cursor. miniredis never does this, which is how the
+// defect hides: a duplicate re-reads the same hash, groupDetails would SUM both, and
+// usage_daily's GREATEST() merge would freeze the inflated count into a CLOSED day.
 type dupScanRedis struct {
 	redis.Cmdable
 }
@@ -353,12 +349,9 @@ func TestScanDetail_DuplicateScanKeysCountOnce(t *testing.T) {
 	}
 }
 
-// TestScanDetailFunc_StreamsOneRowAtATime —
-// a production sweep must not buffer a whole day's rows before
-// processing them. ScanDetailFunc delivers rows to fn as they are
-// decoded, so a callback that aborts after the first row sees the
-// walk stop there instead of continuing to drain every remaining
-// hash into memory first.
+// TestScanDetailFunc_StreamsOneRowAtATime — a production sweep must not buffer a whole day's
+// rows before processing them. ScanDetailFunc delivers rows to fn as decoded, so a callback that
+// aborts after the first row stops the walk there.
 func TestScanDetailFunc_StreamsOneRowAtATime(t *testing.T) {
 	_, rdb := newRedis(t)
 	clock := time.Date(2026, 7, 3, 10, 0, 0, 0, time.UTC)
@@ -448,11 +441,9 @@ func foldedOK(sink *fakeSink, subject, endpoint string) map[string]int64 {
 	return out
 }
 
-// TestRollupSweep_CatchesUpDaysAnOutageSkipped: a sink
-// outage from Friday evening to Monday morning must not lose Friday's
-// tail or the weekend from usage_daily. The first successful sweep
-// after recovery re-folds every day no successful sweep covered since
-// it ended, while the Redis counters still hold them.
+// TestRollupSweep_CatchesUpDaysAnOutageSkipped: a sink outage across a weekend must not lose
+// Friday's tail or the weekend from usage_daily. The first successful sweep after recovery
+// re-folds every day no successful sweep covered since it ended, while Redis still holds them.
 func TestRollupSweep_CatchesUpDaysAnOutageSkipped(t *testing.T) {
 	_, rdb := newRedis(t)
 	clock := time.Date(2026, 7, 3, 17, 55, 0, 0, time.UTC) // Friday

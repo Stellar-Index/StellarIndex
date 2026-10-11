@@ -72,12 +72,9 @@ func TestHandleCursors_AllRows(t *testing.T) {
 	}
 }
 
-// The defect this endpoint carried: `ingestion_cursors` keeps one
-// permanent row per one-shot job shard and has no retention, so the
-// unfiltered response served every abandoned shard forever — on r1,
-// 4,703 of 4,815 rows, the oldest an SDEX backfill shard last touched
-// 112 days earlier. The default response is now the set something is
-// plausibly still writing; the dead set is opt-in.
+// `ingestion_cursors` keeps one permanent row per one-shot job shard with no retention, so an
+// unfiltered response would serve every abandoned shard forever. The default response is the
+// set something is plausibly still writing; the dead set is opt-in.
 func TestHandleCursors_AbandonedExcludedByDefault(t *testing.T) {
 	srv := v1.New(v1.Options{
 		Cursors: &stubCursorsReader{
@@ -138,11 +135,9 @@ func TestHandleCursors_AbandonedExcludedByDefault(t *testing.T) {
 	}
 }
 
-// The response is bounded. Without a cap the row count is whatever
-// history left behind — every sharded ops job mints permanent rows —
-// so a single GET could grow without limit again. Pages are stable
-// (ListCursors' (source, sub_source) order) and reachable through
-// `pagination.next`.
+// The response is bounded: every sharded ops job mints permanent rows, so without a cap a
+// single GET could grow without limit. Pages are stable (ListCursors' (source, sub_source)
+// order) and reachable through `pagination.next`.
 func TestHandleCursors_LimitBoundsResponse(t *testing.T) {
 	rows := make([]timescale.Cursor, 0, 1200)
 	for i := range 1200 {
@@ -198,13 +193,10 @@ func TestHandleCursors_LimitBoundsResponse(t *testing.T) {
 	_ = resp.Body.Close()
 }
 
-// The one condition this endpoint exists to surface is stuck ingest,
-// and the abandoned rule must not swallow it. `ledgerstream` and
-// `projector` hold RESUME state something still reads, so an old row
-// there is an incident, not a leftover — the same premise that makes
-// `reap-cursors` refuse to delete them, read off the same list. An age
-// filter that hides a dead live cursor is a worse outcome than the
-// 4,815-row response this whole change replaced.
+// The one condition this endpoint exists to surface is stuck ingest, and the abandoned rule
+// must not swallow it. `ledgerstream` and `projector` hold RESUME state something still reads,
+// so an old row there is an incident, not a leftover (the same premise that makes
+// `reap-cursors` refuse to delete them, read off the same list).
 func TestHandleCursors_StuckLiveCursorSurvivesTheAbandonedRule(t *testing.T) {
 	srv := v1.New(v1.Options{
 		Cursors: &stubCursorsReader{
@@ -556,11 +548,9 @@ func TestHandleCursors_StatusActiveCombinesWithMaxAge(t *testing.T) {
 	}
 }
 
-// Under a cascade, a generic 500 from /v1/diagnostics/cursors
-// would not distinguish "postgres briefly
-// stalled" from "endpoint permanently broken." Operators couldn't tell
-// whether to retry or escalate. Map transient + timeout shapes to
-// 503 with a clearer detail string.
+// Under a cascade, a generic 500 from /v1/diagnostics/cursors cannot distinguish "postgres
+// briefly stalled" from "endpoint permanently broken", so operators cannot tell retry from
+// escalate. Transient and timeout shapes map to 503 with a clearer detail string.
 func TestHandleCursors_TransientStorageError_Returns503(t *testing.T) {
 	srv := v1.New(v1.Options{
 		Cursors: &stubCursorsReader{

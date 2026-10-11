@@ -35,18 +35,14 @@ func childLabelValues(t *testing.T, vec *prometheus.CounterVec, label string) ma
 
 // TestDivergenceRefreshOutcomesAreSeeded: both divergence guards —
 // stellarindex_divergence_no_reference and
-// stellarindex_divergence_refresh_error_dominant — compare a FAILURE
-// outcome's rate against the `ok` outcome's rate. A counter child does
-// not exist until its first .Inc(), so a process that has never had a
-// successful refresh has no `ok` series, the comparison is the empty
-// vector, and BOTH alerts are silent in exactly the total-outage case
-// they exist for: every reference unreachable, the aggregator restarted
-// mid-outage (as deploys routinely do), flags.divergence_warning served
-// frozen, and a live depeg unflagged.
+// stellarindex_divergence_refresh_error_dominant — compare a FAILURE outcome's rate against
+// the `ok` outcome's rate. A counter child does not exist until its first .Inc(), so a
+// process that never had a successful refresh has no `ok` series, the comparison is the empty
+// vector, and BOTH alerts are silent in the total-outage case they exist for (aggregator
+// restarted mid-outage, flags.divergence_warning frozen, a live depeg unflagged).
 //
-// The subject set is derived from the EMITTER, not restated here, so a
-// new outcome added to divergence_refresh.go without a matching seed
-// fails on the day it is written rather than at the next audit.
+// The subject set is derived from the EMITTER, so a new outcome added to
+// divergence_refresh.go without a matching seed fails immediately.
 func TestDivergenceRefreshOutcomesAreSeeded(t *testing.T) {
 	src, err := os.ReadFile("../aggregate/orchestrator/divergence_refresh.go")
 	if err != nil {
@@ -88,20 +84,14 @@ func TestDivergenceRefreshOutcomesAreSeeded(t *testing.T) {
 
 // TestCustomerWebhookDeliveryOutcomesAreSeeded: in the same shape as its divergence sibling above.
 //
-// Every alert on this counter uses rate()/increase(). A CounterVec
-// child does not exist until its first .Inc(), and rate()/increase()
-// over a series whose FIRST sample in the window is also its first
-// sample ever computes 0 — so on a fresh process the first `exhausted`
-// (a customer's delivery permanently lost) and the first `mark_error`
-// (the duplicate-delivery loop markTerminal's own godoc says "makes the
-// loop visible to an alert") both raise nothing at all. Both alerts
-// then need a SECOND occurrence inside the same window, which the
-// single-row loop this metric exists to catch does not reliably
-// produce.
+// Every alert on this counter uses rate()/increase(). A CounterVec child does not exist until
+// its first .Inc(), and rate()/increase() over a series whose FIRST sample in the window is
+// also its first ever computes 0, so on a fresh process the first `exhausted` (a delivery
+// permanently lost) and the first `mark_error` (the duplicate-delivery loop) raise nothing.
+// The alerts would then need a SECOND occurrence in the same window.
 //
-// The subject set is derived from the EMITTER rather than restated
-// here, so a new outcome added to customerwebhook/worker.go without a
-// matching seed fails on the day it is written.
+// The subject set is derived from the EMITTER, so a new outcome added to
+// customerwebhook/worker.go without a matching seed fails immediately.
 func TestCustomerWebhookDeliveryOutcomesAreSeeded(t *testing.T) {
 	src, err := os.ReadFile("../customerwebhook/worker.go")
 	if err != nil {
@@ -109,11 +99,9 @@ func TestCustomerWebhookDeliveryOutcomesAreSeeded(t *testing.T) {
 	}
 	body := string(src)
 
-	// The four spellings the emitter uses for an outcome label: the
-	// direct counter call, the paired duration histogram (which carries
-	// the same vocabulary), the `outcome = "…"` reassignment inside
-	// handleFailure, and the trailing string argument of the two
-	// helpers that take the outcome by name.
+	// The four spellings the emitter uses for an outcome label: the direct counter call, the
+	// paired duration histogram, the `outcome = "…"` reassignment inside handleFailure, and
+	// the trailing string argument of the two helpers that take the outcome by name.
 	patterns := []*regexp.Regexp{
 		regexp.MustCompile(`CustomerWebhookDeliveryAttemptsTotal\.WithLabelValues\("([a-z_]+)"\)`),
 		regexp.MustCompile(`CustomerWebhookDeliveryDurationSeconds\.WithLabelValues\("([a-z_]+)"\)`),

@@ -14,12 +14,9 @@ import (
 
 // ─── The /v1/ohlc interval ladder has one declaration ────────────────
 //
-// [timescale.OHLCRoutes] is it. The parser and its 400 body derive from
-// the table; the spec's enum and this package's duration() switch are
-// the two copies that cannot be derived (one is YAML, the other a
-// named-width lookup), so they are pinned here instead; this is
-// "one declaration of the served set", extended past the
-// HistoryGranularity type to every interval /v1/ohlc advertises.
+// [timescale.OHLCRoutes] is it. The parser and its 400 body derive from the table; the spec's enum
+// and this package's duration() switch cannot be derived (YAML, and a named-width lookup), so they
+// are pinned here against it.
 
 // TestOHLCIntervals_SpecEnumIsTheRouteTable — the published enum for
 // `/v1/ohlc`'s `interval` parameter must equal the route table, in
@@ -102,12 +99,9 @@ func TestOHLCIntervals_ParserAcceptsExactlyTheRouteTable(t *testing.T) {
 	}
 }
 
-// TestOHLCIntervals_DescriptionNamesEveryFoldedRoute — the operation
-// description's prose enumerating which intervals are re-bucketed
-// from a finer continuous aggregate must name every folded route in
-// [timescale.OHLCRoutes], not just the ones true when it was last
-// hand-edited (e.g. prose naming only 5m/30m/4h after 2h, 12h,
-// 3d and 2w were added as folded routes).
+// TestOHLCIntervals_DescriptionNamesEveryFoldedRoute — the operation description's prose listing
+// which intervals are re-bucketed from a finer continuous aggregate must name every folded route
+// in [timescale.OHLCRoutes], not just the ones true when it was last hand-edited.
 func TestOHLCIntervals_DescriptionNamesEveryFoldedRoute(t *testing.T) {
 	spec := loadOpenAPISpec(t)
 	op := spec.Paths["/ohlc"]["get"]

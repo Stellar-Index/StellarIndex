@@ -114,12 +114,10 @@ func (plainSep1Cache) GetIssuerSep1Cached(context.Context, string) (*timescale.I
 	return nil, sql.ErrNoRows
 }
 
-// TestProjectCatalogueRows_Sep1ImageOverlay pins that catalogue-
-// sourced listing rows (asset_class=fiat|stablecoin|crypto,
-// /v1/external/assets, and the catalogue phase of asset_class=all) must
-// gain the same SEP-1 logo overlay the classic_assets-backed listing rows
-// already get. projectCatalogueRows must set Image from the SEP-1 cache
-// rather than leave it untouched.
+// TestProjectCatalogueRows_Sep1ImageOverlay pins that catalogue-sourced listing rows
+// (asset_class=fiat|stablecoin|crypto, /v1/external/assets, and the catalogue phase of
+// asset_class=all) get the same SEP-1 logo overlay as classic_assets-backed rows:
+// projectCatalogueRows must set Image from the SEP-1 cache.
 func TestProjectCatalogueRows_Sep1ImageOverlay(t *testing.T) {
 	stub := &stubSep1ImagesReader{imgs: []timescale.Sep1Image{
 		{Code: "USDC", Issuer: imgIssuerUSDC, Image: "https://circle.com/usdc.svg"},
@@ -171,12 +169,10 @@ func TestProjectCatalogueRows_Sep1ImageOverlay(t *testing.T) {
 	}
 }
 
-// TestHandleAssetListFromCatalogue_Sep1ImageOverlay is the handler-level
-// regression: /v1/assets?asset_class=stablecoin must serve USDC's real
-// SEP-1 logo end to end, using the actual embedded verified-currency
-// catalogue (same pattern as TestCatalogueStatsUseListingReader) so a
-// future wiring regression (e.g. someone reverting to the bare
-// projectCatalogueRows(matched, caps) call) is caught by CI.
+// TestHandleAssetListFromCatalogue_Sep1ImageOverlay is the handler-level regression:
+// /v1/assets?asset_class=stablecoin must serve USDC's real SEP-1 logo end to end, using the
+// embedded verified-currency catalogue (as TestCatalogueStatsUseListingReader does) so a
+// revert to the bare projectCatalogueRows(matched, caps) call is caught.
 func TestHandleAssetListFromCatalogue_Sep1ImageOverlay(t *testing.T) {
 	cat, err := currency.LoadEmbedded()
 	if err != nil {

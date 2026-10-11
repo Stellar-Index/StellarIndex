@@ -15,22 +15,16 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestP23BoundaryConstantsAgree is ADR-0048 D5's "assert [the CH/PG
-// non-overlap] in code" requirement, the compile+run-time half: the
-// ClickHouse archive's hard clamp (classicmovements.P23StartLedger), the
-// Postgres tail's hard floor (timescale.SEP41MovementsFloorLedger) and
-// the creator board's arm split (clickhouse.P23BoundaryLedger) are three
-// SEPARATE constants (import-direction rules forbid internal/storage
-// from importing internal/sources — see any of their doc comments) that
-// MUST hold the same value for explorer.Handler.assertMovementsNonOverlap's
-// invariant, and for the creators cycle's two arms partitioning the
-// ledger axis, to mean anything. A package that can import all three
-// (this one) is the only place able to pin them together.
+// TestP23BoundaryConstantsAgree is ADR-0048 D5's "assert [the CH/PG non-overlap] in code"
+// requirement: the ClickHouse archive's hard clamp (classicmovements.P23StartLedger), the
+// Postgres tail's hard floor (timescale.SEP41MovementsFloorLedger) and the creator board's arm
+// split (clickhouse.P23BoundaryLedger) are three SEPARATE constants (import-direction rules
+// forbid internal/storage importing internal/sources) that MUST hold the same value for
+// explorer.Handler.assertMovementsNonOverlap and the creators cycle's two arms to partition
+// the ledger axis. Only a package that can import all three can pin them together.
 //
-// Each surface that reads across the boundary adds its constant here.
-// The creators board is on this list because it silently did NOT read
-// across it: its cycle read only the pre-P23 representation, so it
-// ranked creators over a population that ended at the boundary.
+// Each surface that reads across the boundary adds its constant here; the creators board
+// belongs because a cycle reading only the pre-P23 representation ranks a truncated population.
 func TestP23BoundaryConstantsAgree(t *testing.T) {
 	if classicmovements.P23StartLedger != timescale.SEP41MovementsFloorLedger {
 		t.Fatalf("P23 boundary constants drifted: classicmovements.P23StartLedger=%d != timescale.SEP41MovementsFloorLedger=%d",
@@ -41,12 +35,10 @@ func TestP23BoundaryConstantsAgree(t *testing.T) {
 			"the creators cycle's arms would leave a gap or an overlap at the boundary",
 			classicmovements.P23StartLedger, clickhouse.P23BoundaryLedger)
 	}
-	// The config defaults MUST equal the leaf constants: a pubnet TOML that
-	// omits stellar.movements_floor_ledger / stellar.soroban_genesis_ledger
-	// must be byte-identical to the old hardcoded behaviour. The fields exist
-	// only so a test net can override them to genesis (=1). config is imported
-	// BY storage (not vice-versa), so config cannot reference the leaf consts —
-	// this test, which can import both, is the only place able to pin them.
+	// The config defaults MUST equal the leaf constants: a pubnet TOML omitting
+	// stellar.movements_floor_ledger / stellar.soroban_genesis_ledger must behave as the
+	// hardcoded values. The fields exist only so a test net can override them to genesis (=1).
+	// config is imported BY storage, so it cannot reference the leaf consts; this test can.
 	def := config.Default()
 	if def.Stellar.MovementsFloorLedger != timescale.SEP41MovementsFloorLedger {
 		t.Errorf("config default stellar.movements_floor_ledger=%d != timescale.SEP41MovementsFloorLedger=%d",

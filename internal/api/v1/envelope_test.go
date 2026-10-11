@@ -204,12 +204,9 @@ func TestWriteProblem_RFC9457Shape(t *testing.T) {
 	}
 }
 
-// TestWriteProblem_401SetsWWWAuthenticate pins the RFC 7235 §3.1
-// guarantee that every 401 advertises a Bearer challenge so
-// programmatic clients can discover the accepted auth scheme.
-// The header is also tested at the auth-middleware layer; this
-// covers the handler-level writeProblem path used by /v1/account/*
-// for not-yet-authenticated requests.
+// TestWriteProblem_401SetsWWWAuthenticate pins the RFC 7235 §3.1 guarantee that every 401
+// advertises a Bearer challenge. The auth middleware has its own test; this covers the
+// handler-level writeProblem path used by /v1/account/* for unauthenticated requests.
 func TestWriteProblem_401SetsWWWAuthenticate(t *testing.T) {
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r,
@@ -236,11 +233,8 @@ func TestWriteProblem_401SetsWWWAuthenticate(t *testing.T) {
 	}
 }
 
-// TestWriteProblem_NonAuthDoesNotSetWWWAuthenticate guards the
-// inverse: a 400 / 404 / 500 / 503 problem must NOT emit
-// WWW-Authenticate (RFC 7235's MUST applies to 401 only). An unconditional
-// helper would be wrong; this pin keeps the conditional in
-// place.
+// TestWriteProblem_NonAuthDoesNotSetWWWAuthenticate guards the inverse: a 400 / 404 / 500 / 503
+// problem must NOT emit WWW-Authenticate (RFC 7235's MUST applies to 401 only).
 func TestWriteProblem_NonAuthDoesNotSetWWWAuthenticate(t *testing.T) {
 	for _, status := range []int{
 		http.StatusBadRequest,
@@ -269,11 +263,9 @@ func TestHandlerTimedOut(t *testing.T) {
 		}
 	})
 	t.Run("call ctx deadline fired, err is a pg cancel", func(t *testing.T) {
-		// The key case: the driver returns its own
-		// `canceling statement due to user request` error string
-		// after our context.WithTimeout fires. errors.Is misses it
-		// because the driver's PgError doesn't wrap context.DeadlineExceeded;
-		// the per-call context Err() is the authoritative signal.
+		// The key case: after our context.WithTimeout fires the driver returns its own
+		// `canceling statement due to user request` error. errors.Is misses it because PgError
+		// doesn't wrap context.DeadlineExceeded; the per-call context Err() is authoritative.
 		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-1*time.Second))
 		defer cancel()
 		cancelErr := errors.New("ERROR: canceling statement due to user request (SQLSTATE 57014)")
@@ -378,11 +370,9 @@ func TestWriteProblem_ExpiredRequestDeadlineUpgrades500To503(t *testing.T) {
 	}
 }
 
-// The other half of the contract: with the request context ALIVE, the
-// same storage failure is still a 500. Without this, the upgrade above
-// could be satisfied by turning every internal error into a 503 — which
-// would hide real faults from the 5xx-class dashboards that separate
-// "we are broken" from "we are slow".
+// The other half of the contract: with the request context ALIVE the same storage failure is
+// still a 500. Otherwise turning every internal error into a 503 would satisfy the upgrade and
+// hide real faults from dashboards that separate "we are broken" from "we are slow".
 func TestWriteProblem_LiveRequestKeepsInternalError500(t *testing.T) {
 	rec := httptest.NewRecorder()
 	newAnomaliesServer().handleAnomalies(rec, anomaliesRequest())
@@ -411,11 +401,9 @@ func TestWriteProblem_CanceledRequestWritesNothing(t *testing.T) {
 
 var errAnomalyStoreBroke = errors.New("anomaly store: broke")
 
-// deadAnomalyReader fails every read with a plain storage error — one that
-// carries NO deadline signal of its own. That isolation is the point: it
-// forces the status decision to come from the request context rather than
-// from sniffing the error, which is exactly the distinction writeProblem's
-// upgrade rests on.
+// deadAnomalyReader fails every read with a plain storage error carrying NO deadline signal, so
+// the status decision must come from the request context rather than from sniffing the error,
+// which is the distinction writeProblem's upgrade rests on.
 type deadAnomalyReader struct{}
 
 func (deadAnomalyReader) ListFreezeEvents(context.Context, bool, int) ([]timescale.FreezeEventRow, error) {
@@ -434,20 +422,14 @@ func (deadAnomalyReader) CountFiringFreezes(context.Context) (int64, error) {
 	return 0, errAnomalyStoreBroke
 }
 
-// /v1/anomalies is the archetype of the ~50 handler error paths this
-// covers: it hands r.Context() STRAIGHT to the store, so it has no
-// per-call context for handlerTimedOut to inspect and no timeout branch
-// of its own — the only deadline that can fire on it is the blanket
-// middleware.RequestTimeout one, and its sole error path is
-// `errors/internal` 500.
+// /v1/anomalies is the archetype of the many handler error paths this covers: it hands
+// r.Context() STRAIGHT to the store, so it has no per-call context for handlerTimedOut to
+// inspect and no timeout branch; the only deadline that can fire is the blanket
+// middleware.RequestTimeout one, and its sole error path is an `errors/internal` 500.
 //
-// That 500 contradicts the rule the rest of the API is written to (a
-// server-side deadline is a RETRYABLE 503 — writeLendingReservesTimeout,
-// the explorer's writeReadTimeout) and it is the rule the sla-probe
-// scores availability_pct on: a 500 books a permanent failure for a
-// condition a retry would have cleared, which is what made the 500 on
-// /v1/issuers the sole SLA-harness blocker before the clientAborted
-// guard shipped.
+// That 500 contradicts the API-wide rule that a server-side deadline is a RETRYABLE 503
+// (writeLendingReservesTimeout, the explorer's writeReadTimeout), the rule the sla-probe scores
+// availability_pct on: a 500 books a permanent failure for a condition a retry would clear.
 func newAnomaliesServer() *Server {
 	return &Server{
 		Options: Options{Anomalies: deadAnomalyReader{}},

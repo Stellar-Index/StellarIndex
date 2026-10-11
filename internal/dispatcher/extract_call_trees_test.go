@@ -6,11 +6,9 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// extractInvokeContractCallTrees walks the full
-// Soroban auth tree per op, capturing every (contract_id,
-// function_name, args) tuple reachable from each op's HostFunction.
-// Seeing only the top-level call would miss ~99.99% of
-// soroswap-router invocations, which come through an aggregator.
+// extractInvokeContractCallTrees walks the full Soroban auth tree per op, capturing every
+// (contract_id, function_name, args) tuple reachable from the op's HostFunction. Seeing only the
+// top-level call would miss nearly all soroswap-router invocations, which come via an aggregator.
 
 // helper — build a no-auth, top-level-only InvokeContract op.
 func opInvokeNoAuth(t *testing.T, contractByte byte, fnName string) xdr.Operation {
@@ -115,11 +113,10 @@ func TestExtractCallTrees_authRootOnly(t *testing.T) {
 	}
 }
 
-// TestExtractCallTrees_aggregatorWrappingRouter — the headline bug
-// scenario. Top-level op calls aggregator.yeet, auth tree shows
-// aggregator → router.swap → pair.swap. A top-level-only walk sees
-// only aggregator.yeet (no decoder matches); the call-tree walk sees all
-// three calls; the router decoder's Matches() picks the router node.
+// TestExtractCallTrees_aggregatorWrappingRouter is the headline scenario. The top-level op calls
+// aggregator.yeet and the auth tree shows aggregator → router.swap → pair.swap. A top-level-only
+// walk sees just aggregator.yeet (no decoder matches); the call-tree walk sees all three and the
+// router decoder's Matches() picks the router node.
 func TestExtractCallTrees_aggregatorWrappingRouter(t *testing.T) {
 	// Build: aggregator(0xCC).yeet → router(0xDD).swap_exact_tokens_for_tokens → pair(0xEE).swap
 	pair := authNodeContract(t, 0xEE, "swap")
@@ -231,22 +228,15 @@ func TestExtractCallTrees_nonInvokeContractOpNilSlot(t *testing.T) {
 	}
 }
 
-// TestExtractCallTrees_TopLevelNeedsNoAuthIsStillTheRoot pins the root of an auth-free top-level call.
+// TestExtractCallTrees_TopLevelNeedsNoAuthIsStillTheRoot pins the root of an auth-free top-level
+// call.
 //
-// A SorobanAuthorizationEntry's RootInvocation is the root of the subtree
-// that requires authorization — NOT necessarily the op's top-level call.
-// The ordinary aggregator shape has a top-level entry point that needs no
-// auth of its own while the token transfer it triggers does. The extractor
-// only fell back to xdr.HostFunction.MustInvokeContract when the auth array
-// was EMPTY, so in that shape:
-//
-//   - the real top-level call was never emitted at all, and
-//   - the NESTED auth root was emitted carrying CallPath == [], i.e.
-//     labelled as the call-tree root.
-//
-// Every downstream consumer of CallPath (routed_via, RouterSwap.CallPath,
-// the completeness re-derive through ExtractContractCallTree) therefore
-// recorded a false call-tree root.
+// A SorobanAuthorizationEntry's RootInvocation is the root of the subtree that requires
+// authorization, NOT necessarily the op's top-level call. In the ordinary aggregator shape the
+// entry point needs no auth of its own while the token transfer it triggers does. The real
+// top-level call must still be emitted, and the NESTED auth root must not carry CallPath == []
+// (the call-tree root label), or every consumer of CallPath (routed_via, RouterSwap.CallPath, the
+// completeness re-derive through ExtractContractCallTree) records a false root.
 func TestExtractCallTrees_TopLevelNeedsNoAuthIsStillTheRoot(t *testing.T) {
 	// Top level: entrypoint(0xC1).route — needs no auth.
 	// Auth entry root: token(0xC2).transfer — a NESTED call.
@@ -286,11 +276,9 @@ func TestExtractCallTrees_TopLevelNeedsNoAuthIsStillTheRoot(t *testing.T) {
 	}
 }
 
-// TestExtractCallTrees_TopLevelIsAuthRootNotDuplicated is the other half
-// of the root decision: when the auth root IS the top-level call (the
-// common single-entry shape), it must be emitted exactly ONCE. A
-// duplicate here becomes a duplicate decode and therefore a duplicate
-// trade row.
+// TestExtractCallTrees_TopLevelIsAuthRootNotDuplicated is the other half of the root decision:
+// when the auth root IS the top-level call (the common single-entry shape) it must be emitted
+// exactly ONCE, since a duplicate becomes a duplicate decode and a duplicate trade row.
 func TestExtractCallTrees_TopLevelIsAuthRootNotDuplicated(t *testing.T) {
 	pair := authNodeContract(t, 0xEE, "swap")
 	root := authNodeContract(t, 0xCC, "yeet", pair)
@@ -315,24 +303,18 @@ func TestExtractCallTrees_TopLevelIsAuthRootNotDuplicated(t *testing.T) {
 	}
 }
 
-// TestExtractCallTrees_mixedAuthEntries_nonTopIsNested pins nested
-// handling of non-top auth entries.
+// TestExtractCallTrees_mixedAuthEntries_nonTopIsNested pins nested handling of non-top auth
+// entries.
 //
-// The mixed shape: a co-signed tx whose op invokes a_fn (authorized by
-// entry 0, which IS the op's top-level call) while a second, deeper
-// call b_fn carries its own auth entry signed by a different party.
+// The mixed shape: a co-signed tx whose op invokes a_fn (authorized by entry 0, which IS the op's
+// top-level call) while a deeper call b_fn carries its own auth entry signed by another party.
+// Re-rooting must be per entry, not "did ANY walked call match the top-level invocation": otherwise
+// entry 1's root keeps CallPath nil and is exported as a second ENTRY POINT. Downstream that reads
+// as call_depth 0 / call_kind 'top_level', so a router wrapped by an aggregator is recorded as the
+// entry point and TagTradesRoutedVia's sub_invocation join misses.
 //
-// The old all-or-nothing re-rooting keyed on "did ANY walked call match
-// the top-level invocation" — entry 0 matched, so the re-root pass was
-// skipped and entry 1's root kept CallPath nil, i.e. was exported as
-// the op's ENTRY POINT alongside the real one. Downstream that reads as
-// call_depth 0 / call_kind 'top_level', so a router wrapped by an
-// aggregator is recorded as the entry point and TagTradesRoutedVia's
-// sub_invocation join misses.
-//
-// The pre-existing TestExtractCallTrees_multipleAuthEntries builds this
-// exact XDR but asserts only the call count and function names, so the
-// mislabelling was invisible. This test asserts the paths.
+// TestExtractCallTrees_multipleAuthEntries builds the same XDR but asserts only counts and names;
+// this test asserts the paths.
 func TestExtractCallTrees_mixedAuthEntries_nonTopIsNested(t *testing.T) {
 	rootA := authNodeContract(t, 0xAA, "a_fn")
 	rootB := authNodeContract(t, 0xBB, "b_fn")

@@ -10,12 +10,10 @@ import (
 	"time"
 )
 
-// TestSSRFGuardedDialContext_LiteralBlockedIPsRefused pins that the
-// delivery-time guard composes net.ParseIP + nettools.IsBlockedIP
-// and must refuse every non-public literal before it ever dials. These
-// are the ranges an attacker steers a webhook URL at — RFC1918, loopback,
-// and the 169.254.169.254 cloud-metadata endpoint. All hermetic: a blocked
-// literal returns before any dialer is constructed, so no packet leaves.
+// TestSSRFGuardedDialContext_LiteralBlockedIPsRefused pins that the delivery-time guard
+// (net.ParseIP + nettools.IsBlockedIP) refuses every non-public literal before dialing: RFC1918,
+// loopback and the 169.254.169.254 cloud-metadata endpoint, the ranges an attacker steers a
+// webhook URL at. Hermetic: a blocked literal returns before any dialer exists.
 func TestSSRFGuardedDialContext_LiteralBlockedIPsRefused(t *testing.T) {
 	t.Parallel()
 
@@ -61,16 +59,13 @@ func TestSSRFGuardedDialContext_InvalidAddrRejected(t *testing.T) {
 	}
 }
 
-// TestSSRFGuardedDialContext_NamedHostResolvingToLoopbackRefused exercises
-// the resolve-at-dial branch (the anti-DNS-rebind half): a NAMED host is
-// resolved and every result is block-checked. `localhost` resolves to a
-// loopback address, which IsBlockedIP refuses — so the guard must reject it
-// rather than dialing. This is the path registration-time validation cannot
-// cover (the DNS answer can flip between save and callback).
+// TestSSRFGuardedDialContext_NamedHostResolvingToLoopbackRefused exercises the resolve-at-dial
+// branch (the anti-DNS-rebind half): a NAMED host is resolved and every result is block-checked,
+// so `localhost` (loopback) must be rejected rather than dialed. Registration-time validation
+// cannot cover this, since the DNS answer can flip between save and callback.
 //
-// Resilient to a sandbox that cannot resolve `localhost` at all: in that
-// case the guard returns a "resolve" error (still a refusal, never a dial),
-// and the literal-IP test above remains the hard block-list guard.
+// Tolerates a sandbox that cannot resolve `localhost`: the guard then returns a "resolve" error
+// (still a refusal, never a dial) and the literal-IP test above remains the hard guard.
 func TestSSRFGuardedDialContext_NamedHostResolvingToLoopbackRefused(t *testing.T) {
 	t.Parallel()
 
@@ -97,12 +92,9 @@ func TestSSRFGuardedDialContext_NamedHostResolvingToLoopbackRefused(t *testing.T
 	}
 }
 
-// NOTE (coverage gap): the anti-rebind DIAL-TARGET property —
-// that a public-resolving host is dialed at the RESOLVED IP rather than
-// re-resolved by the kernel (ssrf.go dials net.JoinHostPort(ips[0], port))
-// — is not asserted here because ssrfGuardedDialContext hard-codes its
-// *net.Resolver and *net.Dialer, so neither the resolved answer nor the
-// dialed address is observable from a test without a real public dial
-// (disallowed: no network egress in unit tests). Making the resolver/dialer
-// injectable would let a stub prove it; deferred as a follow-up rather than
-// widen this LOW cleanup's blast radius into production wiring.
+// NOTE (coverage gap): the anti-rebind DIAL-TARGET property, that a public-resolving host is
+// dialed at the RESOLVED IP rather than re-resolved by the kernel (ssrf.go dials
+// net.JoinHostPort(ips[0], port)), is not asserted here. ssrfGuardedDialContext hard-codes its
+// *net.Resolver and *net.Dialer, so neither the answer nor the dialed address is observable
+// without a real public dial, which unit tests disallow. An injectable resolver/dialer would
+// let a stub prove it.

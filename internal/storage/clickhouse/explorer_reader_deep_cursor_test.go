@@ -5,30 +5,16 @@ import (
 	"testing"
 )
 
-// Regression tests: a deep operations cursor was O(table).
+// A deep operations cursor must not scan O(table).
 //
-// The cursor arms compared the whole primary key as a TUPLE —
-// `(ledger_seq, tx_index, op_index) < (?, ?, ?)` — and ClickHouse's
-// KeyCondition does not decompose a multi-column tuple comparison, so the
-// predicate was applied AFTER the scan instead of narrowing it. The
-// `ledger_seq >= lower` bound was then the only index-usable term on a
-// cursor page, and it bounds the read from BELOW: for `?cursor=5000000.0.0`
-// the index selected everything from ledger 4,995,000 up to the tip, i.e.
-// the whole table.
+// ClickHouse's KeyCondition does not decompose a multi-column tuple comparison like
+// `(ledger_seq, tx_index, op_index) < (?, ?, ?)`, so the predicate would be applied AFTER the
+// scan. The `ledger_seq >= lower` bound would then be the only index-usable term, and it
+// bounds the read from BELOW, so a deep cursor reads from the lower bound up to the tip.
 //
-// Measured on r1 for that exact cursor:
-//
-//	EXPLAIN ESTIMATE   old: 80 parts / 24,693,075,112 rows / 3,014,332 marks
-//	                   new:  1 part  /          4,157 rows /         1 mark
-//	system.query_log   old: 2,863,412,859 rows / 32.00 GiB / killed unfinished
-//	                        at a 30 s cap (unguarded on the issue: 19.3 B rows
-//	                        / 215 GiB / > 180 s)
-//	                   new:           4,157 rows / 564.43 KiB / 5 ms
-//
-// `?cursor=` is publicly mintable dotted decimal on an unauthenticated
-// route, so this was a cheap way to make the origin read hundreds of
-// gigabytes — not merely a slow page. These tests pin the rewritten shape so
-// the tuple-only form cannot come back, following the package's SQL-text
+// `?cursor=` is publicly mintable dotted decimal on an unauthenticated route, so that is a
+// cheap way to make the origin read hundreds of gigabytes. These tests pin the rewritten
+// SQL shape so the tuple-only form cannot come back, following the package's SQL-text
 // convention (explorer_scan_settings_test.go).
 
 // tupleOnlyCursor is the un-prunable form. It must not appear in any
@@ -69,11 +55,10 @@ func TestRecentOperationsCursor_PredicateIsPrimaryIndexPrunable(t *testing.T) {
 	}
 }
 
-// The row budget is the backstop for the shapes the rewrite alone cannot
-// bound (the unbounded fallback at a near-tip cursor still selects
-// [genesis, cursor]). It belongs on the CURSOR arms only: measured on r1,
-// the unbounded FIRST-PAGE fallback announces 217.44M rows and would be
-// refused by this ceiling, and that arm carries no caller-controlled input.
+// The row budget is the backstop for shapes the rewrite alone cannot bound (the unbounded
+// fallback at a near-tip cursor still selects [genesis, cursor]). It belongs on the CURSOR
+// arms only: the unbounded FIRST-PAGE fallback legitimately announces a huge row count, would
+// be refused by this ceiling, and carries no caller-controlled input.
 func TestRecentOperationsCursor_CarriesARowBudgetTheFirstPageDoesNot(t *testing.T) {
 	for _, bounded := range []bool{true, false} {
 		q := recentOperationsQuery(true, bounded)
@@ -92,16 +77,13 @@ func TestRecentOperationsCursor_CarriesARowBudgetTheFirstPageDoesNot(t *testing.
 	}
 }
 
-// TestRecentOperationsCursor_RewriteIsExactlyEquivalent walks the boundary
-// cases the rewrite has to preserve, by evaluating BOTH predicate forms over
-// an exhaustive little ledger. This is the identity
+// TestRecentOperationsCursor_RewriteIsExactlyEquivalent evaluates BOTH predicate forms over an
+// exhaustive little ledger to pin the identity
 //
 //	(L,T,O) < (l,t,o)  ⟺  L < l ∨ (L = l ∧ (T,O) < (t,o))
 //
-// pinned as a test rather than as a comment, because a future "simplification"
-// that drops the equality arm (or writes `<=` on the leading term) still
-// compiles, still prunes, and silently skips or repeats rows at every ledger
-// boundary.
+// A future "simplification" that drops the equality arm (or writes `<=` on the leading term)
+// still compiles and prunes, but silently skips or repeats rows at every ledger boundary.
 func TestRecentOperationsCursor_RewriteIsExactlyEquivalent(t *testing.T) {
 	type key struct{ L, T, O uint32 }
 	// A miniature operations table: ledger 10 has a single operation,

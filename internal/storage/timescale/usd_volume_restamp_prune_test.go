@@ -16,20 +16,14 @@ import (
 
 // ─── the batch UPDATE must be prunable to the chunk it targets ─────
 //
-// `trades` is a hypertable. An UPDATE that names it and constrains `ts`
-// only through the join (`t.ts = v.ts`) is planned against EVERY chunk:
-// on production, one batch's plan carried 260
-// `Update on …_chunk` targets over an Append of 260 sequential scans
-// (cost 10,040,409), TimescaleDB serviced the DML on the compressed ones
-// by decompressing them wholesale, and a 23-row UPDATE ran 60 minutes,
-// wrote ~270 GB of WAL and changed nothing. Bounding `t.ts` by the
-// batch's own minimum and maximum is redundant against the join — it
-// cannot exclude a row `t.ts = v.ts` would have matched — and it is what
-// lets the planner drop the other 259 chunks.
+// `trades` is a hypertable. An UPDATE that constrains `ts` only through the join (`t.ts = v.ts`)
+// is planned against every chunk, and TimescaleDB services DML on compressed chunks by
+// decompressing them wholesale, so a tiny batch can run for an hour and write huge WAL.
+// Bounding `t.ts` by the batch's own minimum and maximum is redundant against the join (it
+// cannot exclude a row the join would match) and is what lets the planner drop the other chunks.
 //
-// These tests hold the three properties that pruning depends on, at the
-// only layer that can see them without a database: the statement the
-// store builds and the values it binds.
+// These tests hold the three properties pruning depends on at the only layer that can see them
+// without a database: the statement the store builds and the values it binds.
 
 // pruneRow builds one write-set row at ts.
 func pruneRow(ts time.Time, ledger uint32) XLMBaseRestampRow {
@@ -159,11 +153,9 @@ func TestApplyXLMBaseUSDVolumeRestamp_BatchStaysUnderTheParameterCeiling(t *test
 }
 
 // -----------------------------------------------------------------
-// Statement-capturing driver fake. It records each DML's text, its bound
-// arguments and the transaction-local GUCs in force when it ran, which
-// is everything these properties are stated in. Same shape as the GUC
-// fake in usd_volume_restamp_guc_test.go, kept separate so neither test
-// constrains the other's fake.
+// Statement-capturing driver fake: records each DML's text, bound arguments and the
+// transaction-local GUCs in force. Kept separate from the GUC fake in
+// usd_volume_restamp_guc_test.go so neither test constrains the other's fake.
 // -----------------------------------------------------------------
 
 type captureDML struct {

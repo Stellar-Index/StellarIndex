@@ -12,15 +12,13 @@ import (
 )
 
 // TestCataloguePricesArePaidBeforeTheTwinMerge — the ORDER the
-// suppression above depends on, guarded at source in the style of
-// TestDirectoryTagsPrecedeTheListingValuationArm and for the same
-// reason: each function is correct read alone.
+// suppression above depends on, guarded at source like
+// TestDirectoryTagsPrecedeTheListingValuationArm: each function is correct read alone.
 //
-// fillCataloguePricesForPage is what gives a catalogue row a price of
-// its own, and mergeTwinStats (inside fillCatalogueStatsForPage) is
-// where the twin's verdict reaches it. Running the price fill AFTER the
-// stats merge would republish the exact figure the tag just withheld,
-// and nothing behavioural would see it.
+// fillCataloguePricesForPage gives a catalogue row its own price, and mergeTwinStats (inside
+// fillCatalogueStatsForPage) is where the twin's verdict reaches it. Running the price fill
+// AFTER the stats merge would republish the figure the tag just withheld, invisibly to
+// behavioural tests.
 func TestCataloguePricesArePaidBeforeTheTwinMerge(t *testing.T) {
 	checked := 0
 	for _, file := range packageGoFiles(t) {
@@ -40,11 +38,9 @@ func TestCataloguePricesArePaidBeforeTheTwinMerge(t *testing.T) {
 			}
 		}
 	}
-	// Both serving paths — writeCataloguePage (the class-scoped listings
-	// and /v1/external/assets) and serveCatalogueUnifiedPage (the unified
-	// catalogue phase) — make both calls through fillAndRankCatalogueRows,
-	// which TestCatalogueRankFollowsTheFill pins them to. A guard that
-	// matched nothing would pass over an empty set forever.
+	// Both serving paths (writeCataloguePage and serveCatalogueUnifiedPage) make both calls
+	// through fillAndRankCatalogueRows, which TestCatalogueRankFollowsTheFill pins them to.
+	// A guard that matched nothing would pass over an empty set forever.
 	if checked < 1 {
 		t.Fatalf("the guard examined %d function(s) that make both calls; "+
 			"fillAndRankCatalogueRows is known to. Either it lost its price fill or this "+
@@ -96,14 +92,12 @@ func TestCataloguePriceFillOrderCountsCallsOnly(t *testing.T) {
 }
 
 // TestCatalogueRankFollowsTheFill — the catalogue's market-cap rank is
-// only meaningful over caps that have been written. Stellar-issued rows
-// get theirs from the price fill and the twin merge, so a rank taken
-// before both ordered every such row on nil — seed order — and a slice
-// taken before the fill made a late-seeded large asset unreachable.
+// only meaningful over caps that have been written. Stellar-issued rows get theirs from the
+// price fill and the twin merge, so a rank taken before both orders such rows on nil (seed
+// order) and a slice taken before the fill makes a late-seeded large asset unreachable.
 //
-// fillAndRankCatalogueRows is the one place the rank may run, after both
-// fills, and each catalogue page writer must go through it rather than
-// sorting or filling on its own.
+// fillAndRankCatalogueRows is the one place the rank may run, after both fills; each page
+// writer must go through it rather than sorting or filling on its own.
 func TestCatalogueRankFollowsTheFill(t *testing.T) {
 	const (
 		chokepoint = "fillAndRankCatalogueRows"

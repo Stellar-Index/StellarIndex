@@ -8,16 +8,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestPrewarmCoversRWAMembersTheListingNeverRanks is the regression for a gap
-// between two surfaces rather than a bug in either. The lake-supply prewarm
-// took its population from the ASSETS listing's ranked pages; /v1/rwa/assets
-// publishes a set chosen by attestation, not by rank, and a tokenized
-// instrument is bought and held — so a member can sit outside every page
-// ordered by observation count or 24h volume, never be warmed, and serve the
-// trustline floor permanently rather than for one TTL gap.
-//
-// Measured on r1: USDY served 461,621,813.40 against 467,502,151.70
-// across all holding domains, USTRY 9.31% short, TESOURO 14.91% short.
+// TestPrewarmCoversRWAMembersTheListingNeverRanks guards a gap between two surfaces. The
+// lake-supply prewarm took its population from the assets listing's ranked pages, while
+// /v1/rwa/assets publishes a set chosen by attestation, not rank. A tokenized instrument is bought
+// and held, so a member can sit outside every page ordered by observation count or 24h volume,
+// never be warmed, and permanently serve the trustline floor, a lower supply than the true total.
 func TestPrewarmCoversRWAMembersTheListingNeverRanks(t *testing.T) {
 	const (
 		code   = "USDY"
@@ -41,14 +36,10 @@ func TestPrewarmCoversRWAMembersTheListingNeverRanks(t *testing.T) {
 	}
 }
 
-// TestPrewarmWarmsAnRWAMemberTheListingDoesNotReturn is the WIRING half, and
-// the one that matters: the helper above can be perfect while nothing calls
-// it. It drives the production sweep with a listing that returns a DIFFERENT
-// asset, so the only way the member reaches the cache is through the join.
-//
-// Without that join this passes against a build that computes the RWA set and
-// discards it — which is precisely the state this test was written after
-// finding.
+// TestPrewarmWarmsAnRWAMemberTheListingDoesNotReturn is the wiring half: the helper above can be
+// perfect while nothing calls it. It drives the production sweep with a listing returning a
+// DIFFERENT asset, so the member reaches the cache only through the join; a build that computes
+// the RWA set and discards it would otherwise pass.
 func TestPrewarmWarmsAnRWAMemberTheListingDoesNotReturn(t *testing.T) {
 	// The listing ranks CETES. The RWA set holds CETES *and* a member the
 	// listing never returns, which is the shape on r1: a tokenized instrument
@@ -84,11 +75,9 @@ func TestPrewarmWarmsAnRWAMemberTheListingDoesNotReturn(t *testing.T) {
 	}
 }
 
-// TestPrewarmNeverForcesAnRWARebuild — the sweep exists to keep expensive work
-// off the request path. A prewarm that could trigger the attestation scan
-// would put that scan on a timer, which is the opposite of the point. Before
-// the first membership build there is nothing to warm, and saying so by
-// returning nothing is correct rather than a degradation.
+// TestPrewarmNeverForcesAnRWARebuild: the sweep exists to keep expensive work off the request
+// path, and a prewarm that could trigger the attestation scan would put that scan on a timer.
+// Before the first membership build there is nothing to warm, and returning nothing is correct.
 func TestPrewarmNeverForcesAnRWARebuild(t *testing.T) {
 	s := &Server{logger: discardLogger()} // no cache, no reader, no in-flight build
 

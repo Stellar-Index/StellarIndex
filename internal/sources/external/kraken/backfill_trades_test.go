@@ -83,20 +83,14 @@ func mustAsset(t *testing.T, id string) canonical.Asset {
 	return a
 }
 
-// TestBackfillTrades_UnresponsiveVenueIsBounded pins the per-request
-// deadline on the /Trades pagination loop.
+// TestBackfillTrades_UnresponsiveVenueIsBounded pins the per-request deadline on the /Trades
+// pagination loop. The loop only checks ctx between pages and `stellarindex-ops backfill` passes
+// the deadline-less root context, so the only bound on a venue that accepts the connection and
+// never responds is the HTTP client's own Timeout; with http.DefaultClient there is none and the
+// backfill wedges holding its DB handles.
 //
-// The loop only checks ctx BETWEEN pages, and `stellarindex-ops
-// backfill` hands it the process root context — which has no deadline.
-// So the ONLY bound on a venue that accepts the connection and then
-// never writes a response is the HTTP client's own Timeout. With
-// http.DefaultClient (Timeout: 0) there is none: the backfill wedges
-// until the operator kills it, holding its DB handles and its slot in
-// the run.
-//
-// The server here black-holes every request rather than returning an
-// error, because that is the failure a client deadline catches and a
-// connection-refused does not.
+// The server black-holes every request rather than erroring, because that is the failure a client
+// deadline catches and a connection-refused does not.
 func TestBackfillTrades_UnresponsiveVenueIsBounded(t *testing.T) {
 	release := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
@@ -155,13 +149,10 @@ func TestFetchKrakenTrades_OversizedBodyRefused(t *testing.T) {
 	}
 }
 
-// TestFetchKrakenTrades_MalformedCursorRejected pins cursor validation: /Trades
-// sends `last` as a quoted nanosecond string. If Kraken ever flips it to
-// an unquoted number (as /OHLC's `last` already is), json.Unmarshal into
-// the string `last` var must be observed, not swallowed — a swallowed
-// error leaves the cursor at its zero value and BackfillTrades' loop
-// reads last=="" as "no more pages", silently truncating a multi-year
-// walk to one page with err == nil.
+// TestFetchKrakenTrades_MalformedCursorRejected pins cursor validation: /Trades sends `last` as a
+// quoted nanosecond string, and if Kraken flips it to an unquoted number (as /OHLC's already is)
+// the json.Unmarshal error must be returned. A swallowed error leaves last=="" which
+// BackfillTrades reads as "no more pages", silently truncating a multi-year walk to one page.
 func TestFetchKrakenTrades_MalformedCursorRejected(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		fmt.Fprint(w, `{"error":[],"result":{"XXLMZUSD":[],"last":1530403225770289000}}`)

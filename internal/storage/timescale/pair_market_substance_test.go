@@ -16,29 +16,20 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// [Store.PairMarketSubstance] (aggregates.go:2071) is the SQL half of the
-// serving-side thin-market gate: internal/pricingguard.SubstanceGate feeds
-// its three numbers straight into SubstanceOK, and a false pass there
-// publishes an aggregated price for a market that has no substance behind
-// it. It had no test in this package — only the interface fake in
-// internal/pricingguard/substance_test.go, which never sees the SQL.
+// [Store.PairMarketSubstance] is the SQL half of the serving-side thin-market gate:
+// internal/pricingguard.SubstanceGate feeds its three numbers straight into SubstanceOK, and a
+// false pass publishes an aggregated price for a market with no substance behind it. The
+// interface fake in internal/pricingguard never sees the SQL, so these tests catch two
+// mutations:
 //
-// Two mutations would otherwise go uncaught:
+//   - dropping `AND bucket <= now() - INTERVAL '1 minute'` lets the IN-PROGRESS bucket into
+//     the measurement, so trades ADR-0015 says are not servable yet can open the gate.
+//   - dropping one of the two direction arms measures half the market, so a genuinely
+//     two-sided pair is withheld or a one-sided pair reads as dead.
 //
-//   - dropping `AND bucket <= now() - INTERVAL '1 minute'` lets the
-//     IN-PROGRESS bucket into the measurement, so a market can be pushed
-//     over the volume/bucket floor by trades that ADR-0015 says are not
-//     servable yet — the gate opens on activity the price read cannot
-//     even see.
-//   - dropping one of the two direction arms measures half the market
-//     (a recurring direction-fold class), so a genuinely
-//     two-sided pair is withheld, or a one-sided-the-wrong-way pair reads
-//     as dead.
-//
-// The query is built inline with fmt.Sprintf inside the method body, so
-// the package-level template guards in closed_vwap_at_test.go cannot see
-// it. The scripted driver can: it records the SQL text the store actually
-// issued along with the bound args.
+// The query is built inline with fmt.Sprintf, so the package-level template guards in
+// closed_vwap_at_test.go cannot see it. The scripted driver can: it records the SQL text
+// the store issued along with the bound args.
 
 // testXLMUSDCLegs is the spelling sets the substance gate asks about for
 // XLM/USDC: every alias of each leg.
@@ -72,11 +63,9 @@ func substanceQuery(t *testing.T, window time.Duration, row []driver.Value) (rec
 	return conn.only(t), sub
 }
 
-// TestPairMarketSubstance_ClosedBucketPredicate pins the ADR-0015
-// closed-bucket guard in its sargable form. `bucket <= now() - INTERVAL
-// '1 minute'` and nothing else: the `bucket + INTERVAL '1 minute' <=
-// now()` spelling puts a function on the indexed column, which is the
-// drift UNAUTH-DOS-3 found on the sibling reader.
+// TestPairMarketSubstance_ClosedBucketPredicate pins the ADR-0015 closed-bucket guard in its
+// sargable form: `bucket <= now() - INTERVAL '1 minute'` and nothing else. The `bucket +
+// INTERVAL '1 minute' <= now()` spelling puts a function on the indexed column.
 func TestPairMarketSubstance_ClosedBucketPredicate(t *testing.T) {
 	stmt, _ := substanceQuery(t, time.Hour, []driver.Value{"0", int64(0), int64(0), int64(0)})
 
@@ -98,12 +87,10 @@ SQL:
 	}
 }
 
-// TestPairMarketSubstance_ReadsBothStoredDirections pins both arms of the
-// orientation filter. The CAGGs hold a market as both (A,B) and (B,A)
-// rows (see TestCAGGPairReadsFoldBothDirections); substance is a COUNT
-// and a SUM, so no Go-side fold is needed — but the second arm is
-// load-bearing, and a one-armed measurement understates every two-sided
-// market.
+// TestPairMarketSubstance_ReadsBothStoredDirections pins both arms of the orientation filter.
+// The CAGGs hold a market as both (A,B) and (B,A) rows (see
+// TestCAGGPairReadsFoldBothDirections); substance is a COUNT and a SUM so no Go-side fold is
+// needed, but a one-armed measurement understates every two-sided market.
 func TestPairMarketSubstance_ReadsBothStoredDirections(t *testing.T) {
 	stmt, _ := substanceQuery(t, time.Hour, []driver.Value{"0", int64(0), int64(0), int64(0)})
 
@@ -184,11 +171,10 @@ SQL:
 	}
 }
 
-// TestPairMarketSubstance_GroupsByBucket pins the DISTINCT-bucket
-// semantics the doc comment promises: Buckets counts closed MINUTES with
-// a trade, not CAGG rows. Counting rows would let a two-sided minute (one
-// row per direction) report 2, so a single-minute burst on a two-sided
-// dust market would clear a MinBuckets=2 floor on its own.
+// TestPairMarketSubstance_GroupsByBucket pins the DISTINCT-bucket semantics: Buckets counts
+// closed MINUTES with a trade, not CAGG rows. Counting rows would let a two-sided minute (one
+// row per direction) report 2, so a one-minute burst on a dust market would clear a
+// MinBuckets=2 floor alone.
 func TestPairMarketSubstance_GroupsByBucket(t *testing.T) {
 	stmt, _ := substanceQuery(t, time.Hour, []driver.Value{"0", int64(0), int64(0), int64(0)})
 
@@ -206,11 +192,9 @@ func TestPairMarketSubstance_GroupsByBucket(t *testing.T) {
 	}
 }
 
-// TestPairMarketSubstance_VolumeIsAnExactDecimalString is the ADR-0003
-// half: VolumeUSD crosses the seam as the NUMERIC's own text, and
-// pricingguard compares it as a big.Rat. A float64 hop anywhere in the
-// scan would round this fixture in the 17th significant digit — enough to
-// move a pair across a floor set at the same magnitude.
+// TestPairMarketSubstance_VolumeIsAnExactDecimalString is the ADR-0003 half: VolumeUSD crosses
+// the seam as the NUMERIC's own text and pricingguard compares it as a big.Rat. A float64 hop
+// would round in the 17th significant digit, enough to move a pair across a floor.
 func TestPairMarketSubstance_VolumeIsAnExactDecimalString(t *testing.T) {
 	const exact = "123456789012345678.123456789"
 	_, sub := substanceQuery(t, time.Hour, []driver.Value{exact, int64(7), int64(1860), int64(5)})

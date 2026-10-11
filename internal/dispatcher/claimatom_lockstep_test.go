@@ -114,21 +114,17 @@ func lsManageSellOfferOp(claims []xdr.ClaimAtom) (xdr.Operation, xdr.OperationRe
 
 // ─── the guard ───────────────────────────────────────────────────────
 
-// TestClaimAtomCount_LockStepWithDecoder guards the lock-step between the claim-atom count and the decoder.
+// TestClaimAtomCount_LockStepWithDecoder guards the lock-step between the claim-atom count and
+// the decoder.
 //
-// The census (ADR-0033) exists to prove the decoders lost nothing:
-// `census.ClassicTradeEffectCount MUST equal COUNT(trades WHERE
-// source='sdex')`. The lake's `classic_trade_effect_count` carries the
-// same promise. Both counted through sdexclaim.RealTradeCount, whose
-// only rule was "at least one leg is non-zero" — while the decoder
-// ALSO drops unknown atom types, unconvertible assets and self-crosses.
-// Every dropped-by-decoder-but-counted-by-oracle atom is a permanent,
-// unclosable gap in the reconcile: real trade loss becomes
-// indistinguishable from the baseline discrepancy.
+// The census (ADR-0033) proves the decoders lost nothing: `census.ClassicTradeEffectCount MUST
+// equal COUNT(trades WHERE source='sdex')`, and the lake's `classic_trade_effect_count` makes
+// the same promise. The counter (sdexclaim.RealTradeCount) must therefore drop exactly what the
+// decoder drops (unknown atom types, unconvertible assets, self-crosses), or each mismatch is a
+// permanent gap in the reconcile that hides real trade loss.
 //
-// The table drives the ACTUAL decoder (sdex.AuditOp → extractClaimAtoms
-// → decodeClaimAtom) and the ACTUAL shared counter, and demands the two
-// agree atom for atom.
+// The table drives the ACTUAL decoder (sdex.AuditOp → extractClaimAtoms → decodeClaimAtom) and
+// the ACTUAL shared counter, and demands they agree atom for atom.
 func TestClaimAtomCount_LockStepWithDecoder(t *testing.T) {
 	t.Parallel()
 
@@ -242,16 +238,13 @@ func TestClaimAtomCount_LockStepWithDecoder(t *testing.T) {
 	}
 }
 
-// TestClaimAtomCount_BothCountersDelegate is the structural half of the
-// lock-step. The behavioural table above proves sdexclaim agrees with
-// the decoder; this proves the two claimAtomCount COPIES still route
-// through sdexclaim rather than re-implementing the predicate — the
-// drift mode the "mirrors X exactly" comments could only ask for, never
-// enforce. (Same technique as internal/pipeline/lockstep_ast_test.go.)
+// TestClaimAtomCount_BothCountersDelegate is the structural half of the lock-step. The table
+// above proves sdexclaim agrees with the decoder; this proves both claimAtomCount COPIES still
+// route through sdexclaim instead of re-implementing the predicate, which "mirrors X" comments
+// cannot enforce (same technique as internal/pipeline/lockstep_ast_test.go).
 //
-// clickhouse.claimAtomCount is unexported, so this reads the source
-// rather than calling it; that is the point — a future edit that
-// inlines an amount check back into either copy fails here.
+// clickhouse.claimAtomCount is unexported, so this reads the source; an edit that inlines an
+// amount check back into either copy fails here.
 func TestClaimAtomCount_BothCountersDelegate(t *testing.T) {
 	t.Parallel()
 

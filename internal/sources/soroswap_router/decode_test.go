@@ -95,13 +95,10 @@ func TestDecodeRouterArgs_swapTokensForExactTokens(t *testing.T) {
 		mustB64(t, u64SCVal(1735689600)),
 	}
 
-	// Sub-invocation this time — an aggregator wrapping the router one
-	// level deep — to cover the CallDepth/CallKind derivation for the
-	// non-top-level case too (the real-bytes equivalent lives in
-	// real_bytes_test.go against an actual captured aggregator tx).
-	// The exact strkey doesn't matter here — decodeRouterArgs only
-	// cares about CallPath's length, not the caller identities — so a
-	// synthetic placeholder is fine for this pure-decode unit test.
+	// Sub-invocation: an aggregator wrapping the router one level deep, covering the
+	// CallDepth/CallKind derivation for the non-top-level case (real_bytes_test.go has the
+	// real-bytes equivalent). decodeRouterArgs only cares about CallPath's length, not caller
+	// identities, so a synthetic placeholder strkey is fine.
 	const aggregatorStrkey = "CAGGREGATORPLACEHOLDER0000000000000000000000000000000000000"
 	swap, err := decodeRouterArgs(
 		FnSwapTokensForExactTokens, args,
@@ -185,11 +182,9 @@ func TestDecodeRouterArgs_extraArgs(t *testing.T) {
 	}
 }
 
-// TestDecodeRouterArgs_pathTooShort covers the path-length
-// invariant. Router itself rejects len < 2 at the contract level;
-// our decoder mirrors that so a malformed call gets dropped via
-// the dispatcher's drop-counter rather than panicking on a
-// nil-element vec access downstream.
+// TestDecodeRouterArgs_pathTooShort covers the path-length invariant. The router rejects len < 2
+// on-chain; the decoder mirrors that so a malformed call is dropped via the dispatcher's
+// drop-counter rather than panicking on a nil-element vec access downstream.
 func TestDecodeRouterArgs_pathTooShort(t *testing.T) {
 	t.Parallel()
 	a := makeContractAddress(t, byte(0x20))
@@ -242,13 +237,10 @@ func TestDecodeRouterArgs_zeroDeadlineYieldsZeroTime(t *testing.T) {
 	}
 }
 
-// TestDecodeRouterArgs_overflowDeadlineYieldsZeroTime is the
-// regression test for a deadline overflow. A deadline near math.MaxUint64 (a
-// common "unlimited" sentinel some callers pass instead of 0) wraps
-// NEGATIVE under a bare int64(deadline) cast — landing near the 1970
-// epoch, a bogus but plausible, postgres-representable time that
-// silently corrupts the stored deadline instead of being treated as
-// absent.
+// TestDecodeRouterArgs_overflowDeadlineYieldsZeroTime covers deadline overflow. A deadline near
+// math.MaxUint64 (a common "unlimited" sentinel) wraps NEGATIVE under a bare int64(deadline)
+// cast, landing near the 1970 epoch: a plausible, postgres-representable time that silently
+// corrupts the stored deadline instead of being treated as absent.
 func TestDecodeRouterArgs_overflowDeadlineYieldsZeroTime(t *testing.T) {
 	t.Parallel()
 	a := makeContractAddress(t, byte(0x40))

@@ -76,12 +76,11 @@ func sdexTestDecode(t *testing.T, ledger uint32, opIndex int, claims []xdr.Claim
 	return outs
 }
 
-// The SDEX decoder keeps one-side-zero fills and fans claims out on a
-// 1024 op_index stride. The served tier holds no duplicate primary key (ON
-// CONFLICT DO NOTHING), and the census counts only priceable fills: one-side-
-// zero fills are stored, but ledgers written before they were admitted hold
-// none, so the served COUNT carries the same sdexPriceableFilter.
-// A ledger whose only activity is a one-side-zero fill expects 0 rows, not 1.
+// The SDEX decoder keeps one-side-zero fills and fans claims out on a 1024 op_index stride.
+// The served tier holds no duplicate primary key (ON CONFLICT DO NOTHING), and the census counts
+// only priceable fills: older ledgers hold no one-side-zero fills, so the served COUNT carries
+// the same sdexPriceableFilter. A ledger whose only activity is a one-side-zero fill expects
+// 0 rows, not 1.
 func TestSDEXServedCensus_CountsOnlyPriceableFills(t *testing.T) {
 	t.Parallel()
 	const zeroOnly, mixed, fanout = 100, 101, 102
@@ -123,13 +122,10 @@ func TestSDEXServedCensus_CountsOnlyPriceableFills(t *testing.T) {
 	}
 }
 
-// Every SDEX projection oracle in chops must count through the one
-// served-tier projection. Two consumers diverged: ch-reproject counted raw
-// decoder output (no Validate, no PK dedup) and labelled the unstorable
-// one-side-zero fills "recovered loss"; verify-reconciliation and the legacy
-// compute-completeness path diffed served against the ledger_ingest_log
-// census, which keeps one-side-zero fills by design, so they reported a
-// permanent mismatch no operator action could clear.
+// Every SDEX projection oracle in chops must count through the one served-tier projection.
+// Counting raw decoder output (no Validate, no PK dedup) mislabels unstorable one-side-zero
+// fills as recovered loss, and diffing served against the ledger_ingest_log census, which keeps
+// those fills by design, reports a permanent mismatch no operator action can clear.
 func TestSDEXProjectionOracles_RouteThroughTheServedProjection(t *testing.T) {
 	t.Parallel()
 	files, err := filepath.Glob("*.go")

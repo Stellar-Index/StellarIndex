@@ -58,12 +58,10 @@ func TestCaptureEligible(t *testing.T) {
 func TestClaimAtomCount(t *testing.T) {
 	t.Parallel()
 
-	// These atoms must name two DISTINCT assets. Leaving
-	// AssetSold/AssetBought at their zero value is native on both legs —
-	// a native/native self-cross that stellar-core never emits and that
-	// internal/sources/sdex drops (canonical.NewPair rejects base ==
-	// quote). sdexclaim.RealTradeCount applies the decoder's full rule
-	// set, so the atoms have to be shaped like real ones.
+	// The atoms must name two distinct assets. Zero-valued AssetSold/AssetBought is native on
+	// both legs, a self-cross stellar-core never emits and internal/sources/sdex drops
+	// (canonical.NewPair rejects base == quote). sdexclaim.RealTradeCount applies the
+	// decoder's full rule set, so the atoms must look like real ones.
 	usdc := xdr.Asset{
 		Type: xdr.AssetTypeAssetTypeCreditAlphanum4,
 		AlphaNum4: &xdr.AlphaNum4{
@@ -201,14 +199,12 @@ func TestCensusLedger_emptyLedger(t *testing.T) {
 	}
 }
 
-// TestCaptureEligible_UnmarshallableEventCountsAsSinkDoes pins that
-// captureEligible's contract — stated in its own
-// docstring — is that "the census count equals the soroban_events row
-// count for the ledger". It must apply the sink's full gate, including the ScVal
-// MarshalBinary round-trip that contractEventToEventsEvent performs: an
-// event whose topic or body fails to marshal is DROPPED by the sink, so
-// counting it would make the reconcile report a projector shortfall that
-// does not exist.
+// TestCaptureEligible_UnmarshallableEventCountsAsSinkDoes pins captureEligible's contract
+// that "the census count equals the soroban_events row count for the ledger". It must apply
+// the sink's full gate, including the ScVal MarshalBinary round-trip in
+// contractEventToEventsEvent: an event whose topic or body fails to marshal is dropped by
+// the sink, so counting it would make the reconcile report a projector shortfall that does
+// not exist.
 func TestCaptureEligible_UnmarshallableEventCountsAsSinkDoes(t *testing.T) {
 	t.Parallel()
 	base, _ := makeBasicContractEvent(t)

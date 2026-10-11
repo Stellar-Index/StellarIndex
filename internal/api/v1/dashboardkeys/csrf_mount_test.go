@@ -29,13 +29,10 @@ const crossSiteProblemType = "https://api.stellarindex.io/errors/cross-site-requ
 // routePattern matches a ServeMux pattern literal: "METHOD /v1/...".
 var routePattern = regexp.MustCompile(`^(GET|HEAD|OPTIONS|POST|PUT|PATCH|DELETE) (/v1/\S*)$`)
 
-// TestMount_EveryDashboardWriteIsSameSiteGuarded is the mount-level
-// net: every state-changing route registered by any dashboard* package
-// must answer a cross-site Origin with the CSRF problem, never reach its
-// handler. Routes are enumerated from the packages' source, not listed
-// here, so a new `mux.HandleFunc("POST /v1/dashboard/...")` without the
-// guard fails this test by construction, and a new dashboard package
-// fails it until it is mounted below.
+// TestMount_EveryDashboardWriteIsSameSiteGuarded is the mount-level net: every state-changing
+// dashboard* route must answer a cross-site Origin with the CSRF problem, never reach its
+// handler. Routes are enumerated from source, so an unguarded new route fails by construction
+// and a new dashboard package fails until it is mounted below.
 func TestMount_EveryDashboardWriteIsSameSiteGuarded(t *testing.T) {
 	_, _, sc := newTestRig(t)
 	mux := http.NewServeMux()
@@ -88,12 +85,10 @@ func assertWriteBlocked(t *testing.T, h http.Handler, req *http.Request, origin 
 	}
 }
 
-// TestMount_EveryDashboardRouteRequiresSession: every route of the
-// session-only dashboard packages is gated at Mount by
-// dashboardauth.RequireSession, not by each handler remembering to check.
-// The request is anonymous AND cross-site, so a route whose session gate
-// is missing or sits inside another layer answers something other than
-// the session gate's 401.
+// TestMount_EveryDashboardRouteRequiresSession: every route of the session-only dashboard
+// packages is gated at Mount by dashboardauth.RequireSession, not per handler. The request is
+// anonymous AND cross-site, so a missing or misplaced session gate answers something other
+// than its 401.
 func TestMount_EveryDashboardRouteRequiresSession(t *testing.T) {
 	mux := http.NewServeMux()
 	mountAllDashboardPackages(t, mux)
@@ -240,14 +235,11 @@ func routeLiterals(t *testing.T, dir string) []string {
 	return out
 }
 
-// TestMount_CrossSiteWriteBlockedBeforeHandler is the
-// regression at the mount point rather than the middleware unit: a
-// cross-site page must not be able to mint or revoke a logged-in
-// customer's API keys with their session cookie.
+// TestMount_CrossSiteWriteBlockedBeforeHandler checks at the mount point that a cross-site page
+// cannot mint or revoke a logged-in customer's API keys with their session cookie.
 //
-// It asserts the CSRF `type` URI specifically, not just "403" — the
-// handler's own role/session checks also produce 403s, and a test that
-// accepted any 403 would pass even with the guard removed.
+// It asserts the CSRF `type` URI, not just "403": the handler's own role/session checks also
+// produce 403s, so accepting any 403 would pass with the guard removed.
 func TestMount_CrossSiteWriteBlockedBeforeHandler(t *testing.T) {
 	h, _, sc := newTestRig(t)
 	mux := http.NewServeMux()

@@ -9,13 +9,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
 )
 
-// otherRealIssuer is a real, CRC-valid Stellar G-strkey unrelated to
-// Circle. The collision tests reuse it as a stand-in "someone else
-// issuing USDC on Stellar" so the asset_id passes the canonical
-// strkey validator (which checks the CRC, not just the prefix).
-// Borrowed from internal/api/v1/known_issuers.go — Aquarius's AQUA
-// issuer; we're not testing AQUA here, just needing a different
-// real G-strkey to pair with the USDC code.
+// otherRealIssuer is a CRC-valid G-strkey unrelated to Circle, standing in for "someone else
+// issuing USDC" in the collision tests; the canonical validator checks the CRC, not the prefix.
 const otherRealIssuer = "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA"
 
 func newTestCatalogue(t *testing.T) *currency.Catalogue {
@@ -95,13 +90,9 @@ func TestAssetsVerified_NoCatalogue_503(t *testing.T) {
 	}
 }
 
-// TestAssetsVerified_FiatMarketCap — verifies fiat rows in the
-// listing carry computed market_cap_usd; crypto/stablecoin rows
-// don't. The fiat fan-out queries the global-price reader; we
-// stub a fixed FX rate to make the math predictable.
-//
-// Pulls every USD row (price = 1.00 → cap = supply) and one
-// non-USD row to exercise the reader path.
+// TestAssetsVerified_FiatMarketCap pins that fiat rows carry a computed market_cap_usd and
+// crypto/stablecoin rows do not. USD rows use price 1.00 (cap = supply); one non-USD row
+// exercises the reader path with a stubbed FX rate.
 func TestAssetsVerified_FiatMarketCap(t *testing.T) {
 	cat := newTestCatalogue(t)
 	// Stub PriceReader with a 0.14 FX rate for every fiat:CCY/fiat:USD
@@ -162,16 +153,10 @@ func TestAssetsVerified_FiatMarketCap(t *testing.T) {
 	}
 }
 
-// TestAssetsVerified_FiatMarketCap_FXHistoryOnlyNoPriceReader is the
-// guard that attachFiatMarketCaps does not skip its ENTIRE
-// fan-out whenever PriceReader (s.Prices) was nil, even though
-// fiatMarketCapUSD tries fxHistory FIRST and only falls back to
-// PriceReader. A deployment that wires FXHistory but not PriceReader —
-// or even the USD row itself, which needs NEITHER reader (identity
-// price) — got every fiat market_cap_usd silently blanked out. Here
-// only FXHistory is wired (Prices is omitted/nil) and both USD
-// (identity path, no reader needed at all) and CNY (fxHistory path)
-// must still carry a market_cap_usd.
+// TestAssetsVerified_FiatMarketCap_FXHistoryOnlyNoPriceReader guards that attachFiatMarketCaps
+// does not skip its whole fan-out when PriceReader is nil: fiatMarketCapUSD tries fxHistory
+// first, and the USD row needs no reader at all (identity price). With only FXHistory wired,
+// USD and CNY must both still carry a market_cap_usd.
 func TestAssetsVerified_FiatMarketCap_FXHistoryOnlyNoPriceReader(t *testing.T) {
 	cat := newTestCatalogue(t)
 	// USD-base rate for CNY: 1 USD = 7.14286 CNY → InverseUSD ~= 0.14.
@@ -215,11 +200,8 @@ func TestAssetsVerified_FiatMarketCap_FXHistoryOnlyNoPriceReader(t *testing.T) {
 }
 
 func TestAssetsVerified_StaticPathDoesNotShadowSlugDispatch(t *testing.T) {
-	// /v1/assets/verified must route to the catalogue listing
-	// handler, NOT collapse onto /v1/assets/{asset_id} where
-	// "verified" would be parsed as an asset_id (and 400 on the
-	// canonical-id check). Go 1.22+ ServeMux picks the more-
-	// specific pattern; this test pins that behaviour.
+	// /v1/assets/verified must reach the catalogue listing, not /v1/assets/{asset_id} (where
+	// "verified" would 400 on the canonical-id check); ServeMux picks the more specific pattern.
 	srv := v1.New(v1.Options{VerifiedCurrencies: newTestCatalogue(t)})
 	ts := httpTestServer(t, srv)
 

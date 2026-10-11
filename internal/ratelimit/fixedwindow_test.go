@@ -88,11 +88,9 @@ func TestFixedWindowCounter_RedisErrorPropagates(t *testing.T) {
 }
 
 // dropExpireHook fails every standalone EXPIRE the client issues and
-// passes everything else through — the observable shape of the
-// leak: a connection reset / MISCONF / OOM that lands between the INCR
-// and the follow-up EXPIRE. It cannot intercept an EXPIRE issued from
-// INSIDE a Lua script, which is exactly the point: after the fix there
-// is no standalone EXPIRE to drop.
+// passes everything else through, modelling a connection reset / MISCONF / OOM between the
+// INCR and the follow-up EXPIRE. It cannot intercept an EXPIRE issued from INSIDE a Lua
+// script, which is the point: there is no standalone EXPIRE to drop.
 type dropExpireHook struct{ dropped int }
 
 func (h *dropExpireHook) DialHook(next redis.DialHook) redis.DialHook { return next }
@@ -116,15 +114,12 @@ func (h *dropExpireHook) ProcessPipelineHook(next redis.ProcessPipelineHook) red
 // TestFixedWindowCounter_TTLSurvivesDroppedExpire is the
 // regression.
 //
-// The failure it encodes: an Incr that issues INCR and then a separate,
-// best-effort EXPIRE whose error was discarded. Drop that one command —
-// a reset connection, a MISCONF read-only replica, an OOM eviction — and
-// the counter key exists with NO TTL. Nothing ever revisits it (the next
-// window uses a different key suffix), so every dropped EXPIRE leaks one
-// permanent key into the throttle namespace, unbounded over time.
+// The failure it encodes: INCR followed by a separate, best-effort EXPIRE whose error was
+// discarded. If that one command drops, the counter key has NO TTL and nothing revisits it
+// (the next window uses a different key suffix), so each dropped EXPIRE leaks a permanent key
+// into the throttle namespace, unbounded over time.
 //
-// INCR and EXPIRE must be one Lua EVAL: Redis runs both or neither,
-// and a hook that kills standalone EXPIREs cannot separate them.
+// INCR and EXPIRE must be one Lua EVAL: Redis runs both or neither.
 func TestFixedWindowCounter_TTLSurvivesDroppedExpire(t *testing.T) {
 	rdb, mr := newRedis(t)
 	hook := &dropExpireHook{}

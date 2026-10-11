@@ -10,12 +10,10 @@ import (
 	c "github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// extractClaimAtoms covers five op variants. The pre-existing
-// decode_test.go suite hits ManageSellOffer happy + the failed-op
-// branch; this file fills in the other four (ManageBuyOffer,
-// CreatePassiveSellOffer, PathPaymentStrictReceive,
-// PathPaymentStrictSend) plus the LiquidityPool ClaimAtom variant
-// and the native/alphanum12 asset paths in xdrAssetToCanonical.
+// extractClaimAtoms covers five op variants. decode_test.go hits ManageSellOffer happy plus the
+// failed-op branch; this file covers the other four (ManageBuyOffer, CreatePassiveSellOffer,
+// PathPaymentStrictReceive, PathPaymentStrictSend), the LiquidityPool ClaimAtom variant and the
+// native/alphanum12 asset paths in xdrAssetToCanonical.
 
 // ─── op-variant fixtures ──────────────────────────────────────
 
@@ -138,12 +136,11 @@ func TestExtractClaimAtoms_createPassiveSellOffer_returnsClaims(t *testing.T) {
 	}
 }
 
-// TestExtractClaimAtoms_createPassiveSellOffer_manageSellArm covers the REAL
-// on-chain encoding: stellar-core emits passive-offer results under the
-// MANAGE_SELL_OFFER union arm (not CREATE_PASSIVE_SELL_OFFER), so
-// GetCreatePassiveSellOfferResult returns ok=false and the fallback to
-// GetManageSellOfferResult must still surface the claims. Without the fallback these are
-// silently dropped (confirmed vs Hubble at ledger 62701151).
+// TestExtractClaimAtoms_createPassiveSellOffer_manageSellArm covers the REAL on-chain encoding:
+// stellar-core emits passive-offer results under the MANAGE_SELL_OFFER union arm (not
+// CREATE_PASSIVE_SELL_OFFER), so GetCreatePassiveSellOfferResult returns ok=false and the
+// fallback to GetManageSellOfferResult must still surface the claims. Without it they are
+// silently dropped.
 func TestExtractClaimAtoms_createPassiveSellOffer_manageSellArm(t *testing.T) {
 	xlm := xdr.Asset{Type: xdr.AssetTypeAssetTypeNative}
 	usdc := mkAlphanum4Asset(t, "USDC", 0x10)

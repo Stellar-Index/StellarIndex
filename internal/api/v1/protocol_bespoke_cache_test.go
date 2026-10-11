@@ -15,12 +15,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// These tests pin the contract for the bespoke
-// analytics block of /v1/protocols/{name}: a build whose battery is slow,
-// failing, or starved keeps the page's visual suite (the last good block)
-// instead of dropping it — the CCTP "missing visual suite" report — and
-// only a TRUE first-ever miss may compute inline, bounded by its caller's
-// context.
+// These tests pin the bespoke analytics block of /v1/protocols/{name}: a slow, failing or
+// starved build keeps the last good block instead of dropping the visual suite, and only a
+// TRUE first-ever miss may compute inline, bounded by its caller's context.
 
 // bespokeStub is a countable, controllable ProtocolBespokeReader.
 type bespokeStub struct {
@@ -155,12 +152,9 @@ func (c *bespokeFakeClock) Advance(d time.Duration) {
 // under key, and steps the clock one minute PAST the staleness horizon.
 // It returns the clock so a test can step it further.
 //
-// The caller's stub must be BLOCKED (stub.block non-nil) for the read
-// that follows: cachedBespoke kicks its detached refresh BEFORE it reads
-// the entry, and an instant battery can re-put a fresh-stamped block
-// between the two — on a loaded runner the aged entry was overwritten
-// and served as FRESH (CI run 33185801510; 20/48000 under local CPU
-// contention). Blocking the battery makes that interleaving impossible.
+// The caller's stub must be BLOCKED (stub.block non-nil) for the read that follows:
+// cachedBespoke kicks its detached refresh BEFORE reading the entry, and an instant battery
+// could re-put a fresh-stamped block between the two, serving the aged entry as FRESH.
 func ageBespokeEntry(t *testing.T, srv *Server, stub *bespokeStub, key string, blk *timescale.BespokeBlock) *bespokeFakeClock {
 	t.Helper()
 	if stub.block == nil {
@@ -274,11 +268,9 @@ func TestCachedBespoke_NilReaderDegradesAsBefore(t *testing.T) {
 	}
 }
 
-// TestHandleProtocolDetail_StaleBespokeSetsEnvelopeFlag pins the wire
-// contract on the honesty half: analytics.status "stale" always travels
-// with flags.stale, even when the DETAIL entry itself is freshly built —
-// the age lives in the bespoke block, and a client must not read a
-// last-good suite as live.
+// TestHandleProtocolDetail_StaleBespokeSetsEnvelopeFlag pins that analytics.status "stale"
+// always travels with flags.stale, even when the DETAIL entry is fresh: the age lives in the
+// bespoke block, and a client must not read a last-good suite as live.
 func TestHandleProtocolDetail_StaleBespokeSetsEnvelopeFlag(t *testing.T) {
 	stub := &bespokeStub{block: make(chan struct{})}
 	srv := New(Options{ProtocolActivity: prewarmActivityStub{}, ProtocolBespoke: stub})
@@ -370,13 +362,10 @@ func TestCachedBespoke_ColdRespectsCallerDeadline(t *testing.T) {
 	}
 }
 
-// TestPrewarmProtocolDetails_SweepWarmsEveryProtocolWindow verifies one
-// full sweep builds EVERY registry protocol × every ?days= window into
-// the detail cache (each entry healthy: analytics.status "ok", bespoke
-// present) and that every rebuild observed the paired
-// stellarindex_protocol_detail_refresh metrics (the
-// counter+histogram pattern, asserted via obstest because per-label
-// histogram children aren't Collectors).
+// TestPrewarmProtocolDetails_SweepWarmsEveryProtocolWindow verifies one sweep builds EVERY
+// registry protocol x every ?days= window into the detail cache (analytics.status "ok",
+// bespoke present) and observes the paired stellarindex_protocol_detail_refresh metrics
+// (asserted via obstest because per-label histogram children aren't Collectors).
 func TestPrewarmProtocolDetails_SweepWarmsEveryProtocolWindow(t *testing.T) {
 	oldPause := protocolDetailPrewarmPause
 	protocolDetailPrewarmPause = 0

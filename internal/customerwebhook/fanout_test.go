@@ -17,18 +17,13 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// `Fanout.Publish` must report failure: a per-endpoint enqueue failure and
-// a whole-fan-out failure (subscriber list unavailable) are both
-// surfaced, not just logged. The producer — the aggregator's
-// freeze and divergence hot paths, and `stellarindex-ops emit-incident` —
-// could not tell a fan-out that reached five subscribers from one that
-// reached none.
+// `Fanout.Publish` must report failure: a per-endpoint enqueue failure and a whole-fan-out
+// failure (subscriber list unavailable) are both surfaced, not just logged, so a producer can
+// tell a fan-out that reached five subscribers from one that reached none.
 //
-// That loss is PERMANENT in a way a delivery failure is not: no
-// `webhook_deliveries` row was ever written, so the retry worker has nothing
-// to drain and nothing downstream re-derives it. These tests pin the two
-// halves of the contract — the (result, error) contract callers act on, and the
-// zero-seeded counter an operator alerts on.
+// That loss is PERMANENT, unlike a delivery failure: no `webhook_deliveries` row was written,
+// so the retry worker has nothing to drain. These tests pin the (result, error) contract
+// callers act on and the zero-seeded counter an operator alerts on.
 
 // fanoutStore is an in-memory FanoutStore whose two methods can be made to
 // fail independently, and per-webhook for the enqueue path.
@@ -263,12 +258,10 @@ func TestFanoutPublish_NilReceiverIsTyped(t *testing.T) {
 	}
 }
 
-// TestFanoutFailureSeries_ZeroSeeded — every platform.WebhookEventType is
-// pre-seeded against every reason. internal/obs cannot import
-// internal/platform (layering), so the seed list there is a literal copy of
-// this enum; this test iterates platform.WebhookEventTypes() — itself
-// pinned to the declared constants — so a new type fails here until seeded. A missing series
-// reads as "no data" on the alert, which is exactly the silence this guards against.
+// TestFanoutFailureSeries_ZeroSeeded — every platform.WebhookEventType is pre-seeded against
+// every reason. internal/obs cannot import internal/platform (layering), so its seed list is a
+// literal copy of the enum; this test iterates platform.WebhookEventTypes() so a new type fails
+// here until seeded. A missing series reads as "no data" on the alert, the silence guarded here.
 func TestFanoutFailureSeries_ZeroSeeded(t *testing.T) {
 	for _, evt := range platform.WebhookEventTypes() {
 		for _, reason := range []string{

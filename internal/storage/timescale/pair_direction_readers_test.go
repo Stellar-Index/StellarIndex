@@ -12,18 +12,15 @@ import (
 	"time"
 )
 
-// Behavioural companions to TestCAGGPairReadsFoldBothDirections, for
-// the three readers that must fold both pair directions.
+// Behavioural companions to TestCAGGPairReadsFoldBothDirections, for the three readers that must
+// fold both pair directions.
 //
-// The class guard pins the QUERY SHAPE — necessary, because the canned
-// driver replays rows regardless of the SQL, so no driver-level test
-// can prove the flipped rows were fetched. These tests pin the other
-// half: that once fetched, the two directions are FOLDED (exact
-// volume-weighted union) rather than one leg being served as if it
-// were the bucket.
+// The class guard pins the QUERY SHAPE, because the canned driver replays rows regardless of the
+// SQL and so cannot prove the flipped rows were fetched. These tests pin the other half: once
+// fetched, the two directions are FOLDED (exact volume-weighted union) rather than one leg being
+// served as the bucket.
 //
-// Every case reuses combineFixture's economics, where the answers are
-// far apart and unmistakable:
+// Every case reuses combineFixture's economics, where the answers are far apart:
 //
 //	stored (XLM,USDC) unflipped: vwap 0.5, volume 100
 //	stored (USDC,XLM) flipped  : vwap 5,   volume 10
@@ -41,11 +38,9 @@ func dirRows(b time.Time, base, quote string) [][]driver.Value {
 	}
 }
 
-// TestRecentClosedVWAP1mForPair_FoldsBothDirections — the SEP-40
-// /v1/oracle/prices series. A reader that filtered a single
-// orientation and scanned (bucket, base, quote, vwap, count, sources),
-// would leave a flipped-only minute absent from the series entirely and a
-// two-sided minute reporting one leg's price.
+// TestRecentClosedVWAP1mForPair_FoldsBothDirections covers the SEP-40 /v1/oracle/prices series.
+// A reader filtering a single orientation would leave a flipped-only minute absent from the
+// series and a two-sided minute reporting one leg's price.
 func TestRecentClosedVWAP1mForPair_FoldsBothDirections(t *testing.T) {
 	pair := testXLMUSDCPair(t)
 	base := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
@@ -88,12 +83,10 @@ func TestRecentClosedVWAP1mForPair_FoldsBothDirections(t *testing.T) {
 	}
 }
 
-// TestRecentClosedVWAP1mForPair_FlippedOnlyBucketIsServed is the
-// headline failure scenario: a market that traded ONLY in the stored
-// (quote, base) orientation. Otherwise /v1/oracle/prices returns 200
-// with an empty array for an asset /v1/oracle/lastprice priced without
-// difficulty — two endpoints on the same declared SEP-40 surface
-// disagreeing about whether the asset had any history.
+// TestRecentClosedVWAP1mForPair_FlippedOnlyBucketIsServed is the headline failure: a market that
+// traded ONLY in the stored (quote, base) orientation. Otherwise /v1/oracle/prices returns 200
+// with an empty array for an asset /v1/oracle/lastprice prices fine, so two endpoints on the same
+// SEP-40 surface disagree about whether the asset has any history.
 func TestRecentClosedVWAP1mForPair_FlippedOnlyBucketIsServed(t *testing.T) {
 	pair := testXLMUSDCPair(t)
 	b := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
@@ -201,11 +194,9 @@ func TestClosedVWAP1mAtOrBefore_NoRowsIsErrNoRows(t *testing.T) {
 	}
 }
 
-// TestTimedVWAPs1mForChangeSummary_FoldsBothDirections — the third
-// instance of the class, which neither the finding nor its skeptic
-// found. It also asserts the ASC ordering and the bucket-END timestamp
-// survive the rewrite: the worker keys points by when the bucket
-// CLOSED.
+// TestTimedVWAPs1mForChangeSummary_FoldsBothDirections is the third instance of the class. It
+// also asserts the ASC ordering and the bucket-END timestamp, since the worker keys points by
+// when the bucket CLOSED.
 func TestTimedVWAPs1mForChangeSummary_FoldsBothDirections(t *testing.T) {
 	pair := testXLMUSDCPair(t)
 	start := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)

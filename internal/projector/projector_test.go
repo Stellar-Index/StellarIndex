@@ -208,14 +208,10 @@ func TestBuildRegistry_SEP41NeedsWatchedSet(t *testing.T) {
 	}
 }
 
-// TestBuildRegistry_SEP41RegisteredWithoutEnabledSourcesEntry pins the
-// zero-writer case: the sep41 names are NOT in
-// config.KnownSources, so production's enabled_sources can never carry
-// them — yet the dispatcher unconditionally cedes the sep41 domain to
-// the projector. BuildRegistry must therefore
-// register the sep41 sources from the watched-contract set alone, with
-// no enabled-sources entry. r1 ran ~14 days (ledgers 63,419,139+) with
-// zero sep41 writers because only the explicit-name path was tested.
+// TestBuildRegistry_SEP41RegisteredWithoutEnabledSourcesEntry pins the zero-writer case: the
+// sep41 names are not in config.KnownSources, so enabled_sources can never carry them, yet the
+// dispatcher unconditionally cedes the sep41 domain to the projector. BuildRegistry must
+// register the sep41 sources from the watched-contract set alone.
 func TestBuildRegistry_SEP41RegisteredWithoutEnabledSourcesEntry(t *testing.T) {
 	watched := []string{"CWATCHEDCONTRACT0000000000000000000000000000000000000000"}
 
@@ -273,11 +269,9 @@ func TestBuildRegistry_IncludesInScopeSources(t *testing.T) {
 	}
 }
 
-// TestAdaptiveWindow pins the shrink/recover arithmetic for the
-// dense-window stall: deadline-exceeded halves exactly toward
-// MinBatchLimit and never below; success doubles back to BatchLimit. The
-// cycle-level sink-budget arm is pinned by
-// TestCycle_SinkBudgetExhaustionShrinksWindowAndHoldsCursor.
+// TestAdaptiveWindow pins the shrink/recover arithmetic for dense-window stalls: deadline-exceeded
+// halves toward MinBatchLimit and never below; success doubles back to BatchLimit. The cycle-level
+// arm is TestCycle_SinkBudgetExhaustionShrinksWindowAndHoldsCursor.
 func TestAdaptiveWindow(t *testing.T) {
 	w := uint32(BatchLimit)
 	for i := 0; i < 20; i++ {
@@ -305,12 +299,10 @@ func TestAdaptiveWindow(t *testing.T) {
 	}
 }
 
-// TestRun_PanicOutsideRowIsRecovered pins that a panic in a source's cycle
-// machinery (not a row — those have their own recover) or in the replay-window
-// watcher stops only that goroutine: the process survives, worker_panics_total
-// moves, and once every goroutine has stopped Run returns an error rather than
-// the nil a clean exit would give. A zero-value Store nil-derefs its *sql.DB on
-// the first read in both.
+// TestRun_PanicOutsideRowIsRecovered pins that a panic in a source's cycle machinery (rows have
+// their own recover) or the replay-window watcher stops only that goroutine: the process
+// survives, worker_panics_total moves, and Run returns an error once all goroutines stop. A
+// zero-value Store nil-derefs its *sql.DB on first read in both.
 func TestRun_PanicOutsideRowIsRecovered(t *testing.T) {
 	const src = "panic-outside-row"
 	srcCounter := obs.WorkerPanicsTotal.WithLabelValues(sourceWorkerName(src))
@@ -376,14 +368,10 @@ func TestProjectorGoroutinesRecover(t *testing.T) {
 	}
 }
 
-// TestBuildRegistry_FoldsWhitespaceAndCaseInSourceNames pins that the
-// registry's own name lookup must normalise ingestion.enabled_sources
-// entries the SAME way internal/config/validate.go's KnownSources check
-// (which trims + lowercases) and internal/pipeline.BuildDispatcher already
-// do. Lowercasing without TrimSpace would let a name with
-// leading/trailing whitespace — accepted by config.Validate —
-// silently miss its projector entry (buildSource's default case returns
-// ok=false with no error) instead of registering comet.
+// TestBuildRegistry_FoldsWhitespaceAndCaseInSourceNames pins that the registry normalises
+// enabled_sources names the same way config.Validate and pipeline.BuildDispatcher do (trim and
+// lowercase). Without TrimSpace a padded name accepted by Validate would silently miss its
+// projector entry, since buildSource's default case returns ok=false with no error.
 func TestBuildRegistry_FoldsWhitespaceAndCaseInSourceNames(t *testing.T) {
 	reg, err := BuildRegistry([]string{"  Comet  "}, config.OracleConfig{}, nil, nil)
 	if err != nil {

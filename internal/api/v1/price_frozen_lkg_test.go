@@ -15,14 +15,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// `flags.frozen=true` promises that the response carries
-// the last-known-good value the freeze is holding (ADR-0019, and the
-// `frozen` flag's own wording in openapi). The default /v1/price path
-// read the newest closed prices_1m bucket — the bucket the anomaly
-// detector had just refused — and stamped the flag on it from an
-// independent marker read. These tests drive the production handler
-// with a frozen pair whose prices_1m bucket has MOVED away from the
-// held value, and assert the VALUE, not the flag.
+// `flags.frozen=true` promises that the response carries the last-known-good value the freeze is
+// holding (ADR-0019 and the openapi `frozen` wording), not the newest closed prices_1m bucket
+// the anomaly detector refused. These tests drive the production handler with a frozen pair
+// whose prices_1m bucket has MOVED away from the held value, and assert the VALUE, not the flag.
 
 // lkgPairs is the aggregator's VWAP cache, keyed
 // "<asset>/<quote>/<window-seconds>" — the per-(pair, window) value a
@@ -123,16 +119,12 @@ func TestFrozenHeldValueCarriesItsOwnObservedAt(t *testing.T) {
 	}
 }
 
-// The freeze that governs a response is the freeze on the
-// pair whose bucket is being SERVED. A `native` request answered from
-// crypto:XLM's closed bucket is governed by crypto:XLM's marker alone; a
-// marker that exists only on the requested literal (`native/fiat:GBP`)
-// says nothing about the healthy bucket in hand. Before the bound, that
-// literal marker discarded the healthy alias bucket anyway: with nothing
-// held for `native` the request 503'd under a detail claiming a "refused
-// bucket" that did not exist, the batch row vanished, and with a 24h
-// value held for `native` that value replaced the healthy bucket —
-// while asset=crypto:XLM served 200 / the bucket throughout.
+// The freeze that governs a response is the freeze on the pair whose bucket is being SERVED. A
+// `native` request answered from crypto:XLM's closed bucket is governed by crypto:XLM's marker
+// alone; a marker only on the requested literal (`native/fiat:GBP`) says nothing about the
+// healthy alias bucket in hand. Honouring it would 503 under a "refused bucket" detail that does
+// not exist, drop the batch row, or replace the healthy bucket with a stale held value, while
+// asset=crypto:XLM served 200 throughout.
 
 const (
 	healthyAliasBucket = "0.2500"

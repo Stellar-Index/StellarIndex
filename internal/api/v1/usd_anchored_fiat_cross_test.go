@@ -11,16 +11,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// A wallet showing a balance in its user's local currency needs
-// XLM/BRL, XLM/JPY, XLM/ZAR. Before this layer, only three fiats
-// resolved for a crypto asset — USD, EUR and GBP — because those are
-// the only ones any venue we ingest quotes directly. Every other
-// currency 404'd, even though both halves of the answer were on the
-// box and fresh: XLM/USD from the market data, and USD→CCY for ~130
-// currencies in fx_quotes. Nothing composed them.
-//
-// This is the composition: price(asset, CCY) = price(asset, USD) ×
-// rate_usd[CCY]. See ADR-0051.
+// A wallet showing a balance in a local currency needs XLM/BRL, XLM/JPY and so on, but only USD,
+// EUR and GBP are quoted directly by any venue we ingest. The USD-anchored layer composes the
+// two fresh halves held: price(asset, CCY) = price(asset, USD) × rate_usd[CCY] (fx_quotes).
+// See ADR-0051.
 
 const (
 	xlmUSDPrice = "0.17794602537043946501"
@@ -106,13 +100,10 @@ func TestPriceDerivesAnyFiatThroughUSD(t *testing.T) {
 	}
 }
 
-// TestPriceWithheldUSDLegIsNotLaunderedThroughFX is the guard that
-// matters most. Every withholding decision (scam-flagged issuer,
-// decimals guard) is made on the USD leg. If the cross-rate layer
-// re-reads that leg and multiplies it by an FX rate, it becomes a side
-// door that publishes exactly the price policy declined to publish —
-// the class where a fallback chain re-served a
-// withheld market through a route nobody had gated.
+// TestPriceWithheldUSDLegIsNotLaunderedThroughFX is the guard that matters most. Every withholding
+// decision (scam-flagged issuer, decimals guard) is made on the USD leg, so if the cross-rate
+// layer re-reads that leg and multiplies it by an FX rate it becomes a side door publishing
+// exactly the price policy declined to publish.
 func TestPriceWithheldUSDLegIsNotLaunderedThroughFX(t *testing.T) {
 	reader := &usdLegReader{usdPriceFor: "native", price: xlmUSDPrice, withheld: true}
 	srv := v1.New(v1.Options{Prices: reader, Currencies: brlCurrencies(), FXFixings: brlFixings()})

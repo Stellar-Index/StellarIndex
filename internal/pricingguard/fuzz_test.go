@@ -64,13 +64,11 @@ var selectGuardedSeeds = []struct{ cand, rows string }{
 	{"3/1", "1:1;2:1;3:1;4:1;5:1;6:1;7:1;8:1"},
 }
 
-// FuzzSelectGuardedVWAP1m pins the guard's selection against an
-// independent reconstruction of its contract: the baseline is the strictly
-// older rows (index-aligned), the decision is aggregate.GuardServedVWAP's,
-// a served substitute is a parseable older row, rows at/after the
-// candidate never influence the answer, and the decision is invariant
-// under an exact positive rescaling of every price (the band is
-// ratio/MAD-homogeneous — a unit change must not move it).
+// FuzzSelectGuardedVWAP1m pins the guard's selection against an independent reconstruction
+// of its contract: the baseline is the strictly older rows (index-aligned), the decision is
+// aggregate.GuardServedVWAP's, a served substitute is a parseable older row, rows at/after the
+// candidate never influence the answer, and the decision is invariant under exact positive
+// rescaling of every price (the band is ratio/MAD-homogeneous).
 func FuzzSelectGuardedVWAP1m(f *testing.F) {
 	for _, s := range selectGuardedSeeds {
 		f.Add(s.cand, s.rows)
@@ -201,10 +199,9 @@ func FuzzSelectGuardedVWAP1mAt(f *testing.F) {
 	})
 }
 
-// FuzzSubstanceOK checks the floor against an exact big.Int/big.Rat
-// reference and its monotonicity: more volume, buckets or span can never
-// turn a pass into a withhold. Span is a DB-measured interval inside the
-// policy window, so it is held to a non-negative range well short of
+// FuzzSubstanceOK checks the floor against an exact big.Int/big.Rat reference and its
+// monotonicity: more volume, buckets or span never turn a pass into a withhold. Span is a
+// DB-measured interval inside the policy window, so it stays non-negative and well short of
 // time.Duration's overflow.
 func FuzzSubstanceOK(f *testing.F) {
 	f.Add("1000", int64(20), int64(6*3600), "1000", int64(20), int64(6*3600))
@@ -317,12 +314,10 @@ func FuzzPairCacheKey(f *testing.F) {
 	})
 }
 
-// FuzzIsDirectoryScamFlagged: every scam-class tag is recognised whatever
-// its case and surrounding whitespace, among any other tags, in any
-// position; a tag set with no scam-class member is never flagged. The
-// SQL predicates' rule (lower(t), no trim) over the stored canonical
-// form must agree with it, or the churn guard and rank tier split from
-// the price gate.
+// FuzzIsDirectoryScamFlagged: every scam-class tag is recognised whatever its case and
+// whitespace, among any other tags, in any position; a set with no scam-class member is never
+// flagged. The SQL predicates' rule (lower(t), no trim) over the stored canonical form must
+// agree, or the churn guard and rank tier split from the price gate.
 func FuzzIsDirectoryScamFlagged(f *testing.F) {
 	sqlRule := func(stored []string) bool {
 		for _, t := range stored {

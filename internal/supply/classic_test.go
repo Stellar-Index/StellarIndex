@@ -292,14 +292,11 @@ func mustFiat(t *testing.T, code string) canonical.Asset {
 	return a
 }
 
-// TestClassic_Compute_PreservesSACWrappedComponent — Algorithm 2 folds
-// SACWrapped into total_supply; a lossy fold would drop the component
-// before the snapshot reaches asset_supply_history, so the cross-check
-// could only compare folded totals and its escrow leg could not exist.
-// Compute must carry the component out alongside the fold, with
-// the EXACT value the reader supplied — a truncated or rounded copy
-// would move the escrow bound and either mask a real breach or
-// manufacture one.
+// TestClassic_Compute_PreservesSACWrappedComponent — Algorithm 2 folds SACWrapped into
+// total_supply; a lossy fold would drop the component before asset_supply_history, so the
+// cross-check's escrow leg could not exist. Compute must carry the component out alongside the
+// fold with the EXACT value the reader supplied: a truncated or rounded copy would move the escrow
+// bound and either mask a real breach or manufacture one.
 func TestClassic_Compute_PreservesSACWrappedComponent(t *testing.T) {
 	const sacWrapped = 1_236_670_485_295_609 // i128-shaped, > 2^50
 	reader := &stubClassicReader{comps: supply.ClassicSupplyComponents{
@@ -335,11 +332,9 @@ func TestClassic_Compute_PreservesSACWrappedComponent(t *testing.T) {
 	}
 }
 
-// TestClassic_Compute_SACWrappedIsDefensiveCopy — the returned Supply
-// must not alias the reader's component. The stub reader here returns
-// the SAME *big.Int on every call (as a caching production reader
-// legitimately might), so an aliasing Compute would let a mutation of
-// one snapshot silently rewrite another's escrow bound.
+// TestClassic_Compute_SACWrappedIsDefensiveCopy — the returned Supply must not alias the reader's
+// component. The stub returns the SAME *big.Int on every call (as a caching production reader
+// might), so an aliasing Compute would let mutating one snapshot rewrite another's escrow bound.
 func TestClassic_Compute_SACWrappedIsDefensiveCopy(t *testing.T) {
 	shared := bigInt(500_000)
 	reader := &stubClassicReader{comps: supply.ClassicSupplyComponents{
@@ -367,15 +362,11 @@ func TestClassic_Compute_SACWrappedIsDefensiveCopy(t *testing.T) {
 }
 
 // TestClassic_Compute_UnobservedSACLeavesWrappedStroopsNil.
-// SumSACBalancesAtOrBefore's SQL COALESCEs "no sac_balance_observations
-// row found" down to a plain 0, indistinguishable from a genuine zero
-// reading. Compute must consult SACObserved rather than trust
-// SACWrapped's non-nilness, or [Supply.SACWrappedStroops] is never nil
-// and [CrossCheckSubsetBound]'s escrow-bound gate
-// (`if classic.SACWrappedStroops != nil`) always evaluates — even for
-// an asset with literally no SAC-balance observation on record — so a
-// "checked, no violation" result is published for a leg that was never
-// actually evaluated.
+// SumSACBalancesAtOrBefore's SQL COALESCEs "no sac_balance_observations row found" to a plain 0,
+// indistinguishable from a genuine zero. Compute must consult SACObserved rather than trust
+// SACWrapped's non-nilness, or [Supply.SACWrappedStroops] is never nil and
+// [CrossCheckSubsetBound]'s escrow-bound gate (`if classic.SACWrappedStroops != nil`) always runs,
+// publishing "checked, no violation" for a leg that was never evaluated.
 func TestClassic_Compute_UnobservedSACLeavesWrappedStroopsNil(t *testing.T) {
 	reader := &stubClassicReader{comps: supply.ClassicSupplyComponents{
 		Trustline:              bigInt(1_000_000),

@@ -16,20 +16,17 @@ import (
 // TestSLORoutesNeverTouchTheLake pins the multi-region plan's §3a invariant
 // (ADR-0050): no SLO'd route may depend on the ClickHouse lake — or, in the
 // future, any cross-region proxy or S3 fallback. The p95≤200ms/p99≤500ms SLO
-// (ADR-0009, enforced by configs/prometheus/rules.r1/slo.yml over exactly
-// these routes) holds precisely BECAUSE the pricing path is always local
-// Redis+Timescale; a change that wires a lake reader into one of these
-// handlers would put a multi-second-budget dependency onto a 200ms-budget
-// route and, under the multi-region design, a WAN hop onto the money path.
+// (ADR-0009, enforced by configs/prometheus/rules.r1/slo.yml over exactly these routes) holds
+// BECAUSE the pricing path is always local Redis+Timescale; a lake reader in one of these
+// handlers would put a multi-second dependency on a 200ms route and, under multi-region, a
+// WAN hop onto the money path.
 //
-// Mechanism: a direct-body AST tripwire — every SLO'd handler's body is
-// walked for selector reads of the Server's ClickHouse-backed fields. This
-// intentionally checks the handler bodies, not the transitive call graph
-// (the realistic regression is wiring `s.Explorer`/`s.TokenSupply` straight
-// into a handler); if a lake dependency is ever threaded through a helper,
-// add the helper here. The forbidden fields are [sloLakeBackedFields];
-// TestSLOLakeFieldsCoverLakeWiring fails when main.go wires a lake reader
-// into a Server field that set does not name.
+// Mechanism: a direct-body AST tripwire that walks every SLO'd handler body for selector
+// reads of the Server's ClickHouse-backed fields. It deliberately skips the transitive call
+// graph (the realistic regression wires `s.Explorer`/`s.TokenSupply` straight into a
+// handler); if a lake dependency is threaded through a helper, add the helper here. The
+// forbidden fields are [sloLakeBackedFields]; TestSLOLakeFieldsCoverLakeWiring fails when
+// main.go wires a lake reader into a Server field that set does not name.
 func TestSLORoutesNeverTouchTheLake(t *testing.T) {
 	// The exact route→handler set the Prometheus SLO burn-rate rules cover.
 	sloHandlers := map[string]bool{
@@ -78,13 +75,11 @@ func TestSLORoutesNeverTouchTheLake(t *testing.T) {
 }
 
 // TestSLORoutesMatchTheCacheBand pins that the SLO burn-rate rules' route
-// set (sloHandlers above, mirrored in slo.yml's `route=~` regex) must be a
-// subset of middleware.SLOPriceRoutes, the single source of truth
-// cachecontrol.go's short-cache-band switch and its own probe-TTL test
-// share. A route that pages on the p95 latency SLO but isn't in
-// SLOPriceRoutes would silently sit outside the cache band the SLO's
-// freshness assumption depends on — exactly the drift possible between
-// this file, slo.yml and the probe-TTL test's hand-typed list.
+// set (sloHandlers above, mirrored in slo.yml's `route=~` regex) must be a subset of
+// middleware.SLOPriceRoutes, the single source of truth shared by cachecontrol.go's
+// short-cache-band switch and its probe-TTL test. A route that pages on the p95 SLO but is
+// not in SLOPriceRoutes would sit outside the cache band the SLO's freshness assumption
+// depends on.
 func TestSLORoutesMatchTheCacheBand(t *testing.T) {
 	inBand := make(map[string]bool, len(middleware.SLOPriceRoutes))
 	for _, p := range middleware.SLOPriceRoutes {

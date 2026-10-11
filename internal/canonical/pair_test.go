@@ -37,12 +37,10 @@ func TestNewPair_validAndDirectional(t *testing.T) {
 }
 
 func TestEqualEitherWay_rejectsUnrelated(t *testing.T) {
-	// Same-asset-on-both-sides pairs are invalid to construct, so the
-	// degenerate "p ≟ p.Flip()" case never reaches EqualEitherWay at
-	// runtime. What matters is that a pair with one common asset +
-	// one different asset is NOT treated as equal-either-way, or
-	// cross-venue normalization in the aggregator would silently
-	// combine unrelated markets.
+	// Same-asset-on-both-sides pairs cannot be constructed, so the degenerate "p ≟ p.Flip()" case
+	// never reaches EqualEitherWay. What matters is that a pair sharing one asset but differing in
+	// the other is NOT equal-either-way, or cross-venue normalization would combine unrelated
+	// markets.
 	xlm := c.NativeAsset()
 	usdc := mustClassic("USDC", usdcIssuer)
 	eurc := mustClassic("EURC", usdcIssuer)
@@ -107,12 +105,10 @@ func TestParsePair_bad(t *testing.T) {
 	}
 }
 
-// A raw oracle symbol is the one asset form the grammar lets carry
-// "/" (real RedStone feed_ids like "SolvBTC.BBN_FUNDAMENTAL/USD" do).
-// It must still never be usable as a pair leg — Pair.Validate keys
-// on IsMapped, not on the separator character — and ParsePair's
-// right-to-left split must not mistake the embedded "/" for the pair
-// separator and hand back a bogus split.
+// A raw oracle symbol is the one asset form the grammar lets carry "/" (real RedStone feed_ids
+// like "SolvBTC.BBN_FUNDAMENTAL/USD" do). It must never be usable as a pair leg (Pair.Validate
+// keys on IsMapped, not the separator), and ParsePair's right-to-left split must not mistake the
+// embedded "/" for the pair separator.
 func TestParsePair_rawSymbolSlashNeverALeg(t *testing.T) {
 	raw, err := c.NewOracleRawAsset("SolvBTC.BBN_FUNDAMENTAL/USD")
 	if err != nil {
@@ -190,11 +186,8 @@ func mustPair(base, quote c.Asset) c.Pair {
 	return p
 }
 
-// Pair.Validate has three branches (base error, quote error,
-// identity collision) that the existing pair_test.go suite only
-// hits transitively via NewPair. Direct tests pin each branch so
-// a refactor that drops any of them surfaces here, not in a
-// downstream caller's confusing stack trace.
+// Pair.Validate has three branches (base error, quote error, identity collision) otherwise hit
+// only transitively via NewPair; direct tests pin each so a refactor dropping one surfaces here.
 
 func TestPair_Validate_zeroValueSurfacesBaseError(t *testing.T) {
 	// Zero-value Pair: both Base and Quote are zero-value Asset.

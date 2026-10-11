@@ -18,17 +18,12 @@ import (
 )
 
 // gatedDivergenceLooker models a verdict store that has stopped
-// answering: every lookup parks until the test releases it, or until the
-// caller's context gives up on it. Parking on a channel rather than
-// sleeping keeps the tests below fast and free of a sleep's timing
-// slack — the only real time they spend is the sub-budget the handler
-// itself is being measured against.
+// answering: every lookup parks until the test releases it, or until the caller's context
+// gives up. Parking on a channel rather than sleeping keeps the tests fast and free of timing
+// slack; the only real time spent is the sub-budget the handler is measured against.
 //
-// A store that ignored its context could not be modelled this way, and
-// is not what the wired looker does: it reads Redis through go-redis,
-// which honours the deadline (the 8.0036s that prompted this work landed
-// exactly on the pre-flight budget, i.e. the read was cut by the
-// context, not by the store answering).
+// A store that ignored its context could not be modelled this way, and is not what the wired
+// looker does: it reads Redis through go-redis, which honours the deadline.
 type gatedDivergenceLooker struct {
 	release chan struct{} // closed by the test to let parked calls return
 	entered chan struct{} // closed on the first call
@@ -60,10 +55,9 @@ func (g *gatedDivergenceLooker) DivergenceFiringFor(ctx context.Context, _, _ ca
 }
 
 // stallBudget is the divergence sub-budget the stall tests run against.
-// A never-released lookup costs exactly this, so it is what each stalled
-// emission waits; the regression they guard against is the lookup riding
-// the UNSCALED 8s tick budget instead, which every bound below still
-// separates by the same margin as at the production 1s.
+// A never-released lookup costs exactly this, so it is what each stalled emission waits; the
+// regression guarded is the lookup riding the UNSCALED 8s tick budget instead, which every
+// bound below still separates by the same margin as at the production 1s.
 const stallBudget = 100 * time.Millisecond
 
 // tipStreamServerWithLooker wires a hub-less server (so both the
@@ -91,9 +85,8 @@ func tipStreamServerWithLooker(t *testing.T, div v1.DivergenceLooker, budget tim
 const tipStreamURL = "/v1/price/tip/stream?asset=crypto:BTC&quote=fiat:USD&window_seconds=60"
 
 // timedLooker answers after a fixed delay, honouring its context. It is
-// how the budget EDGE is probed: a gate that reports "unchecked"
-// whenever the lookup is not instant would satisfy every stall test in
-// this file while throwing the verdict away on each healthy-but-loaded
+// how the budget EDGE is probed: a gate reporting "unchecked" whenever the lookup is not
+// instant would pass every stall test while discarding the verdict on each healthy-but-loaded
 // read, so the guard has to discriminate, not merely fire.
 type timedLooker struct {
 	delay   time.Duration
@@ -205,12 +198,10 @@ func (l *storeDownLooker) DivergenceFiringFor(context.Context, canonical.Asset, 
 // TestPriceDivergence_GenuineStoreErrorIsLoggedEvenPastTheBudget — the
 // deadline suppression must key on the ERROR, not on the context.
 //
-// /v1/price, its ?window= variant, /v1/price/tip and /v1/vwap have no
-// stall reporter of their own; the tip stream's rate-limited warning
-// covers only the stream. So suppressing on "the context is done"
-// silences a real store outage on every one of them whenever the request
-// budget has already blown — an observability regression on surfaces the
-// sub-budget work does not otherwise touch.
+// /v1/price, its ?window= variant, /v1/price/tip and /v1/vwap have no stall reporter of their
+// own; the tip stream's rate-limited warning covers only the stream. Suppressing on "the
+// context is done" would silence a real store outage on all of them once the request budget
+// has blown.
 func TestPriceDivergence_GenuineStoreErrorIsLoggedEvenPastTheBudget(t *testing.T) {
 	for _, path := range []string{
 		"/v1/price?asset=crypto:BTC&quote=fiat:USD",

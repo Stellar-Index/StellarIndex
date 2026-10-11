@@ -54,11 +54,10 @@ func decodeOne(t *testing.T, d *Decoder, ev events.Event) Event {
 	return out
 }
 
-// FuzzTransferAmount: the SEP-41 transfer body is EITHER a bare i128 OR the
-// CAP-67 map { amount, to_muxed_id }. Both shapes must decode to the same,
-// exact i128 (ADR-0003: never the low limb) over the whole domain, with
-// from/to kept in topic order. The decoder passes the sign through
-// verbatim; the storage writer is the negative-amount gate.
+// FuzzTransferAmount: the SEP-41 transfer body is either a bare i128 or the CAP-67 map
+// { amount, to_muxed_id }. Both shapes must decode to the same exact i128 (never the low
+// limb) over the whole domain, with from/to in topic order. The decoder passes the sign
+// through; the storage writer is the negative-amount gate.
 //
 // Generative run:
 // go test -run=^$ -fuzz=^FuzzTransferAmount$ -fuzztime=60s -parallel=2 ./internal/sources/sep41_transfers
@@ -133,10 +132,9 @@ func FuzzApproveAmount(f *testing.F) {
 	})
 }
 
-// FuzzDecodeArbitraryValue feeds arbitrary bytes as the event body for
-// each of the four kinds. The decoder must never panic, and anything it
-// accepts must be one of the documented shapes with the value read from
-// the right place. Foreign ScVal shapes are refused with ErrBadValue.
+// FuzzDecodeArbitraryValue feeds arbitrary bytes as the event body for each of the four
+// kinds. The decoder must never panic, anything it accepts must be a documented shape with
+// the value read from the right place, and foreign ScVal shapes get ErrBadValue.
 //
 // Generative run:
 // go test -run=^$ -fuzz=^FuzzDecodeArbitraryValue$ -fuzztime=60s -parallel=2 ./internal/sources/sep41_transfers

@@ -12,23 +12,16 @@ import (
 	"time"
 )
 
-// Regression suite for the
-// served-TWAP direction combine.
+// Regression suite for the served-TWAP direction combine.
 //
-// SDEX stores the same market in BOTH orientations, so TWAPPointsInRange
-// has to fold the two stored directions into the one the caller asked
-// for. A TRADE-COUNT-weighted mean of
-// {twap, 1/twap_flipped} (a `1.0/twap` SQL inversion, then
-// `SUM(twap·trade_count)/SUM(trade_count)`) would be wrong: the twap_1h / twap_1d
-// CAGGs (migration 0081) define twap = avg(prices_1m.twap) — EQUAL PER
-// ELAPSED MINUTE, deliberately NOT per trade. The only correct merge
-// weight is therefore each direction's minute COVERAGE (how many prices_1m
-// minute-buckets it contributed = migration 0126's `sample_count`), NOT
-// its trade count.
+// SDEX stores the same market in BOTH orientations, so TWAPPointsInRange folds the two stored
+// directions into the one the caller asked for. A trade-count-weighted mean would be wrong:
+// the twap_1h / twap_1d CAGGs define twap = avg(prices_1m.twap), equal per elapsed minute and
+// deliberately NOT per trade. The only correct merge weight is each direction's minute
+// COVERAGE (prices_1m minute-buckets contributed, the `sample_count` column), not trade count.
 //
-// The canonical fixture is one bucket of a two-sided XLM/USDC market whose
-// three candidate answers are far apart, so the fix must land on exactly
-// the coverage-weighted one:
+// The fixture is one bucket of a two-sided XLM/USDC market whose three candidate answers are
+// far apart, so only the coverage-weighted one passes:
 //
 //	direction A (flipped USDC/XLM): stored twap 2 → oriented 0.5,
 //	    minute coverage 50, trade count 500
@@ -37,12 +30,11 @@ import (
 //
 //	coverage-weighted (CORRECT): (0.5·50 + 0.6·5)/(50+5) = 28/55 = 0.50909…
 //	trade-count-weighted (WRONG): (0.5·500 + 0.6·5000)/5500 = 0.59090…
-//	equal-weighted (the regression 0081 also rejects): (0.5+0.6)/2 = 0.55
+//	equal-weighted (also wrong): (0.5+0.6)/2 = 0.55
 //
-// Coverage disagrees with BOTH by ~16% / ~8%, so a regression to either is
-// a loud failure, not a rounding wobble. The flipped side stores exactly
-// 2, whose reciprocal 0.5 is exact, so the whole combine is exact rational
-// arithmetic (ADR-0003) with no `1.0/twap` rounding anywhere.
+// Coverage differs from both by ~16% / ~8%, so a regression is loud, not a rounding wobble.
+// The flipped side stores exactly 2 (reciprocal 0.5 is exact), so the combine is exact rational
+// arithmetic (ADR-0003) with no `1.0/twap` rounding.
 
 var (
 	// twapCoverageWeighted is the correct answer, 28/55.
@@ -177,12 +169,10 @@ func TestCombineDirTWAP_NoUsableRows(t *testing.T) {
 	}
 }
 
-// TestTWAPPointsInRange_CoverageWeightedUnion drives the real Store method
-// end-to-end over the canned driver (query text, scan, fold) and asserts
-// the VALUE it serves — so a regression anywhere along the path fails, not
-// just in combineDirTWAP. The fixture's per-direction trade counts (500 vs
-// 5000) are the ones that would produce 0.59090 under a trade-count SQL; the read
-// must serve the coverage-weighted 0.50909 and never touch trade_count.
+// TestTWAPPointsInRange_CoverageWeightedUnion drives the real Store method end-to-end over the
+// canned driver (query text, scan, fold) and asserts the served VALUE, so a regression anywhere
+// on the path fails, not just in combineDirTWAP. The trade counts (500 vs 5000) would give
+// 0.59090 under a trade-count SQL; the read must serve 0.50909 and never touch trade_count.
 func TestTWAPPointsInRange_CoverageWeightedUnion(t *testing.T) {
 	pair := testXLMUSDCPair(t)
 	bucket := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
@@ -266,11 +256,10 @@ func TestTWAPPointsInRange_FlippedOnlyBucketIsServed(t *testing.T) {
 	}
 }
 
-// Migration 0166 floors the TWAP chain at $0.01 of notional with a
-// COALESCE fallback, so a direction holding only dust keeps an unfloored
-// twap. When the other direction cleared the floor the fallback row must not
-// enter the merge: here a dust-only flipped minute at 0.001 (oriented 1000)
-// would otherwise pull a clean 5 up to (5·1 + 1000·1)/2 = 502.5.
+// The TWAP chain floors at $0.01 of notional with a COALESCE fallback, so a dust-only direction
+// keeps an unfloored twap. When the other direction cleared the floor that fallback row must not
+// enter the merge: a dust-only flipped minute at 0.001 (oriented 1000) would otherwise pull a
+// clean 5 up to (5·1 + 1000·1)/2 = 502.5.
 func TestCombineDirTWAP_DropsFallbackDirectionWhenAnotherClearedTheFloor(t *testing.T) {
 	got, ok := combineDirTWAP([]dirTWAP{
 		{twapText: "5", sampleCount: 1, notionalCount: 1, flipped: false},

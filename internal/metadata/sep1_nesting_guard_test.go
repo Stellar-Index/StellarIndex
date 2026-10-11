@@ -26,15 +26,13 @@ func nestedInlineTables(depth int) []byte {
 	return []byte(b.String())
 }
 
-// TestParseSEP1RefusesDeepNestingWithinBudget is the wedge at the
-// parser: a document the byte cap admits must not be
-// allowed to spend gigabytes in the decoder.
+// TestParseSEP1RefusesDeepNestingWithinBudget guards the parser: a document the byte cap admits
+// must not be allowed to spend gigabytes in the decoder.
 //
-// The assertion is on BOTH halves, because either alone is passable by
-// a wrong fix: the document must be REFUSED with [ErrTOMLTooDeep], and
-// the refusal must cost near-nothing — a fix that parsed first and
-// judged afterwards would satisfy the error check while still being
-// SIGKILLed by the unit's MemoryMax=2G.
+// The assertion covers BOTH halves, because either alone passes a wrong fix: the document must be
+// REFUSED with [ErrTOMLTooDeep], and the refusal must cost near-nothing, since a fix that parsed
+// first and judged afterwards would pass the error check while still being SIGKILLed by the
+// unit's MemoryMax=2G.
 func TestParseSEP1RefusesDeepNestingWithinBudget(t *testing.T) {
 	body := nestedInlineTables(4000)
 	if len(body) > maxBodyBytes {
@@ -410,11 +408,10 @@ func TestParseSEP1RefusesDottedPathAcrossLines(t *testing.T) {
 	}
 }
 
-// TestCheckTOMLNestingRawPathHoldsWithoutTheLexer is the dotted
-// counterpart of the raw bracket insurance: with the string-aware scans
-// blinded, a key path the raw scan sees only by accumulating it across
-// lines is still refused. No closer sits in data here: one would cancel
-// an opener in the raw count (see [maxRawTOMLNestingDepth]).
+// TestCheckTOMLNestingRawPathHoldsWithoutTheLexer is the dotted counterpart of the raw bracket
+// insurance: with the string-aware scans blinded, a key path the raw scan sees only by
+// accumulating it across lines is still refused. No closer sits in data here, since one would
+// cancel an opener in the raw count (see [maxRawTOMLNestingDepth]).
 func TestCheckTOMLNestingRawPathHoldsWithoutTheLexer(t *testing.T) {
 	// An unterminated multi-line string hides the rest of the body from
 	// the string-aware scans.
@@ -578,11 +575,10 @@ func TestParseSEP1RefusesDeepPathBehindBOM(t *testing.T) {
 	}
 }
 
-// TestParseSEP1RefusesPathAfterEscapedBackslashClose pins the multi-line
-// basic close the decoder takes after an escaped backslash: `\\""""""`
-// ends the string after all six quotes, so no quote is left over to open
-// a string that hides the rest of the line. The `# }` on each line takes
-// the raw scans out of play, so only the string-aware scans can refuse it.
+// TestParseSEP1RefusesPathAfterEscapedBackslashClose pins the multi-line basic close the decoder
+// takes after an escaped backslash: `\\""""""` ends the string after all six quotes, so no quote
+// is left to open a string that hides the rest of the line. The `# }` on each line takes the raw
+// scans out of play, so only the string-aware scans can refuse it.
 func TestParseSEP1RefusesPathAfterEscapedBackslashClose(t *testing.T) {
 	var b strings.Builder
 	b.WriteString("VERSION = \"2.0.0\"\nr = {\n")
@@ -603,17 +599,14 @@ func TestParseSEP1RefusesPathAfterEscapedBackslashClose(t *testing.T) {
 	}
 }
 
-// TestSkipTOMLStringMatchesDecoder compares where skipTOMLString ends a
-// string with where the pinned decoder's lexer ends it, exhaustively over
-// short string bodies.
+// TestSkipTOMLStringMatchesDecoder compares where skipTOMLString ends a string with where the
+// pinned decoder's lexer ends it, exhaustively over short string bodies.
 //
-// Oracle: for a body s, the document `k = <s>\nz = 1\n` decodes with both
-// keys only if the lexer read a string spanning exactly s (anything left
-// on the line after a value is an error), give or take trailing
-// newlines. Every accepted document must then have skipTOMLString end at
-// len(s). A rejected document carries no claim: the decoder stops at its
-// error, and every string the lexer does close is itself enumerated as a
-// body cut at that close, whose next byte is never a quote either.
+// Oracle: for a body s, the document `k = <s>\nz = 1\n` decodes with both keys only if the lexer
+// read a string spanning exactly s (anything left on the line after a value is an error), give or
+// take trailing newlines. Every accepted document must then have skipTOMLString end at len(s). A
+// rejected document carries no claim: the decoder stops at its error, and every string the lexer
+// does close is itself enumerated as a body cut at that close, whose next byte is never a quote.
 func TestSkipTOMLStringMatchesDecoder(t *testing.T) {
 	forms := []struct {
 		open  string

@@ -13,67 +13,43 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker/guardscan"
 )
 
-// apiGoroutineGuards are the recovery markers a detached goroutine in this
-// package tree may register.
+// apiGoroutineGuards are the recovery markers a detached goroutine in this package tree may
+// register.
 //
 //   - worker.Recover — the plain form, for a body with no cleanup of its own.
-//   - worker.Report  — for a body that must ALSO un-wedge something (clear a
-//     single-flight marker, end a flight, mark a fold failed) before it
-//     returns; it recovers itself and hands the value here so the same
-//     counter still moves.
-//   - recoverStreamProducer — the SSE producers' shared helper, which
-//     delegates to worker.Report with the stream name as the worker label.
+//   - worker.Report  — for a body that must also un-wedge something (clear a single-flight
+//     marker, end a flight, mark a fold failed); it recovers itself and the counter still moves.
+//   - recoverStreamProducer — the SSE producers' helper, which delegates to worker.Report.
 //
-// A bare recover() is deliberately NOT accepted: swallowing a panic without
-// moving stellarindex_worker_panics_total converts a loud crash into a
-// silent dead worker, which is the failure this guard exists to prevent.
-// [guardscan] enforces that — a deferred literal counts only when it calls
-// recover() AND one of these.
+// A bare recover() is deliberately not accepted: swallowing a panic without moving
+// stellarindex_worker_panics_total turns a loud crash into a silent dead worker. [guardscan]
+// enforces that: a deferred literal counts only when it calls recover() and one of these.
 var apiGoroutineGuards = []string{"worker.Recover", "worker.Report", "recoverStreamProducer"}
 
-// apiGoroutineFloor is a "did this test find anything?" floor, not an exact
-// count. 45 detached goroutines existed under internal/api/v1 when this
-// guard was written; the floor sits just below so ordinary refactors that
-// remove one do not fail the build, while a discovery walk that silently
-// stops matching (the spawn idiom changes, the tree moves) does.
+// apiGoroutineFloor is a "did this test find anything?" floor, not an exact count: ordinary
+// refactors that remove a goroutine pass, while a discovery walk that silently stops matching
+// (the spawn idiom changes, the tree moves) fails.
 const apiGoroutineFloor = 40
 
-// TestAPIDetachedGoroutinesRecover is the package-tree twin of each
-// binary's main.go guard test: EVERY detached goroutine started anywhere
-// under internal/api/v1 — this package and every subpackage — must register
-// panic recovery.
+// TestAPIDetachedGoroutinesRecover is the package-tree twin of each binary's main.go guard test:
+// every detached goroutine started anywhere under internal/api/v1, subpackages included, must
+// register panic recovery.
 //
-// Why it has to exist separately from the binaries' guards. An unrecovered
-// panic in ANY goroutine terminates the whole Go process; it is not confined
-// to the goroutine that panicked. cmd/stellarindex-api's guard covers the
-// workers main() starts, but the API's real fleet of detached goroutines is
-// started HERE — the stale-while-revalidate cache refreshers, the snapshot
-// fillers, the per-row fan-outs, the SSE producers — and no main.go-scoped
-// walk can see any of them. At the time this was written 37 of the 45 sites
-// in this tree recovered nothing at all, so a nil map, a bad type assertion
-// or an index into an empty slice from a degraded read took the entire API
-// down along with every healthy request in flight.
+// An unrecovered panic in any goroutine terminates the whole process. cmd/stellarindex-api's
+// guard covers the workers main() starts, but the API's real fleet (stale-while-revalidate
+// refreshers, snapshot fillers, per-row fan-outs, SSE producers) is started here, out of reach
+// of a main.go-scoped walk; one nil map from a degraded read would take down every in-flight
+// request.
 //
-// Why an AST guard rather than a behavioural test: the failure mode that
-// bites is the NEXT refresher someone adds without the defer. A behavioural
-// test would have to drive each existing goroutine to panic through a real
-// dependency and would still only cover the ones that exist today. So this
-// derives the goroutine set from the source itself and fails if any of them
-// lacks recovery — find every call site of the thing being guarded, not a
-// sample. Same discipline as cmd/stellarindex-api's
-// TestBackgroundWorkersRecover and this package's
-// TestSourceShapeRules/sse_producer_goroutines_recover, which it subsumes but does not replace
-// (that one additionally pins the producers by NAME).
+// It is an AST guard, not a behavioural test, because the failure that bites is the next
+// refresher added without the defer; a behavioural test only covers goroutines that exist today.
+// It derives the goroutine set from source, like cmd/stellarindex-api's
+// TestBackgroundWorkersRecover, and subsumes but does not replace
+// TestSourceShapeRules/sse_producer_goroutines_recover (which also pins producers by name).
 //
-// There is no exemption list. main.go's guard exempts the HTTP listener
-// because a dead listener means a live process serving nothing; nothing in
-// this tree has that property — every goroutine here is a refresher, a
-// filler or a fan-out whose death should degrade one response, not the
-// process.
-//
-// Proven red: adding an unguarded `go func(){}()` anywhere in the tree, or
-// deleting any one of the guards this fixed, fails this test naming the
-// file and line.
+// There is no exemption list: main.go exempts the HTTP listener because a dead listener means a
+// live process serving nothing, and every goroutine here is one whose death should degrade a
+// single response, not the process.
 func TestAPIDetachedGoroutinesRecover(t *testing.T) {
 	var checked int
 	var unguarded []string
@@ -118,11 +94,9 @@ func TestAPIDetachedGoroutinesRecover(t *testing.T) {
 	}
 }
 
-// apiPackageGoFiles lists every non-test .go file in this package tree, in
-// deterministic order. The walk is rooted at "." — a test's working
-// directory is its own package directory — so it covers this package and
-// every subpackage (explorer, dashboardauth, middleware, …) without naming
-// them, which is the point: a new subpackage is covered the day it lands.
+// apiPackageGoFiles lists every non-test .go file in this package tree, in deterministic order.
+// The walk is rooted at "." (a test's working directory is its package directory), so a new
+// subpackage is covered the day it lands without being named.
 func apiPackageGoFiles(t *testing.T) []string {
 	t.Helper()
 	var out []string

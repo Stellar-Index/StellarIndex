@@ -23,16 +23,11 @@ func hashes(n int) []string {
 	return out
 }
 
-// TestTxIndexes_ChunksAtTheBoundaryWithoutLosingHashes is the chunk-arithmetic
-// contract. txIndexChunk bounds each IN-list so every chunk is a set of
-// primary-key point lookups; the loop that slices `hashes` into those chunks
-// is off-by-one territory, and an over-run panics while an under-run silently
-// drops the tail — which for the MEV sandwich detector means transactions with
-// no known intra-ledger order, i.e. quietly missing detections rather than an
-// error anyone sees.
-//
-// The three interesting sizes are one below, exactly at, and one above the
-// chunk boundary.
+// TestTxIndexes_ChunksAtTheBoundaryWithoutLosingHashes is the chunk-arithmetic contract.
+// txIndexChunk bounds each IN-list so every chunk is a set of primary-key point lookups; an
+// off-by-one over-run panics while an under-run silently drops the tail, which for the MEV
+// sandwich detector means quietly missing detections. The interesting sizes are one below,
+// exactly at, and one above the chunk boundary.
 func TestTxIndexes_ChunksAtTheBoundaryWithoutLosingHashes(t *testing.T) {
 	for _, n := range []int{0, 1, txIndexChunk - 1, txIndexChunk, txIndexChunk + 1, 2*txIndexChunk + 3} {
 		t.Run(fmt.Sprintf("n=%d", n), func(t *testing.T) {
@@ -88,11 +83,10 @@ func TestTxIndexes_ChunksAtTheBoundaryWithoutLosingHashes(t *testing.T) {
 	}
 }
 
-// TestTxIndexes_MissingHashesAreAbsentNotZero — the historical tx_hash_index
-// backfill is windowed, so a hash the lake has not indexed yet legitimately
-// returns no row. It must be ABSENT from the map: a zero-valued entry would
-// tell the MEV detector the transaction was FIRST in its ledger, which is a
-// specific and wrong claim about ordering, not a missing one.
+// TestTxIndexes_MissingHashesAreAbsentNotZero — the tx_hash_index backfill is windowed, so a
+// hash not yet indexed legitimately returns no row. It must be ABSENT from the map: a
+// zero-valued entry would tell the MEV detector the transaction was FIRST in its ledger, a
+// specific and wrong claim rather than a missing one.
 func TestTxIndexes_MissingHashesAreAbsentNotZero(t *testing.T) {
 	conn := &stubConn{respond: func(string) (driver.Rows, error) {
 		// Only "aa" is indexed.
@@ -175,12 +169,10 @@ func TestTxIndexes_TruncatedStreamIsAnError(t *testing.T) {
 	}
 }
 
-// TestTxIndexes_ChunkFailureIncrementsSkippedMetric is the visibility half
-// of the ChunkFailureAbortsWithoutAPartialMap contract: an aborted lookup
-// would be silent past a single log line the mev worker emits on a
-// best-effort basis. obs.MEVLakeOrderLookupSkippedTotal must move so a
-// sustained MEMORY_LIMIT_EXCEEDED rate on stellar.tx_hash_index (the
-// prod incident this bounds) shows up on a dashboard/alert, not just logs.
+// TestTxIndexes_ChunkFailureIncrementsSkippedMetric is the visibility half of the
+// ChunkFailureAbortsWithoutAPartialMap contract: an aborted lookup is otherwise silent past one
+// best-effort log line. obs.MEVLakeOrderLookupSkippedTotal must move so a sustained
+// MEMORY_LIMIT_EXCEEDED rate on stellar.tx_hash_index shows up on an alert, not just in logs.
 func TestTxIndexes_ChunkFailureIncrementsSkippedMetric(t *testing.T) {
 	before := testutil.ToFloat64(obs.MEVLakeOrderLookupSkippedTotal)
 

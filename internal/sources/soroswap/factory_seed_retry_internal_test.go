@@ -15,13 +15,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/stellarrpc"
 )
 
-// White-box half of the seed-retry regression (the fake RPC and the black-box half are further down this file).
-// These
-// substitute seedSleep with a recorder, so they run instantly and can assert
-// the exact backoff schedule. Every case still goes through the exported seed
-// and a REAL stellarrpc.Client: the classification reads the typed errors the
-// client returns, and only the real client can prove which response shape
-// produces which of them.
+// White-box half of the seed-retry regression. seedSleep is replaced with a recorder so the
+// exact backoff schedule is asserted instantly. Every case still uses a REAL stellarrpc.Client:
+// classification reads the client's typed errors, so only it proves which response shape
+// produces which error.
 
 // recordSeedSleeps replaces seedSleep with a recorder for the test's lifetime.
 // onWait, when non-nil, runs before each recorded wait returns (used to cancel
@@ -123,13 +120,10 @@ func TestSeedFromFactoryRPC_SpentBudgetFailsClosedWithTheCause(t *testing.T) {
 	}
 }
 
-// Every shape a rate limiter, a proxy or an unwell node actually answers with
-// must cost one re-issue, not the nightly pass. The first attempt at this retry
-// covered only a non-2xx with a non-empty NON-JSON body (what http.Error
-// writes); through the real client the seed still failed closed after exactly
-// one HTTP hit for every other shape below, because the client dropped the
-// status whenever the body was empty or carried an error envelope. Each case is
-// ONE bad first response to all_pairs_length on an otherwise clean sweep.
+// Every shape a rate limiter, proxy or unwell node answers with must cost one re-issue, not the
+// nightly pass. That includes an empty body or an error envelope, where the client must still
+// surface the HTTP status. Each case is ONE bad first response to all_pairs_length on an
+// otherwise clean sweep.
 func TestSeedFromFactoryRPC_EveryTransientResponseShapeIsRetried(t *testing.T) {
 	factory := makeContractStrkey(t, 0x01)
 	pair, tok0, tok1 := makeContractStrkey(t, 0x02), makeContractStrkey(t, 0x03), makeContractStrkey(t, 0x04)
@@ -367,13 +361,11 @@ func TestSeedRetryBudget_StatedWorstCase(t *testing.T) {
 	}
 }
 
-// compute-completeness and verify-reconciliation fail CLOSED
-// on a seed error, and on r1 the seed sweeps a PUBLIC third-party RPC with
-// 1+3N sequential calls. With no retry, one transient failure anywhere in the
-// sweep aborted the nightly pass for every source. This file is the black-box
-// half of the regression: it uses only the exported seed and a real
-// stellarrpc.Client, so it COMPILES against a no-retry seed and fails there on
-// behaviour. The schedule/budget/classification half is in
+// compute-completeness and verify-reconciliation fail CLOSED on a seed error, and the seed
+// sweeps a PUBLIC third-party RPC with 1+3N sequential calls, so without retry one transient
+// failure aborts the nightly pass for every source. This is the black-box half: it uses only
+// the exported seed and a real stellarrpc.Client, so it compiles against a no-retry seed and
+// fails on behaviour. The schedule/budget/classification half is in
 // factory_seed_retry_internal_test.go.
 
 // seedFault is one scripted failure the fake RPC serves INSTEAD of an answer.
@@ -388,11 +380,10 @@ type seedFault struct {
 	drop    bool   // hijack the connection and close it mid-request
 }
 
-// flakySorobanRPC answers the sweep's logical calls in order from `answers`
-// (base64 SCVals). Before answering logical call i it first serves every fault
-// in faults[i], one per HTTP request; a fault marked forever in `stuck` is
-// served on every request and the call never succeeds. hits counts HTTP
-// requests, per logical call.
+// flakySorobanRPC answers the sweep's logical calls in order from `answers` (base64 SCVals).
+// Before logical call i it serves every fault in faults[i], one per HTTP request; a fault
+// marked in `stuck` is served on every request and the call never succeeds. hits counts HTTP
+// requests per logical call.
 type flakySorobanRPC struct {
 	mu      sync.Mutex
 	answers []string
