@@ -6,20 +6,11 @@
 // root) plus every child contract the factory creates, recursively.
 // Topic symbols (`swap`, `deploy`, ...) are NOT unique across
 // protocols, so topic alone mis-attributes foreign contracts' events.
-// The factory check is decoder-specific; this package owns the set of
-// factory-descended child IDs plus the live-upsert persistence hook.
 //
 // A Registry is seeded three ways, all through [Registry.Seed]:
-//
-//   - Live: the decoder calls Seed(childID, factoryID, firstLedger) on
-//     a factory creation event (Blend `deploy`, Soroswap-style
-//     `new_pair`); Seed fires the persistence hook.
-//   - DB warm: at start the pipeline loads the `protocol_contracts`
-//     table and builds the decoder with WithSeed, so a restart resumes
-//     complete although the projector cursor is past the creation events.
-//   - Genesis / reconcile: operator tooling walks the lake and Seeds
-//     each child.
-//
+// live (a factory creation event; Seed fires the persistence hook),
+// DB warm (the `protocol_contracts` table, via WithSeed), and
+// genesis / reconcile (operator tooling walks the lake).
 // Seed may run concurrently with reads, so the set is mutex-guarded.
 package contractid
 

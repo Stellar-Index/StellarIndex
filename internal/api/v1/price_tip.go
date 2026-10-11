@@ -472,17 +472,11 @@ func (s *Server) tipWindowVWAP(ctx context.Context, asset, quote canonical.Asset
 //
 // A SAC-wrapped classic's Soroban SAC/SAC pool is routinely orders of magnitude
 // thinner than its SDEX book. Merging it unasked would let ONE trade on a tiny
-// pool be the served tip whenever the SDEX book was silent in the window, with no
-// gate on the pool itself: the substance gate measures the alias union (which the
-// deep book clears on the pool's behalf), the trailing-baseline guard never runs
-// on this surface, and the window VWAP reads raw trades. That is the thin-pool
-// third-alias shape the SAC-LAST ordering of canonical.AssetAliases exists to
-// stop; a merge has no "last", so this gives it one. A SAC-form combination the
-// caller did not name is returned in `last`, and computeTip reads it only after
-// the established combinations, the closed-bucket read and every other fallback
-// have missed. A Soroban-only market therefore still serves from its pool, and a
-// SAC print can never displace or blend into an answer the established forms can
-// give.
+// pool be the served tip whenever the SDEX book was silent, with no gate on the
+// pool itself. That is the thin-pool third-alias shape the SAC-LAST ordering of
+// canonical.AssetAliases exists to stop; a merge has no "last", so this gives it
+// one: a SAC-form combination the caller did not name is returned in `last`, and
+// computeTip reads it only after every other fallback has missed.
 //
 // A caller who names a SAC form keeps the full cross in `merge`. Identity
 // combinations (native/crypto:XLM collapsing) are dropped.

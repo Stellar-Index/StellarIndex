@@ -337,9 +337,9 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 }
 
 // recentClosedWithStablecoinFallback wraps PriceReader.RecentClosedSnapshots
-// with the same X/fiat:USD → X/<peg> retry shape used in the
-// other handler-side stablecoin-proxy fallbacks. When the literal
-// asset/fiat:USD lookup returns an empty slice AND quote is fiat:USD AND the operator declared
+// with the same X/fiat:USD -> X/<peg> retry shape used in the other
+// handler-side stablecoin-proxy fallbacks. When the literal asset/fiat:USD
+// lookup returns an empty slice AND quote is fiat:USD AND the operator declared
 // classic USD pegs, walks the pegs and returns the first non-empty
 // asset/<peg> result. viaPeg=true on the return so the envelope can
 // stamp the peg-served series stale and triangulated.
@@ -349,16 +349,9 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 // [Server.walkUSDPegs]); if none does, the first withheld verdict is
 // returned so the handler answers withheld rather than 200 [].
 //
-// Without this, /v1/oracle/prices?asset=native silently returns an
-// empty data array on Stellar mainnet — the same failure as a
-// lastprice without its fallback, expressed as 200-empty rather than
-// 404.
-//
-// Both the literal-quote read and the peg walk go through
-// [Server.recentClosedForAliases], the same XLM dual-form alias loop
-// lastprice/x_last_price use via readPriceWithAliases — without it,
-// `/v1/oracle/prices?asset=native` misses a `crypto:XLM/fiat:USD`
-// bucket the aggregator wrote under the alias spelling.
+// Both reads go through [Server.recentClosedForAliases], the XLM dual-form
+// alias loop, so `/v1/oracle/prices?asset=native` finds a `crypto:XLM/fiat:USD`
+// bucket written under the alias spelling.
 func (s *Server) recentClosedWithStablecoinFallback(
 	ctx context.Context, asset, quote canonical.Asset, n int,
 ) (snapshots []PriceSnapshot, viaPeg bool, err error) {

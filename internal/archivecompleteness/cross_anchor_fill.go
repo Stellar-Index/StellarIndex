@@ -365,24 +365,17 @@ func (f *CrossAnchorFiller) fetchOne(ctx context.Context, seq uint32, rng *rand.
 	//
 	// 0755, not 0750: the daemon runs as root but the archive exists to
 	// be READ by the verifier (stellar-archivist / verify-archive -tier
-	// checkpoint), which runs as a non-root service user. Directories
-	// created 0750 root:root make every file this filler places
-	// unreadable by that consumer — including the files it has just
-	// chowned to stellar:stellar for exactly that purpose, since the
-	// chown covers the file and never its parent. A measurement on r1
-	// found 24 depth-2 directories non-o+rx, covering 24,044 checkpoints
-	// (2.4% of the archive, and the ENTIRE recent window); the ADR-0017
-	// anchor check would have failed with EACCES — which the verifier
-	// treats as a hard mismatch, not a missing file — for every
-	// checkpoint above ~63,180,000.
+	// checkpoint), which runs as a non-root service user. A 0750 root:root
+	// directory makes every file placed unreadable by it, even the files chowned
+	// to stellar:stellar, since the chown never covers the parent. The ADR-0017
+	// anchor check would fail with EACCES, which the verifier treats as a hard
+	// mismatch, not a missing file.
 	//
 	// nolint:gosec // G301 wants <=0750. Deliberate: this is public
-	// blockchain history whose whole purpose is to be read back by a
-	// verifier running as a DIFFERENT service user than the chown target
-	// (r1: the filler chowns to stellar, verify-archive runs as
-	// stellarindex), so group permission does not cover it and 0750
-	// silently locks out the only consumer. No secret is exposed — every
-	// byte here is fetched from public unauthenticated mirrors.
+	// blockchain history read back by a verifier running as a DIFFERENT service
+	// user than the chown target (r1: stellar vs stellarindex), so 0750 locks out
+	// the only consumer. No secret is exposed: every byte is fetched from public
+	// unauthenticated mirrors.
 	if err := os.MkdirAll(filepath.Dir(finalPath), 0o755); err != nil { //nolint:gosec // see note above
 		return tries, fmt.Errorf("mkdir parent: %w", err)
 	}

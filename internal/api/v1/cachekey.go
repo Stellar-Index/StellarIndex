@@ -19,16 +19,13 @@ import (
 //     [cacheKey.strSet], which ORDER-NORMALISES the slice.
 //
 // Grammar: each field is length-prefixed, `<len>:<bytes>`, and fields are
-// concatenated (netstring-style). Two different field sequences can never
-// serialize to the same string whatever bytes a field contains: there is no
-// separator byte for content to forge. A `|`-delimited grammar was unsafe because a
-// hostile filter value or cursor could contain '|' (str("a|b").str("c") and
-// str("a").str("b|c") rendered identically), serving one caller another caller's
+// concatenated (netstring-style), so there is no separator byte for content to
+// forge. A `|`-delimited grammar was unsafe: str("a|b").str("c") and
+// str("a").str("b|c") rendered identically, serving one caller another caller's
 // cached page.
 //
-// This is the in-process analogue of internal/cachekeys (the Redis key grammar,
-// ADR-0007). It stays local to package v1 because the keys reference the timescale
-// sort-order enums and cachekeys must not depend on the storage layer.
+// In-process analogue of internal/cachekeys (the Redis key grammar, ADR-0007);
+// local to package v1 because cachekeys must not depend on the storage layer.
 type cacheKey struct {
 	b strings.Builder
 }
