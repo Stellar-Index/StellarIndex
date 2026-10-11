@@ -23,14 +23,11 @@ const oxrMaxBody = 1 << 20
 // whole: the worker must see no rates rather than a partial board.
 var ErrOXRBoard = errors.New("forex: openexchangerates board refused")
 
-// OpenExchangeRatesProvider adapts Open Exchange Rates' latest.json into
-// the worker's USD-base contract. Its board is republished hourly, where
-// massive's grouped aggregate is a daily bar.
+// OpenExchangeRatesProvider adapts Open Exchange Rates' latest.json into the worker's USD-base
+// contract; the board is republished hourly, unlike massive's daily bar.
 //
-// The Free plan allows 1,000 requests a month and refuses the `base` and
-// `symbols` parameters, so the request carries no query string at all. The
-// app id travels only in the Authorization header, which keeps it out of
-// every URL, log line and error the provider produces.
+// The Free plan refuses `base` and `symbols`, so the request has no query string, and the app id
+// travels only in the Authorization header, keeping it out of every URL, log line and error.
 type OpenExchangeRatesProvider struct {
 	AppID string
 	// Endpoint overrides [OpenExchangeRatesEndpoint]; tests point it at

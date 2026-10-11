@@ -1,12 +1,9 @@
-// Package poloniex derives XLM/USD daily bars for the pre-Kraken span
-// from Poloniex's BTC-quoted XLM market crossed with a USD-quoted BTC
-// leg. It is history only: no streamer, no live path.
+// Package poloniex derives XLM/USD daily bars for the pre-Kraken span from Poloniex's BTC-quoted
+// XLM market crossed with a USD-quoted BTC leg. It is history only: no streamer, no live path.
 //
-// The bars are a different kind of observation from a fill-derived VWAP
-// (one daily close times one daily close, through a BTC pivot), so they
-// are stamped with their own [SourceName], registered with
-// IncludeInVWAP=false, and surface on /v1/ohlc through each bar's
-// `sources`.
+// The bars (one daily close times one daily close, through a BTC pivot) are not fill-derived VWAP
+// observations, so they carry their own [SourceName], are registered with IncludeInVWAP=false, and
+// surface on /v1/ohlc through each bar's `sources`.
 package poloniex
 
 import (

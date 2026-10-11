@@ -12,13 +12,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// ─── `-tier exact -chunks` — the peg identity's half of the walk ────────
-//
-// The chunk driver (usd_volume_restamp_chunks.go) owns chunks, compression policy, the run lock
-// and the free-space guard; this file runs the exact UPDATE on one chunk slice. DML into a
-// compressed chunk decompresses it, so the per-chunk bracket is what keeps this from taking days.
-// `-chunk-batch` and the relative-move flags are refused here: an identity has no move distribution.
-// Fail-closed dry run: without `-write` it only counts and decompresses nothing.
+// `-tier exact -chunks` is the peg identity's half of the walk. The chunk driver
+// (usd_volume_restamp_chunks.go) owns chunks, compression policy, the run lock and the free-space
+// guard; this file runs the exact UPDATE on one chunk slice. DML into a compressed chunk
+// decompresses it, so the per-chunk bracket is what keeps this from taking days. `-chunk-batch` and
+// the relative-move flags are refused: an identity has no move distribution. Without `-write` it
+// only counts and decompresses nothing (fail-closed dry run).
 
 // exactChunkStore is the exact tier's seam: the driver's chunk and policy
 // primitives, the day walk's classify/count/apply trio, and the in-chunk

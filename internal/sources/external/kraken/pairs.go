@@ -6,22 +6,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// DefaultPairs returns the built-in Kraken symbol → canonical.Pair
-// map — XLM across the three fiat currencies Kraken lists it
-// against, two crypto anchors, plus the top-cap globals against
-// USD. Kraken lists every major we want for cross-venue VWAP
-// coverage.
+// DefaultPairs returns the built-in Kraken symbol to canonical.Pair map: XLM against the three
+// fiats Kraken lists, two crypto anchors, and the top-cap globals against USD for cross-venue
+// VWAP coverage.
 //
-// XLM is represented as crypto:XLM so it aligns with Binance's
-// XLMUSDT and with Reflector CEX outputs. Fiats use the fiat:
-// asset variant.
-//
-// Kraken wire-format symbols use "/" separators — "XLM/USD", not
-// "XLMUSD".
-//
-// Top-cap globals all verified live via /0/public/Ticker
-// (full set: ADA, ATOM, AVAX, BCH, BNB, DASH, DOGE,
-// DOT, LINK, LTC, NEAR, SHIB, SOL, TON, TRX, UNI, XRP).
+// XLM is crypto:XLM so it aligns with Binance's XLMUSDT and Reflector CEX outputs; fiats use the
+// fiat: variant. Kraken wire symbols use "/" separators ("XLM/USD", not "XLMUSD").
 func DefaultPairs() (map[string]canonical.Pair, error) {
 	xlm, err := canonical.NewCryptoAsset("XLM")
 	if err != nil {

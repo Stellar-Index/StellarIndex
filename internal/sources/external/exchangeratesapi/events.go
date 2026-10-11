@@ -1,18 +1,15 @@
 // Package exchangeratesapi polls exchangeratesapi.io's REST endpoint
 // for fiat reference rates.
 //
-// It emits canonical.OracleUpdate, not Trade: an FX reference rate is a
-// computed benchmark, not an executed trade. The triangulation layer uses
-// it (`XLM/USD × USD/EUR = XLM/EUR`) when no venue trades a pair directly.
-// Its registry class is ClassExchange, a first-party computation.
+// It emits canonical.OracleUpdate, not Trade: an FX reference rate is a computed benchmark, not an
+// executed trade. The triangulation layer uses it (`XLM/USD × USD/EUR = XLM/EUR`) when no venue
+// trades a pair directly.
 //
-// Professional tier is the minimum: it is the first with a USD base and
-// redistribution rights. The free tier (EUR base only) is rejected at
-// startup, because a EUR-only base would force every FX consumer to
+// Professional tier is the minimum (first with a USD base and redistribution rights). The free
+// tier (EUR base only) is rejected at startup, because it would force every FX consumer to
 // triangulate through EUR.
 //
-// Wire format verified against
-// https://exchangeratesapi.io/documentation:
+// Wire format (https://exchangeratesapi.io/documentation):
 //
 //	GET https://api.exchangeratesapi.io/v1/latest?access_key=KEY&base=USD&symbols=EUR,GBP,JPY,...
 //
@@ -45,27 +42,19 @@ const LatestPath = "/latest"
 // resolution.
 const DefaultPollInterval = 60 * time.Second
 
-// DefaultDecimals is the precision at which we scale the incoming
-// float64 rates. Five decimal places is enough for G10 cross-rates
-// (typical precision ~4dp); 6 gives headroom for EM currencies. This
-// is the scale of the venue's RATE, not the price we emit — see
-// InvertedDecimals.
+// DefaultDecimals is the scale applied to the incoming float64 rates: 6dp covers G10 crosses
+// (~4dp typical) with headroom for EM currencies. It scales the venue's RATE, not the emitted
+// price; see InvertedDecimals.
 const DefaultDecimals uint8 = 6
 
-// InvertedDecimals is the scale of the EMITTED price, after
-// inverting the venue's base-per-symbol rate. Inverting at the same
-// scale as the input quantises weak-currency prices by up to ~1.2%:
-// a rate in the tens of thousands leaves only 1-2
-// significant digits once re-expressed at 6dp. Widening the output
-// to 12dp keeps the round-trip accurate regardless of the rate's
-// magnitude.
+// InvertedDecimals is the scale of the EMITTED price after inverting the venue's base-per-symbol
+// rate. Inverting at the input scale quantises weak-currency prices by up to ~1.2% (a rate in the
+// tens of thousands keeps only 1-2 significant digits at 6dp); 12dp keeps the round-trip accurate
+// at any magnitude.
 const InvertedDecimals uint8 = 12
 
-// DefaultBase is the base currency we query when operator doesn't
-// override. USD is chosen because: (1) it's our primary quote asset,
-// (2) triangulating other pairs through USD matches most consumer
-// expectations, (3) free tier's EUR-only-base is unusable anyway so
-// we may as well bake USD in as the opinionated default.
+// DefaultBase is the base currency queried unless the operator overrides it. USD is our primary
+// quote asset and the usual triangulation pivot.
 const DefaultBase = "USD"
 
 // Compile-time assertion: exchange class in registry.

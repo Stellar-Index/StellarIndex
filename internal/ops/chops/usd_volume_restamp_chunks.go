@@ -28,7 +28,8 @@ import (
 // A DML into a compressed chunk decompresses it wholesale, so per chunk, oldest first, the walk
 // decompresses, restamps in -chunk-batch transactions, re-compresses and heartbeats. Guards: a
 // session advisory lock, the compression policy paused for -write and restored on every exit
-// path, a free-space pre-flight, a refusal of live-adjacent chunks, and re-compression of a failed chunk.
+// path, a free-space pre-flight, a refusal of live-adjacent chunks, and re-compression of a
+// failed chunk.
 
 // chunkRestampStore is the DRIVER's seam: the chunk, policy and lock
 // primitives, and nothing that knows a tier. *timescale.Store satisfies
@@ -485,26 +486,25 @@ type chunkRestampWalk struct {
 	moved uint64
 }
 
-// defaultChunkBytesPoll is how often the walk re-reads the chunk's live
-// on-disk size while it is inside that chunk.
-//
-// 30 s suits a phase measured in hours: it must beat the alert's 30-minute flat window with margin
-// for a scrape gap or slow catalog read, yet stay cheap (180 reads over a 1.5-hour decompress).
+// defaultChunkBytesPoll is how often the walk re-reads the chunk's live on-disk size. 30 s must
+// beat the alert's 30-minute flat window with margin for a scrape gap or slow catalog read, yet
+// stay cheap (180 reads over a 1.5-hour decompress).
 const defaultChunkBytesPoll = 30 * time.Second
 
 // watchChunkBytes publishes the chunk's live on-disk size as byte progress while the walk is
 // inside that chunk, and returns the stop for the poll.
 //
 // A decompress is the longest step (up to ~1.5 h) with zero row progress, so
-// stellarindex_ops_job_no_progress would ticket every healthy run; muting it would blind it where a
-// wedge is likeliest. decompress_chunk grows the chunk's own relations, so the size climbs while it
-// runs and stays flat when wedged.
+// stellarindex_ops_job_no_progress would ticket every healthy run, and muting it would blind it
+// where a wedge is likeliest. decompress_chunk grows the chunk's own relations, so the size climbs
+// while it runs and stays flat when wedged.
 //
-// The re-compress is not covered, as its new relation is invisible until commit. The largest chunk's
-// outlasts the alert, which fails safe with one extra ticket; confirm with pg_stat_activity.
+// The re-compress is not covered, as its new relation is invisible until commit; the largest
+// chunk's outlasts the alert, which fails safe with one extra ticket (confirm with
+// pg_stat_activity).
 //
-// FAIL-SOFT: a failed poll is skipped. A never-succeeding poll leaves the counter flat, which the
-// alert already covers.
+// Fail-soft: a failed poll is skipped, and a never-succeeding one leaves the counter flat, which
+// the alert already covers.
 func (w *chunkRestampWalk) watchChunkBytes(ctx context.Context, c timescale.TradeChunk) (stop func()) {
 	poll := w.copts.ChunkBytesPoll
 	if poll <= 0 {
@@ -722,14 +722,12 @@ type chunkPreflight struct {
 	Err error
 }
 
-// chunkRestampPreflight decides whether a -write run may start — and,
-// called again per chunk with that chunk's size, whether the next
-// decompress may go ahead.
+// chunkRestampPreflight decides whether a -write run may start and, called again per chunk with
+// that chunk's size, whether the next decompress may go ahead.
 //
-// The figure compared is, in order of preference: -min-free-bytes when
-// the operator gave one (trusted as stated, warned about loudly);
-// otherwise statfs on the directory the database reports for `trades`,
-// only when the DSN dials this host. Neither available is a refusal, not a guess.
+// The free figure is -min-free-bytes when the operator gave one (trusted as stated, warned about
+// loudly), otherwise statfs on the directory the database reports for `trades`, only when the DSN
+// dials this host. Neither available is a refusal, not a guess.
 func chunkRestampPreflight(ctx context.Context, store interface {
 	TradesDataVolumePath(context.Context) (string, error)
 }, largest int64, copts chunkRestampOptions,

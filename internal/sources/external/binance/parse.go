@@ -11,22 +11,16 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external/scale"
 )
 
-// externalAmountDecimals is the fixed integer scale every off-chain
-// source normalises to when populating canonical.Trade.BaseAmount /
-// QuoteAmount. On-chain sources use per-asset decimals (XLM=7,
-// Soroban tokens vary); off-chain venues quote in decimal strings
-// with vendor-specific precision. Picking 10^8 uniformly:
+// externalAmountDecimals is the fixed integer scale off-chain sources normalise to when populating
+// canonical.Trade.BaseAmount / QuoteAmount. On-chain sources use per-asset decimals (XLM=7,
+// Soroban tokens vary); off-chain venues quote decimal strings of vendor-specific precision.
+// 10^8 matches crypto-native convention (most exchanges use up to 8 dp), matches Redstone's
+// on-chain price scale so aggregator math can mix on- and off-chain Amounts, and leaves headroom
+// for FX precision (5-6 dp).
 //
-//   - Matches crypto-native convention (most exchanges use ≤8 dp).
-//   - Matches Redstone's on-chain price scale, so aggregator math
-//     can mix on- and off-chain Amounts in the same VWAP if the
-//     policy elects to.
-//   - Headroom for typical FX precision (5–6 dp) without overflow.
-//
-// Aggregator queries must know which side of the boundary the trade
-// came from; canonical.Trade.Source + external.Lookup(source).Class
-// answers that cleanly — ClassExchange off-chain sources carry
-// 10^8 scale, on-chain sources carry their native token scale.
+// Aggregator queries must know which side of the boundary a trade came from:
+// canonical.Trade.Source + external.Lookup(source).Class say whether it carries 10^8 or its
+// native token scale.
 const externalAmountDecimals = 8
 
 // combinedFrame is the outer envelope every combined-stream message
@@ -54,12 +48,9 @@ type aggTradePayload struct {
 }
 
 // parseAggTradeFrame unmarshals a raw WS frame into canonical.Trade.
-// Returns ErrMalformedFrame for JSON shape problems; ErrUnknownSymbol
-// if the symbol isn't in pairMap.
-//
-// pairMap maps Binance symbols (uppercase, no separator) to their
-// canonical.Pair. Supplied by the streamer at construction so the
-// parser stays pure — no package-global state, trivial to unit-test.
+// Returns ErrMalformedFrame for JSON shape problems and ErrUnknownSymbol if the symbol isn't in
+// pairMap, which maps Binance symbols (uppercase, no separator) to their canonical.Pair. The
+// streamer supplies it so the parser stays pure, with no package-global state.
 func parseAggTradeFrame(raw []byte, pairMap map[string]canonical.Pair) (canonical.Trade, error) {
 	var env combinedFrame
 	if err := json.Unmarshal(raw, &env); err != nil {
@@ -124,12 +115,10 @@ func parseAggTradeFrame(raw []byte, pairMap map[string]canonical.Pair) (canonica
 	}, nil
 }
 
-// formatTxHash synthesises a 64-hex-char identifier from the venue
-// symbol + aggregate trade ID. canonical.Trade.Validate() requires a
-// 64-char hex string; CEX trades have no natural Stellar-shaped hash,
-// so we construct a stable one per aggregated fill. (symbol, aggID)
-// is unique only while the whole seed fits the hash: a symbol over 11
-// bytes would truncate aggID's low digits, so it is refused instead.
+// formatTxHash synthesises a 64-hex-char identifier from the venue symbol + aggregate trade ID,
+// since canonical.Trade.Validate() requires one and CEX trades have none. (symbol, aggID) is
+// unique only while the whole seed fits the hash: a symbol over 11 bytes would truncate aggID's
+// low digits, so it is refused instead.
 func formatTxHash(symbol string, aggID int64) (string, error) {
 	return scale.StrictSyntheticTxHash(fmt.Sprintf("%s-%020d", strings.ToUpper(symbol), aggID))
 }

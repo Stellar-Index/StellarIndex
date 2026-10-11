@@ -18,8 +18,7 @@ import (
 
 // ─── `usd-volume-restamp -tier xlm-base` — the anchor re-derive ─────
 //
-// Unlike the exact tier (usd_volume_restamp.go), this re-derives an
-// ESTIMATED tier, so its guards differ:
+// Unlike the exact tier (usd_volume_restamp.go), this re-derives an ESTIMATED tier, so:
 //
 //   - the value comes from usdVolumeViaXLMBaseAnchor, which the live insert calls too;
 //   - a row the anchor cannot price is reported, never guessed, as committing the defective
@@ -27,24 +26,19 @@ import (
 //   - the run is bounded, idempotent and resumable, and nothing spans a chunk;
 //   - it refuses a range the live ingest tail has not passed (checkRestampLiveOverlap).
 //
-// `-report` prints the decision block read BEFORE authorising a production
-// run (counts, NULL->value population, move distribution, USD sums,
-// extremes, a sample); it writes nothing and refuses -write.
+// `-report` prints the decision block to read BEFORE authorising a production run; it writes
+// nothing and refuses -write.
 
-// xlmBaseRestampStore is the slice of [timescale.Store] the re-derive
-// walks through: plan a window, apply the plan. A seam rather than the
-// concrete store so the chunk walk (usd_volume_restamp_chunks.go) can be
-// driven against a scripted double; production passes the store itself.
+// xlmBaseRestampStore is the slice of [timescale.Store] the re-derive uses (plan a window, apply
+// the plan), a seam so the chunk walk can be driven against a scripted double.
 type xlmBaseRestampStore interface {
 	PlanXLMBaseUSDVolumeRestamp(ctx context.Context, p timescale.XLMBaseRestampParams) (*timescale.XLMBaseRestampPlan, error)
 	ApplyXLMBaseUSDVolumeRestamp(ctx context.Context, plan *timescale.XLMBaseRestampPlan, generation int64, batch int) (int64, error)
 }
 
-// xlmBaseRestampRun carries one ESTIMATED tier's invocation: its fixed
-// inputs and its running totals across days (or chunks).
-//
-// It is named for its first tier but carries every estimated tier (xlm-base, xlm-quote, cex-fx),
-// which differ only in the [estimatedTierProfile] below.
+// xlmBaseRestampRun carries one ESTIMATED tier's fixed inputs and running totals across days or
+// chunks. Despite the name it serves every estimated tier (xlm-base, xlm-quote, cex-fx), which
+// differ only in the [estimatedTierProfile] below.
 type xlmBaseRestampRun struct {
 	// tier is the -tier value this run repairs; plan and apply are that
 	// tier's own halves of the walk.
@@ -222,19 +216,13 @@ func (r *xlmBaseRestampRun) summary(cfgPath string, from, to time.Time) string {
 	return b.String()
 }
 
-// xlmBaseRestampCAGGs is the ordered list of continuous aggregates a
-// finished restamp must be followed by, with each one's minimum refresh
-// window (Timescale rejects a window narrower than 2× the bucket with
-// SQLSTATE 22023).
+// xlmBaseRestampCAGGs is the ordered list of continuous aggregates a finished restamp must be
+// followed by, with each one's minimum refresh window (Timescale rejects a window narrower than 2x
+// the bucket with SQLSTATE 22023).
 //
-// The acceptance check (verify-usd-volume) reads `trades` directly, but
-// every served volume surface reads an aggregate whose auto-refresh
-// start_offset reaches back at most days to months, so without this step
-// the check goes green while the API keeps serving pre-restamp numbers.
-//
-// It aliases [timescale.TradesCAGGs] rather than copying it: hand-kept
-// copies drifted and listed aggregates RefreshContinuousAggregate cannot
-// refresh.
+// verify-usd-volume reads `trades` directly, but served volume reads aggregates whose auto-refresh
+// reaches back only days to months, so without this step the check goes green while the API keeps
+// serving pre-restamp numbers. It aliases [timescale.TradesCAGGs] because hand-kept copies drifted.
 var xlmBaseRestampCAGGs = timescale.TradesCAGGs
 
 // followUp is the run's post-write block: the ordered CAGG refresh every
@@ -271,8 +259,8 @@ const xlmBaseMinRelDeltaGuidance = "\nFLAG GUIDANCE — `-min-rel-delta 0.001` i
 // volume reads continuous aggregates, which do not refresh this far back on their own.
 //
 // The window [from 00:00Z, to+1d 00:00Z) is padded by [timescale.PadRefreshWindow] to clear
-// Timescale's 2-bucket minimum. Padding re-materialises unchanged buckets cheaply; a rejected
-// call is costly, as an operator who skips that aggregate ships a partially stale surface.
+// Timescale's 2-bucket minimum. Padding re-materialises unchanged buckets cheaply, whereas a
+// rejected call leaves an operator skipping that aggregate and serving a partially stale surface.
 func restampCAGGFollowUp(from, to time.Time) string {
 	lo := from.UTC().Truncate(24 * time.Hour)
 	hi := to.UTC().Truncate(24*time.Hour).AddDate(0, 0, 1)
@@ -582,21 +570,17 @@ func parseMinRelDelta(s string) (*big.Rat, error) {
 	return r, nil
 }
 
-// checkRestampLiveOverlap is the one-writer contract for a `trades`
-// re-stamp, the direct analogue of projected-rebuild's
-// [checkLiveCursorGuard].
+// checkRestampLiveOverlap is the one-writer contract for a `trades` re-stamp, analogous to
+// projected-rebuild's [checkLiveCursorGuard].
 //
 // `trades.usd_volume` has one live writer, the indexer at the `ledgerstream` cursor, so a restamp
 // is legitimate only behind that cursor. If the tail is below the window's top (resync, stall,
 // rewind), the restamp's high derive_generation wins ON CONFLICT and discards the ingest value, or
 // rewrites a row the tail is about to overwrite, reporting a correction that did not survive.
 //
-// haveLive=false (no ledgerstream cursor at all) is a conservative
-// REFUSAL, exactly as it is for projected-rebuild: an indexer that has
-// never run will walk this range.
-//
-// allowOverlap is the operator's explicit "I have verified the live
-// indexer will not touch this range" override.
+// haveLive=false (no ledgerstream cursor) is a conservative REFUSAL: an indexer that has never run
+// will walk this range. allowOverlap is the operator's explicit override, asserting the live
+// indexer will not touch the range.
 func checkRestampLiveOverlap(haveLive bool, liveLastLedger, windowTopLedger uint32, allowOverlap bool) error {
 	if allowOverlap {
 		return nil

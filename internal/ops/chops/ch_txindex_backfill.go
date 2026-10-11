@@ -8,22 +8,17 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// chTxIndexBackfill fills stellar.tx_hash_index (the hash-ordered
-// GET /v1/tx/{hash} lookup table, docs/operations/perf-todo.md §4) from
-// stellar.transactions history in windowed, resumable INSERT…SELECT chunks.
-// The tx_hash_index_mv materialized view indexes everything ingested after
-// the schema deploy; this covers the ~10.2B rows behind it. Pure
-// ClickHouse-side SQL — no galexie walk, no config file needed.
+// chTxIndexBackfill fills stellar.tx_hash_index (the hash-ordered GET /v1/tx/{hash} lookup table)
+// from stellar.transactions history in windowed, resumable INSERT…SELECT chunks. The
+// tx_hash_index_mv materialized view indexes everything ingested after the schema deploy; this
+// covers the ~10.2B rows behind it. Pure ClickHouse-side SQL, no galexie walk or config needed.
 //
-// Operator cautions for the full-history run on r1 (perf-todo §4): the
-// operator serializes it (don't run alongside other heavy CH jobs), and runs
-// it under the root-<2G watchdog — heavy CH load can wedge the CH log
-// channel on the small root partition. Each window prints a resume point; on
-// interrupt/failure re-run with that -from.
+// Run the full-history backfill alone (not beside other heavy CH jobs) and under the root-<2G
+// watchdog, since heavy CH load can wedge the CH log channel on the small root partition. Each
+// window prints a resume point; on interrupt or failure re-run with that -from.
 //
-// The flag defaults (-from 2 / -to 0=tip) would make a bare
-// `ch-txindex-backfill` start the whole ~10.2B-row backfill, so the run needs
-// an explicit -from, -to, or -full.
+// The flag defaults (-from 2 / -to 0=tip) would make a bare invocation start the whole backfill,
+// so the run needs an explicit -from, -to, or -full.
 type txIndexBackfillPlan struct {
 	chAddr string
 	from   uint32

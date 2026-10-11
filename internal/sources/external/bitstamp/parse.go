@@ -23,14 +23,9 @@ type eventEnvelope struct {
 	Data    json.RawMessage `json:"data"`
 }
 
-// tradePayload matches Bitstamp's live_trades_* data shape.
-// Field names + types verified against
-// https://www.bitstamp.net/websocket/v2/.
-//
-// We read the *_str variants for price/amount — the float64
-// siblings exist but the string form is authoritative and
-// precision-safe. Microtimestamp arrives as a string-form
-// microsecond count (not a JSON number).
+// tradePayload matches Bitstamp's live_trades_* data shape (https://www.bitstamp.net/websocket/v2/).
+// Price and amount are read from the *_str variants, which are authoritative and precision-safe,
+// unlike the float64 siblings. Microtimestamp arrives as a string-form microsecond count.
 type tradePayload struct {
 	ID             int64  `json:"id"`
 	Timestamp      string `json:"timestamp"`      // unix seconds, string
@@ -50,11 +45,9 @@ type errPayload struct {
 	Message string `json:"message"`
 }
 
-// subscriptionAck signals a subscription confirm/reject event back to
-// the streamer, modeled as an error purely as a signalling channel
-// (like ErrRequestedReconnect) — an Accepted ack is not a failure.
-// Carries the venue's channel name + message so the streamer can
-// attribute its per-symbol rejection metric and log line.
+// subscriptionAck signals a subscription confirm/reject back to the streamer. It is an error only
+// as a signalling channel (like ErrRequestedReconnect); an accepted ack is not a failure. It carries
+// the venue's channel name and message for the per-symbol rejection metric and log line.
 type subscriptionAck struct {
 	Channel  string
 	Message  string
@@ -75,11 +68,9 @@ func (a *subscriptionAck) Unwrap() error {
 	return ErrSubscriptionRejected
 }
 
-// parseFrame dispatches on the envelope's `event` field. Trade
-// frames yield one canonical.Trade; subscription confirms / rejects
-// signal a *subscriptionAck; reconnect requests signal
-// ErrRequestedReconnect — the streamer inspects the error chain to
-// react to both.
+// parseFrame dispatches on the envelope's `event` field. Trade frames yield one canonical.Trade;
+// subscription confirms/rejects signal a *subscriptionAck and reconnect requests signal
+// ErrRequestedReconnect, which the streamer detects by inspecting the error chain.
 func parseFrame(raw []byte, pairMap map[string]canonical.Pair) (canonical.Trade, bool, error) {
 	var env eventEnvelope
 	if err := json.Unmarshal(raw, &env); err != nil {
@@ -144,13 +135,10 @@ func parseTrade(env eventEnvelope, pairMap map[string]canonical.Pair) (canonical
 	}
 	quote := new(big.Int).Quo(new(big.Int).Mul(base, price), scale.Pow10(externalAmountDecimals))
 
-	// Dust filter — when base × price floor-divides to 0 (e.g. a
-	// 1e-8 XLM lot at $0.16, or any size where size_float ×
-	// price_float < 1e-8 USD), the canonical validator rejects the
-	// row with "quote_amount must be positive, got 0". These are
-	// real bitstamp trades, just below our integer-scale precision
-	// floor. Return a typed sentinel; the streamer's handleFrame drops
-	// it instead of counting it as a decode error.
+	// Dust filter: when base x price floor-divides to 0 (notional below 1e-8 of the quote), the
+	// canonical validator would reject the row as "quote_amount must be positive". These are real
+	// trades just below our integer-scale precision floor, so return a typed sentinel that
+	// handleFrame drops instead of counting a decode error.
 	if quote.Sign() == 0 {
 		return canonical.Trade{}, ErrDustTrade
 	}

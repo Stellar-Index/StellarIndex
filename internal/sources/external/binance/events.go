@@ -1,22 +1,16 @@
-// Package binance streams live aggregated trades from Binance's
-// public combined-stream WebSocket endpoint and translates them into
-// canonical.Trade values.
+// Package binance streams live aggregated trades from Binance's public combined-stream WebSocket
+// endpoint and translates them into canonical.Trade values.
 //
-// aggTrade, not raw trades: `@aggTrade` merges consecutive fills at the
-// same price in the same millisecond, which is lossless for VWAP (volume is
-// preserved) at ~5-10× lower throughput than the per-fill `@trade` stream.
+// It uses `@aggTrade`, which merges consecutive same-price fills in the same millisecond: lossless
+// for VWAP (volume is preserved) at ~5-10x lower throughput than the per-fill `@trade` stream.
 //
-// Each frame is {"stream": "xlmusdt@aggTrade", "data": {...}}; data carries
-// s (symbol), p and q (price and base quantity, exact decimal strings),
-// T (trade time, ms: the ledger-close equivalent) and m (buyer was maker,
-// so the trade was seller-initiated).
+// Each frame is {"stream": "xlmusdt@aggTrade", "data": {...}}; data carries s (symbol), p and q
+// (price and base quantity, exact decimal strings), T (trade time, ms) and m (buyer was maker, so
+// the trade was seller-initiated). Symbols are uppercase base+quote with no separator (XLMUSDT)
+// and map through a hardcoded pair map.
 //
-// Symbols are base+quote with no separator, uppercase (XLMUSDT); the
-// normalizer maps them through a hardcoded pair map.
-//
-// An XLMUSDT trade emits as canonical.Trade{Pair: XLM/USDT}: stablecoins
-// are mapped to fiat by the aggregator at compute time, never at ingest,
-// so a depeg stays visible in the data.
+// An XLMUSDT trade emits as canonical.Trade{Pair: XLM/USDT}: the aggregator maps stablecoins to
+// fiat at compute time, never at ingest, so a depeg stays visible in the data.
 package binance
 
 import (

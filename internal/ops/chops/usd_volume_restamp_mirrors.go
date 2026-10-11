@@ -12,12 +12,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// `-tier xlm-quote` (DEX trades quoted in XLM, priced through the xlm-base anchor, see
-// [timescale.Store.PlanXLMQuoteUSDVolumeRestamp]) and `-tier cex-fx` (CEX trades quoted in a
-// non-USD fiat, priced from `fx_quotes`, see [timescale.Store.PlanCEXFiatUSDVolumeRestamp])
-// share the xlm-base run, walk and guards and supply only a planner. They keep its money rules:
-// an unpriceable row is reported and left as is (never blanked or replaced by a second-choice
-// estimate at a high derive_generation), and token/token pairs with no trustworthy leg stay out.
+// `-tier xlm-quote` (DEX trades quoted in XLM, priced via the xlm-base anchor) and `-tier cex-fx`
+// (CEX trades quoted in a non-USD fiat, priced from `fx_quotes`) share the xlm-base run, walk and
+// guards and supply only a planner (see [timescale.Store.PlanXLMQuoteUSDVolumeRestamp] and
+// [timescale.Store.PlanCEXFiatUSDVolumeRestamp]). They keep its money rules: an unpriceable row is
+// reported and left as is, never blanked or replaced by a second-choice estimate at a high
+// derive_generation, and token/token pairs with no trustworthy leg stay out.
 
 // xlmQuoteRestampStore is the slice of [timescale.Store] the XLM-quote
 // mirror walks through. A seam rather than the concrete store so the walk

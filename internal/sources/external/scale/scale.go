@@ -1,11 +1,10 @@
 // Copyright (c) 2026 Stellar Index contributors.
 // SPDX-License-Identifier: Apache-2.0
 
-// Package scale holds the shared decimal/float → scaled-integer helpers
-// used by every off-chain (CEX/FX/aggregator) source under
-// internal/sources/external. On-chain sources stamp amounts at per-asset
-// decimals; off-chain sources normalise to a fixed integer scale (10^8
-// for CEX + aggregators, 10^6 for FX). These helpers do the conversion.
+// Package scale holds the shared decimal/float to scaled-integer helpers used by every off-chain
+// (CEX/FX/aggregator) source under internal/sources/external. On-chain sources stamp amounts at
+// per-asset decimals; off-chain sources normalise to a fixed scale (10^8 for CEX and
+// aggregators, 10^6 for FX).
 package scale
 
 import (
@@ -78,15 +77,10 @@ func isDigits(s string) bool {
 // FloatToScaledInt converts a non-negative float to an integer scaled to
 // decimals. Rejects negatives + NaN.
 //
-// Formats to EXACTLY `decimals` places so strconv.FormatFloat performs
-// the rounding (round-to-nearest) — NOT `decimals+2` places then a
-// truncate inside DecimalStringToScaledInt, which would drop the two
-// extra fractional digits toward zero and give every value a one-signed
-// downward bias. That is the same systematic bias InvertScaled's rounding
-// removes (ADR-0003: no biased estimator in the money path). The callers
-// here (ecb, coingecko, coinmarketcap, cryptocompare) feed only
-// VWAP-excluded reference/oracle feeds, so the practical delta is <1 ulp,
-// but the correction is free and consistent with the sibling rounding.
+// It formats to EXACTLY `decimals` places so strconv.FormatFloat rounds to nearest; formatting
+// `decimals+2` places and truncating inside DecimalStringToScaledInt would bias every value
+// downward, the same one-signed bias InvertScaled's rounding removes (ADR-0003: no biased
+// estimator in the money path).
 func FloatToScaledInt(v float64, decimals int) (*big.Int, error) {
 	if v < 0 || v != v {
 		return nil, fmt.Errorf("bad value %v", v)
@@ -99,50 +93,31 @@ func Pow10(n int) *big.Int {
 	return new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(n)), nil)
 }
 
-// SciDecimalStringToScaledInt is DecimalStringToScaledInt with
-// scientific-notation tolerance: an "eE"-bearing input is normalised
-// through float64 (formatted at targetDecimals+2 digits) before the
-// exact decimal parse. Some FX vendors emit very small inverted rates
-// in scientific notation (exchangeratesapi.io in particular); venues
-// that never do should use the strict form so a surprise exponent
-// fails loudly instead of round-tripping through float64.
+// SciDecimalStringToScaledInt is DecimalStringToScaledInt with scientific-notation tolerance: an
+// "eE"-bearing input is normalised through float64 before the exact decimal parse. Some FX vendors
+// emit very small inverted rates that way; venues that never do should use the strict form so a
+// surprise exponent fails loudly instead of round-tripping through float64.
 func SciDecimalStringToScaledInt(s string, targetDecimals int) (*big.Int, error) {
 	if s != "" && strings.ContainsAny(s, "eE") {
 		f, err := strconv.ParseFloat(s, 64)
 		if err != nil {
 			return nil, fmt.Errorf("not a decimal: %q", s)
 		}
-		// Format to EXACTLY targetDecimals places, same as
-		// FloatToScaledInt, so strconv.FormatFloat performs the
-		// rounding (round-to-nearest) instead of DecimalStringToScaledInt
-		// truncating two extra digits toward zero (a one-signed
-		// downward bias, the same class ADR-0003 rejects — see
-		// FloatToScaledInt's comment above).
+		// Format to EXACTLY targetDecimals places so FormatFloat rounds to nearest rather than
+		// truncating toward zero (see FloatToScaledInt).
 		s = strconv.FormatFloat(f, 'f', targetDecimals, 64)
 	}
 	return DecimalStringToScaledInt(s, targetDecimals)
 }
 
-// InvertScaled returns the multiplicative inverse of a positive
-// scaled integer at the same scale: 10^(2*decimals) / v, ROUNDED
-// HALF-UP. The FX pollers use it to flip a vendor's "1 base = X
-// quote" rate into our canonical "price of quote-currency in base
-// units". v must be > 0.
+// InvertScaled returns the inverse of a positive scaled integer at the same scale:
+// 10^(2*decimals) / v, ROUNDED HALF-UP. The FX pollers use it to flip a vendor's "1 base = X
+// quote" rate into the canonical "price of quote-currency in base units". v must be > 0.
 //
-// The rounding is the point. A plain Div truncates toward zero, so
-// every inverted rate lands at or below the true value: a systematic,
-// one-signed bias that accumulates across every poll of every inverted
-// pair (ECB, exchangeratesapi, Chainlink). At DefaultDecimals the
-// per-rate error is at most 1 ulp, but a biased estimator has no
-// business in the money path (ADR-0003: exact big.Int arithmetic, never
-// float, never silent truncation).
-//
-// The formula mirrors [redstone.reciprocalAtScale] for its Invert feeds;
-// the two implementations must not disagree.
-//
-// InvertScaled is the srcDecimals == dstDecimals case of
-// [InvertScaledToDecimals]; see that doc for why a caller inverting a
-// weak-currency rate should usually widen the output scale instead.
+// The rounding is the point: a plain Div truncates toward zero, so every inverted rate lands at or
+// below the true value, a one-signed bias across every poll (ADR-0003: exact big.Int arithmetic,
+// no silent truncation). The formula mirrors [redstone.reciprocalAtScale]; the two must not
+// disagree. It is the srcDecimals == dstDecimals case of [InvertScaledToDecimals].
 func InvertScaled(v *big.Int, decimals int) *big.Int {
 	return InvertScaledToDecimals(v, decimals, decimals)
 }
@@ -151,16 +126,10 @@ func InvertScaled(v *big.Int, decimals int) *big.Int {
 // positive integer scaled at srcDecimals, re-expressed at dstDecimals:
 // round_half_up(10^(srcDecimals+dstDecimals) / v).
 //
-// Precision needed for a value and precision available for its
-// reciprocal are different quantities: a rate scaled at srcDecimals
-// significant digits (e.g. "1 EUR = 25335 VND" at 6dp) inverts to a
-// value whose true magnitude is far smaller (~0.0000395), and
-// re-emitting that inverse at the SAME scale as the input rate leaves
-// only one or two significant digits — a ~1.2% quantisation error for
-// VND, more than double the 50bps divergence threshold this feed
-// exists to police. dstDecimals lets a caller widen the
-// output scale independently of the scale it inverted, without
-// touching the source rate's own precision.
+// A weak-currency rate (1 EUR = 25335 VND at 6dp) inverts to a far smaller magnitude, so
+// re-emitting it at the SAME scale leaves one or two significant digits, a ~1.2% quantisation
+// error that exceeds the 50bps divergence threshold this feed polices. dstDecimals widens the
+// output scale without touching the source rate's precision.
 func InvertScaledToDecimals(v *big.Int, srcDecimals, dstDecimals int) *big.Int {
 	num := Pow10(srcDecimals + dstDecimals)
 	// round half-up = floor((2*num + v) / (2*v)) for v > 0.
@@ -170,20 +139,14 @@ func InvertScaledToDecimals(v *big.Int, srcDecimals, dstDecimals int) *big.Int {
 	return twoNum.Quo(twoNum, twoV)
 }
 
-// SyntheticTxHash derives a stable 64-char lowercase-hex pseudo
-// tx hash from a seed string: the seed's bytes hex-encoded, truncated
-// to 64 chars and right-padded with '0'. canonical Trade/OracleUpdate
-// Validate() requires a 64-char hex tx_hash; off-chain venues have no
-// real one, so each poller formats a deterministic seed
-// ("<VENUE>-<base>-<quote>-<zero-padded ts>") and hashes it through
-// here — reruns at the same vendor timestamp collide on purpose, so
-// the idempotent insert path dedupes repeat polls.
+// SyntheticTxHash derives a stable 64-char lowercase-hex pseudo tx hash from a seed string: the
+// seed's bytes hex-encoded, truncated to 64 chars and right-padded with '0'. Validate() requires
+// a 64-char hex tx_hash and off-chain venues have none, so reruns at the same vendor timestamp
+// collide on purpose and the idempotent insert path dedupes repeat polls.
 //
-// NOTE: this deliberately preserves the historical truncated-hex form
-// (it is NOT a digest): tx_hash is the dedup identity of persisted
-// rows, so changing the derivation would re-insert history under new
-// identities. Distinct venue prefixes keep cross-venue seeds from
-// colliding within the shared 64-char window.
+// It is deliberately NOT a digest: tx_hash is the dedup identity of persisted rows, so changing
+// the derivation would re-insert history under new identities. Distinct venue prefixes keep
+// cross-venue seeds from colliding within the 64-char window.
 func SyntheticTxHash(seed string) string {
 	h := hex.EncodeToString([]byte(seed))
 	if len(h) >= 64 {
@@ -200,11 +163,9 @@ const MaxSyntheticSeedBytes = 32
 // seed SyntheticTxHash would truncate.
 var ErrSyntheticSeedTooLong = errors.New("synthetic tx_hash seed exceeds 32 bytes")
 
-// StrictSyntheticTxHash is SyntheticTxHash for a seed whose tail is part
-// of the identity (a trade id, a candle close time). Truncation would
-// drop that tail and merge distinct rows on the trades PK, so an
-// over-long seed is refused instead. For a seed that fits, the result is
-// byte-identical to SyntheticTxHash, so stored identities are unchanged.
+// StrictSyntheticTxHash is SyntheticTxHash for a seed whose tail is part of the identity (a trade
+// id, a candle close time). Truncation would merge distinct rows on the trades PK, so an over-long
+// seed is refused; a seed that fits hashes byte-identically to SyntheticTxHash.
 func StrictSyntheticTxHash(seed string) (string, error) {
 	if len(seed) > MaxSyntheticSeedBytes {
 		return "", fmt.Errorf("%w: %q is %d bytes", ErrSyntheticSeedTooLong, seed, len(seed))
@@ -221,13 +182,11 @@ const LegacyCandleGranularity = time.Hour
 // symbol is the venue-normalised symbol, closeTs the bucket's close time
 // in the venue's native unit (the value its Trade.Timestamp carries).
 //
-// Candles of different granularities close at the same instant (the last
-// 1m candle of an hour and the 1h candle), and tx_hash is the only trades
-// PK column that can tell them apart, so granularity is part of the
-// identity. LegacyCandleGranularity keeps the "<SYM>-BF-<close>" seed
-// byte-for-byte; every other granularity is a SHA-256 over a seed that
-// names it. A symbol whose legacy seed would truncate is refused at every
-// granularity, so representability does not depend on the flag.
+// Candles of different granularities close at the same instant, and tx_hash is the only trades PK
+// column that can tell them apart, so granularity is part of the identity.
+// LegacyCandleGranularity keeps the "<SYM>-BF-<close>" seed byte-for-byte; every other granularity
+// is a SHA-256 over a seed that names it. A symbol whose legacy seed would truncate is refused at
+// every granularity, so representability does not depend on the flag.
 func CandleTxHash(symbol string, closeTs int64, granularity time.Duration) (string, error) {
 	legacy, err := StrictSyntheticTxHash(fmt.Sprintf("%s-BF-%020d", symbol, closeTs))
 	if err != nil || granularity == LegacyCandleGranularity {

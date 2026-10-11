@@ -1,19 +1,16 @@
-// Package cryptocompare polls CryptoCompare's /data/pricemultifull for
-// cross-check reference prices. `ClassAggregator` — divergence
-// signal only, excluded from VWAP.
+// Package cryptocompare polls CryptoCompare's /data/pricemultifull for cross-check reference
+// prices. `ClassAggregator`: divergence signal only, excluded from VWAP.
 //
 // Wire shape (fields we read; the full object carries ~40 more):
 //
 //	GET https://min-api.cryptocompare.com/data/pricemultifull?fsyms=XLM,BTC&tsyms=USD,EUR
 //	Header: Authorization: Apikey <KEY>
 //
-// /data/pricemultifull rather than /data/pricemulti because only the
-// former carries LASTUPDATE: each row is stamped with the upstream
-// publication time, never our poll time, since the aggregator price
-// tier, price_as_of and the oracle-stale alert all read
-// OracleUpdate.Timestamp as "when this price was true". A quote with
-// no LASTUPDATE is dropped. Free tier works (~100k calls/month); paid ~$80/mo removes the
-// redistribution restriction.
+// /data/pricemultifull is used rather than /data/pricemulti because only it carries LASTUPDATE.
+// Each row is stamped with the upstream publication time, never our poll time, since the
+// aggregator price tier, price_as_of and the oracle-stale alert read OracleUpdate.Timestamp as
+// "when this price was true". A quote with no LASTUPDATE is dropped. The free tier works
+// (~100k calls/month); a paid plan removes the redistribution restriction.
 package cryptocompare
 
 import (
@@ -108,11 +105,8 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 	cryptoAssets := map[string]canonical.Asset{}
 	currencySet := map[string]struct{}{}
 	fiatAssets := map[string]canonical.Asset{}
-	// wantedCombos filters the N×M response matrix down to just
-	// the (crypto, fiat) pairs the operator actually configured.
-	// Without this, emitting the full cross-product fills
-	// oracle_updates with rows that have no corresponding
-	// aggregated output to check against.
+	// wantedCombos filters the N×M response matrix to the configured (crypto, fiat) pairs; the full
+	// cross-product would fill oracle_updates with rows that have no aggregated output to check.
 	wantedCombos := map[string]struct{}{}
 
 	for _, pair := range pairs {

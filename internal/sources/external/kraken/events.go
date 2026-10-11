@@ -1,14 +1,11 @@
-// Package kraken streams live trades from Kraken's public WebSocket
-// v2 trade channel. XLM/USD, XLM/EUR and XLM/GBP are all natively
-// quoted (no stablecoin proxy).
+// Package kraken streams live trades from Kraken's public WebSocket v2 trade channel. XLM/USD,
+// XLM/EUR and XLM/GBP are all natively quoted (no stablecoin proxy).
 //
 // Differences from Binance that shape the code:
-//   - Symbol format is "XLM/USD" (slash-separated, uppercase); pairs.go
-//     normalises both sides of the mapping.
+//   - Symbol format is "XLM/USD" (slash-separated, uppercase); pairs.go normalises both sides.
 //   - Subscription is an explicit JSON method call after connect.
-//   - Numbers arrive as JSON floats. We decode via [encoding/json.Number]
-//     to keep the original decimal string and bypass float entirely
-//     (ADR-0003).
+//   - Numbers arrive as JSON floats; decoding via [encoding/json.Number] keeps the original decimal
+//     string and bypasses float entirely (ADR-0003).
 //
 // Wire format reference: https://docs.kraken.com/api/docs/websocket-v2/trade
 //
@@ -59,11 +56,8 @@ var (
 	// map at construct time (defensive — Start rejects this path).
 	ErrUnknownSymbol = errors.New("kraken: symbol not in configured PairMap")
 
-	// ErrDustTrade — base × price floor-divided to a 0 quote
-	// amount. Tiny lots (e.g. 1e-8 XLM at $0.16) underflow the
-	// canonical.NewAmount integer scale (10^8). Real trades, but
-	// below our precision floor — drop silently rather than
-	// logging at ERROR. Same shape as the Coinbase + Binance +
-	// Bitstamp dust filter.
+	// ErrDustTrade means base x price floor-divided to a 0 quote amount: tiny lots underflow the
+	// canonical.NewAmount integer scale (10^8). Real trades below our precision floor, dropped
+	// silently rather than logged at ERROR, as in the other venues' dust filters.
 	ErrDustTrade = errors.New("kraken: dust trade (quote_amount underflow)")
 )

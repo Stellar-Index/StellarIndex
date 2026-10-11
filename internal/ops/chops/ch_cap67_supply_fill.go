@@ -8,13 +8,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// cap67SupplyFill derives mint, burn and clawback over ledgers the main
-// watermark covers but the supply range does not: first the stretch above
-// the range up to the watermark (a window whose supply extension failed),
-// then the stretch below it down to the derive floor (everything derived
-// before these kinds joined the derive). Transfers there are already in the
-// archive, so only the supply topics are streamed. The API states the supply
-// range it reads back, so the claim follows this fill rather than preceding it.
+// cap67SupplyFill derives mint, burn and clawback over ledgers the main watermark covers but the
+// supply range does not: first the stretch above the range up to the watermark (a window whose
+// supply extension failed), then the stretch below it down to the derive floor. Transfers there are
+// already in the archive, so only the supply topics are streamed. The API states the supply range
+// it reads back, so the claim follows this fill rather than preceding it.
 type cap67SupplyFill struct {
 	chAddr      string
 	window      uint32

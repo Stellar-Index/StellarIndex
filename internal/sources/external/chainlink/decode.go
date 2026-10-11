@@ -13,30 +13,20 @@ import (
 //
 //	(uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)
 //
-// Per the Solidity ABI, every fixed-size element occupies a 32-byte
-// word in the return data — even uint80 (Solidity left-pads to
-// 32 bytes for the return slot). So the response is exactly 5 × 32
-// = 160 bytes = 320 hex chars (plus the 0x prefix).
-//
-// answeredInRound is decoded so the poller can refuse a carried-forward
-// round (answeredInRound < roundId) — Chainlink's own consumer guidance.
+// Every element occupies a 32-byte ABI word (even uint80), so the response is exactly
+// 5 x 32 = 160 bytes = 320 hex chars plus the 0x prefix. answeredInRound is decoded so the poller
+// can refuse a carried-forward round (answeredInRound < roundId).
 
-// maxPlausibleUpdatedAtUnix caps the feed-reported updatedAt (Unix
-// seconds) before any clock comparison. A value that exceeds the
-// int64 / timestamptz range would wrap NEGATIVE in the int64() cast
-// (→ far-past time) or overflow the oracle_updates INSERT; bounding the
-// raw u64 first keeps every later cast provably in range, even if the
-// poller's own clock is broken.
+// maxPlausibleUpdatedAtUnix caps the feed-reported updatedAt (Unix seconds) before any clock
+// comparison. A value beyond the int64/timestamptz range would wrap NEGATIVE in the int64() cast
+// or overflow the INSERT; bounding the raw u64 first keeps every later cast in range.
 const maxPlausibleUpdatedAtUnix = 10_000_000_000 // ~year 2286
 
-// maxUpdatedAtFutureSkew is how far past the poller's own clock a
-// feed-reported updatedAt may sit. Unlike the band / reflector /
-// redstone decoders, Chainlink input is not ledger-anchored, so the
-// poller clock is the only present-time anchor. A future-dated row is
-// refused rather than clamped: it would otherwise win every "latest"
-// read for the pair and drive the staleness gauge negative until the
-// wall clock caught up. Ethereum block timestamps never lead real
-// time, so this only has to absorb host clock skew.
+// maxUpdatedAtFutureSkew is how far past the poller's own clock a feed-reported updatedAt may sit.
+// Chainlink input is not ledger-anchored, so the poller clock is the only present-time anchor. A
+// future-dated row is refused rather than clamped: it would win every "latest" read for the pair
+// and drive the staleness gauge negative. Ethereum block timestamps never lead real time, so this
+// only absorbs host clock skew.
 const maxUpdatedAtFutureSkew = 5 * time.Minute
 
 // checkUpdatedAt validates a raw feed-reported updatedAt against the
@@ -62,19 +52,11 @@ func decodeLatestRoundData(rawHex, feedAddress string, now time.Time) (Round, er
 		return Round{}, fmt.Errorf("%w: latestRoundData expected 160 bytes, got %d", ErrMalformedResult, len(bytes))
 	}
 
-	// roundId — uint80 padded to 32 bytes. We read the FULL 10-byte
-	// (80-bit) value from bytes 22..32 of word 0, not just the low
-	// 64 bits.
-	//
-	// The proxy contract's roundId is (phaseId<<64)|aggregatorRoundId.
-	// Reading only the low 64 bits (bytes[24:32]) discards the phase. On a
-	// proxy phase upgrade the aggregatorRoundId resets to ~1 while the
-	// phaseId increments, so the FULL roundId still strictly increases even
-	// though the low 64 bits regress. Dedup keyed on the low 64 bits would
-	// see round=1 <= prev=<big> and silently stop emitting until restart.
-	// Keying on the full uint80 keeps monotonicity across phase rollovers.
-	// The storage PK (source, ledger, tx_hash, op_index, ts) is idempotent,
-	// so even a re-emit on phase boundary is safe.
+	// roundId is a uint80 padded to 32 bytes; read the FULL 10 bytes (22..32 of word 0). The proxy
+	// roundId is (phaseId<<64)|aggregatorRoundId, and on a phase upgrade the low 64 bits reset
+	// while phaseId increments. Dedup keyed on the low 64 bits would then see round=1 <= prev and
+	// silently stop emitting; the full value stays monotonic. The storage PK is idempotent, so a
+	// re-emit at a phase boundary is safe.
 	roundID := decodeRoundID(bytes[22:32])
 
 	// answer — int256, two's complement, in word 1.
@@ -107,11 +89,8 @@ func decodeLatestRoundData(rawHex, feedAddress string, now time.Time) (Round, er
 //
 //	event AnswerUpdated(int256 indexed current, uint256 indexed roundId, uint256 updatedAt)
 //
-// Topics layout: [topic0=hash, topic1=current, topic2=roundId];
-// Data layout: [updatedAt (uint256, 32 bytes)].
-//
-// One log row → one Round suitable for canonical.OracleUpdate
-// projection (same as decodeLatestRoundData).
+// Topics: [topic0=hash, topic1=current, topic2=roundId]; data: [updatedAt (uint256)]. One log row
+// yields one Round, as for decodeLatestRoundData.
 func decodeAnswerUpdatedLog(entry LogEntry, now time.Time) (Round, error) {
 	if len(entry.Topics) < 3 {
 		return Round{}, fmt.Errorf("%w: AnswerUpdated expected ≥3 topics, got %d", ErrMalformedResult, len(entry.Topics))
@@ -201,14 +180,10 @@ func parseHexUint(s string) (uint64, error) {
 	return v.Uint64(), nil // i128:ok IsUint64 range-checked above
 }
 
-// decodeRoundID reads a big-endian byte slice (the 10-byte uint80
-// proxy roundId, or any width ≤ a uint256) into a *big.Int. We keep
-// the FULL value rather than truncating to uint64 so the per-feed
-// dedup key (RoundID) is phase-aware: the proxy roundId is
-// (phaseId<<64)|aggregatorRoundId and only the wide value is
-// monotonic across a phase rollover. new(big.Int).SetBytes treats the
-// input as an unsigned big-endian integer, which is exactly the
-// uint80 layout Solidity left-pads into the return slot.
+// decodeRoundID reads a big-endian byte slice (the 10-byte uint80 proxy roundId, or any width up to
+// a uint256) into a *big.Int. The FULL value is kept, not truncated to uint64, so the per-feed
+// dedup key is phase-aware: only the wide (phaseId<<64)|aggregatorRoundId is monotonic across a
+// phase rollover.
 func decodeRoundID(b []byte) *big.Int {
 	return new(big.Int).SetBytes(b)
 }

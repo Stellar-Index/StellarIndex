@@ -27,9 +27,9 @@ const passDirtySpanLedgers uint32 = 17_280
 
 // projectionPlan returns src's reconcile floor and whether this run defers src's pending dirty
 // window. Only a -pass defers, only for sources whose re-proof outlasts the pass (sdex, sep41),
-// and only when the span from the window's bottom to hi cannot fit; span decides, not Reason,
-// since a widened window keeps only its last writer's Reason. The deferral ignores the prior
-// verdict so a deferred pass's false cannot pull the next pass into a from-genesis re-proof.
+// and only when the span from the window's bottom to hi cannot fit. Span decides, not Reason,
+// because a widened window keeps only its last writer's Reason. The deferral ignores the prior
+// verdict so a deferred pass's false cannot drag the next pass into a from-genesis re-proof.
 func projectionPlan(src reconSource, pass bool, prior priorProjection, priorWatermark uint32, fromLedger uint, hi uint32, win timescale.ProjectionDirtyWindow, hasDirty bool) (projFrom uint32, deferDirty bool) {
 	projFrom = sourceProjectionFloor(src, pass, prior, priorWatermark, fromLedger)
 	if !hasDirty {

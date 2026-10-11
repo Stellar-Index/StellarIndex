@@ -25,51 +25,34 @@ const RESTEndpoint = "https://api.kraken.com"
 // Docs: https://docs.kraken.com/api/docs/rest-api/get-ohlc-data
 const ohlcPath = "/0/public/OHLC"
 
-// krakenMaxResponse is the hard cap on candles returned per call —
-// documented at 720 and unaffected by query params. Implies ~30
-// days at 1h granularity or ~30 weeks at 1d. The caller can
-// paginate via `since` but the venue's total historical depth is
-// effectively capped at this window for recent data (older data is
-// simply not served via this endpoint).
+// krakenMaxResponse is the hard cap on candles returned per call (720), unaffected by query
+// params. Pagination via `since` cannot reach past it: the venue's historical depth through this
+// endpoint is effectively this window.
 const krakenMaxResponse = 720
 
-// krakenRESTTimeout bounds EVERY REST call this package makes
-// (/OHLC and /Trades). Both pagination loops check ctx only BETWEEN
-// pages, and `stellarindex-ops backfill` hands them the process root
-// context — which carries no deadline. So a venue that accepts the
-// connection and then never writes a response is bounded by this and
-// nothing else; without it the backfill wedges until an operator
-// notices.
+// krakenRESTTimeout bounds EVERY REST call this package makes (/OHLC and /Trades). Both pagination
+// loops check ctx only BETWEEN pages and the backfill passes the deadline-free process context, so
+// a venue that accepts the connection and never responds is bounded by this alone.
 //
-// A var rather than a const purely so the backfill tests can drive the
-// real production path against a black-holing server without waiting
-// 30 s. Nothing in production reassigns it.
+// A var only so tests can drive the production path against a black-holing server quickly.
 var krakenRESTTimeout = 30 * time.Second
 
 // maxRESTBodyBytes caps every Kraken REST body read so a wedged upstream
 // streaming inside the timeout cannot OOM the ingester.
 const maxRESTBodyBytes = 20 << 20
 
-// ErrDepthExceeded marks a Backfill call whose requested `from` is older
-// than Kraken will actually serve. Kraken's /OHLC ignores `since` once it
-// is older than the venue's ~720-candle horizon and returns its most
-// recent window instead, with err=nil — so this is detected from the
-// gap between the requested start and the earliest candle actually
-// returned, not from an HTTP-level failure. Any trades fetched before
-// detection are still returned alongside this error (see partialFetchResume
-// in internal/ops/ingest/backfill_external.go).
+// ErrDepthExceeded marks a Backfill call whose requested `from` is older than Kraken will serve.
+// /OHLC ignores an out-of-horizon `since` and returns its most recent window with no error, so
+// this is detected from the gap between the requested start and the earliest candle returned.
+// Trades fetched before detection are still returned (see partialFetchResume in
+// internal/ops/ingest/backfill_external.go).
 var ErrDepthExceeded = errors.New("kraken: requested range starts before the venue's OHLC serving horizon")
 
-// Backfill implements external.Backfiller. Returns historical
-// trades synthesised from Kraken OHLC candles — one canonical.Trade
-// per bucket, with Kraken's own VWAP field providing the effective
-// price (multiplied by base volume to compute quote volume).
+// Backfill implements external.Backfiller. It synthesises one canonical.Trade per OHLC bucket,
+// with Kraken's VWAP as the effective price (times base volume for quote volume).
 //
-// IMPORTANT depth caveat: Kraken caps at 720 intervals. At 1h that's
-// ~30 days back; at 1d it's ~2 years. A `from` older than that horizon
-// returns ErrDepthExceeded (see below) rather than silently truncating;
-// it's the venue's limit, not a bug in our code. Documented in
-// external.Registry (BackfillAvailable=true with 30-day caveat).
+// Depth caveat: Kraken caps at 720 intervals (~30 days at 1h, ~2 years at 1d). A `from` older
+// than that returns ErrDepthExceeded rather than silently truncating; it is the venue's limit.
 func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to time.Time, granularity time.Duration) ([]canonical.Trade, error) { //nolint:gocognit // dispatch-heavy; splitting would reduce linearity
 	if !from.Before(to) {
 		return nil, fmt.Errorf("kraken.Backfill: from %v must be before to %v", from, to)

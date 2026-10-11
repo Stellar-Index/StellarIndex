@@ -16,11 +16,10 @@ import (
 )
 
 // dustFloorUSDMicros is the streamer dust guard's threshold: 1_000 µUSD = $0.001. CEX feeds emit
-// sub-microcent fills with tiny integer amounts (8 base for 1 quote), whose quote/base is a meaningless
-// fraction; kept, they set the UNWEIGHTED OHLC high/low and draw absurd /v1/ohlc wicks (an XLM/USD low of
-// $0.125 from a $0.00000001 fill) for ~zero volume. It is in USD, not quote units: XLM/BTC is configured
-// (binance/pairs.yaml, bitstamp/pairs.go), and a flat 0.001-quote floor (~$100 in BTC) would drop every
-// small print, SIZE-BIASING the surviving volume and VWAP.
+// sub-microcent fills with tiny integer amounts whose quote/base is a meaningless fraction; kept,
+// they set the unweighted OHLC high/low and draw absurd /v1/ohlc wicks for ~zero volume. The floor
+// is in USD, not quote units: a flat 0.001-quote floor on XLM/BTC (~$100) would drop every small
+// print, size-biasing the surviving volume and VWAP.
 const dustFloorUSDMicros = 1_000
 
 // externalQuoteScale is the fixed-point scale streamed CEX amounts
@@ -29,20 +28,18 @@ const dustFloorUSDMicros = 1_000
 // guard stays scoped to the streamer path.
 const externalQuoteScale = 100_000_000
 
-// fiatQuoteUSDMicros is the USD reference for ANY fiat quote leg: one unit ≈ $1. A per-currency table would
-// be false precision for an order-of-magnitude threshold, and would rot. It understates KWD (≈ $3.26), BHD,
-// OMR and KYD, making their floor stricter (~3.3× for KWD), the size-biased direction. That exposure is
-// bounded at compile time: every streamed fiat leg is hard-coded (kraken + bitstamp + coinbase USD/EUR/GBP,
-// binance EUR/GBP, all ≤ ~$1.35), and ExternalVenueConfig exposes only `enabled` and `poll_interval`.
-// Revisit if a pair list becomes runtime-configurable or gains a >$1.35 fiat leg.
+// fiatQuoteUSDMicros is the USD reference for ANY fiat quote leg: one unit is about $1. A
+// per-currency table would be false precision for an order-of-magnitude threshold. It understates
+// high-value currencies such as KWD, making their floor stricter, the size-biased direction. That
+// exposure is bounded at compile time because every streamed fiat leg is hard-coded (USD/EUR/GBP,
+// all at most ~$1.35). Revisit if a pair list becomes runtime-configurable or gains a pricier leg.
 const fiatQuoteUSDMicros = 1_000_000
 
-// cryptoQuoteUSDMicros is a coarse USD value of ONE whole unit of each crypto quote ticker we stream, in
-// [fiatQuoteUSDMicros] units. NOT prices: nothing served or aggregated reads them; they only convert the
-// $0.001 threshold to quote units, floored at 1, so BTC anywhere in ~$1k–$10M still gives a 1-unit floor.
-// The ingest runner has no rate source (valuation belongs downstream; internal/aggregate/stablecoin.go), so
-// a static table beside the guard is the honest option. An absent ticker means no floor
-// ([minStreamQuoteUnits]).
+// cryptoQuoteUSDMicros is a coarse USD value of ONE whole unit of each crypto quote ticker we
+// stream, in [fiatQuoteUSDMicros] units. NOT prices: nothing served or aggregated reads them; they
+// only convert the $0.001 threshold to quote units, floored at 1. The ingest runner has no rate
+// source (valuation belongs downstream), so a static table beside the guard is the honest option.
+// An absent ticker means no floor ([minStreamQuoteUnits]).
 var cryptoQuoteUSDMicros = map[string]uint64{
 	// USD-pegged stablecoins — the dominant CEX quote leg.
 	"USDT":  1_000_000,
@@ -114,11 +111,9 @@ func quoteUSDReferenceMicros(quote canonical.Asset) (uint64, bool) {
 	}
 }
 
-// minStreamQuoteUnits is the quote-leg floor, in the QUOTE asset's
-// smallest unit at the external 10^8 scale, below which a streamed
-// CEX trade is dropped as dust. Equivalent to $0.001 of notional
-// under [cryptoQuoteUSDMicros] / [fiatQuoteUSDMicros]; [noDustFloor]
-// when the quote asset has no USD reference.
+// minStreamQuoteUnits is the quote-leg floor, in the QUOTE asset's smallest unit at the external
+// 10^8 scale, below which a streamed CEX trade is dropped as dust. It equals $0.001 of notional
+// under [cryptoQuoteUSDMicros] / [fiatQuoteUSDMicros]; [noDustFloor] when there is no USD reference.
 func minStreamQuoteUnits(quote canonical.Asset) canonical.Amount {
 	ref, ok := quoteUSDReferenceMicros(quote)
 	if !ok {
@@ -257,12 +252,10 @@ func preflightPoller(p PollerSpec) error {
 	return nil
 }
 
-// declareOracleResolution gives every polled source a finite
-// stellarindex_oracle_stale budget: the registry's upstream cadence,
-// floored at the poll interval because no row's timestamp can advance
-// faster than we fetch it. A poller the registry has no cadence for
-// falls back to its poll interval rather than the undeclared +Inf,
-// which the alert's bare comparison can never exceed.
+// declareOracleResolution gives every polled source a finite stellarindex_oracle_stale budget: the
+// registry's upstream cadence, floored at the poll interval because no row's timestamp can advance
+// faster than we fetch it. A poller with no registry cadence falls back to its poll interval rather
+// than the undeclared +Inf, which the alert's bare comparison can never exceed.
 func declareOracleResolution(source string, pollInterval time.Duration) {
 	resolution := max(Lookup(source).OracleResolution, pollInterval)
 	obs.DeclareOracleResolution(source, resolution.Seconds())
@@ -283,23 +276,17 @@ func warnUnreferencedDustQuotes(source string, pairs []canonical.Pair, logger *s
 	}
 }
 
-// teardown cancels the derived streamer context and blocks until the
-// already-launched streamer goroutines have observed the cancellation
-// and exited, then returns the original error. Used by Run's poller-
-// validation error paths so a late config error doesn't leak the
-// streamer goroutines started earlier in the same call.
+// teardown cancels the derived streamer context, waits for the already-launched streamer goroutines
+// to exit, then returns the original error, so a late config error in Run does not leak them.
 func teardown(cancel context.CancelFunc, wg *sync.WaitGroup, err error) error {
 	cancel()
 	wg.Wait()
 	return err
 }
 
-// drainUntilClosed reads and discards from a streamer's trade channel
-// until it closes. Used on the streamer-Start error path:
-// the earlier streamers were started with the now-cancelled derived
-// context, so their run loops will close their channels promptly; we
-// drain so the close — and thus the goroutine exit — is not blocked on
-// a pending send, then return.
+// drainUntilClosed discards from a streamer's trade channel until it closes. On the streamer-Start
+// error path the earlier streamers run on a cancelled context and close promptly; draining keeps
+// the close, and thus the goroutine exit, from blocking on a pending send.
 func drainUntilClosed(ch <-chan canonical.Trade) {
 	for range ch {
 	}
@@ -321,11 +308,9 @@ func plausibleTradeTime(ts, now time.Time) bool {
 // cannot hold up shutdown.
 const shutdownDrainGrace = 2 * time.Second
 
-// forwardTrades drains one streamer's channel into the shared sink,
-// wrapping each trade as a TradeEvent. Returns when the source channel
-// closes (streamer shutdown) or ctx is cancelled; on cancel it first
-// flushes trades already buffered in the channel (live CEX streams have no
-// backfill), within shutdownDrainGrace.
+// forwardTrades drains one streamer's channel into the shared sink as TradeEvents. It returns when
+// the channel closes or ctx is cancelled; on cancel it first flushes already-buffered trades within
+// shutdownDrainGrace, since live CEX streams have no backfill.
 func forwardTrades(
 	ctx context.Context,
 	source string,
@@ -355,10 +340,8 @@ func forwardTrades(
 // forwardTrade applies the dust and timestamp filters and sends one trade to the sink. It
 // returns false when ctx was cancelled before the send completed.
 func forwardTrade(ctx context.Context, source string, trade canonical.Trade, sink chan<- consumer.Event) bool {
-	// Drop sub-$0.001 dust fills — see minStreamQuoteUnits. They
-	// carry no meaningful price (integer-quantised round-fraction
-	// ratios) and corrupt the OHLC high/low if ingested. The
-	// floor is resolved per QUOTE ASSET so the threshold means
+	// Drop sub-$0.001 dust fills (see minStreamQuoteUnits): their integer-quantised ratios carry no
+	// meaningful price and corrupt OHLC high/low. The floor is resolved per QUOTE ASSET so it means
 	// the same $0.001 on XLM/BTC as on XLM/USDT.
 	if trade.QuoteAmount.Cmp(minStreamQuoteUnits(trade.Pair.Quote)) < 0 {
 		obs.ExternalDustDroppedTotal.WithLabelValues(source).Inc()
@@ -415,13 +398,11 @@ func inCooldown(p Poller) bool {
 	return ok && t.CooldownRemaining() > 0
 }
 
-// pollOutcome scores one PollOnce result for the polls_total metric. Only
-// "success" and "skipped" refresh the staleness clock: (nil, nil, nil) is a
-// poller that reached upstream and found nothing new (chainlink between hourly
-// rounds; a throttle cooldown is excluded in runPoller), while non-nil but empty is an answer
-// with nothing usable in it (a renamed slug decodes to {}). "idle" is a poller
-// none of whose configured pairs it can request: config, not an upstream
-// failure, and never fresh.
+// pollOutcome scores one PollOnce result for the polls_total metric. Only "success" and "skipped"
+// refresh the staleness clock: (nil, nil, nil) is a poller that reached upstream and found nothing
+// new (a throttle cooldown is excluded in runPoller), while non-nil but empty is an answer with
+// nothing usable in it. "idle" is a poller none of whose configured pairs it can request: a config
+// problem, not an upstream failure, and never fresh.
 func pollOutcome(trades []canonical.Trade, updates []canonical.OracleUpdate, err error) string {
 	switch {
 	case errors.Is(err, ErrNoApplicablePairs):

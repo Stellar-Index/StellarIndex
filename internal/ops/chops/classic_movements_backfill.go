@@ -228,12 +228,11 @@ func classicMovementsBackfill(args []string) error { //nolint:gocognit,gocyclo,f
 	return nil
 }
 
-// classicMovementsResumeStart is the pure -resume decision: jump startLedger to
-// maxLedger only when minFound && minLedger == startLedger, which proves the data
-// starts exactly there (see sortAccountMovementRowsForInsert for why maxLedger is
-// then a sound checkpoint). Data starting ABOVE startLedger is a widened -from,
-// and jumping would skip the gap silently. The caller has already confirmed
-// maxFound && maxLedger >= startLedger.
+// classicMovementsResumeStart is the pure -resume decision: jump startLedger to maxLedger only when
+// minFound && minLedger == startLedger, which proves the data starts exactly there (see
+// sortAccountMovementRowsForInsert for why maxLedger is then a sound checkpoint). Data starting
+// ABOVE startLedger is a widened -from, and jumping would skip the gap silently. The caller has
+// already confirmed maxFound && maxLedger >= startLedger.
 func classicMovementsResumeStart(startLedger, maxLedger, minLedger uint32, minFound bool) (resumeAt uint32, jumped bool) {
 	if !minFound || minLedger != startLedger {
 		return startLedger, false
@@ -337,20 +336,16 @@ func classicMovementsDecodeOp(dec *classicmovements.Decoder, seen map[classicMov
 	}
 }
 
-// classicMovementsResolvePendingClaimableBalances is the ADR-0047 Phase 3
-// second pass over claim/clawback rows the decode loop could not correlate
-// with a create:
+// classicMovementsResolvePendingClaimableBalances is the ADR-0047 second pass over claim/clawback
+// rows the decode loop could not correlate with a create:
 //
 //  1. an in-memory re-check, closing the same-window tx_hash ordering gap;
-//  2. a re-check against res.batch, because CAP-0038 revocation creates
-//     bypass dec.Decode and are not in ClickHouse until this window is
-//     written;
-//  3. one batched clickhouse.FindClaimableBalanceCreates call for creates
-//     outside this run's range.
+//  2. a re-check against res.batch, because CAP-0038 revocation creates bypass dec.Decode and are
+//     not in ClickHouse until this window is written;
+//  3. one batched clickhouse.FindClaimableBalanceCreates call for creates outside this run's range.
 //
-// Still-unresolved rows are counted and logged, never guessed. Never returns
-// an error: a lookup failure degrades the whole miss-set to unresolved rather
-// than failing the window.
+// Still-unresolved rows are counted and logged, never guessed. It never returns an error: a lookup
+// failure degrades the whole miss-set to unresolved rather than failing the window.
 func classicMovementsResolvePendingClaimableBalances(winCtx context.Context, chAddr string, dec *classicmovements.Decoder, wlo, whi uint32, res *windowResult) {
 	pending := dec.TakePendingClaimableBalances()
 	if len(pending) == 0 {

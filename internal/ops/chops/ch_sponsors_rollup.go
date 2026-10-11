@@ -14,24 +14,19 @@ import (
 // holdersRollupLockPath).
 const sponsorsRollupLockPath = "/var/lib/stellarindex/ch-sponsors-rollup.lock"
 
-// ch-sponsors-rollup recomputes the sponsor league table (who has
-// entered into sponsorship arrangements, with how many distinct
-// accounts, and how many revocations they issued) into staging and
-// atomically exchange it live
+// ch-sponsors-rollup recomputes the sponsor league table (sponsors, distinct sponsored accounts,
+// revocations issued) into staging and atomically exchanges it live
 // (deploy/clickhouse/account_sponsors_rollup.sql).
 //
-// One pass over stellar.operations lands a narrow, deduplicated
-// projection of the three sponsorship operation types; every served
-// figure derives from those rows. No body_xdr is read — the sponsored
-// account is the End operation's source_account — which is what keeps
-// the pass affordable.
+// One pass over stellar.operations lands a narrow, deduplicated projection of the three
+// sponsorship operation types, and every served figure derives from those rows. No body_xdr is
+// read (the sponsored account is the End operation's source_account), which keeps the pass
+// affordable.
 //
-// The cycle also records the span it aggregated. That floor is protocol
-// 14's activation, where sponsorship began, so the surface can present
-// it as the feature's genesis rather than as missing coverage.
+// The cycle also records the span it aggregated; that floor is protocol 14's activation, so the
+// surface can present it as the feature's genesis rather than as missing coverage.
 //
-// Takes an exclusive advisory lock before it runs anything, for the same
-// reason ch-creators-rollup and ch-holders-rollup do: see
+// Takes an exclusive advisory lock first, as ch-creators-rollup and ch-holders-rollup do: see
 // acquireRollupLock (rollup_lock.go).
 func chSponsorsRollup(args []string) error {
 	fs, gate := opsutil.NewMutatingFlagSet("ch-sponsors-rollup")

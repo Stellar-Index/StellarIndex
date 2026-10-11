@@ -2,16 +2,15 @@ package chops
 
 import "github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 
-// unprovenCarryTargets names the targets a carried prefix would vouch for
-// without evidence: present in the served tier, not reconciled down to their
-// bottom edge by this run, and with no durable floor at or below that edge.
-// floorsToRecord writes a floor only after a clean run reached the edge, so a
-// missing or higher floor means the target was added to the catalogue, or had
-// rows projected below its old floor, since the last full reconcile.
+// unprovenCarryTargets names the targets a carried prefix would vouch for without evidence:
+// present in the served tier, not reconciled down to their bottom edge by this run, and with no
+// durable floor at or below that edge. floorsToRecord writes a floor only after a clean run
+// reached the edge, so a missing or higher floor means the target was added to the catalogue, or
+// had rows projected below its old floor, since the last full reconcile.
 //
-// Not named, because no floor can tell the cases apart: an empty target
-// (floorsToRecord never floors one), a target whose rows all start inside this
-// run's window, and a target removed and later re-added (it keeps its old floor).
+// Not named, because no floor can tell the cases apart: an empty target (floorsToRecord never
+// floors one), a target whose rows all start inside this run's window, and a target removed and
+// later re-added (it keeps its old floor).
 func unprovenCarryTargets(src reconSource, scopes []projectionScope, servedMins []servedFloor, floors map[string]timescale.CompletenessTargetFloor) []string {
 	var out []string
 	for i, tgt := range src.targets {

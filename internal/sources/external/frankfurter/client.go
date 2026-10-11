@@ -1,15 +1,11 @@
 // Package frankfurter wraps the ECB-backed Frankfurter REST API
-// (https://frankfurter.dev). Used by scripts/ops/fx-history-backfill
-// to populate fx_quotes with 25+ years of daily fiat rates without
-// requiring a paid Massive API key.
+// (https://frankfurter.dev). scripts/ops/fx-history-backfill uses it to populate fx_quotes with
+// 25+ years of daily fiat rates without a paid Massive API key.
 //
-// Frankfurter publishes ECB reference rates back to 1999-01-04 for
-// ~32 currencies, daily granularity only. The range endpoint returns one
-// JSON document for every date in [from, to], so a 25-year backfill is one
-// HTTP request. No API key.
+// It publishes ECB reference rates back to 1999-01-04 for ~32 currencies, daily only. The range
+// endpoint returns one JSON document for [from, to], so a 25-year backfill is one HTTP request.
 //
-// See the package doc on forex for the reconciliation against external/ecb
-// (a Connector-framework poller wired into the indexer). frankfurter doesn't
+// See the forex package doc for the reconciliation against external/ecb. This package does not
 // implement external.Connector.
 package frankfurter
 
@@ -63,14 +59,10 @@ type DayRates struct {
 	Rates map[string]float64
 }
 
-// RangeUSDRates fetches every daily ECB rate for every Frankfurter-
-// supported currency in [from, to] in a single HTTP request. Rates
-// are USD-base — Frankfurter natively quotes EUR-base, so we ask
-// for `from=USD` which the API converts for us (cross-rate through
-// EUR). Days where ECB didn't publish (weekends, holidays) are
-// simply absent from the response.
-//
-// Returned slice is sorted ascending by date.
+// RangeUSDRates fetches every daily ECB rate for every supported currency in [from, to] in one
+// request. Frankfurter quotes EUR-base natively, so `from=USD` makes the API cross-rate through
+// EUR. Days ECB did not publish (weekends, holidays) are absent. The result is sorted ascending
+// by date.
 func (c *Client) RangeUSDRates(ctx context.Context, from, to time.Time) ([]DayRates, error) {
 	fromStr := from.UTC().Format("2006-01-02")
 	toStr := to.UTC().Format("2006-01-02")
@@ -138,13 +130,9 @@ func (c *Client) get(ctx context.Context, url string) ([]byte, error) {
 			buf = append(buf, tmp[:n]...)
 		}
 		if rerr != nil {
-			// Only a CLEAN io.EOF ends the body normally. A mid-stream
-			// truncation surfaces as io.ErrUnexpectedEOF ("unexpected EOF"),
-			// whose string also contains "EOF" — a substring match would
-			// treat a dropped connection as a complete body and return the
-			// partial buffer. errors.Is(rerr, io.EOF) is false for
-			// io.ErrUnexpectedEOF, so a truncated response propagates as an
-			// error instead of a silently-short JSON document.
+			// Only a clean io.EOF ends the body. io.ErrUnexpectedEOF also contains "EOF", so a
+			// substring match would treat a dropped connection as complete; errors.Is is false for
+			// it, so truncation propagates instead of yielding a silently short document.
 			if errors.Is(rerr, io.EOF) {
 				break
 			}

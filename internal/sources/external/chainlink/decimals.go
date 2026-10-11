@@ -16,30 +16,24 @@ import (
 
 // On-chain decimals() verification for the ingest poller.
 //
-// FeedSpec.Decimals from config (or the built-in 8), stamped onto every
-// oracle_updates row without asking the AggregatorV3 proxy what scale it
-// publishes at, would store every reading 10^(configured-actual) off, silently,
-// if wrong or drifted. The poller reads `decimals()` (SelDecimals) on the first
-// poll of each feed and again every decimalsRefreshInterval, and:
+// A configured FeedSpec.Decimals that is wrong or drifted would silently store every reading
+// 10^(configured-actual) off, so the poller reads `decimals()` (SelDecimals) on the first poll of
+// each feed and again every decimalsRefreshInterval, and:
 //
-//   - configured value ABSENT (0) → adopts the on-chain value;
-//   - both present and EQUAL → readings flow;
-//   - both present and DIFFERENT → logs ERROR, counts
-//     obs.ChainlinkFeedDecimalsMismatchTotal on every refused reading, and
-//     REFUSES the feed (ErrDecimalsMismatch): a mis-scaled oracle row is worse
-//     than none;
-//   - decimals() RPC failure → keeps the last known value with a WARN and
-//     retries after decimalsRetryInterval; a feed with no configured value and
-//     no successful read yet is refused (ErrDecimalsUnresolved), never
-//     projected at a guessed scale.
+//   - configured value ABSENT (0): adopts the on-chain value;
+//   - both present and EQUAL: readings flow;
+//   - both present and DIFFERENT: logs ERROR, counts obs.ChainlinkFeedDecimalsMismatchTotal on
+//     every refused reading, and REFUSES the feed (ErrDecimalsMismatch): a mis-scaled oracle
+//     row is worse than none;
+//   - decimals() RPC failure: keeps the last known value with a WARN and retries after
+//     decimalsRetryInterval; a feed with no configured value and no successful read yet is
+//     refused (ErrDecimalsUnresolved), never projected at a guessed scale.
 //
 // Backfill goes through the same resolver.
 const (
-	// decimalsRefreshInterval is how long a verified decimals() read
-	// stays trusted before it is re-read. A proxy's decimals is
-	// effectively immutable, so daily is plenty; the refresh exists so
-	// a proxy re-pointed at a differently-scaled aggregator cannot
-	// mis-scale for the lifetime of the process.
+	// decimalsRefreshInterval is how long a verified decimals() read stays trusted. Decimals are
+	// effectively immutable; the refresh bounds how long a proxy re-pointed at a
+	// differently-scaled aggregator can mis-scale.
 	decimalsRefreshInterval = 24 * time.Hour
 
 	// decimalsRetryInterval bounds how often a feed whose decimals()
@@ -183,12 +177,9 @@ func (p *Poller) fetchDecimals(ctx context.Context, spec FeedSpec) (uint8, error
 	return decodeDecimals(rawHex)
 }
 
-// decodeDecimals parses the 32-byte `decimals()` eth_call result
-// (uint8, left-padded to one word). Rejects anything that is not
-// exactly one word — a proxy answering a different shape must fail
-// loudly — and a value outside 1..255: uint8 cannot exceed 255, and a
-// 0-decimal price feed does not exist on Chainlink, so 0 is treated as
-// a broken contract rather than a scale.
+// decodeDecimals parses the 32-byte `decimals()` eth_call result (uint8, left-padded to one word).
+// Anything but exactly one word fails loudly, and 0 is rejected: no Chainlink price feed has 0
+// decimals, so it indicates a broken contract rather than a scale.
 func decodeDecimals(rawHex string) (uint8, error) {
 	b, err := hexBytes(rawHex)
 	if err != nil {

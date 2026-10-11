@@ -10,12 +10,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// chParticipantBackfill fills the non-source side of stellar.operation_participants (ADR-0038
-// Phase B) for historical ledgers by re-deriving from stellar.operations.body_xdr inside the lake.
-// It writes only non-source participants, sharing the live derivation
-// (clickhouse.operationParticipantRows); source rows too would double-count each op.
-// Windowed and resumable; re-running a window is idempotent (ReplacingMergeTree). On r1 run it
-// under /usr/local/sbin/run-heavy-job.sh, as heavy CH load can wedge the log channel.
+// chParticipantBackfill fills the non-source side of stellar.operation_participants for historical
+// ledgers by re-deriving from stellar.operations.body_xdr inside the lake. It shares the live
+// derivation (clickhouse.operationParticipantRows) and writes only non-source participants, since
+// source rows too would double-count each op. Windowed, resumable and idempotent
+// (ReplacingMergeTree). On r1 run it under /usr/local/sbin/run-heavy-job.sh: heavy CH load can
+// wedge the log channel.
 func chParticipantBackfill(args []string) error {
 	fs := flag.NewFlagSet("ch-participant-backfill", flag.ContinueOnError)
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")

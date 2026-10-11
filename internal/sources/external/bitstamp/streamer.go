@@ -17,11 +17,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external/wsclient"
 )
 
-// Streamer implements external.Streamer for Bitstamp. One
-// connection per process; sends N subscribe frames on connect
-// (Bitstamp does not accept a symbol array like Kraken).
-// Honours `bts:request_reconnect` by closing + reconnecting via the
-// normal backoff path.
+// Streamer implements external.Streamer for Bitstamp. One connection per process; it sends one
+// subscribe frame per symbol on connect (Bitstamp accepts no symbol array, unlike Kraken), and
+// honours `bts:request_reconnect` by reconnecting through the normal backoff path.
 type Streamer struct {
 	// PairMap: Bitstamp symbol ("xlmusd") → canonical.Pair. See
 	// pairs.go:DefaultPairs.

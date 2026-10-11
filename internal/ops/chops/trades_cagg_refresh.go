@@ -123,9 +123,8 @@ func tradesCAGGRefresh(args []string) error {
 
 // sizeTradesCAGGBacklog prints, per [timescale.TradesCAGGs] view, the invalidation ranges a
 // non-forced refresh would re-materialise and their hull as -from/-to ledgers. Ranges below
-// [tradesCAGGNonForcedFloor] are printed separately because the non-forced run refuses them
-// ([refuseTwapsBelowPrices1mFloor]); a prices_1m gap raises the floor past it
-// ([refuseUncoveredTwapReads]).
+// [tradesCAGGNonForcedFloor] print separately because the non-forced run refuses them
+// ([refuseTwapsBelowPrices1mFloor]); a prices_1m gap raises that floor ([refuseUncoveredTwapReads]).
 func sizeTradesCAGGBacklog(ctx context.Context, s tradesCAGGSizer, now time.Time, out io.Writer) error {
 	views := make([]string, len(timescale.TradesCAGGs))
 	for i, c := range timescale.TradesCAGGs {
@@ -308,11 +307,10 @@ func refuseTwapsBelowPrices1mFloor(ctx context.Context, s tradesCAGGStore, plan 
 }
 
 // refreshTradesCAGGsOverLedgers refreshes every [timescale.TradesCAGGs] view in order (twap_*
-// after prices_1m) over the span of the trades stored in [from, to], stopping at the first
-// failure because a later view may build on it. No trades in the range is an error: the caller
-// just rewrote it, so the deleted span is unrecoverable here and the aggregates may still hold
-// it. It succeeds only once prices_1m agrees with trades over sampled windows
-// ([checkTradesPrices1mDrift]).
+// after prices_1m) over the span of trades stored in [from, to], stopping at the first failure
+// because a later view may build on it. No trades in the range is an error: the caller just
+// rewrote it, so the deleted span is unrecoverable here and the aggregates may still hold it. It
+// succeeds only once prices_1m agrees with trades over sampled windows ([checkTradesPrices1mDrift]).
 func refreshTradesCAGGsOverLedgers(ctx context.Context, s tradesCAGGStore, from, to uint32, force bool, now time.Time, out io.Writer) error {
 	tsFrom, tsTo, plan, err := planTradesCAGGRefresh(ctx, s, from, to, force, now, out)
 	if err != nil {

@@ -16,9 +16,9 @@ import (
 
 // ─── `-tier xlm-base -chunks` — the anchor re-derive's half of the walk ──
 //
-// The chunk driver (usd_volume_restamp_chunks.go) owns chunks, compression policy, the run lock
-// and the free-space guard. This file runs the day walk's plan/apply pair
-// (usd_volume_restamp_xlmbase.go), generation guard included, on one chunk through the guarded apply.
+// The chunk driver (usd_volume_restamp_chunks.go) owns chunks, compression policy, the run lock and
+// the free-space guard. This file runs the day walk's plan/apply pair (usd_volume_restamp_xlmbase.go),
+// generation guard included, on one chunk through the guarded apply.
 
 // xlmBaseChunkStore is the xlm-base tier's seam: the driver's chunk and
 // policy primitives, the day walk's plan/apply pair, and the in-chunk

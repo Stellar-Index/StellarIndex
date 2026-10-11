@@ -25,9 +25,9 @@ import (
 
 // verifyContiguity is the verify-contiguity subcommand, a read-only ClickHouse check of the raw
 // lake (ADR-0034). Check 1: every ledger_seq in [-from,-to] is present in stellar.ledgers.
-// Check 2: every tx-bearing ledger has an entry_changes row at/above -ec-floor (0 derives it
-// from the lake, see resolveECFloor). The exit code is the failure count capped at 255;
-// backfill-pending entries below the floor are reported, never counted.
+// Check 2: every tx-bearing ledger has an entry_changes row at/above -ec-floor (0 derives it from
+// the lake, see resolveECFloor). The exit code is the failure count capped at 255; entries below
+// the floor are reported, never counted.
 func verifyContiguity(args []string) error {
 	fs := flag.NewFlagSet("verify-contiguity", flag.ContinueOnError)
 	cfgPath := fs.String("config", "/etc/stellarindex.toml", "path to stellarindex.toml — used only to resolve the default -ch-addr (this tool reads ClickHouse only, never Postgres); a missing/unreadable file is tolerated when -ch-addr is passed explicitly")
@@ -511,11 +511,9 @@ func ecFloorSegments(from, to, ecFloor uint32) (pendingFrom, pendingTo uint32, h
 	return pendingFrom, pendingTo, hasPending, gatedFrom, gatedTo, hasGated
 }
 
-// formatCoverageLine renders one window's report line for both checks; tag carries the
-// check-specific verdict.
-//
+// formatCoverageLine renders one window's report line for both checks; tag carries the verdict.
 // missing saturates at zero like clickhouse.ECWindowCoverage.Missing(), so a present count above
-// expected can never wrap the uint64.
+// expected cannot wrap the uint64.
 func formatCoverageLine(from, to uint32, expected, present uint64, tag string) string {
 	var missing uint64
 	if present < expected {

@@ -14,19 +14,16 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// verifyRecognition implements ADR-0033 Claim 2a (recognition): it
-// pulls every distinct (contract_id, topic_0_sym) shape in the ClickHouse
-// lake's contract_events over a ledger range and runs each through the
-// production decoder chain. Any shape no decoder claims is a recognition
-// gap — an on-chain event we would silently drop, which is exactly what a
-// WASM upgrade that adds a topic looks like.
+// verifyRecognition implements ADR-0033 Claim 2a (recognition): it pulls every distinct
+// (contract_id, topic_0_sym) shape in the lake's contract_events over a ledger range and runs each
+// through the production decoder chain. A shape no decoder claims is a recognition gap, an
+// on-chain event we would silently drop, which is what a WASM upgrade adding a topic looks like.
 //
-// The scan is computeRecognitionGapsCH, the same census compute-completeness
-// -ch publishes as recognition_ok, so the two cannot disagree. Exit code is
-// non-zero when any gap exists, or when the range read no shapes at all, so
-// cron / CI can gate on it. Uses the same dispatcher the indexer builds from
-// ingestion.enabled_sources, so the verdict reflects what the deployment
-// actually handles — not a hand-maintained topic list that could drift.
+// The scan is computeRecognitionGapsCH, the same census compute-completeness publishes as
+// recognition_ok, so the two cannot disagree. Exit is non-zero when any gap exists or the range
+// read no shapes at all, so cron / CI can gate on it. It uses the dispatcher the indexer builds
+// from ingestion.enabled_sources, so the verdict reflects what the deployment handles rather than
+// a hand-maintained topic list that could drift.
 func verifyRecognition(args []string) error {
 	fs := flag.NewFlagSet("verify-recognition", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
@@ -89,15 +86,12 @@ func verifyRecognition(args []string) error {
 	return fmt.Errorf("%d unrecognized event shape(s) — a decoder is missing a topic (ADR-0033 EVERY-event policy)", len(gaps))
 }
 
-// soroswapRecognitionSeed loads the soroswap pair registry and returns the
-// dispatcher option that seeds the soroswap decoder's pair-tokens cache from
-// it — the same registry compute-completeness folds into its recognition
-// census (compute_completeness.go). Without this, Matches() rejects every
-// real SoroswapPair event (swap/sync/deposit/withdraw/skim) and each becomes
-// a false recognition gap even though the indexer decodes + serves them.
-// Shared by verify-recognition and ch-recognition (NS14) so the seeding
-// logic — and its fail-closed posture on the load error, a partial registry
-// would silently under-recognize — lives in one place.
+// soroswapRecognitionSeed loads the soroswap pair registry and returns the dispatcher option that
+// seeds the soroswap decoder's pair-tokens cache, the same registry compute-completeness folds
+// into its recognition census. Without it Matches() rejects every real SoroswapPair event
+// (swap/sync/deposit/withdraw/skim) and each becomes a false recognition gap. Shared by
+// verify-recognition and ch-recognition so the seeding, and its fail-closed posture on a load
+// error (a partial registry would silently under-recognize), live in one place.
 func soroswapRecognitionSeed(ctx context.Context, store *timescale.Store) (soroswap.DecoderOption, error) {
 	pairs, err := store.LoadSoroswapPairRegistry(ctx)
 	if err != nil {

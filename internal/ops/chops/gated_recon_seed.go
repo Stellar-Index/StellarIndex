@@ -9,11 +9,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// preseedFactoryChildren seeds a factory-anchored source's contractid.Registry (ADR-0035) by
-// decoding the factory's creation events from genesis up to `to`; it is a no-op for non-gated
-// sources and idempotent. A sub-range re-derive would otherwise drop every earlier child's
-// events and report a false "missing rows" delta. It reads the ClickHouse lake, not Postgres.
-// A creation event whose decoder panics (completeness.Guard) is returned as a blind spot.
+// preseedFactoryChildren seeds a factory-anchored source's contractid.Registry by decoding the
+// factory's creation events from genesis up to `to` (idempotent; no-op for non-gated sources).
+// A sub-range re-derive would otherwise drop every earlier child's events and report a false
+// "missing rows" delta. It reads the ClickHouse lake. A creation event whose decoder panics
+// (completeness.Guard) is returned as a blind spot.
 func preseedFactoryChildren(ctx context.Context, es completeness.EventStreamer, src reconSource, to uint32) (completeness.BlindSpots, error) {
 	if len(src.factories) == 0 || src.dec == nil {
 		return completeness.BlindSpots{}, nil

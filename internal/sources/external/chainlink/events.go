@@ -1,15 +1,9 @@
-// Package chainlink ingests price observations from Chainlink Data
-// Feeds on Ethereum mainnet via JSON-RPC reads against the
-// AggregatorV3 contract interface.
+// Package chainlink ingests price observations from Chainlink Data Feeds on Ethereum mainnet via
+// JSON-RPC reads against the AggregatorV3 contract interface.
 //
-// Sister to (but distinct from) internal/divergence/chainlink.go —
-// that package is a synchronous cross-check helper for the divergence
-// service; THIS package is a real ingest source that runs its own
-// poller goroutine, dedupes by roundId, and writes
-// canonical.OracleUpdate rows to the oracle_updates hypertable
-// alongside Reflector / Redstone / Band.
-//
-// See README.md for design rationale + Phase A vs Phase B scope.
+// Unlike internal/divergence/chainlink.go (a synchronous cross-check helper), this is a real ingest
+// source: its own poller goroutine dedupes by roundId and writes canonical.OracleUpdate rows to
+// oracle_updates alongside Reflector / Redstone / Band. See README.md for design rationale.
 package chainlink
 
 import (
@@ -22,52 +16,32 @@ import (
 	"golang.org/x/crypto/sha3"
 )
 
-// init computes [AnswerUpdatedTopic0] once. We do this in init()
-// rather than as a `var`-block expression so the dependency chain
-// (sha3 import) stays explicit and the failure mode (a typo in
-// AnswerUpdatedSignature) panics at boot, not silently mis-filters
-// every log forever.
+// init computes [AnswerUpdatedTopic0] once, so a typo in AnswerUpdatedSignature is caught at boot
+// instead of silently mis-filtering every log.
 func init() {
 	h := sha3.NewLegacyKeccak256()
 	_, _ = h.Write([]byte(AnswerUpdatedSignature))
 	AnswerUpdatedTopic0 = "0x" + hex.EncodeToString(h.Sum(nil))
 }
 
-// SourceName is the canonical source identifier stamped on every
-// emitted canonical.OracleUpdate.Source. Stable — appears in
-// metrics labels, /v1/sources, oracle_updates rows.
-//
-// We deliberately use "chainlink" (not "chainlink-http" — the legacy
-// commented-out value in canonical/oracle.go) because the new
-// reality is "Chainlink, full stop": once Chainlink ships Soroban
-// Data Feeds we'll add a separate "chainlink-stellar" or similar
-// source, and the EVM-via-HTTP path keeps this name without
-// confusion.
+// SourceName is the canonical source identifier stamped on every emitted
+// canonical.OracleUpdate.Source. Stable: it appears in metrics labels, /v1/sources and
+// oracle_updates rows. A future Soroban Chainlink source gets its own name.
 const SourceName = "chainlink"
 
-// DefaultPollInterval — 30s aligns with the proposal's freshness
-// ceiling for current-price endpoints (docs/ctx-proposal.md:329).
-// Most Chainlink feeds update every few minutes (heartbeat) or on
-// 0.5% deviation; polling faster than 30s wastes RPC budget without
-// catching anything.
+// DefaultPollInterval is the freshness ceiling for current-price endpoints. Most feeds update on a
+// heartbeat of minutes or a 0.5% deviation, so polling faster wastes RPC budget.
 const DefaultPollInterval = 30 * time.Second
 
-// DefaultDecimals — Chainlink's overwhelming standard for
-// crypto/USD and fiat/USD feeds; the value every built-in
-// DefaultFeedMap entry asserts. It is NOT substituted for an omitted
-// per-feed value: FeedSpec.Decimals == 0 means "adopt the feed's
-// on-chain decimals()" (decimals.go), and an asserted value is
-// verified against the chain before any row is projected.
+// DefaultDecimals is the standard for crypto/USD and fiat/USD feeds and the value every built-in
+// DefaultFeedMap entry asserts. It is NOT substituted for an omitted value: FeedSpec.Decimals == 0
+// means "adopt the feed's on-chain decimals()" (decimals.go), and an asserted value is verified
+// against the chain before any row is projected.
 const DefaultDecimals uint8 = 8
 
-// DefaultEndpoint is the Cloudflare public Ethereum JSON-RPC
-// endpoint. Free, no key, rate-limited per-IP.
-//
-// Suitable as a fallback for divergence-style cross-checks but
-// NOT for production live ingest at scale — you'll get throttled
-// long before 516 feeds × 30s polls land. Operators pointing at
-// production should override with their own Alchemy / Infura /
-// QuickNode endpoint.
+// DefaultEndpoint is the Cloudflare public Ethereum JSON-RPC endpoint (free, per-IP rate-limited).
+// Fine for cross-checks, but production ingest of hundreds of feeds will be throttled; operators
+// should override it with their own provider endpoint.
 const DefaultEndpoint = "https://cloudflare-eth.com"
 
 // Function selectors — keccak256(signature)[:4], precomputed.
@@ -86,28 +60,20 @@ const (
 	SelDecimals = "0x313ce567"
 )
 
-// AnswerUpdatedSignature is the Solidity event signature used for
-// keccak256 → topic[0] computation. Computed once at package init
-// (see init() below) rather than hardcoded so a typo in the hex
-// constant can't silently miss every log forever.
+// AnswerUpdatedSignature is the Solidity event signature hashed into topic[0] at init, not
+// hardcoded as hex, so a typo cannot silently miss every log.
 //
 //	event AnswerUpdated(int256 indexed current, uint256 indexed roundId, uint256 updatedAt)
 //
-// `current` and `roundId` are indexed → topics[1] and topics[2];
-// `updatedAt` is in the data field. (Documented on Chainlink's
-// AggregatorV3Interface reference page.)
+// `current` and `roundId` are indexed (topics[1], topics[2]); `updatedAt` is in the data field.
 const AnswerUpdatedSignature = "AnswerUpdated(int256,uint256,uint256)"
 
 // AnswerUpdatedTopic0 is the keccak256 hash of [AnswerUpdatedSignature],
 // 0x-prefixed. Computed at package init from the signature constant.
 var AnswerUpdatedTopic0 string
 
-// FeedSpec describes one Chainlink AggregatorV3 contract: where it
-// lives, what canonical pair we project its answer into, and how
-// to scale the raw int256.
-//
-// The pair is implicit in the FeedMap key; FeedSpec only carries
-// the per-address fields.
+// FeedSpec describes one Chainlink AggregatorV3 contract and how to scale its raw int256. The pair
+// is implicit in the FeedMap key; FeedSpec only carries the per-address fields.
 type FeedSpec struct {
 	// Address is the 0x-prefixed Ethereum contract address of the
 	// AggregatorV3 proxy. Chainlink upgrades the underlying
@@ -126,11 +92,9 @@ type FeedSpec struct {
 	// Same semantic as divergence/chainlink.go's Invert.
 	Invert bool
 
-	// MaxAge is the live-poll staleness budget: a latestRoundData round
-	// whose updatedAt is older than this is refused, never emitted as a
-	// new observation. Calibrated to the feed's heartbeat (see
-	// [DefaultFeedMap]); zero resolves via [DefaultMaxAge]. Backfill of
-	// historical AnswerUpdated logs is not subject to it.
+	// MaxAge is the live-poll staleness budget: a round whose updatedAt is older is refused, never
+	// emitted as a new observation. Calibrated to the feed heartbeat (see [DefaultFeedMap]); zero
+	// resolves via [DefaultMaxAge]. Historical AnswerUpdated backfill is exempt.
 	MaxAge time.Duration
 }
 
@@ -142,12 +106,9 @@ type Round struct {
 	// came from. Used in dedup keys + log line context.
 	FeedAddress string
 
-	// RoundID is the chainlink-internal round identifier — the FULL
-	// uint80 proxy round id, (phaseId<<64)|aggregatorRoundId, held as
-	// a *big.Int so it never truncates (ADR-0003 in spirit). Dedup is
-	// by (FeedAddress, RoundID) — repeated polls of an unchanged feed
-	// must not produce duplicate OracleUpdate rows. Never nil after
-	// decode; treat a nil RoundID as zero.
+	// RoundID is the FULL uint80 proxy round id, (phaseId<<64)|aggregatorRoundId, held as a
+	// *big.Int so it never truncates. Dedup is by (FeedAddress, RoundID) so repeated polls of an
+	// unchanged feed emit no duplicate rows. Never nil after decode; treat nil as zero.
 	RoundID *big.Int
 
 	// AnsweredInRound is the round that computed Answer, in the same
@@ -206,16 +167,10 @@ var (
 	ErrCarriedForwardRound = errors.New("chainlink: answer carried forward from an earlier round")
 )
 
-// roundCache is the per-feed dedup memory: last roundId we emitted
-// per feed address. Indexed by feed address (lowercased) for
-// canonical compares.
+// roundCache is the per-feed dedup memory: last roundId emitted per lowercased feed address.
 //
-// Survives indexer restart by virtue of the oracle_updates PK
-// (source, ledger=0, tx_hash, op_index, ts) — re-emitting the same
-// (roundId, updatedAt) pair after restart would attempt an INSERT
-// that the storage layer's ON CONFLICT clause rejects, so even
-// without the in-memory cache we'd be safe. The cache just saves
-// the round-trip.
+// Correctness across restarts rests on the oracle_updates PK (source, ledger=0, tx_hash, op_index,
+// ts): a re-emitted round hits ON CONFLICT, so the cache only saves the round-trip.
 type roundCache struct {
 	mu   sync.Mutex
 	last map[string]*big.Int // feed address (lowercase) → last roundId emitted
@@ -225,25 +180,15 @@ func newRoundCache() *roundCache {
 	return &roundCache{last: make(map[string]*big.Int)}
 }
 
-// shouldEmit reports whether this (feed, roundId) is new — i.e.
-// strictly greater than the last seen. Returns true and updates
-// the cache; returns false if we've already emitted this round or
-// a newer one.
+// shouldEmit reports whether this (feed, roundId) is strictly greater than the last seen, and if
+// so records it. It combines wouldEmit + commitEmit (poller.go) for callers and tests that do not
+// need the split; the production poll path splits them so a failure between check and round build
+// cannot strand the round.
 //
-// roundID is the FULL uint80 proxy round id
-// (phaseId<<64)|aggregatorRoundId — see decodeRoundID. Comparing the
-// wide value (not the low 64 bits) is what keeps emission alive
-// across a proxy phase upgrade: when Chainlink rotates the underlying
-// aggregator, aggregatorRoundId resets to ~1 but phaseId increments,
-// so the wide id still strictly increases. A low-64-bit key would see
-// round=1 <= prev and silently wedge the feed until restart.
-//
-// nil roundID is treated as zero (defensive — decode never produces a
-// nil, but a future caller passing nil shouldn't panic here).
-// Combines wouldEmit (poller.go) + commitEmit (poller.go): kept for
-// callers (and tests) that don't need the two steps split apart. The
-// production poll path uses the split form so a failure between the
-// check and the round actually being built can't strand the round.
+// roundID is the FULL uint80 proxy round id (see decodeRoundID). Comparing the wide value, not the
+// low 64 bits, keeps emission alive across a proxy phase upgrade: aggregatorRoundId resets to ~1
+// but phaseId increments, whereas a low-64-bit key would wedge the feed until restart. A nil
+// roundID is treated as zero.
 func (c *roundCache) shouldEmit(feedAddr string, roundID *big.Int) bool {
 	if !c.wouldEmit(feedAddr, roundID) {
 		return false

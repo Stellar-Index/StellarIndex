@@ -11,11 +11,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external/scale"
 )
 
-// pairsYAML is the declarative venue-pair table (see pairs.yaml for
-// the per-pair rationale). Embedded at compile time — editing the
-// YAML still means a rebuild + redeploy, exactly like the previous
-// Go-literal table; the YAML form is the 45b per-venue pattern:
-// pair set as reviewable data, constructor plumbing in one loader.
+// pairsYAML is the declarative venue-pair table (see pairs.yaml for the per-pair rationale),
+// embedded at compile time, so editing it needs a rebuild and redeploy.
 //
 //go:embed pairs.yaml
 var pairsYAML []byte
@@ -54,11 +51,9 @@ func (a assetSpec) asset() (canonical.Asset, error) {
 	}
 }
 
-// parsePairsYAML decodes a pairs.yaml document with strict field
-// checking, so an unknown or renamed key (e.g. "klass" for "class")
-// fails the load instead of silently dropping to the zero value.
-// Pulled out of DefaultPairs so it's testable against arbitrary
-// bytes, not just the embedded file.
+// parsePairsYAML decodes a pairs.yaml document with strict field checking, so an unknown or
+// renamed key fails the load instead of silently dropping to the zero value. Separate from
+// DefaultPairs so it is testable against arbitrary bytes.
 func parsePairsYAML(b []byte) (pairsFile, error) {
 	var f pairsFile
 	dec := yaml.NewDecoder(bytes.NewReader(b))
@@ -69,14 +64,8 @@ func parsePairsYAML(b []byte) (pairsFile, error) {
 	return f, nil
 }
 
-// DefaultPairs returns the built-in pair map for Binance — the
-// common set we stream when the operator enables Binance. Covers
-// the largest XLM markets, the two reference crypto anchors, and the top-cap globals that
-// every CoinGecko-class consumer expects.
-//
-// Returned map is Binance-symbol (uppercase, no separator) →
-// canonical.Pair. Passed into NewStreamer. Extending the set is a
-// one-entry addition to pairs.yaml.
+// DefaultPairs returns the built-in Binance pair map, keyed by Binance symbol (uppercase, no
+// separator) to canonical.Pair, for NewStreamer. Extending it is one entry in pairs.yaml.
 func DefaultPairs() (map[string]canonical.Pair, error) {
 	f, err := parsePairsYAML(pairsYAML)
 	if err != nil {

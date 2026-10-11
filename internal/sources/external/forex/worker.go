@@ -25,11 +25,8 @@ type FXQuoteReader interface {
 	LatestFXQuotes(ctx context.Context, since time.Time) ([]FXQuote, error)
 }
 
-// FXQuote is the storage-layer record the worker writes per refresh.
-// Mirrors the timescale.FXQuote shape but lives in this package so
-// the forex worker doesn't import internal/storage/timescale (which
-// imports forex types via the v1 API package; the dependency would
-// cycle).
+// FXQuote is the storage-layer record the worker writes per refresh. It mirrors timescale.FXQuote
+// here because importing internal/storage/timescale would cycle through the v1 API package.
 type FXQuote struct {
 	Bucket time.Time
 	Ticker string
@@ -38,11 +35,10 @@ type FXQuote struct {
 	Source  string
 }
 
-// maxRateDeviation is the per-refresh sanity band: a rate further than this fraction from the ticker's last
-// ACCEPTED rate is not written on first sighting. fx_quotes is the denominator of every fiat-quoted
-// usd_volume, so the band catches a BROKEN BAR (a 10x decimal shift is 900%, a unit or redenomination change)
-// without second-guessing the market: real one-day devaluations reach EGP ~38%, NGN ~40%, TRY ~25%, and a
-// tighter band would reject genuine history and wedge the ticker.
+// maxRateDeviation is the per-refresh sanity band: a rate further than this fraction from the
+// ticker's last ACCEPTED rate is not written on first sighting. fx_quotes is the denominator of every
+// fiat-quoted usd_volume, so the band catches a broken bar (decimal shift, redenomination) without
+// rejecting real one-day devaluations (up to ~40%), which would wedge the ticker.
 const maxRateDeviation = 0.50
 
 // fxSource is the source tag stamped on persisted rows and on the
@@ -60,56 +56,52 @@ type rateGuard struct {
 	lastAccepted float64
 	pending      float64
 
-	// Stuck-upstream tracking for the HISTORY band: after [stuckRejectionThreshold] consecutive refusals of the
-	// SAME broken historical bar, repeats count as `history_deviation_stuck` (excluded from the alert, still
-	// WARN-logged and graphable) so a known broken bar stops paging for days. Any acceptance or a DIFFERENT
-	// rejected value resets the streak: fresh disagreement always alerts.
+	// Stuck-upstream tracking for the HISTORY band: after [stuckRejectionThreshold] consecutive refusals
+	// of the SAME broken bar, repeats count as `history_deviation_stuck` (no alert, still logged) so a
+	// known broken bar stops paging. Any acceptance or a different rejected value resets the streak.
 	//floatmoney:ok known debt — holds a copy of the same float64 RateUSD (above) for equality/streak comparison, not persisted or served
 	stuckRejectedRate float64
 	stuckCount        int
 
-	// Stuck-upstream tracking for the CONFIRM VETO: a feed persistently serving the same broken CURRENT bar
-	// re-arms pending, and every second sighting is vetoed as `deviation_history_conflict`; this streak quiets
-	// the repeats. Separate from the history-band fields because those reset on every in-band history bar, which
-	// for a broken-current / healthy-history feed is every refresh. Reset by any accepted current rate.
+	// Stuck-upstream tracking for the CONFIRM VETO: a feed persistently serving the same broken CURRENT
+	// bar re-arms pending and is vetoed as `deviation_history_conflict` every second sighting; this
+	// streak quiets the repeats. Kept apart from the history-band fields, which reset on every in-band
+	// history bar. Reset by any accepted current rate.
 	//floatmoney:ok known debt — same class as stuckRejectedRate above
 	conflictStuckRate  float64
 	conflictStuckCount int
 
-	// bootstrapUnconfirmed marks a baseline seeded from one uncorroborated sample (the bootstrap arm). A restart
-	// once bootstrapped UZS on a broken 1820 (true ≈ 11,800) and then rejected the CORRECT 7-day history against
-	// it; this flag lets the history-majority heal in [Worker.guardSnapshot] also scrub that current-day row.
-	// Cleared by a within-band acceptance or a two-fetch pending confirmation.
+	// bootstrapUnconfirmed marks a baseline seeded from one uncorroborated sample, so a broken first
+	// sample cannot reject the correct history; it lets the history-majority heal in
+	// [Worker.guardSnapshot] also scrub the current-day row. Cleared by a within-band acceptance or a
+	// two-fetch pending confirmation.
 	bootstrapUnconfirmed bool
 
-	// healedUncorroborated marks a baseline installed by the history-majority heal that no current fetch has
-	// agreed with yet. A heal is history's word alone; if history was the broken side, keeping the baseline
-	// healable lets a corrected history re-point it instead of wedging the ticker. Cleared as bootstrapUnconfirmed.
+	// healedUncorroborated marks a heal-installed baseline that no current fetch has agreed with yet.
+	// If history was the broken side, keeping it healable lets corrected history re-point it instead of
+	// wedging the ticker. Cleared as bootstrapUnconfirmed.
 	healedUncorroborated bool
 }
 
-// stuckRejectionThreshold is how many consecutive identical history-bar
-// refusals reclassify the ticker as stuck. The worker refreshes hourly,
-// so 12 ≈ half a day of the provider serving the same broken bar —
-// far past the point where repeats carry signal, and long enough that
-// a real multi-refresh scale change has already fired the alert.
+// stuckRejectionThreshold is how many consecutive identical history-bar refusals reclassify the
+// ticker as stuck. Refreshes are hourly, so 12 is half a day of the same broken bar, long enough
+// that a real multi-refresh scale change has already alerted.
 const stuckRejectionThreshold = 12
 
-// stuckSameRateTolerance treats consecutive rejected bars within this relative distance as the SAME stuck
-// value. A live broken feed jitters (UZS: 11791.69 → 11785 → 11817.69), so exact equality never engaged the
-// streak; 1% is tighter than any day-over-day FX move worth reporting and wider than provider jitter.
+// stuckSameRateTolerance treats consecutive rejected bars within this relative distance as the SAME
+// stuck value. A live broken feed jitters, so exact equality never engages the streak; 1% is tighter
+// than any day-over-day FX move worth reporting and wider than provider jitter.
 const stuckSameRateTolerance = 0.01
 
-// History-majority heal: when one refresh rejects ≥ [historyHealMinBars] trailing-7d bars that agree within
-// [historyHealAgreement] of their median, AND the baseline is an uncorroborated bootstrap, the BASELINE is the
-// outlier: ≥4 dated samples beat one. guardSnapshot re-points lastAccepted at the median, admits the bars and
-// scrubs the poisoned current-day row. Two limits keep this from becoming denominator poisoning:
-//   - The agreement band is far tighter than [maxRateDeviation], so a rejected series spanning levels never
-//     heals. A redenomination at first-ever sighting can still flip the baseline; the two-fetch confirmation
-//     restores it within ~2 refreshes, and per-date rows stay correct throughout.
-//   - A CONFIRMED baseline is never healed: two agreeing current fetches against agreeing history means one
-//     endpoint is systemically broken and we can't tell which, so the ticker keeps rejecting (quietly, once
-//     stuck) and waits for an operator.
+// History-majority heal: when one refresh rejects at least [historyHealMinBars] trailing-7d bars that
+// agree within [historyHealAgreement] of their median AND the baseline is an uncorroborated
+// bootstrap, the baseline is the outlier. guardSnapshot re-points lastAccepted at the median, admits
+// the bars and scrubs the poisoned current-day row. Two limits stop this poisoning the denominator:
+//   - The agreement band is far tighter than [maxRateDeviation], so a rejected series spanning
+//     levels never heals; the two-fetch confirmation restores a wrongly flipped baseline.
+//   - A CONFIRMED baseline is never healed: agreeing current fetches against agreeing history means
+//     one endpoint is broken and we cannot tell which, so the ticker keeps rejecting and waits for
+//     an operator.
 const (
 	historyHealMinBars   = 4
 	historyHealAgreement = 0.10
@@ -133,43 +125,33 @@ type Worker struct {
 	// baseline, so it accepts and establishes one.
 	guards map[string]*rateGuard
 
-	// historyVeto is guardSnapshot-scoped state: the per-ticker heal-grade history-majority median
-	// ([historyMajority]) of the current snapshot's trailing-7d bars, computed before the current-rate loop and
-	// cleared on return; acceptRate's pending-confirm arm consults it. Two agreeing samples from ONE broken
-	// endpoint (UZS kept serving 1820 after the heal and would have re-confirmed it) are not two witnesses when
-	// ≥4 agreeing dated bars refute them. History never SETS a baseline here, it only refuses a confirm; a real
-	// devaluation confirms once the trailing majority follows it or splits. Only touched from guardSnapshot.
+	// historyVeto is guardSnapshot-scoped: the per-ticker history-majority median ([historyMajority])
+	// of the snapshot's trailing-7d bars, computed before the current-rate loop and cleared on return.
+	// acceptRate's pending-confirm arm consults it: two agreeing samples from ONE broken endpoint are
+	// not two witnesses when 4+ agreeing dated bars refute them. History never SETS a baseline here, it
+	// only refuses a confirm; a real devaluation confirms once the trailing majority follows it.
 	historyVeto map[string]float64
 
-	// streakCounted is guardSnapshot-scoped: tickers whose stuck streak
-	// already moved this refresh. nil outside a refresh (every refusal
-	// counts), so the streak measures refreshes, not broken bars.
+	// streakCounted is guardSnapshot-scoped: tickers whose stuck streak already moved this refresh,
+	// so the streak counts refreshes, not broken bars. nil outside a refresh (every refusal counts).
 	streakCounted map[string]bool
 
-	// rawHistory is the trailing-7d series exactly as last fetched —
-	// every dated bar, including the ones the band refuses. It is carried
-	// from refresh to refresh HERE and never published: the heal and the
-	// confirm veto must re-see refused bars on every refresh, while the
-	// served [Snapshot.History7d] carries only the bars the band admitted
-	// (see [Worker.refreshOnce]). Only touched from refreshOnce.
+	// rawHistory is the trailing-7d series exactly as last fetched, including bars the band refuses.
+	// It is never published: the heal and confirm veto must re-see refused bars every refresh, while
+	// the served [Snapshot.History7d] carries only admitted bars (see [Worker.refreshOnce]).
 	rawHistory map[string][]HistoryPoint
 
-	// fallbacks are tried IN ORDER when the primary client cannot serve
-	// rates, so a paid-feed outage degrades coverage instead of ending
-	// it. Empty by default — a worker with no fallbacks behaves exactly
-	// as before.
+	// fallbacks are tried IN ORDER when the primary client cannot serve rates, so a paid-feed outage
+	// degrades coverage instead of ending it.
 	fallbacks []RateProvider
 
 	// corroborator is held for the FX fixings plan and never consulted
 	// yet; see [Worker.WithCorroborator].
 	corroborator RateProvider
 
-	// activeSource is the feed that produced the CURRENT snapshot. It is
-	// stamped into fx_quotes.source and used as the `source` metric
-	// label, so `stellarindex_external_fx_last_quote_unix{source=...}`
-	// shows which feed is actually live rather than always claiming the
-	// primary. Only touched from refreshOnce -> guardSnapshot
-	// (single-goroutine, as guards).
+	// activeSource is the feed that produced the CURRENT snapshot, stamped into fx_quotes.source and
+	// the `source` metric label so the metric shows which feed is actually live, not always the
+	// primary. Single-goroutine, like guards.
 	activeSource string
 
 	// fixingWriter, when set, receives the vendor-time hourly bars after
@@ -241,12 +223,12 @@ func (w *Worker) WithReader(reader FXQuoteReader) *Worker {
 	return w
 }
 
-// Run blocks until ctx is cancelled: one fetch immediately so /v1/currencies is populated, then one per
-// interval. Failures are logged, never fatal; the cache keeps the prior snapshot.
+// Run blocks until ctx is cancelled: one fetch immediately so /v1/currencies is populated, then one
+// per interval. Failures are logged, never fatal; the cache keeps the prior snapshot.
 //
-// It publishes stellarindex_source_enabled itself because `massive` is the one registry source not run by the
-// indexer (the gauge's other writer), and /v1/sources/{name}/health reads the gauge as "switched on":
-// without it the live FX feed read "massive: off". Fallback providers are standbys and stay unmarked.
+// It publishes stellarindex_source_enabled itself because `massive` is the one registry source not
+// run by the indexer, and /v1/sources/{name}/health reads that gauge as "switched on". Fallback
+// providers are standbys and stay unmarked.
 func (w *Worker) Run(ctx context.Context) error {
 	obs.SourceEnabled.WithLabelValues(fxSource).Set(1)
 	defer obs.SourceEnabled.WithLabelValues(fxSource).Set(0)
@@ -265,13 +247,8 @@ func (w *Worker) Run(ctx context.Context) error {
 	}
 }
 
-// refreshOnce performs a single fetch+install cycle. Errors get
-// logged at warn level (not error — a stale cache is degraded
-// service, not a crash condition).
-// sourceLabel is the feed name stamped on persisted rows and metric
-// labels. It falls back to the primary when activeSource is unset so a
-// zero-value Worker — a struct literal, as several tests build — keeps
-// the exact pre-fallback behaviour instead of writing an empty source.
+// sourceLabel is the feed name stamped on persisted rows and metric labels. It falls back to the
+// primary when activeSource is unset so a zero-value Worker never writes an empty source.
 func (w *Worker) sourceLabel() string {
 	if w.activeSource == "" {
 		return fxSource
@@ -279,13 +256,11 @@ func (w *Worker) sourceLabel() string {
 	return w.activeSource
 }
 
-// fetchRates returns rates from the first source that can serve them,
-// along with that source's name. The primary client is always tried
-// first; fallbacks follow in registration order.
+// fetchRates returns rates from the first source that can serve them, with that source's name. The
+// primary is tried first, then fallbacks in registration order.
 //
-// A context cancellation is NOT a source failure — it means we are
-// shutting down, so it short-circuits rather than burning through every
-// fallback on the way out.
+// A context cancellation is NOT a source failure: it short-circuits instead of burning through
+// every fallback during shutdown.
 func (w *Worker) fetchRates(ctx context.Context) (map[string]float64, time.Time, string, error) {
 	rates, publishedAt, err := w.client.LatestUSDRates(ctx)
 	if err == nil {
@@ -330,11 +305,9 @@ func (w *Worker) refreshOnce(ctx context.Context) {
 		if errors.Is(err, context.Canceled) {
 			return
 		}
-		// Names are STATIC labels, not rates: losing them must not cost
-		// us a refresh whose rates we already have. This matters most in
-		// exactly the case the fallback exists for — when the primary is
-		// down, its names endpoint is down too. Reuse the last snapshot's
-		// names; only bail if we have none at all (first run).
+		// Names are static labels, not rates: losing them must not cost a refresh whose rates we
+		// already have, which matters most when the primary (and its names endpoint) is down. Reuse
+		// the last snapshot's names; bail only if there are none (first run).
 		if prev := w.cache.Latest(); prev != nil && len(prev.Currencies) > 0 {
 			names = make(map[string]string, len(prev.Currencies))
 			for _, c := range prev.Currencies {
@@ -345,12 +318,9 @@ func (w *Worker) refreshOnce(ctx context.Context) {
 			w.logger.Warn("forex: names fetch failed — reusing last known names",
 				"err", err, "names", len(names))
 		} else {
-			// Cold start with the primary's names endpoint down — the
-			// case the rates fallback exists for. buildSnapshot drops an
-			// unnamed code and fetchHistory only walks named ones, so an
-			// empty map would install nothing; label each rate with its
-			// own ticker instead and let the next successful names fetch
-			// replace the labels.
+			// Cold start with the names endpoint down: buildSnapshot drops unnamed codes and
+			// fetchHistory only walks named ones, so an empty map would install nothing. Label each
+			// rate with its own ticker; the next successful names fetch replaces the labels.
 			names = tickerNames(rates)
 			w.logger.Warn("forex: names fetch failed and no cached names — labelling rates by ticker",
 				"err", err, "currencies", len(names))
@@ -389,20 +359,14 @@ func (w *Worker) refreshOnce(ctx context.Context) {
 	w.appendFixings(ctx, massiveTickers(raw, source), snap)
 }
 
-// maxHeldRateAge bounds how long [servedSnapshot] keeps serving a rate
-// that no refresh has re-confirmed. It mirrors the fx_quotes read path's
-// own bound (fxQuotesSnapLookback in internal/storage/timescale, the
-// "7-day forex-snap lookback" of docs/operations/runbooks/external-pollers.md#stellarindex_external_fx_feed_stale)
-// so the in-memory feed and the table go dark for a ticker at the same
-// age rather than the cache serving a rate the table has already given
-// up on.
+// maxHeldRateAge bounds how long [servedSnapshot] serves a rate no refresh has re-confirmed. It
+// mirrors fxQuotesSnapLookback in internal/storage/timescale so the cache and the table go dark
+// for a ticker at the same age.
 const maxHeldRateAge = 7 * 24 * time.Hour
 
-// guardResult is what one pass of the sanity band over a raw snapshot
-// yields: the rows cleared for fx_quotes, and the same verdicts in the
-// shape [servedSnapshot] needs to build the served cache entry. One pass
-// produces both so the table and the cache can never disagree about what
-// was accepted.
+// guardResult is one pass of the sanity band: the rows cleared for fx_quotes plus the same verdicts
+// in the shape [servedSnapshot] needs, so the table and the cache never disagree about what was
+// accepted.
 type guardResult struct {
 	// batch is the fx_quotes write: accepted current rows plus accepted
 	// (and healed) dated bars, scrubbed rows already removed.
@@ -432,12 +396,12 @@ func (r guardResult) freshQuotes() int {
 }
 
 // servedSnapshot builds the cached snapshot from the raw one and the band's verdicts. Per ticker:
-//   - current rate ACCEPTED → served as fetched, stamped with this refresh's publication time.
-//   - REFUSED, or ABSENT this refresh (the ECB standby covers ~30 currencies to the primary's ~110) → the last
-//     served entry is HELD with its original UpdateAt, as fx_quotes keeps its last accepted row, until
-//     [maxHeldRateAge]; then it is dropped (fail closed).
-//   - baseline REFUTED by the heal → dropped (the holdable entry is the refuted sample); it returns once the
-//     healed baseline accepts a current rate.
+//   - current rate ACCEPTED: served as fetched, stamped with this refresh's publication time.
+//   - REFUSED, or ABSENT this refresh (a standby covers fewer currencies than the primary): the last
+//     served entry is HELD with its original UpdateAt, as fx_quotes keeps its last accepted row,
+//     until [maxHeldRateAge]; then it is dropped (fail closed).
+//   - baseline REFUTED by the heal: dropped, since the holdable entry is the refuted sample; it
+//     returns once the healed baseline accepts a current rate.
 //
 // Both /v1/price fiat paths answer "no rate" for a dropped ticker.
 func servedSnapshot(raw *Snapshot, res guardResult, prev *Snapshot) *Snapshot {
@@ -471,11 +435,10 @@ func servedSnapshot(raw *Snapshot, res guardResult, prev *Snapshot) *Snapshot {
 	}
 }
 
-// seedSnapshot rebuilds, from fx_quotes, the held rates a previous process
-// was serving. The upstream republishes tickers gradually through the day,
-// so without it a restart drops every one it has not re-sent yet. The seed
-// only stands in for prev: servedSnapshot still prefers this refresh's
-// accepted rate, skips refuted tickers and applies [maxHeldRateAge].
+// seedSnapshot rebuilds the previous process's held rates from fx_quotes. Upstream republishes
+// tickers gradually through the day, so without it a restart drops every ticker not yet re-sent.
+// The seed only stands in for prev: servedSnapshot still prefers this refresh's accepted rate,
+// skips refuted tickers and applies [maxHeldRateAge].
 func (w *Worker) seedSnapshot(ctx context.Context, names map[string]string, now time.Time) *Snapshot {
 	if w.reader == nil {
 		return nil
@@ -514,16 +477,16 @@ func (w *Worker) seedSnapshot(ctx context.Context, names map[string]string, now 
 }
 
 // persistSnapshot bands and writes one snapshot to fx_quotes ([Worker.guardSnapshot] then
-// [Worker.writeBatch]); a nil writer is a no-op, and errors are logged at WARN, never fatal. It writes today's
-// row per ticker (upserted on (ticker, today)) and the trailing-7d rows, except an accepted bar dated today,
-// which is cached from the day's first fetch and would pin today's row to a stale value.
+// [Worker.writeBatch]); a nil writer is a no-op, and errors are logged at WARN, never fatal. It
+// writes today's row per ticker (upserted on (ticker, today)) and the trailing-7d rows, except an
+// accepted bar dated today, which is cached from the day's first fetch and would pin a stale value.
 //
-// Both are banded, since one bad bar would mis-scale a currency's whole usd_volume history; a rejected ticker
-// keeps its last accepted row ([obs.ExternalFXRateRejectedTotal]). History points are banded read-only by
-// [acceptHistoryRate] against the current baseline: a 7d-old bar >50% off the live rate is a broken bar.
+// Both are banded, since one bad bar would mis-scale a currency's whole usd_volume history; a
+// rejected ticker keeps its last accepted row ([obs.ExternalFXRateRejectedTotal]). History points
+// are banded read-only by [acceptHistoryRate] against the current baseline.
 //
-// [Worker.refreshOnce] doesn't call this: it runs the same two halves with the cache install between them so
-// the served snapshot follows the band's verdicts. This composition is what the band's tests drive.
+// [Worker.refreshOnce] runs the same two halves with the cache install between them so the served
+// snapshot follows the band's verdicts; this composition is what the band's tests drive.
 func (w *Worker) persistSnapshot(ctx context.Context, snap *Snapshot) {
 	if w.writer == nil || snap == nil {
 		return
@@ -628,12 +591,10 @@ func (w *Worker) writeBatch(ctx context.Context, res guardResult) {
 	}
 	w.logger.Info("forex: fx_quotes persisted", "rows", len(batch))
 
-	// Count SOURCE ENTRIES here: this worker bypasses internal/pipeline's sink, the only other writer of
-	// SourceEventsTotal, so the active FX feed (the USD anchor behind usd_volume and ADR-0051 local-currency
-	// pricing) showed 0 "entries (24h)" on the status page while writing 116 rows a day. Labelled with
-	// sourceLabel() so a fallback's rows count against the fallback, not a down primary. Counted after the
-	// committed write, and only fresh upstream rates: the synthetic USD anchor and carried history are written
-	// even when upstream is dead.
+	// Count source entries here: this worker bypasses internal/pipeline's sink, the only other writer
+	// of SourceEventsTotal. Labelled with sourceLabel() so a fallback's rows count against the
+	// fallback, not a down primary. Counted after the committed write and only for fresh upstream
+	// rates: the synthetic USD anchor and carried history are written even when upstream is dead.
 	fresh := res.freshQuotes()
 	if fresh > 0 {
 		obs.SourceEventsTotal.WithLabelValues(w.sourceLabel()).Add(float64(fresh))
@@ -660,13 +621,13 @@ func (w *Worker) computeHistoryVeto(snap *Snapshot) {
 	}
 }
 
-// healFromHistoryMajority applies the history-majority heal for one ticker after its history bars were
-// banded (split from guardSnapshot for gocognit; pinned by the BootstrapPoisonHealed /
-// ConfirmedBaselineIsNeverHealed / SplitRejectedSeriesFailsAgreement tests). It fires only against an
-// uncorroborated baseline (bootstrapUnconfirmed or healedUncorroborated): one sample loses to
-// ≥historyHealMinBars agreeing dated bars. A CONFIRMED baseline is ambiguous from here and stays rejected for
-// an operator. On a heal the baseline re-points at the median, the bars join the batch and the current-day
-// row is scrubbed via the RateUSD=0 marker; the caller must then stop serving the refuted rate.
+// healFromHistoryMajority applies the history-majority heal for one ticker after its history bars
+// were banded (pinned by the BootstrapPoisonHealed / ConfirmedBaselineIsNeverHealed /
+// SplitRejectedSeriesFailsAgreement tests). It fires only against an uncorroborated baseline
+// (bootstrapUnconfirmed or healedUncorroborated): one sample loses to [historyHealMinBars] agreeing
+// dated bars. A CONFIRMED baseline is ambiguous and stays rejected for an operator. On a heal the
+// baseline re-points at the median, the bars join the batch and the current-day row is scrubbed via
+// the RateUSD=0 marker; the caller must then stop serving the refuted rate.
 func (w *Worker) healFromHistoryMajority(
 	ticker string,
 	rejected []HistoryPoint,
@@ -707,15 +668,15 @@ func (w *Worker) healFromHistoryMajority(
 	return batch, true
 }
 
-// acceptRate is the per-refresh sanity band: it reports whether `rate` may be written and updates the
-// ticker's guard state. Rules, in order:
-//   - non-finite or non-positive → reject (no 1/rate inverse_usd exists).
-//   - no baseline (first sighting since start) → accept and set it; refusing would leave the feed empty.
-//   - within [maxRateDeviation] of the last accepted rate → accept.
-//   - outside the band but within it of the pending outlier → accept (two fetches agree: a real move),
-//     UNLESS the heal-grade 7d majority refutes it ([Worker.vetoConfirmByHistory]): a broken feed agreeing
-//     with itself is not corroboration.
-//   - otherwise → reject, set pending, count and log.
+// acceptRate is the per-refresh sanity band: it reports whether `rate` may be written and updates
+// the ticker's guard state. Rules, in order:
+//   - non-finite or non-positive: reject (no 1/rate inverse_usd exists).
+//   - no baseline (first sighting since start): accept and set it; refusing would leave the feed empty.
+//   - within [maxRateDeviation] of the last accepted rate: accept.
+//   - outside the band but within it of the pending outlier: accept (two fetches agree, a real
+//     move), UNLESS the 7d majority refutes it ([Worker.vetoConfirmByHistory]); a broken feed
+//     agreeing with itself is not corroboration.
+//   - otherwise: reject, set pending, count and log.
 //
 // A reject holds the last accepted row; the confirm arm bounds that hold to one refresh.
 func (w *Worker) acceptRate(ticker string, rate float64) bool {
@@ -764,13 +725,13 @@ func (w *Worker) acceptRate(ticker string, rate float64) bool {
 	return false
 }
 
-// vetoConfirmByHistory, called only from acceptRate's pending-confirm arm, refuses the confirm when the
-// ticker's heal-grade 7d majority ([Worker.historyVeto]) refutes the candidate by more than
-// [maxRateDeviation]: two fetches of the same broken bar are not independent witnesses. History never SETS
-// the baseline; only pending (re-armed) and the streak change. A real devaluation still confirms within days
-// as the majority follows or splits, so the worst case is days of held rate, not a re-poisoned denominator.
-// Repeats within [stuckSameRateTolerance] past [stuckRejectionThreshold] count as
-// "deviation_history_conflict_stuck", excluded from the alert like history_deviation_stuck.
+// vetoConfirmByHistory, called only from acceptRate's pending-confirm arm, refuses the confirm when
+// the ticker's 7d majority ([Worker.historyVeto]) refutes the candidate by more than
+// [maxRateDeviation]: two fetches of the same broken bar are not independent witnesses. History
+// never SETS the baseline; only pending (re-armed) and the streak change. A real devaluation still
+// confirms within days as the majority follows, so the worst case is days of held rate, not a
+// re-poisoned denominator. Repeats within [stuckSameRateTolerance] past [stuckRejectionThreshold]
+// count as "deviation_history_conflict_stuck", excluded from the alert.
 func (w *Worker) vetoConfirmByHistory(ticker string, g *rateGuard, rate float64) bool {
 	med, ok := w.historyVeto[ticker]
 	if !ok || withinBand(rate, med) {
@@ -795,15 +756,15 @@ func (w *Worker) vetoConfirmByHistory(ticker string, g *rateGuard, rate float64)
 	return true
 }
 
-// acceptHistoryRate is the [maxRateDeviation] band for a trailing-7d HISTORY point. Unlike [acceptRate] it
-// is READ-ONLY on guard state, so a wrong past bar can't corrupt the baseline. A 7d bar sits within a week of
-// today's rate, so one >50% off the live baseline is a broken bar about to overwrite a correct stored rate.
-// Rules, in order:
-//   - non-finite or non-positive → reject.
-//   - no baseline → accept (the current-rate loop runs first, so live tickers usually have one).
-//   - within [maxRateDeviation] of the last accepted rate → accept.
-//   - otherwise → reject, count and log as "history_deviation", or "history_deviation_stuck" (excluded from
-//     the alert) after [stuckRejectionThreshold] refusals of the SAME value.
+// acceptHistoryRate is the [maxRateDeviation] band for a trailing-7d HISTORY point. Unlike
+// [acceptRate] it is READ-ONLY on guard state, so a wrong past bar cannot corrupt the baseline. A
+// bar more than the band off the live baseline is a broken bar about to overwrite a correct stored
+// rate. Rules, in order:
+//   - non-finite or non-positive: reject.
+//   - no baseline: accept (the current-rate loop runs first, so live tickers usually have one).
+//   - within [maxRateDeviation] of the last accepted rate: accept.
+//   - otherwise: reject, count and log as "history_deviation", or "history_deviation_stuck"
+//     (excluded from the alert) after [stuckRejectionThreshold] refusals of the SAME value.
 func (w *Worker) acceptHistoryRate(ticker string, rate float64) bool {
 	if math.IsNaN(rate) || math.IsInf(rate, 0) {
 		w.rejectRate(ticker, rate, 0, "non_finite")
@@ -864,11 +825,9 @@ func withinBand(rate, baseline float64) bool {
 	return math.Abs(rate-baseline)/baseline <= maxRateDeviation
 }
 
-// historyMajority reports the median of a rejected history series and
-// whether the series constitutes heal-grade evidence: at least
-// [historyHealMinBars] bars, every bar within [historyHealAgreement] of
-// the median. A series split across two levels (a genuine mid-week
-// redenomination) fails the mutual-agreement test by construction.
+// historyMajority reports the median of a rejected history series and whether it is heal-grade
+// evidence: at least [historyHealMinBars] bars, every one within [historyHealAgreement] of the
+// median. A series split across two levels (a genuine redenomination) fails by construction.
 func historyMajority(rejected []HistoryPoint) (float64, bool) {
 	if len(rejected) < historyHealMinBars {
 		return 0, false

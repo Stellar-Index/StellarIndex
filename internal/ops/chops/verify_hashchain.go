@@ -17,7 +17,6 @@ import (
 // prev_hash must equal ledger n-1's ledger_hash (ADR-0034). Windows split the chain at bucket
 // seams, so it checks in-window links (lagInFrame over ledger_seq) and a lookup at each seam.
 // A gap reads as a break in both; run verify-contiguity first to tell it from a bad hash.
-//
 // Exit code is the broken-link count capped at 255. Read-only; ClickHouse only.
 func verifyHashChain(args []string) error {
 	fs := flag.NewFlagSet("verify-hashchain", flag.ContinueOnError)

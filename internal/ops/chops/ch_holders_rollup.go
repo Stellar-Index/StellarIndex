@@ -10,32 +10,21 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// holdersRollupLockPath is where chHoldersRollup takes its exclusive
-// advisory lock (see acquireHoldersRollupLock). /var/lib/stellarindex is
-// the r1 state directory every long-running stellarindex-* unit already
-// runs from (WorkingDirectory=/var/lib/stellarindex on the sibling
-// systemd units), so the lock survives a reboot at the same place an
-// operator already looks.
+// holdersRollupLockPath is where chHoldersRollup takes its exclusive advisory lock (see
+// acquireHoldersRollupLock), in the state directory the sibling systemd units already run from.
 const holdersRollupLockPath = "/var/lib/stellarindex/ch-holders-rollup.lock"
 
-// ch-holders-rollup recomputes every asset's top-500
-// holders board + holder count into staging tables and atomically
-// EXCHANGE them live (deploy/clickhouse/asset_holders_rollup.sql). The
-// two ledger_entries_current FINAL scans this runs are too heavy for
-// GET /v1/assets/{id}/holders to run PER REQUEST; a 30-minute
-// timer runs them once per cycle instead, and the API serves keyed
-// sub-millisecond reads (sub-second page goal).
+// ch-holders-rollup recomputes every asset's top-500 holders board and holder count into staging
+// tables and atomically EXCHANGEs them live (deploy/clickhouse/asset_holders_rollup.sql). The two
+// ledger_entries_current FINAL scans are too heavy to run PER REQUEST, so a 30-minute timer runs
+// them once per cycle and the API serves keyed sub-millisecond reads.
 //
-// Takes an exclusive advisory lock before it runs anything: the timer
-// and a manually-invoked run both resolve to this same function, and
-// systemd's own single-instance guarantee only covers the FIRST —
-// `stellarindex-ops ch-holders-rollup` run by hand from a shell bypasses
-// it entirely. See acquireRollupLock (rollup_lock.go) for the failure
-// that closes.
+// It takes an exclusive advisory lock first: systemd's single-instance guarantee covers only the
+// timer, and a hand-run `stellarindex-ops ch-holders-rollup` bypasses it (see acquireRollupLock in
+// rollup_lock.go).
 //
-// Fail-closed DRY RUN by default (opsutil.WriteGate): without -write
-// this reports the recompute it would run and takes no lock, opens no
-// connection. The holders-rollup systemd unit passes -write explicitly.
+// Fail-closed DRY RUN by default (opsutil.WriteGate): without -write it reports the recompute and
+// takes no lock and opens no connection. The systemd unit passes -write explicitly.
 func chHoldersRollup(args []string) error {
 	fs := flag.NewFlagSet("ch-holders-rollup", flag.ContinueOnError)
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
@@ -60,13 +49,9 @@ func chHoldersRollup(args []string) error {
 	ctx, cancel := opsutil.SignalContext()
 	defer cancel()
 
-	// The timer runs this unattended every 30 minutes with no other
-	// success/failure signal, so a cycle that silently falls behind (no
-	// crash, just no progress) needs a metric of its own. The same
-	// heartbeat primitive ch-backfill and usd-volume-restamp use
-	// publishes stellarindex_ops_job_last_finish_unix /
-	// _last_exit_ok, which the existing generic ops_job alert tree covers
-	// without a new alert.
+	// The timer runs unattended, so a cycle that silently falls behind (no crash, no progress)
+	// needs its own signal: the shared heartbeat publishes stellarindex_ops_job_last_finish_unix
+	// and _last_exit_ok, which the generic ops_job alerts already cover.
 	hb := opsutil.NewJobHeartbeat("ch-holders-rollup", *heartbeat, nil)
 	if hb.Enabled() {
 		fmt.Fprintf(os.Stderr, "ch-holders-rollup: heartbeat -> %s\n", hb.Path())

@@ -15,7 +15,7 @@ import (
 //
 // The chunk driver (usd_volume_restamp_chunks.go) owns chunks, compression policy, the run lock
 // and the free-space guard. This file serves the row-list tiers (XLM-base, its XLM-quote mirror,
-// CEX fiat-quote) through ONE [chunkRestampTier] so their guards cannot drift; the exact tier's
+// CEX fiat-quote) through one [chunkRestampTier] so their guards cannot drift; the exact tier's
 // set-based UPDATE lives in usd_volume_restamp_chunks_exact.go.
 
 // estimatedChunkApply is the guarded in-chunk write: the store's apply
