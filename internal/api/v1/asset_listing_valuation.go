@@ -15,20 +15,17 @@ import (
 )
 
 // A listing-sourced valuation for a verified-catalogue asset whose market cap
-// this index declines to publish (e.g. USDT0, whose ~$100/day Stellar market
-// trips the dust-liquidity guard). Supply times an independent listing's USD price
-// is true and separately checkable; folded into market cap it would be false. So,
-// like the RWA surface (rwa_reference.go), it ships as a `reference` block plus a
-// `valuation` block with provenance and is never written into `market_cap_usd`.
+// this index declines to publish (e.g. USDT0, whose thin Stellar market trips the
+// dust-liquidity guard). Supply times an independent listing's USD price is true
+// and checkable; folded into market cap it would be false. So, like the RWA
+// surface (rwa_reference.go), it ships as `reference` plus `valuation` blocks
+// with provenance and is never written into `market_cap_usd`.
 //
 // The listing must name the asset exactly: its classic CODE-GISSUER id or its SAC
 // address (derived from one (code, issuer) pair, so an impersonator's contract
-// never matches). Both forms are read because the upstream uses each for about
-// half the set. Matching by code is never done: this network carries impersonating
-// PYUSD, USDT, USDC and XLM issuers.
-//
-// Membership in the verified catalogue (internal/currency/data/seed.yaml) is a
-// second, independent gate: the listing corroborates, the catalogue attests.
+// never matches); the upstream uses each form for about half the set. Matching
+// by code is never done. Verified-catalogue membership (internal/currency/data/seed.yaml)
+// is a second gate: the listing corroborates, the catalogue attests.
 // [Server.listingValuationFor] then fills only a price hole:
 //
 //   - a published market cap wins ([ListingValuationMarketCapPublished]);

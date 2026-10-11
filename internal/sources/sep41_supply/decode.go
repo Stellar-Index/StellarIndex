@@ -124,12 +124,10 @@ func amountScVal(sv xdr.ScVal) (xdr.ScVal, error) {
 // Discriminator: if topic[2] decodes as an Address, it is the legacy
 // admin-prefixed form and the counterparty is topic[2]; otherwise
 // topic[2] is the sep0011_asset String (CAP-67 / Whisk) — or absent
-// (bare spec) — and the counterparty is topic[1]. Verified against the
-// r1 lake: 99.96% of recent mints + 100% of clawbacks were the CAP-67
+// (bare spec) — and the counterparty is topic[1]. CAP-67 is the dominant
 // shape, which a fixed-topic[2] decode would DROP entirely
-// (AsAddressStrkey returns ErrScValType on the String → the whole row
-// is lost → total_supply under-counts). burn's counterparty is topic[1]
-// in every shape.
+// (AsAddressStrkey returns ErrScValType on the String → total_supply
+// under-counts).
 //
 // Older / shorter topic vectors surface ErrShortTopic so the caller
 // drops the row rather than writing garbage.

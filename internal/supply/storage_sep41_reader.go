@@ -63,23 +63,13 @@ type SEP41KindTotals struct {
 // SAC-balance per-contract lookup primitive. Per ADR-0023, this is the
 // algorithm 3 reader path.
 //
-// AdminBalance handling: Algorithm 3 names AdminBalance as a
-// separate field, but the SEP-41 admin is operator-policy (the
-// admin is whoever the contract's `set_admin` event last named).
-// At v1 we don't track set_admin; instead, operators put the
-// admin's strkey in the per-asset LockedSet alongside other
-// locked addresses. AdminBalance is therefore always 0 from this
-// reader; the practical effect on circulating is identical
-// (locked-set sums + admin balance both subtract).
-//
-// "Identical effect on circulating" is only true once the operator
-// HAS configured the locked-set. With no locked-set, nothing is
-// subtracted at all, so stamping `basis:"admin_exclusion"` would claim
-// an exclusion that never happened. [SEP41Computer.Compute] emits
-// [BasisSEP41TotalOnly] for that case, so the unconfigured
-// state is visible on the wire instead of masquerading as a
-// configured one. Do NOT "fix" this by returning a non-zero
-// placeholder here.
+// AdminBalance handling: set_admin is not tracked; operators put the admin's
+// strkey in the per-asset LockedSet, so AdminBalance is always 0 here and the
+// effect on circulating is identical, but only once the locked-set HAS been
+// configured. With none, nothing is subtracted, so stamping
+// `basis:"admin_exclusion"` would claim an exclusion that never happened.
+// [SEP41Computer.Compute] emits [BasisSEP41TotalOnly] for that case. Do NOT
+// "fix" this by returning a non-zero placeholder here.
 //
 // LockedAccount/LockedContract handling: per-entity SAC-balance
 // lookups summed in Go. Per-asset LockedSet sizes are typically

@@ -86,19 +86,14 @@ type Event struct {
 	// operation that emitted this event (created, or updated with
 	// post-image Val != the op's pre-image Val — an identical-value
 	// rewrite does not count), filtered to entries owned by THIS
-	// event's contract. Populated by internal/dispatcher from the tx
-	// meta's per-operation LedgerEntryChanges (production LCM path) and
-	// by the ClickHouse event reader from the lake's
-	// ledger_entry_changes table (re-derive path); both apply the same
-	// rule (internal/dispatcher/state_write_keys.go) so decoders see
-	// one shape.
+	// event's contract. Populated by internal/dispatcher from the tx meta's
+	// LedgerEntryChanges (live path) and by the ClickHouse event reader from
+	// ledger_entry_changes (re-derive path); both apply
+	// internal/dispatcher/state_write_keys.go.
 	//
-	// Redstone is the current primary user: write_prices REWRITES every
-	// requested feed's entry but only ACCEPTED feeds' stored PriceData
-	// actually changes (r1 ground truth, ledger 62056824), so when the
-	// freshness verifier drops feeds (updated_feeds SHORTER than the
-	// op-args feed_ids) the value-changed keys name the accepted subset
-	// EXACTLY — no median heuristics. See
+	// Redstone uses it: write_prices REWRITES every requested feed's entry but
+	// only ACCEPTED feeds' PriceData changes, so when the freshness verifier
+	// drops feeds the value-changed keys name the accepted subset EXACTLY. See
 	// internal/sources/redstone/decode.go resolveFeedAttribution.
 	//
 	// Empty for events observed via stellar-rpc getEvents (which does
