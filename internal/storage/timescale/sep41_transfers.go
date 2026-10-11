@@ -270,23 +270,15 @@ const SEP41TransferLadderBudget = 3 * time.Second
 // optionally filtered by from_addr / to_addr. Powers GET
 // /v1/contracts/{id}/transfers.
 //
-// Full history stays reachable: a contract whose page none of the
-// [sep41TransferLookbackLadder] rungs can fill falls through to an unbounded
-// read. That is cheap for a genuinely low-volume contract (the planner uses
-// sep41_transfers_contract_from_idx), but NOT for a contract with a large
-// history and fewer than `limit` rows in the widest rung: it still takes the
-// per-chunk sort that times out, after paying the ladder first, so its
-// fallback runs on the caller's remaining time (at least 5s of the 8s
-// handler deadline).
+// A contract whose page no [sep41TransferLookbackLadder] rung fills falls
+// through to an unbounded read: cheap for a low-volume contract, but a large
+// history with fewer than `limit` rows in the widest rung still takes the
+// per-chunk sort that times out, so that fallback runs on the caller's
+// remaining time (at least 5s of the 8s handler deadline).
 //
-// The root cause, no index yielding one contract's rows in ledger_close_time
-// DESC order, is only removed by a (contract_id, ledger_close_time DESC)
-// index together with an ORDER BY the compressed chunks can serve (the read
-// also orders by op_index, which compress_orderby lacks, so a compressed
-// chunk still sorts its whole segment). That index is heavy DDL on a
-// hypertable of hundreds of millions of rows and belongs in its own
-// migration with the by-hand CONCURRENTLY step r1 needs (migrations 0083 /
-// 0106 set that convention).
+// The fix is a (contract_id, ledger_close_time DESC) index plus an ORDER BY
+// compressed chunks can serve (op_index is not in compress_orderby): heavy
+// DDL that needs its own migration with the by-hand CONCURRENTLY step.
 func (s *Store) ListSEP41Transfers(ctx context.Context, contractID, fromAddr, toAddr string, limit int) ([]SEP41TransferRow, error) {
 	return s.listSEP41TransfersAt(ctx, contractID, fromAddr, toAddr, limit, time.Now(), SEP41TransferLadderBudget)
 }
@@ -500,29 +492,20 @@ func cursorIndex16(v uint32) int16 {
 }
 
 // ListSEP41TransfersByAddress returns one address's SEP-41 'transfer'
-// history, both sides (from_addr = address OR to_addr = address), newest
-// first, keyset-paged by the composite (ledger, tx_hash, op_index,
-// event_index) cursor. ADR-0048 D5: the Postgres "recent tail" half of the
-// unified GET /v1/accounts/{g}/movements feed, merged in
-// internal/api/v1/explorer/movements.go with ClickHouse's
-// stellar.account_movements (the pre-P23 archive). SEP41MovementsFloorLedger's
+// history, both sides, newest first, keyset-paged by (ledger, tx_hash,
+// op_index, event_index). It is the Postgres recent tail of GET
+// /v1/accounts/{g}/movements (ADR-0048 D5), merged in explorer/movements.go
+// with ClickHouse's stellar.account_movements; SEP41MovementsFloorLedger's
 // doc comment has the non-overlap argument.
 //
-// Scope, narrower than ListSEP41Transfers: event_kind = 'transfer' only
-// (approve/set_admin/set_authorized move no amount), and ledger >=
-// SEP41MovementsFloorLedger. Below the P23 boundary a classic-asset transfer
-// already has a stellar.account_movements row (ADR-0047); a pure Soroban-
-// native SEP-41 transfer below it is a documented gap (see the OpenAPI
-// description for GET /accounts/{g_strkey}/movements).
+// Scope: event_kind = 'transfer' only, and ledger >= SEP41MovementsFloorLedger
+// (below P23 a classic transfer is already in account_movements; a pure
+// Soroban-native one is a documented gap).
 //
-// direction, when non-empty, must be "sent"/"received"/"self" (mirroring
-// clickhouse.AccountMovementDirection, which this package can't import) and
-// is evaluated against `address`: "sent" = from_addr=address (and to_addr !=
-// address), "received" = the reverse, "self" = both.
-//
-// contractID, when non-empty, restricts every arm to that token contract
-// BEFORE the LIMIT, so an ?asset= page is filled from matching rows rather
-// than from the address's newest `limit` transfers of any token.
+// direction, when non-empty, is "sent"/"received"/"self" (mirroring
+// clickhouse.AccountMovementDirection) relative to `address`. contractID,
+// when non-empty, filters every arm BEFORE the LIMIT, so an ?asset= page is
+// filled from matching rows.
 
 // sep41TransfersByAddressQuery assembles the UNION arm set for one
 // direction filter (see ListSEP41TransfersByAddress's shape comment).

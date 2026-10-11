@@ -123,28 +123,19 @@ func (s *Store) InsertSorobanEventsBatch(ctx context.Context, rows []domain.Soro
 	return nil
 }
 
-// StreamSorobanEvents invokes `fn` once per soroban_events row
-// matching the predicate in [from, to] (inclusive), in
-// (ledger_close_time, ledger, tx_hash, op_index, event_index) order
-// — event_index makes the per-op replay order deterministic so
-// multi-event ops (Phoenix's 8-events-per-swap) reconstruct stably
-// (ADR-0033). Used by the projector's tail loop (and its
-// `stellarindex-ops projector-replay` catch-up path — the one
-// catch-up mechanism per ADR-0032; the old per-source
-// `<source>-backfill` subcommands were deleted) plus the ADR-0033
-// completeness reconciler, to re-feed historical rows through the
-// live Go decoders without a MinIO walk.
+// StreamSorobanEvents invokes `fn` once per soroban_events row matching the
+// predicate in [from, to] (inclusive), in (ledger_close_time, ledger,
+// tx_hash, op_index, event_index) order; event_index keeps multi-event ops
+// (Phoenix's 8 events per swap) stable (ADR-0033). It feeds the projector's
+// tail loop, `projector-replay` and the completeness reconciler through the
+// live decoders without a MinIO walk.
 //
-// `contractIDs` and `topic0Syms` are inclusive filters: empty means
-// "no filter on this dimension". Passing both is the common case
-// (per-source replay scopes by both contract set + emitted topic
-// names) and pushes the filter into Postgres so we don't stream
-// billions of irrelevant rows over the network.
+// `contractIDs` and `topic0Syms` are inclusive filters (empty = no filter);
+// passing both pushes the scope into Postgres instead of streaming billions
+// of irrelevant rows.
 //
-// The callback returning a non-nil error aborts the walk. ctx
-// cancellation is checked between rows (the underlying rows.Next()
-// blocks on network reads; cancellation propagates through the
-// driver).
+// A non-nil error from the callback aborts the walk; ctx cancellation is
+// checked between rows and propagates through the driver.
 func (s *Store) StreamSorobanEvents(
 	ctx context.Context,
 	from, to uint32,
@@ -332,26 +323,18 @@ type LedgerGap struct {
 
 // FindSorobanEventsLedgerGaps scans the soroban_events.ledger column in
 // [from, to] and returns every contiguous gap of size >= minGapSize. It is the
-// **data-derived** alternative to the cursor-derived density projection: cursor
-// coverage counts "did we walk this ledger", this query counts "is the data we
-// should have actually in the table". They diverge under failures the cursor
-// cannot see, e.g. a writer halt where cursors advance but the sink has
-// back-pressured to a stop and no rows land.
+// **data-derived** alternative to cursor coverage: it catches failures the
+// cursor cannot see, e.g. cursors advancing while a back-pressured sink lands
+// no rows. minGapSize (typically ~1000, ~1.5 h) filters expected quiet gaps.
 //
-// minGapSize filters out expected event-free gaps. Operators typically use ~1000
-// to surface structurally significant gaps (~1.5 h of none is a writer-halt
-// signature).
+// Implementation: LAG() over distinct ledgers.
 //
-// Implementation: LAG() over distinct ledgers, emitting a gap when the
-// difference > 1 and the gap size meets the threshold.
-//
-// Chunk-pruning (ADR-0033): soroban_events is partitioned by ledger_close_time,
-// NOT ledger, so `WHERE ledger BETWEEN` alone forces a SELECT DISTINCT across
-// every chunk. When ledger_ingest_log fully covers [from,to] we bound
-// ledger_close_time exactly (see [Store.SorobanEventsTimeBound]), as
-// StreamSorobanEvents does. The fullyCovered guard is a correctness requirement:
-// a partial time bound could exclude in-range ledgers and fabricate phantom gaps,
-// so without full coverage we fall back to the correct, slower unpruned scan.
+// soroban_events is partitioned by ledger_close_time, NOT ledger, so a ledger
+// bound alone scans every chunk. When ledger_ingest_log fully covers
+// [from,to] the time is bounded exactly ([Store.SorobanEventsTimeBound]).
+// Full coverage is a correctness requirement: a partial time bound could
+// exclude in-range ledgers and fabricate phantom gaps, so otherwise the
+// slower unpruned scan runs.
 func (s *Store) FindSorobanEventsLedgerGaps(ctx context.Context, from, to, minGapSize int64) ([]LedgerGap, error) {
 	if to < from {
 		return nil, fmt.Errorf("timescale: FindSorobanEventsLedgerGaps: to (%d) < from (%d)", to, from)

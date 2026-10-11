@@ -11,25 +11,15 @@ import (
 // together with the hop it went through so the caller can substance-gate
 // that leg independently.
 //
-// # WHY THIS EXISTS
+// The catalogue prices the long tail through only `direct_usd` and
+// `asset_vs_xlm`, both built on the classic-only `classic_assets`, so an
+// asset trading against neither (including every Soroban-native contract
+// asset) is unpriceable however deep its market.
 //
-// The catalogue prices the long tail through exactly two hard-coded
-// shapes: `direct_usd` (quoted in a USD proxy) and `asset_vs_xlm`
-// (quoted in XLM, times xlm_usd). An asset that trades against NEITHER
-// is unpriceable no matter how deep its market — and both catalogue
-// queries are built on `classic_assets`, which is structurally classic-only
-// (`issuer_g_strkey NOT NULL`), so no Soroban-native contract asset can
-// reach them at all. Example: an asset whose ONLY counterparty is itself a
-// Soroban-native contract, with both legs substantial, is derivable but
-// nothing derived it.
-//
-// SAFETY. This deliberately returns the hop rather than just a number.
-// A transitive price is only as trustworthy as its weakest leg, so the
-// caller MUST gate both (asset→hop and hop→proxy) through the substance
-// gate before serving. Publishing a two-hop price without checking the
-// intermediate would let a thin middle market reprice everything
-// downstream of it — the manipulation the substance floors exist to
-// prevent.
+// The hop is returned, not just a number, because a transitive price is only
+// as trustworthy as its weakest leg: the caller MUST gate both asset→hop and
+// hop→proxy before serving, or a thin middle market reprices everything
+// downstream of it.
 type TransitivePrice struct {
 	// PriceUSD is the derived USD price as an exact NUMERIC string
 	// (ADR-0003 — never float64 on a money path).
@@ -60,27 +50,18 @@ const transitiveHopCandidates = 5
 
 // TransitiveUSDPriceCandidates derives USD prices for `assetID` through
 // each counterparty that itself has a USD price, best candidate first.
+// An empty slice (nil error) means no route exists, a measurement.
 //
-// Returns an empty slice (nil error) when no such path exists — absence
-// of a route is a measurement, not a failure.
+//   - DIRECTION. prices_1m stores a pair both ways and `vwap` is "price of
+//     base in quote": a row (asset, hop) is used as is, (hop, asset) is
+//     INVERTED. Skipping that is a reciprocal price, off by magnitudes.
+//   - HOP RANKING. By the 24h USD volume of the asset<->hop market, then hop
+//     id for determinism. The hop's own USD/XLM market is not gated here.
+//   - SEVERAL CANDIDATES. Up to [transitiveHopCandidates], because a deep
+//     near leg whose hop fails the caller's gate must not hide a shallower
+//     hop that passes.
 //
-// Mechanics, and the details that make it correct:
-//
-//   - DIRECTION. prices_1m stores a pair in BOTH directions, and `vwap`
-//     is always "price of base in quote". A row (asset, hop) is used as
-//     is; a row (hop, asset) is INVERTED. Reading either without
-//     inverting would produce a reciprocal price — off by orders of
-//     magnitude, not a rounding error.
-//   - HOP RANKING. Ordered by the 24h USD volume of the asset<->hop
-//     market (the near leg, the market trusted to convert one into the
-//     other), then by hop id so ties are deterministic. The hop's OWN
-//     USD/XLM market is neither ranked nor gated here.
-//   - SEVERAL CANDIDATES. Up to [transitiveHopCandidates] hops, because
-//     publishability is the caller's decision: a deep near leg whose hop
-//     fails the caller's gate must not hide a shallower hop that passes.
-//
-// Closed buckets only (ADR-0015): every read excludes the in-flight
-// minute, matching every other price surface.
+// Closed buckets only (ADR-0015): the in-flight minute is excluded.
 func (s *Store) TransitiveUSDPriceCandidates(ctx context.Context, assetID string) ([]TransitivePrice, error) {
 	rows, err := s.db.QueryContext(ctx, transitiveUSDPriceSQL, assetID, transitiveHopCandidates, canonical.NativeSACContractID())
 	if err != nil {

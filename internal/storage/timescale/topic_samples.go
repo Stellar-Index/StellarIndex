@@ -43,20 +43,15 @@ const distinctTopicSampleWindow = 30 * 24 * time.Hour
 // (contract_id, topic_0_sym) present in soroban_events over [from, to], with
 // per-shape count and ledger span. It is the input to the recognition audit.
 //
-// Cost is bounded independently of table size (see distinctTopicSampleWindow): a
-// trailing-window scan, chunk-pruned by ledger_close_time, finds almost every
-// shape, and a narrow index-only / bloom-pruned fallback recovers shapes whose
-// only activity predates the window, never reading the wide XDR/body columns
-// across full history (that read, not row count alone, made an unbounded query
-// take 2h).
+// Cost is bounded independently of table size: a chunk-pruned trailing-window
+// scan finds almost every shape, and a narrow index-only fallback recovers
+// older ones without reading the wide XDR/body columns across history.
 //
-// COVERAGE LIMIT. This path is NOT a complete recognition audit; a caller must
-// not read "no gaps found" as complete:
+// NOT a complete audit; "no gaps found" is not "complete":
 //
-//   - Shapes whose topic[0] is not a Symbol/String (topic_0_sym IS NULL) are
-//     recovered ONLY inside the trailing [distinctTopicSampleWindow]; the
-//     pre-window fallback rides a partial index that excludes NULL topic_0_sym
-//     (see [Store.distinctSorobanContractTopicPairs]).
+//   - Shapes whose topic[0] is not a Symbol/String are recovered ONLY inside
+//     [distinctTopicSampleWindow]: the fallback's partial index excludes NULL
+//     topic_0_sym ([Store.distinctSorobanContractTopicPairs]).
 //   - The window bound is a cost ceiling, not a claim about history.
 //
 // The authoritative check is the ClickHouse path (computeRecognitionGapsCH).
@@ -86,29 +81,14 @@ func (s *Store) distinctSorobanTopicSamplesAt(ctx context.Context, from, to uint
 		seen[[2]string{samples[i].Row.ContractID, samples[i].Row.Topic0Sym}] = true
 	}
 
-	// Phase 2: discovery of every (contract_id, topic_0_sym) pair that
-	// has EVER emitted a Symbol/String topic[0] — a contract that
-	// stopped emitting, or a rare historic shape the trailing window
-	// missed. Reads ONLY the narrow composite index
-	// (soroban_events_contract_topic_idx: contract_id, topic_0_sym),
-	// never the wide XDR/body columns — r1's planner (at 357GB / ~3.56B
-	// rows) confirmed an Index Only Scan per uncompressed chunk
-	// and a bloom-filter-pruned Custom Scan (ColumnarScan) per compressed
-	// chunk (TimescaleDB's per-segment min/max + bloom metadata), NOT a
-	// heap fetch of any wide column. This is still O(rows) — Postgres
-	// has no native loose/skip-scan strategy to make it O(distinct
-	// shapes) — but each row costs a narrow columnar/index read instead
-	// of a wide-XDR heap fetch, which is what drove the 2h runtime of
-	// an unbounded wide-column scan; the row COUNT this phase touches
-	// doesn't grow with the sep41 CAP-67 firehose's per-row byte size,
-	// only its row count, so it grows far more slowly than that scan. Non-
-	// Symbol/String topic[0] shapes (Row.Topic0Sym == "") are NOT
-	// recovered by this phase — that partial index excludes NULL
-	// topic_0_sym by construction, and such shapes are rare enough (an
-	// explicit edge case even in the recognition-gap reporting) that
-	// chasing them past the trailing window isn't worth reintroducing
-	// wide-column reads for; the `-ch` full-history path remains the
-	// backstop for them too.
+	// Phase 2: every (contract_id, topic_0_sym) pair that has EVER emitted a
+	// Symbol/String topic[0], including contracts that went quiet before the
+	// window. Reads ONLY soroban_events_contract_topic_idx (an Index Only Scan
+	// or bloom-pruned ColumnarScan per chunk, never a wide-column heap fetch).
+	// Still O(rows), as Postgres has no skip scan, but each row is a narrow
+	// read, so it grows with row count rather than per-row byte size.
+	// Non-Symbol/String shapes are not recovered here (the partial index
+	// excludes NULL topic_0_sym); the `-ch` full-history path backstops them.
 	pairs, err := s.distinctSorobanContractTopicPairs(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: DistinctSorobanTopicSamples pair discovery: %w", err)
