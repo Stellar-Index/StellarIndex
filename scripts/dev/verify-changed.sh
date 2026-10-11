@@ -71,7 +71,7 @@ for app in explorer status; do
         echo "vitest: $(grep -E '^\s*(Test Files|Tests)\s' "$log" | tr -s ' ' | paste -sd ';' -), full output $log"
     else
         echo "vitest: FAIL, full output $log"
-        grep -E -A6 '^\s*(❯|×|✗|FAIL|⎯+ Failed|AssertionError|Error:|Test Files|Tests)\b' "$log" | sed -n '1,150p'
+        grep -E -A6 '^\s*(❯|×|✗|FAIL\b|⎯+ Failed|AssertionError|Error:|TypeError|Test Files\s|Tests\s)' "$log" | sed -n '1,150p'
         status=1
     fi
 done
