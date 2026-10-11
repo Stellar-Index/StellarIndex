@@ -16942,7 +16942,7 @@ components:
                 description: Protocol name where one applies, otherwise a short noun phrase for the surface.
               reason: { type: string }
 
-    # RWA value over time (/rwa/history) — #352.
+    # RWA value over time (/rwa/history).
     RWAHistoryView:
       type: object
       description: |
@@ -17378,7 +17378,7 @@ components:
           type: string
           enum: [published, supply_unavailable, price_unavailable, withheld, not_observed]
 
-    # Tokenized real-world assets (/rwa/assets) — #352.
+    # Tokenized real-world assets (/rwa/assets).
     RWAAssetsView:
       type: object
       description: |

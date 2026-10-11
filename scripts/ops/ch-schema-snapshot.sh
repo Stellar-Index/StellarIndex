@@ -267,7 +267,7 @@ if [[ "$TEXTFILE_DIR" != "/dev/null" ]]; then
     echo "# HELP stellarindex_ch_schema_snapshot_bytes Size on disk of the most recent snapshot directory."
     echo "# TYPE stellarindex_ch_schema_snapshot_bytes gauge"
     echo "stellarindex_ch_schema_snapshot_bytes $bytes"
-    # Always emitted. The offsite alert no longer gates on it; its description
+    # Always emitted. The offsite alert does not gate on it; its description
     # reads it to split "never configured" (0) from "configured but failing" (1).
     echo "# HELP stellarindex_ch_schema_snapshot_offsite_configured 1 if an offsite target (SNAPSHOT_MC_TARGET) is configured for this host, else 0."
     echo "# TYPE stellarindex_ch_schema_snapshot_offsite_configured gauge"

@@ -8,9 +8,8 @@ import type { operations } from '@/api/types';
 //
 // They are derived rather than restated because a hand-written copy
 // matches the wire today and is free to drift from it the day the spec
-// moves. Three panels each carried their own copy of these shapes until
-// board #515; the copies agreed by luck, and nothing would have gone red
-// when one of them stopped. A field renamed in the spec now fails
+// moves; separate copies agree only by luck, and nothing goes red when one
+// stops matching. A field renamed in the spec fails
 // `tsc` in every consumer at once.
 
 export type CreatorsResp = NonNullable<
