@@ -983,11 +983,10 @@
 - name: Install run-compute-completeness.sh driver (ADR-0033 verdict refresh)
   # compute-completeness.service runs this whole-pass driver: one
   # `compute-completeness -ch -pass` call proves recognition + substrate once
-  # at full range for the whole catalogue and reconciles each source's
-  # projection incrementally from its own watermark. The SDEX reconcile's
-  # ClickHouse memory is bounded inside the tool (25k-ledger CH windowing), so
-  # the wrapper no longer chunks — which is what removes the per-chunk repeat of
-  # the ~60s global recognition scan that timed the nightly service out.
+  # at full range and reconciles each source's projection from its own
+  # watermark. The tool bounds SDEX ClickHouse memory itself (25k-ledger
+  # windowing), so the wrapper must not chunk: chunking repeats the ~60s
+  # global recognition scan per chunk and times the nightly service out.
   ansible.builtin.copy:
     src: run-compute-completeness.sh
     dest: /usr/local/sbin/run-compute-completeness.sh
@@ -1124,9 +1123,8 @@
     # conditionally below (listing_sync_enabled).
     - curated-rwa-sync.service
     - curated-rwa-sync.timer
-    # cap67-movements: a continuous FOLLOW DAEMON now (5.3), not a
-    # timer+oneshot — only the .service is rendered; the old .timer is
-    # retired below.
+    # cap67-movements: a continuous follow daemon, not a timer+oneshot;
+    # only the .service is rendered, the old .timer is retired below.
     - holders-rollup.service
     - holders-rollup.timer
     - creators-rollup.service
@@ -1168,9 +1166,8 @@
 
 - name: Enable + start verify-archive / completeness / supply-snapshot timers
   # galexie-archive-trim.timer is INTENTIONALLY OMITTED from this
-  # loop — per [[feedback_cold_tier_premature_enable]] and ADR-0027
-  # §Sequencing, the monthly trim is destructive before §3 (cold-
-  # tiering enabled) + §4 (bulk-trim done). The operator runs
+  # loop: per ADR-0027 §Sequencing, the monthly trim is destructive before
+  # §3 (cold-tiering enabled) + §4 (bulk-trim done). The operator runs
   # `systemctl enable --now galexie-archive-trim.timer` by hand
   # after the bulk-trim completes.
   ansible.builtin.systemd:
@@ -1506,12 +1503,10 @@
       failed_when: false
 
 # ── verify-archive Tier B — only where its anchor can be correct ─────
-# Tier B (checkpoint anchor, task #33 / W8 recon 14a): verify_archive.go
-# has always implemented `-tier checkpoint` but only Tier A was scheduled,
-# so the single-source-corruption anchor check never ran. It reads a LOCAL
-# rs-stellar-archivist mirror (/srv/history-archive) which is populated for
-# pubnet ONLY — see verify_archive_tier_b_enabled in defaults/main.yml for
-# the full rationale and the observed testnet mismatch.
+# Tier B (checkpoint anchor): `verify_archive -tier checkpoint` reads a LOCAL
+# rs-stellar-archivist mirror (/srv/history-archive), populated for pubnet
+# ONLY; see verify_archive_tier_b_enabled in defaults/main.yml for the
+# rationale and the observed testnet mismatch.
 - name: Install + enable verify-archive-tier-b (networks with a correct anchor)
   # Tagged for the same reason as the tier-a install above: the
   # ops-job units must be renderable WITHOUT a full archival-node run,
@@ -1747,8 +1742,8 @@
     weekday: "0"   # Sunday, after the nightly heavy-job band
     state: "{{ 'present' if (verify_archive_tier_d_enabled | bool) else 'absent' }}"
     # The -ops file is read VERBATIM (systemd EnvironmentFile syntax is not
-    # shell — `source` would expand `$` / split on `;` inside a secret;
-    # deploy-ansible-secrets-5). No `%` here: cron turns it into a newline.
+    # shell: `source` would expand `$` / split on `;` inside a secret).
+    # No `%` here: cron turns it into a newline.
     # set -o pipefail: without it, `cmd | logger` exits with LOGGER's
     # status (always 0), so a peer-mismatch or archive-error exit from
     # verify-archive is silently discarded and the job reads as clean.

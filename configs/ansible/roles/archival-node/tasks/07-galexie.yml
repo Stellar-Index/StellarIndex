@@ -16,8 +16,7 @@
 # galexie embeds a CAPTIVE stellar-core (galexie.toml stellar_core_binary_path
 # = /usr/bin/stellar-core) to replay ledgers, so the binary must be present
 # EVEN WHEN run_stellar_core is false (r1/test nets don't run the core DAEMON,
-# but galexie still needs the binary). This was an out-of-band install on r1;
-# codified here so a fresh host (r2/r3/test net) gets it too. `state: present`
+# but galexie still needs the binary). `state: present`
 # never upgrades an already-installed pin, so r1 is untouched.
 - name: Add SDF apt key (captive-core for galexie)
   # Same vendored key as 06-stellar-core.yml (files/sdf.asc, sha256 48c38236…
@@ -254,16 +253,10 @@
   # artifact, not drift.
   tags: [observability, stellar-stack-version, drift-guard]
 
-# The comparison reads stdout OR stderr. Observed on r1 (recorded in the
-# defaults/main.yml warning): the assert below failed with the live
-# galexie reporting '' — an EMPTY stdout. A guard that only ever looks at
-# stdout can never pass against a binary that prints its version banner
-# on stderr, no matter which constant is pinned, so "reconcile the
-# constants" would not have fixed it. Broadening WHERE the string is read
-# from does not weaken the check: it still has to equal
-# galexie_expected_version_string exactly, and an error message on stderr
-# fails that comparison just as an empty stdout does — only now the
-# fail_msg shows what was actually printed.
+# The comparison reads stdout OR stderr: galexie prints its version banner on
+# stderr, so a stdout-only guard can never pass. Reading both does not weaken
+# the check: the string must still equal galexie_expected_version_string, and
+# an error message fails it just as an empty stdout does.
 - name: Resolve the galexie version banner (stdout or stderr)
   ansible.builtin.set_fact:
     galexie_reported_version: >-
@@ -486,11 +479,9 @@
   when: (stellar_network | default('pubnet')) == 'pubnet'
 
 - name: Install galexie-archive-tip-lag metric updater (538d0e752)
-  # Defense-in-depth for the 23-day archive stall — writes a Prometheus textfile gauge of
-  # the ledger lag between galexie-live and galexie-archive. The
-  # accompanying alert pages within hours if the hourly catch-up
-  # timer silently breaks (the failure class that caused the 23-day
-  # original incident).
+  # Writes a Prometheus textfile gauge of the ledger lag between galexie-live
+  # and galexie-archive. The accompanying alert pages within hours if the
+  # hourly catch-up timer silently breaks.
   ansible.builtin.copy:
     src: galexie-archive-tip-lag.sh
     dest: /usr/local/bin/galexie-archive-tip-lag
@@ -709,9 +700,9 @@
     # Role-installed unit — CHECK-MODE UNIT GUARD, tasks/main.yml.
     - not (ansible_check_mode and galexie_archive_tip_lag_units is changed)
 
-# The version-lag page detected core 29.0.0 within a day and then sat
-# unactioned for 2.5 days of a 7-day runway to the P29 vote. The timer installs
-# a newer apt core itself, verified against the ledger tip with rollback.
+# The timer installs a newer apt core itself, verified against the ledger tip
+# with rollback, so a protocol upgrade does not wait on a human acting on the
+# version-lag page.
 - name: Install stellar-core-auto-upgrade
   ansible.builtin.copy:
     src: stellar-core-auto-upgrade.sh

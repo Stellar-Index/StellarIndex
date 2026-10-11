@@ -3,9 +3,8 @@
 #
 # pgBackRest itself (stanza, repo, retention=2) is configured out-of-band
 # (WAL archiving is in postgresql.conf.j2); this task only installs the recurring backup
-# *schedule* — which was missing, so the single bootstrap full backup
-# aged past 24h and tripped `stellarindex_timescale_backup_none_24h`
-# (page) on the status page. Cadence: differential Mon–Sat + a full on
+# *schedule*; without it the bootstrap full backup ages past 24h and trips
+# `stellarindex_timescale_backup_none_24h` (page). Cadence: differential Mon–Sat + a full on
 # Sunday, daily at 02:00, which satisfies both the 24h (page) and 25h
 # (ticket) thresholds in rules.r1/storage.yml. WAL archiving (archive-async)
 # carries the 5-min RPO between backups.
@@ -279,10 +278,9 @@
   register: ch_schema_snapshot_units
   when: ch_schema_snapshot_enabled | default(true)
 
-# Enabled by default, unlike restore-drill.timer: this is seconds of
-# metadata queries and megabytes of output, so the Phase-A capacity
-# argument does not apply — and a backup that ships disabled is exactly
-# what ADR-0043 was written after.
+# Enabled by default, unlike restore-drill.timer: seconds of metadata queries
+# and megabytes of output, so the Phase-A capacity argument does not apply
+# (ADR-0043).
 - name: Enable + start the ClickHouse schema-snapshot timer
   ansible.builtin.systemd:
     name: ch-schema-snapshot.timer
@@ -696,9 +694,7 @@
     daemon_reload: true
   when:
     - pgbackrest_backup_enabled | default(true)
-    # Role-installed unit — CHECK-MODE UNIT GUARD, tasks/main.yml. The
-    # three timers above and the off-site one below already carry this
-    # guard; this one was the odd task out.
+    # Role-installed unit — CHECK-MODE UNIT GUARD, tasks/main.yml.
     - not (ansible_check_mode and restore_drill_units is changed)
   tags: [ops-jobs]
 
