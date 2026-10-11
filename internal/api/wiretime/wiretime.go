@@ -20,15 +20,6 @@ import (
 // the PROCESS's local zone, so the server's local offset (which moves with
 // DST) leaks onto the wire — same instant, rendered differently.
 //
-// Every such string is schema-valid (`format: date-time` accepts an offset),
-// so neither the OpenAPI contract test nor any status-code check can see it.
-// A client that buckets by the literal string instead of the parsed instant
-// mis-buckets by an hour, silently, on price and trade history.
-//
-// This type fixes rendering, not storage: the instant is unchanged, and for a
-// value that was already UTC the bytes are IDENTICAL to what [time.Time]
-// produced, so adopting it is not a response-shape change.
-//
 // Use it for every json-tagged timestamp field a client reads. The rule
 // is enforced over all of internal/api by v1's
 // TestWireTime_NoRawTimeOnTheWire, which fails if a new response struct

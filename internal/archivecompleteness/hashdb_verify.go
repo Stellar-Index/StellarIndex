@@ -60,23 +60,15 @@ const MaxHashDBDriftSeqsReported = 64
 
 // HashDBWindowVerifier accumulates a [HashDBVerifyResult] as the
 // caller feeds it one (ledger_seq, freshly-computed sha256(LCM)) pair
-// at a time. Per internal/hashdb's package doc: "the indexer reads
-// each LCM ... appends a record. A periodic verifier later re-reads
-// the same bucket, recomputes sha256, and compares" — this type is
-// the compare half.
+// at a time.
 //
 // Deliberately transport-agnostic: it does NOT itself re-read the
 // datastore or depend on xdr.LedgerCloseMeta. Re-reading the bucket
 // (typically via ledgerstream.Stream) and computing each ledger's
-// hash (hashdb.Hash(lcm.MarshalBinary())) is the caller's job — see
-// cmd/stellarindex-indexer's periodic verify sweep for the production
-// wiring. This keeps internal/archivecompleteness free of the
+// hash (hashdb.Hash(lcm.MarshalBinary())) is the caller's job. This
+// keeps internal/archivecompleteness free of the
 // ledger-meta xdr dependency scripts/ci/lint-imports.sh's
-// B/xdr-scoped-to-scval rule polices (ADR-0013): only packages on the
-// ledger-meta plumbing path (ledgerstream, dispatcher, pipeline, the
-// indexer/ops binaries) are allow-listed for it, and this package
-// isn't ledger-meta plumbing — it's a comparison, fed pre-hashed
-// input.
+// B/xdr-scoped-to-scval rule polices (ADR-0013).
 //
 // Not safe for concurrent Observe calls — same single-writer
 // discipline as hashdb.DB itself.

@@ -19,22 +19,14 @@ import (
 
 // chReproject is the validation path (ADR-0034): it re-derives a ledger
 // range's protocol output from the ClickHouse Tier-1 lake using the EXISTING
-// decoders, and compares to the currently-served Postgres protocol tables —
-// i.e. "what would rebuilding Postgres from ClickHouse change?". For each
-// source's target table it reports CH-re-derived vs served per-ledger counts.
+// decoders, and compares to the currently-served Postgres protocol tables.
+// For each source's target table it reports CH-re-derived vs served per-ledger counts.
 //
 //   - ClickHouse side: a single pass over stellar.contract_events, feeding each
 //     event to every source decoder (Matches-gated, per-source-independent),
 //     bucketed by EventKind() — then SumKinds projects the kinds that land in
 //     each target table.
 //   - Served side: the actual protocol-table row counts (store.CountRowsByLedger).
-//
-// A CH count > served is the headline migration win: the lake recovers trades
-// the live/soroban_events path silently dropped (the event_index collision).
-// CH < served flags a CH-side gap (e.g. redstone needs op_args the extractor
-// doesn't capture yet). The baseline is deliberately the served tables, NOT
-// soroban_events — that landing zone is being decommissioned and re-derives
-// unreliably (and scanning it loads the live DB).
 //
 // soroswap is re-derived WITHOUT RPC pair-seeding, so its trade count
 // undercounts pairs created before the range; that delta is expected here

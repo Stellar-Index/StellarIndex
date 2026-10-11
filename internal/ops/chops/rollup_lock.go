@@ -25,13 +25,7 @@ import (
 // serializes the timer against ITSELF, not against a manual
 // `stellarindex-ops <job>` run from a shell, so the guard belongs here.
 //
-// Falls back to a temp-dir path when the preferred directory does not
-// exist (dev box, or before deploy has provisioned it), so the exclusion
-// holds everywhere rather than only on hosts an operator remembered to
-// create /var/lib/stellarindex on. Contention is reported as an error
-// (fail closed) rather than blocked on: these are bounded-cadence jobs,
-// not a queue, and an operator who sees "already running" can simply
-// retry rather than the process sitting in an indefinite wait.
+// Contention is reported as an error (fail closed) rather than blocked on.
 func acquireRollupLock(job, path string) (func(), error) {
 	path = filepath.Clean(path)
 	dir := filepath.Dir(path)

@@ -91,18 +91,10 @@ type Event struct {
 	// ledger_entry_changes (re-derive path); both apply
 	// internal/dispatcher/state_write_keys.go.
 	//
-	// Redstone uses it: write_prices REWRITES every requested feed's entry but
-	// only ACCEPTED feeds' PriceData changes, so when the freshness verifier
-	// drops feeds the value-changed keys name the accepted subset EXACTLY. See
-	// internal/sources/redstone/decode.go resolveFeedAttribution.
-	//
 	// Empty for events observed via stellar-rpc getEvents (which does
 	// not surface entry changes) and for readers that did not opt in
 	// (the fetch is per-source opt-in, like OpArgs). Decoders MUST
 	// treat absence as "unknown", not "no writes".
-	//
-	// NOT serialized in the stellar-rpc JSON shape — `omitempty` so
-	// fixture replays from RPC round-trip unchanged.
 	StateWriteKeys []string `json:"stateWriteKeys,omitempty"`
 }
 

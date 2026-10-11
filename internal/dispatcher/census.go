@@ -27,7 +27,6 @@ import (
 //     stroops), which the writer stores (unpriceable) but older ledgers
 //     lack, so the SDEX reconcile in internal/ops/chops compares
 //     priceable fills only (sdexServedCensus, reconTarget.countFilter).
-//     No projection oracle reads this counter.
 //
 //     The lockstep test that guards this comment compares the counter to
 //     the DECODER, never to the writer.

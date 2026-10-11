@@ -408,20 +408,15 @@ func reportCHRebuildPreflight(w io.Writer, lo, hi uint32, rederive []string) err
 // Passes, mirroring the dataflow split:
 //   - Event-based sources: one StreamContractEvents pass, every Matches-gated
 //     decoder per event.
-//   - SDEX (-sdex): a StreamSDEXOps pass. Opt-in because it decodes ~15.5B
-//     ops for a pricing-immaterial ~0.004% recovery.
+//   - SDEX (-sdex): a StreamSDEXOps pass.
 //   - Event-less ContractCall sources (-contract-calls; band,
 //     soroswap-router): a StreamContractCallOps pass filtering body_xdr on
 //     contract bytes. The projector cannot rebuild these.
 //   - SEP-41 watched contracts (-sep41): their topics are the CAP-67 firehose
-//     the main pass excludes, so this pass prefilters on contract_id. For a
-//     scoped recovery, -contracts and -sep41-supply-only narrow the read so
-//     the additive write restores missing rows without a truncate
+//     the main pass excludes, so this pass prefilters on contract_id
 //     (docs/operations/sep41-mint-recovery.md).
 //
-// Dry-run by default; -write persists. Writes are idempotent whether or not
-// the operator truncated first. Windowing [from,to] keeps the streamed set
-// and the successful-tx IN-set bounded.
+// Dry-run by default; -write persists.
 func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear: seed, event pass, optional op pass, report; splitting hurts clarity.
 	fs, gate := opsutil.NewMutatingFlagSet("ch-rebuild")
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")

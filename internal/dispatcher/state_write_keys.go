@@ -14,9 +14,7 @@ import (
 //
 // VALUE-CHANGED, not merely written: the RedStone adapter's write_prices REWRITES
 // every REQUESTED feed's entry, byte-identical for feeds its freshness verifier
-// rejected, while an ACCEPTED feed's stored PriceData always changes. Only "keys
-// whose value changed" names the ACCEPTED set, which Redstone's exact subset
-// attribution needs (internal/sources/redstone/decode.go resolveFeedAttribution).
+// rejected, while an ACCEPTED feed's stored PriceData always changes.
 //
 // The rule, identical here and in the ClickHouse re-derive twin
 // (internal/storage/clickhouse/state_write_keys.go):
@@ -27,8 +25,7 @@ import (
 //   - changed    = post exists AND (no pre-image OR pre.Val != post.Val).
 //
 // `removed` is a deletion, not a value write. P23 `restored` changes are ignored
-// on BOTH sides. A per-key parse/marshal failure excludes that key. Consumers
-// treat StateWriteKeys as best-effort (CAVEAT in internal/sources/redstone/payload.go).
+// on BOTH sides. A per-key parse/marshal failure excludes that key.
 
 // contractDataWrite is one value-changing contract-data write.
 type contractDataWrite struct {

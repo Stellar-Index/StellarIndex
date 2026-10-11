@@ -2,8 +2,7 @@
 // bytes), a drift detector against retroactive rewrites of upstream galexie
 // objects. Upstream can rewrite a fetched ledger's bytes while staying
 // chain-link consistent, so Tier A + Tier D pass; only a fingerprint of what we
-// first saw catches it. The indexer appends sha256 per LCM; a verifier cron
-// recomputes and alerts on mismatch.
+// first saw catches it.
 //
 // Format: a 16-byte header followed by dense fixed-size records.
 //
@@ -18,8 +17,6 @@
 // Concurrency: callers must serialise calls (one writer, one reader, never both
 // at once). A record write is NOT atomic everywhere: 1 record in 128 straddles a
 // 4 KiB page, and a torn record reads as non-zero (permanent false drift).
-// Writes are atomic on copy-on-write filesystems (ZFS); on ext4/xfs a torn
-// record surfaces as drift, see the hashdb runbook.
 package hashdb
 
 import (
