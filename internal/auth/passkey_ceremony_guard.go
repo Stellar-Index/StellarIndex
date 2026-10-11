@@ -13,43 +13,25 @@ import (
 )
 
 // RedisPasskeyCeremonyGuard is the Redis-SETNX adapter for the
-// dashboardauth PasskeyCeremonyGuard seam.
+// dashboardauth PasskeyCeremonyGuard seam. It records every spent WebAuthn
+// ceremony challenge so a captured `finish-login` / `finish-register`
+// request cannot be replayed into a second session or credential. Redis,
+// not process memory, so the spent-set is shared across API instances
+// (same shape as [sep10.RedisReplayGuard]).
 //
-// It records every WebAuthn ceremony challenge that has been spent so
-// a captured `finish-login` / `finish-register` request — ceremony
-// cookie plus the authenticator's response, both of which are just
-// bytes on the wire — cannot be replayed into a second session or a
-// second credential. Redis rather than process memory so the
-// spent-set is shared: with two API instances behind the proxy, an
-// in-process set would happily let the replay through on the other
-// instance.
+// Key layout: `passkey:ceremony:<sha256-hex>`, a digest built by the
+// handler so no challenge material reaches Redis in the clear. The prefix
+// must be in the Redis ACL allow-list (configs/ansible/roles/redis-sentinel/
+// templates/users.acl.j2), or lockdown ACL-denies the SETNX and sign-in fails.
 //
-// Same shape and same reasoning as [sep10.RedisReplayGuard], which does this for SEP-10 challenge transactions.
-//
-// Key layout: `passkey:ceremony:<sha256-hex>` — the digest is built
-// by the dashboardauth handler, so no challenge material reaches
-// Redis in the clear. NOTE for operators: this prefix must appear in
-// the Redis ACL key allow-list
-// (configs/ansible/roles/redis-sentinel/templates/users.acl.j2), or a
-// lockdown deployment authenticates fine and then ACL-denies the
-// SETNX — which the handler treats as "cannot prove freshness" and
-// refuses the sign-in.
-//
-// Eviction hardening: R1 runs `maxmemory-policy allkeys-lru`, which
-// evicts ANY key (TTL or not, this namespace or not) under memory
-// pressure — a longer TTL, a separate logical DB, or a volatile-lru
-// namespace do NOT exempt it, because eviction is instance-wide. A
-// bare SETNX spent-marker is therefore unsafe: if the marker is
-// evicted before its TTL (e.g. while an attacker floods the shared
-// instance with no-expiry apikey mirror writes via open registration),
-// a replayed `finish-login` finds the slot free and SETNX re-claims
-// it — minting a SECOND session for the victim. To make eviction fail CLOSED instead of open,
-// production consumes through [RedisPasskeyCeremonyGuard.Reserve] +
-// [RedisPasskeyCeremonyGuard.ClaimReserved]: the ceremony is reserved
-// at begin, and the claim REQUIRES the reservation to still exist — an
-// evicted (absent) marker refuses the sign-in rather than freeing it
-// for a captured request. [RedisPasskeyCeremonyGuard.Consume] is
-// retained for interface conformance but is not the production path.
+// Eviction hardening: R1 runs `maxmemory-policy allkeys-lru`, which evicts
+// ANY key under memory pressure whatever its TTL. A bare SETNX
+// spent-marker is unsafe: once evicted, a replayed `finish-login`
+// re-claims the slot and mints a SECOND session for the victim. To fail
+// CLOSED, production uses [RedisPasskeyCeremonyGuard.Reserve] +
+// [RedisPasskeyCeremonyGuard.ClaimReserved]: the claim REQUIRES the
+// reservation made at begin to still exist, so an evicted marker refuses
+// the sign-in. [RedisPasskeyCeremonyGuard.Consume] is interface-only.
 type RedisPasskeyCeremonyGuard struct {
 	rdb redis.Cmdable
 }

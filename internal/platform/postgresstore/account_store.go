@@ -336,10 +336,9 @@ func (r *AccountStore) Unsuspend(ctx context.Context, id uuid.UUID) error {
 // otherwise abort the whole batch if a single row were ever
 // mislabelled. Returns the number of rows deleted.
 //
-// reasonPrefix is matched with `LIKE '<escaped-prefix>%'`; callers
-// pass a fixed package constant (signupreaper.SignupRaceReasonPrefix),
-// and any LIKE metacharacters in it are escaped, so there is no
-// pattern-injection surface.
+// reasonPrefix is matched with `LIKE '<escaped-prefix>%'`; callers pass a
+// fixed package constant (signupreaper.SignupRaceReasonPrefix) and any
+// LIKE metacharacters are escaped, so there is no pattern-injection surface.
 func (r *AccountStore) ReapSuspendedOrphans(ctx context.Context, reasonPrefix string, olderThan time.Time) (int64, error) {
 	const q = `
 		DELETE FROM accounts a

@@ -24,10 +24,9 @@ import (
 //	order_filled      OrderID, Amount (actual_making)
 //	order_cancelled   Maker, OrderID
 //
-// Amounts are raw i128 (NUMERIC downstream); the market's decimals live in
+// Amounts are raw i128 (NUMERIC downstream); decimals live in
 // [MainnetContracts], never assumed uniform. An amount is a pointer so a
-// kind that should carry it but left it unset is refused by the store
-// rather than written as 0.
+// kind that should carry it but left it unset is refused, not written as 0.
 type Event struct {
 	ContractID string
 

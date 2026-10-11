@@ -221,15 +221,13 @@ func (r *TokenStore) HasLiveLoginCode(ctx context.Context, email string, maxAtte
 }
 
 // RegisterFailedLoginCode records one failed 6-digit-code attempt
-// against the EMAIL (migration 0122) and returns the resulting
-// lockout state.
+// against the EMAIL and returns the resulting lockout state.
 //
-// The whole point is that this counter is independent of any token:
-// `magic_link_tokens.attempts` resets to 0 on every new mint, and the
-// only thing bounding re-mints is a Redis-backed send throttle that a
-// flush, a fail-over or a restart clears. An attacker who re-mints
-// therefore would have an indefinite ~25-guesses/hour budget against a ~1e6
-// code space. Here the budget is per address and survives all of that.
+// This counter is independent of any token: `magic_link_tokens.attempts`
+// resets on every new mint, and the only bound on re-mints is a Redis send
+// throttle that a flush, fail-over or restart clears, which would give an
+// attacker an indefinite ~25-guesses/hour budget against a ~1e6 code
+// space. Here the budget is per address and survives all of that.
 //
 // One statement, so concurrent verify attempts for the same address
 // cannot both read `failed_count = n` and both write `n+1`:

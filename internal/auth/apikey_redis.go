@@ -24,22 +24,19 @@ import (
 //	KEY   apikey:<sha256-hex>
 //	VALUE JSON [APIKeyRecord]
 //
-// Plaintext keys are never stored; the lookup hashes the
-// caller-supplied bytes with SHA-256 and looks up by hash. A Redis
-// dump leaks owner identifiers and tier mapping but never the key
-// material itself.
+// Plaintext keys are never stored; the lookup hashes the caller-supplied
+// bytes with SHA-256. A Redis dump leaks owner identifiers and tier
+// mapping but never the key material itself.
 //
 // Lookup errors:
 //
-//   - record absent       → [ErrUnauthorized]
-//   - revoked_at set      → [ErrUnauthorized]
+//   - record absent or revoked_at set → [ErrUnauthorized]
 //   - expires_at past     → [ErrTokenExpired]
 //   - record undecodable  → wrapped non-sentinel (operator log signal)
 //   - Redis I/O failure   → wrapped non-sentinel (middleware → 503)
 //
-// Concurrency: safe for use across goroutines — every Lookup is one
-// GET. The only mutable state is the account-status cache, guarded by
-// its own mutex (see [accountStatusGate]).
+// Concurrency: safe across goroutines — every Lookup is one GET; the
+// account-status cache has its own mutex (see [accountStatusGate]).
 type RedisAPIKeyValidator struct {
 	rdb redis.Cmdable
 	now func() time.Time
@@ -255,19 +252,17 @@ func WithClock(now func() time.Time) RedisOption {
 // The Postgres validator (`acct.Status != AccountActive` →
 // [ErrUnauthorized]) and the dashboard session middleware enforce
 // suspension on their own, but this validator is the DEFAULT backend
-// (`auth_backend=redis`). Without a reader, an operator suspending an
-// account does not stop its keys from authenticating here: not through
-// the admin API, not through the dashboard, not even through a manual
-// `UPDATE accounts SET status='suspended'`.
+// (`auth_backend=redis`). Without a reader, suspending an account does
+// not stop its keys from authenticating here, whether through the admin
+// API, the dashboard, or a manual `UPDATE accounts SET status='suspended'`.
 //
 // With a reader wired, a record whose Identifier is
 // [AccountIdentifier](slug) — the shape the Postgres validator stamps
 // and POST /v1/account/keys copies onto every self-service record — has
 // its account resolved and is rejected unless the account is active.
 // `signup-<emailhash>` records (minted by the retired /v1/signup) carry
-// no account reference and are
-// unaffected; the operator kill switch for those is the per-key revoke
-// (DELETE /v1/admin/keys/{keyID}).
+// no account reference and are unaffected; their kill switch is the
+// per-key revoke (DELETE /v1/admin/keys/{keyID}).
 //
 // Nil (the default) skips the account check: no account lookup, no
 // per-request Postgres read.
@@ -449,26 +444,22 @@ func (v *RedisAPIKeyValidator) refreshIdleTTL(ctx context.Context, hash string) 
 // a platform account, and returns the account read so the caller can
 // resolve its overrides. isAccount is false (and err nil) when the
 // check does not apply (no reader wired, or a non-account identifier).
-// Override changes therefore propagate within ttl, like suspension.
 //
 // A short-TTL in-process cache fronts the kill-switch GetBySlug so the
-// status is read at most once per account per ttl window: within the
-// fresh window it serves last-read status without touching Postgres, bounding hot-path Postgres load and
-// suspension-propagation latency to ttl.
+// status is read at most once per account per ttl window, bounding
+// hot-path Postgres load; suspension and override changes therefore
+// propagate within ttl.
 //
 // Degradation posture:
 //
 //   - ErrNotFound: the record references an account that does not
 //     exist — the closed-account case, rejected as [ErrUnauthorized].
-//   - Transport error WITH a cached status within maxStale:
-//     ride out on last-known status (bounded staleness). A Postgres
-//     blip does not 401 every active customer; a still-suspended
-//     account is still rejected off its cached status.
-//   - Transport error with NO usable cached status (truly unknown):
-//     [ErrAccountStatusUnavailable] — a retryable 503, NOT the 401
-//     default. Still fails closed, but with correct, non-key-rotating
-//     semantics rather than mis-signalling "your credential is invalid"
-//     during a server-side outage.
+//   - Transport error WITH a cached status within maxStale: ride out on
+//     last-known status. A Postgres blip does not 401 every active
+//     customer; a still-suspended account is still rejected.
+//   - Transport error with NO usable cached status: [ErrAccountStatusUnavailable]
+//     — a retryable 503, NOT the 401 default. Still fails closed, without
+//     mis-signalling "your credential is invalid" during a server outage.
 func (g *accountStatusGate) check(
 	ctx context.Context, identifier string, now time.Time,
 ) (acct platform.Account, isAccount bool, err error) {

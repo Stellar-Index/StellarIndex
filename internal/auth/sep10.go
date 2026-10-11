@@ -5,41 +5,26 @@ import (
 	"time"
 )
 
-// SEP10Validator implements the server side of Stellar Ecosystem
-// Proposal 10 (SEP-10 / Web Authentication).
-//
-// Three protocol functions:
+// SEP10Validator implements the server side of SEP-10 (Web Authentication).
 //
 //	Challenge — issue a Stellar transaction the client must sign
 //	Verify    — accept the signed transaction; issue a JWT
 //	VerifyJWT — accept the JWT on subsequent requests
 //
-// The flow is two round-trips:
+// Two round-trips:
 //
 //  1. Client: GET /v1/auth/sep10/challenge?account=G… → server returns Challenge
 //  2. Client signs the Challenge.TransactionXDR with its account key
 //  3. Client: POST /v1/auth/sep10/token with the signed XDR → server returns JWT
 //  4. Client uses `Authorization: Bearer <jwt>` on subsequent requests
 //
-// The middleware (`internal/api/v1/middleware/auth.go`) calls
-// [SEP10Validator.VerifyJWT] on every request when auth_mode=sep10.
-// The challenge/verify endpoints are mounted by the API server
-// when an SEP10Validator is wired.
-//
-// The production implementation lives in
-// [internal/auth/sep10.Validator] — `sep10.NewValidator(sep10.Options{…})`
-// is built by `cmd/stellarindex-api/main.go`'s `buildSEP10Validator`.
-// [NoopSEP10Validator] in this package is the graceful-degradation
-// fallback used when the deployment hasn't configured the required
-// env vars (signing seed + JWT secret), Redis for the replay guard, or
-// the ClickHouse lake the signer-threshold check reads; every method returns
-// [ErrNotImplemented] so `/v1/auth/sep10/*` responds 404 sep10-unavailable while the
-// rest of the API still serves. With `auth_mode=sep10` the
-// missing-config path is a hard startup failure instead.
-//
-// References:
-//
-//   - https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0010.md
+// The middleware calls [SEP10Validator.VerifyJWT] on every request when
+// auth_mode=sep10. Production is [internal/auth/sep10.Validator];
+// [NoopSEP10Validator] is the fallback when required config is missing
+// (signing seed + JWT secret, Redis replay guard, or the ClickHouse lake the
+// signer-threshold check reads): every method returns [ErrNotImplemented],
+// so `/v1/auth/sep10/*` responds 404 sep10-unavailable. With
+// `auth_mode=sep10` missing config is a hard startup failure instead.
 type SEP10Validator interface {
 	// Challenge generates a SEP-10-conformant challenge transaction
 	// for the given account. The transaction is unsigned and never

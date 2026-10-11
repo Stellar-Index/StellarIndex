@@ -18,10 +18,8 @@ import (
 // `api_keys` table (the dashboard's source of truth) with an
 // optional Redis read-through cache.
 //
-// Keys minted by the dashboard (`internal/api/v1/dashboardkeys`)
-// authenticate without a separate mirror-write step. Redis-only keys
-// (minted by the retired `/v1/signup`) also work — their canonical
-// `apikey:<hash>` records are consulted before Postgres, so the
+// Redis-only keys (minted by the retired `/v1/signup`) also work — their
+// canonical `apikey:<hash>` records are consulted before Postgres, so the
 // validator transparently serves both populations.
 //
 // On a Postgres-served lookup the result is written back into
@@ -153,13 +151,10 @@ func (v *PostgresAPIKeyValidator) Lookup(ctx context.Context, key string) (Subje
 	//
 	//   - per-key 0 (default/inherit): fall back to the account
 	//     override. If that's also 0 the middleware's
-	//     `MonthlyQuota <= 0` short-circuit leaves the request
-	//     unmetered (the current default when nothing is set).
+	//     `MonthlyQuota <= 0` short-circuit leaves the request unmetered.
 	//   - per-key > 0 AND override > 0: use min(per-key, override) so
-	//     an override always clamps a per-key value budgeted above it.
-	//     This covers keys persisted without the dashboard's mint-time
-	//     clamp: even a persisted `monthly_quota: 9_000_000_000` can
-	//     never exceed the operator's account cap at enforcement time.
+	//     an override always clamps a per-key value budgeted above it,
+	//     including keys persisted without the dashboard's mint-time clamp.
 	//   - per-key > 0 AND override 0: honour the per-key value (the
 	//     dashboard already clamped it to the tier ceiling at mint).
 	//

@@ -14,31 +14,23 @@ import (
 // RedisReplayGuard is the production [ReplayGuard]. [Validator.Challenge]
 // reserves each issued challenge transaction's hash and
 // [Validator.Verify] spends it with an atomic DEL, so a challenge mints
-// at most one JWT; a second submission of the same signed XDR finds no
-// reservation and returns [auth.ErrUnauthorized].
+// at most one JWT; a resubmitted signed XDR finds no reservation and
+// returns [auth.ErrUnauthorized].
 //
 // Eviction hardening: R1 runs `maxmemory-policy allkeys-lru`, which can
 // evict ANY key before its TTL. A SETNX spent-marker fails OPEN under
 // that — an evicted marker lets a captured XDR re-claim the slot and
 // mint a second JWT. Requiring the reservation to be PRESENT makes an
-// eviction refuse the redemption instead (the same protocol as
+// eviction refuse the redemption instead (as in
 // [auth.RedisPasskeyCeremonyGuard.Reserve] / ClaimReserved).
 //
-// Cache key:
-//
-//	sep10:seen:live:<hex transaction hash>
+// Cache key `sep10:seen:live:<hex transaction hash>`, the prefix the Redis
+// ACL allow-list grants.
 //
 // The suffix is the challenge TRANSACTION's canonical hash (see
 // [challengeTxHash]), never a digest of the caller-supplied XDR string:
-// the same transaction has many valid spellings, and keying on the
-// spelling would let one redemption be replayed by re-encoding it.
-// The key stays under the `sep10:seen:` prefix the Redis ACL allow-list
-// (configs/ansible/roles/redis-sentinel/templates/users.acl.j2) grants.
-//
-// Owned by this file rather than internal/cachekeys/ because the
-// SEP-10 replay set is conceptually an auth concern, not a price-
-// cache one — the cachekeys package is the price-cache namespace
-// per ADR-0007.
+// one transaction has many valid spellings, and keying on the spelling
+// would let one redemption be replayed by re-encoding it.
 type RedisReplayGuard struct {
 	rdb redis.UniversalClient
 }

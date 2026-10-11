@@ -23,13 +23,11 @@ import (
 //   - ClassicTradeEffectCount counts ClaimAtoms exactly the way
 //     internal/sources/sdex produces one trade per atom. It does NOT
 //     equal COUNT(trades WHERE source='sdex' AND ledger=seq): the decoder
-//     deliberately emits one-side-zero fills (one leg rounded to 0
-//     stroops), which the writer stores (unpriceable) but older ledgers
-//     lack, so the SDEX reconcile in internal/ops/chops compares
-//     priceable fills only (sdexServedCensus, reconTarget.countFilter).
-//
-//     The lockstep test that guards this comment compares the counter to
-//     the DECODER, never to the writer.
+//     emits one-side-zero fills (one leg rounded to 0 stroops), which the
+//     writer stores (unpriceable), so the SDEX reconcile in
+//     internal/ops/chops compares priceable fills only (sdexServedCensus,
+//     reconTarget.countFilter). The lockstep test guarding this comment
+//     compares the counter to the DECODER, never to the writer.
 //
 // LedgerHash / PrevLedgerHash are the header hashes for the
 // contiguity hash-chain check (prev_ledger_hash[N] == ledger_hash[N-1]).

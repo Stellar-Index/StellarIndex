@@ -12,25 +12,20 @@ import (
 //
 //   - anon:    unauthenticated callers. Not an account tier at all —
 //     the per-IP baseline enforced by the rate-limit middleware
-//     (`[api].anon_rate_limit_per_min`, default 60/min). Declared
-//     here so the ladder methods can document the full model in one
-//     place; it is never persisted to `accounts.tier`.
-//   - free:    every registered account's default. Higher limits than
-//     anon (anchored to the old Starter plan's numbers — the lowest
-//     paid tier before billing was removed).
+//     (`[api].anon_rate_limit_per_min`, default 60/min); never persisted
+//     to `accounts.tier`.
+//   - free:    every registered account's default; higher limits than anon.
 //   - partner: staff-admitted accounts with per-account limits set by
 //     an operator via PATCH /v1/admin/accounts/{id} (the
 //     rate_limit_per_min / monthly_request_quota overrides). The
 //     ladder values below are the partner CEILINGS when no override
-//     is set (the old Enterprise numbers); the override, when set, is
-//     the real limit.
+//     is set; the override, when set, is the real limit.
 //
-// The `accounts.tier` CHECK constraint (migration 0027, deliberately
-// untouched) still speaks the legacy five-string vocabulary
-// (free/starter/pro/business/enterprise). The mapping is code-level:
-// [Tier.Canonical] folds legacy strings into the three-level model on
-// every read, and [Tier.StorageValue] renders a canonical tier back
-// into a CHECK-legal string on every write.
+// The `accounts.tier` CHECK constraint (migration 0027) still speaks the
+// legacy five-string vocabulary (free/starter/pro/business/enterprise).
+// The mapping is code-level: [Tier.Canonical] folds legacy strings into
+// the three-level model on every read, and [Tier.StorageValue] renders a
+// canonical tier back into a CHECK-legal string on every write.
 type Tier string
 
 const (
@@ -159,24 +154,19 @@ func (t Tier) MaxActiveKeys() int {
 // This is the CEILING the account-level operator override
 // ([Account.MonthlyRequestQuotaOverride]) falls back to when unset: the
 // dashboard clamps a customer-supplied per-key quota to min(requested,
-// override-if-set-else-this-ladder) so a metered customer can only LOWER
-// their cap, never raise it above the plan. Without this ceiling the create
-// handler would honour any int64 the POST body carried — a customer on a
-// metered plan could self-mint a key with `monthly_quota: 9_000_000_000` and
-// run effectively unmetered.
+// override-if-set-else-this-ladder) so a customer can only LOWER their
+// cap. Without it a customer could self-mint a key with
+// `monthly_quota: 9_000_000_000`, running effectively unmetered.
 //
 // Symmetric-opposite of [Tier.MaxRateLimitPerMin]: rate limit is a
 // burst ceiling clamped at mint AND raised by the account override as
 // a FLOOR at auth time; monthly quota is a volume ceiling clamped at
 // mint AND lowered by the account override as a CEILING at auth time.
 //
-// Values are round plan budgets (monotonic across the ladder), not a
-// mechanical rate×minutes derivation. Operators grant a specific
-// customer more by setting a higher [Account.MonthlyRequestQuotaOverride]
-// — that override, not this default, is then the hard ceiling.
+// Values are round plan budgets, not a rate×minutes derivation.
 //
-// An unknown tier value is treated as free (defensive — a corrupt row
-// should not unlock elevated quotas), matching the other tier ladders.
+// An unknown tier is treated as free (a corrupt row must not unlock
+// elevated quotas), matching the other tier ladders.
 func (t Tier) MaxMonthlyQuota() int64 {
 	switch t.Canonical() {
 	case TierAnon:

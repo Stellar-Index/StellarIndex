@@ -13,37 +13,21 @@ import (
 // RedisKeyCacheInvalidator evicts a single API-key record from the
 // Redis read-through cache that [PostgresAPIKeyValidator] populates.
 //
-// It is the write-side counterpart for key-mutation paths that live
-// OUTSIDE the dashboard's Revoke handler — e.g. the admin tier
-// clamp, which rewrites `RateLimitPerMin` on the Postgres
-// `api_keys` rows. Without an eviction there, a deployment running
-// `auth_backend=postgres` keeps serving the pre-change rate-limit
-// budget from the validator's read-through cache for up to the
-// cache TTL (~1h) even though Postgres (the source of truth)
-// already reflects the new budget: the cache and the store of record
-// disagree until the TTL rolls the row off.
+// It is the write-side counterpart for key-mutation paths outside the
+// dashboard's Revoke handler, e.g. the admin tier clamp rewriting
+// `RateLimitPerMin` on the Postgres `api_keys` rows. Without an eviction
+// there, `auth_backend=postgres` keeps serving the pre-change budget from
+// the cache for up to the TTL (~1h).
 //
-// Unlike [PostgresAPIKeyValidator] this type carries NO platform
-// store handles — only the cache client. It satisfies the same
-// single-method `InvalidateCachedKey(ctx, hexHash)` contract as the
-// validator, so either can be dropped into a bridge/handler that only
-// needs eviction.
-//
-// WIRING HAZARD — it is NOT safe to wire wherever a Redis client is in
-// scope. It also DELs `apikey:<hash>`, which the postgres validator
-// serves ahead of its cache (see [evictCachedKey]). Under the default
-// `auth_backend=redis` that key IS the canonical credential ([RedisAPIKeyValidator]
-// reads nothing else, and a POST /v1/register credential exists there
-// as the mirror written by [RedisAPIKeyStore.CreateWithSecret]), so a
-// DEL is not an eviction but the irrecoverable destruction of a
-// customer's key: the plaintext was shown once and the Postgres row
-// holds only its hash, so nothing can rebuild the record. Construct
-// through [NewKeyCacheInvalidatorForBackend], which returns nil for
-// every backend but postgres.
-//
-// A nil cache (or a nil receiver) makes every call a no-op: a
-// Redis-less deployment has nothing to invalidate, and the underlying
-// Postgres write is already durable.
+// WIRING HAZARD — NOT safe to wire wherever a Redis client is in scope.
+// It also DELs `apikey:<hash>`, which the postgres validator serves ahead
+// of its cache (see [evictCachedKey]). Under the default
+// `auth_backend=redis` that key IS the canonical credential
+// ([RedisAPIKeyValidator] reads nothing else), so a DEL destroys a
+// customer's key irrecoverably: the plaintext was shown once and Postgres
+// holds only its hash. Construct through
+// [NewKeyCacheInvalidatorForBackend], which returns nil for every backend
+// but postgres. A nil cache or receiver makes every call a no-op.
 type RedisKeyCacheInvalidator struct {
 	cache redis.Cmdable
 }
