@@ -12,9 +12,8 @@
 // price tier, price_as_of and the oracle-stale alert read OracleUpdate.Timestamp as "when this
 // price was true", so a poll-time stamp would present a frozen cache as fresh.
 //
-// CoinGecko uses slug IDs ("stellar", "bitcoin"), not tickers. A small
-// allow-listed ticker→id table covers our pair set; unknown tickers skip
-// per-entry.
+// CoinGecko uses slug IDs ("stellar", "bitcoin"), not tickers. A small allow-listed ticker to id
+// table covers our pair set; unknown tickers skip per-entry.
 package coingecko
 
 import (
@@ -74,14 +73,10 @@ func SetAuthHeader(h http.Header, apiKey, demoAPIKey string) {
 // SimplePricePath is the batch-price endpoint.
 const SimplePricePath = "/api/v3/simple/price"
 
-// DefaultPollInterval — 300s (5min) keeps the daily call volume
-// safely below the demo tier's 10,000-call/day ceiling. At one
-// batched /simple/price request per tick × 288 ticks/day, total
-// burn is ~288 calls/day, leaving ample headroom for the
-// market-cap refresher (~288/day at the same cadence) and the
-// divergence reference (one-shot per pair per tick). At 60s this
-// poller alone burns 1,440/day and, with the divergence lookups on
-// a shared IP, trips the demo 10K/day cap into a sustained 429 loop.
+// DefaultPollInterval of 300s keeps the daily call volume (~288 batched /simple/price calls) well
+// below the demo tier's 10,000-call/day ceiling, leaving headroom for the market-cap refresher and
+// divergence lookups on a shared IP. At 60s this poller alone burns 1,440/day and can trip the cap
+// into a sustained 429 loop.
 const DefaultPollInterval = 300 * time.Second
 
 // DefaultDecimals — 8dp matches the off-chain-source convention.
@@ -90,15 +85,9 @@ const DefaultDecimals uint8 = 8
 // Compile-time assertion: aggregator class in registry.
 var _ = external.ClassAggregator
 
-// tickerToID is the package-level default ticker → CG slug map.
-// Used when a Poller has no instance-level override (preserving
-// pre-Phase-1.2 behaviour for tests and any caller that doesn't
-// pass a catalogue-derived map).
-//
-// Slugs verified against https://api.coingecko.com/api/v3/coins/list.
-// The verified-currency catalogue (`internal/currency`) is now the
-// canonical source of these mappings; an instance-level override
-// via Poller.TickerToID supersedes this map at runtime.
+// tickerToID is the default ticker to CoinGecko slug map, used when a Poller has no instance-level
+// TickerToID override. Slugs are verified against https://api.coingecko.com/api/v3/coins/list; the
+// verified-currency catalogue (`internal/currency`) is the canonical source.
 var tickerToID = map[string]string{
 	"BTC":   "bitcoin",
 	"ETH":   "ethereum",
@@ -135,18 +124,13 @@ type Poller struct {
 	// APIKey is the CoinGecko Pro key (param x_cg_pro_api_key).
 	// Empty → no Pro auth.
 	APIKey string
-	// DemoAPIKey is the free-tier "demo" key (param
-	// x_cg_demo_api_key). CoinGecko's public-no-auth tier was
-	// tightened in late 2024; demo keys are a free signup that
-	// raises per-IP throttling. Set this OR APIKey, not both.
-	// When both are set Pro wins.
+	// DemoAPIKey is the free-tier "demo" key (param x_cg_demo_api_key); it raises per-IP
+	// throttling over the no-auth tier. Set this or APIKey, not both; Pro wins when both are set.
 	DemoAPIKey string
 
-	// TickerToID overrides the package-default map. When non-empty,
-	// only tickers present here will be queried — set this from
-	// `currency.Catalogue.CoinGeckoIDs()` to
-	// drive the poll set from the verified-currency seed instead of
-	// the hardcoded list. Empty → fall back to the package default.
+	// TickerToID overrides the package-default map. When non-empty only tickers present here are
+	// queried; set it from `currency.Catalogue.CoinGeckoIDs()` to drive the poll set from the
+	// verified-currency seed. Empty falls back to the package default.
 	TickerToID map[string]string
 
 	// mu guards the cooldown state. The runner serialises calls per
@@ -214,22 +198,15 @@ func liftLastUpdated(prices simplePriceResponse) map[string]time.Time {
 	return out
 }
 
-// PollOnce implements external.Poller. One batched GET covers every
-// (id, vs_currency) combo in a single JSON map. We derive id +
-// vs_currency sets from the configured pair list, batch them,
-// then emit one OracleUpdate per (ticker, currency) hit.
+// PollOnce implements external.Poller. One batched GET covers every (id, vs_currency) combo and
+// emits one OracleUpdate per (ticker, currency) hit.
 //
-// 429 handling: when the venue returns HTTP 429 (or 403 — CoinGecko
-// emits 403 for demo-key-required paths post-2024), the poller skips
-// subsequent calls until `nextAllowedAt` to avoid hammering the venue
-// with refusals. Cooldown duration is `Retry-After` (capped at
-// `MaxBackoff`) when the header is present, otherwise an exponential
-// backoff doubling from `MinBackoff` to `MaxBackoff`. The first
-// successful response resets the backoff to zero.
+// On HTTP 429 (or 403, which CoinGecko returns for demo-key-required paths) the poller skips calls
+// until `nextAllowedAt` rather than hammer the venue with refusals; see applyBackoff for the
+// cooldown length. The first successful response resets the backoff.
 //
-// Returning (nil, nil, nil) during cooldown — distinct from an error
-// — keeps the runner happy without adding "poller error" log spam
-// for the obvious "we're respecting cooldown" case.
+// Returning (nil, nil, nil) during cooldown, distinct from an error, avoids "poller error" log
+// spam for the expected cooldown case.
 func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canonical.Trade, []canonical.OracleUpdate, error) { //nolint:gocognit,gocyclo,funlen // dispatch-heavy; splitting would reduce linearity
 	if cooldownLeft := p.cooldownRemaining(); cooldownLeft > 0 {
 		return nil, nil, nil
@@ -397,23 +374,12 @@ func (p *Poller) cooldownRemaining() time.Duration {
 	return time.Until(p.nextAllowedAt)
 }
 
-// applyBackoff arms the cooldown. We always grow the backoff
-// exponentially on consecutive 429s — `hint` (parsed Retry-After)
-// is treated as a floor, not a ceiling. Clamped to MaxBackoff.
-//
-// Why both: a Retry-After branch that takes the hint at face
-// value (clamped to MinBackoff) bypasses the doubling. CoinGecko's
-// free tier returns Retry-After values consistently below MinBackoff
-// (commonly 30 s), so clamping lands us at exactly MinBackoff = 60 s
-// forever — which matches the runner's PollInterval = 60 s, producing
-// one 429 per minute indefinitely. The right behaviour for sustained throttling is to
-// back off even when the venue claims you can retry sooner — they
-// can't be trusted to slow YOU down enough when many clients share
-// the same IP cap.
-//
-// max(hint, currentBackoff*2, MinBackoff) — clamped to MaxBackoff —
-// honours an unusually-long Retry-After (e.g. 5 minutes) but doesn't
-// let a chronically-undersize hint defeat the backoff.
+// applyBackoff arms the cooldown: max(hint, currentBackoff*2, MinBackoff), clamped to MaxBackoff.
+// The parsed Retry-After hint is a floor, not a ceiling, and the backoff still doubles on
+// consecutive 429s. Taking the hint at face value would pin the cooldown at MinBackoff, because
+// the free tier's Retry-After is consistently below it, which matches the runner's poll interval
+// and yields one 429 per minute forever; clients sharing an IP cap cannot trust the venue to
+// slow them enough. An unusually long Retry-After is still honoured.
 func (p *Poller) applyBackoff(hint time.Duration) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -459,14 +425,9 @@ func backoffFromRetryAfter(h string) time.Duration {
 	return 0
 }
 
-// truncate keeps log lines bounded — CoinGecko's HTML error pages
-// can be 50KB+ which would be useless noise in the indexer log.
-// truncate cuts `s` to at most `n` bytes plus a trailing "…",
-// walking back to the nearest UTF-8 rune boundary at or before
-// byte n. Used in error messages for HTTP response bodies; raw
-// byte slicing produced invalid UTF-8 in operator log output
-// when CoinGecko's error pages contained Unicode (e.g. their
-// "rate limit" copy or proxy injection).
+// truncate keeps log lines bounded (CoinGecko's HTML error pages can be 50KB+). It cuts `s` to at
+// most `n` bytes plus a trailing "…", walking back to a UTF-8 rune boundary because raw byte
+// slicing yields invalid UTF-8 when an error page contains Unicode.
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s

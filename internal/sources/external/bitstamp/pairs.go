@@ -7,24 +7,15 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// DefaultPairs returns the Bitstamp symbol → canonical.Pair map for
-// the default set of markets the indexer subscribes to when Bitstamp
-// is enabled.
-//
-// Bitstamp symbols are lowercase concatenated ("xlmusd" not "XLM/USD"
-// or "XLMUSD"). We normalise to that format and the channel prefix
-// "live_trades_" is added by the streamer when subscribing.
+// DefaultPairs returns the Bitstamp symbol to canonical.Pair map for the default markets.
+// Symbols are lowercase concatenated ("xlmusd"); the streamer adds the "live_trades_" channel
+// prefix when subscribing.
 //
 // Coverage rationale:
-//   - XLM/USD, XLM/EUR, XLM/GBP — adds EUR/GBP native quotes Kraken
-//     already covers too, so redundancy across the two XLM fiat
-//     venues strengthens the aggregator's confidence.
-//   - XLM/BTC — deep European-retail BTC-pair XLM liquidity.
-//   - BTC/USD, ETH/USD — reference anchors.
-//   - BTC/EUR — European fiat BTC depth, used for triangulation.
-//   - {ADA,ATOM,AVAX,BCH,BNB,DASH,DOGE,DOT,LINK,LTC,NEAR,SHIB,SOL,
-//     TON,TRX,UNI,XRP}/USD — top-cap globals against USD for
-//     cross-venue VWAP coverage. All verified live via /api/v2/ticker.
+//   - XLM/USD, XLM/EUR, XLM/GBP: EUR/GBP quotes Kraken also covers, so two venues corroborate.
+//   - XLM/BTC: deep European-retail BTC-pair XLM liquidity.
+//   - BTC/USD, ETH/USD: reference anchors; BTC/EUR: European depth for triangulation.
+//   - Top-cap globals against USD for cross-venue VWAP coverage.
 func DefaultPairs() (map[string]canonical.Pair, error) {
 	xlm, err := canonical.NewCryptoAsset("XLM")
 	if err != nil {

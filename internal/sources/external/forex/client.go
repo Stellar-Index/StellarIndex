@@ -1,21 +1,16 @@
-// Package forex provides a fiat-currency rates feed for the
-// /v1/currencies surface. Source: massive.com REST API
-// (REST aggregates + bearer auth), daily grain, ~200 currencies,
-// requires an API key (env MASSIVE_API_KEY).
+// Package forex provides a fiat-currency rates feed for the /v1/currencies surface from the
+// massive.com REST API (daily grain, ~200 currencies, API key in env MASSIVE_API_KEY).
 //
-// fx_quotes holds Massive's grouped-daily aggregate: one row per
-// ticker per UTC day. The worker polls hourly, but every write buckets
-// to the day, so per-window figures on /v1/currencies are derived from
-// daily rows (see internal/sources/external/registry.go).
+// fx_quotes holds Massive's grouped-daily aggregate: one row per ticker per UTC day. The worker
+// polls hourly, but every write buckets to the day, so per-window figures on /v1/currencies are
+// derived from daily rows (see internal/sources/external/registry.go).
 //
-// This package and its sibling [frankfurter] sit outside the
-// [external.Connector] framework with their own worker / FXQuoteWriter seam.
-// forex ("massive" in [external.Registry]) is the ACTIVE feed, run in the API
-// binary (not the indexer); see
-// docs/operations/runbooks/external-pollers.md#stellarindex_external_fx_feed_stale.
-// [ecb] and [exchangeratesapi] ARE Connector-framework pollers, disabled by
-// default. ecb and [frankfurter] read the same upstream through two code paths:
-// a known, accepted duplication.
+// This package and its sibling [frankfurter] sit outside the [external.Connector] framework with
+// their own worker / FXQuoteWriter seam. forex ("massive" in [external.Registry]) is the ACTIVE
+// feed, run in the API binary (not the indexer); see
+// docs/operations/runbooks/external-pollers.md#stellarindex_external_fx_feed_stale. [ecb] and
+// [exchangeratesapi] ARE Connector-framework pollers, disabled by default. ecb and [frankfurter]
+// read the same upstream through two code paths, a known and accepted duplication.
 package forex
 
 import (
@@ -71,16 +66,12 @@ func (c *Client) WithBase(base string) *Client {
 	return &cp
 }
 
-// LatestUSDRates returns the current USD-base rate map plus the
-// publication date the upstream stamped on the snapshot. Map keys
-// are lower-case ISO-4217 currency codes (eur, jpy, gbp, …);
-// values are the price of 1 USD denominated in that currency
-// (e.g. usd→eur ≈ 0.92 means 1 USD buys 0.92 EUR).
+// LatestUSDRates returns the current USD-base rate map plus the publication date the upstream
+// stamped on the snapshot. Keys are lower-case ISO-4217 codes; values are the price of 1 USD in
+// that currency (usd to eur at 0.92 means 1 USD buys 0.92 EUR).
 //
-// Backed by /v2/aggs/grouped/.../fx/{date} — one HTTP call returns
-// the closing aggregate for every fx pair Massive tracks for the
-// given date. We filter to USD-base tickers (`C:USD<TKR>`) and
-// extract the close price.
+// Backed by /v2/aggs/grouped/.../fx/{date}: one HTTP call returns the closing aggregate for every
+// fx pair for the date, filtered here to USD-base tickers (`C:USD<TKR>`).
 func (c *Client) LatestUSDRates(ctx context.Context) (map[string]float64, time.Time, error) {
 	// "Latest" is the most recent UTC date with a published bar.
 	// We try today first; if 0 results (markets closed weekend /
@@ -100,12 +91,9 @@ func (c *Client) LatestUSDRates(ctx context.Context) (map[string]float64, time.T
 	return nil, time.Time{}, fmt.Errorf("massive: no fx aggregates published in last 5 days")
 }
 
-// HistoricalUSDRates returns the USD-base rate map as of a specific
-// date. `date` should be in YYYY-MM-DD form.
-//
-// Returns the same shape as [LatestUSDRates]. Days with no published
-// fx bar (weekends, holidays) return an empty map + nil error so
-// the worker can skip the day cleanly.
+// HistoricalUSDRates returns the USD-base rate map as of `date` (YYYY-MM-DD), in the shape of
+// [LatestUSDRates]. Days with no published fx bar (weekends, holidays) return an empty map and nil
+// error so the worker can skip the day cleanly.
 func (c *Client) HistoricalUSDRates(ctx context.Context, date string) (map[string]float64, time.Time, error) {
 	if date == "" {
 		return nil, time.Time{}, fmt.Errorf("date is required")
@@ -135,14 +123,10 @@ func (c *Client) usdRatesAtDate(ctx context.Context, date string) (map[string]fl
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return nil, fmt.Errorf("decode %s: %w", url, err)
 	}
-	// Decode rows one at a time so a single anomalous row doesn't
-	// kill the whole snapshot. Note the explicit `t` field below:
-	// encoding/json matches keys case-insensitively, so an unguarded
-	// struct field tagged `json:"T"` *also* receives JSON key `t`
-	// (the unix-millis bar timestamp) — and "cannot unmarshal number
-	// into Go struct field .T of type string" trashes every row.
-	// Declaring `Tm int64 \`json:"t"\`` claims the lowercase key
-	// explicitly so the uppercase ticker lands cleanly.
+	// Decode rows one at a time so one anomalous row does not kill the whole snapshot. The explicit
+	// lowercase "t" field below is load-bearing: encoding/json matches keys case-insensitively, so a
+	// field tagged "T" alone would also receive the unix-millis bar timestamp under "t" and fail
+	// every row. Claiming "t" explicitly lets the uppercase ticker land cleanly.
 	out := make(map[string]float64, len(raw.Results))
 	const usdPrefix = "C:USD"
 	for _, rowRaw := range raw.Results {
@@ -163,12 +147,9 @@ func (c *Client) usdRatesAtDate(ctx context.Context, date string) (map[string]fl
 	return out, nil
 }
 
-// CurrencyNames returns the ticker→display-name map (lower-case
-// ticker keys → human-readable names). Used to render the "Name"
-// column on /currencies. Massive's reference endpoint paginates;
-// this method walks every page to assemble the full universe
-// (caps at 5000 entries — orders of magnitude above the actual
-// ~200 currencies but defensive against pathological pagination).
+// CurrencyNames returns the lower-case ticker to display-name map for the /currencies "Name"
+// column. Massive's reference endpoint paginates; this walks every page, capped at 5000 entries as
+// a guard against pathological pagination.
 func (c *Client) CurrencyNames(ctx context.Context) (map[string]string, error) {
 	const limit = 1000
 	url := fmt.Sprintf("%s/v3/reference/tickers?market=fx&limit=%d&active=true", c.base, limit)
@@ -205,11 +186,9 @@ func (c *Client) CurrencyNames(ctx context.Context) (map[string]string, error) {
 			}
 		}
 		if raw.NextURL != "" && !sameHost(c.base, raw.NextURL) {
-			// next_url is server-supplied and feeds straight into
-			// c.get, which unconditionally attaches the bearer
-			// token. Refuse to follow it off c.base rather than
-			// hand our API key to whatever host it names; keep
-			// the pages already collected.
+			// next_url is server-supplied and c.get unconditionally attaches the bearer token, so
+			// refuse to follow it off c.base rather than hand our API key to whatever host it names.
+			// Keep the pages already collected.
 			break
 		}
 		url = raw.NextURL

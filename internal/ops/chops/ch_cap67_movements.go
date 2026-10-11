@@ -179,10 +179,9 @@ func (c cap67CatchUp) idle() bool { return c.last < c.start }
 // window. It never steps past a lake hole: Cap67Range clamps the range (including -to) and each
 // advance re-proves its own window hole-free.
 //
-// progress, when non-nil, is called after each window advances with that
-// window's row count and the ledger it reached (see cap67Progress.record) —
-// the per-window granularity a long -follow tick needs so a stalled watermark
-// is distinguishable from a hung process.
+// progress, when non-nil, is called after each window advances with its row count and the ledger
+// reached (see cap67Progress.record), so a long -follow tick can tell a stalled watermark from a
+// hung process.
 func runCap67CatchUp(ctx context.Context, chAddr string, from, to, window uint32, dryRun bool, floorLedger uint32, progress func(rows int64, cursor uint32)) (cap67CatchUp, error) {
 	start, last, err := Cap67Range(ctx, chAddr, from, to, floorLedger)
 	if err != nil {
@@ -304,7 +303,7 @@ func cap67IdleLogTick(ctx context.Context, chAddr string, res cap67CatchUp, n in
 
 // followLoop runs catchUp now and after each sleep until ctx is cancelled. catchUp gets the
 // consecutive idle count and reports whether the tick did work; the sleep is followTick of that
-// count. An error is retried next tick with the idle count unchanged, and skips no ledger as the
+// count. An error is retried next tick with the idle count unchanged and skips no ledger, as the
 // watermark advances only after a clean window. Extracted so shutdown, error and idle accounting
 // are testable without ClickHouse.
 func followLoop(ctx context.Context, interval time.Duration, catchUp func(ctx context.Context, idle int) (worked bool, err error)) error {
@@ -386,9 +385,9 @@ func resolveDeriveRange(ctx context.Context, chAddr, verb string, from, to, floo
 	// heals it. Keyed off stellar.ledgers, the commit marker flushed last. Returns start-1 when start
 	// is a hole, which the caller's `last < start` guard treats as nothing to do.
 	//
-	// The clamp is UNCONDITIONAL: an operator-supplied -to is min()'d against the tip rather than
-	// trusted. With the gate only in the to == 0 branch, `-to N` would walk straight past a hole below
-	// N and stamp the watermark at every window top on the way — the loss above.
+	// The clamp is unconditional: an operator-supplied -to is min()'d against the tip, because a
+	// gate only in the to == 0 branch would let `-to N` walk past a hole below N and stamp the
+	// watermark over it.
 	tip, err := clickhouse.ContiguousWatermark(ctx, chAddr, start)
 	if err != nil {
 		return 0, 0, fmt.Errorf("resolve contiguous lake tip: %w", err)

@@ -41,15 +41,12 @@ type Streamer struct {
 	MaxBackoff time.Duration
 }
 
-// NewStreamer constructs a Streamer with the supplied pair map and
-// sensible defaults for the rest. Logger defaults to slog.Default().
+// NewStreamer constructs a Streamer with the supplied pair map and defaults for the rest. Logger
+// defaults to slog.Default().
 //
-// Backoff defaults: InitialBackoff 5 s,
-// MaxBackoff 60 s. Combined with the healthy-connection reset in the
-// shared wsclient.Loop (a connection that stays alive ≥
-// wsclient.DefaultHealthyConnectionThreshold rewinds backoff to
-// InitialBackoff on its next failure), the effect is bounded 5-60 s
-// reconnect windows instead of a 60 s blanket.
+// Backoff defaults to 5 s initial, 60 s max. With the healthy-connection reset in wsclient.Loop (a
+// connection alive past wsclient.DefaultHealthyConnectionThreshold rewinds backoff on its next
+// failure), reconnect windows are bounded 5-60 s instead of a 60 s blanket.
 func NewStreamer(pairMap map[string]canonical.Pair) *Streamer {
 	return &Streamer{
 		PairMap:        pairMap,
@@ -65,16 +62,13 @@ func (s *Streamer) Name() string { return SourceName }
 // Class implements external.Connector.
 func (s *Streamer) Class() external.Class { return external.ClassExchange }
 
-// Start implements external.Streamer. Connects to the combined
-// stream for the requested pairs, parses frames, and emits
-// canonical.Trade values until ctx is cancelled. Reconnects with
-// bounded exponential backoff on dropped connections; only persistent
-// configuration errors (empty pair list, URL that doesn't parse)
-// return through Start itself.
+// Start implements external.Streamer. It connects to the combined stream for the requested pairs
+// and emits canonical.Trade values until ctx is cancelled, reconnecting with bounded exponential
+// backoff on dropped connections; only persistent configuration errors (empty pair list,
+// unparseable URL) return through Start itself.
 //
-// Empty `pairs` is rejected — Binance requires explicit subscription.
-// Auto-enumeration of all listed symbols is a future capability; for
-// v1 the caller passes the pair set (e.g. DefaultPairList).
+// Empty `pairs` is rejected because Binance requires explicit subscription; the caller passes the
+// pair set (e.g. DefaultPairList).
 func (s *Streamer) Start(ctx context.Context, pairs []canonical.Pair) (<-chan canonical.Trade, error) {
 	if len(pairs) == 0 {
 		return nil, errors.New("binance: pairs required — auto-enumeration not yet supported")
@@ -148,13 +142,11 @@ func (s *Streamer) symbolsFor(pairs []canonical.Pair) ([]string, error) {
 	return out, nil
 }
 
-// buildStreamURL turns a list of Binance symbols into the combined-
-// stream URL. Format:
+// buildStreamURL turns Binance symbols into the combined-stream URL:
 //
 //	wss://stream.binance.com:9443/stream?streams=xlmusdt@aggTrade/btcusdt@aggTrade
 //
-// Symbols are lowercased per Binance convention for the URL (the
-// wire-side Symbol field arrives uppercase).
+// Symbols are lowercased in the URL per Binance convention; the wire-side Symbol arrives uppercase.
 func (s *Streamer) buildStreamURL(symbols []string) (string, error) {
 	if s.Endpoint == "" {
 		s.Endpoint = WSEndpoint

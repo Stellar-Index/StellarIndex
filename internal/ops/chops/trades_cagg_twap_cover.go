@@ -24,14 +24,12 @@ type twapCoverStore interface {
 // scope is read a day at a time, newest first, and stops at the first gap.
 const twapCoverPiece = 24 * time.Hour
 
-// newestUncoveredTwapRead returns the newest piece of the minutes a
-// non-forced run of plan feeds into a twap bucket where prices_1m still
-// disagrees with trades once its own invalidated minutes are rebuilt, with
-// the drifting pairs; ok is false when every such minute agrees. A twap
-// bucket is recomputed when its own log or prices_1m's names it, and reads
-// every minute of the bucket, so a minute dropped by retention above
-// prices_1m's earliest bucket would be recomputed into it as nothing.
-// Minutes at or after cutoff are left out: the live policies own them.
+// newestUncoveredTwapRead returns the newest minute a non-forced run of plan feeds into a twap
+// bucket where prices_1m still disagrees with trades after its own invalidated minutes are
+// rebuilt, with the drifting pairs; ok is false when every such minute agrees. A twap bucket
+// reads every minute of the bucket, so a minute dropped by retention above prices_1m's earliest
+// bucket would be recomputed into it as nothing. Minutes at or after cutoff belong to the live
+// policies and are left out.
 func newestUncoveredTwapRead(ctx context.Context, s twapCoverStore, plan []timescale.CAGGRefreshStep, cutoff time.Time) (
 	[2]time.Time, []timescale.TradesPrices1mDrift, bool, error,
 ) {

@@ -16,19 +16,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// chRecognition is the ClickHouse-backed ADR-0033 Claim 2a (recognition) audit.
-// It pulls every distinct (contract_id, topic_0_sym) shape from the CH lake —
-// the complete, certified authoritative source, so no Postgres soroban_events
-// scan and no serving-DB load — and runs each through the production decoder
-// chain's Matches(). Any shape no decoder claims is a recognition gap: an
-// on-chain event the system would silently drop (a WASM upgrade adding a topic,
-// or a decoder that never handled a topic its protocol emits). This is the
-// "every event for every protocol" gate.
+// chRecognition is the ClickHouse-backed ADR-0033 Claim 2a (recognition) audit. It pulls every
+// distinct (contract_id, topic_0_sym) shape from the CH lake, the certified source, so the serving
+// DB is untouched, and runs each through the production decoder chain's Matches(). A shape no
+// decoder claims is a recognition gap: an on-chain event the system would silently drop.
 //
-// The CAP-67 classic-token firehose (transfer/mint/burn/…) is excluded by
-// default: the enabled protocol decoders don't claim it (sep41 isn't enabled),
-// so including it would report the entire SAC layer as "unrecognized" and drown
-// the protocol signal. Pass -include-firehose to audit it too.
+// The CAP-67 classic-token firehose (transfer/mint/burn) is excluded by default: the enabled
+// decoders don't claim it, so including it would report the whole SAC layer as unrecognized and
+// drown the protocol signal. Pass -include-firehose to audit it too.
 func chRecognition(args []string) error { //nolint:gocognit,funlen // linear: parse, scan, recognize, report.
 	fs := flag.NewFlagSet("ch-recognition", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")
@@ -142,19 +137,14 @@ func chRecognition(args []string) error { //nolint:gocognit,funlen // linear: pa
 		}
 		fmt.Printf("  %s  topic0=%-24q events=%d ledgers=[%d,%d]\n", g.ContractID, sym, g.Count, g.MinLedger, g.MaxLedger)
 	}
-	// Non-zero, matching the Postgres sibling verify-recognition. An
-	// ADR-0033 "every event for every protocol" gate that reports the
-	// gaps in a table and exits 0 is unusable in cron or Healthchecks.io,
-	// which is where a lake-side recognition gate belongs while
-	// soroban_events is decommission-pending.
+	// Non-zero, matching the Postgres sibling verify-recognition: a gate that prints gaps and
+	// exits 0 is unusable in cron or Healthchecks.io.
 	return fmt.Errorf("%d unrecognized event shape(s) — a decoder is missing a topic (ADR-0033 EVERY-event policy)", len(gaps))
 }
 
-// chRecognitionDispatcher builds the production decoder dispatcher
-// ch-recognition audits against: warms the factory-anchored gated registries
-// (ADR-0035) and the soroswap pair-tokens seed from a short-lived
-// Postgres store (protocol_contracts / soroswap_pairs live there even though
-// the recognition shapes themselves come from CH), then closes it.
+// chRecognitionDispatcher builds the production decoder dispatcher ch-recognition audits against.
+// It warms the factory-anchored gated registries and the soroswap pair-tokens seed from a
+// short-lived Postgres store (protocol_contracts and soroswap_pairs live there), then closes it.
 func chRecognitionDispatcher(ctx context.Context, cfg config.Config) (*dispatcher.Dispatcher, error) {
 	store, err := timescale.Open(ctx, cfg.Storage.PostgresDSN)
 	if err != nil {

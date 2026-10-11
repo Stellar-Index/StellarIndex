@@ -14,12 +14,9 @@ import (
 
 const externalAmountDecimals = 8
 
-// matchPayload covers both `match` and `last_match` message types —
-// same field shape, differ only in semantics (last_match is one-per-
-// product on subscribe, match is per-trade going forward).
-//
-// Numbers are strings natively in Coinbase's wire format; no
-// json.Number/float complications.
+// matchPayload covers both `match` and `last_match` messages: the same field shape, where
+// last_match is one per product on subscribe and match is per trade afterwards. Numbers are
+// strings on the wire, so there are no float conversions.
 type matchPayload struct {
 	Type         string `json:"type"`
 	TradeID      int64  `json:"trade_id"`
@@ -42,11 +39,9 @@ type errorPayload struct {
 	Reason  string `json:"reason"`
 }
 
-// parseFrame dispatches on the message `type` field. Returns
-// (trade, true, nil) for match / last_match frames; (_, false, nil)
-// for subscriptions-ack and unknown frames; wraps ErrSubscriptionRejected
-// for subscription errors so the streamer fails cleanly rather than
-// tight-looping on a bad config.
+// parseFrame dispatches on the message `type` field. It returns (trade, true, nil) for match and
+// last_match frames and (_, false, nil) for acks and unknown frames. Subscription errors wrap
+// ErrSubscriptionRejected so the streamer fails cleanly rather than tight-looping on bad config.
 func parseFrame(raw []byte, pairMap map[string]canonical.Pair) (canonical.Trade, bool, error) {
 	// Peek just the `type` field without double-decoding large
 	// bodies — we don't have those here, but the pattern is cheap.
@@ -106,12 +101,9 @@ func buildTrade(m matchPayload, pairMap map[string]canonical.Pair) (canonical.Tr
 		return canonical.Trade{}, fmt.Errorf("%w: price %q: %w", ErrMalformedFrame, m.Price, err)
 	}
 	quote := new(big.Int).Quo(new(big.Int).Mul(base, price), scale.Pow10(externalAmountDecimals))
-	// Dust filter — when base × price floor-divides to 0 (e.g. a
-	// 1e-8 XLM lot at $0.16, or any size where size_float ×
-	// price_float < 1e-8 USD), the canonical validator would
-	// reject the row with "quote_amount must be positive". These
-	// are real coinbase trades, just below our integer-scale
-	// precision floor; drop silently.
+	// Dust filter: when base x price floor-divides to 0 (e.g. a 1e-8 XLM lot at $0.16) the
+	// canonical validator would reject the row as "quote_amount must be positive". These are real
+	// trades below our integer-scale precision floor; drop silently.
 	if quote.Sign() == 0 {
 		return canonical.Trade{}, ErrDustTrade
 	}

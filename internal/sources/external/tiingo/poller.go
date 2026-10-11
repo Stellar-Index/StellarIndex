@@ -82,12 +82,9 @@ type priceBar struct {
 	Close json.Number `json:"close"`
 }
 
-// PollOnce implements external.Poller: one OracleUpdate per (ticker, NAV
-// date) in the lookback window. The pairs argument is unused — the
-// ticker list is fixed at construction.
-//
-// A failing ticker does not discard the others' rows: the error is
-// returned only when every ticker failed, otherwise logged per ticker.
+// PollOnce implements external.Poller: one OracleUpdate per (ticker, NAV date) in the lookback
+// window. The pairs argument is unused because the ticker list is fixed at construction. A failing
+// ticker does not discard the others' rows; the error is returned only when every ticker failed.
 func (p *Poller) PollOnce(ctx context.Context, _ []canonical.Pair) ([]canonical.Trade, []canonical.OracleUpdate, error) {
 	now := time.Now
 	if p.Now != nil {

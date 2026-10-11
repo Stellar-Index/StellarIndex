@@ -113,9 +113,9 @@ type Loop struct {
 	OnDisconnect func(logger *slog.Logger, err error, reason string) (handled, resetBackoff bool)
 }
 
-// Run reconnects until ctx is cancelled, then closes `out`; transient errors
-// leave a timestamp gap, not a closed stream. The healthy-lifetime reset is
-// what stops Binance's 6-12 min recycles pinning backoff at 60 s.
+// Run reconnects until ctx is cancelled, then closes `out`; transient errors leave a timestamp
+// gap, not a closed stream. The healthy-lifetime reset stops Binance's 6-12 min recycles from
+// pinning backoff at 60 s.
 //
 //nolint:gocognit // the reconnect lifecycle (backoff, jitter, healthy-reset, ctx) was extracted VERBATIM from four streamer copies — splitting it re-fragments the exact logic the extraction unified
 func (l *Loop) Run(ctx context.Context, out chan<- canonical.Trade) {

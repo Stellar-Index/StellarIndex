@@ -17,21 +17,13 @@ const (
 	DefaultMaxAgeFX     = 76 * time.Hour
 )
 
-// DefaultFeedMap returns the built-in operator-facing default seed —
-// the sole source of these 6 addresses and their staleness budgets.
-// `internal/divergence/chainlink.go` derives its own default map from
-// this one so the ingest source and the divergence cross-check cannot
-// drift onto different proxies, or different MaxAge, for the same pair.
+// DefaultFeedMap returns the built-in default seed, the sole source of these 6 addresses and
+// their staleness budgets. internal/divergence/chainlink.go derives its default map from this one
+// so the ingest source and the divergence cross-check cannot drift onto different proxies or
+// MaxAge for the same pair. It only applies when [external.chainlink].feed_map is empty.
 //
-// Operators add more feeds via TOML; this function only fires when
-// the operator left [external.chainlink].feed_map empty.
-//
-// Returns the operator-facing shape — keys are pair strings, values
-// are the (address, decimals, invert) triple — so callers can pass
-// it straight into [BuildFeedSet]. Decimals=8 throughout (Chainlink's
-// standard for every entry here).
-//
-// Verified against https://docs.chain.link/data-feeds/price-feeds/addresses.
+// Keys are pair strings, values the (address, decimals, invert) triple, ready for [BuildFeedSet].
+// Decimals=8 throughout. Verified against https://docs.chain.link/data-feeds/price-feeds/addresses.
 func DefaultFeedMap() map[string]FeedSpec {
 	return map[string]FeedSpec{
 		"crypto:BTC/fiat:USD":  {Address: "0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c", Decimals: 8, MaxAge: DefaultMaxAgeCrypto},
@@ -57,23 +49,15 @@ func DefaultMaxAge(pair string) time.Duration {
 	return DefaultMaxAgeCrypto
 }
 
-// BuildFeedSet parses operator-supplied feed-map entries (pair
-// string → FeedSpec) into a runtime feed map and the canonical pair
-// list the framework's runner expects. Empty input → fall back to
-// [DefaultFeedMap].
+// BuildFeedSet parses operator-supplied feed-map entries (pair string to FeedSpec) into a runtime
+// feed map and the canonical pair list the runner expects. Empty input falls back to
+// [DefaultFeedMap]. A pair string that fails canonical parsing is an error, since a silent skip
+// would hide misconfiguration.
 //
-// Returns an error on a pair string that fails canonical parsing —
-// silent skips would hide misconfiguration.
-//
-// Decimals is carried through VERBATIM: an omitted value (0) stays 0,
-// which the Poller reads as "adopt the feed's on-chain decimals()"
-// (decimals.go). It is deliberately NOT substituted with
-// DefaultDecimals here — a substituted 8 would be indistinguishable
-// from an operator-asserted 8, and the resolver would then refuse an
-// 18-decimal feed the operator never mis-configured instead of
-// adopting its real scale.
-//
-// MaxAge 0 resolves to [DefaultMaxAge]; a negative one is an error.
+// Decimals is carried through VERBATIM: an omitted value (0) stays 0, which the Poller reads as
+// "adopt the on-chain decimals()" (decimals.go). Substituting DefaultDecimals would look like an
+// operator-asserted 8 and make the resolver refuse an 18-decimal feed instead of adopting its
+// real scale. MaxAge 0 resolves to [DefaultMaxAge]; a negative one is an error.
 func BuildFeedSet(operatorMap map[string]FeedSpec) (map[string]FeedSpec, []canonical.Pair, error) {
 	source := operatorMap
 	if len(source) == 0 {

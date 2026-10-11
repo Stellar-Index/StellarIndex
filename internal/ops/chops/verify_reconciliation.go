@@ -170,12 +170,12 @@ func reconciliationIsVacuous(expTotal, actTotal int) bool {
 	return expTotal == 0 && actTotal == 0
 }
 
-// seedSoroswapForRecon seeds the soroswap pair registry from the factory via RPC so the
-// re-derive resolves pairs created before the audited range, as verify-decoders does. An empty
+// seedSoroswapForRecon seeds the soroswap pair registry from the factory via RPC so the re-derive
+// resolves pairs created before the audited range, as verify-decoders does. An empty
 // oracle.soroswap.factory_contract disables the seed. A factory with no RPC endpoint, or a failed
 // sweep, is an error the caller must not swallow: a partly seeded registry expects 0 rows for
-// unseeded pairs and would publish projection_ok=false over healthy data. Notices carry no
-// command prefix because compute-completeness shares this.
+// unseeded pairs and would publish projection_ok=false over healthy data. Notices carry no command
+// prefix because compute-completeness shares this.
 func seedSoroswapForRecon(ctx context.Context, cfg config.Config, dec *soroswap.Decoder) error {
 	factory := cfg.Oracle.Soroswap.FactoryContract
 	if factory == "" {

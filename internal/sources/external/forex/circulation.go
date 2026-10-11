@@ -9,21 +9,15 @@ import (
 	"time"
 )
 
-// circulationCSV is the curated monetary-base table joined onto
-// /v1/currencies. Lives in repo at
-// internal/sources/external/forex/circulation_data.csv. Refresh
-// cadence: quarterly, one CSV row per central-bank publication. The
-// file's header comments document the methodology.
+// circulationCSV is the curated monetary-base table joined onto /v1/currencies, refreshed
+// quarterly with one row per central-bank publication; its header comments document the method.
 //
 //go:embed circulation_data.csv
 var circulationCSV string
 
-// CirculationEntry is one row from the curated table — the broad
-// money supply figure and the date the central bank stamped on
-// the underlying release. Float64 is fine for display; precision
-// loss above 2^53 isn't a concern (the largest ticker is JPY at
-// ~1.5e15, well inside float64's safe-integer range; we accept
-// 1-unit rounding for the wire shape).
+// CirculationEntry is one row from the curated table: the broad money supply figure and the date
+// the central bank stamped on the release. Float64 is display-only here: the largest value (JPY,
+// ~1.5e15) is inside the 2^53 safe-integer range, so no precision is lost.
 type CirculationEntry struct {
 	AggregateLocalUnits float64   // M2 / M3 / M4 in the currency's natural unit
 	AsOf                time.Time // Data vintage stamped on the source release

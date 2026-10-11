@@ -428,10 +428,9 @@ func clampExitCode(n int) int {
 	return n
 }
 
-// reconcileExitError maps a completed run's tally to its exit error (nil =
-// clean) and a reason for stderr. It fails a run on mismatches, on an error
-// rate above -max-error-rate, on verifying zero accounts or fewer than
-// requested (either mode), and on staleMergedHeld.
+// reconcileExitError maps a completed run's tally to its exit error (nil = clean) and a reason for
+// stderr. It fails a run on mismatches, on an error rate above -max-error-rate, on verifying zero
+// accounts or fewer than requested (either mode), and on staleMergedHeld.
 //
 // errored counts our-side (ClickHouse) failures only; Horizon outages are excluded. requested is
 // the intended account count, n the results produced (fewer when cancelled), and verified the

@@ -41,12 +41,10 @@ var (
 	fixingBandHi = big.NewRat(3, 2)
 )
 
-// GateFixings scores every candidate bar of series (one ticker, one grain,
-// ascending by BarStart) against the median close of the raw bars before
-// it. Refused bars stay in the reference of later bars, so the verdict on a
-// bar depends only on the vendor series and never on what was stored. A bar
-// with no reference (the first bar, or one after a gap longer than the
-// window) is accepted.
+// GateFixings scores every candidate bar of series (one ticker, one grain, ascending by BarStart)
+// against the median close of the raw bars before it. Refused bars stay in the reference of later
+// bars, so a bar's verdict depends only on the vendor series, never on what was stored. A bar with
+// no reference (the first, or one after a gap longer than the window) is accepted.
 func GateFixings(series []FXBar, isCandidate func(FXBar) bool) (accepted, refused []FXBar) {
 	closes := make([]*big.Rat, len(series))
 	for i, b := range series {
@@ -173,11 +171,10 @@ func RateFromFloat(f float64) *big.Rat {
 	return r
 }
 
-// appendFixings offers the last [fixingLiveWindow] of closed hourly bars for
-// each ticker, comparing accepted bars with served's guarded rates. It runs
-// after the cache install, so the served snapshot never waits on it. A
-// ticker's failure is counted and the cycle continues; a 429 or a dead
-// context ends it.
+// appendFixings offers the last [fixingLiveWindow] of closed hourly bars for each ticker,
+// comparing accepted bars with served's guarded rates. It runs after the cache install, so the
+// served snapshot never waits on it. A ticker's failure is counted and the cycle continues; a 429
+// or a dead context ends it.
 func (w *Worker) appendFixings(ctx context.Context, tickers []string, served *Snapshot) {
 	if w.fixingWriter == nil {
 		return

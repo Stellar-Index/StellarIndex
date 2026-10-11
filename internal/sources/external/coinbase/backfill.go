@@ -52,16 +52,10 @@ func (e *rateLimitedError) Error() string { return "http 429: " + e.body }
 
 // Backfill implements external.Backfiller for Coinbase Exchange.
 //
-// Coinbase's candle response is **a positional array with an unusual
-// field order**: [time_sec, low, high, open, close, volume]. Every
-// other CEX in our fleet uses OHLC (open/high/low/close); Coinbase
-// swapped to LHOC. Positional parsers that assume OHLC get wrong
-// prices silently. We read explicitly by index — comments below
-// mark each slot.
-//
-// Response depth: no documented hard cap beyond the 300-candle
-// per-request limit. Coinbase serves back to product listing
-// (XLM-USD since 2019).
+// Coinbase's candle response is a positional array with an unusual field order: [time_sec, low,
+// high, open, close, volume]. Every other CEX here uses OHLC, so a parser assuming OHLC gets wrong
+// prices silently; we read explicitly by index. Depth has no documented cap beyond the 300-candle
+// per-request limit; Coinbase serves back to product listing.
 func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to time.Time, granularity time.Duration) ([]canonical.Trade, error) {
 	if !from.Before(to) {
 		return nil, fmt.Errorf("coinbase.Backfill: from %v must be before to %v", from, to)
@@ -130,11 +124,9 @@ func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to t
 	return out, nil
 }
 
-// resolveBackfillProduct maps pair to its configured Coinbase product
-// (the inverse of PairMap) and refuses up front if the product can't
-// be represented in a backfill tx hash — the per-candle skip would
-// otherwise turn an unrepresentable product into a silently empty
-// backfill.
+// resolveBackfillProduct maps pair to its configured Coinbase product (the inverse of PairMap) and
+// refuses up front if the product cannot be represented in a backfill tx hash; the per-candle skip
+// would otherwise turn it into a silently empty backfill.
 func (s *Streamer) resolveBackfillProduct(pair canonical.Pair, granSec int) (string, error) {
 	inverse := make(map[string]string, len(s.PairMap))
 	for sym, p := range s.PairMap {
@@ -150,12 +142,10 @@ func (s *Streamer) resolveBackfillProduct(pair canonical.Pair, granSec int) (str
 	return product, nil
 }
 
-// coinbaseCandlesToTrades converts one page of candles into trades.
-// Coinbase returns candles in REVERSE chronological order (newest
-// first); walk the slice backwards so trades emit chronologically.
-// A zero-volume or dust candle is skipped; any other candle that can't
-// be converted fails the page, so a malformed row can never shrink the
-// range silently. A candle not closed by min(to, now) is dropped; see
+// coinbaseCandlesToTrades converts one page of candles into trades. Coinbase returns candles
+// newest first, so the slice is walked backwards to emit chronologically. A zero-volume or dust
+// candle is skipped; any other candle that cannot be converted fails the page, so a malformed row
+// never shrinks the range silently. A candle not closed by min(to, now) is dropped; see
 // scale.CandleClosed.
 func coinbaseCandlesToTrades(candles []coinbaseCandle, product string, pair canonical.Pair, granSec int, to, now time.Time) ([]canonical.Trade, error) {
 	out := make([]canonical.Trade, 0, len(candles))
@@ -179,12 +169,10 @@ func coinbaseCandlesToTrades(candles []coinbaseCandle, product string, pair cano
 	return out, nil
 }
 
-// advanceCoinbaseCursor computes the next window's startSec: one
-// granularity past the most-recent emitted candle (=
-// candles[0].time_sec + granularity, since candles[0] is newest).
-// done=true means the caller should stop paginating — either the
-// newest candle carried no parseable open time, or the cursor failed
-// to advance (a page that repeats would otherwise loop forever).
+// advanceCoinbaseCursor computes the next window's startSec: one granularity past the newest
+// candle (candles[0].time_sec + granularity). done=true tells the caller to stop paginating
+// because the newest candle had no parseable open time, or the cursor failed to advance (a
+// repeating page would otherwise loop forever).
 func advanceCoinbaseCursor(candles []coinbaseCandle, startSec int64, granSec int) (next int64, done bool) {
 	newestOpen, ok := candles[0].openTimeSec()
 	if !ok {
@@ -337,11 +325,10 @@ func fetchCoinbaseCandles(ctx context.Context, endpoint string, q url.Values) ([
 	return out, nil
 }
 
-// coinbaseCandleToTrade synthesises a canonical.Trade. Coinbase
-// publishes no VWAP or quote volume, so the trade is priced at the close
-// (the Backfiller "close when VWAP unavailable" contract): base volume
-// is exact, while quote = close × volume is an estimate whose true value
-// lies anywhere in [low × volume, high × volume].
+// coinbaseCandleToTrade synthesises a canonical.Trade. Coinbase publishes no VWAP or quote volume,
+// so the trade is priced at the close (the Backfiller "close when VWAP unavailable" contract):
+// base volume is exact, while quote = close x volume is an estimate whose true value lies anywhere
+// in [low x volume, high x volume].
 func coinbaseCandleToTrade(c coinbaseCandle, product string, pair canonical.Pair, granSec int) (canonical.Trade, error) {
 	openSec, ok := c.openTimeSec()
 	if !ok {

@@ -92,24 +92,13 @@ type apiError struct {
 	Info string `json:"info"`
 }
 
-// PollOnce implements external.Poller. Fetches the current rate
-// board for Base → (symbols derived from pairs), returns one
-// canonical.OracleUpdate per rate.
+// PollOnce implements external.Poller: it fetches the current rate board for Base against the
+// symbols derived from pairs and returns one canonical.OracleUpdate per rate. The venue quotes
+// `Base -> <symbol>` (USD -> EUR = 0.92 means 1 USD buys 0.92 EUR), so rates are inverted where
+// the pair's base asset matches the venue base.
 //
-// Pairs tell us which symbols to request: for each pair, if the
-// quote currency is a fiat code we know, we include the base-
-// currency code in the symbols list. The venue returns rates as
-// `Base -> <symbol>` (e.g. USD -> EUR = 0.92, meaning 1 USD buys
-// 0.92 EUR). We invert where the pair's base asset matches the
-// venue base to get the right direction.
-//
-// Pairs with crypto bases (XLM/USD, BTC/USD) are skipped at this
-// layer — ExchangeRatesApi only quotes fiat-fiat; crypto prices
-// come from exchange streamers. The Poller silently ignores
-// non-fiat pairs rather than erroring, because mixed-pair configs
-// are normal (operator enables the FX poller for fiat triangulation
-// without needing to audit the crypto pairs already covered by
-// Binance/Kraken/Bitstamp).
+// Pairs with crypto bases are silently skipped rather than rejected: the venue quotes only
+// fiat-fiat, and mixed-pair configs are normal because exchange streamers already cover crypto.
 func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canonical.Trade, []canonical.OracleUpdate, error) { //nolint:gocognit,funlen // dispatch-heavy; splitting would reduce linearity
 	base := p.Base
 	if base == "" {
@@ -129,11 +118,8 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 	if endpoint == "" {
 		endpoint = DefaultEndpoint
 	}
-	// G10-04: exchangeratesapi.io / apilayer only accepts the key
-	// as the `access_key` query param — there is no auth-header
-	// form — so the key necessarily appears in the request URL. A
-	// transport error's *url.Error embeds that URL; GetBody redacts
-	// the query string (RedactURL) so the key can't leak to logs.
+	// The venue accepts the key only as the `access_key` query param, so it sits in the request
+	// URL; GetBody redacts the query string (RedactURL) so a transport error cannot leak it.
 	status, body, err := external.GetBody(ctx, external.GetRequest{
 		URL:        endpoint + LatestPath + "?" + q.Encode(),
 		Headers:    map[string]string{"Accept": "application/json"},
@@ -171,15 +157,9 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 	}
 
 	if lr.Timestamp == 0 {
-		// Refuse rather than stamp wall-clock. The venue's
-		// `timestamp` is when the RATE was observed; substituting
-		// time.Now() re-labels a quote of unknown age as fresh, and
-		// this connector is IncludeInVWAP — so a stale (or replayed)
-		// board would have been priced as a current one and would have
-		// out-ranked genuinely older quotes in every freshness gate
-		// downstream. Same reasoning, and the same error class, as the
-		// base-mismatch arm above: stop rather than stamp a row we
-		// cannot honestly date.
+		// Refuse rather than stamp wall-clock: time.Now() would relabel a quote of unknown age as
+		// fresh, and this connector is IncludeInVWAP, so a stale or replayed board would outrank
+		// genuinely older quotes in every downstream freshness gate.
 		return nil, nil, fmt.Errorf("%w: missing timestamp — refusing to stamp %d rate(s) with wall-clock time", ErrAPIRejected, len(lr.Rates))
 	}
 	ts := time.Unix(lr.Timestamp, 0).UTC()
@@ -190,16 +170,9 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 		return nil, nil, fmt.Errorf("base asset %q: %w", base, err)
 	}
 
-	// Emit one OracleUpdate per target currency — the rate
-	// `<symbol>/<base>` (inverted from venue's `<base>/<symbol>`
-	// quote). Example: venue says "USD base, rate EUR = 0.9235"
-	// meaning 1 USD = 0.9235 EUR. We emit the EUR asset priced
-	// *in* USD (the quote) by inverting: 1 EUR = 1/0.9235 USD ≈
-	// 1.0828 USD.
-	//
-	// This inversion keeps our canonical convention: OracleUpdate
-	// carries "price of <asset> in <quote>" — readable as "how much
-	// Quote does one unit of Asset cost."
+	// Emit one OracleUpdate per target currency, inverting the venue's `<base>/<symbol>` quote so
+	// the update carries the canonical "price of <asset> in <quote>": "USD base, EUR = 0.9235"
+	// becomes 1 EUR = 1/0.9235 USD.
 	for sym, rateNum := range lr.Rates {
 		sym = strings.ToUpper(strings.TrimSpace(sym))
 		if sym == "" {

@@ -22,17 +22,10 @@ import (
 
 // Poller implements external.Poller for Chainlink Data Feeds.
 //
-// One poll tick: for every pair in the supplied pair list, look up
-// the feed spec in FeedMap, call latestRoundData() over JSON-RPC,
-// decode the 5-tuple, dedupe by (feed_address, roundId), and emit
-// one canonical.OracleUpdate per new round.
-//
-// Stateless w.r.t. its own writes (the dedup cache rebuilds at boot
-// — first poll after restart re-emits the latest round per feed if
-// it is within the feed's MaxAge, which the storage layer's PK ON
-// CONFLICT clause idempotently rejects). Goroutine-safe; the framework's runner serialises
-// PollOnce calls per source so internal mutexes only guard against
-// future concurrent-PollOnce paths.
+// It emits one canonical.OracleUpdate per new (feed_address, roundId). The dedup cache is
+// in-memory, so the first poll after a restart re-emits the latest round per feed; the storage
+// PK's ON CONFLICT rejects that idempotently. The runner serialises PollOnce per source, so the
+// internal mutexes only guard against future concurrent paths.
 type Poller struct {
 	// Client is the EVM JSON-RPC client. Constructor injects the
 	// operator-supplied endpoint (Alchemy / Infura / public).
@@ -80,13 +73,9 @@ func (p *Poller) clock() time.Time {
 // the RPC endpoint (must include the API key for keyed providers
 // like Alchemy) and the feed map.
 func NewPoller(rpcURL string, feedMap map[string]FeedSpec) *Poller {
-	// Pre-register the zero-valued mismatch/verify-failed series for
-	// every configured feed. Same reasoning as the divergence
-	// reference's NewChainlinkReference — FeedMap is fixed at
-	// construction, so the label set is bounded even though it is
-	// operator-config-dependent, and without seeding a feed that has
-	// never mis-scaled or failed a decimals() call is indistinguishable
-	// from one whose counter was never wired.
+	// Seed zero-valued mismatch/verify-failed series per configured feed. FeedMap is fixed at
+	// construction so the label set is bounded, and without seeding a healthy feed is
+	// indistinguishable from one whose counter was never wired.
 	for k := range feedMap {
 		obs.ChainlinkFeedDecimalsMismatchTotal.WithLabelValues("ingest", k)
 		obs.ChainlinkFeedDecimalsVerifyFailedTotal.WithLabelValues("ingest", k)
@@ -180,11 +169,9 @@ func checkRoundCurrent(pair canonical.Pair, spec FeedSpec, rnd Round, now time.T
 	return nil
 }
 
-// pollFeed resolves decimals, fetches the latest round, refuses it if
-// it is not current, and, if it's new, projects and commits it.
-// ok=false means "already emitted this round" (no-op, nothing for the
-// caller to report) — the one path PollOnce's fan-in must NOT receive
-// a result for. Every path records the feed's outcome.
+// pollFeed resolves decimals, fetches the latest round, refuses it if it is not current, and
+// projects and commits it if new. ok=false means "already emitted this round": the one path
+// PollOnce's fan-in must not receive a result for. Every path records the feed's outcome.
 func (p *Poller) pollFeed(ctx context.Context, pair canonical.Pair, spec FeedSpec) (pollResult, bool) {
 	res, ok := p.pollFeedOnce(ctx, pair, spec)
 	switch {
@@ -220,14 +207,9 @@ func (p *Poller) pollFeedOnce(ctx context.Context, pair canonical.Pair, spec Fee
 	}
 	u, err := p.project(pair, spec, rnd)
 	if err != nil {
-		// Do NOT mark the round emitted: a project() failure
-		// (unresolved decimals, malformed answer, non-positive
-		// post-invert price) can be transient, but the round id only
-		// changes on-chain when the feed publishes a new answer.
-		// Committing here before the row is ever built would
-		// permanently wedge the feed at this round until process
-		// restart, even though the identical round would project
-		// cleanly on a later tick.
+		// Do NOT mark the round emitted: a project() failure can be transient, but the round id
+		// only advances when the feed publishes a new answer, so committing here would wedge the
+		// feed at this round until restart.
 		return pollResult{err: err, pair: pair, round: rnd}, true
 	}
 	// Commit the dedup high-water mark only now that the update has actually
@@ -237,18 +219,12 @@ func (p *Poller) pollFeedOnce(ctx context.Context, pair canonical.Pair, spec Fee
 	return pollResult{update: u, pair: pair, round: rnd}, true
 }
 
-// PollOnce implements external.Poller. For each pair in `pairs`,
-// look up the feed in FeedMap, call latestRoundData(), and emit
-// one OracleUpdate if the round is new. Returns updates, never
+// PollOnce implements external.Poller: one OracleUpdate per pair whose round is new, never
 // trades (Chainlink is oracle-class).
 //
-// Per-feed failures (including stale and carried-forward rounds) are
-// logged and counted on stellarindex_chainlink_feed_polls_total, not
-// bubbled — one bad feed shouldn't stop the others. The framework's
-// outcome="error" only fires when no feed produced an update.
-//
-// Bounded concurrency: at most `p.Concurrency` simultaneous
-// eth_call requests. Polite default for shared RPC endpoints.
+// Per-feed failures (including stale and carried-forward rounds) are logged and counted on
+// stellarindex_chainlink_feed_polls_total, not bubbled, so one bad feed cannot stop the others.
+// At most p.Concurrency eth_call requests run at once, to stay polite to shared RPC endpoints.
 func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canonical.Trade, []canonical.OracleUpdate, error) { //nolint:gocognit,gocyclo // dispatch-heavy; splitting hurts readability
 	logger := p.Logger
 	if logger == nil {
@@ -333,26 +309,13 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 		updates = append(updates, r.update)
 	}
 
-	// Convention from coingecko: nil/nil/nil = "skipped" (poll fired
-	// but found nothing). Returning err here would mark the WHOLE
-	// tick as "error" even when most feeds succeeded — that's bad
-	// signal hygiene. Per-feed errors are already logged and counted
-	// (stellarindex_chainlink_feed_polls_total) above.
+	// nil/nil/nil means "skipped": returning an error would mark the whole tick "error" even when
+	// most feeds succeeded. Per-feed errors are already logged and counted above.
 	//
-	// Liveness: an all-feeds-FAILED cycle is NOT a healthy skip.
-	// Returning (nil,nil,nil) when every feed errored would let the
-	// runner bump ExternalPollerLastSuccessUnix and keep the
-	// staleness gauge green while the poller is actually wedged (e.g.
-	// bad endpoint, key revoked, RPC down). So surface firstErr when
-	// there were zero successful updates AND at least one feed
-	// errored — a genuine "polled and found nothing new" cycle
-	// (firstErr == nil) still skips cleanly.
-	//
-	// An unchanged sibling (ok=false, nothing sent to results) is
-	// ALSO current, not a failure. Surface firstErr only when NO feed
-	// was current this tick — otherwise a stale/errored feed's error
-	// would flip a genuinely healthy tick to "error" just because its
-	// unchanged sibling had nothing new to report.
+	// An all-feeds-failed cycle is not a healthy skip: (nil,nil,nil) would let the runner bump
+	// ExternalPollerLastSuccessUnix and keep the staleness gauge green while the poller is wedged
+	// (bad endpoint, revoked key, RPC down). An unchanged sibling (ok=false) is current, not a
+	// failure, so firstErr surfaces only when no feed was current this tick.
 	if len(updates) == 0 {
 		if firstErr != nil && !anyCurrent.Load() {
 			return nil, nil, firstErr
@@ -377,21 +340,16 @@ func (p *Poller) fetchLatest(ctx context.Context, pair canonical.Pair, spec Feed
 	return rnd, nil
 }
 
-// project converts a decoded Round into a canonical.OracleUpdate
-// suitable for InsertOracleUpdate. Applies the per-feed Decimals +
-// Invert transforms before populating the row.
+// project converts a decoded Round into a canonical.OracleUpdate, applying the per-feed
+// Decimals and Invert transforms.
 //
-// spec.Decimals must be the RESOLVED scale (resolveDecimals — the
-// on-chain decimals() verified against config). A literal 0 is refused
-// as ErrDecimalsUnresolved rather than silently substituted: dividing
-// by 10^0 would store a BTC/USD row 10^8 too large, and guessing 8
-// would hide exactly the scale drift the resolver exists to catch.
+// spec.Decimals must be the RESOLVED scale (on-chain decimals() verified against config). A
+// literal 0 is refused as ErrDecimalsUnresolved: dividing by 10^0 would store a BTC/USD row
+// 10^8 too large, and guessing 8 would hide the scale drift the resolver exists to catch.
 //
-// Identity for off-chain sources is the synthesized tx_hash + ts
-// pair: Ledger=0, OpIndex=0, TxHash=sha256(feed||roundId)[:64],
-// Timestamp=Round.UpdatedAt. The PK (source, ledger, tx_hash,
-// op_index, ts) gives idempotent inserts under restart and
-// retry — re-emitting the same round produces the same TxHash.
+// Identity is synthesized (Ledger=0, OpIndex=0, TxHash=sha256(feed||roundId)[:64],
+// Timestamp=Round.UpdatedAt), so re-emitting the same round hits the same PK and inserts
+// idempotently under restart and retry.
 func (p *Poller) project(pair canonical.Pair, spec FeedSpec, rnd Round) (canonical.OracleUpdate, error) {
 	decimals := spec.Decimals
 	if decimals == 0 {
@@ -437,13 +395,9 @@ func (p *Poller) project(pair canonical.Pair, spec FeedSpec, rnd Round) (canonic
 	}, nil
 }
 
-// wouldEmit peeks whether (feedAddr, roundID) is newer than the last
-// committed round, WITHOUT mutating the cache. Split from the old
-// combined shouldEmit so a caller can decide to skip fetching/
-// projecting an already-seen round before doing any of that work,
-// while deferring the actual commit until the update built from this
-// round has survived every failure point that would otherwise strand
-// it (see commitEmit).
+// wouldEmit reports whether (feedAddr, roundID) is newer than the last committed round without
+// mutating the cache, so an already-seen round is skipped before any work and the commit waits
+// until the update has survived every failure point (see commitEmit).
 func (c *roundCache) wouldEmit(feedAddr string, roundID *big.Int) bool {
 	if roundID == nil {
 		roundID = new(big.Int)
@@ -454,15 +408,9 @@ func (c *roundCache) wouldEmit(feedAddr string, roundID *big.Int) bool {
 	return !ok || roundID.Cmp(prev) > 0
 }
 
-// commitEmit marks (feedAddr, roundID) as emitted. Callers MUST only
-// call this after the canonical.OracleUpdate for this round has been
-// successfully built (project succeeded) — never before. Marking
-// earlier would mean a project() failure (unresolved decimals,
-// malformed answer, non-positive post-invert price) permanently
-// wedges the feed at that round: the on-chain round id only advances
-// when the feed itself publishes a new answer, so a later,
-// otherwise-healthy poll of the SAME round would silently produce
-// nothing until process restart resets the in-memory cache.
+// commitEmit marks (feedAddr, roundID) as emitted. Call it only after project succeeded: marking
+// earlier would let a project() failure wedge the feed at that round, because the round id only
+// advances when the feed publishes a new answer, so later polls would emit nothing until restart.
 func (c *roundCache) commitEmit(feedAddr string, roundID *big.Int) {
 	if roundID == nil {
 		roundID = new(big.Int)
@@ -478,19 +426,11 @@ func (c *roundCache) commitEmit(feedAddr string, roundID *big.Int) {
 	c.last[feedAddr] = new(big.Int).Set(roundID)
 }
 
-// syntheticTxHash derives a deterministic 64-char hex tx_hash from
-// the (feed address, roundId) pair. SHA-256 chosen for determinism
-// + collision resistance across feeds; the actual wire format is
-// tx_hash CHAR(64) so we hex-encode the 32-byte SHA-256 output.
+// syntheticTxHash derives a deterministic 64-char hex tx_hash (tx_hash is CHAR(64)) from the
+// (feed address, roundId) pair via SHA-256.
 //
-// roundID is the FULL uint80 proxy round id (*big.Int) — hashing the
-// wide value means two rounds from different phases that happen to
-// share a low-64-bit aggregatorRoundId produce DISTINCT tx hashes, so
-// they don't collide on the storage PK.
-//
-// Mirrors the synthetic-hash pattern in coingecko/coinmarketcap
-// pollers — different inputs (their tickers + currency + ts vs our
-// feed + roundId), same idea.
+// roundID is the FULL uint80 proxy round id: rounds from different phases that share a low-64-bit
+// aggregatorRoundId must hash to distinct values so they do not collide on the storage PK.
 func syntheticTxHash(feedAddress string, roundID *big.Int) string {
 	h := sha256.New()
 	_, _ = h.Write([]byte(strings.ToLower(feedAddress)))
@@ -498,11 +438,8 @@ func syntheticTxHash(feedAddress string, roundID *big.Int) string {
 	if roundID == nil {
 		roundID = new(big.Int)
 	}
-	// Decimal string of the wide id. It's already a unique,
-	// deterministic representation per distinct round (no two distinct
-	// wide ids share a decimal string), so the SHA-256 input — and
-	// thus the synthetic tx_hash — is stable + collision-free across
-	// phase rollovers.
+	// The decimal string is unique per distinct wide id, so the hash input stays stable and
+	// collision-free across phase rollovers.
 	_, _ = h.Write([]byte(roundID.String()))
 	return hex.EncodeToString(h.Sum(nil))
 }

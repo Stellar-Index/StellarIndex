@@ -32,22 +32,13 @@ const klinesPath = "/api/v3/klines"
 // `limit=1000` and paginate when the caller asks for more.
 const klineMaxLimit = 1000
 
-// Backfill implements external.Backfiller. Returns historical
-// trades synthesised from Binance's kline data — one canonical.Trade
-// per candle bucket, stamped with the bucket's close-time, base +
-// quote volume preserved from the kline's fields 5 and 7.
+// Backfill implements external.Backfiller: one canonical.Trade per kline candle, stamped with the
+// close time and the candle's base and quote volume. Unsupported granularities error before any
+// HTTP call.
 //
-// Granularity must match one of Binance's supported intervals (see
-// granularityToInterval); unsupported intervals error before any HTTP call.
-//
-// Pagination: Binance caps 1000 candles per request. Requests move startTime
-// forward serially to respect the venue's rate-limit weight (klines weigh 2
-// against a 6000/min budget).
-//
-// The returned trades are NOT deduplicated against existing storage — caller
-// (stellarindex-ops) owns the idempotent insert path. canonical.Trade.TxHash is
-// deterministic from (symbol, close_time_ms) so repeated runs land on the same
-// primary key.
+// Pages of up to 1000 candles are fetched serially to respect the venue's rate-limit weight.
+// Trades are NOT deduplicated here; the caller owns the idempotent insert, and TxHash is
+// deterministic from (symbol, close_time_ms) so repeated runs hit the same primary key.
 func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to time.Time, granularity time.Duration) ([]canonical.Trade, error) {
 	if !from.Before(to) {
 		return nil, fmt.Errorf("binance.Backfill: from %v must be before to %v", from, to)
@@ -107,11 +98,9 @@ func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to t
 	return out, nil
 }
 
-// resolveBackfillSymbol maps pair to its configured Binance symbol
-// (the inverse of PairMap) and refuses up front if the symbol can't
-// be represented in a backfill tx hash — klineToTrade's per-candle
-// skip would otherwise turn an unrepresentable symbol into a silently
-// empty backfill.
+// resolveBackfillSymbol maps pair to its configured Binance symbol (the inverse of PairMap) and
+// refuses up front if the symbol cannot be represented in a backfill tx hash; otherwise
+// klineToTrade's per-candle skip would produce a silently empty backfill.
 func (s *Streamer) resolveBackfillSymbol(pair canonical.Pair, granularity time.Duration) (string, error) {
 	inverse := make(map[string]string, len(s.PairMap))
 	for sym, p := range s.PairMap {
@@ -156,15 +145,11 @@ func klinesToTrades(candles []kline, symbol string, pair canonical.Pair, granula
 // errZeroVolume marks an empty candle, an expected skip.
 var errZeroVolume = errors.New("zero volume")
 
-// advanceBackfillCursor computes the next page's startTime: one interval
-// past the last candle's open time. Binance returns candles with
-// startTime <= openTime <= endTime, so the next page repeats none of
-// this one, but the last page can carry a bar past -to; the ops caller
-// drops it (dropUnsettledCandles). done=true means the page carried no parseable
-// open time and the caller should stop paginating (not an error — the
-// data collected so far is still returned). An error means the cursor
-// did not advance (a caching proxy, a venue ignoring startTime), which
-// would otherwise repeat forever.
+// advanceBackfillCursor computes the next page's startTime: one interval past the last candle's
+// open time, so no page repeats a candle. The last page can carry a bar past -to; the ops caller
+// drops it (dropUnsettledCandles). done=true means the page had no parseable open time and
+// pagination stops without error. An error means the cursor did not advance (caching proxy, venue
+// ignoring startTime), which would otherwise loop forever.
 func advanceBackfillCursor(candles []kline, startMs int64, granularity time.Duration) (next int64, done bool, err error) {
 	lastOpen, ok := candles[len(candles)-1].openTimeMs()
 	if !ok {
@@ -177,11 +162,9 @@ func advanceBackfillCursor(candles []kline, startMs int64, granularity time.Dura
 	return next, false, nil
 }
 
-// restBase returns the REST endpoint, allowing tests to override via
-// a custom Endpoint that points at an httptest server. When Endpoint
-// is a ws:// or wss:// URL (the streaming default), we fall back to
-// the production REST host — streaming and REST are separate
-// services on Binance.
+// restBase returns the REST endpoint; tests override it with an httptest Endpoint. A ws:// or
+// wss:// Endpoint (the streaming default) falls back to the production REST host, since streaming
+// and REST are separate Binance services.
 func (s *Streamer) restBase() string {
 	if s.Endpoint == "" || strings.HasPrefix(s.Endpoint, "ws://") || strings.HasPrefix(s.Endpoint, "wss://") {
 		return RESTEndpoint
@@ -189,11 +172,8 @@ func (s *Streamer) restBase() string {
 	return s.Endpoint
 }
 
-// kline is a single kline row — Binance returns these as a JSON
-// array (positional), not a struct. We unmarshal into []any and
-// extract by index; helpers below parse the fields we care about.
-//
-// Layout (from docs):
+// kline is one kline row. Binance returns a positional JSON array, so it is unmarshalled into
+// []any and read by index. Layout:
 //
 //	[0]  open time (int64 ms)
 //	[1]  open price (string)
@@ -268,13 +248,9 @@ func fetchKlines(ctx context.Context, endpoint string, q url.Values) ([]kline, e
 	return out, nil
 }
 
-// klineToTrade synthesises a canonical.Trade from a single candle.
-// Timestamp uses close-time (authoritative end of the bucket); the
-// trade's BaseAmount / QuoteAmount come directly from the candle's
-// volume fields — no derivation from open/high/low/close.
-//
-// The synthesised tx_hash is stable across repeated backfill runs:
-// see backfillTxHash.
+// klineToTrade synthesises a canonical.Trade from one candle. The timestamp is the close time, and
+// BaseAmount / QuoteAmount come straight from the candle's volume fields, not from OHLC. The
+// tx_hash is stable across repeated runs (see backfillTxHash).
 func klineToTrade(c kline, symbol string, pair canonical.Pair, granularity time.Duration) (canonical.Trade, error) {
 	closeMs, ok := c.closeTimeMs()
 	if !ok {
@@ -326,13 +302,8 @@ func backfillTxHash(symbol string, closeMs int64, granularity time.Duration) (st
 	return scale.CandleTxHash(strings.ToUpper(symbol), closeMs, granularity)
 }
 
-// granularityToInterval maps a time.Duration to Binance's interval
-// string. Binance supports: 1s, 1m, 3m, 5m, 15m, 30m, 1h, 2h, 4h,
-// 6h, 8h, 12h, 1d, 3d, 1w, 1M.
-//
-// For v1 we expose the required granularities (1m, 15m, 1h, 4h,
-// 1d, 1w) plus a couple of common intermediate buckets. Requests
-// outside the supported set return an error.
+// granularityToInterval maps a time.Duration to Binance's interval string. Only the required
+// granularities plus a few common intermediate buckets are exposed; anything else is an error.
 func granularityToInterval(d time.Duration) (string, error) {
 	switch d {
 	case 1 * time.Minute:

@@ -11,21 +11,15 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
-// LatestEURRates returns ECB's daily reference rates as a raw EUR-base
-// map — each value is "1 EUR = X units of that currency", exactly as
-// published — together with the date ECB stamped on the file.
+// LatestEURRates returns ECB's daily reference rates as a raw EUR-base map ("1 EUR = X units of
+// that currency", as published) with the date ECB stamped on the file.
 //
-// This is the same upstream document [Poller.PollOnce] reads, but
-// returned as rates rather than as canonical Trades. It exists so the
-// forex worker can use ECB as a FALLBACK rate source when its paid
-// primary (massive) is unavailable, without duplicating the fetch and
-// XML shape in a second package.
+// It reads the same document as [Poller.PollOnce] but returns rates, so the forex worker can use
+// ECB as a fallback when its paid primary (massive) is unavailable without a second fetch/XML path.
 //
-// EUR itself is NOT in the returned map: ECB publishes rates AGAINST
-// the euro, so the euro has no cube of its own. Callers converting to a
-// different base must add it explicitly.
-//
-// `endpoint` may be empty, in which case [DefaultEndpoint] is used.
+// EUR itself is NOT in the map: ECB publishes rates against the euro, so it has no cube of its
+// own, and callers converting to another base must add it. An empty `endpoint` means
+// [DefaultEndpoint].
 func LatestEURRates(ctx context.Context, endpoint string) (map[string]float64, time.Time, error) {
 	if endpoint == "" {
 		endpoint = DefaultEndpoint

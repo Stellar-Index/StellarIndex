@@ -38,8 +38,8 @@ const (
 // verifyNetworkState compares the lake's derived current state with state the network publishes:
 // hot-archive entries against ledger_entries_current (upgrades can rewrite them without any
 // ledger-meta change), and native XLM holdings plus fee_pool against total_coins exactly.
-// Exit code counts mismatches (a run that compared nothing counts 1), capped at 255; keys the
-// lake lacks or that changed after the checkpoint are coverage, not faithfulness.
+// Exit code counts mismatches (a run that compared nothing counts 1), capped at 255; keys the lake
+// lacks or that changed after the checkpoint are coverage, not faithfulness.
 func verifyNetworkState(args []string) error {
 	fs := flag.NewFlagSet("verify-network-state", flag.ContinueOnError)
 	cfgPath := fs.String("config", "/etc/stellarindex.toml", "path to stellarindex.toml — the network passphrase and history archive URL come from it, so it must load")

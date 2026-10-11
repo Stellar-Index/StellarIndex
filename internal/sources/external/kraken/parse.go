@@ -88,12 +88,8 @@ type frameResult struct {
 }
 
 // tradePayload is one entry in a v2 trade frame's `data` array.
-// Field names verified against
-// docs.kraken.com/api/docs/websocket-v2/trade.
-//
-// qty / price are json.Number so the decimal-string form reaches
-// our scaling helper losslessly — float64 is fine at Kraken's
-// precision but the i128 invariant says no floats for price paths.
+// Field names are from docs.kraken.com/api/docs/websocket-v2/trade. qty and price are json.Number
+// so the decimal string reaches the scaling helper losslessly; price paths use no floats.
 type tradePayload struct {
 	Symbol    string      `json:"symbol"`
 	Side      string      `json:"side"`      // "buy" | "sell" (unused for price/volume, retained for future attribution)
@@ -104,13 +100,9 @@ type tradePayload struct {
 	Timestamp string      `json:"timestamp"` // RFC 3339 with subsecond precision
 }
 
-// parseFrame dispatches on the channel field; trade frames yield
-// zero or more canonical.Trade values (snapshot carries many,
-// update carries one or a few) plus the entries that were skipped.
-// A subscribe acknowledgement yields Ack. Heartbeat / status frames
-// yield an empty result.
-//
-// Malformed frames return ErrMalformedFrame wrapped; the streamer
+// parseFrame dispatches on the channel field; trade frames yield zero or more canonical.Trade
+// values plus the skipped entries, a subscribe acknowledgement yields Ack, and heartbeat/status
+// frames yield an empty result. Malformed frames return a wrapped ErrMalformedFrame; the streamer
 // counts and continues.
 func parseFrame(raw []byte, pairMap map[string]canonical.Pair) (frameResult, error) {
 	var env channelEnvelope
@@ -204,12 +196,9 @@ func buildTrade(t tradePayload, pairMap map[string]canonical.Pair) (canonical.Tr
 	quoteRaw := new(big.Int).Mul(base, price)
 	quote := new(big.Int).Quo(quoteRaw, scale.Pow10(externalAmountDecimals))
 
-	// Dust filter — when base × price floor-divides to 0 (e.g.
-	// a 1e-8 XLM lot at $0.16), the canonical validator rejects
-	// the row with "quote_amount must be positive, got 0". These
-	// are real Kraken trades, just below our integer-scale
-	// precision floor; drop silently. Same shape as the
-	// Coinbase + Binance + Bitstamp dust filter.
+	// Dust filter: when base x price floor-divides to 0 the canonical validator would reject the
+	// row. These are real trades below our integer-scale precision floor; drop silently, as the
+	// other CEX connectors do.
 	if quote.Sign() == 0 {
 		return canonical.Trade{}, ErrDustTrade
 	}

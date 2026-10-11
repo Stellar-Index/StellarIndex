@@ -1,19 +1,16 @@
-// Package coinmarketcap polls CoinMarketCap's Pro /v2 quotes endpoint
-// for cross-check reference prices. `ClassAggregator`: divergence
-// signal only, excluded from VWAP.
+// Package coinmarketcap polls CoinMarketCap's Pro /v2 quotes endpoint for cross-check reference
+// prices. ClassAggregator: divergence signal only, excluded from VWAP.
 //
-// Tier: production needs Standard ($79/mo, 500k credits/month, 60
-// calls/min), the minimum tier that allows redistribution of the data.
+// Production needs the Standard tier, the minimum that allows redistribution of the data.
 //
-// Wire shape (verified):
+// Wire shape:
 //
 //	GET https://pro-api.coinmarketcap.com/v2/cryptocurrency/quotes/latest?symbol=XLM,BTC,ETH&convert=USD
 //	{"data": {"XLM": [{"quote": {"USD": {"price": 0.17582, "last_updated": "..."}}}]}, ...}
 //
-// CMC wraps each symbol's payload in an array because multiple coins can
-// share a ticker. `id=` mode pins one project and its entry is verified
-// against the requested id. `symbol=` mode carries no discriminator we can
-// check, so an entry with more than one coin is refused rather than guessed at.
+// CMC wraps each symbol's payload in an array because multiple coins can share a ticker. `id=`
+// mode pins one project and its entry is verified against the requested id. `symbol=` mode has no
+// discriminator we can check, so an entry with more than one coin is refused rather than guessed.
 package coinmarketcap
 
 import (
@@ -63,21 +60,13 @@ type Poller struct {
 	Endpoint string
 	Interval time.Duration
 
-	// CMCIDs maps upper-case ticker → CMC numeric id (as a
-	// string, e.g. "512" for XLM). Querying CMC by `symbol=` is ambiguous — multiple coins can
-	// share the same ticker (LUNA, LUNC, etc.) and CMC picks the
-	// highest-ranked match, which can drift between tickers and
-	// over time. Every ticker present here is queried by
-	// `id=<numeric>`; tickers absent from the map fall back to
-	// `symbol=`. The two selectors are mutually exclusive PER
-	// TICKER but the poller issues at most one `id=` request and
-	// one `symbol=` request per poll — never mixed on the
-	// same request, so CMC is never asked to disambiguate a
-	// selector it wasn't given.
+	// CMCIDs maps upper-case ticker to CMC numeric id (a string, "512" for XLM). Querying by
+	// `symbol=` is ambiguous: several coins share a ticker and CMC picks the highest-ranked match,
+	// which can drift over time. Every ticker present here is queried by `id=<numeric>`; absent
+	// tickers fall back to `symbol=`. The poller issues at most one `id=` and one `symbol=` request
+	// per poll, never mixed on one request.
 	//
-	// Wired from `currency.Catalogue.CoinMarketCapIDs()` in the
-	// indexer/aggregator binaries. Leave nil to preserve the
-	// legacy symbol-only path.
+	// Wired from `currency.Catalogue.CoinMarketCapIDs()`. Leave nil for the symbol-only path.
 	CMCIDs map[string]string
 
 	// AmbiguousSymbolSkips counts response entries dropped because
@@ -164,12 +153,9 @@ type cmcStatus struct {
 	Timestamp    string `json:"timestamp"`
 }
 
-// requestPlan is the pairs → CMC-request translation: which tickers go
-// by `id=`, which fall back to `symbol=`, and the lookup tables the
-// two decoders need to resolve a response entry back to a canonical
-// asset. Split out of PollOnce so the id/symbol paths — which must
-// never share one HTTP request — can be built once and
-// consumed independently.
+// requestPlan is the pairs to CMC-request translation: which tickers go by `id=`, which fall back
+// to `symbol=`, and the lookup tables the decoders use to resolve a response entry back to a
+// canonical asset. The id and symbol paths must never share one HTTP request.
 type requestPlan struct {
 	cryptoAssets map[string]canonical.Asset
 	fiatAssets   map[string]canonical.Asset

@@ -6,24 +6,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// DefaultPairs returns the Coinbase Exchange product → canonical.Pair
-// map for the default set. US-listed XLM-USD is the flagship pair
-// for this venue in our fleet; the reference anchors plus top-cap
-// globals round out the triangulation + cross-venue VWAP graph.
+// DefaultPairs returns the Coinbase Exchange product to canonical.Pair map for the default set.
+// Product IDs use "-" separators ("XLM-USD"). XLM-USD is the flagship pair (US regulated-venue XLM
+// reference); BTC-USD and ETH-USD are anchors; the top-cap USD products round out the triangulation
+// and cross-venue VWAP graph.
 //
-// Coinbase product IDs use "-" separators: "XLM-USD", "BTC-USD".
-//
-// Coverage rationale:
-//   - XLM-USD — US price discovery for XLM; Coinbase is the
-//     regulated-venue XLM reference.
-//   - BTC-USD, ETH-USD — anchors.
-//   - {ADA,ATOM,AVAX,BCH,BNB,DOGE,DOT,LINK,LTC,NEAR,SHIB,SOL,TON,
-//     UNI,XRP}-USD — top-cap globals against USD. All verified live
-//     via /products/<symbol>.
-//
-// Notable absences: DASH (Coinbase delisted, US AML pressure) and
-// TRX (never listed). The Kraken/Bitstamp/Binance triple covers
-// both for cross-venue VWAP.
+// DASH (delisted) and TRX (never listed) are absent; the Kraken/Bitstamp/Binance venues cover both.
 func DefaultPairs() (map[string]canonical.Pair, error) {
 	xlm, err := canonical.NewCryptoAsset("XLM")
 	if err != nil {
@@ -69,16 +57,11 @@ func DefaultPairs() (map[string]canonical.Pair, error) {
 		quote  canonical.Asset
 	}{
 		{"XLM-USD", xlm, usd},
-		// BTC + ETH cross-fiat: without Coinbase, BTC-EUR and ETH-EUR are
-		// single-source (only Bitstamp) and Phase 2 freeze fires on them
-		// permanently; these give VWAP multi-source corroboration.
-		// XLM-EUR (verified online on the Coinbase products API).
-		// Added because crypto:XLM/fiat:EUR had only TWO venues (kraken +
-		// bitstamp): a single venue going quiet dropped it to source_count=1,
-		// which is one of the three ADR-0019 phase-2 freeze signals, so a pair
-		// with genuinely deep global liquidity kept freezing. Coinbase takes it
-		// to three. (Coinbase has no XLM-GBP product, so XLM/GBP still relies on
-		// kraken + bitstamp + the triangulated USD/GBP route.)
+		// BTC + ETH cross-fiat: without Coinbase, BTC-EUR and ETH-EUR are single-source (Bitstamp)
+		// and the ADR-0019 phase-2 freeze fires on them permanently; these give VWAP multi-source
+		// corroboration. XLM-EUR likewise: with only two venues, one going quiet dropped it to
+		// source_count=1, a freeze signal. Coinbase has no XLM-GBP product, so XLM/GBP still relies
+		// on kraken + bitstamp + the triangulated USD/GBP route.
 		{"XLM-EUR", xlm, eur},
 		{"BTC-USD", btc, usd},
 		{"BTC-EUR", btc, eur},

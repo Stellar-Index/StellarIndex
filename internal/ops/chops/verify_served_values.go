@@ -17,12 +17,11 @@ import (
 	"time"
 )
 
-// verify-served-values reconciles served values against independent ground truth and emits
-// node_exporter textfile gauges: XLM circulating and total supply vs the SDF lumen API, USDC
-// total supply vs Stellar Expert, and the configured SDF reserve-account list vs SDF's
-// published list (sdf_reserve_list.go). Every truth is point-in-time state, never a windowed
-// counter. -textfile (served_values.prom) empty prints to stdout; empty -config skips the list
-// check.
+// verify-served-values reconciles served values against independent ground truth (XLM supply vs
+// the SDF lumen API, USDC supply vs Stellar Expert, the configured SDF reserve list vs SDF's
+// published one) and emits node_exporter textfile gauges. Every truth is point-in-time state,
+// never a windowed counter. -textfile (served_values.prom) empty prints to stdout; empty -config
+// skips the list check.
 func verifyServedValues(args []string) error {
 	fs := flag.NewFlagSet("verify-served-values", flag.ContinueOnError)
 	apiBase := fs.String("api", "http://127.0.0.1:3000", "Base URL of our API (loopback on r1)")
@@ -88,11 +87,10 @@ func servedValuesVerdict(w io.Writer, results []servedValueResult, list *reserve
 	return servedValuesExitError(len(results), failed, skipped)
 }
 
-// servedValuesExitError decides the exit status. total and skipped count VALUE checks only;
-// failed counts any check, the list check included. A failed check fails the run, and so does
-// a run where every value check skipped (fail closed: no served value was verified). The list
-// check stays out of that denominator so a verified list cannot mask dark value sources. A
-// partial skip stays clean.
+// servedValuesExitError decides the exit status. total and skipped count VALUE checks only; failed
+// counts any check, the list check included. A failed check fails the run, and so does a run where
+// every value check skipped (fail closed: nothing was verified). The list check stays out of that
+// denominator so a verified list cannot mask dark value sources; a partial skip stays clean.
 func servedValuesExitError(total, failed, skipped int) error {
 	if failed > 0 {
 		return fmt.Errorf("%d served-value check(s) failed", failed)
@@ -236,11 +234,10 @@ func isMeasuredDrift(r servedValueResult) bool {
 	return !r.ok && !r.skipped && !math.IsNaN(r.relErr)
 }
 
-// settleRecheck decides a drifted check from its second read. A gap that
-// clears is the snapshot race, not a served-value defect. A gap that
-// persists fails, but only names the served value wrong once its snapshot
-// ledger has advanced past the first read's; otherwise the served snapshot
-// is stale. A failed re-read keeps the first verdict (fail-closed).
+// settleRecheck decides a drifted check from its second read. A gap that clears is the snapshot
+// race, not a served-value defect. A persisting gap fails, and blames the served value only once
+// its snapshot ledger has advanced past the first read's; otherwise the snapshot is stale. A
+// failed re-read keeps the first verdict (fail closed).
 func settleRecheck(chk servedValueCheck, first supplyObservation, firstResult servedValueResult, second supplyObservation) servedValueResult {
 	if second.sErr != nil || second.tErr != nil {
 		firstResult.note += fmt.Sprintf("; recheck read failed, first verdict stands: %v", errors.Join(second.sErr, second.tErr))

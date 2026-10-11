@@ -32,24 +32,18 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/wasmaudit"
 )
 
-// projectedRebuild is the ADR-0048 D3 bulk catch-up path for projected
-// (Soroban-derived) sources.
+// projectedRebuild is the bulk catch-up path for projected (Soroban-derived) sources.
 //
-// projector-replay is capped by the live projector's tick cadence (~720k ledgers/hour, no
-// parallelism); this adds workers at 10-20x the rate. Use replay under ~1M ledgers, this above
+// projector-replay is capped by the live projector's tick cadence and has no parallelism; this
+// adds workers at 10-20x the rate. Use replay under ~1M ledgers, this above
 // (docs/operations/runbooks/projector.md#stellarindex_projector_replay_stalled).
 //
-// Rows are IDENTICAL to the live projector's: same decoder registry, same
-// pipeline.HandleEvent sink, and ON CONFLICT DO NOTHING makes the two
-// writers idempotent against each other.
+// Rows are IDENTICAL to the live projector's (same decoder registry, same pipeline.HandleEvent
+// sink) and ON CONFLICT DO NOTHING makes the two writers idempotent against each other.
 //
-// ONE WRITER: it never touches the live projector's cursor, and refuses to
-// run while that cursor is still inside [-from,-to] (checkLiveCursorGuard)
-// unless -allow-live-overlap. Overlap stays row-safe but is two writers
-// racing one range.
-//
-// Checkpoints are per-window ingestion_cursors rows written after each
-// window completes, so -resume picks up where a crash left off.
+// ONE WRITER: it never touches the live projector's cursor and refuses to run while that cursor is
+// inside [-from,-to] (checkLiveCursorGuard) unless -allow-live-overlap, which stays row-safe but
+// is two writers racing one range. Per-window ingestion_cursors checkpoints make -resume exact.
 func projectedRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear: parse+validate, build the live decoder, the live-cursor guard, run, report — splitting scatters the guard rationale away from its call site.
 	fs, gate := opsutil.NewMutatingFlagSet("projected-rebuild")
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")
@@ -322,10 +316,9 @@ func gateProjectedRebuild(ctx context.Context, cfg config.Config, store *timesca
 // WASM generation in its history, the hazard backfill and ch-rebuild -write also refuse.
 // [external.ReplayBackfillSafe] resolves the names; an unregistered one is refused.
 //
-// Armed in dry-run too, unlike ch-rebuild: the dry run previews the -write
-// run, and a multi-hour preview of a refused run is a plan nobody can execute.
-// ch-rebuild's ungated dry run still evaluates an unaudited decoder. No
-// override flag: the way through is the audit plus the registry flip.
+// Armed in dry-run too, unlike ch-rebuild: the dry run previews the -write run, and a multi-hour
+// preview of a refused run is a plan nobody can execute. No override flag: the way through is the
+// audit plus the registry flip.
 func checkProjectedRebuildBackfillSafe(source string, from uint32) error {
 	if external.ReplayBackfillSafe(source) {
 		return nil
@@ -348,14 +341,12 @@ func liveCursorCovers(haveLive bool, liveLastLedger, to uint32) bool {
 	return haveLive && liveLastLedger >= to
 }
 
-// checkLiveCursorGuard is the ADR-0048 D3 one-writer contract as a pure function. It errors
-// unless the live cursor for the source is at or above `to`, so the bulk job only fills history
-// behind the live tail. allowOverlap is the operator's explicit override.
+// checkLiveCursorGuard is the one-writer contract as a pure function. It errors unless the live
+// cursor for the source is at or above `to`, so the bulk job only fills history behind the live
+// tail. allowOverlap is the operator's explicit override.
 //
-// haveLive=false (no live cursor row at all — the projector has never run
-// for this source) is treated as "cursor at 0": conservative refusal by
-// default, since a never-run live projector WILL eventually walk this
-// range once it starts.
+// haveLive=false (the projector has never run for this source) is treated as "cursor at 0" and
+// refused by default, since a never-run projector WILL eventually walk this range.
 func checkLiveCursorGuard(haveLive bool, liveLastLedger, to uint32, allowOverlap bool) error {
 	if allowOverlap {
 		return nil
@@ -389,9 +380,8 @@ type ProjectedRebuildOptions struct {
 	// Workers is the number of concurrent window-claiming goroutines.
 	// Values < 1 are treated as 1.
 	//
-	// Every worker's HandleEvent draws a connection from the one Store pool
-	// (timescale.PoolMaxOpenConns = 25) per row insert. The live-tail drain already runs 8 such
-	// workers against it, so the projectedRebuildMaxWorkers cap needs no pool bump.
+	// Every worker's HandleEvent draws a connection from the one Store pool per row insert
+	// (timescale.PoolMaxOpenConns = 25), so projectedRebuildMaxWorkers is capped to fit it.
 	Workers int
 	// Write persists decoded events via pipeline.HandleEvent AND records
 	// a per-window checkpoint on success. false = dry-run: counts and
@@ -411,10 +401,9 @@ type ProjectedRebuildOptions struct {
 	Heartbeat *opsutil.JobHeartbeat
 }
 
-// applyProjectedEvent decodes one lake event and writes its outputs, returning
-// how many rows it emitted and how many failed to insert. The failure count is
-// the inserts a re-run can still land, so non-zero means the caller must not
-// checkpoint the window (see [checkpointWindow]).
+// applyProjectedEvent decodes one lake event and writes its outputs, returning how many rows it
+// emitted and how many failed to insert. A non-zero failure count is inserts a re-run can still
+// land, so the caller must not checkpoint the window (see [checkpointWindow]).
 //
 // A *[pipeline.TradeDroppedError] is counted separately ([projectedRebuildCounters.permanentDrops])
 // and does not hold the window, since it fails identically on re-run and the live projector skips
@@ -470,14 +459,13 @@ func writeProjectedOutputs(
 	return emitted, insertErrs
 }
 
-// checkpointWindow records a completed window, or deliberately does not when
-// rows were lost inside it: -resume skips checkpointed windows, so
-// checkpointing anyway would lose the row for good, while leaving the cursor
-// unset makes the next resumed run redo the window idempotently.
+// checkpointWindow records a completed window, or deliberately does not when rows were lost inside
+// it: -resume skips checkpointed windows, so checkpointing anyway would lose the row for good,
+// while an unset cursor makes the next resumed run redo the window idempotently.
 //
 // insertErrs excludes permanently rejected trades: what remains is a failed non-trade insert or a
-// retry abandoned on cancellation, which holds the window. Re-running is the only unattended
-// recovery, as completeness registers only `trades` for some sources (aquarius) and cannot see other rows.
+// retry abandoned on cancellation. Re-running is the only unattended recovery, as completeness
+// registers only `trades` for some sources (aquarius) and cannot see other rows.
 func checkpointWindow(
 	ctx context.Context,
 	opts ProjectedRebuildOptions,
@@ -535,11 +523,10 @@ type ProjectedRebuildResult struct {
 // that claim windows from a shared scheduler and stream each through the decoder into
 // pipeline.HandleEvent unbuffered, to fit run-heavy-job.sh's memory cap.
 //
-// A window stream error is fatal to the run unless ctx was canceled; only
-// fully completed windows are checkpointed, so -resume restarts exactly. A
-// decode error or a permanently rejected trade is a soft-fail, counted while
-// the window still checkpoints, because it would re-fail identically; any
-// other insert failure holds the window (see [applyProjectedEvent]).
+// A window stream error is fatal unless ctx was canceled; only fully completed windows are
+// checkpointed, so -resume restarts exactly. A decode error or permanently rejected trade is a
+// counted soft-fail that still checkpoints, because it would re-fail identically; any other
+// insert failure holds the window (see [applyProjectedEvent]).
 func RunProjectedRebuild(ctx context.Context, opts ProjectedRebuildOptions) (ProjectedRebuildResult, error) {
 	logger := opts.Logger
 	if logger == nil {
@@ -884,9 +871,8 @@ func writeModeLabel(write bool) string {
 	return "DRY-RUN (count only)"
 }
 
-// projectedRebuildLossLines renders the summary's loss report: the two ways a
-// -write run can finish without having landed every row, kept apart because
-// the operator's next step is OPPOSITE for each.
+// projectedRebuildLossLines renders the summary's loss report: the two ways a -write run can finish
+// without landing every row, kept apart because the operator's next step is OPPOSITE for each.
 //
 //   - Held windows: a re-run retries them, so say so as an instruction. Do not point at
 //     compute-completeness, which cannot see non-trade tables (aquarius registers only `trades`).

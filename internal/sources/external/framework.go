@@ -1,6 +1,6 @@
-// Package external is the connector framework for off-chain sources: centralised exchanges, institutional
-// FX feeds, third-party aggregators and sovereign daily anchors. Unlike the on-chain dispatcher, they speak
-// HTTPS/WebSocket to vendor APIs on their own cadence, outside the ledger loop, but converge on the same
+// Package external is the connector framework for off-chain sources: centralised exchanges,
+// institutional FX feeds, third-party aggregators and sovereign daily anchors. Unlike the on-chain
+// dispatcher they run on their own cadence outside the ledger loop, but converge on the same
 // canonical types and hypertables.
 //
 // A venue implements whichever capabilities it supports:
@@ -33,26 +33,19 @@ const (
 	// rate) are first-party FX references, so also exchange class, not ClassAggregator.
 	ClassExchange Class = "exchange"
 
-	// ClassAggregator — a third-party service that publishes
-	// already-aggregated prices across many markets (CoinGecko,
-	// CoinMarketCap, CryptoCompare). Useful as a divergence signal
-	// against our own VWAP, but including in our VWAP would
-	// double-count the upstream markets they derive from.
+	// ClassAggregator is a third-party service publishing already-aggregated prices (CoinGecko,
+	// CoinMarketCap). A divergence signal against our VWAP, but including it would double-count the
+	// upstream markets it derives from.
 	ClassAggregator Class = "aggregator"
 
-	// ClassOracle — on-chain, signed, governance-backed price
-	// publishers (Reflector, Redstone, Band). Like aggregators
-	// they publish derived prices, not raw trades; we report them
-	// alongside but exclude from VWAP to avoid methodology
-	// inheritance. Operator may opt one in per-source via config.
+	// ClassOracle is an on-chain, signed price publisher (Reflector, Redstone, Band). Like
+	// aggregators they publish derived prices, so they are reported alongside but excluded from VWAP
+	// to avoid methodology inheritance. An operator may opt one in per source via config.
 	ClassOracle Class = "oracle"
 
-	// ClassAuthoritySanity — sovereign / central-bank daily
-	// reference rates (ECB reference rates, Fed H.10, BOE rates).
-	// Cadence too slow for aggregation but authoritative as a
-	// sanity anchor — the daily-close divergence check that flags
-	// if our live rate drifts more than N bps from the central
-	// bank's public close.
+	// ClassAuthoritySanity is a central-bank daily reference rate (ECB, Fed H.10, BOE). Too slow for
+	// aggregation but authoritative as the daily-close divergence check that flags our live rate
+	// drifting more than N bps from the public close.
 	ClassAuthoritySanity Class = "authority_sanity"
 
 	// ClassLending is on-chain lending (Blend): auction stress-prices, position metrics and bad-debt flags
@@ -100,26 +93,22 @@ type Metadata struct {
 	// here (30-day cap at 1h is too shallow to matter); Binance and
 	// Bitstamp would be true.
 	BackfillAvailable bool
-	// Backfill is the source's replay policy for historical ranges
-	// (backfill, projector-replay, ch-rebuild -write, projected-rebuild).
-	// Soroban contracts upgrade in place, so a current decoder is trusted
-	// on a range only when every WASM version active in it is audited. The
-	// zero value refuses.
+	// Backfill is the source's replay policy for historical ranges (backfill, projector-replay,
+	// ch-rebuild -write, projected-rebuild). Soroban contracts upgrade in place, so a current
+	// decoder is trusted on a range only when every WASM version active in it is audited. The zero
+	// value refuses.
 	Backfill BackfillPolicy
 
-	// AmountDecimals is the smallest-unit scale of the amounts this
-	// source stamps on canonical.Trade (Quote/BaseAmount): 8 for the
-	// CEX/aggregator 1e8 convention, 6 for the FX pollers' 1e6
-	// (DefaultDecimals). 0 means "unset → treat as 8" via
-	// AmountScaleDecimals(). Read this instead of assuming 1e8:
-	// the USD-volume gate mis-scales FX ~100× otherwise.
+	// AmountDecimals is the smallest-unit scale of the amounts this source stamps on canonical.Trade
+	// (Quote/BaseAmount): 8 for the CEX/aggregator 1e8 convention, 6 for the FX pollers' 1e6
+	// (DefaultDecimals). 0 means unset, treated as 8 via AmountScaleDecimals(). Read this instead of
+	// assuming 1e8: the USD-volume gate mis-scales FX ~100x otherwise.
 	AmountDecimals int
 
-	// OracleResolution is the cadence at which the timestamps on this
-	// source's canonical.OracleUpdate rows advance upstream — the base of
-	// its stellarindex_oracle_stale budget. Nonzero exactly for the
-	// sources that write oracle_updates; config.OracleSourceNames mirrors
-	// that set (pinned by pipeline's lockstep test).
+	// OracleResolution is the cadence at which this source's canonical.OracleUpdate timestamps advance
+	// upstream, the base of its stellarindex_oracle_stale budget. Nonzero exactly for sources that
+	// write oracle_updates; config.OracleSourceNames mirrors that set (pinned by pipeline's lockstep
+	// test).
 	OracleResolution time.Duration
 }
 
@@ -164,12 +153,9 @@ type Streamer interface {
 // runner; the connector itself is stateless between calls.
 type Poller interface {
 	Connector
-	// PollOnce hits the venue once and returns whatever it serves.
-	// Exchange-class pollers (rare — most exchanges stream) return
-	// Trades. Aggregator / oracle / sovereign pollers return
-	// OracleUpdates (derived prices with no executed-trade context).
-	// A connector returns only one of the two; the unused slice is
-	// nil.
+	// PollOnce hits the venue once. Exchange-class pollers return Trades; aggregator, oracle and
+	// sovereign pollers return OracleUpdates (derived prices with no executed-trade context). A
+	// connector returns only one of the two; the unused slice is nil.
 	PollOnce(ctx context.Context, pairs []canonical.Pair) (trades []canonical.Trade, updates []canonical.OracleUpdate, err error)
 	// PollInterval is the minimum gap between PollOnce calls.
 	// Framework enforces — connector just declares its cadence.

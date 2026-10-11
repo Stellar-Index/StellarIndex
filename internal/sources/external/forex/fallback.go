@@ -13,22 +13,16 @@ import (
 
 // RateProvider is a source of USD-base fiat rates for the worker.
 //
-// It exists so `massive` — a PAID feed — is not a single point of
-// failure for every fiat-quoted pair on the platform. When massive was
-// the only series in stellarindex_external_fx_last_quote_unix, a
-// subscription lapse, a 429, or an unset MASSIVE_API_KEY silently broke
-// XLM/EUR, XLM/GBP and every other fiat cross once the 7-day forex-snap
-// lookback expired.
+// It keeps `massive`, a paid feed, from being a single point of failure: a subscription lapse,
+// a 429 or an unset MASSIVE_API_KEY would otherwise silently break every fiat cross once the
+// 7-day forex-snap lookback expired.
 type RateProvider interface {
 	// Name is the value stamped into fx_quotes.source and used as the
 	// `source` metric label, so an operator can see WHICH feed is live.
 	Name() string
-	// LatestUSDRates returns units-of-ticker per 1 USD, plus the
-	// upstream's published timestamp. Same contract as
-	// [Client.LatestUSDRates], except that the CASE of the currency-code
-	// keys is the provider's own: the primary emits lower-case, ECB emits
-	// the UPPER-case codes it publishes. The worker's joins normalise the
-	// case (see lowerKeyed), so a provider need not.
+	// LatestUSDRates returns units-of-ticker per 1 USD plus the upstream's published timestamp,
+	// as [Client.LatestUSDRates] does, except key case is the provider's own (primary lower-case,
+	// ECB upper-case). The worker's joins normalise case (see lowerKeyed), so a provider need not.
 	LatestUSDRates(ctx context.Context) (map[string]float64, time.Time, error)
 }
 
@@ -40,17 +34,13 @@ var ErrNoUSDAnchor = errors.New("forex: upstream has no USD rate to rebase on")
 // ECBProvider adapts the ECB daily reference rates into the worker's
 // USD-base contract.
 //
-// ECB is free, keyless, and authoritative — it is the reference the
-// commercial feeds themselves derive from — which makes it the right
-// standby. Two honest limitations, both preferable to no rates at all:
+// ECB is free, keyless and authoritative, which makes it the right standby. Two limitations, both
+// preferable to no rates:
 //
-//   - COVERAGE is ~30 currencies, not massive's 111. Fiat pairs outside
-//     ECB's list keep serving their last-good fx_quotes row via the
-//     existing lookback rather than getting a fresh one.
-//   - CADENCE is one publication per working day (~16:00 CET), so rates
-//     do not move intraday and are absent on weekends/TARGET holidays.
-//     The worker's staleness handling already tolerates this: the daily
-//     file simply stops advancing, exactly like a quiet primary.
+//   - COVERAGE is ~30 currencies, not massive's 111. Pairs outside ECB's list keep serving their
+//     last-good fx_quotes row via the lookback rather than getting a fresh one.
+//   - CADENCE is one publication per working day (~16:00 CET), so rates are static intraday and
+//     absent on weekends/TARGET holidays; the worker's staleness handling tolerates this.
 type ECBProvider struct {
 	// Endpoint overrides the ECB daily-XML URL. Empty uses the
 	// package default; tests point it at an httptest server.
@@ -63,13 +53,12 @@ func (p ECBProvider) Name() string { return "ecb" }
 // LatestUSDRates implements [RateProvider], rebasing ECB's EUR-quoted
 // document onto USD.
 //
-// ECB publishes "1 EUR = X <currency>". The worker wants "1 USD = X
-// <currency>", so every rate divides by ECB's own USD rate:
+// ECB publishes "1 EUR = X <currency>" but the worker wants "1 USD = X <currency>", so every rate
+// divides by ECB's own USD rate:
 //
 //	usdRate(X) = eurRate(X) / eurRate(USD)
 //
-// EUR needs adding by hand because ECB has no cube for its own base
-// currency: units of EUR per 1 USD is simply 1 / eurRate(USD).
+// EUR is added by hand because ECB has no cube for its own base: EUR per USD is 1 / eurRate(USD).
 func (p ECBProvider) LatestUSDRates(ctx context.Context) (map[string]float64, time.Time, error) {
 	eurRates, publishedAt, err := ecb.LatestEURRates(ctx, p.Endpoint)
 	if err != nil {
@@ -98,11 +87,10 @@ func (p ECBProvider) LatestUSDRates(ctx context.Context) (map[string]float64, ti
 	return out, publishedAt, nil
 }
 
-// publishedDecimal recovers ECB's published decimal exactly: its rates
-// carry at most six significant digits, which a float64's shortest
-// representation round-trips, so the rebase divides the published values
-// rather than their binary approximations. ok is false for a missing,
-// non-positive or non-finite rate (ECB's parser admits "NaN" and "Inf").
+// publishedDecimal recovers ECB's published decimal exactly: rates carry at most six significant
+// digits, which a float64's shortest representation round-trips, so the rebase divides published
+// values rather than binary approximations. ok is false for a missing, non-positive or non-finite
+// rate (ECB's parser admits "NaN" and "Inf").
 func publishedDecimal(f float64) (*big.Rat, bool) {
 	if !isFiniteFloat(f) || f <= 0 {
 		return nil, false

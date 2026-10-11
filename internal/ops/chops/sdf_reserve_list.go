@@ -15,10 +15,10 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// SDF reserve-list drift diffs the configured supply.sdf_reserve_accounts set against the one
-// SDF publishes, because the value check's 2% bound hides one small account being added or
-// retired. The list is read from stellar/dashboard common/lumens.js: the accounts table plus
-// networkUpgradeReserveAccount, but not voidAccount, which is the burn address.
+// SDF reserve-list drift diffs the configured supply.sdf_reserve_accounts set against the one SDF
+// publishes, because the value check's 2% bound hides one small account being added or retired.
+// The list is read from stellar/dashboard common/lumens.js: the accounts table plus
+// networkUpgradeReserveAccount, but not voidAccount, the burn address.
 //
 // The parser fails closed into skipped (no verdict) on a missing or malformed block, any row
 // outside the key: "G..." grammar, a missing upgrade-reserve constant, or more than

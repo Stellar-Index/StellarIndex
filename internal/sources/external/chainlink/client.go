@@ -14,34 +14,23 @@ import (
 	"time"
 )
 
-// Client is a minimal Ethereum JSON-RPC client supporting the three
-// methods we need: eth_call (latestRoundData), eth_blockNumber
-// (backfill end-of-range probe), and eth_getLogs (backfill walk).
+// Client is a minimal Ethereum JSON-RPC client for eth_call (latestRoundData), eth_blockNumber
+// (backfill range probe) and eth_getLogs (backfill walk).
 //
-// Deliberately tiny — we don't import a full Ethereum library
-// because (a) the dep tree is heavy (geth's go-ethereum pulls in
-// ~50MB of code) and (b) we use ~3 methods, ABI-decode ~2 shapes,
-// and don't sign or send transactions. The cost of vendoring is
-// higher than maintaining the ~200 lines of bespoke client here.
-//
-// Stateless and goroutine-safe: every method takes a context and
-// performs one HTTP round-trip. Operators wanting connection
-// pooling configure http.Client.Transport accordingly.
+// It is deliberately tiny: go-ethereum's dependency tree is heavy and we need three methods, two
+// ABI shapes and no signing. Stateless and goroutine-safe: each method does one HTTP round-trip;
+// connection pooling is configured via http.Client.Transport.
 type Client struct {
 	HTTPClient *http.Client
 	Endpoint   string
 
-	// id is a monotonic JSON-RPC request id (atomic counter).
-	// Useful for log correlation when an operator pastes a curl
-	// trace; not required by JSON-RPC strictly.
+	// id is a monotonic JSON-RPC request id, useful for log correlation.
 	id atomic.Uint64
 }
 
-// NewClient constructs a Client. Empty endpoint falls back to
-// [DefaultEndpoint] (Cloudflare public). nil http.Client falls
-// back to a 30s-timeout client — generous because eth_getLogs over
-// 5k blocks can take ~2-5s on Alchemy free tier under load, and
-// timing out mid-call is worse than just letting it complete.
+// NewClient constructs a Client. An empty endpoint falls back to [DefaultEndpoint]; a nil
+// http.Client falls back to a 30s timeout, generous because eth_getLogs over 5k blocks can take
+// seconds under load and timing out mid-call is worse than waiting.
 func NewClient(endpoint string, httpClient *http.Client) *Client {
 	if endpoint == "" {
 		endpoint = DefaultEndpoint
@@ -65,15 +54,10 @@ type jsonRPCResponse struct {
 	} `json:"error"`
 }
 
-// EthCall performs eth_call against `to` with raw `data` (0x-prefixed
-// hex, selector + ABI-encoded args). `block` is a tag ("latest",
-// "earliest") or hex-encoded block number. Returns the raw hex
-// result (0x-prefixed) for the caller to ABI-decode.
-//
-// Returns ErrEmptyResult when the contract returns `0x` (typical of
-// reverted calls or contract-not-found). Returns ErrMalformedResult
-// when the JSON-RPC layer succeeded but the response shape is
-// wrong.
+// EthCall performs eth_call against `to` with raw 0x-prefixed `data` (selector + ABI args) at
+// `block` (a tag or hex block number) and returns the raw hex result for the caller to decode.
+// It returns ErrEmptyResult for `0x` (reverted call or missing contract) and ErrMalformedResult
+// when the JSON-RPC layer succeeded but the response shape is wrong.
 func (c *Client) EthCall(ctx context.Context, to, data, block string) (string, error) {
 	if block == "" {
 		block = "latest"
@@ -119,14 +103,11 @@ type LogEntry struct {
 	LogIndex    string   `json:"logIndex"`
 }
 
-// EthGetLogs performs eth_getLogs with the given filter. `addresses`
-// is the contract list; `topics` is the topic filter array (each
-// entry is either a single topic hash or nil for wildcard).
-// `fromBlock` / `toBlock` are inclusive uint64.
+// EthGetLogs performs eth_getLogs for `addresses` and the `topics` filter (a topic hash or nil
+// wildcard per entry) over the inclusive `fromBlock`..`toBlock` range.
 //
-// Provider-specific block-range limits apply: Alchemy free caps
-// response size at 10MB / 10k logs. Callers chunk by 5k blocks
-// (a Defacto safe default) when walking historical ranges.
+// Providers cap range and response size (Alchemy free: 10MB / 10k logs), so callers chunk
+// historical walks by 5k blocks.
 func (c *Client) EthGetLogs(
 	ctx context.Context,
 	addresses []string,
@@ -179,12 +160,8 @@ func (c *Client) do(ctx context.Context, method string, params []any, out any) e
 
 	resp, err := DoWithoutRedirects(c.HTTPClient, req)
 	if err != nil {
-		// G10-04: a transport failure produces a *url.Error whose
-		// Error() embeds the full request URL — and Alchemy/Infura/
-		// QuickNode endpoints carry the API key in the path. Logging
-		// the raw error would leak the secret into the journal. Redact
-		// the URL before wrapping so the error stays diagnostic without
-		// exposing the key.
+		// A *url.Error embeds the full request URL, and keyed RPC providers carry the API key in
+		// the path, so redact before wrapping to keep the key out of logs.
 		return fmt.Errorf("chainlink: %s transport: %w", method, NewRedactedTransportError(err, c.Endpoint))
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -237,40 +214,25 @@ func DoWithoutRedirects(c *http.Client, req *http.Request) (*http.Response, erro
 	return cp.Do(req) //nolint:gosec // G704: both callers build req.URL from an operator-configured RPC endpoint (Client.Endpoint / CHAINLINK_RPC_URL), not request-tainted input
 }
 
-// RedactURLError converts a transport error into a string with any
-// secret-bearing URL scrubbed. Keyed RPC providers (Alchemy, Infura,
-// QuickNode) embed the API key in the endpoint path
-// (e.g. https://eth-mainnet.g.alchemy.com/v2/<KEY>), so a *url.Error's
-// default Error() — "Post \"https://…/v2/<KEY>\": dial tcp …" — would
-// leak the key into logs. We replace the URL with a host-only,
-// path-redacted form. G10-04.
+// RedactURLError converts a transport error into a string with the secret-bearing URL scrubbed.
+// Keyed RPC providers embed the API key in the endpoint path, so a *url.Error's default Error()
+// would leak it; the URL is replaced with a host-only, path-redacted form. Non-*url.Error inputs
+// carry no request URL and are returned unchanged.
 //
-// Non-*url.Error inputs are returned via Error() unchanged — those
-// don't carry the request URL.
-//
-// Exported because internal/divergence's ChainlinkReference talks to
-// the SAME operator endpoint (both read config's CHAINLINK_RPC_URL)
-// and must scrub it the same way (NS12). One implementation, one set
-// of tests: a second hand-rolled copy is how the first redaction came
-// to cover only one of the two clients.
+// Exported because internal/divergence's ChainlinkReference reads the same CHAINLINK_RPC_URL and
+// must scrub it identically; one implementation avoids a second copy drifting out of coverage.
 func RedactURLError(err error, endpoint string) string {
 	var ue *url.Error
 	if !errors.As(err, &ue) {
 		return err.Error()
 	}
-	// Rebuild the message as "<op> <redacted-url>: <underlying>" so it
-	// stays shaped like the original *url.Error but without the secret.
+	// Keep the original "<op> <url>: <underlying>" shape, minus the secret.
 	return fmt.Sprintf("%s %q: %v", ue.Op, RedactEndpoint(endpoint), ue.Err)
 }
 
-// RedactedTransportError pairs a URL-redacted message with the
-// original transport error: Error() renders only the redacted text,
-// but Unwrap() returns the real error, so errors.Is/As still reach
-// sentinels like context.DeadlineExceeded, net.Error or the *url.Error
-// itself. A caller that instead does
-// fmt.Errorf("...: %s", RedactURLError(err, endpoint)) turns err into
-// a leaf — the message survives but every classification through it
-// is silently lost.
+// RedactedTransportError pairs a URL-redacted message with the original transport error. Unwrap
+// keeps errors.Is/As reaching context.DeadlineExceeded, net.Error and the *url.Error; formatting
+// RedactURLError into a new error with %s would turn err into a leaf and lose that classification.
 type RedactedTransportError struct {
 	msg string
 	err error
@@ -279,24 +241,15 @@ type RedactedTransportError struct {
 func (e *RedactedTransportError) Error() string { return e.msg }
 func (e *RedactedTransportError) Unwrap() error { return e.err }
 
-// NewRedactedTransportError builds a [RedactedTransportError] from a
-// transport error, redacting endpoint via [RedactURLError] for the
-// message while keeping err reachable through Unwrap. Every
-// RedactURLError caller wrapping a transport failure should route
-// through this instead of hand-rolling the same msg/err pair.
+// NewRedactedTransportError builds a [RedactedTransportError], redacting endpoint via
+// [RedactURLError] for the message while keeping err reachable through Unwrap.
 func NewRedactedTransportError(err error, endpoint string) *RedactedTransportError {
 	return &RedactedTransportError{msg: RedactURLError(err, endpoint), err: err}
 }
 
-// RedactEndpoint returns a log-safe form of an RPC endpoint: scheme +
-// host only, with the path/query (where keyed providers stash the API
-// key) replaced by "/<redacted>". Falls back to the bare scheme+host
-// string when the endpoint can't be parsed (never echoes the raw
-// input, which might be the secret-bearing URL).
-//
-// Exported alongside [RedactURLError] for the non-transport error
-// paths (request construction, status lines) that also name the
-// endpoint.
+// RedactEndpoint returns a log-safe RPC endpoint: scheme and host only, with the path/query (where
+// keyed providers stash the API key) replaced by "/<redacted>". It never echoes an unparseable
+// input, which might be the secret. Exported for non-transport error paths that name the endpoint.
 func RedactEndpoint(endpoint string) string {
 	u, err := url.Parse(endpoint)
 	if err != nil || u.Host == "" {

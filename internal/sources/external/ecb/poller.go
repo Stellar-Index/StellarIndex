@@ -1,18 +1,14 @@
-// Package ecb polls the European Central Bank's daily foreign-
-// exchange reference rates: a `ClassAuthoritySanity` connector whose
-// end-of-day fix is the anchor against which drift in an upstream FX
-// feed surfaces as a divergence. It is neither primary pricing (one fix
-// per TARGET business day) nor a triangulation input (the forex-snap
-// reads the `massive` feed's fx_quotes).
+// Package ecb polls the European Central Bank's daily foreign-exchange reference rates: a
+// `ClassAuthoritySanity` connector whose end-of-day fix anchors divergence detection against an
+// upstream FX feed. It is neither primary pricing (one fix per TARGET business day) nor a
+// triangulation input (the forex-snap reads the `massive` feed's fx_quotes).
 //
-// Free and unauthenticated. With no new fix the poller re-emits the same
-// rate with a fresh Observer timestamp; the stable tx_hash makes that
-// insert idempotent.
+// Free and unauthenticated. With no new fix the poller re-emits the same rate with a fresh
+// Observer timestamp; the stable tx_hash makes that insert idempotent.
 //
-// Wire shape: a gesmes:Envelope holding <Cube><Cube time="YYYY-MM-DD"> with
-// one <Cube currency="USD" rate="1.0825"/> per currency. Each `rate` is
-// "1 EUR = X currency"; to fit our canonical "price of Asset in Quote" we
-// invert: Asset = <currency>, Quote = EUR, Price = 1 / rate.
+// Wire shape: a gesmes:Envelope holding <Cube><Cube time="YYYY-MM-DD"> with one
+// <Cube currency="USD" rate="1.0825"/> per currency. Each `rate` is "1 EUR = X currency"; to fit
+// our canonical "price of Asset in Quote" we invert: Asset = <currency>, Quote = EUR, Price = 1/rate.
 package ecb
 
 import (
@@ -37,27 +33,18 @@ const (
 	// daily file is what we want for a sanity-anchor poller.
 	DefaultEndpoint = "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml"
 
-	// DefaultPollInterval — ECB publishes once per EU business
-	// day. 6h cadence is comfortable slack vs the ~24h publish
-	// window; the poller is idempotent so polling more often is
-	// harmless (fresh timestamp, same rate values, dedup via
-	// stable tx_hash).
+	// DefaultPollInterval: ECB publishes once per EU business day, so 6h is ample slack; polling
+	// more often is harmless because the stable tx_hash dedups repeats.
 	DefaultPollInterval = 6 * time.Hour
 
-	// DefaultDecimals — 6dp matches ExchangeRatesApi and the
-	// `massive` FX feed (AmountDecimals:6 in the registry). ECB
-	// publishes 4dp natively; the extra headroom stays
-	// precision-safe under float→integer round-trips. This is the
-	// scale of the RATE we parse off the wire, not the price we
-	// emit — see InvertedDecimals.
+	// DefaultDecimals: 6dp matches ExchangeRatesApi and the `massive` FX feed (AmountDecimals:6 in
+	// the registry); ECB publishes 4dp natively. This is the scale of the rate parsed off the
+	// wire, not of the emitted price (see InvertedDecimals).
 	DefaultDecimals uint8 = 6
 
-	// InvertedDecimals is the scale of the EMITTED price, after
-	// inverting the wire rate. Inverting at the same scale as the
-	// input quantises weak-currency prices by up to ~1.2%:
-	// a rate of 25335 (VND) leaves only 1-2 significant digits once
-	// re-expressed at 6dp. Widening the output to 12dp keeps the
-	// round-trip accurate regardless of the rate's magnitude.
+	// InvertedDecimals is the scale of the emitted price, after inverting the wire rate. Inverting
+	// at the input scale quantises weak-currency prices by up to ~1.2% (a rate of 25335 for VND
+	// leaves 1-2 significant digits at 6dp); 12dp keeps the round-trip accurate at any magnitude.
 	InvertedDecimals uint8 = 12
 )
 
@@ -111,15 +98,12 @@ type rateRow struct {
 	Rate     string `xml:"rate,attr"`
 }
 
-// PollOnce implements external.Poller. One GET pulls the day's
-// reference rates; we emit one OracleUpdate per (currency, EUR)
-// pair that matches the configured fiat list.
+// PollOnce implements external.Poller. One GET pulls the day's reference rates and emits one
+// OracleUpdate per (currency, EUR) pair matching the configured fiat list.
 //
-// Pair filtering: we emit only for currencies that appear as
-// *either side* of some configured pair. Unlike the aggregator
-// pollers (which filter by exact combo), ECB's natural semantics
-// are "EUR vs N other currencies" — operator who configures
-// XLM/EUR still wants the USD/EUR rate to triangulate through.
+// Pair filtering: we emit for currencies appearing on either side of some configured pair, not
+// by exact combo as the aggregator pollers do, because ECB is "EUR vs N currencies" and an
+// operator who configures XLM/EUR still wants USD/EUR to triangulate through.
 func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canonical.Trade, []canonical.OracleUpdate, error) { //nolint:gocognit,gocyclo,funlen // dispatch-heavy; splitting would reduce linearity
 	endpoint := p.Endpoint
 	if endpoint == "" {
@@ -210,11 +194,9 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 	return nil, updates, nil
 }
 
-// syntheticTxHash derives a stable 64-char hex from (currency, ts)
-// via the shared scale.SyntheticTxHash form; only the ECB- seed
-// prefix is venue-local. Same-day reruns collide on (currency,
-// unix_day) so the idempotent insert path dedupes multiple polls of
-// the same day's fix.
+// syntheticTxHash derives a stable 64-char hex from (currency, ts) via the shared
+// scale.SyntheticTxHash form; only the ECB- seed prefix is venue-local. Same-day reruns collide on
+// (currency, unix_day), so the idempotent insert dedupes repeat polls of one day's fix.
 func syntheticTxHash(currency, base string, ts int64) string {
 	return scale.SyntheticTxHash(fmt.Sprintf(
 		"ECB-%s-%s-%020d", strings.ToUpper(currency), strings.ToUpper(base), ts))

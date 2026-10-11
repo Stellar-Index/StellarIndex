@@ -30,13 +30,9 @@ const ohlcPathTemplate = "/api/v2/ohlc/%s/"
 // `start` is the reliable path.
 const bitstampMaxLimit = 1000
 
-// Backfill implements external.Backfiller. Returns historical
-// trades synthesised from Bitstamp OHLC candles.
-//
-// Response depth: Bitstamp retains historical OHLC back to pair
-// listing — XLMUSD to 2017, BTCUSD further. Deeper than Kraken's
-// 720-interval cap, so operators wanting multi-year backfill for
-// XLM in USD/EUR/GBP should prefer Bitstamp over Kraken.
+// Backfill implements external.Backfiller, returning trades synthesised from Bitstamp OHLC
+// candles. Bitstamp keeps OHLC back to pair listing (XLMUSD to 2017), far deeper than Kraken's
+// 720-interval cap, so prefer it for multi-year backfill.
 func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to time.Time, granularity time.Duration) ([]canonical.Trade, error) {
 	if !from.Before(to) {
 		return nil, fmt.Errorf("bitstamp.Backfill: from %v must be before to %v", from, to)
@@ -185,12 +181,11 @@ func fetchBitstampOHLC(ctx context.Context, endpoint string, q url.Values) ([]bi
 // errZeroVolume marks an empty candle, an expected skip.
 var errZeroVolume = errors.New("zero volume")
 
-// bitstampCandleToTrade synthesises a canonical.Trade from one
-// candle. Bitstamp publishes no VWAP or quote volume, so the trade is
-// priced at the close (the Backfiller "close when VWAP unavailable"
-// contract): base volume is exact, while quote = close × volume is an
-// estimate whose true value lies anywhere in [low × volume, high × volume].
-// poloniex_via_btc depends on this price being the close.
+// bitstampCandleToTrade synthesises a canonical.Trade from one candle. Bitstamp publishes no VWAP
+// or quote volume, so the trade is priced at the close (the Backfiller "close when VWAP
+// unavailable" contract): base volume is exact, while quote = close x volume is an estimate that
+// truly lies anywhere in [low x volume, high x volume]. poloniex_via_btc depends on the price
+// being the close.
 func bitstampCandleToTrade(c bitstampCandle, symbol string, pair canonical.Pair, stepSec int) (canonical.Trade, error) {
 	openSec, err := strconv.ParseInt(c.Timestamp, 10, 64)
 	if err != nil {

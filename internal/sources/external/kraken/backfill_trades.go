@@ -19,36 +19,27 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external/scale"
 )
 
-// tradesPath is Kraken's raw-fills endpoint. Unlike /OHLC (which
-// serves only the most recent 720 intervals — the reason the 2018-era
-// XLM/USD backfill returned zero candles), /Trades serves
-// the FULL history of a pair, paginated by a nanosecond `since`
-// cursor with up to 1000 fills per page.
+// tradesPath is Kraken's raw-fills endpoint. Unlike /OHLC (only the most recent 720 intervals),
+// /Trades serves the FULL history of a pair, paginated by a nanosecond `since` cursor.
 const tradesPath = "/0/public/Trades"
 
 // tradesPageLimit is Kraken's documented per-page maximum.
 const tradesPageLimit = 1000
 
-// tradesRateLimit paces the pagination loop. Kraken's public tier
-// allows ~1 req/s sustained; a deep backfill (2018→2021 XLM/USD is
-// thousands of pages) must stay a good citizen or the venue serves
-// HTTP 429s and the whole run dies.
+// tradesRateLimit paces the pagination loop to Kraken's ~1 req/s public tier; a deep backfill is
+// thousands of pages and would otherwise hit HTTP 429s and die.
 const tradesRateLimit = 1100 * time.Millisecond
 
-// BackfillTrades walks Kraken's /Trades pagination for [from, to),
-// returning EXACT venue fills (not synthesised candles — price,
-// volume, and timestamp are per-trade). This is the deep-history
-// path: use Backfill (OHLC) for recent windows where candles are
-// cheaper, and this for anything past the OHLC horizon.
+// BackfillTrades walks Kraken's /Trades pagination for [from, to), returning EXACT venue fills
+// rather than synthesised candles. Use it past the OHLC horizon; Backfill (OHLC) is cheaper for
+// recent windows.
 //
-// The venue timestamp is fractional seconds; the cursor is
-// nanoseconds. Fills are converted with the same fixed 10^8 external
-// scale as the streaming path (see externalAmountDecimals — the
-// AGENTS.md scaling trap), and keyed on the streamer's (symbol,
-// trade_id) identity so a backfilled fill and its live row share one PK.
+// The venue timestamp is fractional seconds while the cursor is nanoseconds. Fills use the same
+// fixed 10^8 external scale as the streaming path (see externalAmountDecimals) and the streamer's
+// (symbol, trade_id) key, so a backfilled fill and its live row share one PK.
 //
-// On any error the fills from pages already fetched are returned with it,
-// in time order, so the caller decides what a partial walk is worth.
+// On any error the fills from pages already fetched are returned with it, in time order, so the
+// caller decides what a partial walk is worth.
 func (s *Streamer) BackfillTrades(ctx context.Context, pair canonical.Pair, from, to time.Time) ([]canonical.Trade, error) {
 	if !from.Before(to) {
 		return nil, fmt.Errorf("kraken.BackfillTrades: from %v must be before to %v", from, to)
@@ -158,11 +149,9 @@ func parseTradesResult(result map[string]json.RawMessage) ([]krakenFill, string,
 	var fills []krakenFill
 	for key, raw := range result {
 		if key == "last" {
-			// `last` is a quoted nanosecond string on /Trades (unlike
-			// /OHLC's unquoted integer). A type flip left unchecked
-			// keeps `last` at its zero value, and BackfillTrades' loop
-			// treats last=="" as "no more pages" — a three-year walk
-			// would silently return exactly one page with err == nil.
+			// `last` is a quoted nanosecond string on /Trades (unlike /OHLC's integer). An unchecked
+			// type flip leaves it empty, which BackfillTrades reads as "no more pages", so a deep
+			// walk would silently return one page with err == nil.
 			if err := json.Unmarshal(raw, &last); err != nil {
 				return nil, "", fmt.Errorf("kraken trades: decode last cursor %s: %w", raw, err)
 			}

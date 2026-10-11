@@ -1,19 +1,14 @@
-// Package bitstamp streams live trades from Bitstamp's public
-// WebSocket API. Adds EUR/GBP depth to the XLM market coverage
-// Kraken already provides.
+// Package bitstamp streams live trades from Bitstamp's public WebSocket API, adding EUR/GBP depth
+// to the XLM coverage Kraken provides.
 //
 // Differences from Kraken that shape the code:
 //
-//   - Bitstamp requires ONE subscribe message per channel; we send N
-//     subscribe frames sequentially after connect.
+//   - One subscribe message per channel, sent sequentially after connect.
 //   - Channel naming is "live_trades_xlmusd" (lowercase, concatenated).
-//   - Bitstamp emits both float (price, amount) and string (price_str,
-//     amount_str) forms. We use the string forms only: no floats on the
-//     price path (ADR-0003).
+//   - Only the string forms (price_str, amount_str) are used: no floats on the price path (ADR-0003).
 //   - Microtimestamp is stringified microseconds since epoch.
-//   - Roughly hourly the server sends `bts:request_reconnect` to rebalance
-//     clients. We honour it by closing the connection; the backoff
-//     reconnect picks up.
+//   - Roughly hourly the server sends `bts:request_reconnect`; we close the connection and the
+//     backoff reconnect picks up.
 //
 // Wire format reference: https://www.bitstamp.net/websocket/v2/
 package bitstamp
@@ -66,18 +61,14 @@ var (
 	// loop; not an error the caller sees but an internal signal.
 	ErrRequestedReconnect = errors.New("bitstamp: server requested reconnect")
 
-	// ErrSubscriptionRejected — venue answered a subscribe request
-	// with `bts:error` (e.g. a delisted or malformed pair). Not
-	// fatal: the socket and its other already-subscribed channels
-	// stay live. The streamer logs it and flips
-	// obs.CEXStreamSubscriptionRejected so a dead pair doesn't hide
-	// behind a sibling's still-fresh CEXStreamLastTradeUnix.
+	// ErrSubscriptionRejected: the venue answered a subscribe with `bts:error` (e.g. a delisted
+	// pair). Not fatal, other channels stay live. The streamer flips
+	// obs.CEXStreamSubscriptionRejected so a dead pair does not hide behind a sibling's fresh
+	// CEXStreamLastTradeUnix.
 	ErrSubscriptionRejected = errors.New("bitstamp: subscription rejected")
 
-	// ErrDustTrade — base × price floor-divided to a 0 quote
-	// amount. Tiny bitstamp lots (e.g. 1e-8 XLM at $0.16) underflow
-	// the canonical.NewAmount integer scale (10^8). Real trades, but
-	// below our precision floor — drop silently rather than logging
-	// at ERROR. Same shape as the Coinbase + Binance dust filter.
+	// ErrDustTrade: base × price floor-divides to a 0 quote amount (e.g. 1e-8 XLM at $0.16
+	// underflows the canonical.NewAmount 10^8 scale). Real trades below our precision floor are
+	// dropped silently, as in the Coinbase and Binance dust filters.
 	ErrDustTrade = errors.New("bitstamp: dust trade (quote_amount underflow)")
 )

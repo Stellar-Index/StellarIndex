@@ -24,20 +24,13 @@ type Currency struct {
 	Source string
 }
 
-// Snapshot is the immutable rates+metadata bundle the Cache holds.
-// Replaced atomically by the worker; readers always see a
-// consistent view (no torn reads).
+// Snapshot is the immutable rates+metadata bundle the Cache holds, replaced atomically so readers
+// never see a torn view. It carries only what the sanity band cleared (the band runs BEFORE the
+// install), so a rate refused for fx_quotes is never served from here either.
 //
-// The snapshot the worker installs carries only what the sanity
-// band cleared: the band runs BEFORE the install, so a rate it refused
-// for fx_quotes is never served from here either.
-//
-// History7d is the per-ticker daily series: 7 entries (oldest →
-// newest) showing the price of 1 USD in that currency on each day.
-// Empty when the worker hasn't completed its history backfill yet
-// (or when the upstream rejected the historical fetches —
-// currency-api occasionally 404s for weekends / holidays for
-// less-tracked tickers).
+// History7d is the per-ticker daily series, 7 entries oldest to newest, of the price of 1 USD in
+// that currency. It is empty until the history backfill completes or when upstream rejected the
+// historical fetches (currency-api sometimes 404s for less-tracked tickers on weekends/holidays).
 type Snapshot struct {
 	Currencies  []Currency
 	PublishedAt time.Time
@@ -87,21 +80,14 @@ func (c *Cache) Set(s *Snapshot) {
 // its row carries no upstream information.
 const anchorTicker = "USD"
 
-// buildSnapshot merges a raw rates map + names map into the public
-// Currency slice. Excludes USD itself from the per-currency rate
-// list (rate=1.0 is implied), excludes any code without a name,
-// and sorts alphabetically by ticker for deterministic output.
+// buildSnapshot merges a raw rates map and names map into the public Currency slice, sorted by
+// ticker for deterministic output. USD itself is excluded (rate 1.0 is implied), as is any code
+// without a name. A nil `history` installs cleanly with an empty History7d map.
 //
-// `history` is the per-ticker 7d series the worker assembled — pass
-// nil if no historical backfill has run; the snapshot still
-// installs cleanly with an empty History7d map.
-//
-// The join is CASE-INSENSITIVE on the currency code. The maps'
-// producers never agreed on a case — the primary client lower-cases
-// both, the ECB standby keys on the XML attribute (UPPER), and the
-// reused-names path in refreshOnce re-keys by Ticker (UPPER) — so an
-// exact-case `names[code]` matched nothing on precisely the degraded
-// refreshes, and the snapshot collapsed to the synthetic USD row below.
+// The join is CASE-INSENSITIVE on the currency code: the primary client lower-cases both maps,
+// the ECB standby keys on the XML attribute (UPPER) and refreshOnce re-keys reused names by Ticker
+// (UPPER). An exact-case lookup would match nothing on exactly the degraded refreshes and collapse
+// the snapshot to the synthetic USD row.
 func buildSnapshot(rates map[string]float64, names map[string]string, publishedAt, fetchedAt time.Time, history map[string][]HistoryPoint, circulation map[string]CirculationEntry) *Snapshot {
 	rates, names = lowerKeyed(rates), lowerKeyed(names)
 	out := make([]Currency, 0, len(rates)+1)

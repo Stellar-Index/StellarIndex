@@ -11,21 +11,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// DefaultBackfillChunkBlocks is the number of blocks per
-// eth_getLogs call. Alchemy / Infura / QuickNode all cap response
-// payloads at ~10MB or ~10k logs; 5k is the safe default that
-// avoids "query returned more than 10000 results" errors at the
-// long-tail of high-traffic feed addresses.
-//
-// At ~12s per Ethereum block post-Merge, 5k blocks ≈ 16 hours of
-// chain history per call. 90 days of backfill ≈ 130 chunks/feed.
+// DefaultBackfillChunkBlocks is the number of blocks per eth_getLogs call. Providers cap responses
+// at ~10MB or ~10k logs; 5k blocks stays under that even for high-traffic feed addresses.
 const DefaultBackfillChunkBlocks uint64 = 5_000
 
-// MainnetMergeBlock is a sane lower bound for backfill walks.
-// Pre-Merge blocks predate most Chainlink ETH feeds in their
-// modern form anyway; clamping here avoids wasting RPC budget on
-// 5+ years of empty history. Operators can override via
-// BackfillOptions.MinBlock.
+// MainnetMergeBlock is a sane lower bound for backfill walks: earlier blocks predate most modern
+// Chainlink ETH feeds and would waste RPC budget. Override via BackfillOptions.MinBlock.
 const MainnetMergeBlock uint64 = 15_537_393
 
 // BackfillOptions tunes the historical walk.
@@ -49,23 +40,13 @@ type BackfillOptions struct {
 	Sleep time.Duration
 }
 
-// Backfill walks every configured feed's AnswerUpdated event log
-// across the requested block range and emits one OracleUpdate per
-// historical round.
+// Backfill walks every configured feed's AnswerUpdated logs across the block range and emits one
+// OracleUpdate per historical round. Feeds are walked sequentially to keep the RPC budget
+// predictable and avoid hammering one endpoint.
 //
-// One feed is walked at a time (sequential, not parallel) to keep
-// the RPC budget predictable and avoid burst-hammering a single
-// endpoint. ~33k calls at 5k blocks/chunk × 516 feeds = ~5h wall
-// time at a polite 30-50 req/s, well within Alchemy free tier.
-//
-// The output channel receives `canonical.OracleUpdate` values and
-// is CLOSED on completion (or error) so callers can range over it
-// safely. Per-chunk errors are logged + counted but don't stop
-// the walk — one bad chunk shouldn't abandon the rest of the
-// 90-day range. The first hard error (RPC down for >1 minute,
-// for example) is returned synchronously after the channel is
-// closed so callers can distinguish "completed with gaps" from
-// "completed cleanly."
+// out is CLOSED on completion or error so callers can range over it. Per-chunk errors are logged
+// and counted but do not stop the walk; the first hard error (e.g. RPC down for over a minute) is
+// returned after the close, letting callers tell "completed with gaps" from "completed cleanly".
 func (p *Poller) Backfill(ctx context.Context, pairs []canonical.Pair, opts BackfillOptions, out chan<- canonical.OracleUpdate) error {
 	defer close(out)
 

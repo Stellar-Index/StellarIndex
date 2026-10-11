@@ -1,14 +1,12 @@
 // Copyright 2026 Stellar Index contributors
 // SPDX-License-Identifier: Apache-2.0
 
-// Package chops holds the stellarindex-ops ClickHouse-lake subcommands
-// (named chops, not clickhouse, so the import does not shadow
-// internal/storage/clickhouse): the ADR-0034 lake backfill, gate,
-// reproject and rebuild tools, the ADR-0047 classic-movement backfill, the
-// ADR-0048 projected-source catch-up, and the ADR-0033/ADR-0034
-// completeness, reconciliation, contiguity, hash-chain and network-state
-// verifiers. The re-derivation helpers those tools share
-// (reconciliation_catalogue.go, gated_recon_seed.go) live here too.
+// Package chops holds the stellarindex-ops ClickHouse-lake subcommands (named chops, not
+// clickhouse, so the import does not shadow internal/storage/clickhouse): the lake backfill,
+// gate, reproject and rebuild tools, the classic-movement backfill, the projected-source
+// catch-up, and the completeness, reconciliation, contiguity, hash-chain and network-state
+// verifiers. The re-derivation helpers they share (reconciliation_catalogue.go,
+// gated_recon_seed.go) live here too.
 //
 // cmd/stellarindex-ops main.go's dispatch table calls Run below.
 package chops
@@ -17,12 +15,11 @@ import (
 	"fmt"
 )
 
-// Run is the package's entry point; see discovery.Run for the calling
-// convention. args[0] is the subcommand verb, args[1:] its flags.
+// Run is the package's entry point; see discovery.Run for the calling convention. args[0] is the
+// subcommand verb, args[1:] its flags.
 //
-// Dispatch is split by role, which keeps each switch under the gocyclo
-// ceiling: lake-mutating verbs rewrite lake or served data, while the
-// verifiers touch no trade or event row.
+// Dispatch is split by role, which keeps each switch under the gocyclo ceiling: lake-mutating
+// verbs rewrite lake or served data, while the verifiers touch no trade or event row.
 func Run(args []string) error {
 	if fn, ok := lakeMutatorVerb(args[0]); ok {
 		return fn(args[1:])
@@ -100,12 +97,10 @@ func historyDeriveVerb(verb string) (func([]string) error, bool) {
 	}
 }
 
-// verifierVerb resolves the verification half: the ADR-0033/0034
-// completeness, reconciliation, contiguity, hash-chain and value checks.
-// None of these touch trade/event data. Most are strictly read-only; the
-// exception is compute-completeness, which writes its VERDICT
-// (completeness_snapshots + the projection floors it earns) — bookkeeping
-// about the data, never the data itself.
+// verifierVerb resolves the verification half: the completeness, reconciliation, contiguity,
+// hash-chain and value checks. None touch trade/event data. Most are read-only; compute-completeness
+// writes its verdict (completeness_snapshots + the projection floors it earns), which is
+// bookkeeping about the data, never the data itself.
 func verifierVerb(verb string) (func([]string) error, bool) {
 	switch verb {
 	case "verify-recognition":

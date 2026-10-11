@@ -5,15 +5,14 @@ import (
 	"time"
 )
 
-// Registry is the metadata table for every source the aggregator knows, external and on-chain, so it can
-// read Registry[trade.Source].Class without importing every source package. A miss falls back to
-// ClassExchange with IncludeInVWAP=false: visible in /v1/sources, fail-closed out of VWAP. Venues toggle via
-// `enabled` in config.ExternalConfig; Class and Paid are venue facts, and per-venue weight/VWAP overrides
-// are not wired.
+// Registry is the metadata table for every source the aggregator knows, so it can read
+// Registry[trade.Source].Class without importing every source package. A miss falls back to
+// ClassExchange with IncludeInVWAP=false: visible in /v1/sources, fail-closed out of VWAP.
 //
-// Backfill is BackfillPerWASM for on-chain Soroban sources: a replay is admitted only over a range whose
-// every active WASM hash is in internal/wasmaudit/audited_wasm.json (`update_contract` can change event
-// schemas). Off-chain sources and SDEX are BackfillNoWASM; BackfillUnsafe refuses outright.
+// Backfill is BackfillPerWASM for on-chain Soroban sources: a replay is admitted only over a range
+// whose every active WASM hash is in internal/wasmaudit/audited_wasm.json, because
+// `update_contract` can change event schemas. Off-chain sources and SDEX are BackfillNoWASM;
+// BackfillUnsafe refuses outright.
 var Registry = map[string]Metadata{
 	// ─── On-chain exchanges (dispatcher-path; listed here so the
 	// aggregator has a single lookup table) ──────────────────────
@@ -40,10 +39,8 @@ var Registry = map[string]Metadata{
 	"spectra": {Class: ClassRouter, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM},
 
 	// ─── On-chain oracles ────────────────────────────────────────
-	// Excluded from VWAP by default — they publish already-aggregated
-	// derived prices with their own governance and methodology. Reported
-	// alongside for transparency. Operator opts one in per-source via
-	// config if they want oracle-inclusive aggregation.
+	// Excluded from VWAP by default: they publish already-aggregated prices with their own
+	// methodology. An operator can opt one in per source via config.
 	"reflector-dex": {Class: ClassOracle, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, OracleResolution: 5 * time.Minute, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited; v2 disassembly confirms compat. See docs/operations/wasm-audits/reflector.md */},
 	"reflector-cex": {Class: ClassOracle, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, OracleResolution: 5 * time.Minute, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited; v2 disassembly confirms compat. See docs/operations/wasm-audits/reflector.md */},
 	"reflector-fx":  {Class: ClassOracle, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, OracleResolution: 5 * time.Minute, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited; see docs/operations/wasm-audits/reflector.md */},
@@ -51,20 +48,15 @@ var Registry = map[string]Metadata{
 	"band":          {Class: ClassOracle, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, OracleResolution: time.Hour, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited; see docs/operations/wasm-audits/band.md */},
 
 	// ─── On-chain lending protocols ─────────────────────────────
-	// Auction events surface stress-prices during liquidations; we
-	// report them alongside as a secondary validation surface but
-	// they DO NOT contribute to VWAP. See the blend source package
-	// README for the full extraction scope.
+	// Auction events surface stress prices during liquidations; they are reported as a secondary
+	// validation surface and DO NOT contribute to VWAP.
 	"blend": {Class: ClassLending, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited; 11 contracts (9 pools + backstop + factory), 3 unique WASMs, no mid-life upgrades observed in 5h4m walk over [50457424, 62249727]. See docs/operations/wasm-audits/blend.md §"Phase 2 results". */},
 	// blend_emitter: BLND emissions plumbing in the `blend` family; no price, never VWAP. Audited against the
 	// ClickHouse lake rather than a wasm-history walk: all 469 lifetime events decode to the expected shape and
 	// the sole WASM hash (438a5528…) is SHA256-verified (docs/operations/wasm-audits/blend_emitter.md).
 	"blend_emitter": {Class: ClassLending, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited; see docs/operations/wasm-audits/blend_emitter.md */},
-	// sorocredit — an unbranded consumer-USDC credit / CDP protocol
-	// (single main contract CCG5EWFY…). Credit positions / statements /
-	// scheduled-settlements — no published price, never VWAP. Its
-	// "Liquidation" events are SCHEDULED SETTLEMENTS, not distress — see
-	// internal/sources/sorocredit/README.md.
+	// sorocredit is a consumer-USDC credit protocol with no published price, never VWAP. Its
+	// "Liquidation" events are scheduled settlements, not distress.
 	"sorocredit": {Class: ClassLending, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited lake-direct (ADR-0034): single instance WASM 84a88013…810ea set at deploy (ledger 61,620,824), zero executable changes in the dense-coverage window [62.0M→tip]; all 7 event types have one invariant on-wire schema across the contract's whole life (NewCollateralContract structurally identical 61,624,053→63,363,505, spanning the sparse early window). Safe from genesis 61,620,822. See docs/operations/wasm-audits/sorocredit.md */},
 
 	// ─── On-chain routers + aggregator vaults ────────────────────
@@ -95,17 +87,17 @@ var Registry = map[string]Metadata{
 	"coinbase":         {Class: ClassExchange, Subclass: SubclassCEX, DefaultWeight: 100, IncludeInVWAP: true, Paid: false, BackfillAvailable: true, Backfill: BackfillNoWASM},
 
 	// ─── Institutional FX feeds ──────────────────────────────────
-	// `massive` is the active fiat-FX feed (massive.com, the vendor once branded polygon.io). There is
-	// deliberately NO `polygon-forex` entry: it named the same upstream with IncludeInVWAP:true and would
-	// double-count. Do not re-add it. The forex worker (API binary) polls hourly but writes fx_quotes at
-	// one row per ticker per UTC day (every write buckets to Truncate(24 * time.Hour)): the USD anchor
-	// behind per-trade usd_volume, /v1/assets fiat pricing and the /v1/chart fiat series. Registered so /v1/sources classifies it off-chain FX, not the unknown fallback.
+	// `massive` is the active fiat-FX feed. There is deliberately NO `polygon-forex` entry: it named
+	// the same upstream with IncludeInVWAP:true and would double-count. The forex worker polls
+	// hourly but writes fx_quotes at one row per ticker per UTC day (Truncate(24 * time.Hour)): the
+	// USD anchor behind per-trade usd_volume, /v1/assets fiat pricing and the /v1/chart fiat series.
 	//
 	// `exchangeratesapi` (disabled) is NOT a forex-snap fallback: it emits only OracleUpdates, so
-	// FXQuoteAtOrBefore's `trades` arm finds nothing. The only fallback is the forex worker's ECB standby
-	// (forex.ECBProvider, fx_quotes source "ecb"). forex.OpenExchangeRatesProvider has no row; wiring it must
-	// add one or the FX-snap class check refuses it. FX pollers stamp 1e6, not the CEX 1e8 (AmountDecimals:6,
-	// for the USD-volume gate). OracleResolution is a trading day: FX holds through the ~48h weekend close.
+	// FXQuoteAtOrBefore's `trades` arm finds nothing. The only fallback is the ECB standby
+	// (forex.ECBProvider, fx_quotes source "ecb"). forex.OpenExchangeRatesProvider has no row;
+	// wiring it must add one or the FX-snap class check refuses it. FX pollers stamp 1e6, not the
+	// CEX 1e8 (AmountDecimals:6, for the USD-volume gate). OracleResolution is a trading day: FX
+	// holds through the ~48h weekend close.
 	"massive":          {Class: ClassExchange, Subclass: SubclassFX, DefaultWeight: 100, IncludeInVWAP: true, Paid: true, BackfillAvailable: true, Backfill: BackfillNoWASM, AmountDecimals: 6},
 	"exchangeratesapi": {Class: ClassExchange, Subclass: SubclassFX, DefaultWeight: 100, IncludeInVWAP: true, Paid: true, BackfillAvailable: true, Backfill: BackfillNoWASM, AmountDecimals: 6, OracleResolution: 24 * time.Hour},
 
@@ -133,11 +125,8 @@ var Registry = map[string]Metadata{
 	"tiingo": {Class: ClassOracle, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: false, Backfill: BackfillNoWASM, AmountDecimals: 6, OracleResolution: 24 * time.Hour},
 }
 
-// Lookup returns metadata for a source, with a safe fallback for
-// unknown names. The fallback intentionally excludes-from-VWAP so a
-// typo or renamed source can't quietly inject unauthorised data into
-// aggregation — it shows up in /v1/sources as `class=exchange,
-// included_in_vwap=false` and ops fixes the registry entry.
+// Lookup returns metadata for a source. Unknown names fall back to class=exchange with
+// included_in_vwap=false, so a typo or renamed source cannot inject unvetted data into aggregation.
 func Lookup(source string) Metadata {
 	if m, ok := Registry[source]; ok {
 		return m
@@ -150,13 +139,9 @@ func Lookup(source string) Metadata {
 	}
 }
 
-// Registered reports whether source has an explicit [Registry] entry.
-// Lookup collapses "unregistered" and "registered with AmountDecimals
-// unset" into the same zero-value-derived answer (both read as
-// AmountScaleDecimals()==8), which is safe for Lookup's own VWAP-
-// inclusion fallback but wrong for a caller that needs to tell "no
-// entry" apart from "entry, CEX-default scale" — see
-// commonAmountScaleDecimals in internal/api/v1/ohlc.go.
+// Registered reports whether source has an explicit [Registry] entry. Lookup treats "unregistered"
+// and "AmountDecimals unset" alike (both read AmountScaleDecimals()==8), which is wrong for a
+// caller that must tell "no entry" from "entry, CEX-default scale" (commonAmountScaleDecimals).
 func Registered(source string) bool {
 	_, ok := Registry[source]
 	return ok
@@ -232,13 +217,10 @@ func UnsafeReplaySources(sources []string) []string {
 	return out
 }
 
-// FXSources returns the registered source names whose Subclass is
-// SubclassFX, in deterministic lexicographic order. Used by the
-// forex-snap rule (FXQuoteAtOrBefore): `massive` in the list
-// admits the fx_quotes-first read (the active feed's table), and the
-// full list scopes the trades-hypertable fallback; the stable
-// order makes the across-region tiebreak deterministic when two FX
-// sources publish the same observed_at.
+// FXSources returns the registered source names with Subclass SubclassFX, sorted. The forex-snap
+// rule (FXQuoteAtOrBefore) uses `massive` to admit the fx_quotes-first read and the full list to
+// scope the trades fallback; the stable order makes the tiebreak deterministic when two FX sources
+// publish the same observed_at.
 func FXSources() []string {
 	out := make([]string, 0, 2)
 	for name, m := range Registry {

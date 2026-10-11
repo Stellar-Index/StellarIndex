@@ -24,12 +24,10 @@ type sdexServedPK struct {
 	op uint32
 }
 
-// sdexServedCensus is the per-ledger set of priceable SDEX trades: decoder
-// output that passes canonical.Trade.Validate and is not a one-side-zero fill,
-// keyed by the served primary key. The served side counts with the matching
-// sdexPriceableFilter (reconTarget.countFilter). It is the only SDEX
-// projection oracle; the ledger_ingest_log census keeps one-side-zero fills
-// and so is not one.
+// sdexServedCensus is the per-ledger set of priceable SDEX trades (decoder output that passes
+// canonical.Trade.Validate and is not a one-side-zero fill), keyed by the served primary key; the
+// served side counts with the matching sdexPriceableFilter. It is the only SDEX projection oracle,
+// because the ledger_ingest_log census keeps one-side-zero fills.
 type sdexServedCensus map[uint32]map[sdexServedPK]struct{}
 
 func (c sdexServedCensus) add(outs []consumer.Event) {

@@ -60,10 +60,9 @@ func (r wasmDriftReport) drifting() int {
 	return n
 }
 
-// wasmDrift is the stellarindex-ops `wasm-drift` subcommand: every contract of
-// a gated source that has an audit log must be running a hash that log
-// string-checked. Contracts upgrade in place, so a decoder audited against
-// one build can silently misread the next.
+// wasmDrift is the stellarindex-ops `wasm-drift` subcommand: every contract of a gated source with
+// an audit log must run a hash that log string-checked, because contracts upgrade in place and a
+// decoder audited against one build can silently misread the next.
 //
 // Usage: wasm-drift [-config PATH] [-ch-addr H:P] [-source NAME] [-textfile PATH].
 // Read-only; touches ClickHouse only. Exit code = drifting contracts (capped at 255).

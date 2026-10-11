@@ -35,12 +35,9 @@ type Streamer struct {
 
 // NewStreamer constructs a Streamer with sensible defaults.
 //
-// Backoff defaults: InitialBackoff 5 s,
-// MaxBackoff 60 s. Combined with the healthy-connection reset in the
-// shared wsclient.Loop (a connection that stays alive ≥
-// wsclient.DefaultHealthyConnectionThreshold rewinds backoff to
-// InitialBackoff on its next failure), the effect is bounded 5-60 s
-// reconnect windows instead of a 60 s blanket.
+// Backoff defaults are InitialBackoff 5 s and MaxBackoff 60 s. With the healthy-connection reset
+// in wsclient.Loop (a connection alive for wsclient.DefaultHealthyConnectionThreshold rewinds
+// backoff to InitialBackoff on its next failure), reconnect windows stay bounded to 5-60 s.
 func NewStreamer(pairMap map[string]canonical.Pair) *Streamer {
 	return &Streamer{
 		PairMap:        pairMap,
