@@ -791,6 +791,11 @@ galexie_mirror_verify_enabled: "{{ (stellarindex_s3_cold_bucket_archive | defaul
 # nothing, and the keyless fetch is answered 403 from a datacenter address.
 listing_sync_enabled: "{{ (stellar_network | default('pubnet')) == 'pubnet' }}"
 
+# directory-sync fetches one reviewed public-directory commit, never the moving
+# branch: account_directory feeds the scam gate. Bump url and sha256 together.
+directory_sync_url: "https://github.com/stellar-expert/public-directory/archive/9ecd9768440df4e6b75bd008a15dc9131edbd9fd.tar.gz"
+directory_sync_sha256: "2c0a1e7c47307d2828a30f65ff1d8ed0c95459096117f8cc77ccf60d692d7e07"
+
 # supply-verify-rollup — daily SEP-41 supply-rollup reconciliation. Only
 # meaningful where the SEP-41 supply pipeline runs, i.e. where contracts are
 # watched; elsewhere it would fail "checked 0" nightly.

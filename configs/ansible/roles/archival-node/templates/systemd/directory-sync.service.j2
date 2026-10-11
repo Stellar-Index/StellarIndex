@@ -28,6 +28,8 @@ Environment=EXTRA_FLAGS=
 ExecStart=/usr/local/bin/stellarindex-ops directory-sync \
   -config ${CONFIG_PATH} \
   -timeout ${RUN_TIMEOUT} \
+  -url {{ directory_sync_url }} \
+  -sha256 {{ directory_sync_sha256 }} \
   -write \
   $EXTRA_FLAGS
 
