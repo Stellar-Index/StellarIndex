@@ -25,9 +25,8 @@ const streamWriteDeadline = 25 * time.Second
 // per stream keeps a cohort connected together (after a deploy) from reconnecting together.
 const DefaultMaxStreamLifetime = 30 * time.Minute
 
-// drainWriteDeadline bounds the single courtesy frame written when the
-// SERVER ends a stream at shutdown. Deliberately far shorter than
-// streamWriteDeadline: see endStreamByServer.
+// drainWriteDeadline bounds the courtesy frame written when the SERVER ends a stream; far shorter
+// than streamWriteDeadline (see endStreamByServer).
 const drainWriteDeadline = time.Second
 
 // maxConcurrentStreams caps simultaneous SSE connections across all stream endpoints so a flood
@@ -38,8 +37,7 @@ var activeStreams int64
 
 var rejectedStreams int64
 
-// SetMaxConcurrentStreams overrides the global concurrent-SSE-connection
-// cap. Pass <= 0 to disable. Call once at startup.
+// SetMaxConcurrentStreams overrides the global SSE connection cap (<= 0 disables); call at startup.
 func SetMaxConcurrentStreams(n int64) { atomic.StoreInt64(&maxConcurrentStreams, n) }
 
 // StreamsRejected reports the cumulative SSE connections refused by the concurrency caps since
@@ -66,9 +64,7 @@ func admitStream(w http.ResponseWriter, r *http.Request) (release func(), ok boo
 		http.Error(w, "too many concurrent streams", http.StatusServiceUnavailable)
 		return nil, false
 	}
-	// Per-IP cap: the global cap alone lets one client hold the
-	// entire budget, so a single stalled/hostile address can starve the
-	// streams for everyone. Give each client its own small ceiling.
+	// Per-IP cap: the global cap alone lets one address hold the whole budget.
 	releaseIP, ok := acquireIPStreamSlot(r)
 	if !ok {
 		releaseGlobal()
@@ -83,10 +79,8 @@ func admitStream(w http.ResponseWriter, r *http.Request) (release func(), ok boo
 	}, true
 }
 
-// acquireGlobalStreamSlot reserves one slot against
-// [maxConcurrentStreams], so a connection flood can't exhaust
-// FDs/goroutines. A cap of <= 0 disables the ceiling but still counts
-// the stream, so activeStreams stays truthful.
+// acquireGlobalStreamSlot reserves one slot against [maxConcurrentStreams]. A cap of <= 0
+// disables the ceiling but still counts the stream, so activeStreams stays truthful.
 func acquireGlobalStreamSlot() (release func(), ok bool) {
 	if limit := atomic.LoadInt64(&maxConcurrentStreams); limit > 0 {
 		if atomic.AddInt64(&activeStreams, 1) > limit {
@@ -160,8 +154,8 @@ func Stream(w http.ResponseWriter, r *http.Request, hub *Hub, topics []string, o
 	writeStream(w, r, ch, opts)
 }
 
-// WriteSubscribeRefused answers a connection whose [Hub.Subscribe]
-// failed with [ErrTopicCapacity]. Call it before any SSE header is sent.
+// WriteSubscribeRefused answers a connection whose [Hub.Subscribe] failed with [ErrTopicCapacity];
+// call it before any SSE header is sent.
 func WriteSubscribeRefused(w http.ResponseWriter) {
 	atomic.AddInt64(&rejectedStreams, 1)
 	obs.APISSEStreamsRejectedTotal.WithLabelValues("topic_cap").Inc()
@@ -196,11 +190,9 @@ func writeStream(w http.ResponseWriter, r *http.Request, ch <-chan Event, opts S
 		return
 	}
 
-	// The server's fixed 30s WriteTimeout would reset an SSE stream, and clearing it would let a
-	// blocked write hang forever, so a per-write deadline is rolled forward before every write
-	// (setWriteDeadline). A non-reading client whose writes never block is bounded by the stream
-	// lifetime instead. http.ErrNotSupported (httptest writers, wrappers without Unwrap) is
-	// ignored because those transports enforce no write deadline anyway.
+	// The server's fixed 30s WriteTimeout would reset an SSE stream and clearing it would let a
+	// blocked write hang forever, so a per-write deadline is rolled forward before every write.
+	// http.ErrNotSupported (httptest, wrappers without Unwrap) is ignored: those enforce none.
 	rc := http.NewResponseController(w)
 	setWriteDeadline := func() {
 		_ = rc.SetWriteDeadline(time.Now().Add(streamWriteDeadline))
@@ -245,9 +237,7 @@ func writeStream(w http.ResponseWriter, r *http.Request, ch <-chan Event, opts S
 			return
 		case ev, ok := <-ch:
 			if !ok {
-				// Channel closed → producer signalled done. Return
-				// cleanly; client reconnects with Last-Event-ID for
-				// resume.
+				// Producer closed the channel; the client resumes via Last-Event-ID.
 				return
 			}
 			setWriteDeadline()
@@ -292,8 +282,7 @@ func endStreamForRevocation(w http.ResponseWriter, flusher http.Flusher, setWrit
 	flusher.Flush()
 }
 
-// streamLifetime returns maxLifetime (DefaultMaxStreamLifetime when zero) plus up
-// to 10% random jitter.
+// streamLifetime returns maxLifetime (default when zero) plus up to 10% random jitter.
 func streamLifetime(maxLifetime time.Duration) time.Duration {
 	if maxLifetime <= 0 {
 		maxLifetime = DefaultMaxStreamLifetime
@@ -304,12 +293,10 @@ func streamLifetime(maxLifetime time.Duration) time.Duration {
 	return maxLifetime
 }
 
-// endStreamByServer ends a stream the SERVER is closing (shutdown drain or lifetime expiry) with a
-// final comment frame, so the chunked body terminates and clients reconnect normally instead of
-// the proxy logging a truncated response. A comment keeps the event vocabulary in
-// openapi/stellar-index.v1.yaml unchanged. The write gets [drainWriteDeadline], not
-// [streamWriteDeadline], so a stalled client cannot hold the drain (cost is the maximum across
-// streams, not the sum). A failed write is ignored: the connection is going away anyway.
+// endStreamByServer ends a stream the SERVER is closing (drain or lifetime expiry) with a final
+// comment frame, so the chunked body terminates cleanly instead of the proxy logging a truncated
+// response; a comment leaves the event vocabulary in the OpenAPI spec unchanged. The short
+// [drainWriteDeadline] stops a stalled client holding the drain. A failed write is ignored.
 func endStreamByServer(w http.ResponseWriter, flusher http.Flusher, rc *http.ResponseController, frame string) {
 	_ = rc.SetWriteDeadline(time.Now().Add(drainWriteDeadline))
 	if _, err := fmt.Fprint(w, frame); err != nil {

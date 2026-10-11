@@ -39,13 +39,12 @@ const DefaultResolutionSeconds = 24 * 60 * 60
 // WriteFnName is the adapter's update entry point, the only path that emits a REDSTONE event. The
 // function name is not plumbed, so four layers stand in for a name check:
 //
-//  1. the OpArgs PROVENANCE gate — args attach only when the invoked contract IS the event's
-//     contract, so they describe a direct call INTO the adapter, never a wrapper's args;
+//  1. the OpArgs PROVENANCE gate (args attach only for a direct call INTO the adapter);
 //  2. structural validation of the signature (Address, Vec<String>, Bytes — feedIDsFromOpArgs);
 //  3. the body-vs-args updater cross-check (decodeWritePrices);
 //  4. state-write corroboration: plumbed value-changed keys must match the claimed feed set.
 //
-// A same-contract function passing all four would be a new WASM, caught by the per-WASM-hash audit gate.
+// A function passing all four would be a new WASM, caught by the per-WASM-hash audit gate.
 const WriteFnName = "write_prices"
 
 // Event-topic constants.
@@ -64,9 +63,9 @@ var (
 	// ErrMalformedPayload — the body is not the WritePrices map shape.
 	ErrMalformedPayload = errors.New("redstone: malformed event payload")
 
-	// ErrEmptyUpdates — a non-empty batch decoded to no rows: every price non-positive or every
-	// feed_id unrepresentable even as raw. An on-wire-empty batch (~1.5% of events) is a no-op, and an
-	// unregistered feed_id is a raw:<feed_id> row; neither returns this.
+	// ErrEmptyUpdates — a non-empty batch decoded to no rows (all prices non-positive or all feed_ids
+	// unrepresentable even as raw). An on-wire-empty batch is a no-op; an unregistered feed_id is a
+	// raw:<feed_id> row.
 	ErrEmptyUpdates = errors.New("redstone: empty updated_feeds vector")
 
 	// ErrMissingOpArgs — no InvokeContract args attached, so there are no feed IDs to zip.
@@ -76,9 +75,8 @@ var (
 	// attributed the subset; the event is skipped rather than risk a BTC price on ETH.
 	ErrFeedIDCountMismatch = errors.New("redstone: feed_ids arity doesn't match updated_feeds; cannot safely zip")
 
-	// ErrDuplicateFeedIDs — feed_ids repeats a feed. redstone-core's Config::try_new rejects those
-	// before emitting, so the args did NOT drive the call; a duplicate would also inflate the state-write
-	// subset's arity and force the payload fallback on attacker-shaped candidates.
+	// ErrDuplicateFeedIDs — feed_ids repeats a feed. The contract rejects those before emitting, so
+	// the args did NOT drive the call.
 	ErrDuplicateFeedIDs = errors.New("redstone: duplicate feed_ids in op args")
 
 	// ErrUpdaterMismatch — the body's updater disagrees with args[0]: write_prices publishes its own
@@ -86,8 +84,8 @@ var (
 	ErrUpdaterMismatch = errors.New("redstone: event-body updater disagrees with op-args updater")
 
 	// ErrStateWriteFeedMismatch — the op's value-changed state writes name a different feed set than
-	// an equal-arity feed_ids (every accepted feed's entry changes), or contradict a subset's payload-median
-	// fallback (payload.go F1 CAVEAT). Returned only when the fallback also fails; same honest-blind arm as ErrAmbiguousSubset.
+	// feed_ids, or contradict a subset's payload-median fallback (payload.go F1 CAVEAT). Returned only
+	// when the fallback also fails; same honest-blind arm as ErrAmbiguousSubset.
 	ErrStateWriteFeedMismatch = errors.New("redstone: op-args feed_ids disagree with the op's value-changed state-write feed set")
 
 	// ErrEventIndexOverflow — e.EventIndex >= eventFanoutStride would spill into the next operation's

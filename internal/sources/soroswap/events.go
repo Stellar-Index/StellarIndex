@@ -30,9 +30,7 @@ const (
 
 	// EventPairToken is the classify() kind for the pair's LP-share SEP-41 events (`transfer`,
 	// `mint`, `burn`, `approve`), which carry Symbol topic[0] rather than the "SoroswapPair"
-	// String prefix. A pair IS a SEP-41 token for its LP shares and registered pairs emit these.
-	// They are classified to cover every topic the pair WASM can emit, but the Decoder
-	// deliberately does NOT claim them: see the EventPairToken arm in [Decoder.Matches].
+	// String prefix. The Decoder deliberately does NOT claim them: see [Decoder.Matches].
 	EventPairToken = "pair_token"
 )
 
@@ -117,20 +115,16 @@ var (
 	// Soroswap schema (arity, types, contract).
 	ErrMalformedPayload = errors.New("soroswap: malformed event payload")
 
-	// ErrNonDirectionalSwap - the four swap amounts decoded cleanly but carry NO cross-token
-	// exchange: neither (0_in>0 && 1_out>0) nor (1_in>0 && 0_out>0) holds. pair.swap() is directly
-	// invokable Uniswap-v2-style and any argument mix that keeps K non-decreasing succeeds (mainnet
-	// ledger 57,403,300 moved value within ONE token side). That is a real event but NOT a trade,
-	// with no (base, quote, price) to derive, so [Decoder.Decode] treats it as a RECOGNIZED NO-OP
-	// (zero rows, nil error). Treating it as a decode error would leave the ADR-0033 completeness
-	// re-derive blind (undecodable-but-matched) on that ledger.
+	// ErrNonDirectionalSwap - the four swap amounts decoded but carry NO cross-token exchange:
+	// neither (0_in>0 && 1_out>0) nor (1_in>0 && 0_out>0) holds. pair.swap() is directly invokable
+	// and any mix that keeps K non-decreasing succeeds. It is a real event but not a trade, so
+	// [Decoder.Decode] treats it as a RECOGNIZED NO-OP (zero rows, nil error); a decode error
+	// would leave the ADR-0033 completeness re-derive blind on that ledger.
 	ErrNonDirectionalSwap = errors.New("soroswap: non-directional swap (no cross-token exchange)")
 
 	// ErrAmbiguousSwapDirection - THREE OR MORE of the four amounts are non-zero (overlapping in/out
-	// legs, e.g. 0_in,1_in,1_out), so more than one direction arm holds. Taking the first would
-	// report a GROSS `in` and drop the extra leg, fabricating a price into VWAP/OHLC. These shapes
-	// can settle on-chain, so the whole event is refused rather than half-decoded. It wraps
-	// ErrNonDirectionalSwap so the recognized-no-op handling in [Decoder.Decode] (counted as
-	// expected-zero by the ADR-0033 re-derive) covers it via errors.Is.
+	// legs), so more than one direction arm holds. Taking the first would report a GROSS `in` and
+	// fabricate a price into VWAP/OHLC, so the whole event is refused. It wraps
+	// ErrNonDirectionalSwap so the recognized-no-op handling in [Decoder.Decode] covers it.
 	ErrAmbiguousSwapDirection = fmt.Errorf("%w: ambiguous direction (overlapping in/out legs)", ErrNonDirectionalSwap)
 )

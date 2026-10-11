@@ -58,13 +58,10 @@ type DeliveryStore interface {
 // returns the lifecycle status of the account that owns the webhook, or [platform.ErrNotFound]
 // when the webhook is gone.
 //
-// The auth validator enforces the kill switch inbound, but without a status read here a suspended
-// or closed customer would keep RECEIVING data at their registered endpoints, so the worker
-// re-reads the status immediately before it signs and POSTs.
-//
-// It is required: [New] refuses a store that cannot answer it, because silently skipping the kill
-// switch is the gap this type closes. It is asserted at construction rather than added to
-// [DeliveryStore] because production wiring passes a [platform.WebhookStore] interface value.
+// The auth validator enforces the kill switch inbound; without a status read here a suspended or
+// closed customer would keep RECEIVING data, so the worker re-reads it immediately before signing
+// and POSTing. [New] refuses a store that cannot answer it (asserted at construction, not on
+// [DeliveryStore], because production wiring passes a [platform.WebhookStore] interface value).
 type AccountStatusReader interface {
 	WebhookAccountStatus(ctx context.Context, webhookID uuid.UUID) (platform.AccountStatus, error)
 }
@@ -87,28 +84,22 @@ const (
 	defaultHTTPTimeout = 10 * time.Second
 
 	// storeLeaseDuration is the claim lease ListPendingDeliveries places on each row. A row not
-	// finished within it is re-claimed by a second worker and DOUBLE-delivered. One endpoint's rows
-	// are serial and a batch may be all one endpoint's, so worst-case time to reach the last row is
-	// BatchLimit × (Timeout + markWriteTimeout) however many endpoints run in parallel; that
-	// product MUST stay comfortably under this lease.
+	// finished within it is re-claimed by a second worker and DOUBLE-delivered. A batch may be all
+	// one endpoint's serial rows, so worst-case time to the last row is
+	// BatchLimit × (Timeout + markWriteTimeout) regardless of parallelism; that MUST stay under it.
 	storeLeaseDuration = 5 * time.Minute
 
-	// markWriteTimeout bounds the store write that records an attempt's outcome. It runs on its
-	// OWN deadline, detached from the attempt's (see Worker.mark), so it is an extra term in the
-	// lease invariant; the lease leaves 2s a row over 25 rows, so it must stay under 2s. A write
-	// that cannot land in 1s fails to mark_error and the row is retried on lease expiry, exactly
-	// as after a worker crash.
+	// markWriteTimeout bounds the store write that records an attempt's outcome, on its OWN
+	// deadline detached from the attempt's (see Worker.mark), so it is a term in the lease
+	// invariant (2s of slack per row over 25 rows). A write that cannot land fails to mark_error
+	// and the row is retried on lease expiry, as after a worker crash.
 	markWriteTimeout = 1 * time.Second
 
-	// maxDrainBytes caps how much of a response body we drain to reuse
-	// the connection. We never read the body for content, so a hostile
-	// or buggy endpoint must not tie the worker up streaming megabytes.
+	// maxDrainBytes caps how much of a response body we drain to reuse the connection; the body is
+	// never read for content, so a hostile endpoint cannot tie the worker up streaming megabytes.
 	maxDrainBytes = 64 << 10 // 64 KiB
 
-	// webhookUserAgent identifies deliveries to the customer's endpoint
-	// operator so an unexpected POST can be traced back to us, as every
-	// other outbound fetch in the repo does (internal/metadata/sep1.go,
-	// internal/stellarrpc).
+	// webhookUserAgent lets the endpoint operator trace an unexpected POST back to us.
 	webhookUserAgent = "stellar-index/webhooks (+https://stellarindex.io)"
 )
 
@@ -119,9 +110,7 @@ const _ = uint(storeLeaseDuration - defaultBatchLimit*(defaultHTTPTimeout+markWr
 
 // Options tunes the worker. Zero values yield production defaults.
 type Options struct {
-	// PollInterval between queue drains. Default 5s — tight
-	// enough that SEV-1 deliveries feel real-time, loose enough
-	// that an idle worker doesn't hammer postgres.
+	// PollInterval between queue drains. Default 5s.
 	PollInterval time.Duration
 
 	// BatchLimit caps how many deliveries each poll drains. Default 25.
@@ -136,20 +125,16 @@ type Options struct {
 	Concurrency int
 
 	// MaxAttempts before a delivery is marked permanently failed. Default 15: with backoffCeiling's
-	// schedule the last retry lands ~4–8 h after the first failure. That window is the
-	// customer-facing SLA the runbooks quote (pinned by TestRetryWindowMatchesOperatorDocs);
-	// widening it is an SLA decision, not a tuning knob.
+	// schedule the last retry lands ~4–8 h after the first failure, the customer-facing window the
+	// runbooks quote (TestRetryWindowMatchesOperatorDocs); widening it is an SLA decision.
 	MaxAttempts int
 
-	// HTTPClient supplies the delivery client's Timeout (default
-	// 10s). New always sends through the SSRF-guarded dialer and
-	// refuses redirects, and panics if a Transport is set.
+	// HTTPClient supplies the delivery client's Timeout (default 10s). New always sends through the
+	// SSRF-guarded dialer, refuses redirects, and panics if a Transport is set.
 	HTTPClient *http.Client
 
-	// Logger receives the worker's structured logs. Default
-	// slog.Default(). Worker logs at INFO on every delivery
-	// (success + failure) so operators can dashboard the
-	// activity; WARN on configuration drift (webhook not found).
+	// Logger receives structured logs (default slog.Default()): INFO per delivery, WARN on
+	// configuration drift (webhook not found).
 	Logger *slog.Logger
 
 	// Clock is the time source. Override in tests; production
@@ -481,8 +466,8 @@ func (w *Worker) deliverOne(ctx context.Context, d platform.WebhookDelivery) {
 // accountGateOpen reports whether the owning account permits this delivery. False means DO NOT
 // POST: the row has already been recorded or parked here.
 //
-// The claim query withholds a non-active account's rows, but a batch is drained serially, so an
-// account suspended mid-batch has rows already in hand.
+// The claim query withholds a non-active account's rows, but a batch drains serially, so an account
+// suspended mid-batch has rows already in hand.
 //
 //   - not found: the webhook vanished since the lookup; terminal.
 //   - status unreadable: fail CLOSED. Leave the row for lease expiry so a Postgres blip delays
@@ -581,13 +566,10 @@ func isRetryable4xx(status int) bool {
 }
 
 // mark runs a store write that records an attempt's OUTCOME on a context owned by the write, not
-// by the attempt it records. The attempt context is wrong twice over: a POST that times out
-// reaches the mark with a dead context, so attempt_count would never advance and the row would be
-// re-POSTed every lease interval forever; and its cancellation is the shutdown signal, so a
-// customer just sent an event must not be sent it again because the process was stopping.
-//
-// WithoutCancel drops the parent's deadline and cancellation; markWriteTimeout then bounds the
-// write so a hung store cannot stall the batch past the claim lease.
+// the attempt. A timed-out POST reaches the mark with a dead context, so attempt_count would never
+// advance and the row would be re-POSTed every lease interval; and the attempt's cancellation is
+// the shutdown signal, so a delivered event must not be resent because the process was stopping.
+// markWriteTimeout bounds the write so a hung store cannot stall the batch past the claim lease.
 func (w *Worker) mark(ctx context.Context, write func(context.Context) error) error {
 	markCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), markWriteTimeout)
 	defer cancel()
@@ -597,10 +579,9 @@ func (w *Worker) mark(ctx context.Context, write func(context.Context) error) er
 // markTerminal records a no-retry outcome for a delivery, clearing its schedule so it drops out of
 // the pending list.
 //
-// It must NOT silently discard the store write error: the row still carries its claim lease, so a
-// dropped failure means the same request is re-POSTed every lease interval with no signal. The
-// failure goes on the mark_error counter so an alert sees it, and the terminal `outcome` counter
-// advances only when the mark persisted, so one call never counts both.
+// A store write error must NOT be discarded: the row still carries its lease, so the same request
+// would be re-POSTed every lease interval with no signal. It goes on the mark_error counter, and
+// the terminal `outcome` counter advances only when the mark persisted, so one call never counts both.
 func (w *Worker) markTerminal(ctx context.Context, d platform.WebhookDelivery, msg, outcome string) {
 	if err := w.mark(ctx, func(markCtx context.Context) error {
 		return w.store.MarkAttemptFailed(markCtx, d.ID, msg, 0, time.Time{})

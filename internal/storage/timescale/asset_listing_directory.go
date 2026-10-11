@@ -12,30 +12,26 @@ import (
 	"time"
 )
 
-// asset_listing_directory: the cached Stellar slice of an independent price-aggregation platform's
-// address map, written by `stellarindex-ops listing-sync`.
+// asset_listing_directory: the cached Stellar slice of an independent price platform's address map,
+// written by `stellarindex-ops listing-sync`.
 //
-// A ROW is a CORROBORATION that a second party reached the same (address -> instrument) pairing;
-// it carries no proof of control. A MISSING ROW means "not listed", nothing else. There are no scam
-// flags here: this surface only ADDS corroboration, never withholds, demotes or accuses
-// ([DirectoryScamFlagTags] is where negative verdicts live).
+// A ROW corroborates that a second party reached the same (address -> instrument) pairing; it is
+// no proof of control. A MISSING ROW means only "not listed". This surface only ADDS
+// corroboration; negative verdicts live in [DirectoryScamFlagTags].
 //
-// TWO CLOCKS, TWO BOUNDS: RECOGNITION ages on `synced_at` (our clock, [listingRecognitionMaxAge]);
-// the PRICE ages on `priced_at` (the platform's clock, [listingPriceMaxAge]). Both bounds are
-// spliced into the reader's SQL, as with [assetPriceSnapshotMaxAge], so a new caller cannot forget.
+// TWO CLOCKS, TWO BOUNDS: RECOGNITION ages on `synced_at` (ours, [listingRecognitionMaxAge]); the
+// PRICE ages on `priced_at` (the platform's, [listingPriceMaxAge]). Both are spliced into the
+// reader's SQL so a new caller cannot forget them.
 
 // ListingEntry is one row of the independent listing directory.
 type ListingEntry struct {
-	// Address is the Stellar address the platform published, in either
-	// network form: a Soroban contract C-strkey, or a classic
-	// `CODE-GISSUER` pair. The table's CHECK admits exactly those two.
+	// Address is the published Stellar address: a Soroban C-strkey or a classic `CODE-GISSUER`
+	// pair, the only two forms the table CHECK admits.
 	Address string
-	// ListingID is the platform's opaque coin slug ("stellar",
-	// "usd-coin"). Provenance and the price re-fetch key; never an
-	// identity this index resolves an asset by.
+	// ListingID is the platform's opaque coin slug: provenance and the price re-fetch key, never
+	// an identity this index resolves an asset by.
 	ListingID string
-	// Symbol is the platform's display ticker, lowercase as published.
-	// Not an asset code, not unique, never a resolution key.
+	// Symbol is the platform's display ticker; not an asset code, not unique, never a resolution key.
 	Symbol string
 	// PriceUSD is the platform's USD price as the DECIMAL STRING the upstream printed, carried
 	// unrounded into a NUMERIC column (ADR-0003); never a float64.
@@ -46,8 +42,7 @@ type ListingEntry struct {
 	// PricedAt is the PLATFORM's own publication time for that price. Zero exactly when PriceUSD
 	// is empty; a table CHECK enforces that the two travel together.
 	PricedAt time.Time
-	// Source names the aggregation platform the row came from. Upserts
-	// and the prune are both scoped by it.
+	// Source names the platform the row came from; upserts and the prune are scoped by it.
 	Source string
 }
 
@@ -60,24 +55,21 @@ type ListingEntry struct {
 //	Entries = Contracts + Classic   (the table CHECK makes the two forms exhaustive)
 //	Priced <= Contracts
 type ListingDirectoryCensus struct {
-	// Entries counts fresh rows of every address form — the recognised
-	// population, before the contract/classic split.
+	// Entries counts fresh rows of every address form, before the contract/classic split.
 	Entries int
 	// Contracts counts fresh rows whose address is a C-strkey.
 	Contracts int
 	// Classic counts fresh rows whose address is a `CODE-GISSUER` pair.
 	Classic int
-	// Stale counts rows PRESENT in the cache but past [listingRecognitionMaxAge], the fail-closed
-	// shrink made visible. It is the only read-side evidence that the hourly sync has stopped:
-	// the recognised set just gets smaller while every read succeeds. Stale rising toward
-	// Entries + Stale is a dead sync, not a delisting.
+	// Stale counts rows present but past [listingRecognitionMaxAge], the fail-closed shrink made
+	// visible. It is the only read-side evidence of a stopped hourly sync, since reads still
+	// succeed; Stale rising toward Entries + Stale is a dead sync, not a delisting.
 	Stale int
-	// Priced counts fresh CONTRACT rows whose price is itself inside [listingPriceMaxAge]. A fresh
-	// row with a frozen price counts in Contracts and not here, which is why the clocks are split.
+	// Priced counts fresh CONTRACT rows whose price is inside [listingPriceMaxAge]. A fresh row
+	// with a frozen price counts in Contracts and not here, which is why the clocks are split.
 	Priced int
-	// PricedClassic is the same count over the CLASSIC rows. [Store.ListingDirectoryByAddress]
-	// serves both forms, so comparing its map size against Priced alone would compare against only
-	// the contract half; it stays separate so (Priced <= Contracts) keeps its meaning.
+	// PricedClassic is the same count over CLASSIC rows, kept apart so (Priced <= Contracts) holds
+	// while [Store.ListingDirectoryByAddress], which serves both forms, has a count to compare.
 	PricedClassic int
 }
 
@@ -97,40 +89,34 @@ func (c ListingDirectoryCensus) Check() string {
 }
 
 // listingRecognitionMaxAge is how long a cached row may be reused as RECOGNITION of an address,
-// measured on `synced_at` (our sync clock). It is spliced into every read so the bound lives in
-// SQL, not convention.
+// measured on `synced_at`. It is spliced into every read so the bound lives in SQL.
 //
-// 48 hours: mappings change at human cadence, so a too-TIGHT bound is the real cost (a 2-hour bound
-// on an hourly sync flaps the admitted set on one rate-limited pass). 48h means 48 consecutive
-// missed passes, a DEAD sync, while a CORRECTION still shows within two days. A dead sync shows as
-// [ListingDirectoryCensus.Stale].
+// 48 hours: mappings change at human cadence, so a too-TIGHT bound is the real cost (2 hours on an
+// hourly sync flaps the admitted set on one rate-limited pass). 48h means 48 consecutive missed
+// passes, a DEAD sync, shown as [ListingDirectoryCensus.Stale].
 const listingRecognitionMaxAge = "48 hours"
 
-// listingPriceMaxAge is how long the PLATFORM's published price may be reused, measured on
-// `priced_at` (the platform's clock), NOT `synced_at` (ours).
+// listingPriceMaxAge is how long the PLATFORM's price may be reused, measured on `priced_at` (its
+// clock), NOT `synced_at`: a frozen price is re-copied with a new `synced_at` every hour, so that
+// bound would launder it as fresh. A MISSING `priced_at` is REJECTED as unverifiable.
 //
-// A recent sync proves the FETCH is healthy, not that the price is fresh: a frozen price is
-// re-copied with a new `synced_at` every hour, so a `synced_at` bound would launder it as fresh.
-// A MISSING `priced_at` is REJECTED because freshness is then unverifiable.
-//
-// 24 hours because this price is corroboration, not a trading input; tighter would blank the
-// price on most (illiquid) listings.
+// 24 hours because this price is corroboration, not a trading input; tighter would blank most
+// (illiquid) listings.
 const listingPriceMaxAge = "24 hours"
 
 // ListingPriceMaxFutureSkew is how far AHEAD of our clock a `priced_at` may sit and still count.
-// Without a ceiling a future timestamp voids the 24-hour floor. It only absorbs NTP clock skew;
-// the ingest sync rejects past it too, and [listingPriceMaxFutureSkew] is its SQL spelling.
+// Without a ceiling a future timestamp voids the 24-hour floor. [listingPriceMaxFutureSkew] is
+// its SQL spelling.
 const ListingPriceMaxFutureSkew = 5 * time.Minute
 
 const listingPriceMaxFutureSkew = "5 minutes"
 
-// listingIsContractSQL and listingIsClassicSQL split the cached set by address form; they are the
-// exact twins of the table CHECK, which is what lets the census treat the two as exhaustive.
+// listingIsContractSQL and listingIsClassicSQL split the cached set by address form; they twin the
+// table CHECK, so the census can treat the two as exhaustive.
 //
-// They are REGEXES, not `LIKE 'C%'`: a classic asset code may itself begin with C (`CETES-G...`),
-// and a LIKE would put those in the contract arm while the census still balanced. The classic code
-// class is `[A-Za-z0-9]` because asset codes are case-SENSITIVE (MXNe, sUSD), matching
-// asset_volume_character_rollup.go.
+// They are REGEXES, not `LIKE 'C%'`: a classic code may begin with C (`CETES-G...`), and a LIKE
+// would put it in the contract arm while the census still balanced. Classic codes are
+// case-SENSITIVE (MXNe, sUSD), hence `[A-Za-z0-9]`.
 const (
 	listingIsContractSQL = `address ~ '^C[A-Z2-7]{55}$'`
 	listingIsClassicSQL  = `address ~ '^[A-Za-z0-9]{1,12}-G[A-Z2-7]{55}$'`
@@ -140,9 +126,9 @@ const (
 // read use it, so they cannot disagree about who qualified.
 const listingRecognisedSQL = `synced_at > now() - INTERVAL '` + listingRecognitionMaxAge + `'`
 
-// listingPriceFreshSQL is the price bound as a predicate on the platform's clock. The `IS NOT NULL`
-// arm explicitly rejects a missing publication time rather than leaving it to NULL semantics, and
-// the ceiling arm is what makes the floor a bound: see [ListingPriceMaxFutureSkew].
+// listingPriceFreshSQL is the price bound as a predicate on the platform's clock. `IS NOT NULL`
+// rejects a missing publication time explicitly, and the ceiling arm makes the floor a bound (see
+// [ListingPriceMaxFutureSkew]).
 const listingPriceFreshSQL = `price_usd IS NOT NULL
 		   AND priced_at IS NOT NULL
 		   AND priced_at > now() - INTERVAL '` + listingPriceMaxAge + `'
@@ -155,24 +141,21 @@ const listingUpsertChunk = 500
 // ReplaceListingDirectory upserts the full entry set for one source and prunes that source's rows
 // the upstream no longer carries.
 //
-// One transaction, as in [ReplaceDirectory]: now() is transaction-stable, so every row lands with an
-// identical `synced_at` and the prune is exactly "same source, older synced_at". A partial failure
-// rolls back, so the table never holds a half-applied snapshot.
+// One transaction, as in [ReplaceDirectory]: now() is transaction-stable, so every row shares a
+// `synced_at` and the prune is exactly "same source, older synced_at". A failure rolls back whole.
 func (s *Store) ReplaceListingDirectory(
 	ctx context.Context, entries []ListingEntry, source string,
 ) (upserted, pruned int64, err error) {
 	if source == "" {
 		return 0, 0, errors.New("listing directory: source must be non-empty")
 	}
-	// An empty set means the fetch or parse broke, not that every Stellar asset was delisted at
-	// once. Proceeding would prune the whole source and report a successful sync. An operator
-	// emptying a source on purpose can DELETE directly. Same refusal as [ReplaceDirectory].
+	// An empty set means the fetch or parse broke, not a mass delisting; proceeding would prune the
+	// whole source and report success. Same refusal as [ReplaceDirectory].
 	if len(entries) == 0 {
 		return 0, 0, errors.New("listing directory: refusing to sync an empty entry set (would prune the whole source)")
 	}
-	// Two upstream coin ids can name one address. Equal addresses in one upsert chunk make Postgres
-	// reject the WHOLE statement ("cannot affect row a second time") and freeze the sync, so
-	// collapse last-wins before chunking, as [dedupDirectoryEntriesByAddress] does.
+	// Two coin ids can name one address, and equal addresses in one upsert chunk make Postgres
+	// reject the WHOLE statement ("cannot affect row a second time"), so collapse last-wins first.
 	entries = dedupListingEntriesByAddress(entries)
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -213,9 +196,8 @@ func (s *Store) ReplaceListingDirectory(
 	return upserted, pruned, nil
 }
 
-// dedupListingEntriesByAddress collapses entries sharing an Address, last wins, preserving survivor
-// order. One upsert chunk may hold each conflict key at most once, so this keeps a duplicate-address
-// upstream from aborting [ReplaceListingDirectory]'s transaction.
+// dedupListingEntriesByAddress collapses entries sharing an Address, last wins, keeping survivor
+// order. An upsert chunk may hold each conflict key once, or the transaction aborts.
 func dedupListingEntriesByAddress(entries []ListingEntry) []ListingEntry {
 	idx := make(map[string]int, len(entries))
 	out := make([]ListingEntry, 0, len(entries))
@@ -230,13 +212,12 @@ func dedupListingEntriesByAddress(entries []ListingEntry) []ListingEntry {
 	return out
 }
 
-// buildListingUpsert renders one multi-row upsert for a chunk: 5 positional params per row
-// (address, listing_id, symbol, price_usd, priced_at) plus one shared source param at
-// len(chunk)*5+1. synced_at is the transaction-stable now() that [ReplaceListingDirectory]'s prune
-// relies on.
+// buildListingUpsert renders one multi-row upsert: 5 params per row (address, listing_id, symbol,
+// price_usd, priced_at) plus one shared source param at len(chunk)*5+1. synced_at is the
+// transaction-stable now() the prune relies on.
 //
 // The price and time placeholders carry EXPLICIT `::numeric` / `::timestamptz` casts, as untyped
-// binds fail type inference; the price arrives as a decimal STRING parsed by Postgres, never a float.
+// binds fail type inference; the price is a decimal STRING parsed by Postgres, never a float.
 func buildListingUpsert(chunk []ListingEntry, source string) (string, []any) {
 	var (
 		sb   strings.Builder
@@ -280,9 +261,8 @@ func buildListingUpsert(chunk []ListingEntry, source string) (string, []any) {
 
 // listingDirectoryContractsSQL reads the recognised CONTRACT rows.
 //
-// The price columns go through a CASE on [listingPriceFreshSQL], not a WHERE: past the price bound
-// the row is STILL RECOGNISED and returned unpriced; a WHERE would collapse two independent facts.
-// `price_usd::text` returns the stored NUMERIC digits verbatim; nothing converts to a float.
+// The price columns use a CASE on [listingPriceFreshSQL], not a WHERE: past the price bound the
+// row is STILL RECOGNISED, just unpriced. `price_usd::text` returns the NUMERIC digits verbatim.
 const listingDirectoryContractsSQL = `
 		SELECT address, listing_id, symbol,
 		       CASE WHEN ` + listingPriceFreshSQL + `
@@ -297,8 +277,8 @@ const listingDirectoryContractsSQL = `
 
 // listingDirectoryCensusSQL counts every bucket in one pass.
 //
-// One statement with FILTER aggregates, as in [directoryRWACensus], so the buckets come from ONE
-// snapshot; separate statements can straddle a sync or the moving `now()` and fail to reconcile.
+// One statement with FILTER aggregates so the buckets share ONE snapshot; separate statements can
+// straddle a sync or the moving `now()` and fail to reconcile.
 const listingDirectoryCensusSQL = `
 		SELECT
 		  count(*) FILTER (WHERE ` + listingRecognisedSQL + `)              AS entries,
@@ -319,13 +299,13 @@ const listingDirectoryCensusSQL = `
 // plus the census of the whole cache.
 //
 //   - Only rows inside [listingRecognitionMaxAge]; the bound is in the SQL.
-//   - Only C-strkey addresses. Classic rows are cached and counted ([ListingDirectoryCensus.Classic])
-//     but not returned; the count shows how much of the cache this read is NOT looking at.
-//   - PriceUSD / PricedAt are filled only inside [listingPriceMaxAge]; past it the entry is still
-//     recognised, with an empty price and zero time.
+//   - Only C-strkey addresses; classic rows are counted ([ListingDirectoryCensus.Classic]) to show
+//     how much of the cache this read is NOT looking at.
+//   - PriceUSD / PricedAt are filled only inside [listingPriceMaxAge]; past it the entry stays
+//     recognised with an empty price and zero time.
 //
-// There is no scan cap: the set is a few dozen listed assets, and
-// [ListingDirectoryCensus.Contracts] is what a caller compares len(entries) against.
+// There is no scan cap: the set is a few dozen assets, and Contracts is what len(entries) is
+// compared against.
 func (s *Store) ListingDirectoryContracts(
 	ctx context.Context,
 ) ([]ListingEntry, ListingDirectoryCensus, error) {
@@ -363,8 +343,7 @@ func (s *Store) ListingDirectoryContracts(
 	return out, census, nil
 }
 
-// listingDirectoryCensus counts the whole cached set, bucketed the way
-// the reader narrows it.
+// listingDirectoryCensus counts the whole cached set, bucketed as the reader narrows it.
 func (s *Store) listingDirectoryCensus(ctx context.Context) (ListingDirectoryCensus, error) {
 	var c ListingDirectoryCensus
 	err := s.db.QueryRowContext(ctx, listingDirectoryCensusSQL).Scan(
@@ -376,12 +355,9 @@ func (s *Store) listingDirectoryCensus(ctx context.Context) (ListingDirectoryCen
 	return c, nil
 }
 
-// listingDirectoryByAddressSQL reads EVERY recognised row, of either address form, for the surface
-// that binds a verified-catalogue asset to a listing price.
-//
-// It is [listingDirectoryContractsSQL] without the address-form predicate: a classic asset can be
-// listed under EITHER its `CODE-GISSUER` id or the C-strkey of its SAC, and a reader seeing one
-// form misses whichever the platform published. The same two staleness bounds apply.
+// listingDirectoryByAddressSQL is [listingDirectoryContractsSQL] without the address-form
+// predicate: a classic asset can be listed under EITHER its `CODE-GISSUER` id or its SAC C-strkey,
+// and a reader seeing one form misses whichever the platform published. Same two staleness bounds.
 const listingDirectoryByAddressSQL = `
 		SELECT address, listing_id, symbol,
 		       CASE WHEN ` + listingPriceFreshSQL + `
@@ -398,10 +374,8 @@ const listingDirectoryByAddressSQL = `
 //
 // The map key is the ADDRESS AS PUBLISHED, with no code, symbol or case folding: impersonating
 // issuers wear PYUSD, USDT, USDC and even XLM, so a lookup by code would hand a real instrument's
-// price to whoever minted the ticker. A strkey, or a code bound to its issuer, cannot be collided.
-//
-// Same properties as [ListingDirectoryContracts]: the recognition bound is in the SQL, a row past
-// the PRICE bound comes back recognised but unpriced, and there is no scan cap.
+// price to whoever minted the ticker. A strkey, or a code bound to its issuer, cannot collide.
+// Bounds and scan-cap behaviour match [ListingDirectoryContracts].
 func (s *Store) ListingDirectoryByAddress(
 	ctx context.Context,
 ) (map[string]ListingEntry, ListingDirectoryCensus, error) {

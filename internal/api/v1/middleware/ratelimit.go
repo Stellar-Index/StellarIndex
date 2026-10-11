@@ -18,8 +18,8 @@ import (
 
 // throttleTakeTimeout bounds the throttle's own backend round-trip.
 //
-// The take does not inherit the request's cancellation (see [throttleContext]), so without its own
-// bound a wedged Redis would pin the request goroutine. 5 s matches [postResponseWriteTimeout].
+// The take ignores request cancellation (see [throttleContext]), so a wedged Redis would otherwise
+// pin the request goroutine.
 const throttleTakeTimeout = 5 * time.Second
 
 // throttleContext derives the context for an abuse-prevention backend call (rate-limit take,
@@ -27,11 +27,9 @@ const throttleTakeTimeout = 5 * time.Second
 // bounded by [throttleTakeTimeout] or the request's remaining deadline, whichever is sooner.
 //
 // A client abort must not reach the limiter as an error: the bucket cannot tell a cancelled call
-// from a Redis outage (every take error arms its dwell clock), so a client resetting connections
-// would make the middleware fail CLOSED with 503 for EVERY caller sharing that bucket. Detaching
-// also means an aborted take cannot fall OPEN and leave its token unspent. The request's
-// DEADLINE is re-applied so the pre-handler stack cannot outrun [RequestTimeout]; it is
-// server-set, so a client cannot use it to arm the dwell clock.
+// from a Redis outage (every take error arms its dwell clock), so connection resets would fail
+// CLOSED with 503 for EVERY caller sharing that bucket. The request's server-set DEADLINE is
+// re-applied so the pre-handler stack cannot outrun [RequestTimeout].
 func throttleContext(r *http.Request) (context.Context, context.CancelFunc) {
 	deadline := time.Now().Add(throttleTakeTimeout)
 	if reqDeadline, ok := r.Context().Deadline(); ok && reqDeadline.Before(deadline) {
@@ -44,32 +42,21 @@ func throttleContext(r *http.Request) (context.Context, context.CancelFunc) {
 // cannot bloat the Redis key space or the allocation inside Bucket.Take.
 const MaxRateLimitKeyLen = 256
 
-// RateLimit returns middleware that enforces the given Bucket on
-// every request whose KeyFn produces a non-empty key.
+// RateLimit returns middleware enforcing bucket on every request whose keyFn yields a non-empty
+// key, setting X-RateLimit-Limit/Remaining and, on 429, Retry-After plus a problem+json body.
 //
-// Headers added on every response:
+// Redis failures follow the bucket's dwell-time policy: inside [ratelimit.DefaultDwellTime] fail
+// OPEN; [ratelimit.ErrThrottleUnavailable] past it fails CLOSED with 503. Do not collapse the two.
 //
-//	X-RateLimit-Limit:     <bucket max>
-//	X-RateLimit-Remaining: <after this request>
-//
-// On 429, additionally Retry-After: <seconds until window resets> plus an
-// RFC 9457 problem+json body.
-//
-// Redis failures follow the bucket's dwell-time policy (internal/ratelimit,
-// "Failure mode"): inside the dwell-time ([ratelimit.DefaultDwellTime])
-// fail OPEN (debug log); [ratelimit.ErrThrottleUnavailable] past it fails
-// CLOSED with 503 + Retry-After. Do not collapse the two branches.
-//
-// KeyFn decides the key (per-IP if nil); "" means not limited. Skip bypasses infra endpoints.
-// Oversize keys are truncated to [MaxRateLimitKeyLen] and still bucketed.
+// keyFn defaults to per-IP and "" means not limited; skip bypasses infra endpoints. Oversize keys
+// are truncated to [MaxRateLimitKeyLen] and still bucketed.
 func RateLimit(bucket *ratelimit.Bucket, keyFn func(*http.Request) string, skip func(*http.Request) bool, logger *slog.Logger) Middleware {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	if keyFn == nil {
-		// Default to the forge-resistant, /64-masked identity the production anon path uses:
-		// keying on a full IPv6 /128 lets a caller rotate addresses within one delegated /64 to
-		// mint unlimited buckets and bypass the per-IP limit.
+		// /64-masked like the production anon path: a full IPv6 /128 key lets a caller rotate
+		// addresses within one delegated /64 to mint unlimited buckets.
 		keyFn = func(r *http.Request) string { return remoteIPPrefixFor(r) }
 	}
 	return func(next http.Handler) http.Handler {
@@ -126,28 +113,22 @@ func (c *rateLimitCharge) effectiveMax() int {
 	return c.bucket.Max()
 }
 
-// spend charges tokens against the bucket and settles the outcome onto
-// w. It returns true when the request may proceed, and false once it has written a 429 or a
-// 503 (throttle unreachable past its dwell time). Shared by the base charge and
-// [ChargeRateLimit] so the failure policy and headers cannot drift.
+// spend charges tokens and settles the outcome onto w: true to proceed, false once it has written
+// a 429 or 503. Shared by the base charge and [ChargeRateLimit] so policy and headers cannot drift.
 func (c *rateLimitCharge) spend(w http.ResponseWriter, r *http.Request, tokens int) bool {
 	takeCtx, takeCancel := throttleContext(r)
 	res, err := c.bucket.Charge(takeCtx, c.key, tokens, c.override)
 	takeCancel()
 	if err != nil {
 		if errors.Is(err, ratelimit.ErrThrottleUnavailable) {
-			// Dwell-time exceeded: sustained Redis outage —
-			// fail-CLOSED with 503 + Retry-After rather than
-			// disabling the rate limiter indefinitely.
+			// Sustained Redis outage: fail CLOSED rather than disable the limiter indefinitely.
 			c.logger.Warn("ratelimit unavailable — failing closed (sustained Redis errors)",
 				"err", err, "key", c.key, "request_id", RequestIDFrom(r))
 			obs.RateLimitFailClosedTotal.WithLabelValues(obs.RateLimiterAPI).Inc()
 			writeThrottleUnavailableProblem(w, r)
 			return false
 		}
-		// Log at debug so a Redis outage doesn't flood the error
-		// log — the metric below is the alertable signal, the log
-		// is for post-mortem detail.
+		// Debug level so an outage does not flood the error log; the metric is the alert signal.
 		c.logger.Debug("ratelimit redis error — failing open",
 			"err", err, "key", c.key, "request_id", RequestIDFrom(r))
 		obs.RateLimitFailOpenTotal.Inc()
@@ -170,20 +151,17 @@ func (c *rateLimitCharge) spend(w http.ResponseWriter, r *http.Request, tokens i
 	return true
 }
 
-// ChargeRateLimit re-prices the in-flight request at cost tokens IN TOTAL
-// and charges the difference over what it has already paid. It returns true
-// when the handler may go on, and false once it has written the 429 (or
-// fail-closed 503) itself; the handler must then return without writing.
+// ChargeRateLimit re-prices the in-flight request at cost tokens IN TOTAL and charges the
+// difference over what it has paid. False means it already wrote the 429 or 503; the handler must
+// return without writing.
 //
-// The limiter charges one token before dispatch because that is all it can know. Where the
-// client chooses the work (a 1000-id POST /v1/price/batch) one token would multiply the budget
-// a thousandfold, so such a handler calls this AFTER validating and BEFORE doing the work; the
-// middleware cannot, as pricing the POST means buffering up to 1 MiB for an unadmitted caller.
+// The middleware charges one token before dispatch because that is all it can know. Where the
+// client chooses the work (a 1000-id POST /v1/price/batch) the handler calls this AFTER validating
+// and BEFORE the work; the middleware cannot, as pricing the POST means buffering up to 1 MiB for
+// an unadmitted caller.
 //
-// The total is capped at the subject's ceiling, so an over-ceiling request spends the whole
-// window instead of being refused in every window ([ratelimit.Bucket.Charge]). A request that
-// never crossed a rate-limit middleware proceeds; a cost at or below what was paid charges
-// nothing (never refunds).
+// The total is capped at the subject's ceiling so an over-ceiling request spends the whole window
+// instead of being refused every window. A cost at or below what was paid charges nothing (no refund).
 func ChargeRateLimit(w http.ResponseWriter, r *http.Request, cost int) bool {
 	c, ok := r.Context().Value(rateLimitChargeKey{}).(*rateLimitCharge)
 	if !ok || c == nil {
@@ -202,14 +180,11 @@ func ChargeRateLimit(w http.ResponseWriter, r *http.Request, cost int) bool {
 	return c.spend(w, r, extra) //nolint:contextcheck // intentional detach inside spend — see throttleContext
 }
 
-// nextWindowResetUnix returns the Unix-epoch seconds of when the
-// fixed-window bucket's CURRENT window ends, so clients can back off before a 429. It must match
-// the bucket's key derivation: window ends at ((unix()/window) + 1) * window.
+// nextWindowResetUnix returns when the fixed-window bucket's CURRENT window ends, so clients can
+// back off before a 429. It must match the bucket's key derivation: ((unix()/window) + 1) * window.
 func nextWindowResetUnix(window time.Duration) int64 {
 	if window < time.Second {
-		// Bucket constructor rejects this; defensive zero stops the
-		// formula's divide-by-zero in case a future bucket variant
-		// permits sub-second windows without rejecting at New().
+		// The constructor rejects this; guard the divide-by-zero should a variant allow it.
 		return time.Now().Unix()
 	}
 	windowSecs := int64(window.Seconds())
@@ -217,13 +192,10 @@ func nextWindowResetUnix(window time.Duration) int64 {
 	return ((now / windowSecs) + 1) * windowSecs
 }
 
-// RateLimitBySubject enforces separate anonymous (anonBucket) and authenticated (authBucket)
-// buckets. Authenticated callers are keyed on the owner account ([authenticatedRateLimitKey]);
-// anonymous callers, with or without a Subject, on the per-IP bucket.
-//
-// An authenticated subject with `Subject.RateLimitPerMin > 0` replaces authBucket's default max
-// as the ceiling for THIS request, while the counter stays the account's. Nil buckets disable
-// rate limiting for that class.
+// RateLimitBySubject enforces separate anonymous and authenticated buckets. Authenticated callers
+// key on the owner account ([authenticatedRateLimitKey]); anonymous ones on the per-IP bucket.
+// A Subject.RateLimitPerMin > 0 replaces authBucket's max as the ceiling for THIS request while
+// the counter stays the account's. Nil buckets disable limiting for that class.
 func RateLimitBySubject(anonBucket, authBucket *ratelimit.Bucket, skip func(*http.Request) bool, logger *slog.Logger) Middleware {
 	if logger == nil {
 		logger = slog.Default()
@@ -254,13 +226,10 @@ func RateLimitBySubject(anonBucket, authBucket *ratelimit.Bucket, skip func(*htt
 }
 
 // bucketKeyAndOverrideForRequest picks the bucket, Redis key and any per-subject limit override.
-// The override is non-zero ONLY for an authenticated subject whose APIKey carries an explicit
-// `RateLimitPerMin`.
+// The override is non-zero ONLY for an authenticated subject whose APIKey sets RateLimitPerMin.
 //
 // Anonymous keying is the resolved client IP ALONE: the anonymous Subject.Identifier hashes in
-// the client-controlled User-Agent, so keying on it would let a caller mint a bucket per request
-// and bypass the per-IP floor. anonymousRateLimitKey(r) resolves the IP from the request itself,
-// independent of whether Logger has populated the context value yet.
+// the client-controlled User-Agent, so keying on it would let a caller mint a bucket per request.
 func bucketKeyAndOverrideForRequest(r *http.Request, anonBucket, authBucket *ratelimit.Bucket) (*ratelimit.Bucket, string, int) {
 	if subject, ok := auth.SubjectFrom(r.Context()); ok && subject.Identifier != "" {
 		if subject.Tier != auth.TierAnonymous && subject.Tier != "" {
@@ -272,8 +241,7 @@ func bucketKeyAndOverrideForRequest(r *http.Request, anonBucket, authBucket *rat
 		if anonBucket == nil {
 			return nil, "", 0
 		}
-		// Anonymous: key on resolved IP ALONE, not subject.Identifier
-		// (which folds in the User-Agent — a client-rotatable value).
+		// IP alone: subject.Identifier folds in the client-rotatable User-Agent.
 		return anonBucket, anonymousRateLimitKey(r), 0
 	}
 	if anonBucket == nil {
@@ -292,10 +260,9 @@ func RateLimitCallerKey(r *http.Request) string {
 	return anonymousRateLimitKey(r)
 }
 
-// anonymousRateLimitKey derives the per-IP throttle key for an
-// anonymous caller. IP-ONLY by design (see [bucketKeyAndOverrideForRequest]). It uses
-// [remoteIPPrefixFor] rather than [RemoteIPFrom] so it works before Logger has run. It falls
-// back to "anon" only when no IP resolves; one shared bucket is the safe choice for a throttle.
+// anonymousRateLimitKey derives the IP-ONLY throttle key for an anonymous caller. It uses
+// [remoteIPPrefixFor] so it works before Logger has run, and falls back to one shared "anon"
+// bucket when no IP resolves, the safe choice for a throttle.
 func anonymousRateLimitKey(r *http.Request) string {
 	ip := remoteIPPrefixFor(r)
 	if ip == "" {
@@ -304,10 +271,9 @@ func anonymousRateLimitKey(r *http.Request) string {
 	return "anon:" + ip
 }
 
-// authenticatedRateLimitKey counts every credential an account holds against ONE per-minute
-// bucket, via [UsageKeyForSubject], the derivation the monthly quota also uses so the two budgets
-// cannot drift onto different identities. Keyed per credential, the ceiling would multiply by the
-// number of keys held.
+// authenticatedRateLimitKey counts every credential an account holds against ONE bucket via
+// [UsageKeyForSubject], which the monthly quota shares so the budgets cannot drift onto different
+// identities. Keyed per credential, the ceiling would multiply by the number of keys held.
 func authenticatedRateLimitKey(subject auth.Subject) string {
 	return "auth:" + UsageKeyForSubject(subject)
 }
@@ -324,9 +290,7 @@ func SkipHealthAndMetrics(r *http.Request) bool {
 	return strings.HasPrefix(r.URL.Path, "/errors/")
 }
 
-// rlProblem is a minimised RFC 9457 body duplicated here so the
-// middleware package doesn't import internal/api/v1 (which would
-// create a cycle — v1 imports middleware).
+// rlProblem is a minimal RFC 9457 body duplicated here because v1 imports middleware (cycle).
 type rlProblem struct {
 	Type     string `json:"type"`
 	Title    string `json:"title"`
@@ -335,9 +299,8 @@ type rlProblem struct {
 	Instance string `json:"instance"`
 }
 
-// writeThrottleUnavailableProblem is the 503 + Retry-After response
-// for the dwell-time fail-closed branch. It uses a different type URL and status than
-// writeRateLimitProblem so logs and clients can tell "rate-limited" from "limiter offline".
+// writeThrottleUnavailableProblem is the 503 for the fail-closed branch, with a type URL and status
+// distinct from writeRateLimitProblem so "rate-limited" differs from "limiter offline".
 // Retry-After is set BEFORE WriteHeader because net/http drops later headers.
 func writeThrottleUnavailableProblem(w http.ResponseWriter, r *http.Request) {
 	p := rlProblem{
@@ -349,9 +312,7 @@ func writeThrottleUnavailableProblem(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.Header().Set("Cache-Control", "no-store")
-	// 30s matches ratelimit.DefaultDwellTime; clients that obey
-	// Retry-After will naturally space retries far enough apart to
-	// ride out a typical Redis fail-over.
+	// 30s matches ratelimit.DefaultDwellTime, enough to ride out a typical Redis fail-over.
 	w.Header().Set("Retry-After", "30")
 	w.WriteHeader(http.StatusServiceUnavailable)
 	_ = json.NewEncoder(w).Encode(p)
@@ -366,10 +327,8 @@ func writeRateLimitProblem(w http.ResponseWriter, r *http.Request, retryAfter in
 		Instance: r.URL.RequestURI(),
 	}
 	w.Header().Set("Content-Type", "application/problem+json")
-	// Override the cache-control middleware's per-route directive:
-	// never cache a 429. A 429 says "this caller is over budget right
-	// now" — caching it would replay the denial to other anonymous
-	// clients on the same CDN key well past their own budget reset.
+	// Override the per-route cache directive: a cached 429 would replay the denial to other
+	// anonymous clients on the same CDN key past their own budget reset.
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusTooManyRequests)
 	_ = json.NewEncoder(w).Encode(p)

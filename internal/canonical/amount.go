@@ -11,17 +11,10 @@ import (
 // Amount is a precision-safe wrapper over *big.Int for every token quantity, reserve, price
 // numerator and supply value.
 //
-// i128 invariant (ADR-0003): values from a Soroban event to the API response keep full 128-bit
-// (or wider) precision. Never int64, never float64.
-//
-// The zero value is a valid zero Amount. Callers MUST NOT mutate the underlying *big.Int;
-// create a new Amount for any arithmetic result.
-//
-// JSON wire form is ALWAYS a decimal string: JSON numbers are IEEE 754 doubles and silently
-// lose precision above 2^53. See [Amount.MarshalJSON].
-//
-// [FromString] rejects inputs longer than [MaxAmountStringLen] digits so an untrusted
-// multi-MB decimal string cannot force an unbounded big.Int allocation.
+// Values keep full 128-bit (or wider) precision from Soroban event to API response; never int64 or
+// float64. The zero value is a valid zero Amount. Callers MUST NOT mutate the underlying *big.Int.
+// The JSON wire form is always a decimal string (see [Amount.MarshalJSON]). [FromString] caps input
+// at [MaxAmountStringLen] digits so an untrusted decimal string cannot force a huge allocation.
 type Amount struct {
 	// value is never nil after a successful construction. Helpers
 	// below guard against nil by constructing on demand.
@@ -38,11 +31,8 @@ type Amount struct {
 // absent from zero; callers that need that use *Amount.
 func (a Amount) Equal(b Amount) bool { return a.Cmp(b) == 0 }
 
-// NewAmount wraps any value that can be expressed as a *big.Int.
-//
-// For typical Soroban decoders, prefer [FromInt128Parts] /
-// [FromUInt128Parts] which handle the hi/lo split + two's-complement
-// sign correctly.
+// NewAmount wraps a *big.Int. Soroban decoders should prefer [FromInt128Parts] / [FromUInt128Parts],
+// which handle the hi/lo split and sign correctly.
 func NewAmount(v *big.Int) Amount {
 	if v == nil {
 		return Amount{value: new(big.Int)}
@@ -54,8 +44,8 @@ func NewAmount(v *big.Int) Amount {
 // FromInt128Parts reconstructs a signed 128-bit integer from its Soroban-XDR hi (signed) and
 // lo (unsigned) words.
 //
-// This is the reference path for any i128 from a Soroban event or contract read; the
-// regression fixtures in amount_test.go (including the ADR-0003 KALIEN case) guard it.
+// This is the reference path for any i128 from a Soroban event or contract read; the regression
+// fixtures in amount_test.go guard it.
 func FromInt128Parts(hi int64, lo uint64) Amount {
 	// big.Int arithmetic rather than bit-shifting keeps two's-complement sign propagation correct.
 	h := big.NewInt(hi)
@@ -88,15 +78,12 @@ func FromUInt256Parts(hiHi, hiLo, loHi, loLo uint64) Amount {
 }
 
 // MaxAmountStringLen caps the digits accepted by [FromString], [Amount.UnmarshalJSON] and
-// [Amount.Scan]. 512 is well past any real i128 (~39 digits) value but stops a multi-megabyte
-// decimal string from driving big.Int allocation. The cap lives here so every untrusted entry
-// point gets it.
+// [Amount.Scan]. 512 is far past any i128 (~39 digits) but stops a multi-megabyte string driving
+// big.Int allocation.
 const MaxAmountStringLen = 512
 
-// FromString parses a decimal string (no scientific notation, no
-// thousands separators). Empty string returns a zero Amount.
-// Rejects inputs longer than [MaxAmountStringLen] digits as a DoS
-// guard — far past any real i128 value.
+// FromString parses a decimal string (no scientific notation or separators). An empty string is a
+// zero Amount; inputs over [MaxAmountStringLen] digits are rejected as a DoS guard.
 func FromString(s string) (Amount, error) {
 	if s == "" {
 		return Amount{value: new(big.Int)}, nil
@@ -121,9 +108,7 @@ func (a Amount) BigInt() *big.Int {
 	return new(big.Int).Set(a.value)
 }
 
-// String returns the decimal representation. This is the
-// wire format: our JSON responses always serialise Amount as a
-// JSON string for i128 safety (see ADR-0003).
+// String returns the decimal representation, which is also the JSON wire format.
 func (a Amount) String() string {
 	if a.value == nil {
 		return "0"
@@ -152,10 +137,8 @@ func (a Amount) Cmp(b Amount) int {
 
 // ─── JSON ─────────────────────────────────────────────────────────
 
-// MarshalJSON serialises as a JSON string, never a JSON number.
-// JSON numbers are IEEE 754 doubles (53-bit precision); anything
-// larger than 2^53 would silently lose precision in the client
-// before ever being observed. ADR-0003.
+// MarshalJSON serialises as a JSON string, never a number: clients parse JSON numbers as IEEE 754
+// doubles and would silently lose precision above 2^53.
 func (a Amount) MarshalJSON() ([]byte, error) {
 	return json.Marshal(a.String())
 }
@@ -181,8 +164,7 @@ func (a *Amount) UnmarshalJSON(b []byte) error {
 		*a = v
 		return nil
 	}
-	// Fall back to json.Number (lossless for integer-valued
-	// numerics).
+	// json.Number is lossless for integer-valued numerics.
 	var n json.Number
 	if err := json.Unmarshal(b, &n); err != nil {
 		return fmt.Errorf("canonical: Amount must be a JSON string or number: %w", ErrInvalidAmount)
@@ -197,8 +179,7 @@ func (a *Amount) UnmarshalJSON(b []byte) error {
 
 // ─── database/sql ────────────────────────────────────────────────
 
-// Value implements driver.Valuer. Postgres NUMERIC columns accept
-// arbitrary-precision decimal strings; we hand them exactly that.
+// Value implements driver.Valuer, handing Postgres NUMERIC an exact decimal string.
 func (a Amount) Value() (driver.Value, error) {
 	return a.String(), nil
 }

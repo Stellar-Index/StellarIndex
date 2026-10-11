@@ -68,13 +68,11 @@ func UsageTracker(counter *usage.Counter, logger *slog.Logger) Middleware {
 				usageTrackerRecord(counter, logger, reqCtx, inner, rec, units, deadlineFired, panicked)
 			}}
 			// Deferred so a panicking handler still gets counted: Recoverer sits OUTSIDE this
-			// middleware, so straight-line code after next.ServeHTTP would never run. It re-panics for
-			// that Recoverer and classes the request 5xx explicitly (rec.status was never written).
+			// middleware. It re-panics for that Recoverer and classes the request 5xx explicitly.
 			//
 			// Registered BEFORE the streaming block so it runs AFTER that block's close(done)+<-exited
-			// (defers are LIFO). meterOpenStream must have fully returned, not merely been signalled,
-			// or it could see fired()==true and bill rec's default 200 as OK, double-billing a request
-			// this defer classes as 5xx.
+			// (defers are LIFO): meterOpenStream must have fully returned, or it could bill rec's
+			// default 200 as OK and double-bill a request this defer classes as 5xx.
 			defer func() {
 				p := recover()
 				once.fire(p != nil)
@@ -97,10 +95,8 @@ func UsageTracker(counter *usage.Counter, logger *slog.Logger) Middleware {
 						inner = inner.WithContext(streamCtx) //nolint:contextcheck // false positive: streamCtx is derived from inner's own request context
 						done := make(chan struct{})
 						exited := make(chan struct{})
-						// Wait for meterOpenStream to actually return, not just observe
-						// close(done): bounded by postResponseWriteTimeout, since the
-						// only way this blocks is a tick already in flight finishing
-						// its counter writes under that same timeout.
+						// Wait for meterOpenStream to return, not just observe close(done). Bounded by
+						// postResponseWriteTimeout: it only blocks on an in-flight tick's writes.
 						defer func() { close(done); <-exited }()
 						//nolint:gosec,contextcheck // G118/contextcheck: intentional detach, same rationale (and pattern) as usageTrackerRecord's context.Background() below — ticks must outlive a client-aborted request ctx, not inherit it
 						go meterOpenStream(counter, logger, id, family, subject.MonthlyQuota, endStream, rec, once, units, deadlineFired, done, exited)
@@ -126,29 +122,24 @@ func usageTrackerRecord(counter *usage.Counter, logger *slog.Logger, reqCtx cont
 		return
 	}
 	family := endpointFamily(inner)
-	// A panic never wrote rec.status, so reading it off the
-	// statusRecorder's 200 zero-value would misclass an internal
-	// error as billable "ok" traffic.
+	// A panic never wrote rec.status; its 200 default would misclass the error as billable "ok".
 	class := outcomeClass(rec.status)
 	if panicked {
 		class = usage.ClassServerError
 	}
 	billable := billableClass(class, deadlineFired.Load())
 	n := units.get()
-	// These counters MUST NOT inherit the request's cancellation: an aborted client or exhausted
-	// RequestTimeout would lose the usage row, the monthly-quota input. A wedged store therefore
-	// bounds only a pool worker, and only as hard as the store honours ctx (5 s).
+	// These counters MUST NOT inherit the request's cancellation: an abort or exhausted
+	// RequestTimeout would lose the usage row, the monthly-quota input.
 	//
-	// DELIBERATE: an ABORTED request consumes monthly quota (statusRecorder defaults to 200, so it
-	// is billable). It still cost the read and CPU, and not counting it would be a quota-evasion
-	// vector: abort before the body completes, go unmetered.
+	// DELIBERATE: an ABORTED request consumes quota (rec defaults to 200, so it is billable). It
+	// cost the read and CPU, and not counting it would let a caller abort early and go unmetered.
 	fn := func() { //nolint:contextcheck // intentional detach: post-response work outlives the request ctx
 		ctx, cancel := context.WithTimeout(context.Background(), postResponseWriteTimeout)
 		defer cancel()
 		if billable {
-			// Legacy total: billable traffic only (quota input).
-			// The counter is the alertable signal; a per-request log
-			// line would flood during an outage.
+			// Legacy total: billable traffic only. The drop counter is the alert signal; a
+			// per-request log line would flood during an outage.
 			if err := counter.IncrementBy(ctx, id, n); err != nil {
 				obs.UsageUnitsDroppedTotal.WithLabelValues(obs.UsageCounterBillable).Add(float64(n))
 				logger.Debug("usage: increment failed", "err", err, "subject", id)
@@ -180,9 +171,8 @@ func (o *usageRecordOnce) fire(panicked bool) {
 	}
 }
 
-// fired reports whether the once-record has already run — used by
-// [meterOpenStream] to gate periodic ticks on the stream having
-// actually committed a response.
+// fired reports whether the record has run; [meterOpenStream] gates ticks on the stream having
+// committed a response.
 func (o *usageRecordOnce) fired() bool {
 	return o.done.Load()
 }
@@ -212,9 +202,7 @@ func (m *streamOpenMeter) Flush() {
 	m.once.fire(false)
 }
 
-// usageUnits is one request's metered cost in request units. The
-// tracker opens it at one unit before dispatch; a handler whose product
-// output scales with a client-chosen parameter raises it through
+// usageUnits is one request's metered cost, opened at one unit before dispatch and raised through
 // [ChargeUsage]. Mutex-guarded for the same reason as rateLimitCharge.
 type usageUnits struct {
 	mu sync.Mutex
@@ -280,9 +268,8 @@ func meterOpenStream(counter *usage.Counter, logger *slog.Logger, id, family str
 	}
 }
 
-// meterTick runs one [meterOpenStream] tick's re-check-and-bill decision,
-// split out so the caller's loop stays simple. Returns false once the
-// stream has closed or been ended for quota, telling meterOpenStream to stop.
+// meterTick runs one tick's re-check-and-bill decision; false means the stream closed or was ended
+// for quota and meterOpenStream should stop.
 func meterTick(counter *usage.Counter, logger *slog.Logger, id, family string, quota int64, endStream context.CancelFunc, rec *statusRecorder, once *usageRecordOnce, units *usageUnits, deadlineFired *atomic.Bool, done <-chan struct{}) bool {
 	// Re-check done, non-blocking: a tick already buffered in ticker.C when done closed must not
 	// read rec after the request has finished with it.
@@ -335,9 +322,7 @@ func streamQuotaExhausted(ctx context.Context, counter *usage.Counter, logger *s
 	return used >= quota
 }
 
-// SetStreamMeterIntervalForTest overrides [streamMeterInterval] for the
-// life of a test, returning a restore func. Test-only: production never
-// changes the interval at runtime.
+// SetStreamMeterIntervalForTest overrides [streamMeterInterval] for a test and returns a restore func.
 func SetStreamMeterIntervalForTest(d time.Duration) (restore func()) {
 	orig := streamMeterInterval.Load()
 	streamMeterInterval.Store(int64(d))
@@ -348,8 +333,7 @@ func SetStreamMeterIntervalForTest(d time.Duration) (restore func()) {
 // Test-only: it pauses a tick at the once.fire/exited race instead of relying on scheduling.
 var streamTickHook atomic.Pointer[func()]
 
-// SetStreamTickHookForTest installs fn as [streamTickHook] for the life
-// of a test, returning a restore func. Test-only.
+// SetStreamTickHookForTest installs fn as [streamTickHook] for a test and returns a restore func.
 func SetStreamTickHookForTest(fn func()) (restore func()) {
 	streamTickHook.Store(&fn)
 	return func() { streamTickHook.Store(nil) }
@@ -361,13 +345,12 @@ func SetStreamTickHookForTest(fn func()) (restore func()) {
 //  2. KeyID: for credentials with no owner reference (legacy Redis records).
 //  3. "": anonymous; skip.
 //
-// Why the ACCOUNT, not the credential: the counter feeds [MonthlyQuota] and keys the per-minute
-// bucket ([authenticatedRateLimitKey]); each ceiling is a PLAN budget a customer may only LOWER.
-// Keying on KeyID would let them raise it by minting N keys (N counters) or rotating (fresh
-// KeyID, zero month-to-date).
+// Why the ACCOUNT, not the credential: the counter feeds [MonthlyQuota] and the per-minute bucket
+// ([authenticatedRateLimitKey]), each a PLAN budget a customer may only LOWER. Keying on KeyID
+// would let them raise it by minting N keys or rotating (fresh KeyID, zero month-to-date).
 //
-// The per-credential `Subject.MonthlyQuota` still sets the ceiling, so lowering ONE key's quota
-// cuts it off at that many ACCOUNT-wide requests: stricter, deliberately (it fails closed).
+// A per-credential Subject.MonthlyQuota still sets the ceiling, so lowering ONE key's quota cuts
+// it off at that many ACCOUNT-wide requests: stricter, deliberately (fails closed).
 //
 // Exported so every reader ([MonthlyQuota], /v1/account/usage) shares one implementation: a
 // drifted copy would key off something the writer never wrote and meter NOTHING.
@@ -384,16 +367,13 @@ func UsageKeyForSubject(s auth.Subject) string {
 	return ""
 }
 
-// resolvedRouteKey is the context key [ResolveRoute] stashes its
-// pre-dispatch pattern match under.
+// resolvedRouteKey is the context key for [ResolveRoute]'s pre-dispatch pattern match.
 type resolvedRouteKey struct{}
 
-// ResolveRoute stashes the mux-matched route pattern in the request context via a read-only
-// mux.Handler lookup (no dispatch). Wire it OUTSIDE every pre-dispatch gate (auth, key policy,
-// monthly quota, rate limit, usage tracker): a request a gate rejects never reaches the mux, so
+// ResolveRoute stashes the mux-matched route pattern via a read-only mux.Handler lookup. Wire it
+// OUTSIDE every pre-dispatch gate: a request a gate rejects never reaches the mux, so
 // [obs.CaptureRoute] never runs and it would bucket under "unmatched", hiding the per-endpoint
-// throttle pattern the DETAIL family exists to surface. [obs.CaptureRoute] stays authoritative
-// once the mux dispatches; this only fills the gap.
+// throttle pattern. CaptureRoute stays authoritative once the mux dispatches.
 func ResolveRoute(mux muxMatcher) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -405,8 +385,7 @@ func ResolveRoute(mux muxMatcher) Middleware {
 	}
 }
 
-// stripMethodPrefix strips the leading "METHOD " a Go 1.22+ mux
-// pattern carries (e.g. "GET /v1/assets/{id}") down to the path.
+// stripMethodPrefix drops the leading "METHOD " of a mux pattern ("GET /v1/assets/{id}").
 func stripMethodPrefix(pattern string) string {
 	if i := strings.IndexByte(pattern, ' '); i >= 0 {
 		return pattern[i+1:]
@@ -414,15 +393,12 @@ func stripMethodPrefix(pattern string) string {
 	return pattern
 }
 
-// endpointFamily resolves the bounded-cardinality endpoint label for
-// the request: the mux route pattern path, never the raw URL.
+// endpointFamily resolves the bounded-cardinality endpoint label: the route pattern, never the raw URL.
 func endpointFamily(r *http.Request) string {
 	if route := obs.RouteFromContext(r.Context()); route != "" {
 		return route
 	}
-	// Fallback: the mux mutates r.Pattern in place, so when no
-	// inner middleware re-wrapped the request (plain test stacks)
-	// the pattern is visible here directly.
+	// The mux mutates r.Pattern in place, so it is visible here when no middleware re-wrapped the request.
 	if p := r.Pattern; p != "" {
 		return stripMethodPrefix(p)
 	}
@@ -456,18 +432,16 @@ func billableClass(class string, readDeadlineFired bool) bool {
 
 type readDeadlineKey struct{}
 
-// MarkReadDeadline records that a server-side read deadline fired while
-// serving the request ctx belongs to, making a 5xx answer billable (see
-// [billableClass]). A no-op outside [UsageTracker]; safe for concurrent use.
+// MarkReadDeadline records that a server-side read deadline fired for ctx's request, making a 5xx
+// billable (see [billableClass]). A no-op outside [UsageTracker]; safe for concurrent use.
 func MarkReadDeadline(ctx context.Context) {
 	if fired, ok := ctx.Value(readDeadlineKey{}).(*atomic.Bool); ok {
 		fired.Store(true)
 	}
 }
 
-// outcomeClass maps a response status onto the four bounded usage
-// classes. <400 (incl. 3xx/304) counts as ok; 429 is its own class
-// so throttling is visible separately from real client errors.
+// outcomeClass maps a status onto the four bounded usage classes. <400 counts as ok; 429 is its
+// own class so throttling is visible apart from real client errors.
 func outcomeClass(status int) string {
 	switch {
 	case status == http.StatusTooManyRequests:

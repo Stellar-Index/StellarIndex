@@ -1070,11 +1070,9 @@ var DispatcherLedgerUpgradeEntriesTotal = prometheus.NewCounter(
 	},
 )
 
-// SourceUncorroboratedCallsTotal — per-source counter of oracle-class
-// ContractCall invocations dropped before Decode because they were only
-// DECLARED in the auth tree, never executed (dispatcher.Stats.UncorroboratedCalls). Non-zero on an
-// oracle source means a rejected price-forgery attempt or a routing-shape change; this counter is
-// the only signal for either.
+// SourceUncorroboratedCallsTotal counts oracle-class ContractCall invocations dropped before Decode
+// because they were only DECLARED in the auth tree, never executed. Non-zero means a rejected
+// price-forgery attempt or a routing-shape change; this is the only signal for either.
 var SourceUncorroboratedCallsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_source_uncorroborated_calls_total",
@@ -1208,11 +1206,9 @@ var CEXStreamLastTradeUnix = prometheus.NewGaugeVec(
 	[]string{"source"},
 )
 
-// CEXStreamEntrySkipsTotal — trade entries a CEX WebSocket parser
-// could not convert inside an otherwise well-formed multi-trade frame
-// (kraken). The frame parses, so SourceDecodeErrorsTotal never moves;
-// this is the only signal that a venue renamed a symbol or changed a
-// field's encoding. Dust drops are not counted here.
+// CEXStreamEntrySkipsTotal counts trade entries a CEX WebSocket parser could not convert inside a
+// well-formed multi-trade frame (kraken). SourceDecodeErrorsTotal never moves, so this is the only
+// signal that a venue renamed a symbol or changed an encoding. Dust drops are not counted.
 var CEXStreamEntrySkipsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_cex_stream_entry_skips_total",
@@ -1459,11 +1455,9 @@ var LedgerstreamTierReadTotal = prometheus.NewCounterVec(
 	[]string{"outcome"},
 )
 
-// LedgerstreamStreamPathTotal counts ledgerstream.Stream walks by the read
-// path chosen: tiered (hot + cold), cold_degraded (cold tier configured but
-// failed to open, so hot-only), hot_single_ledger, or sdk (the SDK's
-// ApplyLedgerMetadata loop). A rising cold_degraded rate is a configured cold
-// tier silently out of service.
+// LedgerstreamStreamPathTotal counts ledgerstream.Stream walks by read path: tiered, cold_degraded
+// (cold configured but failed to open, so hot-only), hot_single_ledger, or sdk. A rising
+// cold_degraded rate is a configured cold tier silently out of service.
 var LedgerstreamStreamPathTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_ledgerstream_stream_path_total",
@@ -1634,11 +1628,9 @@ var DivergenceRefreshTotal = prometheus.NewCounterVec(
 	[]string{"outcome"},
 )
 
-// DivergenceRefresherWired is 1 while the aggregator's divergence pass
-// has a refresher and windows to run with, 0 when every reference is
-// disabled. It gates the no-ok liveness alert so a pass that dies
-// before counting any outcome still fires, and a deliberate opt-out
-// does not.
+// DivergenceRefresherWired is 1 while the divergence pass has a refresher and windows, 0 when every
+// reference is disabled. It gates the no-ok liveness alert so a pass that dies before counting any
+// outcome still fires and a deliberate opt-out does not.
 var DivergenceRefresherWired = prometheus.NewGauge(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_divergence_refresher_wired",
@@ -1668,11 +1660,9 @@ var DivergenceReferenceTotal = prometheus.NewCounterVec(
 	[]string{"reference", "outcome"},
 )
 
-// DivergencePairQuorumMet is 1 when a pair's latest divergence refresh
-// had at least min_sources_for_warning responding references, 0 when
-// it did not. Below quorum the warning verdict is carried forward, not
-// re-evaluated, so a 0 means divergence detection is disarmed for the
-// pair while the pass still counts outcome="ok".
+// DivergencePairQuorumMet is 1 when a pair's latest refresh had at least min_sources_for_warning
+// responding references. Below quorum the warning verdict is carried forward, so 0 means detection
+// is disarmed for the pair while the pass still counts outcome="ok".
 var DivergencePairQuorumMet = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_divergence_pair_quorum_met",
@@ -2088,11 +2078,10 @@ const (
 	NotifySendResultSuppressed = "suppressed"
 )
 
-// NotifySendsTotal counts transactional-email sends per template and result,
-// incremented at every notify.Sender.Send call site (sent|failed|suppressed).
-// A sustained failed ratio drives the notify send-failure alert; suppressed
-// is never a failure. Zero-seeded per (template, result) so the ratio reads a
-// real 0 before the first email.
+// NotifySendsTotal counts transactional-email sends per template and result (sent|failed|
+// suppressed) at every notify.Sender.Send call site. A sustained failed ratio drives the
+// send-failure alert; suppressed is never a failure. Zero-seeded so the ratio reads 0 before the
+// first email.
 var NotifySendsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_notify_sends_total",
@@ -2414,12 +2403,9 @@ var APIStreamSubscriberDropsTotal = prometheus.NewCounter(prometheus.CounterOpts
 	Help: "SSE subscribers disconnected by the streaming Hub because their queue was full (slow consumer).",
 })
 
-// AfterResponseTasksDroppedTotal — post-response bookkeeping tasks
-// (UsageTracker counters, TouchUsage last-seen updates) dropped because
-// the shared after-response worker pool's queue was full. A
-// dropped task silently loses a usage row or a last-seen touch, so a
-// sustained nonzero rate here means the pool is undersized for load or a
-// downstream store (Redis/Postgres) has slowed enough that tasks pile up.
+// AfterResponseTasksDroppedTotal counts post-response bookkeeping tasks (usage counters, last-seen
+// touches) dropped because the worker pool's queue was full. Each silently loses a usage row or
+// touch, so a sustained rate means an undersized pool or a slow downstream store.
 var AfterResponseTasksDroppedTotal = prometheus.NewCounter(prometheus.CounterOpts{
 	Name: "stellarindex_after_response_tasks_dropped_total",
 	Help: "Post-response bookkeeping tasks dropped because the shared after-response worker pool queue was full.",
@@ -2568,13 +2554,10 @@ var AggregatorWindowBaseVolume = prometheus.NewGaugeVec(
 	[]string{"pair", "window", "stage"},
 )
 
-// AggregatorDroppedWindowsTotal — count of (pair, window) refreshes
-// where the post-class + post-outlier trade set was non-empty but
-// the window was suppressed by a window-level filter. Labelled by
-// reason: "min_usd_volume" = window's total USD-equivalent volume
-// fell below `aggregate.min_usd_volume`. Distinct from
-// AggregatorEmptyWindowsTotal (which means literally zero trades);
-// drives the launch-readiness L2.1 caveat audit.
+// AggregatorDroppedWindowsTotal counts (pair, window) refreshes whose post-class, post-outlier
+// trade set was non-empty but suppressed by a window-level filter. reason="min_usd_volume" means
+// the window's USD-equivalent volume fell below `aggregate.min_usd_volume`. Distinct from
+// AggregatorEmptyWindowsTotal (literally zero trades).
 var AggregatorDroppedWindowsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_aggregator_dropped_windows_total",
@@ -2640,13 +2623,11 @@ var PriceServeScamWithheldTotal = prometheus.NewCounterVec(
 	[]string{"surface"},
 )
 
-// ScamGateLookupFailuresTotal — count of scam-pricing gate consultations
-// whose account_directory lookup errored, so the gate FAILED OPEN and the
-// price was served unguarded (internal/pricingguard.ScamGate). Failures
-// are not cached, so during a directory outage this rises with request
-// traffic. Labelled by the same `surface` constants as
-// PriceServeScamWithheldTotal. Any sustained rate means directory-flagged
-// issuers are being priced; alert: stellarindex_scam_gate_fail_open.
+// ScamGateLookupFailuresTotal counts scam-gate consultations whose account_directory lookup
+// errored, so the gate FAILED OPEN and the price was served unguarded. Failures are not cached, so
+// the rate tracks request traffic during an outage. Uses the same `surface` labels as
+// PriceServeScamWithheldTotal. Sustained means flagged issuers are being priced
+// (alert: stellarindex_scam_gate_fail_open).
 var ScamGateLookupFailuresTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_scam_gate_lookup_failures_total",
@@ -2769,13 +2750,10 @@ var AnomalyFreezeEscalatedTotal = prometheus.NewCounter(
 	},
 )
 
-// AnomalyFreezeExtensionsTotal — counter of ADR-0019 hold extensions
-// granted (each +30 min after a hold expired without the pair earning
-// its auto-unfreeze). Rate is the operator's early-warning signal
-// that freezes are climbing the ladder toward escalation; a sustained
-// non-zero rate with no escalations means pairs are recovering in the
-// 30–120 minute band, which is normal for a real market event and
-// abnormal for a calibration that is firing on noise.
+// AnomalyFreezeExtensionsTotal counts ADR-0019 hold extensions (+30 min each, after a hold expired
+// without the pair earning auto-unfreeze): the early warning that freezes are climbing toward
+// escalation. Sustained extensions without escalations mean recovery in the 30-120 minute band,
+// normal for a real market event but a sign of a noisy calibration otherwise.
 var AnomalyFreezeExtensionsTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_anomaly_freeze_extensions_total",
@@ -2824,11 +2802,9 @@ var AnomalyFreezeActive = prometheus.NewGauge(
 	},
 )
 
-// AnomalyFreezeRecoveredTotal — counter of freeze rows the recovery
-// worker closed (Redis marker TTL elapsed → MarkRecovered stamped
-// recovered_at on the durable `freeze_events` row). Steady-state
-// rate trails AnomalyFreezeEngagedTotal by the freeze TTL plus the
-// recovery worker's poll interval.
+// AnomalyFreezeRecoveredTotal counts freeze rows the recovery worker closed (Redis marker TTL
+// elapsed, recovered_at stamped on `freeze_events`). It trails AnomalyFreezeEngagedTotal by the
+// freeze TTL plus the worker's poll interval.
 var AnomalyFreezeRecoveredTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_anomaly_freeze_recovered_total",
@@ -2857,11 +2833,9 @@ var AnomalyFreezeLadderWriteFailuresTotal = prometheus.NewCounterVec(
 	[]string{"op"},
 )
 
-// APIFreezeLookupFailuresTotal — counter of API-side freeze-marker reads
-// that returned an error (Redis outage, timeout), excluding client aborts.
-// The response carries frozen_checked=false for each, but nothing else
-// surfaces a degraded freeze read; sustained non-zero means price responses
-// are being served without a freeze verdict.
+// APIFreezeLookupFailuresTotal counts API freeze-marker reads that errored (Redis outage,
+// timeout), excluding client aborts. Each response carries frozen_checked=false, but nothing else
+// surfaces it; sustained means prices are served without a freeze verdict.
 var APIFreezeLookupFailuresTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_api_freeze_lookup_failures_total",

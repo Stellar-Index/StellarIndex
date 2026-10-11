@@ -26,16 +26,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// SourceName is the registry key for this source. Kept as
-// "defindex" (rather than renamed to e.g. "blend-strategy") so the
-// registry / genesis / status-page keys stay stable; a rename is a
-// separate product-taxonomy decision tracked in defindex.md.
+// SourceName is the registry key for this source; it stays "defindex" so registry, genesis and
+// status-page keys stay stable.
 const SourceName = "defindex"
 
-// PrefixStrategy is topic[0] for every Blend strategy event. It is
-// 13 chars, exceeds `symbol_short!`'s 9-char cap, so the SDK
-// serialises it as ScvString (same pattern as Soroswap's
-// "SoroswapPair"). Confirmed on-chain via scan-soroban-events.
+// PrefixStrategy is topic[0] for every Blend strategy event. At 13 chars it exceeds
+// `symbol_short!`'s 9-char cap, so it is an ScvString (like Soroswap's "SoroswapPair").
 const PrefixStrategy = "BlendStrategy"
 
 // PrefixVault is topic[0] for every DeFindex vault-wrapper event (user-facing layer).
@@ -140,35 +136,28 @@ const (
 	DirectionHarvest Direction = "harvest"
 )
 
-// RebalanceMethod is the multiplexed sub-type of a ("DeFindexVault","rebalance") event. Four
-// rebalance actions share the single topic, discriminated by a `rebalance_method` Symbol field
-// in the body.
+// RebalanceMethod is the sub-type of a ("DeFindexVault","rebalance") event: four actions share
+// the topic, discriminated by a `rebalance_method` Symbol in the body.
 //
-// The field name and method values come from upstream research, not an observed on-chain
-// sample (the lake holds zero rebalance emits), so this is forward-looking scaffolding.
-// [DecodeRebalanceMethod] returns the raw Symbol verbatim so a real sample can confirm the
-// wire spelling. The per-method payload is deliberately not modelled: field layouts must not
-// be invented.
+// Field name and values come from upstream research, not an on-chain sample (the lake holds zero
+// rebalance emits). [DecodeRebalanceMethod] returns the raw Symbol so a real sample can confirm
+// the spelling; per-method payloads are not modelled because layouts must not be invented.
 type RebalanceMethod string
 
 const (
-	// RebalanceMethodField is the body Map key that carries the
-	// discriminator Symbol. Documented, UNCONFIRMED on-chain.
+	// RebalanceMethodField is the body Map key carrying the discriminator Symbol (unconfirmed on-chain).
 	RebalanceMethodField = "rebalance_method"
 
-	// The four documented methods. Wire spelling unconfirmed — see the
-	// type godoc. The decoder returns whatever the contract emits; these
-	// constants are for comparison/reporting, not assumed by the decode.
+	// The four documented methods (spelling unconfirmed): for comparison and reporting only; the
+	// decoder returns whatever the contract emits.
 	RebalanceUnwind       RebalanceMethod = "unwind"
 	RebalanceInvest       RebalanceMethod = "invest"
 	RebalanceSwapExactIn  RebalanceMethod = "SwapExactIn"
 	RebalanceSwapExactOut RebalanceMethod = "SwapExactOut"
 )
 
-// Known reports whether m is one of the four documented rebalance
-// methods. A false here on a real event means the upstream contract
-// added or renamed a method — recognised (topic classified) but its
-// sub-type is unmodelled, so it is handled as "recognised, no flow".
+// Known reports whether m is one of the four documented rebalance methods. False on a real event
+// means upstream added or renamed one: recognised, sub-type unmodelled, no flow.
 func (m RebalanceMethod) Known() bool {
 	switch m {
 	case RebalanceUnwind, RebalanceInvest, RebalanceSwapExactIn, RebalanceSwapExactOut:
@@ -248,10 +237,8 @@ type DFee struct {
 	Amount     canonical.Amount // distributed amount in Token (i128, never truncated — ADR-0003)
 }
 
-// DFeesEvent wraps one DFee for the dispatcher / pipeline path. The
-// decoder emits ONE DFeesEvent per distributed_fees Vec entry, so the
-// ADR-0033 projection reconcile's expected event-count equals the
-// served defindex_fees row-count 1:1 (no fan-out waiver needed).
+// DFeesEvent wraps one DFee. The decoder emits ONE per distributed_fees entry so the ADR-0033
+// reconcile's expected event count equals the defindex_fees row count 1:1.
 type DFeesEvent struct {
 	Fee DFee
 }
@@ -266,11 +253,9 @@ func (e DFeesEvent) EventKind() string {
 // Source implements [consumer.Event].
 func (e DFeesEvent) Source() string { return SourceName }
 
-// VaultAdmin is one vault-layer governance event: a role rotation
-// (nmanager / nemanager / rbmanager / nreceiver), a strategy pause
-// toggle (paused / unpaused) or an emergency strategy rescue. Bodies
-// are proven from r1-lake samples (test/fixtures/defindex/); a field a
-// kind's body does not carry stays empty (nil for Amount).
+// VaultAdmin is one vault-layer governance event: a role rotation (nmanager / nemanager /
+// rbmanager / nreceiver), a strategy pause toggle or an emergency rescue. A field a kind's body
+// does not carry stays empty (nil for Amount).
 type VaultAdmin struct {
 	Vault      string // the emitting DeFindex vault-wrapper contract C-strkey
 	Ledger     uint32
@@ -303,10 +288,8 @@ func (e AdminEvent) Source() string { return SourceName }
 // Errors returned by the decode path. Callers classify via
 // errors.Is.
 var (
-	// ErrUnknownEvent — topic shape doesn't match a deposit/withdraw
-	// BlendStrategy event. The dispatcher's drop-counter records
-	// these; not a failure ("strategy emits an event we don't
-	// decode" — harvest / keeper admin — is normal).
+	// ErrUnknownEvent — topic shape matches no decoded event. The dispatcher's drop-counter records
+	// these; a strategy emitting an event we do not decode is normal, not a failure.
 	ErrUnknownEvent = errors.New("defindex: unknown strategy event topic")
 
 	// ErrMalformedPayload — event body doesn't match the expected

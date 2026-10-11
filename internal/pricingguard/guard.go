@@ -1,20 +1,18 @@
-// Package pricingguard is the serving-sanity guard shared by every raw
-// prices_1m closed-bucket serving path across the API and aggregator binaries.
+// Package pricingguard is the serving-sanity guard shared by every raw prices_1m closed-bucket
+// serving path across the API and aggregator binaries.
 //
-// Those paths read a CLOSED prices_1m bucket directly, a bare CAGG bucket that BYPASSES the
-// orchestrator's σ-outlier filter, min-USD-volume gate and freeze protection, so one
-// manipulated print would be served verbatim. The consumers: /v1/price
-// (StorePriceReader.LatestPrice), /v1/assets/{slug} (GlobalPriceReader.LatestVWAP), the
-// price-alert evaluator (priceAlertVWAPReader.LatestVWAP), /v1/price/at + /v1/price/changes
-// (storePriceAtReader.PriceAt, via [GuardServedVWAP1mAt]), the SEP-40 prices() series
-// (StorePriceReader.RecentClosedSnapshots, via [GuardServedVWAP1mSeries]) and /v1/assets
-// change_24h_pct's 24h-ago anchor (storeChange24hReader.USDPrice24hAgo, via
-// [GuardServedVWAP1mAt]). TestRawPrices1mReadersPassTheGuard (cmd/stellarindex-api) fails on
-// a raw prices_1m read with no guard entry point or missing from this list.
+// Those paths read a bare CAGG bucket that BYPASSES the orchestrator's sigma-outlier filter,
+// min-USD-volume gate and freeze protection, so one manipulated print would be served verbatim.
+// The consumers: /v1/price (StorePriceReader.LatestPrice), /v1/assets/{slug}
+// (GlobalPriceReader.LatestVWAP), the price-alert evaluator (priceAlertVWAPReader.LatestVWAP),
+// /v1/price/at + /v1/price/changes (storePriceAtReader.PriceAt, via [GuardServedVWAP1mAt]), the
+// SEP-40 prices() series (StorePriceReader.RecentClosedSnapshots, via [GuardServedVWAP1mSeries])
+// and change_24h_pct's 24h-ago anchor (storeChange24hReader.USDPrice24hAgo, via
+// [GuardServedVWAP1mAt]). TestRawPrices1mReadersPassTheGuard (cmd/stellarindex-api) fails on a raw
+// prices_1m read with no guard entry point or missing from this list.
 //
-// This package wraps the pure robust-band decision ([aggregate.GuardServedVWAP], ADR-0003
-// exact-rational). It sits above storage so both binaries can import it (timescale imports
-// aggregate; the reverse would cycle).
+// It wraps the pure exact-rational band decision ([aggregate.GuardServedVWAP]) and sits above
+// storage because timescale imports aggregate; the reverse would cycle.
 package pricingguard
 
 import (
@@ -29,50 +27,41 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// SampleFetch is how many recent CLOSED combined-direction 1m buckets the guard pulls to build
-// a robust trailing baseline ([aggregate.GuardServedVWAP]). 40 clears the guard's minimum-sample
-// floor while staying a cheap, index-driven LIMIT-N read (only run for a pair already confirmed
-// populated). A thin pair's 40 buckets can span months; [BaselineMaxAge] keeps the baseline
-// trailing.
+// SampleFetch is how many recent CLOSED combined-direction 1m buckets the guard pulls for a robust
+// trailing baseline. 40 clears the minimum-sample floor while staying a cheap, index-driven
+// LIMIT-N read. A thin pair's 40 buckets can span months, so [BaselineMaxAge] keeps it trailing.
 const SampleFetch = 40
 
 // BaselineMaxAge is the furthest before the judged bucket a trailing bucket may start and still
 // count toward its baseline. A price from before a dormancy says nothing about a relisting one:
-// judging against it rejects a real move and serves the dormant row as a confident price. A
-// candidate with nothing in the horizon is the empty-baseline case.
+// judging against it rejects a real move and serves the dormant row as a confident price.
 const BaselineMaxAge = 24 * time.Hour
 
-// TrailingReader is the storage seam the guard needs: the trailing
-// combined-direction closed-bucket fetch. *timescale.Store satisfies it;
-// keeping it an interface makes the wiring unit-testable without a
-// database.
+// TrailingReader is the storage seam the guard needs (*timescale.Store satisfies it): the trailing
+// combined-direction closed-bucket fetch, an interface so wiring tests need no database.
 type TrailingReader interface {
 	RecentClosedVWAP1mCombined(ctx context.Context, p canonical.Pair, limit int) ([]timescale.Vwap1mRow, error)
 }
 
-// TrailingAtReader is the storage seam of the POINT-IN-TIME guard: the
-// trailing baseline anchored at the candidate bucket rather than at now.
-// *timescale.Store satisfies it.
+// TrailingAtReader is the storage seam of the POINT-IN-TIME guard: the trailing baseline anchored
+// at the candidate bucket rather than at now.
 type TrailingAtReader interface {
 	ClosedVWAP1mCombinedBefore(ctx context.Context, p canonical.Pair, before time.Time, limit int) ([]timescale.Vwap1mRow, error)
 }
 
-// GuardServedVWAP1mConfidence is the serving-sanity guard shared by every raw latest-bucket
-// prices_1m serving path (see the package doc). Given the latest CLOSED bucket (`candidate`) it
-// returns the row to serve: the candidate when it is robust-sane or there is no baseline / the
-// trailing fetch failed (fail-open, favour serving a real price), else the newest trailing
-// bucket within the robust band (last-known-good). Exact-rational (ADR-0003). It never errors:
-// on doubt it serves the candidate rather than 404 a pair with data.
+// GuardServedVWAP1mConfidence is the serving-sanity guard for every raw latest-bucket prices_1m
+// path. Given the latest CLOSED bucket (candidate) it returns the candidate when it is robust-sane
+// or there is no baseline / the trailing fetch failed (fail-open: favour serving a real price),
+// else the newest trailing bucket within the robust band (last-known-good). It never errors: on
+// doubt it serves the candidate rather than 404 a pair with data.
 //
-// lowConfidence is true when a SUCCESSFUL trailing fetch returned no usable baseline (a pair's
-// first-ever served minute, or first after more than [BaselineMaxAge] dormant). The value is
-// still served but the caller must surface it as stale. A transient fetch error fails open with
-// lowConfidence=false, so a DB blip does not flag every price stale.
+// lowConfidence is true when a SUCCESSFUL fetch returned no usable baseline (a pair's first served
+// minute, or first after more than [BaselineMaxAge] dormant); the caller must surface it as stale.
+// A transient fetch error fails open with lowConfidence=false, so a DB blip flags nothing stale.
 //
-// substituted is true when the candidate was rejected and `served` is the older last-known-good
-// bucket. A caller that staples enrichment from a separate cache keyed by (pair, window) must
-// withhold it: it answers for the CURRENT tick, not the bucket served. There is deliberately
-// no row-only form.
+// substituted is true when the candidate was rejected and served is the older bucket. A caller
+// that staples enrichment from a cache keyed by (pair, window) must withhold it, since it answers
+// for the CURRENT tick. There is deliberately no row-only form.
 func GuardServedVWAP1mConfidence(
 	ctx context.Context,
 	store TrailingReader,
@@ -108,23 +97,18 @@ func GuardServedVWAP1mConfidence(
 	return served, lowConfidence, rejected
 }
 
-// GuardServedVWAP1mAt is [GuardServedVWAP1mConfidence] for the POINT-IN-TIME path
-// (/v1/price/at and every /v1/price/changes horizon), whose first ladder rung is the same raw
-// prices_1m bucket. Apply it ONLY to a prices_1m answer; coarser rungs are hour/day bars, a
-// diluted exposure the 1-minute baseline cannot judge.
+// GuardServedVWAP1mAt is [GuardServedVWAP1mConfidence] for the POINT-IN-TIME path (/v1/price/at
+// and every /v1/price/changes horizon). Apply it ONLY to a prices_1m answer; coarser rungs are
+// hour/day bars, a diluted exposure the 1-minute baseline cannot judge.
 //
-// `ts` and `maxStaleness` are the caller's at-or-before contract: a rejected candidate is
-// replaced by the newest clean trailing bucket only while it still CLOSES within maxStaleness
-// of ts. Otherwise ok=false and the caller reports "no price at this instant", never a rejected
-// value nor one breaching the requested staleness.
+// ts and maxStaleness are the caller's at-or-before contract: a rejected candidate is replaced by
+// the newest clean trailing bucket only while it still CLOSES within maxStaleness of ts; otherwise
+// ok=false ("no price at this instant"), never a rejected or too-stale value.
 //
-// The baseline is the [SampleFetch] closed buckets immediately BEFORE the candidate
-// ([TrailingAtReader]), not the newest: a now-anchored baseline holds nothing older than a
-// historical candidate, so it would pass unjudged.
-//
-// An empty baseline is ok=false here, where [GuardServedVWAP1mConfidence] serves it flagged
-// low-confidence, because a point-in-time answer has no stale flag to carry that doubt. A
-// trailing-fetch error still fails open.
+// The baseline is the [SampleFetch] closed buckets immediately BEFORE the candidate, not the
+// newest: a now-anchored baseline holds nothing older than a historical candidate, so it would
+// pass unjudged. An empty baseline is ok=false here, because a point-in-time answer has no stale
+// flag to carry that doubt. A trailing-fetch error still fails open.
 func GuardServedVWAP1mAt(
 	ctx context.Context,
 	store TrailingAtReader,
@@ -159,9 +143,8 @@ func GuardServedVWAP1mAt(
 	return served, ok
 }
 
-// SelectGuardedVWAP1mAt is the pure, store-free decision half of [GuardServedVWAP1mAt].
-// ok=false means no servable answer for that instant: the candidate had no trailing baseline,
-// or it was rejected and no last-known-good bucket closes within `maxStaleness` of `ts`.
+// SelectGuardedVWAP1mAt is the pure, store-free half of [GuardServedVWAP1mAt]. ok=false means no
+// trailing baseline, or a rejection with no last-known-good bucket closing within maxStaleness of ts.
 func SelectGuardedVWAP1mAt(
 	candidate timescale.Vwap1mRow,
 	rows []timescale.Vwap1mRow,
@@ -187,10 +170,8 @@ func selectGuardedVWAP1mAt(
 	if !rejected {
 		return served, true, false, false
 	}
-	// The last-known-good bucket is by construction OLDER than the
-	// rejected candidate, so it has to re-clear the caller's own
-	// at-or-before staleness bound (bucket close within maxStaleness of
-	// ts) before it can stand in for it.
+	// The last-known-good bucket is older than the rejected candidate, so it must re-clear the
+	// caller's staleness bound before it can stand in.
 	if ts.Sub(served.Bucket.Add(time.Minute)) > maxStaleness {
 		return timescale.Vwap1mRow{}, false, true, false
 	}
@@ -208,12 +189,10 @@ func countDegraded(path string, rejected, lowConfidence bool) {
 	}
 }
 
-// GuardServedVWAP1mSeries is the guard for a raw prices_1m SERIES (the SEP-40 prices(asset,
-// records) read). `rows` is a newest-first history of at least `n` + [SampleFetch] buckets when
-// available, so each of the first `n` is judged against the [SampleFetch] buckets before it. A
-// bucket the band rejects, or one with no prior bucket, is DROPPED rather than replaced: a
-// series has one entry per bucket, and an older value at a newer timestamp would fabricate a
-// record. Returns at most `n` rows, newest-first. Exact-rational (ADR-0003).
+// GuardServedVWAP1mSeries is the guard for a raw prices_1m SERIES (the SEP-40 prices() read).
+// rows is newest-first with ideally n + [SampleFetch] buckets, so each of the first n is judged
+// against the buckets before it. A rejected bucket, or one with no prior bucket, is DROPPED rather
+// than replaced: an older value at a newer timestamp would fabricate a record.
 func GuardServedVWAP1mSeries(logger *slog.Logger, pair canonical.Pair, rows []timescale.Vwap1mRow, n int) []timescale.Vwap1mRow {
 	if n > len(rows) {
 		n = len(rows)
@@ -238,29 +217,24 @@ func GuardServedVWAP1mSeries(logger *slog.Logger, pair canonical.Pair, rows []ti
 	return out
 }
 
-// SelectGuardedVWAP1m is the pure, store-free decision half of [GuardServedVWAP1mConfidence]:
-// given the candidate and the recent combined-direction closed buckets (`rows`, newest-first,
-// as from [timescale.Store.RecentClosedVWAP1mCombined]), it returns the row to serve and
-// whether the candidate was rejected. Exact-rational (ADR-0003).
+// SelectGuardedVWAP1m is the pure, store-free half of [GuardServedVWAP1mConfidence]: given the
+// candidate and recent closed buckets (newest-first) it returns the row to serve and whether the
+// candidate was rejected.
 func SelectGuardedVWAP1m(candidate timescale.Vwap1mRow, rows []timescale.Vwap1mRow) (served timescale.Vwap1mRow, rejected bool) {
 	served, rejected, _ = selectGuardedVWAP1m(candidate, rows)
 	return served, rejected
 }
 
-// selectGuardedVWAP1m is [SelectGuardedVWAP1m] plus the low-confidence (empty-baseline) signal.
-// lowConfidence is true only when the candidate is ACCEPTED against an empty baseline
-// ([aggregate.ServedBaselineValidated] is false: nothing within [BaselineMaxAge] before it,
-// GuardServedVWAP's fail-open). A rejected or unparseable candidate, and any accept validated
-// against a populated or thin baseline, are lowConfidence=false. Exact-rational (ADR-0003).
+// selectGuardedVWAP1m is [SelectGuardedVWAP1m] plus the low-confidence signal, true only when the
+// candidate is ACCEPTED against an empty baseline ([aggregate.ServedBaselineValidated] false:
+// nothing within [BaselineMaxAge] before it). Rejected or unparseable candidates are false.
 func selectGuardedVWAP1m(candidate timescale.Vwap1mRow, rows []timescale.Vwap1mRow) (served timescale.Vwap1mRow, rejected, lowConfidence bool) {
 	candRat, ok := new(big.Rat).SetString(candidate.VWAP)
 	if !ok {
 		return candidate, false, false // unparseable candidate → can't judge, serve as-is
 	}
-	// Trailing baseline = combined-direction closed buckets STRICTLY older
-	// than the candidate bucket and within [BaselineMaxAge] of it, kept
-	// index-aligned with their rows so the guard's last-known-good index
-	// maps straight back to a servable row.
+	// Baseline = closed buckets STRICTLY older than the candidate and within [BaselineMaxAge],
+	// kept index-aligned with their rows so the last-known-good index maps back to a servable row.
 	trailingRows := make([]timescale.Vwap1mRow, 0, len(rows))
 	trailing := make([]*big.Rat, 0, len(rows))
 	for i := range rows {
@@ -276,8 +250,7 @@ func selectGuardedVWAP1m(candidate timescale.Vwap1mRow, rows []timescale.Vwap1mR
 	}
 	accept, lkgIdx := aggregate.GuardServedVWAP(candRat, trailing)
 	if accept {
-		// An accept against an empty baseline is an unvalidated fail-open —
-		// serve the value, but flag it low-confidence.
+		// Accepting against an empty baseline is an unvalidated fail-open: serve, flag low-confidence.
 		return candidate, false, !aggregate.ServedBaselineValidated(trailing)
 	}
 	return trailingRows[lkgIdx], true, false

@@ -161,10 +161,9 @@ func Stream(
 		return err
 	}
 
-	// delivered counts every ledger actually handed to the caller's
-	// callback, regardless of which path below produced it:
-	// maybeTolerateTrailingMissing must know whether ANYTHING landed before
-	// converting a missing-file error into a clean success (see its godoc).
+	// delivered counts every ledger handed to the callback on any path below:
+	// maybeTolerateTrailingMissing must know whether ANYTHING landed before it turns a
+	// missing-file error into success.
 	var delivered uint32
 	countingCallback := func(lcm xdr.LedgerCloseMeta) error {
 		delivered++
@@ -264,10 +263,8 @@ func retryLiveStart(
 			return fmt.Errorf("ledgerstream: live tail start abandoned on shutdown (last error: %w): %w", err, ctx.Err())
 		}
 		err = attempt()
-		// Stop on success, on anything the caller's callback has already
-		// seen (see the no-skip property above), and on shutdown — where
-		// the attempt's own error already carries the cancellation, since
-		// it came from a ctx-aware walk rather than from this loop.
+		// Stop on success, once the callback has seen anything (no-skip property above), and on
+		// shutdown, where the attempt's own error already carries the cancellation.
 		if err == nil || *delivered > 0 || ctx.Err() != nil {
 			return err
 		}
@@ -279,9 +276,8 @@ func retryLiveStart(
 	return err
 }
 
-// sleepWithContext sleeps for d, returning false if ctx was cancelled
-// first. Mirrors the SDK ledger buffer's helper of the same name so the
-// two retry loops behave identically on shutdown.
+// sleepWithContext sleeps for d, returning false if ctx was cancelled first; mirrors the SDK ledger
+// buffer's helper so both retry loops behave the same on shutdown.
 func sleepWithContext(ctx context.Context, d time.Duration) bool {
 	t := time.NewTimer(d)
 	defer t.Stop()
@@ -294,10 +290,8 @@ func sleepWithContext(ctx context.Context, d time.Duration) bool {
 }
 
 const (
-	// defaultLiveStartRetryWait is the first backoff step used by
-	// [retryLiveStart] when the caller set a budget but no
-	// Config.LiveRetryWait. Production always sets both
-	// (pipeline.LedgerstreamConfig), so this only covers direct callers.
+	// defaultLiveStartRetryWait is [retryLiveStart]'s first backoff step when a budget is set
+	// without Config.LiveRetryWait; production sets both, so it only covers direct callers.
 	defaultLiveStartRetryWait = time.Second
 
 	// maxLiveStartRetryWait caps [retryLiveStart]'s backoff. 30s matches the SDK default and keeps
@@ -322,10 +316,8 @@ func applyLiveRetryPolicy(cfg Config, buffered *ledgerbackend.BufferedStorageBac
 	}
 }
 
-// liveRetryLimit converts a wall-clock fault-tolerance budget into the
-// SDK's attempt count, rounding UP so the budget is a floor rather than
-// a ceiling. Returns 0 (meaning "leave the SDK default alone") when
-// either input is non-positive.
+// liveRetryLimit converts a fault-tolerance time budget into the SDK's attempt count, rounding UP
+// so the budget is a floor. It returns 0 (leave the SDK default) when either input is non-positive.
 func liveRetryLimit(wait, budget time.Duration) uint32 {
 	if wait <= 0 || budget <= 0 {
 		return 0
@@ -350,10 +342,9 @@ func validateRange(r ledgerbackend.Range) error {
 	return nil
 }
 
-// maybeTolerateTrailingMissing converts a bounded-stream missing-file error into
-// a clean walk-complete (nil) when the operator opted in via
-// Config.TolerateTrailingMissing AND the missing sequence is within the trailing
-// window of To. All other errors pass through; a nil err returns nil.
+// maybeTolerateTrailingMissing converts a bounded-stream missing-file error into a clean
+// walk-complete (nil) when Config.TolerateTrailingMissing is set AND the missing sequence is within
+// the trailing window of To. All other errors pass through.
 //
 // A single-ledger range (from == to) whose one ledger is the missing one requires delivered > 0,
 // else Stream would return nil with ZERO callbacks, indistinguishable from a walked empty range.
@@ -361,9 +352,9 @@ func validateRange(r ledgerbackend.Range) error {
 // on a trailing-edge miss and deliver zero to all present ledgers
 // (TestStream_TolerateTrailingMissing_HappyPath), so requiring it would make backfills flaky.
 //
-// resolveTip is consulted only for a miss that passes every cheaper check. To is
-// often a chunk boundary, so only the store's own latest ledger tells an object
-// Galexie has not written yet from a hole with later ledgers on disk.
+// resolveTip is consulted only for a miss that passes every cheaper check. To is often a chunk
+// boundary, so only the store's latest ledger tells a not-yet-written object from a hole with later
+// ledgers on disk.
 func maybeTolerateTrailingMissing(cfg Config, from, to, delivered uint32, err error, resolveTip func() (uint32, error)) error {
 	if err == nil {
 		return nil
@@ -407,27 +398,17 @@ func maybeTolerateTrailingMissing(cfg Config, from, to, delivered uint32, err er
 	return nil
 }
 
-// defaultTrailingMissingWindow is one Galexie 64k-ledger partition
-// plus 1536 ledgers of slack, covering any tip-race between the
-// operator's chosen -to and the partition file Galexie hasn't
-// finished writing yet.
+// defaultTrailingMissingWindow is one Galexie 64k-ledger partition plus 1536 ledgers of slack,
+// covering a tip race between the chosen -to and a partition Galexie has not finished writing.
 const defaultTrailingMissingWindow uint32 = 65536
 
-// trailingMissingRE matches the SDK's
-// `ledger object containing sequence X is missing` error wrap. The
-// SDK uses `pkg/errors.Wrapf`, which produces a colon-joined chain
-// — the sequence appears verbatim in the message regardless of how
-// many layers deep the wrap is. Capturing group 1 is the sequence
-// as a decimal integer.
+// trailingMissingRE matches the SDK's `ledger object containing sequence X is missing` wrap. The
+// sequence appears verbatim however deep the wrap chain is; group 1 is the decimal sequence.
 var trailingMissingRE = regexp.MustCompile(`ledger object containing sequence (\d+) is missing`)
 
-// parseTrailingMissingSeq extracts the sequence number from the
-// SDK's trailing-edge missing-file error. Returns (0, false) when
-// the error does not match the SDK's known wrap shape.
-//
-// We match on the error string because the SDK
-// (github.com/stellar/go-stellar-sdk/ingest/ledgerbackend.ledger_buffer)
-// wraps with pkg/errors.Wrapf and exposes no typed sentinel.
+// parseTrailingMissingSeq extracts the sequence from the SDK's trailing-edge missing-file error,
+// or returns (0, false). It matches the message because the SDK wraps with pkg/errors.Wrapf and
+// exposes no typed sentinel.
 func parseTrailingMissingSeq(err error) (uint32, bool) {
 	if err == nil {
 		return 0, false
@@ -542,9 +523,8 @@ func streamHot(
 	return walkDataStore(ctx, cfg, hot, ledgerRange, buffered, callback)
 }
 
-// StreamStore walks the bounded range [from, to] over a datastore the
-// caller opened itself, for a store whose client the SDK must not build —
-// the cold tier (see pipeline.NewColdDataStore). cfg.DataStore supplies
+// StreamStore walks the bounded range [from, to] over a datastore the caller opened itself, for a
+// client the SDK must not build (the cold tier, pipeline.NewColdDataStore). cfg.DataStore supplies
 // the schema-discovery params; store is closed on return.
 func StreamStore(
 	ctx context.Context,
@@ -566,10 +546,7 @@ func bufferedConfig(cfg Config) ledgerbackend.BufferedStorageBackendConfig {
 	}
 	lpf := cfg.DataStore.Schema.LedgersPerFile
 	if lpf == 0 {
-		// Galexie's default at the time of writing is 1 ledger per
-		// file; the SDK's schema discovery will override this if
-		// the datastore's manifest says otherwise, but we still
-		// need a value to seed the default config.
+		// Seed value (Galexie's default is 1 ledger per file); schema discovery overrides it.
 		lpf = 1
 	}
 	return ingest.DefaultBufferedStorageBackendConfig(lpf)
@@ -619,9 +596,7 @@ func walkDataStore(
 		return fmt.Errorf("ledgerstream: requested range [%d,%d] is entirely before genesis ledger 2",
 			ledgerRange.From(), ledgerRange.To())
 	}
-	// Rebuild the range from the CLAMPED from so PrepareRange (which
-	// stages/validates the range against the datastore) and the walk
-	// loop below always agree on the same bounds.
+	// Rebuild the range from the CLAMPED from so PrepareRange and the walk agree on the bounds.
 	if from != ledgerRange.From() {
 		if ledgerRange.Bounded() {
 			ledgerRange = ledgerbackend.BoundedRange(from, ledgerRange.To())

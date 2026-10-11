@@ -28,11 +28,9 @@ const MainnetPaymentContract = "CAC5SKP5FJT2ZZ7YLV4UCOM6Z5SQCCVPZWHLLLVQNQG2RWWO
 // PaymentEvent / FlushEvent schemas, so adding one is a watchlist change, not a decoder change.
 // Memo-bearing G-wallet flows go through [MainnetRelayerAccounts] instead.
 //
-// The 4th entry (CAFO6OUZ...) was admitted on lake evidence alone: its WASM hash is bytewise
-// identical to the original three (docs/operations/wasm-audits/rozo.md, so that audit covers it),
-// its instance storage matches (dest = second [MainnetRelayerAccounts] entry, usdc = Circle's SAC),
-// and its single payment_event was a smoke test. Two other contracts collide on the short-form
-// `payment` symbol with unrelated bodies and are excluded (see Classify in decode.go).
+// The 4th entry (CAFO6OUZ...) runs the same WASM hash as the original three, so the existing
+// audit (docs/operations/wasm-audits/rozo.md) covers it. Two other contracts collide on the
+// short-form `payment` symbol with unrelated bodies and are excluded (see Classify in decode.go).
 var MainnetPaymentContracts = []string{
 	"CAC5SKP5FJT2ZZ7YLV4UCOM6Z5SQCCVPZWHLLLVQNQG2RWWOOSP3IYRL",
 	"CCRLTS3CMJHYHFD7MYRBJPNW6R3LCXNDO2B6TK6AS6FSXAHR6GBMGLRE",
@@ -51,11 +49,9 @@ var MainnetRelayerAccounts = []string{
 	"GB4CLV3UMXDPFP5OQJQKUCWPRJXPXPJSHTUKZEJLAIZFZR7UHYAQ6EB4",
 }
 
-// Event kinds, the internal classify() labels. The contract source suggests short symbols
-// ("payment" / "flush"), but the DEPLOYED contract emits the long ScSymbols "payment_event" /
-// "flush_event" (too long for symbol_short!); the lake shows zero short-form events, so a
-// short-form-only match would never fire. We match BOTH: the short form is kept because
-// contracts upgrade in place and a later version could emit either.
+// Event kinds, the internal classify() labels. The deployed contract emits the long symbols
+// "payment_event" / "flush_event", not the short ones its source suggests, so a short-form-only
+// match never fires. Both are matched because contracts upgrade in place.
 const (
 	EventPayment = "payment"
 	EventFlush   = "flush"
@@ -80,10 +76,9 @@ var (
 // `pay(from, amount, memo)`. Body: ScMap { from: Address, destination: Address, amount: i128,
 // memo: String }.
 //
-// The deployed contract emits a single-Symbol topic ("payment_event",), not the (payment, from)
-// the upstream source suggests (lake fixtures all have topic_count=1). `from` lives only in the
-// body; decode it via DecodePayment's map lookup, never topic[1]. USDC is the only v1 token, so
-// no token field is surfaced.
+// The deployed contract emits a single-Symbol topic, not (payment, from). `from` lives only in
+// the body; decode it via DecodePayment's map lookup, never topic[1]. USDC is the only v1 token,
+// so no token field is surfaced.
 type Payment struct {
 	// Ledger / TxHash / OpIndex / ClosedAt come from the Event envelope, carried here so a
 	// downstream sink need not re-thread the Event.

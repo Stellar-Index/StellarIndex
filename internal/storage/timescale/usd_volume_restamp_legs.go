@@ -45,9 +45,8 @@ type (
 	restampScanRow = xlmBaseRestampScan
 )
 
-// restampLeg names the trade leg a tier's scan filters on. A closed set
-// whose [restampLeg.column] is the only place a column name reaches the
-// statement text — nothing operator-supplied ever does.
+// restampLeg names the trade leg a tier's scan filters on. [restampLeg.column] is a closed set and
+// the only place a column name reaches the statement text; nothing operator-supplied does.
 type restampLeg int
 
 const (
@@ -279,9 +278,8 @@ func restampDecide(
 
 // restampScope decides whether one scanned row is IN the tier `gate` describes, and rebuilds it
 // into the [canonical.Trade] the decoder produced so the value function sees the same object as
-// the insert path. The tier decision lives beside [tradeUSDVolume] so branch order and selected
-// population cannot drift; this is only the row-shaped part (asset ids and amounts, with
-// [tradeUSDVolume]'s positive-amount bail-outs).
+// the insert path. The tier decision lives beside [tradeUSDVolume] so branch order cannot drift;
+// this is only the row-shaped part, with [tradeUSDVolume]'s positive-amount bail-outs.
 func restampScope(row restampScanRow, spec *USDVolumeQuoteSpec, gate restampGate) (canonical.Trade, xlmBaseDisposition, bool) {
 	base, err := canonical.ParseAsset(row.BaseAsset)
 	if err != nil {
@@ -308,10 +306,9 @@ func restampScope(row restampScanRow, spec *USDVolumeQuoteSpec, gate restampGate
 		BaseAmount:  canonical.NewAmount(baseAmt),
 		QuoteAmount: canonical.NewAmount(quoteAmt),
 	}
-	// The SQL scan already bounds source and the tier's leg, but
-	// re-asserting the tier in Go keeps its definition in ONE place and
-	// makes a widened scan fail CLOSED rather than silently valuing, say,
-	// a token/token pair off a rate its own counterparties authored.
+	// The SQL scan already bounds source and leg; re-asserting the tier in Go keeps its definition
+	// in ONE place and makes a widened scan fail CLOSED rather than value a token/token pair off
+	// a rate its own counterparties authored.
 	switch gate(trade, spec) {
 	case restampTierPegged:
 		return canonical.Trade{}, xlmBaseQuotePegged, false
@@ -333,15 +330,12 @@ func (s *Store) ApplyUSDVolumeRestampPlan(ctx context.Context, plan *RestampPlan
 	return s.applyXLMBaseRestampBatches(ctx, plan, generation, batch, nil)
 }
 
-// ApplyUSDVolumeRestampPlanInChunk is [Store.ApplyUSDVolumeRestampPlan]
-// for a plan whose rows all lie in chunk c, with the
-// is-the-chunk-still-decompressed guard ahead of every batch.
+// ApplyUSDVolumeRestampPlanInChunk is [Store.ApplyUSDVolumeRestampPlan] for a plan whose rows all
+// lie in chunk c, with a still-decompressed guard ahead of every batch.
 func (s *Store) ApplyUSDVolumeRestampPlanInChunk(ctx context.Context, c TradeChunk, plan *RestampPlan, generation int64, batch int) (int64, error) {
 	return s.applyXLMBaseRestampBatches(ctx, plan, generation, batch, s.stillDecompressed(c))
 }
 
-// CEXSourceNames is the ops layer's view of [cexSourceNames] — the
-// off-chain exchanges whose fiat-quoted trades the cex-fx tier values.
-// Exported so `usd-volume-restamp` can print the scope it is about to
-// walk, exactly as [DEXSourceNames] is.
+// CEXSourceNames exports [cexSourceNames], the off-chain exchanges whose fiat-quoted trades the
+// cex-fx tier values, so `usd-volume-restamp` can print its scope as it does for [DEXSourceNames].
 func CEXSourceNames() []string { return cexSourceNames() }

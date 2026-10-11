@@ -33,28 +33,27 @@ const tipProducerLinger = 30 * time.Second
 
 // defaultMaxTipProducers caps how many distinct tip producers may run at once.
 //
-// A tip-stream connection mints a DETACHED producer that outlives the connection for
-// tipProducerLinger, so the SSE connection caps do not bound it: an unauthenticated client could
-// open and abort streams in a loop and leave unbounded compute loops polling the database.
+// A tip-stream connection mints a DETACHED producer that outlives it for tipProducerLinger, so the
+// SSE connection caps do not bound it: an unauthenticated client could open and abort streams in a
+// loop and leave unbounded compute loops polling the database.
 //
 // The key is (asset, quote, window_seconds) with window_seconds CLIENT-CHOSEN in [1,60], and the
-// Hub's topic reaper cannot shed it (it evicts only subscriber-less topics; a live producer
-// re-publishes every window). 512 caps the worst case short of starving the DB pool; tune with
-// [Server.SetMaxTipProducers]. A lingering producer still counts because it still computes, but
-// at either global bound the oldest lingering entries are evicted, so only subscribed demand can
-// refuse a mint.
+// Hub's topic reaper cannot shed it (a live producer re-publishes every window). 512 caps the
+// worst case short of starving the DB pool; tune with [Server.SetMaxTipProducers]. A lingering
+// producer still counts, but at either global bound the oldest lingering entries are evicted, so
+// only subscribed demand can refuse a mint.
 const defaultMaxTipProducers = 512
 
 // defaultMaxTipProducersPerCaller caps how many producers ONE caller may have minted and still
 // hold registered (running or lingering).
 //
 // The global ceiling alone is one unpartitioned pool: one address looping the key space and
-// aborting each connection fills every slot for [tipProducerLinger], refusing all OTHER callers.
-// So each producer is charged to the caller that MINTED it while its registry entry lives;
-// releasing the connection does not return the slot.
+// aborting each connection would fill every slot for [tipProducerLinger], refusing all OTHER
+// callers. So each producer is charged to its minter while its registry entry lives; releasing
+// the connection does not return the slot.
 //
-// 24 sits just above the per-IP concurrent-stream cap ([config].api.max_streams_per_ip) and caps
-// one address under 5% of the pool. Joining an ALREADY-RUNNING producer is never charged. Tune with
+// 24 sits just above the per-IP concurrent-stream cap ([config].api.max_streams_per_ip), under 5%
+// of the pool. Joining an ALREADY-RUNNING producer is never charged. Tune with
 // [Server.SetMaxTipProducersPerCaller].
 const defaultMaxTipProducersPerCaller = 24
 
@@ -91,16 +90,13 @@ func tipTicksPerMinute(window int) int {
 // [Server.acquireTipProducer] substitutes [unknownTipCaller] when the client cannot be named.
 const unattributedTipCaller = ""
 
-// unknownTipCaller is the shared bucket for a request whose client IP
-// cannot be resolved. Collapsing every such request into ONE bucket is
-// deliberate (fail-closed, mirroring streaming.resolveStreamClientIP):
-// an unresolvable caller must not be exempt from the quota.
+// unknownTipCaller is the shared bucket for a request whose client IP cannot be resolved. One
+// bucket is deliberate (fail-closed, mirroring streaming.resolveStreamClientIP): an unresolvable
+// caller must not be exempt from the quota.
 const unknownTipCaller = "unknown"
 
-// tipProducerOutcome is the verdict of an acquire. The two refusals are
-// distinct states, not one "false": the caller-quota refusal names a
-// client that has had its share, the ceiling refusal names a server at
-// capacity, and an operator reading the log needs to tell them apart.
+// tipProducerOutcome is the verdict of an acquire. The refusals stay distinct because a client
+// that has had its share and a server at capacity need telling apart in the log.
 type tipProducerOutcome int
 
 const (
@@ -112,13 +108,11 @@ const (
 	// tipProducerAtGlobalCeiling: the registry is full and this key would
 	// need a NEW producer. No release is handed back.
 	tipProducerAtGlobalCeiling
-	// tipProducerAtCallerRateBudget: minting this producer would take the
-	// caller's producers past its share of the compute rate — a short
-	// window costs more than a long one. No release is handed back.
+	// tipProducerAtCallerRateBudget: minting would take the caller past its share of the compute
+	// rate (a short window costs more than a long one). No release is handed back.
 	tipProducerAtCallerRateBudget
-	// tipProducerAtGlobalRateBudget: minting this producer would take the
-	// registry's aggregate compute rate past its budget. No release is
-	// handed back.
+	// tipProducerAtGlobalRateBudget: minting would take the registry's aggregate compute rate
+	// past its budget. No release is handed back.
 	tipProducerAtGlobalRateBudget
 )
 
@@ -161,9 +155,8 @@ type tipProducer struct {
 	refs   int
 	cancel context.CancelFunc
 	linger *time.Timer
-	// minter is the caller charged for this producer's registry entry.
-	// When it closes its last stream while others still hold the entry,
-	// the charge moves to one of them; after the last holder leaves it is
+	// minter is the caller charged for this entry. When it closes its last stream while others
+	// still hold the entry the charge moves to one of them; after the last holder leaves it is
 	// held through the linger and released only when the entry is deleted.
 	minter string
 	// holders counts refs per caller; entries are deleted at zero.
@@ -195,16 +188,14 @@ type tipProducerRegistry struct {
 	// gauge overrides obs.APITipProducers when non-nil (tests: the
 	// package-level gauge also moves with other tests' linger timers).
 	gauge prometheus.Gauge
-	// maxProducers overrides defaultMaxTipProducers when > 0. A negative
-	// value disables the ceiling (an operator's explicit choice, and the
-	// escape hatch if the default is ever wrong for a deployment).
+	// maxProducers overrides defaultMaxTipProducers when > 0; a negative value disables the
+	// ceiling, an operator's explicit escape hatch.
 	maxProducers int
 	// maxPerCaller overrides defaultMaxTipProducersPerCaller when > 0. A
 	// negative value disables the per-caller quota.
 	maxPerCaller int
-	// minted counts the registered producers each caller minted. Entries
-	// are deleted at zero, so the map cannot outgrow the set of callers
-	// currently holding a producer.
+	// minted counts the registered producers each caller minted; entries are deleted at zero, so
+	// the map is bounded by the callers currently holding a producer.
 	minted map[string]int
 	// maxTicks / maxTicksPerCaller override defaultMaxTipTicksPerMinute /
 	// defaultMaxTipTicksPerMinutePerCaller when > 0; negative disables.
@@ -217,9 +208,8 @@ type tipProducerRegistry struct {
 	// refused counts acquire calls turned away by ANY bound, so a
 	// flood is visible rather than merely survived.
 	refused uint64
-	// refusedPerCaller counts the subset turned away by a per-caller
-	// bound — the shape that says "one client is enumerating the key
-	// space" rather than "the deployment has outgrown its ceiling".
+	// refusedPerCaller counts refusals by a per-caller bound: "one client is enumerating the key
+	// space", not "the deployment has outgrown its ceiling".
 	refusedPerCaller uint64
 	// idleSeq is the last [tipProducer.idleSeq] handed out.
 	idleSeq uint64
@@ -250,9 +240,9 @@ func (r *tipProducerRegistry) acquireTickSlot(ctx context.Context) (release func
 	}
 }
 
-// computeTipGated is computeTip for a producer tick: it holds a tick slot
-// (see [defaultTipTickConcurrency]) for exactly the compute, released on
-// every exit including a panic the producer's recover absorbs.
+// computeTipGated is computeTip for a producer tick, holding a tick slot
+// ([defaultTipTickConcurrency]) for exactly the compute and releasing it on every exit, including
+// a panic the producer's recover absorbs.
 func (s *Server) computeTipGated(ctx context.Context, asset, quote canonical.Asset, window int) (PriceSnapshot, []string, error) {
 	release, err := s.tipProducers.acquireTickSlot(ctx)
 	if err != nil {
@@ -349,10 +339,9 @@ func (r *tipProducerRegistry) planAdmitLocked(caller string, ticks int) ([]tipPr
 	return r.planRoomLocked(ticks)
 }
 
-// wouldAdmit reports, without reserving anything or counting a refusal,
-// whether acquireFor would now admit caller on key. The stream handler
-// asks it before its DB pre-flight so a refusal costs no reads; the real
-// acquire stays authoritative.
+// wouldAdmit reports, reserving nothing and counting no refusal, whether acquireFor would admit
+// caller on key. The stream handler asks it before its DB pre-flight so a refusal costs no reads;
+// the real acquire stays authoritative.
 func (r *tipProducerRegistry) wouldAdmit(key tipProducerKey, caller string) tipProducerOutcome {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -489,9 +478,8 @@ func decrementOrDelete(m map[string]int, k string, n int) {
 
 // acquire is [tipProducerRegistry.acquireFor] with no principal to charge, for in-process callers.
 // The HTTP path must always use acquireFor with a resolved caller
-// (pinned by TestTipProducerCaller_KeysOnTheRotatableBlock).
-//
-// callers reach this form and they have no logger to pass.
+// (pinned by TestTipProducerCaller_KeysOnTheRotatableBlock). In-process callers reach this form
+// and have no logger to pass.
 //
 //nolint:unparam // logger mirrors acquireFor's shape; only in-process
 func (r *tipProducerRegistry) acquire(
@@ -536,9 +524,8 @@ func (r *tipProducerRegistry) acquireFor(
 		if outcome := r.admitLocked(caller, ticks); outcome != tipProducerAdmitted {
 			return nil, outcome
 		}
-		// The cancel func is NOT lost (gosec G118 false positive): it is
-		// stored on the producer record and invoked by the linger timer
-		// in release() once the last reference is gone.
+		// The cancel func is not lost (gosec G118 false positive): it is stored on the producer
+		// and invoked by the linger timer in release().
 		ctx, cancel := context.WithCancel(context.Background()) //nolint:gosec
 		p = &tipProducer{
 			refs: 1, holders: map[string]int{caller: 1}, cancel: cancel,
@@ -547,11 +534,10 @@ func (r *tipProducerRegistry) acquireFor(
 		r.active[key] = p
 		r.producersGauge().Inc()
 		r.chargeLocked(caller, ticks)
-		// `start` is a func VALUE, so the recover guard inside the producer it wraps is invisible to
-		// the static walk that keeps this file's goroutines guarded; registering it HERE makes the
-		// guarantee checkable at the `go` statement and backstops an unguarded start. A producer
-		// that exits uncancelled (a recovered panic) is relaunched on the same entry by
-		// [tipProducerRegistry.respawnIfLive], so a CURRENT subscriber is not left with heartbeats.
+		// `start` is a func VALUE, so the static walk cannot see its recover guard; guarding HERE
+		// makes the guarantee checkable at the `go` statement. A producer that exits uncancelled
+		// (a recovered panic) is relaunched on the same entry by [tipProducerRegistry.respawnIfLive],
+		// so a CURRENT subscriber is not left with heartbeats.
 		r.spawn(ctx, key, p)
 	}
 	return func() { r.release(key, caller) }, tipProducerAdmitted
@@ -590,9 +576,8 @@ func (r *tipProducerRegistry) release(key tipProducerKey, caller string) {
 	})
 }
 
-// spawn runs p.start on a goroutine guarded by worker.Recover and hands
-// its exit to [tipProducerRegistry.respawnIfLive]. ctx must be the
-// context p.cancel cancels.
+// spawn runs p.start on a worker.Recover-guarded goroutine and hands its exit to
+// [tipProducerRegistry.respawnIfLive]. ctx must be the context p.cancel cancels.
 func (r *tipProducerRegistry) spawn(ctx context.Context, key tipProducerKey, p *tipProducer) {
 	go func() {
 		defer worker.Recover(p.logger, "api-sse-price_tip_shared")

@@ -18,9 +18,8 @@ import (
 // entry: the currency identity plus a headline USD price. Per-issuance Stellar detail lives on
 // `/v1/assets/{asset_id}`.
 type GlobalAssetView struct {
-	// Kind is the wire-shape discriminator for the /v1/assets/{asset_id}
-	// oneOf (ADR-0042). Always "catalogue" on this struct — see
-	// the contrasting doc comment on AssetDetail.Kind vs AssetDetail.Type.
+	// Kind is the wire-shape discriminator for the /v1/assets/{asset_id} oneOf (ADR-0042); always
+	// "catalogue" here (contrast AssetDetail.Kind vs AssetDetail.Type).
 	Kind string `json:"kind"`
 
 	// ─── Identity (from the verified-currency catalogue) ──────────
@@ -71,9 +70,8 @@ type GlobalAssetView struct {
 	MarketCapLowLiquidity bool `json:"market_cap_low_liquidity,omitempty"`
 }
 
-// buildGlobalAssetView composes a GlobalAssetView from a catalogue
-// entry. The price block stays empty when no global-price reader is
-// wired or all three tiers come up empty.
+// buildGlobalAssetView composes a GlobalAssetView from a catalogue entry; the price block stays
+// empty when no global-price reader is wired or all three tiers miss.
 func (s *Server) buildGlobalAssetView(ctx context.Context, vc *currency.VerifiedCurrency) GlobalAssetView {
 	view := GlobalAssetView{
 		Kind:           "catalogue",
@@ -86,9 +84,7 @@ func (s *Server) buildGlobalAssetView(ctx context.Context, vc *currency.Verified
 		CoinGeckoID:    vc.CoinGeckoID,
 		CMCID:          vc.CoinMarketCapID,
 	}
-	// Catalogue-sourced supply (M2 for fiat; usually empty for
-	// crypto/stablecoin — the F2 supply pipeline is the source of
-	// truth there).
+	// Catalogue supply: M2 for fiat; empty for crypto/stablecoin, whose supply pipeline is the source.
 	if vc.CirculatingSupply != "" {
 		supply := vc.CirculatingSupply
 		view.CirculatingSupply = &supply
@@ -124,16 +120,14 @@ func (s *Server) populateGlobalCryptoPrice(ctx context.Context, view GlobalAsset
 	}
 	quote, err := canonical.NewFiatAsset("USD")
 	if err != nil {
-		// "USD" must be on the canonical-fiat allow-list; failing here
-		// is a code bug rather than a runtime data issue.
+		// "USD" is always on the fiat allow-list; failing here is a code bug.
 		s.logger.Error("global asset view: USD asset construction failed", "err", err)
 		return view
 	}
 
 	opts := s.globalPriceOpts
 	if opts.AggregatorSources == nil {
-		// Leave aggregator tier disabled if the binary didn't wire a
-		// source list — better to skip than fail.
+		// No wired source list: leave the aggregator tier disabled rather than fail.
 		opts.AggregatorSources = nil
 	}
 
@@ -160,9 +154,8 @@ func (s *Server) populateGlobalCryptoPrice(ctx context.Context, view GlobalAsset
 	view.PriceSources = res.Sources
 	asOf := res.AsOf
 	view.PriceAsOf = wireTimePtr(&asOf)
-	// Crypto / stablecoin market cap stays on the per-asset surface
-	// (/v1/assets/{asset_id}'s F2 fields) — catalogue.CirculatingSupply
-	// is empty for those classes, so no inline computation here.
+	// Crypto / stablecoin market cap stays on /v1/assets/{asset_id}: the catalogue supply is empty
+	// for those classes.
 	return view
 }
 
@@ -207,9 +200,8 @@ func (s *Server) populateFiatView(ctx context.Context, view GlobalAssetView, vc 
 		view.MarketCapUSD = computeFiatMarketCap(vc.CirculatingSupply, vc.SupplyDecimals, identity)
 		return view
 	}
-	// Shared with the listing path — see [Server.fiatUSDPriceFor]. Calling
-	// PriceReader directly here would serve null price_usd /
-	// market_cap_usd for every non-USD fiat.
+	// Shared with the listing path ([Server.fiatUSDPriceFor]); PriceReader alone would serve null
+	// price_usd / market_cap_usd for every non-USD fiat.
 	price, obs, sources, ok := s.fiatUSDPriceFor(ctx, vc.Ticker)
 	if !ok {
 		return view
@@ -232,8 +224,7 @@ type decimalsCorrectedGlobalReader struct {
 	decimals *NonstandardDecimalsCache
 }
 
-// newDecimalsCorrectedGlobalReader wraps r; a nil r stays nil so the
-// handler's "not wired" check still holds.
+// newDecimalsCorrectedGlobalReader wraps r; a nil r stays nil so the "not wired" check holds.
 func newDecimalsCorrectedGlobalReader(r aggregate.GlobalPriceReader, decimals *NonstandardDecimalsCache) aggregate.GlobalPriceReader {
 	if r == nil {
 		return nil
@@ -241,9 +232,8 @@ func newDecimalsCorrectedGlobalReader(r aggregate.GlobalPriceReader, decimals *N
 	return decimalsCorrectedGlobalReader{GlobalPriceReader: r, decimals: decimals}
 }
 
-// LatestVWAP returns the inner tier-1 VWAP decimals-corrected. It is
-// byte-identical when the legs share a scale; a flagged pair whose ratio
-// cannot be parsed reads as a miss, since serving it raw is the defect.
+// LatestVWAP returns the inner tier-1 VWAP decimals-corrected (byte-identical when the legs share
+// a scale). A flagged pair whose ratio cannot be parsed reads as a miss: serving it raw is the defect.
 func (g decimalsCorrectedGlobalReader) LatestVWAP(ctx context.Context, base, quote canonical.Asset) (string, time.Time, int64, []string, bool, error) {
 	vwap, asOf, tradeCount, sources, ok, err := g.GlobalPriceReader.LatestVWAP(ctx, base, quote)
 	if err != nil || !ok {
@@ -275,12 +265,10 @@ func assetForCurrency(vc *currency.VerifiedCurrency) (canonical.Asset, bool) {
 	return globalBaseForTicker(vc.Ticker)
 }
 
-// fiatUSDPriceFor resolves a non-USD fiat's price in USD, plus when it was observed and what
-// produced it. It is the single fiat to USD fallback chain, shared by the asset LISTING path
-// ([Server.fiatMarketCapUSD]) and the asset DETAIL path ([Server.populateFiatView]) so they cannot
-// drift. PriceReader alone returns ErrPriceNotFound for any fiat-quoted request (no on-chain
-// trades exist for a fiat/fiat pair), which would leave the detail path with null price_usd and
-// market_cap_usd for every non-USD currency.
+// fiatUSDPriceFor resolves a non-USD fiat's USD price, when it was observed and what produced it.
+// It is the single fallback chain shared by the LISTING ([Server.fiatMarketCapUSD]) and DETAIL
+// ([Server.populateFiatView]) paths so they cannot drift. PriceReader alone returns
+// ErrPriceNotFound for any fiat-quoted request (no on-chain fiat/fiat trades).
 //
 // Order is load-bearing: fx_quotes first (the authoritative store the forex worker lands in),
 // PriceReader only as a last resort for deployments without fx_quotes wiring.
@@ -293,12 +281,10 @@ func (s *Server) fiatUSDPriceFor(ctx context.Context, ticker string) (price stri
 		now := time.Now().UTC()
 		points, err := s.FXHistory.ListFXHistory(ctx, ticker, now.AddDate(0, 0, -7), now)
 		if err == nil && len(points) > 0 {
-			// oldest→newest; take the most recent usable point. The
-			// served price is the stored NUMERIC text, never the float.
+			// oldest→newest; take the latest usable point. Served price is the stored NUMERIC text, never the float.
 			for i := len(points) - 1; i >= 0; i-- {
 				if _, usable := points[i].inverseUSDRat(); usable {
-					// FXQuotePoint carries no source label; fx_quotes is
-					// Massive-backed by construction.
+					// FXQuotePoint has no source label; fx_quotes is Massive-backed.
 					return points[i].InverseUSDText, points[i].Bucket, []string{"fx_quotes"}, true
 				}
 			}
@@ -347,18 +333,14 @@ func (s *Server) fiatMarketCapUSD(ctx context.Context, vc *currency.VerifiedCurr
 	return computeFiatMarketCap(vc.CirculatingSupply, vc.SupplyDecimals, price)
 }
 
-// computeFiatMarketCap returns market_cap_usd = supplyStr / 10^decimals
-// × priceStr formatted to 2 fractional digits, or nil when either operand
-// can't be parsed. Scaling goes through fiatSupplyWholeUnits so this
-// listing/global figure and the market-cap chart agree for any
-// supply_decimals the catalogue declares.
+// computeFiatMarketCap returns supplyStr / 10^decimals x priceStr to 2 fractional digits, or nil
+// when an operand cannot be parsed. Scaling goes through fiatSupplyWholeUnits so this figure and
+// the market-cap chart agree for any catalogue supply_decimals.
 func computeFiatMarketCap(supplyStr string, decimals int, priceStr string) *string {
 	if supplyStr == "" || priceStr == "" {
 		return nil
 	}
-	// Exact big.Rat — no float64 on served money (ADR-0003),
-	// matching the crypto market-cap path's usdMarketValue. big.Rat
-	// stays exact even for a supply string that would overflow a
+	// Exact big.Rat, no float64 on served money (ADR-0003): exact even for a supply beyond a
 	// float64's 53-bit mantissa.
 	supply, ok := fiatSupplyWholeUnits(supplyStr, decimals)
 	if !ok {
@@ -409,10 +391,8 @@ type VerifiedCurrencyListItem struct {
 	Class          string `json:"class"`
 	VerifiedIssuer string `json:"verified_issuer,omitempty"`
 	CoinGeckoID    string `json:"coingecko_id,omitempty"`
-	// Image is the asset's logo URL from the issuer's SEP-1 TOML
-	// (sanitized; https only). Wallets bulk-load logos from this
-	// listing. Empty when the issuer's TOML is missing
-	// or carries no image for the matched currency.
+	// Image is the logo URL from the issuer's SEP-1 TOML (sanitized, https only); empty when the
+	// TOML is missing or has no image for the currency.
 	Image             string `json:"image,omitempty"`
 	CMCID             string `json:"coinmarketcap_id,omitempty"`
 	CirculatingSupply string `json:"circulating_supply,omitempty"`
@@ -421,9 +401,8 @@ type VerifiedCurrencyListItem struct {
 	// fanned out in parallel. It is empty for crypto and stablecoin rows, whose market cap
 	// lives on /v1/assets/{asset_id}; computing it here would multiply storage round-trips.
 	MarketCapUSD string `json:"market_cap_usd,omitempty"`
-	// AssetID is the canonical Stellar asset id ("native" or
-	// "<code>-<issuer>"); Issuer is set for credit assets only. Both are
-	// empty for entries with no Stellar issuance (fiat).
+	// AssetID is the canonical Stellar id ("native" or "<code>-<issuer>"); Issuer is credit assets
+	// only. Both are empty for entries with no Stellar issuance (fiat).
 	AssetID string `json:"asset_id,omitempty"`
 	Issuer  string `json:"issuer,omitempty"`
 }
@@ -480,9 +459,7 @@ func (s *Server) attachVerifiedImages(ctx context.Context, entries []*currency.V
 	}
 }
 
-// projectVerifiedCurrencyList projects each catalogue entry into
-// VerifiedCurrencyListItem. Extracted from handleAssetsVerified
-// to keep the handler under the gocognit ceiling.
+// projectVerifiedCurrencyList projects each catalogue entry into a VerifiedCurrencyListItem.
 func projectVerifiedCurrencyList(entries []*currency.VerifiedCurrency) []VerifiedCurrencyListItem {
 	out := make([]VerifiedCurrencyListItem, len(entries))
 	for i, vc := range entries {
@@ -502,9 +479,8 @@ func projectVerifiedCurrencyList(entries []*currency.VerifiedCurrency) []Verifie
 	return out
 }
 
-// verifiedStellarIdentity derives the canonical asset id from the
-// entry's (code, issuer) rather than echoing the seed's asset_id
-// string, so the listing can never serve a malformed or code-only id.
+// verifiedStellarIdentity derives the asset id from the entry's (code, issuer), not the seed's
+// asset_id string, so the listing can never serve a malformed or code-only id.
 func verifiedStellarIdentity(se *currency.IssuanceEntry) (assetID, issuer string) {
 	if se == nil {
 		return "", ""
