@@ -22,16 +22,9 @@ import (
 // to distinguish config bugs from I/O / decode failures.
 var ErrInvalidConfig = errors.New("config: invalid")
 
-// KnownSources is the set of source names the indexer's
-// buildSources() switch recognises today. Listed here so
-// config.Validate can reject typos at boot rather than at
-// runtime — an operator running `-dry-run` with `sorowsap`
-// in enabled_sources should get a clear error before storage
-// connect + RPC probe burn 5+ seconds.
-//
-// DO NOT import source packages from config (cycle avoidance, see
-// contractIDPattern). When you add a source in cmd/stellarindex-indexer/
-// main.go buildSources(), mirror the name here.
+// KnownSources is the set of source names buildSources() recognises, so Validate rejects typos at boot
+// (not after -dry-run has paid for storage connect + RPC probe). Do NOT import source packages here
+// (cycle); when adding a source in cmd/stellarindex-indexer/main.go buildSources(), mirror the name.
 var KnownSources = map[string]struct{}{
 	"soroswap":        {},
 	"soroswap-router": {},
@@ -56,12 +49,8 @@ var KnownSources = map[string]struct{}{
 	"upshift":         {},
 }
 
-// Validate checks the loaded Config against the same constraints
-// the operator's runbook assumes. Called by [Load] so a malformed
-// config fails at startup, not mid-request.
-//
-// Returns the first error encountered — callers that want a full
-// report should fix the first error and re-run.
+// Validate checks the loaded Config so a malformed config fails at startup, not mid-request.
+// It returns the first error encountered.
 func (c Config) Validate() error {
 	if err := c.Region.validate(); err != nil {
 		return err
@@ -99,11 +88,8 @@ func (c Config) Validate() error {
 	if err := c.Obs.validate(); err != nil {
 		return err
 	}
-	// Without Supply.Validate() here, enabling the in-aggregator supply
-	// worker without a cadence would reach time.NewTicker(0) at
-	// runtime. It's a no-op for the default
-	// (disabled) config and only enforces the <30s-cadence + reserve-set
-	// invariants when the operator opts in.
+	// Without this, enabling the in-aggregator supply worker with no cadence would reach time.NewTicker(0);
+	// it is a no-op for the default (disabled) config.
 	if err := c.Supply.Validate(); err != nil {
 		return err
 	}
@@ -188,12 +174,9 @@ func (s StellarConfig) validate() error {
 		return fmt.Errorf("%w: stellar.rpc_endpoints must have at least one URL",
 			ErrInvalidConfig)
 	}
-	// Reject duplicate endpoints. Failover is the whole point of
-	// providing a list — duplicates don't buy redundancy, they just
-	// look redundant. Case-fold so "http://X" and "HTTP://X" compare
-	// equal (URL schemes are case-insensitive per RFC 3986).
-	// Errors name entries by index only: a hosted endpoint can carry an
-	// API key in its path or query, and this error is printed at boot.
+	// Reject duplicate endpoints (case-folded: URL schemes are case-insensitive per RFC 3986); they add no
+	// redundancy. Errors name entries by index only: a hosted endpoint can carry an API key in its path or
+	// query, and this error is printed at boot.
 	seen := make(map[string]int, len(s.RPCEndpoints))
 	for i, ep := range s.RPCEndpoints {
 		if _, err := url.Parse(ep); err != nil || !strings.Contains(ep, "://") {
@@ -207,14 +190,9 @@ func (s StellarConfig) validate() error {
 		}
 		seen[key] = i
 	}
-	// history_archive_url backs the
-	// backfill-catchup archive read path and has a mandatory
-	// non-empty default (unlike the optional core_http_endpoint) —
-	// treat it as required, and apply the same scheme-check its
-	// sibling URL fields (rpc_endpoints, core_http_endpoint)
-	// get. Bare url.Parse accepts scheme-less and even empty strings,
-	// which would let a malformed archive URL reach the archive client
-	// unnoticed until the first backfill request failed.
+	// history_archive_url backs the backfill-catchup archive read path and has a mandatory non-empty default,
+	// so require it and scheme-check it like its sibling URL fields; bare url.Parse accepts scheme-less and
+	// empty strings, which would only fail at the first backfill request.
 	if s.HistoryArchiveURL == "" {
 		return fmt.Errorf("%w: stellar.history_archive_url required", ErrInvalidConfig)
 	}
@@ -222,12 +200,9 @@ func (s StellarConfig) validate() error {
 		return fmt.Errorf("%w: stellar.history_archive_url %q must be a full URL",
 			ErrInvalidConfig, s.HistoryArchiveURL)
 	}
-	// Network/archive mismatch guard: the PUBNET archive
-	// (core-live) must never be paired with a test-net `network`, or a
-	// testnet/futurenet node would ingest PUBNET checkpoints into a test-net
-	// store — silent cross-network corruption, and config validation is the
-	// only gate before the archive client uses this URL. A test net's own
-	// archive carries a core-testnet / core-futurenet path segment instead.
+	// Network/archive mismatch guard: the PUBNET archive (core-live) must never pair with a test-net `network`,
+	// or a test-net node would ingest PUBNET checkpoints into a test-net store (silent cross-network corruption).
+	// A test net's own archive has a core-testnet / core-futurenet path segment.
 	if s.Network != "pubnet" {
 		lower := strings.ToLower(s.HistoryArchiveURL)
 		if strings.Contains(lower, "core-live") || strings.Contains(lower, "core_live") {
@@ -242,12 +217,9 @@ func (s StorageConfig) validate() error { //nolint:gocognit,gocyclo // dispatch-
 	if s.PostgresDSN == "" {
 		return fmt.Errorf("%w: storage.postgres_dsn required", ErrInvalidConfig)
 	}
-	// redis_password / clickhouse_serving_password hold the secret VALUE
-	// (their deprecated aliases carry an `_env` suffix), while
-	// s3_access_key_env / s3_secret_key_env hold the NAME of an env var
-	// to dereference. A "holds the value" field that looks like one of
-	// this project's own env-var names is almost certainly the wrong
-	// convention pasted in.
+	// redis_password / clickhouse_serving_password hold the secret VALUE, while s3_access_key_env / s3_secret_key_env
+	// hold the NAME of an env var. A "value" field that looks like one of this project's env-var names is almost
+	// certainly the wrong convention pasted in.
 	if envVarNameLikePattern.MatchString(s.RedisPassword) {
 		return fmt.Errorf("%w: storage.redis_password looks like an env-var NAME (%q), not a secret value — "+
 			"this field holds the password itself (see field doc); did you mean to export that variable "+
@@ -325,15 +297,9 @@ func (s StorageConfig) validate() error { //nolint:gocognit,gocyclo // dispatch-
 			}
 		}
 	}
-	// Cold-tier credentials are all-or-nothing (ADR-0027). Like their
-	// hot counterparts these hold the NAME of an env var, not the
-	// credential; unlike them, EMPTY is a meaningful value — it selects
-	// anonymous reads, which is correct for the production target
-	// (aws-public-blockchain is a public AWS Open Data bucket). Half a
-	// pair is therefore never a sane state: pipeline.NewColdDataStore
-	// would have to guess whether the operator meant "anonymous" or
-	// "static creds", and guessing "anonymous" on a private bucket is
-	// a silent degradation. Reject at load time instead.
+	// Cold-tier credentials are all-or-nothing (ADR-0027). Like the hot ones they hold an env var NAME, but EMPTY is
+	// meaningful: anonymous reads, correct for the public aws-public-blockchain bucket. Half a pair is never sane,
+	// since NewColdDataStore would have to guess, and guessing "anonymous" on a private bucket degrades silently.
 	if (s.S3ColdAccessKeyEnv == "") != (s.S3ColdSecretKeyEnv == "") {
 		return fmt.Errorf("%w: storage.s3_cold_access_key_env (%s) and storage.s3_cold_secret_key_env (%s) must "+
 			"be set together — leave BOTH empty for anonymous reads (public buckets), or name BOTH env vars for "+
@@ -345,14 +311,9 @@ func (s StorageConfig) validate() error { //nolint:gocognit,gocyclo // dispatch-
 	if s.S3ColdSecretKeyEnv != "" && !envVarNameShapePattern.MatchString(s.S3ColdSecretKeyEnv) {
 		return errEnvNameShape("s3_cold_secret_key_env")
 	}
-	// Cold tiering's enable flag (StorageConfig.ColdTieringEnabled) is
-	// the bucket field alone — region and endpoint have no independent
-	// gate. A bucket set without them reaches
-	// pipeline.NewColdDataStore with a zero-value Region (SigV4 has no
-	// meaningful signature without one) and no BaseEndpoint override,
-	// silently resolving to whatever the AWS default endpoint resolver
-	// guesses for an empty region. Require all three together, same
-	// all-or-nothing shape as the hot tier's S3Endpoint block above.
+	// Cold tiering's enable flag is the bucket field alone, so a bucket set without region and endpoint would
+	// reach pipeline.NewColdDataStore with a zero Region (no meaningful SigV4 signature) and silently resolve to
+	// the AWS default endpoint. Require all three together, like the hot tier's S3Endpoint block.
 	if s.S3ColdBucketArchive != "" {
 		if s.S3ColdRegion == "" {
 			return fmt.Errorf("%w: storage.s3_cold_region required when s3_cold_bucket_archive is set",
@@ -363,12 +324,9 @@ func (s StorageConfig) validate() error { //nolint:gocognit,gocyclo // dispatch-
 				ErrInvalidConfig)
 		}
 	}
-	// ClickHouse feed-switch dependency (ADR-0041 feed-switch): the
-	// projector reads forward events from the CH lake's contract_events,
-	// so CH must actually be BEING WRITTEN — i.e. the real-time dual-sink
-	// must be on. projector_source=true with live_sink=false silently
-	// mis-reads a lake nothing keeps current. Enforce the documented
-	// "Requires clickhouse_live_sink" invariant at validate-time.
+	// ClickHouse feed-switch dependency (ADR-0041): the projector reads forward events from the CH lake, which
+	// is only kept current when the real-time dual-sink is on. projector_source=true with live_sink=false
+	// would silently mis-read a stale lake.
 	if s.ClickHouseProjectorSource && !s.ClickHouseLiveSink {
 		return fmt.Errorf("%w: storage.clickhouse_projector_source requires storage.clickhouse_live_sink "+
 			"(the projector reads forward events from ClickHouse, so the dual-sink must be writing them)",
@@ -377,28 +335,12 @@ func (s StorageConfig) validate() error { //nolint:gocognit,gocyclo // dispatch-
 	return nil
 }
 
-// A config-validation failure is FATAL at boot: the message goes to
-// stderr, systemd hands it to journald, promtail ships it to Loki on
-// the 720h retention, and anyone with Grafana read access can then read
-// it — the same log store an edge access-log leak can put
-// credentials into, reached from the other side.
-//
-// So the rule for every branch below is: echo the offending VALUE only
-// when the branch can ONLY fire on a non-secret. The two
-// redis_password / clickhouse_serving_password branches above
-// satisfy that and deliberately keep their %q — they fire only when the
-// value matched envVarNameLikePattern, i.e. it is provably one of this
-// project's own env-var NAMES and not a password, and naming it is the
-// whole diagnostic. Every branch that reaches these helpers is the
-// opposite: each fires on exactly the paste-the-credential-where-the-
-// name-goes mistake it exists to catch, or on an operator input that is
-// malformed and therefore cannot be assumed to be anything.
+// A config-validation failure is FATAL at boot and its message reaches journald, then Loki (720h retention, Grafana-readable).
+// So a branch echoes the offending VALUE only when it can ONLY fire on a non-secret: the redis_password / clickhouse_serving_password
+// branches keep %q (they fire only on an env-var-NAME match); every branch using these helpers fires on a pasted credential or malformed input.
 
-// errEnvNameShape reports a storage.*_key_env field whose value does not
-// have the shape of an env-var name. The value is withheld: this branch
-// fires precisely when the operator pasted the credential itself where
-// the NAME belongs, so printing it would put an S3 secret key in the
-// boot log.
+// errEnvNameShape reports a storage.*_key_env field that does not look like an env-var name. The value is
+// withheld: the operator likely pasted the credential itself, and printing it would put an S3 secret in the boot log.
 func errEnvNameShape(field string) error {
 	return fmt.Errorf("%w: storage.%s doesn't look like an env-var NAME (expected UPPER_SNAKE_CASE) — "+
 		"this field holds the NAME to dereference, not the credential itself (value withheld: if you "+
@@ -435,18 +377,12 @@ func setOrEmpty(v string) string {
 	return "set"
 }
 
-// redactConnString is [redact.ConnString]. It stays as a name in this
-// file because the validation branches read better for it, and it
-// delegates because the migration tool needs the same behaviour and a
-// second copy is how a redaction invariant drifts (the maskEmail
-// duplication that produced internal/pii is the precedent).
+// redactConnString is [redact.ConnString], kept as a local name for readability; it delegates because the
+// migration tool needs the same behaviour and a second copy is how a redaction invariant drifts.
 func redactConnString(v string) string { return redact.ConnString(v) }
 
-// addrErrReason returns net.SplitHostPort's reason WITHOUT the address
-// it embeds. *net.AddrError formats as "address <addr>: <reason>", so
-// wrapping it with %w would re-leak the very value redactConnString just
-// withheld — the reason alone ("too many colons in address", "missing
-// port in address") is what actually helps.
+// addrErrReason returns net.SplitHostPort's reason WITHOUT the address it embeds: wrapping the
+// *net.AddrError with %w would re-leak the value redactConnString withheld.
 func addrErrReason(err error) string {
 	var addrErr *net.AddrError
 	if errors.As(err, &addrErr) {
@@ -456,16 +392,9 @@ func addrErrReason(err error) string {
 }
 
 func (i IngestionConfig) validate() error {
-	// Duplicate source names would spawn multiple consumers on the
-	// same event stream — double-counting metrics and doubling orphan
-	// buffer memory. Case-fold so ["soroswap", "Soroswap"] is caught
-	// too (buildSources lowercases before dispatch).
-	//
-	// Unknown names are also rejected here. Without this check a typo
-	// like "sorowsap" reaches the indexer's buildSources() switch at
-	// startup — by then -dry-run has already paid for storage Open +
-	// RPC probe, so the operator waits 5+ seconds for a one-char typo
-	// to surface. Cross-checking KnownSources closes that loop.
+	// Duplicate source names would spawn multiple consumers on one event stream (double-counted metrics, doubled
+	// orphan buffer memory); case-folded because buildSources lowercases. Unknown names are rejected too, so a
+	// typo like "sorowsap" fails here rather than after -dry-run has paid for storage Open + RPC probe.
 	seen := make(map[string]struct{}, len(i.EnabledSources))
 	for _, name := range i.EnabledSources {
 		key := strings.ToLower(strings.TrimSpace(name))
@@ -519,20 +448,9 @@ func (o OracleConfig) validate() error {
 	return o.validateStalenessOverrides()
 }
 
-// OracleSourceNames is the set of source names that publish
-// oracle_updates rows and therefore carry the
-// stellarindex_oracle_last_update_unix / _staleness_budget_seconds
-// gauges: the on-chain oracles pipeline.BuildDispatcher enables (a
-// subset of KnownSources) and the pollers external.Run starts (an
-// [external.<name>] section). It is the set a staleness override may
-// name.
-//
-// Mirrored here rather than imported for the same cycle-avoidance
-// reason KnownSources is (see its comment). The authority is
-// external.Registry's nonzero OracleResolution rows, and pipeline's
-// TestOracleSourceNames_MatchRegistry fails when the two drift — an
-// override naming a source nothing emits would sit in the config
-// looking effective while matching no series.
+// OracleSourceNames is the set of source names that publish oracle_updates rows and carry the oracle staleness gauges
+// (on-chain oracles pipeline.BuildDispatcher enables, pollers external.Run starts); a staleness override may name only these.
+// Mirrored for cycle avoidance; pipeline's TestOracleSourceNames_MatchRegistry fails on drift (an override naming a source nothing emits matches no series).
 var OracleSourceNames = map[string]struct{}{
 	"reflector-dex":    {},
 	"reflector-cex":    {},
@@ -548,15 +466,9 @@ var OracleSourceNames = map[string]struct{}{
 	"tiingo":           {},
 }
 
-// validateStalenessOverrides rejects the ways a per-asset staleness
-// budget can be written down and silently do nothing.
-//
-// Every check here exists because the override's whole job is to
-// change one alert's threshold: a row that names a source nothing
-// emits, or an asset spelled differently from the metric's label,
-// matches no series at all. That failure is invisible — the operator
-// sees a config full of intent, the alert keeps firing on the same
-// schedule, and there is no error anywhere. Fail at startup instead.
+// validateStalenessOverrides rejects overrides that would silently do nothing: a row naming a source nothing
+// emits, or an asset spelled differently from the metric's label, matches no series, so the alert keeps
+// firing on schedule with no error anywhere. Fail at startup instead.
 func (o OracleConfig) validateStalenessOverrides() error {
 	seen := make(map[string]int, len(o.StalenessOverrides))
 	for i, ov := range o.StalenessOverrides {
@@ -568,11 +480,8 @@ func (o OracleConfig) validateStalenessOverrides() error {
 				strings.Join(slices.Sorted(maps.Keys(OracleSourceNames)), ", "))
 		}
 
-		// The `asset` label is canonical.Asset.String(), so the
-		// configured value must both parse AND round-trip. Parsing
-		// alone is not enough: "XLM" parses (to the native asset) but
-		// stringifies back to "native", so an override written "XLM"
-		// would key a series that never exists.
+		// The `asset` label is canonical.Asset.String(), so the value must parse AND round-trip: "XLM" parses
+		// (to native) but stringifies back to "native", so an override written "XLM" would key a series that never exists.
 		asset, err := canonical.ParseAsset(ov.Asset)
 		if err != nil {
 			// Both errors wrap: callers match ErrInvalidConfig to know the
@@ -619,18 +528,9 @@ func (a AggregateConfig) validate() error {
 		return fmt.Errorf("%w: aggregate.max_market_cap_volume_ratio must be >= 0",
 			ErrInvalidConfig)
 	}
-	// A cap above the store's ceiling is REFUSED, not clamped. Silently
-	// clamping does double damage: the scan does not widen, AND the
-	// orchestrator's truncation detector (len(t) >= MaxTradesPerWindow)
-	// can never fire again — so an operator who follows the field's own
-	// godoc ("raise the cap if that counter fires sustainedly") would see
-	// a real truncation rate drop to a
-	// reported 0% with nothing actually fixed.
-	// tradesInRangeCeiling mirrors timescale.MaxTradesInRangeLimit.
-	// Duplicated as a literal because internal/config is a leaf package
-	// and must not import a storage adapter; timescale's own
-	// TestMaxTradesInRangeLimit_matchesConfigCeiling keeps the two in
-	// lockstep.
+	// A cap above the store's ceiling is REFUSED, not clamped: clamping would leave the scan unwidened and
+	// silently disable the orchestrator's truncation detector (len(t) >= MaxTradesPerWindow). Mirrors
+	// timescale.MaxTradesInRangeLimit as a literal (config is a leaf package); timescale's TestMaxTradesInRangeLimit_matchesConfigCeiling pins it.
 	const tradesInRangeCeiling = 10000
 	if a.MaxTradesPerWindow > tradesInRangeCeiling {
 		return fmt.Errorf(
@@ -673,14 +573,9 @@ func (a AggregateConfig) validate() error {
 	return nil
 }
 
-// validate checks the AnomalyConfig's Phase 2 thresholds plus the
-// Thresholds / Classifications map shapes. Consumers silently fall
-// through to the loose ClassDefault thresholds on an unknown class,
-// so a typo'd class name (e.g. "stablecoins") in EITHER
-// map would apply the wrong (looser) thresholds to that class/asset with
-// no error anywhere, defeating the anomaly-freeze safety net for
-// exactly the assets an operator thought they'd tightened. Rejecting
-// unknown class names at config-load time closes that gap.
+// validate checks the AnomalyConfig's Phase 2 thresholds plus the Thresholds / Classifications map shapes.
+// Consumers fall through to the loose ClassDefault on an unknown class, so a typo'd class name (e.g.
+// "stablecoins") would silently apply looser thresholds; reject unknown classes at load.
 func (a AnomalyConfig) validate() error {
 	known := make(map[string]struct{}, len(anomaly.AllClasses()))
 	for _, c := range anomaly.AllClasses() {
@@ -814,11 +709,8 @@ func (d DivergenceConfig) validate() error {
 	return nil
 }
 
-// parsePairString resolves a "<base>/<quote>" string into a
-// canonical.Pair via canonical.ParseAsset on each side. Lives here
-// (not in canonical/) so the canonical package stays free of
-// validation-message specifics — the aggregator binary calls the
-// same helper at startup to materialise its [Pair] slice.
+// parsePairString resolves a "<base>/<quote>" string into a canonical.Pair via canonical.ParseAsset on each side.
+// Lives here so canonical stays free of validation-message specifics.
 func parsePairString(s string) (canonical.Pair, error) {
 	slash := strings.LastIndex(s, "/")
 	if slash <= 0 || slash == len(s)-1 {
@@ -835,14 +727,8 @@ func parsePairString(s string) (canonical.Pair, error) {
 	return canonical.NewPair(base, quote)
 }
 
-// AggregatorPairs resolves the operator-supplied pair strings into
-// canonical.Pair instances. Returns nil when no pairs are
-// configured — callers fall back to their built-in default.
-//
-// validate() already rejects unparseable entries at startup, so
-// this re-parse is infallible in practice; we still return an
-// error to keep the seam testable and to surface the failure
-// loudly if validation is ever bypassed.
+// AggregatorPairs resolves the configured pair strings; nil when none are configured (callers use their default).
+// validate() already rejects unparseable entries, so the error only surfaces if validation is bypassed.
 func (a AggregateConfig) AggregatorPairs() ([]canonical.Pair, error) {
 	if len(a.Pairs) == 0 {
 		return nil, nil
@@ -891,15 +777,9 @@ func parseAggregateWindows(raws []string) ([]time.Duration, error) {
 	return out, nil
 }
 
-// validate enforces the [CompositeReferenceConfig] bounds and requires
-// every allow-listed target to have a triangulation chain: the chain's
-// legs ARE the reference, so a listed target without one would be
-// silently dead ("composite_unavailable: no_chain" every bucket) — the
-// config-gated-feature-ships-dead class. The chain check applies only
-// when the mechanism is enabled AND a triangulation table exists: the
-// binary default (chains empty, list populated) is a valid dormant
-// state, since the reference is defined by the chains an operator
-// deploys.
+// validate enforces the [CompositeReferenceConfig] bounds. Every allow-listed target needs a triangulation chain
+// (its legs ARE the reference), else it is silently dead ("composite_unavailable: no_chain"). The chain check
+// applies only when enabled AND a triangulation table exists: the default (no chains, list populated) is a valid dormant state.
 func (c CompositeReferenceConfig) validate(a AggregateConfig) error {
 	if c.ToleranceBps < 0 || c.ToleranceBps > 10_000 {
 		return fmt.Errorf("%w: aggregate.composite_reference.tolerance_bps must be in [0,10000] (0 = default), got %d",
@@ -955,24 +835,14 @@ func (a AggregateConfig) CompositeReferenceTargets() ([]canonical.Pair, error) {
 	return out, nil
 }
 
-// ResolvedTriangulationChain is the parsed representation of a
-// TriangulationChainConfig — all pair strings resolved to
-// canonical.Pair. Returned by [AggregatorTriangulations]; callers
-// pass the slice straight into orchestrator.Config.Triangulations
-// after type-converting each row.
+// ResolvedTriangulationChain is a TriangulationChainConfig with all pair strings resolved to canonical.Pair.
 type ResolvedTriangulationChain struct {
 	Target canonical.Pair
 	Legs   []canonical.Pair
 }
 
-// AggregatorTriangulations resolves the operator-supplied
-// TriangulationChainConfig rows into ResolvedTriangulationChain
-// instances. Returns nil when no chains are configured.
-//
-// Each row's Target + Legs are parsed via parsePairString. The
-// per-chain structural validation (legs chainable, endpoints match
-// target) lives in orchestrator.ValidateTriangulationChain — this
-// helper only does the parse step.
+// AggregatorTriangulations resolves the configured chains; nil when none. Only parses: structural validation
+// lives in orchestrator.ValidateTriangulationChain.
 func (a AggregateConfig) AggregatorTriangulations() ([]ResolvedTriangulationChain, error) {
 	if len(a.Triangulations) == 0 {
 		return nil, nil
@@ -1063,41 +933,25 @@ func (a APIConfig) validate() error {
 				ErrInvalidConfig, i, raw, err)
 		}
 	}
-	// request_timeout is documented as the
-	// PRIMARY bound and serving_statement_timeout as the SQL-side
-	// backstop, which only works as defense-in-depth when the
-	// statement timeout is the longer of the two (so the app-layer
-	// deadline fires first). An inverted pair silently swaps which
-	// layer actually governs — the DB kills the query first, so a
-	// batch/admin caller relying on the documented request_timeout
-	// ceiling gets cut off early instead. 0 on either side disables
-	// that layer entirely and is unaffected by this check.
+	// request_timeout is the PRIMARY bound and serving_statement_timeout the SQL-side backstop, so the statement
+	// timeout must be the longer one (the app deadline fires first). An inverted pair lets the DB kill the query first.
+	// 0 on either side disables that layer and skips this check.
 	if a.RequestTimeout > 0 && a.ServingStatementTimeout > 0 && a.ServingStatementTimeout <= a.RequestTimeout {
 		return fmt.Errorf("%w: api.serving_statement_timeout (%v) must be longer than api.request_timeout (%v) — "+
 			"the SQL-side backstop only works as defense-in-depth when it fires AFTER the app-layer deadline",
 			ErrInvalidConfig, a.ServingStatementTimeout, a.RequestTimeout)
 	}
-	// The same ordering rule one layer up, on the side the check above
-	// left open: request_timeout must also sit ABOVE the longest
-	// per-handler budget ([APIMaxHandlerBudget]). Below it, the blanket
-	// deadline is the one that fires on every slow read, so every
-	// handler's specific `…-timeout` 503 becomes unreachable and the
-	// budgets they advertise are fiction — the configuration half of the
-	// bodyless-200 class. Rejected rather than clamped: silently raising
-	// an operator's stated ceiling is the surprise this whole area is
-	// about, and the value is theirs to correct.
+	// request_timeout must also sit ABOVE the longest per-handler budget ([APIMaxHandlerBudget]); below it the blanket
+	// deadline fires first and every handler's specific `-timeout` 503 becomes unreachable. Rejected, not clamped:
+	// silently raising an operator's stated ceiling is the surprise to avoid.
 	if a.RequestTimeout > 0 && a.RequestTimeout <= APIMaxHandlerBudget {
 		return fmt.Errorf("%w: api.request_timeout (%v) must be longer than the longest per-handler "+
 			"budget (%v) — at or below it the blanket request deadline fires first and every handler's "+
 			"own timeout response becomes unreachable",
 			ErrInvalidConfig, a.RequestTimeout, APIMaxHandlerBudget)
 	}
-	// An unknown name in status_services is a service that can
-	// never be reported down — /v1/status would look for a heartbeat
-	// key Prometheus never publishes and hold `overall` at degraded
-	// forever, which reads exactly like the stuck status this list exists
-	// to prevent. Reject the typo at boot rather than serve a permanently
-	// mis-rolled status page.
+	// An unknown status_services name can never be reported down: /v1/status would wait on a heartbeat key
+	// Prometheus never publishes and hold `overall` at degraded forever. Reject the typo at boot.
 	for i, raw := range a.StatusServices {
 		switch strings.ToLower(strings.TrimSpace(raw)) {
 		case "indexer", "aggregator":
@@ -1150,11 +1004,8 @@ var (
 	// populated with an env-var NAME instead of the secret itself.
 	envVarNameLikePattern = regexp.MustCompile(`^STELLARINDEX_[A-Z0-9_]+$`)
 
-	// envVarNameShapePattern matches the general shape of an
-	// UPPER_SNAKE_CASE identifier — what a "holds the NAME of an env
-	// var" field (s3_access_key_env, s3_secret_key_env) should look
-	// like. Catches the inverse mistake: a literal secret (or
-	// anything else) shipped where a name was expected.
+	// envVarNameShapePattern matches UPPER_SNAKE_CASE, the shape a "holds the NAME of an env var" field
+	// (s3_access_key_env, s3_secret_key_env) should have; catches a literal secret shipped where a name was expected.
 	envVarNameShapePattern = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
 
 	// s3BucketPattern — AWS S3 DNS-compatible bucket naming rules:
