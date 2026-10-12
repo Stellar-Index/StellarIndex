@@ -20,6 +20,44 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.112.0] — 2026-10-12
+
+214 commits since v0.111.0, most of them test-file folds and comment clean-up. One migration (0215). One new ClickHouse table. No `pkg/*` break (`pkg/client` gains optional `stale` and `triangulated` price fields).
+
+### Migrations
+
+- **0215:** trigger-maintained current trustline balance for classic supply; the reader seeds lazily, no replay (#3322).
+
+### Operator actions
+
+- **ClickHouse:** apply `deploy/clickhouse/trades_by_account.sql`, then run `ch-rebuild -sdex -trades-by-account` to fill it (#3395).
+- **ops:** `galexie-mirror-verify` reports decode-equivalent mirror objects as a separate `equivalent` result class, apart from real divergence (#3402).
+- **ops:** flags removed because nothing passes them: `detect-gaps -rpc-max-staleness`, `issuer-flags -chain-recheck-limit`, `state-snapshot -throttle-ms` (#3401).
+- **config:** five never-set keys removed, including `redis_closed_bucket_channel` and `background_statement_timeout`; defaults are inlined (#3392).
+
+### Added
+
+- **explorer:** account trades below the Postgres horizon are served from `stellar.trades_by_account` (#3395).
+- **api:** asset listing rows carry `contract_id`; a non-fiat asset in a crypto ticker is priced through its USD legs (#3314, #3312).
+- **notify:** Resend tracking pinned off; suppression derived from bounce and complaint events (#3394).
+- **ops:** daily age-encrypted config and secrets backup timer (#3313); `galexie-mirror-verify` prints each missing-local object (#3298).
+- **status:** `status.stellarindex.io` is a standalone incident page (#3316).
+
+### Fixed
+
+- **explorer:** static-build pages price through `/v1/price/batch` (#3393); build-time API requests are capped per worker (#3317); account movements warn only while served coverage is incomplete (#3390).
+- **archive:** holes inside the trim are accepted, and the weekly upstream check is excluded from the 24h stale alert (#3391).
+- **ops:** `galexie-archive-fill` queues behind a held heavy lock instead of deferring (#3319); `config-backup` pg_dump switches to postgres and logs why it fails (#3318); lake-backup orphans are swept from a started record (#3291); `directory-sync` is pinned to a reviewed commit (#3308).
+
+### Performance
+
+- **completeness:** the recognition shape scan is split by `topic[0]` kind (#3356).
+
+### Changed
+
+- **config:** unreferenced script removed; CLI flags and config keys nothing sets are folded into their defaults (#3389, #3392, #3401).
+- **test:** several hundred small test files folded into their subject files (#3360–#3403).
+
 ## [v0.111.0] — 2026-10-10
 
 104 commits since v0.110.0. No migrations, no `pkg/*` break. Removed config keys no deployment sets (#3119, #3120).
@@ -108,19 +146,3 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 - **web:** trade volume, pool reserves, protocol TVL, RWA history and the MEV feed rank, total and format with exact decimals, never doubles (#2958, #2959, #2960).
 - **web:** charts across ledger, transaction, network, contract, account, asset, market, MEV, status and source pages (#2951–#2957); prose walls cut (#2949, #2950).
 - **web:** SAC contract pages show the wrapped asset (#2947); the contracts page shows deployments per month and 90-day actives (#2946); breadcrumbs on every content page (#2942).
-
-## [v0.107.0] — 2026-10-09
-
-190 commits since v0.106.0, almost all comment and doc clean-up. No migrations, no `pkg/*` break.
-
-### Fixed
-
-- **timescale:** a zero USD-pegged base leg is valued at exactly $0 (#2890); SEP-41 cursor indexes clamp to smallint instead of wrapping (#2881).
-- **dashboardauth:** a signed-in browser gets its own code-lockout budget (#2878).
-- **clickhouse:** a large gated contract set is sent as an external table (#2807).
-- **indexer:** the hashdb history slice, which compared our bytes to SDF's, is dropped (#2806).
-- **ops:** pgbackrest backups get a 900s archive timeout (#2761).
-
-### Changed
-
-- Go bumped to 1.27.2 and golang.org/x/net to v0.60.0 (#2899).
