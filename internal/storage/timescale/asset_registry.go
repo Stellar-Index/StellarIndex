@@ -27,9 +27,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// assetRegistryDedupeTTL caps upserts to one per asset per window. A permanent seen-set would
-// freeze `last_seen_*` and `observation_count` at first observation; 60 s keeps the hot path off
-// the registry table while "last seen" stays within a minute of activity.
+// assetRegistryDedupeTTL caps upserts to one per asset per window; a permanent seen-set would freeze last_seen_* and observation_count.
 const assetRegistryDedupeTTL = 60 * time.Second
 
 // assetRegistryDedupe / issuerRegistryDedupe live on [Store], not at package scope, so the cache
@@ -37,15 +35,9 @@ const assetRegistryDedupeTTL = 60 * time.Second
 // "dedupe" the second DB's first trade for an asset so its classic_assets row is never written.
 // The zero value is ready to use. See the field docs on [Store].
 
-// registerClassicAssetSeen ensures a `classic_assets` row exists for the classic asset, bumping
-// last_seen_* to the trade's ledger and timestamp and incrementing observation_count. InsertTrade
-// calls it after the trades INSERT succeeds.
-//
-// This is the trade-side half; [Store.RegisterClassicAssetsHeld] covers held-but-never-traded
-// assets, which would otherwise have no row, no issuers row, no SEP-1 fetch and no RWA candidacy.
-//
-// Returns nil on success, no-op (non-classic asset) or already-deduped within this process.
-// Callers log and swallow errors so a registry write failure cannot sink the trade insert.
+// registerClassicAssetSeen ensures a classic_assets row exists, bumping last_seen_* and observation_count. Trade-side half;
+// held-but-never-traded assets come from [Store.RegisterClassicAssetsHeld]. Callers log and swallow errors so a registry failure cannot
+// sink the trade insert.
 func (s *Store) registerClassicAssetSeen(
 	ctx context.Context,
 	asset canonical.Asset,
@@ -82,9 +74,8 @@ const upsertClassicAssetSQL = `
 			observation_count  = classic_assets.observation_count + 1
 	`
 
-// registerClassicAssetRange is [Store.registerClassicAssetSeen] for a lowest..highest observation.
-// A lower minimum than the last one this Store upserted bypasses the dedupe TTL so backward
-// backfill still reaches first_seen_*.
+// registerClassicAssetRange is [Store.registerClassicAssetSeen] for a lowest..highest range; a lower minimum bypasses the dedupe TTL so
+// backward backfill still reaches first_seen_*.
 func (s *Store) registerClassicAssetRange(
 	ctx context.Context,
 	asset canonical.Asset,
@@ -157,9 +148,8 @@ func (s *Store) ResetAssetRegistryDedupeForTest() {
 	})
 }
 
-// shouldSkipAssetRegistryUpsert reports whether `now` is within `assetRegistryDedupeTTL` of the
-// last recorded upsert for `assetID` on THIS store; false on first sight or an expired entry. It
-// touches only the in-memory cache so the TTL gate is unit-testable without Postgres.
+// shouldSkipAssetRegistryUpsert reports whether `assetID` was upserted on THIS store within the TTL; in-memory only so it is
+// unit-testable.
 func (s *Store) shouldSkipAssetRegistryUpsert(assetID string, now time.Time) bool {
 	cached, ok := s.assetRegistryDedupe.Load(assetID)
 	if !ok {
@@ -172,10 +162,8 @@ func (s *Store) shouldSkipAssetRegistryUpsert(assetID string, now time.Time) boo
 	return now.Sub(lastUpsert) < assetRegistryDedupeTTL
 }
 
-// registerIssuerSeen ensures an `issuers` row exists for the supplied G-strkey. Idempotent and
-// dedupe-cached. It writes only g_strkey: home_domain, auth flags and the SEP-1 payload come from
-// the separate AccountEntry observer (ADR-0021); without it, the curated fallback at
-// internal/api/v1/known_issuers.go fills home_domain + org_name at the wire boundary.
+// registerIssuerSeen idempotently ensures an issuers row, writing only g_strkey; home_domain and SEP-1 data come from the AccountEntry
+// observer (ADR-0021), with known_issuers.go as the wire-boundary fallback.
 func (s *Store) registerIssuerSeen(ctx context.Context, gStrkey string) error {
 	if gStrkey == "" {
 		return nil
@@ -216,10 +204,8 @@ func (s *Store) ClassicAssetBySlug(ctx context.Context, slug string) (code, issu
 
 // ─── holdings-fed registration ──────────────────────────────────────────
 
-// classicAssetHoldingBatchMax caps observations per multi-row INSERT. The bound that matters is
-// Postgres's 65,535 bind parameters per statement, and each observation binds seven: 2,000 rows
-// is 14,000 parameters, well clear even if a column is added, while a 512k-asset walk stays at a
-// few hundred statements.
+// classicAssetHoldingBatchMax caps observations per INSERT: seven binds each, so 2,000 rows stays far under Postgres's 65,535 parameter
+// limit.
 const classicAssetHoldingBatchMax = 2000
 
 // ClassicAssetHolding is one holdings-derived observation of a classic asset (trustline evidence it exists); First/Last bracket the evidence ledgers and First is only an upper bound on genesis.
@@ -248,10 +234,8 @@ func (s *Store) RegisterClassicAssetsHeld(ctx context.Context, obs []ClassicAsse
 	return assets, issuers, nil
 }
 
-// registerClassicAssetsHeldBatch writes one bounded batch: issuers first, then assets, matching
-// [Store.registerClassicAssetSeen]. There is no FK, but the order makes "every classic_assets row
-// has an issuers row by the time it is queryable" true for the concurrent RWA membership build
-// and SEP-1 refresh queue.
+// registerClassicAssetsHeldBatch writes issuers first, then assets, so every classic_assets row has an issuers row once queryable (the
+// RWA membership build and SEP-1 queue run concurrently; there is no FK).
 func (s *Store) registerClassicAssetsHeldBatch(ctx context.Context, obs []ClassicAssetHolding) (int64, int64, error) {
 	rows := make([]ClassicAssetHolding, 0, len(obs))
 	seenIssuer := make(map[string]struct{}, len(obs))
@@ -286,12 +270,8 @@ func (s *Store) registerClassicAssetsHeldBatch(ctx context.Context, obs []Classi
 	return assetCount, issuerCount, nil
 }
 
-// normaliseHoldingBracket orders the bracket so first <= last on both the
-// ledger and the timestamp.
-//
-// The lake supplies min/max from one aggregate so they arrive ordered, but classic_assets has
-// CHECK (last_seen_ledger >= first_seen_ledger) and one inverted row would abort the whole
-// multi-row statement; sorting here makes that failure impossible rather than unlikely.
+// normaliseHoldingBracket orders first <= last on ledger and timestamp: classic_assets CHECKs last_seen_ledger >= first_seen_ledger, and
+// one inverted row would abort the whole multi-row statement.
 func normaliseHoldingBracket(o ClassicAssetHolding) ClassicAssetHolding {
 	if o.LastLedger < o.FirstLedger {
 		o.FirstLedger, o.LastLedger = o.LastLedger, o.FirstLedger
@@ -302,12 +282,8 @@ func normaliseHoldingBracket(o ClassicAssetHolding) ClassicAssetHolding {
 	return o
 }
 
-// insertIssuersBatch is the batch form of [Store.registerIssuerSeen]: g_strkey only, ON CONFLICT
-// DO NOTHING, the rest left to the AccountEntry observer and SEP-1 fetcher.
-//
-// The RWA surface needs these rows: `issuers` is written only here, so an issuer whose assets are
-// held but never traded would never get a home_domain or sep1_payload, and BoundSep1Currencies
-// (the RWA membership build's only input) selects WHERE sep1_payload IS NOT NULL.
+// insertIssuersBatch is the batch form of [Store.registerIssuerSeen] (g_strkey only, ON CONFLICT DO NOTHING). Needed because
+// held-but-never-traded issuers would otherwise never get sep1_payload, which BoundSep1Currencies (the RWA membership input) requires.
 func (s *Store) insertIssuersBatch(ctx context.Context, gStrkeys []any) (int64, error) {
 	if len(gStrkeys) == 0 {
 		return 0, nil
@@ -329,11 +305,8 @@ func (s *Store) insertIssuersBatch(ctx context.Context, gStrkeys []any) (int64, 
 	return n, nil
 }
 
-// upsertHeldAssetsBatch is the registry upsert for holdings evidence.
-//
-// The conflict clause widens first_seen_* / last_seen_* and the holding columns and touches
-// nothing else. LEAST and GREATEST ignore NULL operands in Postgres, so a pre-existing row with
-// NULL holding columns gets them filled on its first pass.
+// upsertHeldAssetsBatch widens first_seen_*/last_seen_* and the holding columns only; LEAST/GREATEST ignore NULL, so NULL holding
+// columns fill in.
 func (s *Store) upsertHeldAssetsBatch(ctx context.Context, rows []ClassicAssetHolding) (int64, error) {
 	var b strings.Builder
 	b.WriteString(`INSERT INTO classic_assets (

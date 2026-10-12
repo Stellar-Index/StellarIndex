@@ -193,11 +193,8 @@ const curatedRWAPublishedTotalSQL = `
 		   AND ` + curatedRWAPublishedRecognisedSQL + `
 		 ORDER BY month_end ASC`
 
-// curatedRWAPublishedSplitSQL serves the split for ONE month, largest first, under the same bound.
-//
-// The ORDER BY names the TABLE column: the select list's `value_usd::text` takes the output name
-// `value_usd`, and Postgres resolves an unqualified ORDER BY against output names first, which
-// would sort the amounts as text ("904795860.00" above "3100000000.00").
+// curatedRWAPublishedSplitSQL serves one month's split, largest first. ORDER BY names the TABLE column: an unqualified value_usd
+// resolves to the text output name and would sort amounts as text ("904795860.00" above "3100000000.00").
 const curatedRWAPublishedSplitSQL = `
 		SELECT subclass, value_usd::text, source_query, executed_at
 		  FROM curated_rwa_published_series

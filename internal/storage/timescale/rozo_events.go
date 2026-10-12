@@ -100,9 +100,7 @@ func (s *Store) InsertRozoEvent(ctx context.Context, e RozoEvent) error {
 	return nil
 }
 
-// ptrToNullString maps a nil *string to SQL NULL and a non-nil one to
-// its value (including the empty string, which is a meaningful value
-// — see RozoEvent.Memo).
+// ptrToNullString maps nil to SQL NULL and a non-nil pointer to its value; the empty string is meaningful (see RozoEvent.Memo).
 func ptrToNullString(v *string) sql.NullString {
 	if v == nil {
 		return sql.NullString{}

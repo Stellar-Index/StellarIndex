@@ -41,10 +41,7 @@ var AllHistoryGranularities = []HistoryGranularity{
 	Granularity1d, Granularity1w, Granularity1mo,
 }
 
-// historyGranularitySep separates the entries [HistoryGranularityList]
-// renders. Named rather than inlined so the guard test can split on
-// the same value: a test that hard-coded ", " would fail on a change
-// of punctuation and report it as a missing granularity.
+// historyGranularitySep separates [HistoryGranularityList] entries; named so the guard test splits on the same value.
 const historyGranularitySep = ", "
 
 // HistoryGranularityList renders [AllHistoryGranularities] for Validate's error and the API's 400 bodies so new granularities reach every message.
@@ -66,9 +63,8 @@ func (g HistoryGranularity) Validate() error {
 	return fmt.Errorf("unknown granularity %q (want one of: %s)", g, HistoryGranularityList())
 }
 
-// closedBucketInterval is the Postgres INTERVAL the closed-bucket guard subtracts from now()
-// (ADR-0015); it equals the bucket size. The calendar spellings ('1 day', '1 month') step on the
-// UTC bucket grid only because [sessionConnConfig] pins every pool's session TimeZone to UTC.
+// closedBucketInterval is the INTERVAL the closed-bucket guard subtracts from now() (ADR-0015); it equals the bucket size.
+// Calendar spellings ('1 day', '1 month') align to the UTC grid only because [sessionConnConfig] pins TimeZone to UTC.
 func (g HistoryGranularity) closedBucketInterval() string {
 	switch g {
 	case Granularity1m:
@@ -115,29 +111,19 @@ func (g HistoryGranularity) Seconds() int {
 	return int(g.BucketDuration() / time.Second)
 }
 
-// dirVWAP is one stored market direction's contribution to a CAGG bucket. The decoder keeps each
-// trade in the venue's observed ordering ([canonical.Orient]), so one market lands as both (A,B)
-// and (B,A) rows and every serving read must fold the two itself.
-//
-//   - vwapText and volumeText are the NUMERIC `vwap` and `volume_priced` columns as text (no float
-//     round-trip), over priceable rows only (both legs > 0) in the row's own raw orientation.
-//     `volume` also counts zero-leg rows, so it cannot weight vwap.
-//   - flipped marks a row stored (quote, base) relative to the orientation the caller asked for.
+// dirVWAP is one stored direction's share of a CAGG bucket; a market lands as both (A,B) and (B,A) rows that reads must fold.
+// vwapText/volumeText are NUMERIC text over priceable rows only (volume_priced, not volume); flipped = stored (quote, base).
 type dirVWAP struct {
 	vwapText   string
 	volumeText string
 	flipped    bool
 }
 
-// combinedVWAPSigDigits is how many SIGNIFICANT digits a combined VWAP renders with. Prices span
-// roughly 1e2 down to 1e-12 and below (an 18-decimals token quoted in XLM), so precision must be
-// RELATIVE (see [rateScaleFor]). 25 digits is past the ~16-20 fractional digits of the CAGG's own
-// NUMERIC division, so rendering never drops precision the inputs carried.
+// combinedVWAPSigDigits is the SIGNIFICANT-digit count of a combined VWAP (prices span 1e2..1e-12; see [rateScaleFor]).
+// 25 exceeds the CAGG's own ~16-20 fractional NUMERIC digits, so rendering never drops input precision.
 const combinedVWAPSigDigits = 25
 
-// formatCombinedVWAP renders an exact combined VWAP as a decimal string with trailing zeros
-// trimmed (mirrors `formatCrossRate` on the API side). It is the ONLY lossy step in the combine;
-// everything upstream is exact rational arithmetic.
+// formatCombinedVWAP renders an exact rational as a trimmed decimal string; the only lossy step in the combine.
 func formatCombinedVWAP(r *big.Rat) string {
 	s := r.FloatString(rateScaleFor(r, combinedVWAPSigDigits))
 	if strings.Contains(s, ".") {
@@ -147,19 +133,8 @@ func formatCombinedVWAP(r *big.Rat) string {
 	return s
 }
 
-// combineDirVWAP folds the stored directions of one bucket into the VWAP of their union in the
-// requested (base, quote) orientation, as a NUMERIC-shaped decimal string.
-//
-// VWAP is Σ(quote leg) / Σ(base leg), so each row's legs are re-expressed in the requested
-// orientation before dividing:
-//
-//	requested base  leg = volume_priced          (flipped row: vwap × volume_priced)
-//	requested quote leg = vwap × volume_priced   (flipped row: volume_priced)
-//
-// A trade-count-weighted mean of {vwap, 1/vwap_flipped} is not a VWAP: it weights a hundred dust
-// trades above one whale. A single unflipped row is returned VERBATIM so served bytes match a
-// single-direction read. Arithmetic is exact (math/big), never float64 or SQL `1.0 / vwap`, which
-// rounds the flipped leg before weighting. ok=false means "no data for this bucket".
+// combineDirVWAP folds one bucket's stored directions into the union VWAP in the requested orientation (NUMERIC-shaped string).
+// VWAP = Σquote leg / Σbase leg in exact math/big (never float64 or SQL 1.0/vwap); one unflipped row is VERBATIM; ok=false = no data.
 func combineDirVWAP(rows []dirVWAP) (string, bool) {
 	if len(rows) == 1 && !rows[0].flipped {
 		if v, ok := new(big.Rat).SetString(rows[0].vwapText); !ok || v.Sign() <= 0 {
@@ -193,15 +168,8 @@ func combineDirVWAP(rows []dirVWAP) (string, bool) {
 	return formatCombinedVWAP(new(big.Rat).Quo(quoteLeg, baseLeg)), true
 }
 
-// dirTWAP is one stored direction's contribution to a TWAP CAGG bucket (twap_1h / twap_1d).
-// Mirrors [dirVWAP], but the merge weight is minute coverage (`sample_count`), not trade count.
-//
-//   - twapText is the NUMERIC `twap` column as text, in the row's own orientation:
-//     avg(prices_1m.twap) over the window's minute buckets.
-//   - sampleCount is that minute-bucket count: the row's own avg denominator and the merge weight.
-//   - notionalCount is how many of those minutes cleared the $0.01 notional floor; zero means the
-//     row's twap is the unfloored fallback.
-//   - flipped marks a row stored (quote, base) relative to the orientation the caller asked for.
+// dirTWAP is one stored direction's share of a TWAP bucket (twap_1h/1d); like [dirVWAP] but merged by minute coverage (sample_count).
+// notionalCount is the minutes that cleared the $0.01 notional floor; zero means twap is the unfloored fallback.
 type dirTWAP struct {
 	twapText      string
 	sampleCount   int64
@@ -209,9 +177,7 @@ type dirTWAP struct {
 	flipped       bool
 }
 
-// flooredDirTWAP applies migration 0166's notional-floor fallback across
-// directions: when any direction cleared the floor, a direction whose twap
-// is the unfloored fallback (dust or unpriced only) is dropped from the merge.
+// flooredDirTWAP drops directions whose twap is the unfloored fallback when any direction cleared the floor (migration 0166).
 func flooredDirTWAP(rows []dirTWAP) []dirTWAP {
 	floored := 0
 	for _, r := range rows {
@@ -231,19 +197,8 @@ func flooredDirTWAP(rows []dirTWAP) []dirTWAP {
 	return out
 }
 
-// combineDirTWAP folds the stored directions of ONE TWAP bucket into the requested (base, quote)
-// orientation, as a NUMERIC-shaped decimal string.
-//
-// twap_1h / twap_1d are avg(prices_1m.twap): one equal observation per elapsed minute, not per
-// trade, so the only correct direction weight is minute coverage (`sample_count`); trade-count
-// weighting is wrong by an unbounded factor.
-//
-//	combined = Σ(oriented_twap · sample_count) / Σ(sample_count)
-//
-// A flipped row is oriented by an EXACT rational 1/twap, never SQL `1.0 / twap`, which rounds
-// before weighting. A single unflipped row is returned VERBATIM. Notional-floor fallback rows are
-// dropped first when another direction cleared the floor ([flooredDirTWAP]). ok=false when no row
-// has a parseable, positive twap and sample_count.
+// combineDirTWAP folds one TWAP bucket's directions: Σ(oriented_twap·sample_count)/Σ(sample_count); trade-count weights are wrong here.
+// Flipped rows use exact 1/twap (never SQL 1.0/twap); one unflipped row is VERBATIM; fallback rows drop first; ok=false if none parse.
 func combineDirTWAP(rows []dirTWAP) (string, bool) {
 	rows = flooredDirTWAP(rows)
 	if len(rows) == 1 && !rows[0].flipped {
@@ -273,9 +228,8 @@ func combineDirTWAP(rows []dirTWAP) (string, bool) {
 	return formatCombinedVWAP(new(big.Rat).Quo(num, den)), true
 }
 
-// appendSources appends src's entries to dst, skipping any already present: a served row's
-// contributor list is the union of its per-direction `sources` arrays. A linear scan avoids a map
-// allocation per bucket on the price hot path; ordering is settled by [normalizeVwapSources].
+// appendSources appends src's entries absent from dst; a linear scan avoids a per-bucket map on the hot path ([normalizeVwapSources]
+// orders).
 func appendSources(dst, src []string) []string {
 	for _, s := range src {
 		dup := false
@@ -292,11 +246,8 @@ func appendSources(dst, src []string) []string {
 	return dst
 }
 
-// bucketRowCap converts a caller's bucket limit into the SQL row limit a both-directions read
-// needs. A bucket holds at most two rows (one per direction), so 2n+1 rows always contain the
-// first n buckets complete; the +1 row can only start an (n+1)-th bucket, which the caller trims.
-// Capping in SQL (not via a DISTINCT-buckets CTE) keeps the index-ordered plans untouched.
-// Returns 0 for a non-positive limit, meaning "no LIMIT clause".
+// bucketRowCap converts a bucket limit to a SQL row limit: a bucket has at most two rows (one per direction), so 2n+1 holds n whole
+// buckets. Capped in SQL, not via a DISTINCT-buckets CTE, to keep index-ordered plans; 0 (no LIMIT) for a non-positive limit.
 func bucketRowCap(limit int) int {
 	if limit <= 0 {
 		return 0
@@ -360,13 +311,8 @@ func (s *Store) HistoryPoints(ctx context.Context, p canonical.Pair, granularity
 		fmt.Sprintf("HistoryPoints[%s]", granularity))
 }
 
-// scanHistoryPoints folds the both-directions rows of a prices_<granularity> read into one
-// [HistoryPoint] per bucket, in query order. Rows of a bucket are adjacent (callers order by
-// bucket), so one pass with no map suffices.
-//
-// `base` is the requested pair's base asset id; a row with a different base_asset is the flipped
-// storage of the same market. `limit` is the caller's bucket limit (0 = unbounded): the query
-// fetched [bucketRowCap] rows, so the first `limit` buckets are complete and the rest are trimmed.
+// scanHistoryPoints folds adjacent both-direction prices_<granularity> rows into one [HistoryPoint] per bucket.
+// A row whose base_asset differs from `base` is flipped storage; `limit` buckets (0 = all) of the [bucketRowCap] fetch are whole.
 func scanHistoryPoints(rows *sql.Rows, base string, limit int, what string) ([]HistoryPoint, error) {
 	out := make([]HistoryPoint, 0, 1024)
 	var (
@@ -427,13 +373,8 @@ func scanHistoryPoints(rows *sql.Rows, base string, limit int, what string) ([]H
 	return out, nil
 }
 
-// sumUSDVolume adds the per-direction volume_usd columns of one bucket. The directions hold
-// disjoint trades (each is filed once, in the venue's orientation), so USD volumes add with no
-// double counting and need no orientation conversion.
-//
-// Returns nil when every column is NULL (the "no usd_volume entries" case [HistoryPoint]
-// documents), and a lone non-NULL value verbatim so served bytes match a single-direction read.
-// Sums render at the widest input scale, as Postgres `SUM(numeric)` would.
+// sumUSDVolume adds a bucket's per-direction volume_usd (disjoint trades, no double counting); nil if all NULL, a lone value VERBATIM.
+// Sums render at the widest input scale, as Postgres SUM(numeric) would.
 func sumUSDVolume(vals []sql.NullString) *string {
 	var (
 		sum   *big.Rat
@@ -470,9 +411,7 @@ func sumUSDVolume(vals []sql.NullString) *string {
 	return &s
 }
 
-// decimalScale counts the fractional digits in a Postgres NUMERIC text
-// value. Postgres never renders NUMERIC in exponent form, so a single
-// '.' scan is exact.
+// decimalScale counts fractional digits of a NUMERIC text value; Postgres never uses exponent form, so one '.' scan is exact.
 func decimalScale(s string) int {
 	if i := strings.IndexByte(s, '.'); i >= 0 {
 		return len(s) - i - 1
@@ -540,9 +479,7 @@ func (s *Store) HistoryPointsInRange(
 		fmt.Sprintf("HistoryPointsInRange[%s]", granularity))
 }
 
-// twapGranularities is the set of granularities backed by a TWAP continuous aggregate: 1h for
-// sub-daily timeframes, 1d for daily and up, so the TWAP CAGG surface stays at two views over
-// prices_1m instead of mirroring all seven prices_* grains.
+// twapGranularities are the granularities backed by a TWAP CAGG: 1h (sub-daily) and 1d (daily and up), not all seven prices_* grains.
 var twapGranularities = map[HistoryGranularity]struct{}{
 	Granularity1h: {},
 	Granularity1d: {},
@@ -614,10 +551,8 @@ func (s *Store) TWAPPointsInRange(
 		fmt.Sprintf("TWAPPointsInRange[%s]", granularity))
 }
 
-// scanTWAPPoints folds the both-directions rows of a twap_<granularity> read into one
-// [HistoryPoint] per bucket (the VWAP field carries the TWAP value), in query order. It has the
-// [scanHistoryPoints] shape with [combineDirTWAP]'s coverage-weighted fold and `sample_count` in
-// place of `volume`; `base` and `limit` mean the same.
+// scanTWAPPoints is [scanHistoryPoints] for twap_<granularity>: the VWAP field carries the TWAP, folded by [combineDirTWAP] on
+// sample_count.
 func scanTWAPPoints(rows *sql.Rows, base string, limit int, what string) ([]HistoryPoint, error) {
 	out := make([]HistoryPoint, 0, 1024)
 	var (
@@ -687,19 +622,8 @@ type Vwap1mRow struct {
 	Sources    []string
 }
 
-// recentClosedVWAP1mForPairQuery is the newest-first closed-bucket read behind the SEP-40
-// prices() passthrough.
-//
-// It reads both stored orientations ([dirVWAP]), since one drops every minute that traded only the
-// flipped way, as a UNION ALL of index-drivable branches, not an OR; see
-// [closedVWAP1mAtOrBeforeQuery]. `LIMIT $3` is a row cap ([bucketRowCap]).
-//
-// The guard is `bucket <= now() - INTERVAL '1 minute'`, NOT `bucket + INTERVAL '1 minute' <=
-// now()`: a function on the indexed column blocks the bucket index and chunk pruning. It is a
-// const so the sargability tests in closed_vwap_at_test.go can scan it.
-//
-// Deliberately NOT given the `bucket >=` lower bound or the 14-day existence gate
-// [RecentClosedVWAP1mCombined] carries: both would empty a dormant asset's last N closed buckets.
+// recentClosedVWAP1mForPairQuery: newest-first closed buckets behind SEP-40 prices(), both orientations as UNION ALL, not OR.
+// Guard stays sargable (`bucket <= now() - INTERVAL '1 minute'`); deliberately no `bucket >=` bound or existence gate (dormant assets).
 const recentClosedVWAP1mForPairQuery = `
         SELECT * FROM (
             (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text,
@@ -735,14 +659,8 @@ func (s *Store) RecentClosedVWAP1mForPair(ctx context.Context, p canonical.Pair,
 	return scanCombinedVwap1mRows(rows, p, limit, "RecentClosedVWAP1mForPair")
 }
 
-// recentClosedVWAP1mCombinedTemplate is the newest-first, both-directions, LIMIT-N variant of
-// [latestClosedVWAP1mTemplate]. `%[1]s` is the literal `bucket >=` lower bound for plan-time chunk
-// pruning, spelled into both branches because each must prune independently.
-//
-// It selects raw per-direction rows and leaves the combine to [combineDirVWAP] in Go: exact
-// rational math, not a NUMERIC `1.0 / vwap` that rounds the flipped leg before weighting.
-// `LIMIT $3` is a row cap ([bucketRowCap]) that keeps a plain index-ordered scan. UNION ALL, not
-// an OR; see [closedVWAP1mAtOrBeforeQuery].
+// recentClosedVWAP1mCombinedTemplate is the newest-first both-directions LIMIT-N variant of [latestClosedVWAP1mTemplate]; folded in Go.
+// `%[1]s` is the literal `bucket >=` bound in both branches; `LIMIT $3` is a row cap ([bucketRowCap]).
 const recentClosedVWAP1mCombinedTemplate = `
         SELECT * FROM (
             (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text,
@@ -786,9 +704,8 @@ func (s *Store) RecentClosedVWAP1mCombined(ctx context.Context, p canonical.Pair
 	return scanCombinedVwap1mRows(rows, p, limit, "RecentClosedVWAP1mCombined")
 }
 
-// closedVWAP1mCombinedBeforeTemplate is [recentClosedVWAP1mCombinedTemplate] anchored at an
-// instant instead of now(): only buckets STRICTLY older than $4 qualify. `%[1]s` is the literal
-// `bucket >=` lower bound, injected into both branches for plan-time chunk pruning.
+// closedVWAP1mCombinedBeforeTemplate is [recentClosedVWAP1mCombinedTemplate] anchored at an instant: only buckets STRICTLY older than $4.
+// `%[1]s` is the literal `bucket >=` bound, injected into both branches for plan-time chunk pruning.
 const closedVWAP1mCombinedBeforeTemplate = `
         SELECT * FROM (
             (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text,
@@ -832,11 +749,8 @@ func (s *Store) ClosedVWAP1mCombinedBefore(ctx context.Context, p canonical.Pair
 	return scanCombinedVwap1mRows(rows, p, limit, "ClosedVWAP1mCombinedBefore")
 }
 
-// scanCombinedVwap1mRows folds the both-directions rows of a prices_1m read into one [Vwap1mRow]
-// per bucket, in query order. A bucket's rows are adjacent (callers order by bucket), so one pass
-// with no map suffices. The VWAP is the volume-weighted union ([combineDirVWAP]), the trade count
-// the sum, the sources the de-duplicated union. `limit` is the caller's bucket limit (0 =
-// unbounded): the query fetched [bucketRowCap] rows, so a partial tail is trimmed.
+// scanCombinedVwap1mRows folds adjacent both-direction prices_1m rows into one [Vwap1mRow] per bucket, in query order. VWAP via
+// [combineDirVWAP], trade counts summed, sources unioned; `limit` (0 = unbounded) trims the partial tail of the [bucketRowCap] fetch.
 func scanCombinedVwap1mRows(rows *sql.Rows, p canonical.Pair, limit int, what string) ([]Vwap1mRow, error) {
 	base := p.Base.String()
 	capHint := limit
@@ -897,16 +811,8 @@ func scanCombinedVwap1mRows(rows *sql.Rows, p canonical.Pair, limit int, what st
 	return out, nil
 }
 
-// closedVWAP1mAtOrBeforeQuery is the both-directions anchor read behind /v1/assets/{id}'s
-// change_24h_pct. One orientation alone would return a single leg's VWAP for a two-direction
-// bucket (a silently wrong number) and match nothing for a flipped-only bucket.
-//
-// `LIMIT 2` is the row cap for one bucket; if the newest bucket has one row, the second belongs to
-// an older bucket and [scanCombinedVwap1mRows]'s limit=1 trim discards it. UNION ALL of two
-// single-direction branches, NOT one `(A AND B) OR (B AND A)`: each branch is an exact prefix match
-// on prices_1m_pair_bucket_idx (base_asset, quote_asset, bucket DESC), so it walks newest-first and
-// stops at its LIMIT. The OR form cannot drive that index, and for a pair with no rows the LIMIT
-// never fills, so it walks every chunk. Guarded by TestBothDirectionReadersUseUnionNotOr.
+// closedVWAP1mAtOrBeforeQuery is the both-directions anchor read for change_24h_pct (one orientation alone gives one leg's VWAP).
+// UNION ALL of two index-prefix branches on prices_1m_pair_bucket_idx, NOT an OR (walks every chunk for empty pairs); LIMIT 2 = one bucket.
 const closedVWAP1mAtOrBeforeQuery = `
         SELECT * FROM (
             (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text,
@@ -959,11 +865,8 @@ type VWAPAtRow struct {
 // PriceAtMinuteRungMaxAge is how far behind now a point-in-time lookup may be and still be served from raw prices_1m; exported because the thin-market gate (pricingguard.SubstanceGate.AllowedAt) keys its floors on the same boundary.
 const PriceAtMinuteRungMaxAge = 48 * time.Hour
 
-// priceAtResolutionLadder returns the CAGG resolutions to probe for a point-in-time lookup `age`
-// behind now, FINEST first. It encodes the served-tier reality: prices_1m holds the recent
-// working set (~2 days), prices_1h reaches back weeks, prices_1d spans to 2015. Coarser rungs are
-// fallbacks so an old instant still resolves when finer CAGGs have aged out that row. Pure, so it
-// is unit-tested without a DB.
+// priceAtResolutionLadder returns the CAGG resolutions to probe for a point-in-time lookup `age` behind now, FINEST first.
+// prices_1m holds ~2 days, prices_1h weeks, prices_1d back to 2015; coarser rungs cover instants the finer CAGGs aged out.
 func priceAtResolutionLadder(age time.Duration) []HistoryGranularity {
 	switch {
 	case age <= PriceAtMinuteRungMaxAge:
@@ -996,18 +899,8 @@ func (s *Store) ClosedVWAPAtOrBefore(ctx context.Context, p canonical.Pair, ts t
 	return VWAPAtRow{}, sql.ErrNoRows
 }
 
-// closedVWAPAtOrBeforeQueryTemplate finds the nearest closed bucket at-or-before an instant for
-// one CAGG resolution and returns its RAW per-direction rows; [combineDirVWAP] folds them in Go
-// with exact rational arithmetic.
-//
-//	%[1]s - table name (prices_<granularity>, from the validated enum)
-//	%[2]s - upper bound literal (ts - resolution: the closed-bucket guard
-//	        `bucket + resolution <= ts` written sargably as `bucket <= ts - resolution`)
-//	%[3]s - lower bound literal (plan-time chunk exclusion; set below any bucket
-//	        ClosedVWAPAtOrBefore would accept)
-//
-// Both bounds are literal constants so the planner prunes chunks at plan time (a bind parameter
-// would force a whole-history plan). The pair strings stay bound parameters ($1/$2).
+// closedVWAPAtOrBeforeQueryTemplate returns the nearest closed bucket's RAW per-direction rows at-or-before an instant.
+// %[1]s table, %[2]s/%[3]s upper/lower bound literals (not binds), so chunks prune at plan time.
 const closedVWAPAtOrBeforeQueryTemplate = `
     WITH latest AS (
         SELECT max(b) AS b FROM (
@@ -1039,9 +932,8 @@ const closedVWAPAtOrBeforeQueryTemplate = `
       FROM r
 `
 
-// closedVWAPAtOrBeforeRes runs [closedVWAPAtOrBeforeQueryTemplate] for one resolution. found=false
-// (nil error) means no closed bucket in the pruning window, so the caller falls to a coarser rung;
-// the lower bound sits below any acceptable bucket, so it never wrongly excludes one.
+// closedVWAPAtOrBeforeRes runs the template for one resolution; found=false (nil error) means no closed bucket in the window, so go
+// coarser.
 func (s *Store) closedVWAPAtOrBeforeRes(
 	ctx context.Context, p canonical.Pair, ts time.Time, maxStaleness time.Duration, g HistoryGranularity,
 ) (time.Time, string, bool, error) {
@@ -1117,23 +1009,15 @@ func (s *Store) LatestClosedVWAP1mForPair(ctx context.Context, p canonical.Pair)
 	return s.latestClosedVWAP1m(ctx, p, cutoff)
 }
 
-// latestVWAPWindow bounds the lookback for [LatestClosedVWAP1mForPair]. A LITERAL cutoff this far
-// back is interpolated so the planner prunes old chunks at PLAN time (~6ms vs ~280ms unbounded).
-// 400 days covers every recently-traded pair while excluding most of prices_1m's decade of chunks.
+// latestVWAPWindow bounds [LatestClosedVWAP1mForPair]'s lookback; a LITERAL cutoff prunes chunks at plan time (~6ms vs ~280ms unbounded).
 const latestVWAPWindow = 400 * 24 * time.Hour
 
-// latestVWAPGateWindow bounds the cheap recent-existence probe [LatestClosedVWAP1mForPair] runs
-// before its value walk. It is the price surface's freshness horizon: a pair with no closed
-// 1-minute bucket in two weeks is "not currently priced", so the read returns [sql.ErrNoRows] and
-// /v1/price uses its triangulation / last-trade fallback. Proving a pair empty then touches only
-// recent (hot, mostly-uncompressed) chunks instead of the ~400-day span. It must stay below
-// [latestVWAPWindow] so that on a gate hit the value walk always finds the confirmed bucket.
+// latestVWAPGateWindow bounds the recent-existence probe before the value walk: no closed 1m bucket in 14 days means "not currently priced"
+// ([sql.ErrNoRows]; /v1/price falls back). Must stay below [latestVWAPWindow] so a gate hit always finds the confirmed bucket.
 const latestVWAPGateWindow = 14 * 24 * time.Hour
 
-// recentClosedVWAP1mExistsTemplate is the recent-existence gate query. `%[1]s` carries the literal
-// lower-bound clause for plan-time chunk pruning. It probes BOTH stored directions: a
-// one-direction probe could miss a flipped-only bucket and wrongly gate a live pair to ErrNoRows.
-// LIMIT 1 lets a populated pair short-circuit at its first row instead of scanning the window.
+// recentClosedVWAP1mExistsTemplate is the recent-existence gate; `%[1]s` is the literal lower bound. It probes BOTH directions so a
+// flipped-only bucket cannot wrongly gate a live pair to ErrNoRows; LIMIT 1 short-circuits a populated pair.
 const recentClosedVWAP1mExistsTemplate = `
         SELECT 1 FROM (
             (SELECT 1 FROM prices_1m
@@ -1151,11 +1035,7 @@ const recentClosedVWAP1mExistsTemplate = `
          LIMIT 1
     `
 
-// recentClosedVWAP1mExists reports whether the pair has at least one CLOSED 1-minute bucket (in
-// either stored direction) at or after `since`: the cheap gate in front of
-// [LatestClosedVWAP1mForPair]'s value walk. A miss returns (false, nil) so the caller returns
-// [sql.ErrNoRows]. The sargable closed-bucket guard and the literal lower bound both prune chunks,
-// so proving a pair empty touches only recent chunks.
+// recentClosedVWAP1mExists reports whether the pair has a CLOSED 1m bucket in either direction at or after `since`; a miss is (false, nil).
 func (s *Store) recentClosedVWAP1mExists(ctx context.Context, p canonical.Pair, since time.Time) (bool, error) {
 	// A literal lower bound (our own timestamp) gives PLAN-time chunk exclusion; a $N bind
 	// parameter would force a whole-history plan.
@@ -1180,11 +1060,8 @@ func (s *Store) RecentClosedVWAP1mExists(ctx context.Context, p canonical.Pair) 
 	return s.recentClosedVWAP1mExists(ctx, p, since)
 }
 
-// latestClosedVWAP1m runs the combined-direction latest-closed-bucket query with a literal
-// `bucket >= since` lower bound on every prices_1m scan (the template's single `%[1]s` slot,
-// repeated on all three), so the planner prunes old chunks at plan time. Returns [sql.ErrNoRows]
-// when no closed bucket exists in the window. The latest bucket's raw per-direction rows (at most
-// two) are folded by [combineDirVWAP] in Go, not by a NUMERIC `1.0 / vwap` that rounds early.
+// latestClosedVWAP1m runs the combined-direction latest-closed-bucket query with the literal `bucket >=` bound on every prices_1m scan.
+// Returns [sql.ErrNoRows] if none in the window; raw rows fold in [combineDirVWAP], not NUMERIC `1.0 / vwap`, which rounds early.
 const latestClosedVWAP1mTemplate = `
         WITH latest AS (
             SELECT max(b) AS b FROM (
@@ -1371,9 +1248,7 @@ func (s *Store) VWAPsForPair1m(ctx context.Context, p canonical.Pair, from, to t
 	return out, nil
 }
 
-// stringArray is a [sql.Scanner] for Postgres TEXT[] columns such as prices_1m `sources`. It
-// parses only the plain `{a,b,c}` form; quoted entries with embedded commas are unsupported,
-// which is fine because source names are identifier-shaped.
+// stringArray scans Postgres TEXT[] (e.g. prices_1m `sources`); plain `{a,b,c}` only, since source names are identifier-shaped.
 type stringArray []string
 
 // normalizeVwapSources sorts the CAGG `sources` array so contributor ordering is deterministic.

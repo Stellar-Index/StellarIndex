@@ -38,9 +38,7 @@ const (
 	cctpSeriesNameCumulative = "Cumulative net inflow (all-time)"
 )
 
-// cctpMintsCTE returns the inbound-transfers subquery: one RAW row per
-// stored mint_and_withdraw event (see file-doc rule 1 — collapsing per
-// (tx, op) would halve a genuine batched double-transfer in one op).
+// cctpMintsCTE returns the inbound subquery: one RAW row per mint_and_withdraw event, no per-(tx, op) collapse (file-doc rule 1);
 // windowed appends the $1::interval bound.
 func cctpMintsCTE(windowed bool) string {
 	q := `SELECT tx_hash, op_index, ts, amount
@@ -52,9 +50,8 @@ func cctpMintsCTE(windowed bool) string {
 	return q
 }
 
-// cctpBurnsCTE returns the outbound-transfers subquery: one RAW row per
-// stored deposit_for_burn event, carrying the destination domain and
-// depositor (file-doc rule 1 — no per-(tx, op) collapse).
+// cctpBurnsCTE returns the outbound subquery: one RAW row per deposit_for_burn event with destination domain and depositor (file-doc
+// rule 1).
 func cctpBurnsCTE(windowed bool) string {
 	q := `SELECT tx_hash, op_index, ts, amount,
 	         counterparty_domain AS domain,
@@ -67,15 +64,9 @@ func cctpBurnsCTE(windowed bool) string {
 	return q
 }
 
-// cctpRecvCTE returns the message_received subquery: one BurnMessage body per (tx_hash, op_index),
-// the inbound join side for source-chain attribution.
-//
-// This is the one place the per-(tx, op) GROUP BY deliberately survives (file-doc rule 1), because
-// the join needs exactly one row per op or each mint would fan out into a double-counted row. If
-// one op ever carried two received messages, min(body) attributes all its mints to one source
-// chain: totals stay conserved and only the per-chain split within that op can be off.
-//
-// Always window-bounded; all-time aggregates never need source attribution.
+// cctpRecvCTE returns one BurnMessage body per (tx_hash, op_index) for source-chain attribution. The per-(tx, op) GROUP BY survives here
+// (file-doc rule 1) so mints do not fan out; with two messages in one op, min(body) keeps totals and only skews that op's chain split.
+// Always window-bounded.
 func cctpRecvCTE() string {
 	return `SELECT tx_hash, op_index, min(attributes->>'message_body') AS body
 	   FROM cctp_events
@@ -110,11 +101,8 @@ func cctpWindowKPIQuery() string {
 		  (SELECT count(*) FROM b)::text`
 }
 
-// cctpAllTimeKPIQuery is the all-time inbound / outbound / net volumes plus unique-participant
-// counts. Recipients resolve per op to forward_recipient when the op forwarded (the final
-// beneficiary), else mint_recipient; the per-(tx, op) GROUP BY is the forward-restatement pairing
-// of file-doc rule 2 (the pair must resolve to one recipient), not twin dedup. count(DISTINCT r)
-// makes the KPI distinct addresses; count(*) would count recipient-bearing ops.
+// cctpAllTimeKPIQuery is all-time inbound/outbound/net volumes and unique participants. Recipient resolves per op to forward_recipient
+// else mint_recipient (the forward-restatement pairing of file-doc rule 2); count(DISTINCT r), not count(*), counts addresses.
 func cctpAllTimeKPIQuery() string {
 	return `
 		WITH m AS (` + cctpMintsCTE(false) + `), b AS (` + cctpBurnsCTE(false) + `)
@@ -130,9 +118,8 @@ func cctpAllTimeKPIQuery() string {
 		      GROUP BY tx_hash, op_index) q WHERE r IS NOT NULL AND r <> '')::text`
 }
 
-// cctpInboundBreakdownQuery groups the window's inbound transfers by burn-token tail (source
-// chain), USDC-weighted descending. The LEFT JOIN keeps a transfer with a missing or malformed
-// receive row in the total (as "Unknown source") so the breakdown always sums to the inbound KPI.
+// cctpInboundBreakdownQuery groups inbound by burn-token tail, USDC-weighted; the LEFT JOIN keeps unmatched receives as "Unknown source"
+// so it sums to the KPI.
 func cctpInboundBreakdownQuery() string {
 	return `
 		WITH r AS (` + cctpRecvCTE() + `), m AS (` + cctpMintsCTE(true) + `)
@@ -154,10 +141,8 @@ func cctpOutboundBreakdownQuery() string {
 		FROM b GROUP BY 1 ORDER BY sum(amount) DESC`
 }
 
-// cctpPerChainSeriesQuery builds the top-5-chains-by-window-volume
-// directional series: (chain_key, bucket, usdc) rows ordered by each
-// chain's total volume descending, then chain_key, then bucket. chain_key
-// breaks volume ties so each chain's rows stay contiguous for collectPerChainSeries.
+// cctpPerChainSeriesQuery builds top-5-chain directional series ordered by chain volume desc, chain_key (tie-break), bucket, so each
+// chain's rows stay contiguous for collectPerChainSeries.
 func cctpPerChainSeriesQuery(windowDays int, inbound bool) string {
 	trunc, format := bridgeSeriesGrain(windowDays)
 	var j string
@@ -180,9 +165,7 @@ func cctpPerChainSeriesQuery(windowDays int, inbound bool) string {
 		ORDER BY top.vol DESC, j.chain_key ASC, 2 ASC`
 }
 
-// cctpCumulativeNetInflowQuery is the all-time daily running sum of
-// (inbound − outbound) — the SDF headline series. Deliberately NOT
-// window-bounded: it is an all-time chart (over a tiny table).
+// cctpCumulativeNetInflowQuery is the all-time daily running sum of (inbound - outbound), deliberately not window-bounded (tiny table).
 func cctpCumulativeNetInflowQuery() string {
 	return `
 		WITH m AS (` + cctpMintsCTE(false) + `), b AS (` + cctpBurnsCTE(false) + `),
@@ -216,9 +199,7 @@ func cctpLargestTransfersQuery() string {
 		ORDER BY amount DESC NULLS LAST LIMIT 10`
 }
 
-// cctpChainLabel resolves a per-chain key from the queries above — a
-// burn-token tail for inbound rows, a decimal domain id for outbound — to
-// its verified display name.
+// cctpChainLabel resolves a per-chain key (burn-token tail inbound, decimal domain id outbound) to its verified display name.
 func cctpChainLabel(direction string, key string) string {
 	if direction == "Inbound" {
 		return cctpChainForBurnToken(key)
@@ -233,10 +214,7 @@ func cctpChainLabel(direction string, key string) string {
 	return cctpChainForDomain(uint32(d))
 }
 
-// bespokeBridgeCCTP assembles the CCTP bridge block: windowed + all-time
-// KPIs, the directional total series, per-chain top-5 series, the all-time
-// cumulative net-inflow series, source/destination breakdowns, and the
-// largest-transfers table.
+// bespokeBridgeCCTP assembles the CCTP block: windowed and all-time KPIs, flow and per-chain series, breakdowns and largest transfers.
 func (s *Store) bespokeBridgeCCTP(ctx context.Context, since string, windowDays int) (*BespokeBlock, error) {
 	blk := &BespokeBlock{
 		Category: "bridge",
@@ -294,9 +272,8 @@ func (s *Store) cctpKPIs(ctx context.Context, blk *BespokeBlock, since string, w
 	return nil
 }
 
-// cctpTotalFlowSeries appends the direction-stable total inbound/outbound
-// series ("Inbound (USDC)" / "Outbound (USDC)" across every window; the
-// grain — hourly at 24h, daily otherwise — lives in the point timestamps).
+// cctpTotalFlowSeries appends the direction-stable total "Inbound (USDC)"/"Outbound (USDC)" series; grain (hourly at 24h, else daily) is
+// in the timestamps.
 func (s *Store) cctpTotalFlowSeries(ctx context.Context, blk *BespokeBlock, since string, windowDays int) error {
 	for _, dir := range []struct {
 		name    string
@@ -316,9 +293,7 @@ func (s *Store) cctpTotalFlowSeries(ctx context.Context, blk *BespokeBlock, sinc
 	return nil
 }
 
-// cctpPerChainSeries appends one series per top-5 chain and direction,
-// named "Inbound · <chain>" / "Outbound · <chain>", ordered by window
-// volume descending within each direction.
+// cctpPerChainSeries appends one "Inbound · <chain>"/"Outbound · <chain>" series per top-5 chain, ordered by window volume descending.
 func (s *Store) cctpPerChainSeries(ctx context.Context, blk *BespokeBlock, since string, windowDays int) error {
 	for _, dir := range []struct {
 		prefix    string
@@ -337,9 +312,7 @@ func (s *Store) cctpPerChainSeries(ctx context.Context, blk *BespokeBlock, since
 	return nil
 }
 
-// collectPerChainSeries runs a per-chain series query and folds its ordered
-// (chain_key, bucket, value) rows into per-chain BespokeSeries, preserving
-// the query's volume-descending chain order.
+// collectPerChainSeries folds ordered (chain_key, bucket, value) rows into per-chain BespokeSeries, keeping the query's chain order.
 func (s *Store) collectPerChainSeries(ctx context.Context, query, since, direction, prefix string) ([]BespokeSeries, error) {
 	rows, err := s.db.QueryContext(ctx, query, since)
 	if err != nil {
@@ -422,9 +395,8 @@ func (s *Store) collectBreakdown(ctx context.Context, title, direction, query, s
 	return bd, nil
 }
 
-// cctpLargestTransfers fills the window's top-10 transfers table. Amounts
-// are ordered on the raw 6-decimal integer and served as the SQL-side exact
-// NUMERIC decimal string (ADR-0003).
+// cctpLargestTransfers fills the window's top-10 table, ordered on the raw 6-decimal integer and served as the exact SQL NUMERIC string
+// (ADR-0003).
 func (s *Store) cctpLargestTransfers(ctx context.Context, blk *BespokeBlock, since string) error {
 	rows, err := s.db.QueryContext(ctx, cctpLargestTransfersQuery(), since)
 	if err != nil {

@@ -165,7 +165,8 @@ func (s *Store) GetChangeSummary(ctx context.Context, entityType, entityID strin
 	return row, nil
 }
 
-// DeleteChangeSummary removes the row for (entity_type, entity_id) and reports whether one existed; the only way to clear an ath/atl pinned by the upsert ratchet.
+// DeleteChangeSummary removes the row for (entity_type, entity_id) and reports whether one existed; the only way to clear an ath/atl
+// pinned by the upsert ratchet.
 func (s *Store) DeleteChangeSummary(ctx context.Context, entityType, entityID string) (bool, error) {
 	res, err := s.db.ExecContext(ctx,
 		`DELETE FROM change_summary_5m WHERE entity_type = $1 AND entity_id = $2`,
@@ -229,18 +230,9 @@ func strPtrOrNil(s *string) any {
 	return *s
 }
 
-// timedVWAPs1mForChangeSummaryQuery reads both stored orientations of the pair over the closed
-// buckets in [from, to), oldest-first.
-//
-// Closed per ADR-0015: a bucket is admitted only once it has ended by both the caller's `to` and
-// the database clock, so the in-progress minute never becomes current_value or a ratcheted ath/atl
-// (the upsert keeps GREATEST/LEAST for good). The predicate is sargable, as in aggregates.go.
-//
-// Both directions are read (see [dirVWAP], TestCAGGPairReadsFoldBothDirections): the decoder does
-// not normalise orientation, so the market lands in prices_1m as both (A,B) and (B,A), and one
-// orientation would miss rows stored the other way round.
-//
-// ASC order is fine for [scanCombinedVwap1mRows], which only needs same-bucket rows adjacent.
+// timedVWAPs1mForChangeSummaryQuery reads both stored orientations over closed buckets in [from, to), oldest-first (ADR-0015).
+// A bucket is admitted only once ended by both `to` and the DB clock, so the live minute never ratchets ath/atl; both directions are read
+// ([dirVWAP], TestCAGGPairReadsFoldBothDirections) since the decoder does not normalise orientation. ASC suits [scanCombinedVwap1mRows].
 const timedVWAPs1mForChangeSummaryQuery = `
 		SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text,
 		       COALESCE(trade_count, 0), sources
@@ -260,7 +252,8 @@ const timedVWAPs1mForChangeSummaryQuery = `
 		 ORDER BY bucket ASC, base_asset ASC
 	`
 
-// TimedVWAPs1mForChangeSummary adapts TimedVWAPsForPair1m to [changesummary.PriceSource]; points are oldest-first, combined across both directions as the price of Base in Quote, with `At` the bucket end.
+// TimedVWAPs1mForChangeSummary adapts TimedVWAPsForPair1m to [changesummary.PriceSource]; points are oldest-first, combined across both
+// directions as the price of Base in Quote, with `At` the bucket end.
 func (s *Store) TimedVWAPs1mForChangeSummary(ctx context.Context, pair canonical.Pair, from, to time.Time) ([]ChangeSummaryPoint, error) {
 	rows, err := s.db.QueryContext(ctx, timedVWAPs1mForChangeSummaryQuery,
 		pair.Base.String(), pair.Quote.String(), from.UTC(), to.UTC())

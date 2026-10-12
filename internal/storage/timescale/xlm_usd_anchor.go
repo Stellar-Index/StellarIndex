@@ -21,9 +21,8 @@ package timescale
 // whole catalogue. Within one form a lone dust row is still the minute's rate when nothing else
 // printed (per-row floor [directLegMinQuoteVolume]).
 
-// xlmUSDAnchorMaxAge is the oldest XLM/USD minute a triangulated price may use: the ingest
-// resolver's default Freshness, so read and trade time agree on when XLM has a USD price. Past it
-// the asset is unpriced, never re-marked at a stale rate.
+// xlmUSDAnchorMaxAge is the oldest XLM/USD minute a triangulated price may use, the ingest resolver's Freshness; past it the asset is
+// unpriced, never re-marked.
 const xlmUSDAnchorMaxAge = "1 hour"
 
 // xlmUSDAnchorMinUSD is the per-row USD floor; volume_usd is
@@ -36,9 +35,8 @@ func xlmUSDAnchorForms(sac string) string {
 	return "'native', 'crypto:XLM', " + sac
 }
 
-// xlmUSDAnchorMinutes renders a subquery yielding (form_rank, bucket, vwap): XLM's USD rate per
-// minute and form for closed minutes in [lo, hi]. lo and hi are SQL timestamptz expressions and
-// must stay sargable (no function of bucket).
+// xlmUSDAnchorMinutes renders (form_rank, bucket, vwap) for closed minutes in [lo, hi]; lo and hi are timestamptz expressions that must
+// stay sargable.
 func xlmUSDAnchorMinutes(lo, hi, sac string) string {
 	forms := xlmUSDAnchorForms(sac)
 	bounds := `bucket >= ` + lo + `
@@ -73,17 +71,14 @@ func xlmUSDAnchorPick(lo, hi, sac string) string {
 		   LIMIT 1`
 }
 
-// xlmUSDAnchorAt renders [xlmUSDAnchorPick] as of instant ts: no row when no form printed within
-// [xlmUSDAnchorMaxAge] before it. Batch paths join [xlmUSDAnchorGridCTE], which
-// TestXLMUSDAnchor_ShapesShareOnePopulation holds to the same value.
+// xlmUSDAnchorAt renders [xlmUSDAnchorPick] as of ts: no row if no form printed within [xlmUSDAnchorMaxAge]. Batch paths join
+// [xlmUSDAnchorGridCTE]; TestXLMUSDAnchor_ShapesShareOnePopulation holds them equal.
 func xlmUSDAnchorAt(ts, sac string) string {
 	return xlmUSDAnchorPick("("+ts+") - INTERVAL '"+xlmUSDAnchorMaxAge+"'", ts, sac)
 }
 
-// xlmUSDAnchorGridCTE renders CTEs `<name>_min` and `<name>`(minute, vwap,
-// bucket): [xlmUSDAnchorAt] at every minute from lo to now, for equi-joining on a 1-minute bucket.
-// One range scan plus a forward fill per form (the count-group trick) replaces an index probe per
-// joined row. The grid starts [xlmUSDAnchorMaxAge] before lo so the fill is seeded at lo.
+// xlmUSDAnchorGridCTE renders CTEs `<name>_min` and `<name>`(minute, vwap, bucket): [xlmUSDAnchorAt] at every minute from lo to now. One
+// range scan plus a per-form forward fill replaces a probe per row; the grid starts [xlmUSDAnchorMaxAge] before lo to seed the fill.
 func xlmUSDAnchorGridCTE(name, lo, sac string) string {
 	start := "(" + lo + ") - INTERVAL '" + xlmUSDAnchorMaxAge + "'"
 	return `
@@ -121,9 +116,8 @@ func xlmUSDAnchorPerPeriodCTE(name, col, unit, lo, sac string) string {
 		)`
 }
 
-// xlmUSDNativeCTEs renders XLM's own USD price now (`xlm_usd`) and at each
-// change lookback (`xlm_usd_1h/_24h/_7d`, read within the same tolerance
-// windows as the per-asset arms), each one (vwap, bucket) row or none.
+// xlmUSDNativeCTEs renders XLM's USD price now (`xlm_usd`) and at each change lookback (`xlm_usd_1h/_24h/_7d`), each one (vwap, bucket)
+// row or none.
 func xlmUSDNativeCTEs(sac string) string {
 	return `
 		xlm_usd AS (` + xlmUSDAnchorAt("now()", sac) + `),

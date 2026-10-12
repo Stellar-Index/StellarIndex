@@ -240,9 +240,8 @@ func (s *Store) LatestAquariusReserves(ctx context.Context, windowDays int) ([]A
 	return pools, nil
 }
 
-// aquariusLatestReserveLegs reads, per pool, the reserve legs of its latest update_reserves event
-// in the window, ordered so a pool's legs are contiguous and pools are recency-first. The result
-// set is closed before returning so LatestAquariusReserves never holds two open cursors.
+// aquariusLatestReserveLegs reads each pool's latest update_reserves legs, grouped per pool and recency-first.
+// The result set is closed before returning so LatestAquariusReserves never holds two open cursors.
 func (s *Store) aquariusLatestReserveLegs(ctx context.Context, since string) ([]AquariusPoolReserve, error) {
 	const q = `
 		WITH latest AS (
@@ -306,10 +305,7 @@ func (s *Store) aquariusLatestReserveLegs(ctx context.Context, since string) ([]
 	return out, nil
 }
 
-// aquariusReserveTokenPositions resolves the token address at each
-// (pool, token_index) from the most recent deposit/withdraw in the window
-// — best-effort address recovery for the positional update_reserves stream.
-// Returns pool → token_index → token address.
+// aquariusReserveTokenPositions maps pool -> token_index -> token address from the latest deposit/withdraw in the window (best effort).
 func (s *Store) aquariusReserveTokenPositions(ctx context.Context, since string) (map[string]map[int]string, error) {
 	const q = `
 		SELECT DISTINCT ON (contract_id, token_index) contract_id, token_index, token

@@ -18,12 +18,8 @@ type Cursor struct {
 	UpdatedAt   time.Time
 }
 
-// liveCursorSources are the ingestion_cursors namespaces holding LIVE resume state (the live
-// indexer and per-domain projector positions), not records of finished one-shot jobs.
-//
-// One list, because reap-cursors (never DELETE these rows) and /v1/diagnostics/cursors (never
-// classify them `abandoned`) must agree on which rows it covers: an old row here means ingest is
-// STUCK, the row an operator most needs to see. One-shot shard rows outlive their work by design.
+// liveCursorSources are the ingestion_cursors namespaces holding LIVE resume state, not finished one-shot jobs. One list so reap-cursors
+// (never DELETE these) and /v1/diagnostics/cursors (never `abandoned`) agree: an old row here means ingest is STUCK.
 var liveCursorSources = []string{"ledgerstream", "projector"}
 
 // LiveCursorSources returns a copy of the live cursor namespaces.

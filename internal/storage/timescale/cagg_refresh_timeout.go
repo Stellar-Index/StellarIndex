@@ -75,10 +75,8 @@ func (e *CAGGRefreshTimeoutError) Error() string {
 
 func (e *CAGGRefreshTimeoutError) Unwrap() error { return e.Err }
 
-// isStatementTimeoutErr reports whether err is the backend's statement_timeout cancellation. A
-// plain statement gives SQLSTATE 57014, but refresh_continuous_aggregate re-throws it as XX000
-// with the message `canceling statement due to statement timeout`, so the message is matched
-// too (as internal/api/v1/envelope.go does).
+// isStatementTimeoutErr reports a statement_timeout cancellation: SQLSTATE 57014, or XX000 when refresh_continuous_aggregate
+// re-throws it, so the message `canceling statement due to statement timeout` is matched too (as internal/api/v1/envelope.go does).
 func isStatementTimeoutErr(err error) bool {
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) {
@@ -87,15 +85,8 @@ func isStatementTimeoutErr(err error) bool {
 	return pgErr.Code == "57014" || strings.Contains(pgErr.Message, "canceling statement due to statement timeout")
 }
 
-// refreshCAGGBounded runs one refresh_continuous_aggregate CALL on a single pinned pooled
-// connection under a session statement_timeout of `timeout`, restoring the previous value before
-// the connection returns to the pool (see the file comment for why SET, not SET LOCAL).
-//
-// The previous value is read with current_setting so a pool with its own backstop
-// ([OpenBackground]) gets THAT back, not the server default a bare RESET gives. The restore runs
-// on a detached context (the caller's is already done on the Go-deadline path). A failed restore
-// marks the connection bad so database/sql closes it: it returns with its original timeout or
-// not at all.
+// refreshCAGGBounded runs one refresh CALL under a session statement_timeout, restoring the prior current_setting value (not RESET) after.
+// Restore uses a detached ctx; a failed restore marks the conn bad so it is closed. File comment: why SET, not SET LOCAL.
 func (s *Store) refreshCAGGBounded(ctx context.Context, q string, from, to time.Time, timeout time.Duration) (err error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout+caggRefreshDeadlineGrace)
 	defer cancel()

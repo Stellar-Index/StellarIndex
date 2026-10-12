@@ -20,9 +20,8 @@ type UsdVolumePricingRow struct {
 	Unroutable int64
 }
 
-// usdVolumePricingSQL is bounded by ts, so chunk exclusion keeps it to the
-// window's chunks. A classic asset id is "<code>-<G… issuer>", issuer being
-// the trailing 56 characters.
+// usdVolumePricingSQL is bounded by ts so chunk exclusion keeps it to the window's chunks; a classic id's issuer is its trailing 56
+// characters.
 const usdVolumePricingSQL = `
 SELECT source,
        count(*),

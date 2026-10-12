@@ -209,10 +209,8 @@ func (s *Store) SorobanEventsTimeBound(ctx context.Context, from, to uint32) (lo
 	return loN.Time, hiN.Time, cnt == expected, nil
 }
 
-// enclosingCloseTimeQuery returns the close times of the nearest logged ledger at or below $1 and
-// at or above $2, which enclose every ledger in [$1, $2]. Close time is monotonic in ledger
-// sequence, so unlike [Store.SorobanEventsTimeBound] it needs no full coverage (the gap scan runs
-// exactly when coverage may have holes); a side with no anchor is NULL and left unbounded.
+// enclosingCloseTimeQuery returns the close times of the nearest logged ledgers at or below $1 and at or above $2. Close time is monotonic
+// in ledger sequence, so it needs no full coverage (the gap scan runs when coverage may have holes); a side with no anchor is NULL.
 const enclosingCloseTimeQuery = `
 	SELECT (SELECT ledger_close_time FROM ledger_ingest_log
 	         WHERE ledger_seq <= $1 ORDER BY ledger_seq DESC LIMIT 1),

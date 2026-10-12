@@ -93,24 +93,18 @@ const upsertCompletenessSnapshotQuery = `
         WHERE EXCLUDED.tip_ledger >= completeness_snapshots.tip_ledger
            OR $14::boolean`
 
-// snapshotExecer is the slice of *sql.DB / *sql.Tx the verdict write
-// needs, so the same statement runs standalone or inside
-// [Store.PublishCompletenessVerdict]'s transaction.
+// snapshotExecer is the *sql.DB / *sql.Tx slice the verdict write needs, so it runs standalone or inside
+// [Store.PublishCompletenessVerdict].
 type snapshotExecer interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
-// foundProblem is the never-regress guard's problem arm: this run's own checks
-// found a failure, located (FirstProblem) or not (FoundProblem). A verdict
-// that is false only because a claim was not evaluated does not qualify.
+// foundProblem is the never-regress guard's problem arm: this run's checks found a failure; an unevaluated claim does not qualify.
 func (snap CompletenessSnapshot) foundProblem() bool {
 	return snap.FirstProblem > 0 || snap.FoundProblem
 }
 
-// execCompletenessSnapshot runs the verdict write and reports whether it
-// was APPLIED. The never-regress guard makes a regressive run match zero
-// rows, which the driver reports as success — so rows-affected is the only
-// signal that a verdict was actually stored.
+// execCompletenessSnapshot reports whether the verdict was APPLIED: a regressive run matches zero rows yet the driver reports success.
 func execCompletenessSnapshot(ctx context.Context, ex snapshotExecer, snap CompletenessSnapshot) (bool, error) {
 	res, err := ex.ExecContext(ctx, upsertCompletenessSnapshotQuery,
 		snap.Source, int64(snap.Genesis), int64(snap.Tip), int64(snap.Watermark),

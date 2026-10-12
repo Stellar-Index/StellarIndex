@@ -70,9 +70,8 @@ type spectraKindSpec struct {
 	fields spectraField
 }
 
-// spectraKindSpecs mirrors the spectra_events_kind_columns and
-// spectra_events_kind_column_count CHECKs: a kind carries exactly these
-// fields and every other optional column is NULL.
+// spectraKindSpecs mirrors the spectra_events_kind_columns / _kind_column_count CHECKs: a kind carries exactly these fields, all others
+// NULL.
 var spectraKindSpecs = map[SpectraEventKind]spectraKindSpec{
 	SpectraPTDeployed:      {[]SpectraRole{SpectraRoleFactory}, sfMarketPT | sfCaller | sfIBT | sfDuration},
 	SpectraYTDeployed:      {[]SpectraRole{SpectraRolePT}, sfMarketPT | sfYT},
@@ -338,9 +337,8 @@ func priorSpectraMarket(ctx context.Context, tx *sql.Tx, e SpectraEvent) (string
 	return "", nil
 }
 
-// refreshSpectraMarket re-derives one spectra_markets row from the earliest discovery row of each
-// kind naming pt, deleting it when none is left. The six pt_deployed columns come from one row so
-// the all-or-none CHECK holds.
+// refreshSpectraMarket re-derives one spectra_markets row from the earliest discovery row of each kind naming pt (deleting it if none);
+// the six pt_deployed columns come from one row so the all-or-none CHECK holds.
 //
 // unbounded-latest-ok: a market's creation row is arbitrarily old, and the read is keyed to one market_pt.
 func refreshSpectraMarket(ctx context.Context, tx *sql.Tx, pt string) error {

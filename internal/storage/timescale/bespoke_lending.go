@@ -101,10 +101,8 @@ const (
 	lendingBackstopOutflowKinds = `'withdraw','draw'`
 )
 
-// lendingSideSeriesQuery builds the per-bucket position-event count series
-// for one side of the money market at the window's grain (hourly at 24h —
-// bridgeSeriesGrain). kinds MUST be one of the lending*SideKinds constants
-// (never request-derived).
+// lendingSideSeriesQuery builds the per-bucket position-event counts for one side (bridgeSeriesGrain); kinds MUST be a lending*SideKinds
+// constant.
 func lendingSideSeriesQuery(windowDays int, kinds string) string {
 	trunc, format := bridgeSeriesGrain(windowDays)
 	return `
@@ -116,9 +114,7 @@ func lendingSideSeriesQuery(windowDays int, kinds string) string {
 		 GROUP BY 1 ORDER BY 1 ASC`
 }
 
-// lendingBackstopFlowSeriesQuery builds the per-bucket backstop flow-event
-// count series for one direction. kinds MUST be one of the
-// lendingBackstop*Kinds constants.
+// lendingBackstopFlowSeriesQuery builds per-bucket backstop flow counts for one direction; kinds MUST be a lendingBackstop*Kinds constant.
 func lendingBackstopFlowSeriesQuery(windowDays int, kinds string) string {
 	trunc, format := bridgeSeriesGrain(windowDays)
 	return `
@@ -130,9 +126,7 @@ func lendingBackstopFlowSeriesQuery(windowDays int, kinds string) string {
 		 GROUP BY 1 ORDER BY 1 ASC`
 }
 
-// lendingAuctionSeriesQuery builds the per-bucket auction-event count
-// series (all three lifecycle kinds — new/fill/delete; the started-vs-
-// filled split lives in the KPIs). blend_auctions' time column is ts.
+// lendingAuctionSeriesQuery builds per-bucket auction-event counts across all three kinds; blend_auctions' time column is ts.
 func lendingAuctionSeriesQuery(windowDays int) string {
 	trunc, format := bridgeSeriesGrain(windowDays)
 	return `
@@ -143,11 +137,8 @@ func lendingAuctionSeriesQuery(windowDays int) string {
 		 GROUP BY 1 ORDER BY 1 ASC`
 }
 
-// lendingPerPoolSeriesQuery builds the top-5-pools-by-window-events series: (pool, bucket, events)
-// rows ordered by window event count descending, then pool, then bucket. The pool tiebreak (in
-// the top-5 CTE and the outer ORDER BY) is load-bearing: pools tied on count otherwise interleave
-// by bucket, and collectLendingPoolSeries's consecutive-key fold would fragment one pool's line
-// into several.
+// lendingPerPoolSeriesQuery builds the top-5-pools series ordered by window events desc, pool, bucket. The pool tiebreak is load-bearing:
+// tied pools would interleave by bucket and collectLendingPoolSeries's consecutive-key fold would fragment a line.
 func lendingPerPoolSeriesQuery(windowDays int) string {
 	trunc, format := bridgeSeriesGrain(windowDays)
 	return `
@@ -166,9 +157,7 @@ func lendingPerPoolSeriesQuery(windowDays int) string {
 		 ORDER BY top.events DESC, p.pool, 2 ASC`
 }
 
-// lendingAllTimeKPIQuery is the unwindowed lifetime scale of the Blend money market: position
-// events, supply/borrow-side counts, distinct users and pools. Deliberately NOT window-bounded;
-// the whole block is built under the window-keyed protocol-detail cache.
+// lendingAllTimeKPIQuery is the unwindowed lifetime scale of the Blend money market, deliberately not window-bounded (window-keyed cache).
 func lendingAllTimeKPIQuery() string {
 	return `
 		SELECT count(*)::text,
@@ -179,9 +168,7 @@ func lendingAllTimeKPIQuery() string {
 		  FROM blend_positions`
 }
 
-// lendingScaleKPIs fills the window supply/borrow event counts + active
-// pools, and their all-time equivalents. Counts, not amounts — see the
-// section comment.
+// lendingScaleKPIs fills window and all-time supply/borrow event counts and active pools; counts, not amounts.
 func (s *Store) lendingScaleKPIs(ctx context.Context, blk *BespokeBlock, since string, windowDays int) error {
 	var wSupply, wBorrow, wPools string
 	err := s.db.QueryRowContext(ctx, `
@@ -212,10 +199,8 @@ func (s *Store) lendingScaleKPIs(ctx context.Context, blk *BespokeBlock, since s
 	return nil
 }
 
-// lendingActivitySeries appends the chart lines: supply-side vs
-// borrow-side position events (a paired two-line chart covering every
-// event kind), backstop inflow vs outflow events, auction events, and one
-// activity line per top-5 pool. All counts (see the section comment).
+// lendingActivitySeries appends supply vs borrow events, backstop inflow vs outflow, auction events and one line per top-5 pool; all
+// counts.
 func (s *Store) lendingActivitySeries(ctx context.Context, blk *BespokeBlock, since string, windowDays int) error {
 	for _, sp := range []struct {
 		name  string
@@ -243,9 +228,8 @@ func (s *Store) lendingActivitySeries(ctx context.Context, blk *BespokeBlock, si
 	return nil
 }
 
-// collectLendingPoolSeries folds the ordered rows of lendingPerPoolSeriesQuery into per-pool
-// BespokeSeries, preserving its events-descending pool order. Pools are labelled by truncated
-// contract id; the served tier has no pool-name registry.
+// collectLendingPoolSeries folds lendingPerPoolSeriesQuery rows into per-pool series in events-descending order, labelled by truncated
+// contract id.
 func (s *Store) collectLendingPoolSeries(ctx context.Context, query, since string) ([]BespokeSeries, error) {
 	rows, err := s.db.QueryContext(ctx, query, since)
 	if err != nil {
@@ -271,9 +255,8 @@ func (s *Store) collectLendingPoolSeries(ctx context.Context, query, since strin
 	return out, rows.Err()
 }
 
-// lendingActivityBreakdowns fills the two composition datasets: position events by pool (top 10)
-// and by event kind (all seven). Both are event-count weighted, the only honest weight across
-// mixed-asset rows; Value and Count carry the same tally so both kinds of consumer agree.
+// lendingActivityBreakdowns fills position events by pool (top 10) and by kind; event-count weighted, the only honest weight across mixed
+// assets.
 func (s *Store) lendingActivityBreakdowns(ctx context.Context, blk *BespokeBlock, since string, windowDays int) error {
 	byPool, err := s.collectLendingBreakdown(ctx,
 		BespokeBreakdown{Title: "Activity by pool", Unit: "events"},
@@ -307,9 +290,7 @@ func (s *Store) lendingActivityBreakdowns(ctx context.Context, blk *BespokeBlock
 	return nil
 }
 
-// collectLendingBreakdown runs one (key, value_text, count) composition
-// query and labels its rows via label. query is a hard-coded constant per
-// call site (never request-derived).
+// collectLendingBreakdown runs one (key, value_text, count) composition query; query is a hard-coded constant, never request-derived.
 func (s *Store) collectLendingBreakdown(ctx context.Context, base BespokeBreakdown, query, since string, label func(string) string) (BespokeBreakdown, error) {
 	rows, err := s.db.QueryContext(ctx, query, since)
 	if err != nil {
@@ -331,10 +312,8 @@ func (s *Store) collectLendingBreakdown(ctx context.Context, base BespokeBreakdo
 	return base, nil
 }
 
-// lendingFlashLoanTable fills the recent-flash-loans table. Rows are RECENCY-ordered, never
-// amount-ordered: ranking mixed-asset raw amounts would compare different per-asset decimal
-// scales. Each row shows its own asset's raw amount; Tx carries the full hash. Empty-safe: omitted
-// when no flash loan landed in the window.
+// lendingFlashLoanTable fills recent flash loans, RECENCY-ordered: ranking mixed-asset raw amounts would compare different decimal scales.
+// Omitted when no flash loan landed in the window.
 func (s *Store) lendingFlashLoanTable(ctx context.Context, blk *BespokeBlock, since string) error {
 	tbl, err := s.scanTable(ctx,
 		BespokeTable{Title: "Recent flash loans", Columns: []string{"When", "Pool", "Asset", "Amount (raw token units)", "Borrower", "Tx"}},
@@ -359,9 +338,8 @@ func (s *Store) lendingFlashLoanTable(ctx context.Context, blk *BespokeBlock, si
 	return nil
 }
 
-// truncLendingID renders "CAJJ…BXBD" for a contract/account id, a display label where a 56-char
-// strkey would overwhelm the chart. It duplicates the API layer's truncPositionsContract on
-// purpose: storage never imports api packages.
+// truncLendingID renders "CAJJ…BXBD" for a display label; duplicates the API's truncPositionsContract because storage never imports api
+// packages.
 func truncLendingID(id string) string {
 	if len(id) <= 9 {
 		return id
@@ -481,10 +459,8 @@ func creditPartialSettlementsPhrase(n int64) string {
 	return strconv.FormatInt(n, 10) + " settlements"
 }
 
-// creditSettlementSeriesQuery builds the scheduled-settlement volume series at the window's grain
-// (bridgeSeriesGrain). Only USDC primary legs are summed, so the series stays single-denomination
-// (7-decimal base units); bespokeCredit flags it a lower bound when a settlement is not fully
-// summed.
+// creditSettlementSeriesQuery builds scheduled-settlement volume at the window's grain, summing only USDC primary legs (7-decimal base
+// units) so it stays single-denomination; bespokeCredit flags a lower bound when a settlement is not fully summed.
 func creditSettlementSeriesQuery(windowDays int) string {
 	trunc, format := bridgeSeriesGrain(windowDays)
 	return `
@@ -494,9 +470,8 @@ func creditSettlementSeriesQuery(windowDays int) string {
 		GROUP BY 1 ORDER BY 1 ASC`
 }
 
-// creditPositionsOpenedSeriesQuery builds the positions-opened count
-// series at the window's grain — one NewCollateralContract event per
-// opened position (credit_positions).
+// creditPositionsOpenedSeriesQuery builds the positions-opened count series, one NewCollateralContract event per position
+// (credit_positions).
 func creditPositionsOpenedSeriesQuery(windowDays int) string {
 	trunc, format := bridgeSeriesGrain(windowDays)
 	return `
@@ -506,19 +481,15 @@ func creditPositionsOpenedSeriesQuery(windowDays int) string {
 		GROUP BY 1 ORDER BY 1 ASC`
 }
 
-// creditAllTimePositionsKPIQuery is the unwindowed lifetime scale of the sorocredit position book:
-// positions ever opened + distinct owners. credit_positions is the only credit_* table with an
-// owner column, so the unique-users figure is scoped to position opens. Deliberately NOT
-// window-bounded.
+// creditAllTimePositionsKPIQuery is the unwindowed lifetime scale of the position book; credit_positions is the only credit_* table with an
+// owner column, so unique users is scoped to position opens.
 func creditAllTimePositionsKPIQuery() string {
 	return `
 		SELECT count(*)::text, count(DISTINCT owner)::text
 		  FROM credit_positions`
 }
 
-// creditPositionExtras appends the credit_positions-derived visual-suite
-// extensions: the positions-opened series (window grain) and the
-// all-time position-book KPIs alongside the existing window-scoped set.
+// creditPositionExtras appends the credit_positions-derived series (positions opened) and all-time position-book KPIs.
 func (s *Store) creditPositionExtras(ctx context.Context, blk *BespokeBlock, windowDays int, since string) error {
 	series, err := s.scanDailySeries(ctx, creditPositionsOpenedSeriesQuery(windowDays), since)
 	if err != nil {

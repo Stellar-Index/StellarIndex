@@ -6,18 +6,13 @@ import (
 	"fmt"
 )
 
-// opsVerifyStatementTimeoutMS bounds statement_timeout for the full-history ops/verify counts
-// (CountRowsByLedger, MinLedger). These are trusted ops jobs, never the request path (whose DoS
-// backstop is OpenServing's session statement_timeout), and they scan full-history hypertables
-// that legitimately take tens of minutes as the chain grows; a short cap silently fails the
-// completeness projection verify on large sources. 2h leaves headroom yet still catches a stuck
-// query; the caller's context is the real outer bound.
-//
-// The aggregator's gap detector must NOT use this constant: its Go context is 15 min, and a 2h PG
-// timeout there orphans backends (see gapDetectorStatementTimeoutMS).
+// opsVerifyStatementTimeoutMS bounds statement_timeout for trusted ops counts (CountRowsByLedger, MinLedger) that scan full-history
+// hypertables for tens of minutes; a short cap silently fails projection verify. Not for the gap detector (15 min context; a 2h PG
+// timeout orphans backends, see gapDetectorStatementTimeoutMS).
 const opsVerifyStatementTimeoutMS = 7200000 // 2 hours, in ms
 
-// MinLedger returns the smallest ledger in a per-source table over [from, to], i.e. where that target's served data begins, the lower bound of the projection reconcile; a hardcoded floor would certify only a recent slice.
+// MinLedger returns the smallest ledger in a per-source table over [from, to], i.e. where that target's served data begins, the lower
+// bound of the projection reconcile; a hardcoded floor would certify only a recent slice.
 func (s *Store) MinLedger(ctx context.Context, table, ledgerColumn, whereFilter string, from, to uint32) (uint32, bool, error) {
 	filter := ""
 	if whereFilter != "" {
@@ -45,7 +40,8 @@ func (s *Store) MinLedger(ctx context.Context, table, ledgerColumn, whereFilter 
 	return uint32(minL.Int64), true, nil
 }
 
-// CountRowsByLedger returns rows-per-ledger for a per-source protocol table over [from, to], the actual side of projection reconciliation; table, ledgerColumn and whereFilter are interpolated, so callers must pass trusted constants.
+// CountRowsByLedger returns rows-per-ledger for a per-source protocol table over [from, to], the actual side of projection
+// reconciliation; table, ledgerColumn and whereFilter are interpolated, so callers must pass trusted constants.
 func (s *Store) CountRowsByLedger(ctx context.Context, table, ledgerColumn, whereFilter string, from, to uint32) (map[uint32]int, error) {
 	if to < from {
 		return nil, fmt.Errorf("timescale: CountRowsByLedger: to (%d) < from (%d)", to, from)

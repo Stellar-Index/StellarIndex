@@ -20,11 +20,8 @@ type TopicSample struct {
 	MaxLedger uint32
 }
 
-// distinctTopicSampleWindow bounds how far back (wall-clock) the cheap PHASE-1 scan looks for an
-// example per (contract_id, topic_0_sym) shape, mirroring computeGapScanWindow. A recent example
-// is as good as an old one, so scanning the whole range is wasted IO. Full-history recognition is
-// the ClickHouse path's job (computeRecognitionGapsCH, the authoritative ADR-0033 Claim 2a check);
-// shapes active only before the window are found by [Store.distinctSorobanContractTopicPairs].
+// distinctTopicSampleWindow bounds the PHASE-1 scan to recent examples per (contract_id, topic_0_sym); older-only shapes are found by
+// [Store.distinctSorobanContractTopicPairs], full-history recognition by computeRecognitionGapsCH (ADR-0033 Claim 2a).
 const distinctTopicSampleWindow = 30 * 24 * time.Hour
 
 // DistinctSorobanTopicSamples returns one representative row per distinct (contract_id, topic_0_sym) in soroban_events over [from, to] with per-shape count and ledger span, the input to the recognition audit.
@@ -74,11 +71,8 @@ func (s *Store) distinctSorobanTopicSamplesAt(ctx context.Context, from, to uint
 	return samples, nil
 }
 
-// distinctSorobanTopicSamplesWindowedQuery builds the PHASE 1 query text as a pure function so the
-// always-present trailing-window bound (`ledger_close_time >= $3`) is unit-testable without
-// Postgres. rangeCovered mirrors whether SorobanEventsTimeBound found [from,to] fully covered by
-// ledger_ingest_log: when true a [$4,$5] ledger_close_time bound is added for chunk pruning. The
-// $3 bound is unconditional, keeping the query bounded however coverage resolves.
+// distinctSorobanTopicSamplesWindowedQuery builds the PHASE 1 text purely so the always-present `ledger_close_time >= $3` bound is
+// testable; rangeCovered (from SorobanEventsTimeBound) adds a [$4,$5] bound for chunk pruning.
 func distinctSorobanTopicSamplesWindowedQuery(rangeCovered bool) string {
 	timeFilter := " AND ledger_close_time >= $3"
 	if rangeCovered {
@@ -172,11 +166,8 @@ const distinctSorobanContractTopicPairsQuery = `
         FROM soroban_events
         WHERE topic_0_sym IS NOT NULL`
 
-// distinctSorobanContractTopicPairs is PHASE 2: EVERY (contract_id, topic_0_sym) pair ever seen
-// with a Symbol/String topic[0], read off soroban_events_contract_topic_idx (partial, WHERE
-// topic_0_sym IS NOT NULL) via an Index Only Scan (uncompressed chunks) or a bloom-pruned
-// ColumnarScan (compressed), never the wide XDR/body columns. It touches every row (no skip scan)
-// but each read is narrow, far cheaper than a wide scan.
+// distinctSorobanContractTopicPairs is PHASE 2: every (contract_id, topic_0_sym) pair with a Symbol/String topic[0], read narrowly off
+// soroban_events_contract_topic_idx (partial, topic_0_sym IS NOT NULL) rather than the wide XDR/body columns; it touches every row.
 func (s *Store) distinctSorobanContractTopicPairs(ctx context.Context) ([][2]string, error) {
 	rows, err := s.db.QueryContext(ctx, distinctSorobanContractTopicPairsQuery)
 	if err != nil {
@@ -198,12 +189,8 @@ func (s *Store) distinctSorobanContractTopicPairs(ctx context.Context) ([][2]str
 	return out, nil
 }
 
-// oneSorobanTopicSampleQuery is PHASE 3's query text, a const for the same reason as
-// distinctSorobanContractTopicPairsQuery: an equality filter on the composite index's exact
-// columns (contract_id, topic_0_sym) and LIMIT 1 with no ORDER BY, so Postgres stops at the first
-// matching index entry instead of sorting the pair's rows. There is no per-pair count/min/max:
-// for a DORMANT pair it would scan millions of rows and exhaust the run budget, so sampled pairs
-// report Count = -1 ("not measured") and each fetch runs under its own short deadline.
+// oneSorobanTopicSampleQuery is PHASE 3's text: equality on the composite index plus LIMIT 1 with no ORDER BY, so Postgres stops at the
+// first entry. No per-pair count/min/max (a dormant pair would exhaust the budget); sampled pairs report Count = -1 ("not measured").
 const oneSorobanTopicSampleQuery = `
         SELECT e.ledger, e.ledger_close_time, e.tx_hash, e.op_index, e.event_index,
                e.contract_id, e.contract_id_hex, e.topic_count, e.topic_0_sym,
@@ -216,10 +203,8 @@ const oneSorobanTopicSampleQuery = `
 // oneSorobanTopicSampleTimeout bounds each PHASE 3 fetch: a miss is tolerable, a run abort is not.
 const oneSorobanTopicSampleTimeout = 90 * time.Second
 
-// oneSorobanTopicSample is PHASE 3: an index-backed fetch of ANY one row (LIMIT 1, no ORDER BY;
-// recognition doesn't care which) for a SPECIFIC (contract_id, topic_0_sym) pair within [from, to].
-// Only called for pairs Phase 1's window missed, so dormant shapes pay this once per run.
-// ok=false when the pair has no rows within [from,to]: Phase 2 is not range-scoped.
+// oneSorobanTopicSample is PHASE 3: fetch ANY one row for a (contract_id, topic_0_sym) pair in [from, to], only for pairs Phase 1
+// missed. ok=false when the pair has no rows in range (Phase 2 is not range-scoped).
 func (s *Store) oneSorobanTopicSample(ctx context.Context, contractID, topic0Sym string, from, to uint32) (TopicSample, bool, error) {
 	var (
 		samp                   TopicSample
@@ -272,10 +257,8 @@ func (s *Store) oneSorobanTopicSample(ctx context.Context, contractID, topic0Sym
 	return samp, true, nil
 }
 
-// pairTimeoutSkip reports whether a PHASE 3 per-pair fetch failed because ITS OWN deadline
-// (pairCtx, oneSorobanTopicSampleTimeout) expired, as opposed to the caller's ctx being canceled
-// or a genuine query error, and logs it. Without the log the shape would leave no gap and no
-// trace, and dormant shapes, the class the audit exists to catch, are likeliest to time out.
+// pairTimeoutSkip reports (and logs) whether a PHASE 3 fetch failed on ITS OWN deadline rather than caller cancel or a query error;
+// unlogged, dormant shapes (likeliest to time out) would leave no gap and no trace.
 func pairTimeoutSkip(pairCtx, ctx context.Context, contractID, topic0Sym string, from, to uint32) bool {
 	if pairCtx.Err() == nil || ctx.Err() != nil {
 		return false

@@ -24,9 +24,7 @@ import (
 //     routerName (direct calls, unregistered wrappers, legacy NULL call_path), so the fallback never
 //     claims a wrapper it lacks evidence for.
 
-// routedViaTsSlack widens the trades.ts chunk-pruning bound relative
-// to the router-swap window. Generous (well beyond any close-time
-// precision skew) while still confining the UPDATE to the window's
+// routedViaTsSlack widens the trades.ts chunk-pruning bound beyond any close-time skew while still confining the UPDATE to the window's
 // chunks.
 const routedViaTsSlack = 5 * time.Minute
 

@@ -23,10 +23,8 @@ type DefiActionCount struct {
 	Count    int64
 }
 
-// defiActionCountsQuery UNIONs one GROUP BY per per-account table. Every arm except blend_auctions
-// rides the user-leading index its positions-fold sibling uses. blend_auctions has none but is a
-// small lifecycle table (~10k rows), so a filtered scan is accepted. sorocredit's credit_events has
-// no owner column, so its only per-account count is positions opened (credit_positions.owner).
+// defiActionCountsQuery UNIONs one GROUP BY per per-account table; blend_auctions has no user-leading index (small table, ~10k rows).
+// sorocredit's credit_events has no owner column, so its only per-account count is positions opened (credit_positions.owner).
 const defiActionCountsQuery = `
 	SELECT 'blend' AS protocol, event_kind AS action, count(*) AS n
 	  FROM blend_positions WHERE user_address = $1 GROUP BY event_kind
@@ -85,17 +83,8 @@ type BridgeActivity struct {
 	CCTPInboundMints  int64
 }
 
-// bridgeActivityQuery counts both bridge tables in one round-trip.
-//
-// Neither predicate is index-served, deliberately: rozo_events is a few hundred rows and
-// cctp_events tens of thousands, far under where an index or a GIN over the jsonb would pay off.
-// CCTP parties live inside the `attributes` jsonb (a storage blob, not a query surface):
-//   - deposit_for_burn `depositor` is a Stellar Address strkey and matchable.
-//   - mint_and_withdraw `mint_recipient` is a Stellar Address strkey and matchable, though often a
-//     forwarder CONTRACT rather than the user's G-account, so that mint is not attributed to the
-//     user (disclosed in the endpoint's note).
-//   - deposit_for_burn `mint_recipient` is a DESTINATION-CHAIN 32-byte hex value, structurally not
-//     a Stellar account, so inbound counts deliberately never match on it.
+// bridgeActivityQuery counts both bridge tables in one round-trip; the tables are small, so no index serves the jsonb predicates.
+// deposit_for_burn mint_recipient is destination-chain hex, never matched; a forwarder-contract mint_recipient is not the user's.
 const bridgeActivityQuery = `
 	SELECT
 	  (SELECT count(*) FROM rozo_events WHERE event_type = 'payment' AND from_addr = $1),

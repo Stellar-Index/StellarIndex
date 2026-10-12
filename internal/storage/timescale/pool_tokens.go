@@ -40,8 +40,7 @@ func (s *Store) PoolTokens(ctx context.Context, source string) (map[string][]str
 	return nil, nil
 }
 
-// phoenixPoolTokens returns pool → [token_a, token_b] from the most recent
-// provide_liquidity row per pool (withdraw rows carry no token addresses).
+// phoenixPoolTokens returns pool -> [token_a, token_b] from the latest provide_liquidity row per pool (withdraw rows carry no addresses).
 // unbounded-latest-ok: a pool with no recent provide_liquidity row still has tokens; the result is cached.
 func (s *Store) phoenixPoolTokens(ctx context.Context) (map[string][]string, error) {
 	q := fmt.Sprintf(`
@@ -80,9 +79,7 @@ func (s *Store) phoenixPoolTokens(ctx context.Context) (map[string][]string, err
 	return out, nil
 }
 
-// aquariusPoolTokens returns pool → tokens ordered by the pool's canonical
-// token_index (2/3/4-token stableswaps included), from the most recent
-// deposit/withdraw row per (pool, token_index).
+// aquariusPoolTokens returns pool -> tokens ordered by canonical token_index, from the latest deposit/withdraw per (pool, token_index).
 // unbounded-latest-ok: a pool with no recent row still has tokens; the result is cached.
 func (s *Store) aquariusPoolTokens(ctx context.Context) (map[string][]string, error) {
 	q := fmt.Sprintf(`
@@ -119,9 +116,8 @@ func (s *Store) aquariusPoolTokens(ctx context.Context) (map[string][]string, er
 	return out, nil
 }
 
-// groupedPoolTokens runs a two-column (pool, token) DISTINCT query and groups
-// the tokens per pool, sorted for a deterministic order-free set. query MUST select exactly
-// (pool, token) in that order and is a hard-coded per-source constant, never request-derived.
+// groupedPoolTokens groups a (pool, token) DISTINCT query per pool, sorted. query MUST select exactly (pool, token); hard-coded, never
+// request-derived.
 func (s *Store) groupedPoolTokens(ctx context.Context, source, query string) (map[string][]string, error) {
 	rows, err := s.db.QueryContext(ctx, query)
 	if err != nil {

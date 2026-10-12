@@ -2,25 +2,8 @@ package timescale
 
 import "fmt"
 
-// ─── CCTP chain-identity tables (SDF-facing: verified, never guessed) ────
-//
-// Both tables were verified against Circle's primary docs:
-//
-//   - https://developers.circle.com/stablecoins/usdc-contract-addresses
-//   - https://developers.circle.com/cctp/concepts/supported-chains-and-domains
-//
-// Inbound attribution: a Stellar mint's CCTP BurnMessage body is (version u32 | burnToken bytes32 |
-// mintRecipient bytes32 | ...) stored as raw hex, so hex chars 33..72 are the low 20 bytes of
-// burnToken: the token address on EVM chains, the tail of the full address otherwise:
-//
-//	Solana   USDC mint EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v (tail abc9…5d61)
-//	Aptos    USDC 0xbae207659db88bea0cbead6da0ed00aac12edcdda169e591cd41c94180b46f3b
-//	Starknet USDC 0x033068f6539f8e6e6b131e6b2b814e6c34a5224bc66947c47dab9dfee93b35fb
-//
-// A tail not in the table renders as "Unverified (0x…)", never a guessed chain name.
-//
-// cctpBurnTokenChains maps that lowercase 40-hex-char tail to the chain name; only CCTP domains
-// are listed.
+// cctpBurnTokenChains maps the lowercase 40-hex low-20-bytes tail of a BurnMessage burnToken (hex chars 33..72) to its chain; CCTP domains
+// only. A tail not in the table renders as "Unverified (0x…)", never a guessed chain name.
 var cctpBurnTokenChains = map[string]string{
 	// EVM chains — the slice is the USDC contract address itself.
 	"a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48": "Ethereum",
@@ -52,9 +35,7 @@ var cctpBurnTokenChains = map[string]string{
 	"2b814e6c34a5224bc66947c47dab9dfee93b35fb": "Starknet",
 }
 
-// cctpChainForBurnToken resolves a burn-token tail (lowercase 40-hex slice
-// of the BurnMessage body) to a verified chain name. Unknown tails get an
-// honest "Unverified (0x…)" label — SDF-facing data never guesses.
+// cctpChainForBurnToken resolves a burn-token tail to a verified chain name; unknown tails get "Unverified (0x…)", never a guess.
 func cctpChainForBurnToken(tail string) string {
 	if tail == "" {
 		return "Unknown source"
@@ -68,10 +49,8 @@ func cctpChainForBurnToken(tail string) string {
 	return fmt.Sprintf("Unverified (0x%s)", tail)
 }
 
-// cctpDomainChains is Circle's public CCTP domain registry (verified against
-// https://developers.circle.com/cctp/concepts/supported-chains-and-domains;
-// Noble/Sui/Aptos are CCTP-v1-legacy domains, kept because
-// deposit_for_burn rows reference them). Domains 20/23/24 are unassigned.
+// cctpDomainChains is Circle's CCTP domain registry; Noble/Sui/Aptos are v1-legacy domains kept because deposit_for_burn rows reference
+// them. Domains 20/23/24 are unassigned.
 var cctpDomainChains = map[uint32]string{
 	0:  "Ethereum",
 	1:  "Avalanche",

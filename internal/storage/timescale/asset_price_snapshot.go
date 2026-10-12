@@ -26,21 +26,13 @@ import (
 // would blank every weekly-trading asset. The detail query is separate, so a listing row can lag
 // its detail page by up to that ceiling.
 
-// assetPriceSnapshotMaxAge is how old an `asset_price_snapshot` row may be and still be served; SQL
-// enforces it in the listing's LEFT JOIN (see [listAssetsBaseSelect]). 15 minutes is 7 missed
-// passes of the 2-minute refresh: a restart never blanks the page, and a price cannot drift much
-// before the row stops being served.
+// assetPriceSnapshotMaxAge is how old a snapshot row may be and still be served (enforced in the listing's LEFT JOIN, see
+// [listAssetsBaseSelect]): 7 missed 2-minute passes, so a restart never blanks the page.
 const assetPriceSnapshotMaxAge = "15 minutes"
 
-// priceArmPickExpr names the arm that prices an asset: 'native' (XLM itself, from the xlm_usd
-// anchor), 'direct' (a USD-proxy market) or 'xlm' (an XLM market triangulated through the anchor
-// `ax` taken at that market's own minute); NULL when none can.
-//
-// The arm with the newer observation wins: fixed arm order would let any USD print in the 7-day
-// lookback beat an XLM market trading this minute, serving a days-old price as current. A
-// triangulated observation is as old as its XLM-market minute; a tie goes to the direct arm (no
-// triangulation error). An XLM market with no anchor within [xlmUSDAnchorMaxAge] cannot price, so
-// an older direct row still does; native XLM with no fresh anchor is unpriced.
+// priceArmPickExpr names the pricing arm: 'native' (xlm_usd anchor), 'direct' (USD-proxy market) or 'xlm' (XLM market via anchor `ax`
+// at its own minute). The newer observation wins (fixed order would serve a days-old USD print as current); ties go direct. No anchor
+// within [xlmUSDAnchorMaxAge] means the xlm arm cannot price.
 const priceArmPickExpr = `CASE
 		      WHEN ca.asset_id = 'native'
 		        THEN CASE WHEN (SELECT vwap FROM xlm_usd) IS NOT NULL THEN 'native' END
@@ -51,10 +43,8 @@ const priceArmPickExpr = `CASE
 		        THEN 'xlm'
 		    END`
 
-// priceArmJoins attaches every arm CTE of [assetPriceArmCTEs] to the spine row `ca`, the XLM/USD
-// anchor at each asset_vs_xlm* arm's own minute as `ax*` (anchorJoin renders one: the rollup joins
-// the grid, the detail query a lateral pick), then picks the arm as `pick.arm`. Shared by the
-// rollup and the detail query so the two cannot choose differently.
+// priceArmJoins attaches every [assetPriceArmCTEs] arm to spine row `ca` plus the anchor at each arm's minute (`ax*`), picking `pick.arm`.
+// Shared by the rollup and the detail query so they cannot choose differently.
 func priceArmJoins(anchorJoin func(alias, ts string) string) string {
 	return `
 		  LEFT JOIN direct_usd        direct      ON direct.asset_id     = ca.asset_id
@@ -85,19 +75,15 @@ func xlmUSDLateralJoin(sac string) func(alias, ts string) string {
 	}
 }
 
-// snapshotPriceUSDExpr is the headline USD price, read through the arm
-// [priceArmPickExpr] chose. The listing's `listingPriceUSDExpr` reads it
-// back as `aps.price_usd`; the detail query renders it inline.
+// snapshotPriceUSDExpr is the headline USD price through the arm [priceArmPickExpr] chose (read back as `aps.price_usd`).
 const snapshotPriceUSDExpr = `CASE pick.arm
 		      WHEN 'native' THEN (SELECT vwap FROM xlm_usd)
 		      WHEN 'direct' THEN direct.vwap
 		      WHEN 'xlm'    THEN vs_xlm.vwap * ax.vwap
 		    END`
 
-// priceChangePctExpr is the unrounded percentage change over lookback ("1h", "24h" or "7d"), with
-// both legs read through the arm that priced the asset; mixing arms would compare this minute's
-// price with a lookback against a different, possibly days-stale, "now". NULL when the chosen arm
-// has no lookback row.
+// priceChangePctExpr is the unrounded change over lookback ("1h", "24h", "7d"), both legs through the arm that priced the asset
+// (mixing arms would compare against a possibly stale "now"); NULL when that arm has no lookback row.
 func priceChangePctExpr(lookback string) string {
 	return fmt.Sprintf(`CASE pick.arm
 		      WHEN 'native' THEN CASE WHEN (SELECT vwap FROM xlm_usd_%[1]s) > 0
@@ -110,20 +96,9 @@ func priceChangePctExpr(lookback string) string {
 		    END`, lookback)
 }
 
-// snapshotNormalizedPriceUSDExpr is [snapshotPriceUSDExpr] with the dex-nonstandard-decimals
-// forward normalisation applied; it is the value the rollup stores. `nda` is the refresh's LEFT
-// JOIN onto nonstandard_decimals_assets.
-//
-// prices_1m holds raw smallest-unit ratios, so for a token whose decimals() is not 7 every arm is
-// off by the same 10^(7 - decimals); one factor corrects whichever arm answered. Normalising
-// before the listing's ROUND(price_usd, 10) keeps an 18-decimals token's 1e-11 raw ratio from
-// rounding to zero.
-//
-// A reader of this column must not normalise it again. The change columns need no factor (the
-// scale cancels in each ratio), but a multiplier must use the same decimals: a market cap divides
-// a smallest-unit supply by the token's real decimals, not 7 (v1.Server.applyConfirmedListingDecimals).
-// The CASE, not a COALESCE'd factor of 1, keeps unconfirmed assets' value byte-identical;
-// power(numeric, numeric) with an integral exponent is exact (ADR-0003).
+// snapshotNormalizedPriceUSDExpr is [snapshotPriceUSDExpr] corrected for non-7 decimals (`nda` joins nonstandard_decimals_assets); it
+// is what the rollup stores, so readers must not normalise again (market cap uses the real decimals). The CASE keeps unconfirmed assets
+// byte-identical; integral power(numeric, numeric) is exact (ADR-0003).
 const snapshotNormalizedPriceUSDExpr = `CASE WHEN nda.decimals IS NULL
 		         THEN ` + snapshotPriceUSDExpr + `
 		         ELSE ` + snapshotPriceUSDExpr + `
@@ -148,22 +123,9 @@ const (
 	priceWindow7d  = `bucket BETWEEN ` + priceWindow7dLo + ` AND ` + priceWindow7dHi
 )
 
-// unionPriceArmCTE renders the CTE pair `<name>_rows` / `<name>` for one price arm: per asset, the
-// newest 1-minute bucket in window where it traded against any of quotes in either stored
-// direction, the VWAP of that bucket's rows, and the distinct venues behind them.
-//
-// prices_1m keeps a market in whichever direction its source wrote it and `vwap` is always base
-// priced in quote, so each row is re-expressed as two legs in the arm's (asset, quote) orientation
-// and the leg sums re-divided, the SQL form of [combineDirVWAP]:
-//
-//	(asset, q) row: asset leg = volume_priced,         q leg = vwap * volume_priced
-//	(q, asset) row: asset leg = vwap * volume_priced,  q leg = volume_priced
-//
-// volume_priced, not volume: vwap covers only trades with both legs > 0, so its weight must too.
-// Preferring one direction could price an asset from a side of its book that is days stale.
-//
-// asset is "" for every asset (the rollup) or a scalar SQL expression pinning the arm to one asset
-// (the detail query).
+// unionPriceArmCTE renders CTE pair `<name>_rows`/`<name>`: per asset, the newest 1m bucket in window against any of quotes in either
+// direction, its VWAP and venues. Rows are re-expressed as two legs and re-divided (see [combineDirVWAP]), weighted by volume_priced
+// (vwap covers only both-leg-positive trades). asset "" means all assets.
 func unionPriceArmCTE(name, quotes, window, asset string) string {
 	var baseSide, flipped string
 	if asset != "" {
@@ -204,11 +166,9 @@ func unionPriceArmCTE(name, quotes, window, asset string) string {
 		)`, name, quotes, window, baseSide, flipped)
 }
 
-// assetPriceArmCTEs renders the eight per-asset arms [priceArmJoins] reads, now and at each change
-// lookback: `direct_usd*` against the USD proxies ([usdProxyQuotes]: fiat:USD and USDC, in classic
-// and SAC forms because Soroban venues carry the SAC id) and `asset_vs_xlm*` against XLM in both
-// identity forms ([xlmQuotes]). TestProxyQuoteLists_Lockstep pins both IN-lists. xlmQuoteList is
-// an [xlmQuotesBound] form; the caller binds the network's native SAC at that placeholder.
+// assetPriceArmCTEs renders the eight arms [priceArmJoins] reads: `direct_usd*` against [usdProxyQuotes], `asset_vs_xlm*` against
+// [xlmQuotes]. TestProxyQuoteLists_Lockstep pins both IN-lists; xlmQuoteList is an [xlmQuotesBound] form whose placeholder the caller
+// binds to the native SAC.
 func assetPriceArmCTEs(asset, xlmQuoteList string) string {
 	arms := make([]string, 0, 8)
 	for _, arm := range []struct{ name, quotes string }{
@@ -227,10 +187,8 @@ func assetPriceArmCTEs(asset, xlmQuoteList string) string {
 	return strings.Join(arms, ",")
 }
 
-// assetPriceCTEs is the rollup's price substrate: every asset's eight arms, XLM's own USD scalars,
-// and the anchor grid the asset_vs_xlm* arms are triangulated through, reaching back to the oldest
-// arm's window. It carries no pushdown markers: a full all-asset recompute has nothing to narrow
-// to (as with refreshAssetVolumeUpsert). $1 is canonical.NativeSACContractID().
+// assetPriceCTEs is the rollup's price substrate (eight arms, XLM scalars, anchor grid); no pushdown markers since the recompute is
+// all-asset. $1 is canonical.NativeSACContractID().
 var assetPriceCTEs = assetPriceArmCTEs("", xlmQuotesBound1) + "," +
 	xlmUSDNativeCTEs(nativeSACParam(1)) + "," +
 	xlmUSDAnchorGridCTE("xlm_usd_grid", priceWindow7dLo, nativeSACParam(1))
@@ -250,14 +208,9 @@ const (
 	xlmFormPrefOpenBound4 = `array_position(ARRAY['native', $4::text], `
 )
 
-// refreshAssetPriceSnapshotUpsert recomputes every priced asset's headline price, 1h/24h/7d change
-// and backing source count from [assetPriceCTEs] and upserts one row per asset.
-//
-// The spine is the assets that can have a price (`direct_usd` union `asset_vs_xlm` union native),
-// not the whole catalogue. Money stays NUMERIC end to end (ADR-0003): price and change columns are
-// stored unrounded and the listing applies the wire rendering; the decimals correction for a
-// confirmed non-7-decimals token happens here, before any rounding. `computed_at` is the
-// transaction timestamp so the sibling prune can drop assets whose price lapsed this pass.
+// refreshAssetPriceSnapshotUpsert recomputes each priceable asset's price, 1h/24h/7d change and source count from [assetPriceCTEs].
+// Money stays NUMERIC and unrounded (ADR-0003); the decimals correction happens here, before any rounding; computed_at is the tx
+// timestamp for the prune.
 var refreshAssetPriceSnapshotUpsert = `
 INSERT INTO asset_price_snapshot AS s
        (asset_id, price_usd, change_1h_pct, change_24h_pct, change_7d_pct,
@@ -307,20 +260,15 @@ ON CONFLICT (asset_id) DO UPDATE
        source_count   = EXCLUDED.source_count,
        computed_at    = EXCLUDED.computed_at`
 
-// refreshAssetPriceSnapshotPrune deletes assets that stopped being priceable this pass (nothing
-// re-wrote them, so computed_at stayed old). As in refreshAssetVolumePrune, just-upserted rows
-// carry computed_at = now() (one transaction) and survive, so a delisted asset's last price cannot
-// linger as current.
+// refreshAssetPriceSnapshotPrune drops assets no longer priceable this pass; just-upserted rows carry computed_at = now() (one tx) and
+// survive.
 const refreshAssetPriceSnapshotPrune = `DELETE FROM asset_price_snapshot WHERE computed_at < now()`
 
-// refreshAssetPriceSnapshotPruneExpired is the zero-row pass's prune (see
-// [pruneRollup]): past assetPriceSnapshotMaxAge the listing join already
-// ignores a row, so nothing older is worth keeping.
+// refreshAssetPriceSnapshotPruneExpired is the zero-row pass's prune ([pruneRollup]): past assetPriceSnapshotMaxAge the join ignores a row.
 const refreshAssetPriceSnapshotPruneExpired = `DELETE FROM asset_price_snapshot WHERE computed_at < now() - INTERVAL '` + assetPriceSnapshotMaxAge + `'`
 
-// pruneRollup drops the rows this pass did not re-write. An upsert that wrote nothing is an upstream
-// fault (prices_1m empty or rebuilt, refresh stalled), not proof every asset lapsed, so it runs
-// pruneExpired, which drops only rows already past the rollup's validity bound.
+// pruneRollup drops rows this pass did not re-write; a zero-row upsert is an upstream fault (prices_1m empty or stalled), so it runs
+// pruneExpired, which drops only rows past the validity bound.
 func pruneRollup(ctx context.Context, tx *sql.Tx, upserted int64, prune, pruneExpired string) error {
 	q := prune
 	if upserted == 0 {
@@ -339,7 +287,8 @@ func execRowCount(ctx context.Context, tx *sql.Tx, q string, args ...any) (int64
 	return res.RowsAffected()
 }
 
-// RefreshAssetListingRollups recomputes and atomically replaces both listing rollups (asset_volume_24h, asset_price_snapshot) in one transaction so a row's volume and price share a pass; upsert and prune take row locks only.
+// RefreshAssetListingRollups recomputes and atomically replaces both listing rollups (asset_volume_24h, asset_price_snapshot) in one
+// transaction so a row's volume and price share a pass; upsert and prune take row locks only.
 func (s *Store) RefreshAssetListingRollups(ctx context.Context) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

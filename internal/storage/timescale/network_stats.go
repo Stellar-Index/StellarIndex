@@ -55,9 +55,7 @@ func (s *Store) GetNetworkStats(ctx context.Context) (NetworkStats, error) {
 	return out, nil
 }
 
-// networkStatsQuery builds GetNetworkStats's query. canonBase/canonQuote fold a market's two
-// stored orientations (e.g. XLM/USDC and USDC/XLM) into one row before counting distinct pairs
-// (see canonOrientSQL), so a market recorded in both directions is not counted twice.
+// networkStatsQuery folds a market's two stored orientations (canonBase/canonQuote, see canonOrientSQL) before counting distinct pairs.
 func networkStatsQuery() string {
 	canonBase, canonQuote, _ := canonOrientSQL(2)
 	return `

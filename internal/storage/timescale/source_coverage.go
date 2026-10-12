@@ -19,10 +19,8 @@ type SourceCoverage struct {
 	LastUpdated     time.Time
 }
 
-// countDistinctLedgersQuery is the statement [Store.CountDistinctLedgers] runs for a target: its
-// DistinctLedgerCountSQL override when set, else the generic COUNT(DISTINCT <ledger column>).
-// Factored out so the routing is pinned without a database
-// (TestCountDistinctLedgersQueryRoutesOnlySorobanEventsToCensus).
+// countDistinctLedgersQuery is the statement [Store.CountDistinctLedgers] runs for a target: its DistinctLedgerCountSQL override, else the
+// generic COUNT(DISTINCT <ledger column>); factored out for TestCountDistinctLedgersQueryRoutesOnlySorobanEventsToCensus.
 func countDistinctLedgersQuery(target GapDetectorTarget) string {
 	if target.DistinctLedgerCountSQL != "" {
 		return target.DistinctLedgerCountSQL
@@ -93,9 +91,7 @@ func SourceCoverageFromCounts(source, table string, distinctLedgers, expectedLed
 	}
 }
 
-// percentagesFromCounts factors the density + gap_free math into
-// one place so the formulas can be reviewed in isolation. Both
-// returns are capped [0, 1].
+// percentagesFromCounts holds the density and gap_free math in one place; both returns are capped to [0, 1].
 func percentagesFromCounts(distinct, expected, maxGap int64) (density, gapFree float64) {
 	if expected <= 0 {
 		return 0, 0

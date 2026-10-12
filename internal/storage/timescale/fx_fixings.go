@@ -30,9 +30,7 @@ const (
 // FXFixingLag separates a closed bucket end E from the newest bar it may bind, so every region holds a bar before any bucket that binds it is served (bar T is seen closed at T+delta, delta <= 1h + settle).
 const FXFixingLag = 3 * time.Hour
 
-// fxFixingWriteTimeout caps one batch transaction. The API cache's delta load
-// re-reads rows ingested up to this long before its previous load, so every
-// writer must stay inside it.
+// fxFixingWriteTimeout caps one batch txn; the API cache's delta load re-reads this far back, so every writer must stay inside it.
 const fxFixingWriteTimeout = 20 * time.Second
 
 // FX resolutions on the wire.
@@ -93,11 +91,8 @@ func (s *Store) InsertFXFixingBatch(ctx context.Context, rows []FXFixing) (int64
 	return inserted, nil
 }
 
-// fxFixingAtOrBeforeSelect is the binding rule: per ticker, the row with the greatest bar_end <=
-// cutoff inside the lookback, hourly over daily on a tie, then the highest generation. Every
-// parameter is cast, since an untyped parameter beside an interval fails to resolve an operator.
-// The bar_start bound is implied by the bar_end window (a bar is at most a day wide) and lets the
-// planner exclude chunks, which are partitioned on bar_start.
+// fxFixingAtOrBeforeSelect: per ticker, greatest bar_end <= cutoff in the lookback; ties go hourly over daily, then highest generation.
+// Parameters are cast (untyped beside an interval fails operator resolution); the bar_start bound lets the planner exclude chunks.
 const fxFixingAtOrBeforeSelect = `
 	SELECT DISTINCT ON (ticker)
 	       ticker, grain, bar_start, bar_end, rate_usd::text, source, generation
@@ -159,15 +154,10 @@ func (s *Store) fxFixingRowsAtOrBefore(ctx context.Context, tickers []string, cu
 	return out, nil
 }
 
-// fxFixingStoreMaxAge bounds the fixings arm of [Store.FXQuoteAtOrBefore];
-// it matches the API's default cross max age so both paths accept the
-// same weekend carry.
+// fxFixingStoreMaxAge bounds the fixings arm of [Store.FXQuoteAtOrBefore]; matches the API's default cross max age (same weekend carry).
 const fxFixingStoreMaxAge = 76 * time.Hour
 
-// fxFixingSnapAtOrBefore is the fixings arm of [Store.FXQuoteAtOrBefore]:
-// the pair priced from each leg's fixing at or before cutoff − lag. It
-// returns [ErrNoFXQuote] unless every leg has a fixing, so the caller keeps
-// its fx_quotes path for the era before fixings.
+// fxFixingSnapAtOrBefore prices the pair from each leg's fixing at or before cutoff - lag; [ErrNoFXQuote] unless every leg has one.
 func (s *Store) fxFixingSnapAtOrBefore(ctx context.Context, pair canonical.Pair, cutoff time.Time) (*big.Rat, time.Time, string, error) {
 	tickers := fxSnapTickers(pair)
 	if len(tickers) == 0 {
@@ -184,9 +174,7 @@ func (s *Store) fxFixingSnapAtOrBefore(ctx context.Context, pair canonical.Pair,
 	return fxSnapFromRows(pair, rows)
 }
 
-// fxFixingDailyArm binds the era before fixings. A ticker takes it iff cutoff
-// is before its first fixing's bar_end or it has no fixings; a miss after
-// the first fixing is a gap inside the era and stays a miss.
+// fxFixingDailyArm binds the era before fixings: a ticker takes it iff cutoff precedes its first fixing's bar_end or it has none.
 func (s *Store) fxFixingDailyArm(ctx context.Context, tickers []string, cutoff time.Time, out map[string]FXFixingBinding) error {
 	firsts, err := s.fxFixingFirstBarEnds(ctx, tickers)
 	if err != nil {
@@ -223,9 +211,8 @@ func (s *Store) fxFixingDailyArm(ctx context.Context, tickers []string, cutoff t
 	return nil
 }
 
-// fxFixingFirstBarEnds returns, per ticker that has any fixing, the bar_end
-// of its earliest bar. Ordering on the partitioning column lets the
-// chunk-ordered scan stop at the first chunk holding the ticker.
+// fxFixingFirstBarEnds returns each fixed ticker's earliest bar_end; ordering on the partition column lets the scan stop at the first
+// chunk.
 func (s *Store) fxFixingFirstBarEnds(ctx context.Context, tickers []string) (map[string]time.Time, error) {
 	const q = `
 		SELECT t.ticker, f.bar_end

@@ -79,11 +79,8 @@ func (s *Store) scanHolders(ctx context.Context, protocol, kind, q string) ([]De
 	return out, rows.Err()
 }
 
-// blendPositionHolders folds blend_positions per (user, pool, asset) into a
-// supply leg and a borrow leg, with the same CASE arithmetic as BlendPositionsByUser but the
-// user in the GROUP BY. Uses blend_positions_pool_user_asset_idx. A leg an auction or bad-debt
-// write-off has moved (blendAuctionMovesSQL) is left out: its net no longer describes the
-// position and the pre-liquidation figure must not rank as an open holding.
+// blendPositionHolders folds blend_positions per (user, pool, asset) into supply and borrow legs (user in the GROUP BY).
+// Uses blend_positions_pool_user_asset_idx. A leg moved by an auction/bad-debt write-off (blendAuctionMovesSQL) is left out.
 func (s *Store) blendPositionHolders(ctx context.Context) ([]DeFiPositionHolder, error) {
 	const supply = `
 		SELECT pool, asset, user_address,
@@ -153,10 +150,8 @@ func (s *Store) defindexVaultHolders(ctx context.Context) ([]DeFiPositionHolder,
 	return s.scanHolders(ctx, "defindex", holderKindVaultShares, q)
 }
 
-// creditPositionHolders reports each position's LATEST statement amount,
-// one row per position not yet withdrawn. "Withdrawn" is judged as CreditPositionsByOwner does
-// (a withdrawal event on the collateral contract) so a cohort row and the per-account page
-// agree. Positions with no statement yet carry '0'.
+// creditPositionHolders reports each not-yet-withdrawn position's LATEST statement amount (withdrawal judged as CreditPositionsByOwner
+// does, so cohort and per-account page agree); positions with no statement carry '0'.
 func (s *Store) creditPositionHolders(ctx context.Context) ([]DeFiPositionHolder, error) {
 	const q = `
 		SELECT p.collateral_contract, '' AS asset, p.owner,

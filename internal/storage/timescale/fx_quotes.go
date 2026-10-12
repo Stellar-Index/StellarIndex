@@ -149,10 +149,8 @@ func (s *Store) LatestFXQuotes(ctx context.Context, since time.Time) ([]FXQuote,
 // would always fall back to cached VWAP. The helpers below are the fx_quotes-first leg; the
 // trades read is only a fallback for re-enabled connectors.
 
-// fxQuotesSnapLookback bounds how far back the snap read accepts a row. Buckets are daily and the
-// feed skips weekends/holidays for some tickers, so 7 days tolerates the longest routine gap while
-// refusing a stale chained-fiat leg. A total miss surfaces [ErrNoFXQuote]. The floor also lets
-// TimescaleDB prune to the window's chunks instead of scanning to genesis on a miss.
+// fxQuotesSnapLookback bounds the snap read: 7 days tolerates weekend/holiday gaps but refuses a stale chained-fiat leg, and lets
+// TimescaleDB prune chunks on a miss ([ErrNoFXQuote]).
 const fxQuotesSnapLookback = 7 * 24 * time.Hour
 
 // fxQuotesSourceLabel is the provenance label for fx_quotes rows, also substituted for rows whose
@@ -171,10 +169,8 @@ type fxSnapRow struct {
 	Source  string
 }
 
-// fxSnapTickers returns the fx_quotes tickers needed to price `pair`,
-// or nil when the pair cannot be priced from fx_quotes at all (either
-// side non-fiat, or the degenerate USD/USD). USD needs no row — it is
-// the rate_usd anchor, exactly 1 by definition.
+// fxSnapTickers returns the fx_quotes tickers needed to price `pair`, or nil if unpriceable (non-fiat side or USD/USD); USD is the
+// anchor, exactly 1.
 func fxSnapTickers(pair canonical.Pair) []string {
 	if pair.Base.Type != canonical.AssetFiat || pair.Quote.Type != canonical.AssetFiat {
 		return nil
@@ -189,18 +185,9 @@ func fxSnapTickers(pair canonical.Pair) []string {
 	return out
 }
 
-// fxSnapFromRows computes the pair price (quote units per base unit, the trades path's
-// QuoteAmount/BaseAmount orientation) from latest-per-ticker fx_quotes rows keyed by ticker.
-//
-// Math is exact *big.Rat: rate_usd(T) is "T per 1 USD", so price(B/Q) = rate_usd(Q) / rate_usd(B),
-// with a USD side contributing exactly 1; the other direction would invert every fiat-quoted
-// pair. The cached `inverse_usd` column is NOT used; inversion happens in Rat space.
-//
-// observedAt is the OLDEST bucket used (the staler input governs freshness). The source label is
-// the sorted "+"-join of distinct row sources (a cross can mix providers); NULL-source rows read
-// as [fxQuotesSourceLabel].
-//
-// Returns [ErrNoFXQuote] when a needed ticker has no row.
+// fxSnapFromRows prices B/Q (quote per base) as exact *big.Rat rate_usd(Q)/rate_usd(B), a USD side being 1; inverse_usd is NOT used.
+// observedAt is the OLDEST bucket used; source is the sorted "+"-join of row sources (NULL reads as [fxQuotesSourceLabel]). Returns
+// [ErrNoFXQuote] when a needed ticker has no row.
 func fxSnapFromRows(pair canonical.Pair, rows map[string]fxSnapRow) (*big.Rat, time.Time, string, error) {
 	tickers := fxSnapTickers(pair)
 	if len(tickers) == 0 {
@@ -254,12 +241,8 @@ func fxSnapFromRows(pair canonical.Pair, rows map[string]fxSnapRow) (*big.Rat, t
 	return new(big.Rat).Quo(quoteRate, baseRate), observedAt, strings.Join(sources, "+"), nil
 }
 
-// fxQuotesSnapAtOrBefore is the fx_quotes leg of [Store.FXQuoteAtOrBefore]: the newest observation
-// per needed ticker with `bucket <= cutoff` within [fxQuotesSnapLookback]. DISTINCT ON over the
-// (ticker, bucket DESC) index makes each ticker a bounded descending scan.
-//
-// Returns [ErrNoFXQuote] when any needed ticker has no row in the window (caller falls back to
-// trades). Other DB errors propagate: a broken read leaves no trustworthy chained-fiat output.
+// fxQuotesSnapAtOrBefore reads the newest row per needed ticker with `bucket <= cutoff` within [fxQuotesSnapLookback]. A missing ticker
+// returns [ErrNoFXQuote] (caller falls back to trades); other DB errors propagate.
 func (s *Store) fxQuotesSnapAtOrBefore(
 	ctx context.Context,
 	pair canonical.Pair,
@@ -314,9 +297,8 @@ func (s *Store) fxQuotesRowsAtOrBefore(ctx context.Context, tickers []string, cu
 	return got, nil
 }
 
-// fxQuoteBucketAtOrBeforeSelect finds the newest bucket for one ticker at or before a cutoff,
-// within a lookback floor. The floor lets TimescaleDB prune chunks on a miss (as for
-// [fxQuotesSnapLookback]) and is also the caller's as-of tolerance, hence a parameter.
+// fxQuoteBucketAtOrBeforeSelect finds a ticker's newest bucket at or before a cutoff; the lookback floor is a parameter because it
+// prunes chunks and is also the caller's as-of tolerance.
 const fxQuoteBucketAtOrBeforeSelect = `
 	SELECT bucket
 	  FROM fx_quotes

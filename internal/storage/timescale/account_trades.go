@@ -68,12 +68,8 @@ type AccountTradesCursor struct {
 // IsSet reports whether the cursor points past an already served row.
 func (c AccountTradesCursor) IsSet() bool { return !c.Ts.IsZero() }
 
-// accountTradesInnerCols is the per-arm column list. base/quote amounts and usd_volume are cast to
-// text server-side so the driver never sees a float.
-//
-// The COALESCE expressions MUST carry explicit aliases: otherwise PostgreSQL names both output
-// columns `coalesce` and the outer SELECT's `usd_volume` fails at PLAN time (42703). Only real SQL
-// execution catches that; a substring test on the query string cannot.
+// accountTradesInnerCols is the per-arm column list; amounts and usd_volume are cast to text so the driver never sees a float.
+// The COALESCEs MUST be aliased: otherwise both output columns are `coalesce` and the outer usd_volume fails at plan time (42703).
 const accountTradesInnerCols = `source, ledger, tx_hash, op_index, ts,
 	       base_asset, quote_asset,
 	       base_amount::text AS base_amount, quote_amount::text AS quote_amount,
@@ -87,12 +83,8 @@ const accountTradesOuterCols = `source, ledger, tx_hash, op_index, ts,
 	       base_asset, quote_asset,
 	       base_amount, quote_amount, usd_volume, routed_via, signer`
 
-// accountTradesQuery builds the two-arm UNION described in the file header. hasCursor appends the
-// keyset tuple comparison to both arms.
-//
-// Placeholder layout (hasCursor=true): $1 address, $2 ts floor, $3..$6 cursor, $7 limit. Both arms
-// reuse the same numbered placeholders, so the caller passes each value once. Without a cursor
-// the limit moves to $3.
+// accountTradesQuery builds the two-arm UNION; hasCursor adds the keyset tuple comparison to both arms.
+// Placeholders: $1 address, $2 ts floor, $3..$6 cursor, $7 limit (limit is $3 without a cursor); both arms reuse them.
 func accountTradesQuery(hasCursor bool) string {
 	// $2 is the compression-horizon ts floor from tradesUncompressedHorizon: the per-account partial
 	// indexes exist only on UNCOMPRESSED chunks, and an arm reaching a compressed one decompress-scans
@@ -114,19 +106,12 @@ func accountTradesQuery(hasCursor bool) string {
 	) u` + orderBy
 }
 
-// tradesHorizonFailClosedWindow is the fail-CLOSED floor served on a catalog lookup error: well
-// inside the compress_after window (see TradesCompressionPolicy), so it never claims a possibly
-// compressed chunk as index-safe.
+// tradesHorizonFailClosedWindow is the fail-CLOSED floor on a catalog error: inside compress_after, so no compressed chunk looks
+// index-safe.
 const tradesHorizonFailClosedWindow = 24 * time.Hour
 
-// tradesUncompressedHorizon returns the floor below which per-account trades reads have no usable
-// index (see accountTradesQuery): the END of the NEWEST COMPRESSED chunk, not the start of the
-// oldest uncompressed one, because compression is not a time prefix (a straggler chunk can stay
-// uncompressed while later ones compress).
-//
-// Cached for 10 minutes. Fails CLOSED to a short recent window (tradesHorizonFailClosedWindow),
-// NOT epoch: callers render any non-zero horizon as a "trades since <date>" coverage note, so a
-// failure degrades into that channel instead of implying all history is indexed.
+// tradesUncompressedHorizon returns the end of the newest compressed chunk: below it per-account reads have no usable index.
+// Compression is not a time prefix. Cached 10m; fails CLOSED to tradesHorizonFailClosedWindow, never epoch (which implies full indexing).
 func (s *Store) tradesUncompressedHorizon(ctx context.Context) time.Time {
 	tradesHorizonMu.Lock()
 	defer tradesHorizonMu.Unlock()

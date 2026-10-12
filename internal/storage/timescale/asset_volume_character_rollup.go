@@ -19,24 +19,11 @@ import (
 // moves the compute: every stored signal equals what the per-asset [Store.AssetVolumeCharacter]
 // returns, because both derive from the same raw double sums through [volumeCharacterFromSums].
 
-// assetVolumeCharacterRollupSQLTemplate is the all-asset generalization of
-// assetVolumeCharacterSQL: it projects every trade onto both its base_asset and quote_asset
-// (UNION ALL), folds each raw side onto its canonical asset via the alias_map (so XLM's three
-// identities land on one row), then GROUP BYs the canonical asset.
-//
-// {{ALIAS_VALUES}} is replaced (strings.Replace, not Sprintf: the LIKE patterns carry literal %)
-// by the alias-fold VALUES rows from the process AliasRegistry (see buildAliasMapValues); alias
-// params start at $1. {{WINDOW}} is the trailing window as an interval literal: against a bind
-// parameter the planner cannot exclude chunks, and this long roll starved the compression policy.
-//
-// Every per-asset signal is reproduced exactly:
-//   - total_vol / *_vol are SUM(usd_volume::double precision), the same double the per-asset query
-//     sums, so Go-derived shares match to full precision.
-//   - the (maker,taker) pair is unordered (LEAST/GREATEST); maker is read through
-//     volumeCharacterMakerSQL, so a pool is never an account.
-//   - issuer is the G-strkey suffix of a classic 'CODE-GISSUER' id, else empty.
-//   - market_styled tests the raw counterpart, never the folded form.
-//   - total_vol_num is the exact NUMERIC sum, for the stored volume_usd column.
+// assetVolumeCharacterRollupSQLTemplate is the all-asset form of assetVolumeCharacterSQL: each trade is projected onto both legs, folded
+// onto its canonical asset via the alias_map, then grouped. {{ALIAS_VALUES}} is swapped by strings.Replace (the LIKE patterns carry a
+// literal %); {{WINDOW}} is an interval literal because a bind parameter stops chunk exclusion and this long roll starved the compression
+// policy. total_vol and *_vol sum usd_volume::double precision exactly as the per-asset query does; total_vol_num is the exact NUMERIC
+// sum.
 const assetVolumeCharacterRollupSQLTemplate = `
 WITH alias_map(form, canon) AS (
   VALUES {{ALIAS_VALUES}}
@@ -101,10 +88,8 @@ SELECT
  GROUP BY a.asset_id
 `
 
-// assetVolumeCharacterRow is one scanned all-asset roll: the raw sums the
-// Go derivation turns into shares + character. total is the double the
-// per-asset query sums (drives the shares to full precision);
-// totalVolNumeric is the exact NUMERIC text stored in volume_usd.
+// assetVolumeCharacterRow is one scanned roll: total is the double sum driving shares; totalVolNumeric is the exact NUMERIC text for
+// volume_usd.
 type assetVolumeCharacterRow struct {
 	assetID                                             string
 	total, topPair, selfCross, issuerSide, marketStyled float64
@@ -112,10 +97,8 @@ type assetVolumeCharacterRow struct {
 	makers, takers                                      int64
 }
 
-// buildAliasMapValues renders the alias-fold VALUES rows + their args from
-// the process AliasRegistry, starting at placeholder startIdx. Forms are
-// bound as params (never string-concatenated) and cast ::text so the CTE
-// columns type as text for the join against trades.base/quote_asset.
+// buildAliasMapValues renders the alias-fold VALUES rows and args from the AliasRegistry from placeholder startIdx; forms are bound, cast
+// ::text.
 func buildAliasMapValues(startIdx int) (valuesSQL string, args []any) {
 	forms := canonical.AllAliasForms()
 	if len(forms) == 0 {
@@ -142,10 +125,8 @@ func buildAliasMapValues(startIdx int) (valuesSQL string, args []any) {
 	return b.String(), args
 }
 
-// volumeCharacterFromSums derives the signals + character from the raw sums: the exact NUMERIC
-// total text is the volume, the double sums only form the unitless shares. It is the single
-// derivation shared by [Store.AssetVolumeCharacter] and the all-asset rollup, so the rollup can
-// never drift from the value the detail computes live.
+// volumeCharacterFromSums is the single derivation shared with [Store.AssetVolumeCharacter], so the rollup cannot drift from the live
+// detail; the exact NUMERIC text is the volume, the double sums only form shares.
 func volumeCharacterFromSums(totalNum string, total, topPair, selfCross, issuerSide, marketStyled float64, makers, takers int64) AssetVolumeCharacter {
 	out := AssetVolumeCharacter{
 		WindowDays:     int(volumeCharacterWindow.Hours()) / 24,
@@ -171,10 +152,8 @@ const assetVolumeCharacterRollTimeout = "45min"
 // AssetVolumeCharacterRollApplicationName tags the roll's backend so a deploy can pg_cancel_backend it before a migration ALTERs trades.
 const AssetVolumeCharacterRollApplicationName = "stellarindex-asset-character-roll"
 
-// refreshAssetVolumeCharacterPrune drops assets whose priced volume lapsed
-// out of the window this pass — same one-transaction now() trick as the
-// asset_volume_24h rollup: just-upserted rows carry computed_at = now() and
-// survive; stale rows carry an older timestamp and are deleted.
+// refreshAssetVolumeCharacterPrune drops assets that lapsed out of the window; upserted rows carry computed_at = now() (same transaction)
+// and survive.
 const refreshAssetVolumeCharacterPrune = `DELETE FROM asset_volume_character WHERE computed_at < now()`
 
 // refreshAssetVolumeCharacterPruneExpired is the zero-row pass's prune (see
@@ -206,17 +185,8 @@ func (s *Store) RefreshAssetVolumeCharacter(ctx context.Context) error {
 	return nil
 }
 
-// rollAssetVolumeCharacter runs the all-asset single-pass roll and returns
-// one row per canonical asset with priced volume in the window.
-//
-// Connection hygiene mirrors [Store.refreshCAGGBounded]: the pinned connection's statement_timeout
-// is read with current_setting before this call overrides it, and restored (via set_config, on a
-// context detached from the caller's so an already-fired deadline doesn't also fail the restore)
-// before the connection returns to the pool, so an [OpenBackground] connector's session backstop
-// isn't silently replaced by this call's bound for a later query on the same pooled connection.
-// A failed restore marks the connection bad via conn.Raw(driver.ErrBadConn) rather than pooling it
-// with the override live. max_parallel_workers_per_gather has no pool-level default to protect, so
-// it keeps a bare RESET.
+// rollAssetVolumeCharacter returns one row per canonical asset with priced volume. Like [Store.refreshCAGGBounded], it restores the pinned
+// connection's statement_timeout on a detached context, and marks the connection bad (driver.ErrBadConn) if the restore fails.
 func (s *Store) rollAssetVolumeCharacter(ctx context.Context) (out []assetVolumeCharacterRow, err error) {
 	window := fmt.Sprintf("%d hours", int(volumeCharacterWindow.Hours()))
 	aliasValues, args := buildAliasMapValues(1)
@@ -361,9 +331,8 @@ func execAssetVolumeCharacterUpsert(ctx context.Context, tx *sql.Tx, batch []ass
 	return nil
 }
 
-// assetVolumeCharacterRollupSQL is the keyed-on-PK read the detail path
-// uses. volume_usd is read back as NUMERIC text so the money sum never
-// passes through a double (ADR-0003).
+// assetVolumeCharacterRollupSQL is the PK read for the detail path; volume_usd is read as NUMERIC text so money never passes a double
+// (ADR-0003).
 const assetVolumeCharacterRollupSQL = `
 SELECT window_days, volume_usd::text, distinct_makers, distinct_takers,
        top_account_pair_vol_share, self_cross_share, issuer_side_share,

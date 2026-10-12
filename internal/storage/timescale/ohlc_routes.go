@@ -58,9 +58,8 @@ func OHLCIntervalList() string {
 	return strings.Join(parts, historyGranularitySep)
 }
 
-// ohlcFoldDeclared reports whether some folded route re-buckets `source` by exactly `fold`. It is
-// the allow-list [Store.OHLCSeriesReBucketed] applies before `fold` is interpolated into SQL: the
-// pairing is safe because it is a literal in this file, never a request value.
+// ohlcFoldDeclared reports whether a folded route re-buckets `source` by exactly `fold`; the allow-list [Store.OHLCSeriesReBucketed]
+// applies before interpolating `fold` into SQL (literals in this file, never request values).
 func ohlcFoldDeclared(source HistoryGranularity, fold string) bool {
 	for _, r := range OHLCRoutes {
 		if r.Folded() && r.Source == source && r.Fold == fold {

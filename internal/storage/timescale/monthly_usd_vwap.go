@@ -32,8 +32,7 @@ type MonthlyUSDVWAP struct {
 	VolumeUSD float64
 }
 
-// monthlyUSDVWAPsSQL reads the monthly CAGG's USD-quoted rows in [from, to). The quote set is
-// usdProxyQuotes (quotes whose VWAP is ALREADY USD) so a month priced here agrees with the live
+// monthlyUSDVWAPsSQL reads USD-quoted rows of the monthly CAGG in [from, to), over usdProxyQuotes (VWAP already USD) to agree with the live
 // path. $1/$2 are cast explicitly: an untyped bind beside a timestamptz column fails with 42883.
 const monthlyUSDVWAPsSQL = `
 SELECT bucket, base_asset, vwap::text, volume_priced::text, COALESCE(volume_usd, 0)::text, sources
@@ -67,9 +66,7 @@ func (s *Store) MonthlyUSDVWAPs(ctx context.Context, from, to time.Time, sourceD
 	return foldMonthlyUSDVWAPs(in, sourceDecimals)
 }
 
-// monthlyUSDVWAPRow is one prices_1mo row as stored: vwap and its weight
-// volume_priced (Σbase over the trades vwap covers) in the base
-// spelling's raw stored unit.
+// monthlyUSDVWAPRow is one stored prices_1mo row: vwap and its weight volume_priced (Σbase) in the base spelling's raw stored unit.
 type monthlyUSDVWAPRow struct {
 	month             time.Time
 	base              string
@@ -150,18 +147,12 @@ func foldMonthlyUSDVWAPs(in []monthlyUSDVWAPRow, sourceDecimals SourceAmountDeci
 	return out, nil
 }
 
-// classicAmountDecimals is the ledger's own amount scale: XLM and every
-// classic asset (its SAC included) are stored in 10^-7 units whichever
-// venue traded them.
+// classicAmountDecimals is the ledger's amount scale: XLM and every classic asset (SAC included) are 10^-7 whichever venue traded them.
 const classicAmountDecimals = 7
 
-// monthlyUSDVWAPScale is the factor (10^-decimals) turning one row's stored base volume into whole
-// units. Rows sharing a key only need to agree, and keys cross spellings only via the alias
-// registry:
-//   - an on-chain classic spelling ('native', CODE-ISSUER, a registered SAC) is stored at 7 places;
-//   - an off-chain spelling (crypto:, fiat:) is stored at its sources' registered scale (CEX 10^8,
-//     FX 10^6), on which the row's sources must agree; mixed scales are not one market's volume;
-//   - anything else folds with its own spelling only, so it is left raw.
+// monthlyUSDVWAPScale is the factor (10^-decimals) turning stored base volume into whole units: on-chain classic spellings use 7 places;
+// off-chain (crypto:, fiat:) use the sources' registered scale (CEX 10^8, FX 10^6), which must agree or the row is not one market; others
+// stay raw.
 func monthlyUSDVWAPScale(raw string, sources []string, sourceDecimals SourceAmountDecimals) (*big.Rat, error) {
 	a, err := canonical.ParseAsset(raw)
 	if err != nil {
@@ -199,9 +190,8 @@ func tenToMinus(decimals int) *big.Rat {
 	return new(big.Rat).SetFrac(big.NewInt(1), new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil))
 }
 
-// monthlyUSDVWAPAsset is the fold key for a stored base_asset spelling: its canonical form under
-// the alias registry (native for every XLM spelling, the classic form for a registered SAC), or
-// the spelling itself when it is no canonical asset id, so that row folds with nothing.
+// monthlyUSDVWAPAsset is the fold key for a stored base_asset: its canonical form under the alias registry, or itself when not canonical
+// (folds with nothing).
 func monthlyUSDVWAPAsset(raw string) string {
 	a, err := canonical.ParseAsset(raw)
 	if err != nil {

@@ -89,12 +89,8 @@ func (s *Store) HasAsset(ctx context.Context, a canonical.Asset) (bool, error) {
 	return s.hasNonClassicAsset(ctx, a)
 }
 
-// hasClassicAsset is the fast path: PK lookup on classic_assets.
-//
-// The registry is also fed from trustline holdings ([Store.RegisterClassicAssetsHeld]), so it is
-// not a subset of `trades`; otherwise a held but never-traded asset would 404 on
-// GET /v1/assets/{id}. This answers "does the asset exist", not "has it traded"; read
-// last_trade_at for activity.
+// hasClassicAsset is the PK lookup on classic_assets. The registry also holds trustline-only assets, so it answers "exists", not "has
+// traded".
 func (s *Store) hasClassicAsset(ctx context.Context, a canonical.Asset) (bool, error) {
 	const q = `SELECT EXISTS (SELECT 1 FROM classic_assets WHERE asset_id = $1)`
 	var exists bool
@@ -108,18 +104,9 @@ func (s *Store) hasClassicAsset(ctx context.Context, a canonical.Asset) (bool, e
 	return exists, nil
 }
 
-// hasNonClassicAsset answers existence for asset types the classic registry cannot hold.
-//
-// It avoids the unbounded `trades WHERE base = $1 OR quote = $1` scan: the OR BitmapOrs every
-// chunk back to 2017 and can blow the API budget during recompression. Instead three probes are
-// ORed and evaluated lazily: classic_assets over the alias forms (so a declared SAC agrees with
-// its classic twin), then trades base and quote sides, each `= ANY($1) AND ts >= $2` so each
-// leads on its own column's index. `since` is computed Go-side so the planner excludes
-// out-of-window chunks at plan time. Probes bind [assetAliasArray], so XLM's three spellings
-// answer alike.
-//
-// The window is the one [Store.DistinctAssets] uses, so the detail route cannot 404 an asset the
-// listing shows. A non-classic asset whose only trades predate it answers false.
+// hasNonClassicAsset probes classic_assets (alias forms), then trades base and quote each as `= ANY($1) AND ts >= $2`, avoiding the
+// unbounded `base = $1 OR quote = $1` BitmapOr. Window matches [Store.DistinctAssets] so detail cannot 404 a listed asset; `since` is
+// Go-side for plan-time pruning.
 func (s *Store) hasNonClassicAsset(ctx context.Context, a canonical.Asset) (bool, error) {
 	const q = `
         SELECT

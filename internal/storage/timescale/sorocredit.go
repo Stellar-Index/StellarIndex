@@ -50,7 +50,8 @@ type CreditStatement struct {
 	EventIndex         int
 }
 
-// CreditSettlement is one credit_settlements row: a SCHEDULED settlement decoded from the on-wire "Liquidation" event, NOT a distressed liquidation.
+// CreditSettlement is one credit_settlements row: a SCHEDULED settlement decoded from the on-wire "Liquidation" event, NOT a distressed
+// liquidation.
 type CreditSettlement struct {
 	CollateralContract string
 	PositionUUID       string
@@ -178,7 +179,8 @@ func (s *Store) InsertCreditStatement(ctx context.Context, e CreditStatement) er
 	return nil
 }
 
-// InsertCreditSettlement appends one scheduled-settlement row decoded from the on-wire "Liquidation" event (recurring keeper settlement, not a distressed liquidation); idempotent on the PK.
+// InsertCreditSettlement appends one scheduled-settlement row decoded from the on-wire "Liquidation" event (recurring keeper
+// settlement, not a distressed liquidation); idempotent on the PK.
 func (s *Store) InsertCreditSettlement(ctx context.Context, e CreditSettlement) error {
 	if e.CollateralContract == "" {
 		return errors.New("timescale: InsertCreditSettlement: CollateralContract is empty")
@@ -268,7 +270,8 @@ func (s *Store) InsertCreditEvent(ctx context.Context, e CreditEvent) error {
 	return nil
 }
 
-// CreditAnalyticsSummary is the windowed sorocredit activity summary behind /v1/protocols/sorocredit; volumes are canonical.Amount (i128/NUMERIC, never int64), counts exact.
+// CreditAnalyticsSummary is the windowed sorocredit activity summary behind /v1/protocols/sorocredit; volumes are canonical.Amount
+// (i128/NUMERIC, never int64), counts exact.
 type CreditAnalyticsSummary struct {
 	// PositionsOpened is the count of NewCollateralContract events in the
 	// window (one child Collateral-<uuid> contract per opened position).
@@ -311,9 +314,8 @@ func (a *CreditAnalyticsSummary) HasActivity() bool {
 		a.Settlements > 0 || a.Withdrawals > 0)
 }
 
-// creditUSDCSAC is the mainnet USDC SAC, the only debt asset whose amounts
-// SettlementVolume sums (7-decimal base units). Mirrored here, not imported:
-// storage keeps its no-upward-import boundary.
+// creditUSDCSAC is the mainnet USDC SAC, the only debt asset SettlementVolume sums (7-decimal base units); mirrored, not imported, to keep
+// storage's no-upward-import boundary.
 const creditUSDCSAC = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
 
 // creditUSDCLegFilter admits the settled_amount of rows whose primary leg is
@@ -330,7 +332,8 @@ const creditSettlementsAnalyticsQuery = `
 		       max(ledger_close_time)
 		  FROM credit_settlements WHERE ledger_close_time > now() - $1::interval`
 
-// CreditWindowAnalytics reads the windowed sorocredit summary from the four credit_* hypertables with volumes as canonical.Amount, never int64; returns (nil, nil) when no credit data exists.
+// CreditWindowAnalytics reads the windowed sorocredit summary from the four credit_* hypertables with volumes as canonical.Amount,
+// never int64; returns (nil, nil) when no credit data exists.
 func (s *Store) CreditWindowAnalytics(ctx context.Context, windowDays int) (*CreditAnalyticsSummary, error) {
 	if windowDays <= 0 {
 		windowDays = 90

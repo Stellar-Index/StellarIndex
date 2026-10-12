@@ -7,17 +7,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// sorobanVolume24hUSDQuery derives the trailing-24h USD trade volume for a pure-Soroban SEP-41
-// asset. [Store.Volume24hUSDForAsset] only sees the insert-time `usd_volume`, so a token whose
-// XLM-legged trades were stored unvalued would show a bogus "0".
-//
-// Valuation is per TRADE, never per prices_1m row: each trade contributes its `usd_volume` when
-// present, else its XLM leg (stroops) at the XLM/USD anchor of the trade's own minute
-// ([xlmUSDAnchorGridCTE]), never today's rate. A trade with neither (no XLM leg, or no anchor
-// within xlmUSDAnchorMaxAge) is excluded and counted so the caller can flag a lower bound.
-//
-// The window is the closed 1-minute buckets of the last 24h. $1 binds the asset's canonical key
-// as stored in trades.base_asset / quote_asset (e.g. a `C…` id); $2 the native-XLM SAC.
+// sorobanVolume24hUSDQuery derives trailing-24h USD volume for a pure-Soroban SEP-41 asset ([Store.Volume24hUSDForAsset] misses unvalued
+// XLM-legged trades). Valued per TRADE: `usd_volume`, else its XLM leg at the XLM/USD anchor of the trade's own minute
+// ([xlmUSDAnchorGridCTE]), never today's rate; trades with neither are excluded and counted (lower bound). $1 is the asset's key in
+// trades.base_asset/quote_asset, $2 the native-XLM SAC.
 //
 //nolint:gosec // G202: fragments are constant SQL built from literals and $N placeholders
 var sorobanVolume24hUSDQuery = `

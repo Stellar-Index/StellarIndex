@@ -5,13 +5,8 @@ package timescale
 
 import "sync/atomic"
 
-// installedMovementsFloor overrides the pubnet-default [SEP41MovementsFloorLedger] process-wide;
-// zero means not installed and the const default holds. It is written at most once at start-up
-// before any read path runs ([InstallMovementsFloor]); the atomic keeps that publish race-free.
-//
-// This is the canonical.InstallAliasRegistry idiom: a network-derived value is needed in leaf
-// storage (the /movements read path and [Store.ListSEP41TransfersByAddress]) with no config.Config
-// in scope, so it is published once instead of threaded through every signature.
+// installedMovementsFloor overrides [SEP41MovementsFloorLedger] process-wide (zero = not installed); written once at start-up by
+// [InstallMovementsFloor], the canonical.InstallAliasRegistry idiom for a network-derived value with no config in scope.
 var installedMovementsFloor atomic.Uint32
 
 // InstallMovementsFloor publishes floor as the process-wide movements boundary [MovementsFloor] resolves to; call once at start-up after config load, and floor==0 means not installed so a mis-wired config never zeroes the boundary.
