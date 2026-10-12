@@ -3,7 +3,11 @@ package timescale
 import (
 	"context"
 	"fmt"
+	"math"
 	"math/big"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -105,5 +109,43 @@ func TestSEP41SupplyEventWriters_ShareRowContract(t *testing.T) {
 				t.Errorf("%s/%s: err = %v, want %q", tc.name, op, err, want)
 			}
 		}
+	}
+}
+
+func TestCursorIndex16_ClampsInsteadOfWrapping(t *testing.T) {
+	for in, want := range map[uint32]int16{0: 0, 7: 7, math.MaxInt16: math.MaxInt16, math.MaxInt16 + 1: math.MaxInt16, math.MaxUint16: math.MaxInt16, math.MaxUint32: math.MaxInt16} {
+		if got := cursorIndex16(in); got != want {
+			t.Errorf("cursorIndex16(%d) = %d, want %d", in, got, want)
+		}
+	}
+}
+
+// TestSEP41SupplyRollupMigrationsNeverPrescribeDestructiveReset pins that migrations never tell operators to
+// `TRUNCATE sep41_supply_rollup`, which also wipes migration 0088's seeded genesis baseline and under-reports
+// supply.
+func TestSEP41SupplyRollupMigrationsNeverPrescribeDestructiveReset(t *testing.T) {
+	paths, err := filepath.Glob("../../../migrations/*.sql")
+	if err != nil || len(paths) == 0 {
+		t.Fatalf("glob migrations: %d files, err=%v", len(paths), err)
+	}
+	destructive := regexp.MustCompile("(?i)(TRUNCATE\\s+(TABLE\\s+)?|DELETE\\s+FROM\\s+)`?sep41_supply_rollup")
+	for _, p := range paths {
+		raw, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatalf("read %s: %v", p, err)
+		}
+		if loc := destructive.FindIndex(raw); loc != nil {
+			t.Errorf("%s: %q — never TRUNCATE/DELETE sep41_supply_rollup; it drops the migration-0088 "+
+				"genesis baseline. Reset the fold via Store.ResetSEP41SupplyRollupFold instead",
+				filepath.Base(p), raw[loc[0]:loc[1]])
+		}
+	}
+
+	header, err := os.ReadFile("../../../migrations/0085_create_sep41_supply_rollup.up.sql")
+	if err != nil {
+		t.Fatalf("read migration 0085: %v", err)
+	}
+	if !strings.Contains(string(header), "ResetSEP41SupplyRollupFold") {
+		t.Error("migration 0085's header no longer names ResetSEP41SupplyRollupFold as the below-checkpoint reset")
 	}
 }
