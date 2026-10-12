@@ -10,8 +10,7 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// Load reads a TOML config file and returns a [Config] with defaults for omitted fields.
-// File beats defaults; env overrides ([ApplyEnvOverrides]) beat the file. Parse errors name the path and line.
+// Load reads a TOML config file and returns a [Config] with defaults for omitted fields; file beats defaults, env overrides beat the file, and parse errors name the path and line.
 func Load(path string) (Config, error) {
 	// G304 false positive: operator-supplied config path is the
 	// whole point of the flag. No user-controlled input reaches
@@ -24,8 +23,7 @@ func Load(path string) (Config, error) {
 	return LoadReader(f, path)
 }
 
-// LoadReader is [Load] with a supplied io.Reader. Useful for tests
-// that don't want to touch the filesystem.
+// LoadReader is [Load] with a supplied io.Reader, for tests that avoid the filesystem.
 func LoadReader(r io.Reader, origin string) (Config, error) {
 	doc, err := io.ReadAll(r)
 	if err != nil {
@@ -150,9 +148,7 @@ func retiredKeyMatch(path string) (string, bool) {
 	return "", false
 }
 
-// ApplyEnvOverrides replaces every field with an `env:` tag whose env var is set, and returns the dotted
-// config-path of each field overridden, NEVER the values (most are secrets). Secret fields follow `env: "NAME"`
-// where NAME holds the secret. Empty vars are ignored. Does NOT re-validate; use [LoadWithEnv] for that.
+// ApplyEnvOverrides replaces every field whose `env:` var is set (empty is ignored) and returns the dotted config-paths overridden, NEVER the values; it does NOT re-validate, use [LoadWithEnv].
 func (c *Config) ApplyEnvOverrides() []string {
 	var overridden []string
 	if v := os.Getenv("STELLARINDEX_POSTGRES_DSN"); v != "" {
@@ -220,9 +216,7 @@ func (c *Config) ApplyEnvOverrides() []string {
 	return overridden
 }
 
-// LoadWithEnv is [Load] + [ApplyEnvOverrides] + a second [Validate], so a bad env value fails fast with ErrInvalidConfig
-// instead of a confusing DB error at connect time. It logs at Info (default slog logger, before obs is configured)
-// the override field PATHS only, never values: most are secrets.
+// LoadWithEnv is [Load] + [ApplyEnvOverrides] + a second [Validate] so a bad env value fails fast with ErrInvalidConfig; it logs only override field PATHS, never values.
 func LoadWithEnv(path string) (Config, error) {
 	c, err := Load(path)
 	if err != nil {

@@ -11,9 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// StatusNoticeStore implements [platform.StatusNoticeStore] against
-// the `status_notices` table from migration 0082 — the operator-posted
-// customer-facing status banners.
+// StatusNoticeStore implements [platform.StatusNoticeStore] against the `status_notices` table, the operator-posted status banners.
 type StatusNoticeStore struct{ s *Store }
 
 // NewStatusNoticeStore returns the Postgres-backed implementation.
@@ -58,9 +56,7 @@ func scanStatusNotice(row interface {
 	return n, nil
 }
 
-// Create inserts a new notice. status is forced to active on insert —
-// a notice is born active and only ever transitions to resolved via
-// Resolve. The schema's CHECK constraints catch a malformed severity.
+// Create inserts a notice, forced to status active; it only transitions to resolved via Resolve.
 func (r *StatusNoticeStore) Create(ctx context.Context, n platform.StatusNotice) (platform.StatusNotice, error) {
 	const q = `
 		INSERT INTO status_notices (title, body, severity, status, created_by)
@@ -90,16 +86,14 @@ func (r *StatusNoticeStore) Get(ctx context.Context, id uuid.UUID) (platform.Sta
 	return out, nil
 }
 
-// ListActive returns active notices newest-first (served by the
-// partial index status_notices_active_idx).
+// ListActive returns active notices newest-first.
 func (r *StatusNoticeStore) ListActive(ctx context.Context) ([]platform.StatusNotice, error) {
 	const q = `SELECT ` + statusNoticeColumns +
 		` FROM status_notices WHERE status = 'active' ORDER BY created_at DESC`
 	return r.queryNotices(ctx, q)
 }
 
-// List returns notices of any status, newest-first, capped at limit
-// (default 100, hard-capped 500 to bound an operator's history page).
+// List returns notices of any status, newest-first, capped at limit (default 100, hard cap 500).
 func (r *StatusNoticeStore) List(ctx context.Context, limit int) ([]platform.StatusNotice, error) {
 	if limit <= 0 {
 		limit = 100
@@ -132,9 +126,7 @@ func (r *StatusNoticeStore) queryNotices(ctx context.Context, q string, args ...
 	return out, nil
 }
 
-// Resolve flips the notice to resolved, stamping resolved_at on the
-// first transition only (COALESCE keeps the original timestamp on a
-// repeat call — resolving is idempotent). Returns the updated row.
+// Resolve flips the notice to resolved and returns the row; resolved_at is stamped on the first transition only, so it is idempotent.
 func (r *StatusNoticeStore) Resolve(ctx context.Context, id uuid.UUID) (platform.StatusNotice, error) {
 	const q = `
 		UPDATE status_notices SET

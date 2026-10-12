@@ -23,8 +23,7 @@ type APIKeyStore interface {
 	Create(ctx context.Context, req CreateAPIKeyRequest) (rec APIKeyRecord, plaintext string, err error)
 }
 
-// CreateAPIKeyRequest is the payload [APIKeyStore.Create] consumes.
-// The store ignores fields it computes itself (KeyID, CreatedAt).
+// CreateAPIKeyRequest is the payload [APIKeyStore.Create] consumes; the store ignores fields it computes (KeyID, CreatedAt).
 type CreateAPIKeyRequest struct {
 	// Identifier — owner-account reference. The store stamps this
 	// onto APIKeyRecord.Identifier verbatim. Required.
@@ -67,13 +66,10 @@ type CreateAPIKeyRequest struct {
 	SelfService bool
 }
 
-// ErrMintExceedsCaller is [ClampToMinter]'s refusal: the request asked
-// for more authority than the minting credential holds.
+// ErrMintExceedsCaller is [ClampToMinter]'s refusal: the request asked for more authority than the minting credential holds.
 var ErrMintExceedsCaller = errors.New("auth: mint exceeds the minting credential's own authority")
 
-// ClampToMinter enforces that a credential mints no child more privileged than itself, returning the scopes to persist or an error wrapping ErrMintExceedsCaller.
-// Scopes: a full-access minter (empty list) delegates freely; a scoped minter with no request passes on its OWN scopes, never an empty list; an explicit request must be a Subject.HasScope subset and is refused, not dropped.
-// Rate limit (0 = deployment default): a minter's own ceiling bounds the child's; on the default, only a full-access minter may set one, a scoped minter may only issue the default.
+// ClampToMinter ensures a credential mints no child more privileged than itself (scopes must be a HasScope subset and are refused, not dropped; a scoped minter cannot exceed its own rate limit), returning the scopes to persist or an error wrapping ErrMintExceedsCaller.
 func ClampToMinter(minter Subject, scopes []string, rateLimitPerMin int) ([]string, error) {
 	if rateLimitPerMin > 0 {
 		if minter.RateLimitPerMin > 0 && rateLimitPerMin > minter.RateLimitPerMin {
@@ -100,8 +96,7 @@ func ClampToMinter(minter Subject, scopes []string, rateLimitPerMin int) ([]stri
 	return scopes, nil
 }
 
-// ChildKeyRequest builds the mint request for a key parent delegates to itself, the one place every delegated dimension is copied (TestChildKeyRequest_InheritsEveryField pins it;
-// zero means unlimited quota or never-expiring). The store re-checks scopes via MintedBy (ClampToMinter).
+// ChildKeyRequest builds the mint request for a key parent delegates to itself, the one place every delegated dimension is copied; the store re-checks scopes via MintedBy (ClampToMinter).
 func ChildKeyRequest(parent Subject, label string, scopes []string) CreateAPIKeyRequest {
 	return CreateAPIKeyRequest{
 		MintedBy:        &parent,
@@ -117,8 +112,7 @@ func ChildKeyRequest(parent Subject, label string, scopes []string) CreateAPIKey
 	}
 }
 
-// RedisAPIKeyStore implements APIKeyStore over the `apikey:<sha256-hex>` records RedisAPIKeyValidator reads.
-// It generates the plaintext (`sip_` + 32 crypto/rand bytes hex) and the KeyID (`kid_` + 8 bytes), which is distinct from the secret hash so it is safe in logs and responses.
+// RedisAPIKeyStore implements APIKeyStore over the `apikey:<sha256-hex>` records the validator reads; it generates the plaintext (`sip_` + 32 crypto/rand bytes hex) and a KeyID (`kid_`) that is distinct from the secret hash and safe to log.
 type RedisAPIKeyStore struct {
 	rdb redis.Cmdable
 	now func() time.Time
@@ -131,8 +125,7 @@ type RedisAPIKeyStore struct {
 // StoreOption configures a [RedisAPIKeyStore] at construction.
 type StoreOption func(*RedisAPIKeyStore)
 
-// WithStoreClock overrides the time source for CreatedAt stamping.
-// Production uses time.Now; tests inject a fixed clock.
+// WithStoreClock overrides the time source for CreatedAt stamping, for tests.
 func WithStoreClock(now func() time.Time) StoreOption {
 	return func(s *RedisAPIKeyStore) { s.now = now }
 }
@@ -160,12 +153,10 @@ func NewRedisAPIKeyStore(rdb redis.Cmdable, opts ...StoreOption) *RedisAPIKeySto
 	return s
 }
 
-// MaxKeyRateLimitPerMin is the highest per-key budget any surface may
-// set: the Partner plan ceiling (platform.TierPartner.MaxRateLimitPerMin).
+// MaxKeyRateLimitPerMin is the highest per-key budget any surface may set: the Partner plan ceiling.
 const MaxKeyRateLimitPerMin = 100_000
 
-// ValidateKeyBounds is the store-side floor every mint and re-budget path
-// inherits, whichever surface (HTTP, dashboard, ops CLI) called it.
+// ValidateKeyBounds is the store-side floor every mint and re-budget path inherits, whichever surface called it.
 func ValidateKeyBounds(rateLimitPerMin int, scopes []string) error {
 	if rateLimitPerMin < 0 || rateLimitPerMin > MaxKeyRateLimitPerMin {
 		return fmt.Errorf("rate limit %d must be in [0, %d] (0 = tier default)", rateLimitPerMin, MaxKeyRateLimitPerMin)
@@ -190,9 +181,7 @@ func (s *RedisAPIKeyStore) GetByKeyID(ctx context.Context, keyID string) (APIKey
 	return rec, nil
 }
 
-// Create implements APIKeyStore: validate (Identifier required) and resolve an unset MonthlyQuota from the identifier's credentials;
-// generate KeyID and plaintext; SET apikey:<sha256(plaintext)> with MirroredKeyIdleTTL when req.SelfService, else no expiry (SETNX unneeded, collisions are astronomical).
-// On Redis failure the plaintext is not surfaced: the caller gets an empty record, empty string and the error.
+// Create implements APIKeyStore: requires an Identifier, generates KeyID and plaintext, and SETs apikey:<sha256(plaintext)> (with MirroredKeyIdleTTL when req.SelfService); on Redis failure the plaintext is not surfaced.
 func (s *RedisAPIKeyStore) Create(ctx context.Context, req CreateAPIKeyRequest) (APIKeyRecord, string, error) {
 	if req.Identifier == "" {
 		return APIKeyRecord{}, "", errors.New("auth: Create: Identifier is required")
@@ -288,21 +277,17 @@ func mintableTier(t Tier) bool {
 	}
 }
 
-// KeyQuotaExceededError is [RedisAPIKeyStore.CreateCapped]'s refusal:
-// the identifier already holds Active un-revoked keys against a ceiling
-// of Max.
+// KeyQuotaExceededError is [RedisAPIKeyStore.CreateCapped]'s refusal: the identifier already holds Active un-revoked keys against a ceiling of Max.
 type KeyQuotaExceededError struct{ Active, Max int }
 
 func (e *KeyQuotaExceededError) Error() string {
 	return fmt.Sprintf("auth: identifier holds %d active API keys (max %d)", e.Active, e.Max)
 }
 
-// ErrKeyQuotaUnavailable wraps every CreateCapped failure that left the
-// ceiling unverified (lock or count), as distinct from a failed write.
+// ErrKeyQuotaUnavailable wraps every CreateCapped failure that left the ceiling unverified (lock or count), as distinct from a failed write.
 var ErrKeyQuotaUnavailable = errors.New("auth: key quota could not be verified")
 
-// ErrKeyMintBusy means another capped mint for the same identifier held
-// the mint lock for the whole wait. Retryable.
+// ErrKeyMintBusy means another capped mint for the same identifier held the mint lock for the whole wait; retryable.
 var ErrKeyMintBusy = errors.New("auth: another key mint for this identifier is in progress")
 
 const (
@@ -325,8 +310,7 @@ end
 return 0
 `)
 
-// CreateCapped is Create with the identifier's active-key ceiling enforced under a per-identifier lock shared across API instances, so a concurrent burst cannot all read a count below maxActive and mint.
-// Active means un-revoked; a lock or count failure refuses the mint.
+// CreateCapped is Create with the identifier's active-key ceiling enforced under a per-identifier lock shared across API instances; a lock or count failure refuses the mint.
 func (s *RedisAPIKeyStore) CreateCapped(ctx context.Context, req CreateAPIKeyRequest, maxActive int) (APIKeyRecord, string, error) {
 	if req.Identifier == "" {
 		return APIKeyRecord{}, "", errors.New("auth: CreateCapped: Identifier is required")

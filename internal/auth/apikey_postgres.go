@@ -14,8 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// PostgresAPIKeyValidator reads keys from the Postgres `api_keys` table (source of truth) with an optional Redis read-through cache (`apikey-cache:<hash>`, cacheTTL, its own namespace so the redis validator never reads it as a credential).
-// Canonical `apikey:<hash>` records (retired /v1/signup) are consulted first. Revoke evicts via InvalidateCachedKey. Redis failures degrade to Postgres; Postgres down means nobody authenticates.
+// PostgresAPIKeyValidator reads keys from Postgres `api_keys` (source of truth) with an optional Redis read-through cache in its own `apikey-cache:` namespace; Redis failures degrade to Postgres, Postgres down means nobody authenticates.
 type PostgresAPIKeyValidator struct {
 	keys     platform.APIKeyStore
 	accounts platform.AccountStore
@@ -43,9 +42,7 @@ type PostgresValidatorOptions struct {
 	CacheTTL time.Duration
 }
 
-// NewPostgresAPIKeyValidator constructs the cutover validator.
-// Returns an error if the required platform stores aren't wired
-// — the validator is useless without them.
+// NewPostgresAPIKeyValidator constructs the validator, returning an error if the required platform stores are not wired.
 func NewPostgresAPIKeyValidator(opts PostgresValidatorOptions) (*PostgresAPIKeyValidator, error) {
 	if opts.Keys == nil {
 		return nil, errors.New("auth: PostgresAPIKeyValidator: Keys store is required")
@@ -312,8 +309,7 @@ func hexNibble(c byte) (byte, error) {
 	return 0, fmt.Errorf("auth: invalid hex byte %q", c)
 }
 
-// InvalidateCachedKey removes a key's cache row and any canonical `apikey:` record (see evictCachedKey), so a revoked key stops authenticating without waiting for the TTL;
-// hexHash is the SHA-256 of the plaintext, hex-encoded.
+// InvalidateCachedKey removes a key's cache row and any canonical `apikey:` record so a revoked key stops authenticating without waiting for the TTL; hexHash is the hex SHA-256 of the plaintext.
 func (v *PostgresAPIKeyValidator) InvalidateCachedKey(ctx context.Context, hexHash string) error {
 	if v.cache == nil {
 		return nil

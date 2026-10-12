@@ -14,9 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// AccountStore implements [platform.AccountStore] against
-// Postgres. Constructor takes a [*Store] so multiple platform
-// stores share the connection pool.
+// AccountStore implements [platform.AccountStore] against Postgres, sharing the pool of the [*Store] it is built from.
 type AccountStore struct {
 	s              *Store
 	sweepBatchRows int
@@ -27,8 +25,7 @@ func NewAccountStore(s *Store) *AccountStore {
 	return &AccountStore{s: s, sweepBatchRows: defaultSweepBatchRows}
 }
 
-// WithSweepBatchSize overrides the per-statement row cap
-// [AccountStore.ReapSuspendedOrphans] uses. See [TokenStore.WithSweepBatchSize].
+// WithSweepBatchSize overrides the per-statement row cap [AccountStore.ReapSuspendedOrphans] uses; see [TokenStore.WithSweepBatchSize].
 func (r *AccountStore) WithSweepBatchSize(n int) *AccountStore {
 	r.sweepBatchRows = n
 	return r
@@ -210,8 +207,7 @@ func execAccountUpdate(ctx context.Context, exec accountExecer, a platform.Accou
 	return res.RowsAffected()
 }
 
-// UpdateAtomic reads the row under SELECT ... FOR UPDATE, applies mutate, and writes back in one transaction. Update rewrites every column, so without the lock two racing PATCHes would lose the first (a lost SUSPEND is a live hole).
-// mutate returning an error aborts; platform.ErrNotFound (unwrapped) if the row is absent.
+// UpdateAtomic reads the row under SELECT ... FOR UPDATE, applies mutate and writes back in one transaction so racing PATCHes cannot lose a SUSPEND; an error from mutate aborts, ErrNotFound if absent.
 func (r *AccountStore) UpdateAtomic(
 	ctx context.Context, id uuid.UUID, mutate func(*platform.Account) error,
 ) (before, after platform.Account, err error) {
@@ -244,8 +240,7 @@ func (r *AccountStore) UpdateAtomic(
 	return before, after, nil
 }
 
-// Suspend sets status=suspended + reason. Idempotent — calling
-// on an already-suspended account just rewrites the reason.
+// Suspend sets status=suspended and the reason; idempotent, an already-suspended account just gets the reason rewritten.
 func (r *AccountStore) Suspend(ctx context.Context, id uuid.UUID, reason string) error {
 	const q = `
 		UPDATE accounts SET
@@ -285,8 +280,7 @@ func (r *AccountStore) Unsuspend(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
-// ReapSuspendedOrphans hard-deletes signup-race orphans: Suspended, `suspended_reason` starting with reasonPrefix, suspended before olderThan, and with NO users AND NO api_keys (the NOT EXISTS guards also dodge the ON DELETE RESTRICT foreign keys). Returns rows deleted.
-// reasonPrefix is matched with LIKE and its metacharacters are escaped, so there is no pattern injection.
+// ReapSuspendedOrphans hard-deletes suspended signup-race orphans (reason starts with reasonPrefix, older than olderThan, NO users AND NO api_keys) and returns rows deleted; reasonPrefix LIKE metacharacters are escaped.
 func (r *AccountStore) ReapSuspendedOrphans(ctx context.Context, reasonPrefix string, olderThan time.Time) (int64, error) {
 	const q = `
 		DELETE FROM accounts a
@@ -349,10 +343,7 @@ func (r *AccountStore) ListAbandonedRegistrations(ctx context.Context, createdBe
 	return out, nil
 }
 
-// CountAccounts returns the current row count of the accounts table.
-// Read by the signup-reaper's sweep to publish [obs.AccountRows] — see
-// [AccountStore.ReapSuspendedOrphans]'s doc comment for why the reap
-// itself never bounds a successful POST /v1/register.
+// CountAccounts returns the row count of the accounts table, published by the signup-reaper sweep as [obs.AccountRows].
 func (r *AccountStore) CountAccounts(ctx context.Context) (int64, error) {
 	const q = `SELECT COUNT(*) FROM accounts`
 	var n int64
@@ -362,9 +353,7 @@ func (r *AccountStore) CountAccounts(ctx context.Context) (int64, error) {
 	return n, nil
 }
 
-// CountAPIKeys returns the current row count of the api_keys table.
-// Read by the signup-reaper's sweep to publish [obs.APIKeyRows],
-// alongside [AccountStore.CountAccounts].
+// CountAPIKeys returns the row count of the api_keys table, published by the signup-reaper sweep as [obs.APIKeyRows].
 func (r *AccountStore) CountAPIKeys(ctx context.Context) (int64, error) {
 	const q = `SELECT COUNT(*) FROM api_keys`
 	var n int64

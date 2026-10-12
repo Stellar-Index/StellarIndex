@@ -17,10 +17,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// RedisAPIKeyValidator implements APIKeyValidator over `apikey:<sha256-hex>` records (JSON
-// APIKeyRecord); plaintext keys are never stored, so a Redis dump leaks owners and tiers but not keys.
-// Absent or revoked_at set is ErrUnauthorized; expires_at past is ErrTokenExpired; an undecodable
-// record or Redis I/O failure is a wrapped non-sentinel (log signal / 503). Safe across goroutines.
+// RedisAPIKeyValidator implements APIKeyValidator over `apikey:<sha256-hex>` records (plaintext keys are never stored); absent or revoked is ErrUnauthorized, expired is ErrTokenExpired, decode or Redis failure is a wrapped non-sentinel error.
 type RedisAPIKeyValidator struct {
 	rdb redis.Cmdable
 	now func() time.Time
@@ -64,24 +61,18 @@ type cachedAccountStatus struct {
 	at   time.Time
 }
 
-// DefaultAccountStatusCacheTTL is the freshness window of the account-status cache: at most one
-// kill-switch query per account per window instead of per request.
+// DefaultAccountStatusCacheTTL is the freshness window of the account-status cache: at most one kill-switch query per account per window.
 const DefaultAccountStatusCacheTTL = 30 * time.Second
 
-// MirroredKeyIdleTTL is the sliding idle window for register-mirrored credentials: every successful
-// Lookup slides it, so a used key never expires while an abandoned one ages out, bounding the keyspace
-// that open /v1/register would otherwise grow without limit. The TTL also makes the record eligible
-// for volatile-lru eviction; TTL-less records never are.
+// MirroredKeyIdleTTL is the sliding idle window for register-mirrored credentials, slid on every successful Lookup so abandoned keys age out and become volatile-lru evictable.
 const MirroredKeyIdleTTL = 90 * 24 * time.Hour
 
-// AccountStatusReader is the slice of [platform.AccountStore] the Redis validator needs for
-// suspension and the account's rate-limit / quota overrides.
+// AccountStatusReader is the slice of [platform.AccountStore] the Redis validator needs for suspension and rate-limit / quota overrides.
 type AccountStatusReader interface {
 	GetBySlug(ctx context.Context, slug string) (platform.Account, error)
 }
 
-// APIKeyRecord is the JSON shape at `apikey:<hash>`, written by the admin/seeding path and only read
-// by the validator. Time fields are RFC 3339; absent means no constraint (no expiry, not revoked).
+// APIKeyRecord is the JSON shape at `apikey:<hash>`, read-only to the validator; time fields are RFC 3339 and absent means no constraint.
 type APIKeyRecord struct {
 	// KeyID is a public-safe identifier, distinct from the secret hash (the Redis key), so it can
 	// appear in logs and /v1/account/me without leaking the credential. Stable for the key's lifetime.
@@ -151,23 +142,17 @@ func WithClock(now func() time.Time) RedisOption {
 	return func(v *RedisAPIKeyValidator) { v.now = now }
 }
 
-// WithAccountStatus wires the account-level kill switch. The Postgres validator and dashboard sessions
-// enforce suspension themselves, but this is the default backend (auth_backend=redis): without a
-// reader, suspending an account does not stop its keys here. Records whose Identifier is
-// AccountIdentifier(slug) are rejected unless the account is active; `signup-<emailhash>` records
-// have no account and die by per-key revoke. Nil skips the check and the per-request Postgres read.
+// WithAccountStatus wires the account-level kill switch: records whose Identifier is AccountIdentifier(slug) are rejected unless the account is active, and nil skips the check (suspension would then not stop keys on this backend).
 func WithAccountStatus(accounts AccountStatusReader) RedisOption {
 	return func(v *RedisAPIKeyValidator) { v.status.accounts = accounts }
 }
 
-// WithMirroredKeyIdleTTL overrides the sliding idle window re-applied on each successful Lookup
-// (default [MirroredKeyIdleTTL]); a non-positive value disables refresh-on-use.
+// WithMirroredKeyIdleTTL overrides the sliding idle window re-applied on each successful Lookup (default [MirroredKeyIdleTTL]); non-positive disables refresh-on-use.
 func WithMirroredKeyIdleTTL(ttl time.Duration) RedisOption {
 	return func(v *RedisAPIKeyValidator) { v.mirroredKeyIdleTTL = ttl }
 }
 
-// NewRedisAPIKeyValidator constructs a validator reading records from rdb, which MUST be non-nil;
-// the auth middleware fails loud with 503 if the validator is left as the Noop stub.
+// NewRedisAPIKeyValidator constructs a validator reading records from rdb, which MUST be non-nil.
 func NewRedisAPIKeyValidator(rdb redis.Cmdable, opts ...RedisOption) *RedisAPIKeyValidator {
 	if rdb == nil {
 		panic("auth: NewRedisAPIKeyValidator: rdb must not be nil")

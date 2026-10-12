@@ -21,9 +21,7 @@ const (
 	NoticeCritical StatusNoticeSeverity = "critical"
 )
 
-// ValidNoticeSeverity reports whether s is a known severity. Callers
-// validate at the API boundary; the DB CHECK constraint is the
-// backstop.
+// ValidNoticeSeverity reports whether s is a known severity; callers validate at the API boundary and the DB CHECK is the backstop.
 func ValidNoticeSeverity(s StatusNoticeSeverity) bool {
 	switch s {
 	case NoticeMaintenance, NoticeMinor, NoticeMajor, NoticeCritical:
@@ -44,10 +42,7 @@ const (
 	NoticeResolved StatusNoticeStatus = "resolved"
 )
 
-// StatusNotice is one operator-posted customer-facing status banner
-// Written only
-// by the operator-tier admin endpoints (every mutation audit-logged),
-// read by the public `/v1/status/notices` surface.
+// StatusNotice is one operator-posted customer-facing status banner, written only by audit-logged operator-tier admin endpoints and read by the public `/v1/status/notices`.
 type StatusNotice struct {
 	ID         uuid.UUID
 	Title      string
@@ -60,9 +55,7 @@ type StatusNotice struct {
 	ResolvedAt time.Time // zero until resolved
 }
 
-// StatusNoticeStore is the persistence boundary for [StatusNotice].
-// Production impl: postgresstore.StatusNoticeStore over the
-// `status_notices` table (migration 0082).
+// StatusNoticeStore is the persistence boundary for [StatusNotice], implemented by postgresstore.StatusNoticeStore.
 type StatusNoticeStore interface {
 	// Create inserts a new notice (status defaults to active). Returns
 	// the created row with server-generated ID + timestamps populated.

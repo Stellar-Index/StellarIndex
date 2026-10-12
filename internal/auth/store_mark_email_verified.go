@@ -15,8 +15,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 )
 
-// MarkEmailVerified sets an existing key's EmailVerifiedAt to now (or the optional `at`, for tests), which RequireEmailVerified gates /v1/* on. Like UpdateRateLimit it resolves the KeyID via the index and read-modify-writes the record.
-// Idempotent: re-marking updates the timestamp without error, so a double click on the link is not a 500. Returns the updated record or ErrKeyNotFound.
+// MarkEmailVerified sets a key's EmailVerifiedAt to now (or optional `at`, for tests), which RequireEmailVerified gates on; idempotent, returns the updated record or ErrKeyNotFound.
 func (s *RedisAPIKeyStore) MarkEmailVerified(ctx context.Context, keyID string, at time.Time) (APIKeyRecord, error) {
 	if keyID == "" {
 		return APIKeyRecord{}, errors.New("auth: MarkEmailVerified: keyID is required")

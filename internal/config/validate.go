@@ -17,14 +17,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/redact"
 )
 
-// ErrInvalidConfig is the sentinel error every validation failure
-// wraps. Use errors.Is(err, ErrInvalidConfig) in callers that need
-// to distinguish config bugs from I/O / decode failures.
+// ErrInvalidConfig is the sentinel every validation failure wraps; use errors.Is to tell config bugs from I/O or decode failures.
 var ErrInvalidConfig = errors.New("config: invalid")
 
-// KnownSources is the set of source names buildSources() recognises, so Validate rejects typos at boot
-// (not after -dry-run has paid for storage connect + RPC probe). Do NOT import source packages here
-// (cycle); when adding a source in cmd/stellarindex-indexer/main.go buildSources(), mirror the name.
+// KnownSources is the set of source names buildSources() recognises so Validate rejects typos at boot; do not import source packages here (cycle), mirror new names instead.
 var KnownSources = map[string]struct{}{
 	"soroswap":        {},
 	"soroswap-router": {},
@@ -49,8 +45,7 @@ var KnownSources = map[string]struct{}{
 	"upshift":         {},
 }
 
-// Validate checks the loaded Config so a malformed config fails at startup, not mid-request.
-// It returns the first error encountered.
+// Validate checks the loaded Config so a malformed config fails at startup, returning the first error.
 func (c Config) Validate() error {
 	if err := c.Region.validate(); err != nil {
 		return err
@@ -448,9 +443,7 @@ func (o OracleConfig) validate() error {
 	return o.validateStalenessOverrides()
 }
 
-// OracleSourceNames is the set of source names that publish oracle_updates rows and carry the oracle staleness gauges
-// (on-chain oracles pipeline.BuildDispatcher enables, pollers external.Run starts); a staleness override may name only these.
-// Mirrored for cycle avoidance; pipeline's TestOracleSourceNames_MatchRegistry fails on drift (an override naming a source nothing emits matches no series).
+// OracleSourceNames is the set of sources publishing oracle_updates that a staleness override may name; mirrored to avoid a cycle, and pipeline's TestOracleSourceNames_MatchRegistry fails on drift.
 var OracleSourceNames = map[string]struct{}{
 	"reflector-dex":    {},
 	"reflector-cex":    {},
@@ -727,8 +720,7 @@ func parsePairString(s string) (canonical.Pair, error) {
 	return canonical.NewPair(base, quote)
 }
 
-// AggregatorPairs resolves the configured pair strings; nil when none are configured (callers use their default).
-// validate() already rejects unparseable entries, so the error only surfaces if validation is bypassed.
+// AggregatorPairs resolves the configured pair strings, nil when none (callers use their default); validate() already rejects unparseable entries.
 func (a AggregateConfig) AggregatorPairs() ([]canonical.Pair, error) {
 	if len(a.Pairs) == 0 {
 		return nil, nil
@@ -744,9 +736,7 @@ func (a AggregateConfig) AggregatorPairs() ([]canonical.Pair, error) {
 	return out, nil
 }
 
-// AggregatorWindows is the time.Duration twin of AggregatorPairs —
-// resolves the configured window strings, returning nil when the
-// list is empty so callers fall back to orchestrator.DefaultWindows.
+// AggregatorWindows resolves the configured window strings to durations, nil when empty so callers use orchestrator.DefaultWindows.
 func (a AggregateConfig) AggregatorWindows() ([]time.Duration, error) {
 	if len(a.Windows) == 0 {
 		return nil, nil
@@ -818,8 +808,7 @@ func (c CompositeReferenceConfig) validate(a AggregateConfig) error {
 	return nil
 }
 
-// CompositeReferenceTargets resolves the composite-reference allow-list
-// into canonical pairs. Nil when the list is empty.
+// CompositeReferenceTargets resolves the composite-reference allow-list into canonical pairs, nil when empty.
 func (a AggregateConfig) CompositeReferenceTargets() ([]canonical.Pair, error) {
 	if len(a.CompositeReference.Targets) == 0 {
 		return nil, nil
@@ -841,8 +830,7 @@ type ResolvedTriangulationChain struct {
 	Legs   []canonical.Pair
 }
 
-// AggregatorTriangulations resolves the configured chains; nil when none. Only parses: structural validation
-// lives in orchestrator.ValidateTriangulationChain.
+// AggregatorTriangulations resolves the configured chains (parse only, nil when none); structural validation lives in orchestrator.ValidateTriangulationChain.
 func (a AggregateConfig) AggregatorTriangulations() ([]ResolvedTriangulationChain, error) {
 	if len(a.Triangulations) == 0 {
 		return nil, nil

@@ -14,8 +14,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// RedisSignupEmailLocker is the Redis-SETNX dashboardauth EmailLocker: it serialises first-login provisioning per email (key `signup:lock:<sha256-hex>`, hashed by the handler so no plaintext email reaches Redis).
-// The value is a per-acquire fencing token and Release is a Lua compare-and-delete, so a holder that overruns the 30s TTL cannot delete its successor's lock and reopen the orphan-Account race; the TTL covers a crash.
+// RedisSignupEmailLocker is the Redis-SETNX EmailLocker serialising first-login provisioning per hashed email; Release is a Lua compare-and-delete on a per-acquire fencing token so an overrunning holder cannot delete a successor's lock.
 type RedisSignupEmailLocker struct {
 	rdb redis.Cmdable
 }
@@ -54,8 +53,7 @@ func signupLockKey(emailHash string) string {
 	return "signup:lock:" + emailHash
 }
 
-// Acquire implements dashboardauth.EmailLocker: SETNX with a fencing token and ttl, returning (true, token, nil) on win, (false, "", nil) on contention, (false, "", err) on Redis or entropy failure.
-// The caller treats err as "fall through unlocked" and passes the token back to Release.
+// Acquire is SETNX with a fencing token and ttl, returning (true, token, nil) on win, (false, "", nil) on contention, (false, "", err) on Redis or entropy failure (the caller falls through unlocked).
 func (l *RedisSignupEmailLocker) Acquire(ctx context.Context, emailHash string, ttl time.Duration) (bool, string, error) {
 	token, err := newLockToken()
 	if err != nil {
@@ -71,8 +69,7 @@ func (l *RedisSignupEmailLocker) Acquire(ctx context.Context, emailHash string, 
 	return true, token, nil
 }
 
-// Release implements dashboardauth.EmailLocker as compare-and-delete: the key goes only if it still carries this caller's token, so an overrunning holder cannot delete a successor's lock.
-// An empty token (never held), an expired key or an absent key is a harmless no-op.
+// Release is a compare-and-delete: the key goes only if it still carries this caller's token; an empty token or an expired or absent key is a no-op.
 func (l *RedisSignupEmailLocker) Release(ctx context.Context, emailHash, token string) error {
 	if token == "" {
 		return nil

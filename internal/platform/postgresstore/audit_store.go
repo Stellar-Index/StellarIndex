@@ -15,8 +15,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// AuditStore implements [platform.AuditStore] against `audit_log`; Append is fire-and-forget, so audit unavailability never blocks customer or staff workflows (the caller logs and continues).
-// List has no non-test caller: no dashboard or API route calls it yet.
+// AuditStore implements [platform.AuditStore] against `audit_log`; Append is fire-and-forget so audit unavailability never blocks workflows; no dashboard or API route calls it yet.
 type AuditStore struct{ s *Store }
 
 // NewAuditStore returns the Postgres-backed implementation.
@@ -25,9 +24,7 @@ func NewAuditStore(s *Store) *AuditStore { return &AuditStore{s: s} }
 // Compile-time interface conformance.
 var _ platform.AuditStore = (*AuditStore)(nil)
 
-// Append inserts one audit_log row. Returns nil even if the
-// account_id or actor_user_id reference doesn't exist (the FK is
-// ON DELETE SET NULL — the row stays, just unlinked).
+// Append inserts one audit_log row; a missing account_id or actor_user_id reference is not an error (FK is ON DELETE SET NULL).
 func (a *AuditStore) Append(ctx context.Context, e platform.AuditEntry) error {
 	if e.Action == "" {
 		return errors.New("postgresstore: Append: AuditEntry.Action is empty")
@@ -67,10 +64,7 @@ func (a *AuditStore) Append(ctx context.Context, e platform.AuditEntry) error {
 	return nil
 }
 
-// AppendBatch is the bulk variant — currently a loop over Append
-// since the audit_log volume is low (< 100 rows / sec at design
-// scale). A future high-throughput caller can introduce a COPY-
-// based fast path without changing the interface.
+// AppendBatch is the bulk variant, currently a loop over Append given the low audit_log volume.
 func (a *AuditStore) AppendBatch(ctx context.Context, entries []platform.AuditEntry) error {
 	for i, e := range entries {
 		if err := a.Append(ctx, e); err != nil {
@@ -80,8 +74,7 @@ func (a *AuditStore) AppendBatch(ctx context.Context, entries []platform.AuditEn
 	return nil
 }
 
-// List returns rows matching the query, ordered ts DESC. Limit
-// defaults to 100 when zero, capped at 1000.
+// List returns rows matching the query, ordered ts DESC; Limit defaults to 100 when zero, capped at 1000.
 func (a *AuditStore) List(ctx context.Context, q platform.AuditQuery) ([]platform.AuditEntry, error) {
 	limit := q.Limit
 	if limit <= 0 {

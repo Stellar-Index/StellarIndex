@@ -11,17 +11,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
 )
 
-// DefaultSignupThrottleDwellTime is how long the throttle may fail open on Redis errors before CheckIP fails CLOSED with ErrThrottleUnavailable.
-// 30s tolerates a Redis blip without taking signup offline, yet stops an attacker sustaining an outage from bulk-minting accounts; tune via SignupIPThrottleOptions.DwellTime.
+// DefaultSignupThrottleDwellTime (30s) is how long the throttle may fail open on Redis errors before CheckIP fails CLOSED with ErrThrottleUnavailable.
 const DefaultSignupThrottleDwellTime = 30 * time.Second
 
 // signupThrottleIncrTimeout bounds the throttle's own Redis round-trip: the increment deliberately ignores the CALLER's cancellation (see CheckIP),
 // so a wedged Redis would otherwise pin the handler goroutine forever. 5s is a backstop above go-redis's 3s default.
 const signupThrottleIncrTimeout = 5 * time.Second
 
-// RedisSignupIPThrottle implements v1.SignupIPThrottle with a sliding-window Redis counter, default 5/hour per IP (set only via SignupIPThrottleOptions), since the global 6000/min anonymous limit would allow 360,000 email-to-key pairs/hour from one IP.
-// Dwell-time inversion: Redis transport errors fall open (wrapped error) until Redis has failed continuously for the dwell time (default 30s), after which CheckIP returns ErrThrottleUnavailable (503 + Retry-After).
-// The clock resets after a dwell time of unbroken successes, or a success following a dwell time with no failure; one success amid ongoing errors does not reset it.
+// RedisSignupIPThrottle is a sliding-window Redis counter, default 5/hour per IP; Redis errors fall open until they persist for the dwell time (default 30s), after which CheckIP returns ErrThrottleUnavailable (503 + Retry-After).
 type RedisSignupIPThrottle struct {
 	counter   *ratelimit.FixedWindowCounter
 	max       int
@@ -66,10 +63,7 @@ type SignupIPThrottleOptions struct {
 	NowFn func() time.Time
 }
 
-// NewRedisSignupIPThrottle constructs the throttle. rdb MUST be
-// non-nil; pass a no-op v1.SignupIPThrottle (or simply leave the
-// Options.SignupIPThrottle field nil) for deployments without
-// Redis.
+// NewRedisSignupIPThrottle constructs the throttle; rdb MUST be non-nil.
 func NewRedisSignupIPThrottle(rdb redis.UniversalClient, opts SignupIPThrottleOptions) *RedisSignupIPThrottle {
 	if rdb == nil {
 		panic("auth: NewRedisSignupIPThrottle: rdb must not be nil")
@@ -102,8 +96,7 @@ func NewRedisSignupIPThrottle(rdb redis.UniversalClient, opts SignupIPThrottleOp
 	}
 }
 
-// CheckIP increments the per-IP counter: nil under the cap, ErrSignupRateLimited at the cap, ErrThrottleUnavailable after the dwell time of Redis failure (503 + Retry-After),
-// and a wrapped Redis error on a transient failure (the handler falls open rather than taking signup offline).
+// CheckIP increments the per-IP counter: nil under the cap, ErrSignupRateLimited at the cap, ErrThrottleUnavailable after the dwell time of Redis failure, else a wrapped Redis error (the handler falls open).
 func (t *RedisSignupIPThrottle) CheckIP(ctx context.Context, ip string) error {
 	if ip == "" {
 		// No usable IP: let the request through, since the global rate limit also found none; this throttle hardens against IP-rotators, not IP-less direct calls.

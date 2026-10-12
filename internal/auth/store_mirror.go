@@ -9,8 +9,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// MirroredKey is an already-minted credential written into the Redis validator store under a plaintext the CALLER generated: a deployment on the Redis validator (backend=redis) whose issuance path records its management row in Postgres would otherwise 401 on first use,
-// and Create cannot serve it because it GENERATES the secret. Record is the full validator record (built via APIKeyRecordFromPlatform), written as given, so a mirror can never widen a key.
+// MirroredKey is an already-minted credential written into the Redis validator store under a caller-generated plaintext; Record is written as given, so a mirror can never widen a key.
 type MirroredKey struct {
 	// Plaintext is the caller-generated secret (`sip_<64hex>`). The
 	// store writes only its SHA-256; the plaintext is never persisted.
@@ -22,8 +21,7 @@ type MirroredKey struct {
 	Record APIKeyRecord
 }
 
-// APIKeyRecordFromPlatform maps a Postgres management row onto the Redis validator record field-for-field so the mirror enforces the same gates; identifier is AccountIdentifier of the account slug.
-// k.MonthlyQuota must be resolved: 0 means inherit on the management row but UNMETERED in the Redis record, so a zero is refused rather than shipping an uncapped key.
+// APIKeyRecordFromPlatform maps a Postgres management row onto the Redis validator record field-for-field; k.MonthlyQuota must be resolved (0 means UNMETERED there), so a zero is refused rather than shipping an uncapped key.
 func APIKeyRecordFromPlatform(k platform.APIKey, identifier string) (APIKeyRecord, error) {
 	if k.MonthlyQuota <= 0 {
 		return APIKeyRecord{}, fmt.Errorf("auth: APIKeyRecordFromPlatform: key %q has unresolved monthly quota %d; resolve the plan cap before mirroring", k.ID, k.MonthlyQuota)
@@ -48,10 +46,7 @@ func APIKeyRecordFromPlatform(k platform.APIKey, identifier string) (APIKeyRecor
 	}, nil
 }
 
-// CreateWithSecret writes an already-minted credential into the Redis
-// validator store, with the same key layout as [RedisAPIKeyStore.Create].
-// Permissions are the record's own: PermissionsAll=false with no allow
-// entries is the permission middleware's closed posture (403 everything).
+// CreateWithSecret writes an already-minted credential into the Redis validator store with the key layout of [RedisAPIKeyStore.Create]; PermissionsAll=false with no allow entries is the closed posture (403 everything).
 func (s *RedisAPIKeyStore) CreateWithSecret(ctx context.Context, k MirroredKey) error {
 	switch {
 	case k.Plaintext == "":
