@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   buildFetchData,
+  buildFetchPriceBatch,
   MAX_IN_FLIGHT,
   MAX_UNAVAILABLE_WAITS,
   throttleDelayMs,
@@ -165,5 +166,51 @@ describe('in-flight cap', () => {
     );
     expect(results.every((r) => r === 1)).toBe(true);
     expect(peak).toBe(MAX_IN_FLIGHT);
+  });
+});
+
+describe('buildFetchPriceBatch', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('chunks at the GET cap, dedupes, and maps unanswered ids to null', async () => {
+    const urls: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        urls.push(url);
+        const ids = new URL(url).searchParams.get('asset_ids')!.split(',');
+        return fakeResponse(200, {
+          data: ids
+            .filter((id) => id !== 'crypto:CHUNK7')
+            .map((id) => ({ asset_id: id, price: '1' })),
+          stale: ['crypto:CHUNK3'],
+          flags: { stale: true },
+        });
+      }),
+    );
+    const ids = Array.from({ length: 150 }, (_, i) => `crypto:CHUNK${i}`);
+    const got = await buildFetchPriceBatch([...ids, ...ids, 'fiat:USD'], 'fiat:USD');
+    expect(urls).toHaveLength(2);
+    expect(got.get('crypto:CHUNK7')).toBeNull();
+    expect(got.get('crypto:CHUNK3')?.stale).toBe(true);
+    expect(got.get('crypto:CHUNK4')?.stale).toBe(false);
+    expect(got.has('fiat:USD')).toBe(false);
+  });
+
+  it('leaves a row flag undefined when the OR flag is set without the id list', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        fakeResponse(200, {
+          data: [{ asset_id: 'crypto:OLDAPI', price: '1' }],
+          flags: { triangulated: true },
+        }),
+      ),
+    );
+    const got = await buildFetchPriceBatch(['crypto:OLDAPI'], 'fiat:USD');
+    expect(got.get('crypto:OLDAPI')?.triangulated).toBeUndefined();
+    expect(got.get('crypto:OLDAPI')?.stale).toBe(false);
   });
 });

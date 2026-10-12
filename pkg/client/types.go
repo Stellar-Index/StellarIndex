@@ -25,6 +25,10 @@ type Envelope[T any] struct {
 	// Thin names the ids in Data served from a market below the
 	// substance floor under the include_thin opt-in (batch only).
 	Thin []string `json:"thin,omitempty"`
+	// Stale and Triangulated name the ids in Data behind the OR-ed flags of
+	// the same name (batch only).
+	Stale        []string `json:"stale,omitempty"`
+	Triangulated []string `json:"triangulated,omitempty"`
 	// UnderReviewReason is the operator-supplied reason; present exactly when Flags.UnderReview is true.
 	UnderReviewReason string   `json:"under_review_reason,omitempty"`
 	Sources           []string `json:"sources,omitempty"`

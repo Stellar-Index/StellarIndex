@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/notify"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // buildDashboardSender picks the dashboard auth and signup mail transport. A blank Resend credential wires notify.UnconfiguredSender
@@ -38,5 +40,15 @@ func buildDashboardTransport(cfg config.DashboardConfig, logger *slog.Logger) (n
 		return nil, fmt.Errorf("resend sender: %w", err)
 	}
 	logger.Info("dashboard auth using Resend sender", "from", cfg.EmailFrom)
+	if cfg.ResendDomainID == "" {
+		logger.Warn("api.dashboard.resend_domain_id is empty; Resend click/open tracking is not pinned off")
+	} else {
+		go func() {
+			defer worker.Recover(logger, "resend-disable-tracking")
+			if err := s.DisableTracking(context.Background(), cfg.ResendDomainID); err != nil {
+				logger.Error("could not turn off Resend click/open tracking", "err", err)
+			}
+		}()
+	}
 	return s, nil
 }

@@ -2,7 +2,7 @@ package redispub
 
 import "time"
 
-// DefaultChannel is the Redis pub/sub channel the [Publisher] writes and the Subscriber reads; override via `[storage].redis_closed_bucket_channel` on both aggregator and API.
+// DefaultChannel is the Redis pub/sub channel the [Publisher] writes and the Subscriber reads.
 const DefaultChannel = "stellarindex:closed-bucket:v1"
 
 // KindFrozen marks a [ClosedBucketEvent] for a bucket a freeze refused: identity, no value. The empty Kind is a price, so producers omitting the field still decode as prices.

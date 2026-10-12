@@ -25,10 +25,14 @@ type Envelope struct {
 	// price, as distinct from ids with no data.
 	Withheld []string `json:"withheld,omitempty"`
 	// Thin names ids /v1/price/batch served under `include_thin=true` from a sub-floor market.
-	Thin       []string    `json:"thin,omitempty"`
-	Sources    []string    `json:"sources,omitempty"`
-	Flags      Flags       `json:"flags"`
-	Pagination *Pagination `json:"pagination,omitempty"`
+	Thin []string `json:"thin,omitempty"`
+	// Stale and Triangulated name the /v1/price/batch rows behind the OR-ed flags of the same name,
+	// so a multi-id batch keeps each row's provenance.
+	Stale        []string    `json:"stale,omitempty"`
+	Triangulated []string    `json:"triangulated,omitempty"`
+	Sources      []string    `json:"sources,omitempty"`
+	Flags        Flags       `json:"flags"`
+	Pagination   *Pagination `json:"pagination,omitempty"`
 }
 
 // Flags are the advisory quality markers (Stale, Triangulated, Frozen, OutsideCoverage, SingleSource, Diverged, Rerouted, PivotUnverified); OutsideCoverage is set only when the coverage floor is KNOWN and the range ends at or before it.

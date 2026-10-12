@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 const (
@@ -179,15 +180,11 @@ func TestValidate_RPCEndpointErrorsOmitURL(t *testing.T) {
 	}
 }
 
-// Indexer/aggregator pools must ship a non-zero, generous SQL statement_timeout: zero is unbounded, a tight value clips
-// heavy work. It must also exceed the request-path serving bound so a stuck background query is unambiguous.
-func TestDefault_BackgroundStatementTimeoutIsGenerousBackstop(t *testing.T) {
-	got := config.Default().Storage.BackgroundStatementTimeout
-	if got != 30*time.Minute {
-		t.Fatalf("Storage.BackgroundStatementTimeout = %v, want 30m (the generous REC-08 backstop)", got)
-	}
+// The background backstop must exceed the request-path serving bound so a stuck background query is unambiguous.
+func TestBackgroundStatementTimeoutExceedsServingBound(t *testing.T) {
+	got := timescale.BackgroundStatementTimeout
 	if serving := config.Default().API.ServingStatementTimeout; got <= serving {
-		t.Fatalf("Storage.BackgroundStatementTimeout (%v) must exceed the serving bound (%v)", got, serving)
+		t.Fatalf("timescale.BackgroundStatementTimeout (%v) must exceed the serving bound (%v)", got, serving)
 	}
 }
 

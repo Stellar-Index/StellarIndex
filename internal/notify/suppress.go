@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -35,9 +36,51 @@ func NewHashSetChecker(hashes []string) (HashSetChecker, error) {
 
 // IsSuppressed implements [Checker].
 func (c HashSetChecker) IsSuppressed(_ context.Context, canonical string) (bool, error) {
-	sum := sha256.Sum256([]byte(canonical))
-	_, ok := c[hex.EncodeToString(sum[:])]
+	_, ok := c[RecipientHash(canonical)]
 	return ok, nil
+}
+
+// RecipientHash is the suppression-list digest of a [CanonicalRecipient] address.
+func RecipientHash(canonical string) string {
+	sum := sha256.Sum256([]byte(canonical))
+	return hex.EncodeToString(sum[:])
+}
+
+// resendFeedbackEvent is the subset of a Resend webhook event that decides suppression.
+type resendFeedbackEvent struct {
+	Type string `json:"type"`
+	Data struct {
+		To     []string `json:"to"`
+		Bounce struct {
+			Type string `json:"type"`
+		} `json:"bounce"`
+	} `json:"data"`
+}
+
+// FeedbackHashes returns the suppression digests one Resend webhook event adds: every recipient of
+// email.complained or email.bounced (Resend's permanent-rejection event) unless the bounce is
+// marked Temporary; any other event adds none. The caller must
+// verify the webhook signature first, or anyone could suppress any address.
+func FeedbackHashes(payload []byte) ([]string, error) {
+	var ev resendFeedbackEvent
+	if err := json.Unmarshal(payload, &ev); err != nil {
+		return nil, fmt.Errorf("notify: feedback event: %w", err)
+	}
+	switch {
+	case ev.Type == "email.complained":
+	case ev.Type == "email.bounced" && ev.Data.Bounce.Type != "Temporary":
+	default:
+		return nil, nil
+	}
+	out := make([]string, 0, len(ev.Data.To))
+	for _, raw := range ev.Data.To {
+		canon, err := CanonicalRecipient(raw)
+		if err != nil {
+			return nil, fmt.Errorf("notify: feedback event recipient: %w", err)
+		}
+		out = append(out, RecipientHash(canon))
+	}
+	return out, nil
 }
 
 // SuppressingSender withholds a message whose To list contains a suppressed recipient; everything else passes to Next untouched.

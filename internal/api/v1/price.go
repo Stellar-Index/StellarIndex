@@ -2343,12 +2343,10 @@ func batchDegraded(results []batchRowResult) bool {
 // the OR over served rows.
 func batchEnvelope(ids []string, results []batchRowResult) Envelope {
 	out := make([]PriceSnapshot, 0, len(ids))
-	var withheld, thin []string
+	var withheld, thin, stale, triangulated []string
 	allSources := map[string]struct{}{}
-	anyStale := false
 	anyFrozen := false
 	anySingleSource := false
-	anyTriangulated := false
 	for i := range results {
 		row := results[i]
 		if !row.ok {
@@ -2358,10 +2356,10 @@ func batchEnvelope(ids []string, results []batchRowResult) Envelope {
 			continue // skip — per-asset miss
 		}
 		if row.stale {
-			anyStale = true
+			stale = append(stale, ids[i])
 		}
 		if row.triangulated {
-			anyTriangulated = true
+			triangulated = append(triangulated, ids[i])
 		}
 		if row.thin {
 			thin = append(thin, ids[i])
@@ -2384,17 +2382,19 @@ func batchEnvelope(ids []string, results []batchRowResult) Envelope {
 	// Sort for ADR-0015 byte-identical cross-region output: map iteration order would break it.
 	sort.Strings(srcs)
 	return Envelope{
-		Data:     out,
-		Sources:  srcs,
-		Withheld: withheld,
-		Thin:     thin,
+		Data:         out,
+		Sources:      srcs,
+		Withheld:     withheld,
+		Thin:         thin,
+		Stale:        stale,
+		Triangulated: triangulated,
 		Flags: Flags{
 			ThinMarket:   len(thin) > 0,
-			Stale:        anyStale,
+			Stale:        len(stale) > 0,
 			Frozen:       anyFrozen,
 			Degraded:     anyFrozen,
 			SingleSource: anySingleSource,
-			Triangulated: anyTriangulated,
+			Triangulated: len(triangulated) > 0,
 		},
 	}
 }

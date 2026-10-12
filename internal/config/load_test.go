@@ -74,31 +74,6 @@ metrics_listen = "127.0.0.1:9464"
 	}
 }
 
-// TestLoadReader_RedisClosedBucketChannel — the closed-bucket stream channel must be a real config
-// key that round-trips into StorageConfig, so the aggregator and API can use an operator-chosen
-// channel instead of the hardcoded redispub.DefaultChannel.
-func TestLoadReader_RedisClosedBucketChannel(t *testing.T) {
-	body := `
-[region]
-id = "r2"
-name = "Ashburn"
-
-[stellar]
-network = "pubnet"
-
-[storage]
-postgres_dsn = "postgres://u:p@h/db"
-redis_closed_bucket_channel = "stellarindex:closed-bucket:staging"
-`
-	c, err := cfg.LoadReader(strings.NewReader(body), "test.toml")
-	if err != nil {
-		t.Fatalf("LoadReader: %v", err)
-	}
-	if got, want := c.Storage.RedisClosedBucketChannel, "stellarindex:closed-bucket:staging"; got != want {
-		t.Errorf("Storage.RedisClosedBucketChannel = %q, want %q", got, want)
-	}
-}
-
 func TestLoadReader_AggregatePairsAndWindows(t *testing.T) {
 	body := `
 [region]
