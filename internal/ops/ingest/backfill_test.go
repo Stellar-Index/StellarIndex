@@ -14,7 +14,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
+	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -712,4 +714,164 @@ func TestBackfillFlags(t *testing.T) {
 	t.Run("Backfill_RejectsMissingFlags", caseBackfill_RejectsMissingFlags)
 	t.Run("ParseBackfillFlags_Parallel", caseParseBackfillFlags_Parallel)
 	t.Run("ParseBackfillFlags_WriteGate", caseParseBackfillFlags_WriteGate)
+}
+
+// TestCapCheckpointAtLoss pins that backfill never checkpoints lastFullyEnqueued past rows a sink dropped or abandoned, else -resume skips them.
+func TestCapCheckpointAtLoss(t *testing.T) {
+	const startFrom, enqueued = 1_000, 1_500
+	cases := []struct {
+		name        string
+		loss        pipeline.ShutdownLoss
+		rawMin      uint32
+		rawUnlanded bool
+		want        uint32
+		wantErr     bool
+	}{
+		{name: "nothing lost", want: enqueued},
+		{name: "soroban-events dropped the tail of ledger 1500", rawMin: 1_500, rawUnlanded: true, want: 1_499, wantErr: true},
+		{name: "abandoned trades from ledger 1200", loss: pipeline.ShutdownLoss{Rows: 3, MinLedger: 1_200}, want: 1_199, wantErr: true},
+		{name: "lowest of both sinks wins", loss: pipeline.ShutdownLoss{Rows: 1, MinLedger: 1_400}, rawMin: 1_300, rawUnlanded: true, want: 1_299, wantErr: true},
+		{name: "loss above the enqueued watermark does not raise it", rawMin: 1_600, rawUnlanded: true, want: enqueued, wantErr: true},
+		{name: "ledger-less abandoned event records nothing new", loss: pipeline.ShutdownLoss{Rows: 1, LedgerUnknown: true}, want: startFrom - 1, wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := capCheckpointAtLoss(enqueued, startFrom, tc.loss, tc.rawMin, tc.rawUnlanded)
+			if got != tc.want {
+				t.Errorf("checkpoint = %d; want %d", got, tc.want)
+			}
+			if (err != nil) != tc.wantErr {
+				t.Errorf("err = %v; wantErr %t", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestRunChunkGuardedRecoversPanic pins that a chunk panic becomes an error on errCh and wg.Done still fires.
+func TestRunChunkGuardedRecoversPanic(t *testing.T) {
+	var wg sync.WaitGroup
+	errCh := make(chan error, 1)
+	wg.Add(1)
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	chunk := chunkRange{from: 100, to: 200}
+
+	func() {
+		// Call runChunkGuarded directly: a real goroutine panic would crash the test binary before the assertion ran.
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("panic escaped runChunkGuarded: %v", r)
+			}
+		}()
+		runChunkGuarded(logger, "backfill-chunk-0", 0, chunk, errCh, &wg, func() error {
+			panic("boom: simulated decoder panic")
+		})
+	}()
+
+	wg.Wait()
+	close(errCh)
+
+	var got []error
+	for e := range errCh {
+		got = append(got, e)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected exactly one reported error, got %d: %v", len(got), got)
+	}
+	wantSubstr := fmt.Sprintf("chunk %d [%d, %d]:", 0, chunk.from, chunk.to)
+	if !strings.Contains(got[0].Error(), wantSubstr) {
+		t.Fatalf("error %q missing expected prefix %q", got[0], wantSubstr)
+	}
+	if !strings.Contains(got[0].Error(), "boom: simulated decoder panic") {
+		t.Fatalf("error %q does not carry the panic value", got[0])
+	}
+}
+
+// TestRunChunkGuardedPropagatesRunError confirms an ordinary run() error reaches errCh with no panic fabricated.
+func TestRunChunkGuardedPropagatesRunError(t *testing.T) {
+	var wg sync.WaitGroup
+	errCh := make(chan error, 1)
+	wg.Add(1)
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	chunk := chunkRange{from: 1, to: 2}
+	wantErr := errors.New("ordinary chunk failure")
+
+	runChunkGuarded(logger, "backfill-chunk-1", 1, chunk, errCh, &wg, func() error {
+		return wantErr
+	})
+
+	wg.Wait()
+	close(errCh)
+
+	var got []error
+	for e := range errCh {
+		got = append(got, e)
+	}
+	if len(got) != 1 || !errors.Is(got[0], wantErr) {
+		t.Fatalf("expected wrapped wantErr, got %v", got)
+	}
+}
+
+// failingOracleStore rejects the rounds whose TxHash is in fail.
+type failingOracleStore struct {
+	fail    map[string]bool
+	written []string
+}
+
+func (s *failingOracleStore) InsertOracleUpdate(_ context.Context, u canonical.OracleUpdate) error {
+	if s.fail[u.TxHash] {
+		return errors.New("statement_timeout")
+	}
+	s.written = append(s.written, u.TxHash)
+	return nil
+}
+
+func runChainlinkDrain(t *testing.T, store *failingOracleStore, walk error, dryRun bool, txs ...string) error {
+	t.Helper()
+	updates := make(chan canonical.OracleUpdate, len(txs))
+	for _, tx := range txs {
+		updates <- canonical.OracleUpdate{Source: "chainlink", TxHash: tx}
+	}
+	close(updates)
+	walkErr := make(chan error, 1)
+	walkErr <- walk
+	return drainChainlinkUpdates(context.Background(), updates, walkErr, store, dryRun, 0, time.Now())
+}
+
+// TestDrainChainlinkUpdates_DroppedRoundFailsTheRun: a rejected round must fail the run, since the command is idempotent by tx hash and a zero exit is never re-run.
+func TestDrainChainlinkUpdates_DroppedRoundFailsTheRun(t *testing.T) {
+	t.Parallel()
+	store := &failingOracleStore{fail: map[string]bool{"b": true}}
+	err := runChainlinkDrain(t, store, nil, false, "a", "b", "c")
+	if err == nil {
+		t.Fatal("drainChainlinkUpdates returned nil with 1 of 3 rounds dropped; the run would exit 0")
+	}
+	if !strings.Contains(err.Error(), "1 of 3 oracle update(s) failed to insert") {
+		t.Fatalf("err = %v, want the dropped-row accounting", err)
+	}
+	if got := strings.Join(store.written, ","); got != "a,c" {
+		t.Fatalf("written = %q, want the good rounds a,c still written", got)
+	}
+}
+
+// TestDrainChainlinkUpdates_KeepsWalkError: the venue walk's own error survives alongside the row accounting.
+func TestDrainChainlinkUpdates_KeepsWalkError(t *testing.T) {
+	t.Parallel()
+	walk := errors.New("eth_getLogs: 429")
+	err := runChainlinkDrain(t, &failingOracleStore{fail: map[string]bool{"a": true}}, walk, false, "a")
+	if !errors.Is(err, walk) || !strings.Contains(err.Error(), "failed to insert") {
+		t.Fatalf("err = %v, want both the walk error and the dropped-row accounting", err)
+	}
+}
+
+func TestDrainChainlinkUpdates_CleanAndDryRunAreNil(t *testing.T) {
+	t.Parallel()
+	if err := runChainlinkDrain(t, &failingOracleStore{}, nil, false, "a", "b"); err != nil {
+		t.Fatalf("clean run: %v", err)
+	}
+	// Dry-run never touches the store; a store that rejects everything proves it.
+	if err := runChainlinkDrain(t, &failingOracleStore{fail: map[string]bool{"a": true}}, nil, true, "a"); err != nil {
+		t.Fatalf("dry run: %v", err)
+	}
 }

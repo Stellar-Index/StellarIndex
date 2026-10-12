@@ -5,6 +5,8 @@ package chops
 
 import (
 	"errors"
+	"io"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -208,5 +210,60 @@ func TestCHBackfill_ChangesOnlyFollowsTheModeGate(t *testing.T) {
 		if err == nil || errors.Is(err, opsutil.ErrWriteModeUnstated) || !strings.Contains(err.Error(), "absent.toml") {
 			t.Errorf("-changes-only %s: err = %v, want the run to reach config load", mode, err)
 		}
+	}
+}
+
+// TestWindowedCHBackfills_RefuseImplicitFullRun: every windowed ClickHouse backfill refuses a bare invocation (no
+// -from/-to/-full) rather than starting the whole ledger-2..tip history outside run-heavy-job.sh. The refusal fires
+// before any connection, so no live lake is needed.
+func TestWindowedCHBackfills_RefuseImplicitFullRun(t *testing.T) {
+	cases := []struct {
+		name string
+		run  func(args []string) error
+	}{
+		{"ch-contract-ledgers-backfill", chContractLedgersBackfill},
+		{"ch-instance-backfill", chInstanceBackfill},
+		{"ch-txindex-backfill", func(args []string) error {
+			_, err := parseTxIndexBackfillFlags(args)
+			return err
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.run([]string{"-write"})
+			if err == nil {
+				t.Fatalf("%s: bare invocation (no -from/-to/-full) was accepted — it must refuse the implicit full-history backfill", tc.name)
+			}
+			if !strings.Contains(err.Error(), "full-history") {
+				t.Fatalf("%s: refusal error should explain the full-history footgun, got: %v", tc.name, err)
+			}
+		})
+	}
+}
+
+// TestChParticipantBackfill_FailureIsNotReportedDone: a failed backfill must not print the "done - wrote N rows" line,
+// or the operator would take it for a finished run. A closed ClickHouse port fails it at once; the bound resolves from a
+// stub.
+func TestChParticipantBackfill_FailureIsNotReportedDone(t *testing.T) {
+	stubLakeContiguousThrough(t, 10)
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := os.Stderr
+	os.Stderr = w
+	runErr := chParticipantBackfill([]string{"-ch-addr", "127.0.0.1:1", "-from", "2", "-to", "10"})
+	os.Stderr = orig
+	_ = w.Close()
+	out, _ := io.ReadAll(r)
+
+	if runErr == nil {
+		t.Fatal("expected an error against an unreachable ClickHouse")
+	}
+	if strings.Contains(string(out), "done —") {
+		t.Errorf("failed run printed the completion line:\n%s", out)
+	}
+	if !strings.Contains(string(out), "FAILED") {
+		t.Errorf("failed run must say it FAILED:\n%s", out)
 	}
 }

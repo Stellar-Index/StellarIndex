@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -15,6 +17,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 )
 
@@ -228,4 +231,118 @@ func TestSeedSoroswapForRecon_NoticesNameNoCommand(t *testing.T) {
 		t.Errorf("stderr %q is missing the disabled-seed notice", out)
 	}
 	assertNoCommandPrefix(t, out)
+}
+
+// Fail-closed seeding makes the nightly only as reliable as ~640 sequential public-RPC calls. The retry is pinned in
+// internal/sources/soroswap; this proves seedSoroswapForRecon reaches it with the client and timeouts it builds, and
+// that the helper's notices name no command.
+
+// captureStderr runs fn with os.Stderr redirected and returns what it wrote.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	orig := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stderr = w
+	t.Cleanup(func() { os.Stderr = orig })
+	fn()
+	_ = w.Close()
+	os.Stderr = orig
+	out, _ := io.ReadAll(r)
+	return string(out)
+}
+
+func assertSeedSurvivesOneTransient(t *testing.T, transient func(w http.ResponseWriter, id int)) {
+	t.Helper()
+	factory, pair := seedFixtureStrkey(t, 0x01), seedFixtureStrkey(t, 0x02)
+	answers := []string{
+		seedFixtureU32(t, 1),
+		seedFixtureAddr(t, pair),
+		seedFixtureAddr(t, seedFixtureStrkey(t, 0x03)),
+		seedFixtureAddr(t, seedFixtureStrkey(t, 0x04)),
+	}
+	var hits, answered atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			ID int `json:"id"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		if hits.Add(1) == 1 {
+			transient(w, req.ID)
+			return
+		}
+		i := int(answered.Add(1)) - 1
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"jsonrpc": "2.0", "id": req.ID,
+			"result": map[string]any{"latestLedger": 100, "results": []map[string]any{{"xdr": answers[i]}}},
+		})
+	}))
+	t.Cleanup(srv.Close)
+
+	dec := soroswap.NewDecoder()
+	var err error
+	out := captureStderr(t, func() {
+		err = seedSoroswapForRecon(context.Background(), seedFixtureConfig(factory, srv.URL), dec)
+	})
+	if err != nil {
+		t.Fatalf("seed returned %q after ONE transient response (%d request(s) made); want nil — both commands "+
+			"abort every source's verdict on this error, so a single blip must be retried, not returned", err, hits.Load())
+	}
+	if n := hits.Load(); n != 5 {
+		t.Errorf("RPC saw %d request(s); want 5 (4 calls + 1 retry of the first)", n)
+	}
+	if !dec.Matches(pairSyncEvent(pair)) {
+		t.Error("decoder does not match the swept pair after a recovered seed")
+	}
+	if !strings.Contains(out, "soroswap pair seed: seeded 1 pairs") {
+		t.Errorf("stderr %q is missing the success notice", out)
+	}
+	assertNoCommandPrefix(t, out)
+}
+
+func assertNoCommandPrefix(t *testing.T, out string) {
+	t.Helper()
+	for _, cmd := range []string{"verify-reconciliation", "compute-completeness"} {
+		if strings.Contains(out, cmd) {
+			t.Errorf("seed notice names the command %q, but the helper is shared by both: %q", cmd, out)
+		}
+	}
+}
+
+// The recognition census must seed the soroswap decoder with the pair registry (the same set attribution folds into
+// ownerOf); unseeded, pairTokens is empty and Matches() rejects every real pair event as a false gap. Both directions
+// run on the same event: unseeded rejects, seeded recognizes.
+func TestRecognitionCensus_SoroswapPairSeedRequired(t *testing.T) {
+	// A real registered soroswap pair contract (from the r1 pair registry).
+	const pairID = "CB46LMGJC7SYSH4C7SBNLV635OX5BSNQDGRR32NRXAV7N2AVNZMQUJ3A"
+	// A pair "sync" flow event — topic[0]=String("SoroswapPair"), topic[1]=Symbol("sync").
+	pairEvent := events.Event{
+		ContractID: pairID,
+		Topic:      []string{soroswap.TopicPrefixPair, soroswap.TopicSymbolSync},
+	}
+
+	// Control: an UNSEEDED census dispatcher must NOT recognize the pair event.
+	unseeded, err := pipeline.BuildDispatcher([]string{soroswap.SourceName}, config.OracleConfig{}, nil)
+	if err != nil {
+		t.Fatalf("build unseeded dispatcher: %v", err)
+	}
+	if _, ok := unseeded.Recognize(pairEvent); ok {
+		t.Fatal("unseeded census recognized a soroswap pair event — the bug is not reproduced; " +
+			"this test would pass vacuously and prove nothing")
+	}
+
+	// The fix: a census dispatcher SEEDED with the pair registry recognizes it.
+	seed := map[string]soroswap.PairTokens{pairID: {}} // Matches() needs only key presence
+	seeded, err := pipeline.BuildDispatcher(
+		[]string{soroswap.SourceName}, config.OracleConfig{}, nil,
+		soroswap.WithSeededPairTokensDecoder(seed),
+	)
+	if err != nil {
+		t.Fatalf("build seeded dispatcher: %v", err)
+	}
+	if _, ok := seeded.Recognize(pairEvent); !ok {
+		t.Fatal("seeded census did NOT recognize a real soroswap pair event — the fix is ineffective")
+	}
 }
