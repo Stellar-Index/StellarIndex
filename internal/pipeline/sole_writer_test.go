@@ -17,6 +17,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/cctp"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/comet"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/reflector"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/rozo"
 	sep41_supply "github.com/Stellar-Index/StellarIndex/internal/sources/sep41_supply"
 	sep41_transfers "github.com/Stellar-Index/StellarIndex/internal/sources/sep41_transfers"
@@ -368,4 +369,18 @@ func TestProjectorStallBound_CoversCatchUpPeriod(t *testing.T) {
 	if ProjectorStallBound <= period {
 		t.Errorf("ProjectorStallBound = %s, must exceed the %s ch-live-catchup period", ProjectorStallBound, period)
 	}
+}
+
+// reflector.UpdateEvent is shared by three specs; one of them claiming a
+// different writer role must fail loudly rather than pick a winner.
+func TestIndexEventRoles_ConflictingRolesPanic(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("indexEventRoles accepted one event type with two writer roles")
+		}
+	}()
+	indexEventRoles([]SourceSpec{
+		{Name: "a", Events: []consumer.Event{reflector.UpdateEvent{}}, Projector: &ProjectorSpec{}},
+		{Name: "b", Events: []consumer.Event{reflector.UpdateEvent{}}},
+	})
 }

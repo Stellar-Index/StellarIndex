@@ -905,3 +905,25 @@ func TestContractInteractions_CapsDistinctTxsNotEventRows(t *testing.T) {
 		t.Fatalf("edges = %+v, want one peer with 4 shared txs", edges)
 	}
 }
+
+func TestHashChainWindowResult_Checked(t *testing.T) {
+	cases := []struct {
+		name    string
+		present uint64
+		want    uint64
+	}{
+		{"typical-window", 1_000_000, 999_999},
+		{"single-ledger", 1, 0},
+		// Present==0 is a wholly missing window, where Present-1 would wrap a uint64 subtraction to ~1.8e19.
+		// Checked() MUST saturate to 0 here.
+		{"empty-window", 0, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := HashChainWindowResult{Present: tc.present}
+			if got := w.Checked(); got != tc.want {
+				t.Fatalf("Checked() = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
