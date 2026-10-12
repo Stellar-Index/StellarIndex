@@ -125,7 +125,8 @@ func extractTx(ext *LedgerExtract, tx ingest.LedgerTransaction, seq uint32, clos
 }
 
 // sorobanMetering is the per-tx Soroban resource snapshot; zero for classic txs. DECLARED values come from the envelope, ACTUAL fees from
-// the tx meta. There is no actual-instructions field: pubnet meta carries none (see internal/xdrjson/operation.go).
+// the tx meta. There is no actual-instructions field: the CPU count is only in core_metrics diagnostic events, which pubnet meta
+// carries but the lake does not store (see internal/xdrjson/operation.go).
 type sorobanMetering struct {
 	Instructions     uint32
 	DiskReadBytes    uint32

@@ -428,6 +428,10 @@ func (f fakeSampleLister) ListObjectsV2(_ context.Context, in *s3.ListObjectsV2I
 	return out, nil
 }
 
+func (f fakeSampleLister) GetObject(context.Context, *s3.GetObjectInput, ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
+	return nil, errors.New("the SDF sample compares listings only")
+}
+
 func TestVerifySDFSample(t *testing.T) {
 	t.Parallel()
 	k := func(seq uint32) string { return sdfSampleSchema.GetObjectKeyFromSequenceNumber(seq) }
