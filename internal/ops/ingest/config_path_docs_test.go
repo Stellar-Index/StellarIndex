@@ -55,3 +55,16 @@ func TestDocsCiteTheDeployedConfigPath(t *testing.T) {
 		t.Errorf("docs cite a config path ansible does not deploy (want %s):\n%s", deployed, strings.Join(bad, "\n"))
 	}
 }
+
+// ingestDocsRepoRoot resolves the repo root from internal/ops/ingest.
+func ingestDocsRepoRoot(t *testing.T) string {
+	t.Helper()
+	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		t.Fatalf("resolve repo root: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
+		t.Fatalf("repo root %s has no go.mod: %v", root, err)
+	}
+	return root
+}
