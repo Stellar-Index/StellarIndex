@@ -17,7 +17,7 @@
 #
 # What must hold:
 #   1. a healthy listing is parsed correctly — count, first, last, and
-#      the declared capacity trim recognised as the one permitted hole —
+#      holes wholly inside the declared capacity trim permitted —
 #      and the scan reports ok 1 with the rows it read;
 #   2. the guard still works: a deleted partition and an overlapping
 #      re-fill both raise unexpected_gaps, and strict mode (no declared
@@ -75,6 +75,9 @@ case "${MODE:-full}" in
   full)       genesis; tail_from 0 4; exit 0 ;;
   gap)        genesis; tail_from 0 1; tail_from 3 4; exit 0 ;;   # partition 2 deleted
   overlap)    genesis; tail_from 0 4; row 50176000 50239999 776; exit 0 ;;
+  rehydrate)  genesis; row 38080000 38143999 595; tail_from 0 4; exit 0 ;;   # one partition re-filled inside the trim
+  rehydrate_gap) genesis; row 38080000 38143999 595; tail_from 0 1; tail_from 3 4; exit 0 ;;
+  straddle)   genesis; tail_from 1 4; exit 0 ;;   # hole runs past the trim end
   truncated)  # the read dies partway; the prefix it emitted is contiguous
               genesis; tail_from 0 1
               echo "mc: <ERROR> Unable to list. connection reset by peer" >&2
@@ -154,6 +157,19 @@ expect galexie_archive_unexpected_gaps 1 "an overlapping re-fill raises one unex
 
 run full ""
 expect galexie_archive_unexpected_gaps 1 "strict mode counts the trim hole as unexpected"
+
+run rehydrate
+expect galexie_archive_unexpected_gaps 0 "two holes wholly inside the trim are not unexpected"
+expect galexie_archive_partition_count 7 "a partition re-filled inside the trim is counted"
+
+run rehydrate_gap
+expect galexie_archive_unexpected_gaps 1 "a hole outside the trim alerts beside holes inside it"
+
+run straddle
+expect galexie_archive_unexpected_gaps 1 "a hole crossing the trim end alerts"
+
+run full 128000-49983999
+expect galexie_archive_unexpected_gaps 1 "a hole crossing the trim start alerts"
 
 # ─── 3. the read failed ─────────────────────────────────────────────
 #
@@ -330,7 +346,7 @@ fi
 # promtool is optional on a developer box; this parser is not, so the
 # grammar assertion runs everywhere.
 echo "galexie-archive-contiguity-test: every mode parses"
-for m in full gap overlap truncated dead empty unparseable; do
+for m in full gap overlap rehydrate rehydrate_gap straddle truncated dead empty unparseable; do
   run "$m"
   if python3 scripts/ci/lint_textfile_exposition.py --check-file "$PROM" >/dev/null 2>&1; then
     ok "mode=$m publishes valid exposition"

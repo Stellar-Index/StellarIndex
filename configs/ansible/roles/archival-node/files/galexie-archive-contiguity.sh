@@ -11,7 +11,7 @@
 #
 # Mechanics: one `mc ls` of the top-level partition dirs (`<reverse-hex>--<start>-<end>/`,
 # 64k ledgers each, ~220 rows). Sort by start, walk the ranges, count every discontinuity
-# that is NOT the declared trim; overlaps count too (a straddling re-fill is corruption).
+# not wholly inside the declared trim; overlaps count too (a straddling re-fill is corruption).
 # Chunk-level holes inside a partition are restore-drill territory
 # (deploy/monitoring/rules/restore-drill.yml).
 #
@@ -88,7 +88,8 @@ if [ "$read_rc" -eq 0 ]; then
         n++
         if ($1 <= prev) bad++                       # overlap/duplicate
         else if ($1 != prev+1) {                    # a hole
-          if (!(ts != "" && prev+1 == ts+0 && $1-1 == te+0)) bad++
+          # A rehydrate filling the trim splits it into several holes, each still expected.
+          if (!(ts != "" && prev+1 >= ts+0 && $1-1 <= te+0)) bad++
         }
         if ($2 > prev) prev=$2
       }
