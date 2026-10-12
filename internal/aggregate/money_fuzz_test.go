@@ -337,10 +337,8 @@ func FuzzTWAP(f *testing.F) {
 		var lo, hi *big.Rat
 		exact := new(big.Rat)
 		total := new(big.Int)
-		// A priced trade's price is current from its own timestamp until
-		// the NEXT priced trade's timestamp (or end): an unpriceable trade
-		// in between neither starts nor ends a slot (fuzzTrades never
-		// repeats a timestamp, so "instant" and "trade" coincide here).
+		// A priced trade's price holds from its timestamp until the NEXT priced trade's (or end); an unpriceable trade in between neither
+		// starts nor ends a slot. fuzzTrades never repeats a timestamp, so "instant" and "trade" coincide.
 		var pending *big.Rat
 		var pendingAt time.Time
 		for _, tr := range trades {

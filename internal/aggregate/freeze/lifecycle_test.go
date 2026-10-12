@@ -27,10 +27,8 @@ func calmUncorroborated(at time.Time) freeze.Signal {
 	return freeze.Signal{Now: at, Scored: true, Confidence: 0.50, ZScore: 0.4}
 }
 
-// middling is neither: it does not fire, and it does not clear the
-// auto-unfreeze bar either (z between the two thresholds). This is
-// the band the pre-lifecycle code released on, because release was
-// simply "the fire condition stopped holding".
+// middling neither fires nor clears the auto-unfreeze bar (z between the two thresholds): the hysteresis band where release
+// needs more than "the fire condition stopped holding".
 func middling(at time.Time) freeze.Signal {
 	return freeze.Signal{Now: at, Scored: true, Confidence: 0.50, ZScore: 4.2}
 }

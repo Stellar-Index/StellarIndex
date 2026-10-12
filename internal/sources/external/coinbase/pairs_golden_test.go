@@ -6,13 +6,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// TestDefaultPairs_GoldenSet pins the EXACT Coinbase product set, mirroring binance's golden test.
-//
-// TestDefaultPairList_matchesDefaultPairs alone is a tautology that compares the projection
-// against its own source, so deleting a product from DefaultPairs leaves it green. It matters
-// beyond drift: Coinbase subscribes to every product_id in ONE frame and a rejected id is fatal
-// to the connection (streamer.go OnDisconnect -> "coinbase subscription rejected"), so a wrong
-// or delisted id takes down XLM-USD, BTC-USD, ETH-USD and every major with it.
+// TestDefaultPairs_GoldenSet pins the exact Coinbase product set: the projection test alone is a tautology against its own
+// source. It matters because all products subscribe in one frame and a rejected id is fatal to the connection, taking XLM-USD,
+// BTC-USD and every major down with it.
 func TestDefaultPairs_GoldenSet(t *testing.T) {
 	crypto := func(code string) canonical.Asset {
 		a, err := canonical.NewCryptoAsset(code)

@@ -13,11 +13,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external/scale"
 )
 
-// FuzzParseAggTradeFrame drives quantity/price through a real-shape
-// aggTrade frame and checks the money arithmetic against big.Int:
-// base is the exact 10^8 scaling, quote is base×price/10^8 truncated,
-// dust is exactly a zero quote, and a field the scaler rejects never
-// yields a trade.
+// FuzzParseAggTradeFrame checks the money arithmetic against big.Int: base is the exact 10^8 scaling, quote is base×price/10^8
+// truncated, dust is exactly a zero quote, and a field the scaler rejects never yields a trade.
 func FuzzParseAggTradeFrame(f *testing.F) {
 	f.Add("152.34", "0.17582", "XLMUSDT", int64(987654321))
 	f.Add("0.00000001", "0.16", "XLMUSDT", int64(1))

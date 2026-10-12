@@ -263,10 +263,8 @@ func TestPollInterval_Default(t *testing.T) {
 	}
 }
 
-// TestInversionMath_MatchesExpected pins the poller's full rate->price pipeline: scale the venue
-// rate, then INVERT it (ECB publishes EUR-per-unit; the poller emits unit-per-EUR). Asserting
-// only the scaling step (scaled.Int64() == 1082500 is 1.0825 itself, not its reciprocal) would
-// let a broken InvertScaled pass.
+// TestInversionMath_MatchesExpected pins the full rate->price pipeline: scale the venue rate, then invert it (ECB publishes
+// EUR-per-unit). Asserting only the scaled value would let a broken InvertScaled pass.
 func TestInversionMath_MatchesExpected(t *testing.T) {
 	// ECB's rate=1.0825 -> emitted price = 1/1.0825 = 0.923787... at
 	// 10^6 scale, round-half-up = 923788.
@@ -282,10 +280,8 @@ func TestInversionMath_MatchesExpected(t *testing.T) {
 		t.Errorf("InvertScaled(1.0825 at 10^6) = %d want %d (round_half_up(1e12/1082500))", inverted.Int64(), want)
 	}
 
-	// Inverting a weak-currency rate at the SAME scale as the input quantises it hard. VND at
-	// "1 EUR = 25335 VND": inverting at 6dp gives round(10^12/25_335_000_000) = 39 → 0.000039,
-	// vs the true 0.00003947, about -1.2% error. The poller must widen the output scale
-	// (InvertedDecimals) instead of reusing DefaultDecimals for both directions.
+	// Inverting a weak-currency rate at the input scale quantises it hard: VND at 25335/EUR inverts at 6dp to 0.000039 vs true
+	// 0.00003947 (-1.2%), so the poller must widen the output scale (InvertedDecimals) rather than reuse DefaultDecimals.
 	vndRateScaled, err := scale.FloatToScaledInt(25335, int(DefaultDecimals))
 	if err != nil {
 		t.Fatalf("floatToScaledInt(VND rate): %v", err)

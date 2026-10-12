@@ -23,10 +23,8 @@ func TestRegistry_KnownSourcesClassified(t *testing.T) {
 	}
 }
 
-// TestRegistry_RetiredFXIdentityStaysUnregistered: `polygon-forex` and `massive` are ONE
-// upstream under two brands. Re-adding the retired entry (IncludeInVWAP:true) double-counts
-// massive's own rates in VWAP and adds a third name to FXSources(). `massive` is the
-// surviving identity; both halves are asserted so a revert cannot be quiet.
+// TestRegistry_RetiredFXIdentityStaysUnregistered: `polygon-forex` and `massive` are one upstream under two brands; re-adding the
+// retired entry (IncludeInVWAP:true) double-counts massive's rates in VWAP. Both halves are asserted so a revert cannot be quiet.
 func TestRegistry_RetiredFXIdentityStaysUnregistered(t *testing.T) {
 	if _, ok := Registry["polygon-forex"]; ok {
 		t.Error("Registry has a `polygon-forex` entry again — it is the same upstream as `massive` under the pre-rename brand, and with IncludeInVWAP:true it double-counts those rates")
@@ -114,10 +112,8 @@ func TestClassBridge_Defined(t *testing.T) {
 }
 
 func TestRegistry_FailClosedOnUnknown(t *testing.T) {
-	// Lookup of an unknown source must return a metadata record that
-	// is visible (so ops can see the bad entry via /v1/sources) but
-	// excluded from VWAP (so a typo or renamed source can't quietly
-	// contribute).
+	// Lookup of an unknown source must return metadata that is visible (via /v1/sources) but excluded from VWAP,
+	// so a typo or renamed source cannot quietly contribute.
 	m := Lookup("definitely-not-a-real-source")
 	if m.IncludeInVWAP {
 		t.Error("Lookup on unknown source returned IncludeInVWAP=true; must fail-closed")
@@ -145,11 +141,9 @@ func TestRegistry_Registered(t *testing.T) {
 	}
 }
 
-// TestRegistry_BackfillSafePolicy locks the WASM-aware default: every on-chain Soroban source
-// is BackfillSafe=false until its decoder is audited against every WASM version in the replay
-// range. SDEX (classic, no WASM) and off-chain sources are true; unknown sources fail closed.
-// Flipping false->true is the only allowed direction, after a wasm-history audit, and this
-// test makes it a deliberate reviewed change.
+// TestRegistry_BackfillSafePolicy locks the WASM-aware default: on-chain Soroban sources are BackfillSafe=false until audited
+// against every WASM version in the replay range; SDEX and off-chain sources are true; unknown sources fail closed. Flipping
+// to true is a reviewed change.
 func TestRegistry_BackfillSafePolicy(t *testing.T) {
 	wantUnsafe := []string{
 		// All Soroban sources are now audited; the wantUnsafe slot
@@ -239,10 +233,8 @@ func TestFXSources_DeterministicLexOrder(t *testing.T) {
 	}
 }
 
-// TestIsFXSource_RegistryDriven exercises the snap-rule's per-leg
-// classification. A predicate-driven view of the registry — when an
-// operator adds a new SubclassFX vendor, the snap rule picks it up
-// without code changes elsewhere.
+// TestIsFXSource_RegistryDriven exercises the snap rule's per-leg classification, which is registry-driven:
+// a new SubclassFX vendor is picked up without code changes elsewhere.
 func TestIsFXSource_RegistryDriven(t *testing.T) {
 	if !IsFXSource("exchangeratesapi") {
 		t.Error("IsFXSource(exchangeratesapi) = false, want true")
@@ -300,10 +292,9 @@ func TestAggregatorSources_DeterministicLexOrder(t *testing.T) {
 }
 
 func TestEvents_SourceFieldDelegatesToCanonical(t *testing.T) {
-	// Source() labels metrics by venue and MUST delegate to the embedded canonical.Trade.Source,
-	// or every external venue collapses into one "external.trade" label. Building a full
-	// canonical.Trade needs valid Pair/Amount values, so this checks EventKind and that the
-	// Source field path compiles.
+	// Source() labels metrics by venue and MUST delegate to the embedded canonical.Trade.Source, or every external venue collapses
+	// into one "external.trade" label; this checks EventKind and that the Source path compiles (a full Trade needs valid
+	// Pair/Amount).
 	var te TradeEvent
 	if got := te.EventKind(); got != "external.trade" {
 		t.Errorf("TradeEvent.EventKind() = %q, want external.trade", got)

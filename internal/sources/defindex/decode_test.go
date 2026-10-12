@@ -177,11 +177,8 @@ const (
 	createBodyEarliestFactory = "AAAAEQAAAAEAAAADAAAADwAAAAZhc3NldHMAAAAAABAAAAABAAAAAQAAABEAAAABAAAAAgAAAA8AAAAHYWRkcmVzcwAAAAASAAAAASW0/NhZrsL6Y0hDjEibPDwQyYttIb5P08swy2iVPvl3AAAADwAAAApzdHJhdGVnaWVzAAAAAAAQAAAAAQAAAAEAAAARAAAAAQAAAAMAAAAPAAAAB2FkZHJlc3MAAAAAEgAAAAFnf2w30jxNVNqTCwuM6wPG4DaWDNl4NsGuiz8NDKweKQAAAA8AAAAEbmFtZQAAAA4AAAAOQmxlbmQgU3RyYXRlZ3kAAAAAAA8AAAAGcGF1c2VkAAAAAAAAAAAAAAAAAA8AAAAFcm9sZXMAAAAAAAARAAAAAQAAAAQAAAADAAAAAAAAABIAAAAAAAAAAI/sKanankkaQEGC08WiRi97yjWn3C73URmgU+eSxFGvAAAAAwAAAAEAAAASAAAAAAAAAACP7Cmp2p5JGkBBgtPFokYve8o1p9wu91EZoFPnksRRrwAAAAMAAAACAAAAEgAAAAAAAAAAj+wpqdqeSRpAQYLTxaJGL3vKNafcLvdRGaBT55LEUa8AAAADAAAAAwAAABIAAAAAAAAAAI/sKanankkaQEGC08WiRi97yjWn3C73URmgU+eSxFGvAAAADwAAAAl2YXVsdF9mZWUAAAAAAAADAAAAZA=="
 )
 
-// The factory is PERMISSIONLESS, so a `create` body's named strategies are
-// attacker-controlled: factory events are recognised (Matches true, no
-// error, no events) but never seed the registry and never decode the body.
-// The registry is bare (factory roots only, curated children withheld), so
-// any Has() hit could only come from a body seed.
+// The factory is PERMISSIONLESS, so a `create` body's strategies are attacker-controlled: factory events are recognised
+// (Matches true, no error, no events) but never seed the registry or decode the body, so any Has() hit would be a body seed.
 func TestDecode_factoryEvents_recognisedNeverSeed(t *testing.T) {
 	t.Parallel()
 	const current = "CDKFHFJIET3A73A2YN4KV7NSV32S6YGQMUFH3DNJXLBWL4SKEGVRNFKI"

@@ -40,10 +40,8 @@ func TestDefaultPairList_matchesDefaultPairs(t *testing.T) {
 	}
 }
 
-// Streamer.Start has two synchronous reject paths that don't touch
-// the network: empty pairs slice, and a pair not in the PairMap.
-// Pin both — the alternative is the goroutine spinning a websocket
-// dial against a venue we can't usefully subscribe to.
+// Streamer.Start has two synchronous reject paths that never touch the network (empty pairs, pair not in PairMap); both are
+// pinned so no goroutine spins dialling a venue we cannot subscribe to.
 
 func TestStreamer_Start_emptyPairsRejected(t *testing.T) {
 	pm, err := DefaultPairs()

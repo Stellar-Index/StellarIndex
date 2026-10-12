@@ -84,10 +84,8 @@ func TestCompute_AnomalyKillsScore(t *testing.T) {
 	}
 }
 
-// TestCompute_DegenerateInputsScoreZeroNotNaN — a brand-new asset with no
-// baseline and below-floor liquidity, and extreme inputs that drive every
-// factor to 0, both score a finite 0 (the geometric mean's dominating-factor
-// behaviour), never NaN from log(0).
+// TestCompute_DegenerateInputsScoreZeroNotNaN: a brand-new asset with no baseline and below-floor liquidity, and extreme
+// inputs driving every factor to 0, both score a finite 0 (geometric mean), never NaN from log(0).
 func TestCompute_DegenerateInputsScoreZeroNotNaN(t *testing.T) {
 	tests := []struct {
 		name string
@@ -153,10 +151,8 @@ func TestCompute_WeightingChangesScore(t *testing.T) {
 
 // ─── Bootstrap cap (ADR-0019 §"Bootstrap policy") ───────────────
 
-// TestCompute_BootstrapCapPreservesLowConfidence — when an asset
-// is in bootstrap AND would naturally score below the cap (e.g.
-// single-source low-liquidity), the cap is a CEILING not a floor.
-// The natural-low score must still come through.
+// TestCompute_BootstrapCapPreservesLowConfidence: when a bootstrapping asset would naturally score below the cap,
+// the cap is a ceiling not a floor, so the natural low score must come through.
 func TestCompute_BootstrapCapPreservesLowConfidence(t *testing.T) {
 	in := healthyInputs()
 	in.BaselineAgeDays = 5 // bootstrap
@@ -378,10 +374,8 @@ func TestCompute_CrossOracleAgreementDecomposition(t *testing.T) {
 	}
 }
 
-// TestCompute_AgreementCountDoesNotChangeScore — the agreement count
-// is transparency-only per ADR-0019 (the combiner's cross-oracle
-// input is divergence-from-median). Two computations differing only
-// in agreement count must produce identical combined scores.
+// TestCompute_AgreementCountDoesNotChangeScore: the agreement count is transparency-only (ADR-0019; the combiner uses
+// divergence-from-median), so computations differing only in it must score identically.
 func TestCompute_AgreementCountDoesNotChangeScore(t *testing.T) {
 	a := healthyInputs()
 	a.CrossOracleAgreementCount = 0
@@ -418,10 +412,7 @@ func TestCompute_UnmeasuredLiquidityDoesNotZeroTheScore(t *testing.T) {
 		t.Errorf("unmeasured confidence = %v, want %v (the neutral factor is 0.5, the same as a $%.0f measured bucket)",
 			got.Confidence, wantSame.Confidence, mid.LiquidityUSD)
 	}
-	// And the collision is no longer at the publish floor: a bucket at
-	// min_usd_volume must now be DISTINGUISHABLE from "unmeasured" by
-	// value alone (the flag remains the contract, but the coincidence
-	// that motivated it is gone).
+	// A bucket at min_usd_volume must be distinguishable from "unmeasured" by value alone; the flag stays the contract.
 	if confidence.LiquidityFactor(10_000) == confidence.LiquidityUnmeasuredFactor {
 		t.Error("LiquidityFactor(min_usd_volume) still collides with the unmeasured neutral")
 	}
@@ -505,10 +496,8 @@ func TestCompute_TriangulationAgreementRaisesAndDisagreementLowers(t *testing.T)
 		t.Errorf("25%% direct-vs-composite divergence did not lower confidence: %v vs unchecked %v",
 			disagree.Confidence, unchecked)
 	}
-	// Size check: the penalty must be big enough to matter (a
-	// manipulation signal that moves the score by 0.001 is decoration),
-	// and the credit small enough that corroboration alone can't lift a
-	// bad bucket over a threshold.
+	// Size check: the penalty must be big enough to matter, and the credit small enough that corroboration alone
+	// cannot lift a bad bucket over a threshold.
 	if unchecked-disagree.Confidence < 0.15 {
 		t.Errorf("disagreement penalty too small: %v → %v", unchecked, disagree.Confidence)
 	}
@@ -650,10 +639,8 @@ func TestCompute_NonFiniteBaselineAgeStillEncodes(t *testing.T) {
 	}
 }
 
-// TestCompute_BootstrapGateHysteresis walks one pair's density down
-// through the band and back up, carrying the gate state between scores
-// the way the orchestrator does. A released pair holds its score until
-// density falls below 27.0; a capped pair releases only at 28.5.
+// TestCompute_BootstrapGateHysteresis walks one pair's density down through the band and back up, carrying gate state
+// as the orchestrator does: a released pair holds its score until density falls below 27.0; a capped pair releases only at 28.5.
 func TestCompute_BootstrapGateHysteresis(t *testing.T) {
 	if confidence.BootstrapReengageDensityDays != 27.0 {
 		t.Fatalf("re-engage edge = %v, want 27.0 days-equivalent", confidence.BootstrapReengageDensityDays)

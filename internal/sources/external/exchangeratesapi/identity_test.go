@@ -7,10 +7,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
-// Name + Class must agree with the entry in
-// internal/sources/external/registry.go — divergence would cause
-// the aggregator's class-based VWAP filter to treat this venue
-// inconsistently across the call sites.
+// Name and Class must agree with internal/sources/external/registry.go, or the aggregator's class-based VWAP filter treats
+// this venue inconsistently.
 
 func TestPoller_NameAndClass(t *testing.T) {
 	p, err := NewPoller("key")

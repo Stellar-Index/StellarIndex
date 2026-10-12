@@ -8,10 +8,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// TestCallSig guards the PK discriminator. CallSig must (1) be deterministic, (2) IGNORE
-// deadline so auth-tree dups of the same call dedup even if a sentinel deadline varies, and
-// (3) DIFFER for any economically-distinct swap (recipient / path / amount). A regression
-// silently loses sub-op swaps or double-counts dups.
+// TestCallSig guards the PK discriminator: CallSig is deterministic, ignores deadline (auth-tree dups dedup),
+// and differs for any economically distinct swap (recipient / path / amount), else sub-op swaps are lost or dups double-counted.
 func TestCallSig(t *testing.T) {
 	t.Parallel()
 	base := RouterSwap{

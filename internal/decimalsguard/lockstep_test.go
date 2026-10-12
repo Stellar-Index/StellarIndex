@@ -75,10 +75,8 @@ func row(asset string, decimals int) timescale.NonstandardDecimalsAsset {
 	return timescale.NonstandardDecimalsAsset{Asset: asset, Decimals: decimals, Source: "aquarius"}
 }
 
-// TestReconcile_RepairsRowThatDisagreesWithLake: a persisted row carrying a
-// value the lake contradicts (a hand-seeded 6 for a token whose instance
-// declares 9) is upserted to the lake's value, counted once, and the
-// resolved cache learns the lake's value so the next Sweep agrees.
+// TestReconcile_RepairsRowThatDisagreesWithLake: a persisted row the lake contradicts (hand-seeded 6, instance declares 9) is
+// upserted to the lake's value, counted once, and the resolved cache learns it so the next Sweep agrees.
 func TestReconcile_RepairsRowThatDisagreesWithLake(t *testing.T) {
 	const asset = "fake-lockstep-hand-seeded-6-lake-9"
 	before := mismatchVal(asset)
@@ -110,10 +108,8 @@ func TestReconcile_RepairsRowThatDisagreesWithLake(t *testing.T) {
 	}
 }
 
-// TestReconcile_DeletesRowWhenLakeConfirmsStandard: the table's CHECK
-// forbids storing 7, so a row whose token the lake now confirms as 7 dp
-// can only be repaired by deletion — and the durable-write latch for it
-// is cleared so a later confirmed non-7 reading is persisted again.
+// TestReconcile_DeletesRowWhenLakeConfirmsStandard: the table's CHECK forbids storing 7, so a row the lake confirms as 7 dp is
+// repaired by deletion, and its durable-write latch is cleared so a later confirmed non-7 reading persists again.
 func TestReconcile_DeletesRowWhenLakeConfirmsStandard(t *testing.T) {
 	const asset = "fake-lockstep-stale-9-lake-7"
 	before := mismatchVal(asset)
@@ -148,10 +144,8 @@ func TestReconcile_DeletesRowWhenLakeConfirmsStandard(t *testing.T) {
 	}
 }
 
-// TestReconcile_LeavesUnresolvableRowAlone: a lake read error and a
-// not-derivable declaration are NOT evidence the row is wrong — an
-// operator-seeded row for an uncaptured instance must survive. No write,
-// no delete, no metric.
+// TestReconcile_LeavesUnresolvableRowAlone: a lake read error or not-derivable declaration is NOT evidence the row is wrong
+// (an operator-seeded row for an uncaptured instance must survive): no write, no delete, no metric.
 func TestReconcile_LeavesUnresolvableRowAlone(t *testing.T) {
 	const (
 		errAsset  = "fake-lockstep-lake-error"
@@ -199,10 +193,8 @@ func TestReconcile_AgreementIsSilent(t *testing.T) {
 	}
 }
 
-// TestReconcile_BypassesResolvedCache is the drift the lockstep exists for:
-// the guard confirmed 9 and latched it in its per-process resolved cache,
-// then the lake reading changed (a re-captured instance). Sweep would never
-// look again; Reconcile must re-read the lake and repair the row.
+// TestReconcile_BypassesResolvedCache is the drift the lockstep exists for: the guard latched 9 in its per-process cache, then
+// the lake reading changed; Sweep would never look again, so Reconcile must re-read the lake and repair the row.
 func TestReconcile_BypassesResolvedCache(t *testing.T) {
 	const asset = "fake-lockstep-recaptured-instance"
 	before := mismatchVal(asset)
@@ -291,11 +283,8 @@ func TestReconcile_DisabledWithoutReconciler(t *testing.T) {
 	}
 }
 
-// TestNew_LogsWhenWriterDisarmsReconcile: a non-nil Writer that does not
-// implement DecimalsAssetReconciler (a wrapper that forgot to forward it)
-// disarms the lockstep, and New must say so at ERROR naming the concrete
-// type. A full reconciler and a nil Writer (persistence deliberately off)
-// must stay quiet.
+// TestNew_LogsWhenWriterDisarmsReconcile: a non-nil Writer not implementing DecimalsAssetReconciler disarms the lockstep, and New
+// must log at ERROR naming the concrete type; a full reconciler and a nil Writer (persistence off) stay quiet.
 func TestNew_LogsWhenWriterDisarmsReconcile(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -337,11 +326,8 @@ func TestReconcile_LoadErrorPropagates(t *testing.T) {
 	}
 }
 
-// TestLockstep_EveryPersistedRowMatchesTheLake is the invariant test: over a
-// projection with every kind of row — drifted, stale-standard, in lockstep,
-// unresolvable — one Reconcile leaves NO row the lake can read that
-// disagrees with the lake. If the two resolvers can still diverge after a
-// tick, this fails.
+// TestLockstep_EveryPersistedRowMatchesTheLake is the invariant test: over drifted, stale-standard, in-lockstep and unresolvable
+// rows, one Reconcile leaves NO lake-readable row that disagrees with the lake.
 func TestLockstep_EveryPersistedRowMatchesTheLake(t *testing.T) {
 	const (
 		drifted      = "fake-lockstep-inv-drifted"      // row 6, lake 9
@@ -408,11 +394,8 @@ func TestRun_ReconcilesOnTheInitialTick(t *testing.T) {
 	}
 }
 
-// deadlineRecordingResolver records whether the context reconcileRow passed
-// it carried a deadline, without actually blocking for one (a hung-lake
-// repro would have to sleep past reconcileRowReadTimeout — this asserts the
-// bound is APPLIED, which is the invariant, not that a slow call was
-// observed timing out).
+// deadlineRecordingResolver records whether the context reconcileRow passed carried a deadline, asserting the bound is APPLIED
+// rather than waiting out a hung lake past reconcileRowReadTimeout.
 type deadlineRecordingResolver struct {
 	decimals    uint32
 	hadDeadline bool
@@ -423,11 +406,8 @@ func (r *deadlineRecordingResolver) TokenDecimals(ctx context.Context, _ string)
 	return r.decimals, true, nil
 }
 
-// TestReconcile_BoundsEachRowReadWithADeadline guards that Reconcile
-// ran every row's lake read on the tick's root context, unbounded, so one
-// hung ClickHouse query stalled the whole serial pass. PROVEN RED before
-// reconcileRowReadTimeout: the resolver saw the caller's bare
-// context.Background() (no deadline) passed straight through.
+// TestReconcile_BoundsEachRowReadWithADeadline: each row's lake read must carry a deadline, else one hung ClickHouse query stalls
+// the whole serial pass (it saw a bare context.Background() before reconcileRowReadTimeout).
 func TestReconcile_BoundsEachRowReadWithADeadline(t *testing.T) {
 	const asset = "fake-lockstep-read-budget"
 	store := newFakeStore(row(asset, 9))

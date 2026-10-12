@@ -134,11 +134,8 @@ func TestObserver_SkipsNativeClaimable(t *testing.T) {
 	}
 }
 
-// TestObserver_SkipsRemovedAtV1 — a Removed claimable change whose
-// pre-image was never observed stays filtered out at Match: the
-// LedgerKey carries no asset, so watched-set membership is
-// undetermined. (Removals that DO have a same-ledger pre-image are
-// emitted — see removal_supply_test.go.)
+// TestObserver_SkipsRemovedAtV1 pins that a Removed claimable change with no observed pre-image is filtered at Match, since
+// the LedgerKey carries no asset. Removals with a same-ledger pre-image are emitted; see removal_supply_test.go.
 func TestObserver_SkipsRemovedAtV1(t *testing.T) {
 	o, _ := NewObserver([]string{"USDC:" + gIssuer})
 	if o.Matches(makeRemovedCBChange()) {

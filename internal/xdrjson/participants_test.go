@@ -175,10 +175,9 @@ func scContract(id xdr.ContractId) xdr.ScAddress {
 	return xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &id}
 }
 
-// addrAuthEntry builds a SorobanAuthorizationEntry whose Address credential names account g. An
-// attacker can author this for ANY g with a garbage signature: it is unverified at the XDR-decode
-// layer (the network checks it only during apply, for consumed entries on successful txs), so a
-// decoded auth entry naming g does NOT prove g authorized anything.
+// addrAuthEntry builds a SorobanAuthorizationEntry whose Address credential names account g. An attacker can author this for any
+// g with a garbage signature (the network verifies only during apply), so a decoded auth entry naming g does not prove g
+// authorized anything.
 func addrAuthEntry(t *testing.T, contractID xdr.ContractId, g string) xdr.SorobanAuthorizationEntry {
 	t.Helper()
 	acct := xdr.MustAddress(g)
@@ -245,13 +244,9 @@ func TestParticipantAccounts_InvokeContractAddressVsStringArg(t *testing.T) {
 	}
 }
 
-// TestParticipantAccounts_InvokeContractAuthoredAuthDoesNotParticipate is the unconditional
-// regression: neither an InvokeContract Address ARG nor a self-authored op.Auth Address entry
-// naming a victim may make that victim a participant. Both are attacker-controllable at decode
-// time: auth signatures are verified only by the network during apply (and only for consumed
-// require_auth entries on SUCCESSFUL txs), while the indexer decodes failed-tx op bodies too
-// (extract.go calls this unconditionally). A failing tx with a victim Address arg AND auth entry
-// (garbage signature, no victim key) would fool a consent gate on op.Auth. Include NEITHER.
+// TestParticipantAccounts_InvokeContractAuthoredAuthDoesNotParticipate: neither an InvokeContract Address arg nor a self-authored
+// op.Auth Address entry naming a victim may make the victim a participant. Both are attacker-controllable at decode time, and
+// failed-tx op bodies are decoded too (extract.go), so a consent gate on op.Auth would be fooled; include neither.
 func TestParticipantAccounts_InvokeContractAuthoredAuthDoesNotParticipate(t *testing.T) {
 	contractID := testContractID()
 	// Victim (gAddr2) as an Address arg AND as the named authorizer in a self-

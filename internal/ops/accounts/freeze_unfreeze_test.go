@@ -184,10 +184,8 @@ func TestFreezeUnfreeze_UnconfiguredRedisIsAnErrorNotAPanic(t *testing.T) {
 
 // ─── the operator-override vs aggregator-rehydrate race ─────────
 
-// fakeLadderStore is an in-memory freeze.LadderStore mirroring the SQL in
-// timescale.FreezeEventSink: SaveLadder UPDATEs the open row (a zero State
-// nulls hold_until), LoadLadder reports absent once the row is closed
-// (recovered_at stamped) or the ladder retired (hold_until NULL).
+// fakeLadderStore is an in-memory freeze.LadderStore mirroring the SQL in timescale.FreezeEventSink: SaveLadder UPDATEs the
+// open row (zero State nulls hold_until); LoadLadder reports absent once closed (recovered_at) or retired (hold_until NULL).
 type fakeLadderStore struct {
 	states map[string]freeze.State
 	closed map[string]bool

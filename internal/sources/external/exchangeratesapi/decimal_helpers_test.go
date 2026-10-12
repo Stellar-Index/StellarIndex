@@ -6,11 +6,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external/scale"
 )
 
-// scale.SciDecimalStringToScaledInt is the precision-preserving converter for
-// ExchangeRatesAPI quotes. Unlike the strict form, it ACCEPTS scientific notation (small
-// inverted rates such as "2e-10"). Both branches are pinned from this venue's side so the
-// poller cannot switch to the strict form and lose exotic-pair rates, or stop rejecting
-// empty/garbage input.
+// scale.SciDecimalStringToScaledInt converts ExchangeRatesAPI quotes without precision loss and, unlike the strict form,
+// accepts scientific notation ("2e-10"). Both branches are pinned so the poller cannot switch to the strict form and lose
+// exotic-pair rates, or stop rejecting empty/garbage input.
 
 func TestDecimalStringToScaledInt_edges(t *testing.T) {
 	cases := []struct {

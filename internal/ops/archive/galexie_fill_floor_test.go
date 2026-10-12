@@ -113,10 +113,8 @@ func (h *fillHarness) env(extra ...string) []string {
 		}, extra...)...)
 }
 
-// run executes a sandboxed copy of the shipped script: its host paths are
-// rewritten into the harness dir, nothing else changes. The paths the run
-// cannot do without must be present; the floor file and lock are rewritten
-// when the script names them.
+// run executes a sandboxed copy of the shipped script with host paths rewritten into the harness dir and nothing else changed.
+// Paths the run needs must exist; the floor file and lock are rewritten when the script names them.
 func (h *fillHarness) run(t *testing.T, script string, extra ...string) (string, error) {
 	t.Helper()
 	body := readRepoFile(t, script)

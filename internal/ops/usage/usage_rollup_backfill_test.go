@@ -34,10 +34,8 @@ func (s *recordingUsageSink) UpsertUsageDaily(_ context.Context, rows []usage.Ro
 	return nil
 }
 
-// seedUsageDetail writes per-endpoint counters for `day` through the
-// REAL usage.Counter (clock pinned to that day), so the Redis keys and
-// hash fields are exactly what middleware.UsageTracker writes in
-// production rather than a hand-rolled approximation.
+// seedUsageDetail writes per-endpoint counters for `day` through the real usage.Counter (clock pinned to that day),
+// so Redis keys and hash fields match what middleware.UsageTracker writes in production.
 func seedUsageDetail(t *testing.T, rdb redis.Cmdable, day time.Time, subject, endpoint, class string, times int) {
 	t.Helper()
 	pinned := time.Date(day.Year(), day.Month(), day.Day(), 9, 0, 0, 0, time.UTC)

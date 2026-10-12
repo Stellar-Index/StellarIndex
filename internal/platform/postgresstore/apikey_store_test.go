@@ -21,10 +21,8 @@ func TestNonNilStringArray_NilBecomesEmpty(t *testing.T) {
 	}
 }
 
-// TestNonNilStringArray_NonNilPassthrough — a non-nil input
-// round-trips through unchanged. The wrapper is purely a
-// nil-defence boundary; it must NOT mutate or copy values
-// when the slice is already non-nil.
+// TestNonNilStringArray_NonNilPassthrough pins that a non-nil slice passes through unchanged: the wrapper only defends against
+// nil, never copies or mutates.
 func TestNonNilStringArray_NonNilPassthrough(t *testing.T) {
 	in := []string{"app.example.com", "console.example.com"}
 	got := nonNilStringArray(in)
@@ -52,10 +50,8 @@ var apiKeysBoundedMarkers = []string{
 	"LIMIT", "COUNT(", "EXISTS", "WHERE id = $", "WHERE key_hash = $", "revoked_at IS NULL",
 }
 
-// TestAPIKeysQueriesAreBounded is the lint that every SQL literal
-// in this package that reads FROM api_keys must be bounded. An unbounded
-// per-account list put the whole revoked history on the mint path, the
-// dashboard list and the admin suspend kill switch.
+// TestAPIKeysQueriesAreBounded lints that every SQL literal reading FROM api_keys is bounded; an unbounded per-account list
+// put the whole revoked history on the mint path, dashboard list and admin suspend.
 func TestAPIKeysQueriesAreBounded(t *testing.T) {
 	files, err := filepath.Glob("*.go")
 	if err != nil {

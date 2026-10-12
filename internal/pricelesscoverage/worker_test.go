@@ -16,10 +16,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestPopularPriceless_Census pins the tripwire's verdict. Each row is chosen so exactly ONE
-// guard decides it, so removing that guard flips the row: the market-character (wash) exclusion,
-// the priced short-circuit, and the popularity floor. The withheld verdict is the serving
-// gate's, pinned by TestSweep_WithheldIsTheServingGatesVerdict.
+// TestPopularPriceless_Census pins the tripwire's verdict; each row is decided by exactly ONE guard (market-character wash
+// exclusion, priced short-circuit, popularity floor), so removing it flips the row. The withheld verdict is pinned by
+// TestSweep_WithheldIsTheServingGatesVerdict.
 func TestPopularPriceless_Census(t *testing.T) {
 	cases := []struct {
 		name string
@@ -39,10 +38,8 @@ func TestPopularPriceless_Census(t *testing.T) {
 			want: true,
 		},
 		{
-			// (B) the reported scam AUD: ~$205k/day RAW volume but 99% in a
-			// single wallet pair — a volume-painting wash farm. A raw-volume
-			// floor would page for it; the market-character exclusion must
-			// keep it SILENT.
+			// (B) the reported scam AUD: ~$205k/day raw volume, 99% in one wallet pair (a wash farm). A raw-volume floor would page; the
+			// market-character exclusion must stay SILENT.
 			name: "wash_concentrated_priceless_silent",
 			in: timescale.AssetCoverageSignals{
 				AssetID: "SCAMAUD-GISSUER", HasPriceUSD: false,
@@ -84,10 +81,9 @@ func TestPopularPriceless_Census(t *testing.T) {
 			want: true,
 		},
 		{
-			// Mid-range wash: its 0.80 share is below the 0.90 all-or-nothing gate, so
-			// washConcentrated does not exclude it, but $16k of the $20k raw 7d volume is one
-			// wash pair; market-character volume is $4k, under the $10k floor. A raw-volume
-			// comparison fires here; the market-character discount must not.
+			// Mid-range wash: its 0.80 share is under the 0.90 washConcentrated gate, but $16k of $20k raw 7d volume is one wash pair,
+			// leaving $4k market-character volume under the $10k floor. A raw-volume comparison fires; the market-character discount must
+			// not.
 			name: "mid_range_wash_discount_silent",
 			in: timescale.AssetCoverageSignals{
 				AssetID: "MIDWASH-GISSUER", HasPriceUSD: false,
@@ -123,10 +119,9 @@ func (f substanceStore) PairMarketSubstanceAt(
 	return f.m, nil
 }
 
-// The tripwire's "withheld" is the serving gate's own asset verdict, not a re-derivation of one
-// of its floors. A market clearing $1,000 in too few distinct minutes is withheld by the gate (no
-// gap); one whose candidate-row 24h volume is low while the gate's alias-union measure clears is
-// served-or-missing, so its absence is a real gap.
+// "Withheld" is the serving gate's own asset verdict, not a re-derivation of one floor: a market clearing $1,000 in too few
+// distinct minutes is withheld (no gap), while low candidate-row 24h volume with a clearing alias-union measure is served-or-
+// missing, so its absence is a real gap.
 func TestSweep_WithheldIsTheServingGatesVerdict(t *testing.T) {
 	const assetID = "GOLD-GATISXX6BZ6NC7IKQBY37CJD4SOZL3CYZJWXEDG6JVIY4WBS6KXJHN6Q"
 	cases := []struct {
@@ -173,10 +168,8 @@ func (f *fakeReader) PopularPricelessCandidates(context.Context) ([]timescale.As
 	return f.sigs, f.err
 }
 
-// TestSweep_SetsGaugeToFiringCount proves the worker publishes the COUNT of
-// firing assets — not a mock: the fake reader supplies raw signals and the
-// real classifier decides, so the gauge reflects the census above (one
-// popular-priceless + one wash + one gate-withheld + one priced -> exactly 1).
+// TestSweep_SetsGaugeToFiringCount proves the worker publishes the COUNT of firing assets using the real classifier over fake
+// raw signals (one popular-priceless + one wash + one gate-withheld + one priced -> exactly 1).
 func TestSweep_SetsGaugeToFiringCount(t *testing.T) {
 	obs.AssetsPopularPriceless.Set(-1) // sentinel: prove the sweep overwrites it
 	fixed := time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)
@@ -226,11 +219,8 @@ func (d *deadlineReader) PopularPricelessCandidates(ctx context.Context) ([]time
 	return nil, nil
 }
 
-// TestSweep_BoundsReadWithTimeout proves the sweep hands the reader a
-// deadline-bearing context: the full-catalogue scan takes about a minute warm and can balloon
-// under load, and an unbounded read could pin a DB connection. The ceiling must sit above the
-// warm scan yet be finite. Red-proof: pass ctx straight through in Sweep and sawDeadline goes
-// false.
+// TestSweep_BoundsReadWithTimeout proves the reader gets a deadline-bearing context: the full-catalogue scan takes ~1 min warm
+// and can balloon, and an unbounded read could pin a DB connection. The ceiling must sit above the warm scan yet be finite.
 func TestSweep_BoundsReadWithTimeout(t *testing.T) {
 	r := &deadlineReader{}
 	w := New(r, Options{SweepTimeout: 90 * time.Second})
@@ -260,10 +250,8 @@ func TestSweepTimeout_DefaultApplied(t *testing.T) {
 
 const ybtcSAC = "CB2XMFB6BDIHFOSFB5IXHDOYV3SI3IXMNIZLPDZHC7ENDCXSBEBZAO2Y"
 
-// A SAC trading under its contract id while the asset is priced under its
-// classic id must not trip the "priceless popular asset" tripwire. A SAC candidate whose
-// classic asset is priced is not a gap; one whose classic asset is also
-// priceless still is.
+// TestSweep_SACCandidatePricedUnderItsClassicAsset: a SAC trading under its contract id whose classic asset is priced is not a
+// gap for the "priceless popular asset" tripwire; one whose classic asset is also priceless still is.
 func TestSweep_SACCandidatePricedUnderItsClassicAssetIsNotAGap(t *testing.T) {
 	sigs := []timescale.AssetCoverageSignals{
 		{AssetID: ybtcSAC, Volume7dUSD: 43_823, Trades7d: 11, Volume24hUSD: 5_000, TopAccountPairVolShare: 0},

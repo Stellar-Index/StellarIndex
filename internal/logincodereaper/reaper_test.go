@@ -15,18 +15,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// `login_code_lockouts` retention.
-//
-// The lockout table's primary key is attacker-chosen (POST
-// /v1/auth/verify-code is unauthenticated and takes any well-formed
-// address), and rows for synthetic addresses are never cleared by the
-// success path because nobody can sign in as them. Without this reaper
-// the table grows without bound at whatever rate the anonymous rate
-// limit allows, on a disk-fixed host.
-//
-// These tests pin the worker's contract. The DELETE predicate itself —
-// including the rule that a LIVE lock is never reaped — is proven
-// against real Postgres in test/integration/auth_test.go.
+// `login_code_lockouts` retention: the key is attacker-chosen (unauthenticated POST /v1/auth/verify-code) and the success path
+// never clears synthetic addresses, so without this reaper the table grows unbounded. The DELETE predicate (a LIVE lock is never
+// reaped) is proven against real Postgres in test/integration/auth_test.go.
 
 type sweepCall struct{ olderThan time.Time }
 
@@ -126,11 +117,8 @@ func TestSweep_DeletesAndPublishesRowCount(t *testing.T) {
 	}
 }
 
-// TestSweep_RetentionExceedsTheCountingWindow — a sweep must never be
-// able to shorten a LIVE counting window, which is what would let a
-// grinder reset their durable failure count by waiting.
-// dashboardauth.durableCodeFailureWindow is 24h; this pins the default
-// retention above it so the two cannot drift into each other.
+// TestSweep_RetentionExceedsTheCountingWindow: a sweep must never shorten a LIVE counting window, which would let a grinder reset
+// their failure count by waiting. Pins default retention above dashboardauth.durableCodeFailureWindow (24h).
 func TestSweep_RetentionExceedsTheCountingWindow(t *testing.T) {
 	const countingWindow = 24 * time.Hour // dashboardauth.durableCodeFailureWindow
 	if logincodereaper.DefaultRetention <= countingWindow {
@@ -240,11 +228,8 @@ func TestRun_SweepsImmediately(t *testing.T) {
 	}
 }
 
-// TestRun_DrainsBacklogBeyondOnePassCap: the store
-// deletes at most a fixed number of rows per call, and one anonymous IP
-// can insert more than that per hour. If a capped pass waited a full
-// Interval the table would grow without bound, so one tick must keep
-// sweeping until the backlog is gone, then settle back to the Interval.
+// TestRun_DrainsBacklogBeyondOnePassCap: the store deletes a capped number of rows per call, so one tick must keep sweeping until
+// the backlog is gone, then settle back to the Interval; otherwise the table grows without bound.
 func TestRun_DrainsBacklogBeyondOnePassCap(t *testing.T) {
 	const perCallCap = 50
 	store := &fakeLockoutStore{backlog: 3*perCallCap + 5, perCallCap: perCallCap}
@@ -293,11 +278,8 @@ func TestNew_DefaultsAreProduction(t *testing.T) {
 	}
 }
 
-// TestSweep_MarksLiveness: every COMPLETED sweep — including a
-// failed one — stamps the liveness gauge, and construction publishes the
-// configured interval the stalled alert scales its threshold by. A dead
-// reaper is otherwise invisible: its rows gauge just freezes at a
-// healthy-looking number.
+// TestSweep_MarksLiveness: every COMPLETED sweep, failed ones included, stamps the liveness gauge, and construction publishes the
+// interval the stalled alert scales by. Otherwise a dead reaper is invisible: its rows gauge freezes at a healthy-looking number.
 func TestSweep_MarksLiveness(t *testing.T) {
 	g := obs.AuthReaperLastSweepUnix.WithLabelValues(obs.AuthReaperLoginCode)
 	start := float64(time.Now().Unix())

@@ -88,10 +88,8 @@ func TestCuratedRWAFetch_ReadsBothPublicResultsAndPages(t *testing.T) {
 			{"month_end": "2025-08-31", "total_rwa_market_cap_usd": json.Number("4004795860.00")},
 			{"month_end": "2024-09-30 00:00:00.000 UTC", "total_rwa_market_cap_usd": json.Number("436023166.55")},
 			{"month_end": "2025-07-31", "total_rwa_market_cap_usd": json.Number("3900000000.123456789")},
-			// The NEWEST month, printed in exponent form — a rendering a
-			// query engine picks for a large numeric whenever it likes.
-			// This row is the curator's headline; refusing it would
-			// publish the series dated to July.
+			// The newest month, printed in exponent form (a rendering a query engine may pick for a large numeric).
+			// It is the curator's headline row; refusing it would publish the series dated to July.
 			{"month_end": "2025-09-30", "total_rwa_market_cap_usd": json.Number("4.28e9")},
 			{"month_end": "2024-10-31", "total_rwa_market_cap_usd": json.Number("5.135e8")},
 		},
@@ -136,10 +134,8 @@ func TestCuratedRWAFetch_ReadsBothPublicResultsAndPages(t *testing.T) {
 	if len(rows) != 10 {
 		t.Fatalf("rows = %d, want 10", len(rows))
 	}
-	// The total series comes first, oldest month first, every value the
-	// figure the curator printed — verbatim when it printed one plainly,
-	// and with the point shifted out when it printed an exponent. No
-	// float ever holds it, so the digits are the curator's own.
+	// The total series comes first, oldest month first, each value the curator's own figure: verbatim when printed plainly,
+	// point-shifted when printed as an exponent. No float ever holds it, so no digits are lost.
 	total := rows[:5]
 	for i, want := range []struct{ month, value string }{
 		{"2024-09-30", "436023166.55"},
@@ -377,10 +373,8 @@ func TestCuratedRWAMonthEndAndDecimal(t *testing.T) {
 			t.Errorf("decimal %q -> (%q, %v), want (%q, true)", tc.in, got, ok, tc.want)
 		}
 	}
-	// What is still not a published figure. "5/3" and "0x1p-2" are the
-	// reason this parses the literal itself rather than deferring to
-	// big.Rat, which accepts both; the last two are exponents wide
-	// enough to be an allocation rather than a market capitalisation.
+	// Still not a published figure: "5/3" and "0x1p-2" are why this parses the literal itself rather than via big.Rat,
+	// which accepts both; the last two are exponents wide enough to be an allocation, not a market cap.
 	for _, s := range []string{"", "abc", "1,000", "5/3", "0x1p-2", "1e", "1e+", ".", "1.2.3", "1 000", "1e99999", "9e400"} {
 		if got, ok := curatedRWADecimal(json.Number(s)); ok {
 			t.Errorf("decimal %q accepted as %q", s, got)
@@ -389,10 +383,8 @@ func TestCuratedRWAMonthEndAndDecimal(t *testing.T) {
 }
 
 func TestCuratedRWASync_RefusesWithoutKeyOrConfig(t *testing.T) {
-	// No key is a REFUSAL, not a failure: the run stamps its textfile so
-	// the timer's cadence stays measurable, says so on the gauge, and
-	// exits clean rather than leaving the unit red every day until an
-	// operator sets the key.
+	// No key is a refusal, not a failure: the run stamps its textfile (keeping the timer cadence measurable), says so on the
+	// gauge and exits clean rather than leaving the unit red daily until an operator sets the key.
 	t.Setenv("DUNE_API_KEY", "")
 	prom := filepath.Join(t.TempDir(), "curated.prom")
 	if err := curatedRWASync([]string{"-config", writeIngestConfig(t), "-textfile", prom}); err != nil {

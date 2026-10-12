@@ -266,10 +266,9 @@ func TestDecoder_Decode_MessageSent(t *testing.T) {
 	}
 }
 
-// TestDecoder_Decode_FullCensusEvents exercises Matches + Decode for the 16 remaining topics from a
-// known CCTP contract, guarding the dispatcher_adapter.go switch (a Classify case with no matching
-// arm would fall through to ErrUnknownEvent instead of emitting a row), as
-// TestDecoder_Decode_GovernanceEvents does for the first 5.
+// TestDecoder_Decode_FullCensusEvents exercises Matches + Decode for the 16 remaining topics from a known CCTP contract,
+// guarding the dispatcher_adapter.go switch: a Classify case with no arm would fall through to ErrUnknownEvent instead of
+// emitting a row.
 func TestDecoder_Decode_FullCensusEvents(t *testing.T) {
 	t.Parallel()
 	d := NewDecoder()

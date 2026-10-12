@@ -16,11 +16,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// FuzzAssetID checks every asset renderer in this package agrees with
-// canonical.AssetFromXDR — the identity the rest of the pipeline keys on — so
-// the explorer never mints an id the canonical layer would refuse or render
-// differently, and that SACContractID inverts the rendered id back to the
-// asset's real SAC address (the Blend-reserve pricing join).
+// FuzzAssetID checks every asset renderer agrees with canonical.AssetFromXDR (the identity the pipeline keys on), so the explorer
+// never mints an id the canonical layer would refuse, and that SACContractID inverts the id back to the real SAC address (Blend-
+// reserve pricing join).
 func FuzzAssetID(f *testing.F) {
 	iss, err := strkey.Decode(strkey.VersionByteAccountID, issuerAccount)
 	if err != nil {
@@ -219,10 +217,9 @@ func TestOperationBody_rejectsTrailingBytesInFinalQuantum(t *testing.T) {
 	}
 }
 
-// FuzzDecodeOperationBody checks the operation renderer is total on any wire
-// body and that every classic Int64 amount it emits is the exact decimal of
-// the on-wire stroops (ADR-0003: a string, never a float, never truncated),
-// with each asset/price field bound to the right operand.
+// FuzzDecodeOperationBody checks the renderer is total on any wire body and that every classic Int64 amount is the exact decimal
+// of the on-wire stroops (ADR-0003: string, never float, never truncated), with each asset/price field bound to the right
+// operand.
 func FuzzDecodeOperationBody(f *testing.F) {
 	for _, s := range opBodySeeds(f) {
 		f.Add(s)

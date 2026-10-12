@@ -15,10 +15,8 @@ func (f fakeDecimalsLookup) Lookup(assetID string) (int, bool) {
 	return d, ok
 }
 
-// testContract is a real, valid on-chain C-strkey — the contract
-// id from the decimals incident
-// (docs/operations/runbooks/dex.md), reused here
-// purely as a memorable, checksum-valid fixture.
+// testContract is a real, checksum-valid C-strkey, the contract id from the decimals incident (docs/operations/runbooks/dex.md),
+// reused as a fixture.
 const testContract = "CC2RBGYNCFBCVENIDL5BFBWPH4OUZM2UA3OD2K2N54GLMWCC4KWPVAGO"
 
 func TestResolveDecimals_NilLookupDefaultsStandard(t *testing.T) {

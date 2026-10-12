@@ -102,10 +102,7 @@ func TestGolden_defindexStrategyHarvest_ledger57485721(t *testing.T) {
 	if fe.Flow.From != wantFrom {
 		t.Errorf("From = %q, want %q", fe.Flow.From, wantFrom)
 	}
-	// amount: the DUST value 2, decoded-by-name — NOT price_per_share.
-	// Mutation guard (non-vacuous): change wantAmount to "3" (or wantFrom
-	// by one char) and this test FAILS — the value is pinned, not merely
-	// asserted non-empty.
+	// amount: the DUST value 2, decoded by name, not price_per_share. Mutating wantAmount or wantFrom must fail this test.
 	if got := fe.Flow.Amount.String(); got != wantAmount {
 		t.Errorf("Amount = %q, want %q (decode-by-name must ignore price_per_share)", got, wantAmount)
 	}

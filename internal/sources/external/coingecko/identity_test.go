@@ -7,10 +7,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
-// Coingecko is an aggregator (composite index over upstream venues),
-// NOT an exchange. Class must be ClassAggregator so the aggregator's
-// VWAP filter excludes it — including a composite index against
-// retail liquidity would double-count the same upstream trades.
+// Coingecko is an aggregator, not an exchange: ClassAggregator keeps it out of the VWAP filter so upstream trades are not
+// double-counted.
 
 func TestPoller_NameAndClass(t *testing.T) {
 	p := NewPoller()

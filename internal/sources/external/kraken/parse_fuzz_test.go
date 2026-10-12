@@ -13,10 +13,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external/scale"
 )
 
-// FuzzBuildTrade: qty/price as the json.Number strings the decoder hands
-// over; base is the exact 10^8 scaling, quote is base×price/10^8
-// truncated, dust is exactly a zero quote, and a field the scaler rejects
-// never yields a trade.
+// FuzzBuildTrade: qty/price arrive as json.Number strings; base is the exact 10^8 scaling, quote is base×price/10^8 truncated,
+// dust is exactly a zero quote, and a field the scaler rejects never yields a trade.
 func FuzzBuildTrade(f *testing.F) {
 	f.Add("100.00000000", "0.17582", "XLM/USD", int64(987654321))
 	f.Add("0.00000001", "0.16", "XLM/USD", int64(1))

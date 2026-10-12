@@ -11,10 +11,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external/kraken"
 )
 
-// Every quote asset in every shipped venue pair table must resolve to a
-// USD reference, or a configured production pair runs with the dust guard
-// inert. Quotes are derived from each venue's DefaultPairs so a newly
-// added quote leg fails here rather than only warning at startup.
+// TestShippedVenueQuotes_HaveUSDReference requires every quote asset in each venue's DefaultPairs to resolve to a USD
+// reference. Otherwise a configured pair runs with the dust guard inert; a new quote leg fails here instead of only warning at
+// startup.
 func TestShippedVenueQuotes_HaveUSDReference(t *testing.T) {
 	venues := map[string]func() (map[string]canonical.Pair, error){
 		"binance":  binance.DefaultPairs,

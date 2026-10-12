@@ -182,10 +182,8 @@ func TestDecoder_orderBookClaim_roundTrip(t *testing.T) {
 }
 
 func TestDecoder_multiClaim_opIndexUnique(t *testing.T) {
-	// One ManageSellOffer crosses the book through two resting
-	// offers → two claims → two trades, each with a distinct
-	// OpIndex so the trades hypertable's primary key doesn't
-	// collide.
+	// One ManageSellOffer crossing two resting offers yields two claims and two trades with distinct OpIndex, so the trades
+	// primary key cannot collide.
 	xlm := xdr.Asset{Type: xdr.AssetTypeAssetTypeNative}
 	usdc := mkAlphanum4Asset(t, "USDC", 0x10)
 
@@ -246,10 +244,8 @@ func TestDecoder_failedOp_emitsNothing(t *testing.T) {
 	}
 }
 
-// TestDecoder_v0ClaimAtom_decodedAsOrderBook pins that V0 claim atoms (pre-CAP-27 shape)
-// decode into a regular trade, deriving the seller G-strkey from the raw ed25519 bytes.
-// Without the V0 branch the per-claim skip drops the row, leaving a coverage hole in
-// since-inception history on pre-P18 ledgers.
+// TestDecoder_v0ClaimAtom_decodedAsOrderBook pins that pre-CAP-27 V0 claim atoms decode into a trade, deriving the seller
+// G-strkey from the raw ed25519 bytes. Without the V0 branch the claim is skipped, leaving a coverage hole in pre-P18 history.
 func TestDecoder_v0ClaimAtom_decodedAsOrderBook(t *testing.T) {
 	var pub xdr.Uint256
 	pub[0] = 0x30
@@ -329,10 +325,8 @@ func TestDecoder_Name(t *testing.T) {
 	}
 }
 
-// TestDecoder_DecodeCounted_ReportsPerClaimFailures: Decode silently drops a claim atom it
-// cannot decode, so DecodeCounted must surface the failure count. The census can then mark
-// the ledger blind (completeness.BlindTracker) instead of certifying a clean reconcile on a
-// ledger where a claim was provably dropped.
+// TestDecoder_DecodeCounted_ReportsPerClaimFailures: Decode silently drops an undecodable claim, so DecodeCounted must report
+// the count. The census can then mark the ledger blind (completeness.BlindTracker) instead of certifying a clean reconcile.
 func TestDecoder_DecodeCounted_ReportsPerClaimFailures(t *testing.T) {
 	xlm := xdr.Asset{Type: xdr.AssetTypeAssetTypeNative}
 	usdc := mkAlphanum4Asset(t, "USDC", 0x10)

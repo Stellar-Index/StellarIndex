@@ -22,11 +22,9 @@ import (
 // fixture across tests.
 const usdcIssuer = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 
-// Golden-string tests: every wire string asserted below is byte-identical to what the
-// untyped `string` builders produced. The typed-key migration (ADR-0007) is compile-time
-// hardening only and must NOT invalidate a live Redis key on deploy. Each assertion calls
-// [*.String] to cross into the raw wire string, as a real call site does at the
-// redis.Cmdable boundary.
+// Golden-string tests: each wire string is byte-identical to what the untyped string builders produced, since the typed-key
+// migration (ADR-0007) must not invalidate a live Redis key on deploy. Each assertion calls [*.String] as a real call site does
+// at the redis.Cmdable boundary.
 
 func TestPriceKey(t *testing.T) {
 	xlm := canonical.NativeAsset()
@@ -107,11 +105,9 @@ func TestRateLimitKey(t *testing.T) {
 }
 
 func TestRateLimitKey_MatchesRatelimitPackagePrefix(t *testing.T) {
-	// internal/ratelimit builds "rl:<escape(key)>:<bucket>" atomically inside Bucket.Charge;
-	// this package mirrors that shape for read-only callers. A hardcoded "rl:" prefix
-	// assertion would pass even if the two sides drifted (e.g. the bucket window division
-	// changed), so this drives a real *ratelimit.Bucket against miniredis and diffs the
-	// ACTUAL key it wrote against cachekeys.RateLimitKey's output.
+	// internal/ratelimit builds "rl:<escape(key)>:<bucket>" inside Bucket.Charge and cachekeys mirrors it for readers. A hardcoded
+	// prefix assertion would not catch drift, so drive a real *ratelimit.Bucket against miniredis and diff the actual key with
+	// cachekeys.RateLimitKey.
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rdb.Close() })
@@ -185,10 +181,8 @@ func TestHealth(t *testing.T) {
 	}
 }
 
-// TestVWAPProvenance covers the cache key + the constant marker
-// the triangulation worker stamps. The API reads the value via
-// byte equality so the two must stay in lock-step — flipping
-// either side without the other breaks `flags.triangulated`.
+// TestVWAPProvenance covers the cache key and the constant marker the triangulation worker stamps; the API reads it by byte
+// equality, so both sides must change together or `flags.triangulated` breaks.
 func TestVWAPProvenance(t *testing.T) {
 	xlm := canonical.NativeAsset()
 	usdc, err := canonical.NewClassicAsset("USDC", usdcIssuer)
@@ -201,11 +195,8 @@ func TestVWAPProvenance(t *testing.T) {
 	if got.String() != want {
 		t.Errorf("VWAPProvenance = %q, want %q", got.String(), want)
 	}
-	// Sibling-key check: the provenance key MUST be the VWAP key with `:provenance` suffixed.
-	// The aggregator writes both atomically; a mismatched suffix would orphan the marker.
-	//
-	// [VWAPKey] and [VWAPProvenanceKey] are DISTINCT types, so the comparison goes through
-	// .String() on both sides (see TestTypedKeysAreDistinctFamilies below).
+	// Sibling-key check: the provenance key must be the VWAP key plus `:provenance`, as the aggregator writes both atomically and a
+	// mismatched suffix orphans the marker. The types are distinct, so compare via .String() on both sides.
 	vwap := cachekeys.VWAP(xlm, usdc, 5*time.Minute)
 	if got.String() != vwap.String()+":provenance" {
 		t.Errorf("VWAPProvenance %q is not VWAP %q + :provenance", got.String(), vwap.String())
@@ -216,10 +207,8 @@ func TestVWAPProvenance(t *testing.T) {
 	}
 }
 
-// TestVWAPCompositeMeta pins the composite-meta marker's wire shape: the
-// VWAP value key with `:composite_meta` suffixed. The aggregator writes
-// it alongside the value; a mismatched suffix would orphan the router
-// quality flags Step 3 reads.
+// TestVWAPCompositeMeta pins the composite-meta marker: the VWAP value key plus `:composite_meta`. A mismatched suffix would
+// orphan the router quality flags Step 3 reads.
 func TestVWAPCompositeMeta(t *testing.T) {
 	xlm := canonical.NativeAsset()
 	gbp := canonical.Asset{Type: canonical.AssetFiat, Code: "GBP"}
@@ -383,12 +372,9 @@ func TestAllKeysHaveDistinctPrefixes(t *testing.T) {
 	}
 }
 
-// TestMarketsListFamily golden-pins the four `markets:list:*` shapes.
-// These canonical builders spare call sites in cmd/stellarindex-api/main.go from hand-appending
-// `":order=" + marketsOrderKey(order)` (and other ad-hoc suffixes) onto a bare string, the
-// ad-hoc-key-construction bug class this package exists to close. Against the typed
-// [cachekeys.MarketsListKey] that concatenation is a compile error. The golden strings
-// assert the wire bytes equal what the concatenation would produce.
+// TestMarketsListFamily golden-pins the four `markets:list:*` shapes. The canonical builders spare cmd/stellarindex-api/main.go
+// from hand-appending suffixes (a compile error against the typed [cachekeys.MarketsListKey]); the goldens assert identical wire
+// bytes.
 func TestMarketsListFamily(t *testing.T) {
 	base := cachekeys.MarketsList("cur1", 25)
 	if base.String() != "markets:list:cur1:25" {
@@ -469,10 +455,8 @@ func TestOracleLatest(t *testing.T) {
 // compile-time misuse demonstration below.
 func wantsPriceKey(cachekeys.PriceKey) {}
 
-// TestTypedKeysAreDistinctFamilies is the compile-time misuse example the typed-key design
-// exists to produce. The POSITIVE case (a PriceKey satisfies a PriceKey-typed parameter)
-// compiles and runs below. The NEGATIVE cases are commented out because a _test.go file
-// must compile; the comments show exactly what fails and why.
+// TestTypedKeysAreDistinctFamilies shows the compile-time misuse protection of typed keys. The positive case (PriceKey into a
+// PriceKey parameter) runs below; the negative cases are commented out since a _test.go file must compile.
 func TestTypedKeysAreDistinctFamilies(t *testing.T) {
 	xlm := canonical.NativeAsset()
 	usdc, _ := canonical.NewClassicAsset("USDC", usdcIssuer)
@@ -508,11 +492,9 @@ func TestTypedKeysAreDistinctFamilies(t *testing.T) {
 	_ = usdc // keep the import path exercised even if unused above
 }
 
-// TestAPIKeyRecords_NotOnAnEvictingInstance: `apikey:` records are the credential of record
-// for signup, admin and mint-key issued keys (the plaintext is unrecoverable by contract).
-// They are durable only if the instance can never evict them: noeviction, or a volatile-*
-// policy while the records carry no TTL. An allkeys-* policy evicts regardless of TTL, so
-// memory pressure silently deletes live credentials. Both codified Redis deployments are checked.
+// TestAPIKeyRecords_NotOnAnEvictingInstance: `apikey:` records are the credential of record (plaintext is unrecoverable), so the
+// instance must never evict them: noeviction, or volatile-* while records carry no TTL. allkeys-* evicts regardless of TTL,
+// silently deleting live credentials. Both codified Redis deployments are checked.
 func TestAPIKeyRecords_NotOnAnEvictingInstance(t *testing.T) {
 	policies := map[string]string{
 		"redis-sentinel defaults": sentinelDefaultsPolicy(t),

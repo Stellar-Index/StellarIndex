@@ -162,10 +162,8 @@ func TestRunVerifyChunks_CheckpointOnly_StillDetectsChainBreak(t *testing.T) {
 
 // ─── fixture helpers ────────────────────────────────────────────────
 
-// filesystemLedgerstreamConfig is a copy of the helper from
-// test/integration/projector_test.go — duplicated so
-// the cmd/stellarindex-ops integration test doesn't have to import
-// across package boundaries.
+// filesystemLedgerstreamConfig duplicates the helper in test/integration/projector_test.go so this integration test
+// need not import across package boundaries.
 func filesystemLedgerstreamConfig(dir string) ledgerstream.Config {
 	return ledgerstream.Config{
 		DataStore: datastore.DataStoreConfig{

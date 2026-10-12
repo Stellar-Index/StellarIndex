@@ -13,10 +13,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// Pin the metric labels emitted by runPoller so a refactor can't
-// silently change "skipped" → "success" (which would defeat the
-// staleness alert) or fail to increment "error" (which would re-open
-// the original blind-spot bug).
+// Pin the metric labels emitted by runPoller so a refactor cannot turn "skipped" into "success" (defeating the staleness alert)
+// or stop incrementing "error".
 
 func TestRunPoller_MetricLabels(t *testing.T) {
 	cases := []struct {
@@ -205,11 +203,8 @@ type errMock string
 
 func (e errMock) Error() string { return string(e) }
 
-// readPollsCounter peeks the current value of
-// ExternalPollerPollsTotal{source, outcome}. Reset semantics:
-// prometheus counters can't be reset between subtests in the same
-// process, so each subtest uses a unique source label and asserts
-// strict increment rather than exact value.
+// readPollsCounter reads ExternalPollerPollsTotal{source, outcome}. Prometheus counters cannot be reset between subtests,
+// so each subtest uses a unique source label and asserts a strict increment.
 func readPollsCounter(t *testing.T, source, outcome string) float64 {
 	t.Helper()
 	m, err := obs.ExternalPollerPollsTotal.GetMetricWithLabelValues(source, outcome)

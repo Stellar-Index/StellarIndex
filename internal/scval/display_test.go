@@ -86,10 +86,9 @@ func TestDisplay_NestedDepthCap(t *testing.T) {
 	}
 }
 
-// TestDisplay_I128 pins the ADR-0003 invariant at the display layer: a value
-// above 2^63 renders as the full decimal string, never a truncated int64.
-// TestDisplay_truncationBoundary pins the 120-byte string cap: a string of
-// exactly the cap renders whole, one byte more is cut and marked.
+// TestDisplay_I128 pins ADR-0003 at the display layer: a value above 2^63 renders as the full decimal string, never a truncated
+// int64. TestDisplay_truncationBoundary pins the 120-byte string cap: exactly the cap renders whole, one byte more is cut and
+// marked.
 func TestDisplay_truncationBoundary(t *testing.T) {
 	for n, want := range map[int]string{
 		120: strings.Repeat("a", 120),

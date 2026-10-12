@@ -151,10 +151,8 @@ func TestContiguousWatermark_FreezesOnGap(t *testing.T) {
 	})
 
 	t.Run("mid-range gap freezes the checkpoint before it", func(t *testing.T) {
-		// Ledgers 100,101 persist; 102 is skipped (read error); 103,104
-		// persist. The durable checkpoint MUST be 101 (last ledger with no
-		// preceding gap), so a resume re-reads from 102 (the gap) — NOT 104,
-		// which would strand ledger 102 forever.
+		// Ledgers 100,101 persist; 102 is skipped (read error); 103,104 persist. The checkpoint MUST be 101 (last ledger with no
+		// preceding gap) so resume re-reads from 102, not 104, which would strand 102 forever.
 		var wm contiguousWatermark
 		wm.persisted(100)
 		wm.persisted(101)

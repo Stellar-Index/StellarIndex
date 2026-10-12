@@ -151,10 +151,8 @@ func TestMinMaxInt(t *testing.T) {
 // describe the contract this code was written against.
 const sdkListFilePathsMaxLimit = 1000
 
-// fakeHotArchive is a keyspace-only stand-in for the galexie-archive
-// MinIO bucket. It implements both seams the trim planner uses:
-// trimFileLister (the SDK DataStore slice) and s3PrefixLister (the
-// raw delimited listing used for partition discovery).
+// fakeHotArchive is a keyspace-only stand-in for the galexie-archive MinIO bucket, implementing trimFileLister
+// (SDK DataStore slice) and s3PrefixLister (raw delimited listing for partition discovery).
 type fakeHotArchive struct {
 	keys      []string // sorted ascending, exactly as S3 returns them
 	keyPrefix string   // bucket key prefix ("" for galexie-archive)
@@ -538,10 +536,8 @@ func TestListHotPartitions_PagesPastOneThousandCommonPrefixes(t *testing.T) {
 			t.Fatalf("partition %q did not parse", p.prefix)
 		}
 	}
-	// Discovery returns them lexicographically, i.e. NEWEST partition
-	// first (descending hex) — the same ordering trap that produced the
-	// original bug. planTrim re-sorts; see
-	// TestComparePartitions_OldestFirstUnparsedLast.
+	// Discovery returns partitions lexicographically, i.e. newest first (descending hex), the ordering trap behind the original bug.
+	// planTrim re-sorts; see TestComparePartitions_OldestFirstUnparsedLast.
 	if parts[0].start != (partitions-1)*2 {
 		t.Errorf("first discovered partition starts at %d, want %d (lexicographic = newest first)", parts[0].start, (partitions-1)*2)
 	}

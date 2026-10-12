@@ -13,10 +13,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external/scale"
 )
 
-// FuzzParseFrameTrade: amount_str/price_str through a real-shape
-// live_trades frame; base is the exact 10^8 scaling, quote is
-// base×price/10^8 truncated, dust is exactly a zero quote, and a field
-// the scaler rejects never yields a trade.
+// FuzzParseFrameTrade: base is the exact 10^8 scaling, quote is base×price/10^8 truncated, dust is exactly a zero quote, and a
+// field the scaler rejects never yields a trade.
 func FuzzParseFrameTrade(f *testing.F) {
 	f.Add("100.5", "0.17582", "xlmusd", int64(123456789))
 	f.Add("0.00000001", "0.16", "xlmusd", int64(1))

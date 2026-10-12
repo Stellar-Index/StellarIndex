@@ -15,10 +15,8 @@ import (
 // internal/sources/blend/README.md "Known gap" for the evidence trail. They pin the V1
 // pool-factory's simpler vocabulary: if a decode helper drifts, the asserted fields change.
 
-// TestGolden_UpdateEmissionsV1 pins decodeUpdateEmissions against a
-// real V1 pool event: ledger 51,524,668, pool CDVQVKOY…, tx
-// f56fabf7…, event_index 4. Topic: [Symbol("update_emissions")].
-// Body: bare i128 = 447798000000.
+// TestGolden_UpdateEmissionsV1 pins decodeUpdateEmissions against a real V1 pool event (ledger 51,524,668, event_index 4):
+// topic [Symbol("update_emissions")], body bare i128 = 447798000000.
 func TestGolden_UpdateEmissionsV1(t *testing.T) {
 	t.Parallel()
 	ev := &events.Event{
@@ -52,11 +50,8 @@ func TestGolden_UpdateEmissionsV1(t *testing.T) {
 	}
 }
 
-// TestGolden_NewLiquidationAuctionV1 pins decodeNewLiquidationAuctionV1 against a real V1
-// pool event (ledger 51,611,821, pool CDVQVKOY…, tx c128f9ce…). Topic:
-// [Symbol("new_liquidation_auction"), Address(user)]. Body: Map{bid, block, lot}, the same
-// AuctionData shape decodeAuctionData parses for V2's new_auction, but with no auction_type
-// topic and no percent field.
+// TestGolden_NewLiquidationAuctionV1 pins decodeNewLiquidationAuctionV1 against a real V1 pool event (ledger 51,611,821):
+// body is the AuctionData Map{bid, block, lot} as in V2's new_auction, but with no auction_type topic and no percent field.
 func TestGolden_NewLiquidationAuctionV1(t *testing.T) {
 	t.Parallel()
 	ev := &events.Event{
@@ -114,10 +109,8 @@ func TestGolden_NewLiquidationAuctionV1(t *testing.T) {
 	}
 }
 
-// TestGolden_DeleteLiquidationAuctionV1 pins decodeDeleteLiquidationAuctionV1 against the
-// single real V1 occurrence (ledger 54,890,906, pool CBP7NO6F…, tx 24fb3d09…). Topic:
-// [Symbol("delete_liquidation_auction"), Address(user)]. Body: ScvVoid, not parsed, as with
-// V2's delete_auction.
+// TestGolden_DeleteLiquidationAuctionV1 pins decodeDeleteLiquidationAuctionV1 against the single real V1 occurrence
+// (ledger 54,890,906); the body is ScvVoid and is not parsed, as with V2's delete_auction.
 func TestGolden_DeleteLiquidationAuctionV1(t *testing.T) {
 	t.Parallel()
 	ev := &events.Event{
@@ -240,10 +233,9 @@ func TestGolden_FillAuctionV1(t *testing.T) {
 	}
 }
 
-// V1 new_auction topics are [Symbol, u32(auction_type)] with no user: the
-// user is the V1 backstop and percent is 100. The bad_debt rows one ledger
-// earlier move exactly the bid's dTokens onto the backstop, which is the
-// evidence that the auction covers the whole liability.
+// V1 new_auction topics are [Symbol, u32(auction_type)] with no user: the user is the V1 backstop and percent is 100. The
+// prior ledger's bad_debt rows move exactly the bid's dTokens onto the backstop, showing the auction covers the whole
+// liability.
 func TestGolden_NewAuctionV1(t *testing.T) {
 	t.Parallel()
 	evs := loadV1PoolAuctionEvents(t)

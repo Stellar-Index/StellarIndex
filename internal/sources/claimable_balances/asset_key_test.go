@@ -6,11 +6,8 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// TestAssetKeyFromAsset_nonEd25519IssuerNoPanic confirms the issuer
-// deref uses GetEd25519() with the ok-check rather than the raw
-// `Issuer.Ed25519[:]` slice (which panics when the AccountId is not
-// an Ed25519 key — a malformed/forward-compat XDR). The decoder must
-// return an error, not crash the ledger.
+// TestAssetKeyFromAsset_nonEd25519IssuerNoPanic pins that the issuer deref uses GetEd25519() with the ok-check, not the raw
+// slice, which panics on a non-Ed25519 AccountId; the decoder must return an error.
 func TestAssetKeyFromAsset_nonEd25519IssuerNoPanic(t *testing.T) {
 	// AccountId with a type that has no Ed25519 union arm populated.
 	badIssuer := xdr.AccountId{Type: xdr.PublicKeyType(99)} // Ed25519 == nil

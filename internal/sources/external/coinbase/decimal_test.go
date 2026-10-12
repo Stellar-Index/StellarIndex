@@ -11,10 +11,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external/scale"
 )
 
-// Error and edge-case tests for decimalStringToScaledInt. The
-// existing TestDecimalStringToScaledInt_CoinbasePrecision
-// exercises only happy paths; this file fills in the error
-// branches to match the shape of the binance + bitstamp suites.
+// Error and edge-case tests for decimalStringToScaledInt, covering the branches the happy-path
+// TestDecimalStringToScaledInt_CoinbasePrecision misses, in the shape of the binance and bitstamp suites.
 
 func TestDecimalStringToScaledInt_emptyRejected(t *testing.T) {
 	_, err := scale.DecimalStringToScaledInt("", 8)
@@ -166,10 +164,8 @@ func TestParseFrame_ErrorFrameSurfacesRejection(t *testing.T) {
 }
 
 func TestParseFrame_UnknownProduct(t *testing.T) {
-	// A match on a product not in PairMap — MATIC-USD is in the
-	// ADR-0014 allow-list but intentionally not in DefaultPairs
-	// (skipped pending MATIC→POL migration), the stable "known
-	// unknown" placeholder. Surfaces ErrUnknownProduct.
+	// A match on a product absent from PairMap (MATIC-USD is allow-listed per ADR-0014 but deliberately not in DefaultPairs,
+	// pending the MATIC to POL migration) surfaces ErrUnknownProduct.
 	raw := []byte(`{
       "type":"match","trade_id":1,"side":"buy","size":"1","price":"0.5",
       "product_id":"MATIC-USD","sequence":1,"time":"2026-04-24T00:00:00Z"

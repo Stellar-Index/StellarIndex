@@ -89,10 +89,8 @@ func (l *sep1CallLog) count(step string) int {
 	return n
 }
 
-// sep1TestDomain starts a TLS server that serves body at the SEP-1
-// well-known path and returns its host:port, which is what the resolver
-// takes as a home_domain. Every hit is logged as "fetch <label>" so a
-// caller can assert where the fetch falls relative to the store writes.
+// sep1TestDomain starts a TLS server serving body at the SEP-1 well-known path and returns its host:port, which the resolver
+// takes as a home_domain. Each hit logs "fetch <label>" so a caller can assert where the fetch falls relative to store writes.
 func sep1TestDomain(t *testing.T, log *sep1CallLog, label, body string) (*httptest.Server, string) {
 	t.Helper()
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

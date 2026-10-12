@@ -8,11 +8,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external/scale"
 )
 
-// decimalStringToScaledInt converts a decimal string (e.g. "0.123")
-// to an integer scaled by 10^targetDecimals. The implementation
-// has a long branch tree (sign, dot-position, fractional padding /
-// truncation) — table-driven test mirrors the binance + coinbase
-// suites for symmetry.
+// decimalStringToScaledInt converts a decimal string ("0.123") to an integer scaled by 10^targetDecimals; this table test
+// covers its long branch tree (sign, dot position, fractional padding or truncation).
 
 func TestDecimalStringToScaledInt(t *testing.T) {
 	cases := []struct {
@@ -60,10 +57,7 @@ func TestDecimalStringToScaledInt(t *testing.T) {
 }
 
 func TestDecimalStringToScaledInt_scientificNotationRejected(t *testing.T) {
-	// The function deliberately rejects scientific notation rather
-	// than silently producing the wrong answer — Bitstamp's REST
-	// shouldn't ever serialize that way, but a future API change
-	// must surface as a parse failure not a wrong-value bug.
+	// Scientific notation is rejected rather than mis-scaled: Bitstamp should never send it, and an API change must fail the parse.
 	for _, s := range []string{"1e10", "1.5E-3", "2e0"} {
 		_, err := scale.DecimalStringToScaledInt(s, 8)
 		if err == nil {

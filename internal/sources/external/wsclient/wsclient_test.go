@@ -68,11 +68,8 @@ func TestClassifyDisconnect_BoundedReasonLabels(t *testing.T) {
 	}
 }
 
-// TestKeepAliveHTTPClient_HasKeepaliveDialer — the *http.Client we hand to
-// websocket.Dial must have a Transport with a custom DialContext that sets
-// TCP keepalive, and HTTP/2 must stay disabled. Without the dialer, dead
-// TCP connections take Linux's default (~2h) to be detected, surfacing as
-// "connection reset by peer" reads instead of being preempted.
+// TestKeepAliveHTTPClient_HasKeepaliveDialer: the client passed to websocket.Dial needs a Transport with a TCP-keepalive
+// DialContext and HTTP/2 disabled, otherwise dead connections take Linux's default (~2h) to detect.
 func TestKeepAliveHTTPClient_HasKeepaliveDialer(t *testing.T) {
 	c := KeepAliveHTTPClient()
 	if c == nil {
@@ -90,18 +87,9 @@ func TestKeepAliveHTTPClient_HasKeepaliveDialer(t *testing.T) {
 	}
 }
 
-// TestLoop_PingStallDropsConnection pins half-open detection:
-// a HALF-OPEN venue socket must be detected by the loop itself, not left
-// to OS TCP keepalive (minutes-to-hours on Linux defaults).
-//
-// The fake venue accepts the upgrade and then wedges — it never reads
-// again, so the client's ping frame is never processed and no pong comes
-// back, while the TCP connection stays established. That is exactly what a
-// half-open venue socket looks like from the streamer's side. Before the
-// ping watchdog, runOnce sat in a bare conn.Read on the long-lived
-// connection context and returned nothing at all: no trades, no error, no
-// reconnect, and no disconnect metric — the streamer looked healthy while
-// ingesting zero.
+// TestLoop_PingStallDropsConnection pins half-open detection by the loop itself, not OS keepalive (minutes to hours): the fake
+// venue accepts the upgrade then never reads, so no pong arrives. Without the ping watchdog runOnce blocked in conn.Read with
+// no trades, error, reconnect or disconnect metric.
 func TestLoop_PingStallDropsConnection(t *testing.T) {
 	wedged := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -153,12 +141,9 @@ func TestLoop_PingStallDropsConnection(t *testing.T) {
 	}
 }
 
-// TestLoop_DialTimeoutBoundsSilentUpgrade pins the dial deadline: a venue that
-// completes TCP (and, in production, TLS) but never answers the HTTP
-// upgrade must fail the dial attempt within DialTimeout. The transport's
-// timeouts stop at TLS and the ping watchdog starts only after Dial
-// returns, so before the per-attempt deadline runOnce blocked on the loop
-// context indefinitely: no error, no "dial" disconnect, no reconnect.
+// TestLoop_DialTimeoutBoundsSilentUpgrade pins the dial deadline: a venue that completes TCP/TLS but never answers the HTTP
+// upgrade must fail within DialTimeout, since transport timeouts stop at TLS and the ping watchdog starts only after Dial
+// returns.
 func TestLoop_DialTimeoutBoundsSilentUpgrade(t *testing.T) {
 	wedged := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
@@ -255,14 +240,9 @@ func TestLoop_DialTimeoutDoesNotLimitConnection(t *testing.T) {
 	<-done
 }
 
-// TestLoop_ReadsFrameLargerThanDefaultLimit: coder/websocket's
-// undocumented-to-callers 32 KiB default message limit must not survive
-// Dial. Kraken's v2 trade channel batches every fill of one match into a
-// single `update` frame array; a liquidity sweep of ~175+ fills alone
-// exceeds 32 KiB. Without runOnce raising the limit, conn.Read fails with
-// "read limited at 32769 bytes", the connection drops, and every fill in
-// that frame — the highest-volume prints — is lost with only a disconnect
-// counter as the signal.
+// TestLoop_ReadsFrameLargerThanDefaultLimit: coder/websocket's 32 KiB default message limit must not survive Dial. Kraken
+// batches all fills of one match into one frame (a ~175+ fill sweep exceeds 32 KiB); hitting the limit drops the connection
+// and every fill in it.
 func TestLoop_ReadsFrameLargerThanDefaultLimit(t *testing.T) {
 	// One byte over coder/websocket's defaultReadLimit (32768); a real
 	// Kraken burst frame is larger still, but this is the exact boundary

@@ -156,11 +156,9 @@ func TestPollOnce_BaseMismatch_Rejected(t *testing.T) {
 	}
 }
 
-// TestPollOnce_MissingTimestamp_Rejected pins undated boards: a response with `timestamp: 0`
-// carries rates of UNKNOWN age, and substituting time.Now() would relabel a possibly stale or
-// replayed board as fresh. This connector is IncludeInVWAP, so such rows would out-rank genuinely
-// older quotes in every downstream freshness gate. Refuse, same error class as the base mismatch:
-// emit nothing rather than a row we cannot honestly date.
+// TestPollOnce_MissingTimestamp_Rejected: a board with `timestamp: 0` has rates of unknown age, and substituting time.Now()
+// would relabel a stale board as fresh. This connector is IncludeInVWAP, so such rows would out-rank older quotes; refuse with
+// the base-mismatch error class and emit nothing.
 func TestPollOnce_MissingTimestamp_Rejected(t *testing.T) {
 	srv := newTestServer(t, `{
       "success": true, "timestamp": 0, "base": "USD", "date": "2026-04-24",
@@ -265,10 +263,8 @@ func TestPollInterval_DefaultsTo60s(t *testing.T) {
 	}
 }
 
-// TestPollOnce_WeakCurrencyInversionPrecision pins inversion precision: inverting a
-// weak-currency rate (large magnitude, e.g. VND) at the SAME scale as
-// the input rate quantises the emitted price by up to ~1.2%. The
-// poller must emit at InvertedDecimals, not DefaultDecimals.
+// TestPollOnce_WeakCurrencyInversionPrecision: inverting a weak-currency rate (large magnitude, e.g. VND) at the input's scale
+// quantises the price by up to ~1.2%, so the poller must emit at InvertedDecimals, not DefaultDecimals.
 func TestPollOnce_WeakCurrencyInversionPrecision(t *testing.T) {
 	srv := newTestServer(t, `{
       "success": true,

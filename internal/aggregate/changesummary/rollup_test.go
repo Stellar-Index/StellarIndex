@@ -114,10 +114,8 @@ func TestValueAt_RejectsBaselineOlderThanNotBefore(t *testing.T) {
 	}
 }
 
-// TestComputeSummary_DormantPairLeavesHorizonsNull — a pair whose newest
-// observation is five days old has no price information inside the 1h or
-// 24h period; those horizons must be NULL, not a present 0%. The 7d
-// horizon still spans the newest observation and keeps its real delta.
+// TestComputeSummary_DormantPairLeavesHorizonsNull: a pair whose newest observation is five days old has no price
+// information in the 1h or 24h period, so those horizons must be NULL, not a 0%; the 7d horizon keeps its real delta.
 func TestComputeSummary_DormantPairLeavesHorizonsNull(t *testing.T) {
 	now := time.Date(2026, 5, 4, 12, 0, 0, 0, time.UTC)
 	series := []TimedValue{
@@ -263,10 +261,8 @@ func TestComputeSummary_ExtremesKeepRealMovesAndShortSeries(t *testing.T) {
 	}
 }
 
-// TestComputeSummary_PreservesFullPrecision — a price with more
-// significant digits than float64 can carry must round-trip byte-for-byte
-// into CurrentValue/ATHValue/ATLValue. A ParseFloat round-trip (the old
-// behaviour) destroys everything past the 17th digit.
+// TestComputeSummary_PreservesFullPrecision: a price with more significant digits than float64 carries must round-trip
+// byte-for-byte into CurrentValue/ATHValue/ATLValue; a ParseFloat round-trip loses everything past the 17th digit.
 func TestComputeSummary_PreservesFullPrecision(t *testing.T) {
 	now := time.Date(2026, 5, 4, 12, 0, 0, 0, time.UTC)
 	const precise = "0.104735294117647058823529412"

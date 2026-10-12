@@ -63,10 +63,8 @@ func TestSniff_RecognisesAllFourSEP41Events(t *testing.T) {
 	}
 }
 
-// TestSniff_RejectsNonSEP41Symbols — DEX-specific symbols (swap,
-// sync, deposit, …) and arbitrary unknown symbols MUST NOT trip the
-// sniffer. Without this guard discovery would record every
-// contract-event-emitting contract on pubnet.
+// TestSniff_RejectsNonSEP41Symbols: DEX symbols (swap, sync, deposit) and unknown symbols must not trip the sniffer,
+// or discovery would record every event-emitting contract on pubnet.
 func TestSniff_RejectsNonSEP41Symbols(t *testing.T) {
 	for _, sym := range []string{"swap", "sync", "deposit", "withdraw", "rebalance", "REDSTONE", "POOL"} {
 		t.Run(sym, func(t *testing.T) {
@@ -159,10 +157,8 @@ func TestInMemoryRecorder_RoundTrip(t *testing.T) {
 	}
 }
 
-// TestInMemoryRecorder_FirstWriteWinsOnMetadata — the first Record
-// for a contract preserves first_seen_event + first_seen_ledger;
-// subsequent Records only bump the counter. Mirrors the Postgres
-// ON CONFLICT DO UPDATE pattern.
+// TestInMemoryRecorder_FirstWriteWinsOnMetadata: the first Record keeps first_seen_event and first_seen_ledger;
+// later Records only bump the counter, mirroring the Postgres ON CONFLICT DO UPDATE.
 func TestInMemoryRecorder_FirstWriteWinsOnMetadata(t *testing.T) {
 	r := discovery.NewInMemoryRecorder()
 	ctx := context.Background()
@@ -216,10 +212,8 @@ func TestInMemoryRecorder_RejectsEmptyContractID(t *testing.T) {
 // Exercises the broader oracle-suggestive topic[0] sniffer added per
 // docs/architecture/oracle-manipulation-defense.md §"Event-shaped discovery".
 
-// TestSniffOracleEvent_RecognisesEveryOracleSuggestiveSymbol — the
-// exact symbol set from the investigation's 2026-07-10 ClickHouse
-// census must all trip SniffOracleEvent with Kind=KindOracleEvent
-// and Symbol == the matched string.
+// TestSniffOracleEvent_RecognisesEveryOracleSuggestiveSymbol: every symbol in the ClickHouse census must trip
+// SniffOracleEvent with Kind=KindOracleEvent and Symbol equal to the matched string.
 func TestSniffOracleEvent_RecognisesEveryOracleSuggestiveSymbol(t *testing.T) {
 	symbols := []string{
 		"price", "prices", "lastprice", "last_price", "x_last_price",
@@ -255,10 +249,8 @@ func TestSniffOracleEvent_RecognisesEveryOracleSuggestiveSymbol(t *testing.T) {
 	}
 }
 
-// TestSniffOracleEvent_RejectsNonOracleSymbols — SEP-41 symbols
-// (transfer/mint/burn/clawback) and arbitrary DEX symbols must NOT
-// trip the oracle-event sniffer. This is the negative case proving
-// the two event-path sniffers are disjoint.
+// TestSniffOracleEvent_RejectsNonOracleSymbols: SEP-41 symbols (transfer/mint/burn/clawback) and DEX symbols must not trip it,
+// so the two event-path sniffers stay disjoint.
 func TestSniffOracleEvent_RejectsNonOracleSymbols(t *testing.T) {
 	for _, sym := range []string{"transfer", "mint", "burn", "clawback", "swap", "sync", "deposit", "withdraw", "rebalance", "POOL"} {
 		t.Run(sym, func(t *testing.T) {
@@ -373,10 +365,8 @@ func TestSniffOracleCall_RejectsEmptyContractID(t *testing.T) {
 
 // ─── Sniff (KindSEP41) now also sets Kind + Symbol ────────────────
 
-// TestSniff_SetsKindAndSymbol — the broadened Hit shape: Sniff must
-// still classify exactly as before AND now also stamp
-// Kind=KindSEP41 and Symbol==string(EventType), so a single Recorder
-// code path can read "what got sighted" without branching.
+// TestSniff_SetsKindAndSymbol: Sniff classifies as before and also stamps Kind=KindSEP41 and Symbol=string(EventType),
+// so one Recorder path can read what was sighted without branching.
 func TestSniff_SetsKindAndSymbol(t *testing.T) {
 	ev := makeEvent(t, "mint", validContractID)
 	hit, ok := discovery.Sniff(ev)

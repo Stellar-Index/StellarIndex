@@ -11,10 +11,8 @@ import (
 	"testing"
 )
 
-// A bare `#N` in this repo reads as Stellar-Index/StellarIndex issue N.
-// The probe's sources once cited a private task number that way and it
-// resolved to an unrelated dependency bump, so any tracker number here
-// must say which tracker it belongs to ("Task #52").
+// A bare `#N` reads as Stellar-Index/StellarIndex issue N (a private task number once resolved to an unrelated dependency
+// bump), so any tracker number here must name its tracker ("Task #52").
 var bareTrackerRef = regexp.MustCompile(`(^|[^\w/&])#[0-9]+\b`)
 
 func TestSourcesCiteNoBareTrackerNumbers(t *testing.T) {

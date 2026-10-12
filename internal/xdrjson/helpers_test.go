@@ -7,18 +7,14 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// controlByteCode4 is an alphanum4 asset code carrying an embedded
-// control byte (0x01) — the exact shape internal/canonical.AssetFromXDR
-// (via NewClassicAsset/validateClassicAssetCode) refuses, and which
-// stellar-core does not itself reject (see AssetFromXDR's doc comment).
+// controlByteCode4 is an alphanum4 asset code with an embedded control byte (0x01): the shape canonical.AssetFromXDR refuses
+// (NewClassicAsset/validateClassicAssetCode) but stellar-core does not reject.
 var controlByteCode4 = [4]byte{'A', 0x01, 'B', 0}
 
 const issuerAccount = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 
-// TestAssetCodeRejectsInvalidBytes pins that assetCode
-// must not just trim trailing NULs, it must apply the same validity rule
-// canonical.AssetFromXDR enforces, so xdrjson never mints an asset id the
-// canonical layer would refuse.
+// TestAssetCodeRejectsInvalidBytes pins that assetCode applies the same validity rule as canonical.AssetFromXDR, not just
+// trimming trailing NULs, so xdrjson never mints an asset id the canonical layer would refuse.
 func TestAssetCodeRejectsInvalidBytes(t *testing.T) {
 	if code, ok := assetCode(controlByteCode4[:]); ok {
 		t.Fatalf("assetCode(%v) = (%q, true), want ok=false (control byte must be rejected)", controlByteCode4, code)

@@ -2,10 +2,8 @@ package platform
 
 import "testing"
 
-// TestTierCanonical pins the legacy-string mapping the free-platform
-// model relies on: stored rows (and operator PATCH bodies) may still
-// carry the migration-0027 five-string vocabulary, and every one of
-// them must fold into exactly {anon, free, partner}.
+// TestTierCanonical pins the legacy-string mapping: stored rows and operator PATCH bodies may carry the migration-0027 five-
+// string vocabulary, and every one must fold into exactly {anon, free, partner}.
 func TestTierCanonical(t *testing.T) {
 	cases := []struct {
 		in   Tier
@@ -31,10 +29,8 @@ func TestTierCanonical(t *testing.T) {
 	}
 }
 
-// TestTierStorageValue pins the write-side mapping onto the untouched
-// migration-0027 CHECK constraint, including the round-trip property
-// Canonical(StorageValue(t)) == Canonical(t) (anon folds to free —
-// it is never an account tier).
+// TestTierStorageValue pins the write-side mapping onto the migration-0027 CHECK constraint, including
+// Canonical(StorageValue(t)) == Canonical(t) (anon folds to free; it is never an account tier).
 func TestTierStorageValue(t *testing.T) {
 	cases := []struct {
 		in   Tier
@@ -111,10 +107,8 @@ func TestTierLadders(t *testing.T) {
 	}
 }
 
-// TestAccountEffectiveRateLimitPerMin: the account view
-// reports what auth enforces on a default-minted key (1000/min, raised
-// by the override floor), never the tier ceiling. A partner comped to
-// 5,000/min reads 5,000, not 100,000.
+// TestAccountEffectiveRateLimitPerMin: the account view reports what auth enforces on a default-minted key (1000/min, raised by
+// the override floor), never the tier ceiling; a partner comped to 5,000/min reads 5,000, not 100,000.
 func TestAccountEffectiveRateLimitPerMin(t *testing.T) {
 	cases := []struct {
 		name     string

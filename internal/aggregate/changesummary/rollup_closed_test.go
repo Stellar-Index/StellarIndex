@@ -34,10 +34,8 @@ func refreshWith(t *testing.T, src fixedSource, now time.Time) (*recordingSink, 
 	return sink, w.refreshOne(context.Background(), Entity{Type: "coin", ID: "native"}, now.Add(-time.Hour), now)
 }
 
-// TestRefreshOne_ExcludesTheOpenBucket is the open-bucket worker half: a point
-// whose bucket ends after the worker's clock is the minute still filling.
-// Admitted, its fat-finger 1000 became current_value and the ATH — which
-// the upsert then ratchets with GREATEST for good.
+// TestRefreshOne_ExcludesTheOpenBucket: a point whose bucket ends after the worker's clock is the minute still filling.
+// Admitted, a fat-finger 1000 became current_value and the ATH, which the upsert ratchets with GREATEST permanently.
 func TestRefreshOne_ExcludesTheOpenBucket(t *testing.T) {
 	now := time.Date(2026, 9, 23, 12, 0, 30, 0, time.UTC)
 	minute := now.Truncate(time.Minute)

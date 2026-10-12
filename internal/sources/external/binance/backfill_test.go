@@ -18,10 +18,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external/scale"
 )
 
-// synthesiseKlines builds a slice of Binance-shape kline rows for
-// the given count, starting at `startMs` with `intervalMs` gap.
-// Price drifts upward by 0.00001 per bucket, volume is a flat 100
-// XLM — enough signal to assert on ordering and field-mapping.
+// synthesiseKlines builds count Binance-shape kline rows from startMs at intervalMs spacing, price drifting up 0.00001 per
+// bucket, volume a flat 100 XLM.
 func synthesiseKlines(count int, startMs, intervalMs int64) []kline {
 	out := make([]kline, count)
 	for i := 0; i < count; i++ {
@@ -49,10 +47,8 @@ func synthesiseKlines(count int, startMs, intervalMs int64) []kline {
 	return out
 }
 
-// newTestREST serves the Binance klines endpoint. Replays the
-// supplied candle sets in order — each GET consumes one set,
-// matching Binance's paginate-by-startTime behaviour when the
-// caller advances after a full 1000-row response.
+// newTestREST serves the Binance klines endpoint, replaying the given candle sets in order, one per GET, like startTime
+// pagination.
 func newTestREST(t *testing.T, responses [][]kline) *httptest.Server {
 	t.Helper()
 	var mu sync.Mutex
@@ -120,11 +116,8 @@ func TestBackfill_SinglePage(t *testing.T) {
 	if len(trades[0].TxHash) != 64 {
 		t.Errorf("TxHash len = %d", len(trades[0].TxHash))
 	}
-	// Hash determinism: recomputing backfillTxHash with the same
-	// inputs (symbol + close_ms) must match what Backfill stored.
-	// This is the "rerunnable backfill hits the same primary key"
-	// invariant — no need for a second HTTP call, the formula is
-	// pure.
+	// backfillTxHash is pure: recomputing it from symbol and close_ms must match what Backfill stored, so a rerun hits the same
+	// primary key.
 	wantHash, err := backfillTxHash("XLMUSDT", wantCloseMs, time.Hour)
 	if err != nil {
 		t.Fatalf("backfillTxHash: %v", err)
@@ -395,10 +388,8 @@ func mustPairMapBF(t *testing.T) map[string]canonical.Pair {
 	return m
 }
 
-// A 9-byte symbol pushes the candle seed one byte past the hash; truncating
-// would drop closeMs's last digit so neighbouring candles overwrite
-// each other on the trades PK. Backfill must refuse it before walking
-// rather than per-candle-skip it into an empty result.
+// A 9-byte symbol pushes the candle seed one byte past the hash; truncating drops closeMs's last digit and neighbouring candles
+// overwrite each other on the trades PK, so Backfill must refuse it up front.
 func TestBackfill_RejectsSymbolThatWouldTruncateSeed(t *testing.T) {
 	const startMs = int64(1_745_000_000_000)
 	srv := newTestREST(t, [][]kline{synthesiseKlines(2, startMs, 1), {}})

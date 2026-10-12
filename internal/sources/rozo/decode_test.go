@@ -206,10 +206,8 @@ func TestDecodePayment_HappyPath(t *testing.T) {
 	}
 }
 
-// TestDecodePayment_LargeI128 catches the ADR-0003 invariant —
-// USDC has 7 decimals so a >2^53 amount (e.g. a large institutional
-// transfer above ~90 billion display USDC) MUST round-trip through
-// the decoder as a *big.Int, not silently truncated to int64.
+// TestDecodePayment_LargeI128 pins ADR-0003: USDC has 7 decimals, so an amount above 2^53 must round-trip through the decoder
+// as a *big.Int, never truncated to int64.
 func TestDecodePayment_LargeI128(t *testing.T) {
 	t.Parallel()
 	big1 := new(big.Int)
@@ -330,9 +328,7 @@ func TestDecodeFlush_MissingField(t *testing.T) {
 
 func TestTopicSymbolPayment_StableEncoding(t *testing.T) {
 	t.Parallel()
-	// Lock the on-wire bytes — a re-encoded value MUST be
-	// byte-identical to the package-init constant. Drift here
-	// means scval's encoder changed and every classify() call
+	// Lock the on-wire bytes: a re-encoded value must equal the package-init constant, or scval's encoder changed and classify()
 	// would silently miss matches.
 	want := b64(t, symbol(EventPayment))
 	if TopicSymbolPayment != want {
@@ -413,10 +409,8 @@ var rozoGoldenPaymentFrames = map[string]struct {
 	},
 }
 
-// TestGolden_Payment_LakeBytes pins DecodePayment against real mainnet lake bytes across the
-// original and the later-admitted 4th contract's sibling deployments, and both observed memo
-// naming conventions. The body field-name mapping (amount/destination/from/memo) is documented
-// from the contract source; this round-trips it against a captured real event.
+// TestGolden_Payment_LakeBytes round-trips DecodePayment's body field mapping (amount/destination/from/memo) against real
+// mainnet lake bytes, across the original and 4th contract's sibling deployments and both observed memo naming conventions.
 func TestGolden_Payment_LakeBytes(t *testing.T) {
 	t.Parallel()
 	for name, f := range rozoGoldenPaymentFrames {
@@ -458,11 +452,9 @@ func TestGolden_Payment_LakeBytes(t *testing.T) {
 	}
 }
 
-// TestGolden_FlushEvent_NeverObserved documents that flush_event (the admin sweep path) has
-// never fired on mainnet across the four gated Payment contracts in the lake (topic_0_sym =
-// 'flush_event' returns zero rows), so DecodeFlush's body shape stays UNVERIFIED against real
-// bytes, unlike DecodePayment. It follows the blend_backstop precedent (rw_zone_remove:
-// synthetic-from-source) rather than leaving a silent gap.
+// TestGolden_FlushEvent_NeverObserved records that flush_event (admin sweep) never fired on mainnet across the four gated
+// Payment contracts, so DecodeFlush's body shape is unverified against real bytes and is covered synthetically from source, as
+// in blend_backstop.
 func TestGolden_FlushEvent_NeverObserved(t *testing.T) {
 	t.Parallel()
 	t.Log("flush_event: 0 real occurrences across all 4 MainnetPaymentContracts " +
@@ -471,10 +463,8 @@ func TestGolden_FlushEvent_NeverObserved(t *testing.T) {
 		"TestDecodeFlush_MissingField above, not real lake bytes")
 }
 
-// TestClassify_LongFormPaymentEvent is the regression guard for the
-// long-form topic: the deployed contract emits topic[0]="payment_event"
-// (full ScSymbol), which the original short-form-only match dropped,
-// leaving rozo_events empty despite 393 lake events.
+// TestClassify_LongFormPaymentEvent guards the long-form topic: the deployed contract emits topic[0]="payment_event" (full
+// ScSymbol), which a short-form-only match dropped, leaving rozo_events empty.
 func TestClassify_LongFormPaymentEvent(t *testing.T) {
 	t.Parallel()
 	ev := paymentEventLongTopic(t, MainnetPaymentContract)

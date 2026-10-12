@@ -12,10 +12,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// stubSource is a baseline.TimedVWAPSource that returns a per-pair
-// fixture (or err). The fixture is built relative to a `now` time
-// captured per-test so SplitByLookback's window cutoffs land where
-// we expect.
+// stubSource is a baseline.TimedVWAPSource returning a per-pair fixture (or err), built relative to a per-test `now`
+// so SplitByLookback's window cutoffs land where expected.
 type stubSource struct {
 	mu     sync.Mutex
 	byPair map[string][]baseline.TimedVWAP

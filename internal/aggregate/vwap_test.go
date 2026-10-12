@@ -120,10 +120,8 @@ func TestVWAP_AllZeroBaseReturnsErr(t *testing.T) {
 }
 
 func TestVWAP_NegativeAmountsSkipped(t *testing.T) {
-	// canonical.Trade.Validate rejects negative amounts, but VWAP is
-	// called from rollup paths that sometimes bypass Validate (tests,
-	// intermediate buckets). A negative base or quote would pollute
-	// the sum and flip the sign of the result — skip them defensively.
+	// canonical.Trade.Validate rejects negative amounts, but rollup paths sometimes bypass it (tests, buckets). A negative
+	// base or quote would flip the result's sign, so VWAP skips them defensively.
 	trades := []canonical.Trade{
 		mkTrade(-10, 50), // negative base, skip
 		mkTrade(10, -50), // negative quote, skip

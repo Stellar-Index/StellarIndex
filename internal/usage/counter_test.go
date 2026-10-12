@@ -23,10 +23,8 @@ func newRedis(t *testing.T) (*miniredis.Miniredis, *redis.Client) {
 	return mr, rdb
 }
 
-// TestIncrementAndRead_RoundTrip — Increment + Read recover the
-// counts they wrote. The happy path.
-// TestMonthToDate_SumsCurrentMonthOnly — only counters dated
-// within the current UTC calendar month are summed.
+// TestMonthToDate_SumsCurrentMonthOnly: only counters dated within the current UTC calendar month are summed;
+// TestIncrementAndRead_RoundTrip covers the plain Increment + Read happy path.
 func TestMonthToDate_SumsCurrentMonthOnly(t *testing.T) {
 	_, rdb := newRedis(t)
 	clock := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC) // 1st of month
@@ -149,10 +147,8 @@ func TestRead_DayBoundary(t *testing.T) {
 	}
 }
 
-// TestIncrement_EmptySubjectIsNoOp — passing an empty subject is
-// a no-op. The handler short-circuits before calling Increment
-// when the subject is anonymous; this guard catches a regression
-// where the URL-encoded empty string makes it past the check.
+// TestIncrement_EmptySubjectIsNoOp: an empty subject is a no-op, guarding against the URL-encoded empty string slipping past
+// the handler's anonymous check.
 func TestIncrement_EmptySubjectIsNoOp(t *testing.T) {
 	mr, rdb := newRedis(t)
 	c := usage.New(rdb)
@@ -214,10 +210,8 @@ func TestRead_DaysClampedToRetention(t *testing.T) {
 	}
 }
 
-// TestKeyPrefix_Isolation — two Counters with different prefixes
-// don't see each other's keys. Lets the test suite share one
-// miniredis without collisions, AND lets a future operator run
-// two usage counters against one Redis without collision.
+// TestKeyPrefix_Isolation: Counters with different prefixes don't see each other's keys, so tests can share one miniredis and
+// two usage counters can share one Redis.
 func TestKeyPrefix_Isolation(t *testing.T) {
 	_, rdb := newRedis(t)
 	a := usage.New(rdb, usage.WithKeyPrefix("usage-a:"))
@@ -238,10 +232,8 @@ func TestKeyPrefix_Isolation(t *testing.T) {
 	}
 }
 
-// TestSubject_URLEncoded — subjects with colon bytes (e.g. IPv6
-// addresses, "subject:bucket" composites) don't collide on the
-// day-suffix separator. The package URL-encodes the subject
-// before joining; verify the key shape directly.
+// TestSubject_URLEncoded: subjects containing colons (IPv6, "subject:bucket") are URL-encoded so they cannot collide with the
+// day-suffix separator.
 func TestSubject_URLEncoded(t *testing.T) {
 	mr, rdb := newRedis(t)
 	clock := time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC)

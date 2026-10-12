@@ -36,10 +36,8 @@ func anchorHashFor(seq uint32) sdkxdr.Hash {
 	return sha256.Sum256([]byte(fmt.Sprintf("stellar-index test checkpoint %d", seq)))
 }
 
-// writeMirrorCheckpoint writes <root>/ledger/XX/YY/ZZ/ledger-<hex>.xdr.gz
-// in the archive's own format: a gzipped stream of record-marked
-// LedgerHeaderHistoryEntry values. Two entries, so the reader's scan
-// for the matching sequence is exercised rather than short-circuited.
+// writeMirrorCheckpoint writes <root>/ledger/XX/YY/ZZ/ledger-<hex>.xdr.gz in the archive's format: a gzipped stream of
+// record-marked LedgerHeaderHistoryEntry values. Two entries exercise the reader's scan for the matching sequence.
 func writeMirrorCheckpoint(t *testing.T, root string, seq uint32) {
 	t.Helper()
 	hexSeq := fmt.Sprintf("%08x", seq)
@@ -78,10 +76,8 @@ func writeMirrorCheckpoint(t *testing.T, root string, seq uint32) {
 
 func TestClassifyCheckpointAnchor_CoverageEdgesAreAsymmetric(t *testing.T) {
 	t.Parallel()
-	// The mirror holds 127 and 191; 255 is the trailing checkpoint the
-	// walk reaches before the fill job does. 63 is below the mirror's
-	// own floor, which a mirror that fills upward from genesis can
-	// never legitimately do — that absence is a hole, not a fill lag.
+	// The mirror holds 127 and 191; 255 is the trailing checkpoint the walk reaches before the fill job does.
+	// 63 is below the mirror's floor, which a mirror filling upward from genesis can never legitimately miss: a hole, not fill lag.
 	root := mirrorFixture(t, 127, 191)
 	cov := readArchiveMirrorCoverage(root, mirrorLedger)
 	if !cov.Known || cov.Floor != 127 || cov.HighWater != 191 {

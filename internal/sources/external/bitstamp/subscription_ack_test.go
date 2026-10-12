@@ -11,10 +11,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// TestRecordSubscriptionAck_RejectionSetsGaugeAndLogs is the
-// Guard: a rejected bts:error subscription must flip
-// obs.CEXStreamSubscriptionRejected and log, not vanish silently the
-// way "swallow and continue" would leave it.
+// TestRecordSubscriptionAck_RejectionSetsGaugeAndLogs: a rejected bts:error subscription must set
+// obs.CEXStreamSubscriptionRejected and log.
 func TestRecordSubscriptionAck_RejectionSetsGaugeAndLogs(t *testing.T) {
 	// Distinct pair from other bitstamp tests so the shared gauge's
 	// state can't collide across parallel test runs.

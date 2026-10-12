@@ -18,10 +18,8 @@ func TestBuild_DisabledWhenAllEmpty(t *testing.T) {
 }
 
 func TestBuild_SinglePrefersSentinelWhenBothSet(t *testing.T) {
-	// When both are set, Sentinel wins — operators upgrading from
-	// single-node leave RedisAddr in place, set the Sentinel
-	// fields, and the deploy switches over without a config-strip
-	// step.
+	// When both are set, Sentinel wins, so operators can set the Sentinel fields and leave RedisAddr in place without a
+	// config-strip step.
 	cfg := config.StorageConfig{
 		RedisAddr:          "127.0.0.1:6379",
 		RedisSentinelAddrs: []string{"sentinel-1:26379", "sentinel-2:26379"},

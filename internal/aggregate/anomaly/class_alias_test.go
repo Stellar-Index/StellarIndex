@@ -16,10 +16,8 @@ func mustAsset(t *testing.T, s string) canonical.Asset {
 	return a
 }
 
-// TestClassifier_FoldsAliases: XLM trades as both native and crypto:XLM
-// pairs, and the default pair set carries both. A class set on either
-// spelling must apply to the other, or that population silently falls to
-// ClassDefault's looser freeze threshold.
+// TestClassifier_FoldsAliases: XLM trades as both native and crypto:XLM pairs, so a class set on either spelling must apply
+// to the other, or that population silently falls to ClassDefault's looser freeze threshold.
 func TestClassifier_FoldsAliases(t *testing.T) {
 	for _, key := range []string{"native", "crypto:XLM"} {
 		c := anomaly.NewClassifier(map[string]anomaly.AssetClass{key: anomaly.ClassCrypto})

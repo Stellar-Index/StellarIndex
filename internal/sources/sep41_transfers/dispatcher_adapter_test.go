@@ -396,11 +396,8 @@ func TestDecoder_NameAndSource(t *testing.T) {
 	}
 }
 
-// TestDecoder_MatchesOnlyWatchedContract pins that the projector
-// reuses this watched-set decoder so it reproduces exactly what the
-// dispatcher writes — a watched contract matches, an unwatched one does
-// not. (A projector passing a synthetic contract that matches nothing
-// writes zero rows.)
+// TestDecoder_MatchesOnlyWatchedContract pins that the projector reuses this watched-set decoder, so it reproduces what the
+// dispatcher writes: a watched contract matches, an unwatched one does not.
 func TestDecoder_MatchesOnlyWatchedContract(t *testing.T) {
 	const watched = "CWATCHEDCONTRACT0000000000000000000000000000000000000000"
 	dec, err := NewDecoder([]string{watched})

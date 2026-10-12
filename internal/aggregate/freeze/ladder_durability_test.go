@@ -18,10 +18,8 @@ import (
 
 // ─── the durable-ladder seam (migration 0119) ────────────────────
 
-// fakeLadderStore is an in-memory freeze.LadderStore. It stores the last
-// saved state per pair and lets a test CLOSE the durable row (what
-// `stellarindex-ops freeze-unfreeze` does when it stamps recovered_at) or
-// fail the read.
+// fakeLadderStore is an in-memory freeze.LadderStore keeping the last saved state per pair; a test can close the durable
+// row (as `stellarindex-ops freeze-unfreeze` stamps recovered_at) or fail the read.
 type fakeLadderStore struct {
 	states map[string]freeze.State
 	closed map[string]bool

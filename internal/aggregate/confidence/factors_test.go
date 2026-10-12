@@ -244,10 +244,8 @@ func TestTriangulationAgreementFactor_IsMonotoneDecreasing(t *testing.T) {
 }
 
 func TestTriangulationAgreementFactor_NoCompositeReturnsNeutral(t *testing.T) {
-	// Negative is the "no composite for this pair" sentinel — the same
-	// 0.7 neutral CrossOracleFactor uses. Compute additionally zeroes
-	// the factor's weight in this case; see
-	// TestCompute_TriangulationUncheckedIsInert.
+	// Negative is the "no composite for this pair" sentinel, the same 0.7 neutral CrossOracleFactor uses; Compute also zeroes
+	// the factor's weight then (see TestCompute_TriangulationUncheckedIsInert).
 	if got := confidence.TriangulationAgreementFactor(-1); got != 0.7 {
 		t.Errorf("no-composite sentinel = %v, want 0.7", got)
 	}

@@ -9,11 +9,9 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// TestTxResultNamesExhaustive asserts every VALID transaction result code the
-// SDK knows maps to a non-empty, non-fallback friendly slug. It ranges a code
-// window and gates on the SDK's own ValidEnum, so when a future SDK adds a new
-// result code this test goes RED until result_codes.go maps it — a blank/
-// "unknown" slug for a real code must never reach the wire.
+// TestTxResultNamesExhaustive asserts every valid transaction result code the SDK knows maps to a non-empty, non-fallback slug.
+// It gates on the SDK's ValidEnum, so a new code fails until result_codes.go maps it; a blank "unknown" slug must never reach the
+// wire.
 func TestTxResultNamesExhaustive(t *testing.T) {
 	var probe xdr.TransactionResultCode
 	seen := 0

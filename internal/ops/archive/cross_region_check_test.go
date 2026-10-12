@@ -12,10 +12,8 @@ import (
 	"time"
 )
 
-// stubServer returns a regions-style API that always answers with
-// the supplied response payload. Used to simulate per-region API
-// responses in unit tests without needing the full stellarindex-api
-// stack.
+// stubServer returns a regions-style API that always answers with the given payload, simulating per-region responses
+// without the full stellarindex-api stack.
 func stubServer(t *testing.T, body any) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

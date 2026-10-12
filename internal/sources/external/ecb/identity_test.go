@@ -7,11 +7,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
-// Name + Class must agree with the registry. ECB is the
-// authority-sanity feed: NOT in VWAP, used only as a sanity
-// check vs computed FX. Reclassifying ECB as ClassExchange would
-// double-count central-bank reference rates against retail
-// liquidity — a serious aggregator hazard.
+// ECB is a sanity-check feed, not in VWAP; classing it ClassExchange would double-count central-bank rates against retail
+// liquidity.
 
 func TestPoller_NameAndClass(t *testing.T) {
 	p := NewPoller()

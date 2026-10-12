@@ -16,10 +16,8 @@ import (
 	externalkraken "github.com/Stellar-Index/StellarIndex/internal/sources/external/kraken"
 )
 
-// fakeTradeInserter is a DB-free tradeInserter: it fails on the
-// TxHash keys listed in fail (or on every insert once infra=true, to
-// exercise the abort path), and records every TxHash it was asked to
-// insert.
+// fakeTradeInserter is a DB-free tradeInserter that fails on the listed TxHash keys (or every insert once infra=true,
+// to exercise the abort path) and records every TxHash it was asked to insert.
 type fakeTradeInserter struct {
 	fail  map[string]error
 	infra bool // if true, every failing insert returns an infra error

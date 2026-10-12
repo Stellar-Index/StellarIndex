@@ -31,10 +31,8 @@ type fakeAlertStore struct {
 	// the fired-mark.
 	claimErr  error
 	claimErrN int
-	// dbLastFired is the AUTHORITATIVE last_fired_at the conditional UPDATE evaluates its
-	// predicate against, which may differ from the ListEnabledPriceAlerts snapshot taken at the
-	// top of the sweep. Seeding it independently models a second evaluator having claimed the
-	// same crossing in between. Empty entry = SQL NULL = never fired.
+	// dbLastFired is the authoritative last_fired_at the conditional UPDATE checks, which may differ from the sweep-start snapshot (a
+	// second evaluator claimed the crossing in between). Empty entry = SQL NULL = never fired.
 	dbLastFired map[uuid.UUID]time.Time
 	// dbDisarmed is the authoritative disarmed column; rearms counts
 	// RearmPriceAlert calls that cleared it.
@@ -61,10 +59,8 @@ func (s *fakeAlertStore) ListEnabledPriceAlerts(context.Context) ([]platform.Pri
 	return out, nil
 }
 
-// ClaimPriceAlertFire models the conditional UPDATE, predicate and all:
-// it claims only when the AUTHORITATIVE row (dbLastFired, dbRule) says the
-// cooldown has elapsed and the rule is unchanged, never when the caller's
-// snapshot does.
+// ClaimPriceAlertFire models the conditional UPDATE: it claims only when the authoritative row (dbLastFired, dbRule) shows the
+// cooldown elapsed and the rule unchanged, regardless of the caller's snapshot.
 func (s *fakeAlertStore) ClaimPriceAlertFire(_ context.Context, snap platform.PriceAlert, firedAt time.Time) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -232,10 +228,8 @@ func TestSweep_Fires(t *testing.T) {
 	}
 }
 
-// TestEnqueueAll_ContinuesPastFailure proves a single bad webhook does not
-// abort the fan-out: the two healthy targets still get their delivery
-// enqueued, and the failure surfaces in the returned error rather than
-// silently swallowing the remaining webhooks.
+// TestEnqueueAll_ContinuesPastFailure proves one bad webhook does not abort the fan-out: the healthy targets are still enqueued
+// and the failure surfaces in the returned error.
 func TestEnqueueAll_ContinuesPastFailure(t *testing.T) {
 	acct := uuid.New()
 	good1 := priceAlertWebhook(acct, true, string(platform.WebhookEventPriceAlert))
@@ -391,12 +385,9 @@ func TestSweep_NoSubscribedWebhook_DoesNotMarkFired(t *testing.T) {
 	}
 }
 
-// TestSweep_FiredMarkFlaky_NoDuplicateDelivery: a transient ClaimPriceAlertFire failure must NOT
-// cause the crossing to be re-delivered to the same webhooks on the next tick. With the
-// fired-mark advanced before the fan-out, each webhook receives the crossing at most once.
-//
-// Enqueue-then-mark would let sweep 1 enqueue both webhooks, the mark fail, and sweep 2
-// re-enqueue both: 4 deliveries with un-dedupable delivery ids. Required: 2, one per webhook.
+// TestSweep_FiredMarkFlaky_NoDuplicateDelivery: a transient ClaimPriceAlertFire failure must not re-deliver the crossing next
+// tick. The fired-mark advances before the fan-out; enqueue-then-mark would give 4 deliveries with un-dedupable ids, want 2 (one
+// per webhook).
 func TestSweep_FiredMarkFlaky_NoDuplicateDelivery(t *testing.T) {
 	acct := uuid.New()
 	now := time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC)
@@ -453,10 +444,8 @@ func TestSweep_NoPrice_NoFire(t *testing.T) {
 	}
 }
 
-// TestSweep_StalePrice_NoFire proves the evaluator rejects a crossing built off a closed VWAP
-// bucket older than its freshness budget. The condition is crossed with no cooldown, but the
-// bucket closed outside maxPriceStaleness of "now", so the alert must not fire and the `stale`
-// outcome must be recorded.
+// TestSweep_StalePrice_NoFire proves a crossing built off a closed VWAP bucket older than maxPriceStaleness does not fire, even
+// with no cooldown, and the `stale` outcome is recorded.
 func TestSweep_StalePrice_NoFire(t *testing.T) {
 	acct := uuid.New()
 	alert := platform.PriceAlert{
@@ -530,20 +519,9 @@ func TestConditionCrossed(t *testing.T) {
 	}
 }
 
-// TestSweep_CrossingAlreadyClaimedByAnotherEvaluator_NoFanOut: the cooldown gate is
-// check-then-act, so it cannot be what guarantees one notification per crossing.
-//
-// coolingDown reads a.LastFiredAt from the SNAPSHOT taken at the top of the sweep. Two evaluators
-// running the same code (a second aggregator, an R2/R3 standby, a rolling-deploy overlap) both
-// snapshot before either fires, so BOTH pass the gate on the same crossing. An unconditional
-// UPDATE mark would let both fan out, sending two webhooks with different delivery ids that
-// cannot be deduped on X-StellarIndex-Delivery-Id.
-//
-// Modelled as the second instance: the snapshot says "never fired" while the authoritative row
-// already carries the winner's last_fired_at inside the cooldown. The conditional UPDATE must
-// refuse the claim and the fan-out must not happen.
-//
-// Without the claim check: 1 delivery enqueued, want 0.
+// TestSweep_CrossingAlreadyClaimedByAnotherEvaluator_NoFanOut: the cooldown gate reads a snapshot, so two evaluators (standby,
+// deploy overlap) can both pass it. With the snapshot saying never fired but the authoritative row inside the cooldown, the
+// conditional UPDATE must refuse the claim and nothing is enqueued (duplicates would carry different, un-dedupable delivery ids).
 func TestSweep_CrossingAlreadyClaimedByAnotherEvaluator_NoFanOut(t *testing.T) {
 	acct := uuid.New()
 	now := time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC)
@@ -635,10 +613,8 @@ func (p *stepPrices) LatestVWAP(context.Context, canonical.Asset, canonical.Asse
 	return p.price, p.bucket, true, nil
 }
 
-// TestSweep_FiresOncePerCrossing pins the "crosses its threshold" contract:
-// a condition that keeps holding across sweeps, every one past the
-// cooldown, is one crossing and one delivery. Only a fresh price on the
-// other side re-arms the alert, and the next crossing fires again.
+// TestSweep_FiresOncePerCrossing pins the "crosses its threshold" contract: a condition that keeps holding past the cooldown is
+// one crossing and one delivery; only a fresh price on the other side re-arms the alert.
 func TestSweep_FiresOncePerCrossing(t *testing.T) {
 	acct := uuid.New()
 	now := time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC)
@@ -831,10 +807,8 @@ func TestSweep_FanOutFailedPartially_StaysDisarmed(t *testing.T) {
 	}
 }
 
-// The sweep is serial on the process context, so one alert whose price read never returns would
-// hold every later alert, across all tenants, until the background statement timeout. Each alert
-// has its own deadline: the stalled one is recorded as a timeout and the next alert still fires
-// within the same sweep.
+// The sweep is serial, so one alert whose price read never returns would block every later alert across all tenants. Each alert
+// has its own deadline: the stalled one is recorded as a timeout and the next still fires in the same sweep.
 func TestSweep_StalledAlertTimesOutAndOthersStillFire(t *testing.T) {
 	acct := uuid.New()
 	stalled := platform.PriceAlert{
@@ -854,10 +828,8 @@ func TestSweep_StalledAlertTimesOutAndOthersStillFire(t *testing.T) {
 	w := New(alerts, hooks, stallingPrices{stallBase: "crypto:BTC", price: "0.20"}, Options{
 		Interval: 300 * time.Millisecond,
 		Logger:   quietLogger(),
-		// Pin "now" alongside stallingPrices' fixed healthy-pair bucket
-		// (11:59:00 on the pinned day) so the freshness check (maxPriceStaleness)
-		// sees a 1-minute-old bucket rather than one aged off the real
-		// wall clock against a timestamp fixed at test-authoring time.
+		// Pin "now" next to stallingPrices' fixed healthy-pair bucket (11:59:00) so the freshness check (maxPriceStaleness) sees a
+		// 1-minute-old bucket, not one aged against the real wall clock.
 		Clock: func() time.Time { return time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC) },
 	})
 

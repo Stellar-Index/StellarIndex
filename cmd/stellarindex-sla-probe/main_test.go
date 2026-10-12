@@ -222,10 +222,8 @@ func TestPairEndpoints_BuildsExpected(t *testing.T) {
 	}
 }
 
-// TestEndpointFailures_PerEndpointFreshnessOverride pins the
-// ADR-0015 split: a closed-bucket /price observation 80 s stale is
-// within its structural bound (no failure), while the same 80 s on
-// /price/tip — the ≤30 s SLA surface — fails.
+// TestEndpointFailures_PerEndpointFreshnessOverride pins the ADR-0015 split: 80 s stale on a closed-bucket /price is within its
+// bound, but the same 80 s on /price/tip (the <=30 s SLA surface) fails.
 func TestEndpointFailures_PerEndpointFreshnessOverride(t *testing.T) {
 	sla := slaTargets{P95MS: 1000, P99MS: 1000, FreshnessSec: 30, AvailabilityPct: 99.0}
 	fresh := 80.0
@@ -329,18 +327,9 @@ func abs(x float64) float64 {
 	return x
 }
 
-// TestRunProbe_FreshnessMeasuredAtSampleTime guards that freshness is measured at each sample's
-// receipt. Computing time.Since(observedAt) inside aggregateEndpointStats, which runs once after
-// the whole run, charges every sample the gap to the end of the run: a median bias of duration/2.
-//
-// The fake API stamps observed_at as it answers, so true freshness is the localhost round trip,
-// well under a millisecond; anything near duration/2 is the bias.
-//
-// PROVEN-RED: restore
-//
-//	freshSamples = append(freshSamples, time.Since(s.observedAt).Seconds())
-//
-// in aggregateEndpointStats and this reports ~1.0 s against a 2 s run.
+// TestRunProbe_FreshnessMeasuredAtSampleTime guards that freshness is measured at each sample's receipt; computing
+// time.Since(observedAt) after the run charges every sample the gap to the run's end (median bias of duration/2). The fake API
+// stamps observed_at as it answers, so near duration/2 means the bias.
 func TestRunProbe_FreshnessMeasuredAtSampleTime(t *testing.T) {
 	url := serve(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -399,10 +388,8 @@ func TestAggregateEndpointStats_FreshnessUsesSampleReceiptInstant(t *testing.T) 
 	}
 }
 
-// TestAggregateEndpointStats_LatencyExcludesFailedSamples:
-// a failed request has no response latency, and a connection-refused one
-// "takes" ~0 ms, so pooling failures into the percentiles drags them
-// toward zero exactly when the API is down.
+// TestAggregateEndpointStats_LatencyExcludesFailedSamples: failed requests have no response latency (connection-refused takes
+// ~0 ms), so pooling them would drag percentiles toward zero exactly when the API is down.
 func TestAggregateEndpointStats_LatencyExcludesFailedSamples(t *testing.T) {
 	var ss []probeSample
 	for i := 0; i < 5; i++ {
@@ -510,10 +497,9 @@ func TestAggregateEndpointStats_FreshnessIsStalestResponse(t *testing.T) {
 	}
 }
 
-// TestRunProbe_PairEndpointsRejectBodiesThatBreakTheirContract pins that a 2xx whose body cannot
-// carry the measurement is not a success. Without it a missing observed_at silently drops the
-// freshness series and its alert, and /oracle/latest answering `{"data":[]}` during an oracle
-// outage would read 100 % available.
+// TestRunProbe_PairEndpointsRejectBodiesThatBreakTheirContract pins that a 2xx body unable to carry the measurement is not a
+// success; otherwise a missing observed_at drops the freshness series and `{"data":[]}` from /oracle/latest during an outage
+// reads as available.
 func TestRunProbe_PairEndpointsRejectBodiesThatBreakTheirContract(t *testing.T) {
 	url := serve(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -556,10 +542,8 @@ func TestHelperProcessMain(t *testing.T) {
 	os.Exit(0)
 }
 
-// TestMain_RejectsOutOfRangeNumericFlags: every numeric flag
-// is range-checked before a request is made. Unchecked, each value below
-// produced a complete, plausible report instead of a usage error — an
-// expired -duration read as a total outage.
+// TestMain_RejectsOutOfRangeNumericFlags: every numeric flag is range-checked before any request, since each bad value
+// otherwise produced a plausible report instead of a usage error (an expired -duration read as a total outage).
 func TestMain_RejectsOutOfRangeNumericFlags(t *testing.T) {
 	srv := httptest.NewServer(http.NotFoundHandler())
 	deadURL := srv.URL
@@ -587,15 +571,8 @@ func TestMain_RejectsOutOfRangeNumericFlags(t *testing.T) {
 	}
 }
 
-// TestRunProbe_MultiPairDoesNotMergeSamples: with two -pair flags both pairs' endpoints share the
-// bare names "price"/"price-tip"/"oracle-latest". Samples must not be keyed by ep.Name alone, or
-// a fresh pair's and a stale pair's samples merge and the stale pair's freshness becomes
-// invisible.
-//
-// PROVEN-RED: keying samples[ep.Name] (main.go collectSamples/runProbe)
-// instead of samples[sampleKey(ep)] makes this fail: both pairs'
-// ObservedAtFreshSec collapse to the same merged value and the USDC pair
-// is never named in FailedReasons.
+// TestRunProbe_MultiPairDoesNotMergeSamples: with two -pair flags the endpoints share bare names, so samples must be keyed by
+// sampleKey(ep), not ep.Name, or a fresh and a stale pair merge and the stale pair's freshness becomes invisible.
 func TestRunProbe_MultiPairDoesNotMergeSamples(t *testing.T) {
 	url := serve(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -642,10 +619,8 @@ func TestRunProbe_MultiPairDoesNotMergeSamples(t *testing.T) {
 	if nativeTip.ObservedAtFreshSec == nil || usdcTip.ObservedAtFreshSec == nil {
 		t.Fatalf("missing freshness samples: native=%v usdc=%v", nativeTip.ObservedAtFreshSec, usdcTip.ObservedAtFreshSec)
 	}
-	// The defect merges both pairs' samples into one bucket, so both
-	// rows would read the same (merged) freshness. Asserting they
-	// differ — and that each is close to its OWN pair's true value —
-	// is what a merge cannot satisfy.
+	// A sample merge would give both rows the same freshness; asserting they differ and each is near its OWN pair's value is what a
+	// merge cannot satisfy.
 	const freshCeiling = 5.0
 	if *nativeTip.ObservedAtFreshSec > freshCeiling {
 		t.Errorf("native/fiat:USD price-tip freshness = %.1fs, want <= %.1fs (contaminated by the stale USDC pair)",
@@ -796,10 +771,8 @@ func TestHit_ClassifiesFailures(t *testing.T) {
 	}
 }
 
-// TestPriceTip_FallbackFreshnessIsSeparate pins the split: a tip
-// response served from the closed bucket (no window_seconds) is
-// structurally 61-150 s old and passes at 95 s, while a trade-window
-// response (window_seconds > 0) is still held to the 30 s target.
+// TestPriceTip_FallbackFreshnessIsSeparate pins that a tip served from the closed bucket (no window_seconds) is structurally
+// 61-150 s old and passes at 95 s, while a trade-window response (window_seconds > 0) is still held to the 30 s target.
 func TestPriceTip_FallbackFreshnessIsSeparate(t *testing.T) {
 	tip := pairEndpoints("native", "fiat:USD", defaultClosedBucketFreshTarget)[1]
 	if tip.Name != "price-tip" {

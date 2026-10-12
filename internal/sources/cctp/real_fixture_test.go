@@ -86,10 +86,8 @@ func requireRealEvent(t *testing.T, ev *events.Event, contract, want string) {
 	}
 }
 
-// TestDepositForBurnAmount_IsCanonicalSixDecimals pins the outbound scale the served CCTP sums
-// divide by 1e6 (protocol_bespoke_cctp.go): the burn amount must equal the BurnMessage amount the
-// same tx sends cross-chain, minted 1:1 as 6-decimal USDC on the destination. A 7-decimal local
-// SAC amount would be 10x the message amount.
+// TestDepositForBurnAmount_IsCanonicalSixDecimals pins the outbound scale the served CCTP sums divide by 1e6: the burn amount
+// equals the BurnMessage amount, 6-decimal USDC; a 7-decimal local SAC amount would be 10x the message amount.
 func TestDepositForBurnAmount_IsCanonicalSixDecimals(t *testing.T) {
 	t.Parallel()
 	burnEv, msgEv := realDepositForBurn, realMessageSent

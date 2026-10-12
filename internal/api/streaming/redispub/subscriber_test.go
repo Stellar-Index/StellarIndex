@@ -163,10 +163,8 @@ func TestSubscriber_TopicFormatStaysInSync(t *testing.T) {
 	}
 }
 
-// publishRaw sends raw bytes on the pub/sub channel, bypassing the
-// typed Publisher — the exact shape a host-adjacent process with Redis
-// network access (r1 Redis has NO AUTH) could inject. Used to prove the
-// subscriber validates + sanitizes before fan-out (F2).
+// publishRaw sends raw bytes on the pub/sub channel, bypassing the typed Publisher: the shape a host-adjacent process could
+// inject (r1 Redis has no AUTH). Used to prove the subscriber validates and sanitizes before fan-out.
 func publishRaw(t *testing.T, rdb *redis.Client, channel, payload string) {
 	t.Helper()
 	if err := rdb.Publish(context.Background(), channel, payload).Err(); err != nil {
@@ -217,10 +215,9 @@ func callValues(t *testing.T, calls []hubCall) string {
 	return strings.Join(vs, ",")
 }
 
-// TestSubscriber_DropsForgedValueDecimal: an event with a non-numeric, non-positive or absurd
-// value_decimal must be dropped, not fanned out. Forged events are followed by ONE valid sentinel;
-// a single Redis channel is processed in order, so a Hub holding exactly the sentinel proves every
-// forged message was already handled and rejected.
+// TestSubscriber_DropsForgedValueDecimal pins that an event with a non-numeric, non-positive or absurd value_decimal is
+// dropped. Forged events are followed by one valid sentinel; the channel is ordered, so a Hub holding only the sentinel proves
+// every forged message was rejected.
 func TestSubscriber_DropsForgedValueDecimal(t *testing.T) {
 	const channel = "test:closed"
 	_, rdb := newRedis(t)
@@ -279,10 +276,8 @@ func TestSubscriber_DropsForgedValueDecimal(t *testing.T) {
 	}
 }
 
-// TestSubscriber_StripsInjectedExtraFields: a valid event carrying injected extra JSON fields is
-// fanned out sanitized to the canonical four-field shape, because the subscriber re-marshals the
-// validated struct rather than forwarding raw bytes. value_decimal survives unchanged as a decimal
-// string.
+// TestSubscriber_StripsInjectedExtraFields pins that a valid event with injected extra JSON fields is fanned out as the
+// canonical four-field shape (re-marshalled, not raw), with value_decimal unchanged as a decimal string.
 func TestSubscriber_StripsInjectedExtraFields(t *testing.T) {
 	const channel = "test:closed"
 	_, rdb := newRedis(t)
@@ -336,11 +331,8 @@ func TestSubscriber_StripsInjectedExtraFields(t *testing.T) {
 	}
 }
 
-// TestSubscriber_DropsNonCanonicalAssetIdentity — asset and quote are
-// echoed to SSE clients as asset_id / quote and form the Hub topic key,
-// so a forged event naming anything canonical.Asset.String() could not
-// have produced must be DROPPED, not fanned out verbatim. Same
-// batch-then-sentinel proof as TestSubscriber_DropsForgedValueDecimal.
+// TestSubscriber_DropsNonCanonicalAssetIdentity pins that an event whose asset or quote canonical.Asset.String() could not
+// have produced is dropped, since both feed SSE output and the Hub topic key. Same sentinel proof as the value_decimal test.
 func TestSubscriber_DropsNonCanonicalAssetIdentity(t *testing.T) {
 	const channel = "test:closed"
 	_, rdb := newRedis(t)
@@ -390,12 +382,9 @@ func TestSubscriber_DropsNonCanonicalAssetIdentity(t *testing.T) {
 	}
 }
 
-// TestSubscriber_ForwardsOneFramePerBucket — two aggregators on one
-// channel (a restart overlap, a failover pair) each publish every
-// bucket; a delayed message can arrive after a newer bucket. The Hub
-// topic must carry each bucket once, in order: a repeat of the
-// newest bucket from a second producer and an older bucket are both
-// dropped, and the next bucket goes through.
+// TestSubscriber_ForwardsOneFramePerBucket pins that with two producers (restart overlap, failover) and late messages, the Hub
+// carries each bucket once, in order: a repeat of the newest bucket and an older bucket are dropped, the next bucket goes
+// through.
 func TestSubscriber_ForwardsOneFramePerBucket(t *testing.T) {
 	const channel = "test:closed"
 	_, rdb := newRedis(t)
@@ -466,10 +455,8 @@ func TestNewSubscriber_SeedsEveryOutcome(t *testing.T) {
 	}
 }
 
-// TestSubscriber_CountsRejectionsByCause — an API host whose clock lags
-// the aggregator by more than the forward-skew tolerance drops every
-// event. That must be countable as clock skew, distinct from a stale
-// replay and from a malformed payload.
+// TestSubscriber_CountsRejectionsByCause pins that an API host whose clock lags the aggregator beyond the forward-skew
+// tolerance counts as clock skew, distinct from stale replay and malformed payload.
 func TestSubscriber_CountsRejectionsByCause(t *testing.T) {
 	const channel = "test:outcomes"
 	_, rdb := newRedis(t)
@@ -631,10 +618,8 @@ func TestSubscriber_OneFramePerBucketAcrossKinds(t *testing.T) {
 	}
 }
 
-// TestSubscriber_FrameTimestampsRenderUTC pins that the /v1/price/stream
-// frame renders as_of and observed_at with a literal Z even when the
-// producer's event carried a local offset: a client bucketing on the
-// string would otherwise mis-bucket by the offset.
+// TestSubscriber_FrameTimestampsRenderUTC pins that /v1/price/stream renders as_of and observed_at with a literal Z even for a
+// local-offset producer, so clients bucketing on the string do not mis-bucket.
 func TestSubscriber_FrameTimestampsRenderUTC(t *testing.T) {
 	const channel = "test:closed:utc"
 	_, rdb := newRedis(t)

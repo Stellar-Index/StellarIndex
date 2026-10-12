@@ -23,10 +23,8 @@ func localTrade(source string, quote int64, ts time.Time) canonical.Trade {
 	}
 }
 
-// noisy returns centre ± up to ~0.1% of deterministic pseudo-noise so
-// the majority regime has a realistic (non-zero) MAD — the shape
-// under which the whole-window band is tightest and the drift
-// artifact is worst.
+// noisy returns centre +/- ~0.1% deterministic noise so the majority regime has a realistic non-zero MAD, the shape where the
+// whole-window band is tightest and the drift artifact worst.
 func noisy(centre int64, i int) int64 {
 	return centre + int64((i*7919)%21-10)*(centre/10_000)
 }
@@ -131,10 +129,8 @@ func TestFilterOutliersLocal_SinglePrintSpikeOnThinSeriesIsTrimmed(t *testing.T)
 }
 
 func TestFilterOutliersLocal_DenseMultiSourceTailAndFatFinger(t *testing.T) {
-	// The design's red-proof shape: 8 400 old-regime + 1 600 new-regime
-	// prints (16% tail) across three agreeing venues at ~50 prints/min,
-	// plus ONE fat-finger 2× print inside the shift. Expect: 0 agreed
-	// prints dropped, the fat-finger dropped.
+	// Red-proof shape: 8,400 old-regime plus 1,600 new-regime prints (16% tail), three agreeing venues, ~50 prints/min, plus ONE
+	// fat-finger 2x print in the shift. Expect 0 agreed prints dropped and the fat-finger dropped.
 	t0 := time.Date(2026, 8, 28, 9, 0, 0, 0, time.UTC)
 	sources := []string{"binance", "coinbase", "kraken"}
 	const total, tail = 10_000, 1_600
@@ -186,10 +182,8 @@ func TestFilterOutliersLocal_MidBucketStepUsesNextBucketReference(t *testing.T) 
 }
 
 func TestFilterOutliersLocal_LegacyParityOnUntimedInputs(t *testing.T) {
-	// Untimed trades (zero Timestamp — the /v1 handler tests' shape)
-	// all share one bucket, so the local filter must reproduce the
-	// whole-window verdicts exactly: masking case dropped, honest
-	// dispersion kept, zero-base skipped, short input passed through.
+	// Untimed trades (zero Timestamp, the /v1 handler tests' shape) share one bucket, so the local filter must reproduce the
+	// whole-window verdicts: masking case dropped, honest dispersion kept, zero-base skipped, short input passed through.
 	mk := func(quote int64) canonical.Trade { return localTrade("x", quote, time.Time{}) }
 	masking := []canonical.Trade{mk(100), mk(100), mk(100), mk(100), mk(200)}
 	if got := FilterOutliersLocal(masking, LocalOutlierOptions{Sigma: 4}); len(got) != 4 {
@@ -525,10 +519,8 @@ func sizedTrade(source string, base int64, num, den int64, ts time.Time) canonic
 	}
 }
 
-// dustOverBlockWindow is the dust-over-block worked example: one venue, one
-// 5 m window, sigma 4 — 3 honest prints of 1,000,000 XLM at 0.100
-// ($300k) and 4 wash prints of 30,000 XLM at 0.114 ($13.7k), all
-// inside one 1 m bucket. The count median is the wash level.
+// dustOverBlockWindow is the dust-over-block example: one venue, one 5m window, sigma 4, with 3 honest prints of 1,000,000 XLM at
+// 0.100 ($300k) and 4 wash prints of 30,000 XLM at 0.114 ($13.7k) in one 1m bucket. The count median is the wash level.
 func dustOverBlockWindow(t0 time.Time) []canonical.Trade {
 	const stroops = 10_000_000
 	var trades []canonical.Trade

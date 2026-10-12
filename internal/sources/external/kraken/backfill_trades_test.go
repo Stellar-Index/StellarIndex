@@ -83,14 +83,9 @@ func mustAsset(t *testing.T, id string) canonical.Asset {
 	return a
 }
 
-// TestBackfillTrades_UnresponsiveVenueIsBounded pins the per-request deadline on the /Trades
-// pagination loop. The loop only checks ctx between pages and `stellarindex-ops backfill` passes
-// the deadline-less root context, so the only bound on a venue that accepts the connection and
-// never responds is the HTTP client's own Timeout; with http.DefaultClient there is none and the
-// backfill wedges holding its DB handles.
-//
-// The server black-holes every request rather than erroring, because that is the failure a client
-// deadline catches and a connection-refused does not.
+// TestBackfillTrades_UnresponsiveVenueIsBounded pins the per-request deadline on the /Trades loop: the root context has no
+// deadline, so without the HTTP client Timeout a venue that never responds wedges the backfill. The server black-holes requests,
+// as refusal would not exercise it.
 func TestBackfillTrades_UnresponsiveVenueIsBounded(t *testing.T) {
 	release := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
@@ -149,10 +144,8 @@ func TestFetchKrakenTrades_OversizedBodyRefused(t *testing.T) {
 	}
 }
 
-// TestFetchKrakenTrades_MalformedCursorRejected pins cursor validation: /Trades sends `last` as a
-// quoted nanosecond string, and if Kraken flips it to an unquoted number (as /OHLC's already is)
-// the json.Unmarshal error must be returned. A swallowed error leaves last=="" which
-// BackfillTrades reads as "no more pages", silently truncating a multi-year walk to one page.
+// TestFetchKrakenTrades_MalformedCursorRejected: a malformed /Trades last cursor must return the Unmarshal error; swallowing it
+// leaves last=="", which BackfillTrades reads as no more pages and silently truncates a long walk.
 func TestFetchKrakenTrades_MalformedCursorRejected(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		fmt.Fprint(w, `{"error":[],"result":{"XXLMZUSD":[],"last":1530403225770289000}}`)

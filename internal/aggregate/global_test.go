@@ -385,10 +385,8 @@ func TestComputeGlobalPrice_VWAPTierAliasUnderThreshold(t *testing.T) {
 	}
 }
 
-// aliasTierReader keys the aggregator and triangulated seams by the
-// exact base form queried, so a test can prove tryAggregatorTier and
-// tryTriangulatedTier walk the asset's alias family (not just the
-// literal base). VWAP always misses so the fallback tiers run.
+// aliasTierReader keys the aggregator and triangulated seams by the exact base form queried, proving tryAggregatorTier and
+// tryTriangulatedTier walk the asset's alias family, not just the literal base. VWAP always misses so fallback tiers run.
 type aliasTierReader struct {
 	aggByBase map[string][]canonical.OracleUpdate
 	triByBase map[string]string

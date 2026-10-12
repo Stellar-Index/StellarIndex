@@ -12,10 +12,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// fakeReader returns a fixed set of (source, asset) refs and records how many
-// times it was called, plus the `since` it was called with — the latter lets
-// tests prove Backfill and Sweep pass different windows through the same
-// TradeReader seam.
+// fakeReader returns fixed (source, asset) refs and records call count and the `since` passed, proving Backfill and Sweep use
+// different windows through the same TradeReader seam.
 type fakeReader struct {
 	refs      []timescale.SorobanDEXTradeRef
 	err       error
@@ -232,10 +230,8 @@ func TestSweep_StampsHeartbeatOnSuccess(t *testing.T) {
 	}
 }
 
-// TestSweep_DoesNotStampHeartbeatOnEnumerationFailure proves a FAILED
-// enumeration does not stamp the heartbeat — stamping unconditionally would
-// hide exactly the "guard never armed" failure mode the gauge exists to
-// surface (a lake that never answers would still look freshly-swept).
+// TestSweep_DoesNotStampHeartbeatOnEnumerationFailure: a FAILED enumeration must not stamp the heartbeat, or a lake that never
+// answers would look freshly swept and hide the "guard never armed" failure the gauge exists to surface.
 func TestSweep_DoesNotStampHeartbeatOnEnumerationFailure(t *testing.T) {
 	obs.DecimalsGuardSweepLastSuccessUnix.Set(0)
 
@@ -303,10 +299,8 @@ func (f *fakeWriter) UpsertNonstandardDecimalsAsset(_ context.Context, asset str
 	return nil
 }
 
-// TestSweep_PersistsConfirmedOffenderToWriter proves report() upserts a
-// confirmed non-7-decimals asset through the wired Writer exactly once —
-// the same dedup latch that suppresses repeat metric increments also
-// suppresses repeat upserts (the row doesn't need re-writing every sweep).
+// TestSweep_PersistsConfirmedOffenderToWriter: report() upserts a confirmed non-7-decimals asset through the Writer exactly once;
+// the dedup latch that suppresses repeat metric increments also suppresses repeat upserts.
 func TestSweep_PersistsConfirmedOffenderToWriter(t *testing.T) {
 	const (
 		src   = "aquarius"
@@ -331,10 +325,8 @@ func TestSweep_PersistsConfirmedOffenderToWriter(t *testing.T) {
 	}
 }
 
-// TestSweep_WriterErrorDoesNotBlockDetection proves a persistence failure
-// is swallowed (warn-logged) — the metric still fires and Sweep still
-// succeeds. The serving guard staying unfed on a DB hiccup must never take
-// down the detection signal.
+// TestSweep_WriterErrorDoesNotBlockDetection: a persistence failure is warn-logged and swallowed, so the metric still fires and
+// Sweep succeeds; a DB hiccup must never take down the detection signal.
 func TestSweep_WriterErrorDoesNotBlockDetection(t *testing.T) {
 	const (
 		src   = "comet"
@@ -358,11 +350,9 @@ func TestSweep_WriterErrorDoesNotBlockDetection(t *testing.T) {
 	}
 }
 
-// TestReport_RetriesWriteAfterTransientFailure guards against latching before a fallible write.
-// The persistence latch must be set ONLY after a SUCCESSFUL write, so a transient DB failure
-// leaves the asset eligible for retry on the next sweep instead of stranding a non-7-decimal
-// token on a 10^(7-decimals)-skewed served price until restart. The retry stops once a write
-// succeeds, and the observability alarm fires exactly once regardless of the write outcome.
+// TestReport_RetriesWriteAfterTransientFailure: the persistence latch is set ONLY after a SUCCESSFUL write, so a transient DB
+// failure leaves the asset retryable instead of stranding a non-7-decimal token on a 10^(7-decimals)-skewed price until restart.
+// The alarm fires exactly once regardless of write outcome.
 func TestReport_RetriesWriteAfterTransientFailure(t *testing.T) {
 	const (
 		src   = "soroswap"
@@ -413,10 +403,8 @@ func TestReport_RetriesWriteAfterTransientFailure(t *testing.T) {
 
 // ─── Backfill (one-time startup self-seed pass) ────────────────────────────
 
-// TestBackfill_DormantOffenderGetsUpserted pins the dormant-offender case: a non-7-decimals token
-// that traded once and left the periodic sweep's short window. Sweep's window cannot see a
-// 30-day-old trade, while Backfill's wide window does and self-seeds nonstandard_decimals_assets
-// through the same classify+report path, with no operator hand-seed.
+// TestBackfill_DormantOffenderGetsUpserted: a non-7-decimals token that traded once outside Sweep's short window is still found
+// by Backfill's wide window, which self-seeds nonstandard_decimals_assets through the same classify+report path.
 func TestBackfill_DormantOffenderGetsUpserted(t *testing.T) {
 	const (
 		src   = "aquarius"
@@ -492,10 +480,8 @@ func TestBackfill_PropagatesEnumerationError(t *testing.T) {
 	}
 }
 
-// TestBackfill_UsesConfiguredWindow proves Backfill computes `since` from
-// its own BackfillWindow (config-surfaced via
-// internal/config.DecimalsGuardConfig.BackfillWindowDays), independent of
-// Sweep's Window.
+// TestBackfill_UsesConfiguredWindow: Backfill computes `since` from its own BackfillWindow
+// (DecimalsGuardConfig.BackfillWindowDays), independent of Sweep's Window.
 func TestBackfill_UsesConfiguredWindow(t *testing.T) {
 	reader := &fakeReader{}
 	resolver := &fakeResolver{decimals: map[string]uint32{}}

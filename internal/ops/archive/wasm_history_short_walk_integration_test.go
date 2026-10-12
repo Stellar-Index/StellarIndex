@@ -76,10 +76,8 @@ func TestWasmHistoryWorker_ShortWalk_UpperEndIsLastObserved(t *testing.T) {
 			"the worker cannot have observed a ledger that was never stored", w.upperEnd, lastSeeded)
 	}
 
-	// Writer → reader: feed the walk's own result through the reader
-	// that publishes it. mergeWasmHistories closes a contract's open
-	// range at upperEnd, and that ToLedger is what lands in the tool's
-	// stdout JSON, so the coverage claim must not outrun the walk.
+	// Writer to reader: feed the walk's result through the reader that publishes it. mergeWasmHistories closes an open range
+	// at upperEnd and that ToLedger lands in the stdout JSON, so the coverage claim must not outrun the walk.
 	w.state = map[sdkxdr.Hash]*wasmContractState{
 		watched: {ranges: []wasmRange{{WasmHash: "abc123", FromLedger: from, ToLedger: 0}}},
 	}

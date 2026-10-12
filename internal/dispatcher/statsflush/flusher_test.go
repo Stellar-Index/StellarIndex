@@ -17,10 +17,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// stubStatsSource is a deterministic StatsSource for tests. The
-// Flusher is exercised via direct flushAt calls; the goroutine
-// loop in Run() is straightforward enough that the table-driven
-// flushAt tests cover the contract.
+// stubStatsSource is a deterministic StatsSource; the Flusher is exercised via direct flushAt calls, which cover the contract
+// without the Run() loop.
 type stubStatsSource struct {
 	stats dispatcher.Stats
 }
@@ -33,10 +31,8 @@ func (s *stubStatsSource) Stats() dispatcher.Stats { return s.stats }
 type fakeStatsWriter struct {
 	fail  bool
 	calls [][]timescale.DecoderStatsBucket
-	// ctxErrs records ctx.Err() as observed at write time, one entry
-	// per call. A non-nil entry means the real *timescale.Store would
-	// have been rejected by database/sql before reaching Postgres —
-	// which is how the shutdown drain silently wrote nothing.
+	// ctxErrs records ctx.Err() as seen at write time, one per call; a non-nil entry means database/sql would reject the write,
+	// which is how the shutdown drain wrote nothing.
 	ctxErrs []error
 }
 
@@ -54,12 +50,8 @@ func newTestFlusher(source StatsSource, store statsWriter) *Flusher {
 	return New(source, store, slog.New(slog.NewTextHandler(io.Discard, nil)), Options{Interval: 5 * time.Minute})
 }
 
-// TestFlushAt_WriteFailure_RetainsLastSnapshot pins that flushAt does not advance f.last when
-// InsertDecoderStats fails; that would permanently discard the window's deltas, since the next
-// tick would diff against a snapshot that was never durably written.
-//
-// Two failing ticks then a successful one: the third write must carry the full cumulative delta
-// across all three windows.
+// TestFlushAt_WriteFailure_RetainsLastSnapshot pins that flushAt does not advance f.last when InsertDecoderStats fails, which
+// would discard the window's deltas. Two failing ticks then a success: the third write carries the full cumulative delta.
 func TestFlushAt_WriteFailure_RetainsLastSnapshot(t *testing.T) {
 	src := &stubStatsSource{stats: dispatcher.Stats{
 		EventsSeen: map[string]int{"band": 10},
@@ -91,10 +83,8 @@ func TestFlushAt_WriteFailure_RetainsLastSnapshot(t *testing.T) {
 		t.Errorf("after successful flush 3, f.last.EventsSeen[band] = %d, want 40 (snapshot must advance on success)", got)
 	}
 
-	// InsertDecoderStats is attempted on every tick (the fake records all 3), but only the third
-	// call's rows landed. Its delta must be the full 40 from the zero baseline, not 15: if failed
-	// flushes advanced the snapshot (10, then 25), flush 3 would diff against 25 and lose the
-	// first 25 events forever.
+	// Only the third call landed, and its delta must be the full 40 from the zero baseline, not 15: advancing the snapshot on
+	// failed flushes would lose the first 25 events.
 	if len(w.calls) != 3 {
 		t.Fatalf("InsertDecoderStats called %d times, want 3 (attempted on every tick)", len(w.calls))
 	}
@@ -114,10 +104,8 @@ func TestFlushAt_WriteFailure_RetainsLastSnapshot(t *testing.T) {
 	}
 }
 
-// TestFlushAt_WriteSuccess_AdvancesSnapshot pins the baseline (already
-// correct) behaviour for contrast with the failure-path regression
-// test above: a successful write DOES advance f.last so the next
-// tick's delta starts fresh.
+// TestFlushAt_WriteSuccess_AdvancesSnapshot is the contrast case: a successful write advances f.last so the next tick's delta
+// starts fresh.
 func TestFlushAt_WriteSuccess_AdvancesSnapshot(t *testing.T) {
 	src := &stubStatsSource{stats: dispatcher.Stats{
 		EventsSeen: map[string]int{"redstone": 7},
@@ -135,12 +123,8 @@ func TestFlushAt_WriteSuccess_AdvancesSnapshot(t *testing.T) {
 	}
 }
 
-// TestRun_ShutdownDrain_UsesLiveContext guards the shutdown drain: Run's ctx.Done() arm must not
-// call f.flush(ctx) with the context that just fired. database/sql checks ctx.Err() before
-// acquiring a connection, so the final flush would never write and every restart would drop up
-// to a full interval of events_seen / decode_errors / orphan_events.
-//
-// Asserts the drain happens and carries a context still live at write time.
+// TestRun_ShutdownDrain_UsesLiveContext pins that Run's shutdown drain flushes with a live context: database/sql rejects a
+// fired ctx, so the final flush would drop up to an interval of events.
 func TestRun_ShutdownDrain_UsesLiveContext(t *testing.T) {
 	src := &stubStatsSource{stats: dispatcher.Stats{
 		EventsSeen: map[string]int{"band": 7},
@@ -171,10 +155,9 @@ func TestRun_ShutdownDrain_UsesLiveContext(t *testing.T) {
 	}
 }
 
-// TestFlushAt_PromotesDispatcherCountersToPrometheus pins that
-// TxReadErrors, TxEventReadErrors and EntryMetaUnsupported are not WARN-log-only: each needs a
-// Prometheus series an alert rule can key off. One window with all three nonzero must log the
-// WARN and add the exact delta to the matching counter.
+// TestFlushAt_PromotesDispatcherCountersToPrometheus pins that TxReadErrors, TxEventReadErrors and EntryMetaUnsupported each
+// get a Prometheus series, not just a WARN log: one window with all three nonzero logs the WARN and adds the exact delta to
+// each counter.
 func TestFlushAt_PromotesDispatcherCountersToPrometheus(t *testing.T) {
 	before := struct{ txRead, txEvent, entryMeta float64 }{
 		testutil.ToFloat64(obs.DispatcherTxReadErrorsTotal),
@@ -246,12 +229,8 @@ func TestFlushAt_PromotesLedgerUpgradeEntries(t *testing.T) {
 	}
 }
 
-// TestFlushAt_EntryMetaUnsupported_SnapshotAdvances_NoLatch pins that the
-// end-of-flush snapshot includes EntryMetaUnsupported; otherwise f.last stays 0, every delta
-// equals the full cumulative total, and the WARN fires every window instead of only on new
-// occurrences.
-//
-// Two ticks with the same cumulative value must WARN exactly once, from the first.
+// TestFlushAt_EntryMetaUnsupported_SnapshotAdvances_NoLatch pins that the end-of-flush snapshot includes EntryMetaUnsupported,
+// else the WARN fires every window. Two ticks with the same cumulative value WARN exactly once.
 func TestFlushAt_EntryMetaUnsupported_SnapshotAdvances_NoLatch(t *testing.T) {
 	src := &stubStatsSource{stats: dispatcher.Stats{EntryMetaUnsupported: 4}}
 	w := &fakeStatsWriter{}
@@ -275,13 +254,9 @@ func TestFlushAt_EntryMetaUnsupported_SnapshotAdvances_NoLatch(t *testing.T) {
 	}
 }
 
-// TestFlushAt_ObsCounters_SurviveWriteFailure_NoLatch pins that flushAt does not derive the
-// dispatcher-level obs-counter deltas (TxReadErrors, TxEventReadErrors, EntryMetaUnsupported)
-// from f.last, which is deliberately held back on an InsertDecoderStats failure; otherwise the
-// next stable-count tick recomputes the same positive delta and re-emits obs.Add and the WARN.
-//
-// A failing tick with a fresh delta, then a recovered tick with no movement, must fire the
-// counter and the WARN once, from the first tick.
+// TestFlushAt_ObsCounters_SurviveWriteFailure_NoLatch pins that obs-counter deltas are not derived from f.last, which is held
+// back on a write failure; else a later flat tick re-emits them. A failing tick with a fresh delta then a flat recovered tick
+// fires the counter and WARN once.
 func TestFlushAt_ObsCounters_SurviveWriteFailure_NoLatch(t *testing.T) {
 	before := testutil.ToFloat64(obs.DispatcherTxReadErrorsTotal)
 
@@ -317,10 +292,8 @@ func TestFlushAt_ObsCounters_SurviveWriteFailure_NoLatch(t *testing.T) {
 	}
 }
 
-// TestFlushAt_UncorroboratedCalls_EmitsWarnAndMetric proves
-// UncorroboratedCalls now has a consumer: a rejected oracle price-forgery
-// attempt (or a routing-shape change) reaches both a Prometheus counter and
-// a WARN on a fresh delta, instead of vanishing silently.
+// TestFlushAt_UncorroboratedCalls_EmitsWarnAndMetric pins that UncorroboratedCalls (a rejected oracle price-forgery attempt or
+// routing-shape change) reaches a Prometheus counter and a WARN on a fresh delta.
 func TestFlushAt_UncorroboratedCalls_EmitsWarnAndMetric(t *testing.T) {
 	before := testutil.ToFloat64(obs.SourceUncorroboratedCallsTotal.WithLabelValues("band"))
 
@@ -344,10 +317,8 @@ func TestFlushAt_UncorroboratedCalls_EmitsWarnAndMetric(t *testing.T) {
 	}
 }
 
-// TestFlushAt_UncorroboratedCalls_SurviveWriteFailure_NoLatch proves the
-// obsLast baseline for this counter is independent of f.last: a failed
-// InsertDecoderStats must not make the NEXT, flat-count tick recompute a
-// stale positive delta against a held-back baseline.
+// TestFlushAt_UncorroboratedCalls_SurviveWriteFailure_NoLatch pins that this counter's obsLast baseline is independent of
+// f.last, so a failed write cannot make a flat tick recompute a stale positive delta.
 func TestFlushAt_UncorroboratedCalls_SurviveWriteFailure_NoLatch(t *testing.T) {
 	before := testutil.ToFloat64(obs.SourceUncorroboratedCallsTotal.WithLabelValues("band"))
 

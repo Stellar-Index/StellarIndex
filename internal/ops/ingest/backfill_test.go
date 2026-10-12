@@ -18,10 +18,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// writeMinimalConfig drops a TOML config that has just enough fields
-// for parseBackfillFlags + config.LoadWithEnv to succeed. The
-// dispatcher / store / passphrase fields don't matter for these
-// tests — we exit before opening any of them via -dry-run.
+// writeMinimalConfig drops a TOML config with just enough fields for parseBackfillFlags and config.LoadWithEnv to succeed;
+// the tests exit via -dry-run before opening the dispatcher, store or passphrase.
 func writeMinimalConfig(t *testing.T, sources []string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -50,10 +48,8 @@ enabled_sources = ["` + strings.Join(sources, `","`) + `"]
 	return path
 }
 
-// caseBackfill_RejectsMissingFlags locks down the no-default-genesis
-// guard. Operators have wiped the trades hypertable by typing
-// `backfill -config PATH` without -from before — the flag is
-// required so a fat-finger can't trigger a multi-day genesis replay.
+// caseBackfill_RejectsMissingFlags locks down the no-default-genesis guard: -from is required so a fat-finger
+// `backfill -config PATH` cannot trigger a multi-day genesis replay (it has wiped the trades hypertable before).
 func caseBackfill_RejectsMissingFlags(t *testing.T) {
 	cfg := writeMinimalConfig(t, []string{"sdex"})
 	cases := []struct {
@@ -202,10 +198,7 @@ func TestBackfillCursorSub_DistinctRangesAndSources(t *testing.T) {
 
 // TestUnsafeBackfillSources_PureFunction: the helper returns the FULL unsafe list, not just the first.
 func TestUnsafeBackfillSources_PureFunction(t *testing.T) {
-	// Every on-chain Soroban source has been
-	// audited; use a synthetic typo'd source to exercise the
-	// fail-closed Lookup-fallback path. Same shape as the gate
-	// test above.
+	// Every on-chain Soroban source is audited, so a synthetic typo'd source exercises the fail-closed Lookup-fallback path.
 	got := unsafeBackfillSources([]string{"unknown-future-source", "binance", "sdex", "kraken", "comet"})
 	want := []string{"unknown-future-source"}
 	if len(got) != len(want) {
@@ -351,10 +344,8 @@ func caseParseBackfillFlags_Parallel(t *testing.T) {
 	}
 }
 
-// fakeCAGGRefresher is a DB-free caggRefresher: canned
-// LedgerRangeToTimeRange + per-view RefreshContinuousAggregate
-// results, so refreshCAGGsForChunk's failure-aggregation logic
-// is exercisable without live Postgres.
+// fakeCAGGRefresher is a DB-free caggRefresher with canned LedgerRangeToTimeRange and per-view RefreshContinuousAggregate
+// results, so refreshCAGGsForChunk's failure aggregation runs without live Postgres.
 type fakeCAGGRefresher struct {
 	tsFrom, tsTo time.Time
 	rangeErr     error

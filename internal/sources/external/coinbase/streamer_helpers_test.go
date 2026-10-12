@@ -6,10 +6,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// productsFor inverts the operator-supplied PairMap so the streamer
-// can render canonical pairs as Coinbase product IDs ("XLM-USD") on
-// the wire. Pairs missing from the map are fatal — silently dropping
-// would starve a market downstream.
+// productsFor inverts the operator-supplied PairMap to render canonical pairs as Coinbase product IDs ("XLM-USD"); a pair
+// missing from the map is fatal, since dropping it would starve a market.
 
 func TestProductsFor_happyPath(t *testing.T) {
 	pm, err := DefaultPairs()

@@ -328,10 +328,9 @@ func TestCoinMarketCapIDs(t *testing.T) {
 	}
 }
 
-// TestBrowseable_ExcludesReferenceOnly_DivergenceUnaffected: pure pricing-reference coins
-// (BTC/ETH/..., reference_only: true) are excluded from the browseable catalogue so /v1/assets
-// stays Stellar-only, but MUST remain in CoinGeckoIDs()/CoinMarketCapIDs() so the
-// divergence/aggregator reference-price pipeline is unaffected.
+// TestBrowseable_ExcludesReferenceOnly_DivergenceUnaffected: reference_only coins (BTC/ETH/...) are excluded from the browseable
+// catalogue so /v1/assets stays Stellar-only, but must stay in CoinGeckoIDs()/CoinMarketCapIDs() for the divergence/aggregator
+// reference-price pipeline.
 func TestBrowseable_ExcludesReferenceOnly_DivergenceUnaffected(t *testing.T) {
 	cat, err := LoadEmbedded()
 	if err != nil {
@@ -505,10 +504,8 @@ func TestSeedBrowseable_StellarOnlyNetworks(t *testing.T) {
 	}
 }
 
-// TestLoadFromBytes_RejectsUnknownField: a misspelled
-// or renamed optional key (e.g. "coingecko_id" typo'd as "coingecko_di")
-// must fail the load loudly instead of silently parsing to the zero
-// value and dropping the intended data.
+// TestLoadFromBytes_RejectsUnknownField: a misspelled optional key (e.g. "coingecko_di") must fail the load loudly, not parse to
+// the zero value and silently drop the data.
 func TestLoadFromBytes_RejectsUnknownField(t *testing.T) {
 	yamlSrc := `verified_currencies:
   - ticker: FOO
@@ -579,14 +576,9 @@ func TestSeedDataIntegrity(t *testing.T) {
 	}
 }
 
-// TestStellarCollision_nativeAssetImpersonator guards native-asset impersonation.
-//
-// XLM's seed entry is `network: stellar` + `asset_id: native` with NO classic `code`, so it must
-// still enter byStellarCode. Otherwise every classic "XLM-G<attacker>" is served with no
-// collision flag, and the explorer's badge predicate (verifiedSlugSet.has("xlm") && !collision,
-// since the listing falls back to the code as slug) shows it as a VERIFIED currency.
-//
-// No legitimate classic asset can carry XLM's code, so every issuer must collide.
+// TestStellarCollision_nativeAssetImpersonator: XLM's seed entry is `network: stellar` + `asset_id: native` with no classic
+// `code`, yet must still enter byStellarCode; otherwise "XLM-G<attacker>" is served with no collision flag and the explorer
+// badges it VERIFIED. No legitimate classic asset can carry XLM's code, so every issuer must collide.
 func TestStellarCollision_nativeAssetImpersonator(t *testing.T) {
 	cat, err := LoadEmbedded()
 	if err != nil {
@@ -623,19 +615,9 @@ func TestStellarCollision_nativeAssetImpersonator(t *testing.T) {
 	}
 }
 
-// TestStellarCollision_CoversEveryCatalogueTicker pins that an impersonation can be reported for
-// EVERY verified ticker that names an ISSUED asset, not only those with a Stellar issuance.
-//
-// byStellarCode must not be populated solely inside the Issuance loop, or `reference_only`
-// entries (USDT, BTC, ETH, XRP, …) never enter it and a fake of them is never flagged.
-//
-// The census must not run over cat.All() without a carve-out for sovereign-currency entries:
-// the rule is "no legitimate classic asset can bear the code of an asset issued elsewhere", and
-// a sovereign currency is issued nowhere. SEP-1 codes a fiat anchor's deposit token with exactly
-// the ISO code, so the census would require every compliant anchor to be reportable as an
-// impersonator. The carve is by CLASS and only where the entry has no Stellar issuance of its
-// own; a fiat code must still be ANSWERABLE via FiatDenomination, and a fiat entry that gains a
-// verified Stellar issuance falls back under the collision rule.
+// TestStellarCollision_CoversEveryCatalogueTicker: impersonation must be reportable for every verified ticker naming an issued
+// asset, including `reference_only` ones (USDT, BTC, ETH, XRP), so byStellarCode is not filled only in the Issuance loop.
+// Sovereign currencies are carved out by class (SEP-1 anchors use the ISO code) but stay answerable via FiatDenomination.
 func TestStellarCollision_CoversEveryCatalogueTicker(t *testing.T) {
 	cat, err := LoadEmbedded()
 	if err != nil {
@@ -708,10 +690,8 @@ func TestStellarCollision_DoesNotFlagTheGenuineIssuer(t *testing.T) {
 	}
 }
 
-// TestStellarCollision_TickerOnlyVettedIssuanceRoute pins the documented way
-// to admit a genuine Stellar issuance of a ticker-only entry: a
-// `network: stellar` entry on the same catalogue entry exempts that issuer
-// alone.
+// TestStellarCollision_TickerOnlyVettedIssuanceRoute pins the documented way to admit a genuine Stellar issuance of a ticker-only
+// entry: a `network: stellar` entry on the same catalogue entry exempts that issuer alone.
 func TestStellarCollision_TickerOnlyVettedIssuanceRoute(t *testing.T) {
 	const (
 		anchor   = "GDUKMGUGDZQK6YHYA5Z6AY2G4XDSZPSZ3SW5UN3ARVMO6QSRDWP5YLEX"
@@ -792,10 +772,9 @@ func TestLoadFromBytes_RejectsKnownAnchorsOutsideFiatDenomination(t *testing.T) 
 	}
 }
 
-// TestFiatDenomination_ExcludesFiatWithSorobanOnlyIssuance: a fiat entry whose only Stellar
-// issuance is a Soroban contract (no classic code) has a Stellar identity, so StellarCollision
-// owns its ticker and FiatDenomination must not answer for it, as in the classic case and as the
-// census test's `StellarEntry() == nil` carve-out assumes.
+// TestFiatDenomination_ExcludesFiatWithSorobanOnlyIssuance: a fiat entry whose only Stellar issuance is a Soroban contract has a
+// Stellar identity, so StellarCollision owns its ticker and FiatDenomination must not answer for it, matching the census test's
+// carve-out.
 func TestFiatDenomination_ExcludesFiatWithSorobanOnlyIssuance(t *testing.T) {
 	const contract = "CBSJZEIO5C7KC2SF3MKSNXXJSW5G3VTNBX4ATMKUI3B2MR4JKM4R26YF"
 	cat, err := LoadFromBytes([]byte(`verified_currencies:

@@ -44,11 +44,8 @@ func loadAdminFixtures(t *testing.T) []adminFixture {
 	return out
 }
 
-// TestGolden_defindexVaultAdmin drives every captured vault admin row
-// through the production NewDecoder().Matches/Decode and pins the
-// decoded values. Expected values were decoded from the same bytes
-// independently of internal/scval (hand-rolled XDR + strkey); the
-// strategy addresses are curated MainnetStrategies entries.
+// TestGolden_defindexVaultAdmin drives every captured vault admin row through the production NewDecoder().Matches/Decode
+// and pins decoded values, which were derived independently of internal/scval (hand-rolled XDR + strkey).
 func TestGolden_defindexVaultAdmin(t *testing.T) {
 	t.Parallel()
 

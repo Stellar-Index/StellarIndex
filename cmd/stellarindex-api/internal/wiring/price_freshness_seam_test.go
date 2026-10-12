@@ -24,11 +24,9 @@ import (
 // window and the clock, so the constant cannot be silently changed and the nil-fallbacks cannot
 // rot.
 
-// TestStorePriceReaderFreshnessDefault pins the freshness window.
-//
-// 15 minutes sits between two failure modes: well above the 1-2 minute closed-bucket floor, so an
-// active pair is never falsely marked stale, and decisive on a dormant one, which would
-// otherwise serve a months-old VWAP with stale=false.
+// TestStorePriceReaderFreshnessDefault pins the 15 minute freshness window: well above the 1-2 minute closed-bucket floor so
+// active pairs are never falsely stale, yet decisive on a dormant pair, which would otherwise serve a months-old VWAP with
+// stale=false.
 func TestStorePriceReaderFreshnessDefault(t *testing.T) {
 	t.Parallel()
 
@@ -95,10 +93,8 @@ func TestStorePriceReaderStalenessBoundary(t *testing.T) {
 	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
 	r := StorePriceReader{Now: func() time.Time { return now }}
 
-	// Calls the real rule. Re-implementing the expression locally would certify nothing: deleting
-	// the `> r.freshnessWindow()` term from LatestPrice would leave the test green while
-	// /v1/price served months-old buckets with stale=false. The rule lives in
-	// StorePriceReader.bucketIsStale so a unit test can reach it; LatestPrice calls the same method.
+	// Call the real rule: re-implementing the expression locally would stay green if the `> r.freshnessWindow()` term were deleted
+	// from LatestPrice.
 	stale := r.bucketIsStale
 
 	for _, tc := range []struct {

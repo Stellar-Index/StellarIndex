@@ -14,19 +14,9 @@ import (
 // containing one is the ordinary operator mistake that reaches this path.
 const dsnSentinel = "PLACEHOLDER-NOT-A-REAL-SECRET-%ZZ"
 
-// The migration tool is handed the production DSN (password inline) on every deploy and
-// prints failures to stderr, where the deploy log, journald, promtail and Loki collect them.
-//
-// The leak comes from the library, not our format strings: golang-migrate rejects an
-// unparseable database URL with net/url's *url.Error, which renders `parse "<the whole
-// URL>": ...`. A password with an unescaped `%`, `#` or space would print in full.
-//
-// A second case is ours: `down <dsn>` (a paste into the slot where N goes) echoes the
-// argument verbatim through an unrelated error path, so the fix belongs where the process
-// writes rather than at one call site.
-//
-// The test builds and runs the REAL BINARY, because the leak lives in a dependency's error
-// text; a unit test over our own strings cannot see it.
+// The migration tool gets the production DSN on every deploy and prints failures to stderr, which deploy logs collect. The leak
+// comes from golang-migrate's net/url error quoting the whole URL, and from `down <dsn>` echoing its argument. The test runs the
+// REAL BINARY because the leak lives in a dependency's error text.
 func TestMigrate_FatalOutputNeverCarriesTheDSNPassword(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), "stellarindex-migrate")
 	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
@@ -65,10 +55,7 @@ func TestMigrate_FatalOutputNeverCarriesTheDSNPassword(t *testing.T) {
 		name string
 		env  []string
 		args []string
-		// keep is the diagnostic that must SURVIVE. Without it a fix
-		// that prints nothing at all would pass — and leave the
-		// operator unable to see what failed, or which of the two
-		// places a DSN comes from held the value that was wrong.
+		// keep is the diagnostic that must SURVIVE; otherwise printing nothing would pass and leave the operator blind.
 		keep []string
 	}{
 		{
@@ -141,10 +128,8 @@ func buildMigrate(t *testing.T) (bin, migDir string) {
 	return bin, migDir
 }
 
-// runMigrate returns everything the process wrote, stdout and stderr
-// together: a deploy log does not keep them apart, so neither may carry
-// the credential. The inherited DSN is cleared first so a developer's
-// own environment cannot stand in for the one under test.
+// runMigrate returns stdout and stderr together, since a deploy log keeps neither apart. The inherited DSN is cleared so the
+// developer's environment cannot stand in for the one under test.
 func runMigrate(t *testing.T, bin string, env, args []string) string {
 	t.Helper()
 	cmd := exec.Command(bin, args...)
@@ -169,11 +154,8 @@ func assertNoStem(t *testing.T, out string) {
 	}
 }
 
-// assertWithheld is the strong property: the tool must not echo the argument AT ALL,
-// scrubbed or otherwise. A malformed DSN is by definition not parseable, so every rule for
-// "where the password ends" in one has a counter-example. The harmless parts are the canary:
-// if the host or a `password=` key reached the output, the tool echoed the argument and
-// only a heuristic stood between the credential and the deploy log.
+// assertWithheld is the strong property: the argument must not be echoed AT ALL, scrubbed or otherwise. The harmless parts (host,
+// `password=` key) are the canary: if they appear, only a heuristic stood between the credential and the log.
 func assertWithheld(t *testing.T, out, arg string) {
 	t.Helper()
 	assertNoStem(t, out)
@@ -285,15 +267,8 @@ func TestMigrate_TheLibrarysReasonNeverRepeatsAPieceOfThePassword(t *testing.T) 
 	}
 }
 
-// errf must be the only stderr writer, but the flag package prints its own parse errors to
-// the FlagSet's output (raw os.Stderr by default), and those repeat the rejected argument.
-// A DSN that lands where a flag name goes (`-dsn` dropped, or `-$DSN_VAR` typed for
-// `-dsn $DSN_VAR`) would print whole.
-//
-// A scrubbing writer is not enough: the flag package cuts a rejected "flag name" at its
-// first `=`, so base64 padding yields an echo with no `@` for a scrubber to key on. The
-// FlagSet output is discarded and the tool composes its own message, which names the
-// argument's POSITION and never its text.
+// errf must be the only stderr writer, but the flag package echoes rejected arguments to the FlagSet output. A DSN landing in a
+// flag-name slot would print whole, so that output is discarded and the tool names the argument's POSITION, never its text.
 func TestMigrate_FlagParseErrorsDoNotEchoTheArgument(t *testing.T) {
 	bin, migDir := buildMigrate(t)
 	tail := "@" + redactionHost + ":5432/stellarindex?sslmode=disable"
@@ -333,10 +308,8 @@ func TestMigrate_FlagParseErrorsDoNotEchoTheArgument(t *testing.T) {
 			[]string{"down", "-migrations", migDir, "postgres://stellarindex:" + stemHead + " " + stemTail + tail},
 			"unexpected argument",
 		},
-		// The flag package cuts a "flag name" at its FIRST `=` and echoes only what precedes
-		// it. When that `=` is inside the password the echo is `-postgres://user:<password
-		// so far>` with no `@`, so no userinfo pattern matches. Base64 padding (`openssl
-		// rand -base64 32` ends in `=`) is the ordinary way to get there.
+		// The flag package cuts a "flag name" at its FIRST `=` and echoes what precedes it. A `=` inside the password (base64 padding)
+		// leaves an echo with no `@`, so no userinfo pattern matches.
 		{
 			"a DSN where a flag name goes, base64 padding on the password",
 			[]string{"-postgres://stellarindex:" + stemHead + "==" + tail, "status"},
@@ -399,10 +372,8 @@ func TestMigrate_NoSlotEchoesAConnectionStringItWasHanded(t *testing.T) {
 		{"query password with a semicolon", queryDSN(stemHead + ";" + stemTail)},
 		{"query password with a single quote", queryDSN(stemHead + "'" + stemTail)},
 		{"query password with a raw ampersand", queryDSN(stemHead + "&" + stemTail)},
-		// The shape the second attempt was rejected on. Any `:` before the
-		// `@` — a host:port is enough — makes the userinfo reading of this
-		// string run to the `@` INSIDE the query password, so the scrubber
-		// cut as far as the head and printed `@` and the tail.
+		// Any `:` before the `@` (a host:port suffices) makes the userinfo reading run to the `@` INSIDE the query password, so a
+		// scrubber cut at the head and printed `@` and the tail.
 		{"query password with an unescaped @", queryDSN(stemHead + "@" + stemTail)},
 		{"query password with two unescaped @", queryDSN(stemHead + "@x@" + stemTail)},
 		{"query password with an @, no other parameter", "postgres://" + redactionHost + ":5432/stellarindex?password=" + stemHead + "@" + stemTail},
@@ -462,10 +433,8 @@ func TestMigrate_NoSlotEchoesAConnectionStringItWasHanded(t *testing.T) {
 		}
 	}
 
-	// The remaining two routes an unusable DSN reaches the output by: the
-	// unparseable-DSN path, which the tool renders itself, by BOTH ways
-	// the value arrives; and the flag-name slot, which the flag package
-	// echoes. Both carry the query-password-with-@ shape.
+	// The remaining routes an unusable DSN reaches output by: the tool-rendered unparseable-DSN path (both ways the value arrives)
+	// and the flag-name slot the flag package echoes, each with the query-password-with-@ shape.
 	for name, dsn := range map[string]string{
 		"query password with a raw ampersand": "postgres://" + redactionHost + "/stellarindex%ZZ?password=" + stemHead + "&" + stemTail + "&sslmode=disable",
 		"query password with an @":            "postgres://" + redactionHost + ":5432/db%ZZ?password=" + stemHead + "@" + stemTail,
@@ -501,10 +470,8 @@ func TestMigrate_NoSlotEchoesAConnectionStringItWasHanded(t *testing.T) {
 	}
 }
 
-// A lossy transform is tested WITH its trigger. The everyday development DSN has user,
-// password and database all the same word; a scrubber that cut that word wherever it
-// appeared would mangle the help text and every message naming the database. It cuts only
-// the `:password@` span.
+// A lossy transform is tested WITH its trigger: when user, password and database are the same word, the scrubber must cut only
+// the `:password@` span, not mangle help text and messages naming the database.
 func TestMigrate_ScrubbingAKnownPasswordDoesNotMangleOrdinaryOutput(t *testing.T) {
 	bin, migDir := buildMigrate(t)
 	dsn := "postgres://stellarindex:stellarindex@" + redactionHost + ":5432/stellarindex?sslmode=disable"
@@ -528,11 +495,8 @@ func TestMigrate_ScrubbingAKnownPasswordDoesNotMangleOrdinaryOutput(t *testing.T
 	}
 }
 
-// A DSN with its `//` left out parses (net/url reads `postgres:u:pw@h` as opaque and
-// `postgres:/u:pw@h` as a path), so the parse check passes it to lib/pq, which reads it as
-// keyword/value and fails with `missing "=" after "<the whole DSN>"`, and a scrubber anchored
-// on `://` and `password=` misses it. The tool refuses the shape itself, before the driver
-// sees it and before `down`'s prompt prints it.
+// A DSN missing its `//` parses (net/url reads it as opaque or a path), so lib/pq reads it as keyword/value and errors with
+// `missing "=" after "<the whole DSN>"`. The tool must refuse that shape itself, before the driver and before `down`'s prompt.
 func TestMigrate_ADSNMissingItsSlashesIsRefusedWithoutEchoingIt(t *testing.T) {
 	bin, migDir := buildMigrate(t)
 	userinfo := "stellarindex:" + stemHead + "@" + redactionHost + ":5432/stellarindex"
@@ -575,15 +539,8 @@ func TestMigrate_ADSNMissingItsSlashesIsRefusedWithoutEchoingIt(t *testing.T) {
 	}
 }
 
-// `down` calls m.Steps(-n), a destructive rollback, so an operator who fat-fingers it (or a
-// script that inherits the wrong $STELLARINDEX_POSTGRES_DSN) must get a confirmation prompt
-// first. `up` is the only verb any deploy pipeline runs (deploy-binary.yml); `down` is a
-// manual break-glass command, so the safe default is to ask, and to refuse (never guess)
-// when nothing can answer the prompt, matching scripts/dev/cut-release.sh.
-//
-// The test builds the REAL BINARY, because the gate has to run before `newMigrator` opens a
-// connection: it asserts on WHICH failure comes back, and only the real dispatch in main()
-// proves the gate runs first.
+// `down` runs a destructive m.Steps(-n), so it must prompt, and refuse (never guess) when nothing can answer. The test builds the
+// REAL BINARY because the gate must run before `newMigrator` opens a connection, and only main()'s dispatch proves that.
 func TestMigrate_DownRefusesWithoutConfirmationOnNonTTYStdin(t *testing.T) {
 	bin := buildMigrateBinary(t)
 
@@ -635,10 +592,8 @@ func TestMigrate_DownYesSkipsConfirmationAndReachesTheMigrator(t *testing.T) {
 	}
 }
 
-// -yes only skips the prompt; every non-interactive caller passes it, so it cannot also be
-// the acknowledgement that the rollback may discard data. r1 production reaches Postgres at
-// 127.0.0.1 (14-stellarindex-services.yml), so the refusal must not depend on the host
-// looking remote.
+// -yes only skips the prompt, so it cannot also acknowledge that the rollback may discard data. r1 production reaches Postgres at
+// 127.0.0.1, so the refusal must not depend on the host looking remote.
 func TestMigrate_DownRefusesWithoutIKnowOnProductionShapeDSN(t *testing.T) {
 	bin := buildMigrateBinary(t)
 
@@ -690,11 +645,8 @@ func buildMigrateBinary(t *testing.T) string {
 	return bin
 }
 
-// An empty or repeated -dsn must be refused before anything is dialled. The environment DSN
-// stands in for production: an explicit `-dsn ""` (the quoted expansion of an unset
-// variable) must not fall through to it, and a second -dsn must not silently replace the
-// first. Both hosts are unresolvable, so the host in the output shows which database the
-// tool would have used.
+// An empty or repeated -dsn must be refused before any dial: `-dsn ""` (an unset variable's expansion) must not fall back to the
+// environment DSN standing in for production, nor a second -dsn replace the first. Unresolvable hosts show which was used.
 func TestMigrate_EmptyOrRepeatedDSNIsRefusedBeforeAnyDial(t *testing.T) {
 	bin, migDir := buildMigrate(t)
 
@@ -762,16 +714,9 @@ func TestMigrate_EmptyOrRepeatedDSNIsRefusedBeforeAnyDial(t *testing.T) {
 	}
 }
 
-// A flag must reach the tool wherever the operator puts it, and if it cannot, the tool must
-// say so rather than run against something else. Go's flag package stops parsing at the
-// first non-flag argument, so in `stellarindex-migrate down 1 -dsn postgres://staging/...`
-// a single Parse over argv would drop the -dsn and fall back to $STELLARINDEX_POSTGRES_DSN
-// (production). All four verbs and -migrations are affected.
-//
-// The test builds the REAL BINARY and asserts on the host it dials, the only thing that
-// separates the bug from the fix (both spellings otherwise "work"); a unit test on an
-// internal helper cannot see a defect in argv handling at main(). Both hostnames are
-// unresolvable, so nothing connects and the name in the error is the evidence.
+// A flag must reach the tool wherever the operator puts it, else the tool must say so. flag stops at the first non-flag, so in
+// `down 1 -dsn staging` a single Parse drops -dsn and falls back to the production env DSN. The test runs the REAL BINARY and
+// checks the host dialled (both hostnames unresolvable, so the name in the error is the evidence).
 func TestMigrate_FlagsReachTheToolInEitherPosition(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), "stellarindex-migrate")
 	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {

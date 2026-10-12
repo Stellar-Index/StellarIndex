@@ -56,13 +56,7 @@ func TestParseFrame_TradeHappyPath(t *testing.T) {
 	if trade.BaseAmount.BigInt().Cmp(wantBase) != 0 {
 		t.Errorf("BaseAmount = %s want %s", trade.BaseAmount, wantBase)
 	}
-	// Quote = 100.5 × 0.17582 = 17.670 → 10^8 = 1_767_039_000
-	// 1005 × 17582 = 17,670,910 (at 10^(4+5)=10^9)
-	// ... reconstruct carefully:
-	// base integer-form = 10_050_000_000 (10^8)
-	// price integer-form = 17_582_000 (10^8)
-	// product = 176_699_100_000_000_000
-	// ÷ 10^8 = 1_766_991_000
+	// Quote = base × price / 10^8: 10_050_000_000 × 17_582_000 = 176_699_100_000_000_000, / 10^8 = 1_766_991_000.
 	wantQuote := big.NewInt(1_766_991_000)
 	if trade.QuoteAmount.BigInt().Cmp(wantQuote) != 0 {
 		t.Errorf("QuoteAmount = %s want %s", trade.QuoteAmount, wantQuote)
@@ -103,12 +97,8 @@ func TestParseFrame_SubscriptionSucceededIgnored(t *testing.T) {
 	_ = trade
 }
 
-// TestParseFrame_SubscriptionErrorSurfacesRejection is a
-// guard: a bts:error rejecting a subscribe request must
-// surface as ErrSubscriptionRejected, not be swallowed as (nil, nil).
-// Swallowing it left a rejected/delisted pair with no error, log or
-// metric — the venue's other, still-accepted pairs kept the shared
-// per-source CEXStreamLastTradeUnix gauge fresh, hiding the dead one.
+// TestParseFrame_SubscriptionErrorSurfacesRejection: a bts:error rejecting a subscribe must surface as ErrSubscriptionRejected,
+// not (nil, nil); swallowing it let the other pairs keep the shared last-trade gauge fresh and hid the dead one.
 func TestParseFrame_SubscriptionErrorSurfacesRejection(t *testing.T) {
 	raw := []byte(`{"event":"bts:error","channel":"live_trades_xlmbtc","data":{"message":"Bad subscription string."}}`)
 	_, isTrade, err := parseFrame(raw, mustPairs(t))
@@ -147,10 +137,7 @@ func TestParseFrame_UnknownEventIgnored(t *testing.T) {
 }
 
 func TestParseFrame_TradeOnUnknownChannel(t *testing.T) {
-	// A trade arrived on a channel not in our PairMap — MATIC is in
-	// the ADR-0014 allow-list but intentionally not in DefaultPairs
-	// (skipped pending MATIC→POL migration), making it the stable
-	// "known unknown" placeholder. Parser surfaces ErrUnknownChannel.
+	// A trade on a channel absent from PairMap (MATIC: allow-listed but not in DefaultPairs) must surface ErrUnknownChannel.
 	raw := []byte(`{
       "event":"trade",
       "channel":"live_trades_maticusd",
@@ -163,18 +150,8 @@ func TestParseFrame_TradeOnUnknownChannel(t *testing.T) {
 }
 
 func TestParseFrame_DustTradeReturnsTypedSentinel(t *testing.T) {
-	// 1e-8 XLM at $0.16 — base × price floor-divides to 0 at 10^8
-	// integer scale. The canonical validator would reject the row
-	// with "quote_amount must be positive, got 0" → ERROR-log-on-
-	// every-trade and silent ingestion drop.
-	//
-	// Following the Coinbase + Binance dust-trade pattern, parseTrade
-	// now returns ErrDustTrade, which the streamer's handleFrame drops
-	// instead of counting it as a decode error.
-	//
-	// Reproduces the production log signature from r1
-	// ("insert trade failed … quote_amount must be
-	// positive, got 0" with source=bitstamp).
+	// 1e-8 XLM at $0.16 floor-divides to a zero quote at 10^8 scale, which the canonical validator rejects; parseTrade returns
+	// ErrDustTrade so handleFrame drops it instead of counting a decode error.
 	raw := []byte(`{
       "event":"trade",
       "channel":"live_trades_xlmusd",

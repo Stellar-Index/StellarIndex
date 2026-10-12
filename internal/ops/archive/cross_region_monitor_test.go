@@ -313,10 +313,8 @@ func TestAllFailed_Helper(t *testing.T) {
 	}
 }
 
-// stubResponse returns an httptest.Server that always returns the
-// supplied response wrapped in {"data": ...}. Mirrors stubServer in
-// cross_region_check_test.go but local to this file so we don't
-// depend on test-helper visibility across files.
+// stubResponse returns an httptest.Server that always answers with the given response wrapped in {"data": ...}.
+// It mirrors stubServer in cross_region_check_test.go but stays local to avoid cross-file helper dependence.
 func stubResponse(t *testing.T, body crossRegionResponse) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

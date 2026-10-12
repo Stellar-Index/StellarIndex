@@ -169,10 +169,8 @@ func TestKrakenBackfill_SkipsCandleNotClosedByToOrNow(t *testing.T) {
 	}
 }
 
-// The 1h candle and the hour's last 1m candle close at the same instant.
-// If they share (tx_hash, ts) they share the whole trades PK, and a 1m
-// run followed by a 1h run upserts the hour's volume onto the :59 minute
-// row — ~197% of true volume for the hour.
+// The 1h candle and the hour's last 1m candle close at the same instant; sharing (tx_hash, ts) means sharing the trades PK, so a
+// 1h run after a 1m run would upsert hourly volume onto the :59 row (~197% of true).
 func TestKrakenBackfill_GranularityIsPartOfCandleIdentity(t *testing.T) {
 	const hourStart = int64(484_722 * 3600)
 	hourly := krakenBackfillHour(t, hourStart, time.Hour)[0]
@@ -194,10 +192,9 @@ func TestKrakenBackfill_GranularityIsPartOfCandleIdentity(t *testing.T) {
 	}
 }
 
-// TestKrakenBackfill_DetectsDepthHorizonStraddle: Kraken ignores a `since` older than its
-// ~720-candle horizon and serves its most recent window instead, with no HTTP error. A range
-// straddling the horizon must surface as ErrDepthExceeded, carrying the trades that ARE inside
-// the served window, not as a silent truncated success.
+// TestKrakenBackfill_DetectsDepthHorizonStraddle: Kraken ignores a since older than its ~720-candle horizon and serves its latest
+// window without an error; a straddling range must return ErrDepthExceeded with the trades inside the window, not a silent
+// truncated success.
 func TestKrakenBackfill_DetectsDepthHorizonStraddle(t *testing.T) {
 	const requestedFromSec = int64(1_700_000_000)
 	const hourSec = int64(3_600)
@@ -240,10 +237,8 @@ func TestKrakenBackfill_DetectsDepthHorizonStraddle(t *testing.T) {
 	}
 }
 
-// TestKrakenBackfill_DetectsDepthHorizonEntirelyExceeded: a range
-// entirely older than Kraken's serving horizon must not report 0
-// trades with err=nil — that reads as "nothing traded in this window"
-// rather than "this window was never asked for".
+// TestKrakenBackfill_DetectsDepthHorizonEntirelyExceeded: a range wholly older than the horizon must not return 0 trades with
+// err=nil, which would read as nothing traded.
 func TestKrakenBackfill_DetectsDepthHorizonEntirelyExceeded(t *testing.T) {
 	const requestedFromSec = int64(1_700_000_000)
 	const hourSec = int64(3_600)
@@ -388,10 +383,8 @@ func TestKrakenBackfill_UndecodableLastCursorErrors(t *testing.T) {
 	}
 }
 
-// "RENDER/USD" leaves a 33-byte candle seed; truncating it would drop the
-// close time's last digit so neighbouring candles could share one
-// trades PK. Backfill must refuse it before walking rather than
-// per-candle-skip it into an empty result.
+// RENDER/USD leaves a 33-byte candle seed; truncating drops the close time's last digit and neighbouring candles could share a
+// trades PK, so Backfill must refuse it up front.
 func TestKrakenBackfill_RejectsSymbolThatWouldTruncateSeed(t *testing.T) {
 	const startSec = int64(1_745_000_000)
 	srv := newTestKrakenREST(t, "RENDER/USD", synthesiseKrakenCandles(2, startSec, 60), startSec+60)
@@ -421,10 +414,8 @@ func TestKrakenBackfill_RejectsSymbolThatWouldTruncateSeed(t *testing.T) {
 	}
 }
 
-// A raw-fill backfill and the live streamer must derive the same
-// trades-PK identity (tx_hash and the stored microsecond ts) for the
-// same Kraken fill, or backfilling a streamed window inserts every fill
-// twice and doubles its volume.
+// A raw-fill backfill and the live streamer must derive the same trades-PK identity (tx_hash, microsecond ts) for one Kraken
+// fill, or backfilling a streamed window doubles its volume.
 func TestRawFillTxHashMatchesLiveIdentity(t *testing.T) {
 	pair, err := canonical.NewPair(mustAsset(t, "crypto:XLM"), mustAsset(t, "fiat:USD"))
 	if err != nil {

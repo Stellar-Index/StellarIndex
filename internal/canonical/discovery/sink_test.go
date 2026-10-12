@@ -53,10 +53,8 @@ func (r *fakeRecorder) IsKnown(_ context.Context, _ string) (bool, error) {
 	return false, nil
 }
 
-// TestAsyncSink_DrainsToRecorder — happy path: Push → channel →
-// worker → Recorder.Record. Stop drains pending records. Each Push
-// uses a distinct (ContractID, EventType) so the in-process dedup
-// doesn't collapse them.
+// TestAsyncSink_DrainsToRecorder: Push -> channel -> worker -> Recorder.Record, with Stop draining pending records; each Push
+// uses a distinct (ContractID, EventType) so in-process dedup doesn't collapse them.
 func TestAsyncSink_DrainsToRecorder(t *testing.T) {
 	rec := &fakeRecorder{}
 	sink := discovery.NewAsyncSink(rec, discovery.AsyncSinkOptions{BufferSize: 16})
@@ -78,11 +76,9 @@ func TestAsyncSink_DrainsToRecorder(t *testing.T) {
 	}
 }
 
-// TestAsyncSink_DedupsRepeatedHits: repeat pushes for the same (ContractID, EventType) in one
-// process do not each occupy a channel slot (most pushes are duplicates, so this protects
-// production rate; they are counted in SkippedCount). The skipped observations are not
-// discarded: Stop flushes one extra Record call per key with the true accumulated count, so
-// totalCount accounts for every push.
+// TestAsyncSink_DedupsRepeatedHits: repeat pushes for the same (ContractID, EventType) don't each take a channel slot (counted
+// in SkippedCount), and Stop flushes one extra Record per key with the true accumulated count, so totalCount accounts for every
+// push.
 func TestAsyncSink_DedupsRepeatedHits(t *testing.T) {
 	rec := &fakeRecorder{}
 	sink := discovery.NewAsyncSink(rec, discovery.AsyncSinkOptions{BufferSize: 16})
@@ -116,10 +112,8 @@ func TestAsyncSink_DedupsRepeatedHits(t *testing.T) {
 	}
 }
 
-// TestAsyncSink_DropsOnFullBuffer — Push doesn't block; once the
-// channel fills, additional Hits increment DroppedCount instead.
-// Each Push uses a distinct ContractID so the in-process dedup
-// doesn't collapse them before they hit the channel.
+// TestAsyncSink_DropsOnFullBuffer: Push never blocks; once the channel fills, extra Hits bump DroppedCount.
+// Each Push uses a distinct ContractID so in-process dedup does not collapse them first.
 func TestAsyncSink_DropsOnFullBuffer(t *testing.T) {
 	hold := make(chan struct{})
 	rec := &fakeRecorder{hold: hold} // worker blocks indefinitely
@@ -231,10 +225,8 @@ func TestAsyncSink_StopIsIdempotent(t *testing.T) {
 	wg.Wait() // must not deadlock or panic
 }
 
-// TestAsyncSink_StartTwice_IsNoOp pins Start's documented idempotency:
-// without a once-guard a second Start launched a second run() goroutine,
-// and on Stop the loser of the close(s.done) race panicked the process
-// after worker.Recover had already unwound.
+// TestAsyncSink_StartTwice_IsNoOp pins Start's idempotency: a second Start must not launch a second run() goroutine,
+// whose close(s.done) race on Stop would panic the process.
 func TestAsyncSink_StartTwice_IsNoOp(t *testing.T) {
 	rec := &fakeRecorder{}
 	sink := discovery.NewAsyncSink(rec, discovery.AsyncSinkOptions{BufferSize: 4})
@@ -264,10 +256,7 @@ func TestAsyncSink_DedupsAcrossKindsIndependently(t *testing.T) {
 	sink.Push(discovery.Hit{ContractID: "C-oracle", Kind: discovery.KindOracleEvent, Symbol: "oracle"})
 	// Repeat of the first — must dedup, not a 3rd record.
 	sink.Push(discovery.Hit{ContractID: "C-oracle", Kind: discovery.KindOracleEvent, Symbol: "price_update"})
-	// Same contract, same symbol string, but KindOracleCall instead of
-	// KindOracleEvent — a distinct sighting (event vs call path), not
-	// a dedup of the KindOracleEvent "oracle" hit above (different
-	// symbol anyway, but this also proves Kind alone disambiguates).
+	// Same contract and symbol but KindOracleCall, not KindOracleEvent: Kind alone makes it a distinct sighting, not a dedup.
 	sink.Push(discovery.Hit{ContractID: "C-oracle", Kind: discovery.KindOracleCall, Symbol: "relay"})
 
 	sink.Stop()
@@ -362,10 +351,8 @@ func (r *errorOnceRecorder) recorded() []string {
 	return append([]string(nil), r.success...)
 }
 
-// TestAsyncSink_RecordFailureRollsBackSeen pins that a failed Record rolls back the seen-mark,
-// which is set at Push time. Otherwise every later event for the contract is skipped as a
-// duplicate and a contract first seen during a recorder outage is lost to discovery for the life
-// of the process, as the buffer-full path already avoids.
+// TestAsyncSink_RecordFailureRollsBackSeen pins that a failed Record rolls back the seen-mark set at Push time.
+// Otherwise later events for the contract are skipped as duplicates and discovery loses it for the life of the process.
 func TestAsyncSink_RecordFailureRollsBackSeen(t *testing.T) {
 	rec := &errorOnceRecorder{fails: 1}
 	sink := discovery.NewAsyncSink(rec, discovery.AsyncSinkOptions{BufferSize: 8})
@@ -486,10 +473,8 @@ func TestAsyncSink_StopFlushesTrueEventCountAndLastLedger(t *testing.T) {
 	}
 }
 
-// TestAsyncSink_StopBoundedByDrainTimeout — Stop must not drain
-// every buffered hit at RecordTimeout each (1024 × 2s ≈ 34 min in
-// production) without an overall deadline, or under a Postgres stall it
-// outlives the indexer's systemd stop timeout and was SIGKILLed.
+// TestAsyncSink_StopBoundedByDrainTimeout: Stop needs an overall drain deadline; draining 1024 hits at 2s each (~34 min)
+// under a Postgres stall would outlive the systemd stop timeout and get SIGKILLed.
 func TestAsyncSink_StopBoundedByDrainTimeout(t *testing.T) {
 	const hits = 40
 	rec := &stallRecorder{}

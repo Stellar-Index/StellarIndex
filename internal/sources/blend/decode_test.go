@@ -23,10 +23,8 @@ func makeDeployEvent(t *testing.T, poolAddr string) events.Event {
 	return makeDeployEventFrom(t, MainnetPoolFactory, poolAddr)
 }
 
-// makeDeployEventFrom builds a `deploy` event from a specific factory —
-// ContractID is the factory (deploy is emitted BY the factory; the new
-// pool is carried in the body), so it passes the ADR-0035 gate when the
-// factory is in MainnetPoolFactories.
+// makeDeployEventFrom builds a `deploy` event whose ContractID is the factory (deploy is emitted BY the factory),
+// so it passes the ADR-0035 gate when the factory is in MainnetPoolFactories.
 func makeDeployEventFrom(t *testing.T, factory, poolAddr string) events.Event {
 	t.Helper()
 	return events.Event{
@@ -214,10 +212,7 @@ func auctionDataScVal(bid, lot xdr.ScVal, block uint32) xdr.ScVal {
 // ─── classify ───────────────────────────────────────────────────
 
 func TestClassify(t *testing.T) {
-	// classify() is the auction-only fast path retained for the
-	// legacy auction dispatcher. Money-market / admin topics
-	// return "" through this entry point; the extended switch
-	// lives in classifyAny() (see TestClassifyAny).
+	// classify() is the auction-only fast path: money-market and admin topics return "" here; classifyAny() handles them.
 	cases := []struct {
 		name string
 		top0 string
@@ -504,10 +499,8 @@ func TestDecoder_NameAndKind(t *testing.T) {
 	}
 }
 
-// TestDecodeAuctions_PopulateEventIndex pins that each auction decode carries
-// events.Event.EventIndex onto the row, so same-kind auction events from ONE operation don't
-// collapse on the blend_auctions PK. Without it a liquidation filling several positions in one
-// op silently drops all but one fill_auction row via ON CONFLICT DO NOTHING.
+// TestDecodeAuctions_PopulateEventIndex pins that each auction row carries EventIndex, so same-kind events from one operation
+// do not collapse on the blend_auctions PK (ON CONFLICT DO NOTHING would drop all but one fill_auction).
 func TestDecodeAuctions_PopulateEventIndex(t *testing.T) {
 	pool := contractStrkeyFromSeed(t, 0x01)
 	user := accountStrkeyFromSeed(t, 0x10)

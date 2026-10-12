@@ -118,11 +118,8 @@ var (
 	cteNameRE      = regexp.MustCompile(`(?i)\b([a-z_0-9]+)\s+AS\s*\(`)
 )
 
-// TestRunbookSQLNamesMigratedRelations: the first diagnostic query of a page must not fail on a
-// missing table, so every unqualified relation a runbook SELECTs FROM must be created by some
-// migration. Schema-qualified names (ClickHouse `stellar.*`, `timescaledb_information.*`),
-// Postgres catalogues (`pg_*`), `schema_migrations`, CTE names and `…`-elided fragments are
-// out of scope.
+// TestRunbookSQLNamesMigratedRelations: every unqualified relation a runbook SELECTs FROM must be created by a migration, so a
+// page's first query cannot hit a missing table. Schema-qualified names, pg_*, schema_migrations, CTEs and elisions are skipped.
 func TestRunbookSQLNamesMigratedRelations(t *testing.T) {
 	root := repoRootForOpsTest(t)
 	files, err := filepath.Glob(filepath.Join(root, "migrations", "*.up.sql"))

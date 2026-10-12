@@ -12,10 +12,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external/scale"
 )
 
-// FuzzParseFrameMatch: size/price through a real-shape match frame; base
-// is the exact 10^8 scaling, quote is base×price/10^8 truncated, dust is
-// exactly a zero quote, and a field the scaler rejects never yields a
-// trade.
+// FuzzParseFrameMatch: size and price through a real-shape match frame; base is the exact 10^8 scaling, quote is
+// base*price/10^8 truncated, dust is exactly a zero quote, and a field the scaler rejects never yields a trade.
 func FuzzParseFrameMatch(f *testing.F) {
 	f.Add("100.00000000", "0.17582000", "XLM-USD", int64(123456))
 	f.Add("0.00000001", "0.16", "XLM-USD", int64(1))

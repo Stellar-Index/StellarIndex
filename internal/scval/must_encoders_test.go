@@ -5,11 +5,8 @@ import (
 	"testing"
 )
 
-// MustEncodeSymbol / MustEncodeString are compile-time constant
-// helpers — they panic on bad input rather than returning an error.
-// Pin both: (a) success returns the same blob as the non-panic
-// variant, (b) panics carry the "scval.MustEncode…" prefix so a
-// crash log is unambiguously traceable.
+// MustEncodeSymbol / MustEncodeString are constant helpers that panic on bad input. Pin that success matches the non-panic
+// variant and panics carry the "scval.MustEncode…" prefix so a crash log is traceable.
 
 func TestMustEncodeSymbol_happyPath(t *testing.T) {
 	got := MustEncodeSymbol("swap")

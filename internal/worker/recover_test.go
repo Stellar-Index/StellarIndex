@@ -13,14 +13,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// TestRecover_ContainsPanicAndLogs proves the guard does its two jobs:
-//
-//	(a) it CONFINES the panic, so a detached worker's fault cannot terminate the process; and
-//	(b) it LOGS the fault at Error with the worker name, the panic value and a stack, so a
-//	    silently-stopped worker cannot pass unnoticed.
-//
-// If worker.Recover omitted its recover(), the panic below would escape guardedWorker into
-// this test, which has no recover of its own, and crash the test binary.
+// TestRecover_ContainsPanicAndLogs proves the guard (a) confines the panic so a detached worker cannot terminate the process, and
+// (b) logs at Error with worker name, panic value and stack. Without recover() the panic would escape and crash the test binary.
 func TestRecover_ContainsPanicAndLogs(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelError}))
@@ -48,10 +42,8 @@ func TestRecover_ContainsPanicAndLogs(t *testing.T) {
 	}
 }
 
-// TestRecover_NilLoggerDoesNotItselfPanic guards the defensive nil-logger
-// branch: a recover helper that panicked on a nil logger would be worse
-// than no guard at all (it would turn a recoverable worker fault into an
-// unrecoverable one). slog.Default() is used as the fallback sink.
+// TestRecover_NilLoggerDoesNotItselfPanic guards the nil-logger branch: a recover helper that panicked on nil would turn a
+// recoverable worker fault into an unrecoverable one. slog.Default() is the fallback sink.
 func TestRecover_NilLoggerDoesNotItselfPanic(t *testing.T) {
 	guardedWorker := func() {
 		defer worker.Recover(nil, "nil-logger-worker")

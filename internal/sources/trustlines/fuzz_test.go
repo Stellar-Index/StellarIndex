@@ -72,10 +72,8 @@ func refAssetKey(a xdr.TrustLineAsset) (string, bool) {
 	return strings.TrimRight(string(code), "\x00") + ":" + issuer.Address(), true
 }
 
-// FuzzAssetKeyFromTrustLineAsset checks the watched-asset key: identity
-// is (code, issuer) — the issuer bytes round-trip through the strkey, the
-// code is exactly the unpadded asset code — and non-credit variants are
-// rejected rather than keyed.
+// FuzzAssetKeyFromTrustLineAsset checks the watched-asset key: identity is (code, issuer), the issuer round-trips through the
+// strkey, the code is the unpadded asset code, and non-credit variants are rejected.
 func FuzzAssetKeyFromTrustLineAsset(f *testing.F) {
 	f.Add(uint8(1), []byte("USDC"), bytes.Repeat([]byte{7}, 32))
 	f.Add(uint8(2), []byte("LONGCODE12AB"), bytes.Repeat([]byte{9}, 32))
@@ -126,10 +124,9 @@ func FuzzAssetKeyFromTrustLineAsset(f *testing.F) {
 	})
 }
 
-// FuzzObserverDecode drives arbitrary LedgerEntryChange XDR through the observer. Matches
-// fires exactly for a watched classic credit trustline in any change variant (same code under
-// another issuer never matches); a match decodes to one Observation carrying the holder, the
-// watched key and the int64 balance verbatim, and a removal has a zero balance with IsRemoval.
+// FuzzObserverDecode drives arbitrary LedgerEntryChange XDR through the observer. Matches fires only for a watched classic
+// credit trustline (same code under another issuer never matches); a match yields one Observation with the holder, watched key
+// and verbatim int64 balance, and a removal has zero balance with IsRemoval.
 func FuzzObserverDecode(f *testing.F) {
 	issuer, impostor := fuzzAccountID(0x10), fuzzAccountID(0x11)
 	holder := fuzzAccountID(0x20)

@@ -72,10 +72,9 @@ func refAccountID(c xdr.LedgerEntryChange) string {
 	return ""
 }
 
-// FuzzObserverDecode drives arbitrary LedgerEntryChange XDR through the observer. Matches fires
-// exactly for a watched AccountEntry in any change variant; a match decodes to one Observation
-// whose balance is the int64 stroops verbatim (ADR-0003: no truncation or sign change), and a
-// removal has a zero balance with IsRemoval set.
+// FuzzObserverDecode drives arbitrary LedgerEntryChange XDR through the observer: Matches fires exactly for a watched
+// AccountEntry in any change variant; the balance is int64 stroops verbatim (ADR-0003); a removal has zero balance with
+// IsRemoval set.
 func FuzzObserverDecode(f *testing.F) {
 	watchedID, otherID := fuzzAccountID(0x01), fuzzAccountID(0x02)
 	for _, ct := range []xdr.LedgerEntryChangeType{

@@ -95,10 +95,8 @@ func TestSimulateTransaction_decodesSuccess(t *testing.T) {
 }
 
 func TestSimulateTransaction_passesThroughContractError(t *testing.T) {
-	// stellar-rpc returns a 200 with .error populated when the
-	// contract call itself failed (panic, out-of-gas, etc.). The
-	// Go method must NOT translate that to a Go error — callers
-	// inspect SimulationResponse.Error directly.
+	// stellar-rpc returns 200 with .error populated when the contract call itself failed; the Go method must NOT turn that into a Go
+	// error, since callers inspect SimulationResponse.Error directly.
 	s := mockRPC(t, map[string]any{
 		"simulateTransaction": map[string]any{
 			"latestLedger": 100,

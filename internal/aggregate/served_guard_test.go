@@ -112,10 +112,8 @@ func TestGuardServedVWAP_ModerateMovePasses(t *testing.T) {
 }
 
 func TestGuardServedVWAP_EmptyBaselineFailsOpen(t *testing.T) {
-	// Post-M11(b): ONLY a truly empty baseline (no usable trailing
-	// bucket) fails open — there is no centre to judge against. A thin
-	// but non-empty baseline is handled by the wider-finite band and is
-	// proven in TestGuardServedVWAP_ThinHistoryNotFullyOpen.
+	// ONLY a truly empty baseline (no usable trailing bucket) fails open: no centre to judge against. A thin but non-empty
+	// baseline gets the wider-finite band (see TestGuardServedVWAP_ThinHistoryNotFullyOpen).
 	for _, trailing := range [][]*big.Rat{nil, {}, {nil, nil}} {
 		accept, lkg := GuardServedVWAP(rat(t, "1000.0"), trailing)
 		if !accept || lkg != -1 {
@@ -134,10 +132,8 @@ func TestServedBaselineValidated_EmptyBaselineUnvalidatedButStillServed(t *testi
 		if !accept || lkg != -1 {
 			t.Fatalf("empty baseline must still SERVE the value (no blackout): accept=%v lkg=%d", accept, lkg)
 		}
-		// Half 2 — but UNVALIDATED: the companion signal must be false, so
-		// the caller marks it stale/low-confidence rather than confident.
-		// (Without this signal the accept above would be served with
-		// stale=false — the fail-open defect.)
+		// Half 2, but UNVALIDATED: the companion signal must be false so the caller marks the value stale/low-confidence; without it the
+		// accepted value would be served with stale=false, the fail-open defect.
 		if ServedBaselineValidated(empty) {
 			t.Fatalf("empty baseline must report UNVALIDATED (low-confidence); got validated=true — the fail-open defect")
 		}

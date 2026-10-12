@@ -69,10 +69,7 @@ func TestReadVCSSetting_MatchedKey(t *testing.T) {
 }
 
 func TestVersionField_IsNonEmpty(t *testing.T) {
-	// Default value should never be empty — clients display this
-	// directly, and an empty version field is meaningfully
-	// different from "dev". Belt-and-braces against a future
-	// ldflags-only-init regression.
+	// The default must never be empty: clients display it directly, and an empty version differs meaningfully from "dev".
 	if Version == "" {
 		t.Error("Version is empty — must default to \"dev\" if ldflags didn't run")
 	}

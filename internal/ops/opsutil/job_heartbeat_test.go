@@ -16,10 +16,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 )
 
-// gaugeValue pulls one metric's sample value out of a textfile body,
-// erroring the test if the series is absent — absence and zero are
-// DIFFERENT states for these gauges and the tests must not conflate them
-// (that conflation was a real defect one directory over).
+// gaugeValue returns one metric's sample from a textfile body and fails if the series is absent: absence and zero are
+// different states.
 func gaugeValue(t *testing.T, body, metric string) string {
 	t.Helper()
 	for _, line := range strings.Split(body, "\n") {

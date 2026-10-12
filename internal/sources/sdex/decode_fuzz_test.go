@@ -20,10 +20,8 @@ import (
 // Generative runs: go test -run=^$ -fuzz=^FuzzXxx$ -fuzztime=60s ./internal/sources/sdex
 // Under a plain `go test` the seeds run as ordinary cases.
 
-// fuzzAsset builds an xdr.Asset from raw fuzz bytes: native when
-// native is set, alphanum4 for a code of <=4 bytes, alphanum12 otherwise.
-// The code bytes are NOT sanitised — control bytes and interior NULs are
-// exactly the on-chain shapes canonical.AssetFromXDR must reject.
+// fuzzAsset builds an xdr.Asset from raw fuzz bytes: native, alphanum4 for codes <=4 bytes, else alphanum12. Code bytes are
+// deliberately unsanitised: control bytes and interior NULs are on-chain shapes canonical.AssetFromXDR must reject.
 func fuzzAsset(native bool, code, issuer []byte) xdr.Asset {
 	if native {
 		return xdr.MustNewNativeAsset()
@@ -148,11 +146,9 @@ func FuzzAmountFromInt64(f *testing.F) {
 	})
 }
 
-// FuzzDecodeClaimAtom drives decodeClaimAtom over arbitrary atoms and asserts: (1) it accepts
-// exactly the atoms sdexclaim.IsRealTrade counts, so the ADR-0033 census oracle equals
-// COUNT(trades); (2) every accepted atom decodes to its own exact amounts, assets and maker;
-// (3) both-legs-non-positive no-ops and unknown variants are rejected with the documented
-// sentinels, never mis-decoded.
+// FuzzDecodeClaimAtom asserts decodeClaimAtom accepts exactly the atoms sdexclaim.IsRealTrade counts (so the census oracle
+// equals COUNT(trades)), decodes accepted atoms to their exact amounts, assets and maker, and rejects non-positive-leg and
+// unknown atoms with the documented sentinels.
 func FuzzDecodeClaimAtom(f *testing.F) {
 	iss := []byte{1, 2, 3}
 	f.Add(uint8(0), []byte{9}, false, []byte("USDC"), iss, true, []byte(nil), []byte(nil), int64(10_000_000), int64(3_000_000), uint8(0), uint16(0))
@@ -229,10 +225,8 @@ var tradeOpTypes = []xdr.OperationType{
 	xdr.OperationTypePayment,
 }
 
-// resultArmAccepted reports whether extractClaimAtoms may read claims
-// from a result arm of type trType for an op of type opType: the arm
-// must be the op's own, except that core emits CreatePassiveSellOffer
-// results under the ManageSellOffer arm.
+// resultArmAccepted reports whether extractClaimAtoms may read claims from result arm trType for opType: the op's own arm,
+// except that core emits CreatePassiveSellOffer results under the ManageSellOffer arm.
 func resultArmAccepted(opType, trType xdr.OperationType) bool {
 	if opType == trType {
 		return true
@@ -240,10 +234,9 @@ func resultArmAccepted(opType, trType xdr.OperationType) bool {
 	return opType == xdr.OperationTypeCreatePassiveSellOffer && trType == xdr.OperationTypeManageSellOffer
 }
 
-// FuzzDecodeOperationResultXDR feeds arbitrary XDR OperationResults (seeded from every trade-op
-// success shape) through the production decoder and the audit seam, asserting they agree with
-// each other and the census predicate, each emitted trade carries its own atom's exact amounts,
-// op_index values are unique, and a result arm foreign to the op type yields nothing.
+// FuzzDecodeOperationResultXDR feeds arbitrary OperationResults through the production decoder and audit seam, asserting they
+// agree with the census predicate, each trade carries its atom's exact amounts, op_index values are unique, and a result arm
+// foreign to the op type yields nothing.
 func FuzzDecodeOperationResultXDR(f *testing.F) {
 	for _, seed := range operationResultSeeds(f) {
 		f.Add(seed.opSel, seed.raw, uint8(2), false)
