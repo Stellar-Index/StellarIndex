@@ -1236,7 +1236,7 @@ func TestDistinctTopicShapes_NonSymbolTopic0(t *testing.T) {
 		}
 	}
 
-	shapes, err := chstore.DistinctTopicShapes(ctx, addr, lo, lo+uint32(len(fixture)), nil)
+	shapes, err := chstore.DistinctTopicShapes(ctx, addr, lo, lo+uint32(len(fixture)), nil, nil)
 	if err != nil {
 		t.Fatalf("DistinctTopicShapes: %v", err)
 	}

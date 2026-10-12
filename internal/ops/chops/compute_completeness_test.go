@@ -108,16 +108,6 @@ func TestRecognitionGlobalExcludeSyms_ExcludesFirehoseNotClassicToken(t *testing
 	}
 }
 
-func TestWatchedSep41RecognitionShapes_EmptyWatchListScansNothing(t *testing.T) {
-	shapes, err := watchedSep41RecognitionShapes(context.Background(), config.Config{}, "unreachable:0", 0, 100)
-	if err != nil {
-		t.Fatalf("empty watch list must short-circuit without dialing ClickHouse, got err: %v", err)
-	}
-	if shapes != nil {
-		t.Errorf("empty watch list must scan nothing, got %v", shapes)
-	}
-}
-
 // Strict per-ledger compare catches a drop netted by a phantom; an aggregate
 // waiver tolerates a keying shift only below its vintage boundary, and a waiver
 // without a boundary reconciles strict.

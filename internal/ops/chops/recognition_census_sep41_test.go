@@ -11,7 +11,7 @@ import (
 
 // TestBuildCensusDispatcher_RecognisesWatchedSEP41 pins that the recognition
 // census carries the same watched-set sep41 decoders as the indexer, so the
-// CAP-67 shapes watchedSep41RecognitionShapes re-adds are not reported as gaps.
+// CAP-67 shapes the scan keeps for watched contracts are not reported as gaps.
 func TestBuildCensusDispatcher_RecognisesWatchedSEP41(t *testing.T) {
 	const (
 		watched   = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUOZWS4HG3B5UPHHC2QQA"
