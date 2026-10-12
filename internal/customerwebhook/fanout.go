@@ -17,30 +17,20 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// FanoutStore is the subset of [platform.WebhookStore] the fan-out
-// service uses. Pulled out as a narrow interface so producers can
-// substitute fakes in unit tests without standing up a full store.
+// FanoutStore is the narrow subset of [platform.WebhookStore] the fan-out uses, so producers can substitute fakes in unit tests.
 type FanoutStore interface {
 	ListWebhooksSubscribedTo(ctx context.Context, eventType platform.WebhookEventType) ([]platform.CustomerWebhook, error)
 	EnqueueDelivery(ctx context.Context, d platform.WebhookDelivery) error
 }
 
-// Fanout enqueues one webhook delivery per subscribed enabled webhook when a product event fires;
-// the worker then drains the pending rows. Without a Publish caller a registered hook never fires.
-//
-// The triggering event is already durable in its own table, so a fan-out failure never blocks the
-// producer. It must still be visible: Publish reports a [PublishResult] plus an error whenever any
-// delivery was lost, and every loss increments [obs.CustomerWebhookFanoutFailuresTotal].
+// Fanout enqueues one delivery per subscribed enabled webhook when a product event fires; a fan-out failure never blocks the producer (the event is already durable) but must be visible: Publish returns a [PublishResult] plus an error on any lost delivery and increments [obs.CustomerWebhookFanoutFailuresTotal].
 type Fanout struct {
 	store  FanoutStore
 	logger *slog.Logger
 	clock  func() time.Time
 }
 
-// PublishResult summarises one fan-out. Subscribers is what the
-// store returned; Enqueued + Failed + Suppressed partition it (a
-// short-circuit before the loop — invalid payload, list error — leaves
-// them all zero).
+// PublishResult summarises one fan-out: Subscribers is what the store returned and Enqueued + Failed + Suppressed partition it (an early short-circuit leaves them all zero).
 type PublishResult struct {
 	Subscribers int
 	Enqueued    int
@@ -57,10 +47,7 @@ type PublishResult struct {
 	AlreadyEnqueued int
 }
 
-// NewFanout constructs a Fanout. nil store returns nil — the
-// producer call sites short-circuit on nil Fanout, matching the
-// "webhook subsystem optional in this deployment" posture for
-// Redis-less / Postgres-less binaries.
+// NewFanout constructs a Fanout; a nil store returns nil and producer call sites short-circuit on a nil Fanout (webhooks optional in this deployment).
 func NewFanout(store FanoutStore, logger *slog.Logger) *Fanout {
 	if store == nil {
 		return nil
@@ -71,15 +58,7 @@ func NewFanout(store FanoutStore, logger *slog.Logger) *Fanout {
 	return &Fanout{store: store, logger: logger, clock: time.Now}
 }
 
-// Publish enqueues one delivery per subscribed enabled webhook. payload must be caller-marshalled
-// JSON small enough for a Postgres jsonb column.
-//
-// It returns the counts plus a non-nil error whenever a subscribed customer LOST the event; a lost
-// enqueue is permanent because no retry row exists. Zero subscribers is a successful no-op. A
-// suspended or closed account is not a subscriber: the kill switch is enforced in
-// ListWebhooksSubscribedTo and again in EnqueueDelivery, and a refusal from the second gate lands
-// in [PublishResult.Suppressed], not an error. Callers MUST log the error at ERROR with the
-// event type + counts.
+// Publish enqueues one delivery per subscribed enabled webhook (payload: caller-marshalled JSON); it returns a non-nil error whenever a subscribed customer LOST the event (permanent, no retry row), which callers MUST log at ERROR; suspended or closed accounts are counted in [PublishResult.Suppressed], not an error.
 func (f *Fanout) Publish(
 	ctx context.Context, eventType platform.WebhookEventType, payload []byte,
 ) (PublishResult, error) {
@@ -126,13 +105,7 @@ func (f *Fanout) publish(
 	return res, nil
 }
 
-// PublishOnce is [Fanout.Publish] for an event with a stable identity.
-// Each delivery ID is derived from (eventType, eventKey, webhook id) and the store keys the row on
-// it, so re-running a partially failed fan-out enqueues only the missed subscribers; the rest land
-// in [PublishResult.AlreadyEnqueued]. Receivers see one Delivery-Id per logical event.
-//
-// eventKey must identify the event, not the attempt: two distinct events
-// sharing a key would collapse into one delivery. An empty key is refused.
+// PublishOnce is [Fanout.Publish] for an event with a stable identity: the delivery ID derives from (eventType, eventKey, webhook id) so a re-run enqueues only missed subscribers (the rest land in [PublishResult.AlreadyEnqueued]); eventKey must identify the event, not the attempt, and an empty key is refused.
 func (f *Fanout) PublishOnce(
 	ctx context.Context, eventType platform.WebhookEventType, eventKey string, payload []byte,
 ) (PublishResult, error) {
@@ -144,8 +117,7 @@ func (f *Fanout) PublishOnce(
 	})
 }
 
-// EventDeliveryID is the delivery ID [Fanout.PublishOnce] assigns one
-// subscriber's copy of an event.
+// EventDeliveryID is the delivery ID [Fanout.PublishOnce] assigns one subscriber's copy of an event.
 func EventDeliveryID(eventType platform.WebhookEventType, eventKey string, webhookID uuid.UUID) uuid.UUID {
 	name := string(eventType) + "\x00" + eventKey + "\x00" + webhookID.String()
 	return uuid.NewSHA1(deliveryIDNamespace, []byte(name))
@@ -211,10 +183,7 @@ func suppressed(err error) bool {
 	return errors.As(err, &s) && s.WebhookSuppressed()
 }
 
-// MarshalPayload is a tiny convenience for callers that already
-// have a Go struct: marshal it to JSON and return the bytes, or
-// log + return nil if marshalling fails (callers should fan-out
-// or skip based on the nil check).
+// MarshalPayload marshals v to JSON, or logs and returns nil on failure, which callers should check before fanning out.
 func MarshalPayload(logger *slog.Logger, v any) []byte {
 	b, err := json.Marshal(v)
 	if err != nil {
@@ -226,6 +195,5 @@ func MarshalPayload(logger *slog.Logger, v any) []byte {
 	return b
 }
 
-// ErrFanoutNotConfigured is what [Fanout.Publish] returns on a nil receiver (webhooks optional in
-// this deployment), so callers can tell "not wired" from "wired and lost the event" with errors.Is.
+// ErrFanoutNotConfigured is what [Fanout.Publish] returns on a nil receiver (webhooks optional), so errors.Is tells "not wired" from "wired and lost the event".
 var ErrFanoutNotConfigured = errors.New("customerwebhook: fanout not configured")

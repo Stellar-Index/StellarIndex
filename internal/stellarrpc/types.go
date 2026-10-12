@@ -63,8 +63,7 @@ type jsonrpcResponse struct {
 	Error   *JSONRPCError   `json:"error,omitempty"`
 }
 
-// JSONRPCError is the standard JSON-RPC 2.0 error payload.
-// Callers typically classify via errors.Is / Error.Code.
+// JSONRPCError is the standard JSON-RPC 2.0 error payload; classify via errors.Is or Error.Code.
 type JSONRPCError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
@@ -77,11 +76,7 @@ func (e *JSONRPCError) Error() string {
 
 // ─── Method response types ─────────────────────────────────────────
 
-// Health is the response from getHealth.
-//
-// Status is "healthy" when the node's last-applied ledger is within the staleness threshold. A
-// catching-up or disconnected node returns an error envelope instead, so check that error and then
-// Status.
+// Health is the getHealth response; Status is "healthy" only within the staleness threshold, while a catching-up or disconnected node returns an error envelope, so check that error before Status.
 type Health struct {
 	Status             string `json:"status"`
 	LatestLedger       uint32 `json:"latestLedger,omitempty"`
@@ -123,10 +118,7 @@ type EventsResponse struct {
 	OldestLedgerCloseTime string         `json:"oldestLedgerCloseTime,omitempty"`
 }
 
-// EventFilter restricts which events getEvents returns.
-//
-// Type is "contract", "system", "diagnostic" or "" for all. ContractIDs is an optional allow-list
-// of C-addresses. Topics holds optional per-position patterns (base64 SCVal or the "*" wildcard).
+// EventFilter restricts getEvents: Type is "contract", "system", "diagnostic" or "" for all; ContractIDs is an optional C-address allow-list; Topics are per-position patterns (base64 SCVal or "*").
 type EventFilter struct {
 	Type        string     `json:"type,omitempty"`
 	ContractIDs []string   `json:"contractIds,omitempty"`
@@ -170,10 +162,7 @@ type ledgersParams struct {
 
 // ─── getTransaction / getTransactions ─────────────────────────────
 
-// TransactionStatus is the coarse outcome of a single tx per
-// stellar-rpc. SUCCESS = included and applied; FAILED = included but
-// errored; NOT_FOUND = not in the RPC's retention window (check
-// archive for older txs).
+// TransactionStatus is a tx's coarse outcome: SUCCESS (applied), FAILED (included but errored), NOT_FOUND (outside the RPC retention window; check the archive).
 type TransactionStatus string
 
 const (
@@ -182,11 +171,7 @@ const (
 	TxStatusNotFound TransactionStatus = "NOT_FOUND"
 )
 
-// TransactionResponse is the response from getTransaction.
-//
-// XDR fields are base64-encoded; callers decode via github.com/stellar/go-stellar-sdk/xdr
-// (ADR-0013). scripts/ci/lint-imports.sh rule B keeps `xdr` out of decoder packages other than
-// internal/scval.
+// TransactionResponse is the getTransaction response; XDR fields are base64 and callers decode via the SDK xdr package (ADR-0013, lint-imports.sh rule B keeps `xdr` out of decoder packages other than internal/scval).
 type TransactionResponse struct {
 	Status TransactionStatus `json:"status"`
 
@@ -216,10 +201,7 @@ type transactionParams struct {
 	Hash string `json:"hash"`
 }
 
-// TransactionsResponse is the response from getTransactions.
-//
-// stellar-rpc paginates via cursor. Each entry is a full TransactionResponse minus the latest and
-// oldest ledger fields, which live on the outer response.
+// TransactionsResponse is the cursor-paginated getTransactions response; each entry is a TransactionResponse without the latest/oldest ledger fields, which live on the outer response.
 type TransactionsResponse struct {
 	Transactions          []TransactionResponse `json:"transactions"`
 	Cursor                string                `json:"cursor,omitempty"`
@@ -246,10 +228,7 @@ type simulateParams struct {
 	Transaction string `json:"transaction"` // base64-encoded xdr.TransactionEnvelope
 }
 
-// SimulationResponse is the simulateTransaction response. Only the
-// fields we actually consume are modelled; the full response also
-// includes resource-fee estimates, state-entry deltas, and auth
-// hints that aren't useful for read-only view calls.
+// SimulationResponse is the simulateTransaction response, modelling only the fields consumed for read-only view calls.
 type SimulationResponse struct {
 	LatestLedger uint32             `json:"latestLedger"`
 	Results      []SimulationResult `json:"results,omitempty"`
@@ -262,16 +241,13 @@ type SimulationResponse struct {
 	MinResourceFee string `json:"minResourceFee,omitempty"`
 }
 
-// SimulationResult is one entry in SimulationResponse.Results. XDR holds the base64 SCVal return
-// value. Auth lists the required authorization entries (empty for public view functions), so a
-// caller building a real tx sees what still needs signing.
+// SimulationResult is one SimulationResponse.Results entry: XDR is the base64 SCVal return value and Auth the required authorization entries (empty for public view functions).
 type SimulationResult struct {
 	XDR  string   `json:"xdr"`            // base64 SCVal return value
 	Auth []string `json:"auth,omitempty"` // base64 SorobanAuthorizationEntry
 }
 
-// FeePercentiles are p10/p20/…/p99 distributions, as decimal strings
-// to preserve i128 safety.
+// FeePercentiles are p10/p20/.../p99 distributions as decimal strings to preserve i128 safety.
 type FeePercentiles struct {
 	Max              string `json:"max"`
 	Min              string `json:"min"`

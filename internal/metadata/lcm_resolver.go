@@ -9,29 +9,19 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// IssuerHomeDomain is one on-chain reading of an account's home_domain.
-//
-// Observed=false: no observation exists, so the operator-static map may answer.
-// Observed=true, Domain=="": the latest observation says the account has no home_domain (never
-// set, cleared, or merged). The ledger is authoritative: an issuer that clears its home_domain
-// has withdrawn the identity claim, and a static value must not re-assert it.
+// IssuerHomeDomain is one on-chain reading of an account's home_domain: Observed=false means no observation (the static map may answer); Observed=true with Domain=="" means the ledger says none is set, which is authoritative, so a static value must not re-assert a withdrawn identity claim.
 type IssuerHomeDomain struct {
 	Observed bool
 	Domain   string
 }
 
-// AccountObservationLookup is the storage primitive [LCMHomeDomainResolver] consumes. A missing
-// observation is IssuerHomeDomain{Observed: false} with a nil error (the batch form omits the
-// issuer); only storage failures return an error.
+// AccountObservationLookup is the storage primitive [LCMHomeDomainResolver] consumes; a missing observation is IssuerHomeDomain{Observed: false} with a nil error (batch form omits the issuer), and only storage failures return an error.
 type AccountObservationLookup interface {
 	HomeDomainAtOrBefore(ctx context.Context, issuer string, asOfLedger uint32) (IssuerHomeDomain, error)
 	HomeDomainsAtOrBefore(ctx context.Context, issuers []string, asOfLedger uint32) (map[string]IssuerHomeDomain, error)
 }
 
-// LCMHomeDomainResolver reads the latest home_domain recorded in `account_observations`. It only
-// knows accounts the indexer watches (`[metadata].watched_issuer_accounts` plus
-// `[supply].sdf_reserve_accounts`); per ADR-0021 the static `[metadata.issuer_home_domains]` map
-// answers for the rest.
+// LCMHomeDomainResolver reads the latest home_domain from `account_observations`; it only knows watched accounts (`[metadata].watched_issuer_accounts`, `[supply].sdf_reserve_accounts`), and per ADR-0021 the static `[metadata.issuer_home_domains]` map answers for the rest.
 type LCMHomeDomainResolver struct {
 	store AccountObservationLookup
 }
@@ -45,8 +35,7 @@ func NewLCMHomeDomainResolver(store AccountObservationLookup) *LCMHomeDomainReso
 // the int4 ledger column (^uint32(0) overflowed it with pq 22003).
 const observerLatestLedger = uint32(math.MaxInt32)
 
-// HomeDomainFor returns the latest observed home_domain reading for the
-// issuer's G-strkey. Storage errors are wrapped in [ErrLCMUnavailable].
+// HomeDomainFor returns the latest observed home_domain reading for the issuer's G-strkey; storage errors are wrapped in [ErrLCMUnavailable].
 func (r *LCMHomeDomainResolver) HomeDomainFor(ctx context.Context, issuer string) (IssuerHomeDomain, error) {
 	hd, err := r.store.HomeDomainAtOrBefore(ctx, issuer, observerLatestLedger)
 	if err != nil {
@@ -58,8 +47,7 @@ func (r *LCMHomeDomainResolver) HomeDomainFor(ctx context.Context, issuer string
 	return hd, nil
 }
 
-// HomeDomainsFor is [LCMHomeDomainResolver.HomeDomainFor] for many issuers
-// in one store read. Unobserved issuers are absent from the map.
+// HomeDomainsFor is [LCMHomeDomainResolver.HomeDomainFor] for many issuers in one store read; unobserved issuers are absent from the map.
 func (r *LCMHomeDomainResolver) HomeDomainsFor(ctx context.Context, issuers []string) (map[string]IssuerHomeDomain, error) {
 	hds, err := r.store.HomeDomainsAtOrBefore(ctx, issuers, observerLatestLedger)
 	if err != nil {
@@ -68,9 +56,7 @@ func (r *LCMHomeDomainResolver) HomeDomainsFor(ctx context.Context, issuers []st
 	return hds, nil
 }
 
-// ErrLCMUnavailable signals the LCM-derived path failed to read
-// (storage error, not "no observation"). The chained-fallback
-// caller logs + drops to the static map.
+// ErrLCMUnavailable signals the LCM-derived path failed to read (a storage error, not "no observation"); the chained-fallback caller logs and drops to the static map.
 var ErrLCMUnavailable = errors.New("metadata: LCM resolver storage error")
 
 // lcmLookupTimeoutMs bounds one resolver read inside the caller's request
@@ -78,14 +64,7 @@ var ErrLCMUnavailable = errors.New("metadata: LCM resolver storage error")
 // the response.
 const lcmLookupTimeoutMs = 100
 
-// ChainedHomeDomainLookup composes the live LCM resolver with the operator-static map:
-//
-//  1. An observation exists: its reading is final, and the static map is NOT consulted, so an
-//     on-chain clear or merge cannot be overridden by operator config.
-//  2. No observation: the static map answers.
-//  3. Storage error: warnFn logs and the static map answers.
-//
-// The read runs under the caller's ctx, bounded to 100ms, so a disconnecting client cancels it.
+// ChainedHomeDomainLookup composes the LCM resolver with the static map: an observation is final (the static map is NOT consulted, so an on-chain clear or merge cannot be overridden); no observation or a storage error (warnFn logs) falls to the static map; the read is bounded to 100ms under the caller's ctx.
 func ChainedHomeDomainLookup(
 	live *LCMHomeDomainResolver,
 	static func(issuer string) (string, bool),
@@ -99,9 +78,7 @@ func ChainedHomeDomainLookup(
 	}
 }
 
-// ChainedHomeDomainBatch is [ChainedHomeDomainLookup] for a page of
-// issuers: one bounded store read instead of one per row. The result
-// holds only issuers with a known domain.
+// ChainedHomeDomainBatch is [ChainedHomeDomainLookup] for a page of issuers in one bounded store read; the result holds only issuers with a known domain.
 func ChainedHomeDomainBatch(
 	live *LCMHomeDomainResolver,
 	static func(issuer string) (string, bool),
@@ -131,9 +108,7 @@ func ChainedHomeDomainBatch(
 	}
 }
 
-// ObservedHomeDomainLookup is layer 1 of [ChainedHomeDomainLookup] alone:
-// ("", false) for an unobserved issuer or a storage error. For a caller
-// that runs its own live on-chain read before the static map.
+// ObservedHomeDomainLookup is layer 1 of [ChainedHomeDomainLookup] alone: ("", false) for an unobserved issuer or a storage error, for callers that run their own live on-chain read before the static map.
 func ObservedHomeDomainLookup(
 	live *LCMHomeDomainResolver,
 	warnFn func(msg string, kv ...any),
@@ -141,9 +116,7 @@ func ObservedHomeDomainLookup(
 	return ChainedHomeDomainLookup(live, func(string) (string, bool) { return "", false }, warnFn)
 }
 
-// StaticHomeDomainFallback is the static tail of [ChainedHomeDomainLookup]
-// alone: it answers only when the issuer has no observation (or the read
-// failed), so an observed on-chain clear still suppresses the static map.
+// StaticHomeDomainFallback is the static tail of [ChainedHomeDomainLookup] alone: it answers only when the issuer has no observation (or the read failed), so an observed on-chain clear still suppresses the static map.
 func StaticHomeDomainFallback(
 	live *LCMHomeDomainResolver,
 	static func(issuer string) (string, bool),

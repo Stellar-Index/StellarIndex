@@ -16,14 +16,10 @@ import (
 	externalchainlink "github.com/Stellar-Index/StellarIndex/internal/sources/external/chainlink"
 )
 
-// MaxResponseBytes caps how much we will read off the wire per call.
-// A big getEvents / getTransactions / getLedgers page can be several MB; 64 MiB leaves headroom
-// while bounding memory if an upstream proxy misbehaves. Exceeding the cap is an error, not a
-// silent truncation.
+// MaxResponseBytes caps the bytes read per call (64 MiB) to bound memory if an upstream misbehaves; exceeding it is an error, not a silent truncation.
 const MaxResponseBytes = 64 << 20
 
-// Client is a JSON-RPC client for a single stellar-rpc endpoint.
-// Safe for concurrent use.
+// Client is a JSON-RPC client for a single stellar-rpc endpoint, safe for concurrent use.
 type Client struct {
 	endpoint string
 	http     *http.Client
@@ -33,14 +29,12 @@ type Client struct {
 // Option configures a [Client] at construction time.
 type Option func(*Client)
 
-// WithHTTPClient overrides the default http.Client (useful for
-// custom timeouts, TLS configs, transport-level tracing).
+// WithHTTPClient overrides the default http.Client (timeouts, TLS, tracing).
 func WithHTTPClient(h *http.Client) Option {
 	return func(c *Client) { c.http = h }
 }
 
-// WithTimeout sets an overall request timeout. Ignored if
-// [WithHTTPClient] has already been applied.
+// WithTimeout sets an overall request timeout, ignored if [WithHTTPClient] was already applied.
 func WithTimeout(d time.Duration) Option {
 	return func(c *Client) {
 		if c.http == nil {
@@ -49,8 +43,7 @@ func WithTimeout(d time.Duration) Option {
 	}
 }
 
-// New returns a client pointing at endpoint (e.g.
-// "http://localhost:8000"). Default timeout: 30 s.
+// New returns a client for endpoint with a 30 s default timeout.
 func New(endpoint string, opts ...Option) *Client {
 	c := &Client{endpoint: endpoint}
 	for _, opt := range opts {
@@ -79,10 +72,7 @@ func newDefaultTransport() http.RoundTripper {
 // Endpoint returns the URL the client talks to.
 func (c *Client) Endpoint() string { return c.endpoint }
 
-// HTTPStatusError is returned by every call whose response status is >= 400, whatever the body.
-// The status tells "rate limiting or briefly unwell" from "this request is wrong", so classify
-// with errors.As, never by message. Err is the *[JSONRPCError] when the body was an error
-// envelope (Unwrap exposes it), else nil.
+// HTTPStatusError is returned for any response status >= 400; classify with errors.As, never by message; Err is the *[JSONRPCError] when the body was an error envelope, else nil.
 type HTTPStatusError struct {
 	// Method is the JSON-RPC method that was called.
 	Method string
@@ -112,9 +102,7 @@ func (e *HTTPStatusError) Error() string {
 // Unwrap returns the JSON-RPC error envelope the response carried, if any.
 func (e *HTTPStatusError) Unwrap() error { return e.Err }
 
-// ResponseDecodeError is returned when a status below 400 carries a body that is not a JSON-RPC
-// envelope (empty, cut short, or a proxy's HTML page). It is per-response, so a retrying caller can
-// tell it from an envelope that decoded but did not fit the target type, which re-asking would not fix.
+// ResponseDecodeError is returned when a status below 400 carries a body that is not a JSON-RPC envelope (empty, truncated, proxy HTML); per-response, so a retrying caller can tell it from a well-formed envelope that did not fit the target type.
 type ResponseDecodeError struct {
 	// Method is the JSON-RPC method that was called.
 	Method string
@@ -250,9 +238,7 @@ func truncate(s string, n int) string {
 
 // ─── Public methods ────────────────────────────────────────────────
 
-// Health calls getHealth. Note: a healthy stale node returns a
-// JSON-RPC error envelope rather than a 200 with status=stale —
-// callers should handle both paths.
+// Health calls getHealth; a healthy stale node returns a JSON-RPC error envelope rather than status=stale, so callers must handle both paths.
 func (c *Client) Health(ctx context.Context) (*Health, error) {
 	var h Health
 	err := c.call(ctx, "getHealth", nil, &h)
@@ -265,8 +251,7 @@ func (c *Client) LatestLedger(ctx context.Context) (*LatestLedger, error) {
 	return &l, c.call(ctx, "getLatestLedger", nil, &l)
 }
 
-// LatestLedgerSequence returns just the ledger sequence number. stellar-rpc's getEvents rejects
-// startLedger=0, so sources must seed a real startLedger from this before subscribing.
+// LatestLedgerSequence returns the latest ledger sequence; getEvents rejects startLedger=0, so sources must seed a real startLedger from this.
 func (c *Client) LatestLedgerSequence(ctx context.Context) (uint32, error) {
 	l, err := c.LatestLedger(ctx)
 	if err != nil {
@@ -293,9 +278,7 @@ func (c *Client) FeeStats(ctx context.Context) (*FeeStats, error) {
 	return &f, c.call(ctx, "getFeeStats", nil, &f)
 }
 
-// GetEvents calls getEvents with the given filters and pagination (nil for server defaults).
-// The response is sanity-checked (see EventsResponse.sanityCheck), so inconsistent ledger bounds
-// or out-of-order events surface as an error here, not as a silent ingestion bug downstream.
+// GetEvents calls getEvents (nil pagination for server defaults); the response is sanity-checked so inconsistent ledger bounds or out-of-order events error here instead of silently corrupting ingestion.
 func (c *Client) GetEvents(ctx context.Context, startLedger, endLedger uint32, filters []EventFilter, pag *Pagination) (*EventsResponse, error) {
 	p := eventsParams{StartLedger: startLedger, EndLedger: endLedger, Filters: filters, Pagination: pag}
 	var r EventsResponse
@@ -315,34 +298,20 @@ func (c *Client) GetLedgers(ctx context.Context, startLedger uint32, pag *Pagina
 	return &r, c.call(ctx, "getLedgers", p, &r)
 }
 
-// GetTransaction calls getTransaction.
-//
-// hash is the tx envelope hash as a hex string (no "0x" prefix). A tx outside the node's retention
-// window returns status=NOT_FOUND, not an error, so callers must branch on Status.
+// GetTransaction calls getTransaction with the hex envelope hash (no "0x"); a tx outside the retention window returns status=NOT_FOUND, not an error, so callers must branch on Status.
 func (c *Client) GetTransaction(ctx context.Context, hash string) (*TransactionResponse, error) {
 	var r TransactionResponse
 	return &r, c.call(ctx, "getTransaction", transactionParams{Hash: hash}, &r)
 }
 
-// GetTransactions calls getTransactions (paginated batch lookup).
-//
-// startLedger=0 uses the pagination cursor only. Cursor format is
-// an opaque stellar-rpc value — pass through from a prior response.
+// GetTransactions calls getTransactions; startLedger=0 uses the pagination cursor only, which is an opaque value passed through from a prior response.
 func (c *Client) GetTransactions(ctx context.Context, startLedger uint32, pag *Pagination) (*TransactionsResponse, error) {
 	p := transactionsParams{StartLedger: startLedger, Pagination: pag}
 	var r TransactionsResponse
 	return &r, c.call(ctx, "getTransactions", p, &r)
 }
 
-// SimulateTransaction calls simulateTransaction.
-//
-// txEnvelope is a base64-encoded xdr.TransactionEnvelope; for read-only view calls it can be
-// unsigned because simulation does not validate signatures. Build one with
-// [InvokeContractTxEnvelope].
-//
-// The SimulationResponse is returned verbatim: Results[0].XDR holds the return value, and Error is
-// non-empty when the contract call itself failed. A nil Go error only means the round-trip
-// succeeded.
+// SimulateTransaction calls simulateTransaction with a base64 TransactionEnvelope (unsigned is fine, build via [InvokeContractTxEnvelope]); the response is verbatim, so Error non-empty means the contract call failed while a nil Go error only means the round-trip succeeded.
 func (c *Client) SimulateTransaction(ctx context.Context, txEnvelope string) (*SimulationResponse, error) {
 	p := simulateParams{Transaction: txEnvelope}
 	var r SimulationResponse

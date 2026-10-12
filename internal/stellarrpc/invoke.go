@@ -7,15 +7,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// InvokeContractTxEnvelope builds a base64-encoded TransactionEnvelope
-// suitable for [Client.SimulateTransaction]. Nothing is signed because simulation ignores
-// signatures, so the source account can be any well-formed G-strkey.
-//
-// Fee and SeqNum are placeholders (100 and 0) that the simulate endpoint ignores; real submission
-// would need genuine values and signatures.
-//
-// contractID is a C-strkey, functionName the Symbol to call, and args pre-built SCVals (typically
-// empty for no-arg view functions).
+// InvokeContractTxEnvelope builds an unsigned base64 TransactionEnvelope for [Client.SimulateTransaction] from a C-strkey contractID, function Symbol and SCVal args; the source account can be any G-strkey and Fee/SeqNum are ignored placeholders, so it is not submittable.
 func InvokeContractTxEnvelope(sourceAccount, contractID, functionName string, args []xdr.ScVal) (string, error) {
 	if sourceAccount == "" {
 		// Any valid G-strkey works — simulation ignores the source.

@@ -8,19 +8,12 @@ import (
 	"path/filepath"
 )
 
-// CrossAnchorChecker scans a history-archive layout under archiveRoot and reports missing
-// per-checkpoint files. Paths match what `verify-archive -tier checkpoint` reads:
-//
-//	<archiveRoot>/ledger/XX/YY/ZZ/ledger-XXYYZZWW.xdr.gz
-//
-// where XXYYZZWW is the 8-char hex checkpoint sequence (seq % 64 == 63).
+// CrossAnchorChecker scans a history-archive layout under archiveRoot for missing per-checkpoint files at ledger/XX/YY/ZZ/ledger-XXYYZZWW.xdr.gz (8-char hex checkpoint seq, seq % 64 == 63).
 type CrossAnchorChecker struct {
 	archiveRoot string
 }
 
-// NewCrossAnchorChecker returns a checker that scans the supplied
-// archiveRoot. The directory must exist; missing directories /
-// permission errors return on the first Check call.
+// NewCrossAnchorChecker returns a checker scanning archiveRoot; a missing or unreadable directory surfaces on the first Check call.
 func NewCrossAnchorChecker(archiveRoot string) *CrossAnchorChecker {
 	return &CrossAnchorChecker{archiveRoot: archiveRoot}
 }
@@ -46,15 +39,10 @@ type CrossAnchorResult struct {
 	Truncated bool
 }
 
-// MaxMissingReported caps CrossAnchorResult.Missing so a catastrophic gap cannot produce a
-// multi-megabyte report; 65,536 is one partition of checkpoints.
+// MaxMissingReported caps CrossAnchorResult.Missing so a catastrophic gap cannot produce a multi-megabyte report; 65,536 is one partition of checkpoints.
 const MaxMissingReported = 65536
 
-// Check walks the checkpoint positions (seq % 64 == 63) inside the inclusive range [from, to]
-// and reports what is present vs missing. Read-only.
-//
-// An error is returned only when archiveRoot itself is unreadable; a missing checkpoint file is
-// recorded in Missing instead.
+// Check read-only scans checkpoint positions (seq % 64 == 63) in the inclusive [from, to]; it errors only when archiveRoot is unreadable, a missing file is recorded in Missing instead.
 func (c *CrossAnchorChecker) Check(from, to uint32) (CrossAnchorResult, error) {
 	if c.archiveRoot == "" {
 		return CrossAnchorResult{}, errors.New("archivecompleteness: archiveRoot is required")

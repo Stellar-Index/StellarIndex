@@ -11,21 +11,14 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// FixedWindowCounter is the "N per window" primitive behind the auth throttles: INCR a per-window
-// Redis key with a 2x window drain TTL and return the count for the caller to compare to its cap.
-// Like [Bucket], INCR plus EXPIRE-on-first is one atomic Lua EVAL, so a key never outlives its
-// TTL. Bucketing allows up to 2x the cap across a window boundary: fine for abuse prevention,
-// NOT for billing (use internal/usage).
+// FixedWindowCounter is the "N per window" primitive behind the auth throttles: one atomic Lua INCR plus EXPIRE-on-first with a 2x window drain TTL, returning the count for the caller to compare; allows up to 2x the cap across a boundary, fine for abuse prevention, NOT for billing (use internal/usage).
 type FixedWindowCounter struct {
 	rdb    redis.Cmdable
 	window time.Duration
 	nowFn  func() time.Time
 }
 
-// NewFixedWindowCounter constructs a counter. rdb must be non-nil and window >= 1s; a nil nowFn
-// defaults to [time.Now] (tests inject a clock to drive window transitions). The 1s floor matches
-// [New]: key derivation divides by int64(window.Seconds()), which is zero for a sub-second window
-// and would panic at the first Incr.
+// NewFixedWindowCounter constructs a counter; rdb must be non-nil and window >= 1s (as in [New], since key derivation divides by int64(window.Seconds()) and would panic on a sub-second window); a nil nowFn defaults to [time.Now].
 func NewFixedWindowCounter(rdb redis.Cmdable, window time.Duration, nowFn func() time.Time) *FixedWindowCounter {
 	if rdb == nil {
 		panic("ratelimit: NewFixedWindowCounter: rdb must not be nil")
@@ -57,9 +50,7 @@ return current
 // immutable and go-redis caches the SHA inside the value.
 var incrScript = redis.NewScript(incrLua)
 
-// Incr increments the counter behind keyBase for the current window and returns the
-// post-increment count. The window bucket (`unix_seconds / window_seconds`, as in [Bucket]) is
-// appended as ":<n>", and the 2x window drain TTL is set atomically with the creating increment.
+// Incr increments the counter behind keyBase for the current window (bucket `unix_seconds / window_seconds` appended as ":<n>") and returns the post-increment count; the 2x drain TTL is set atomically with the creating increment.
 func (c *FixedWindowCounter) Incr(ctx context.Context, keyBase string) (int64, error) {
 	windowStart := c.nowFn().Unix() / int64(c.window.Seconds())
 	key := fmt.Sprintf("%s:%d", keyBase, windowStart)
@@ -79,17 +70,14 @@ func (c *FixedWindowCounter) Incr(ctx context.Context, keyBase string) (int64, e
 	return count, nil
 }
 
-// LocalFixedWindowCounter is the in-process twin of [FixedWindowCounter]: same bucketing and
-// semantics, no error path. It keeps a throttle enforcing its cap per process while Redis is
-// down instead of failing open, and shares the bounded [localStore] (sweep, hard key cap).
+// LocalFixedWindowCounter is the in-process twin of [FixedWindowCounter] with no error path, keeping a throttle enforcing its cap per process while Redis is down instead of failing open; shares the bounded [localStore].
 type LocalFixedWindowCounter struct {
 	store  *localStore
 	window time.Duration
 	nowFn  func() time.Time
 }
 
-// NewLocalFixedWindowCounter constructs the in-process counter; window must be >= 1s (same floor
-// as [NewFixedWindowCounter]) and a nil nowFn defaults to [time.Now].
+// NewLocalFixedWindowCounter constructs the in-process counter; window must be >= 1s (as [NewFixedWindowCounter]) and a nil nowFn defaults to [time.Now].
 func NewLocalFixedWindowCounter(window time.Duration, nowFn func() time.Time) *LocalFixedWindowCounter {
 	if window < time.Second {
 		panic("ratelimit: NewLocalFixedWindowCounter: window must be >= 1s")
@@ -100,8 +88,7 @@ func NewLocalFixedWindowCounter(window time.Duration, nowFn func() time.Time) *L
 	return &LocalFixedWindowCounter{store: newLocalStore(), window: window, nowFn: nowFn}
 }
 
-// Allow increments keyBase's counter for the current window and reports whether the count is
-// within limit. Safe for concurrent use.
+// Allow increments keyBase's counter for the current window and reports whether the count is within limit; safe for concurrent use.
 func (c *LocalFixedWindowCounter) Allow(keyBase string, limit int) bool {
 	now := c.nowFn()
 	window := now.Unix() / int64(c.window.Seconds())

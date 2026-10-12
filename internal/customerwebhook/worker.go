@@ -37,16 +37,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// DeliveryStore is the worker's subset of [platform.WebhookStore].
-// Implementations MUST honour two contracts the worker relies on:
-//
-//   - ListPendingDeliveries claims each returned row atomically and leases it, so at most one
-//     worker has a given delivery in flight and an abandoned claim self-heals at lease expiry.
-//   - GetWebhook returns [platform.ErrNotFound], and ONLY that, when the row is genuinely absent.
-//     Not-found is terminal and every other error is retried, so flattening transport failures
-//     into ErrNotFound would silently discard deliveries.
-//
-// It must ALSO implement [AccountStatusReader]; [New] enforces that at construction.
+// DeliveryStore is the worker's subset of [platform.WebhookStore]; ListPendingDeliveries MUST claim rows atomically with a lease, GetWebhook MUST return [platform.ErrNotFound] and ONLY that for an absent row (terminal; other errors retry, so flattening would discard deliveries); it MUST also implement [AccountStatusReader].
 type DeliveryStore interface {
 	ListPendingDeliveries(ctx context.Context, limit int) ([]platform.WebhookDelivery, error)
 	GetWebhook(ctx context.Context, id uuid.UUID) (platform.CustomerWebhook, error)
@@ -54,14 +45,7 @@ type DeliveryStore interface {
 	MarkAttemptFailed(ctx context.Context, id uuid.UUID, errMsg string, responseStatus int, nextAttemptAt time.Time) error
 }
 
-// AccountStatusReader is the account-level kill switch on the OUTBOUND side. WebhookAccountStatus
-// returns the lifecycle status of the account that owns the webhook, or [platform.ErrNotFound]
-// when the webhook is gone.
-//
-// The auth validator enforces the kill switch inbound; without a status read here a suspended or
-// closed customer would keep RECEIVING data, so the worker re-reads it immediately before
-// signing and POSTing. [New] refuses a store that cannot answer it (asserted at construction
-// because production wiring passes a [platform.WebhookStore] interface value).
+// AccountStatusReader is the outbound account kill switch: WebhookAccountStatus returns the owning account's lifecycle status ([platform.ErrNotFound] if the webhook is gone), re-read immediately before signing and POSTing so a suspended or closed customer stops RECEIVING data; [New] refuses a store that cannot answer it.
 type AccountStatusReader interface {
 	WebhookAccountStatus(ctx context.Context, webhookID uuid.UUID) (platform.AccountStatus, error)
 }
@@ -156,9 +140,7 @@ type Worker struct {
 	running atomic.Bool
 }
 
-// New constructs a Worker. store must be non-nil and must implement
-// [AccountStatusReader]; opts gets production defaults applied to every
-// zero field.
+// New constructs a Worker; store must be non-nil and implement [AccountStatusReader], and opts gets production defaults for every zero field.
 func New(store DeliveryStore, opts Options) *Worker {
 	return newWorker(store, opts, guardedClient)
 }
@@ -243,8 +225,7 @@ func guardedClient(c *http.Client) *http.Client {
 	return &guarded
 }
 
-// Run drives the poll loop until ctx is cancelled and returns the context error. It is one-shot
-// per Worker: any second call, concurrent or after return, yields ErrAlreadyRunning.
+// Run drives the poll loop until ctx is cancelled and returns the context error; one-shot per Worker, any second call yields ErrAlreadyRunning.
 func (w *Worker) Run(ctx context.Context) error {
 	if !w.running.CompareAndSwap(false, true) {
 		return ErrAlreadyRunning
@@ -269,10 +250,7 @@ func (w *Worker) Run(ctx context.Context) error {
 	}
 }
 
-// Stop signals Run to exit cleanly. Returns after the in-flight
-// tick (if any) completes. Safe to call before Run: doneCh is only
-// closed by Run's own defer, so a Worker that was never Run has
-// nothing to wait for.
+// Stop signals Run to exit and returns after the in-flight tick completes; safe before Run, since doneCh is only closed by Run's defer.
 func (w *Worker) Stop() {
 	select {
 	case <-w.stopCh:
@@ -713,6 +691,5 @@ func signDeliveryHMACSHA256(secret []byte, ts int64, deliveryID, eventType strin
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-// ErrAlreadyRunning is returned when Worker.Run is called more
-// than once on the same Worker instance.
+// ErrAlreadyRunning is returned when Worker.Run is called more than once on the same Worker.
 var ErrAlreadyRunning = errors.New("customerwebhook: worker already running")

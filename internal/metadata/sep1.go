@@ -18,8 +18,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/nettools"
 )
 
-// SEP1 is the parsed subset of a stellar.toml we use. The full content stays in [SEP1.Raw] for the
-// uncommon fields, which are not structured until something needs them.
+// SEP1 is the parsed subset of a stellar.toml we use; the full content stays in [SEP1.Raw] for uncommon fields.
 type SEP1 struct {
 	// OrgName is the issuer's human-readable organisation name —
 	// typically `DOCUMENTATION.ORG_NAME` in the TOML.
@@ -52,18 +51,13 @@ type SEP1 struct {
 	RecoveredSections []SkippedSection
 }
 
-// SkippedSection is one top-level table a recovered parse could not
-// read. Header is the table line verbatim ("[[CURRENCIES]]",
-// "[DOCUMENTATION]"), Err the parser's own message.
+// SkippedSection is one top-level table a recovered parse could not read: Header is the table line verbatim, Err the parser's message.
 type SkippedSection struct {
 	Header string
 	Err    string
 }
 
-// Currency is one entry from the [[CURRENCIES]] array. Subset of
-// SEP-1 §Currencies. We preserve numeric values as strings to
-// avoid precision loss on `max_supply` + `fixed_number` fields
-// (ADR-0003).
+// Currency is one [[CURRENCIES]] entry (subset of SEP-1); numeric values such as `max_supply` and `fixed_number` stay strings to avoid precision loss (ADR-0003).
 type Currency struct {
 	Code            string
 	Issuer          string
@@ -89,8 +83,7 @@ type Currency struct {
 	ApprovalCriteria       string
 }
 
-// Resolver fetches + parses stellar.toml for a home-domain. Safe
-// for concurrent use. Stateless across calls (no cache).
+// Resolver fetches and parses stellar.toml for a home-domain; safe for concurrent use, no cache.
 type Resolver struct {
 	client *http.Client
 
@@ -111,9 +104,7 @@ type Options struct {
 	AllowPrivateIPs bool
 }
 
-// WithClient replaces the Resolver's HTTP client. Test-only: production uses NewResolver's
-// SSRF-guarded client. It keeps our CheckRedirect policy (cross-host and downgrade rejection) on
-// the incoming client, so a swapped client cannot hide redirect regressions from tests.
+// WithClient replaces the Resolver's HTTP client, test-only (production uses NewResolver's SSRF-guarded client); it keeps our CheckRedirect policy (cross-host and downgrade rejection) on the incoming client so tests cannot hide redirect regressions.
 func WithClient(r *Resolver, c *http.Client) *Resolver {
 	if r.client != nil && r.client.CheckRedirect != nil {
 		c.CheckRedirect = r.client.CheckRedirect
@@ -182,25 +173,17 @@ func redirectOrigin(u *url.URL) string {
 	return net.JoinHostPort(strings.ToLower(u.Hostname()), port)
 }
 
-// ErrSSRFBlocked is returned when a SEP-1 URL resolves to a
-// private or loopback IP, or (in production) targets a port other than 443.
+// ErrSSRFBlocked is returned when a SEP-1 URL resolves to a private or loopback IP, or (in production) targets a port other than 443.
 var ErrSSRFBlocked = errors.New("sep1: target IP is in a private or reserved range")
 
-// ErrTOMLTooLarge is returned when the response body exceeds
-// [maxBodyBytes].
+// ErrTOMLTooLarge is returned when the response body exceeds [maxBodyBytes].
 var ErrTOMLTooLarge = errors.New("sep1: TOML body exceeds 100 KiB limit")
 
 // maxBodyBytes caps the stellar.toml body at SEP-1's own limit, which the reference client
 // (go-stellar-sdk StellarTomlMaxSize) also enforces.
 const maxBodyBytes = 100 << 10
 
-// ErrTOMLTooDeep is returned when a stellar.toml nests structural brackets, or tables through
-// dotted keys and headers, deeper than [maxTOMLNestingDepth].
-//
-// [maxBodyBytes] bounds the INPUT, not the decoder's work, which is superlinear in nesting depth:
-// 4,000 nested inline tables (16 KB) allocate 1.81 GiB against the refresh unit's MemoryMax=2G.
-// Depth is therefore bounded BEFORE the decoder, and an over-deep document fails like any
-// unparseable one (issuer marked failed, run continues).
+// ErrTOMLTooDeep is returned when nesting exceeds [maxTOMLNestingDepth]; checked BEFORE the decoder because [maxBodyBytes] bounds input, not the superlinear decode work (16 KB of nested tables allocate 1.81 GiB against MemoryMax=2G), and an over-deep document fails like any unparseable one.
 var ErrTOMLTooDeep = errors.New("sep1: TOML nests tables deeper than the parse budget allows")
 
 // Nesting bounds enforced by [checkTOMLNesting].
@@ -568,8 +551,7 @@ func sep1DocFieldCap(key string) int {
 	return maxShortFieldRunes
 }
 
-// Resolve fetches and parses the stellar.toml for domain, a bare lowercased home-domain (e.g.
-// "circle.com"), NOT a URL; the resolver builds `https://<domain>/.well-known/stellar.toml`.
+// Resolve fetches and parses the stellar.toml for domain, a bare lowercased home-domain (e.g. "circle.com"), NOT a URL; it builds `https://<domain>/.well-known/stellar.toml`.
 func (r *Resolver) Resolve(ctx context.Context, domain string) (*SEP1, error) {
 	domain = strings.ToLower(strings.TrimSpace(domain))
 	if domain == "" {

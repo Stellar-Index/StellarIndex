@@ -12,8 +12,7 @@ import (
 //go:embed data/seed.yaml
 var seedYAML []byte
 
-// AssetClass classifies a verified currency for the everything-is-an-asset routing model.
-// Crypto is the default; stocks, metals, commodities and funds are future-scope placeholders.
+// AssetClass classifies a verified currency for the everything-is-an-asset routing model; Crypto is the default, others are future-scope placeholders.
 type AssetClass string
 
 const (
@@ -26,8 +25,7 @@ const (
 	ClassFiat AssetClass = "fiat"
 )
 
-// IsKnownClass reports whether c is a defined class, so the loader fails loudly on a typo rather
-// than treating it as "crypto".
+// IsKnownClass reports whether c is a defined class, so the loader fails loudly on a typo instead of treating it as "crypto".
 func IsKnownClass(c AssetClass) bool {
 	switch c {
 	case ClassCrypto, ClassStablecoin, ClassFiat:
@@ -37,8 +35,7 @@ func IsKnownClass(c AssetClass) bool {
 	}
 }
 
-// VerifiedCurrency is one entry in the verified-currency catalogue, pointer-shared across every
-// index so LookupBySlug and LookupByTicker return the same instance.
+// VerifiedCurrency is one verified-currency catalogue entry, pointer-shared across every index so LookupBySlug and LookupByTicker return the same instance.
 type VerifiedCurrency struct {
 	Ticker              string
 	Slug                string
@@ -69,8 +66,7 @@ type VerifiedCurrency struct {
 	KnownAnchorIssuers []string
 }
 
-// IssuanceEntry is the Stellar issuance identity for a verified currency; Network is always
-// "stellar" for a populated entry.
+// IssuanceEntry is the Stellar issuance identity of a verified currency; Network is always "stellar" when populated.
 type IssuanceEntry struct {
 	// Network is short, lowercase and stable.
 	Network string
@@ -84,8 +80,7 @@ type IssuanceEntry struct {
 	ExternalLink string
 }
 
-// Catalogue indexes the verified currencies for API lookups; it is built once at startup and
-// never mutated, so lookups are safe for concurrent use.
+// Catalogue indexes the verified currencies for API lookups; built once at startup and never mutated, so lookups are safe for concurrent use.
 type Catalogue struct {
 	entries          []*VerifiedCurrency
 	bySlug           map[string]*VerifiedCurrency // lowercase
@@ -131,14 +126,12 @@ type rawIssuance struct {
 	ExternalLink string `yaml:"external_link"`
 }
 
-// LoadEmbedded parses the binary-embedded seed catalogue. Used by
-// the production wiring in cmd/stellarindex-api/main.go.
+// LoadEmbedded parses the binary-embedded seed catalogue (production wiring).
 func LoadEmbedded() (*Catalogue, error) {
 	return LoadFromBytes(seedYAML)
 }
 
-// LoadFromBytes parses an arbitrary YAML blob. Used by tests and by
-// any future operator-config override path.
+// LoadFromBytes parses an arbitrary YAML blob (tests, operator-config override).
 func LoadFromBytes(b []byte) (*Catalogue, error) {
 	var raw rawCatalogue
 	dec := yaml.NewDecoder(bytes.NewReader(b))
@@ -332,17 +325,12 @@ func (cat *Catalogue) indexTickerOnlyEntry(vc *VerifiedCurrency) error {
 	return nil
 }
 
-// All returns every verified currency in the catalogue. The slice
-// is shared — callers MUST NOT mutate. Order matches the order of
-// entries in the seed file (deterministic).
+// All returns every verified currency in seed-file order; the slice is shared, callers MUST NOT mutate.
 func (c *Catalogue) All() []*VerifiedCurrency {
 	return c.entries
 }
 
-// Browseable returns every entry except ReferenceOnly ones: the set behind the /v1/assets
-// browse listings and /v1/assets/verified. CoinGeckoIDs() / CoinMarketCapIDs() deliberately
-// do NOT use it, because reference coins must still drive the reference-price pipeline.
-// Order is preserved; the slice is freshly allocated.
+// Browseable returns every entry except ReferenceOnly ones (the /v1/assets browse set), in order, freshly allocated; CoinGeckoIDs/CoinMarketCapIDs deliberately do NOT use it because reference coins must still drive reference pricing.
 func (c *Catalogue) Browseable() []*VerifiedCurrency {
 	if c == nil {
 		return nil
@@ -357,10 +345,7 @@ func (c *Catalogue) Browseable() []*VerifiedCurrency {
 	return out
 }
 
-// StellarIssued returns the entries with a Stellar on-chain issuance (StellarEntry() != nil),
-// the set that belongs on /v1/assets. It excludes reference-only coins and fiat currencies,
-// which live on /v1/external/assets; Browseable only drops reference-only, so it would leak
-// fiat into the Stellar listing. Order preserved; freshly allocated.
+// StellarIssued returns entries with a Stellar on-chain issuance (the /v1/assets set), excluding reference-only coins and fiat (which live on /v1/external/assets); Browseable would leak fiat here. Order preserved, freshly allocated.
 func (c *Catalogue) StellarIssued() []*VerifiedCurrency {
 	if c == nil {
 		return nil
@@ -374,9 +359,7 @@ func (c *Catalogue) StellarIssued() []*VerifiedCurrency {
 	return out
 }
 
-// External returns the catalogue entries with NO Stellar issuance
-// (StellarEntry() == nil): fiat currencies + reference-only coins. This is the
-// set for /v1/external/assets. Order preserved; freshly allocated.
+// External returns entries with NO Stellar issuance (fiat and reference-only coins), the /v1/external/assets set; order preserved, freshly allocated.
 func (c *Catalogue) External() []*VerifiedCurrency {
 	if c == nil {
 		return nil
@@ -390,8 +373,7 @@ func (c *Catalogue) External() []*VerifiedCurrency {
 	return out
 }
 
-// LookupBySlug returns the verified currency for a URL slug
-// ("usdc"). Case-insensitive.
+// LookupBySlug returns the verified currency for a URL slug, case-insensitive.
 func (c *Catalogue) LookupBySlug(slug string) (*VerifiedCurrency, bool) {
 	if c == nil {
 		return nil, false
@@ -400,8 +382,7 @@ func (c *Catalogue) LookupBySlug(slug string) (*VerifiedCurrency, bool) {
 	return v, ok
 }
 
-// LookupByTicker returns the verified currency for a ticker
-// ("USDC"). Case-insensitive.
+// LookupByTicker returns the verified currency for a ticker, case-insensitive.
 func (c *Catalogue) LookupByTicker(ticker string) (*VerifiedCurrency, bool) {
 	if c == nil {
 		return nil, false
@@ -410,10 +391,7 @@ func (c *Catalogue) LookupByTicker(ticker string) (*VerifiedCurrency, bool) {
 	return v, ok
 }
 
-// LookupByStellarAssetID returns the verified currency that owns
-// the given canonical asset_id on Stellar (exact-match — includes
-// "native", "CODE-G…", etc.). Returns (nil, false) for any
-// unverified Stellar asset.
+// LookupByStellarAssetID returns the verified currency owning the exact canonical Stellar asset_id (incl. "native"), or (nil, false) for any unverified asset.
 func (c *Catalogue) LookupByStellarAssetID(assetID string) (*VerifiedCurrency, bool) {
 	if c == nil {
 		return nil, false
@@ -422,17 +400,7 @@ func (c *Catalogue) LookupByStellarAssetID(assetID string) (*VerifiedCurrency, b
 	return v, ok
 }
 
-// StellarCollision reports whether (code, issuer) is an unverified ticker collision: a
-// verified currency claims this code on Stellar but with a different issuer.
-//
-// Returns (verified, true) for a code match with a different issuer (caller warns),
-// (verified, false) when code AND issuer match, and (nil, false) when no verified currency
-// claims the code or code or issuer is empty.
-//
-// Soroban contracts and the native asset itself are out of scope, but impersonators of native
-// are in: a classic asset with code "XLM" always collides. A code matching only a sovereign
-// currency without Stellar issuance (USD, EUR, ...) is a denomination, not a collision; see
-// indexTickerOnlyEntry and FiatDenomination.
+// StellarCollision reports whether (code, issuer) is an unverified ticker collision: (verified, true) for a code match with a different issuer, (verified, false) when both match, (nil, false) if the code is unclaimed or either is empty; a classic "XLM" always collides, a fiat-only denomination never does.
 func (c *Catalogue) StellarCollision(code, issuer string) (*VerifiedCurrency, bool) {
 	if c == nil || code == "" || issuer == "" {
 		return nil, false
@@ -452,15 +420,7 @@ func (c *Catalogue) StellarCollision(code, issuer string) (*VerifiedCurrency, bo
 	return v, true
 }
 
-// FiatDenomination returns the sovereign-currency entry a classic code denominates in, for a
-// code held as fiat with no Stellar issuance ("USD" → the US Dollar entry). Case-insensitive.
-//
-// StellarCollision deliberately does not answer for such a code: a denomination is not an identity
-// claim, so it carries no impersonation verdict and must not gate a valuation. A fiat entry is in
-// exactly one of the two indexes, which TestStellarCollision_CoversEveryCatalogueTicker pins.
-//
-// Returns (nil, false) for an unknown code, and for a fiat entry with a verified Stellar
-// issuance, which StellarCollision owns.
+// FiatDenomination returns the sovereign-currency entry a classic code denominates in (case-insensitive); a denomination is not an identity claim, so it carries no impersonation verdict and must not gate a valuation; (nil, false) for unknown codes and fiat with a verified Stellar issuance (StellarCollision's).
 func (c *Catalogue) FiatDenomination(code string) (*VerifiedCurrency, bool) {
 	if c == nil || code == "" {
 		return nil, false
@@ -469,13 +429,7 @@ func (c *Catalogue) FiatDenomination(code string) (*VerifiedCurrency, bool) {
 	return v, ok
 }
 
-// FiatCodeAnchor answers the anchor-verdict question StellarCollision never gates on: is
-// code a catalogue fiat denomination, and if so is issuer in that entry's known-anchor set?
-//
-// Returns (nil, false, false) when code is not a fiat denomination; callers must not attach
-// a fiat-anchor note then. Returns (denomination, false, true) for an uncurated issuer: a
-// neutral "declared, unverified anchor" note, never an impersonation warning or a market-cap
-// suppression. Returns (denomination, true, true) for a recognised anchor.
+// FiatCodeAnchor reports (denomination, knownAnchor, ok) for a fiat code and issuer: not a denomination gives (nil, false, false); an uncurated issuer gives a neutral "declared, unverified anchor" (denom, false, true), never an impersonation warning or market-cap suppression.
 func (c *Catalogue) FiatCodeAnchor(code, issuer string) (denomination *VerifiedCurrency, knownAnchor, ok bool) {
 	if c == nil || issuer == "" {
 		return nil, false, false
@@ -492,8 +446,7 @@ func (c *Catalogue) FiatCodeAnchor(code, issuer string) (denomination *VerifiedC
 	return v, false, true
 }
 
-// StellarEntry returns the Stellar network entry for a verified
-// currency, or nil if the currency has no Stellar issuance.
+// StellarEntry returns the Stellar issuance entry, or nil if the currency has none.
 func (v *VerifiedCurrency) StellarEntry() *IssuanceEntry {
 	if v == nil {
 		return nil
@@ -506,9 +459,7 @@ func (v *VerifiedCurrency) StellarEntry() *IssuanceEntry {
 	return nil
 }
 
-// CoinGeckoIDs returns upper-cased-ticker → CG slug for entries with a non-empty CoinGeckoID.
-// It drives the CG poller's id-lookup table, so a seed entry with a coingecko_id expands
-// coverage automatically.
+// CoinGeckoIDs returns upper-cased ticker to CG slug for entries with a CoinGeckoID; it drives the CG poller's id table, so a new seed coingecko_id expands coverage automatically.
 func (c *Catalogue) CoinGeckoIDs() map[string]string {
 	if c == nil {
 		return nil
@@ -523,9 +474,7 @@ func (c *Catalogue) CoinGeckoIDs() map[string]string {
 	return out
 }
 
-// CoinMarketCapIDs returns upper-cased-ticker → CMC integer-id string for entries with a
-// non-empty CoinMarketCapID. CMC accepts either ticker or id; the id is surfaced so per-symbol
-// resolution can disambiguate.
+// CoinMarketCapIDs returns upper-cased ticker to CMC integer-id string for entries with a CoinMarketCapID, so per-symbol resolution can disambiguate.
 func (c *Catalogue) CoinMarketCapIDs() map[string]string {
 	if c == nil {
 		return nil
@@ -540,8 +489,7 @@ func (c *Catalogue) CoinMarketCapIDs() map[string]string {
 	return out
 }
 
-// Tickers returns every catalogue ticker, upper-cased, in seed order; the indexer builds the
-// aggregator pair set from it.
+// Tickers returns every catalogue ticker, upper-cased, in seed order; the indexer builds the aggregator pair set from it.
 func (c *Catalogue) Tickers() []string {
 	if c == nil {
 		return nil
@@ -553,8 +501,7 @@ func (c *Catalogue) Tickers() []string {
 	return out
 }
 
-// ByClass returns every catalogue entry of the given class, in
-// seed order. Returns nil for the unknown / empty class.
+// ByClass returns every entry of the given class in seed order, nil for an unknown or empty class.
 func (c *Catalogue) ByClass(class AssetClass) []*VerifiedCurrency {
 	if c == nil {
 		return nil

@@ -7,8 +7,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/hashdb"
 )
 
-// HashDBVerifyResult is the outcome of a [HashDBWindowVerifier] pass: counts first, then a
-// bounded sample of drifted sequences, like [CrossAnchorResult].
+// HashDBVerifyResult is the outcome of a [HashDBWindowVerifier] pass: counts first, then a bounded sample of drifted sequences, like [CrossAnchorResult].
 type HashDBVerifyResult struct {
 	// From, To — the ledger range that was walked (inclusive).
 	From, To uint32
@@ -40,32 +39,21 @@ func (r HashDBVerifyResult) AnyDrift() bool {
 	return r.Drifted > 0
 }
 
-// MaxHashDBDriftSeqsReported caps HashDBVerifyResult.DriftSeqs, bounding the payload even when
-// every ledger in the window drifted (same rationale as [MaxMissingReported]).
+// MaxHashDBDriftSeqsReported caps HashDBVerifyResult.DriftSeqs so the payload stays bounded even when every ledger drifted (same rationale as [MaxMissingReported]).
 const MaxHashDBDriftSeqsReported = 64
 
-// HashDBWindowVerifier accumulates a [HashDBVerifyResult] as the caller feeds it one
-// (ledger_seq, fresh sha256(LCM)) pair at a time.
-//
-// It is transport-agnostic: re-reading the bucket and hashing each ledger is the caller's job, so
-// this package stays free of the ledger-meta xdr dependency that lint-imports.sh rule
-// B/xdr-scoped-to-scval polices (ADR-0013).
-//
-// Not safe for concurrent Observe calls, matching hashdb.DB's single-writer discipline.
+// HashDBWindowVerifier accumulates a [HashDBVerifyResult] from (ledger_seq, fresh sha256(LCM)) pairs; transport-agnostic so this package avoids the ledger-meta xdr dependency (lint-imports.sh rule B, ADR-0013); not safe for concurrent Observe.
 type HashDBWindowVerifier struct {
 	db  *hashdb.DB
 	res HashDBVerifyResult
 }
 
-// NewHashDBWindowVerifier returns a verifier for ledgers in [from, to] (inclusive). db is
-// read-only here: Observe only calls db.Verify, never db.Append.
+// NewHashDBWindowVerifier returns a verifier for ledgers in [from, to] inclusive; db is read-only (Observe calls db.Verify, never db.Append).
 func NewHashDBWindowVerifier(db *hashdb.DB, from, to uint32) *HashDBWindowVerifier {
 	return &HashDBWindowVerifier{db: db, res: HashDBVerifyResult{From: from, To: to}}
 }
 
-// Observe checks one ledger's fresh hash against hashdb's recorded value. It errors only on a
-// hashdb I/O failure, never on a mismatch: drift is data, and an operator investigating a
-// suspected rewrite wants every drifted ledger, so the caller's walk should continue past a hit.
+// Observe checks one ledger's fresh hash against hashdb's record; it errors only on hashdb I/O failure, never on a mismatch (drift is data, so the caller's walk should continue past a hit).
 func (v *HashDBWindowVerifier) Observe(seq uint32, observed [32]byte) error {
 	if v.db == nil {
 		return errors.New("archivecompleteness: hashdb verify requires a non-nil DB")
