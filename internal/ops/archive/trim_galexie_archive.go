@@ -35,10 +35,9 @@ const (
 	// trimMaxFilesCeiling bounds --max-files: ~1.6% of the 63.6M-object
 	// archive, ten of the runbook's 100k chunked passes.
 	trimMaxFilesCeiling = 1_000_000
-	// trimMinHotWindowLedgers (30 days at 17,280 ledgers/day) is how far
-	// below the hot archive's newest ledger the cutoff must sit. ADR-0027's
-	// hot window is 90 days; 30 leaves the scheduled cutoff 60 days of
-	// slack while refusing a cutoff typed at or near the live seam.
+	// trimMinHotWindowLedgers (30 days at 17,280 ledgers/day) is how far below the hot archive's newest ledger the cutoff must sit: the hot
+	// window is 90 days, so 30 leaves the
+	// scheduled cutoff 60 days of slack while refusing a cutoff typed at or near the live seam.
 	trimMinHotWindowLedgers = 30 * 17_280
 )
 
@@ -221,9 +220,8 @@ func trimGalexieArchive(args []string) error { //nolint:gocognit,gocyclo,funlen 
 	return nil
 }
 
-// checkTrimCutoff refuses a cutoff within trimMinHotWindowLedgers of the hot
-// archive's newest ledger, so a wrong variable or a stray digit cannot trim
-// the hot tier up to the live seam.
+// checkTrimCutoff refuses a cutoff within trimMinHotWindowLedgers of the hot archive's newest ledger, so a wrong variable or stray digit
+// cannot trim the hot tier up to the live seam.
 func checkTrimCutoff(olderThan, hotTip uint32) error {
 	var highest uint32
 	if hotTip > trimMinHotWindowLedgers {
@@ -276,9 +274,8 @@ func deleteTrimCandidates(ctx context.Context, logger *slog.Logger, del s3Object
 // all above the cutoff, giving candidates=0 that looks like success. Discover partitions, skip those wholly at/above the cutoff,
 // and page StartAfter through the rest. --max-files caps the whole run (counter on trimPlan).
 
-// trimListPageSize is the SDK's hard per-call ceiling (see above). We
-// request it explicitly rather than relying on the Limit:0 default,
-// because "0 means 1000" is the trap this whole block exists to avoid.
+// trimListPageSize is the SDK's hard per-call ceiling, requested explicitly because the Limit:0 default ("0 means 1000") is the trap this
+// block exists to avoid.
 const trimListPageSize = 1000
 
 // trimFileLister and trimColdChecker are the slices of datastore.DataStore the planner calls, so tests can fake the SDK's 1000-key clamp.
@@ -290,10 +287,8 @@ type trimColdChecker interface {
 	Exists(ctx context.Context, path string) (bool, error)
 }
 
-// s3PrefixLister is the slice of *s3.Client partition discovery needs.
-// The SDK's DataStore interface has no delimited/common-prefix
-// listing, so discovery goes through the same raw hot-only client the
-// deletion loop uses.
+// s3PrefixLister is the slice of *s3.Client partition discovery needs: the SDK's DataStore has no delimited/common-prefix listing, so
+// discovery uses the same raw hot-only client as the deletion loop.
 type s3PrefixLister interface {
 	ListObjectsV2(ctx context.Context, params *s3.ListObjectsV2Input, optFns ...func(*s3.Options)) (*s3.ListObjectsV2Output, error)
 }
@@ -307,9 +302,8 @@ type hotPartition struct {
 	parsed bool
 }
 
-// trimPlan is the result of enumeration + filtering: the candidate
-// list plus the counters that make "found nothing" distinguishable
-// from "barely looked".
+// trimPlan is the result of enumeration + filtering: the candidates plus the counters that make "found nothing" distinguishable from
+// "barely looked".
 type trimPlan struct {
 	candidates       []string
 	skippedTooFresh  int
@@ -491,10 +485,8 @@ func scanPartition(ctx context.Context, logger *slog.Logger, hot trimFileLister,
 	}
 }
 
-// evaluateTrimFile buckets one enumerated path through the per-file
-// safety chain — parse, cutoff, cold-tier HEAD — kept in its own
-// function so the enumeration around it can change without the filter
-// changing with it.
+// evaluateTrimFile buckets one enumerated path through the per-file safety chain (parse, cutoff, cold-tier HEAD), separate so enumeration
+// can change without the filter changing.
 func evaluateTrimFile(ctx context.Context, logger *slog.Logger, cold trimColdChecker, path string, opts trimOpts, plan *trimPlan) {
 	_, to, perr := datastore.ParseRangeFromObjectKey(path)
 	if perr != nil {
@@ -560,9 +552,7 @@ func parseTrimFlags(args []string) (trimOpts, error) {
 	return opts, nil
 }
 
-// splitBucketPath parses the SDK-style "bucket/prefix/path" form
-// into (bucket, prefix). Mirrors the SDK's `url.Parse("s3://" + ...)`
-// logic from datastore/s3.go's FromS3Client.
+// splitBucketPath parses the SDK-style "bucket/prefix/path" form into (bucket, prefix), mirroring datastore/s3.go's FromS3Client.
 func splitBucketPath(bucketPath string) (bucket, prefix string, err error) {
 	parsed, err := url.Parse("s3://" + bucketPath)
 	if err != nil {

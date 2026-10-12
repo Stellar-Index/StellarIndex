@@ -17,14 +17,11 @@ func newRing(capacity int) *ring {
 	}
 }
 
-// empty reports whether the ring holds no events — i.e. the topic has
-// never been published to (or was reaped and recreated), so there is
-// nothing a reconnecting client could replay from it.
+// empty reports whether the ring holds no events: the topic was never published to (or was reaped and recreated), so a reconnecting client
+// has nothing to replay.
 func (r *ring) empty() bool { return len(r.events) == 0 }
 
-// push appends ev. When the ring is at capacity, the oldest event
-// is discarded. The slice is kept ordered ascending by ID so that
-// snapshotAfter can do a linear scan.
+// push appends ev, discarding the oldest at capacity. The slice stays ordered ascending by ID so snapshotAfter can do a linear scan.
 func (r *ring) push(ev Event) {
 	if len(r.events) < r.cap {
 		r.events = append(r.events, ev)
@@ -36,9 +33,8 @@ func (r *ring) push(ev Event) {
 	r.events[len(r.events)-1] = ev
 }
 
-// oldestID returns the ID of the oldest event still held, or "" if the
-// ring is empty. The floor a client's replay can be trusted against —
-// anything strictly older was evicted and is gone.
+// oldestID returns the oldest held event's ID, or "" if empty: the floor a client's replay can be trusted against, since anything strictly
+// older was evicted.
 func (r *ring) oldestID() string {
 	if len(r.events) == 0 {
 		return ""
@@ -46,15 +42,14 @@ func (r *ring) oldestID() string {
 	return r.events[0].ID
 }
 
-// hasEvicted reports whether this ring has ever discarded an event. A cursor older than
-// [ring.oldestID] is a genuine gap only then; otherwise the oldest event is the topic's first-ever
-// publish, which a stale or synthetic cursor can predate with nothing lost.
+// hasEvicted reports whether this ring has ever discarded an event. A cursor older than [ring.oldestID] is a genuine gap only then;
+// otherwise the oldest event is the topic's
+// first-ever publish, which a stale or synthetic cursor can predate with nothing lost.
 func (r *ring) hasEvicted() bool { return r.evicted }
 
-// snapshotAfter returns a copy, in ID order, of every buffered event with ID strictly greater than
-// lastEventID; an empty lastEventID returns nil. If the cursor predates the oldest held event, all
-// held events are returned. IDs are timestamp-packed ([Generator]), so an ID gap is
-// indistinguishable from a quiet period; [Hub.Subscribe] therefore compares against
+// snapshotAfter returns a copy, in ID order, of every buffered event with ID strictly greater than lastEventID (nil for an empty one; all
+// held events if the cursor predates the oldest).
+// IDs are timestamp-packed ([Generator]), so a gap is indistinguishable from a quiet period; [Hub.Subscribe] compares against
 // [ring.oldestID] itself and emits an [EventTypeStreamGap] marker.
 func (r *ring) snapshotAfter(lastEventID string) []Event {
 	if lastEventID == "" {

@@ -39,9 +39,8 @@ type BaselineSource interface {
 	LatestBaseline(ctx context.Context, pair canonical.Pair) (baseline.MultiBaseline, time.Time, error)
 }
 
-// confidenceCacheTTL — the TTL is identical to VWAP (derived from this
-// orchestrator's own cadence) so a stale confidence record can't
-// outlive the price it scored.
+// confidenceCacheTTL equals the VWAP TTL (derived from the orchestrator's cadence) so a stale confidence record can't outlive the price it
+// scored.
 func (o *Orchestrator) confidenceCacheTTL(window time.Duration) time.Duration {
 	return o.vwapTTL(window)
 }
@@ -142,10 +141,9 @@ func (o *Orchestrator) computeConfidence(
 	}, true
 }
 
-// cacheConfidence writes a previously-computed [confidence.Score]
-// to Redis. Called only when the bucket is being published (i.e.
-// neither Phase 1 nor Phase 2 has refused). Failures are logged +
-// counted but don't propagate — confidence is enrichment.
+// cacheConfidence writes a computed [confidence.Score] to Redis, only when the bucket is published (neither phase refused). Failures are
+// logged and
+// counted but don't propagate: confidence is enrichment.
 func (o *Orchestrator) cacheConfidence(
 	ctx context.Context,
 	pair canonical.Pair,
@@ -167,15 +165,12 @@ func (o *Orchestrator) cacheConfidence(
 	obs.AggregatorConfidenceComputeTotal.WithLabelValues("ok").Inc()
 }
 
-// canonicalTrade is a local alias to avoid an import cycle while
-// the orchestrator's Trade-handling helpers live next to the
-// canonical package import. Same shape; same semantics.
+// canonicalTrade is a local alias to avoid an import cycle with the canonical package import; same shape and semantics.
 type canonicalTrade = canonical.Trade
 
 // crossOracleSignal is what [Orchestrator.lookupCrossOracle] extracts for the confidence step; no data means both fields at their -1 sentinels (neutral factor, CrossOracleChecked=false).
 type crossOracleSignal struct {
-	// divergencePct — % deviation from the cross-reference median,
-	// or -1 ("no cross-oracle data", the [confidence.CrossOracleFactor]
+	// divergencePct is the % deviation from the cross-reference median, or -1 (the [confidence.CrossOracleFactor] "no cross-oracle data"
 	// sentinel).
 	divergencePct float64
 	// agreementCount — references corroborating our VWAP within the
@@ -261,9 +256,8 @@ func approxUSDVolume(trades []canonicalTrade, pair canonical.Pair) float64 {
 	return usd
 }
 
-// isUSDQuoted reports whether the pair's quote is fiat:USD or a
-// canonical USD-pegged stablecoin. Used to gate USD-magnitude
-// approximations in [approxUSDVolume].
+// isUSDQuoted reports whether the pair's quote is fiat:USD or a canonical USD-pegged stablecoin; it gates the USD-magnitude approximations
+// in [approxUSDVolume].
 func isUSDQuoted(pair canonical.Pair) bool {
 	switch pair.Quote.String() {
 	case "fiat:USD",
@@ -277,9 +271,10 @@ func isUSDQuoted(pair canonical.Pair) bool {
 	return false
 }
 
-// baselineAgeDays returns how much real history backs the 30d baseline in days-equivalent of 1m buckets (-1 = bootstrap sentinel for [confidence.BaselineQualityFactor]).
-// Bucket count is Day30.N+1: N counts RETURNS, so dividing N could never reach 30 and the bootstrap cap would stay engaged forever.
-// It is sample DENSITY, not calendar age (un-capping a sparse pair by age would raise confidence on a thin baseline); see [confidence.Inputs.BaselineAgeDays].
+// baselineAgeDays is the history behind the 30d baseline in days-equivalent of 1m buckets (-1 = bootstrap sentinel for
+// [confidence.BaselineQualityFactor]).
+// Bucket count is Day30.N+1 (N counts RETURNS, so N alone never reaches 30); it is sample DENSITY, not calendar age, so a sparse pair
+// isn't un-capped on a thin baseline.
 func baselineAgeDays(multi baseline.MultiBaseline) float64 {
 	if multi.Day30 == nil {
 		return -1
@@ -290,9 +285,8 @@ func baselineAgeDays(multi baseline.MultiBaseline) float64 {
 	return float64(multi.Day30.N+1) / 1440.0
 }
 
-// maxBucketZ is the largest [baseline.MultiBaseline.MaxZScore] over rets, so
-// the worst minute of a multi-minute decision is the one that is judged, with
-// the baseline window that scored it.
+// maxBucketZ is the largest [baseline.MultiBaseline.MaxZScore] over rets, so the worst minute of a multi-minute decision is the one
+// judged.
 func maxBucketZ(multi baseline.MultiBaseline, rets []baseline.BucketReturn) (float64, time.Duration, bool) {
 	var best float64
 	var bestWindow time.Duration
@@ -308,14 +302,12 @@ func maxBucketZ(multi baseline.MultiBaseline, rets []baseline.BucketReturn) (flo
 	return best, bestWindow, len(rets) > 0
 }
 
-// maxBaselineAge is the oldest baseline row still scored against. Past one
-// day the stored 1d window no longer overlaps the last day at all, and the
-// hourly refresher has missed 24 cycles for this pair.
+// maxBaselineAge is the oldest baseline row still scored against: past one day the stored 1d window no longer overlaps the last day, and
+// the hourly refresher missed 24 cycles.
 const maxBaselineAge = baseline.Window1d
 
-// baselineFresh exports the pair's baseline age and reports whether the row
-// is young enough to score against. A zero computedAt is unknown freshness
-// and fails closed; a row stamped ahead of now (clock skew) is fresh.
+// baselineFresh exports the baseline age and reports whether it is young enough to score against. A zero computedAt fails closed; a row
+// stamped ahead of now (clock skew) is fresh.
 func baselineFresh(pair canonical.Pair, computedAt, now time.Time) bool {
 	if computedAt.IsZero() {
 		return false

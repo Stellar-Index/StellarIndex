@@ -190,9 +190,8 @@ func archiveCompletenessVerify(args []string) error {
 	return nil
 }
 
-// archiveCompletenessVerifyFillOptions carries the filler config for
-// archiveCompletenessVerifyFill (split out of archiveCompletenessVerify's
-// flag vars to keep the fill phase testable in isolation).
+// archiveCompletenessVerifyFillOptions carries the filler config for archiveCompletenessVerifyFill, split from the flag vars so the fill
+// phase is testable in isolation.
 type archiveCompletenessVerifyFillOptions struct {
 	ArchiveRoot string
 	Workers     int
@@ -201,9 +200,8 @@ type archiveCompletenessVerifyFillOptions struct {
 	Network     string
 }
 
-// archiveCompletenessVerifyFill runs verify's Phase 2: a no-op when
-// nothing is missing, a dry-run notice when -write was not passed, or
-// an actual fetch-and-place otherwise.
+// archiveCompletenessVerifyFill runs verify's Phase 2: a no-op when nothing is missing, a dry-run notice without -write, else an actual
+// fetch-and-place.
 func archiveCompletenessVerifyFill(ctx context.Context, write bool, missing []uint32, opts archiveCompletenessVerifyFillOptions) (archivecompleteness.FillResult, error) {
 	switch {
 	case len(missing) == 0:

@@ -140,9 +140,9 @@ func healthStaleAfter(interval, timeout time.Duration) time.Duration {
 	return 3*interval + timeout
 }
 
-// crossRegionHealth is the /healthz verdict. "Has run once" would be a latch, so it uses two recency-bounded
-// facts: lastRunUnix (a sweep completed) and lastReachedUnix (a sweep reached a region, via allFailed();
-// partial failure stays green and is reported by the fetch_errors metric).
+// crossRegionHealth is the /healthz verdict. "Has run once" would be a latch, so it uses two recency-bounded facts: lastRunUnix (a sweep
+// completed) and lastReachedUnix
+// (a sweep reached a region, via allFailed(); partial failure stays green and shows in the fetch_errors metric).
 func crossRegionHealth(exp *crossRegionExporter, now time.Time, staleAfter time.Duration) (int, string) {
 	last := exp.lastRunUnix.Load()
 	if last == 0 {
@@ -235,9 +235,8 @@ func runOneTick(
 	}
 }
 
-// allFailed reports whether every region's fetch returned an error.
-// Used to flag the "every region is unreachable" alert as distinct
-// from "we got data and it diverged".
+// allFailed reports whether every region's fetch errored, flagging "every region is unreachable" as distinct from "we got data and it
+// diverged".
 func allFailed(results []regionResult) bool {
 	if len(results) == 0 {
 		return false
@@ -330,9 +329,9 @@ func newCrossRegionExporter(reg prometheus.Registerer) *crossRegionExporter {
 // String makes crossRegionMetric usable as a Prometheus label value.
 func (m crossRegionMetric) String() string { return string(m) }
 
-// tickOutcome labels one (pair, metric) sweep. "inconclusive" (compared=false: fewer than two regions
-// responded) must not read as "ok", or one region down would look like genuine agreement with zero
-// comparisons; the one-shot treats it as a hard failure.
+// tickOutcome labels one (pair, metric) sweep. "inconclusive" (compared=false: fewer than two regions responded) must not read as "ok", or
+// one region down looks like
+// agreement with zero comparisons; the one-shot treats it as a hard failure.
 func tickOutcome(divergence, compared, allFailed bool) string {
 	switch {
 	case allFailed:

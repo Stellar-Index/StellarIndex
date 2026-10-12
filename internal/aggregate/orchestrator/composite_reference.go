@@ -116,9 +116,8 @@ const (
 	compositeVerdictUnavailable  compositeVerdict = "unavailable"
 )
 
-// compositeVerdicts enumerates every verdict so the gauge can be set
-// for ALL of them each evaluation (a label that is only ever set to 1
-// leaves stale 1s behind when the verdict changes).
+// compositeVerdicts enumerates every verdict so the gauge is set for ALL of them each evaluation (a label only ever set to 1 leaves stale
+// 1s).
 var compositeVerdicts = []compositeVerdict{
 	compositeVerdictCorroborated, compositeVerdictRefuted, compositeVerdictUnavailable,
 }
@@ -128,20 +127,17 @@ type legRef struct {
 	price   *big.Rat
 	sources int
 
-	// dispersion is max |venueVWAP − legVWAP| / legVWAP across the
-	// distinct venues in the survivor slice (exact Rat; nil when fewer
-	// than two venues). The leg-dispersion guard reads it.
+	// dispersion is max |venueVWAP - legVWAP| / legVWAP across the distinct survivor venues (exact Rat; nil under two venues); the leg-
+	// dispersion guard reads it.
 	dispersion *big.Rat
 
-	// dispersionUncomputable is set when a venue's own VWAP could not be
-	// computed (A4): the guard cannot vouch for the leg, so the leg is
-	// refused (`leg_dispersion=uncomputable`) rather than skipped.
+	// dispersionUncomputable is set when a venue's own VWAP could not be computed: the guard cannot vouch for the leg, so it is refused
+	// (`leg_dispersion=uncomputable`) rather than skipped.
 	dispersionUncomputable bool
 
-	// proxyShare is the fraction of the survivor base volume (at the
-	// common scale the VWAP weights by) that fetchForTarget rewrote onto
-	// this pair from a stablecoin-proxy source pair ([aggregate.ProxyPair])
-	// — prints quoted in a stablecoin, priced here at par with real USD.
+	// proxyShare is the fraction of survivor base volume (at the common scale the VWAP weights by) that fetchForTarget rewrote onto this pair
+	// from a
+	// stablecoin-proxy source pair ([aggregate.ProxyPair]): prints quoted in a stablecoin, priced here at par with real USD.
 	proxyShare float64
 
 	// surfaceDivergence is |proxyVWAP - ownQuoteVWAP| / ownQuoteVWAP, exposing a stablecoin de-peg the par rewrite absorbs; nil when a surface is empty, surfaceUncomputable when a VWAP failed.
@@ -149,9 +145,8 @@ type legRef struct {
 	surfaceUncomputable bool
 }
 
-// quoteSurfaceRefusal returns why this leg cannot stand for one quote
-// asset — its proxy-rewritten and own-quote prints disagree by more
-// than maxBps, or the comparison could not run — or "" when it can.
+// quoteSurfaceRefusal returns why this leg cannot stand for one quote asset (proxy-rewritten and own-quote prints disagree by more than
+// maxBps, or the comparison could not run), or "".
 func (lr legRef) quoteSurfaceRefusal(maxBps int) string {
 	if lr.surfaceUncomputable {
 		return "quote_surface=uncomputable"
@@ -162,10 +157,9 @@ func (lr legRef) quoteSurfaceRefusal(maxBps int) string {
 	return ""
 }
 
-// quoteSurfaces measures how much of a published bucket came through a
-// stablecoin-proxy rewrite (proxied holds those trades' IDs) and how far
-// the proxy prints sit from the pair's own-quote prints. Both surfaces
-// are priced with computeNormalizedVWAP, as the leg VWAP is.
+// quoteSurfaces measures how much of a published bucket came through a stablecoin-proxy rewrite (proxied holds those trade IDs) and how
+// far
+// those prints sit from the pair's own-quote prints; both are priced with computeNormalizedVWAP, as the leg VWAP is.
 func (o *Orchestrator) quoteSurfaces(
 	pair canonical.Pair, trades []canonical.Trade, proxied map[string]struct{},
 ) (share float64, divergence *big.Rat, uncomputable bool) {
@@ -246,27 +240,23 @@ type compositeReference struct {
 	// reference resolved; nil when unavailable.
 	price *big.Rat
 
-	// divergencePct is |direct − composite| / composite × 100 when the
-	// reference resolved (the same orientation as
-	// [Orchestrator.triangulationDivergencePct]). Reporting only — a
-	// float64 mirror of [deviationRatio] for gauges and log lines.
+	// divergencePct is |direct - composite| / composite * 100 when the reference resolved (see [Orchestrator.triangulationDivergencePct]);
+	// reporting only, a float64 mirror of [deviationRatio] for gauges and logs.
 	divergencePct float64
 
 	// deviationRatio is the exact *big.Rat |direct - composite| / composite that [releaseCorroborated] compares against its band, avoiding float64 rounding at the boundary.
 	deviationRatio *big.Rat
 
-	// legSources maps each chain leg (canonical pair string) to the
-	// distinct source count behind it on this bucket (FX legs: the
-	// number of distinct FX providers in the snap, normally 1).
+	// legSources maps each chain leg (canonical pair string) to its distinct source count on this bucket (FX legs: distinct FX providers in
+	// the snap, normally 1).
 	legSources map[string]int
 
 	// legDispersionBps maps each priced leg to its venue dispersion in
 	// bps (see legRef.dispersion); absent for FX legs.
 	legDispersionBps map[string]float64
 
-	// unavailable names why the reference could not be evaluated
-	// (e.g. "leg_sources=1", "fx_stale", "leg_not_refreshed"). Empty
-	// when the reference resolved.
+	// unavailable names why the reference could not be evaluated (e.g. "leg_sources=1", "fx_stale", "leg_not_refreshed"); empty when it
+	// resolved.
 	unavailable string
 }
 
@@ -311,16 +301,14 @@ func (r compositeReference) legDispersionString() string {
 	return " composite_leg_dispersion_bps={" + strings.Join(parts, ",") + "}"
 }
 
-// resolved reports whether the reference produced a composite on this
-// bucket (corroborated or refuted) — the readings that may stand in
-// for the prior-tick chain sample and drive the release lens.
+// resolved reports whether the reference produced a composite (corroborated or refuted): those readings may stand in for the prior-tick
+// chain sample and drive the release lens.
 func (r compositeReference) resolved() bool {
 	return r.verdict == compositeVerdictCorroborated || r.verdict == compositeVerdictRefuted
 }
 
-// reasonSuffix is appended to the phase-2 freeze reason so
-// freeze_events.detail->>'reason' and the `freeze engaged` log carry
-// the basis, the agreement measured and how strong each leg was.
+// reasonSuffix is appended to the phase-2 freeze reason (freeze_events.detail->>'reason', the `freeze engaged` log): basis, agreement
+// measured, each leg's strength.
 func (r compositeReference) reasonSuffix() string {
 	switch r.verdict {
 	case compositeVerdictUnavailable:
@@ -369,8 +357,7 @@ func (o *Orchestrator) recordLegRef(pair canonical.Pair, window time.Duration, v
 	o.setTickLegRef(pair, window, o.newLegRef(pair, vwap, trades, nil))
 }
 
-// newLegRef builds the reference-leg reading for a published bucket;
-// proxied is the set of trade IDs fetchForTarget rewrote from a
+// newLegRef builds the reference-leg reading for a published bucket; proxied is the set of trade IDs fetchForTarget rewrote from a
 // stablecoin-proxy source pair.
 func (o *Orchestrator) newLegRef(pair canonical.Pair, vwap *big.Rat, trades []canonical.Trade, proxied map[string]struct{}) legRef {
 	dispersion, uncomputable := o.legDispersion(pair, trades, vwap)

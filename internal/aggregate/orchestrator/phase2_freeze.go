@@ -94,18 +94,16 @@ func releaseCorroborated(c confidenceComputation, candidate *big.Rat, ref compos
 	return false
 }
 
-// confidenceWithSourceCount is the Phase 2 input bundle. Pulled
-// out of [confidenceComputation] so [phase2FreezeFires] is a pure
-// function on three floats — easy to unit-test exhaustively.
+// confidenceWithSourceCount is the Phase 2 input bundle, split out of [confidenceComputation] so [phase2FreezeFires] is a pure function on
+// three floats.
 type confidenceWithSourceCount struct {
 	Confidence  float64
 	ZScore      float64
 	SourceCount int
 }
 
-// classOf resolves the asset class label for a pair, using the
-// Phase 1 checker's classifier when it's wired so the per-class
-// metric stays consistent across both phases.
+// classOf resolves a pair's asset class label with the Phase 1 checker's classifier when wired, keeping the per-class metric consistent
+// across both phases.
 func (o *Orchestrator) classOf(pair canonical.Pair) anomaly.AssetClass {
 	if o.cfg.Anomaly != nil {
 		return o.cfg.Anomaly.ClassOf(pair.Base)
@@ -236,9 +234,10 @@ func (o *Orchestrator) stepFreezeLifecycle(
 	return true
 }
 
-// loadFreezeState returns the working lifecycle state for a (pair, window) key plus whether the operator force-unfroze it out of band. Two cheap Redis reads:
-// a cold key (first evaluation in this process) re-hydrates THIS window's ladder from the marker ([Orchestrator.loadMarkerState]), else every deploy restarts the 2-hour escalation clock and the window publishes the bucket the freeze was withholding; an absent marker is the operator override (the read is window-AGNOSTIC, the marker is pair-scoped), else the in-memory ladder would re-write it.
-// A cold-key read error returns err and caches nothing; the caller must withhold the bucket.
+// loadFreezeState returns the working lifecycle state for a (pair, window) plus whether the operator force-unfroze it out of band (two
+// cheap Redis reads). A cold key re-hydrates THIS window's ladder from the marker,
+// else every deploy restarts the 2-hour escalation clock; an absent marker is the operator override (window-AGNOSTIC read, pair-scoped
+// marker). A cold-key read error caches nothing; the caller must withhold the bucket.
 func (o *Orchestrator) loadFreezeState(
 	ctx context.Context,
 	pair canonical.Pair,
@@ -290,9 +289,8 @@ func (o *Orchestrator) loadMarkerState(
 	return o.cfg.FreezeWriter.LoadState(ctx, pair.Base, pair.Quote)
 }
 
-// engageFreeze applies a still-frozen [freeze.Outcome]: persist the
-// state, count it, log the transition, protect the last-known-good
-// value, and refresh the marker with the remaining hold.
+// engageFreeze applies a still-frozen [freeze.Outcome]: persist state, count and log the transition, protect the last-known-good value,
+// refresh the marker with the remaining hold.
 func (o *Orchestrator) engageFreeze(
 	ctx context.Context,
 	pair canonical.Pair,
@@ -391,9 +389,8 @@ func (o *Orchestrator) reseedFrozenVWAP(ctx context.Context, pair canonical.Pair
 	}
 }
 
-// markHoldForWindow writes the freeze marker for (pair, window),
-// recording the owning window when the configured writer can carry it
-// and falling back to the pair-wide write when it cannot.
+// markHoldForWindow writes the freeze marker for (pair, window), recording the owning window when the writer can carry it, else the pair-
+// wide write.
 func (o *Orchestrator) markHoldForWindow(
 	ctx context.Context,
 	pair canonical.Pair,
@@ -521,10 +518,9 @@ func (o *Orchestrator) releaseFreeze(
 	o.clearReleasedMarker(ctx, pair, window)
 }
 
-// overrideMode labels a release the orchestrator detected as a missing
-// marker: "operator" when freeze-unfreeze left its tombstone (or the writer
-// cannot say), "lapsed" when the marker and ladder expired with no operator
-// involved, so the operator series counts only human force-unfreezes.
+// overrideMode labels a release detected as a missing marker: "operator" when freeze-unfreeze left its tombstone (or the writer cannot
+// say), "lapsed" when marker and ladder expired,
+// so the operator series counts only human force-unfreezes.
 func (o *Orchestrator) overrideMode(ctx context.Context, pair canonical.Pair) string {
 	if o.overrideReader == nil {
 		return "operator"
@@ -541,9 +537,10 @@ func (o *Orchestrator) overrideMode(ctx context.Context, pair canonical.Pair) st
 	return "lapsed"
 }
 
-// clearReleasedMarker deletes the pair's marker when what THIS PROCESS believes is its last frozen window releases.
-// [Orchestrator.siblingWindowFrozen] only sees windows that reached the freeze step in this process; a window under [Config.MinUSDVolume], or any window after a restart, is invisible to it. So a window-aware writer releases against the marker's own record ([WindowedFreezeMarker.ReleaseWindow]) and keeps a still-frozen (e.g. ESCALATED) sibling's marker and ladder; a writer that can't scope clears outright.
-// An operator override already deleted the marker; clearing again is an idempotent DEL.
+// clearReleasedMarker deletes the pair's marker when this process's last frozen window releases. [Orchestrator.siblingWindowFrozen] is
+// blind to windows under [Config.MinUSDVolume] or after a restart,
+// so a window-aware writer releases against the marker's own record ([WindowedFreezeMarker.ReleaseWindow]) and keeps a still-frozen
+// sibling's marker; others clear outright (an idempotent DEL after an operator override).
 func (o *Orchestrator) clearReleasedMarker(ctx context.Context, pair canonical.Pair, window time.Duration) {
 	if o.windowedFreeze == nil {
 		if err := o.cfg.FreezeWriter.Clear(ctx, pair.Base, pair.Quote); err != nil {

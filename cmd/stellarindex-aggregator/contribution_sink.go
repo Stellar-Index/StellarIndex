@@ -7,10 +7,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// contributionSink adapts the timescale Store to orchestrator.ContributionSink, writing each
-// [orchestrator.ContributionRecord] as a batch of [timescale.PriceSourceContribution] rows.
-// It lives in the binary because the orchestrator imports storage, so a storage-to-orchestrator
-// import would close an import cycle.
+// contributionSink adapts the Store to orchestrator.ContributionSink, writing each ContributionRecord as PriceSourceContribution rows;
+// it lives in the binary because a storage-to-orchestrator import would close an import cycle.
 type contributionSink struct {
 	store *timescale.Store
 }
@@ -26,14 +24,12 @@ func (s *contributionSink) RecordContributions(ctx context.Context, rec orchestr
 	return s.store.InsertPriceSourceContributions(ctx, contributionRows(rec))
 }
 
-// contributionScale is the fractional digits a weight and a USD volume
-// are rendered at: exact for any USD amount scaled by up to 10^18, and a
-// weight's rounding error stays below 1e-18.
+// contributionScale is the fractional digits a weight and a USD volume render at: exact for USD scaled up to 10^18, weight error below
+// 1e-18.
 const contributionScale = 18
 
-// contributionRows maps one record to its storage rows. rec.Window is
-// carried onto every row: it is the only thing telling the 5m, 1h and
-// 24h breakdowns of one pair apart.
+// contributionRows maps one record to storage rows; rec.Window goes on every row since it alone tells a pair's 5m, 1h and 24h breakdowns
+// apart.
 func contributionRows(rec orchestrator.ContributionRecord) []timescale.PriceSourceContribution {
 	// SourceUSDVolume sums USD over the same post-filter trade slice that produced
 	// Contributions[].Weight, so volume_usd matches the published set even when outlier or

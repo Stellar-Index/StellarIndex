@@ -13,9 +13,10 @@ import (
 // The divergence comparison feeds ONE confidence factor ([confidence.Inputs.TriangulationDivergencePct]) and deliberately not [confidence.Inputs.SourceCount]: a composite re-uses our own leg VWAPs, so counting it would claim independence it lacks.
 // The router's multi-route corroborationCount is held to the same rule (ADR-0019 amendment 2) and is audit-only; both freeze phases read [distinctSourceCount] alone. A composite stands down a single-venue freeze only via the SAME-bucket composite reference (composite_reference.go).
 
-// compositeSample is the latest composite price the chain pass published for one target (pair, window), with its publish time and router corroboration.
-// `at` MUST keep the MONOTONIC clock reading (time.Now(), not .UTC(); see [Orchestrator.recordComposite]) so time.Since staleness checks survive a backward wall-clock step.
-// Like [Orchestrator.prevVWAPs]: bounded, and read/written only within a single Tick, so lock-free.
+// compositeSample is the latest composite price the chain pass published for one target (pair, window), with publish time and router
+// corroboration.
+// `at` MUST keep the MONOTONIC clock reading (time.Now(), not .UTC()) so time.Since staleness survives a backward wall-clock step. Single-
+// Tick access like [Orchestrator.prevVWAPs], so lock-free.
 type compositeSample struct {
 	price *big.Rat
 	at    time.Time
@@ -73,17 +74,16 @@ func (o *Orchestrator) routeCorroborationCount(pair canonical.Pair, window time.
 	return sample.corroborationCount, true
 }
 
-// compositeKey is the [Orchestrator.lastComposites] key. Its own key
-// space, deliberately not shared with prevVWAPs / frozenThisTick even
-// though the shape matches — those maps answer different questions and
-// a future change to one must not silently re-key the others.
+// compositeKey is the [Orchestrator.lastComposites] key, deliberately its own key space (not shared with prevVWAPs / frozenThisTick):
+// those maps answer different questions and must not be silently re-keyed together.
 func compositeKey(pair canonical.Pair, window time.Duration) string {
 	return pair.String() + ":" + window.String()
 }
 
-// triangulationDivergencePct returns the % absolute deviation between the direct VWAP just computed and the latest composite for the pair, plus whether a comparison happened. (_, false) when nothing is comparable (no chain, none published, older than [compositeMaxAgeTicks], non-positive price); unchecked is fail-closed ([confidence.Compute] drops the factor's weight).
-// The composite is one tick old by construction: the chain pass runs after the per-pair loop, and re-deriving mid-refresh would double the FX-snap load and double-count [obs.AggregatorFXSnapFallbackTotal]. A leg frozen this tick makes the chain refuse to publish.
-// A RESOLVED composite-reference reading (composite_reference.go) is returned instead so confidence, freeze verdict and release lens read ONE sample; an UNAVAILABLE one falls through.
+// triangulationDivergencePct returns the % absolute deviation between the direct VWAP just computed and the latest composite, plus whether
+// a comparison happened; (_, false) when nothing is comparable
+// (no chain, none published, older than [compositeMaxAgeTicks], non-positive price), which is fail-closed ([confidence.Compute] drops the
+// factor's weight). A RESOLVED composite-reference reading is returned instead so confidence, freeze and release read ONE sample.
 func (o *Orchestrator) triangulationDivergencePct(
 	pair canonical.Pair,
 	window time.Duration,
@@ -117,10 +117,8 @@ func (o *Orchestrator) triangulationDivergencePct(
 	return math.Abs(directF-compositeF) / compositeF * 100.0, true
 }
 
-// tickInterval returns the configured tick cadence, falling back to
-// [DefaultInterval] for an Orchestrator built without one. New()
-// already normalises Config.Interval, so the fallback only covers a
-// zero-valued struct assembled directly in a test.
+// tickInterval returns the configured tick cadence, falling back to [DefaultInterval] for a zero-valued struct built directly in a test
+// (New() normalises Config.Interval).
 func (o *Orchestrator) tickInterval() time.Duration {
 	if o.cfg.Interval > 0 {
 		return o.cfg.Interval

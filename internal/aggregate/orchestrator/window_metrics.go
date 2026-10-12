@@ -15,8 +15,7 @@ import (
 // Per-refresh window observability: per-venue VWAP of the trade set the filter was handed, and how many trades each filter stage left standing in THIS refresh.
 // A per-tick re-count of trimmed prints would measure the MAD band's disagreement with the window tail, not venue disagreement.
 
-// windowLabel renders a refresh window as the metric label the alert
-// rules match on: "5m", "1h", "24h" (seconds for anything not a whole
+// windowLabel renders a refresh window as the metric label the alert rules match on: "5m", "1h", "24h" (seconds for anything not a whole
 // minute).
 func windowLabel(window time.Duration) string {
 	switch {

@@ -27,9 +27,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 )
 
-// verifyArchive runs verification tiers against a galexie bucket (ADR-0017): A chain links, B checkpoint hashes vs the local archive, D peer archives, E stellar-archivist scan, C SDF sample.
-// `-tier all` (A, B, D, E) runs sequentially and any mismatch is a hard stop.
-// Defaults: bucket is S3BucketArchive else S3BucketLive; from is 2 (ledger 1 has no predecessor); to 0 = unbounded.
+// verifyArchive runs verification tiers against a galexie bucket: A chain links, B checkpoint hashes vs the local archive, D peer
+// archives, E stellar-archivist scan, C SDF sample.
+// `-tier all` (A, B, D, E) runs sequentially and any mismatch is a hard stop; defaults: bucket S3BucketArchive else S3BucketLive, from 2
+// (ledger 1 has no predecessor), to 0 = unbounded.
 func verifyArchive(args []string) (retErr error) { //nolint:funlen,gocognit,gocyclo // linear diagnostic; splitting reduces readability
 	fs := flag.NewFlagSet("verify-archive", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
@@ -829,9 +830,8 @@ type peerSelfTally struct {
 	matched, diverged, missed, unmirrored int
 }
 
-// compare checks our local history-XXXXXXXX.json for seq against the
-// peers' consensus checkpoint. An absent file above the mirror's
-// high-water is fill lag (unmirrored); inside its span it is missed.
+// compare checks our local history-XXXXXXXX.json for seq against the peers' consensus checkpoint. An absent file above the mirror's high-
+// water is fill lag (unmirrored); inside its span it is missed.
 func (t *peerSelfTally) compare(archiveRoot, relPath string, seq uint32, consensus historyCheckpoint, cov archiveMirrorCoverage) {
 	path := filepath.Join(archiveRoot, filepath.FromSlash(relPath))
 	body, err := os.ReadFile(path) //nolint:gosec // archiveRoot is operator-supplied via flag
@@ -916,9 +916,8 @@ func parseHistoryCheckpoint(body []byte, src string) (historyCheckpoint, error) 
 	return cp, nil
 }
 
-// checkpointsEqual compares the consensus-state fields of two
-// history-XXXXXXXX.json records. Ignores server + version which
-// vary legitimately across operators.
+// checkpointsEqual compares the consensus-state fields of two history-XXXXXXXX.json records, ignoring server + version, which vary
+// legitimately across operators.
 func checkpointsEqual(a, b historyCheckpoint) bool {
 	if a.CurrentLedger != b.CurrentLedger {
 		return false
@@ -936,9 +935,9 @@ func checkpointsEqual(a, b historyCheckpoint) bool {
 	return true
 }
 
-// archiveMirrorCoverage is the checkpoint span the local cross-anchor mirror (-archive-root) actually holds, measured from the mirror.
-// The fill job lags the LCM walk, so trailing absences are delivery lag while interior ones are defects (mirrors TolerateTrailingMissing).
-// Known == false means the mirror was unreadable: every absence then counts as a genuine miss.
+// archiveMirrorCoverage is the checkpoint span the local cross-anchor mirror (-archive-root) actually holds. The fill job lags the LCM
+// walk, so trailing absences are delivery lag while interior ones are defects
+// (mirrors TolerateTrailingMissing); Known == false (unreadable mirror) makes every absence a genuine miss.
 type archiveMirrorCoverage struct {
 	Floor     uint32 // lowest checkpoint ledger the mirror holds
 	HighWater uint32 // highest checkpoint ledger the mirror holds
@@ -959,9 +958,8 @@ func (c archiveMirrorCoverage) String() string {
 	return fmt.Sprintf("[%d, %d]", c.Floor, c.HighWater)
 }
 
-// mirrorCategory is one checkpoint-file tree of the archive layout. The
-// fill job maintains ledger/ only, so each tier must measure coverage
-// from the tree it actually reads.
+// mirrorCategory is one checkpoint-file tree of the archive layout; the fill job maintains ledger/ only, so each tier must measure
+// coverage from the tree it reads.
 type mirrorCategory struct{ dir, suffix string }
 
 var (
@@ -969,10 +967,8 @@ var (
 	mirrorHistory = mirrorCategory{dir: "history", suffix: ".json"}
 )
 
-// readArchiveMirrorCoverage measures the checkpoint span held under
-// <archiveRoot>/<cat.dir> by descending the hex-nested tree to its least
-// and greatest leaf. Four readdirs per bound (with backtracking past
-// empty branches), so it costs nothing next to the walk itself.
+// readArchiveMirrorCoverage measures the span under <archiveRoot>/<cat.dir> by descending the hex-nested tree to its least and greatest
+// leaf (four readdirs per bound, backtracking past empty branches).
 func readArchiveMirrorCoverage(archiveRoot string, cat mirrorCategory) archiveMirrorCoverage {
 	root := filepath.Join(archiveRoot, cat.dir)
 	low, lowOK := extremeMirrorCheckpoint(root, cat, 0, false)
@@ -983,9 +979,8 @@ func readArchiveMirrorCoverage(archiveRoot string, cat mirrorCategory) archiveMi
 	return archiveMirrorCoverage{Floor: low, HighWater: high, Known: true}
 }
 
-// mirrorTreeDepth is the number of directory levels between
-// <archiveRoot>/ledger and a ledger-XXXXXXXX.xdr.gz file: the first
-// three bytes of the hex-encoded sequence, one level each.
+// mirrorTreeDepth is the directory levels between <archiveRoot>/ledger and a ledger-XXXXXXXX.xdr.gz file: one per each of the first three
+// bytes of the hex sequence.
 const mirrorTreeDepth = 3
 
 // extremeMirrorCheckpoint returns the least or greatest checkpoint sequence below dir; names are fixed-width hex, so lexical order is numeric.
@@ -1097,9 +1092,8 @@ func readArchivedLedgerHash(archiveRoot string, seq uint32) (sdkxdr.Hash, bool, 
 	}
 }
 
-// extractLedgerHeader pulls the header out of an LCM regardless of
-// version. V0 (pre-p20) and V1 (p20+) differ in structure; both
-// expose a LedgerHeaderHistoryEntry at different paths.
+// extractLedgerHeader pulls the header out of an LCM of either version: V0 (pre-p20) and V1 (p20+) expose a LedgerHeaderHistoryEntry at
+// different paths.
 func extractLedgerHeader(lcm sdkxdr.LedgerCloseMeta) (sdkxdr.LedgerHeader, bool) {
 	switch lcm.V {
 	case 0:
@@ -1173,9 +1167,8 @@ type storageChange struct {
 	Durability string `json:"durability,omitempty"` // persistent | temporary
 }
 
-// contractStorageHistory is the per-contract output shape for the
-// storage-rotation tracker. One entry per watched contract that
-// had ANY observed non-Instance ContractData change.
+// contractStorageHistory is the per-contract output of the storage-rotation tracker: one entry per watched contract with ANY observed non-
+// Instance ContractData change.
 type contractStorageHistory struct {
 	Contract string          `json:"contract"`
 	Changes  []storageChange `json:"changes"`

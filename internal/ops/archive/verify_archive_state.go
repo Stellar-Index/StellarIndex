@@ -71,10 +71,8 @@ type ChunkStitch struct {
 	CheckpointsUnmirrored int  `json:"checkpoints_unmirrored,omitempty"`
 }
 
-// readVerifyArchiveState loads state from disk. Missing file returns
-// a zero state (empty Tiers map) without error — the first-ever run
-// has no prior state. Malformed JSON returns an error so operators
-// notice corruption instead of silently rebuilding from zero.
+// readVerifyArchiveState loads state from disk. A missing file returns a zero state (first-ever run); malformed JSON returns an error so
+// corruption is noticed, not silently rebuilt from zero.
 func readVerifyArchiveState(path string) (VerifyArchiveState, error) {
 	if path == "" {
 		return VerifyArchiveState{Tiers: map[string]VerifyArchiveTierState{}}, nil
@@ -98,9 +96,8 @@ func readVerifyArchiveState(path string) (VerifyArchiveState, error) {
 	return st, nil
 }
 
-// writeVerifyArchiveState writes state to disk atomically. Creates
-// parent directories on demand (mkdir -p semantics) so the operator
-// doesn't have to pre-create /var/lib/stellarindex.
+// writeVerifyArchiveState writes state atomically, creating parent directories on demand so the operator needn't pre-create
+// /var/lib/stellarindex.
 func writeVerifyArchiveState(path string, st VerifyArchiveState) error {
 	if path == "" {
 		return fmt.Errorf("state file path empty")
@@ -150,10 +147,8 @@ func resolveIncrementalFromTiers(st VerifyArchiveState, tiers []string, explicit
 	return incrementalFromWatermark(bound.LastVerifiedLedger, explicitFrom, safetyOverlap)
 }
 
-// incrementalBoundTier returns the state entry that BOUNDS an
-// incremental run over tiers — the one with the lowest
-// LastVerifiedLedger. ok=false when any covered tier has no prior
-// verified ledger.
+// incrementalBoundTier returns the state entry that BOUNDS an incremental run over tiers (the lowest LastVerifiedLedger); ok=false when
+// any covered tier has no prior verified ledger.
 func incrementalBoundTier(st VerifyArchiveState, tiers []string) (VerifyArchiveTierState, bool) {
 	var bound VerifyArchiveTierState
 	found := false
@@ -226,9 +221,7 @@ func updateTierState(st VerifyArchiveState, tier string, newHighLedger uint32, n
 	return out
 }
 
-// startTierProgress seeds a tier's InProgress section with the given
-// run plan. Called once at the start of a run before any chunks
-// complete. Returns a fresh state value.
+// startTierProgress seeds a tier's InProgress section with the run plan, once before any chunk completes; returns a fresh state value.
 func startTierProgress(st VerifyArchiveState, tier string, from, to uint32, workers int, chunks []opsutil.RangeChunk, now time.Time) VerifyArchiveState {
 	out := VerifyArchiveState{Tiers: make(map[string]VerifyArchiveTierState, len(st.Tiers)+1)}
 	for k, v := range st.Tiers {
@@ -251,9 +244,8 @@ func startTierProgress(st VerifyArchiveState, tier string, from, to uint32, work
 	return out
 }
 
-// markChunkDone flips one chunk's Done flag in the tier's InProgress
-// section and updates UpdatedAt. No-op if InProgress isn't set or
-// idx is out of range. Caller is expected to serialise calls.
+// markChunkDone flips one chunk's Done flag in the tier's InProgress and updates UpdatedAt; a no-op if InProgress is unset or idx out of
+// range. Callers must serialise calls.
 func markChunkDone(st VerifyArchiveState, tier string, idx int, lastHash sdkxdr.Hash, now time.Time) VerifyArchiveState {
 	out := VerifyArchiveState{Tiers: make(map[string]VerifyArchiveTierState, len(st.Tiers))}
 	for k, v := range st.Tiers {
@@ -275,10 +267,9 @@ func markChunkDone(st VerifyArchiveState, tier string, idx int, lastHash sdkxdr.
 	return out
 }
 
-// markChunkDoneStitch is markChunkDone plus the chunk's boundary
-// evidence — the form the walk uses. Without the evidence a resumed
-// run cannot check the boundaries either side of the chunk it skips,
-// and stitchChunks would silently compare non-adjacent chunks instead.
+// markChunkDoneStitch is markChunkDone plus the chunk's boundary evidence. Without it a resumed run cannot check the boundaries around a
+// skipped chunk
+// and stitchChunks would silently compare non-adjacent chunks.
 func markChunkDoneStitch(st VerifyArchiveState, tier string, idx int, res chunkResult, now time.Time, doCheckpoint bool) VerifyArchiveState {
 	out := markChunkDone(st, tier, idx, res.LastHash, now)
 	ts, ok := out.Tiers[tier]
@@ -304,8 +295,7 @@ func markChunkDoneStitch(st VerifyArchiveState, tier string, idx int, res chunkR
 	return out
 }
 
-// chunkResult rebuilds the persisted boundary terms into the shape
-// stitchChunks consumes. idx is the chunk's ORIGINAL plan index — the
+// chunkResult rebuilds the persisted boundary terms into the shape stitchChunks consumes; idx is the chunk's ORIGINAL plan index, the
 // label a boundary failure is reported under.
 func (s ChunkStitch) chunkResult(idx int, c ChunkProgress) (chunkResult, error) {
 	res := chunkResult{
@@ -392,9 +382,10 @@ func allChunkIdxs(chunks []opsutil.RangeChunk) []int {
 	return idxs
 }
 
-// planResumedWalk narrows resumeChunks to what this run can still prove, and never returns an empty plan.
-// Done only means the walk returned no error; stitch, checkpoint-anchor and high-water proofs come after, so an all-Done run with InProgress left behind is re-walked, not certified.
-// A chunk is skipped only if its boundary evidence was persisted; otherwise stitchChunks would compare non-adjacent chunks.
+// planResumedWalk narrows resumeChunks to what this run can still prove, and never returns an empty plan. Done only means the walk
+// returned no error (stitch, anchor and high-water proofs come after),
+// so an all-Done run with InProgress left behind is re-walked, not certified; a chunk is skipped only if its boundary evidence was
+// persisted.
 func planResumedWalk(st VerifyArchiveState, tier string, from, to uint32, workers int, chunks []opsutil.RangeChunk, doCheckpoint bool) ([]opsutil.RangeChunk, []int, string) {
 	keep, idxs, reason := resumeChunks(st, tier, from, to, workers, chunks)
 	if len(keep) == 0 {

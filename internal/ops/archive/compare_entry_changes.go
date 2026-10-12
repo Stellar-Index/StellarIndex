@@ -52,10 +52,8 @@ func (r *entryChangeReport) add(ledger uint32, pos int, detail string) {
 	}
 }
 
-// compareEntryChanges is `compare-entry-changes`: extract the
-// stellar.ledger_entry_changes rows for [-from, -to] from our galexie export
-// and from the cold tier (the AWS public export) and report every row that
-// differs. Read-only; exits non-zero when any row differs.
+// compareEntryChanges is `compare-entry-changes`: diff stellar.ledger_entry_changes rows for [-from, -to] between our galexie export and
+// the cold tier (AWS public export). Read-only; exits non-zero on any difference.
 func compareEntryChanges(args []string) error {
 	fs := flag.NewFlagSet("compare-entry-changes", flag.ContinueOnError)
 	cfgPath := fs.String("config", "/etc/stellarindex.toml", "Path to stellarindex.toml")
@@ -93,8 +91,7 @@ func compareEntryChanges(args []string) error {
 	return nil
 }
 
-// exportSources opens our export through the SDK client and the cold tier
-// through pipeline.NewColdDataStore, which must not inherit the ambient
+// exportSources opens our export via the SDK client and the cold tier via pipeline.NewColdDataStore, which must not inherit the ambient
 // (MinIO) AWS credentials.
 func exportSources(cfg config.Config, bucket string) (ours, aws ledgerSource) {
 	if bucket == "" {
@@ -122,9 +119,8 @@ func exportSources(cfg config.Config, bucket string) (ours, aws ledgerSource) {
 	return ours, aws
 }
 
-// compareEntryChangeRange walks [from, to] in windows so memory stays bounded
-// by the window, not the range: per window it digests every row of each
-// export, then compares position by position.
+// compareEntryChangeRange walks [from, to] in windows so memory is bounded by the window, not the range: per window it digests every row
+// of each export, then compares position by position.
 func compareEntryChangeRange(ctx context.Context, ours, aws ledgerSource, passphrase string, from, to, window uint32) (entryChangeReport, error) {
 	rep := entryChangeReport{From: from, To: to, Sample: []entryChangeDiff{}}
 	for lo := uint64(from); lo <= uint64(to); lo += uint64(window) {

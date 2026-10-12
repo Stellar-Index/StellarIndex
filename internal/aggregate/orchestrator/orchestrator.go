@@ -357,8 +357,7 @@ type Orchestrator struct {
 	// scoring starts (see marginalBuckets). Same single-Tick invariant as prevVWAPs.
 	scoredMinutes map[string]minuteVWAP
 
-	// lastWriteAt is the last successful VWAP write per FULL pair (so one quote can't vouch for another), written
-	// only via recordPairWrite, by both served-key writers and the first-sighting seed; emitStalenessGauges reads it
+	// lastWriteAt: last VWAP write per FULL pair (one quote can't vouch for another), set only via recordPairWrite and read by emitStalenessGauges
 	// for `stellarindex_api_price_stale`. Bounded by len(cfg.Pairs) + len(cfg.Triangulations); the gauge iterates
 	// cfg.Pairs only, so cardinality is unchanged. Same single-Tick invariant as prevVWAPs.
 	lastWriteAt map[string]time.Time
@@ -630,10 +629,9 @@ const (
 	stalenessXLMTicker = "crypto:XLM"
 )
 
-// recordPairWrite stamps a successful VWAP publish for the FULL pair: a base-only key let XLM/USD publishes
-// keep a dead XLM/GBP reading fresh. It is the only writer of lastWriteAt, called by both served-key writers
-// (refreshPairWindow and publishComposite), since a chain-only pair never reaches the direct writer. A zero
-// `at` (outside a Tick) records nothing: an unstamped gauge keeps climbing, the fail-safe direction.
+// recordPairWrite stamps a successful VWAP publish for the FULL pair (a base-only key let XLM/USD keep a dead XLM/GBP reading fresh); the
+// only writer of lastWriteAt.
+// A zero `at` (outside a Tick) records nothing: an unstamped gauge keeps climbing, the fail-safe direction.
 func (o *Orchestrator) recordPairWrite(pair canonical.Pair, at time.Time) {
 	if at.IsZero() {
 		return
@@ -1033,10 +1031,10 @@ func (o *Orchestrator) replayDecidedBucket(
 	return o.publishDirect(ctx, pair, window, d.published, d.end, now)
 }
 
-// computeNormalizedVWAP computes VWAP and applies the non-standard-decimals normalization in one step, since
-// aggregate.VWAP is correct only when both legs share a scale (aggregate.AdjustPrice,
-// docs/operations/runbooks/dex.md). A nil DecimalsLookup makes it an exact no-op. One call site means every
-// consumer sees the same corrected number.
+// computeNormalizedVWAP computes VWAP plus the non-standard-decimals normalization in one step, since aggregate.VWAP is right only when
+// both legs share a scale
+// (aggregate.AdjustPrice, docs/operations/runbooks/dex.md); a nil DecimalsLookup is an exact no-op, and one call site keeps every
+// consumer's number identical.
 func (o *Orchestrator) computeNormalizedVWAP(trades []canonical.Trade, pair canonical.Pair) (*big.Rat, error) {
 	// Scale-normalize BEFORE the weighted sum: a window can mix on-chain (7dp) and CEX (8dp) trades, and the raw
 	// Σquote/Σbase over-weights the finer scale ~10× per decimal (aggregate.NormalizeAmountScale, as price_tip.go
@@ -1055,9 +1053,9 @@ func amountScaleDecimalsFor(source string) int {
 	return external.Lookup(source).AmountScaleDecimals()
 }
 
-// markFrozenThisTick records a freeze refusal so [Orchestrator.legPriceFromCache] won't feed the
-// last-known-good into a chain. Called from the freeze paths themselves so a new freeze path can't forget it
-// and reopen the laundering route. Tolerates a nil map for tests that call refreshPairWindow directly.
+// markFrozenThisTick records a freeze refusal so [Orchestrator.legPriceFromCache] won't feed the last-known-good into a chain; called from
+// the freeze paths themselves
+// so a new freeze path can't reopen the laundering route. Tolerates a nil map for tests calling refreshPairWindow directly.
 func (o *Orchestrator) markFrozenThisTick(pair canonical.Pair, window time.Duration) {
 	if o.frozenThisTick == nil {
 		o.frozenThisTick = make(map[string]struct{})
@@ -1111,9 +1109,8 @@ func (o *Orchestrator) keepFrozenVWAPAlive(ctx context.Context, pair canonical.P
 	}
 }
 
-// evaluateAndMaybeFreeze runs the anomaly check on a fresh VWAP and writes a freeze marker when told to.
-// ok=true (Allow/Warn): the caller writes the cache; ok=false (Freeze): it skips the write so the previous
-// value keeps serving. A nil Anomaly returns Allow.
+// evaluateAndMaybeFreeze runs the anomaly check on a fresh VWAP and writes a freeze marker when told to. ok=false (Freeze): the caller
+// skips the write so the previous value keeps serving; nil Anomaly returns Allow.
 func (o *Orchestrator) evaluateAndMaybeFreeze(
 	ctx context.Context,
 	pair canonical.Pair,
@@ -1247,10 +1244,9 @@ func (o *Orchestrator) fetchForTarget(
 	return merged, tradeUSD, proxied, coverage, nil
 }
 
-// usdVolumeForPairPerTrade returns exact USD value per Trade.ID(), keyed before fetchForTarget rewrites Pair so
-// filters can drop trades without losing attribution. nil when the quote isn't a USD surface (volume_usd is
-// then NULL). Scale comes from [usdQuoteDecimals], the classification [dropForMinUSDVolume] also uses, so the
-// two can't disagree.
+// usdVolumeForPairPerTrade returns exact USD value per Trade.ID(), keyed before fetchForTarget rewrites Pair; nil when the quote isn't a
+// USD surface (volume_usd NULL).
+// Scale comes from [usdQuoteDecimals], shared with [dropForMinUSDVolume] so the two can't disagree.
 func usdVolumeForPairPerTrade(pair canonical.Pair, batch []canonical.Trade, classicUSDPegs, sorobanUSDPegs []canonical.Asset) map[string]*big.Rat {
 	if len(batch) == 0 {
 		return nil
@@ -1310,10 +1306,7 @@ func usdQuoteDecimals(quote canonical.Asset, classicUSDPegs, sorobanUSDPegs []ca
 	}
 }
 
-// isUSDPeggedClassic reports whether `asset` is one of the
-// operator-declared classic USD-pegged credits. Matched by exact
-// (code, issuer) equality — the same shape the orchestrator's
-// expansion path uses.
+// isUSDPeggedClassic reports whether `asset` is an operator-declared classic USD-pegged credit, by exact (code, issuer) equality.
 func isUSDPeggedClassic(asset canonical.Asset, pegs []canonical.Asset) bool {
 	for _, p := range pegs {
 		if p.Type != canonical.AssetClassic {
@@ -1326,10 +1319,8 @@ func isUSDPeggedClassic(asset canonical.Asset, pegs []canonical.Asset) bool {
 	return false
 }
 
-// isUSDPeggedSoroban reports whether `asset` is one of the
-// operator-resolved Soroban SAC-wrapper USD-pegged assets (see
-// [Config.USDPeggedSorobanAssets]). Matched by exact ContractID
-// equality — the Soroban twin of [isUSDPeggedClassic].
+// isUSDPeggedSoroban reports whether `asset` is an operator-resolved USD-pegged SAC wrapper ([Config.USDPeggedSorobanAssets]), by exact
+// ContractID; the Soroban twin of [isUSDPeggedClassic].
 func isUSDPeggedSoroban(asset canonical.Asset, pegs []canonical.Asset) bool {
 	for _, p := range pegs {
 		if p.Type != canonical.AssetSoroban {
@@ -1342,9 +1333,9 @@ func isUSDPeggedSoroban(asset canonical.Asset, pegs []canonical.Asset) bool {
 	return false
 }
 
-// survivorUSDVolume sums the USD volume of the post-filter survivors from the per-trade map captured before
-// the rewrite. The MinUSDVolume gate is post-class, post-outlier: a pre-filter total would let thin windows
-// clear the floor on discarded volume. A missing key (quote not a USD surface) contributes zero.
+// survivorUSDVolume sums USD volume of the post-filter survivors from the per-trade map captured before the rewrite: the MinUSDVolume gate
+// is post-class, post-outlier,
+// else thin windows clear the floor on discarded volume. A missing key (quote not a USD surface) contributes zero.
 func survivorUSDVolume(trades []canonical.Trade, tradeUSD map[string]*big.Rat) *big.Rat {
 	sum := new(big.Rat)
 	for i := range trades {
@@ -1355,9 +1346,8 @@ func survivorUSDVolume(trades []canonical.Trade, tradeUSD map[string]*big.Rat) *
 	return sum
 }
 
-// minUSDVolumeRat is the configured floor as the exact decimal the
-// operator wrote: the shortest float64 round-trip, not its binary expansion.
-// nil for NaN/±Inf, which have no exact value.
+// minUSDVolumeRat is the configured floor as the exact decimal the operator wrote (shortest float64 round-trip, not its binary expansion);
+// nil for NaN/Inf.
 func minUSDVolumeRat(floor float64) *big.Rat {
 	r, ok := new(big.Rat).SetString(strconv.FormatFloat(floor, 'g', -1, 64))
 	if !ok {
@@ -1449,9 +1439,8 @@ func (o *Orchestrator) fiatWindowUSDVolume(ctx context.Context, quote canonical.
 	return sum.Mul(sum, rate), ""
 }
 
-// dropUnpriceable removes stored trades with a zero leg before the venue
-// VWAPs and outlier statistics: they have no price, so they must neither
-// count as outliers nor weigh a venue's VWAP with price-less volume.
+// dropUnpriceable removes stored trades with a zero leg before venue VWAPs and outlier statistics: they must neither count as outliers nor
+// weigh a VWAP with price-less volume.
 func dropUnpriceable(pair canonical.Pair, trades []canonical.Trade) []canonical.Trade {
 	out := make([]canonical.Trade, 0, len(trades))
 	for _, t := range trades {
@@ -1487,9 +1476,9 @@ func dropExcludedSources(pair canonical.Pair, trades []canonical.Trade, excluded
 	return out
 }
 
-// filterForVWAP keeps only Class=Exchange, IncludeInVWAP=true sources: only genuine exchange trades vote.
-// Unregistered sources fail closed via the registry default (visible in /v1/sources, no VWAP vote). Preserves
-// order for deterministic VWAP and returns a fresh slice.
+// filterForVWAP keeps only Class=Exchange, IncludeInVWAP=true sources, so only genuine exchange trades vote; unregistered sources fail
+// closed via the registry default.
+// Preserves order for a deterministic VWAP and returns a fresh slice.
 func filterForVWAP(trades []canonical.Trade) []canonical.Trade {
 	out := make([]canonical.Trade, 0, len(trades))
 	for _, t := range trades {
@@ -1501,10 +1490,8 @@ func filterForVWAP(trades []canonical.Trade) []canonical.Trade {
 	return out
 }
 
-// formatRatSigDigits is how many SIGNIFICANT digits [formatRatFixed]
-// preserves for a value too small to render at its requested fixed
-// scale — see [renderScale]. 12 keeps a sub-1e-12 price round-tripping
-// with the same fidelity a normal-magnitude price gets at 12 decimals.
+// formatRatSigDigits is how many SIGNIFICANT digits [formatRatFixed] keeps for a value too small for its fixed scale (see [renderScale]);
+// 12 gives a sub-1e-12 price the fidelity a normal price gets at 12 decimals.
 const formatRatSigDigits = 12
 
 // formatRatMinSigDigits is the fewest significant digits a render at `decimals` places may keep before [renderScale] widens it: half the places, so at 12 places truncation error stays under 1e-5 (0.1 bp) with output unchanged for prices >= 1e-7.
@@ -1512,16 +1499,14 @@ func formatRatMinSigDigits(decimals int) int {
 	return (decimals + 1) / 2
 }
 
-// formatRatMaxScale caps the fractional places [renderScale] will
-// extend to, so a pathological (or hostile) micro-valued rational can
-// never make us render an unbounded string on the publish path. Mirrors
-// storage-tier bridgeRateMaxScale.
+// formatRatMaxScale caps the fractional places [renderScale] extends to, so a pathological micro-valued rational can't make the publish
+// path render an unbounded string; mirrors storage's bridgeRateMaxScale.
 const formatRatMaxScale = 60
 
-// formatRatFixed renders r at fixed precision, truncating toward zero as the API spec mandates
-// ((*big.Rat).FloatString rounds half-to-even). 12 places covers sensible price ranges. The scale is a FLOOR:
-// a positive value below 1e-12 would render "0.000…0", reparse to zero, serve price 0 and nil the next tick's
-// edge graph (BuildEdges rejects Sign()<=0), so [renderScale] extends it for those values only.
+// formatRatFixed renders r at fixed precision, truncating toward zero as the API spec mandates ((*big.Rat).FloatString rounds half-to-
+// even). The scale is a FLOOR: a positive value below 1e-12
+// would render "0.000...0", serve price 0 and nil the next tick's edge graph (BuildEdges rejects Sign()<=0), so [renderScale] extends it
+// for those values only.
 func formatRatFixed(r *big.Rat, decimals int) string {
 	decimals = renderScale(r, decimals)
 	// Multiply numerator by 10^decimals, divide by denominator,
@@ -1558,10 +1543,10 @@ func zeroes(n int) string {
 	return string(b)
 }
 
-// renderScale is `decimals` for values keeping [formatRatMinSigDigits] significant digits there (normal
-// prices render byte-identical); smaller positive values extend to [formatRatSigDigits] so they neither render
-// as zero nor lose up to half their value. Float-free (ADR-0003): it counts leading fractional zeros exactly,
-// like storage's rateScaleFor, except `decimals` is a floor.
+// renderScale is `decimals` for values keeping [formatRatMinSigDigits] significant digits there (normal prices render byte-identical);
+// smaller positive values extend to [formatRatSigDigits]
+// so they neither render as zero nor lose half their value. Float-free: it counts leading fractional zeros exactly, like storage's
+// rateScaleFor, with `decimals` a floor.
 func renderScale(r *big.Rat, decimals int) int {
 	if r == nil || r.Sign() == 0 {
 		return decimals
