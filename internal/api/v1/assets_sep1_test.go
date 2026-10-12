@@ -3,7 +3,9 @@ package v1_test
 import (
 	"context"
 	"database/sql"
+	"testing"
 
+	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -22,4 +24,23 @@ func (s *stubSep1Cache) GetIssuerSep1Cached(_ context.Context, gStrkey string) (
 		return payload, nil
 	}
 	return nil, sql.ErrNoRows
+}
+
+func currencyAuthorityFixture(t *testing.T, cur timescale.IssuerSep1Currency) string {
+	t.Helper()
+	issuer := testUSDCIssuer
+	domain := "issuer.example.com"
+	reader := &stubAssetReader{
+		byID: map[string]v1.AssetDetail{
+			"USDC-" + testUSDCIssuer: {
+				AssetID: "USDC-" + testUSDCIssuer, Type: "classic",
+				Code: "USDC", Issuer: &issuer, HomeDomain: &domain, Decimals: 7,
+			},
+		},
+	}
+	cur.Code, cur.Issuer = "USDC", testUSDCIssuer
+	sep1 := &stubSep1Cache{byIssuer: map[string]*timescale.IssuerSep1Cached{
+		testUSDCIssuer: {Currencies: []timescale.IssuerSep1Currency{cur}},
+	}}
+	return httpTestServer(t, v1.New(v1.Options{Assets: reader, Sep1Cache: sep1})).URL
 }
