@@ -19,10 +19,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// GetRequest describes one polling GET. Headers are set verbatim on
-// the request; LimitBytes caps the body read (vendor boards range
-// from ~100 KB rate lists to multi-MB snapshots, so each poller
-// states its own ceiling).
+// GetRequest describes one polling GET: Headers are set verbatim and LimitBytes caps the body read, so each poller states its own ceiling.
 type GetRequest struct {
 	URL     string
 	Headers map[string]string
@@ -39,9 +36,7 @@ type GetRequest struct {
 
 var errRedirectRefused = errors.New("redirect refused: request URL carries a secret")
 
-// GetBody performs one context-scoped GET with a 30s-timeout client and a size-capped body read.
-// Interpreting non-2xx statuses stays with the caller because vendors disagree about error
-// transport (exchangeratesapi serves auth errors as 200 plus a success:false field).
+// GetBody performs one context-scoped GET with a 30s timeout and a size-capped body; interpreting non-2xx statuses stays with the caller because vendors disagree on error transport.
 func GetBody(ctx context.Context, r GetRequest) (int, []byte, error) {
 	// A zero cap makes io.LimitReader yield an empty body with no error,
 	// which a caller would parse as "no rates" rather than a config bug.
@@ -99,16 +94,12 @@ func redactQuery(rawURL string) string {
 	return u.String() + "?<redacted>"
 }
 
-// DefaultFXPairTargets is the G10-ish fiat cross-rate set the FX pollers target against a base
-// currency. It is shared by production wiring and the verify-external diagnostic so the two cannot
-// drift apart and silently drop a reference rate from one of them.
+// DefaultFXPairTargets is the G10-ish fiat cross-rate set shared by production wiring and the verify-external diagnostic so the two cannot drift apart.
 var DefaultFXPairTargets = []string{
 	"USD", "EUR", "GBP", "JPY", "CAD", "AUD", "CHF", "NZD", "SEK", "NOK", "MXN",
 }
 
-// DefaultFXPairs builds the fiat/base cross pairs described by
-// DefaultFXPairTargets, skipping base itself. An unrecognised base
-// (not on the ADR-0010 allow-list) returns nil — the caller no-ops.
+// DefaultFXPairs builds the fiat/base cross pairs from DefaultFXPairTargets, skipping base itself; an unrecognised base (not on the ADR-0010 allow-list) returns nil.
 func DefaultFXPairs(base string) []canonical.Pair {
 	baseAsset, err := canonical.NewFiatAsset(base)
 	if err != nil {
@@ -132,11 +123,7 @@ func DefaultFXPairs(base string) []canonical.Pair {
 	return out
 }
 
-// FiatCodesFromPairs derives an FX poller's interest set: every fiat code on either side of any
-// configured pair, uppercased and mapped to its Asset, excluding excludeCode (the venue's base,
-// whose rate of 1 is useless). An empty result means no fiat cross-rates, so the poller no-ops.
-//
-// Either side counts because an operator configuring XLM/EUR still needs USD/EUR to triangulate.
+// FiatCodesFromPairs derives an FX poller's interest set: every fiat code on either side of any configured pair, uppercased, excluding excludeCode; an empty result means the poller no-ops.
 func FiatCodesFromPairs(pairs []canonical.Pair, excludeCode string) map[string]canonical.Asset {
 	excl := strings.ToUpper(excludeCode)
 	out := map[string]canonical.Asset{}

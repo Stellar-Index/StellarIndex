@@ -92,8 +92,7 @@ func ContractRecognitionTags() []string {
 	return out
 }
 
-// HasContractRecognitionTag matches tags case-insensitively after trimming, like every
-// other reader of this column.
+// HasContractRecognitionTag matches tags case-insensitively after trimming, like every other reader of this column.
 func HasContractRecognitionTag(tags []string) bool {
 	for _, t := range tags {
 		if _, ok := contractRecognitionTags[strings.ToLower(strings.TrimSpace(t))]; ok {
@@ -103,8 +102,7 @@ func HasContractRecognitionTag(tags []string) bool {
 	return false
 }
 
-// ContractCandidate is one contract token with every input C1-C4 read; no valuation, so a
-// market can never change membership.
+// ContractCandidate is one contract token with every input C1-C4 read; no valuation, so a market can never change membership.
 type ContractCandidate struct {
 	// ContractID is the C-strkey and the whole identity; two contracts calling themselves BENJI
 	// are two assets.
@@ -125,8 +123,7 @@ type ContractCandidate struct {
 	Symbol string
 }
 
-// QualifyContract applies C1-C4 in order; the reported reason is the requirement that
-// would have had to change first.
+// QualifyContract applies C1-C4 in order; the reported reason is the requirement that would have had to change first.
 func QualifyContract(c ContractCandidate) Verdict {
 	// C1: a CRC-checked contract address; never join a supply query on an unverified id.
 	if !canonical.IsContractID(strings.TrimSpace(c.ContractID)) {
@@ -250,8 +247,7 @@ var contractInstruments = []contractInstrument{
 	{ContractID: centrifugeDeJAAA, Instrument: "Janus Henderson Anemoy AAA CLO Fund, Centrifuge deRWA token (deJAAA)", Class: "bond"},
 }
 
-// ContractInstrumentClass reports whether a curated binding may carry this class; it backs
-// the guard on the hand-maintained [contractInstruments] literal.
+// ContractInstrumentClass reports whether a curated binding may carry this class; it backs the guard on the hand-maintained contractInstruments literal.
 func ContractInstrumentClass(class string) bool {
 	_, ok := contractAnchorClasses[strings.ToLower(strings.TrimSpace(class))]
 	return ok
@@ -286,8 +282,7 @@ func ContractInstrumentBindings() []ContractInstrumentBinding {
 	return out
 }
 
-// CouldQualifyContract is [CouldQualify]'s contract counterpart: a pre-filter before the
-// metadata read, never a decision.
+// CouldQualifyContract is CouldQualify's contract counterpart: a pre-filter before the metadata read, never a decision.
 func CouldQualifyContract(contractID, symbol string) bool {
 	if _, ok := contractInstrumentOf(contractID); ok {
 		return true

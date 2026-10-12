@@ -17,18 +17,14 @@ import (
 // Invariant: for every checkpointed contract, checkpoint.total == the sum of the raw rows it
 // folds; zero tolerance catches a double-fold (k*truth) and a below-checkpoint edit alike.
 
-// RunningTotals is the per-kind supply total a SEP-41 contract's incremental checkpoint carries.
-// Fields are *big.Int per ADR-0003 (a mint sum can exceed i128); nil reads as zero.
+// RunningTotals is the per-kind supply total a SEP-41 contract's incremental checkpoint carries; fields are *big.Int per ADR-0003 (a mint sum can exceed i128) and nil reads as zero.
 type RunningTotals struct {
 	Mint     *big.Int
 	Burn     *big.Int
 	Clawback *big.Int
 }
 
-// TotalsDrift is one (contract, kind) where a served incremental checkpoint disagrees with the
-// authoritative re-sum of the same rows by more than tolerance. Delta = Checkpoint − Truth:
-// positive is an OVER-count (double-fold), negative an UNDER-count (a below-checkpoint edit the
-// watermark never re-summed). Either means the rollup must be TRUNCATEd and re-folded.
+// TotalsDrift is one (contract, kind) where a served checkpoint disagrees with the authoritative re-sum beyond tolerance; Delta = Checkpoint - Truth, positive an OVER-count and negative an UNDER-count, either meaning the rollup must be TRUNCATEd and re-folded.
 type TotalsDrift struct {
 	ContractID string   // SEP-41 contract C-strkey
 	Kind       string   // "mint" | "burn" | "clawback"
@@ -37,18 +33,7 @@ type TotalsDrift struct {
 	Delta      *big.Int // Checkpoint − Truth (>0 over-count, <0 under-count)
 }
 
-// ReconcileRunningTotals diffs a served incremental checkpoint against the AUTHORITATIVE re-sum
-// (`truth`) of the exact rows it folds, up to the checkpoint's last_ledger. It returns every
-// (contract, kind) differing by strictly more than tolerance (abs), sorted by (contract, kind).
-//
-// TRUTH SOURCE: `truth` MUST be the same-source re-sum of the rows the checkpoint folds, NOT the
-// network-wide ClickHouse `supply_flows` lake. The PG SEP-41 observer is watched-set-gated and
-// bare-i128-only while the lake is map-variant-aware, so totals legitimately differ and a lake
-// comparison would false-positive on every map-variant token. The projection reconcile
-// (reconcile.go) separately proves `sep41_supply_events` faithful to the lake.
-//
-// A nil tolerance means exact; a caller MAY pass a small one to absorb an in-flight advance
-// racing the re-sum snapshot. Pure, no IO.
+// ReconcileRunningTotals diffs a checkpoint against the authoritative re-sum (`truth`) and returns every (contract, kind) differing by strictly more than tolerance, sorted; TRUTH SOURCE: `truth` MUST be the same-source re-sum of the rows folded, NOT the network-wide ClickHouse `supply_flows` lake, which would false-positive on map-variant tokens.
 func ReconcileRunningTotals(checkpoint, truth map[string]RunningTotals, tolerance *big.Int) []TotalsDrift {
 	tol := tolerance
 	if tol == nil {

@@ -23,9 +23,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 )
 
-// Class is how a source participates in aggregation. Averaging aggregates with raw trades
-// double-counts upstream markets, and oracles impose another publisher's methodology, so only
-// [ClassExchange] contributes to VWAP; the rest are reported for transparency and divergence.
+// Class is how a source participates in aggregation: only ClassExchange contributes to VWAP, since averaging aggregates or oracles with raw trades double-counts upstream markets.
 type Class string
 
 const (
@@ -58,8 +56,7 @@ const (
 	ClassBridge Class = "bridge"
 )
 
-// Subclass partitions a [Class] for the confidence diversity factor (ADR-0019): a CEX and a DEX under
-// ClassExchange are economically distinct. Empty means no partition, usual outside ClassExchange.
+// Subclass partitions a Class for the confidence diversity factor (ADR-0019); empty means no partition.
 type Subclass string
 
 const (
@@ -68,8 +65,7 @@ const (
 	SubclassFX  Subclass = "fx"  // institutional FX feed
 )
 
-// Metadata is the source-registry record, static after startup. Operators may override
-// DefaultWeight and IncludeInVWAP via config; Class, Subclass and Paid are facts about the venue.
+// Metadata is the static source-registry record; operators may override DefaultWeight and IncludeInVWAP, while Class, Subclass and Paid are facts about the venue.
 type Metadata struct {
 	Class         Class
 	Subclass      Subclass
@@ -104,8 +100,7 @@ func (m Metadata) AmountScaleDecimals() int {
 	return 8
 }
 
-// Connector is the common root interface; every venue implements it plus at least one of
-// [Streamer] / [Poller] / [Backfiller].
+// Connector is the common root interface; every venue implements it plus at least one of Streamer, Poller or Backfiller.
 type Connector interface {
 	// Name returns the source identifier; it must match the [Registry] key and the Source
 	// stamped on emitted trades and updates.
@@ -114,8 +109,7 @@ type Connector interface {
 	Class() Class
 }
 
-// Streamer is implemented by venues that push live trades over a persistent connection.
-// Reconnect, heartbeats and rate limiting are handled internally.
+// Streamer is implemented by venues that push live trades over a persistent connection, handling reconnect, heartbeats and rate limiting internally.
 type Streamer interface {
 	Connector
 	// Start subscribes to pairs (empty = all, where the venue enumerates symbols on connect; otherwise an
@@ -125,8 +119,7 @@ type Streamer interface {
 	Start(ctx context.Context, pairs []canonical.Pair) (<-chan canonical.Trade, error)
 }
 
-// Poller is implemented by venues with REST endpoints serving the current quote board. The
-// runner calls it on a fixed cadence; the connector is stateless between calls.
+// Poller is implemented by venues with REST endpoints serving the current quote board; the runner calls it on a fixed cadence and the connector is stateless between calls.
 type Poller interface {
 	Connector
 	// PollOnce hits the venue once. Exchange-class pollers return Trades; aggregator, oracle
@@ -136,16 +129,13 @@ type Poller interface {
 	PollInterval() time.Duration
 }
 
-// Backfiller is implemented by venues whose REST APIs expose historical OHLC candles, emitted as one
-// synthesised canonical.Trade per candle at its VWAP (or close) with its volume; open/high/low are dropped.
-// Depth varies per venue (Kraken caps at 720 intervals), so check Metadata.BackfillAvailable.
+// Backfiller is implemented by venues with historical OHLC candles, emitted as one synthesised canonical.Trade per candle at its VWAP (or close) with its volume; depth varies per venue, so check Metadata.BackfillAvailable.
 type Backfiller interface {
 	Connector
 	Backfill(ctx context.Context, pair canonical.Pair, from, to time.Time, granularity time.Duration) ([]canonical.Trade, error)
 }
 
-// TradeEvent wraps external trades as a consumer.Event, mirroring the on-chain TradeEvent so the
-// sink type-switch stays uniform; Trade.Source names the venue.
+// TradeEvent wraps external trades as a consumer.Event, mirroring the on-chain TradeEvent so the sink type-switch stays uniform; Trade.Source names the venue.
 type TradeEvent struct {
 	Trade canonical.Trade
 }
@@ -167,8 +157,7 @@ func (UpdateEvent) EventKind() string { return "external.update" }
 // Source implements [consumer.Event].
 func (e UpdateEvent) Source() string { return e.Update.Source }
 
-// ErrNoApplicablePairs is returned by a poller whose configured pairs map to
-// nothing it can request. The runner scores it "idle", never success.
+// ErrNoApplicablePairs is returned by a poller whose configured pairs map to nothing it can request; the runner scores it "idle", never success.
 var ErrNoApplicablePairs = errors.New("external: no configured pair applies to this poller")
 
 // Compile-time checks.
@@ -190,6 +179,5 @@ const (
 	BackfillPerWASM
 )
 
-// BackfillSafe reports whether any replay can be admitted. PerWASM sources
-// are further gated per range by internal/wasmaudit.
+// BackfillSafe reports whether any replay can be admitted; PerWASM sources are further gated per range by internal/wasmaudit.
 func (m Metadata) BackfillSafe() bool { return m.Backfill != BackfillUnsafe }

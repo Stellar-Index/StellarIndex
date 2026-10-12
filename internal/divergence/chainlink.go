@@ -67,8 +67,7 @@ type ChainlinkOptions struct {
 	FeedMap map[string]ChainlinkFeed
 }
 
-// ChainlinkFeed is the operator-facing feed-config shape (no
-// internal type-leakage).
+// ChainlinkFeed is the operator-facing feed-config shape, with no internal type leakage.
 type ChainlinkFeed struct {
 	// Address is the 0x-prefixed Ethereum contract address of the
 	// Chainlink AggregatorV3 feed.
@@ -94,8 +93,7 @@ type ChainlinkFeed struct {
 // owned by the ingest source so both readers agree.
 const defaultChainlinkMaxAgeFX = externalchainlink.DefaultMaxAgeFX
 
-// NewChainlinkReference constructs a Chainlink-backed reference. An empty opts.FeedMap falls back to built-in Ethereum mainnet proxies (not reached from the aggregator, which skips an empty FeedMap with a WARN).
-// Operator entries merge OVER the defaults: an entry can be overridden or added, never removed by omission.
+// NewChainlinkReference constructs a Chainlink-backed reference; an empty opts.FeedMap falls back to built-in Ethereum mainnet proxies, and operator entries merge OVER the defaults (override or add, never removed by omission).
 func NewChainlinkReference(opts ChainlinkOptions) *ChainlinkReference {
 	httpClient := opts.HTTPClient
 	if httpClient == nil {
@@ -153,15 +151,12 @@ func defaultChainlinkFeedMap() map[string]chainlinkFeedSpec {
 	return out
 }
 
-// Name implements [Reference].
-// ChainlinkSourceName is the stable source label for the Chainlink
-// reference (see SyntheticCrossName for the naming contract).
+// ChainlinkSourceName is the stable source label for the Chainlink reference (see SyntheticCrossName for the naming contract).
 const ChainlinkSourceName = "chainlink"
 
 func (*ChainlinkReference) Name() string { return ChainlinkSourceName }
 
-// LookupQuote implements [Reference]; AsOf is the round's updatedAt. A decimals() disagreement refuses the feed and a round older than MaxAge is rejected (a frozen feed would mask or fabricate divergence).
-// It uses `latestRoundData()` (selector 0xfeaf968c), not `latestAnswer()`, which has no timestamp. Transport/decode/staleness errors mean "reference unavailable this run".
+// LookupQuote implements Reference with AsOf the round's updatedAt, via `latestRoundData()` (not `latestAnswer()`, which has no timestamp); a decimals() disagreement refuses the feed and a round older than MaxAge is rejected.
 func (r *ChainlinkReference) LookupQuote(ctx context.Context, pair canonical.Pair, observedAt time.Time) (Quote, error) {
 	spec, ok := r.feedMap[pair.String()]
 	if !ok {

@@ -9,23 +9,18 @@ import (
 	"strings"
 )
 
-// ErrSuppressed is returned by [SuppressingSender] when every send was
-// withheld because a recipient is on the suppression list. Callers count
-// it as `suppressed`, not `failed`: no provider call was made.
+// ErrSuppressed is returned by SuppressingSender when every send was withheld because a recipient is on the suppression list; count it as `suppressed`, not `failed`, since no provider call was made.
 var ErrSuppressed = errors.New("notify: recipient suppressed")
 
 // Checker reports whether a canonical recipient must not be mailed.
-// A webhook-fed table can implement it later without touching callers.
 type Checker interface {
 	IsSuppressed(ctx context.Context, canonical string) (bool, error)
 }
 
-// HashSetChecker suppresses recipients by the hex SHA-256 of their
-// [CanonicalRecipient] form.
+// HashSetChecker suppresses recipients by the hex SHA-256 of their CanonicalRecipient form.
 type HashSetChecker map[string]struct{}
 
-// NewHashSetChecker validates 64-char hex digests (case-insensitive) and
-// returns the checker. An empty list suppresses nothing.
+// NewHashSetChecker validates 64-char hex digests (case-insensitive) and returns the checker; an empty list suppresses nothing.
 func NewHashSetChecker(hashes []string) (HashSetChecker, error) {
 	set := make(HashSetChecker, len(hashes))
 	for _, h := range hashes {
@@ -45,15 +40,13 @@ func (c HashSetChecker) IsSuppressed(_ context.Context, canonical string) (bool,
 	return ok, nil
 }
 
-// SuppressingSender withholds a message whose To list contains a
-// suppressed recipient; everything else passes to Next untouched.
+// SuppressingSender withholds a message whose To list contains a suppressed recipient; everything else passes to Next untouched.
 type SuppressingSender struct {
 	Next    Sender
 	Checker Checker
 }
 
-// Send validates, checks every recipient (fail closed on checker error),
-// then forwards. A suppressed message returns ErrSuppressed.
+// Send validates, checks every recipient (fail closed on checker error), then forwards; a suppressed message returns ErrSuppressed.
 func (s SuppressingSender) Send(ctx context.Context, msg Message) error {
 	if err := validate(msg); err != nil {
 		return err
@@ -73,8 +66,7 @@ func (s SuppressingSender) Send(ctx context.Context, msg Message) error {
 // MailConfigured forwards to Next so [IsUnconfigured] still sees through.
 func (s SuppressingSender) MailConfigured() bool { return !IsUnconfigured(s.Next) }
 
-// WithSuppression wraps next so recipients whose hashes are listed are
-// never mailed. An empty list returns next unchanged.
+// WithSuppression wraps next so recipients whose hashes are listed are never mailed; an empty list returns next unchanged.
 func WithSuppression(next Sender, hashes []string) (Sender, error) {
 	if len(hashes) == 0 {
 		return next, nil

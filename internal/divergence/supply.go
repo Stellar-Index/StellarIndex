@@ -33,8 +33,7 @@ var (
 	ErrNoServedSupply = errors.New("divergence: no served circulating supply for asset")
 )
 
-// SupplyReference is a pluggable external circulating-supply source, the analogue of [Reference]. Implementations MUST be safe for concurrent
-// LookupCirculatingSupply calls and SHOULD return [ErrAssetUnsupported] for an unpublished asset (a gap, not a transport failure).
+// SupplyReference is a pluggable external circulating-supply source, the analogue of Reference; implementations MUST be safe for concurrent LookupCirculatingSupply calls and SHOULD return ErrAssetUnsupported for an unpublished asset.
 type SupplyReference interface {
 	// Name returns a stable, lowercase, hyphenated label for the Prometheus `reference` label and
 	// JSON keys (e.g. "coingecko"). Renaming is a wire break against the supply-divergence alert.
@@ -44,8 +43,7 @@ type SupplyReference interface {
 	LookupCirculatingSupply(ctx context.Context, asset canonical.Asset) (float64, error)
 }
 
-// ServedSupply is the narrow view of our own served circulating-supply
-// snapshot the cross-check consumes.
+// ServedSupply is the narrow view of our own served circulating-supply snapshot the cross-check consumes.
 type ServedSupply struct {
 	// Circulating is the served figure in MINOR units (stroops for XLM
 	// at 7 dp; per-asset decimals otherwise) — the *big.Int form the
@@ -64,9 +62,7 @@ type ServedSupplyReader interface {
 	LatestCirculatingSupply(ctx context.Context, assetKey string) (ServedSupply, error)
 }
 
-// SupplyCheck binds one flagship asset to the identifiers each side of
-// the comparison needs. The service iterates a fixed, operator-bounded
-// slice of these (XLM first — see [DefaultSupplyChecks]).
+// SupplyCheck binds one flagship asset to the identifiers each side of the comparison needs; the service iterates a fixed, operator-bounded slice of these.
 type SupplyCheck struct {
 	// Asset is the canonical asset passed to each [SupplyReference].
 	Asset canonical.Asset
@@ -82,9 +78,7 @@ type SupplyCheck struct {
 	Label string
 }
 
-// SupplyOutcomeKind is the per-(asset, tick) outcome, used directly as
-// the `outcome` Prometheus label. Mirrors the price path's
-// ok/divergent/no_reference/refresh_error vocabulary.
+// SupplyOutcomeKind is the per-(asset, tick) outcome, used directly as the `outcome` Prometheus label, mirroring the price path's vocabulary.
 type SupplyOutcomeKind string
 
 const (
@@ -167,8 +161,7 @@ func supplyStaleness(now func() time.Time, maxAge time.Duration, refName string,
 // DefaultSupplyThreshold is the 1% relative-divergence ceiling, far above the ~0.03% XLM fee-pool noise floor (docs/methodology/xlm-circulating-supply.md), so only a real drift alerts.
 const DefaultSupplyThreshold = 0.01
 
-// DefaultSupplyPerReferenceTimeout bounds each supply-reference HTTP call
-// when the caller sets none (supply endpoints are slower than price ones).
+// DefaultSupplyPerReferenceTimeout bounds each supply-reference HTTP call when the caller sets none (supply endpoints are slower than price ones).
 const DefaultSupplyPerReferenceTimeout = 10 * time.Second
 
 // SupplyService runs one supply cross-check cycle per [Tick]: load our figure, fan out to references, emit ratio, outcome and duration; safe for concurrent Tick with concurrent-safe dependencies.
@@ -237,9 +230,7 @@ func DefaultSupplyChecks() []SupplyCheck {
 	}
 }
 
-// Tick runs one cross-check cycle across every configured check.
-// Per-check failures are isolated (logged + surfaced via the outcome
-// metric) so one asset's storage hiccup doesn't drop the rest.
+// Tick runs one cross-check cycle across every configured check; per-check failures are isolated (logged and counted) so one asset's hiccup doesn't drop the rest.
 func (s *SupplyService) Tick(ctx context.Context) {
 	for _, c := range s.checks {
 		if ctx.Err() != nil {
@@ -376,8 +367,7 @@ type StellarDashboardOptions struct {
 	NowFn func() time.Time
 }
 
-// NewStellarDashboardReference constructs the Dashboard-backed
-// reference.
+// NewStellarDashboardReference constructs the Dashboard-backed reference.
 func NewStellarDashboardReference(opts StellarDashboardOptions) *StellarDashboardReference {
 	httpClient := opts.HTTPClient
 	if httpClient == nil {
@@ -540,8 +530,7 @@ type CoinGeckoSupplyOptions struct {
 	NowFn func() time.Time
 }
 
-// NewCoinGeckoSupplyReference constructs the CoinGecko-backed supply
-// reference.
+// NewCoinGeckoSupplyReference constructs the CoinGecko-backed supply reference.
 func NewCoinGeckoSupplyReference(opts CoinGeckoSupplyOptions) *CoinGeckoSupplyReference {
 	baseURL := opts.BaseURL
 	if baseURL == "" {

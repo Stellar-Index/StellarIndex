@@ -123,27 +123,19 @@ func minStreamQuoteUnits(quote canonical.Asset) canonical.Amount {
 	return dustFloorUnits(ref)
 }
 
-// StreamerSpec is a configured streamer + the pair list it should
-// subscribe to. Returned by each venue package's builder so the
-// indexer doesn't need to know how to wire pair maps per venue.
+// StreamerSpec is a configured streamer plus the pair list it should subscribe to, returned by each venue's builder.
 type StreamerSpec struct {
 	Streamer Streamer
 	Pairs    []canonical.Pair
 }
 
-// PollerSpec pairs a Poller with the list of pairs it should fetch
-// on each tick. Pollers declare their own PollInterval; the runner
-// ticks at that cadence and fans the PollOnce outputs into the
-// shared sink.
+// PollerSpec pairs a Poller with the pairs it fetches each tick; the runner ticks at the poller's own PollInterval and fans PollOnce outputs into the shared sink.
 type PollerSpec struct {
 	Poller Poller
 	Pairs  []canonical.Pair
 }
 
-// Run starts every streamer and poller in its own goroutine, fans their output into sink as consumer.Events,
-// and returns a cleanup that blocks until all have stopped; ctx cancellation is the stop signal. A streamer
-// whose channel closes on an unrecoverable error is dropped while the rest continue; config errors at Start
-// return synchronously before anything is left running.
+// Run starts every streamer and poller in its own goroutine, fans output into sink, and returns a cleanup that blocks until all stop; a streamer dropped on an unrecoverable error leaves the rest running, and Start config errors return synchronously.
 func Run(
 	ctx context.Context,
 	streamers []StreamerSpec,

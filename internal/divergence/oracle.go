@@ -10,8 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// OracleReader is the narrow served-tier read seam for the on-chain oracle references (production: timescale LatestOracleObservation).
-// It returns (nil, nil), not a storage sentinel, when the source never observed any (baseKeys x quoteKeys) combination, mapped to [ErrAssetUnsupported] without importing storage's ErrNotFound.
+// OracleReader is the narrow served-tier read seam for the on-chain oracle references; it returns (nil, nil) when the source never observed any (baseKeys x quoteKeys) combination, mapped to ErrAssetUnsupported.
 type OracleReader interface {
 	// LatestOracleObservation returns the single most-recent
 	// oracle_updates row for `source` whose asset matches ANY of
@@ -37,9 +36,7 @@ const (
 	DefaultOracleMaxAgeBand      = 26 * time.Hour
 )
 
-// OracleReference is a [Reference] over our OWN ingested `oracle_updates` rows, one instance per source label; it is independent only where the oracle's price discovery is not ours
-// (reflector-dex prices the same SDEX book our VWAP aggregates, so [NewService] drops it; see [CorrelatedWithOurVWAP]).
-// Scale (ADR-0003): the RAW integer price is scaled via big.Rat, never int64 truncation, and collapses to float64 only at the [Reference] boundary.
+// OracleReference is a Reference over our OWN ingested `oracle_updates` rows, one per source label; reflector-dex prices the same SDEX book our VWAP aggregates, so NewService drops it (see CorrelatedWithOurVWAP). Prices scale the RAW integer via big.Rat (ADR-0003), collapsing to float64 only at the Reference boundary.
 type OracleReference struct {
 	source string
 	reader OracleReader
@@ -63,9 +60,7 @@ type OracleReferenceOptions struct {
 	MaxAge time.Duration
 }
 
-// CorrelatedWithOurVWAP reports whether a reference's price discovery is
-// the on-chain book our own VWAP aggregates, so it cannot corroborate or
-// contradict it.
+// CorrelatedWithOurVWAP reports whether a reference's price discovery is the on-chain book our own VWAP aggregates, so it cannot corroborate or contradict it.
 func CorrelatedWithOurVWAP(name string) bool {
 	return name == OracleSourceReflectorDEX
 }
@@ -106,8 +101,7 @@ func defaultOracleMaxAge(source string) time.Duration {
 // Name implements [Reference].
 func (r *OracleReference) Name() string { return r.source }
 
-// LookupQuote implements [Reference]; AsOf is the observation's ledger close time. Both sides expand through the alias registry ([canonical.AssetAliasStrings]) so XLM's three forms
-// (`native`, `crypto:XLM`, the SAC address) match; any other asset must match its canonical string exactly. No inversion or triangulation: an unpublished pair is [ErrAssetUnsupported].
+// LookupQuote implements Reference with AsOf the observation's ledger close time; both sides expand through the alias registry so XLM's three forms match, other assets match their canonical string exactly, and an unpublished pair is ErrAssetUnsupported (no inversion or triangulation).
 func (r *OracleReference) LookupQuote(ctx context.Context, pair canonical.Pair, observedAt time.Time) (Quote, error) {
 	u, err := r.reader.LatestOracleObservation(ctx,
 		r.source, canonical.AssetAliasStrings(pair.Base), canonical.AssetAliasStrings(pair.Quote))

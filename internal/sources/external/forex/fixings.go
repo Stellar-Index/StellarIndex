@@ -11,9 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// FXFixingWriter is the optional append seam for fx_fixings. It has no read
-// method on purpose: the gate is a function of the vendor series alone, so
-// two regions fetching the same bars store the same rows.
+// FXFixingWriter is the optional append seam for fx_fixings, with no read method on purpose: the gate depends on the vendor series alone, so two regions store the same rows.
 type FXFixingWriter interface {
 	InsertFXFixingBatch(ctx context.Context, bars []FXBar) error
 }
@@ -41,10 +39,7 @@ var (
 	fixingBandHi = big.NewRat(3, 2)
 )
 
-// GateFixings scores every candidate bar of series (one ticker, one grain, ascending by BarStart)
-// against the median close of the raw bars before it. Refused bars stay in the reference of later
-// bars, so a bar's verdict depends only on the vendor series, never on what was stored. A bar with
-// no reference (the first, or one after a gap longer than the window) is accepted.
+// GateFixings scores each candidate bar (one ticker, one grain, ascending) against the median close of the raw bars before it; refused bars stay in later references, and a bar with no reference is accepted.
 func GateFixings(series []FXBar, isCandidate func(FXBar) bool) (accepted, refused []FXBar) {
 	closes := make([]*big.Rat, len(series))
 	for i, b := range series {
@@ -157,9 +152,7 @@ func guardedDailyRates(snap *Snapshot) map[string]map[time.Time]*big.Rat {
 	return out
 }
 
-// RateFromFloat converts an in-memory feed rate to an exact Rat through its
-// shortest round-trip decimal, so the conversion adds no digits the float did
-// not carry. nil for a non-positive or non-finite rate.
+// RateFromFloat converts an in-memory feed rate to an exact Rat via its shortest round-trip decimal, adding no digits the float did not carry; nil for a non-positive or non-finite rate.
 func RateFromFloat(f float64) *big.Rat {
 	if f <= 0 || !isFiniteFloat(f) {
 		return nil

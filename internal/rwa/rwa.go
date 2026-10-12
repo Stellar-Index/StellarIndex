@@ -61,8 +61,7 @@ var anchorClasses = map[string]struct{}{
 	"realestate": {},
 }
 
-// AnchorClass normalises a declared SEP-1 anchor_asset_type to its closed-vocabulary form, or ""
-// when it names no instrument class. Only case and surrounding space are folded.
+// AnchorClass normalises a declared SEP-1 anchor_asset_type to its closed-vocabulary form, or "" when it names no instrument class; only case and surrounding space are folded.
 func AnchorClass(declared string) string {
 	c := strings.ToLower(strings.TrimSpace(declared))
 	if _, ok := anchorClasses[c]; !ok {
@@ -84,8 +83,7 @@ var contractAnchorClasses = func() map[string]struct{} {
 	return out
 }()
 
-// ContractAnchorClasses lists the contract-binding vocabulary in stable order, served beside
-// [AnchorClasses] so a consumer sees why a contract row may carry a class no SEP-1 entry could.
+// ContractAnchorClasses lists the contract-binding vocabulary in stable order, served beside AnchorClasses so a consumer sees why a contract row may carry a class no SEP-1 entry could.
 func ContractAnchorClasses() []string {
 	out := make([]string, 0, len(contractAnchorClasses))
 	for c := range contractAnchorClasses {
@@ -95,8 +93,7 @@ func ContractAnchorClasses() []string {
 	return out
 }
 
-// AnchorClasses lists the closed vocabulary in stable order; served so a consumer reads the rule
-// instead of inferring it from the rows present that day.
+// AnchorClasses lists the closed vocabulary in stable order, served so a consumer reads the rule instead of inferring it from the rows present.
 func AnchorClasses() []string {
 	out := make([]string, 0, len(anchorClasses))
 	for c := range anchorClasses {
@@ -127,8 +124,7 @@ func RecognitionTags() []string {
 	return out
 }
 
-// HasRecognitionTag reports whether any tag vouches for the account as an issuer, matched like the
-// scam classifier (case-insensitive, trimmed).
+// HasRecognitionTag reports whether any tag vouches for the account as an issuer, matched like the scam classifier (case-insensitive, trimmed).
 func HasRecognitionTag(tags []string) bool {
 	for _, t := range tags {
 		if _, ok := recognitionTags[strings.ToLower(strings.TrimSpace(t))]; ok {
@@ -138,9 +134,7 @@ func HasRecognitionTag(tags []string) bool {
 	return false
 }
 
-// ScamFlagged reports whether any tag is scam-class. It reads the ONE vocabulary in
-// timescale.DirectoryScamFlagTags, so this package never admits an issuer whose price serving
-// withholds.
+// ScamFlagged reports whether any tag is scam-class, reading the ONE vocabulary in timescale.DirectoryScamFlagTags so this package never admits an issuer whose price serving withholds.
 func ScamFlagged(tags []string) bool {
 	for _, t := range tags {
 		lt := strings.ToLower(strings.TrimSpace(t))
@@ -153,9 +147,7 @@ func ScamFlagged(tags []string) bool {
 	return false
 }
 
-// Candidate is one asset put to the definition, with every input the four requirements read. It
-// carries no valuation: membership is decided before a number is attached, so a thin or withheld
-// market can never change who is in the set.
+// Candidate is one asset put to the definition with every input the four requirements read; it carries no valuation, so a thin or withheld market can never change who is in the set.
 type Candidate struct {
 	// Code and Issuer are the on-chain (code, issuer) identity.
 	Code   string
@@ -193,8 +185,7 @@ type Verdict struct {
 	Recognition string
 }
 
-// Qualify applies the requirements in order; the reported reason is the requirement that
-// would have had to change first.
+// Qualify applies the requirements in order; the reported reason is the requirement that would have had to change first.
 func Qualify(c Candidate) Verdict {
 	if strings.TrimSpace(c.Code) == "" || strings.TrimSpace(c.Issuer) == "" {
 		return Verdict{Reject: RejectNotClassic}
@@ -258,9 +249,7 @@ func isOracleRWACode(code string) bool {
 	return false
 }
 
-// CouldQualify is the asset-side pre-filter for R4, never a decision. It must read every
-// input Qualify's R4 arms read, or it silently changes membership (Franklin's `other` + ISIN
-// classes); TestCouldQualify_MatchesQualifyOnTheAssetSideInputs pins that.
+// CouldQualify is the asset-side pre-filter for R4, never a decision; it must read every input Qualify's R4 arms read or it silently changes membership (TestCouldQualify_MatchesQualifyOnTheAssetSideInputs pins that).
 func CouldQualify(code, declaredAnchorType, declaredAnchorAsset string) bool {
 	return AnchorClass(declaredAnchorType) != "" ||
 		isOracleRWACode(code) ||

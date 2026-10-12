@@ -11,12 +11,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// DefaultBackfillChunkBlocks is the number of blocks per eth_getLogs call. Providers cap responses
-// at ~10MB or ~10k logs; 5k blocks stays under that even for high-traffic feed addresses.
+// DefaultBackfillChunkBlocks is the number of blocks per eth_getLogs call; 5k stays under provider caps (~10MB or ~10k logs).
 const DefaultBackfillChunkBlocks uint64 = 5_000
 
-// MainnetMergeBlock is a sane lower bound for backfill walks: earlier blocks predate most modern
-// Chainlink ETH feeds and would waste RPC budget. Override via BackfillOptions.MinBlock.
+// MainnetMergeBlock is a sane lower bound for backfill walks, since earlier blocks predate most Chainlink ETH feeds; override via BackfillOptions.MinBlock.
 const MainnetMergeBlock uint64 = 15_537_393
 
 // BackfillOptions tunes the historical walk.
@@ -40,11 +38,7 @@ type BackfillOptions struct {
 	Sleep time.Duration
 }
 
-// Backfill walks every configured feed's AnswerUpdated logs across the block range and emits one
-// OracleUpdate per historical round. Feeds are walked sequentially to keep the RPC budget
-// predictable. out is CLOSED on completion or error so callers can range over it. Per-chunk errors
-// are logged and counted but do not stop the walk; the first hard error (e.g. RPC down for over a
-// minute) is returned after the close, so callers can tell "completed with gaps" from clean.
+// Backfill walks every configured feed's AnswerUpdated logs and emits one OracleUpdate per round; out is CLOSED on completion or error, per-chunk errors are logged and counted, and the first hard error is returned after the close.
 func (p *Poller) Backfill(ctx context.Context, pairs []canonical.Pair, opts BackfillOptions, out chan<- canonical.OracleUpdate) error {
 	defer close(out)
 

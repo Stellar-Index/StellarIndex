@@ -24,23 +24,16 @@ func init() {
 	AnswerUpdatedTopic0 = "0x" + hex.EncodeToString(h.Sum(nil))
 }
 
-// SourceName is the canonical source identifier stamped on every emitted
-// canonical.OracleUpdate.Source. Stable: it appears in metrics labels, /v1/sources and
-// oracle_updates rows. A future Soroban Chainlink source gets its own name.
+// SourceName is the canonical source identifier stamped on every OracleUpdate.Source; it is stable because it appears in metrics labels, /v1/sources and oracle_updates rows.
 const SourceName = "chainlink"
 
-// DefaultPollInterval is the freshness ceiling for current-price endpoints. Most feeds update on a
-// heartbeat of minutes or a 0.5% deviation, so polling faster wastes RPC budget.
+// DefaultPollInterval is the freshness ceiling for current-price endpoints; polling faster than feed heartbeats wastes RPC budget.
 const DefaultPollInterval = 30 * time.Second
 
-// DefaultDecimals is the standard for crypto/USD and fiat/USD feeds and the value every built-in
-// DefaultFeedMap entry asserts. It is NOT substituted for an omitted value: FeedSpec.Decimals == 0
-// means "adopt the feed's on-chain decimals()", and an asserted value is verified against the chain
-// before any row is projected.
+// DefaultDecimals is the standard for crypto/USD and fiat/USD feeds but is NOT substituted for an omitted value: FeedSpec.Decimals == 0 means adopt the on-chain decimals(), and an asserted value is verified against the chain.
 const DefaultDecimals uint8 = 8
 
-// DefaultEndpoint is the Cloudflare public Ethereum JSON-RPC endpoint (free, per-IP rate-limited).
-// Production ingest of hundreds of feeds will be throttled; operators should override it.
+// DefaultEndpoint is the Cloudflare public Ethereum JSON-RPC endpoint (free, per-IP rate-limited); operators should override it for production ingest.
 const DefaultEndpoint = "https://cloudflare-eth.com"
 
 // AggregatorV3Interface function selectors, keccak256(signature)[:4], precomputed.
@@ -55,20 +48,13 @@ const (
 	SelDecimals = "0x313ce567"
 )
 
-// AnswerUpdatedSignature is the Solidity event signature hashed into topic[0] at init, not
-// hardcoded as hex, so a typo cannot silently miss every log.
-//
-//	event AnswerUpdated(int256 indexed current, uint256 indexed roundId, uint256 updatedAt)
-//
-// `current` and `roundId` are topics[1] and topics[2]; `updatedAt` is in the data field.
+// AnswerUpdatedSignature is the Solidity event signature hashed into topic[0] at init, not hardcoded as hex, so a typo cannot silently miss every log.
 const AnswerUpdatedSignature = "AnswerUpdated(int256,uint256,uint256)"
 
-// AnswerUpdatedTopic0 is the keccak256 hash of [AnswerUpdatedSignature],
-// 0x-prefixed. Computed at package init from the signature constant.
+// AnswerUpdatedTopic0 is the 0x-prefixed keccak256 hash of AnswerUpdatedSignature, computed at package init.
 var AnswerUpdatedTopic0 string
 
-// FeedSpec describes one Chainlink AggregatorV3 contract and how to scale its raw int256. The pair
-// is implicit in the FeedMap key; FeedSpec only carries the per-address fields.
+// FeedSpec describes one Chainlink AggregatorV3 contract and how to scale its raw int256; the pair is implicit in the FeedMap key.
 type FeedSpec struct {
 	// Address is the 0x-prefixed AggregatorV3 proxy address; it is stable across the underlying
 	// aggregator's upgrades.
@@ -88,8 +74,7 @@ type FeedSpec struct {
 	MaxAge time.Duration
 }
 
-// Round is one decoded latestRoundData() / getRoundData() tuple: the dedup key (RoundID) and the
-// source of the OracleUpdate's timestamp and price.
+// Round is one decoded latestRoundData() / getRoundData() tuple: the dedup key (RoundID) and the source of the OracleUpdate's timestamp and price.
 type Round struct {
 	// FeedAddress is the 0x-prefixed contract address this round came from.
 	FeedAddress string

@@ -15,15 +15,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// Recognizer decides whether any decoder claims an event, without
-// decoding it. *dispatcher.Dispatcher satisfies this via Recognize.
+// Recognizer decides whether any decoder claims an event, without decoding it; *dispatcher.Dispatcher satisfies it via Recognize.
 type Recognizer interface {
 	Recognize(events.Event) (string, bool)
 }
 
-// RecognitionGap is a distinct on-chain event shape that NO decoder recognizes: seen in
-// soroban_events but silently dropped on decode. A WASM upgrade adding a new topic looks like this,
-// and it is surfaced loudly instead of vanishing.
+// RecognitionGap is a distinct on-chain event shape that NO decoder recognizes (seen in soroban_events but silently dropped on decode), surfaced loudly instead of vanishing.
 type RecognitionGap struct {
 	ContractID string
 	Topic0Sym  string // "" when topic[0] is not a Symbol/String
@@ -33,11 +30,7 @@ type RecognitionGap struct {
 	Reason     string // "no decoder matches" | "unreconstructable: <err>"
 }
 
-// AuditRecognition reconstructs a representative event per distinct (contract, topic) shape and
-// returns those the Recognizer rejects; empty means Claim 2a holds for the audited range.
-//
-// A sample that cannot be reconstructed is itself a gap: if the event cannot be rebuilt from its
-// stored bytes, we cannot claim to decode it.
+// AuditRecognition reconstructs a representative event per distinct (contract, topic) shape and returns those the Recognizer rejects; a sample that cannot be reconstructed is itself a gap.
 func AuditRecognition(samples []timescale.TopicSample, r Recognizer) []RecognitionGap {
 	var gaps []RecognitionGap
 	for i := range samples {

@@ -27,8 +27,7 @@ type Cache interface {
 	Expire(ctx context.Context, key string, expiration time.Duration) *redis.BoolCmd
 }
 
-// CachedResult is the wire shape stored at the `div:<base>/<quote>` Redis key (ADR-0007): [Result]
-// plus derived fields so API consumers need not redo the threshold logic.
+// CachedResult is the wire shape stored at the `div:<base>/<quote>` Redis key (ADR-0007): Result plus derived fields so API consumers need not redo the threshold logic.
 type CachedResult struct {
 	// PairID is the canonical pair string the result is for.
 	PairID string `json:"pair_id"`
@@ -186,8 +185,7 @@ func independentReferences(refs []Reference) []Reference {
 	return out
 }
 
-// NewService constructs a divergence service. Returns an error when
-// required options are missing.
+// NewService constructs a divergence service, returning an error when required options are missing.
 func NewService(opts ServiceOptions) (*Service, error) {
 	if opts.Cache == nil {
 		return nil, errors.New("divergence: Cache is required")
@@ -273,12 +271,10 @@ func recordReferenceHealth(pair canonical.Pair, res Result, quorumMet bool) {
 	obs.DivergencePairQuorumMet.WithLabelValues(pair.String()).Set(met)
 }
 
-// ErrNoReferenceResponded is returned by RefreshPair when no configured reference answered
-// and at least one genuinely failed; the outage result is still cached, so it can be paged on.
+// ErrNoReferenceResponded is returned by RefreshPair when no configured reference answered and at least one genuinely failed; the outage result is still cached, so it can be paged on.
 var ErrNoReferenceResponded = errors.New("divergence: no reference responded for pair")
 
-// RefreshPair compares ourPrice with the references and caches the result at div:<base>/<quote>.
-// It returns nil when no references are configured, ErrNoReferenceResponded, or a cache error.
+// RefreshPair compares ourPrice with the references and caches the result at div:<base>/<quote>; it returns nil when no references are configured, ErrNoReferenceResponded, or a cache error.
 func (s *Service) RefreshPair(ctx context.Context, pair canonical.Pair, ourPrice float64, observedAt time.Time) error {
 	return s.refresh(ctx, pair, ourPrice, observedAt, false)
 }
@@ -554,8 +550,7 @@ func absFloat(f float64) float64 {
 	return f
 }
 
-// AssetVerdict is [Service.LookupCached]'s by-asset answer. Firing and Checked aggregate every
-// quote of the base; Detail is one pair's row for display, so its counts are not an asset verdict.
+// AssetVerdict is Service.LookupCached's by-asset answer: Firing and Checked aggregate every quote of the base, while Detail is one pair's row for display, not an asset verdict.
 type AssetVerdict struct {
 	// Firing is the OR of the per-pair WarningFired flags.
 	Firing bool

@@ -16,15 +16,13 @@ type FXQuoteWriter interface {
 	InsertFXQuoteBatch(ctx context.Context, quotes []FXQuote) error
 }
 
-// FXQuoteReader is the read seam that restores held rates after a
-// restart. nil-able — without it a cold start holds nothing.
+// FXQuoteReader is the nil-able read seam that restores held rates after a restart; without it a cold start holds nothing.
 type FXQuoteReader interface {
 	// LatestFXQuotes returns the newest row per ticker with Bucket >= since.
 	LatestFXQuotes(ctx context.Context, since time.Time) ([]FXQuote, error)
 }
 
-// FXQuote is the storage-layer record the worker writes per refresh. It mirrors timescale.FXQuote
-// here because importing internal/storage/timescale would cycle through the v1 API package.
+// FXQuote is the storage-layer record the worker writes per refresh, mirroring timescale.FXQuote because importing internal/storage/timescale would cycle through the v1 API package.
 type FXQuote struct {
 	Bucket time.Time
 	Ticker string
@@ -98,8 +96,7 @@ const (
 	historyHealAgreement = 0.10
 )
 
-// Worker periodically fetches upstream rates and names into a [Cache], as a goroutine for the
-// API process lifetime.
+// Worker periodically fetches upstream rates and names into a Cache for the API process lifetime.
 type Worker struct {
 	client      *Client
 	cache       *Cache
@@ -148,9 +145,7 @@ type Worker struct {
 	now func() time.Time
 }
 
-// NewWorker constructs the worker. Massive's grouped aggregate is daily, so sub-15-min polling just
-// re-fetches the same bar; 1h picks up the new UTC day. The circulation CSV loads once, bad rows
-// are logged and skipped, and the map rides every snapshot.
+// NewWorker constructs the worker; Massive's grouped aggregate is daily, so sub-15-min polling just re-fetches the same bar.
 func NewWorker(client *Client, cache *Cache, logger *slog.Logger, interval time.Duration) *Worker {
 	if interval <= 0 {
 		interval = time.Hour
@@ -178,35 +173,28 @@ func (w *Worker) WithFallbacks(providers ...RateProvider) *Worker {
 	return w
 }
 
-// WithCorroborator registers a provider outside the serving chain; it is stored only, never
-// fetched or stamped as a source, until the FX fixings plan wires it in.
+// WithCorroborator registers a provider outside the serving chain; it is stored only, never fetched or stamped as a source.
 func (w *Worker) WithCorroborator(p RateProvider) *Worker {
 	w.corroborator = p
 	return w
 }
 
-// Corroborator returns the provider registered by [Worker.WithCorroborator],
-// or nil.
+// Corroborator returns the provider registered by WithCorroborator, or nil.
 func (w *Worker) Corroborator() RateProvider { return w.corroborator }
 
-// WithWriter attaches a quote writer so each successful refresh also persists rates and history
-// to the fx_quotes hypertable. A nil writer keeps the worker cache-only.
+// WithWriter attaches a quote writer so each successful refresh also persists rates and history to fx_quotes; a nil writer keeps the worker cache-only.
 func (w *Worker) WithWriter(writer FXQuoteWriter) *Worker {
 	w.writer = writer
 	return w
 }
 
-// WithReader attaches the fx_quotes reader the first refresh seeds its
-// held rates from. nil keeps a cold start holding nothing.
+// WithReader attaches the fx_quotes reader the first refresh seeds held rates from; nil keeps a cold start holding nothing.
 func (w *Worker) WithReader(reader FXQuoteReader) *Worker {
 	w.reader = reader
 	return w
 }
 
-// Run blocks until ctx is cancelled: one fetch immediately, then one per interval. Failures are
-// logged, never fatal; the cache keeps the prior snapshot. It publishes stellarindex_source_enabled
-// itself because `massive` is the one registry source the indexer does not run; fallbacks are
-// standbys and stay unmarked.
+// Run blocks until ctx is cancelled, fetching immediately then once per interval; failures are logged, never fatal, and the cache keeps the prior snapshot.
 func (w *Worker) Run(ctx context.Context) error {
 	obs.SourceEnabled.WithLabelValues(fxSource).Set(1)
 	defer obs.SourceEnabled.WithLabelValues(fxSource).Set(0)

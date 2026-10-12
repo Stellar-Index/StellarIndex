@@ -38,18 +38,14 @@ const MassiveBase = "https://api.massive.com"
 // from stalling the worker indefinitely.
 const fetchTimeout = 10 * time.Second
 
-// Client wraps the Massive REST endpoints in use. Auth uses a
-// bearer token supplied by the operator.
+// Client wraps the Massive REST endpoints in use, authenticated by an operator-supplied bearer token.
 type Client struct {
 	http   *http.Client
 	base   string
 	apiKey string
 }
 
-// NewClient returns a [Client] hitting [MassiveBase] with the
-// supplied API key. Empty key is allowed at construction time so
-// `make build` doesn't require the secret; callers that need to
-// fetch must check ApiKey() first or trust upstream 401s.
+// NewClient returns a Client hitting MassiveBase; an empty key is allowed at construction, so callers that fetch must check ApiKey() first or trust upstream 401s.
 func NewClient(apiKey string) *Client {
 	return &Client{
 		http:   httpx.NewKeyedClient("forex", fetchTimeout),
@@ -58,18 +54,14 @@ func NewClient(apiKey string) *Client {
 	}
 }
 
-// WithBase returns a copy of c with the base URL overridden — for
-// tests pointing at an httptest.Server.
+// WithBase returns a copy of c with the base URL overridden, for tests pointing at an httptest.Server.
 func (c *Client) WithBase(base string) *Client {
 	cp := *c
 	cp.base = base
 	return &cp
 }
 
-// LatestUSDRates returns the current USD-base rate map plus the publication date the upstream
-// stamped on the snapshot. Keys are lower-case ISO-4217 codes; values are the price of 1 USD in
-// that currency (usd to eur at 0.92 means 1 USD buys 0.92 EUR). One /v2/aggs/grouped/.../fx/{date}
-// call returns every fx pair's closing aggregate, filtered here to USD-base tickers (`C:USD<TKR>`).
+// LatestUSDRates returns the USD-base rate map (lower-case ISO-4217 keys, price of 1 USD in that currency) plus the upstream publication date, filtered to USD-base tickers (`C:USD<TKR>`).
 func (c *Client) LatestUSDRates(ctx context.Context) (map[string]float64, time.Time, error) {
 	// "Latest" is the most recent UTC date with a published bar.
 	// We try today first; if 0 results (markets closed weekend /
@@ -89,9 +81,7 @@ func (c *Client) LatestUSDRates(ctx context.Context) (map[string]float64, time.T
 	return nil, time.Time{}, fmt.Errorf("massive: no fx aggregates published in last 5 days")
 }
 
-// HistoricalUSDRates returns the USD-base rate map as of `date` (YYYY-MM-DD), in the shape of
-// [LatestUSDRates]. Days with no published fx bar (weekends, holidays) return an empty map and nil
-// error so the worker can skip the day cleanly.
+// HistoricalUSDRates returns the USD-base rate map as of `date` (YYYY-MM-DD) in the shape of LatestUSDRates; days with no fx bar return an empty map and nil error.
 func (c *Client) HistoricalUSDRates(ctx context.Context, date string) (map[string]float64, time.Time, error) {
 	if date == "" {
 		return nil, time.Time{}, fmt.Errorf("date is required")
@@ -145,9 +135,7 @@ func (c *Client) usdRatesAtDate(ctx context.Context, date string) (map[string]fl
 	return out, nil
 }
 
-// CurrencyNames returns the lower-case ticker to display-name map for the /currencies "Name"
-// column. Massive's reference endpoint paginates; this walks every page, capped at 5000 entries as
-// a guard against pathological pagination.
+// CurrencyNames returns the lower-case ticker to display-name map, walking every page capped at 5000 entries as a guard against pathological pagination.
 func (c *Client) CurrencyNames(ctx context.Context) (map[string]string, error) {
 	const limit = 1000
 	url := fmt.Sprintf("%s/v3/reference/tickers?market=fx&limit=%d&active=true", c.base, limit)
@@ -203,9 +191,7 @@ const (
 	GrainDay  = "1d"
 )
 
-// FXBar is one closed-or-open vendor aggregate bar for C:USD<Ticker>: the
-// close is units of Ticker per 1 USD, the [Currency.RateUSD] orientation.
-// CloseText is the vendor's decimal text verbatim; no float holds it.
+// FXBar is one vendor aggregate bar for C:USD<Ticker>: close is units of Ticker per 1 USD, and CloseText is the vendor's decimal text verbatim (no float holds it).
 type FXBar struct {
 	Ticker    string // upper-case ISO-4217
 	Grain     string // [GrainHour] or [GrainDay]
@@ -219,9 +205,7 @@ type FXBar struct {
 // documented to count bars, so the cap is far above any real series.
 const maxAggPages = 5000
 
-// ListAggBars returns C:USD<ticker>'s bars of grain in [from, to],
-// ascending, following same-host next_url pages. Bars whose close is not a
-// positive decimal are dropped: they cannot be a rate.
+// ListAggBars returns C:USD<ticker>'s bars of grain in [from, to], ascending, following same-host next_url pages; bars whose close is not a positive decimal are dropped.
 func (c *Client) ListAggBars(ctx context.Context, ticker, grain string, from, to time.Time) ([]FXBar, error) {
 	var span string
 	var width time.Duration
