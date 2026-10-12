@@ -15,9 +15,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/xdrjson"
 )
 
-// AccountState is the current on-chain state of an account, reconstructed from
-// the latest ledger_entry_changes per key (ADR-0038 Phase C). Exists=false
-// when the account has no live AccountEntry (never created, or merged away).
+// AccountState is an account's current on-chain state from the latest ledger_entry_changes per key (ADR-0038); Exists=false when it has no live AccountEntry.
 type AccountState struct {
 	Exists        bool
 	Balance       int64 // native XLM, stroops
@@ -80,9 +78,7 @@ type AssetHolder struct {
 	Balance   int64
 }
 
-// AccountState reconstructs an account's current state: the latest AccountEntry plus
-// its live trustlines and offers (latest non-removed change per key). Exists=false,
-// no error, for an unknown or merged account.
+// AccountState reconstructs an account's current state (latest AccountEntry plus live trustlines and offers); Exists=false, no error, for an unknown or merged account.
 func (r *ExplorerReader) AccountState(ctx context.Context, account string) (AccountState, error) {
 	st, err := r.accountEntry(ctx, account)
 	if errors.Is(err, errCorruptAccountEntry) {
@@ -106,9 +102,7 @@ func (r *ExplorerReader) AccountState(ctx context.Context, account string) (Acco
 	return st, nil
 }
 
-// AccountSigners returns the entry-level state without trustlines and offers. Unlike
-// [ExplorerReader.AccountState], a corrupt entry is an error: an authentication
-// check must not read it as "no account".
+// AccountSigners returns the entry-level state without trustlines and offers; unlike AccountState a corrupt entry is an error, so authentication never reads it as "no account".
 func (r *ExplorerReader) AccountSigners(ctx context.Context, account string) (AccountState, error) {
 	return r.accountEntry(ctx, account)
 }
@@ -310,10 +304,7 @@ const (
 		WHERE entry_type = 'account' AND change_type != 'removed' AND balance > 0` + explorerScanSettings
 )
 
-// AssetHolders returns the top holders by current balance plus the count of positive
-// balances. For "native" the balance is the AccountEntry XLM balance (see
-// nativeHoldersQuery). Callers pass the canonical board key: the handler folds XLM
-// alias forms (canonical.AssetAliases) to "native" first.
+// AssetHolders returns the top holders by current balance plus the count of positive balances; callers pass the canonical board key (XLM alias forms folded to "native").
 func (r *ExplorerReader) AssetHolders(ctx context.Context, asset string, limit int) ([]AssetHolder, int64, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
@@ -412,9 +403,7 @@ func wealthPriceArgs(prices []string) ([]string, error) {
 	return out, nil
 }
 
-// AccountsByWealth ranks accounts by USD value of native XLM plus every trustline
-// asset with a caller-supplied price (assets/prices are parallel arrays; native key
-// is "native"). Unpriced or uncaptured assets simply do not contribute.
+// AccountsByWealth ranks accounts by USD value of native XLM plus every trustline asset with a caller-supplied price (parallel arrays); unpriced assets do not contribute.
 func (r *ExplorerReader) AccountsByWealth(ctx context.Context, assets, prices []string, limit int) ([]AccountWealth, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
@@ -457,9 +446,7 @@ func (r *ExplorerReader) AccountsByWealth(ctx context.Context, assets, prices []
 const accountsUnspendableQuery = `SELECT account_id, entry_xdr FROM stellar.ledger_entries_current FINAL
 		WHERE entry_type = 'account' AND account_id IN (?) AND change_type != 'removed'` + explorerScanSettings
 
-// AccountsUnspendable reports locked burn addresses: master weight 0 and no other
-// signers, so no signature set reaches ANY threshold. Thresholds are irrelevant:
-// they gate which operations a weight authorizes, not whether a weight is reachable.
+// AccountsUnspendable reports locked burn addresses: master weight 0 and no other signers, so no signature set reaches any threshold.
 func (r *ExplorerReader) AccountsUnspendable(ctx context.Context, accountIDs []string) (map[string]bool, error) {
 	if len(accountIDs) == 0 {
 		return nil, nil
@@ -505,10 +492,7 @@ func signerAddress(k xdr.SignerKey) string {
 	return s
 }
 
-// AccountHomeDomains returns account → home_domain for accounts with a live,
-// decodable entry (decoded from XDR; the lake has no home_domain column). Keep three
-// states apart: non-empty = declared domain, "" = entry read, none declared, absent
-// key = not read.
+// AccountHomeDomains returns account to home_domain for live decodable entries; non-empty = declared, "" = read but none declared, absent key = not read.
 func (r *ExplorerReader) AccountHomeDomains(ctx context.Context, accounts []string) (map[string]string, error) {
 	if len(accounts) == 0 {
 		return map[string]string{}, nil

@@ -5,9 +5,7 @@ package timescale
 
 import "strings"
 
-// OHLCRoute is how one `/v1/ohlc?interval=` value is served: straight from the continuous
-// aggregate of that width (Native), or by folding a finer one at query time (Source + Fold, see
-// [Store.OHLCSeriesReBucketed]). Exactly one shape is set; [OHLCRoute.Folded] tells them apart.
+// OHLCRoute is how one `/v1/ohlc?interval=` value is served: from the continuous aggregate of that width (Native) or by folding a finer one (Source + Fold); exactly one shape is set, see [OHLCRoute.Folded].
 type OHLCRoute struct {
 	// Interval is the wire value the API accepts (`2h`).
 	Interval string
@@ -23,15 +21,7 @@ type OHLCRoute struct {
 // Folded reports whether the route re-buckets a finer aggregate.
 func (r OHLCRoute) Folded() bool { return r.Native == "" }
 
-// OHLCRoutes is the one declaration of the /v1/ohlc interval ladder, finest first. Interval
-// validation, the 400 body, the reader's view choice and the fold allow-list in
-// [Store.OHLCSeriesReBucketed] all derive from it; separate lists would drift, and a width the
-// reader knows but the allow-list does not would answer 500.
-//
-// Folds are query-time derivations over existing views, so none needs a backfill. 3d folds the
-// daily view (3 source rows instead of 72, and prices_1d is the closed-bucket authority for day
-// boundaries). 4h folds prices_1h although prices_4h exists: moving it to the native view changes
-// which rows the extremes' notional floor (migration 0147) admits, a served-value decision.
+// OHLCRoutes is the single declaration of the /v1/ohlc interval ladder, finest first; validation, the 400 body, view choice and the fold allow-list all derive from it so they cannot drift.
 var OHLCRoutes = []OHLCRoute{
 	{Interval: "1m", Native: Granularity1m},
 	{Interval: "5m", Source: Granularity1m, Fold: "5 minutes"},
@@ -49,8 +39,7 @@ var OHLCRoutes = []OHLCRoute{
 	{Interval: "1mo", Native: Granularity1mo},
 }
 
-// OHLCRouteFor resolves a wire interval to its route; ok=false for anything [OHLCRoutes] does not
-// declare (the API's 400).
+// OHLCRouteFor resolves a wire interval to its route; ok=false for anything [OHLCRoutes] does not declare (the API's 400).
 func OHLCRouteFor(interval string) (OHLCRoute, bool) {
 	for _, r := range OHLCRoutes {
 		if r.Interval == interval {
@@ -60,8 +49,7 @@ func OHLCRouteFor(interval string) (OHLCRoute, bool) {
 	return OHLCRoute{}, false
 }
 
-// OHLCIntervalList renders the accepted intervals for the API's 400 body, generated so a new rung
-// reaches the message without prose edits.
+// OHLCIntervalList renders the accepted intervals for the API's 400 body, generated so a new rung reaches the message without prose edits.
 func OHLCIntervalList() string {
 	parts := make([]string, len(OHLCRoutes))
 	for i, r := range OHLCRoutes {

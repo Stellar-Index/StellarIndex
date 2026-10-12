@@ -61,18 +61,7 @@ const earliestBucketStoredSQL = `
 	) t
 `
 
-// EarliestBucket returns the START of the oldest CLOSED bucket the prices_<granularity> CAGG holds
-// for the pair inside [from, to), and whether one exists. It is the coverage-floor primitive
-// behind the API's outside-coverage signal.
-//
-// It is alias-complete on both legs and both stored directions, because XLM's forms are disjoint
-// venue populations and SDEX records a market in whichever orientation the venue used; a floor
-// read against one spelling would be too late. Surfaces reading one stored orientation must use
-// [Store.EarliestBucketAsStored]; the fiat-quoted /v1/ohlc series must use
-// [Store.EarliestBucketLiteralQuote].
-//
-// `to` must be strictly after `from`. Returns (zero, false, nil) when the pair has no bucket in
-// the window.
+// EarliestBucket returns the START of the oldest CLOSED prices_<granularity> bucket for the pair in [from, to) and whether one exists, alias-complete on both legs and both stored directions; the coverage-floor primitive.
 func (s *Store) EarliestBucket(
 	ctx context.Context,
 	p canonical.Pair,
@@ -82,13 +71,7 @@ func (s *Store) EarliestBucket(
 	return s.earliestBucket(ctx, "EarliestBucket", earliestBucketSQL, p, granularity, from, to, true)
 }
 
-// EarliestBucketAsStored is [Store.EarliestBucket] over the requested orientation only, never the
-// flipped rows.
-//
-// /v1/history is served by [Store.TradesInRangeAfter], which reads one stored orientation, so a
-// market recorded only as USDC/AQUA answers base=AQUA&quote=USDC with an empty page. A floor
-// folded across both orientations would claim coverage the page can never return; the floor must
-// span exactly what the serving read spans.
+// EarliestBucketAsStored is [Store.EarliestBucket] over the requested orientation only, never flipped rows, matching /v1/history, which reads one stored orientation.
 func (s *Store) EarliestBucketAsStored(
 	ctx context.Context,
 	p canonical.Pair,
@@ -98,14 +81,7 @@ func (s *Store) EarliestBucketAsStored(
 	return s.earliestBucket(ctx, "EarliestBucketAsStored", earliestBucketStoredSQL, p, granularity, from, to, true)
 }
 
-// EarliestBucketLiteralQuote is [Store.EarliestBucket] with the alias fold removed from the QUOTE
-// leg only; the base leg and both stored directions are still folded.
-//
-// The fiat-quoted /v1/ohlc series reads each USD-pegged constituent under one quote spelling and
-// [Store.OHLCSeries] never folds a second one, so a floor folded across the quote family would
-// claim bars the series can never return. The base leg keeps its fold because the combine
-// enumerates every base spelling. The narrowing is in the bound array, so it shares one statement
-// text with [Store.EarliestBucket].
+// EarliestBucketLiteralQuote is [Store.EarliestBucket] with the alias fold removed from the QUOTE leg only, for the fiat-quoted /v1/ohlc series that reads each constituent under one quote spelling.
 func (s *Store) EarliestBucketLiteralQuote(
 	ctx context.Context,
 	p canonical.Pair,

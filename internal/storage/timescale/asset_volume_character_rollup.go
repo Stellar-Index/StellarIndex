@@ -168,9 +168,7 @@ func volumeCharacterFromSums(totalNum string, total, topPair, selfCross, issuerS
 // ~23 min on the full lake, so the bound leaves headroom while still guarding a wedge.
 const assetVolumeCharacterRollTimeout = "45min"
 
-// AssetVolumeCharacterRollApplicationName tags the roll's backend so a
-// deploy can pg_cancel_backend it before a migration ALTERs trades
-// (configs/ansible/tasks/cancel-asset-character-roll.yml).
+// AssetVolumeCharacterRollApplicationName tags the roll's backend so a deploy can pg_cancel_backend it before a migration ALTERs trades.
 const AssetVolumeCharacterRollApplicationName = "stellarindex-asset-character-roll"
 
 // refreshAssetVolumeCharacterPrune drops assets whose priced volume lapsed
@@ -183,15 +181,7 @@ const refreshAssetVolumeCharacterPrune = `DELETE FROM asset_volume_character WHE
 // [pruneRollup]); the interval is volumeCharacterWindow, pinned by test.
 const refreshAssetVolumeCharacterPruneExpired = `DELETE FROM asset_volume_character WHERE computed_at < now() - INTERVAL '14 days'`
 
-// RefreshAssetVolumeCharacter recomputes the per-asset volume-character rollup from the live
-// trailing-window trades roll and atomically replaces its contents. The aggregator's
-// assetcharacterrollup worker calls it on a slow cadence so /v1/assets{,/{id}} never runs the
-// all-asset roll per request.
-//
-// The heavy SELECT runs outside the transaction (a read); the upsert + prune run in one
-// transaction taking row-level locks only, never ACCESS EXCLUSIVE, which would stall concurrent
-// listing/detail reads. computed_at is stamped to the transaction clock in SQL so the sibling
-// prune sees just-written rows as current.
+// RefreshAssetVolumeCharacter recomputes the per-asset volume-character rollup from the trailing-window trades roll and atomically replaces its contents, so /v1/assets never runs the all-asset roll per request.
 func (s *Store) RefreshAssetVolumeCharacter(ctx context.Context) error {
 	rows, err := s.rollAssetVolumeCharacter(ctx)
 	if err != nil {
@@ -381,12 +371,7 @@ SELECT window_days, volume_usd::text, distinct_makers, distinct_takers,
   FROM asset_volume_character
  WHERE asset_id = $1`
 
-// AssetVolumeCharacterRollup returns the pre-computed signals + character for one asset from the
-// asset_volume_character rollup: a keyed-on-PK lookup, no per-request trades roll. The assetID is
-// folded to its canonical form first (the rollup keys canonical assets), so a SAC-form or
-// crypto:XLM request resolves onto the same row its classic/native twin wrote. found=false means
-// no rolled row (no priced trades in the window, or the worker hasn't run yet); the caller omits
-// the fields.
+// AssetVolumeCharacterRollup returns one asset's precomputed signals and character by PK lookup; the assetID is folded to canonical form first so SAC and crypto:XLM spellings hit the same row as their classic/native twin.
 func (s *Store) AssetVolumeCharacterRollup(ctx context.Context, assetID string) (AssetVolumeCharacter, bool, error) {
 	key := assetID
 	if a, err := canonical.ParseAsset(assetID); err == nil {

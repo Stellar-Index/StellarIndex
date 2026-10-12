@@ -18,7 +18,6 @@ import (
 )
 
 // Store is the handle on our TimescaleDB connection pool.
-// Safe for concurrent use.
 type Store struct {
 	db *sql.DB
 
@@ -71,24 +70,17 @@ type Store struct {
 	sep41Watermark classicWatermarkCache
 }
 
-// SetUSDVolumeQuoteSpec installs the quote-asset spec [InsertTrade] uses for on-chain
-// `trades.usd_volume`; nil reverts to off-chain-only. Call once at startup, not concurrently
-// with InsertTrade.
+// SetUSDVolumeQuoteSpec installs the quote-asset spec InsertTrade uses for on-chain trades.usd_volume; nil reverts to off-chain-only; call once at startup, not concurrently with InsertTrade.
 func (s *Store) SetUSDVolumeQuoteSpec(spec *USDVolumeQuoteSpec) {
 	s.usdVolumeQuoteSpec = spec
 }
 
-// SetUSDVolumeFXResolver installs the FX-resolver tier for on-chain USD volume; nil clears it. It
-// is consulted only when the quote-spec tier declines (see [tradeUSDVolume]). Call once at
-// startup, not concurrently with InsertTrade.
+// SetUSDVolumeFXResolver installs the FX-resolver tier for on-chain USD volume, consulted only when the quote-spec tier declines; nil clears it; call once at startup, not concurrently with InsertTrade.
 func (s *Store) SetUSDVolumeFXResolver(r USDVolumeFXResolver) {
 	s.usdVolumeFXResolver = r
 }
 
 // SetDeriveGeneration sets the generation the derived-value writers stamp into `derive_generation`.
-//
-// A re-derive tool passes a POSITIVE value so its rows win the ON CONFLICT guard; time.Now().Unix()
-// is positive and monotonic, so a later re-derive supersedes an earlier one. Call once at startup.
 func (s *Store) SetDeriveGeneration(gen int64) {
 	s.deriveGeneration = gen
 }
@@ -153,8 +145,7 @@ func configurePool(db *sql.DB) {
 	db.SetConnMaxIdleTime(PoolConnMaxIdleTime)
 }
 
-// Open initialises a connection pool and pings it so a bad DSN fails fast. Pool tuning comes from
-// [configurePool].
+// Open initialises a connection pool and pings it so a bad DSN fails fast.
 func Open(ctx context.Context, dsn string) (*Store, error) {
 	cfg, err := sessionConnConfig(dsn)
 	if err != nil {
@@ -240,9 +231,7 @@ func keywordDSNFailure(err error) string {
 	return "an invalid keyword/value connection string"
 }
 
-// PingContext exercises the pool for the indexer's resilience probe. It is an observability hook;
-// reconnection is database/sql plus ConnMaxLifetime. A nil receiver returns nil so shutdown and
-// test teardown can poll an unwired Store.
+// PingContext exercises the pool for the indexer's resilience probe.
 func (s *Store) PingContext(ctx context.Context) error {
 	if s == nil || s.db == nil {
 		return nil
@@ -258,12 +247,10 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-// DB returns the underlying *sql.DB for packages that need raw
-// access (e.g. the migrate binary). Prefer the typed methods.
+// DB returns the underlying *sql.DB for packages that need raw access (e.g. the migrate binary).
 func (s *Store) DB() *sql.DB { return s.db }
 
-// DeriveGeneration returns the generation the derived-value writers stamp (see
-// [SetDeriveGeneration]); 0 is live ingest. Ops entry points assert it is positive before writing.
+// DeriveGeneration returns the generation the derived-value writers stamp (see [SetDeriveGeneration]); 0 is live ingest.
 func (s *Store) DeriveGeneration() int64 { return s.deriveGeneration }
 
 // ─── Error helpers ─────────────────────────────────────────────────

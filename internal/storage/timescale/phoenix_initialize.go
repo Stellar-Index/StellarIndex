@@ -7,9 +7,7 @@ import (
 	"time"
 )
 
-// PhoenixInitializeEvent is one observed Phoenix pool-deploy
-// `initialize` token announcement (migration 0131) — one row per pool
-// token (slot 'a' / 'b'), each carrying the token contract address.
+// PhoenixInitializeEvent is one Phoenix pool-deploy `initialize` token announcement, one row per pool token (slot 'a' or 'b') carrying the token contract address.
 type PhoenixInitializeEvent struct {
 	Pool            string
 	Ledger          uint32
@@ -21,10 +19,7 @@ type PhoenixInitializeEvent struct {
 	Token           string
 }
 
-// InsertPhoenixInitialize lands one initialize event, idempotent on the
-// (ledger_close_time, pool, ledger, tx_hash, op_index, event_index) PK via the
-// generation-guarded corrective upsert. It rejects an empty Pool / TxHash / Token, a zero
-// LedgerCloseTime, and a TokenSlot outside {'a','b'}.
+// InsertPhoenixInitialize lands one initialize event, idempotent on its PK via the generation-guarded corrective upsert; rejects empty Pool/TxHash/Token, zero LedgerCloseTime and a TokenSlot outside {'a','b'}.
 func (s *Store) InsertPhoenixInitialize(ctx context.Context, e PhoenixInitializeEvent) error {
 	if e.Pool == "" {
 		return errors.New("timescale: InsertPhoenixInitialize: Pool is empty")

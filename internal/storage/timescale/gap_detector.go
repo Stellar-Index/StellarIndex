@@ -10,12 +10,9 @@ import (
 )
 
 // GapDetectorInterval is how often [RunGapDetector] re-scans every per-source hypertable for gaps.
-// The LAG()-over-DISTINCT scan is expensive (soroban_events alone takes minutes), and the metric
-// feeds a paging alert held for 15 min, so 30 min keeps alert latency at 45-60 min.
 const GapDetectorInterval = 30 * time.Minute
 
-// GapDetectorMinGapSize is the threshold below which a gap is treated as no-activity noise rather
-// than an ingest gap. It matches `stellarindex-ops find-data-gaps` (1000 ledgers, ~1.5 h).
+// GapDetectorMinGapSize is the threshold below which a gap is treated as no-activity noise rather than an ingest gap.
 const GapDetectorMinGapSize = int64(1000)
 
 // gapDetectorPerTargetTimeout caps one per-target scan at 3x soroban_events's measured 5 min; the
@@ -31,17 +28,10 @@ const gapDetectorPerTargetTimeout = 15 * time.Minute
 // by TestGapDetectorStatementTimeoutWithinGoBudget.
 const gapDetectorStatementTimeoutMS = 780_000 // 13 min, in ms
 
-// GapDetectorSafetyLookback bounds how far below tip one cycle re-scans (~200k ledgers, ~11.5
-// days). Steady state scans only [previous high-water, tip]; this binds only after the detector
-// was down long enough that the high-water fell further behind, capping the catch-up.
-//
-// The detector is a supporting signal for the recent frontier (ADR-0033); the deep-history verdict
-// is completeness_snapshots. Re-walking [genesis, tip] each cycle would cost two ~13-min scans.
+// GapDetectorSafetyLookback bounds how far below tip one cycle re-scans (~200k ledgers, ~11.5 days), binding only after the detector was down long enough for the high-water to fall behind.
 const GapDetectorSafetyLookback = int64(200_000)
 
-// GapDetectorFirstScanCap bounds the FIRST-ever scan of a target (no high-water yet): 2M ledgers
-// (~115 days) is a meaningful window yet finite, so a new target or a lost cursor never triggers
-// the full-history walk. Deeper history is the ADR-0033 completeness verdict's domain.
+// GapDetectorFirstScanCap bounds the FIRST-ever scan of a target to 2M ledgers (~115 days) so a new target or lost cursor never walks full history; deeper history is the completeness verdict's domain.
 const GapDetectorFirstScanCap = int64(2_000_000)
 
 // gapDetectorHighWaterSource is the ingestion_cursors `source` holding each target's scan
@@ -135,17 +125,7 @@ func persistGapScanSeed(ctx context.Context, store *Store, logger *slog.Logger, 
 	}
 }
 
-// RunGapDetector blocks until ctx is cancelled, periodically scanning every applicable target in
-// [DefaultGapDetectorTargets] (see [ApplicableGapDetectorTargets]) for ledger-coverage gaps and
-// emitting per-(source, table) gauges.
-//
-// It complements the cursor-derived density in /v1/diagnostics/ingestion: cursor coverage measures
-// process state and can read 100% while data is missing, so this scans the data tables directly.
-//
-// A transient Postgres error on one target neither clears its gauges nor halts the others; the
-// runs_total{outcome=error} counter exposes a sustained outage. Targets whose cadence has not
-// elapsed since their last persisted scan are skipped and re-emitted from persisted state (see
-// [seedGapDetectorState]).
+// RunGapDetector blocks until ctx is cancelled, periodically scanning every applicable target in [DefaultGapDetectorTargets] for ledger-coverage gaps and emitting per-(source, table) gauges.
 func RunGapDetector(ctx context.Context, store *Store, logger *slog.Logger, network string) error {
 	if store == nil {
 		return nil

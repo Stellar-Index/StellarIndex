@@ -17,9 +17,7 @@ var validPhoenixAdminActions = map[string]bool{
 	"blend_set_min_trading_a": true, "blend_set_min_trading_b": true,
 }
 
-// PhoenixAdminEvent is one observed Phoenix admin/config event
-// (migrations 0132, 0195). Admin is the address the body carries when
-// present, empty otherwise (stored NULL).
+// PhoenixAdminEvent is one observed Phoenix admin/config event (migrations 0132, 0195).
 type PhoenixAdminEvent struct {
 	Pool            string
 	Ledger          uint32
@@ -32,10 +30,7 @@ type PhoenixAdminEvent struct {
 	Value           string // decimal i128 of blend_set_min_trading_*; "" → NULL
 }
 
-// InsertPhoenixAdmin lands one admin-rotation event, idempotent on the table PK with the
-// generation-guarded corrective upsert.
-//
-// It rejects an empty Pool/TxHash, a zero LedgerCloseTime and an AdminAction outside the closed set.
+// InsertPhoenixAdmin lands one admin-rotation event, idempotent on the table PK with the generation-guarded corrective upsert.
 func (s *Store) InsertPhoenixAdmin(ctx context.Context, e PhoenixAdminEvent) error {
 	if e.Pool == "" {
 		return errors.New("timescale: InsertPhoenixAdmin: Pool is empty")

@@ -17,7 +17,7 @@ TanStack Query. Customer dashboard at `/dashboard/*`. ~80 routes (82
 1. **Reuse the design system.** Build from `@/components/ui` (Button, Card,
    Badge, Stat, Table, Tabs, Page/Container/Section, Input, Feedback, Mono) and
    the domain atoms in `@/components/primitives` (Sparkline, DirectionPill,
-   MultiWindowDelta, …). If a pattern recurs, promote it to a primitive — don't inline
+   FreshnessMarker, …). If a pattern recurs, promote it to a primitive — don't inline
    a bespoke one. **This is a hand-rolled system — NOT shadcn/ui.**
 2. **Tokens, not hex.** Colors / type scale / radius / shadow are semantic
    tokens in the `@theme` block of `src/app/globals.css` (Tailwind 4 — there is

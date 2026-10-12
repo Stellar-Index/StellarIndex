@@ -321,21 +321,15 @@ func restampScope(row restampScanRow, spec *USDVolumeQuoteSpec, gate restampGate
 	}
 }
 
-// ApplyUSDVolumeRestampPlan writes an estimated-tier plan's rows and returns how many the
-// database actually changed. The write set is the PLAN (no second predicate is evaluated), and
-// each row is written only while `trades.derive_generation <= generation` and stamped with it.
-// Shared by every tier: the statement is keyed on the primary key and the batch's own `ts`
-// bounds, neither of which depends on the tier.
+// ApplyUSDVolumeRestampPlan writes an estimated-tier plan's rows and returns how many the database changed; the write set is the plan (no second predicate), each row written only while trades.derive_generation <= generation.
 func (s *Store) ApplyUSDVolumeRestampPlan(ctx context.Context, plan *RestampPlan, generation int64, batch int) (int64, error) {
 	return s.applyXLMBaseRestampBatches(ctx, plan, generation, batch, nil)
 }
 
-// ApplyUSDVolumeRestampPlanInChunk is [Store.ApplyUSDVolumeRestampPlan] for a plan whose rows all
-// lie in chunk c, with a still-decompressed guard ahead of every batch.
+// ApplyUSDVolumeRestampPlanInChunk is Store.ApplyUSDVolumeRestampPlan for a plan whose rows all lie in chunk c, with a still-decompressed guard ahead of every batch.
 func (s *Store) ApplyUSDVolumeRestampPlanInChunk(ctx context.Context, c TradeChunk, plan *RestampPlan, generation int64, batch int) (int64, error) {
 	return s.applyXLMBaseRestampBatches(ctx, plan, generation, batch, s.stillDecompressed(c))
 }
 
-// CEXSourceNames exports [cexSourceNames], the off-chain exchanges whose fiat-quoted trades the
-// cex-fx tier values, so `usd-volume-restamp` can print its scope as it does for [DEXSourceNames].
+// CEXSourceNames exports cexSourceNames, the off-chain exchanges whose fiat-quoted trades the cex-fx tier values, so usd-volume-restamp can print its scope.
 func CEXSourceNames() []string { return cexSourceNames() }

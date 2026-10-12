@@ -7,10 +7,7 @@ import (
 	"time"
 )
 
-// BespokeBlock is the served-tier, per-category bespoke analytics for a protocol page (mapped 1:1
-// to api/v1.ProtocolBespoke; timescale cannot import v1): headline KPIs, named time-series and
-// named top-N tables. All numeric values are pre-formatted strings so amounts above 2^53 stay
-// exact.
+// BespokeBlock is the served-tier per-category analytics for a protocol page, mapped 1:1 to api/v1.ProtocolBespoke (timescale cannot import v1); numeric values are pre-formatted strings so amounts above 2^53 stay exact.
 type BespokeBlock struct {
 	Category   string
 	KPIs       []BespokeKPI
@@ -41,18 +38,14 @@ type BespokeSeriesPt struct {
 	Value string
 }
 
-// BespokeBreakdown is a named composition dataset (the "pie" complement to
-// the time-series): value-weighted (label, value, count) rows, window-scoped
-// and sorted descending by the store. Generic so any category can adopt it
-// (CCTP ships "Inflows by source chain" / "Outflows by destination chain").
+// BespokeBreakdown is a named composition dataset: value-weighted (label, value, count) rows, window-scoped and sorted descending by the store, usable by any category.
 type BespokeBreakdown struct {
 	Title string
 	Unit  string
 	Rows  []BespokeBreakdownRow
 }
 
-// BespokeBreakdownRow is one composition slice; Value is a numeric string
-// (ADR-0003), Count the number of contributing events/transfers.
+// BespokeBreakdownRow is one composition slice; Value is a numeric string and Count the number of contributing events.
 type BespokeBreakdownRow struct {
 	Label string
 	Value string
@@ -66,10 +59,7 @@ type BespokeTable struct {
 	Rows    [][]string
 }
 
-// BuildProtocolBespoke assembles the bespoke block for source (the protocol name) over a trailing
-// windowDays. Returns nil (not an error) for a category with no bespoke metrics, so the page
-// degrades to its generic analytics. windowDays bounds every query to the ts-indexed recent window
-// so projected-table scans stay cheap.
+// BuildProtocolBespoke assembles the bespoke block for source over a trailing windowDays; nil (not an error) for a category with no bespoke metrics, and windowDays bounds every query to the ts-indexed recent window.
 func (s *Store) BuildProtocolBespoke(ctx context.Context, source, category string, windowDays int) (*BespokeBlock, error) {
 	if windowDays <= 0 {
 		windowDays = 90

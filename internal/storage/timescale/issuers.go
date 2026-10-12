@@ -12,8 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// IssuerRow is the read-side projection of one `issuers` row. Auth flags are pointers so nil means
-// "no observation yet", not false.
+// IssuerRow is the read-side projection of one `issuers` row; auth flags are pointers so nil means "no observation yet", not false.
 type IssuerRow struct {
 	GStrkey    string
 	HomeDomain string
@@ -117,8 +116,6 @@ func (s *Store) GetIssuer(ctx context.Context, gStrkey string) (IssuerRow, error
 }
 
 // IssuerSummary is one entry in the issuer-directory listing, returned by [Store.ListIssuers].
-// OrgName comes from the SEP-1 payload's `OrgName` and is empty until the fetcher has refreshed
-// the issuer or when the toml has no documentation block.
 type IssuerSummary struct {
 	GStrkey    string
 	HomeDomain string
@@ -130,9 +127,7 @@ type IssuerSummary struct {
 	TotalObservationCount int64
 }
 
-// ListIssuers returns the issuer directory ordered by total observation count desc, the activity
-// proxy /v1/issuers exposes. limit clamps to [1, 500]. Issuers without any classic_assets row are
-// excluded: they are orphan G-strkeys with no activity.
+// ListIssuers returns the issuer directory ordered by total observation count desc, the activity proxy /v1/issuers exposes. limit clamps to [1, 500].
 func (s *Store) ListIssuers(ctx context.Context, limit int) ([]IssuerSummary, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
@@ -183,8 +178,7 @@ type IssuerAsset struct {
 	ObservationCount int64
 }
 
-// IssuerSep1Candidate is one IssuersNeedingSep1Refresh row: an issuer the SEP-1 fetcher should
-// resolve next.
+// IssuerSep1Candidate is one IssuersNeedingSep1Refresh row: an issuer the SEP-1 fetcher should resolve next.
 type IssuerSep1Candidate struct {
 	GStrkey    string
 	HomeDomain string
@@ -193,9 +187,7 @@ type IssuerSep1Candidate struct {
 	Reached bool
 }
 
-// IssuerSep1CandidateByStrkey returns the (g_strkey, home_domain) pair for one issuer, the targeted
-// counterpart of IssuersNeedingSep1Refresh for `sep1-refresh -issuer <g>`. It returns sql.ErrNoRows
-// for an unknown issuer, or an error when the account has no home_domain to fetch.
+// IssuerSep1CandidateByStrkey returns the (g_strkey, home_domain) pair for one issuer for `sep1-refresh -issuer <g>`; sql.ErrNoRows for an unknown issuer, and an error when it has no home_domain.
 func (s *Store) IssuerSep1CandidateByStrkey(ctx context.Context, gStrkey string) (IssuerSep1Candidate, error) {
 	const q = `SELECT g_strkey, COALESCE(home_domain, ''), sep1_payload IS NOT NULL FROM issuers WHERE g_strkey = $1`
 	var c IssuerSep1Candidate
@@ -208,20 +200,10 @@ func (s *Store) IssuerSep1CandidateByStrkey(ctx context.Context, gStrkey string)
 	return c, nil
 }
 
-// Sep1RefreshMaxLimit caps one IssuersNeedingSep1Refresh run so a mistyped operator override cannot
-// ask for the whole 77k-row population in one statement; the run deadline is the real budget.
+// Sep1RefreshMaxLimit caps one IssuersNeedingSep1Refresh run so a mistyped override cannot request the whole population in one statement.
 const Sep1RefreshMaxLimit = 5000
 
-// IssuersNeedingSep1Refresh returns up to `limit` issuers with a home_domain, whose sep1_resolved_at
-// is missing or older than `staleness`, and whose retry deferral has expired. It orders by
-// sep1_resolved_at ASC NULLS FIRST so never-resolved issuers and the oldest payloads surface first.
-//
-// `staleness` of 0 means "refresh anything" but does NOT override the deferral: a domain on the
-// failure ladder is skipped until sep1_next_attempt_after passes, and `sep1-refresh -issuer <G>`
-// forces one.
-//
-// `limit` is clamped INTO [1, Sep1RefreshMaxLimit], not reset to a default: resetting would give an
-// operator who raised LIMIT past the ceiling a smaller budget, which reads as a slow job.
+// IssuersNeedingSep1Refresh returns up to `limit` issuers with a home_domain whose sep1_resolved_at is missing or older than `staleness` and whose retry deferral has expired, never-resolved and oldest first.
 func (s *Store) IssuersNeedingSep1Refresh(ctx context.Context, staleness time.Duration, limit int) ([]IssuerSep1Candidate, error) {
 	if limit <= 0 {
 		limit = 1
@@ -262,9 +244,7 @@ func (s *Store) IssuersNeedingSep1Refresh(ctx context.Context, staleness time.Du
 	return out, nil
 }
 
-// IssuerSep1Cached is the parsed `sep1_payload` JSONB column, the subset of [metadata.SEP1] the
-// `sep1-refresh` cron persists. [GetIssuerSep1Cached] returns it so the API can overlay SEP-1 data
-// without a live HTTPS fetch.
+// IssuerSep1Cached is the parsed `sep1_payload` JSONB, the subset of [metadata.SEP1] the `sep1-refresh` cron persists, so the API can overlay SEP-1 data without a live HTTPS fetch.
 type IssuerSep1Cached struct {
 	OrgName       string               `json:"OrgName,omitempty"`
 	Version       string               `json:"Version,omitempty"`
@@ -308,14 +288,7 @@ type IssuerSep1Currency struct {
 	ApprovalCriteria       string `json:"ApprovalCriteria,omitempty"`
 }
 
-// IssuerSep1Unreachable reports whether the issuer's current failure streak is one the payload alone
-// cannot show: attempts that ended without a storable document and that no systemic-outage unwind
-// took back. [GetIssuerSep1Cached] returns (nil, nil) for both no-payload cases, which are opposite
-// findings: OUR backlog, or the ISSUER's publication (e.g. a malformed stellar.toml).
-//
-// It reads sep1_consecutive_failures, not sep1_resolved_at: the cron stamps resolved_at BEFORE each
-// fetch and keeps it through [Store.UnwindIssuerSep1Backoff], so it is set on every touched row
-// after our own outage, while the counter still separates their failures from ours.
+// IssuerSep1Unreachable reports whether the issuer's current failure streak is one the payload alone cannot show (attempts ending without a storable document, not undone by a systemic-outage unwind).
 func (s *Store) IssuerSep1Unreachable(ctx context.Context, gStrkey string) (bool, error) {
 	const q = `SELECT COALESCE(sep1_consecutive_failures, 0) > 0 FROM issuers WHERE g_strkey = $1`
 	var unreachable bool
@@ -330,9 +303,7 @@ func (s *Store) IssuerSep1Unreachable(ctx context.Context, gStrkey string) (bool
 	return unreachable, nil
 }
 
-// GetIssuerSep1Cached returns the cached SEP-1 payload from `issuers.sep1_payload`: (nil, nil) when
-// the row has no payload yet, (nil, sql.ErrNoRows) when the issuer is unknown. It replaces a live
-// per-request HTTPS fetch that dominated /v1/assets/{id} p95.
+// GetIssuerSep1Cached returns the cached SEP-1 payload: (nil, nil) when the row has none yet and (nil, sql.ErrNoRows) for an unknown issuer, replacing a per-request HTTPS fetch.
 func (s *Store) GetIssuerSep1Cached(ctx context.Context, gStrkey string) (*IssuerSep1Cached, error) {
 	q := `SELECT sep1_payload, ` + sep1PayloadOutlivedSQL + ` FROM issuers WHERE g_strkey = $1`
 	var (
@@ -353,8 +324,7 @@ func (s *Store) GetIssuerSep1Cached(ctx context.Context, gStrkey string) (*Issue
 	return &out, nil
 }
 
-// Sep1Image is one (code, issuer, image) triple from a verified issuer's cached SEP-1
-// [[CURRENCIES]] payload; only entries with non-empty Code, Issuer AND Image are returned.
+// Sep1Image is one (code, issuer, image) triple from a verified issuer's cached SEP-1 [[CURRENCIES]] payload; only entries with non-empty Code, Issuer and Image are returned.
 type Sep1Image struct {
 	Code   string
 	Issuer string
@@ -408,15 +378,7 @@ SELECT i.g_strkey,
    AND jsonb_typeof(c.value -> 'Image') = 'string'
    AND jsonb_typeof(c.value -> 'Code')  = 'string'`
 
-// AllSep1Images returns every populated [[CURRENCIES]] image across issuers whose sep1_payload is
-// set and has not outlived a failing domain ([sep1PayloadOutlivedSQL]), for the /v1/assets logo
-// overlay. The API caches it on a DETACHED context and applies its own URL-scheme filter
-// ([isSafeImageURL]). Non-qualifying entries are skipped, not fatal: one issuer's junk must not
-// blank the map.
-//
-// g_strkey is projected beside the DECLARED issuer ([sep1ImageFrom]) because keyed purely on
-// TOML-supplied (code, issuer), any account could publish a "USDC" entry naming another issuer's
-// G-key with an attacker image. A TOML may describe only the issuer that served it.
+// AllSep1Images returns every populated [[CURRENCIES]] image from issuers whose sep1_payload is set and has not outlived a failing domain ([sep1PayloadOutlivedSQL]), for the /v1/assets logo overlay; callers apply [isSafeImageURL].
 func (s *Store) AllSep1Images(ctx context.Context) ([]Sep1Image, error) {
 	rows, err := s.db.QueryContext(ctx, allSep1ImagesQuery)
 	if err != nil {
@@ -441,15 +403,7 @@ func (s *Store) AllSep1Images(ctx context.Context) ([]Sep1Image, error) {
 	return out, nil
 }
 
-// SyncIssuerHomeDomain writes an issuer's ON-CHAIN home_domain onto its row, reporting whether the
-// row changed. An empty domain is refused as "not read"; an account READ as declaring none goes
-// through [Store.ClearIssuerHomeDomain], so the two can never be confused.
-//
-// It overwrites because the SEP-1 resolver READS this column to pick the domain: write-once would
-// keep a lapsed domain, and whoever registers it next could serve a stellar.toml listing the
-// issuer back, pass the bidirectional check and inherit the verified org identity. Rows that
-// already agree are skipped; a changed row has its SEP-1 state unbound in the same statement
-// ([sep1ResetOnHomeDomainChange]).
+// SyncIssuerHomeDomain writes an issuer's ON-CHAIN home_domain onto its row and reports whether it changed; an empty domain is refused as "not read", and an account that declares none goes through [Store.ClearIssuerHomeDomain].
 func (s *Store) SyncIssuerHomeDomain(ctx context.Context, gStrkey, homeDomain string) (bool, error) {
 	if homeDomain == "" {
 		return false, nil
@@ -457,9 +411,7 @@ func (s *Store) SyncIssuerHomeDomain(ctx context.Context, gStrkey, homeDomain st
 	return s.writeIssuerHomeDomain(ctx, "SyncIssuerHomeDomain", gStrkey, homeDomain)
 }
 
-// ClearIssuerHomeDomain blanks the home_domain of an issuer whose live AccountEntry was read and
-// declares none, reporting whether the row changed. Keeping a cleared domain is the same takeover
-// risk as keeping one the account moved away from (see [Store.SyncIssuerHomeDomain]).
+// ClearIssuerHomeDomain blanks the home_domain of an issuer whose live AccountEntry was read and declares none, reporting whether the row changed.
 func (s *Store) ClearIssuerHomeDomain(ctx context.Context, gStrkey string) (bool, error) {
 	return s.writeIssuerHomeDomain(ctx, "ClearIssuerHomeDomain", gStrkey, "")
 }
@@ -502,22 +454,10 @@ func sep1ResetOnHomeDomainChange(newHD string) string {
 		"@changed", "("+newHD+") IS DISTINCT FROM home_domain")
 }
 
-// ErrSep1PayloadRejected marks a payload Postgres refused on its content (SQLSTATE class 22, e.g.
-// a `\u0000` jsonb cannot hold): the document's fault, so the caller keeps the retry-ladder step.
+// ErrSep1PayloadRejected marks a payload Postgres refused on its content (SQLSTATE class 22, e.g. a `\u0000` jsonb cannot hold), the document's fault, so the caller keeps the retry-ladder step.
 var ErrSep1PayloadRejected = errors.New("sep1 payload rejected by the database")
 
-// SetIssuerSep1Payload writes a SEP-1 fetch result to the issuers row (sep1_payload and
-// sep1_resolved_at = now()) and clears the retry ladder, so a RECOVERING domain returns to the plain
-// -older-than cadence. In the same transaction it appends one issuer_identity_history row per
-// identity field the payload changes on an established issuer ([sep1IdentityChanges]), so an
-// overwrite is never blind. The caller serialises the payload.
-//
-// It is the only writer of sep1_payload_fetched_at; sep1_resolved_at is stamped by every attempt, so
-// only this column says how old the held payload is once a domain starts failing.
-//
-// fetchedFrom is the home_domain the candidate was read under; the write lands only while the row
-// still holds it, else the old domain's toml would bind to the new one. The bool reports whether
-// the payload was stored.
+// SetIssuerSep1Payload writes a SEP-1 fetch result (sep1_payload, sep1_resolved_at = now()) and clears the retry ladder, appending an issuer_identity_history row per changed identity field in the same transaction.
 func (s *Store) SetIssuerSep1Payload(ctx context.Context, gStrkey, fetchedFrom string, payload []byte) (stored bool, err error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -591,19 +531,7 @@ const (
 	sep1BackoffMaxShift = 20
 )
 
-// MarkIssuerSep1Failed records a terminating attempt that produced no payload (dead domain, TLS
-// error, SSRF-blocked, unparseable TOML, failed write), advances the retry ladder and returns the
-// new consecutive-failure count.
-//
-// Two jobs, easy to conflate:
-//   - sep1_resolved_at = NOW() is QUEUE HYGIENE: IssuersNeedingSep1Refresh orders
-//     `sep1_resolved_at ASC NULLS FIRST`, so an unstamped row stays first and dead domains would
-//     fill the queue front. Every failure path must stamp it.
-//   - sep1_consecutive_failures / sep1_next_attempt_after are the BUDGET for repeat failures.
-//
-// One statement, so count and deferral cannot disagree; the SET expressions read the PRE-UPDATE
-// count, so a first failure yields count 1 and a one-day deferral. Both interval parameters carry
-// an explicit ::interval cast: an untyped bind beside an interval operator raises 42883 at runtime.
+// MarkIssuerSep1Failed records a terminating attempt with no payload, advances the retry ladder and returns the consecutive-failure count; sep1_resolved_at = NOW() is queue hygiene, not a successful resolve.
 func (s *Store) MarkIssuerSep1Failed(ctx context.Context, gStrkey string) (int, error) {
 	const q = `
         UPDATE issuers
@@ -626,17 +554,7 @@ func (s *Store) MarkIssuerSep1Failed(ctx context.Context, gStrkey string) (int, 
 	return failures, nil
 }
 
-// UnwindIssuerSep1Backoff takes back exactly one ladder step for each given issuer and lifts their
-// deferral, leaving sep1_resolved_at alone.
-//
-// This is the systemic-outage escape hatch. Each key failed exactly once in the run being unwound,
-// so decrementing by one restores the pre-run count; clearing sep1_next_attempt_after returns the
-// row to the plain -older-than cadence. sep1_resolved_at KEEPS its bump so the queue order advances
-// and the run cannot re-walk the same head.
-//
-// An outage on OUR side (DNS, egress, a bad resolver) fails every domain; believing it would push
-// the whole population toward the 30-day cap and go quiet while the freshness watchdog stays green.
-// The caller decides what "systemic" means; this is the undo.
+// UnwindIssuerSep1Backoff takes back exactly one ladder step for each given issuer and lifts their deferral, leaving sep1_resolved_at alone.
 func (s *Store) UnwindIssuerSep1Backoff(ctx context.Context, gStrkeys []string) (int64, error) {
 	if len(gStrkeys) == 0 {
 		return 0, nil
@@ -673,9 +591,7 @@ func intervalArg(d time.Duration) string {
 // since this is a DoS bound, not pagination.
 const issuerAssetsHardCap = 500
 
-// ListIssuerAssets returns the classic assets issued by a G-strkey, ordered by observation count
-// desc (a cheap trading-activity proxy: held-but-never-traded assets carry 0 and sort last),
-// capped at [issuerAssetsHardCap].
+// ListIssuerAssets returns the classic assets issued by a G-strkey, ordered by observation count desc (held-but-never-traded assets sort last), capped at [issuerAssetsHardCap].
 func (s *Store) ListIssuerAssets(ctx context.Context, gStrkey string) ([]IssuerAsset, error) {
 	const q = `
 		SELECT
@@ -712,9 +628,7 @@ func (s *Store) ListIssuerAssets(ctx context.Context, gStrkey string) ([]IssuerA
 	return out, nil
 }
 
-// IssuerAuthFlagsOnRecord is what one issuers row HOLDS in its auth-flag columns, values included,
-// so the chain re-check can tell a reading the chain still agrees with from one it has moved past.
-// Flags are pointers as in [IssuerRow]: NULL is "no observation yet", not `false`.
+// IssuerAuthFlagsOnRecord is what one issuers row holds in its auth-flag columns, values included, so the chain re-check can spot a stale reading; flags are pointers where NULL means "no observation yet".
 type IssuerAuthFlagsOnRecord struct {
 	GStrkey    string
 	Required   *bool
@@ -728,19 +642,7 @@ type IssuerAuthFlagsOnRecord struct {
 	AsOfLedger *uint32
 }
 
-// IssuersNeedingChainRecheck returns every issuer whose auth-flag columns are already FILLED from a
-// live (or unlabelled) reading, by primary key, with the values currently on record. `limit` <= 0
-// returns every candidate, the intended setting: the caller writes back only rows the chain
-// disagrees with.
-//
-// It is a third queue because [Store.IssuerGStrkeysNeedingFlags] is `auth_required IS NULL` and
-// [Store.IssuerGStrkeysNeedingRecheck] covers only `last_known_before_removal` rows, so a filled,
-// live-sourced row would never be read again, yet `issuers.home_domain` rides on it (see
-// [Store.SyncIssuerHomeDomain]).
-//
-// `last_known_before_removal` rows are EXCLUDED (their removal ledger is fixed, so rewriting is a
-// no-op), except a merged row still holding a home_domain stored while live, which stays offered
-// until the persist clears the merged account's identity.
+// IssuersNeedingChainRecheck returns every issuer whose auth-flag columns are filled from a live or unlabelled reading, by primary key, with the stored values; `limit` <= 0 returns all, the intended setting.
 func (s *Store) IssuersNeedingChainRecheck(ctx context.Context, limit int) ([]IssuerAuthFlagsOnRecord, error) {
 	q := `
         SELECT g_strkey,

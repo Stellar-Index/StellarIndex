@@ -10,28 +10,12 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 )
 
-// OpenServing is [Open] with a session-level `statement_timeout` on every pooled connection, the
-// SQL-side backstop under the per-request deadline. Heavy scans override it with
-// `SET LOCAL statement_timeout`. statementTimeout <= 0 falls back to plain [Open].
-//
-// The serving pool also runs `SET plan_cache_mode = force_custom_plan`: the raw-trades fallback
-// (TradesInRange) flips to a GENERIC plan after five executions, and planning that across every
-// chunk costs hundreds of milliseconds whenever the plan cache invalidates. Custom plans bind in
-// milliseconds and prune better; batch pools keep the default, where generic plans pay off.
-//
-// Both settings are a post-connect SET (a wrapping driver.Connector), not a DSN edit, so URL and
-// keyword-form DSNs behave alike.
+// OpenServing is Open with a session-level statement_timeout on every pooled connection as the SQL-side backstop under the request deadline; statementTimeout <= 0 falls back to plain Open.
 func OpenServing(ctx context.Context, dsn string, statementTimeout time.Duration) (*Store, error) {
 	return openWithSessionSetup(ctx, dsn, statementTimeout, true)
 }
 
-// OpenBackground is [Open] with a session-level `statement_timeout` on every pooled connection,
-// for the long-running indexer and aggregator binaries, so a stuck query stops server-side even
-// after its Go ctx is cancelled.
-//
-// The bound is deliberately GENEROUS so it only kills a true runaway; heavy batch scans set a
-// longer `SET LOCAL statement_timeout` in their own transaction. One-shot ops/migrate/backfill
-// paths stay on unbounded [Open]. statementTimeout <= 0 falls back to plain [Open].
+// OpenBackground is Open with a deliberately generous session statement_timeout for long-running indexer and aggregator binaries, so a stuck query stops server-side even after its ctx is cancelled.
 func OpenBackground(ctx context.Context, dsn string, statementTimeout time.Duration) (*Store, error) {
 	return openWithSessionSetup(ctx, dsn, statementTimeout, false)
 }

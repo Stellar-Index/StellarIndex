@@ -12,8 +12,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// NetworkStateReader reads stellar.ledger_entries_current for comparison with
-// the network's own state (verify-network-state).
+// NetworkStateReader reads stellar.ledger_entries_current for comparison with the network's own state (verify-network-state).
 type NetworkStateReader struct{ conn driver.Conn }
 
 // NewNetworkStateReader dials ClickHouse on the heavy read class.
@@ -28,8 +27,7 @@ func NewNetworkStateReader(ctx context.Context, addr string) (*NetworkStateReade
 // Close releases the connection.
 func (r *NetworkStateReader) Close() error { return r.conn.Close() }
 
-// LedgerKeyColumns returns the (entry_type, key_xdr) pair the writer stores
-// for key, so a caller looks a network key up in exactly the lake's encoding.
+// LedgerKeyColumns returns the (entry_type, key_xdr) pair the writer stores for key, so lookups use exactly the lake's encoding.
 func LedgerKeyColumns(key xdr.LedgerKey) (entryType, keyXDR string, err error) {
 	keyXDR, err = xdr.MarshalBase64(key)
 	if err != nil {
@@ -45,8 +43,7 @@ type CurrentEntry struct {
 	EntryXDR   string
 }
 
-// CurrentEntries returns the FINAL ledger_entries_current row for each key of
-// one entry type. A key the table does not hold is absent from the map.
+// CurrentEntries returns the FINAL ledger_entries_current row for each key of one entry type; a key the table does not hold is absent from the map.
 func (r *NetworkStateReader) CurrentEntries(ctx context.Context, entryType string, keys []string) (map[string]CurrentEntry, error) {
 	out := make(map[string]CurrentEntry, len(keys))
 	if len(keys) == 0 {
@@ -71,9 +68,7 @@ func (r *NetworkStateReader) CurrentEntries(ctx context.Context, entryType strin
 	return out, rows.Err()
 }
 
-// LumenTally is native XLM summed over every domain that can hold it, as of
-// one ledger, beside that ledger header's total_coins and fee_pool. All sums
-// are exact integers in stroops.
+// LumenTally is native XLM summed over every domain that can hold it as of one ledger, beside that header's total_coins and fee_pool; all sums are exact integers in stroops.
 type LumenTally struct {
 	Ledger            uint32
 	TotalCoins        int64
@@ -104,8 +99,7 @@ func (t *LumenTally) Held() *big.Int {
 	return s.Add(s, t.ContractBalances)
 }
 
-// Residual is Held + FeePool − TotalCoins: zero when the lake's state conserves
-// lumens, negative when it is missing holdings.
+// Residual is Held + FeePool - TotalCoins: zero when the lake's state conserves lumens, negative when it is missing holdings.
 func (t *LumenTally) Residual() *big.Int {
 	r := new(big.Int).Add(t.Held(), big.NewInt(t.FeePool))
 	return r.Sub(r, big.NewInt(t.TotalCoins))
@@ -114,11 +108,7 @@ func (t *LumenTally) Residual() *big.Int {
 // lumenEntryTypes are the entry types that can hold native XLM.
 var lumenEntryTypes = []string{"account", "claimable_balance", "liquidity_pool", "contract_data"}
 
-// LumenConservation tallies native XLM held in ledger_entries_current as of the
-// newest committed ledger (stellar.ledgers is written last in a flush). One FINAL read gives a
-// single parts snapshot; keys whose resolved row is newer than that ledger are rolled back to
-// their first later change's pre-image in ledger_entry_changes, so concurrent ingest cannot tear
-// the sum. nativeSAC is the network's native Stellar Asset Contract id (C…).
+// LumenConservation tallies native XLM held in ledger_entries_current as of the newest committed ledger, rolling back keys newer than it so concurrent ingest cannot tear the sum; nativeSAC is the native SAC contract id.
 func (r *NetworkStateReader) LumenConservation(ctx context.Context, nativeSAC string) (*LumenTally, error) {
 	sac, prefix, err := nativeSACKey(nativeSAC)
 	if err != nil {

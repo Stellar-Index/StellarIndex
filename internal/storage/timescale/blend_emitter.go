@@ -11,9 +11,6 @@ import (
 )
 
 // BlendEmitterKind discriminates the four Blend Emitter events.
-// String values match the blend_emitter_events.event_kind CHECK
-// constraint (migration 0095) and the Event* constants in
-// internal/sources/blend_emitter/events.go.
 type BlendEmitterKind string
 
 const (
@@ -32,8 +29,7 @@ func (k BlendEmitterKind) IsValid() bool {
 	return false
 }
 
-// BlendEmitterDistributeEvent is one observed `distribute` event —
-// one BLND emission to a backstop pool.
+// BlendEmitterDistributeEvent is one observed `distribute` event — one BLND emission to a backstop pool.
 type BlendEmitterDistributeEvent struct {
 	ContractID      string
 	Ledger          uint32
@@ -45,15 +41,13 @@ type BlendEmitterDistributeEvent struct {
 	Amount          canonical.Amount
 }
 
-// BlendEmitterRecipient is one (address, amount) pair from a `drop`
-// event's variable-length recipient list.
+// BlendEmitterRecipient is one (address, amount) pair from a `drop` event's variable-length recipient list.
 type BlendEmitterRecipient struct {
 	Address string
 	Amount  canonical.Amount
 }
 
-// BlendEmitterDropEvent is one observed `drop` event. The writer fans Recipients out to one row
-// each, with a 0-based recipient_index (slice order) keeping the rows distinct.
+// BlendEmitterDropEvent is one observed `drop` event.
 type BlendEmitterDropEvent struct {
 	ContractID      string
 	Ledger          uint32
@@ -64,9 +58,7 @@ type BlendEmitterDropEvent struct {
 	Recipients      []BlendEmitterRecipient
 }
 
-// BlendEmitterSwapConfigEvent is one observed `q_swap` / `swap`
-// event — the Emitter queuing or executing a change of which
-// backstop (and backstop token) it targets.
+// BlendEmitterSwapConfigEvent is one `q_swap` / `swap` event: the Emitter queuing or executing a change of its target backstop and backstop token.
 type BlendEmitterSwapConfigEvent struct {
 	ContractID       string
 	Ledger           uint32
@@ -146,12 +138,7 @@ func execBlendEmitterRow(
 	return nil
 }
 
-// InsertBlendEmitterDistribute appends one `distribute` row, idempotent on the table PK. A replay
-// rewrites the row only when the incoming derive_generation is >= the stored one, so a stale
-// replay cannot revert a later correction.
-//
-// It rejects empty ContractID/TxHash/BackstopID and a non-positive Amount before touching the DB;
-// the decoder enforces these too, but the writer double-checks so malformed input cannot land.
+// InsertBlendEmitterDistribute appends one `distribute` row, idempotent on the PK; a replay rewrites only when derive_generation >= stored, and empty ContractID/TxHash/BackstopID or a non-positive Amount is rejected before the DB.
 func (s *Store) InsertBlendEmitterDistribute(ctx context.Context, e BlendEmitterDistributeEvent) error {
 	if e.ContractID == "" {
 		return errors.New("timescale: InsertBlendEmitterDistribute: ContractID is empty")
@@ -174,12 +161,7 @@ func (s *Store) InsertBlendEmitterDistribute(ctx context.Context, e BlendEmitter
 	)
 }
 
-// InsertBlendEmitterDrop appends one `drop` event as one row per recipient (recipient_index =
-// slice position). A single transaction prevents a partial fan-out; each row is idempotent under
-// the same generation-guarded upsert as InsertBlendEmitterDistribute.
-//
-// It rejects empty ContractID/TxHash, an empty recipient list, and per-recipient empty addresses
-// or non-positive amounts.
+// InsertBlendEmitterDrop appends one `drop` event as one row per recipient (recipient_index = slice position).
 func (s *Store) InsertBlendEmitterDrop(ctx context.Context, e BlendEmitterDropEvent) error {
 	if e.ContractID == "" {
 		return errors.New("timescale: InsertBlendEmitterDrop: ContractID is empty")
@@ -220,11 +202,7 @@ func (s *Store) InsertBlendEmitterDrop(ctx context.Context, e BlendEmitterDropEv
 	return nil
 }
 
-// InsertBlendEmitterSwapConfig appends one `q_swap` or `swap` row, with the same PK and
-// generation-guarded upsert as the other writers.
-//
-// It rejects empty ContractID/TxHash/NewBackstop/NewBackstopToken and any other Kind. An
-// UnlockTime that is zero or outside the timestamptz range writes SQL NULL rather than erroring.
+// InsertBlendEmitterSwapConfig appends one `q_swap` or `swap` row, with the same PK and generation-guarded upsert as the other writers.
 func (s *Store) InsertBlendEmitterSwapConfig(ctx context.Context, e BlendEmitterSwapConfigEvent) error {
 	if e.ContractID == "" {
 		return errors.New("timescale: InsertBlendEmitterSwapConfig: ContractID is empty")

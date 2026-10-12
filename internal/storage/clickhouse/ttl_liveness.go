@@ -53,8 +53,7 @@ var errTTLLiveUntilTableMissing = errors.New(
 		"(table + materialized view, then its Step-2 windowed backfill) before running TTL-liveness reads; " +
 		"there is no scan fallback")
 
-// TTLKeyHash returns the TTL key hash for the entry whose base64 LedgerKey is keyXDR: sha256
-// over the decoded key bytes, as stellar-core derives LedgerKeyTtl.keyHash.
+// TTLKeyHash returns the TTL key hash for a base64 LedgerKey: sha256 over the decoded key bytes, as stellar-core derives LedgerKeyTtl.keyHash.
 func TTLKeyHash(keyXDR string) (string, error) {
 	raw, err := base64.StdEncoding.DecodeString(keyXDR)
 	if err != nil {
@@ -78,13 +77,7 @@ const (
 	TTLArchived
 )
 
-// ClassifyTTLLiveness resolves whether each base64 LedgerKey in keyXDRs is live as of
-// asOfLedger, via a primary-key lookup of `stellar.ttl_live_until`, chunked by
-// [ttlLivenessBatchSize]. Missing projection: [errTTLLiveUntilTableMissing].
-//
-// Keys with no TTL row come back [TTLUnknown] and callers KEEP them: a silent over-drop
-// understates supply and is harder to notice than an over-count. Only a parsed, lapsed
-// liveUntilLedgerSeq justifies exclusion.
+// ClassifyTTLLiveness resolves whether each base64 LedgerKey is live as of asOfLedger via a primary-key lookup of stellar.ttl_live_until; keys with no TTL row are TTLUnknown and callers KEEP them (an over-drop understates supply).
 func ClassifyTTLLiveness(ctx context.Context, conn driver.Conn, keyXDRs []string, asOfLedger uint32) (map[string]TTLLiveness, error) {
 	liveUntil, err := resolveTTLLiveUntil(ctx, conn, keyXDRs)
 	if err != nil {
@@ -97,9 +90,7 @@ func ClassifyTTLLiveness(ctx context.Context, conn driver.Conn, keyXDRs []string
 	return out, nil
 }
 
-// TTLVerdictAt is the liveness rule every TTL reader shares: live through liveUntilLedgerSeq
-// inclusive, archived once asOfLedger passes it. A zero live_until proves nothing: UNKNOWN,
-// never a guessed archival.
+// TTLVerdictAt is the shared liveness rule: live through liveUntilLedgerSeq inclusive, archived after; a zero live_until is UNKNOWN, never a guessed archival.
 func TTLVerdictAt(liveUntil, asOfLedger uint32) TTLLiveness {
 	switch {
 	case liveUntil == 0:

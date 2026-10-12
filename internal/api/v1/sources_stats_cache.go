@@ -9,13 +9,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// CachedSourcesStatsReader wraps a [SourcesStatsReader] with a
-// per-process TTL cache. The underlying SQL aggregations scan ~24h of the
-// trades hypertable (millions of rows) and take 5-10s, so a 60s TTL is needed;
-// these 24h-trailing aggregates do not move materially in that time.
-//
-// Single-flight: concurrent callers during a refetch share one upstream call,
-// which matters because the explorer's table and home strip both want stats.
+// CachedSourcesStatsReader wraps a [SourcesStatsReader] with a per-process TTL cache and single-flight, since the 24h aggregations scan millions of trades and take 5-10s.
 type CachedSourcesStatsReader struct {
 	upstream SourcesStatsReader
 	ttl      time.Duration
@@ -34,23 +28,18 @@ type sourcesStatsSlot[T any] struct {
 	flight chan struct{}
 }
 
-// NewCachedSourcesStatsReader wraps `upstream` with a TTL cache.
-// ttl=0 disables the cache (every call goes through). 60s is the
-// typical production value.
+// NewCachedSourcesStatsReader wraps upstream with a TTL cache (ttl=0 disables); 60s is the typical production value.
 func NewCachedSourcesStatsReader(upstream SourcesStatsReader, ttl time.Duration) *CachedSourcesStatsReader {
 	return &CachedSourcesStatsReader{upstream: upstream, ttl: ttl}
 }
 
-// GetSourceStats returns the cached value when fresh; otherwise
-// triggers exactly one upstream refetch (sharing it across all
-// concurrent callers).
+// GetSourceStats returns the cached value when fresh, else triggers exactly one upstream refetch shared by all concurrent callers.
 func (c *CachedSourcesStatsReader) GetSourceStats(ctx context.Context) ([]timescale.SourceStats, error) {
 	rows, _, err := c.GetSourceStatsAt(ctx)
 	return rows, err
 }
 
-// GetSourceStatsAt is GetSourceStats plus the served slot's fill time;
-// zero on an uncached (ttl<=0) read.
+// GetSourceStatsAt is GetSourceStats plus the served slot's fill time; zero on an uncached (ttl<=0) read.
 func (c *CachedSourcesStatsReader) GetSourceStatsAt(ctx context.Context) ([]timescale.SourceStats, time.Time, error) {
 	return fetchSourcesSlot(ctx, c, &c.stats, "source_stats", c.upstream.GetSourceStats)
 }
@@ -66,8 +55,7 @@ func (c *CachedSourcesStatsReader) GetSourceVolumeHistory24hAt(ctx context.Conte
 	return fetchSourcesSlot(ctx, c, &c.hist, "volume_history_24h", c.upstream.GetSourceVolumeHistory24h)
 }
 
-// GetSourceVolumeHistory7d: same single-flight TTL pattern as the 24h
-// variant, on its own cache slot.
+// GetSourceVolumeHistory7d uses the same single-flight TTL pattern as the 24h variant, on its own cache slot.
 func (c *CachedSourcesStatsReader) GetSourceVolumeHistory7d(ctx context.Context) ([]timescale.SourceVolumeBucket, error) {
 	rows, _, err := c.GetSourceVolumeHistory7dAt(ctx)
 	return rows, err

@@ -8,7 +8,6 @@ import (
 )
 
 // UsdVolumePricingRow is one source's trade counts over a pricing window.
-// Trades == Priced + Unpriced + Unroutable.
 type UsdVolumePricingRow struct {
 	Source string
 	Trades int64
@@ -42,10 +41,7 @@ SELECT source,
  GROUP BY source
  ORDER BY source`
 
-// UsdVolumePricingStats counts priced, unpriced and unroutable trades per
-// source for sources over [from, to). Every requested source gets a row, in
-// name order; one with no trades in the window has all counts zero, so a
-// silent venue is visible rather than absent.
+// UsdVolumePricingStats counts priced, unpriced and unroutable trades per source for sources over [from, to).
 func (s *Store) UsdVolumePricingStats(ctx context.Context, from, to time.Time, sources []string) ([]UsdVolumePricingRow, error) {
 	rows, err := s.db.QueryContext(ctx, usdVolumePricingSQL, from, to, sources)
 	if err != nil {

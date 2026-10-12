@@ -10,11 +10,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// AccountObservationSeed is the lake-derived snapshot of one account's latest
-// AccountEntry, for seeding the served tier's account_observations hypertable
-// (ADR-0021). The live observer only writes when an account CHANGES, so a
-// dormant account would otherwise fall back to operator-static config forever.
-// Any later live observation supersedes the seed via at-or-before-ledger ordering.
+// AccountObservationSeed is the lake-derived latest AccountEntry of one account, seeding account_observations (ADR-0021); any later live observation supersedes it.
 type AccountObservationSeed struct {
 	// Found is false when the lake holds no AccountEntry row for the account:
 	// never created, or dormant since before entry-change capture began (fill
@@ -33,10 +29,7 @@ type AccountObservationSeed struct {
 	SeqNum     int64
 }
 
-// LatestAccountEntrySeed reads the latest AccountEntry for one account from
-// the current-state projection. Found=false (no error) for an unknown account;
-// a corrupt stored entry_xdr IS an error, since silently seeding nothing would
-// masquerade as "account dormant".
+// LatestAccountEntrySeed reads the latest AccountEntry from the current-state projection; Found=false for an unknown account, a corrupt entry_xdr is an error.
 func (r *ExplorerReader) LatestAccountEntrySeed(ctx context.Context, account string) (AccountObservationSeed, error) {
 	const q = `SELECT entry_xdr, change_type, ledger_seq, close_time
 		FROM stellar.ledger_entries_current FINAL

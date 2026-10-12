@@ -9,16 +9,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// CachedIssuersReader wraps an [IssuersReader] with a per-process TTL cache
-// and single-flight refetch.
-//
-// The list SQL is a full GROUP BY over issuers JOIN classic_assets that no index can avoid,
-// and the catalogue moves on a minutes-to-hours timescale, so a TTL-stale ranking is fine.
-// GetIssuer + ListIssuerAssets are pass-through: one G-strkey, already index-backed.
-//
-// Single-flight follows CachedMarketsReader's write-on-success / delete-on-error pattern: a
-// waiter holds its own pointer to the entry, so it reads the leader's error even after the
-// leader removed the entry from the map.
+// CachedIssuersReader wraps [IssuersReader] with a per-process TTL cache and single-flight for the expensive list; GetIssuer and ListIssuerAssets pass through.
 type CachedIssuersReader struct {
 	upstream IssuersReader
 	ttl      time.Duration
@@ -39,8 +30,7 @@ type issuersCacheEntry struct {
 	err error
 }
 
-// NewCachedIssuersReader wraps `upstream` with a TTL cache. ttl=0 disables caching (every
-// call passes through). The caller (cmd/stellarindex-api) picks the TTL.
+// NewCachedIssuersReader wraps upstream with a TTL cache; ttl=0 disables caching and the caller picks the TTL.
 func NewCachedIssuersReader(upstream IssuersReader, ttl time.Duration) *CachedIssuersReader {
 	return &CachedIssuersReader{
 		upstream: upstream,
@@ -49,30 +39,23 @@ func NewCachedIssuersReader(upstream IssuersReader, ttl time.Duration) *CachedIs
 	}
 }
 
-// GetIssuer is a pass-through: a sub-ms PK lookup, and per-strkey caching would scatter the
-// working set with no shared-callers win.
+// GetIssuer is a pass-through: a sub-ms PK lookup that per-strkey caching would only scatter.
 func (c *CachedIssuersReader) GetIssuer(ctx context.Context, gStrkey string) (timescale.IssuerRow, error) {
 	return c.upstream.GetIssuer(ctx, gStrkey)
 }
 
-// ListIssuerAssets is a pass-through: an indexed scan bounded by timescale.issuerAssetsHardCap.
-// The cap is needed because spammers mint many codes and airdrop trustlines, so the
-// per-issuer asset count is not a bound by itself.
+// ListIssuerAssets is a pass-through bounded by timescale.issuerAssetsHardCap, needed because spammers mint many codes and airdrop trustlines.
 func (c *CachedIssuersReader) ListIssuerAssets(ctx context.Context, gStrkey string) ([]timescale.IssuerAsset, error) {
 	return c.upstream.ListIssuerAssets(ctx, gStrkey)
 }
 
-// ListIssuers — cached. One entry holds the IssuersListMaxLimit page and
-// every request slices its prefix from it: the aggregate's cost is set by
-// the scan, not by LIMIT, so a per-limit key would let a caller sweeping
-// `?limit=` force one uncollapsed upstream scan per value.
+// ListIssuers is cached as one IssuersListMaxLimit page that every request prefix-slices, so sweeping `?limit=` cannot force one upstream scan per value.
 func (c *CachedIssuersReader) ListIssuers(ctx context.Context, limit int) ([]timescale.IssuerSummary, error) {
 	list, _, err := c.ListIssuersAt(ctx, limit)
 	return list, err
 }
 
-// ListIssuersAt is ListIssuers plus the served entry's fill time; zero on
-// an uncached (ttl<=0) read.
+// ListIssuersAt is ListIssuers plus the served entry's fill time; zero on an uncached (ttl<=0) read.
 func (c *CachedIssuersReader) ListIssuersAt(ctx context.Context, limit int) ([]timescale.IssuerSummary, time.Time, error) {
 	if c.ttl <= 0 {
 		list, err := c.upstream.ListIssuers(ctx, limit)

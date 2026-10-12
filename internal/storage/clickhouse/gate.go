@@ -9,11 +9,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// GateCounts is the read-back of a ledger range's Tier-1 counts: the per-ledger STORED counts
-// (the ledgers row the extractor wrote) and the ACTUAL row counts of the child tables. The
-// completeness gate (internal/ops/chops/ch_gate.go) asserts they agree with each other AND with
-// the decoder-independent census oracle. All reads use FINAL so duplicate ReplacingMergeTree
-// parts dedup at read time.
+// GateCounts is the read-back of a ledger range's per-ledger STORED counts and the child tables' ACTUAL row counts, read with FINAL so ReplacingMergeTree duplicates dedup; the completeness gate asserts they agree with each other and the census oracle.
 type GateCounts struct {
 	LedgerRows   uint64 // count() of stellar.ledgers in range (deduped)
 	TotalLedgers uint64 // count() of ALL stellar.ledgers (whole DB) — footprint denominator
@@ -32,8 +28,7 @@ type GateCounts struct {
 	RowEvents uint64
 }
 
-// TableFootprint is one stellar.* table's on-disk size (compressed) + row
-// count, for the Phase 2 §6 gate-1 footprint projection.
+// TableFootprint is one stellar.* table's compressed on-disk size and row count, for the Phase 2 gate-1 footprint projection.
 type TableFootprint struct {
 	Table string
 	Bytes uint64
@@ -136,8 +131,7 @@ func ReadGateCounts(ctx context.Context, addr string, from, to uint32) (GateCoun
 	return c, nil
 }
 
-// ReadFootprint returns per-table compressed bytes + row counts for the
-// stellar database (active parts only).
+// ReadFootprint returns per-table compressed bytes and row counts for the stellar database (active parts only).
 func ReadFootprint(ctx context.Context, addr string) ([]TableFootprint, error) {
 	conn, err := openRead(ctx, addr)
 	if err != nil {

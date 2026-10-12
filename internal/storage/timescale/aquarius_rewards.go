@@ -11,10 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// AquariusRewardsKind discriminates the twelve rewards-gauge event
-// kinds (migration 0099). String values match the
-// aquarius_rewards_events.event_kind CHECK constraint and the
-// RewardsAction constants in internal/sources/aquarius/consumer.go.
+// AquariusRewardsKind discriminates the twelve rewards-gauge event kinds (migration 0099).
 type AquariusRewardsKind string
 
 // Rewards-gauge event kinds — see internal/sources/aquarius/README.md
@@ -34,8 +31,7 @@ const (
 	AquariusRewardsConfigRewards       AquariusRewardsKind = "config_rewards"
 )
 
-// IsValid reports whether k is one of the twelve known rewards-gauge
-// kinds. Mirrors the CHECK constraint in migration 0099.
+// IsValid reports whether k is one of the twelve known rewards-gauge kinds.
 func (k AquariusRewardsKind) IsValid() bool {
 	switch k {
 	case AquariusRewardsPoolState, AquariusRewardsClaimReward, AquariusRewardsSetRewardsConfig,
@@ -47,9 +43,7 @@ func (k AquariusRewardsKind) IsValid() bool {
 	return false
 }
 
-// AquariusRewardsEvent is one observed rewards-gauge event (any of the twelve kinds).
-// UserAddress and Amount are NULL when the kind does not carry them; Attributes holds the rest,
-// with i128 fields as decimal strings because NUMERIC inside jsonb is lossy (ADR-0003).
+// AquariusRewardsEvent is one rewards-gauge event (any of twelve kinds); UserAddress and Amount are NULL when the kind lacks them and i128 fields in Attributes are decimal strings because jsonb NUMERIC is lossy.
 type AquariusRewardsEvent struct {
 	ContractID      string
 	Ledger          uint32
@@ -63,10 +57,7 @@ type AquariusRewardsEvent struct {
 	Attributes      map[string]any
 }
 
-// InsertAquariusRewardsEvent appends one rewards-gauge event to aquarius_rewards_events.
-// Idempotent in row count on the table PK, but not inert in value: the upsert is guarded by
-// `derive_generation <= EXCLUDED.derive_generation`, so a replay at an equal-or-higher generation
-// overwrites stored values (letting a re-derive repair a wrong row) and a lower one is refused.
+// InsertAquariusRewardsEvent appends one rewards-gauge event, guarded by `derive_generation <= EXCLUDED.derive_generation` so an equal-or-higher replay overwrites values and a lower one is refused.
 func (s *Store) InsertAquariusRewardsEvent(ctx context.Context, e AquariusRewardsEvent) error {
 	if e.ContractID == "" {
 		return errors.New("timescale: InsertAquariusRewardsEvent: ContractID is empty")
@@ -143,22 +134,13 @@ var aquariusRewardsAllKinds = []AquariusRewardsKind{
 	AquariusRewardsSetRewardsState, AquariusRewardsGaugeAdd, AquariusRewardsConfigRewards,
 }
 
-// AquariusRewardsKindCount is one kind's LIFETIME (all-time, unwindowed)
-// event count. It carries no amount: one kind's rows are denominated in
-// many different tokens (per-claim reward token, per-pool share token), so
-// a per-kind sum of base units has no unit.
+// AquariusRewardsKindCount is one kind's LIFETIME (all-time, unwindowed) event count.
 type AquariusRewardsKindCount struct {
 	Kind   AquariusRewardsKind
 	Events int64
 }
 
-// AquariusRewardsLifetimeByKind reads the lifetime per-kind event count for all twelve
-// rewards-gauge kinds, in migration-0099 census order.
-//
-// A plain `GROUP BY event_kind` would visit every row of a multi-million-row hypertable. Instead
-// each kind literal is LATERAL-joined so Postgres plans twelve `event_kind = <literal>` scans on
-// aquarius_rewards_events_kind_ts_idx, each bounded to its own rows. The table is compressed with
-// segmentby (contract_id, event_kind), so the equality also skips whole non-matching segments.
+// AquariusRewardsLifetimeByKind reads the lifetime per-kind event count for all twelve rewards-gauge kinds, in migration-0099 census order.
 func (s *Store) AquariusRewardsLifetimeByKind(ctx context.Context) ([]AquariusRewardsKindCount, error) {
 	kinds := make([]string, len(aquariusRewardsAllKinds))
 	for i, k := range aquariusRewardsAllKinds {
@@ -200,31 +182,21 @@ func (s *Store) AquariusRewardsLifetimeByKind(ctx context.Context) ([]AquariusRe
 	return out, nil
 }
 
-// AquariusClaimRewardWindow is the windowed claim_reward drill-down. Volume exists only per
-// reward token (ByToken): tokens differ in decimals and carry no price here, so a cross-token
-// total would be meaningless.
+// AquariusClaimRewardWindow is the windowed claim_reward drill-down; volume exists only per reward token (ByToken) because tokens differ in decimals and have no price here.
 type AquariusClaimRewardWindow struct {
 	Events            int64
 	DistinctClaimants int64
 	ByToken           []AquariusClaimRewardTokenVolume
 }
 
-// AquariusClaimRewardTokenVolume is one reward token's share of the claim
-// window. Amount is base units of RewardToken (canonical.Amount, ADR-0003)
-// — never USD and never fed to VWAP. RewardToken is "" for a row whose
-// attributes carry no reward_token.
+// AquariusClaimRewardTokenVolume is one reward token's share of the claim window; Amount is base units (canonical.Amount), never USD and never fed to VWAP, and RewardToken is "" when absent.
 type AquariusClaimRewardTokenVolume struct {
 	RewardToken string
 	Events      int64
 	Amount      canonical.Amount
 }
 
-// AquariusRewardsClaimWindow reads the windowed claim_reward summary: event count and distinct
-// claimants overall, plus event count and summed amount per reward token (busiest first, ties by
-// token id). The event_kind equality plus ledger_close_time range is one sargable predicate on
-// aquarius_rewards_events_kind_ts_idx, and GROUPING SETS gives both levels from one scan.
-//
-// Returns (nil, nil) when no claim_reward fired in the window; windowDays <= 0 means 30.
+// AquariusRewardsClaimWindow reads the windowed claim_reward summary (overall count and distinct claimants, plus per-reward-token count and summed amount) in one GROUPING SETS scan on aquarius_rewards_events_kind_ts_idx.
 func (s *Store) AquariusRewardsClaimWindow(ctx context.Context, windowDays int) (*AquariusClaimRewardWindow, error) {
 	if windowDays <= 0 {
 		windowDays = 30
@@ -269,9 +241,7 @@ func (s *Store) AquariusRewardsClaimWindow(ctx context.Context, windowDays int) 
 	return &out, nil
 }
 
-// AquariusRewardsDailyClaimSeries reads the daily claim_reward event count over the trailing
-// windowDays, bounded by the same index predicate as AquariusRewardsClaimWindow. windowDays <= 0
-// means 90.
+// AquariusRewardsDailyClaimSeries reads the daily claim_reward event count over the trailing windowDays (<= 0 means 90) on the same index predicate as AquariusRewardsClaimWindow.
 func (s *Store) AquariusRewardsDailyClaimSeries(ctx context.Context, windowDays int) ([]BespokeSeriesPt, error) {
 	if windowDays <= 0 {
 		windowDays = 90

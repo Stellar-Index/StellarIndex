@@ -50,17 +50,12 @@ func contractInstanceBackfillQuery(table string) string {
 	SETTINGS max_threads = 4, max_memory_usage = 8589934592, max_execution_time = 1800`, table)
 }
 
-// BackfillContractInstanceChanges fills stellar.contract_instance_changes (the per-contract
-// instance-executable timeline behind the explorer's code-history + wasm-hash reads) from
-// ledger_entry_changes history in windowed, resumable INSERT...SELECT chunks. Same operator
-// contract as BackfillContractActiveLedgers: serialize on r1, run under run-heavy-job.sh.
+// BackfillContractInstanceChanges fills stellar.contract_instance_changes from ledger_entry_changes history in windowed, resumable chunks; serialize on r1, run under run-heavy-job.sh.
 func BackfillContractInstanceChanges(ctx context.Context, addr string, from, to, window uint32, logf func(format string, args ...any)) error {
 	return BackfillContractInstanceChangesInto(ctx, addr, ContractInstanceChangesTable, from, to, window, logf)
 }
 
-// BackfillContractInstanceChangesInto is BackfillContractInstanceChanges
-// against an explicit target: ContractInstanceChangesTable, or
-// ContractInstanceChangesV2Table during the key-rebuild cut-over.
+// BackfillContractInstanceChangesInto is BackfillContractInstanceChanges against an explicit target table (ContractInstanceChangesTable or the V2 table during the key-rebuild cut-over).
 func BackfillContractInstanceChangesInto(ctx context.Context, addr, table string, from, to, window uint32, logf func(format string, args ...any)) error {
 	if table != ContractInstanceChangesTable && table != ContractInstanceChangesV2Table {
 		return fmt.Errorf("clickhouse: instance-changes backfill: table %q is not %s or %s",
@@ -82,8 +77,7 @@ func BackfillContractInstanceChangesInto(ctx context.Context, addr, table string
 		}, logf)
 }
 
-// InstanceBackfillStart is the state a genesis watermark must be proven
-// against, read BEFORE the backfill runs.
+// InstanceBackfillStart is the state a genesis watermark must be proven against, read BEFORE the backfill runs.
 type InstanceBackfillStart struct {
 	// RawMaxLedger is max(ledger_seq) over stellar.ledgers, holes included.
 	RawMaxLedger uint32
@@ -126,11 +120,7 @@ func ReadInstanceBackfillStart(ctx context.Context, addr, table string) (Instanc
 	return st, nil
 }
 
-// SetContractInstanceChangesGenesisWatermark records that the named instance-timeline table is
-// complete from the lake's first ledger through `thru`, in entry_history_watermark. Readers trust
-// a per-contract miss instead of scanning ledger_entry_changes, so call only after a backfill
-// proven complete. A thru at or below the stored mark records nothing: the table is a
-// ReplacingMergeTree, so a later, lower row would win after a merge.
+// SetContractInstanceChangesGenesisWatermark records the instance-timeline table complete from the first ledger through `thru` (readers then trust per-contract misses), so call only after a proven-complete backfill; a thru at or below the stored mark records nothing.
 func SetContractInstanceChangesGenesisWatermark(ctx context.Context, addr, table string, thru uint32) error {
 	if table != ContractInstanceChangesTable && table != ContractInstanceChangesV2Table {
 		return fmt.Errorf("clickhouse: instance-changes watermark: table %q is not %s or %s",

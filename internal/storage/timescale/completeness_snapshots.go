@@ -7,8 +7,7 @@ import (
 	"time"
 )
 
-// CompletenessSnapshot is one source's completeness verdict
-// (migration 0052, ADR-0033 Phase 6).
+// CompletenessSnapshot is one source's completeness verdict.
 type CompletenessSnapshot struct {
 	Source      string
 	Genesis     uint32
@@ -132,11 +131,7 @@ func execCompletenessSnapshot(ctx context.Context, ex snapshotExecer, snap Compl
 	return n > 0, nil
 }
 
-// UpsertCompletenessSnapshot writes (or refreshes) a source's verdict.
-//
-// It does NOT report whether the never-regress guard rejected the write; a caller whose next step
-// depends on the verdict having been STORED (clearing a dirty window) must use
-// [Store.PublishCompletenessVerdict].
+// UpsertCompletenessSnapshot writes a source's verdict without reporting whether the never-regress guard rejected it; callers clearing a dirty window on the verdict must use [Store.PublishCompletenessVerdict].
 func (s *Store) UpsertCompletenessSnapshot(ctx context.Context, snap CompletenessSnapshot) error {
 	if _, err := execCompletenessSnapshot(ctx, s.db, snap); err != nil {
 		return fmt.Errorf("timescale: UpsertCompletenessSnapshot (%s): %w", snap.Source, err)
@@ -144,10 +139,7 @@ func (s *Store) UpsertCompletenessSnapshot(ctx context.Context, snap Completenes
 	return nil
 }
 
-// DirtyWindowClear identifies the replay-rewind dirty window a verdict has
-// earned the right to clear: the exact row the run read (bounds AND
-// updated_at), matching clearProjectionDirtyWindowQuery's optimistic
-// predicate.
+// DirtyWindowClear identifies the replay-rewind dirty window a verdict may clear: the exact row the run read (bounds AND updated_at), matching clearProjectionDirtyWindowQuery's optimistic predicate.
 type DirtyWindowClear struct {
 	From, To  uint32
 	UpdatedAt time.Time
@@ -167,17 +159,7 @@ type VerdictPublication struct {
 	WindowCleared bool
 }
 
-// PublishCompletenessVerdict writes a source's verdict and, only if that write was APPLIED,
-// clears the replay-rewind dirty window it discharged, in ONE transaction.
-//
-// Two statements would not do: a run with `-to` below the stored tip is rejected by the
-// never-regress guard with a nil error, and the caller would delete the window on a verdict that
-// was never stored. The delete is therefore gated on rows-affected and shares the transaction, so
-// a crash between the two rolls BOTH back (fail-closed: the next run re-verifies). Under READ
-// COMMITTED a blocked verdict re-evaluates the guard against the committed row, so Applied
-// reflects the row as it really is.
-//
-// clearWindow == nil publishes the verdict alone.
+// PublishCompletenessVerdict writes a verdict and, only if that write was APPLIED, clears the dirty window it discharged in ONE transaction, because the never-regress guard rejects a lower-`-to` run with a nil error.
 func (s *Store) PublishCompletenessVerdict(ctx context.Context, snap CompletenessSnapshot, clearWindow *DirtyWindowClear) (VerdictPublication, error) {
 	var out VerdictPublication
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -259,9 +241,7 @@ func (s *Store) ListCompletenessSnapshots(ctx context.Context) ([]CompletenessSn
 	return out, nil
 }
 
-// DeleteCompletenessSnapshots removes the verdict rows of the named sources, which
-// compute-completeness has itself classified as not applicable on a non-pubnet network (never
-// arbitrary input). A nil or empty list is a no-op.
+// DeleteCompletenessSnapshots removes the verdict rows of sources compute-completeness classified as not applicable on a non-pubnet network; a nil or empty list is a no-op.
 func (s *Store) DeleteCompletenessSnapshots(ctx context.Context, sources []string) (int64, error) {
 	if len(sources) == 0 {
 		return 0, nil

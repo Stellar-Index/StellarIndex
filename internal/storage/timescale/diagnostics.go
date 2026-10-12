@@ -9,8 +9,7 @@ import (
 	"time"
 )
 
-// FXCoverage is how much FX history fx_quotes holds, for /v1/diagnostics/ingestion. It is
-// zero-valued when the table is empty; handlers render that as "—", not an error.
+// FXCoverage is how much FX history fx_quotes holds, for /v1/diagnostics/ingestion; zero-valued when the table is empty and rendered as "—", not an error.
 type FXCoverage struct {
 	// EarliestQuote / LatestQuote are MIN/MAX(bucket). Zero
 	// values when fx_quotes is empty.
@@ -25,10 +24,7 @@ type FXCoverage struct {
 	CurrenciesCount int
 }
 
-// FXCoverageStats returns the current coverage state of the
-// fx_quotes hypertable. A single GROUPING() aggregate over the
-// hypertable; cheap (~1ms on a populated table because the
-// hypertable's index sits on bucket).
+// FXCoverageStats returns the current coverage state of the fx_quotes hypertable.
 func (s *Store) FXCoverageStats(ctx context.Context) (FXCoverage, error) {
 	const q = `
 		SELECT
@@ -59,10 +55,7 @@ func (s *Store) FXCoverageStats(ctx context.Context) (FXCoverage, error) {
 	return out, nil
 }
 
-// SupplyCoverage counts assets with a supply snapshot and when the latest was written, so a
-// stalled supply observer shows in LastSnapshotAt. Classic vs SEP-41 splits asset_key by prefix
-// (SEP-41 ids start with "C"; classic are "native" or "CODE:G-strkey"), mirroring the three
-// supply algorithms (XLM / classic / SEP-41).
+// SupplyCoverage counts assets with a supply snapshot and when the latest was written, so a stalled supply observer shows in LastSnapshotAt.
 type SupplyCoverage struct {
 	ClassicAssets  int
 	SEP41Assets    int
@@ -70,9 +63,7 @@ type SupplyCoverage struct {
 	LatestLedger   int64
 }
 
-// LedgerRangeToTimeRange returns MIN/MAX(ts) of trades in [fromLedger, toLedger], translating a
-// backfill ledger chunk into the CAGG refresh range. ErrNotFound means nothing to refresh, not a
-// failure. It uses trades_source_ledger_idx plus a per-chunk scan.
+// LedgerRangeToTimeRange returns MIN/MAX(ts) of trades in [fromLedger, toLedger] to turn a backfill chunk into a CAGG refresh range; ErrNotFound means nothing to refresh.
 func (s *Store) LedgerRangeToTimeRange(ctx context.Context, fromLedger, toLedger uint32) (time.Time, time.Time, error) {
 	const q = `SELECT MIN(ts), MAX(ts) FROM trades WHERE ledger BETWEEN $1 AND $2`
 	var minTs, maxTs sql.NullTime
@@ -85,10 +76,7 @@ func (s *Store) LedgerRangeToTimeRange(ctx context.Context, fromLedger, toLedger
 	return minTs.Time, maxTs.Time, nil
 }
 
-// LedgerRangeToOracleTimeRange is [Store.LedgerRangeToTimeRange] over
-// `oracle_updates`, the root of [OracleCAGGs]. ts is the publication
-// time those views bucket on. Off-chain rows carry ledger 0, so they
-// never fall in a backfill range.
+// LedgerRangeToOracleTimeRange is [Store.LedgerRangeToTimeRange] over `oracle_updates`, the root of [OracleCAGGs]; off-chain rows carry ledger 0 so they never fall in a backfill range.
 func (s *Store) LedgerRangeToOracleTimeRange(ctx context.Context, fromLedger, toLedger uint32) (time.Time, time.Time, error) {
 	const q = `SELECT MIN(ts), MAX(ts) FROM oracle_updates WHERE ledger BETWEEN $1 AND $2`
 	var minTs, maxTs sql.NullTime
@@ -101,16 +89,7 @@ func (s *Store) LedgerRangeToOracleTimeRange(ctx context.Context, fromLedger, to
 	return minTs.Time, maxTs.Time, nil
 }
 
-// TradesCAGGs is the ORDERED set of every continuous aggregate rooted on `trades`, the ONE list
-// the refresh allow-list, [CAGGsLiveForever] and the usd_volume restamp derive from.
-// TestTradesCAGGsMatchCatalog holds it against the migrated schema.
-//
-// twap_1h / twap_1d are built on prices_1m's materialisation, so prices_1m must lead and the
-// twaps trail or they re-materialise from stale input.
-//
-// MinWindow is Timescale's minimum refresh window: refresh_continuous_aggregate rejects
-// (SQLSTATE 22023) a window narrower than 2x bucket width. Callers pad up to it with
-// [PadRefreshWindow]; padded buckets hold no new trades, so they are nearly free.
+// TradesCAGGs is the ORDERED set of every continuous aggregate rooted on `trades`, the single list the refresh allow-list, [CAGGsLiveForever] and the usd_volume restamp derive from; twap_* build on prices_1m so it must come first.
 var TradesCAGGs = []CAGGSpec{
 	// Must lead: twap_1h / twap_1d are materialised FROM this one.
 	{Name: "prices_1m", MinWindow: 2 * time.Minute, Bucket: time.Minute},
@@ -130,10 +109,7 @@ var TradesCAGGs = []CAGGSpec{
 	{Name: "twap_1d", MinWindow: 3 * 24 * time.Hour, Bucket: 24 * time.Hour},
 }
 
-// OracleCAGGs is every continuous aggregate rooted on `oracle_updates`, order-free since all
-// read it directly. Their policies reach back only 5 minutes to 3 months, so a backfilled range
-// reaches them only through an explicit refresh. TestTradesCAGGsMatchCatalog holds the list to
-// the schema.
+// OracleCAGGs is every continuous aggregate rooted on `oracle_updates` (order-free); their policies reach back only 5 minutes to 3 months, so a backfilled range needs an explicit refresh.
 var OracleCAGGs = []CAGGSpec{
 	{Name: "oracle_prices_1m", MinWindow: 2 * time.Minute, Bucket: time.Minute},
 	{Name: "oracle_prices_15m", MinWindow: 30 * time.Minute, Bucket: 15 * time.Minute},
@@ -145,13 +121,9 @@ var OracleCAGGs = []CAGGSpec{
 }
 
 // CAGGsOnPrices1m are the [TradesCAGGs] views materialised FROM prices_1m, not `trades`.
-// Retention drops prices_1m chunks without an invalidation, so refreshing one of these over
-// dropped, un-rebuilt minute rows deletes its history. TestTradesCAGGsMatchCatalog holds the
-// list to the schema.
 var CAGGsOnPrices1m = []string{"twap_1h", "twap_1d"}
 
-// SupplyCAGG is the continuous aggregate over asset_supply_history. Its policy reaches back only
-// 7 days, so older re-derived snapshots need an explicit refresh.
+// SupplyCAGG is the continuous aggregate over asset_supply_history; its policy reaches back only 7 days, so older re-derived snapshots need an explicit refresh.
 var SupplyCAGG = CAGGSpec{Name: "supply_1d", MinWindow: 3 * 24 * time.Hour}
 
 // allowedCAGGViews is the allow-list of view names RefreshContinuousAggregate accepts. The name is
@@ -172,15 +144,6 @@ var allowedCAGGViews = func() map[string]bool {
 // IsRefreshableCAGG reports whether RefreshContinuousAggregate accepts viewName.
 func IsRefreshableCAGG(viewName string) bool { return allowedCAGGViews[viewName] }
 
-// CAGGsLiveForever is the ORDERED set of served price rungs, one per [HistoryGranularity]: the
-// prices_* subset of [TradesCAGGs] the backfill refreshes after each chunk. Every served rung
-// must be here, because the policy refresher only rolls forward and an omitted rung is a
-// permanent hole in every backfilled range.
-//
-// Only prices_1m has a retention policy (disabled by default); where armed, refreshing an older
-// chunk is wasted work, not a fault. twap_1h / twap_1d are built FROM prices_1m, so they are not
-// rungs, but [PlanCAGGRefresh] refreshes them after forcing prices_1m over their window.
-//
 // CAGGSpec names a continuous aggregate and its minimum refresh window.
 type CAGGSpec struct {
 	Name      string
@@ -190,10 +153,10 @@ type CAGGSpec struct {
 	Bucket time.Duration
 }
 
-// MonthBucket is the [CAGGSpec.Bucket] of a view bucketed by
-// time_bucket('1 month', ts, 'UTC'), which has no fixed width.
+// MonthBucket is the [CAGGSpec.Bucket] of a view bucketed by time_bucket('1 month', ts, 'UTC'), which has no fixed width.
 const MonthBucket time.Duration = -1
 
+// CAGGsLiveForever is the ordered set of served prices_* rungs the backfill refreshes after each chunk; an omitted rung is a permanent hole in every backfilled range.
 var CAGGsLiveForever = func() []CAGGSpec {
 	out := make([]CAGGSpec, 0, len(TradesCAGGs))
 	for _, c := range TradesCAGGs {
@@ -204,8 +167,7 @@ var CAGGsLiveForever = func() []CAGGSpec {
 	return out
 }()
 
-// PadRefreshWindow expands [from, to] to span at least minWindow, centered on the original
-// midpoint, to satisfy the two-bucket minimum. Padding materializes as empty buckets (cheap).
+// PadRefreshWindow expands [from, to] to span at least minWindow, centered on the original midpoint, to satisfy the two-bucket minimum.
 func PadRefreshWindow(from, to time.Time, minWindow time.Duration) (time.Time, time.Time) {
 	span := to.Sub(from)
 	if span >= minWindow {
@@ -215,36 +177,22 @@ func PadRefreshWindow(from, to time.Time, minWindow time.Duration) (time.Time, t
 	return from.Add(-pad), to.Add(pad)
 }
 
-// RefreshContinuousAggregate materialises a continuous aggregate over [from, to] via
-// refresh_continuous_aggregate, blocking until done. It is required after backfill because the
-// policy refresher only rolls FORWARD within its look-back window. Idempotent; an unknown view
-// name fails loudly.
-//
-// Every call runs under a statement_timeout from [CAGGRefreshTimeout] on the pinned connection,
-// so a wedged refresh fails THIS call with a [*CAGGRefreshTimeoutError] instead of holding its
-// parallel siblings behind ingest.caggRefreshMu.
+// RefreshContinuousAggregate materialises a continuous aggregate over [from, to] and blocks until done; required after backfill because the policy refresher only rolls FORWARD, idempotent, and an unknown view fails loudly.
 func (s *Store) RefreshContinuousAggregate(ctx context.Context, viewName string, from, to time.Time) error {
 	return s.RefreshContinuousAggregateWithTimeout(ctx, viewName, from, to, CAGGRefreshTimeout(to.Sub(from)))
 }
 
-// RefreshContinuousAggregateWithTimeout is [Store.RefreshContinuousAggregate]
-// under an explicit per-CALL statement_timeout. timeout must be positive:
-// an unbounded refresh is the defect this bound exists to remove, so
-// there is deliberately no "0 disables it" arm.
+// RefreshContinuousAggregateWithTimeout is [Store.RefreshContinuousAggregate] under a per-CALL statement_timeout; timeout must be positive, with deliberately no "0 disables" arm.
 func (s *Store) RefreshContinuousAggregateWithTimeout(ctx context.Context, viewName string, from, to time.Time, timeout time.Duration) error {
 	return s.refreshCAGG(ctx, viewName, from, to, timeout, false)
 }
 
-// RefreshContinuousAggregateForced is [Store.RefreshContinuousAggregate] with `force => true`,
-// recomputing the whole window rather than only invalidated ranges. A retention drop logs no
-// invalidation, so over a dropped range only the forced form restores rows.
+// RefreshContinuousAggregateForced is [Store.RefreshContinuousAggregate] with `force => true`, recomputing the whole window; a retention drop logs no invalidation, so only the forced form restores dropped ranges.
 func (s *Store) RefreshContinuousAggregateForced(ctx context.Context, viewName string, from, to time.Time) error {
 	return s.refreshCAGG(ctx, viewName, from, to, CAGGRefreshTimeout(to.Sub(from)), true)
 }
 
-// Prices1mEarliestBucket returns prices_1m's earliest materialised bucket
-// (the view is materialized_only, migration 0172), [ErrNotFound] when it
-// holds none. Below it, minute rows were dropped or never materialised.
+// Prices1mEarliestBucket returns prices_1m's earliest materialised bucket (the view is materialized_only), [ErrNotFound] when empty; below it minute rows were dropped or never materialised.
 func (s *Store) Prices1mEarliestBucket(ctx context.Context) (time.Time, error) {
 	var b time.Time
 	err := s.db.QueryRowContext(ctx, `SELECT bucket FROM prices_1m ORDER BY bucket LIMIT 1`).Scan(&b)
@@ -257,9 +205,7 @@ func (s *Store) Prices1mEarliestBucket(ctx context.Context) (time.Time, error) {
 	return b, nil
 }
 
-// Prices1mRetentionArmed reports whether migration 0156's retention
-// policy on prices_1m is scheduled. It matches on the view name, as that
-// migration requires; no policy reads as not armed.
+// Prices1mRetentionArmed reports whether the retention policy on prices_1m is scheduled, matched on the view name; no policy reads as not armed.
 func (s *Store) Prices1mRetentionArmed(ctx context.Context) (bool, error) {
 	var armed bool
 	err := s.db.QueryRowContext(ctx, `
@@ -329,20 +275,14 @@ func isConcurrentRefreshErr(err error) bool {
 		strings.Contains(err.Error(), "concurrent refresh"))
 }
 
-// CAGGCoverage is the time range and row count of prices_1h, the coarsest rung every deployment
-// has materialised. Nothing in prices_1h is pruned, so `trades`, prices_1h and this stat span the
-// same history; prices_1m may not, where its retention policy is armed.
-//
-// A wide range says the backfill is healthy for prices_1h alone, NOT that finer grains are
-// materialised over the same span (see [CAGGsLiveForever]).
+// CAGGCoverage is the time range and row count of prices_1h, the coarsest rung every deployment has materialised; nothing there is pruned, whereas prices_1m may be where retention is armed.
 type CAGGCoverage struct {
 	EarliestBucket time.Time
 	LatestBucket   time.Time
 	BucketCount    int64
 }
 
-// CAGGCoverageStats returns the earliest and latest prices_1h buckets, empty before the CAGG is
-// first materialised.
+// CAGGCoverageStats returns the earliest and latest prices_1h buckets, empty before the CAGG is first materialised.
 func (s *Store) CAGGCoverageStats(ctx context.Context) (CAGGCoverage, error) {
 	// MIN/MAX use the bucket index. An exact COUNT(*) over prices_1h is a full scan of ~175M rows,
 	// and /v1/diagnostics/ingestion polls this every ~15s. BucketCount is only a coverage stat, so
@@ -374,10 +314,7 @@ func (s *Store) CAGGCoverageStats(ctx context.Context) (CAGGCoverage, error) {
 	return out, nil
 }
 
-// BackfillCoverage is one per-source row: the earliest and latest ledgers with any trade, plus the
-// trade count. Gaps inside that range are not detected; that would need a much heavier
-// distinct-ledger scan. CEX/FX sources report ledgers (0, 0) because their trades carry no
-// Stellar ledger, so only TradeCount is meaningful.
+// BackfillCoverage is one per-source row of earliest and latest trade ledgers plus trade count; gaps inside the range are not detected, and CEX/FX sources report ledgers (0, 0) so only TradeCount is meaningful.
 type BackfillCoverage struct {
 	Source         string
 	EarliestLedger int64
@@ -385,10 +322,7 @@ type BackfillCoverage struct {
 	TradeCount     int64
 }
 
-// BackfillCoverageStats is intentionally a no-op that exists only to satisfy the CoverageCache
-// reader interface. Coverage is cursor-first (backfill-cursor union plus source_entry_counts), and
-// a per-source `trades` scan is unsafe: oracle sources have no `trades` rows, so it cannot
-// chunk-exclude and walks the whole hypertable to the statement timeout.
+// BackfillCoverageStats is intentionally a no-op that exists only to satisfy the CoverageCache reader interface.
 func (s *Store) BackfillCoverageStats(_ context.Context) ([]BackfillCoverage, error) {
 	return nil, nil
 }
@@ -422,10 +356,7 @@ const supplyCoverageStatsQuery = `
 	WHERE asset_key IS NOT NULL
 `
 
-// SupplyCoverageStats counts assets ever given a supply (SEP-41 vs classic) and the newest
-// snapshot's time and ledger. There is no time floor: an asset whose last snapshot is old still
-// has a supply, so a floor would under-count. The asset set is a loose index scan over
-// asset_supply_history_asset_time_idx, one seek per distinct asset_key per chunk, not a full sort.
+// SupplyCoverageStats counts assets ever given a supply (SEP-41 vs classic) and the newest snapshot's time and ledger; deliberately no time floor, since an asset with an old snapshot still has a supply.
 func (s *Store) SupplyCoverageStats(ctx context.Context) (SupplyCoverage, error) {
 	var (
 		sep41, classic int
@@ -451,10 +382,7 @@ func (s *Store) SupplyCoverageStats(ctx context.Context) (SupplyCoverage, error)
 	return out, nil
 }
 
-// SourceEntryCounts returns the per-source running tally from `source_entry_counts` (see
-// [Store.SeedSourceEntryCounts]), keyed by source. It scans a tiny tally table and never touches
-// the trades/oracle_updates hypertables, so it stays fast during an all-time backfill, which is
-// why the counter exists. Powers the `entries` column on /v1/diagnostics/ingestion.
+// SourceEntryCounts returns the per-source running tally from `source_entry_counts`, keyed by source; it never touches the trades/oracle_updates hypertables so it stays fast during an all-time backfill.
 func (s *Store) SourceEntryCounts(ctx context.Context) (map[string]int64, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT source, entry_count FROM source_entry_counts`)
@@ -644,12 +572,6 @@ func (s *Store) SeedSourceEntryCounts(ctx context.Context) (int64, error) {
 }
 
 // BumpSourceEntryCount adds n to one source's running tally (the first writer creates the row).
-// Callers differ in replay-safety:
-//
-//   - the trades + oracle_updates + fx_quotes insert paths bump INLINE inside the idempotent
-//     INSERT (`HAVING count(*) > 0`), so a re-walk over stored rows is a no-op.
-//   - pipeline/sink.go::bumpEntryCount adds n = 1 per event UNCONDITIONALLY, so re-driving a sink
-//     over an ingested range double-counts until [Store.SeedSourceEntryCounts] SET-resets it.
 func (s *Store) BumpSourceEntryCount(ctx context.Context, source string, n int64) error {
 	if n <= 0 {
 		return nil

@@ -92,9 +92,7 @@ var spectraKindSpecs = map[SpectraEventKind]spectraKindSpec{
 
 var spectraOrderIDPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
-// SpectraEvent is one `spectra_events` row. Which optional fields a kind
-// carries is fixed by migration 0210; the writer sends the rest as NULL
-// and refuses a non-zero value in a field the kind does not carry.
+// SpectraEvent is one spectra_events row; the optional fields a kind carries are fixed by migration 0210, the writer sends the rest as NULL and refuses a non-zero value in a field the kind does not carry.
 type SpectraEvent struct {
 	ContractID      string
 	Ledger          uint32
@@ -128,11 +126,7 @@ type SpectraEvent struct {
 	YieldInIBT  *canonical.Amount
 }
 
-// InsertSpectraEvent writes one spectra_events row, idempotent on (ledger_close_time, contract_id,
-// ledger, tx_hash, op_index, event_index) under the derive_generation guard: an equal-or-higher
-// generation overwrites, a lower one is refused. When the row is or replaces a pt_deployed /
-// yt_deployed / pt_added row, the markets it names are re-derived in the same transaction, so a
-// rebuild leaves no stale market and a refused replay touches neither table.
+// InsertSpectraEvent writes one spectra_events row, idempotent on its PK under the derive_generation guard: an equal-or-higher generation overwrites, a lower one is refused.
 func (s *Store) InsertSpectraEvent(ctx context.Context, e SpectraEvent) error {
 	args, err := spectraEventArgs(e)
 	if err != nil {
@@ -404,8 +398,7 @@ func refreshSpectraMarket(ctx context.Context, tx *sql.Tx, pt string) error {
 	return nil
 }
 
-// SpectraMarket is one `spectra_markets` row. An empty string or zero
-// value means that column's discovery event has not been recorded yet.
+// SpectraMarket is one spectra_markets row; an empty string or zero value means that column's discovery event has not been recorded yet.
 type SpectraMarket struct {
 	PT              string
 	YT              string
@@ -419,8 +412,7 @@ type SpectraMarket struct {
 	ListedLedger uint32
 }
 
-// SpectraMarkets returns every recorded market ordered by PT.
-// Empty-safe: (nil, nil) before any market is recorded.
+// SpectraMarkets returns every recorded market ordered by PT. Empty-safe: (nil, nil) before any market is recorded.
 func (s *Store) SpectraMarkets(ctx context.Context) ([]SpectraMarket, error) {
 	const q = `
         SELECT pt, yt, ibt, factory_id, deployer, duration_s,

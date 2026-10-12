@@ -14,18 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// VWAPUSDFXResolver implements [USDVolumeFXResolver] against the `prices_1m` aggregate: an
-// on-chain quote asset's latest VWAP against any operator-declared USD peg, treating the peg as
-// exactly $1. The cache key is (asset, 1-minute bucket), matching the CAGG's resolution.
-//
-// Three routes, tried in order (docs/operations/usd-volume-coverage-plan.md):
-//
-//  1. FIAT assets via `fx_quotes`, since prices_1m holds crypto markets only
-//     ([VWAPUSDFXResolver.usdPriceForFiat]).
-//  2. Direct `<asset>/<peg>` VWAP over the asset's alias forms and the alias-complete peg set
-//     ([VWAPUSDFXResolver.queryDB]).
-//  3. The XLM bridge `<asset>/XLM x XLM/USD`, as most Stellar tokens have an XLM market but no
-//     stablecoin one ([VWAPUSDFXResolver.bridgeViaXLM]).
+// VWAPUSDFXResolver implements USDVolumeFXResolver against prices_1m: an on-chain quote asset's latest VWAP against any operator-declared USD peg, treating the peg as exactly $1, cached per (asset, 1-minute bucket).
 type VWAPUSDFXResolver struct {
 	store *Store
 
@@ -233,13 +222,7 @@ func usdPegForms(classicPegs []string, sacWrappers map[string]string) ([]string,
 	return forms, nil
 }
 
-// USDPriceAt implements [USDVolumeFXResolver]: the USD price of `asset` at-or-before `at`, each
-// configured peg treated as exactly $1.
-//
-// It returns ("", false, nil) when no peg market has a row in the lookup window, the newest row is
-// older than Freshness, the market is below the substance floor at the trade's time
-// ([VWAPUSDFXResolver.substanceAllows]), or no pegs are configured. Real DB errors propagate so
-// the caller can surface them; the trade still inserts with usd_volume NULL.
+// USDPriceAt implements [USDVolumeFXResolver]: the USD price of `asset` at-or-before `at`, each configured peg treated as exactly $1.
 func (r *VWAPUSDFXResolver) USDPriceAt(ctx context.Context, asset canonical.Asset, at time.Time) (string, bool, error) {
 	// Fiat resolves from fx_quotes (see [VWAPUSDFXResolver.usdPriceForFiat]). This MUST precede
 	// the peg check: pricing EUR needs no Stellar USD-peg market.
@@ -315,10 +298,7 @@ func (r *VWAPUSDFXResolver) resolveRate(ctx context.Context, asset canonical.Ass
 	return rate, nil
 }
 
-// ThinMarketRefused reports whether asset had a candidate rate at `at` that
-// the substance gate refused and none it allowed, read from the verdicts the
-// last USDPriceAt call cached (no query). It only relabels coverage metrics;
-// usd_volume stays NULL either way.
+// ThinMarketRefused reports whether asset had a candidate rate at `at` that the substance gate refused and none it allowed, from verdicts cached by the last USDPriceAt call; usd_volume stays NULL either way.
 func (r *VWAPUSDFXResolver) ThinMarketRefused(asset canonical.Asset, at time.Time) bool {
 	if !r.substanceGate || isXLMAsset(asset) {
 		return false
@@ -801,15 +781,7 @@ func directLegQuery(bounded bool) string {
 	`
 }
 
-// InstallUSDVolumeResolution wires BOTH `usd_volume` tiers onto a store in one call: the
-// [USDVolumeQuoteSpec] (declared USD-pegged classics + SAC wrappers) and the [VWAPUSDFXResolver]
-// (FX-anchored rates and fiat quotes).
-//
-// Every trade-writing process must install BOTH. A partial install is destructive: the trade
-// upserts set `usd_volume = EXCLUDED.usd_volume` gated only by `derive_generation`, so a re-derive
-// without the resolvers writes NULL over correct values.
-//
-// Empty `classicUSDPegs` is a no-op (both tiers stay nil).
+// InstallUSDVolumeResolution wires BOTH usd_volume tiers (USDVolumeQuoteSpec and VWAPUSDFXResolver) onto a store in one call; every trade-writing process must install both.
 func InstallUSDVolumeResolution(store *Store, classicUSDPegs []string, sacWrappers map[string]string) error {
 	if store == nil {
 		return errors.New("timescale: InstallUSDVolumeResolution: store is required")

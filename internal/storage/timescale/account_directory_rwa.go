@@ -17,14 +17,7 @@ import (
 // CHECK accepts both strkey forms). The contract arm keys on the contract address, under the same
 // scam vocabulary and a NARROWER recognition vocabulary.
 
-// DirectoryRWACensus accounts for every curated directory row the contract-arm scan walked: the
-// starting population and a named bucket for each way a row stopped short of becoming a candidate,
-// as [Sep1BoundCensus] does. The arithmetic closes, and [DirectoryRWACensus.Check] proves it:
-//
-//	Entries   = Accounts + Contracts
-//	Contracts = ContractsScamFlagged + ContractsWithoutIssuingTag +
-//	            ContractsRecognised
-//	Accounts >= AccountsIssuingTagged >= AccountsIssuingWithoutAsset
+// DirectoryRWACensus accounts for every directory row the contract-arm scan walked, with a named bucket per way a row stopped short; [DirectoryRWACensus.Check] proves the arithmetic closes.
 type DirectoryRWACensus struct {
 	// Entries is every row in the curated directory.
 	Entries int
@@ -56,9 +49,7 @@ type DirectoryRWACensus struct {
 	AccountsIssuingWithoutAsset int
 }
 
-// Check returns the reason the census does not balance, or "" when it does. Exported like
-// [Sep1BoundCensus.Check] so the publishing surface can declare its accounting UNBALANCED on the
-// wire rather than serve figures a reader cannot reconcile.
+// Check returns the reason the census does not balance, or "" when it does.
 func (c DirectoryRWACensus) Check() string {
 	if got := c.Accounts + c.Contracts; got != c.Entries {
 		return fmt.Sprintf("address forms sum to %d, not Entries %d", got, c.Entries)
@@ -81,14 +72,7 @@ func (c DirectoryRWACensus) Check() string {
 // when it binds, the census says so and the surface reports truncation, never a silently short set.
 const directoryRecognisedScanCap = 512
 
-// DirectoryRecognisedContracts returns the curated directory rows whose
-// address is a CONTRACT carrying at least one of `issuingTags` and no
-// scam-class tag, together with the census of the whole directory.
-//
-// The issuing vocabulary is a PARAMETER because it belongs to internal/rwa, which imports this
-// package; the scam vocabulary is read locally to avoid the drift [DirectoryScamFlagTags] warns
-// about. Rows are ordered by address so a truncated scan is deterministic; tag matching is
-// case-insensitive on trimmed tags, as in pricingguard and the listing rank expression.
+// DirectoryRecognisedContracts returns directory CONTRACT rows with an `issuingTags` tag and no scam-class tag, plus the whole-directory census; the issuing vocabulary is a parameter because internal/rwa imports this package.
 func (s *Store) DirectoryRecognisedContracts(
 	ctx context.Context, issuingTags []string,
 ) ([]DirectoryEntry, DirectoryRWACensus, error) {
@@ -206,9 +190,7 @@ func (s *Store) directoryRWACensus(ctx context.Context, issuingTags []string) (D
 	return c, nil
 }
 
-// DirectoryRecognisedIssuersWithoutAsset names the curated directory ACCOUNTS with an issuing tag
-// and no scam tag for which this index holds no classic asset (the entities counted by
-// [DirectoryRWACensus.AccountsIssuingWithoutAsset]). It admits nothing and feeds no valuation.
+// DirectoryRecognisedIssuersWithoutAsset names recognised directory ACCOUNTS for which this index holds no classic asset; it admits nothing and feeds no valuation.
 func (s *Store) DirectoryRecognisedIssuersWithoutAsset(
 	ctx context.Context, issuingTags []string, limit int,
 ) ([]DirectoryEntry, error) {

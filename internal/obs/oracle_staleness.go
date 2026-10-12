@@ -12,12 +12,10 @@ import (
 // State is process-global like the metrics: the oracle sink is reached through free
 // functions that carry no config.
 
-// OracleStaleBudgetMultiplier is the alert's historical `10 × resolution` threshold;
-// changing it re-thresholds every un-overridden asset, so prefer a per-asset override.
+// OracleStaleBudgetMultiplier is the alert's historical `10 x resolution` threshold; changing it re-thresholds every un-overridden asset, so prefer a per-asset override.
 const OracleStaleBudgetMultiplier = 10
 
-// OracleStalenessOverride is one operator budget; Asset is the canonical metric label
-// ("crypto:DAI", "native"), not the oracle's raw symbol.
+// OracleStalenessOverride is one operator budget; Asset is the canonical metric label ("crypto:DAI", "native"), not the oracle's raw symbol.
 type OracleStalenessOverride struct {
 	Source        string
 	Asset         string
@@ -38,8 +36,7 @@ var oracleStaleness = struct {
 	byAsset:  map[oracleStalenessKey]float64{},
 }
 
-// DeclareOracleResolution publishes a source's cadence and derives its default budget
-// together, so no published age lacks a budget to be judged by.
+// DeclareOracleResolution publishes a source's cadence and derives its default budget together, so no published age lacks a budget.
 func DeclareOracleResolution(source string, resolutionSeconds float64) {
 	OracleResolutionSeconds.WithLabelValues(source).Set(resolutionSeconds)
 
@@ -48,12 +45,10 @@ func DeclareOracleResolution(source string, resolutionSeconds float64) {
 	oracleStaleness.bySource[source] = OracleStaleBudgetMultiplier * resolutionSeconds
 }
 
-// OracleHeartbeatGrace is the slack added to a heartbeat-driven source's
-// heartbeat before a silent asset tickets.
+// OracleHeartbeatGrace is the slack added to a heartbeat-driven source's heartbeat before a silent asset tickets.
 const OracleHeartbeatGrace = 2 * 3600
 
-// DeclareOracleHeartbeat budgets a heartbeat source at heartbeat + [OracleHeartbeatGrace];
-// a multiple of the heartbeat would let a dead feed hide for days.
+// DeclareOracleHeartbeat budgets a heartbeat source at heartbeat + [OracleHeartbeatGrace]; a multiple of the heartbeat would let a dead feed hide for days.
 func DeclareOracleHeartbeat(source string, heartbeatSeconds float64) {
 	OracleResolutionSeconds.WithLabelValues(source).Set(heartbeatSeconds)
 
@@ -62,9 +57,7 @@ func DeclareOracleHeartbeat(source string, heartbeatSeconds float64) {
 	oracleStaleness.bySource[source] = heartbeatSeconds + OracleHeartbeatGrace
 }
 
-// SetOracleStalenessOverrides REPLACES the override set (removing a config row removes it
-// on restart). Call before the first update; a later install reaches a pair only on its
-// next publication.
+// SetOracleStalenessOverrides REPLACES the override set; call before the first update, since a later install reaches a pair only on its next publication.
 func SetOracleStalenessOverrides(overrides []OracleStalenessOverride) {
 	next := make(map[oracleStalenessKey]float64, len(overrides))
 	for _, o := range overrides {
@@ -76,9 +69,7 @@ func SetOracleStalenessOverrides(overrides []OracleStalenessOverride) {
 	oracleStaleness.byAsset = next
 }
 
-// OracleStalenessBudget returns the override, else the source default, else +Inf: an
-// undeclared source cannot alert but still emits a visible series. Every source declares
-// one (TestBuildDispatcher_DeclaresBudgetForEveryOracleSource and its external twin).
+// OracleStalenessBudget returns the override, else the source default, else +Inf: an undeclared source cannot alert but still emits a series.
 func OracleStalenessBudget(source, asset string) float64 {
 	oracleStaleness.mu.RLock()
 	defer oracleStaleness.mu.RUnlock()
@@ -92,8 +83,7 @@ func OracleStalenessBudget(source, asset string) float64 {
 	return math.Inf(1)
 }
 
-// RecordOracleUpdate emits the age and its budget from one call, so Prometheus's
-// label-matched comparison always has both sides.
+// RecordOracleUpdate emits the age and its budget from one call, so Prometheus's label-matched comparison always has both sides.
 func RecordOracleUpdate(source, asset string, updatedAtUnix float64) {
 	OracleLastUpdateUnix.WithLabelValues(source, asset).Set(updatedAtUnix)
 	OracleStalenessBudgetSeconds.WithLabelValues(source, asset).

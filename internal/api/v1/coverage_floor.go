@@ -14,18 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// CoverageFloorReader answers when this deployment's served history for a pair BEGINS, which an
-// empty series leaves ambiguous ("the market was quiet" vs "the window predates anything held").
-// Production is one bounded, index-backed `min(bucket)` over prices_<granularity>. A surface picks
-// the method spanning the rows its own serving read spans, since a floor over rows it cannot serve
-// claims bars that never arrive.
-//   - EarliestBucket folds both legs' alias families and both stored directions.
-//   - EarliestBucketAsStored reads the requested orientation only (no surface uses it today).
-//   - EarliestBucketLiteralQuote drops the alias fold on the quote leg, matching the fiat combine,
-//     which reads each constituent under one named quote spelling.
-//
-// [from, to) is half-open and `to` MUST be after `from`; the store rejects a degenerate window so a
-// bad probe range fails loudly instead of claiming a pair has no coverage.
+// CoverageFloorReader answers when served history for a pair BEGINS (min bucket over prices_<granularity>); [from, to) is half-open and `to` MUST be after `from`.
 type CoverageFloorReader interface {
 	EarliestBucket(ctx context.Context, pair canonical.Pair, granularity string, from, to time.Time) (time.Time, bool, error)
 	EarliestBucketAsStored(ctx context.Context, pair canonical.Pair, granularity string, from, to time.Time) (time.Time, bool, error)

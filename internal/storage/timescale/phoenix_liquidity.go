@@ -10,8 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// PhoenixLiquidityAction discriminates provide and withdraw liquidity events. Its values must match
-// the phoenix_liquidity.action CHECK constraint and the phoenix package's EventAction constants.
+// PhoenixLiquidityAction discriminates provide and withdraw liquidity events; values must match the phoenix_liquidity.action CHECK and the phoenix package's EventAction constants.
 type PhoenixLiquidityAction string
 
 const (
@@ -28,12 +27,7 @@ func (a PhoenixLiquidityAction) IsValid() bool {
 	return false
 }
 
-// PhoenixLiquidityChange is one phoenix_liquidity row: a provide_liquidity or withdraw_liquidity
-// event from a Phoenix pool.
-//
-// Amounts are decimal-string numerics (i128 -> *big.Int -> string, never int64). TokenA, TokenB and
-// SharesAmount are empty where the event omits them (withdraw has no token addresses; provide has
-// no shares amount); the writer maps "" to SQL NULL.
+// PhoenixLiquidityChange is one phoenix_liquidity row (provide or withdraw); amounts are decimal-string numerics (never int64) and TokenA/TokenB/SharesAmount are empty where the event omits them.
 type PhoenixLiquidityChange struct {
 	Pool       string
 	Ledger     uint32
@@ -53,13 +47,7 @@ type PhoenixLiquidityChange struct {
 	SharesAmount string // withdraw-only; "" → NULL
 }
 
-// InsertPhoenixLiquidityChange appends one phoenix_liquidity row, idempotent on the
-// (ledger_close_time, pool, ledger, tx_hash, op_index, action, event_index) PK; event_index keeps
-// two provides/withdraws in one op from colliding. ON CONFLICT DO UPDATE guarded by
-// derive_generation corrects the row on a higher-or-equal-generation replay and no-ops a stale one.
-//
-// It rejects empty Pool/TxHash/Sender, an invalid Action and empty NUMERIC amounts (AmountA and
-// AmountB are NOT NULL) before touching the DB.
+// InsertPhoenixLiquidityChange appends one phoenix_liquidity row, idempotent on its PK (event_index separates same-op events) with a derive_generation-guarded upsert.
 func (s *Store) InsertPhoenixLiquidityChange(ctx context.Context, e PhoenixLiquidityChange) error {
 	if e.Pool == "" {
 		return errors.New("timescale: InsertPhoenixLiquidityChange: Pool is empty")
@@ -132,13 +120,7 @@ func (s *Store) InsertPhoenixLiquidityChange(ctx context.Context, e PhoenixLiqui
 	return nil
 }
 
-// PhoenixPoolFlow is one pool's net (provide - withdraw) liquidity flow per token leg over a
-// window. It is a WINDOW DELTA, NOT an absolute reserve: Phoenix events carry moved amounts, not
-// post-state reserves, so no clean reserve or TVL is derivable.
-//
-// TokenA/TokenB come from the pool's most recent provide_liquidity row (withdraw events omit
-// addresses) and are "" when no provide was seen in the window. NetA/NetB are canonical.Amount
-// (never int64) and negative when withdrawals exceed provides.
+// PhoenixPoolFlow is one pool's net (provide - withdraw) flow per token leg over a window; a WINDOW DELTA, not a reserve, since Phoenix events carry moved amounts and no TVL is derivable.
 type PhoenixPoolFlow struct {
 	Pool      string
 	TokenA    string
@@ -150,15 +132,7 @@ type PhoenixPoolFlow struct {
 	LatestAt  time.Time
 }
 
-// LatestPhoenixLiquidityFlows returns per-pool net liquidity flow over the trailing windowDays,
-// most-active pool first. Token addresses are resolved from the pool's most recent provide, since
-// withdraw events carry none.
-//
-// Phoenix has no post-state reserve snapshot or published price, so the figures are base-unit
-// WINDOW deltas, not absolute reserves or USD TVL. Phoenix is contract-identity gated, so unlike
-// Comet these rows carry no may-predate-the-gate caveat.
-//
-// It returns (nil, nil) when nothing was captured in the window; windowDays <= 0 means 90.
+// LatestPhoenixLiquidityFlows returns per-pool net liquidity flow over the trailing windowDays, most-active first, with token addresses from the pool's latest provide; no reserve snapshot or price exists, so these are native-token deltas.
 func (s *Store) LatestPhoenixLiquidityFlows(ctx context.Context, windowDays int) ([]PhoenixPoolFlow, error) {
 	if windowDays <= 0 {
 		windowDays = 90

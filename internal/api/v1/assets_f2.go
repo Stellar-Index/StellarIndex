@@ -15,9 +15,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// SupplyLooker is the read-side interface behind the F2 fields on /v1/assets/{id}. LatestSupply
-// returns the most recent persisted [supply.Supply] or [ErrSupplyNotFound]. Real errors propagate
-// so the handler can log them at WARN; the F2 fields then stay null (F2 is a best-effort overlay).
+// SupplyLooker is the read side behind the F2 fields on /v1/assets/{id}; LatestSupply returns [ErrSupplyNotFound] or propagates real errors (F2 stays null).
 type SupplyLooker interface {
 	LatestSupply(ctx context.Context, assetKey string) (supply.Supply, error)
 	// DailyCirculatingSupply returns daily last-known circulating
@@ -27,36 +25,23 @@ type SupplyLooker interface {
 	DailyCirculatingSupply(ctx context.Context, assetKey string, from, to time.Time) ([]timescale.SupplyDayPoint, error)
 }
 
-// ErrSupplyNotFound is what [SupplyLooker.LatestSupply] returns when the asset has no snapshot.
-// The handler treats it as "unavailable for this asset": F2 fields stay null, nothing is logged.
+// ErrSupplyNotFound is returned by [SupplyLooker.LatestSupply] when no snapshot exists; the handler leaves F2 fields null and logs nothing.
 var ErrSupplyNotFound = errors.New("api: supply snapshot not found")
 
-// Change24hReader returns the asset's USD price from about 24 hours ago, the baseline for
-// change_24h_pct. It picks the latest closed prices_1m bucket whose bucket-end is at or before
-// now-24h. [ErrChange24hUnavailable] means no closed bucket exists in the window (e.g. first
-// traded under 24h ago); change_24h_pct then stays null and nothing is logged. Real errors
-// propagate so the handler can log them at WARN.
+// Change24hReader returns the asset's USD price about 24h ago for change_24h_pct; [ErrChange24hUnavailable] means no closed bucket, so the field stays null silently.
 type Change24hReader interface {
 	USDPrice24hAgo(ctx context.Context, asset canonical.Asset) (string, error)
 }
 
-// ErrChange24hUnavailable is what [Change24hReader.USDPrice24hAgo] returns when no comparison
-// price exists in the 24h-ago window; unlike a real read error, the handler falls through silently.
+// ErrChange24hUnavailable is returned when no comparison price exists in the 24h-ago window; unlike real errors the handler falls through silently.
 var ErrChange24hUnavailable = errors.New("api: change_24h_pct comparison price unavailable")
 
-// VolumeReader backs volume_24h_usd on /v1/assets/{id}: the trailing-24h USD trade volume summed
-// across every pair where the asset is base or quote, as a decimal string ("0" is valid). Trades
-// with no trade-time usd_volume contribute 0 and lowerBound reports that one was excluded.
-// Errors propagate so the handler can log them; the field then stays null.
+// VolumeReader backs volume_24h_usd as a decimal string ("0" is valid); trades without a usd_volume contribute 0 and lowerBound reports the exclusion.
 type VolumeReader interface {
 	Volume24hUSDForAsset(ctx context.Context, assetKey string) (usd string, lowerBound bool, err error)
 }
 
-// SorobanVolumeReader is OPTIONALLY implemented by the wired [VolumeReader] to give pure-Soroban
-// SEP-41 assets an XLM-anchored 24h USD volume. The plain reader only sees the insert-time
-// usd_volume column (set when the quote is a USD-pegged classic), so a token trading against XLM
-// reports a bogus "0". This variant values XLM-legged trades through the on-chain XLM/USD VWAP;
-// SEP-41/SEP-41 legs still contribute 0. Same "0"-not-null convention as VolumeReader.
+// SorobanVolumeReader is optionally implemented by [VolumeReader] to give SEP-41 assets an XLM-anchored 24h USD volume; SEP-41/SEP-41 legs still contribute 0.
 type SorobanVolumeReader interface {
 	SorobanVolume24hUSDForAsset(ctx context.Context, assetKey string) (usd string, lowerBound bool, err error)
 }
@@ -565,8 +550,7 @@ type sep1DeclaredMaxResolver struct {
 	detail *AssetDetail
 }
 
-// SEP1MaxSupply implements [supply.MetadataResolver]. It never errors: every junk shape
-// (unparseable, negative, fractional raw units) degrades to ok=false rather than fabricating.
+// SEP1MaxSupply implements [supply.MetadataResolver]; it never errors and degrades every junk shape to ok=false.
 func (r sep1DeclaredMaxResolver) SEP1MaxSupply(_ context.Context, _ canonical.Asset) (string, bool, error) {
 	d := r.detail
 	if d == nil {

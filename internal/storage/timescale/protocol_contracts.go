@@ -6,8 +6,7 @@ import (
 	"fmt"
 )
 
-// ProtocolContract is the read-side projection of one protocol_contracts
-// row — a factory-descended child contract for a gated decoder (ADR-0035).
+// ProtocolContract is the read-side projection of one protocol_contracts row, a factory-descended child contract for a gated decoder.
 type ProtocolContract struct {
 	Source      string
 	ContractID  string
@@ -15,10 +14,7 @@ type ProtocolContract struct {
 	FirstLedger uint32 // 0 when the seed source didn't carry it
 }
 
-// UpsertProtocolContract records (or refreshes) a factory-descended child contract for a gated
-// source. Idempotent on (source, contract_id): the live creation handler and the genesis seed
-// walk both re-upsert. firstLedger 0 (unknown) is stored as NULL so a later seed that knows the
-// ledger can fill it without being masked by a 0 sentinel.
+// UpsertProtocolContract records (or refreshes) a factory-descended child contract for a gated source.
 func (s *Store) UpsertProtocolContract(ctx context.Context, source, contractID, factoryID string, firstLedger uint32) error {
 	if source == "" || contractID == "" {
 		return errors.New("timescale: UpsertProtocolContract: empty source or contract_id")
@@ -44,9 +40,7 @@ func (s *Store) UpsertProtocolContract(ctx context.Context, source, contractID, 
 	return nil
 }
 
-// ProtocolContractIndex returns a contract_id to source map over every registered protocol
-// contract, backing the explorer's contract-attribution overlay. The table is small, so loading
-// it whole is cheaper than a per-id query.
+// ProtocolContractIndex returns a contract_id to source map over every registered protocol contract, backing the explorer's contract-attribution overlay.
 func (s *Store) ProtocolContractIndex(ctx context.Context) (map[string]string, error) {
 	const q = `SELECT contract_id, source FROM protocol_contracts`
 	rows, err := s.db.QueryContext(ctx, q)
@@ -69,9 +63,7 @@ func (s *Store) ProtocolContractIndex(ctx context.Context) (map[string]string, e
 	return out, nil
 }
 
-// ListProtocolContracts returns every registered child contract for source as full rows, ordered
-// by first_ledger then contract_id for a stable listing; it backs GET /v1/protocols/{name}.
-// A NULL first_ledger maps to FirstLedger 0 and sorts last.
+// ListProtocolContracts returns every registered child contract for source as full rows, ordered by first_ledger then contract_id (NULL first_ledger maps to 0 and sorts last), backing GET /v1/protocols/{name}.
 func (s *Store) ListProtocolContracts(ctx context.Context, source string) ([]ProtocolContract, error) {
 	if source == "" {
 		return nil, errors.New("timescale: ListProtocolContracts: empty source")
@@ -132,14 +124,7 @@ func projectionContractColumn(source string) (table, column string, ok bool) {
 	return "", "", false
 }
 
-// ListSourceContractsFromProjection returns the DISTINCT contract ids a source's projected table
-// holds, the fallback roster for protocols the protocol_contracts registry doesn't carry. Returns
-// nil for sources without a per-contract projected table. Capped so a pathological table can't
-// blow the response.
-//
-// The cap is why sorocredit is absent from both switches below: its contract set far exceeds the
-// cap, so an enumerated roster could only publish the cap as its count. CountSourceContracts
-// serves it.
+// ListSourceContractsFromProjection returns the DISTINCT contract ids a source's projected table holds, the roster fallback for protocols absent from protocol_contracts; nil for sources without a per-contract table, and capped.
 func (s *Store) ListSourceContractsFromProjection(ctx context.Context, source string) ([]string, error) {
 	// Oracle sources (band/reflector-*/redstone) share ONE projected table,
 	// oracle_updates, so the generic unfiltered DISTINCT below would return
@@ -190,11 +175,7 @@ func sourceContractCountQuery(source string) (query string, ok bool) {
 	return "", false
 }
 
-// CountSourceContracts returns source's exact contract total WITHOUT enumerating it, for a
-// protocol whose contracts far outnumber the roster paths' LIMIT 5000, where a roster-derived
-// count can only publish the cap. ok=false, with no query issued, for a source with no count-only
-// path. Deliberately unwindowed (the lifetime set); the API serves it from its prewarmed
-// roster-count cache, so it never runs on a request path.
+// CountSourceContracts returns a source's exact contract total WITHOUT enumerating it, for protocols whose contracts exceed the roster LIMIT 5000; ok=false with no query issued when the source has no count path.
 func (s *Store) CountSourceContracts(ctx context.Context, source string) (int64, bool, error) {
 	q, ok := sourceContractCountQuery(source)
 	if !ok {
@@ -234,13 +215,7 @@ func (s *Store) listContractsFilteredBySource(ctx context.Context, table, column
 	return out, nil
 }
 
-// LoadProtocolContracts returns every child contract C-strkey registered for source as a flat
-// slice, used at startup to warm a gated decoder's contractid.Registry.
-//
-// Returns an empty slice (not nil + error) when the source has no rows, the state before
-// `stellarindex-ops seed-protocol-contracts -source <name>` has run. The gate then sees an empty
-// registry and drops every child event until seeded, so the genesis walk is a deploy
-// precondition.
+// LoadProtocolContracts returns every registered child contract C-strkey for source as a flat slice to warm a gated decoder's contractid.Registry at startup; empty (not an error) when the source has no rows.
 func (s *Store) LoadProtocolContracts(ctx context.Context, source string) ([]string, error) {
 	if source == "" {
 		return nil, errors.New("timescale: LoadProtocolContracts: empty source")

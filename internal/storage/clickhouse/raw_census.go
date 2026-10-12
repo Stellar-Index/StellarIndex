@@ -11,8 +11,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// RawTableShortfall is one raw-table partition holding fewer rows than
-// stellar.ledgers declares for it.
+// RawTableShortfall is one raw-table partition holding fewer rows than stellar.ledgers declares for it.
 type RawTableShortfall struct {
 	Table string
 	// Partition is intDiv(ledger_seq, 1_000_000).
@@ -24,8 +23,7 @@ type RawTableShortfall struct {
 	Present uint64
 }
 
-// RawTableTotal is one table's range-wide expected vs present, printed so
-// duplicate inflation is visible beside a pass.
+// RawTableTotal is one table's range-wide expected vs present, printed so duplicate inflation is visible beside a pass.
 type RawTableTotal struct {
 	Table             string
 	Expected, Present uint64
@@ -55,10 +53,7 @@ var rawCensusTables = []rawCensusSpec{
 	{table: "operation_participants", presenceOnly: true, expected: func(h rawCensusHeader) uint64 { return h.op }},
 }
 
-// RawTableCensus cross-checks the five non-ledger raw tables against the
-// per-partition counts stellar.ledgers declares, over the partitions [from, to]
-// touches. Present counts un-merged ReplacingMergeTree duplicates, so a
-// shortfall proves loss while a pass bounds loss only to present − expected.
+// RawTableCensus cross-checks the five non-ledger raw tables against stellar.ledgers' per-partition counts; Present counts un-merged duplicates, so a shortfall proves loss while a pass bounds it only to present - expected.
 func RawTableCensus(ctx context.Context, addr string, from, to uint32) ([]RawTableShortfall, []RawTableTotal, error) {
 	if from > to {
 		return nil, nil, nil

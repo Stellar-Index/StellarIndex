@@ -6,24 +6,19 @@ import (
 	"time"
 )
 
-// CurrenciesReader exposes the latest in-memory forex snapshot for /v1/price fiat cross-rate
-// triangulation. The forex *Cache implements it; the interface keeps forex from importing v1.
+// CurrenciesReader exposes the latest in-memory forex snapshot for /v1/price fiat cross-rate triangulation.
 type CurrenciesReader interface {
 	// Latest returns the most recent forex snapshot, or nil if no
 	// fetch has completed yet (warming up).
 	Latest() *CurrenciesSnapshot
 }
 
-// FXHistoryReader serves long-form persisted history from the
-// fx_quotes hypertable. Used by /v1/chart for fiat:fiat pairs and
-// by /v1/chart?price_type=market_cap.
+// FXHistoryReader serves persisted fx_quotes history for /v1/chart fiat:fiat pairs and price_type=market_cap.
 type FXHistoryReader interface {
 	ListFXHistory(ctx context.Context, ticker string, from, to time.Time) ([]FXQuotePoint, error)
 }
 
-// FXQuotePoint is the storage-layer-projected history datum. Both
-// rates are the fx_quotes NUMERIC columns' exact text; they are parsed
-// to *big.Rat, never through a float (ADR-0003).
+// FXQuotePoint is a history datum whose rates are exact NUMERIC text parsed to *big.Rat, never a float (ADR-0003).
 type FXQuotePoint struct {
 	Bucket time.Time
 	// RateUSDText is rate_usd: units of the ticker per 1 USD.
@@ -48,19 +43,14 @@ func positiveRat(s string) (*big.Rat, bool) {
 	return r, true
 }
 
-// CurrenciesSnapshot is the v1-side projection of the forex cache.
-// Mirrors forex.Snapshot field-for-field; defined here so the
-// binding adapter in cmd/stellarindex-api can convert without this
-// package importing the source package.
+// CurrenciesSnapshot is the v1-side projection of forex.Snapshot, defined here so v1 does not import the source package.
 type CurrenciesSnapshot struct {
 	Currencies  []CurrencyEntry
 	PublishedAt time.Time
 	FetchedAt   time.Time
 }
 
-// CurrencyEntry is one in-memory currency row carried by
-// CurrenciesSnapshot. Consumed by /v1/price's fiat cross-rate
-// triangulation path.
+// CurrencyEntry is one in-memory currency row of CurrenciesSnapshot, used by /v1/price's fiat cross-rate triangulation.
 type CurrencyEntry struct {
 	Ticker string
 	Name   string

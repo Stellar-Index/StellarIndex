@@ -32,9 +32,7 @@ const defaultStellarDivergenceThresholdPct = 5.0
 // global: EURC's worst measured gap (4.56%) sat under the shared 5%.
 const stablecoinDepegThresholdPct = 1.0
 
-// AssetGlobalMarket is the global-market reference for a vetted
-// same-asset token: the USD price of its global ticker across venues, and
-// how far this asset's own Stellar market sits from it.
+// AssetGlobalMarket is the global-market USD reference for a vetted same-asset token and how far this asset's Stellar market sits from it.
 type AssetGlobalMarket struct {
 	// Asset is the global ticker the catalogue binds to this issuance.
 	Asset string `json:"asset"`

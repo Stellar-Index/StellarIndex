@@ -159,9 +159,7 @@ var protocolDetailPrewarmPause = 2 * time.Second
 // most-requested no-param page warms first.
 var protocolBespokeWindows = []int{protocolActivityWindowDays, 1, 7, 30}
 
-// PrewarmProtocolDetails refreshes EVERY (protocol, window) detail cache entry, one build at a time,
-// so no user request pays for a cold analytics build. It shares the request path's single-flight,
-// so an overlapping request-kicked refresh joins the same build.
+// PrewarmProtocolDetails refreshes EVERY (protocol, window) detail entry one build at a time, sharing the request path's single-flight.
 func (s *Server) PrewarmProtocolDetails(ctx context.Context) {
 	for _, meta := range protocolRegistry {
 		for _, w := range protocolBespokeWindows {
@@ -199,10 +197,7 @@ const protocolActivityWindowDays = 90
 // protocolActivityWindowLedgers is protocolActivityWindowDays in ledgers (5s close, 17,280/day).
 const protocolActivityWindowLedgers = protocolActivityWindowDays * 17280
 
-// ProtocolActivityReader serves per-protocol on-chain analytics from the certified lake
-// (contract_events), all scoped to a protocol's contract-id set. Production wiring is
-// *clickhouse.ExplorerReader. A nil reader serves the analytics fields empty; the directory and
-// registry still work.
+// ProtocolActivityReader serves per-protocol analytics from the certified lake, scoped to a contract-id set; a nil reader serves analytics fields empty.
 type ProtocolActivityReader interface {
 	LakeTipLedger(ctx context.Context) (uint32, error)
 	ProtocolEventBreakdown(ctx context.Context, contractIDs []string, sinceLedger uint32) ([]clickhouse.ProtocolEventTypeCount, error)
@@ -222,8 +217,7 @@ type protocolFastActivityReader interface {
 	ProtocolContractActivityFast(ctx context.Context, contractIDs []string, sinceDay time.Time) ([]clickhouse.ProtocolContractActivity, error)
 }
 
-// ProtocolBespokeReader builds the per-category bespoke analytics block from the served-tier
-// projected tables. Production wiring is timescale.Store; nil omits the block, not the page.
+// ProtocolBespokeReader builds the per-category bespoke analytics block from served-tier projected tables; nil omits the block, not the page.
 type ProtocolBespokeReader interface {
 	BuildProtocolBespoke(ctx context.Context, source, category string, windowDays int) (*timescale.BespokeBlock, error)
 }
@@ -262,8 +256,7 @@ func bespokeFromStore(b *timescale.BespokeBlock) *ProtocolBespoke {
 	return out
 }
 
-// ProtocolContractsReader is the read seam for the protocol_contracts registry (ADR-0035). A nil
-// reader serves contract lists and counts empty, never an error.
+// ProtocolContractsReader is the read seam for the protocol_contracts registry (ADR-0035); a nil reader serves contract lists and counts empty, never an error.
 type ProtocolContractsReader interface {
 	ListProtocolContracts(ctx context.Context, source string) ([]timescale.ProtocolContract, error)
 	// ListSourceContractsFromProjection is the fallback roster for protocols the registry does not
@@ -283,22 +276,17 @@ type protocolContractCounter interface {
 	CountSourceContracts(ctx context.Context, source string) (int64, bool, error)
 }
 
-// ProtocolStatsReader supplies the trailing-24h event count per source (one grouped UNION ALL).
-// A nil reader serves events_24h as 0 for every protocol.
+// ProtocolStatsReader supplies the trailing-24h event count per source; a nil reader serves events_24h as 0.
 type ProtocolStatsReader interface {
 	CountRecentEventsBySource(ctx context.Context) (map[string]int64, error)
 }
 
-// SoroswapPairsReader exposes the soroswap_pairs registry, Soroswap's equivalent of
-// protocol_contracts (its pair set lives outside the unified registry and carries token
-// identities the decoder needs). Production wiring is timescale.Store.LoadSoroswapPairRegistry.
-// A nil reader serves the soroswap contract list and count empty.
+// SoroswapPairsReader exposes the soroswap_pairs registry, Soroswap's equivalent of protocol_contracts; a nil reader serves its contract list and count empty.
 type SoroswapPairsReader interface {
 	LoadSoroswapPairRegistry(ctx context.Context) ([]timescale.SoroswapPair, error)
 }
 
-// ProtocolCompletenessView is the headline slice of /v1/coverage's verdict (the same
-// completeness_snapshots row, keyed by source name) joined onto a protocol row.
+// ProtocolCompletenessView is the headline slice of /v1/coverage's verdict joined onto a protocol row.
 type ProtocolCompletenessView struct {
 	// Complete is the headline ADR-0033 verdict.
 	Complete bool `json:"complete"`
@@ -310,8 +298,7 @@ type ProtocolCompletenessView struct {
 	ProjectionVerifiedFrom uint32 `json:"projection_verified_from,omitempty"`
 }
 
-// ProtocolView is the wire shape of one directory row on
-// GET /v1/protocols.
+// ProtocolView is one directory row on GET /v1/protocols.
 type ProtocolView struct {
 	// Name is the canonical source name — the same identifier
 	// /v1/coverage and /v1/sources use.
@@ -355,10 +342,7 @@ type ProtocolsView struct {
 	CoverageNote string `json:"coverage_note,omitempty"`
 }
 
-// ProtocolContractView is one registered contract instance on
-// GET /v1/protocols/{name} — a unified projection over
-// protocol_contracts (factory-gated sources) and soroswap_pairs
-// (token0/token1 populated, factory absent).
+// ProtocolContractView is one registered contract on GET /v1/protocols/{name}, unifying protocol_contracts and soroswap_pairs.
 type ProtocolContractView struct {
 	// ContractID is the instance's C-strkey.
 	ContractID string `json:"contract_id"`
@@ -390,8 +374,7 @@ type ProtocolContractView struct {
 	LastSeen string `json:"last_seen,omitempty"`
 }
 
-// ProtocolEventTypeView is one slice of a protocol's event-type distribution:
-// a topic[0] symbol and how many times it fired (all-time, from the lake).
+// ProtocolEventTypeView is one slice of a protocol's all-time event-type distribution: a topic[0] symbol and its count.
 type ProtocolEventTypeView struct {
 	EventType string `json:"event_type"`
 	Count     int64  `json:"count"`
@@ -403,9 +386,7 @@ type ProtocolEventTypeView struct {
 // filled per protocol category. The UI renders the three shapes generically, so retuning a
 // category's metrics is a server-side data change.
 
-// ProtocolBespoke is the category-specific analytics block on
-// GET /v1/protocols/{name}. Absent when no bespoke reader is wired or the
-// category has none yet.
+// ProtocolBespoke is the category-specific analytics block on GET /v1/protocols/{name}, absent when no bespoke reader is wired.
 type ProtocolBespoke struct {
 	// Category is the metric family: dex | amm | lending | vault | bridge | oracle.
 	Category string `json:"category"`
@@ -422,8 +403,7 @@ type ProtocolBespoke struct {
 	Notes []string `json:"notes,omitempty"`
 }
 
-// BespokeKPI is one headline metric card. Value is PRE-FORMATTED (the server
-// owns formatting so the number is correct + ADR-0003-safe); Unit is advisory.
+// BespokeKPI is one headline metric card; Value is PRE-FORMATTED server-side (ADR-0003-safe) and Unit is advisory.
 type BespokeKPI struct {
 	Label string `json:"label"`
 	Value string `json:"value"`
@@ -438,32 +418,27 @@ type BespokeSeries struct {
 	Points []BespokeSeriesPt `json:"points"`
 }
 
-// BespokeSeriesPt is one (date, value) point. Value is a numeric STRING
-// (ADR-0003: amounts can exceed 2^53).
+// BespokeSeriesPt is one (date, value) point; Value is a numeric STRING (ADR-0003).
 type BespokeSeriesPt struct {
 	Date  string `json:"date"`
 	Value string `json:"value"`
 }
 
-// BespokeBreakdown is a named composition dataset (the donut/pie complement
-// to Series): value-weighted rows, window-scoped, sorted descending by the
-// server. Generic — any category can adopt it.
+// BespokeBreakdown is a named, window-scoped composition dataset sorted descending by the server; any category can adopt it.
 type BespokeBreakdown struct {
 	Title string                `json:"title"`
 	Unit  string                `json:"unit,omitempty"`
 	Rows  []BespokeBreakdownRow `json:"rows"`
 }
 
-// BespokeBreakdownRow is one composition slice. Value is a numeric STRING
-// (ADR-0003); Count is the number of contributing transfers/events.
+// BespokeBreakdownRow is one composition slice; Value is a numeric STRING (ADR-0003) and Count the contributing events.
 type BespokeBreakdownRow struct {
 	Label string `json:"label"`
 	Value string `json:"value"`
 	Count int64  `json:"count"`
 }
 
-// BespokeTable is a named top-N table — columns + string rows (the server
-// formats every cell).
+// BespokeTable is a named top-N table of columns and server-formatted string rows.
 type BespokeTable struct {
 	Title   string     `json:"title"`
 	Columns []string   `json:"columns"`
@@ -487,10 +462,7 @@ const (
 	protocolAnalyticsUnavailable = "unavailable"
 )
 
-// ProtocolAnalyticsStatus makes analytics degradation explicit on the wire; a failed bespoke build
-// or lake fill would otherwise be indistinguishable from a protocol with no activity. "ok": trust
-// the analytics; "stale": real data, a refresh is in flight; "unavailable": absence means
-// degraded, so render a hint, not a zero.
+// ProtocolAnalyticsStatus makes analytics degradation explicit ("ok", "stale", "unavailable"); on "unavailable" render a hint, not a zero.
 type ProtocolAnalyticsStatus struct {
 	// Status is ok | stale | unavailable.
 	Status string `json:"status"`
@@ -498,9 +470,7 @@ type ProtocolAnalyticsStatus struct {
 	AsOf string `json:"as_of,omitempty"`
 }
 
-// ProtocolDetailView is the envelope data field of
-// GET /v1/protocols/{name}: the directory row plus the contract
-// registry, decoded event vocabulary and verification write-up path.
+// ProtocolDetailView is the GET /v1/protocols/{name} data: the directory row plus contract registry, decoded event vocabulary and verification write-up path.
 type ProtocolDetailView struct {
 	ProtocolView
 	// Contracts lists every registered instance; empty for sources without a contract registry

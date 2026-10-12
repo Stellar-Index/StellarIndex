@@ -82,10 +82,10 @@ done
 # readable without it.
 extra=()
 if command -v pg_dump >/dev/null 2>&1 && command -v runuser >/dev/null 2>&1 && id postgres >/dev/null 2>&1; then
-  if runuser -u postgres -- pg_dump --schema-only "$PG_DATABASE" > "$stage/pg-schema.sql" 2>/dev/null; then
+  if runuser -u postgres -- pg_dump --schema-only "$PG_DATABASE" > "$stage/pg-schema.sql" 2>"$stage/pg_dump.err"; then
     extra=(-C "$stage" pg-schema.sql)
   else
-    note "pg_dump --schema-only $PG_DATABASE failed; continuing without it"
+    note "pg_dump --schema-only $PG_DATABASE failed ($(grep -m1 'error:' "$stage/pg_dump.err" || tail -n1 "$stage/pg_dump.err")); continuing without it"
   fi
 fi
 

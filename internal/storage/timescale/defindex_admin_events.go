@@ -14,10 +14,7 @@ var validDefindexAdminKinds = map[string]bool{
 	"nreceiver": true, "nmanager": true, "nemanager": true, "rbmanager": true,
 }
 
-// DefindexAdminEvent is one defindex_admin_events row (migration 0192):
-// a DeFindex vault role rotation, strategy pause toggle or rescue.
-// Optional fields are "" when the kind's body does not carry them
-// (stored NULL); Amount is a decimal i128 per ADR-0003.
+// DefindexAdminEvent is one defindex_admin_events row: a vault role rotation, strategy pause toggle or rescue; optional fields are "" (stored NULL) and Amount is a decimal i128 string.
 type DefindexAdminEvent struct {
 	Ledger          uint32
 	LedgerCloseTime time.Time
@@ -32,10 +29,7 @@ type DefindexAdminEvent struct {
 	Amount          string
 }
 
-// InsertDefindexAdminEvent lands one vault admin event, idempotent on
-// the (ledger_close_time, contract_id, ledger, tx_hash, op_index,
-// event_index) PK with the generation-guarded corrective upsert
-// (migration 0110 convention).
+// InsertDefindexAdminEvent lands one vault admin event, idempotent on its PK with the generation-guarded corrective upsert.
 func (s *Store) InsertDefindexAdminEvent(ctx context.Context, e DefindexAdminEvent) error {
 	if e.TxHash == "" {
 		return errors.New("timescale: InsertDefindexAdminEvent: TxHash is empty")

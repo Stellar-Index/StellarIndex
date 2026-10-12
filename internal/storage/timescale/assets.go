@@ -10,12 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// DistinctAssets returns one page of assets seen as base or quote in trades within
-// [MarketsRecencyWindow], keyed by asset-id cursor (empty starts at the beginning; limit is
-// clamped to [1, 500]). nextCursor is empty on the last page.
-//
-// The window matches /v1/markets's "active assets" semantic and bounds cost: without it the
-// UNIONed DISTINCT scans every trades chunk and takes minutes, far past the 30s API budget.
+// DistinctAssets returns one page of assets seen as base or quote within [MarketsRecencyWindow], keyed by asset-id cursor (limit clamped to [1, 500]); the window bounds the UNIONed DISTINCT scan.
 func (s *Store) DistinctAssets(ctx context.Context, cursor string, limit int) ([]canonical.Asset, string, error) {
 	if limit < 1 {
 		limit = 100
@@ -80,13 +75,7 @@ func (s *Store) DistinctAssets(ctx context.Context, cursor string, limit int) ([
 	return out, nextCursor, nil
 }
 
-// HasAsset reports whether this index knows the asset: (true, nil) known, (false, nil)
-// unknown, (_, err) on query failure.
-//
-//   - AssetClassic: PK lookup on `classic_assets` (one row per (code, issuer)), which bypasses
-//     the trades hypertable where `base_asset = $1 OR quote_asset = $1` seeks every chunk.
-//   - Every other type: [Store.hasNonClassicAsset], a window-bounded probe, because classic_assets
-//     requires an issuer and so cannot hold native or contract assets.
+// HasAsset reports whether this index knows the asset; classic assets use a PK lookup on `classic_assets` to avoid seeking every trades chunk, other types use a window-bounded probe.
 func (s *Store) HasAsset(ctx context.Context, a canonical.Asset) (bool, error) {
 	// Native XLM exists from genesis whether or not anyone has traded it, so answering from
 	// trade activity is a category error that bites on a quiet network: a network with no XLM

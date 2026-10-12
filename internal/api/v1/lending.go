@@ -15,8 +15,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/xdrjson"
 )
 
-// LendingReader is the storage-side seam for /v1/lending/pools.
-// timescale.Store implements via ListBlendPools / BlendPoolAssets.
+// LendingReader is the storage-side seam for /v1/lending/pools; timescale.Store implements it.
 type LendingReader interface {
 	ListBlendPools(ctx context.Context) ([]timescale.BlendPoolSummary, error)
 	BlendPoolAssets(ctx context.Context, pool string) ([]string, error)
@@ -24,13 +23,7 @@ type LendingReader interface {
 	BlendReserveConfigs(ctx context.Context, pool string) (map[string]blend.ReserveConfig, error)
 }
 
-// LendingPool is the wire shape for /v1/lending/pools entries.
-//
-// The listing is Blend-only. net_supplied_30d / net_borrowed_30d are a 30-day NET-FLOW proxy in
-// token base-units, NOT TVL or reserve balances, and null when the flows span more than one
-// reserve asset (base units of different tokens do not add). utilization_30d_pct is their ratio,
-// null when either is null or net supply is not positive. Current per-reserve state is served by
-// /v1/lending/pools/{pool}/reserves.
+// LendingPool is a /v1/lending/pools entry (Blend-only); net_supplied_30d/net_borrowed_30d are a 30-day NET-FLOW proxy, NOT TVL, and null across more than one reserve asset.
 type LendingPool struct {
 	Protocol          string   `json:"protocol"`
 	Pool              string   `json:"pool"`
@@ -100,9 +93,7 @@ func (s *Server) handleLendingPools(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out, Flags{})
 }
 
-// LendingPoolReservesView is the wire response for
-// GET /v1/lending/pools/{pool}/reserves — real per-reserve current
-// state (ADR-0039), read from the lake's Soroban contract storage.
+// LendingPoolReservesView is the GET /v1/lending/pools/{pool}/reserves response: per-reserve current state (ADR-0039) from the lake's contract storage.
 type LendingPoolReservesView struct {
 	Pool   string  `json:"pool"`
 	TVLUSD *string `json:"tvl_usd"` // sum of priced reserves; null when none priced
@@ -117,10 +108,7 @@ type LendingPoolReservesView struct {
 	AsOfLedger uint32 `json:"as_of_ledger,omitempty"`
 }
 
-// ReserveView is one reserve's decoded state + derived metrics.
-// Amounts are token-base-unit decimal strings (ADR-0003); USD values
-// are decimal strings or null when the asset has no resolved price or
-// no established decimals.
+// ReserveView is one reserve's decoded state and derived metrics; amounts are base-unit decimal strings (ADR-0003), USD values decimal strings or null when unpriced.
 type ReserveView struct {
 	Asset          string  `json:"asset"`
 	Decimals       uint32  `json:"decimals"`

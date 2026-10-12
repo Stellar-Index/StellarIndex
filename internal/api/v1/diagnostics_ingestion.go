@@ -21,8 +21,7 @@ type FXCoverageReader interface {
 	FXCoverageStats(ctx context.Context) (timescale.FXCoverage, error)
 }
 
-// SupplyCoverageReader is the seam for asset_supply_history coverage stats; timescale.Store
-// satisfies it.
+// SupplyCoverageReader is the seam for asset_supply_history coverage stats; timescale.Store satisfies it.
 type SupplyCoverageReader interface {
 	SupplyCoverageStats(ctx context.Context) (timescale.SupplyCoverage, error)
 }
@@ -32,14 +31,12 @@ type CAGGCoverageReader interface {
 	CAGGCoverageStats(ctx context.Context) (timescale.CAGGCoverage, error)
 }
 
-// SourceEntryCountReader is the seam for the per-source entry tally; timescale.Store satisfies
-// it. The ~20-row read stays cheap during an all-time backfill.
+// SourceEntryCountReader is the seam for the per-source entry tally; the ~20-row read stays cheap during a backfill.
 type SourceEntryCountReader interface {
 	SourceEntryCounts(ctx context.Context) (map[string]int64, error)
 }
 
-// IngestionDiagnostics is the wire shape for /v1/diagnostics/ingestion: one snapshot of the
-// region's ingest state, so the status page renders its whole ingestion panel from a single call.
+// IngestionDiagnostics is the /v1/diagnostics/ingestion shape: one snapshot of the region's ingest state for the whole status panel.
 type IngestionDiagnostics struct {
 	Region   RegionInfo             `json:"region"`
 	Version  IngestionVersionInfo   `json:"version"`
@@ -67,37 +64,24 @@ type IngestionDiagnostics struct {
 	Sources      []SourceHealthRow `json:"sources"`
 }
 
-// CAGGCoverageView is the prices_1h coverage summary; buckets are RFC3339, empty until the CAGG
-// is materialised.
+// CAGGCoverageView is the prices_1h coverage summary; buckets are RFC3339, empty until the CAGG is materialised.
 type CAGGCoverageView struct {
 	EarliestBucket string `json:"earliest_bucket,omitempty"`
 	LatestBucket   string `json:"latest_bucket,omitempty"`
 	BucketCount    int64  `json:"bucket_count"`
 }
 
-// SourceCoverageReader is the ADR-0031 read seam for the data-derived coverage projection
-// (source_coverage_snapshots, written by the gap detector each 30-minute cycle).
-// An empty slice with nil error means "detector has not run yet, fall back to v1", never a
-// coverage regression.
+// SourceCoverageReader is the ADR-0031 seam for the data-derived coverage projection; an empty slice with nil error means "detector not run yet", never a regression.
 type SourceCoverageReader interface {
 	ListSourceCoverage(ctx context.Context) ([]timescale.SourceCoverage, error)
 }
 
-// CompletenessReader is the read seam for the per-source watermark verdict, wired to
-// timescale.Store.ListCompletenessSnapshots (filled by `stellarindex-ops compute-completeness`).
-// A nil reader or empty slice leaves the completeness_* fields absent and the UI falls back to
-// the gap_free coverage signal.
+// CompletenessReader is the seam for the per-source watermark verdict; a nil reader or empty slice omits completeness_* and the UI falls back to gap_free.
 type CompletenessReader interface {
 	ListCompletenessSnapshots(ctx context.Context) ([]timescale.CompletenessSnapshot, error)
 }
 
-// BackfillCoverageRow is the per-source coverage projection.
-//
-// DensityPct is distinct_ledger_count / (tip - genesis + 1) from source_coverage_snapshots,
-// because cursors can say "fine" while the data says "missing". GenesisLedger comes from
-// sourceGenesisLedger; EarliestLedger / LatestLedger are display only. GapFreePct is
-// 1 - max_gap / expected: a sparse source running cleanly hits 1.0 despite low DensityPct, so
-// the alert reads it.
+// BackfillCoverageRow is the per-source coverage projection; DensityPct is distinct ledgers over the expected span, GapFreePct is 1 - max_gap/expected and is what the alert reads.
 type BackfillCoverageRow struct {
 	Source         string `json:"source"`
 	Applies        bool   `json:"applies"`
@@ -191,15 +175,13 @@ var sourceGenesisLedger = map[string]int64{
 	"rozo": 60_829_370,
 }
 
-// RegionInfo identifies the deployment that generated this snapshot; same shape as Region on
-// /v1/status so the two endpoints cannot drift.
+// RegionInfo identifies the deployment that generated the snapshot, same shape as Region on /v1/status.
 type RegionInfo struct {
 	Name       string `json:"name"`
 	Deployment string `json:"deployment"`
 }
 
-// IngestionVersionInfo is the same five fields /v1/version returns, duplicated onto the
-// ingestion response so an operator screen needs no second fetch when comparing regions.
+// IngestionVersionInfo duplicates the /v1/version fields onto the ingestion response so operators need no second fetch.
 type IngestionVersionInfo struct {
 	Version   string `json:"version"`
 	BuildDate string `json:"build_date"`
@@ -208,9 +190,7 @@ type IngestionVersionInfo struct {
 	GoVersion string `json:"go_version"`
 }
 
-// LedgerTip summarises live-network ingest progress. LatestLedger is prices_1m's
-// MAX(ledger_sequence); LagSeconds is the age of the latest ledgerstream cursor update. Volume,
-// markets and assets share /v1/network/stats's source so the two endpoints agree.
+// LedgerTip summarises live ingest progress: LatestLedger is prices_1m's MAX(ledger_sequence), LagSeconds the age of the latest ledgerstream cursor update.
 type LedgerTip struct {
 	LatestLedger    int64  `json:"latest_ledger"`
 	LagSeconds      int64  `json:"lag_seconds"`
@@ -219,10 +199,7 @@ type LedgerTip struct {
 	AssetsIndexed   int64  `json:"assets_indexed"`
 }
 
-// BackfillDecoderState is one row of the per-decoder backfill summary, collapsing the many
-// concurrent backfill ranges into running/stalled/oldest per decoder set. Decoder is the
-// comma-separated set after the range prefix of the cursor's sub_source (e.g.
-// "50534290-51275895:sdex,soroswap" gives "sdex,soroswap").
+// BackfillDecoderState is one per-decoder-set backfill summary row (running/stalled/oldest), with Decoder taken from the cursor sub_source after the range prefix.
 type BackfillDecoderState struct {
 	Decoder string `json:"decoder"`
 	// RangesTotal is the total cursor rows for this decoder set; Complete, Running and Stalled
@@ -246,8 +223,7 @@ type BackfillDecoderState struct {
 // It matches statusActiveMaxAge in diagnostics_cursors.go so both endpoints agree.
 const stalledThreshold = 10 * time.Minute
 
-// FXBackfillState describes the fiat-rate history in fx_quotes. Earliest/Latest are RFC3339
-// dates at day granularity (daily upstream snapshots); empty when the table is empty.
+// FXBackfillState describes the fx_quotes fiat history; Earliest/Latest are RFC3339 day-granularity dates, empty when the table is empty.
 type FXBackfillState struct {
 	EarliestQuote   string `json:"earliest_quote,omitempty"`
 	LatestQuote     string `json:"latest_quote,omitempty"`
@@ -255,8 +231,7 @@ type FXBackfillState struct {
 	CurrenciesCount int    `json:"currencies_count"`
 }
 
-// SupplyStateView projects timescale.SupplyCoverage onto the wire. Classic and SEP-41 assets
-// are split because their supply observers run independently and can wedge separately.
+// SupplyStateView projects timescale.SupplyCoverage onto the wire, splitting classic and SEP-41 because their observers can wedge separately.
 type SupplyStateView struct {
 	ClassicAssets  int    `json:"classic_assets_with_supply"`
 	SEP41Assets    int    `json:"sep41_assets_with_supply"`
@@ -264,9 +239,7 @@ type SupplyStateView struct {
 	LatestLedger   int64  `json:"latest_ledger,omitempty"`
 }
 
-// SourceHealthRow joins static external.Registry metadata with the live 24h stats from
-// sourcesStats so operators can see which sources are silent. Sorted by name for deterministic
-// responses.
+// SourceHealthRow joins static external.Registry metadata with live 24h stats so operators see silent sources; sorted by name.
 type SourceHealthRow struct {
 	Name          string `json:"name"`
 	Class         string `json:"class"`
@@ -346,9 +319,7 @@ func (s *Server) freshIngestionSnapshot() *ingestionSnapshotEntry {
 	return entry
 }
 
-// StartIngestionSnapshotRefresh rebuilds [Server.ingestionSnapshot] every 15s, matching the
-// Cache-Control max-age, until ctx is cancelled. Call it once. A slow build never blocks reads,
-// which keep serving the previous snapshot until the store.
+// StartIngestionSnapshotRefresh rebuilds [Server.ingestionSnapshot] every 15s until ctx is cancelled; call once, reads keep the previous snapshot during a slow build.
 func (s *Server) StartIngestionSnapshotRefresh(ctx context.Context) {
 	const cadence = ingestionSnapshotCadence
 	// Fire once immediately so the first request hits the warm path. Each build uses its own

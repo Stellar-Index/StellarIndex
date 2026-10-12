@@ -43,10 +43,7 @@ func assetAliasRows(assetIDs []string) (forms, owners []string, prios []int64) {
 	return forms, owners, prios
 }
 
-// AssetRow is the read-side projection of one asset-discovery row: classic_assets joined with the
-// supply and activity counters. String fields keep it decoupled from the canonical package.
-// VWAP, Volume24hUSD and MarketCapUSD are pointers so an asset with no computed value (new, or
-// illiquid with no off-chain peg) emits JSON null.
+// AssetRow is the read-side projection of one asset-discovery row: classic_assets joined with the supply and activity counters.
 type AssetRow struct {
 	Slug             string
 	AssetID          string
@@ -103,8 +100,7 @@ type AssetRow struct {
 	RankTier *int
 }
 
-// AssetsOrder selects the sort and cursor scheme used by ListAssets: ObservationCountDesc ranks
-// by activity (default), Volume24hUSDDesc by live volume.
+// AssetsOrder selects the sort and cursor scheme used by ListAssets: ObservationCountDesc ranks by activity (default), Volume24hUSDDesc by live volume.
 type AssetsOrder int
 
 const (
@@ -118,8 +114,7 @@ const (
 	AssetsOrderVolume24hUSDDesc
 )
 
-// ListAssetsOptions bundles the optional filters / paging
-// parameters for ListAssets. Zero values are the API defaults.
+// ListAssetsOptions bundles the optional filters / paging parameters for ListAssets.
 type ListAssetsOptions struct {
 	// Limit clamps to [1, 500]; 0 → 100.
 	Limit int
@@ -147,15 +142,12 @@ type ListAssetsOptions struct {
 	Order AssetsOrder
 }
 
-// ListAssets returns asset-directory rows by observation count desc, a cheap activity proxy. The
-// keyset cursor `<observation_count>:<asset_id>` is the last row's tuple; empty means first page.
+// ListAssets returns asset-directory rows by observation count desc, a cheap activity proxy.
 func (s *Store) ListAssets(ctx context.Context, limit int, issuer, cursor string) ([]AssetRow, error) {
 	return s.ListAssetsExt(ctx, ListAssetsOptions{Limit: limit, Issuer: issuer, Cursor: cursor})
 }
 
-// SupplyObservation is one asset's most recent ADR-0011 supply observation. ObservedAt travels
-// with the value because a supply figure without vintage is unfalsifiable, and the serving path
-// decides whether to trust this arm over the lake's live flow sum by its age.
+// SupplyObservation is one asset's most recent supply observation; ObservedAt travels with the value because the serving path decides whether to trust it over the lake's flow sum by age.
 type SupplyObservation struct {
 	// CirculatingSupply is the raw integer in the asset's smallest
 	// unit (stroops for classic + native), as a decimal string —
@@ -168,16 +160,7 @@ type SupplyObservation struct {
 	ObservedAt time.Time
 }
 
-// LatestSupplyObservations returns the most-recent supply observation per
-// canonical asset_id, restricted to observations no older than maxAge.
-// Keys are the listing's asset ids (CODE-ISSUER, `native`); coverage is the observer's watch-list.
-//
-// It reads the observation log, not the supply_1d CAGG: that daily roll-up's newest bucket is a
-// completed previous day (~2.9h to ~26.9h old), which understates supply and would fail any 24h
-// vintage bound. The log ticks every five minutes.
-//
-// maxAge must be positive; a non-positive value admits nothing, so the caller falls back to its
-// next arm rather than publish an observation of unknown vintage.
+// LatestSupplyObservations returns the newest supply observation per canonical asset_id no older than maxAge, from the observation log and not the supply_1d CAGG, whose newest bucket lags.
 func (s *Store) LatestSupplyObservations(ctx context.Context, maxAge time.Duration) (map[string]SupplyObservation, error) {
 	// Postgres computes the cutoff, not the caller: rows carry the writer's clock, and a reader's
 	// clock would turn skew into a phantom staleness verdict.
@@ -224,10 +207,7 @@ func (s *Store) LatestSupplyObservations(ctx context.Context, maxAge time.Durati
 	return out, nil
 }
 
-// ListAssetsExt is ListAssets with the full options bag. ListAssets
-// is kept as the 3-arg call so existing callers
-// (handler, integration tests) compile unchanged; new callers
-// pass ListAssetsOptions to opt into Q.
+// ListAssetsExt is ListAssets with the full options bag.
 func (s *Store) ListAssetsExt(ctx context.Context, opts ListAssetsOptions) ([]AssetRow, error) {
 	// Clamp to the page-size ceiling plus one row for the caller's overfetch-by-one sentinel (501,
 	// not 500). Resetting to the default would truncate a 501-row overfetch to 100 and drop the cursor.
@@ -660,10 +640,7 @@ const refreshAssetVolumePrune = `DELETE FROM asset_volume_24h WHERE computed_at 
 // one older than the 24h window it summed, which is false by construction.
 const refreshAssetVolumePruneExpired = `DELETE FROM asset_volume_24h WHERE computed_at < now() - INTERVAL '24 hours'`
 
-// RefreshAssetVolume24h is the aggregator's entry point into the /v1/assets rollup refresh. It
-// delegates to [Store.RefreshAssetListingRollups], which refreshes asset_volume_24h AND
-// asset_price_snapshot in one transaction. The name is narrower than the behaviour because it is
-// the method assetvolrollup.Refresher names.
+// RefreshAssetVolume24h is the aggregator's entry point into the /v1/assets rollup refresh.
 func (s *Store) RefreshAssetVolume24h(ctx context.Context) error {
 	return s.RefreshAssetListingRollups(ctx)
 }
@@ -844,8 +821,7 @@ func atoiOrZero(s string) int {
 	return n
 }
 
-// AssetPricePoint is one USD-price sample: `T` the bucket end (RFC 3339), `P` the price rounded
-// to 10 dp on the same path as price_usd. P is a pointer so a bucket with no trades is null, not zero.
+// AssetPricePoint is one USD-price sample: `T` the bucket end (RFC 3339), `P` the price rounded to 10 dp on the price_usd path; P is a pointer so a tradeless bucket is null, not zero.
 type AssetPricePoint struct {
 	T string
 	P *string
@@ -881,9 +857,7 @@ const (
 	catalogueRoundPlacesForWanted = catalogueRoundPlacesHead + `ANY(w.forms)` + catalogueRoundPlacesTail
 )
 
-// GetAssetPriceHistory24h returns up to 24 hourly USD price samples, oldest first, using the
-// same direct-then-XLM-triangulated path as price_usd. Buckets with no trades give a null P, left
-// to the UI to gap or interpolate.
+// GetAssetPriceHistory24h returns up to 24 hourly USD price samples, oldest first, using the same direct-then-XLM-triangulated path as price_usd.
 func (s *Store) GetAssetPriceHistory24h(ctx context.Context, assetID string) ([]AssetPricePoint, error) {
 	rows, err := s.db.QueryContext(ctx, getAssetPriceHistory24hSQL, assetAliasArray(assetID), canonical.NativeSACContractID())
 	if err != nil {
@@ -1007,8 +981,7 @@ var getAssetPriceHistory24hSQL = `
 		 ORDER BY hours.bucket ASC
 `
 
-// GetAssetPriceHistory7d returns up to 7 daily USD price samples, oldest first, on the same path
-// as GetAssetPriceHistory24h. Buckets with no trades give a null P.
+// GetAssetPriceHistory7d returns up to 7 daily USD price samples, oldest first, on the same path as GetAssetPriceHistory24h.
 func (s *Store) GetAssetPriceHistory7d(ctx context.Context, assetID string) ([]AssetPricePoint, error) {
 	rows, err := s.db.QueryContext(ctx, getAssetPriceHistory7dSQL, assetAliasArray(assetID), canonical.NativeSACContractID())
 	if err != nil {
@@ -1125,16 +1098,7 @@ var getAssetPriceHistory7dSQL = `
 		 ORDER BY days.bucket ASC
 `
 
-// AssetATH is the asset's all-time-high USD price and its day, across USD-quoted day-buckets in
-// `prices_1d` (direct USD-stablecoin pairs and `fiat:USD`). Triangulated asset/XLM x XLM/USD
-// paths are excluded: one bad XLM/USD reading on a thin day could fabricate an ATH.
-//
-// The metric is the highest day-VWAP, not the highest tick, so volume weighting rejects dust prints.
-// The `USDT-GCQTGZQQ...` issuer is EXCLUDED from every USD allowlist (that asset trades unpegged).
-// USD proxies are [usdProxyQuotes]; new ones need a verified-catalogue entry.
-//
-// A day-bucket counts only if its pair cleared [athMinDayVolumeUSD] and [athMinDayTrades], so a
-// lone print cannot set the high. The floor is a display filter, not attack-resistant.
+// AssetATH is the asset's all-time-high USD price and day from USD-quoted `prices_1d` buckets; triangulated asset/XLM x XLM/USD paths are excluded and the metric is the highest day-VWAP, not a tick.
 type AssetATH struct {
 	USD string // numeric, fixed-point string (preserves precision)
 	At  string // RFC-3339 day-bucket the high was set
@@ -1146,10 +1110,7 @@ const (
 	athMinDayTrades    = 3
 )
 
-// GetAssetATH returns the asset's all-time-high USD price: the (vwap, bucket_day) with maximal
-// vwap in `prices_1d` over [usdProxyQuotes] (canonical USDC and its SAC, plus `fiat:USD`).
-// Native XLM is the BASE of every USD pair, so no special case is needed. Returns (nil, nil) when
-// no USD-quoted day cleared the substance floor.
+// GetAssetATH returns the asset's all-time-high USD price as the (vwap, bucket_day) with maximal vwap in `prices_1d` over [usdProxyQuotes]; (nil, nil) when no USD-quoted day cleared the substance floor.
 func (s *Store) GetAssetATH(ctx context.Context, assetID string) (*AssetATH, error) {
 	// Alias-complete: max USD day-VWAP across EVERY canonical form; volume weighting keeps a thin
 	// SAC pool's dust from fabricating a high.
@@ -1177,9 +1138,7 @@ func (s *Store) GetAssetATH(ctx context.Context, assetID string) (*AssetATH, err
 	return &ath, nil
 }
 
-// GetAssetsATHBatch returns the ATH USD price and day per asset_id in one round trip, with
-// GetAssetATH's semantics per id (all alias forms, same allowlist and floor, earliest day on a
-// tie). Empty input gives an empty map; ids with no USD-quoted history are absent.
+// GetAssetsATHBatch returns the ATH USD price and day per asset_id in one round trip with GetAssetATH's semantics (all alias forms, same floor); ids with no USD-quoted history are absent.
 func (s *Store) GetAssetsATHBatch(ctx context.Context, assetIDs []string) (map[string]AssetATH, error) {
 	out := make(map[string]AssetATH, len(assetIDs))
 	if len(assetIDs) == 0 {
@@ -1222,10 +1181,7 @@ func (s *Store) GetAssetsATHBatch(ctx context.Context, assetIDs []string) (map[s
 	return out, nil
 }
 
-// AssetTopMarket is one entry in the top-markets preview returned
-// alongside a single asset lookup. Compact summary suitable for an
-// asset detail page header — the full markets list lives on
-// /v1/markets.
+// AssetTopMarket is one entry in the top-markets preview returned alongside a single asset lookup.
 type AssetTopMarket struct {
 	Counterparty  string  // the OTHER side of the pair (the side that's NOT this asset)
 	Side          string  // "base" if this asset was base, else "quote"
@@ -1233,9 +1189,7 @@ type AssetTopMarket struct {
 	TradeCount24h int64
 }
 
-// GetAssetMarketsCount returns the number of distinct markets the asset traded in over the
-// trailing 24h (non-null prices_1m bucket). A market is its canonical orientation, as on
-// /v1/markets, so one stored in both directions counts once. Returns 0 with no rows.
+// GetAssetMarketsCount returns the number of distinct markets the asset traded in over the trailing 24h (non-null prices_1m bucket).
 func (s *Store) GetAssetMarketsCount(ctx context.Context, assetID string) (int64, error) {
 	var n int64
 	if err := s.db.QueryRowContext(ctx, assetMarketsCountQuery(), assetAliasArray(assetID), canonical.NativeSACContractID()).Scan(&n); err != nil {
@@ -1244,9 +1198,7 @@ func (s *Store) GetAssetMarketsCount(ctx context.Context, assetID string) (int64
 	return n, nil
 }
 
-// GetAssetTradeCount24h returns the trades the asset took part in (base OR quote) over the
-// trailing 24h. It reads the `trades` hypertable directly, so the count is per trade rather than
-// per prices_1m bucket. Returns 0 with no trades.
+// GetAssetTradeCount24h returns the trades the asset took part in (base OR quote) over the trailing 24h.
 func (s *Store) GetAssetTradeCount24h(ctx context.Context, assetID string) (int64, error) {
 	const q = `
 		SELECT COUNT(*)
@@ -1261,8 +1213,7 @@ func (s *Store) GetAssetTradeCount24h(ctx context.Context, assetID string) (int6
 	return n, nil
 }
 
-// GetAssetTopMarkets returns up to `limit` markets the asset trades in (base OR quote), by
-// trailing-24h USD volume desc. limit clamps to [1, 20]; default 5.
+// GetAssetTopMarkets returns up to `limit` markets the asset trades in (base OR quote), by trailing-24h USD volume desc. limit clamps to [1, 20]; default 5.
 func (s *Store) GetAssetTopMarkets(ctx context.Context, assetID string, limit int) ([]AssetTopMarket, error) {
 	if limit <= 0 || limit > 20 {
 		limit = 5
@@ -1466,10 +1417,7 @@ var getAssetBySlugSQL = `
 		  LEFT JOIN per_asset_24h_vol vol ON true` + priceArmJoins(xlmUSDLateralJoin("$2::text")) + `
 `
 
-// GetAssetBySlug looks up by friendly slug (USDC, AQUA, EURC),
-// canonical asset_id (USDC-GA5Z…), OR raw code with case-insensitive
-// retry — see the SQL's WHERE clause + the handler's case-fallback
-// for the full input-shape table.
+// GetAssetBySlug looks up by friendly slug, canonical asset_id or raw code with a case-insensitive retry; see the SQL WHERE clause for the input-shape table.
 func (s *Store) GetAssetBySlug(ctx context.Context, slug string) (AssetRow, error) {
 	r, err := scanAssetRow(s.db.QueryRowContext(ctx, getAssetBySlugSQL, slug, canonical.NativeSACContractID()))
 	if err != nil {
@@ -1480,24 +1428,12 @@ func (s *Store) GetAssetBySlug(ctx context.Context, slug string) (AssetRow, erro
 	return r, nil
 }
 
-// GetAssetByAssetID is a thin wrapper kept for clarity at the
-// handler layer — the underlying SQL accepts canonical asset_id
-// alongside friendly slug, so this just calls GetAssetBySlug.
+// GetAssetByAssetID is a thin handler-layer wrapper over GetAssetBySlug, whose SQL also accepts a canonical asset_id.
 func (s *Store) GetAssetByAssetID(ctx context.Context, assetID string) (AssetRow, error) {
 	return s.GetAssetBySlug(ctx, assetID)
 }
 
-// GetNativeAssetRow returns the synthetic AssetRow for native XLM, which has no classic_assets row
-// (that table tracks issued assets only). Without it `/v1/coins/XLM` would 404 or let an issued
-// token with code "XLM" (a scam token) win the disambiguation tiebreak.
-//
-//   - Slug / Code "XLM"; AssetID "native"; no issuer; first/last seen ledger 0 (unset).
-//   - ObservationCount 0 with ObservationCountUnmeasured set; nothing cheap counts native trades.
-//   - PriceUSD and Change*Pct use the same xlm_usd stablecoin-proxy chain as the listing.
-//   - Volume24hUSD sums volume_usd where native is base or quote over 24h.
-//   - MarketCapUSD and CirculatingSupply are NULL; native has no supply row.
-//
-// It always returns a populated row (no sql.ErrNoRows path): the CTEs LEFT JOIN out to NULL.
+// GetNativeAssetRow returns the synthetic AssetRow for native XLM, which has no classic_assets row, so an issued scam token coded "XLM" cannot win the `/v1/coins/XLM` tiebreak.
 func (s *Store) GetNativeAssetRow(ctx context.Context) (AssetRow, error) {
 	row, err := scanAssetRow(s.db.QueryRowContext(ctx, getNativeAssetSQL, canonical.NativeSACContractID()))
 	if err != nil {
@@ -1592,9 +1528,7 @@ var getNativeAssetSQL = `
 		  LEFT JOIN per_asset_24h_vol vol ON true
 `
 
-// LatestAssetStats returns per-asset 24h volume and supply stats for /v1/assets/{id}. Volume sums
-// prices_1m.volume_usd where the asset is base or quote (as Volume24hUSDForAsset). Supply is
-// always null: classic_asset_stats_5m never got a writer. A row with no stats is not an error.
+// LatestAssetStats returns per-asset 24h volume and supply stats for /v1/assets/{id}; volume sums prices_1m.volume_usd as base or quote, supply is always null (no writer), and no stats is not an error.
 func (s *Store) LatestAssetStats(ctx context.Context, assetID string) (AssetRow, error) {
 	// Alias-complete: sum the asset's volume across all its canonical
 	// forms (mirrors Volume24hUSDForAsset), so the /v1/assets/{id} volume
@@ -1628,9 +1562,7 @@ func (s *Store) LatestAssetStats(ctx context.Context, assetID string) (AssetRow,
 	return out, nil
 }
 
-// ValidateAssetsCursor errors if a non-empty `cursor` does not match the shape the listing emits
-// for the order; an empty cursor is valid. Handlers should answer 400: a bad cursor otherwise
-// degrades the keyset predicate to match no rows, an empty page that looks like end-of-pagination.
+// ValidateAssetsCursor errors if a non-empty `cursor` does not match the shape the listing emits for the order; an empty cursor is valid.
 func ValidateAssetsCursor(cursor string, order AssetsOrder) error {
 	if cursor == "" {
 		return nil
@@ -1729,10 +1661,7 @@ func parseAssetCursor(cursor string) (tier int, obsCount int64, assetID string) 
 	return atoiOrZero(tierStr), n, assetID
 }
 
-// EncodeAssetsCursor renders the keyset cursor for the LAST row of a page:
-// `<rank_tier>:<sort_key>:<asset_id>`, the full ORDER BY tuple exactly as the query ranked the row.
-// It pairs with [parseAssetCursor] / [parseVolumeCursor] and lives here so the encode side cannot
-// drift from assetsOrderBy and assetsCursorPredicate. A nil RankTier encodes as tier 0.
+// EncodeAssetsCursor renders the keyset cursor `<rank_tier>:<sort_key>:<asset_id>` for a page's LAST row, matching assetsOrderBy and assetsCursorPredicate; a nil RankTier encodes as tier 0.
 func EncodeAssetsCursor(row AssetRow, order AssetsOrder) string {
 	tier := 0
 	if row.RankTier != nil {
@@ -1749,10 +1678,7 @@ func EncodeAssetsCursor(row AssetRow, order AssetsOrder) string {
 	return fmt.Sprintf("%d:%s:%s", tier, sortKey, row.AssetID)
 }
 
-// GetAssetsPriceHistory24hBatch returns 24h hourly USD-price series for many assets in one query,
-// keyed by asset_id, up to 24 points oldest first; an asset with no trades gets an empty slice.
-// It uses the same alias-complete pick as GetAssetPriceHistory24h so a listing sparkline and its
-// detail chart agree.
+// GetAssetsPriceHistory24hBatch returns up to 24 hourly USD-price points per asset, oldest first, keyed by asset_id, using the same alias-complete pick as GetAssetPriceHistory24h; no trades gives an empty slice.
 func (s *Store) GetAssetsPriceHistory24hBatch(ctx context.Context, assetIDs []string) (map[string][]AssetPricePoint, error) {
 	if len(assetIDs) == 0 {
 		return map[string][]AssetPricePoint{}, nil
@@ -1869,10 +1795,7 @@ var getAssetsPriceHistory24hBatchSQL = `
 		 ORDER BY w.asset_id, hours.bucket ASC
 `
 
-// GetAssetsPriceHistory7dBatch returns 7d daily USD-price series for
-// many assets in one query. 7-bucket-deep daily grain, mirroring
-// the per-asset GetAssetPriceHistory7d. Same alias-complete
-// direct-then-XLM-triangulated pick; one query for many asset_ids.
+// GetAssetsPriceHistory7dBatch returns 7 daily USD-price points per asset in one query, mirroring GetAssetPriceHistory7d's alias-complete direct-then-XLM-triangulated pick.
 func (s *Store) GetAssetsPriceHistory7dBatch(ctx context.Context, assetIDs []string) (map[string][]AssetPricePoint, error) {
 	if len(assetIDs) == 0 {
 		return map[string][]AssetPricePoint{}, nil

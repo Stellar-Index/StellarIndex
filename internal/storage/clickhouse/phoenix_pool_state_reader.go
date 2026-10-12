@@ -37,8 +37,7 @@ const (
 	phoenixFieldTokenB     = "token_b"
 )
 
-// PhoenixPoolState is one pool's decoded current state: reserves (full-precision i128
-// *big.Int, ADR-0003, token base units) and token identities from persistent storage.
+// PhoenixPoolState is one pool's decoded current state: reserves (full-precision i128 *big.Int, ADR-0003, token base units) and token identities from persistent storage.
 type PhoenixPoolState struct {
 	Pool     string // pool contract C-strkey
 	TokenA   string // token contract C-strkey, from the CONFIG entry
@@ -88,12 +87,7 @@ func (p *phoenixPoolParts) complete() bool {
 	return !p.shapeBad && p.tokenA != "" && p.tokenB != "" && p.reserveA != nil && p.reserveB != nil
 }
 
-// PhoenixPoolReserves reads current reserve state for the given pools in one batched
-// `key_xdr IN (...)` lookup (3 keys per pool), mirroring SoroswapPairReserves. Pools with no
-// captured entries, or TTL-archived ones (only a positively-resolved lapsed TTL drops a pool), are
-// absent from both returns: absence is "unavailable", never zero. Entries that do not decode to
-// the verified shape, or a partial set, come back in the second return (undecodable, sorted) so
-// callers can count them; they are never partially decoded.
+// PhoenixPoolReserves reads current pool state in one batched lookup (3 keys per pool); absent or TTL-archived pools mean "unavailable", never zero, and undecodable or partial entries come back in the second return, never partially decoded.
 func (r *ExplorerReader) PhoenixPoolReserves(ctx context.Context, pools []string) (map[string]PhoenixPoolState, []string, error) {
 	keys, refByKey, err := phoenixPoolKeys(pools)
 	if err != nil {

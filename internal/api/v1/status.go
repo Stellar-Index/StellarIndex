@@ -16,9 +16,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// StatusResponse is the wire shape for /v1/status, the customer-facing health rollup behind the
-// public status page. It is distinct from /v1/healthz (shallow liveness) and /v1/readyz (deep
-// dependency ping); /v1/diagnostics/cursors carries the operator detail.
+// StatusResponse is the /v1/status wire shape, the customer-facing health rollup behind the public status page, distinct from /v1/healthz and /v1/readyz.
 type StatusResponse struct {
 	// Overall is "ok" when every signal is healthy, "degraded" when a signal is unhealthy but the
 	// API is serving, "down" when no live signal is available.
@@ -158,17 +156,14 @@ type StatusIncidents struct {
 	Active []ActiveIncident `json:"active,omitempty"`
 }
 
-// ActiveIncident is one entry in [StatusIncidents.Active]. Internal labels (component, team,
-// instance) are deliberately excluded to keep the surface public-safe. RunbookURL is included
-// because the runbooks are public markdown, so it leaks nothing.
+// ActiveIncident is one entry in [StatusIncidents.Active]; internal labels (component, team, instance) are deliberately excluded to keep it public-safe.
 type ActiveIncident struct {
 	Name       string `json:"name"`
 	Severity   string `json:"severity"`
 	RunbookURL string `json:"runbook_url,omitempty"`
 }
 
-// StatusBackend pulls signals from a metrics and alerting stack ([PrometheusStatusBackend]); nil
-// degrades to in-process data only.
+// StatusBackend pulls signals from a metrics and alerting stack ([PrometheusStatusBackend]); nil degrades to in-process data only.
 type StatusBackend interface {
 	// Heartbeats returns the latest successful scrape time per friendly service name
 	// ("indexer", "aggregator", "api"). A zero time means the scrape has never succeeded.
@@ -268,9 +263,7 @@ const activeSourcesQuery = `count(
 
 const totalSourcesQuery = `count(stellarindex_source_enabled == 1)`
 
-// Freshness returns the first query error rather than a zero count, so a blind probe trips the
-// backend canary instead of reading as ingest death. The active window is 7 days because rozo,
-// phoenix, ecb and band emit only a few events per day; a shorter one reads them dark.
+// Freshness returns the first query error rather than a zero count so a blind probe trips the canary, and uses a 7-day active window because rozo, phoenix, ecb and band emit few events per day.
 func (p *PrometheusStatusBackend) Freshness(ctx context.Context) (StatusFreshness, error) {
 	var out StatusFreshness
 

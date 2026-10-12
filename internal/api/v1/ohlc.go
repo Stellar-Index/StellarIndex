@@ -21,17 +21,7 @@ import (
 // override via ?outlier_sigma=N, including 0 for raw inspection.
 const ohlcDefaultOutlierSigma = 4.0
 
-// OHLCBar is the wire shape for /v1/ohlc entries. All prices are
-// decimal strings (ADR-0003).
-//
-// The volume fields are RAW smallest-unit sums in a per-SOURCE scale, not a fixed stroop: DEX legs
-// are 7-decimal, CEX 8, FX 6 ([amountScaleDecimalsFor]). Dividing by a fixed 1e7 overstates a
-// CEX-fed pair tenfold. BaseVolumeDecimals / QuoteVolumeDecimals state the scale on the wire (the
-// [aggregate.NormalizeAmountScale] lift target, resolved over the pre-outlier-filter population);
-// a leg in `nonstandard_decimals_assets` is stamped at the asset's own decimals instead.
-//
-// Truncated means the window hit the per-request trade cap: Open/High/Low reflect only the
-// chronologically-last N trades (the reader drops the oldest under the LIMIT). Close is unaffected.
+// OHLCBar is the /v1/ohlc entry with decimal-string prices; volumes are RAW smallest-unit sums in a per-SOURCE scale (stated by BaseVolumeDecimals/QuoteVolumeDecimals), and Truncated means Open/High/Low cover only the last N trades.
 type OHLCBar struct {
 	From        WireTime `json:"from"`
 	To          WireTime `json:"to"`

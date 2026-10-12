@@ -22,10 +22,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/strkey"
 )
 
-// SACBalanceSeed is one current SAC / SEP-41 Balance(Address) entry from the
-// current-state projection, shaped for seeding sac_balance_observations. The live
-// observer only writes on change, so dormant contract-held balances would
-// otherwise drop out of Algorithm-2 supply. This reads authoritative current state.
+// SACBalanceSeed is one current SAC / SEP-41 Balance(Address) entry from the current-state projection, seeding sac_balance_observations so dormant contract-held balances do not drop out of Algorithm-2 supply.
 type SACBalanceSeed struct {
 	ContractID string    // SAC-wrapper contract C-strkey
 	AssetKey   string    // operator-mapped classic asset_key (CODE:ISSUER)
@@ -42,12 +39,7 @@ type SACBalanceSeed struct {
 	keyXDR string
 }
 
-// StreamSACBalanceSeeds invokes fn once per live Balance(Address) entry of a WATCHED SAC wrapper.
-// ledger_entries_current keeps archived (TTL-lapsed) values forever, so matched keys go through
-// ClassifyTTLLiveness. With no contract_id column the watched filter runs in Go after decoding
-// key_xdr, so the FINAL scan covers every contract_data row and must run under run-heavy-job.sh.
-// Removed and archived entries emit tombstones (IsRemoval, Balance=0). Corrupt XDR on a watched
-// entry is a hard error: dropping it would read as "holder holds nothing".
+// StreamSACBalanceSeeds invokes fn once per live Balance(Address) entry of a WATCHED SAC wrapper (TTL-classified, tombstones for removed or archived, corrupt XDR is a hard error); the FINAL scan is heavy, run under run-heavy-job.sh.
 func StreamSACBalanceSeeds(ctx context.Context, addr string, watched map[string]string, fn func(SACBalanceSeed) error) error {
 	if len(watched) == 0 {
 		return errors.New("clickhouse: StreamSACBalanceSeeds: empty watched SAC-wrapper set")
@@ -281,16 +273,7 @@ func ledgerCloseTimesBatch(ctx context.Context, conn driver.Conn, seqs []uint32,
 	return nil
 }
 
-// StreamSACBalanceSeedsFullHistory is the raw-history counterpart to StreamSACBalanceSeeds.
-// It reads the stellar.ledger_entry_changes append-log, not ledger_entries_current: the MV only
-// sees rows inserted after it existed, so a dormant Balance entry last written before that floor
-// is invisible there while the raw substrate (ADR-0034) is complete.
-// Reduces to the latest write per (entry_type, key_xdr): server-side per ledger window, in Go
-// across windows. Heavy: run under run-heavy-job.sh for the small watched set, never scheduled.
-// Memory grows with the span an unbounded query covers, so scan in primary-key ledger WINDOWS
-// (sacSeedLedgerWindow). Splitting per contract does not help: one wrapper owns ~98% of the
-// GROUP BY cardinality. SeedEvidence records the reduced range and, under walk.VerifyLake, the
-// ledger through which the lake was proven intact before anything was emitted.
+// StreamSACBalanceSeedsFullHistory is StreamSACBalanceSeeds over the raw ledger_entry_changes log, so dormant Balance entries written before the MV existed are seen; heavy (windowed by ledger), run under run-heavy-job.sh, never scheduled.
 func StreamSACBalanceSeedsFullHistory(ctx context.Context, addr string, watched map[string]string, walk SeedWalk, fn func(SACBalanceSeed) error) (SeedEvidence, error) {
 	if len(watched) == 0 {
 		return SeedEvidence{}, errors.New("clickhouse: StreamSACBalanceSeedsFullHistory: empty watched SAC-wrapper set")

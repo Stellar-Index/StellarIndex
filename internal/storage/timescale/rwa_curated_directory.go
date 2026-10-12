@@ -48,12 +48,7 @@ type CuratedRWAEntry struct {
 	Source string
 }
 
-// CuratedRWACensus is the storage layer's account of one curator's cache, read in the same
-// snapshot as the rows. Its arithmetic closes as [ListingDirectoryCensus]'s does, and
-// [CuratedRWACensus.Check] proves it:
-//
-//	Entries = Contracts + Classic   (a table CHECK makes the two forms exhaustive)
-//	Priced <= Contracts, PricedClassic <= Classic
+// CuratedRWACensus is the storage layer's account of one curator's cache, read in the same snapshot as the rows.
 type CuratedRWACensus struct {
 	// Entries counts rows inside the recognition bound, of either address form.
 	Entries int
@@ -105,11 +100,7 @@ const curatedRWAPriceFreshSQL = `price_usd IS NOT NULL
 // 65535 bind-param cap.
 const curatedRWAUpsertChunk = 500
 
-// ReplaceCuratedRWADirectory makes one curator's cache equal to `entries`: each entry is upserted
-// with a fresh synced_at and every row of that curator the run did not touch is pruned.
-//
-// An empty set is refused: a run that fetched nothing cannot tell "the curator lists nothing" from
-// "the fetch failed", and applying it would prune the whole curator into silence.
+// ReplaceCuratedRWADirectory makes one curator's cache equal `entries` (upsert with fresh synced_at, prune untouched rows); an empty set is refused since a run that fetched nothing cannot tell "lists nothing" from a failed fetch.
 func (s *Store) ReplaceCuratedRWADirectory(
 	ctx context.Context, curator string, entries []CuratedRWAEntry, source string,
 ) (upserted, pruned int64, err error) {
@@ -250,12 +241,7 @@ const curatedRWACensusSQL = `
 		  FROM rwa_curated_directory
 		 WHERE curator = $1`
 
-// CuratedRWADirectoryByAddress returns one curator's recognised rows keyed by exact address, with
-// the census of that curator's whole cache.
-//
-// The map key is the address as published, never the code: a code lookup would hand a curator's
-// price to whichever account minted the ticker first, while a strkey or a code bound to its
-// issuer cannot be collided into.
+// CuratedRWADirectoryByAddress returns one curator's recognised rows keyed by exact published address, never code, plus the census of that curator's whole cache, so one account's price cannot be handed to a same-code minter.
 func (s *Store) CuratedRWADirectoryByAddress(
 	ctx context.Context, curator string,
 ) (map[string]CuratedRWAEntry, CuratedRWACensus, error) {

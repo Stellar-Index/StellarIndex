@@ -10,10 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// AquariusLiquidityAction discriminates the two Aquarius
-// liquidity-mutating events. String values match the
-// aquarius_liquidity.action CHECK constraint (migration 0089) and the
-// LiquidityAction constants in internal/sources/aquarius/consumer.go.
+// AquariusLiquidityAction discriminates the two Aquarius liquidity-mutating events.
 type AquariusLiquidityAction string
 
 const (
@@ -30,9 +27,7 @@ func (a AquariusLiquidityAction) IsValid() bool {
 	return false
 }
 
-// AquariusReservesEvent is one observed update_reserves event — the
-// pool's POST-STATE reserve vector (one i128 per pool token). The
-// writer fans it out to one aquarius_reserves row per token position.
+// AquariusReservesEvent is one observed update_reserves event — the pool's POST-STATE reserve vector (one i128 per pool token).
 type AquariusReservesEvent struct {
 	ContractID      string
 	Ledger          uint32
@@ -45,10 +40,7 @@ type AquariusReservesEvent struct {
 	Reserves []canonical.Amount
 }
 
-// AquariusLiquidityEvent is one observed deposit_liquidity /
-// withdraw_liquidity event. The writer fans it out to one
-// aquarius_liquidity row per token position; Shares (the per-event LP
-// share amount) lands on the token_index = 0 row only.
+// AquariusLiquidityEvent is one deposit_liquidity / withdraw_liquidity event, fanned out to one row per token position; Shares lands on the token_index = 0 row only.
 type AquariusLiquidityEvent struct {
 	ContractID      string
 	Ledger          uint32
@@ -66,11 +58,7 @@ type AquariusLiquidityEvent struct {
 	Shares canonical.Amount
 }
 
-// InsertAquariusReserves appends one update_reserves observation, fanned to one row per token
-// position. Idempotent on the table PK. The upsert is a generation-guarded DO UPDATE, not DO
-// NOTHING: a re-derive at a higher derive_generation lands its correction in place, a lower one
-// never reverts it, and DO NOTHING would silently drop corrected re-derives.
-// Rejects an empty ContractID/TxHash, an empty reserve vector and a negative reserve up front.
+// InsertAquariusReserves appends one update_reserves observation, one row per token position, via a generation-guarded DO UPDATE (not DO NOTHING) so a higher-generation re-derive corrects in place and a lower one never reverts it.
 func (s *Store) InsertAquariusReserves(ctx context.Context, e AquariusReservesEvent) error {
 	if e.ContractID == "" {
 		return errors.New("timescale: InsertAquariusReserves: ContractID is empty")
@@ -123,10 +111,7 @@ func (s *Store) InsertAquariusReserves(ctx context.Context, e AquariusReservesEv
 	return nil
 }
 
-// InsertAquariusLiquidity appends one deposit_liquidity / withdraw_liquidity observation, fanned
-// to one row per token position. Shares lands on the token_index = 0 row only (NULL elsewhere).
-// Idempotent on the table PK. Rejects empty identifiers, an invalid Action, a tokens/amounts
-// length mismatch, an empty token address and negative amounts or shares up front.
+// InsertAquariusLiquidity appends one deposit/withdraw_liquidity observation, one row per token position (Shares on token_index = 0 only), idempotent on the PK; rejects empty identifiers, invalid Action, length mismatches and negative amounts.
 func (s *Store) InsertAquariusLiquidity(ctx context.Context, e AquariusLiquidityEvent) error {
 	if e.ContractID == "" {
 		return errors.New("timescale: InsertAquariusLiquidity: ContractID is empty")
@@ -201,8 +186,7 @@ func (s *Store) InsertAquariusLiquidity(ctx context.Context, e AquariusLiquidity
 	return nil
 }
 
-// AquariusReserveLeg is one token position within a pool's latest reserve
-// snapshot.
+// AquariusReserveLeg is one token position within a pool's latest reserve snapshot.
 type AquariusReserveLeg struct {
 	// TokenIndex is the 0-based position in the pool's canonical token
 	// order.
@@ -217,9 +201,7 @@ type AquariusReserveLeg struct {
 	Reserve canonical.Amount
 }
 
-// AquariusPoolReserve is one Aquarius pool's latest POST-STATE reserve
-// snapshot: the complete reserve vector from the pool's single most recent
-// update_reserves event.
+// AquariusPoolReserve is one pool's latest POST-STATE reserve snapshot: the full reserve vector of its newest update_reserves event.
 type AquariusPoolReserve struct {
 	ContractID string
 	ObservedAt time.Time
@@ -228,19 +210,7 @@ type AquariusPoolReserve struct {
 	Legs []AquariusReserveLeg
 }
 
-// LatestAquariusReserves returns the newest reserve snapshot per pool within the trailing
-// windowDays, most recently updated first. A snapshot is the full reserve vector of the pool's
-// single latest update_reserves event, so multi-token stableswap pools keep all legs. Token
-// addresses are recovered positionally from the pool's latest deposit/withdraw in the window
-// (update_reserves carries none, migration 0089); a leg with no liquidity event keeps an empty
-// Token.
-//
-// Two limits callers must carry: token identity is positional recovery, not a captured address;
-// and aquarius_reserves has no transaction application order, so if two transactions touch a pool
-// in its latest ledger at the same op_index and event_index, the snapshot is either one's
-// post-state, not provably the final one.
-//
-// Returns (nil, nil) when nothing was captured in the window; windowDays <= 0 means 90.
+// LatestAquariusReserves returns the newest reserve snapshot per pool within the trailing windowDays, most recently updated first; multi-token stableswap pools keep all legs, with token addresses recovered positionally.
 func (s *Store) LatestAquariusReserves(ctx context.Context, windowDays int) ([]AquariusPoolReserve, error) {
 	if windowDays <= 0 {
 		windowDays = 90

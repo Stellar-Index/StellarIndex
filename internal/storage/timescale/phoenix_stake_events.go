@@ -9,9 +9,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// PhoenixStakeAction discriminates the stake-contract actions. Its values must match the
-// phoenix_stake_events.action CHECK constraint and the EventAction* constants in
-// internal/sources/phoenix.
+// PhoenixStakeAction discriminates stake-contract actions; values must match the phoenix_stake_events.action CHECK and the EventAction* constants in internal/sources/phoenix.
 type PhoenixStakeAction string
 
 const (
@@ -58,16 +56,7 @@ func (a PhoenixStakeAction) hasToken() bool {
 	return true
 }
 
-// PhoenixStakeEvent is one phoenix_stake_events row: a single observed stake-contract event from
-// a Phoenix pool.
-//
-// Amount is a decimal string (i128 -> *big.Int -> string), always positive; the action carries
-// the direction. It is empty for withdraw_rewards / distribute_rewards, which carry no amount.
-//
-// LPToken is the LP share-token address on bond/unbond but is REPURPOSED to the reward-token /
-// distributed-asset address on withdraw_rewards / distribute_rewards (see phoenix/events.go).
-// User is empty for pool-wide distribute_rewards and create_distribution_flow; LPToken is empty
-// for migration_*.
+// PhoenixStakeEvent is one phoenix_stake_events row; Amount is a decimal string, always positive (the action carries direction) and empty for withdraw_rewards / distribute_rewards.
 type PhoenixStakeEvent struct {
 	StakeContract string
 	Ledger        uint32
@@ -84,15 +73,7 @@ type PhoenixStakeEvent struct {
 	Amount     string // decimal i128; empty for reward actions (NULL column)
 }
 
-// InsertPhoenixStakeEvent appends one phoenix_stake_events row, idempotent on the
-// (ledger_close_time, stake_contract, ledger, tx_hash, op_index, action, event_index) PK
-// (event_index keeps two bonds/unbonds in one op from colliding). The upsert is a
-// generation-guarded DO UPDATE, not DO NOTHING: a replay at the SAME generation is a no-op, but a
-// re-derive at a higher generation lands its correction.
-//
-// It rejects empty StakeContract / TxHash and an invalid Action before touching the DB. User is
-// required unless the action is pool-wide; LPToken unless it is a migration_* step; Amount only
-// for bond/unbond, since the reward events carry none (the column is nullable for that reason).
+// InsertPhoenixStakeEvent appends one phoenix_stake_events row, idempotent on its PK (event_index separates same-op events) via a generation-guarded DO UPDATE, not DO NOTHING.
 func (s *Store) InsertPhoenixStakeEvent(ctx context.Context, e PhoenixStakeEvent) error {
 	if e.StakeContract == "" {
 		return errors.New("timescale: InsertPhoenixStakeEvent: StakeContract is empty")
@@ -147,9 +128,7 @@ func (s *Store) InsertPhoenixStakeEvent(ctx context.Context, e PhoenixStakeEvent
 	return nil
 }
 
-// PhoenixStakeSummary is the windowed Phoenix LP-staking summary, the READ side of
-// phoenix_stake_events. Amounts are LP-share-token base units (i128/NUMERIC, never int64);
-// NetStaked is negative when unbonds exceed bonds in the window.
+// PhoenixStakeSummary is the windowed LP-staking summary read from phoenix_stake_events; amounts are LP-share base units (NUMERIC, never int64) and NetStaked is negative when unbonds exceed bonds.
 type PhoenixStakeSummary struct {
 	Bonds         int64
 	Unbonds       int64
@@ -159,11 +138,7 @@ type PhoenixStakeSummary struct {
 	UniqueStakers int64
 }
 
-// PhoenixStakeWindowStats reads the windowed bond / unbond volumes and participants from
-// phoenix_stake_events. Amounts stay LP-share-token base units as canonical.Amount.
-//
-// It returns (nil, nil) when the window has no bond/unbond event, so the KPI is omitted.
-// windowDays <= 0 means 90.
+// PhoenixStakeWindowStats reads the windowed bond / unbond volumes and participants from phoenix_stake_events.
 func (s *Store) PhoenixStakeWindowStats(ctx context.Context, windowDays int) (*PhoenixStakeSummary, error) {
 	if windowDays <= 0 {
 		windowDays = 90

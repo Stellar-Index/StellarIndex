@@ -17,11 +17,7 @@ import (
 // maps it to a 500 — same outcome as an uncached upstream error.
 var errNetworkStatsColdFailed = errors.New("network stats: cold fetch failed")
 
-// CachedNetworkStatsReader wraps a [NetworkStatsReader] with a single-key stale-while-revalidate
-// cache. GetNetworkStats is a network-wide 24h aggregate over the served tier (the slowest /v1
-// route), but its figures move slowly: serve the cached value instantly and revalidate in one
-// background flight, so no request ever blocks on the slow upstream. Same shape as the
-// coins/markets caches (asset_catalogue_cache.go), reduced to one key.
+// CachedNetworkStatsReader is a single-key stale-while-revalidate cache over the slow network-wide 24h aggregate, so no request blocks on the upstream.
 type CachedNetworkStatsReader struct {
 	// logger sinks a panic recovered in a detached refresh goroutine. It is the process default,
 	// not the Server's logger, because readers are built before the Server exists. The
@@ -41,25 +37,18 @@ type CachedNetworkStatsReader struct {
 	flight chan struct{}
 }
 
-// NewCachedNetworkStatsReader wraps upstream. ttl<=0 disables the cache
-// (every call passes through). 30s is the production default — matches the
-// coins cache and is far below the cadence at which these aggregates move.
+// NewCachedNetworkStatsReader wraps upstream; ttl<=0 disables the cache and 30s is the production default.
 func NewCachedNetworkStatsReader(upstream NetworkStatsReader, ttl time.Duration) *CachedNetworkStatsReader {
 	return &CachedNetworkStatsReader{logger: slog.Default(), upstream: upstream, ttl: ttl}
 }
 
-// GetNetworkStats implements NetworkStatsReader with SWR semantics. It
-// delegates to GetNetworkStatsAt and drops the freshness signals for
-// callers that don't stamp them.
+// GetNetworkStats implements NetworkStatsReader with SWR semantics, dropping the freshness signals GetNetworkStatsAt returns.
 func (c *CachedNetworkStatsReader) GetNetworkStats(ctx context.Context) (timescale.NetworkStats, error) {
 	v, _, _, err := c.GetNetworkStatsAt(ctx)
 	return v, err
 }
 
-// GetNetworkStatsAt is GetNetworkStats plus freshness: the value's observation time and whether
-// it was served stale (a prior success kept past its TTL while a refresh is pending or failing).
-// The handler stamps flags.stale and as_of from these rather than asserting stale:false over
-// aged data. A zero observedAt means a live, uncached read (as_of=now, stale=false).
+// GetNetworkStatsAt is GetNetworkStats plus observation time and a served-stale flag; a zero observedAt means a live uncached read.
 func (c *CachedNetworkStatsReader) GetNetworkStatsAt(ctx context.Context) (timescale.NetworkStats, time.Time, bool, error) {
 	if c.ttl <= 0 {
 		v, err := c.upstream.GetNetworkStats(ctx)

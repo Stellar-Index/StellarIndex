@@ -12,16 +12,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// TxIndexReader resolves tx hashes to their intra-ledger application order (tx_index) from the
-// lake's stellar.tx_hash_index, kept current by a materialized view over stellar.transactions. The
-// Postgres served tier does not carry this ordering; the MEV sandwich detectors consume it
-// (mev.TxOrderResolver). Construct once at startup, reuse, Close at shutdown.
+// TxIndexReader resolves tx hashes to their intra-ledger application order (tx_index) from stellar.tx_hash_index for the MEV sandwich detectors; construct once, reuse, Close at shutdown.
 type TxIndexReader struct {
 	conn driver.Conn
 }
 
-// NewTxIndexReader dials ClickHouse with a small pool and pings it,
-// authenticating as the environment's identity ([chAuth]).
+// NewTxIndexReader dials ClickHouse with a small pool and pings it, authenticating as the environment's identity (chAuth).
 func NewTxIndexReader(ctx context.Context, addr string) (*TxIndexReader, error) {
 	auth, err := chAuth()
 	if err != nil {
@@ -51,11 +47,7 @@ func NewTxIndexReader(ctx context.Context, addr string) (*TxIndexReader, error) 
 // list reads a granule per unmerged part per key and trips MEMORY_LIMIT.
 const txIndexChunk = 500
 
-// TxIndexes returns tx_hash -> tx_index for every hash the lake knows. Missing hashes (not yet
-// indexed; the historical backfill is windowed) are absent from the map and callers degrade rather
-// than guess. max() collapses un-merged ReplacingMergeTree duplicates (tx_index is identical across
-// duplicates of one hash). A failed chunk aborts the call: a partial map would read as
-// "legitimately unindexed" to the MEV worker. MEVLakeOrderLookupSkippedTotal counts it.
+// TxIndexes returns tx_hash to tx_index for every hash the lake knows; missing hashes are absent (callers degrade, never guess), max() collapses RMT duplicates, and a failed chunk aborts the call rather than return a partial map.
 func (r *TxIndexReader) TxIndexes(ctx context.Context, hashes []string) (map[string]uint32, error) {
 	out := make(map[string]uint32, len(hashes))
 	err := forEachTxHashChunk(ctx, hashes, obs.MEVLakeOrderLookupSkippedTotal, func(chunk []string) error {
@@ -73,10 +65,7 @@ type TxLedgerIndex struct {
 	TxIndex uint32
 }
 
-// TxLedgerIndexes returns tx_hash → every (ledger_seq, tx_index) the lake holds
-// for it, so a writer can confirm the ledger before trusting the index. Same
-// absent-not-zero and abort-on-failure contract as TxIndexes; a failed call
-// counts under TxIndexTagLookupSkippedTotal instead of the MEV counter.
+// TxLedgerIndexes returns tx_hash to every (ledger_seq, tx_index) the lake holds so a writer can confirm the ledger; same absent-not-zero and abort-on-failure contract as TxIndexes.
 func (r *TxIndexReader) TxLedgerIndexes(ctx context.Context, hashes []string) (map[string][]TxLedgerIndex, error) {
 	out := make(map[string][]TxLedgerIndex, len(hashes))
 	err := forEachTxHashChunk(ctx, hashes, obs.TxIndexTagLookupSkippedTotal, func(chunk []string) error {

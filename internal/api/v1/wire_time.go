@@ -9,9 +9,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/api/wiretime"
 )
 
-// WireTime is the canonical JSON rendering of an instant on the v1 wire:
-// RFC 3339, always UTC, always a literal `Z`. See [wiretime.Time], which
-// lives in a leaf package so v1's sub-packages can use it too.
+// WireTime is the canonical v1 wire rendering of an instant: RFC 3339, always UTC, literal `Z`; see [wiretime.Time].
 type WireTime = wiretime.Time
 
 // wireTimePtr lifts an optional instant onto the wire, preserving

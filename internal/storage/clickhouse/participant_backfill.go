@@ -50,8 +50,7 @@ func operationParticipantRows(bodyB64, opSource string, ledger uint32, closeTime
 	return rows, nil
 }
 
-// ParticipantBackfillStats accumulates what a BackfillOperationParticipants run
-// scanned + wrote (or, in dry-run, WOULD write).
+// ParticipantBackfillStats accumulates what a BackfillOperationParticipants run scanned and wrote (or, in dry-run, WOULD write).
 type ParticipantBackfillStats struct {
 	OpsScanned   uint64 // operation rows read from stellar.operations
 	Participants uint64 // non-source participant rows derived; all written (or would-write in dry-run) only when the run returned nil
@@ -63,12 +62,7 @@ type ParticipantBackfillStats struct {
 // window, so a dense post-Soroban window never materialises in the heap.
 const participantInsertBatch = 50_000
 
-// BackfillOperationParticipants fills stellar.operation_participants for the inclusive [from,to]
-// ledger range by re-deriving participants from stellar.operations.body_xdr: a CH-INTERNAL job,
-// not a Galexie re-walk, using the SAME operationParticipantRows as live capture. Windowed and
-// resumable like BackfillTxHashIndex; re-running a window is idempotent (ReplacingMergeTree
-// keyed on (account, ledger_seq, tx_index, op_index)). Rows are STREAMED and flushed in fixed
-// batches to bound memory. dryRun counts what WOULD be written and writes nothing.
+// BackfillOperationParticipants fills stellar.operation_participants for [from,to] by re-deriving from operations.body_xdr (CH-internal, windowed, resumable, idempotent on the ReplacingMergeTree key); dryRun writes nothing.
 func BackfillOperationParticipants(ctx context.Context, addr string, from, to, window uint32, dryRun bool, logf func(format string, args ...any)) (ParticipantBackfillStats, error) {
 	var stats ParticipantBackfillStats
 	if from == 0 || to < from || window == 0 {
@@ -267,10 +261,7 @@ func openParticipantWrite(ctx context.Context, addr string) (driver.Conn, error)
 	return conn, nil
 }
 
-// MinParticipantLedger returns the lowest ledger present in
-// stellar.operation_participants — the live-capture floor. ok=false when the
-// table is empty (no live capture yet), so the caller can fall back to the lake
-// tip. The historical backfill targets [genesis, floor-1] by default.
+// MinParticipantLedger returns the lowest ledger in operation_participants, the live-capture floor; ok=false when the table is empty.
 func MinParticipantLedger(ctx context.Context, addr string) (uint32, bool, error) {
 	conn, err := openRead(ctx, addr)
 	if err != nil {

@@ -6,10 +6,7 @@ import (
 	"time"
 )
 
-// DecoderStatsBucket is one row's worth of dispatcher counters for a
-// single source over a 5-minute window. The flusher computes deltas
-// against its last snapshot and writes one of these per source per
-// bucket boundary.
+// DecoderStatsBucket is one row's worth of dispatcher counters for a single source over a 5-minute window.
 type DecoderStatsBucket struct {
 	Bucket       time.Time
 	Source       string
@@ -19,16 +16,7 @@ type DecoderStatsBucket struct {
 	LastLedger   uint32
 }
 
-// InsertDecoderStats writes decoder_stats_5m rows; empty input is a valid no-op. ON CONFLICT
-// (bucket, source) DO UPDATE merges two flushes for one bucket (clock jump, leader change)
-// instead of erroring.
-//
-// The caller emits deltas (current minus last snapshot), not running totals.
-//
-// ALL-OR-NOTHING: one transaction, because statsflush retains its previous snapshot on any
-// error so the unwritten delta folds into the next flush. With the ACCUMULATING conflict clause,
-// a partial batch would double-count on that retry, inflating events_seen by a whole window and
-// corrupting the decode-error rate that denominator serves.
+// InsertDecoderStats writes decoder_stats_5m rows (empty input is a no-op), merging two flushes of one bucket via ON CONFLICT DO UPDATE; callers pass deltas, not running totals, and the write is all-or-nothing in one transaction.
 func (s *Store) InsertDecoderStats(ctx context.Context, rows []DecoderStatsBucket) error {
 	if len(rows) == 0 {
 		return nil

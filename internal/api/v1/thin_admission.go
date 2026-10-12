@@ -10,18 +10,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 )
 
-// ThinMarketConfidenceCeiling caps /v1/price's confidence on a
-// thin-admitted serve. It is a declared ceiling, not a measurement:
-// ADR-0019's original freeze threshold.
+// ThinMarketConfidenceCeiling caps /v1/price's confidence on a thin-admitted serve; it is a declared ceiling, not a measurement.
 const ThinMarketConfidenceCeiling = 0.10
 
 type thinAdmissionKey struct{}
 
-// ThinAdmission is the request-scoped record of the `include_thin`
-// opt-in. A handler installs it with [WithThinAdmission] and reads it
-// after the price read; only the gate chokepoints and the coalescing
-// price reader fetch it from the context, to release a covered thin leg
-// and record the substance evidence they measured.
+// ThinAdmission is the request-scoped record of the `include_thin` opt-in, installed with [WithThinAdmission] and fetched only by the gate chokepoints and the coalescing price reader.
 type ThinAdmission struct {
 	asset     canonical.Asset
 	quote     canonical.Asset
@@ -33,8 +27,7 @@ type ThinAdmission struct {
 	heldEv   *pricingguard.SubstanceEvidence
 }
 
-// WithThinAdmission installs a fresh record for the request pair. With
-// requested=false the record only collects evidence for a 404 body.
+// WithThinAdmission installs a fresh record for the request pair; with requested=false it only collects evidence for a 404 body.
 func WithThinAdmission(ctx context.Context, asset, quote canonical.Asset, requested bool) (context.Context, *ThinAdmission) {
 	a := &ThinAdmission{asset: asset, quote: quote, requested: requested}
 	return context.WithValue(ctx, thinAdmissionKey{}, a), a
@@ -49,16 +42,12 @@ func ThinAdmissionFrom(ctx context.Context) *ThinAdmission {
 // Requested reports whether this record releases thin markets.
 func (a *ThinAdmission) Requested() bool { return a != nil && a.requested }
 
-// Covers reports whether a gate verdict on (base, quote) is about the
-// request's own market: the request BASE is either leg. The quote alone
-// never covers, so a cross through another asset's market stays gated.
+// Covers reports whether a gate verdict on (base, quote) concerns the request's own market: the request BASE may be either leg, and the quote alone never covers.
 func (a *ThinAdmission) Covers(base, quote canonical.Asset) bool {
 	return a != nil && (sameAsset(a.asset, base) || sameAsset(a.asset, quote))
 }
 
-// ThinWithheld is the second-pass rule: the read ended withheld for a
-// reason a thin covered leg can produce, and such a leg was measured.
-// A flagged issuer is never measured, so it never qualifies.
+// ThinWithheld is the second-pass rule: the read ended withheld for a reason a thin covered leg can produce and such a leg was measured; a flagged issuer is never measured.
 func (a *ThinAdmission) ThinWithheld(reason PriceWithheldReason) bool {
 	switch reason {
 	case PriceWithheldSubstance, PriceWithheldUpstreamLeg, PriceWithheldUnattributed:
@@ -81,11 +70,7 @@ func (a *ThinAdmission) Record(base, quote canonical.Asset, v pricingguard.Verdi
 	}
 }
 
-// Merge folds another record's answer in; callers gate it on Covers.
-// The admitted slot keeps the last admitted write (the route served);
-// the withheld slot keeps the first non-empty measurement, because a
-// peg or orientation with no data measures thin at zero buckets and
-// must not displace real evidence.
+// Merge folds another record in (callers gate on Covers): admitted keeps the last write, withheld keeps the first non-empty measurement so zero-data legs cannot displace real evidence.
 func (a *ThinAdmission) Merge(admitted bool, ev *pricingguard.SubstanceEvidence) {
 	if a == nil || ev == nil {
 		return
@@ -140,8 +125,7 @@ func includeThinRequested(r *http.Request) bool {
 	return r.URL.Query().Get("include_thin") == "true"
 }
 
-// SubstanceEvidence is the wire form of a substance measurement: the
-// market measured, its figures, and the floor it was held to.
+// SubstanceEvidence is the wire form of a substance measurement: the market measured, its figures, and the floor it was held to.
 type SubstanceEvidence struct {
 	Base          string                      `json:"base"`
 	Quote         string                      `json:"quote"`

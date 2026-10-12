@@ -11,24 +11,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
-// ErrCirculatingExceedsTotal is returned by [Store.InsertSupply] for a snapshot whose circulating
-// supply exceeds its total. Computers derive circulating by subtracting exclusions from total, so
-// this is a computer bug; InsertSupply is the sole writer and the table has only per-column CHECKs.
+// ErrCirculatingExceedsTotal is returned by Store.InsertSupply for a snapshot whose circulating supply exceeds its total, which is a computer bug since InsertSupply is the sole writer.
 var ErrCirculatingExceedsTotal = errors.New("timescale: InsertSupply: circulating_supply exceeds total_supply")
 
-// InsertSupply appends a [supply.Supply] snapshot to asset_supply_history.
-// Idempotent-corrective on (asset_key, ledger_sequence, time): re-deriving at the same ledger
-// UPDATEs the value columns in place when the writer's derive_generation is >= the stored one, so a
-// corrected re-derive lands without a DELETE + re-backfill; a lower generation is a no-op skip.
-// Live ingest uses generation 0, so a plain re-observe re-writes the identical value.
-//
-// `time` is in the key because TimescaleDB requires the partition column in any unique index on a
-// hypertable. Writes for the same (asset, ledger) carry the same `time` (the ledger close
-// timestamp), so (asset_key, ledger_sequence) uniqueness holds at the application level.
-//
-// AssetKey + TotalSupply + CirculatingSupply must be populated (guards a zero-value struct).
-// Non-negativity is enforced by CHECK constraints, so a violation surfaces as a pgx error rather
-// than a quiet write of bad data.
+// InsertSupply appends a supply.Supply snapshot to asset_supply_history, idempotent-corrective on (asset_key, ledger_sequence, time): a re-derive UPDATEs the value columns when its derive_generation is >= the stored one.
 func (s *Store) InsertSupply(ctx context.Context, snap supply.Supply) error {
 	if snap.AssetKey == "" {
 		return errors.New("timescale: InsertSupply: AssetKey is empty")
@@ -105,9 +91,7 @@ func (s *Store) InsertSupply(ctx context.Context, snap supply.Supply) error {
 	return nil
 }
 
-// LatestSupply returns the most-recent snapshot for assetKey, for /v1/assets/{id}. It returns
-// [ErrNotFound] when the asset has no recorded supply. No time floor on purpose: a stale supply is
-// still served with its as-of, and (asset_key, time DESC) makes each chunk one index seek.
+// LatestSupply returns the most-recent snapshot for assetKey, for /v1/assets/{id}. It returns [ErrNotFound] when the asset has no recorded supply.
 func (s *Store) LatestSupply(ctx context.Context, assetKey string) (supply.Supply, error) {
 	const q = `
 		SELECT time, total_supply::text, circulating_supply::text, max_supply::text, basis, ledger_sequence, sac_wrapped_stroops::text
@@ -137,8 +121,7 @@ func (s *Store) LatestSupply(ctx context.Context, assetKey string) (supply.Suppl
 	return assembleSupply(assetKey, observedAt, totalStr, circulatingStr, maxStr, basis, ledger, sacWrappedStr)
 }
 
-// SupplyHistory returns snapshots for assetKey in [from, to), ascending by time. limit caps the
-// count; 0 means no limit. An empty slice with nil error means no observations in the window.
+// SupplyHistory returns snapshots for assetKey in [from, to), ascending by time. limit caps the count; 0 means no limit.
 func (s *Store) SupplyHistory(ctx context.Context, assetKey string, from, to time.Time, limit int) ([]supply.Supply, error) {
 	q := `
 		SELECT time, total_supply::text, circulating_supply::text, max_supply::text, basis, ledger_sequence, sac_wrapped_stroops::text
@@ -185,21 +168,13 @@ func (s *Store) SupplyHistory(ctx context.Context, assetKey string, from, to tim
 	return out, nil
 }
 
-// SupplyDayPoint is one day's last-known circulating supply from the
-// supply_1d continuous aggregate (migration 0066). Used as the supply
-// leg of crypto market-cap-over-time.
+// SupplyDayPoint is one day's last-known circulating supply from the supply_1d continuous aggregate (migration 0066).
 type SupplyDayPoint struct {
 	Bucket      time.Time
 	Circulating *big.Int
 }
 
-// DailyCirculatingSupply returns daily last-known circulating supply for assetKey from the
-// supply_1d CAGG, ascending by day, within [from, to], plus the single most-recent point STRICTLY
-// before `from` (the carry-in row) so the caller can forward-fill the leading edge of a windowed
-// market-cap series. Empty slice with nil error when the asset has no snapshots at all.
-//
-// A zero `from` means "from inception": the carry-in clause matches nothing and the window clause
-// returns the full series.
+// DailyCirculatingSupply returns daily last-known circulating supply for assetKey from the supply_1d CAGG within [from, to], plus the single most-recent point strictly before from so the caller can forward-fill the leading edge.
 func (s *Store) DailyCirculatingSupply(ctx context.Context, assetKey string, from, to time.Time) ([]SupplyDayPoint, error) {
 	const q = `
 		(SELECT bucket, circulating_supply::text

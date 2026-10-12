@@ -20,7 +20,6 @@ Environment=BACKUP_MC_TARGET={{ config_backup_mc_target }}
 {% endif %}
 ExecStart=/usr/local/bin/config-backup.sh
 # Root: most of what it archives is root-only.
-User=root
 
 Nice=15
 IOSchedulingClass=best-effort

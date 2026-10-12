@@ -11,15 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/pgarray"
 )
 
-// InsertSorobanEventsBatch persists raw Soroban event rows into the soroban_events hypertable.
-// It is idempotent on the (ledger_close_time, ledger, tx_hash, op_index, event_index) PK via
-// ON CONFLICT DO NOTHING, so replays and overlapping backfill chunks are no-ops.
-//
-// One multi-row INSERT keeps a ~1000-row batch to a single round-trip, which the AsyncSink's
-// throughput depends on. An empty batch returns nil (an idle flush tick).
-//
-// Every row must carry a non-empty TxHash, ContractID, Topic0XDR and BodyXDR: one malformed row
-// would abort the whole transaction on COMMIT, so validating here keeps it from sinking the rest.
+// InsertSorobanEventsBatch persists raw Soroban event rows into soroban_events, idempotent on the (ledger_close_time, ledger, tx_hash, op_index, event_index) PK via ON CONFLICT DO NOTHING.
 func (s *Store) InsertSorobanEventsBatch(ctx context.Context, rows []domain.SorobanEventRow) error {
 	if len(rows) == 0 {
 		return nil
@@ -108,15 +100,7 @@ func (s *Store) InsertSorobanEventsBatch(ctx context.Context, rows []domain.Soro
 	return nil
 }
 
-// StreamSorobanEvents calls fn once per soroban_events row matching the predicate in [from, to]
-// (inclusive), ordered by (ledger_close_time, ledger, tx_hash, op_index, event_index); event_index
-// keeps multi-event ops (Phoenix's 8 events per swap) stable. It feeds the projector, replay and
-// the completeness reconciler without a MinIO walk.
-//
-// `contractIDs` and `topic0Syms` are inclusive filters (empty = none); passing both pushes the
-// scope into Postgres instead of streaming billions of irrelevant rows.
-//
-// A non-nil callback error aborts the walk; ctx cancellation is checked between rows.
+// StreamSorobanEvents calls fn once per soroban_events row matching the predicate in [from, to] inclusive, ordered by (ledger_close_time, ledger, tx_hash, op_index, event_index), feeding the projector.
 func (s *Store) StreamSorobanEvents(
 	ctx context.Context,
 	from, to uint32,
@@ -228,9 +212,7 @@ func appendSorobanEventsFilter(sb *strings.Builder, args []any, contractIDs, top
 	return args
 }
 
-// FirstSorobanEventLedger returns the lowest ledger in [from, to] holding a
-// row StreamSorobanEvents would return for the same filters, and false when
-// the range holds none. The projector seeds a never-run source from it.
+// FirstSorobanEventLedger returns the lowest ledger in [from, to] holding a row StreamSorobanEvents would return for the same filters, false when none; the projector seeds a never-run source from it.
 func (s *Store) FirstSorobanEventLedger(ctx context.Context, from, to uint32, contractIDs, topic0Syms, excludeTopic0Syms []string) (uint32, bool, error) {
 	if to < from {
 		return 0, false, nil
@@ -279,23 +261,14 @@ func placeholdersFrom(startIdx, count int) string {
 	return sb.String()
 }
 
-// LedgerGap is one contiguous block of ledgers with no soroban_events row, produced by
-// [FindSorobanEventsLedgerGaps]. Start and End are inclusive and Size = End - Start + 1; the
-// snake_case JSON tags are the shape shell scripts consume from find-data-gaps `--output json`.
+// LedgerGap is one contiguous block of ledgers with no soroban_events row, produced by [FindSorobanEventsLedgerGaps].
 type LedgerGap struct {
 	Start int64 `json:"start"`
 	End   int64 `json:"end"`
 	Size  int64 `json:"size"`
 }
 
-// FindSorobanEventsLedgerGaps returns every contiguous gap of size >= minGapSize in
-// soroban_events.ledger within [from, to], using LAG() over distinct ledgers. It is the
-// data-derived alternative to cursor coverage and catches cursors advancing while a
-// back-pressured sink lands no rows. minGapSize (typically ~1000) filters expected quiet gaps.
-//
-// The table is partitioned by ledger_close_time, so a ledger bound alone scans every chunk. The
-// time is bounded ([Store.SorobanEventsTimeBound]) only when ledger_ingest_log fully covers
-// [from,to]: a partial bound could exclude in-range ledgers and fabricate phantom gaps.
+// FindSorobanEventsLedgerGaps returns every contiguous gap of size >= minGapSize in soroban_events.ledger within [from, to] via LAG() over distinct ledgers, a data-derived alternative to cursor coverage.
 func (s *Store) FindSorobanEventsLedgerGaps(ctx context.Context, from, to, minGapSize int64) ([]LedgerGap, error) {
 	if to < from {
 		return nil, fmt.Errorf("timescale: FindSorobanEventsLedgerGaps: to (%d) < from (%d)", to, from)
@@ -346,10 +319,7 @@ func (s *Store) FindSorobanEventsLedgerGaps(ctx context.Context, from, to, minGa
 	return out, nil
 }
 
-// CountSorobanEventsInRange returns the row count in the ledger
-// range [from, to] inclusive. Test + diagnostic helper — not on
-// the hot path. Used by the integration test to assert
-// "100 events walked → 100 rows landed".
+// CountSorobanEventsInRange returns the soroban_events row count in the inclusive ledger range [from, to]; a test and diagnostic helper, not on the hot path.
 func (s *Store) CountSorobanEventsInRange(ctx context.Context, from, to uint32) (int64, error) {
 	if to < from {
 		return 0, errors.New("timescale: CountSorobanEventsInRange: to < from")
@@ -362,10 +332,7 @@ func (s *Store) CountSorobanEventsInRange(ctx context.Context, from, to uint32) 
 	return n, nil
 }
 
-// MaxSorobanEventLedger returns the highest ledger present in
-// soroban_events. ok is false (with a nil error) when the table is empty.
-// Used by `seed-protocol-contracts` to default the upper bound of the
-// factory-creation walk to the lake tip.
+// MaxSorobanEventLedger returns the highest ledger present in soroban_events. ok is false (with a nil error) when the table is empty.
 func (s *Store) MaxSorobanEventLedger(ctx context.Context) (uint32, bool, error) {
 	const q = `SELECT max(ledger) FROM soroban_events`
 	var maxL sql.NullInt64

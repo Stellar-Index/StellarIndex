@@ -7,20 +7,13 @@ import (
 )
 
 // SoroswapPair is the read-side projection of one soroswap_pairs row.
-// Pure C-strkey strings — the canonical.Asset reconstruction happens
-// in the caller (the indexer/backfill main wiring) so the storage
-// layer stays decoupled from the canonical types package.
 type SoroswapPair struct {
 	PairStrkey   string
 	Token0Strkey string
 	Token1Strkey string
 }
 
-// UpsertSoroswapPair inserts or refreshes a (pair, token0, token1)
-// mapping. observed_at is bumped to now() on every call. Idempotent on pair_strkey, so the
-// new_pair handler calls it on every factory event without an existence check.
-//
-// All three inputs are C-strkeys already validated at decode time (canonical.NewSorobanAsset).
+// UpsertSoroswapPair inserts or refreshes a (pair, token0, token1) mapping. observed_at is bumped to now() on every call.
 func (s *Store) UpsertSoroswapPair(ctx context.Context, pairStrkey, token0Strkey, token1Strkey string) error {
 	if pairStrkey == "" {
 		return errors.New("timescale: UpsertSoroswapPair: empty pair_strkey")
@@ -42,10 +35,7 @@ func (s *Store) UpsertSoroswapPair(ctx context.Context, pairStrkey, token0Strkey
 	return nil
 }
 
-// InsertSoroswapPairIfAbsent writes a (pair, token0, token1) mapping only
-// when pair_strkey has no row yet, reporting whether it inserted. It never
-// overwrites: rows learned from on-chain new_pair events (UpsertSoroswapPair)
-// outrank the off-chain stellar-rpc bootstrap in seed-soroswap-pairs.
+// InsertSoroswapPairIfAbsent writes a (pair, token0, token1) mapping only when pair_strkey has no row, reporting whether it inserted; it never overwrites on-chain new_pair rows (UpsertSoroswapPair) with the off-chain bootstrap.
 func (s *Store) InsertSoroswapPairIfAbsent(ctx context.Context, pairStrkey, token0Strkey, token1Strkey string) (bool, error) {
 	if pairStrkey == "" {
 		return false, errors.New("timescale: InsertSoroswapPairIfAbsent: empty pair_strkey")
@@ -69,11 +59,7 @@ func (s *Store) InsertSoroswapPairIfAbsent(ctx context.Context, pairStrkey, toke
 	return n == 1, nil
 }
 
-// LoadSoroswapPairRegistry returns every row in soroswap_pairs as a
-// flat slice, used at startup to seed the soroswap.Decoder's in-memory pair registry.
-//
-// Returns an empty slice (not nil + nil error) when the table is empty, the steady state for a
-// fresh deployment that has not run `stellarindex-ops seed-soroswap-pairs`.
+// LoadSoroswapPairRegistry returns every soroswap_pairs row as a flat slice to seed the decoder's in-memory pair registry at startup; an empty slice (not an error) for a fresh deployment.
 func (s *Store) LoadSoroswapPairRegistry(ctx context.Context) ([]SoroswapPair, error) {
 	const q = `
 		SELECT pair_strkey, token0_strkey, token1_strkey

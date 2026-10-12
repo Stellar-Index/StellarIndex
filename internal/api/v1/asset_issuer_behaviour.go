@@ -11,10 +11,7 @@ import (
 // on; a slower scan omits the totals rather than delaying the response.
 const issuerFlowReadTimeout = 2 * time.Second
 
-// AssetIssuerBehaviour is what a classic asset's issuer can do to holders
-// (its live account flags) and what it has done to supply (the asset's
-// Stellar Asset Contract mint/burn/clawback log). Every classic mint, burn
-// and clawback is issuer-originated by protocol.
+// AssetIssuerBehaviour is what a classic asset's issuer can do to holders (live flags) and has done to supply (SAC mint/burn/clawback log).
 type AssetIssuerBehaviour struct {
 	AuthRequired        *bool   `json:"auth_required,omitempty"`
 	AuthRevocable       *bool   `json:"auth_revocable,omitempty"`

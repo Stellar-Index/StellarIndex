@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest';
+import { render } from '@testing-library/react';
 
-import { unwrapChangeSummary, buildChangeWindows } from './ChangeSummaryStrip';
+import {
+  AccelerationArrow,
+  StreakChip,
+  buildChangeWindows,
+  unwrapChangeSummary,
+} from './ChangeSummaryStrip';
 import type { ChangeSummary } from '@/api/hooks';
 
 const row: ChangeSummary = {
@@ -44,5 +50,23 @@ describe('buildChangeWindows', () => {
     expect(windows.map((w) => w.label)).toEqual(['1h', '24h', '7d', '30d']);
     expect(windows[0].deltaPct).toBeCloseTo(-1.02);
     expect(windows[3].deltaPct).toBeNull(); // absent ≠ zero
+  });
+});
+
+describe('strip chips', () => {
+  it('StreakChip pluralises days and names the direction', () => {
+    expect(
+      render(<StreakChip direction="up" days={1} />).container.textContent,
+    ).toBe('1 day up');
+    expect(
+      render(<StreakChip direction="down" days={5} />).container.textContent,
+    ).toBe('5 days down');
+  });
+
+  it('AccelerationArrow maps direction × acceleration to glyph and label', () => {
+    const { getByLabelText } = render(
+      <AccelerationArrow direction="down" acceleration="decreasing" />,
+    );
+    expect(getByLabelText('recovering').textContent).toBe('↘↗');
   });
 });

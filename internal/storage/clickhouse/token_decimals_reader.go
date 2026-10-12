@@ -26,10 +26,7 @@ var tokenDecimalsKeys = []string{"decimal", "decimals"}
 // Both maps are read and never blended: differing scales are refused by [decimalsFromInstance].
 var tokenMetadataMapKeys = []string{"METADATA", "Config"}
 
-// TokenDecimals resolves a token contract's `decimals()` from the METADATA map in its instance
-// storage, the value `decimals()` would return, without executing WASM. found=false (nil error)
-// when the instance isn't in the lake, no METADATA map exists, or the declaration is out of
-// bounds; callers keep their default (7).
+// TokenDecimals resolves a token contract's decimals() from its instance METADATA map without executing WASM; found=false (nil error) when unavailable, and callers keep their default (7).
 func (r *ExplorerReader) TokenDecimals(ctx context.Context, contractID string) (uint32, bool, error) {
 	raw, err := strkey.Decode(strkey.VersionByteContract, contractID)
 	if err != nil {

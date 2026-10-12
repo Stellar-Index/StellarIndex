@@ -14,13 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/upshift"
 )
 
-// ProtocolMeta is the hand-curated static identity of one indexed protocol, true regardless of
-// database contents. The dynamic halves (contract registry, 24h event counts, completeness
-// verdict) are joined on at request time.
-//
-// Genesis ledgers mirror internal/ops/chops/reconciliation_catalogue.go (WASM-audit-sourced
-// first-possible-data ledgers); factory sets come from the per-source packages so an amendment
-// there propagates here without a second edit.
+// ProtocolMeta is the hand-curated static identity of one indexed protocol; genesis ledgers mirror the reconciliation catalogue and factory sets come from the per-source packages.
 type ProtocolMeta struct {
 	// Name is the canonical source name — the same identifier used by
 	// completeness_snapshots, protocol_contracts and /v1/coverage.

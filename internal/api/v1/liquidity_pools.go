@@ -40,8 +40,7 @@ const (
 	nativeLPListingRefreshTimeout = 30 * time.Second
 )
 
-// LiquidityPoolReservesRow is the wire shape for one native (CAP-38) constant-product pool's
-// current reserve state. All quantities are base-unit (stroop) decimal strings.
+// LiquidityPoolReservesRow is one native (CAP-38) constant-product pool's current reserves; all quantities are stroop decimal strings.
 type LiquidityPoolReservesRow struct {
 	Pool    string `json:"pool"`     // L-strkey (SEP-23)
 	PoolHex string `json:"pool_hex"` // 32-byte LiquidityPoolId, hex (Horizon/SDEX form)
@@ -69,8 +68,7 @@ type LiquidityPoolReserveSide struct {
 	Reserve  string `json:"reserve"`  // base units (stroops), decimal string
 }
 
-// LiquidityPoolDepthLevel is the depth estimate at one slippage tier, using the Soroban AMM depth
-// table's exact-integer constant-product model.
+// LiquidityPoolDepthLevel is the depth estimate at one slippage tier, using the Soroban AMM depth table's exact-integer constant-product model.
 type LiquidityPoolDepthLevel struct {
 	SlippagePct string        `json:"slippage_pct"`
 	AssetAIn    PoolDepthSide `json:"asset_a_in"` // selling asset A for asset B
@@ -261,9 +259,7 @@ func (s *Server) refreshNativeLPListing() {
 	}()
 }
 
-// PrewarmNativeLiquidityPools primes the ranked listing from cmd/stellarindex-api's prewarm loop
-// so the first visitor after boot does not pay the whole-prefix scan inline. It calls the EXACT
-// function the handler calls, so there is no prewarmed-key-vs-requested-key drift.
+// PrewarmNativeLiquidityPools primes the ranked listing by calling the EXACT function the handler calls, so prewarmed and requested keys cannot drift.
 func (s *Server) PrewarmNativeLiquidityPools(ctx context.Context) {
 	if s.Explorer == nil || ctx.Err() != nil {
 		return

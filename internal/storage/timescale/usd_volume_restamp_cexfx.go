@@ -28,8 +28,7 @@ import (
 // The default tolerance is the live insert path's bound, so this never writes what `InsertTrade`
 // would decline; `-fx-max-staleness` may only narrow it.
 
-// CEXFiatMaxQuoteStaleness is the default and maximum as-of tolerance for the cex-fx tier. It
-// equals the live insert path's bound, so a restamped row carries what InsertTrade would write.
+// CEXFiatMaxQuoteStaleness is the default and maximum as-of tolerance for the cex-fx tier.
 const CEXFiatMaxQuoteStaleness = fxQuotesSnapLookback
 
 // cexFiatQuoteAssets is the scan's quote-leg allow-list: every fiat code except USD, in the
@@ -117,11 +116,7 @@ func (g *fxAsOfGate) priceable(ctx context.Context, asset canonical.Asset, at ti
 	return true, nil
 }
 
-// PlanCEXFiatUSDVolumeRestamp scans one bounded window and returns the rows the re-derive would
-// rewrite plus the disposition of every row it would not. READ-ONLY; [Store.ApplyUSDVolumeRestampPlan]
-// consumes the plan verbatim. maxStaleness <= 0 means [CEXFiatMaxQuoteStaleness]; a WIDER value is
-// refused because the resolver would decline the quote anyway and the run would report a
-// tolerance it did not apply.
+// PlanCEXFiatUSDVolumeRestamp scans one bounded window and returns the rows the re-derive would rewrite plus the disposition of every row it would not; READ-ONLY, and Store.ApplyUSDVolumeRestampPlan consumes the plan verbatim.
 func (s *Store) PlanCEXFiatUSDVolumeRestamp(ctx context.Context, p RestampScanParams, maxStaleness time.Duration) (*RestampPlan, error) {
 	if maxStaleness > CEXFiatMaxQuoteStaleness {
 		return nil, fmt.Errorf("timescale: cex-fx restamp: as-of tolerance %s exceeds the live insert path's own fx_quotes lookback (%s); "+

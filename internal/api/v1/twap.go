@@ -11,15 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// TWAPResult is the wire shape for /v1/twap responses.
-//
-// Price is the time-weighted mean as a decimal string (10-digit
-// precision, consistent with VWAP / OHLC). TradeCount is the number
-// of trades that carried weight — priced, surviving the outlier filter,
-// and in an instant with a positive slot. OutliersFiltered counts the
-// trades the sigma filter removed. Truncated signals the window had
-// more trades than the server's per-request cap; see
-// VWAPResult.Truncated for the same semantics.
+// TWAPResult is the /v1/twap wire shape; Price is a decimal string, and Truncated means the window exceeded the per-request trade cap (see VWAPResult.Truncated).
 type TWAPResult struct {
 	From             WireTime `json:"from"`
 	To               WireTime `json:"to"`

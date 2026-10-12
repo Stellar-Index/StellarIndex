@@ -23,9 +23,7 @@ const (
 	AccountMovementSelf     AccountMovementDirection = "self"
 )
 
-// AccountMovement is the pre-fan-out movement. It mirrors classicmovements.Movement
-// instead of importing it: internal/storage sits below internal/sources
-// (lint-imports.sh L/storage-below-compute).
+// AccountMovement is the pre-fan-out movement, mirroring classicmovements.Movement because internal/storage sits below internal/sources (L/storage-below-compute).
 type AccountMovement struct {
 	MovementKind    string
 	Provenance      string
@@ -63,10 +61,7 @@ type AccountMovementRow struct {
 	Attributes      map[string]any
 }
 
-// FanOutAccountMovement expands one movement into its account_movements row(s).
-// Two exceptions to "one row per participant": From==To is one direction=self row, so no two
-// rows differ only by `direction`; exactly one side set (claimable-balance escrow, LP or
-// path-payment leg) is one row for the known side with Counterparty="". Neither set returns nil.
+// FanOutAccountMovement expands one movement into account_movements rows: From==To is one direction=self row, a single known side gets Counterparty="", neither side returns nil.
 func FanOutAccountMovement(m AccountMovement) []AccountMovementRow {
 	base := AccountMovementRow{
 		Ledger:          m.Ledger,
@@ -153,10 +148,7 @@ func EnsureAccountMovementsTable(ctx context.Context, addr string) error {
 // bounding payload size however large the caller's window is.
 const accountMovementsInsertChunk = 20_000
 
-// InsertAccountMovements fans out and batch-inserts movements; retrying the whole batch is safe
-// because ReplacingMergeTree absorbs duplicates. Rows go out in ledger order, so a partial send
-// is complete below max(ledger), a sound resume point for classic-movements-backfill. Returns
-// rows sent, not rows surviving dedup.
+// InsertAccountMovements fans out and batch-inserts in ledger order (retry-safe, ReplacingMergeTree absorbs duplicates); returns rows sent, not rows surviving dedup.
 func InsertAccountMovements(ctx context.Context, addr string, movements []AccountMovement) (int64, error) {
 	if len(movements) == 0 {
 		return 0, nil
@@ -284,8 +276,7 @@ func openAccountMovementsWrite(ctx context.Context, addr string) (driver.Conn, e
 	return conn, nil
 }
 
-// MaxAccountMovementLedger returns the highest ledger in [from,to], the resume point (found=false if none).
-// No FINAL: duplicates share the same ledger value, so max() is exact.
+// MaxAccountMovementLedger returns the highest ledger in [from,to] as the resume point (found=false if none); no FINAL needed since duplicates share the ledger value.
 func MaxAccountMovementLedger(ctx context.Context, addr string, from, to uint32) (ledger uint32, found bool, err error) {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -304,9 +295,7 @@ func MaxAccountMovementLedger(ctx context.Context, addr string, from, to uint32)
 	return uint32(hi), true, nil
 }
 
-// MinAccountMovementLedger returns the lowest ledger in [from,to]. -resume trusts
-// MaxAccountMovementLedger only when this equals from, otherwise a widened -from
-// would jump past the earlier, never-processed range.
+// MinAccountMovementLedger returns the lowest ledger in [from,to]; -resume trusts MaxAccountMovementLedger only when this equals from.
 func MinAccountMovementLedger(ctx context.Context, addr string, from, to uint32) (ledger uint32, found bool, err error) {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -356,13 +345,7 @@ func chunkStrings(ids []string, n int) [][]string {
 	return chunks
 }
 
-// FindClaimableBalanceCreates batch-resolves pending claim/clawback refs to their create rows,
-// keyed by balance_id. Ids go in a ClickHouse external table and match via a hash-set semijoin:
-// an inlined IN-list exceeds max_query_size and compounds the bloom filter's false-positive
-// rate into a full scan of the wide attributes column. use_skip_indexes=0, so idx_cb_balance_id
-// is unused here. The map holds only found ids; a miss means no create row yet (ADR-0047 D4
-// incompleteness), so callers must count and log it, never guess an amount. Duplicate rows are
-// identical, first wins. Empty input returns an empty non-nil map.
+// FindClaimableBalanceCreates batch-resolves claim/clawback refs to create rows keyed by balance_id; the map holds only found ids, so callers must count and log misses and never guess an amount.
 func FindClaimableBalanceCreates(ctx context.Context, addr string, balanceIDHexes []string) (map[string]ClaimableBalanceCreateRow, error) {
 	out := make(map[string]ClaimableBalanceCreateRow, len(balanceIDHexes))
 	if len(balanceIDHexes) == 0 {
@@ -434,13 +417,10 @@ func findClaimableBalanceCreatesChunk(ctx context.Context, conn driver.Conn, chu
 	return rows.Err()
 }
 
-// AccountMovementVerifyCounts maps movement_kind to the count of DISTINCT movements
-// (a two-participant movement is 2 rows sharing one identity).
+// AccountMovementVerifyCounts maps movement_kind to the count of DISTINCT movements (a two-participant movement is 2 rows sharing one identity).
 type AccountMovementVerifyCounts map[string]uint64
 
-// VerifyAccountMovementsWindow recounts [from,to] by movement_kind via
-// uniqExact(tx_hash, op_index, leg_index), collapsing fan-out rows. No FINAL:
-// identical duplicates do not inflate a distinct count.
+// VerifyAccountMovementsWindow recounts [from,to] by movement_kind via uniqExact(tx_hash, op_index, leg_index), collapsing fan-out rows.
 func VerifyAccountMovementsWindow(ctx context.Context, addr string, from, to uint32) (AccountMovementVerifyCounts, error) {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -485,8 +465,7 @@ type AccountMovementFilter struct {
 	HasMaxLedger bool
 }
 
-// AccountMovementCursor is the descending (ledger, tx_hash, op_index, leg_index)
-// keyset position; Ledger==0 means first page.
+// AccountMovementCursor is the descending (ledger, tx_hash, op_index, leg_index) keyset position; Ledger==0 means first page.
 type AccountMovementCursor struct {
 	Ledger   uint32
 	TxHash   string
@@ -549,13 +528,7 @@ func accountMovementsSQL(filter AccountMovementFilter, hasCursor, exactDedup boo
 	return sb.String()
 }
 
-// AccountMovements returns one address's movement feed, newest first, keyset-paged.
-// `address` is an equality on the ORDER BY prefix: one contiguous range, no UNION. The explorer
-// merges this archive with the Postgres tail; its ledger ceiling travels in
-// filter.MaxLedger/HasMaxLedger so it applies before LIMIT, never as a post-read trim.
-// No FINAL: the page is read as a window in sort-key order (LIMIT 1 BY would stop the early
-// exit) and the newest ingested_at per key is kept in Go. A window that cannot prove a full
-// page falls back to accountMovementsQuery.
+// AccountMovements returns one address's movement feed, newest first and keyset-paged, with no FINAL (newest ingested_at per key is kept in Go); the Postgres-tail ceiling in filter.MaxLedger applies before LIMIT.
 func (r *ExplorerReader) AccountMovements(ctx context.Context, address string, limit int, cur AccountMovementCursor, filter AccountMovementFilter) ([]AccountMovementRow, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 25

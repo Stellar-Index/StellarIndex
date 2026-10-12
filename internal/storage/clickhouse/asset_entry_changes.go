@@ -8,14 +8,10 @@ import (
 	"time"
 )
 
-// EntryHistoryBackfillMarker is the stellar.entry_history_watermark name the
-// operator writes once ch-entry-history has derived from the lake's first
-// ledger (deploy/clickhouse/entry_history.sql step 4). Until it exists the
-// derive may have started above genesis.
+// EntryHistoryBackfillMarker is the stellar.entry_history_watermark name written once ch-entry-history has derived from the lake's first ledger; until it exists the derive may have started above genesis.
 const EntryHistoryBackfillMarker = "entry_history_backfill"
 
-// AssetEntryChangeCursor is the keyset position of one asset_entry_changes
-// row: its sort key after the asset.
+// AssetEntryChangeCursor is the keyset position of one asset_entry_changes row: its sort key after the asset.
 type AssetEntryChangeCursor struct {
 	Ledger      uint32
 	TxHash      string
@@ -69,11 +65,7 @@ func assetEntryChangesSQL(hasCursor, exactDedup bool) string {
 	return sb.String()
 }
 
-// AssetEntryChanges returns one asset's ledger-entry changes (trustline,
-// offer, claimable balance, liquidity pool) from stellar.asset_entry_changes,
-// newest first, keyset-paged by the table's sort key, never above maxLedger
-// (inclusive). asset is the id the table stores ("native", "CODE-ISSUER" or
-// "pool:<hex>"); the caller folds aliases.
+// AssetEntryChanges returns one asset's ledger-entry changes from stellar.asset_entry_changes, newest first, keyset-paged, never above maxLedger; asset is the stored id and the caller folds aliases.
 func (r *ExplorerReader) AssetEntryChanges(ctx context.Context, asset string, limit int, cur AssetEntryChangeCursor, maxLedger uint32) ([]AssetEntryChange, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 25
@@ -153,9 +145,7 @@ func (r *ExplorerReader) queryAssetEntryChanges(ctx context.Context, asset, q st
 	return out, rows.Err()
 }
 
-// EntryHistoryCoverage returns the ch-entry-history derive watermark and the
-// ledger the operator's from-genesis backfill marker records (0 = never
-// derived / not yet verified, or the watermark table is not provisioned).
+// EntryHistoryCoverage returns the ch-entry-history derive watermark and the from-genesis backfill marker ledger (0 = never derived, not verified, or table not provisioned).
 func (r *ExplorerReader) EntryHistoryCoverage(ctx context.Context) (watermark, backfilledThru uint32, err error) {
 	const q = `SELECT maxIf(thru_ledger, name = 'entry_history'), maxIf(thru_ledger, name = ?)
 		FROM stellar.entry_history_watermark`

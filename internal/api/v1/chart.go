@@ -16,10 +16,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
-// ChartSeries is the wire shape for /v1/chart (OpenAPI ChartEnvelope.data, ADR-0020).
-//
-// `truncated` + `data_starts_at` tell a consumer the timeframe reaches past retention, so 7 daily
-// points under `?timeframe=1y` are not mistaken for the last 7 days of a long history.
+// ChartSeries is the /v1/chart wire shape (ADR-0020); `truncated` + `data_starts_at` flag a timeframe reaching past retention.
 type ChartSeries struct {
 	AssetID       string             `json:"asset_id"`
 	Quote         string             `json:"quote"`

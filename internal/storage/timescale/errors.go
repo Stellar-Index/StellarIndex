@@ -20,17 +20,7 @@ func sqlStateClass(code string) string {
 	return code[:2]
 }
 
-// IsInfraError reports whether err from a write path is an INFRASTRUCTURE fault (database
-// unreachable, restarting or out of connections), as opposed to a per-row DATA fault or transient
-// lock contention (deadlock, serialization).
-//
-// This drives the sink's failure policy: an infra fault hits every row and clears only when the DB
-// returns, so the sink RETRIES with backpressure rather than dropping the write. A data fault is
-// permanent for its row, so the sink error-and-skips it (one bad row must not wedge the pipeline).
-// Contention is left to the batch path's per-row fallback; its sorted insert order keeps it rare.
-//
-// Conservative by design: only clear unavailability or capacity signals return true, and anything
-// unrecognised falls to error-and-skip (fail-visible, never fail-silent).
+// IsInfraError reports whether a write-path err is an INFRASTRUCTURE fault (database unreachable, restarting or out of connections) rather than a per-row data fault or lock contention, which drives the sink's failure policy.
 func IsInfraError(err error) bool {
 	if err == nil {
 		return false
@@ -84,23 +74,10 @@ func IsInfraError(err error) bool {
 	return false
 }
 
-// ErrMalformedRow marks a row a store method's own pre-SQL validation
-// rejected. The check is deterministic, so [IsPermanentDataError] treats
-// it like a class 22/23 fault: retrying the same row can never succeed.
+// ErrMalformedRow marks a row a store method's pre-SQL validation rejected; deterministic, so [IsPermanentDataError] treats it as permanent.
 var ErrMalformedRow = errors.New("timescale: malformed row")
 
-// IsPermanentDataError reports whether err from a write path is a DETERMINISTIC data fault that
-// can NEVER succeed on retry: an integrity-constraint violation (SQLSTATE class 23) or a data
-// exception (class 22). A caller gating progress on durability (the projector's cursor) may SKIP
-// such a row rather than stall forever on a poison row.
-//
-// It is the CONSERVATIVE complement of retry, NOT the exact negation of [IsInfraError]. False (hold
-// and retry) for infra faults (class 08, shutdown, capacity), transient lock contention (40P01,
-// 40001, 55P03), cancellation or statement_timeout (57014), context errors, and anything
-// UNRECOGNISED. True for class 22/23 and a validation reject wrapping [ErrMalformedRow].
-//
-// The false-default is the safe side: an unknown error must never be skipped and silently dropped;
-// a stuck row then surfaces as rising projector lag and a repeated failure metric.
+// IsPermanentDataError reports whether a write-path err is a DETERMINISTIC data fault (SQLSTATE class 22 or 23) that can never succeed on retry, so a durability-gated caller such as the projector cursor may skip the row.
 func IsPermanentDataError(err error) bool {
 	if err == nil {
 		return false

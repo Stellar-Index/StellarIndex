@@ -8,10 +8,7 @@ import (
 	"time"
 )
 
-// AquariusAdminKind discriminates the eight governance/upgrade admin
-// event kinds (migration 0100). String values match the
-// aquarius_admin.event_kind CHECK constraint and the AdminAction
-// constants in internal/sources/aquarius/consumer.go.
+// AquariusAdminKind discriminates the eight governance/upgrade admin event kinds (migration 0100).
 type AquariusAdminKind string
 
 // Governance / upgrade admin event kinds — see
@@ -28,8 +25,7 @@ const (
 	AquariusAdminPoolGaugeSwitchToken    AquariusAdminKind = "pool_gauge_switch_token"
 )
 
-// IsValid reports whether k is one of the eight known governance/
-// upgrade kinds. Mirrors the CHECK constraint in migration 0100.
+// IsValid reports whether k is one of the eight known governance/ upgrade kinds.
 func (k AquariusAdminKind) IsValid() bool {
 	switch k {
 	case AquariusAdminApplyUpgrade, AquariusAdminCommitUpgrade, AquariusAdminSetPrivilegedAddrs,
@@ -41,10 +37,7 @@ func (k AquariusAdminKind) IsValid() bool {
 	return false
 }
 
-// AquariusAdminEvent is one observed router/pool governance event
-// (any of the eight kinds). Admin / Target are universal promoted
-// columns, NULL when the kind doesn't carry them; Attributes holds
-// the kind-specific remainder.
+// AquariusAdminEvent is one observed router/pool governance event (any of the eight kinds).
 type AquariusAdminEvent struct {
 	ContractID      string
 	Ledger          uint32
@@ -58,9 +51,7 @@ type AquariusAdminEvent struct {
 	Attributes      map[string]any
 }
 
-// InsertAquariusAdminEvent appends one governance/upgrade admin event
-// to aquarius_admin. Idempotent on the (ledger_close_time,
-// contract_id, ledger, tx_hash, op_index, event_kind, event_index) PK.
+// InsertAquariusAdminEvent appends one governance/upgrade admin event to aquarius_admin.
 func (s *Store) InsertAquariusAdminEvent(ctx context.Context, e AquariusAdminEvent) error {
 	if e.ContractID == "" {
 		return errors.New("timescale: InsertAquariusAdminEvent: ContractID is empty")
@@ -127,13 +118,7 @@ var aquariusAdminAllKinds = []AquariusAdminKind{
 	AquariusAdminPoolGaugeSwitchToken,
 }
 
-// AquariusAdminLifetimeTotal reads the all-time governance/upgrade event count across all eight
-// kinds.
-//
-// It uses the per-kind LATERAL pattern of AquariusRewardsLifetimeByKind (bounded
-// `event_kind = <literal>` scans on aquarius_admin_kind_ts_idx in one round trip) rather than a
-// plain `count(*)`. The table is small (rare governance actions), but the indexed path costs
-// nothing and does not rely on it staying small.
+// AquariusAdminLifetimeTotal reads the all-time governance/upgrade event count across all eight kinds via the per-kind LATERAL pattern (bounded scans on aquarius_admin_kind_ts_idx), not a plain count(*).
 func (s *Store) AquariusAdminLifetimeTotal(ctx context.Context) (int64, error) {
 	kinds := make([]string, len(aquariusAdminAllKinds))
 	for i, k := range aquariusAdminAllKinds {
@@ -154,9 +139,7 @@ func (s *Store) AquariusAdminLifetimeTotal(ctx context.Context) (int64, error) {
 	return total, nil
 }
 
-// AquariusAdminEventView is one governance/upgrade event row for the
-// "Recent governance events" table — kind/contract/admin/target/ledger,
-// newest first.
+// AquariusAdminEventView is one governance/upgrade event row for the "Recent governance events" table — kind/contract/admin/target/ledger, newest first.
 type AquariusAdminEventView struct {
 	Kind            AquariusAdminKind
 	ContractID      string
@@ -166,13 +149,7 @@ type AquariusAdminEventView struct {
 	LedgerCloseTime time.Time
 }
 
-// LatestAquariusAdminEvents reads the most recent `limit` governance/upgrade events across the
-// router + pools, newest first. limit <= 0 means 25.
-//
-// Deliberately UNWINDOWED, unlike sibling "recent N" augments: governance events are rare, so a
-// trailing-window bound could render an empty table despite real history. `ORDER BY
-// ledger_close_time DESC LIMIT $1` stays bounded anyway: ledger_close_time leads the primary-key
-// index, so this is a backward index scan capped by LIMIT, not a full-table scan.
+// LatestAquariusAdminEvents reads the newest `limit` governance/upgrade events newest first (<= 0 means 25); deliberately UNWINDOWED because the events are rare and a window could render an empty table.
 func (s *Store) LatestAquariusAdminEvents(ctx context.Context, limit int) ([]AquariusAdminEventView, error) {
 	if limit <= 0 {
 		limit = 25

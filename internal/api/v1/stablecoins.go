@@ -54,9 +54,7 @@ type StablecoinsView struct {
 	Assets   []StablecoinAsset     `json:"assets"`
 }
 
-// StablecoinTotal is the headline. SupplyUSD is absent, never "0.00", when no
-// summed member is valued; LowerBound is true whenever the figure is less than
-// the value of every stablecoin on Stellar.
+// StablecoinTotal is the headline; SupplyUSD is absent, never "0.00", when no summed member is valued, and LowerBound is true whenever it is below the value of every Stellar stablecoin.
 type StablecoinTotal struct {
 	SupplyUSD *string `json:"supply_usd,omitempty"`
 	// Assets counts the set; AssetsValued and AssetsUnvalued split it.
@@ -82,10 +80,7 @@ type StablecoinExclusion struct {
 	Reason string `json:"reason"`
 }
 
-// StablecoinAsset is one member, keyed by (code, issuer). The price is the
-// real served pair price, never coerced to the peg, so a depeg shows.
-// SupplyUSD is the pipeline's own market cap, as /v1/assets and /v1/rwa/assets
-// publish it; PriceBasis names a non-market price behind PriceUSD.
+// StablecoinAsset is one member keyed by (code, issuer); the price is the real served pair price, never coerced to the peg, so a depeg shows.
 type StablecoinAsset struct {
 	AssetID                     string  `json:"asset_id"`
 	Code                        string  `json:"code"`

@@ -59,8 +59,8 @@
 #      on an existing file: fs.protected_regular refuses that across
 #      users in /run/lock); a lock file that cannot be opened at all
 #      refuses an operator job and only warns a scheduled one; and every
-#      timer/cron launcher declares HEAVY_JOB_CLASS=scheduled and, bar the
-#      hourly galexie-archive-fill, a HEAVY_JOB_LOCK_WAIT. These
+#      timer/cron launcher declares HEAVY_JOB_CLASS=scheduled and a
+#      HEAVY_JOB_LOCK_WAIT. These
 #      cases use a real flock(2) shim, not the always-succeeds stub.
 #   12. a TERM to the root-branch wrapper stops its sibling scope, so no
 #      payload outlives a stopped/timed-out unit holding the lock.
@@ -332,15 +332,11 @@ units=0
 while IFS= read -r unit; do
   units=$((units + 1))
   if grep -qx 'SuccessExitStatus=75' "$unit"; then ok "$unit declares SuccessExitStatus=75"; else bad "$unit ExecStarts run-heavy-job.sh without SuccessExitStatus=75 — a lock skip would fail the unit"; fi
-  case "$unit" in
-    */galexie-archive-fill.service*) ;;
-    *)
-      wait_s="$(sed -n 's/^Environment=HEAVY_JOB_LOCK_WAIT=//p' "$unit")"
-      tss="$(sed -n 's/^TimeoutStartSec=//p' "$unit")"
-      case "$wait_s" in ''|*[!0-9]*) wait_s=0 ;; esac
-      case "$tss" in ''|*[!0-9]*) tss=0 ;; esac
-      if [ "$wait_s" -gt 0 ] && [ "$tss" -gt "$wait_s" ]; then ok "$unit queues (wait ${wait_s}s, TimeoutStartSec=${tss}s outlasts it)"; else bad "$unit is a daily/monthly timer unit that would skip on a held lock (HEAVY_JOB_LOCK_WAIT='${wait_s}', TimeoutStartSec='${tss}': only the hourly galexie-archive-fill may defer)"; fi ;;
-  esac
+  wait_s="$(sed -n 's/^Environment=HEAVY_JOB_LOCK_WAIT=//p' "$unit")"
+  tss="$(sed -n 's/^TimeoutStartSec=//p' "$unit")"
+  case "$wait_s" in ''|*[!0-9]*) wait_s=0 ;; esac
+  case "$tss" in ''|*[!0-9]*) tss=0 ;; esac
+  if [ "$wait_s" -gt 0 ] && [ "$tss" -gt "$wait_s" ]; then ok "$unit queues (wait ${wait_s}s, TimeoutStartSec=${tss}s outlasts it)"; else bad "$unit is a timer unit that would skip on a held lock (HEAVY_JOB_LOCK_WAIT='${wait_s}', TimeoutStartSec='${tss}')"; fi
   if grep -qx 'Environment=HEAVY_JOB_CLASS=scheduled' "$unit"; then ok "$unit declares HEAVY_JOB_CLASS=scheduled"; else bad "$unit ExecStarts run-heavy-job.sh without Environment=HEAVY_JOB_CLASS=scheduled — the timer would be refused whenever another heavy job runs"; fi
 done < <(grep -rlE '^ExecStart=[^ ]*run-heavy-job\.sh ' configs/ansible/roles/archival-node/templates/systemd deploy/systemd)
 if [ "$units" -gt 0 ]; then ok "$units wrapper unit(s) checked"; else bad "no unit ExecStarts run-heavy-job.sh — the unit check ran over nothing"; fi

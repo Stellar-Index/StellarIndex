@@ -9,8 +9,7 @@ import (
 	"time"
 )
 
-// TradesPrices1mDrift is one pair whose `trades` rows and prices_1m
-// buckets disagree over a window. Amounts are exact NUMERIC text.
+// TradesPrices1mDrift is one pair whose trades rows and prices_1m buckets disagree over a window; amounts are exact NUMERIC text.
 type TradesPrices1mDrift struct {
 	BaseAsset, QuoteAsset   string
 	TradeCount, CAGGCount   string
@@ -18,11 +17,7 @@ type TradesPrices1mDrift struct {
 	TradeUSD, CAGGUSD       string
 }
 
-// TradesPrices1mDrift compares, per pair, the trade count, base volume and USD volume of `trades`
-// in [from, to) with the sums prices_1m serves for the same minutes, returning every pair that
-// differs. prices_1m is a plain GROUP BY minute over `trades`, so a fully materialised window
-// agrees exactly; a difference is a bucket still holding rows since rewritten, added or removed.
-// from and to must be whole minutes, or the bucket and row ranges differ.
+// TradesPrices1mDrift compares per pair the trade count, base volume and USD volume of trades in [from, to) with the sums prices_1m serves for the same minutes, returning every pair that differs.
 func (s *Store) TradesPrices1mDrift(ctx context.Context, from, to time.Time) ([]TradesPrices1mDrift, error) {
 	if !from.Equal(from.Truncate(time.Minute)) || !to.Equal(to.Truncate(time.Minute)) || !from.Before(to) {
 		return nil, fmt.Errorf("timescale: TradesPrices1mDrift: [%s,%s) is not a non-empty range of whole minutes",

@@ -9,9 +9,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// ContractCallOp is one InvokeContract operation reconstructed from the lake: the op body + ledger
-// context, enough to feed dispatcher.ExtractContractCallTree and a ContractCallDecoder. Source is
-// the op's source account, used for attribution; it does not affect the emitted event COUNT.
+// ContractCallOp is one InvokeContract operation reconstructed from the lake (op body plus ledger context); Source is for attribution and does not affect the emitted event COUNT.
 type ContractCallOp struct {
 	Ledger   uint32
 	ClosedAt time.Time
@@ -21,13 +19,7 @@ type ContractCallOp struct {
 	Op       xdr.Operation
 }
 
-// StreamContractCallOps re-derives the InvokeContract ops that invoke a given contract: the
-// projection input for event-less ContractCall sources (band, soroswap-router).
-// stellar.operations has no contract_id column, so it restricts to InvokeHostFunction ops in
-// [from,to] and matches the contract's raw 32-byte ID (`contractHex`, lowercase hex) as a
-// substring of the base64-DECODED body_xdr, far faster than decoding every invoke in Go.
-// Successful txs only: a failed tx's invoke never executed, so counting it would over-state the
-// census. The match is a cheap SUPERSET filter; ContractCallDecoder.Matches is the exact predicate.
+// StreamContractCallOps re-derives successful InvokeContract ops for one contract (input for event-less ContractCall sources) via a cheap SUPERSET substring match; ContractCallDecoder.Matches is the exact predicate.
 func StreamContractCallOps(ctx context.Context, addr, contractHex string, from, to uint32, fn func(ContractCallOp) error) error {
 	conn, err := openRead(ctx, addr)
 	if err != nil {

@@ -22,16 +22,10 @@ import (
 // rwaCuratorDune is the first and only curator today.
 const rwaCuratorDune = "dune:stellar"
 
-// RWAReferenceCuratorPrice is the provenance of a curated row's price: the curator's own uploaded
-// price per token, weaker than a listing price because nothing aggregates venues behind it.
+// RWAReferenceCuratorPrice is the provenance of a curated row's price (the curator's uploaded price per token), weaker than a listing price because no venues are aggregated behind it.
 const RWAReferenceCuratorPrice = "curator_uploaded_price"
 
-// RWACuratedDirectoryReader is the seam the curated arm reads through; *timescale.Store satisfies
-// it. Optional: without it no curated arm is served and the response says so.
-//
-// Two reads, one seam. The first curator's per-asset list is private (see
-// internal/ops/ingest/curated_rwa_sync.go), so its PUBLISHED totals are what answers and the
-// directory stays empty until a curator with a readable list exists.
+// RWACuratedDirectoryReader is the optional seam the curated arm reads through (*timescale.Store satisfies it); without it no curated arm is served and the response says so.
 type RWACuratedDirectoryReader interface {
 	CuratedRWADirectoryByAddress(ctx context.Context, curator string) (
 		map[string]timescale.CuratedRWAEntry, timescale.CuratedRWACensus, error)
@@ -134,9 +128,7 @@ type RWACurator struct {
 	AlsoVerified bool `json:"also_verified"`
 }
 
-// RWACuratedCensus is the storage layer's account of the curator cache.
-// Entries = Contracts + Classic; only Contracts rows can be served, so
-// Classic is the part of the curator's list the arm leaves out.
+// RWACuratedCensus is the storage layer's account of the curator cache; only Contracts rows can be served, so Classic (Entries = Contracts + Classic) is the part the arm leaves out.
 type RWACuratedCensus struct {
 	Entries       int       `json:"entries"`
 	Contracts     int       `json:"contracts"`
@@ -147,15 +139,13 @@ type RWACuratedCensus struct {
 	ObservedAt    *WireTime `json:"observed_at,omitempty"`
 }
 
-// RWACuratedPublishedSplit is one line of the curator's own subclass
-// split for the published month, labelled in the curator's vocabulary.
+// RWACuratedPublishedSplit is one line of the curator's own subclass split for the published month, in the curator's vocabulary.
 type RWACuratedPublishedSplit struct {
 	Subclass string `json:"subclass"`
 	ValueUSD string `json:"value_usd"`
 }
 
-// RWACuratedPublishedPoint is one month of the curator's published
-// total series.
+// RWACuratedPublishedPoint is one month of the curator's published total series.
 type RWACuratedPublishedPoint struct {
 	// MonthEnd is the last day of the month, YYYY-MM-DD.
 	MonthEnd string `json:"month_end"`
@@ -172,9 +162,7 @@ const rwaCuratedPublishedStaleAfter = 48 * time.Hour
 // directory table's curatedRWAPriceMaxAge.
 const rwaCuratedPublishedMaxAge = 7 * 24 * time.Hour
 
-// RWACuratedPublished is what the curator PUBLISHES: its headline monthly RWA market-cap total,
-// that month's split by its own subclass labels, and the monthly series. It is the curator's
-// arithmetic over private inputs, served verbatim so the gap to the verified total is one number.
+// RWACuratedPublished is the curator's PUBLISHED monthly total, subclass split and series, served verbatim as the curator's arithmetic over private inputs.
 type RWACuratedPublished struct {
 	// TotalUSD is the latest month's total, 2dp.
 	TotalUSD string `json:"total_usd"`
@@ -200,8 +188,7 @@ type RWACuratedPublished struct {
 	GapVsVerifiedUSD *string `json:"gap_vs_verified_usd,omitempty"`
 }
 
-// RWACuratedSummary is the curated arm's own total. It sits BESIDE the
-// verified summary and is never folded into it.
+// RWACuratedSummary is the curated arm's own total, shown BESIDE the verified summary and never folded into it.
 type RWACuratedSummary struct {
 	Curator string `json:"curator"`
 	// Status is "served" (per-asset rows below), "published_totals" (no per-asset row readable; see

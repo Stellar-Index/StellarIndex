@@ -85,11 +85,7 @@ const curatedRWAPublishedRecognisedSQL = `observed_at > now() - INTERVAL '` + cu
 // 65535 bind cap.
 const curatedRWAPublishedInsertChunk = 500
 
-// ReplaceCuratedRWAPublished makes one curator's cache equal `rows`, PER SERIES, in one transaction
-// so a series is always one execution's whole output; unnamed series are left alone.
-//
-// An empty set is refused: "publishes nothing" and "fetch failed" look alike, and applying it would
-// silence the curator.
+// ReplaceCuratedRWAPublished makes one curator's cache equal `rows` PER SERIES in one transaction, leaving unnamed series alone; an empty set is refused because "publishes nothing" and "fetch failed" look alike.
 func (s *Store) ReplaceCuratedRWAPublished(
 	ctx context.Context, curator string, rows []CuratedRWAPublishedRow,
 ) (inserted int64, err error) {
@@ -211,8 +207,7 @@ const curatedRWAPublishedSplitSQL = `
 		   AND ` + curatedRWAPublishedRecognisedSQL + `
 		 ORDER BY curated_rwa_published_series.value_usd DESC, subclass ASC`
 
-// LatestCuratedPublished returns what one curator last published, or (nil, nil) when nothing is
-// inside the recognition bound: an absence, so the surface can say `unavailable` rather than fail.
+// LatestCuratedPublished returns what one curator last published, or (nil, nil) when nothing is inside the recognition bound, so the surface can say `unavailable` rather than fail.
 func (s *Store) LatestCuratedPublished(ctx context.Context, curator string) (*CuratedRWAPublished, error) {
 	if curator == "" {
 		return nil, errors.New("curated rwa published: curator must be non-empty")

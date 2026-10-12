@@ -26,13 +26,7 @@ import (
 // their own generation and the `derive_generation <= $gen` guard would let run order decide the
 // value. It also refuses a USD-pegged base leg, which is the exact tier (2b).
 
-// PlanXLMQuoteUSDVolumeRestamp scans one bounded window and returns the rows the XLM-quote
-// re-derive would rewrite, plus the disposition of every row it would not. READ-ONLY; the plan
-// is the whole dry run and [Store.ApplyUSDVolumeRestampPlan] consumes it verbatim.
-//
-// The value comes from [tradeUSDVolumeViaXLMQuoteAnchorFor], the base-side anchor the insert
-// path calls on the mirrored row, so `leg/1e7 x XLM/USD` has one spelling and a change moves
-// both tiers at once.
+// PlanXLMQuoteUSDVolumeRestamp scans one bounded window and returns the rows the XLM-quote re-derive would rewrite plus the disposition of every row it would not; READ-ONLY, and Store.ApplyUSDVolumeRestampPlan consumes it verbatim.
 func (s *Store) PlanXLMQuoteUSDVolumeRestamp(ctx context.Context, p RestampScanParams) (*RestampPlan, error) {
 	return s.planRestampTier(ctx, p, restampTierScan{
 		Tier:    "xlm-quote",

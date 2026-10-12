@@ -27,8 +27,7 @@ import (
 // superseded, non-removed offer version.
 const liveOfferScanSettings = "SETTINGS max_threads = 4, max_memory_usage = 8589934592, optimize_move_to_prewhere_if_final = 0"
 
-// LiveOffer is one live classic offer. Amounts and prices are classic types (int64
-// stroops, int32 price rationals), not i128; callers aggregate with big math.
+// LiveOffer is one live classic offer; amounts and prices are int64 stroops and int32 price rationals (not i128), so callers aggregate with big math.
 type LiveOffer struct {
 	KeyXDR string
 
@@ -95,10 +94,7 @@ func (r *ExplorerReader) offerBookLoadCursor(ctx context.Context) (uint32, error
 	return offerBookTip(floor, false, lc), nil
 }
 
-// LoadLiveOffers streams every LIVE offer entry from the current-state projection
-// and returns them with the CONTIGUOUS tip read BEFORE the scan (the incremental
-// cursor). Anything above it is re-read by [OfferChangesSince] and re-applied
-// idempotently by version. Undecodable entries are skipped.
+// LoadLiveOffers streams every live offer from the current-state projection and returns the CONTIGUOUS tip read BEFORE the scan as the incremental cursor; undecodable entries are skipped.
 func (r *ExplorerReader) LoadLiveOffers(ctx context.Context) ([]LiveOffer, uint32, error) {
 	cursor, err := r.offerBookLoadCursor(ctx)
 	if err != nil {
@@ -137,12 +133,7 @@ func (r *ExplorerReader) LoadLiveOffers(ctx context.Context) ([]LiveOffer, uint3
 	return out, cursor, nil
 }
 
-// OfferChangesSince streams offer changes in (fromLedger, contiguous tip] in
-// (ledger_seq, intra_ledger_seq) order, partition-pruned. Overlapping rows are safe: the caller
-// applies by version. The upper bound is [offerBookTip], never max(ledger_seq): the LiveSink drops
-// whole ledgers under pressure, so crossing a hole would put later catch-up rows below the
-// committed cursor forever and an offer removed in the dropped ledger would stay live. The cursor
-// holds below the hole and resumes once it is filled.
+// OfferChangesSince streams offer changes in (fromLedger, contiguous tip], bounded by the contiguous tip (never max(ledger_seq), which could cross a LiveSink hole); overlapping rows are safe as the caller applies by version.
 func (r *ExplorerReader) OfferChangesSince(ctx context.Context, fromLedger uint32) ([]OfferChange, uint32, error) {
 	lc, err := ledgerContiguityFrom(ctx, r.conn, fromLedger+1)
 	if err != nil {
@@ -211,8 +202,7 @@ func offerVersion(ledger, intra uint32) uint64 {
 	return uint64(ledger)<<32 | uint64(intra)
 }
 
-// OfferRemovalRef is an offer's LedgerKey plus the ledger its winning current-state
-// row was recorded at.
+// OfferRemovalRef is an offer's LedgerKey plus the ledger its winning current-state row was recorded at.
 type OfferRemovalRef struct {
 	KeyXDR string
 	Ledger uint32
@@ -222,17 +212,7 @@ type OfferRemovalRef struct {
 // ledger's granules, so cost is ~linear in refs.
 const offerRemovalProbeBatch = 500
 
-// OfferRemovedAt reports which offers have a `removed` change row AT THE SAME LEDGER
-// as their winning current-state row.
-//
-// Backfilled ledger_entry_changes rows may carry intra_ledger_seq = 0, so same-ledger changes
-// to one key tie on ledger_entries_current's RMT version and an ARBITRARY row survives: an
-// offer updated then consumed in one ledger can persist as `updated`, a phantom live offer
-// (crossed best bid/ask). The losing `removed` row is gone from ledger_entries_current but
-// ledger_entry_changes still holds it; this is a partition-pruned point read.
-// A same-ledger check suffices for FINAL winners: an offer key embeds the never-reused offer
-// ID, so a later removal would itself have won. Refs with no change rows come back "not
-// removed"; the crossed-pairs gauge watches that residue.
+// OfferRemovedAt reports which offers have a `removed` change row at the SAME ledger as their winning current-state row, catching phantom live offers when backfilled intra_ledger_seq ties let the wrong RMT row win; refs without change rows are "not removed".
 func (r *ExplorerReader) OfferRemovedAt(ctx context.Context, refs []OfferRemovalRef) (map[string]struct{}, error) {
 	removed := make(map[string]struct{})
 	for start := 0; start < len(refs); start += offerRemovalProbeBatch {

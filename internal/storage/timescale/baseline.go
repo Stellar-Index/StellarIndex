@@ -11,12 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// StoredBaseline is the wire shape between storage and the aggregator's refresh worker: a
-// [baseline.MultiBaseline] (1d / 7d / 30d windows, ADR-0019) plus refresh-freshness metadata.
-//
-// Day1 / Day7 are nil when the pair's history is too short for that window, which encodes
-// "bootstrap on this scale". Day30 is required: n_30d < MinSamples fails pre-flight in
-// [Store.UpsertBaseline].
+// StoredBaseline is the storage-to-aggregator wire shape: a [baseline.MultiBaseline] plus refresh metadata; Day1/Day7 nil means bootstrap at that scale, while Day30 is required.
 type StoredBaseline struct {
 	Pair        canonical.Pair
 	ComputedAt  time.Time
@@ -25,17 +20,10 @@ type StoredBaseline struct {
 	Multi       baseline.MultiBaseline
 }
 
-// ErrBaselineNotFound is returned by [Store.LatestBaseline] when
-// the requested pair has never had a baseline written. Callers in
-// the aggregator's confidence-score loop translate this into the
-// "bootstrap" branch (ADR-0019 §"Bootstrap (warmup) policy").
+// ErrBaselineNotFound is returned by [Store.LatestBaseline] when the requested pair has never had a baseline written.
 var ErrBaselineNotFound = errors.New("timescale: baseline not found for pair")
 
-// UpsertBaseline writes or overwrites the baseline row for a pair: one row per pair, latest
-// refresh wins, and the aggregator's refresh worker is the only writer.
-//
-// Pre-flight requires a non-nil Day30 (the NOT NULL columns would reject it anyway, but this gives
-// a clearer error), Day30.N >= [baseline.MinSamples], and WindowEnd > WindowStart.
+// UpsertBaseline writes the pair's single baseline row (the aggregator refresh worker is the only writer), requiring a non-nil Day30 with N >= [baseline.MinSamples] and WindowEnd > WindowStart.
 func (s *Store) UpsertBaseline(ctx context.Context, sb StoredBaseline) error {
 	if sb.Multi.Day30 == nil {
 		return fmt.Errorf("timescale: UpsertBaseline %s: 30d baseline is nil", sb.Pair.String())
@@ -107,9 +95,7 @@ func nullableBaseline(b *baseline.Baseline) (sql.NullFloat64, sql.NullFloat64, s
 		sql.NullInt64{Valid: true, Int64: int64(b.N)}
 }
 
-// LatestBaseline returns the current baseline for `pair`, or [ErrBaselineNotFound] when none exists
-// (the caller falls through to the bootstrap policy). API hot path: a point lookup on the
-// (base_asset, quote_asset) primary key, not a scan.
+// LatestBaseline returns the pair's current baseline by primary-key point lookup, or [ErrBaselineNotFound] so the caller falls through to the bootstrap policy; API hot path.
 func (s *Store) LatestBaseline(ctx context.Context, pair canonical.Pair) (StoredBaseline, error) {
 	const q = `
 		SELECT computed_at, window_start, window_end,
@@ -162,9 +148,7 @@ func (s *Store) LatestBaseline(ctx context.Context, pair canonical.Pair) (Stored
 	return sb, nil
 }
 
-// CountBaselines returns the row count of volatility_baseline_1m.
-// Diagnostic helper for the aggregator's "how many pairs have a
-// baseline yet" metrics; not for production hot paths.
+// CountBaselines returns the row count of volatility_baseline_1m; a diagnostic for aggregator metrics, not for hot paths.
 func (s *Store) CountBaselines(ctx context.Context) (int64, error) {
 	const q = `SELECT count(*) FROM volatility_baseline_1m`
 	var n int64

@@ -16,10 +16,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// DexSourceNames returns every Class=Exchange + Subclass=DEX source, sorted for stable order.
-//
-// Exported so the prewarm goroutine computes the SAME slice the handler does: otherwise the
-// prewarmed unfiltered /v1/pools key (Sources nil) never matches the handler's key.
+// DexSourceNames returns every Exchange/DEX source, sorted; exported so the prewarm computes the SAME slice as the handler and keys match.
 func DexSourceNames() []string {
 	out := make([]string, 0, len(external.Registry))
 	for name, md := range external.Registry {
@@ -31,8 +28,7 @@ func DexSourceNames() []string {
 	return out
 }
 
-// CexSourceNames returns every CEX source, sorted. Exported so the prewarm can warm
-// `/v1/markets?source=<name>`.
+// CexSourceNames returns every CEX source, sorted; exported so the prewarm can warm `/v1/markets?source=<name>`.
 func CexSourceNames() []string {
 	out := make([]string, 0, len(external.Registry))
 	for name := range external.Registry {
@@ -44,12 +40,7 @@ func CexSourceNames() []string {
 	return out
 }
 
-// MarketsReader is the storage-side interface for /v1/markets and /v1/pairs lookups.
-//
-// The row slices the list methods return belong to the caller, who normalises and enriches them in
-// place, so an implementation that retains rows (a cache) must hand out a copy, as
-// [CachedMarketsReader] does. Callers may replace a row's fields but not write through its
-// pointer/slice fields.
+// MarketsReader is the storage-side interface for /v1/markets and /v1/pairs; returned rows belong to the caller, so a retaining implementation (a cache) must hand out copies.
 type MarketsReader interface {
 	// DistinctPairsExt returns one page of (base, quote) pairs present in the trades store.
 	// Cursor is opaque; empty starts at page 1.
@@ -105,8 +96,7 @@ func allPools(ctx context.Context, reader MarketsReader, filter timescale.PoolsF
 	return rows, next, time.Time{}, false, err
 }
 
-// Pool is the wire shape for /v1/pools entries: Market plus a `source`, so one pair on two DEXes
-// is two rows.
+// Pool is the /v1/pools entry shape: Market plus a `source`, so one pair on two DEXes is two rows.
 type Pool struct {
 	Source        string   `json:"source"`
 	Base          string   `json:"base"`
@@ -288,18 +278,7 @@ func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) { //nolint:
 	writeEnvelope(w, env)
 }
 
-// Market is the wire shape for /v1/markets entries.
-//
-// TradeCount24h may be zero even when LastTradeAt is recent: they measure
-// different windows (activity vs most-recent event).
-//
-// Volume24hUSD sums prices_1m's per-bucket volume_usd over 24h. It is a pointer so a pair with
-// no USD-equivalent trades emits null ("unknown") rather than "0" ("definitely zero").
-//
-// LastTradeAt is the latest prices_1m bucket-start with a trade, falling back to the daily
-// bucket-start for pairs idle >24h but active in the 14d window; use it for freshness.
-// BucketCloseAt is the latest prices_1d bucket-start (UTC midnight) and would show spuriously
-// large staleness, so do not use it for that.
+// Market is the /v1/markets entry; Volume24hUSD is a pointer so null means "unknown" not "0", and LastTradeAt (not BucketCloseAt) is the freshness field.
 type Market struct {
 	Base          string   `json:"base"`
 	Quote         string   `json:"quote"`
@@ -321,8 +300,7 @@ type Market struct {
 	FirstTradeAt *WireTime `json:"first_trade_at,omitempty"`
 }
 
-// MarketVolumeBucket is one hourly USD-volume datapoint for the sparkline; volume_usd is a string
-// for precision.
+// MarketVolumeBucket is one hourly USD-volume sparkline point; volume_usd is a string for precision.
 type MarketVolumeBucket struct {
 	Hour      WireTime `json:"hour"`
 	VolumeUSD string   `json:"volume_usd"`

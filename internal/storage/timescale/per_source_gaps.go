@@ -11,13 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sourcenet"
 )
 
-// GapDetectorTarget identifies one (source, table) pair the gap detector scans for contiguous
-// ledger-coverage gaps. The table label disambiguates a source spanning several hypertables
-// (blend -> blend_positions + blend_emissions + ...). LedgerColumn is normally "ledger".
-//
-// FindPerSourceLedgerGaps interpolates Table and LedgerColumn into the query (Postgres cannot
-// bind identifiers), so they must come only from the compile-time [DefaultGapDetectorTargets],
-// never from a flag, env var or user input.
+// GapDetectorTarget identifies one (source, table) pair the gap detector scans for ledger-coverage gaps; the table label disambiguates a multi-hypertable source and LedgerColumn is normally "ledger".
 type GapDetectorTarget struct {
 	Source       string
 	Table        string
@@ -79,8 +73,7 @@ type GapDetectorTarget struct {
 // surfaces the divergence. Ledgers below the log floor read 0.
 const sorobanEventsDistinctLedgerCountSQL = `SELECT COUNT(*) FROM ledger_ingest_log WHERE ledger_seq BETWEEN $1 AND $2 AND soroban_event_count > 0`
 
-// SourceNetKey is the [sourcenet] name for this target — its
-// [GapDetectorTarget.CanonicalSource] when set, else its Source.
+// SourceNetKey is the [sourcenet] name for this target — its [GapDetectorTarget.CanonicalSource] when set, else its Source.
 func (t GapDetectorTarget) SourceNetKey() string {
 	if t.CanonicalSource != "" {
 		return t.CanonicalSource
@@ -88,10 +81,7 @@ func (t GapDetectorTarget) SourceNetKey() string {
 	return t.Source
 }
 
-// EffectiveMinGapSize returns the threshold this target should use,
-// preferring [MinGapSizeOverride] if non-zero. Single source of
-// truth for both [FindPerSourceLedgerGaps] and the alert-rule
-// query layer.
+// EffectiveMinGapSize returns the threshold this target should use, preferring [MinGapSizeOverride] if non-zero.
 func (t GapDetectorTarget) EffectiveMinGapSize() int64 {
 	if t.MinGapSizeOverride > 0 {
 		return t.MinGapSizeOverride
@@ -99,9 +89,7 @@ func (t GapDetectorTarget) EffectiveMinGapSize() int64 {
 	return GapDetectorMinGapSize
 }
 
-// EffectiveScanCadence returns the per-target scan cadence,
-// preferring [ScanCadence] if non-zero. Single source of truth
-// for the scheduler in [RunGapDetector].
+// EffectiveScanCadence returns the per-target scan cadence, preferring [ScanCadence] if non-zero.
 func (t GapDetectorTarget) EffectiveScanCadence() time.Duration {
 	if t.ScanCadence > 0 {
 		return t.ScanCadence
@@ -109,11 +97,7 @@ func (t GapDetectorTarget) EffectiveScanCadence() time.Duration {
 	return GapDetectorInterval
 }
 
-// DefaultGapDetectorTargets is the set of per-source hypertables the gap detector scans every
-// cycle. A migration creating a per-source hypertable MUST add a target in the same change;
-// [TestGapDetectorTargetsCoverMigrations] fails CI for a new `*_events|*_liquidity|*_positions|
-// *_emissions|*_admin|*_transfers|*_swaps|*_stake_events|*_supply_events` hypertable without one.
-// Scan order is lighter tables first, so soroban-events does not delay the lighter signals.
+// DefaultGapDetectorTargets is the set of per-source hypertables scanned every cycle; a migration creating a per-source hypertable MUST add a target (TestGapDetectorTargetsCoverMigrations fails CI otherwise).
 var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// SEP-41 tokens have no single deploy ledger, so the floor is the Soroban era start (pubnet
 	// L50,457,424); nothing earlier can emit SEP-41 events.
@@ -245,12 +229,7 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// n/a on the API listing and the entry count is shown instead.
 }
 
-// ApplicableGapDetectorTargets drops targets whose source does not exist on this network and
-// returns the rest in scan order, logging the exclusion set once.
-//
-// Every Genesis is a pubnet deploy ledger, so on a test net the scan window is inverted and
-// [Store.FindPerSourceLedgerGaps] would reject it every cycle. Pubnet, and an empty or unknown
-// network name, keeps every target.
+// ApplicableGapDetectorTargets drops targets whose source does not exist on this network and returns the rest in scan order, logging the exclusion set once.
 func ApplicableGapDetectorTargets(targets []GapDetectorTarget, network string, logger *slog.Logger) []GapDetectorTarget {
 	out := make([]GapDetectorTarget, 0, len(targets))
 	var excluded []string
@@ -341,10 +320,7 @@ func maxLedgerInWindowQuery(target GapDetectorTarget) string {
 		target.LedgerColumn, target.Table, filter)
 }
 
-// MaxLedgerInWindow returns the highest ledger present in [from,to] for
-// target, and ok=false when the window has no rows at all (NULL max).
-// Skips targets carrying a [GapDetectorTarget.DistinctLedgerCountSQL]
-// override (soroban-events) — see [maxLedgerInWindowQuery].
+// MaxLedgerInWindow returns the highest ledger present in [from,to] for target, and ok=false when the window has no rows at all (NULL max).
 func (s *Store) MaxLedgerInWindow(ctx context.Context, target GapDetectorTarget, from, to int64) (int64, bool, error) {
 	if target.DistinctLedgerCountSQL != "" {
 		return 0, false, nil
@@ -362,12 +338,7 @@ func (s *Store) MaxLedgerInWindow(ctx context.Context, target GapDetectorTarget,
 	return ledger.Int64, true, nil
 }
 
-// FindPerSourceLedgerGaps finds contiguous ledger gaps >= minGapSize in the target's hypertable
-// within [from, to]. A positive seedLedger below `from` is UNION-ALLed in as a synthetic prior row
-// so a gap spanning the window boundary is still detected (see [perSourceLedgerGapsQuery]).
-//
-// target.Table and target.LedgerColumn are interpolated into the SQL and not validated, so
-// callers MUST pass a target from [DefaultGapDetectorTargets], never user input.
+// FindPerSourceLedgerGaps finds ledger gaps >= minGapSize in the target's hypertable within [from, to], seeding a synthetic prior row from `seedLedger`; target.Table and LedgerColumn are interpolated unvalidated, so MUST come from [DefaultGapDetectorTargets].
 func (s *Store) FindPerSourceLedgerGaps(ctx context.Context, target GapDetectorTarget, from, to, minGapSize, seedLedger int64) ([]LedgerGap, error) {
 	if from < 0 || to < from {
 		return nil, fmt.Errorf("timescale: FindPerSourceLedgerGaps invalid range [%d,%d]", from, to)

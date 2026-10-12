@@ -31,11 +31,7 @@ const priceBatchMaxAssets = 100
 // GET limit without bloating query strings.
 const priceBatchMaxAssetsPOST = 1000
 
-// DivergenceLooker consults cached divergence results when serving /v1/price (production: an
-// adapter around `internal/divergence.Service.LookupCached`).
-//
-// Absence (`found=false`) and read errors both leave the warning unset; errors are logged at WARN,
-// absence is the steady state for assets the worker hasn't reached.
+// DivergenceLooker consults cached divergence results when serving /v1/price; absence and read errors both leave the warning unset.
 type DivergenceLooker interface {
 	// DivergenceFiringFor reports whether the divergence warning is firing for the EXACT
 	// (asset, quote) pair. `checked` is true only when a cached result met the worker's own
@@ -45,22 +41,12 @@ type DivergenceLooker interface {
 	DivergenceFiringFor(ctx context.Context, asset, quote canonical.Asset) (firing, checked bool, window time.Duration, err error)
 }
 
-// FrozenLooker tells the v1 server whether the latest bucket for a pair was frozen by the anomaly
-// checker (ADR-0019); production is a Redis adapter the aggregator populates at bucket close.
-//
-// FrozenForPair reports the MARKER only. LatestPrice reads the raw prices_1m bucket, which the
-// checker never gates, so on a frozen pair that snapshot is the bucket the freeze refused;
-// [Server.resolveFrozenServe] swaps in the held VWAP (or refuses) before setting the flags.
-// Read errors fall through with frozen=false: a price without the flag beats a 5xx on a Redis blip.
+// FrozenLooker reports whether a pair's latest bucket was frozen by the anomaly checker (ADR-0019); it reports the MARKER only, and read errors fall through with frozen=false.
 type FrozenLooker interface {
 	FrozenForPair(ctx context.Context, asset, quote canonical.Asset) (bool, error)
 }
 
-// PriceReader is the storage-side interface for /v1/price lookups.
-//
-// Production: Redis hot path (`price:<asset>`, ADR-0007) with a Timescale fallback to the latest
-// trade. Responses served from that fallback are flagged stale=true (docs/architecture/ha-plan.md
-// section 9).
+// PriceReader is the storage-side interface for /v1/price: Redis hot path (ADR-0007) with a Timescale last-trade fallback flagged stale=true.
 type PriceReader interface {
 	// LatestPrice returns the most recent known price of asset in terms of quote, or
 	// [ErrPriceNotFound] when the pair has no observation. sources lists the contributing
@@ -78,18 +64,10 @@ type PriceReader interface {
 // ErrPriceNotFound is returned by PriceReader.LatestPrice when no data exists for the pair (404).
 var ErrPriceNotFound = errors.New("api: price not found for pair")
 
-// ErrPriceWithheld is returned when the pair HAS data but the thin-market substance gate refuses
-// to publish an aggregated price: trailing activity is below the serve floor, so any price would
-// be attacker-authorable.
-//
-// Handlers map it to a 404 of type ".../price-withheld" so integrators can tell "never seen" from
-// "seen, declined". The fallback chain is deliberately NOT consulted on a withheld read: it would
-// re-serve the same substanceless market through a side door.
+// ErrPriceWithheld means the pair has data but the thin-market substance gate refuses to publish; handlers map it to a 404 price-withheld, and the fallback chain is deliberately NOT consulted.
 var ErrPriceWithheld = errors.New("api: price withheld — trailing market substance below serve floor")
 
-// PriceWithheldReason discriminates WHY a price read was withheld (substance, scam-issuer, a
-// propagated upstream leg), so a flagged issuer isn't described in the substance gate's wording.
-// It travels alongside the sentinel: errors.Is(err, ErrPriceWithheld) still matches via Unwrap.
+// PriceWithheldReason says WHY a price was withheld (substance, scam-issuer, upstream leg); errors.Is(err, ErrPriceWithheld) still matches via Unwrap.
 type PriceWithheldReason string
 
 const (
@@ -126,8 +104,7 @@ func newPriceWithheld(reason PriceWithheldReason) error {
 	return &withheldError{reason: reason}
 }
 
-// PriceWithheldError is the ErrPriceWithheld a reader returns for a
-// pricingguard verdict, carrying which gate fired to the response.
+// PriceWithheldError is the ErrPriceWithheld a reader returns for a pricingguard verdict, carrying which gate fired.
 func PriceWithheldError(w pricingguard.Withholding) error {
 	return newPriceWithheld(withheldReasonFor(w))
 }
@@ -175,43 +152,26 @@ func priceWithheldReason(err error) PriceWithheldReason {
 	return PriceWithheldUnattributed
 }
 
-// PriceWithheldReasonOf is [priceWithheldReason] for producers outside
-// this package that put a withholding on a stream.
+// PriceWithheldReasonOf is [priceWithheldReason] for producers outside this package that put a withholding on a stream.
 func PriceWithheldReasonOf(err error) PriceWithheldReason { return priceWithheldReason(err) }
 
-// PriceSubstanceGate is the serving-side thin-market gate seam (production:
-// internal/pricingguard.SubstanceGate). The server consults it directly only on paths that skip
-// PriceReader (the tip rolling-window VWAP); reader-backed paths are gated inside the readers.
-// surface is a low-cardinality metric label.
-//
-// Allowed fails open when the pair cannot be measured. Probe reports that case as measured=false,
-// uncounted, for the listing verdict that must not publish an unverified price
-// ([Server.listingSubstanceVerdict]).
+// PriceSubstanceGate is the serving-side thin-market gate seam, consulted directly only on paths that skip PriceReader; Allowed fails open when unmeasurable and Probe reports measured=false.
 type PriceSubstanceGate interface {
 	Allowed(ctx context.Context, base, quote canonical.Asset, surface string) bool
 	Probe(ctx context.Context, base, quote canonical.Asset) (allowed, measured bool, floor pricingguard.SubstanceFloor)
 }
 
-// PriceSubstanceMeasurer is the optional evidence-carrying form of
-// [PriceSubstanceGate]; production's *pricingguard.SubstanceGate has it.
-// A gate without it is folded through Allowed and records no evidence.
+// PriceSubstanceMeasurer is the optional evidence-carrying form of [PriceSubstanceGate]; a gate without it is folded through Allowed with no evidence.
 type PriceSubstanceMeasurer interface {
 	Measure(ctx context.Context, base, quote canonical.Asset) pricingguard.SubstanceVerdict
 }
 
-// PriceScamGate withholds the aggregated price for an asset whose ISSUER is flagged scam-class in
-// the curated directory (production: internal/pricingguard.ScamGate). Nil-safe.
-//
-// This is the BASE-ONLY question, half the decision (see [PriceScamPairGate]); handlers must ask
-// via [scamWithheld], never call this method directly.
+// PriceScamGate withholds the price for an asset whose ISSUER is flagged scam-class; it is the base-only half of the decision, so handlers must ask via [scamWithheld].
 type PriceScamGate interface {
 	Withheld(ctx context.Context, base canonical.Asset, surface string) bool
 }
 
-// PriceScamPairGate is the pair-aware form of [PriceScamGate]: it withholds when EITHER leg's
-// issuer is flagged. Withholding is a property of the MARKET: a base-only gate would serve
-// `?base=native&quote=<FLAGGED>` at 200 as the reciprocal of the number withheld for the opposite
-// orientation. Production implements this form (TestProductionScamGateIsPairAware).
+// PriceScamPairGate is the pair-aware [PriceScamGate]: it withholds when EITHER leg's issuer is flagged, since withholding is a property of the market, not one orientation.
 type PriceScamPairGate interface {
 	PriceScamGate
 	WithheldPair(ctx context.Context, base, quote canonical.Asset, surface string) bool
@@ -318,8 +278,7 @@ func mustParseAsset(s string) canonical.Asset {
 	return a
 }
 
-// PriceSnapshot is the neutral shape returned by [PriceReader]. The
-// handler wraps it in [Envelope].
+// PriceSnapshot is the neutral shape returned by [PriceReader]; the handler wraps it in [Envelope].
 type PriceSnapshot struct {
 	// AssetID + Quote canonical strings match the request parameters.
 	AssetID string `json:"asset_id"`
@@ -429,8 +388,7 @@ func marketSingleSource(snap PriceSnapshot, sources []string) bool {
 	return len(sources) == 1
 }
 
-// ConfidenceFactors mirrors `confidence.Factors` on the wire so the API package doesn't force an
-// aggregate import on SDK consumers.
+// ConfidenceFactors mirrors `confidence.Factors` on the wire so SDK consumers need no aggregate import.
 type ConfidenceFactors struct {
 	ZScore          float64 `json:"z_score"`
 	SourceCount     float64 `json:"source_count"`
@@ -466,26 +424,18 @@ type ConfidenceFactors struct {
 	BootstrapCapped bool    `json:"bootstrap_capped"`
 }
 
-// ConfidenceLooker fetches the cached confidence score for `/v1/price` (production: a Redis
-// adapter over `confidence:<base>:<quote>:<window>`).
-//
-// Absent entries return `(_, false, nil)`; read errors propagate via the third return so the
-// handler can log without failing, since confidence is enrichment, not a publish-blocking signal.
+// ConfidenceLooker fetches the cached confidence score for /v1/price; absent entries return `(_, false, nil)` and read errors propagate without failing the request.
 type ConfidenceLooker interface {
 	LookupConfidence(ctx context.Context, asset, quote canonical.Asset, window time.Duration) (PriceSnapshotConfidence, bool, error)
 }
 
-// PriceSnapshotConfidence is the read-side shape between [ConfidenceLooker] and the handler, local
-// to this package so the storage adapter does the JSON decode + remap once.
+// PriceSnapshotConfidence is the read-side shape between [ConfidenceLooker] and the handler, so the storage adapter decodes once.
 type PriceSnapshotConfidence struct {
 	Confidence float64
 	Factors    ConfidenceFactors
 }
 
-// TriangulatedPriceLooker is the fallback /v1/price consults after a Timescale miss. The
-// aggregator publishes implied VWAPs (e.g. XLM/EUR via XLM/USD x USD/EUR) to Redis with a
-// provenance sibling set to "triangulated"; this reads both (via [cachekeys.VWAP],
-// [cachekeys.VWAPProvenance], [cachekeys.VWAPObservedAt]). Nil leaves triangulated-only pairs 404.
+// TriangulatedPriceLooker is the fallback /v1/price consults after a Timescale miss, reading the aggregator's implied VWAPs and provenance from Redis; nil leaves triangulated-only pairs 404.
 type TriangulatedPriceLooker interface {
 	// LookupTriangulatedVWAP returns the cached VWAP for the pair + window. found needs a value AND
 	// its observed-at stamp: without one nothing says how old it is, so it is a miss. A miss is
@@ -530,11 +480,7 @@ func (s *Server) lookupCachedVWAPAliased(ctx context.Context, bases, quotes []ca
 	return CachedVWAP{}, canonical.Asset{}, canonical.Asset{}, false
 }
 
-// CompositeMetaLooker is an OPTIONAL capability a [TriangulatedPriceLooker] may implement to
-// expose the router-quality flags at [cachekeys.VWAPCompositeMeta]: `diverged` (contributing routes
-// disagreed) and `rerouted` (a dry chain leg was substituted around). They are enrichment on an
-// already-served price: a miss, malformed blob or read error leaves them unset and NEVER fails the
-// request.
+// CompositeMetaLooker is an OPTIONAL [TriangulatedPriceLooker] capability exposing `diverged`/`rerouted` flags; a miss or error leaves them unset and NEVER fails the request.
 type CompositeMetaLooker interface {
 	// LookupCompositeMeta returns the raw JSON blob under [cachekeys.VWAPCompositeMeta]; a miss is
 	// found=false, and err is a real read failure for logging only.
@@ -1045,8 +991,7 @@ func (s *Server) normalizeRawPriceSnapshot(snap *PriceSnapshot, base, quote cano
 	snap.Price = s.normalizeRawRatioString(snap.Price, base, quote)
 }
 
-// NormalizeRawPriceSnapshot is [Server.normalizeRawPriceSnapshot] for a caller with no *Server
-// (streampublish's SSE bridge). decimals may be nil: fails open at aggregate.StandardDecimals.
+// NormalizeRawPriceSnapshot is [Server.normalizeRawPriceSnapshot] for callers with no *Server; nil decimals fails open at aggregate.StandardDecimals.
 func NormalizeRawPriceSnapshot(snap *PriceSnapshot, base, quote canonical.Asset, decimals *NonstandardDecimalsCache) {
 	snap.Price = normalizeRawRatioStringWithLookup(snap.Price, base, quote, decimals)
 }
@@ -2541,9 +2486,7 @@ func batchEnvelope(ids []string, results []batchRowResult) Envelope {
 
 // ─── Helpers for PriceReader implementations ──────────────────────
 
-// LastTradeToSnapshot converts a canonical.Trade into a PriceSnapshot with price_type="last_trade".
-// Price = QuoteAmount / BaseAmount as a decimal string at roundToDecimals precision; callers supply
-// `decimals` for the quote asset's scale. ok is false for a trade with a zero leg: it has no price.
+// LastTradeToSnapshot converts a canonical.Trade to a last_trade PriceSnapshot (QuoteAmount / BaseAmount as a decimal string); ok is false for a zero leg.
 func LastTradeToSnapshot(t canonical.Trade, decimals int) (PriceSnapshot, bool) {
 	price, ok := priceRatioDecimal(t, decimals)
 	if !ok {
@@ -2558,9 +2501,7 @@ func LastTradeToSnapshot(t canonical.Trade, decimals int) (PriceSnapshot, bool) 
 	}, true
 }
 
-// VWAP1mToSnapshot maps a 1-minute prices_1m row to a [PriceSnapshot]. `assetID` and `quote` are the
-// request's strings so the echo stays as sent; `vwap` is the NUMERIC text, unparsed. `observed_at`
-// is the END of the closed window (`bucketStart + 1m`).
+// VWAP1mToSnapshot maps a prices_1m row to a [PriceSnapshot]; `vwap` is unparsed NUMERIC text and observed_at is the END of the closed window.
 func VWAP1mToSnapshot(assetID, quote, vwap string, bucketStart time.Time) PriceSnapshot {
 	return PriceSnapshot{
 		AssetID:       assetID,

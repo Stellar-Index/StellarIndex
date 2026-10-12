@@ -6,12 +6,7 @@ import (
 	"time"
 )
 
-// DeFiPositionHolder is one (owner, protocol, venue, asset) position as
-// the per-protocol folds report it: the same six folds behind /v1/accounts/{g}/positions,
-// walked for EVERY owner. Amount is the fold's own decimal string in the fold's own unit (token
-// amount, shares, LP stake, statement, gauge delta), a magnitude to rank and display and never
-// a settlement figure. A zero net is still a row (opened then fully closed); the consumer
-// decides whether closed positions count.
+// DeFiPositionHolder is one (owner, protocol, venue, asset) position as the six per-protocol folds report it, walked for every owner; Amount is the fold's own decimal string in the fold's own unit.
 type DeFiPositionHolder struct {
 	Protocol     string
 	PositionKind string
@@ -35,10 +30,7 @@ const (
 	holderKindGauge          = "gauge_position"
 )
 
-// DeFiPositionHolders returns every open-or-closed position across the six
-// folds. Sized for a daily rollup, not a request: the set is a few hundred thousand rows,
-// small beside the cohort membership it is joined to on the ClickHouse side, which is why the
-// join happens there and not here.
+// DeFiPositionHolders returns every open or closed position across the six folds; sized for a daily rollup, not a request (a few hundred thousand rows, joined on the ClickHouse side).
 func (s *Store) DeFiPositionHolders(ctx context.Context) ([]DeFiPositionHolder, error) {
 	var out []DeFiPositionHolder
 	for _, part := range []struct {

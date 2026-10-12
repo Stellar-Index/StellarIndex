@@ -16,10 +16,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// ProtocolTVLView is the additive per-protocol TVL summary on GET /v1/protocols rows and
-// /v1/protocols/{name}. Phoenix and Comet events carry flow deltas, not post-state reserves, so
-// their figures come from the pools' STORAGE entries in the lake; a window net-flow is NOT TVL.
-// Absent for protocols with no absolute reserve source (SDEX is an order book) and on cold start.
+// ProtocolTVLView is the additive per-protocol TVL summary; Phoenix/Comet figures come from pool STORAGE entries (a window net-flow is NOT TVL) and it is absent when no absolute reserve source exists.
 type ProtocolTVLView struct {
 	// TVLUSD is the summed USD value of every PRICED reserve leg, as a decimal string (ADR-0003).
 	// Unpriced legs contribute 0, so it is a LOWER BOUND whenever UnpricedPools > 0.
@@ -42,17 +39,14 @@ type ProtocolTVLView struct {
 	Basis string `json:"basis"`
 }
 
-// DEXTVLRefreshInterval is the cadence at which the API's background goroutine calls Refresh.
-// The reads are three batched lake lookups, one served-tier query and a few prices_1m lookups;
-// TVL moves slowly enough that anything faster adds no signal.
+// DEXTVLRefreshInterval is the background Refresh cadence; TVL moves slowly enough that faster adds no signal.
 const DEXTVLRefreshInterval = 10 * time.Minute
 
 // aquariusTVLWindowDays bounds the aquarius_reserves recency scan; it matches the protocol
 // analytics window so both surfaces describe the same pool set.
 const aquariusTVLWindowDays = 90
 
-// SoroswapTVLReserveReader reads current Soroswap pair reserves from the lake (production:
-// *clickhouse.ExplorerReader). A pair absent from the result is "unavailable", NEVER zero TVL.
+// SoroswapTVLReserveReader reads current Soroswap pair reserves from the lake; an absent pair is "unavailable", NEVER zero TVL.
 type SoroswapTVLReserveReader interface {
 	SoroswapPairReserves(ctx context.Context, pairs []string) (map[string]clickhouse.SoroswapPairState, error)
 }
@@ -62,46 +56,27 @@ type AquariusTVLReserveReader interface {
 	LatestAquariusReserves(ctx context.Context, windowDays int) ([]timescale.AquariusPoolReserve, error)
 }
 
-// PhoenixTVLReserveReader reads current Phoenix pool reserves and token identities from the
-// pools' persistent storage in the lake (production: *clickhouse.ExplorerReader). The second
-// return lists pools whose storage did not decode to the recognised shape: counted, never
-// guessed. Pools absent from BOTH returns are "unavailable", NEVER zero TVL.
+// PhoenixTVLReserveReader reads current Phoenix pool reserves from lake storage; undecodable pools are counted, never guessed, and absent pools are "unavailable", NEVER zero TVL.
 type PhoenixTVLReserveReader interface {
 	PhoenixPoolReserves(ctx context.Context, pools []string) (map[string]clickhouse.PhoenixPoolState, []string, error)
 }
 
-// CometTVLReserveReader reads current Comet per-token pool balances from the lake, with the same
-// absence and undecodable contract as PhoenixTVLReserveReader.
+// CometTVLReserveReader reads current Comet per-token pool balances from the lake, with the same absence and undecodable contract as PhoenixTVLReserveReader.
 type CometTVLReserveReader interface {
 	CometPoolReserves(ctx context.Context, pools []string) (map[string]clickhouse.CometPoolState, []string, error)
 }
 
-// TVLUSDPricer resolves an on-chain asset's USD price at a point in time. Production wiring is
-// *timescale.VWAPUSDFXResolver, the same tier system that stamps trades.usd_volume, so TVL and
-// volume share one methodology. The rate is a RAW prices_1m ratio anchored at the 7-decimal
-// classic scale; see tvlLegUSD.
+// TVLUSDPricer resolves an on-chain asset's USD price at a point in time via the same tier system that stamps trades.usd_volume; the rate is a RAW prices_1m ratio at 7-decimal classic scale.
 type TVLUSDPricer interface {
 	USDPriceAt(ctx context.Context, asset canonical.Asset, at time.Time) (string, bool, error)
 }
 
-// TVLUSDPegInfo reports whether an asset is an operator-declared USD-pegged classic (or its SAC
-// wrapper) and at what decimal scale. Nil means no peg shortcut: pegged tokens then price
-// through the resolver like any other asset, or count unpriced.
+// TVLUSDPegInfo reports whether an asset is an operator-declared USD-pegged classic (or its SAC) and its decimal scale; nil means no peg shortcut.
 type TVLUSDPegInfo interface {
 	QuoteUSDPegInfo(asset canonical.Asset) (decimals int, ok bool)
 }
 
-// TVLValueGate is the serving-side TRUST gate on a reserve leg: may a USD valuation of this
-// asset be published at all?
-//
-// Without it the resolver's only floor is one cent of quote notional, so a scam-flagged issuer's
-// token with one self-traded $0.01 minute would be valued into pool TVL and the protocol
-// headline. An attacker-authored number is not a lower bound.
-//
-// Production routes to cmd/stellarindex-api's priceWithheld chokepoint (substance gate OR scam
-// gate, never consulted separately). Nil is a valid allow-everything gate; buildDEXTVLValueGate
-// must return a nil INTERFACE when neither guard is wired, since an interface holding a
-// non-pointer struct is never == nil.
+// TVLValueGate is the serving-side trust gate on whether a reserve leg's USD valuation may be published; nil is allow-all, so wiring must return a nil INTERFACE when no guard exists.
 type TVLValueGate interface {
 	ValueWithheld(ctx context.Context, asset canonical.Asset) bool
 
@@ -111,8 +86,7 @@ type TVLValueGate interface {
 	Screens() []string
 }
 
-// DEXTVLSources are the read seams the TVL snapshot is computed from. Every field is optional; a
-// protocol whose readers are missing is simply absent from the snapshot.
+// DEXTVLSources are the optional read seams the TVL snapshot is computed from; a protocol with missing readers is absent from the snapshot.
 type DEXTVLSources struct {
 	// SoroswapPairs is the pair id set the lake reserve lookup is scoped to.
 	SoroswapPairs SoroswapPairsReader
@@ -144,9 +118,7 @@ type DEXTVLSources struct {
 	Logger Logger
 }
 
-// DEXTVLCache is a read-mostly per-protocol TVL snapshot refreshed by a background goroutine,
-// because the explorer read budget cannot afford per-request aggregation over reserve tables.
-// Cold start serves an empty snapshot: handlers omit the tvl field, never 503.
+// DEXTVLCache is a read-mostly per-protocol TVL snapshot refreshed in the background; cold start serves an empty snapshot and handlers omit tvl, never 503.
 type DEXTVLCache struct {
 	mu       sync.RWMutex
 	snapshot map[string]ProtocolTVLView
@@ -159,32 +131,26 @@ type DEXTVLCache struct {
 	src         DEXTVLSources
 }
 
-// NewDEXTVLCache constructs an empty cache; production calls Refresh at startup, then every
-// DEXTVLRefreshInterval.
+// NewDEXTVLCache constructs an empty cache; production calls Refresh at startup, then every DEXTVLRefreshInterval.
 func NewDEXTVLCache(src DEXTVLSources) *DEXTVLCache {
 	return &DEXTVLCache{src: src}
 }
 
-// Snapshot returns the latest successful per-protocol TVL map and its timestamp (nil and zero
-// before the first refresh). Callers must treat the map as read-only.
+// Snapshot returns the latest per-protocol TVL map and its timestamp (nil and zero before the first refresh); callers must treat the map as read-only.
 func (c *DEXTVLCache) Snapshot() (map[string]ProtocolTVLView, time.Time) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.snapshot, c.fetchedAt
 }
 
-// SnapshotAndTotal returns the per-protocol snapshot with the headline total from the SAME
-// refresh cycle. Reading Snapshot() and Total() separately can straddle a Refresh() and pair one
-// cycle's figures with another's total, so callers publishing both (GET /v1/protocols) use this.
+// SnapshotAndTotal returns the snapshot with the total from the SAME refresh cycle, so callers publishing both never pair one cycle's figures with another's total.
 func (c *DEXTVLCache) SnapshotAndTotal() (map[string]ProtocolTVLView, *DEXTVLTotalView, time.Time) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.snapshot, c.total, c.fetchedAt
 }
 
-// Protocol returns one protocol's published view with the per-pool breakdown it was summed from
-// and whether it is carried forward from an earlier cycle. ok=false when the protocol has no
-// entry. Callers must treat the pools slice as read-only.
+// Protocol returns one protocol's published view with its per-pool breakdown and carried-forward flag; ok=false when absent, and the pools slice is read-only.
 func (c *DEXTVLCache) Protocol(name string) (DEXTVLProtocolSnapshot, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -205,8 +171,7 @@ func (c *DEXTVLCache) Protocol(name string) (DEXTVLProtocolSnapshot, bool) {
 	}, true
 }
 
-// Unavailable reports why a derived protocol published no figure on the latest refresh; ok=false
-// when it published one or is not derived here.
+// Unavailable reports why a derived protocol published no figure on the latest refresh; ok=false when it published one or is not derived here.
 func (c *DEXTVLCache) Unavailable(name string) (string, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -239,9 +204,7 @@ func (c *DEXTVLCache) derivations() []dexTVLDerivation {
 	}
 }
 
-// Refresh recomputes the snapshot. A per-protocol failure keeps that protocol's previous entry,
-// so a transient read error does not blank a healthy figure, and is joined into the returned
-// error; protocols that compute successfully swap in atomically.
+// Refresh recomputes the snapshot; a per-protocol failure keeps that protocol's previous entry and is joined into the returned error.
 func (c *DEXTVLCache) Refresh(ctx context.Context) error {
 	now := time.Now().UTC()
 	valuer := newTVLValuer(c.src.Pricer, c.src.PegInfo, c.src.Gate, now)

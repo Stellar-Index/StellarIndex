@@ -12,10 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// TopicShape is one distinct (contract_id, topic_0_sym) event shape in the lake,
-// with a representative event for recognition (ADR-0033 Claim 2a). The CH lake
-// is the complete authoritative source, so a shape-scan over it sees every event
-// shape any contract has ever emitted — no Postgres soroban_events scan needed.
+// TopicShape is one distinct (contract_id, topic_0_sym) event shape in the lake with a representative event for recognition (ADR-0033 Claim 2a).
 type TopicShape struct {
 	ContractID string
 	Topic0Sym  string
@@ -32,9 +29,7 @@ type TopicShape struct {
 	DataXDR   string   // base64 SCVal data of that event
 }
 
-// Event reconstructs the representative [events.Event] for this shape — enough
-// for a decoder's Matches() (Type, ContractID, Topic, Value). It is NOT a full
-// event (no ledger/tx identity); recognition only needs the shape.
+// Event reconstructs the representative [events.Event] for this shape, enough for a decoder's Matches() but not a full event (no ledger/tx identity).
 func (s TopicShape) Event() events.Event {
 	return events.Event{
 		Type:                     s.EventType,
@@ -83,18 +78,7 @@ const nonSymbolShapeCols = `if(topic_0_sym = '', topics_xdr[1], '') AS t0,
 			if(topic_0_sym = '', topics_xdr[2], '') AS t1,
 			if(topic_0_sym = '', length(topics_xdr), 0) AS tn`
 
-// DistinctTopicShapes returns one representative event per distinct (contract_id, topic_0_sym)
-// in contract_events over [from,to], ordered by Count descending. excludeTopic0 drops topic[0]
-// symbols (e.g. ClassicTokenTopic0Syms, the CAP-67 classic-token firehose).
-//
-// Two phases keep peak memory bounded regardless of history size:
-//
-//  1. SCAN: per-partition windows GROUP BY only the NARROW identity columns
-//     (contract_id, topic_0_sym) + count/min/max, merged Go-side. No wide column is read.
-//  2. EXEMPLAR: fetch the newest event's bytes per shape with a point read pinned to the
-//     shape's MaxLedger, exemplarBatchSize shapes per query.
-//
-// Both phases carry boundedScanSettings: growth costs time, not failures.
+// DistinctTopicShapes returns one representative event per distinct (contract_id, topic_0_sym) over [from,to] by Count descending, in a narrow SCAN phase then a point-read EXEMPLAR phase so memory stays bounded; excludeTopic0 drops topic[0] symbols.
 func DistinctTopicShapes(ctx context.Context, addr string, from, to uint32, excludeTopic0 []string) ([]TopicShape, error) {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -119,11 +103,7 @@ func DistinctTopicShapes(ctx context.Context, addr string, from, to uint32, excl
 	return finishShapeScan(ctx, conn, acc)
 }
 
-// DistinctTopicShapesForWatchedContracts scopes the distinct-shape scan to a topic[0] set AND a
-// contract set, for the watched-SEP41 recognition census. The global scan drops the CAP-67
-// classic-token topics (too costly to re-scan for every contract), so a watched SEP-41 source
-// dropping its OWN transfer/mint/burn events would be invisible to it. Restricting both sets
-// keeps those kinds auditable at bounded cost. Returns (nil, nil) if either set is empty.
+// DistinctTopicShapesForWatchedContracts scopes the shape scan to a topic[0] set AND a contract set, keeping a watched SEP-41 source's own transfer/mint/burn drops auditable at bounded cost; returns (nil, nil) if either set is empty.
 func DistinctTopicShapesForWatchedContracts(ctx context.Context, addr string, from, to uint32, topic0, contractIDs []string) ([]TopicShape, error) {
 	if len(topic0) == 0 || len(contractIDs) == 0 {
 		return nil, nil
