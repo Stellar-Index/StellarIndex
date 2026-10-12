@@ -3,6 +3,7 @@ package coinbase
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -165,5 +166,116 @@ func TestStreamer_RejectedProductDroppedOnResubscribe(t *testing.T) {
 	defer mu.Unlock()
 	if len(subs) < 2 || len(subs[0]) != 2 || !reflect.DeepEqual(subs[1], []string{"XLM-USD"}) {
 		t.Fatalf("subscriptions = %v, want 2 then [XLM-USD]", subs)
+	}
+}
+
+// TestNewStreamer_DefaultInitialBackoffIs5s pins NewStreamer's 5 s default backoff, shared with Binance/Bitstamp, against
+// drive-by edits.
+func TestNewStreamer_DefaultInitialBackoffIs5s(t *testing.T) {
+	s := NewStreamer(nil)
+	if got, want := s.InitialBackoff, 5*time.Second; got != want {
+		t.Errorf("InitialBackoff = %v, want %v (F-0029/G10-03)", got, want)
+	}
+	if got, want := s.MaxBackoff, 60*time.Second; got != want {
+		t.Errorf("MaxBackoff = %v, want %v", got, want)
+	}
+}
+
+// TestClassifyDisconnect_BoundedReasonLabels keeps disconnect metric label cardinality bounded; Coinbase adds
+// subscription_rejected so a config-reject loop is distinguishable from wire drops.
+func TestClassifyDisconnect_BoundedReasonLabels(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"nil", nil, "other"},
+		{"subscription_rejected", ErrSubscriptionRejected, "subscription_rejected"},
+		{"reset", errors.New("read: failed to read frame payload: read tcp 1.2.3.4:443: read: connection reset by peer"), "reset"},
+		{"broken_pipe", errors.New("write: broken pipe"), "broken_pipe"},
+		{"timeout", errors.New("read: i/o timeout"), "timeout"},
+		{"dial", errors.New("dial: lookup ws-feed.exchange.coinbase.com: no such host"), "dial"},
+		{"other", errors.New("EOF"), "other"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := classifyDisconnect(tc.err); got != tc.want {
+				t.Errorf("classifyDisconnect(%v) = %q, want %q", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRestBase_emptyEndpointFallsBackToREST(t *testing.T) {
+	s := &Streamer{}
+	if got := s.restBase(); got != RESTEndpoint {
+		t.Errorf("restBase() = %q, want %q", got, RESTEndpoint)
+	}
+}
+
+func TestRestBase_wsEndpointFallsBackToREST(t *testing.T) {
+	for _, prefix := range []string{"ws://example.com", "wss://example.com"} {
+		s := &Streamer{Endpoint: prefix}
+		if got := s.restBase(); got != RESTEndpoint {
+			t.Errorf("restBase(%q) = %q, want %q", prefix, got, RESTEndpoint)
+		}
+	}
+}
+
+func TestRestBase_httpEndpointPassesThrough(t *testing.T) {
+	s := &Streamer{Endpoint: "http://127.0.0.1:9999"}
+	if got := s.restBase(); got != "http://127.0.0.1:9999" {
+		t.Errorf("restBase() = %q, want passthrough", got)
+	}
+}
+
+// productsFor inverts the operator-supplied PairMap to render canonical pairs as Coinbase product IDs ("XLM-USD"); a pair
+// missing from the map is fatal, since dropping it would starve a market.
+
+func TestProductsFor_happyPath(t *testing.T) {
+	pm, err := DefaultPairs()
+	if err != nil {
+		t.Fatalf("DefaultPairs: %v", err)
+	}
+	s := NewStreamer(pm)
+
+	got, err := s.productsFor([]canonical.Pair{pm["XLM-USD"], pm["BTC-USD"]})
+	if err != nil {
+		t.Fatalf("productsFor: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len = %d, want 2", len(got))
+	}
+	want := map[string]bool{"XLM-USD": true, "BTC-USD": true}
+	for _, p := range got {
+		if !want[p] {
+			t.Errorf("unexpected product %q", p)
+		}
+	}
+}
+
+func TestProductsFor_unknownPairRejected(t *testing.T) {
+	pm, err := DefaultPairs()
+	if err != nil {
+		t.Fatalf("DefaultPairs: %v", err)
+	}
+	s := NewStreamer(pm)
+
+	// MATIC: in allow-list, intentionally not in DefaultPairs.
+	matic, err := canonical.NewCryptoAsset("MATIC")
+	if err != nil {
+		t.Fatalf("NewCryptoAsset(MATIC): %v", err)
+	}
+	usd, err := canonical.NewFiatAsset("USD")
+	if err != nil {
+		t.Fatalf("NewFiatAsset(USD): %v", err)
+	}
+	missing, err := canonical.NewPair(matic, usd)
+	if err != nil {
+		t.Fatalf("NewPair: %v", err)
+	}
+
+	if _, err := s.productsFor([]canonical.Pair{missing}); err == nil {
+		t.Fatal("expected error for MATIC/USD (not in DefaultPairs), got nil")
 	}
 }

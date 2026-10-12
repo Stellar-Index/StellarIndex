@@ -4,7 +4,9 @@ import (
 	"encoding/base64"
 	"errors"
 	"math/big"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stellar/go-stellar-sdk/xdr"
 
@@ -680,4 +682,222 @@ func splitBigInt128(n *big.Int) (hi int64, lo uint64) {
 	loBig := new(big.Int).And(u, mask64)
 	hiBig := new(big.Int).Rsh(u, 64)
 	return int64(hiBig.Uint64()), loBig.Uint64()
+}
+
+// Real r1 fixture: the RedStone adapter's per-feed contract-data key at
+// ledger 62056824 — ContractData{CA526Y2N…, ScString("USTRY"), persistent}.
+const testContractDataKeyB64 = "AAAABgAAAAE7r2NNhY1q1h+JSvMDLKe8+WE7oLTJ1BXmafczoXPOOwAAAA4AAAAFVVNUUlkAAAAAAAAB"
+
+func TestParseContractDataKey_RealFixture(t *testing.T) {
+	contractID, key, err := ParseContractDataKey(testContractDataKeyB64)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if contractID != "CA526Y2NQWGWVVQ7RFFPGAZMU66PSYJ3UC2MTVAV4ZU7OM5BOPHDXUSG" {
+		t.Errorf("contract = %s, want the RedStone adapter", contractID)
+	}
+	s, err := AsString(key)
+	if err != nil {
+		t.Fatalf("key AsString: %v", err)
+	}
+	if s != "USTRY" {
+		t.Errorf("key = %q, want USTRY", s)
+	}
+}
+
+func TestParseContractDataKey_Rejections(t *testing.T) {
+	if _, _, err := ParseContractDataKey("!!not-base64"); !errors.Is(err, ErrScValDecode) {
+		t.Errorf("garbage: err = %v, want ErrScValDecode", err)
+	}
+
+	// A non-contract-data LedgerKey (account) is a type error, not a
+	// decode error — callers filtering mixed key lists skip this class.
+	acct := xdr.MustAddress("GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF")
+	accountKey, merr := xdr.MarshalBase64(xdr.LedgerKey{
+		Type:    xdr.LedgerEntryTypeAccount,
+		Account: &xdr.LedgerKeyAccount{AccountId: acct},
+	})
+	if merr != nil {
+		t.Fatal(merr)
+	}
+	if _, _, err := ParseContractDataKey(accountKey); !errors.Is(err, ErrScValType) {
+		t.Errorf("account key: err = %v, want ErrScValType", err)
+	}
+}
+
+// MustEncodeSymbol / MustEncodeString are constant helpers that panic on bad input. Pin that success matches the non-panic
+// variant and panics carry the "scval.MustEncode…" prefix so a crash log is traceable.
+
+func TestMustEncodeSymbol_happyPath(t *testing.T) {
+	got := MustEncodeSymbol("swap")
+	want, err := EncodeSymbol("swap")
+	if err != nil {
+		t.Fatalf("EncodeSymbol: %v", err)
+	}
+	if got != want {
+		t.Errorf("MustEncodeSymbol = %q, want %q", got, want)
+	}
+}
+
+func TestMustEncodeSymbol_panicsOnInvalid(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected panic on empty symbol, got none")
+		}
+		msg, ok := r.(string)
+		if !ok {
+			t.Fatalf("panic value not a string: %T %v", r, r)
+		}
+		if !strings.Contains(msg, "MustEncodeSymbol") {
+			t.Errorf("panic %q missing \"MustEncodeSymbol\" prefix", msg)
+		}
+	}()
+	_ = MustEncodeSymbol("") // empty is invalid for ScSymbol
+}
+
+func TestMustEncodeString_happyPath(t *testing.T) {
+	got := MustEncodeString("SoroswapPair")
+	want, err := EncodeString("SoroswapPair")
+	if err != nil {
+		t.Fatalf("EncodeString: %v", err)
+	}
+	if got != want {
+		t.Errorf("MustEncodeString = %q, want %q", got, want)
+	}
+}
+
+// Three Display defects, each reachable from
+// contract-controlled or default-constructed input.
+func TestDisplay_auditRegressions(t *testing.T) {
+	t.Run("zero ScVal does not panic", func(t *testing.T) {
+		// ScValTypeScvBool == 0, so a default-constructed ScVal reports
+		// Type==Bool with a nil B arm. MapField returns exactly this on a
+		// miss, so logging the value on a miss path panicked the goroutine.
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("Display(xdr.ScVal{}) panicked: %v", r)
+			}
+		}()
+		if got := Display(xdr.ScVal{}); got == "" {
+			t.Error("Display(zero) returned empty string")
+		}
+	})
+
+	t.Run("U256 renders its value, not its type name", func(t *testing.T) {
+		v := xdr.ScVal{
+			Type: xdr.ScValTypeScvU256,
+			U256: &xdr.UInt256Parts{HiHi: 0, HiLo: 0, LoHi: 1, LoLo: 42},
+		}
+		// (1 << 64) + 42
+		const want = "18446744073709551658"
+		if got := Display(v); got != want {
+			t.Errorf("Display(U256) = %q, want %q — the repo decodes u256 for Redstone prices, so rendering the bare word \"U256\" drops the number entirely", got, want)
+		}
+	})
+
+	t.Run("I256 renders a negative value", func(t *testing.T) {
+		v := xdr.ScVal{
+			Type: xdr.ScValTypeScvI256,
+			I256: &xdr.Int256Parts{HiHi: -1, HiLo: 0xFFFFFFFFFFFFFFFF, LoHi: 0xFFFFFFFFFFFFFFFF, LoLo: 0xFFFFFFFFFFFFFFFF},
+		}
+		if got := Display(v); got != "-1" {
+			t.Errorf("Display(I256 all-ones) = %q, want -1", got)
+		}
+	})
+
+	t.Run("truncation cuts on a rune boundary", func(t *testing.T) {
+		// "a" + 100 x "é" puts a 2-byte rune astride byte 120.
+		s := "a" + strings.Repeat("é", 100)
+		v := xdr.ScVal{Type: xdr.ScValTypeScvString, Str: (*xdr.ScString)(&s)}
+		got := Display(v)
+		if !utf8.ValidString(got) {
+			t.Errorf("Display produced invalid UTF-8: %q — the string is contract-supplied, so the input is attacker-chosen", got)
+		}
+	})
+}
+
+// TestEncodeDecodeArgs_RoundTrip covers the op-args plumbing soroban_events and projector-replay depend on: InvokeContract args
+// stored as a ScVal::Vec must rebuild into the per-arg base64 blobs events.Event.OpArgs expects, byte-for-byte (XDR is
+// canonical).
+func TestEncodeDecodeArgs_RoundTrip(t *testing.T) {
+	args := []string{
+		MustEncodeSymbol("relay"),
+		MustEncodeString("BTC"),
+		MustEncodeSymbol("force_relay"),
+	}
+
+	encoded, err := EncodeArgsAsScVec(args)
+	if err != nil {
+		t.Fatalf("EncodeArgsAsScVec: %v", err)
+	}
+	if len(encoded) == 0 {
+		t.Fatal("EncodeArgsAsScVec returned empty bytes for non-empty args")
+	}
+
+	decoded, err := DecodeScVecToArgs(encoded)
+	if err != nil {
+		t.Fatalf("DecodeScVecToArgs: %v", err)
+	}
+	if len(decoded) != len(args) {
+		t.Fatalf("decoded %d args, want %d", len(decoded), len(args))
+	}
+	for i := range args {
+		if decoded[i] != args[i] {
+			t.Errorf("arg[%d] = %q, want %q (order/value must round-trip)", i, decoded[i], args[i])
+		}
+	}
+}
+
+// TestEncodeDecodeArgs_Empty: EncodeArgsAsScVec(nil) returns (nil, nil) so the sink stores SQL NULL, and DecodeScVecToArgs(nil)
+// returns (nil, nil) so a NULL op_args column means "no args", never an error.
+func TestEncodeDecodeArgs_Empty(t *testing.T) {
+	for _, in := range [][]string{nil, {}} {
+		b, err := EncodeArgsAsScVec(in)
+		if err != nil {
+			t.Errorf("EncodeArgsAsScVec(%v): unexpected err %v", in, err)
+		}
+		if b != nil {
+			t.Errorf("EncodeArgsAsScVec(%v) = %v, want nil bytes", in, b)
+		}
+	}
+	for _, in := range [][]byte{nil, {}} {
+		out, err := DecodeScVecToArgs(in)
+		if err != nil {
+			t.Errorf("DecodeScVecToArgs(%v): unexpected err %v", in, err)
+		}
+		if out != nil {
+			t.Errorf("DecodeScVecToArgs(%v) = %v, want nil", in, out)
+		}
+	}
+}
+
+// TestEncodeArgs_InvalidBase64 — a non-decodable arg blob is a wire
+// corruption; encode must fail loudly (wrapped with the arg index),
+// not silently drop the arg from the vec.
+func TestEncodeArgs_InvalidBase64(t *testing.T) {
+	_, err := EncodeArgsAsScVec([]string{MustEncodeSymbol("ok"), "!!!not-base64!!!"})
+	if err == nil {
+		t.Fatal("EncodeArgsAsScVec with a malformed arg: want error, got nil")
+	}
+}
+
+// TestDecodeScVec_WrongShape — the column commits to ScVal::Vec. A blob of any OTHER ScVal
+// type (here a bare Symbol) must error, not read as a zero-arg list, so producer drift is
+// caught instead of silently dropping every arg.
+func TestDecodeScVec_WrongShape(t *testing.T) {
+	// MustEncodeSymbol yields a base64 ScVal::Symbol; its raw bytes
+	// are a valid ScVal but NOT a Vec.
+	notAVec, err := base64.StdEncoding.DecodeString(MustEncodeSymbol("swap"))
+	if err != nil {
+		t.Fatalf("decode fixture: %v", err)
+	}
+	if _, err := DecodeScVecToArgs(notAVec); err == nil {
+		t.Error("DecodeScVecToArgs on a non-Vec ScVal: want error, got nil")
+	}
+
+	// Outright garbage must also error (unmarshal failure), never panic.
+	if _, err := DecodeScVecToArgs([]byte{0xde, 0xad, 0xbe, 0xef}); err == nil {
+		t.Error("DecodeScVecToArgs on garbage bytes: want error, got nil")
+	}
 }
