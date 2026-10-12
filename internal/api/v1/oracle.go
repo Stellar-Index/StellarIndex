@@ -35,19 +35,13 @@ type oracleAtReader interface {
 	LatestOracleStreamsAt(ctx context.Context) ([]canonical.OracleUpdate, time.Time, error)
 }
 
-// oracleAssetCandidates expands the user-facing asset identifier into every key form the oracle
-// layer might have stored under (Reflector keys by global ticker such as `crypto:XLM`, not the
-// canonical asset_id).
-//
-// The `crypto:<TICKER>` translation is IDENTITY-GATED. Firing on the CODE alone would answer any
-// classic asset whose code spells a global ticker with the REAL issuer's oracle rows
-// (attacker-authored pricing): identity is (code, issuer), never code alone. Only an asset the
-// verified-currency catalogue itself issues under that ticker may claim its readings.
-//
-// A Soroban contract id resolves FIRST through the deterministic SAC derivation (ADR-0013), so a
-// contract that IS native XLM's or a verified asset's SAC inherits the classic key, then faces the
-// same gate. Every form is expanded through [canonical.AssetAliases]; the result starts with the
-// original asset, and later entries are best-effort for the `WHERE asset = ANY($1)` filter.
+// oracleAssetCandidates expands an asset into every key form the oracle layer may hold (Reflector keys by global ticker, e.g.
+// `crypto:XLM`), through
+// [canonical.AssetAliases]; the original comes first. The `crypto:<TICKER>` translation is IDENTITY-GATED: on CODE alone a classic asset
+// spelling a ticker
+// would get the REAL issuer's rows (attacker-authored pricing), so identity is (code, issuer) and only the catalogue's own issuance may
+// claim it.
+// A Soroban contract id resolves FIRST through the deterministic SAC derivation (ADR-0013), then faces the same gate.
 func (s *Server) oracleAssetCandidates(a canonical.Asset) []canonical.Asset {
 	candidates := canonical.AssetAliases(a)
 
@@ -89,13 +83,10 @@ func appendAssetsUnique(dst []canonical.Asset, add ...canonical.Asset) []canonic
 	return dst
 }
 
-// verifiedTickerFor returns the global crypto ticker a CLASSIC asset is entitled to be answered
-// under: non-empty only when this exact (code, issuer) is the verified-currency catalogue's own
-// Stellar issuance for that ticker.
-//
-// A nil catalogue and an unverified issuer both fail CLOSED. A ticker held with NO Stellar
-// issuance (`reference_only` entries such as USDT, BTC) is never granted: any classic `USDT-G...`
-// is by construction an impersonator.
+// verifiedTickerFor returns the global ticker a CLASSIC asset may be answered under: non-empty only when this exact (code, issuer) is the
+// catalogue's
+// own Stellar issuance. A nil catalogue or unverified issuer fails CLOSED; `reference_only` tickers (USDT, BTC) are never granted: any
+// classic `USDT-G...` impersonates.
 func (s *Server) verifiedTickerFor(a canonical.Asset) (string, bool) {
 	if a.Type != canonical.AssetClassic || a.Code == "" || a.Issuer == "" {
 		return "", false
@@ -107,13 +98,10 @@ func (s *Server) verifiedTickerFor(a canonical.Asset) (string, bool) {
 	return vc.Ticker, true
 }
 
-// verifiedSACAsset maps a Soroban contract id back to the native or verified-catalogue classic
-// asset whose Stellar Asset Contract it is.
-//
-// The trust anchor is DERIVATION, not metadata: each candidate's SAC id is derived through the
-// same internal/xdrjson call [Server.buildKnownSACs] uses (v1 must not import the SDK xdr package,
-// ADR-0013), so a contract can only claim an identity whose derivation lands on it. Built once and
-// cached; empty without a network passphrase (fail-closed).
+// verifiedSACAsset maps a contract id back to the native or verified classic asset whose SAC it is. The trust anchor is DERIVATION, not
+// metadata:
+// the same internal/xdrjson call as [Server.buildKnownSACs] (v1 must not import the SDK xdr package, ADR-0013). Cached; empty without a
+// passphrase (fail-closed).
 func (s *Server) verifiedSACAsset(contractID string) (canonical.Asset, bool) {
 	s.verifiedSACsOnce.Do(func() { s.verifiedSACs = s.buildVerifiedSACs() })
 	a, ok := s.verifiedSACs[contractID]
@@ -186,13 +174,9 @@ type OracleReading struct {
 	Mapped bool `json:"mapped"`
 }
 
-// handleOracleLatest serves GET /v1/oracle/latest?asset=<id>&source=<name>&quote=<id>.
-//
-// With no filter it returns one OracleReading per (source, quote) that has observed the asset, so
-// MORE than one per source when a source publishes several live quotes (Redstone EUROC/EUR and
-// EUROC/USD). A source filter yields one row per quote; both filters yield at most one. The source
-// filter accepts on-chain sources only (sourceFilterOK). No observations is a 200 with an empty
-// array, not an error.
+// handleOracleLatest serves GET /v1/oracle/latest?asset=&source=&quote=: one OracleReading per (source, quote), so MORE than one per
+// source when it
+// publishes several quotes; the source filter is on-chain only (sourceFilterOK). No observations is a 200 with an empty array.
 func (s *Server) handleOracleLatest(w http.ResponseWriter, r *http.Request) {
 	reader := s.Oracle
 	if reader == nil {
@@ -291,12 +275,10 @@ func (s *Server) handleOracleLatest(w http.ResponseWriter, r *http.Request) {
 	writeEnvelope(w, Envelope{Data: rows, AsOf: vintage.asOf()})
 }
 
-// handleOracleStreams serves GET /v1/oracle/streams[?include_unmapped=true].
-//
-// Returns one row per (source, asset, quote): the latest observation each oracle published in the
-// trailing 7d (~100s of rows, so a full dump is fine). include_unmapped (default false) adds the
-// `raw:<symbol>` rows (mapped:false) for symbols with no canonical asset. The storage read is
-// unfiltered either way, so a raw row is never silently dropped between the table and this boundary.
+// handleOracleStreams serves GET /v1/oracle/streams[?include_unmapped=true]: the latest observation per (source, asset, quote) over the
+// trailing 7d.
+// include_unmapped (default false) adds `raw:<symbol>` rows (mapped:false); storage is unfiltered, so a raw row is never silently
+// dropped.
 func (s *Server) handleOracleStreams(w http.ResponseWriter, r *http.Request) {
 	reader := s.Oracle
 	if reader == nil {
@@ -382,10 +364,8 @@ func oracleReadingFrom(u canonical.OracleUpdate) OracleReading {
 	}
 }
 
-// scaledDecimalString renders integer/10^decimals as a decimal
-// string, truncating (floor) to `decimals` fractional digits.
-// Preserves sign correctly. Consistent with priceRatioDecimal /
-// ratToDecimal.
+// scaledDecimalString renders integer/10^decimals as a decimal string, truncating (floor) to `decimals` places, sign-correct (like
+// ratToDecimal).
 func scaledDecimalString(value *big.Int, decimals uint8) string {
 	if value == nil {
 		return "0"

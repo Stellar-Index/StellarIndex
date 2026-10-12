@@ -128,10 +128,8 @@ func (c *SDEXOrderBookCache) ReloadDue(now time.Time) bool {
 		now.Sub(c.loadTry) >= SDEXOrderBookReloadRetry
 }
 
-// observeMaintain records one Load/Advance/VerifyPending attempt
-// against the paired order-book maintenance metrics. op is "load",
-// "advance" or "verify"; the outcome label is op-qualified (load_ok,
-// advance_error, verify_ok, …) so the cost classes chart apart.
+// observeMaintain records one Load/Advance/VerifyPending attempt against the order-book maintenance metrics. op is "load", "advance" or
+// "verify"; the outcome label is op-qualified (load_ok, advance_error, ...) so cost classes chart apart.
 func observeMaintain(op string, start time.Time, err error) {
 	outcome := op + "_ok"
 	if err != nil {
@@ -140,10 +138,8 @@ func observeMaintain(op string, start time.Time, err error) {
 	observeMaintainOutcome(outcome, start)
 }
 
-// observeMaintainOutcome records against an explicit outcome label,
-// for the one case observeMaintain's op+error inference can't express:
-// Advance's "advance_held" (zero cursor progress, no error — see
-// [SDEXOrderBookCache.Advance]).
+// observeMaintainOutcome records against an explicit outcome label, for the case observeMaintain's op+error inference can't express:
+// Advance's "advance_held" (zero cursor progress, no error, see [SDEXOrderBookCache.Advance]).
 func observeMaintainOutcome(outcome string, start time.Time) {
 	obs.SDEXOrderBookMaintainTotal.WithLabelValues(outcome).Inc()
 	obs.SDEXOrderBookMaintainDurationSeconds.WithLabelValues(outcome).Observe(time.Since(start).Seconds())
@@ -188,10 +184,9 @@ func (c *SDEXOrderBookCache) Load(ctx context.Context) (err error) {
 	return nil
 }
 
-// partitionLoadedBook splits a freshly loaded book into the served book and the version-tie
-// quarantine (intra_ledger_seq == 0). Seed-snapshot rows carry intra 0xFFFFFFFF and stay trusted.
-// trusted is the book being replaced (nil on first load): a suspect it already serves at the SAME
-// version keeps its verdict.
+// partitionLoadedBook splits a freshly loaded book into the served book and the version-tie quarantine (intra_ledger_seq == 0); seed-
+// snapshot rows carry intra 0xFFFFFFFF and stay trusted.
+// trusted is the book being replaced (nil on first load): a suspect it already serves at the SAME version keeps its verdict.
 func partitionLoadedBook(book, trusted map[string]clickhouse.LiveOffer) (served, pending map[string]clickhouse.LiveOffer) {
 	served = make(map[string]clickhouse.LiveOffer, len(book))
 	pending = make(map[string]clickhouse.LiveOffer)
@@ -320,13 +315,11 @@ func (c *SDEXOrderBookCache) Advance(ctx context.Context) error {
 	return nil
 }
 
-// updateHealthGaugesLocked recomputes the book's data-quality gauges. Caller holds mu.
-//
-// The crossed-pairs count is the tripwire this cache keeps at zero: Stellar's DEX executes crossing
-// offers at submission, so a RESTING book can never have best bid > best ask. A sustained non-zero
-// value means phantom offers are served, e.g. zombies whose removal was never ingested (so
-// [VerifyPending] cannot disprove them). The stellarindex_sdex_orderbook_crossed_book alert fires
-// on it and the log line names the pairs.
+// updateHealthGaugesLocked recomputes the book's data-quality gauges (caller holds mu). The crossed-pairs count is the tripwire this
+// cache keeps at zero: Stellar's DEX executes crossing offers at submission,
+// so a RESTING book never has best bid > best ask; sustained non-zero means phantom offers are served (e.g. zombies whose removal was
+// never ingested, so [VerifyPending] cannot disprove them).
+// The stellarindex_sdex_orderbook_crossed_book alert fires on it and the log line names the pairs.
 func (c *SDEXOrderBookCache) updateHealthGaugesLocked() {
 	pairs := crossedPairs(c.offers)
 	crossed := len(pairs)
@@ -340,9 +333,8 @@ func (c *SDEXOrderBookCache) updateHealthGaugesLocked() {
 	obs.SDEXOrderBookPendingOffers.Set(float64(len(c.pending)))
 }
 
-// minPriceRat returns the smaller of the rationals cur = curN/curD and
-// n/d by exact cross-multiplication (curD == 0 means "unset"). Price
-// components are int32, so the products fit comfortably in int64.
+// minPriceRat returns the smaller of cur = curN/curD and n/d by exact cross-multiplication (curD == 0 means "unset"); price components
+// are int32, so the products fit in int64.
 func minPriceRat(curN, curD, n, d int64) (int64, int64) {
 	if curD == 0 || n*curD < curN*d {
 		return n, d
@@ -350,10 +342,8 @@ func minPriceRat(curN, curD, n, d int64) (int64, int64) {
 	return curN, curD
 }
 
-// crossedPairs lists, sorted, the (unordered) asset pairs whose book is
-// crossed: best bid strictly above best ask. A touching book is legal —
-// a PASSIVE offer rests against an opposite offer at exactly the inverse
-// price — so counting it would hold the gauge non-zero indefinitely.
+// crossedPairs lists, sorted, the asset pairs whose book is crossed: best bid strictly above best ask. A touching book is legal (a
+// PASSIVE offer rests at exactly the inverse price), so counting it would hold the gauge non-zero indefinitely.
 func crossedPairs(offers map[string]clickhouse.LiveOffer) []string {
 	// Per unordered pair, track the best (minimum) offer price of each
 	// direction. For direction A→B an offer's N/D is B-per-A.
@@ -395,9 +385,8 @@ func crossedPairs(offers map[string]clickhouse.LiveOffer) []string {
 	return crossed
 }
 
-// sdexMarketSnapshot is one consistent read of a (selling, buying)
-// market: the served offers per side, the quarantined offers withheld
-// from each side, and the book's freshness.
+// sdexMarketSnapshot is one consistent read of a (selling, buying) market: served offers per side, the quarantined offers withheld from
+// each side, and the book's freshness.
 type sdexMarketSnapshot struct {
 	asks, bids                 []clickhouse.LiveOffer
 	withheldAsks, withheldBids int
@@ -531,8 +520,7 @@ func (s *Server) handleSDEXOrderbook(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, view, Flags{Stale: stale, Degraded: stale})
 }
 
-// parseOrderBookParams validates selling/buying (canonical classic
-// forms only — the SDEX trades classic assets) and the depth cap.
+// parseOrderBookParams validates selling/buying (canonical classic forms only, since the SDEX trades classic assets) and the depth cap;
 // problem is non-empty on rejection.
 func parseOrderBookParams(r *http.Request) (selling, buying canonical.Asset, depth int, problem string) {
 	depth = sdexOrderBookDefaultDepth
@@ -589,12 +577,10 @@ type bookLevel struct {
 	offers int
 }
 
-// aggregateOrderBookSide folds one side's offers into sorted, cumulative price levels.
-//
-// Asks sell the base asset: price N/D is already quote-per-base and Amount is base stroops. Bids
-// sell the QUOTE asset: N/D is base-per-quote, so the level price is the exact inverse D/N, Amount
-// is quote stroops and the base equivalent is Amount × N/D. All arithmetic is exact big.Rat; the
-// only rounding is at render time (7 decimal places, stroop precision).
+// aggregateOrderBookSide folds one side's offers into sorted, cumulative price levels. Asks sell the base: N/D is already quote-per-base,
+// Amount is base stroops. Bids sell the QUOTE: N/D is base-per-quote,
+// so the level price is the exact inverse D/N, Amount is quote stroops and the base equivalent is Amount x N/D. All big.Rat; rounding
+// only at render time (7 decimal places, stroop precision).
 func aggregateOrderBookSide(offers []clickhouse.LiveOffer, invert bool, depth int) []SDEXOrderBookLevelView {
 	levels := map[[2]int64]*bookLevel{}
 	for _, o := range offers {

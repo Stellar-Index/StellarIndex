@@ -10,17 +10,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
-// handleSourceHealth serves GET /v1/sources/{name}/health, one source's
-// [SourceHealthRow], the same shape /v1/diagnostics/ingestion carries, so the
-// explorer can poll a single venue without the full operator snapshot.
-//
-// Data path: the background-refreshed ingestion snapshot (15s cadence, see
-// StartIngestionSnapshotRefresh) when populated; otherwise an inline
-// buildSourceHealth (8s ceiling, soft-fails to zeroed stats) right after start.
-//
-// An unknown source, or one absent on the configured network
-// (sourcenet.Applicable), is a 404 to agree with /v1/sources. The registry is
-// static per binary, so that set only changes on deploy.
+// handleSourceHealth serves GET /v1/sources/{name}/health: one [SourceHealthRow] from the 15s background ingestion snapshot, else an
+// inline buildSourceHealth (8s ceiling, soft-fails to zeroed stats).
+// An unknown source, or one absent on the configured network, is a 404 to agree with /v1/sources.
 func (s *Server) handleSourceHealth(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	detail := ""

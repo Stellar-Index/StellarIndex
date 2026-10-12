@@ -10,9 +10,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// handleSignupRetired answers every method on /v1/signup and /v1/signup/verify with the same
-// 410. It reads neither body nor email: 201-vs-409 would be an email-existence oracle, so no
-// unauthenticated response may depend on request content.
+// handleSignupRetired answers every method on /v1/signup and /v1/signup/verify with the same 410 and reads no body: 201-vs-409 would be
+// an email-existence oracle.
 func (s *Server) handleSignupRetired(w http.ResponseWriter, r *http.Request) {
 	writeProblem(w, r,
 		"https://api.stellarindex.io/errors/endpoint-retired",
@@ -27,9 +26,8 @@ type SignupIPThrottle interface {
 	CheckIP(ctx context.Context, ip string) error
 }
 
-// signupIPThrottleOK runs the per-IP signup throttle check. It returns true when the request
-// should proceed, false when the response is already written (429 on quota exhaustion). It
-// falls open on transient Redis errors; the global rate-limit middleware still applies.
+// signupIPThrottleOK runs the per-IP signup throttle: false means the 429 is already written. Falls open on transient Redis errors;
+// global rate limit still applies.
 func (s *Server) signupIPThrottleOK(w http.ResponseWriter, r *http.Request) bool {
 	if s.SignupIPThrottle == nil {
 		return true

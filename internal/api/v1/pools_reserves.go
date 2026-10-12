@@ -29,9 +29,8 @@ const sourceSoroswap = "soroswap"
 // taken on the input side). A venue constant, not read from chain.
 const soroswapFeeBps = 30
 
-// poolDepthSlippagesBps are the slippage tiers the depth table is
-// computed for. Tiers at or below the swap fee are meaningless (every
-// trade pays the fee), so the smallest tier sits above soroswapFeeBps.
+// poolDepthSlippagesBps are the depth-table slippage tiers; tiers at or below the swap fee are meaningless, so the smallest sits above
+// soroswapFeeBps.
 var poolDepthSlippagesBps = []int64{50, 100, 200}
 
 // PoolReservesRow is one AMM pool contract's current reserve state; token quantities are base-unit decimal strings (ADR-0003), never floats.
@@ -81,16 +80,8 @@ type PoolDepthSide struct {
 	Output   string `json:"output"`
 }
 
-// handlePoolReserves serves GET /v1/pools/reserves.
-//
-// Query params:
-//   - pool   (optional): a pool contract C-strkey; restricts to that pool. 404 when it is not a
-//     registered Soroswap pair, so coverage is explicit rather than silent.
-//   - source (optional): venue filter. Only "soroswap" is accepted; anything else is a 400 naming
-//     the venues that serve reserves, not a silently empty response.
-//
-// Consistency surface: current contract state (tip-adjacent; per-pool as_of_ledger stamps the
-// exact state ledger), not closed-bucket.
+// handlePoolReserves serves GET /v1/pools/reserves: current contract state (tip-adjacent; per-pool as_of_ledger), not closed-bucket.
+// ?pool= (C-strkey) 404s when not a registered Soroswap pair; ?source= accepts only "soroswap", else 400 naming the venues.
 func (s *Server) handlePoolReserves(w http.ResponseWriter, r *http.Request) {
 	if s.Explorer == nil {
 		s.explorerUnavailable(w, r)
@@ -237,9 +228,8 @@ func parsePoolAssetFilter(w http.ResponseWriter, r *http.Request) (*poolAssetFil
 	return newPoolAssetFilter(asset), true
 }
 
-// poolReservesPairs loads the Soroswap pair registry and applies the
-// optional single-pool or asset filter. ok=false after a problem+json
-// write (registry failure, or an unregistered pool → honest 404).
+// poolReservesPairs loads the Soroswap pair registry and applies the pool/asset filter; ok=false after a problem+json (registry failure,
+// or an unregistered pool: honest 404).
 func (s *Server) poolReservesPairs(ctx context.Context, w http.ResponseWriter, r *http.Request, poolFilter string, assetFilter *poolAssetFilter) ([]string, bool) {
 	registry, err := s.SoroswapPairs.LoadSoroswapPairRegistry(ctx)
 	if err != nil {
@@ -269,11 +259,9 @@ func (s *Server) poolReservesPairs(ctx context.Context, w http.ResponseWriter, r
 	return pairs, true
 }
 
-// poolReservesDisplays batch-fetches token display metadata for every
-// token in the decoded states. Best-effort (a failure never blocks the reserves), but ok=false on
-// a fetch failure so callers can tell "the lookup errored" from "the token declares no metadata".
-// Conflating them would stamp decimals=7 everywhere, mis-scaling every non-7dp pair's mid price
-// by 10^(d-7) on one transient error.
+// poolReservesDisplays batch-fetches token display metadata, best-effort, but ok=false on a fetch error so "errored" differs from "no
+// metadata":
+// conflating them would stamp decimals=7 and mis-scale every non-7dp mid price by 10^(d-7).
 func (s *Server) poolReservesDisplays(ctx context.Context, states map[string]clickhouse.SoroswapPairState) (map[string]clickhouse.TokenDisplayMeta, bool) {
 	tokenSet := make(map[string]struct{}, len(states)*2)
 	for _, st := range states {
@@ -292,11 +280,9 @@ func (s *Server) poolReservesDisplays(ctx context.Context, states map[string]cli
 	return displays, true
 }
 
-// buildPoolReservesRow assembles one wire row from a decoded pair
-// state and the best-effort token display map. Decimals-dependent mid prices are emitted only
-// when BOTH tokens' decimals were actually read; otherwise they are null rather than computed
-// from the default-7 stamp, which would mis-scale them by 10^(d-7). Reserves and depth are
-// base-unit exact and decimals-independent, so always served.
+// buildPoolReservesRow assembles one wire row; decimals-dependent mid prices are emitted only when BOTH tokens' decimals were read, else
+// null (not the default-7 stamp,
+// which mis-scales by 10^(d-7)). Reserves and depth are base-unit exact, so always served.
 func buildPoolReservesRow(st clickhouse.SoroswapPairState, displays map[string]clickhouse.TokenDisplayMeta, displaysOK bool) PoolReservesRow {
 	tok := func(contract string, reserve *big.Int) (PoolReserveToken, bool) {
 		t := PoolReserveToken{Contract: contract, Decimals: 7, Reserve: reserve.String()}
@@ -364,9 +350,8 @@ func buildPoolReservesRow(st clickhouse.SoroswapPairState, displays map[string]c
 // Both use exact big.Int arithmetic, floored to base units. The wire's `model` label states the
 // assumptions: x·y=k with the whole fee on input, and no other trade between state and execution.
 
-// maxInputWithinSlippage returns the largest input (base units of the
-// input-side token, floored) whose average execution price stays within slipBps of mid. Zero when
-// slipBps ≤ feeBps (the fee alone exceeds the tier).
+// maxInputWithinSlippage returns the largest input (base units, floored) whose average price stays within slipBps of mid; zero when
+// slipBps <= feeBps.
 //
 //nolint:unparam // feeBps always receives soroswapFeeBps today (single-venue coverage); the parameter keeps the model math venue-generic and the fee assumption explicit at every call site
 func maxInputWithinSlippage(reserveIn *big.Int, feeBps, slipBps int64) *big.Int {
@@ -379,8 +364,7 @@ func maxInputWithinSlippage(reserveIn *big.Int, feeBps, slipBps int64) *big.Int 
 	return num.Quo(num, den)
 }
 
-// constantProductOutput returns Δy = y·(1−f)·Δx / (x + (1−f)·Δx),
-// floored to base units. Zero for a zero/negative input or empty pool.
+// constantProductOutput returns dy = y(1-f)dx / (x + (1-f)dx), floored to base units; zero for a non-positive input or empty pool.
 //
 //nolint:unparam // feeBps always receives soroswapFeeBps today — same rationale as maxInputWithinSlippage
 func constantProductOutput(reserveIn, reserveOut, dx *big.Int, feeBps int64) *big.Int {
@@ -394,9 +378,8 @@ func constantProductOutput(reserveIn, reserveOut, dx *big.Int, feeBps int64) *bi
 	return num.Quo(num, den)
 }
 
-// midPriceString renders the decimals-adjusted mid price
-// (reserveNum/10^decNum) ÷ (reserveDen/10^decDen) as a decimal string:
-// 18 fractional digits, trailing zeros trimmed.
+// midPriceString renders the decimals-adjusted mid price (reserveNum/10^decNum) / (reserveDen/10^decDen) with 18 fractional digits,
+// trailing zeros trimmed.
 func midPriceString(reserveNum, reserveDen *big.Int, decNum, decDen uint32) string {
 	num := new(big.Int).Mul(reserveNum, pow10(decDen))
 	den := new(big.Int).Mul(reserveDen, pow10(decNum))

@@ -36,9 +36,8 @@ const (
 	stablecoinReasonMCapNull   = "market_cap_withheld"
 )
 
-// stablecoinPegs is the peg each catalogue ticker tracks. The catalogue holds
-// no peg field; a ticker absent here is served with peg "unknown" and never
-// summed, so a new seed entry cannot silently enter the USD total.
+// stablecoinPegs is the peg each catalogue ticker tracks; a ticker absent here is served with peg "unknown" and never summed, so a new
+// seed entry cannot silently enter the USD total.
 var stablecoinPegs = map[string]string{
 	"USDC": "USD", "PYUSD": "USD", "USDT0": "USD", "YUSDC": "USD", "EURC": "EUR",
 }
@@ -103,9 +102,8 @@ type stablecoinMember struct {
 	ticker, code, issuer string
 }
 
-// stablecoinPrewarmSet keys the members to their SACs for the lake-supply
-// prewarm, reduced by the request path's own [classicLakeSupplyCandidates] so
-// it cannot warm an asset the handler would not look up.
+// stablecoinPrewarmSet keys the members to their SACs for the lake-supply prewarm, reduced by [classicLakeSupplyCandidates] so it cannot
+// warm an asset the handler would not look up.
 func (s *Server) stablecoinPrewarmSet() map[string]string {
 	members, _ := stablecoinMembership(s.VerifiedCurrencies)
 	details := make([]AssetDetail, 0, len(members))
@@ -148,9 +146,8 @@ func stablecoinAliasSupply(
 	return "", ""
 }
 
-// stablecoinFillAliasSupply attaches supply, under any alias form, to the
-// rows the listing pipeline left without one. Supply is a chain fact; this
-// moves no price and no gate.
+// stablecoinFillAliasSupply attaches supply, under any alias form, to rows the listing pipeline left without one. Supply is a chain fact;
+// it moves no price and no gate.
 func (s *Server) stablecoinFillAliasSupply(ctx context.Context, rows map[string]AssetDetail) {
 	var missing []AssetDetail
 	for _, d := range rows {

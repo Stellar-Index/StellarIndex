@@ -40,9 +40,8 @@ type VWAPBreakdown struct {
 	Buckets   []VWAPBreakdownBucket `json:"buckets"`
 }
 
-// parseVWAPBreakdown validates ?breakdown= and ?interval=. A nil interval
-// with ok=true means the caller did not opt in; "" means one bucket over
-// the window. ok=false means a problem+json has been written.
+// parseVWAPBreakdown validates ?breakdown= and ?interval=: nil interval with ok=true means no opt-in, "" means one bucket; ok=false means
+// a problem+json is written.
 func parseVWAPBreakdown(w http.ResponseWriter, r *http.Request) (interval *ohlcInterval, ok bool) {
 	q := r.URL.Query()
 	rawBreakdown, rawInterval := q.Get("breakdown"), q.Get("interval")
@@ -72,9 +71,8 @@ func parseVWAPBreakdown(w http.ResponseWriter, r *http.Request) (interval *ohlcI
 	return &iv, true
 }
 
-// vwapBreakdown builds the ?breakdown=source block, or nil when interval
-// is nil. Prices get the same nonstandard-decimals correction as the
-// headline price.
+// vwapBreakdown builds the ?breakdown=source block, or nil when interval is nil; prices get the same nonstandard-decimals correction as
+// the headline.
 func (s *Server) vwapBreakdown(
 	interval *ohlcInterval, pair canonical.Pair, pre, post []canonical.Trade, from, to time.Time, truncated bool,
 ) *VWAPBreakdown {
@@ -111,10 +109,8 @@ type vwapBucketTrades struct {
 	pre, post  []canonical.Trade
 }
 
-// buildVWAPBreakdown buckets the pre- and post-outlier-filter trades and reduces each bucket per
-// source with [aggregate.SourceContributions]. Exclusions are pre minus post per (bucket,
-// source), derived here because the filter records none. adjust applies the same
-// nonstandard-decimals price correction as the headline price.
+// buildVWAPBreakdown buckets pre- and post-outlier-filter trades and reduces each per source ([aggregate.SourceContributions]);
+// exclusions are pre minus post, since the filter records none.
 func buildVWAPBreakdown(
 	pre, post []canonical.Trade, interval ohlcInterval, from, to time.Time,
 	adjust func(*big.Rat) *big.Rat, truncated bool,

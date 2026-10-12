@@ -54,18 +54,12 @@ func (c *NonstandardDecimalsCache) Refresh(ctx context.Context) error {
 	return nil
 }
 
-// warnOnPartialAliasFamily reports a flagged asset whose alias family is only PARTLY flagged.
-// [NonstandardDecimalsCache.Lookup] does not alias-fold, so an asset with several spellings (XLM
-// is `native`, `crypto:XLM` and its SAC) would be normalised under one and not another. The
-// result is a WRONG value, not a missing one: the price leg scales per source pair while the
-// supply leg divides by the requested base's decimals, so they diverge by a power of ten.
-//
-// Unreachable on today's data (every flagged row is a bare C-strkey with a singleton family);
-// the durable fix is alias-folding the lookup, which changes the contract for other callers. The
-// bad row arrives via a TABLE at runtime, so only a refresh-time check can catch it.
-//
-// It warns and counts but neither drops the row nor fails the refresh: blanking the guard would
-// turn a scaling error into an unnormalised one across every surface.
+// warnOnPartialAliasFamily warns and counts (never drops or fails the refresh) when a flagged asset's alias family is only PARTLY
+// flagged.
+// [NonstandardDecimalsCache.Lookup] does not alias-fold, so price and supply legs scale by different powers of ten: a WRONG value, not a
+// missing one.
+// Unreachable on today's data; a bad TABLE row only shows up at refresh, and blanking the guard would turn a scaling error into an
+// unnormalised one.
 func (c *NonstandardDecimalsCache) warnOnPartialAliasFamily(next map[string]timescale.NonstandardDecimalsAsset) {
 	for id := range next {
 		asset, err := canonical.ParseAsset(id)

@@ -17,15 +17,10 @@ type SEP40Price struct {
 	Timestamp WireTime `json:"timestamp"`
 }
 
-// handleOracleLastPrice serves GET /v1/oracle/lastprice?asset=<id>.
-//
-// SEP-40 `lastprice(asset) -> Option<PriceData>` passthrough. The quote is always fiat:USD,
-// mirroring a fixed-quote on-chain oracle; other quotes go through /v1/price or
-// /v1/oracle/x_last_price.
-//
-// 404 when no price observation exists for the asset. A frozen pair
-// (ADR-0019) serves the held last-known-good with flags.frozen, or 503
-// when none is held — never the refused bucket.
+// handleOracleLastPrice serves GET /v1/oracle/lastprice?asset=<id>: SEP-40 `lastprice` passthrough, quote always fiat:USD (other quotes:
+// /v1/price, /v1/oracle/x_last_price).
+// 404 when no observation exists. A frozen pair (ADR-0019) serves the held last-known-good with flags.frozen, or 503 when none is held;
+// never the refused bucket.
 func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 	reader := s.Prices
 	if reader == nil {
@@ -149,9 +144,8 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out, flags, sources...)
 }
 
-// isDeclaredPeg reports a fallback answer that is the operator's peg
-// declaration rather than an observation. SEP40Price carries no
-// price_type to mark it, so the point reads answer SEP-40's None (404).
+// isDeclaredPeg reports a fallback answer that is the operator's peg declaration, not an observation; SEP40Price has no price_type, so
+// point reads answer None (404).
 func isDeclaredPeg(s PriceSnapshot) bool { return s.PriceType == "peg" }
 
 // sep40Read is what a SEP-40 single-price handler read, before the
@@ -164,10 +158,8 @@ type sep40Read struct {
 	viaFallback  bool
 }
 
-// sep40Serve applies the freeze verdict the handler already resolved and
-// builds the response. A held value replaces the read wholesale — value,
-// sources, triangulation — and is stale and single-sourced by
-// construction, as on /v1/price.
+// sep40Serve applies the already-resolved freeze verdict; a held value replaces the read wholesale (value, sources, triangulation) and is
+// stale and single-sourced, as on /v1/price.
 func (s *Server) sep40Serve(ctx context.Context, asset, quote canonical.Asset, rd sep40Read, held frozenResolution) (SEP40Price, Flags, []string) {
 	if held.outcome == frozenServeHeld {
 		rd = sep40Read{
@@ -198,15 +190,9 @@ func (s *Server) sep40Serve(ctx context.Context, asset, quote canonical.Asset, r
 	return out, flags, rd.sources
 }
 
-// handleOraclePrices serves GET /v1/oracle/prices?asset=<id>&records=N.
-//
-// SEP-40 `prices(asset, records) -> Option<Vec<PriceData>>` passthrough: up to `records` most
-// recent CLOSED 1-minute VWAP snapshots for asset/USD, newest first. Per ADR-0015 the
-// in-progress bucket is excluded. records defaults to 60, max 200.
-//
-// 200 with empty array when the asset has no closed buckets yet.
-// 400 when records is out of range or asset is malformed.
-// 503 when no PriceReader is wired.
+// handleOraclePrices serves GET /v1/oracle/prices?asset=&records=N: SEP-40 `prices` passthrough, up to `records` (default 60, max 200)
+// most recent CLOSED 1m VWAP snapshots, newest first (ADR-0015).
+// 200 with an empty array if none; 400 for bad records or asset; 503 when no PriceReader is wired.
 func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 	reader := s.Prices
 	if reader == nil {
@@ -306,16 +292,10 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out, Flags{Stale: viaPeg, Triangulated: viaPeg})
 }
 
-// recentClosedWithStablecoinFallback wraps PriceReader.RecentClosedSnapshots with the usual
-// X/fiat:USD -> X/<peg> retry: when the fiat:USD read is empty and the operator declared classic
-// USD pegs, it returns the first non-empty asset/<peg> result with viaPeg=true so the envelope
-// can mark the series stale and triangulated.
-//
-// A withheld peg leg is not a miss: the asset has a price that policy declines to publish. A
-// later peg may still serve (as in [Server.walkUSDPegs]); if none does, the first withheld
-// verdict is returned so the handler answers withheld rather than 200 [].
-//
-// Both reads go through [Server.recentClosedForAliases] so the XLM alias spellings are covered.
+// recentClosedWithStablecoinFallback wraps RecentClosedSnapshots with the X/fiat:USD -> X/<peg> retry (first non-empty, viaPeg=true so
+// the envelope marks stale and triangulated).
+// A withheld peg leg is not a miss: a later peg may still serve ([Server.walkUSDPegs]), else the first withheld verdict is returned, not
+// 200 []. Reads cover XLM aliases via [Server.recentClosedForAliases].
 func (s *Server) recentClosedWithStablecoinFallback(
 	ctx context.Context, asset, quote canonical.Asset, n int,
 ) (snapshots []PriceSnapshot, viaPeg bool, err error) {
@@ -351,9 +331,8 @@ func (s *Server) recentClosedWithStablecoinFallback(
 	return snapshots, false, nil
 }
 
-// recentClosedForAliases tries each XLM alias of asset (see [assetAliases]) against quote in
-// priority order and returns the first non-empty result, so a native vs crypto:XLM split of one
-// market is not missed.
+// recentClosedForAliases tries each XLM alias of asset (see [assetAliases]) against quote in priority order and returns the first non-
+// empty result.
 func (s *Server) recentClosedForAliases(ctx context.Context, asset, quote canonical.Asset, n int) ([]PriceSnapshot, error) {
 	var firstErr error
 	for _, a := range assetAliases(asset) {
@@ -380,14 +359,9 @@ const (
 	oraclePricesMax     = 200
 )
 
-// handleOracleXLastPrice serves
-// GET /v1/oracle/x_last_price?base=<id>&quote=<id>.
-//
-// SEP-40 `x_last_price(base, quote)` passthrough. The response `asset` carries the canonical base
-// id so SEP-40 clients can reuse their lastprice parsing; the quote is the one requested.
-//
-// 404 when no observation exists for the pair. Freeze handling as
-// handleOracleLastPrice.
+// handleOracleXLastPrice serves GET /v1/oracle/x_last_price?base=&quote=: SEP-40 passthrough; `asset` carries the canonical base id so
+// clients reuse lastprice parsing.
+// 404 when no observation exists for the pair; freeze handling as handleOracleLastPrice.
 func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) {
 	reader := s.Prices
 	if reader == nil {
@@ -494,9 +468,7 @@ func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, out, flags, sources...)
 }
 
-// parseXLastPriceBaseQuote extracts + validates the base/quote pair for
-// x_last_price (funlen split of handleOracleXLastPrice). Returns
-// ok=false after writing a problem response.
+// parseXLastPriceBaseQuote validates the x_last_price base/quote pair; ok=false after writing a problem response.
 func (s *Server) parseXLastPriceBaseQuote(w http.ResponseWriter, r *http.Request) (base, quote canonical.Asset, ok bool) {
 	rawBase := r.URL.Query().Get("base")
 	if rawBase == "" {

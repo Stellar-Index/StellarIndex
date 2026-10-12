@@ -10,10 +10,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// validMEVKinds is the openapi ?kind= enum: the detectors' exported Kind*
-// constants, so kinds cannot drift from mev_events.kind, plus oracle_deviation,
-// reserved for a detector that does not exist yet. Filtering on it is valid and
-// yields no rows rather than a 400.
+// validMEVKinds is the ?kind= enum: detector Kind* constants plus oracle_deviation (no detector yet; filtering yields no rows, not a
+// 400).
 var validMEVKinds = map[string]bool{
 	mev.KindArbitrage:          true,
 	mev.KindSandwich:           true,
@@ -42,11 +40,8 @@ type MEVEventView struct {
 	ProfitUSD        *string         `json:"profit_usd"`
 }
 
-// handleMEVEvents serves GET /v1/mev, the auto-flagged MEV-event feed, newest
-// first. ?kind= filters to one pattern; ?limit= defaults to 50, max 500.
-//
-// Returns 200 with an empty array when no MEVReader is wired or nothing has
-// been detected, like /v1/markets and /v1/lending/pools.
+// handleMEVEvents serves GET /v1/mev, newest first; ?kind= filters, ?limit= defaults to 50 (max 500).
+// Returns 200 with an empty array when no MEVReader is wired or nothing is detected.
 func (s *Server) handleMEVEvents(w http.ResponseWriter, r *http.Request) {
 	if s.MEV == nil {
 		writeJSON(w, []MEVEventView{}, Flags{})
@@ -117,9 +112,7 @@ func (s *Server) handleMEVEvents(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out, Flags{})
 }
 
-// rawOrNull passes a stored jsonb string through as-is, falling back
-// to a JSON null when it's empty or not valid JSON (defensive — the
-// column is NOT NULL so this should never fire).
+// rawOrNull passes a stored jsonb string through, or JSON null when empty or invalid (defensive; the column is NOT NULL).
 func rawOrNull(s string) json.RawMessage {
 	if s == "" || !json.Valid([]byte(s)) {
 		return json.RawMessage("null")

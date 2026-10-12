@@ -22,10 +22,8 @@ func wireTimePtr(t *time.Time) *WireTime {
 	return &w
 }
 
-// wireTimeOrNil lifts an instant that may never have happened (unverified email, never-logged-in
-// session) onto the wire as absent rather than the zero instant. A struct-typed WireTime ignores
-// `omitempty`, so the zero time would render as "0001-01-01T00:00:00Z", which an SDK decodes
-// into a non-nil pointer indistinguishable from a real timestamp.
+// wireTimeOrNil lifts an instant that may never have happened onto the wire as absent: a struct-typed WireTime ignores `omitempty`, so
+// the zero time would render "0001-01-01T00:00:00Z".
 func wireTimeOrNil(t time.Time) *WireTime {
 	if t.IsZero() {
 		return nil
@@ -34,9 +32,7 @@ func wireTimeOrNil(t time.Time) *WireTime {
 	return &w
 }
 
-// wireTimeUnptr is [wireTimePtr]'s inverse: it hands an optional wire
-// instant back to handler-side code that works in [time.Time],
-// preserving nil.
+// wireTimeUnptr is [wireTimePtr]'s inverse, preserving nil.
 func wireTimeUnptr(t *WireTime) *time.Time {
 	if t == nil {
 		return nil

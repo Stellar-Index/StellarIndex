@@ -13,19 +13,14 @@ func isCEXVenue(name string) bool {
 	return ok && md.Class == external.ClassExchange && md.Subclass == external.SubclassCEX
 }
 
-// sourceSelectable reports whether a single-source selector may name this
-// source: on-chain sources and CEX venues. Off-chain data vendors
-// (aggregators, FX providers, Tiingo, Chainlink, sovereign anchors) are
-// served only beside other sources. /v1/sources exposes it as `selectable`
-// so clients gate on the same predicate the 400 uses.
+// sourceSelectable reports whether a single-source selector may name this source: on-chain sources and CEX venues only; /v1/sources
+// exposes it as `selectable`.
 func sourceSelectable(name string) bool {
 	return external.IsOnChain(name) || isCEXVenue(name)
 }
 
-// sourceFilterOK validates an optional single-source selector: it must
-// name a registered, selectable source (see sourceSelectable). A data
-// vendor selected alone would make a route a proxy for that vendor's API.
-// Writes the 400 on refusal.
+// sourceFilterOK validates an optional single-source selector (registered and selectable) and writes the 400 on refusal; a vendor
+// selected alone would proxy its API.
 func sourceFilterOK(w http.ResponseWriter, r *http.Request, source string) bool {
 	if source == "" {
 		return true
@@ -49,11 +44,8 @@ func sourceFilterOK(w http.ResponseWriter, r *http.Request, source string) bool 
 	return true
 }
 
-// rawTradeSourceFilterOK is sourceFilterOK for the raw-trade routes
-// (/v1/history, /v1/observations and its stream): they serve on-chain
-// sources only, so an exchange venue is refused as well as a data vendor.
-// Exchange trade rows are not redistributable; /v1/vwap serves their
-// aggregate instead.
+// rawTradeSourceFilterOK is sourceFilterOK for the raw-trade routes (/v1/history, /v1/observations): on-chain sources only,
+// since exchange trade rows are not redistributable (/v1/vwap serves their aggregate).
 func rawTradeSourceFilterOK(w http.ResponseWriter, r *http.Request, source string) bool {
 	if source == "" {
 		return true

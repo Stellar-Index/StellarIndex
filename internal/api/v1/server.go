@@ -43,10 +43,8 @@ type ReadyChecker interface {
 // ExpectedSchemaVersion is the migrations/ head this binary was built against; readiness fails when applied < expected (a NEWER schema is safe), and a test fails CI if a migration is added unbumped.
 const ExpectedSchemaVersion uint = 215
 
-// nonAtomicMigrationVersions lists migrations whose up.sql commits mid-file, breaking
-// golang-migrate's one-transaction-per-file guarantee. A dirty flag at any version NOT in
-// this set means the attempt rolled back cleanly and the schema is intact at version-1; only
-// these versions leave a genuinely partial schema when dirty.
+// nonAtomicMigrationVersions lists migrations whose up.sql commits mid-file. A dirty flag at any other version means a clean rollback
+// (schema intact at version-1).
 var nonAtomicMigrationVersions = map[uint]bool{30: true}
 
 // SchemaVersionReader reports the applied golang-migrate state (version + dirty), adapted from *timescale.Store in cmd/stellarindex-api.
@@ -91,9 +89,8 @@ func (c schemaVersionChecker) Ping(ctx context.Context) error {
 	return nil
 }
 
-// schemaDirtyChecker is the non-critical sibling of schemaVersionChecker: it flags a dirty
-// schema_migrations row as readyz "degraded" without draining the backend, because for atomic
-// migrations dirty means a clean rollback (see [nonAtomicMigrationVersions]).
+// schemaDirtyChecker flags a dirty schema_migrations row as readyz "degraded" without draining the backend: for atomic migrations dirty
+// means a clean rollback.
 type schemaDirtyChecker struct {
 	reader SchemaVersionReader
 }
@@ -122,9 +119,8 @@ type OpenBucketCAGGReader interface {
 	OpenBucketCAGGs(ctx context.Context) ([]string, error)
 }
 
-// closedBucketChecker is the critical ReadyChecker for ADR-0015 at runtime. Most CAGG readers
-// have no closed-bucket predicate and rely on materialized_only; an out-of-band ALTER would make
-// them serve the open bucket beside a guarded /v1/price.
+// closedBucketChecker is the critical ReadyChecker for ADR-0015: an out-of-band ALTER of materialized_only would serve the open bucket
+// beside a guarded /v1/price.
 type closedBucketChecker struct {
 	reader OpenBucketCAGGReader
 }
@@ -350,17 +346,13 @@ type Server struct {
 	requestTimeout time.Duration
 }
 
-// defaultRequestTimeout is the fallback per-request deadline when Options.RequestTimeout is
-// unset. 15s outlasts the per-read 8s ceilings (so their more specific errors surface first)
-// and stays under the http.Server WriteTimeout (30s) so the app-layer deadline bounds a hang.
+// defaultRequestTimeout is the per-request deadline when Options.RequestTimeout is unset: above the per-read 8s ceilings, under the 30s
+// WriteTimeout.
 const defaultRequestTimeout = 15 * time.Second
 
-// maxHandlerBudget is the ceiling for a per-handler context.WithTimeout budget: one at or above
-// the global request deadline never fires, making the handler's specific 503 branch unreachable.
-// The 3s headroom is response-writing room, not a boot-enforced minimum
-// ([config.APIConfig.validate] requires only request_timeout > [config.APIMaxHandlerBudget]).
-// TestHandlerBudgets_StayInsideTheRequestTimeout and TestMaxHandlerBudgetMatchesConfigBound
-// enforce the bound and the config mirror.
+// maxHandlerBudget caps a per-handler context.WithTimeout: at or above the global deadline it never fires, making the handler's 503
+// branch unreachable.
+// Pinned by TestHandlerBudgets_StayInsideTheRequestTimeout and TestMaxHandlerBudgetMatchesConfigBound.
 const maxHandlerBudget = defaultRequestTimeout - 3*time.Second
 
 // DashboardAuthMounter is satisfied by main.go's dashboardauth.Handlers, defined here so this package does not import dashboardauth.
@@ -985,11 +977,8 @@ func valueOr(s, fallback string) string {
 // heartbeat for exactly these (plus "api") and rolls `overall` up from them.
 var defaultStatusServices = []string{"indexer", "aggregator"}
 
-// statusServicesOr normalises Options.StatusServices: nil/empty falls back to the pubnet pair.
-// The result is a copy and never nil, so a deployment with NO background service still reports
-// its own "api" entry.
-//
-// Names are lower-cased as well as trimmed, as config validation does: heartbeats are keyed by
+// statusServicesOr normalises Options.StatusServices (nil/empty falls back to the pubnet pair; never nil). Names are lower-cased because
+// heartbeats key on
 // lower-case Prometheus `job` labels, so "Indexer" would boot clean then pin `overall` degraded.
 func statusServicesOr(names []string) []string {
 	out := make([]string, 0, len(names))
@@ -1053,16 +1042,14 @@ func globalPriceOptsWithDefaults(o aggregate.GlobalPriceOptions) aggregate.Globa
 // BeginStreamDrain tells every SSE connection the process is shutting down so none holds http.Server.Shutdown open; idempotent, register with RegisterOnShutdown, see [streaming.Drain].
 func (s *Server) BeginStreamDrain() { s.streamDrain.Begin() }
 
-// streamOptions is the [streaming.StreamOptions] every stream handler passes, so a new stream
-// gets the shutdown drain and heartbeat credential re-check by construction; forgetting either
-// fails silently (a deploy stall, or a revoked key that keeps streaming).
+// streamOptions is the [streaming.StreamOptions] every stream handler passes, so a new stream gets the shutdown drain and heartbeat
+// credential re-check.
 func (s *Server) streamOptions() streaming.StreamOptions {
 	return streaming.StreamOptions{Drain: s.streamDrain, Revalidate: s.streamRevalidate}
 }
 
-// streamRevalidationGates are the middlewareStack entries an open stream re-runs at each
-// heartbeat. RateLimit is absent on purpose: it would spend a token per heartbeat and is
-// admission control, not revocation.
+// streamRevalidationGates are the middlewareStack entries an open stream re-runs per heartbeat; RateLimit is absent (admission control,
+// not revocation).
 var streamRevalidationGates = map[string]bool{
 	"PublicRoutes":         true,
 	"Auth":                 true,
@@ -1071,9 +1058,8 @@ var streamRevalidationGates = map[string]bool{
 	"MonthlyQuota":         true,
 }
 
-// buildStreamRevalidator returns the [streaming.StreamOptions.Revalidate] hook: the request is
-// replayed through the gates in stack order and fails if any answers (401, 403, 429) instead of
-// reaching the terminal handler. Nil when no gate is configured.
+// buildStreamRevalidator returns the Revalidate hook: replays the request through the gates in stack order and fails if any answers 401,
+// 403 or 429. Nil with no gate.
 func (s *Server) buildStreamRevalidator() func(*http.Request) bool {
 	var gates []middleware.Middleware
 	for _, e := range s.middlewareStack() {
@@ -1118,12 +1104,10 @@ type stackEntry struct {
 	mw   middleware.Middleware
 }
 
-// middlewareStack is the request-path middleware order, outermost first. middleware/doc.go
-// documents it and TestMiddlewareStackMatchesPackageDoc fails when the two disagree.
-//
-// HTTPMetrics sits outside Logger+Recoverer so metrics count requests whose handler panicked.
-// CORS runs outside RateLimit so preflight OPTIONS requests spend no rate-limit budget.
-// RateLimit runs inside Auth and the other gates so the remote IP and Subject are set when it keys.
+// middlewareStack is the request-path middleware order, outermost first; TestMiddlewareStackMatchesPackageDoc pins it to
+// middleware/doc.go.
+// HTTPMetrics is outside Logger+Recoverer so panics are counted; CORS is outside RateLimit; RateLimit is inside Auth so remote IP and
+// Subject are set.
 func (s *Server) middlewareStack() []stackEntry {
 	stack := []stackEntry{
 		{"RequestID", middleware.RequestID},
@@ -1219,14 +1203,9 @@ var proxyForwardHeaders = []string{
 	"Forwarded",
 }
 
-// loopbackOnly wraps `next` so it returns 404 unless the request is a local, un-proxied
-// scrape. Used for `/metrics`.
-//
-// Both required: RemoteAddr is loopback AND no proxy-forwarding header. The second makes the
-// guard real: Caddy runs on the same host, so a misconfigured Caddy presents a LOOPBACK RemoteAddr
-// for public traffic, while mainstream proxies set X-Forwarded-For by default. Defence in depth:
-// the real control is the Caddyfile 404ing /metrics; a proxy that STRIPS forwarding headers would
-// still pass. 404 not 403, since 403 confirms the route exists.
+// loopbackOnly returns 404 unless the request is a local, un-proxied scrape (for /metrics). Requires loopback RemoteAddr AND no
+// forwarding header,
+// since a misconfigured Caddy presents loopback for public traffic. 404 not 403, which would confirm the route exists.
 func loopbackOnly(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		host, _, err := net.SplitHostPort(r.RemoteAddr)
@@ -1248,17 +1227,14 @@ func loopbackOnly(next http.Handler) http.Handler {
 	})
 }
 
-// handlePublic mounts a route that is unauthenticated by design (a credential bootstrap or public
-// status surface), answering without an API key or SEP-10 JWT under every auth_mode. Its OpenAPI
-// operation must declare `security: []`; TestPublicRoutes_MatchOpenAPISecurityNone holds the two
-// in lockstep.
+// handlePublic mounts a route unauthenticated by design under every auth_mode; its OpenAPI operation must declare `security: []`
+// (TestPublicRoutes_MatchOpenAPISecurityNone).
 func (s *Server) handlePublic(pattern string, h http.HandlerFunc) {
 	s.publicRoutes.Handle(s.mux, pattern, h)
 }
 
-// handleAdmin mounts an operator-only route. The operator tier and, for writes, the X-Reason
-// header are enforced here so a new /v1/admin/ handler cannot ship without them; handlers keep
-// their own checks as defence in depth.
+// handleAdmin mounts an operator-only route; the operator tier and, for writes, X-Reason are enforced here so a new /v1/admin/ handler
+// cannot skip them.
 func (s *Server) handleAdmin(pattern string, h http.HandlerFunc) {
 	_, instance, _ := strings.Cut(pattern, " ")
 	s.mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
@@ -1600,12 +1576,8 @@ type checkResult struct {
 	Error string `json:"error,omitempty"`
 }
 
-// handleHealthz is the shallow liveness probe: 200 while the process runs and the mux serves.
-// It does NOT touch the database or Redis; that is the readiness probe's job.
-//
-// /healthz and /readyz cover the serving plane only (process, postgres, redis); ingest lag,
-// supply and oracle freshness live at `/v1/status`, since probes must not flap when a backfill
-// stalls or one source goes silent.
+// handleHealthz is the shallow liveness probe: no database or Redis. Probes cover the serving plane only so they do not flap when ingest
+// stalls (see /v1/status).
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, healthResponse{
 		Status:     "ok",
@@ -1614,10 +1586,8 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	}, Flags{})
 }
 
-// handleReadyz is the deep readiness probe: it pings every ReadyChecker in parallel under a
-// short shared timeout, 200 only if all pass, else 503. Parallel keeps latency at the slowest
-// single check, so the 2s budget is not eaten serially and a typical 1s probe timeout does not
-// flap the pod.
+// handleReadyz pings every ReadyChecker in parallel under a short shared timeout: 200 only if all pass, else 503. Parallel keeps latency
+// at the slowest check.
 func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 	// Single-flight + 1s result cache: /v1/readyz is unauthenticated and unlimited (LB probes
 	// must never be throttled) and each round holds DB pool slots up to 2s, so uncached spam
@@ -1663,9 +1633,8 @@ func writeReadyz(w http.ResponseWriter, code int, body []byte) {
 	_, _ = w.Write(body)
 }
 
-// fillReadyz runs one readyz round and publishes the result, releasing the single-flight gate
-// on every exit including a panic; a flight left set would wedge every later /v1/readyz behind
-// a channel nobody closes.
+// fillReadyz runs one readyz round and releases the single-flight gate on every exit including a panic, else later /v1/readyz calls wedge
+// on a channel nobody closes.
 func (s *Server) fillReadyz(done chan struct{}) {
 	defer close(done)
 	defer func() {
@@ -1787,14 +1756,12 @@ func (s *Server) computeReadyz() (int, []byte) {
 	return render(http.StatusOK, Flags{})
 }
 
-// readyCheckFailedDetail is the fixed checks[].error text /v1/readyz serves for a failed ping.
-// Never the driver error: readyz is unauthenticated and rate-limit exempt, and a dependency's
-// error names its endpoint (pgx adds user and database). The real error goes to the server log.
+// readyCheckFailedDetail is the fixed checks[].error for a failed ping. Never the driver error: readyz is unauthenticated and a driver
+// error names its endpoint.
 const readyCheckFailedDetail = "ping failed — see the API server log for the underlying error"
 
-// readyzPublicError is a Ping failure whose text is safe for the public readyz body (never an
-// endpoint, credential or driver output). Only this type is echoed; every other error is
-// served as [readyCheckFailedDetail].
+// readyzPublicError is a Ping failure whose text is safe for the public readyz body; every other error is served as
+// [readyCheckFailedDetail].
 type readyzPublicError struct{ msg string }
 
 func (e readyzPublicError) Error() string { return e.msg }
@@ -1815,14 +1782,11 @@ func (s *Server) runReadyCheck(ctx context.Context, c ReadyChecker) checkResult 
 	return r
 }
 
-// livezLakeTTL bounds how long one lake-ping round is reused, like readyz's cache: at LB probe
-// cadence (~10s) each probe gets a fresh round, while a burst of anonymous probes costs at most
-// one ClickHouse query per second.
+// livezLakeTTL is how long one lake-ping round is reused: at most one ClickHouse query per second under an anonymous probe burst.
 const livezLakeTTL = time.Second
 
-// livezLakeUnreadyDetail is the fixed hint served when the lake ping fails. Never the driver
-// error: the route is unauthenticated and rate-limit exempt, and err.Error() carries the
-// ClickHouse endpoint. The real error goes to the server log once per cache round.
+// livezLakeUnreadyDetail is the fixed hint for a failed lake ping, never the driver error (it carries the ClickHouse endpoint; the route
+// is unauthenticated).
 const livezLakeUnreadyDetail = "clickhouse ping failed — see the API server log for the underlying error"
 
 // lakeHealth is the /v1/livez/lake payload (data member of the envelope).
@@ -1831,15 +1795,10 @@ type lakeHealth struct {
 	Detail string `json:"detail,omitempty"`
 }
 
-// handleLivezLake is the LAKE-critical health probe. /v1/readyz treats ClickHouse as
-// NON-critical, so a lake-dead region stays in a load balancer's pool for lake-backed routes.
-// This is the complement: 200 iff the ClickHouse checker pings; 503 on failure OR when no lake
-// is wired (absent fails closed). Lake-route monitors point here, pricing monitors at /v1/readyz.
-//
-// Single-flight + 1s result cache: the route shares readyz's auth and rate-limit exemptions, safe
-// only behind it; otherwise each anonymous request would run a `LakeTipLedger` query against a
-// struggling lake. livezLakeMu is never held across the ping, or queued callers would block up to
-// the 5s budget mid-outage. The round runs detached in fillLivezLake; waiters can abandon it.
+// handleLivezLake is the LAKE-critical probe: 200 iff the ClickHouse checker pings; 503 on failure or when no lake is wired (fails
+// closed). /v1/readyz treats ClickHouse as non-critical.
+// Single-flight plus 1s cache, since the route is unauthenticated and rate-limit exempt. livezLakeMu is never held across the ping; the
+// round runs detached in fillLivezLake.
 func (s *Server) handleLivezLake(w http.ResponseWriter, r *http.Request) {
 	s.livezLakeMu.Lock()
 	if time.Since(s.livezLakeAt) < livezLakeTTL && s.livezLakeBody != nil {
@@ -1931,9 +1890,8 @@ func (s *Server) computeLivezLake() (int, []byte) {
 	})
 }
 
-// handleVersion reports binary version, build date and VCS info for fleet-wide "what's
-// running" checks. `dirty` reports uncommitted changes in the build tree (production builds
-// should always be false).
+// handleVersion reports binary version, build date and VCS info; `dirty` flags uncommitted changes in the build tree (false in production
+// builds).
 func (s *Server) handleVersion(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, map[string]string{
 		"version":    version.Version,
@@ -1944,9 +1902,8 @@ func (s *Server) handleVersion(w http.ResponseWriter, _ *http.Request) {
 	}, Flags{})
 }
 
-// handleSecurityTxt serves /.well-known/security.txt per RFC 9116. Canonical: points at the
-// explorer copy so the two origins cannot drift. Expires is computed at request time, one
-// year out, so it is always a valid future date.
+// handleSecurityTxt serves /.well-known/security.txt per RFC 9116, pointing at the explorer copy so origins cannot drift; Expires is one
+// year out at request time.
 func (s *Server) handleSecurityTxt(w http.ResponseWriter, _ *http.Request) {
 	expires := time.Now().UTC().AddDate(1, 0, 0).Format(time.RFC3339)
 	body := "# Stellar Index — security.txt (api origin)\n" +
@@ -1975,9 +1932,7 @@ func (s *Server) handleRoot(w http.ResponseWriter, _ *http.Request) {
 	}, Flags{})
 }
 
-// handleErrorDoc serves a dereferenceable page for one RFC 9457 problem `type` slug. Slugs are
-// self-descriptive, so the humanised slug plus a link to the full reference beats a 404.
-// Content-negotiated: JSON for API clients, minimal HTML for a browser.
+// handleErrorDoc serves a dereferenceable page for one RFC 9457 problem `type` slug: JSON for API clients, minimal HTML for a browser.
 func (s *Server) handleErrorDoc(w http.ResponseWriter, r *http.Request) {
 	// The slug is URL-path input; constrain it to the kebab-case charset real error types use.
 	// Anything else is not ours and is not reflected, which also keeps HTML metacharacters out
@@ -2043,9 +1998,8 @@ func humaniseErrorSlug(slug string) string {
 // charset every real problem type uses.
 var errorSlugRE = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
-// knownErrorSlugs is the closed set of RFC 9457 problem `type` slugs this API emits. A slug
-// outside it matches errorSlugRE's charset but names no real error type, so a retired or
-// mistyped one must not be reflected as a live 200 page.
+// knownErrorSlugs is the closed set of problem `type` slugs this API emits; a retired or mistyped slug must not be reflected as a live
+// 200 page.
 var knownErrorSlugs = map[string]struct{}{
 	"account-activity-timeout":        {},
 	"account-closed":                  {},
@@ -2293,9 +2247,7 @@ var knownErrorSlugs = map[string]struct{}{
 	"warming-up":                      {},
 }
 
-// errorDocTmpl is the minimal browser page for an error type. html/template auto-escapes
-// {{.human}} / {{.slug}}, so the reflected path value is safe by construction (and gosec
-// trusts it, unlike a hand-rolled escaper).
+// errorDocTmpl is the browser page for an error type; html/template auto-escapes the reflected path value.
 var errorDocTmpl = htmltemplate.Must(htmltemplate.New("errdoc").Parse(
 	`<!doctype html><html lang="en"><head><meta charset="utf-8">` +
 		`<meta name="viewport" content="width=device-width,initial-scale=1">` +
@@ -2308,9 +2260,8 @@ var errorDocTmpl = htmltemplate.Must(htmltemplate.New("errdoc").Parse(
 		`<p>For the full API reference, see <a href="https://docs.stellarindex.io">docs.stellarindex.io</a>.</p>` +
 		`</body></html>`))
 
-// handleRobotsTxt serves /robots.txt: the JSON API origin is not for crawler indexing, so
-// search engines are pointed at the docs and explorer subdomains, and the `Sitemap:` directive
-// covers a crawler that ignores the Disallow.
+// handleRobotsTxt: the JSON API origin is not for indexing, so crawlers are pointed at docs and explorer; `Sitemap:` covers a crawler
+// that ignores Disallow.
 func (s *Server) handleRobotsTxt(w http.ResponseWriter, _ *http.Request) {
 	const body = `# api.stellarindex.io — JSON API, not for human reading.
 # Indexable content lives on the companion subdomains:
@@ -2328,9 +2279,8 @@ Sitemap: https://stellarindex.io/sitemap.xml
 	_, _ = w.Write([]byte(body))
 }
 
-// backupMetricsFor resolves the /v1/diagnostics/backups metrics seam: an explicit
-// Options.BackupMetrics wins, else the status backend is reused when it answers raw PromQL.
-// Any other StatusBackend (test fakes, nil) leaves the endpoint unconfigured and 503.
+// backupMetricsFor resolves the /v1/diagnostics/backups seam: Options.BackupMetrics wins, else the status backend when it answers raw
+// PromQL; otherwise 503.
 func backupMetricsFor(opts Options) backupMetricsSource {
 	if opts.BackupMetrics != nil {
 		return opts.BackupMetrics

@@ -28,15 +28,13 @@ var ErrPriceAtUnavailable = errors.New("api: no closed bucket at or before reque
 // ErrPriceAtGuarded means a closed bucket exists but the serving-sanity guard refused it; it matches errors.Is(err, ErrPriceWithheld) with [PriceWithheldManipulationGuard].
 var ErrPriceAtGuarded = newPriceWithheld(PriceWithheldManipulationGuard)
 
-// priceAtMaxLookback caps the gap tolerated between the requested instant and the bucket found.
-// Without it a ts inside a multi-week quiet gap would serve a weeks-old price as "the price at
-// ts". One day covers real data gaps while refusing to fabricate continuity across dead markets.
+// priceAtMaxLookback caps the gap between the requested instant and the bucket found, so a ts inside a multi-week quiet gap never serves
+// a weeks-old price as "the price at ts".
 const priceAtMaxLookback = 24 * time.Hour
 
-// handlePriceAt serves GET /v1/price/at?asset=&quote=&ts=RFC3339, the point-in-time price for
-// cost-basis / PnL tooling. The answer is the closed VWAP bucket at-or-before ts from the finest
-// CAGG that covers it; observed_at is the BUCKET's close time, never ts, and window_seconds is the
-// resolution used, so callers see how far and how coarse the nearest observation was.
+// handlePriceAt serves GET /v1/price/at?asset=&quote=&ts=RFC3339 (cost-basis / PnL): the closed VWAP bucket at-or-before ts from the
+// finest covering CAGG.
+// observed_at is the BUCKET's close time, never ts, and window_seconds is the resolution used.
 func (s *Server) handlePriceAt(w http.ResponseWriter, r *http.Request) {
 	if s.PriceAt == nil {
 		writeProblem(w, r,
@@ -129,9 +127,9 @@ func (s *Server) handlePriceAt(w http.ResponseWriter, r *http.Request) {
 		coverageFrom, outside, nil, "")
 }
 
-// resolvePriceAt is the direct alias walk, then the stablecoin
-// fallback (flagged triangulated). withheld is the first withheld-class
-// refusal either stage saw; err is a reader failure that ended the walk.
+// resolvePriceAt is the direct alias walk, then the stablecoin fallback (flagged triangulated); withheld is the first withheld-class
+// refusal either stage saw,
+// err a reader failure that ended the walk.
 func (s *Server) resolvePriceAt(
 	ctx context.Context, asset, quote canonical.Asset, ts time.Time,
 ) (PriceSnapshot, Flags, bool, error, error) {
@@ -149,10 +147,10 @@ func (s *Server) resolvePriceAt(
 	return PriceSnapshot{}, Flags{}, false, withheld, nil
 }
 
-// lookupPriceAt walks the alias combinations and returns the first in-lookback bucket. withheld is
-// the first ErrPriceWithheld-class error seen, so the caller can choose the right 404 once every
-// orientation and peg is exhausted. err is a reader failure ([isPriceAtMiss] false); it ends the
-// walk because a later orientation's hit would stand in for an unknown answer.
+// lookupPriceAt walks the alias combinations and returns the first in-lookback bucket. withheld is the first ErrPriceWithheld-class
+// error, so the caller picks
+// the right 404 once all orientations are exhausted; err is a reader failure ([isPriceAtMiss] false) and ends the walk (a later hit would
+// stand in for an unknown answer).
 func (s *Server) lookupPriceAt(ctx context.Context, asset, quote canonical.Asset, ts time.Time) (PriceSnapshot, bool, error, error) {
 	var withheld error
 	for _, a := range assetAliases(asset) {
@@ -193,12 +191,11 @@ func (s *Server) lookupPriceAt(ctx context.Context, asset, quote canonical.Asset
 	return PriceSnapshot{}, false, withheld, nil
 }
 
-// lookupPriceAtStablecoinFallback is the CAGG sibling of the raw-trades stablecoin fallback.
-// CAGG buckets key on the REAL stored quote asset, so a historical X/fiat:USD lookup misses unless
-// something traded in fiat:USD then. When the alias walk found nothing for a fiat:USD quote, it
-// retries each USD-pegged classic in priority order; the first in-lookback bucket wins. The
-// snapshot echoes the REQUESTED quote and flags.triangulated (set by the caller) marks the proxy.
-// withheld carries the withheld signal across every peg; a reader failure on any peg ends the walk.
+// lookupPriceAtStablecoinFallback is the CAGG sibling of the raw-trades fallback: buckets key on the REAL stored quote, so a historical
+// X/fiat:USD lookup misses unless
+// something traded in fiat:USD; it retries each USD-pegged classic in priority order. The snapshot echoes the REQUESTED quote (caller
+// sets flags.triangulated);
+// withheld carries across every peg, and a reader failure on any peg ends the walk.
 func (s *Server) lookupPriceAtStablecoinFallback(
 	ctx context.Context, asset, quote canonical.Asset, ts time.Time,
 ) (PriceSnapshot, bool, error, error) {
@@ -221,16 +218,14 @@ func (s *Server) lookupPriceAtStablecoinFallback(
 	return PriceSnapshot{}, false, withheld, nil
 }
 
-// isPriceAtMiss reports whether a [PriceAtReader] error is an answer —
-// no bucket in range, or a bucket a serving gate refused — rather than a
-// failed read. Only a miss lets a walk move on to the next orientation.
+// isPriceAtMiss reports whether a [PriceAtReader] error is an answer (no bucket in range, or one a serving gate refused) rather than a
+// failed read; only a miss lets a walk move on.
 func isPriceAtMiss(err error) bool {
 	return errors.Is(err, ErrPriceAtUnavailable) || errors.Is(err, ErrPriceWithheld)
 }
 
-// notePriceAtMiss folds a [PriceAtReader] miss into a walk's sticky
-// withheld verdict (first withheld-class error wins) and returns nil, or
-// returns err unchanged when it is a read failure the walk must stop on.
+// notePriceAtMiss folds a miss into a walk's sticky withheld verdict (first withheld-class error wins) and returns nil, or err unchanged
+// for a read failure the walk must stop on.
 func notePriceAtMiss(withheld *error, err error) error {
 	if !isPriceAtMiss(err) {
 		return err
@@ -241,9 +236,8 @@ func notePriceAtMiss(withheld *error, err error) error {
 	return nil
 }
 
-// writePriceAtReadFailure answers a [PriceAtReader] read failure on the
-// point-in-time routes. Never the 404 / available:false a miss gets: a
-// timed-out or failed read says nothing about whether a bucket exists.
+// writePriceAtReadFailure answers a read failure on the point-in-time routes, never the 404 / available:false a miss gets: a failed read
+// says nothing about whether a bucket exists.
 func (s *Server) writePriceAtReadFailure(callCtx context.Context, w http.ResponseWriter, r *http.Request, route string, err error) {
 	if clientAborted(r, err) {
 		return
@@ -262,10 +256,9 @@ func (s *Server) writePriceAtReadFailure(callCtx context.Context, w http.Respons
 		"Internal error", http.StatusInternalServerError, "")
 }
 
-// priceAtUSDPegPairs is the ordered proxy list [Server.lookupPriceAtStablecoinFallback] walks: for
-// a `fiat:USD` quote, the asset against each USD-pegged classic (skipping the asset itself); empty
-// for any other quote. Kept separate so the coverage floor enumerates the SAME pairs the lookup
-// retries.
+// priceAtUSDPegPairs is the ordered proxy list [Server.lookupPriceAtStablecoinFallback] walks (asset against each USD-pegged classic for
+// a `fiat:USD` quote, else empty);
+// separate so the coverage floor enumerates the SAME pairs the lookup retries.
 func (s *Server) priceAtUSDPegPairs(asset, quote canonical.Asset) []canonical.Pair {
 	if quote.Type != canonical.AssetFiat || quote.Code != "USD" {
 		return nil

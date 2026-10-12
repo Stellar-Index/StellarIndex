@@ -15,10 +15,8 @@ func (s *Server) SetHolds(list []holds.Hold) {
 	s.holds.Store(&list)
 }
 
-// underReview wraps a supply, balance or holder handler: when an operator
-// hold covers the response it adds `flags.under_review` and a top-level
-// `under_review_reason`. The numbers are served unchanged. With no holds
-// loaded the handler runs unbuffered.
+// underReview wraps a supply, balance or holder handler: when an operator hold covers the response it adds `flags.under_review` and
+// `under_review_reason`; numbers are unchanged.
 func (s *Server) underReview(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		list := s.holds.Load()
@@ -90,9 +88,8 @@ func markUnderReview(list []holds.Hold, pathAsset string, body []byte) ([]byte, 
 	return append(out, '\n'), true
 }
 
-// subjectOf collects every asset or contract id the response names: the
-// path asset, data.asset_id/contract_id, and for an account the native
-// balance and each trustline asset.
+// subjectOf collects every asset or contract id the response names: the path asset, data.asset_id/contract_id, and for an account the
+// native and trustline assets.
 func subjectOf(pathAsset string, data json.RawMessage) holds.Subject {
 	sub := holds.Subject{}
 	if pathAsset != "" {

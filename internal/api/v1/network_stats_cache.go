@@ -12,9 +12,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// errNetworkStatsColdFailed is returned to a waiter that joined a cold
-// fetch which then failed upstream (no stale value to serve). The handler
-// maps it to a 500 — same outcome as an uncached upstream error.
+// errNetworkStatsColdFailed goes to waiters of a failed cold fetch with no stale value; the handler maps it to 500, like an uncached
+// error.
 var errNetworkStatsColdFailed = errors.New("network stats: cold fetch failed")
 
 // CachedNetworkStatsReader is a single-key stale-while-revalidate cache over the slow network-wide 24h aggregate, so no request blocks on the upstream.
@@ -124,10 +123,8 @@ func (c *CachedNetworkStatsReader) GetNetworkStatsAt(ctx context.Context) (times
 	}
 }
 
-// settle applies a fill's outcome (the upstream call ran detached, never
-// on a request ctx). On success it swaps val+at; on failure it keeps any
-// stale value and records err for cold waiters. Clearing the in-flight
-// marker is what makes the next request retry.
+// settle applies a detached fill's outcome: success swaps val+at; failure keeps any stale value and records err for cold waiters.
+// Clearing the in-flight marker makes the next request retry.
 func (c *CachedNetworkStatsReader) settle(v timescale.NetworkStats, err error) {
 	c.mu.Lock()
 	c.err = err

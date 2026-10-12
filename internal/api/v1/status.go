@@ -84,9 +84,8 @@ const (
 	incidentsStatusUnknown  = "unknown"
 )
 
-// incidentsStatusFor classifies the incidents trust state from the query outcome. A query error
-// must NOT be published as an all-clear, so err != nil is "unknown". See
-// [StatusResponse.IncidentsStatus].
+// incidentsStatusFor classifies the incidents trust state from the query outcome; a query error is "unknown", never an all-clear
+// ([StatusResponse.IncidentsStatus]).
 func incidentsStatusFor(inc StatusIncidents, err error) string {
 	switch {
 	case err != nil:
@@ -247,15 +246,12 @@ func (p *PrometheusStatusBackend) Latency(ctx context.Context) (StatusLatency, e
 	return out, nil
 }
 
-// activeSourcesQuery and totalSourcesQuery are the numerator and denominator of the "Active
-// sources" headline, package-level so the subset invariant can be asserted without a Prometheus.
-//
-// The numerator MUST join on stellarindex_source_enabled, or the counts come from different
-// populations and the ratio can exceed 1 (always-on supply observers emit events but carry no
-// `enabled` flag). A feed with no gauge is counted on NEITHER side. Both count series, assuming
-// one scrape target per source: a second scraped API replica would count `massive` twice.
-// deploy/monitoring/rule-tests/status-source-counts_test.yml evaluates both under promtool, and
-// TestStatusSourceCountQueries_MatchPromtoolFixture holds that fixture to these exact strings.
+// activeSourcesQuery and totalSourcesQuery are the "Active sources" numerator and denominator. The numerator MUST join on
+// stellarindex_source_enabled,
+// or the populations differ and the ratio can exceed 1; a feed with no gauge counts on NEITHER side. Both assume one scrape target per
+// source.
+// TestStatusSourceCountQueries_MatchPromtoolFixture holds deploy/monitoring/rule-tests/status-source-counts_test.yml to these exact
+// strings.
 const activeSourcesQuery = `count(
 	(rate(stellarindex_source_events_total[7d]) > 0)
 	and on (source) (stellarindex_source_enabled == 1)
@@ -590,12 +586,9 @@ func unknownServices(names []string) []StatusService {
 	return out
 }
 
-// heartbeatServices grades each DECLARED background service against the heartbeat map. A
-// heartbeat older than statusHeartbeatStaleAfter flags it down; a missing or zero heartbeat
-// (including a nil map from a failed query) leaves it "unknown", never an all-clear.
-//
-// Undeclared services are not graded: they have no heartbeat by design, and a permanent
-// "unknown" would pin `overall` at "degraded" on lean deployments.
+// heartbeatServices grades each DECLARED service against the heartbeat map: older than statusHeartbeatStaleAfter is down; missing or zero
+// (incl. a nil map) is "unknown", never an all-clear.
+// Undeclared services are not graded, or a permanent "unknown" would pin `overall` at "degraded" on lean deployments.
 func heartbeatServices(names []string, hb map[string]time.Time) []StatusService {
 	now := time.Now().UTC()
 	out := make([]StatusService, 0, len(names))
@@ -617,23 +610,11 @@ func heartbeatServices(names []string, hb map[string]time.Time) []StatusService 
 // statusHeartbeatStaleAfter is the heartbeat age beyond which a service is "down".
 const statusHeartbeatStaleAfter = 60 * time.Second
 
-// rollupOverall computes the customer-facing `overall` field from the per-service rollup plus the
-// two cross-cutting signals (metrics-backend unreachable; page-severity alert firing).
-//
-// Precedence (worst wins):
-//
-//   - "down": any service is down.
-//   - "degraded": any service is degraded, OR backendErr, OR a page-severity alert is firing, OR a
-//     latency SLO is breached, OR services are in a mixed known state (one ok + one unknown:
-//     partial visibility is honest degradation, not "ok").
-//   - "unknown": every service is unknown (or has a zero LastSeen). Distinct from "down": no
-//     signal at all. Without it a full metrics-backend outage would read overall=ok.
-//   - "ok": every service is ok and no canary signal trips.
-//
-// TICKET incidents are deliberately NOT an input: `page` means customers are affected, `ticket`
-// means look during working hours, and changing that changes what "ok" PROMISES publicly. An
-// active-source SHORTFALL is not an input either: its 7-day window describes ingest coverage,
-// not whether customers are served now, so it surfaces only as freshness_status "degraded".
+// rollupOverall computes `overall` from the per-service rollup plus backend-unreachable and page-alert signals. Worst wins: down;
+// degraded (incl. mixed ok+unknown, an SLO breach);
+// unknown (every service unknown, so a full metrics outage never reads ok); ok. TICKET incidents and an active-source SHORTFALL are
+// deliberately NOT inputs:
+// `page` means customers are affected, and changing that changes what "ok" PROMISES publicly.
 func rollupOverall(services []StatusService, backendErr, pageFiring, latencyBreached bool) string {
 	var anyDown, anyDegraded, anyOK, anyUnknown bool
 	for _, svc := range services {

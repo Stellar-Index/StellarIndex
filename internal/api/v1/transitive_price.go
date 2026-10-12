@@ -13,18 +13,11 @@ type TransitivePricer interface {
 	TransitiveUSDPriceCandidates(ctx context.Context, assetID string) ([]timescale.TransitivePrice, error)
 }
 
-// transitivePriceFor returns a USD price derived through ONE intermediate hop: the first ranked
-// candidate whose asset and hop are not scam-withheld and whose two legs both clear the
-// substance floors. A failing candidate falls through to the next, so a deep near leg into a
-// thin hop cannot hide a sound route. Returns ("", false) when none may be served, errors included.
-//
-// # WHY BOTH LEGS
-//
-// A two-hop price inherits its weakest leg. Gating only the near leg (asset->hop) would let a
-// thin INTERMEDIATE market reprice everything quoted against it, the manipulation the
-// substance floors exist to stop, one hop removed. So the hop is gated against the same proxy
-// quotes the catalogue prices through, as if served on its own. The near leg is gated as
-// (asset, hop) because that IS the market trusted to convert one into the other.
+// transitivePriceFor returns a USD price through ONE intermediate hop: the first ranked candidate whose asset and hop are not scam-
+// withheld and whose two legs both clear the
+// substance floors; a failing candidate falls through. Returns ("", false) when none may be served, errors included.
+// Both legs are gated because a two-hop price inherits its weakest leg: a thin hop would otherwise reprice everything quoted against it,
+// the manipulation the floors stop.
 func (s *Server) transitivePriceFor(ctx context.Context, asset canonical.Asset, assetID string) (string, bool) {
 	if s.TransitivePricer == nil {
 		return "", false
@@ -73,15 +66,10 @@ func (s *Server) transitiveCandidateAllowed(ctx context.Context, asset canonical
 	return s.assetPriceAllowed(ctx, hop, "transitive")
 }
 
-// normalizeTransitiveUSD applies the dex-nonstandard-decimals forward normalisation to the
-// resolver's product, a chain of RAW prices_1m ratios (asset->hop, then hop->USD-proxy).
-//
-// Each raw leg is off by 10^(base decimals - quote decimals), inverted legs included, so the
-// chain's factors TELESCOPE: the hop's decimals cancel and the product is off by exactly
-// 10^(asset decimals - terminal quote decimals). The terminal quote is always a standard-scale
-// USD proxy ([defaultPriceQuote]), so one exact multiply corrects the product whichever hop
-// produced it. Byte-identical for an asset with no confirmed non-7-decimals row (see
-// [Server.normalizeRawRatioString]); otherwise a 9dp Soroban token would read 100x low.
+// normalizeTransitiveUSD applies the dex-nonstandard-decimals normalisation to a chain of RAW prices_1m ratios. The hop's decimals
+// telescope away, leaving an error of exactly
+// 10^(asset decimals - terminal quote decimals), the terminal being a standard-scale USD proxy ([defaultPriceQuote]); otherwise a 9dp
+// Soroban token reads 100x low.
 func (s *Server) normalizeTransitiveUSD(priceUSD string, asset canonical.Asset) string {
 	return s.normalizeRawRatioString(priceUSD, asset, defaultPriceQuote)
 }

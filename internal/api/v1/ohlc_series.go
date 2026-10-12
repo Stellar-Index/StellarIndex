@@ -56,10 +56,8 @@ const (
 	ohlcSeriesMaxLimit     = 1000
 )
 
-// ohlcInterval is a validated interval for the multi-bar mode. The accepted set is
-// [timescale.OHLCRoutes], the table the reader routes from, so [parseOHLCInterval] ranges over it.
-// The constants exist for places needing a named width; TestOHLCIntervals_EveryRouteHasADuration
-// keeps them in step.
+// ohlcInterval is a validated multi-bar interval; the accepted set is [timescale.OHLCRoutes], so [parseOHLCInterval] ranges over it.
+// TestOHLCIntervals_EveryRouteHasADuration keeps the named constants in step.
 type ohlcInterval string
 
 const (
@@ -115,9 +113,8 @@ func (i ohlcInterval) duration() time.Duration {
 	return 0
 }
 
-// parseOHLCInterval validates the `interval` query param against [timescale.OHLCRoutes], writing a
-// problem+json when invalid. An empty raw yields ok=false with no response, so callers tell "no
-// interval" from "invalid interval" via raw != "".
+// parseOHLCInterval validates `interval` against [timescale.OHLCRoutes]; an empty raw yields ok=false with no response, so callers tell
+// "no interval" from "invalid interval" via raw != "".
 func parseOHLCInterval(w http.ResponseWriter, r *http.Request, raw string) (ohlcInterval, bool) {
 	if _, ok := timescale.OHLCRouteFor(raw); ok {
 		return ohlcInterval(raw), true
@@ -129,10 +126,8 @@ func parseOHLCInterval(w http.ResponseWriter, r *http.Request, raw string) (ohlc
 	return "", false
 }
 
-// parseOHLCSeriesLimit parses the `?limit=` query param for the
-// series mode. Defaults to [ohlcSeriesDefaultLimit], caps at
-// [ohlcSeriesMaxLimit]. Returns ok=false (after writing a
-// problem+json) on parse error / out-of-range.
+// parseOHLCSeriesLimit parses ?limit= for series mode (default [ohlcSeriesDefaultLimit], cap [ohlcSeriesMaxLimit]); ok=false after
+// writing a problem+json.
 func parseOHLCSeriesLimit(w http.ResponseWriter, r *http.Request) (int, bool) {
 	raw := r.URL.Query().Get("limit")
 	if raw == "" {
@@ -149,10 +144,10 @@ func parseOHLCSeriesLimit(w http.ResponseWriter, r *http.Request) (int, bool) {
 	return n, true
 }
 
-// handleOHLCSeries serves the multi-bar branch of /v1/ohlc. Closed-bucket only (ADR-0015): the
-// storage layer's `bucket + interval <= now()` guard excludes the in-progress bucket, and a
-// defaulted `to` snaps to the previous interval boundary so regions answer byte-identically.
-// [Server.handleOHLC] routes here only with a non-empty, validated interval.
+// handleOHLCSeries serves the multi-bar branch of /v1/ohlc, closed buckets only (ADR-0015): storage excludes the in-progress bucket and a
+// defaulted `to`
+// snaps to the previous interval boundary so regions answer byte-identically. [Server.handleOHLC] routes here only with a validated
+// interval.
 func (s *Server) handleOHLCSeries(
 	w http.ResponseWriter, r *http.Request,
 	pair canonical.Pair,
@@ -245,19 +240,11 @@ func (s *Server) handleOHLCSeries(
 	writeJSONCoverage(w, resp, flags, coverageFrom)
 }
 
-// capOHLCSeriesNewest trims an ascending `limit+1` probe read to the NEWEST `limit` bars, marking
-// every survivor `truncated` only when the probe row came back, i.e. the window really held a
-// bucket the response does not carry.
-//
-// The probe makes the flag exact: `len(bars) == limit` is not evidence of a cut, since a request
-// with no `from` is sized to exactly `limit` intervals, and a wide window over a sparse market can
-// hold exactly `limit` populated buckets.
-//
-// Newest, because both capped readers keep the newest rows ([timescale.Store.OHLCSeries] orders
-// DESC then reverses; [Server.ohlcSeriesFiatCombined] keeps the newest of its merge), so the
-// dropped row is the oldest. A caller pages back by re-asking with `to` = the first bar's `t`.
-//
-// The truncated result is a fresh slice: a reader may hand out bars it still owns.
+// capOHLCSeriesNewest trims an ascending `limit+1` probe read to the NEWEST `limit` bars and marks them `truncated` only when the probe
+// row came back:
+// `len(bars) == limit` proves nothing (no `from` sizes the window to exactly `limit`; a sparse market can hold exactly `limit`).
+// Newest because both capped readers keep the newest rows; callers page back with `to` = the first bar's `t`. The result is a fresh slice
+// (readers may own bars).
 func capOHLCSeriesNewest(bars []OHLCSeriesBar, limit int) []OHLCSeriesBar {
 	if limit <= 0 || len(bars) <= limit {
 		return bars
@@ -270,15 +257,12 @@ func capOHLCSeriesNewest(bars []OHLCSeriesBar, limit int) []OHLCSeriesBar {
 	return out
 }
 
-// pgTimeBucketOrigin is the origin TimescaleDB's `time_bucket()` snaps to by default (see
-// [timescale.Store.OHLCSeriesReBucketed]). [time.Time.Truncate] snaps from Go's zero time, which
-// agrees only for widths that evenly divide the offset between origins (1h/4h/12h/1d, not 3d or
-// 2w), so a default `to` would land on a boundary the folded rows never do.
+// pgTimeBucketOrigin is TimescaleDB's default time_bucket origin ([timescale.Store.OHLCSeriesReBucketed]); [time.Time.Truncate] agrees
+// only for widths
+// dividing the origin offset (1h/4h/12h/1d, not 3d or 2w), so a default `to` would miss the folded rows' boundaries.
 var pgTimeBucketOrigin = time.Date(2000, 1, 3, 0, 0, 0, 0, time.UTC)
 
-// truncateToBucketOrigin rounds t DOWN to a multiple of d counted from [pgTimeBucketOrigin],
-// reproducing time_bucket's floor. d <= 0 is a no-op (duration() is 0 only outside the validated
-// enum).
+// truncateToBucketOrigin rounds t DOWN to a multiple of d from [pgTimeBucketOrigin], reproducing time_bucket's floor; d <= 0 is a no-op.
 func truncateToBucketOrigin(t time.Time, d time.Duration) time.Time {
 	if d <= 0 {
 		return t
@@ -290,10 +274,9 @@ func truncateToBucketOrigin(t time.Time, d time.Duration) time.Time {
 	return t.Add(-rem)
 }
 
-// parseOHLCSeriesFromTo parses from/to with interval-aware defaults: `to` snaps DOWN to an
-// interval boundary (ADR-0015 cross-region stability), `from` is to - limit*interval, and
-// explicit values are used verbatim (UTC). Returns ok=false after writing a problem+json on a
-// parse error or from >= to.
+// parseOHLCSeriesFromTo parses from/to with interval-aware defaults: `to` snaps DOWN to an interval boundary (ADR-0015), `from` is to -
+// limit*interval,
+// explicit values are verbatim (UTC). ok=false after a problem+json on a parse error or from >= to.
 func parseOHLCSeriesFromTo(
 	w http.ResponseWriter, r *http.Request,
 	interval ohlcInterval, limit int,
@@ -337,12 +320,10 @@ func parseOHLCSeriesFromTo(
 	return from, to, true
 }
 
-// ohlcSeriesWithAliases tries each XLM dual-form alias pair and returns the FIRST non-empty series.
-// The CAGGs key bars by the canonical id the trades carried (CEX bars live under `crypto:XLM`), so
-// a single spelling would miss them. Cross-alias bar fusion is a separate design decision;
-// first-hit matches the single-bar endpoint.
-// The bool is `proxied` (drives `flags.triangulated`, see [Server.ohlcSeriesFiatCombined]); the
-// non-fiat path always returns false since it serves one stored spelling, never a pivot.
+// ohlcSeriesWithAliases returns the FIRST non-empty series across the XLM dual-form alias pairs (CAGGs key bars by the id trades carried,
+// e.g.
+// CEX bars under `crypto:XLM`); no cross-alias fusion, matching the single-bar endpoint. The bool is `proxied` (flags.triangulated),
+// always false off the fiat path.
 func (s *Server) ohlcSeriesWithAliases(
 	ctx context.Context,
 	pair canonical.Pair,
@@ -373,9 +354,9 @@ func (s *Server) ohlcSeriesWithAliases(
 	return nil, false, nil
 }
 
-// annotateOHLCSeriesBarScale fills VBaseDecimals/VQuoteDecimals from each bar's Sources via
-// [barScaleDecimals]. It must not share a path with [ohlcBucketAcc.finalize]: a combined bucket's
-// scale is the lift target of its constituents, not a lookup on the union of their venues.
+// annotateOHLCSeriesBarScale fills VBaseDecimals/VQuoteDecimals from each bar's Sources via [barScaleDecimals]. It must not share a path
+// with
+// [ohlcBucketAcc.finalize]: a combined bucket's scale is its constituents' lift target, not a lookup on the union of their venues.
 func annotateOHLCSeriesBarScale(bars []OHLCSeriesBar) {
 	for i := range bars {
 		d := barScaleDecimals(bars[i].Sources)
@@ -384,9 +365,8 @@ func annotateOHLCSeriesBarScale(bars []OHLCSeriesBar) {
 	}
 }
 
-// wireScaleDecimals renders a smallest-unit scale for the wire. An
-// unknown scale is null, never -1: a consumer computing 10^-1 would
-// silently scale the volume up tenfold instead of refusing to render it.
+// wireScaleDecimals renders a scale for the wire; unknown is null, never -1 (a consumer computing 10^-1 would scale the volume up
+// tenfold).
 func wireScaleDecimals(scale int) *int {
 	if scale == ohlcBarScaleUnknown {
 		return nil
@@ -394,10 +374,9 @@ func wireScaleDecimals(scale int) *int {
 	return &scale
 }
 
-// adjustOHLCSeriesBars applies the dex-nonstandard-decimals normalization to every bar's OHLC (see
-// [Server.handleOHLCSeries]). It returns bars UNCHANGED when baseDecimals == quoteDecimals,
-// because the CAGG's raw NUMERIC::text does not match [ratToDecimal]'s fixed rendering, so
-// reformatting would change the wire bytes of every already-correct 7dp pair.
+// adjustOHLCSeriesBars applies dex-nonstandard-decimals normalization to every bar (see [Server.handleOHLCSeries]); bars are returned
+// UNCHANGED when
+// baseDecimals == quoteDecimals, since reformatting the CAGG's NUMERIC::text via [ratToDecimal] would change bytes for every 7dp pair.
 func adjustOHLCSeriesBars(bars []OHLCSeriesBar, baseDecimals, quoteDecimals int) []OHLCSeriesBar {
 	if baseDecimals == quoteDecimals || len(bars) == 0 {
 		return bars
@@ -414,10 +393,8 @@ func adjustOHLCSeriesBars(bars []OHLCSeriesBar, baseDecimals, quoteDecimals int)
 	return out
 }
 
-// adjustOHLCPriceString parses a NUMERIC decimal price string, applies
-// [aggregate.AdjustPrice], and reformats at [ohlcPriceDigits]. Returns
-// the input unchanged when it doesn't parse (defensive — an empty or
-// malformed CAGG string should pass through rather than vanish).
+// adjustOHLCPriceString applies [aggregate.AdjustPrice] to a NUMERIC price string and reformats at [ohlcPriceDigits]; unparsable input
+// passes through.
 func adjustOHLCPriceString(s string, baseDecimals, quoteDecimals int) string {
 	raw := ratFromDecimal(s)
 	if raw == nil {

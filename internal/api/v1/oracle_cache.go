@@ -35,21 +35,14 @@ type oracleCacheEntry struct {
 	err error
 }
 
-// oracleCacheMaxEntries bounds the entry map.
-//
-// The key is the caller's sorted asset list plus the source filter, and
-// `/v1/oracle/latest?asset=` is public and unauthenticated, so every distinct asset an anonymous
-// caller names mints a key. Only failures delete their entry (an empty result is a success), so
-// without a cap a walk of the asset space grows the map until OOM. The cap sits far above the
-// real working set; oldest-first eviction mirrors historyCacheMaxEntries.
+// oracleCacheMaxEntries bounds the map: the key is the sorted asset list plus source filter on a public unauthenticated endpoint, and
+// only failures delete
+// entries (empty is a success), so an asset-space walk would grow it to OOM. Oldest-first eviction mirrors historyCacheMaxEntries.
 const oracleCacheMaxEntries = 4096
 
-// evictIfFullLocked drops the oldest-filled entry when the map is at capacity. Caller must hold
-// c.mu and call it only when admitting a NEW key; replacing an expired entry is size-neutral.
-//
-// In-flight entries (at.IsZero()) are never evicted, since that would orphan their waiters. The
-// map can briefly exceed the cap when every entry is a live fill, bounded by concurrent requests
-// rather than the key space. Evicting a fresh entry costs at most one extra upstream query.
+// evictIfFullLocked drops the oldest-filled entry at capacity; caller holds c.mu and calls it only when admitting a NEW key. In-flight
+// entries are never
+// evicted (waiters orphaned), so the map can briefly exceed the cap, bounded by concurrent requests.
 func (c *CachedOracleReader) evictIfFullLocked(op string) {
 	if len(c.entries) < oracleCacheMaxEntries {
 		return
@@ -147,15 +140,13 @@ func (c *CachedOracleReader) LatestOracleStreamsAt(ctx context.Context) ([]canon
 // one caller's abort cannot propagate to every caller single-flighted onto the same fill.
 const oracleFetchBudget = 30 * time.Second
 
-// errOracleFillPanicked is handed to waiters when the fill goroutine
-// they joined panicked, rather than a nil-ish "no error, no data" —
-// see fill's comment. Mirrors CachedHistoryReader.errHistoryFillPanicked.
+// errOracleFillPanicked goes to waiters whose fill goroutine panicked, instead of a nil-ish "no error, no data" (see fill). Mirrors
+// CachedHistoryReader.errHistoryFillPanicked.
 var errOracleFillPanicked = errors.New("oracle cache: fill panicked")
 
-// fetch is the TTL + single-flight loop, as in CachedIssuersReader.fetchList except that a fill
-// is always DETACHED into its own goroutine on oracleFetchBudget, never bound to the caller that
-// triggered it. A caller cancelling its ctx only stops that caller waiting; it must not abort the
-// fetch under every other caller single-flighted onto the key.
+// fetch is the TTL + single-flight loop, as in CachedIssuersReader.fetchList, except a fill is DETACHED on oracleFetchBudget: a caller
+// cancelling
+// only stops that caller waiting and must not abort the fetch for others single-flighted onto the key.
 func (c *CachedOracleReader) fetch(
 	ctx context.Context,
 	op, key string,
@@ -206,11 +197,9 @@ func (c *CachedOracleReader) fetch(
 	}
 }
 
-// fill runs the upstream call on oracleFetchBudget, not the triggering caller's ctx, and settles
-// entry for every waiter holding its pointer, so it outlives any one caller's cancellation.
-//
-// The panic guard exists because entry starts zero-valued: a fill that panicked without settling
-// would still close(done) and waiters would read an empty success instead of a failure.
+// fill runs the upstream call on oracleFetchBudget (not the caller's ctx) and settles entry for every waiter. The panic guard is needed
+// because entry
+// starts zero-valued: an unsettled panic would still close(done) and waiters would read an empty success.
 func (c *CachedOracleReader) fill(
 	key string,
 	entry *oracleCacheEntry,
@@ -249,9 +238,8 @@ func (c *CachedOracleReader) fill(
 	c.mu.Unlock()
 }
 
-// settleFailedFill hands a fill failure to every waiter holding
-// entry's pointer and drops it from the map — errors are never
-// TTL-cached — unless a concurrent fresh fill already replaced it.
+// settleFailedFill hands a failure to every waiter on entry and drops it (errors are never TTL-cached) unless a concurrent fresh fill
+// replaced it.
 func (c *CachedOracleReader) settleFailedFill(key string, entry *oracleCacheEntry, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

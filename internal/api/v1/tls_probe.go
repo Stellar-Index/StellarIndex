@@ -15,9 +15,8 @@ import (
 // TLSCertProbeInterval is how often [RunTLSCertProbe] re-probes a host's leaf cert; 6 h re-confirms the expiry 56 times before the 14-day alert.
 const TLSCertProbeInterval = 6 * time.Hour
 
-// tlsCertProbeTimeout caps each probe. Handshakes against Caddy typically take
-// under 300 ms; 10 s absorbs a network blip without holding the goroutine open
-// through a deeper outage.
+// tlsCertProbeTimeout caps each probe: Caddy handshakes take under 300 ms; 10 s absorbs a blip without holding the goroutine through a
+// deeper outage.
 const tlsCertProbeTimeout = 10 * time.Second
 
 // RunTLSCertProbe blocks until ctx is cancelled, probing hosts by TLS handshake and emitting the leaf NotAfter gauge, which is NOT cleared on probe failure (the probe_total counter catches sustained errors); first probe runs immediately.
@@ -60,10 +59,8 @@ func probeAllHosts(ctx context.Context, hosts []string, logger *slog.Logger) {
 	}
 }
 
-// probeOneHost performs one TLS-dial + cert-extract attempt
-// against `host`. Bound by tlsCertProbeTimeout. Returns the
-// outcome label that was incremented on TLSCertProbeTotal so
-// callers (tests) can assert without scraping Prometheus.
+// probeOneHost does one TLS dial + cert extract bounded by tlsCertProbeTimeout, returning the outcome label it incremented on
+// TLSCertProbeTotal.
 func probeOneHost(ctx context.Context, host string, logger *slog.Logger) string {
 	dialCtx, cancel := context.WithTimeout(ctx, tlsCertProbeTimeout)
 	defer cancel()
@@ -117,10 +114,8 @@ func tlsCertProbeOutcomes() []string {
 	return []string{"ok", "dial_error", "timeout", "no_cert", "cert_invalid", "cert_expired"}
 }
 
-// recordTLSDialFailure classifies a failed handshake. A leaf that failed
-// verification still reached us, and the error carries it: its NotAfter
-// is recorded and the outcome says expired vs otherwise invalid, so a
-// bad cert is never reported as a bare "unreachable" with no gauge.
+// recordTLSDialFailure classifies a failed handshake: a leaf that failed verification still has a NotAfter, recorded with expired vs
+// invalid, never a bare "unreachable" with no gauge.
 func recordTLSDialFailure(host string, err error, logger *slog.Logger) string {
 	var cve *tls.CertificateVerificationError
 	if errors.As(err, &cve) && len(cve.UnverifiedCertificates) > 0 {
@@ -144,15 +139,10 @@ func recordTLSDialFailure(host string, err error, logger *slog.Logger) string {
 	return outcome
 }
 
-// tlsConfigOverride is a test-only hook: tests that exercise the
-// probe against an httptest TLS server need to flip
-// InsecureSkipVerify to accept the test's self-signed cert. Nil
-// in production (the default tls.Config is used verbatim).
+// tlsConfigOverride is a test-only hook (InsecureSkipVerify for httptest self-signed certs); nil in production.
 var tlsConfigOverride func(*tls.Config) //nolint:gochecknoglobals // test seam
 
-// hostnameOnly strips the :port suffix if present. tls.Config's
-// ServerName needs the hostname part only — passing host:port
-// fails the SNI lookup.
+// hostnameOnly strips the :port suffix; tls.Config.ServerName needs the hostname only or the SNI lookup fails.
 func hostnameOnly(host string) string {
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		return h

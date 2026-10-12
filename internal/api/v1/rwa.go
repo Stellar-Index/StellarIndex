@@ -26,15 +26,13 @@ import (
 // pipeline unchanged, so this surface cannot publish a figure /v1/assets would have withheld.
 // An unavailable valuation is stated in `valuation.status` with no number, never rendered as zero.
 
-// rwaMembershipTTL bounds how long the membership set is reused. Its inputs (SEP-1 refresh,
-// directory sync) move daily, so ten minutes keeps the scan off the request path while a new
-// issuer still appears within the hour.
+// rwaMembershipTTL bounds reuse of the membership set; its inputs (SEP-1 refresh, directory sync) move daily, so ten minutes keeps the
+// scan off the request path.
 const rwaMembershipTTL = 10 * time.Minute
 
-// rwaMaxIssuers bounds the per-issuer listing reads one rebuild makes. The qualifying set is
-// small because R3 requires an independent party to have named the account; the cap only guards
-// against a directory sync that suddenly tags thousands. When it binds, the surface says so
-// rather than serving a silently truncated set.
+// rwaMaxIssuers bounds the per-issuer listing reads of one rebuild; the qualifying set is small (R3 needs an independent party to name
+// the account), so the cap only guards a
+// directory sync that suddenly tags thousands. When it binds, the surface says so rather than serving a silently truncated set.
 const rwaMaxIssuers = 64
 
 // rwaAssetsPerIssuer bounds one issuer's listing page. The long tail past it goes unread and is
@@ -227,14 +225,12 @@ const (
 const (
 	rwaArmClassic  = "classic"
 	rwaArmContract = "contract"
-	// rwaArmListing is C2's second arm: the in-repo curated contract bindings narrowed to those an
-	// independent listing directory corroborates. It is separate from the contract arm because it
-	// narrows a different population from a different root (a table in this repository, not a
-	// third party's directory).
+	// rwaArmListing is C2's second arm: the in-repo curated contract bindings narrowed to those an independent listing directory
+	// corroborates; separate from the contract arm because it
+	// narrows a different population from a different root.
 	rwaArmListing = "listing"
-	// rwaArmValuation continues past the served set instead of narrowing toward it: it accounts
-	// for which served rows carry a REFERENCE-priced valuation and, for each row that does not,
-	// the reason. That coverage is otherwise visible only by reading every row.
+	// rwaArmValuation continues past the served set: it accounts for which served rows carry a REFERENCE-priced valuation and, for each that
+	// does not, the reason.
 	rwaArmValuation = "valuation"
 )
 
@@ -681,17 +677,17 @@ type rwaMembership struct {
 	rebuildFailedAt time.Time
 }
 
-// rwaCandidateFilter keeps only bound SEP-1 entries that could satisfy requirement 4, so the scan
-// never materialises the tens of thousands declaring an NFT, a crypto token or nothing. Every
-// input a requirement-4 arm reads must be passed (anchor asset too), or ISIN-only declarations
-// are filtered before [Server.admitClassicCandidates] sees them.
+// rwaCandidateFilter keeps only bound SEP-1 entries that could satisfy requirement 4, so the scan never materialises tens of thousands
+// declaring an NFT, crypto token or nothing.
+// Every input a requirement-4 arm reads must be passed (anchor asset too), or ISIN-only declarations are filtered before
+// [Server.admitClassicCandidates] sees them.
 func rwaCandidateFilter(c timescale.Sep1BoundCurrency) bool {
 	return rwa.CouldQualify(c.Code, c.AnchorAssetType, c.AnchorAsset)
 }
 
-// buildRWAMembership runs BOTH arms and returns the combined set. The arms are independent (SEP-1
-// by (code, issuer), directory by contract address); either may be unavailable without emptying
-// the response, and the funnel says which was measured. Reason vocabularies are disjoint.
+// buildRWAMembership runs BOTH arms and returns the combined set; they are independent (SEP-1 by (code, issuer), directory by contract
+// address), so either may be unavailable
+// without emptying the response, and the funnel says which was measured. Reason vocabularies are disjoint.
 func (s *Server) buildRWAMembership(ctx context.Context) rwaMembership {
 	out := s.buildRWAClassicMembership(ctx)
 	c := s.buildRWAContractMembership(ctx)
@@ -718,9 +714,8 @@ func (s *Server) buildRWAMembership(ctx context.Context) rwaMembership {
 	return out
 }
 
-// buildRWAClassicMembership applies the definition to every issuer-bound SEP-1 attestation.
-// It does one indexed scan, one batch directory lookup (no N+1), then the per-candidate verdict;
-// nothing here reads a price.
+// buildRWAClassicMembership applies the definition to every issuer-bound SEP-1 attestation: one indexed scan, one batch directory lookup
+// (no N+1), then the per-candidate verdict. Nothing here reads a price.
 func (s *Server) buildRWAClassicMembership(ctx context.Context) rwaMembership {
 	out := rwaMembership{refusals: map[string]int{}}
 	reader, ok := s.Sep1Cache.(Sep1BoundCurrencyReader)
@@ -775,10 +770,9 @@ func (s *Server) buildRWAClassicMembership(ctx context.Context) rwaMembership {
 	return out
 }
 
-// admitClassicCandidates runs the ordered R1-R4 evaluation over the bound declarations and
-// accumulates the admitted set, the refusal tally and the two structural drops onto the
-// membership. It is split from [Server.buildRWAClassicMembership] to keep the verdict loop
-// separate from read-error handling.
+// admitClassicCandidates runs the ordered R1-R4 evaluation over the bound declarations, accumulating the admitted set, refusal tally and
+// two structural drops onto the membership;
+// split from [Server.buildRWAClassicMembership] to keep the verdict loop apart from read-error handling.
 func (s *Server) admitClassicCandidates(
 	out *rwaMembership,
 	bound []timescale.Sep1BoundCurrency,
@@ -879,21 +873,18 @@ func rwaISINCollisionOf(anchorAsset string, declarers map[string]int) *RWAISINCo
 	return &RWAISINCollision{ISIN: isin, DeclaredByIssuers: declarers[isin]}
 }
 
-// rwaMembershipRetryGap rate-limits rebuild attempts, not rebuilds. A failed rebuild leaves the
-// entry stale, so without a gap every request would retry and a broken read would become a scan
-// storm against already-struggling tables.
+// rwaMembershipRetryGap rate-limits rebuild ATTEMPTS: a failed rebuild leaves the entry stale, so without a gap a broken read becomes a
+// scan storm against struggling tables.
 const rwaMembershipRetryGap = 60 * time.Second
 
-// rwaMembershipBudget is the detached rebuild's own deadline, not a request budget. It must
-// exceed the measured build cost (~11.5 s in production) with room to spare, or the refresh is
-// killed halfway and the entry never warms.
+// rwaMembershipBudget is the detached rebuild's own deadline; it must exceed the measured build cost (~11.5 s in production) or the
+// refresh is killed halfway and never warms.
 const rwaMembershipBudget = 2 * time.Minute
 
-// cachedRWAMembership returns the membership set for a request. Once built, a stale set is served
-// as-is and a detached rebuild is kicked behind it, because an inline rebuild scans every
-// issuer-bound SEP-1 payload plus the curated directory (~11 s). Only a never-filled cache waits,
-// since an empty set would falsely state that no real-world asset exists; [Server.PrewarmRWA]
-// makes the prewarm goroutine the waiter, not a visitor.
+// cachedRWAMembership returns the membership set: once built, a stale set is served as-is while a detached rebuild runs (inline is ~11
+// s). Only a never-filled cache waits,
+// since an empty set would falsely state that no real-world asset exists; [Server.PrewarmRWA] makes the prewarm goroutine the waiter, not
+// a visitor.
 func (s *Server) cachedRWAMembership(ctx context.Context) rwaMembership {
 	served, flight := s.readRWAMembership() //nolint:contextcheck // the rebuild is deliberately detached from this request's context — see this function's doc; ctx is honoured by the cold-cache wait below.
 	if served != nil {
@@ -930,9 +921,9 @@ func rwaMembershipSetOf(m rwaMembership) *RWAMembershipSet {
 	return out
 }
 
-// stampRWAServeState records, on a copy of the set, whether it has outlived its lifetime and
-// whether its replacement failed. These are "as of now" answers: readRWAMembership returns a
-// pointer into the cache, so writing through it would freeze one request's clock for every reader.
+// stampRWAServeState records on a COPY whether the set outlived its lifetime and whether its replacement failed; readRWAMembership
+// returns a pointer into the cache,
+// so writing through it would freeze one request's clock for every reader.
 func (s *Server) stampRWAServeState(m rwaMembership) rwaMembership {
 	s.rwaMu.Lock()
 	defer s.rwaMu.Unlock()
@@ -946,10 +937,10 @@ func (s *Server) stampServeStateLocked(m rwaMembership) rwaMembership {
 	return m
 }
 
-// readRWAMembership serves what the cache holds and kicks a detached rebuild when the entry is
-// stale or absent and no attempt is running or too recent. It returns the served set (nil only
-// before the first successful build) and the in-flight rebuild's completion channel, which only
-// [Server.PrewarmRWA] and the cold-cache arm of [Server.cachedRWAMembership] wait on.
+// readRWAMembership serves what the cache holds and kicks a detached rebuild when the entry is stale or absent and no attempt is running
+// or too recent.
+// It returns the served set (nil only before the first build) and the rebuild's completion channel, awaited only by [Server.PrewarmRWA]
+// and the cold-cache arm of [Server.cachedRWAMembership].
 func (s *Server) readRWAMembership() (*rwaMembership, chan struct{}) {
 	s.rwaMu.Lock()
 	defer s.rwaMu.Unlock()
@@ -973,9 +964,8 @@ func (s *Server) readRWAMembership() (*rwaMembership, chan struct{}) {
 	return served, flight
 }
 
-// refreshRWAMembership rebuilds the set on a detached context and swaps it in. A failed rebuild
-// leaves the previous set untouched: a failed read must not empty a surface whose inputs move
-// daily.
+// refreshRWAMembership rebuilds the set on a detached context and swaps it in; a failed rebuild leaves the previous set untouched, since
+// a failed read must not empty the surface.
 func (s *Server) refreshRWAMembership(done chan struct{}) {
 	// Deferred so a panic in the scan cannot leave the single-flight marker set, which would
 	// freeze the cache for the life of the process since a non-nil flight is never replaced.
@@ -1050,10 +1040,8 @@ func (s *Server) PrewarmRWA(ctx context.Context) {
 
 // ─── handler ────────────────────────────────────────────────────────
 
-// handleRWAAssets serves GET /v1/rwa/assets.
-//
-// No query parameters: the set is small and complete by construction, so there is nothing to
-// page and any filter is better applied by the caller over the whole document.
+// handleRWAAssets serves GET /v1/rwa/assets. No query parameters: the set is small and complete by construction, so any filter is better
+// applied by the caller.
 func (s *Server) handleRWAAssets(w http.ResponseWriter, r *http.Request) {
 	view := RWAAssetsView{
 		Definition:        rwaDefinition(),
@@ -1148,10 +1136,10 @@ func (s *Server) handleRWAAssets(w http.ResponseWriter, r *http.Request) {
 	writeEnvelope(w, Envelope{Data: view, Flags: Flags{Stale: degraded || curatedDegraded, Degraded: degraded || curatedDegraded || m.readFailed}})
 }
 
-// rwaVerifiedContractRows values the verified contract arm. A valuation ctx cut short still
-// returns its rows, reported as degraded (flags.stale). A failed read fails the response, since a
-// swallowed error would publish admitted-but-unread members as never observed. live is false when
-// nothing further should be written (client gone, or failure response already written).
+// rwaVerifiedContractRows values the verified contract arm. A valuation ctx cut short still returns its rows, reported degraded
+// (flags.stale); a failed read fails the response,
+// since a swallowed error would publish admitted-but-unread members as never observed. live is false when nothing further should be
+// written.
 func (s *Server) rwaVerifiedContractRows(
 	ctx context.Context, w http.ResponseWriter, r *http.Request, members []rwaContractMember,
 ) (rows map[string]AssetDetail, degraded, live bool) {
@@ -1201,9 +1189,8 @@ func rwaDefinition() RWADefinition {
 	}
 }
 
-// rwaCatalogueJoin counts what the join from the admitted set to the asset catalogue removed. Both
-// fields count drops at the very end of the funnel, where an asset that met every requirement
-// could otherwise vanish from every tally.
+// rwaCatalogueJoin counts what the join from the admitted set to the asset catalogue removed, at the very end of the funnel where an
+// asset meeting every requirement could otherwise vanish from every tally.
 type rwaCatalogueJoin struct {
 	// pagesTruncated counts member issuers whose listing page filled to rwaAssetsPerIssuer, so a
 	// member in the unread tail cannot be found.
@@ -1212,10 +1199,9 @@ type rwaCatalogueJoin struct {
 	notObserved int
 }
 
-// rwaAssetsCost is the rate-limit price, in tokens, of one /v1/rwa/assets request: one per store
-// listing read. Membership is cached but valuation is not, so every request runs a listing read
-// per member issuer plus one batched catalogue read for the contract arm. The pipeline's own
-// supply and price reads are deliberately not counted.
+// rwaAssetsCost is the rate-limit price in tokens of one /v1/rwa/assets request: one per store listing read (per member issuer, plus one
+// batched catalogue read for the contract arm).
+// Membership is cached but valuation is not; the pipeline's own supply and price reads are deliberately not counted.
 func rwaAssetsCost(m rwaMembership) int {
 	cost := len(rwaMemberIssuers(m))
 	if len(m.contracts) > 0 {
@@ -1240,10 +1226,9 @@ func rwaMemberIssuers(m rwaMembership) []string {
 	return issuers
 }
 
-// rwaListingRows reads each member issuer through the same listing query /v1/assets uses (one
-// indexed page per issuer) and returns rows keyed by asset_id, plus what the read could not
-// cover. Running the real listing path keeps this surface from publishing a valuation /v1/assets
-// would have refused.
+// rwaListingRows reads each member issuer through the same listing query /v1/assets uses (one indexed page per issuer), returning rows
+// keyed by asset_id plus what the read could not cover.
+// Running the real listing path keeps this surface from publishing a valuation /v1/assets would have refused.
 func (s *Server) rwaListingRows(
 	ctx context.Context, m rwaMembership,
 ) (map[string]AssetDetail, rwaCatalogueJoin, error) {
@@ -1297,11 +1282,9 @@ func (s *Server) rwaListingRows(
 	return out, join, nil
 }
 
-// rwaFillMissingSupply attaches circulating supply to rows the market-cap fill left without one.
-//
-// Only rows with no reading at all are touched, so a supply the pipeline attached deliberately
-// (dust-suppressed and ticker-collision branches) is never overwritten. Supply is a chain fact,
-// not a price claim, so this changes no valuation and no gate.
+// rwaFillMissingSupply attaches circulating supply to rows the market-cap fill left without one. Only rows with no reading at all are
+// touched, so a deliberately attached
+// supply (dust-suppressed and ticker-collision branches) is never overwritten; supply is a chain fact, so no valuation or gate changes.
 func (s *Server) rwaFillMissingSupply(ctx context.Context, rows []AssetDetail) {
 	missing := false
 	for i := range rows {
@@ -1335,9 +1318,9 @@ func rwaKey(code, issuer string) string {
 	return strings.TrimSpace(code) + "-" + issuer
 }
 
-// rwaMatchMemberRows pairs one issuer's member codes with its listing rows via [matchAssetCode], so
-// a mis-cased declaration still reaches its asset. A row two members resolve to goes to the member
-// spelling it exactly, or to neither: serving it twice would count it twice.
+// rwaMatchMemberRows pairs one issuer's member codes with its listing rows via [matchAssetCode], so a mis-cased declaration still reaches
+// its asset.
+// A row two members resolve to goes to the member spelling it exactly, or to neither: serving it twice would count it twice.
 func rwaMatchMemberRows(codes []string, rows []timescale.AssetRow) ([]timescale.AssetRow, []string) {
 	rowCodes := make([]string, len(rows))
 	for i := range rows {
@@ -1364,9 +1347,9 @@ func rwaMatchMemberRows(codes []string, rows []timescale.AssetRow) ([]timescale.
 	return keep, memberCodes
 }
 
-// rwaAssetRows joins the membership evidence to the valued listing rows and returns how many
-// members the join could not place. A member with no listing row (attested but never observed on
-// chain) is dropped but counted, because "admitted then never served" is otherwise invisible.
+// rwaAssetRows joins the membership evidence to the valued listing rows and returns how many members the join could not place; a member
+// with no listing row
+// is dropped but counted, because "admitted then never served" is otherwise invisible.
 func (s *Server) rwaAssetRows(m rwaMembership, rows map[string]AssetDetail) ([]RWAAsset, int) {
 	out := make([]RWAAsset, 0, len(m.members))
 	notObserved := 0
@@ -1412,10 +1395,10 @@ func (s *Server) rwaAssetRows(m rwaMembership, rows map[string]AssetDetail) ([]R
 	return out, notObserved
 }
 
-// rwaSupplyProvenance carries the listing row's supply basis onto the RWA row, with whether a
-// figure on that basis is a floor ([supply.Basis.LowerBound], so the two cannot disagree). A row
-// with a supply but no basis (dust-suppressed and ticker-collision paths) returns nothing:
-// naming an arm that did not answer is worse than naming none.
+// rwaSupplyProvenance carries the listing row's supply basis onto the RWA row, with whether that figure is a floor
+// ([supply.Basis.LowerBound], so the two cannot disagree).
+// A supply with no basis (dust-suppressed and ticker-collision paths) returns nothing: naming an arm that did not answer is worse than
+// naming none.
 func rwaSupplyProvenance(d AssetDetail) (string, bool) {
 	if d.CirculatingSupply == nil || d.SupplyBasis == nil {
 		return "", false
@@ -1424,9 +1407,9 @@ func rwaSupplyProvenance(d AssetDetail) (string, bool) {
 	return b.String(), b.LowerBound()
 }
 
-// rwaSortAssets orders by published market cap descending, then observation count, then asset id.
-// It runs once over the combined set: concatenating sorted arms would rank every classic row
-// above every contract row. Unvalued rows sort after every valued row.
+// rwaSortAssets orders by published market cap descending, then observation count, then asset id, once over the combined set
+// (concatenating sorted arms would rank every classic row above every contract row).
+// Unvalued rows sort last.
 func rwaSortAssets(out []RWAAsset) {
 	sort.SliceStable(out, func(i, j int) bool {
 		li, lj := ratFromOptionalString(out[i].Valuation.MarketCapUSD), ratFromOptionalString(out[j].Valuation.MarketCapUSD)
@@ -1483,9 +1466,9 @@ func rwaValuationOf(d AssetDetail) RWAValuation {
 
 // ─── aggregates ─────────────────────────────────────────────────────
 
-// rwaSumMarketCaps returns the exact sum of the published market caps and how many rows
-// contributed. big.Rat over already-rounded 2-dp figures (ADR-0003) keeps each level the exact sum
-// of the level below. Returns nil when nothing was published.
+// rwaSumMarketCaps returns the exact sum of published market caps and how many rows contributed; big.Rat over already-rounded 2-dp
+// figures (ADR-0003) keeps each level the exact sum
+// of the level below. Nil when nothing was published.
 func rwaSumMarketCaps(assets []RWAAsset) (*string, int) {
 	sum := new(big.Rat)
 	valued := 0
@@ -1504,9 +1487,9 @@ func rwaSumMarketCaps(assets []RWAAsset) (*string, int) {
 	return &s, valued
 }
 
-// rwaSumReferenceValues is [rwaSumMarketCaps] on the reference basis, with the same exact
-// big.Rat arithmetic. It returns nil when nothing was reference-valued, since a zero would read
-// as "the backing is worth nothing". Kept separate so a market cap cannot be summed into it.
+// rwaSumReferenceValues is [rwaSumMarketCaps] on the reference basis. Nil when nothing was reference-valued, since zero would read as
+// "the backing is worth nothing";
+// kept separate so a market cap cannot be summed into it.
 func rwaSumReferenceValues(assets []RWAAsset) (*string, int) {
 	sum := new(big.Rat)
 	valued := 0
@@ -1525,9 +1508,9 @@ func rwaSumReferenceValues(assets []RWAAsset) (*string, int) {
 	return &s, valued
 }
 
-// rwaBothBases totals, on each basis separately, the rows carrying both a market cap and a
-// reference valuation. Restricting to the overlap matters: subtracting full sums compares two
-// different populations, and the difference reads as a premium nobody measured.
+// rwaBothBases totals, on each basis separately, the rows carrying both a market cap and a reference valuation: subtracting full sums
+// compares two different populations,
+// and the difference reads as a premium nobody measured.
 func rwaBothBases(assets []RWAAsset) RWABothBases {
 	market := new(big.Rat)
 	reference := new(big.Rat)
@@ -1550,9 +1533,8 @@ func rwaBothBases(assets []RWAAsset) RWABothBases {
 	return RWABothBases{Assets: n, MarketCapUSD: &m, ReferenceValueUSD: &r}
 }
 
-// rwaReferenceSources lists the distinct oracles behind the published reference valuations,
-// sorted. Only contributing rows count: naming a publisher whose figure was refused would
-// attribute to it a number it is not in.
+// rwaReferenceSources lists the distinct oracles behind the published reference valuations, sorted, from contributing rows only: naming a
+// publisher whose figure was refused would attribute to it a number it is not in.
 func rwaReferenceSources(assets []RWAAsset) []string {
 	seen := map[string]struct{}{}
 	out := make([]string, 0, 2)
@@ -1570,8 +1552,7 @@ func rwaReferenceSources(assets []RWAAsset) []string {
 	return out
 }
 
-// rwaReferenceProvenances lists the distinct kinds of claim in the reference total, from
-// contributing rows only: a row whose valuation was refused contributed nothing, so naming its
+// rwaReferenceProvenances lists the distinct kinds of claim in the reference total, from contributing rows only: a refused row's
 // provenance would describe the total by something not in it.
 func rwaReferenceProvenances(assets []RWAAsset) []string {
 	seen := map[string]struct{}{}
@@ -1605,11 +1586,10 @@ func rwaSummariseReference(assets []RWAAsset) RWAReferenceSummary {
 	}
 }
 
-// rwaReferenceProvenanceProse describes the kinds of claim in the total, from the provenances
-// actually present: an oracle NAV values the instrument (the token step rests on the issuer's
-// declaration), a listing price values the token and says nothing of the backing, a fund NAV and a
-// prospectus constant NAV are the fund's or issuer's own statements. Derived from the rows, since
-// a basis naming a provenance the total lacks is as wrong as one omitting one it has.
+// rwaReferenceProvenanceProse describes the kinds of claim in the total from the provenances actually present (oracle NAV values the
+// instrument; a listing price values the token and says
+// nothing of the backing; fund and prospectus NAVs are the issuer's own statements). Derived from the rows: a basis naming a provenance
+// the total lacks is as wrong as omitting one it has.
 func rwaReferenceProvenanceProse(provenances []string) string {
 	present := make(map[string]bool, len(provenances))
 	for _, p := range provenances {
@@ -1683,9 +1663,9 @@ func rwaReferenceBasis(total, valued int, provenances []string) string {
 	return b.String()
 }
 
-// rwaIssuerCount is the single definition of "how many issuers" for the RWA set, shared by
-// /v1/rwa/assets, /v1/rwa/history and /v1/rwa/premium. A contract-issued member has no issuer
-// G-address, so each contract counts as its own issuer rather than a shared blank bucket.
+// rwaIssuerCount is the single definition of "how many issuers" for the RWA set, shared by /v1/rwa/assets, /v1/rwa/history and
+// /v1/rwa/premium;
+// a contract-issued member has no issuer G-address, so each contract counts as its own issuer.
 func rwaIssuerCount(distinctClassicIssuers, contractCount int) int {
 	return distinctClassicIssuers + contractCount
 }

@@ -231,10 +231,9 @@ var protocolRegistry = withVerificationPages([]ProtocolMeta{
 	},
 })
 
-// verificationPageDocs names the protocols whose write-up is not at docs/protocols/<name>.md: the
-// three Reflector feeds share one page, and the router is documented on the Soroswap page. A name
-// mapped to "" has no page yet: the API serves no link and TestProtocolVerificationPages stops
-// requiring one.
+// verificationPageDocs names protocols whose write-up is not at docs/protocols/<name>.md (the three Reflector feeds share one page; the
+// router is on the Soroswap page).
+// A name mapped to "" has no page yet: the API serves no link and TestProtocolVerificationPages stops requiring one.
 var verificationPageDocs = map[string]string{
 	"reflector-dex":   "reflector",
 	"reflector-cex":   "reflector",
@@ -242,9 +241,8 @@ var verificationPageDocs = map[string]string{
 	"soroswap-router": "soroswap",
 }
 
-// withVerificationPages stamps each entry's verification-page path from
-// its name, so writing docs/protocols/<name>.md is all it takes to link a write-up. Deriving it
-// removes a second, silent edit site that left existing pages reported as verification_page: null.
+// withVerificationPages stamps each entry's verification-page path from its name, so writing docs/protocols/<name>.md is all it takes; no
+// second edit site left pages reported as verification_page: null.
 func withVerificationPages(reg []ProtocolMeta) []ProtocolMeta {
 	for i := range reg {
 		doc, ok := verificationPageDocs[reg[i].Name]

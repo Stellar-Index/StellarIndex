@@ -76,11 +76,8 @@ func statusNoticeViews(in []platform.StatusNotice) []StatusNotice {
 	return out
 }
 
-// handleStatusNotices serves GET /v1/status/notices — the public,
-// anonymous-friendly list of ACTIVE operator-posted banners the status
-// page renders. Nil-to-empty: an unwired store or zero active notices
-// returns `{"notices":[],"count":0}` rather than null so SDK/JS
-// consumers can .map() unconditionally.
+// handleStatusNotices serves GET /v1/status/notices: ACTIVE operator banners. Nil-to-empty (`{"notices":[],"count":0}`, not null) so SDK
+// consumers can .map().
 func (s *Server) handleStatusNotices(w http.ResponseWriter, r *http.Request) {
 	if s.StatusNotices == nil {
 		writeJSON(w, StatusNoticesList{Notices: []StatusNotice{}, Count: 0}, Flags{})
@@ -101,9 +98,8 @@ func (s *Server) handleStatusNotices(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, StatusNoticesList{Notices: views, Count: len(views)}, Flags{})
 }
 
-// handleAdminStatusNoticesList serves GET /v1/admin/status-notices —
-// the operator history view: every notice, active + resolved, newest
-// first. Operator-tier only; read-only (no audit row).
+// handleAdminStatusNoticesList serves GET /v1/admin/status-notices: every notice, newest first. Operator-tier only; read-only (no audit
+// row).
 func (s *Server) handleAdminStatusNoticesList(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireOperator(w, r, "/v1/admin/status-notices"); !ok {
 		return
@@ -132,9 +128,7 @@ type adminCreateNoticeRequest struct {
 	Severity string `json:"severity"`
 }
 
-// handleAdminStatusNoticeCreate serves POST /v1/admin/status-notices —
-// post a new active customer-facing banner. Operator-tier only;
-// requires an `X-Reason` header. Audit-logged
+// handleAdminStatusNoticeCreate serves POST /v1/admin/status-notices. Operator-tier only; requires `X-Reason`; audit-logged
 // ("status_notice.create").
 func (s *Server) handleAdminStatusNoticeCreate(w http.ResponseWriter, r *http.Request) {
 	subject, ok := s.requireOperator(w, r, "/v1/admin/status-notices")
@@ -190,10 +184,8 @@ func (s *Server) handleAdminStatusNoticeCreate(w http.ResponseWriter, r *http.Re
 	})
 }
 
-// handleAdminStatusNoticeResolve serves POST
-// /v1/admin/status-notices/{id}/resolve — flip an active banner to
-// resolved (clears it from the public surface). Operator-tier only;
-// requires `X-Reason`. Idempotent. Audit-logged ("status_notice.resolve").
+// handleAdminStatusNoticeResolve serves POST /v1/admin/status-notices/{id}/resolve. Operator-tier only; requires `X-Reason`; idempotent;
+// audit-logged ("status_notice.resolve").
 func (s *Server) handleAdminStatusNoticeResolve(w http.ResponseWriter, r *http.Request) {
 	subject, ok := s.requireOperator(w, r, "/v1/admin/status-notices/{id}/resolve")
 	if !ok {
@@ -292,9 +284,7 @@ func parseCreateNoticeRequest(w http.ResponseWriter, r *http.Request) (adminCrea
 	return req, true
 }
 
-// noticeActorRef derives the free-form "who posted this" reference
-// stored on the row. Prefers the operator key id, falls back to the
-// identifier.
+// noticeActorRef derives the "who posted this" reference stored on the row: the operator key id, else the identifier.
 func noticeActorRef(subject auth.Subject) string {
 	if subject.KeyID != "" {
 		return subject.KeyID

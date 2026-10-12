@@ -9,26 +9,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// handleObservations serves GET /v1/observations per ADR-0018 Surface 3, the
-// lowest-level, no-aggregation surface.
-//
-// Wire shape: an array of TradeRow entries, one per source that has ever recorded
-// a trade on the (asset, quote) pair. Empty array (NOT 404) when there are none,
-// so a caller polling for "any source data" sees zero -> some without a contract
-// change.
-//
-// Query parameters:
-//
-//   - asset (required): canonical asset id; mirrors /v1/price.
-//   - quote (optional, default fiat:USD)
-//   - source (optional): narrow to a single on-chain source (0- or 1-element
-//     array). Off-chain names, exchanges included, 400 (rawTradeSourceFilterOK).
-//   - aggregate=latest (optional): collapse to the single most-recent trade across
-//     all sources; the array wire shape is preserved.
-//
-// flags.stale is always false here (ADR-0018); freeze + divergence flags are
-// intentionally NOT consulted. ?granularity= and ?window_seconds= return 400
-// (ADR-0018 URL discipline).
+// handleObservations serves GET /v1/observations (ADR-0018 Surface 3): one TradeRow per source that ever traded (asset, quote); empty
+// array, not 404.
+// Params: asset (required), quote (default fiat:USD), source (on-chain only, else 400 via rawTradeSourceFilterOK), aggregate=latest.
+// FRESHNESS CONTRACT: flags.stale is always false, freeze/divergence are not consulted, and ?granularity=/?window_seconds= give 400.
 func (s *Server) handleObservations(w http.ResponseWriter, r *http.Request) {
 	if s.History == nil {
 		writeProblem(w, r,
@@ -129,10 +113,9 @@ func (s *Server) handleObservations(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, rows, flags, srcs...)
 }
 
-// fetchObservationsOrWriteError runs computeObservations and translates
-// any error into the right problem+json (client-abort silent return, timeout 503,
-// cache-unavailable 503, internal 500). Returns (trades, true) on success; (_, false) means a
-// response was already written and the caller must return.
+// fetchObservationsOrWriteError runs computeObservations and maps errors to problem+json (client abort silent, timeout/cache-unavailable
+// 503, else 500).
+// (_, false) means a response was already written.
 func (s *Server) fetchObservationsOrWriteError(
 	w http.ResponseWriter, r *http.Request,
 	obsCtx context.Context,
@@ -171,10 +154,9 @@ func (s *Server) fetchObservationsOrWriteError(
 	return nil, false
 }
 
-// observationsHaveTriangulatedPrice is the best-effort lookup that
-// powers the empty-observations triangulation hint. Returns true when /v1/price would serve the
-// pair via the Redis VWAP cache or the stablecoin-fiat proxy. Errors downgrade to false: this is
-// a UX hint, not a load-bearing signal.
+// observationsHaveTriangulatedPrice is the best-effort check behind the empty-observations hint (would /v1/price serve the pair via Redis
+// VWAP
+// or the stablecoin-fiat proxy); errors downgrade to false since it is a UX hint only.
 func (s *Server) observationsHaveTriangulatedPrice(ctx context.Context, pair canonical.Pair) bool {
 	if _, _, _, _, ok := s.tryRedisVWAPFallback(ctx, pair.Base, pair.Quote); ok {
 		return true
@@ -185,10 +167,8 @@ func (s *Server) observationsHaveTriangulatedPrice(ctx context.Context, pair can
 	return false
 }
 
-// rejectObservationsTierParams enforces the URL-discipline rule from
-// ADR-0018: ?granularity= and ?window_seconds= select tiers on other surfaces, and accepting
-// them here would let a query param silently change the consistency contract. Returns true when
-// neither is present; otherwise writes a 400 and returns false.
+// rejectObservationsTierParams enforces ADR-0018 URL discipline: ?granularity=/?window_seconds= would silently change the consistency
+// contract, so 400.
 func rejectObservationsTierParams(w http.ResponseWriter, r *http.Request) bool {
 	q := r.URL.Query()
 	if q.Get("granularity") != "" {
@@ -208,10 +188,7 @@ func rejectObservationsTierParams(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
-// parseObservationsAssetQuote — same shape as parseTipAssetQuote;
-// kept separate so each surface's error type URLs stay legible in
-// problem+json responses (a single helper would flatten the
-// surface-specific error vocabulary).
+// parseObservationsAssetQuote mirrors parseTipAssetQuote but stays separate so each surface keeps its own problem+json error type URLs.
 func parseObservationsAssetQuote(w http.ResponseWriter, r *http.Request) (canonical.Asset, canonical.Asset, bool) {
 	rawAsset, ok := resolveAssetOrBaseParam(w, r)
 	if !ok {
@@ -245,10 +222,7 @@ func parseObservationsAssetQuote(w http.ResponseWriter, r *http.Request) (canoni
 	return asset, quote, true
 }
 
-// collapseToLatest returns a 0- or 1-element slice containing the
-// single most-recent trade by Timestamp, ledger as the tie-breaker.
-// Used by the aggregate=latest path to flatten a multi-source slice
-// without changing the array-shaped response wire contract.
+// collapseToLatest returns the newest trade by Timestamp (ledger breaks ties) for aggregate=latest, keeping the array wire shape.
 func collapseToLatest(trades []canonical.Trade) []canonical.Trade {
 	if len(trades) == 0 {
 		return trades
@@ -262,10 +236,7 @@ func collapseToLatest(trades []canonical.Trade) []canonical.Trade {
 	return []canonical.Trade{trades[bestIdx]}
 }
 
-// isLater reports whether a is more recent than b. Timestamp is the
-// primary order; ledger breaks ties (a higher ledger close at the
-// same wall-clock second is more recent in practice — Stellar packs
-// many trades into one ledger).
+// isLater reports whether a is newer than b: Timestamp first, then ledger (Stellar packs many trades into one ledger).
 func isLater(a, b canonical.Trade) bool {
 	if a.Timestamp.After(b.Timestamp) {
 		return true

@@ -35,10 +35,8 @@ type RegisterAccountCreator interface {
 	Suspend(ctx context.Context, id uuid.UUID, reason string) error
 }
 
-// registerRequest is the inbound POST /v1/register body. Both fields
-// are optional — a bare `{}` (or an empty body) registers fine. The
-// email, when present, is CONTACT-ONLY: no verification loop, no
-// duplicate gate, no credential delivery rides on it.
+// registerRequest is the POST /v1/register body; both fields are optional (a bare `{}` or empty body registers). Email is CONTACT-ONLY:
+// no verification, duplicate gate or credential delivery.
 type registerRequest struct {
 	Name  string `json:"name,omitempty"`
 	Email string `json:"email,omitempty"`
@@ -67,21 +65,13 @@ type RegisterResult struct {
 // /v1/signup — name + email + JSON wrapper fits in a fraction of it.
 const registerBodyMaxBytes = 4 * 1024
 
-// handleRegister serves POST /v1/register: public, anonymous-tier, the canonical agent onboarding
-// path (one curl, no body needed) --
-//
-//	curl -X POST https://api.stellarindex.io/v1/register \
-//	    -H 'Content-Type: application/json'
-//
-// -- creating a free-tier platform account and minting its first API key. Name and email are
-// optional. Unlike email-keyed /v1/signup (a bare Redis credential), this creates a real accounts
-// row, promotable via PATCH /v1/admin/accounts/{id}, plus a Postgres-backed key.
-//
-// Abuse posture: per-IP volume shares the [SignupIPThrottle] budget with /v1/signup; Content-Type
-// application/json is REQUIRED (requireJSONContentType) because a header-less POST is a CORS
-// simple request no preflight catches, though a body-less POST is fine; an account whose key is
-// never used is erased once its validator record expires
-// ([accounterasure.AbandonedRegistrationRetention]).
+// handleRegister serves POST /v1/register: public, anonymous-tier agent onboarding (one curl, no body needed) that creates a free-tier
+// accounts row, promotable via
+// PATCH /v1/admin/accounts/{id}, plus a Postgres-backed first API key. Unlike email-keyed /v1/signup (a bare Redis credential).
+// Abuse posture: per-IP volume shares the [SignupIPThrottle] budget with /v1/signup; Content-Type application/json is REQUIRED
+// (requireJSONContentType) because a header-less
+// POST is a CORS simple request no preflight catches (a body-less POST is fine); an account whose key is never used is erased once its
+// validator record expires ([accounterasure.AbandonedRegistrationRetention]).
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	req, ok := s.parseAndValidateRegister(w, r)
 	if !ok {
@@ -133,10 +123,8 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}, Flags{})
 }
 
-// createRegisteredAccount inserts the free-tier account row, retrying
-// once on a slug collision (12 hex chars of entropy makes that
-// astronomically rare; the retry mirrors dashboardauth.signupNewUser).
-// ok=false means the response has already been written.
+// createRegisteredAccount inserts the free-tier account row, retrying once on a slug collision (mirrors dashboardauth.signupNewUser).
+// ok=false means the response has been written.
 func (s *Server) createRegisteredAccount(
 	w http.ResponseWriter, r *http.Request, req registerRequest,
 ) (platform.Account, bool) {
@@ -172,9 +160,9 @@ func (s *Server) createRegisteredAccount(
 	return platform.Account{}, false
 }
 
-// mintRegisterKey mints the account's first API key at the free-tier budgets. The monthly quota is
-// persisted EXPLICITLY at the tier ceiling, not the 0 inherit sentinel, so the key is metered from
-// birth, as in the dashboard mint path (clampMonthlyQuotaToAccount).
+// mintRegisterKey mints the account's first API key at the free-tier budgets. The monthly quota is persisted EXPLICITLY at the tier
+// ceiling, not the 0 inherit sentinel,
+// so the key is metered from birth (as in clampMonthlyQuotaToAccount).
 func (s *Server) mintRegisterKey(ctx context.Context, acct platform.Account) (string, platform.APIKey, error) {
 	var buf [32]byte
 	if _, err := rand.Read(buf[:]); err != nil {
@@ -250,15 +238,12 @@ func (s *Server) mintRegisterKey(ctx context.Context, acct platform.Account) (st
 	return plaintext, out, nil
 }
 
-// suspendRegisterOrphan quarantines the account left behind when key minting failed after the
-// account row committed. The `signup-race:` suspended_reason is the exact prefix
-// signupreaper.ReapSuspendedOrphans matches. A register orphan has no child user and, because the
-// mirror is written first, no api_keys child, so it satisfies the reaper's conservative predicate.
-//
-// Best-effort: the caller has logged the orphan and is about to 500, so a failed suspend only
-// leaves the row for an operator and never changes the response. It runs on a detached,
-// short-deadline context so a request whose deadline the failing write consumed can still
-// quarantine the row.
+// suspendRegisterOrphan quarantines the account left when key minting failed after the account row committed. The `signup-race:`
+// suspended_reason is the exact prefix
+// signupreaper.ReapSuspendedOrphans matches; a register orphan has no child user or api_keys child, so it satisfies the reaper's
+// predicate.
+// Best-effort: it runs on a detached short-deadline context so a request whose deadline the failing write consumed can still quarantine,
+// and a failure never changes the 500.
 func (s *Server) suspendRegisterOrphan(ctx context.Context, accountID uuid.UUID, cause error) {
 	if s.RegisterAccounts == nil {
 		return
@@ -275,10 +260,7 @@ func (s *Server) suspendRegisterOrphan(ctx context.Context, accountID uuid.UUID,
 		"account_id", accountID, "orphan_cause", cause)
 }
 
-// registerSlug returns `reg-<12hex>` — a URL-safe handle with 48 bits
-// of entropy. Registered-account slugs are machine-generated (there
-// is no vanity-handle affordance on this path; the operator can
-// rename later through the platform surfaces).
+// registerSlug returns `reg-<12hex>`, a URL-safe machine-generated handle with 48 bits of entropy (no vanity handles on this path).
 func registerSlug() (string, error) {
 	var buf [6]byte
 	if _, err := rand.Read(buf[:]); err != nil {
@@ -287,10 +269,8 @@ func registerSlug() (string, error) {
 	return "reg-" + hex.EncodeToString(buf[:]), nil
 }
 
-// parseAndValidateRegister runs the auth/store/body gates. Returns
-// the normalised request and ok=true on success; on failure the
-// response has already been written. Mirrors parseAndValidateSignup,
-// minus the email-required leg (both fields here are optional).
+// parseAndValidateRegister runs the auth/store/body gates, returning the normalised request; on failure the response is already written.
+// Mirrors parseAndValidateSignup minus the email-required leg.
 func (s *Server) parseAndValidateRegister(w http.ResponseWriter, r *http.Request) (registerRequest, bool) {
 	if subject, ok := auth.SubjectFrom(r.Context()); ok &&
 		subject.Tier != auth.TierAnonymous && subject.Tier != "" {

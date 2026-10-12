@@ -27,16 +27,9 @@ type TWAPResult struct {
 	Substance *SubstanceEvidence `json:"substance,omitempty"`
 }
 
-// handleTWAP serves GET /v1/twap?base=...&quote=...&from=...&to=...
-//
-// Defaults match /v1/history (1-hour window ending now). TWAP
-// weights each instant's price by the duration until the next instant
-// (or windowEnd for the last); see internal/aggregate/twap.go for the
-// formula.
-//
-// The outlier filter defaults ON at /v1/ohlc's sigma: a time weight is
-// unrelated to trade size, so on a thin pair one dust print alone in
-// its ledger carries the whole interval to the next ledger's trade.
+// handleTWAP serves GET /v1/twap?base=&quote=&from=&to= (defaults as /v1/history; formula in internal/aggregate/twap.go).
+// The outlier filter defaults ON at /v1/ohlc's sigma: time weight ignores trade size, so one dust print alone in its ledger would carry
+// the whole interval on a thin pair.
 func (s *Server) handleTWAP(w http.ResponseWriter, r *http.Request) {
 	if s.History == nil {
 		writeProblem(w, r,
@@ -124,9 +117,8 @@ func (s *Server) handleTWAP(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, res, Flags{Triangulated: triangulated, ThinMarket: res.Substance != nil, ProxyDeviation: triangulated && s.proxyDeviation(ctx, to)})
 }
 
-// computeTWAP filters trades at sigma and time-weights the survivors
-// over [from, to), writing the problem response itself on failure.
-// Truncated is left for the caller, which owns the trade cap.
+// computeTWAP filters trades at sigma and time-weights the survivors over [from, to), writing the problem response itself on failure;
+// Truncated is left to the caller.
 func (s *Server) computeTWAP(
 	w http.ResponseWriter, r *http.Request, pair canonical.Pair,
 	from, to time.Time, window aggregate.ScaledWindow, sigma float64,

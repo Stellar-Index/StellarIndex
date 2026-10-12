@@ -10,10 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// parseFloatOr0 parses a numeric string for ratio maths (the share
-// split), returning 0 on any parse failure. Precision-lossy by design —
-// used ONLY for the cosmetic SharePct percentage, never for a served
-// amount (those stay stringified per ADR-0003).
+// parseFloatOr0 returns 0 on parse failure and is precision-lossy: for the cosmetic SharePct only, never a served amount (ADR-0003).
 func parseFloatOr0(s string) float64 {
 	f, err := strconv.ParseFloat(s, 64)
 	if err != nil {
@@ -46,15 +43,8 @@ type MarketSourcesResp struct {
 	Sources    []SourceVolume `json:"sources"`
 }
 
-// handleMarketSources serves GET /v1/markets/sources.
-//
-// Returns the trailing-24h USD-volume and trade-count breakdown by source for a market pair
-// (?base=&quote=) or an asset across every pair (?asset=). /v1/history only samples recent
-// trades, so an accurate 24h share needs this server-side aggregate.
-//
-// Volume derivation matches /v1/sources?include=stats: trade-time usd_volume only, never
-// today's XLM price; a source with unpriced trades is flagged volume_lower_bound, and one with
-// no priced trade still appears with its trade count and a null volume.
+// handleMarketSources serves GET /v1/markets/sources: trailing-24h USD volume and trade count per source for ?base=&quote= or ?asset=.
+// Volume is trade-time usd_volume only (as /v1/sources?include=stats); unpriced trades set volume_lower_bound, none priced gives null.
 func (s *Server) handleMarketSources(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	base := q.Get("base")
@@ -135,9 +125,7 @@ func (s *Server) handleMarketSources(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out, Flags{})
 }
 
-// writeMarketSourcesError reports a /v1/markets/sources storage failure:
-// silent on a client disconnect, a retryable 503 naming the endpoint on
-// the handler's own 8s budget expiring, otherwise a plain 500.
+// writeMarketSourcesError is silent on client disconnect, a retryable 503 naming the endpoint on the handler's 8s budget, else 500.
 func (s *Server) writeMarketSourcesError(w http.ResponseWriter, r *http.Request, msCtx context.Context, err error) {
 	if clientAborted(r, err) {
 		return
@@ -156,17 +144,10 @@ func (s *Server) writeMarketSourcesError(w http.ResponseWriter, r *http.Request,
 		"Storage layer returned an error.")
 }
 
-// sourceStatsAliases expands a raw asset_id query param into every canonical FORM the
-// per-source aggregate should match, via [canonical.AssetAliases]. XLM is the multi-form case:
-// SDEX writes `native`, CEXes write `crypto:XLM`, Soroban AMMs write the SAC C-address, so one
-// form alone undercounts the volume-by-source split.
-//
-// Membership and valuation must agree: the per-source volume CASE values the XLM SAC leg at
-// the XLM/USD rate, so a filter without the SAC would drop Soroban XLM trades that are valued
-// as XLM. The SQL binds [canonical.NativeSACContractID], the same SAC this expansion emits.
-//
-// It falls back to the literal id when the param does not parse, giving a single-form query
-// rather than an error.
+// sourceStatsAliases expands an asset_id param to every form via [canonical.AssetAliases] (native, crypto:XLM, SAC); one form
+// undercounts.
+// The SQL binds [canonical.NativeSACContractID], so the filter must include that SAC or valued Soroban XLM trades drop. Unparsable ids
+// pass through.
 func sourceStatsAliases(id string) []string {
 	a, err := canonical.ParseAsset(id)
 	if err != nil {
