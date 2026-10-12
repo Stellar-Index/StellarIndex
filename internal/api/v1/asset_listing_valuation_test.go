@@ -153,3 +153,16 @@ func TestAssetListingSnapshot_PanickingReadIsNotCached(t *testing.T) {
 		t.Fatalf("reads = %d, want 2 — the panicked read's TTL stamp was served as a cached answer", rd.reads)
 	}
 }
+
+// panicOnceListings panics on its first read and answers every later one.
+type panicOnceListings struct{ reads int }
+
+func (p *panicOnceListings) ListingDirectoryByAddress(context.Context) (
+	map[string]timescale.ListingEntry, timescale.ListingDirectoryCensus, error,
+) {
+	p.reads++
+	if p.reads == 1 {
+		panic("listing read blew up")
+	}
+	return map[string]timescale.ListingEntry{}, timescale.ListingDirectoryCensus{}, nil
+}
