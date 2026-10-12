@@ -12,17 +12,12 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// RedisPasskeyCeremonyGuard is the Redis adapter for dashboardauth.PasskeyCeremonyGuard: it records spent WebAuthn challenges (key `passkey:ceremony:<sha256-hex>`, digest built by the handler) so a captured finish-login/finish-register cannot be replayed.
-// The prefix must be in the Redis ACL allow-list (users.acl.j2) or sign-in fails. Redis runs allkeys-lru, so a bare SETNX spent-marker could be evicted and replayed into a SECOND session;
-// production therefore uses Reserve + ClaimReserved, where the claim REQUIRES the begin-time marker, so eviction fails CLOSED. Consume is interface-only.
+// RedisPasskeyCeremonyGuard records spent WebAuthn challenges so a captured finish-login/finish-register cannot be replayed; production uses Reserve + ClaimReserved so an allkeys-lru eviction fails CLOSED.
 type RedisPasskeyCeremonyGuard struct {
 	rdb redis.Cmdable
 }
 
-// NewRedisPasskeyCeremonyGuard constructs a guard. rdb MUST be
-// non-nil — the api binary only wires this when Redis is reachable,
-// and Redis-less deployments leave the dashboardauth field nil so
-// that package's in-process default takes over.
+// NewRedisPasskeyCeremonyGuard constructs a guard; rdb MUST be non-nil.
 func NewRedisPasskeyCeremonyGuard(rdb redis.Cmdable) *RedisPasskeyCeremonyGuard {
 	if rdb == nil {
 		panic("auth: NewRedisPasskeyCeremonyGuard: rdb must not be nil")
@@ -44,8 +39,7 @@ func liveCeremonyKey(digest string) string {
 	return "passkey:ceremony:live:" + digest
 }
 
-// Reserve records at ceremony BEGIN that a challenge is live and redeemable once; ClaimReserved needs this marker, so an allkeys-lru eviction fails the sign-in closed.
-// ttl must outlive the ceremony's validity. A pre-existing marker (challenges are fresh 32-byte randoms) returns ErrPasskeyCeremonyAlreadyReserved and the caller must not issue the challenge.
+// Reserve records at ceremony BEGIN that a challenge is live and redeemable once; ttl must outlive the ceremony, and an existing marker returns ErrPasskeyCeremonyAlreadyReserved.
 func (g *RedisPasskeyCeremonyGuard) Reserve(ctx context.Context, digest string, ttl time.Duration) error {
 	key := liveCeremonyKey(digest)
 	created, err := g.rdb.SetNX(ctx, key, "1", ttl).Result()
@@ -58,12 +52,10 @@ func (g *RedisPasskeyCeremonyGuard) Reserve(ctx context.Context, digest string, 
 	return nil
 }
 
-// ErrPasskeyCeremonyAlreadyReserved reports a Reserve whose live marker
-// already existed.
+// ErrPasskeyCeremonyAlreadyReserved reports a Reserve whose live marker already existed.
 var ErrPasskeyCeremonyAlreadyReserved = errors.New("passkey ceremony already reserved")
 
-// ClaimReserved spends a reserved ceremony: (true, nil) for the one caller whose DEL removed the marker, (false, nil) when it is absent for ANY reason (replayed, never reserved, evicted), which is what makes eviction fail closed.
-// DEL is atomic, so concurrent presentations yield one claimant; a store outage is an error and the caller fails closed.
+// ClaimReserved spends a reserved ceremony: (true, nil) only for the one caller whose atomic DEL removed the marker, (false, nil) when it is absent for any reason (which fails eviction closed), error on store outage.
 func (g *RedisPasskeyCeremonyGuard) ClaimReserved(ctx context.Context, digest string) (bool, error) {
 	key := liveCeremonyKey(digest)
 	removed, err := g.rdb.Del(ctx, key).Result()

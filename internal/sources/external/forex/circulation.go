@@ -15,9 +15,7 @@ import (
 //go:embed circulation_data.csv
 var circulationCSV string
 
-// CirculationEntry is one row from the curated table: the broad money supply figure and the date
-// the central bank stamped on the release. Float64 is display-only here: the largest value (JPY,
-// ~1.5e15) is inside the 2^53 safe-integer range, so no precision is lost.
+// CirculationEntry is one curated row: broad money supply and the central bank's release date; Float64 is display-only (largest value, JPY ~1.5e15, is inside 2^53).
 type CirculationEntry struct {
 	AggregateLocalUnits float64   // M2 / M3 / M4 in the currency's natural unit
 	AsOf                time.Time // Data vintage stamped on the source release

@@ -24,10 +24,7 @@ var (
 	silenceFlush func()
 )
 
-// SilenceSDKChecksumWarnings filters stderr (fd 2) through a pipe dropping the SDK's no-checksum
-// WARNs, which MinIO triggers on every GetObject. Must run before config.LoadDefaultConfig, which
-// binds os.Stderr into the SDK logger. The caller MUST run the returned flush (never nil) before
-// exiting; os.Exit skips defers.
+// SilenceSDKChecksumWarnings filters stderr through a pipe dropping the SDK's no-checksum WARNs; it MUST run before config.LoadDefaultConfig, and the caller MUST run the returned flush (never nil) before exiting since os.Exit skips defers.
 func SilenceSDKChecksumWarnings() (flush func()) {
 	silenceOnce.Do(func() {
 		f, err := installStderrFilter()

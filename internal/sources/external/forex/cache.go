@@ -8,9 +8,7 @@ import (
 	"time"
 )
 
-// Currency is one entry in the snapshot — ticker, display name,
-// and price-of-1-USD-in-this-currency. Stable across the lifetime
-// of a snapshot; the Cache replaces snapshots atomically.
+// Currency is one snapshot entry: ticker, display name and price of 1 USD in this currency; the Cache replaces snapshots atomically.
 type Currency struct {
 	Ticker  string  // upper-case ISO-4217 (USD, EUR, JPY, …)
 	Name    string  // display name ("United States Dollar")
@@ -24,13 +22,7 @@ type Currency struct {
 	Source string
 }
 
-// Snapshot is the immutable rates+metadata bundle the Cache holds, replaced atomically so readers
-// never see a torn view. It carries only what the sanity band cleared (the band runs BEFORE the
-// install), so a rate refused for fx_quotes is never served from here either.
-//
-// History7d is the per-ticker daily series, 7 entries oldest to newest, of the price of 1 USD in
-// that currency. It is empty until the history backfill completes or when upstream rejected the
-// historical fetches (currency-api sometimes 404s for less-tracked tickers).
+// Snapshot is the immutable rates+metadata bundle the Cache holds, replaced atomically; it carries only rates the sanity band cleared, and History7d is the 7-day per-ticker series (empty until backfill completes).
 type Snapshot struct {
 	Currencies  []Currency
 	PublishedAt time.Time
@@ -50,28 +42,22 @@ type HistoryPoint struct {
 	RateUSD float64
 }
 
-// Cache holds the latest forex snapshot. Safe for concurrent use;
-// readers go through atomic.Pointer so there's no lock contention
-// on the hot read path. Initial state is nil — readers MUST handle
-// the no-snapshot-yet case (typically: 503 or "warming up" UX).
+// Cache holds the latest forex snapshot, safe for concurrent use via atomic.Pointer; readers MUST handle the nil no-snapshot-yet case.
 type Cache struct {
 	snapshot atomic.Pointer[Snapshot]
 }
 
-// NewCache returns an empty Cache. The worker populates it on
-// first successful fetch.
+// NewCache returns an empty Cache that the worker populates on first successful fetch.
 func NewCache() *Cache {
 	return &Cache{}
 }
 
-// Latest returns the most recent snapshot, or nil if no fetch has
-// completed yet. Callers MUST nil-check.
+// Latest returns the most recent snapshot, or nil if no fetch has completed; callers MUST nil-check.
 func (c *Cache) Latest() *Snapshot {
 	return c.snapshot.Load()
 }
 
-// Set installs a new snapshot atomically. Old snapshot is GC-able
-// once no readers retain it.
+// Set installs a new snapshot atomically.
 func (c *Cache) Set(s *Snapshot) {
 	c.snapshot.Store(s)
 }

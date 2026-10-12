@@ -28,8 +28,7 @@ const (
 	FieldReferralFee    = "referral_fee_amount"
 )
 
-// SwapFieldCount is the number of distinct events per swap (Q1); a trade is ready only when all
-// 8 RawSwap slots are populated.
+// SwapFieldCount is the number of distinct events per swap; a trade is ready only when all 8 RawSwap slots are populated.
 const SwapFieldCount = 8
 
 // EventActionSwap is topic[0] of every swap-field event; topic[1] carries the field name.
@@ -171,10 +170,7 @@ const (
 	// canonical.Asset.SacContractID()); use aquarius.MainnetXLMSAC or canonical.XLMSacContractID.
 )
 
-// MainnetPools is the curated gated pool set, from the factory's `query_pools()` cross-checked
-// against lake activity. The decoder also self-registers from the factory's create events, so
-// this is a cold-start root for pools created outside the streamed window. A pool missing from
-// BOTH fail-closes and surfaces as a recognition gap, never silently mis-attributed.
+// MainnetPools is the curated gated pool set (factory `query_pools()` cross-checked against lake activity), a cold-start root since the decoder also self-registers from create events; a pool missing from BOTH fail-closes as a recognition gap, never mis-attributed.
 var MainnetPools = []string{
 	"CBHCRSVX3ZZ7EGTSYMKPEFGZNWRVCSESQR3UABET4MIW52N4EVU6BIZX",
 	"CBCZGGNOEUZG4CAAE7TGTQQHETZMKUT4OIPFHHPKEUX46U4KXBBZ3GLH",
@@ -193,9 +189,7 @@ var MainnetPools = []string{
 	"CAZ6W4WHVGQBGURYTUOLCUOOHW6VQGAAPSPCD72VEDZMBBPY7H43AYEC",
 }
 
-// MainnetStakeContracts are the per-pool stake contracts that emit bond/unbond. They are separate
-// addresses NOT returned by query_pools(), enumerated from lake activity. An unlisted one
-// fail-closes into a recognition gap and gets added here.
+// MainnetStakeContracts are the per-pool stake contracts that emit bond/unbond, enumerated from lake activity (query_pools() does not return them); an unlisted one fail-closes into a recognition gap.
 var MainnetStakeContracts = []string{
 	"CBRGNWGAC25CPLMOAMR7WBPOF5QTFA5RYXQH4DEJ4K65G2QFLTLMW7RO",
 	"CAF3UJ45ZQJP6USFUIMVMGOUETUTXEC35R2247VJYIVQBGKTKBZKNBJ3",
@@ -218,17 +212,12 @@ var MainnetStakeContracts = []string{
 	"CDEQYRWFU3IHPRR6H6VOQRUU3JFS6DTUYUL4YAQSD3ALB5IPBTEOZUFM", // pre-lake; keeper CBZ7M5B3 + phoenix v1.1 stake-migration events
 }
 
-// MainnetMapPools are pools running the NEWER pool WASM whose swap emits a SINGLE ScvSymbol("swap")
-// event with an ScvMap body instead of the older 8 ScvString-tuple events (Q5). Gating is by
-// contract identity, so a pool upgrading from String to Map shape in place is already covered;
-// only the decode dispatch depends on the topic shape.
+// MainnetMapPools are pools on the NEWER WASM whose swap is a SINGLE ScvSymbol("swap") event with an ScvMap body instead of 8 ScvString-tuple events; gating is by contract identity, so only the decode dispatch depends on topic shape.
 var MainnetMapPools = []string{
 	"CBENABXP6C4C7WG6KB7JQOTDS5GIIXF3IX3PIYNZFCDZDWUHITO2HZ4S",
 }
 
-// MainnetGatedSet is the full curated child set the decoder seeds: String-schema pools, Map-schema
-// pools and stake contracts. The multihop relay is deliberately EXCLUDED; it only relays to pools
-// and emits no swap/liquidity/stake events, so gating loses nothing.
+// MainnetGatedSet is the full curated child set the decoder seeds (String-schema pools, Map-schema pools, stake contracts); the multihop relay is EXCLUDED as it emits no swap/liquidity/stake events.
 func MainnetGatedSet() []string {
 	out := make([]string, 0, len(MainnetPools)+len(MainnetMapPools)+len(MainnetStakeContracts))
 	out = append(out, MainnetPools...)
@@ -253,10 +242,7 @@ var (
 	TopicSymbolReferralFee    = scval.MustEncodeString(FieldReferralFee)    //
 )
 
-// TopicSymbolSwapMap is topic[0] of the NEWER Map-body swap schema: a SINGLE ScvSymbol("swap")
-// (disc 0x0F) whose body is an ScvMap, distinct from the older ScvString("swap") (disc 0x0E). Map
-// keys are underscore Symbols ("actual_received_amount"). See README Q5: pools upgrade in place
-// and can change event SHAPE, not just fields.
+// TopicSymbolSwapMap is topic[0] of the NEWER Map-body swap schema, a SINGLE ScvSymbol("swap") (disc 0x0F) with an ScvMap body, distinct from the older ScvString("swap") (disc 0x0E); pools upgrade in place and can change event SHAPE.
 var TopicSymbolSwapMap = scval.MustEncodeSymbol(EventActionSwap)
 
 // The Map-schema pool WASM publishes provide/withdraw_liquidity the same way: one ScvSymbol topic,

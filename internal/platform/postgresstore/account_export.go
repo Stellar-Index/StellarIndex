@@ -22,10 +22,7 @@ var staffExportRedactedKeys = []string{"actor_email", "session_id", "actor_user_
 // ExtraKeysFunc lists the keys an account holds outside Postgres, by slug.
 type ExtraKeysFunc func(ctx context.Context, slug string) ([]platform.ExportAPIKey, error)
 
-// ExportAccount reads everything [platform.AccountExport] describes for
-// accountID, as requester sees it. extra, when non-nil, supplies the
-// Redis-held self-service keys; they are merged before usage is read so
-// their key:<id> usage rows are exported too.
+// ExportAccount reads everything [platform.AccountExport] describes for accountID as requester sees it; non-nil extra supplies Redis-held keys, merged before usage is read.
 func (r *AccountStore) ExportAccount(
 	ctx context.Context, accountID, requester uuid.UUID, now time.Time, extra ExtraKeysFunc,
 ) (platform.AccountExport, error) {

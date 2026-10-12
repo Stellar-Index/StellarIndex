@@ -14,12 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// Decoder is the dispatcher-facing view of Phoenix. It is stateful: one swap is 8 separate events
-// that must be correlated by (ledger, tx_hash, op_index) before a canonical.Trade can be emitted,
-// and the Decoder owns that correlation buffer.
-//
-// The dispatcher feeds events in order, so Decode is not re-entrant; the mutex is cheap insurance
-// against parallel ledger replay.
+// Decoder is the stateful dispatcher-facing Phoenix view: one swap is 8 separate events correlated by (ledger, tx_hash, op_index) in its buffer before a canonical.Trade is emitted; Decode is not re-entrant, the mutex guards parallel ledger replay.
 type Decoder struct {
 	mu  sync.Mutex
 	buf *buffer
@@ -35,19 +30,7 @@ type Decoder struct {
 	reg *contractid.Registry
 }
 
-// NewDecoder constructs a phoenix Decoder with a fresh buffer.
-//
-// Contract-identity gating (ADR-0035/0040), factory-anchored: the curated mainnet set (pools and
-// stake contracts) is always seeded as the cold-start root, and the factory's
-// ("create","liquidity_pool") events self-register the pools they announce.
-//
-// Trust: admission is on contract identity, but the factory is admin-upgradeable, so an admitted
-// pool ultimately trusts the factory admin. Tokens are creator-chosen, so admission is not price
-// trust; the downstream pricing guards are (docs/operations/wasm-audits/phoenix.md).
-//
-// Stake contracts are not announced by the factory, so only the curated seed or the
-// protocol_contracts warm admits them. Caller opts layer that DB warm and the live-upsert hook on
-// top, which lets an operator admit a contract without a redeploy.
+// NewDecoder constructs a phoenix Decoder with a fresh buffer, gated on contract identity (ADR-0035/0040): the curated mainnet pool and stake set is the cold-start root, the factory's ("create","liquidity_pool") events self-register pools, and stake contracts (not factory-announced) come only from the seed or the protocol_contracts warm; an admitted pool trusts the upgradeable factory admin, and admission is not price trust.
 func NewDecoder(opts ...contractid.Option) *Decoder {
 	base := []contractid.Option{
 		contractid.WithFactories([]string{MainnetFactory}),
@@ -59,24 +42,10 @@ func NewDecoder(opts ...contractid.Option) *Decoder {
 // Name implements [dispatcher.Decoder].
 func (*Decoder) Name() string { return SourceName }
 
-// GatedContractSet returns the decoder's gate: the factory trust root plus every registered
-// pool/stake contract, growing in-stream as factory create events self-register pools. It is the
-// contract-id prefilter the completeness re-derive scopes its lake read to. Matches() gates purely
-// on contract identity and the correlation buffer only groups events from a single pool, so the
-// prefilter never splits a group.
+// GatedContractSet returns the gate (factory root plus every registered pool/stake contract) as the contract-id prefilter for the completeness re-derive; Matches() gates purely on contract identity and the buffer groups events from a single pool, so the prefilter never splits a group.
 func (d *Decoder) GatedContractSet() []string { return d.reg.GatedSet() }
 
-// Matches implements [dispatcher.Decoder]. Phoenix events carry topic[0] = String(<action>) and
-// the field name in the second slot, which the buffer routes internally. Claimed actions:
-//
-//   - swap: two on-wire shapes, the older 8-event ScvString schema (actionSwap) and the newer
-//     single-event ScvSymbol("swap") + ScvMap schema (actionSwapMap); classifyAny picks the
-//     shape from the topic and both reconstruct into the same TradeEvent.
-//   - provide_liquidity / withdraw_liquidity: String schema (buffered) and Map schema (single event)
-//   - bond / unbond and the other stake-contract events
-//   - the factory's create and config-update events, gated on IsFactory
-//
-// Each action's per-field correlation is independent.
+// Matches implements [dispatcher.Decoder], gating on contract identity and claiming swap (older 8-event ScvString schema or newer single ScvSymbol("swap") + ScvMap schema, picked by classifyAny from the topic), provide/withdraw_liquidity, bond/unbond and other stake events, and the factory's create / config-update events (IsFactory); each action's per-field correlation is independent.
 func (d *Decoder) Matches(ev events.Event) bool {
 	a, _ := classifyAny(&ev)
 	if a == actionUnknown {
@@ -93,10 +62,7 @@ func (d *Decoder) Matches(ev events.Event) bool {
 	return d.reg.Has(ev.ContractID)
 }
 
-// Decode implements [dispatcher.Decoder]. It routes to the per-action reassembly buffer and
-// returns an event once an action's required field count is met, (nil, nil) while still buffering.
-// withdraw_liquidity's optional 5th `auto unbonded` event is discarded because the bond contract
-// emits its own unbond carrying the same data.
+// Decode implements [dispatcher.Decoder], routing to the per-action reassembly buffer and returning an event once the action's required field count is met, (nil, nil) while buffering; withdraw_liquidity's optional `auto unbonded` event is discarded since the bond contract emits its own unbond.
 func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	a, fieldTopic := classifyAny(&ev)
 	if a == actionUnknown {
@@ -353,9 +319,7 @@ func (d *Decoder) decodeDistributeRewardsEvent(ev *events.Event, closedAt time.T
 	return []consumer.Event{StakeEvent{Change: change}}, nil
 }
 
-// Drain implements [dispatcher.Drainer]: it flushes every open correlation
-// group at the end of a bounded stream. Decodable swap groups are emitted
-// (with any trades carried from a failed Decode); the rest count as orphans.
+// Drain implements [dispatcher.Drainer], flushing every open correlation group at the end of a bounded stream: Decodable swap groups are emitted, the rest count as orphans.
 func (d *Decoder) Drain() []consumer.Event {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -366,9 +330,7 @@ func (d *Decoder) Drain() []consumer.Event {
 	return out
 }
 
-// EvictedOrphans is the count of incomplete correlation groups dropped
-// since this Decoder was constructed. The dispatcher reads it through
-// its optional EvictedOrphans() interface (see evictedOrphans).
+// EvictedOrphans is the count of incomplete correlation groups dropped since construction, read by the dispatcher through its optional EvictedOrphans() interface.
 func (d *Decoder) EvictedOrphans() int {
 	d.mu.Lock()
 	defer d.mu.Unlock()

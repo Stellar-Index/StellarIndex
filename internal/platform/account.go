@@ -97,10 +97,7 @@ func (t Tier) MaxMonthlyQuota() int64 {
 	}
 }
 
-// MaxWebhooks returns the per-tier ceiling on registered webhook
-// endpoints. Replaces the dashboard's flat 10-webhook cap; override
-// seam is dashboardwebhooks.Config.WebhookQuotas. Unknown tiers are
-// treated as free, same posture as the other tier ladders.
+// MaxWebhooks returns the per-tier ceiling on registered webhook endpoints; unknown tiers are treated as free.
 func (t Tier) MaxWebhooks() int {
 	switch t.Canonical() {
 	case TierAnon:
@@ -157,13 +154,10 @@ type Account struct {
 	MonthlyRequestQuotaOverride int64 // 0 = inherit tier default
 }
 
-// DashboardKeyDefaultRateLimitPerMin is the rate_limit_per_min a
-// dashboard-minted key gets when the create request leaves it unset.
+// DashboardKeyDefaultRateLimitPerMin is the rate_limit_per_min a dashboard-minted key gets when the request leaves it unset.
 const DashboardKeyDefaultRateLimitPerMin = 1000
 
-// ResolveKeyRateLimitPerMin is the per-minute limit auth enforces for
-// one of this account's keys: the account override is a FLOOR over the
-// key's own budget, so it only ever raises it.
+// ResolveKeyRateLimitPerMin is the per-minute limit auth enforces for one of the account's keys: the account override is a FLOOR over the key's own budget.
 func (a Account) ResolveKeyRateLimitPerMin(keyRate int) int {
 	if a.RateLimitPerMinOverride > keyRate {
 		return a.RateLimitPerMinOverride
@@ -171,9 +165,7 @@ func (a Account) ResolveKeyRateLimitPerMin(keyRate int) int {
 	return keyRate
 }
 
-// ResolveKeyMonthlyQuota is the monthly quota auth enforces for one of
-// this account's keys (0 = unmetered): a key at 0 inherits the account
-// override, and a set override is a CEILING over any other key value.
+// ResolveKeyMonthlyQuota is the monthly quota auth enforces for a key (0 = unmetered): a key at 0 inherits the account override, a set override is a CEILING.
 func (a Account) ResolveKeyMonthlyQuota(keyQuota int64) int64 {
 	override := a.MonthlyRequestQuotaOverride
 	if keyQuota == 0 || (override > 0 && override < keyQuota) {
@@ -182,17 +174,13 @@ func (a Account) ResolveKeyMonthlyQuota(keyQuota int64) int64 {
 	return keyQuota
 }
 
-// EffectiveRateLimitPerMin is what auth enforces on a key minted at the
-// dashboard defaults. Limits are per key, so a key minted with an
-// explicit budget can differ; the tier ceiling is only a mint-time cap.
+// EffectiveRateLimitPerMin is what auth enforces on a key minted at the dashboard defaults; the tier ceiling is only a mint-time cap.
 func (a Account) EffectiveRateLimitPerMin() int {
 	minted := min(DashboardKeyDefaultRateLimitPerMin, a.Tier.MaxRateLimitPerMin())
 	return a.ResolveKeyRateLimitPerMin(minted)
 }
 
-// EffectiveMonthlyQuota is what auth enforces on a key minted at the
-// dashboard defaults: it stores 0 (inherit) under an override, else the
-// tier ceiling.
+// EffectiveMonthlyQuota is what auth enforces on a key minted at the dashboard defaults: 0 (inherit) under an override, else the tier ceiling.
 func (a Account) EffectiveMonthlyQuota() int64 {
 	var minted int64
 	if a.MonthlyRequestQuotaOverride <= 0 {

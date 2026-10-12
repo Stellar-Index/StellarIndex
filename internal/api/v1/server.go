@@ -41,7 +41,7 @@ type ReadyChecker interface {
 }
 
 // ExpectedSchemaVersion is the migrations/ head this binary was built against; readiness fails when applied < expected (a NEWER schema is safe), and a test fails CI if a migration is added unbumped.
-const ExpectedSchemaVersion uint = 214
+const ExpectedSchemaVersion uint = 215
 
 // nonAtomicMigrationVersions lists migrations whose up.sql commits mid-file, breaking
 // golang-migrate's one-transaction-per-file guarantee. A dirty flag at any version NOT in

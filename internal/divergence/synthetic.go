@@ -10,14 +10,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// SyntheticCrossName is the stable source label for the USD-cross
-// reference. Appears in the divergence result's Sources map, in
-// Prometheus labels, and in operator dumps — renaming is a wire break.
+// SyntheticCrossName is the stable source label for the USD-cross reference; it appears in the Sources map, Prometheus labels and operator dumps, so renaming is a wire break.
 const SyntheticCrossName = "synthetic-usd-cross"
 
-// SyntheticCrossReference derives a non-USD-fiat pair as (base / fiat:USD) / (fiat:X / fiat:USD), giving EUR/GBP pairs a second reading above the divergence trust floor (divergenceMinSources).
-// It counts as one source and the legs must come from different publishers (see [referencePublisher]); both must be fresh, positive and finite.
-// A leg failure is unsupported when no leg CAN answer, unavailable when one SHOULD have.
+// SyntheticCrossReference derives a non-USD-fiat pair as (base / fiat:USD) / (fiat:X / fiat:USD); it counts as one source, the legs must come from different publishers, and both must be fresh, positive and finite.
 type SyntheticCrossReference struct {
 	usdLegs []Reference // ordered candidates for base → fiat:USD
 	fxLegs  []Reference // ordered candidates for fiat:X → fiat:USD
@@ -37,9 +33,7 @@ type SyntheticCrossOptions struct {
 	FXLegs []Reference
 }
 
-// NewSyntheticCrossReference validates the leg sets. Both must be
-// non-empty — a cross with a missing leg can never answer and would
-// only add a permanent failure row to every result.
+// NewSyntheticCrossReference validates the leg sets; both must be non-empty, since a cross with a missing leg can never answer and would only add a permanent failure row.
 func NewSyntheticCrossReference(opts SyntheticCrossOptions) (*SyntheticCrossReference, error) {
 	if len(opts.USDLegs) == 0 || len(opts.FXLegs) == 0 {
 		return nil, errors.New("divergence: synthetic cross needs at least one USD leg and one FX leg")
@@ -58,8 +52,7 @@ func NewSyntheticCrossReference(opts SyntheticCrossOptions) (*SyntheticCrossRefe
 // Name implements [Reference].
 func (s *SyntheticCrossReference) Name() string { return SyntheticCrossName }
 
-// LookupQuote implements [Reference]; only pairs quoted in a non-USD fiat are in scope (USD pairs have direct oracles, and a synthetic there would double-count them).
-// Each leg is held to its own [MaxComparableAge] and the cross is as old as its base leg.
+// LookupQuote implements Reference for pairs quoted in a non-USD fiat only (USD pairs have direct oracles, and a synthetic there would double-count); each leg is held to its own MaxComparableAge.
 func (s *SyntheticCrossReference) LookupQuote(ctx context.Context, pair canonical.Pair, observedAt time.Time) (Quote, error) {
 	if pair.Quote.Type != canonical.AssetFiat || pair.Quote.Code == "USD" {
 		return Quote{}, fmt.Errorf("%w: %s: synthetic cross covers non-USD-fiat quotes only",

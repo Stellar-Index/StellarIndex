@@ -6,10 +6,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 )
 
-// Event is the [consumer.Event] the Rozo Decoder emits, one per decoded v1 contract event, in the
-// rozo_events row shape. Per-event-type fields (From / Memo for payment, Token for flush) are
-// *string so nil writes SQL NULL. The sink type-switches on it (internal/pipeline/sink.go) and
-// writes via Store.InsertRozoEvent.
+// Event is the [consumer.Event] the Rozo Decoder emits, one per decoded v1 contract event in the rozo_events row shape; per-type fields (From / Memo for payment, Token for flush) are *string so nil writes SQL NULL.
 type Event struct {
 	ContractID string
 	Ledger     uint32

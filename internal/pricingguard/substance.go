@@ -27,23 +27,17 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// MarketSubstanceReader is the storage seam the substance gate needs; *timescale.Store
-// satisfies it. It takes each leg's full set of spellings so the union is measured in one read:
-// distinct buckets do not add across spellings that trade in the same minute.
+// MarketSubstanceReader is the storage seam the substance gate needs; *timescale.Store satisfies it.
 type MarketSubstanceReader interface {
 	PairMarketSubstance(ctx context.Context, bases, quotes []canonical.Asset, window time.Duration) (timescale.MarketSubstance, error)
 }
 
-// MarketSubstanceAtReader is the storage seam for the POINT-IN-TIME question
-// ([SubstanceGate.AllowedAt]): the same three legs, measured over the window ending at `asOf`
-// at the named grain.
+// MarketSubstanceAtReader is the storage seam for the POINT-IN-TIME question ([SubstanceGate.AllowedAt]): the same three legs, measured over the window ending at `asOf` at the named grain.
 type MarketSubstanceAtReader interface {
 	PairMarketSubstanceAt(ctx context.Context, bases, quotes []canonical.Asset, asOf time.Time, window time.Duration, g timescale.HistoryGranularity) (timescale.MarketSubstance, error)
 }
 
-// SubstanceStore is the store [NewSubstanceGate] requires: both questions, so a store that
-// answers only the live one fails to compile instead of silently judging history by today's
-// market.
+// SubstanceStore is the store [NewSubstanceGate] requires: both questions, so a store that answers only the live one fails to compile instead of silently judging history by today's market.
 type SubstanceStore interface {
 	MarketSubstanceReader
 	MarketSubstanceAtReader
@@ -51,8 +45,7 @@ type SubstanceStore interface {
 
 var _ SubstanceStore = (*timescale.Store)(nil)
 
-// SubstancePolicy is the serve floor. Zero-valued fields take the defaults below; binaries map
-// config.PricingGuardConfig onto this (this package stays config-free).
+// SubstancePolicy is the serve floor.
 type SubstancePolicy struct {
 	// MinVolumeUSD is the minimum trailing-window USD volume (exact-rational compare, ADR-0003).
 	// Default $1,000: above dust-seeding volumes, low enough for genuinely-traded small assets.
@@ -92,8 +85,7 @@ func (p SubstancePolicy) withDefaults() SubstancePolicy {
 	return p
 }
 
-// SubstancePolicyFromValues maps raw [pricing_guard] config values onto a policy. Zero, a NaN/Inf
-// volume and an overflowing span/window all fall back to the defaults, never zero or negative.
+// SubstancePolicyFromValues maps raw [pricing_guard] config values onto a policy; zero, NaN/Inf and overflowing values fall back to the defaults, never zero or negative.
 func SubstancePolicyFromValues(minVolumeUSD float64, minBuckets, minSpanMinutes, windowHours int) SubstancePolicy {
 	pol := SubstancePolicy{
 		MinBuckets: int64(minBuckets),
@@ -136,8 +128,7 @@ func (e substanceVerdict) verdict() SubstanceVerdict {
 	return SubstanceVerdict{Allowed: e.allowed, Measured: true, Floor: e.floor, Evidence: &ev}
 }
 
-// SubstanceEvidence is the measurement a verdict was reached on (the alias union of Base and
-// Quote, its figures, the policy applied). It shares the verdict's cache entry, so they agree.
+// SubstanceEvidence is the measurement a verdict was reached on (the alias union of Base and Quote, its figures, the policy applied).
 type SubstanceEvidence struct {
 	Base, Quote canonical.Asset
 	// Window is the trailing measurement window (Policy.Window).
@@ -157,9 +148,7 @@ type SubstanceEvidence struct {
 	Floor  SubstanceFloor
 }
 
-// SubstanceVerdict is one pair's substance answer with its evidence. Measured=false means no
-// verdict (store error or deadline): Allowed is false and Evidence nil. A nil gate and an ungated
-// pair are Allowed and Measured with nil Evidence.
+// SubstanceVerdict is one pair's substance answer with its evidence.
 type SubstanceVerdict struct {
 	Allowed  bool
 	Measured bool
@@ -167,8 +156,7 @@ type SubstanceVerdict struct {
 	Evidence *SubstanceEvidence
 }
 
-// SubstanceGate is the serving-side thin-market gate. Build with [NewSubstanceGate]; a nil
-// *SubstanceGate is a valid no-op gate that allows everything.
+// SubstanceGate is the serving-side thin-market gate.
 type SubstanceGate struct {
 	store  SubstanceStore
 	policy SubstancePolicy
@@ -189,8 +177,7 @@ type SubstanceGateOptions struct {
 	Logger *slog.Logger
 }
 
-// Policy returns the resolved (defaults-applied) policy, for deriving a RELATED policy from the
-// same operator-configured floor.
+// Policy returns the resolved (defaults-applied) policy, for deriving a RELATED policy from the same operator-configured floor.
 func (g *SubstanceGate) Policy() SubstancePolicy {
 	if g == nil {
 		return SubstancePolicy{}.withDefaults()
@@ -198,8 +185,7 @@ func (g *SubstanceGate) Policy() SubstancePolicy {
 	return g.policy
 }
 
-// NewSubstanceGate builds a gate and logs the floors it enforces, defaults resolved, since an
-// unset key runs at a value no config file shows.
+// NewSubstanceGate builds a gate and logs the floors it enforces, defaults resolved, since an unset key runs at a value no config file shows.
 func NewSubstanceGate(store SubstanceStore, opts SubstanceGateOptions) *SubstanceGate {
 	g := &SubstanceGate{
 		store:   store,
@@ -216,8 +202,7 @@ func NewSubstanceGate(store SubstanceStore, opts SubstanceGateOptions) *Substanc
 	return g
 }
 
-// SubstanceGated reports whether the pair is in scope: at least one leg is on-chain (native /
-// classic / soroban), which anyone can author trades for. Off-chain synthetic pairs are out.
+// SubstanceGated reports whether the pair is in scope: at least one leg is on-chain (native / classic / soroban), which anyone can author trades for.
 func SubstanceGated(base, quote canonical.Asset) bool {
 	onChain := func(a canonical.Asset) bool {
 		switch a.Type {
@@ -230,8 +215,7 @@ func SubstanceGated(base, quote canonical.Asset) bool {
 	return onChain(base) || onChain(quote)
 }
 
-// SubstanceVerdicter is the per-pair seam [AssetSubstanceVerdict] folds over. Probe is uncounted,
-// so the asset-level decision counts once however many quotes it tries.
+// SubstanceVerdicter is the per-pair seam [AssetSubstanceVerdict] folds over.
 type SubstanceVerdicter interface {
 	Probe(ctx context.Context, base, quote canonical.Asset) (allowed, measured bool, floor SubstanceFloor)
 }
@@ -245,13 +229,7 @@ var fiatUSD = func() canonical.Asset {
 	return a
 }()
 
-// AssetSubstanceVerdict is the gate's answer for one asset's USD price rather than one pair. The
-// backing quotes are XLM, fiat:USD and each USD peg in usdPegs; the identity pair is skipped.
-// Allowed when the asset is out of scope, is native (definitionally liquid), or ANY quote clears
-// the floor. measured is false when none cleared and at least one could not be measured. A nil
-// gate allows.
-//
-// The quotes are probes of ONE decision, so the metrics count the asset once under `surface`.
+// AssetSubstanceVerdict is the gate's answer for one asset's USD price rather than one pair: allowed when out of scope, native, or ANY backing quote clears the floor; a nil gate allows.
 func AssetSubstanceVerdict(
 	ctx context.Context, gate SubstanceVerdicter, asset canonical.Asset,
 	usdPegs []canonical.Asset, surface string,
@@ -263,9 +241,7 @@ func AssetSubstanceVerdict(
 	return allowed, measured
 }
 
-// AssetSubstanceVerdictThinServed is [AssetSubstanceVerdict] for include_thin callers. A thin
-// verdict is not counted here: whether the row is finally served thin is known only after later
-// overlays, and the caller counts it then.
+// AssetSubstanceVerdictThinServed is [AssetSubstanceVerdict] for include_thin callers.
 func AssetSubstanceVerdictThinServed(
 	ctx context.Context, gate SubstanceVerdicter, asset canonical.Asset,
 	usdPegs []canonical.Asset, surface string,
@@ -309,9 +285,7 @@ func assetSubstance(
 	return false, measured, floor
 }
 
-// SubstanceFloor names the floor a withheld market failed (the `floor` label on
-// obs.PriceServeSubstanceWithheldTotal). Floors are checked in the order below, so a volume
-// failure cleared both persistence floors.
+// SubstanceFloor names the floor a withheld market failed (the `floor` label on obs.PriceServeSubstanceWithheldTotal).
 type SubstanceFloor string
 
 const (
@@ -353,15 +327,12 @@ func countVerdict(surface string, allowed, measured bool, floor SubstanceFloor) 
 	}
 }
 
-// SubstanceOK is the pure decision: does the measured substance clear the policy floor?
-// Exact-rational volume compare (ADR-0003). An unparseable volume string counts as zero
-// (fail-closed): a volume that cannot be verified cannot clear the floor.
+// SubstanceOK is the pure decision: does the measured substance clear the policy floor? Exact-rational volume compare; an unparseable volume counts as zero (fail-closed).
 func SubstanceOK(volumeUSD *big.Rat, buckets, spanSeconds int64, policy SubstancePolicy) bool {
 	return FailedFloor(volumeUSD, buckets, buckets, spanSeconds, policy) == FloorNone
 }
 
-// FailedFloor is [SubstanceOK] naming the first failed floor, or [FloorNone]. valuedBuckets only
-// labels a volume failure; it never changes the verdict.
+// FailedFloor is [SubstanceOK] naming the first failed floor, or [FloorNone].
 func FailedFloor(volumeUSD *big.Rat, buckets, valuedBuckets, spanSeconds int64, policy SubstancePolicy) SubstanceFloor {
 	if volumeUSD == nil {
 		volumeUSD = new(big.Rat)
@@ -380,42 +351,26 @@ func FailedFloor(volumeUSD *big.Rat, buckets, valuedBuckets, spanSeconds int64, 
 	return FloorNone
 }
 
-// Allowed reports whether an aggregated price claim for (base, quote) may be served. `surface`
-// labels the withheld metric (obs.PriceServeSubstanceWithheldTotal) so operators can see WHICH
-// serving path is withholding: a low-cardinality constant, never a pair string.
-//
-// The measurement is the ALIAS UNION of the pair: XLM's three spellings (native / crypto:XLM / the
-// SAC) hold disjoint venue populations; volumes add, and a minute active under two spellings is
-// one bucket. Without it, native/fiat:USD would measure zero rows and withhold XLM itself.
-//
-// Verdicts are cached for [substanceCacheTTL] per direction-insensitive pair key. A nil gate
-// allows everything.
-//
-// Allowed FAILS OPEN when the pair could not be measured. A surface that must not publish an
-// unverified claim (listings, market caps, ADR-0018) asks [SubstanceGate.Verdict].
+// Allowed reports whether an aggregated price claim for (base, quote) may be served, measured over the ALIAS UNION of the pair's spellings; `surface` is a low-cardinality metric label, never a pair string.
 func (g *SubstanceGate) Allowed(ctx context.Context, base, quote canonical.Asset, surface string) bool {
 	allowed, measured := g.Verdict(ctx, base, quote, surface)
 	return allowed || !measured
 }
 
-// Verdict is [SubstanceGate.Allowed] without the fail-open: measured is false (and allowed false)
-// when a store error or deadline prevented a verdict, so the caller decides what that means on
-// its surface. Unmeasured verdicts count in obs.PriceServeSubstanceUnmeasuredTotal.
+// Verdict is [SubstanceGate.Allowed] without the fail-open: measured is false (and allowed false) when a store error or deadline prevented a verdict.
 func (g *SubstanceGate) Verdict(ctx context.Context, base, quote canonical.Asset, surface string) (allowed, measured bool) {
 	allowed, measured, floor := g.Probe(ctx, base, quote)
 	countVerdict(surface, allowed, measured, floor)
 	return allowed, measured
 }
 
-// Probe is [SubstanceGate.Verdict] without the metrics, also naming the failed floor, for a
-// caller that folds several pairs into one decision and counts it itself.
+// Probe is [SubstanceGate.Verdict] without the metrics, also naming the failed floor, for a caller that folds several pairs into one decision and counts it itself.
 func (g *SubstanceGate) Probe(ctx context.Context, base, quote canonical.Asset) (allowed, measured bool, floor SubstanceFloor) {
 	v := g.Measure(ctx, base, quote)
 	return v.Allowed, v.Measured, v.Floor
 }
 
-// Measure is the live verdict with its evidence, uncounted. Allowed, Verdict and Probe project
-// it, so every live read shares one cache entry.
+// Measure is the live verdict with its evidence, uncounted.
 func (g *SubstanceGate) Measure(ctx context.Context, base, quote canonical.Asset) SubstanceVerdict {
 	if g == nil || !SubstanceGated(base, quote) {
 		return SubstanceVerdict{Allowed: true, Measured: true}
@@ -532,18 +487,7 @@ func (g *SubstanceGate) policyAt(age time.Duration) (timescale.HistoryGranularit
 	return timescale.Granularity1h, hourGrainPolicy(g.policy)
 }
 
-// AllowedAt reports whether an aggregated price claim for (base, quote) AS OF `at` may be
-// served: the point-in-time form of [SubstanceGate.Allowed], for /v1/price/at and each
-// /v1/price/changes horizon.
-//
-// Allowed would be wrong both ways: a window ending NOW would withhold history of a market honest
-// at `at` but dormant today, and pass one thick today but attacker-seeded dust at `at`. So
-// substance is measured over [policy.Window] ending at `at`, closed buckets only, alias union as
-// live (see [SubstanceGate.policyAt]).
-//
-// A future `at` is measured as of now. Fail postures match the live gate. Verdicts are cached per
-// (pair, grain, truncated instant) for [substanceCacheTTL]; withheld ones are counted under
-// `surface` but not logged, since the transition log describes a pair's present.
+// AllowedAt reports whether an aggregated price claim for (base, quote) AS OF `at` may be served: substance is measured over the window ending at `at` (closed buckets, alias union), not now.
 func (g *SubstanceGate) AllowedAt(ctx context.Context, base, quote canonical.Asset, at time.Time, surface string) bool {
 	v := g.MeasureAt(ctx, base, quote, at)
 	countVerdict(surface, v.Allowed, v.Measured, v.Floor)

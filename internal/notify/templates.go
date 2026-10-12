@@ -8,10 +8,7 @@ import (
 	textTemplate "text/template"
 )
 
-// MagicLinkInput is the data the magic-link template expects.
-// Fields are intentionally minimal — the template avoids
-// surfacing unverified user input (the email is the only thing
-// echoed back to the user, and we know they typed it).
+// MagicLinkInput is the data the magic-link template expects, kept minimal so no unverified user input is surfaced beyond the typed email.
 type MagicLinkInput struct {
 	// LinkURL is the absolute URL the user clicks. Generated
 	// by the auth handler: `<dashboard-base>/auth/callback?token=<plaintext>`.
@@ -31,9 +28,7 @@ type MagicLinkInput struct {
 	UserAgent ClientDescription
 }
 
-// ClientDescription names a client only in terms from a fixed browser/OS
-// vocabulary. The unexported field means no caller can place raw header
-// text in a signed email through it; ClientFromUserAgent is the only producer.
+// ClientDescription names a client only in terms from a fixed browser/OS vocabulary; the unexported field keeps raw header text out of a signed email, and ClientFromUserAgent is the only producer.
 type ClientDescription struct{ label string }
 
 // String returns the description, or "" when no User-Agent was sent.
@@ -65,8 +60,7 @@ var (
 	}
 )
 
-// ClientFromUserAgent maps a raw User-Agent header onto the closed
-// vocabulary above; nothing from ua other than the match is kept.
+// ClientFromUserAgent maps a raw User-Agent header onto the closed vocabulary; nothing from ua other than the match is kept.
 func ClientFromUserAgent(ua string) ClientDescription {
 	if strings.TrimSpace(ua) == "" {
 		return ClientDescription{}
@@ -120,8 +114,7 @@ func renderMagicLink(in MagicLinkInput) (htmlBody, textBody string, err error) {
 	return hb.String(), tb.String(), nil
 }
 
-// MagicLinkMessage builds a fully-formed Message from the input and From. It attaches the tag
-// `{template: "magic-link"}` so the Resend dashboard can break out per-template metrics.
+// MagicLinkMessage builds a fully-formed Message from the input and From, tagged `{template: "magic-link"}` for per-template metrics.
 func MagicLinkMessage(from, recipient string, in MagicLinkInput) (Message, error) {
 	htmlBody, textBody, err := renderMagicLink(in)
 	if err != nil {
@@ -183,8 +176,7 @@ Request came from {{if .IPAddress}}{{.IPAddress}}{{else}}an unknown source{{end}
 If you didn't request this, you can safely ignore this email — neither the code nor the link works without this email.
 `
 
-// PasskeyChange is what happened to the passkey a [PasskeyChangedInput]
-// reports.
+// PasskeyChange is what happened to the passkey a PasskeyChangedInput reports.
 type PasskeyChange string
 
 // PasskeyChange values.
@@ -193,9 +185,7 @@ const (
 	PasskeyRemoved PasskeyChange = "removed"
 )
 
-// PasskeyChangedInput is the data the passkey-changed notice expects. The
-// passkey's label is deliberately absent: whoever made the change chose it,
-// so it is not echoed into mail the account owner is meant to trust.
+// PasskeyChangedInput is the data the passkey-changed notice expects; the passkey label is deliberately absent, since whoever made the change chose it and it must not be echoed into mail the owner trusts.
 type PasskeyChangedInput struct {
 	Change PasskeyChange
 	// When is pre-formatted by the caller (UTC).
@@ -209,9 +199,7 @@ type PasskeyChangedInput struct {
 	ManageURL string
 }
 
-// PasskeyChangedMessage renders the notice sent to a user whenever a
-// passkey is added to or removed from their sign-in methods, so a change
-// they did not make is visible to them outside the dashboard.
+// PasskeyChangedMessage renders the notice sent whenever a passkey is added or removed, so a change the user did not make is visible outside the dashboard.
 func PasskeyChangedMessage(from, recipient string, in PasskeyChangedInput) (Message, error) {
 	if in.Change != PasskeyAdded && in.Change != PasskeyRemoved {
 		return Message{}, fmt.Errorf("passkey-changed: unknown change %q", in.Change)
@@ -297,10 +285,7 @@ type AccountErasedInput struct {
 	When string
 }
 
-// AccountErasedMessage renders the confirmation sent to an account's
-// owners after the account was erased, so an erasure they did not make is
-// visible to them. It names no slug, key or member: the mail goes to an
-// address the service has just forgotten.
+// AccountErasedMessage renders the confirmation sent to an erased account's owners; it names no slug, key or member, since the mail goes to an address the service has just forgotten.
 func AccountErasedMessage(from, recipient string, in AccountErasedInput) (Message, error) {
 	htmlBody, err := renderHTML("account_erased.html", accountErasedHTMLTemplate, in)
 	if err != nil {

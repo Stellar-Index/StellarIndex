@@ -12,9 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// ProcessLedger runs the dispatcher over one LedgerCloseMeta and forwards each emitted event to sink.
-// A dispatcher error is logged and returned unchanged so the caller refuses cursor advancement; ctx cancellation returns ctx.Err() (shutdown).
-// The caller persists the cursor only after a nil return.
+// ProcessLedger runs the dispatcher over one LedgerCloseMeta and forwards each emitted event to sink; a dispatcher error is returned unchanged so the caller refuses cursor advancement, and the caller persists the cursor only after a nil return.
 func ProcessLedger(
 	ctx context.Context,
 	disp *dispatcher.Dispatcher,

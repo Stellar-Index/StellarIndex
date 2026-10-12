@@ -77,9 +77,113 @@ func (s *Store) InsertTrustlineObservation(ctx context.Context, o TrustlineObser
 	return nil
 }
 
-// SumTrustlineBalancesAtOrBefore returns the sum of trustline_balance for `assetKey` over the latest row per account at or before `asOfLedger` (removals contribute 0), as a non-nil *big.Int; unbounded-latest-ok: a holder whose last row predates any floor still holds that balance at asOfLedger.
+// SumTrustlineBalancesAtOrBefore returns the sum of trustline_balance for `assetKey` over the latest row per account at or before `asOfLedger` (removals contribute 0), as a non-nil *big.Int, read from trustline_balance_current (0215) and seeded on first use; unbounded-latest-ok: a holder whose last row predates any floor still holds that balance at asOfLedger.
 func (s *Store) SumTrustlineBalancesAtOrBefore(ctx context.Context, assetKey string, asOfLedger uint32) (*big.Int, error) {
-	const q = `
+	if v, err := s.sumTrustlineCurrent(ctx, assetKey, asOfLedger); err != nil || v != nil {
+		return v, err
+	}
+	if err := s.seedTrustlineCurrent(ctx, assetKey); err != nil {
+		return nil, err
+	}
+	if v, err := s.sumTrustlineCurrent(ctx, assetKey, asOfLedger); err != nil || v != nil {
+		return v, err
+	}
+	return s.sumTrustlineFullScan(ctx, assetKey, asOfLedger)
+}
+
+// trustlineLatestOrder is the per-holder pick order shared by the full scan, the seed and the
+// 0215 trigger; they must agree or the current table drifts from the scan.
+const trustlineLatestOrder = `ledger DESC, walk_version DESC, intra_ledger_seq DESC, observed_at DESC`
+
+// sumTrustlineCurrent returns nil when the asset is not seeded. One statement, so the seeded check,
+// the current rows and the rewind of holders newer than asOfLedger share a snapshot.
+func (s *Store) sumTrustlineCurrent(ctx context.Context, assetKey string, asOfLedger uint32) (*big.Int, error) {
+	q := `
+        WITH cur AS MATERIALIZED (
+            SELECT account_id, ledger, balance_stroops, is_removal
+              FROM trustline_balance_current
+             WHERE asset_key = $1
+        )
+        SELECT CASE WHEN EXISTS (SELECT 1 FROM trustline_balance_current_seeded WHERE asset_key = $1) THEN (
+            COALESCE((SELECT sum(balance_stroops) FROM cur WHERE ledger <= $2 AND NOT is_removal), 0)
+          + COALESCE((SELECT sum(p.balance_stroops)
+                        FROM cur c
+                        CROSS JOIN LATERAL (
+                            SELECT t.balance_stroops, t.is_removal
+                              FROM trustline_observations t
+                             WHERE t.asset_key = $1 AND t.account_id = c.account_id AND t.ledger <= $2
+                             ORDER BY ` + trustlineLatestOrder + `
+                             LIMIT 1
+                        ) p
+                       WHERE c.ledger > $2 AND NOT p.is_removal), 0)
+        )::text END
+    `
+	var raw sql.NullString
+	if err := s.db.QueryRowContext(ctx, q, assetKey, int(asOfLedger)).Scan(&raw); err != nil {
+		return nil, fmt.Errorf("timescale: sumTrustlineCurrent %s: %w", assetKey, err)
+	}
+	if !raw.Valid {
+		return nil, nil
+	}
+	v, ok := new(big.Int).SetString(raw.String, 10)
+	if !ok {
+		return nil, fmt.Errorf("timescale: sumTrustlineCurrent %s: parse %q", assetKey, raw.String)
+	}
+	return v, nil
+}
+
+// seedTrustlineCurrent folds the asset's history into trustline_balance_current and marks it
+// seeded, in one transaction under the asset's advisory lock (the one 0215's invalidation takes).
+// Strict > so a stale snapshot row never overwrites an equal-key row the trigger rewrote since.
+// unbounded-latest-ok: every holder's latest row, however old, is part of the current balance.
+func (s *Store) seedTrustlineCurrent(ctx context.Context, assetKey string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("timescale: seedTrustlineCurrent %s: begin: %w", assetKey, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx,
+		`SELECT pg_advisory_xact_lock(hashtextextended('trustline_balance_current:' || $1, 0))`, assetKey); err != nil {
+		return fmt.Errorf("timescale: seedTrustlineCurrent %s: lock: %w", assetKey, err)
+	}
+	seed := `
+        INSERT INTO trustline_balance_current AS c (
+            asset_key, account_id, ledger, observed_at,
+            walk_version, intra_ledger_seq, balance_stroops, is_removal
+        )
+        SELECT DISTINCT ON (account_id)
+               asset_key, account_id, ledger, observed_at,
+               walk_version, intra_ledger_seq, balance_stroops, is_removal
+          FROM trustline_observations
+         WHERE asset_key = $1
+         ORDER BY account_id, ` + trustlineLatestOrder + `
+        ON CONFLICT (asset_key, account_id) DO UPDATE SET
+            ledger           = EXCLUDED.ledger,
+            observed_at      = EXCLUDED.observed_at,
+            walk_version     = EXCLUDED.walk_version,
+            intra_ledger_seq = EXCLUDED.intra_ledger_seq,
+            balance_stroops  = EXCLUDED.balance_stroops,
+            is_removal       = EXCLUDED.is_removal
+        WHERE (c.ledger, c.walk_version, c.intra_ledger_seq, c.observed_at)
+            < (EXCLUDED.ledger, EXCLUDED.walk_version, EXCLUDED.intra_ledger_seq, EXCLUDED.observed_at)
+    `
+	if _, err := tx.ExecContext(ctx, seed, assetKey); err != nil {
+		return fmt.Errorf("timescale: seedTrustlineCurrent %s: fold: %w", assetKey, err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO trustline_balance_current_seeded (asset_key) VALUES ($1) ON CONFLICT DO NOTHING`, assetKey); err != nil {
+		return fmt.Errorf("timescale: seedTrustlineCurrent %s: mark: %w", assetKey, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("timescale: seedTrustlineCurrent %s: commit: %w", assetKey, err)
+	}
+	return nil
+}
+
+// sumTrustlineFullScan is the history scan the current table replaces.
+// unbounded-latest-ok: a holder whose last row predates any floor still holds that balance at asOfLedger.
+func (s *Store) sumTrustlineFullScan(ctx context.Context, assetKey string, asOfLedger uint32) (*big.Int, error) {
+	q := `
         SELECT COALESCE(sum(balance_stroops), 0)::text
           FROM (
             SELECT DISTINCT ON (account_id)
@@ -87,7 +191,7 @@ func (s *Store) SumTrustlineBalancesAtOrBefore(ctx context.Context, assetKey str
               FROM trustline_observations
              WHERE asset_key = $1
                AND ledger    <= $2
-             ORDER BY account_id, ledger DESC, walk_version DESC, intra_ledger_seq DESC
+             ORDER BY account_id, ` + trustlineLatestOrder + `
           ) latest
          WHERE NOT is_removal
     `

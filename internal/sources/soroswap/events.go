@@ -11,8 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// Source name constant — appears in metrics labels, canonical.Trade.Source,
-// and config.IngestionConfig.EnabledSources. Must be stable.
+// SourceName is the stable source name used in metrics labels, canonical.Trade.Source and config.IngestionConfig.EnabledSources.
 const SourceName = "soroswap"
 
 // Event names: topic[1] of every pair/factory event is a Symbol SCVal with one of these values
@@ -54,11 +53,7 @@ const (
 	MainnetPairWASMHash = "18051456816b66f12e773a56f77c5794fac1b1fb7ab6e22d4fad5a412770f73e"
 )
 
-// MainnetFactories is the COMPLETE, lake-verified set of Soroswap factories on mainnet
-// (ADR-0035): the primary CA4HEQTL plus three early factories whose 21 pairs never had a swap.
-// They are included so the `new_pair` gate honors every factory and the reconcile self-seeds
-// those pairs, so a future trade on one is captured rather than dropped. Re-run the
-// `SoroswapFactory:new_pair` enumeration if a new factory appears.
+// MainnetFactories is the COMPLETE, lake-verified set of Soroswap factories on mainnet (ADR-0035), including three early factories whose pairs never swapped, so the `new_pair` gate honors every factory; re-run the `SoroswapFactory:new_pair` enumeration if a new one appears.
 var MainnetFactories = []string{
 	MainnetFactory,
 	"CCIQM2O3YJQEKS7I77AS5IO3CU6UCBAUWHLWRBWVV336ZCSTKRNBKPHW", // early, 11 pairs
@@ -66,8 +61,7 @@ var MainnetFactories = []string{
 	"CCDATRT2EY6Y2KAZ7HM7BRZVZCB6RHL56PQUBWGBS2ML2JAK7VXFLCJY", // early, 4 pairs
 }
 
-// IsMainnetFactory reports whether contractID is one of the verified
-// Soroswap factories — the trust-root set the new_pair gate consults.
+// IsMainnetFactory reports whether contractID is a verified Soroswap factory, the trust-root set the new_pair gate consults.
 func IsMainnetFactory(contractID string) bool {
 	for _, f := range MainnetFactories {
 		if f == contractID {

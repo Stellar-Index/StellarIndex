@@ -19,15 +19,10 @@ const OpenExchangeRatesEndpoint = "https://openexchangerates.org/api"
 // oxrMaxBody caps the latest.json read; a full board is ~4 KB.
 const oxrMaxBody = 1 << 20
 
-// ErrOXRBoard marks an Open Exchange Rates response the provider refuses
-// whole: the worker must see no rates rather than a partial board.
+// ErrOXRBoard marks an Open Exchange Rates response refused whole, so the worker sees no rates rather than a partial board.
 var ErrOXRBoard = errors.New("forex: openexchangerates board refused")
 
-// OpenExchangeRatesProvider adapts Open Exchange Rates' latest.json into the worker's USD-base
-// contract; the board is republished hourly, unlike massive's daily bar.
-//
-// The Free plan refuses `base` and `symbols`, so the request has no query string, and the app id
-// travels only in the Authorization header, keeping it out of every URL, log line and error.
+// OpenExchangeRatesProvider adapts latest.json into the worker's USD-base contract; the Free plan takes no query string, so the app id travels only in the Authorization header, never in a URL, log or error.
 type OpenExchangeRatesProvider struct {
 	AppID string
 	// Endpoint overrides [OpenExchangeRatesEndpoint]; tests point it at
@@ -38,9 +33,7 @@ type OpenExchangeRatesProvider struct {
 // Name implements [RateProvider].
 func (p OpenExchangeRatesProvider) Name() string { return "openexchangerates" }
 
-// LatestUSDRates implements [RateProvider]. Keys are the UPPER-case codes
-// the board publishes; values are units of the code per 1 USD, already the
-// worker's contract, so no rebase is needed.
+// LatestUSDRates implements RateProvider; keys are the UPPER-case codes published and values are units of the code per 1 USD, so no rebase is needed.
 func (p OpenExchangeRatesProvider) LatestUSDRates(ctx context.Context) (map[string]float64, time.Time, error) {
 	endpoint := p.Endpoint
 	if endpoint == "" {

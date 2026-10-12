@@ -9,7 +9,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// AsyncSink is a non-blocking [Recorder] adapter for the dispatcher hot path: Push enqueues and one worker records; a repeat (ContractID, Kind, EventType, Symbol) key folds into a pending delta flushed by Stop with the true [Hit.Count]; a full buffer drops the hit (DroppedCount) because stalling dispatch is worse.
+// AsyncSink is a non-blocking [Recorder] adapter for the dispatcher hot path: repeat keys fold into a pending delta flushed with the true [Hit.Count], and a full buffer drops the hit (DroppedCount) rather than stall dispatch.
 type AsyncSink struct {
 	rec          Recorder
 	logger       *slog.Logger
@@ -73,7 +73,7 @@ type AsyncSinkOptions struct {
 	Logger *slog.Logger
 }
 
-// NewAsyncSink constructs a sink in stopped state; callers must call Start before Push will drain.
+// NewAsyncSink constructs an AsyncSink in stopped state; call Start before Push will drain.
 func NewAsyncSink(rec Recorder, opts AsyncSinkOptions) *AsyncSink {
 	if opts.BufferSize <= 0 {
 		opts.BufferSize = 1024
@@ -105,12 +105,12 @@ func NewAsyncSink(rec Recorder, opts AsyncSinkOptions) *AsyncSink {
 	}
 }
 
-// Start launches the drain worker; idempotent, and the caller must Stop before process exit to flush pending records.
+// Start launches the drain worker; idempotent, and the caller must Stop before exit to flush pending records.
 func (s *AsyncSink) Start() {
 	s.startOnce.Do(func() { go s.run() })
 }
 
-// Push enqueues a Hit without blocking (dropped after Stop or when full, folded into the pending delta if already enqueued); satisfies dispatcher.DiscoverySink structurally (import cycle), and holds s.mu throughout so a concurrent Stop cannot close the channel under the send.
+// Push enqueues a Hit without blocking: dropped after Stop or when the buffer is full, folded into the key's pending delta if already enqueued.
 func (s *AsyncSink) Push(hit Hit) {
 	key := seenKey(hit)
 
@@ -148,7 +148,7 @@ func (s *AsyncSink) Push(hit Hit) {
 	}
 }
 
-// Stop closes the input and waits at most DrainTimeout for the drain, the bound pipeline.IndexerStopTimeout is sized from; idempotent.
+// Stop closes the input and waits at most DrainTimeout for the drain (pipeline.IndexerStopTimeout is sized from it); idempotent.
 func (s *AsyncSink) Stop() {
 	s.stopOnce.Do(func() {
 		timer := time.AfterFunc(s.drainTimeout, s.drainCancel)

@@ -36,10 +36,7 @@ type APIKey struct {
 	CreatedAt              time.Time
 }
 
-// APIKeyTier is the tier the key authenticates as. Distinct
-// from [Tier] (the account's billing tier) — a key can be
-// pinned to a specific runtime tier independent of the account
-// plan, e.g. for operator credentials or partner integrations.
+// APIKeyTier is the tier the key authenticates as, distinct from the account's billing [Tier].
 type APIKeyTier string
 
 const (
@@ -56,16 +53,12 @@ const (
 	KeyScopeAdmin     = "admin"     // /v1/admin/* operator surface
 )
 
-// KnownKeyScopes lists the accepted scope vocabulary, for
-// validation errors and docs.
+// KnownKeyScopes lists the accepted scope vocabulary, for validation errors and docs.
 func KnownKeyScopes() []string {
 	return []string{KeyScopeRead, KeyScopeAccount, KeyScopeDashboard, KeyScopeAdmin}
 }
 
-// ValidKeyScope reports whether s is one of the known capability
-// scopes. The wildcard "*" is NOT accepted at mint time — an empty
-// list already means full access, so persisting "*" would just be
-// a second spelling of the same thing.
+// ValidKeyScope reports whether s is a known scope; the wildcard "*" is NOT accepted at mint time since an empty list already means full access.
 func ValidKeyScope(s string) bool {
 	switch s {
 	case KeyScopeRead, KeyScopeAccount, KeyScopeDashboard, KeyScopeAdmin:
@@ -82,17 +75,13 @@ type KeyPermissions struct {
 	Deny  []KeyPermissionEntry `json:"deny,omitempty"`
 }
 
-// KeyPermissionEntry matches one allow/deny rule. Either Endpoint
-// (exact pattern, e.g. "GET /v1/price") or EndpointPrefix
-// (e.g. "/v1/account/") — never both.
+// KeyPermissionEntry matches one allow/deny rule by exact Endpoint or EndpointPrefix, never both.
 type KeyPermissionEntry struct {
 	Endpoint       string `json:"endpoint,omitempty"`
 	EndpointPrefix string `json:"endpoint_prefix,omitempty"`
 }
 
-// IsActive reports whether the key is currently valid: not
-// revoked, not expired (or expiry zero), and assumes the parent
-// account is active (caller is responsible for checking that).
+// IsActive reports whether the key is not revoked and not expired (zero expiry never expires); the caller must check the parent account is active.
 func (k APIKey) IsActive(now time.Time) bool {
 	if !k.RevokedAt.IsZero() {
 		return false
@@ -103,9 +92,7 @@ func (k APIKey) IsActive(now time.Time) bool {
 	return true
 }
 
-// APIKeyStore persists [APIKey] in Postgres. The runtime auth
-// validator will consult this store via a Redis-cached read-
-// through wrapper once the Phase 1 Week 4 cutover ships.
+// APIKeyStore persists [APIKey] in Postgres.
 type APIKeyStore interface {
 	// Create inserts a pre-hashed key; ErrConflict on hash/ID collision, [ErrAPIKeyQuotaExceeded] when maxActiveKeysPerAccount is met (zero or negative disables the cap).
 	Create(ctx context.Context, k APIKey, maxActiveKeysPerAccount int) (APIKey, error)

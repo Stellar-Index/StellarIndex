@@ -9,8 +9,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// Reference is a pluggable external price reference. Implementations MUST be safe for concurrent LookupQuote calls, SHOULD set a per-call timeout via ctx,
-// and SHOULD return [ErrAssetUnsupported] for an unlisted asset so [Compare] records the gap without treating it as a transport failure.
+// Reference is a pluggable external price reference; implementations MUST be safe for concurrent LookupQuote calls, SHOULD set a per-call timeout via ctx, and SHOULD return ErrAssetUnsupported for an unlisted asset.
 type Reference interface {
 	// Name returns a stable, lowercase, hyphenated label suitable
 	// for Prometheus labels and JSON keys (e.g. "coingecko",
@@ -29,10 +28,7 @@ type Quote struct {
 	AsOf  time.Time
 }
 
-// ErrTooStaleToCompare — the reference answered, but its price was
-// observed longer ago than [MaxComparableAge] before the comparison:
-// live by its own budget, yet describing a different market than the
-// short-window VWAP it would be compared with.
+// ErrTooStaleToCompare means the reference answered but its price was observed longer than MaxComparableAge before the comparison, describing a different market than the short-window VWAP.
 var ErrTooStaleToCompare = errors.New("divergence: reference too stale to compare")
 
 // Comparability ceilings for [MaxComparableAge]. Non-FX pairs get 1h (the longest heartbeat of a live-market reference; older quotes cannot describe a minutes-wide VWAP's market).
@@ -42,8 +38,7 @@ const (
 	DefaultMaxComparableAgeFX = defaultChainlinkMaxAgeFX
 )
 
-// MaxComparableAge is the oldest a reference quote for pair may be,
-// relative to the comparison time, and still vote in [Compare].
+// MaxComparableAge is the oldest a reference quote for pair may be, relative to the comparison time, and still vote in Compare.
 func MaxComparableAge(pair canonical.Pair) time.Duration {
 	if pair.Base.Type == canonical.AssetFiat && pair.Quote.Type == canonical.AssetFiat {
 		return DefaultMaxComparableAgeFX

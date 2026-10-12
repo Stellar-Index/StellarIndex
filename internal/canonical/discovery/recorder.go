@@ -6,7 +6,7 @@ import (
 	"sync"
 )
 
-// Recorder persists [Hit] records, idempotent on ContractID (one row per contract, not per event); callers log and continue on error since the contract reappears and the write is retried.
+// Recorder persists [Hit] records, idempotent on ContractID (one row per contract); callers log and continue on error, since the write is retried on a later event.
 type Recorder interface {
 	// Record upserts the hit, updating event_count and last-seen.
 	Record(ctx context.Context, hit Hit) error
@@ -34,7 +34,7 @@ func NewInMemoryRecorder() *InMemoryRecorder {
 	}
 }
 
-// Record stores the hit, preserving the first observation verbatim (first_seen_at / first_seen_event stay stable) and only incrementing the counter afterwards, like a Postgres ON CONFLICT DO UPDATE.
+// Record stores or updates the hit: the first observation per contract is kept verbatim, later ones only increment the counter.
 func (r *InMemoryRecorder) Record(_ context.Context, hit Hit) error {
 	if hit.ContractID == "" {
 		return errors.New("discovery: cannot record hit with empty ContractID")
@@ -60,7 +60,7 @@ func (r *InMemoryRecorder) IsKnown(_ context.Context, contractID string) (bool, 
 	return ok, nil
 }
 
-// Snapshot returns a copy of the recorded hits in unspecified order; callers sort if they need determinism.
+// Snapshot returns a copy of the recorded hits in unspecified order.
 func (r *InMemoryRecorder) Snapshot() []Hit {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -71,7 +71,7 @@ func (r *InMemoryRecorder) Snapshot() []Hit {
 	return out
 }
 
-// Count returns how many times Record was invoked for contractID (zero if never seen), so tests can verify per-event calls.
+// Count returns how many times Record was invoked for contractID (zero if never seen).
 func (r *InMemoryRecorder) Count(contractID string) int {
 	r.mu.Lock()
 	defer r.mu.Unlock()

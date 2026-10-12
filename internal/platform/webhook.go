@@ -34,9 +34,7 @@ const (
 	WebhookEventPriceAlert WebhookEventType = "price.alert"
 )
 
-// WebhookEventTypes returns every [WebhookEventType] in declaration order: the one membership
-// list for subscription validation and metric seeding. TestWebhookEventTypesListsEveryConstant
-// fails when a constant is missing from it.
+// WebhookEventTypes returns every [WebhookEventType] in declaration order, the one list for subscription validation and metric seeding.
 func WebhookEventTypes() []WebhookEventType {
 	return []WebhookEventType{
 		WebhookEventIncidentSEV1,
@@ -57,9 +55,7 @@ func IsWebhookEventType(s string) bool {
 	return false
 }
 
-// CustomerWebhook is an outbound HTTPS endpoint for event notifications, signed with HMAC-SHA-256 and retried with exponential backoff.
-// The signing key is the LITERAL HMAC key (the receiver needs the same secret), sealed at rest with [WebhookKeySealer] into `signing_key_sealed`; the legacy `secret_hash` holds a raw key only for rows written without a seal key.
-// Each plaintext key is returned exactly once (creation, rotate-secret) and never served again.
+// CustomerWebhook is an outbound HTTPS event endpoint signed with HMAC-SHA-256 and retried with backoff; the signing key is the literal HMAC key, sealed at rest, and each plaintext key is returned exactly once.
 type CustomerWebhook struct {
 	ID        uuid.UUID
 	AccountID uuid.UUID
@@ -77,8 +73,7 @@ type CustomerWebhook struct {
 	UpdatedAt               time.Time
 }
 
-// ActivePreviousSigningKey returns PreviousSigningKey while its overlap
-// window is open at now, else nil.
+// ActivePreviousSigningKey returns PreviousSigningKey while its overlap window is open at now, else nil.
 func (w CustomerWebhook) ActivePreviousSigningKey(now time.Time) []byte {
 	if len(w.PreviousSigningKey) == 0 || !now.Before(w.PreviousSecretExpiresAt) {
 		return nil
@@ -86,8 +81,7 @@ func (w CustomerWebhook) ActivePreviousSigningKey(now time.Time) []byte {
 	return w.PreviousSigningKey
 }
 
-// WebhookDelivery is one delivery of an event to a customer webhook; every attempt is tracked
-// so the dashboard can render the delivery log.
+// WebhookDelivery is one delivery of an event to a customer webhook, with every attempt tracked for the dashboard delivery log.
 type WebhookDelivery struct {
 	ID                 uuid.UUID
 	WebhookID          uuid.UUID
@@ -101,15 +95,12 @@ type WebhookDelivery struct {
 	CreatedAt          time.Time
 }
 
-// IsTerminal reports whether the delivery has stopped retrying: delivered, or the retry budget
-// is exhausted (NextAttemptAt zero with DeliveredAt zero; callers tell them apart by DeliveredAt).
+// IsTerminal reports whether the delivery stopped retrying: delivered, or retry budget exhausted (NextAttemptAt zero; tell them apart by DeliveredAt).
 func (d WebhookDelivery) IsTerminal() bool {
 	return !d.DeliveredAt.IsZero() || d.NextAttemptAt.IsZero()
 }
 
-// ErrDeliveryAlreadyEnqueued reports an EnqueueDelivery whose ID is already
-// queued for that webhook: the event reached the subscriber on an earlier
-// attempt, so nothing was inserted and nothing was lost.
+// ErrDeliveryAlreadyEnqueued reports an EnqueueDelivery whose ID is already queued for that webhook, so nothing was inserted and nothing was lost.
 var ErrDeliveryAlreadyEnqueued = errors.New("platform: webhook delivery already enqueued")
 
 // WebhookStore persists [CustomerWebhook] and [WebhookDelivery].

@@ -6,17 +6,7 @@ import (
 	"time"
 )
 
-// Trade is one executed trade, observed on a specific venue in a specific ledger.
-//
-// Storage identity is (Source, Ledger, TxHash, OpIndex, Timestamp), mirroring the `trades`
-// hypertable primary key, so a persisted row always produces the same ID.
-//
-// Amounts are [Amount] (big.Int-backed). Price is NOT stored: it is derived from
-// QuoteAmount / BaseAmount at query time, since a stored price would force a precision choice
-// that belongs at the display layer.
-//
-// Invariant: BaseAmount >= 0, QuoteAmount >= 0, not both zero. A single zero leg is a real
-// (unpriceable) fill; both zero is an ingestion bug.
+// Trade is one executed trade on a venue in a ledger, identified by (Source, Ledger, TxHash, OpIndex, Timestamp); amounts are [Amount], price is derived at query time never stored, and BaseAmount/QuoteAmount are >= 0 and not both zero.
 type Trade struct {
 	// Source is the connector name ("sdex", "soroswap", ...). Must be stable: it is part of the
 	// trade ID.
@@ -60,14 +50,7 @@ type Trade struct {
 	RoutedVia string `json:"routed_via,omitempty"`
 }
 
-// FanoutOpIndex packs an operation index (high 16 bits) and an in-operation event index (low 16)
-// into the uint32 OpIndex slot, so several trades from ONE operation (a multi-hop swap) get
-// distinct identities instead of colliding on the primary key and being silently dropped by the
-// writer's ON CONFLICT. Sources emitting one trade per Soroban contract event within an op
-// (aquarius, comet) MUST use it; SDEX spaces op_index itself (*1024 stride).
-//
-// It panics if either input is negative or exceeds 0xFFFF: masking would manufacture the
-// trade-ID collisions this exists to prevent, and is a decoder bug to surface.
+// FanoutOpIndex packs an operation index (high 16 bits) and an event index (low 16) into OpIndex so several trades from one operation keep distinct identities; it panics if either is negative or over 0xFFFF.
 func FanoutOpIndex(opIndex, eventIndex int) uint32 {
 	if opIndex < 0 || opIndex > 0xFFFF {
 		panic(fmt.Sprintf("canonical: FanoutOpIndex opIndex %d out of range [0, 65535]", opIndex))
@@ -78,18 +61,13 @@ func FanoutOpIndex(opIndex, eventIndex int) uint32 {
 	return uint32(opIndex)<<16 | uint32(eventIndex)
 }
 
-// ID is the primary key in the trades hypertable and the dedup key across region replicas:
-// `<source>:<ledger>:<tx_hash>:<op_index>:<unix_nanos_utc>`.
+// ID is the trades primary key and cross-region dedup key: `<source>:<ledger>:<tx_hash>:<op_index>:<unix_nanos_utc>`.
 func (t Trade) ID() string {
 	return fmt.Sprintf("%s:%d:%s:%d:%d",
 		t.Source, t.Ledger, t.TxHash, t.OpIndex, t.Timestamp.UTC().UnixNano())
 }
 
-// Validate returns nil iff every invariant holds; ErrInvalidTrade is always an upstream bug.
-//
-// Ledger is NOT required to be non-zero: off-chain venues stamp 0 and rely on the rest of the
-// identity for uniqueness. Exactly one zero leg is valid: SDEX settles fills that rounded to zero
-// stroops, real on-chain effects that are stored but unpriceable, so every price path filters them.
+// Validate returns nil iff every invariant holds (ErrInvalidTrade is an upstream bug); Ledger may be 0 for off-chain venues, and exactly one zero leg is valid but unpriceable, so price paths filter it.
 func (t Trade) Validate() error {
 	if t.Source == "" {
 		return fmt.Errorf("%w: empty source", ErrInvalidTrade)
@@ -116,14 +94,12 @@ func (t Trade) Validate() error {
 	return nil
 }
 
-// PriceRatio returns (numerator, denominator) = (QuoteAmount, BaseAmount), never nil. The
-// *big.Int pair loses no precision; float conversion belongs only at the display edge.
+// PriceRatio returns (QuoteAmount, BaseAmount) as a lossless *big.Int pair; convert to float only at the display edge.
 func (t Trade) PriceRatio() (num, den *big.Int) {
 	return t.QuoteAmount.BigInt(), t.BaseAmount.BigInt()
 }
 
-// Equal compares two trades by storage identity only; Maker/Taker are observational and may
-// differ between regions' records of the same row.
+// Equal compares two trades by storage identity only; Maker/Taker are observational.
 func (t Trade) Equal(o Trade) bool {
 	return t.Source == o.Source &&
 		t.Ledger == o.Ledger &&

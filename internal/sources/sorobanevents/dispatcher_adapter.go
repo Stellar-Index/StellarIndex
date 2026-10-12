@@ -12,17 +12,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// RawEventSink receives every Soroban contract event from the dispatcher's raw-event hook,
-// whether or not a per-source decoder claimed it; the sink converts to a [Row] via [Capture].
-//
-// PushEvent MAY block to apply back-pressure: cursor advance must not outrun durable writes,
-// otherwise -resume cannot recover the gap, so a full buffer must never drop rows.
+// RawEventSink receives every Soroban contract event from the dispatcher's raw-event hook, claimed or not; PushEvent MAY block for back-pressure because cursor advance must not outrun durable writes (else -resume cannot recover the gap), so a full buffer must never drop rows.
 type RawEventSink interface {
 	PushEvent(ev events.Event)
 }
 
-// BatchWriter is the storage seam the [AsyncSink] drains into. The Timescale implementation
-// uses one multi-row INSERT with ON CONFLICT DO NOTHING, so replays are idempotent.
+// BatchWriter is the storage seam the [AsyncSink] drains into; the Timescale implementation uses one multi-row INSERT with ON CONFLICT DO NOTHING, so replays are idempotent.
 type BatchWriter interface {
 	InsertSorobanEventsBatch(ctx context.Context, rows []Row) error
 }
@@ -64,14 +59,7 @@ type AsyncSinkOptions struct {
 	Logger *slog.Logger
 }
 
-// AsyncSink is the back-pressuring adapter between the dispatcher's raw-event hook and a batched
-// storage writer. Construct with [NewAsyncSink] + Start; Stop drains the buffer and stops the worker.
-//
-// PushEvent blocks when the channel is full so rows are never silently lost, a precondition for
-// the backfill driver's cursor-advance contract. DroppedCount goes non-zero only when a producer
-// races past the stopping check after Stop.
-//
-// PushEvent is safe for concurrent callers; the single worker goroutine serialises writes.
+// AsyncSink is the back-pressuring adapter between the raw-event hook and a batched writer (build with [NewAsyncSink] + Start; Stop drains); PushEvent blocks when full so rows are never silently lost (a precondition for the backfill cursor-advance contract), is safe for concurrent callers, and a single worker serialises writes.
 type AsyncSink struct {
 	w                BatchWriter
 	isPermanentFault func(error) bool
@@ -112,8 +100,7 @@ type AsyncSink struct {
 	accepted uint64
 }
 
-// NewAsyncSink constructs an AsyncSink. Returns the sink in stopped
-// state — callers must call Start before PushEvent will drain.
+// NewAsyncSink constructs an AsyncSink in stopped state; callers must call Start before PushEvent will drain.
 func NewAsyncSink(w BatchWriter, opts AsyncSinkOptions) *AsyncSink {
 	if opts.IsPermanentFault == nil {
 		opts.IsPermanentFault = func(error) bool { return false }
@@ -157,10 +144,7 @@ func (s *AsyncSink) Start() {
 	s.startOnce.Do(func() { go s.run() })
 }
 
-// PushEvent captures ev into a Row and enqueues it. A Capture error is counted as skipped
-// (ErrSkip silently, anything else logged). A full channel BLOCKS until a slot frees or Stop
-// fires, in which case the row is counted as dropped; DroppedCount is non-zero only in that
-// shutdown race. Satisfies [RawEventSink] structurally to avoid a circular import.
+// PushEvent captures ev into a Row and enqueues it; a Capture error counts as skipped, and a full channel BLOCKS until a slot frees or Stop fires (then the row counts as dropped). Satisfies [RawEventSink] structurally to avoid a circular import.
 func (s *AsyncSink) PushEvent(ev events.Event) {
 	row, err := Capture(ev)
 	if err != nil {
@@ -203,10 +187,7 @@ const syncPoll = 20 * time.Millisecond
 // ErrSinkStopped is returned by [AsyncSink.Sync] when the worker exited with accepted rows unsettled.
 var ErrSinkStopped = errors.New("sorobanevents: sink stopped before its rows settled")
 
-// Sync blocks until every row whose PushEvent returned before the call has settled (committed to
-// soroban_events, or counted lost) or ctx ends. PushEvent returns before the ledgerstream cursor
-// is written, so after Sync every ledger at or below a previously read cursor is readable unless
-// LostCount says otherwise. The worker settles batches in channel order, so the count settles a prefix.
+// Sync blocks until every row whose PushEvent returned before the call has settled (committed or counted lost) or ctx ends, so after Sync every ledger at or below a previously read ledgerstream cursor is readable unless LostCount says otherwise.
 func (s *AsyncSink) Sync(ctx context.Context) error {
 	s.mu.Lock()
 	target := s.accepted
@@ -246,20 +227,14 @@ func (s *AsyncSink) noteUnlandedLocked(ledger uint32) {
 	}
 }
 
-// LowestUnlandedLedger returns the lowest ledger of any row dropped or abandoned at shutdown, so a
-// resume cursor can stop short of it. Permanent-data-fault rows are excluded: a re-walk cannot
-// land them either.
+// LowestUnlandedLedger returns the lowest ledger of any row dropped or abandoned at shutdown so a resume cursor can stop short of it; permanent-data-fault rows are excluded since a re-walk cannot land them.
 func (s *AsyncSink) LowestUnlandedLedger() (uint32, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.minUnlanded, s.minUnlanded != 0
 }
 
-// Stop closes the stopping channel so blocked producers return their row as dropped, then waits
-// for the worker to drain and flush the final batch within DrainGrace; failures are counted lost.
-// The input channel is deliberately not closed: that would race concurrent producers into a
-// send-to-closed panic. Producers racing past the stopping check count as dropped; accepted rows
-// are never counted lost merely because Stop raced their flush. Idempotent.
+// Stop closes the stopping channel so blocked producers return their row as dropped, then waits for the worker to drain within DrainGrace (failures count lost); the input channel is deliberately not closed, to avoid a send-to-closed panic with racing producers. Idempotent.
 func (s *AsyncSink) Stop() {
 	s.stopOnce.Do(func() {
 		close(s.stopping)
@@ -271,16 +246,14 @@ func (s *AsyncSink) Stop() {
 	})
 }
 
-// DroppedCount returns the rows dropped in the shutdown race; a monotonic rise means Postgres
-// writes cannot keep up with peak event rate.
+// DroppedCount returns the rows dropped in the shutdown race; a monotonic rise means Postgres writes cannot keep up with peak event rate.
 func (s *AsyncSink) DroppedCount() uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.dropped
 }
 
-// SkippedCount returns the events skipped by Capture (non-contract or malformed). A low value is
-// normal; a sustained rise means the dispatcher is feeding us garbage.
+// SkippedCount returns the events skipped by Capture (non-contract or malformed); a sustained rise means the dispatcher is feeding us garbage.
 func (s *AsyncSink) SkippedCount() uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -294,9 +267,7 @@ func (s *AsyncSink) WrittenCount() uint64 {
 	return s.written
 }
 
-// LostCount returns the rows permanently lost: batches that hit a positively-classified permanent
-// data fault or never landed before shutdown gave up. Without this signal a sustained infra fault
-// would silently eat whole windows of the raw landing zone, so operators alert on it rising.
+// LostCount returns the rows permanently lost (a positively-classified permanent data fault, or never landed before shutdown); operators alert on it rising since otherwise an infra fault silently eats windows of the raw landing zone.
 func (s *AsyncSink) LostCount() uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()

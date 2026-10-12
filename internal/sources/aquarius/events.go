@@ -10,9 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// SourceName constant — appears in metrics labels,
-// canonical.Trade.Source, and config.IngestionConfig.EnabledSources.
-// Stable.
+// SourceName is the stable source name used in metrics labels, canonical.Trade.Source and config.IngestionConfig.EnabledSources.
 const SourceName = "aquarius"
 
 // Event names: topic[0] of every Aquarius event, as a Symbol SCVal (per
@@ -90,9 +88,7 @@ const (
 	MainnetXLMSAC = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"
 )
 
-// PoolType classifies the Aquarius pool emitting an event. It is only for operator inspection:
-// the trade decoder never branches on it, because the `trade` event carries the sold/bought
-// token addresses in its topics for every pool shape.
+// PoolType classifies the Aquarius pool emitting an event, for operator inspection only: the trade decoder never branches on it because `trade` carries the sold/bought token addresses in its topics for every pool shape.
 type PoolType uint8
 
 const (
@@ -176,19 +172,10 @@ var (
 	ErrZeroAmountTrade = errors.New("aquarius: zero-amount trade (recognized no-op)")
 )
 
-// EventAddPool is the ROUTER's pool-registration event (emitted by MainnetRouter, not by pools).
-// Its body is a Vec whose first element is the new pool's Address, the seam the contract-identity
-// gate anchors on (ADR-0035, ADR-0040; docs/protocols/aquarius.md).
+// EventAddPool is the ROUTER's pool-registration event (emitted by MainnetRouter, not by pools); its Vec body's first element is the new pool's Address, the seam the contract-identity gate anchors on (ADR-0035, ADR-0040).
 const EventAddPool = "add_pool"
 
-// MainnetPools is the curated gated pool set (ADR-0040): the pools announced by MainnetRouter's
-// add_pool events, which match the protocol's own registry API, so the router is the trust root.
-// Pools added later self-register via the add_pool path in Decode, so this is a warm-start. An
-// unlisted pool fail-closes into an ADR-0033 recognition gap (visible, never silently attributed).
-//
-// Deliberately EXCLUDED (docs/protocols/aquarius.md): pools of the parallel router deployment
-// CA7RQDMM... (same WASM, not in the registry API), the look-alike CCPHUHQY... (foreign pool
-// WASM), and pre-genesis rehearsal pools.
+// MainnetPools is the curated gated pool set (ADR-0040): pools announced by MainnetRouter's add_pool events (the trust root), a warm-start since later pools self-register in Decode; an unlisted pool fail-closes into a recognition gap, and the parallel router's pools, the look-alike CCPHUHQY... and pre-genesis pools are deliberately EXCLUDED (docs/protocols/aquarius.md).
 var MainnetPools = []string{
 	"CA22XCXSINOJTOQGKTLTEUXNKE7Z4IEBO5XNHPX7MRAEPOD3OAJMHY5R",
 	"CA242XKXANKC46P53M355OPYWMHWPPTKQM5T5DNMOBWJMHOWDLNPJTN4",
@@ -524,9 +511,7 @@ var MainnetPools = []string{
 	"CDZYAFNTTKR5V6ZWYUBHSYTYNEMOQZJPJ4VRTWFEMEZO3CPLS62HWRY4",
 }
 
-// MainnetGatedSet is the curated child set the decoder seeds —
-// currently just the pools (the router registers itself as the
-// factory trust root, not a child).
+// MainnetGatedSet is the curated child set the decoder seeds (currently just the pools; the router is the factory trust root, not a child).
 func MainnetGatedSet() []string {
 	out := make([]string, 0, len(MainnetPools))
 	out = append(out, MainnetPools...)

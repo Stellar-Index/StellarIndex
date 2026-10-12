@@ -11,8 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// ClassicSupplyStore is the storage primitive set the [StorageClassicSupplyReader] consumes. Each sum
-// is a non-nil *big.Int, removal-aware, at or before the ledger.
+// ClassicSupplyStore is the storage primitive set the [StorageClassicSupplyReader] consumes; each sum is a non-nil, removal-aware *big.Int at or before the ledger.
 type ClassicSupplyStore interface {
 	SumTrustlineBalancesAtOrBefore(ctx context.Context, assetKey string, asOfLedger uint32) (*big.Int, error)
 	SumClaimableBalancesAtOrBefore(ctx context.Context, assetKey string, asOfLedger uint32) (*big.Int, error)
@@ -33,17 +32,13 @@ type ClassicSupplyStore interface {
 	MinClassicComponentLedger(ctx context.Context, assetKey string, asOfLedger uint32) (uint32, error)
 }
 
-// StorageClassicSupplyReader satisfies [ClassicSupplyReader] from the four classic-supply hypertables
-// (ADR-0022). The issuer's own holding is read as a normal trustline observation (zero if absent);
-// [LockedSet] accounts/contracts are looked up per entity and summed in Go (short lists).
+// StorageClassicSupplyReader satisfies [ClassicSupplyReader] from the four classic-supply hypertables (ADR-0022), reading the issuer as a normal trustline and summing [LockedSet] entries in Go.
 type StorageClassicSupplyReader struct {
 	store  ClassicSupplyStore
 	logger *slog.Logger
 }
 
-// ClassicSupplyReaderOptions configures a StorageClassicSupplyReader.
-// The Logger rides here (the canonical idiom — a logger is never a
-// positional constructor param; see docs/architecture/lexicon.md).
+// ClassicSupplyReaderOptions configures a StorageClassicSupplyReader; the Logger rides here, never as a positional constructor param.
 type ClassicSupplyReaderOptions struct {
 	// Logger surfaces the fail-permissive MinClassicComponentLedger error
 	// path; it is the only thing the reader logs. A nil Logger
@@ -52,9 +47,7 @@ type ClassicSupplyReaderOptions struct {
 	Logger *slog.Logger
 }
 
-// NewStorageClassicSupplyReader constructs the reader. A zero
-// ClassicSupplyReaderOptions (nil Logger) defaults the logger to
-// [slog.Default].
+// NewStorageClassicSupplyReader constructs the reader; a nil Logger defaults to [slog.Default].
 func NewStorageClassicSupplyReader(store ClassicSupplyStore, opts ClassicSupplyReaderOptions) *StorageClassicSupplyReader {
 	logger := opts.Logger
 	if logger == nil {
@@ -63,8 +56,7 @@ func NewStorageClassicSupplyReader(store ClassicSupplyStore, opts ClassicSupplyR
 	return &StorageClassicSupplyReader{store: store, logger: logger}
 }
 
-// ClassicSupplyAt implements [ClassicSupplyReader]. Any sub-query failure returns an error with no
-// partial Components: a partial sum would silently publish wrong totals.
+// ClassicSupplyAt implements [ClassicSupplyReader]; any sub-query failure returns an error with no partial Components, since a partial sum would publish wrong totals.
 func (r *StorageClassicSupplyReader) ClassicSupplyAt(ctx context.Context, asset canonical.Asset, locked LockedSet, ledger uint32) (ClassicSupplyComponents, error) {
 	if asset.Type != canonical.AssetClassic {
 		return ClassicSupplyComponents{}, fmt.Errorf("supply: StorageClassicSupplyReader: %w: got type %q", ErrNotClassic, asset.Type)
@@ -171,17 +163,13 @@ func (r *StorageClassicSupplyReader) sumPerContractSAC(ctx context.Context, cont
 // Compile-time check.
 var _ ClassicSupplyReader = (*StorageClassicSupplyReader)(nil)
 
-// AssetBoundClassicComputer adapts a [ClassicComputer] to [SnapshotComputer] by baking in a fixed
-// [canonical.Asset], so the aggregator can run one [Refresher] per watched classic asset.
+// AssetBoundClassicComputer adapts a [ClassicComputer] to [SnapshotComputer] with a fixed [canonical.Asset], one [Refresher] per watched classic asset.
 type AssetBoundClassicComputer struct {
 	inner *ClassicComputer
 	asset canonical.Asset
 }
 
-// NewAssetBoundClassicComputer constructs the per-asset wrapper.
-// Errors when the asset isn't a classic credit asset (the
-// [ClassicComputer] checks too at Compute time, but failing fast
-// at construction is friendlier).
+// NewAssetBoundClassicComputer constructs the per-asset wrapper, failing fast if the asset isn't a classic credit asset.
 func NewAssetBoundClassicComputer(inner *ClassicComputer, asset canonical.Asset) (*AssetBoundClassicComputer, error) {
 	if asset.Type != canonical.AssetClassic {
 		return nil, fmt.Errorf("%w: got type %q", ErrNotClassic, asset.Type)
@@ -192,8 +180,7 @@ func NewAssetBoundClassicComputer(inner *ClassicComputer, asset canonical.Asset)
 	return &AssetBoundClassicComputer{inner: inner, asset: asset}, nil
 }
 
-// Compute implements [SnapshotComputer] by delegating to the
-// wrapped [ClassicComputer.Compute] with the bound asset.
+// Compute implements [SnapshotComputer] by delegating to [ClassicComputer.Compute] with the bound asset.
 func (a *AssetBoundClassicComputer) Compute(ctx context.Context, ledger uint32, observedAt time.Time) (Supply, error) {
 	return a.inner.Compute(ctx, a.asset, ledger, observedAt)
 }

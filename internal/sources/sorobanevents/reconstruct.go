@@ -10,13 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// Reconstruct projects a soroban_events Row back into an [events.Event] for a per-source decoder,
-// the inverse of [Capture] for the fields backfill needs (contract_id, topics, body, op args).
-// LedgerClosedAt is RFC 3339 as the dispatcher would stamp it; ID and TransactionIndex stay empty
-// because no decoder uses them.
-//
-// The projector (including `stellarindex-ops projector-replay`, the one catch-up path per
-// ADR-0032) and the completeness reconciler use it to re-feed the same decoder live ingest uses.
+// Reconstruct projects a soroban_events Row back into an [events.Event] for a per-source decoder, the inverse of [Capture] for the fields backfill needs; ID and TransactionIndex stay empty since no decoder uses them, and the projector (incl. `projector-replay`) and completeness reconciler use it to re-feed the live decoder.
 func Reconstruct(row Row) (events.Event, error) {
 	if row.ContractID == "" {
 		return events.Event{}, fmt.Errorf("sorobanevents.Reconstruct: empty contract_id (ledger=%d)", row.Ledger)

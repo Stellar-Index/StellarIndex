@@ -54,23 +54,17 @@ func (rd ReserveData) rateScalar() *big.Int {
 	return scalar12
 }
 
-// SuppliedUnderlying returns the reserve's total supplied amount in the
-// underlying token's smallest unit (reserve.rs::total_supply =
-// b_supply.fixed_mul_floor(b_rate, SCALAR_12), SCALAR_9 on V1).
+// SuppliedUnderlying returns the reserve's total supplied amount in the underlying token's smallest unit (reserve.rs::total_supply: b_supply.fixed_mul_floor(b_rate, SCALAR_12), SCALAR_9 on V1).
 func (rd ReserveData) SuppliedUnderlying() *big.Int {
 	return fixedMulFloor(rd.BSupply, rd.BRate, rd.rateScalar())
 }
 
-// BorrowedUnderlying returns the reserve's total borrowed amount in the
-// underlying token's smallest unit (reserve.rs::total_liabilities =
-// d_supply.fixed_mul_ceil(d_rate, SCALAR_12), SCALAR_9 on V1).
+// BorrowedUnderlying returns the reserve's total borrowed amount in the underlying token's smallest unit (reserve.rs::total_liabilities: d_supply.fixed_mul_ceil(d_rate, SCALAR_12), SCALAR_9 on V1).
 func (rd ReserveData) BorrowedUnderlying() *big.Int {
 	return fixedMulCeil(rd.DSupply, rd.DRate, rd.rateScalar())
 }
 
-// Utilization returns the reserve utilization in 7 decimals, exactly
-// per reserve.rs::utilization: liabilities/supply, 0 when no debt,
-// capped at SCALAR_7 (100%) when liabilities ≥ supply.
+// Utilization returns the reserve utilization in 7 decimals per reserve.rs::utilization: liabilities/supply, 0 with no debt, capped at SCALAR_7 (100%).
 func (rd ReserveData) Utilization() *big.Int {
 	liabilities := rd.BorrowedUnderlying()
 	supply := rd.SuppliedUnderlying()
@@ -83,9 +77,7 @@ func (rd ReserveData) Utilization() *big.Int {
 	return fixedDivCeil(liabilities, supply, scalar7)
 }
 
-// BorrowRate returns the current annual borrow rate (cur_ir) in 7 decimals, ported from
-// interest.rs::calc_accrual. util is ReserveData.Utilization and irMod is ReserveData.IRMod,
-// both 7-decimal.
+// BorrowRate returns the current annual borrow rate (cur_ir) in 7 decimals, ported from interest.rs::calc_accrual; util and irMod are both 7-decimal.
 func (rc ReserveConfig) BorrowRate(util, irMod *big.Int) *big.Int {
 	rBase := big.NewInt(int64(rc.RBase))
 	rOne := big.NewInt(int64(rc.ROne))
@@ -122,10 +114,7 @@ func (rc ReserveConfig) BorrowRate(util, irMod *big.Int) *big.Int {
 	}
 }
 
-// SupplyRate returns the supplier rate in 7 decimals: the borrow rate scaled by utilization (only
-// borrowed capital earns interest) minus the backstop's take. bstopRate is 7-decimal.
-//
-//	supply_rate = borrow_rate × util × (1 − bstop_rate)
+// SupplyRate returns the supplier rate in 7 decimals: borrow_rate x util x (1 - bstop_rate), since only borrowed capital earns interest; bstopRate is 7-decimal.
 func SupplyRate(borrowRate, util *big.Int, bstopRate uint32) *big.Int {
 	gross := fixedMulFloor(borrowRate, util, scalar7)
 	keep := new(big.Int).Sub(scalar7, big.NewInt(int64(bstopRate)))
@@ -144,9 +133,7 @@ func rate7ToFloat(rate *big.Int) float64 {
 	return v
 }
 
-// ReserveMetrics bundles the derived current-state metrics for one reserve. HasAPR is false when
-// the ReserveConfig (rate-model params) is unavailable: supplied / borrowed / utilization come
-// from ReserveData alone, but the APR fields are meaningless without the config.
+// ReserveMetrics bundles the derived current-state metrics for one reserve; HasAPR is false when the ReserveConfig is unavailable, as the APR fields are meaningless without it.
 type ReserveMetrics struct {
 	SuppliedUnderlying *big.Int // smallest unit of the underlying token
 	BorrowedUnderlying *big.Int
@@ -156,8 +143,7 @@ type ReserveMetrics struct {
 	SupplyAPR          float64 //floatmoney:ok a yield rate/fraction (like BorrowAPR above), not a principal amount
 }
 
-// BaseMetrics derives the config-free metrics (supplied / borrowed / utilization) from ReserveData
-// alone, for reserves whose ReserveConfig isn't captured so APY can't be computed.
+// BaseMetrics derives the config-free metrics (supplied, borrowed, utilization) from ReserveData alone, for reserves whose ReserveConfig isn't captured.
 func BaseMetrics(rd ReserveData) ReserveMetrics {
 	return ReserveMetrics{
 		SuppliedUnderlying: rd.SuppliedUnderlying(),
@@ -166,9 +152,7 @@ func BaseMetrics(rd ReserveData) ReserveMetrics {
 	}
 }
 
-// Metrics derives the full per-reserve metrics (incl. APY) from reserve state, config and the
-// pool's backstop take rate. BorrowRate is the V2 model (7-decimal ir_mod); a V1 reserve's
-// 9-decimal ir_mod has no verified port, so its APR is withheld rather than served ~100x high.
+// Metrics derives the full per-reserve metrics (incl. APY) using the V2 borrow model (7-decimal ir_mod); a V1 reserve's 9-decimal ir_mod has no verified port, so its APR is withheld rather than served ~100x high.
 func Metrics(rd ReserveData, rc ReserveConfig, bstopRate uint32) ReserveMetrics {
 	if rd.Version == PoolV1 {
 		return BaseMetrics(rd)

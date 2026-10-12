@@ -11,8 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// DefaultBufferSize is the per-topic ring capacity: ~4 hours of replay at the 1m closed-bucket
-// cadence and ~21 minutes at the 5s tip cadence, about 1 MiB per topic at 4 KiB per Event.
+// DefaultBufferSize is the per-topic ring capacity (~4 hours of replay at the 1m cadence, ~21 minutes at the 5s tip cadence).
 const DefaultBufferSize = 256
 
 // subscriberQueueDepth is the per-subscriber channel capacity; a full channel drops the
@@ -24,24 +23,13 @@ const subscriberQueueDepth = 32
 // is headroom, not a tuned limit.
 const maxSplitReplayTopics = 8
 
-// DefaultTopicIdleTTL is how long a subscriber-less topic with buffered events is kept, so a
-// client that disconnects can reconnect with Last-Event-ID and still get its replay. Topics with an
-// EMPTY buffer (what a client mints by streaming an arbitrary pair) have nothing to replay and are
-// dropped as soon as their last subscriber leaves.
+// DefaultTopicIdleTTL is how long a subscriber-less topic with buffered events is kept for Last-Event-ID replay; topics with an empty buffer are dropped as soon as their last subscriber leaves.
 const DefaultTopicIdleTTL = 15 * time.Minute
 
-// DefaultMaxTopics is the topic-map ceiling per Hub. Over it the reaper evicts SUBSCRIBER-LESS
-// topics oldest-first; a subscribed topic is never evicted, because that would silently detach an
-// open stream. When every topic is subscribed, [Hub.Subscribe] refuses with [ErrTopicCapacity], so
-// client-supplied keys cannot grow the map past the ceiling; only Publish may briefly exceed it.
-//
-// Rings are allocated on first PUBLISH (see [topicState.buffer]), so memory scales with topics that
-// carry events (~80 MiB at this bound) while a subscriber-only topic costs just a map entry.
-// [Hub.BufferedTopicCount] reports the count that carries the memory.
+// DefaultMaxTopics is the per-Hub topic-map ceiling: the reaper evicts only SUBSCRIBER-LESS topics oldest-first, [Hub.Subscribe] refuses with [ErrTopicCapacity] when every topic is subscribed, and only Publish may briefly exceed it; rings are allocated on first publish.
 const DefaultMaxTopics = 4096
 
-// ErrTopicCapacity is returned by [Hub.Subscribe] when a new topic cannot fit under the ceiling
-// because every held topic has a live subscriber. The caller should refuse the stream (503).
+// ErrTopicCapacity is returned by [Hub.Subscribe] when a new topic cannot fit under the ceiling because every held topic has a live subscriber; the caller should refuse the stream (503).
 var ErrTopicCapacity = errors.New("streaming: hub topic capacity exhausted")
 
 const (
@@ -55,8 +43,7 @@ const (
 	topicSweepInterval = 30 * time.Second
 )
 
-// Hub is the goroutine-safe pub/sub primitive backing the SSE stream handlers, shared across all
-// stream endpoints (topics are typically pair-keyed, e.g. "tip:native/fiat:USD").
+// Hub is the goroutine-safe pub/sub primitive backing the SSE stream handlers, shared across all stream endpoints.
 type Hub struct {
 	gen        Generator
 	bufferSize int
@@ -129,9 +116,7 @@ func (t *topicState) hasEvictedBuffered() bool {
 	return t.buffer != nil && t.buffer.hasEvicted()
 }
 
-// NewHub returns a Hub with bufferSize events per topic (0 takes [DefaultBufferSize]). Retention
-// defaults to [DefaultTopicIdleTTL] and [DefaultMaxTopics]; see [Hub.SetTopicIdleTTL] and
-// [Hub.SetMaxTopics].
+// NewHub returns a Hub with bufferSize events per topic (0 takes [DefaultBufferSize]) and default retention ([DefaultTopicIdleTTL], [DefaultMaxTopics]).
 func NewHub(bufferSize int) *Hub {
 	if bufferSize <= 0 {
 		bufferSize = DefaultBufferSize
@@ -145,8 +130,7 @@ func NewHub(bufferSize int) *Hub {
 	}
 }
 
-// SetTopicIdleTTL overrides how long a subscriber-less topic keeps its replay buffer; <= 0
-// restores [DefaultTopicIdleTTL]. Call at startup or from tests.
+// SetTopicIdleTTL overrides how long a subscriber-less topic keeps its replay buffer; <= 0 restores [DefaultTopicIdleTTL]. Call at startup or from tests.
 func (h *Hub) SetTopicIdleTTL(d time.Duration) {
 	if d <= 0 {
 		d = DefaultTopicIdleTTL
@@ -156,8 +140,7 @@ func (h *Hub) SetTopicIdleTTL(d time.Duration) {
 	h.mu.Unlock()
 }
 
-// SetMaxTopics overrides the topic-map ceiling. Pass <= 0 to restore
-// [DefaultMaxTopics]. Call at startup (or from tests).
+// SetMaxTopics overrides the topic-map ceiling; <= 0 restores [DefaultMaxTopics]. Call at startup or from tests.
 func (h *Hub) SetMaxTopics(n int) {
 	if n <= 0 {
 		n = DefaultMaxTopics
@@ -168,17 +151,14 @@ func (h *Hub) SetMaxTopics(n int) {
 	h.mu.Unlock()
 }
 
-// TopicCount reports how many topics the Hub currently holds — the
-// gauge for the reap threshold [DefaultMaxTopics] works against.
+// TopicCount reports how many topics the Hub currently holds, the gauge for the [DefaultMaxTopics] reap threshold.
 func (h *Hub) TopicCount() int {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return len(h.topics)
 }
 
-// BufferedTopicCount reports how many topics have allocated a replay ring (were published to at
-// least once). This is the count that carries the Hub's memory; the difference from
-// [Hub.TopicCount] is subscribed-only topics, which cost a map entry rather than ~20 KiB.
+// BufferedTopicCount reports how many topics have allocated a replay ring (published to at least once), the count that carries the Hub's memory.
 func (h *Hub) BufferedTopicCount() int {
 	h.mu.RLock()
 	topics := make([]*topicState, 0, len(h.topics))
@@ -198,15 +178,10 @@ func (h *Hub) BufferedTopicCount() int {
 	return n
 }
 
-// TopicsReaped reports the cumulative topics the reaper has dropped; a flat zero next to a high
-// [Hub.TopicCount] means the retention policy is mistuned.
+// TopicsReaped reports the cumulative topics the reaper has dropped; a flat zero next to a high [Hub.TopicCount] means retention is mistuned.
 func (h *Hub) TopicsReaped() uint64 { return h.reaped.Load() }
 
-// Publish broadcasts a fresh Event on the given topic and returns the assigned ID; the Hub
-// populates ID and Timestamp, so callers MUST leave both zero.
-//
-// A subscriber whose queue is full is dropped (channel closed, subscription removed); the client
-// sees the connection close and reconnects with Last-Event-ID for buffered replay.
+// Publish broadcasts a fresh Event on the topic and returns its assigned ID (callers MUST leave ID and Timestamp zero); a subscriber with a full queue is dropped and must reconnect with Last-Event-ID.
 func (h *Hub) Publish(topic, eventType string, data []byte) string {
 	ev := Event{
 		Type:      eventType,
@@ -246,14 +221,7 @@ func (h *Hub) Publish(topic, eventType string, data []byte) string {
 	return ev.ID
 }
 
-// Subscribe registers a subscriber across one or more topics with an optional Last-Event-ID resume
-// cursor. The returned chan yields any [EventTypeStreamGap] markers, then replay in ID order
-// ACROSS every subscribed topic, then live events. Unsubscribe by calling cancel().
-//
-// An empty lastEventID means no replay. If the backlog exceeds the subscriber queue, the OLDEST
-// events are dropped (see the loop below) and a stream_gap marker precedes the replay only when
-// the ring itself lost events. It returns [ErrTopicCapacity], holding no registration, when a
-// topic it would create does not fit under the ceiling.
+// Subscribe registers a subscriber across topics with an optional Last-Event-ID resume cursor, yielding [EventTypeStreamGap] markers, then replay in ID order across topics, then live events; it returns [ErrTopicCapacity] with no registration when a new topic does not fit, and cancel() unsubscribes.
 func (h *Hub) Subscribe(topics []string, lastEventID string) (<-chan Event, func(), error) {
 	sub := &subscription{
 		ch:     make(chan Event, subscriberQueueDepth),

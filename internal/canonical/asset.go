@@ -44,21 +44,7 @@ const (
 	AssetOracleRaw AssetType = "raw"
 )
 
-// Asset is a canonical identifier for any asset we price.
-//
-// The seven valid shapes:
-//
-//   - Native:  {Type: AssetNative}
-//   - Classic: {Type: AssetClassic, Code: "USDC", Issuer: "G..."}
-//   - Soroban: {Type: AssetSoroban, ContractID: "C..."}
-//   - Fiat:    {Type: AssetFiat,   Code: "USD"}            ADR-0010
-//   - Crypto:  {Type: AssetCrypto, Code: "BTC"}            ADR-0014
-//   - RWA:     {Type: AssetRWA,    Code: "BENJI"}          ADR-0028
-//   - Raw:     {Type: AssetOracleRaw, Code: "NOTACOIN"}    record-layer only
-//
-// A SAC-wrapped classic asset's canonical form is the classic one; the SAC address is metadata
-// via [Asset.SacContractID]. The zero value is not a valid Asset; use [NativeAsset],
-// [NewClassicAsset], or [NewSorobanAsset].
+// Asset is the canonical identifier for any asset we price, in one of seven shapes (native, classic, soroban, fiat, crypto, rwa, oracle-raw); a SAC-wrapped classic asset is canonically the classic one, and the zero value is invalid.
 type Asset struct {
 	Type AssetType `json:"type"`
 
@@ -81,8 +67,7 @@ func NativeAsset() Asset {
 	return Asset{Type: AssetNative}
 }
 
-// NewClassicAsset constructs a classic Stellar asset. Returns an
-// error if code or issuer fail validation.
+// NewClassicAsset constructs a classic Stellar asset, erroring if code or issuer fail validation.
 func NewClassicAsset(code, issuer string) (Asset, error) {
 	if err := validateClassicAssetCode(code); err != nil {
 		return Asset{}, err
@@ -93,9 +78,7 @@ func NewClassicAsset(code, issuer string) (Asset, error) {
 	return Asset{Type: AssetClassic, Code: code, Issuer: issuer}, nil
 }
 
-// ValidateAssetCode reports whether code is a valid classic asset code, the rule [AssetFromXDR]
-// enforces. Exported so callers outside NewClassicAsset (e.g. internal/xdrjson) never mint a
-// canonical-looking id for a code AssetFromXDR would reject.
+// ValidateAssetCode reports whether code is a valid classic asset code, the rule [AssetFromXDR] enforces.
 func ValidateAssetCode(code string) error {
 	return validateClassicAssetCode(code)
 }
@@ -129,9 +112,7 @@ func NewSorobanAsset(contractID string) (Asset, error) {
 	return Asset{Type: AssetSoroban, ContractID: contractID}, nil
 }
 
-// String returns the canonical wire identifier (docs/reference/api-design.md §3): "native",
-// "<code>-<issuer>" (classic) or "<contract_id>" (soroban). [ParseAsset] also accepts
-// `<code>:<issuer>` on input, but output is always dash-separated.
+// String returns the canonical wire identifier: "native", "<code>-<issuer>" (classic) or "<contract_id>" (soroban); output is always dash-separated.
 func (a Asset) String() string {
 	switch a.Type {
 	case AssetNative:
@@ -158,9 +139,7 @@ func (a Asset) IsZero() bool {
 	return a.Type == "" && a.Code == "" && a.Issuer == "" && a.ContractID == ""
 }
 
-// Validate returns nil if a is one of the seven valid shapes (see the
-// [Asset] doc: native / classic / soroban / fiat / crypto / rwa / raw);
-// an error otherwise.
+// Validate returns nil if a is one of the seven valid shapes (see [Asset]), an error otherwise.
 func (a Asset) Validate() error { //nolint:gocognit,gocyclo // dispatch-heavy; one case per AssetType, splitting would reduce linearity
 	switch a.Type {
 	case AssetNative:
@@ -215,8 +194,7 @@ func (a Asset) Validate() error { //nolint:gocognit,gocyclo // dispatch-heavy; o
 	}
 }
 
-// Equal reports whether a and b name the same asset. A classic asset and its SAC-wrapped Soroban
-// form are NOT equal: they are different canonical representations, bridged by the SAC registry.
+// Equal reports whether a and b name the same asset; a classic asset and its SAC form are NOT equal, they are bridged by the SAC registry.
 func (a Asset) Equal(b Asset) bool {
 	return a.Type == b.Type &&
 		a.Code == b.Code &&
@@ -224,10 +202,7 @@ func (a Asset) Equal(b Asset) bool {
 		a.ContractID == b.ContractID
 }
 
-// ParseAsset is the inverse of String. Accepts all seven canonical
-// forms (native / classic / soroban / fiat: / crypto: / rwa: / raw:)
-// plus the `<code>:<issuer>` alias for classic assets and the case-
-// insensitive "XLM" alias for native.
+// ParseAsset is the inverse of String; it also accepts `<code>:<issuer>` for classic and case-insensitive "XLM" for native.
 func ParseAsset(s string) (Asset, error) {
 	if s == "" {
 		return Asset{}, fmt.Errorf("%w: empty asset identifier", ErrInvalidAsset)
@@ -279,14 +254,12 @@ func ParseAsset(s string) (Asset, error) {
 
 // ─── JSON ──────────────────────────────────────────────────────────
 
-// MarshalJSON emits the canonical string form, not the struct: the API wire contract uses flat
-// asset strings.
+// MarshalJSON emits the canonical string form, not the struct, per the flat-asset-string API contract.
 func (a Asset) MarshalJSON() ([]byte, error) {
 	return json.Marshal(a.String())
 }
 
-// UnmarshalJSON accepts the canonical string form or the structured object form that storage
-// layers keeping the fields split use.
+// UnmarshalJSON accepts the canonical string form or the structured object form.
 func (a *Asset) UnmarshalJSON(b []byte) error {
 	// Try string first
 	var s string
@@ -319,11 +292,7 @@ func (a Asset) Value() (driver.Value, error) {
 	return a.String(), nil
 }
 
-// Scan implements sql.Scanner.
-//
-// A SQL NULL is an ERROR, not a zero Asset: [Value] refuses anything failing [Validate], so a NULL
-// is a schema/query defect (a missed LEFT JOIN), and a zero Asset would survive every Equal
-// comparison. A legitimately nullable column must scan through sql.NullString and [ParseAsset].
+// Scan implements sql.Scanner; SQL NULL is an ERROR, not a zero Asset (scan nullable columns via sql.NullString and [ParseAsset]).
 func (a *Asset) Scan(src any) error {
 	if src == nil {
 		return fmt.Errorf("%w: cannot scan SQL NULL into an Asset "+

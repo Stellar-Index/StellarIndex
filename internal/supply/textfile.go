@@ -27,19 +27,14 @@ const metricVerifyRollupLastSuccessTimestamp = "stellarindex_supply_verify_rollu
 
 const helpVerifyRollupLastSuccessTimestamp = "Unix timestamp of the most recent verify-rollup run with 0 drift and 0 missing checkpoints."
 
-// WriteSnapshotTextfile renders a [Supply] snapshot in node_exporter textfile format. pass=false
-// emits no fresh `last_success_timestamp`, so the previous samples are carried forward (see
-// [metricLastSuccessTimestamp]); the failure path proper is [WriteSnapshotFailureTextfile].
-// Written to `<path>.tmp` then renamed; node_exporter skips `.tmp`, so a partial write never scrapes.
+// WriteSnapshotTextfile renders a [Supply] snapshot in node_exporter textfile format, atomically via `<path>.tmp` rename; pass=false carries the previous success timestamp forward.
 func WriteSnapshotTextfile(path string, snap Supply, durationSec float64, pass bool) error {
 	return writeAtomicCarryingLastSuccess(path, metricLastSuccessTimestamp, helpLastSuccessTimestamp, func(w io.Writer) error {
 		return writeSnapshotMetrics(w, snap, durationSec, pass)
 	})
 }
 
-// WriteSnapshotFailureTextfile writes `unit_failed=1` and the duration gauge, carrying the existing
-// last_success_timestamp samples through verbatim (none if no prior file, which `_never_initialized`
-// keys on) so a failed run can't erase the series both stale alerts need. assetRaw labels via [AssetKey].
+// WriteSnapshotFailureTextfile writes `unit_failed=1` and the duration gauge, carrying existing last_success_timestamp samples through verbatim so a failed run can't erase the series the stale alerts need.
 func WriteSnapshotFailureTextfile(path, assetRaw string, durationSec float64) error {
 	assetKey, err := ParseAssetKey(assetRaw)
 	if err != nil {
@@ -50,18 +45,14 @@ func WriteSnapshotFailureTextfile(path, assetRaw string, durationSec float64) er
 	})
 }
 
-// WriteVerifyRollupTextfile renders a `supply verify-rollup` run, mirroring [WriteSnapshotTextfile]:
-// pass=false carries the previous success timestamp forward. missingCount (contracts with no
-// sep41_supply_rollup checkpoint; unexamined, not clean, see [rollupExitDecision]) is kept distinct
-// from driftCount because the investigations start in different places.
+// WriteVerifyRollupTextfile renders a `supply verify-rollup` run like [WriteSnapshotTextfile]; missingCount (unexamined, not clean) is kept distinct from driftCount.
 func WriteVerifyRollupTextfile(path string, checked, driftCount, missingCount int, durationSec float64, pass bool) error {
 	return writeAtomicCarryingLastSuccess(path, metricVerifyRollupLastSuccessTimestamp, helpVerifyRollupLastSuccessTimestamp, func(w io.Writer) error {
 		return writeVerifyRollupMetrics(w, checked, driftCount, missingCount, durationSec, pass)
 	})
 }
 
-// WriteVerifyRollupFailureTextfile is the failure-path emit for a run that errored before it had
-// counts: only `unit_failed` and the duration gauge; the previous success timestamp is carried forward.
+// WriteVerifyRollupFailureTextfile is the failure-path emit for a run that errored before it had counts: `unit_failed` and the duration gauge only.
 func WriteVerifyRollupFailureTextfile(path string, durationSec float64) error {
 	return writeAtomicCarryingLastSuccess(path, metricVerifyRollupLastSuccessTimestamp, helpVerifyRollupLastSuccessTimestamp, func(w io.Writer) error {
 		return writeVerifyRollupFailureMetrics(w, durationSec)

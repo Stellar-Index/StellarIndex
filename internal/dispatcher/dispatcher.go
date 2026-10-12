@@ -34,19 +34,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// Decoder is what a source package implements to join event dispatch: export a NewDecoder() and register it
-// at startup. Name is stamped into metrics and Trade/OracleUpdate.Source; Matches is a cheap byte-equality
-// topic check (no SCVal parsing); Decode may emit nothing for intermediate events of a correlated sequence
-// (Soroswap swap+sync, Phoenix 8-field). A Decode error is counted and the next event proceeds.
+// Decoder is what a source package implements to join event dispatch; Matches is a cheap topic check (no SCVal parsing), and Decode may emit nothing for intermediate events of a correlated sequence; a Decode error is counted and dispatch continues.
 type Decoder interface {
 	Name() string
 	Matches(ev events.Event) bool
 	Decode(ev events.Event) ([]consumer.Event, error)
 }
 
-// Drainer is an optional interface a stateful [Decoder] implements to flush correlation groups still
-// buffered when a bounded stream ends; otherwise a group only an age sweep or later event would emit
-// (a phoenix swap, a soroswap swap with no following sync) is lost. Drain also empties the buffers.
+// Drainer is an optional [Decoder] interface for stateful decoders to flush correlation groups still buffered when a bounded stream ends; without it those groups are lost.
 type Drainer interface {
 	Drain() []consumer.Event
 }
@@ -59,10 +54,7 @@ func Drain(dec any) []consumer.Event {
 	return nil
 }
 
-// StateWriteKeyConsumer is an optional [Decoder] extension declaring the contracts whose events need
-// events.Event.StateWriteKeys. ProcessLedger resolves the write keys (state_write_keys.go) only for
-// those, since the meta walk and XDR marshalling are measurable overhead. Other events carry nil,
-// which consumers must read as "unknown", not "no writes".
+// StateWriteKeyConsumer is an optional [Decoder] extension declaring contracts whose events need events.Event.StateWriteKeys; other events carry nil, which consumers MUST read as "unknown", not "no writes".
 type StateWriteKeyConsumer interface {
 	StateWriteContracts() []string
 }
@@ -86,10 +78,7 @@ func (d *Dispatcher) stateWriteContracts() map[string]bool {
 	return set
 }
 
-// OpDecoder decodes classic Stellar operations (ManageOffer, PathPayment, …) rather than Soroban events;
-// SDEX is the main user. OpContext carries the op and its result so the decoder needn't re-walk the envelope.
-// Errors are skip-and-count, as for [Decoder]. Unlike [Decoder], op-type sets may overlap: every matching
-// OpDecoder runs, so each must emit only its own domain's facts.
+// OpDecoder decodes classic Stellar operations rather than Soroban events; errors are skip-and-count, and unlike [Decoder] every matching OpDecoder runs, so each MUST emit only its own domain's facts.
 type OpDecoder interface {
 	Name() string
 	// Matches is a cheap predicate on the op (typically checks
@@ -100,8 +89,7 @@ type OpDecoder interface {
 	Decode(ctx OpContext) ([]consumer.Event, error)
 }
 
-// OpContext carries what an OpDecoder needs to decode one classic operation: the op, its result,
-// and the tx-level metadata (ledger, close time, tx hash, source account).
+// OpContext carries what an OpDecoder needs to decode one classic operation: the op, its result and tx-level metadata.
 type OpContext struct {
 	Ledger   uint32
 	ClosedAt time.Time
@@ -117,10 +105,7 @@ type OpContext struct {
 	OpResult xdr.OperationResult
 }
 
-// ContractCallDecoder observes Soroban InvokeContract calls whether or not the contract emits an
-// event. Band's relay() / force_relay() update storage but publish nothing (docs/protocols/band.md),
-// so the call args are the authoritative payload. Matching is by (contract_id, function_name); the
-// source package decodes the args. Errors are skip-and-count, as for [Decoder].
+// ContractCallDecoder observes Soroban InvokeContract calls whether or not the contract emits an event, matching by (contract_id, function_name); errors are skip-and-count, as for [Decoder].
 type ContractCallDecoder interface {
 	Name() string
 	// Matches reports whether this decoder owns the call: contractID is the invoked C-strkey and
@@ -130,20 +115,14 @@ type ContractCallDecoder interface {
 	Decode(ctx ContractCallContext) ([]consumer.Event, error)
 }
 
-// ExecutionCorroborationRequirer is an optional [ContractCallDecoder] extension: the dispatcher
-// drops any matched call whose [ContractCallContext.ExecutionCorroborated] is false. Routing walks
-// the submitter-supplied auth tree and the host does not require every declared authorization to
-// execute, so a successful tx can carry an auth entry naming an oracle with FORGED price args that
-// never ran. Price oracles implement it (Band: its call args ARE the price); decoders that don't
-// (trade-volume routers) trust the walked tree.
+// ExecutionCorroborationRequirer is an optional [ContractCallDecoder] extension: the dispatcher drops matched calls whose ExecutionCorroborated is false, because a submitter-supplied auth entry can carry forged price args that never ran (price oracles implement it).
 type ExecutionCorroborationRequirer interface {
 	// RequiresExecutionCorroboration reports whether this decoder's calls must be
 	// execution-corroborated; false is equivalent to not implementing the interface.
 	RequiresExecutionCorroboration() bool
 }
 
-// RefusesUncorroborated reports whether dec must skip a matched call whose ExecutionCorroborated
-// flag is false. The live dispatcher and the lake re-derive share it so both gate identically.
+// RefusesUncorroborated reports whether dec must skip a matched call whose ExecutionCorroborated is false; the live dispatcher and the lake re-derive share it so both gate identically.
 func RefusesUncorroborated(dec ContractCallDecoder, corroborated bool) bool {
 	r, ok := dec.(ExecutionCorroborationRequirer)
 	return ok && r.RequiresExecutionCorroboration() && !corroborated
@@ -155,9 +134,7 @@ func executionCorroborated(top, call *invokeCall) bool {
 	return top != nil && sameInvocation(top, call)
 }
 
-// ContractCallContext is what a ContractCallDecoder needs to decode one InvokeContract call, built by
-// ProcessLedger for every successful one. Args are base64 SCVal blobs (the events.Event.OpArgs / Topic
-// format), unwrapped with internal/scval.Parse.
+// ContractCallContext is what a ContractCallDecoder needs to decode one InvokeContract call; Args are base64 SCVal blobs.
 type ContractCallContext struct {
 	Ledger       uint32
 	ClosedAt     time.Time
@@ -188,10 +165,7 @@ type ContractCallContext struct {
 	ExecutionCorroborated bool
 }
 
-// LedgerEntryChangeDecoder observes raw [xdr.LedgerEntryChange] rows from each LCM regardless of which
-// transaction or fee-meta block produced them (ADR-0021), for sources that derive state from ledger-entry
-// deltas, e.g. the AccountEntry observer (internal/sources/accounts/). Matches is the cheap pre-filter on the
-// entry's Data discriminant; errors are skip-and-count, as for [Decoder].
+// LedgerEntryChangeDecoder observes raw [xdr.LedgerEntryChange] rows from each LCM regardless of producing transaction (ADR-0021); Matches pre-filters on the entry's Data discriminant, and errors are skip-and-count.
 type LedgerEntryChangeDecoder interface {
 	Name() string
 	Matches(change xdr.LedgerEntryChange) bool
@@ -202,15 +176,7 @@ type LedgerEntryChangeDecoder interface {
 // entry-change delta: the change plus the tx-level metadata that produced it. FeeMeta-block changes
 // carry an empty TxHash and OpIndex == -1 to distinguish them from per-op changes.
 
-// EntryWalkVersion identifies the entry-change walk ORDER behind [LedgerEntryChangeContext.IntraLedgerSeq].
-// Each block is walked in entrywalk.Canonical (ledger key) order because core's export order is
-// hash-map iteration and varies.
-//
-// Bump it only when a change RENUMBERS existing positions. Positions are persisted and compared
-// across binaries: account_observations and siblings guard on `(walk_version, intra_ledger_seq) <=
-// EXCLUDED`, so an unbumped renumbering silently drops every correction. ledger_entries_current_v2
-// carries no walk version, so there the range must be deleted and reprojected.
-// Procedure: docs/operations/runbooks/entry-walk-renumbering.md.
+// EntryWalkVersion identifies the entry-change walk ORDER behind [LedgerEntryChangeContext.IntraLedgerSeq]; bump it only when a change RENUMBERS existing positions, since persisted positions are compared across binaries and an unbumped renumbering silently drops corrections (docs/operations/runbooks/entry-walk-renumbering.md).
 const EntryWalkVersion = 3
 
 type LedgerEntryChangeContext struct {
@@ -228,9 +194,7 @@ type LedgerEntryChangeContext struct {
 	Change xdr.LedgerEntryChange
 }
 
-// Dispatcher owns the registered decoders: construct with New(), register once at startup, then call
-// ProcessLedger per LedgerCloseMeta. ProcessLedger is not concurrency-safe (the ledgerstream callback
-// serialises it); the stats counters are, under statsMu, for the statsflush reader.
+// Dispatcher owns the registered decoders: register once at startup, then call ProcessLedger per LedgerCloseMeta; ProcessLedger is not concurrency-safe (the ledgerstream callback serialises it), stats counters are.
 type Dispatcher struct {
 	decoders             []Decoder
 	opDecoders           []OpDecoder
@@ -296,8 +260,7 @@ type Dispatcher struct {
 	uncorroboratedCalls map[string]int
 }
 
-// New constructs a Dispatcher with the given Soroban-event decoders; earlier registration wins
-// first-match precedence. Classic-op decoders register via AddOpDecoder and are not first-match.
+// New constructs a Dispatcher with the given Soroban-event decoders; earlier registration wins first-match precedence.
 func New(decoders ...Decoder) *Dispatcher {
 	return &Dispatcher{
 		decoders:            decoders,
@@ -307,71 +270,52 @@ func New(decoders ...Decoder) *Dispatcher {
 	}
 }
 
-// AddOpDecoder registers a classic-operation decoder (SDEX and any non-Soroban path) once at startup,
-// not concurrently with ProcessLedger. Every decoder whose Matches claims an op decodes it, in
-// registration order.
+// AddOpDecoder registers a classic-operation decoder once at startup, not concurrently with ProcessLedger; every decoder whose Matches claims an op decodes it, in registration order.
 func (d *Dispatcher) AddOpDecoder(od OpDecoder) {
 	d.opDecoders = append(d.opDecoders, od)
 }
 
-// AddContractCallDecoder registers a decoder that observes Soroban InvokeContract calls directly,
-// for sources that emit no on-chain events (Band's StandardReference). Registration order is
-// first-match precedence.
+// AddContractCallDecoder registers a decoder that observes InvokeContract calls directly, for sources that emit no on-chain events; registration order is first-match precedence.
 func (d *Dispatcher) AddContractCallDecoder(ccd ContractCallDecoder) {
 	d.contractCallDecoders = append(d.contractCallDecoders, ccd)
 }
 
-// AddEntryDecoder registers a LedgerEntryChange decoder (ADR-0021) once at startup, not concurrently with
-// ProcessLedger; registration order is first-match precedence. Unmatched changes are not counted in
-// unmatchedHits: every tx produces several, and they would dominate the metric.
+// AddEntryDecoder registers a LedgerEntryChange decoder once at startup, not concurrently with ProcessLedger; registration order is first-match precedence and unmatched changes are not counted in unmatchedHits.
 func (d *Dispatcher) AddEntryDecoder(ld LedgerEntryChangeDecoder) {
 	d.entryDecoders = append(d.entryDecoders, ld)
 }
 
-// AddDecoder registers a Soroban event Decoder after construction, with [New]'s first-match precedence; once
-// at startup, not concurrently with ProcessLedger. It exists for the supply observers configured per asset in
-// `[supply] watched_sep41_contracts`, which don't fit the per-source `cfg.Ingestion.EnabledSources`.
+// AddDecoder registers a Soroban event Decoder after construction with [New]'s first-match precedence, once at startup and not concurrently with ProcessLedger.
 func (d *Dispatcher) AddDecoder(dec Decoder) {
 	d.decoders = append(d.decoders, dec)
 }
 
-// DiscoverySink receives one Push per hit from [discovery.Sniff] (SEP-41 topic), [discovery.SniffOracleEvent]
-// (oracle-suggestive topic) or [discovery.SniffOracleCall] (oracle-suggestive function name, the Band-alike
-// case). Push MUST NOT block: it runs on the ingest hot path. The standard implementation buffers Hits to a
-// worker calling discovery.Recorder.Record (internal/canonical/discovery); one sink serves all three.
+// DiscoverySink receives one Push per discovery hit (SEP-41 topic, oracle-suggestive topic or function name); Push MUST NOT block because it runs on the ingest hot path.
 type DiscoverySink interface {
 	Push(hit discovery.Hit)
 }
 
-// SetDiscoverySink installs the sink called on every watched-shape sighting (see [DiscoverySink]);
-// nil disables all three hooks. Called once at startup, not concurrently with ProcessLedger.
+// SetDiscoverySink installs the sink called on every watched-shape sighting; nil disables all hooks. Call once at startup, not concurrently with ProcessLedger.
 func (d *Dispatcher) SetDiscoverySink(sink DiscoverySink) {
 	d.discoverySink = sink
 }
 
-// RawEventSink receives one PushEvent per Soroban contract event [dispatchOne] sees, BEFORE the
-// decoder chain, so events a decoder rejects still land in soroban_events (ADR-0029). PushEvent
-// MAY block: a full buffer slows dispatch so the ledger cursor cannot outrun durable writes.
-// Dropping on full is unsafe: the cursor is already past the lost rows, so nothing recovers them.
+// RawEventSink receives one PushEvent per Soroban contract event BEFORE the decoder chain (ADR-0029); PushEvent MAY block so the ledger cursor cannot outrun durable writes, and dropping on full is unsafe because nothing recovers lost rows.
 type RawEventSink interface {
 	PushEvent(ev events.Event)
 }
 
-// SetRawEventSink installs the sink called on every Soroban contract event (ADR-0029); nil disables
-// it. Called once at startup, not concurrently with ProcessLedger.
+// SetRawEventSink installs the sink called on every Soroban contract event; nil disables it. Call once at startup, not concurrently with ProcessLedger.
 func (d *Dispatcher) SetRawEventSink(sink RawEventSink) {
 	d.rawEventSink = sink
 }
 
-// SetLogger installs the logger for the decoder-panic guard and eviction-read failures. Nil keeps
-// slog.Default(), so a recovered panic is still reported, just without the operator's configured
-// format. Called once at startup, not concurrently with ProcessLedger.
+// SetLogger installs the logger for the decoder-panic guard and eviction-read failures; nil keeps slog.Default(). Call once at startup, not concurrently with ProcessLedger.
 func (d *Dispatcher) SetLogger(logger *slog.Logger) {
 	d.logger = logger
 }
 
-// Stats is a snapshot of the dispatcher's internal counters, keyed by source name, with an
-// "unmatched" total for events no decoder claimed. Callers must treat it as immutable.
+// Stats is a snapshot of the dispatcher's counters keyed by source name, with an "unmatched" total; callers MUST treat it as immutable.
 type Stats struct {
 	// EventsSeen is the per-source count of inputs a decoder's Matches() claimed: the denominator of
 	// the decoder error rate in decoder_stats_5m, without which errors are a count, not a rate.
@@ -472,10 +416,7 @@ func (d *Dispatcher) Stats() Stats {
 	}
 }
 
-// ProcessLedger walks lcm's transactions, routes each artefact to its decoder and returns all outputs; it
-// blocks until done. passphrase must match the ledger's network (the SDK hashes txs with it). A bad LCM
-// errors immediately; per-tx read errors bump Stats().TxReadErrors (logged at WARN by statsflush) and
-// per-event decode errors are skipped, so the call succeeds with fewer outputs.
+// ProcessLedger walks lcm, routes each artefact to its decoder and returns all outputs, blocking until done; passphrase must match the ledger's network, a bad LCM errors, and per-tx read or per-event decode errors are skipped and counted.
 func (d *Dispatcher) ProcessLedger(lcm xdr.LedgerCloseMeta, passphrase string) ([]consumer.Event, error) { //nolint:gocognit,gocyclo,funlen // dispatch-heavy; splitting would reduce linearity
 	reader, err := ingest.NewLedgerTransactionReaderFromLedgerCloseMeta(passphrase, lcm)
 	if err != nil {
@@ -934,8 +875,7 @@ func (d *Dispatcher) dispatchContractCall(ctx ContractCallContext) (outs []consu
 	return nil, nil
 }
 
-// RouteContractCall is the test-harness entry point for
-// contract-call decoders, symmetric with Route / RouteOp.
+// RouteContractCall is the test-harness entry point for contract-call decoders.
 func (d *Dispatcher) RouteContractCall(ctx ContractCallContext) ([]consumer.Event, error) {
 	return d.dispatchContractCall(ctx)
 }
@@ -1024,14 +964,12 @@ func (d *Dispatcher) decodeOp(od OpDecoder, ctx OpContext) (outs []consumer.Even
 	return got, nil
 }
 
-// RouteOp is the test-harness entry point for classic-op
-// decoders, symmetric with Route for Soroban events.
+// RouteOp is the test-harness entry point for classic-op decoders.
 func (d *Dispatcher) RouteOp(ctx OpContext) ([]consumer.Event, error) {
 	return d.dispatchOp(ctx)
 }
 
-// Route feeds one event through the Matches/Decode chain for test harnesses and fixture replay. It
-// errors only when the matching decoder fails; unclaimed events count in Stats().UnmatchedHits.
+// Route feeds one event through the Matches/Decode chain for test harnesses and fixture replay; it errors only when the matching decoder fails.
 func (d *Dispatcher) Route(ev events.Event) ([]consumer.Event, error) {
 	return d.dispatchOne(ev)
 }

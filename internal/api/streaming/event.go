@@ -10,8 +10,7 @@ import (
 // idLen is the width of a generated event ID in hex characters.
 const idLen = 16
 
-// Event is one SSE message ready for delivery on a topic (see [WriteFrame] for the wire mapping).
-// Data is pre-serialised by the producer; Stream is content-agnostic.
+// Event is one SSE message ready for delivery on a topic (see [WriteFrame]); Data is pre-serialised by the producer, Stream is content-agnostic.
 type Event struct {
 	// ID is the lexicographically-sortable event identifier.
 	// Clients use it as `Last-Event-ID` on reconnect to resume.
@@ -33,26 +32,17 @@ type Event struct {
 	Retry time.Duration
 }
 
-// EventTypeStreamGap is the `event:` value Hub.Subscribe emits when a replay cannot cover the
-// requested Last-Event-ID: the ring evicted older events, or the cursor is newer than any ID this
-// process could have issued (a foreign ID space). IDs are timestamp-packed, not a per-topic
-// sequence, so the client cannot observe a gap otherwise. It is sent before any replay event with
-// no ID of its own, so it does not advance the resume cursor.
+// EventTypeStreamGap is the `event:` value Hub.Subscribe emits when a replay cannot cover the requested Last-Event-ID (ring evicted it, or the cursor is from a foreign ID space); it carries no ID, so it does not advance the resume cursor.
 const EventTypeStreamGap = "stream_gap"
 
-// Generator is a goroutine-safe monotonic event-ID source. [Generator.Next] returns a 16-char
-// lowercase hex ID: the high 48 bits are unix millis, the low 16 a per-millisecond counter. The
-// only client contract is "lexicographic sort = chronological"; treat IDs as opaque. Non-Hub
-// callers (per-connection tickers) can construct one directly.
+// Generator is a goroutine-safe monotonic event-ID source; [Generator.Next] returns a 16-char lowercase hex ID (48-bit unix millis, 16-bit per-ms counter), and clients may rely only on lexicographic order being chronological.
 type Generator struct {
 	// state packs (lastMillis << 16) | counter into one uint64 for atomic CAS; the counter resets
 	// whenever lastMillis advances.
 	state atomic.Uint64
 }
 
-// Ahead reports whether id is a well-formed ID newer than anything this generator could have
-// issued by now (a cursor from a process whose clock runs ahead). It sorts above every ring event,
-// so a resume would replay nothing and hide the loss. Malformed IDs return false.
+// Ahead reports whether id is a well-formed ID newer than anything this generator could have issued (a cursor from a process with a faster clock), which a resume would otherwise replay as nothing; malformed IDs return false.
 func (g *Generator) Ahead(id string) bool {
 	if len(id) != idLen {
 		return false

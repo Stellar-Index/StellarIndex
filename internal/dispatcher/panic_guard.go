@@ -11,9 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// ErrDecoderPanic wraps every error a recovered decoder panic is turned
-// into, so a caller that cares (an ops diagnostic, a test) can tell a
-// crash apart from an ordinary decode refusal with errors.Is.
+// ErrDecoderPanic wraps every error produced from a recovered decoder panic, so callers can tell a crash from a decode refusal with errors.Is.
 var ErrDecoderPanic = errors.New("decoder panicked")
 
 // panicSite is the ledger coordinate of the input a decoder crashed on.
@@ -74,14 +72,7 @@ func (d *Dispatcher) log() *slog.Logger {
 	return slog.Default()
 }
 
-// DecodeRow runs one lake row through dec for a caller outside the dispatch loop (the projector,
-// projected-rebuild) under the same panic discipline as recordDecoderPanic. Those callers skip a
-// failed row and advance, so the skip is made loud here where no caller can forget it: a recovered
-// panic is counted in DecoderPanicsTotal and logged with its stack, a decode error is logged with
-// the row coordinate.
-//
-// matched is false when dec does not claim ev (outs and err are then nil). A panic in Matches
-// counts as that decoder's failure. err is the decoder's own error or an [ErrDecoderPanic] wrap.
+// DecodeRow runs one lake row through dec for callers outside the dispatch loop under the dispatcher's panic discipline; matched is false when dec does not claim ev, and err is the decoder's error or an [ErrDecoderPanic] wrap, with panics counted and logged loudly.
 func DecodeRow(name string, dec Decoder, ev events.Event, log *slog.Logger) (outs []consumer.Event, matched bool, err error) {
 	if name == "" {
 		name = "unknown"

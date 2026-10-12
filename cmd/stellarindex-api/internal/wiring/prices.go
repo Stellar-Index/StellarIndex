@@ -17,13 +17,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// RedisTriangulatedLooker adapts the shared Redis client to v1.TriangulatedPriceLooker, reading the
-// cachekeys VWAP value plus its provenance, observed-at and coverage keys.
-//
-// A missing triangulation marker yields isTriangulated=false but the value is still served,
-// because aggregator-rewritten pairs (XLM/fiat:USD) have no prices_1m row to fall back on. A miss,
-// or a value with no readable observed-at stamp, returns found=false with no error: its age is
-// unknowable and a freeze keeps a value alive for its whole hold. Read errors propagate.
+// RedisTriangulatedLooker adapts the shared Redis client to v1.TriangulatedPriceLooker, reading the cachekeys VWAP value plus its provenance, observed-at and coverage keys.
 type RedisTriangulatedLooker struct{ RDB redis.UniversalClient }
 
 func (r RedisTriangulatedLooker) LookupTriangulatedVWAP(
@@ -68,9 +62,7 @@ func (r RedisTriangulatedLooker) LookupTriangulatedVWAP(
 	return out, true, nil
 }
 
-// LookupCompositeMeta reads the router quality-flags blob written alongside a triangulated
-// composite, so /v1/price can surface flags.diverged / flags.rerouted. Best-effort: the handler
-// leaves the flags unset on any error, so meta never fails the request.
+// LookupCompositeMeta reads the router quality-flags blob written alongside a triangulated composite; best-effort, any error leaves the flags unset rather than failing the request.
 func (r RedisTriangulatedLooker) LookupCompositeMeta(
 	ctx context.Context, base, quote canonical.Asset, window time.Duration,
 ) ([]byte, bool, error) {
@@ -89,18 +81,14 @@ func (r RedisTriangulatedLooker) LookupCompositeMeta(
 	return val, true, nil
 }
 
-// GlobalPriceStore is the storage seam [GlobalPriceReader] reads;
-// *timescale.Store satisfies it.
+// GlobalPriceStore is the storage seam [GlobalPriceReader] reads; *timescale.Store satisfies it.
 type GlobalPriceStore interface {
 	pricingguard.TrailingReader
 	LatestClosedVWAP1mForPair(ctx context.Context, p canonical.Pair) (timescale.Vwap1mRow, error)
 	LatestAggregatorPricesForPair(ctx context.Context, base, quote canonical.Asset, sources []string) ([]canonical.OracleUpdate, error)
 }
 
-// GlobalPriceReader adapts *timescale.Store + the Redis triangulated looker to
-// aggregate.GlobalPriceReader. Each method is one ComputeGlobalPrice tier: LatestVWAP (tier 1, the
-// raw ratio, decimals-corrected by v1's decimalsCorrectedGlobalReader), LatestAggregatorPrices
-// (tier 2) and LookupTriangulated (tier 3, via RedisTriangulatedLooker).
+// GlobalPriceReader adapts *timescale.Store + the Redis triangulated looker to aggregate.GlobalPriceReader.
 type GlobalPriceReader struct {
 	S         GlobalPriceStore
 	Tri       RedisTriangulatedLooker
@@ -175,14 +163,7 @@ func (g GlobalPriceReader) LookupTriangulated(ctx context.Context, base, quote c
 // the structural 1-2min closed-bucket floor, so active pairs stay fresh and dormant ones flag.
 const defaultVWAPFreshness = 15 * time.Minute
 
-// PriceWithheld is THE withholding chokepoint for every price-serving read seam. One function keeps
-// the scam and substance gates symmetric: hand-written call sites let
-// disable_substance_gate=true also un-withhold flagged issuers. TestPriceServingSeamsAreGated
-// derives the seam set from calls to it, and TestWithholdingGatesAreSpelledOnlyAtTheChokepoint
-// fails if a call site spells a gate out itself.
-//
-// Both gates are nil-receiver safe (nil == allow-everything). It returns WHICH gate fired so
-// v1.PriceWithheldError can name the cause.
+// PriceWithheld is THE withholding chokepoint for every price-serving read seam, keeping the scam and substance gates symmetric; both are nil-receiver safe (nil allows everything).
 func PriceWithheld(
 	ctx context.Context,
 	substance *pricingguard.SubstanceGate,
@@ -216,8 +197,7 @@ type withholdingQuery struct {
 
 type WithholdingOption func(*withholdingQuery)
 
-// AsOfInstant marks the gated read as point-in-time: the thin-market half is measured over the
-// window ending at ts. It is an option, not a second chokepoint.
+// AsOfInstant marks the gated read as point-in-time: the thin-market half is measured over the window ending at ts.
 func AsOfInstant(ts time.Time) WithholdingOption {
 	return func(q *withholdingQuery) {
 		q.pointInTime = true
@@ -334,9 +314,7 @@ func (r StorePriceReader) LatestPrice(ctx context.Context, asset, quote canonica
 	return snap, []string{trades[0].Source}, true, nil
 }
 
-// RecentClosedSnapshots is the SEP-40 prices(asset, records) passthrough: the most-recent N closed
-// 1-minute VWAP buckets. A pair with none yet returns an empty slice and nil error; "asset unknown"
-// is the handler's asset-existence check, not this reader's.
+// RecentClosedSnapshots is the SEP-40 prices(asset, records) passthrough: the most-recent N closed 1-minute VWAP buckets.
 func (r StorePriceReader) RecentClosedSnapshots(ctx context.Context, asset, quote canonical.Asset, n int) ([]v1.PriceSnapshot, error) {
 	pair, err := canonical.NewPair(asset, quote)
 	if err != nil {
@@ -365,9 +343,7 @@ func (r StorePriceReader) RecentClosedSnapshots(ctx context.Context, asset, quot
 	return out, nil
 }
 
-// RecentClosedVWAP1mExists is the optional gate the /v1/price stablecoin-proxy fallback uses to
-// skip empty proxy pairs before the unbounded last-trade walk. It delegates to the store's
-// bounded, both-directions probe and satisfies the unexported `proxyPairGate` in internal/api/v1.
+// RecentClosedVWAP1mExists is the optional gate the /v1/price stablecoin-proxy fallback uses to skip empty proxy pairs before the unbounded last-trade walk.
 func (r StorePriceReader) RecentClosedVWAP1mExists(ctx context.Context, base, quote canonical.Asset) (bool, error) {
 	pair, err := canonical.NewPair(base, quote)
 	if err != nil {

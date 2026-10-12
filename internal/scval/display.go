@@ -18,15 +18,12 @@ import (
 // blow the stack or the response size.
 const displayMaxDepth = 3
 
-// Display renders an ScVal as a compact human-readable string for explorer event rows. It is a
-// display format, not a wire format: long payloads truncate and exotic types degrade to their
-// type name.
+// Display renders an ScVal as a compact human-readable string for explorer rows; it is a display format, not a wire format (long payloads truncate, exotic types degrade to their type name).
 func Display(v xdr.ScVal) string {
 	return display(v, 0)
 }
 
-// DisplayB64 parses a base64 ScVal and renders it; empty string on
-// parse failure (display surfaces degrade, never error).
+// DisplayB64 parses a base64 ScVal and renders it; empty string on parse failure (display surfaces degrade, never error).
 func DisplayB64(b64 string) string {
 	if b64 == "" {
 		return ""

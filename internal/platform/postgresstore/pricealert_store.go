@@ -79,8 +79,7 @@ func (c *PriceAlertStore) CreatePriceAlert(ctx context.Context, a platform.Price
 	return a, nil
 }
 
-// GetPriceAlert returns one alert by ID. [platform.ErrNotFound] when
-// absent.
+// GetPriceAlert returns one alert by ID, or [platform.ErrNotFound].
 func (c *PriceAlertStore) GetPriceAlert(ctx context.Context, id uuid.UUID) (platform.PriceAlert, error) {
 	const q = `
 		SELECT id, account_id, base_asset, quote_asset, condition, threshold,
@@ -98,8 +97,7 @@ func (c *PriceAlertStore) GetPriceAlert(ctx context.Context, id uuid.UUID) (plat
 	return a, err
 }
 
-// ListPriceAlertsForAccount returns every alert the account owns,
-// newest first.
+// ListPriceAlertsForAccount returns every alert the account owns, newest first.
 func (c *PriceAlertStore) ListPriceAlertsForAccount(ctx context.Context, accountID uuid.UUID) ([]platform.PriceAlert, error) {
 	const q = `
 		SELECT id, account_id, base_asset, quote_asset, condition, threshold,
@@ -113,9 +111,7 @@ func (c *PriceAlertStore) ListPriceAlertsForAccount(ctx context.Context, account
 	return c.queryAlerts(ctx, "ListPriceAlertsForAccount", q, accountID)
 }
 
-// ListEnabledPriceAlerts returns every enabled alert across all
-// accounts. The evaluator sweeps this set each tick; the partial index
-// `price_alerts_enabled_idx` keeps the scan tight.
+// ListEnabledPriceAlerts returns every enabled alert across all accounts, the set the evaluator sweeps each tick.
 func (c *PriceAlertStore) ListEnabledPriceAlerts(ctx context.Context) ([]platform.PriceAlert, error) {
 	const q = `
 		SELECT id, account_id, base_asset, quote_asset, condition, threshold,
@@ -129,8 +125,7 @@ func (c *PriceAlertStore) ListEnabledPriceAlerts(ctx context.Context) ([]platfor
 	return c.queryAlerts(ctx, "ListEnabledPriceAlerts", q)
 }
 
-// UpdatePriceAlert persists the mutable fields (AccountID and ID are immutable); [platform.ErrNotFound] if gone.
-// The SET right-hand sides read the old row so the CASE re-arms against the old rule; threshold compares as NUMERIC ("0.150" == "0.15").
+// UpdatePriceAlert persists the mutable fields (AccountID and ID are immutable), re-arming against the old rule; [platform.ErrNotFound] if gone.
 func (c *PriceAlertStore) UpdatePriceAlert(ctx context.Context, a platform.PriceAlert) error {
 	if a.ID == uuid.Nil {
 		return errors.New("postgresstore: UpdatePriceAlert: ID is empty")
@@ -181,9 +176,7 @@ func (c *PriceAlertStore) DeletePriceAlert(ctx context.Context, id uuid.UUID) er
 	return nil
 }
 
-// ClaimPriceAlertFire stamps last_fired_at and disarms the alert ONLY when it is armed and its cooldown has elapsed (never fired OR last_fired_at + cooldown <= firedAt), and reports whether it won; the gate lives in the UPDATE, see [platform.PriceAlertStore].
-// The claim also pins pair, condition, threshold and enabled, so a mid-sweep edit matches nothing.
-// A missing row and a row in cooldown both return claimed=false, not [platform.ErrNotFound].
+// ClaimPriceAlertFire stamps last_fired_at and disarms the alert ONLY when it is armed and past cooldown, reporting whether it won; a missing row or one in cooldown returns claimed=false, not ErrNotFound.
 func (c *PriceAlertStore) ClaimPriceAlertFire(ctx context.Context, a platform.PriceAlert, firedAt time.Time) (bool, error) {
 	const q = `
 		UPDATE price_alerts
@@ -212,9 +205,7 @@ func (c *PriceAlertStore) ClaimPriceAlertFire(ctx context.Context, a platform.Pr
 	return n == 1, nil
 }
 
-// RearmPriceAlert clears disarmed, compare-and-swap on last_fired_at so
-// an evaluator acting on an older snapshot cannot re-arm a newer fire.
-// updated_at is left alone: re-arming is evaluator state, not an edit.
+// RearmPriceAlert clears disarmed, compare-and-swap on last_fired_at so an evaluator on an older snapshot cannot re-arm a newer fire.
 func (c *PriceAlertStore) RearmPriceAlert(ctx context.Context, id uuid.UUID, lastFiredAt time.Time) (bool, error) {
 	var fired any
 	if !lastFiredAt.IsZero() {

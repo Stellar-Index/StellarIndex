@@ -5,9 +5,7 @@ package rwa
 
 import "strings"
 
-// IsISIN reports whether s is a well-formed ISO 6166 ISIN (Luhn check digit over the
-// A=10…Z=35 expansion). Form only, not existence: it rules out a product name posing as an
-// identifier, and a real ISIN is agency-assigned and externally resolvable.
+// IsISIN reports whether s is a well-formed ISO 6166 ISIN (Luhn check digit over the A=10..Z=35 expansion); form only, not existence, ruling out a product name posing as an identifier.
 func IsISIN(s string) bool {
 	s, ok := upperASCII12(s)
 	if !ok {
@@ -57,8 +55,7 @@ func IsISIN(s string) bool {
 	return (10-sum%10)%10 == digits[len(digits)-1]
 }
 
-// CanonicalISIN returns s in the trimmed, upper-case form every ISIN
-// comparison keys on, and whether it is a well-formed ISIN at all.
+// CanonicalISIN returns s in the trimmed, upper-case form every ISIN comparison keys on, and whether it is a well-formed ISIN at all.
 func CanonicalISIN(s string) (string, bool) {
 	u, ok := upperASCII12(s)
 	if !ok || !IsISIN(u) {

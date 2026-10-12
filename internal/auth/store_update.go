@@ -11,13 +11,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 )
 
-// ErrKeyNotFound is returned by [RedisAPIKeyStore.UpdateRateLimit]
-// when no key with the supplied KeyID was found in Redis. Operators
-// see this when they typo a KeyID on the upgrade-key CLI.
+// ErrKeyNotFound is returned by [RedisAPIKeyStore.UpdateRateLimit] when no key with the supplied KeyID exists.
 var ErrKeyNotFound = errors.New("auth: key_id not found")
 
-// UpdateRateLimit sets the per-minute budget of the key with the given public KeyID (used by `stellarindex-ops upgrade-key` and the admin tier-clamp path), resolving it via the KeyID index (findRecordByKeyID), walking the keyspace only while the index is unusable.
-// Returns the updated record, ErrKeyNotFound, or a wrapped Redis error.
+// UpdateRateLimit sets the per-minute budget of the key with the public KeyID, resolved via the KeyID index; returns the updated record, ErrKeyNotFound, or a wrapped Redis error.
 func (s *RedisAPIKeyStore) UpdateRateLimit(ctx context.Context, keyID string, newRateLimitPerMin int) (APIKeyRecord, error) {
 	if keyID == "" {
 		return APIKeyRecord{}, errors.New("auth: UpdateRateLimit: keyID is required")

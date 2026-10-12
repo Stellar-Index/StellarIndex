@@ -9,8 +9,6 @@ import (
 )
 
 // UsageReaderOrNil returns a v1.UsageReader bound to `c`, or a nil v1.UsageReader when `c` is nil.
-// /v1/account/usage treats nil as "no usage backend wired" and returns an empty list, the correct
-// degradation when Redis is absent.
 func UsageReaderOrNil(c *usage.Counter) v1.UsageReader {
 	if c == nil {
 		return nil
@@ -34,9 +32,7 @@ func (a usageReaderAdapter) Read(ctx context.Context, subject string, days int) 
 	return out, nil
 }
 
-// UsageRollupReaderOrNil returns a v1.UsageRollupReader over the
-// `usage_daily` hypertable when the Timescale store is wired; nil
-// otherwise so the handler stays on the legacy per-day Redis path.
+// UsageRollupReaderOrNil returns a v1.UsageRollupReader over the `usage_daily` hypertable when the Timescale store is wired; nil otherwise so the handler stays on the legacy per-day Redis path.
 func UsageRollupReaderOrNil(s *timescale.Store) v1.UsageRollupReader {
 	if s == nil {
 		return nil
@@ -60,9 +56,7 @@ func (a usageRollupReaderAdapter) ReadRollup(ctx context.Context, subject string
 	return out, nil
 }
 
-// UsageEndpointDay derives the wire semantics from the granular columns: requests = every non-429
-// outcome (ok + 4xx + 5xx); billable = ok + 4xx, the classes middleware.billableClass lets into
-// the MonthlyQuota counter; errors = 4xx (excl. 429) + 5xx; throttled = 429s.
+// UsageEndpointDay derives the wire semantics from the granular columns: requests = every non-429 outcome, billable = ok + 4xx, errors = 4xx (excl. 429) + 5xx, throttled = 429s.
 func UsageEndpointDay(r timescale.UsageDailyRow) v1.UsageEndpointDay {
 	return v1.UsageEndpointDay{
 		Date:      r.Day,

@@ -14,8 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// SourceName constant — appears in metrics labels, registry keys,
-// and storage rows. Stable.
+// SourceName is the stable source name used in metrics labels, registry keys and storage rows.
 const SourceName = "blend"
 
 // Event names: topic[0] of every Blend pool / pool-factory event, as a Soroban Symbol.
@@ -82,17 +81,13 @@ const (
 	MainnetBackstopV1 = "CAO3AGAMZVRMHITL36EJ2VZQWKYRPWMQAPDQD5YEOF3GIF7T44U4JAL3"
 )
 
-// MainnetPoolFactories is the complete set of Blend pool factories on mainnet (ADR-0035).
-// Blend was redeployed, so gating `deploy` on one factory silently drops the other's pools;
-// re-derive from the lake if a third factory appears. Order is irrelevant.
+// MainnetPoolFactories is the complete set of Blend pool factories on mainnet (ADR-0035); gating `deploy` on one factory silently drops the other's pools, so re-derive from the lake if a third appears.
 var MainnetPoolFactories = []string{
 	MainnetPoolFactoryV1,
 	MainnetPoolFactory,
 }
 
-// FactoryGenesisLedger is a lower bound on any Blend factory `deploy` (the backstop Comet pool's
-// ledger, before the V1 factory's first deploy). The pool-registry genesis seed, the ADR-0033
-// reconcile genesis and documented replays all start here (doc_parity_test).
+// FactoryGenesisLedger is a lower bound on any Blend factory `deploy`; the pool-registry genesis seed, the ADR-0033 reconcile genesis and documented replays all start here.
 const FactoryGenesisLedger uint32 = 51_499_546
 
 // Pre-encoded base64 SCVal::Symbol blobs for byte-equality topic classification, which avoids

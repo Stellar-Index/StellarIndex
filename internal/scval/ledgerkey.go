@@ -7,12 +7,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// ParseContractDataKey base64-decodes an XDR LedgerKey and, when it is a
-// CONTRACT_DATA key, returns the owning contract's C-strkey and the entry's key ScVal. It is the
-// decoder-side reader for [events.Event.StateWriteKeys].
-//
-// Wire-level failures wrap [ErrScValDecode]; a non-contract-data key wraps [ErrScValType], which
-// callers filtering a mixed key list should skip rather than fail on.
+// ParseContractDataKey decodes a base64 XDR LedgerKey and, for a CONTRACT_DATA key, returns the owning C-strkey and key ScVal; wire failures wrap ErrScValDecode, a non-contract-data key wraps ErrScValType (skip, don't fail).
 func ParseContractDataKey(b64 string) (contractID string, key xdr.ScVal, err error) {
 	var lk xdr.LedgerKey
 	if uerr := UnmarshalBase64(b64, &lk); uerr != nil {

@@ -36,8 +36,7 @@ const (
 	keyIndexBuildBatch = 500
 )
 
-// ErrKeyIndexBuildBusy is returned by [RedisAPIKeyStore.BuildKeyIndex]
-// when another process holds the build lock.
+// ErrKeyIndexBuildBusy is returned by [RedisAPIKeyStore.BuildKeyIndex] when another process holds the build lock.
 var ErrKeyIndexBuildBusy = errors.New("auth: api-key index build already in progress")
 
 // errKeyIndexSuperseded means the build's generation vanished before
@@ -204,9 +203,7 @@ func (s *RedisAPIKeyStore) indexLookup(ctx context.Context, field string) (value
 	return "", false, false
 }
 
-// BuildKeyIndex indexes every record and then marks the index ready: the backfill for pre-index records and the repair after eviction (lookups call it when the index is absent; operators may too).
-// Safe concurrently with issuance: writes are idempotent and a dangling entry is skipped and pruned. `ready` is written only after a complete walk with every write acknowledged, and only while this build's generation is still in the hash.
-// Returns the count indexed, ErrKeyIndexBuildBusy if another process is building, or the first Redis error (including NOPERM).
+// BuildKeyIndex indexes every record then marks the index ready (only after a complete, fully acknowledged walk), returning the count, ErrKeyIndexBuildBusy, or the first Redis error; safe concurrently with issuance.
 func (s *RedisAPIKeyStore) BuildKeyIndex(ctx context.Context) (int, error) {
 	token, err := newLockToken()
 	if err != nil {
@@ -273,10 +270,7 @@ func (s *RedisAPIKeyStore) buildKeyIndexLocked(ctx context.Context, gen string) 
 	return indexed, nil
 }
 
-// InvalidateKeyIndex drops `ready` and any in-flight build's generation,
-// so the next lookup rebuilds from the records themselves. The API calls
-// it at startup because a rolled-back binary writes records it never
-// indexes. NOPERM is not an error: readers walk while the ACL denies the family.
+// InvalidateKeyIndex drops `ready` and any in-flight build's generation so the next lookup rebuilds from the records; NOPERM is not an error.
 func (s *RedisAPIKeyStore) InvalidateKeyIndex(ctx context.Context) error {
 	err := s.rdb.HDel(ctx, cachekeys.APIKeyIndex().String(), keyIndexReadyField, keyIndexGenField).Err()
 	if err != nil && !isRedisNoPerm(err) {
@@ -319,8 +313,7 @@ func (s *RedisAPIKeyStore) findRecordByKeyID(ctx context.Context, keyID string) 
 	return hash, rec, found, err
 }
 
-// ListKeysForIdentifier returns every APIKeyRecord whose Identifier matches (admin tier-clamp, GET/POST /v1/account/keys), at cost proportional to the keys the identifier OWNS, walking the keyspace only while the index is unusable.
-// Every record is re-checked against `identifier`, so a stale index entry hides and leaks nothing. Returns nil, nil for no matches, distinct from a Redis I/O failure.
+// ListKeysForIdentifier returns every APIKeyRecord whose Identifier matches, re-checking each record against identifier so a stale index entry leaks nothing; nil, nil means no matches.
 func (s *RedisAPIKeyStore) ListKeysForIdentifier(ctx context.Context, identifier string) ([]APIKeyRecord, error) {
 	if identifier == "" {
 		return nil, errors.New("auth: ListKeysForIdentifier: identifier is required")
@@ -371,10 +364,7 @@ func (s *RedisAPIKeyStore) recordsForIdentifier(ctx context.Context, identifier 
 	return out, err
 }
 
-// DeleteKeysForIdentifier deletes every record identifier owns, with its
-// index entries, and returns the deleted KeyIDs. Account erasure calls it
-// before and after its Postgres commit: a record left behind would
-// authenticate as whichever account next holds the identifier.
+// DeleteKeysForIdentifier deletes every record identifier owns with its index entries and returns the deleted KeyIDs; a leftover record would authenticate as the next holder of the identifier.
 func (s *RedisAPIKeyStore) DeleteKeysForIdentifier(ctx context.Context, identifier string) ([]string, error) {
 	if identifier == "" {
 		return nil, errors.New("auth: DeleteKeysForIdentifier: identifier is required")
@@ -400,8 +390,7 @@ func (s *RedisAPIKeyStore) DeleteKeysForIdentifier(ctx context.Context, identifi
 	return deleted, nil
 }
 
-// RevokeKeyByID deletes the key with `keyID` constrained to `identifier`, so a caller can revoke only keys they own. ErrKeyNotFound covers both a missing key and another identifier's (no cross-account existence oracle) and is never nil:
-// the operator kill switch reports success on nil, so a typo'd identifier must not read as a contained leak. Ownership is checked against the RECORD, never the index.
+// RevokeKeyByID deletes the key keyID constrained to identifier (ownership checked against the RECORD); ErrKeyNotFound covers missing and foreign keys alike (no existence oracle) and is never nil on a miss.
 func (s *RedisAPIKeyStore) RevokeKeyByID(ctx context.Context, identifier, keyID string) error {
 	if identifier == "" {
 		return errors.New("auth: RevokeKeyByID: identifier is required")

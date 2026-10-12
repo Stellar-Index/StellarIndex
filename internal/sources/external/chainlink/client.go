@@ -14,12 +14,7 @@ import (
 	"time"
 )
 
-// Client is a minimal Ethereum JSON-RPC client for eth_call (latestRoundData), eth_blockNumber
-// (backfill range probe) and eth_getLogs (backfill walk).
-//
-// It is deliberately tiny, as go-ethereum's dependency tree is heavy and we need no signing.
-// Stateless and goroutine-safe: each method does one HTTP round-trip; pooling lives in
-// http.Client.Transport.
+// Client is a minimal, stateless, goroutine-safe Ethereum JSON-RPC client for eth_call, eth_blockNumber and eth_getLogs, kept tiny to avoid go-ethereum's dependency tree.
 type Client struct {
 	HTTPClient *http.Client
 	Endpoint   string
@@ -28,9 +23,7 @@ type Client struct {
 	id atomic.Uint64
 }
 
-// NewClient constructs a Client. An empty endpoint falls back to [DefaultEndpoint]; a nil
-// http.Client falls back to a 30s timeout, generous because eth_getLogs over 5k blocks can take
-// seconds under load and timing out mid-call is worse than waiting.
+// NewClient constructs a Client; an empty endpoint falls back to DefaultEndpoint and a nil http.Client to a 30s timeout.
 func NewClient(endpoint string, httpClient *http.Client) *Client {
 	if endpoint == "" {
 		endpoint = DefaultEndpoint
@@ -54,10 +47,7 @@ type jsonRPCResponse struct {
 	} `json:"error"`
 }
 
-// EthCall performs eth_call against `to` with raw 0x-prefixed `data` (selector + ABI args) at
-// `block` (a tag or hex block number) and returns the raw hex result for the caller to decode.
-// It returns ErrEmptyResult for `0x` (reverted call or missing contract) and ErrMalformedResult
-// when the JSON-RPC layer succeeded but the response shape is wrong.
+// EthCall performs eth_call against `to` with raw 0x-prefixed `data` at `block`, returning the raw hex result; ErrEmptyResult for `0x`, ErrMalformedResult for a wrong response shape.
 func (c *Client) EthCall(ctx context.Context, to, data, block string) (string, error) {
 	if block == "" {
 		block = "latest"
@@ -76,8 +66,7 @@ func (c *Client) EthCall(ctx context.Context, to, data, block string) (string, e
 	return resultHex, nil
 }
 
-// EthBlockNumber returns the current head block as a uint64. Used
-// by the backfill harness to bound its eth_getLogs walk at "now".
+// EthBlockNumber returns the current head block as a uint64, bounding the backfill eth_getLogs walk.
 func (c *Client) EthBlockNumber(ctx context.Context) (uint64, error) {
 	var resultHex string
 	if err := c.do(ctx, "eth_blockNumber", []any{}, &resultHex); err != nil {
@@ -90,9 +79,7 @@ func (c *Client) EthBlockNumber(ctx context.Context) (uint64, error) {
 	return n, nil
 }
 
-// LogEntry is the eth_getLogs response shape we care about for
-// AnswerUpdated decoding. Other fields (logIndex, removed, etc)
-// are present in the JSON but ignored by us.
+// LogEntry is the eth_getLogs response shape needed for AnswerUpdated decoding; other fields are ignored.
 type LogEntry struct {
 	Address     string   `json:"address"`     // 0x-prefixed feed contract
 	Topics      []string `json:"topics"`      // [topic0, ...indexed]
@@ -103,11 +90,7 @@ type LogEntry struct {
 	LogIndex    string   `json:"logIndex"`
 }
 
-// EthGetLogs performs eth_getLogs for `addresses` and the `topics` filter (a topic hash or nil
-// wildcard per entry) over the inclusive `fromBlock`..`toBlock` range.
-//
-// Providers cap range and response size (Alchemy free: 10MB / 10k logs), so callers chunk
-// historical walks by 5k blocks.
+// EthGetLogs performs eth_getLogs for `addresses` and the `topics` filter over the inclusive `fromBlock`..`toBlock` range; providers cap range and response size, so callers chunk by 5k blocks.
 func (c *Client) EthGetLogs(
 	ctx context.Context,
 	addresses []string,
@@ -201,24 +184,17 @@ func (c *Client) do(ctx context.Context, method string, params []any, out any) e
 	return nil
 }
 
-// ErrRedirectRefused is the transport error for an RPC reply that tries
-// to redirect: the endpoint URL may carry an API key, and Go re-sends
-// the full previous URL as the next hop's Referer.
+// ErrRedirectRefused is the transport error for an RPC reply that redirects, because the endpoint URL may carry an API key that Go re-sends as the next hop's Referer.
 var ErrRedirectRefused = errors.New("redirect refused: rpc endpoint URL may carry an API key")
 
-// DoWithoutRedirects sends req through a shallow copy of c that never
-// follows a redirect; c itself (timeout, transport) is left untouched.
+// DoWithoutRedirects sends req through a shallow copy of c that never follows a redirect, leaving c untouched.
 func DoWithoutRedirects(c *http.Client, req *http.Request) (*http.Response, error) {
 	cp := *c
 	cp.CheckRedirect = func(*http.Request, []*http.Request) error { return ErrRedirectRefused }
 	return cp.Do(req) //nolint:gosec // G704: both callers build req.URL from an operator-configured RPC endpoint (Client.Endpoint / CHAINLINK_RPC_URL), not request-tainted input
 }
 
-// RedactURLError converts a transport error into a string with the secret-bearing URL scrubbed.
-// Keyed RPC providers embed the API key in the endpoint path, so a *url.Error's default Error()
-// would leak it; the URL is replaced with a host-only form. Non-*url.Error inputs carry no request
-// URL and are returned unchanged. Exported because internal/divergence's ChainlinkReference reads
-// the same CHAINLINK_RPC_URL and must scrub it identically.
+// RedactURLError converts a transport error into a string with the secret-bearing URL scrubbed to host-only, since keyed RPC providers embed the API key in the path; exported so internal/divergence's ChainlinkReference scrubs identically.
 func RedactURLError(err error, endpoint string) string {
 	var ue *url.Error
 	if !errors.As(err, &ue) {
@@ -228,9 +204,7 @@ func RedactURLError(err error, endpoint string) string {
 	return fmt.Sprintf("%s %q: %v", ue.Op, RedactEndpoint(endpoint), ue.Err)
 }
 
-// RedactedTransportError pairs a URL-redacted message with the original transport error. Unwrap
-// keeps errors.Is/As reaching context.DeadlineExceeded, net.Error and the *url.Error; formatting
-// RedactURLError into a new error with %s would turn err into a leaf and lose that classification.
+// RedactedTransportError pairs a URL-redacted message with the original error; Unwrap keeps errors.Is/As reaching context.DeadlineExceeded, net.Error and *url.Error.
 type RedactedTransportError struct {
 	msg string
 	err error
@@ -239,15 +213,12 @@ type RedactedTransportError struct {
 func (e *RedactedTransportError) Error() string { return e.msg }
 func (e *RedactedTransportError) Unwrap() error { return e.err }
 
-// NewRedactedTransportError builds a [RedactedTransportError], redacting endpoint via
-// [RedactURLError] for the message while keeping err reachable through Unwrap.
+// NewRedactedTransportError builds a RedactedTransportError, redacting endpoint for the message while keeping err reachable through Unwrap.
 func NewRedactedTransportError(err error, endpoint string) *RedactedTransportError {
 	return &RedactedTransportError{msg: RedactURLError(err, endpoint), err: err}
 }
 
-// RedactEndpoint returns a log-safe RPC endpoint: scheme and host only, with the path/query (where
-// keyed providers stash the API key) replaced by "/<redacted>". It never echoes an unparseable
-// input, which might be the secret. Exported for non-transport error paths that name the endpoint.
+// RedactEndpoint returns a log-safe RPC endpoint (scheme and host only, path/query replaced by "/<redacted>") and never echoes an unparseable input, which might be the secret.
 func RedactEndpoint(endpoint string) string {
 	u, err := url.Parse(endpoint)
 	if err != nil || u.Host == "" {

@@ -7,21 +7,7 @@ import (
 	"time"
 )
 
-// OracleUpdate is one price observation published by an on-chain or off-chain
-// oracle (Reflector, Redstone, Band, Chainlink-HTTP, …).
-//
-// Identity mirrors [Trade]: (Source, Ledger, TxHash, OpIndex) is the unique key.
-//
-// # Price representation
-//
-// Oracle scales are source-specific (Reflector i128 at ~14 decimals; Band E9/E18; Redstone U256
-// at 8). Normalising at ingest would lose precision or force a float, so the raw integer is
-// kept in [Price] with the source-declared [Decimals] and the aggregation layer scales on read.
-//
-// # Pair vs single-asset
-//
-// [Quote] is the denominator; for single-asset-USD updates it is a synthetic fiat reference
-// (`fiat:USD`, built via [NewFiatAsset]), not a Stellar asset. See ADR-0010.
+// OracleUpdate is one oracle price observation keyed by (Source, Ledger, TxHash, OpIndex); Price stays the raw source-scaled integer with its [Decimals] (never normalised at ingest) and [Quote] may be a synthetic fiat reference.
 type OracleUpdate struct {
 	// Source is the stable oracle name ("reflector-dex", "redstone", "band", "chainlink", ...) and
 	// part of identity. "chainlink" is the EVM-via-HTTP ingest source, distinct from the in-memory
@@ -76,17 +62,12 @@ type OracleUpdate struct {
 	Observer string `json:"observer,omitempty"`
 }
 
-// ID returns the observation's logical identity, `<source>:<ledger>:<tx_hash>:<op_index>`.
-//
-// It is NOT the `oracle_updates` primary key, which also carries the partition column `ts`, so
-// a re-derive that moves `ts` or `op_index` adds a second row.
+// ID returns the logical identity `<source>:<ledger>:<tx_hash>:<op_index>`, which is NOT the `oracle_updates` primary key (that also carries `ts`).
 func (u OracleUpdate) ID() string {
 	return fmt.Sprintf("%s:%d:%s:%d", u.Source, u.Ledger, u.TxHash, u.OpIndex)
 }
 
-// Validate returns nil iff every invariant holds. Callers in the
-// ingestion path should call this before writing; a violation is
-// always an upstream bug.
+// Validate returns nil iff every invariant holds; call before writing, a violation is always an upstream bug.
 func (u OracleUpdate) Validate() error {
 	if u.Source == "" {
 		return fmt.Errorf("%w: empty source", ErrInvalidOracle)
@@ -174,9 +155,7 @@ func maxOraclePriceRaw(decimals uint8) *big.Int {
 	return new(big.Int).Exp(big.NewInt(10), big.NewInt(maxOraclePriceWholeExp+int64(decimals)), nil)
 }
 
-// PriceFloat returns Price / 10^Decimals as a *big.Float. Convenience
-// for display / triangulation; never store the result — it's lossy
-// beyond big.Float's 53-bit mantissa default.
+// PriceFloat returns Price / 10^Decimals as a lossy *big.Float for display only; never store or compare money with it.
 func (u OracleUpdate) PriceFloat() *big.Float {
 	f := new(big.Float).SetInt(u.Price.BigInt())
 	if u.Decimals == 0 {
@@ -188,8 +167,7 @@ func (u OracleUpdate) PriceFloat() *big.Float {
 	return new(big.Float).Quo(f, scale)
 }
 
-// Equal compares by identity only (Source, Ledger, TxHash, OpIndex); Confidence and Observer are
-// observational, so the same publication seen by different observers is Equal.
+// Equal compares by identity only (Source, Ledger, TxHash, OpIndex); Confidence and Observer are observational.
 func (u OracleUpdate) Equal(o OracleUpdate) bool {
 	return u.Source == o.Source &&
 		u.Ledger == o.Ledger &&

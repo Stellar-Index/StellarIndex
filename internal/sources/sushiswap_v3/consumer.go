@@ -7,9 +7,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 )
 
-// TradeEvent is the [consumer.Event] shape the Decoder emits for each
-// price-forming pool `swap`. The pipeline sink type-switches on it and
-// writes the trade to the trades hypertable.
+// TradeEvent is the [consumer.Event] the Decoder emits for each price-forming pool `swap`, written by the sink to the trades hypertable.
 type TradeEvent struct {
 	Trade canonical.Trade
 }
@@ -23,10 +21,7 @@ func (TradeEvent) Source() string { return SourceName }
 // Compile-time check that TradeEvent satisfies consumer.Event.
 var _ consumer.Event = TradeEvent{}
 
-// PositionEvent is the [consumer.Event] the Decoder emits for a pool `mint`, `burn` or `collect`
-// (the concentrated-liquidity position lifecycle). Token0 / Token1 come from the pool registry,
-// not the event body. Liquidity is the mint / burn delta and unset for a collect; Sender is set
-// on a mint only and Recipient on a collect only.
+// PositionEvent is the [consumer.Event] for a pool `mint`, `burn` or `collect`; Token0 / Token1 come from the pool registry, Liquidity is the mint / burn delta (unset for collect), Sender is set on mint only and Recipient on collect only.
 type PositionEvent struct {
 	ContractID string // pool contract C-strkey (emitter)
 	Ledger     uint32
@@ -47,8 +42,7 @@ type PositionEvent struct {
 	Amount1    canonical.Amount
 }
 
-// EventKind implements [consumer.Event]. One kind for all three actions;
-// the row's action column discriminates them.
+// EventKind implements [consumer.Event]: one kind for all three actions, the row's action column discriminates.
 func (PositionEvent) EventKind() string { return "sushiswap_v3.position" }
 
 // Source implements [consumer.Event] — matches [SourceName].

@@ -36,8 +36,7 @@ func validateRawSymbol(code string) error {
 	return nil
 }
 
-// NewOracleRawAsset constructs a verbatim oracle-symbol reference.
-// Returns ErrInvalidAsset if the symbol fails [validateRawSymbol].
+// NewOracleRawAsset constructs a verbatim oracle-symbol reference, returning ErrInvalidAsset if the symbol fails [validateRawSymbol].
 func NewOracleRawAsset(symbol string) (Asset, error) {
 	if err := validateRawSymbol(symbol); err != nil {
 		return Asset{}, err
@@ -45,20 +44,12 @@ func NewOracleRawAsset(symbol string) (Asset, error) {
 	return Asset{Type: AssetOracleRaw, Code: symbol}, nil
 }
 
-// IsMapped reports whether a is anything but the record-layer-only [AssetOracleRaw]. Pairs, VWAP,
-// divergence and MEV scans must check it before treating an oracle_updates row as comparable.
+// IsMapped reports whether a is anything but the record-layer-only [AssetOracleRaw]; pairs, VWAP, divergence and MEV scans must check it first.
 func (a Asset) IsMapped() bool {
 	return a.Type != AssetOracleRaw
 }
 
-// MapOracleSymbol resolves a bare oracle symbol (Reflector `Asset::Other(Symbol)`, Band
-// `symbol_rates` key) to its canonical asset, else a verbatim [AssetOracleRaw]. Precedence is
-// fiat (ADR-0010) → crypto (ADR-0014) → RWA (ADR-0028) → raw, one shared order for every
-// source; the lists are disjoint (TestMapOracleSymbol_allowListsDisjoint), so order only
-// matters if that changes.
-//
-// The result is raw iff !IsMapped(). The only error is a symbol failing [validateRawSymbol]
-// (empty / >64 bytes / non-printable ASCII); the record layer refuses what it cannot represent.
+// MapOracleSymbol resolves a bare oracle symbol to fiat, crypto, RWA, else a verbatim [AssetOracleRaw] (check !IsMapped()); it errors only if the symbol fails [validateRawSymbol].
 func MapOracleSymbol(sym string) (Asset, error) {
 	switch {
 	case IsKnownFiat(sym):

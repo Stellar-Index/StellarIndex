@@ -23,8 +23,7 @@ const (
 	routedViaSweepLookback = 30 * time.Minute
 )
 
-// RoutedViaTagger is the storage seam the sweeper writes through.
-// *timescale.Store satisfies it via TagTradesRoutedVia.
+// RoutedViaTagger is the storage seam the sweeper writes through; *timescale.Store satisfies it.
 type RoutedViaTagger interface {
 	TagTradesRoutedVia(ctx context.Context, routerName, tradeSource string, from, to time.Time) (int64, error)
 }

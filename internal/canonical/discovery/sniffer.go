@@ -40,7 +40,7 @@ const (
 	EventClawback SEP41EventType = "clawback"
 )
 
-// Hit is one sniffer sighting: the contract's C-strkey, which sniffer, and when.
+// Hit is one sighting from a sniffer: the contract C-strkey, which sniffer, and when.
 type Hit struct {
 	ContractID string
 	// Kind is always set by a sniffer; Recorders treat an empty Kind as
@@ -61,7 +61,7 @@ type Hit struct {
 	Count int64
 }
 
-// Sniff reports whether an event's topic[0] is one of the four SEP-41 symbols; pure, checks no arity beyond topic[0] (older contracts emit three-topic transfers; decoders reject bad bodies).
+// Sniff reports whether a contract event's topic[0] is one of the four SEP-41 symbols; pure, and checks no arity beyond topic[0].
 func Sniff(ev events.Event) (Hit, bool) {
 	sym, ok := parseTopic0Symbol(ev)
 	if !ok {
@@ -161,7 +161,7 @@ var oracleEventSymbols = map[string]struct{}{
 	"assets":            {},
 }
 
-// SniffOracleEvent reports whether topic[0] is in [oracleEventSymbols], so a new oracle is sighted before any decoder knows it; disjoint from [Sniff]'s set.
+// SniffOracleEvent reports whether an event's topic[0] is in [oracleEventSymbols]; the set is disjoint from [Sniff]'s.
 func SniffOracleEvent(ev events.Event) (Hit, bool) {
 	sym, ok := parseTopic0Symbol(ev)
 	if !ok {
@@ -199,7 +199,7 @@ type OracleCallInput struct {
 	ObservedAtRFC3339 string
 }
 
-// SniffOracleCall reports whether an InvokeContract function name is in [oracleCallFunctions], catching oracles that update storage without an event (Band's relay); one map lookup, args not inspected.
+// SniffOracleCall reports whether an InvokeContract function name is in [oracleCallFunctions], catching oracles that update storage without an event; args are not inspected.
 func SniffOracleCall(in OracleCallInput) (Hit, bool) {
 	if in.ContractID == "" || in.FunctionName == "" {
 		return Hit{}, false

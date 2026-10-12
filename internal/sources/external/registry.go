@@ -5,10 +5,7 @@ import (
 	"time"
 )
 
-// Registry is the metadata table for every source the aggregator knows. A miss falls back to
-// ClassExchange with IncludeInVWAP=false: visible in /v1/sources, fail-closed out of VWAP.
-// On-chain Soroban sources are BackfillPerWASM because `update_contract` can change event
-// schemas; off-chain sources and SDEX are BackfillNoWASM; BackfillUnsafe refuses.
+// Registry is the metadata table for every known source; a miss falls back to ClassExchange with IncludeInVWAP=false, fail-closed out of VWAP, and on-chain Soroban sources are BackfillPerWASM because `update_contract` can change event schemas.
 var Registry = map[string]Metadata{
 	// ─── On-chain exchanges (dispatcher-path; listed here so the
 	// aggregator has a single lookup table) ──────────────────────
@@ -104,8 +101,7 @@ var Registry = map[string]Metadata{
 	"tiingo": {Class: ClassOracle, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: false, Backfill: BackfillNoWASM, AmountDecimals: 6, OracleResolution: 24 * time.Hour},
 }
 
-// Lookup returns metadata for a source. Unknown names fall back to class=exchange with
-// included_in_vwap=false, so a typo or renamed source cannot inject unvetted data into aggregation.
+// Lookup returns metadata for a source; unknown names fall back to class=exchange with included_in_vwap=false, so a typo cannot inject unvetted data into aggregation.
 func Lookup(source string) Metadata {
 	if m, ok := Registry[source]; ok {
 		return m
@@ -118,9 +114,7 @@ func Lookup(source string) Metadata {
 	}
 }
 
-// Registered reports whether source has an explicit [Registry] entry. Lookup treats "unregistered"
-// and "AmountDecimals unset" alike (both read AmountScaleDecimals()==8), which is wrong for a
-// caller that must tell "no entry" from "entry, CEX-default scale" (commonAmountScaleDecimals).
+// Registered reports whether source has an explicit Registry entry, which Lookup cannot tell from an entry with AmountDecimals unset (both read AmountScaleDecimals()==8).
 func Registered(source string) bool {
 	_, ok := Registry[source]
 	return ok
@@ -131,8 +125,7 @@ func IncludeInVWAP(source string) bool {
 	return Lookup(source).IncludeInVWAP
 }
 
-// BackfillSafe reports whether the source's policy admits any replay.
-// A BackfillPerWASM source is further gated per range by internal/wasmaudit.
+// BackfillSafe reports whether the source's policy admits any replay; a BackfillPerWASM source is further gated per range by internal/wasmaudit.
 func BackfillSafe(source string) bool {
 	return Lookup(source).BackfillSafe()
 }
@@ -152,9 +145,7 @@ var replayStandardSchemaSources = map[string]struct{}{
 	"sep41_supply":    {},
 }
 
-// ReplayBackfillSafe is [BackfillSafe] for the re-derive paths, which carry the same old-WASM
-// hazard as `backfill`. It additionally accepts projector source names; any other name gets
-// BackfillSafe's fail-closed answer.
+// ReplayBackfillSafe is BackfillSafe for the re-derive paths, additionally accepting projector source names; any other name gets BackfillSafe's fail-closed answer.
 func ReplayBackfillSafe(source string) bool {
 	if ReplayExempt(source) {
 		return true
@@ -162,15 +153,13 @@ func ReplayBackfillSafe(source string) bool {
 	return BackfillSafe(ReplayAuditSubject(source))
 }
 
-// ReplayExempt reports a standard-schema source (the sep41 pair) that the
-// per-protocol WASM audit does not apply to.
+// ReplayExempt reports a standard-schema source (the sep41 pair) that the per-protocol WASM audit does not apply to.
 func ReplayExempt(source string) bool {
 	_, ok := replayStandardSchemaSources[source]
 	return ok
 }
 
-// ReplayAuditSubject is the Registry source whose WASM audit covers a
-// projector source name (blend_backstop -> blend; every other name maps to itself).
+// ReplayAuditSubject is the Registry source whose WASM audit covers a projector source name (blend_backstop -> blend; other names map to themselves).
 func ReplayAuditSubject(source string) string {
 	if coveredBy, ok := replayAuditCoveredBy[source]; ok {
 		return coveredBy
@@ -178,9 +167,7 @@ func ReplayAuditSubject(source string) string {
 	return source
 }
 
-// UnsafeReplaySources filters `sources` to those [ReplayBackfillSafe]
-// refuses, preserving order, so a re-derive command can name every
-// offender in one refusal.
+// UnsafeReplaySources filters `sources` to those ReplayBackfillSafe refuses, preserving order, so a re-derive command can name every offender.
 func UnsafeReplaySources(sources []string) []string {
 	var out []string
 	for _, s := range sources {
@@ -191,8 +178,7 @@ func UnsafeReplaySources(sources []string) []string {
 	return out
 }
 
-// FXSources returns the registered SubclassFX source names, sorted. The stable order makes the
-// forex-snap tiebreak deterministic when two FX sources publish the same observed_at.
+// FXSources returns the registered SubclassFX source names, sorted so the forex-snap tiebreak is deterministic.
 func FXSources() []string {
 	out := make([]string, 0, 2)
 	for name, m := range Registry {
@@ -205,14 +191,11 @@ func FXSources() []string {
 }
 
 // IsFXSource reports whether the named source has Subclass=SubclassFX.
-// Convenience wrapper for the snap-rule's per-leg classification.
 func IsFXSource(source string) bool {
 	return Lookup(source).Subclass == SubclassFX
 }
 
-// IsOnChain reports whether a source observes Stellar directly rather than an off-chain vendor
-// API, so reference-pricing feeds don't pose as on-chain activity. Unknown names fall to
-// on-chain, which only matters for typos: the registry is closed.
+// IsOnChain reports whether a source observes Stellar directly rather than an off-chain vendor API; unknown names fall to on-chain, which only matters for typos.
 func IsOnChain(source string) bool {
 	m := Lookup(source)
 	//exhaustive:ignore
@@ -233,8 +216,7 @@ func IsOnChain(source string) bool {
 	return true
 }
 
-// AggregatorSources returns every ClassAggregator source, sorted, keeping class policy out of
-// storage. Disabled aggregators stay listed; they simply have no rows.
+// AggregatorSources returns every ClassAggregator source, sorted; disabled aggregators stay listed.
 func AggregatorSources() []string {
 	out := make([]string, 0, 4)
 	for name, m := range Registry {

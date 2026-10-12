@@ -52,20 +52,7 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 	}
 }
 
-// SeedFromFactoryRPC populates the Decoder's pair->(token0, token1) registry from the factory's
-// on-chain state via read-only simulateTransaction: all_pairs_length(), all_pairs(i), then
-// token_0()/token_1() per pair (~3N+1 calls).
-//
-// Cold-start only: the live path records every new_pair event (Decoder.SeedPair), but pairs
-// created BEFORE the dispatcher's first ledger are invisible to it.
-//
-// factoryContract is the factory C-strkey (mainnet
-// CA4HEQTL2WPEUYKYKCDOHCDNIV4QHNJ7EL4J4NQ6VADP7SYHVRYZ7AW2). Transient RPC failures are retried per
-// call (see seedMaxAttempts and [retryableSimulateErr]); a spent budget or deterministic failure
-// stops the sweep.
-//
-// It returns the pairs seeded and an error on any failure; the caller decides between fail-closed
-// and fail-open (empty registry, silent swaps accepted). Idempotent: seeded entries overwrite.
+// SeedFromFactoryRPC populates the pair->(token0, token1) registry from the factory's on-chain state via read-only simulateTransaction (~3N+1 calls); cold-start only, since the live path records every new_pair but pairs created before the first ledger are invisible. Transient RPC failures are retried per call; it returns the pairs seeded and an error on any failure, and the caller decides fail-closed vs fail-open. Idempotent.
 func (d *Decoder) SeedFromFactoryRPC(ctx context.Context, rpc *stellarrpc.Client, factoryContract string) (int, error) {
 	length, err := callU32(ctx, rpc, factoryContract, "all_pairs_length", nil)
 	if err != nil {

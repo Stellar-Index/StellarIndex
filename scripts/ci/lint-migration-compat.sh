@@ -157,12 +157,23 @@ grep_lines() {
   printf '%s' "$out"
 }
 
+# fn_body_lines <file>: line numbers inside CREATE FUNCTION $$ bodies, which run
+# when called, not at migrate time. Other body quoting is left to the DML checks.
+fn_body_lines() {
+  awk '{ l = tolower($0) }
+    infn { print NR; if (gsub(/\$\$/, "&", l) % 2) infn = 0; next }
+    l ~ /^[ \t]*create (or replace )?function / { pend = 1 }
+    pend && (c = gsub(/\$\$/, "&", l)) { pend = 0; if (c % 2) infn = 1; next }
+    pend && l ~ /;/ { pend = 0 }' "$1"
+}
+
 fail=0
 SEEN=()   # `<file>:<class>` actually observed this run
 
 for f in "$MIGRATIONS_DIR"/*.up.sql; do
   [ -e "$f" ] || continue
   base="$(basename "$f")"
+  fnlines="$(fn_body_lines "$f" | tr '\n' ' ')"
   for i in "${!CLASSES[@]}"; do
     class="${CLASSES[$i]}"
     re="${MATCH[$i]}"
@@ -172,6 +183,10 @@ for f in "$MIGRATIONS_DIR"/*.up.sql; do
     hits="$(grep_lines -nEi -- "$re" "$f")"
     if [ -n "$hits" ]; then
       hits="$(printf '%s\n' "$hits" | grep_lines -vE -- '^[0-9]+:[[:space:]]*--')"
+    fi
+    if [ -n "$hits" ] && [ -n "$fnlines" ]; then
+      hits="$(printf '%s\n' "$hits" | awk -F: -v skip="$fnlines" \
+        'BEGIN { n = split(skip, a, " "); for (i = 1; i <= n; i++) in_fn[a[i]] = 1 } !($1 in in_fn)')"
     fi
     if [ -n "$exclude" ] && [ -n "$hits" ]; then
       hits="$(printf '%s\n' "$hits" | grep_lines -viE -- "$exclude")"

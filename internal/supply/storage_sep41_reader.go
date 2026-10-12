@@ -10,9 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// SEP41SupplyStore is the storage primitive set of [StorageSEP41SupplyReader]. SEP-41 contracts share
-// the SAC `DataKey::Balance(Address) -> i128` shape; a SAC's rows sit under its classic CODE:ISSUER key
-// and its G holders' balances are trustlines (TrustlineBalanceForAccountAtOrBefore).
+// SEP41SupplyStore is the storage primitive set of [StorageSEP41SupplyReader]; SEP-41 contracts share the SAC `DataKey::Balance(Address) -> i128` shape, and a SAC's rows sit under its classic CODE:ISSUER key.
 type SEP41SupplyStore interface {
 	SEP41KindTotalsAtOrBefore(ctx context.Context, contractID string, asOfLedger uint32) (SEP41KindTotals, error)
 	SACBalanceForContractAtOrBefore(ctx context.Context, contractHolder, assetKey string, asOfLedger uint32) (*big.Int, error)
@@ -30,34 +28,26 @@ type SEP41SupplyStore interface {
 	SEP41GenesisBaselineSeeded(ctx context.Context, contractID string) (bool, error)
 }
 
-// SEP41KindTotals mirrors the timescale.SEP41KindTotals shape
-// without importing timescale (which would create a cycle —
-// timescale already imports supply for InsertSupply). The
-// aggregator-side adapter projects between the two types.
+// SEP41KindTotals mirrors the timescale.SEP41KindTotals shape without importing timescale (which imports supply); the aggregator adapter projects between them.
 type SEP41KindTotals struct {
 	Mint     *big.Int
 	Burn     *big.Int
 	Clawback *big.Int
 }
 
-// StorageSEP41SupplyReader satisfies [SEP41SupplyReader] from sep41_supply_events totals plus per-holder
-// SAC-balance lookups (ADR-0023). AdminBalance is always 0 (set_admin is untracked; operators use the
-// per-asset LockedSet), so [SEP41Computer.Compute] emits [BasisSEP41TotalOnly] unless one is set. Do NOT "fix" with a placeholder.
+// StorageSEP41SupplyReader satisfies [SEP41SupplyReader] from sep41_supply_events totals plus per-holder SAC-balance lookups (ADR-0023); AdminBalance is always 0 (set_admin is untracked), so do NOT "fix" it with a placeholder.
 type StorageSEP41SupplyReader struct {
 	store SEP41SupplyStore
 	// sacClassicKeys is [SACClassicKeys] of the observer's sac_wrappers.
 	sacClassicKeys map[string]string
 }
 
-// NewStorageSEP41SupplyReader constructs the reader. sacClassicKeys is
-// [SACClassicKeys] of the sac_wrappers the sac_balances observer runs
-// with; nil means no watched contract is a SAC.
+// NewStorageSEP41SupplyReader constructs the reader; sacClassicKeys is [SACClassicKeys] of the observer's sac_wrappers, nil meaning no watched contract is a SAC.
 func NewStorageSEP41SupplyReader(store SEP41SupplyStore, sacClassicKeys map[string]string) *StorageSEP41SupplyReader {
 	return &StorageSEP41SupplyReader{store: store, sacClassicKeys: sacClassicKeys}
 }
 
-// SEP41SupplyAt implements [SEP41SupplyReader]: kind totals plus per-holder balances for the
-// locked set. AdminBalance is 0 (see the type docstring; the computer reports [BasisSEP41TotalOnly]).
+// SEP41SupplyAt implements [SEP41SupplyReader]: kind totals plus per-holder balances for the locked set, with AdminBalance 0 (see [StorageSEP41SupplyReader]).
 func (r *StorageSEP41SupplyReader) SEP41SupplyAt(ctx context.Context, asset canonical.Asset, locked LockedSet, ledger uint32) (SEP41SupplyComponents, error) {
 	if asset.Type != canonical.AssetSoroban {
 		return SEP41SupplyComponents{}, fmt.Errorf("supply: StorageSEP41SupplyReader: %w: got type %q", ErrNotSoroban, asset.Type)
@@ -153,17 +143,13 @@ func (r *StorageSEP41SupplyReader) holderBalance(ctx context.Context, holder, co
 // Compile-time check.
 var _ SEP41SupplyReader = (*StorageSEP41SupplyReader)(nil)
 
-// AssetBoundSEP41Computer adapts a [SEP41Computer] to [SnapshotComputer] by baking in a fixed
-// [canonical.Asset]; the aggregator builds one per watched SEP-41 contract.
+// AssetBoundSEP41Computer adapts a [SEP41Computer] to [SnapshotComputer] with a fixed [canonical.Asset], one per watched SEP-41 contract.
 type AssetBoundSEP41Computer struct {
 	inner *SEP41Computer
 	asset canonical.Asset
 }
 
-// NewAssetBoundSEP41Computer constructs the per-contract wrapper.
-// Errors when the asset isn't a Soroban contract (the
-// SEP41Computer also checks at Compute time; failing fast at
-// construction is friendlier).
+// NewAssetBoundSEP41Computer constructs the per-contract wrapper, failing fast if the asset isn't a Soroban contract.
 func NewAssetBoundSEP41Computer(inner *SEP41Computer, asset canonical.Asset) (*AssetBoundSEP41Computer, error) {
 	if asset.Type != canonical.AssetSoroban {
 		return nil, fmt.Errorf("%w: got type %q", ErrNotSoroban, asset.Type)
@@ -174,8 +160,7 @@ func NewAssetBoundSEP41Computer(inner *SEP41Computer, asset canonical.Asset) (*A
 	return &AssetBoundSEP41Computer{inner: inner, asset: asset}, nil
 }
 
-// Compute implements [SnapshotComputer] by delegating to the
-// wrapped [SEP41Computer.Compute] with the bound asset.
+// Compute implements [SnapshotComputer] by delegating to [SEP41Computer.Compute] with the bound asset.
 func (a *AssetBoundSEP41Computer) Compute(ctx context.Context, ledger uint32, observedAt time.Time) (Supply, error) {
 	return a.inner.Compute(ctx, a.asset, ledger, observedAt)
 }

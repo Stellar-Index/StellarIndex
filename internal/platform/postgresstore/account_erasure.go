@@ -14,9 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// ErrErasureBlocked is returned by [AccountStore.PlanErasure] for an
-// account an automated erasure must not touch: billing state exists (no
-// writer on main, so it is handled by hand) or a member is staff.
+// ErrErasureBlocked is returned by [AccountStore.PlanErasure] for an account erasure must not touch: billing state exists or a member is staff.
 var ErrErasureBlocked = errors.New("account erasure blocked")
 
 // accountKeysReadCap bounds the whole-history api_keys reads erasure and
@@ -59,8 +57,7 @@ type ErasureRequest struct {
 	RequireNoUsers bool
 }
 
-// ErasureCounts is what one EraseAccount removed, recorded on the
-// account.erase audit row.
+// ErasureCounts is what one EraseAccount removed, recorded on the account.erase audit row.
 type ErasureCounts struct {
 	AuditRowsScrubbed int64 `json:"audit_rows_scrubbed"`
 	UsageRowsRenamed  int64 `json:"usage_rows_renamed"`
@@ -74,9 +71,7 @@ type ErasureCounts struct {
 	Users             int64 `json:"users"`
 }
 
-// UsageSubjects are the usage_daily / Redis usage subjects an account's
-// traffic is counted under: the account-level id:acct:<slug> and the
-// per-key key:<id> fallback.
+// UsageSubjects are the usage_daily / Redis subjects an account's traffic is counted under: id:acct:<slug> and per-key key:<id>.
 func UsageSubjects(slug string, keyIDs ...string) []string {
 	out := []string{"id:acct:" + slug}
 	for _, k := range keyIDs {
@@ -85,8 +80,7 @@ func UsageSubjects(slug string, keyIDs ...string) []string {
 	return out
 }
 
-// PlanErasure reads what an erasure of id will remove. platform.ErrNotFound
-// means the account is already gone.
+// PlanErasure reads what an erasure of id will remove; platform.ErrNotFound means the account is already gone.
 func (r *AccountStore) PlanErasure(ctx context.Context, id uuid.UUID) (ErasurePlan, error) {
 	p := ErasurePlan{AccountID: id}
 	var stripe sql.NullString
@@ -155,9 +149,7 @@ func (r *AccountStore) PlanErasure(ctx context.Context, id uuid.UUID) (ErasurePl
 	return p, nil
 }
 
-// EraseAccount closes the account and deletes or scrubs every row that holds it in ONE transaction (platform.ErrNotFound means already gone).
-// Order matters: slug lock first, as Create takes it; audit scrub while users and keys still exist (the 0188 trigger checks linkage); child-first deletes so RESTRICT foreign keys guard against a missed table;
-// slug tombstone and account.erase row in the same commit.
+// EraseAccount closes the account and deletes or scrubs every row holding it in ONE transaction (slug lock first, audit scrub before users/keys go, child-first deletes); ErrNotFound means already gone.
 func (r *AccountStore) EraseAccount(ctx context.Context, req ErasureRequest) (ErasureCounts, error) {
 	p := req.Plan
 	var c ErasureCounts
@@ -274,10 +266,7 @@ func lockAccountForErasure(ctx context.Context, tx *sql.Tx, req ErasureRequest) 
 	return nil
 }
 
-// RenameUsageSubjects moves usage_daily rows from subjects to erased,
-// merging into rows already there. Erasure re-runs it after its commit:
-// a rollup sweep that read the Redis counters before they were deleted
-// can upsert an old subject afterwards.
+// RenameUsageSubjects moves usage_daily rows from subjects to erased, merging into existing rows; erasure re-runs it after commit because a rollup sweep can re-upsert an old subject.
 func (r *AccountStore) RenameUsageSubjects(ctx context.Context, subjects []string, erased string) (int64, error) {
 	tx, err := r.s.db.BeginTx(ctx, nil)
 	if err != nil {

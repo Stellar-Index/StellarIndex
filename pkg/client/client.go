@@ -13,19 +13,10 @@ import (
 	"time"
 )
 
-// DefaultBaseURL is the public Stellar Index endpoint. Override via
-// [Options.BaseURL] for staging / self-hosted deployments.
+// DefaultBaseURL is the public Stellar Index endpoint; override via [Options.BaseURL] for staging or self-hosted deployments.
 const DefaultBaseURL = "https://api.stellarindex.io"
 
-// DefaultTimeout is the per-request timeout applied when
-// [Options.HTTPClient] is nil. It is a HARD wall-clock cap on the
-// whole request — set as http.Client.Timeout — and is independent of
-// the per-call context: a context deadline can only shorten a
-// request, never extend it past this 30s. Hot-path calls (Price,
-// Observations) are well under this. To permit a longer request
-// (e.g. a wide-range History call), supply your own transport via
-// [Options.HTTPClient] with a larger (or zero = unbounded) Timeout;
-// raising the per-call context deadline alone has no effect.
+// DefaultTimeout is the HARD wall-clock per-request cap (http.Client.Timeout) applied when [Options.HTTPClient] is nil; a context deadline can only shorten it, so longer requests need your own HTTPClient with a larger (or zero = unbounded) Timeout.
 const DefaultTimeout = 30 * time.Second
 
 // userAgent is sent on every request so server-side telemetry can
@@ -72,8 +63,7 @@ type Options struct {
 	AllowInsecureHTTP bool
 }
 
-// Client is the entry point for every API call. Construct via
-// [New] and reuse across goroutines.
+// Client is the entry point for every API call; construct via [New] and reuse across goroutines.
 type Client struct {
 	baseURL    string
 	apiKey     string
@@ -82,9 +72,7 @@ type Client struct {
 	configErr  error
 }
 
-// New constructs a [Client] from the supplied [Options]. Returns a
-// usable client even with a zero Options (anonymous calls against
-// the public endpoint).
+// New constructs a [Client] from [Options]; a zero Options yields a usable anonymous client against the public endpoint.
 func New(opts Options) *Client {
 	baseURL := opts.BaseURL
 	if baseURL == "" {

@@ -25,9 +25,7 @@ type UsageEvent struct {
 	RequestID  string
 }
 
-// UsageRollup models a row of the planned (never created) api_usage_5m,
-// api_usage_1h and api_usage_1d aggregates. Same shape across all three;
-// only the bucket interval differs.
+// UsageRollup models a row of the planned api_usage_5m / _1h / _1d aggregates, which share one shape and differ only in bucket interval.
 type UsageRollup struct {
 	Bucket          time.Time
 	AccountID       uuid.UUID

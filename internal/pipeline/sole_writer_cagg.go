@@ -16,21 +16,16 @@ import (
 // ProjectorStallBound is the longest the projector can hold a projected event behind a lake hole: one ch-live-catchup period (10 minutes) plus a 5-minute margin, the bound prices_1m's lookback is sized to.
 const ProjectorStallBound = 15 * time.Minute
 
-// ErrSoleWriterCAGGWindow is returned by [VerifySoleWriterCAGGCoverage]
-// when a continuous aggregate would not re-aggregate rows the projector
-// writes late.
+// ErrSoleWriterCAGGWindow is returned by [VerifySoleWriterCAGGCoverage] when a continuous aggregate would not re-aggregate rows the projector writes late.
 var ErrSoleWriterCAGGWindow = errors.New("rows only the projector writes would miss continuous aggregates: " +
 	"their refresh start_offset is shorter than the projector's stall bound " + ProjectorStallBound.String())
 
-// CAGGWindowReader lists continuous-aggregate refresh windows;
-// *timescale.Store implements it.
+// CAGGWindowReader lists continuous-aggregate refresh windows; *timescale.Store implements it.
 type CAGGWindowReader interface {
 	CAGGRefreshWindows(ctx context.Context) ([]timescale.CAGGRefreshWindow, error)
 }
 
-// VerifySoleWriterCAGGCoverage refuses a sink mode where the projector alone writes a table that a continuous aggregate reads with a lookback shorter than ProjectorStallBound;
-// low projector lag does not prove safety, one lake hole suffices. Phase 4 checks every aggregate (so a new one cannot slip past a stale list); Phase 3 checks only aggregates over SoleWriter sources' tables.
-// A missing refresh policy, or no aggregates at all, also fails.
+// VerifySoleWriterCAGGCoverage refuses a sink mode where the projector alone writes a table that a continuous aggregate reads with a lookback shorter than ProjectorStallBound (one lake hole suffices); a missing refresh policy or no aggregates also fails.
 func VerifySoleWriterCAGGCoverage(ctx context.Context, r CAGGWindowReader, mode SinkMode) error {
 	tables, all, err := soleWrittenTables(mode)
 	if err != nil {

@@ -8,23 +8,14 @@ import (
 	"time"
 )
 
-// SafeUnixFutureWindow bounds how far past the ledger close a decoded timestamp may sit before
-// [SafeUnixSeconds] / [SafeUnixMillis] fall back to the close time. It absorbs clock skew without
-// admitting sentinel or overflow values that error the timestamptz INSERT.
+// SafeUnixFutureWindow bounds how far past the ledger close a decoded timestamp may sit before [SafeUnixSeconds] / [SafeUnixMillis] fall back to the close time.
 const SafeUnixFutureWindow = 24 * time.Hour
 
 // safeUnixEpochFloorSeconds (1e9 s, September 2001) is the lower sanity bound: every ingested
 // source launched later, so anything earlier is a 0 or sentinel and falls back to the close.
 const safeUnixEpochFloorSeconds = 1_000_000_000
 
-// SafeUnixSeconds converts a raw u64 UNIX-seconds timestamp to UTC, falling back to closedAt
-// outside [1e9 s, closedAt+SafeUnixFutureWindow].
-//
-// The bound check runs on the RAW u64, BEFORE the int64 cast: a value above math.MaxInt64 wraps
-// negative and would stamp a far-PAST time that a cast-first future-only guard misses. The
-// ceiling is int64-checked before its own uint64 cast, since a pre-1970 closedAt would wrap it
-// and disable the guard. Decoders share this rather than hand-rolling one; see
-// [SafeUnixMillis].
+// SafeUnixSeconds converts a raw u64 UNIX-seconds timestamp to UTC, falling back to closedAt outside [1e9 s, closedAt+SafeUnixFutureWindow], bound-checking the RAW u64 before the int64 cast.
 func SafeUnixSeconds(raw uint64, closedAt time.Time) time.Time {
 	ceil := closedAt.Add(SafeUnixFutureWindow).Unix()
 	if ceil < 0 {
@@ -39,13 +30,7 @@ func SafeUnixSeconds(raw uint64, closedAt time.Time) time.Time {
 	return time.Unix(int64(raw), 0).UTC()
 }
 
-// UnboundedUnixSeconds converts a raw u64 UNIX-seconds value to UTC WITHOUT a close-time window,
-// for fields legitimately far in the future (a swap deadline, a timelock unlock) that
-// [SafeUnixSeconds]'s ceiling would wrongly clamp.
-//
-// It only guards the int64 cast: a value near math.MaxUint64 wraps to a small negative, a bogus
-// time near 1970 that looks plausible and that the timestamptz range check does not catch.
-// ok is false for any value that would wrap; treat it as absent and leave the field unset.
+// UnboundedUnixSeconds converts a raw u64 UNIX-seconds value to UTC without a close-time window, guarding only the int64 cast; ok=false means treat the field as absent.
 func UnboundedUnixSeconds(raw uint64) (t time.Time, ok bool) {
 	if raw > uint64(math.MaxInt64) {
 		return time.Time{}, false
@@ -53,8 +38,7 @@ func UnboundedUnixSeconds(raw uint64) (t time.Time, ok bool) {
 	return time.Unix(int64(raw), 0).UTC(), true
 }
 
-// SafeUnixMillis is [SafeUnixSeconds] for raw u64 UNIX-milliseconds
-// timestamps (Reflector topic[2], Redstone PackageTimestamp).
+// SafeUnixMillis is [SafeUnixSeconds] for raw u64 UNIX-millisecond timestamps.
 func SafeUnixMillis(raw uint64, closedAt time.Time) time.Time {
 	ceil := closedAt.Add(SafeUnixFutureWindow).UnixMilli()
 	if ceil < 0 {

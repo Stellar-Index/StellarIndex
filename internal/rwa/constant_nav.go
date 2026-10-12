@@ -6,9 +6,7 @@ import (
 	"time"
 )
 
-// ConstantNAVBinding binds an exact (code, issuer) to the NAV an EU MMFR CNAV prospectus
-// fixes, served under the issuer's own provenance and re-read every [ConstantNAVReviewInterval]
-// because a conversion leaves SEP-1 unchanged. Accumulating classes (e.g. sgBENJI) are measured, not fixed.
+// ConstantNAVBinding binds an exact (code, issuer) to the NAV an EU MMFR CNAV prospectus fixes, served under the issuer's provenance and re-read every ConstantNAVReviewInterval; accumulating classes are measured, not fixed.
 type ConstantNAVBinding struct {
 	Code   string
 	Issuer string
@@ -30,9 +28,7 @@ type ConstantNAVBinding struct {
 	ReviewBy string
 }
 
-// ConstantNAVReviewInterval is a quarter: the NAV is fixed until the regime changes, and a
-// regime change is announced in reports that are quarterly at the shortest. Longer would serve
-// a converted class at par for most of a year.
+// ConstantNAVReviewInterval is a quarter: a regime change is announced in reports quarterly at the shortest, and longer would serve a converted class at par for most of a year.
 const ConstantNAVReviewInterval = 90 * 24 * time.Hour
 
 // constantNAVDateLayout is the layout VerifiedOn and ReviewBy are
@@ -111,8 +107,7 @@ func indexConstantNAV(bindings []ConstantNAVBinding) (constantNAVTable, error) {
 	return t, nil
 }
 
-// ReviewDeadline is the start of the ReviewBy date, UTC; an unparseable date returns the
-// zero time so a hand-built binding fails closed as already due.
+// ReviewDeadline is the start of the ReviewBy date, UTC; an unparseable date returns the zero time so a hand-built binding fails closed as already due.
 func (b ConstantNAVBinding) ReviewDeadline() time.Time {
 	t, err := time.Parse(constantNAVDateLayout, b.ReviewBy)
 	if err != nil {
@@ -121,22 +116,18 @@ func (b ConstantNAVBinding) ReviewDeadline() time.Time {
 	return t
 }
 
-// ReviewDue reports whether the binding has passed its review deadline
-// at now — strictly after it, so the binding stands through the exact
-// instant [ConstantNAVReviewInterval] ends and is due from the next.
+// ReviewDue reports whether the binding is strictly past its review deadline at now, so it stands through the exact instant ConstantNAVReviewInterval ends.
 func (b ConstantNAVBinding) ReviewDue(now time.Time) bool {
 	return now.After(b.ReviewDeadline())
 }
 
-// ConstantNAV returns the prospectus constant-NAV binding for this exact
-// (code, issuer), and whether one exists.
+// ConstantNAV returns the prospectus constant-NAV binding for this exact (code, issuer), and whether one exists.
 func ConstantNAV(code, issuer string) (ConstantNAVBinding, bool) {
 	b, ok := constantNAVIndex.byPair[instrumentKey{code: strings.TrimSpace(code), issuer: strings.TrimSpace(issuer)}]
 	return b, ok
 }
 
-// ConstantNAVISINConflict reports whether the SEP-1-declared ISIN contradicts the table,
-// so a row would name one security and be valued as another; a malformed ISIN contradicts nothing.
+// ConstantNAVISINConflict reports whether the SEP-1-declared ISIN contradicts the table, so a row would name one security and be valued as another; a malformed ISIN contradicts nothing.
 func ConstantNAVISINConflict(code, issuer, declaredAnchorAsset string) bool {
 	isin, ok := CanonicalISIN(declaredAnchorAsset)
 	if !ok {
@@ -150,8 +141,7 @@ func ConstantNAVISINConflict(code, issuer, declaredAnchorAsset string) bool {
 	return bound && (instrumentKey{code: b.Code, issuer: b.Issuer}) != key
 }
 
-// ConstantNAVBindings returns the table in declaration order, for
-// documentation surfaces and tests.
+// ConstantNAVBindings returns the table in declaration order, for documentation surfaces and tests.
 func ConstantNAVBindings() []ConstantNAVBinding {
 	out := make([]ConstantNAVBinding, len(constantNAVBindings))
 	copy(out, constantNAVBindings)

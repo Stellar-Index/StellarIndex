@@ -9,16 +9,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// Decoder is the dispatcher-facing view of Circle CCTP v2. It is stateless: each event decodes
-// independently into one cctp_events row, with no buffering. The deposit_for_burn and
-// message_sent pairing is correlated downstream by (ledger, tx_hash).
-//
-// Matching is by topic[0] symbol AND contract id (ADR-0035): another contract could emit the same
-// symbol bytes, so Matches also requires one of the three known CCTP contracts.
+// Decoder is the dispatcher-facing view of Circle CCTP v2.
 type Decoder struct{}
 
-// NewDecoder constructs a CCTP Decoder. Stateless — the returned
-// value is safe to share.
+// NewDecoder constructs a stateless CCTP Decoder that is safe to share.
 func NewDecoder() *Decoder { return &Decoder{} }
 
 // withIndex stamps the intra-op event index onto the projected Event and wraps it as the
@@ -41,9 +35,7 @@ var cctpContracts = map[string]struct{}{
 	MainnetCctpForwarder:        {},
 }
 
-// MainnetContracts returns the known Circle CCTP v2 contract set, the recognition-attribution
-// pin for the ADR-0033 catalogue. Without it an unhandled cctp topic lands in the system-wide
-// recognition bucket instead of capping this source.
+// MainnetContracts returns the known Circle CCTP v2 contract set, the recognition-attribution pin for the ADR-0033 catalogue.
 func MainnetContracts() []string {
 	out := make([]string, 0, len(cctpContracts))
 	for id := range cctpContracts {
@@ -53,8 +45,7 @@ func MainnetContracts() []string {
 	return out
 }
 
-// IsCCTPContract reports whether id is one of the known Circle CCTP v2
-// contracts on Stellar mainnet.
+// IsCCTPContract reports whether id is one of the known Circle CCTP v2 contracts on Stellar mainnet.
 func IsCCTPContract(id string) bool {
 	_, ok := cctpContracts[id]
 	return ok
@@ -63,16 +54,12 @@ func IsCCTPContract(id string) bool {
 // Name implements [dispatcher.Decoder].
 func (*Decoder) Name() string { return SourceName }
 
-// Matches implements [dispatcher.Decoder]. Claims an event when its
-// topic[0] is one of the four CCTP symbols AND it was emitted by a
-// known CCTP contract.
+// Matches implements [dispatcher.Decoder]: it claims an event only when topic[0] is a CCTP symbol AND a known CCTP contract emitted it.
 func (*Decoder) Matches(ev events.Event) bool {
 	return IsCCTPContract(ev.ContractID) && Classify(&ev) != ""
 }
 
-// Decode implements [dispatcher.Decoder]. Emits one [Event] per recognised CCTP event, or nothing
-// otherwise (it re-checks Matches so a direct caller is safe). A decode error is non-fatal per
-// the dispatcher contract: counted and skipped.
+// Decode implements [dispatcher.Decoder], re-checking Matches so a direct caller is safe; a decode error is non-fatal (counted and skipped).
 func (*Decoder) Decode(ev events.Event) ([]consumer.Event, error) { //nolint:gocognit,gocyclo,cyclop,funlen // one case per CCTP event kind; the flat dispatch table stays auditable against the upstream contract's event list (same exemption as blend's decodeByKind)
 	kind := Classify(&ev)
 	if kind == "" || !IsCCTPContract(ev.ContractID) {

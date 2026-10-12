@@ -8,8 +8,7 @@ import (
 // AccountExportSchemaVersion versions the [AccountExport] document.
 const AccountExportSchemaVersion = 1
 
-// AccountExport is the GET /v1/dashboard/account/export document. Secrets (key hashes, signing keys, session hashes, passkey public keys, MFA material) and other members' data are never included.
-// jsonb columns are carried as json.RawMessage so no number is decoded into a float64; NUMERIC columns are decimal strings.
+// AccountExport is the GET /v1/dashboard/account/export document; secrets (key hashes, signing keys, session hashes, passkey keys, MFA material) and other members' data are never included.
 type AccountExport struct {
 	SchemaVersion int       `json:"schema_version"`
 	GeneratedAt   time.Time `json:"generated_at"`
@@ -41,8 +40,7 @@ type ExportAccount struct {
 	MonthlyRequestQuotaOverride *int64     `json:"monthly_request_quota_override,omitempty"`
 }
 
-// ExportUser is one member. MFA secrets and recovery-code hashes are
-// never exported.
+// ExportUser is one member; MFA secrets and recovery-code hashes are never exported.
 type ExportUser struct {
 	ID              string     `json:"id"`
 	Email           string     `json:"email"`
@@ -126,8 +124,7 @@ type ExportWebhookDelivery struct {
 	CreatedAt          time.Time       `json:"created_at"`
 }
 
-// ExportPriceAlert is one price alert. Threshold is the NUMERIC column
-// as a decimal string (ADR-0003).
+// ExportPriceAlert is one price alert; Threshold is the NUMERIC column as a decimal string (ADR-0003).
 type ExportPriceAlert struct {
 	ID              string     `json:"id"`
 	BaseAsset       string     `json:"base_asset"`
@@ -161,9 +158,7 @@ type ExportUsageDay struct {
 	ThrottledCount   int64  `json:"throttled_count"`
 }
 
-// ExportAuditRecord is one audit_log row about the account. IP and user
-// agent are present only on the requester's own actions; staff identity
-// (actor_email, session_id) is removed from metadata.
+// ExportAuditRecord is one audit_log row about the account; IP and user agent appear only on the requester's own actions and staff identity is removed from metadata.
 type ExportAuditRecord struct {
 	Timestamp   time.Time       `json:"ts"`
 	ActorKind   string          `json:"actor_kind"`

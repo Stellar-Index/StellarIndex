@@ -6,9 +6,7 @@ import (
 	"strings"
 )
 
-// Pair is a directed (base, quote) market: `XLM/USD` is the inverse of `USD/XLM`. Aggregation
-// across venues with flipped orientations MUST normalise through [Pair.Flip] before combining.
-// A Pair with the same asset on both sides is invalid ([Pair.Validate]).
+// Pair is a directed (base, quote) market (`XLM/USD` is the inverse of `USD/XLM`); normalise via [Pair.Flip] before aggregating, and the same asset on both sides is invalid.
 type Pair struct {
 	Base  Asset `json:"base"`
 	Quote Asset `json:"quote"`
@@ -23,10 +21,7 @@ func NewPair(base, quote Asset) (Pair, error) {
 	return p, nil
 }
 
-// Validate returns nil if both assets are valid, mapped, and distinct.
-//
-// A raw oracle symbol ([AssetOracleRaw]) is valid at the record layer but never a pair leg: the
-// interpretation layer may not price, compare or aggregate it.
+// Validate returns nil if both assets are valid, mapped and distinct; a raw oracle symbol ([AssetOracleRaw]) is never a pair leg.
 func (p Pair) Validate() error {
 	if err := p.Base.Validate(); err != nil {
 		return fmt.Errorf("base: %w", err)
@@ -49,26 +44,22 @@ func (p Pair) Validate() error {
 	return nil
 }
 
-// String emits the wire form `<base>/<quote>` using the asset
-// canonical identifiers.
+// String emits the wire form `<base>/<quote>` using the asset canonical identifiers.
 func (p Pair) String() string {
 	return p.Base.String() + "/" + p.Quote.String()
 }
 
-// Flip returns the reversed Pair. `XLM/USD` → `USD/XLM`. The derived
-// price of the flipped pair is 1 divided by the original.
+// Flip returns the reversed Pair; the derived price of the flipped pair is 1 divided by the original.
 func (p Pair) Flip() Pair {
 	return Pair{Base: p.Quote, Quote: p.Base}
 }
 
-// Equal reports whether two pairs have the same base and quote in
-// the same direction. `XLM/USD != USD/XLM`.
+// Equal reports whether two pairs have the same base and quote in the same direction.
 func (p Pair) Equal(q Pair) bool {
 	return p.Base.Equal(q.Base) && p.Quote.Equal(q.Quote)
 }
 
-// EqualEitherWay reports whether p and q name the same market in
-// either direction. Useful for venue-normalisation before aggregation.
+// EqualEitherWay reports whether p and q name the same market in either direction.
 func (p Pair) EqualEitherWay(q Pair) bool {
 	return p.Equal(q) || p.Equal(q.Flip())
 }
@@ -95,9 +86,7 @@ func ParsePair(s string) (Pair, error) {
 	return NewPair(base, quote)
 }
 
-// MarshalJSON emits the structured form {base:..., quote:...}.
-// (We deliberately emit the object form here rather than a string,
-// because pairs are rarer as user-facing identifiers than assets.)
+// MarshalJSON emits the structured object form {base, quote}, not a string.
 func (p Pair) MarshalJSON() ([]byte, error) {
 	type raw Pair
 	return json.Marshal(raw(p))

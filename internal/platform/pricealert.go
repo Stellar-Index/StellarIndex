@@ -8,8 +8,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// AlertCondition is the direction a [PriceAlert] fires in; it mirrors the
-// `price_alerts.condition` CHECK constraint.
+// AlertCondition is the direction a [PriceAlert] fires in, mirroring the `price_alerts.condition` CHECK constraint.
 type AlertCondition string
 
 const (
@@ -21,8 +20,7 @@ const (
 	AlertBelow AlertCondition = "below"
 )
 
-// ValidAlertCondition reports whether s is a known condition, so the CRUD handler rejects a bad
-// one before the INSERT hits the CHECK constraint.
+// ValidAlertCondition reports whether s is a known condition, so the CRUD handler rejects a bad one before the INSERT.
 func ValidAlertCondition(s string) bool {
 	switch AlertCondition(s) {
 	case AlertAbove, AlertBelow:
@@ -35,12 +33,10 @@ func ValidAlertCondition(s string) bool {
 // MinAlertCooldownSeconds floors the re-fire interval: without it a price oscillating around the threshold re-enqueues every subscribed webhook each tick and outruns the delivery worker's drain.
 const MinAlertCooldownSeconds = 300
 
-// MaxAlertCooldownSeconds is the largest cooldown the int4
-// `price_alerts.cooldown_seconds` column can hold.
+// MaxAlertCooldownSeconds is the largest cooldown the int4 `price_alerts.cooldown_seconds` column can hold.
 const MaxAlertCooldownSeconds = math.MaxInt32
 
-// ValidAlertCooldown reports whether n is an accepted cooldown, so an out-of-range value is a 400
-// rather than a firehose alert or a driver encode error surfacing as a 500.
+// ValidAlertCooldown reports whether n is an accepted cooldown, so an out-of-range value is a 400 rather than a firehose alert or a 500.
 func ValidAlertCooldown(n int) bool {
 	return n >= MinAlertCooldownSeconds && n <= MaxAlertCooldownSeconds
 }

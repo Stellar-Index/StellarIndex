@@ -21,16 +21,12 @@ type WebhookStore struct {
 	sealer *platform.WebhookKeySealer
 }
 
-// NewWebhookStore returns the Postgres-backed implementation without a
-// sealer: new signing keys are stored raw and a sealed key cannot be
-// read back. The list reads, which never carry a key, are unaffected.
+// NewWebhookStore returns the Postgres-backed implementation without a sealer: signing keys are stored raw and a sealed key cannot be read back.
 func NewWebhookStore(s *Store) *WebhookStore {
 	return &WebhookStore{s: s}
 }
 
-// NewSealingWebhookStore is [NewWebhookStore] that seals signing keys on
-// write and unseals them in [WebhookStore.GetWebhook]. A nil sealer is
-// the same as NewWebhookStore.
+// NewSealingWebhookStore is [NewWebhookStore] that seals signing keys on write and unseals them in GetWebhook; a nil sealer behaves as NewWebhookStore.
 func NewSealingWebhookStore(s *Store, sealer *platform.WebhookKeySealer) *WebhookStore {
 	return &WebhookStore{s: s, sealer: sealer}
 }
@@ -52,8 +48,7 @@ func webhookURLConflict(err error) error {
 	return err
 }
 
-// CreateWebhook inserts the registry row, enforcing `maxPerAccount` atomically: a per-account advisory lock ([lockAccount]) serialises creates so the loser's count-CTE sees the winner's INSERT (a handler pre-check is raceable).
-// maxPerAccount <= 0 admits nothing (TierAnon); a duplicate URL on one account returns [platform.ErrConflict].
+// CreateWebhook inserts the registry row, enforcing maxPerAccount atomically under a per-account advisory lock; maxPerAccount <= 0 admits nothing, a duplicate URL returns [platform.ErrConflict].
 func (c *WebhookStore) CreateWebhook(ctx context.Context, w platform.CustomerWebhook, maxPerAccount int) (platform.CustomerWebhook, error) {
 	if w.AccountID == uuid.Nil {
 		return platform.CustomerWebhook{}, errors.New("postgresstore: CreateWebhook: AccountID is empty")
@@ -113,8 +108,7 @@ func (c *WebhookStore) CreateWebhook(ctx context.Context, w platform.CustomerWeb
 	return w, nil
 }
 
-// ListWebhooksForAccount returns every webhook the account has
-// registered, ordered by CreatedAt desc.
+// ListWebhooksForAccount returns every webhook the account registered, ordered by CreatedAt desc.
 func (c *WebhookStore) ListWebhooksForAccount(ctx context.Context, accountID uuid.UUID) ([]platform.CustomerWebhook, error) {
 	const q = `
 		SELECT id, account_id, name, url, events, enabled,
@@ -142,8 +136,7 @@ func (c *WebhookStore) ListWebhooksForAccount(ctx context.Context, accountID uui
 	return out, nil
 }
 
-// ListWebhooksSubscribedTo returns enabled webhooks subscribed to eventType whose owning account is ACTIVE (events is text[], ANY($1) the predicate).
-// Fail-closed outbound kill switch: a webhook whose account is not `active`, or whose account row is missing, is not a subscriber, mirroring the inbound side.
+// ListWebhooksSubscribedTo returns enabled webhooks subscribed to eventType; fail-closed, a webhook whose account is not `active` or is missing is not a subscriber.
 func (c *WebhookStore) ListWebhooksSubscribedTo(ctx context.Context, eventType platform.WebhookEventType) ([]platform.CustomerWebhook, error) {
 	const q = `
 		SELECT id, account_id, name, url, events, enabled,
@@ -175,10 +168,7 @@ func (c *WebhookStore) ListWebhooksSubscribedTo(ctx context.Context, eventType p
 	return out, nil
 }
 
-// GetWebhook returns one row by ID with its signing key unsealed.
-// ErrNotFound when absent. When the key is sealed and this store has no
-// sealer, or the sealed bytes do not open, it returns the row without
-// SigningKey and an error wrapping [platform.ErrWebhookKeyUnsealable].
+// GetWebhook returns one row by ID with its signing key unsealed, or ErrNotFound; an unopenable sealed key returns the row without SigningKey and an error wrapping [platform.ErrWebhookKeyUnsealable].
 func (c *WebhookStore) GetWebhook(ctx context.Context, id uuid.UUID) (platform.CustomerWebhook, error) {
 	const q = `
 		SELECT id, account_id, name, url, events, enabled,
@@ -303,8 +293,7 @@ func (c *WebhookStore) rawSigningKeys(ctx context.Context) ([]rawSigningKey, err
 	return out, rows.Err()
 }
 
-// UpdateWebhook persists name / url / events / enabled changes.
-// SigningKey + AccountID are immutable post-create.
+// UpdateWebhook persists name, url, events and enabled changes; SigningKey and AccountID are immutable.
 func (c *WebhookStore) UpdateWebhook(ctx context.Context, w platform.CustomerWebhook) error {
 	if w.ID == uuid.Nil {
 		return errors.New("postgresstore: UpdateWebhook: ID is empty")
@@ -345,8 +334,7 @@ func (c *WebhookStore) DeleteWebhook(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
-// EnqueueDelivery inserts one pending delivery only if the owning account is ACTIVE; it is the choke point every producer shares (price alerts resolve targets without the status filter), so a suspended account accrues nothing.
-// Errors: wrapping [ErrWebhookAccountInactive] when inactive, [platform.ErrNotFound] when the webhook is gone, [platform.ErrDeliveryAlreadyEnqueued] when d.ID is already queued (so a partial fan-out can re-run without re-notifying).
+// EnqueueDelivery inserts one pending delivery only if the owning account is ACTIVE (the shared choke point); errors wrap [ErrWebhookAccountInactive], [platform.ErrNotFound] or [platform.ErrDeliveryAlreadyEnqueued].
 func (c *WebhookStore) EnqueueDelivery(ctx context.Context, d platform.WebhookDelivery) error {
 	if d.WebhookID == uuid.Nil {
 		return errors.New("postgresstore: EnqueueDelivery: WebhookID is empty")
@@ -434,8 +422,7 @@ func (e accountInactiveError) Error() string {
 // Unwrap exposes [ErrWebhookAccountInactive] to errors.Is.
 func (e accountInactiveError) Unwrap() error { return ErrWebhookAccountInactive }
 
-// WebhookSuppressed marks this as a delivery withheld by policy rather
-// than one lost to a failure (the net.Error.Timeout contract shape).
+// WebhookSuppressed marks a delivery withheld by policy rather than lost to a failure.
 func (e accountInactiveError) WebhookSuppressed() bool { return true }
 
 // refuseEnqueue turns an enqueue that matched no row into the specific
@@ -478,9 +465,7 @@ func (c *WebhookStore) WebhookAccountStatus(ctx context.Context, webhookID uuid.
 // rows per poll instead of a whole batch.
 const maxClaimPerWebhook = 5
 
-// ListPendingDeliveries atomically claims up to `limit` due deliveries with one UPDATE...RETURNING ... FOR UPDATE SKIP LOCKED, fair-shared across endpoints (capped at maxClaimPerWebhook each) so a black-holing endpoint cannot starve others.
-// The 5-minute lease makes a crashed worker's re-POST idempotent (the receiver dedupes on X-StellarIndex-Delivery-Id).
-// Rows of non-ACTIVE accounts are PARKED, not destroyed; the EXISTS must not join `accounts`, or the row lock would extend to it and an admin PATCH would make the worker skip that customer.
+// ListPendingDeliveries atomically claims up to limit due deliveries (FOR UPDATE SKIP LOCKED, fair-shared per endpoint, 5-minute lease); rows of non-ACTIVE accounts are parked, and the EXISTS must not join `accounts`.
 func (c *WebhookStore) ListPendingDeliveries(ctx context.Context, limit int) ([]platform.WebhookDelivery, error) {
 	if limit <= 0 {
 		limit = 100
@@ -604,8 +589,7 @@ func (c *WebhookStore) SweepFinishedDeliveries(ctx context.Context, olderThan ti
 	return c.s.deleteInBatches(ctx, "postgresstore: SweepFinishedDeliveries", q, olderThan, defaultSweepBatchRows)
 }
 
-// CountDeliveries returns the current webhook_deliveries row count. Feeds
-// the webhook-delivery reaper's [obs.RetentionReaperRows] gauge.
+// CountDeliveries returns the webhook_deliveries row count, feeding the [obs.RetentionReaperRows] gauge.
 func (c *WebhookStore) CountDeliveries(ctx context.Context) (int64, error) {
 	var n int64
 	if err := c.s.db.QueryRowContext(ctx,
@@ -674,8 +658,7 @@ func scanDeliveryRow(s rowScanner) (platform.WebhookDelivery, error) {
 
 // ─── Dashboard-flow surfaces (extends EnqueueDelivery/MarkDelivered) ─────
 
-// RotateWebhookSecret makes newSecret the signing key in place under a row lock, moving the outgoing key to the previous slot; the row is never deleted, so queued deliveries and the log survive.
-// Keys are stored as create stores them (sealed with a sealer, raw without); a store without a sealer refuses a sealed row rather than write a pair it cannot read back.
+// RotateWebhookSecret makes newSecret the signing key in place under a row lock, moving the old key to the previous slot; keys are stored as create stores them and a sealer-less store refuses a sealed row.
 func (c *WebhookStore) RotateWebhookSecret(ctx context.Context, id uuid.UUID, newSecret []byte, previousExpiresAt time.Time) error {
 	if len(newSecret) == 0 {
 		return errors.New("postgresstore: RotateWebhookSecret: newSecret is empty")
@@ -786,8 +769,7 @@ func (c *WebhookStore) AppendDelivery(ctx context.Context, d platform.WebhookDel
 	return d, nil
 }
 
-// UpdateDelivery rewrites the attempt-state fields. Idempotent; the
-// row is keyed by ID and only the mutable fields are touched.
+// UpdateDelivery rewrites the attempt-state fields of the delivery keyed by ID; idempotent.
 func (c *WebhookStore) UpdateDelivery(ctx context.Context, d platform.WebhookDelivery) error {
 	if d.ID == uuid.Nil {
 		return errors.New("postgresstore: UpdateDelivery: ID is empty")
@@ -828,8 +810,7 @@ func (c *WebhookStore) UpdateDelivery(ctx context.Context, d platform.WebhookDel
 	return nil
 }
 
-// ListDeliveries returns the most-recent `limit` attempts for one
-// webhook, newest first. Used by the dashboard delivery log.
+// ListDeliveries returns the most-recent limit attempts for one webhook, newest first.
 func (c *WebhookStore) ListDeliveries(ctx context.Context, webhookID uuid.UUID, limit int) ([]platform.WebhookDelivery, error) {
 	if limit <= 0 {
 		limit = 100

@@ -8,13 +8,10 @@ import (
 	"time"
 )
 
-// GenesisSeeder writes one contract's pre-Soroban genesis baseline. It must be
-// idempotent (the baseline is SET, not added).
+// GenesisSeeder writes one contract's pre-Soroban genesis baseline and must be idempotent (the baseline is SET, not added).
 type GenesisSeeder func(ctx context.Context, contractID string) error
 
-// GenesisSeedingComputer wraps a SEP-41 [SnapshotComputer] so a watched
-// contract whose genesis baseline is missing seeds itself instead of staying
-// withheld until an operator runs `supply seed-sep41-genesis`.
+// GenesisSeedingComputer wraps a SEP-41 [SnapshotComputer] so a watched contract with a missing genesis baseline seeds itself instead of staying withheld.
 type GenesisSeedingComputer struct {
 	inner      SnapshotComputer
 	contractID string
@@ -44,9 +41,7 @@ func NewGenesisSeedingComputer(inner SnapshotComputer, contractID string, opts G
 	return &GenesisSeedingComputer{inner: inner, contractID: contractID, seed: opts.Seed, retryAfter: opts.RetryAfter, logger: logger}
 }
 
-// Compute implements [SnapshotComputer]. On a missing-baseline error it seeds
-// once and recomputes; any other outcome, and a failed seed, return the
-// inner result unchanged so the refresher still classes it benign.
+// Compute implements [SnapshotComputer]: on a missing-baseline error it seeds once and recomputes, otherwise returns the inner result unchanged.
 func (g *GenesisSeedingComputer) Compute(ctx context.Context, ledger uint32, observedAt time.Time) (Supply, error) {
 	s, err := g.inner.Compute(ctx, ledger, observedAt)
 	if !errors.Is(err, ErrGenesisBaselineNotSeeded) && !errors.Is(err, ErrNegativeTotalMissingBaseline) {

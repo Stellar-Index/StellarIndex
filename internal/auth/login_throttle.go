@@ -14,9 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
 )
 
-// RedisLoginThrottle implements dashboardauth.LoginThrottle, the magic-link send throttle: per-IP (10/hour) and per-TARGET-email (5/hour) sliding-window caps, send denied when EITHER is exhausted, since /v1/auth/login otherwise lets one IP bomb a victim inbox and burn email quota and sender reputation.
-// Redis outage: the handler falls open on a throttle error, so every increment is also applied to an in-process fixed-window counter with the SAME caps; Redis is authoritative while it answers, the local count decides on error.
-// This beats the signup throttle's fail-closed inversion, which would take login offline for a blip. Once the degraded cap is exhausted Allow returns (false, nil), a definitive DENY; the over-quota branch still returns the generic 200, so anti-enumeration holds.
+// RedisLoginThrottle is the magic-link send throttle: per-IP (10/hour) and per-target-email (5/hour) sliding caps, denied when EITHER is exhausted; Redis errors fall open to an in-process counter with the same caps.
 type RedisLoginThrottle struct {
 	counter    *ratelimit.FixedWindowCounter
 	fallback   *ratelimit.LocalFixedWindowCounter
@@ -25,8 +23,7 @@ type RedisLoginThrottle struct {
 	keyPrefix  string
 }
 
-// LoginThrottleOptions tunes a [RedisLoginThrottle]. Zero values pick the
-// documented defaults.
+// LoginThrottleOptions tunes a [RedisLoginThrottle]; zero values pick the documented defaults.
 type LoginThrottleOptions struct {
 	MaxPerIP    int           // sends/window/IP (default 10)
 	MaxPerEmail int           // sends/window/target-email (default 5)
@@ -35,8 +32,7 @@ type LoginThrottleOptions struct {
 	NowFn       func() time.Time
 }
 
-// NewRedisLoginThrottle constructs the throttle. rdb MUST be non-nil; leave
-// the dashboardauth Config.LoginThrottle field nil for Redis-less deploys.
+// NewRedisLoginThrottle constructs the throttle; rdb MUST be non-nil.
 func NewRedisLoginThrottle(rdb redis.UniversalClient, opts LoginThrottleOptions) *RedisLoginThrottle {
 	if rdb == nil {
 		panic("auth: NewRedisLoginThrottle: rdb must not be nil")
@@ -66,8 +62,7 @@ func NewRedisLoginThrottle(rdb redis.UniversalClient, opts LoginThrottleOptions)
 	}
 }
 
-// Allow increments the per-IP and per-email counters and reports whether BOTH are within cap; the email is hashed (sha256, 16-hex prefix) so plaintext never reaches Redis.
-// (true, nil) send; (false, nil) over quota, also once the in-process cap is exhausted during an outage, where the Redis error is deliberately NOT returned since the handler falls open on any non-nil error; (true, err) Redis down but local cap has room.
+// Allow increments the per-IP and per-email counters and reports whether BOTH are within cap; the email is hashed so plaintext never reaches Redis, and a definitive deny returns (false, nil) rather than an error.
 func (t *RedisLoginThrottle) Allow(ctx context.Context, ip, email string) (bool, error) {
 	allowed := true
 	var firstErr error
@@ -112,16 +107,14 @@ func (t *RedisLoginThrottle) incrUnderCap(ctx context.Context, keyBase string, l
 	return int(count) <= limit, nil
 }
 
-// HashEmail returns a short stable digest of a canonicalised email for use as a Redis key fragment, never the plaintext. Normalisation happens HERE so the per-email cap buckets every spelling of one inbox together whether or not the caller normalised;
-// it is exported so the in-process fallback (cmd/stellarindex-api inProcessLoginThrottle) shares the identity. Canonicalisation is RFC-5322 aware (addr-spec extracted), since case+trim alone gives each spelling its own 5/hour budget, bypassing the inbox-bombing cap; unparseable input falls back to case+trim.
+// HashEmail returns a short stable digest of the canonicalised email for a Redis key, never the plaintext; it normalises here so every spelling of one inbox shares the per-email cap.
 func HashEmail(email string) string {
 	normalized := CanonicalEmail(email)
 	sum := sha256.Sum256([]byte(normalized))
 	return hex.EncodeToString(sum[:8])
 }
 
-// CanonicalEmail reduces an address to its lower-cased addr-spec, stripping display name, angle brackets, a `+tag` suffix and, for gmail.com/googlemail.com only, local-part dots; unparseable input returns lower-cased, trimmed input (throttle-bucket identity only, so it must never reject).
-// Without it `victim+1@gmail.com`, `victim+2@gmail.com` and `vic.tim@gmail.com` each get their own budget for one inbox.
+// CanonicalEmail reduces an address to its lower-cased addr-spec (no display name, `+tag`, or gmail local-part dots) for throttle bucketing only; unparseable input returns lower-cased, trimmed input and it never rejects.
 func CanonicalEmail(email string) string {
 	trimmed := strings.ToLower(strings.TrimSpace(email))
 	addrSpec := trimmed

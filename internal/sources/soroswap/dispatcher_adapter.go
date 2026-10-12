@@ -11,21 +11,13 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// PairTokens holds the (token0, token1) identities of a Soroswap pair contract, from factory
-// new_pair events. Exported so callers can build a seed map for [WithSeededPairTokensDecoder].
+// PairTokens holds the (token0, token1) identities of a Soroswap pair from factory new_pair events; exported to build a seed map for [WithSeededPairTokensDecoder].
 type PairTokens struct {
 	Token0 canonical.Asset
 	Token1 canonical.Asset
 }
 
-// Decoder is the dispatcher-facing view of Soroswap. It owns a swap+sync correlation buffer
-// (a SwapEvent is followed immediately by a SyncEvent in the same transaction) and a
-// pair->(token0, token1) registry seeded by factory new_pair events, because swap events carry
-// only amounts. Pair deposit/withdraw match but produce no output; LP-share SEP-41 events are
-// classified but NOT claimed (see the EventPairToken arm in Matches).
-//
-// The dispatcher is serial; the mutex exists so operator tooling can call SeedPair concurrently
-// at startup.
+// Decoder is the dispatcher-facing Soroswap view: a swap+sync correlation buffer (a SwapEvent is followed immediately by a SyncEvent in the same transaction, paired by (ledger, tx_hash, op_index)) and a pair->(token0, token1) registry from factory new_pair events, since swap events carry only amounts; LP-share SEP-41 events are classified but NOT claimed.
 type Decoder struct {
 	// mu guards buf, pairTokens and the skip counters. Critical sections that call anything release
 	// it via defer; see [Decoder.absorbEvent].
@@ -65,8 +57,7 @@ func NewDecoder(opts ...DecoderOption) *Decoder {
 // DecoderOption configures a Decoder at construction time.
 type DecoderOption func(*Decoder)
 
-// WithSeededPairTokensDecoder pre-loads the pair->tokens cache so startup need not re-walk
-// factory events from genesis.
+// WithSeededPairTokensDecoder pre-loads the pair->tokens cache so startup need not re-walk factory events from genesis.
 func WithSeededPairTokensDecoder(seed map[string]PairTokens) DecoderOption {
 	return func(d *Decoder) {
 		for k, v := range seed {
@@ -75,18 +66,14 @@ func WithSeededPairTokensDecoder(seed map[string]PairTokens) DecoderOption {
 	}
 }
 
-// WithPairUpsertHook installs a callback fired on each factory new_pair event with the pair and
-// token_0/token_1 C-strkeys, so the mapping can be persisted for restarts and parallel chunks.
-// It fires after the decoder mutex is released but on the dispatch goroutine: keep it cheap (a
-// queued ExecContext is fine; a blocking network call is not).
+// WithPairUpsertHook installs a callback fired on each factory new_pair event with the pair and token_0/token_1 C-strkeys; it runs on the dispatch goroutine after the decoder mutex is released, so keep it cheap.
 func WithPairUpsertHook(hook func(pairStrkey, token0Strkey, token1Strkey string)) DecoderOption {
 	return func(d *Decoder) {
 		d.onNewPair = hook
 	}
 }
 
-// SeedPair adds a pair->tokens mapping live; safe from any goroutine. It fires the onNewPair hook
-// so SeedFromFactoryRPC callers also get persistence.
+// SeedPair adds a pair->tokens mapping live, safe from any goroutine, and fires the onNewPair hook so SeedFromFactoryRPC callers also persist.
 func (d *Decoder) SeedPair(pair string, token0, token1 canonical.Asset) {
 	hook := d.storePairTokens(pair, token0, token1)
 	if hook != nil {
@@ -107,16 +94,7 @@ func (d *Decoder) storePairTokens(pair string, token0, token1 canonical.Asset) f
 // Name implements [dispatcher.Decoder].
 func (*Decoder) Name() string { return SourceName }
 
-// Matches implements [dispatcher.Decoder]. Topic symbols are shared across AMMs, so it gates on
-// CONTRACT IDENTITY, not topic (ADR-0035):
-//
-//   - factory new_pair events match ONLY from a canonical Soroswap factory (MainnetFactories).
-//     Otherwise a foreign contract could inject a pair->tokens mapping and have its swaps
-//     mis-attributed as Soroswap trades.
-//   - pair events match ONLY from a REGISTERED pair, seeded live from new_pair, a startup DB warm
-//     and the genesis factory walk (`stellarindex-ops seed-soroswap-pairs`).
-//
-// Registry completeness is a hard requirement: an un-seeded real pair has its events dropped.
+// Matches implements [dispatcher.Decoder], gating on CONTRACT IDENTITY, not topic (ADR-0035): factory new_pair events match only from a MainnetFactories entry (else a foreign contract could inject pair->tokens), pair events only from a REGISTERED pair; an un-seeded real pair has its events dropped.
 func (d *Decoder) Matches(ev events.Event) bool {
 	kind := classify(&ev)
 	if kind == "" {
@@ -231,9 +209,7 @@ func (d *Decoder) pairTokensFor(contractID string) (PairTokens, bool) {
 	return tokens, ok
 }
 
-// GatedContractSet returns every contract Matches can accept (verified factories plus registered
-// pairs), sorted. The completeness re-derive scopes its lake read to it, so it must never be
-// narrower than the gate.
+// GatedContractSet returns every contract Matches can accept (verified factories plus registered pairs), sorted; the completeness re-derive scopes its lake read to it, so it must never be narrower than the gate.
 func (d *Decoder) GatedContractSet() []string {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -316,9 +292,7 @@ func (d *Decoder) emitCompleted(completed []RawPair) ([]consumer.Event, error) {
 	return out, nil
 }
 
-// Drain implements [dispatcher.Drainer]: it flushes the open swap/sync groups at the end of a
-// bounded stream. A swap-only group is final (the trade reads from the swap body alone); a
-// sync-only group is LP-traffic noise and only counted.
+// Drain implements [dispatcher.Drainer], flushing open swap/sync groups at the end of a bounded stream: a swap-only group is final (the trade reads from the swap body alone), a sync-only group is LP noise and only counted.
 func (d *Decoder) Drain() []consumer.Event {
 	d.mu.Lock()
 	open := d.buf.orphans()
@@ -344,17 +318,14 @@ func (d *Decoder) Drain() []consumer.Event {
 	return out
 }
 
-// EvictedOrphans is the count of swap-only buffer entries dropped by age-out, a real lost trade;
-// bare-sync evictions are in [Decoder.EvictedBareSync].
+// EvictedOrphans is the count of swap-only buffer entries dropped by age-out (a real lost trade); bare-sync evictions are in [Decoder.EvictedBareSync].
 func (d *Decoder) EvictedOrphans() int {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	return d.evictedOrphans
 }
 
-// EvictedBareSync is the count of sync-only buffer entries dropped by age-out. Deposits,
-// withdrawals and skims emit a sync with no swap, so this is expected LP traffic, kept separate
-// from [Decoder.EvictedOrphans] so that stays a loss signal.
+// EvictedBareSync is the count of sync-only entries dropped by age-out (expected LP traffic from deposits, withdrawals and skims), kept apart so [Decoder.EvictedOrphans] stays a loss signal.
 func (d *Decoder) EvictedBareSync() int {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -368,8 +339,7 @@ func (d *Decoder) SkippedUnknownPair() int {
 	return d.skippedUnknownPair
 }
 
-// UnknownContractDrops implements the dispatcher's duck-typed reporter interface so a swap dropped
-// for want of a pair-token mapping reaches obs.SourceDecodeErrorsTotal instead of vanishing.
+// UnknownContractDrops implements the dispatcher's duck-typed reporter so a swap dropped for want of a pair-token mapping reaches obs.SourceDecodeErrorsTotal.
 func (d *Decoder) UnknownContractDrops() int {
 	return d.SkippedUnknownPair()
 }

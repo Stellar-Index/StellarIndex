@@ -17,8 +17,7 @@ import (
 // On r1 the chain holds MinIO's keys, so an SDK-built cold client would sign real-AWS requests with them (InvalidAccessKeyId), and ledgerstream's non-fatal cold-init failure hides it as a log line.
 // So NewColdDataStore uses datastore.FromS3Client and never config.LoadDefaultConfig (it also resolves AWS_ENDPOINT_URL): the cold client inherits NOTHING from the environment.
 
-// NewColdDataStore builds the ADR-0027 cold-tier DataStore from storage.s3_cold_* with explicit credentials, not the SDK's ambient chain (see the note above).
-// Otherwise identical to NewS3DataStore (path-style, region, FromS3Client tail), so the SDK's bucket-probe diagnostics are preserved.
+// NewColdDataStore builds the ADR-0027 cold-tier DataStore from storage.s3_cold_* with explicit credentials, not the SDK's ambient chain; otherwise identical to NewS3DataStore.
 func NewColdDataStore(ctx context.Context, storage config.StorageConfig) (datastore.DataStore, error) {
 	client, err := NewColdS3Client(storage)
 	if err != nil {
@@ -27,8 +26,7 @@ func NewColdDataStore(ctx context.Context, storage config.StorageConfig) (datast
 	return datastore.FromS3Client(ctx, client, storage.S3ColdBucketArchive)
 }
 
-// NewColdS3Client returns the cold tier's raw *s3.Client, for callers
-// that need object metadata (ETag, Last-Modified) the DataStore hides.
+// NewColdS3Client returns the cold tier's raw *s3.Client, for callers needing object metadata (ETag, Last-Modified) the DataStore hides.
 func NewColdS3Client(storage config.StorageConfig) (*s3.Client, error) {
 	if storage.S3ColdBucketArchive == "" {
 		return nil, fmt.Errorf("cold datastore: storage.s3_cold_bucket_archive is empty (cold tiering disabled)")

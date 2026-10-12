@@ -25,24 +25,16 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// SourceName is the registry key for this catch-all source, used only for metrics / log
-// attribution: it hooks in via [dispatcher.RawEventSink], not the per-source `Decoder` chain.
+// SourceName is the registry key for this catch-all source, used only for metrics / log attribution; it hooks in via [dispatcher.RawEventSink], not the per-source Decoder chain.
 const SourceName = "soroban-events"
 
-// Row is one captured soroban_events row, ready for batched insert; fields map 1:1 to the table
-// columns and pointer types are nullable columns. It aliases [domain.SorobanEventRow] because
-// internal/storage/timescale uses this shape and must not import upward into this package.
+// Row is one captured soroban_events row for batched insert, fields mapping 1:1 to table columns (pointers are nullable); it aliases [domain.SorobanEventRow] because internal/storage/timescale must not import upward into this package.
 type Row = domain.SorobanEventRow
 
-// ErrSkip is returned by [Capture] for events the table never stores (non-"contract" types, or no
-// valid ContractID). Callers MUST treat it as a silent skip: it only fires on inputs the
-// dispatcher already filtered, so it is defence in depth.
+// ErrSkip is returned by [Capture] for events the table never stores (non-"contract" types, or no valid ContractID); callers MUST treat it as a silent skip.
 var ErrSkip = errors.New("sorobanevents: event not eligible for capture")
 
-// Capture projects one [events.Event] into a [Row], returning [ErrSkip] for non-contract events
-// or a missing ContractID. tx_hash is stored as 32 raw bytes so the indexed column stays
-// binary-comparable; topics and body are base64-decoded raw XDR; op_args_xdr is nil when the
-// event did not come from an InvokeContract op.
+// Capture projects one [events.Event] into a [Row], returning [ErrSkip] for non-contract events or a missing ContractID; tx_hash is stored as 32 raw bytes, topics and body as base64-decoded raw XDR, and op_args_xdr is nil when the event did not come from an InvokeContract op.
 func Capture(ev events.Event) (Row, error) {
 	if ev.Type != "contract" {
 		return Row{}, ErrSkip

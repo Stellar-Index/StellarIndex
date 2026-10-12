@@ -75,8 +75,7 @@ var offChainReferenceCodes = map[string]struct{}{
 	"SPXU": {}, // one share of an inverse S&P 500 ETF
 }
 
-// InstrumentFeed returns the feed bound to this exact (code, issuer). The code is not
-// case-folded (XAUM is not XAUm); surrounding whitespace is trimmed.
+// InstrumentFeed returns the feed bound to this exact (code, issuer); the code is not case-folded (XAUM is not XAUm) and surrounding whitespace is trimmed.
 func InstrumentFeed(code, issuer string) (string, bool) {
 	feed, ok := bindingIndex[instrumentKey{
 		code:   strings.TrimSpace(code),
@@ -85,23 +84,20 @@ func InstrumentFeed(code, issuer string) (string, bool) {
 	return feed, ok
 }
 
-// OffChainReferenceCode reports whether a feed of this code prices an off-chain quantity; it
-// only picks the refusal wording and grants nothing.
+// OffChainReferenceCode reports whether a feed of this code prices an off-chain quantity; it only picks the refusal wording and grants nothing.
 func OffChainReferenceCode(code string) bool {
 	_, ok := offChainReferenceCodes[strings.TrimSpace(code)]
 	return ok
 }
 
-// InstrumentBinding is one served binding — the pair this surface will
-// compare, and the feed it will compare it against.
+// InstrumentBinding is one served binding: the pair this surface compares, and the feed it compares against.
 type InstrumentBinding struct {
 	Code   string `json:"code"`
 	Issuer string `json:"issuer"`
 	Feed   string `json:"feed"`
 }
 
-// InstrumentBindings lists the curated set in a stable order, as [AnchorClasses] does, with
-// each feed in its canonical `rwa:` form for the oracle endpoints.
+// InstrumentBindings lists the curated set in a stable order, as AnchorClasses does, with each feed in its canonical `rwa:` form.
 func InstrumentBindings() []InstrumentBinding {
 	out := make([]InstrumentBinding, 0, len(instrumentBindings))
 	for _, b := range instrumentBindings {
@@ -151,8 +147,7 @@ var fundNAVIndex = func() map[instrumentKey]string {
 	return m
 }()
 
-// FundNAVTicker returns the fund ticker bound to this exact (code, issuer), as
-// [InstrumentFeed] does.
+// FundNAVTicker returns the fund ticker bound to this exact (code, issuer), as InstrumentFeed does.
 func FundNAVTicker(code, issuer string) (string, bool) {
 	t, ok := fundNAVIndex[instrumentKey{
 		code:   strings.TrimSpace(code),
@@ -161,8 +156,7 @@ func FundNAVTicker(code, issuer string) (string, bool) {
 	return t, ok
 }
 
-// FundNAVTickers lists the bound tickers, sorted — the set the NAV poller
-// fetches.
+// FundNAVTickers lists the bound tickers, sorted: the set the NAV poller fetches.
 func FundNAVTickers() []string {
 	out := make([]string, 0, len(fundNAVBindings))
 	for _, b := range fundNAVBindings {
