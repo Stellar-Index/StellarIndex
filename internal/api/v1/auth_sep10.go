@@ -13,16 +13,9 @@ import (
 // here" answer carries.
 const sep10UnavailableType = "https://api.stellarindex.io/errors/sep10-unavailable"
 
-// sep10UnavailableDetail is the body those answers carry.
-//
-// It must stand alone for a caller who read no docs: WHY the route refuses (no working validator,
-// a deployment posture) and WHAT TO DO INSTEAD (an API key). It names no single cause because
-// resolveSEP10Validator installs the Noop for ANY construction failure, and the real error stays
-// in the startup log because the route is public. The call sites share one string to avoid drift.
-//
-// Enabling SEP-10 SWAPS the deployment's credential type rather than adding one, because
-// middleware.authenticate is a mutually exclusive switch over auth_mode; "turn it on as well"
-// would break every existing key holder.
+// sep10UnavailableDetail is the shared 404 body and must stand alone: WHY (no working validator) and WHAT TO DO (use an API key). It names
+// no single cause because resolveSEP10Validator installs the Noop for ANY construction failure (real error in the startup log). Enabling
+// SEP-10 SWAPS the credential type: middleware.authenticate is a mutually exclusive switch over auth_mode.
 const sep10UnavailableDetail = "no SEP-10 validator is wired on this deployment, " +
 	"so it cannot issue or verify SEP-10 challenges; this is a deployment posture, not an outage. " +
 	"Authenticate with an API key instead (Authorization: Bearer sip_…) — see https://stellarindex.io/sdk. " +
@@ -41,11 +34,8 @@ func writeSEP10Unavailable(w http.ResponseWriter, r *http.Request) {
 		sep10UnavailableDetail)
 }
 
-// handleSEP10Challenge serves GET /v1/auth/sep10/challenge?account=G…
-//
-// Returns the challenge transaction the client signs with its account key: the SEP-10 §3.2
-// { transaction, network_passphrase } pair plus issued_at/valid_until. It is deliberately
-// unauthenticated, since SEP-10 bootstraps auth from a public G-strkey.
+// handleSEP10Challenge serves GET /v1/auth/sep10/challenge?account=G…, returning the challenge transaction to sign (SEP-10
+// §3.2) plus issued_at/valid_until. Deliberately unauthenticated: SEP-10 bootstraps auth from a public G-strkey.
 func (s *Server) handleSEP10Challenge(w http.ResponseWriter, r *http.Request) {
 	if s.SEP10 == nil {
 		writeSEP10Unavailable(w, r)
@@ -117,29 +107,17 @@ type sep10TokenRequest struct {
 	Transaction string `json:"transaction"`
 }
 
-// sep10TokenResponse is the wire shape for POST /v1/auth/sep10/token.
-// SEP-10 §3.4 specifies a `token` field. We additionally return
-// expires_at + the authenticated G-strkey for client convenience —
-// neither breaks the SEP-10 contract.
+// sep10TokenResponse is the POST /v1/auth/sep10/token body: SEP-10 §3.4 `token` plus expires_at and the G-strkey, which do not
+// break the contract.
 type sep10TokenResponse struct {
 	Token     string   `json:"token"`
 	ExpiresAt WireTime `json:"expires_at"`
 	Account   string   `json:"account"`
 }
 
-// handleSEP10Token serves POST /v1/auth/sep10/token.
-//
-// Accepts a signed challenge in the JSON body `{"transaction": "<base64-XDR>"}` (SEP-10 §3.3,
-// the only form implemented), validates it and returns a JWT.
-//
-// Errors:
-//   - 400 — body missing or transaction field absent
-//   - 400 — XDR malformed (auth.ErrTokenMalformed)
-//   - 401 — signature wrong / no signers / wrong account
-//     (auth.ErrUnauthorized)
-//   - 410 — challenge time-bounds expired (auth.ErrTokenExpired)
-//   - 404 — validator not wired (sep10-unavailable)
-//   - 500 — anything else
+// handleSEP10Token serves POST /v1/auth/sep10/token (JSON `{"transaction": "<base64-XDR>"}`, SEP-10 §3.3). Errors: 400 missing
+// body/field or malformed XDR (auth.ErrTokenMalformed); 401 bad signature/signers/account (auth.ErrUnauthorized); 410 expired
+// time-bounds (auth.ErrTokenExpired); 404 validator not wired (sep10-unavailable); 500 otherwise.
 func (s *Server) handleSEP10Token(w http.ResponseWriter, r *http.Request) {
 	if s.SEP10 == nil {
 		writeSEP10Unavailable(w, r)

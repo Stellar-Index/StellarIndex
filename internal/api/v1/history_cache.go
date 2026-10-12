@@ -27,13 +27,9 @@ type CachedHistoryReader struct {
 	entries map[string]*historyCacheEntry
 }
 
-// historyCacheMaxEntries bounds the entry map.
-//
-// The key is `base|quote|source`, and both asset components accept any CRC-valid strkey, a key
-// space an anonymous caller can walk for free. Only failures delete their entry (an empty result
-// for a nonexistent pair is a success), so without a cap one IP at the anon budget mints thousands
-// of permanent entries a minute. The cap is far above the real working set, and eviction is
-// oldest-first as in accountStateCache.
+// historyCacheMaxEntries bounds the entry map: the key `base|quote|source` accepts any CRC-valid strkey, a space an anonymous
+// caller can walk free, and only failures delete entries, so without a cap one IP mints thousands of permanent entries a
+// minute. Eviction is oldest-first as in accountStateCache.
 const historyCacheMaxEntries = 4096
 
 type historyCacheEntry struct {
@@ -58,10 +54,8 @@ func NewCachedHistoryReader(upstream HistoryReader, ttl time.Duration) *CachedHi
 	}
 }
 
-// historyRefreshBudget bounds a detached cold-fill or
-// stale-while-revalidate background refresh — independent of any
-// request ctx (the whole point: outlive the handler's 8s ceiling).
-// Matches coins/markets refresh budgets.
+// historyRefreshBudget bounds a detached cold-fill or stale-while-revalidate refresh, independent of any request ctx (it must
+// outlive the handler's 8s ceiling); matches coins/markets budgets.
 const historyRefreshBudget = 30 * time.Second
 
 // TradesInRangeAfterFromSource forwards uncached to an upstream that supports the single-source read and errors otherwise, so an unchecked caller never gets unfiltered rows.
@@ -104,9 +98,8 @@ func (c *CachedHistoryReader) evictIfFullLocked() {
 
 type freshHistoryKey struct{}
 
-// withFreshHistory marks ctx so [CachedHistoryReader.LatestTradePerSource]
-// reads through to the store. A caller that stamps its own as_of=now (the
-// observations stream) must not re-emit a cached trade as current.
+// withFreshHistory marks ctx so [CachedHistoryReader.LatestTradePerSource] reads through to the store: a caller stamping its
+// own as_of=now (the observations stream) must not re-emit a cached trade as current.
 func withFreshHistory(ctx context.Context) context.Context {
 	return context.WithValue(ctx, freshHistoryKey{}, true)
 }
@@ -184,15 +177,13 @@ func (c *CachedHistoryReader) LatestTradePerSource(
 	}
 }
 
-// errHistoryFillPanicked is what a cold waiter receives when the fill it joined panicked. It is
-// distinct from upstream errors so an operator can tell "the refresher died" from "the query
-// failed".
+// errHistoryFillPanicked is what a cold waiter gets when the fill it joined panicked, distinct from upstream errors so
+// "refresher died" differs from "query failed".
 var errHistoryFillPanicked = errors.New("history cache: fill panicked")
 
-// settleFailedFill applies the failed-fill bookkeeping to entry: keep a stale value and clear the
-// in-flight marker so the next expiry retries, or with no prior value hand the error to waiters
-// and drop the entry so the next request starts a fresh fill. It is split out so the panic guard
-// runs the same transitions; a guard that only reported would latch the entry in flight forever.
+// settleFailedFill applies failed-fill bookkeeping: keep a stale value and clear in-flight so the next expiry retries, or with
+// no prior value hand the error to waiters and drop the entry. Split out so the panic guard runs the same transitions; a guard
+// that only reported would latch the entry in flight forever.
 func (c *CachedHistoryReader) settleFailedFill(key string, entry *historyCacheEntry, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

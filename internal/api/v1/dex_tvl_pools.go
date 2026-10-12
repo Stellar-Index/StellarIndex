@@ -118,13 +118,9 @@ type tvlLegInput struct {
 	raw   *big.Int
 }
 
-// tvlProtocolAccumulator folds pools into one protocol's ProtocolTVLView and per-pool breakdown.
-// All four refresh paths feed it the same way, so the accounting rules (priced XOR unpriced, the
-// lower-bound contract, the as-of high-water, leaf rounding) live in one place.
-//
-// Money is rounded ONCE, at the leaf: each valued leg is published to the cent and every figure
-// above it is the exact sum of the published strings beneath. Rounding at every level would let
-// a pool's legs differ from the pool by a cent and break reconciliation.
+// tvlProtocolAccumulator folds pools into one protocol's ProtocolTVLView and breakdown for all four refresh paths (priced XOR
+// unpriced, lower bound, as-of high-water). Money is rounded ONCE at the leaf; every figure above is the exact sum of published
+// strings, so a pool never differs from its legs by a cent.
 type tvlProtocolAccumulator struct {
 	valuer *tvlValuer
 	view   ProtocolTVLView
@@ -219,19 +215,9 @@ func (a *tvlProtocolAccumulator) finish() (ProtocolTVLView, []DEXTVLPoolView) {
 	return a.view, a.pools
 }
 
-// handleProtocolTVL serves GET /v1/protocols/{name}/tvl, the per-pool breakdown behind the `tvl`
-// block on the protocol's directory row.
-//
-// It reads ONLY the in-process snapshot the background refresher keeps, so traffic cannot make
-// it expensive. Degradation is explicit, never a fabricated empty figure:
-//
-//   - unknown protocol → 404 (same problem as /v1/protocols/{name});
-//   - a known protocol with no pooled-liquidity derivation → 404 naming the reason;
-//   - a derived protocol with no figure this cycle (failed read, or no pools) → 404 saying so;
-//   - no cache wired, or wired but not yet refreshed → 503 problem.
-//
-// A figure carried forward from an earlier cycle is SERVED, labelled carried_forward with
-// flags.stale set; the headline total refuses it, and this is where to see what was refused.
+// handleProtocolTVL serves GET /v1/protocols/{name}/tvl from the in-process snapshot only. Degradation is explicit, never a
+// fabricated empty figure: unknown protocol, not derived, or no figure this cycle give 404 (with reason); no cache or not yet
+// refreshed gives 503. A carried-forward figure is SERVED with carried_forward and flags.stale (the headline total refuses it).
 func (s *Server) handleProtocolTVL(w http.ResponseWriter, r *http.Request) {
 	meta, ok := protocolByName(r.PathValue("name"))
 	if !ok {
@@ -287,9 +273,8 @@ func (s *Server) handleProtocolTVL(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// dexTVLNotDerivedReason explains a 404 on a KNOWN protocol: the scope exclusion where one names
-// it (matching tvl_total.excluded), otherwise "not wired here". An unwired protocol is absent
-// from the snapshot, and absence is honest "unavailable", never zero TVL.
+// dexTVLNotDerivedReason explains a 404 on a KNOWN protocol: the scope exclusion where one names it (matching
+// tvl_total.excluded), else "not wired here". Absence is "unavailable", never zero TVL.
 func dexTVLNotDerivedReason(name string) string {
 	for _, ex := range dexTVLScopeExclusions {
 		if ex.Subject == name {

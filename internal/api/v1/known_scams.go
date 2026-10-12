@@ -2,21 +2,15 @@ package v1
 
 import "github.com/Stellar-Index/StellarIndex/internal/canonical"
 
-// knownScams flags G-strkeys that stellar.expert's directory marks as malicious or unsafe.
-// It is hand-curated rather than fetched at runtime so the API does not depend on a
-// third-party's uptime.
-//
-// Sourcing rule: add a G-strkey only when its directory entry (api.stellar.expert/explorer/
-// public/directory/<g>) has a `tags` array containing "malicious" or "unsafe". Reason carries
-// the directory's `name` when present, otherwise a one-line justification.
+// scamFlag marks a G-strkey that stellar.expert's directory tags "malicious" or "unsafe". Hand-curated so the API does not
+// depend on a third party's uptime: add one only when its directory entry (api.stellar.expert/explorer/public/directory/<g>)
+// has such a tag; Reason carries the directory `name` when present.
 type scamFlag struct {
 	Reason string // human-readable label rendered in the warning badge
 }
 
-// scamIssuers is the curated set. Keep alphabetised by G-strkey.
-//
-// Entries come from checking the highest-volume uncurated issuers (no home_domain in
-// /v1/issuers) against the stellar.expert directory.
+// scamIssuers is the curated set, alphabetised by G-strkey; entries come from checking the highest-volume uncurated issuers (no
+// home_domain in /v1/issuers) against the stellar.expert directory.
 var scamIssuers = map[string]scamFlag{
 	// "Scam Assets" — malicious, unsafe.
 	"GA2XZLXNLAL26VBCA2OESAIMXTRH5GXKLHYZMDGNCR2SYS5QZWWNBLCK": {
@@ -99,9 +93,8 @@ var scamIssuers = map[string]scamFlag{
 	},
 }
 
-// scamReason returns the curated scam reason for a G-strkey, or
-// "" when the issuer isn't flagged. Callers add the warning badge
-// when the result is non-empty.
+// scamReason returns the curated scam reason for a G-strkey, or "" when not flagged; callers add the warning badge when
+// non-empty.
 func scamReason(gStrkey string) string {
 	if entry, ok := scamIssuers[gStrkey]; ok {
 		return entry.Reason

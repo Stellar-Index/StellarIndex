@@ -50,10 +50,8 @@ func IsCacheUnavailable(err error) bool {
 	return false
 }
 
-// writeCacheUnavailableProblem emits the 503 + Retry-After + problem+json shape for handlers that
-// would otherwise 500 on Redis MISCONF. Retry-After is 30s, matching writeThrottleUnavailableProblem;
-// typical Redis fail-over lands well inside it. Retry-After MUST be set before writeProblem, which
-// owns WriteHeader; net/http drops headers added after the status line is committed.
+// writeCacheUnavailableProblem emits the 503 + Retry-After (30s, as writeThrottleUnavailableProblem) problem+json for handlers
+// that would 500 on Redis MISCONF. Retry-After MUST be set before writeProblem, which owns WriteHeader.
 func writeCacheUnavailableProblem(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Retry-After", "30")
 	writeProblem(w, r,

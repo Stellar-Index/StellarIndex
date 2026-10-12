@@ -34,9 +34,8 @@ const (
 	// nativeLPListingTTL bounds how often the whole-prefix ranked scan runs. Pool membership and
 	// the top-N drift slowly against the ~5s ledger cadence, so a burst costs one scan a minute.
 	nativeLPListingTTL = 60 * time.Second
-	// nativeLPListingRefreshTimeout bounds ONE detached rescan (and the prewarm call), which
-	// belongs to a background goroutine, not a request. The scan is ~0.07s plus a Go decode of
-	// ~40k entries; 30s is contention headroom.
+	// nativeLPListingRefreshTimeout bounds ONE detached rescan (and the prewarm call), run by a background goroutine, not a
+	// request; the scan is ~0.07s plus a Go decode of ~40k entries, 30s is contention headroom.
 	nativeLPListingRefreshTimeout = 30 * time.Second
 )
 
@@ -152,24 +151,17 @@ func (s *Server) serveOneLiquidityPool(ctx context.Context, w http.ResponseWrite
 	writeJSON(w, out, Flags{Stale: stale})
 }
 
-// nativeLPListing returns the cached top-N ranked native-pool listing.
-//
-// STALE-SERVE: an existing entry is ALWAYS returned immediately and a lapsed one kicks ONE detached
-// refresh. Holding nativeLPMu across the refresh would make the first caller after each TTL lapse
-// pay the whole-prefix lake scan with every concurrent caller queued behind it. Only a
-// never-computed process fills inline, and PrewarmNativeLiquidityPools removes even that.
-//
-// flags.stale is NOT set from cache age: here it means lake freshness, and overloading it would
-// make a 61-second-old ranking look like a lagging ingest. Cache health is observable through
-// stellarindex_explorer_swr_refresh_total{cache="native_lp_listing"}.
+// nativeLPListing returns the cached top-N ranked native-pool listing. STALE-SERVE: an existing entry is ALWAYS returned at
+// once and a lapsed one kicks ONE detached refresh (holding nativeLPMu would queue every caller behind a whole-prefix lake
+// scan); only a never-computed process fills inline. flags.stale is NOT set from cache age (it means lake freshness); cache
+// health is stellarindex_explorer_swr_refresh_total{cache="native_lp_listing"}.
 func (s *Server) nativeLPListing(ctx context.Context) ([]LiquidityPoolReservesRow, error) {
 	rows, _, _, err := s.nativeLPSnapshot(ctx)
 	return rows, err
 }
 
-// nativeLPSnapshot is [Server.nativeLPListing] plus every captured pool's state in ranked order
-// (the ?asset= filter needs pools beyond the global top N), and whether the rows are carried
-// forward: past the TTL, or last-good after a failed scan.
+// nativeLPSnapshot is [Server.nativeLPListing] plus every captured pool's state in ranked order (the ?asset= filter needs pools
+// beyond the top N), and whether rows are carried forward: past the TTL, or last-good after a failed scan.
 func (s *Server) nativeLPSnapshot(ctx context.Context) ([]LiquidityPoolReservesRow, []clickhouse.NativeLiquidityPoolState, bool, error) {
 	s.nativeLPMu.Lock()
 	rows, all, fetched := s.nativeLPCached, s.nativeLPAll, s.nativeLPFetched
@@ -238,9 +230,8 @@ func (s *Server) fillNativeLPListing(ctx context.Context) ([]LiquidityPoolReserv
 	return out, states, false, nil
 }
 
-// refreshNativeLPListing kicks ONE detached rescan (a no-op while one runs). Detached so no
-// visitor waits: bound to a request deadline, a slow scan would die with the request and the next
-// visitor would pay the same wait again.
+// refreshNativeLPListing kicks ONE detached rescan (no-op while one runs); detached so no visitor waits, as a request-bound
+// slow scan would die with the request and the next visitor would pay again.
 func (s *Server) refreshNativeLPListing() {
 	if !s.nativeLPRefreshing.CompareAndSwap(false, true) {
 		return

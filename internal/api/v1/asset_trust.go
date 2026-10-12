@@ -2,19 +2,9 @@ package v1
 
 import "github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 
-// Asset trust summary for /v1/assets/{id}: a banded score plus the
-// factor breakdown behind it.
-//
-// Invariants:
-//   - READ-ONLY OUTPUT. buildAssetTrust runs after every price producer and
-//     suppressor and only reads their results; nothing in pricing, ranking
-//     or the substance gates reads AssetDetail.Trust.
-//   - UNKNOWN != ZERO. A factor with no evidence is banded "unknown", carries
-//     null points and is left out of both the numerator and the denominator;
-//     only an observed bad signal scores low.
-//   - Every factor names the data source it was read from.
-//   - The formula is versioned; any change to a weight, threshold or factor
-//     bumps trustFormulaVersion.
+// Asset trust summary for /v1/assets/{id}: banded score plus factors. Invariants: READ-ONLY OUTPUT (nothing in pricing, ranking
+// or substance gates reads AssetDetail.Trust); UNKNOWN != ZERO (no evidence is "unknown", null points, out of the score); any
+// weight, threshold or factor change bumps trustFormulaVersion.
 const trustFormulaVersion = 1
 
 // Factor ids (stable wire values).

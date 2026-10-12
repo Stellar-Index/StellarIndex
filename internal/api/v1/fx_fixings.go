@@ -24,9 +24,8 @@ var errFXLegMissing = errors.New("fx fixing: no rate binds at the bucket end")
 // the derived price reports stale outside the weekend market close.
 const fxFixingStaleAfter = 4 * time.Hour
 
-// fxFixingCache holds the recent fixings window in memory so a closed cross
-// costs no round trip. It answers E only when the answer equals the store's
-// at the last load L; anything else reads the store.
+// fxFixingCache holds the recent fixings window in memory so a closed cross costs no round trip. It answers E only when the
+// answer equals the store's at the last load L; anything else reads the store.
 type fxFixingCache struct {
 	reader FXFixingReader
 	logger *slog.Logger
@@ -68,9 +67,8 @@ func (c *fxFixingCache) bind(ctx context.Context, tickers []string, e time.Time)
 	return out, nil
 }
 
-// fromMemory answers only when E ≤ L and E's whole lookback lies above the
-// held floor; a ticker with no held row reads the store, which owns the
-// daily arm and the era-gap decision.
+// fromMemory answers only when E <= L and E's whole lookback lies above the held floor; a ticker with no held row reads the
+// store (it owns the daily arm and the era-gap decision).
 func (c *fxFixingCache) fromMemory(tickers []string, e time.Time) (map[string]timescale.FXFixingBinding, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -155,9 +153,8 @@ func (c *fxFixingCache) mergeLocked(rows []timescale.FXFixing, at time.Time) {
 	c.loadedAt, c.floor = at, floor
 }
 
-// selectFixing is the store's binding rule (timescale.FXFixingAtOrBefore)
-// over held rows: the greatest bar_end in (cutoff − maxAge, cutoff], then
-// grain '1h' over '1d', then the highest generation.
+// selectFixing is the store's binding rule (timescale.FXFixingAtOrBefore) over held rows: greatest bar_end in (cutoff - maxAge,
+// cutoff], then grain '1h' over '1d', then highest generation.
 func selectFixing(rows []timescale.FXFixing, cutoff time.Time, maxAge time.Duration) (timescale.FXFixing, bool) {
 	var best timescale.FXFixing
 	found := false
@@ -208,10 +205,8 @@ func fixingRate(b timescale.FXFixingBinding) (*big.Rat, bool) {
 	return r, true
 }
 
-// fxFixingStale reports whether an hourly fixing bound at e trails e − lag
-// by more than fxFixingStaleAfter outside the weekend close
-// [Fri 22:00Z, Mon 02:00Z). A pure function of e, so every region agrees.
-// Daily fixings carry no FX staleness of their own.
+// fxFixingStale reports whether an hourly fixing bound at e trails e - lag by more than fxFixingStaleAfter outside the weekend
+// close [Fri 22:00Z, Mon 02:00Z); a pure function of e, so every region agrees. Daily fixings have no FX staleness.
 func fxFixingStale(e time.Time, b timescale.FXFixingBinding) bool {
 	if b.Resolution != timescale.FXResolutionHourly {
 		return false

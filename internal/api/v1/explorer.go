@@ -57,13 +57,8 @@ type (
 	ContractWasmView         = explorerpkg.ContractWasmView
 )
 
-// explorerUnavailable writes the standard 503 when no explorer reader is wired
-// (deployment without ClickHouse, or ClickHouse unreachable at startup). Kept
-// in package v1 (rather than moved into internal/api/v1/explorer) because
-// three non-explorer-cluster handlers — lending TVL, liquidity-pool reserves,
-// and pool-reserves — also read through the same ExplorerReader seam and call
-// this directly; explorer.Handler has its own equivalent (unavailable) so
-// this package doesn't need to import that package's unexported method.
+// explorerUnavailable writes the standard 503 when no explorer reader is wired. Kept in package v1 because lending TVL,
+// liquidity-pool reserves and pool-reserves also read through the ExplorerReader seam; explorer.Handler has its own equivalent.
 func (s *Server) explorerUnavailable(w http.ResponseWriter, r *http.Request) {
 	writeProblem(w, r,
 		"https://api.stellarindex.io/errors/explorer-unavailable",
@@ -71,12 +66,8 @@ func (s *Server) explorerUnavailable(w http.ResponseWriter, r *http.Request) {
 		"This deployment hasn't wired the ClickHouse explorer reader (ADR-0038).")
 }
 
-// parseExplorerLimit parses ?limit= with a default and an inclusive cap.
-// ok=false (after writing a problem+json) on parse error / out of range.
-// Kept in package v1 (rather than moved) because anomalies.go, mev.go, and
-// liquidity_pools.go also call it directly; explorer.Handler receives it as
-// the injected ParseLimit func (see explorerHandlerFor below) so the moved
-// endpoints share the exact same limit-parsing behavior.
+// parseExplorerLimit parses ?limit= with a default and inclusive cap; ok=false (after writing problem+json) when invalid. Kept
+// here because anomalies.go, mev.go and liquidity_pools.go call it; explorer.Handler gets it injected as ParseLimit.
 func parseExplorerLimit(w http.ResponseWriter, r *http.Request, def, maxN int) (int, bool) {
 	raw := r.URL.Query().Get("limit")
 	if raw == "" {
@@ -92,14 +83,8 @@ func parseExplorerLimit(w http.ResponseWriter, r *http.Request, def, maxN int) (
 	return n, true
 }
 
-// explorerHandlerFor constructs the explorer package's *Handler from a
-// fully-initialized Server + its constructor Options, wiring the small
-// set of cross-cutting seams (logger, USD pricing, SAC detection, the
-// lake watermark cache, and the shared response-writing helpers) as
-// injected function values — the explorer package must not import
-// package v1 (Server already imports explorer to register routes;
-// the reverse import would cycle), so these seams cross the boundary
-// as plain funcs/interfaces instead of *Server itself.
+// explorerHandlerFor builds the explorer *Handler from the Server and Options, injecting cross-cutting seams (logger, USD
+// pricing, SAC detection, lake watermark cache, response helpers) as funcs: package explorer must not import v1 (import cycle).
 func explorerHandlerFor(s *Server, opts Options, logger *slog.Logger) *explorerpkg.Handler {
 	return &explorerpkg.Handler{
 		Reader:             opts.Explorer,

@@ -99,10 +99,8 @@ const IssuersListDefaultLimit = 100
 // IssuersListMaxLimit is the largest `?limit=` handleIssuersList accepts.
 const IssuersListMaxLimit = 500
 
-// handleIssuersList serves GET /v1/issuers.
-//
-// Returns the issuer directory ordered by total observation count across the issuer's classic
-// assets (an activity proxy). 503 when no IssuersReader is wired, 400 on out-of-range limit.
+// handleIssuersList serves GET /v1/issuers, ordered by total observation count across the issuer's classic assets (an activity
+// proxy). 503 when no IssuersReader is wired, 400 on out-of-range limit.
 func (s *Server) handleIssuersList(w http.ResponseWriter, r *http.Request) {
 	if s.Issuers == nil {
 		writeProblem(w, r,
@@ -193,10 +191,8 @@ func (s *Server) handleIssuersList(w http.ResponseWriter, r *http.Request) {
 	writeEnvelope(w, Envelope{Data: out, AsOf: vintage.asOf()})
 }
 
-// handleIssuer serves GET /v1/issuers/{g_strkey}.
-//
-// Returns 404 (problem+json) when the issuer has never been observed. Always includes the assets
-// array so the issuer card needs no second request.
+// handleIssuer serves GET /v1/issuers/{g_strkey}: 404 (problem+json) when the issuer was never observed; always includes the
+// assets array so the card needs no second request.
 func (s *Server) handleIssuer(w http.ResponseWriter, r *http.Request) {
 	if s.Issuers == nil {
 		writeProblem(w, r,
@@ -339,15 +335,10 @@ type IssuerAuthFlagsReader interface {
 	BulkAccountAuthFlags(ctx context.Context, gStrkeys []string) (map[string]clickhouse.AccountAuthFlags, error)
 }
 
-// enrichIssuerFromAccountState overlays the issuer's live AccountEntry (auth flags, home_domain,
-// as-of ledger) onto the persisted row. Flags: AUTH_REQUIRED=1, AUTH_REVOCABLE=2,
-// AUTH_IMMUTABLE=4, AUTH_CLAWBACK=8.
-//
-// The live entry is the authority on its own account, so it is consulted for every row, filled or
-// not: persisted columns are an older reading and may hold a domain the account has moved away
-// from. With no live entry the persisted reading stands: absence from the current-state projection
-// looks the same for a merged account and a lake-coverage gap, so only the drain, which reads an
-// actual `removed` row, may write `last_known_before_removal`.
+// enrichIssuerFromAccountState overlays the issuer's live AccountEntry (auth flags AUTH_REQUIRED=1, REVOCABLE=2, IMMUTABLE=4,
+// CLAWBACK=8; home_domain; as-of ledger) onto the persisted row, consulted for every row (persisted columns may hold a
+// moved-away domain). With no live entry the persisted reading stands: absence looks the same for a merged account and a lake
+// gap, so only the drain, reading a `removed` row, may write `last_known_before_removal`.
 func (s *Server) enrichIssuerFromAccountState(ctx context.Context, gStrkey string, out *Issuer) {
 	live, ok := s.liveIssuerAccount(ctx, gStrkey)
 	if !ok {
@@ -376,9 +367,8 @@ func (s *Server) enrichIssuerFromAccountState(ctx context.Context, gStrkey strin
 	out.SEP1Payload, out.SEP1ResolvedAt = nil, nil
 }
 
-// liveIssuerAccount reads the issuer's current AccountEntry: through the
-// narrow key_xdr point lookup when wired, else through the explorer's full
-// account-state read.
+// liveIssuerAccount reads the issuer's current AccountEntry through the narrow key_xdr point lookup when wired, else the
+// explorer's full account-state read.
 func (s *Server) liveIssuerAccount(ctx context.Context, gStrkey string) (clickhouse.AccountAuthFlags, bool) {
 	if s.IssuerAuthFlags != nil {
 		m, err := s.IssuerAuthFlags.BulkAccountAuthFlags(ctx, []string{gStrkey})

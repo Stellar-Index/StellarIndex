@@ -17,12 +17,8 @@ import (
 // The seeded entry's `at` is the snapshot's REAL observation time, never `time.Now()`, so age
 // resets only on a real upstream refresh; [Server.listAssetsExtAt] hands it to the handler.
 
-// listAssetsCacheKey derives the [CachedAssetsReader.entries] key for a ListAssetsExt call.
-//
-// It MUST stay byte-identical to the key expression in [CachedAssetsReader.ListAssetsExt]: a seed
-// under a different key is a phantom slot that leaves callers on the cold path while the cache
-// looks healthy. TestListAssetsCacheKeyMatchesListAssetsExt fails on any divergence, even field
-// order.
+// listAssetsCacheKey derives the [CachedAssetsReader.entries] key for ListAssetsExt. It MUST stay byte-identical to the key in
+// [CachedAssetsReader.ListAssetsExt], else a seed lands in a phantom slot (TestListAssetsCacheKeyMatchesListAssetsExt).
 func listAssetsCacheKey(opts timescale.ListAssetsOptions) string {
 	return newCacheKey("ListAssetsExt").
 		int(opts.Limit).str(opts.Issuer).str(opts.Code).str(opts.Type).
@@ -77,10 +73,9 @@ func (c *CachedAssetsReader) ListAssetsExtAt(
 	return rows, at, time.Since(at) >= c.ttl, nil
 }
 
-// listAssetsExtAt reads through [CachedAssetsReader.ListAssetsExtAt] when the wired reader has it,
-// else the plain AssetsReader call. The type-assert avoids widening [AssetsReader] for every test
-// double and the bare store. The degraded (zero time, false) is deliberate: an uncached reader
-// answers live, so the caller stamps as_of=now.
+// listAssetsExtAt reads via [CachedAssetsReader.ListAssetsExtAt] when the reader has it, else the plain call (avoids widening
+// [AssetsReader]). The zero-time, false fallback is deliberate: an uncached reader answers live, so the caller stamps
+// as_of=now.
 func (s *Server) listAssetsExtAt(
 	ctx context.Context, opts timescale.ListAssetsOptions,
 ) ([]timescale.AssetRow, time.Time, bool, error) {

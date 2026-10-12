@@ -43,9 +43,8 @@ type DEXTVLExclusion struct {
 	Reason  string `json:"reason"`
 }
 
-// dexTVLScopeExclusions are the standing scope decisions: pooled- or locked-value surfaces we
-// index but deliberately do not sum. They ship on every response so the total cannot be read
-// as a whole-network claim by omission. Each entry must name something we hold data for today.
+// dexTVLScopeExclusions are standing scope decisions: pooled/locked-value surfaces indexed but deliberately not summed. They
+// ship on every response so the total is never read as whole-network by omission; each must name something we hold data for.
 var dexTVLScopeExclusions = []DEXTVLExclusion{
 	{
 		Subject: "classic liquidity pools",
@@ -130,22 +129,10 @@ func (c *DEXTVLCache) Total() *DEXTVLTotalView {
 	return c.total
 }
 
-// reconcileDEXTVLTotal folds a per-protocol snapshot into the headline total, admitting only
-// parts whose own published claims hold. It REFUSES rather than warns: a protocol failing
-// admission is dropped from the sum and named in `excluded`, so a wrong total is never served.
-//
-// Refusals:
-//
-//   - stale: Refresh's carryPrev keeps a protocol's previous entry when its reserve read
-//     fails. Refresh NAMES carried protocols instead of comparing stamps: RFC3339 is
-//     second-resolution, so a carried figure could share an as_of and pass an equality test.
-//   - unparseable: the sum must be exact; a part that is not a non-negative
-//     decimal has no defined contribution.
-//   - pool accounting: every pool is priced XOR unpriced, so pools_total must
-//     equal their sum; otherwise the lower-bound claim is unprovable.
-//
-// carried and unavailable protocols are listed in `excluded` and make the total
-// a lower bound. Returns nil for an empty snapshot.
+// reconcileDEXTVLTotal folds the snapshot into the headline total, admitting only parts whose own claims hold. It REFUSES
+// rather than warns: a failing protocol is dropped and named in `excluded`. Refusals: stale (Refresh NAMES carried protocols;
+// RFC3339 seconds let a carried as_of equal the stamp), unparseable, pools_total != priced + unpriced. Carried and unavailable
+// protocols make the total a lower bound; nil for an empty snapshot.
 func reconcileDEXTVLTotal(snapshot map[string]ProtocolTVLView, at time.Time, carried []string, unavailable []DEXTVLExclusion) *DEXTVLTotalView {
 	if len(snapshot) == 0 {
 		return nil
@@ -202,9 +189,8 @@ func reconcileDEXTVLTotal(snapshot map[string]ProtocolTVLView, at time.Time, car
 	return out
 }
 
-// dexTVLAdmit decides whether a per-protocol figure may be summed into the headline total and
-// returns the parsed amount from the SAME call that validated it, so a caller can never sum a
-// figure this function did not vouch for. ok=false returns the refusal reason for `excluded`.
+// dexTVLAdmit decides whether a figure may be summed and returns the amount parsed by the SAME call that validated it, so a
+// caller never sums an unvouched figure. ok=false returns the refusal reason for `excluded`.
 func dexTVLAdmit(part ProtocolTVLView, stamp string, carried bool) (*big.Rat, string, bool) {
 	// The stamp comparison is defence in depth: a part built against a different instant is the
 	// same inconsistency Refresh reports as carried.

@@ -36,11 +36,8 @@ type LendingPool struct {
 	Utilization30dPct *float64 `json:"utilization_30d_pct,omitempty"` // single-asset borrow/supply window ratio
 }
 
-// handleLendingPools serves GET /v1/lending/pools.
-//
-// One row per Blend pool seen in the trailing-7d auction stream, sorted by total auctions desc.
-// Returns 200 with an empty array when no LendingReader is wired, like other feature-gated
-// handlers.
+// handleLendingPools serves GET /v1/lending/pools: one row per Blend pool seen in the trailing-7d auction stream, by total
+// auctions desc. 200 with an empty array when no LendingReader is wired, like other feature-gated handlers.
 func (s *Server) handleLendingPools(w http.ResponseWriter, r *http.Request) {
 	reader := s.Lending
 	if reader == nil {
@@ -125,10 +122,9 @@ type ReserveView struct {
 	SupplyAPR *float64 `json:"supply_apr"`
 }
 
-// handleLendingPoolReserves serves GET /v1/lending/pools/{pool}/reserves
-// - current-state TVL, utilization and APY per reserve (ADR-0039), decoded from the pool's
-// Soroban storage in the lake. USD values are best-effort and null without a USD price and
-// established decimals; token-unit amounts, utilization and APY are always exact.
+// handleLendingPoolReserves serves GET /v1/lending/pools/{pool}/reserves: current-state TVL, utilization and APY per reserve
+// (ADR-0039) decoded from the pool's Soroban storage. USD values are best-effort and null without a USD price and established
+// decimals; token-unit amounts, utilization and APY are always exact.
 func (s *Server) handleLendingPoolReserves(w http.ResponseWriter, r *http.Request) {
 	if s.Explorer == nil {
 		s.explorerUnavailable(w, r)
@@ -205,10 +201,8 @@ func (s *Server) handleLendingPoolReserves(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, out, Flags{Stale: stale, Degraded: configsFailed})
 }
 
-// reservesTVLUSD sums the priced reserves' supplied USD in reserve order.
-// The total is nil when no reserve is priced, and lowerBound is true when
-// it is rendered but excludes a reserve that has no USD value (AGENTS.md
-// money invariant: a partial total is a lower bound, never a total).
+// reservesTVLUSD sums the priced reserves' supplied USD in reserve order. total is nil when none is priced; lowerBound is true
+// when it excludes a reserve with no USD value (AGENTS.md money invariant: a partial total is a lower bound, never a total).
 func reservesTVLUSD(suppliedUSD []*big.Rat) (total *string, lowerBound bool) {
 	tvl := new(big.Rat)
 	priced := 0
@@ -225,10 +219,9 @@ func reservesTVLUSD(suppliedUSD []*big.Rat) (total *string, lowerBound bool) {
 	return &s, priced < len(suppliedUSD)
 }
 
-// blendReserveInputs resolves the served-tier inputs of the reserves
-// read: the pool's contract generation and its reserve assets. A pool with no known V1/V2
-// lineage gets an empty reserve list, since a guessed rate scale is off by 10^3. proceed=false
-// means a response has been written or the client has gone.
+// blendReserveInputs resolves the pool's contract generation and reserve assets. A pool with no known V1/V2 lineage gets an
+// empty reserve list, since a guessed rate scale is off by 10^3. proceed=false means a response was written or the client has
+// gone.
 func (s *Server) blendReserveInputs(ctx context.Context, w http.ResponseWriter, r *http.Request, pool string) (version blend.PoolVersion, assets []string, proceed bool) {
 	version, err := s.Lending.BlendPoolVersion(ctx, pool)
 	if err != nil {
@@ -248,9 +241,8 @@ func (s *Server) blendReserveInputs(ctx context.Context, w http.ResponseWriter, 
 	return version, assets, true
 }
 
-// writeLendingLookupError maps a failed served-tier lookup to the
-// reserves handler's response: nothing for an aborted client, the
-// retryable 503 on the handler deadline, else a 500.
+// writeLendingLookupError maps a failed served-tier lookup: nothing for an aborted client, the retryable 503 on the handler
+// deadline, else 500.
 func (s *Server) writeLendingLookupError(ctx context.Context, w http.ResponseWriter, r *http.Request, stage, pool string, err error) {
 	if clientAborted(r, err) {
 		return
@@ -263,11 +255,9 @@ func (s *Server) writeLendingLookupError(ctx context.Context, w http.ResponseWri
 	writeProblem(w, r, "https://api.stellarindex.io/errors/internal", "Internal error", http.StatusInternalServerError, "")
 }
 
-// writeLendingReservesTimeout is the typed 503 for when the [maxHandlerBudget] ceiling fires,
-// ahead of the global request deadline so the caller gets a problem rather than a bare cut-off.
-// A deadline on a lake read is a retryable capacity condition, not a fault: a 500 would tell
-// clients not to retry, count against 5xx availability, and is not declared in the OpenAPI spec
-// for this path (400 and 503 only).
+// writeLendingReservesTimeout is the typed 503 when the [maxHandlerBudget] ceiling fires ahead of the global deadline. A
+// lake-read deadline is retryable capacity, not a fault: a 500 would tell clients not to retry, count against 5xx availability,
+// and is not declared in OpenAPI for this path (400 and 503 only).
 func (s *Server) writeLendingReservesTimeout(w http.ResponseWriter, r *http.Request, stage, pool string) {
 	s.logger.Warn("lending reserves deadline exceeded", "stage", stage, "pool", pool)
 	writeProblem(w, r,
@@ -276,9 +266,8 @@ func (s *Server) writeLendingReservesTimeout(w http.ResponseWriter, r *http.Requ
 		"the pool's reserve state didn't decode within "+maxHandlerBudget.String()+"; retry shortly.")
 }
 
-// buildReserveView maps one decoded reserve state to its wire shape,
-// pricing it in USD best-effort. Returns the supplied-USD contribution
-// (nil when unpriced) so the caller can sum the pool TVL.
+// buildReserveView maps one decoded reserve state to its wire shape, pricing it in USD best-effort; returns the supplied-USD
+// contribution (nil when unpriced) for the pool TVL sum.
 func (s *Server) buildReserveView(ctx context.Context, st clickhouse.BlendReserveState) (ReserveView, *big.Rat) {
 	rv := ReserveView{
 		Asset:          st.Asset,
@@ -322,10 +311,8 @@ func (s *Server) buildReserveView(ctx context.Context, st clickhouse.BlendReserv
 	return rv, suppliedContrib
 }
 
-// reserveDecimals returns the reserve token's real decimal exponent: the
-// pool's reserve config when captured, else 7 for a known SAC (fixed by the
-// protocol), else the token contract's own declared decimals() from the lake.
-// ok=false when none of those is available or the lake read failed.
+// reserveDecimals returns the reserve token's real decimal exponent: the pool's reserve config when captured, else 7 for a
+// known SAC, else the token contract's own decimals() from the lake. ok=false when none is available or the lake read failed.
 func (s *Server) reserveDecimals(ctx context.Context, st clickhouse.BlendReserveState) (int, bool) {
 	if st.DecimalsFound {
 		return int(st.Decimals), true
@@ -340,13 +327,9 @@ func (s *Server) reserveDecimals(ctx context.Context, st clickhouse.BlendReserve
 	return d, true
 }
 
-// reservePriceUSD resolves a USD price for a Blend reserve's underlying
-// token (a Soroban SAC contract id). It maps the SAC back to the classic/native asset it wraps
-// and prices that, since price feeds are keyed by (code, issuer), not the C-id; a non-SAC token
-// is priced directly. Best-effort: ok=false means TVL is reported in token units only.
-//
-// scale is the decimals the price was normalised with (nonstandard-decimals projection, else 7):
-// only an amount divided by that same exponent can be multiplied by it.
+// reservePriceUSD resolves a USD price for a reserve's token. A SAC C-id is mapped back to the classic/native asset it wraps and priced
+// there (feeds are keyed by (code, issuer)); ok=false means token units only. scale is the decimals the price was normalised with
+// (nonstandard-decimals projection, else 7): only an amount divided by that same exponent can be multiplied by it.
 func (s *Server) reservePriceUSD(ctx context.Context, assetC string) (price string, scale int, ok bool) {
 	if canonicalID, ok := s.resolveSACAsset(assetC); ok {
 		if a, err := canonical.ParseAsset(canonicalID); err == nil {
@@ -363,15 +346,12 @@ func (s *Server) reservePriceUSD(ctx context.Context, assetC string) (price stri
 	return price, aggregate.ResolveDecimals(s.NonstandardDecimals, asset), ok
 }
 
-// pubnetPassphrase is the Stellar mainnet network passphrase — the
-// verified-currency catalogue is pubnet-only, so SAC contract ids are
-// computed against it.
+// pubnetPassphrase is the mainnet passphrase; the verified-currency catalogue is pubnet-only, so SAC contract ids are computed
+// against it.
 const pubnetPassphrase = "Public Global Stellar Network ; September 2015"
 
-// resolveSACAsset maps a SAC contract C-strkey → the canonical
-// classic/native asset id it wraps, using a map built once from the
-// verified-currency catalogue's Stellar assets (+ native XLM). ok=false
-// when the contract isn't a known asset's SAC.
+// resolveSACAsset maps a SAC contract C-strkey to the canonical classic/native asset id it wraps, via a map built once from the
+// verified-currency catalogue's Stellar assets (+ native XLM); ok=false when not a known asset's SAC.
 func (s *Server) resolveSACAsset(contractC string) (string, bool) {
 	s.sacReserveOnce.Do(func() { s.sacReserveAssets = s.buildSACReserveMap() })
 	id, ok := s.sacReserveAssets[contractC]
@@ -404,10 +384,8 @@ func (s *Server) buildSACReserveMap() map[string]string {
 func round2(f float64) float64 { return float64(int64(f*100+0.5)) / 100 }
 func round4(f float64) float64 { return float64(int64(f*10000+0.5)) / 10000 }
 
-// utilizationPct returns the window borrow/supply ratio as a
-// percentage (2dp), or nil when either flow is absent (a multi-asset
-// window has no single unit) or net supply is ≤ 0. Both inputs are
-// decimal big-int strings in the same asset's base units.
+// utilizationPct returns the window borrow/supply ratio as a percentage (2dp), or nil when either flow is absent (a multi-asset
+// window has no single unit) or net supply <= 0. Inputs are decimal big-int strings in the same asset's base units.
 func utilizationPct(netSupplied, netBorrowed *string) *float64 {
 	if netSupplied == nil || netBorrowed == nil {
 		return nil

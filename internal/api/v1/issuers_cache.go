@@ -127,9 +127,8 @@ func (c *CachedIssuersReader) fetchList(
 	}
 }
 
-// settleList applies a fetchList fill to entry: cache on success; on
-// failure hand err to the waiters and drop the entry so errors are never
-// cached.
+// settleList applies a fetchList fill to entry: cache on success; on failure hand err to waiters and drop the entry, so errors
+// are never cached.
 func (c *CachedIssuersReader) settleList(key string, entry *issuersCacheEntry) func([]timescale.IssuerSummary, error) {
 	return func(rows []timescale.IssuerSummary, err error) {
 		c.mu.Lock()

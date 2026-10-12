@@ -76,12 +76,9 @@ func (st APIKeyBudgetStores) note(step string) {
 	}
 }
 
-// clampKeyBudgetsToTier lowers every credential `account` can still authenticate with down to
-// `ceiling`, across BOTH key stores. It returns the lowered and failed counts so the caller can
-// record the outcome durably. `cause` is stamped on every log line.
-//
-// Best-effort and idempotent: keys at or below the ceiling and revoked keys are skipped, and one
-// key's failure never stops the others, since leaving over-tier throughput live is worse.
+// clampKeyBudgetsToTier lowers every credential `account` can still authenticate with to `ceiling`, across BOTH key stores,
+// returning lowered and failed counts for a durable record. Best-effort and idempotent: keys at or below the ceiling and
+// revoked keys are skipped, and one failure never stops the rest (over-tier throughput left live is worse).
 func (s *Server) clampKeyBudgetsToTier(
 	ctx context.Context,
 	cause string,
@@ -103,9 +100,8 @@ func (s *Server) clampKeyBudgetsToTier(
 	return lowered, failed
 }
 
-// downgradePlatformAPIKeys lowers every active Postgres dashboard key for `account` whose
-// per-minute budget exceeds `ceiling`, then evicts it from the auth cache. Idempotent; revoked
-// keys are left alone.
+// downgradePlatformAPIKeys lowers every active Postgres dashboard key for `account` whose per-minute budget exceeds `ceiling`,
+// then evicts it from the auth cache. Idempotent; revoked keys are left alone.
 func (s *Server) downgradePlatformAPIKeys(
 	ctx context.Context,
 	cause string,
@@ -149,9 +145,8 @@ func (s *Server) downgradePlatformAPIKeys(
 	return lowered, failed
 }
 
-// downgradeRedisAPIKeys lowers every Redis key the account minted through POST /v1/account/keys
-// down to `ceiling`. Those records carry [auth.AccountIdentifier](slug) and inherit the caller's
-// budget at mint time. No-op without a Redis store or a slug.
+// downgradeRedisAPIKeys lowers every Redis key minted through POST /v1/account/keys to `ceiling` (they carry
+// [auth.AccountIdentifier](slug) and inherit the caller's budget at mint). No-op without a Redis store or slug.
 func (s *Server) downgradeRedisAPIKeys(
 	ctx context.Context,
 	cause string,
@@ -192,10 +187,9 @@ func (s *Server) downgradeRedisAPIKeys(
 	return lowered, failed
 }
 
-// invalidatePlatformKeyCache evicts a just-updated Postgres key from the auth read-through cache.
-// No-op when no invalidator is wired or the row has no hash. A failure is logged and counted
-// under `key_cache_invalidate` but not surfaced: the write succeeded, so the worst case is the
-// old budget until the cache TTL elapses.
+// invalidatePlatformKeyCache evicts an updated Postgres key from the auth cache; no-op without an invalidator or hash. A
+// failure is logged and counted under `key_cache_invalidate` but not surfaced: the write succeeded, worst case is the old
+// budget until the cache TTL.
 func (s *Server) invalidatePlatformKeyCache(ctx context.Context, cause string, st APIKeyBudgetStores, account platform.Account, k platform.APIKey) {
 	if st.CacheInvalidator == nil || len(k.KeyHash) == 0 {
 		return

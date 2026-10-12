@@ -30,19 +30,12 @@ type CachedAssetsReader struct {
 	swrEntries map[string]*swrEntry
 }
 
-// assetsCacheMaxEntries bounds the entry map.
-//
-// Cache keys carry client-controlled components (`cursor` is validated for shape only, plus
-// free-text `q` and asset ids). Without eviction one anonymous caller could mint a permanent
-// full-page entry per distinct cursor and walk the process to its MemoryMax. The cap sits far
-// above the real working set, which is a handful of prewarmed shapes and bounded pagination.
+// assetsCacheMaxEntries bounds the entry map: keys carry client-controlled parts (cursor, free-text q), so without eviction one
+// anonymous caller could grow it to MemoryMax. Far above the real working set.
 const assetsCacheMaxEntries = 4096
 
-// evictOldestAssetsEntry drops the oldest-filled entry when the map is at
-// capacity. Caller must hold the mutex.
-//
-// In-flight entries (at.IsZero()) are never evicted — dropping one
-// would orphan its waiters from the fill about to close their channel.
+// evictOldestAssetsEntry drops the oldest-filled entry at capacity; caller holds the mutex. In-flight entries (at.IsZero()) are
+// never evicted, which would orphan their waiters.
 func evictOldestAssetsEntry(m map[string]*assetsCacheEntry) {
 	if len(m) < assetsCacheMaxEntries {
 		return
@@ -240,14 +233,8 @@ func (c *CachedAssetsReader) GetAssetTradeCount24h(ctx context.Context, assetID 
 		})
 }
 
-// swrEntry backs the generic single-value SWR path. `val` holds an opaque T whose dynamic type
-// is invariant per key because keys are method-namespaced (e.g. "GetAssetByAssetID|<id>"), so
-// the e.val.(T) assertions never mix types. Guarded by CachedAssetsReader.mu.
-// evictOldestSWREntry drops the oldest-filled entry when the map is at
-// capacity. Caller must hold the mutex.
-//
-// In-flight entries (at.IsZero()) are never evicted — dropping one
-// would orphan its waiters from the fill about to close their channel.
+// evictOldestSWREntry drops the oldest-filled entry at capacity; caller holds the mutex. In-flight entries (at.IsZero()) are
+// never evicted, which would orphan their waiters. swrEntry.val is an opaque T, invariant per method-namespaced key.
 func evictOldestSWREntry(m map[string]*swrEntry) {
 	if len(m) < assetsCacheMaxEntries {
 		return
@@ -276,15 +263,9 @@ type swrEntry struct {
 	err    error
 }
 
-// swr is the generic single-value stale-while-revalidate fetch: the fetchRows logic made
-// type-parametric so every per-asset method shares ONE implementation. It is a free function
-// because Go methods cannot have type parameters.
-//
-//	(A)  fresh hit → return cached
-//	(A') expired with a prior success → serve stale IMMEDIATELY + one single-flighted
-//	     background refresh (runDetachedFill); never blocks a request on the slow upstream
-//	(B)/(C) cold → join the running fill or start one, then wait on it OR the caller's ctx;
-//	     delete-on-error, with waiters holding the entry pointer so they read its err safely
+// swr is the generic single-value stale-while-revalidate fetch (a free function: methods cannot take type parameters). Fresh
+// hit returns cached; expired-with-prior-success serves stale at once plus one single-flighted background refresh; cold joins
+// or starts a fill, deleting the entry on error so errors are never cached.
 func swr[T any](ctx context.Context, c *CachedAssetsReader, op, key string, upstream func(context.Context) (T, error)) (T, error) {
 	var zero T
 	c.mu.Lock()
@@ -351,9 +332,8 @@ func swr[T any](ctx context.Context, c *CachedAssetsReader, op, key string, upst
 	}
 }
 
-// settleSWR applies an swr fill, cold or (A'). On failure a stale value is
-// kept (retry next request); a cold entry hands err to its waiters and is
-// dropped so errors are never cached.
+// settleSWR applies an swr fill: on failure a stale value is kept, a cold entry hands err to its waiters and is dropped so
+// errors are never cached.
 func settleSWR[T any](c *CachedAssetsReader, op, key string, entry *swrEntry) func(T, error) {
 	return func(v T, err error) {
 		c.mu.Lock()
@@ -374,9 +354,8 @@ func settleSWR[T any](c *CachedAssetsReader, op, key string, entry *swrEntry) fu
 	}
 }
 
-// settleRowsFillLocked applies a finished fill to an assetsCacheEntry:
-// apply the value on success; on failure keep a stale value, or for a
-// cold entry hand err to its waiters and drop it. Caller holds c.mu.
+// settleRowsFillLocked applies a finished fill: on failure keep a stale value, or hand err to a cold entry's waiters and drop
+// it. Caller holds c.mu.
 func (c *CachedAssetsReader) settleRowsFillLocked(op, key string, entry *assetsCacheEntry, err error, apply func()) {
 	entry.flight = nil
 	switch {
@@ -393,15 +372,11 @@ func (c *CachedAssetsReader) settleRowsFillLocked(op, key string, entry *assetsC
 	}
 }
 
-// assetsRefreshBudget bounds a stale-while-revalidate background refresh. It runs off the
-// request path, so a generous budget costs users nothing; it must comfortably exceed the
-// listing aggregate's contended worst case so the refresh completes and the cache advances
-// instead of perpetually re-spawning.
+// assetsRefreshBudget bounds a background refresh; it must comfortably exceed the listing aggregate's contended worst case so
+// the cache advances instead of perpetually re-spawning.
 const assetsRefreshBudget = 30 * time.Second
 
-// fetchRows returns just the rows. Kept so callers that do not care
-// about observation time are not forced to discard a value at every call
-// site.
+// fetchRows returns just the rows, for callers that do not need observation time.
 func (c *CachedAssetsReader) fetchRows(
 	ctx context.Context,
 	op, key string,
@@ -411,13 +386,8 @@ func (c *CachedAssetsReader) fetchRows(
 	return rows, err
 }
 
-// fetchRowsAt is fetchRows plus the OBSERVATION TIME of the rows it
-// returns, read under the same lock acquisition as the rows themselves.
-//
-// The pairing is the point: sampling `e.at` before fetchRows races with a refresh, which would
-// publish fresh rows under a stale `as_of` and `stale=true`. A zero `at` means the rows did not
-// come from a cache entry (cache disabled, or a cold fill not retained); callers read it as
-// "answered live".
+// fetchRowsAt is fetchRows plus the rows' OBSERVATION TIME, read under the same lock: sampling `e.at` separately races a
+// refresh and would publish fresh rows under a stale `as_of`. A zero `at` means "answered live" (no cache entry).
 func (c *CachedAssetsReader) fetchRowsAt(
 	ctx context.Context,
 	op, key string,
@@ -495,9 +465,8 @@ func (c *CachedAssetsReader) fetchRowsAt(
 	}
 }
 
-// joinOrStartColdLocked returns the in-flight cold entry for key, or
-// installs a fresh one (leader=true) whose fill the caller must start.
-// Caller holds c.mu.
+// joinOrStartColdLocked returns the in-flight cold entry for key or installs one (leader=true) whose fill the caller must
+// start. Caller holds c.mu.
 func (c *CachedAssetsReader) joinOrStartColdLocked(e *assetsCacheEntry, ok bool, key string) (*assetsCacheEntry, bool) {
 	if ok && e.flight != nil {
 		return e, false
@@ -508,10 +477,8 @@ func (c *CachedAssetsReader) joinOrStartColdLocked(e *assetsCacheEntry, ok bool,
 	return entry, true
 }
 
-// settleRows applies a fetchRowsAt fill, cold or stale-while-revalidate
-// (A'). The upstream call ran through runDetachedFill, never a request ctx:
-// for (A') that ctx dies the instant the stale response is written, and for
-// a cold fill one waiter's abort must not fail the rest.
+// settleRows applies a fetchRowsAt fill. The upstream call runs via runDetachedFill, never a request ctx: it dies when the
+// stale response is written, and one waiter's abort must not fail the rest.
 func (c *CachedAssetsReader) settleRows(op, key string, entry *assetsCacheEntry) func([]timescale.AssetRow, error) {
 	return func(rows []timescale.AssetRow, err error) {
 		c.mu.Lock()
@@ -520,10 +487,8 @@ func (c *CachedAssetsReader) settleRows(op, key string, entry *assetsCacheEntry)
 	}
 }
 
-// fetchHistoryMap is [CachedAssetsReader.fetchRows] for the batched price-history maps, with
-// the same (A)/(A')/(B)/(C) branch order. Without (A') an expired history batch would block
-// every caller on the slow upstream, a stampede-on-expiry that the listing rows avoid and that
-// /v1/assets?include=sparkline would hit on its sibling call in the same request.
+// fetchHistoryMap is [CachedAssetsReader.fetchRows] for the batched price-history maps, with the same branch order; without
+// stale-serve an expired batch would stampede the slow upstream on expiry.
 func (c *CachedAssetsReader) fetchHistoryMap(
 	ctx context.Context,
 	op, key string,

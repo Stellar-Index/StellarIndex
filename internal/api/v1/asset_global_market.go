@@ -11,9 +11,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
-// priceBasisGlobalMarket marks a PriceUSD filled from the global
-// cross-venue market of the ticker the verified catalogue binds to this
-// exact (code, issuer), because no Stellar market price survived the gates.
+// priceBasisGlobalMarket marks a PriceUSD filled from the global cross-venue market of the ticker the verified catalogue binds
+// to this exact (code, issuer), when no Stellar price survived the gates.
 const priceBasisGlobalMarket = "global_market"
 
 // globalMarketMaxAge bounds the age of the aggregator row backing a
@@ -51,9 +50,8 @@ type AssetGlobalMarket struct {
 	IssuerSignals []string `json:"issuer_signals,omitempty"`
 }
 
-// globalMarketAsset returns the global ticker the verified catalogue binds
-// to this exact classic asset_id, and the parsed asset itself. A lookalike
-// sharing the code never matches: the lookup is on the full CODE-ISSUER id.
+// globalMarketAsset returns the global ticker the verified catalogue binds to this exact asset_id plus the parsed asset. A
+// lookalike sharing the code never matches: the lookup is on the full CODE-ISSUER id.
 func (s *Server) globalMarketAsset(assetID string) (global, local canonical.Asset, ok bool) {
 	vc, ok := s.VerifiedCurrencies.LookupByStellarAssetID(assetID)
 	if !ok || vc.Class == currency.ClassFiat || vc.CoinGeckoID == "" {
@@ -111,10 +109,8 @@ func addGlobalMarketRow(into map[string]rwaReference, u canonical.OracleUpdate) 
 	return true
 }
 
-// applyGlobalMarket attaches the global-market reference to a vetted row.
-// Runs after the substance gate: a surviving Stellar market price is
-// measured against the reference; a missing one is filled from it, ahead
-// of any fixed declared peg, so a global depeg shows in price_usd.
+// applyGlobalMarket attaches the global-market reference to a vetted row, after the substance gate: a surviving Stellar price
+// is measured against it, a missing one is filled from it ahead of any declared peg, so a global depeg shows in price_usd.
 func (s *Server) applyGlobalMarket(row *AssetDetail, refs map[string]rwaReference, now time.Time) {
 	g, local, ok := s.globalMarketAsset(row.AssetID)
 	if !ok {

@@ -23,9 +23,8 @@ import (
 // A failed lookup still withholds pricing (issuerDirectoryUnchecked); a nil reader prices
 // normally and the SQL demotion fails open.
 
-// stampIssuerDirectory copies one curated directory label onto the
-// detail. Tags are set only when non-empty so an unlabelled entry
-// doesn't emit an empty `[]`; domain/name are omitempty strings.
+// stampIssuerDirectory copies one curated directory label onto the detail; tags are set only when non-empty so an unlabelled
+// entry never emits `[]`.
 func stampIssuerDirectory(detail *AssetDetail, e timescale.DirectoryEntry) {
 	if len(e.Tags) > 0 {
 		detail.IssuerDirectoryTags = e.Tags
@@ -34,10 +33,8 @@ func stampIssuerDirectory(detail *AssetDetail, e timescale.DirectoryEntry) {
 	detail.IssuerDirectoryName = e.Name
 }
 
-// directoryAddress is the account_directory key that labels the asset: a
-// classic asset's issuer G-address, or a contract token's own C-address
-// (it has no issuer account, and the directory labels contracts too).
-// Empty for assets with neither (native, fiat, catalogue-global).
+// directoryAddress is the account_directory key for the asset: a classic issuer G-address or a contract token's own C-address;
+// empty for native, fiat and catalogue-global.
 func directoryAddress(d *AssetDetail) string {
 	if d.Issuer != nil && *d.Issuer != "" {
 		return *d.Issuer
@@ -70,9 +67,8 @@ func (s *Server) applyIssuerDirectoryTags(ctx context.Context, detail *AssetDeta
 	stampIssuerDirectory(detail, e)
 }
 
-// fillIssuerDirectoryTags resolves the whole listing page's issuer set
-// in ONE batch query (no N+1), then stamps each row. Rows with no
-// directoryAddress (native / catalogue-global) are skipped.
+// fillIssuerDirectoryTags resolves the page's issuer set in ONE batch query (no N+1) and stamps each row; rows with no
+// directoryAddress are skipped.
 func (s *Server) fillIssuerDirectoryTags(ctx context.Context, rows []AssetDetail) {
 	if s.Directory == nil || len(rows) == 0 {
 		return
@@ -138,12 +134,9 @@ func issuerPricingWithheld(d *AssetDetail) bool {
 	return d.issuerDirectoryUnchecked || pricingguard.IsDirectoryScamFlagged(d.IssuerDirectoryTags)
 }
 
-// suppressScamIssuerPricing nulls every dollar claim on the payload (price, market cap, FDV,
-// change_*, price_history_* series, listing reference/valuation) when the issuer carries a
-// scam-class directory tag or its lookup failed (issuerDirectoryUnchecked). Circulating supply
-// (a raw chain fact) and the warning fields stay. It is the payload-side twin of the reader-seam
-// pricingguard.ScamGate, so a scam issuer publishes neither a price nor a market cap.
-// Idempotent and nil-safe.
+// suppressScamIssuerPricing nulls every dollar claim (price, market cap, FDV, change_*, price_history_*, listing valuation)
+// when the issuer has a scam-class directory tag or its lookup failed (issuerDirectoryUnchecked); supply and warnings stay.
+// Payload-side twin of pricingguard.ScamGate. Idempotent, nil-safe.
 func suppressScamIssuerPricing(d *AssetDetail) {
 	if d == nil || !issuerPricingWithheld(d) {
 		return
@@ -175,13 +168,9 @@ func suppressScamIssuerPricing(d *AssetDetail) {
 	d.GlobalMarket = nil
 }
 
-// withholdPriceSeriesWhenUnpriced drops the price-over-time claims (price_history_* and the
-// all-time high) from a payload that may not publish a price, for any reason. Serving them
-// beside a null price_usd leaks the withheld value and contradicts the payload.
-//
-// It shares [priceSeriesPublishable] with the listing's sparkline attach so the two surfaces
-// cannot disagree, e.g. a declared-peg asset with no sparkline on /v1/assets but a full series
-// on /v1/assets/{id}.
+// withholdPriceSeriesWhenUnpriced drops price_history_* and the ATH from a payload that may not publish a price, since serving
+// them beside a null price_usd leaks the withheld value. Shares [priceSeriesPublishable] with the sparkline attach so the
+// surfaces cannot disagree.
 func withholdPriceSeriesWhenUnpriced(d *AssetDetail) {
 	if d == nil || priceSeriesPublishable(d) {
 		return

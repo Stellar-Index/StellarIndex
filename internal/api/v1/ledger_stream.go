@@ -14,27 +14,21 @@ import (
 )
 
 const (
-	// ledgerStreamProducerQueueDepth is the per-connection buffer
-	// between the producer goroutine and the SSE writer. Matches
-	// tipStreamProducerQueueDepth — small enough that a wedged writer
-	// is detected promptly (next send blocks → ctx teardown).
+	// ledgerStreamProducerQueueDepth is the per-connection buffer between producer and SSE writer; matches
+	// tipStreamProducerQueueDepth, small so a wedged writer is detected promptly (next send blocks, ctx teardown).
 	ledgerStreamProducerQueueDepth = 4
 
-	// ledgerStreamPollInterval is how often the producer re-reads the ingest cursor. The indexer
-	// commits a ledger every ~5s; 500ms surfaces each within ~500ms, and this poll is on the
-	// real-time path of the explorer's ledger follow. The read is shared across connections (see
-	// ledgerStreamTip), so its cost does not scale with clients.
+	// ledgerStreamPollInterval is how often the producer re-reads the ingest cursor: the indexer commits a ledger every ~5s and
+	// 500ms surfaces each promptly; the read is shared across connections (see ledgerStreamTip), so cost does not scale with
+	// clients.
 	ledgerStreamPollInterval = 500 * time.Millisecond
 
-	// ledgerStreamRefreshInterval forces an emit even when the ledger has NOT advanced, so
-	// lag_seconds stays current; otherwise a stalled indexer would leave the client on a stale lag
-	// that looks healthy.
+	// ledgerStreamRefreshInterval forces an emit even when the ledger has NOT advanced, so lag_seconds stays current; otherwise a
+	// stalled indexer would leave the client on a stale, healthy-looking lag.
 	ledgerStreamRefreshInterval = 10 * time.Second
 
-	// ledgerStreamTickTimeout bounds a single per-tick cursors read. RequestTimeout excludes
-	// `/stream` paths (long-lived by design), so without it a slow ListCursors call could hold this
-	// producer's goroutine and DB connection open indefinitely, once per connection. Mirrors
-	// observationsScanTimeout.
+	// ledgerStreamTickTimeout bounds one per-tick cursors read: RequestTimeout excludes `/stream` paths, so without it a slow
+	// ListCursors could hold this goroutine and a DB connection open indefinitely per connection. Mirrors observationsScanTimeout.
 	ledgerStreamTickTimeout = 8 * time.Second
 
 	// ledgerStreamTipTTL is how long one cursors read serves every open
@@ -42,10 +36,8 @@ const (
 	ledgerStreamTipTTL = ledgerStreamPollInterval / 2
 )
 
-// ledgerStreamTip is ledgerTip shared across every /v1/ledger/stream
-// connection: concurrent callers join one in-flight read, and a
-// successful result is reused for ledgerStreamTipTTL. The caller's ctx
-// bounds only its own wait.
+// ledgerStreamTip is ledgerTip shared across every /v1/ledger/stream connection: callers join one in-flight read and a success
+// is reused for ledgerStreamTipTTL; the caller's ctx bounds only its own wait.
 func (s *Server) ledgerStreamTip(ctx context.Context) (LedgerTipView, bool, error) {
 	s.ledgerStreamMu.Lock()
 	if !s.ledgerStreamAt.IsZero() && time.Since(s.ledgerStreamAt) < ledgerStreamTipTTL {
@@ -70,9 +62,8 @@ func (s *Server) ledgerStreamTip(ctx context.Context) (LedgerTipView, bool, erro
 	}
 }
 
-// refreshLedgerStreamTip starts or joins the one in-flight cursors read.
-// It runs on its own bounded context: tied to the first caller's, one
-// client disconnecting would fail the read for every other waiter.
+// refreshLedgerStreamTip starts or joins the one in-flight cursors read on its own bounded context: tied to the first caller's,
+// one disconnect would fail the read for every waiter.
 func (s *Server) refreshLedgerStreamTip() <-chan singleflight.Result {
 	return s.ledgerStreamFlight.DoChan("tip", func() (any, error) {
 		// A panic here would otherwise be re-raised on a bare goroutine and
@@ -98,18 +89,9 @@ type ledgerStreamTipResult struct {
 	ok   bool
 }
 
-// handleLedgerStream serves GET /v1/ledger/stream, the SSE counterpart of /v1/ledger/tip. It
-// pushes a `ledger_update` event each time the live-ingest frontier advances.
-//
-// Wire shape per connection:
-//
-//   - Initial event: the current tip, emitted synchronously on connect. There is no Last-Event-ID
-//     resume; every connection starts from the current tip.
-//   - Recurring events: one per new ledger, plus a refresh every ~10s if the ledger has not
-//     advanced, so lag_seconds never goes stale during an ingest stall.
-//
-// Pre-stream errors (no CursorsReader, cursor not yet established) are problem+json with the right
-// status, since once the SSE body starts a non-200 code can no longer be set.
+// handleLedgerStream serves GET /v1/ledger/stream, the SSE counterpart of /v1/ledger/tip: a `ledger_update` per live-ingest advance, plus a
+// refresh every ~10s if unchanged so lag_seconds never goes stale in a stall. The initial event is the current tip (no Last-Event-ID
+// resume). Pre-stream errors are problem+json with the right status, as a non-200 cannot be set once the SSE body starts.
 func (s *Server) handleLedgerStream(w http.ResponseWriter, r *http.Request) {
 	// Admit against the concurrency caps FIRST, so a client at its stream cap does not pay for the
 	// pre-flight cursors read before being rejected. release is idempotent and deferred so every
@@ -162,10 +144,8 @@ func (s *Server) handleLedgerStream(w http.ResponseWriter, r *http.Request) {
 	streaming.StreamFromChannelPreAdmitted(w, r, ch, s.streamOptions())
 }
 
-// runLedgerStreamProducer is the per-connection poll loop: it emits the initial event, then polls
-// the ingest cursor and emits when the ledger advanced or ledgerStreamRefreshInterval elapsed
-// without one. It closes ch on ctx cancel (client disconnect); the per-tick decision lives in
-// nextLedgerEvent.
+// runLedgerStreamProducer is the per-connection poll loop: initial event, then emit when the ledger advanced or
+// ledgerStreamRefreshInterval elapsed; closes ch on ctx cancel; the per-tick decision lives in nextLedgerEvent.
 func (s *Server) runLedgerStreamProducer(
 	ctx context.Context,
 	ch chan<- streaming.Event,
@@ -210,8 +190,7 @@ func (s *Server) runLedgerStreamProducer(
 	}
 }
 
-// nextLedgerEvent runs one producer tick: re-read the ingest cursor and decide whether to emit.
-// ok=false (caller skips the tick; heartbeats keep the connection alive) on a transient read
+// nextLedgerEvent runs one producer tick; ok=false (tick skipped, heartbeats keep the connection alive) on a transient read
 // failure, an unestablished cursor, or a ledger that neither advanced nor aged past the refresh.
 func (s *Server) nextLedgerEvent(
 	ctx context.Context,
@@ -243,9 +222,8 @@ func (s *Server) nextLedgerEvent(
 	return ev, view, true
 }
 
-// sendStreamEvent pushes one event onto the per-connection channel,
-// returning false if ctx cancelled first (client disconnect) so the
-// producer can tear down.
+// sendStreamEvent pushes one event onto the connection channel, returning false if ctx cancelled first (client disconnect) so
+// the producer tears down.
 func sendStreamEvent(ctx context.Context, ch chan<- streaming.Event, ev streaming.Event) bool {
 	select {
 	case <-ctx.Done():
@@ -255,19 +233,15 @@ func sendStreamEvent(ctx context.Context, ch chan<- streaming.Event, ev streamin
 	}
 }
 
-// ledgerStreamPayload is the SSE-data shape of a ledger_update
-// event. It mirrors the /v1/ledger/tip envelope (data + as_of) so an
-// SDK consumer can decode polled and streamed responses with one
-// type.
+// ledgerStreamPayload is the SSE data of a ledger_update; mirrors the /v1/ledger/tip envelope (data + as_of) so an SDK decodes
+// polled and streamed responses with one type.
 type ledgerStreamPayload struct {
 	Data LedgerTipView `json:"data"`
 	AsOf WireTime      `json:"as_of"`
 }
 
-// ledgerStreamEvent builds one ledger_update SSE event. Returns
-// (_, false) on a JSON-marshal failure (a programming error in
-// LedgerTipView) so the caller skips the emit and keeps the stream
-// alive rather than tearing it down.
+// ledgerStreamEvent builds one ledger_update event; (_, false) on a JSON-marshal failure (a programming error in LedgerTipView)
+// so the caller skips the emit and keeps the stream alive.
 func ledgerStreamEvent(gen *streaming.Generator, view LedgerTipView) (streaming.Event, bool) {
 	body, err := json.Marshal(ledgerStreamPayload{
 		Data: view,
@@ -283,9 +257,9 @@ func ledgerStreamEvent(gen *streaming.Generator, view LedgerTipView) (streaming.
 	}, true
 }
 
-// recoverStreamProducer is the deferred panic guard for the SSE producer goroutines. It MUST be
-// invoked as `defer s.recoverStreamProducer("<stream>")` from the producer itself: recover() only
-// works in a function the panicking goroutine deferred, so it cannot sit behind a helper call.
+// recoverStreamProducer is the deferred panic guard for SSE producers; MUST be invoked as `defer
+// s.recoverStreamProducer("<stream>")` from the producer itself, as recover() only works in a function the panicking goroutine
+// deferred.
 func (s *Server) recoverStreamProducer(stream string) {
 	if r := recover(); r != nil {
 		// Report rather than only log: this is the ONE counter the stellarindex_worker_panics_total

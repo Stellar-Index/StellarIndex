@@ -51,9 +51,8 @@ func (b *AssetIssuerBehaviour) riskSignals() []string {
 	return out
 }
 
-// applyIssuerBehaviour attaches the issuer's live flags and the asset's
-// lifetime supply flows to a classic asset's detail. Best-effort: a part
-// that does not resolve is omitted, never reported as false or zero.
+// applyIssuerBehaviour attaches the issuer's live flags and the asset's lifetime supply flows to a classic asset; best-effort,
+// an unresolved part is omitted, never false or zero.
 func (s *Server) applyIssuerBehaviour(ctx context.Context, row *AssetDetail) {
 	a, err := canonical.ParseAsset(row.AssetID)
 	if err != nil || a.Type != canonical.AssetClassic {
@@ -75,9 +74,8 @@ func (s *Server) applyIssuerBehaviour(ctx context.Context, row *AssetDetail) {
 	row.IssuerBehaviour = &b
 }
 
-// fillIssuerFlowTotals reads Σmint, Σburn and Σclawback over the asset's
-// SAC. An incompletely seeded log (burns exceed mints) is omitted, as
-// /v1/assets/{id}/supply refuses it.
+// fillIssuerFlowTotals reads Σmint, Σburn and Σclawback over the asset's SAC; an incompletely seeded log (burns exceed mints)
+// is omitted, as /v1/assets/{id}/supply refuses it.
 func (s *Server) fillIssuerFlowTotals(ctx context.Context, assetID string, b *AssetIssuerBehaviour) {
 	if s.TokenSupply == nil {
 		return

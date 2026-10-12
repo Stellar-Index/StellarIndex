@@ -156,10 +156,8 @@ func tradeRowFrom(t canonical.Trade, decimals int) TradeRow {
 	return row
 }
 
-// normalizeTradeRowPrices rewrites each row's Price from the raw quote/base ratio to the
-// nonstandard-decimals-corrected price. rows and trades are parallel slices; the legs are resolved
-// once against the nonstandard_decimals_assets guard table (as /v1/vwap and /v1/price do). A no-op
-// when both legs share a scale. Amounts stay raw smallest-unit integers; only Price is corrected.
+// normalizeTradeRowPrices rewrites each row's Price from the raw quote/base ratio to the decimals-corrected price (legs
+// resolved against nonstandard_decimals_assets, as /v1/vwap and /v1/price). Amounts stay raw integers; only Price changes.
 func (s *Server) normalizeTradeRowPrices(rows []TradeRow, trades []canonical.Trade, base, quote canonical.Asset) {
 	baseDec := aggregate.ResolveDecimals(s.NonstandardDecimals, base)
 	quoteDec := aggregate.ResolveDecimals(s.NonstandardDecimals, quote)
@@ -212,12 +210,7 @@ func historySourceParam(w http.ResponseWriter, r *http.Request, reader HistoryRe
 	return source, true
 }
 
-// handleHistory serves GET /v1/history?base=<id>&quote=<id>&from=<rfc3339>&to=<rfc3339>&limit=<int>[&source=<name>].
-//
-// Defaults:
-//   - from: to - 1h (1-hour window rolling back from `to`)
-//   - to:   now
-//   - limit: 1000 (server clamps to ≤ 10000)
+// handleHistory serves GET /v1/history; defaults: from = to - 1h, to = now, limit 1000 (clamped to 10000).
 func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolint:funlen // option parsing + 8s-timeout guard + range/limit defaults are linear; splitting fragments the request lifecycle
 	reader := s.History
 	if reader == nil {
@@ -372,11 +365,9 @@ type historyCursor struct {
 	opIndex uint32
 }
 
-// pastTieGroupCursorSource is the `source` of a cursor that resumes past a whole tie group: a
-// marker, not a source name. It binds source empty so the stepped op_index decides the tuple
-// comparison (see [tieGroupCursor]); a client-written empty source would weaken the full-PK
-// comparison, which [decodeHistoryCursor] rejects. `*` cannot collide with a real source name
-// ([a-z0-9_-]); TestHistoryCursor_PastGroupMarkerIsNotASourceName pins that.
+// pastTieGroupCursorSource marks a cursor resuming past a whole tie group (binds source empty so the stepped op_index decides,
+// see [tieGroupCursor]); `*` cannot collide with a real source ([a-z0-9_-]), pinned by
+// TestHistoryCursor_PastGroupMarkerIsNotASourceName.
 const pastTieGroupCursorSource = "*"
 
 // encodeHistoryCursor / decodeHistoryCursor are the URL-safe base64 wire form of a historyCursor:
@@ -447,9 +438,8 @@ func isLowerHex64(s string) bool {
 	return true
 }
 
-// parseBaseQuote extracts and validates base/quote, writing a problem response and returning
-// ok=false on failure. `asset=` is an alias for `base=` so URLs copied from /v1/price work;
-// passing both is a 400 rather than a silent precedence pick.
+// parseBaseQuote validates base/quote, writing the problem and returning ok=false on failure. `asset=` aliases `base=` (URLs
+// copied from /v1/price); passing both is a 400, not a silent precedence pick.
 func parseBaseQuote(w http.ResponseWriter, r *http.Request) (canonical.Asset, canonical.Asset, bool) {
 	rawBase := r.URL.Query().Get("base")
 	rawAsset := r.URL.Query().Get("asset")
@@ -519,9 +509,8 @@ type HistorySeries struct {
 	DataEndsAt      *WireTime `json:"data_ends_at,omitempty"` // last returned bucket; only set when RowCapTruncated
 }
 
-// markDiscontinuity stamps the interior-gap signal via [ChartSeries.markDiscontinuity] so the
-// surfaces cannot disagree about what a hole is. This surface shares the chart's read chain and
-// can carry the same hole, so it must flag it rather than assert continuity it does not have.
+// markDiscontinuity stamps the interior-gap signal via [ChartSeries.markDiscontinuity] so surfaces cannot disagree about a
+// hole; this surface shares the chart's read chain, so it must flag the hole rather than assert continuity.
 func (h *HistorySeries) markDiscontinuity() {
 	c := ChartSeries{Granularity: h.Granularity, Points: h.Points}
 	c.markDiscontinuity()
@@ -559,10 +548,9 @@ func nonVWAPSources(srcs []string) []string {
 const (
 	defaultHistoryGranularity = "1d"
 
-	// historyMaxPoints caps a single response: the 1m CAGG reaches ~32M rows over 5 years.
-	// Truncation takes the EARLIEST buckets. /v1/chart knows that from the request and coarsens its
-	// grain ([chartFitGranularity]); since-inception has no window parameter, so the handler checks
-	// len(points) == historyMaxPoints and stamps row_cap_truncated and data_ends_at instead.
+	// historyMaxPoints caps a response (the 1m CAGG reaches ~32M rows over 5 years); truncation takes the EARLIEST buckets.
+	// /v1/chart coarsens its grain ([chartFitGranularity]); since-inception has no window, so the handler stamps row_cap_truncated
+	// and data_ends_at when len(points) == historyMaxPoints.
 	historyMaxPoints = 50_000
 
 	// sinceInceptionPricingSpan is the fixed history depth the rate-limit price assumes, so a
@@ -570,10 +558,8 @@ const (
 	sinceInceptionPricingSpan = 10 * 365 * 24 * time.Hour
 )
 
-// sinceInceptionCost is the rate-limit price, in tokens, of one since-inception request. Work
-// tracks the point count, min(historyMaxPoints, span / bucket width), so each grain costs its
-// point count's multiple of the default grain's, rounded DOWN to stay conservative. An unknown
-// grain costs the base token because it is a 400 before any read.
+// sinceInceptionCost is the rate-limit price in tokens of one since-inception request: each grain costs its point count's
+// multiple of the default grain's, rounded DOWN (conservative); an unknown grain costs the base token (400 before any read).
 func sinceInceptionCost(gran string) int {
 	width := timescale.HistoryGranularity(gran).BucketDuration()
 	if width <= 0 {
@@ -586,9 +572,9 @@ func sinceInceptionCost(gran string) int {
 	return max(1, points(width)/base)
 }
 
-// handleHistorySinceInception serves GET /v1/history/since-inception?asset=&quote=&granularity=:
-// CLOSED CAGG buckets, oldest first, capped at historyMaxPoints. A pair with no closed buckets
-// yet is 200 with empty points[], not 404, since the asset may be known without bucketed history.
+// handleHistorySinceInception serves GET /v1/history/since-inception: CLOSED CAGG buckets, oldest first, capped at
+// historyMaxPoints. A pair with no closed buckets is 200 with empty points[], not 404 (the asset may be known without bucketed
+// history).
 func (s *Server) handleHistorySinceInception(w http.ResponseWriter, r *http.Request) { //nolint:funlen // option parsing + 8s-timeout guard + grain-default + clamp logic are linear; splitting fragments the request lifecycle
 	if s.History == nil {
 		writeProblem(w, r,
@@ -717,17 +703,10 @@ func (s *Server) handleHistorySinceInception(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, series, Flags{Triangulated: walk.proxied, Stale: walk.degraded, Degraded: walk.degraded})
 }
 
-// tradesInRangeAfterWithAliases reads one page of raw trades unioned across every XLM alias form,
-// each in both stored directions: the raw-trade twin of [Server.chartMergeAliasPairs]. A
-// literal-keyed, one-direction read is blind to venues publishing XLM under another id and to
-// markets recorded the other way round.
-//
-// Union, not first-hit: the cursor carries no form field ([historyCursor]), so falling through to
-// a sibling form on the next page would silently skip its rows at or before the cursor.
-// [mergeTradeStreams] merges the streams into one keyset-ordered page; ties keep stream order.
-//
-// The returned cursor (nil when drained) is not `len(page) == limit`: tie-group completion can
-// cut a page short or run it over `limit` ([streamPageCursor]).
+// tradesInRangeAfterWithAliases reads one page of raw trades unioned across every XLM alias form in both stored directions
+// (twin of [Server.chartMergeAliasPairs]). Union, not first-hit: the cursor has no form field, so falling through to a sibling
+// form would skip its rows. The returned cursor (nil when drained) is not `len(page) == limit`: tie-group completion can cut a
+// page short or run it over ([streamPageCursor]).
 func (s *Server) tradesInRangeAfterWithAliases(
 	ctx context.Context,
 	reader HistoryReader,
@@ -758,9 +737,8 @@ func (s *Server) tradesInRangeAfterWithAliases(
 	return page, next, nil
 }
 
-// readAliasFormStreams reads one both-direction page of every alias form
-// [tradesInRangeAfterWithAliases] must union, deduping a pair that canonicalises identically to
-// one already read. The literal form in the requested orientation leads, the order pinned on a tie.
+// readAliasFormStreams reads one both-direction page of every alias form to union, deduping pairs that canonicalise
+// identically; the literal form in the requested orientation leads (the order pinned on a tie).
 func readAliasFormStreams(
 	pair canonical.Pair, limit int,
 	read func(canonical.Pair, int) ([]canonical.Trade, error),
@@ -793,35 +771,24 @@ func readAliasFormStreams(
 	return streams, nil
 }
 
-// tieGroupReadMax is the size of the one re-read that completes a tie group, equal to
-// [Store.TradesInRangeAfter]'s own clamp.
-//
-// A tie group is the rows sharing (ts, ledger, tx_hash, op_index); they differ only in `source`,
-// so a group cannot exceed the distinct sources (a few dozen) and one read to the store maximum
-// ends the question. A retry ladder was rejected: its exhaustion branch would cut a page through
-// the group and mint a last-row cursor, silently losing the group's remaining rows.
+// tieGroupReadMax is the one re-read that completes a tie group, equal to [Store.TradesInRangeAfter]'s clamp. A group (rows
+// sharing ts, ledger, tx_hash, op_index) cannot exceed the distinct sources, so one max read ends it; a retry ladder was
+// rejected as its exhaustion would cut through the group and silently lose rows.
 const tieGroupReadMax = 10000
 
-// tradeStream is one raw keyset-ordered page read behind the alias/direction fan-in
-// [readAliasFormStreams] builds: the pair it was read with (for a tie-group re-read) and the limit
-// it was given, which [Server.completeOverLimitTieGroup] may raise above the page `limit`. That
-// per-stream limit, not the page limit, says whether a stream is drained.
+// tradeStream is one raw keyset-ordered page behind the alias/direction fan-in: the pair read (for a tie-group re-read) and its
+// limit, which [Server.completeOverLimitTieGroup] may raise above the page `limit`; that per-stream limit says whether the
+// stream is drained.
 type tradeStream struct {
 	pair  canonical.Pair
 	rows  []canonical.Trade
 	limit int
 }
 
-// completeOverLimitTieGroup re-reads every stream that stopped ON the tie group a `limit`-row page
-// would have to serve past, so the merge may serve the group whole. Returns `streams` untouched
-// when no group straddles the page edge (every ordinary request).
-//
-// A group that opens the page and still holds rows at index `limit` cannot take the lower edge
-// (an empty page carrying a cursor would stall the client), so it runs to the upper edge, over
-// `limit`. That is only safe if the group is complete across every stream ([tieGroupFetched]): a
-// cursor minted past the group would exclude unfetched rows differing only in `source`. So each
-// under-read stream is re-read once to [tieGroupReadMax]; the final check makes the impossible
-// state loud.
+// completeOverLimitTieGroup re-reads every stream stopped ON the tie group a `limit`-row page must serve past, so the merge
+// serves it whole. A group opening the page cannot take the lower edge (an empty page with a cursor stalls the client), so it
+// runs over `limit`, safe only if complete across every stream ([tieGroupFetched]): each under-read stream is re-read once to
+// [tieGroupReadMax], and a final check makes the impossible state loud.
 func (s *Server) completeOverLimitTieGroup(
 	streams []tradeStream,
 	read func(canonical.Pair, int) ([]canonical.Trade, error),
@@ -856,11 +823,9 @@ func (s *Server) completeOverLimitTieGroup(
 	return streams, nil
 }
 
-// overLimitTieGroup returns the tie group that opens the merge and still holds rows at index
-// `limit` (so a page must serve past `limit` to return anything), and whether there is one.
-//
-// Computed from the streams: one group's rows are contiguous at each stream's head, so summing the
-// heads avoids building the merge. Every other cut retreats to a group's lower edge.
+// overLimitTieGroup returns the tie group that opens the merge and still holds rows at index `limit`, and whether there is one.
+// Computed from the streams' heads (a group's rows are contiguous there), avoiding building the merge; every other cut retreats
+// to a group's lower edge.
 func overLimitTieGroup(streams []tradeStream, limit int) (canonical.Trade, bool) {
 	var none canonical.Trade
 	if limit < 1 {
@@ -904,13 +869,9 @@ func leadingTieGroupLen(rows []canonical.Trade, probe canonical.Trade) int {
 	return n
 }
 
-// tieGroupFetched reports whether one stream's read returned every row it holds in `probe`'s tie
-// group: true when the read came back short of its limit (drained) or its last row falls outside
-// the group (rows arrive in key order, so the group ended inside what was read).
-//
-// False is the state that loses rows: the read stopped on the group, and a cursor minted from
-// another stream's row would make the `(ts, ledger, tx_hash, op_index, source) >` predicate
-// exclude every unfetched row whose source orders below that one.
+// tieGroupFetched reports whether a stream returned every row of `probe`'s tie group: its read came back short of the limit
+// (drained) or its last row falls outside the group. False loses rows: a cursor minted from another stream's row would exclude
+// unfetched rows whose source orders below it.
 func tieGroupFetched(rows []canonical.Trade, probe canonical.Trade, readLimit int) bool {
 	if len(rows) < readLimit {
 		return true
@@ -918,14 +879,9 @@ func tieGroupFetched(rows []canonical.Trade, probe canonical.Trade, readLimit in
 	return !sameTradeOrderKey(rows[len(rows)-1], probe)
 }
 
-// mergeTradeStreams merges every alias-form/direction stream [readAliasFormStreams] built into one
-// page in `want`'s orientation, cuts it without splitting a tie group, and reports whether rows
-// remain behind the cut.
-//
-// On a tie the earlier stream wins, so the literal form's requested orientation leads. `st.limit`,
-// not the page `limit`, says a stream is drained ([completeOverLimitTieGroup] can raise it). The
-// merge compares only (ts, ledger, tx_hash, op_index): Go's byte order on `source` can disagree
-// with the database collation, so it never compares source and never cuts through a tie group.
+// mergeTradeStreams merges the alias-form/direction streams into one page in `want`'s orientation, cut without splitting a tie group, and
+// reports whether rows remain. The earlier stream wins a tie; `st.limit`, not the page limit, says a stream is drained. It compares only
+// (ts, ledger, tx_hash, op_index), never source: Go byte order can disagree with the database collation.
 func mergeTradeStreams(streams []tradeStream, want canonical.Pair, limit int) ([]canonical.Trade, *historyCursor) {
 	if limit < 1 {
 		limit = 1
@@ -991,14 +947,9 @@ func tradePageCut(merged []canonical.Trade, limit int) int {
 	return cut
 }
 
-// streamPageCursor is where the next page resumes after `merged[:cut]`, or nil when drained.
-//
-// Two forms, the difference between exactly-once and at-least-once pagination. The default names
-// the last served row's primary key: it never skips, but a row tying with it and served earlier
-// on the page comes back when the database orders its `source` above the cursor's (the merge
-// orders ties by stream, the database by `source`). So when the page ends on a tie group that is
-// complete across every stream ([tieGroupFetched]), the cursor steps past the whole group
-// ([tieGroupCursor]); otherwise the last-row cursor stands.
+// streamPageCursor is where the next page resumes after `merged[:cut]`, nil when drained. The default last-row primary-key cursor never
+// skips but can re-serve a tie served earlier (the merge orders ties by stream, the database by `source`); so when the page ends on a tie
+// group complete across every stream ([tieGroupFetched]) the cursor steps past the whole group ([tieGroupCursor]).
 func streamPageCursor(merged []canonical.Trade, cut int, streams []tradeStream, more bool) *historyCursor {
 	if !more || cut < 1 || cut > len(merged) {
 		return nil
@@ -1029,20 +980,10 @@ func allStreamsFetchedGroup(streams []tradeStream, last canonical.Trade) bool {
 	return true
 }
 
-// tieGroupCursor is the resume point strictly past a fully served tie group: the group's
-// (ts, ledger, tx_hash) with op_index stepped once and no source.
-//
-// Correct because the database compares (ts, ledger, tx_hash, op_index, source) as a tuple:
-// against (T, L, H, op+1, EMPTY) every group row loses on the fourth component and every later row
-// wins on one of the first four, whatever the collation. A row (T, L, H, op+1, S) is kept for
-// every S because [canonical.Trade.Validate] rejects an empty source.
-//
-// That premise is the application's, not the schema's: `trades.source` is `text NOT NULL`, so a
-// direct write with an empty source would be skipped. Not closed with a CHECK (a hypertable
-// migration for a hazard reachable only by direct writes).
-//
-// op_index is uint32: op+1 at [math.MaxUint32] would wrap to 0 and re-serve the transaction
-// forever, so that returns false and the caller keeps the last-row cursor (may repeat, never skips).
+// tieGroupCursor resumes strictly past a fully served tie group: (ts, ledger, tx_hash) with op_index stepped once and no
+// source, so every group row loses on the fourth tuple component whatever the collation. Premise: [canonical.Trade.Validate]
+// rejects an empty source (no CHECK on `trades.source`). op+1 at [math.MaxUint32] would wrap and re-serve forever, so it
+// returns false and the caller keeps the last-row cursor (may repeat, never skips).
 func tieGroupCursor(last canonical.Trade) (historyCursor, bool) {
 	if last.OpIndex == math.MaxUint32 {
 		return historyCursor{}, false
@@ -1056,11 +997,9 @@ func tieGroupCursor(last canonical.Trade) (historyCursor, bool) {
 	}, true
 }
 
-// orientTradeTo re-expresses one stored trade in `want`'s orientation. A row stored the other way
-// round has its legs and smallest-unit amounts swapped (as [canonical.Orient]), keyed on the row's
-// own base_asset, not on which read returned it. No division happens: `price` is rendered later as
-// quote_amount/base_amount ([tradeRowFrom]), so it inverts at full precision. A row in neither
-// orientation is left as it came.
+// orientTradeTo re-expresses a stored trade in `want`'s orientation: a row stored the other way has legs and smallest-unit
+// amounts swapped (as [canonical.Orient]), keyed on its own base_asset. No division: `price` is rendered later as
+// quote_amount/base_amount ([tradeRowFrom]), inverting at full precision.
 func orientTradeTo(t canonical.Trade, want canonical.Pair) canonical.Trade {
 	if !t.Pair.Equal(want.Flip()) {
 		return t
@@ -1094,11 +1033,9 @@ func sameTradeOrderKey(a, b canonical.Trade) bool {
 		a.OpIndex == b.OpIndex
 }
 
-// externalSourceAmountDecimals returns the amount scale an off-chain connector stamps its trades
-// at, and whether the source is a registered off-chain venue at all.
-//
-// ok=false is load-bearing: an unknown source's zero Metadata defaults to 8, right for a CEX but
-// catastrophic as a fallback for on-chain sources that stamp at per-asset decimals.
+// externalSourceAmountDecimals returns the amount scale an off-chain connector stamps its trades at, and whether the source is
+// a registered off-chain venue. ok=false is load-bearing: an unknown source's zero Metadata defaults to 8, catastrophic as a
+// fallback for on-chain sources stamping per-asset decimals.
 func externalSourceAmountDecimals(source string) (int, bool) {
 	m, ok := external.Registry[source]
 	if !ok {
