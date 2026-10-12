@@ -145,3 +145,42 @@ func literalOnlyFreezeShapes() map[string]lkgPairs {
 		"24h held for the literal":     {nativeGBP + "/86400": literalHeld24h},
 	}
 }
+
+// A declared 1:1 peg is neither an observation nor a value that survives an
+// FX multiplication, so no fiat cross is served from it, on any surface.
+func TestDeclaredPegIsNotCrossedThroughFX(t *testing.T) {
+	usdc, _ := oraclePegs(t)
+	srv := v1.New(v1.Options{
+		Prices:            &stubPriceReader{err: v1.ErrPriceNotFound},
+		USDPeggedClassics: []canonical.Asset{usdc},
+		Currencies:        brlCurrencies(),
+		FXFixings:         brlFixings(),
+	})
+	ts := startHTTPTest(t, srv.Handler())
+
+	status, body := getBody(t, ts.URL+"/v1/price?asset="+usdc.String()+"&quote=fiat:USD")
+	if status != http.StatusOK || !strings.Contains(body, `"price_type":"peg"`) {
+		t.Fatalf("precondition: the declaration serves as peg against USD, got %d: %s", status, body)
+	}
+	for _, path := range []string{
+		"/v1/price?asset=" + usdc.String() + "&quote=fiat:BRL",
+		"/v1/price/tip?asset=" + usdc.String() + "&quote=fiat:BRL",
+		"/v1/oracle/x_last_price?base=" + usdc.String() + "&quote=fiat:BRL",
+	} {
+		status, body := getBody(t, ts.URL+path)
+		if status != http.StatusNotFound || strings.Contains(body, `"price"`) {
+			t.Errorf("%s: status = %d, want 404 with no price: %s", path, status, body)
+		}
+	}
+}
+
+// ADR-0018 URL discipline: a query parameter must not change a surface's consistency contract; a mismatched intent gets
+// 400. /v1/price is closed-bucket, so `?window=300|3600|86400` (rolling VWAP) belongs on /v1/price/tip.
+func TestPriceWindow_DoesNotSelectARollingSurface(t *testing.T) {
+	srv := v1.New(v1.Options{History: &stubHistoryReader{}})
+	ts := httpTestServer(t, srv)
+	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD&window=300")
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status=%d want 400: a rolling window is a tip-surface request and /v1/price is closed-bucket", resp.StatusCode)
+	}
+}

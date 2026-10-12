@@ -9,6 +9,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -251,5 +252,42 @@ func TestHandlePriceChanges_ReaderFailureIsNotAbsence(t *testing.T) {
 				"/v1/price/changes?asset=native&quote=fiat:USD", nil))
 			assertReadFailureProblem(t, rec, tc.wantStatus, tc.wantType)
 		})
+	}
+}
+
+type stubChange24h struct{ then string }
+
+func (s stubChange24h) USDPrice24hAgo(context.Context, canonical.Asset) (string, error) {
+	return s.then, nil
+}
+
+// TestBatchChange24h pins the contract: USD-quoted batch
+// rows carry the signed trailing-24h change; non-USD quotes omit it.
+func TestBatchChange24h(t *testing.T) {
+	s := &Server{Options: Options{Change24h: stubChange24h{then: "0.20"}}}
+	usd := defaultPriceQuote
+	if got := s.batchChange24h(context.Background(), canonical.NativeAsset(), usd, "0.21"); got == nil || *got != "+5.00" {
+		t.Fatalf("change = %v, want +5.00", got)
+	}
+	eur, _ := canonical.ParseAsset("fiat:EUR")
+	if got := s.batchChange24h(context.Background(), canonical.NativeAsset(), eur, "0.21"); got != nil {
+		t.Fatalf("non-USD quote should omit change, got %v", *got)
+	}
+	s.Change24h = nil
+	if got := s.batchChange24h(context.Background(), canonical.NativeAsset(), usd, "0.21"); got != nil {
+		t.Fatal("nil reader should omit change")
+	}
+}
+
+// TestPriceAuthority_SpecEnumIsTheGoVocabulary pins GlobalAssetView's price_authority enum to every
+// aggregate.PriceAuthority constant in declaration order; a label the handler stamps but the spec omits breaks the
+// closed union.
+func TestPriceAuthority_SpecEnumIsTheGoVocabulary(t *testing.T) {
+	got := specPropertyEnum(t, "GlobalAssetView", "price_authority")
+	want := goFileStringConsts(t, filepath.Join(repoRoot(t), "internal", "aggregate", "global.go"), "PriceAuthority")
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("openapi GlobalAssetView.price_authority enum = %v\n  aggregate.PriceAuthority consts        = %v\n"+
+			"edit both (and regenerate docs/reference/api, examples/postman and "+
+			"web/explorer/src/api/types.ts from the spec)", got, want)
 	}
 }
