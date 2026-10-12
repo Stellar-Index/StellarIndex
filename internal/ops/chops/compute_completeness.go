@@ -1729,25 +1729,20 @@ func countsAbove(m map[uint32]int, b uint32) map[uint32]int {
 var recognitionGlobalExcludeSyms = clickhouse.FirehoseExcludeSyms
 
 // computeRecognitionGapsCH is the ClickHouse recognition audit: distinct (contract, topic) shapes from the lake through the dispatcher's
-// Recognize(). The global scan excludes FirehoseExcludeSyms; watchedSep41RecognitionShapes re-adds them for the watched set (recognised
-// because buildCensusDispatcher registers sep41 decoders).
+// Recognize(). The scan excludes FirehoseExcludeSyms except on the watched SEP-41 contracts (recognised because buildCensusDispatcher
+// registers sep41 decoders), so a watched source dropping its own event kinds still gaps.
 func computeRecognitionGapsCH(ctx context.Context, cfg config.Config, chAddr string, gated map[string][]contractid.Option, from, tip uint32, soroswapOpts ...soroswap.DecoderOption) ([]completeness.RecognitionGap, error) {
 	disp, err := buildCensusDispatcher(cfg, gated, soroswapOpts...)
 	if err != nil {
 		return nil, err
 	}
-	shapes, err := clickhouse.DistinctTopicShapes(ctx, chAddr, from, tip, recognitionGlobalExcludeSyms)
+	shapes, err := clickhouse.DistinctTopicShapes(ctx, chAddr, from, tip, recognitionGlobalExcludeSyms, cfg.Supply.WatchedSEP41Contracts)
 	if err != nil {
 		return nil, err
 	}
 	if verr := recognitionScanEmptyErr(len(shapes), from, tip); verr != nil {
 		return nil, verr
 	}
-	watched, err := watchedSep41RecognitionShapes(ctx, cfg, chAddr, from, tip)
-	if err != nil {
-		return nil, err
-	}
-	shapes = append(shapes, watched...)
 
 	var gaps []completeness.RecognitionGap
 	for _, s := range shapes {
@@ -1777,16 +1772,6 @@ func buildCensusDispatcher(cfg config.Config, gated map[string][]contractid.Opti
 		return nil, fmt.Errorf("register supply event decoders: %w", err)
 	}
 	return disp, nil
-}
-
-// watchedSep41RecognitionShapes is the watched-set half of the census: topics FirehoseExcludeSyms drops globally, restricted to
-// watched_sep41_contracts, so a watched source dropping its own event kinds still gaps. An empty watch list audits nothing.
-func watchedSep41RecognitionShapes(ctx context.Context, cfg config.Config, chAddr string, from, tip uint32) ([]clickhouse.TopicShape, error) {
-	watched := cfg.Supply.WatchedSEP41Contracts
-	if len(watched) == 0 {
-		return nil, nil
-	}
-	return clickhouse.DistinctTopicShapesForWatchedContracts(ctx, chAddr, from, tip, clickhouse.FirehoseExcludeSyms, watched)
 }
 
 // recognitionScanEmptyErr fails closed on a scan that read zero shapes (no samples would read as clean); verify-recognition refuses the

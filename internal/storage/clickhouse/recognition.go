@@ -68,14 +68,13 @@ func (s TopicShape) key() shapeKey {
 	return shapeKey{contract: s.ContractID, topic0: s.Topic0Sym, t0: s.t0, t1: s.t1, tn: s.tn}
 }
 
-// nonSymbolShapeCols are the non-Symbol key columns, empty for a Symbol topic[0] so group-key state grows only for rare non-Symbol
-// shapes. They make the scan read topics_xdr (roughly triple the cost).
+// nonSymbolShapeCols are the exemplar fetch's non-Symbol key columns, empty for a Symbol topic[0] to match the phase-1 shape keys.
 const nonSymbolShapeCols = `if(topic_0_sym = '', topics_xdr[1], '') AS t0,
 			if(topic_0_sym = '', topics_xdr[2], '') AS t1,
 			if(topic_0_sym = '', length(topics_xdr), 0) AS tn`
 
-// DistinctTopicShapes returns one representative event per distinct (contract_id, topic_0_sym) over [from,to] by Count descending, in a narrow SCAN phase then a point-read EXEMPLAR phase so memory stays bounded; excludeTopic0 drops topic[0] symbols.
-func DistinctTopicShapes(ctx context.Context, addr string, from, to uint32, excludeTopic0 []string) ([]TopicShape, error) {
+// DistinctTopicShapes returns one representative event per distinct (contract_id, topic_0_sym) over [from,to] by Count descending, in a narrow SCAN phase then a point-read EXEMPLAR phase so memory stays bounded; excludeTopic0 drops topic[0] symbols except on watchedContracts.
+func DistinctTopicShapes(ctx context.Context, addr string, from, to uint32, excludeTopic0, watchedContracts []string) ([]TopicShape, error) {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
 		return nil, err
@@ -83,14 +82,14 @@ func DistinctTopicShapes(ctx context.Context, addr string, from, to uint32, excl
 	defer func() { _ = conn.Close() }()
 
 	acc := make(map[shapeKey]*TopicShape)
-	scanQ := distinctShapesWindowQuery(excludeTopic0)
+	scanQs := []string{distinctSymbolShapesWindowQuery(excludeTopic0, watchedContracts), distinctNonSymbolShapesWindowQuery()}
 	err = forEachLedgerWindow(from, to, recognitionScanWindow, func(lo, hi uint32) error {
-		rows, qerr := conn.Query(ctx, scanQ, lo, hi)
-		if qerr != nil {
-			return fmt.Errorf("clickhouse: distinct topic shapes [%d,%d]: %w", lo, hi, qerr)
+		for _, q := range scanQs {
+			if qerr := scanShapeWindow(ctx, conn, q, lo, hi, acc); qerr != nil {
+				return qerr
+			}
 		}
-		defer func() { _ = rows.Close() }()
-		return mergeShapeWindow(rows, acc)
+		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -99,31 +98,13 @@ func DistinctTopicShapes(ctx context.Context, addr string, from, to uint32, excl
 	return finishShapeScan(ctx, conn, acc)
 }
 
-// DistinctTopicShapesForWatchedContracts scopes the shape scan to a topic[0] set AND a contract set, keeping a watched SEP-41 source's own transfer/mint/burn drops auditable at bounded cost; returns (nil, nil) if either set is empty.
-func DistinctTopicShapesForWatchedContracts(ctx context.Context, addr string, from, to uint32, topic0, contractIDs []string) ([]TopicShape, error) {
-	if len(topic0) == 0 || len(contractIDs) == 0 {
-		return nil, nil
-	}
-	conn, err := openRead(ctx, addr)
+func scanShapeWindow(ctx context.Context, conn driver.Conn, q string, lo, hi uint32, acc map[shapeKey]*TopicShape) error {
+	rows, err := conn.Query(ctx, q, lo, hi)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("clickhouse: distinct topic shapes [%d,%d]: %w", lo, hi, err)
 	}
-	defer func() { _ = conn.Close() }()
-
-	acc := make(map[shapeKey]*TopicShape)
-	scanQ := distinctShapesWatchedQuery(topic0, contractIDs)
-	err = forEachLedgerWindow(from, to, recognitionScanWindow, func(lo, hi uint32) error {
-		rows, qerr := conn.Query(ctx, scanQ, lo, hi)
-		if qerr != nil {
-			return fmt.Errorf("clickhouse: distinct topic shapes (watched) [%d,%d]: %w", lo, hi, qerr)
-		}
-		defer func() { _ = rows.Close() }()
-		return mergeShapeWindow(rows, acc)
-	})
-	if err != nil {
-		return nil, err
-	}
-	return finishShapeScan(ctx, conn, acc)
+	defer func() { _ = rows.Close() }()
+	return mergeShapeWindow(rows, acc)
 }
 
 // finishShapeScan sorts the accumulated shapes (count descending, identity tie-break for deterministic output) and fills their exemplars;
@@ -158,34 +139,17 @@ func finishShapeScan(ctx context.Context, conn driver.Conn, acc map[shapeKey]*To
 	return out, nil
 }
 
-// distinctShapesWindowQuery is the phase-1 scan: NARROW identity columns only (no topics_xdr/data_xdr/op_args_xdr, no argMax exemplar
-// state) under bounded settings. Split out so its shape is unit-testable.
-func distinctShapesWindowQuery(excludeTopic0 []string) string {
-	where := "WHERE ledger_seq BETWEEN ? AND ?"
+// distinctSymbolShapesWindowQuery is the phase-1 scan of Symbol topic[0] shapes: NARROW identity columns only (no topics_xdr/data_xdr/
+// op_args_xdr, no argMax exemplar state) under bounded settings. watchedContracts keep their excluded topics in scope.
+func distinctSymbolShapesWindowQuery(excludeTopic0, watchedContracts []string) string {
+	where := "WHERE ledger_seq BETWEEN ? AND ? AND topic_0_sym != ''"
 	if len(excludeTopic0) > 0 {
-		where += " AND topic_0_sym NOT IN (" + sqlQuoteList(excludeTopic0) + ")"
+		filter := "topic_0_sym NOT IN (" + sqlQuoteList(excludeTopic0) + ")"
+		if len(watchedContracts) > 0 {
+			filter = "(" + filter + " OR contract_id IN (" + sqlQuoteEscapedList(watchedContracts) + "))"
+		}
+		where += " AND " + filter
 	}
-	return fmt.Sprintf(`
-		SELECT
-			contract_id,
-			topic_0_sym,
-			%s,
-			count() AS cnt,
-			min(ledger_seq) AS lo,
-			max(ledger_seq) AS hi
-		FROM stellar.contract_events
-		%s
-		GROUP BY contract_id, topic_0_sym, t0, t1, tn
-		%s`, nonSymbolShapeCols, where, boundedScanSettings)
-}
-
-// distinctShapesWatchedQuery is the phase-1 scan for DistinctTopicShapesForWatchedContracts: distinctShapesWindowQuery's shape INCLUDING
-// topic[0], plus a contract_id restriction; contractIDs are lake-sourced strkeys, so escaped.
-func distinctShapesWatchedQuery(topic0, contractIDs []string) string {
-	where := fmt.Sprintf("WHERE ledger_seq BETWEEN ? AND ? AND topic_0_sym IN (%s) AND contract_id IN (%s)",
-		sqlQuoteList(topic0), sqlQuoteEscapedList(contractIDs))
-	// topic_0_sym IN (non-empty Symbols): the non-Symbol columns are constant
-	// here, so they are not read from topics_xdr.
 	return fmt.Sprintf(`
 		SELECT
 			contract_id,
@@ -200,6 +164,26 @@ func distinctShapesWatchedQuery(topic0, contractIDs []string) string {
 		%s
 		GROUP BY contract_id, topic_0_sym
 		%s`, where, boundedScanSettings)
+}
+
+// distinctNonSymbolShapesWindowQuery is the phase-1 scan of non-Symbol topic[0] shapes (about 0.1% of events). PREWHERE reads topics_xdr
+// only for granules holding one; a single query guarding topics_xdr with if() read the whole column, more than doubling the scan.
+func distinctNonSymbolShapesWindowQuery() string {
+	return fmt.Sprintf(`
+		SELECT
+			contract_id,
+			topic_0_sym,
+			topics_xdr[1] AS t0,
+			topics_xdr[2] AS t1,
+			length(topics_xdr) AS tn,
+			count() AS cnt,
+			min(ledger_seq) AS lo,
+			max(ledger_seq) AS hi
+		FROM stellar.contract_events
+		PREWHERE topic_0_sym = ''
+		WHERE ledger_seq BETWEEN ? AND ?
+		GROUP BY contract_id, topic_0_sym, t0, t1, tn
+		%s`, boundedScanSettings)
 }
 
 // mergeShapeWindow folds one window's distinct-shape rows into the

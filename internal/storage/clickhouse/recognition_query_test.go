@@ -8,74 +8,78 @@ import (
 	"testing"
 )
 
-// TestDistinctShapesWindowQuery_NoWideColumns: the distinct-shape scan must read only narrow identity
-// columns, because argMax exemplar state over topics_xdr/data_xdr scales with distinct shapes and OOMs.
-// topics_xdr is read only for non-Symbol topic[0] keys.
-func TestDistinctShapesWindowQuery_NoWideColumns(t *testing.T) {
-	q := distinctShapesWindowQuery(ClassicTokenTopic0Syms)
-	for _, forbidden := range []string{"data_xdr", "op_args_xdr", "argMax"} {
+// TestDistinctSymbolShapesWindowQuery_NoWideColumns pins the recognition OOM and scan-cost fixes:
+// the Symbol scan reads ONLY the narrow identity columns. argMax exemplar state scales with the
+// distinct-shape population until it dies at any memory cap, and topics_xdr is the lake's widest column.
+func TestDistinctSymbolShapesWindowQuery_NoWideColumns(t *testing.T) {
+	q := distinctSymbolShapesWindowQuery(ClassicTokenTopic0Syms, nil)
+	for _, forbidden := range []string{"topics_xdr", "data_xdr", "op_args_xdr", "argMax", "contract_id IN"} {
 		if strings.Contains(q, forbidden) {
-			t.Errorf("shape scan must not touch %q (wide-column read is phase 2's batched exemplar fetch):\n%s", forbidden, q)
+			t.Errorf("Symbol shape scan must not contain %q:\n%s", forbidden, q)
 		}
 	}
-	if got := strings.Count(q, "topics_xdr"); got != 3 || strings.Count(q, "if(topic_0_sym = '', ") != 3 {
-		t.Errorf("topics_xdr must appear only in the three non-Symbol-guarded key columns (got %d):\n%s", got, q)
-	}
 	for _, required := range []string{
-		"GROUP BY contract_id, topic_0_sym, t0, t1, tn",
+		"GROUP BY contract_id, topic_0_sym",
+		"'' AS t0",
 		"count() AS cnt",
 		"min(ledger_seq) AS lo",
 		"max(ledger_seq) AS hi",
-		"WHERE ledger_seq BETWEEN ? AND ?",
-		"topic_0_sym NOT IN ('transfer','mint','burn','clawback','approve','set_admin','set_authorized')",
+		"WHERE ledger_seq BETWEEN ? AND ? AND topic_0_sym != ''",
+		"AND topic_0_sym NOT IN ('transfer','mint','burn','clawback','approve','set_admin','set_authorized')",
 	} {
 		if !strings.Contains(q, required) {
-			t.Errorf("shape scan missing %q:\n%s", required, q)
+			t.Errorf("Symbol shape scan missing %q:\n%s", required, q)
 		}
 	}
 }
 
-// TestDistinctShapesWindowQuery_BoundedSettings — the scan carries its own
-// per-query bounds (low threads + external group-by spill), so a window whose
-// distinct set grows costs disk and time, never an OOM kill.
-func TestDistinctShapesWindowQuery_BoundedSettings(t *testing.T) {
-	q := distinctShapesWindowQuery(nil)
-	for _, s := range []string{
-		"SETTINGS",
-		"max_threads = 2",
-		"max_memory_usage = 8589934592",
-		"max_bytes_before_external_group_by = 4294967296",
-	} {
-		if !strings.Contains(q, s) {
-			t.Errorf("shape scan missing bounded setting %q:\n%s", s, q)
-		}
+// TestDistinctSymbolShapesWindowQuery_WatchedContractsKeepExcludedTopics — a watched SEP-41
+// contract's transfer/mint/burn stay in scope, so a watched source dropping them still gaps.
+func TestDistinctSymbolShapesWindowQuery_WatchedContractsKeepExcludedTopics(t *testing.T) {
+	q := distinctSymbolShapesWindowQuery(FirehoseExcludeSyms, []string{"CAAA", "C'BB"})
+	want := "AND (topic_0_sym NOT IN ('transfer','mint','burn','clawback','approve','set_authorized') OR contract_id IN ('CAAA','C\\'BB'))"
+	if !strings.Contains(q, want) {
+		t.Errorf("Symbol shape scan missing %q:\n%s", want, q)
 	}
-	if strings.Contains(q, "NOT IN") {
-		t.Errorf("no-exclusion query must not carry a NOT IN clause:\n%s", q)
+	if q := distinctSymbolShapesWindowQuery(nil, []string{"CAAA"}); strings.Contains(q, "contract_id IN") || strings.Contains(q, "NOT IN") {
+		t.Errorf("no exclusion means nothing to re-admit; got:\n%s", q)
 	}
 }
 
-// TestDistinctShapesWatchedQuery_IncludesTopicsAndContracts pins the watched-SEP41 scoped census: unlike the
-// global NOT IN scan, it INCLUDEs the given topic[0] set and restricts to the given contracts, so it avoids
-// re-scanning the firehose.
-func TestDistinctShapesWatchedQuery_IncludesTopicsAndContracts(t *testing.T) {
-	q := distinctShapesWatchedQuery(FirehoseExcludeSyms, []string{"CAAA", "CBBB"})
+// TestDistinctNonSymbolShapesWindowQuery_PrewhereGuardsTopics — topics_xdr is read only behind
+// a PREWHERE on an empty topic_0_sym, and no alias may shadow topic_0_sym (CH resolves aliases in PREWHERE).
+func TestDistinctNonSymbolShapesWindowQuery_PrewhereGuardsTopics(t *testing.T) {
+	q := distinctNonSymbolShapesWindowQuery()
 	for _, required := range []string{
-		"topic_0_sym IN ('transfer','mint','burn','clawback','approve','set_authorized')",
-		"contract_id IN ('CAAA','CBBB')",
-		"GROUP BY contract_id, topic_0_sym",
-		"'' AS t0",
+		"PREWHERE topic_0_sym = ''",
 		"WHERE ledger_seq BETWEEN ? AND ?",
+		"topics_xdr[1] AS t0",
+		"length(topics_xdr) AS tn",
+		"GROUP BY contract_id, topic_0_sym, t0, t1, tn",
 	} {
 		if !strings.Contains(q, required) {
-			t.Errorf("watched shape scan missing %q:\n%s", required, q)
+			t.Errorf("non-Symbol shape scan missing %q:\n%s", required, q)
 		}
 	}
-	if strings.Contains(q, "NOT IN") {
-		t.Errorf("watched shape scan must INCLUDE the topic set, not exclude it:\n%s", q)
+	if strings.Contains(q, "AS topic_0_sym") || strings.Contains(q, "data_xdr") {
+		t.Errorf("non-Symbol shape scan must not alias topic_0_sym or read data_xdr:\n%s", q)
 	}
-	if strings.Contains(q, "topics_xdr") {
-		t.Errorf("watched shape scan only matches Symbol topics, so it must not read topics_xdr:\n%s", q)
+}
+
+// TestShapeScanQueries_BoundedSettings — each scan carries its own per-query bounds (low threads
+// + external group-by spill), so a window whose distinct set grows costs disk and time, never an OOM kill.
+func TestShapeScanQueries_BoundedSettings(t *testing.T) {
+	for _, q := range []string{distinctSymbolShapesWindowQuery(nil, nil), distinctNonSymbolShapesWindowQuery()} {
+		for _, s := range []string{
+			"SETTINGS",
+			"max_threads = 2",
+			"max_memory_usage = 8589934592",
+			"max_bytes_before_external_group_by = 4294967296",
+		} {
+			if !strings.Contains(q, s) {
+				t.Errorf("shape scan missing bounded setting %q:\n%s", s, q)
+			}
+		}
 	}
 }
 

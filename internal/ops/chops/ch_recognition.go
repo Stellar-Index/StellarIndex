@@ -58,7 +58,7 @@ func chRecognition(args []string) error { //nolint:gocognit,funlen // linear: pa
 	}
 
 	fmt.Fprintf(os.Stderr, "ch-recognition: scanning distinct (contract,topic) shapes in [%d,%d] (exclude-firehose=%v)\n", *from, hi, !*includeFirehose)
-	shapes, err := clickhouse.DistinctTopicShapes(ctx, *chAddr, uint32(*from), hi, exclude)
+	shapes, err := clickhouse.DistinctTopicShapes(ctx, *chAddr, uint32(*from), hi, exclude, nil)
 	if err != nil {
 		return err
 	}

@@ -58,9 +58,6 @@ func TestTopic0SymIncludePredicates_OnlyReviewedSites(t *testing.T) {
 		// topic0Predicate itself, and symbolTopic0Predicate for reconcile sources whose
 		// decoder rejects a String topic[0] (pinned by the chops catalogue test).
 		"internal/storage/clickhouse/event_reader.go": 2,
-		// Watched-SEP41 census: the complement of the global scan's Symbol-only
-		// NOT IN, which already keeps every String-topic shape.
-		"internal/storage/clickhouse/recognition.go": 1,
 		// sep41_supply's decoder matches mint/burn/clawback as Symbols only.
 		"internal/storage/clickhouse/supply_reader.go": 1,
 	}
