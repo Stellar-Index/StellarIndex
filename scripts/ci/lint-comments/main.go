@@ -34,11 +34,11 @@ import (
 	"strings"
 )
 
-// hard matches dates, ticket ids, #nnn and "PR n", including every pattern
+// hard matches dates, ticket ids, #n and "PR n", including every pattern
 // lint-repo-budget.sh rejects in added comments.
 var hard = regexp.MustCompile(`(?i)\b20\d\d-\d\d-\d\d\b|\b202[4-9]-[01]\d\b|` +
 	`\b(?:RLT|CS|CO|NS|LIVE|INV|LC)-\d+\b|\b(?:F|Q|T|RSWP|CMA|CMB|HIS|DOC|YDC|DRY)-\d{3,4}\b|` +
-	`\b[FTQK]\d{3}\b|#\d{3,}\b|\bPR \d+|\bpre-20\d\d\b`)
+	`\b[FTQK]\d{3}\b|#\d+\b|\bPR \d+|\bpre-20\d\d\b`)
 
 // commitHash matches an abbreviated git hash; a match needs a digit and a letter
 // and must not be a float like 1e999999999, so numbers and hex-like words pass.
