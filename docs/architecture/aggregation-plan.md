@@ -170,7 +170,7 @@ on an empty pair since 2021, 1.13× for an FX snap; the 8 s handler
 ceilings are unchanged.
 
 Pinned by `TestTradesInRange_AggregateOverBothStoredDirections`
-(`trades_in_range_direction_test.go`), `TestRawTradeReadsSpanBothStoredDirections`
+(`trades_direction_test.go`), `TestRawTradeReadsSpanBothStoredDirections`
 (`trades_direction_test.go`, query shape) and
 `TestCAGGPairReadsFoldBothDirections` (`pair_direction_guard_test.go`,
 parses every SQL literal so a new one-direction CAGG read fails CI).
