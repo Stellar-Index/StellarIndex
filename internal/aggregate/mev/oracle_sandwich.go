@@ -34,9 +34,7 @@ type oracleSandwichDetail struct {
 	Note               string       `json:"note"`
 }
 
-// DetectOracleSandwiches finds one account trading a pair touching the oracle's asset strictly before AND after
-// the update's tx within one ledger (by tx_index); one candidate per (update, account).
-// txIdx must cover trade and oracle tx hashes; unresolved hashes silently degrade detection.
+// DetectOracleSandwiches finds one account trading a pair touching the oracle's asset strictly before AND after the update's tx in one ledger (by tx_index); one candidate per (update, account). txIdx must cover trade and oracle tx hashes or detection silently degrades.
 func DetectOracleSandwiches(trades []canonical.Trade, usdVolume []string, oracles []OracleRef, txIdx map[string]uint32) []Candidate {
 	if len(txIdx) == 0 || len(oracles) == 0 {
 		return nil

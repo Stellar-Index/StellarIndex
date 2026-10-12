@@ -11,9 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// Decoder is the dispatcher-facing OpDecoder for classic SDEX trades; it works on
-// xdr.Operation + xdr.OperationResult pairs via dispatcher.OpContext, not events. Stateless:
-// every claim atom is self-contained, so one op's N trades all come from one Decode call.
+// Decoder is the dispatcher-facing OpDecoder for classic SDEX trades, working on xdr.Operation + OperationResult pairs via dispatcher.OpContext; stateless, since every claim atom is self-contained.
 type Decoder struct{}
 
 // NewDecoder constructs an SDEX Decoder.
@@ -22,29 +20,18 @@ func NewDecoder() *Decoder { return &Decoder{} }
 // Name implements [dispatcher.OpDecoder].
 func (*Decoder) Name() string { return SourceName }
 
-// Matches implements [dispatcher.OpDecoder]. True for every op
-// type that can produce ClaimAtoms: ManageOffer (sell/buy),
-// CreatePassiveSellOffer, PathPayment (strict-receive + strict-
-// send). See matchesTradeOp for the authoritative list.
+// Matches implements [dispatcher.OpDecoder]: true for every op type that can produce ClaimAtoms (see matchesTradeOp for the authoritative list).
 func (*Decoder) Matches(op xdr.Operation) bool {
 	return matchesTradeOp(op)
 }
 
-// Decode implements [dispatcher.OpDecoder]: zero trades for ops that didn't cross the book,
-// one per claim atom otherwise. Taker is the tx source account; Maker comes from each claim
-// atom (a G-address, or the hex pool hash for liquidity-pool fills).
+// Decode implements [dispatcher.OpDecoder]: zero trades for ops that didn't cross the book, one per claim atom otherwise. Taker is the tx source; Maker comes from each claim atom (a G-address, or the hex pool hash for liquidity-pool fills).
 func (d *Decoder) Decode(ctx dispatcher.OpContext) ([]consumer.Event, error) {
 	out, _ := d.decodeCounted(ctx)
 	return out, nil
 }
 
-// DecodeCounted is the completeness-census variant of Decode: same logic, plus the count of
-// claim atoms that failed to decode (errors other than [ErrNoOpClaim]; not both-zero no-ops
-// and not one-sided fills, which decode cleanly).
-//
-// The census (reDeriveSDEXCensusViaDecoder) needs the count to mark a ledger BLIND rather than
-// treating a per-claim drop as "zero trades, clean". Decode cannot report it without breaking
-// the dispatcher.OpDecoder signature, so this is a second, additive method.
+// DecodeCounted is Decode plus the count of claim atoms that failed to decode (errors other than [ErrNoOpClaim]), so the completeness census marks a ledger BLIND rather than "zero trades, clean"; a separate method because Decode cannot report it without breaking the dispatcher.OpDecoder signature.
 func (d *Decoder) DecodeCounted(ctx dispatcher.OpContext) ([]consumer.Event, int) {
 	return d.decodeCounted(ctx)
 }
@@ -93,8 +80,7 @@ func (*Decoder) decodeCounted(ctx dispatcher.OpContext) ([]consumer.Event, int) 
 	return out, failed
 }
 
-// TradeEvent is the [consumer.Event] this source emits. Matches
-// the pattern of soroswap.TradeEvent / aquarius.TradeEvent etc.
+// TradeEvent is the [consumer.Event] this source emits, like soroswap.TradeEvent / aquarius.TradeEvent.
 type TradeEvent struct {
 	Trade canonical.Trade
 }

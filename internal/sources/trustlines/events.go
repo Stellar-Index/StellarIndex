@@ -5,20 +5,13 @@ import (
 	"time"
 )
 
-// SourceName is the canonical identifier for the trustlines
-// observer. Stamped on metric labels and on every
-// [Observation.Source]. Stable.
+// SourceName is the stable identifier for the trustlines observer, stamped on metric labels and every [Observation.Source].
 const SourceName = "trustlines"
 
-// ObservationKind is the consumer.Event.EventKind value emitted
-// by the observer. The indexer's sink type-switches on this
-// string to route observations to `trustline_observations`.
+// ObservationKind is the consumer.Event.EventKind the observer emits; the sink type-switches on it to route to `trustline_observations`.
 const ObservationKind = "trustlines.observation"
 
-// Observation is the post-change TrustLineEntry state at the ledger that produced the change.
-// One per (account, asset, ledger): if a ledger touches it repeatedly, the writer's
-// last-writer-wins ON CONFLICT path keeps the final state. Removed changes set IsRemoval=true
-// with Balance zeroed, meaning the holder no longer has the trustline at that ledger.
+// Observation is the post-change TrustLineEntry state at the producing ledger, one per (account, asset, ledger) with last-writer-wins ON CONFLICT keeping the final state. A removal sets IsRemoval=true with Balance zeroed: the holder no longer has the trustline.
 type Observation struct {
 	// AccountID is the G-strkey of the trustline's holder.
 	AccountID string

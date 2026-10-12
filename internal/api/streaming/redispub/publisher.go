@@ -16,25 +16,19 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// RedisPublisher is the subset of the Redis client surface
-// [Publisher] needs. Declared as an interface so tests can
-// substitute miniredis without pulling the full UniversalClient.
+// RedisPublisher is the subset of the Redis client [Publisher] needs, so tests can substitute miniredis.
 type RedisPublisher interface {
 	Publish(ctx context.Context, channel string, message any) *redis.IntCmd
 }
 
-// Publisher implements
-// [github.com/Stellar-Index/StellarIndex/internal/aggregate/orchestrator.StreamPublisher]
-// by PUBLISHing each closed-bucket event as JSON to a Redis channel. Fields are read-only after
-// construction and the underlying RedisPublisher is concurrent-safe by contract.
+// Publisher implements orchestrator.StreamPublisher by PUBLISHing each closed-bucket event as JSON to a Redis channel; fields are read-only after construction.
 type Publisher struct {
 	cache    RedisPublisher
 	channel  string
 	producer string
 }
 
-// NewPublisher constructs a Publisher writing to the given Redis
-// channel. Empty channel falls back to [DefaultChannel].
+// NewPublisher constructs a Publisher writing to the given channel; empty falls back to [DefaultChannel].
 func NewPublisher(cache RedisPublisher, channel string) (*Publisher, error) {
 	if cache == nil {
 		return nil, errors.New("redispub: RedisPublisher is required")
@@ -57,16 +51,13 @@ func newProducerID() string {
 	return fmt.Sprintf("%s-%d-%s", host, os.Getpid(), hex.EncodeToString(nonce[:]))
 }
 
-// Channel returns the Redis channel this Publisher writes to.
-// Useful in startup logs and matching the Subscriber's channel.
+// Channel returns the Redis channel this Publisher writes to, for startup logs and matching the Subscriber.
 func (p *Publisher) Channel() string { return p.channel }
 
 // ProducerID returns the id stamped on every event this Publisher sends.
 func (p *Publisher) ProducerID() string { return p.producer }
 
-// PublishClosedBucket implements orchestrator.StreamPublisher: it JSON-marshals the event and
-// PUBLISHes it to the configured channel. The orchestrator logs a failure and continues because
-// the next tick retries.
+// PublishClosedBucket JSON-marshals the event and PUBLISHes it; the orchestrator logs a failure and continues because the next tick retries.
 func (p *Publisher) PublishClosedBucket(
 	ctx context.Context,
 	pair canonical.Pair,
@@ -94,10 +85,7 @@ func (p *Publisher) PublishClosedBucket(
 	return p.send(ctx, ev)
 }
 
-// PublishFrozenBucket implements
-// `orchestrator.StreamPublisher.PublishFrozenBucket`: a [KindFrozen]
-// event naming the bucket a freeze refused, with no value. A zero
-// frozenSince is sent as unknown.
+// PublishFrozenBucket publishes a [KindFrozen] event naming the bucket a freeze refused, with no value; a zero frozenSince is sent as unknown.
 func (p *Publisher) PublishFrozenBucket(
 	ctx context.Context,
 	pair canonical.Pair,

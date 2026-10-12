@@ -59,10 +59,7 @@ var opResultNames = map[xdr.OperationResultCode]string{
 	xdr.OperationResultCodeOpTooManySponsoring: "op_too_many_sponsoring",
 }
 
-// TxResultName returns the human-readable slug for a transaction result code
-// (the value in stellar.transactions.result_code). An unmapped/newer code
-// falls back to a truthful numeric form rather than a blank — a slug is never
-// silently empty, so the wire never implies "success" for an unknown code.
+// TxResultName returns the slug for a transaction result code; an unmapped code falls back to a numeric form, never blank, so the wire never implies success for an unknown code.
 func TxResultName(code int32) string {
 	if s, ok := txResultNames[xdr.TransactionResultCode(code)]; ok {
 		return s
@@ -70,9 +67,7 @@ func TxResultName(code int32) string {
 	return fmt.Sprintf("tx_unknown(%d)", code)
 }
 
-// OpResultName returns the human-readable slug for an operation result code
-// (the value in stellar.operation_results.result_code). Same fallback
-// discipline as TxResultName.
+// OpResultName returns the slug for an operation result code, with the same numeric fallback as TxResultName.
 func OpResultName(code int32) string {
 	if s, ok := opResultNames[xdr.OperationResultCode(code)]; ok {
 		return s
@@ -80,11 +75,7 @@ func OpResultName(code int32) string {
 	return fmt.Sprintf("op_unknown(%d)", code)
 }
 
-// OpInnerResultName returns the slug of an op_inner operation's
-// op-type-specific result code, decoded from the stored base64 OperationResult (e.g.
-// "payment_underfunded"). ok=false when the outer code is not op_inner or the XDR does not decode.
-// The slug is the SDK enum name minus its type prefix, snake_cased, so every op type is covered
-// without a hand-kept table; an unnamed (newer) code falls back to "<result type>_unknown(<n>)".
+// OpInnerResultName returns the slug of an op_inner op's type-specific result (e.g. "payment_underfunded"), from the SDK enum name minus its type prefix; ok=false if the outer code isn't op_inner or the XDR doesn't decode. Unnamed codes fall back to "<result type>_unknown(<n>)".
 func OpInnerResultName(resultXDR string) (string, bool) {
 	var res xdr.OperationResult
 	if err := xdr.SafeUnmarshalBase64(resultXDR, &res); err != nil {

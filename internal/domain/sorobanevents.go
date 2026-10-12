@@ -2,8 +2,7 @@ package domain
 
 import "time"
 
-// SorobanEventRow is one soroban_events row (ADR-0029), columns 1:1 with
-// migration 0041.
+// SorobanEventRow is one soroban_events row (ADR-0029), columns 1:1 with migration 0041.
 type SorobanEventRow struct {
 	Ledger          uint32
 	LedgerCloseTime time.Time

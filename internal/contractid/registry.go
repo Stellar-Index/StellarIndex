@@ -14,12 +14,7 @@ package contractid
 
 import "sync"
 
-// Registry is a set of factory-descended child contract IDs (C-strkeys) plus the protocol's factory
-// trust-root set, with an optional persistence hook. Construct with [New]; the zero value is unusable.
-//
-// A protocol may have MORE THAN ONE factory (Blend has two pool factories that both deploy real
-// pools). Gating the creation event on a single factory would silently drop the other's children,
-// so the factory trust root is a SET, not a scalar.
+// Registry is a set of factory-descended child contract IDs plus the factory trust-root set, with an optional persistence hook; build with [New]. The root is a SET because a protocol can have several factories (Blend has two), and gating on one would drop the other's children.
 type Registry struct {
 	mu        sync.RWMutex
 	set       map[string]struct{} // discovered children (factory descendants)
@@ -29,12 +24,10 @@ type Registry struct {
 	attrHook  func(childID, factoryID string, firstLedger uint32, attrs Attrs)
 }
 
-// Attrs is optional per-child metadata a decoder persists beside the child id
-// (a pool's token identities, say). Values are opaque strings to the registry.
+// Attrs is optional per-child metadata a decoder persists beside the child id; values are opaque to the registry.
 type Attrs map[string]string
 
-// New constructs a Registry, applying any options (WithFactories, WithSeed,
-// WithHook).
+// New constructs a Registry, applying any options (WithFactories, WithSeed, WithHook).
 func New(opts ...Option) *Registry {
 	r := &Registry{
 		set:       make(map[string]struct{}),
@@ -50,9 +43,7 @@ func New(opts ...Option) *Registry {
 // Option configures a Registry at construction time.
 type Option func(*Registry)
 
-// WithFactories sets the protocol's factory trust-root set: the contract IDs whose creation events
-// the decoder honors and from which every child is seeded. Its completeness is load-bearing: a
-// missing factory means its children's events are silently dropped.
+// WithFactories sets the factory trust-root set whose creation events the decoder honors; completeness is load-bearing, since a missing factory silently drops its children's events.
 func WithFactories(factoryIDs []string) Option {
 	return func(r *Registry) {
 		for _, id := range factoryIDs {
@@ -63,8 +54,7 @@ func WithFactories(factoryIDs []string) Option {
 	}
 }
 
-// WithSeed pre-loads the child set from the `protocol_contracts` table. It does NOT fire the
-// persistence hook because these IDs are already persisted.
+// WithSeed pre-loads the child set from `protocol_contracts`; it does not fire the persistence hook (already persisted).
 func WithSeed(childIDs []string) Option {
 	return func(r *Registry) {
 		for _, id := range childIDs {
@@ -75,17 +65,12 @@ func WithSeed(childIDs []string) Option {
 	}
 }
 
-// WithHook installs the live-upsert callback fired by Seed when a factory creation event discovers
-// a child. It receives the child's C-strkey, the deploying factory's C-strkey (provenance; a
-// protocol can have several factories) and the creation ledger. It runs on the decode path, so
-// keep it cheap: a timeout-bounded ExecContext is fine, a blocking network call is not. It is
-// invoked WITHOUT the registry lock held.
+// WithHook installs the live-upsert callback Seed fires on a discovered child (child C-strkey, deploying factory, creation ledger). It runs on the decode path, so keep it cheap and non-blocking on the network; it is called without the registry lock held.
 func WithHook(fn func(childID, factoryID string, firstLedger uint32)) Option {
 	return func(r *Registry) { r.hook = fn }
 }
 
-// WithAttrSeed pre-loads children together with their durable attributes. Like
-// [WithSeed] it fires no hook and admits each child into the gate.
+// WithAttrSeed pre-loads children with their durable attributes; like [WithSeed] it fires no hook and admits each child into the gate.
 func WithAttrSeed(seed map[string]Attrs) Option {
 	return func(r *Registry) {
 		for id, a := range seed {
@@ -98,14 +83,12 @@ func WithAttrSeed(seed map[string]Attrs) Option {
 	}
 }
 
-// WithAttrHook installs the callback [Registry.SeedWithAttrs] fires to persist a child's
-// attributes. Like [WithHook] it must be cheap and runs without the registry lock held.
+// WithAttrHook installs the callback [Registry.SeedWithAttrs] fires to persist attributes; like [WithHook] it must be cheap and runs without the registry lock.
 func WithAttrHook(fn func(childID, factoryID string, firstLedger uint32, attrs Attrs)) Option {
 	return func(r *Registry) { r.attrHook = fn }
 }
 
-// Has reports whether contractID is a registered factory descendant: the gate Matches() consults
-// for every non-creation event.
+// Has reports whether contractID is a registered factory descendant: the gate Matches() consults for every non-creation event.
 func (r *Registry) Has(contractID string) bool {
 	r.mu.RLock()
 	_, ok := r.set[contractID]
@@ -113,9 +96,7 @@ func (r *Registry) Has(contractID string) bool {
 	return ok
 }
 
-// IsFactory reports whether contractID is one of the protocol's trust-root factories. Matches()
-// consults it for the creation event (e.g. Blend `deploy`): only a genuine factory may announce a
-// child, so a foreign contract cannot inject one.
+// IsFactory reports whether contractID is a trust-root factory; Matches() consults it for the creation event so only a genuine factory can announce a child.
 func (r *Registry) IsFactory(contractID string) bool {
 	r.mu.RLock()
 	_, ok := r.factories[contractID]
@@ -123,8 +104,7 @@ func (r *Registry) IsFactory(contractID string) bool {
 	return ok
 }
 
-// Factories returns the factory trust-root set in no guaranteed order; the genesis-seed walk uses
-// it to find every factory whose creation events to replay.
+// Factories returns the factory trust-root set, unordered; the genesis-seed walk replays each one's creation events.
 func (r *Registry) Factories() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -135,10 +115,7 @@ func (r *Registry) Factories() []string {
 	return out
 }
 
-// Children returns the registered factory-descendant set (the gate's Has() members) in no
-// guaranteed order. The completeness re-derive uses it as the contract-id prefilter for the CH lake
-// read; with the factories ([Registry.GatedSet]) it is exactly what Matches() can accept, so the
-// prefilter changes speed only.
+// Children returns the registered descendant set (Has() members), unordered; with the factories ([Registry.GatedSet]) it is exactly what Matches() can accept, so the re-derive prefilter changes speed only.
 func (r *Registry) Children() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -149,10 +126,7 @@ func (r *Registry) Children() []string {
 	return out
 }
 
-// GatedSet returns the union of the factory trust roots and the registered children: every contract
-// whose events Matches() can accept. It is the tightest sound contract-id prefilter for a re-derive
-// because factories must stream so their creation events self-seed children in-window, and children
-// so their business events stream. It is deduped and unordered; sort for determinism.
+// GatedSet returns the factories plus registered children, unordered and deduped: every contract Matches() can accept, and the tightest sound prefilter for a re-derive. Sort for determinism.
 func (r *Registry) GatedSet() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -168,10 +142,7 @@ func (r *Registry) GatedSet() []string {
 	return out
 }
 
-// Seed registers a child contract (idempotent) and fires the persistence hook, if any. factoryID is
-// the creation event's emitter and firstLedger its ledger; both are provenance only, not used by
-// the gate. The hook fires on every call (the upsert downstream is idempotent), so a re-observed
-// creation event refreshes the durable row harmlessly.
+// Seed registers a child (idempotent) and fires the persistence hook on every call, since the downstream upsert is idempotent; factoryID and firstLedger are provenance only, not used by the gate.
 func (r *Registry) Seed(childID, factoryID string, firstLedger uint32) {
 	if childID == "" {
 		return
@@ -185,8 +156,7 @@ func (r *Registry) Seed(childID, factoryID string, firstLedger uint32) {
 	}
 }
 
-// SeedWithAttrs is [Registry.Seed] plus the child's attributes, which are
-// retained in memory and passed to the attribute hook (if any).
+// SeedWithAttrs is [Registry.Seed] plus the child's attributes, kept in memory and passed to the attribute hook.
 func (r *Registry) SeedWithAttrs(childID, factoryID string, firstLedger uint32, attrs Attrs) {
 	if childID == "" {
 		return

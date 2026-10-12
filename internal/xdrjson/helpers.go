@@ -61,16 +61,10 @@ func assetCode(raw []byte) (string, bool) {
 	return code, true
 }
 
-// AssetID is the exported canonical asset id ("native" / "CODE-ISSUER") —
-// the same form the rest of the API + explorer use. Lets other packages
-// (e.g. the lake entry-change extractor) tag rows with a queryable,
-// API-consistent asset key.
+// AssetID is the canonical asset id ("native" / "CODE-ISSUER") the API and explorer use, so lake rows can carry an API-consistent asset key.
 func AssetID(a xdr.Asset) string { return assetID(a) }
 
-// TrustLineAssetID renders a trustline entry's asset in the canonical
-// explorer form. Regular credits → "CODE-ISSUER"; native → "native";
-// liquidity-pool-share trustlines → "pool:<hex pool id>" (a distinct
-// namespace so they never collide with a credit-asset key).
+// TrustLineAssetID renders a trustline's asset as "CODE-ISSUER", "native", or "pool:<hex pool id>" (a distinct namespace so pool shares never collide with credit assets).
 func TrustLineAssetID(t xdr.TrustLineAsset) string {
 	switch t.Type {
 	case xdr.AssetTypeAssetTypeNative:
@@ -197,9 +191,7 @@ func contractAddress(addr xdr.ScAddress) (string, bool) {
 	}
 }
 
-// MemoTypeName normalises the lake's XDR memo-type enum string
-// ("MemoTypeMemoText") to the explorer's wire value ("text"). Returns "none"
-// for the empty / no-memo case.
+// MemoTypeName normalises the lake's XDR memo-type enum ("MemoTypeMemoText") to the wire value ("text"); "none" for empty.
 func MemoTypeName(xdrEnum string) string {
 	s := strings.TrimPrefix(xdrEnum, "MemoTypeMemo")
 	if s == "" {

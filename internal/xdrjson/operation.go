@@ -49,9 +49,7 @@ var opTypeName = map[xdr.OperationType]string{
 	xdr.OperationTypeRestoreFootprint:              "restore_footprint",
 }
 
-// OpTypeName returns the snake_case wire name for an XDR op type, or
-// "unknown_<n>" for an enum the map doesn't cover (forward-compat for a future
-// protocol op).
+// OpTypeName returns the snake_case wire name for an XDR op type, or "unknown_<n>" for an enum the map doesn't cover (forward-compat).
 func OpTypeName(t xdr.OperationType) string {
 	if s, ok := opTypeName[t]; ok {
 		return s
@@ -78,17 +76,13 @@ var opTypeEnumStringByName = func() map[string]string {
 	return m
 }()
 
-// OpTypeEnumString maps a snake_case wire name back to the lake's stored
-// op_type enum string; ok is false for a name outside the controlled vocabulary.
+// OpTypeEnumString maps a snake_case wire name back to the lake's op_type enum string; ok is false outside the controlled vocabulary.
 func OpTypeEnumString(name string) (string, bool) {
 	s, ok := opTypeEnumStringByName[name]
 	return s, ok
 }
 
-// OpTypeNameFromEnumString returns the snake_case wire name OpTypeName gives its enum, from the
-// lake's CamelCase enum string, so every read path serves invoke_host_function rather than
-// invokehostfunction. A string the map doesn't cover falls back to a lowercased,
-// "OperationType"-stripped best effort, for a new protocol op decoded before the map is updated.
+// OpTypeNameFromEnumString returns OpTypeName's wire name from the lake's CamelCase enum string (so reads serve invoke_host_function, not invokehostfunction); an unmapped string falls back to a lowercased, prefix-stripped best effort.
 func OpTypeNameFromEnumString(s string) string {
 	if name, ok := opTypeNameByEnumString[s]; ok {
 		return name
@@ -108,9 +102,7 @@ type DecodedOp struct {
 	RawXDR string
 }
 
-// DecodeOperationBody decodes a base64 operation body into a DecodedOp. The
-// source account (operations may override the tx source) is passed separately
-// by the caller since it lives outside the body in the lake.
+// DecodeOperationBody decodes a base64 operation body into a DecodedOp; the source account lives outside the body in the lake, so the caller passes it.
 func DecodeOperationBody(bodyB64 string) (DecodedOp, error) {
 	var body xdr.OperationBody
 	if err := scval.UnmarshalBase64(bodyB64, &body); err != nil {
@@ -435,10 +427,7 @@ func fillInvokeHostFunction(op xdr.InvokeHostFunctionOp, f map[string]any) {
 	}
 }
 
-// AuthInvocation is one node of a Soroban authorization tree (the nested
-// SorobanAuthorizedInvocation in an InvokeHostFunction op's auth entries). A create-contract
-// authorization has Kind "create_contract" and no function/args. Credentials is set only on each
-// tree's root, since a sub-invocation's authorization is implied by its parent's.
+// AuthInvocation is one node of a Soroban authorization tree; a create-contract node has Kind "create_contract" and no function/args. Credentials is set only on the root, since sub-invocations inherit it.
 type AuthInvocation struct {
 	Kind           string           `json:"kind"` // invoke_contract | create_contract
 	ContractID     string           `json:"contract_id,omitempty"`
@@ -449,10 +438,7 @@ type AuthInvocation struct {
 	SubInvocations []AuthInvocation `json:"sub_invocations,omitempty"`
 }
 
-// AuthCredentials describes who authorized one auth entry's root invocation:
-// the op's own source account, or a separate address (which may be a
-// different signer entirely — e.g. a relayer-submitted transaction carrying
-// a user's signed auth entry).
+// AuthCredentials says who authorized an auth entry's root invocation: the op's source account or a separate address (e.g. a relayer-submitted tx carrying a user's signed entry).
 type AuthCredentials struct {
 	Kind                      string `json:"kind"` // source_account | address
 	Address                   string `json:"address,omitempty"`

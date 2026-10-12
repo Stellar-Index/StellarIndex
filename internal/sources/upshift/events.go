@@ -28,8 +28,7 @@ import (
 // SourceName is stamped on every emitted event and every `upshift_vault_events` row.
 const SourceName = "upshift"
 
-// EventKind is the [consumer.Event] discriminator; one type carries all four decoded kinds (the
-// sep41_transfers shape).
+// EventKind is the [consumer.Event] discriminator; one type carries all four decoded kinds (the sep41_transfers shape).
 const EventKind = "upshift.vault_event"
 
 // Vault contract ids on pubnet. They are IDENTITIES, not tunables: changing one re-points a served
@@ -44,12 +43,10 @@ const (
 	MainnetVaultEarnXLM = "CC6TRAPQD3NK7THUKWPV5SL2JHKQGNXZVB6S6MVYFSLRWAKEFUWZKZ7J"
 )
 
-// GenesisLedger is the protocol's first pubnet event (earnUSDC's `admin_set`). It is the density
-// denominator (ADR-0031) and the gap detector's floor: an exact observed value, never an estimate.
+// GenesisLedger is the protocol's first pubnet event (earnUSDC's `admin_set`), the density denominator (ADR-0031) and gap-detector floor: an exact observed value, never an estimate.
 const GenesisLedger uint32 = 62_623_313
 
-// VaultMeta is the curated, lake-verified description of one vault. The underlying is EVIDENCE of
-// what the vault holds; nothing here converts between the two scales or invents an asset.
+// VaultMeta is the curated, lake-verified description of one vault; the underlying is evidence of what it holds, and nothing converts between the two scales or invents an asset.
 type VaultMeta struct {
 	// Label is the share ticker, INFERRED from the underlying (no event carries it). Never an
 	// identity; the contract id is.
@@ -67,12 +64,7 @@ type VaultMeta struct {
 	FirstEventLedger uint32
 }
 
-// MainnetVaults is the curated Upshift vault set on pubnet, the ADR-0040 trust root; the lake
-// sweep in the package doc shows these are the only contracts emitting the bespoke vocabulary.
-//
-// Completeness is load-bearing: a vault missing here has its events DROPPED, not
-// mis-attributed. Re-run the bespoke-symbol sweep, or add a `protocol_contracts` row, to admit
-// a new one without a redeploy.
+// MainnetVaults is the curated Upshift vault set on pubnet, the ADR-0040 trust root. Completeness is load-bearing: a missing vault has its events DROPPED; re-run the bespoke-symbol sweep or add a `protocol_contracts` row to admit one without a redeploy.
 var MainnetVaults = map[string]VaultMeta{
 	MainnetVaultEarnUSDC: {
 		Label:            "earnUSDC",
@@ -88,9 +80,7 @@ var MainnetVaults = map[string]VaultMeta{
 	},
 }
 
-// MainnetGatedSet returns the vault allowlist seeded into the decoder's identity registry.
-// It is derived from [MainnetVaults] so the gated and documented sets cannot drift, and sorted
-// so the projector's contract-id prefilter and the reconcile's lake read are byte-stable.
+// MainnetGatedSet returns the vault allowlist seeded into the identity registry, derived from [MainnetVaults] so gated and documented sets cannot drift, sorted for byte-stable prefilters.
 func MainnetGatedSet() []string {
 	out := make([]string, 0, len(MainnetVaults))
 	for id := range MainnetVaults {

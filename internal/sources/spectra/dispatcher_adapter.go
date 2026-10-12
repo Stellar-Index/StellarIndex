@@ -17,22 +17,7 @@ const (
 	AttrMarketPT = "market_pt"
 )
 
-// Decoder is the dispatcher-facing Spectra decoder. Its state is the
-// contract-identity gate (ADR-0035) and each gated contract's role:
-//
-//   - the factory is the trust root for `pt_deployed`, which admits the PT;
-//   - `yt_deployed` from an admitted PT admits the YT, with the PT as its
-//     market;
-//   - the registry, router, order engines, wrapper IBTs and the current
-//     PTs/YTs are hand-kept ([MainnetContracts], [MainnetInfrastructure]).
-//
-// An IBT named by `pt_deployed` is a market attribute only and is never
-// admitted (earnXLM / earnUSDC are Upshift vaults). The registry's
-// `*_change` events admit nothing.
-//
-// In a market's creation transaction the PT's `yt_deployed` precedes the
-// factory's `pt_deployed`, so the first read of that window misses it. The
-// projector re-reads a window whose gate widened, and the re-read claims it.
+// Decoder is the dispatcher-facing Spectra decoder; its state is the contract-identity gate (ADR-0035): the factory is the trust root for `pt_deployed` (admits the PT), `yt_deployed` from an admitted PT admits the YT, and the registry, router, order engines and wrapper IBTs are hand-kept. An IBT named by `pt_deployed` is never admitted, and registry `*_change` events admit nothing. A market's `yt_deployed` precedes `pt_deployed` in its creation tx, so the projector re-reads a window whose gate widened.
 type Decoder struct {
 	reg *contractid.Registry
 
@@ -41,9 +26,7 @@ type Decoder struct {
 	ytMarket map[string]string // discovered YT → PT
 }
 
-// NewDecoder constructs a Decoder with the hand-kept set installed first.
-// Options layer the protocol_contracts warm (contractid.WithAttrSeed
-// carries the role attributes) and the persistence hooks on top.
+// NewDecoder constructs a Decoder with the hand-kept set installed first; options layer the protocol_contracts warm (contractid.WithAttrSeed carries role attributes) and persistence hooks on top.
 func NewDecoder(opts ...contractid.Option) *Decoder {
 	base := []contractid.Option{
 		contractid.WithFactories([]string{MainnetFactory}),
@@ -125,9 +108,7 @@ func (d *Decoder) Matches(ev events.Event) bool {
 	return ok
 }
 
-// Decode implements [dispatcher.Decoder]. A row kind yields one [Event];
-// a recognised zero-row kind yields none and no error (ADR-0033
-// expected-zero). A malformed body is an error, so the ledger stays blind.
+// Decode implements [dispatcher.Decoder]: a row kind yields one [Event], a recognised zero-row kind none and no error (ADR-0033 expected-zero); a malformed body is an error, so the ledger stays blind.
 func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	kind, role, ok := d.gate(&ev)
 	switch {

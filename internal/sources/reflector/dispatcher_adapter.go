@@ -5,10 +5,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// Decoder is the dispatcher-facing view of one Reflector oracle variant (DEX / CEX / FX), scoped
-// to that variant's mainnet contract address. It is stateless: everything needed to decode an
-// update lives in the event. Per-entry decode errors (unknown ticker, malformed payload) are
-// non-fatal returns that the dispatcher counts before continuing.
+// Decoder is the dispatcher-facing view of one Reflector variant (DEX / CEX / FX), scoped to that variant's mainnet contract; stateless. Per-entry decode errors (unknown ticker, malformed payload) are non-fatal and counted by the dispatcher.
 type Decoder struct {
 	variant    Variant
 	contractID string
@@ -16,10 +13,7 @@ type Decoder struct {
 	observer   string
 }
 
-// NewDecoder constructs a Reflector Decoder bound to one mainnet
-// oracle variant. contractID scopes the matcher so a DEX Decoder
-// won't try to decode a CEX event (fiat vs crypto assets), even
-// though they share the REFLECTOR:update topic.
+// NewDecoder constructs a Decoder bound to one variant; contractID scopes the matcher so a DEX Decoder won't decode a CEX event (fiat vs crypto assets) despite the shared REFLECTOR:update topic.
 func NewDecoder(variant Variant, contractID string, opts ...DecoderOption) *Decoder {
 	d := &Decoder{
 		variant:    variant,
@@ -35,16 +29,12 @@ func NewDecoder(variant Variant, contractID string, opts ...DecoderOption) *Deco
 // DecoderOption configures a Decoder at construction.
 type DecoderOption func(*Decoder)
 
-// WithDecoderObserver stamps an observer strkey on every emitted
-// OracleUpdate. The observer is typically the tx source account
-// (the relayer); when left blank the update's Observer column
-// stays empty, which is a valid OracleUpdate.
+// WithDecoderObserver stamps an observer strkey (typically the relayer tx source) on every emitted OracleUpdate; blank leaves the Observer column empty, which is valid.
 func WithDecoderObserver(obs string) DecoderOption {
 	return func(r *Decoder) { r.observer = obs }
 }
 
-// WithDecoderDecimals sets the power-of-10 scale stamped on every
-// emitted OracleUpdate. 0 keeps [DefaultDecimals].
+// WithDecoderDecimals sets the power-of-10 scale stamped on every emitted OracleUpdate; 0 keeps [DefaultDecimals].
 func WithDecoderDecimals(dec uint8) DecoderOption {
 	return func(r *Decoder) {
 		if dec != 0 {
@@ -56,8 +46,7 @@ func WithDecoderDecimals(dec uint8) DecoderOption {
 // Name implements [dispatcher.Decoder].
 func (d *Decoder) Name() string { return d.variant.SourceName() }
 
-// Matches implements [dispatcher.Decoder]. It accepts events from this Decoder's contract whose
-// topic[0..1] are Symbol("REFLECTOR"), Symbol("update"); classify() checks arity (topic[2]).
+// Matches implements [dispatcher.Decoder]: events from this Decoder's contract whose topic[0..1] are Symbol("REFLECTOR"), Symbol("update"); classify() checks arity (topic[2]).
 func (d *Decoder) Matches(ev events.Event) bool {
 	if ev.ContractID != d.contractID {
 		return false
@@ -65,10 +54,7 @@ func (d *Decoder) Matches(ev events.Event) bool {
 	return classify(&ev)
 }
 
-// Decode implements [dispatcher.Decoder]. Returns zero or more
-// UpdateEvent wrappers — one per (asset, price) entry in the
-// event's update_data vector, after zero-price and unknown-symbol
-// entries are skipped. See decodeUpdate for details.
+// Decode implements [dispatcher.Decoder], returning one UpdateEvent per (asset, price) entry in update_data after zero-price and unknown-symbol entries are skipped (see decodeUpdate).
 func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	closedAt, err := ev.EventClosedAt()
 	if err != nil {

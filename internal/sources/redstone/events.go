@@ -28,23 +28,13 @@ import (
 // SourceName is stamped on every OracleUpdate; one adapter contract covers all feeds.
 const SourceName = "redstone"
 
-// DefaultDecimals is the RedStone-wide price scale (redstone-price-feed/src/config.rs:1, verified
-// against the deployed source); there is no per-feed scale.
+// DefaultDecimals is the RedStone-wide price scale (redstone-price-feed/src/config.rs:1, verified against the deployed source); there is no per-feed scale.
 const DefaultDecimals uint8 = 8
 
-// DefaultResolutionSeconds is the 24h heartbeat (updates are `0.2% deviation OR 24h`), exported as
-// the `stellarindex_oracle_resolution_seconds` gauge so the oracle-stale alert has a per-source threshold.
+// DefaultResolutionSeconds is the 24h heartbeat (updates are `0.2% deviation OR 24h`), exported as the `stellarindex_oracle_resolution_seconds` gauge so the oracle-stale alert has a per-source threshold.
 const DefaultResolutionSeconds = 24 * 60 * 60
 
-// WriteFnName is the adapter's update entry point, the only path that emits a REDSTONE event. The
-// function name is not plumbed, so four layers stand in for a name check:
-//
-//  1. the OpArgs PROVENANCE gate (args attach only for a direct call INTO the adapter);
-//  2. structural validation of the signature (Address, Vec<String>, Bytes — feedIDsFromOpArgs);
-//  3. the body-vs-args updater cross-check (decodeWritePrices);
-//  4. state-write corroboration: plumbed value-changed keys must match the claimed feed set.
-//
-// A function passing all four would be a new WASM, caught by the per-WASM-hash audit gate.
+// WriteFnName is the adapter's update entry point, the only path emitting a REDSTONE event. The function name isn't plumbed, so four layers stand in: the OpArgs PROVENANCE gate, signature validation (feedIDsFromOpArgs), the body-vs-args updater cross-check (decodeWritePrices), and state-write corroboration; a function passing all four would be a new WASM, caught by the per-WASM-hash audit.
 const WriteFnName = "write_prices"
 
 // Event-topic constants.

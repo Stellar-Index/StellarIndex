@@ -7,12 +7,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// SACContractID returns the Stellar Asset Contract id, as a C-strkey, for a canonical
-// classic/native asset on the given network. The id is deterministic from asset and network
-// passphrase (xdr.Asset.ContractID), so a SAC address maps back to the classic asset it wraps.
-//
-// ok=false for assets with no classic SAC (fiat, pure-crypto, a Soroban-native non-SAC token) or
-// on any encode error.
+// SACContractID returns the C-strkey of the Stellar Asset Contract for a classic/native asset on the given network (deterministic via xdr.Asset.ContractID); ok=false for assets with no classic SAC or on encode error.
 func SACContractID(assetID, passphrase string) (string, bool) {
 	ca, err := canonical.ParseAsset(assetID)
 	if err != nil {

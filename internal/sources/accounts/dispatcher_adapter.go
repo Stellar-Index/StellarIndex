@@ -9,10 +9,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 )
 
-// Observer is the dispatcher-facing AccountEntry observer (ADR-0021), implementing
-// [dispatcher.LedgerEntryChangeDecoder]. It fires only on G-strkeys in the operator-configured
-// watched set (see [NewObserver]); a watch-every-account mode would be a table-size decision
-// needing its own ADR.
+// Observer is the dispatcher-facing AccountEntry observer (ADR-0021), a [dispatcher.LedgerEntryChangeDecoder] firing only on G-strkeys in the operator-configured watched set (see [NewObserver]); a watch-every-account mode would be a table-size decision needing its own ADR.
 type Observer struct {
 	// watched maps G-strkey → true. Map lookup is O(1) per change;
 	// the watched set is typically small (single-digit accounts at
@@ -20,16 +17,10 @@ type Observer struct {
 	watched map[string]struct{}
 }
 
-// ErrEmptyWatchSet is returned by [NewObserver] when the input
-// list is empty. An observer with no accounts to watch is a
-// configuration error — operators that don't want the observer
-// active should simply not register it with the dispatcher.
+// ErrEmptyWatchSet is returned by [NewObserver] for an empty list: an observer with nothing to watch is a configuration error; operators who don't want it should not register it.
 var ErrEmptyWatchSet = errors.New("accounts: cannot construct Observer with empty watched-account list")
 
-// NewObserver constructs an [Observer] watching the supplied
-// G-strkey list. The list is deduplicated; empty strings are
-// rejected as a configuration error to surface mistyped TOML
-// before live ingest.
+// NewObserver constructs an [Observer] watching the G-strkey list; entries are deduplicated and empty strings rejected to surface mistyped TOML before live ingest.
 func NewObserver(watched []string) (*Observer, error) {
 	if len(watched) == 0 {
 		return nil, ErrEmptyWatchSet
@@ -47,8 +38,7 @@ func NewObserver(watched []string) (*Observer, error) {
 // Name implements [dispatcher.LedgerEntryChangeDecoder].
 func (*Observer) Name() string { return SourceName }
 
-// Matches implements [dispatcher.LedgerEntryChangeDecoder]. It is true only for an AccountEntry
-// change whose AccountId is in the watched set; both checks are cheap, with extraction left to Decode.
+// Matches implements [dispatcher.LedgerEntryChangeDecoder]: true only for an AccountEntry change whose AccountId is watched; both checks are cheap, extraction is left to Decode.
 func (o *Observer) Matches(change xdr.LedgerEntryChange) bool {
 	id, err := accountIDFromChange(change)
 	if err != nil {
@@ -58,8 +48,7 @@ func (o *Observer) Matches(change xdr.LedgerEntryChange) bool {
 	return watched
 }
 
-// Decode implements [dispatcher.LedgerEntryChangeDecoder]. Emits
-// exactly one [Observation] per matched change.
+// Decode implements [dispatcher.LedgerEntryChangeDecoder], emitting exactly one [Observation] per matched change.
 func (o *Observer) Decode(ctx dispatcher.LedgerEntryChangeContext) ([]consumer.Event, error) {
 	obs, err := extractObservation(ctx.Change)
 	if err != nil {

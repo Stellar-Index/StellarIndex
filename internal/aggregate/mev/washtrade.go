@@ -56,9 +56,7 @@ type washDetail struct {
 	Note               string    `json:"note"`
 }
 
-// DetectWashTrades finds self_trade (maker == taker; one per (tx, account)) and round_trip (two accounts filling each
-// other both ways, 2+ fills per direction, per roundTripBucket). Both fire only where maker is an account (accountMaker),
-// so Soroban AMM rows and SDEX pool fills are excluded.
+// DetectWashTrades finds self_trade (maker == taker; one per (tx, account)) and round_trip (two accounts filling each other both ways, 2+ fills per direction, per roundTripBucket); both fire only where maker is an account (accountMaker), excluding Soroban AMM rows and SDEX pool fills.
 func DetectWashTrades(trades []canonical.Trade, usdVolume []string) []Candidate {
 	out := detectSelfTrades(trades, usdVolume)
 	out = append(out, detectRoundTrips(trades, usdVolume)...)

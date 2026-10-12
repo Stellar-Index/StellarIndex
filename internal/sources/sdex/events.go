@@ -8,8 +8,7 @@ package sdex
 
 import "errors"
 
-// SourceName is the canonical identifier for SDEX-produced trades (canonical.Trade.Source and
-// metrics labels).
+// SourceName is the canonical identifier for SDEX-produced trades (canonical.Trade.Source and metrics labels).
 const SourceName = "sdex"
 
 // Errors returned by the decode path.

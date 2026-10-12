@@ -28,9 +28,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// Config binds the SDK's datastore configuration, BufferedStorageBackend tuning and optional
-// observability into one unit. The zero-value DataStore is invalid: [Stream] returns an error
-// rather than silently skipping.
+// Config binds the SDK datastore configuration, BufferedStorageBackend tuning and optional observability; the zero-value DataStore is invalid and [Stream] errors rather than skipping.
 type Config struct {
 	// DataStore — required. Describes the Galexie output bucket
 	// (S3/MinIO/GCS) or a filesystem directory for tests. In a
@@ -119,15 +117,7 @@ func (c *Config) tieringEnabled() bool {
 	return c.ColdDataStore.Type != ""
 }
 
-// Stream reads ledgers in [from, to] from the datastore and invokes callback once per
-// xdr.LedgerCloseMeta. It blocks.
-//
-//   - to == 0 → unbounded live tail; returns only on ctx cancellation, datastore error or
-//     callback error.
-//   - to >= from → bounded range; returns nil on completion.
-//
-// from is clamped upward to the Stellar genesis ledger (2) by the SDK. The callback runs on
-// Stream's goroutine, so expensive work there throttles ingest; fan out via a channel instead.
+// Stream reads ledgers in [from, to] and invokes callback once per xdr.LedgerCloseMeta, blocking. to == 0 is an unbounded live tail (returns on ctx cancel or error); to >= from is bounded. The callback runs on Stream's goroutine, so expensive work throttles ingest.
 func Stream(
 	ctx context.Context,
 	cfg Config,
@@ -523,9 +513,7 @@ func streamHot(
 	return walkDataStore(ctx, cfg, hot, ledgerRange, buffered, callback)
 }
 
-// StreamStore walks the bounded range [from, to] over a datastore the caller opened itself, for a
-// client the SDK must not build (the cold tier, pipeline.NewColdDataStore). cfg.DataStore supplies
-// the schema-discovery params; store is closed on return.
+// StreamStore walks the bounded range [from, to] over a datastore the caller opened (the cold tier); cfg.DataStore supplies schema params and store is closed on return.
 func StreamStore(
 	ctx context.Context,
 	cfg Config,

@@ -48,8 +48,7 @@ const (
 	BlendEventDeleteLiquidationAuction = "delete_liquidation_auction"
 )
 
-// BlendPositionEvent is a money-market event that changes a (user, asset, pool)
-// position (origin: internal/sources/blend.PositionEvent).
+// BlendPositionEvent is a money-market event that changes a (user, asset, pool) position (origin: internal/sources/blend.PositionEvent).
 type BlendPositionEvent struct {
 	Pool string // emitting pool contract C-strkey
 	Kind string // one of the seven money-market event-kind constants
@@ -68,8 +67,7 @@ type BlendPositionEvent struct {
 	Timestamp  time.Time
 }
 
-// BlendEmissionEvent is an emission or credit-risk event
-// (origin: internal/sources/blend.EmissionEvent).
+// BlendEmissionEvent is an emission or credit-risk event (origin: internal/sources/blend.EmissionEvent).
 type BlendEmissionEvent struct {
 	Pool string
 	Kind string
@@ -94,8 +92,7 @@ type BlendEmissionEvent struct {
 	Timestamp  time.Time
 }
 
-// BlendAdminEvent is a pool-config, admin or factory lifecycle event
-// (origin: internal/sources/blend.AdminEvent).
+// BlendAdminEvent is a pool-config, admin or factory lifecycle event (origin: internal/sources/blend.AdminEvent).
 type BlendAdminEvent struct {
 	ContractID string
 	Kind       string
@@ -136,8 +133,7 @@ type BlendAdminEvent struct {
 	Timestamp  time.Time
 }
 
-// BlendAssetAmount is one (asset, amount) pair of a V1 auction's bid or lot;
-// it mirrors blend.AssetAmount because domain cannot import sources.
+// BlendAssetAmount is one (asset, amount) pair of a V1 auction's bid or lot; mirrors blend.AssetAmount because domain cannot import sources.
 type BlendAssetAmount struct {
 	Asset  string
 	Amount *big.Int // i128 per ADR-0003

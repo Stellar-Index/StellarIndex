@@ -149,9 +149,7 @@ const (
 	ScanInputAuctions = "auction_fills"
 )
 
-// WorkerConfig configures a Worker (Window 30m, ScanLimit 50_000; a capped scan is reported via Observer.Truncated).
-// Oracles/Auctions/Order are optional: a nil seam disables its detectors rather than guessing.
-// The worker never deletes mev_events: a pruned event cannot be re-derived from the trailing window.
+// WorkerConfig configures a Worker (Window 30m, ScanLimit 50_000; a capped scan is reported via Observer.Truncated). A nil Oracles/Auctions/Order seam disables its detectors rather than guessing. The worker never deletes mev_events: a pruned event cannot be re-derived from the trailing window.
 type WorkerConfig struct {
 	Window    time.Duration
 	ScanLimit int
@@ -198,8 +196,7 @@ func (w *Worker) SetOrder(o TxOrderResolver) {
 	w.order.Store(&o)
 }
 
-// RunOnce scans the trailing window once and returns (detected, inserted); now is the window's upper bound.
-// Auxiliary inputs are best-effort: a failure skips their detectors and never fails the run.
+// RunOnce scans the trailing window once, returning (detected, inserted); now is the window's upper bound. Auxiliary inputs are best-effort: a failure skips their detectors, never the run.
 func (w *Worker) RunOnce(ctx context.Context, now time.Time) (detected, inserted int, err error) {
 	start := now
 	since := now.Add(-w.window)

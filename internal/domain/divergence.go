@@ -6,9 +6,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// DivergenceObservationRecord is one per-reference cross-check row in
-// divergence_observations. Prices are decimal strings (ADR-0003) so the write
-// path never binds a float64 into the NUMERIC columns.
+// DivergenceObservationRecord is one per-reference cross-check row in divergence_observations; prices are decimal strings (ADR-0003) so the write path never binds a float64 into NUMERIC.
 type DivergenceObservationRecord struct {
 	Pair       canonical.Pair
 	Reference  string

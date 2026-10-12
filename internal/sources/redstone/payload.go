@@ -179,8 +179,7 @@ func attributeSubset(prices []priceDataDecoded, feedIDs []string, payload []byte
 	}
 }
 
-// ErrAmbiguousSubset — a subset-filtered batch could not be attributed uniquely. An ERROR, not a
-// skip, so the completeness verifier keeps counting the ledger as blind.
+// ErrAmbiguousSubset means a subset-filtered batch could not be attributed uniquely; an ERROR, not a skip, so the completeness verifier keeps counting the ledger as blind.
 var ErrAmbiguousSubset = errors.New("redstone: subset-filtered batch attribution ambiguous")
 
 // be24 / be48 read big-endian 3- and 6-byte unsigned integers.

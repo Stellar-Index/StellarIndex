@@ -7,8 +7,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/domain"
 )
 
-// OracleRef is one on-chain oracle_updates row; an alias of [domain.MEVOracleRef], which lives there so
-// storage need not import this package.
+// OracleRef is one on-chain oracle_updates row, an alias of [domain.MEVOracleRef] so storage need not import this package.
 type OracleRef = domain.MEVOracleRef
 
 // AuctionFill is one blend_auctions fill row for the cascade detector; an alias of [domain.MEVAuctionFill].
@@ -19,8 +18,7 @@ type AuctionFill = domain.MEVAuctionFill
 // against that constant by TestSDEXOpIndexStrideMatchesSource.
 const sdexOpIndexStride = 1024
 
-// OpRef locates a trade leg on chain. trades.op_index packs the op with the trade's position, so evidence
-// publishes it decoded (OpIndex, SubIndex), omitted for a source with an unknown encoding.
+// OpRef locates a trade leg on chain; trades.op_index packs op with trade position, so evidence publishes it decoded (OpIndex, SubIndex), omitted for a source with unknown encoding.
 type OpRef struct {
 	OpIndex      *uint32 `json:"op_index,omitempty"`
 	SubIndex     *uint32 `json:"sub_index,omitempty"`
@@ -104,9 +102,7 @@ func orderableTrade(t canonical.Trade) bool {
 	return t.Ledger > 0 && t.TxHash != "" && t.Taker != ""
 }
 
-// OrderingTxHashes returns the distinct tx hashes the sandwich detectors need tx_index for, prefiltered to
-// keep the lake lookup bounded: sandwich-shaped (ledger, pair) groups, and trades touching a same-ledger
-// oracle update's asset plus the update txs.
+// OrderingTxHashes returns the distinct tx hashes the sandwich detectors need tx_index for, prefiltered to keep the lake lookup bounded: sandwich-shaped (ledger, pair) groups plus trades touching a same-ledger oracle update's asset and the update txs.
 func OrderingTxHashes(trades []canonical.Trade, oracles []OracleRef) []string {
 	need := map[string]struct{}{}
 	collectSandwichHashes(trades, need)

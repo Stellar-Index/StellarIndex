@@ -18,16 +18,13 @@ import (
 // SourceName is the dispatcher / projector source name.
 const SourceName = "spectra"
 
-// GenesisLedger is the registry's first event (`role_granted`), ahead of
-// the factory's first at 63,778,145. Projector, gap target, catalogue and
-// ingestion floor all start here.
+// GenesisLedger is the registry's first event (`role_granted`), ahead of the factory's first at 63,778,145; projector, gap target, catalogue and ingestion floor all start here.
 const GenesisLedger uint32 = 63_778_088
 
 // EventKind is the consumer.Event kind of [Event].
 const EventKind = "spectra.event"
 
-// Role is a gated contract's part in Spectra. The values are the
-// spectra_events.role column's.
+// Role is a gated contract's part in Spectra; values match the spectra_events.role column.
 type Role string
 
 const (
@@ -40,19 +37,14 @@ const (
 	RoleIBT         Role = "ibt"
 )
 
-// ContractMeta describes one gated contract. Decimals is the market's
-// token scale (7 / 13 / 18 differ per market); 0 for the registry.
-// MarketPT is a YT's PT, which names the market of its transfer rows.
+// ContractMeta describes one gated contract. Decimals is the market's token scale (7 / 13 / 18 differ per market), 0 for the registry; MarketPT is a YT's PT, naming the market of its transfer rows.
 type ContractMeta struct {
 	Role     Role
 	Decimals uint8
 	MarketPT string
 }
 
-// MainnetContracts is the curated trust root (ADR-0035): the registry, and
-// the PT, YT and wrapper-IBT of each of the seven markets, from Spectra's
-// operator API and the capture script's table. The earnXLM / earnUSDC IBTs
-// are Upshift vaults, attributed by the upshift source, so not listed.
+// MainnetContracts is the curated trust root (ADR-0035): the registry plus the PT, YT and wrapper-IBT of each of seven markets. The earnXLM / earnUSDC IBTs are Upshift vaults attributed by that source, so not listed.
 var MainnetContracts = map[string]ContractMeta{
 	"CCUGRASBWD5SXDYMS7NM437FQ7KNKHFX74D2VRJVTRU4J2TWDMURUW3V": {RoleRegistry, 0, ""},
 	// sw-USDC
@@ -87,8 +79,7 @@ const (
 	MainnetRouter  = "CB56R3NGNN7KNBGEH3CWK7SQIAR7SFAS3PKDQEJX7Y3U6TEFDJBVPY7F"
 )
 
-// MainnetOrderEngines is the v0 order engine (replaced at 63,780,164) and
-// the current one; both carry the same WASM.
+// MainnetOrderEngines is the v0 order engine (replaced at 63,780,164) and the current one; both carry the same WASM.
 var MainnetOrderEngines = []string{
 	"CC2CEV23OQVGALHWQTKA26DYQTDNS7XJSL75EHTLHKZH6W3HJAEUKKB7",
 	"CCKNOCLH6QILGS6GYZWMQ6JCHWC2D75OCI5RLBPCUF7FJTONNSCZZAC5",
@@ -104,8 +95,7 @@ const (
 	YTWasmHash = "daeb931b9507440b6dc4f73256ac33c6089964f5d035f7eec5fcedc10e732c8e"
 )
 
-// MainnetGatedSet returns the sorted contract ids, derived from
-// [MainnetContracts] so the gate and the metadata cannot drift.
+// MainnetGatedSet returns the sorted contract ids, derived from [MainnetContracts] so the gate and metadata cannot drift.
 func MainnetGatedSet() []string {
 	out := make([]string, 0, len(MainnetContracts))
 	for id := range MainnetContracts {

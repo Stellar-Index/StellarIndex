@@ -5,17 +5,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 )
 
-// Decoder implements dispatcher.ContractCallDecoder. Band's contract emits zero events, so
-// the relayer's relay()/force_relay() InvokeContract call carries the payload (see
-// docs/protocols/band.md). Stateless; matching is an O(1) string compare with no SCVal
-// parsing on the hot path.
+// Decoder implements dispatcher.ContractCallDecoder: Band's contract emits zero events, so the relayer's relay()/force_relay() InvokeContract call carries the payload (docs/protocols/band.md). Stateless; matching is an O(1) string compare.
 type Decoder struct {
 	standardReferenceContract string
 }
 
-// NewDecoder constructs a Band Decoder bound to the mainnet
-// StandardReference contract. Testnet callers pass the testnet
-// address instead; the decoder has no knowledge of which is which.
+// NewDecoder constructs a Decoder bound to the given StandardReference contract (mainnet or testnet; the decoder doesn't know which).
 func NewDecoder(standardReferenceContract string) *Decoder {
 	return &Decoder{standardReferenceContract: standardReferenceContract}
 }
@@ -23,15 +18,10 @@ func NewDecoder(standardReferenceContract string) *Decoder {
 // Name implements [dispatcher.ContractCallDecoder].
 func (d *Decoder) Name() string { return SourceName }
 
-// RequiresExecutionCorroboration implements [dispatcher.ExecutionCorroborationRequirer].
-// The call args ARE the price payload, so a call the attacker-controlled auth tree merely
-// DECLARED (forged rates naming the StandardReference contract, never executed) would be
-// laundered into a recognised oracle price. Corroboration drops any call that is not the
-// op's top-level EXECUTED invocation, the shape every genuine relayer update takes.
+// RequiresExecutionCorroboration implements [dispatcher.ExecutionCorroborationRequirer]. The call args ARE the price payload, so a call the attacker-controlled auth tree merely DECLARED (forged rates naming the contract, never executed) would be laundered into a recognised price; corroboration drops any call that isn't the op's top-level EXECUTED invocation.
 func (d *Decoder) RequiresExecutionCorroboration() bool { return true }
 
-// Matches implements [dispatcher.ContractCallDecoder]: the contract ID plus one of the two
-// relay entry points. Every other function on the contract is read-only or admin.
+// Matches implements [dispatcher.ContractCallDecoder]: the contract ID plus one of the two relay entry points; every other function is read-only or admin.
 func (d *Decoder) Matches(contractID, functionName string) bool {
 	if contractID != d.standardReferenceContract {
 		return false
@@ -39,9 +29,7 @@ func (d *Decoder) Matches(contractID, functionName string) bool {
 	return functionName == FnRelay || functionName == FnForceRelay
 }
 
-// Decode implements [dispatcher.ContractCallDecoder]. Emits zero
-// or more UpdateEvent wrappers — one per (symbol, rate) entry in
-// symbol_rates after USD special-casing and unknown-symbol skips.
+// Decode implements [dispatcher.ContractCallDecoder], emitting one UpdateEvent per (symbol, rate) entry in symbol_rates after USD special-casing and unknown-symbol skips.
 func (d *Decoder) Decode(ctx dispatcher.ContractCallContext) ([]consumer.Event, error) {
 	updates, err := decodeRelayArgs(
 		ctx.FunctionName, ctx.Args,

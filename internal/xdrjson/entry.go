@@ -7,10 +7,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// LedgerEntryFields decodes a classic ledger entry (account, trustline, offer,
-// data, claimable balance, liquidity pool) to its state fields; ok=false for
-// every other entry type. last_modified_ledger is left out on purpose: it moves
-// on every write, so it would mark every field-level diff as changed.
+// LedgerEntryFields decodes a classic ledger entry to its state fields; ok=false for other types. last_modified_ledger is omitted: it moves on every write and would mark every diff changed.
 func LedgerEntryFields(e xdr.LedgerEntry) (map[string]any, bool) {
 	var f map[string]any
 	switch e.Data.Type {

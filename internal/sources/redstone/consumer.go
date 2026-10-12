@@ -5,10 +5,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 )
 
-// UpdateEvent is the [consumer.Event] Redstone's Decoder emits per
-// feed update. The indexer's event sink type-switches on this and
-// calls store.InsertOracleUpdate — same shape as reflector.UpdateEvent
-// so the sink plumbing stays uniform.
+// UpdateEvent is the [consumer.Event] Redstone's Decoder emits per feed update; the sink type-switches on it and calls store.InsertOracleUpdate, same shape as reflector.UpdateEvent.
 type UpdateEvent struct {
 	Update canonical.OracleUpdate
 }

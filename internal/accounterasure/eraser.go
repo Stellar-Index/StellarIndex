@@ -45,10 +45,7 @@ const afterCommitTimeout = 30 * time.Second
 // ErrBlocked wraps [postgresstore.ErrErasureBlocked].
 var ErrBlocked = postgresstore.ErrErasureBlocked
 
-// ErrCleanupIncomplete marks an Erase error returned after the Postgres
-// commit: the account is erased, but Redis state or late usage rows remain
-// until FinishBySlug runs. The erasure must not be retried or reported as
-// failed.
+// ErrCleanupIncomplete marks an Erase error after the Postgres commit: the account is erased but Redis state or late usage rows remain until FinishBySlug runs. Do not retry or report it as failed.
 var ErrCleanupIncomplete = errors.New("account erased; post-commit cleanup incomplete")
 
 // Store is the Postgres half; *postgresstore.AccountStore satisfies it.
@@ -59,8 +56,7 @@ type Store interface {
 	SlugErased(ctx context.Context, slug string) (bool, error)
 }
 
-// Eraser runs an erasure. Redis may be nil on a Redis-less deployment,
-// which holds no Redis state to erase.
+// Eraser runs an erasure; Redis may be nil on a Redis-less deployment, which holds no Redis state.
 type Eraser struct {
 	Store  Store
 	Redis  redis.Cmdable
@@ -88,10 +84,7 @@ type Report struct {
 	LateUsageRows int64
 }
 
-// Erase erases the account. A second call for the same account reports
-// AlreadyErased. An error before the commit leaves the account untouched;
-// an error after it wraps ErrCleanupIncomplete, carries the full Report,
-// and leaves Redis state that FinishBySlug removes.
+// Erase erases the account; a repeat reports AlreadyErased. An error before the commit leaves the account untouched; one after it wraps ErrCleanupIncomplete, carries the full Report, and leaves Redis state for FinishBySlug.
 func (e *Eraser) Erase(ctx context.Context, id uuid.UUID, actor platform.ActorKind) (Report, error) {
 	return e.erase(ctx, id, actor, nil)
 }
@@ -166,10 +159,7 @@ func (e *Eraser) erase(
 	return rep, nil
 }
 
-// FinishBySlug re-runs the post-commit cleanup for an account whose
-// Postgres erasure committed but whose Redis cleanup did not finish. It
-// refuses a slug that was never erased, so an operator typo cannot wipe
-// a live account's keys.
+// FinishBySlug re-runs post-commit cleanup for an account whose Postgres erasure committed but Redis cleanup did not finish; it refuses a never-erased slug so an operator typo cannot wipe a live account's keys.
 func (e *Eraser) FinishBySlug(ctx context.Context, slug string) (Report, error) {
 	ok, err := e.Store.SlugErased(ctx, slug)
 	if err != nil {
@@ -251,28 +241,19 @@ func (e *Eraser) deleteRedis(
 	return keys, deleted, nil
 }
 
-// AbandonedRegistrationRetention is how long an unused /v1/register
-// account lives. It equals the validator record's idle TTL, so on the redis
-// auth backend the key no longer authenticates by then and the reap removes
-// only dead rows. The postgres backend falls back to the never-expiring
-// api_keys row, so the sweep must not run there.
+// AbandonedRegistrationRetention is how long an unused /v1/register account lives, equal to the validator record's idle TTL so on the redis auth backend the reap removes only dead rows. The postgres backend falls back to the never-expiring api_keys row, so the sweep must not run there.
 const AbandonedRegistrationRetention = auth.MirroredKeyIdleTTL
 
 // abandonedSweepLimit caps the accounts one sweep erases; the next hourly
 // sweep takes the rest.
 const abandonedSweepLimit = 500
 
-// AbandonedLister lists reap candidates; *postgresstore.AccountStore
-// satisfies it.
+// AbandonedLister lists reap candidates (*postgresstore.AccountStore).
 type AbandonedLister interface {
 	ListAbandonedRegistrations(ctx context.Context, createdBefore time.Time, limit int) ([]uuid.UUID, error)
 }
 
-// SweepAbandonedRegistrations erases the accounts l lists as unused
-// registrations created before createdBefore. It skips any that gained a member
-// or still has a validator record in Redis, since an unexpired record may belong
-// to a key in use whose last_used_at touch was dropped. It needs Redis to prove
-// that, and returns how many it erased.
+// SweepAbandonedRegistrations erases accounts l lists as unused registrations created before createdBefore, skipping any that gained a member or still have a Redis validator record (an unexpired record may belong to a key in use whose last_used_at touch was dropped). It needs Redis to prove that; returns the count erased.
 func (e *Eraser) SweepAbandonedRegistrations(ctx context.Context, l AbandonedLister, createdBefore time.Time) (int64, error) {
 	if e.Redis == nil {
 		return 0, errors.New("account erasure: abandoned-registration sweep needs Redis")

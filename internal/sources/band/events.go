@@ -13,23 +13,13 @@ package band
 
 import "errors"
 
-// SourceName is stamped on every OracleUpdate this package emits.
-// Single source — Band has one StandardReference contract per
-// network.
+// SourceName is stamped on every OracleUpdate this package emits; Band has one StandardReference contract per network.
 const SourceName = "band"
 
-// DefaultDecimals is the Band single-symbol rate scale —
-// `E9 = 10^9` per band-soroban/src/constant.rs. Every relayed rate
-// is u64 at this scale.
+// DefaultDecimals is the Band rate scale, `E9 = 10^9` per band-soroban/src/constant.rs; every relayed rate is u64 at this scale.
 const DefaultDecimals uint8 = 9
 
-// DefaultResolutionSeconds is Band's MEASURED mainnet relay cadence: one hour.
-//
-// [pipeline.BuildDispatcher] emits it as the `stellarindex_oracle_resolution_seconds` gauge
-// and `stellarindex_oracle_stale` alerts at 10x this value, so the constant IS the alert
-// threshold; a too-small value fires on every sample and hides a real outage. If the cadence
-// changes, re-measure with changes(stellarindex_oracle_last_update_unix{source="band"}[24h])
-// rather than reasoning from docs.
+// DefaultResolutionSeconds is Band's MEASURED mainnet relay cadence (one hour); [pipeline.BuildDispatcher] emits it as the oracle-resolution gauge and `stellarindex_oracle_stale` alerts at 10x, so it IS the alert threshold (too small fires constantly). Re-measure with changes(stellarindex_oracle_last_update_unix{source="band"}[24h]) if cadence changes.
 const DefaultResolutionSeconds = 3600
 
 // Relay function names on the StandardReference contract. Both

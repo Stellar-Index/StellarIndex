@@ -86,8 +86,7 @@ type EventSink interface {
 	RecordFreeze(ctx context.Context, asset, quote canonical.Asset, frozenValue string, decision anomaly.Decision) error
 }
 
-// LadderStore is the durable home for the lifecycle [State]. A missing marker under a live freeze reads as the operator override,
-// so without it a Redis flush would RELEASE every freeze, escalated ones included. Optional, concurrent-safe, best-effort.
+// LadderStore is the durable home for the lifecycle [State]: without it a Redis flush would RELEASE every freeze (a missing marker reads as the operator override), escalated ones included. Optional, concurrent-safe, best-effort.
 type LadderStore interface {
 	// SaveLadder writes the whole state on every transition, so it is idempotent and self-correcting.
 	// It never creates a record; zero rows affected is an error (timescale.ErrNotFound), counted.
@@ -98,8 +97,7 @@ type LadderStore interface {
 	LoadLadder(ctx context.Context, asset, quote canonical.Asset) (State, bool, error)
 }
 
-// WindowLadderStore is the per-window [LadderStore]: a pair-keyed record is last-writer-wins, so a 5m ladder could replace a 1h
-// ESCALATED one. Implementations keep a fail-closed pair-level summary for [Recovery] and freeze-unfreeze.
+// WindowLadderStore is the per-window [LadderStore]: a pair-keyed record is last-writer-wins, so a 5m ladder could replace a 1h ESCALATED one. Implementations keep a fail-closed pair-level summary for [Recovery] and freeze-unfreeze.
 type WindowLadderStore interface {
 	// SaveWindowLadder records state as window's ladder on the open record, leaving other windows untouched; an inactive state retires it.
 	SaveWindowLadder(ctx context.Context, asset, quote canonical.Asset, window time.Duration, state State) error
@@ -349,8 +347,7 @@ func (w *Writer) RetireWindowLadder(ctx context.Context, asset, quote canonical.
 	return nil
 }
 
-// ReleaseWindow ends window's freeze for a caller believing it is the LAST frozen window and reports whether the marker was kept.
-// That belief misses floor-dropped and post-restart windows, so the marker and then the durable record are asked; an unreadable record returns the error.
+// ReleaseWindow ends window's freeze for a caller believing it is the LAST frozen window and reports whether the marker was kept; that belief misses floor-dropped and post-restart windows, so the marker and then the durable record are asked, and an unreadable record returns the error.
 func (w *Writer) ReleaseWindow(ctx context.Context, asset, quote canonical.Asset, window time.Duration) (bool, error) {
 	label := windowLabel(window)
 	marker, ok, err := w.readMarker(ctx, cachekeys.Freeze(asset, quote))
@@ -560,14 +557,12 @@ func windowLabel(window time.Duration) string {
 	return window.String()
 }
 
-// LoadState reads the lifecycle state, falling back to the durable ladder when the marker is gone (a flush is not an override).
-// An open unlapsed row is PRESENT; no open row means ended; a lapsed row is not resurrected; an undecodable marker is (State{}, true, nil).
+// LoadState reads the lifecycle state, falling back to the durable ladder when the marker is gone (a flush is not an override): an open unlapsed row is present, none means ended, a lapsed row is not resurrected, an undecodable marker is (State{}, true, nil).
 func (w *Writer) LoadState(ctx context.Context, asset, quote canonical.Asset) (State, bool, error) {
 	return w.loadState(ctx, asset, quote, 0)
 }
 
-// LoadStateForWindow is [Writer.LoadState] for one window: Ladders[window], or zero, never a sibling's. Pre-Ladders and ownerless
-// durable ladders answer pair-wide, adopted only within one grace of UnownedSince, because Escalated never auto-releases.
+// LoadStateForWindow is [Writer.LoadState] for one window: Ladders[window] or zero, never a sibling's. Pre-Ladders and ownerless ladders answer pair-wide, adopted only within one grace of UnownedSince, because Escalated never auto-releases.
 func (w *Writer) LoadStateForWindow(
 	ctx context.Context,
 	asset, quote canonical.Asset,

@@ -45,9 +45,7 @@ type sandwichDetail struct {
 	Note               string       `json:"note"`
 }
 
-// DetectSandwiches finds, within one ledger and unordered pair, an account trading in two DIFFERENT txs whose
-// tx_index brackets another account's trade. Trades missing from txIdx are ignored: a partial map degrades detection, never fabricates order.
-// usdVolume is the optional parallel notional slice, as in DetectArbitrage.
+// DetectSandwiches finds, in one ledger and unordered pair, an account trading in two DIFFERENT txs whose tx_index brackets another account's trade; trades missing from txIdx are ignored, so a partial map degrades detection, never fabricates order. usdVolume is as in DetectArbitrage.
 func DetectSandwiches(trades []canonical.Trade, usdVolume []string, txIdx map[string]uint32) []Candidate {
 	if len(txIdx) == 0 {
 		return nil
