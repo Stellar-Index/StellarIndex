@@ -15,9 +15,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/xdrjson"
 )
 
-// opsDirTTL is how long the cached /v1/operations first page counts as fresh (~two ledgers).
-// Past the TTL the entry is still SERVED (flags.stale + its real as_of) while a detached
-// refresh runs, so the TTL sets the freshness label rather than gating a blocking recompute.
+// opsDirTTL is how long the cached /v1/operations first page counts as fresh (~two ledgers). Past it the entry is still SERVED
+// (flags.stale + real as_of) while a detached refresh runs, so the TTL sets the freshness label rather than gating a blocking recompute.
 const opsDirTTL = 10 * time.Second
 
 // opsDirRefreshTimeout bounds one detached first-page rebuild: a tail-window-bounded page plus the
@@ -32,14 +31,8 @@ const opsDirMaxLimit = 200
 // reuses perKeyFlight.
 const opsDirFlightKey = "ops_directory"
 
-// opsDirCache is a tiny SWR cache for the /v1/operations directory FIRST page (no cursor), which
-// is identical for every caller between ledgers but costs a DESC-LIMIT lake read plus the
-// tx-outcome read.
-//
-// One entry holding the MAXIMUM page, sliced per request: keying by raw `?limit=` would let a
-// caller sweeping the range buy a fresh lake read per value. Cursor pages are unique and are
-// never cached. An expired entry is served while a single detached refresh rebuilds it; only a
-// never-computed entry blocks. Zero value is ready to use.
+// opsDirCache is a tiny SWR cache for the /v1/operations FIRST page, holding the MAXIMUM page sliced per request (keying by raw
+// `?limit=` lets a sweep buy a lake read per value). Cursor pages are never cached; an expired entry is served while one refresh runs.
 type opsDirCache struct {
 	mu    sync.Mutex
 	entry opsDirEntry
@@ -72,9 +65,8 @@ func (c *opsDirCache) put(view OperationsView) {
 	c.has = true
 }
 
-// opTypeStatsTTL bounds the trailing-24h op-type breakdown. It is much longer than opsDirTTL
-// because ledger-level precision on a 24-hour aggregate is meaningless and each recompute scans
-// a day of the operations table.
+// opTypeStatsTTL bounds the trailing-24h op-type breakdown. Much longer than opsDirTTL: ledger-level precision on a 24-hour aggregate is
+// meaningless and each recompute scans a day of the operations table.
 const opTypeStatsTTL = 5 * time.Minute
 
 // opTypeStatsRefreshTimeout bounds one detached op-type aggregation, a FINAL GROUP BY over ~24h of
@@ -105,7 +97,8 @@ func (c *opTypeStatsCache) put(stats []OpTypeStatV) {
 	c.stats, c.at = stats, time.Now()
 }
 
-// OpView is the wire shape for a decoded operation; Fields is the decoded body, empty for undecoded types where RawXDR carries the original base64.
+// OpView is the wire shape for a decoded operation; Fields is the decoded body, empty for undecoded types where RawXDR carries the
+// original base64.
 type OpView struct {
 	Ledger        uint32         `json:"ledger"`
 	CloseTime     string         `json:"close_time"`
@@ -136,9 +129,8 @@ type OpView struct {
 	InnerResult string `json:"inner_result,omitempty"`
 }
 
-// opViewLight is the directory summary shape: identity + op type WITHOUT decoding the XDR body.
-// Decoding would force reading the large body_xdr column over the whole table; per-op fields
-// live on the per-ledger view and /v1/tx/{hash}.
+// opViewLight is the directory summary: identity + op type WITHOUT decoding the XDR body, which would read the large body_xdr column
+// over the whole table. Per-op fields live on the per-ledger view and /v1/tx/{hash}.
 func opViewLight(o clickhouse.OpRow) OpView {
 	return OpView{
 		Ledger:        o.Seq,
@@ -193,12 +185,8 @@ const opsOutcomeCoverageNote = "transaction outcomes are temporarily unavailable
 // See stampTxOutcomes for how it is sized (r1-measured worst case × ~16).
 const txOutcomeStitchBudget = time.Second
 
-// opRowTxKeys returns the distinct ledgers and tx hashes of a page of operation rows, the two
-// IN-lists for a batched TxOutcomesByHash read.
-//
-// The ledger SET, not a [lo,hi] span: a sparse account's page can straddle millions of ledgers,
-// and a span predicate scales the outcome read with idleness rather than page size (see
-// TxOutcomesByHash).
+// opRowTxKeys returns the distinct ledgers and tx hashes of a page of operation rows, for a batched TxOutcomesByHash read. The ledger
+// SET, not a [lo,hi] span: a sparse account's page can straddle millions of ledgers (see TxOutcomesByHash).
 func opRowTxKeys(rows []clickhouse.OpRow) (ledgers []uint32, hashes []string) {
 	if len(rows) == 0 {
 		return nil, nil
@@ -218,9 +206,8 @@ func opRowTxKeys(rows []clickhouse.OpRow) (ledgers []uint32, hashes []string) {
 	return ledgers, hashes
 }
 
-// stitchTxOutcomes stamps each op view with its parent transaction's outcome so failed
-// transactions' operations are marked FAILED on list views. An op whose tx hash is absent from
-// the map keeps nil TransactionSuccessful: absence is UNKNOWN, never "successful".
+// stitchTxOutcomes stamps each op view with its parent transaction's outcome so failed transactions' operations are marked FAILED.
+// An op whose tx hash is absent from the map keeps nil TransactionSuccessful: absence is UNKNOWN, never "successful".
 func stitchTxOutcomes(ops []OpView, outcomes map[string]clickhouse.TxOutcome) {
 	for i := range ops {
 		o, ok := outcomes[ops[i].TxHash]
@@ -233,9 +220,8 @@ func stitchTxOutcomes(ops []OpView, outcomes map[string]clickhouse.TxOutcome) {
 	}
 }
 
-// stampTxOutcomes stitches parent-transaction outcomes onto the built views. It returns a
-// coverage note (empty on success) rather than failing: a transient read blip degrades to
-// "outcome unknown", not to a misleading unmarked op.
+// stampTxOutcomes stitches parent-transaction outcomes onto the built views. It returns a coverage note (empty on success) rather than
+// failing: a transient read blip degrades to "outcome unknown", not to a misleading unmarked op.
 func (h *Handler) stampTxOutcomes(ctx context.Context, ops []OpView, rows []clickhouse.OpRow) string {
 	ledgers, hashes := opRowTxKeys(rows)
 	if len(hashes) == 0 {
@@ -259,10 +245,8 @@ func (h *Handler) stampTxOutcomes(ctx context.Context, ops []OpView, rows []clic
 	return ""
 }
 
-// resolveOpTypeStats returns the trailing-24h op-type breakdown, serving the STALE value (nil on
-// a cold process, so the omitempty panel is dropped) while a DETACHED single-flight refresh runs.
-// Minutes-old numbers are still truthful for a 24-hour aggregate; recomputing inline would share
-// the directory's request budget and drag the whole page into 503 every refresh.
+// resolveOpTypeStats returns the trailing-24h op-type breakdown, serving the STALE value (nil when cold, so the omitempty panel drops)
+// while a DETACHED refresh runs; inline recompute would share the directory's request budget and 503 the page.
 func (h *Handler) resolveOpTypeStats() (stats []OpTypeStatV, fresh bool) {
 	cached, fresh := h.opTypeStats.get()
 	if fresh {
@@ -272,7 +256,8 @@ func (h *Handler) resolveOpTypeStats() (stats []OpTypeStatV, fresh bool) {
 	return cached, false   // stale (or nil on a cold process — panel appears next request)
 }
 
-// PrewarmOpTypeStats primes the op-type breakdown at opTypeStatsTTL cadence via the request path's detached single-flight refresh; a fresh panel is a no-op.
+// PrewarmOpTypeStats primes the op-type breakdown at opTypeStatsTTL cadence via the request path's detached single-flight refresh; a
+// fresh panel is a no-op.
 func (h *Handler) PrewarmOpTypeStats(ctx context.Context) {
 	if h.Reader == nil || ctx.Err() != nil {
 		return
@@ -320,7 +305,8 @@ func (h *Handler) refreshOpTypeStats() {
 	}()
 }
 
-// OperationsView is the wire response for GET /v1/operations and /v1/ledgers/{seq}/operations; the per-ledger form sets Ledger, the directory form NextCursor and OpTypeStats.
+// OperationsView is the wire response for GET /v1/operations and /v1/ledgers/{seq}/operations; the per-ledger form sets Ledger, the
+// directory form NextCursor and OpTypeStats.
 type OperationsView struct {
 	Ledger      uint32        `json:"ledger"`
 	Operations  []OpView      `json:"operations"`
@@ -345,7 +331,8 @@ type OpTypeStatV struct {
 	Count int64  `json:"count"`
 }
 
-// Operations serves GET /v1/operations: network-wide recent operations newest first, keyset-paged via ?cursor= (ledger.tx_index.op_index), plus op_type_stats.
+// Operations serves GET /v1/operations: network-wide recent operations newest first, keyset-paged via ?cursor=
+// (ledger.tx_index.op_index), plus op_type_stats.
 func (h *Handler) Operations(w http.ResponseWriter, r *http.Request) {
 	// A ledger-scoped read has its own route and consistency contract
 	// (ADR-0018); serving it here as a directory page would answer the wrong question.
@@ -429,9 +416,8 @@ func (h *Handler) ledgerOperations(w http.ResponseWriter, r *http.Request, seq u
 	h.writeJSONAt(w, out, stale, out.CoverageNote != "" || herr != nil, time.Time{})
 }
 
-// operationsResponseByteBudget is a conservative, fail-closed ceiling on the raw XDR bytes one
-// per-ledger response will decode. The right figure depends on proxy limits not visible from
-// this repo, so it is a placeholder rather than a tuned value.
+// operationsResponseByteBudget is a conservative, fail-closed ceiling on the raw XDR bytes one per-ledger response will decode.
+// The right figure depends on proxy limits not visible from this repo, so it is a placeholder, not a tuned value.
 const operationsResponseByteBudget = 8 << 20 // 8 MiB
 
 // NetworkThroughputView is the wire response for GET /v1/network/throughput, a daily time-series of network counts.
@@ -484,7 +470,8 @@ func feePoolAdjustment(day string, prevProtocol, protocol uint32) string {
 	return ""
 }
 
-// NetworkThroughput serves GET /v1/network/throughput (daily counts over ?window_days=, default 30, max 365); snapshot-served from the prewarmed detached scan (see network_throughput_cache.go).
+// NetworkThroughput serves GET /v1/network/throughput (daily counts over ?window_days=, default 30, max 365); snapshot-served from the
+// prewarmed detached scan (see network_throughput_cache.go).
 func (h *Handler) NetworkThroughput(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)
@@ -624,10 +611,8 @@ func (h *Handler) writeOperationsPageError(ctx context.Context, w http.ResponseW
 		"Internal error", http.StatusInternalServerError, "")
 }
 
-// opsDirCached serves the cached max-page first-page view. A stale entry is served
-// (degraded=true) while a detached refresh runs; a never-computed cache single-flights the fill
-// and waits up to ctx's own deadline, so concurrent first requests share ONE detached lake read
-// (unshared inline reads would let a limit sweep defeat the cache on its first pass).
+// opsDirCached serves the cached max-page first-page view: stale is served (degraded=true) while a detached refresh runs; a never-computed
+// cache single-flights the fill, so concurrent first requests share ONE lake read.
 func (h *Handler) opsDirCached(ctx context.Context) (view OperationsView, asOf time.Time, degraded bool, err error) {
 	if e, hit, fresh := h.opsDir.get(); hit {
 		if !fresh {
@@ -652,9 +637,8 @@ func (h *Handler) opsDirCached(ctx context.Context) (view OperationsView, asOf t
 	}
 }
 
-// sliceOperationsView truncates a max-limit page to the caller's limit. NextCursor is recomputed
-// from the last retained row: the ceiling page's cursor points past opsDirMaxLimit rows and
-// would skip every row between the requested limit and the ceiling.
+// sliceOperationsView truncates a max-limit page to the caller's limit. NextCursor is recomputed from the last retained row: the ceiling
+// page's cursor points past opsDirMaxLimit rows and would skip every row between the requested limit and the ceiling.
 func sliceOperationsView(v OperationsView, limit int) OperationsView {
 	if limit <= 0 || limit >= len(v.Operations) {
 		return v
@@ -735,12 +719,8 @@ func (h *Handler) parseOpTypes(w http.ResponseWriter, r *http.Request) ([]string
 	return out, true
 }
 
-// refreshOpsDirectory kicks ONE detached rebuild of the max-page first page (a no-op while a
-// flight is up) and returns the flight to optionally wait on. Detached because a rebuild bound
-// to the request deadline would die with the request and the next visitor would pay the same wait.
-//
-// Bounded by the shared refresh gate under its own class; on saturation we skip and keep serving
-// the stale entry, never queue.
+// refreshOpsDirectory kicks ONE detached rebuild of the max-page first page (no-op while a flight is up) and returns the flight.
+// Detached so it survives the request; the shared refresh gate bounds it, and on saturation we skip and keep serving stale.
 func (h *Handler) refreshOpsDirectory() *keyFlight {
 	fl, owner := h.opsDir.flight.begin(opsDirFlightKey)
 	if !owner {

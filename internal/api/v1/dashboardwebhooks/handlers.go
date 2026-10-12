@@ -43,10 +43,8 @@ type Config struct {
 	// [platform.Tier.MaxWebhooks]. Non-positive values are ignored.
 	WebhookQuotas map[platform.Tier]int
 
-	// idempotency backs the optional Idempotency-Key header on
-	// HandleCreate: a client that retries a create after a timeout gets
-	// the original response (and signing secret) replayed instead of
-	// registering a second webhook. Lazily initialized by validate().
+	// idempotency backs the optional Idempotency-Key header on HandleCreate: a retried create replays the original response
+	// (and signing secret) instead of registering a second webhook. Lazily initialized by validate().
 	idempotency *middleware.IdempotencyStore
 }
 
@@ -77,7 +75,8 @@ func NewHandlers(cfg Config) (*Handlers, error) {
 	return &Handlers{cfg: &cfg}, nil
 }
 
-// Mount installs the webhook routes behind [dashboardauth.RequireSession], with mutations also behind [middleware.RequireSameSiteWrite] so a cross-site page cannot register an exfiltrating endpoint.
+// Mount installs the webhook routes behind [dashboardauth.RequireSession], with mutations also behind [middleware.RequireSameSiteWrite]
+// so a cross-site page cannot register an exfiltrating endpoint.
 func (h *Handlers) Mount(mux *http.ServeMux, _ *middleware.PublicRoutes) {
 	session := dashboardauth.RequireSession()
 	sameSite := middleware.RequireSameSiteWrite(h.cfg.Logger)
@@ -90,10 +89,8 @@ func (h *Handlers) Mount(mux *http.ServeMux, _ *middleware.PublicRoutes) {
 	mux.Handle("GET /v1/dashboard/webhooks/{id}/deliveries", session(http.HandlerFunc(h.HandleListDeliveries)))
 }
 
-// webhookDTO is the wire shape the dashboard reads.
-//
-// The signing key is returned once at create (and once per rotation) and stays out of this DTO
-// so no later read re-exposes it. See [platform.CustomerWebhook] for the at-rest model.
+// webhookDTO is the wire shape the dashboard reads. The signing key is returned once at create and once per rotation and stays out of
+// this DTO so no later read re-exposes it. See [platform.CustomerWebhook].
 type webhookDTO struct {
 	ID        string        `json:"id"`
 	Name      string        `json:"name"`
@@ -372,9 +369,8 @@ func (h *Handlers) HandleDelete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// previousSecretOverlap is how long a rotated-out key keeps signing
-// deliveries alongside the new one: time for the receiver to deploy the
-// new key without rejecting anything in between.
+// previousSecretOverlap is how long a rotated-out key keeps signing alongside the new one, so the receiver can deploy the new key
+// without rejections.
 const previousSecretOverlap = 24 * time.Hour
 
 type rotateSecretResponse struct {
@@ -386,7 +382,8 @@ type rotateSecretResponse struct {
 	PreviousSecretExpiresAt wiretime.Time `json:"previous_secret_expires_at"`
 }
 
-// HandleRotateSecret replaces the signing key in place (old key keeps signing for previousSecretOverlap); behind Idempotency-Key because a retried rotate would push the receiver's key out of the overlap.
+// HandleRotateSecret replaces the signing key in place (old key keeps signing for previousSecretOverlap); behind Idempotency-Key because
+// a retried rotate would push the receiver's key out of the overlap.
 func (h *Handlers) HandleRotateSecret(w http.ResponseWriter, r *http.Request) {
 	sc, ok := dashboardauth.SessionFromContext(r.Context())
 	if !ok {
@@ -470,9 +467,8 @@ func canManage(role platform.Role) bool {
 	}
 }
 
-// getWebhookMeta is GetWebhook for callers that never touch the signing
-// key: an unsealable key must not block an owner from editing or deleting
-// the webhook, which is the documented recovery from a lost seal key.
+// getWebhookMeta is GetWebhook for callers that never touch the signing key: an unsealable key must not block an owner
+// from editing or deleting the webhook, the documented recovery from a lost seal key.
 func (h *Handlers) getWebhookMeta(ctx context.Context, id uuid.UUID) (platform.CustomerWebhook, error) {
 	w, err := h.cfg.Webhooks.GetWebhook(ctx, id)
 	if errors.Is(err, platform.ErrWebhookKeyUnsealable) {
@@ -482,9 +478,8 @@ func (h *Handlers) getWebhookMeta(ctx context.Context, id uuid.UUID) (platform.C
 	return w, err
 }
 
-// parseAndAuthorise extracts the {id} path value, scopes it to the
-// session's account (404 otherwise — don't leak presence). On
-// failure writes the response and returns ok=false.
+// parseAndAuthorise extracts {id} and scopes it to the session's account (404 otherwise, so presence does not leak).
+// On failure it writes the response and returns ok=false.
 func parseAndAuthorise(w http.ResponseWriter, r *http.Request, h *Handlers, accountID uuid.UUID) (uuid.UUID, bool) {
 	raw := r.PathValue("id")
 	if raw == "" {
@@ -582,11 +577,8 @@ func validateWebhookURL(ctx context.Context, raw string) error {
 	return nil
 }
 
-// rejectInternalHost errors if any address host resolves to is non-public. The worker repeats
-// the check at send time because DNS can change between save and delivery.
-//
-// RFC 2606 / 6761 reserved TLDs (.example, .test, .invalid, .localhost) skip resolution: they
-// never resolve to real infrastructure and the worker rejects them at send time.
+// rejectInternalHost errors if any address host resolves to is non-public; the worker repeats it at send time because DNS can change.
+// RFC 2606 / 6761 reserved TLDs (.example, .test, .invalid, .localhost) skip resolution: they never resolve to real infrastructure.
 func rejectInternalHost(parent context.Context, host string) error {
 	if nettools.IsReservedTLD(host) {
 		return nil
@@ -611,12 +603,8 @@ func rejectInternalHost(parent context.Context, host string) error {
 	return blockedResolvedAddrError(host, addrs)
 }
 
-// blockedResolvedAddrError reports the first resolved address in addrs that
-// falls in a non-public range, or nil if none do. Split out so the wording is testable without
-// DNS.
-//
-// The error carries only host, never the resolved IP: the caller writes err.Error() into the
-// 400 body, and the resolved address is internal network topology.
+// blockedResolvedAddrError reports the first resolved address in a non-public range, or nil. Split out so the wording is testable
+// without DNS. The error carries only host, never the resolved IP, which is internal topology and lands in the 400 body.
 func blockedResolvedAddrError(host string, addrs []net.IPAddr) error {
 	for _, ipa := range addrs {
 		if nettools.IsBlockedIP(ipa.IP) {
@@ -651,9 +639,8 @@ func validateEvents(events []string) error {
 	return nil
 }
 
-// maxWebhooksFor resolves the webhook ceiling for an account tier:
-// the Config.WebhookQuotas override when present and positive, else
-// the [platform.Tier.MaxWebhooks] default ladder.
+// maxWebhooksFor resolves the webhook ceiling for a tier: a positive Config.WebhookQuotas override, else the [platform.Tier.MaxWebhooks]
+// ladder.
 func (h *Handlers) maxWebhooksFor(tier platform.Tier) int {
 	if v, ok := h.cfg.WebhookQuotas[tier]; ok && v > 0 {
 		return v
@@ -673,8 +660,7 @@ func (h *Handlers) checkQuota(r *http.Request, accountID uuid.UUID, maxHooks int
 	return 0, ""
 }
 
-// generateSecret mints a 32-byte URL-safe secret returned once to
-// the customer. They store it server-side and use it to verify
+// generateSecret mints a 32-byte URL-safe secret returned once to the customer, who uses it to verify
 // the X-StellarIndex-Signature header on inbound POSTs.
 func generateSecret() (string, error) {
 	var buf [32]byte

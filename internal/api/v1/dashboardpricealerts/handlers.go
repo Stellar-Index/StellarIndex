@@ -36,10 +36,8 @@ type Config struct {
 	// [platform.Tier.MaxPriceAlerts]. Non-positive values are ignored.
 	AlertQuotas map[platform.Tier]int
 
-	// idempotency backs the optional Idempotency-Key header on
-	// HandleCreate: a client that retries a create after a
-	// timeout gets the original response replayed instead of
-	// registering a second alert. Lazily initialized by validate().
+	// idempotency backs the optional Idempotency-Key header on HandleCreate: a retried create replays the original response
+	// instead of registering a second alert. Lazily initialized by validate().
 	idempotency *middleware.IdempotencyStore
 }
 
@@ -70,7 +68,8 @@ func NewHandlers(cfg Config) (*Handlers, error) {
 	return &Handlers{cfg: &cfg}, nil
 }
 
-// Mount installs the price-alert routes behind [dashboardauth.RequireSession], with mutations also behind [middleware.RequireSameSiteWrite] since session-cookie auth is otherwise cross-site forgeable.
+// Mount installs the price-alert routes behind [dashboardauth.RequireSession], with mutations also behind
+// [middleware.RequireSameSiteWrite] since session-cookie auth is otherwise cross-site forgeable.
 func (h *Handlers) Mount(mux *http.ServeMux, _ *middleware.PublicRoutes) {
 	session := dashboardauth.RequireSession()
 	sameSite := middleware.RequireSameSiteWrite(h.cfg.Logger)
@@ -309,9 +308,8 @@ func canManage(role platform.Role) bool {
 	}
 }
 
-// parseAndAuthorise extracts {id}, scopes it to the session's account
-// (404 otherwise — don't leak presence). On failure writes the response
-// and returns ok=false.
+// parseAndAuthorise extracts {id} and scopes it to the session's account (404 otherwise, so presence does not leak).
+// On failure it writes the response and returns ok=false.
 func parseAndAuthorise(w http.ResponseWriter, r *http.Request, h *Handlers, accountID uuid.UUID) (uuid.UUID, bool) {
 	raw := r.PathValue("id")
 	if raw == "" {
@@ -375,9 +373,7 @@ func parseCreateRequest(r *http.Request) (createRequest, int, string) {
 var cooldownProblem = fmt.Sprintf("cooldown_seconds must be between %d and %d",
 	platform.MinAlertCooldownSeconds, platform.MaxAlertCooldownSeconds)
 
-// applyUpdate validates + applies a PATCH body to current. Returns
-// (status, problem) on the first validation failure, or (0, "") on
-// success.
+// applyUpdate validates and applies a PATCH body to current. Returns (status, problem) on the first failure, or (0, "") on success.
 func applyUpdate(current *platform.PriceAlert, req updateRequest) (int, string) {
 	if req.BaseAsset != nil {
 		v := strings.TrimSpace(*req.BaseAsset)
@@ -432,9 +428,8 @@ func validateAsset(field, raw string) string {
 	return ""
 }
 
-// decimalRe pins the threshold to a plain positive decimal so the
-// NUMERIC insert is safe (no big.Rat fraction / scientific notation
-// reaching the column) and the value round-trips cleanly.
+// decimalRe pins the threshold to a plain positive decimal so the NUMERIC insert is safe (no fraction or scientific notation) and round-
+// trips.
 var decimalRe = regexp.MustCompile(`^[0-9]+(\.[0-9]+)?$`)
 
 func validateThreshold(raw string) string {

@@ -19,7 +19,8 @@ import (
 // evidence); this file only maps fold rows onto the shared wire shape, resolves display labels
 // best-effort, and applies include_closed. It never computes a position amount itself.
 
-// PositionsReader is the narrow Postgres read seam (the six per-protocol fold queries), satisfied by *timescale.Store; nil disables the endpoint (503).
+// PositionsReader is the narrow Postgres read seam (the six per-protocol fold queries), satisfied by *timescale.Store; nil disables the
+// endpoint (503).
 type PositionsReader interface {
 	BlendPositionsByUser(ctx context.Context, address string) ([]timescale.BlendPositionFold, error)
 	BlendBackstopSharesByUser(ctx context.Context, address string) ([]timescale.BlendBackstopFold, error)
@@ -29,14 +30,14 @@ type PositionsReader interface {
 	AquariusGaugeByUser(ctx context.Context, address string) ([]timescale.AquariusGaugeFold, error)
 }
 
-// PoolTokensReader mirrors v1's ProtocolPoolTokensReader (a copy, since v1 imports explorer); nil degrades venue_label to absent and never fails the endpoint.
+// PoolTokensReader mirrors v1's ProtocolPoolTokensReader (a copy, since v1 imports explorer); nil degrades venue_label to absent and
+// never fails the endpoint.
 type PoolTokensReader interface {
 	PoolTokens(ctx context.Context, source string) (map[string][]string, error)
 }
 
-// Position-kind, amount-semantics, and basis wire vocabularies for AccountPositionsView.
-// amount_semantics is OUTPUT-only (never a filter the server 400s on) and gains values as folds
-// are added.
+// Position-kind, amount-semantics and basis wire vocabularies for AccountPositionsView. amount_semantics is OUTPUT-only (never a filter the
+// server 400s on) and gains values as folds are added.
 const (
 	PositionKindLendingSupply  = "lending_supply"
 	PositionKindLendingBorrow  = "lending_borrow"
@@ -120,9 +121,8 @@ type AccountPositionsView struct {
 	CoverageNote string `json:"coverage_note,omitempty"`
 }
 
-// positionsCoverage collects the per-protocol read failures behind one
-// request so the response can say which folds are missing rather than
-// pass their absence off as an empty position set.
+// positionsCoverage collects the per-protocol read failures behind one request so the response names the missing folds rather than passing
+// their absence off as an empty position set.
 type positionsCoverage struct {
 	degraded []string
 	// labelsUnresolved: a pool-token read failed, so some rows lack their
@@ -130,9 +130,8 @@ type positionsCoverage struct {
 	labelsUnresolved bool
 }
 
-// fail records that `protocol`'s fold could not be read. Safe on a nil
-// receiver so a builder called outside AccountPositions (tests, future
-// callers) doesn't have to thread a collector it doesn't want.
+// fail records that `protocol`'s fold could not be read. Safe on a nil receiver, so builders called outside AccountPositions need no
+// collector.
 func (c *positionsCoverage) fail(protocol string) {
 	if c == nil {
 		return
@@ -151,15 +150,12 @@ func (c *positionsCoverage) note() string {
 		"from this response, not proven absent on-chain — retry before treating this list as complete."
 }
 
-// positionsProtocolFolds is the number of per-protocol folds AccountPositions runs, and the
-// denominator in coverage_note. Adding a fold means bumping it:
-// TestExplorer_AccountPositions_TotalReadFailureIsNotAnEmptyAccount fails on the mismatch.
+// positionsProtocolFolds is the number of per-protocol folds AccountPositions runs, the denominator in coverage_note. Adding a fold
+// means bumping it: TestExplorer_AccountPositions_TotalReadFailureIsNotAnEmptyAccount fails on the mismatch.
 const positionsProtocolFolds = 6
 
-// positionsUnavailable writes the 503 for this endpoint specifically —
-// distinct wording from unavailable() (that one names the ClickHouse
-// explorer reader; this endpoint's hard dependency is the Postgres
-// PositionsReader instead).
+// positionsUnavailable writes this endpoint's 503, worded apart from unavailable() (which names the ClickHouse reader): the hard dependency
+// here is the Postgres PositionsReader.
 func (h *Handler) positionsUnavailable(w http.ResponseWriter, r *http.Request) {
 	h.WriteProblem(w, r,
 		"https://api.stellarindex.io/errors/explorer-unavailable",
@@ -167,11 +163,8 @@ func (h *Handler) positionsUnavailable(w http.ResponseWriter, r *http.Request) {
 		"This deployment hasn't wired the Postgres positions reader.")
 }
 
-// collectPositions folds the six ADR-0035-gated protocols' event tables into one per-(venue,
-// kind) net-position list. Not paginated: each fold is capped by timescale's positionsVenueLimit.
-//
-// "Net-zero" (closed) differs per protocol (see each buildXPositions helper): a delta-summed net
-// of exactly 0 for event_derived protocols, a Withdrawal-observed flag for sorocredit.
+// collectPositions folds the six ADR-0035-gated protocols' event tables into one per-(venue, kind) net-position list; not paginated,
+// each fold is capped by timescale's positionsVenueLimit. "Net-zero" (closed) differs per protocol: see each buildXPositions helper.
 func (h *Handler) collectPositions(ctx context.Context, g string, resolve positionAssetResolver, cov *positionsCoverage) []PositionEntry {
 	// The folds are INDEPENDENT Postgres reads, run concurrently so latency is their MAX, not
 	// their SUM. Each writes its own slot (positions + coverage), merged afterwards in fixed fold
@@ -220,20 +213,16 @@ func (h *Handler) collectPositions(ctx context.Context, g string, resolve positi
 	return positions
 }
 
-// accountPositionsSnapshot is the cached payload behind AccountPositions: the UNFILTERED fold
-// output plus its coverage note. include_closed is applied at serve time so both variants share
-// one cache entry.
-//
-// A DEGRADED snapshot IS cached: it travels with its coverage_note so it is never passed off as
-// complete, and refusing to cache would make every request during an outage pay the full
-// six-fold latency and still be degraded.
+// accountPositionsSnapshot is the cached payload behind AccountPositions: the UNFILTERED fold output plus coverage note (include_closed
+// applies at serve time). A DEGRADED snapshot IS cached with its coverage_note; refusing would make every outage request pay six folds.
 type accountPositionsSnapshot struct {
 	positions        []PositionEntry
 	coverageNote     string
 	labelsUnresolved bool
 }
 
-// AccountPositions serves GET /v1/accounts/{g_strkey}/positions, excluding closed positions unless ?include_closed=true; SWR-cached under the same contract as AccountActivity.
+// AccountPositions serves GET /v1/accounts/{g_strkey}/positions, excluding closed positions unless ?include_closed=true; SWR-cached
+// under the same contract as AccountActivity.
 func (h *Handler) AccountPositions(w http.ResponseWriter, r *http.Request) {
 	if h.Positions == nil {
 		h.positionsUnavailable(w, r)
@@ -297,13 +286,8 @@ func (h *Handler) AccountPositions(w http.ResponseWriter, r *http.Request) {
 
 // ─── asset / venue display-label resolution ──────────────────────────
 
-// newPositionAssetResolver returns a per-request memoized contract-id -> display-label resolver
-// built on resolveSEP41MovementAsset (SAC-then-raw-contract-id). It never fails: an unresolvable
-// contract degrades to a truncated id.
-//
-// This endpoint's hard dependency is h.Positions (Postgres), NOT h.Reader (the ClickHouse lake),
-// and resolveSEP41MovementAsset has no nil-Reader guard, so without a Reader the label degrades
-// to the raw contract id instead of calling through a nil interface.
+// newPositionAssetResolver returns a per-request memoized contract-id -> label resolver over resolveSEP41MovementAsset; it never fails
+// (degrades to a truncated id). Its dependency is h.Positions, not h.Reader, so without a Reader the label is the raw id.
 func (h *Handler) newPositionAssetResolver(ctx context.Context) positionAssetResolver {
 	// MUST be concurrency-safe: the parallel folds share this resolver, and concurrent map writes
 	// are a FATAL runtime throw that no recover() catches. The lock is held across the resolve
@@ -329,15 +313,12 @@ func (h *Handler) newPositionAssetResolver(ctx context.Context) positionAssetRes
 	}
 }
 
-// positionAssetResolver maps a contract id to its display label,
-// memoised per request. Safe for concurrent use (see
+// positionAssetResolver maps a contract id to its display label, memoised per request; safe for concurrent use (see
 // newPositionAssetResolver).
 type positionAssetResolver = func(contractID string) string
 
-// assetDisplayLabel shortens a resolved asset identifier to a display code: "native" -> "XLM";
-// "CODE-ISSUER" or "CODE:GISSUER" -> "CODE" (both separators occur: SAC metadata names are the
-// colon-separated SEP-11 form, passed through unchanged by resolveSEP41MovementAsset); anything
-// else (a raw C-strkey) -> a truncated contract id. The label is display-only, never identity.
+// assetDisplayLabel shortens a resolved asset id to a display code: "native" -> "XLM"; "CODE-ISSUER" or "CODE:GISSUER" -> "CODE" (SAC
+// metadata uses the colon SEP-11 form); a raw C-strkey -> a truncated contract id. Display-only, never identity.
 func assetDisplayLabel(resolved string) string {
 	if resolved == "" {
 		return ""
@@ -360,9 +341,8 @@ func truncPositionsContract(c string) string {
 	return c[:4] + "…" + c[len(c)-4:]
 }
 
-// poolTokensFor best-effort loads source's pool -> token-contract map. A nil reader or read error
-// yields no map (callers treat a missing key as "no label"); a read error is also recorded on
-// cov. Production wiring is TTL-cached per source in package v1.
+// poolTokensFor best-effort loads source's pool -> token-contract map. A nil reader or read error yields no map (a missing key means "no
+// label") and a read error is also recorded on cov. Production wiring is TTL-cached per source in package v1.
 func (h *Handler) poolTokensFor(ctx context.Context, source string, cov *positionsCoverage) map[string][]string {
 	if h.PoolTokens == nil {
 		return nil
@@ -406,9 +386,8 @@ func fmtActivity(ledger uint32, t time.Time) PositionLastActivity {
 
 // ─── per-protocol builders ────────────────────────────────────────────
 
-// buildBlendPositions maps BlendPositionFold rows to up to two
-// PositionEntry rows each (an independent lending_supply and/or
-// lending_borrow leg — see timescale.BlendPositionFold's doc comment).
+// buildBlendPositions maps BlendPositionFold rows to up to two PositionEntry rows each (independent lending_supply and/or lending_borrow
+// legs; see timescale.BlendPositionFold).
 func (h *Handler) buildBlendPositions(ctx context.Context, address string, resolve func(string) string, cov *positionsCoverage) []PositionEntry {
 	rows, err := h.Positions.BlendPositionsByUser(ctx, address)
 	if err != nil {
@@ -461,9 +440,8 @@ func (h *Handler) buildBlendPositions(ctx context.Context, address string, resol
 	return out
 }
 
-// blendLegEntry sets a Blend leg's amount. A superseded leg's underlying
-// net omits the auctioned b/d-tokens, so it serves no amount; only an
-// exactly-zero token balance (fully seized or repaid) is a known zero.
+// blendLegEntry sets a Blend leg's amount. A superseded leg's underlying net omits the auctioned b/d-tokens, so it serves no amount;
+// only an exactly-zero token balance (fully seized or repaid) is a known zero.
 func blendLegEntry(e PositionEntry, net string, superseded bool, tokens string) PositionEntry {
 	if superseded {
 		e.AmountSemantics = AmountSemanticsSupersededByAuction
@@ -479,9 +457,8 @@ func blendLegEntry(e PositionEntry, net string, superseded bool, tokens string) 
 	return e
 }
 
-// buildBlendBackstopPositions maps BlendBackstopFold rows to backstop_shares entries. Assets is a
-// fixed descriptive label, not a resolved contract: blend_backstop_events carries no LP-token
-// contract id, and the label is the protocol's documented backstop token (BLND:USDC LP).
+// buildBlendBackstopPositions maps BlendBackstopFold rows to backstop_shares entries. Assets is a fixed label, not a resolved contract:
+// blend_backstop_events carries no LP-token contract id, and the label is the documented backstop token (BLND:USDC LP).
 func (h *Handler) buildBlendBackstopPositions(ctx context.Context, address string, resolve func(string) string, cov *positionsCoverage) []PositionEntry {
 	rows, err := h.Positions.BlendBackstopSharesByUser(ctx, address)
 	if err != nil {
@@ -514,9 +491,8 @@ func (h *Handler) buildBlendBackstopPositions(ctx context.Context, address strin
 	return out
 }
 
-// buildPhoenixStakePositions maps PhoenixStakeFold rows to `stake` entries. The PoolTokens map is
-// pool-keyed for Phoenix, not stake-contract-keyed, so VenueLabel is left absent (a known
-// best-effort gap).
+// buildPhoenixStakePositions maps PhoenixStakeFold rows to `stake` entries. PoolTokens is pool-keyed for Phoenix, not stake-contract-keyed,
+// so VenueLabel is left absent (a known best-effort gap).
 func (h *Handler) buildPhoenixStakePositions(ctx context.Context, address string, resolve func(string) string, cov *positionsCoverage) []PositionEntry {
 	rows, err := h.Positions.PhoenixStakeByUser(ctx, address)
 	if err != nil {
@@ -545,9 +521,8 @@ func (h *Handler) buildPhoenixStakePositions(ctx context.Context, address string
 	return out
 }
 
-// buildDefindexPositions maps DefindexVaultFold rows to `vault_shares` entries. defindex_flows
-// has only a positional amounts_vec with no asset identity, so Assets is left absent rather than
-// guessed; there is no PoolTokens entry for defindex either, so VenueLabel stays absent too.
+// buildDefindexPositions maps DefindexVaultFold rows to `vault_shares` entries. defindex_flows has only a positional amounts_vec with no
+// asset identity, so Assets and VenueLabel are left absent rather than guessed.
 func (h *Handler) buildDefindexPositions(ctx context.Context, address string, cov *positionsCoverage) []PositionEntry {
 	rows, err := h.Positions.DefindexVaultSharesByUser(ctx, address)
 	if err != nil {
@@ -571,13 +546,8 @@ func (h *Handler) buildDefindexPositions(ctx context.Context, address string, co
 	return out
 }
 
-// buildCreditPositions maps CreditPositionFold rows to `credit` entries, the one STATEFUL
-// protocol here. Assets is hardcoded to ["USDC"] because sorocredit runs a single USDC book and
-// credit_statements carries no debt-asset address.
-//
-// "Closed" is Withdrawn (a Withdrawal event observed), NOT a zero-amount check: a freshly opened
-// position with no statement yet has amount "" and not_yet_published, since "0" would
-// misrepresent "unknown yet" as "verified zero".
+// buildCreditPositions maps CreditPositionFold rows to `credit` entries, the one STATEFUL protocol; Assets is hardcoded ["USDC"] (one
+// book). "Closed" is Withdrawn, NOT a zero amount: a fresh position with no statement is "" / not_yet_published.
 func (h *Handler) buildCreditPositions(ctx context.Context, address string, cov *positionsCoverage) []PositionEntry {
 	rows, err := h.Positions.CreditPositionsByOwner(ctx, address)
 	if err != nil {

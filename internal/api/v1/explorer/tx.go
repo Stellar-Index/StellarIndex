@@ -35,7 +35,8 @@ type TxDetailView struct {
 	CoverageNote string `json:"coverage_note,omitempty"`
 }
 
-// TxDetail serves GET /v1/tx/{hash} via the tx_hash skip-index; once the ledger is known, operations, results and events are ledger-scoped (partition-pruned).
+// TxDetail serves GET /v1/tx/{hash} via the tx_hash skip-index; once the ledger is known, operations, results and events are ledger-
+// scoped (partition-pruned).
 func (h *Handler) TxDetail(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)
@@ -130,11 +131,8 @@ func txNotFoundDetail(tip uint32, stale, tipOK bool) string {
 	}
 }
 
-// txReadFailed handles the two outcomes every TxDetail read shares: a client hangup writes
-// nothing, and a blown budget answers retryable. The budget belongs to the whole request, so
-// later sub-reads are doomed too, and a "partial" transaction assembled from failures would be a
-// 200 read as fact; a deadline is therefore never the disclosable-partial class. Returns true
-// when the response has been written.
+// txReadFailed handles the outcomes every TxDetail read shares: a client hangup writes nothing; a blown budget answers retryable. The
+// budget covers the whole request, so a deadline is never the disclosable-partial class. Returns true when the response is written.
 func (h *Handler) txReadFailed(w http.ResponseWriter, r *http.Request, ctx context.Context, err error, read, hash string) bool {
 	if h.ClientAborted(r, err) {
 		return true
@@ -163,9 +161,8 @@ func txCoverageNote(resultsFailed, eventsFailed bool) string {
 	return ""
 }
 
-// buildTxOpViews decodes a transaction's operations, stamps each with its parent transaction's
-// success (so a failed tx's operations are not mistaken for applied), and attaches each op's
-// result code and slug, plus the inner slug of an op_inner operation.
+// buildTxOpViews decodes a transaction's operations, stamps each with its parent tx's success (so a failed tx's ops are not mistaken
+// for applied), and attaches each op's result code and slug (plus the inner slug of an op_inner operation).
 func buildTxOpViews(ops []clickhouse.OpRow, results map[uint32]clickhouse.OpResult, txSuccessful bool, txResultCode int32) []OpView {
 	out := make([]OpView, len(ops))
 	// One immutable bool shared by every op — they all belong to this tx and

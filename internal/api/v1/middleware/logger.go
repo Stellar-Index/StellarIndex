@@ -8,18 +8,19 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// SlowRequestThreshold is the latency at or above which a request also logs its query shape and `slow=true`; it equals the published p99 target and must stay rare (~0.2% of requests).
+// SlowRequestThreshold is the latency at or above which a request also logs its query shape and `slow=true`; it equals the published p99
+// target and must stay rare (~0.2% of requests).
 const SlowRequestThreshold = 500 * time.Millisecond
 
-// maxLoggedPathLen and maxLoggedUserAgentLen bound two caller-controlled fields per log line;
-// net/http's ~1 MB header limit is a transport limit, not a log-safety one. The path bound is
-// generous because paths can carry a 56-char Stellar id plus nested segments.
+// maxLoggedPathLen and maxLoggedUserAgentLen bound two caller-controlled fields per log line (net/http's ~1 MB header limit is not a
+// log-safety one). The path bound is generous: paths can carry a 56-char Stellar id plus nested segments.
 const (
 	maxLoggedPathLen      = 512
 	maxLoggedUserAgentLen = 256
 )
 
-// Logger emits one structured entry per request (5xx ERROR, 4xx WARN, 429 skipped, successful synthetic DEBUG); remote_ip is [RemoteIP], never the caller-written first X-Forwarded-For hop, and query parameters and bodies are never logged.
+// Logger emits one structured entry per request (5xx ERROR, 4xx WARN, 429 skipped, successful synthetic DEBUG); remote_ip is [RemoteIP],
+// never the caller-written first X-Forwarded-For hop, and query parameters and bodies are never logged.
 func Logger(logger *slog.Logger) Middleware {
 	if logger == nil {
 		logger = slog.Default()
@@ -77,10 +78,8 @@ func Logger(logger *slog.Logger) Middleware {
 	}
 }
 
-// statusRecorder wraps an http.ResponseWriter + captures status +
-// byte count. The bare minimum — no special interface passes-through
-// (h2, flusher, hijacker). Re-evaluate when we add SSE (which
-// needs Flusher).
+// statusRecorder wraps an http.ResponseWriter to capture status and byte count. No h2/flusher/hijacker pass-through yet;
+// re-evaluate when SSE needs Flusher.
 type statusRecorder struct {
 	http.ResponseWriter
 	status int
@@ -106,7 +105,8 @@ func (r *statusRecorder) Write(b []byte) (int, error) {
 	return n, err
 }
 
-// Unwrap lets http.NewResponseController reach SetWriteDeadline, Flush and Hijack; without it SSE handlers cannot clear the global WriteTimeout.
+// Unwrap lets http.NewResponseController reach SetWriteDeadline, Flush and Hijack; without it SSE handlers cannot clear the global
+// WriteTimeout.
 func (r *statusRecorder) Unwrap() http.ResponseWriter {
 	return r.ResponseWriter
 }

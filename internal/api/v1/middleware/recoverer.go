@@ -8,7 +8,8 @@ import (
 	"runtime/debug"
 )
 
-// Recoverer turns a panicking handler into a 500 with a stack-trace log; the body is generic problem+json and the panic value and stack never reach the client.
+// Recoverer turns a panicking handler into a 500 with a stack-trace log; the body is generic problem+json and the panic value and stack
+// never reach the client.
 func Recoverer(logger *slog.Logger) Middleware {
 	if logger == nil {
 		logger = slog.Default()
@@ -42,12 +43,8 @@ func Recoverer(logger *slog.Logger) Middleware {
 	}
 }
 
-// writeProblem emits an RFC 9457 problem+json body for a recovered panic. It is local because
-// importing v1 would create a cycle.
-//
-// If the handler already wrote a header, WriteHeader is a no-op and the body is appended to
-// what it streamed. That is acceptable: the response was already broken, the stack is logged,
-// and detecting a prior write would mean wrapping the writer on every request.
+// writeProblem emits an RFC 9457 body for a recovered panic (local: importing v1 would cycle). If the handler already wrote a header,
+// the body is appended to what it streamed; acceptable, since the stack is logged and detecting a prior write costs a wrapper per request.
 func writeProblem(w http.ResponseWriter, r *http.Request, _ any) {
 	w.Header().Set("Content-Type", "application/problem+json")
 	// Override the cache-control middleware's per-route directive:

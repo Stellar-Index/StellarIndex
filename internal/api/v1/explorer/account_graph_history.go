@@ -11,7 +11,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// AccountGraphHistoryView is GET /v1/accounts/{g_strkey}/graph/history; the creation and sponsorship series are kept apart, not summed, as they cover different spans.
+// AccountGraphHistoryView is GET /v1/accounts/{g_strkey}/graph/history; the creation and sponsorship series are kept apart, not summed,
+// as they cover different spans.
 type AccountGraphHistoryView struct {
 	Account string `json:"account"`
 	// Granularity is the bucket width, always "1M". The served tier keeps only two timestamps per
@@ -78,10 +79,8 @@ type AccountGraphHistoryUnplacedV struct {
 	Detail string `json:"detail"`
 }
 
-// unplacedRepeatEvents is the only reason this surface refuses a month, and it comes from the
-// stored shape: the graph holds one row per distinct pair with first_at and last_at, so an edge
-// with N events places two and the middle N-2 have no recorded time. Per-event timestamps live
-// only in the rollups' working tables, which are truncated and refilled every cycle.
+// unplacedRepeatEvents is the only reason this surface refuses a month: the graph stores one row per pair with first_at and last_at,
+// so an edge with N events places two and the middle N-2 have no recorded time (rollup working tables are truncated each cycle).
 const unplacedRepeatEvents = "repeat-events-not-timestamped"
 
 const unplacedRepeatEventsDetail = "an edge stores first_at and last_at only, so events between " +
@@ -98,7 +97,8 @@ const accountGraphHistoryNote = "History, not live state: creations are immutabl
 	"totals.accounts; events is a lower bound whenever lower_bound is true, with the shortfall " +
 	"counted exactly in totals.events_unplaced and named in unplaced[]."
 
-// AccountGraphHistory serves GET /v1/accounts/{g_strkey}/graph/history; bounded by construction (primary-key range reads, one point per active month) so it takes no granularity or window.
+// AccountGraphHistory serves GET /v1/accounts/{g_strkey}/graph/history; bounded by construction (primary-key range reads, one point per
+// active month) so it takes no granularity or window.
 func (h *Handler) AccountGraphHistory(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)

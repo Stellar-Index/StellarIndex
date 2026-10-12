@@ -28,9 +28,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// passkeySignupMaxPerIP per passkeySignupWindow caps account-creating
-// begin-signup calls per client IP (/64 for IPv6), per API instance. Each
-// completed ceremony creates an account, so this is the abuse bound.
+// passkeySignupMaxPerIP per passkeySignupWindow caps account-creating begin-signup calls per client IP (/64 for IPv6) per instance;
+// each completed ceremony creates an account.
 const (
 	passkeySignupMaxPerIP = 10
 	passkeySignupWindow   = time.Hour
@@ -93,7 +92,8 @@ func (h *Handlers) allowPasskeySignup(w http.ResponseWriter, r *http.Request) bo
 	return false
 }
 
-// HandlePasskeyFinishSignup verifies the attestation, creates the account, owner user and credential and mints a session; every verification failure is one generic 400.
+// HandlePasskeyFinishSignup verifies the attestation, creates the account, owner user and credential and mints a session; every
+// verification failure is one generic 400.
 func (h *Handlers) HandlePasskeyFinishSignup(w http.ResponseWriter, r *http.Request) {
 	fail := func() {
 		writeProblem(w, http.StatusBadRequest, "passkey sign-up failed — start again", r.URL.Path)
@@ -168,9 +168,8 @@ func (h *Handlers) HandlePasskeyFinishSignup(w http.ResponseWriter, r *http.Requ
 	_ = json.NewEncoder(w).Encode(verifyCodeResponse{Status: "ok"})
 }
 
-// createPasskeyAccount inserts the account, its owner user (under the ID
-// the credential was bound to) and the credential. A failure after the
-// account exists suspends it, so no half-built account stays active.
+// createPasskeyAccount inserts the account, its owner user (under the ID the credential was bound to) and the credential.
+// A failure after the account exists suspends it, so no half-built account stays active.
 func (h *Handlers) createPasskeyAccount(
 	r *http.Request, userID uuid.UUID, name string, cred *webauthn.Credential,
 ) (platform.User, platform.WebAuthnCredential, error) {

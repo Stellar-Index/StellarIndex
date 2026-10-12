@@ -24,19 +24,16 @@ import (
 // is immutable; five minutes matches the API prewarm cadence, so the entry stays fresh.
 const networkThroughputTTL = 5 * time.Minute
 
-// networkThroughputMaxWindowDays is the window every cached entry holds.
-// It matches parseWindowDays' own ceiling, so one warm entry can serve
-// any accepted ?window_days= by slicing its tail.
+// networkThroughputMaxWindowDays is the window every cached entry holds: parseWindowDays' own ceiling, so one warm entry serves any
+// accepted ?window_days= by slicing its tail.
 const networkThroughputMaxWindowDays = 365
 
-// networkThroughputRefreshTimeout bounds one detached recompute. The 365-day FINAL merge can take
-// minutes under replay load; generous so a viable refresh is not abandoned, bounded so a wedged
-// query cannot pin the single-flight forever.
+// networkThroughputRefreshTimeout bounds one detached recompute: the 365-day FINAL merge can take minutes under replay load, but a
+// wedged query must not pin the single-flight forever.
 const networkThroughputRefreshTimeout = 3 * time.Minute
 
-// networkThroughputFlightKey is the single-flight key. The cache holds
-// exactly one entry (the max window), so the key is a constant — it
-// exists only to reuse perKeyFlight.
+// networkThroughputFlightKey is the constant single-flight key (the cache holds one entry, the max window); it exists only to reuse
+// perKeyFlight.
 const networkThroughputFlightKey = "throughput"
 
 type networkThroughputEntry struct {
@@ -53,10 +50,8 @@ type networkThroughputCache struct {
 	flight perKeyFlight
 }
 
-// get returns the entry whenever one exists — INCLUDING past the TTL
-// (fresh=false); staleness is the caller's judgment, so a run of failed
-// refreshes degrades to old-but-real data instead of 503s. Same contract
-// as assetHoldersCache.get.
+// get returns the entry whenever one exists, INCLUDING past the TTL (fresh=false): staleness is the caller's call, so failed refreshes
+// degrade to old-but-real data, not 503s. Same contract as assetHoldersCache.get.
 func (c *networkThroughputCache) get() (e networkThroughputEntry, ok, fresh bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -73,10 +68,8 @@ func (c *networkThroughputCache) put(buckets []clickhouse.ThroughputBucket) {
 	c.has = true
 }
 
-// refreshNetworkThroughput kicks ONE detached recompute of the max-window
-// series (no-op when a flight is already up) and returns the flight to
-// optionally wait on. Detached because bound to a request deadline the year-window scan never
-// finishes, so the cache would never fill.
+// refreshNetworkThroughput kicks ONE detached recompute of the max-window series (no-op while a flight is up) and returns the flight to
+// wait on. Detached because the year-window scan never finishes within a request deadline, so the cache would never fill.
 func (h *Handler) refreshNetworkThroughput() *keyFlight {
 	fl, owner := h.throughput.flight.begin(networkThroughputFlightKey)
 	if !owner {
@@ -117,9 +110,8 @@ func (h *Handler) refreshNetworkThroughput() *keyFlight {
 	return fl
 }
 
-// networkThroughputCached serves the daily series for `windowDays`: a stale entry is served
-// (degraded=true, real asOf) while a detached recompute runs. A never-computed cache waits only
-// to the request deadline; the compute outlives it, so the retry lands warm.
+// networkThroughputCached serves the daily series for `windowDays`: a stale entry is served (degraded=true, real asOf) while a detached
+// recompute runs. A never-computed cache waits only to the request deadline; the compute outlives it, so the retry lands warm.
 func (h *Handler) networkThroughputCached(ctx context.Context, windowDays int) (buckets []clickhouse.ThroughputBucket, asOf time.Time, degraded bool, err error) {
 	if e, ok, fresh := h.throughput.get(); ok {
 		if !fresh {
@@ -151,7 +143,8 @@ func sliceThroughput(rows []clickhouse.ThroughputBucket, windowDays int) []click
 	return rows
 }
 
-// PrewarmNetworkThroughput primes /v1/network/throughput by kicking the request path's detached single-flight refresh with the same argument, so prewarm and handler never warm different keys.
+// PrewarmNetworkThroughput primes /v1/network/throughput by kicking the request path's detached single-flight refresh with the same
+// argument, so prewarm and handler never warm different keys.
 func (h *Handler) PrewarmNetworkThroughput(ctx context.Context) {
 	if h.Reader == nil || ctx.Err() != nil {
 		return

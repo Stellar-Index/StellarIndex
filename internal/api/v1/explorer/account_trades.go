@@ -36,7 +36,8 @@ const accountTradesScopeNote = "On-chain trades where this address is recorded a
 	"(soroswap records the taker for trades from 2026-07-30 onward; earlier soroswap rows carry none). " +
 	"Off-chain CEX/FX trades carry no Stellar account, so they cannot appear here."
 
-// AccountTradeEntry is one wire row; amounts and usd_volume are decimal strings, usd_volume absent (never "0") when unknown, and there is deliberately no price field.
+// AccountTradeEntry is one wire row; amounts and usd_volume are decimal strings, usd_volume absent (never "0") when unknown, and there
+// is deliberately no price field.
 type AccountTradeEntry struct {
 	Ts          string `json:"ts"`
 	Source      string `json:"source"`
@@ -70,10 +71,8 @@ type AccountTradesView struct {
 	Note       string              `json:"note"`
 }
 
-// accountTradesGate caps concurrent ListAccountTrades reads at four of the 25-connection serving
-// pool: enough for a few genuine callers, too few to starve other Postgres-backed endpoints.
-// accountTradesCallers holds each caller to one slot so one caller's parallel slow scans cannot
-// shed everyone else.
+// accountTradesGate caps concurrent ListAccountTrades reads at four of the 25-connection pool so other Postgres endpoints are not starved;
+// accountTradesCallers holds each caller to one slot so one caller's parallel slow scans cannot shed everyone else.
 var (
 	accountTradesGate    = make(chan struct{}, 4)
 	accountTradesCallers = callerSlots{held: map[string]struct{}{}}
@@ -173,7 +172,8 @@ func (h *Handler) tradesBusy(w http.ResponseWriter, r *http.Request) {
 			"this scan was NOT started on this request — retry in a moment")
 }
 
-// AccountTrades serves GET /v1/accounts/{g_strkey}/trades, the address's trades (taker or maker) newest first, keyset-paged by an opaque (ts, ledger, tx_hash, op_index) cursor.
+// AccountTrades serves GET /v1/accounts/{g_strkey}/trades, the address's trades (taker or maker) newest first, keyset-paged by an opaque
+// (ts, ledger, tx_hash, op_index) cursor.
 func (h *Handler) AccountTrades(w http.ResponseWriter, r *http.Request) {
 	if h.Trades == nil {
 		h.tradesUnavailable(w, r)

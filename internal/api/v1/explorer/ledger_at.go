@@ -12,8 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// errLedgerAtNotFound means no captured ledger provably closed at or before
-// the requested instant: before the lake's first ledger, 1s or more after its
+// errLedgerAtNotFound means no captured ledger provably closed at or before the instant: before the lake's first ledger, 1s+ after its
 // tip's close, or with the answer inside or just before a lake gap.
 var errLedgerAtNotFound = errors.New("no ledger resolvable at ts")
 
@@ -58,10 +57,8 @@ func (h *Handler) LedgerAt(w http.ResponseWriter, r *http.Request) {
 	h.WriteJSON(w, ledgerView(l), stale)
 }
 
-// ledgerAtOrBefore finds the first captured ledger a that closed after ts and
-// returns a-1. The answer is served only when it is proven: a-1 is captured
-// and closed at or before ts, and its successor a closed after it. Only a lake
-// gap adjacent to the answer yields errLedgerAtNotFound, never a wrong ledger.
+// ledgerAtOrBefore finds the first captured ledger a that closed after ts and returns a-1, served only when proven (a-1 captured and
+// closed at or before ts, a after it). Only a lake gap adjacent to the answer yields errLedgerAtNotFound, never a wrong ledger.
 func (h *Handler) ledgerAtOrBefore(ctx context.Context, ts time.Time) (clickhouse.LedgerHeader, error) {
 	tip, err := h.Reader.RecentLedgers(ctx, 1, 0)
 	if err != nil {
@@ -101,7 +98,8 @@ type LedgerPager interface {
 	RecentLedgers(ctx context.Context, limit int, beforeSeq uint32) ([]clickhouse.LedgerHeader, error)
 }
 
-// FirstCapturedClosedAfter binary-searches for the lowest captured ledger closed after ts (tipSeq must qualify); each probe reads the newest captured ledger at or below mid, so lake gaps cannot mislead it.
+// FirstCapturedClosedAfter binary-searches for the lowest captured ledger closed after ts (tipSeq must qualify); each probe reads the
+// newest captured ledger at or below mid, so lake gaps cannot mislead it.
 func FirstCapturedClosedAfter(ctx context.Context, r LedgerPager, tipSeq uint32, ts time.Time) (uint32, error) {
 	lo, hi := uint32(0), tipSeq
 	for lo < hi {

@@ -5,7 +5,8 @@ import (
 	"strings"
 )
 
-// TrailingSlashRedirect 308-redirects a non-root path ending in `/` to the slashless path (query preserved); sits OUTSIDE the mux and CaptureRoute, INSIDE Logger.
+// TrailingSlashRedirect 308-redirects a non-root path ending in `/` to the slashless path (query preserved); sits OUTSIDE the mux and
+// CaptureRoute, INSIDE Logger.
 func TrailingSlashRedirect(mux muxMatcher) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -38,16 +39,13 @@ func TrailingSlashRedirect(mux muxMatcher) Middleware {
 	}
 }
 
-// muxMatcher is satisfied by *http.ServeMux (Go's enhanced routing).
-// Narrowed to the one method TrailingSlashRedirect needs so tests can
-// fake it without standing up a real mux.
+// muxMatcher is satisfied by *http.ServeMux, narrowed to the one method TrailingSlashRedirect needs so tests can fake it.
 type muxMatcher interface {
 	Handler(r *http.Request) (http.Handler, string)
 }
 
-// isCleanSameOriginPath reports whether target is safe to redirect to: exactly one leading '/'
-// (not protocol-relative "//"), no backslash (browsers treat '\' as '/'), and no control byte
-// (browsers strip tab, LF and CR, so "/\t/evil.com" becomes "//evil.com").
+// isCleanSameOriginPath reports whether target is safe to redirect to: one leading '/' (not "//"), no backslash (browsers treat '\' as
+// '/'), and no control byte (browsers strip tab, LF and CR, so "/\t/evil.com" becomes "//evil.com").
 func isCleanSameOriginPath(target string) bool {
 	if !strings.HasPrefix(target, "/") || strings.HasPrefix(target, "//") {
 		return false

@@ -6,7 +6,8 @@ import (
 	"strings"
 )
 
-// CacheControl sets Cache-Control per route policy (ADR-0018); operator and tip routes are never shared-cached, and every problem+json writer MUST set `no-store` or the CDN caches the failure.
+// CacheControl sets Cache-Control per route policy (ADR-0018); operator and tip routes are never shared-cached, and every problem+json
+// writer MUST set `no-store` or the CDN caches the failure.
 func CacheControl(next http.Handler) http.Handler {
 	return CacheControlWithCDN(true)(next)
 }
@@ -33,10 +34,8 @@ var perCallerHeaders = [...]string{
 	HeaderRequestID,
 }
 
-// perCallerHeaderStripper drops [perCallerHeaders] from a response a shared cache may reuse.
-// It decides at commit time, not when the middleware runs, because handlers and problem writers
-// override Cache-Control in between. Stripped rather than Vary'd: a per-request key would make
-// every response a CDN miss.
+// perCallerHeaderStripper drops [perCallerHeaders] from a response a shared cache may reuse. Decided at commit time because handlers
+// override Cache-Control in between. Stripped rather than Vary'd: a per-request key would make every response a CDN miss.
 type perCallerHeaderStripper struct {
 	http.ResponseWriter
 	committed bool
@@ -82,9 +81,8 @@ func (s *perCallerHeaderStripper) Unwrap() http.ResponseWriter {
 	return s.ResponseWriter
 }
 
-// sharedCacheReusable reports whether a shared cache may store the response and serve it again
-// without the origin (RFC 9111). Bare `private`, `no-store` and `no-cache` say no (no-cache
-// revalidates, and the 304 restates the current request's headers); field-qualified forms do not count.
+// sharedCacheReusable reports whether a shared cache may store and re-serve the response (RFC 9111). Bare `private`, `no-store` and
+// `no-cache` say no (no-cache revalidates, and the 304 restates the current request's headers); field-qualified forms do not count.
 func sharedCacheReusable(values []string) bool {
 	for _, v := range values {
 		for _, d := range strings.Split(v, ",") {
@@ -97,8 +95,7 @@ func sharedCacheReusable(values []string) bool {
 	return true
 }
 
-// ledgerDetailPath and txDetailPath match closed-ledger detail paths. Their band stays modest
-// (1 min client / 5 min CDN) because policyForPath knows nothing about the tip, and a young ledger
+// ledgerDetailPath and txDetailPath match closed-ledger detail paths. The band stays modest (1 min client / 5 min CDN): a young ledger
 // can be served before every projection for it has landed, so a long TTL could pin a partial view.
 var (
 	ledgerDetailPath = regexp.MustCompile(`^/v1/ledgers/[0-9]+(/transactions|/operations)?$`)
@@ -113,14 +110,8 @@ var (
 	lendingReservesPath = regexp.MustCompile(`^/v1/lending/pools/[^/]+/reserves$`)
 )
 
-// ledgerPolicy classifies the operator probes and the explorer's ledger/tx surface.
-// ok=false means "not one of mine, fall through to the main switch".
-//
-//   - Closed-ledger reads take the modest band described at ledgerDetailPath.
-//   - /v1/ledgers moves every ~5 s and /v1/network/throughput has a server-side cache: short band.
-//   - /v1/operations and /v1/contracts sit behind caches that refresh only ON a request, so an
-//     entry's age is bounded by the inter-arrival gap, not the TTL; a 60 s/300 s band would
-//     compound it. /transfers is a cursorless latest-N listing: short band.
+// ledgerPolicy classifies the operator probes and the explorer's ledger/tx surface; ok=false means fall through to the main switch.
+// /v1/operations and /v1/contracts sit behind caches that refresh only ON a request, so a 60 s/300 s band would compound their age.
 func ledgerPolicy(path string, cdnEnabled bool) (string, bool) {
 	switch {
 	// Operator probes: a cached probe is a lie. Here rather than in the main switch to keep
@@ -144,7 +135,8 @@ func ledgerPolicy(path string, cdnEnabled bool) (string, bool) {
 	return "", false
 }
 
-// SLOPriceRoutes are the closed-bucket price surfaces with a very short shared cache; a shared TTL of d skews as_of by up to d, so s-maxage must stay inside the 150 s SLA probe bound (TestPolicyForPath_PriceSharedTTLIsBoundedByTheProbe).
+// SLOPriceRoutes are the closed-bucket price surfaces with a very short shared cache; a shared TTL of d skews as_of by up to d, so
+// s-maxage must stay inside the 150 s SLA probe bound (TestPolicyForPath_PriceSharedTTLIsBoundedByTheProbe).
 var SLOPriceRoutes = []string{
 	"/v1/price",
 	"/v1/price/batch",
@@ -215,14 +207,8 @@ func closedLedgerPolicy(cdnEnabled bool) string {
 	return "public, max-age=60"
 }
 
-// policyForPath classifies a request path into a Cache-Control directive; package scope lets
-// tests pin the policy table without a handler.
-//
-// Order matters: the more-specific prefix MUST win. `/v1/price/tip` is private and `/v1/price`
-// is public, so the tip rule must run first.
-//
-// With cdnEnabled false only `max-age` survives, so a CDN the operator does not have cannot
-// cache anything.
+// policyForPath classifies a path into a Cache-Control directive. The more-specific prefix MUST win (`/v1/price/tip` is private,
+// `/v1/price` public). With cdnEnabled false only `max-age` survives, so a CDN the operator lacks cannot cache anything.
 func policyForPath(path string, cdnEnabled bool) string {
 	// Split into helpers to stay under the gocyclo ceiling; see ledgerPolicy.
 	if p, ok := ledgerPolicy(path, cdnEnabled); ok {

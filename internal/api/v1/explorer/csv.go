@@ -10,7 +10,8 @@ import (
 	"strings"
 )
 
-// CSVPage is one page of a list endpoint as text/csv; envelope fields outside the rows travel as headers (Link rel="next", true flags in X-StellarIndex-Flags).
+// CSVPage is one page of a list endpoint as text/csv; envelope fields outside the rows travel as headers (Link rel="next", true flags in
+// X-StellarIndex-Flags).
 type CSVPage struct {
 	Columns    []string
 	Rows       [][]string
@@ -19,7 +20,8 @@ type CSVPage struct {
 	Headers    map[string]string
 }
 
-// NegotiateCSV reports whether the request asked for text/csv and always marks the response Vary: Accept so no cache serves the wrong representation.
+// NegotiateCSV reports whether the request asked for text/csv and always marks the response Vary: Accept so no cache serves the wrong
+// representation.
 func NegotiateCSV(w http.ResponseWriter, r *http.Request) bool {
 	w.Header().Add("Vary", "Accept")
 	return prefersCSV(r.Header.Get("Accept"))
@@ -28,8 +30,7 @@ func NegotiateCSV(w http.ResponseWriter, r *http.Request) bool {
 // jsonMediaRank orders the media ranges that admit JSON by specificity.
 var jsonMediaRank = map[string]int{"*/*": 1, "application/*": 2, "application/json": 3}
 
-// prefersCSV is true when text/csv outranks JSON in accept. JSON's rank is
-// its most specific match (application/json, then application/*, then */*);
+// prefersCSV is true when text/csv outranks JSON in accept. JSON's rank is its most specific match (application/json, application/*, */*);
 // a tie with a wildcard goes to the type the client named.
 func prefersCSV(accept string) bool {
 	csvQ, jsonQ, jsonRank := -1.0, -1.0, 0
@@ -55,7 +56,8 @@ func prefersCSV(accept string) bool {
 	return csvQ > 0 && (csvQ > jsonQ || (csvQ == jsonQ && jsonRank < 3))
 }
 
-// WriteCSVPage writes p with a header row; every cell passes csvSafeCell (no spreadsheet formulas) and the export is never stored in a shared cache since its URL is the JSON one.
+// WriteCSVPage writes p with a header row; every cell passes csvSafeCell (no spreadsheet formulas) and the export is never stored in a
+// shared cache since its URL is the JSON one.
 func WriteCSVPage(w http.ResponseWriter, r *http.Request, p CSVPage) error {
 	h := w.Header()
 	h.Set("Content-Type", "text/csv; charset=utf-8")
@@ -99,10 +101,8 @@ var asciiFold = map[rune]string{
 	'\u2026': "...", '\u2264': "<=", '\u2265': ">=", '\u00A0': " ",
 }
 
-// headerSafe renders s as one line of printable ASCII: known punctuation is
-// folded, any other non-ASCII rune becomes '?', and CR, LF and every other
-// control character become a space (runs collapsed), so no value can split
-// or smuggle a header.
+// headerSafe renders s as one line of printable ASCII: known punctuation is folded, other non-ASCII becomes '?', and control characters
+// become a space (runs collapsed), so no value can split or smuggle a header.
 func headerSafe(s string) string {
 	var b strings.Builder
 	for _, r := range s {
@@ -124,9 +124,8 @@ func headerSafe(s string) string {
 // formula, so a negative amount keeps its exact text.
 var plainNumber = regexp.MustCompile(`^-?[0-9]+(\.[0-9]+)?$`)
 
-// csvSafeCell neutralises CSV injection (OWASP): a cell a spreadsheet would
-// evaluate as a formula gets a leading apostrophe. Asset codes, memos and
-// attribute values are attacker-chosen.
+// csvSafeCell neutralises CSV injection (OWASP): a cell a spreadsheet would evaluate as a formula gets a leading apostrophe.
+// Asset codes, memos and attribute values are attacker-chosen.
 func csvSafeCell(s string) string {
 	if s == "" || plainNumber.MatchString(s) {
 		return s

@@ -17,7 +17,8 @@ import (
 	"time"
 )
 
-// PasskeyCeremonyGuard makes a WebAuthn ceremony challenge usable exactly once; production uses Redis SETNX, and the in-process default misses replays routed to another instance.
+// PasskeyCeremonyGuard makes a WebAuthn ceremony challenge usable exactly once; production uses Redis SETNX, and the in-process default
+// misses replays routed to another instance.
 type PasskeyCeremonyGuard interface {
 	// Consume claims the one-shot slot for a ceremony digest. It returns true for the first
 	// presenter, false for a replay, and an error when the store is unreachable, which callers
@@ -26,9 +27,8 @@ type PasskeyCeremonyGuard interface {
 	Consume(ctx context.Context, digest string, ttl time.Duration) (bool, error)
 }
 
-// inProcessPasskeyCeremonyGuard is the single-instance default: a TTL-bounded in-memory set of
-// spent digests. Only a verified ceremony spends a slot, so memory is bounded by successful
-// ceremonies, not request volume.
+// inProcessPasskeyCeremonyGuard is the single-instance default: a TTL-bounded in-memory set of spent digests.
+// Only verified ceremonies spend a slot, so memory is bounded by successful ceremonies, not request volume.
 type inProcessPasskeyCeremonyGuard struct {
 	now func() time.Time
 

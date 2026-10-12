@@ -15,7 +15,8 @@ var trustedProxyConfig struct {
 	prefixes []netip.Prefix
 }
 
-// SetTrustedProxyCIDRs replaces the allow-list deciding whether X-Forwarded-For influences client identity; empty trusts no proxies and ignores XFF entirely.
+// SetTrustedProxyCIDRs replaces the allow-list deciding whether X-Forwarded-For influences client identity; empty trusts no proxies and
+// ignores XFF entirely.
 func SetTrustedProxyCIDRs(cidrs []string) error {
 	parsed := make([]netip.Prefix, 0, len(cidrs))
 	for _, raw := range cidrs {
@@ -54,15 +55,14 @@ func resolveRemoteIP(r *http.Request) string {
 	return remoteIPFor(r)
 }
 
-// remoteIPPrefixFor resolves the client's THROTTLE-KEY identity via [ratelimit.ThrottleIPKey]:
-// the unmapped IPv4 address (so "::ffff:1.2.3.4" and "1.2.3.4" share a budget) or the IPv6 /64.
-// Use it ONLY for throttle and cap keys; audit logs and admin display need the exact address
-// from [remoteIPFor] / [RemoteIP].
+// remoteIPPrefixFor resolves the THROTTLE-KEY identity via [ratelimit.ThrottleIPKey]: unmapped IPv4 ("::ffff:1.2.3.4" = "1.2.3.4") or
+// the IPv6 /64. ONLY for throttle and cap keys; audit logs and admin display need the exact address from [remoteIPFor] / [RemoteIP].
 func remoteIPPrefixFor(r *http.Request) string {
 	return ratelimit.ThrottleIPKey(remoteIPFor(r))
 }
 
-// RemoteIP returns the caller IP: behind a trusted proxy ([SetTrustedProxyCIDRs]) the closest untrusted X-Forwarded-For hop, else the direct peer; "" when none resolves.
+// RemoteIP returns the caller IP: behind a trusted proxy ([SetTrustedProxyCIDRs]) the closest untrusted X-Forwarded-For hop, else the
+// direct peer; "" when none resolves.
 func RemoteIP(r *http.Request) string {
 	return remoteIPFor(r)
 }
@@ -88,19 +88,8 @@ func requestCameViaTrustedProxy(peer string) bool {
 	return false
 }
 
-// rightmostUntrustedForwardedFor walks X-Forwarded-For RIGHT-TO-LEFT and returns the first
-// entry outside every trusted-proxy CIDR, the closest untrusted hop.
-//
-// Proxies APPEND the peer, so the chain is:
-//
-//	<client-supplied...>, <trusted-proxy-1>, <trusted-proxy-2>
-//
-// The leftmost entry is attacker-controlled; trusting it would let a client spoof its per-IP
-// rate-limit identity and bypass per-key IP allowlists. Everything left of the first untrusted
-// hop is ignored.
-//
-// Returns "" when the header is empty, every entry is trusted (the caller falls back to the
-// direct peer), or none parses as an IP.
+// rightmostUntrustedForwardedFor walks X-Forwarded-For RIGHT-TO-LEFT and returns the first entry outside every trusted-proxy CIDR. The
+// leftmost entry is attacker-controlled. Returns "" if empty, all trusted (caller uses the direct peer) or none parses as an IP.
 func rightmostUntrustedForwardedFor(xff string) string {
 	if xff == "" {
 		return ""

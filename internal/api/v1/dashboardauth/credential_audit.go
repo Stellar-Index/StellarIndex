@@ -35,7 +35,8 @@ type CredentialEvent struct {
 	Metadata   map[string]any
 }
 
-// RecordSessionCredentialEvent appends ev to sink as the session user's own action; best-effort (failure logged and counted, never returned), a nil sink records nothing.
+// RecordSessionCredentialEvent appends ev to sink as the session user's own action; best-effort (failure logged and counted, never
+// returned), a nil sink records nothing.
 func RecordSessionCredentialEvent(
 	r *http.Request, sink platform.AuditStore, logger *slog.Logger, now time.Time,
 	sc SessionContext, ev CredentialEvent,
@@ -70,10 +71,8 @@ func (h *Handlers) recordPasskeyRegistered(r *http.Request, sc SessionContext, r
 // passkeySettingsPath is the dashboard page listing the user's passkeys.
 const passkeySettingsPath = "/dashboard/settings"
 
-// notifyPasskeyChanged counts a passkey add/remove and emails the user
-// whose sign-in methods changed, so a change made from a session they do
-// not control still reaches them. Best-effort for the same reason as the
-// audit row: the change has already committed.
+// notifyPasskeyChanged counts a passkey add/remove and emails the user, so a change made from a session
+// they do not control still reaches them. Best-effort: the change has already committed.
 func (h *Handlers) notifyPasskeyChanged(r *http.Request, sc SessionContext, change notify.PasskeyChange) {
 	obs.PasskeyCredentialChangesTotal.WithLabelValues(string(change)).Inc()
 	if platform.IsPlaceholderEmail(sc.User.Email) {
@@ -110,10 +109,8 @@ func (h *Handlers) notifyPasskeyChanged(r *http.Request, sc SessionContext, chan
 	obs.NotifySendsTotal.WithLabelValues(obs.NotifyTemplatePasskeyChanged, obs.NotifySendResultSent).Inc()
 }
 
-// recordPasskeyLoginRefusal counts and audits a sign-in refused after
-// the assertion signature verified. The presenter is unauthenticated,
-// so the row is a system action on the credential owner's account with
-// no actor user: attributing it to the owner would name the victim.
+// recordPasskeyLoginRefusal counts and audits a sign-in refused after the signature verified. The presenter is
+// unauthenticated, so the row has no actor user: attributing it to the owner would name the victim.
 func (h *Handlers) recordPasskeyLoginRefusal(
 	r *http.Request, action, reason string, owner platform.User, cred platform.WebAuthnCredential, presentedSignCount uint32,
 ) {

@@ -22,9 +22,8 @@ const touchTimeout = 2 * time.Second
 // request context is deliberately not used: a client disconnect must not read as a provider failure.
 const sendTimeout = 10 * time.Second
 
-// newTouchCtx returns a context for the async TouchSession goroutine. It keeps the request's values
-// but drops its cancellation, since the handler has usually returned by then; a 2 s timeout caps a
-// stuck write.
+// newTouchCtx returns a context for the async TouchSession goroutine: the request's values without its cancellation
+// (the handler has usually returned), with a 2 s timeout capping a stuck write.
 func newTouchCtx(parent context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.WithoutCancel(parent), touchTimeout)
 }
@@ -38,7 +37,8 @@ func parseIP(s string) net.IP {
 	return net.ParseIP(s)
 }
 
-// Middleware resolves a valid session cookie into a SessionContext; anonymous requests (no, invalid, revoked or expired cookie) pass through untouched, gating is RequireSession's job.
+// Middleware resolves a valid session cookie into a SessionContext; anonymous requests (no, invalid, revoked or expired cookie) pass
+// through untouched, gating is RequireSession's job.
 func Middleware(cfg *Config) func(http.Handler) http.Handler {
 	// The Config may never have run validate(); a nil Now or Logger would panic every authenticated
 	// request, so default them here.
@@ -185,9 +185,8 @@ func (t *touchTracker) shouldTouch(id uuid.UUID, now time.Time) bool {
 	return true
 }
 
-// sweepLocked evicts entries aged past interval; with no session-ended signal the map would
-// otherwise grow forever, and an aged entry suppresses nothing. It runs at most once per interval
-// so a busy deployment does not pay an O(map size) scan per touch. Caller must hold t.mu.
+// sweepLocked evicts entries aged past interval (an aged entry suppresses nothing; otherwise the map grows forever).
+// At most once per interval to avoid an O(map) scan per touch. Caller must hold t.mu.
 func (t *touchTracker) sweepLocked(now time.Time) {
 	if now.Sub(t.lastSweep) < t.interval {
 		return
@@ -200,7 +199,8 @@ func (t *touchTracker) sweepLocked(now time.Time) {
 	}
 }
 
-// SessionAccountSubject scopes an Idempotency-Key to the caller's account so two customers never share a cache entry; empty without a session, meaning "don't dedupe".
+// SessionAccountSubject scopes an Idempotency-Key to the caller's account so two customers never share a cache entry; empty without a
+// session, meaning "don't dedupe".
 func SessionAccountSubject(r *http.Request) string {
 	sc, ok := SessionFromContext(r.Context())
 	if !ok {

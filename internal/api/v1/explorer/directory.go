@@ -10,13 +10,15 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// DirectoryReader resolves curated third-party address labels from the `account_directory` table (synced by `stellarindex-ops directory-sync`); production impl is *timescale.Store.
+// DirectoryReader resolves curated third-party address labels from the `account_directory` table (synced by `stellarindex-ops directory-
+// sync`); production impl is *timescale.Store.
 type DirectoryReader interface {
 	DirectoryEntryByAddress(ctx context.Context, address string) (timescale.DirectoryEntry, bool, error)
 	DirectoryEntriesByAddresses(ctx context.Context, addresses []string) (map[string]timescale.DirectoryEntry, error)
 }
 
-// DirectoryInfoV is the wire form of one directory label: a DISPLAY label with third-party `source` attribution, not a verification signal; clients should surface `malicious`/`unsafe` tags prominently.
+// DirectoryInfoV is the wire form of one directory label: a DISPLAY label with third-party `source` attribution, not a verification
+// signal; clients should surface `malicious`/`unsafe` tags prominently.
 type DirectoryInfoV struct {
 	Name   string   `json:"name"`
 	Domain string   `json:"domain,omitempty"`
@@ -32,10 +34,8 @@ func dirInfoV(e timescale.DirectoryEntry) *DirectoryInfoV {
 	return &DirectoryInfoV{Name: e.Name, Domain: e.Domain, Tags: tags, Source: e.Source}
 }
 
-// directoryFor resolves one address's label, reporting whether the read answered. The label is
-// nil when no reader is wired or the address is unlisted (the common case). ok=false is NOT
-// "unlisted": a #malicious/#unsafe label may exist unseen, so the caller must say so on the wire.
-// A directory outage never fails the account/contract view it decorates.
+// directoryFor resolves one address's label, reporting whether the read answered. ok=false is NOT "unlisted": a #malicious/#unsafe label
+// may exist unseen, so the caller must say so on the wire. A directory outage never fails the view it decorates.
 func (h *Handler) directoryFor(ctx context.Context, address string) (*DirectoryInfoV, bool) {
 	if h.Directory == nil {
 		return nil, true
@@ -51,9 +51,8 @@ func (h *Handler) directoryFor(ctx context.Context, address string) (*DirectoryI
 	return dirInfoV(e), true
 }
 
-// directoryBatchMax bounds GET /v1/directory's address list. 100 covers
-// a full explorer table page of counterparties in one round trip while
-// keeping the ANY($1) read trivially cheap.
+// directoryBatchMax bounds GET /v1/directory's address list: 100 covers a full explorer table page in one round trip while keeping
+// ANY($1) cheap.
 const directoryBatchMax = 100
 
 // DirectoryLookupView is GET /v1/directory: entries keyed by address, PRESENT addresses only; `entries` is always an object, never null.

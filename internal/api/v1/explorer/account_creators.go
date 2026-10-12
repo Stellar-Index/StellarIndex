@@ -10,7 +10,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// AccountCreatorsView is GET /v1/accounts/creators, the account-creator league table; stroops are decimal STRINGS and it is the CREATOR relationship only, never a sponsorship figure.
+// AccountCreatorsView is GET /v1/accounts/creators, the account-creator league table; stroops are decimal STRINGS and it is the CREATOR
+// relationship only, never a sponsorship figure.
 type AccountCreatorsView struct {
 	Creators []AccountCreatorV `json:"creators"`
 	Totals   struct {
@@ -58,15 +59,13 @@ type AccountCreatorV struct {
 const (
 	// creatorsDefaultLimit is one screen of the board.
 	creatorsDefaultLimit = 50
-	// creatorsMaxLimit bounds the page. The rollup holds one row per
-	// distinct creator, so a deeper request stays a keyed read; the cap
-	// exists to bound the response, not the query.
+	// creatorsMaxLimit bounds the page. The rollup holds one row per distinct creator, so a deeper request stays a keyed read;
+	// the cap bounds the response, not the query.
 	creatorsMaxLimit = 500
 )
 
-// stroopsString renders an Int128 stroops figure as the decimal string
-// the wire contract requires (ADR-0003). A nil big.Int — what a scan of
-// a NULL-shaped value would leave — renders "0" rather than panicking.
+// stroopsString renders an Int128 stroops figure as the decimal string the wire contract requires (ADR-0003).
+// A nil big.Int (a NULL-shaped scan) renders "0" rather than panicking.
 func stroopsString(v *big.Int) string {
 	if v == nil {
 		return "0"
@@ -74,15 +73,8 @@ func stroopsString(v *big.Int) string {
 	return v.String()
 }
 
-// parseBoardAccount reads the optional `?account=` filter both league
-// tables accept: return only this address's row, with its rank intact.
-//
-// It exists because rank is a property of the whole aggregation while the board is a top-N page:
-// an address past the cap is otherwise indistinguishable from one that never appears, which a UI
-// must not conflate.
-//
-// A malformed strkey is a 400, never a silently empty board, which would read as "this account did
-// nothing". A WELL-FORMED address with no row is a 200 with an empty array, a real answer.
+// parseBoardAccount reads the optional `?account=` filter: only this address's row, rank intact (rank is a whole-aggregation property;
+// a top-N page cannot tell a past-cap address from absent). Malformed strkey is a 400; a well-formed address with no row is a 200 with [].
 func (h *Handler) parseBoardAccount(w http.ResponseWriter, r *http.Request) (string, bool) {
 	raw := strings.TrimSpace(r.URL.Query().Get("account"))
 	if raw == "" {

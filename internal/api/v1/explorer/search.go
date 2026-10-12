@@ -8,7 +8,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// SearchResultView classifies a free-text explorer query (ADR-0038) and points at its canonical detail endpoint via Kind + Href; Supported=false marks kinds with no detail endpoint.
+// SearchResultView classifies a free-text explorer query (ADR-0038) and points at its canonical detail endpoint via Kind + Href;
+// Supported=false marks kinds with no detail endpoint.
 type SearchResultView struct {
 	Query     string `json:"query"`
 	Kind      string `json:"kind"` // transaction|ledger|account|contract|asset|unknown
@@ -29,9 +30,8 @@ func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
 	h.WriteJSON(w, classifySearch(q), false)
 }
 
-// classifySearch maps a query to its entity kind + detail href. Order matters:
-// the most specific shapes first (tx hash, ledger seq, account/contract/muxed
-// strkeys), then the generic asset-id parse, then unknown.
+// classifySearch maps a query to its entity kind + detail href. Order matters: most specific shapes first (tx hash, ledger seq,
+// account/contract/muxed strkeys), then the generic asset-id parse, then unknown.
 func classifySearch(q string) SearchResultView {
 	res := SearchResultView{Query: q}
 

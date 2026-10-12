@@ -5,7 +5,8 @@ import (
 	"net/http"
 )
 
-// Envelope404 converts the ServeMux's default text/plain 404 and 405 into RFC 9457 problem+json, intercepting only the WriteHeader decision so SSE and large responses are untouched.
+// Envelope404 converts the ServeMux's default text/plain 404 and 405 into RFC 9457 problem+json, intercepting only the WriteHeader
+// decision so SSE and large responses are untouched.
 func Envelope404(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rec := &envelope404Recorder{ResponseWriter: w, r: r}
@@ -54,7 +55,8 @@ func (e *envelope404Recorder) Flush() {
 	}
 }
 
-// Unwrap exposes the underlying ResponseWriter so http.NewResponseController can reach SetWriteDeadline and Hijack; see statusRecorder.Unwrap.
+// Unwrap exposes the underlying ResponseWriter so http.NewResponseController can reach SetWriteDeadline and Hijack; see
+// statusRecorder.Unwrap.
 func (e *envelope404Recorder) Unwrap() http.ResponseWriter {
 	return e.ResponseWriter
 }
@@ -69,9 +71,7 @@ func shouldOverride(status int, contentType string) bool {
 	return contentType == "text/plain; charset=utf-8"
 }
 
-// writeProblem writes the RFC 9457 envelope. Mirrors the v1
-// package's writeProblem shape but stays in middleware so we don't
-// pull a circular import.
+// writeProblem writes the RFC 9457 envelope; it mirrors the v1 package's helper but lives here to avoid an import cycle.
 func (e *envelope404Recorder) writeProblem(status int) {
 	typeURL := "https://api.stellarindex.io/errors/not-found"
 	title := "Not found"
