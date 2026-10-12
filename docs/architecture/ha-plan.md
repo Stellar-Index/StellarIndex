@@ -521,7 +521,8 @@ Incidents are Markdown files in `internal/incidents/data/`, rendered by
 `web/explorer/src/lib/incidents.ts` and embedded in the API binary so
 `stellarindex-ops emit-incident` sends `incident.sev1` /
 `incident.resolved` webhooks from the same source. `status.stellarindex.io`
-is a redirect-only Cloudflare Pages stub (`web/status/public/_redirects`).
+(`web/status/`) renders the same corpus with no API call and its own Pages
+project, so it is the channel that still publishes during an outage.
 Operator steps: [`runbooks/sev-status-page-update.md`](../operations/runbooks/sev-status-page-update.md).
 
 Why not a SaaS (Instatus was the original pick): webhooks are the primary
