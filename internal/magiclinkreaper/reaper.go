@@ -43,9 +43,7 @@ const (
 	DefaultRetention = 48 * time.Hour
 )
 
-// MagicLinkStore is the reaper's narrow seam, satisfied by *postgresstore.TokenStore. It is
-// declared here so the delete surface stays off platform.TokenStore, which every token fake would
-// otherwise have to implement.
+// MagicLinkStore is the reaper's narrow seam, satisfied by *postgresstore.TokenStore and declared here so the delete surface stays off platform.TokenStore, which every token fake would otherwise have to implement.
 type MagicLinkStore interface {
 	// SweepExpiredMagicLinkTokens deletes rows expired before olderThan and returns the count.
 	// It never deletes a live row.
@@ -66,8 +64,7 @@ type Options struct {
 	Clock func() time.Time
 }
 
-// Reaper periodically deletes expired magic-link token rows and
-// publishes the table's size.
+// Reaper periodically deletes expired magic-link token rows and publishes the table's size.
 type Reaper struct {
 	store     MagicLinkStore
 	interval  time.Duration
@@ -76,8 +73,7 @@ type Reaper struct {
 	now       func() time.Time
 }
 
-// New builds a Reaper. Panics if store is nil (a wiring bug — the
-// caller must gate construction on the Postgres token store existing).
+// New builds a Reaper; it panics if store is nil, a wiring bug since the caller must gate construction on the Postgres token store existing.
 func New(store MagicLinkStore, opts Options) *Reaper {
 	if store == nil {
 		panic("magiclinkreaper: New requires a non-nil store")
@@ -105,8 +101,7 @@ func New(store MagicLinkStore, opts Options) *Reaper {
 	return r
 }
 
-// Run drives the sweep loop until ctx is cancelled. It sweeps once immediately, since the table may
-// have grown while the process was down, then every Interval.
+// Run drives the sweep loop until ctx is cancelled, sweeping once immediately (the table may have grown while the process was down), then every Interval.
 func (r *Reaper) Run(ctx context.Context) error {
 	tick := time.NewTicker(r.interval)
 	defer tick.Stop()
@@ -122,12 +117,7 @@ func (r *Reaper) Run(ctx context.Context) error {
 	}
 }
 
-// Sweep runs one retention pass and refreshes the row-count gauge; it is exported so tests can
-// drive a single pass.
-//
-// Errors are recorded on [obs.MagicLinkTokenErrorsTotal] and swallowed because the next tick
-// retries. The gauge is refreshed even when the DELETE failed, since that is when an operator most
-// needs the row count.
+// Sweep runs one retention pass and refreshes the row-count gauge (exported so tests can drive a single pass); errors are recorded on [obs.MagicLinkTokenErrorsTotal] and swallowed since the next tick retries, and the gauge refreshes even after a failed DELETE, when the row count matters most.
 func (r *Reaper) Sweep(ctx context.Context) {
 	deleted, err := r.store.SweepExpiredMagicLinkTokens(ctx, r.now().Add(-r.retention))
 	switch {

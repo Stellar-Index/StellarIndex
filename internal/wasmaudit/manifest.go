@@ -21,8 +21,7 @@ import (
 //go:embed audited_wasm.json
 var auditedWasmJSON []byte
 
-// Entry is one audited WASM hash. One hash can serve several sources
-// (reflector-dex and reflector-cex run the same oracle WASM).
+// Entry is one audited WASM hash; one hash can serve several sources (reflector-dex and reflector-cex run the same oracle WASM).
 type Entry struct {
 	Sources []string `json:"sources"`
 	Role    string   `json:"role"`

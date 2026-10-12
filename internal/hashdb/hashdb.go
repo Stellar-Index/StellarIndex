@@ -57,9 +57,7 @@ type DB struct {
 	startLedger uint32
 }
 
-// Create opens a fresh hashdb file at path covering ledgers
-// [startLedger, +∞). Fails if the file already exists. Creates
-// header bytes; no records.
+// Create opens a fresh hashdb file at path covering ledgers [startLedger, +inf), writing only the header; it fails if the file already exists.
 func Create(path string, startLedger uint32) (*DB, error) {
 	// #nosec G304 — `path` is operator-supplied, not request-derived; traversal protection belongs
 	// to the caller.
@@ -87,8 +85,7 @@ func Create(path string, startLedger uint32) (*DB, error) {
 	return &DB{f: f, startLedger: startLedger}, nil
 }
 
-// Open opens an existing hashdb file. Returns ErrBadMagic /
-// ErrBadVersion on header mismatch.
+// Open opens an existing hashdb file, returning ErrBadMagic / ErrBadVersion on header mismatch.
 func Open(path string) (*DB, error) {
 	// #nosec G304 — operator-supplied path; see Create() comment.
 	f, err := os.OpenFile(path, os.O_RDWR, 0)
@@ -125,9 +122,7 @@ func (db *DB) Close() error {
 // StartLedger returns the ledger sequence of record 0.
 func (db *DB) StartLedger() uint32 { return db.startLedger }
 
-// Hash returns the sha256 of the supplied LCM bytes. Helper so
-// callers don't have to import crypto/sha256 just to construct a
-// fixed-size value.
+// Hash returns the sha256 of the supplied LCM bytes, so callers need not import crypto/sha256 for the fixed-size value.
 func Hash(lcmBytes []byte) [recordSize]byte {
 	return sha256.Sum256(lcmBytes)
 }
@@ -142,8 +137,7 @@ func (db *DB) recordOffset(seq uint32) (int64, error) {
 	return int64(headerSize) + int64(seq-db.startLedger)*int64(recordSize), nil
 }
 
-// Append writes the hash for ledger seq. Callers should write contiguously: a skipped slot is
-// zero-padded and reads back as ErrMissing.
+// Append writes the hash for ledger seq; write contiguously, since a skipped slot is zero-padded and reads back as ErrMissing.
 func (db *DB) Append(seq uint32, h [recordSize]byte) error {
 	off, err := db.recordOffset(seq)
 	if err != nil {
@@ -155,8 +149,7 @@ func (db *DB) Append(seq uint32, h [recordSize]byte) error {
 	return nil
 }
 
-// Get returns the recorded hash for ledger seq. Returns ErrMissing
-// when the slot is past EOF or all-zero.
+// Get returns the recorded hash for ledger seq, or ErrMissing when the slot is past EOF or all-zero.
 func (db *DB) Get(seq uint32) ([recordSize]byte, error) {
 	var out [recordSize]byte
 	off, err := db.recordOffset(seq)
@@ -176,10 +169,7 @@ func (db *DB) Get(seq uint32) ([recordSize]byte, error) {
 	return out, nil
 }
 
-// Verify compares observed against the stored hash for seq. Returns
-// nil on match, ErrDrift on mismatch, ErrMissing when no record
-// exists yet. Callers that want "record on first sight, verify
-// thereafter" semantics should fall back to Append on ErrMissing.
+// Verify compares observed against the stored hash for seq: nil on match, ErrDrift on mismatch, ErrMissing when unrecorded (callers wanting record-on-first-sight fall back to Append).
 func (db *DB) Verify(seq uint32, observed [recordSize]byte) error {
 	stored, err := db.Get(seq)
 	if err != nil {

@@ -16,9 +16,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 )
 
-// Observer is the dispatcher-facing LiquidityPoolEntry observer (ADR-0022), a
-// [dispatcher.LedgerEntryChangeDecoder] driven by the same watched-asset config as the trustlines
-// and claimable observers.
+// Observer is the dispatcher-facing LiquidityPoolEntry observer (ADR-0022), a [dispatcher.LedgerEntryChangeDecoder] driven by the same watched-asset config as the trustlines and claimable observers.
 type Observer struct {
 	watched map[string]struct{}
 
@@ -66,9 +64,7 @@ func NewObserver(watched []string) (*Observer, error) {
 
 func (*Observer) Name() string { return SourceName }
 
-// Matches returns true for a body-carrying change on a ConstantProduct pool (the only LP variant)
-// with at least one side in the watched set. A Removed variant matches only when the pre-image
-// memo already knows the pool's watched sides, as in claimable_balances.
+// Matches returns true for a body-carrying change on a ConstantProduct pool (the only LP variant) with at least one watched side; a Removed variant matches only when the pre-image memo already knows the pool's watched sides, as in claimable_balances.
 func (o *Observer) Matches(change xdr.LedgerEntryChange) bool {
 	if change.Type == xdr.LedgerEntryChangeTypeLedgerEntryRemoved {
 		poolID, ok := removedPoolID(change)
@@ -100,16 +96,8 @@ func (o *Observer) Matches(change xdr.LedgerEntryChange) bool {
 	return false
 }
 
-// Decode implements [dispatcher.LedgerEntryChangeDecoder]. Emits one Observation per watched
-// asset side.
-//
-// A Removed change (pool deleted) emits one removal Observation per watched side (Balance zero,
-// IsRemoval true) so the served aggregate stops counting the vanished reserves. The removal is an
-// absorbing state, not a delta, so re-ingesting a ledger rewrites the identical rows rather than
-// double-subtracting.
-//
-// A State change carries only the pre-image; it feeds the memo and emits nothing, since emitting
-// would persist a stale reserve.
+// Decode implements [dispatcher.LedgerEntryChangeDecoder], emitting one Observation per watched asset side; a Removed change emits zero-balance removal rows
+// (absorbing, so re-ingest is idempotent) and a State change only feeds the memo, since emitting it would persist a stale reserve.
 func (o *Observer) Decode(ctx dispatcher.LedgerEntryChangeContext) ([]consumer.Event, error) {
 	if ctx.Change.Type == xdr.LedgerEntryChangeTypeLedgerEntryRemoved {
 		poolID, ok := removedPoolID(ctx.Change)

@@ -64,8 +64,7 @@ var extraBlockedNets = func() []*net.IPNet {
 	return out
 }()
 
-// IsBlockedIP reports whether ip is in a non-public / SSRF-dangerous range; nil is blocked
-// (fail-closed). It is the canonical guard, never re-implemented per package.
+// IsBlockedIP reports whether ip is in a non-public / SSRF-dangerous range; nil is blocked (fail-closed). It is the canonical guard, never re-implemented per package.
 func IsBlockedIP(ip net.IP) bool {
 	if ip == nil {
 		return true
@@ -89,11 +88,7 @@ func IsBlockedIP(ip net.IP) bool {
 	return false
 }
 
-// DialFirstReachable dials each of ips on port in order and returns the first
-// connection that succeeds, or every attempt's error joined. Callers must have
-// passed every ip through IsBlockedIP first; dialing the literal (never the
-// hostname) keeps the kernel from re-resolving to an unchecked address, and
-// falling through keeps one dead A/AAAA record from failing the whole dial.
+// DialFirstReachable dials each of ips on port in order and returns the first success, or every attempt's error joined. Callers must have passed every ip through IsBlockedIP; dialing the literal (never the hostname) keeps the kernel from re-resolving to an unchecked address, and falling through keeps one dead A/AAAA record from failing the dial.
 func DialFirstReachable(ctx context.Context, dialer *net.Dialer, network string, ips []net.IP, port string) (net.Conn, error) {
 	if len(ips) == 0 {
 		return nil, errors.New("nettools: no addresses to dial")
@@ -112,8 +107,7 @@ func DialFirstReachable(ctx context.Context, dialer *net.Dialer, network string,
 	return nil, errors.Join(errs...)
 }
 
-// IsReservedTLD reports whether host is (or is under) a documentation/reserved
-// TLD per RFC 2606 / RFC 6761 — never a real internet destination.
+// IsReservedTLD reports whether host is (or is under) a documentation/reserved TLD per RFC 2606 / RFC 6761, never a real internet destination.
 func IsReservedTLD(host string) bool {
 	h := strings.ToLower(strings.TrimSuffix(host, "."))
 	for _, tld := range []string{"example", "test", "invalid", "localhost"} {

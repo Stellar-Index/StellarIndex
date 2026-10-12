@@ -23,9 +23,7 @@ import (
 //go:embed data/*.md
 var contentFS embed.FS
 
-// Severity matches the SEV-1/2/3 convention from
-// docs/operations/sev-playbook.md. Customer-facing only — internal
-// SEV-A/B/C ladders aren't exposed.
+// Severity matches the SEV-1/2/3 convention from docs/operations/sev-playbook.md; customer-facing only, internal SEV-A/B/C ladders are not exposed.
 type Severity string
 
 const (
@@ -34,9 +32,7 @@ const (
 	SeverityInformative Severity = "SEV-3"
 )
 
-// Status tracks the customer-facing lifecycle of an incident.
-// Mirrors the fields used by Statuspage and similar tools so
-// status-page UIs can render familiar pills.
+// Status tracks the customer-facing incident lifecycle, mirroring Statuspage-style fields so status-page UIs can render familiar pills.
 type Status string
 
 const (
@@ -100,9 +96,7 @@ type rawFrontmatter struct {
 	Date               string   `yaml:"date"`
 }
 
-// Load parses every `data/*.md` file in the embedded directory, newest `started_at` first, skipping
-// `_`-prefixed files. Per-file errors are logged and skipped; Load fails only if the embedded FS
-// is unreadable.
+// Load parses every `data/*.md` file in the embedded directory, newest `started_at` first, skipping `_`-prefixed files; per-file errors are logged and skipped, and it fails only if the embedded FS is unreadable.
 func Load(logger *slog.Logger) ([]Incident, error) {
 	if logger == nil {
 		logger = slog.Default()

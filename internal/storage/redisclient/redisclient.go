@@ -14,16 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 )
 
-// Build returns a [redis.UniversalClient] for the API and aggregator binaries.
-//
-// Selection rule:
-//   - cfg.RedisSentinelAddrs non-empty → FailoverClient (survives failover without a config
-//     change); cfg.RedisAddr is ignored.
-//   - Sentinel empty AND cfg.RedisAddr non-empty → plain Client.
-//   - both empty → nil; the caller decides whether that is fatal (aggregator) or tolerable
-//     (API caches fall through gracefully).
-//
-// The client is safe for concurrent use; close it on shutdown.
+// Build returns a [redis.UniversalClient] for the API and aggregator: cfg.RedisSentinelAddrs non-empty gives a FailoverClient (RedisAddr ignored), else RedisAddr non-empty a plain Client, else nil (the caller decides whether that is fatal or tolerable). Safe for concurrent use; close on shutdown.
 func Build(cfg config.StorageConfig) redis.UniversalClient {
 	// Username is empty by default (Redis's default-user path) and set
 	// to "stellarindex" (or per-component) when the operator sets
@@ -61,10 +52,7 @@ func Build(cfg config.StorageConfig) redis.UniversalClient {
 	return c
 }
 
-// Mode reports which branch [Build] would take. Used by the
-// startup logger so operators see "redis mode=sentinel" or
-// "redis mode=single" in the boot line — matters for SEV-1
-// triage when the config doesn't match the deployed topology.
+// Mode reports which branch [Build] would take, so the boot line shows "redis mode=sentinel" or "single", which matters for triage when config does not match the deployed topology.
 func Mode(cfg config.StorageConfig) string {
 	switch {
 	case len(cfg.RedisSentinelAddrs) > 0:

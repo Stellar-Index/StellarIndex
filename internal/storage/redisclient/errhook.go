@@ -37,9 +37,7 @@ func (errorMetricsHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
 	}
 }
 
-// ProcessPipelineHook counts each failed command in the pipeline, except
-// that a transport failure (which every queued command inherits) counts once
-// and a transaction's MULTI/EXEC wrappers are not counted.
+// ProcessPipelineHook counts each failed command in the pipeline, except that a transport failure (which every queued command inherits) counts once and a transaction's MULTI/EXEC wrappers are not counted.
 func (errorMetricsHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
 	return func(ctx context.Context, cmds []redis.Cmder) error {
 		err := next(ctx, cmds)

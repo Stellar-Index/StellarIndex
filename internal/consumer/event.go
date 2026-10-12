@@ -1,8 +1,6 @@
 package consumer
 
-// Event is the sum type of every payload a source can emit.
-// Concrete shapes are defined in internal/canonical; consumers
-// type-switch on the concrete type, not this interface.
+// Event is the sum type of every payload a source can emit; concrete shapes live in internal/canonical and consumers type-switch on the concrete type, not this interface.
 type Event interface {
 	// EventKind is a constant string — e.g. "soroswap.trade",
 	// "aquarius.trade". Used as the "kind" label on

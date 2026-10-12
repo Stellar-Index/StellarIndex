@@ -15,16 +15,12 @@ type Decoder struct {
 
 var ErrEmptyWatchSet = errors.New("sep41_transfers: cannot construct Decoder with empty watched-contract list")
 
-// NewUngatedDecoder returns a Decoder whose Decode classifies by topic alone with NO watched-set
-// gate, for lake-derive jobs (ch-cap67-movements) that must cover the contracts the watched set
-// excludes (native XLM's SAC above all). Its Matches always returns false, so it cannot be wired
-// into the gated dispatcher/projector paths by accident.
+// NewUngatedDecoder returns a Decoder that classifies by topic alone with NO watched-set gate, for lake-derive jobs (ch-cap67-movements) that must cover contracts the watched set excludes (native XLM's SAC above all); its Matches always returns false, so it cannot be wired into the gated dispatcher/projector paths by accident.
 func NewUngatedDecoder() *Decoder {
 	return &Decoder{watched: map[string]struct{}{}}
 }
 
-// NewDecoder constructs a Decoder watching the supplied SEP-41
-// contract C-strkey list. Empty input rejected as a config error.
+// NewDecoder constructs a Decoder watching the supplied SEP-41 contract C-strkey list; empty input is rejected as a config error.
 func NewDecoder(watched []string) (*Decoder, error) {
 	if len(watched) == 0 {
 		return nil, ErrEmptyWatchSet
@@ -41,11 +37,7 @@ func NewDecoder(watched []string) (*Decoder, error) {
 
 func (*Decoder) Name() string { return SourceName }
 
-// Matches returns true when topic[0] is transfer / approve / set_admin / set_authorized on a
-// watched contract. mint/burn/clawback belong to sep41_supply, so the observers never double-process.
-//
-// The projector reuses this watched-set decoder because it must reproduce exactly what the
-// dispatcher writes: the watched set is the gate on both paths.
+// Matches returns true when topic[0] is transfer / approve / set_admin / set_authorized on a watched contract (mint/burn/clawback belong to sep41_supply, so observers never double-process); the projector reuses this watched-set gate because it must reproduce exactly what the dispatcher writes.
 func (d *Decoder) Matches(ev events.Event) bool {
 	if ev.Type != "contract" {
 		return false

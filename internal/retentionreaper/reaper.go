@@ -42,8 +42,7 @@ const (
 	WebhookDeliveryRetention = 30 * 24 * time.Hour
 )
 
-// SweepFunc deletes terminal rows older than olderThan and returns the
-// count removed. It must never delete a row that is still live.
+// SweepFunc deletes terminal rows older than olderThan and returns the count removed; it must never delete a row that is still live.
 type SweepFunc func(ctx context.Context, olderThan time.Time) (int64, error)
 
 // CountFunc returns the table's current row count.
@@ -78,8 +77,7 @@ type Reaper struct {
 	now       func() time.Time
 }
 
-// New builds a Reaper. Panics on a missing name, sweep or retention —
-// each is a wiring bug.
+// New builds a Reaper; it panics on a missing name, sweep or retention, each a wiring bug.
 func New(opts Options) *Reaper {
 	if opts.Name == "" || opts.Sweep == nil || opts.Retention <= 0 {
 		panic("retentionreaper: New requires Name, Sweep and a positive Retention")
@@ -106,8 +104,7 @@ func New(opts Options) *Reaper {
 	return r
 }
 
-// Run sweeps once immediately, then every Interval, until ctx is
-// cancelled.
+// Run sweeps once immediately, then every Interval, until ctx is cancelled.
 func (r *Reaper) Run(ctx context.Context) error {
 	tick := time.NewTicker(r.interval)
 	defer tick.Stop()
@@ -123,9 +120,7 @@ func (r *Reaper) Run(ctx context.Context) error {
 	}
 }
 
-// Sweep runs one retention pass and refreshes the row gauge. Errors are
-// counted and swallowed: a failed pass is retried next tick. The gauge is
-// refreshed even after a failed DELETE, when the row count matters most.
+// Sweep runs one retention pass and refreshes the row gauge; errors are counted and swallowed (retried next tick), and the gauge refreshes even after a failed DELETE, when the row count matters most.
 func (r *Reaper) Sweep(ctx context.Context) {
 	deleted, err := r.sweep(ctx, r.now().Add(-r.retention))
 	switch {

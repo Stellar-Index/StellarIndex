@@ -12,9 +12,7 @@ import (
 	"fmt"
 )
 
-// Run is the package's entry point; see discovery.Run for the calling convention. args[0] is the
-// subcommand verb, args[1:] its flags. Dispatch is split by role to keep each switch under the
-// gocyclo ceiling: lake-mutating verbs rewrite lake or served data; verifiers touch no row.
+// Run is the package's entry point (see discovery.Run for the calling convention): args[0] is the subcommand verb, args[1:] its flags; dispatch is split by role (lake-mutating verbs vs verifiers that touch no row) to keep each switch under the gocyclo ceiling.
 func Run(args []string) error {
 	if fn, ok := lakeMutatorVerb(args[0]); ok {
 		return fn(args[1:])

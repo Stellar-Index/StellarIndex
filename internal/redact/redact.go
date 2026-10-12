@@ -14,9 +14,7 @@ import (
 	"strings"
 )
 
-// ConnString renders a connection string for a fatal boot error, keeping only
-// the scheme: the input is malformed, and managed-Redis URIs carry an inline
-// password just as Postgres DSNs do.
+// ConnString renders a connection string for a fatal boot error keeping only the scheme: the input is malformed, and managed-Redis URIs carry an inline password just as Postgres DSNs do.
 func ConnString(v string) string {
 	if v == "" {
 		return "(empty)"
@@ -44,9 +42,7 @@ var quotedURLPasswordPattern = regexp.MustCompile(`("[a-zA-Z][a-zA-Z0-9+.\-]*://
 // does not match: it holds an env-var name, which is the diagnostic.
 var keywordPasswordPattern = regexp.MustCompile(`(?i)\b(sslpassword|password)\s*=\s*(?:'(?:\\.|[^'])*'|[^\s&"';]*)`)
 
-// Credentials strips inline secrets from text formatted elsewhere, such as a
-// library error embedding its DSN. Apply it where the process writes, so new
-// error paths inherit it; host, database and reason survive.
+// Credentials strips inline secrets from text formatted elsewhere, such as a library error embedding its DSN; apply it where the process writes so new error paths inherit it. Host, database and reason survive.
 func Credentials(s string) string {
 	// Quoted first: it knows where the URL ends, so it must see the text
 	// before the token pattern has cut a first segment out of it.
@@ -63,18 +59,8 @@ const (
 	marker   = ":" + redacted + "@"
 )
 
-// Known is [Credentials] for a process that holds the connection strings its
-// output might repeat, so it can cut each secret by value: the longest prefix
-// of it after its own anchor (`scheme://user:`, `password=`), which catches a
-// truncated echo, then the whole `:password@` span raw or %q-escaped. Both
-// keep a delimiter so a DSN like postgres://app:app@localhost/app does not
-// redact `database "app"`. Held strings are cut together: two sharing an
-// anchor, cut one at a time, leak the second's tail.
-//
-// Not closed: a secret echoed without its anchor or span; a query password
-// containing `&<recognised parameter>=` (see [queryValueEnd]); credentials not
-// held as connection strings (PGPASSWORD, passfile). It is the second line of
-// defence; not echoing operator text at all is the first.
+// Known is [Credentials] for held connection strings: it cuts each secret by value (anchored prefix, then the `:password@` span raw or %q-escaped), keeping delimiters.
+// Second line of defence only: a secret echoed without its anchor, or credentials not held as connection strings (PGPASSWORD, passfile), pass through.
 func Known(text string, connStrings ...string) string {
 	var (
 		held  []heldSecret
@@ -368,10 +354,7 @@ func commonPrefixLen(a, b string) int {
 	return n
 }
 
-// ParseFailure says why a held connection string could not be used without
-// repeating it: net/url's reason quotes fragments of the input (a password with
-// `/`, `?` or `#` reads as `invalid port ":<password>"`). The string is
-// described only when it parses; otherwise only the kind is returned.
+// ParseFailure says why a held connection string could not be used without repeating it: net/url's reason quotes fragments of the input (a password with `/`, `?` or `#` reads as `invalid port ":<password>"`), so the string is described only when it parses, otherwise only the kind.
 func ParseFailure(connString string, err error) string {
 	kind := parseErrorKind(err)
 	u, perr := url.Parse(connString)

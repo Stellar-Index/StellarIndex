@@ -13,13 +13,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// Canonical returns one LedgerEntryChanges block stably sorted by ledger key.
-//
-// stellar-core lists a block's keys in hash-map iteration order, so two
-// exports of the same ledger can disagree on it; a key's own changes (state
-// before updated/removed, restored before updated) are always in commit
-// order, and a stable sort keeps that while fixing the order across keys.
-// The input is never modified: it is the ledger meta other readers share.
+// Canonical returns one LedgerEntryChanges block stably sorted by ledger key: stellar-core lists keys in hash-map order so two exports of a ledger can disagree, while a key's own changes stay in commit order (state before updated/removed, restored before updated). The input is never modified, as it is shared ledger meta.
 func Canonical(changes []xdr.LedgerEntryChange) []xdr.LedgerEntryChange {
 	if len(changes) < 2 {
 		return changes

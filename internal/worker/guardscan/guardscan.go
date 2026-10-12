@@ -49,12 +49,7 @@ const (
 	KindUnresolved Kind = "unresolved"
 )
 
-// Config selects the recovery helpers a body may use to satisfy the guard.
-//
-// Guards are call names as written in source: a bare "recoverBackgroundWorker" or a qualified
-// "worker.Recover". A bare `recover()` is NOT accepted alone: swallowing a panic without logging
-// it or moving stellarindex_worker_panics_total turns a loud crash into a silent one, the failure
-// this guard prevents. A deferred literal counts only when it calls recover() AND one of Guards.
+// Config selects the recovery helpers a body may use as its guard: call names as written in source ("recoverBackgroundWorker", "worker.Recover"). A bare recover() is not accepted alone, since swallowing a panic unlogged and uncounted turns a loud crash into a silent one; a deferred literal must call recover() AND one of Guards.
 type Config struct {
 	Guards []string
 }
@@ -87,12 +82,7 @@ type Site struct {
 	fset *token.FileSet
 }
 
-// Calls reports whether the site's body calls name anywhere, including inside nested function
-// literals. name matches the qualified rendering ("pipeline.PersistEvents") or the bare final
-// identifier ("ListenAndServe"), so a call through a variable receiver still matches.
-//
-// It is the hook for CONTENT-checked exemptions: asserting the body calls "ListenAndServe"
-// rather than trusting a line number keeps an exemption from migrating onto an unrelated worker.
+// Calls reports whether the site's body calls name anywhere, including nested function literals; name matches the qualified ("pipeline.PersistEvents") or bare final identifier, so content-checked exemptions cannot migrate onto an unrelated worker like a line number can.
 func (s Site) Calls(name string) bool {
 	if s.body == nil {
 		return false
@@ -111,9 +101,7 @@ func (s Site) Calls(name string) bool {
 	return found
 }
 
-// DefersCall reports whether the site's body defers name at its OWN statement level, descending
-// through blocks and if/for/select bodies but never into a nested function literal, whose defer
-// does not run for this goroutine and would certify a guard that never fires.
+// DefersCall reports whether the site's body defers name at its own statement level, descending through blocks and if/for/select but never a nested function literal, whose defer does not run for this goroutine and would certify a guard that never fires.
 func (s Site) DefersCall(name string) bool {
 	if s.body == nil {
 		return false
@@ -123,10 +111,7 @@ func (s Site) DefersCall(name string) bool {
 	})
 }
 
-// SendsOn reports whether the site's body contains a channel send on the
-// named channel, at any depth. Used to assert that a site which recovers
-// a panic in a LOAD-BEARING goroutine still re-signals the fault as fatal
-// rather than quietly continuing.
+// SendsOn reports whether the site's body sends on the named channel at any depth, to assert a recovering load-bearing goroutine still re-signals the fault as fatal.
 func (s Site) SendsOn(chanName string) bool {
 	if s.body == nil {
 		return false
@@ -145,18 +130,12 @@ func (s Site) SendsOn(chanName string) bool {
 	return found
 }
 
-// ScanFile parses path and returns one Site per `go` statement in it, in
-// source order. Sites are returned for every `go` statement including
-// unresolvable ones; an error is returned only when path itself (or the
-// module it lives in) cannot be read.
+// ScanFile parses path and returns one Site per `go` statement in source order, including unresolvable ones; it errors only when path or its module cannot be read.
 func ScanFile(path string, cfg Config) ([]Site, error) {
 	return NewScanner(cfg).ScanFile(path)
 }
 
-// Scanner scans many files while parsing each package it resolves into
-// only once; a per-file ScanFile re-parses the scanned file's whole
-// package every time, which is quadratic over a large package tree.
-// A Scanner is not safe for concurrent use.
+// Scanner scans many files, parsing each resolved package once (per-file ScanFile re-parses the whole package, quadratic over a large tree). Not safe for concurrent use.
 type Scanner struct {
 	cfg  Config
 	pkgs map[string]*pkgIndex // keyed by absolute directory
@@ -169,8 +148,7 @@ func NewScanner(cfg Config) *Scanner {
 	return &Scanner{cfg: cfg, pkgs: map[string]*pkgIndex{}}
 }
 
-// ScanFile is the package-level ScanFile, sharing this Scanner's package
-// index across calls.
+// ScanFile is the package-level ScanFile, sharing this Scanner's package index across calls.
 func (sc *Scanner) ScanFile(path string) ([]Site, error) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)

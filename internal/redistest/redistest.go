@@ -39,9 +39,7 @@ func Run(t testing.TB) *Server {
 	return s
 }
 
-// Kill takes the server down. Unlike closing a miniredis and keeping its
-// address, no later dial can reach a different process that has bound the
-// freed ephemeral port.
+// Kill takes the server down; unlike closing a miniredis and keeping its address, no later dial can reach a different process that has bound the freed ephemeral port.
 func (s *Server) Kill() {
 	s.down.Store(true)
 	s.Close()

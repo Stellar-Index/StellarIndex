@@ -12,9 +12,7 @@ import (
 	"testing"
 )
 
-// RedirectTrap is an origin that 302s every request to a second server on
-// another port, recording whether the key header reached either side. The
-// port change is the case net/http itself never strips Authorization on.
+// RedirectTrap is an origin that 302s every request to a second server on another port, recording whether the key header reached either side; the port change is the case net/http itself never strips Authorization on.
 type RedirectTrap struct {
 	// URL is the origin's base URL; point the client under test at it.
 	URL string
@@ -50,8 +48,7 @@ func NewRedirectTrap(t testing.TB, header string) *RedirectTrap {
 	return trap
 }
 
-// AssertKeyStayedOnOrigin fails unless the client sent the key to the
-// origin and then did not dial the redirect target at all.
+// AssertKeyStayedOnOrigin fails unless the client sent the key to the origin and then did not dial the redirect target at all.
 func (r *RedirectTrap) AssertKeyStayedOnOrigin(t testing.TB) {
 	t.Helper()
 	if r.originHits.Load() == 0 || !r.originSawKey.Load() {

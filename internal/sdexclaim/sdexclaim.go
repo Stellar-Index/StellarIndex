@@ -33,32 +33,14 @@ func parts(a xdr.ClaimAtom) (sold, bought xdr.Int64, soldAsset, boughtAsset xdr.
 	return 0, 0, xdr.Asset{}, xdr.Asset{}, false
 }
 
-// BoughtSide returns one ClaimAtom's (AssetBought, AmountBought), what the taker PAID into that
-// offer or pool, and whether its discriminant is a known variant. Callers needing a leg use this
-// so a new ClaimAtom variant is taught to [parts] once.
+// BoughtSide returns one ClaimAtom's (AssetBought, AmountBought), what the taker PAID into that offer or pool, and whether its discriminant is a known variant; callers needing a leg use it so a new ClaimAtom variant is taught to [parts] once.
 func BoughtSide(a xdr.ClaimAtom) (asset xdr.Asset, amount xdr.Int64, known bool) {
 	_, bought, _, boughtAsset, known := parts(a)
 	return boughtAsset, bought, known
 }
 
-// IsRealTrade reports whether internal/sources/sdex.decodeClaimAtom would
-// return a Trade rather than an error for one ClaimAtom.
-//
-// It is the SINGLE definition of that predicate, applied by both count oracles
-// so both equal the DECODER's trade output. They do NOT equal COUNT(trades):
-// the writer also drops one-side-zero fills (canonical.Trade.Validate), which
-// rule 2 keeps. A served-tier oracle must re-derive through that filter
-// (chops.sdexServedCensus).
-//
-// The four drop rules, in the decoder's order:
-//
-//  1. UNKNOWN ATOM TYPE: decodeClaimAtom returns ErrUnknownClaimAtomType.
-//  2. BOTH LEGS ZERO: no-op atoms. ONE-side-zero fills are KEPT.
-//  3. AN ASSET THAT DOESN'T CONVERT: [canonical.AssetFromXDR] rejects
-//     unsupported types, un-encodable issuers and codes outside [a-zA-Z0-9].
-//  4. A SELF-CROSS: canonical.NewPair rejects base == quote.
-//
-// An oracle counting rows the writer refuses can NEVER reconcile.
+// IsRealTrade reports whether sdex.decodeClaimAtom would return a Trade for a ClaimAtom: the single predicate both count oracles share, so they equal the decoder's output.
+// It drops unknown atom types, both-legs-zero (one-side-zero is kept), assets AssetFromXDR rejects, and self-crosses; the writer's Validate drops more (see chops.sdexServedCensus).
 func IsRealTrade(a xdr.ClaimAtom) bool {
 	sold, bought, soldAsset, boughtAsset, known := parts(a)
 	if !known {
@@ -81,9 +63,7 @@ func IsRealTrade(a xdr.ClaimAtom) bool {
 	return true
 }
 
-// RealTradeCount counts the claims that will become `trades` rows — see
-// [IsRealTrade] for the drop rules and why they must match the decoder's
-// exactly.
+// RealTradeCount counts the claims that will become `trades` rows; see [IsRealTrade] for the drop rules, which must match the decoder's exactly.
 func RealTradeCount(claims []xdr.ClaimAtom) int {
 	n := 0
 	for i := range claims {

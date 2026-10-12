@@ -10,8 +10,7 @@ const (
 	ObservationKind = "claimable_balances.observation"
 )
 
-// Observation is one ClaimableBalanceEntry-delta record, identified per claimable balance id (not
-// per account). Removed variants (a claim) carry Balance zero and IsRemoval true.
+// Observation is one ClaimableBalanceEntry-delta record, identified per claimable balance id (not per account); Removed variants (a claim) carry Balance zero and IsRemoval true.
 type Observation struct {
 	// ClaimableID is the BalanceID's hex form, unique across the network.
 	ClaimableID string

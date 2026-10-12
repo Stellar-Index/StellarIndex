@@ -13,17 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
-// Observer is the dispatcher-facing SAC balance observer (ADR-0022).
-// Implements [dispatcher.LedgerEntryChangeDecoder].
-//
-// Watched-contract driven: the observer's NewObserver takes a
-// map of SAC contract IDs → asset_keys. Match runs:
-//
-//  1. Type discriminator (LedgerEntryTypeContractData)
-//  2. Contract scAddress == one of the watched contracts
-//  3. Key shape is `Vec(Symbol("Balance"), Address)`
-//
-// The operator TOML (`[supply.sac_wrappers]`) feeds NewObserver's argument.
+// Observer is the dispatcher-facing SAC balance observer (ADR-0022), a [dispatcher.LedgerEntryChangeDecoder] gated on watched contracts (NewObserver's contract-ID to asset_key map, fed by `[supply.sac_wrappers]`): it matches ContractData entries whose contract is watched and whose key is `Vec(Symbol("Balance"), Address)`.
 type Observer struct {
 	// wrappers maps SAC contract C-strkey → asset_key (CODE:ISSUER).
 	wrappers map[string]string
@@ -46,9 +36,7 @@ var (
 	ErrUnknownValShape = scval.ErrUnknownBalanceValShape
 )
 
-// NewObserver constructs the SAC observer with the supplied
-// contract→asset_key map. Empty input is rejected as a config
-// error.
+// NewObserver constructs the SAC observer with the supplied contract to asset_key map; empty input is rejected as a config error.
 func NewObserver(wrappers map[string]string) (*Observer, error) {
 	if len(wrappers) == 0 {
 		return nil, ErrEmptyWrapperMap
@@ -140,9 +128,7 @@ func (o *Observer) Decode(ctx dispatcher.LedgerEntryChangeContext) ([]consumer.E
 	}}, nil
 }
 
-// UnknownValShapeDrops is the count of Balance-keyed changes for a watched
-// contract whose value shape [scval.SEP41BalanceAmount] could not decode.
-// See the field doc on [Observer.unknownValShapeDrops].
+// UnknownValShapeDrops counts Balance-keyed changes for a watched contract whose value shape [scval.SEP41BalanceAmount] could not decode (see [Observer.unknownValShapeDrops]).
 func (o *Observer) UnknownValShapeDrops() int { return o.unknownValShapeDrops }
 
 // contractDataFromChange returns the ContractDataEntry and is-removal flag for any change

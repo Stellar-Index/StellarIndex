@@ -44,8 +44,7 @@ type Subject struct {
 	Ledger uint32
 }
 
-// Parse decodes and validates a hold file. Unknown keys are an error so a
-// typo cannot silently turn a hold into a no-op.
+// Parse decodes and validates a hold file; unknown keys are an error so a typo cannot silently turn a hold into a no-op.
 func Parse(doc []byte) ([]Hold, error) {
 	var f file
 	meta, err := toml.NewDecoder(bytes.NewReader(doc)).Decode(&f)
@@ -153,14 +152,10 @@ func Match(holds []Hold, sub Subject) (Hold, bool) {
 	return Hold{}, false
 }
 
-// DefaultReloadInterval replaces a non-positive Watch interval, which would
-// panic time.NewTicker.
+// DefaultReloadInterval replaces a non-positive Watch interval, which would panic time.NewTicker.
 const DefaultReloadInterval = 15 * time.Second
 
-// Watch polls path every interval and hands each successfully parsed list
-// to apply. A missing file means no holds; an unreadable, invalid or
-// zero-byte file keeps the previous list, so a bad edit cannot silently lift a hold.
-// Blocks until ctx is done.
+// Watch polls path every interval and hands each successfully parsed list to apply, blocking until ctx is done. A missing file means no holds; an unreadable, invalid or zero-byte file keeps the previous list, so a bad edit cannot silently lift a hold.
 func Watch(ctx context.Context, path string, interval time.Duration, apply func([]Hold), logger *slog.Logger) {
 	var last []byte
 	reload := func() {

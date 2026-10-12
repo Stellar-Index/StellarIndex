@@ -43,8 +43,7 @@ func newDecimalsCache(reader decimalsAssetReader, logger *slog.Logger) *decimals
 	return &decimalsCache{reader: reader, logger: logger}
 }
 
-// Refresh reloads the snapshot from Postgres, atomically swapping it on
-// success. On error the previous snapshot (if any) is retained.
+// Refresh reloads the snapshot from Postgres and atomically swaps it in; on error the previous snapshot (if any) is retained.
 func (c *decimalsCache) Refresh(ctx context.Context) error {
 	rows, err := c.reader.LoadNonstandardDecimalsAssets(ctx)
 	if err != nil {
@@ -63,9 +62,7 @@ func (c *decimalsCache) Refresh(ctx context.Context) error {
 	return nil
 }
 
-// Lookup satisfies aggregate.DecimalsLookup. A nil receiver or a cold/
-// never-refreshed cache both report found=false (never "everything
-// flagged") — same fail-open contract as internal/api/v1's cache.
+// Lookup satisfies aggregate.DecimalsLookup; a nil receiver or cold cache reports found=false (never "everything flagged"), the same fail-open contract as internal/api/v1's cache.
 func (c *decimalsCache) Lookup(assetID string) (decimals int, found bool) {
 	if c == nil {
 		return 0, false

@@ -8,8 +8,7 @@ import (
 	"testing"
 )
 
-// RunHoldsInstanceLock fails t unless mainPath's run() takes the
-// timescale.<lockName> instance lock before any goroutine and returns instanceLock.Lost().
+// RunHoldsInstanceLock fails t unless mainPath's run() takes the timescale.<lockName> instance lock before any goroutine and returns instanceLock.Lost().
 func RunHoldsInstanceLock(t *testing.T, mainPath, lockName string) {
 	t.Helper()
 	fset := token.NewFileSet()
