@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Defensive-guard coverage. The INSERT/SELECT round-trip runs against
@@ -30,5 +31,33 @@ func TestUpsertSoroswapPair_rejectsEmptyToken1(t *testing.T) {
 	err := s.UpsertSoroswapPair(context.Background(), "Cpair", "C0", "")
 	if err == nil || !strings.Contains(err.Error(), "token") {
 		t.Errorf("err=%v should mention token", err)
+	}
+}
+
+// TestPgTimestamptzRepresentable guards the clamp that stops a garbage router `deadline` rejecting a valid
+// swap: a u64 sentinel renders a year-99-billion time, and one above max-int64 overflows negative; both fall
+// outside timestamptz range and would fail the whole INSERT (SQLSTATE 22008).
+func TestPgTimestamptzRepresentable(t *testing.T) {
+	cases := []struct {
+		name string
+		t    time.Time
+		want bool
+	}{
+		{"recent deadline", time.Date(2026, 6, 11, 12, 0, 0, 0, time.UTC), true},
+		{"epoch", time.Unix(0, 0).UTC(), true},
+		{"far-but-valid future", time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC), true},
+		// u64 sentinel deadline ≈ 3.1e18 seconds → year ~99 billion.
+		{"u64 sentinel deadline", time.Unix(3_100_000_000_000_000_000, 0).UTC(), false},
+		// deadline > max-int64 overflows int64() to a large negative → BC year.
+		{"int64-overflow BC", time.Unix(-3_100_000_000_000_000_000, 0).UTC(), false},
+		{"just past pg max", pgTimestamptzMax.Add(time.Hour), false},
+		{"just before pg min", pgTimestamptzMin.Add(-time.Hour), false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := pgTimestamptzRepresentable(c.t); got != c.want {
+				t.Errorf("pgTimestamptzRepresentable(%v) = %v, want %v", c.t, got, c.want)
+			}
+		})
 	}
 }
