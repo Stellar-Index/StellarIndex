@@ -666,3 +666,156 @@ func TestRWASummaryProvenance_ProseDescribesEveryReachableProvenance(t *testing.
 		t.Errorf("four-provenance prose does not state the mixture: %q", all)
 	}
 }
+
+// A set mixing classic and contract-issued rows: by_issuer holds only the
+// classic G-addresses — a contract row's empty Issuer is not a grouping key.
+func TestRWAIdentity_ByIssuerSkipsContractRows(t *testing.T) {
+	const (
+		etherfuse = "GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC"
+		ondo      = "GAKE3L4PLQPE6BMUTPGXXDDEYRNQSMWQTMVZDSXTPXDOOMFDTVUOGCEX"
+	)
+	mcap := func(v string) RWAValuation { return RWAValuation{MarketCapUSD: &v} }
+	assets := []RWAAsset{
+		{AssetID: "USTRY-" + etherfuse, Code: "USTRY", Issuer: etherfuse, IssuerDirectoryName: "Etherfuse", HomeDomain: "etherfuse.com", Valuation: mcap("10.00")},
+		{AssetID: "USDY-" + ondo, Code: "USDY", Issuer: ondo, IssuerDirectoryName: "Ondo", HomeDomain: "ondo.finance", Valuation: mcap("20.00")},
+		{AssetID: "CA1", ContractID: "CA1", IssuerDirectoryName: "Entity One", IssuerDirectoryDomain: "one.example", Valuation: mcap("30.00")},
+		{AssetID: "CA2", ContractID: "CA2", IssuerDirectoryName: "Entity Two", IssuerDirectoryDomain: "two.example", Valuation: mcap("40.00")},
+	}
+
+	got := rwaByIssuer(assets)
+	if len(got) != 2 {
+		t.Fatalf("by_issuer = %+v, want exactly the 2 classic issuers", got)
+	}
+	want := map[string]string{etherfuse: "10.00", ondo: "20.00"}
+	for _, row := range got {
+		if row.Issuer == "" {
+			t.Errorf("by_issuer carries a blank issuer %+v merging contract rows of distinct entities", row)
+			continue
+		}
+		if row.MarketCapUSD == nil || *row.MarketCapUSD != want[row.Issuer] || row.Assets != 1 {
+			t.Errorf("by_issuer[%s] = %+v, want 1 asset at %s", row.Issuer, row, want[row.Issuer])
+		}
+	}
+	if s := rwaSummarise(assets, rwaTruncation{}); s.Issuers != 4 || s.Assets != 4 {
+		t.Errorf("summary assets/issuers = %d/%d, want 4/4 — each contract is its own issuer, never a shared blank one", s.Assets, s.Issuers)
+	}
+}
+
+// A contract row's domain comes from the curated directory, not from an
+// on-chain home_domain an attestation was fetched from, and it is served
+// under the field that says so.
+func TestRWAIdentity_ContractDirectoryDomainIsNotHomeDomain(t *testing.T) {
+	const contract = "CBNG2BVXUXUM7OUJNU6SGW7KZPG7OBNRSSFA2DSVDNCOYBJI7SE5VBSO"
+	rows := rwaContractAssetRows(
+		[]rwaContractMember{{contractID: contract, basis: "sep1_anchor_declaration", dirName: "Entity", dirDomain: "entity.example"}},
+		map[string]AssetDetail{contract: {AssetID: contract}},
+	)
+	if len(rows) != 1 {
+		t.Fatalf("rows = %+v, want 1", rows)
+	}
+	if rows[0].HomeDomain != "" {
+		t.Errorf("home_domain = %q, want empty — no attestation was fetched for a contract", rows[0].HomeDomain)
+	}
+	if rows[0].IssuerDirectoryDomain != "entity.example" {
+		t.Errorf("issuer_directory_domain = %q, want the directory's entity.example", rows[0].IssuerDirectoryDomain)
+	}
+}
+
+// TestRwaAssetIssuerCount_ContractsAreNotOneSharedBlankBucket pins that rwaAssetIssuerCount (summary.issuers) counts each
+// admitted contract as its own issuer, not one shared blank-Issuer map key.
+func TestRwaAssetIssuerCount_ContractsAreNotOneSharedBlankBucket(t *testing.T) {
+	assets := make([]RWAAsset, 0, 26)
+	for i := 0; i < 21; i++ {
+		assets = append(assets, RWAAsset{
+			AssetID: "CODE-issuer",
+			Issuer:  issuerAddr(i),
+		})
+	}
+	for i := 0; i < 5; i++ {
+		assets = append(assets, RWAAsset{
+			AssetID:    "contract-asset",
+			ContractID: contractAddr(i),
+		})
+	}
+
+	got := rwaAssetIssuerCount(assets)
+	const want = 26 // 21 distinct classic issuers + 5 distinct contracts
+	if got != want {
+		t.Fatalf("rwaAssetIssuerCount() = %d, want %d", got, want)
+	}
+}
+
+// TestRwaIssuerCount_AgreesAcrossAssetsAndHistoryViews: the same membership (21 classic issuers, 5 contracts) must publish
+// the same issuers count via rwaAssetIssuerCount and via rwaHistoryIssuerCount (/v1/rwa/history, /premium).
+func TestRwaIssuerCount_AgreesAcrossAssetsAndHistoryViews(t *testing.T) {
+	m := rwaMembership{}
+	assets := make([]RWAAsset, 0, 26)
+	for i := 0; i < 21; i++ {
+		m.members = append(m.members, rwaMember{issuer: issuerAddr(i)})
+		assets = append(assets, RWAAsset{Issuer: issuerAddr(i)})
+	}
+	for i := 0; i < 5; i++ {
+		m.contracts = append(m.contracts, rwaContractMember{contractID: contractAddr(i)})
+		assets = append(assets, RWAAsset{ContractID: contractAddr(i)})
+	}
+
+	fromAssets := rwaAssetIssuerCount(assets)
+	fromHistory := rwaHistoryIssuerCount(m)
+	if fromAssets != fromHistory {
+		t.Fatalf("issuers disagree across endpoints for the same membership: assets=%d history/premium=%d", fromAssets, fromHistory)
+	}
+	if fromAssets != 26 {
+		t.Fatalf("rwaAssetIssuerCount() = %d, want 26", fromAssets)
+	}
+}
+
+func issuerAddr(i int) string {
+	return "GISSUER" + string(rune('A'+i))
+}
+
+func contractAddr(i int) string {
+	return "CCONTRACT" + string(rune('A'+i))
+}
+
+// TestRWASummarise_EveryCapMakesALowerBound: each rebuild cap, not only the issuer cap, makes a fully-valued set's total
+// a lower bound, and the basis names the cap rather than calling the set complete.
+func TestRWASummarise_EveryCapMakesALowerBound(t *testing.T) {
+	cap100 := "100.00"
+	assets := []RWAAsset{{
+		AssetID:   "USTRY-GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC",
+		Valuation: RWAValuation{Status: RWAValuationPublished, MarketCapUSD: &cap100},
+	}}
+	for _, tc := range []struct {
+		name  string
+		trunc rwaTruncation
+		names string
+	}{
+		{"issuer cap", rwaTruncation{overIssuerCap: 2}, "issuer cap turned away 2 qualifying asset(s)"},
+		{"contract scan cap", rwaTruncation{overContractCap: 5}, "contract scan cap left 5 recognised contract(s) unevaluated"},
+		{"full issuer page", rwaTruncation{issuerPagesFull: 1}, "1 member issuer(s) have more classic assets"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sum := rwaSummarise(assets, tc.trunc)
+			if sum.AssetsUnvalued != 0 || sum.MarketCapUSD == nil || *sum.MarketCapUSD != "100.00" {
+				t.Fatalf("unvalued=%d cap=%v, want one valued row totalling 100.00", sum.AssetsUnvalued, sum.MarketCapUSD)
+			}
+			if !sum.LowerBound || !sum.Truncated {
+				t.Errorf("lower_bound/truncated = %v/%v, want true/true", sum.LowerBound, sum.Truncated)
+			}
+			if strings.Contains(sum.Basis, "Every asset in the set publishes a valuation") {
+				t.Errorf("basis claims a complete set: %q", sum.Basis)
+			}
+			if !strings.Contains(sum.Basis, tc.names) {
+				t.Errorf("basis = %q, want it to name %q", sum.Basis, tc.names)
+			}
+		})
+	}
+
+	sum := rwaSummarise(assets, rwaTruncation{})
+	if sum.LowerBound || sum.Truncated {
+		t.Errorf("untruncated fully-valued set: lower_bound/truncated = %v/%v, want false/false", sum.LowerBound, sum.Truncated)
+	}
+	if !strings.Contains(sum.Basis, "Every asset in the set publishes a valuation") {
+		t.Errorf("untruncated basis = %q", sum.Basis)
+	}
+}
