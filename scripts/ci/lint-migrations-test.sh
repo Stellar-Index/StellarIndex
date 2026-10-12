@@ -495,6 +495,29 @@ SQL
 mcatches "a TRUNCATE inside a DO block with no marker is caught" "$d" \
   "0002_reset.up.sql: blanks data and declares no"
 
+d="$(mig fu-fn-truncate 0002_track.up.sql <<'SQL'
+BEGIN;
+CREATE TABLE marks (k text PRIMARY KEY);
+CREATE FUNCTION marks_reset() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    TRUNCATE marks;
+    DELETE FROM marks;
+    RETURN NULL;
+END
+$$;
+COMMIT;
+SQL
+)"
+clean_mig "a TRUNCATE or DELETE inside a CREATE FUNCTION body does not blank data at migrate time" "$d"
+
+d="$(mig fu-fn-then-truncate 0002_track.up.sql <<'SQL'
+CREATE FUNCTION f() RETURNS void LANGUAGE plpgsql AS $$ BEGIN PERFORM 1; END $$;
+TRUNCATE marks;
+SQL
+)"
+mcatches "a TRUNCATE after a function body is still caught" "$d" \
+  "0002_track.up.sql: blanks data and declares no"
+
 d="$(mig fu-cagg 0002_recreate.up.sql <<'SQL'
 --   CALL refresh_continuous_aggregate('prices_1m', NULL, now());
 BEGIN;
