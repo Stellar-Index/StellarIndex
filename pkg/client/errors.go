@@ -10,18 +10,7 @@ import (
 	"time"
 )
 
-// APIError is the typed wrapper around an RFC 9457 problem+json
-// response. Returned from any client method when the server replies
-// with HTTP 4xx or 5xx. Clients detect and inspect via [errors.As]:
-//
-//	var apiErr *client.APIError
-//	if errors.As(err, &apiErr) {
-//	    switch apiErr.Status {
-//	    case 404: ...
-//	    case 429: ...
-//	    case 503: ...
-//	    }
-//	}
+// APIError is the typed wrapper around an RFC 9457 problem+json response, returned from any client method on HTTP 4xx or 5xx; inspect it with [errors.As].
 type APIError struct {
 	// Status is the HTTP status code (4xx / 5xx).
 	Status int
@@ -98,10 +87,7 @@ type APIError struct {
 	MonthToDate *int64
 }
 
-// RetryAfterDuration reports the recommended back-off and whether the
-// server supplied one. ok=false means the header was absent (callers
-// should fall back to their own back-off policy rather than retrying
-// immediately).
+// RetryAfterDuration reports the server's recommended back-off; ok=false means no header was sent, so fall back to your own back-off rather than retrying immediately.
 func (e *APIError) RetryAfterDuration() (d time.Duration, ok bool) {
 	return e.RetryAfter, e.RetryAfter > 0
 }
@@ -132,12 +118,10 @@ const (
 	ProblemTypePriceWithheld = "https://api.stellarindex.io/errors/price-withheld"
 )
 
-// IsNotFound reports whether the error is a 404 — of ANY kind, including
-// a withheld price. Check [APIError.IsWithheld] first.
+// IsNotFound reports whether the error is a 404 of ANY kind, including a withheld price, so check [APIError.IsWithheld] first.
 func (e *APIError) IsNotFound() bool { return e.Status == 404 }
 
-// IsWithheld reports whether the server declined to publish a price it
-// holds (problem type [ProblemTypePriceWithheld]).
+// IsWithheld reports whether the server declined to publish a price it holds (problem type [ProblemTypePriceWithheld]).
 func (e *APIError) IsWithheld() bool { return e.Type == ProblemTypePriceWithheld }
 
 // IsUnauthorized reports whether the error is a 401.

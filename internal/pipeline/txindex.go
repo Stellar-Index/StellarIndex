@@ -21,23 +21,18 @@ const (
 	TxIndexPageSize = 1000
 )
 
-// TxIndexLakeReader resolves tx hashes to every (ledger, apply order) the lake
-// holds for them. *clickhouse.TxIndexReader satisfies it; unknown hashes are absent.
+// TxIndexLakeReader resolves tx hashes to every (ledger, apply order) the lake holds; *clickhouse.TxIndexReader satisfies it, and unknown hashes are absent.
 type TxIndexLakeReader interface {
 	TxLedgerIndexes(ctx context.Context, hashes []string) (map[string][]clickhouse.TxLedgerIndex, error)
 }
 
-// TxIndexTradeTagger is the Postgres seam the tx-index walk reads and writes
-// through. *timescale.Store satisfies it.
+// TxIndexTradeTagger is the Postgres seam the tx-index walk reads and writes through; *timescale.Store satisfies it.
 type TxIndexTradeTagger interface {
 	UntaggedTxIndexTrades(ctx context.Context, from, to time.Time, afterLedger uint32, afterHash string, limit int) ([]timescale.TxIndexKey, error)
 	TagTradesTxIndex(ctx context.Context, from, to time.Time, tags []timescale.TxIndexTag) (int64, error)
 }
 
-// TagTxIndexWindow tags trades.tx_index for every untagged on-chain tx in
-// [from, to), page by page in (ledger, tx_hash) order, and returns the rows
-// tagged. It walks to the end of the window rather than retrying the oldest
-// page, so a hash the lake cannot resolve never starves the txs behind it.
+// TagTxIndexWindow tags trades.tx_index for every untagged on-chain tx in [from, to) in (ledger, tx_hash) pages and returns rows tagged; it walks to the window's end so an unresolvable hash never starves later txs.
 func TagTxIndexWindow(ctx context.Context, lake TxIndexLakeReader, store TxIndexTradeTagger, from, to time.Time, pageSize int) (int64, error) {
 	var (
 		total       int64
@@ -108,10 +103,7 @@ func txIndexAtLedger(rows []clickhouse.TxLedgerIndex, ledger uint32) (uint32, bo
 	return 0, false
 }
 
-// RunTxIndexTagger sweeps the trailing lookback window every interval,
-// back-tagging trades.tx_index (first-wins, every on-chain source) from the
-// lake. Blocks until ctx cancels; performs one final sweep on shutdown.
-// interval/lookback <= 0 select the defaults.
+// RunTxIndexTagger sweeps the trailing lookback window every interval, back-tagging trades.tx_index (first-wins) from the lake; blocks until ctx cancels, with one final sweep on shutdown, and interval/lookback <= 0 select defaults.
 func RunTxIndexTagger(ctx context.Context, logger *slog.Logger, lake TxIndexLakeReader, store TxIndexTradeTagger, interval, lookback time.Duration) {
 	if interval <= 0 {
 		interval = txIndexSweepInterval

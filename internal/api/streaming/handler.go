@@ -19,10 +19,7 @@ import (
 // slow-but-alive client is not killed.
 const streamWriteDeadline = 25 * time.Second
 
-// DefaultMaxStreamLifetime is how long one SSE connection is served before the server ends it and
-// the client reconnects (resuming via Last-Event-ID where supported). It bounds a TCP-alive client
-// that never reads, which neither the write deadline nor TCP keepalive reclaims. Up to 10% jitter
-// per stream keeps a cohort connected together (after a deploy) from reconnecting together.
+// DefaultMaxStreamLifetime is how long one SSE connection is served before the server ends it and the client reconnects; it bounds a TCP-alive client that never reads, with up to 10% jitter per stream to avoid reconnect stampedes.
 const DefaultMaxStreamLifetime = 30 * time.Minute
 
 // drainWriteDeadline bounds the courtesy frame written when the SERVER ends a stream; far shorter
@@ -40,14 +37,10 @@ var rejectedStreams int64
 // SetMaxConcurrentStreams overrides the global SSE connection cap (<= 0 disables); call at startup.
 func SetMaxConcurrentStreams(n int64) { atomic.StoreInt64(&maxConcurrentStreams, n) }
 
-// StreamsRejected reports the cumulative SSE connections refused by the concurrency caps since
-// process start (exported per cap as stellarindex_api_sse_streams_rejected_total).
+// StreamsRejected reports the cumulative SSE connections refused by the concurrency caps since process start.
 func StreamsRejected() int64 { return atomic.LoadInt64(&rejectedStreams) }
 
-// TryAcquireStreamSlot is [admitStream] exported for callers whose pre-flight work is expensive, so
-// admission happens before that compute. release is idempotent and MUST be called when the stream
-// ends. Callers that pre-admit MUST use [StreamFromChannelPreAdmitted] instead of
-// [StreamFromChannel], or a SECOND slot is acquired for the same connection.
+// TryAcquireStreamSlot is [admitStream] exported for callers with expensive pre-flight work; release is idempotent and MUST be called when the stream ends, and pre-admitting callers MUST use [StreamFromChannelPreAdmitted] or a SECOND slot is acquired.
 func TryAcquireStreamSlot(w http.ResponseWriter, r *http.Request) (release func(), ok bool) {
 	return admitStream(w, r)
 }
@@ -100,18 +93,13 @@ func acquireGlobalStreamSlot() (release func(), ok bool) {
 	}, true
 }
 
-// DefaultHeartbeatInterval is the cadence of SSE comment heartbeats (`:keepalive\n\n`) when no
-// events flow, so no idle bound on the proxy path cuts a quiet stream.
-// internal/config/caddy_sse_timeouts_test.go holds every Caddy timeout on the stream path to at
-// least two of these.
+// DefaultHeartbeatInterval is the cadence of SSE comment heartbeats when no events flow; every Caddy timeout on the stream path must be at least two of these (internal/config/caddy_sse_timeouts_test.go).
 const DefaultHeartbeatInterval = 15 * time.Second
 
-// DefaultRetry is the SSE `retry:` reconnection-delay hint sent once in the prelude, giving the
-// server headroom to recover (deploy roll, LB blip) without a reconnect stampede.
+// DefaultRetry is the SSE `retry:` reconnection-delay hint sent once in the prelude, so a deploy roll does not cause a reconnect stampede.
 const DefaultRetry = 5000 * time.Millisecond
 
-// StreamOptions tunes [Stream] behaviour. Zero values use sensible
-// defaults so most callers can pass `StreamOptions{}`.
+// StreamOptions tunes [Stream] behaviour; zero values use defaults.
 type StreamOptions struct {
 	// HeartbeatInterval is the no-event cadence for SSE comment heartbeats. Zero =
 	// DefaultHeartbeatInterval.
@@ -132,10 +120,7 @@ type StreamOptions struct {
 	MaxLifetime time.Duration
 }
 
-// Stream wires an http.ResponseWriter into the Hub for the supplied topics: SSE headers, replay
-// from Last-Event-ID (header wins over `?last_event_id=`), live forwarding until the request
-// context cancels, and comment heartbeats. The v1 endpoints mostly subscribe themselves and feed
-// [StreamFromChannelPreAdmitted]; see doc.go for which replay from a Hub.
+// Stream wires an http.ResponseWriter into the Hub for the topics: SSE headers, replay from Last-Event-ID (header wins over `?last_event_id=`), live forwarding until the request context cancels, and comment heartbeats.
 func Stream(w http.ResponseWriter, r *http.Request, hub *Hub, topics []string, opts StreamOptions) {
 	// Admission FIRST: hub.Subscribe allocates a topic keyed by client-controlled `topics`, so a
 	// connection the caps will refuse must never get that far.
@@ -154,17 +139,14 @@ func Stream(w http.ResponseWriter, r *http.Request, hub *Hub, topics []string, o
 	writeStream(w, r, ch, opts)
 }
 
-// WriteSubscribeRefused answers a connection whose [Hub.Subscribe] failed with [ErrTopicCapacity];
-// call it before any SSE header is sent.
+// WriteSubscribeRefused answers a connection whose [Hub.Subscribe] failed with [ErrTopicCapacity]; call it before any SSE header is sent.
 func WriteSubscribeRefused(w http.ResponseWriter) {
 	atomic.AddInt64(&rejectedStreams, 1)
 	obs.APISSEStreamsRejectedTotal.WithLabelValues("topic_cap").Inc()
 	http.Error(w, "too many concurrent stream topics", http.StatusServiceUnavailable)
 }
 
-// StreamFromChannel is the lower-level SSE writer for any receive-only event channel, for endpoints
-// whose events are computed per connection rather than fanned out from a Hub. It returns when the
-// request context cancels or the caller closes `ch`, which ends the stream cleanly.
+// StreamFromChannel is the lower-level SSE writer for any receive-only event channel (events computed per connection); it returns when the request context cancels or the caller closes ch.
 func StreamFromChannel(w http.ResponseWriter, r *http.Request, ch <-chan Event, opts StreamOptions) {
 	release, ok := admitStream(w, r)
 	if !ok {
@@ -174,9 +156,7 @@ func StreamFromChannel(w http.ResponseWriter, r *http.Request, ch <-chan Event, 
 	writeStream(w, r, ch, opts)
 }
 
-// StreamFromChannelPreAdmitted is [StreamFromChannel] for a caller that already reserved its slot
-// via [TryAcquireStreamSlot]. It neither acquires nor releases a slot; the caller owns that
-// lifecycle, which avoids reserving a SECOND slot for the same connection.
+// StreamFromChannelPreAdmitted is [StreamFromChannel] for a caller that already holds a slot via [TryAcquireStreamSlot]; it neither acquires nor releases one, the caller owns that lifecycle.
 func StreamFromChannelPreAdmitted(w http.ResponseWriter, r *http.Request, ch <-chan Event, opts StreamOptions) {
 	writeStream(w, r, ch, opts)
 }
@@ -305,9 +285,7 @@ func endStreamByServer(w http.ResponseWriter, flusher http.Flusher, rc *http.Res
 	flusher.Flush()
 }
 
-// LastEventIDFrom returns the resume cursor: the `Last-Event-ID` header, or `?last_event_id=` for
-// clients that cannot set headers (browser EventSource sends the header only on reconnect, not on
-// the initial connection after a page reload). Exported for non-Hub endpoints.
+// LastEventIDFrom returns the resume cursor: the `Last-Event-ID` header, else `?last_event_id=` for clients that cannot set headers; exported for non-Hub endpoints.
 func LastEventIDFrom(r *http.Request) string {
 	if v := r.Header.Get("Last-Event-ID"); v != "" {
 		return v
@@ -315,17 +293,7 @@ func LastEventIDFrom(r *http.Request) string {
 	return r.URL.Query().Get("last_event_id")
 }
 
-// WriteFrame emits one SSE frame to w:
-//
-//	retry: <ms>        (omitted when Retry == 0)
-//	id: <ID>
-//	event: <Type>      (omitted when Type == "")
-//	data: <line 1>
-//	data: <line 2>     (one per \n in Data)
-//	\n
-//
-// Each `data:` line ends with \n per the SSE spec; the trailing \n separates frames. WriteFrame does
-// NOT flush; direct callers (custom event loops) must.
+// WriteFrame emits one SSE frame (retry, id, event, one data line per \n in Data, blank terminator) to w; it does NOT flush, so direct callers (custom event loops) must.
 func WriteFrame(w http.ResponseWriter, ev Event) error {
 	var b strings.Builder
 	b.Grow(len(ev.Data) + 64)

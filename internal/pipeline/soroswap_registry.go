@@ -15,8 +15,7 @@ import (
 // A timeout beats a silent drop because the in-memory registry already has the pair and only future backfills or restarts miss it.
 const upsertHookTimeout = 2 * time.Second
 
-// SoroswapPersistenceOptions returns the soroswap.DecoderOption slice for [BuildDispatcher] when soroswap is enabled: seeded pair tokens from soroswap_pairs plus an upsert hook for live new_pair events,
-// both because the in-memory registry is invisible to parallel backfill workers and restarts. hookCtx parents every upsert; pass the root context.
+// SoroswapPersistenceOptions returns the soroswap.DecoderOption slice for [BuildDispatcher] (pair tokens seeded from soroswap_pairs plus a live new_pair upsert hook), since the in-memory registry is invisible to parallel backfill workers and restarts; hookCtx parents every upsert.
 func SoroswapPersistenceOptions(
 	ctx context.Context,
 	store *timescale.Store,

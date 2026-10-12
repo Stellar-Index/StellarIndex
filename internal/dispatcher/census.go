@@ -12,22 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sdexclaim"
 )
 
-// Census is the decoder-independent count of one ledger's completeness-relevant primitives plus its
-// hash-chain anchors, computed from the LedgerCloseMeta without decoding any event body (ADR-0033
-// Claim 1).
-//
-//   - SorobanEventCount MUST equal COUNT(soroban_events WHERE ledger=seq); any shortfall is a
-//     capture/persistence gap.
-//
-//   - ClassicTradeEffectCount counts ClaimAtoms the way internal/sources/sdex produces one trade
-//     per atom. It does NOT equal COUNT(trades WHERE source='sdex' AND ledger=seq): the decoder
-//     emits one-side-zero fills (one leg rounded to 0 stroops) which the writer stores as
-//     unpriceable, so the SDEX reconcile in internal/ops/chops compares priceable fills only
-//     (sdexServedCensus, reconTarget.countFilter). The lockstep test guarding this comment
-//     compares the counter to the DECODER, never to the writer.
-//
-// LedgerHash / PrevLedgerHash are the header hashes for the contiguity hash-chain check
-// (prev_ledger_hash[N] == ledger_hash[N-1]).
+// Census is the decoder-independent per-ledger count of completeness primitives plus hash-chain anchors (ADR-0033 Claim 1); SorobanEventCount MUST equal COUNT(soroban_events) for the ledger, and ClassicTradeEffectCount counts ClaimAtoms (decoder-side), not served trades rows.
 type Census struct {
 	LedgerSeq               uint32
 	LedgerCloseTime         time.Time
@@ -47,13 +32,7 @@ type Census struct {
 	TxEventReadErrors int
 }
 
-// CensusLedger walks a LedgerCloseMeta and tallies the completeness-relevant primitives without
-// decoding event bodies. It is deliberately independent of the decoder path so a decoder bug
-// cannot mask itself in the census.
-//
-// Counting mirrors the dispatch walk's eligibility rules: only successful transactions contribute
-// (ProcessLedger skips failed ones), contract events must be capture-eligible, and trade ops must
-// have succeeded.
+// CensusLedger tallies completeness primitives from a LedgerCloseMeta without decoding event bodies, independent of the decoder path so a decoder bug cannot mask itself; it mirrors the dispatch walk's eligibility rules.
 func CensusLedger(lcm xdr.LedgerCloseMeta, passphrase string) (Census, error) { //nolint:gocognit,gocyclo // linear LCM walk; splitting reduces clarity (same as ProcessLedger).
 	c := Census{
 		LedgerSeq:       lcm.LedgerSequence(),

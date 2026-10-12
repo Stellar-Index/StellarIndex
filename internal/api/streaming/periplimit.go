@@ -27,14 +27,10 @@ var (
 	streamClientIP   = defaultStreamClientIP
 )
 
-// SetMaxStreamsPerIP sets the per-client-IP concurrent-SSE cap. Pass
-// <= 0 to disable (the global cap still applies). Call once at startup.
+// SetMaxStreamsPerIP sets the per-client-IP concurrent-SSE cap; <= 0 disables it (the global cap still applies). Call once at startup.
 func SetMaxStreamsPerIP(n int) { atomic.StoreInt64(&maxStreamsPerIP, int64(n)) }
 
-// SetStreamClientIPResolver overrides how the per-IP cap identifies a
-// caller. The binary wires the trusted-proxy-aware resolver so the cap
-// keys off the true client IP. Passing nil restores the default
-// direct-peer resolver. Call once at startup.
+// SetStreamClientIPResolver overrides how the per-IP cap identifies a caller (the binary wires the trusted-proxy-aware resolver); nil restores the direct-peer default. Call once at startup.
 func SetStreamClientIPResolver(f func(*http.Request) string) {
 	streamClientIPMu.Lock()
 	if f == nil {
@@ -100,9 +96,7 @@ func acquireIPStreamSlot(r *http.Request) (release func(), ok bool) {
 	}, true
 }
 
-// ActiveStreamsForIP reports the current open-stream count attributed to
-// ip — a diagnostic/test hook. ip is an address as the configured
-// resolver produces it; it is masked the way acquireIPStreamSlot keys it.
+// ActiveStreamsForIP reports the open-stream count attributed to ip as the configured resolver produces it; a diagnostic/test hook.
 func ActiveStreamsForIP(ip string) int {
 	key := ratelimit.ThrottleIPKey(ip)
 	streamIPMu.Lock()

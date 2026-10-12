@@ -367,9 +367,7 @@ func SpecByName(name string) (*SourceSpec, bool) {
 	return nil, false
 }
 
-// SorobanSourceNames lists every name BuildDispatcher accepts whose events
-// land in soroban_events (ADR-0029). internal/ops/ingest's resume-stalled
-// gate picks soroban_events vs trades[source='sdex'] gap scans from it.
+// SorobanSourceNames lists every name BuildDispatcher accepts whose events land in soroban_events (ADR-0029).
 var SorobanSourceNames = sorobanSourceNames(specs)
 
 func sorobanSourceNames(ss []SourceSpec) []string {

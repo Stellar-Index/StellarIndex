@@ -57,9 +57,7 @@ const (
 	SinkModeSkipSoleWriter
 )
 
-// SinkModeForProjector picks the events-goroutine sink mode so a sole-writer event is written exactly once for every flag combination.
-//
-// projector off: SinkModeAll. On with persist_per_source: SinkModeSkipSoleWriter. On without: SinkModeSkipProjected.
+// SinkModeForProjector picks the events-goroutine sink mode so a sole-writer event is written exactly once: projector off is SinkModeAll, on with persist_per_source SinkModeSkipSoleWriter, on without SinkModeSkipProjected.
 func SinkModeForProjector(projectorEnabled, persistPerSource bool) SinkMode {
 	if !projectorEnabled {
 		return SinkModeAll
@@ -369,10 +367,7 @@ func IsProjectedEvent(ev consumer.Event) bool {
 	return eventRoles[reflect.TypeOf(ev)].projected
 }
 
-// IsSoleWriterProjected reports whether the projector owns ev's write
-// even in Phase-3 parallel mode ([ProjectorSpec.SoleWriter]), so the
-// events goroutine skips it whatever PersistPerSource says. A subset of
-// [IsProjectedEvent] by construction.
+// IsSoleWriterProjected reports whether the projector owns ev's write even in Phase-3 parallel mode ([ProjectorSpec.SoleWriter]), so the events goroutine skips it whatever PersistPerSource says.
 func IsSoleWriterProjected(ev consumer.Event) bool {
 	return eventRoles[reflect.TypeOf(ev)].soleWriter
 }
@@ -494,9 +489,7 @@ drainRemainder:
 	}
 }
 
-// ShutdownDeadline is the process drain budget after SIGINT/SIGTERM; the sink's drain budgets are derived from it.
-// Independent budgets would stop worker 0's deadline arm (the undrained-range ERROR) from ever firing.
-// Pinned by TestShutdownDeadline_MainUsesConstant and TestDrainBudget_FitsShutdownDeadline.
+// ShutdownDeadline is the process drain budget after SIGINT/SIGTERM; the sink's drain budgets MUST derive from it, or worker 0's undrained-range ERROR could never fire.
 const ShutdownDeadline = 30 * time.Second
 
 // Drain budgets of the indexer's other shutdown sinks. main wires each
@@ -514,9 +507,7 @@ const (
 	stopTimeoutMargin = 30 * time.Second
 )
 
-// IndexerStopTimeout is the floor for the indexer unit's TimeoutStopSec:
-// below it systemd SIGKILLs mid-drain and the buffered rows are lost.
-// Pinned against both unit files by TestIndexerStopTimeout_UnitsCoverDrainBudgets.
+// IndexerStopTimeout is the floor for the indexer unit's TimeoutStopSec; below it systemd SIGKILLs mid-drain and buffered rows are lost.
 const IndexerStopTimeout = ShutdownDeadline + CHLiveSinkStopBudget +
 	RawEventDrainBudget + DiscoveryDrainBudget + stopTimeoutMargin
 
@@ -840,9 +831,7 @@ func reportAbandonedEvent(logger *slog.Logger, lt *lossTracker, ev consumer.Even
 		"kind", ev.EventKind(), "source", eventSource(ev), "err", err)
 }
 
-// ShutdownLoss is what one [PersistEvents] run abandoned: rows no drain
-// pass landed. A caller that checkpoints a resume cursor (backfill) must
-// not move it past them.
+// ShutdownLoss is what one [PersistEvents] run abandoned (rows no drain pass landed); a caller checkpointing a resume cursor (backfill) MUST NOT move it past them.
 type ShutdownLoss struct {
 	// Rows is the number of abandoned rows.
 	Rows int
@@ -920,8 +909,7 @@ func (e *TradeDroppedError) Error() string {
 		e.Source, e.Ledger, e.TxHash, e.OpIndex, e.Cause)
 }
 
-// Unwrap returns the store's permanent-fault error so errors.Is / errors.As
-// classification sees through the wrapper.
+// Unwrap returns the store's permanent-fault error so errors.Is / errors.As see through the wrapper.
 func (e *TradeDroppedError) Unwrap() error { return e.Cause }
 
 // newTradeDroppedError wraps cause with the dropped trade's identity.
@@ -2038,9 +2026,7 @@ func persistSEP41TransferEvent(ctx context.Context, logger *slog.Logger, store *
 	return nil
 }
 
-// SEP41TransferRowOf converts a decoded sep41_transfers event to its
-// storage row — exported so batch writers (ch-rebuild) share the
-// exact mapping the live sink uses.
+// SEP41TransferRowOf converts a decoded sep41_transfers event to its storage row; exported so batch writers (ch-rebuild) share the exact live-sink mapping.
 func SEP41TransferRowOf(e sep41_transfers.Event) timescale.SEP41TransferRow {
 	return timescale.SEP41TransferRow{
 		ContractID:      e.ContractID,

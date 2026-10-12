@@ -22,8 +22,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// GatedMeta describes a factory-anchored decoder (ADR-0035): its trust-root factory SET, the creation event's topic[0] name,
-// the genesis ledger bounding the deploy walk, and a constructor applying contractid child-gate options.
+// GatedMeta describes a factory-anchored decoder (ADR-0035): its trust-root factory SET, creation-event topic[0] name, genesis ledger bounding the deploy walk, and a constructor applying contractid child-gate options.
 type GatedMeta struct {
 	Factories []string // canonical factory C-strkeys (gate trust roots); empty for curated-only sources
 	// CreationSym is the creation event's topic[0] name, empty for curated-only sources. Matched against both on-wire encodings
@@ -124,16 +123,13 @@ var gatedSources = map[string]GatedMeta{
 	},
 }
 
-// GatedMetaFor returns the metadata for a factory-anchored source and
-// whether it is gated. Used by the genesis-seed CLI.
+// GatedMetaFor returns the metadata for a factory-anchored source and whether it is gated.
 func GatedMetaFor(source string) (GatedMeta, bool) {
 	m, ok := gatedSources[source]
 	return m, ok
 }
 
-// GatedSourceNames returns the factory-anchored source names (those that
-// warm a contractid.Registry from protocol_contracts). Stable order is not
-// guaranteed; callers that need determinism should sort.
+// GatedSourceNames returns the factory-anchored source names; order is not guaranteed, so callers needing determinism must sort.
 func GatedSourceNames() []string {
 	out := make([]string, 0, len(gatedSources))
 	for name := range gatedSources {
@@ -142,8 +138,7 @@ func GatedSourceNames() []string {
 	return out
 }
 
-// GatedFactories returns the canonical factory C-strkey SET for a gated
-// source, or nil if the source is not factory-anchored.
+// GatedFactories returns the canonical factory C-strkey SET for a gated source, or nil if it is not factory-anchored.
 func GatedFactories(source string) []string { return gatedSources[source].Factories }
 
 // CuratedFactoryID is the provenance on protocol_contracts rows from a source's in-code curated set, written only via SeedCuratedContracts.
@@ -161,14 +156,12 @@ type protocolContractStore interface {
 	ProtocolContractUpserter
 }
 
-// ProtocolContractUpserter is the protocol_contracts write seam
-// [SeedCuratedContracts] needs; *timescale.Store implements it.
+// ProtocolContractUpserter is the protocol_contracts write seam [SeedCuratedContracts] needs; *timescale.Store implements it.
 type ProtocolContractUpserter interface {
 	UpsertProtocolContract(ctx context.Context, source, contractID, factoryID string, firstLedger uint32) error
 }
 
-// SeedCuratedContracts upserts a curated source's CuratedSet into protocol_contracts (factory_id = CuratedFactoryID, first_ledger = meta.Genesis) and returns rows written.
-// It is the ONE writer of curated rows; an empty CuratedSet on a curated-only source is an error, not a zero-row success.
+// SeedCuratedContracts upserts a curated source's CuratedSet into protocol_contracts (factory_id = CuratedFactoryID, first_ledger = meta.Genesis) and returns rows written; it is the ONE writer of curated rows, and an empty CuratedSet on a curated-only source is an error.
 func SeedCuratedContracts(
 	ctx context.Context,
 	store ProtocolContractUpserter,
@@ -207,8 +200,7 @@ func seedCuratedContracts(
 	return seeded, nil
 }
 
-// GatedRegistryOptions warms the contractid.Registry for every gated source (keyed by name) from protocol_contracts and meta.CuratedSet (ADR-0035, ADR-0040).
-// withHook installs the live-upsert callback and arms curated reconcile; read-only audits pass false so they write nothing.
+// GatedRegistryOptions warms the contractid.Registry for every gated source from protocol_contracts and meta.CuratedSet (ADR-0035, ADR-0040); withHook installs the live-upsert callback and arms curated reconcile, so read-only audits pass false and write nothing.
 func GatedRegistryOptions(
 	ctx context.Context,
 	store *timescale.Store,
