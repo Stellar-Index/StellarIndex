@@ -11,8 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// SelfServiceKeyManager is the v1 boundary onto the Redis-backed self-service key store (keys
-// minted through POST /v1/account/keys), implemented by [auth.RedisAPIKeyStore].
+// SelfServiceKeyManager is the v1 boundary onto the Redis-backed self-service key store, implemented by [auth.RedisAPIKeyStore].
 type SelfServiceKeyManager interface {
 	ListKeysForIdentifier(ctx context.Context, identifier string) ([]auth.APIKeyRecord, error)
 	UpdateRateLimit(ctx context.Context, keyID string, newRateLimitPerMin int) (auth.APIKeyRecord, error)
@@ -27,22 +26,12 @@ type KeyMirror interface {
 	RevokeKeyByID(ctx context.Context, identifier, keyID string) error
 }
 
-// KeyCacheInvalidator evicts one API-key record from the auth read-through cache by its SHA-256
-// hex hash.
-//
-// It is meaningful ONLY under auth_backend=postgres. Under the default redis backend
-// `apikey:<hash>` is the canonical credential, not a cache, so an eviction there deletes the
-// customer's key for good; [NewAPIKeyBudgetStores] leaves the field nil in that mode.
+// KeyCacheInvalidator evicts one API-key record from the auth cache by SHA-256 hex hash; meaningful ONLY under auth_backend=postgres, since under redis the record is the canonical credential.
 type KeyCacheInvalidator interface {
 	InvalidateCachedKey(ctx context.Context, hexHash string) error
 }
 
-// APIKeyBudgetStores groups the credential stores a TIER CHANGE has to clamp, so every path that
-// lowers a tier lowers the budget on every credential the old tier allowed.
-//
-// Postgres dashboard keys and Redis self-service keys are independent, and a missed store is a
-// live throughput leak: both validators read the budget off the key record, so lowering
-// accounts.tier alone changes nothing.
+// APIKeyBudgetStores groups the credential stores a tier change must clamp; a missed store is a live throughput leak because lowering accounts.tier alone changes nothing.
 type APIKeyBudgetStores struct {
 	// Platform is the Postgres dashboard key store; nil skips that half.
 	Platform platform.APIKeyStore
@@ -60,13 +49,7 @@ type APIKeyBudgetStores struct {
 	OnError func(step string)
 }
 
-// NewAPIKeyBudgetStores assembles the credential stores for one deployment; it is the single place
-// that decides, from `[api].auth_backend`, whether a key-cache invalidator exists. platformKeys
-// and rdb are nil without Postgres and Redis respectively.
-//
-// The invalidator is wired ONLY under auth_backend=postgres. Under redis it would DEL the canonical
-// credential and an admin PATCH would permanently destroy every register-minted key (only a hash is
-// kept). Nothing needs evicting there: the clamp rewrites the record in place.
+// NewAPIKeyBudgetStores assembles the credential stores and wires the key-cache invalidator ONLY under auth_backend=postgres, since under redis it would DEL the canonical credential.
 func NewAPIKeyBudgetStores(platformKeys platform.APIKeyStore, rdb redis.Cmdable, authBackend string) APIKeyBudgetStores {
 	var st APIKeyBudgetStores
 	if platformKeys != nil {

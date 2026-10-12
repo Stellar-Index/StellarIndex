@@ -6,10 +6,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// AssetsReader is the seam the /v1/assets handlers read asset-catalogue data
-// through (price / volume / market_cap / sparkline / ATH). timescale.Store
-// satisfies it via ListAssetsExt, GetAssetBySlug, GetNativeAssetRow,
-// GetAssetTopMarkets, GetAssetPriceHistory24h and GetAssetMarketsCount.
+// AssetsReader is the seam /v1/assets handlers read catalogue data through (price, volume, market_cap, sparkline, ATH); timescale.Store satisfies it.
 type AssetsReader interface {
 	ListAssetsExt(ctx context.Context, opts timescale.ListAssetsOptions) ([]timescale.AssetRow, error)
 	GetAssetBySlug(ctx context.Context, slug string) (timescale.AssetRow, error)
@@ -29,16 +26,13 @@ type AssetsReader interface {
 	GetAssetTradeCount24h(ctx context.Context, assetID string) (int64, error)
 }
 
-// AssetATH is the all-time-high USD price + bucket-day pair. Embedded
-// in AssetDetail.ATH.
+// AssetATH is the all-time-high USD price and bucket day, embedded in AssetDetail.ATH.
 type AssetATH struct {
 	USD string `json:"usd"`
 	At  string `json:"at"`
 }
 
-// AssetTopMarket is one entry in the per-asset top-markets preview.
-// `Counterparty` is the OTHER side of the pair (the asset that's
-// not the one being queried). `Side` is "base" or "quote".
+// AssetTopMarket is one top-markets preview entry; `Counterparty` is the other side of the pair and `Side` is "base" or "quote".
 type AssetTopMarket struct {
 	Counterparty  string  `json:"counterparty"`
 	Side          string  `json:"side"`
@@ -46,10 +40,7 @@ type AssetTopMarket struct {
 	TradeCount24h int64   `json:"trade_count_24h"`
 }
 
-// AssetPricePoint is one hourly/daily USD-price sample in
-// AssetDetail.PriceHistory24h / PriceHistory7d. `T` is the bucket
-// end as an RFC3339 timestamp; `P` is the rounded-to-10dp USD price
-// or nil when no trades that bucket produced a VWAP.
+// AssetPricePoint is one USD-price sample: `T` is the bucket end (RFC3339), `P` the 10dp price or nil when the bucket had no VWAP.
 type AssetPricePoint struct {
 	T string  `json:"t"`
 	P *string `json:"p,omitempty"`

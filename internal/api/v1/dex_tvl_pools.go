@@ -49,8 +49,7 @@ const (
 	DEXTVLBasisEmptyReserve = "empty_reserve"
 )
 
-// DEXTVLLegView is one reserve leg of one pool on the drill-down: the reserve as captured, the
-// identity it was priced under, and either its valuation or the reason it has none.
+// DEXTVLLegView is one reserve leg of a pool: the captured reserve, the identity it was priced under, and its valuation or the reason it has none.
 type DEXTVLLegView struct {
 	// Token is the token contract id (C-strkey) as the pool's storage carries it. Omitted when
 	// the address never resolved.
@@ -71,9 +70,7 @@ type DEXTVLLegView struct {
 	Excluded string `json:"excluded,omitempty"`
 }
 
-// DEXTVLPoolView is one pool's contribution to its protocol's tvl_usd. Pool tvl_usd is the EXACT
-// sum of its legs' published usd strings, and the protocol's the exact sum of its pools', so
-// rows add up to the level above byte-for-byte, as tvl_total does over the protocols.
+// DEXTVLPoolView is one pool's contribution to tvl_usd: the exact sum of its legs' usd strings, so rows add up to the level above byte-for-byte.
 type DEXTVLPoolView struct {
 	// Pool is the pool (pair) contract C-strkey.
 	Pool string `json:"pool"`
@@ -105,8 +102,7 @@ type ProtocolTVLDetailView struct {
 	Pools []DEXTVLPoolView `json:"pools"`
 }
 
-// DEXTVLProtocolSnapshot is one protocol's entry in the cache: the
-// published view plus the pools it was built from.
+// DEXTVLProtocolSnapshot is one protocol's cache entry: the published view plus the pools it was built from.
 type DEXTVLProtocolSnapshot struct {
 	TVL            ProtocolTVLView
 	Pools          []DEXTVLPoolView

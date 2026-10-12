@@ -14,9 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// IssuersReader is the seam the issuer handlers read through.
-// timescale.Store satisfies it via GetIssuer + ListIssuerAssets +
-// ListIssuers.
+// IssuersReader is the seam the issuer handlers read through; timescale.Store satisfies it.
 type IssuersReader interface {
 	GetIssuer(ctx context.Context, gStrkey string) (timescale.IssuerRow, error)
 	ListIssuerAssets(ctx context.Context, gStrkey string) ([]timescale.IssuerAsset, error)
@@ -29,10 +27,7 @@ type issuersAtReader interface {
 	ListIssuersAt(ctx context.Context, limit int) ([]timescale.IssuerSummary, time.Time, error)
 }
 
-// IssuerListEntry is the wire shape of one row in /v1/issuers.
-//
-// OrgName is the SEP-1 `[DOCUMENTATION].ORG_NAME`, filled by `stellarindex-ops sep1-refresh`;
-// empty when never resolved or the issuer has no documentation block.
+// IssuerListEntry is one /v1/issuers row; OrgName is the SEP-1 ORG_NAME filled by `stellarindex-ops sep1-refresh`, empty when unresolved.
 type IssuerListEntry struct {
 	GStrkey    string `json:"g_strkey"`
 	HomeDomain string `json:"home_domain,omitempty"`
@@ -98,10 +93,7 @@ type IssuedAsset struct {
 	ObservationCount int64  `json:"observation_count"`
 }
 
-// IssuersListDefaultLimit is the limit handleIssuersList applies when
-// the request omits `?limit=`. Exported so the prewarm — which must
-// keep this exact key warm — references the one source of truth
-// instead of a second, driftable copy.
+// IssuersListDefaultLimit is the limit applied when `?limit=` is omitted; exported so the prewarm warms this exact key from one source of truth.
 const IssuersListDefaultLimit = 100
 
 // IssuersListMaxLimit is the largest `?limit=` handleIssuersList accepts.
@@ -342,8 +334,7 @@ func (s *Server) writeIssuerReadProblem(w http.ResponseWriter, r *http.Request, 
 		"Storage layer returned an error.")
 }
 
-// IssuerAuthFlagsReader is the narrow lake seam /v1/issuers/{g_strkey} reads an
-// issuer's current AccountEntry flags + home_domain through.
+// IssuerAuthFlagsReader is the narrow lake seam for an issuer's current AccountEntry flags and home_domain.
 type IssuerAuthFlagsReader interface {
 	BulkAccountAuthFlags(ctx context.Context, gStrkeys []string) (map[string]clickhouse.AccountAuthFlags, error)
 }

@@ -21,9 +21,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// StatusNoticeStore is the boundary the status-notice endpoints need.
-// Production impl: postgresstore.StatusNoticeStore over the
-// `status_notices` table (migration 0082).
+// StatusNoticeStore is the boundary the status-notice endpoints need; production is postgresstore.StatusNoticeStore over `status_notices`.
 type StatusNoticeStore interface {
 	Create(ctx context.Context, n platform.StatusNotice) (platform.StatusNotice, error)
 	Get(ctx context.Context, id uuid.UUID) (platform.StatusNotice, error)
@@ -32,11 +30,7 @@ type StatusNoticeStore interface {
 	Resolve(ctx context.Context, id uuid.UUID) (platform.StatusNotice, error)
 }
 
-// StatusNotice is the wire shape for status-notice responses — the
-// operator-posted customer-facing banner. Distinct
-// from the Alertmanager-derived StatusIncidents block on /v1/status and
-// from the embedded post-mortem incidents.Incident: this is a live,
-// human-authored maintenance / incident banner.
+// StatusNotice is the wire shape of an operator-posted, human-authored customer-facing banner, distinct from the Alertmanager-derived StatusIncidents block.
 type StatusNotice struct {
 	ID         string `json:"id"`
 	Title      string `json:"title"`

@@ -25,9 +25,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/signupreaper"
 )
 
-// RegisterAccountCreator is the narrow create-only account boundary POST /v1/register needs,
-// backed by postgresstore.AccountStore; narrowed so the register path cannot grow admin
-// affordances by accident.
+// RegisterAccountCreator is the narrow create-only account boundary POST /v1/register needs, so the register path cannot grow admin affordances.
 type RegisterAccountCreator interface {
 	Create(ctx context.Context, a platform.Account) (platform.Account, error)
 	// Suspend quarantines an account behind a machine-matchable suspended_reason. Register marks an
@@ -46,9 +44,7 @@ type registerRequest struct {
 	Email string `json:"email,omitempty"`
 }
 
-// RegisterLimits is the free-tier limits block on the /v1/register
-// reply — the numbers the fresh account is subject to, so an agent
-// can self-configure its client without a second request.
+// RegisterLimits is the free-tier limits block on the /v1/register reply, so an agent can self-configure its client.
 type RegisterLimits struct {
 	RateLimitPerMin int   `json:"rate_limit_per_min"`
 	MonthlyQuota    int64 `json:"monthly_quota"`
@@ -57,10 +53,7 @@ type RegisterLimits struct {
 	MaxPriceAlerts  int   `json:"max_price_alerts"`
 }
 
-// RegisterResult is the wire shape for /v1/register replies. The
-// plaintext key appears here exactly once — callers that drop the
-// response can simply register again (registration is free and not
-// email-keyed).
+// RegisterResult is the /v1/register reply; the plaintext key appears exactly once, and callers that drop it can simply register again.
 type RegisterResult struct {
 	AccountID string         `json:"account_id"`
 	APIKey    string         `json:"api_key"` // plaintext bearer token; shown ONCE

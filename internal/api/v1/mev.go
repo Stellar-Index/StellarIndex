@@ -23,16 +23,12 @@ var validMEVKinds = map[string]bool{
 	"oracle_deviation":         true,
 }
 
-// MEVReader is the storage seam for /v1/mev. timescale.Store
-// implements via ListMEVEvents.
+// MEVReader is the storage seam for /v1/mev; timescale.Store implements it via ListMEVEvents.
 type MEVReader interface {
 	ListMEVEvents(ctx context.Context, kind string, limit int) ([]timescale.MEVEventRow, error)
 }
 
-// MEVEventView is the wire shape for /v1/mev entries. detail is the per-kind
-// evidence object plus a note stating what is and is not claimed. profit_usd is
-// null because no detector estimates profit: trade direction is ambiguous in
-// the served rows.
+// MEVEventView is a /v1/mev entry; detail holds per-kind evidence plus a note on what is claimed, and profit_usd is null because no detector estimates profit.
 type MEVEventView struct {
 	EventID          string          `json:"event_id"`
 	DetectedAt       string          `json:"detected_at"`

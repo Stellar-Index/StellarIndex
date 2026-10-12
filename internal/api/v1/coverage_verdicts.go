@@ -11,15 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// CoverageVerdictView is one source's row on GET /v1/coverage: the public projection of the
-// ADR-0033 completeness verdict from completeness_snapshots.
-//
-// Two axes (ADR-0033/ADR-0034):
-//   - LakeComplete: the certified ClickHouse ARCHIVE is contiguous + hash-chained +
-//     recognition-complete from genesis to tip (substrate and recognition only).
-//   - Complete: the SERVED tier additionally reconciles against that archive within its
-//     retention window. Postgres is the working-set tier, not the archive, so Complete can be
-//     false while LakeComplete is true.
+// CoverageVerdictView is one source's GET /v1/coverage row (ADR-0033/0034); LakeComplete is the certified archive axis, Complete also reconciles the served tier so it can be false while LakeComplete is true.
 type CoverageVerdictView struct {
 	// Source is the logical source name, the same identifiers /v1/sources uses.
 	Source string `json:"source"`
@@ -66,13 +58,7 @@ type NotApplicableSourceView struct {
 	Reason string `json:"reason"`
 }
 
-// RecognitionAxisView is the ADR-0033 RECOGNITION audit axis: distinct on-chain event shapes in the
-// certified lake that sit on contracts NO indexed source owns.
-//
-// It is deliberately NOT a [CoverageVerdictView], although it is stored in completeness_snapshots
-// under the reserved source name "recognition": as a `sources[]` row the headline would count it
-// as a failed source and its per-source fields would be fiction. A source dropping its OWN events
-// surfaces as `recognition_ok: false` on THAT source's row, and fails the headline.
+// RecognitionAxisView is the ADR-0033 audit axis of event shapes on contracts no source owns; deliberately not a [CoverageVerdictView], which would count it as a failed source.
 type RecognitionAxisView struct {
 	// AllShapesRecognized is true when the census is empty; false is the expected steady state on
 	// any public network with protocols we have not integrated.

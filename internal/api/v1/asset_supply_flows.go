@@ -7,9 +7,7 @@ import (
 	"time"
 )
 
-// AssetSupplyFlows is the wire response for GET /v1/assets/{asset_id}/supply/flows:
-// the token's mint / burn / clawback log bucketed by UTC day, from its first
-// recorded flow. Amounts are base-unit decimal strings (ADR-0003).
+// AssetSupplyFlows is the GET /v1/assets/{asset_id}/supply/flows response: mint/burn/clawback bucketed by UTC day, amounts as base-unit decimal strings (ADR-0003).
 type AssetSupplyFlows struct {
 	AssetID    string               `json:"asset_id"`
 	ContractID string               `json:"contract_id"`

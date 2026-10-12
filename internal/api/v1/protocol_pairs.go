@@ -5,11 +5,7 @@ import (
 	"strings"
 )
 
-// ProtocolPoolTokensReader maps a pool-based protocol's contracts to the
-// token contract C-strkeys each holds, so the /v1/protocols/{name} roster can
-// render a human asset pair ("XLM/USDC"). Production wiring is
-// timescale.Store.PoolTokens behind poolTokensCache. A nil reader or result
-// leaves the pair label off and never fails the roster.
+// ProtocolPoolTokensReader maps a pool-based protocol's contracts to their token C-strkeys for the roster pair label; nil or empty never fails the roster.
 type ProtocolPoolTokensReader interface {
 	// PoolTokens returns pool contract_id → ordered token contract C-strkeys
 	// for `source`, or (nil, nil) for a source without a per-token table.

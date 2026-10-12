@@ -12,19 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// CachedMarketsReader wraps a [MarketsReader] with a small per-key TTL cache. The list endpoints
-// it backs (DistinctPairsExt, SourceMarkets, AssetMarkets, AllPools,
-// GetPairsVolumeHistory24hBatch) all run the same expensive 24h-trades-hypertable scan, hit on
-// every /markets, /pools and /dexes page load.
-//
-// The key is a stable string of the call's args. Fills are single-flight; errors are not cached.
-// Per-pair lookups (PairMarket) and the sparkline batch are pass-through.
-//
-// Ownership: every serving branch of fetchPairs / fetchPools returns a COPY of the entry's row
-// slice, because handleMarkets and handlePools write rows in place and the
-// dex-nonstandard-decimals last_price correction is not idempotent. The copy is one level deep:
-// pointer and slice fields (LastPrice, Volume24hUSD, ...) still alias the cache, so callers may
-// REPLACE a field but must never write THROUGH one.
+// CachedMarketsReader wraps [MarketsReader] with a per-key TTL cache and single-flight; served row slices are one-level COPIES, so callers may REPLACE a field but never write THROUGH a pointer or slice field.
 type CachedMarketsReader struct {
 	// logger sinks a panic recovered in a detached refresh goroutine. It is the process default
 	// because the reader wrappers are built before the API Server exists; the load-bearing signal
@@ -84,8 +72,7 @@ type marketsCacheEntry struct {
 	err error
 }
 
-// NewCachedMarketsReader wraps `upstream` with a TTL cache; ttl=0 disables it. The 30s
-// production default is tighter than sources_stats's 60s because /v1/markets is the front page.
+// NewCachedMarketsReader wraps upstream with a TTL cache (ttl=0 disables); the 30s production default is tighter than sources_stats's 60s because /v1/markets is the front page.
 func NewCachedMarketsReader(upstream MarketsReader, ttl time.Duration) *CachedMarketsReader {
 	return &CachedMarketsReader{
 		logger:   slog.Default(),
@@ -95,8 +82,7 @@ func NewCachedMarketsReader(upstream MarketsReader, ttl time.Duration) *CachedMa
 	}
 }
 
-// PairMarket and GetPairsVolumeHistory24hBatch are pass-through —
-// see type comment for rationale.
+// PairMarket and GetPairsVolumeHistory24hBatch pass through uncached; see the type comment.
 func (c *CachedMarketsReader) PairMarket(ctx context.Context, base, quote canonical.Asset) (Market, bool, error) {
 	return c.upstream.PairMarket(ctx, base, quote)
 }
@@ -105,24 +91,18 @@ func (c *CachedMarketsReader) GetPairsVolumeHistory24hBatch(ctx context.Context,
 	return c.upstream.GetPairsVolumeHistory24hBatch(ctx, pairs)
 }
 
-// FirstTradeBatch passes through uncached — inception is immutable
-// once set and the call is opt-in via ?include=inception.
+// FirstTradeBatch passes through uncached: inception is immutable and the call is opt-in via ?include=inception.
 func (c *CachedMarketsReader) FirstTradeBatch(ctx context.Context, pairs [][2]string) (map[string]time.Time, error) {
 	return c.upstream.FirstTradeBatch(ctx, pairs)
 }
 
-// DistinctPairsExt — cached. Plain [MarketsReader] shape; drops the
-// staleness meta DistinctPairsExtAt surfaces (prewarm + non-/v1/markets
-// callers don't need it).
+// DistinctPairsExt is cached in the plain [MarketsReader] shape, dropping the staleness meta DistinctPairsExtAt surfaces.
 func (c *CachedMarketsReader) DistinctPairsExt(ctx context.Context, cursor string, limit int, order timescale.MarketsOrder) ([]Market, string, error) {
 	rows, next, _, _, err := c.DistinctPairsExtAt(ctx, cursor, limit, order)
 	return rows, next, err
 }
 
-// DistinctPairsExtAt is DistinctPairsExt plus the served rows' observed-at time and staleness
-// flag, so /v1/markets stamps an honest as_of and flags.stale instead of asserting as_of=now over
-// old rows when refreshes keep failing. observedAt is zero when the cache is disabled (an
-// uncached read is live-fresh).
+// DistinctPairsExtAt is DistinctPairsExt plus the rows' observed-at time and staleness so /v1/markets stamps an honest as_of; observedAt is zero when the cache is disabled.
 func (c *CachedMarketsReader) DistinctPairsExtAt(ctx context.Context, cursor string, limit int, order timescale.MarketsOrder) ([]Market, string, time.Time, bool, error) {
 	if c.ttl <= 0 {
 		rows, next, err := c.upstream.DistinctPairsExt(ctx, cursor, limit, order)
@@ -140,8 +120,7 @@ func (c *CachedMarketsReader) SourceMarkets(ctx context.Context, source, cursor 
 	return rows, next, err
 }
 
-// SourceMarketsAt is SourceMarkets plus the observed-at + staleness meta —
-// see DistinctPairsExtAt.
+// SourceMarketsAt is SourceMarkets plus observed-at and staleness meta; see DistinctPairsExtAt.
 func (c *CachedMarketsReader) SourceMarketsAt(ctx context.Context, source, cursor string, limit int, order timescale.MarketsOrder) ([]Market, string, time.Time, bool, error) {
 	if c.ttl <= 0 {
 		rows, next, err := c.upstream.SourceMarkets(ctx, source, cursor, limit, order)
@@ -159,8 +138,7 @@ func (c *CachedMarketsReader) AssetMarkets(ctx context.Context, asset, cursor st
 	return rows, next, err
 }
 
-// AssetMarketsAt is AssetMarkets plus the observed-at + staleness meta —
-// see DistinctPairsExtAt.
+// AssetMarketsAt is AssetMarkets plus observed-at and staleness meta; see DistinctPairsExtAt.
 func (c *CachedMarketsReader) AssetMarketsAt(ctx context.Context, asset, cursor string, limit int, order timescale.MarketsOrder) ([]Market, string, time.Time, bool, error) {
 	if c.ttl <= 0 {
 		rows, next, err := c.upstream.AssetMarkets(ctx, asset, cursor, limit, order)
@@ -172,16 +150,13 @@ func (c *CachedMarketsReader) AssetMarketsAt(ctx context.Context, asset, cursor 
 	})
 }
 
-// AllPools is cached. The Sources filter is a SET; [cacheKey.strSet] sorts it into the key so the
-// prewarm goroutine and the handler hit the same slot without having to agree on element order.
+// AllPools is cached; the Sources filter is a SET that [cacheKey.strSet] sorts into the key so prewarm and handler share a slot.
 func (c *CachedMarketsReader) AllPools(ctx context.Context, filter timescale.PoolsFilter, cursor string, limit int, order timescale.MarketsOrder) ([]Pool, string, error) {
 	rows, next, _, _, err := c.AllPoolsStale(ctx, filter, cursor, limit, order)
 	return rows, next, err
 }
 
-// AllPoolsStale is AllPools plus the served rows' observed-at and whether
-// they came from the stale-while-revalidate branch (past the TTL) — see
-// poolsStaleReader.
+// AllPoolsStale is AllPools plus the rows' observed-at and whether they came from the stale-while-revalidate branch (see poolsStaleReader).
 func (c *CachedMarketsReader) AllPoolsStale(ctx context.Context, filter timescale.PoolsFilter, cursor string, limit int, order timescale.MarketsOrder) ([]Pool, string, time.Time, bool, error) {
 	if c.ttl <= 0 {
 		rows, next, err := c.upstream.AllPools(ctx, filter, cursor, limit, order)

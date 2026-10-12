@@ -33,24 +33,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// ReadyChecker is what /readyz polls to decide whether serving-plane dependencies respond.
-//
-// Ping MUST respect ctx: checkers run in parallel under a shared 2 s deadline, and one that
-// ignores it turns readyz into a cascade-failure vector for the liveness probe.
-//
-// Critical() separates "cannot serve without this" (Postgres) from "degrades but serves" (Redis).
-// /readyz returns 503 ONLY for a failing critical check, or a Redis outage would drain every backend.
+// ReadyChecker is what /readyz polls; Ping MUST respect ctx (shared 2 s deadline) and Critical() separates "cannot serve" (Postgres) from "degrades" (Redis), so only a critical failure returns 503.
 type ReadyChecker interface {
 	Ping(ctx context.Context) error
 	Name() string
 	Critical() bool
 }
 
-// ExpectedSchemaVersion is the migrations/ head this binary was built against; a lower applied
-// schema fails readiness so it never hides behind a green healthz. The check is `applied >=
-// expected` because a NEWER schema is safe in a rolling deploy or rollback; a dirty row alone is
-// not a mismatch, see [nonAtomicMigrationVersions]. TestExpectedSchemaVersionMatchesMigrationsHead
-// fails CI if a migration is added unbumped.
+// ExpectedSchemaVersion is the migrations/ head this binary was built against; readiness fails when applied < expected (a NEWER schema is safe), and a test fails CI if a migration is added unbumped.
 const ExpectedSchemaVersion uint = 214
 
 // nonAtomicMigrationVersions lists migrations whose up.sql commits mid-file, breaking
@@ -59,8 +49,7 @@ const ExpectedSchemaVersion uint = 214
 // these versions leave a genuinely partial schema when dirty.
 var nonAtomicMigrationVersions = map[uint]bool{30: true}
 
-// SchemaVersionReader reports the applied golang-migrate schema state (schema_migrations.version
-// + dirty). cmd/stellarindex-api adapts *timescale.Store, keeping the raw SQL in the binary layer.
+// SchemaVersionReader reports the applied golang-migrate state (version + dirty), adapted from *timescale.Store in cmd/stellarindex-api.
 type SchemaVersionReader interface {
 	// SchemaMigrationVersion returns the highest applied migration and whether its row is dirty.
 	// version==0 means none applied.
@@ -74,8 +63,7 @@ type schemaVersionChecker struct {
 	expected uint
 }
 
-// NewSchemaVersionChecker builds the schema-head readiness check. It is critical: a
-// binary/schema mismatch must drain the backend, not serve partial data behind a green probe.
+// NewSchemaVersionChecker builds the critical schema-head readiness check, so a binary/schema mismatch drains the backend instead of serving partial data.
 func NewSchemaVersionChecker(reader SchemaVersionReader) ReadyChecker {
 	return schemaVersionChecker{reader: reader, expected: ExpectedSchemaVersion}
 }
@@ -110,8 +98,7 @@ type schemaDirtyChecker struct {
 	reader SchemaVersionReader
 }
 
-// NewSchemaDirtyChecker builds the non-critical dirty-row visibility check.
-// Register it alongside [NewSchemaVersionChecker] against the same reader.
+// NewSchemaDirtyChecker builds the non-critical dirty-row visibility check; register it beside [NewSchemaVersionChecker] on the same reader.
 func NewSchemaDirtyChecker(reader SchemaVersionReader) ReadyChecker {
 	return schemaDirtyChecker{reader: reader}
 }
@@ -130,8 +117,7 @@ func (c schemaDirtyChecker) Ping(ctx context.Context) error {
 	return nil
 }
 
-// OpenBucketCAGGReader lists the continuous aggregates that serve their in-progress bucket
-// outside the real-time allowlist; *timescale.Store satisfies it.
+// OpenBucketCAGGReader lists the continuous aggregates that serve their in-progress bucket outside the real-time allowlist; *timescale.Store satisfies it.
 type OpenBucketCAGGReader interface {
 	OpenBucketCAGGs(ctx context.Context) ([]string, error)
 }
@@ -143,8 +129,7 @@ type closedBucketChecker struct {
 	reader OpenBucketCAGGReader
 }
 
-// NewClosedBucketChecker builds the materialized_only readiness check. It is critical: two
-// money surfaces disagreeing on one pair must drain the backend.
+// NewClosedBucketChecker builds the critical materialized_only readiness check, since two money surfaces disagreeing on one pair must drain the backend.
 func NewClosedBucketChecker(reader OpenBucketCAGGReader) ReadyChecker {
 	return closedBucketChecker{reader: reader}
 }
@@ -163,8 +148,7 @@ func (c closedBucketChecker) Ping(ctx context.Context) error {
 	return nil
 }
 
-// Server is the HTTP handler for the Stellar Index v1 API. [New] returns it with routes mounted;
-// [Server.Handler] yields the http.Handler. Thread-safe.
+// Server is the thread-safe HTTP handler for the v1 API; [New] returns it with routes mounted and [Server.Handler] yields the http.Handler.
 type Server struct {
 	// Options is the construction-time wiring; the fields below are state derived from it.
 	Options
@@ -379,9 +363,7 @@ const defaultRequestTimeout = 15 * time.Second
 // enforce the bound and the config mirror.
 const maxHandlerBudget = defaultRequestTimeout - 3*time.Second
 
-// DashboardAuthMounter is satisfied by main.go's dashboardauth.Handlers. It is defined here so
-// this package does not import dashboardauth; the dependency runs the other way and main.go
-// wires the result into v1.Options.
+// DashboardAuthMounter is satisfied by main.go's dashboardauth.Handlers, defined here so this package does not import dashboardauth.
 type DashboardAuthMounter interface {
 	// Mount registers the login entry points through public so they
 	// answer without an API key or SEP-10 JWT under every auth_mode.
@@ -1068,9 +1050,7 @@ func globalPriceOptsWithDefaults(o aggregate.GlobalPriceOptions) aggregate.Globa
 	return o
 }
 
-// BeginStreamDrain tells every SSE connection the process is shutting down, so none holds
-// http.Server.Shutdown open. Idempotent; register with http.Server.RegisterOnShutdown. Not
-// BaseContext, which would also abort ordinary in-flight requests. See [streaming.Drain].
+// BeginStreamDrain tells every SSE connection the process is shutting down so none holds http.Server.Shutdown open; idempotent, register with RegisterOnShutdown, see [streaming.Drain].
 func (s *Server) BeginStreamDrain() { s.streamDrain.Begin() }
 
 // streamOptions is the [streaming.StreamOptions] every stream handler passes, so a new stream
@@ -1702,13 +1682,10 @@ func (s *Server) fillReadyz(done chan struct{}) {
 	s.readyzMu.Unlock()
 }
 
-// ReadinessProbeCadence is how often [Server.StartReadinessProbe] runs a
-// readiness round: one Prometheus scrape interval.
+// ReadinessProbeCadence is how often [Server.StartReadinessProbe] runs a readiness round: one Prometheus scrape interval.
 const ReadinessProbeCadence = 15 * time.Second
 
-// StartReadinessProbe runs a readiness round every `every` until ctx ends, so
-// stellarindex_dependency_up stays current when nothing calls /v1/readyz; otherwise the gauge
-// freezes and an outage after the last probe never reads 0.
+// StartReadinessProbe runs a readiness round every `every` until ctx ends, so stellarindex_dependency_up stays current when nothing calls /v1/readyz.
 func (s *Server) StartReadinessProbe(ctx context.Context, every time.Duration) {
 	t := time.NewTicker(every)
 	defer t.Stop()

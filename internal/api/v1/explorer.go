@@ -10,18 +10,7 @@ import (
 	explorerpkg "github.com/Stellar-Index/StellarIndex/internal/api/v1/explorer"
 )
 
-// The network-explorer endpoint implementations (ADR-0038) live in
-// internal/api/v1/explorer. This file only wires that package's
-// *Handler into Server (see server.go's Handler construction +
-// mountRoutes) and keeps type aliases for the explorer types package v1
-// exports, so the explorer_*_test.go files in this package compile
-// unchanged — they still write `v1.LedgersListView` etc.
-//
-// ExplorerReader is also the read seam behind a few v1 handlers
-// OUTSIDE the explorer package (asset SAC resolution in assets.go,
-// lending TVL, liquidity-pool + pool-reserve reads) — those keep
-// referring to the bare `ExplorerReader` name in package v1
-// unchanged via this alias.
+// ExplorerReader aliases the explorer package's read seam, which v1 handlers outside it (SAC resolution, lending TVL, pool reserves) also use; the explorer endpoints live in internal/api/v1/explorer (ADR-0038).
 type ExplorerReader = explorerpkg.ExplorerReader
 
 type (
@@ -142,9 +131,7 @@ func explorerHandlerFor(s *Server, opts Options, logger *slog.Logger) *explorerp
 	}
 }
 
-// PrewarmAccountsWealth primes the /v1/accounts wealth ranking. Exposed on
-// the Server so cmd/stellarindex-api can drive it from the prewarm loop;
-// see [explorer.Handler.PrewarmAccountsWealth] for why it is needed.
+// PrewarmAccountsWealth primes the /v1/accounts wealth ranking for cmd/stellarindex-api's prewarm loop; see [explorer.Handler.PrewarmAccountsWealth].
 func (s *Server) PrewarmAccountsWealth(ctx context.Context) {
 	if s.explorerHandler == nil {
 		return
@@ -152,10 +139,7 @@ func (s *Server) PrewarmAccountsWealth(ctx context.Context) {
 	s.explorerHandler.PrewarmAccountsWealth(ctx)
 }
 
-// PrewarmOpTypeStats primes the /v1/operations trailing-24h op-type
-// panel. Exposed on the Server so cmd/stellarindex-api can drive it from
-// the same 5-minute prewarm loop as the wealth ranking; see
-// [explorer.Handler.PrewarmOpTypeStats].
+// PrewarmOpTypeStats primes the /v1/operations trailing-24h op-type panel for the prewarm loop; see [explorer.Handler.PrewarmOpTypeStats].
 func (s *Server) PrewarmOpTypeStats(ctx context.Context) {
 	if s.explorerHandler == nil {
 		return
@@ -163,10 +147,7 @@ func (s *Server) PrewarmOpTypeStats(ctx context.Context) {
 	s.explorerHandler.PrewarmOpTypeStats(ctx)
 }
 
-// PrewarmContractsDirectory primes the /v1/contracts directory's default
-// window rung. Exposed on the Server so cmd/stellarindex-api can drive it
-// from the same 5-minute prewarm loop as the wealth ranking; see
-// [explorer.Handler.PrewarmContractsDirectory].
+// PrewarmContractsDirectory primes the /v1/contracts directory's default window rung for the prewarm loop; see [explorer.Handler.PrewarmContractsDirectory].
 func (s *Server) PrewarmContractsDirectory(ctx context.Context) {
 	if s.explorerHandler == nil {
 		return
@@ -174,8 +155,7 @@ func (s *Server) PrewarmContractsDirectory(ctx context.Context) {
 	s.explorerHandler.PrewarmContractsDirectory(ctx)
 }
 
-// PrewarmContractStats primes the /v1/contracts/stats snapshot; see
-// [explorer.Handler.PrewarmContractStats].
+// PrewarmContractStats primes the /v1/contracts/stats snapshot; see [explorer.Handler.PrewarmContractStats].
 func (s *Server) PrewarmContractStats(ctx context.Context) {
 	if s.explorerHandler == nil {
 		return
@@ -183,10 +163,7 @@ func (s *Server) PrewarmContractStats(ctx context.Context) {
 	s.explorerHandler.PrewarmContractStats(ctx)
 }
 
-// PrewarmNetworkThroughput primes the /v1/network/throughput daily
-// series. Exposed on the Server so cmd/stellarindex-api can drive it from
-// the same 5-minute prewarm loop as the wealth ranking; see
-// [explorer.Handler.PrewarmNetworkThroughput].
+// PrewarmNetworkThroughput primes the /v1/network/throughput daily series for the prewarm loop; see [explorer.Handler.PrewarmNetworkThroughput].
 func (s *Server) PrewarmNetworkThroughput(ctx context.Context) {
 	if s.explorerHandler == nil {
 		return

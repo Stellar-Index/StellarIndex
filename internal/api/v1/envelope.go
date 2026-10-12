@@ -13,8 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 )
 
-// Envelope is the shape of every 2xx JSON response. See
-// docs/reference/api-design.md §4.
+// Envelope is the shape of every 2xx JSON response (docs/reference/api-design.md section 4).
 type Envelope struct {
 	Data any      `json:"data"`
 	AsOf WireTime `json:"as_of"`
@@ -32,15 +31,7 @@ type Envelope struct {
 	Pagination *Pagination `json:"pagination,omitempty"`
 }
 
-// Flags are the advisory quality markers.
-//   - Stale: below this surface's baseline contract (e.g. /v1/price degraded to last-trade).
-//   - Triangulated: computed via a pivot (typically USD), not a directly-traded pair.
-//   - Frozen: anomaly detection refused the new bucket; the response carries the held
-//     last-known-good value with its own observed_at, and Stale set. Tip and observations ignore it.
-//   - OutsideCoverage: the range ends at or before `coverage_from`. Only on windowed surfaces, only
-//     when the floor is KNOWN, never on a range straddling it.
-//   - SingleSource: one contributing source; with Frozen, the manipulation signature.
-//   - Diverged / Rerouted / PivotUnverified: /v1/price triangulated path only.
+// Flags are the advisory quality markers (Stale, Triangulated, Frozen, OutsideCoverage, SingleSource, Diverged, Rerouted, PivotUnverified); OutsideCoverage is set only when the coverage floor is KNOWN and the range ends at or before it.
 type Flags struct {
 	Stale             bool `json:"stale"`
 	ReducedRedundancy bool `json:"reduced_redundancy"`
@@ -95,9 +86,7 @@ type Pagination struct {
 	Next string `json:"next,omitempty"`
 }
 
-// Problem is the RFC 9457 error payload. RequestID echoes X-Request-ID so a body alone finds the
-// server-side trace. CoverageFrom / OutsideCoverage repeat the envelope members on /v1/price/at,
-// whose "no closed bucket" 404 has the same dead-market-or-before-history ambiguity.
+// Problem is the RFC 9457 error payload; RequestID echoes X-Request-ID, and CoverageFrom/OutsideCoverage repeat the envelope members on /v1/price/at.
 type Problem struct {
 	Type            string    `json:"type"`
 	Title           string    `json:"title"`

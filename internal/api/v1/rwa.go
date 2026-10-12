@@ -41,13 +41,7 @@ const rwaMaxIssuers = 64
 // reported like the issuer cap.
 const rwaAssetsPerIssuer = 500
 
-// Sep1BoundCurrencyReader is the storage seam the membership build reads attestations through;
-// *timescale.Store satisfies it. Optional: without it the surface serves an empty set with a
-// stated reason rather than an error.
-//
-// The candidate pool silently bounds this surface: it reads `issuers WHERE sep1_payload IS NOT
-// NULL`, so an issuer the registry writers have not reached is absent from the `refused` counts
-// entirely, not refused by a requirement.
+// Sep1BoundCurrencyReader is the storage seam for RWA membership attestations; optional, and its candidate pool is only issuers with a sep1_payload, so unreached issuers are absent from `refused` counts.
 type Sep1BoundCurrencyReader interface {
 	BoundSep1Currencies(
 		ctx context.Context, keep timescale.Sep1CurrencyFilter,
@@ -102,8 +96,7 @@ type RWAAssetsView struct {
 	UnreachedEntities []RWAUnreachedEntity `json:"unreached_entities"`
 }
 
-// RWAUnreachedEntity is one recognised issuing entity this index holds no token for. Name, domain
-// and tags are the curated third party's own labels (as on asset rows, issuer_directory_*).
+// RWAUnreachedEntity is one recognised issuing entity this index holds no token for; name, domain and tags are the curated third party's own labels.
 type RWAUnreachedEntity struct {
 	// Address is the G-account the directory names, served so an operator can act on it.
 	Address string   `json:"address"`
@@ -112,9 +105,7 @@ type RWAUnreachedEntity struct {
 	Tags    []string `json:"tags,omitempty"`
 }
 
-// RWAFunnel is the complete narrowing from every issuer that could carry a SEP-1 attestation down
-// to the assets served. Without it, a few rows cannot distinguish a network with few real-world
-// assets from a pipeline silently discarding thousands of candidates.
+// RWAFunnel is the full narrowing from every issuer that could carry a SEP-1 attestation down to the assets served, so a few rows cannot hide thousands of silently discarded candidates.
 type RWAFunnel struct {
 	// Stages is the narrowing in pipeline order, coarse to fine. Each stage's Dropped reasons
 	// account exactly for the difference between its count and the next stage's.
@@ -135,14 +126,7 @@ type RWAFunnel struct {
 	ListingDirectory *RWAListingDirectory `json:"listing_directory,omitempty"`
 }
 
-// RWAMembershipSet dates the set this response describes and whether the copy served has lapsed.
-// The cache serves a lapsed set while a detached rebuild runs, so a request never waits for the
-// multi-second rescan; this block makes that visible:
-//
-//	Stale false                       inside its lifetime
-//	Stale true, RebuildFailedAt nil   lapsed, rebuild running or about to: transient
-//	Stale true, RebuildFailedAt set   lapsed and the last replacement FAILED; the
-//	                                  served set is the last good one. Act on this.
+// RWAMembershipSet dates the described set; Stale means the copy served has lapsed while a detached rebuild runs, and RebuildFailedAt set means the last rebuild FAILED and the set is the last good one.
 type RWAMembershipSet struct {
 	// BuiltAt is when the rebuild that produced this set finished, not when the response was
 	// rendered or any source was written. It is the instant the lifetime clock starts from, so
@@ -158,19 +142,7 @@ type RWAMembershipSet struct {
 	RebuildFailedAt *WireTime `json:"rebuild_failed_at,omitempty"`
 }
 
-// RWAListingDirectory is what the independent listing directory looked like when the served set
-// was built. A `listing` arm corroborating nothing can mean a directory never synced, a sync that
-// stopped, or a healthy directory this set predates. Entries counts fresh rows only
-// (`Entries = Contracts + Classic`, Stale beside, never inside), so Stale tells the zero cases apart:
-//
-//	Entries == 0 && Stale == 0     never synced: the table is empty
-//	Entries == 0 && Stale > 0      every row aged out: the sync STOPPED
-//	Entries > 0 && Contracts == 0  healthy, names no Stellar CONTRACT address
-//	Entries > 0 && Contracts > 0   healthy and populated
-//
-// A sync completed AFTER ObservedAt means the set predates the rows and the next rebuild carries
-// them; nothing is broken. Evidence and verdict come from the same read, so they cannot
-// contradict.
+// RWAListingDirectory is the independent listing directory as it looked when the set was built; Entries counts fresh rows only (Contracts + Classic), so Entries==0 with Stale>0 means the sync STOPPED.
 type RWAListingDirectory struct {
 	// ObservedAt is when this index read the directory, not when it was synced or the response
 	// rendered. Counts can be re-read later but this instant cannot, so it is published; it
@@ -342,8 +314,7 @@ type RWADefinition struct {
 	DocumentationURL string `json:"documentation_url"`
 }
 
-// RWABoundContractInstrument is one curated binding: an exact contract address, the instrument it
-// holds, and that instrument's closed-vocabulary class.
+// RWABoundContractInstrument is one curated binding of an exact contract address to its instrument and closed-vocabulary class.
 type RWABoundContractInstrument struct {
 	ContractID string `json:"contract_id"`
 	Instrument string `json:"instrument"`
@@ -440,11 +411,7 @@ func rwaTruncationOf(m rwaMembership, join rwaCatalogueJoin) rwaTruncation {
 	}
 }
 
-// RWAReferenceSummary aggregates the reference-priced basis.
-//
-// Every field mirrors a market-cap counterpart in [RWASummary]: the total is absent rather than
-// "0.00" when nothing is reference-valued, and LowerBound says whether it is below the set's
-// value. The meaning differs: nothing summed here was observed being paid.
+// RWAReferenceSummary aggregates the reference-priced basis; the total is absent rather than "0.00" when nothing is reference-valued, and nothing summed here was observed being paid.
 type RWAReferenceSummary struct {
 	// ValueUSD is the exact sum of the published per-asset `reference_valuation.value_usd`
 	// strings. Absent, never "0.00", when no member is reference-valued.
@@ -468,11 +435,7 @@ type RWAReferenceSummary struct {
 	Basis string `json:"basis"`
 }
 
-// RWABothBases totals the members that carry a market cap AND a reference valuation.
-//
-// `market_cap_usd` and `reference_valuation.value_usd` sum over different rows, so their
-// difference means nothing. These two totals share the same rows, so their difference is the
-// aggregate market-versus-reference gap over that overlap (per asset: `premium.pct`).
+// RWABothBases totals members carrying both a market cap AND a reference valuation, so only these two totals share rows and their difference is the aggregate market-versus-reference gap.
 type RWABothBases struct {
 	// Assets is how many members carry both figures.
 	Assets int `json:"assets"`
@@ -503,8 +466,7 @@ const (
 	RWAValuationDecimalsUnknown = "decimals_unavailable"
 )
 
-// RWAValuation carries a row valuation, or the reason there is none. Both money fields are absent
-// unless Status is published.
+// RWAValuation carries a row valuation or the reason there is none; both money fields are absent unless Status is published.
 type RWAValuation struct {
 	Status   string  `json:"status"`
 	PriceUSD *string `json:"price_usd,omitempty"`
@@ -596,8 +558,7 @@ type RWAAsset struct {
 	ObservationCount int64  `json:"observation_count"`
 }
 
-// RWAISINCollision reports one ISIN declared in anchor_asset by several issuer accounts. A declared
-// ISIN is a claim, not proof of holding the security, so the row only counts the claimants.
+// RWAISINCollision reports one ISIN declared in anchor_asset by several issuer accounts; a declared ISIN is a claim, not proof of holding the security.
 type RWAISINCollision struct {
 	// ISIN is the declared identifier in canonical upper-case form.
 	ISIN string `json:"isin"`
@@ -1061,10 +1022,7 @@ func (s *Server) endRWAMembershipFlight(done chan struct{}) {
 	close(done)
 }
 
-// PrewarmRWA fills the three caches the /rwa page reads: the membership set shared by all RWA
-// routes, then the value and premium series behind the history panels (which build on it), so
-// the first build is paid by this goroutine, not the first visitor. Best-effort: no reader wired,
-// or a failed scan, leaves the cache as it was.
+// PrewarmRWA fills the membership set, then the value and premium history caches built on it, best-effort, so the first visitor does not pay the build.
 func (s *Server) PrewarmRWA(ctx context.Context) {
 	// The membership set depends on neither history reader, so it warms on its own terms.
 	if _, flight := s.readRWAMembership(); flight != nil { //nolint:contextcheck // same detachment as the request path; ctx is honoured by the wait below, not by the scan.

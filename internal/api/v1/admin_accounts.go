@@ -22,10 +22,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// PlatformAccountStore is the narrow platform-account boundary the operator tier-override
-// endpoints need, backed by postgresstore.AccountStore (the store the Postgres API-key validator
-// reads at Lookup). Distinct from [AccountStore], the self-service key store: this one carries the
-// account-level tier + rate-limit / monthly-quota overrides.
+// PlatformAccountStore is the narrow platform-account boundary for operator tier-override endpoints, carrying account-level tier and limit overrides.
 type PlatformAccountStore interface {
 	Get(ctx context.Context, id uuid.UUID) (platform.Account, error)
 	GetBySlug(ctx context.Context, slug string) (platform.Account, error)
@@ -36,16 +33,13 @@ type PlatformAccountStore interface {
 	UpdateAtomic(ctx context.Context, id uuid.UUID, mutate func(*platform.Account) error) (before, after platform.Account, err error)
 }
 
-// AccountSessionRevoker is the narrow [platform.UserStore] slice account
-// closure needs to log every member out. postgresstore.UserStore satisfies it.
+// AccountSessionRevoker is the [platform.UserStore] slice account closure needs to log every member out.
 type AccountSessionRevoker interface {
 	ListUsersForAccount(ctx context.Context, accountID uuid.UUID) ([]platform.User, error)
 	RevokeAllUserSessions(ctx context.Context, userID uuid.UUID) error
 }
 
-// AdminAccountView is the wire shape of the operator account endpoints: the account-level knobs an
-// operator edits, no customer PII beyond the billing email. It mirrors the dashboardauth
-// staff-lookup projection so the two admin surfaces render consistently.
+// AdminAccountView is the operator account wire shape: account-level knobs only, no customer PII beyond the billing email.
 type AdminAccountView struct {
 	ID                          string `json:"id"`
 	Name                        string `json:"name"`

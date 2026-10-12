@@ -44,10 +44,7 @@ func (s *Server) contractProtocol(ctx context.Context, contractID string) (strin
 	return name, ok
 }
 
-// PrewarmContractProtocolIndex builds the contract -> protocol map before any request needs
-// it. The 5-minute prewarm loop is under contractProtocolIndexTTL, so no request triggers a
-// build. It builds inline on ctx (shutdown cancels it) and no-ops while the map is fresh or
-// another build is running.
+// PrewarmContractProtocolIndex builds the contract-to-protocol map on ctx before any request needs it; no-ops while fresh or another build runs.
 func (s *Server) PrewarmContractProtocolIndex(ctx context.Context) {
 	if ctx.Err() != nil || !s.claimContractProtocolIndexBuild() {
 		return

@@ -12,9 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
-// TokenSupplyReader is the seam GET /v1/assets/{asset_id}/supply reads through: the ClickHouse
-// supply_flows lake, a live SQL sum of decoded mint/burn/clawback with no rollup. Nil disables the
-// endpoint (503). Distinct from [SupplyLooker]: this is the raw on-chain net for EVERY token.
+// TokenSupplyReader is the seam for GET /v1/assets/{asset_id}/supply: a live ClickHouse supply_flows sum of mint/burn/clawback; nil disables the endpoint (503).
 type TokenSupplyReader interface {
 	TokenSupply(ctx context.Context, contractID string) (clickhouse.TokenSupply, error)
 	NativeTotalCoins(ctx context.Context) (totalCoins int64, ledger uint32, err error)
@@ -35,8 +33,7 @@ func isNativeSupplyAlias(assetID string) bool {
 		(parsed.Type == canonical.AssetCrypto && strings.EqualFold(parsed.Code, "XLM"))
 }
 
-// AssetSupply is the wire response for GET /v1/assets/{asset_id}/supply. Amounts are decimal
-// strings in the asset's smallest unit (an i128 is never a JSON number); clients apply decimals.
+// AssetSupply is the GET /v1/assets/{asset_id}/supply response; amounts are smallest-unit decimal strings, never JSON numbers.
 type AssetSupply struct {
 	AssetID       string  `json:"asset_id"`
 	ContractID    string  `json:"contract_id,omitempty"`
@@ -184,8 +181,7 @@ func (s *Server) handleAssetSupply(w http.ResponseWriter, r *http.Request) {
 	}, Flags{Stale: stale})
 }
 
-// ContractStorageSupplyReader is the seam for the storage-derived supply reading. It is separate
-// from [TokenSupplyReader] so a deployment can wire one source without the other.
+// ContractStorageSupplyReader is the seam for the storage-derived supply reading, separate from [TokenSupplyReader] so either can be wired alone.
 type ContractStorageSupplyReader interface {
 	ContractStorageSupply(ctx context.Context, contractID string) (clickhouse.ContractStorageSupply, error)
 }

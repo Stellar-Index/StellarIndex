@@ -10,12 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// SEP40Price is the wire shape for the SEP-40 passthrough
-// endpoints (/v1/oracle/lastprice, /v1/oracle/x_last_price).
-//
-// The field set is minimal on purpose: on-chain SEP-40 oracles expose only `(price, timestamp)`,
-// and integrators rely on this surface matching that. Richer fields live on /v1/oracle/latest
-// and /v1/price.
+// SEP40Price is the SEP-40 passthrough shape (/v1/oracle/lastprice, x_last_price), deliberately minimal to `(price, timestamp)` like on-chain oracles.
 type SEP40Price struct {
 	Asset     string   `json:"asset"`
 	Price     string   `json:"price"`

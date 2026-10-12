@@ -144,10 +144,7 @@ type RWAPremiumSeries struct {
 	ReferenceOnlyDays int `json:"reference_only_days,omitempty"`
 }
 
-// RWAPremiumHistoryPoint is one day of one member's premium.
-//
-// Both prices are served beside the ratio, as the point-in-time surface does, because a reader who
-// sees only the quotient cannot tell which side moved.
+// RWAPremiumHistoryPoint is one day of one member's premium, with both prices served beside the ratio so a reader can tell which side moved.
 type RWAPremiumHistoryPoint struct {
 	// T is the UTC day the bucket opens.
 	T WireTime `json:"t"`
@@ -167,8 +164,7 @@ type RWAPremiumHistoryPoint struct {
 	Trades    int64  `json:"trades"`
 }
 
-// RWAPremiumCoveragePoint is one day's account of how much of the set
-// could be compared.
+// RWAPremiumCoveragePoint is one day's account of how much of the set could be compared.
 type RWAPremiumCoveragePoint struct {
 	T WireTime `json:"t"`
 	// AssetsMeasured and AssetsUnmeasured split the WHOLE set by whether
@@ -210,12 +206,7 @@ const rwaPremiumBasisUnavailable = "No premium series is published: membership c
 
 // ─── readers ────────────────────────────────────────────────────────
 
-// RWAMarketHistoryReader reads the observed daily dollar market, the market leg of
-// GET /v1/rwa/premium.
-//
-// Declared apart from the live price seams for [RWAOracleHistoryReader]'s reason: a history
-// capability on a live-read interface would force stubs on every implementation. Nil disables the
-// endpoint, since a premium with the market leg missing is no series, not a shorter one.
+// RWAMarketHistoryReader reads the observed daily dollar market, the market leg of GET /v1/rwa/premium; nil disables the endpoint because a premium missing its market leg is no series.
 type RWAMarketHistoryReader interface {
 	DailyMarketDays(ctx context.Context, assets, quotes []canonical.Asset, from, to time.Time) ([]timescale.MarketDay, error)
 }

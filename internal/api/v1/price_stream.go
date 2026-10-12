@@ -13,11 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 )
 
-// PriceStreamTopic returns the Hub topic key `closed:<asset>/<quote>/<window_seconds>` for
-// closed-bucket events, exported so publishers compute the same key as the handler. The window is
-// in the key because the aggregator publishes one bucket per (pair, window); on one topic the
-// price would flap across window lengths every tick. The "closed:" prefix keeps it clear of the
-// tip stream's "tip:" topics on the shared Hub.
+// PriceStreamTopic returns the Hub key `closed:<asset>/<quote>/<window_seconds>`, exported so publishers match the handler; the window is in the key so prices do not flap across windows.
 func PriceStreamTopic(asset, quote canonical.Asset, windowSeconds int) string {
 	return "closed:" + asset.String() + "/" + quote.String() + "/" + strconv.Itoa(windowSeconds)
 }

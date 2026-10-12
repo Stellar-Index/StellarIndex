@@ -9,8 +9,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// UsdVolumePricingRefreshInterval is how often the background loop recomputes
-// the axis; the window is one fixed hour-aligned 24h, so a request never scans trades.
+// UsdVolumePricingRefreshInterval is how often the loop recomputes the axis over one fixed hour-aligned 24h window, so a request never scans trades.
 const UsdVolumePricingRefreshInterval = 15 * time.Minute
 
 const usdVolumePricingWindow = 24 * time.Hour
@@ -38,8 +37,7 @@ type usdVolumePricingSnapshot struct {
 	asOf       time.Time
 }
 
-// UsdVolumePricingCache holds the last successful refresh; a failed refresh
-// keeps the previous snapshot.
+// UsdVolumePricingCache holds the last successful refresh; a failed refresh keeps the previous snapshot.
 type UsdVolumePricingCache struct {
 	mu     sync.RWMutex
 	snap   *usdVolumePricingSnapshot
@@ -85,9 +83,7 @@ func (c *UsdVolumePricingCache) view() *UsdVolumePricingAxisView {
 	return buildUsdVolumePricingView(snap)
 }
 
-// UsdVolumePricingAxisView is the USD volume pricing axis on GET /v1/coverage.
-// It is not a source verdict and is outside complete_sources / total_sources:
-// it measures valuation of captured trades, not capture.
+// UsdVolumePricingAxisView is the USD volume pricing axis on GET /v1/coverage; it measures valuation of captured trades, not capture, so it is outside complete_sources / total_sources.
 type UsdVolumePricingAxisView struct {
 	WindowStart WireTime `json:"window_start"`
 	WindowEnd   WireTime `json:"window_end"`
@@ -101,8 +97,7 @@ type UsdVolumePricingAxisView struct {
 	Sources  []UsdVolumePricingSource `json:"sources"`
 }
 
-// UsdVolumePricingSource is one source's exact trade counts in the window.
-// Trades = Priced + Unpriced + Unroutable.
+// UsdVolumePricingSource is one source's exact trade counts in the window, where Trades = Priced + Unpriced + Unroutable.
 type UsdVolumePricingSource struct {
 	Source string `json:"source"`
 	Class  string `json:"class"`

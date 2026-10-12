@@ -6,8 +6,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 )
 
-// CachedVWAP is one aggregator-published VWAP read from the Redis
-// cache.
+// CachedVWAP is one aggregator-published VWAP read from the Redis cache.
 type CachedVWAP struct {
 	// Value is the decimal-string VWAP.
 	Value string

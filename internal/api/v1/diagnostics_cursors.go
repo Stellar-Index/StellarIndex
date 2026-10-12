@@ -9,15 +9,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// CursorsReader is the seam the /v1/diagnostics/cursors handler reads
-// through. timescale.Store satisfies it via ListCursors.
+// CursorsReader is the seam the /v1/diagnostics/cursors handler reads through; timescale.Store satisfies it.
 type CursorsReader interface {
 	ListCursors(ctx context.Context) ([]timescale.Cursor, error)
 }
 
-// Cursor is the wire shape of one /v1/diagnostics/cursors row. last_updated is RFC 3339 and lag
-// is seconds-since-update. State is the derived lifecycle marker (see [cursorStateFor]), so
-// readers need not do age arithmetic against thresholds they cannot know.
+// Cursor is one /v1/diagnostics/cursors row; State is the derived lifecycle marker (see [cursorStateFor]) so readers need no threshold arithmetic.
 type Cursor struct {
 	Source      string `json:"source"`
 	SubSource   string `json:"sub_source,omitempty"`

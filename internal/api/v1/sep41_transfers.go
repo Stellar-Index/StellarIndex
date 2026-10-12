@@ -10,15 +10,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// SEP41TransfersReader is the seam the handler reads through.
-// timescale.Store satisfies it via ListSEP41Transfers.
+// SEP41TransfersReader is the seam the handler reads through; timescale.Store satisfies it via ListSEP41Transfers.
 type SEP41TransfersReader interface {
 	ListSEP41Transfers(ctx context.Context, contractID, fromAddr, toAddr string, limit int) ([]timescale.SEP41TransferRow, error)
 }
 
-// SEP41TransferEntry is one row in the wire response. Amount is a
-// string (not a JSON number) per ADR-0003 — i128 values exceed
-// IEEE 754 double precision above 2^53.
+// SEP41TransferEntry is one wire row; Amount is a string, not a JSON number, because i128 values exceed IEEE 754 precision above 2^53 (ADR-0003).
 type SEP41TransferEntry struct {
 	Ledger          uint32 `json:"ledger"`
 	LedgerCloseTime string `json:"ledger_close_time"`

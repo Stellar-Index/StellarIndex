@@ -12,17 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// CachedHistoryReader wraps a [HistoryReader], adding a stale-while-revalidate cache to
-// `LatestTradePerSource` only, the primitive behind `/v1/observations`. Every other method is
-// pass-through (range-bounded or CAGG-backed and fast).
-//
-// The query is a DISTINCT ON (source) over `trades` with no time bound; `trades_pair_source_ts_idx`
-// makes it per-chunk SkipScans (49-289 ms on r1). The cache keeps the status page's poll off the
-// database and caches the exact result, including a legitimate empty slice.
-//
-// The cold fill runs in a detached goroutine on its own budget: the handler's hard 8s ceiling
-// would otherwise fail every cold call before it could populate the cache, so the endpoint would
-// 503 forever. Detached, the first callers 503 while the fill warms the cache for the next poll.
+// CachedHistoryReader adds a stale-while-revalidate cache to LatestTradePerSource only (behind /v1/observations); the cold fill runs detached so the handler's 8s ceiling cannot 503 it forever.
 type CachedHistoryReader struct {
 	// logger sinks a panic recovered in a detached refresh goroutine. It is the process default,
 	// not the Server's logger, because the wrappers are built before the Server exists. The
@@ -58,8 +48,7 @@ type historyCacheEntry struct {
 	err error
 }
 
-// NewCachedHistoryReader wraps `upstream` so `LatestTradePerSource` is stale-while-revalidate
-// cached. ttl=0 disables the cache. Production wires 2m, which the status page tolerates.
+// NewCachedHistoryReader wraps upstream with a stale-while-revalidate cache for LatestTradePerSource; ttl=0 disables it.
 func NewCachedHistoryReader(upstream HistoryReader, ttl time.Duration) *CachedHistoryReader {
 	return &CachedHistoryReader{
 		logger:        slog.Default(),
@@ -75,9 +64,7 @@ func NewCachedHistoryReader(upstream HistoryReader, ttl time.Duration) *CachedHi
 // Matches coins/markets refresh budgets.
 const historyRefreshBudget = 30 * time.Second
 
-// TradesInRangeAfterFromSource forwards to the upstream when it supports the
-// single-source read; it is never cached. Errors otherwise so a caller that
-// skipped the [SourceHistoryReader] check cannot silently get unfiltered rows.
+// TradesInRangeAfterFromSource forwards uncached to an upstream that supports the single-source read and errors otherwise, so an unchecked caller never gets unfiltered rows.
 func (c *CachedHistoryReader) TradesInRangeAfterFromSource(
 	ctx context.Context, pair canonical.Pair, source string,
 	from, to, afterTs time.Time, afterLedger uint32,

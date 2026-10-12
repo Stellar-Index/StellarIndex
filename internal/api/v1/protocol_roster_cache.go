@@ -142,10 +142,7 @@ func (s *Server) refreshRosterLocked(key string, meta ProtocolMeta) *rosterFligh
 	return fl
 }
 
-// PrewarmProtocolRosters refreshes EVERY source's roster-count entry one read at a time, so no
-// user request pays for a cold roster scan. It refreshes unconditionally (the single flight
-// collapses duplicates), keeping entries at exactly the sweep cadence, like
-// PrewarmProtocolDetails.
+// PrewarmProtocolRosters refreshes EVERY source's roster-count entry unconditionally, one read at a time, at exactly the sweep cadence.
 func (s *Server) PrewarmProtocolRosters(ctx context.Context) {
 	for _, meta := range protocolRegistry {
 		if ctx.Err() != nil {

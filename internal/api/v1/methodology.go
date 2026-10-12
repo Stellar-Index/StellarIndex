@@ -8,11 +8,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
-// Methodology is the wire shape of /v1/methodology, a machine-readable summary of the active
-// aggregation policy. Every field maps to a constant in this package, a row in
-// `internal/sources/external.Registry`, or an operator config value; nothing is fabricated for
-// display. pkg/client mirrors this shape: adding optional fields is compatible, removing or
-// renaming needs an SDK minor bump.
+// Methodology is the /v1/methodology shape, a machine-readable summary of the active aggregation policy with nothing fabricated; pkg/client mirrors it, so removing or renaming fields needs an SDK minor bump.
 type Methodology struct {
 	// Version is the shape version of the response; bump on any breaking change.
 	Version string `json:"version"`
@@ -78,8 +74,7 @@ type MethodologySourceClass struct {
 	Description       string `json:"description"`
 }
 
-// MethodologySource is one venue, projected from
-// `external.Registry`.
+// MethodologySource is one venue projected from `external.Registry`.
 type MethodologySource struct {
 	Name              string `json:"name"`
 	Class             string `json:"class"`
@@ -93,8 +88,7 @@ type MethodologySource struct {
 	OnChain bool `json:"on_chain"`
 }
 
-// MethodologyReference is a pointer to an ADR or other narrative
-// doc that governs one slice of the policy.
+// MethodologyReference points to an ADR or narrative doc governing one slice of the policy.
 type MethodologyReference struct {
 	ID    string `json:"id"`
 	Title string `json:"title"`

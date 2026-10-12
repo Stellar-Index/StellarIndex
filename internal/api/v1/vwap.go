@@ -13,20 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// VWAPResult is the wire shape for /v1/vwap responses.
-//
-// Price is the volume-weighted mean as a decimal string (10-digit precision, as /v1/history and
-// /v1/ohlc). Volumes are raw smallest-unit integer strings at the per-SOURCE scale of the venues
-// (7 on-chain, 8 CEX, 6 FX), lifted to one common scale when the window mixes venues;
-// BaseVolumeDecimals / QuoteVolumeDecimals state that scale, as [OHLCBar] does.
-//
-// OutliersFiltered is how many trades the sigma filter removed; zero when outlier_sigma=0 or
-// there were too few samples.
-//
-// Truncated is true when the window hit the max-trades cap (10000): Price is then over the
-// chronologically-LAST 10000 trades only, not the true window VWAP. The reader orders `ts DESC`
-// under the LIMIT and reverses, so truncation drops the OLDEST rows; ASC would compute a busy 24h
-// VWAP from a slice that never reaches the present.
+// VWAPResult is the /v1/vwap wire shape; Price is a decimal string, volumes are raw per-SOURCE-scale integers stated by BaseVolumeDecimals/QuoteVolumeDecimals, and Truncated means Price covers only the LAST 10000 trades.
 type VWAPResult struct {
 	From        WireTime `json:"from"`
 	To          WireTime `json:"to"`

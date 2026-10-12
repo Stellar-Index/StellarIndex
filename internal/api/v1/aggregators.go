@@ -8,8 +8,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// AggregatorsReader is the seam the /v1/aggregators handler reads
-// through. timescale.Store satisfies it via AggregatorRollup.
+// AggregatorsReader is the seam the /v1/aggregators handler reads through; timescale.Store satisfies it.
 type AggregatorsReader interface {
 	// AggregatorRollup returns every routers-registry entry
 	// (migration 0025) joined with its routed-trade stats for
@@ -17,12 +16,7 @@ type AggregatorsReader interface {
 	AggregatorRollup(ctx context.Context, since time.Time) ([]timescale.AggregatorRollupRow, error)
 }
 
-// AggregatorRow is the wire shape for one /v1/aggregators entry: a routers-registry row plus its
-// routed-via attribution over the trailing 24 h.
-//
-// RoutedVolume24hUSD is a decimal string, null (never "0") when no routed trade in the window
-// carried a USD valuation, since usd_volume is backfilled and can lag. Vault-kind rows always
-// report zero routed trades: routed_via tagging applies to kind='router' only.
+// AggregatorRow is one /v1/aggregators entry; RoutedVolume24hUSD is a decimal string, null (never "0") when no routed trade carried a USD valuation.
 type AggregatorRow struct {
 	ContractID     string `json:"contract_id"`
 	Name           string `json:"name"`

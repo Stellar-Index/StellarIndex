@@ -26,18 +26,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// Sep1CachedReader is the narrow dependency /v1/assets/{id} uses to apply the SEP-1 overlay from
-// the payload the sep1-refresh cron persisted in issuers.sep1_payload. It never fetches live,
-// because a live HTTPS fetch per uncached request dominated p95.
+// Sep1CachedReader supplies the SEP-1 overlay from the payload the sep1-refresh cron persisted; it never fetches live (that dominated p95).
 type Sep1CachedReader interface {
 	GetIssuerSep1Cached(ctx context.Context, gStrkey string) (*timescale.IssuerSep1Cached, error)
 }
 
-// Sep1FetchStateReader answers the one question a payload cannot: has this
-// issuer's own domain failed to serve a storable document?
-//
-// It is a separate interface, consulted through a type assertion, so existing stubs of the
-// interface above keep compiling (as with [ContractStorageSupplyReader]).
+// Sep1FetchStateReader reports whether an issuer's domain failed to serve a storable document; separate interface so existing stubs keep compiling.
 type Sep1FetchStateReader interface {
 	IssuerSep1Unreachable(ctx context.Context, gStrkey string) (bool, error)
 }
@@ -61,10 +55,7 @@ func warnIfSep1CacheLacksFetchState(s *Server, logger *slog.Logger) {
 	}
 }
 
-// AssetReader is the storage-side interface for asset reads.
-// Implementations:
-//   - *timescale.Store (queries trades hypertable's distinct assets).
-//   - in-memory stubs for tests.
+// AssetReader is the storage-side interface for asset reads (*timescale.Store, in-memory test stubs).
 type AssetReader interface {
 	// GetAsset returns the canonical representation for the given
 	// asset-id. Returns ErrAssetNotFound when the asset isn't yet
@@ -76,19 +67,15 @@ type AssetReader interface {
 	ListAssets(ctx context.Context, cursor string, limit int) ([]AssetDetail, string, error)
 }
 
-// ErrAssetNotFound is what AssetReader.GetAsset returns for an
-// unknown asset. Handlers translate it to HTTP 404 + problem+json.
+// ErrAssetNotFound is what AssetReader.GetAsset returns for an unknown asset; handlers translate it to 404 problem+json.
 var ErrAssetNotFound = errors.New("api: asset not found")
 
-// TokenDecimalsReader resolves a Soroban token's on-chain decimals() from contract-instance
-// metadata in the ClickHouse lake. found=false when the instance is not captured or stores no
-// standard metadata, and the caller keeps the default.
+// TokenDecimalsReader resolves a Soroban token's decimals() from lake contract-instance metadata; found=false keeps the caller's default.
 type TokenDecimalsReader interface {
 	TokenDecimals(ctx context.Context, contractID string) (uint32, bool, error)
 }
 
-// AssetDetail is the payload for /v1/assets responses. Matches the
-// shape in docs/reference/api-design.md §5.2.
+// AssetDetail is the /v1/assets payload, matching docs/reference/api-design.md section 5.2.
 type AssetDetail struct {
 	// Kind is the wire-shape discriminator for the /v1/assets/{asset_id} oneOf between AssetDetail
 	// and GlobalAssetView (ADR-0042); it is always "stellar_asset" here. Type is the asset class
@@ -379,9 +366,7 @@ type AssetDetail struct {
 	UnverifiedTickerCollision bool `json:"unverified_ticker_collision,omitempty"`
 }
 
-// UnverifiedWarning is attached to /v1/assets/{id} when the asset code collides with a verified
-// Stellar currency but the issuer differs. Every field, including `note`, is safe to render
-// verbatim in a warning banner.
+// UnverifiedWarning is attached when an asset code collides with a verified currency but the issuer differs; every field is safe to render verbatim.
 type UnverifiedWarning struct {
 	// VerifiedSlug is the canonical slug ("usdc") consumers can
 	// redirect to.
@@ -400,9 +385,7 @@ type UnverifiedWarning struct {
 	Note string `json:"note"`
 }
 
-// FiatCodeAnchor is attached to /v1/assets/{id} when a classic asset's code names a catalogue
-// fiat denomination with no Stellar issuance. Neutral by design: it carries no impersonation
-// verdict and never suppresses market_cap_usd.
+// FiatCodeAnchor is attached when a classic asset's code names a fiat denomination with no Stellar issuance; neutral, never suppresses market_cap_usd.
 type FiatCodeAnchor struct {
 	// Ticker is the ISO-4217 code the asset denominates in ("USD").
 	Ticker string `json:"ticker"`
@@ -793,9 +776,7 @@ func (s *Server) handleAssetList(w http.ResponseWriter, r *http.Request) {
 	writeEnvelope(w, env)
 }
 
-// AssetsListOverfetchBy is how far past the caller's limit the classic listing paths request, so
-// the (limit+1)th row signals a next page. Exported so the prewarm's cache-key set mirrors it
-// rather than keeping a second copy of the +1.
+// AssetsListOverfetchBy is how far past limit the classic listing requests so the extra row signals a next page; exported so the prewarm cache-key set mirrors it.
 const AssetsListOverfetchBy = 1
 
 // handleAssetListFromAssets serves /v1/assets when an AssetsReader is wired, projecting
@@ -1369,9 +1350,7 @@ func (s *Server) servableClassicSupplyLocked() map[string]string {
 	return s.classicSupplyCache
 }
 
-// PrewarmClassicSupply fills the classic supply cache out of band so no request pays the cold
-// fill. It is safe to call concurrently: it shares the request path's single-flight and retry-gap
-// logic, so a warm cache is a no-op.
+// PrewarmClassicSupply fills the classic supply cache out of band; concurrency-safe via the request path's single-flight, and a warm cache is a no-op.
 func (s *Server) PrewarmClassicSupply(ctx context.Context) {
 	s.cachedClassicSupply(ctx)
 }
@@ -1678,9 +1657,7 @@ func (s *Server) endSep1ImagesFlight(done chan struct{}) {
 	close(done)
 }
 
-// PrewarmSep1Images fills the SEP-1 logo map out of band so the first /v1/assets after a deploy
-// does not render fallback avatars. It hits the handler's cache slot (one keyless process-wide
-// entry, same [Server.readSep1Images]). Best-effort: a failed scan leaves the cache as it was.
+// PrewarmSep1Images fills the SEP-1 logo map out of band using the handler's cache slot; best-effort, a failed scan leaves the cache as it was.
 func (s *Server) PrewarmSep1Images(ctx context.Context) {
 	reader, ok := s.Sep1Cache.(sep1ImagesReader)
 	if !ok {
@@ -2993,9 +2970,7 @@ func applyUnverifiedWarning(detail *AssetDetail, asset canonical.Asset, cat *cur
 	return true
 }
 
-// AssetMetadata is the wire shape of /v1/assets/{id}/metadata: the SEP-1 overlay slice of
-// AssetDetail without the core canonical fields, for wallets that want only metadata. It elides
-// empty pointers as AssetDetail does.
+// AssetMetadata is the /v1/assets/{id}/metadata wire shape: the SEP-1 overlay slice of AssetDetail without the core canonical fields.
 type AssetMetadata struct {
 	AssetID         string  `json:"asset_id"`
 	HomeDomain      *string `json:"home_domain,omitempty"`
@@ -3015,9 +2990,7 @@ type AssetMetadata struct {
 	Sep1CurrencyAuthority
 }
 
-// Sep1CurrencyAuthority is what the issuer's own [[CURRENCIES]] entry says
-// about the asset's standing and backing. Issuer-declared and unverified by
-// this index; set only when sep1_status is "verified".
+// Sep1CurrencyAuthority is the issuer's own [[CURRENCIES]] entry about standing and backing; issuer-declared, unverified, set only when sep1_status is "verified".
 type Sep1CurrencyAuthority struct {
 	// CurrencyStatus is SEP-1 `status` (live, dead, test, private).
 	CurrencyStatus *string `json:"currency_status,omitempty"`

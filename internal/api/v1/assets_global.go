@@ -14,9 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 )
 
-// GlobalAssetView is the wire shape of `/v1/assets/{slug}` for a verified-currency catalogue
-// entry: the currency identity plus a headline USD price. Per-issuance Stellar detail lives on
-// `/v1/assets/{asset_id}`.
+// GlobalAssetView is the `/v1/assets/{slug}` shape for a verified-currency entry: identity plus headline USD price; per-issuance detail lives on `/v1/assets/{asset_id}`.
 type GlobalAssetView struct {
 	// Kind is the wire-shape discriminator for the /v1/assets/{asset_id} oneOf (ADR-0042); always
 	// "catalogue" here (contrast AssetDetail.Kind vs AssetDetail.Type).
@@ -232,8 +230,7 @@ func newDecimalsCorrectedGlobalReader(r aggregate.GlobalPriceReader, decimals *N
 	return decimalsCorrectedGlobalReader{GlobalPriceReader: r, decimals: decimals}
 }
 
-// LatestVWAP returns the inner tier-1 VWAP decimals-corrected (byte-identical when the legs share
-// a scale). A flagged pair whose ratio cannot be parsed reads as a miss: serving it raw is the defect.
+// LatestVWAP returns the inner tier-1 VWAP decimals-corrected; a flagged pair whose ratio cannot be parsed reads as a miss rather than serving raw.
 func (g decimalsCorrectedGlobalReader) LatestVWAP(ctx context.Context, base, quote canonical.Asset) (string, time.Time, int64, []string, bool, error) {
 	vwap, asOf, tradeCount, sources, ok, err := g.GlobalPriceReader.LatestVWAP(ctx, base, quote)
 	if err != nil || !ok {
@@ -376,14 +373,7 @@ func (s *Server) handleGlobalAsset(w http.ResponseWriter, r *http.Request, vc *c
 	writeJSON(w, view, Flags{})
 }
 
-// VerifiedCurrencyListItem is one entry of `GET /v1/assets/verified`, the verified-currency
-// catalogue directory listing.
-//
-// Distinct from [GlobalAssetView] in two ways:
-//
-//  1. No price block: pricing every catalogue entry per request would multiply storage round-trips
-//     by N, so the listing is identity-only; consumers fetch `/v1/assets/{slug}` for pricing.
-//  2. Description is omitted to keep payloads small; the detail page carries it.
+// VerifiedCurrencyListItem is one `GET /v1/assets/verified` entry: identity only, no price block or description, to avoid N storage round-trips.
 type VerifiedCurrencyListItem struct {
 	Ticker         string `json:"ticker"`
 	Slug           string `json:"slug"`

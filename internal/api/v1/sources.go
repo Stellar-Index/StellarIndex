@@ -12,8 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// SourcesStatsReader is the seam for /v1/sources?include=stats.
-// timescale.Store implements via GetSourceStats.
+// SourcesStatsReader is the seam for /v1/sources?include=stats; timescale.Store implements it via GetSourceStats.
 type SourcesStatsReader interface {
 	GetSourceStats(ctx context.Context) ([]timescale.SourceStats, error)
 	GetSourceVolumeHistory24h(ctx context.Context) ([]timescale.SourceVolumeBucket, error)
@@ -55,8 +54,7 @@ func (l liveSourcesStats) GetSourceVolumeHistory7dAt(ctx context.Context) ([]tim
 	return rows, time.Time{}, err
 }
 
-// VolumeBucket is one hour bucket on the per-source 24h sparkline. Hour is RFC 3339; volume_usd is
-// a decimal string to preserve precision through JSON; trade_count is the trades in that hour.
+// VolumeBucket is one hour bucket on the per-source 24h sparkline; volume_usd is a decimal string to preserve precision.
 type VolumeBucket struct {
 	Hour       WireTime `json:"hour"`
 	VolumeUSD  string   `json:"volume_usd"`
@@ -120,10 +118,7 @@ func markXLMUnpriced(into map[string]bool, buckets []timescale.SourceVolumeBucke
 	}
 }
 
-// Source is the wire shape for /v1/sources entries.
-//
-// Fields are copied one by one from external.Metadata rather than embedding it, so an
-// internal-only field added there cannot change the JSON contract.
+// Source is the wire shape for /v1/sources entries, copied field by field from external.Metadata so an internal-only field cannot change the JSON contract.
 type Source struct {
 	Name string `json:"name"`
 	// Class is the top-level taxonomy (exchange / aggregator / oracle / authority_sanity / lending /

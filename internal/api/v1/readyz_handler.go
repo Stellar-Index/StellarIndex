@@ -8,10 +8,7 @@ import (
 	"time"
 )
 
-// ReadyzHandler is the plain-text readiness probe the non-API daemons
-// (indexer, aggregator) mount beside /metrics: 200 only when every
-// critical check passes, 503 naming each failed critical check otherwise.
-// Non-critical checks are ignored here — they only degrade, never drain.
+// ReadyzHandler is the plain-text readiness probe for non-API daemons: 200 only when every critical check passes, else 503 naming the failures; non-critical checks never drain.
 func ReadyzHandler(checks ...ReadyChecker) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)

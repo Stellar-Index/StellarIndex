@@ -9,14 +9,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// DEXTVLTotalView is the headline TVL across the pooled-liquidity protocols the snapshot
-// covers: the EXACT sum of the `tvl_usd` strings on the published `protocols[]` rows, never an
-// independent re-derivation. A consumer re-adding the visible parts reconciles byte-for-byte;
-// a total from the underlying rationals would differ and nobody could tell which side is wrong.
-// Each part has exactly two decimals, so the sum does too and nothing rounds here.
-//
-// It is deliberately NOT a whole-network figure: `excluded` lists every pooled-value surface
-// we index and leave out, with the reason. See docs/methodology/dex-tvl.md.
+// DEXTVLTotalView is the headline TVL: the EXACT sum of the published protocols[] tvl_usd strings (never re-derived), deliberately not whole-network, with `excluded` naming what is left out.
 type DEXTVLTotalView struct {
 	// TVLUSD is the exact sum of the included protocols' published tvl_usd strings (decimal string).
 	TVLUSD string `json:"tvl_usd"`
@@ -44,8 +37,7 @@ type DEXTVLTotalView struct {
 	Excluded []DEXTVLExclusion `json:"excluded"`
 }
 
-// DEXTVLExclusion is one thing the headline total omits and why; `subject` is a protocol name
-// where one applies, else a short noun phrase.
+// DEXTVLExclusion is one thing the headline total omits and why; `subject` is a protocol name where one applies.
 type DEXTVLExclusion struct {
 	Subject string `json:"subject"`
 	Reason  string `json:"reason"`
@@ -131,8 +123,7 @@ const (
 		"unavailable, never zero TVL, so no figure is published"
 )
 
-// Total returns the latest reconciled headline total, or nil before the first refresh completes
-// (handlers omit the field, never 503).
+// Total returns the latest reconciled headline total, or nil before the first refresh (handlers omit the field, never 503).
 func (c *DEXTVLCache) Total() *DEXTVLTotalView {
 	c.mu.RLock()
 	defer c.mu.RUnlock()

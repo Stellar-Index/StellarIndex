@@ -13,11 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// OHLCSeriesBar is one bar in the multi-bar /v1/ohlc?interval=... response. Field names are short
-// to keep payloads compact at the 1000-bar maximum, as CG/CMC do.
-//
-// `T` is the bucket start, aligned to UTC interval boundaries (1w starts Monday 00:00 UTC); the
-// bucket end is `T + interval`.
+// OHLCSeriesBar is one bar of the multi-bar /v1/ohlc response with short field names; `T` is the UTC-aligned bucket start (1w starts Monday 00:00 UTC).
 type OHLCSeriesBar struct {
 	T      WireTime `json:"t"`
 	O      string   `json:"o"`
@@ -43,10 +39,7 @@ type OHLCSeriesBar struct {
 	Sources []string `json:"sources,omitempty"`
 }
 
-// OHLCSeriesResponse is the wire envelope for /v1/ohlc?interval=...
-// — distinct from the single-bar [OHLCBar] response. CG/CMC clients
-// expect a series shape (`[{t,o,h,l,c,v},...]`); this is the
-// CG-parity payload.
+// OHLCSeriesResponse is the CG-parity series envelope for /v1/ohlc?interval=..., distinct from the single-bar [OHLCBar] response.
 type OHLCSeriesResponse struct {
 	Base      string          `json:"base"`
 	Quote     string          `json:"quote"`

@@ -11,8 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// FXFixingReader binds a closed bucket's FX leg to the vendor's time series
-// (fx_fixings, ADR-0018). *timescale.Store satisfies it.
+// FXFixingReader binds a closed bucket's FX leg to the vendor's fx_fixings series (ADR-0018); *timescale.Store satisfies it.
 type FXFixingReader interface {
 	FXFixingAtOrBefore(ctx context.Context, tickers []string, e time.Time, maxAge time.Duration) (map[string]timescale.FXFixingBinding, error)
 	LoadFXFixingWindow(ctx context.Context, horizon time.Duration, ingestedAfter time.Time) ([]timescale.FXFixing, time.Time, error)

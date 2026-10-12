@@ -12,12 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// PriceAtReader returns the closed VWAP bucket at-or-before a historical instant for a pair. It
-// picks the finest CAGG resolution whose nearest bucket is within the honesty cap and reports
-// which it used.
-//
-// GET /v1/price/changes shares it (one PriceAt per horizon), which is why the staleness tolerance
-// is a parameter: /v1/price/at passes [priceAtMaxLookback], changes passes a per-horizon value.
+// PriceAtReader returns the closed VWAP bucket at-or-before an instant, picking the finest CAGG within the honesty cap; staleness tolerance is a parameter because /v1/price/changes shares it.
 type PriceAtReader interface {
 	// PriceAt returns (vwap decimal string, the bucket's CLOSE time, the serving CAGG resolution in
 	// seconds, error); the resolution lets the caller label window_seconds honestly. Past
@@ -27,15 +22,10 @@ type PriceAtReader interface {
 	PriceAt(ctx context.Context, pair canonical.Pair, ts time.Time, maxStaleness time.Duration) (value string, observedAt time.Time, resolutionSeconds int, err error)
 }
 
-// ErrPriceAtUnavailable is the sentinel a PriceAtReader returns when no
-// closed bucket exists within maxStaleness at-or-before the requested
-// instant (pair younger than ts, ts predates recorded history, or a
-// dead-market gap). It never means a bucket exists and was refused.
+// ErrPriceAtUnavailable means no closed bucket exists within maxStaleness at-or-before the instant; it never means a bucket exists and was refused.
 var ErrPriceAtUnavailable = errors.New("api: no closed bucket at or before requested timestamp")
 
-// ErrPriceAtGuarded is returned when a closed bucket exists but the serving-sanity guard refused it
-// (a gross outlier with no clean bucket in range). It matches errors.Is(err, ErrPriceWithheld) and
-// carries [PriceWithheldManipulationGuard] for the problem wording.
+// ErrPriceAtGuarded means a closed bucket exists but the serving-sanity guard refused it; it matches errors.Is(err, ErrPriceWithheld) with [PriceWithheldManipulationGuard].
 var ErrPriceAtGuarded = newPriceWithheld(PriceWithheldManipulationGuard)
 
 // priceAtMaxLookback caps the gap tolerated between the requested instant and the bucket found.
