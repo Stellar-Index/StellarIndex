@@ -443,25 +443,9 @@ type CoinGeckoVenueConfig struct {
 	DemoAPIKey   string        `toml:"demo_api_key" doc:"CoinGecko Demo API key, sent as x-cg-demo-api-key. With api_key also empty, requests go out anonymously and are heavily 429-throttled. Prefer env var." env:"COINGECKO_DEMO_API_KEY" default:""`
 }
 
-// MassiveConfig carries the massive.com forex API key and the forex worker's poll cadence.
+// MassiveConfig carries the massive.com forex API key.
 type MassiveConfig struct {
-	APIKey          string        `toml:"api_key" doc:"massive.com API key. Empty still starts the forex worker, but every fetch 401s and /v1/currencies serves warming-up. Prefer env var." env:"MASSIVE_API_KEY" default:""`
-	RefreshInterval time.Duration `toml:"refresh_interval" doc:"Forex worker poll cadence. One poll is one request to massive, plus one to each standby it falls through to. Zero uses 1h; values under 10m are raised to 10m and logged. Budget a metered feed against it: the Open Exchange Rates Free plan (1,000 requests/month, hourly updates) spends 720-744/month at 1h." default:"1h"`
-}
-
-// MinMassiveRefreshInterval (10m) floors [MassiveConfig.RefreshInterval], since boards update at most hourly and a faster poll only spends metered quota.
-const MinMassiveRefreshInterval = 10 * time.Minute
-
-// EffectiveRefreshInterval returns the forex worker's cadence: 1h when unset, raised to [MinMassiveRefreshInterval] (clamped=true) when below it.
-func (m MassiveConfig) EffectiveRefreshInterval() (d time.Duration, clamped bool) {
-	switch {
-	case m.RefreshInterval <= 0:
-		return time.Hour, false
-	case m.RefreshInterval < MinMassiveRefreshInterval:
-		return MinMassiveRefreshInterval, true
-	default:
-		return m.RefreshInterval, false
-	}
+	APIKey string `toml:"api_key" doc:"massive.com API key. Empty still starts the forex worker, but every fetch 401s and /v1/currencies serves warming-up. Prefer env var." env:"MASSIVE_API_KEY" default:""`
 }
 
 // OpenExchangeRatesConfig carries the Open Exchange Rates app id and toggle.
@@ -597,25 +581,17 @@ func (s StellarConfig) Passphrase() string {
 // StorageConfig captures every persistent-store connection; DSNs NEVER embed passwords, use the `env:` tag to reference a secret.
 type StorageConfig struct {
 	PostgresDSN string `toml:"postgres_dsn" doc:"Postgres DSN; password resolved via env: prefix." env:"STELLARINDEX_POSTGRES_DSN" default:"postgres://stellarindex@127.0.0.1:5432/stellarindex?sslmode=disable"`
-	// BackgroundStatementTimeout is the session statement_timeout for INDEXER and AGGREGATOR pools
-	// (timescale.OpenBackground), a runaway backstop; the 30m default must exceed every legitimate
-	// unbounded query. ops/migrate use plain timescale.Open and stay unbounded. 0 disables it.
-	BackgroundStatementTimeout time.Duration `toml:"background_statement_timeout" doc:"Session-level Postgres statement_timeout applied to every connection in the long-running INDEXER and AGGREGATOR pools (via a post-connect SET), so a runaway background query is bounded SQL-side even after the Go ctx gives up (REC-08). Deliberately GENEROUS: it must exceed every legitimate query that does not set its own bound — the heavy batch scans SET LOCAL a longer value inside a transaction, which overrides this. Does NOT affect the one-shot ops/migrate/heavy-backfill pools (they open via plain Open and stay unbounded — a global timeout there would kill legitimate multi-hour migrations/backfills/reconcile, the rejected prior fix). 0 disables it (plain Open)." default:"30m"`
-	RedisAddr                  string        `toml:"redis_addr" doc:"Redis master address host:port. Used when redis_sentinel_addrs is empty (single-node / direct mode). When sentinel addrs are set, this is ignored." default:"127.0.0.1:6379"`
+	RedisAddr   string `toml:"redis_addr" doc:"Redis master address host:port. Used when redis_sentinel_addrs is empty (single-node / direct mode). When sentinel addrs are set, this is ignored." default:"127.0.0.1:6379"`
 	// Sentinel mode: a non-empty redis_sentinel_addrs makes the client use go-redis FailoverClient
 	// (ADR-0024, the production topology); redis_addr is the fallback for dev/single-node.
 	RedisSentinelAddrs []string `toml:"redis_sentinel_addrs" doc:"List of Sentinel host:port addresses. Non-empty enables FailoverClient mode (production HA per ADR-0024); empty falls back to single-node redis_addr." default:"[]"`
 	RedisMasterName    string   `toml:"redis_master_name" doc:"Sentinel master name as set in inventory (e.g. stellarindex-r1-cache). Required when redis_sentinel_addrs is non-empty." default:""`
 	RedisPassword      string   `toml:"redis_password" doc:"The Redis password itself, NOT an env-var NAME to dereference — inject it via the STELLARINDEX_REDIS_PASSWORD env override (the project's standard secret path) rather than writing it to this file. The old key redis_password_env is a deprecated alias (accepted with a boot warning). Used as both requirepass (client auth) and SentinelPassword (sentinel auth) — same secret per the role." env:"STELLARINDEX_REDIS_PASSWORD" default:""`
 	RedisUsername      string   `toml:"redis_username" doc:"Optional Redis ACL username. Empty (default) AUTHs as Redis's legacy 'default' user — same wire shape as redis_password alone. Set to 'stellarindex' (or the operator's per-component user) when redis_acl_lockdown is enabled in the ansible role (F-1213 audit-2026-05-12); without a username the broker-side ACL rejects the connection." default:""`
-	// RedisClosedBucketChannel is the pub/sub channel the aggregator's redispub.Publisher writes
-	// closed-bucket VWAP events to and the API's Subscriber reads; empty falls back to
-	// redispub.DefaultChannel. Set only to partition streams of deployments sharing one Redis.
-	RedisClosedBucketChannel string `toml:"redis_closed_bucket_channel" doc:"Redis pub/sub channel the aggregator publishes closed-bucket VWAP events to and the API subscribes on. Empty (default) uses redispub.DefaultChannel (stellarindex:closed-bucket:v1). Set only when multiple deployments share one Redis and need partitioned streams." default:""`
-	S3Endpoint               string `toml:"s3_endpoint" doc:"S3-compatible object-store endpoint (MinIO / AWS S3)." default:"http://127.0.0.1:9000"`
-	S3Region                 string `toml:"s3_region" doc:"S3 region label (free-form for MinIO; AWS region name otherwise)." default:"r1"`
-	S3BucketArchive          string `toml:"s3_bucket_archive" doc:"Immutable history-archive bucket name." default:"galexie-archive"`
-	S3BucketLive             string `toml:"s3_bucket_live" doc:"Live Galexie export bucket name." default:"galexie-live"`
+	S3Endpoint         string   `toml:"s3_endpoint" doc:"S3-compatible object-store endpoint (MinIO / AWS S3)." default:"http://127.0.0.1:9000"`
+	S3Region           string   `toml:"s3_region" doc:"S3 region label (free-form for MinIO; AWS region name otherwise)." default:"r1"`
+	S3BucketArchive    string   `toml:"s3_bucket_archive" doc:"Immutable history-archive bucket name." default:"galexie-archive"`
+	S3BucketLive       string   `toml:"s3_bucket_live" doc:"Live Galexie export bucket name." default:"galexie-live"`
 	// These hold the NAME of the env var carrying the credential, NOT the credential: buildS3Client
 	// does os.Getenv(S3AccessKeyEnv). They have NO `env:` tag on purpose, since ApplyEnvOverrides would
 	// overwrite the name with the secret and os.Getenv(secret) returns "".
@@ -877,14 +853,6 @@ type StreamingConfig struct {
 	// MaxTipProducersPerCaller caps the [MaxTipProducers] slots one
 	// client-IP-derived caller may hold minted. Negative disables it.
 	MaxTipProducersPerCaller int `toml:"max_tip_producers_per_caller" doc:"Per-caller cap on minted shared tip-stream producers, charged to the client-IP-derived principal for the life of the registry entry (through its linger). Prevents one address from filling the whole MaxTipProducers pool. Negative disables the per-caller quota; 0 keeps the built-in default." default:"24"`
-
-	// BufferSize is the per-topic ring-buffer capacity for the
-	// closed-bucket Hub. <= 0 keeps streaming.DefaultBufferSize (256).
-	BufferSize int `toml:"buffer_size" doc:"Per-topic ring-buffer capacity for the streaming Hub — how many recent closed-bucket events a late-subscribing client can replay. <= 0 keeps the built-in default (256)." default:"256"`
-
-	// TopicIdleTTL overrides how long a subscriber-less Hub topic keeps its buffer before the
-	// reaper drops it. <= 0 keeps streaming.DefaultTopicIdleTTL (15m).
-	TopicIdleTTL time.Duration `toml:"topic_idle_ttl" doc:"How long a Hub topic with no subscribers keeps its replay buffer before the reaper drops it. <= 0 keeps the built-in default (15m)." default:"15m"`
 
 	// MaxTopics overrides the Hub's topic-map ceiling. <= 0 keeps
 	// streaming.DefaultMaxTopics (4096).
@@ -1306,8 +1274,6 @@ func defaultAPIConfig() APIConfig {
 			MaxConcurrentStreams:     8192,
 			MaxTipProducers:          512,
 			MaxTipProducersPerCaller: 24,
-			BufferSize:               256,
-			TopicIdleTTL:             15 * time.Minute,
 			MaxTopics:                4096,
 		},
 	}
@@ -1339,6 +1305,11 @@ var RetiredKeys = map[string]string{
 	"hashdb.verify_interval_minutes":                  "never set — fixed 60m in the indexer",
 	"hashdb.verify_window_ledgers":                    "never set — fixed 20000 ledgers in the indexer",
 	"api.holds_reload_interval":                       "never set — fixed 15s in the API",
+	"storage.background_statement_timeout":            "never set — timescale.BackgroundStatementTimeout (30m)",
+	"storage.redis_closed_bucket_channel":             "never set — redispub.DefaultChannel",
+	"api.streaming.buffer_size":                       "never set — streaming.DefaultBufferSize (256)",
+	"api.streaming.topic_idle_ttl":                    "never set — streaming.DefaultTopicIdleTTL (15m)",
+	"external.massive.refresh_interval":               "never set — fixed 1h forex poll in the API",
 }
 
 // Default returns a Config with every field at its default; it always passes Validate.
@@ -1358,9 +1329,8 @@ func Default() Config {
 			MovementsFloorLedger: 58762517,
 		},
 		Storage: StorageConfig{
-			PostgresDSN:                "postgres://stellarindex@127.0.0.1:5432/stellarindex?sslmode=disable",
-			BackgroundStatementTimeout: 30 * time.Minute,
-			RedisAddr:                  "127.0.0.1:6379",
+			PostgresDSN: "postgres://stellarindex@127.0.0.1:5432/stellarindex?sslmode=disable",
+			RedisAddr:   "127.0.0.1:6379",
 			// Sentinel fields stay empty (dev / single-node); production inventories set them (ADR-0024).
 			RedisSentinelAddrs: []string{},
 			RedisMasterName:    "",
@@ -1468,7 +1438,6 @@ func defaultExternalConfig() ExternalConfig {
 		CryptoCompare:    CryptoCompareVenueConfig{Enabled: false},
 		ECB:              ExternalVenueConfig{Enabled: false},
 		Chainlink:        ChainlinkVenueConfig{Enabled: false, FeedMap: map[string]ChainlinkFeedSetting{}},
-		Massive:          MassiveConfig{RefreshInterval: time.Hour},
 		Tiingo:           TiingoVenueConfig{Enabled: false},
 	}
 }

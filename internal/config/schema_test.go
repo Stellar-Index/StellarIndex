@@ -51,14 +51,14 @@ func TestEmitMarkdown_hasGeneratedBanner(t *testing.T) {
 func TestDescribe_durationFieldTypeLabel(t *testing.T) {
 	fields := cfg.Describe()
 	for _, f := range fields {
-		if f.Path == "storage.background_statement_timeout" {
+		if f.Path == "api.serving_statement_timeout" {
 			if f.Type != "duration" {
-				t.Fatalf("storage.background_statement_timeout: Type = %q, want %q", f.Type, "duration")
+				t.Fatalf("api.serving_statement_timeout: Type = %q, want %q", f.Type, "duration")
 			}
 			return
 		}
 	}
-	t.Fatal("storage.background_statement_timeout not found in Describe() output")
+	t.Fatal("api.serving_statement_timeout not found in Describe() output")
 }
 
 // A field tagged `default:""` documents an intentional empty default, distinct from no tag. Neither is Required: a

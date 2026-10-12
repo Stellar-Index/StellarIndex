@@ -396,8 +396,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 
 	// The hub is built unconditionally so /v1/price/stream never 503s; the per-pair publisher
 	// starts only when [api.streaming].pairs is set, and the Redis subscriber binds below.
-	hub := streaming.NewHub(cfg.API.Streaming.BufferSize)
-	hub.SetTopicIdleTTL(cfg.API.Streaming.TopicIdleTTL)
+	hub := streaming.NewHub(streaming.DefaultBufferSize)
 	hub.SetMaxTopics(cfg.API.Streaming.MaxTopics)
 
 	// A global SSE cap alone lets one client hold the whole budget. The per-IP cap uses the
@@ -478,16 +477,12 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// snapshot. With an empty [external.massive] api_key every fetch gets 401 and the endpoint
 	// serves "warming up".
 	forexCache := forex.NewCache()
-	forexInterval, clamped := cfg.External.Massive.EffectiveRefreshInterval()
-	if clamped {
-		logger.Warn("forex: external.massive.refresh_interval below floor — clamped",
-			"configured", cfg.External.Massive.RefreshInterval, "using", forexInterval)
-	}
+	// Hourly: boards update at most hourly, and a faster poll only spends metered quota.
 	forexWorker := forex.NewWorker(
 		forex.NewClient(cfg.External.Massive.APIKey),
 		forexCache,
 		logger.With("component", "forex"),
-		forexInterval,
+		time.Hour,
 	)
 	// Persisting to fx_quotes lets /v1/currencies chart history beyond the in-memory window.
 	forexWorker = forexWorker.WithWriter(&wiring.ForexQuoteWriter{Store: store}).
@@ -1173,7 +1168,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// serving. Gate on rdb, not hub: the Hub is always non-nil, and NewSubscriber(nil, ...) would
 	// abort startup. Without Redis the stream serves heartbeats only.
 	if rdb != nil && hub != nil {
-		sub, err := redispub.NewSubscriber(rdb, cfg.Storage.RedisClosedBucketChannel, hub, logger.With("component", "stream-sub"))
+		sub, err := redispub.NewSubscriber(rdb, redispub.DefaultChannel, hub, logger.With("component", "stream-sub"))
 		if err != nil {
 			return fmt.Errorf("redispub subscriber: %w", err)
 		}

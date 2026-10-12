@@ -15,6 +15,10 @@ func OpenServing(ctx context.Context, dsn string, statementTimeout time.Duration
 	return openWithSessionSetup(ctx, dsn, statementTimeout, true)
 }
 
+// BackgroundStatementTimeout is the indexer and aggregator session statement_timeout: a runaway backstop that must exceed every
+// legitimate unbounded query (ops and migrate use plain Open and stay unbounded).
+const BackgroundStatementTimeout = 30 * time.Minute
+
 // OpenBackground is Open with a deliberately generous session statement_timeout for long-running indexer and aggregator binaries, so a stuck query stops server-side even after its ctx is cancelled.
 func OpenBackground(ctx context.Context, dsn string, statementTimeout time.Duration) (*Store, error) {
 	return openWithSessionSetup(ctx, dsn, statementTimeout, false)

@@ -88,13 +88,6 @@ redis_addr         = "127.0.0.1:6379"
 # redis_sentinel_addrs = ["cache-01.internal:26379", "cache-02.internal:26379", "cache-03.internal:26379"]
 # redis_master_name    = "stellarindex-r1-cache"
 
-# redis_closed_bucket_channel. Redis pub/sub channel the
-# aggregator's closed-bucket VWAP publisher writes to and the API's
-# subscriber listens on. Empty (default) uses redispub.DefaultChannel
-# (stellarindex:closed-bucket:v1). Set only when multiple deployments
-# share one Redis and need partitioned streams.
-# redis_closed_bucket_channel = "stellarindex:closed-bucket:v1"
-
 s3_endpoint        = "http://127.0.0.1:9000"
 s3_region          = "r1"
 s3_bucket_archive  = "galexie-archive"
@@ -127,11 +120,6 @@ s3_secret_key_env  = "STELLARINDEX_S3_SECRET_KEY"
 # name. The old key clickhouse_serving_password_env still loads, with a
 # deprecation warning.
 # clickhouse_serving_password = ""
-
-# background_statement_timeout — session-level Postgres
-# statement_timeout for the long-running indexer/aggregator pools,
-# separate from api.serving_statement_timeout.
-# background_statement_timeout = "30m"
 
 # Cold-tier S3 (ADR-0027, aws-public-blockchain Open Data
 # Sponsorship). Empty leaves the cold tier unconfigured.
@@ -339,13 +327,11 @@ backfill_from_ledger  = 0                # 0 = resume from persisted cursor
   #                     # Older rounds are refused and counted, never written as current.
   #                     # Omit for the pair's default (built-in budget, else 76 fiat/fiat, else 3).
 
-  # massive.com forex rates behind /v1/currencies, fetched every
-  # refresh_interval by stellarindex-api. An empty key still starts the
-  # worker, but every fetch 401s and /v1/currencies serves warming-up.
+  # massive.com forex rates behind /v1/currencies, fetched hourly by
+  # stellarindex-api. An empty key still starts the worker, but every
+  # fetch 401s and /v1/currencies serves warming-up.
   [external.massive]
   # api_key = ""    # prefer env: MASSIVE_API_KEY
-  # refresh_interval = "1h"   # forex worker poll cadence; floor 10m (clamped + logged).
-  #                           # One poll = one request to massive, plus one per standby it falls through to.
 
   # Open Exchange Rates hourly USD-base board. Built by stellarindex-api
   # when enabled, but NOT in the serving chain yet: the worker holds it and
@@ -625,8 +611,6 @@ pairs = []
 # max_concurrent_streams        = 8192   # global concurrent SSE cap; <= 0 disables
 # max_tip_producers             = 512    # global cap on distinct shared tip-stream producers; negative disables
 # max_tip_producers_per_caller  = 24     # per-caller share of max_tip_producers; negative disables
-# buffer_size                   = 256    # per-topic ring-buffer capacity; <= 0 keeps the built-in default
-# topic_idle_ttl                = "15m"  # subscriber-less topic reap threshold; <= 0 keeps the built-in default
 # max_topics                    = 4096   # ceiling on distinct live topics; <= 0 keeps the built-in default
 
 # SEP-10 Web Auth. Active when auth_mode = "sep10" or when the
