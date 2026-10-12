@@ -13,9 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 )
 
-// ReplayGuard makes every issued challenge transaction redeemable exactly once, so a captured signed XDR cannot mint multiple JWTs inside its time-bound window (SEP-10 §3.4 leaves the defence to implementations).
-// Reserve records a challenge's hash at issuance; Claim spends it and returns [auth.ErrUnauthorized] when no reservation is present. Claim must require presence, not absence, so a store that evicts early (Redis allkeys-lru) refuses a redemption instead of re-admitting a replay.
-// Production: internal/auth/sep10/redisreplay.go. A nil ReplayGuard disables the defence.
+// ReplayGuard makes every issued challenge transaction redeemable exactly once, so a captured signed XDR cannot mint multiple JWTs inside its time-bound window: Reserve records the hash at issuance, Claim spends it and returns [auth.ErrUnauthorized] when no reservation is present (it must require presence, not absence, so an early-evicting store refuses rather than re-admits a replay); a nil ReplayGuard disables the defence.
 type ReplayGuard interface {
 	Reserve(ctx context.Context, txHash string, ttl time.Duration) error
 	Claim(ctx context.Context, txHash string) error
@@ -36,8 +34,7 @@ func challengeTxHash(tx *txnbuild.Transaction, networkPassphrase string) (string
 	return h, nil
 }
 
-// AccountSigners is a Stellar account's current on-chain signing
-// configuration: what SEP-10's threshold check verifies signatures against.
+// AccountSigners is a Stellar account's current on-chain signing configuration, what SEP-10's threshold check verifies signatures against.
 type AccountSigners struct {
 	// Exists is false when the account has no live ledger entry (never
 	// funded, or merged away).
@@ -49,8 +46,7 @@ type AccountSigners struct {
 	Signers []Signer
 }
 
-// Signer is one additional signer of an account: a signer-key strkey and
-// its weight.
+// Signer is one additional signer of an account: a signer-key strkey and its weight.
 type Signer struct {
 	Key    string
 	Weight uint32
@@ -61,8 +57,7 @@ type AccountLoader interface {
 	LoadAccountSigners(ctx context.Context, accountID string) (AccountSigners, error)
 }
 
-// ErrAccountLoaderUnavailable is returned when no [AccountLoader] can be
-// supplied: without one the medium-threshold check cannot run.
+// ErrAccountLoaderUnavailable is returned when no [AccountLoader] can be supplied, since the medium-threshold check cannot run without one.
 var ErrAccountLoaderUnavailable = errors.New("sep10: AccountLoader required but not configured")
 
 // Options configures a [Validator].
@@ -135,9 +130,7 @@ type Validator struct {
 	accounts     AccountLoader
 }
 
-// NewValidator constructs a [Validator] from [Options]. Returns an
-// error when required fields are missing or the seed isn't a
-// parseable Stellar S-strkey.
+// NewValidator constructs a [Validator] from [Options], erroring when required fields are missing or the seed isn't a parseable Stellar S-strkey.
 func NewValidator(opts Options) (*Validator, error) {
 	if opts.ServerSeed == "" {
 		return nil, errors.New("sep10: ServerSeed is required")
@@ -239,9 +232,7 @@ func (v *Validator) Challenge(ctx context.Context, clientAccount string) (auth.C
 	}, nil
 }
 
-// Verify implements [auth.SEP10Validator]: validates structure, server and client signatures, time bounds, web auth domain and home domain, then issues a JWT for the client account.
-// Errors: [auth.ErrTokenMalformed] (unparseable XDR or missing server signature); [auth.ErrUnauthorized] (client signature missing/wrong, non-signing key, or weight below the medium threshold);
-// [auth.ErrTokenExpired] (time bounds elapsed); any other error means the account's signers could not be loaded.
+// Verify implements [auth.SEP10Validator]: validates structure, server and client signatures, time bounds, web auth domain and home domain, then issues a JWT; errors are [auth.ErrTokenMalformed] (unparseable XDR or missing server signature), [auth.ErrUnauthorized] (client signature missing/wrong, non-signing key, or weight below the medium threshold) and [auth.ErrTokenExpired] (time bounds elapsed); any other error means signers could not be loaded.
 func (v *Validator) Verify(ctx context.Context, signedXDR string) (auth.Token, error) {
 	// ReadChallengeTx parses the transaction and validates structure
 	// (server source account, single sequence number, manage_data

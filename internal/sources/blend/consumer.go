@@ -37,10 +37,7 @@ func (FillAuctionEvent) Source() string    { return SourceName }
 func (DeleteAuctionEvent) EventKind() string { return DeleteAuctionEventKind }
 func (DeleteAuctionEvent) Source() string    { return SourceName }
 
-// Money-market event types. The decoder emits one of these
-// per money-market / credit-risk / admin event; the sink's
-// type-switch routes each to the matching blend_positions /
-// blend_emissions / blend_admin writer.
+// PositionEvent.EventKind routes to the blend_positions writer; the decoder emits one money-market kind per event.
 func (PositionEvent) EventKind() string { return PositionEventKind }
 func (PositionEvent) Source() string    { return SourceName }
 

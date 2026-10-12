@@ -36,10 +36,7 @@ func classify(e *events.Event) string {
 	}
 }
 
-// AssetAmount is one (asset, amount) pair from an AuctionData
-// `bid` or `lot` map. Amounts are i128 in the Blend contract; we
-// surface them as *big.Int for canonical-types parity with the
-// rest of the indexer (per AGENTS.md i128-never-truncates).
+// AssetAmount is one (asset, amount) pair from an AuctionData `bid` or `lot` map; amounts are i128 held as *big.Int, never truncated.
 type AssetAmount struct {
 	// Asset is the canonical asset (Soroban contract address) for
 	// the entry. Native-XLM SAC contracts surface as a SorobanAsset
@@ -51,10 +48,7 @@ type AssetAmount struct {
 	Amount *big.Int
 }
 
-// AuctionData mirrors `pool/src/auctions/auction.rs::AuctionData`.
-// Blend's struct has NAMED fields, so on the wire it is an ScvMap of three symbol-keyed entries
-// (bid, lot, block), not a tuple. Shape is pinned by docs/operations/wasm-audits/blend.md
-// ("AuctionData shape") and the v1-pool-auctions fixtures in v1_pool_auction_test.go.
+// AuctionData mirrors `pool/src/auctions/auction.rs::AuctionData`: NAMED fields, so on the wire an ScvMap of symbol-keyed bid, lot and block entries, not a tuple (docs/operations/wasm-audits/blend.md).
 type AuctionData struct {
 	// Bid is the map of (asset, amount) pairs the filler spends
 	// to clear the auction.
@@ -67,9 +61,7 @@ type AuctionData struct {
 	Block uint32
 }
 
-// NewAuctionEvent is the decoded form of Blend's `new_auction`
-// event. One emitted per liquidation / bad-debt / interest auction
-// when it's first announced.
+// NewAuctionEvent is the decoded `new_auction` event, emitted once per liquidation / bad-debt / interest auction when first announced.
 type NewAuctionEvent struct {
 	Pool        string // pool contract C-strkey (matched at dispatch)
 	AuctionType uint32 // 0=UserLiquidation, 1=BadDebt, 2=Interest
@@ -87,9 +79,7 @@ type NewAuctionEvent struct {
 	Timestamp  time.Time
 }
 
-// FillAuctionEvent is the decoded form of `fill_auction`. An auction may emit several fills as
-// fillers take partial percentages; `fill_percent` over (auction_type, user, pool) sums to 100%
-// by close.
+// FillAuctionEvent is the decoded `fill_auction`; one auction may emit several fills as fillers take partial percentages, summing to 100% by close.
 type FillAuctionEvent struct {
 	Pool        string
 	AuctionType uint32
@@ -108,9 +98,7 @@ type FillAuctionEvent struct {
 	Timestamp  time.Time
 }
 
-// DeleteAuctionEvent is the decoded form of `delete_auction` —
-// emitted when an auction is admin-deleted (e.g. position recovered
-// before fill). Body is empty.
+// DeleteAuctionEvent is the decoded `delete_auction` (admin-deleted auction); its body is empty.
 type DeleteAuctionEvent struct {
 	Pool        string
 	AuctionType uint32

@@ -11,18 +11,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// Decoder is the dispatcher-facing view of the Aquarius AMM. Swaps carry their asset identities in
-// the event topics, so trade decoding needs no per-source state; the only state is the
-// contract-identity gate (ADR-0035/0040), the registry of Aquarius pools anchored on the router.
+// Decoder is the dispatcher-facing Aquarius view; swaps carry asset identities in topics so trade decoding needs no state, and the only state is the contract-identity gate (ADR-0035/0040), the pool registry anchored on the router.
 type Decoder struct {
 	// reg gates Matches() on contract identity (ADR-0035/0040). Trust root is MainnetRouter, whose
 	// add_pool events announce every pool the protocol serves (docs/protocols/aquarius.md).
 	reg *contractid.Registry
 }
 
-// NewDecoder constructs an Aquarius Decoder. The curated MainnetPools set and router trust root are
-// always installed, so a bare NewDecoder() carries the full verified registry (reconciliation and
-// sub-range re-derives rely on this). Opts layer the DB warm and live-upsert hook on top.
+// NewDecoder constructs an Aquarius Decoder; the curated MainnetPools and router root are always installed (reconciliation and sub-range re-derives rely on that), and opts layer the DB warm and live-upsert hook on top.
 func NewDecoder(opts ...contractid.Option) *Decoder {
 	base := []contractid.Option{
 		contractid.WithFactories([]string{MainnetRouter}),
@@ -34,22 +30,10 @@ func NewDecoder(opts ...contractid.Option) *Decoder {
 // Name implements [dispatcher.Decoder].
 func (*Decoder) Name() string { return SourceName }
 
-// GatedContractSet returns the current gate: the router plus every registered pool. It is the
-// contract-id prefilter for the completeness re-derive's lake read; Matches() accepts only these
-// contracts, so the counts equal a whole-lake stream. It reflects only pools registered so far,
-// so callers needing in-window pools must seed the registry first.
+// GatedContractSet returns the current gate (router plus every registered pool) as the contract-id prefilter for the completeness re-derive; it reflects only pools registered so far, so seed the registry first for in-window pools.
 func (d *Decoder) GatedContractSet() []string { return d.reg.GatedSet() }
 
-// Matches implements [dispatcher.Decoder]. It gates on contract identity, not topic bytes
-// (ADR-0035/0040):
-//
-//   - a pool `trade` matches only when emitted by a registered Aquarius pool. The bare
-//     Symbol("trade") topic is forgeable: look-alike routers and forks emit the identical shape.
-//   - the router's `add_pool` matches only when emitted by the canonical router (the trust root);
-//     Decode registers the announced pool so its later trades pass the gate.
-//
-// An unregistered real pool fails closed into an ADR-0033 recognition gap, visible and never
-// silently mis-attributed.
+// Matches implements [dispatcher.Decoder], gating on contract identity, not topic bytes (ADR-0035/0040): a pool `trade` matches only from a registered pool (the bare Symbol("trade") topic is forgeable by look-alike routers and forks), the router's `add_pool` only from the canonical router (trust root); an unregistered real pool fails closed into a recognition gap.
 func (d *Decoder) Matches(ev events.Event) bool {
 	switch classify(&ev) {
 	case EventTrade, EventUpdateReserves, EventReservesSync, EventDepositLiquidity, EventWithdrawLiquidity,
@@ -90,10 +74,7 @@ func isNotATrade(err error) bool {
 	return errors.Is(err, ErrZeroAmountTrade) || errors.Is(err, canonical.ErrPairMismatch)
 }
 
-// Decode implements [dispatcher.Decoder]. It returns one TradeEvent per successful pool-trade
-// decode (Aquarius trades are single-pair). A router `add_pool` announcement registers the new
-// pool in the gate and emits nothing ((nil, nil) is the dispatcher's "match, nothing to emit");
-// Seed fires the persistence hook so the mapping survives restarts.
+// Decode implements [dispatcher.Decoder], returning one TradeEvent per successful pool-trade decode (single-pair); a router `add_pool` registers the new pool in the gate and emits nothing ((nil, nil)), and Seed fires the persistence hook.
 func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	if isAddPool(&ev) {
 		pool, err := decodeAnnouncedPool(&ev)

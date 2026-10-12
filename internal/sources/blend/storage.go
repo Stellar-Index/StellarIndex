@@ -20,8 +20,7 @@ import (
 // underlying token's decimals. A V1 pool stores d_rate / b_rate / ir_mod with 9 decimals under the
 // same field names, so the scale is keyed on PoolVersion, never on the wire shape.
 
-// PoolVersion is a Blend pool contract's generation, resolved from the
-// factory that deployed it. It fixes the scale of ReserveData's rates.
+// PoolVersion is a Blend pool contract's generation, resolved from its deploying factory; it fixes the scale of ReserveData's rates.
 type PoolVersion uint8
 
 const (
@@ -35,8 +34,7 @@ const (
 	PoolV2
 )
 
-// PoolVersionForFactory maps the factory that deployed a pool to the
-// pool's contract generation.
+// PoolVersionForFactory maps the factory that deployed a pool to the pool's contract generation.
 func PoolVersionForFactory(factoryID string) PoolVersion {
 	switch factoryID {
 	case MainnetPoolFactoryV1:
@@ -47,8 +45,7 @@ func PoolVersionForFactory(factoryID string) PoolVersion {
 	return PoolVersionUnknown
 }
 
-// ReserveData is a Blend reserve's per-asset on-chain state
-// (PoolDataKey::ResData(asset) → persistent storage).
+// ReserveData is a Blend reserve's per-asset on-chain state (PoolDataKey::ResData(asset), persistent storage).
 type ReserveData struct {
 	DRate          *big.Int    // dToken→underlying rate, 12 decimals (V1: 9)
 	BRate          *big.Int    // bToken→underlying rate, 12 decimals (V1: 9)
@@ -60,9 +57,7 @@ type ReserveData struct {
 	Version        PoolVersion // contract generation the rates are scaled for
 }
 
-// ReserveConfig is a Blend reserve's per-asset configuration
-// (PoolDataKey::ResConfig(asset) → persistent storage). The interest
-// model (interest.go) reads Util / RBase / ROne / RTwo / RThree.
+// ReserveConfig is a Blend reserve's per-asset configuration (PoolDataKey::ResConfig(asset)); the interest model reads Util, RBase, ROne, RTwo and RThree.
 type ReserveConfig struct {
 	Index      uint32
 	Decimals   uint32
@@ -86,9 +81,7 @@ const (
 	reserveConfigEnabled   = "enabled"
 )
 
-// PoolConfig is the pool-wide config (instance storage, Symbol
-// "Config"). BstopRate is the backstop's cut of accrued debt interest
-// (7 decimals) — the supply-APR computation needs it.
+// PoolConfig is the pool-wide config (instance storage, Symbol "Config"); BstopRate is the backstop's cut of accrued debt interest (7 decimals), needed for supply APR.
 type PoolConfig struct {
 	Oracle        string
 	MinCollateral *big.Int
@@ -117,9 +110,7 @@ type reserveConfigMetadata struct {
 	Enabled    *bool   `json:"enabled"`
 }
 
-// ParseReserveConfigMetadata builds a ReserveConfig from a queue_set_reserve event's metadata JSON
-// (blend_admin.attributes -> 'metadata'), the event-derived source of rate-model params when the
-// on-chain ResConfig entry isn't in the captured window.
+// ParseReserveConfigMetadata builds a ReserveConfig from a queue_set_reserve event's metadata JSON, the event-derived source of rate-model params when the on-chain ResConfig entry isn't in the captured window.
 func ParseReserveConfigMetadata(b []byte) (ReserveConfig, error) {
 	var m reserveConfigMetadata
 	if err := json.Unmarshal(b, &m); err != nil {
@@ -140,10 +131,7 @@ func ParseReserveConfigMetadata(b []byte) (ReserveConfig, error) {
 	}, nil
 }
 
-// DecodeReserveData decodes a ReserveData ScVal (the value of a
-// ResData(asset) contract_data entry) for a pool of the given
-// generation. V1 and V2 entries are indistinguishable on the wire, so
-// an unknown generation is refused rather than guessed.
+// DecodeReserveData decodes a ResData(asset) ReserveData ScVal for a pool of the given generation; V1 and V2 are indistinguishable on the wire, so an unknown generation is refused rather than guessed.
 func DecodeReserveData(v scval.ScVal, version PoolVersion) (ReserveData, error) {
 	if version != PoolV1 && version != PoolV2 {
 		return ReserveData{}, fmt.Errorf("blend: reserve data for unknown pool version %d", version)
@@ -179,9 +167,7 @@ func DecodeReserveData(v scval.ScVal, version PoolVersion) (ReserveData, error) 
 	return rd, nil
 }
 
-// DecodeReserveConfig decodes a ReserveConfig ScVal (the value of a
-// ResConfig(asset) contract_data entry). The V2-only fields are optional
-// so a V1 pool's entry decodes.
+// DecodeReserveConfig decodes a ResConfig(asset) ReserveConfig ScVal; the V2-only fields are optional so a V1 entry decodes.
 func DecodeReserveConfig(v scval.ScVal) (ReserveConfig, error) {
 	m, err := scval.AsMap(v)
 	if err != nil {
@@ -224,8 +210,7 @@ func DecodeReserveConfig(v scval.ScVal) (ReserveConfig, error) {
 	return rc, nil
 }
 
-// DecodePoolConfig decodes a PoolConfig ScVal (instance storage,
-// Symbol "Config").
+// DecodePoolConfig decodes a PoolConfig ScVal (instance storage, Symbol "Config").
 func DecodePoolConfig(v scval.ScVal) (PoolConfig, error) {
 	m, err := scval.AsMap(v)
 	if err != nil {

@@ -6,12 +6,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// Decoder implements dispatcher.Decoder (the event-based variant). Vault wrappers
-// (`("DeFindexVault","deposit"|"withdraw")`) carry end-user attribution; Blend strategies
-// (`("BlendStrategy",...)`) carry vault-to-strategy movement.
-//
-// Both match gated on CONTRACT IDENTITY (ADR-0035/0040): any pubnet contract can emit these topic
-// strings, so dispatch is topic shape AND registry membership (see MainnetVaults).
+// Decoder implements dispatcher.Decoder for vault wrappers (`("DeFindexVault","deposit"|"withdraw")`, end-user attribution) and Blend strategies (`("BlendStrategy",...)`, vault-to-strategy movement); both are gated on CONTRACT IDENTITY (ADR-0035/0040), since any pubnet contract can emit these topic strings.
 type Decoder struct {
 	// reg gates Matches() on contract identity: MainnetFactories gate factory events; vaults and
 	// strategies come from the curated seed plus the protocol_contracts operator warm.
@@ -24,9 +19,7 @@ type Decoder struct {
 	reg *contractid.Registry
 }
 
-// NewDecoder constructs a defindex Decoder. The curated mainnet set is always seeded as the trust
-// root, because create events omit the vault address and only name attacker-controlled strategies.
-// Caller opts layer the protocol_contracts warm and live-upsert hook on top.
+// NewDecoder constructs a defindex Decoder; the curated mainnet set is always seeded as the trust root because create events omit the vault address and only name attacker-controlled strategies.
 func NewDecoder(opts ...contractid.Option) *Decoder {
 	base := []contractid.Option{
 		contractid.WithFactories(MainnetFactories),
@@ -38,13 +31,7 @@ func NewDecoder(opts ...contractid.Option) *Decoder {
 // Name implements [dispatcher.Decoder].
 func (d *Decoder) Name() string { return SourceName }
 
-// Matches implements [dispatcher.Decoder]. Gates on CONTRACT IDENTITY, not topic bytes
-// (ADR-0035/0040): flow events match only from a registered child, factory events (`create` /
-// `n_fee`) only from a MainnetFactories entry. Factory events are recognised for EVERY-event
-// completeness but not decoded.
-//
-// An un-seeded real vault or strategy fail-closes into a visible ADR-0033 recognition gap, never
-// silent mis-attribution.
+// Matches implements [dispatcher.Decoder], gating on CONTRACT IDENTITY, not topic bytes (ADR-0035/0040): flow events match only from a registered child, factory events (`create` / `n_fee`) only from a MainnetFactories entry and are recognised but not decoded; an un-seeded real vault or strategy fail-closes into a visible recognition gap.
 func (d *Decoder) Matches(ev events.Event) bool {
 	if classify(&ev) != "" || classifyVault(&ev) != "" {
 		return d.reg.Has(ev.ContractID)
@@ -52,10 +39,7 @@ func (d *Decoder) Matches(ev events.Event) bool {
 	return classifyFactory(&ev) != "" && d.reg.IsFactory(ev.ContractID)
 }
 
-// Decode implements [dispatcher.Decoder]. It emits Event (strategy), VaultEvent (vault),
-// DFeesEvent (one per distributed_fees entry) or AdminEvent for modelled topics; other recognised
-// topics drop with (nil, nil). An error is reserved for malformed bodies of modelled topics, so
-// normal unmodelled traffic does not inflate the decode-error counter.
+// Decode implements [dispatcher.Decoder], emitting Event, VaultEvent, DFeesEvent (one per distributed_fees entry) or AdminEvent for modelled topics; other recognised topics drop with (nil, nil), and an error is reserved for malformed bodies of modelled topics.
 func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	if kind := classify(&ev); kind != "" {
 		return d.decodeStrategy(&ev, kind)

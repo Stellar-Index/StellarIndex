@@ -11,10 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// RawSwap is the partial set of fields observed for a single swap.
-// We fill it as the 8 distinct events arrive (Q1). Arrival order
-// is NOT guaranteed; we populate slots by field-name and check
-// completeness via [SwapFieldCount].
+// RawSwap is the partial set of fields seen for one swap, filled as the 8 distinct events arrive in any order; slots are keyed by field name and completeness is checked against [SwapFieldCount].
 type RawSwap struct {
 	Ledger  uint32
 	TxHash  string
@@ -38,9 +35,7 @@ type RawSwap struct {
 	ReferralFee    *events.Event
 }
 
-// Complete reports whether all 8 slots are populated — the CURRENT
-// (post-upgrade) era's full event set, and the trigger for the eager
-// emit path in absorb.
+// Complete reports whether all 8 slots are populated, the CURRENT (post-upgrade) full event set and the trigger for the eager emit path.
 func (r *RawSwap) Complete() bool {
 	return r.Sender != nil &&
 		r.SellToken != nil &&
@@ -52,15 +47,7 @@ func (r *RawSwap) Complete() bool {
 		r.ReferralFee != nil
 }
 
-// Decodable reports whether the slots decodeSwap actually CONSUMES are populated: Sender,
-// SellToken, OfferAmount, BuyToken, ReturnAmount. ActualReceived / SpreadAmount / ReferralFee are
-// deliberately unread (ActualReceived is the pool's INPUT echo and corrupts prices, Q3).
-//
-// This is the sweep-time emission gate. The pre-upgrade pool WASM emitted 7 field-events per swap
-// (no "actual received amount"), so those groups can never Complete(); gating on Complete() would
-// drop every pre-upgrade swap as an orphan. Emitting only at sweep, never eagerly, keeps an
-// in-flight 8-field group waiting for its full set; only a group that aged out is decoded from
-// what the decoder needs.
+// Decodable reports whether the slots decodeSwap CONSUMES are populated (Sender, SellToken, OfferAmount, BuyToken, ReturnAmount); it is the sweep-time gate because pre-upgrade pool WASM emitted only 7 field-events (no "actual received amount") and gating on Complete() would drop those swaps; ActualReceived is the pool's INPUT echo and corrupts prices, so it is unread.
 func (r *RawSwap) Decodable() bool {
 	return r.Sender != nil &&
 		r.SellToken != nil &&
@@ -671,9 +658,7 @@ func sdkDecodeI128(valueB64 string) (canonical.Amount, error) {
 // (Address for asset/account fields, I128 for amounts). The dispatcher calls serially, so buffer
 // access is single-threaded; the Decoder's mutex is belt-and-braces.
 
-// RawProvideLiquidity is the partial set of 5 fields observed for
-// a single provide_liquidity call. Slots populate by topic[1]; the
-// record is ready when all 5 are non-nil.
+// RawProvideLiquidity is the partial set of 5 fields for one provide_liquidity call, slotted by topic[1]; ready when all 5 are non-nil.
 type RawProvideLiquidity struct {
 	Ledger  uint32
 	TxHash  string
@@ -745,9 +730,7 @@ func (r *RawProvideLiquidity) assign(e *events.Event, fieldTopic string) error {
 	return nil
 }
 
-// RawWithdrawLiquidity is the partial set of 4 required fields for one withdraw_liquidity call.
-// The optional `auto unbonded` 5th event is dropped at classify time: the stake-contract `unbond`
-// decoder already captures it, and not every withdraw emits it.
+// RawWithdrawLiquidity is the partial set of 4 required fields for one withdraw_liquidity call; the optional `auto unbonded` 5th event is dropped at classify time because the stake-contract `unbond` decoder already captures it.
 type RawWithdrawLiquidity struct {
 	Ledger  uint32
 	TxHash  string
@@ -817,10 +800,7 @@ func (r *RawWithdrawLiquidity) assign(e *events.Event, fieldTopic string) error 
 	return nil
 }
 
-// RawStake is the partial set of 3 fields observed for one
-// bond / unbond call from the stake contract. The same shape
-// services both — the action (bond vs unbond) is carried alongside
-// in the buffer's group key.
+// RawStake is the partial set of 3 fields for one bond / unbond call from the stake contract; the action is carried in the buffer's group key.
 type RawStake struct {
 	Ledger  uint32
 	TxHash  string
@@ -878,9 +858,7 @@ func (r *RawStake) assign(e *events.Event, fieldTopic string) error {
 	return nil
 }
 
-// RawWithdrawRewards is the partial set of 2 fields (user, reward_token) for one withdraw_rewards
-// call from the stake contract. The event has no amount field (see events.go's package doc for
-// where the amount surfaces).
+// RawWithdrawRewards is the partial set of 2 fields (user, reward_token) for one withdraw_rewards call from the stake contract; the event has no amount field.
 type RawWithdrawRewards struct {
 	Ledger  uint32
 	TxHash  string

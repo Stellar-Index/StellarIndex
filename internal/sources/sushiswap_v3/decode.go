@@ -9,11 +9,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// SwapFields is the decoded body of a pool `swap` event.
-//
-// Amount0 / Amount1 are signed deltas from the pool's point of view, so direction is derivable
-// from the body alone: positive is a token the pool received (the trader sold it), negative one
-// it paid out (the trader bought it). A price-forming swap has exactly one of each.
+// SwapFields is the decoded body of a pool `swap`; Amount0 / Amount1 are signed deltas from the pool's view (positive received, negative paid out), so direction derives from the body alone and a price-forming swap has exactly one of each.
 type SwapFields struct {
 	Amount0      canonical.Amount // i128 — signed pool delta of token0
 	Amount1      canonical.Amount // i128 — signed pool delta of token1
@@ -24,8 +20,7 @@ type SwapFields struct {
 	Recipient    string           // Address — who received the output leg
 }
 
-// PoolCreatedFields is the decoded body of a factory `pool_created` event —
-// the only on-chain statement of a pool's token identities.
+// PoolCreatedFields is the decoded factory `pool_created` body, the only on-chain statement of a pool's token identities.
 type PoolCreatedFields struct {
 	Pool        string // Address — the new pool contract
 	Token0      canonical.Asset
@@ -174,9 +169,7 @@ func sdkDecodePoolCreated(valueB64 string) (PoolCreatedFields, error) {
 	return out, nil
 }
 
-// PositionFields is the decoded body of a pool `mint`, `burn` or `collect`.
-// Liquidity is the `amount` entry of a mint / burn and stays zero (and
-// HasLiquidity false) for a collect, which carries no liquidity delta.
+// PositionFields is the decoded body of a pool `mint`, `burn` or `collect`; Liquidity is the `amount` of a mint / burn and stays zero (HasLiquidity false) for a collect.
 type PositionFields struct {
 	Owner        string
 	Sender       string // mint only

@@ -9,10 +9,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// RawPair is what a dispatched Soroban event tells us about a
-// swap/sync pair BEFORE we decode the SCVal payload. We collect
-// these by (ledger, tx_hash, op_index) key, then finalise once we
-// have both the swap + its sync.
+// RawPair is what dispatched Soroban events tell us about a swap/sync pair before SCVal decode, collected by (ledger, tx_hash, op_index) and finalised once both the swap and its sync are present.
 type RawPair struct {
 	Ledger   uint32
 	TxHash   string
@@ -24,8 +21,7 @@ type RawPair struct {
 	Sync *events.Event // populated when we see a sync
 }
 
-// Complete reports whether this pair has both events and is ready
-// to emit as a trade.
+// Complete reports whether the pair has both swap and sync and is ready to emit as a trade.
 func (r RawPair) Complete() bool { return r.Swap != nil && r.Sync != nil }
 
 // groupKey is the (ledger, tx_hash, op_index, pair_contract) tuple that correlates swap + sync.
@@ -219,11 +215,7 @@ var (
 	decodeLiquidity   = sdkDecodeLiquidity
 )
 
-// LiquidityFields is the decoded body shared by the pair `deposit` and `withdraw` events, one
-// #[contracttype] struct on the wire:
-//
-//	{ amount_0: i128, amount_1: i128, liquidity: i128,
-//	  new_reserve_0: i128, new_reserve_1: i128, to: Address }
+// LiquidityFields is the decoded body shared by pair `deposit` and `withdraw` (one #[contracttype] struct: amount_0, amount_1, liquidity, new_reserve_0, new_reserve_1 as i128, plus `to` Address).
 type LiquidityFields struct {
 	Amount0     canonical.Amount // token0 added (deposit) / removed (withdraw)
 	Amount1     canonical.Amount // token1 added (deposit) / removed (withdraw)
@@ -312,17 +304,7 @@ func sdkDecodeSwapAmounts(valueB64 string) (swapAmounts, error) {
 	return out, nil
 }
 
-// NewPairFields is the decoded factory NewPairEvent, which populates the pair->(token0, token1)
-// registry that decodeSwap depends on.
-//
-// Contract reference (factory/src/event.rs:19-43):
-//
-//	NewPairEvent {
-//	    token_0: Address,
-//	    token_1: Address,
-//	    pair:    Address,
-//	    new_pairs_length: u32,
-//	}
+// NewPairFields is the decoded factory NewPairEvent (token_0, token_1, pair, new_pairs_length: u32), which populates the pair->(token0, token1) registry that decodeSwap depends on.
 type NewPairFields struct {
 	Token0 canonical.Asset // from Address
 	Token1 canonical.Asset
@@ -374,16 +356,7 @@ func sdkDecodeNewPair(valueB64 string) (NewPairFields, error) {
 	return NewPairFields{Token0: a0, Token1: a1, Pair: pairAddr}, nil
 }
 
-// SkimFields is the decoded SkimEvent, emitted when a caller invokes `skim()` to claim the excess
-// of the pair's token balance over its stored reserves (Uniswap-v2-style).
-//
-// Contract reference (pair/src/event.rs):
-//
-//	struct SkimEvent { skimmed_0: i128, skimmed_1: i128 }
-//
-// Decoding is by name and tolerates the Uniswap-v2-style `amount_0` / `amount_1` aliases, so a
-// WASM rename still yields a row rather than a silent drop. `to` is decoded when present and left
-// empty when absent, as current Soroswap WASM omits it.
+// SkimFields is the decoded pair SkimEvent (skimmed_0, skimmed_1: i128), decoded by name tolerating the `amount_0` / `amount_1` aliases so a WASM rename still yields a row; `to` is empty when absent, as current WASM omits it.
 type SkimFields struct {
 	// Amount0 is the token0 excess transferred out of the pool.
 	Amount0 canonical.Amount
