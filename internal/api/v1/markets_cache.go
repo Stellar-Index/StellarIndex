@@ -26,17 +26,12 @@ type CachedMarketsReader struct {
 	entries map[string]*marketsCacheEntry
 }
 
-// marketsCacheMaxEntries bounds the entry map.
-//
-// Cache keys carry client-controlled components (`cursor` is validated for shape only, free-text
-// `q`, asset ids), so without eviction one anonymous caller could mint a permanent full-page
-// entry per cursor and walk the process to its MemoryMax. The cap sits far above the real
-// working set of prewarmed shapes and bounded pagination.
+// marketsCacheMaxEntries bounds the map: keys carry client-controlled parts (cursor, q, asset ids), so uncapped one caller could exhaust
+// memory.
 const marketsCacheMaxEntries = 4096
 
-// evictOldestMarketsEntry drops the oldest-filled entry when the map is at capacity. Caller
-// must hold the mutex. In-flight entries (at.IsZero()) are never evicted: dropping one would
-// orphan its waiters from the fill about to close their channel.
+// evictOldestMarketsEntry drops the oldest-filled entry at capacity; caller holds the mutex. In-flight entries are never evicted (waiters
+// orphaned).
 func evictOldestMarketsEntry(m map[string]*marketsCacheEntry) {
 	if len(m) < marketsCacheMaxEntries {
 		return
@@ -171,24 +166,12 @@ func (c *CachedMarketsReader) AllPoolsStale(ctx context.Context, filter timescal
 	})
 }
 
-// marketsRefreshBudget bounds a stale-while-revalidate background refresh. It runs OFF the
-// request path, so a generous budget is free; it must exceed the worst-case contended
-// AllPools / DistinctPairs scan so the refresh completes and the cache moves forward.
+// marketsRefreshBudget bounds the off-request SWR refresh; it must exceed the worst-case contended AllPools/DistinctPairs scan.
 const marketsRefreshBudget = 30 * time.Second
 
-// fetchPairs is the shared TTL + single-flight + stale-while-revalidate loop for the
-// pair-returning methods; `op` is the metric label. As in asset_catalogue_cache.go's fetchRows,
-// an expired entry serves its stale rows IMMEDIATELY and one background refresh runs off the
-// request path, because the AllPools/DistinctPairs scan cannot be made cheap (no per-source
-// pre-aggregate exists).
-//
-// Returns rows + next cursor, observedAt (when the rows were fetched upstream; zero on a cold
-// miss/error) and stale (past the TTL). /v1/markets stamps these into as_of and flags.stale so a
-// stale-serve is never asserted as fresh.
-//
-// Rows are always a copy (slices.Clone), including to the cold LEADER, whose upstream result is
-// the slice the entry keeps. The clone runs outside the mutex: a stored backing array is never
-// written again (a refresh swaps in a new slice), so unlocked reads are safe.
+// fetchPairs is the TTL + single-flight + stale-while-revalidate loop for pair methods (`op` is the metric label); observedAt/stale keep
+// stale serves honest.
+// Rows are always cloned, even to the cold leader; the clone runs outside the mutex since stored backing arrays are never rewritten.
 func (c *CachedMarketsReader) fetchPairs(
 	ctx context.Context,
 	op, key string,
@@ -266,9 +249,7 @@ func (c *CachedMarketsReader) fetchPairs(
 	}
 }
 
-// joinOrStartColdLocked returns the in-flight cold entry for key, or
-// installs a fresh one (leader=true) whose fill the caller must start.
-// Caller holds c.mu.
+// joinOrStartColdLocked returns key's in-flight cold entry or installs a fresh one (leader=true) the caller must fill. Caller holds c.mu.
 func (c *CachedMarketsReader) joinOrStartColdLocked(e *marketsCacheEntry, ok bool, key string) (*marketsCacheEntry, bool) {
 	if ok && e.flight != nil {
 		return e, false
@@ -279,10 +260,8 @@ func (c *CachedMarketsReader) joinOrStartColdLocked(e *marketsCacheEntry, ok boo
 	return entry, true
 }
 
-// settleFailedFillLocked applies a failed fill to entry. With a prior
-// success it keeps serving that stale value (retry next request); cold,
-// it hands err to the waiters and drops the entry so errors are never
-// cached. Caller holds c.mu.
+// settleFailedFillLocked keeps serving a prior value on failure (retry next request); cold, it hands err to waiters and drops the entry.
+// Caller holds c.mu.
 func (c *CachedMarketsReader) settleFailedFillLocked(op, key string, entry *marketsCacheEntry, err error) {
 	entry.flight = nil
 	if !entry.at.IsZero() {
@@ -325,9 +304,8 @@ func (c *CachedMarketsReader) settlePairs(op, key string, entry *marketsCacheEnt
 	}
 }
 
-// fetchPools mirrors fetchPairs (SWR included) for AllPools' return type. The ~8s per-source
-// pools scan cannot be made cheap (prices_* collapse source; price_source_contributions is
-// curated/sparse), so SWR moves it off the request path with no correctness loss.
+// fetchPools mirrors fetchPairs (SWR included) for AllPools; the ~8s per-source scan can't be made cheap, so SWR moves it off the request
+// path.
 func (c *CachedMarketsReader) fetchPools(
 	ctx context.Context,
 	op, key string,

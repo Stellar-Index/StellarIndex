@@ -36,9 +36,8 @@ const rwaReferenceTTL = 30 * time.Second
 // covers a weekend plus a holiday. It labels and does not withhold: Friday's NAV is still Monday's.
 const rwaReferenceStaleAfter = 72 * time.Hour
 
-// rwaReferenceMaxAge is the age past which an observation is not served at all: the window
-// LatestOracleStreams defines an active stream by. Needed because a snapshot is carried forward
-// across a failed read, so carried rows must not outlive the bound.
+// rwaReferenceMaxAge is the age past which an observation is not served at all (the window LatestOracleStreams defines an active stream
+// by); needed because a snapshot is carried forward across a failed read.
 const rwaReferenceMaxAge = 7 * 24 * time.Hour
 
 // rwaFundNAVMaxAge is the oldest fund NAV served. Five days spans a weekend plus a holiday;
@@ -203,9 +202,8 @@ type rwaReference struct {
 	asOf   time.Time
 }
 
-// rwaReferences is one oracle-stream snapshot reduced to what this surface may publish, keyed by
-// the FEED code exactly as the allow-list spells it, never folded. The asset-to-feed join happens
-// through [rwa.InstrumentFeed]; this map is only the feed-side half.
+// rwaReferences is one oracle-stream snapshot reduced to what this surface may publish, keyed by the FEED code exactly as the allow-list
+// spells it, never folded; the asset-to-feed join is [rwa.InstrumentFeed].
 type rwaReferences struct {
 	// byFeed holds the references that passed R-A and R-C.
 	byFeed map[string]rwaReference
@@ -228,9 +226,8 @@ func (r *rwaReferences) addSideFeed(u canonical.OracleUpdate) bool {
 	return rwaAddFundNAV(r.fundNAV, u) || addGlobalMarketRow(r.globalUSD, u)
 }
 
-// rwaReferenceSnapshotFrom reduces one oracle-stream read to the references this surface may
-// publish. It uses the same trailing-7d rows /v1/oracle/streams serves: one scan serves the whole
-// set, and a feed absent from that window is not an active stream.
+// rwaReferenceSnapshotFrom reduces one oracle-stream read to publishable references, using the same trailing-7d rows /v1/oracle/streams
+// serves; a feed absent from that window is not an active stream.
 func rwaReferenceSnapshotFrom(updates []canonical.OracleUpdate) rwaReferences {
 	out := rwaReferences{
 		byFeed:    map[string]rwaReference{},
@@ -341,10 +338,9 @@ func ratFromScaledInt(value *big.Int, decimals uint8) *big.Rat {
 	return r.Quo(r, new(big.Rat).SetInt(scale))
 }
 
-// cachedRWAReferences returns the reference snapshot, refreshed at most once per TTL window behind
-// a single-flight gate. On a failed read it serves the last good snapshot, else an unavailable one:
-// an empty snapshot would tell every row "no oracle publishes your instrument", a finding a failed
-// read may not make.
+// cachedRWAReferences returns the reference snapshot, refreshed at most once per TTL behind a single-flight gate. On a failed read it
+// serves the last good snapshot, else an unavailable one:
+// an empty snapshot would tell every row "no oracle publishes your instrument", a finding a failed read may not make.
 func (s *Server) cachedRWAReferences(ctx context.Context) rwaReferences {
 	if s.Oracle == nil {
 		return rwaReferences{}
@@ -393,9 +389,8 @@ func (s *Server) cachedRWAReferences(ctx context.Context) rwaReferences {
 	return snap
 }
 
-// fillRWAReferences runs the oracle-stream read and releases the single-flight gate even on panic;
-// a skipped release would leave rwaRefFlight on a channel nobody closes and wedge /v1/rwa/assets.
-// It runs on its own budget because one caller's disconnect must not abort a shared fill.
+// fillRWAReferences runs the oracle-stream read and releases the single-flight gate even on panic (a skipped release would wedge
+// /v1/rwa/assets on a channel nobody closes), on its own budget so one caller's disconnect cannot abort a shared fill.
 func (s *Server) fillRWAReferences(done chan struct{}) {
 	defer close(done)
 	defer func() {
@@ -428,9 +423,8 @@ func (s *Server) fillRWAReferences(done chan struct{}) {
 
 // ─── per-row application ────────────────────────────────────────────
 
-// rwaApplyReference attaches the oracle reference and premium to one served row, or the reason
-// neither is there. The refusal order is the rule order and decides the reason reported: a
-// flagged issuer is answered as flagged first, since that is about the issuer, not the data.
+// rwaApplyReference attaches the oracle reference and premium to one served row, or the reason neither is there. The refusal order is the
+// rule order and decides the reported reason: a flagged issuer is answered as flagged first.
 func rwaApplyReference(
 	a *RWAAsset,
 	snap rwaReferences,
@@ -543,17 +537,16 @@ func rwaApplyReference(
 	}
 }
 
-// rwaApplyContractReference attaches the listing-priced reference to a contract member, or the
-// reason there is none. Nothing binds a contract address to an oracle feed, but a listing row names
-// the exact address and a USD price. The figure prices the token, so it carries
-// [RWAReferenceListingPrice] and no premium ([RWAPremiumReferenceNotOracle]).
+// rwaApplyContractReference attaches the listing-priced reference to a contract member, or the reason there is none. Nothing binds a
+// contract address to an oracle feed, but a listing row names the address and a USD price;
+// the figure prices the token, so it carries [RWAReferenceListingPrice] and no premium ([RWAPremiumReferenceNotOracle]).
 func rwaApplyContractReference(a *RWAAsset, entry timescale.ListingEntry, now time.Time) {
 	rwaApplyListingReference(a, entry, RWAPremiumContractNotBound, now)
 }
 
-// rwaApplyListingReference is the body both arms share; `notFound` is the refusal kept when the
-// directory names nothing. The classic arm reaches it only when nobody bound the pair: an expired,
-// non-USD or non-positive feed is a finding a listing price must not overturn.
+// rwaApplyListingReference is the body both arms share; `notFound` is the refusal kept when the directory names nothing. The classic arm
+// reaches it only when nobody bound the pair:
+// an expired, non-USD or non-positive feed is a finding a listing price must not overturn.
 func rwaApplyListingReference(a *RWAAsset, entry timescale.ListingEntry, notFound string, now time.Time) {
 	price, refusal := rwaListingPrice(entry, notFound, now)
 	if refusal != "" {
@@ -595,9 +588,8 @@ func rwaListingPrice(entry timescale.ListingEntry, notFound string, now time.Tim
 	return price, ""
 }
 
-// rwaListingReferencesOf indexes the admitted members' listing rows by address. Built from the
-// MEMBERSHIP, not a second listing read: the row that priced an asset must be the row that
-// recognised it.
+// rwaListingReferencesOf indexes the admitted members' listing rows by address, built from the MEMBERSHIP rather than a second listing
+// read: the row that priced an asset must be the row that recognised it.
 func rwaListingReferencesOf(members []rwaContractMember) map[string]timescale.ListingEntry {
 	out := make(map[string]timescale.ListingEntry, len(members))
 	for _, m := range members {
@@ -609,13 +601,10 @@ func rwaListingReferencesOf(members []rwaContractMember) map[string]timescale.Li
 	return out
 }
 
-// rwaRefuseReference records ONE refusal in BOTH places it must appear (premium and
-// reference valuation), so the two cannot tell different stories; the funnel reads only
-// `reference_valuation.status`.
-//
-// rwaApplyConstantNAVReference prices a share class at the NAV its prospectus fixes. It is dated
-// now because the value is a standing rule, not an observation; the verification date travels in
-// Source. Past ReviewBy the row is served `stale: true`: labelled, not withheld.
+// rwaRefuseReference records ONE refusal in BOTH places it must appear (premium and reference valuation) so they cannot tell different
+// stories; the funnel reads only `reference_valuation.status`.
+// rwaApplyConstantNAVReference prices a share class at the NAV its prospectus fixes, dated now because the value is a standing rule (the
+// verification date travels in Source). Past ReviewBy the row is `stale: true`: labelled, not withheld.
 func rwaApplyConstantNAVReference(a *RWAAsset, b rwa.ConstantNAVBinding, now time.Time) {
 	price := ratFromOptionalString(&b.NAVUSD)
 	if price == nil || price.Sign() <= 0 {
@@ -663,9 +652,8 @@ func rwaNAVDisagrees(value, nav *big.Rat) bool {
 	return diff.Abs(diff).Cmp(rwaNAVDisagreementTolerance) > 0
 }
 
-// rwaApplyFundNAVReference prices a fund-share row at its fund's NAV, reporting whether it decided
-// the row. A bound row with no NAV is left undecided for the lower arms; a NAV past
-// [rwaFundNAVMaxAge] is refused.
+// rwaApplyFundNAVReference prices a fund-share row at its fund's NAV, reporting whether it decided the row. A bound row with no NAV is
+// left undecided for the lower arms; a NAV past [rwaFundNAVMaxAge] is refused.
 func rwaApplyFundNAVReference(a *RWAAsset, snap rwaReferences, now time.Time) bool {
 	ticker, ok := rwaFundNAVTicker(a.Code, a.Issuer)
 	if !ok {
@@ -700,9 +688,8 @@ func rwaRefuseReference(a *RWAAsset, status string) {
 	a.ReferenceValuation = RWAReferenceValuation{Status: status}
 }
 
-// rwaReferenceValuationOf values one row's float at the reference price, or states why it
-// cannot. It runs only on a row already carrying a published reference, so its refusals concern
-// the price value and the supply, never admissibility ([rwaApplyReference]).
+// rwaReferenceValuationOf values one row's float at the reference price, or states why it cannot. It runs only on a row already carrying
+// a published reference, so refusals concern price value and supply, never admissibility ([rwaApplyReference]).
 func rwaReferenceValuationOf(a *RWAAsset, ref rwaReference) RWAReferenceValuation {
 	// A zero or negative net asset value is bad data, not a valuation of zero; the premium path
 	// refuses to divide by it and this path refuses to multiply by it.
@@ -723,10 +710,9 @@ func rwaReferenceValuationOf(a *RWAAsset, ref rwaReference) RWAReferenceValuatio
 	return RWAReferenceValuation{Status: RWAReferenceValuationPublished, ValueUSD: &value}
 }
 
-// rwaReferenceValueUSD = (circulating / 10^decimals) x referencePrice, as a 2-dp decimal string;
-// empty on any input that is not a valuation. Exact rational arithmetic, rounded once at the end
-// so the summary total is the exact sum of the per-row strings. A negative scale is refused
-// because [big.Int.Exp] answers a negative exponent with 1, publishing raw units as dollars.
+// rwaReferenceValueUSD = (circulating / 10^decimals) x referencePrice as a 2-dp decimal string, empty on any input that is not a
+// valuation. Exact rationals rounded once at the end so the summary total is the exact sum of the per-row strings;
+// a negative scale is refused because [big.Int.Exp] answers a negative exponent with 1, publishing raw units as dollars.
 func rwaReferenceValueUSD(circRaw string, decimals int, unit *big.Rat) string {
 	if unit == nil || decimals < 0 {
 		return ""

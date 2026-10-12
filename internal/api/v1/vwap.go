@@ -39,10 +39,8 @@ type VWAPResult struct {
 	Substance *SubstanceEvidence `json:"substance,omitempty"`
 }
 
-// handleVWAP serves GET /v1/vwap?base=...&quote=...&from=...&to=...&outlier_sigma=...
-//
-// Defaults match /v1/history (1-hour window ending now). outlier_sigma defaults to 0 (no
-// filtering); the aggregator's own 4-sigma default is a different layer's decision.
+// handleVWAP serves GET /v1/vwap (defaults as /v1/history). outlier_sigma defaults to 0 (no filtering); the aggregator's own 4-sigma
+// default is a different layer's decision.
 func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 	reader := s.History
 	if reader == nil {
@@ -176,10 +174,9 @@ func (s *Server) writeVWAPError(w http.ResponseWriter, r *http.Request, err erro
 			" between "+from.Format(time.RFC3339)+" and "+to.Format(time.RFC3339))
 }
 
-// thinMarketEvidence is the live substance measurement behind
-// flags.thin_market on /v1/vwap and /v1/twap, or nil when the pair clears the floor (or no gate is
-// wired). These raw-trade surfaces serve a thin market (ADR-0018), so the verdict is admitted
-// rather than withheld; the scam half already ran, hence the nil scam gate.
+// thinMarketEvidence is the live substance measurement behind flags.thin_market on /v1/vwap and /v1/twap, or nil when the pair clears the
+// floor.
+// These raw-trade surfaces admit a thin market (ADR-0018) rather than withhold it; the scam half already ran, hence the nil scam gate.
 func (s *Server) thinMarketEvidence(ctx context.Context, base, quote canonical.Asset, surface string) *SubstanceEvidence {
 	if s.Substance == nil {
 		return nil
@@ -222,9 +219,8 @@ func parseVWAPOutlierSigma(w http.ResponseWriter, r *http.Request) (float64, boo
 	return v, true
 }
 
-// fetchVWAPTrades is the trade-fetch and error-dispatch wrapper for handleVWAP. Returns
-// (trades, triangulated, ok); ok=false means a problem+json has already been written
-// (client-abort, cache-unavailable or internal error) and the caller must return immediately.
+// fetchVWAPTrades wraps the trade fetch and error dispatch; ok=false means a problem+json is already written (abort, cache-unavailable or
+// internal) and the caller must return.
 func (s *Server) fetchVWAPTrades(
 	ctx context.Context, w http.ResponseWriter, r *http.Request,
 	pair canonical.Pair, from, to time.Time, maxTrades int,
@@ -251,18 +247,11 @@ func (s *Server) fetchVWAPTrades(
 	return aggregate.ScaledWindow{}, false, false
 }
 
-// tradesInRangeWithStablecoinFallback is the single raw-trade fetch behind every single-shot
-// ("point") rate endpoint: /v1/vwap, /v1/twap and the single-bar /v1/ohlc. Returns (window,
-// triangulated, err), trades sorted by close time ascending as [aggregate.ComputeOHLC] /
-// [aggregate.TWAP] require and lifted to one amount scale (a mixed window is weighted by real
-// volume, not smallest-unit magnitude).
-//
-// A fiat quote's depth sits under the pegged stablecoin pairs, so every constituent of
-// [Server.usdPeggedConstituents] is COMBINED, as the series path does; the first non-empty peg
-// would answer differently for a point than a series (see [Server.fiatCombinedTrades]).
-//
-// A non-fiat quote takes the FIRST alias form with trades, as [Server.ohlcSeriesWithAliases]
-// does, so point and series resolve an aliased input identically instead of 404ing.
+// tradesInRangeWithStablecoinFallback is the single raw-trade fetch behind /v1/vwap, /v1/twap and the single-bar /v1/ohlc: trades sorted
+// by close time and lifted to one amount scale.
+// A fiat quote COMBINES every [Server.usdPeggedConstituents] as the series path does (the first non-empty peg would answer differently
+// for a point than a series);
+// a non-fiat quote takes the FIRST alias form with trades, as [Server.ohlcSeriesWithAliases] does.
 func (s *Server) tradesInRangeWithStablecoinFallback(
 	ctx context.Context, pair canonical.Pair, from, to time.Time, maxTrades int,
 ) (aggregate.ScaledWindow, bool, error) {

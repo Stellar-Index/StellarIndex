@@ -61,11 +61,9 @@ func (l rwaListing) names(contractID string) bool {
 	return ok
 }
 
-// rwaListingSnapshot reads the listing directory once per rebuild.
-//
-// Fails CLOSED: a failed read yields an unavailable snapshot, never a carried-forward one, since
-// an old recognition admits an asset on a fact nobody re-established, which is what C2 exists to
-// prevent. The reader enforces the staleness bound in SQL.
+// rwaListingSnapshot reads the listing directory once per rebuild. Fails CLOSED: a failed read yields an unavailable snapshot, never a
+// carried-forward one, since an old recognition admits an asset on a fact
+// nobody re-established, which C2 exists to prevent. The reader enforces the staleness bound in SQL.
 func (s *Server) rwaListingSnapshot(ctx context.Context) rwaListing {
 	if s.RWAListings == nil {
 		return rwaListing{}
@@ -152,13 +150,10 @@ type rwaListingCensus struct {
 	observedAt time.Time
 }
 
-// rwaListingCandidates builds the second arm's population: every curated binding the first arm
-// is not already evaluating, with the curated tags C3 needs.
-//
-// The curated-directory lookup is required: C3 refuses scam-flagged addresses and scam flags
-// exist only there, so a candidate whose tags could not be read must not be admitted. A failed
-// lookup closes the arm under its own refusal reason, never the listing's, because the reason
-// tells an operator which system to inspect.
+// rwaListingCandidates builds the second arm's population: every curated binding the first arm is not evaluating, with the curated tags
+// C3 needs. The directory lookup is required: scam flags exist only there,
+// so a candidate whose tags could not be read must not be admitted. A failed lookup closes the arm under its own refusal reason, never
+// the listing's, because the reason tells an operator which system to inspect.
 func (s *Server) rwaListingCandidates(
 	ctx context.Context, listing rwaListing, directoryEvaluated map[string]struct{},
 ) ([]rwaListingCandidate, rwaListingCensus) {
@@ -216,10 +211,9 @@ func (s *Server) rwaListingCandidates(
 	return out, census
 }
 
-// rwaDirectoryTagsFor batch-reads the curated tags for a set of addresses, reporting whether
-// the read answered at all. ok=false is not "no tags": confusing a failed read with an empty list
-// admits an asset on the mere absence of a scam flag. An absent reader is the same: C3 cannot be
-// evaluated, so the arm closes.
+// rwaDirectoryTagsFor batch-reads curated tags for a set of addresses, reporting whether the read answered. ok=false is not "no tags":
+// confusing a failed read with an empty list admits an asset on the mere
+// absence of a scam flag. An absent reader is the same: C3 cannot be evaluated, so the arm closes.
 func (s *Server) rwaDirectoryTagsFor(ctx context.Context, addrs []string) (map[string][]string, bool) {
 	if len(addrs) == 0 {
 		return map[string][]string{}, true

@@ -13,9 +13,8 @@ import (
 
 var errPoolTokensFillPanicked = errors.New("pool tokens fill panicked")
 
-// poolTokensTTL is how long a source's pool→tokens map is served before
-// the next read refills it: a new pool, or a reserve added to an existing
-// one (blend set_reserve), goes unlabelled for up to this long.
+// poolTokensTTL is how long a source's pool-to-tokens map is served; a new pool or added reserve (blend set_reserve) goes unlabelled that
+// long.
 const poolTokensTTL = 10 * time.Minute
 
 // poolTokensFillTimeout bounds one detached fill: the full-table DISTINCT
@@ -27,10 +26,9 @@ type poolTokensEntry struct {
 	at     time.Time
 }
 
-// poolTokensCache puts a per-source TTL cache in front of PoolTokens.
-// /v1/accounts/{g}/positions is keyed by address, so without it every
-// address miss re-ran up to three whole-table DISTINCT scans. The
-// returned map is shared across callers and must be treated as read-only.
+// poolTokensCache is a per-source TTL cache in front of PoolTokens, sparing /v1/accounts/{g}/positions up to three whole-table DISTINCT
+// scans per address miss.
+// The returned map is shared and read-only.
 type poolTokensCache struct {
 	upstream ProtocolPoolTokensReader
 	now      func() time.Time
@@ -78,9 +76,8 @@ func (c *poolTokensCache) PoolTokens(ctx context.Context, source string) (map[st
 	}
 }
 
-// fill runs one detached upstream read for source. It re-checks the entry
-// first: a caller that missed just before another flight stored it would
-// otherwise start a second flight once that one has left the group.
+// fill runs one detached upstream read; it re-checks the entry first, or a late caller would start a second flight after the first left
+// the group.
 func (c *poolTokensCache) fill(source string) (val any, err error) {
 	c.mu.Lock()
 	cur, have := c.entries[source]

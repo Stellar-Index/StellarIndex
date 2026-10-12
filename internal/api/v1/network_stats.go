@@ -14,13 +14,9 @@ type NetworkStatsReader interface {
 	GetNetworkStats(ctx context.Context) (timescale.NetworkStats, error)
 }
 
-// networkStatsStaleReader is the optional capability of a reader that reports each served value's
-// freshness (the TTL cache does; the raw store does not). handleNetworkStats then stamps the real
-// as_of and flags.stale, so the cache's stale-while-revalidate path cannot assert stale:false
-// over a value a failing refresh let age past the TTL.
-//
-// GetNetworkStatsAt returns the stats, observedAt (fetch time; zero means as_of=now, not stale)
-// and stale (past the cache TTL). Mirrors marketsStaleReader.
+// networkStatsStaleReader is the optional freshness capability (the TTL cache has it, the raw store doesn't): GetNetworkStatsAt returns
+// observedAt
+// (zero = as_of=now) and stale so SWR cannot assert stale:false over an aged value. Mirrors marketsStaleReader.
 type networkStatsStaleReader interface {
 	GetNetworkStatsAt(ctx context.Context) (timescale.NetworkStats, time.Time, bool, error)
 }

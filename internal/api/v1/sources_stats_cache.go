@@ -66,11 +66,9 @@ func (c *CachedSourcesStatsReader) GetSourceVolumeHistory7dAt(ctx context.Contex
 	return fetchSourcesSlot(ctx, c, &c.hist7d, "volume_history_7d", c.upstream.GetSourceVolumeHistory7d)
 }
 
-// fetchSourcesSlot is the TTL + single-flight loop shared by the three methods.
-// A stale slot joins the running fill or starts one, then waits on it or the
-// caller's ctx. The fill runs detached (runDetachedFill) so one caller's abort
-// cannot fail the others. Waiters read the fill's error, not the slot alone, so
-// a failed fill is never served as an empty success.
+// fetchSourcesSlot is the TTL + single-flight loop shared by the three methods. The fill runs detached (runDetachedFill) so one caller's
+// abort cannot fail the others;
+// waiters read the fill's error, not the slot alone, so a failed fill is never served as an empty success.
 func fetchSourcesSlot[T any](
 	ctx context.Context,
 	c *CachedSourcesStatsReader,

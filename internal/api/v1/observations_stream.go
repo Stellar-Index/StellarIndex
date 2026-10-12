@@ -24,26 +24,13 @@ const (
 	minObservationsIntervalSeconds     = 1
 	maxObservationsIntervalSeconds     = 60
 
-	// observationsStreamProducerQueueDepth is the per-connection
-	// channel capacity between the producer goroutine and the SSE
-	// writer. 4 is enough for the writer to fall a tick behind without
-	// the producer blocking.
+	// observationsStreamProducerQueueDepth is the per-connection producer-to-SSE-writer channel capacity; 4 lets the writer lag a tick.
 	observationsStreamProducerQueueDepth = 4
 )
 
-// handleObservationsStream serves GET /v1/observations/stream, the SSE counterpart to
-// /v1/observations (ADR-0018).
-//
-// Wire shape per connection:
-//
-//   - Initial event: the current per-source observations (`[]` when the pair has no trades yet).
-//   - Recurring events: every interval_seconds (default 5, clamp 1-60) a fresh
-//     LatestTradePerSource scan runs, bypassing the SWR history cache because each event is
-//     stamped as_of=now, and an `observations_update` fires UNCONDITIONALLY (no dedupe).
-//   - Heartbeats: every streaming.DefaultHeartbeatInterval when no real event has flowed.
-//
-// ?granularity= and ?window_seconds= return 400, as on /v1/observations; `interval_seconds` is
-// named differently because the raw surface has no aggregation window.
+// handleObservationsStream serves GET /v1/observations/stream (SSE twin of /v1/observations, ADR-0018): an initial snapshot, then every
+// interval_seconds (default 5, clamp 1-60) an uncached scan and an unconditional observations_update (no dedupe).
+// granularity/window_seconds give 400.
 func (s *Server) handleObservationsStream(w http.ResponseWriter, r *http.Request) {
 	// Admit against the concurrency caps FIRST, before the pre-flight computeObservations scan;
 	// otherwise a client at its cap would still trigger the full DB scan before rejection. release
@@ -132,13 +119,8 @@ func (s *Server) handleObservationsStream(w http.ResponseWriter, r *http.Request
 	streaming.StreamFromChannelPreAdmitted(w, r, ch, s.streamOptions())
 }
 
-// computeObservations is the shared core of [Server.handleObservations] and
-// [Server.handleObservationsStream]; it returns the post-aggregate trades ready for encoding.
-//
-// Alias fan-in: trades are stored under whichever spelling the decoder stamped (SDEX XLM legs
-// under `native`, CEX feeds under `crypto:XLM`), so a literal lookup would leave `?asset=native`
-// blind to CEX observations. Every alias spelling of the pair is scanned and the newest trade per
-// source kept, as the price read paths do. Non-XLM pairs have one spelling and one scan.
+// computeObservations is the shared core of [Server.handleObservations] and the stream. Alias fan-in: trades are stored under whichever
+// spelling the decoder stamped (native, crypto:XLM), so every alias spelling is scanned and the newest trade per source kept.
 func (s *Server) computeObservations(
 	ctx context.Context, pair canonical.Pair, source, aggregate string,
 ) ([]canonical.Trade, error) {
@@ -204,9 +186,7 @@ func firstScanError(errs []error) error {
 	return first
 }
 
-// mergeNewestPerSource folds `trades` into `merged`, keeping the most
-// recent trade per source. `bySource` maps source → index in merged
-// and is mutated in place.
+// mergeNewestPerSource folds trades into merged keeping the newest per source; bySource (source to index in merged) is mutated in place.
 func mergeNewestPerSource(merged []canonical.Trade, bySource map[string]int, trades []canonical.Trade) []canonical.Trade {
 	for _, t := range trades {
 		// Backstop for the storage-side filter: no exchange row is served raw.
@@ -229,10 +209,9 @@ func mergeNewestPerSource(merged []canonical.Trade, bySource map[string]int, tra
 // matching the request handler's 8s ceiling in observations.go.
 const observationsScanTimeout = 8 * time.Second
 
-// runObservationsStreamProducer is the per-connection compute + push loop: it emits the
-// pre-computed initial event, then recomputes and emits every `intervalSeconds` unconditionally.
-// Per-tick failures are logged and skipped (heartbeats keep the connection alive). It returns
-// when ctx cancels, closing ch so [streaming.StreamFromChannel] returns cleanly.
+// runObservationsStreamProducer emits the initial event then recomputes every intervalSeconds unconditionally; tick failures are logged
+// and skipped.
+// It closes ch on ctx cancel so [streaming.StreamFromChannel] returns cleanly.
 func (s *Server) runObservationsStreamProducer(
 	ctx context.Context,
 	ch chan<- streaming.Event,
@@ -287,15 +266,10 @@ func (s *Server) runObservationsStreamProducer(
 	}
 }
 
-// observationsStreamEvent builds one SSE event payload from trades, returning (_, false) on
-// JSON-marshal failure. The envelope mirrors the request endpoint, including the single-source
-// flag.
-//
-// stale, frozen and divergence_checked are structurally false on every tick, BY DESIGN: this is
-// the raw per-source surface, with no aggregation contract to fall short of and no aggregated
-// value for a cross-reference verdict to vouch for, so s.Divergence is never consulted. See the
-// FRESHNESS CONTRACT block in handleObservations; pinned by
-// TestObservationsStream_DivergenceCheckedStructurallyFalse.
+// observationsStreamEvent builds one SSE payload ((_, false) on marshal failure). stale, frozen and divergence_checked are false BY
+// DESIGN: raw
+// per-source surface, nothing to vouch for, s.Divergence never consulted (FRESHNESS CONTRACT;
+// TestObservationsStream_DivergenceCheckedStructurallyFalse).
 func (s *Server) observationsStreamEvent(gen *streaming.Generator, pair canonical.Pair, trades []canonical.Trade) (streaming.Event, bool) {
 	rows := make([]TradeRow, len(trades))
 	srcSet := make(map[string]struct{}, len(trades))
@@ -331,9 +305,8 @@ func (s *Server) observationsStreamEvent(gen *streaming.Generator, pair canonica
 	}, true
 }
 
-// observationsStreamPayload is the SSE-data shape — same envelope
-// as the request endpoint so SDK consumers can use one type for
-// both polling and streaming.
+// observationsStreamPayload is the SSE data shape, the same envelope as the request endpoint so SDKs use one type for polling and
+// streaming.
 type observationsStreamPayload struct {
 	Data    []TradeRow `json:"data"`
 	AsOf    WireTime   `json:"as_of"`
@@ -341,9 +314,8 @@ type observationsStreamPayload struct {
 	Flags   Flags      `json:"flags"`
 }
 
-// parseObservationsIntervalSeconds reads the optional interval_seconds
-// query param, defaulting to defaultObservationsIntervalSeconds and
-// rejecting values outside the documented clamp.
+// parseObservationsIntervalSeconds reads interval_seconds, defaulting to defaultObservationsIntervalSeconds and rejecting values outside
+// the clamp.
 func parseObservationsIntervalSeconds(w http.ResponseWriter, r *http.Request) (int, bool) {
 	raw := r.URL.Query().Get("interval_seconds")
 	if raw == "" {

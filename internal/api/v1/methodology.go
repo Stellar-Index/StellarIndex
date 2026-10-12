@@ -98,9 +98,8 @@ type MethodologyReference struct {
 // methodologyVersion is the shape version; bump on breaking changes only, not new optional fields.
 const methodologyVersion = "1.0"
 
-// handleMethodology serves GET /v1/methodology from constants, the in-memory registry and
-// [Options.USDPeggedClassics]; no DB call. Content changes only on deploy or config reload, so it
-// is safe to cache aggressively.
+// handleMethodology serves GET /v1/methodology from constants, the registry and [Options.USDPeggedClassics]; no DB, safe to cache
+// aggressively.
 func (s *Server) handleMethodology(w http.ResponseWriter, r *http.Request) {
 	pegs := make([]MethodologyStablecoinPeg, 0, len(s.USDPeggedClassics))
 	for _, peg := range s.USDPeggedClassics {

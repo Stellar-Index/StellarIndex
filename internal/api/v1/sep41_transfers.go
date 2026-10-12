@@ -44,27 +44,24 @@ type SEP41TransfersResponse struct {
 	Transfers []SEP41TransferEntry `json:"transfers"`
 }
 
-// defaultTokenDecimals is the scale assumed when a contract's real
-// decimals() can't be read from the lake — 7, matching Stellar
-// classic/native stroops and the SAC default.
+// defaultTokenDecimals is the scale assumed when a contract's real decimals() can't be read from the lake: 7, matching classic/native
+// stroops and the SAC default.
 const defaultTokenDecimals = 7
 
-// tokenMetadataReadTimeout bounds EVERY best-effort token-metadata read against the ClickHouse
-// lake (decimals() and the SEP-41 supply overlay). These are overlays whose failure mode is a
-// documented default or null field; without a sub-budget a slow lake would stall the caller for
-// the FULL request budget. One constant keeps sibling call sites bounded alike.
+// tokenMetadataReadTimeout bounds EVERY best-effort token-metadata read against the lake (decimals() and the SEP-41 supply overlay):
+// their failure mode is a documented default or null field,
+// so without a sub-budget a slow lake would stall the caller for the FULL request budget. One constant keeps sibling call sites bounded
+// alike.
 const tokenMetadataReadTimeout = 2 * time.Second
 
-// sep41TransfersReadTimeout is the whole budget for the per-contract read: the store's lookback
-// ladder plus its full-history fallback. timescale.SEP41TransferLadderBudget caps the ladder at
-// half, so the fallback gets at least as much time as the ladder that failed; neither package
-// sees the other's constant, so TestSEP41Transfers_LadderBudgetLeavesTheFallbackAtLeastHalf pins it.
+// sep41TransfersReadTimeout is the whole budget for the per-contract read: the store's lookback ladder plus its full-history fallback.
+// timescale.SEP41TransferLadderBudget caps the ladder at half;
+// neither package sees the other's constant, so TestSEP41Transfers_LadderBudgetLeavesTheFallbackAtLeastHalf pins it.
 const sep41TransfersReadTimeout = 8 * time.Second
 
-// resolveTokenDecimals reads a token contract's on-chain decimals(), bounded by
-// tokenMetadataReadTimeout. A nil reader or uncaptured token yields the default 7; a FAILED read
-// returns ok=false, because decimals is the conversion factor for every amount beside it and a
-// guessed 7 on an 18-decimal token overstates each by 10^11.
+// resolveTokenDecimals reads a token contract's on-chain decimals(), bounded by tokenMetadataReadTimeout. A nil reader or uncaptured
+// token yields the default 7; a FAILED read returns ok=false,
+// because decimals is the conversion factor for every amount beside it and a guessed 7 on an 18-decimal token overstates each by 10^11.
 func (s *Server) resolveTokenDecimals(ctx context.Context, contractID string) (decimals int, ok bool) {
 	if s.TokenDecimals == nil {
 		return defaultTokenDecimals, true
@@ -83,9 +80,8 @@ func (s *Server) resolveTokenDecimals(ctx context.Context, contractID string) (d
 	return int(d), true
 }
 
-// resolveAssetDecimals returns the smallest-unit scale for a canonical asset: the contract's
-// decimals() for Soroban tokens (passing through resolveTokenDecimals's ok), else the default 7.
-// Callers resolve once per side per request, never per row.
+// resolveAssetDecimals returns the smallest-unit scale for a canonical asset: the contract's decimals() for Soroban tokens (passing
+// through resolveTokenDecimals's ok), else 7. Callers resolve once per side per request, never per row.
 func (s *Server) resolveAssetDecimals(ctx context.Context, a canonical.Asset) (decimals int, ok bool) {
 	if a.Type == canonical.AssetSoroban && a.ContractID != "" {
 		return s.resolveTokenDecimals(ctx, a.ContractID)
@@ -93,9 +89,8 @@ func (s *Server) resolveAssetDecimals(ctx context.Context, a canonical.Asset) (d
 	return defaultTokenDecimals, true
 }
 
-// writeDecimalsUnavailable is the refusal for a response whose
-// `decimals` field is its amounts' conversion factor when the token's
-// scale could not be read: a retryable 503 rather than a guessed 7.
+// writeDecimalsUnavailable refuses a response whose `decimals` field is its amounts' conversion factor when the scale could not be read:
+// a retryable 503 rather than a guessed 7.
 func writeDecimalsUnavailable(w http.ResponseWriter, r *http.Request, problemType string) {
 	if r.Context().Err() != nil {
 		return // client aborted: nothing to write to
@@ -205,9 +200,8 @@ func (s *Server) handleSEP41Transfers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, resp, Flags{})
 }
 
-// parseSEP41TransferIdentifiers validates the path contract_id and optional ?from / ?to as
-// Stellar strkeys. On failure it writes a 400 Problem and returns ok=false. Split out of
-// handleSEP41Transfers for the gocognit threshold.
+// parseSEP41TransferIdentifiers validates the path contract_id and optional ?from / ?to as strkeys; on failure it writes a 400 and
+// returns ok=false.
 func parseSEP41TransferIdentifiers(w http.ResponseWriter, r *http.Request) (contractID, fromAddr, toAddr string, ok bool) {
 	contractID = r.PathValue("contract_id")
 	if contractID == "" {

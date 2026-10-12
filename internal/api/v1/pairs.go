@@ -7,14 +7,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// handlePairs serves GET /v1/pairs?base=<id>&quote=<id>.
-//
-// Returns a [Market] array of zero or one entries (the OpenAPI PairsEnvelope shape): the
-// activity summary if any trade has been seen, otherwise an empty array. A missing pair is NOT
-// a 404, so clients can tell "no such pair" from a malformed request by status code.
-//
-// Reuses [MarketsReader]: /v1/pairs and /v1/markets share a storage shape, differing only in
-// access pattern (pageable scan vs single-pair lookup).
+// handlePairs serves GET /v1/pairs?base=&quote=: a [Market] array of zero or one entries (OpenAPI PairsEnvelope), reusing
+// [MarketsReader].
+// A missing pair is NOT a 404, so clients tell "no such pair" from a malformed request by status.
 func (s *Server) handlePairs(w http.ResponseWriter, r *http.Request) {
 	rawBase := r.URL.Query().Get("base")
 	if rawBase == "" {
@@ -93,11 +88,9 @@ func (s *Server) handlePairs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out, Flags{})
 }
 
-// pairMarketWithAliases resolves the single-pair market by trying each XLM alias combination
-// of base and quote and returning the first form with a row, like
-// [Server.ohlcSeriesWithAliases]. An XLM pair lives under whichever id its trades carried
-// (native, crypto:XLM or the SAC), so a literal lookup misses valid aliased input. The matched
-// legs are returned so the caller resolves decimals against the pair that produced the row.
+// pairMarketWithAliases tries each XLM alias combination of base and quote (like [Server.ohlcSeriesWithAliases]) since a pair lives under
+// whichever id its
+// trades carried; the matched legs are returned so decimals resolve against the pair that produced the row.
 func (s *Server) pairMarketWithAliases(
 	ctx context.Context, reader MarketsReader, base, quote canonical.Asset,
 ) (Market, canonical.Asset, canonical.Asset, bool, error) {

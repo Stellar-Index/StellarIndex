@@ -12,41 +12,26 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// tipStreamProducerQueueDepth is the per-connection channel capacity between producer and SSE
-// writer: enough for the writer to lag a tick or two, small enough that a wedged writer blocks the
-// producer's next send and ctx cancel then signals teardown.
+// tipStreamProducerQueueDepth is the producer-to-writer channel capacity: small enough that a wedged writer blocks the producer's next
+// send, so ctx cancel signals teardown.
 const tipStreamProducerQueueDepth = 4
 
-// tipStreamTickTimeout bounds one per-tick computeTip call. RequestTimeout excludes `/stream`
-// paths, so a slow computation would otherwise hold the producer and its DB connection open
-// indefinitely.
+// tipStreamTickTimeout bounds one per-tick computeTip; RequestTimeout excludes `/stream`, so a slow compute would otherwise hold its DB
+// connection indefinitely.
 const tipStreamTickTimeout = 8 * time.Second
 
-// tipStreamDivergenceBudget bounds the per-event divergence lookup, the one auxiliary read in an
-// emission, separately from the tick and pre-flight budgets.
-//
-// The cadence is the product; `divergence_checked: false` already means "could not verify". A
-// degraded auxiliary signal must degrade the flag, never the stream, so it cannot share
-// [tipStreamTickTimeout]. The read is a single GET of the precomputed div: record; past the
-// budget the event goes out unchecked, shifting an emission by at most a fifth of the default 5s
-// window.
+// tipStreamDivergenceBudget bounds the per-event divergence lookup, separately from the tick budget: a degraded auxiliary signal must
+// degrade the flag
+// (`divergence_checked: false` = could not verify), never the stream. Past the budget the event goes out unchecked.
 const tipStreamDivergenceBudget = time.Second
 
-// tipStreamDivergenceStallInterval bounds how often a divergence lookup that exceeded
-// [tipStreamDivergenceBudget] is logged. It is process-wide because the one shared verdict store
-// stalls; per-key limits would flood the log. Each line carries the count it swallowed.
+// tipStreamDivergenceStallInterval rate-limits logging of lookups that exceeded [tipStreamDivergenceBudget]; process-wide because the one
+// shared verdict store stalls.
 const tipStreamDivergenceStallInterval = time.Minute
 
-// handlePriceTipStream serves GET /v1/price/tip/stream: the SSE counterpart to /v1/price/tip
-// (ADR-0018 §"SSE stream wires onto the tip surface").
-//
-// A tip_update fires as soon as the first compute completes, then every window_seconds (default 5,
-// clamp 1–60). Failed ticks are logged and skipped; heartbeats every
-// streaming.DefaultHeartbeatInterval keep the connection alive. Cache-Control is the route policy
-// from the CacheControl middleware, which the writer keeps.
-//
-// Pre-stream errors (param validation, "no data ever" 404) are problem+json: once the body starts
-// the status can't be set, so failures must be detected pre-flight.
+// handlePriceTipStream serves GET /v1/price/tip/stream, the SSE counterpart to /v1/price/tip (ADR-0018): a tip_update at once, then every
+// window_seconds (default 5, clamp 1-60);
+// failed ticks are skipped. Errors must be detected pre-flight (problem+json), since the status cannot change once the body starts.
 func (s *Server) handlePriceTipStream(w http.ResponseWriter, r *http.Request) {
 	// Admit against the concurrency caps FIRST so a client at its cap does not pay for the
 	// pre-flight compute. release is idempotent; the stream is handed off via
@@ -179,12 +164,9 @@ func (s *Server) writeTipPreflightError(w http.ResponseWriter, r *http.Request, 
 	}
 }
 
-// writeTipProducerRefused answers a connection whose pair has no shared producer running and
-// may not mint one.
-//
-// Falling through to the per-connection tick loop would reintroduce the unbounded compute the
-// bounds exist to prevent. Every refusal is 503 + Retry-After, not 429 (the published contract;
-// lingering producers expire within [tipProducerLinger]).
+// writeTipProducerRefused answers a connection whose pair has no producer running and may not mint one. Every refusal is 503 + Retry-
+// After, not 429 (the published contract;
+// lingering producers expire within [tipProducerLinger]); a per-connection tick loop would reintroduce the unbounded compute.
 func (s *Server) writeTipProducerRefused(
 	w http.ResponseWriter, r *http.Request,
 	outcome tipProducerOutcome, asset, quote canonical.Asset, window int,
@@ -206,15 +188,10 @@ func (s *Server) writeTipProducerRefused(
 		detail)
 }
 
-// forwardTipStream bridges a Hub subscription onto the SSE writer channel, prepending the
-// connection's pre-flight snapshot so the first frame never waits for the producer's next tick.
-// It closes ch when the request context cancels or the subscription closes (hub shutdown or topic
-// evict; the client's EventSource auto-reconnects).
-//
-// isResume is whether the connection supplied a Last-Event-ID. On a resume `sub` replays the
-// buffered backlog in ID order, but firstEv came from its own [streaming.Generator] and its ID is
-// newer than anything buffered, so sending it ahead of the replay walks the SSE cursor backwards.
-// The backlog already carries the pair's current state, so firstEv is skipped.
+// forwardTipStream bridges a Hub subscription onto the SSE writer channel, prepending the pre-flight snapshot so the first frame never
+// waits a tick; it closes ch on ctx cancel or subscription close.
+// On a resume (Last-Event-ID) firstEv is skipped: its ID is newer than the replayed backlog, so sending it first would walk the SSE
+// cursor backwards.
 func (s *Server) forwardTipStream(
 	ctx context.Context,
 	ch chan<- streaming.Event,
@@ -249,11 +226,9 @@ func (s *Server) forwardTipStream(
 	}
 }
 
-// runTipStreamProducer is the per-connection compute and push loop. It emits the pre-built initial
-// event (skipped when its Data is empty), then recomputes every `windowSeconds`. A withheld pair
-// emits a price_withheld marker ([Server.tipTickEvent]); other failures are skipped on the
-// assumption that transient unavailability clears by the next tick. It returns when ctx cancels and
-// closes ch so [streaming.StreamFromChannel] returns cleanly.
+// runTipStreamProducer is the per-connection compute and push loop: the initial event (skipped when empty), then every `windowSeconds`. A
+// withheld pair emits a
+// price_withheld marker ([Server.tipTickEvent]); other failures are skipped as transient. It closes ch on ctx cancel.
 func (s *Server) runTipStreamProducer(
 	ctx context.Context,
 	ch chan<- streaming.Event,
@@ -297,9 +272,9 @@ func (s *Server) runTipStreamProducer(
 	}
 }
 
-// tipTickEvent computes one tick's emission for both producers: a tip_update, or a price_withheld
-// marker while a withholding gate refuses the pair, so a pair crossing the gate after connect reads
-// as withheld, not as a quiet market. ok is false only when there is nothing to emit.
+// tipTickEvent computes one tick for both producers: a tip_update, or a price_withheld marker while a gate refuses the pair, so a pair
+// crossing the gate after connect
+// reads as withheld, not a quiet market. ok is false only when there is nothing to emit.
 func (s *Server) tipTickEvent(ctx context.Context, gen *streaming.Generator, asset, quote canonical.Asset, window int) (streaming.Event, bool) {
 	tickCtx, cancel := context.WithTimeout(ctx, tipStreamTickTimeout)
 	defer cancel()
@@ -341,14 +316,10 @@ func tipWithheldEvent(gen *streaming.Generator, asset, quote canonical.Asset, re
 	return streaming.Event{ID: gen.Next(), Type: "price_withheld", Data: body}, true
 }
 
-// tipStreamEvent builds the SSE payload for one tip emission, with flags from the request
-// endpoint's own lookup (tipFlags) so it carries the verdict a GET would, while the store answers
-// inside [tipStreamDivergenceBudget].
-//
-// Once the store is slow the surfaces deliberately diverge (GET uses the request budget, the
-// stream the shorter sub-budget), so a base can be checked=true on GET and checked=false on the
-// stream. That is the safe direction: the stream never manufactures an all-clear the GET would
-// not give. Returns (_, false) on JSON-marshal failure; the caller skips the emit.
+// tipStreamEvent builds the SSE payload for one emission with tipFlags from the endpoint's own lookup. Once the store is slow GET and
+// stream deliberately diverge
+// (request budget vs [tipStreamDivergenceBudget]), so a base can be checked=true on GET and false on the stream: the stream never
+// manufactures an all-clear the GET would not give.
 func (s *Server) tipStreamEvent(ctx context.Context, gen *streaming.Generator, asset, quote canonical.Asset, snap PriceSnapshot, sources []string) (streaming.Event, bool) {
 	// Flags first, THEN the timestamp: as_of must be taken after the last step that can delay
 	// the emission, or a slow divergence lookup ships an as_of up to a sub-budget stale.
@@ -370,11 +341,10 @@ func (s *Server) tipStreamEvent(ctx context.Context, gen *streaming.Generator, a
 	}, true
 }
 
-// tipStreamFlags builds one emission's envelope flags, running the divergence lookup under
-// [tipStreamDivergenceBudget] rather than the caller's whole budget. On a stall the stream degrades
-// the flag and emits on time, with `divergence_checked: false` meaning "could not verify", never
-// "prices agree". Comparing the two contexts tells a stall (sub-budget expired, caller's has room)
-// from teardown (both expired), which is not logged.
+// tipStreamFlags builds one emission's flags, running the divergence lookup under [tipStreamDivergenceBudget]. On a stall it degrades the
+// flag (`divergence_checked: false` means
+// "could not verify", never "prices agree"); the two contexts tell a stall (sub-budget expired only) from teardown (both), which is not
+// logged.
 func (s *Server) tipStreamFlags(ctx context.Context, snap PriceSnapshot, asset, quote canonical.Asset, sources []string) Flags {
 	budget := s.tipDivergenceBudget()
 	lookupCtx, cancel := context.WithTimeout(ctx, budget)

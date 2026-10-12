@@ -69,11 +69,8 @@ type MarketsReader interface {
 	FirstTradeBatch(ctx context.Context, pairs [][2]string) (map[string]time.Time, error)
 }
 
-// marketsStaleReader is the optional capability of a MarketsReader that reports each served
-// row-set's observed-at time and staleness; CachedMarketsReader implements it. It lets handleMarkets
-// stamp an honest as_of and flags.stale instead of the stale-while-revalidate path claiming
-// as_of=now over old rows while refresh keeps failing. The *At methods add observedAt (zero means
-// as_of=now, not stale) and stale (the served bytes are past the cache TTL).
+// marketsStaleReader is the optional CachedMarketsReader capability reporting observedAt (zero = as_of=now) and stale (past TTL),
+// so handleMarkets never stamps as_of=now over old rows while refresh keeps failing.
 type marketsStaleReader interface {
 	DistinctPairsExtAt(ctx context.Context, cursor string, limit int, order timescale.MarketsOrder) ([]Market, string, time.Time, bool, error)
 	SourceMarketsAt(ctx context.Context, source, cursor string, limit int, order timescale.MarketsOrder) ([]Market, string, time.Time, bool, error)
@@ -111,18 +108,9 @@ type Pool struct {
 	LastPrice *string `json:"last_price,omitempty"`
 }
 
-// handlePools serves GET /v1/pools: DEX/AMM pools only, one row per (source, base, quote) where
-// the source is a DEX. CEX pairs go through /v1/markets.
-//
-// Query params (all optional): cursor, limit (1-500, default 100), order_by ("volume_24h_usd_desc"
-// default, or "pair"), source (one DEX name; unknown or non-DEX names give an empty list),
-// base / quote (AND-combined), asset (either side; exclusive with base/quote since AND vs OR has no
-// well-defined combination).
-//
-// Every ?asset=/?base=/?quote= filter is re-spelled through canonical.ParseAsset (see
-// canonicaliseAssetFilter): a bare alias like "XLM" differs from the stored form, and the SQL `=`
-// would return an authoritative empty 200, cached for 60s. `native` and `crypto:XLM` are stored
-// as distinct rows, so canonicalising does not merge them.
+// handlePools serves GET /v1/pools: DEX/AMM pools only (CEX pairs go through /v1/markets); asset is exclusive with base/quote.
+// Asset filters are re-spelled via canonical.ParseAsset (canonicaliseAssetFilter): a bare "XLM" would match nothing and cache an empty
+// 200 for 60s.
 func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,gocyclo,funlen // option parsing + DEX-source filter + asset/base+quote validation + 8s-timeout guard are linear; splitting fragments the request lifecycle
 	cursor := r.URL.Query().Get("cursor")
 	limit := 100
@@ -306,12 +294,8 @@ type MarketVolumeBucket struct {
 	VolumeUSD string   `json:"volume_usd"`
 }
 
-// handleMarkets serves GET /v1/markets.
-//
-// Query params (all optional): cursor, limit (1-500, default 100), order_by ("pair" or
-// "volume_24h_usd_desc", the default, so clients skip ~5K dust pairs), source (one on-chain source
-// or CEX venue seen in the recency window; data vendors are refused by sourceFilterOK), and asset
-// (canonical asset_id on either side; mutually exclusive with `source`).
+// handleMarkets serves GET /v1/markets; order_by defaults to volume_24h_usd_desc so clients skip ~5K dust pairs.
+// asset is exclusive with source; data vendors are refused by sourceFilterOK.
 func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,gocyclo,funlen // option parsing + source/asset/no-filter dispatch + 8s-timeout guard + sparkline backfill are linear; splitting fragments the request lifecycle
 	cursor := r.URL.Query().Get("cursor")
 	limit := 100
@@ -538,12 +522,8 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 	writeEnvelope(w, env)
 }
 
-// expandSlugToAssetIDs resolves a verified-currency catalogue slug (e.g. "usdc", "xlm") to the
-// canonical asset_ids it represents, for /v1/markets?asset=<slug> fan-out.
-//
-// The expansion is every networks[].asset_id (non-Stellar networks contribute nothing, as we index
-// no trades there), plus `crypto:<TICKER>` for crypto and stablecoin classes so CEX trades match,
-// plus `fiat:<TICKER>` for fiat. Nil when no catalogue is wired or the slug is unknown.
+// expandSlugToAssetIDs maps a catalogue slug to its Stellar networks[].asset_id values plus crypto:/fiat: tickers; nil if unwired or
+// unknown.
 func (s *Server) expandSlugToAssetIDs(slug string) []string {
 	if s.VerifiedCurrencies == nil {
 		return nil
@@ -592,12 +572,9 @@ func assetMarketsLeg(ctx context.Context, reader MarketsReader, asset string, li
 	return rows, time.Time{}, false, err
 }
 
-// fanOutAssetMarkets calls AssetMarkets in parallel per expanded asset_id, dedupes on (base, quote)
-// so a pair matched by two queries is one row, sorts per `order` and caps at `limit`. There is no
-// pagination because cursors across heterogeneous streams are not well-defined.
-//
-// Freshness is conservative: observedAt is the oldest contributing read and stale is the OR of the
-// legs; both are zero/false when the reader cannot report them, so the handler uses as_of=now.
+// fanOutAssetMarkets runs AssetMarkets per expanded asset_id, dedupes on (base, quote), sorts and caps at limit; no pagination (cursors
+// don't compose).
+// Freshness is conservative: observedAt is the oldest leg, stale the OR of legs; zero/false when the reader cannot report them.
 func (s *Server) fanOutAssetMarkets(ctx context.Context, reader MarketsReader, assets []string, limit int, order timescale.MarketsOrder) ([]Market, time.Time, bool, error) {
 	type result struct {
 		rows       []Market
@@ -650,10 +627,8 @@ func (s *Server) fanOutAssetMarkets(ctx context.Context, reader MarketsReader, a
 	return merged, observedAt, stale, nil
 }
 
-// sortMergedMarkets orders a fan-out's merged rows as the single-asset SQL path does
-// (buildSourceMarketsQuery / distinctPairsCommon), so `order_by` behaves the same for an asset_id
-// and a slug. Volume order treats NULL as zero and ties break ascending by (base, quote), matching
-// `COALESCE(vol_24h_num, 0) DESC, base||quote ASC`.
+// sortMergedMarkets mirrors the single-asset SQL order so order_by matches for asset_id and slug: NULL volume is zero, ties by (base,
+// quote).
 func sortMergedMarkets(merged []Market, order timescale.MarketsOrder) {
 	switch order {
 	case timescale.MarketsOrderPair:
@@ -693,14 +668,9 @@ func compareVolumeUSD(a, b *string) int {
 	return toRat(a).Cmp(toRat(b))
 }
 
-// adjustListingPrice is the one path a listing row's last_price takes to the wire: scam-issuer
-// withholding, then dex-nonstandard-decimals normalization (docs/operations/runbooks/dex.md).
-//
-// Withholding returns nil: the row still lists (trades and volume are activity, not a price) but
-// has no last_price, matching the 404 from /v1/price, /v1/vwap and /v1/twap (see scamWithheld).
-// `surface` labels the metric. A nil or empty lastPrice passes through, and lastPrice is returned
-// unchanged (same pointer) when decimals match: the CAGG's NUMERIC::text differs from
-// [ratToDecimal]'s fixed 10-digit rendering, so reformatting would change bytes for every 7dp pair.
+// adjustListingPrice is the sole path a listing last_price takes to the wire: scam-issuer withholding (nil; the row still lists, as
+// /v1/price 404s)
+// then nonstandard-decimals normalization. Same pointer returned when decimals match: reformatting would change bytes for every 7dp pair.
 func (s *Server) adjustListingPrice(ctx context.Context, base, quote canonical.Asset, lastPrice *string, surface string) *string {
 	if lastPrice == nil || *lastPrice == "" {
 		return lastPrice
@@ -721,9 +691,8 @@ func (s *Server) adjustListingPrice(ctx context.Context, base, quote canonical.A
 	return &adjusted
 }
 
-// adjustListingPriceStrings is [Server.adjustListingPrice] for callers holding only the wire-shape
-// base/quote strings. They come from canonical.Asset.String(), so a parse failure is defensive-only
-// and fails open, returning lastPrice unchanged rather than dropping the row or 500ing the listing.
+// adjustListingPriceStrings is [Server.adjustListingPrice] for wire-shape base/quote strings; a parse failure fails open (lastPrice
+// unchanged).
 func (s *Server) adjustListingPriceStrings(ctx context.Context, baseRaw, quoteRaw string, lastPrice *string, surface string) *string {
 	if lastPrice == nil || *lastPrice == "" {
 		return lastPrice

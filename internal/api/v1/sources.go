@@ -19,9 +19,8 @@ type SourcesStatsReader interface {
 	GetSourceVolumeHistory7d(ctx context.Context) ([]timescale.SourceVolumeBucket, error)
 }
 
-// sourcesStatsAtReader is what the TTL cache adds to SourcesStatsReader:
-// each read also returns the fill time of the slot it served, so
-// handleSources stamps as_of with the data's vintage instead of now.
+// sourcesStatsAtReader is what the TTL cache adds to SourcesStatsReader: each read also returns the served slot's fill time, so as_of is
+// the data's vintage.
 type sourcesStatsAtReader interface {
 	GetSourceStatsAt(ctx context.Context) ([]timescale.SourceStats, time.Time, error)
 	GetSourceVolumeHistory24hAt(ctx context.Context) ([]timescale.SourceVolumeBucket, time.Time, error)
@@ -76,10 +75,7 @@ func parseSourcesInclude(raw string) (stats, sparkline, sparkline7d bool) {
 	return stats, sparkline, sparkline7d
 }
 
-// buildSourceVolumeHistory projects the per-(source, hour) raw buckets
-// into a per-source trailing-24h series, zero-filling missing hours so
-// clients render a continuous chart rather than gappy bars. Carries
-// both USD volume + trade count per hour.
+// buildSourceVolumeHistory projects per-(source, hour) buckets into a per-source trailing-24h series, zero-filling missing hours.
 func buildSourceVolumeHistory(buckets []timescale.SourceVolumeBucket, hours int) map[string][]VolumeBucket {
 	type hourRaw struct {
 		vol   string
@@ -161,10 +157,8 @@ type Source struct {
 	VolumeHistory7d []VolumeBucket `json:"volume_history_7d,omitempty"`
 }
 
-// validSourceClasses is the allow-list of values accepted for the
-// `class` query parameter: every external.Class, because every class is
-// served on some row. TestSourceClassSurfacesAgree holds it to the
-// constants and to both spec enums.
+// validSourceClasses is the allow-list for the `class` query parameter: every external.Class; TestSourceClassSurfacesAgree holds it to
+// the constants and spec enums.
 var validSourceClasses = map[string]bool{
 	string(external.ClassExchange):        true,
 	string(external.ClassAggregator):      true,
@@ -186,22 +180,15 @@ func sourceClassList() string {
 	return strings.Join(names, ", ")
 }
 
-// servesPubnetReference reports whether the compiled-in reference registries
-// (verified-currency catalogue, routers, off-chain feeds) describe this
-// network. They name pubnet identities only; an unknown network reads as
-// pubnet, as in sourcenet.Applicable.
+// servesPubnetReference reports whether the compiled-in reference registries (pubnet identities only) describe this network; an unknown
+// network reads as pubnet.
 func (s *Server) servesPubnetReference() bool {
 	return s.Network != sourcenet.Testnet && s.Network != sourcenet.Futurenet
 }
 
-// handleSources serves GET /v1/sources.
-//
-// Returns the static external.Registry scoped to the configured network (sourcenet.Applicable),
-// sorted by name so responses are deterministic and CDN-cacheable. The catalogue is small enough
-// that it is not paginated. The optional `class` filter must be in validSourceClasses, else 400.
-//
-// It renders the metadata the aggregator's class filter consults, so `include_in_vwap=false` is
-// intentional policy (aggregator/oracle/authority-sanity classes), not a missing connector.
+// handleSources serves GET /v1/sources: the static external.Registry scoped to the network (sourcenet.Applicable), sorted by name for
+// CDN-cacheable output; unknown `class` is a 400.
+// `include_in_vwap=false` is intentional policy (aggregator/oracle/authority-sanity classes), not a missing connector.
 func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,gocyclo // include parsing + per-source stat-fill + sparkline backfill are linear; splitting would scatter the request lifecycle
 	classFilter := r.URL.Query().Get("class")
 	if classFilter != "" && !validSourceClasses[classFilter] {

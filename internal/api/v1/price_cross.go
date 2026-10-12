@@ -26,10 +26,10 @@ type crossLeg struct {
 	served  canonical.Asset
 }
 
-// closedUSDAnchoredFiatCross prices a NON-fiat asset in a fiat for the closed surfaces:
-// price(asset, USD) x the fixing binding at the USD leg's bucket end (ADR-0051, ADR-0018), so the
-// answer never depends on when or where it is read. The USD leg resolves first so a withheld leg
-// propagates; multiplying a withheld price by a rate would publish it through an ungated door.
+// closedUSDAnchoredFiatCross prices a NON-fiat asset in a fiat for closed surfaces: price(asset, USD) x the fixing binding at the USD
+// leg's bucket end (ADR-0051, ADR-0018),
+// so the answer never depends on when or where it is read. The USD leg resolves first so a withheld leg propagates (a rate onto it would
+// publish it through an ungated door).
 func (s *Server) closedUSDAnchoredFiatCross(ctx context.Context, asset, quote canonical.Asset) fallbackResult {
 	if asset.Type == canonical.AssetFiat || !asset.IsMapped() || quote.Type != canonical.AssetFiat || quote.Code == "USD" {
 		return fallbackResult{}
@@ -59,10 +59,10 @@ func (s *Server) closedUSDAnchoredFiatCross(ctx context.Context, asset, quote ca
 	}
 }
 
-// closedUSDAnchoredCryptoCross prices a non-fiat asset in a crypto ticker it has no market against:
-// price(asset, USD) / price(quote, USD) in exact rationals (invariant 1). Both legs resolve through
-// [Server.resolveUSDLeg], so a withheld leg withholds the cross. Legs from different buckets are
-// stale: the ratio of two moments is a price at neither.
+// closedUSDAnchoredCryptoCross prices a non-fiat asset in a crypto ticker it has no market against: price(asset, USD) / price(quote, USD)
+// in exact rationals (invariant 1).
+// Both legs resolve through [Server.resolveUSDLeg], so a withheld leg withholds the cross; legs from different buckets are stale (a ratio
+// of two moments is a price at neither).
 func (s *Server) closedUSDAnchoredCryptoCross(ctx context.Context, asset, quote canonical.Asset) fallbackResult {
 	if asset.Type == canonical.AssetFiat || !asset.IsMapped() || quote.Type != canonical.AssetCrypto || sameAsset(asset, quote) {
 		return fallbackResult{}
@@ -114,9 +114,9 @@ func composeCryptoCross(asset, quote canonical.Asset, a, q PriceSnapshot) (Price
 	return out, true
 }
 
-// resolveFrozenCryptoCross governs a crypto-quoted cross by both legs' markers, read as
-// /v1/price?quote=fiat:USD reads them. A frozen leg contributes its held value; a frozen leg with
-// nothing held serves nothing, never the refused bucket divided through.
+// resolveFrozenCryptoCross governs a crypto-quoted cross by both legs' markers, read as /v1/price?quote=fiat:USD reads them; a frozen leg
+// contributes its held value,
+// or serves nothing if none is held, never the refused bucket divided through.
 func (s *Server) resolveFrozenCryptoCross(r *http.Request, c *cryptoCrossLegs, requested, quote canonical.Asset) frozenResolution {
 	a := s.resolveFrozenServe(r, requested, c.asset.served, defaultPriceQuote)
 	q := s.resolveFrozenServe(r, quote, c.quote.served, defaultPriceQuote)

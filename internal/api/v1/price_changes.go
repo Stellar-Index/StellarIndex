@@ -62,14 +62,13 @@ type PriceChanges struct {
 	Substance *SubstanceEvidence `json:"substance,omitempty"`
 }
 
-// priceChangesCurrentStaleness bounds how old the "current" bucket may be before the pair has no
-// current price (404). It matches [priceAtMaxLookback]: a pair with no trade in a day has no
-// honest anchor for a change.
+// priceChangesCurrentStaleness bounds how old the "current" bucket may be before the pair has no current price (404); it matches
+// [priceAtMaxLookback].
 const priceChangesCurrentStaleness = priceAtMaxLookback
 
-// priceChangeHorizons are the trailing windows /v1/price/changes reports, ascending. The reader's
-// staleness tolerance is the horizon itself: loose enough for a daily bar to answer a multi-week
-// horizon, while a bucket more than one horizon-width stale means "no data that far back".
+// priceChangeHorizons are the trailing windows /v1/price/changes reports, ascending. Staleness tolerance is the horizon itself: a daily
+// bar can answer a multi-week
+// horizon, but a bucket more than one horizon-width stale means "no data that far back".
 var priceChangeHorizons = []struct {
 	label string
 	dur   time.Duration
@@ -80,11 +79,9 @@ var priceChangeHorizons = []struct {
 	{"30d", 30 * 24 * time.Hour},
 }
 
-// handlePriceChanges serves GET /v1/price/changes?asset=&quote=.
-//
-// Missing horizons are null with available=false, never an error; withheld=true when the
-// reference bucket exists but a serving gate refused it. 404 only when the pair has no current
-// price; 503/500 when a read fails, since a failed read is not evidence a bucket is missing.
+// handlePriceChanges serves GET /v1/price/changes?asset=&quote=: missing horizons are null with available=false, withheld=true when a
+// serving gate refused the reference bucket.
+// 404 only when the pair has no current price; 503/500 on a failed read, which is not evidence a bucket is missing.
 func (s *Server) handlePriceChanges(w http.ResponseWriter, r *http.Request) {
 	if s.PriceAt == nil {
 		writeProblem(w, r,
@@ -185,10 +182,9 @@ type priceChangeCurrent struct {
 	adm          *ThinAdmission
 }
 
-// priceChangeCurrentThin resolves the anchor with the default read, and
-// only when that ended withheld on a measured thin leg and the request
-// opted in, again with that leg admitted. A failed second pass serves the
-// first pass's verdict: an optional retry never turns a 404 into a 5xx.
+// priceChangeCurrentThin resolves the anchor with the default read and, only when that ended withheld on a measured thin leg and the
+// request opted in, again with that leg admitted.
+// A failed second pass serves the first pass's verdict: an optional retry never turns a 404 into a 5xx.
 func (s *Server) priceChangeCurrentThin(ctx context.Context, r *http.Request, asset, quote canonical.Asset, now time.Time) (priceChangeCurrent, error) {
 	offCtx, off := WithThinAdmission(ctx, asset, quote, false)
 	cur, err := s.priceChangeCurrentPass(offCtx, asset, quote, now)
@@ -215,9 +211,8 @@ func (s *Server) priceChangeCurrentPass(ctx context.Context, asset, quote canoni
 	return priceChangeCurrent{pair: pair, res: res, triangulated: triangulated, found: found, withheld: withheld}, err
 }
 
-// priceChangeHorizonThin is [Server.priceChangeHorizon] with the same
-// two-pass rule, on a record of the horizon's own: each horizon is a
-// point-in-time read with its own verdict.
+// priceChangeHorizonThin is [Server.priceChangeHorizon] with the same two-pass rule, on the horizon's own record (each horizon is a
+// point-in-time read with its own verdict).
 func (s *Server) priceChangeHorizonThin(
 	ctx context.Context, r *http.Request, asset, quote canonical.Asset, pair canonical.Pair,
 	currentPrice string, target time.Time, tolerance time.Duration,
@@ -248,12 +243,10 @@ type priceAtResult struct {
 	resSec     int
 }
 
-// resolvePriceChangePair finds the (base, quote) orientation that yields a current price and
-// returns it so every horizon is measured against the SAME market. It walks the XLM aliases and,
-// for a fiat:USD quote with no direct bucket, the USD-pegged classics (triangulated=true).
-// found=false means no orientation had a fresh current bucket; a non-nil withheld (only
-// meaningful then) is the first ErrPriceWithheld-class error, so the caller can report the
-// price-withheld 404 instead of generic not-found. The last return is a reader failure.
+// resolvePriceChangePair finds the (base, quote) orientation with a current price so every horizon is measured against the SAME market,
+// walking XLM aliases and, for fiat:USD,
+// the USD-pegged classics (triangulated=true). found=false means no fresh current bucket; withheld (meaningful then) is the first
+// ErrPriceWithheld-class error for the price-withheld 404. The last return is a reader failure.
 func (s *Server) resolvePriceChangePair(
 	ctx context.Context, asset, quote canonical.Asset, now time.Time,
 ) (canonical.Pair, priceAtResult, bool, bool, error, error) {
@@ -289,9 +282,9 @@ func (s *Server) resolvePriceChangePair(
 	return canonical.Pair{}, priceAtResult{}, false, false, withheld, nil
 }
 
-// currentPriceForAliases returns the first (assetAlias, quoteAlias) orientation with a current
-// closed bucket within priceChangesCurrentStaleness. withheld is the first ErrPriceWithheld-class
-// error seen, so the caller can pick the right 404 once all orientations are exhausted.
+// currentPriceForAliases returns the first (assetAlias, quoteAlias) orientation with a current closed bucket within
+// priceChangesCurrentStaleness;
+// withheld is the first ErrPriceWithheld-class error, so the caller picks the right 404.
 func (s *Server) currentPriceForAliases(
 	ctx context.Context, asset, quote canonical.Asset, now time.Time,
 ) (canonical.Pair, priceAtResult, bool, error, error) {
@@ -322,11 +315,10 @@ func (s *Server) currentPriceForAliases(
 	return canonical.Pair{}, priceAtResult{}, false, withheld, nil
 }
 
-// priceChangeHorizon computes one horizon's delta for an already-resolved pair. A miss (no bucket,
-// withheld reference, unparseable ratio) yields an all-null horizon; a reader failure is returned
-// as err, since available=false would falsely claim no history. A withheld reference sets Withheld:
-// the gates are asked about `target`, not `now`, so one horizon can be withheld while its siblings
-// are not.
+// priceChangeHorizon computes one horizon's delta for a resolved pair. A miss (no bucket, withheld reference, unparseable ratio) yields
+// an all-null horizon; a reader failure is returned
+// as err, since available=false would falsely claim no history. Gates are asked about `target`, not `now`, so one horizon can be withheld
+// while siblings are not.
 func (s *Server) priceChangeHorizon(
 	ctx context.Context, pair canonical.Pair, currentPrice string, target time.Time, tolerance time.Duration,
 ) (PriceChangeHorizon, PriceWithheldReason, error) {
@@ -358,10 +350,8 @@ func (s *Server) priceChangeHorizon(
 	}, "", nil
 }
 
-// resolutionLabel maps a bucket width in seconds back to the CAGG
-// granularity label the reader used, for the wire `resolution` field.
-// Falls back to a "<n>s" form for any width outside the known ladder
-// (never expected — the reader only serves the fixed rungs).
+// resolutionLabel maps a bucket width in seconds back to the CAGG granularity label for the wire `resolution` field; unknown widths
+// (never expected) fall back to "<n>s".
 func resolutionLabel(sec int) string {
 	switch sec {
 	case 60:

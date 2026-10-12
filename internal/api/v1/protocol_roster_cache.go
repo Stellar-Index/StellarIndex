@@ -19,15 +19,12 @@ import (
 // request path to a map read. One background refresh runs per source per protocolRosterTTL
 // regardless of request rate, and the prewarm sweep keeps entries warm.
 
-// protocolRosterTTL is the freshness horizon of a cached roster count. Past it the entry is NOT
-// dropped but served while ONE detached refresh runs. 20 minutes exceeds the protocol prewarm
-// sweep interval (~13-16 min), so prewarm refreshes every entry and requests rarely refresh. It
-// matches protocolDetailTTL because the roster feeds the directory the detail cache warms.
+// protocolRosterTTL is the freshness horizon of a cached roster count; past it the entry is served while ONE detached refresh runs. It
+// exceeds the prewarm sweep (~13-16 min)
+// and matches protocolDetailTTL because the roster feeds the directory the detail cache warms.
 const protocolRosterTTL = 20 * time.Minute
 
-// protocolRosterRefreshTimeout bounds one detached roster refresh. The
-// scan is ~0.5–0.8s measured live; 30s is generous headroom for contention
-// while still bounding a wedged query so it cannot pin the single-flight.
+// protocolRosterRefreshTimeout bounds one detached roster refresh (scan ~0.5-0.8s live) so a wedged query cannot pin the single-flight.
 const protocolRosterRefreshTimeout = 30 * time.Second
 
 type rosterEntry struct {
@@ -57,16 +54,11 @@ func (c *rosterCache) initLocked() {
 	}
 }
 
-// cachedRosterCount returns meta's contract_count with stale-while-revalidate semantics:
-//
-//   - fresh entry: served as-is.
-//   - entry past protocolRosterTTL: served immediately while ONE detached refresh runs.
-//   - never built: wait for the detached single-flight refresh up to the caller's deadline. The
-//     refresh uses a background ctx + protocolRosterRefreshTimeout, so a request that times out
-//     still lets the fill complete and the next request lands warm.
-//
-// ok=false only when the caller's context is cancelled OR the first-ever read for this source
-// FAILED. A nil reader is not a failure: it yields a genuine (possibly zero) count with ok=true.
+// cachedRosterCount returns meta's contract_count stale-while-revalidate: fresh served as-is; past protocolRosterTTL served while ONE
+// detached refresh runs;
+// never built waits for that single-flight up to the caller's deadline (the refresh uses a background ctx, so a timed-out request still
+// lets the next land warm).
+// ok=false only when the caller's ctx is cancelled or the first-ever read FAILED; a nil reader yields a genuine count with ok=true.
 // The caller omits an ok=false source rather than publishing a fabricated contract_count: 0.
 func (s *Server) cachedRosterCount(ctx context.Context, meta ProtocolMeta) (count int, ok bool) {
 	key := meta.Name
@@ -93,12 +85,10 @@ func (s *Server) cachedRosterCount(ctx context.Context, meta ProtocolMeta) (coun
 	}
 }
 
-// refreshRosterLocked kicks ONE detached roster refresh for key (returning the live flight if
-// one is up). Caller holds mu. It runs on a background context, never a request deadline, and
-// only DISPLACES the cached entry on success: a failed read keeps the last-good count (old-but-
-// real beats a fabricated zero), and a first-ever failure leaves the key absent.
-// endRosterFlight deregisters fl and releases its waiters. It is deferred so it runs on EVERY
-// exit including a panic: a flight left in the map is never retried and never closes.
+// refreshRosterLocked kicks ONE detached refresh for key (caller holds mu) and only DISPLACES the cached entry on success: old-but-real
+// beats a fabricated zero.
+// endRosterFlight deregisters fl and releases its waiters. It is deferred so it runs on EVERY exit including a panic: a flight left in
+// the map is never retried and never closes.
 func (s *Server) endRosterFlight(key string, fl *rosterFlight) {
 	s.protocolRosterCache.mu.Lock()
 	delete(s.protocolRosterCache.flights, key)

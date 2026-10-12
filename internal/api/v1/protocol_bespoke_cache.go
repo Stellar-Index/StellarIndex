@@ -27,41 +27,30 @@ import (
 // warm). A failed or starved refresh keeps the last good block. Every build kicks a refresh
 // UNCONDITIONALLY (single flight collapses duplicates); a freshness-gated kick would sawtooth.
 
-// bespokeStaleAfter is the age past which a SERVED bespoke block is reported stale
-// (analytics.status drops ok to stale); it is NOT a refresh trigger. Three sweeps' worth: a
-// healthy system serves a block from the previous sweep (~13-16 min old), so crossing it means
-// refreshes have been failing or starved, which is when a client should be told.
+// bespokeStaleAfter is the age past which a SERVED bespoke block is reported stale (analytics.status drops ok to stale); not a refresh
+// trigger.
+// Three sweeps' worth: a healthy block is ~13-16 min old, so crossing it means refreshes are failing or starved.
 const bespokeStaleAfter = 45 * time.Minute
 
-// bespokeRefreshTimeout bounds ONE detached bespoke battery. Batteries take ~2s under load, so
-// a minute is ample headroom while still bounding a wedged query so it cannot pin the
-// single-flight.
+// bespokeRefreshTimeout bounds ONE detached bespoke battery (~2s under load) so a wedged query cannot pin the single-flight.
 const bespokeRefreshTimeout = time.Minute
 
-// bespokeGateLimit bounds concurrently-running detached bespoke batteries. The key space is
-// closed (registry x four whitelisted windows, ~80 keys), but a cold-start burst could launch
-// one Postgres battery per key at once. 8 (class cap 4, since TryAcquireClass allows a
-// server-keyed class half the global limit) is a third of timescale.PoolMaxOpenConns, so the
-// detached tier cannot crowd out request-path served-tier reads. Deliberately SEPARATE from the
-// explorer's lake gate: these queries hit Postgres, and sharing the ClickHouse bound would
-// couple two pools that share no resource.
+// bespokeGateLimit bounds concurrent detached bespoke batteries (a cold-start burst could launch one per key, ~80 keys). 8 (class cap 4)
+// is a third of timescale.PoolMaxOpenConns,
+// so the detached tier cannot crowd out request-path reads. SEPARATE from the explorer's lake gate: these hit Postgres, and sharing the
+// ClickHouse bound would couple unrelated pools.
 const bespokeGateLimit = 8
 
-// bespokeGateClass is this cache's refresh class. Its own name so a burst
-// of bespoke refreshes can never consume the gate's whole allowance (see
-// clickhouse.RefreshGate.TryAcquireClass).
+// bespokeGateClass is this cache's refresh class, its own so a burst of bespoke refreshes cannot consume the gate's whole allowance
+// (clickhouse.RefreshGate.TryAcquireClass).
 const bespokeGateClass = "protocol_bespoke"
 
-// errBespokeSaturated is the flight error recorded when the refresh gate
-// was saturated and the build was SKIPPED rather than queued. It never
-// reaches the wire: a first-ever miss degrades to "no block" (exactly as
-// a failed build already did) and the next build re-kicks.
+// errBespokeSaturated is the flight error for a build SKIPPED (not queued) on a saturated gate. Never reaches the wire: a first-ever miss
+// degrades to "no block" and the next build re-kicks.
 var errBespokeSaturated = errors.New("v1: protocol bespoke refresh capacity saturated; retry shortly")
 
-// errBespokePanicked is the flight error recorded when the detached
-// build goroutine panicked. Distinct from a build error so an operator
-// can tell "the builder died" (which also moved
-// stellarindex_worker_panics_total) from "the build failed".
+// errBespokePanicked is the flight error for a panicked detached build, distinct from a build error so operators can tell "the builder
+// died" (also moves stellarindex_worker_panics_total).
 var errBespokePanicked = errors.New("v1: protocol bespoke build panicked")
 
 type bespokeEntry struct {
@@ -102,10 +91,8 @@ func (c *bespokeCache) clock() time.Time {
 	return time.Now()
 }
 
-// protocolBespokeCacheKey is the single cache-key grammar for the bespoke
-// cache — every dimension BuildProtocolBespoke dispatches on (source,
-// category, window) goes through here, so no two call sites can key the
-// same block differently (the feedback_prewarm_handler_drift class).
+// protocolBespokeCacheKey is the single cache-key grammar for the bespoke cache: every dimension BuildProtocolBespoke dispatches on goes
+// through here, so no two call sites key a block differently.
 func protocolBespokeCacheKey(source, category string, windowDays int) string {
 	return newCacheKey("protocolBespoke").str(source).str(category).int(windowDays).build()
 }
@@ -156,9 +143,8 @@ func (c *bespokeCache) refreshGate() *clickhouse.RefreshGate {
 	return c.gate
 }
 
-// refreshBespoke kicks ONE detached bespoke build for key (returning the live flight when one
-// is up) for the caller to optionally wait on. Detached on purpose: a build bound to the
-// caller's remaining budget dies at the deadline and drops the block, which this cache prevents.
+// refreshBespoke kicks ONE detached build for key (returning the live flight if one is up). Detached on purpose: a build bound to the
+// caller's budget dies at the deadline and drops the block.
 func (s *Server) refreshBespoke(key, source, category string, windowDays int) *bespokeFlight {
 	fl, owner := s.protocolBespokeCache.begin(key)
 	if !owner {
@@ -204,14 +190,10 @@ func (s *Server) refreshBespoke(key, source, category string, windowDays int) *b
 	return fl
 }
 
-// cachedBespoke returns the bespoke block for (source, category, window).
-//
-//   - A cached block is returned IMMEDIATELY, flagged stale once older than bespokeStaleAfter,
-//     while one detached refresh runs.
-//   - A TRUE first-ever miss waits for that detached build, bounded by ctx. The build outlives
-//     the wait, so the next one lands warm.
-//   - ok=false means no block could be produced (no reader wired, or the first-ever build
-//     failed, was starved or outran ctx); the caller drops the bespoke block.
+// cachedBespoke returns the bespoke block for (source, category, window): a cached block immediately (stale once older than
+// bespokeStaleAfter) while one detached refresh runs;
+// a first-ever miss waits for that build, bounded by ctx (the build outlives the wait). ok=false means no block could be produced, and
+// the caller drops it.
 func (s *Server) cachedBespoke(ctx context.Context, source, category string, windowDays int) (blk *timescale.BespokeBlock, stale, ok bool) {
 	if s.ProtocolBespoke == nil {
 		return nil, false, false
@@ -232,9 +214,8 @@ func (s *Server) cachedBespoke(ctx context.Context, source, category string, win
 	}
 }
 
-// labelOracleSACs swaps each SAC contract id in an oracle block's tables and
-// breakdown labels for the classic asset it provably wraps: reflector-dex
-// keys feeds by SAC, which reads as an opaque C-address on the page.
+// labelOracleSACs swaps each SAC contract id in an oracle block for the classic asset it provably wraps (reflector-dex keys feeds by SAC,
+// an opaque C-address on the page).
 func (s *Server) labelOracleSACs(ctx context.Context, blk *timescale.BespokeBlock) {
 	if blk == nil || blk.Category != "oracle" || s.Explorer == nil {
 		return
