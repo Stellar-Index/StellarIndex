@@ -1257,6 +1257,9 @@ groups:
       #   configs/alertmanager/apply.sh. `heavy_job_*`: written at job start,
       #   removed at exit. `ch_lake_backup`: written only when a run ends and a
       #   full runs for days; stellarindex_ch_lake_backup_stale owns it.
+      # - `galexie_archive_upstream`: weekly, written only on a completed run;
+      #   stellarindex_galexie_archive_upstream_check_stale (galexie-archive.yml)
+      #   owns it.
       #
       # Lock-gated producers (the `unless` clause is the one list) wait behind
       # the host-wide heavy lock, so a long heavy job legitimately freezes their
@@ -1268,7 +1271,7 @@ groups:
         expr: |
           (
             time() - node_textfile_mtime_seconds{
-              file!~".*/ops_job_.*\\.pid[0-9]+\\.prom$|.*/ops_job_(backfill|usd_volume_restamp|projected_rebuild_[a-z0-9_]+)\\.prom$|.*/restore_drill.*\\.prom$|.*/verify_archive_tier_d\\.prom$|.*/alertmanager_receivers\\.prom$|.*/heavy_job_.*\\.prom$|.*/ch_lake_backup\\.prom$"
+              file!~".*/ops_job_.*\\.pid[0-9]+\\.prom$|.*/ops_job_(backfill|usd_volume_restamp|projected_rebuild_[a-z0-9_]+)\\.prom$|.*/restore_drill.*\\.prom$|.*/verify_archive_tier_d\\.prom$|.*/alertmanager_receivers\\.prom$|.*/heavy_job_.*\\.prom$|.*/ch_lake_backup\\.prom$|.*/galexie_archive_upstream\\.prom$"
             } > 86400
           )
           unless on (instance, file) (
