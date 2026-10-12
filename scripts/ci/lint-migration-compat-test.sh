@@ -140,6 +140,33 @@ expect 'RAISE EXCEPTION guard clears dml (no inline marker needed)' 0 'passed'
 run 'DELETE FROM comet_liquidity;' '0001_fixture.up.sql:dml'
 expect 'baselined dml entry passes' 0 'passed'
 
+run 'CREATE FUNCTION forget(p text) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+    DELETE FROM marks WHERE k = p;
+    TRUNCATE marks_seeded;
+END
+$$;' ''
+expect 'DML inside a CREATE FUNCTION body is not migrate-time dml' 0 'passed'
+
+run 'CREATE FUNCTION f() RETURNS void LANGUAGE sql AS $$ SELECT 1 $$;
+DELETE FROM marks;' ''
+expect 'DML after a one-line function body still fires' 1 'dml'
+
+run '-- unlike a CREATE FUNCTION body, this runs now
+DO $$
+BEGIN
+    DELETE FROM marks;
+END $$;' ''
+expect 'a comment naming CREATE FUNCTION does not hide a DO block' 1 'dml'
+
+# shellcheck disable=SC2016 # $fn$ is SQL dollar quoting
+run 'CREATE FUNCTION f() RETURNS void LANGUAGE sql AS $fn$ SELECT 1 $fn$;
+DO $$
+BEGIN
+    DELETE FROM marks;
+END $$;' ''
+expect 'a tag-quoted function does not hide a later DO block' 1 'dml'
+
 echo
 echo "lint-migration-compat-test: ${pass} passed, ${fail} failed"
 [ "$fail" -eq 0 ] || exit 1
