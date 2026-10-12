@@ -6,6 +6,8 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,7 +20,9 @@ import (
 	io_prom_dto "github.com/prometheus/client_model/go"
 	sdkxdr "github.com/stellar/go-stellar-sdk/xdr"
 
+	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/archivecompleteness"
+	"github.com/Stellar-Index/StellarIndex/internal/astguard"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
@@ -713,4 +717,75 @@ func histogramSampleSum(t *testing.T, vec *prometheus.HistogramVec, labelKey, la
 		}
 	}
 	return total
+}
+
+// TestRunHoldsInstanceLock is a source-level tripwire: run() must take the Postgres instance lock before starting any
+// goroutine and surface a lost lock in its exit error, or a second indexer could race the cursors and double-write.
+func TestRunHoldsInstanceLock(t *testing.T) {
+	astguard.RunHoldsInstanceLock(t, "main.go", "IndexerInstanceLockName")
+}
+
+type fakeSchemaReader struct{ version uint }
+
+func (f fakeSchemaReader) SchemaMigrationVersion(context.Context) (uint, bool, error) {
+	return f.version, false, nil
+}
+
+// TestMetricsMuxReadyzGatesOnSchemaHead pins that the deploy gate
+// probes the indexer's /readyz, which must 503 when the applied schema is
+// behind the binary, while /healthz stays a constant liveness 200.
+func TestMetricsMuxReadyzGatesOnSchemaHead(t *testing.T) {
+	cases := []struct {
+		name    string
+		applied uint
+		want    int
+	}{
+		{"schema behind binary", v1.ExpectedSchemaVersion - 1, http.StatusServiceUnavailable},
+		{"schema at binary head", v1.ExpectedSchemaVersion, http.StatusOK},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mux := newMetricsMux(fakeSchemaReader{version: tc.applied})
+
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+			if rec.Code != tc.want {
+				t.Fatalf("/readyz = %d, want %d (body %q)", rec.Code, tc.want, rec.Body.String())
+			}
+			if tc.want != http.StatusOK && !strings.Contains(rec.Body.String(), "schema") {
+				t.Fatalf("/readyz body %q does not name the failed schema check", rec.Body.String())
+			}
+
+			rec = httptest.NewRecorder()
+			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("/healthz = %d, want 200 regardless of schema", rec.Code)
+			}
+		})
+	}
+}
+
+// The package doc must not claim blanket panic isolation: the dispatcher-to-Timescale sink goroutine is deliberately
+// unguarded, and a stale claim would send an on-call responder looking for a recover() that does not exist.
+func TestPackageDocDoesNotOverclaimPanicIsolation(t *testing.T) {
+	data, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(data)
+	pkgIdx := strings.Index(src, "\npackage main")
+	if pkgIdx < 0 {
+		t.Fatal("could not locate \"package main\" in main.go")
+	}
+	doc := src[:pkgIdx]
+
+	if strings.Contains(doc, "with panic isolation") {
+		t.Fatalf("package doc claims the sink goroutine drains events "+
+			"\"with panic isolation\", but it is deliberately unguarded "+
+			"(see the CRASH comment at its go func() literal): %q", doc)
+	}
+	if !strings.Contains(doc, "unguarded") {
+		t.Fatalf("package doc should describe the sink goroutine's deliberate "+
+			"crash-on-panic behavior (\"unguarded\"), got: %q", doc)
+	}
 }

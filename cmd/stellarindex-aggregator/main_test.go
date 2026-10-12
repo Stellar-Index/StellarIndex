@@ -7,6 +7,8 @@ import (
 	"io"
 	"log/slog"
 	"math/big"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -15,6 +17,8 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
+	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
+	"github.com/Stellar-Index/StellarIndex/internal/astguard"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/divergence"
@@ -23,6 +27,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
+	"github.com/Stellar-Index/StellarIndex/internal/worker/guardscan"
 )
 
 // TestDefaultPairs_IncludesBothXLMForms guards that the aggregator publishes under both `crypto:XLM` and `native`,
@@ -659,5 +664,142 @@ func TestLazyCloseTimeReader_LatestLedgerAtOrBefore_UnblocksOnShutdown(t *testin
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("LatestLedgerAtOrBefore blocked past shutdown instead of returning")
+	}
+}
+
+// TestRunHoldsInstanceLock is a source-level tripwire: run() must take the Postgres instance lock before starting any
+// goroutine and surface a lost lock in its exit error, or a second aggregator double-writes prices, freezes and
+// alerts.
+func TestRunHoldsInstanceLock(t *testing.T) {
+	astguard.RunHoldsInstanceLock(t, "main.go", "AggregatorInstanceLockName")
+}
+
+type fakeSchemaReader struct{ version uint }
+
+func (f fakeSchemaReader) SchemaMigrationVersion(context.Context) (uint, bool, error) {
+	return f.version, false, nil
+}
+
+// TestMetricsMuxReadyzGatesOnSchemaHead pins that the deploy gate
+// probes the aggregator's /readyz, which must 503 when the applied schema is
+// behind the binary, while /healthz stays a constant liveness 200.
+func TestMetricsMuxReadyzGatesOnSchemaHead(t *testing.T) {
+	cases := []struct {
+		name    string
+		applied uint
+		want    int
+	}{
+		{"schema behind binary", v1.ExpectedSchemaVersion - 1, http.StatusServiceUnavailable},
+		{"schema at binary head", v1.ExpectedSchemaVersion, http.StatusOK},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mux := newMetricsMux(fakeSchemaReader{version: tc.applied})
+
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+			if rec.Code != tc.want {
+				t.Fatalf("/readyz = %d, want %d (body %q)", rec.Code, tc.want, rec.Body.String())
+			}
+			if tc.want != http.StatusOK && !strings.Contains(rec.Body.String(), "schema") {
+				t.Fatalf("/readyz body %q does not name the failed schema check", rec.Body.String())
+			}
+
+			rec = httptest.NewRecorder()
+			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("/healthz = %d, want 200 regardless of schema", rec.Code)
+			}
+		})
+	}
+}
+
+// The single-host port-collision shift must key off whether the operator set obs.metrics_listen (MetricsListenSet),
+// not equality with the indexer's default: an explicit 127.0.0.1:9464 must be honoured verbatim, not rewritten to
+// :9465.
+func TestMetricsListenAddr_ExplicitDefaultIsHonoured(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	cfg := config.ObsConfig{
+		MetricsListen:    aggregatorMetricsCollidingDefault,
+		MetricsListenSet: true,
+	}
+
+	got := metricsListenAddr(cfg, logger)
+
+	if got != aggregatorMetricsCollidingDefault {
+		t.Fatalf("metricsListenAddr shifted an explicitly-configured value: got %q, want %q",
+			got, aggregatorMetricsCollidingDefault)
+	}
+}
+
+// Unset (left at Default()'s value) still gets the single-host shift.
+func TestMetricsListenAddr_UnsetDefaultShifts(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	cfg := config.ObsConfig{
+		MetricsListen:    aggregatorMetricsCollidingDefault,
+		MetricsListenSet: false,
+	}
+
+	got := metricsListenAddr(cfg, logger)
+
+	if got != aggregatorMetricsShiftedAddr {
+		t.Fatalf("metricsListenAddr did not shift an unset default: got %q, want %q",
+			got, aggregatorMetricsShiftedAddr)
+	}
+}
+
+// TestBackgroundWorkersRecover is an AST guard: every detached goroutine must register panic recovery, since one
+// unrecovered panic kills the process. The worker set is derived from source (internal/worker/guardscan). Only the
+// metrics listener is exempt, matched by content (ListenAndServe/Serve).
+func TestBackgroundWorkersRecover(t *testing.T) {
+	sites, err := guardscan.ScanFile("main.go", guardscan.Config{
+		Guards: []string{"worker.Recover", "worker.Report"},
+	})
+	if err != nil {
+		t.Fatalf("scan main.go: %v", err)
+	}
+
+	var checked, exempt int
+	for _, s := range sites {
+		if s.Kind == guardscan.KindUnresolved {
+			t.Errorf("go %s at main.go:%d could not be resolved to a function body (%s). "+
+				"Wrap it in `go func(){ defer worker.Recover(logger, \"<name>\"); … }()` "+
+				"so the guard is visible where the goroutine starts.", s.Target, s.Line, s.Reason)
+			continue
+		}
+
+		if s.Calls("ListenAndServe") || s.Calls("Serve") {
+			// The metrics-listener goroutine — see the doc comment. Assert
+			// it is genuinely the listener rather than trusting a position.
+			exempt++
+			if s.Recovers {
+				t.Errorf("go func() at main.go:%d serves HTTP but registers "+
+					"worker.Recover — recovering the listener leaves a live "+
+					"process with nothing listening, which is worse than crashing", s.Line)
+			}
+			continue
+		}
+
+		checked++
+		if !s.Recovers {
+			t.Errorf("detached goroutine at main.go:%d (go %s, body at %s) does not "+
+				"`defer worker.Recover(logger, \"<name>\")`. An unrecovered "+
+				"panic in a goroutine terminates the WHOLE process, crash-looping "+
+				"the aggregator over a single non-serving background worker.",
+				s.Line, s.Target, s.Origin)
+		}
+	}
+
+	// Guard against the guard covering nothing (e.g. the spawn idiom
+	// changes and the AST match stops finding anything). 14 detached
+	// workers exist today; this is a floor, not an exact count.
+	if checked < 14 {
+		t.Errorf("only %d background goroutine(s) discovered, expected at least 14 — "+
+			"the discovery in this test has drifted from the code and is no longer "+
+			"protecting anything", checked)
+	}
+	if exempt != 1 {
+		t.Errorf("found %d HTTP-listener goroutine(s), want exactly 1 — if the metrics "+
+			"listener was restructured, re-check that the exemption still applies to it alone", exempt)
 	}
 }
