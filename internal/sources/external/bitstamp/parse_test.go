@@ -4,10 +4,12 @@ import (
 	"errors"
 	"log/slog"
 	"math/big"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external/scale"
 )
 
 func mustPairs(t *testing.T) map[string]canonical.Pair {
@@ -198,5 +200,66 @@ func TestHandleFrame_DustTradeIsQuietSkip(t *testing.T) {
 	trades, err := handleFrame(raw, mustPairs(t), slog.Default())
 	if err != nil || len(trades) != 0 {
 		t.Fatalf("dust frame: trades=%d err=%v, want none", len(trades), err)
+	}
+}
+
+// decimalStringToScaledInt converts a decimal string ("0.123") to an integer scaled by 10^targetDecimals; this table test
+// covers its long branch tree (sign, dot position, fractional padding or truncation).
+
+func TestDecimalStringToScaledInt(t *testing.T) {
+	cases := []struct {
+		name        string
+		in          string
+		targetDP    int
+		want        *big.Int
+		expectError bool
+	}{
+		{"integer only at 8 dp", "1", 8, big.NewInt(100_000_000), false},
+		{"with fraction", "0.12", 8, big.NewInt(12_000_000), false},
+		{"max-precision fraction", "0.12345678", 8, big.NewInt(12_345_678), false},
+		{"truncate over max precision", "0.123456789999", 8, big.NewInt(12_345_678), false},
+		{"negative", "-1.5", 8, big.NewInt(-150_000_000), false},
+		{"leading dot (no integer part)", ".5", 8, big.NewInt(50_000_000), false},
+		{"trailing dot (no fraction)", "5.", 8, big.NewInt(500_000_000), false},
+		{"zero", "0", 8, big.NewInt(0), false},
+		{"large integer", "1000000", 0, big.NewInt(1_000_000), false},
+		{"different dp = 2", "1.234", 2, big.NewInt(123), false},
+
+		// Error cases.
+		{"empty", "", 8, nil, true},
+		{"scientific lowercase", "1e3", 8, nil, true},
+		{"scientific uppercase", "1E3", 8, nil, true},
+		{"non-numeric", "not-a-number", 8, nil, true},
+		{"hex-looking", "0xff", 8, nil, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := scale.DecimalStringToScaledInt(tc.in, tc.targetDP)
+			if tc.expectError {
+				if err == nil {
+					t.Errorf("expected error, got %v", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("scale.DecimalStringToScaledInt(%q, %d): %v", tc.in, tc.targetDP, err)
+			}
+			if got.Cmp(tc.want) != 0 {
+				t.Errorf("got %s, want %s", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDecimalStringToScaledInt_scientificNotationRejected(t *testing.T) {
+	// Scientific notation is rejected rather than mis-scaled: Bitstamp should never send it, and an API change must fail the parse.
+	for _, s := range []string{"1e10", "1.5E-3", "2e0"} {
+		_, err := scale.DecimalStringToScaledInt(s, 8)
+		if err == nil {
+			t.Errorf("scale.DecimalStringToScaledInt(%q) returned nil error; want rejection", s)
+		}
+		if !strings.Contains(err.Error(), "scientific") {
+			t.Errorf("error %q missing \"scientific\" fragment", err.Error())
+		}
 	}
 }

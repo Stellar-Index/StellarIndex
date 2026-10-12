@@ -8,7 +8,9 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -556,4 +558,100 @@ func carryHarness(t *testing.T, source string) *wedgeHarness {
 	})
 	h.src.Decoder = &carryDecoder{carryAt: 103}
 	return h
+}
+
+// fakeLossyDecoder implements dispatcher.Decoder plus the duck-typed EvictedOrphans / UnknownContractDrops counters
+// soroswap's real decoder exposes, mimicking the shape emitDecoderLossDeltas reads without importing the real soroswap
+// package.
+type fakeLossyDecoder struct {
+	orphans, drops int
+}
+
+func (*fakeLossyDecoder) Name() string              { return "fake-lossy" }
+func (*fakeLossyDecoder) Matches(events.Event) bool { return false }
+func (*fakeLossyDecoder) Decode(events.Event) ([]consumer.Event, error) {
+	return nil, nil
+}
+func (f *fakeLossyDecoder) EvictedOrphans() int       { return f.orphans }
+func (f *fakeLossyDecoder) UnknownContractDrops() int { return f.drops }
+
+// TestEmitDecoderLossDeltas: the projector builds its own decoder instance per source, separate from the live indexer's
+// dispatcher, so it must read that instance's EvictedOrphans / UnknownContractDrops; the metric moves by its own
+// accumulated count or the projector's loss signal is unobservable.
+func TestEmitDecoderLossDeltas(t *testing.T) {
+	dec := &fakeLossyDecoder{}
+	src := Source{Name: "q037-fake-source", Decoder: dec}
+	p := &Projector{}
+
+	before := testutil.ToFloat64(obs.ProjectorEventsDecoded.WithLabelValues(src.Name, "orphan_evicted"))
+	beforeDrops := testutil.ToFloat64(obs.ProjectorEventsDecoded.WithLabelValues(src.Name, "unknown_contract_drop"))
+
+	dec.orphans = 3
+	dec.drops = 2
+	p.emitDecoderLossDeltas(src)
+
+	gotOrphans := testutil.ToFloat64(obs.ProjectorEventsDecoded.WithLabelValues(src.Name, "orphan_evicted")) - before
+	if gotOrphans != 3 {
+		t.Fatalf("orphan_evicted delta = %v, want 3", gotOrphans)
+	}
+	gotDrops := testutil.ToFloat64(obs.ProjectorEventsDecoded.WithLabelValues(src.Name, "unknown_contract_drop")) - beforeDrops
+	if gotDrops != 2 {
+		t.Fatalf("unknown_contract_drop delta = %v, want 2", gotDrops)
+	}
+
+	// A second call with unchanged decoder counters must add nothing more
+	// (delta, not a re-emit of the cumulative value).
+	p.emitDecoderLossDeltas(src)
+	if got := testutil.ToFloat64(obs.ProjectorEventsDecoded.WithLabelValues(src.Name, "orphan_evicted")) - before; got != 3 {
+		t.Fatalf("orphan_evicted after unchanged cycle = %v, want 3 (no double count)", got)
+	}
+
+	// A further real eviction on the SAME decoder instance must show up as
+	// an additional delta.
+	dec.orphans = 5
+	p.emitDecoderLossDeltas(src)
+	if got := testutil.ToFloat64(obs.ProjectorEventsDecoded.WithLabelValues(src.Name, "orphan_evicted")) - before; got != 5 {
+		t.Fatalf("orphan_evicted after second eviction = %v, want 5", got)
+	}
+}
+
+// newSeedHarness wires a projector over a store with NO projector cursor — a
+// newly-registered source's first cycles — and records every ledger the sink
+// receives.
+func newSeedHarness(t *testing.T, name string, evs []events.Event, tip uint32) (*wedgeHarness, func() []uint32) {
+	t.Helper()
+	var (
+		mu   sync.Mutex
+		seen []uint32
+	)
+	h := newWedgeHarness(t, name, evs, tip, func(ev consumer.Event) error {
+		mu.Lock()
+		defer mu.Unlock()
+		if le, ok := ev.(ledgerEvent); ok {
+			seen = append(seen, le.ledger)
+		}
+		return nil
+	})
+	h.store.haveCursor, h.store.projectorCursor = false, 0
+	return h, func() []uint32 {
+		mu.Lock()
+		defer mu.Unlock()
+		return slices.Clone(seen)
+	}
+}
+
+// The seek runs once per source; later cursor-less cycles (e.g. one whose
+// first event's write is being retried) reuse the seed.
+func TestSeedFromLedger_SeeksOnce(t *testing.T) {
+	const first = 50_000_000
+	h, _ := newSeedHarness(t, "seed-once", []events.Event{lakeEvent(first, 1)}, first+10)
+
+	for i := 0; i < 3; i++ {
+		if got := h.proj.seedFromLedger(context.Background(), h.src, h.lake); got != first {
+			t.Fatalf("seed #%d = %d, want %d", i, got, first)
+		}
+	}
+	if h.events.seeks != 1 {
+		t.Fatalf("seeks = %d, want 1", h.events.seeks)
+	}
 }
