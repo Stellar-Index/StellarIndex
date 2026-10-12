@@ -10,7 +10,7 @@ import { compareDecimalStrings, formatPriceSmall } from '@/lib/format';
 import { LivePrice } from '../../LivePrice';
 import { EmbedPairPathView } from './EmbedPairPathView';
 import { LiveChangeChip } from '../../LiveChangeChip';
-import { isCIStub } from '@/lib/buildFetch';
+import { buildFetchPairPrice, isCIStub } from '@/lib/buildFetch';
 import { shortAssetText } from '@/lib/asset-label';
 import { CURRENT_NETWORK } from '@/lib/networks';
 
@@ -22,7 +22,6 @@ type Params = Promise<{ pair: string }>;
 
 type Market = components['schemas']['MarketRow'];
 
-type PriceResp = components['schemas']['Price'];
 
 type ChartResp = {
   points: components['schemas']['HistoryPoint'][];
@@ -89,24 +88,6 @@ export async function generateMetadata({
   };
 }
 
-async function fetchPrice(
-  base: string,
-  quote: string,
-): Promise<PriceResp | null> {
-  if (isCIStub) return null;
-  try {
-    const res = await fetch(
-      `${API_BASE_URL}/v1/price?asset=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}`,
-      { signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS) },
-    );
-    if (!res.ok) return null;
-    const env = (await res.json()) as { data: PriceResp };
-    return env.data ?? null;
-  } catch {
-    return null;
-  }
-}
-
 async function fetchChart(
   base: string,
   quote: string,
@@ -152,7 +133,7 @@ export default async function EmbedPairPage({ params }: { params: Params }) {
   }
   const { base, quote } = decoded;
   const [price, chart] = await Promise.all([
-    fetchPrice(base, quote),
+    buildFetchPairPrice(base, quote),
     fetchChart(base, quote),
   ]);
 

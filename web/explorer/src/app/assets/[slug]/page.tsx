@@ -9,6 +9,7 @@ import { supplyAsOfNote, withheldNote } from './headerNotes';
 import {
   buildFetchData,
   buildFetchEnvelope,
+  buildFetchPriceBatch,
   failBuild,
 } from '@/lib/buildFetch';
 import {
@@ -565,6 +566,8 @@ export async function fetchPriceDirect(
   // discarded — the "Stale" badge below was permanently dead without this
   // (the only path that ever set `flags` was the client-synthesized
   // triangulation fallback, which never sets `stale` at all).
+  const batched = await listingPrice(asset, quote);
+  if (batched !== undefined) return batched;
   const env = await buildFetchEnvelope<Pick<PriceResp, 'price' | 'quote'>>(
     `/v1/price?asset=${encodeURIComponent(asset)}&quote=${encodeURIComponent(quote)}`,
     { softFail: true, timeoutMs: 6_000, attempts: 2 },
@@ -575,6 +578,29 @@ export async function fetchPriceDirect(
     flags: env.flags
       ? { stale: env.flags.stale, triangulated: env.flags.triangulated }
       : undefined,
+  };
+}
+
+// listingPrice answers from one /v1/price/batch over the whole build
+// listing, so 500 asset pages cost a handful of requests, not 500+. Returns
+// undefined when the batch cannot answer exactly (unanswered id, or a row
+// whose stale/triangulated flag the envelope could not pin down).
+async function listingPrice(
+  asset: string,
+  quote: string,
+): Promise<PriceResp | null | undefined> {
+  const cache = await getBuildCoinsCache();
+  if (!cache?.byAssetId.has(asset)) return undefined;
+  const prices = await buildFetchPriceBatch([...cache.byAssetId.keys()], quote);
+  const hit = prices.get(asset);
+  if (hit === null) return null;
+  if (!hit || hit.stale === undefined || hit.triangulated === undefined) {
+    return undefined;
+  }
+  return {
+    price: hit.row.price,
+    quote: hit.row.quote,
+    flags: { stale: hit.stale, triangulated: hit.triangulated },
   };
 }
 

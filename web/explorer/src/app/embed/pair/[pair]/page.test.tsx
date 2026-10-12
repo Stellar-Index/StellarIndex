@@ -36,19 +36,23 @@ describe('EmbedPairPage — live price refresh (W8.10)', () => {
   });
 
   it('replaces the BUILD-baked price with the live /v1/price value on mount', async () => {
-    // /v1/price is hit twice: once at build (baked 0.25) and once by the
-    // LivePrice poll after mount (live 0.75). A static span would show the
+    // The build bakes 0.25 off /v1/price/batch; the LivePrice poll after
+    // mount reads /v1/price (live 0.75). A static span would show the
     // baked 0.25 forever — the corrected behavior is that 0.75 takes over.
-    let priceCalls = 0;
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: string | URL) => {
         const url = String(input);
-        if (url.includes('/v1/price')) {
-          priceCalls += 1;
-          const price = priceCalls === 1 ? '0.25' : '0.75';
+        // Build bakes from /v1/price/batch; /v1/price is only the live poll.
+        if (url.includes('/v1/markets')) return jsonResponse({ data: [] });
+        if (url.includes('/v1/price/batch')) {
           return jsonResponse({
-            data: { price, observed_at: '2026-08-16T00:00:00Z' },
+            data: [{ asset_id: 'native', price: '0.25', observed_at: '2026-08-16T00:00:00Z' }],
+          });
+        }
+        if (url.includes('/v1/price')) {
+          return jsonResponse({
+            data: { price: '0.75', observed_at: '2026-08-16T00:00:00Z' },
           });
         }
         if (url.includes('/v1/chart'))
@@ -68,23 +72,23 @@ describe('EmbedPairPage — live price refresh (W8.10)', () => {
     const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
     const pollUrl = calls
       .map((c) => String(c[0]))
-      .find((u, i) => u.includes('/v1/price') && i > 0);
+      .find((u) => u.includes('/v1/price?'));
     expect(pollUrl).toContain('quote=USDC-GABC');
   });
 
   it('keeps the baked price under an honest "as baked at deploy" caption when the live poll fails', async () => {
-    let priceCalls = 0;
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: string | URL) => {
         const url = String(input);
-        if (url.includes('/v1/price')) {
-          priceCalls += 1;
-          if (priceCalls === 1) {
-            return jsonResponse({ data: { price: '0.25' } }); // build baked
-          }
-          throw new Error('offline'); // poll fails
+        // Build bakes from /v1/price/batch; /v1/price is only the live poll.
+        if (url.includes('/v1/markets')) return jsonResponse({ data: [] });
+        if (url.includes('/v1/price/batch')) {
+          return jsonResponse({
+            data: [{ asset_id: 'native', price: '0.25', observed_at: '2026-08-16T00:00:00Z' }],
+          });
         }
+        if (url.includes('/v1/price')) throw new Error('offline'); // poll fails
         if (url.includes('/v1/chart'))
           return jsonResponse({ data: { points: [] } });
         if (url.includes('/v1/changes'))

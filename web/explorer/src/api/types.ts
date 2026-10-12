@@ -11802,6 +11802,18 @@ export interface components {
              *     No `change_24h_pct` is derived for these rows.
              */
             thin?: string[];
+            /**
+             * @description Requested ids in `data` whose row is stale; `flags.stale`
+             *     is their OR. Input order; absent when no row is stale.
+             */
+            stale?: string[];
+            /**
+             * @description Requested ids in `data` whose price was derived through
+             *     another market (stablecoin proxy, cross-rate);
+             *     `flags.triangulated` is their OR. Input order; absent when
+             *     no row is triangulated.
+             */
+            triangulated?: string[];
         };
         SubstanceEvidence: {
             /** @description The request's base asset; the market measured is the alias union of base and quote. */
