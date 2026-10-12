@@ -10,9 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// ClassicSupplyComponents is the per-asset Algorithm 2 breakdown (ADR-0011) at one ledger: total is
-// the sum of the four holding components, circulating is total minus the locked-set. All are non-nil
-// *big.Int (zero is valid); IssuerBalance is separate so the default locked-set member needs no re-query.
+// ClassicSupplyComponents is the per-asset Algorithm 2 breakdown at one ledger: total is the sum of four holding components, circulating is total minus the locked-set, all non-nil *big.Int.
 type ClassicSupplyComponents struct {
 	// Trustline is Σ trustline_balance across every classic holder. No issuer filter is needed: the
 	// protocol refuses a trustline to one's own asset, so no issuer row exists.
@@ -52,14 +50,12 @@ type ClassicSupplyComponents struct {
 	MinComponentLedger uint32
 }
 
-// ClassicSupplyReader is the read-side interface the [ClassicComputer] needs. It takes a
-// [canonical.Asset] so a caller cannot pass an asset_key mismatching the indexer's storage shape.
+// ClassicSupplyReader is the read-side interface the [ClassicComputer] needs, taking a [canonical.Asset] so the asset_key always matches the storage shape.
 type ClassicSupplyReader interface {
 	ClassicSupplyAt(ctx context.Context, asset canonical.Asset, locked LockedSet, ledger uint32) (ClassicSupplyComponents, error)
 }
 
-// ClassicComputer derives Algorithm 2 supply for classic credit assets from a [Policy] and a
-// [ClassicSupplyReader]. Safe for concurrent Compute() calls: fields are read-only after construction.
+// ClassicComputer derives Algorithm 2 supply for classic credit assets from a [Policy] and a [ClassicSupplyReader]; safe for concurrent Compute calls.
 type ClassicComputer struct {
 	policy Policy
 	reader ClassicSupplyReader
@@ -73,13 +69,10 @@ func NewClassicComputer(policy Policy, reader ClassicSupplyReader) (*ClassicComp
 	return &ClassicComputer{policy: policy, reader: reader}, nil
 }
 
-// ErrNotClassic is returned by [ClassicComputer.Compute] for a non-[canonical.AssetClassic] asset,
-// so callers route it to the right computer instead of getting a silently wrong supply.
+// ErrNotClassic is returned by [ClassicComputer.Compute] for a non-classic asset, so callers route it to the right computer instead of getting a wrong supply.
 var ErrNotClassic = errors.New("supply: asset is not a classic credit asset")
 
-// Compute returns the [Supply] for a classic asset (Algorithm 2): total is trustline + claimable +
-// LP-reserve + SAC-wrapped; circulating subtracts issuer, locked-account and locked-contract balances;
-// max_supply is the Policy override or nil (SEP-1 overlay applies at the API layer).
+// Compute returns the [Supply] for a classic asset (Algorithm 2): total is trustline + claimable + LP-reserve + SAC-wrapped, circulating subtracts issuer and locked balances, max_supply is the Policy override or nil.
 func (c *ClassicComputer) Compute(ctx context.Context, asset canonical.Asset, ledger uint32, observedAt time.Time) (Supply, error) {
 	if asset.Type != canonical.AssetClassic {
 		return Supply{}, fmt.Errorf("%w: got type %q", ErrNotClassic, asset.Type)

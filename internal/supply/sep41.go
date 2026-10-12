@@ -10,9 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// SEP41SupplyComponents is the per-token breakdown at one ledger (ADR-0011 Algorithm 3): total =
-// Mint - Burn - Clawback over the contract's lifetime; circulating = total - admin balance -
-// locked-set balances. All fields are non-nil *big.Int; zero is valid.
+// SEP41SupplyComponents is the per-token Algorithm 3 breakdown at one ledger: total = Mint - Burn - Clawback, circulating = total - admin balance - locked-set balances, all non-nil *big.Int.
 type SEP41SupplyComponents struct {
 	// MintTotal is Σ mint.amount over the contract's lifetime.
 	MintTotal *big.Int
@@ -46,22 +44,18 @@ type SEP41SupplyComponents struct {
 	GenesisBaselineSeeded bool
 }
 
-// SEP41SupplyReader is the [SEP41Computer]'s read side (production: Postgres event-sum totals plus
-// the contract_data store). It receives the contract id and the locked-set so it can produce the
-// locked sums in a single query; it returns non-nil components, and storage errors propagate as-is.
+// SEP41SupplyReader is the [SEP41Computer]'s read side; it returns non-nil components given the contract id and locked-set, and storage errors propagate as-is.
 type SEP41SupplyReader interface {
 	SEP41SupplyAt(ctx context.Context, asset canonical.Asset, locked LockedSet, ledger uint32) (SEP41SupplyComponents, error)
 }
 
-// SEP41Computer derives Algorithm 3 supply for SEP-41 Soroban tokens from a [Policy] (locked-set,
-// max_supply overrides) and a [SEP41SupplyReader]. Safe for concurrent Compute calls.
+// SEP41Computer derives Algorithm 3 supply for SEP-41 Soroban tokens from a [Policy] and a [SEP41SupplyReader]; safe for concurrent Compute calls.
 type SEP41Computer struct {
 	policy Policy
 	reader SEP41SupplyReader
 }
 
-// NewSEP41Computer constructs an Algorithm 3 computer. Returns
-// ErrNilReader when reader is nil.
+// NewSEP41Computer constructs an Algorithm 3 computer, returning ErrNilReader when reader is nil.
 func NewSEP41Computer(policy Policy, reader SEP41SupplyReader) (*SEP41Computer, error) {
 	if reader == nil {
 		return nil, ErrNilReader
@@ -72,24 +66,16 @@ func NewSEP41Computer(policy Policy, reader SEP41SupplyReader) (*SEP41Computer, 
 // ErrNotSoroban is returned by [SEP41Computer.Compute] for a non-Soroban asset (routing safety net).
 var ErrNotSoroban = errors.New("supply: asset is not a SEP-41 Soroban token")
 
-// ErrNegativeTotalSupply is returned when Mint - Burn - Clawback is negative AND the genesis
-// baseline is seeded. That is impossible, so the totals mis-summed upstream; the refresher maps
-// it to the paging `compute_error` rather than emit a negative supply.
+// ErrNegativeTotalSupply is returned when Mint - Burn - Clawback is negative AND the genesis baseline is seeded (impossible, so mis-summed upstream); the refresher maps it to the paging `compute_error`.
 var ErrNegativeTotalSupply = errors.New("supply: SEP-41 mint − burn − clawback went negative")
 
-// ErrNegativeTotalMissingBaseline is returned when the total is negative and the genesis baseline
-// is NOT seeded: a pre-Soroban SAC wrapper legitimately reads sum(burn) > sum(mint) until
-// `stellarindex-ops supply seed-sep41-genesis` runs. Benign `missing_baseline`, not corruption.
+// ErrNegativeTotalMissingBaseline is returned when the total is negative and the genesis baseline is NOT seeded (a pre-Soroban SAC wrapper legitimately reads burn > mint); benign `missing_baseline`, not corruption.
 var ErrNegativeTotalMissingBaseline = errors.New("supply: SEP-41 total negative and pre-Soroban genesis baseline not seeded — run `stellarindex-ops supply seed-sep41-genesis`")
 
-// ErrGenesisBaselineNotSeeded is returned for a classic asset's SAC wrapper with no seeded baseline,
-// whatever the sign: the Soroban-era-only sum omits earlier mints and burns. Benign (`missing_baseline`).
+// ErrGenesisBaselineNotSeeded is returned for a classic asset's SAC wrapper with no seeded baseline, whatever the sign, since the Soroban-era sum omits earlier mints and burns; benign (`missing_baseline`).
 var ErrGenesisBaselineNotSeeded = errors.New("supply: SEP-41 SAC wrapper's pre-Soroban genesis baseline not seeded — run `stellarindex-ops supply seed-sep41-genesis`")
 
-// Compute returns the [Supply] for a SEP-41 token (Algorithm 3): total = Mint - Burn - Clawback;
-// circulating = total - AdminBalance - locked-set balances; max is the Policy override or nil.
-// Basis is BasisOverride, else BasisAdminExclusion only if a non-zero AdminBalance was subtracted,
-// else BasisSEP41TotalOnly.
+// Compute returns the [Supply] for a SEP-41 token (Algorithm 3): total = Mint - Burn - Clawback, circulating = total - AdminBalance - locked-set balances, max is the Policy override or nil.
 func (c *SEP41Computer) Compute(ctx context.Context, asset canonical.Asset, ledger uint32, observedAt time.Time) (Supply, error) {
 	if asset.Type != canonical.AssetSoroban {
 		return Supply{}, fmt.Errorf("%w: got type %q", ErrNotSoroban, asset.Type)

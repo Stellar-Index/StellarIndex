@@ -5,8 +5,7 @@ import (
 	"time"
 )
 
-// Basis identifies which policy produced a [Supply] value. The strings appear on the API and in
-// metric labels, so renaming one is a wire break.
+// Basis identifies which policy produced a [Supply] value; the strings appear on the API and in metric labels, so renaming one is a wire break.
 type Basis string
 
 const (
@@ -68,9 +67,7 @@ const (
 // String returns the basis as a string for log lines and metric labels.
 func (b Basis) String() string { return string(b) }
 
-// LowerBound reports whether a figure on this basis is a provable floor. [BasisClassicTrustlineSum]
-// misses whole holding domains; [BasisContractStorageBalances] misses entries never projected.
-// The flag is derived from the basis.
+// LowerBound reports whether a figure on this basis is only a provable floor (e.g. [BasisClassicTrustlineSum] misses whole holding domains), derived from the basis.
 func (b Basis) LowerBound() bool {
 	switch b {
 	case BasisClassicTrustlineSum, BasisContractStorageBalances:
@@ -80,9 +77,7 @@ func (b Basis) LowerBound() bool {
 	}
 }
 
-// Supply is the wire-shape result of a supply derivation. AssetKey is "XLM", "CODE:G...", or a bare
-// contract id. TotalSupply / CirculatingSupply are never nil; MaxSupply is nil when no defensible
-// value exists. MaxSupplyBasis is set only when MaxSupply is not from Basis.
+// Supply is the wire-shape result of a supply derivation; TotalSupply and CirculatingSupply are never nil, MaxSupply is nil when no defensible value exists.
 type Supply struct {
 	AssetKey          string
 	TotalSupply       *big.Int

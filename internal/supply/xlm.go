@@ -14,9 +14,7 @@ import (
 // never "native" or "XLM:" variants.
 const xlmAssetKey = "XLM"
 
-// XLMTotalSupplyStroops is the frozen-2019 pubnet native XLM total in stroops: 50_001_806_812 XLM
-// x 10^7 (50 B genesis plus the inflation pool frozen by the October 2019 vote; ADR-0011). It
-// never moves; only circulating does. A function returning a copy so callers can't mutate it.
+// XLMTotalSupplyStroops is the frozen-2019 pubnet native XLM total in stroops (50_001_806_812 XLM x 10^7, ADR-0011); it never moves, only circulating does, and each call returns a fresh copy.
 func XLMTotalSupplyStroops() *big.Int {
 	return new(big.Int).Set(xlmTotalSupplyStroops)
 }
@@ -36,13 +34,10 @@ var xlmTestNetworkTotalSupplyStroops = new(big.Int).Mul(
 	big.NewInt(10_000_000), // 10^7 stroops per XLM
 )
 
-// ErrUnknownNetwork is returned for a passphrase that is not pubnet/testnet/futurenet. Fail-closed:
-// serving the pubnet constant for an unrecognised network is the defect this guards against.
+// ErrUnknownNetwork is returned for a passphrase that is not pubnet/testnet/futurenet; fail-closed, never serving the pubnet constant for an unrecognised network.
 var ErrUnknownNetwork = errors.New("supply: no native XLM total known for network passphrase")
 
-// XLMTotalSupplyStroopsForNetwork returns the native XLM total in stroops for the passphrase:
-// pubnet is the frozen-2019 figure, testnet and futurenet are 100 B genesis lumens (== ledger
-// total_coins). Anything else is [ErrUnknownNetwork]. Always returns a fresh copy.
+// XLMTotalSupplyStroopsForNetwork returns a fresh copy of the native XLM total in stroops for the passphrase (pubnet frozen-2019, testnet/futurenet 100 B lumens); anything else is [ErrUnknownNetwork].
 func XLMTotalSupplyStroopsForNetwork(passphrase string) (*big.Int, error) {
 	switch passphrase {
 	case canonical.PubnetPassphrase:
@@ -53,10 +48,7 @@ func XLMTotalSupplyStroopsForNetwork(passphrase string) (*big.Int, error) {
 	return nil, fmt.Errorf("%w: %q", ErrUnknownNetwork, passphrase)
 }
 
-// ReserveBalanceReader is the [XLMComputer]'s read side: the summed XLM balance in stroops of
-// the given G-strkey accounts as of a ledger, as a non-nil *big.Int (zero is valid). The reader
-// owns its caching (one call per Compute). On storage error it returns an error; the computer
-// surfaces it rather than fabricating a partial answer.
+// ReserveBalanceReader is the [XLMComputer]'s read side: the summed stroop balance of the given G-accounts as of a ledger, a non-nil *big.Int; storage errors are returned, never a partial answer.
 type ReserveBalanceReader interface {
 	ReserveBalanceTotal(ctx context.Context, accounts []string, ledger uint32) (*big.Int, error)
 }
@@ -71,16 +63,12 @@ func readReserveTotal(ctx context.Context, r ReserveBalanceReader, accounts []st
 	return v, ReserveSourceLive, err
 }
 
-// ReserveBalanceFreshnessReader extends [ReserveBalanceReader] with a freshness anchor for the SDF
-// reserve accounts (the XLM leg of the freshness gate). [ConfigReserveBalanceReader] DELIBERATELY does
-// not implement it (strict mode refuses static config); zero means unobserved (permissive bypass).
+// ReserveBalanceFreshnessReader extends [ReserveBalanceReader] with a freshness anchor for the SDF reserve accounts; [ConfigReserveBalanceReader] deliberately does not implement it, and zero means unobserved (permissive).
 type ReserveBalanceFreshnessReader interface {
 	MinReserveAccountLedger(ctx context.Context, accounts []string, asOfLedger uint32) (uint32, error)
 }
 
-// XLMComputer derives Algorithm 1 supply for native XLM from [Policy.SDFReserveAccounts] and a
-// [ReserveBalanceReader]. Safe for concurrent Compute calls: fields are read-only after
-// construction and the reader must be concurrent-safe.
+// XLMComputer derives Algorithm 1 supply for native XLM from [Policy.SDFReserveAccounts] and a [ReserveBalanceReader]; safe for concurrent Compute calls.
 type XLMComputer struct {
 	reserveAccounts []string
 	reader          ReserveBalanceReader
@@ -88,16 +76,12 @@ type XLMComputer struct {
 	total *big.Int
 }
 
-// NewXLMComputer builds an Algorithm 1 computer for PUBNET (frozen-2019 total); production should
-// use [NewXLMComputerForNetwork] so test networks use their own total. reader MAY be nil only
-// when reserveAccounts is empty; otherwise ErrNilReader.
+// NewXLMComputer builds an Algorithm 1 computer for PUBNET (production should use [NewXLMComputerForNetwork]); reader may be nil only when reserveAccounts is empty, else ErrNilReader.
 func NewXLMComputer(reserveAccounts []string, reader ReserveBalanceReader) (*XLMComputer, error) {
 	return NewXLMComputerForNetwork(canonical.PubnetPassphrase, reserveAccounts, reader)
 }
 
-// NewXLMComputerForNetwork builds a computer whose total/max supply is the native XLM total of
-// the passphrase's network; an unrecognised passphrase is [ErrUnknownNetwork], never a pubnet
-// fallback. Same reader contract as [NewXLMComputer].
+// NewXLMComputerForNetwork builds a computer using the passphrase network's native XLM total; an unrecognised passphrase is [ErrUnknownNetwork], never a pubnet fallback.
 func NewXLMComputerForNetwork(passphrase string, reserveAccounts []string, reader ReserveBalanceReader) (*XLMComputer, error) {
 	total, err := XLMTotalSupplyStroopsForNetwork(passphrase)
 	if err != nil {
@@ -116,14 +100,10 @@ func NewXLMComputerForNetwork(passphrase string, reserveAccounts []string, reade
 	}, nil
 }
 
-// ErrNilReader is returned when reserve accounts are configured without a reader; that would
-// silently overstate circulating supply (no exclusion applied), so construction fails loudly.
+// ErrNilReader is returned when reserve accounts are configured without a reader, which would silently overstate circulating supply.
 var ErrNilReader = errors.New("supply: reserve-balance reader is nil but reserve accounts are configured")
 
-// Compute returns the native XLM [Supply] at ledger (Algorithm 1): total = the network's native
-// total, max = total (hard-capped), circulating = total - sum(SDF reserve balances). observedAt is
-// the ledger close time; wall-clock is not consulted. A reader failure is returned wrapped: falling
-// back to "total as circulating" would be indistinguishable on the wire from a healthy zero-reserve state.
+// Compute returns the native XLM [Supply] at ledger (Algorithm 1): total = max = network total, circulating = total - sum(SDF reserve balances); a reader failure is returned wrapped, never "total as circulating".
 func (c *XLMComputer) Compute(ctx context.Context, ledger uint32, observedAt time.Time) (Supply, error) {
 	total := new(big.Int).Set(c.total)
 

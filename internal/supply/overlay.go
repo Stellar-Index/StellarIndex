@@ -7,18 +7,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// MetadataResolver reads SEP-1 `[[CURRENCIES]]` max_supply declarations for [Overlay];
-// production is sep1DeclaredMaxResolver in internal/api/v1. SEP1MaxSupply returns the raw
-// decimal string, ok=false when none is declared. Errors are treated as "no overlay" by callers.
-// The resolver owns its caching.
+// MetadataResolver reads SEP-1 `[[CURRENCIES]]` max_supply declarations for [Overlay] as a raw decimal string (ok=false when none); callers treat errors as "no overlay".
 type MetadataResolver interface {
 	SEP1MaxSupply(ctx context.Context, asset canonical.Asset) (raw string, ok bool, err error)
 }
 
-// Overlay applies the SEP-1 max_supply precedence (ADR-0011): operator override (already in
-// snap.MaxSupply) wins, then the SEP-1 declaration, else nil. XLM is hard-capped at total and
-// never overlaid. Junk declarations are ignored (display value, not source of truth); only a
-// SEP1MaxSupply error with ok=true is returned. On apply, MaxSupply and MaxSupplyBasis change.
+// Overlay applies the SEP-1 max_supply precedence (ADR-0011): operator override wins, then the SEP-1 declaration, else nil; XLM is never overlaid and junk declarations are ignored.
 func Overlay(ctx context.Context, snap Supply, asset canonical.Asset, resolver MetadataResolver) (Supply, bool, error) {
 	// XLM and assets with operator-override max already set —
 	// nothing to do.

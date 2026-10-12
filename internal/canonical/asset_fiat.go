@@ -43,16 +43,12 @@ var knownFiatCodes = map[string]struct{}{
 }
 
 // IsKnownFiat reports whether code is in the ADR-0010 allow-list.
-// Callers use this to validate operator-supplied fiat configuration
-// before constructing an [Asset] at startup.
 func IsKnownFiat(code string) bool {
 	_, ok := knownFiatCodes[code]
 	return ok
 }
 
-// KnownFiatCodes returns the ADR-0010 allow-list, sorted, as a COPY so callers cannot widen the
-// map. It serves readers needing the closed set (a query bounding itself to fiat-quoted rows
-// cannot call [IsKnownFiat] per row); a second hard-coded list would drift.
+// KnownFiatCodes returns the ADR-0010 allow-list, sorted, as a copy.
 func KnownFiatCodes() []string {
 	out := make([]string, 0, len(knownFiatCodes))
 	for code := range knownFiatCodes {
@@ -62,8 +58,7 @@ func KnownFiatCodes() []string {
 	return out
 }
 
-// NewFiatAsset constructs a fiat asset. Returns ErrInvalidAsset if
-// the code isn't allow-listed.
+// NewFiatAsset constructs a fiat asset, returning ErrInvalidAsset if the code isn't allow-listed.
 func NewFiatAsset(code string) (Asset, error) {
 	if !IsKnownFiat(code) {
 		return Asset{}, errorf(ErrInvalidAsset, "unknown fiat code %q (see ADR-0010)", code)

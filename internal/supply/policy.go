@@ -8,9 +8,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// LockedSet lists accounts/contracts whose holdings are excluded from circulating_supply for one
-// asset (ADR-0011). Defaults: issuer balance (algorithm 2), admin balance (algorithm 3); operators
-// extend via the supply-policy YAML. LP-reserve balances are NEVER locked: the asset still circulates.
+// LockedSet lists accounts/contracts whose holdings are excluded from circulating_supply for one asset (ADR-0011); LP-reserve balances are NEVER locked.
 type LockedSet struct {
 	// Accounts are G-strkey addresses (classic accounts, SAC admin
 	// G-addresses, treasury multisigs) whose XLM / classic-asset
@@ -23,16 +21,12 @@ type LockedSet struct {
 	Contracts []string
 }
 
-// IsEmpty reports whether this set excludes nothing, letting computers skip the locked-balance
-// lookup. Not the same as "no override" in YAML, where the per-algorithm default applies.
+// IsEmpty reports whether this set excludes nothing, so computers can skip the lookup; not the same as "no override" in YAML, where the per-algorithm default applies.
 func (l LockedSet) IsEmpty() bool {
 	return len(l.Accounts) == 0 && len(l.Contracts) == 0
 }
 
-// Policy is the operator configuration loaded from YAML at start: SDF-reserve accounts (XLM),
-// per-asset locked-set overrides, and max_supply overrides. Missing fields keep the per-algorithm
-// defaults (no SDF exclusion; issuer/admin-only locked-set; SEP-1 max_supply or nil).
-// Read-only after load; concurrent reads are safe.
+// Policy is the operator configuration loaded from YAML at start (SDF-reserve accounts, per-asset locked-set and max_supply overrides); missing fields keep per-algorithm defaults, and it is read-only after load.
 type Policy struct {
 	// SDFReserveAccounts is the G-address list whose XLM balances
 	// are excluded from XLM circulating_supply per Algorithm 1.
@@ -50,10 +44,7 @@ type Policy struct {
 	MaxSupplyOverrides map[string]string
 }
 
-// MaxSupplyOverride looks up the operator override for assetKey.
-// Returns the override as a *big.Int when set, nil + ok=false when
-// no override exists, error when the YAML value isn't a parseable
-// decimal integer.
+// MaxSupplyOverride returns the operator override for assetKey as a *big.Int, nil + ok=false when none, or an error when the YAML value isn't a decimal integer.
 func (p Policy) MaxSupplyOverride(assetKey string) (*big.Int, bool, error) {
 	raw, ok := p.MaxSupplyOverrides[assetKey]
 	if !ok || raw == "" {
@@ -110,9 +101,7 @@ func validateStrkeys(label, kind string, valid func(string) bool, items []string
 	return errs
 }
 
-// Validate checks the policy for structural problems. Returns
-// joined errors when multiple problems exist. Cheap; runs at
-// process start after YAML load.
+// Validate checks the policy for structural problems, returning joined errors; cheap, runs at start after YAML load.
 func (p Policy) Validate() error {
 	var errs []error
 

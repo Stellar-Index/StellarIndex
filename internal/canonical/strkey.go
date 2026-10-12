@@ -10,30 +10,25 @@ import (
 // verification, not just format. The SDK decoder is the single source of truth, so a strkey with
 // matching prefix and length but a wrong checksum is rejected.
 
-// IsAccountID reports whether s is a valid Stellar account / issuer
-// public key (G-strkey), CRC-checked.
+// IsAccountID reports whether s is a valid CRC-checked Stellar account / issuer public key (G-strkey).
 func IsAccountID(s string) bool {
 	_, err := strkey.Decode(strkey.VersionByteAccountID, s)
 	return err == nil
 }
 
-// IsContractID reports whether s is a valid Soroban contract
-// address (C-strkey), CRC-checked.
+// IsContractID reports whether s is a valid CRC-checked Soroban contract address (C-strkey).
 func IsContractID(s string) bool {
 	_, err := strkey.Decode(strkey.VersionByteContract, s)
 	return err == nil
 }
 
-// IsMuxedAccount reports whether s is a valid Stellar muxed
-// account address (M-strkey), CRC-checked. Added in CAP-67 / P23
-// — SEP-41 transfer destinations can be M-addresses post-Whisk.
+// IsMuxedAccount reports whether s is a valid CRC-checked muxed account address (M-strkey), a possible SEP-41 transfer destination since CAP-67.
 func IsMuxedAccount(s string) bool {
 	_, err := strkey.Decode(strkey.VersionByteMuxedAccount, s)
 	return err == nil
 }
 
-// MuxedAccountID returns the G-strkey underlying an M-strkey: the first 32
-// bytes of the muxed payload are the ed25519 key. ok=false on a malformed M.
+// MuxedAccountID returns the G-strkey underlying an M-strkey (its first 32 bytes); ok=false on a malformed M.
 func MuxedAccountID(m string) (string, bool) {
 	raw, err := strkey.Decode(strkey.VersionByteMuxedAccount, m)
 	if err != nil || len(raw) < 32 {
@@ -46,23 +41,19 @@ func MuxedAccountID(m string) (string, bool) {
 	return g, true
 }
 
-// IsClaimableBalance reports whether s is a valid claimable-balance address (B-strkey),
-// CRC-checked. CAP-67 extended SEP-41 transfer destinations to include them.
+// IsClaimableBalance reports whether s is a valid CRC-checked claimable-balance address (B-strkey).
 func IsClaimableBalance(s string) bool {
 	_, err := strkey.Decode(strkey.VersionByteClaimableBalance, s)
 	return err == nil
 }
 
-// IsLiquidityPool reports whether s is a valid liquidity-pool address (L-strkey), CRC-checked.
-// CAP-67 extended SEP-41 transfer destinations to include LP addresses.
+// IsLiquidityPool reports whether s is a valid CRC-checked liquidity-pool address (L-strkey).
 func IsLiquidityPool(s string) bool {
 	_, err := strkey.Decode(strkey.VersionByteLiquidityPool, s)
 	return err == nil
 }
 
-// IsAnyHolder reports whether s can plausibly hold a SEP-41 balance: G, C, M, B or L. It
-// validates from/to at the /v1/sep41_transfers boundary; G alone would reject legitimate
-// post-CAP-67 destinations.
+// IsAnyHolder reports whether s can plausibly hold a SEP-41 balance (G, C, M, B or L); G alone would reject legitimate post-CAP-67 destinations.
 func IsAnyHolder(s string) bool {
 	return IsAccountID(s) || IsContractID(s) || IsMuxedAccount(s) ||
 		IsClaimableBalance(s) || IsLiquidityPool(s)

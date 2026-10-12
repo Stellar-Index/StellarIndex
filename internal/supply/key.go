@@ -11,9 +11,7 @@ import (
 
 const nativeAssetKey = "XLM"
 
-// AssetKey produces the supply-package key for a [canonical.Asset] (ADR-0011): native is "XLM",
-// classic is "CODE:ISSUER" (colon for storage; canonical.Asset uses dash on the API), SEP-41 is the
-// bare C-strkey. Off-chain assets and raw oracle symbols have no supply and return ("", error).
+// AssetKey produces the supply key for a [canonical.Asset]: native is "XLM", classic "CODE:ISSUER" (colon), SEP-41 the bare C-strkey; off-chain and raw oracle assets return ("", error).
 func AssetKey(a canonical.Asset) (string, error) {
 	switch a.Type {
 	case canonical.AssetNative:
@@ -29,10 +27,7 @@ func AssetKey(a canonical.Asset) (string, error) {
 	}
 }
 
-// CanonicalizeWatchedClassic converts operator-config "CODE-ISSUER" entries into the CODE:ISSUER
-// form the observers' decoders produce. Raw dash-form strings would never match, so the trustline /
-// claimable / LP observers would observe NOTHING and classic supply would degrade to its SAC slice
-// (USDC 40M vs ~266M). Colon-form is parsed too; unparseable or non-classic entries are a loud error.
+// CanonicalizeWatchedClassic converts operator "CODE-ISSUER" entries into the CODE:ISSUER form observers produce (dash form would match nothing); unparseable or non-classic entries are a loud error.
 func CanonicalizeWatchedClassic(entries []string) ([]string, error) {
 	out := make([]string, 0, len(entries))
 	for _, e := range entries {
@@ -48,9 +43,7 @@ func CanonicalizeWatchedClassic(entries []string) ([]string, error) {
 	return out, nil
 }
 
-// SACWrapperAssetKey is the asset_key the sac_balances observer stamps on a sac_wrappers entry's
-// rows: CODE:ISSUER for a SAC-wrapped classic asset (classic=true), else the value verbatim (pure
-// SEP-41 contract). Readers resolve through it so they query the key the writer wrote.
+// SACWrapperAssetKey is the asset_key the sac_balances observer stamps on a sac_wrappers entry's rows: CODE:ISSUER for a SAC-wrapped classic asset (classic=true), else the value verbatim.
 func SACWrapperAssetKey(value string) (key string, classic bool, err error) {
 	if !strings.ContainsAny(value, "-:") {
 		return value, false, nil
@@ -62,9 +55,7 @@ func SACWrapperAssetKey(value string) (key string, classic bool, err error) {
 	return canon[0], true, nil
 }
 
-// SACClassicKeys maps each SAC contract of a sac_wrappers map to the
-// classic asset_key its balance rows are stored under, omitting pure
-// SEP-41 self-maps.
+// SACClassicKeys maps each SAC contract of a sac_wrappers map to the classic asset_key its balance rows are stored under, omitting pure SEP-41 self-maps.
 func SACClassicKeys(wrappers map[string]string) (map[string]string, error) {
 	out := make(map[string]string, len(wrappers))
 	for cid, v := range wrappers {
@@ -79,9 +70,7 @@ func SACClassicKeys(wrappers map[string]string) (map[string]string, error) {
 	return out, nil
 }
 
-// ParseAssetKey resolves any operator spelling [canonical.ParseAsset]
-// accepts ("native"/"XLM", CODE-ISSUER or CODE:ISSUER, a C-strkey) to
-// the [AssetKey] form snapshots are keyed on.
+// ParseAssetKey resolves any operator spelling [canonical.ParseAsset] accepts to the [AssetKey] form snapshots are keyed on.
 func ParseAssetKey(raw string) (string, error) {
 	a, err := canonical.ParseAsset(raw)
 	if err != nil {
@@ -90,9 +79,7 @@ func ParseAssetKey(raw string) (string, error) {
 	return AssetKey(a)
 }
 
-// CanonicalizeStaleComponentLedgers re-keys stale_component_ledgers_by_asset onto [AssetKey] form,
-// the exact-match key of the Refresher's per-asset gate. An unparseable key or two spellings of
-// one asset is an error, else the global threshold would silently stay in force.
+// CanonicalizeStaleComponentLedgers re-keys stale_component_ledgers_by_asset onto [AssetKey] form; an unparseable key or two spellings of one asset is an error.
 func CanonicalizeStaleComponentLedgers(byAsset map[string]uint32) (map[string]uint32, error) {
 	return canonicalizeAssetKeys(byAsset)
 }
@@ -103,10 +90,7 @@ func CanonicalizeStaleComponentLedgers(byAsset map[string]uint32) (map[string]ui
 var errNativePolicyKey = errors.New("native XLM takes no per-asset locked set or max_supply override " +
 	"(Algorithm 1 reads neither; exclude XLM reserves via sdf_reserve_accounts)")
 
-// CanonicalizePolicyKeys re-keys an operator's per_asset_locked_sets
-// or max_supply_overrides map onto [AssetKey] form, the exact-match
-// key the classic and SEP-41 computers read. An unparseable key, two
-// spellings of one asset, or native XLM is an error.
+// CanonicalizePolicyKeys re-keys a per_asset_locked_sets or max_supply_overrides map onto [AssetKey] form; an unparseable key, two spellings of one asset, or native XLM is an error.
 func CanonicalizePolicyKeys[V any](byAsset map[string]V) (map[string]V, error) {
 	out, err := canonicalizeAssetKeys(byAsset)
 	if err != nil {

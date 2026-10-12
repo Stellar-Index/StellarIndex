@@ -11,8 +11,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// PubnetPassphrase is the Stellar mainnet passphrase, the input to deterministic SAC
-// contract-ID derivation. Kept here, not in config, because the asset model is pubnet-scoped.
+// PubnetPassphrase is the Stellar mainnet passphrase, the input to deterministic SAC contract-ID derivation.
 const PubnetPassphrase = "Public Global Stellar Network ; September 2015"
 
 // TestnetPassphrase and FuturenetPassphrase are the SDF test networks' passphrases, exported so
@@ -22,16 +21,7 @@ const (
 	FuturenetPassphrase = "Test SDF Future Network ; October 2022"
 )
 
-// SacContractID returns the C-strkey of the asset's Stellar Asset Contract on the configured
-// network ([NetworkPassphrase]; see [InstallNetworkPassphrase]). It is a pure function of
-// (asset, passphrase) with no on-chain lookup, valid even if the SAC was never deployed
-// (deployment is permissionless and address-stable). The wrong network would yield an address
-// resolving to nothing or a different asset.
-//
-// Wallets resolve holdings by contract address, so classic detail must carry this and a
-// C-address lookup must land on the classic identity.
-//
-// It errors only for shapes with no SAC (a Soroban token is its own contract; use ContractID).
+// SacContractID returns the asset's SAC C-strkey, a pure function of (asset, configured network passphrase) valid even if never deployed; it errors only for shapes with no SAC (a Soroban token is its own contract).
 func (a Asset) SacContractID() (string, error) {
 	return a.sacContractIDOn(NetworkPassphrase())
 }
@@ -59,8 +49,7 @@ func (a Asset) sacContractIDOn(passphrase string) (string, error) {
 	return strkey.MustEncode(strkey.VersionByteContract, raw[:]), nil
 }
 
-// ContractAddress is the asset's C-address: a Soroban token's own contract, or the derived SAC for
-// classic and native. ok=false for shapes with neither (fiat, external, raw).
+// ContractAddress is the asset's C-address (a Soroban token's own contract, or the derived SAC for classic and native); ok=false for fiat, external and raw.
 func (a Asset) ContractAddress() (string, bool) {
 	if a.ContractID != "" {
 		return a.ContractID, true
@@ -72,10 +61,7 @@ func (a Asset) ContractAddress() (string, bool) {
 	return sac, err == nil
 }
 
-// SEP11SACAsset resolves a SEP-0011 name ("native" or "CODE:GISSUER", a CAP-67 event's trailing
-// topic) to the classic asset ONLY when contractID is its SAC on the configured network. Any
-// contract can emit that topic, so the name is never an identity; the derivation is.
-// ok=false means the claim must not be trusted.
+// SEP11SACAsset resolves a SEP-0011 name to the classic asset ONLY when contractID is its derived SAC, since any contract can emit that topic; ok=false means the claim must not be trusted.
 func SEP11SACAsset(name, contractID string) (Asset, bool) {
 	var asset Asset
 	if name == "native" {

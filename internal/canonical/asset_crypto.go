@@ -40,17 +40,13 @@ var knownCryptoCodes = map[string]struct{}{
 	"SolvBTC_FUNDAMENTAL_USD": {}, "SolvBTC.BBN_FUNDAMENTAL_USD": {},
 }
 
-// IsKnownCrypto reports whether code is in the ADR-0014 allow-list.
-// Callers use this to filter Reflector CEX-oracle symbols on the
-// decoder hot path — unknown tickers are skipped rather than
-// silently coerced.
+// IsKnownCrypto reports whether code is in the ADR-0014 allow-list; unknown tickers are skipped, never coerced.
 func IsKnownCrypto(code string) bool {
 	_, ok := knownCryptoCodes[code]
 	return ok
 }
 
-// NewCryptoAsset constructs a crypto-ticker asset. Returns
-// ErrInvalidAsset if the code isn't allow-listed.
+// NewCryptoAsset constructs a crypto-ticker asset, returning ErrInvalidAsset if the code isn't allow-listed.
 func NewCryptoAsset(code string) (Asset, error) {
 	if !IsKnownCrypto(code) {
 		return Asset{}, errorf(ErrInvalidAsset, "unknown crypto code %q (see ADR-0014)", code)
