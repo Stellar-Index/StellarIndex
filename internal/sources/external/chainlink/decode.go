@@ -17,15 +17,13 @@ import (
 // (320 hex chars plus 0x). answeredInRound is decoded so the poller can refuse a carried-forward
 // round (answeredInRound < roundId).
 
-// maxPlausibleUpdatedAtUnix caps the feed-reported updatedAt (Unix seconds) before any clock
-// comparison. A value beyond the int64/timestamptz range would wrap NEGATIVE in the int64() cast
-// or overflow the INSERT; bounding the raw u64 first keeps every later cast in range.
+// maxPlausibleUpdatedAtUnix caps the feed-reported updatedAt (Unix seconds) before any clock comparison: a value beyond the
+// int64/timestamptz range would wrap NEGATIVE in the int64() cast or overflow the INSERT.
 const maxPlausibleUpdatedAtUnix = 10_000_000_000 // ~year 2286
 
-// maxUpdatedAtFutureSkew is how far past the poller's own clock a feed-reported updatedAt may sit.
-// The poller clock is the only present-time anchor here. A future-dated row is refused, not
-// clamped: it would win every "latest" read for the pair and drive the staleness gauge negative.
-// Ethereum block timestamps never lead real time, so this only absorbs host clock skew.
+// maxUpdatedAtFutureSkew is how far past the poller's clock a feed-reported updatedAt may sit. Future-dated rows are refused, not
+// clamped: they would win every "latest" read and drive the staleness gauge negative. Ethereum block timestamps never lead real time,
+// so this only absorbs host clock skew.
 const maxUpdatedAtFutureSkew = 5 * time.Minute
 
 // checkUpdatedAt validates a raw feed-reported updatedAt against the
@@ -82,11 +80,8 @@ func decodeLatestRoundData(rawHex, feedAddress string, now time.Time) (Round, er
 	}, nil
 }
 
-// decodeAnswerUpdatedLog parses one eth_getLogs entry from AggregatorV3's AnswerUpdated event:
-//
-//	event AnswerUpdated(int256 indexed current, uint256 indexed roundId, uint256 updatedAt)
-//
-// Topics are [hash, current, roundId] and data is [updatedAt]; one log yields one Round.
+// decodeAnswerUpdatedLog parses one eth_getLogs entry of AggregatorV3's AnswerUpdated(int256 indexed current, uint256 indexed roundId,
+// uint256 updatedAt): topics are [hash, current, roundId], data is [updatedAt]; one log yields one Round.
 func decodeAnswerUpdatedLog(entry LogEntry, now time.Time) (Round, error) {
 	if len(entry.Topics) < 3 {
 		return Round{}, fmt.Errorf("%w: AnswerUpdated expected ≥3 topics, got %d", ErrMalformedResult, len(entry.Topics))
@@ -135,9 +130,8 @@ func decodeAnswerUpdatedLog(entry LogEntry, now time.Time) (Round, error) {
 	}, nil
 }
 
-// decodeInt256 parses a 32-byte big-endian two's-complement integer
-// into a *big.Int. Same semantics as the inline answer decode in
-// internal/divergence/chainlink.go's decodeChainlinkRoundData.
+// decodeInt256 parses a 32-byte big-endian two's-complement integer into a *big.Int, as the inline decode in
+// internal/divergence/chainlink.go does.
 func decodeInt256(b []byte) *big.Int {
 	v := new(big.Int).SetBytes(b)
 	if len(b) == 32 && b[0]&0x80 != 0 {
@@ -147,10 +141,8 @@ func decodeInt256(b []byte) *big.Int {
 	return v
 }
 
-// hexBytes decodes a 0x-prefixed hex string to bytes. Tolerates an
-// odd-length payload by left-padding with a zero nibble (defensive
-// for some RPC providers that strip leading zeros from large
-// uint256 returns).
+// hexBytes decodes a 0x-prefixed hex string; an odd-length payload is left-padded with a zero nibble (some RPC providers strip leading
+// zeros).
 func hexBytes(s string) ([]byte, error) {
 	s = strings.TrimPrefix(s, "0x")
 	if len(s)%2 != 0 {
@@ -176,17 +168,14 @@ func parseHexUint(s string) (uint64, error) {
 	return v.Uint64(), nil // i128:ok IsUint64 range-checked above
 }
 
-// decodeRoundID reads a big-endian byte slice (the 10-byte uint80 proxy roundId, or any width up to
-// a uint256) into a *big.Int. The FULL value is kept, not truncated to uint64, so the per-feed
-// dedup key is phase-aware: only the wide (phaseId<<64)|aggregatorRoundId is monotonic across a
-// phase rollover.
+// decodeRoundID reads a big-endian byte slice (the 10-byte uint80 proxy roundId, up to uint256) into a *big.Int, keeping the FULL
+// value: only the wide (phaseId<<64)|aggregatorRoundId is monotonic across a phase rollover, which the per-feed dedup key needs.
 func decodeRoundID(b []byte) *big.Int {
 	return new(big.Int).SetBytes(b)
 }
 
-// readUpdatedAt reads a 32-byte uint256 updatedAt word and applies
-// checkUpdatedAt, rejecting any value with the high 24 bytes set (which
-// the low 8 bytes alone would misread).
+// readUpdatedAt reads a 32-byte uint256 updatedAt word and applies checkUpdatedAt, rejecting values with the high 24 bytes set (the low
+// 8 alone would misread).
 func readUpdatedAt(word []byte, now time.Time) (uint64, error) {
 	for _, b := range word[:24] {
 		if b != 0 {
@@ -197,8 +186,7 @@ func readUpdatedAt(word []byte, now time.Time) (uint64, error) {
 	return v, checkUpdatedAt(v, now)
 }
 
-// bigEndianUint64 reads 8 bytes as big-endian uint64. Tiny helper
-// for the per-tuple-element extraction in decodeLatestRoundData /
+// bigEndianUint64 reads 8 bytes as big-endian uint64, for per-tuple-element extraction in decodeLatestRoundData /
 // decodeAnswerUpdatedLog.
 func bigEndianUint64(b []byte) uint64 {
 	if len(b) != 8 {

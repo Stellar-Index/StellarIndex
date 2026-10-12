@@ -16,9 +16,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// censusBackfill writes the decoder-independent ledger_ingest_log census and hash-chain anchors for a historical range (ADR-0033 Phase 2).
-// Pure structural walk; re-runs converge (UpsertLedgerIngestLog is ON CONFLICT DO UPDATE) and resume from the ingestion_cursors checkpoint.
-// Fail-closed (opsutil.WriteGate): the default is a DRY RUN that walks and reports; -write applies.
+// censusBackfill writes the decoder-independent ledger_ingest_log census and hash-chain anchors for a historical range (ADR-0033).
+// Re-runs converge and resume from the ingestion_cursors checkpoint. Fail-closed (opsutil.WriteGate): default is a DRY RUN.
 func censusBackfill(args []string) error { //nolint:gocognit,gocyclo,funlen // linear walk + checkpoint loop; splitting reduces clarity (same as backfillRouter).
 	fs, gate := opsutil.NewMutatingFlagSet("census-backfill")
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
@@ -189,9 +188,8 @@ func censusBucket(cfg config.Config, override string, from, to uint32) (string, 
 	return opsutil.ResolveStreamBucket(cfg, override, from, to)
 }
 
-// censusCoverage fails a run that did not persist its whole range (wrong bucket or partial persist), naming the bucket,
-// because the reconcile measures completeness against a ledger_ingest_log row per ledger (ADR-0033). Failing closed costs a re-run; failing open costs a hole.
-// `from` is where the run STARTED (post-resume), so ledgers banked by an earlier run are not re-charged.
+// censusCoverage fails a run that did not persist its whole range, naming the bucket, because the reconcile measures completeness
+// against a ledger_ingest_log row per ledger. `from` is post-resume, so ledgers banked by an earlier run are not re-charged.
 func censusCoverage(from, to uint32, persisted, skipped int, bucket string, interrupted bool) error {
 	want := int64(to) - int64(from) + 1
 	switch {
@@ -226,10 +224,8 @@ func (w *contiguousWatermark) gap() {
 	w.frozen = true
 }
 
-// upsertCensusRow writes one ledger's substrate row, or — in the default
-// fail-closed preview — reports success without touching
-// ledger_ingest_log, so the walk still exercises the read + census path
-// (and the coverage check at the end) while writing nothing.
+// upsertCensusRow writes one ledger's substrate row, or in the default preview reports success without writing, so the walk still
+// exercises the read + census path and the coverage check.
 func upsertCensusRow(ctx context.Context, store *timescale.Store, write bool, row timescale.LedgerIngestRow) error {
 	if !write {
 		return nil

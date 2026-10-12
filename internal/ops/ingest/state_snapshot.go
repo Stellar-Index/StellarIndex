@@ -154,10 +154,8 @@ func parseStateSnapshotFlags(args []string) (stateSnapshotOpts, error) {
 // writeSnapshot's refusal is testable without ClickHouse.
 type entryChangeInserter func(ctx context.Context, addr string, rows []clickhouse.LedgerEntryChangeRow, throttle time.Duration) (int, error)
 
-// writeSnapshot inserts the collected write set. A partial read is refused:
-// -limit stops the bucket-list walk at an arbitrary prefix, and writing it
-// would publish a fraction of the checkpoint (2M of ~48M entries at the
-// default) as the whole, with nothing downstream able to tell.
+// writeSnapshot inserts the collected write set. A partial read is refused: -limit stops the bucket-list walk at an arbitrary prefix,
+// and writing it would publish a fraction of the checkpoint (2M of ~48M entries at the default) as the whole.
 func writeSnapshot(ctx context.Context, insert entryChangeInserter, t *snapTally, limit uint64, scope, chAddr string, throttle time.Duration) error {
 	if t.partial {
 		return fmt.Errorf("refusing -write: -limit %d stopped the checkpoint read after %d entries, so the %d collected rows are a bucket-list-order prefix, not the snapshot — re-run with -limit 0 (-dry-run sizes a bounded read without writing)",
@@ -174,9 +172,8 @@ func writeSnapshot(ctx context.Context, insert entryChangeInserter, t *snapTally
 	return nil
 }
 
-// printWriteSet reports the collected write set — the total plus a per-entry-type
-// breakdown — so an operator can size a fill (and confirm the -max-modified-ledger
-// bound targeted the dormant tail) before committing the INSERT.
+// printWriteSet reports the total plus a per-entry-type breakdown, so an operator can size a fill and confirm -max-modified-ledger
+// targeted the dormant tail.
 func printWriteSet(t *snapTally) {
 	byType := make(map[string]int, 8)
 	for i := range t.rows {
@@ -269,9 +266,8 @@ func tallyCheckpoint(ctx context.Context, arch *historyarchive.Archive, seq uint
 	return t, nil
 }
 
-// observe folds one live entry into the tally, classifying contract instances
-// as WASM vs SAC (SACs have no WASM, WASM instances point at a
-// contract_code blob we need for the "see the code" view).
+// observe folds one live entry into the tally, classifying contract instances as WASM vs SAC (SACs have no WASM; WASM ones point at a
+// contract_code blob).
 func (t *snapTally) observe(typ xdr.LedgerEntryType, post *xdr.LedgerEntry) {
 	t.byType[typ]++
 	t.total++

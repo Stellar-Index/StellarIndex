@@ -74,9 +74,8 @@ func (p *Poller) PollInterval() time.Duration {
 	return p.Interval
 }
 
-// priceBar is the subset of one /prices element the poller reads. Close
-// stays a json.Number so the value is scaled from its decimal text and
-// never passes through float64.
+// priceBar is the subset of one /prices element the poller reads; Close stays a json.Number so it is scaled from decimal text, never
+// float64.
 type priceBar struct {
 	Date  string      `json:"date"`
 	Close json.Number `json:"close"`
@@ -146,10 +145,8 @@ func (p *Poller) pollTicker(ctx context.Context, ticker, start string) ([]canoni
 	return barsToUpdates(ticker, bars)
 }
 
-// barsToUpdates converts one ticker's bars. An empty array is "no NAV
-// published" and yields no rows; a bar without a close is skipped for the
-// same reason. A bar that cannot be dated or scaled fails the ticker,
-// because it means the wire shape changed.
+// barsToUpdates converts one ticker's bars. An empty array or a bar without a close yields no rows ("no NAV published"); a bar that
+// cannot be dated or scaled fails the ticker, because the wire shape changed.
 func barsToUpdates(ticker string, bars []priceBar) ([]canonical.OracleUpdate, error) {
 	asset, err := canonical.NewOracleRawAsset(ticker)
 	if err != nil {

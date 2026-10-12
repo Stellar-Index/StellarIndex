@@ -14,9 +14,8 @@ import (
 
 const externalAmountDecimals = 8
 
-// matchPayload covers both `match` and `last_match` messages: the same field shape, where
-// last_match is one per product on subscribe and match is per trade afterwards. Numbers are
-// strings on the wire, so there are no float conversions.
+// matchPayload covers `match` and `last_match` messages (same shape; last_match is one per product on subscribe). Numbers are strings
+// on the wire: no float conversions.
 type matchPayload struct {
 	Type         string `json:"type"`
 	TradeID      int64  `json:"trade_id"`
@@ -30,18 +29,16 @@ type matchPayload struct {
 	Time         string `json:"time"` // RFC 3339 with ns precision
 }
 
-// errorPayload is the shape of a `type:"error"` frame — usually a
-// subscription rejection ("invalid product_id"). We surface this so
-// the streamer can distinguish config bugs from network blips.
+// errorPayload is a `type:"error"` frame, usually a subscription rejection ("invalid product_id"), surfaced so the streamer can tell
+// config bugs from network blips.
 type errorPayload struct {
 	Type    string `json:"type"`
 	Message string `json:"message"`
 	Reason  string `json:"reason"`
 }
 
-// parseFrame dispatches on the message `type` field. It returns (trade, true, nil) for match and
-// last_match frames and (_, false, nil) for acks and unknown frames. Subscription errors wrap
-// ErrSubscriptionRejected so the streamer fails cleanly rather than tight-looping on bad config.
+// parseFrame dispatches on the message `type`: (trade, true, nil) for match/last_match, (_, false, nil) for acks and unknown frames.
+// Subscription errors wrap ErrSubscriptionRejected so the streamer fails cleanly rather than tight-looping on bad config.
 func parseFrame(raw []byte, pairMap map[string]canonical.Pair) (canonical.Trade, bool, error) {
 	// Peek just the `type` field without double-decoding large
 	// bodies — we don't have those here, but the pattern is cheap.

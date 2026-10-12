@@ -25,16 +25,12 @@ const RESTEndpoint = "https://api.kraken.com"
 // Docs: https://docs.kraken.com/api/docs/rest-api/get-ohlc-data
 const ohlcPath = "/0/public/OHLC"
 
-// krakenMaxResponse is the hard cap on candles returned per call (720), unaffected by query
-// params. Pagination via `since` cannot reach past it: the venue's historical depth through this
-// endpoint is effectively this window.
+// krakenMaxResponse is the hard cap on candles per call (720), unaffected by query params; `since` pagination cannot reach past it, so
+// historical depth here is effectively this window.
 const krakenMaxResponse = 720
 
-// krakenRESTTimeout bounds EVERY REST call this package makes (/OHLC and /Trades). Both pagination
-// loops check ctx only BETWEEN pages and the backfill passes the deadline-free process context, so
-// a venue that accepts the connection and never responds is bounded by this alone.
-//
-// A var only so tests can drive the production path against a black-holing server quickly.
+// krakenRESTTimeout bounds EVERY REST call (/OHLC and /Trades): pagination checks ctx only BETWEEN pages and backfill passes a
+// deadline-free context. A var only so tests can drive a black-holing server quickly.
 var krakenRESTTimeout = 30 * time.Second
 
 // maxRESTBodyBytes caps every Kraken REST body read so a wedged upstream
@@ -173,9 +169,7 @@ func convertCandle(c krakenCandle, symbol string, pair canonical.Pair, closeTs i
 	return trade, false, err
 }
 
-// restBase returns the REST URL. When Endpoint is a ws:// URL (the
-// streaming default), we fall back to the production REST host.
-// Tests override with an http:// value to redirect at httptest.
+// restBase returns the REST URL; a ws:// Endpoint (the streaming default) falls back to the production REST host.
 func (s *Streamer) restBase() string {
 	if s.Endpoint == "" || strings.HasPrefix(s.Endpoint, "ws://") || strings.HasPrefix(s.Endpoint, "wss://") {
 		return RESTEndpoint
@@ -214,10 +208,8 @@ func (k krakenCandle) stringAt(i int) (string, bool) {
 	return s, ok
 }
 
-// ohlcResponse is the shape Kraken returns for /0/public/OHLC.
-// The `result` field has a dynamic key (the pair name) plus a
-// `last` sentinel integer, so we decode it as RawMessage and
-// fish out the candle array by iterating keys.
+// ohlcResponse is the /0/public/OHLC shape: `result` has a dynamic pair-name key plus a `last` integer, so decode it as RawMessage and
+// find the candle array by iterating keys.
 type ohlcResponse struct {
 	Error  []string                   `json:"error"`
 	Result map[string]json.RawMessage `json:"result"`
@@ -276,9 +268,7 @@ func fetchKrakenOHLC(ctx context.Context, endpoint string, q url.Values) ([]krak
 // errZeroVolume marks an empty candle, an expected skip.
 var errZeroVolume = errors.New("zero volume")
 
-// krakenCandleToTrade synthesises a canonical.Trade from a Kraken
-// candle. Price is the candle's VWAP (authoritative for the
-// bucket); quote amount is computed as price × base volume.
+// krakenCandleToTrade synthesises a Trade from a candle: price is the candle's VWAP, quote amount is price x base volume.
 func krakenCandleToTrade(c krakenCandle, symbol string, pair canonical.Pair, closeTs int64, granularity time.Duration) (canonical.Trade, error) {
 	volStr, ok := c.volumeStr()
 	if !ok {
@@ -337,9 +327,7 @@ func candleTxHash(symbol string, closeTs int64, granularity time.Duration) (stri
 	return scale.CandleTxHash(strings.ReplaceAll(strings.ToUpper(symbol), "/", ""), closeTs, granularity)
 }
 
-// granularityToMinutes maps a time.Duration to Kraken's interval
-// parameter (in minutes). Kraken accepts: 1, 5, 15, 30, 60, 240,
-// 1440, 10080, 21600 (minutes).
+// granularityToMinutes maps a Duration to Kraken's interval in minutes: 1, 5, 15, 30, 60, 240, 1440, 10080, 21600.
 func granularityToMinutes(d time.Duration) (int, error) {
 	switch d {
 	case 1 * time.Minute:

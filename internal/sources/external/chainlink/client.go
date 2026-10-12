@@ -114,14 +114,12 @@ func (c *Client) EthGetLogs(
 	return logs, nil
 }
 
-// maxRPCBodyBytes caps a JSON-RPC response read. Providers cap
-// eth_getLogs near 10 MB / 10k logs; the headroom covers envelope
-// overhead while stopping a wedged endpoint from OOMing the ingester.
+// maxRPCBodyBytes caps a JSON-RPC response read: providers cap eth_getLogs near 10 MB / 10k logs; headroom covers envelope overhead
+// while stopping a wedged endpoint from OOMing the ingester.
 const maxRPCBodyBytes = 32 << 20
 
-// do is the one-shot HTTP wrapper shared by every RPC method.
-// Marshals the JSON-RPC request, posts, decodes the response, and
-// unmarshals `result` into `out`.
+// do is the one-shot HTTP wrapper shared by every RPC method: marshal the JSON-RPC request, post, decode, unmarshal `result` into
+// `out`.
 func (c *Client) do(ctx context.Context, method string, params []any, out any) error {
 	id := c.id.Add(1)
 	reqBody, err := json.Marshal(map[string]any{

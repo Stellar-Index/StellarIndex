@@ -52,8 +52,7 @@ const (
 	amountScale = 8
 	day         = 24 * time.Hour
 	pageLimit   = 500
-	// Poloniex candle array layout: [low high open close amount quantity
-	// buyTakerAmount buyTakerQuantity tradeCount ts weightedAverage
+	// Poloniex candle array layout: [low high open close amount quantity buyTakerAmount buyTakerQuantity tradeCount ts weightedAverage
 	// interval startTime closeTime].
 	colClose, colQuantity, colStart, candleCols = 3, 5, 12, 13
 )
@@ -111,8 +110,7 @@ type candle struct {
 	quantity *big.Int // XLM at amountScale decimals
 }
 
-// derive crosses each XLM/BTC day with the BTC/USD close of the same UTC
-// day. Money stays in big.Int / big.Rat; the quote leg floors at
+// derive crosses each XLM/BTC day with the BTC/USD close of the same UTC day. Money stays in big.Int / big.Rat; the quote leg floors at
 // amountScale, the same rounding the other candle backfills use.
 func derive(candles []candle, btcTrades []canonical.Trade, pair canonical.Pair, to, now time.Time) ([]canonical.Trade, error) {
 	btcClose := make(map[time.Time]*big.Rat, len(btcTrades))

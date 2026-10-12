@@ -11,8 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external/scale"
 )
 
-// pairsYAML is the declarative venue-pair table (see pairs.yaml for the per-pair rationale),
-// embedded at compile time, so editing it needs a rebuild and redeploy.
+// pairsYAML is the declarative venue-pair table (see pairs.yaml), embedded at compile time, so editing it needs a rebuild and redeploy.
 //
 //go:embed pairs.yaml
 var pairsYAML []byte
@@ -22,10 +21,8 @@ type pairsFile struct {
 	Pairs []pairSpec `yaml:"pairs"`
 }
 
-// pairSpec is one venue pair row: the Binance wire symbol plus the
-// canonical identity of each side. Class is load-bearing — fiat vs
-// crypto assets are distinct canonical types (e.g. BTCEUR quotes in
-// fiat EUR, not a hypothetical crypto "EUR").
+// pairSpec is one venue pair row: the Binance wire symbol plus each side's canonical identity. Class is load-bearing: fiat and crypto
+// assets are distinct canonical types (BTCEUR quotes in fiat EUR).
 type pairSpec struct {
 	Symbol string    `yaml:"symbol"`
 	Base   assetSpec `yaml:"base"`
@@ -50,9 +47,8 @@ func (a assetSpec) asset() (canonical.Asset, error) {
 	}
 }
 
-// parsePairsYAML decodes a pairs.yaml document with strict field checking, so an unknown or
-// renamed key fails the load instead of silently dropping to the zero value. Separate from
-// DefaultPairs so it is testable against arbitrary bytes.
+// parsePairsYAML decodes pairs.yaml with strict field checking, so an unknown or renamed key fails the load instead of dropping to
+// zero.
 func parsePairsYAML(b []byte) (pairsFile, error) {
 	var f pairsFile
 	dec := yaml.NewDecoder(bytes.NewReader(b))

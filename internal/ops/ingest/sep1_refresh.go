@@ -88,10 +88,8 @@ func sep1RefreshCmd(args []string) error {
 	return nil
 }
 
-// sep1Store is the slice of the store the refresh loop writes. Narrowed
-// from *timescale.Store so the loop's ordering guarantees (below) can be
-// asserted without a database — the parser, the HTTP client and the
-// queue semantics under test are all the real ones either way.
+// sep1Store is the slice of the store the refresh loop writes, narrowed so the loop's ordering guarantees can be asserted without a
+// database.
 type sep1Store interface {
 	MarkIssuerSep1Failed(ctx context.Context, gStrkey string) (int, error)
 	SetIssuerSep1Payload(ctx context.Context, gStrkey, fetchedFrom string, payload []byte) (bool, error)
@@ -152,9 +150,9 @@ const (
 	sep1OurFault
 )
 
-// refreshOneSep1Issuer fetches, parses and stores one issuer's stellar.toml, reporting whether a payload was written and whose fault a failure was.
-// The attempt is marked FIRST: a hostile document can get the worker SIGKILLed before any on-failure mark, leaving the unstamped row at the head of the queue forever.
-// The pre-mark is free for healthy issuers because SetIssuerSep1Payload resets the ladder in the same statement.
+// refreshOneSep1Issuer fetches, parses and stores one issuer's stellar.toml, reporting whether a payload was written and whose fault a
+// failure was. The attempt is marked FIRST: a hostile document can get the worker SIGKILLed before any on-failure mark, leaving the row
+// at the queue head forever.
 func refreshOneSep1Issuer(
 	ctx context.Context, store sep1Store, chain sep1ChainReader, resolver sep1Resolver,
 	c timescale.IssuerSep1Candidate, dryRun bool,
@@ -298,10 +296,8 @@ const (
 	systemicMinAttempts        = 50
 )
 
-// sep1RunVerdict reports whether a run's failures should be read as a
-// fault on our side rather than on the issuers': the failure fraction over
-// the attempted candidates that had been reached before. Pure, so the
-// calibration is testable without a network or a database.
+// sep1RunVerdict reports whether a run's failures read as our fault rather than the issuers': the failure fraction over previously
+// reached candidates. Pure.
 func sep1RunVerdict(attempted []timescale.IssuerSep1Candidate, failedKeys []string, rate float64) bool {
 	if rate > 1 {
 		return false
@@ -429,9 +425,7 @@ func marshalSep1Payload(sep *metadata.SEP1, orgVerified bool) ([]byte, error) {
 	return json.Marshal(out)
 }
 
-// sep1FetchDomain returns the domain to fetch an issuer's TOML from:
-// the curated override when one exists, else the on-chain
-// home_domain. Split out for the funlen budget + direct testing.
+// sep1FetchDomain returns the domain to fetch an issuer's TOML from: the curated override if any, else the on-chain home_domain.
 func sep1FetchDomain(gStrkey, homeDomain string) string {
 	if override, ok := sep1DomainOverrides[gStrkey]; ok {
 		return override

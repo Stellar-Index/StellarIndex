@@ -17,9 +17,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// seedSoroswapPairs reads every pair contract the Soroswap factory has deployed via stellar-rpc simulateTransaction into the soroswap_pairs registry.
-// One-shot bootstrap (~3N+1 simulate calls at a 300ms throttle). Insert-only: on-chain new_pair rows outrank an unauthenticated RPC simulation, so a disagreeing pair is printed as a diff, left untouched, and fails the run.
-// Fail-closed (opsutil.WriteGate): the default run is a DRY RUN; -write applies.
+// seedSoroswapPairs reads every Soroswap factory pair via stellar-rpc simulateTransaction into soroswap_pairs (one-shot, ~3N+1 calls at
+// 300ms). Insert-only: on-chain rows outrank an unauthenticated simulation, so a disagreeing pair is printed and fails the run.
 func seedSoroswapPairs(args []string) error {
 	fs, gate := opsutil.NewMutatingFlagSet("seed-soroswap-pairs")
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")
@@ -85,10 +84,8 @@ func seedSoroswapPairs(args []string) error {
 	return seeder.finish()
 }
 
-// soroswapFactoriesToSeed returns the configured factory first, then — when
-// it is a mainnet factory — the rest of soroswap.MainnetFactories, so the
-// early launch-era factories' pairs are registered too. A non-mainnet
-// (testnet) factory is seeded alone.
+// soroswapFactoriesToSeed returns the configured factory, then (for a mainnet factory) the rest of soroswap.MainnetFactories so
+// launch-era factories' pairs register too; a non-mainnet factory is seeded alone.
 func soroswapFactoriesToSeed(configured string) []string {
 	out := []string{configured}
 	if !soroswap.IsMainnetFactory(configured) {

@@ -11,29 +11,19 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external/scale"
 )
 
-// externalAmountDecimals is the fixed integer scale off-chain sources normalise to when populating
-// canonical.Trade.BaseAmount / QuoteAmount. On-chain sources use per-asset decimals (XLM=7,
-// Soroban tokens vary); off-chain venues quote decimal strings of vendor-specific precision.
-// 10^8 matches crypto-native convention (most exchanges use up to 8 dp), matches Redstone's
-// on-chain price scale so aggregator math can mix on- and off-chain Amounts, and leaves headroom
-// for FX precision (5-6 dp).
-//
-// Aggregator queries must know which side of the boundary a trade came from:
-// canonical.Trade.Source + external.Lookup(source).Class say whether it carries 10^8 or its
-// native token scale.
+// externalAmountDecimals is the fixed integer scale (10^8) off-chain sources normalise Trade.BaseAmount / QuoteAmount to; on-chain
+// sources use per-asset decimals. 10^8 matches crypto convention and Redstone's on-chain price scale, with headroom for FX (5-6 dp).
+// Aggregators must check Trade.Source + external.Lookup(source).Class for the scale.
 const externalAmountDecimals = 8
 
-// combinedFrame is the outer envelope every combined-stream message
-// arrives in. The inner `data` field is the event payload; we
-// dispatch on the stream name's suffix to pick the decoder.
+// combinedFrame is the outer envelope of every combined-stream message; the inner `data` is the payload, decoded by the stream name's
+// suffix.
 type combinedFrame struct {
 	Stream string          `json:"stream"`
 	Data   json.RawMessage `json:"data"`
 }
 
-// aggTradePayload matches the Binance aggTrade event shape (event
-// type "aggTrade"). Single-letter field names preserved from the
-// wire — Binance optimises bandwidth on their real-time streams.
+// aggTradePayload matches the Binance aggTrade event; single-letter field names are the wire's (bandwidth optimisation).
 type aggTradePayload struct {
 	EventType  string `json:"e"` // "aggTrade"
 	EventTime  int64  `json:"E"` // ms since epoch (ignored — we use T)
@@ -47,10 +37,8 @@ type aggTradePayload struct {
 	IsMaker    bool   `json:"m"` // buyer was maker (seller-initiated trade)
 }
 
-// parseAggTradeFrame unmarshals a raw WS frame into canonical.Trade.
-// Returns ErrMalformedFrame for JSON shape problems and ErrUnknownSymbol if the symbol isn't in
-// pairMap, which maps Binance symbols (uppercase, no separator) to their canonical.Pair. The
-// streamer supplies it so the parser stays pure, with no package-global state.
+// parseAggTradeFrame unmarshals a raw WS frame into canonical.Trade; ErrMalformedFrame for bad JSON shape, ErrUnknownSymbol if absent
+// from pairMap (uppercase Binance symbol -> pair, supplied by the streamer so the parser stays pure).
 func parseAggTradeFrame(raw []byte, pairMap map[string]canonical.Pair) (canonical.Trade, error) {
 	var env combinedFrame
 	if err := json.Unmarshal(raw, &env); err != nil {
@@ -115,10 +103,8 @@ func parseAggTradeFrame(raw []byte, pairMap map[string]canonical.Pair) (canonica
 	}, nil
 }
 
-// formatTxHash synthesises a 64-hex-char identifier from the venue symbol + aggregate trade ID,
-// since canonical.Trade.Validate() requires one and CEX trades have none. (symbol, aggID) is
-// unique only while the whole seed fits the hash: a symbol over 11 bytes would truncate aggID's
-// low digits, so it is refused instead.
+// formatTxHash synthesises a 64-hex tx identifier from venue symbol + aggregate trade ID (Trade.Validate requires one; CEX trades have
+// none). A symbol over 11 bytes is refused: it would truncate aggID's low digits and break uniqueness.
 func formatTxHash(symbol string, aggID int64) (string, error) {
 	return scale.StrictSyntheticTxHash(fmt.Sprintf("%s-%020d", strings.ToUpper(symbol), aggID))
 }

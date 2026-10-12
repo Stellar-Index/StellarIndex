@@ -84,9 +84,8 @@ const DefaultDecimals uint8 = 8
 // Compile-time assertion: aggregator class in registry.
 var _ = external.ClassAggregator
 
-// tickerToID is the default ticker to CoinGecko slug map, used when a Poller has no instance-level
-// TickerToID override. Slugs are verified against https://api.coingecko.com/api/v3/coins/list; the
-// verified-currency catalogue (`internal/currency`) is the canonical source.
+// tickerToID is the default ticker -> CoinGecko slug map, used without a Poller TickerToID override; slugs are verified against
+// https://api.coingecko.com/api/v3/coins/list, and `internal/currency` is the canonical catalogue.
 var tickerToID = map[string]string{
 	"BTC":   "bitcoin",
 	"ETH":   "ethereum",
@@ -132,9 +131,7 @@ type Poller struct {
 	// verified-currency seed. Empty falls back to the package default.
 	TickerToID map[string]string
 
-	// mu guards the cooldown state. The runner serialises calls per
-	// source so contention is nil; the lock makes concurrent reads
-	// safe under future test fixtures and metrics endpoints.
+	// mu guards the cooldown state; the runner serialises calls per source, so it only protects concurrent test and metrics reads.
 	mu             sync.Mutex
 	nextAllowedAt  time.Time     // earliest UTC time the poller is allowed to hit the venue again
 	currentBackoff time.Duration // last applied backoff, doubled on consecutive 429s
@@ -173,18 +170,14 @@ func (p *Poller) PollInterval() time.Duration {
 	return p.Interval
 }
 
-// simplePriceResponse is the nested map CoinGecko returns.
-// Outer key = asset slug, inner key = fiat code (lowercase) or
-// lastUpdatedKey.
+// simplePriceResponse is CoinGecko's nested map: outer key asset slug, inner key lowercase fiat code or lastUpdatedKey.
 type simplePriceResponse map[string]map[string]float64
 
 // lastUpdatedKey is the per-id field include_last_updated_at=true adds.
 const lastUpdatedKey = "last_updated_at"
 
-// liftLastUpdated removes lastUpdatedKey from every id's object (so it
-// is never read as a vs_currency quote) and returns each id's upstream
-// publication time. An id with a missing or non-positive value is
-// absent from the result, and PollOnce drops it.
+// liftLastUpdated removes lastUpdatedKey from every id's object (so it is never read as a vs_currency quote) and returns each id's
+// upstream publication time; ids with a missing or non-positive value are absent, and PollOnce drops them.
 func liftLastUpdated(prices simplePriceResponse) map[string]time.Time {
 	out := make(map[string]time.Time, len(prices))
 	for id, entry := range prices {
@@ -357,10 +350,8 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 // runner can tell a cooldown skip from a healthy "nothing new" poll.
 func (p *Poller) CooldownRemaining() time.Duration { return p.cooldownRemaining() }
 
-// cooldownRemaining returns how much longer the poller must wait
-// before hitting the venue again. Zero (or negative) means polling
-// is allowed. Lock-protected so the runner + tests can read state
-// safely.
+// cooldownRemaining returns how long the poller must wait before hitting the venue again (<= 0 means polling is allowed);
+// lock-protected.
 func (p *Poller) cooldownRemaining() time.Duration {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -370,11 +361,9 @@ func (p *Poller) cooldownRemaining() time.Duration {
 	return time.Until(p.nextAllowedAt)
 }
 
-// applyBackoff arms the cooldown: max(hint, currentBackoff*2, MinBackoff), clamped to MaxBackoff.
-// The parsed Retry-After hint is a floor, not a ceiling, and the backoff still doubles on
-// consecutive 429s. The free tier's Retry-After is consistently below MinBackoff, which matches
-// the runner's poll interval, so taking it at face value would yield one 429 per minute forever.
-// An unusually long Retry-After is still honoured.
+// applyBackoff arms the cooldown: max(hint, currentBackoff*2, MinBackoff), clamped to MaxBackoff. The Retry-After hint is a floor, not
+// a ceiling: the free tier's is consistently below MinBackoff (the runner's poll interval), so taking it at face value would 429 once a
+// minute forever.
 func (p *Poller) applyBackoff(hint time.Duration) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -401,10 +390,8 @@ func (p *Poller) resetBackoff() {
 	p.nextAllowedAt = time.Time{}
 }
 
-// backoffFromRetryAfter parses the Retry-After header per RFC 7231
-// section 7.1.3 — either a non-negative integer of seconds or an
-// HTTP-date. Returns 0 when the header is absent or unparseable
-// (caller falls through to the exponential branch).
+// backoffFromRetryAfter parses Retry-After per RFC 7231 section 7.1.3 (non-negative seconds or an HTTP-date); 0 when absent or
+// unparseable.
 func backoffFromRetryAfter(h string) time.Duration {
 	if h == "" {
 		return 0
@@ -420,9 +407,8 @@ func backoffFromRetryAfter(h string) time.Duration {
 	return 0
 }
 
-// truncate keeps log lines bounded (CoinGecko's HTML error pages can be 50KB+). It cuts `s` to at
-// most `n` bytes plus a trailing "…", walking back to a UTF-8 rune boundary because raw byte
-// slicing yields invalid UTF-8 when an error page contains Unicode.
+// truncate keeps log lines bounded (CoinGecko's HTML error pages can be 50KB+): cuts `s` to at most `n` bytes plus "…", on a UTF-8 rune
+// boundary.
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s

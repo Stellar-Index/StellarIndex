@@ -25,13 +25,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// externalInsertBudget bounds the DATABASE half of a backfill-external run
-// on its own clock: a shared deadline with the venue walk would let a
-// long paced walk leave nothing to write the fills it just paid to fetch.
+// externalInsertBudget bounds the DATABASE half of backfill-external on its own clock, so a long paced venue walk cannot leave nothing
+// to write the fills it fetched.
 const externalInsertBudget = 12 * time.Hour
 
-// backfillExternal drives the Backfiller interface for one external venue.
-// The operator passes the venue-native symbol ("XLMUSDT" Binance, "XLM/USD" Kraken, "xlmusd" Bitstamp, "XLM-USD" Coinbase).
+// backfillExternal drives the Backfiller interface for one external venue; the operator passes the venue-native symbol ("XLMUSDT"
+// Binance, "XLM/USD" Kraken, "xlmusd" Bitstamp, "XLM-USD" Coinbase).
 //
 //nolint:gocognit,gocyclo,funlen // ops-CLI subcommand: flag parsing + venue dispatch + insert-loop in one function is the most readable shape
 func backfillExternal(args []string) error {
@@ -219,10 +218,8 @@ func partialFetchResume(trades []canonical.Trade, err error) (time.Time, bool) {
 	return high, true
 }
 
-// partialWalkError is the non-zero exit for a salvaged run. The range
-// asked for was NOT covered, so the command must never exit 0 however
-// well the writes went — an operator scripting a chunked walk has to be
-// able to tell a completed slice from a truncated one.
+// partialWalkError is the non-zero exit for a salvaged run: the range was NOT covered, so it must never exit 0 or a scripted chunked
+// walk cannot tell a truncated slice from a complete one.
 func partialWalkError(n int, resumeFrom time.Time, insErr error) error {
 	at := resumeFrom.UTC().Format(time.RFC3339Nano)
 	if insErr != nil {
@@ -280,9 +277,8 @@ func refuseForeignRows(ctx context.Context, probe foreignTradeProbe, source stri
 		errBackfillForeignRows, source, pair.String(), n, first.UTC().Format(time.RFC3339Nano), first.UTC().Format(time.RFC3339Nano))
 }
 
-// walkedTo is the exclusive end of the range a walk actually covered: the
-// requested -to, or just past the high-water trade of a walk that ended
-// early (stored rows beyond it are not ones the run could have rewritten).
+// walkedTo is the exclusive end of the range a walk covered: the requested -to, or just past the high-water trade of an early-ended
+// walk.
 func walkedTo(to, resumeFrom time.Time, partial bool) time.Time {
 	if partial && resumeFrom.Before(to) {
 		return resumeFrom.Add(time.Microsecond)
@@ -309,18 +305,16 @@ func checkStoredOverlap(cfgPath, source string, pair canonical.Pair, from, to ti
 // windowPlan slices a fills walk into bounded spans of venue history.
 type windowPlan struct {
 	size time.Duration // history held in memory at once, and the checkpoint grain
-	// overlap is re-fetched ahead of each window so a fill on the boundary
-	// survives whether the venue's `since` cursor is inclusive or not; the
-	// duplicates are dropped by trade identity before the write.
+	// overlap is re-fetched ahead of each window so a boundary fill survives an inclusive or exclusive `since` cursor; duplicates are
+	// dropped by trade identity before the write.
 	overlap time.Duration
 	// pace spaces windows apart: the venue walker paces only between its
 	// own pages, so back-to-back windows would otherwise burst requests.
 	pace time.Duration
 }
 
-// krakenRawWindows bounds a -raw-trades run to one day of fills in memory.
-// A pair's deep history is ~10^7 fills; held whole, it is killed by the
-// memory cap before a row is written. pace mirrors kraken's tradesRateLimit.
+// krakenRawWindows bounds a -raw-trades run to one day of fills in memory: a pair's deep history (~10^7 fills) held whole is killed by
+// the memory cap. pace mirrors kraken's tradesRateLimit.
 var krakenRawWindows = windowPlan{size: 24 * time.Hour, overlap: time.Second, pace: 1100 * time.Millisecond}
 
 type (
@@ -328,9 +322,8 @@ type (
 	windowSink  func(trades []canonical.Trade) error
 )
 
-// backfillKrakenRawTrades drives the kraken fills walk one window at a
-// time, writing each window before fetching the next, so memory is bounded
-// by a window and a failure costs at most the window it happened in.
+// backfillKrakenRawTrades walks kraken fills one window at a time, writing each before fetching the next, so memory is bounded by a
+// window.
 func backfillKrakenRawTrades(kr *externalkraken.Streamer, pair canonical.Pair, from, to time.Time, dryRun bool, cfgPath string, progressEvery int) error {
 	// Deep pagination is slow by design (venue rate limit), so the walk
 	// gets a day rather than the 30-minute candle budget.
@@ -416,9 +409,8 @@ func windowBounds(plan windowPlan, from, to, start time.Time) (end, fetchFrom ti
 	return end, fetchFrom
 }
 
-// dropSeen removes trades already handed to the sink by the previous
-// window's overlap, and returns the identities the next window's overlap
-// may repeat (those at or after tailFrom).
+// dropSeen removes trades the previous window's overlap already handed to the sink and returns identities at or after tailFrom that the
+// next overlap may repeat.
 func dropSeen(trades []canonical.Trade, seen map[string]struct{}, tailFrom time.Time) ([]canonical.Trade, map[string]struct{}) {
 	next := make(map[string]struct{})
 	kept := trades[:0]
@@ -448,19 +440,16 @@ func waitPace(ctx context.Context, d time.Duration) error {
 	}
 }
 
-// windowStopError is the non-zero exit of a windowed walk that did not
-// reach -to. It carries every cause (errors.Is sees each) and the resume
-// point: the window's start, before which everything is written.
+// windowStopError is the non-zero exit of a windowed walk that did not reach -to; it carries every cause (errors.Is sees each) and the
+// resume point, the window start, before which everything is written.
 func windowStopError(start, end time.Time, written int, causes []error) error {
 	return fmt.Errorf("backfill-external: walk stopped in window %s -> %s with %d trade(s) written — range incomplete, resume with -from %s: %w",
 		start.UTC().Format(time.RFC3339), end.UTC().Format(time.RFC3339), written,
 		start.UTC().Format(time.RFC3339Nano), errors.Join(causes...))
 }
 
-// tradeInserter is the storage seam insertBackfilledTrades depends on —
-// split out so the insert-loop's failure policy (infra-abort vs
-// data-fault-skip, and the non-zero exit on any drop) is unit-testable
-// with a fake, without a live Postgres.
+// tradeInserter is the storage seam for insertBackfilledTrades, so its failure policy (infra-abort vs data-fault-skip, non-zero exit on
+// any drop) is unit-testable with a fake.
 type tradeInserter interface {
 	InsertTrade(ctx context.Context, t canonical.Trade) error
 	BatchInsertTrades(ctx context.Context, trades []canonical.Trade) error
@@ -629,10 +618,8 @@ func unknownPairError(source, want string, pm map[string]canonical.Pair) error {
 	return fmt.Errorf("pair %q not in %s DefaultPairs — known symbols: %v", want, source, keys)
 }
 
-// summariseDryRun prints a compact stats view for --dry-run mode.
-// Shows first/last trade timestamps, trade count, and pair-level
-// volume totals so the operator can sanity-check a range before
-// committing a large insert.
+// summariseDryRun prints first/last trade timestamps, count and per-pair volume so the operator can sanity-check a range before a large
+// insert.
 func summariseDryRun(trades []canonical.Trade) {
 	var sum dryRunSummary
 	sum.add(trades)
@@ -681,9 +668,7 @@ func (s *dryRunSummary) print() {
 	_ = w.Flush()
 }
 
-// amountToFloat converts a canonical.Amount at the given decimal
-// scale to a float64 for display. Precision-lossy; never use this
-// path for anything that writes back to storage.
+// amountToFloat converts a canonical.Amount at the given decimal scale to float64 for display only; lossy, never for storage.
 func amountToFloat(a canonical.Amount, decimals int) float64 {
 	bi := a.BigInt()
 	if bi == nil {

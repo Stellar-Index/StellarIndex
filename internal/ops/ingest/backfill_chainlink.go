@@ -30,8 +30,8 @@ func chainlinkFeedSetFromConfig(in map[string]config.ChainlinkFeedSetting) (map[
 	return chainlink.BuildFeedSet(adapted)
 }
 
-// backfillChainlink inserts one canonical.OracleUpdate per historical AnswerUpdated round into oracle_updates.
-// Idempotent at the same derive_generation (PK plus deterministic syntheticTxHash); InsertOracleUpdate is a generation-guarded DO UPDATE, so a higher generation deliberately overwrites.
+// backfillChainlink inserts one canonical.OracleUpdate per historical AnswerUpdated round into oracle_updates. Idempotent at one
+// derive_generation (PK + deterministic syntheticTxHash); a higher generation deliberately overwrites (generation-guarded DO UPDATE).
 //
 //nolint:gocognit,gocyclo,funlen // ops-CLI subcommand: flag parsing + config load + insert loop in one function is the most readable shape
 func backfillChainlink(args []string) error {

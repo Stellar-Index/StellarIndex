@@ -90,9 +90,8 @@ const (
 	refusedIDMismatch      = "id_mismatch"
 )
 
-// refuse records a dropped response entry on its atomic counter, the
-// exported metric and a Warn naming the entry, so a refused ticker is
-// never a silent loss of a reference price.
+// refuse records a dropped response entry on its atomic counter, the exported metric and a Warn naming the entry, so a refused ticker
+// is never a silent loss.
 func (p *Poller) refuse(counter *uint64, reason string, attrs ...any) {
 	atomic.AddUint64(counter, 1)
 	obs.ExternalPollerRefusedEntriesTotal.WithLabelValues(SourceName, reason).Inc()
@@ -151,9 +150,8 @@ type cmcStatus struct {
 	Timestamp    string `json:"timestamp"`
 }
 
-// requestPlan is the pairs to CMC-request translation: which tickers go by `id=`, which fall back
-// to `symbol=`, and the lookup tables the decoders use to resolve a response entry back to a
-// canonical asset. The id and symbol paths must never share one HTTP request.
+// requestPlan is the pairs-to-request split: tickers requested by `id=` vs `symbol=`, plus the lookup tables that resolve a response
+// entry back to a canonical asset. The id and symbol paths must never share one HTTP request.
 type requestPlan struct {
 	cryptoAssets map[string]canonical.Asset
 	fiatAssets   map[string]canonical.Asset
@@ -164,10 +162,8 @@ type requestPlan struct {
 	currencies   []string
 }
 
-// planRequest derives the id-mode/symbol-mode split from pairs and
-// p.CMCIDs. A ticker is total to exactly one mode — never both — so
-// the two resulting requests are total-per-selector rather than the
-// previous single request that set `id=` and `symbol=` together.
+// planRequest derives the id-mode/symbol-mode split from pairs and p.CMCIDs; a ticker goes to exactly one mode, so each request carries
+// a single selector.
 func (p *Poller) planRequest(pairs []canonical.Pair) requestPlan {
 	symbolSet := map[string]struct{}{}
 	cryptoAssets := map[string]canonical.Asset{}
@@ -219,9 +215,8 @@ func (p *Poller) planRequest(pairs []canonical.Pair) requestPlan {
 	}
 }
 
-// fetchQuotes issues one /v2/quotes/latest request under a single
-// selector (`id` or `symbol` — never both) and decodes the
-// envelope, including CMC's in-body status.error_code.
+// fetchQuotes issues one /v2/quotes/latest request under a single selector (`id` or `symbol`, never both) and decodes the envelope,
+// including CMC's in-body status.error_code.
 func (p *Poller) fetchQuotes(ctx context.Context, selector, selectorValue string, currencies []string) (quotesResponse, error) {
 	q := url.Values{}
 	q.Set(selector, selectorValue)
@@ -267,10 +262,8 @@ func (p *Poller) fetchQuotes(ctx context.Context, selector, selectorValue string
 	return r, nil
 }
 
-// decodeIDMode decodes a response fetched with `id=`. CMC keys the
-// response map by the numeric id string, not the ticker, so the ticker
-// is resolved via plan.idToTicker; the coin's own `id` must then agree
-// with that key before the entry is trusted.
+// decodeIDMode decodes an `id=` response. CMC keys the map by numeric id, so the ticker comes from plan.idToTicker, and the coin's own
+// `id` must agree with that key before the entry is trusted.
 func (p *Poller) decodeIDMode(r quotesResponse, plan requestPlan) ([]canonical.OracleUpdate, int) {
 	var updates []canonical.OracleUpdate
 	undated := 0
@@ -291,10 +284,8 @@ func (p *Poller) decodeIDMode(r quotesResponse, plan requestPlan) ([]canonical.O
 	return updates, undated
 }
 
-// decodeSymbolMode decodes a response fetched with `symbol=`. More than
-// one coin under a ticker means CMC could not disambiguate it and the
-// payload carries nothing we can verify the choice against, so the
-// ticker is refused rather than guessed at.
+// decodeSymbolMode decodes a `symbol=` response. Several coins under one ticker cannot be verified, so the ticker is refused, not
+// guessed.
 func (p *Poller) decodeSymbolMode(r quotesResponse, plan requestPlan) ([]canonical.OracleUpdate, int) {
 	var updates []canonical.OracleUpdate
 	undated := 0
@@ -318,9 +309,8 @@ func (p *Poller) decodeSymbolMode(r quotesResponse, plan requestPlan) ([]canonic
 	return updates, undated
 }
 
-// decodeQuotes turns one resolved coin's per-currency quotes into
-// OracleUpdates filtered to the wanted (ticker, currency) combos, and
-// counts the quotes dropped for an unparseable last_updated.
+// decodeQuotes turns one resolved coin's quotes into OracleUpdates for the wanted (ticker, currency) combos and counts quotes dropped
+// for an unparseable last_updated.
 func decodeQuotes(ticker string, coin cmcCoin, plan requestPlan) ([]canonical.OracleUpdate, int) {
 	cryptoAsset := plan.cryptoAssets[ticker]
 	var updates []canonical.OracleUpdate

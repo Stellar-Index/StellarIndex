@@ -152,9 +152,8 @@ func checkRoundCurrent(pair canonical.Pair, spec FeedSpec, rnd Round, now time.T
 	return nil
 }
 
-// pollFeed resolves decimals, fetches the latest round, refuses it if it is not current, and
-// projects and commits it if new. ok=false means "already emitted this round": the one path
-// PollOnce's fan-in must not receive a result for. Every path records the feed's outcome.
+// pollFeed resolves decimals, fetches the latest round, refuses it if not current, and projects and commits it if new. ok=false means
+// "already emitted this round", the one path PollOnce's fan-in must not receive a result for. Every path records the feed's outcome.
 func (p *Poller) pollFeed(ctx context.Context, pair canonical.Pair, spec FeedSpec) (pollResult, bool) {
 	res, ok := p.pollFeedOnce(ctx, pair, spec)
 	switch {
@@ -303,15 +302,9 @@ func (p *Poller) fetchLatest(ctx context.Context, pair canonical.Pair, spec Feed
 	return rnd, nil
 }
 
-// project converts a decoded Round into a canonical.OracleUpdate, applying the per-feed
-// Decimals and Invert transforms.
-//
-// spec.Decimals must be the RESOLVED scale (on-chain decimals() verified against config). A
-// literal 0 is refused as ErrDecimalsUnresolved: dividing by 10^0 would store a BTC/USD row
-// 10^8 too large, and guessing 8 would hide the scale drift the resolver exists to catch.
-//
-// Identity is synthesized (Ledger=0, OpIndex=0, TxHash=sha256(feed||roundId)[:64],
-// Timestamp=Round.UpdatedAt) so re-emitting a round is idempotent under restart and retry.
+// project converts a decoded Round into a canonical.OracleUpdate, applying per-feed Decimals and Invert. spec.Decimals must be the
+// RESOLVED scale: a literal 0 is refused (ErrDecimalsUnresolved), as 10^0 would store a BTC/USD row 10^8 too large. Identity is
+// synthesized (Ledger=0, OpIndex=0, TxHash=sha256(feed||roundId)[:64], Timestamp=Round.UpdatedAt) so re-emits are idempotent.
 func (p *Poller) project(pair canonical.Pair, spec FeedSpec, rnd Round) (canonical.OracleUpdate, error) {
 	decimals := spec.Decimals
 	if decimals == 0 {
@@ -383,9 +376,8 @@ func (c *roundCache) commitEmit(feedAddr string, roundID *big.Int) {
 	c.last[feedAddr] = new(big.Int).Set(roundID)
 }
 
-// syntheticTxHash derives a deterministic 64-char hex tx_hash from (feed address, roundId).
-// roundID is the FULL uint80 proxy round id: rounds from different phases sharing a low-64-bit
-// aggregatorRoundId must hash distinctly or they collide on the storage PK.
+// syntheticTxHash derives a deterministic 64-char hex tx_hash from (feed address, roundId). roundID is the FULL uint80 proxy round id:
+// rounds from different phases sharing a low-64-bit aggregatorRoundId must hash distinctly or they collide on the storage PK.
 func syntheticTxHash(feedAddress string, roundID *big.Int) string {
 	h := sha256.New()
 	_, _ = h.Write([]byte(strings.ToLower(feedAddress)))

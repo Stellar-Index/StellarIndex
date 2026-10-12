@@ -71,9 +71,8 @@ func GetBody(ctx context.Context, r GetRequest) (int, []byte, error) {
 	return resp.StatusCode, body, nil
 }
 
-// redactURLError converts a transport error into a string with the secret-bearing URL scrubbed:
-// *url.Error embeds the full request URL, including any key-carrying query param, so it is
-// replaced by a path-only form. Other error types do not carry the URL and pass through.
+// redactURLError converts a transport error to a string with the secret-bearing URL scrubbed: *url.Error embeds the full request URL
+// (including key-carrying query params), so it is replaced by a path-only form.
 func redactURLError(err error, safeURL string) string {
 	var ue *url.Error
 	if !errors.As(err, &ue) {
@@ -82,9 +81,8 @@ func redactURLError(err error, safeURL string) string {
 	return fmt.Sprintf("%s %q: %v", ue.Op, redactQuery(safeURL), ue.Err)
 }
 
-// redactQuery returns `rawURL` with any query string replaced by
-// "?<redacted>". Falls back to a constant on parse failure so we
-// never echo the raw (secret-bearing) input.
+// redactQuery returns rawURL with its query replaced by "?<redacted>", and a constant on parse failure, so raw secret-bearing input is
+// never echoed.
 func redactQuery(rawURL string) string {
 	u, err := url.Parse(rawURL)
 	if err != nil || u.Host == "" {

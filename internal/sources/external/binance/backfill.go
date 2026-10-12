@@ -27,9 +27,7 @@ const RESTEndpoint = "https://api.binance.com"
 // https://developers.binance.com/docs/binance-spot-api-docs/rest-api#klinecandlestick-data
 const klinesPath = "/api/v3/klines"
 
-// klineMaxLimit is the per-request cap on candles returned. Higher
-// than this and Binance clamps silently — we explicitly request
-// `limit=1000` and paginate when the caller asks for more.
+// klineMaxLimit is the per-request candle cap; above it Binance clamps silently, so we request `limit=1000` and paginate.
 const klineMaxLimit = 1000
 
 // Backfill implements external.Backfiller: one canonical.Trade per kline candle, stamped with the
@@ -98,9 +96,8 @@ func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to t
 	return out, nil
 }
 
-// resolveBackfillSymbol maps pair to its configured Binance symbol (the inverse of PairMap) and
-// refuses up front if the symbol cannot be represented in a backfill tx hash; otherwise
-// klineToTrade's per-candle skip would produce a silently empty backfill.
+// resolveBackfillSymbol maps pair to its configured Binance symbol (inverse of PairMap) and refuses up front if the symbol cannot be
+// represented in a backfill tx hash; klineToTrade's per-candle skip would otherwise yield a silently empty backfill.
 func (s *Streamer) resolveBackfillSymbol(pair canonical.Pair, granularity time.Duration) (string, error) {
 	inverse := make(map[string]string, len(s.PairMap))
 	for sym, p := range s.PairMap {
@@ -116,10 +113,8 @@ func (s *Streamer) resolveBackfillSymbol(pair canonical.Pair, granularity time.D
 	return symbol, nil
 }
 
-// klinesToTrades converts one page of candles into trades. A zero-volume
-// candle is skipped; any other candle that can't be converted fails the
-// page, so a malformed row can never shrink the range silently. A candle
-// not closed by min(to, now) is dropped; see scale.CandleClosed.
+// klinesToTrades converts one page of candles. Zero-volume candles are skipped; any other unconvertible candle fails the page so a
+// malformed row never shrinks the range silently. A candle not closed by min(to, now) is dropped; see scale.CandleClosed.
 func klinesToTrades(candles []kline, symbol string, pair canonical.Pair, granularity time.Duration, to, now time.Time) ([]canonical.Trade, error) {
 	out := make([]canonical.Trade, 0, len(candles))
 	for _, c := range candles {
@@ -145,11 +140,9 @@ func klinesToTrades(candles []kline, symbol string, pair canonical.Pair, granula
 // errZeroVolume marks an empty candle, an expected skip.
 var errZeroVolume = errors.New("zero volume")
 
-// advanceBackfillCursor computes the next page's startTime: one interval past the last candle's
-// open time, so no page repeats a candle. The last page can carry a bar past -to; the ops caller
-// drops it (dropUnsettledCandles). done=true means the page had no parseable open time and
-// pagination stops without error. An error means the cursor did not advance (caching proxy, venue
-// ignoring startTime), which would otherwise loop forever.
+// advanceBackfillCursor computes the next page's startTime, one interval past the last candle's open time, so no page repeats a candle.
+// done=true means no parseable open time (stop, no error); an error means the cursor did not advance (caching proxy, venue ignoring
+// startTime), which would loop forever.
 func advanceBackfillCursor(candles []kline, startMs int64, granularity time.Duration) (next int64, done bool, err error) {
 	lastOpen, ok := candles[len(candles)-1].openTimeMs()
 	if !ok {
@@ -162,9 +155,8 @@ func advanceBackfillCursor(candles []kline, startMs int64, granularity time.Dura
 	return next, false, nil
 }
 
-// restBase returns the REST endpoint; tests override it with an httptest Endpoint. A ws:// or
-// wss:// Endpoint (the streaming default) falls back to the production REST host, since streaming
-// and REST are separate Binance services.
+// restBase returns the REST endpoint; tests override it. A ws:// or wss:// Endpoint (the streaming default) falls back to the
+// production REST host.
 func (s *Streamer) restBase() string {
 	if s.Endpoint == "" || strings.HasPrefix(s.Endpoint, "ws://") || strings.HasPrefix(s.Endpoint, "wss://") {
 		return RESTEndpoint
@@ -172,21 +164,8 @@ func (s *Streamer) restBase() string {
 	return s.Endpoint
 }
 
-// kline is one kline row. Binance returns a positional JSON array, so it is unmarshalled into
-// []any and read by index. Layout:
-//
-//	[0]  open time (int64 ms)
-//	[1]  open price (string)
-//	[2]  high price (string)
-//	[3]  low price (string)
-//	[4]  close price (string)
-//	[5]  base asset volume (string)
-//	[6]  close time (int64 ms)
-//	[7]  quote asset volume (string)
-//	[8]  number of trades (int)
-//	[9]  taker buy base asset volume (string)
-//	[10] taker buy quote asset volume (string)
-//	[11] unused
+// kline is one positional Binance array read by index: [0] open ms, [1-4] OHLC strings, [5] base volume, [6] close ms, [7] quote
+// volume, [8] trade count, [9] taker buy base volume, [10] taker buy quote volume, [11] unused.
 type kline []any
 
 func (k kline) openTimeMs() (int64, bool)   { return k.intAt(0) }
@@ -248,9 +227,8 @@ func fetchKlines(ctx context.Context, endpoint string, q url.Values) ([]kline, e
 	return out, nil
 }
 
-// klineToTrade synthesises a canonical.Trade from one candle. The timestamp is the close time, and
-// BaseAmount / QuoteAmount come straight from the candle's volume fields, not from OHLC. The
-// tx_hash is stable across repeated runs (see backfillTxHash).
+// klineToTrade synthesises a Trade from one candle: timestamp is the close time, Base/QuoteAmount come from the volume fields, not
+// OHLC; tx_hash is stable (see backfillTxHash).
 func klineToTrade(c kline, symbol string, pair canonical.Pair, granularity time.Duration) (canonical.Trade, error) {
 	closeMs, ok := c.closeTimeMs()
 	if !ok {
@@ -295,9 +273,8 @@ func klineToTrade(c kline, symbol string, pair canonical.Pair, granularity time.
 	}, nil
 }
 
-// backfillTxHash is the historical-candle equivalent of formatTxHash,
-// keyed on the candle's close time and granularity rather than an
-// aggTrade ID; see scale.CandleTxHash.
+// backfillTxHash is formatTxHash for historical candles, keyed on close time and granularity, not an aggTrade ID; see
+// scale.CandleTxHash.
 func backfillTxHash(symbol string, closeMs int64, granularity time.Duration) (string, error) {
 	return scale.CandleTxHash(strings.ToUpper(symbol), closeMs, granularity)
 }

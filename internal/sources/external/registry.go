@@ -130,16 +130,14 @@ func BackfillSafe(source string) bool {
 	return Lookup(source).BackfillSafe()
 }
 
-// replayAuditCoveredBy maps a projected source with no Registry row to the entry whose WASM audit
-// covers its decoder (Blend's audit covered the backstop contract). String literals, not
-// SourceName constants: those packages import this one; ops tests pin them.
+// replayAuditCoveredBy maps a projected source with no Registry row to the entry whose WASM audit covers its decoder (Blend's audit
+// covered the backstop). String literals, not SourceName constants: those packages import this one; ops tests pin them.
 var replayAuditCoveredBy = map[string]string{
 	"blend_backstop": "blend",
 }
 
-// replayStandardSchemaSources read a schema fixed by a standard (SEP-41 / CAP-67) across arbitrary
-// token contracts, so the WASM audit has no single subject. Their sanctioned re-derives
-// (docs/operations/sep41-mint-recovery.md) must not be stranded by this gate.
+// replayStandardSchemaSources read a standard-fixed schema (SEP-41 / CAP-67) across arbitrary token contracts, so the WASM audit has no
+// single subject; their sanctioned re-derives (docs/operations/sep41-mint-recovery.md) must not be stranded by this gate.
 var replayStandardSchemaSources = map[string]struct{}{
 	"sep41_transfers": {},
 	"sep41_supply":    {},

@@ -12,9 +12,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// seedEntryCounts recomputes source_entry_counts with a full GROUP BY, SETting (not adding) so re-runs converge.
-// Run it at the tip after the all-time backfill: the scan is lock-hungry and not race-free against live ingest.
-// -write is required; a run with neither -write nor -dry-run is refused.
+// seedEntryCounts recomputes source_entry_counts with a full GROUP BY, SETting (not adding) so re-runs converge. Run it at the tip
+// after the all-time backfill: the scan is lock-hungry and not race-free against live ingest. -write is required.
 func seedEntryCounts(args []string) error {
 	fs, gate := opsutil.NewMutatingFlagSet("seed-entry-counts")
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")

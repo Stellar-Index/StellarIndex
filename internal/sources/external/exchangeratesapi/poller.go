@@ -74,9 +74,7 @@ func (p *Poller) PollInterval() time.Duration {
 	return p.Interval
 }
 
-// latestResponse is the JSON shape the /latest endpoint returns.
-// Floats kept as json.Number so we scale to integer form without
-// the float64 precision round-trip.
+// latestResponse is the /latest JSON shape; rates stay json.Number so they scale to integers without a float64 round-trip.
 type latestResponse struct {
 	Success   bool                   `json:"success"`
 	Timestamp int64                  `json:"timestamp"`
@@ -214,10 +212,8 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 	return nil, updates, nil
 }
 
-// resolveSymbols walks the pairs list and returns the unique set of
-// fiat codes to query. If p.Symbols is set explicitly, we honour
-// that; otherwise we derive from pairs whose assets are on the
-// fiat allow-list.
+// resolveSymbols returns the unique fiat codes to query: p.Symbols if set explicitly, else those derived from pairs on the fiat
+// allow-list.
 func (p *Poller) resolveSymbols(base string, pairs []canonical.Pair) []string {
 	if len(p.Symbols) > 0 {
 		return p.Symbols
@@ -230,10 +226,8 @@ func (p *Poller) resolveSymbols(base string, pairs []canonical.Pair) []string {
 	return out
 }
 
-// backfillTxHash synthesises a canonical.OracleUpdate tx_hash from
-// (symbol, base, timestamp). canonical.OracleUpdate.Validate()
-// requires a 64-char hex string; we build one that's stable across
-// repeat polls when the venue timestamp is the same.
+// backfillTxHash synthesises the 64-char hex tx_hash canonical.OracleUpdate.Validate requires from (symbol, base, timestamp), stable
+// across repeat polls with the same venue timestamp.
 func backfillTxHash(symbol, base string, ts int64) string {
 	return scale.SyntheticTxHash(fmt.Sprintf(
 		"XRATES-%s-%s-%020d", strings.ToUpper(base), strings.ToUpper(symbol), ts))

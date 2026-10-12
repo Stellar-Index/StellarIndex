@@ -17,10 +17,8 @@ import (
 // off-chain source normalises to 10^8 integer scale.
 const externalAmountDecimals = 8
 
-// channelEnvelope is the shared outer shape for every v2 message
-// (trade, heartbeat, status, subscribe-ack, error). We dispatch on
-// Channel first, then on Type (for trade frames — snapshot vs
-// update) to pick the decoder.
+// channelEnvelope is the shared outer shape of every v2 message; dispatch on Channel first, then Type (snapshot vs update) for trade
+// frames.
 type channelEnvelope struct {
 	Channel string          `json:"channel"`
 	Type    string          `json:"type"`
@@ -87,9 +85,8 @@ type frameResult struct {
 	Ack    *subscribeAck
 }
 
-// tradePayload is one entry in a v2 trade frame's `data` array.
-// Field names are from docs.kraken.com/api/docs/websocket-v2/trade. qty and price are json.Number
-// so the decimal string reaches the scaling helper losslessly; price paths use no floats.
+// tradePayload is one entry in a v2 trade frame's `data` array. qty and price are json.Number so the decimal string reaches the scaling
+// helper losslessly; price paths use no floats.
 type tradePayload struct {
 	Symbol    string      `json:"symbol"`
 	Side      string      `json:"side"`      // "buy" | "sell" (unused for price/volume, retained for future attribution)
@@ -100,10 +97,8 @@ type tradePayload struct {
 	Timestamp string      `json:"timestamp"` // RFC 3339 with subsecond precision
 }
 
-// parseFrame dispatches on the channel field; trade frames yield zero or more canonical.Trade
-// values plus the skipped entries, a subscribe acknowledgement yields Ack, and heartbeat/status
-// frames yield an empty result. Malformed frames return a wrapped ErrMalformedFrame; the streamer
-// counts and continues.
+// parseFrame dispatches on the channel field: trade frames yield Trades plus skipped entries, a subscribe ack yields Ack,
+// heartbeat/status yield nothing. Malformed frames return a wrapped ErrMalformedFrame; the streamer counts and continues.
 func parseFrame(raw []byte, pairMap map[string]canonical.Pair) (frameResult, error) {
 	var env channelEnvelope
 	dec := json.NewDecoder(bytes.NewReader(raw))
@@ -125,9 +120,7 @@ func parseFrame(raw []byte, pairMap map[string]canonical.Pair) (frameResult, err
 	return frameResult{}, nil
 }
 
-// parseSubscribeAck reads the venue's verdict on one subscribed
-// symbol. A rejection names the symbol at the top level; an accepted
-// ack names it under result.
+// parseSubscribeAck reads the venue's verdict on one subscribed symbol: a rejection names it at the top level, an accept under result.
 func parseSubscribeAck(env channelEnvelope) *subscribeAck {
 	ack := &subscribeAck{Symbol: env.Symbol, Accepted: *env.Success}
 	if env.Result != nil && env.Result.Symbol != "" {
@@ -143,10 +136,7 @@ func parseSubscribeAck(env channelEnvelope) *subscribeAck {
 	return ack
 }
 
-// parseTradeFrame decodes the `data` array of a trade channel
-// frame. Each entry is one trade; all share the same channel+type
-// metadata. A bad entry is skipped and reported, not fatal to the
-// frame.
+// parseTradeFrame decodes a trade frame's `data` array; a bad entry is skipped and reported, not fatal to the frame.
 func parseTradeFrame(env channelEnvelope, pairMap map[string]canonical.Pair) (frameResult, error) {
 	if len(env.Data) == 0 {
 		return frameResult{}, nil
@@ -225,10 +215,7 @@ func buildTrade(t tradePayload, pairMap map[string]canonical.Pair) (canonical.Tr
 	}, nil
 }
 
-// formatTxHash — see binance.formatTxHash for rationale. 64-char
-// hex synthesised from (symbol, trade_id) for canonical.Trade
-// validation; a slash-stripped symbol over 11 bytes would truncate
-// trade_id, so it is refused.
+// formatTxHash: see binance.formatTxHash. A slash-stripped symbol over 11 bytes would truncate trade_id, so it is refused.
 func formatTxHash(symbol string, tradeID int64) (string, error) {
 	// Normalise symbol — strip slash so the hash matches regardless
 	// of how Kraken formats it. "XLM/USD" and "XLMUSD" yield the

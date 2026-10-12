@@ -17,9 +17,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// detectGaps compares every LIVE per-source cursor (see [timescale.LiveCursorSources]) against the stellar-rpc tip and exits non-zero when one lags by more than threshold or none exists.
-// One-shot job namespaces are excluded (their last_ledger is a range end); multi-cursor sources use the MINIMUM.
-// It also flags enabled projector sources with no cursor row (see [catalogueMissingProjectorSources]) and asserts the RPC tip is fresh against wall-clock.
+// detectGaps compares every LIVE per-source cursor ([timescale.LiveCursorSources]) against the stellar-rpc tip; exits non-zero on lag
+// past threshold or no cursor. One-shot namespaces are excluded (last_ledger is a range end); multi-cursor sources use the MINIMUM.
 func detectGaps(args []string) error {
 	fs := flag.NewFlagSet("detect-gaps", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
@@ -170,10 +169,8 @@ func minLedgerBySource(cursors []timescale.Cursor) map[string]uint32 {
 	return minBySource
 }
 
-// writeGapReport prints the SOURCE/LAST LEDGER/TIP/LAG/STATUS table to w
-// and returns the sources lagging past threshold. Iteration is sorted by
-// source so output is reproducible across invocations — operators pipe
-// into diff / grep and expect stable ordering.
+// writeGapReport prints the SOURCE/LAST LEDGER/TIP/LAG/STATUS table to w and returns sources lagging past threshold; sorted by source
+// so output is stable for diff / grep.
 func writeGapReport(w io.Writer, minBySource map[string]uint32, tipSeq, threshold uint32) []string {
 	var lagging []string
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)

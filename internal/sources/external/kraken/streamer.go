@@ -53,10 +53,7 @@ func (s *Streamer) Name() string { return SourceName }
 // Class implements external.Connector.
 func (s *Streamer) Class() external.Class { return external.ClassExchange }
 
-// subscribeReq is the JSON envelope we send post-connect to
-// register the trade channel for a symbol list. Kraken v2 accepts
-// an array of symbols in a single method call; no need to send N
-// separate subscriptions.
+// subscribeReq is the post-connect envelope registering the trade channel; v2 takes the whole symbol list in one call.
 type subscribeReq struct {
 	Method string         `json:"method"`
 	Params subscribeParam `json:"params"`
@@ -165,9 +162,8 @@ func (h *frameHandler) handle(data []byte) ([]canonical.Trade, error) {
 	return res.Trades, nil
 }
 
-// recordAck flags a rejected symbol rather than dropping the
-// connection: Kraken answers per symbol, so the other pairs on this
-// socket are still live and a reconnect would only interrupt them.
+// recordAck flags a rejected symbol rather than dropping the connection: Kraken answers per symbol, so a reconnect would only interrupt
+// the other live pairs.
 func (h *frameHandler) recordAck(ack subscribeAck) {
 	label := strings.ToUpper(ack.Symbol)
 	if _, ok := h.pairMap[label]; !ok {

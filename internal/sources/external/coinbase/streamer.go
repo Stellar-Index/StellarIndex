@@ -134,10 +134,8 @@ func (s *Streamer) Start(ctx context.Context, pairs []canonical.Pair) (<-chan ca
 	return out, nil
 }
 
-// classifyDisconnect handles Coinbase's venue-specific
-// ErrSubscriptionRejected label — so operators can tell a config-reject
-// loop apart from transient wire drops — then delegates the wire-level
-// cases to wsclient.ClassifyDisconnect.
+// classifyDisconnect labels Coinbase's ErrSubscriptionRejected so operators can tell a config-reject loop from transient drops,
+// delegating wire-level cases to wsclient.ClassifyDisconnect.
 func classifyDisconnect(err error) string {
 	if errors.Is(err, ErrSubscriptionRejected) {
 		return "subscription_rejected"
@@ -154,9 +152,8 @@ func dropAndLog(logger *slog.Logger, active []string, err error) []string {
 	return remaining
 }
 
-// dropRejectedProducts removes every product the rejection text names, so
-// one delisted product cannot starve the whole venue. It never empties the
-// list: with nothing left to subscribe the rejection stays a loud config error.
+// dropRejectedProducts removes every product the rejection text names, so one delisted product cannot starve the venue. It never
+// empties the list: with nothing left to subscribe the rejection stays a loud config error.
 func dropRejectedProducts(active []string, text string) (remaining, dropped []string) {
 	named := make(map[string]bool)
 	for _, tok := range strings.FieldsFunc(strings.ToUpper(text), func(r rune) bool {
