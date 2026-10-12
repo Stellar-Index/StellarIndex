@@ -6726,7 +6726,9 @@ export interface components {
              *     behind an AMM or Soroban swap, where the recorded taker is
              *     a router or contract. Absent for non-AMM trades and for
              *     trades the signer sweeper has not yet tagged (migration
-             *     0150).
+             *     0150). Also absent for every trade older than the served
+             *     tier's horizon: those rows come from the lake archive,
+             *     which does not record the signer.
              */
             signer?: string;
         };
@@ -26407,6 +26409,7 @@ export interface operations {
                      *           }
                      *         ],
                      *         "next_cursor": "1785340800000000000.63000001.be8ac09cf011950987ae7c17badec336ccf24782a03f5573b1f982cb44c98f36.0",
+                     *         "lower_bound": true,
                      *         "note": "On-chain trades where this address is recorded as the acting account (taker) or the resting sdex offer owner (maker). Coverage: sdex, aquarius, phoenix, comet. Soroswap swaps do not yet record the acting account and off-chain CEX/FX trades carry no Stellar account, so neither can appear here."
                      *       },
                      *       "as_of": "2026-07-30T22:39:31.01258567Z",
