@@ -11,14 +11,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// The price-alert evaluator is a PRICE-SERVING surface: it reads the same closed prices_1m
-// bucket the API serves and pushes the number to a customer's webhook. It lives in a binary the
-// API's seam guard cannot see, so without the thin-market substance gate and the scam-issuer
-// gate a directory-flagged issuer whose price /v1/price refuses to publish could still be
-// delivered, signed, to a customer.
-//
-// These tests pin that the decision is consulted here, and that it is the PAIR decision rather
-// than a second base-only copy.
+// The price-alert evaluator is a price-serving surface that pushes the closed prices_1m number to a customer webhook,
+// in a binary the API's seam guard cannot see. Without the substance and scam-issuer gates a price /v1/price refuses
+// could be delivered. These tests pin that the PAIR decision is consulted here, not a base-only copy.
 
 // alertScamDirectory flags exactly the listed G-addresses.
 type alertScamDirectory struct {
@@ -36,13 +31,9 @@ func (d *alertScamDirectory) DirectoryEntryByAddress(_ context.Context, address 
 
 const alertScamIssuer = "GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ"
 
-// TestPriceAlertSeamIsGated is this binary's half of the seam guard cmd/stellarindex-api has.
-// That guard parses the API's main.go only, so a second binary reading the same closed buckets
-// could serve them ungated and stay green.
-//
-// The subject set is derived from the STORE CALL, not from a list of method names: a new
-// price-serving reader here has to read a closed bucket to serve a price, so it cannot avoid
-// the scan.
+// TestPriceAlertSeamIsGated is this binary's half of the seam guard in cmd/stellarindex-api, which parses only the
+// API's main.go. The subject set is derived from the store call, not method names: any price-serving reader here must
+// read a closed bucket.
 func TestPriceAlertSeamIsGated(t *testing.T) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "main.go", nil, 0)
@@ -77,10 +68,8 @@ func TestPriceAlertSeamIsGated(t *testing.T) {
 	}
 }
 
-// readsClosedVWAPBucket reports whether fn references a store read
-// returning a closed 1m VWAP bucket on any receiver. A method value
-// (f := r.store.LatestClosedVWAP1mForPair) or a store alias
-// (st := r.store; st.LatestClosedVWAP1mForPair(...)) reads the same bucket.
+// readsClosedVWAPBucket reports whether fn references the closed 1m VWAP store read on any receiver, including a
+// method value or a store alias, which read the same bucket.
 func readsClosedVWAPBucket(fn *ast.FuncDecl) bool {
 	found := false
 	ast.Inspect(fn, func(n ast.Node) bool {

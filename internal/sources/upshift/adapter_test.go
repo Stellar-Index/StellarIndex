@@ -36,10 +36,9 @@ func realDeposit(contractID string) events.Event {
 	}
 }
 
-// TestTopicSymbols_MatchTheLakeBytes pins every pre-encoded topic Symbol
-// to the exact base64 the lake stores in `topics_xdr[1]`. classify() compares these as BYTES, so
-// a wrong encoding silently makes the decoder claim nothing, which looks identical to "the
-// protocol went quiet".
+// TestTopicSymbols_MatchTheLakeBytes pins every pre-encoded topic Symbol to the exact base64 the lake stores in
+// topics_xdr[1]. classify() compares them as bytes, so a wrong encoding silently claims nothing, which looks like the
+// protocol went quiet.
 func TestTopicSymbols_MatchTheLakeBytes(t *testing.T) {
 	t.Parallel()
 
@@ -67,10 +66,9 @@ func TestTopicSymbols_MatchTheLakeBytes(t *testing.T) {
 	}
 }
 
-// TestMainnetVaults_ShapeAndCompleteness pins the curated gate trust
-// root: both vaults present, the zero-event address absent, every entry a plausible C-strkey with
-// lake-verified metadata, and GenesisLedger equal to the EARLIEST vault's first event (the
-// ADR-0031 density denominator; a rounded or late value silently inflates coverage).
+// TestMainnetVaults_ShapeAndCompleteness pins the curated gate trust root: both vaults present, the zero-event
+// address absent, every entry a plausible C-strkey with lake-verified metadata, and GenesisLedger equal to the
+// earliest vault's first event (ADR-0031 density denominator).
 func TestMainnetVaults_ShapeAndCompleteness(t *testing.T) {
 	t.Parallel()
 
@@ -122,10 +120,8 @@ func TestMainnetVaults_ShapeAndCompleteness(t *testing.T) {
 	}
 }
 
-// TestVaultsHaveDistinctUnderlyings guards the identity error this
-// project has already paid for once: two vaults collapsing onto one
-// asset. earnUSDC and earnXLM are separate instruments holding separate
-// underlyings, and neither share token is its underlying.
+// TestVaultsHaveDistinctUnderlyings guards against two vaults collapsing onto one asset: earnUSDC and earnXLM are
+// separate instruments with separate underlyings, and neither share token is its underlying.
 func TestVaultsHaveDistinctUnderlyings(t *testing.T) {
 	t.Parallel()
 
@@ -142,10 +138,9 @@ func TestVaultsHaveDistinctUnderlyings(t *testing.T) {
 	}
 }
 
-// TestMatches_RejectsUnknownSymbolFromACuratedVault proves the gate is a
-// conjunction, not a disjunction: being a curated vault is necessary but not sufficient. A symbol
-// this protocol has never emitted stays unclaimed even from the real earnUSDC contract, so a
-// contract upgrade surfaces as a recognition gap rather than being decoded on a guess.
+// TestMatches_RejectsUnknownSymbolFromACuratedVault pins that the gate is a conjunction: a curated vault is
+// necessary, not sufficient. An unknown symbol stays unclaimed even from earnUSDC, so a contract upgrade surfaces as
+// a recognition gap, not a guess.
 func TestMatches_RejectsUnknownSymbolFromACuratedVault(t *testing.T) {
 	t.Parallel()
 
@@ -162,10 +157,9 @@ func TestMatches_RejectsUnknownSymbolFromACuratedVault(t *testing.T) {
 	}
 }
 
-// TestDecode_RecognizedCustodyEventsProjectZeroRows pins the ADR-0033
-// contract for events that are gated and classified but deliberately unserved: ZERO
-// consumer.Events and NO error, so the re-derive counts their ledgers as expected-zero instead of
-// marking them blind. An error here would hold the completeness verdict open indefinitely.
+// TestDecode_RecognizedCustodyEventsProjectZeroRows pins the ADR-0033 contract for gated, classified but unserved
+// events: zero consumer.Events and no error, so re-derive counts their ledgers as expected-zero; an error would hold
+// the verdict open.
 func TestDecode_RecognizedCustodyEventsProjectZeroRows(t *testing.T) {
 	t.Parallel()
 
@@ -201,16 +195,9 @@ func TestDecode_RecognizedCustodyEventsProjectZeroRows(t *testing.T) {
 	}
 }
 
-// TestDecodeTransfer_AcceptsTheBareI128Body covers the SEP-41 body form
-// that no live vault event exercises.
-//
-// Both vaults launched after CAP-67, so every `transfer` they emit carries the Map form and the
-// golden fixtures can only pin that one. The bare-i128 form is the ORIGINAL SEP-41 shape and what
-// a pre-Protocol-23 replay presents, so its branch must be exercised or it would first fail
-// during a historical replay.
-//
-// The body is a genuine pre-CAP-67 SEP-41 transfer captured from the lake, carried on a vault's
-// topics because the shape, not the emitter, is what this test is about.
+// TestDecodeTransfer_AcceptsTheBareI128Body covers the bare-i128 SEP-41 body, which no live vault event exercises:
+// both vaults launched after CAP-67 and emit the Map form, but a pre-Protocol-23 replay presents the bare shape. The
+// body is a genuine pre-CAP-67 transfer from the lake.
 func TestDecodeTransfer_AcceptsTheBareI128Body(t *testing.T) {
 	t.Parallel()
 
@@ -249,10 +236,9 @@ func TestDecodeTransfer_AcceptsTheBareI128Body(t *testing.T) {
 	}
 }
 
-// TestDecode_MalformedBodyIsAnError proves the complement of the test
-// above: an INDETERMINATE body (one that did not decode) stays an error so the completeness
-// verdict goes blind rather than silently under-counting. The zero-row path is reserved for
-// events we fully understood and chose not to serve.
+// TestDecode_MalformedBodyIsAnError pins the complement: an indeterminate body (one that did not decode) stays an
+// error so the completeness verdict goes blind rather than under-counting. The zero-row path is for events we
+// understood and chose not to serve.
 func TestDecode_MalformedBodyIsAnError(t *testing.T) {
 	t.Parallel()
 
@@ -281,10 +267,8 @@ func TestDecode_MalformedBodyIsAnError(t *testing.T) {
 	}
 }
 
-// TestDecoder_DBWarmAdmitsAVaultWithoutARedeploy pins the operator seam
-// the curated-set mechanism depends on (ADR-0040): a vault admitted via the protocol_contracts
-// warm is gated IN without editing MainnetVaults. Without this, "operator-admitted" would not be
-// a working path.
+// TestDecoder_DBWarmAdmitsAVaultWithoutARedeploy pins the operator seam of the curated-set mechanism (ADR-0040): a
+// vault admitted via the protocol_contracts warm is gated in without editing MainnetVaults.
 func TestDecoder_DBWarmAdmitsAVaultWithoutARedeploy(t *testing.T) {
 	t.Parallel()
 
@@ -305,10 +289,9 @@ func TestDecoder_DBWarmAdmitsAVaultWithoutARedeploy(t *testing.T) {
 	}
 }
 
-// TestGatedContractSet_IsTheMatchesDomain pins the invariant the
-// projector's contract-id prefilter relies on: every contract in the gated set is one Matches can
-// accept. If the two diverge, the prefilter drops events the decoder would have claimed, a
-// silent under-capture with no error anywhere.
+// TestGatedContractSet_IsTheMatchesDomain pins the invariant the projector's contract-id prefilter relies on: every
+// contract in the gated set is one Matches can accept. If they diverge, the prefilter drops events the decoder would
+// claim, a silent under-capture.
 func TestGatedContractSet_IsTheMatchesDomain(t *testing.T) {
 	t.Parallel()
 

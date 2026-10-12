@@ -110,10 +110,8 @@ func TestCountNewDrift_DedupesAcrossOverlappingWindows(t *testing.T) {
 	}
 }
 
-// TestCountNewDrift_NilSeenCountsRaw pins the one-off
-// runVerifyHashDBRange CLI path: a single explicit pass has no
-// repeat-observation problem to dedupe, so the raw Drifted count
-// passes through unchanged.
+// TestCountNewDrift_NilSeenCountsRaw pins that the one-off runVerifyHashDBRange path, with no repeat observations to
+// dedupe, passes the raw Drifted count through unchanged.
 func TestCountNewDrift_NilSeenCountsRaw(t *testing.T) {
 	res := archivecompleteness.HashDBVerifyResult{
 		Drifted:   3,
@@ -124,10 +122,8 @@ func TestCountNewDrift_NilSeenCountsRaw(t *testing.T) {
 	}
 }
 
-// TestCountNewDrift_ExcessBeyondCapCountsRaw pins the capped-DriftSeqs
-// edge case: Drifted can exceed len(DriftSeqs) once
-// MaxHashDBDriftSeqsReported is hit. The un-identifiable excess must
-// still be counted rather than silently dropped.
+// TestCountNewDrift_ExcessBeyondCapCountsRaw pins that drift beyond MaxHashDBDriftSeqsReported, which DriftSeqs cannot
+// identify, is still counted rather than dropped.
 func TestCountNewDrift_ExcessBeyondCapCountsRaw(t *testing.T) {
 	seen := make(map[uint32]struct{})
 	res := archivecompleteness.HashDBVerifyResult{

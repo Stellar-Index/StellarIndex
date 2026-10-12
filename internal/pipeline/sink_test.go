@@ -51,10 +51,8 @@ func TestPersistEvents_DrainsBufferedEventsOnShutdown(t *testing.T) {
 		in <- fakeEvent{id: i}
 	}
 
-	// Cancel the ctx FIRST so PersistEvents enters the drain path
-	// on its first iteration. (If we cancelled mid-iteration, the
-	// race between `case <-ctx.Done()` and `case ev, ok := <-in`
-	// would be Go-runtime-dependent and the test would be flaky.)
+	// Cancel the ctx FIRST so PersistEvents enters the drain path on its first iteration; cancelling mid-iteration would
+	// race `case <-ctx.Done()` against `case ev, ok := <-in` and flake.
 	cancel()
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -194,10 +192,9 @@ func unitTimeoutStopSec(t *testing.T, path string) (time.Duration, bool) {
 	return 0, false
 }
 
-// TestShutdownBudgets_MainWiresConstants — the sum above only bounds the
-// real drains if main passes each budget into its sink. A literal (or
-// omitting the field and inheriting the sink's default) lets the two
-// drift apart exactly as a 90s sink drain inside a 30s process would.
+// TestShutdownBudgets_MainWiresConstants: the budget sum only bounds the real drains if main passes each budget into
+// its sink. A literal, or inheriting the sink default, lets them drift apart (e.g. a 90s sink drain inside a 30s
+// process).
 func TestShutdownBudgets_MainWiresConstants(t *testing.T) {
 	fset := token.NewFileSet()
 	main := parseFile(t, fset, repoDir("cmd", "stellarindex-indexer", "main.go"))
@@ -376,10 +373,8 @@ func TestDrainFinalPass_SkipInSinkExcludedFromReport(t *testing.T) {
 	// Projector-owned under SinkModeSkipProjected (see
 	// IsProjectedEvent) — must never count toward the report.
 	in <- reflector.UpdateEvent{}
-	// NOT projector-owned; guaranteed permanent data fault WITHOUT
-	// touching the DB (OracleUpdate.Validate rejects a bare Source),
-	// the same trick TestPersistEvents_DataFaultEventIsCountedAsDropped
-	// uses — safe with a nil store.
+	// Not projector-owned, and a guaranteed permanent data fault without touching the DB (OracleUpdate.Validate rejects a
+	// bare Source), the same trick as TestPersistEvents_DataFaultEventIsCountedAsDropped; safe with a nil store.
 	in <- band.UpdateEvent{Update: canonical.OracleUpdate{Source: band.SourceName}}
 	close(in)
 
@@ -470,10 +465,8 @@ func TestDrainBufferedEvents_CleanDrainCountsNoUndrainedRows(t *testing.T) {
 	}
 }
 
-// TestShutdownSafeCtx_LiveCtxPassedThroughUnchanged pins the
-// no-op-on-live-ctx half of the shutdown-safe context: a still-live parent context
-// must be returned as-is (not wrapped), so the normal (non-racy) path
-// through persistWorker is unaffected.
+// TestShutdownSafeCtx_LiveCtxPassedThroughUnchanged pins the live-context half: a still-live parent context is
+// returned as-is, not wrapped, so the normal path through persistWorker is unaffected.
 func TestShutdownSafeCtx_LiveCtxPassedThroughUnchanged(t *testing.T) {
 	ctx := context.Background()
 	got, cancel := shutdownSafeCtx(ctx, &drainDeadline{})

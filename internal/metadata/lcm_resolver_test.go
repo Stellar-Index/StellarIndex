@@ -48,10 +48,9 @@ func (f *fakeLookup) HomeDomainsAtOrBefore(ctx context.Context, issuers []string
 	return out, nil
 }
 
-// TestLCMHomeDomainResolver_AsOfFitsInPostgresInt32 pins the "no upper bound" sentinel below
-// MaxInt32: a `^uint32(0)` overflows the postgres int4 column on every call (error 22003),
-// which would defeat the LCM path and silently route every issuer through the static-map
-// fallback.
+// TestLCMHomeDomainResolver_AsOfFitsInPostgresInt32 pins the "no upper bound" sentinel below MaxInt32: `^uint32(0)`
+// overflows the postgres int4 column (error 22003) on every call, defeating the LCM path and silently routing every
+// issuer to the static fallback.
 func TestLCMHomeDomainResolver_AsOfFitsInPostgresInt32(t *testing.T) {
 	const maxInt32 = uint32(1<<31 - 1) // 2,147,483,647
 	lookup := &fakeLookup{rows: map[string]string{}}
@@ -136,10 +135,9 @@ func TestChainedHomeDomainLookup_LiveWins(t *testing.T) {
 	}
 }
 
-// TestChainedHomeDomainLookup_ObservedClearSuppressesStatic — an issuer
-// whose latest observation carries no home_domain (cleared on chain, or
-// merged) must resolve to no domain; the operator's static entry must not
-// re-assert an identity the issuer withdrew.
+// TestChainedHomeDomainLookup_ObservedClearSuppressesStatic pins that an issuer whose latest observation has no
+// home_domain (cleared on chain, or merged) resolves to none; the static entry must not re-assert an identity the
+// issuer withdrew.
 func TestChainedHomeDomainLookup_ObservedClearSuppressesStatic(t *testing.T) {
 	live := NewLCMHomeDomainResolver(&fakeLookup{rows: map[string]string{"GA1": ""}})
 	staticCalled := 0
@@ -207,10 +205,9 @@ func TestChainedHomeDomainLookup_FallsBackOnStorageError(t *testing.T) {
 	}
 }
 
-// TestSplitHomeDomainLayers — ObservedHomeDomainLookup never answers from
-// the static map, and StaticHomeDomainFallback answers only for an
-// unobserved issuer (or a failed read), so an observed clear still
-// suppresses the static entry when a caller runs its own read between them.
+// TestSplitHomeDomainLayers pins that ObservedHomeDomainLookup never answers from the static map and
+// StaticHomeDomainFallback answers only for an unobserved issuer or failed read, so an observed clear still suppresses
+// the static entry between caller reads.
 func TestSplitHomeDomainLayers(t *testing.T) {
 	live := NewLCMHomeDomainResolver(&fakeLookup{rows: map[string]string{
 		"GLIVE": "live.example.com", "GCLEAR": "",

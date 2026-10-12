@@ -11,10 +11,8 @@ import (
 	"testing"
 )
 
-// TestConstructorsHaveProductionCaller fails when an exported New* in this
-// package has no non-test caller outside it. A read-through cache here once
-// shipped with tests, a metric, a Redis key family and runbooks while no
-// binary ever constructed it, so every operator signal it fed was dark.
+// TestConstructorsHaveProductionCaller fails when an exported New* in this package has no non-test caller outside it,
+// since an uncalled constructor leaves every operator signal it feeds (metric, Redis keys, runbooks) dark.
 func TestConstructorsHaveProductionCaller(t *testing.T) {
 	root := moduleRoot(t)
 	ctors := exportedConstructors(t, filepath.Join(root, "internal", "metadata"))
@@ -77,10 +75,8 @@ func exportedConstructors(t *testing.T, pkgDir string) []string {
 	return out
 }
 
-// productionSources returns every non-test .go file in the module outside
-// internal/metadata. Nested agent worktrees (.claude) and fixtures are
-// skipped so a checkout containing sibling copies of the repo cannot
-// satisfy the guard on this copy's behalf.
+// productionSources returns every non-test .go file outside internal/metadata. Nested agent worktrees (.claude) and
+// fixtures are skipped so sibling repo copies cannot satisfy the guard on this copy's behalf.
 func productionSources(t *testing.T, root string) []string {
 	t.Helper()
 	skip := map[string]bool{".git": true, ".claude": true, "testdata": true, "node_modules": true, "vendor": true, "web": true}

@@ -22,13 +22,9 @@ const metricsReadme = "../../docs/reference/metrics/README.md"
 // surface table the four price-serve gate counters share.
 const substanceWithheldHeading = "### `stellarindex_price_serve_substance_withheld_total`"
 
-// TestPriceServeSurfaceLabelsAreDocumented pins the README's `surface` table to the labels
-// the code emits, in both directions, so an operator can tell which paths withhold.
-//
-// Emitted = every string constant passed as the `surface` argument of a non-test function
-// declaring a `surface` parameter, under internal/ and cmd/. A call forwarding its own
-// `surface` parameter is followed at ITS callers; any other non-constant argument fails,
-// because a label the scan cannot read is a label nobody can document.
+// TestPriceServeSurfaceLabelsAreDocumented pins the README `surface` table to the labels the code emits, in both
+// directions. Emitted labels are string constants passed as `surface` to non-test functions under internal/ and
+// cmd/; a forwarded parameter is followed at its callers, and any other non-constant argument fails.
 func TestPriceServeSurfaceLabelsAreDocumented(t *testing.T) {
 	emitted := emittedSurfaceLabels(t, "../../internal", "../../cmd")
 	if len(emitted) < 10 {
@@ -189,10 +185,9 @@ func collectStringConsts(f *ast.File, into map[string]string) {
 	}
 }
 
-// surfaceParamIndex maps each function or method name whose `surface`
-// parameter reaches the gate metrics to that parameter's positions. The
-// seed is this package's own functions; a function elsewhere joins when
-// it forwards its `surface` parameter into one already in the set.
+// surfaceParamIndex maps each function or method name whose `surface` parameter reaches the gate metrics to that
+// parameter's positions. It is seeded by this package and grows with functions that forward `surface` into one
+// already in the set.
 func surfaceParamIndex(pkgs map[string]*surfacePackage) map[string][]int {
 	type decl struct {
 		fn  *ast.FuncDecl

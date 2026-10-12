@@ -12,14 +12,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// resolveStartLedger decides where every indexer restart begins reading. Each arm fails
-// quietly (the indexer just looks busy), so the precedence is pinned rather than inspected:
-//
-//   - resuming from the cursor ITSELF rather than cursor+1 re-ingests one ledger every restart;
-//   - preferring backfill_from_ledger OVER a live cursor rewinds to a stale config value, a
-//     huge replay that looks like a normal catch-up;
-//   - defaulting to some ledger when neither is set is the "re-ingest genesis by accident"
-//     case the function exists to prevent.
+// resolveStartLedger decides where every indexer restart begins; each arm fails quietly, so the precedence is pinned:
+// resume from cursor+1 (not the cursor), prefer a live cursor over backfill_from_ledger, and never default to genesis.
 
 // fakeCursorStore is a cursorReader that returns a scripted answer. It
 // is a probe on the precedence decision, not a store double: the values
@@ -151,10 +145,8 @@ func TestResolveStartLedger_StoreErrorIsPropagatedNotTreatedAsAbsent(t *testing.
 	}
 }
 
-// TestResolveStartLedger_ReadsTheIndexerCursorRow pins WHICH cursor is
-// consulted. The store keys cursors by (source, sub_source); reading a
-// different source's row would resume from an unrelated pipeline's
-// position, and the value returned would still look plausible.
+// TestResolveStartLedger_ReadsTheIndexerCursorRow pins WHICH cursor is consulted: the store keys cursors by (source,
+// sub_source), and another source's row would give a plausible but unrelated resume position.
 func TestResolveStartLedger_ReadsTheIndexerCursorRow(t *testing.T) {
 	t.Parallel()
 

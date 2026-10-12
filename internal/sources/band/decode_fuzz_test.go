@@ -64,15 +64,9 @@ func validSymbol(sym string) bool {
 	return true
 }
 
-// FuzzDecodeRelayArgs builds a well-formed relay / force_relay call with a fuzzed symbol, rate,
-// resolve_time and indices, and checks the emitted row against an independent expectation:
-//   - the price is the exact u64 rate (no int64 wrap above 2^63);
-//   - USD and zero rates are never emitted;
-//   - inside Band's acceptance window (floor ≤ resolve_time < close + 3600, strict, as relay()
-//     applies it) the timestamp is the declared resolve_time; outside it, relay() is dropped
-//     (ErrEmptyRates, since the contract would silently no-op it) and force_relay clamps to the
-//     ledger close (unconditional admin path);
-//   - a rate in any numeric shape other than u64 is refused.
+// FuzzDecodeRelayArgs checks the row against an independent expectation: the price is the exact u64 rate (no int64
+// wrap above 2^63); USD and zero rates are never emitted; inside Band's window (floor <= resolve_time < close + 3600)
+// ts is resolve_time, outside it relay() is dropped and force_relay clamps to close; non-u64 rates are refused.
 func FuzzDecodeRelayArgs(f *testing.F) {
 	f.Add("BTC", uint64(50_000_000_000_000), uint64(fuzzClose), false, uint8(0), uint8(0), true)
 	f.Add("EUR", uint64(1<<63), uint64(fuzzClose-60), true, uint8(3), uint8(0), false)
@@ -168,10 +162,8 @@ func FuzzDecodeRelayArgs(f *testing.F) {
 	})
 }
 
-// FuzzDecodeRelayArgsRaw hands decodeRelayArgs arbitrary XDR in every
-// argument slot. It must never panic, and a success must be justified
-// by the bytes: every emitted row is a positive price equal to the u64
-// in a non-USD symbol_rates slot at the row's own vector position.
+// FuzzDecodeRelayArgsRaw hands decodeRelayArgs arbitrary XDR in every argument slot: no panic, and every emitted row
+// is a positive price equal to the u64 in a non-USD symbol_rates slot at its own vector position.
 func FuzzDecodeRelayArgsRaw(f *testing.F) {
 	good := func(sv xdr.ScVal) []byte {
 		b, err := sv.MarshalBinary()

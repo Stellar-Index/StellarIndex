@@ -58,10 +58,8 @@ var errData = &pgconn.PgError{
 	Message: `null value in column "quote_asset" violates not-null constraint`,
 }
 
-// errUnclassified is a driver error NEITHER predicate recognises — the
-// shape of a disk-full (53100), OOM (53200) or class-58 I/O fault
-// reaching the sink today: these must block-and-retry, never
-// drop.
+// errUnclassified is a driver error NEITHER predicate recognises, the shape of disk-full (53100), OOM (53200) or a
+// class-58 I/O fault reaching the sink: these must block-and-retry, never drop.
 var errUnclassified = &pgconn.PgError{
 	Code:    "53100",
 	Message: "could not extend file \"base/16384/24576\": No space left on device",
@@ -286,10 +284,8 @@ func TestClassifyFault_StoragePredicatesAgree(t *testing.T) {
 	}
 }
 
-// TestRetryInfra_UnclassifiedFaultRetriesUntilItLands — the core
-// property at the retry choke point: a fault nobody has positively
-// classified (disk-full here) must BLOCK and retry until it lands, not
-// return for the caller to drop.
+// TestRetryInfra_UnclassifiedFaultRetriesUntilItLands: at the retry choke point, a fault nobody has positively
+// classified (disk-full here) must BLOCK and retry until it lands, not return for the caller to drop.
 func TestRetryInfra_UnclassifiedFaultRetriesUntilItLands(t *testing.T) {
 	var attempts atomic.Int32
 	err := retryInfra(context.Background(), discardLogger(), "test", func(context.Context) error {
@@ -384,10 +380,8 @@ func TestFlushTradeBatch_ExternalUnclassifiedRoutesToBufferNoBlock(t *testing.T)
 	}
 }
 
-// scriptedStore is a tradeWriter whose per-row outcome is scripted by
-// ledger, so the external buffer's per-row isolation pass can be driven
-// through a MIXED batch: one permanently-bad row plus rows that fail
-// with an infrastructure fault.
+// scriptedStore is a tradeWriter whose per-row outcome is scripted by ledger, driving the external buffer's per-row
+// isolation pass through a mixed batch: one permanently-bad row plus rows failing with an infrastructure fault.
 type scriptedStore struct {
 	mu       sync.Mutex
 	batchErr error

@@ -8,10 +8,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 )
 
-// The single-host port-collision shift must key off whether the operator set obs.metrics_listen
-// (config.ObsConfig.MetricsListenSet), never off equality with the indexer's default. An operator
-// who explicitly pins the aggregator to 127.0.0.1:9464, the indexer's default, must be honoured
-// verbatim, not silently rewritten to :9465.
+// The single-host port-collision shift must key off whether the operator set obs.metrics_listen (MetricsListenSet),
+// not equality with the indexer's default: an explicit 127.0.0.1:9464 must be honoured verbatim, not rewritten to
+// :9465.
 func TestMetricsListenAddr_ExplicitDefaultIsHonoured(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	cfg := config.ObsConfig{

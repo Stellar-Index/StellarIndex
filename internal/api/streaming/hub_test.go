@@ -63,10 +63,8 @@ func TestHub_TopicMetricsTrackReaping(t *testing.T) {
 	}
 }
 
-// TestStream_ActiveAndRejectedStreamsAreMetered — the concurrency caps'
-// state is exported: an open stream holds the active gauge up, a
-// per-IP refusal is counted under its reason, and closing the stream
-// releases the gauge.
+// TestStream_ActiveAndRejectedStreamsAreMetered pins the exported cap state: an open stream holds the active gauge up,
+// a per-IP refusal is counted under its reason, and closing the stream releases the gauge.
 func TestStream_ActiveAndRejectedStreamsAreMetered(t *testing.T) {
 	streaming.SetMaxStreamsPerIP(1)
 	defer streaming.SetMaxStreamsPerIP(0)
@@ -217,10 +215,8 @@ func TestHub_MultiTopicSubscription(t *testing.T) {
 	}
 }
 
-// TestHub_ResumeReplaysEventsAfterCursor — events published before Subscribe
-// are replayed, in order, when the Last-Event-ID is older than the newest
-// buffered event. When the ring is full the oldest event is evicted, and
-// resuming from the evicted ID returns whatever remains.
+// TestHub_ResumeReplaysEventsAfterCursor pins that events published before Subscribe replay in order after an older
+// Last-Event-ID, and that once the ring evicts the oldest event, resuming from its ID returns what remains.
 func TestHub_ResumeReplaysEventsAfterCursor(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -306,10 +302,8 @@ func TestHub_SlowSubscriberDropped(t *testing.T) {
 		hub.Publish("topic", "x", []byte("payload"))
 	}
 
-	// Slow sub's channel should now be closed. Signal completion
-	// over a channel rather than a shared bool — the race detector
-	// flags the latter (the drain goroutine writes while the main
-	// goroutine reads).
+	// The slow sub's channel is now closed. Signal completion over a channel, not a shared bool, which the race
+	// detector flags.
 	slowDrained := make(chan struct{})
 	go func() {
 		for range slow {
@@ -370,11 +364,8 @@ func TestHub_PublishRaceFreeIDs(t *testing.T) {
 	}
 }
 
-// TestHub_PublishVsCancelRace pins that a subscriber cancelling (which
-// closes its channel) concurrently with Publish (which sends off the topic
-// lock) must never panic with "send on closed channel". Without the guard,
-// the select send-case on a closed channel would be "ready" and chosen over
-// default, crashing the whole process. Run under -race.
+// TestHub_PublishVsCancelRace pins that a subscriber cancelling (closing its channel) during Publish must never panic
+// with "send on closed channel", which the select send-case would otherwise choose over default. Run under -race.
 func TestHub_PublishVsCancelRace(t *testing.T) {
 	hub := streaming.NewHub(0)
 	const workers = 8
@@ -435,11 +426,9 @@ func TestHub_PublishVsCancelRace(t *testing.T) {
 	// If we got here without a panic, the race is fixed.
 }
 
-// TestHub_SubscribeKeepsEventsPublishedDuringSubscribe pins the subscribe/publish gap: an event
-// published while Subscribe runs must land in EITHER the replay OR the live fanout, never neither.
-// A snapshot-first Subscribe would drop it silently, indistinguishable at the client from a buffer
-// overrun. Many topics widen the window enough to hit reliably; the single-topic production path
-// has the same microsecond gap. The invariant is structural, so the assertion is an exact zero.
+// TestHub_SubscribeKeepsEventsPublishedDuringSubscribe pins that an event published during Subscribe lands in either
+// the replay or the live fanout, never neither, since a drop is indistinguishable from a buffer overrun. Many topics
+// widen the window; the assertion is an exact zero.
 func TestHub_SubscribeKeepsEventsPublishedDuringSubscribe(t *testing.T) {
 	const iterations = 200
 	const perIteration = 5
@@ -511,13 +500,9 @@ func TestHub_SubscribeKeepsEventsPublishedDuringSubscribe(t *testing.T) {
 	}
 }
 
-// TestHub_ReplayBeyondQueueDepthKeepsConnection pins replay-overflow handling.
-//
-// Closing the subscription on replay overflow would hand a client resuming more than 32 events
-// behind the 32 OLDEST (stalest) events and disconnect it, so every reconnect repeats that and
-// stale prices render as live. The replay must deliver the NEWEST events that fit and keep the
-// subscription open. It is budgeted at HALF the channel capacity: a full-capacity replay leaves no
-// headroom, so the next live Publish would find the channel full and evict the resumed subscriber.
+// TestHub_ReplayBeyondQueueDepthKeepsConnection pins that a resume more than 32 events behind gets the NEWEST events
+// that fit and keeps the subscription open; closing on overflow would replay the stalest events on every reconnect.
+// Replay is budgeted at half the channel capacity so the next live Publish does not evict the subscriber.
 func TestHub_ReplayBeyondQueueDepthKeepsConnection(t *testing.T) {
 	h := streaming.NewHub(256)
 	const published = 32 * 3
@@ -569,13 +554,9 @@ drain:
 	}
 }
 
-// TestHub_ResumeReplayLeavesHeadroom pins the replay headroom:
-// a resume clamped at the FULL channel capacity leaves no room for the
-// next live Publish, which finds the channel full and evicts the
-// subscriber it had just resumed. The channel must come back with
-// spare capacity, single-topic or multi-topic, and every subscribed
-// topic must contribute at least one replayed event — not just the
-// first.
+// TestHub_ResumeReplayLeavesHeadroom pins that a resume leaves spare channel capacity, since a full-capacity replay
+// makes the next live Publish evict the subscriber just resumed. Holds for single and multi-topic, and every
+// subscribed topic must replay at least one event.
 func TestHub_ResumeReplayLeavesHeadroom(t *testing.T) {
 	t.Run("single topic", func(t *testing.T) {
 		h := streaming.NewHub(256)
@@ -593,10 +574,8 @@ func TestHub_ResumeReplayLeavesHeadroom(t *testing.T) {
 
 	t.Run("multi topic replays every topic", func(t *testing.T) {
 		h := streaming.NewHub(256)
-		// Topic "a" alone has more buffered events than the whole
-		// channel can hold, so an unbudgeted per-topic clamp lets it
-		// fill the channel by itself before topic "b" is ever
-		// registered.
+		// Topic "a" alone holds more buffered events than the channel, so an unbudgeted per-topic clamp would fill it
+		// before "b" registers.
 		for i := 0; i < 40; i++ {
 			h.Publish("a", "price_update", []byte("seed-a"))
 		}
@@ -628,10 +607,8 @@ func TestHub_ResumeReplayLeavesHeadroom(t *testing.T) {
 	})
 }
 
-// TestHub_ReconnectIDsAreMonotonic pins reconnect ordering:
-// a resuming subscriber must never see an event ID
-// smaller than or equal to the resume cursor's own ID, and never out
-// of order across the replayed set.
+// TestHub_ReconnectIDsAreMonotonic pins that a resuming subscriber never sees an ID less than or equal to the
+// cursor's, nor any ID out of order across the replayed set.
 func TestHub_ReconnectIDsAreMonotonic(t *testing.T) {
 	h := streaming.NewHub(256)
 	var resumeFrom string
@@ -661,13 +638,9 @@ drain:
 	}
 }
 
-// TestHub_MultiTopicReplayIsMergedByID pins merged replay order:
-// ids come from one Hub-wide generator but a
-// multi-topic Subscribe that queued each topic's whole replay before
-// the next would make the wire `id:` line walk backwards at the topic
-// boundary. Interleaving publishes across two topics and resuming from
-// before all of them must come back in strict id order, not grouped by
-// topic.
+// TestHub_MultiTopicReplayIsMergedByID pins that a multi-topic resume replays in strict id order, not grouped by
+// topic; IDs come from one Hub-wide generator, so queuing each topic's replay whole would make the wire `id:` walk
+// backwards.
 func TestHub_MultiTopicReplayIsMergedByID(t *testing.T) {
 	hub := streaming.NewHub(0)
 	cursor := hub.Publish("seed", "x", []byte("seed"))
@@ -700,12 +673,9 @@ func idsOf(evs []streaming.Event) []string {
 	return out
 }
 
-// TestHub_ReplayGapEmitsStreamGapMarker pins the gap marker:
-// a resume whose cursor names an event the ring has already
-// evicted must be preceded by an [streaming.EventTypeStreamGap] marker
-// naming the requested cursor and the oldest id still available —
-// without it nothing on the wire distinguishes a truncated replay from a
-// complete one.
+// TestHub_ReplayGapEmitsStreamGapMarker pins that a resume whose cursor was already evicted is preceded by an
+// [streaming.EventTypeStreamGap] marker naming the requested cursor and oldest available id; otherwise a truncated
+// replay looks complete.
 func TestHub_ReplayGapEmitsStreamGapMarker(t *testing.T) {
 	hub := streaming.NewHub(2) // tiny ring: forces eviction
 	cursor := hub.Publish("seed", "x", []byte("seed"))
@@ -741,13 +711,9 @@ func TestHub_ReplayGapEmitsStreamGapMarker(t *testing.T) {
 	}
 }
 
-// TestDoc_MaxTopicsIsNotAHardCeiling pins doc.go's package overview to
-// the reap-threshold behaviour hub.go's DefaultMaxTopics documents
-// — a stale "caps the map regardless" claim would send an
-// operator sizing memory against a bound that does not exist. The
-// comment markers are stripped and the text re-joined on whitespace
-// before matching, so a phrase that got re-wrapped across lines can't
-// hide from the check.
+// TestDoc_MaxTopicsIsNotAHardCeiling pins doc.go's overview to the reap-threshold behaviour that hub.go's
+// DefaultMaxTopics documents, so a stale "caps the map regardless" claim cannot mislead memory sizing. Comment markers
+// are stripped and text re-joined on whitespace so re-wrapping cannot hide a phrase.
 func TestDoc_MaxTopicsIsNotAHardCeiling(t *testing.T) {
 	src, err := os.ReadFile("doc.go")
 	if err != nil {
@@ -792,24 +758,17 @@ func TestHub_OwnCursorEmitsNoStreamGap(t *testing.T) {
 	}
 }
 
-// Replay rings are allocated on first PUBLISH, not on subscribe.
-//
-// The reaper evicts only SUBSCRIBER-LESS topics, so the map can hold up to maxTopics
-// subscribed-but-silent topics. /v1/price/stream subscribes one connection to
-// assetAliases(base) x assetAliases(quote), up to 9 topics of which few are ever published to;
-// eager rings would reserve ~20 KiB apiece for those, scaling memory with streams x alias fan-out.
-// BufferedTopicCount must stay at the published count, within the 2 KiB per-topic budget below.
+// Replay rings are allocated on first PUBLISH, not subscribe: the reaper evicts only subscriber-less topics and
+// /v1/price/stream subscribes up to 9 alias topics, few published to. Eager ~20 KiB rings would scale memory with
+// fan-out, so BufferedTopicCount must stay at the published count.
 
 // subscriberOnlyTopics is large enough that a 20 KiB-per-topic ring is
 // unmistakable against measurement noise (~400 MiB eager vs ~7 MiB
 // lazy), and small enough to stay cheap once fixed.
 const subscriberOnlyTopics = 20000
 
-// lazyRingBudgetBytes is the per-subscribed-topic memory budget. A
-// topicState plus its map entry and key is a few hundred bytes; an
-// eagerly-allocated 256-event ring is ~20 KiB. 2 KiB sits an order of
-// magnitude clear of both, so this fails on the defect without being
-// sensitive to allocator noise.
+// lazyRingBudgetBytes is the per-subscribed-topic memory budget: a topicState plus map entry is a few hundred bytes
+// and an eager 256-event ring ~20 KiB, so 2 KiB fails on the defect without allocator noise.
 const lazyRingBudgetBytes = 2048
 
 func TestHub_SubscribedButUnpublishedTopicsAllocateNoRing(t *testing.T) {
@@ -949,10 +908,9 @@ func churnTopics(t *testing.T, hub *streaming.Hub, n int) {
 	}
 }
 
-// TestHub_ReapDropsMintedTopicsButKeepsReplayBuffers pins both halves of the retention policy:
-// client-minted topics never published to are dropped once subscriber-less, while a real topic's
-// ring survives the churn so a reconnecting client still gets its Last-Event-ID replay. Deleting a
-// topic whenever its subscriber count hits 0 bounds the map but fails the replay half.
+// TestHub_ReapDropsMintedTopicsButKeepsReplayBuffers pins both halves of retention: client-minted topics never
+// published to are dropped once subscriber-less, while a real topic's ring survives so a reconnect still replays.
+// Deleting at subscriber count 0 fails the replay half.
 func TestHub_ReapDropsMintedTopicsButKeepsReplayBuffers(t *testing.T) {
 	hub := streaming.NewHub(0)
 
@@ -982,10 +940,8 @@ func TestHub_ReapDropsMintedTopicsButKeepsReplayBuffers(t *testing.T) {
 	}
 }
 
-// TestHub_ReapDropsBufferedTopicPastIdleTTL — once a published topic
-// has been subscriber-less for longer than the idle TTL, its replay
-// buffer is released too. Otherwise a pair that trades once and goes
-// quiet holds its ring for the life of the process.
+// TestHub_ReapDropsBufferedTopicPastIdleTTL pins that a topic subscriber-less past the idle TTL releases its replay
+// buffer, so a pair that trades once and goes quiet does not hold its ring for the process lifetime.
 func TestHub_ReapDropsBufferedTopicPastIdleTTL(t *testing.T) {
 	hub := streaming.NewHub(0)
 	hub.SetTopicIdleTTL(time.Nanosecond)

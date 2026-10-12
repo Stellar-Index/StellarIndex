@@ -143,10 +143,8 @@ func TestValidateTriangulationChain_BadStructure(t *testing.T) {
 	}
 }
 
-// TestIsFXLeg_StructuralPredicate exercises the snap-rule's per-leg
-// classification: only fiat-vs-fiat legs (e.g. USD/EUR) qualify.
-// Crypto-vs-fiat (XLM/USD) and crypto-vs-crypto (XLM/USDT) stay on
-// the cached-VWAP path.
+// TestIsFXLeg_StructuralPredicate pins the snap rule's per-leg classification: only fiat-vs-fiat legs (USD/EUR)
+// qualify; crypto-vs-fiat (XLM/USD) and crypto-vs-crypto (XLM/USDT) stay on the cached-VWAP path.
 func TestIsFXLeg_StructuralPredicate(t *testing.T) {
 	usdEUR := mkPair(t, "fiat", "USD", "fiat", "EUR")
 	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
@@ -247,10 +245,8 @@ func TestTriangulate_FrozenLegDoesNotPublishDerivedPrice(t *testing.T) {
 	}
 }
 
-// TestTriangulate_HealthyLegStillPublishes is the other half of the
-// frozen-leg guard: the freeze check must be scoped to the pairs actually
-// frozen this tick, not a blanket refusal that black-holes every
-// chained pair.
+// TestTriangulate_HealthyLegStillPublishes is the other half of the frozen-leg guard: the freeze check is scoped to
+// the pairs actually frozen this tick, not a blanket refusal that black-holes every chained pair.
 func TestTriangulate_HealthyLegStillPublishes(t *testing.T) {
 	ctx := context.Background()
 	leg1 := mkPair(t, "crypto", "XLM", "crypto", "USDT")
@@ -343,10 +339,9 @@ func TestTriangulate_FrozenLegTargetPublishedDirectlyIsNotLaundered(t *testing.T
 	targetKey := cachekeys.VWAP(target.Base, target.Quote, window).String()
 	cache.Set(ctx, leg2Key, "0.900000000000", time.Minute)
 
-	// leg1: prev = $1.00, this tick single-source prints ~$2.10 — well
-	// past the 2% freeze threshold, so leg1 freezes and contributes no
-	// edge. leg2 is cached and healthy, but with leg1 gone there is no
-	// path from XLM to EUR (CombineRoutes returns ErrNoRoute for target).
+	// leg1: prev = $1.00, this tick single-source prints ~$2.10, past the 2% freeze threshold, so leg1 freezes and
+	// contributes no edge. leg2 is healthy, but with leg1 gone there is no XLM to EUR path (CombineRoutes returns
+	// ErrNoRoute).
 	o.prevVWAPs[leg1.String()+":"+window.String()] = big.NewRat(1, 1)
 	o.store = &mockStore{perPair: map[string][]canonical.Trade{
 		leg1.String(): {
@@ -367,10 +362,8 @@ func TestTriangulate_FrozenLegTargetPublishedDirectlyIsNotLaundered(t *testing.T
 		t.Fatalf("Tick: %v", err)
 	}
 
-	// 1. The outcome is the new, distinct one — not folded into
-	// frozen_leg (which would mean a freeze was inherited) or missing_leg
-	// (which would mean the chains-dry alert fires for a target that is
-	// not dry at all).
+	// 1. The outcome is the new, distinct one: not folded into frozen_leg (an inherited freeze) or missing_leg (which
+	// would fire the chains-dry alert for a target that is not dry).
 	afterDirectServed := testutil.ToFloat64(obs.AggregatorTriangulationsTotal.WithLabelValues(outcomeFrozenLegDirectServed))
 	if afterDirectServed-beforeDirectServed != 1 {
 		t.Errorf("%s counter delta = %v, want 1", outcomeFrozenLegDirectServed, afterDirectServed-beforeDirectServed)
@@ -396,10 +389,8 @@ func TestTriangulate_FrozenLegTargetPublishedDirectlyIsNotLaundered(t *testing.T
 		}
 	}
 
-	// 4. AnomalyFreezeEngagedTotal increments exactly once, for leg1's
-	// own freeze. inheritLegFreeze must not fire a SECOND
-	// increment (same class, since target shares leg1's Base asset) for
-	// a target that was never frozen.
+	// 4. AnomalyFreezeEngagedTotal increments exactly once, for leg1's own freeze. inheritLegFreeze must not fire a
+	// second increment (same class, as target shares leg1's Base asset) for a target that was never frozen.
 	afterEngaged := testutil.ToFloat64(obs.AnomalyFreezeEngagedTotal.WithLabelValues(string(anomaly.ClassStablecoin)))
 	if afterEngaged-beforeEngaged != 1 {
 		t.Errorf("AnomalyFreezeEngagedTotal(%s) delta = %v, want 1 (leg1's own freeze only)",

@@ -41,10 +41,8 @@ func TestDecodeFee_setProtocolFee_realFixture(t *testing.T) {
 }
 
 func TestDecodeFee_claimProtocolFee_realFixture(t *testing.T) {
-	// topic[1] carries the claimed token address on every sampled
-	// on-chain event — the original
-	// fixture captured only topic[0]; the token topic is rebuilt with
-	// the same encoding the lake stores.
+	// topic[1] carries the claimed token address on every sampled on-chain event; the token topic is rebuilt with the
+	// lake's encoding.
 	wantClaimedAsset := "CCNXGPE4AQCSNEBZO3XJDKKDI3CRLYMVS6UWBBTVDLALLWMJEXBORQ2A" // public contract strkey, not a credential
 	e := &events.Event{
 		ContractID: "CCNXGPE4AQCSNEBZO3XJDKKDI3CRLYMVS6UWBBTVDLALLWMJEXBORQ2A",
@@ -92,11 +90,8 @@ func TestMatches_protocolFeePoolGated(t *testing.T) {
 	}
 }
 
-// TestDecodeFee_setProtocolFee_mapPathUnchanged proves the two-shape
-// branch left the Map path intact AND that the Map form is tagged
-// HasOldFee=true (so its per-token old values are persisted, not
-// NULLed). realSetFeeBody / realSetFeeTopic0 are defined in
-// protocol_fee_test.go (same package).
+// TestDecodeFee_setProtocolFee_mapPathUnchanged pins that the Map path is intact and tagged HasOldFee=true, so its
+// per-token old values are persisted rather than NULLed.
 func TestDecodeFee_setProtocolFee_mapPathUnchanged(t *testing.T) {
 	e := &events.Event{
 		ContractID: "CCNXGPE4AQCSNEBZO3XJDKKDI3CRLYMVS6UWBBTVDLALLWMJEXBORQ2A",

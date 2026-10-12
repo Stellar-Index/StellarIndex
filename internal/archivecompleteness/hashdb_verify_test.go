@@ -44,10 +44,9 @@ func TestHashDBWindowVerifier_OK(t *testing.T) {
 	}
 }
 
-// TestHashDBWindowVerifier_DriftDetected is the alert path this package exists to serve: the
-// caller observes a different hash for a ledger hashdb already has a record for (upstream
-// rewrote an already-fetched ledger, or our local copy is corrupted). It must tally as
-// Drifted, record the sequence, and make AnyDrift() report true.
+// TestHashDBWindowVerifier_DriftDetected is the alert path this package serves: a different observed hash for a ledger
+// hashdb already records (upstream rewrote it, or our copy is corrupt) must tally as Drifted, record the sequence, and
+// make AnyDrift() true.
 func TestHashDBWindowVerifier_DriftDetected(t *testing.T) {
 	t.Parallel()
 	db := mkHashDB(t, 0)
@@ -77,10 +76,8 @@ func TestHashDBWindowVerifier_DriftDetected(t *testing.T) {
 	}
 }
 
-// TestHashDBWindowVerifier_DriftDoesNotAbort confirms multiple
-// drifted ledgers in one window all get tallied — an operator
-// investigating a suspected rewrite wants the full picture, not just
-// the first hit.
+// TestHashDBWindowVerifier_DriftDoesNotAbort pins that multiple drifted ledgers in one window are all tallied, giving
+// an operator investigating a suspected rewrite the full picture.
 func TestHashDBWindowVerifier_DriftDoesNotAbort(t *testing.T) {
 	t.Parallel()
 	db := mkHashDB(t, 100)
@@ -107,10 +104,9 @@ func TestHashDBWindowVerifier_DriftDoesNotAbort(t *testing.T) {
 	}
 }
 
-// TestHashDBWindowVerifier_DriftSeqsCapped confirms the reported
-// sequence list truncates at MaxHashDBDriftSeqsReported while Drifted
-// keeps the true total — mirrors CrossAnchorResult's Truncated
-// contract (bounded payload even under a worst-case scenario).
+// TestHashDBWindowVerifier_DriftSeqsCapped pins that the reported sequence list truncates at
+// MaxHashDBDriftSeqsReported while Drifted keeps the true total, mirroring CrossAnchorResult's Truncated contract
+// (bounded payload).
 func TestHashDBWindowVerifier_DriftSeqsCapped(t *testing.T) {
 	t.Parallel()
 	total := MaxHashDBDriftSeqsReported + 10
@@ -156,10 +152,8 @@ func TestHashDBWindowVerifier_Missing(t *testing.T) {
 	}
 }
 
-// TestHashDBWindowVerifier_OutOfRange covers a window whose lower
-// bound reaches further back than hashdb's coverage — e.g. hashdb was
-// created partway through a region's history. Must count as
-// OutOfRange, not error the whole sweep.
+// TestHashDBWindowVerifier_OutOfRange covers a window reaching further back than hashdb's coverage (e.g. hashdb
+// created partway through history): it counts as OutOfRange and does not error the whole sweep.
 func TestHashDBWindowVerifier_OutOfRange(t *testing.T) {
 	t.Parallel()
 	db := mkHashDB(t, 1000)
@@ -174,10 +168,8 @@ func TestHashDBWindowVerifier_OutOfRange(t *testing.T) {
 	}
 }
 
-// TestNewHashDBWindowVerifier_NilDB confirms Observe fails loudly
-// (returns an error) rather than nil-pointer-panicking when
-// misconstructed with a nil DB — defensive, since a nil db would
-// otherwise panic deep inside hashdb.DB.Verify.
+// TestNewHashDBWindowVerifier_NilDB pins that Observe returns an error rather than nil-pointer-panicking when
+// constructed with a nil DB, which would otherwise panic deep inside hashdb.DB.Verify.
 func TestNewHashDBWindowVerifier_NilDB(t *testing.T) {
 	t.Parallel()
 	v := NewHashDBWindowVerifier(nil, 1, 1)
@@ -187,10 +179,8 @@ func TestNewHashDBWindowVerifier_NilDB(t *testing.T) {
 	}
 }
 
-// TestHashDBWindowVerifier_HashdbIOErrorAborts confirms a hashdb I/O failure (as opposed to a
-// hash mismatch) is not folded into Drifted/Missing/OutOfRange. It means "we couldn't even
-// check" and must surface as an error, so the caller does not mistake "the check never ran"
-// for "the check ran clean".
+// TestHashDBWindowVerifier_HashdbIOErrorAborts pins that a hashdb I/O failure (not a hash mismatch) is not folded into
+// Drifted/Missing/OutOfRange: it means the check could not run and must surface as an error, not read as a clean run.
 func TestHashDBWindowVerifier_HashdbIOErrorAborts(t *testing.T) {
 	t.Parallel()
 	db := mkHashDB(t, 0)

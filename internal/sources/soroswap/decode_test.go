@@ -9,13 +9,9 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// Decoder tests using SDK-encoded fixtures. Complements real_fixture_test.go (live mainnet
-// captures) with shapes hard to provoke on mainnet: large negative i128s, missing map fields,
-// wrong top-level SCVal kind, contract-version drift.
-//
-// new_pair events are infrequent on mainnet, so until a real fixture lands in
-// test/fixtures/soroswap/<wasm_hash>/new_pair_*.json the new_pair decoder is covered only by
-// the SDK-encoded fixture below. TODO: refresh from real capture when available.
+// Decoder tests using SDK-encoded fixtures, complementing real_fixture_test.go with shapes hard to provoke on mainnet:
+// large negative i128s, missing map fields, wrong top-level SCVal kind, contract-version drift.
+// new_pair is rare on mainnet, so its decoder is covered only by the SDK-encoded fixture below until a real capture lands.
 
 // ─── SDK-encode helpers for building well-formed fixtures ────────
 
@@ -310,10 +306,8 @@ func TestTopicConstantsMatchEncoderOutput(t *testing.T) {
 		TopicPrefixFactory: PrefixFactory,
 	}
 	for got, src := range cases {
-		// We can't re-import scval.MustEncodeString here without
-		// cycling; instead, the golden test in internal/scval/
-		// covers the encoder itself. This test just verifies the
-		// length + prefix discriminator is String (14 = 0x0E).
+		// The golden test in internal/scval/ covers the encoder itself (importing it here would cycle);
+		// this test only verifies the length + prefix discriminator is String (14 = 0x0E).
 		raw, err := base64.StdEncoding.DecodeString(got)
 		if err != nil {
 			t.Fatalf("decode %q: %v", src, err)

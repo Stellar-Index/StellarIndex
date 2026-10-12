@@ -36,11 +36,8 @@ func withheldFor(t *testing.T, surface string) float64 {
 	return sum
 }
 
-// TestAssetSubstanceVerdict_CountsTheAssetOnce: the listing
-// asks one question per asset — may its USD price be served — by
-// probing XLM, fiat:USD and each declared peg. The withheld counter
-// counted every refused probe, so one withheld row read as three, and
-// the figure moved when an operator declared another peg.
+// TestAssetSubstanceVerdict_CountsTheAssetOnce pins that the listing asks one question per asset (probing XLM,
+// fiat:USD and each declared peg), so the withheld counter must count the asset once, not once per refused probe.
 func TestAssetSubstanceVerdict_CountsTheAssetOnce(t *testing.T) {
 	const surface = "count_once_test"
 	asset := mustAsset(t, "THIN-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V")

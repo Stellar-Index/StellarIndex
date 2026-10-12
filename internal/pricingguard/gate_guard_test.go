@@ -43,15 +43,9 @@ var closedVWAPSeamExempt = map[string]string{
 		"GATED lookupUSDPrice succeeds first",
 }
 
-// TestEveryBinaryAsksTheGate is the cross-binary seam guard: each binary's own guard parses
-// only its main.go, so none sees a publish site in another binary or file. This walks the
-// non-test sources of every cmd/* binary and fails when
-//
-//   - any function reads a closed VWAP bucket (a *ClosedVWAP* call on any
-//     receiver) without asking a Gate, directly or through a package-level
-//     function that does; or
-//   - any call names a gate HALF's decision method, which folds the two
-//     halves outside Gate.
+// TestEveryBinaryAsksTheGate is the cross-binary seam guard: it walks the non-test sources of every cmd/* binary
+// and fails when a function reads a closed VWAP bucket (*ClosedVWAP* call) without asking a Gate, or a call names
+// a gate half's decision method, which folds the halves outside Gate.
 func TestEveryBinaryAsksTheGate(t *testing.T) {
 	binaries, err := filepath.Glob(filepath.Join("..", "..", "cmd", "*"))
 	if err != nil {
@@ -181,10 +175,9 @@ func readsClosedVWAPAnyReceiver(body *ast.BlockStmt) bool {
 // under across the binaries.
 var gateHolderNames = map[string]bool{"substance": true, "Substance": true, "scam": true, "Scam": true}
 
-// halfReferences returns every gate-half selector in body: each call on any receiver, and a
-// method value taken from a gate holder or a local alias of one (g := r.scam;
-// f := g.WithheldPair), which is a deferred call. Non-call references need a holder because
-// the half names are generic (a rate-limit result carries a plain Allowed field).
+// halfReferences returns every gate-half selector in body: calls on any receiver, and method values taken from a
+// gate holder or a local alias of one (a deferred call). Non-call references need a holder because the half names
+// are generic.
 func halfReferences(body *ast.BlockStmt) []*ast.SelectorExpr {
 	calls := map[*ast.SelectorExpr]bool{}
 	ast.Inspect(body, func(n ast.Node) bool {

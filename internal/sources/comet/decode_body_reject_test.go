@@ -109,10 +109,8 @@ func TestSdkDecodeSwapBody_missingFields(t *testing.T) {
 }
 
 func TestSdkDecodeSwapBody_wrongTypeRejected(t *testing.T) {
-	// caller present but as a Symbol, not an Address — the
-	// AsAddressStrkey check must reject; otherwise downstream
-	// strkey logic would emit a malformed string and break trade
-	// attribution.
+	// caller present as a Symbol, not an Address: AsAddressStrkey must reject it, or downstream strkey logic would
+	// emit a malformed string and break trade attribution.
 	tokenIn := contractStrkeyFromSeed(t, 0x20)
 	tokenOut := contractStrkeyFromSeed(t, 0x30)
 	tokenInSv := addressScValFromStrkey(t, tokenIn)

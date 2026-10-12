@@ -12,10 +12,8 @@ import (
 	"testing"
 )
 
-// TestFilteringForwarder exercises the line-filter directly, without
-// touching real fd 2. The forwarder reads from any io.Reader and
-// writes filtered lines to its supplied *os.File; an os.Pipe lets
-// us assert on what comes out.
+// TestFilteringForwarder exercises the line-filter directly, without real fd 2: an os.Pipe stands in for the output
+// file.
 func TestFilteringForwarder(t *testing.T) {
 	cases := []struct {
 		name    string

@@ -53,11 +53,9 @@ func (failingEvictedKeys) EvictedLedgerKeys() ([]xdr.LedgerKey, error) {
 	return nil, errors.New("unsupported LedgerCloseMeta version")
 }
 
-// TestWalkEvictedKeys_UnreadableListIsCountedAndLogged pins that a failed
-// evicted-key read is never silent: the ledger still lands, but the skip is
-// counted for the alert and logged with the ledger a replay has to cover.
-// Each dropped eviction would otherwise leave a served balance above the
-// truth with nothing distinguishing it from a ledger that evicted nothing.
+// TestWalkEvictedKeys_UnreadableListIsCountedAndLogged pins that a failed evicted-key read is never silent: the
+// ledger still lands, but the skip is counted for the alert and logged with the ledger a replay must cover, since a
+// dropped eviction leaves a served balance above the truth.
 func TestWalkEvictedKeys_UnreadableListIsCountedAndLogged(t *testing.T) {
 	var buf bytes.Buffer
 	d := New()

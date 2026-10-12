@@ -22,15 +22,11 @@ import (
 	"testing"
 )
 
-// notProjectedEvents is the conscious-decision register for
-// consumer.Event types defined in PROJECTED source packages that are
-// deliberately NOT projected. Keep reasons — every entry is a design
-// decision, not a default.
+// notProjectedEvents is the register of consumer.Event types in PROJECTED source packages that are deliberately NOT
+// projected. Every entry is a design decision with a reason.
 var notProjectedEvents = map[string]string{
-	// (none today — every event type a projected source package
-	// defines is projector-owned. If you add a log-only or
-	// dispatcher-owned event type to a projected source package,
-	// register it here with the ADR/why.)
+	// None today: every event type a projected source package defines is projector-owned. Register a log-only or
+	// dispatcher-owned type here with its ADR and reason.
 }
 
 // notSunkEvents registers consumer.Event types that deliberately have NO HandleEvent arm (another writer owns them), with the reason.
@@ -161,10 +157,8 @@ func caseTypesCalling(t *testing.T, fn *ast.FuncDecl, callee string) map[string]
 	return out
 }
 
-// bodyCallsPersist reports whether stmts (a case clause's body)
-// contains, anywhere in its subtree, a call to a `persist*` helper or
-// a `store.<Method>(...)` call — the two shapes every real HandleEvent
-// arm uses (see sink.go's handleEvent).
+// bodyCallsPersist reports whether stmts (a case clause's body) contain, anywhere, a call to a `persist*` helper or a
+// `store.<Method>(...)` call, the two shapes every real HandleEvent arm uses (see sink.go's handleEvent).
 func bodyCallsPersist(stmts []ast.Stmt) bool {
 	found := false
 	for _, stmt := range stmts {
@@ -241,10 +235,8 @@ func TestLockstep_ProjectedEventsHavePersistArms(t *testing.T) {
 	fset := token.NewFileSet()
 	sink := parseFile(t, fset, "sink.go")
 
-	// `handleEvent` (unexported) holds the dispatch type-switch;
-	// HandleEvent is the exported one-line wrapper over it (split
-	// out so an infra RETRY can suppress the once-per-event source
-	// counters). The guard walks the switch wherever it lives.
+	// `handleEvent` (unexported) holds the dispatch type-switch; HandleEvent is its exported wrapper. The guard walks the
+	// switch wherever it lives.
 	handleFn := funcDecl(t, sink, "handleEvent")
 	handle := caseTypeNames(t, handleFn)
 	persists := caseBodyPersists(t, handleFn)

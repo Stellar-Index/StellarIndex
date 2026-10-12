@@ -15,10 +15,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/stellarrpc"
 )
 
-// White-box half of the seed-retry regression. seedSleep is replaced with a recorder so the
-// exact backoff schedule is asserted instantly. Every case still uses a REAL stellarrpc.Client:
-// classification reads the client's typed errors, so only it proves which response shape
-// produces which error.
+// White-box half of the seed-retry regression: seedSleep is replaced with a recorder so the backoff schedule is asserted instantly.
+// Every case still uses a REAL stellarrpc.Client, since classification reads its typed errors.
 
 // recordSeedSleeps replaces seedSleep with a recorder for the test's lifetime.
 // onWait, when non-nil, runs before each recorded wait returns (used to cancel
@@ -120,10 +118,9 @@ func TestSeedFromFactoryRPC_SpentBudgetFailsClosedWithTheCause(t *testing.T) {
 	}
 }
 
-// Every shape a rate limiter, proxy or unwell node answers with must cost one re-issue, not the
-// nightly pass. That includes an empty body or an error envelope, where the client must still
-// surface the HTTP status. Each case is ONE bad first response to all_pairs_length on an
-// otherwise clean sweep.
+// Every shape a rate limiter, proxy or unwell node answers with must cost one re-issue, not the nightly pass, including
+// an empty body or error envelope where the client must still surface the HTTP status. Each case is ONE bad first
+// response to all_pairs_length on an otherwise clean sweep.
 func TestSeedFromFactoryRPC_EveryTransientResponseShapeIsRetried(t *testing.T) {
 	factory := makeContractStrkey(t, 0x01)
 	pair, tok0, tok1 := makeContractStrkey(t, 0x02), makeContractStrkey(t, 0x03), makeContractStrkey(t, 0x04)
@@ -361,12 +358,9 @@ func TestSeedRetryBudget_StatedWorstCase(t *testing.T) {
 	}
 }
 
-// compute-completeness and verify-reconciliation fail CLOSED on a seed error, and the seed
-// sweeps a PUBLIC third-party RPC with 1+3N sequential calls, so without retry one transient
-// failure aborts the nightly pass for every source. This is the black-box half: it uses only
-// the exported seed and a real stellarrpc.Client, so it compiles against a no-retry seed and
-// fails on behaviour. The schedule/budget/classification half is in
-// factory_seed_retry_internal_test.go.
+// compute-completeness and verify-reconciliation fail CLOSED on a seed error, and the seed makes 1+3N sequential calls
+// to a PUBLIC RPC, so without retry one transient failure aborts the nightly pass for every source. This black-box half
+// uses only the exported seed; the schedule and classification half is in factory_seed_retry_internal_test.go.
 
 // seedFault is one scripted failure the fake RPC serves INSTEAD of an answer.
 type seedFault struct {
@@ -380,10 +374,8 @@ type seedFault struct {
 	drop    bool   // hijack the connection and close it mid-request
 }
 
-// flakySorobanRPC answers the sweep's logical calls in order from `answers` (base64 SCVals).
-// Before logical call i it serves every fault in faults[i], one per HTTP request; a fault
-// marked in `stuck` is served on every request and the call never succeeds. hits counts HTTP
-// requests per logical call.
+// flakySorobanRPC answers the sweep's logical calls in order from `answers` (base64 SCVals), serving every fault in faults[i]
+// (one per HTTP request) before call i; a fault in `stuck` is served on every request. hits counts HTTP requests per logical call.
 type flakySorobanRPC struct {
 	mu      sync.Mutex
 	answers []string

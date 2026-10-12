@@ -12,10 +12,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/rwa"
 )
 
-// referenceISIN is an independent ISO 6166 check: the body is expanded
-// to a decimal STRING (letters as their two-digit ordinal) and the
-// textbook Luhn runs over that string with the check digit included, so
-// a valid ISIN sums to 0 mod 10. It shares no code shape with [rwa.IsISIN].
+// referenceISIN is an independent ISO 6166 check: it expands the body to a decimal string (letters as two-digit ordinals)
+// and runs textbook Luhn over it including the check digit, sharing no code shape with [rwa.IsISIN].
 func referenceISIN(s string) bool {
 	s = strings.TrimSpace(s)
 	if len(s) != 12 {
@@ -99,10 +97,8 @@ func FuzzIsISIN(f *testing.F) {
 	})
 }
 
-// FuzzQualify pins the structural properties of the classic verdict that
-// no fixture enumerates: the pre-filter is never narrower than the rule,
-// a scam tag or a missing SEP-1 binding never admits, and an admitted row
-// carries exactly the basis and class its inputs justify.
+// FuzzQualify pins structural properties of the classic verdict: the pre-filter is never narrower than the rule,
+// a scam tag or missing SEP-1 binding never admits, and an admitted row carries exactly the basis and class its inputs justify.
 func FuzzQualify(f *testing.F) {
 	const issuer = "GD5J73EKK5IYL5XS3FBTHHX7CZIYRP7QXDL57XFWGC2WVYWT326OBXRP"
 	f.Add("gBENJI", issuer, true, "other", "LU2900381208", "issuer", "", false)

@@ -9,11 +9,8 @@ import (
 	"time"
 )
 
-// TestWriteStream_EmitsRetryInPrelude pins the SSE reconnection-delay
-// hint: writeStream must emit `retry: 5000` before the `:connected`
-// prelude comment and before the first real event, so a client that
-// disconnects immediately after connecting still learned the
-// server's requested reconnect backoff.
+// TestWriteStream_EmitsRetryInPrelude pins that writeStream emits `retry: 5000` before the `:connected` prelude and
+// the first event, so a client that disconnects at once still learns the reconnect backoff.
 func TestWriteStream_EmitsRetryInPrelude(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -34,19 +31,15 @@ func TestWriteStream_EmitsRetryInPrelude(t *testing.T) {
 	}
 }
 
-// TestGenerator_NeverDuplicates pins the contract "never returns the same ID twice". A counter
-// masked to 16 bits would wrap at 65 536 IDs/ms and silently re-issue IDs under a burst. 70 000
-// calls forced into one millisecond must stay unique because the generator advances the synthetic
-// millis instead of wrapping.
+// TestGenerator_NeverDuplicates pins that an ID is never returned twice. A counter masked to 16 bits would wrap at 65
+// 536 IDs/ms and re-issue IDs, so 70 000 calls in one millisecond must advance the synthetic millis instead.
 func TestGenerator_NeverDuplicates(t *testing.T) {
 	t.Parallel()
 
 	const N = 70_000
 	g := &Generator{}
-	// Force every CAS into the "same-millis" branch by pre-seeding
-	// state with a future millis — wall-clock now() will be smaller
-	// for the lifetime of this test, so every Next() falls into the
-	// counter-bump or counter-overflow path.
+	// Pre-seed a future millis so wall-clock now() stays smaller and every Next() takes the counter-bump or overflow
+	// path.
 	const futureMs = uint64(1<<47 - 1) // far enough that time.Now never beats it
 	g.state.Store(futureMs << 16)
 
@@ -60,11 +53,8 @@ func TestGenerator_NeverDuplicates(t *testing.T) {
 	}
 }
 
-// TestGenerator_StrictlyIncreasing — the wire contract is
-// "lexicographic sort = chronological". A regression that
-// emitted an ID lower than a previous one would break
-// snapshotAfter's `id > lastEventID` filter and the client's
-// Last-Event-ID resume logic.
+// TestGenerator_StrictlyIncreasing pins the wire contract that lexicographic order is chronological order; a lower ID
+// would break snapshotAfter's `id > lastEventID` filter and Last-Event-ID resume.
 func TestGenerator_StrictlyIncreasing(t *testing.T) {
 	t.Parallel()
 

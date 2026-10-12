@@ -13,11 +13,9 @@ import (
 	"testing"
 )
 
-// claimAtomVariantSwitchSites are the only non-test files allowed to name a
-// ClaimAtom discriminant. Everything else destructures an atom through
-// internal/sdexclaim, so a new variant is taught to one place and the
-// census, the lake counter and the classic-movements path-payment leg
-// cannot disagree about which atoms they understand.
+// claimAtomVariantSwitchSites are the only non-test files allowed to name a ClaimAtom discriminant; everything else
+// goes through internal/sdexclaim, so the census, lake counter and path-payment leg cannot disagree about which
+// atoms they understand.
 var claimAtomVariantSwitchSites = map[string]string{
 	"internal/sdexclaim/sdexclaim.go": "the canonical destructuring (parts)",
 	"internal/sources/sdex/decode.go": "the trade decoder, which needs each variant's maker identity " +

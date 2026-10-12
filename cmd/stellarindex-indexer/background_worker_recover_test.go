@@ -6,26 +6,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker/guardscan"
 )
 
-// TestBackgroundWorkersRecover is a guard-coverage test: every detached background goroutine
-// must either register panic recovery or be a documented, content-checked CRASH site.
-//
-// An unrecovered panic in ANY goroutine terminates the whole process, so an unguarded flusher,
-// verifier, watcher or tagger stops ingestion for the network. Most carry `defer close(done)`,
-// so shutdown would read a panicked worker as cleanly finished.
-//
-// The guard is deliberately NOT uniform. Recovering these two would leave a process that looks
-// healthy while persisting nothing, which is worse than exiting (reasons live in main.go):
-//
-//   - the SINK (pipeline.PersistEvents): the writes happen in child goroutines recover() cannot
-//     reach, and if the frame did unwind nothing would read `events` again while /metrics kept
-//     serving a frozen cursor.
-//   - the METRICS LISTENER (ListenAndServe): net/http already isolates per-request panics, so a
-//     panic here is an accept-loop fault and the guard's counter is read over the dead endpoint.
-//
-// The ledgerstream PRODUCER is checked separately below: it recovers only to convert the panic
-// into the existing fatal-error path so the sink drain runs first.
-//
-// Deleting any one `defer worker.Recover(...)` fails this test naming the goroutine's line.
+// TestBackgroundWorkersRecover is a guard-coverage test: every detached background goroutine must register panic
+// recovery or be a documented, content-checked CRASH site (the sink and metrics listener, where recovering would leave a
+// healthy-looking process persisting nothing). Deleting a `defer worker.Recover(...)` fails it.
 func TestBackgroundWorkersRecover(t *testing.T) {
 	sites, err := guardscan.ScanFile("main.go", guardscan.Config{
 		Guards: []string{"worker.Recover", "worker.Report"},

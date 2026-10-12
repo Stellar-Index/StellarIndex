@@ -26,10 +26,8 @@ func TestAnchorClass_ClosedVocabulary(t *testing.T) {
 	}
 }
 
-// TestAnchorClass_ExcludesFiat pins the one exclusion a reader is most
-// likely to want to undo. A fiat-anchored token is a stablecoin, a
-// different instrument counted on its own surface; folding it in would
-// silently multiply the headline figure.
+// TestAnchorClass_ExcludesFiat pins the exclusion a reader is most likely to undo: a fiat-anchored token is a stablecoin
+// counted on its own surface, and folding it in would silently multiply the headline figure.
 func TestAnchorClass_ExcludesFiat(t *testing.T) {
 	if AnchorClass("fiat") != "" {
 		t.Error("fiat normalised to a real-world class — stablecoins are not RWAs on this surface")
@@ -39,10 +37,8 @@ func TestAnchorClass_ExcludesFiat(t *testing.T) {
 	}
 }
 
-// TestScamFlagged_ReadsTheOneVocabulary — the scam vocabulary is not
-// restated here; it is read from the single list the price-withholding
-// gate and the listing rank expression also read. A tag that withholds
-// a price must also keep an issuer out of this set.
+// TestScamFlagged_ReadsTheOneVocabulary pins that the scam vocabulary is read from the single list shared with the price-withholding gate
+// and the listing rank expression, so a tag that withholds a price also keeps an issuer out of this set.
 func TestScamFlagged_ReadsTheOneVocabulary(t *testing.T) {
 	for _, tag := range timescale.DirectoryScamFlagTags {
 		if !ScamFlagged([]string{tag}) {
@@ -150,13 +146,9 @@ func TestQualify_OracleBasisNeverAdmitsOnCodeAlone(t *testing.T) {
 	}
 }
 
-// TestCouldQualify_MatchesQualifyOnTheAssetSideInputs — the storage pre-filter must never drop
-// an entry [Qualify] would have admitted; a pre-filter narrower than its rule is a silent
-// membership change.
-//
-// The matrix spans EVERY asset-side input a requirement-4 arm reads: code (oracle arm), anchor
-// type (class arm) and anchor asset (ISIN arm). Omitting a dimension lets the guard pass while
-// the pre-filter drops the very assets that arm exists for.
+// TestCouldQualify_MatchesQualifyOnTheAssetSideInputs pins that the storage pre-filter never drops an entry [Qualify] would admit,
+// since a narrower pre-filter is a silent membership change. The matrix spans every asset-side input a requirement-4 arm reads:
+// code (oracle arm), anchor type (class arm) and anchor asset (ISIN arm).
 func TestCouldQualify_MatchesQualifyOnTheAssetSideInputs(t *testing.T) {
 	codes := []string{"USTRY", "BENJI", "XAU", "XAUm", "MEME", "USDC", ""}
 	types := []string{"bond", "stock", "commodity", "realestate", "fiat", "crypto", "nft", "other", ""}
@@ -185,10 +177,8 @@ func TestCouldQualify_MatchesQualifyOnTheAssetSideInputs(t *testing.T) {
 	}
 }
 
-// TestCouldQualify_KeepsAnISINDeclaredEntryWithNoClass pins the exact
-// shape that was dropped: a code no oracle prices, type `other`, and a
-// well-formed ISIN in anchor_asset. The matrix above covers it too;
-// this names it so a future narrowing fails on a line that says why.
+// TestCouldQualify_KeepsAnISINDeclaredEntryWithNoClass names a shape the pre-filter once dropped: a code no oracle prices,
+// type `other`, and a well-formed ISIN in anchor_asset.
 func TestCouldQualify_KeepsAnISINDeclaredEntryWithNoClass(t *testing.T) {
 	for _, c := range []struct{ code, isin string }{
 		{"gBENJI", "LU2900381208"},

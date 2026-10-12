@@ -26,10 +26,8 @@ import (
 
 // ─── chainlinkFeedSetFromConfig ──────────────────────────────────
 
-// TestChainlinkFeedSetFromConfig_RejectsAMalformedPairKey pins that a non-canonical pair key in
-// the operator TOML aborts startup, naming the key. Skipping it would leave the configured feed
-// silently absent from the divergence cross-check, and a missing reference reads like an agreeing
-// one.
+// TestChainlinkFeedSetFromConfig_RejectsAMalformedPairKey pins that a non-canonical pair key aborts startup naming the
+// key; skipping it would leave the feed silently absent from the divergence cross-check, which reads like agreement.
 func TestChainlinkFeedSetFromConfig_RejectsAMalformedPairKey(t *testing.T) {
 	t.Parallel()
 
@@ -68,14 +66,9 @@ func TestChainlinkFeedSetFromConfig_RejectsAMalformedPairKey(t *testing.T) {
 	}
 }
 
-// TestChainlinkFeedSetFromConfig_ZeroDecimalsStaysAbsentForOnChainResolution is the scaling trap.
-// `decimals` is a uint8, so an omitted TOML value is 0, and taking that literally would serve a
-// price 10^8 times too large. BuildFeedSet
-// must carry the 0 through verbatim rather than substitute DefaultDecimals (8): the poller
-// adopts the feed's on-chain `decimals()` for an omitted value and verifies a set one, and
-// `project` refuses a literal 0 as ErrDecimalsUnresolved. A substituted 8 would look
-// operator-asserted and make the resolver refuse an 18-decimal feed the operator never
-// mis-configured.
+// TestChainlinkFeedSetFromConfig_ZeroDecimalsStaysAbsentForOnChainResolution is the scaling trap: an omitted `decimals`
+// is 0, and BuildFeedSet must carry that 0 through rather than substitute DefaultDecimals (8), since the poller adopts
+// the on-chain decimals() for an omitted value and a substituted 8 would wrongly refuse an 18-decimal feed.
 func TestChainlinkFeedSetFromConfig_ZeroDecimalsStaysAbsentForOnChainResolution(t *testing.T) {
 	t.Parallel()
 
@@ -145,13 +138,9 @@ func TestChainlinkFeedSetFromConfig_CarriesMaxAgeThrough(t *testing.T) {
 	}
 }
 
-// TestChainlinkFeedSetFromConfig_EmptyMapYieldsTheBuiltInDefaults pins a counter-intuitive
-// behaviour. startExternalConnectors guards this helper with
-//
-//	if len(pairs) == 0 { logger.Warn("…feed_map is empty after parse — skipping") }
-//
-// which suggests an empty feed_map disables the source, but BuildFeedSet substitutes
-// DefaultFeedMap() for an empty input, so the guard is unreachable for an empty map.
+// TestChainlinkFeedSetFromConfig_EmptyMapYieldsTheBuiltInDefaults pins a counter-intuitive behaviour: BuildFeedSet
+// substitutes DefaultFeedMap() for an empty input, so startExternalConnectors' `len(pairs) == 0` skip guard is
+// unreachable.
 func TestChainlinkFeedSetFromConfig_EmptyMapYieldsTheBuiltInDefaults(t *testing.T) {
 	t.Parallel()
 
@@ -174,10 +163,8 @@ func TestChainlinkFeedSetFromConfig_EmptyMapYieldsTheBuiltInDefaults(t *testing.
 
 // ─── setSourceEnabled ────────────────────────────────────────────
 
-// TestSetSourceEnabled_LowercasesAndSkipsEmpty pins the label normalisations. A mixed-case name
-// would split one source into two series, so `sum by (source)` double-counts and an alert keyed
-// on the lowercase spelling never fires for the other. An empty label value is a meaningless
-// series no query selects.
+// TestSetSourceEnabled_LowercasesAndSkipsEmpty pins label normalisation: a mixed-case name would split one source into
+// two series (double-counting in `sum by (source)`), and an empty label value is a meaningless series.
 func TestSetSourceEnabled_LowercasesAndSkipsEmpty(t *testing.T) {
 	obs.SourceEnabled.Reset()
 
@@ -202,10 +189,8 @@ func TestSetSourceEnabled_LowercasesAndSkipsEmpty(t *testing.T) {
 	}
 }
 
-// TestSetSourceEnabled_UnknownSourceIsRecordedNotRejected pins that a name missing from
-// external.Registry is recorded, not validated: the gauge reports what the operator configured,
-// and dropping a typo would hide why their source is absent. Label cardinality is bounded by a
-// fixed operator list read once at startup, not by request input.
+// TestSetSourceEnabled_UnknownSourceIsRecordedNotRejected pins that a name missing from external.Registry is recorded,
+// not validated: the gauge reports what the operator configured, and cardinality is bounded by a fixed startup list.
 func TestSetSourceEnabled_UnknownSourceIsRecordedNotRejected(t *testing.T) {
 	obs.SourceEnabled.Reset()
 
@@ -223,10 +208,8 @@ func TestSetSourceEnabled_UnknownSourceIsRecordedNotRejected(t *testing.T) {
 	}
 }
 
-// TestSetSourceEnabled_FalseSetsZeroNotAbsent — "disabled" has to be an
-// explicit 0. Leaving the series absent instead makes
-// `source_enabled == 0` match nothing, so a disabled source and an
-// unconfigured one become indistinguishable in an alert.
+// TestSetSourceEnabled_FalseSetsZeroNotAbsent: "disabled" must be an explicit 0, or `source_enabled == 0` matches
+// nothing and a disabled source is indistinguishable from an unconfigured one.
 func TestSetSourceEnabled_FalseSetsZeroNotAbsent(t *testing.T) {
 	obs.SourceEnabled.Reset()
 
@@ -240,10 +223,8 @@ func TestSetSourceEnabled_FalseSetsZeroNotAbsent(t *testing.T) {
 
 // ─── startExternalConnectors ─────────────────────────────────────
 
-// TestStartExternalConnectors_NothingEnabledStartsNothing pins that the all-disabled path
-// returns a no-op wait func and an empty source list without touching external.Run (which spawns
-// network goroutines). A nil wait func would panic run()'s shutdown, which calls it
-// unconditionally.
+// TestStartExternalConnectors_NothingEnabledStartsNothing pins that the all-disabled path returns a no-op wait func and
+// an empty source list without touching external.Run; a nil wait func would panic run()'s unconditional shutdown call.
 func TestStartExternalConnectors_NothingEnabledStartsNothing(t *testing.T) {
 	t.Parallel()
 
@@ -267,12 +248,9 @@ func TestStartExternalConnectors_NothingEnabledStartsNothing(t *testing.T) {
 	wait() // must not block or panic
 }
 
-// TestStartExternalConnectors_EveryEnabledNameIsRegistered is the registry-gating assertion.
-// The returned names are the `Source` string stamped on every emitted trade, which the aggregator
-// resolves through external.Lookup at VWAP time. An unregistered name yields
-// Metadata{IncludeInVWAP: false, AmountDecimals: 0}; external scaling is not uniform (CEX 10^8,
-// FX 10^6), so amounts would be read at 10^0, wrong by eight orders of magnitude. A connector
-// without a Registry entry is a scaling defect, not just a missing dashboard row.
+// TestStartExternalConnectors_EveryEnabledNameIsRegistered is the registry-gating assertion: returned names are the
+// trade `Source`, resolved via external.Lookup at VWAP time. An unregistered name yields AmountDecimals 0, but scaling
+// is not uniform (CEX 10^8, FX 10^6), so amounts would be wrong by eight orders of magnitude.
 func TestStartExternalConnectors_EveryEnabledNameIsRegistered(t *testing.T) {
 	t.Parallel()
 
@@ -346,10 +324,8 @@ type discardWriter struct{}
 
 func (discardWriter) Write(p []byte) (int, error) { return len(p), nil }
 
-// mustCatalogue loads the embedded verified-currency catalogue — the
-// same one run() passes. The aggregator pair set and the CoinGecko
-// ticker map are both derived from it, so a nil catalogue would exercise
-// a fallback path production never takes.
+// mustCatalogue loads the embedded verified-currency catalogue that run() passes; a nil one would exercise a fallback
+// path production never takes.
 func mustCatalogue(t *testing.T) *currency.Catalogue {
 	t.Helper()
 	c, err := currency.LoadEmbedded()

@@ -26,11 +26,9 @@ var aquariusFixtureFeeBps = map[string]int64{
 	"CDE57N6XTUPBKYYDGQMXX7E7SLNOLFY3JEQB4MULSMR2AKTSAENGX2HC": 5,
 }
 
-// TestTradeAmounts_feeIsGrossOfSoldAmount pins that a decoded trade's BaseAmount (sold_amount)
-// is the taker's gross input, not net of the fee. Every real fixture satisfies
-// fee == ceil(sold_amount * fee_bps / 10000), consistent only if sold_amount is gross. The net
-// hypothesis (fee = gross * fee_bps / (10000 - fee_bps)) is checked too and must NOT match; if
-// it ever does, reopen the gross/net call rather than silently re-deriving it.
+// TestTradeAmounts_feeIsGrossOfSoldAmount pins that BaseAmount (sold_amount) is the taker's gross input: every real
+// fixture satisfies fee == ceil(sold_amount * fee_bps / 10000). The net formula must NOT match; if it does, reopen the
+// gross/net call.
 func TestTradeAmounts_feeIsGrossOfSoldAmount(t *testing.T) {
 	root := filepath.Join("..", "..", "..", "test", "fixtures", "aquarius")
 	dirs, err := os.ReadDir(root)
@@ -123,10 +121,8 @@ func checkAquariusFeeFixture(t *testing.T, path string, checked *int) {
 	}
 }
 
-// Decoder tests using SDK-encoded fixtures. Complement
-// real_fixture_test.go (mainnet captures): this file covers shapes
-// that are hard to produce on mainnet — large negative i128s,
-// wrong body arity, topic slot with wrong SCVal type.
+// Decoder tests on SDK-encoded fixtures for shapes hard to find on mainnet: large negative i128s, wrong body arity,
+// wrong topic-slot SCVal type. real_fixture_test.go covers mainnet captures.
 
 // ─── SDK helpers ────────────────────────────────────────────────
 
@@ -360,10 +356,8 @@ func TestRealDecoder_wrongTopicType(t *testing.T) {
 // ─── Topic-constant drift guard ──────────────────────────────────
 
 func TestTopicSymbolTradeMatchesEncoderOutput(t *testing.T) {
-	// Confirm the init-time TopicSymbolTrade equals what
-	// scval.MustEncodeSymbol("trade") produces. The byte-level
-	// golden is already guarded in internal/scval/scval_test.go;
-	// this test catches a regression in the init wiring.
+	// Pins that the init-time TopicSymbolTrade equals scval.MustEncodeSymbol("trade"); the byte golden lives in
+	// scval_test.go.
 	if got := encodeSymbol(t, EventTrade); got != TopicSymbolTrade {
 		t.Errorf("TopicSymbolTrade drift:\n got  %s\n want %s", TopicSymbolTrade, got)
 	}

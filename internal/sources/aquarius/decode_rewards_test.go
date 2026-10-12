@@ -121,10 +121,8 @@ func TestDecodeSetRewardsConfig_realFixture(t *testing.T) {
 // ─── position_update ────────────────────────────────────────────
 
 func TestDecodePositionUpdate_realFixture(t *testing.T) {
-	// Same pool + tx as TestDecodePoolState_realFixture — the i128
-	// delta here (2372478774429) matches pool_state's "value" field
-	// exactly, and the checkpoint (88499) sits between range_from
-	// (86260) and range_to (90340).
+	// Same pool and tx as TestDecodePoolState_realFixture: the i128 delta matches pool_state's value, and the
+	// checkpoint sits between range_from and range_to.
 	e := &events.Event{
 		ContractID: "CD3INVPZI3UBNYU3FEMTIGUJCYQVVMD73XSAOL7FFCYOUQ34DSFUZUZT",
 		Ledger:     62006854,
@@ -157,10 +155,7 @@ func TestDecodePositionUpdate_realFixture(t *testing.T) {
 	}
 }
 
-// TestDecodePositionUpdate_negativeDelta proves the signed i128 delta
-// round-trips through a NEGATIVE value (a withdrawal — real bytes
-// captured from the SAME pool + range, a later ledger where the
-// amount is negated: 62007126).
+// TestDecodePositionUpdate_negativeDelta pins that the signed i128 delta round-trips a negative value (a withdrawal).
 func TestDecodePositionUpdate_negativeDelta(t *testing.T) {
 	e := &events.Event{
 		ContractID: "CD3INVPZI3UBNYU3FEMTIGUJCYQVVMD73XSAOL7FFCYOUQ34DSFUZUZT",
@@ -397,10 +392,7 @@ func TestDecodeSetRewardsState_realFixture(t *testing.T) {
 	}
 }
 
-// TestDecodeSetRewardsState_falseRealFixture proves the `false` value
-// round-trips too (real bytes: pool
-// CBHWO677JA72CGF2SPTWISMJP7PQTT7NQBIO6W5YQ62UJBF55IN34F26, ledger
-// 61319440).
+// TestDecodeSetRewardsState_falseRealFixture pins that a real `false` value round-trips.
 func TestDecodeSetRewardsState_falseRealFixture(t *testing.T) {
 	e := &events.Event{
 		ContractID: "CBHWO677JA72CGF2SPTWISMJP7PQTT7NQBIO6W5YQ62UJBF55IN34F26",
@@ -446,10 +438,8 @@ func TestDecodeRewardsGaugeAdd_realFixture(t *testing.T) {
 // ─── config_rewards (router-side) ───────────────────────────────
 
 func TestDecodeConfigRewards_realFixture(t *testing.T) {
-	// Router CBQDHNBF… (MainnetRouter), ledger 59002073, SAME tx as
-	// TestDecodeSetRewardsConfig_realFixture — amount + expires_at
-	// match exactly (7428124 / 1758341413), confirming the pool ↔
-	// router field correlation.
+	// Same tx as TestDecodeSetRewardsConfig_realFixture: amount and expires_at match exactly, confirming the
+	// pool-to-router field correlation.
 	e := &events.Event{
 		ContractID: MainnetRouter,
 		Ledger:     59002073,

@@ -108,10 +108,8 @@ func TestGoldenDecodeSwapFields_RealLakeBytes(t *testing.T) {
 	}
 }
 
-// TestGoldenDecodeSwapFields_SqrtPriceKeepsFullWidth guards the one field
-// that does not fit a narrower path. sqrt_price_x96 is a U256 Q64.96
-// value; decoding it as an i128 low word or a float would truncate it
-// silently.
+// TestGoldenDecodeSwapFields_SqrtPriceKeepsFullWidth guards the field that fits no narrower path: sqrt_price_x96 is a
+// U256 Q64.96 value, and decoding it as an i128 low word or a float would truncate it silently.
 func TestGoldenDecodeSwapFields_SqrtPriceKeepsFullWidth(t *testing.T) {
 	got, err := sdkDecodeSwapFields(goldenSwapSellToken0)
 	if err != nil {
@@ -172,10 +170,8 @@ func TestGoldenDecodePoolCreated_AgreesWithCuratedTable(t *testing.T) {
 	}
 }
 
-// TestDecodeSwap_DirectionAndExactAmounts is the money test: a decoded
-// swap becomes the trade it should, with the base leg the token the trader
-// SOLD and the quote leg the magnitude of what they BOUGHT, both exact and
-// both identified by contract, never by code.
+// TestDecodeSwap_DirectionAndExactAmounts is the money test: the base leg is the token the trader SOLD and the quote leg
+// the magnitude of what they BOUGHT, both exact and identified by contract, never by code.
 func TestDecodeSwap_DirectionAndExactAmounts(t *testing.T) {
 	tok0 := mustAsset(t, tokenXLM)
 	tok1 := mustAsset(t, tokenUSDC)
@@ -405,10 +401,8 @@ func i128ScVal(t *testing.T, n *big.Int) xdr.ScVal {
 	return xdr.ScVal{Type: xdr.ScValTypeScvI128, I128: &p}
 }
 
-// swapBodyWithBadTick builds a swap Map body carrying valid amount0 /
-// amount1 / recipient but a `tick` field of the WRONG ScVal type (Bool
-// instead of I32), and omits liquidity / sqrt_price_x96 / sender
-// entirely — the four fields decodeSwap never reads.
+// swapBodyWithBadTick builds a swap Map body with valid amount0, amount1 and recipient but a `tick` of the WRONG ScVal
+// type (Bool, not I32), omitting liquidity, sqrt_price_x96 and sender: the four fields decodeSwap never reads.
 func swapBodyWithBadTick(t *testing.T, amount0, amount1 *big.Int, recipient string) string {
 	t.Helper()
 	badTick := true

@@ -191,10 +191,9 @@ func TestDecodeLiquidityPoolOp_withdraw_success(t *testing.T) {
 	}
 }
 
-// TestDecodeLiquidityPoolOp_withdraw_missingBefore_unavailable covers
-// the withdraw-specific rule: unlike deposit, a withdraw ALWAYS acts
-// on a pre-existing pool, so a missing 'state' row (only 'updated'
-// present) is itself a fidelity gap, not a valid "new pool" case.
+// TestDecodeLiquidityPoolOp_withdraw_missingBefore_unavailable covers the withdraw-specific rule: a withdraw ALWAYS acts
+// on a pre-existing pool, so a missing 'state' row (only 'updated' present) is a fidelity gap, not a valid new-pool
+// case.
 func TestDecodeLiquidityPoolOp_withdraw_missingBefore_unavailable(t *testing.T) {
 	native := xdr.Asset{Type: xdr.AssetTypeAssetTypeNative}
 	usdc := mkAlphanum4Asset(t, "USDC", 0x96)
@@ -210,11 +209,9 @@ func TestDecodeLiquidityPoolOp_withdraw_missingBefore_unavailable(t *testing.T) 
 	}
 }
 
-// TestDecodeLiquidityPoolOp_withdraw_fullDrain_removedEntry covers the full-drain withdrawal:
-// core erases the LiquidityPoolEntry and emits 'state' + 'removed' (key only) with NO
-// 'updated' row. After-reserves are zero by construction, so both legs are emitted at the
-// full prior reserve; misreading this as ErrEntryChangesUnavailable would drop a real
-// withdrawal AND fire a false fidelity alarm.
+// TestDecodeLiquidityPoolOp_withdraw_fullDrain_removedEntry covers the full drain: core erases the LiquidityPoolEntry
+// and emits 'state' + 'removed' with NO 'updated' row. After-reserves are zero, so both legs are emitted at the full
+// prior reserve; reading it as ErrEntryChangesUnavailable would drop a real withdrawal and fire a false fidelity alarm.
 func TestDecodeLiquidityPoolOp_withdraw_fullDrain_removedEntry(t *testing.T) {
 	withdrawerAddr, _ := mkAccount(t, 0x97)
 	native := xdr.Asset{Type: xdr.AssetTypeAssetTypeNative}
@@ -249,10 +246,9 @@ func TestDecodeLiquidityPoolOp_withdraw_fullDrain_removedEntry(t *testing.T) {
 	}
 }
 
-// TestDecodeLiquidityPoolOp_withdraw_zeroLeg_emitsPayingLeg covers the one-sided withdrawal:
-// each leg is floor(shares*reserve/totalShares), so a small withdrawal from a lopsided pool
-// pays B and rounds A to zero. Only the zero leg is dropped; rejecting the op as
-// ErrMalformedMovement would lose the real B-side payout.
+// TestDecodeLiquidityPoolOp_withdraw_zeroLeg_emitsPayingLeg covers the one-sided withdrawal: each leg is
+// floor(shares*reserve/totalShares), so a small withdrawal from a lopsided pool pays B and rounds A to zero. Only the
+// zero leg is dropped; rejecting the op would lose the B payout.
 func TestDecodeLiquidityPoolOp_withdraw_zeroLeg_emitsPayingLeg(t *testing.T) {
 	withdrawerAddr, _ := mkAccount(t, 0x99)
 	native := xdr.Asset{Type: xdr.AssetTypeAssetTypeNative}
@@ -387,10 +383,9 @@ func mkClaimableBalanceCreatedChange(t *testing.T, balanceIDSeed byte, asset xdr
 	}
 }
 
-// TestDecodeCAP0038Revocation_noLiquidation_emitsNothing is the common case: a successful
-// AllowTrust with no correlated claimable_balance creation. It is not an error and not
-// ErrEntryChangesUnavailable (LP-deposit/withdraw specific); zero movements means "nothing
-// happened here", as for an ordinary flag change.
+// TestDecodeCAP0038Revocation_noLiquidation_emitsNothing is the common case: a successful AllowTrust with no correlated
+// claimable_balance creation. It is neither an error nor ErrEntryChangesUnavailable; zero movements means nothing
+// happened here.
 func TestDecodeCAP0038Revocation_noLiquidation_emitsNothing(t *testing.T) {
 	op := mkAllowTrustOp(t, 0x97, "USDC", 0)
 	result := mkAllowTrustSuccessResult()
@@ -419,10 +414,8 @@ func TestDecodeCAP0038Revocation_liquidation_emitsTwoLegs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecodeCAP0038Revocation: %v", err)
 	}
-	// Two assets liquidated => FOUR movements: a pool-exit leg and a
-	// claimable-balance-create leg for each. Counting the pool-exit legs
-	// alone (2) would leave the created balances unresolvable. The
-	// per-asset fan-out is checked below.
+	// Two assets liquidated give FOUR movements, a pool-exit leg and a claimable-balance-create leg each;
+	// counting only the pool-exit legs would leave the created balances unresolvable.
 	if len(movements) != 4 {
 		t.Fatalf("got %d movements, want 4 (a withdraw leg + a create leg per liquidated asset)", len(movements))
 	}
@@ -558,10 +551,8 @@ func TestDecodeCAP0038Revocation_failedOp_emitsNothing(t *testing.T) {
 	}
 }
 
-// TestDecodeCAP0038Revocation_ignoresPreexistingBalances: only a
-// claimable balance CREATED by the revoking op is a liquidation; a
-// balance that merely appears as state/updated in the same meta was
-// already escrowed and must not be re-emitted as pool exit.
+// TestDecodeCAP0038Revocation_ignoresPreexistingBalances: only a claimable balance CREATED by the revoking op is a liquidation;
+// one that merely appears as state/updated was already escrowed and must not be re-emitted as a pool exit.
 func TestDecodeCAP0038Revocation_ignoresPreexistingBalances(t *testing.T) {
 	native := xdr.MustNewNativeAsset()
 	state := mkClaimableBalanceCreatedChange(t, 0x61, native, 800)

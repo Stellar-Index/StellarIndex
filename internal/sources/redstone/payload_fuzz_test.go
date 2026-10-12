@@ -9,25 +9,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// parsePayload walks an ATTACKER-SHAPED binary format by hand, reading the third op-arg of
-// write_prices backwards and deriving every offset from length fields inside the buffer.
-// Signatures are deliberately not verified, and a backfill replays whatever the lake holds.
-//
-// Its two failure modes are what a fuzz target is for:
-//
-//   - an unchecked offset (a slice on a payload-chosen length) panics the ingest goroutine;
-//   - a partial read succeeds and ATTRIBUTES A PRICE TO THE WRONG FEED, the misattribution
-//     the refuse-rather-than-guess design exists to prevent.
-//
-// Both targets run as seed-corpus tests under `go test`; the generative runs are
-//
-//	go test -run=^$ -fuzz=FuzzParsePayload    -fuzztime=20s ./internal/sources/redstone/
-//	go test -run=^$ -fuzz=FuzzAttributeSubset -fuzztime=20s ./internal/sources/redstone/
+// parsePayload walks an ATTACKER-SHAPED binary format by hand, with offsets from in-buffer lengths and no signature
+// check. Fuzzing targets an unchecked offset that panics the ingest goroutine, and a partial read that ATTRIBUTES A
+// PRICE TO THE WRONG FEED. Seed corpora run under `go test`.
 
-// fuzzSeedPayloads returns the seed corpus: the REAL ledger-59,258,375
-// payload (the subset-filtered fixture the parser was written for) plus
-// synthetic ones, and truncations of the real payload at each structural
-// boundary — the offsets where an unchecked read would land.
+// fuzzSeedPayloads returns the seed corpus: the real ledger-59,258,375 payload, synthetic ones, and truncations of the
+// real payload at each structural boundary, where an unchecked read would land.
 func fuzzSeedPayloads(f *testing.F) [][]byte {
 	fixture, err := payloadFromOpArgs(subsetFixtureEvent().OpArgs)
 	if err != nil {
@@ -79,10 +66,8 @@ func FuzzParsePayload(f *testing.F) {
 			return
 		}
 
-		// Property 3 — a success is never empty and never degenerate.
-		// pkgCount ≥ 1 and dpCount ≥ 1 are enforced, and an empty feed id
-		// is rejected, so a successful parse carries at least one named
-		// feed with at least one package.
+		// Property 3: a success is never empty or degenerate; pkgCount and dpCount are at least 1 and an empty feed id
+		// is rejected, so a parse carries at least one named feed with one package.
 		if len(byFeed) == 0 {
 			t.Fatal("parse succeeded with zero feeds; the caller would then " +
 				"match no candidate and refuse a payload that parsed")
@@ -141,13 +126,9 @@ func FuzzParsePayload(f *testing.F) {
 	})
 }
 
-// FuzzAttributeSubset fuzzes the attribution itself: the order-preserving
-// DP that decides which feed_id each surviving price belongs to.
-//
-// A returned assignment must be JUSTIFIED, not merely well-formed: every assigned price must
-// equal that feed's payload median at the price's own package_timestamp EXACTLY, and the
-// assignment must be strictly order-preserving in feed_ids (the adapter builds updated_feeds
-// in one pass). Anything else publishes a price under another asset's name.
+// FuzzAttributeSubset fuzzes the order-preserving DP that assigns each surviving price a feed_id. An assignment must be
+// JUSTIFIED: every price equals that feed's payload median at its own package_timestamp exactly, and the order is
+// strictly preserved in feed_ids; anything else publishes a price under another asset's name.
 func FuzzAttributeSubset(f *testing.F) {
 	realPayload, err := payloadFromOpArgs(subsetFixtureEvent().OpArgs)
 	if err != nil {

@@ -31,10 +31,8 @@ func TestOrchestratorVWAPMaxAge_DerivesFromInterval(t *testing.T) {
 	}
 }
 
-// TestOrchestratorVWAPTTL_FlapsLessOnARaisedInterval: with the interval
-// raised past what cachekeys.VWAPTTL(window) alone would grant, a long
-// window's TTL must widen accordingly instead of expiring at the
-// unwidened package default and flapping /v1/price between 200 and 404.
+// TestOrchestratorVWAPTTL_FlapsLessOnARaisedInterval pins that an interval raised past what cachekeys.VWAPTTL(window)
+// grants widens a long window's TTL, instead of expiring at the default and flapping /v1/price between 200 and 404.
 func TestOrchestratorVWAPTTL_FlapsLessOnARaisedInterval(t *testing.T) {
 	o := New(nil, nil, Config{Interval: 60 * time.Second})
 	window := 24 * time.Hour

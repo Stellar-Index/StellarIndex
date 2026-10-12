@@ -85,10 +85,8 @@ func TestSyntheticCross_DerivesNonUSDFiatQuote(t *testing.T) {
 	}
 }
 
-// TestSyntheticCross_USDAndNonFiatQuotesUnsupported — USD-quoted pairs
-// already have the direct oracle references; a synthetic reading there
-// would double-count the very feeds it is built from. Non-fiat quotes
-// are out of scope entirely.
+// TestSyntheticCross_USDAndNonFiatQuotesUnsupported pins that USD-quoted pairs already have direct oracle references,
+// so a synthetic reading would double-count the feeds it is built from; non-fiat quotes are out of scope.
 func TestSyntheticCross_USDAndNonFiatQuotesUnsupported(t *testing.T) {
 	usdLeg := &pairStub{name: "u", prices: map[string]float64{"crypto:XLM/fiat:USD": 0.35}}
 	fxLeg := &pairStub{name: "f", prices: map[string]float64{"fiat:EUR/fiat:USD": 1.09}}
@@ -111,10 +109,9 @@ func TestSyntheticCross_USDAndNonFiatQuotesUnsupported(t *testing.T) {
 	}
 }
 
-// TestSyntheticCross_ErrorSemantics preserves Compare's
-// unsupported-vs-degraded bookkeeping: all legs unsupported →
-// unsupported (no reference universe for the pair); any transient leg
-// failure → unavailable (a reading SHOULD have existed).
+// TestSyntheticCross_ErrorSemantics preserves Compare's unsupported-vs-degraded bookkeeping: all legs unsupported
+// means unsupported (no reference universe); any transient leg failure means unavailable (a reading should have
+// existed).
 func TestSyntheticCross_ErrorSemantics(t *testing.T) {
 	fxOK := &pairStub{name: "f", prices: map[string]float64{"fiat:EUR/fiat:USD": 1.09}}
 
@@ -177,10 +174,8 @@ func TestSyntheticCross_LegOrderFirstAnswerWins(t *testing.T) {
 	}
 }
 
-// TestSyntheticCross_LegsFromDifferentPublishers — the production leg
-// order puts reflector-cex first and reflector-fx first; crossing those
-// would be one publisher checking itself, so the FX leg falls through to
-// chainlink.
+// TestSyntheticCross_LegsFromDifferentPublishers pins that production leg order puts reflector-cex and reflector-fx
+// first; crossing those would be one publisher checking itself, so the FX leg falls through to chainlink.
 func TestSyntheticCross_LegsFromDifferentPublishers(t *testing.T) {
 	reflectorCEX := &pairStub{name: OracleSourceReflectorCEX, prices: map[string]float64{"crypto:XLM/fiat:USD": 0.35}}
 	chainlinkUSD := &pairStub{name: ChainlinkSourceName, prices: map[string]float64{"crypto:XLM/fiat:USD": 0.36}}

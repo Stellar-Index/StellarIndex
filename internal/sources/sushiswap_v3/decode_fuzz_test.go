@@ -92,22 +92,9 @@ func fuzzSwapBody(t *testing.T, amount0, amount1 xdr.ScVal, liq xdr.UInt128Parts
 	return fuzzB64(t, xdr.ScVal{Type: xdr.ScValTypeScvMap, Map: &pm})
 }
 
-// FuzzSwapDirectionAndExactAmounts drives Decoder.Decode on a registered pool over the whole
-// i128 x i128 domain of the two signed pool deltas and checks the emitted trade against a
-// *big.Int reference:
-//
-//   - a trade exists iff exactly one delta is strictly positive and the other strictly
-//     negative; any other combination is a counted recognized no-op, never a trade at a
-//     fabricated price;
-//   - base = the token the pool RECEIVED at the exact positive delta, quote = the token it
-//     PAID at the exact magnitude of the negative delta, with no int64 truncation (ADR-0003),
-//     including -2^127 whose magnitude does not fit an i128;
-//   - OpIndex fans out by event index, Taker is the output recipient;
-//   - the best-effort fields (liquidity u128, sqrt_price_x96 u256, tick, sender) round-trip
-//     at full width regardless of field order.
-//
-// Generative run:
-// go test -run=^$ -fuzz=^FuzzSwapDirectionAndExactAmounts$ -fuzztime=60s -parallel=2 ./internal/sources/sushiswap_v3/
+// FuzzSwapDirectionAndExactAmounts drives Decoder.Decode over the whole i128 x i128 delta domain against a *big.Int
+// reference: a trade exists iff exactly one delta is positive and the other negative; base is the token received at the
+// exact positive delta, quote the token paid at the exact magnitude, no int64 truncation (ADR-0003), including -2^127.
 func FuzzSwapDirectionAndExactAmounts(f *testing.F) {
 	type seed struct {
 		h0     int64

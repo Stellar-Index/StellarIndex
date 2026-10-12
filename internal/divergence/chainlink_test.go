@@ -86,10 +86,8 @@ func mustPair(t *testing.T, base, quote string) canonical.Pair {
 }
 
 func TestChainlink_LookupQuote_HappyPath_BTC_USD(t *testing.T) {
-	// Chainlink feed answer: 65,432.10 USD * 10^8 = 6,543,210,000,000.
-	// Hex of 6543210000000 = 0x5F3115DBE80, padded to 32 bytes =
-	// 0x0000000000000000000000000000000000000000000000000000005F3115DBE80
-	// Wait — 6543210000000 = 0x5F3115DBE80 (44 bits). Pad to 64 hex chars.
+	// Chainlink feed answer: 65,432.10 USD * 10^8 = 6,543,210,000,000 = 0x5F3115DBE80 (44 bits), padded to 64 hex
+	// chars.
 	answer := big.NewInt(6_543_210_000_000)
 	hexStr := roundDataHex(answer, time.Now().Add(-time.Minute))
 
@@ -328,10 +326,8 @@ func TestChainlink_OperatorOverridesDefault(t *testing.T) {
 
 // ─── Helpers ─────────────────────────────────────────────────────
 
-// bigInt256Hex pads a positive big.Int to 32-byte 0x-prefixed hex.
-// roundDataHex builds a 160-byte latestRoundData() eth_call result:
-// (roundId, answer, startedAt, updatedAt, answeredInRound), one
-// 32-byte word each. roundId/startedAt/answeredInRound are dummies.
+// roundDataHex builds a 160-byte latestRoundData() eth_call result (roundId, answer, startedAt, updatedAt,
+// answeredInRound), one 32-byte word each; roundId, startedAt and answeredInRound are dummies.
 func roundDataHex(answer *big.Int, updatedAt time.Time) string {
 	word := func(n *big.Int) string {
 		h := n.Text(16)
@@ -528,10 +524,9 @@ func newDecimalsTestRef(t *testing.T, f *chainlinkFakeRPC, pairKey, address stri
 	return ref, clock, &logBuf
 }
 
-// TestChainlink_Decimals_AbsentAdoptsOnChain — an operator entry with
-// no decimals adopts the contract's decimals(). The fake feed publishes
-// at 18 decimals with an answer of 1.08 × 10^18; a constructor that
-// coerced the absent value to 8 and would have served 1.08 × 10^10.
+// TestChainlink_Decimals_AbsentAdoptsOnChain pins that an operator entry with no decimals adopts the contract's
+// decimals(). The fake feed publishes at 18 decimals (1.08 x 10^18); coercing the absent value to 8 would serve 1.08
+// x 10^10.
 func TestChainlink_Decimals_AbsentAdoptsOnChain(t *testing.T) {
 	t.Parallel()
 	answer, _ := new(big.Int).SetString("1080000000000000000", 10) // 1.08 × 10^18
@@ -639,10 +634,8 @@ func TestChainlink_Decimals_MismatchDoesNotBleedAcrossPairsSharingAddress(t *tes
 	answer := big.NewInt(1_500_000_000)
 	f := newChainlinkFakeRPC(t, roundDataHex(answer, time.Date(2026, 9, 18, 11, 0, 0, 0, time.UTC)), 8, http.StatusOK)
 
-	// Distinct codes from every other decimals test in this file — the
-	// mismatch counter is a global Prometheus metric keyed by pair
-	// string, so reusing a pair here would race with another test's
-	// before/after counter snapshot.
+	// Distinct codes from every other decimals test in this file: the mismatch counter is a global Prometheus metric
+	// keyed by pair string, so reusing a pair would race with another test's before/after counter snapshot.
 	mismatchPair := mustPair(t, "crypto:SOL", "fiat:USD")
 	okPair := mustPair(t, "crypto:AVAX", "fiat:USD")
 
@@ -668,10 +661,8 @@ func TestChainlink_Decimals_MismatchDoesNotBleedAcrossPairsSharingAddress(t *tes
 		t.Fatalf("mismatchPair: err = %v, want ErrChainlinkDecimalsMismatch", err)
 	}
 
-	// Second call, different pair, same address, well within the
-	// retry window (cache hit path in resolveDecimals): must adopt
-	// the on-chain 8 and succeed, not inherit the other pair's
-	// mismatch verdict.
+	// Second call, different pair, same address, within the retry window (cache hit in resolveDecimals): must adopt
+	// the on-chain 8 and succeed, not inherit the other pair's mismatch verdict.
 	got, err := priceOf(ref.LookupQuote(context.Background(), okPair, ref.now()))
 	if err != nil {
 		t.Fatalf("okPair: LookupQuote = %v, want success — its own config (none asserted) agrees with on-chain 8, "+
@@ -817,10 +808,9 @@ func TestDecodeChainlinkDecimals(t *testing.T) {
 	}
 }
 
-// chainlinkSecretPath is the key-bearing part of a keyed RPC endpoint.
-// Keyed providers (Alchemy, Infura, QuickNode) put the API key in the
-// URL PATH, which is why config.go documents the whole rpc_url as a
-// secret. Deliberately an obviously-fake, low-entropy string.
+// chainlinkSecretPath is the key-bearing part of a keyed RPC endpoint: Alchemy, Infura and QuickNode put the API key
+// in the URL path, which is why config.go documents the whole rpc_url as a secret. Deliberately an obviously fake,
+// low-entropy string.
 const chainlinkSecretPath = "/v2/not-a-real-key-ns12" // gitleaks:allow
 
 // hangUpRPC accepts then closes the connection without answering, giving a real *url.Error hermetically (hijacking, not a closed port).
@@ -937,10 +927,8 @@ func TestChainlink_TransportTimeout_ClassifiesAsTimeout_NotError(t *testing.T) {
 	}
 }
 
-// TestChainlink_BadRequestURL_RedactsKeyedEndpoint — NS12, second URL
-// -bearing path in the same function: http.NewRequestWithContext runs
-// url.Parse, and its failure is itself a *url.Error carrying the raw
-// (secret) URL.
+// TestChainlink_BadRequestURL_RedactsKeyedEndpoint covers the second URL-bearing path: http.NewRequestWithContext
+// runs url.Parse, and its failure is a *url.Error carrying the raw (secret) URL.
 func TestChainlink_BadRequestURL_RedactsKeyedEndpoint(t *testing.T) {
 	// A control character makes url.Parse fail without changing what
 	// the operator configured in any other way.
@@ -996,10 +984,9 @@ func TestChainlink_TransportError_SecretNeverReachesDivergenceCache(t *testing.T
 	if strings.Contains(string(body), chainlinkSecretPath) {
 		t.Fatalf("divergence cache entry carries the keyed rpc endpoint at rest: %s", body)
 	}
-	// Non-vacuous: the failure label must still be there (and name the
-	// redacted endpoint), so this is not passing because the cache is
-	// empty or the failure was swallowed. Decoded, because the encoder
-	// escapes the angle brackets of "<redacted>" on the wire.
+	// Non-vacuous: the failure label must still be there and name the redacted endpoint, so this does not pass
+	// because the cache is empty or the failure swallowed. Decoded, because the encoder escapes the angle brackets of
+	// <redacted> on the wire.
 	var cached CachedResult
 	if err := json.Unmarshal(body, &cached); err != nil {
 		t.Fatalf("unmarshal cached result: %v", err)

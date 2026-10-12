@@ -37,10 +37,8 @@ func TestGet_OversizeBodyFails(t *testing.T) {
 	}
 }
 
-// TestCurrencyNames_RefusesPaginationOffHost pins that a next_url pointing off the configured
-// Massive host is not followed: [Client.get] attaches the bearer token to any URL it is given,
-// so a compromised upstream could otherwise redirect the pagination loop to an attacker host and
-// exfiltrate the API key via the Authorization header.
+// TestCurrencyNames_RefusesPaginationOffHost pins that a next_url off the configured Massive host is not followed:
+// [Client.get] sends the bearer token to any URL, so a compromised upstream could exfiltrate the API key.
 func TestCurrencyNames_RefusesPaginationOffHost(t *testing.T) {
 	var attackerHits int32
 	attacker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

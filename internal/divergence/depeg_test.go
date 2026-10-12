@@ -34,10 +34,8 @@ func TestStablecoinDepeg_DivergenceWorkerFires(t *testing.T) {
 		QuoteAmount: canonical.NewAmount(big.NewInt(1_000_000)),  // 0.10 USDC @ 7-decimals
 	}
 
-	// Step 2 — apply the aggregator's stablecoin proxy. ProxyTrade
-	// rewrites the pair to XLM/fiat:USD; amounts stay untouched
-	// (the policy assumes USDC ≈ USD). This is exactly the
-	// concealment path ADR-0026 documents.
+	// Step 2: apply the aggregator's stablecoin proxy. ProxyTrade rewrites the pair to XLM/fiat:USD and leaves
+	// amounts untouched (the policy assumes USDC ~ USD), which is the concealment path ADR-0026 documents.
 	proxied, ok := aggregate.ProxyTrade(trade)
 	if !ok {
 		t.Fatalf("ProxyTrade should rewrite XLM/USDC → XLM/fiat:USD")
@@ -46,10 +44,8 @@ func TestStablecoinDepeg_DivergenceWorkerFires(t *testing.T) {
 		t.Fatalf("proxied quote = %+v, want fiat:USD", proxied.Pair.Quote)
 	}
 
-	// Step 3 — what our aggregator would publish: VWAP from the
-	// proxied trades. With one trade the VWAP is just the trade
-	// price; no need to invoke the orchestrator. The amounts are
-	// 7-decimal stroops; price is 0.10.
+	// Step 3: what our aggregator would publish. With one trade the VWAP is just the trade price, so the orchestrator
+	// is not needed. Amounts are 7-decimal stroops; price is 0.10.
 	const ourPrice = 0.10
 
 	// Step 4 — the actual market: USDC depegged to 0.95 USD this

@@ -12,15 +12,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 )
 
-// TestMuxedCounterpartiesResolveToBaseAccount pins that the three MUXED-typed classic
-// counterparties (PaymentOp.Destination, ClawbackOp.From, AccountMergeOp.Destination) are
-// recorded as the G-strkey of the account that actually holds the balance.
-//
-// An M-strkey is a custodian's routing label, not an on-chain account. Written verbatim into
-// stellar.account_movements' address/counterparty columns, which are read by G-strkey equality
-// (/v1/accounts/{g}/movements), the movement is unreachable and missing from the underlying
-// account's own feed. The shared participant derivation and lake op-source extraction follow
-// the same rule.
+// TestMuxedCounterpartiesResolveToBaseAccount pins that the MUXED-typed counterparties (PaymentOp.Destination, ClawbackOp.From,
+// AccountMergeOp.Destination) are recorded as the G-strkey of the account holding the balance. An M-strkey is a custodian's routing label;
+// written verbatim it would be unreachable by G-strkey equality (/v1/accounts/{g}/movements) and missing from the real account's feed.
 
 // mkMuxedAccount returns the M-strkey, the underlying G-strkey, and the
 // xdr.MuxedAccount for a muxed (SEP-23) account with a memo id.

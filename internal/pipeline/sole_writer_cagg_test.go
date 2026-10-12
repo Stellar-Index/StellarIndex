@@ -122,10 +122,9 @@ func TestProjectedSourcesNameTheirTables(t *testing.T) {
 	}
 }
 
-// TestVerifySoleWriterCAGGCoverage_SoleWriterTablesInPhase3 pins that
-// Phase-3 mode gates the aggregates over a sole-writer source's tables:
-// the projector alone writes them there too, so a short lookback misses
-// its late rows. Aggregates the dispatcher still feeds live stay ungated.
+// TestVerifySoleWriterCAGGCoverage_SoleWriterTablesInPhase3 pins that Phase-3 mode gates aggregates over a sole-writer
+// source's tables, since the projector alone writes them and a short lookback misses late rows. Dispatcher-fed
+// aggregates stay ungated.
 func TestVerifySoleWriterCAGGCoverage_SoleWriterTablesInPhase3(t *testing.T) {
 	for source, tables := range soleWriterTables(t) {
 		for _, table := range tables {
@@ -144,10 +143,8 @@ func TestVerifySoleWriterCAGGCoverage_SoleWriterTablesInPhase3(t *testing.T) {
 	}
 }
 
-// TestVerifySoleWriterCAGGCoverage_Phase3SkipsDispatcherFedViews runs the
-// gate on the shipped catalogue shape: no aggregate reads a sep41 table,
-// and oracle_prices_1m's 5 minutes is fine while the dispatcher still
-// writes oracle_updates live.
+// TestVerifySoleWriterCAGGCoverage_Phase3SkipsDispatcherFedViews runs the gate on the shipped catalogue: no aggregate
+// reads a sep41 table, and oracle_prices_1m's 5 minutes is fine while the dispatcher still writes oracle_updates live.
 func TestVerifySoleWriterCAGGCoverage_Phase3SkipsDispatcherFedViews(t *testing.T) {
 	r := &fakeCAGGWindows{windows: []timescale.CAGGRefreshWindow{
 		{View: "oracle_prices_1m", Hypertable: "oracle_updates", HasPolicy: true, StartOffset: 5 * time.Minute},

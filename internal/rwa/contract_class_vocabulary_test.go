@@ -11,10 +11,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/rwa"
 )
 
-// TestContractVocabularyContainsTheClassicOne — the contract arm may say MORE
-// than SEP-1 has words for; it must never say LESS. A term dropped from the
-// classic set while a binding still used it would refuse an address that was
-// admitted yesterday, silently, on a vocabulary edit made for the other arm.
+// TestContractVocabularyContainsTheClassicOne pins that the contract arm may say MORE than SEP-1 has words for, never LESS.
+// A term dropped from the classic set while a binding still uses it would silently refuse a previously admitted address.
 func TestContractVocabularyContainsTheClassicOne(t *testing.T) {
 	contract := map[string]bool{}
 	for _, c := range rwa.ContractAnchorClasses() {
@@ -28,10 +26,8 @@ func TestContractVocabularyContainsTheClassicOne(t *testing.T) {
 	}
 }
 
-// TestFundIsNotAcceptedFromASEP1Declaration is the half of the split that matters. `fund` exists
-// because the contract arm makes its OWN statement from a primary source, reviewed in code. The
-// classic arm READS the issuer's free-text anchor_asset_type, where accepting a term SEP-1 does
-// not define is accepting an invented spelling, the failure the closed set exists to prevent.
+// TestFundIsNotAcceptedFromASEP1Declaration pins the split: `fund` is the contract arm's own reviewed statement,
+// while the classic arm reads free-text anchor_asset_type, where accepting a term SEP-1 does not define is accepting an invented spelling.
 func TestFundIsNotAcceptedFromASEP1Declaration(t *testing.T) {
 	for _, declared := range []string{"fund", "Fund", " FUND "} {
 		if got := rwa.AnchorClass(declared); got != "" {
@@ -45,10 +41,8 @@ func TestFundIsNotAcceptedFromASEP1Declaration(t *testing.T) {
 	}
 }
 
-// TestContractVocabularyIsExactlyTheClassicOnePlusFund pins the widening to
-// what was argued for. A vocabulary that grows by accident grows without an
-// argument attached, and the argument is the only thing standing between a
-// class and a label chosen to make a number larger.
+// TestContractVocabularyIsExactlyTheClassicOnePlusFund pins the widening to what was argued for.
+// A vocabulary that grows by accident grows without the argument that stops a label being chosen to inflate a number.
 func TestContractVocabularyIsExactlyTheClassicOnePlusFund(t *testing.T) {
 	want := append([]string{"fund"}, rwa.AnchorClasses()...)
 	sort.Strings(want)
@@ -60,10 +54,8 @@ func TestContractVocabularyIsExactlyTheClassicOnePlusFund(t *testing.T) {
 	}
 }
 
-// TestTheOvernightSwapFundIsNotFiledAsABond pins a specific refusal. The fund holds listed
-// equities and swaps that return away for an overnight index rate; `bond` is false on the assets
-// and on the exposure, and filing it as one would attach a falsifiable claim to a highly visible
-// number.
+// TestTheOvernightSwapFundIsNotFiledAsABond pins a specific refusal: the fund holds listed equities and swaps the return
+// away for an overnight rate, so `bond` is false on assets and exposure and would be a falsifiable claim on a visible number.
 func TestTheOvernightSwapFundIsNotFiledAsABond(t *testing.T) {
 	var seen int
 	for _, b := range rwa.ContractInstrumentBindings() {
@@ -81,10 +73,8 @@ func TestTheOvernightSwapFundIsNotFiledAsABond(t *testing.T) {
 	}
 }
 
-// TestTheTBillFundsKeepTheClassTheyShippedWith pins that widening the vocabulary does not
-// reclassify anything already published. The T-Bill funds hold short-dated sovereign debt, so
-// `bond` is defensible, and moving them would change what an existing row says about an
-// unchanged instrument.
+// TestTheTBillFundsKeepTheClassTheyShippedWith pins that widening the vocabulary reclassifies nothing already published.
+// The T-Bill funds hold short-dated sovereign debt, so `bond` stays.
 func TestTheTBillFundsKeepTheClassTheyShippedWith(t *testing.T) {
 	var seen int
 	for _, b := range rwa.ContractInstrumentBindings() {
@@ -102,10 +92,8 @@ func TestTheTBillFundsKeepTheClassTheyShippedWith(t *testing.T) {
 	}
 }
 
-// TestOpenAPIAnchorClassEnumMatchesContractVocabulary pins the wire contract to the Go
-// vocabulary it serves. `anchor_class` is populated from BOTH the classic and contract arms: a
-// term the contract arm may legally emit (`fund`) but the spec's enum omits is an undocumented
-// value a generated client cannot model.
+// TestOpenAPIAnchorClassEnumMatchesContractVocabulary pins the wire enum to the Go vocabulary: `anchor_class` comes from both arms,
+// so a term the contract arm may emit (`fund`) but the spec omits is a value a generated client cannot model.
 func TestOpenAPIAnchorClassEnumMatchesContractVocabulary(t *testing.T) {
 	raw, err := os.ReadFile("../../openapi/stellar-index.v1.yaml")
 	if err != nil {

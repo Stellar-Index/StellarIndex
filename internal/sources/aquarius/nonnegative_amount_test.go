@@ -38,10 +38,7 @@ func vecVal(elts ...xdr.ScVal) xdr.ScVal {
 	return xdr.ScVal{Type: xdr.ScValTypeScvVec, Vec: &pvec}
 }
 
-// claimAmountEvents builds the three Aquarius claim events whose i128
-// amount lands in a column carrying CHECK (amount >= 0) — migration
-// 0099 (aquarius_rewards_events.amount) and 0129
-// (aquarius_protocol_fee.amount).
+// claimAmountEvents builds the three Aquarius claim events whose i128 amount lands in a CHECK (amount >= 0) column.
 func claimAmountEvents(t *testing.T, amount *big.Int) map[string]events.Event {
 	t.Helper()
 	token := makeContractStrkey(t, 0x11)

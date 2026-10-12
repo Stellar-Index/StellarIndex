@@ -55,10 +55,7 @@ func TestProcessAndPersistCursor_ReturnsDispatcherErrorBeforeCursorWrite(t *test
 func TestRecordCursorMetric_UsesSingleLabelCardinality(t *testing.T) {
 	t.Parallel()
 
-	// The live cursor gauge is declared with one `source` label.
-	// This helper exists to keep the write path pinned to that
-	// cardinality and avoid reintroducing the prior panic-class
-	// mismatch.
+	// The live cursor gauge has one `source` label; this pins the write path to that cardinality (a mismatch panics).
 	recordCursorMetric(123)
 }
 
@@ -85,10 +82,8 @@ func TestEmitDiscoveryDropMetricDelta_AddsOnlyNewDrops(t *testing.T) {
 	}
 }
 
-// TestRecordCHLiveSinkUndercount_AddsErrorCountsToMetric: a
-// non-zero LedgerExtract undercount field must not be visible only as a
-// WARN log line. It must also add its exact count (not just a
-// per-ledger flag) to obs.ChLiveSinkReadUndercountTotal.
+// TestRecordCHLiveSinkUndercount_AddsErrorCountsToMetric: a non-zero LedgerExtract undercount must add its exact count,
+// not just a per-ledger flag, to obs.ChLiveSinkReadUndercountTotal rather than appear only as a WARN log.
 func TestRecordCHLiveSinkUndercount_AddsErrorCountsToMetric(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
@@ -149,10 +144,8 @@ func TestRecordLedgerIngestCensusSkip_AddsErrorCountsToMetric(t *testing.T) {
 	}
 }
 
-// TestRecordLedgerIngest_CensusReadErrorsMeterUndercount drives the live
-// ledger_ingest_log path end to end: two TxProcessing entries whose hashes
-// match no envelope in the (empty) tx set are two reader errors, so the row
-// is skipped (nil store is never touched) and the counter must move by 2.
+// TestRecordLedgerIngest_CensusReadErrorsMeterUndercount: two TxProcessing entries matching no envelope are two reader
+// errors, so the row is skipped (nil store untouched) and the counter moves by 2.
 func TestRecordLedgerIngest_CensusReadErrorsMeterUndercount(t *testing.T) {
 	counter := obs.ChLiveSinkReadUndercountTotal.WithLabelValues("tx_read_errors_census")
 	before := testutil.ToFloat64(counter)
@@ -317,10 +310,8 @@ func invalidLedgerCloseMeta(seq uint32) sdkxdr.LedgerCloseMeta {
 	}
 }
 
-// validLedgerCloseMeta returns a minimal XDR-encodable LCM for the given sequence. Unlike
-// invalidLedgerCloseMeta it must survive MarshalBinary, because recordHashdb calls that directly;
-// an empty tx-set phase list encodes, whereas a zero-value envelope with an unset union
-// discriminant panics in EncodeTo.
+// validLedgerCloseMeta returns a minimal LCM that survives MarshalBinary, as recordHashdb requires: an empty tx-set
+// phase list encodes, whereas a zero-value envelope with an unset union discriminant panics in EncodeTo.
 func validLedgerCloseMeta(seq uint32) sdkxdr.LedgerCloseMeta {
 	return sdkxdr.LedgerCloseMeta{
 		V: 1,
@@ -340,10 +331,8 @@ func validLedgerCloseMeta(seq uint32) sdkxdr.LedgerCloseMeta {
 	}
 }
 
-// TestRecordHashdb_OK confirms the happy path: Append succeeds,
-// HashdbAppendTotal{"ok"} + HashdbAppendDurationSeconds{"ok"} both
-// advance, and lastAppended is updated to the ledger's sequence
-// (which the periodic verify sweep's window computation depends on).
+// TestRecordHashdb_OK confirms the happy path: both ok-outcome append metrics advance and lastAppended becomes the
+// ledger sequence, which the periodic verify sweep's window computation depends on.
 func TestRecordHashdb_OK(t *testing.T) {
 	t.Parallel()
 
@@ -387,10 +376,8 @@ func TestRecordHashdb_OK(t *testing.T) {
 	}
 }
 
-// TestRecordHashdb_AppendErrorIsFailureTolerant pins the hashdb contract: a write failure is
-// logged and counted but never stalls or fails ingest. An out-of-range Append must bump the error
-// outcome and leave lastAppended untouched, so the verify sweep never believes an unrecorded
-// ledger was durably recorded.
+// TestRecordHashdb_AppendErrorIsFailureTolerant pins that a hashdb write failure is logged and counted but never stalls
+// ingest: an out-of-range Append bumps the error outcome and leaves lastAppended untouched.
 func TestRecordHashdb_AppendErrorIsFailureTolerant(t *testing.T) {
 	t.Parallel()
 
@@ -406,10 +393,8 @@ func TestRecordHashdb_AppendErrorIsFailureTolerant(t *testing.T) {
 	beforeDur := obstest.HistogramSampleCount(t, obs.HashdbAppendDurationSeconds, "outcome", "error")
 
 	var lastAppended atomic.Uint32
-	// Ledger 500 is below the hashdb's startLedger (1000) — Append
-	// returns hashdb.ErrOutOfRange. This must not panic or block;
-	// the call below returning at all (rather than the test hanging
-	// or crashing) is itself part of what's being asserted.
+	// Ledger 500 is below the hashdb startLedger, so Append returns ErrOutOfRange; the call must neither panic nor
+	// block.
 	recordHashdb(db, validLedgerCloseMeta(500), logger, &lastAppended)
 
 	after := testutil.ToFloat64(obs.HashdbAppendTotal.WithLabelValues("error"))
@@ -438,10 +423,8 @@ func validLedgerCloseMetaWithBaseFee(seq uint32, baseFee uint32) sdkxdr.LedgerCl
 // with identical bytes goes through Verify, not a blind Append: lastAppended advances and the
 // stored record is untouched.
 func TestRecordHashdb_ReingestSameBytesDoesNotDoubleAppend(t *testing.T) {
-	// Not t.Parallel(): asserts an exact delta on the process-global
-	// HashdbAppendTotal counter, which the other hashdb append tests
-	// in this file also do under t.Parallel() — running serially
-	// avoids racing their windows.
+	// Not t.Parallel(): asserts an exact delta on the process-global HashdbAppendTotal, which other parallel append
+	// tests also move.
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	path := filepath.Join(t.TempDir(), "drift.db")
 	db, err := hashdb.Create(path, 500)
@@ -471,10 +454,8 @@ func TestRecordHashdb_ReingestSameBytesDoesNotDoubleAppend(t *testing.T) {
 	}
 }
 
-// TestRecordHashdb_DriftOnReingestDoesNotOverwrite pins that recordHashdb never appends blindly:
-// re-ingesting a recorded ledger with different bytes would clobber the original fingerprint,
-// destroying the tamper evidence the drift detector exists to keep. The first hash must stay on
-// disk, HashdbDriftTotal must increment, and lastAppended must not advance.
+// TestRecordHashdb_DriftOnReingestDoesNotOverwrite pins that recordHashdb never appends blindly: re-ingesting a ledger
+// with different bytes must keep the first hash on disk, bump HashdbDriftTotal and not advance lastAppended.
 func TestRecordHashdb_DriftOnReingestDoesNotOverwrite(t *testing.T) {
 	// Not t.Parallel(): see TestRecordHashdb_ReingestSameBytesDoesNotDoubleAppend.
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -602,10 +583,8 @@ func TestOpenOrCreateHashDB_RecreatesTruncatedFile(t *testing.T) {
 	}
 }
 
-// TestOpenOrCreateHashDB_BadMagicFailsClosed confirms a file with a
-// full header but foreign magic bytes is NOT silently recreated — a
-// file with content might be a real baseline (or evidence); discarding
-// it automatically would defeat the detector's purpose.
+// TestOpenOrCreateHashDB_BadMagicFailsClosed confirms a file with a full header but foreign magic is not silently
+// recreated, since it might be a real baseline or evidence.
 func TestOpenOrCreateHashDB_BadMagicFailsClosed(t *testing.T) {
 	t.Parallel()
 
@@ -619,10 +598,8 @@ func TestOpenOrCreateHashDB_BadMagicFailsClosed(t *testing.T) {
 	}
 }
 
-// TestHashDBSweepComplete_AllMissingIsNotComplete: a window with no hashdb record for any ledger
-// must not report a clean sweep, since nothing was compared. `complete` needs more than every
-// ledger being accounted for (an all-Missing window satisfies that trivially); otherwise
-// hashDBVerifySweep logs "hashdb verify sweep clean" with outcome="ok" despite Verified==0.
+// TestHashDBSweepComplete_AllMissingIsNotComplete: a window with no hashdb record for any ledger must not report a clean
+// sweep, since nothing was compared (Verified==0).
 func TestHashDBSweepComplete_AllMissingIsNotComplete(t *testing.T) {
 	t.Parallel()
 
@@ -650,12 +627,8 @@ func TestHashDBSweepComplete_AllMissingIsNotComplete(t *testing.T) {
 	}
 }
 
-// TestRecordHashdb_DurationExcludesMarshal guards that HashdbAppendDurationSeconds times only
-// hashdb.Append's single WriteAt, not marshaling the ledger.
-//
-// Structural rather than a wall-clock ratio, which is noisy under load. A slow
-// marshalLedgerCloseMeta hook injects a fixed large sleep, and the observed metric must stay far
-// below it; a timer started before the marshal would blow that ceiling by orders of magnitude.
+// TestRecordHashdb_DurationExcludesMarshal guards that HashdbAppendDurationSeconds times only the single WriteAt, not
+// marshaling. Structural, not a wall-clock ratio: a slow marshal hook sleeps long and the metric must stay far below it.
 func TestRecordHashdb_DurationExcludesMarshal(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	path := filepath.Join(t.TempDir(), "drift.db")

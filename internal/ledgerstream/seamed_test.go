@@ -57,10 +57,8 @@ func TestStreamArchiveThenLive_crossesSeam(t *testing.T) {
 	}
 }
 
-// TestStreamArchiveThenLive_seamZeroLiveOnly verifies the seam=0
-// short-circuit: archive bucket is unused, the call degrades to a
-// plain unbounded Stream against the live config. Critical for
-// backwards-compat with the single-bucket deployment shape.
+// TestStreamArchiveThenLive_seamZeroLiveOnly verifies the seam=0 short-circuit: the archive bucket is unused and the
+// call degrades to a plain unbounded Stream on the live config, keeping the single-bucket deployment shape working.
 func TestStreamArchiveThenLive_seamZeroLiveOnly(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -101,10 +99,9 @@ func TestStreamArchiveThenLive_seamZeroLiveOnly(t *testing.T) {
 	}
 }
 
-// TestStreamArchiveThenLive_fromAboveSeamLiveOnly covers the
-// "resume from a cursor that's already past the seam" case: from=20,
-// seam=10. The archive read is skipped entirely (seam-1=9 < from=20
-// would be an inverted bounded range and crash the SDK).
+// TestStreamArchiveThenLive_fromAboveSeamLiveOnly covers resuming from a cursor already past the seam (from=20,
+// seam=10): the archive read is skipped, since seam-1=9 < from=20 would be an inverted bounded range that crashes the
+// SDK.
 func TestStreamArchiveThenLive_fromAboveSeamLiveOnly(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -176,18 +173,9 @@ func newSeededFilesystemDataStore(t *testing.T, ctx context.Context, from, to ui
 	return cfg, dir
 }
 
-// TestStreamArchiveThenLive_trailingGapRefusesHandoff pins the silent seam gap fix.
-//
-// TolerateTrailingMissing is set for both buckets (ops backfills share the helper and must
-// survive racing the live tip), so a hole at the archive's trailing edge makes the bounded Stream
-// return success. The handoff must not then jump to the fixed seam, or every undelivered ledger
-// is skipped permanently: the cursor advances past the gap and nothing re-reads it. It was also
-// silent, since the trailing-missing WARN only logs when cfg.Logger is set and production never
-// sets it.
-//
-// The archive holds only [5,7] while the seam implies [5,9]; the stream must refuse to hand off
-// rather than skip 8 and 9. Without the lastArchive check it returns the live phase's stop
-// sentinel with 8-9 missing from `got`.
+// TestStreamArchiveThenLive_trailingGapRefusesHandoff pins the silent seam gap. TolerateTrailingMissing makes a hole
+// at the archive's trailing edge succeed; handing off to the fixed seam would skip those ledgers permanently. With
+// [5,7] archived and a seam implying [5,9], the stream must refuse to hand off rather than skip 8 and 9.
 func TestStreamArchiveThenLive_trailingGapRefusesHandoff(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

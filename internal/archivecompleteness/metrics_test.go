@@ -49,10 +49,9 @@ func TestWriteTextfile_BasicShape(t *testing.T) {
 	}
 }
 
-// TestWriteTextfile_ChecksExpectedFoundDenominator — a zero archive_files_missing reading is
-// indistinguishable from "nothing was scanned" (a vacuous range) without a denominator.
-// PopulateFromReport must carry Expected/Found onto the textfile so an alert can require
-// checkpoints_expected > 0 before trusting a clean reading.
+// TestWriteTextfile_ChecksExpectedFoundDenominator pins that PopulateFromReport carries Expected/Found onto the
+// textfile, since a zero archive_files_missing is indistinguishable from a vacuous range without a denominator; alerts
+// can require checkpoints_expected > 0.
 func TestWriteTextfile_ChecksExpectedFoundDenominator(t *testing.T) {
 	snap := archivecompleteness.NewMetricsSnapshot()
 	report := archivecompleteness.NewReport(100, 200)
@@ -81,10 +80,8 @@ func TestWriteTextfile_ChecksExpectedFoundDenominator(t *testing.T) {
 	}
 }
 
-// TestWriteTextfile_EmptySnapshotProducesOnlyHelp — a snapshot with
-// no missing files and no repair activity should still emit
-// well-formed output (just the help/type for files_missing, with
-// no sample lines below it). Empty maps are valid input.
+// TestWriteTextfile_EmptySnapshotProducesOnlyHelp pins that a snapshot with no missing files or repair activity still
+// emits well-formed output (just help/type for files_missing, no samples); empty maps are valid input.
 func TestWriteTextfile_EmptySnapshotProducesOnlyHelp(t *testing.T) {
 	snap := archivecompleteness.NewMetricsSnapshot()
 	var buf bytes.Buffer
@@ -132,13 +129,9 @@ func TestPopulateFromReport(t *testing.T) {
 	}
 }
 
-// TestPopulateFromFillResult — repair-attempts and -failures get populated from a FillResult under
-// REAL source names.
-//
-// Failures must not land under a synthetic `multi-source-exhausted` label while attempts use real
-// source names: the label sets would never intersect, so the `archive-completeness.yml`
-// `sum by (source)(failures) / sum by (source)(attempts)` alert would have a permanently-zero
-// numerator. Pinned: one attempt per try, one failure per failed try, keyed by the source tried.
+// TestPopulateFromFillResult pins that repair attempts and failures are populated under REAL source names: a synthetic
+// `multi-source-exhausted` failure label would never intersect the attempts labels, leaving the
+// `archive-completeness.yml` failure/attempt alert a zero numerator. One attempt per try, one failure per failed try.
 func TestPopulateFromFillResult(t *testing.T) {
 	res := archivecompleteness.FillResult{
 		Filled:           5,
@@ -183,10 +176,8 @@ func TestPopulateFromFillResult(t *testing.T) {
 	}
 }
 
-// TestWriteTextfile_StableOrdering — multiple runs of the same
-// snapshot produce byte-identical output. Important for ops because
-// a node_exporter scrape comparing successive textfiles uses
-// content equality to detect "nothing changed".
+// TestWriteTextfile_StableOrdering pins that repeated runs of one snapshot give byte-identical output, which ops rely
+// on because a node_exporter scrape compares successive textfiles by content to detect no change.
 func TestWriteTextfile_StableOrdering(t *testing.T) {
 	snap := archivecompleteness.NewMetricsSnapshot()
 	snap.FilesMissing["cross-anchor"] = 0
@@ -204,10 +195,8 @@ func TestWriteTextfile_StableOrdering(t *testing.T) {
 	}
 }
 
-// A host that has NEVER had a clean run must publish 0 rather than
-// nothing. `time() - 0` is enormous, so the staleness alert fires —
-// which is correct: a never-verified archive is not a healthy one,
-// and emitting no series at all would make it look like one.
+// A host that has NEVER had a clean run must publish 0, not nothing: `time() - 0` is enormous so the staleness alert
+// fires, which is correct, whereas an absent series would make a never-verified archive look healthy.
 func TestWriteTextfile_NeverSucceededEmitsZeroNotAbsence(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "archive_completeness.prom")
 	snap := archivecompleteness.NewMetricsSnapshot()

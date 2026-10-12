@@ -27,11 +27,8 @@ const (
 
 // ─── classifyAny ─────────────────────────────────────────────────
 
-// installAddressI128Fakes swaps the SDK decoders for deterministic
-// fakes — same pattern as TestDecodeSwap_happyPath. The fakes
-// interpret a body string as either an address tag ("addr:<C>") or
-// an i128 decimal ("i128:<n>"), so test data is human-readable in
-// the test source.
+// installAddressI128Fakes swaps the SDK decoders for fakes reading "addr:<C>" and "i128:<n>" bodies, keeping test data
+// readable.
 func installAddressI128Fakes(t *testing.T) (restore func()) {
 	t.Helper()
 	prevAddr, prevAsset, prevI128 := decodeAddress, decodeAsset, decodeI128

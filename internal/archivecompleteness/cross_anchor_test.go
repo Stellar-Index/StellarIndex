@@ -12,10 +12,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/archivecompleteness"
 )
 
-// makeTestArchive builds a minimal `<root>/ledger/XX/YY/ZZ/ledger-…xdr.gz` tree with
-// checkpoint files at the given sequences. Check() structurally probes every present file
-// (non-empty, valid gzip, non-empty content), so each fixture is a valid non-empty gzip
-// stream to be counted as Found.
+// makeTestArchive builds a minimal `<root>/ledger/XX/YY/ZZ/ledger-…xdr.gz` tree with checkpoint files at the given
+// sequences. Check() probes each present file (non-empty, valid gzip, non-empty content), so each fixture is a valid
+// non-empty gzip stream.
 func makeTestArchive(t *testing.T, present []uint32) string {
 	t.Helper()
 	root := t.TempDir()
@@ -161,10 +160,8 @@ func TestCheck_RangeBelowFirstCheckpoint(t *testing.T) {
 	}
 }
 
-// TestCheck_ZeroByteFileIsMissing is the regression: a
-// present-but-zero-length checkpoint file must be counted as
-// Missing, not Found — a zero-byte file proves nothing was ever
-// actually written there.
+// TestCheck_ZeroByteFileIsMissing pins that a present but zero-length checkpoint file counts as Missing, not Found,
+// since it proves nothing was written there.
 func TestCheck_ZeroByteFileIsMissing(t *testing.T) {
 	root := makeTestArchive(t, []uint32{63, 191})
 	writeCheckpointFile(t, root, 127, nil) // present but empty
@@ -211,10 +208,8 @@ func TestCheck_CorruptGzipIsMissing(t *testing.T) {
 	}
 }
 
-// TestCheck_ZeroDecompressedContentIsMissing: a technically-valid
-// gzip stream that decompresses to ZERO bytes (an empty payload
-// gzip'd) must also be treated as missing: the probe requires
-// decompressed size > 0.
+// TestCheck_ZeroDecompressedContentIsMissing pins that a valid gzip stream decompressing to zero bytes is also
+// Missing: the probe requires decompressed size > 0.
 func TestCheck_ZeroDecompressedContentIsMissing(t *testing.T) {
 	root := makeTestArchive(t, []uint32{63})
 	writeCheckpointFile(t, root, 127, gzipBytes(t, "")) // valid gzip, empty payload

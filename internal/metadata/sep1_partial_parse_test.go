@@ -12,10 +12,9 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// The document under test is a real stellar.toml whose ACCOUNTS array ends in an unterminated
-// basic string, so the whole file is invalid TOML while every [[CURRENCIES]] table is
-// well-formed. Section recovery must still read those tables: a missing quotation mark in a
-// table we do not consult must not silence an issuer's whole declaration.
+// The document is a real stellar.toml whose ACCOUNTS array ends in an unterminated basic string, so the file is
+// invalid TOML while every [[CURRENCIES]] table is well-formed. Section recovery must still read them: an unconsulted
+// table must not silence an issuer's declaration.
 func realWisdomTreeTOML(t *testing.T) []byte {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join("testdata", "wisdomtree-unterminated-accounts.toml"))

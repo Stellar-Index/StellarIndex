@@ -10,9 +10,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// TestReconstruct_RoundTripsCapture proves Capture → Reconstruct is
-// loss-free for the fields decoders need: ContractID, OpIndex, TxHash (via hex round-trip),
-// Topic[0..N], Value, OpArgs. Other fields (ID, TransactionIndex, InSuccessfulContractCall) are
+// TestReconstruct_RoundTripsCapture proves Capture to Reconstruct is loss-free for the fields decoders need
+// (ContractID, OpIndex, TxHash, Topic[0..N], Value, OpArgs); ID, TransactionIndex and InSuccessfulContractCall are
 // unused by decoders and not captured.
 func TestReconstruct_RoundTripsCapture(t *testing.T) {
 	t.Parallel()
@@ -106,14 +105,9 @@ func TestReconstruct_RoundTripsCapture(t *testing.T) {
 	}
 }
 
-// TestReconstruct_PreservesFiveOrMoreTopics is the topic-arity regression
-// guard: a Soroban event with MORE than four topics (e.g. an Aquarius multi-token pool event)
-// must round-trip through Capture → Reconstruct with EVERY topic preserved, no >4→4 truncation.
-//
-// Proven-red against a decodeTopics capped at [4][]byte and a reconstructTopics capping want>4→4:
-// the len==6 assertion fails. The end-to-end length is the tight proof, since Reconstruct can
-// only emit 6 topics if Capture persisted all 6 (otherwise it falls back to the four topic_0..3
-// columns). Uses only pre-existing symbols so it compiles (and fails) against a full revert.
+// TestReconstruct_PreservesFiveOrMoreTopics pins that an event with more than four topics (e.g. an Aquarius
+// multi-token pool event) round-trips with every topic, no 4-topic truncation; len==6 proves Capture persisted all
+// 6, not just the topic_0..3 columns.
 func TestReconstruct_PreservesFiveOrMoreTopics(t *testing.T) {
 	t.Parallel()
 
@@ -178,12 +172,8 @@ func TestReconstruct_PreservesFiveOrMoreTopics(t *testing.T) {
 	}
 }
 
-// TestReconstruct_TopicGapErrors: a stored row whose topics_xdr has an empty slot followed by a
-// non-empty one must fail closed instead of silently shifting the later topic down a position.
-//
-// Proven-red against a reconstructTopics that uses a bare `continue` on an empty slot with no gap
-// tracking: the row would reconstruct ["swap","extra"] (empty slot dropped, "extra" shifted from
-// index 2 to 1) with a nil error.
+// TestReconstruct_TopicGapErrors pins that a row whose topics_xdr has an empty slot before a non-empty one fails
+// closed, instead of silently shifting the later topic down a position.
 func TestReconstruct_TopicGapErrors(t *testing.T) {
 	t.Parallel()
 
@@ -214,10 +204,8 @@ func TestReconstruct_TopicGapErrors(t *testing.T) {
 	}
 }
 
-// TestReconstruct_NoOpArgs handles the common case of an event
-// that didn't come from an InvokeContract op (CAP-67 classic-op
-// transfer events, system events, etc.). OpArgs is nil on
-// reconstruction, which the consumer expects.
+// TestReconstruct_NoOpArgs pins the common case of an event not from an InvokeContract op (CAP-67 classic-op
+// transfer events, system events): OpArgs is nil on reconstruction, as the consumer expects.
 func TestReconstruct_NoOpArgs(t *testing.T) {
 	t.Parallel()
 

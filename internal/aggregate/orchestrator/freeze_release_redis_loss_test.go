@@ -13,10 +13,9 @@ import (
 // A release during a Redis loss must not end a sibling's freeze. These tests build the writer as cmd/stellarindex-aggregator does, WITH a ladder store, so the durable half of a release is reachable.
 // With the marker gone, a recovering 5m window cleared and retired the WHOLE durable record, so the cold escalated 1h window rehydrated nothing and published.
 
-// sinkShapedLadderStore mirrors timescale.FreezeEventSink's ladder
-// semantics (the real sink is exercised in test/integration): a per-window
-// map, a fail-closed pair-level summary, and a pair-level retire that drops
-// every window's ladder with it.
+// sinkShapedLadderStore mirrors timescale.FreezeEventSink's ladder semantics (the real sink is covered in
+// test/integration): a per-window map, a fail-closed pair-level summary, and a pair-level retire that drops every
+// window's ladder.
 type sinkShapedLadderStore struct {
 	windows map[time.Duration]freeze.State
 	retired bool

@@ -124,10 +124,9 @@ func TestFreeze_ReseedsHeldVWAPAfterCacheLoss(t *testing.T) {
 	}
 }
 
-// A move that lands in one batch is scored against the level before the
-// batch, not only between the batch's two newest (agreeing) minutes; and a
-// newest minute with no VWAP hands scoring to the newest priceable minute
-// instead of skipping it.
+// A move that lands in one batch is scored against the level before the batch, not only between the batch's two
+// newest (agreeing) minutes; a newest minute with no VWAP hands scoring to the newest priceable minute instead of
+// skipping.
 func TestFreeze_BacklogBatchScoredAgainstLevelBeforeIt(t *testing.T) {
 	for _, unpriceable := range []bool{false, true} {
 		for _, window := range DefaultWindows {

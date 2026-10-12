@@ -21,11 +21,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// These tests exercise the real SCVal decoder with SDK-encoded fixtures covering both Asset
-// variants Reflector emits per update_data pair (Asset::Stellar(Address), Asset::Other(Symbol))
-// and the topic[2] u64 timestamp. The SDK encoder is ground truth for the wire format; golden
-// bytes in internal/scval/scval_test.go catch an SDK upgrade that changes encoding. Real captures
-// are described in test/fixtures/reflector/README.md.
+// These tests exercise the real SCVal decoder with SDK-encoded fixtures for both Asset variants Reflector emits
+// (Asset::Stellar(Address), Asset::Other(Symbol)) and the topic[2] u64 timestamp. The SDK encoder is ground truth
+// for the wire format; golden bytes in internal/scval/scval_test.go catch an encoding change.
 
 // ─── Encoding helpers — build the exact xdr shapes Reflector emits ─
 
@@ -187,10 +185,8 @@ func TestRealDecoder_stellarAndSymbolAssetsMix(t *testing.T) {
 	}
 }
 
-// Oracle capture-totality: an unmapped symbol is RECORDED as a
-// raw:<symbol> row, not skipped. An event whose
-// ONLY entry is unknown must not surface as ErrEmptyPrices, which would
-// lose the slot until a code change plus a lake replay.
+// Oracle capture-totality: an unmapped symbol is recorded as a raw:<symbol> row, so an event whose only entry is
+// unknown must not surface as ErrEmptyPrices, which would lose the slot until a code change plus a lake replay.
 func TestRealDecoder_unknownSymbolAllUnknownRecordedAsRaw(t *testing.T) {
 	madeUp := xdr.ScSymbol("NOTACURRENCY")
 	symSv := xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &madeUp}
@@ -281,10 +277,8 @@ func TestRealDecoder_nonPositivePriceSkippedIsObservable(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
 	t.Cleanup(func() { slog.SetDefault(prev) })
 
-	// Mixed payload — one valid positive-price fiat entry (USD @ 1.0)
-	// plus one non-positive entry (EUR @ 0). EUR is a known fiat, so it
-	// decodes to a real PriceEntry (not a Skip) and hits the
-	// non-positive guard rather than the unknown-symbol path.
+	// Mixed payload: one valid fiat entry (USD @ 1.0) and one non-positive entry (EUR @ 0). EUR is a known fiat, so it
+	// hits the non-positive guard, not the unknown-symbol path.
 	usd := xdr.ScSymbol("USD")
 	usdSv := xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &usd}
 	eur := xdr.ScSymbol("EUR")
@@ -370,10 +364,8 @@ func TestRealDecoder_malformedTopicArity(t *testing.T) {
 // contract emits ───────────────────────────────────────────────────
 
 func TestTopicSymbolsMatchEncodedContractTopics(t *testing.T) {
-	// The TopicSymbolReflector / TopicSymbolUpdate constants are
-	// computed at package init via scval.MustEncodeSymbol. Verify
-	// that an event built with the exact bytes the contract would
-	// emit is classified() as a Reflector update.
+	// The topic constants are computed at package init via scval.MustEncodeSymbol; verify an event built with the exact
+	// contract bytes is classified as a Reflector update.
 	want0, err := scval.EncodeSymbol(EventTopic0)
 	if err != nil {
 		t.Fatal(err)
@@ -397,10 +389,9 @@ func TestTopicSymbolsMatchEncodedContractTopics(t *testing.T) {
 	}
 }
 
-// TestRealDecoder_DEXRowQuotedInUSDCSAC_SelfPriceSanity: a reflector-dex update with the
-// native-XLM SAC at 0.2002 (14 decimals). The DEX oracle denominates in the USDC SAC (its SEP-40
-// base()), so this is XLM-in-USDC, not a self-price. The quote must be the USDC SAC: native
-// misreads it as a self-price, and fiat:USD normalises a stablecoin at ingest, hiding a depeg.
+// TestRealDecoder_DEXRowQuotedInUSDCSAC_SelfPriceSanity: a reflector-dex update with the native-XLM SAC at 0.2002
+// (14 decimals) is XLM-in-USDC, since the DEX oracle denominates in the USDC SAC. The quote must be the USDC SAC:
+// native misreads it as a self-price, and fiat:USD normalises a stablecoin at ingest, hiding a depeg.
 func TestRealDecoder_DEXRowQuotedInUSDCSAC_SelfPriceSanity(t *testing.T) {
 	xlmSAC := contractAddressFromStrkey(t,
 		"CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA")
@@ -496,10 +487,9 @@ func contractAddressFromStrkey(t *testing.T, cStrkey string) xdr.ScAddress {
 	return xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &cid}
 }
 
-// TestRealDecoder_fxVESAndXAUMappedNotRaw pins that every reflector-fx event's VES and XAU slots
-// decode to fiat:VES (ISO-4217, ADR-0010) and rwa:XAU (ADR-0028), not raw:, without bumping the
-// unknown-symbols counter. The vector position (op_index) is unchanged, so the
-// generation-guarded upsert rewrites a raw: row in place on replay.
+// TestRealDecoder_fxVESAndXAUMappedNotRaw pins that reflector-fx VES and XAU slots decode to fiat:VES (ADR-0010) and
+// rwa:XAU (ADR-0028), not raw:, without bumping the unknown-symbols counter. The vector position (op_index) is
+// unchanged, so the generation-guarded upsert rewrites a raw: row in place on replay.
 func TestRealDecoder_fxVESAndXAUMappedNotRaw(t *testing.T) {
 	ves := xdr.ScSymbol("VES")
 	vesSv := xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &ves}
@@ -507,11 +497,9 @@ func TestRealDecoder_fxVESAndXAUMappedNotRaw(t *testing.T) {
 	xauSv := xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &xau}
 	bodyB64 := encodeUpdateBody(t,
 		[]xdr.ScVal{vesSv, xauSv},
-		// Synthetic magnitudes at the 14-decimal scale, not the live feed's. The test asserts
-		// round-trip identity and the decode path's only price predicate is Price.Sign() <= 0,
-		// so magnitude adds no coverage. Real magnitudes are covered by real_fixture_test.go,
-		// which pins zero raw rows on FX with rwa:XAU as the only non-fiat slot.
-		// Values below: 1 VES ≈ 7.3e-6 USD; 1 XAU ≈ 4,100 USD.
+		// Synthetic magnitudes at the 14-decimal scale: the test asserts round-trip identity and the only price predicate
+		// is Price.Sign() <= 0, so magnitude adds no coverage. Real magnitudes are covered by real_fixture_test.go (1 VES
+		// ~ 7.3e-6 USD; 1 XAU ~ 4,100 USD).
 		[]*big.Int{big.NewInt(730_000_000), big.NewInt(410_000_000_000_000_000)},
 	)
 	e := &events.Event{

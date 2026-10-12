@@ -41,10 +41,8 @@ func fuzzPairs(t *testing.T, assets []canonical.Asset, raw []byte) []canonical.P
 	return out
 }
 
-// FuzzValidateTriangulationChain checks the chain validator against its
-// structural definition: at least two legs, endpoints matching the target,
-// every adjacent pair of legs sharing its pivot asset, and no fiat/fiat leg
-// without USD.
+// FuzzValidateTriangulationChain checks the chain validator against its structural definition: at least two legs,
+// endpoints matching the target, adjacent legs sharing their pivot asset, and no fiat/fiat leg without USD.
 func FuzzValidateTriangulationChain(f *testing.F) {
 	f.Add(byte(0), byte(4), []byte{0, 2, 2, 4})
 	f.Add(byte(0), byte(4), []byte{0, 2, 3, 4})
@@ -116,10 +114,8 @@ func FuzzExcludeDirectEdge(f *testing.F) {
 	})
 }
 
-// FuzzPhase2FreezeFires checks the ADR-0019 3-signal AND: agreement with
-// the strict/inclusive comparisons as written in the ADR, and monotonicity
-// (a bucket that is less confident, more anomalous, or thinner than a
-// firing one also fires).
+// FuzzPhase2FreezeFires checks the ADR-0019 3-signal AND: agreement with the ADR's strict/inclusive comparisons, and
+// monotonicity (a less confident, more anomalous or thinner bucket than a firing one also fires).
 func FuzzPhase2FreezeFires(f *testing.F) {
 	f.Add(0.0, 0.0, 0, 0.1, 6.0, 1, 0.1, 1.0, 1)
 	f.Add(0.25, 5.0, 1, 0.25, 5.0, 1, 0.0, 0.0, 0)
@@ -147,10 +143,9 @@ func FuzzPhase2FreezeFires(f *testing.F) {
 	})
 }
 
-// FuzzReleaseCorroborated checks the release lens: a no-lens bucket never
-// releases; each lens agrees symmetrically (a candidate x% above its
-// reference and one x% below read the same); and agreement is monotone —
-// shrinking the disagreement never turns a release into a hold.
+// FuzzReleaseCorroborated checks the release lens: a no-lens bucket never releases; each lens is symmetric (x% above
+// and x% below read the same); and agreement is monotone, so shrinking the disagreement never turns a release into a
+// hold.
 func FuzzReleaseCorroborated(f *testing.F) {
 	f.Add(true, 3.0, 0.0, 0.0, false, 2.0)
 	f.Add(true, 5.0, 0.1, 0.04, false, 0.0)
@@ -228,10 +223,9 @@ func floatRat(t *testing.T, v float64) *big.Rat {
 	return r
 }
 
-// FuzzLegDispersion checks the leg-dispersion statistic against an exact
-// big.Rat reference (max |venueVWAP − legVWAP| / legVWAP), and that it is
-// invariant under scaling every amount by 2^k — amounts are canonical
-// big.Int and a scale well past 2^63 must not change the answer (ADR-0003).
+// FuzzLegDispersion checks the leg-dispersion statistic against an exact big.Rat reference (max |venueVWAP - legVWAP|
+// / legVWAP), and its invariance under scaling every amount by 2^k: amounts are big.Int, so a scale past 2^63 must
+// not change the answer (ADR-0003).
 func FuzzLegDispersion(f *testing.F) {
 	f.Add([]byte{0, 1, 0, 1}, []byte{10, 20, 30, 40}, []byte{15, 15, 45, 60}, uint8(0))
 	f.Add([]byte{0, 1, 2}, []byte{1, 1, 1}, []byte{100, 101, 99}, uint8(70))

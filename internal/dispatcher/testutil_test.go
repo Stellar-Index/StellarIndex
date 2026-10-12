@@ -8,11 +8,8 @@ import (
 
 const testPassphrase = "Test SDF Network ; September 2015"
 
-// emptyLedgerCloseMeta builds a minimal LedgerCloseMetaV1 with zero
-// transactions. Sufficient for exercising the reader construction
-// path without going through full tx+event fixture assembly. For
-// event-routing coverage, the dispatchOne unit tests use synthetic
-// events.Event directly.
+// emptyLedgerCloseMeta builds a minimal LedgerCloseMetaV1 with zero transactions to exercise reader construction
+// without full fixture assembly.
 func emptyLedgerCloseMeta(t *testing.T, seq uint32) xdr.LedgerCloseMeta {
 	t.Helper()
 	return xdr.LedgerCloseMeta{

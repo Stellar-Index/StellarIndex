@@ -29,10 +29,8 @@ func TestSymbolToAsset_fiat(t *testing.T) {
 	}
 }
 
-// Oracle capture-totality: an unknown symbol is not an
-// error — it resolves to a verbatim raw:<symbol> asset so the slot is
-// recorded. Only an unrepresentable symbol (which an ScSymbol can
-// never be) is refused, as canonical.ErrInvalidAsset.
+// Oracle capture-totality: an unknown symbol resolves to a verbatim raw:<symbol> asset; only an unrepresentable symbol
+// is refused, as canonical.ErrInvalidAsset.
 func TestSymbolToAsset_unknownIsRaw(t *testing.T) {
 	a, err := symbolToAsset("DOGEMOON")
 	if err != nil {

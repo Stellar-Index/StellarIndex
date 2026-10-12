@@ -210,10 +210,9 @@ func TestBuildDispatcher_InstallsConfiguredOverrides(t *testing.T) {
 	}
 }
 
-// TestBuildDispatcher_NoOverridesLeavesEveryAssetOnTheDefault is the
-// headline no-behaviour-change assertion for the wiring: with an empty
-// override list — the shipped default — every oracle asset's budget is
-// the number the alert expression computed before the budget existed.
+// TestBuildDispatcher_NoOverridesLeavesEveryAssetOnTheDefault is the no-behaviour-change assertion: with the shipped
+// empty override list every oracle asset's budget equals the number the alert expression computed before the budget
+// existed.
 func TestBuildDispatcher_NoOverridesLeavesEveryAssetOnTheDefault(t *testing.T) {
 	oracle := config.OracleConfig{
 		Reflector: config.ReflectorOracleConfig{CEXContract: realisticCStrkey},

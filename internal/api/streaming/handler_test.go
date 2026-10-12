@@ -206,10 +206,8 @@ func TestStream_LastEventIDQueryFallback(t *testing.T) {
 	}
 }
 
-// TestStream_ContextCancelEndsStream — when the request context
-// cancels (client disconnect), Stream returns promptly. Probed by
-// closing the request and asserting the server-side handler
-// completes.
+// TestStream_ContextCancelEndsStream pins that Stream returns promptly once the request context cancels (client
+// disconnect).
 func TestStream_ContextCancelEndsStream(t *testing.T) {
 	hub := streaming.NewHub(0)
 	done := make(chan struct{})
@@ -241,10 +239,9 @@ func TestStream_ContextCancelEndsStream(t *testing.T) {
 	}
 }
 
-// TestStream_KeepsRouteCacheControl: the v1 CacheControl middleware sets each stream's per-route
-// policy before the handler runs, and the SSE writer must not overwrite it (a bare `no-cache`
-// would make /v1/price/stream's no-store storable and drop `private` from tip/observations).
-// With no policy set, the writer's own fallback must still forbid storage.
+// TestStream_KeepsRouteCacheControl pins that the SSE writer keeps the per-route policy set by the v1 CacheControl
+// middleware (a bare `no-cache` would make /v1/price/stream's no-store storable and drop `private`); with none set,
+// its fallback forbids storage.
 func TestStream_KeepsRouteCacheControl(t *testing.T) {
 	for _, preset := range []string{"no-store", "private, no-cache, must-revalidate", "private, no-store", ""} {
 		t.Run(preset, func(t *testing.T) {
@@ -272,10 +269,8 @@ func TestStream_KeepsRouteCacheControl(t *testing.T) {
 	}
 }
 
-// TestStream_RevalidateFailureEndsStream — credential, key-policy and
-// quota checks are per-request middleware, so a stream admitted before
-// its key was revoked must re-check at each heartbeat and end once the
-// check fails, instead of streaming until the client hangs up.
+// TestStream_RevalidateFailureEndsStream pins that credential, key-policy and quota checks rerun at each heartbeat, so
+// a stream admitted before its key was revoked ends instead of streaming until the client hangs up.
 func TestStream_RevalidateFailureEndsStream(t *testing.T) {
 	var revoked atomic.Bool
 	var checks atomic.Int32
@@ -324,10 +319,8 @@ func TestStream_RevalidateFailureEndsStream(t *testing.T) {
 	}
 }
 
-// TestStream_MaxLifetimeEndsStreamAndResumes — a client that never reads
-// never makes a write block, so only a lifetime bound frees its slot. The
-// server must end the stream after MaxLifetime even while heartbeats and
-// events keep flowing, and the reconnect must resume from Last-Event-ID.
+// TestStream_MaxLifetimeEndsStreamAndResumes pins that MaxLifetime ends the stream even while heartbeats and events
+// flow (a client that never reads never blocks a write), and that the reconnect resumes from Last-Event-ID.
 func TestStream_MaxLifetimeEndsStreamAndResumes(t *testing.T) {
 	hub := streaming.NewHub(0)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

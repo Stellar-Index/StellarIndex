@@ -180,10 +180,8 @@ func TestEntryDispatch_DecodeErrorCountedPerSource(t *testing.T) {
 	}
 }
 
-// TestEntryDispatch_NoDecoderRegistered — a dispatcher with no
-// entry decoders silently drops every change. No error, no
-// outputs, no counter bump (per ADR-0021 entry changes are
-// high-volume so we don't count unmatched).
+// TestEntryDispatch_NoDecoderRegistered: with no entry decoders every change is dropped silently, with no error,
+// output or counter bump (ADR-0021: high volume).
 func TestEntryDispatch_NoDecoderRegistered(t *testing.T) {
 	disp := New()
 	outs, err := disp.RouteEntryChange(LedgerEntryChangeContext{

@@ -98,10 +98,8 @@ func TestRouteContractCall_unmatched_returnsNilNil(t *testing.T) {
 	if len(out) != 0 {
 		t.Errorf("got %d events, want 0 (no decoder matched)", len(out))
 	}
-	// Stats must NOT increment unmatched-hits — that counter is
-	// for events, not contract calls. ContractCallDecoder calls
-	// fall through silently when nothing claims them; the
-	// dispatcher's metric distinction is intentional.
+	// Contract calls must not bump unmatched-hits: that counter is for events, and unclaimed calls fall through
+	// silently by design.
 	if d.Stats().UnmatchedHits != 0 {
 		t.Errorf("UnmatchedHits = %d, want 0 (CC misses don't bump event-side counter)",
 			d.Stats().UnmatchedHits)
@@ -147,10 +145,9 @@ func TestRouteContractCall_emptyDecoderListNoMatch(t *testing.T) {
 
 // ─── Discovery hook (event-less oracle, §"Event-less discovery") ─────────────────
 
-// TestDispatchContractCall_DiscoveryHook_FiresOnOracleCallCandidate — the event-less-oracle
-// sniffer (docs/architecture/oracle-manipulation-defense.md §"Event-less discovery") must push a
-// Hit for a call matching the oracle-suggestive function-name allow-list with ZERO
-// ContractCallDecoders registered, so a future Band-alike is sighted before any decoder exists.
+// TestDispatchContractCall_DiscoveryHook_FiresOnOracleCallCandidate pins that a call matching the oracle-suggestive
+// function-name allow-list pushes a Hit with ZERO ContractCallDecoders registered, so a Band-alike is sighted before
+// any decoder exists.
 func TestDispatchContractCall_DiscoveryHook_FiresOnOracleCallCandidate(t *testing.T) {
 	sink := &recordingSink{}
 	d := New()
@@ -249,10 +246,8 @@ func TestDispatchContractCall_DiscoveryHook_NilSinkIsNoop(t *testing.T) {
 
 // ─── contractCallPathActive gate ───────────────────────────────────
 
-// TestContractCallPathActive covers the ProcessLedger gate deciding whether to walk each op's
-// InvokeContract auth tree at all. A gate of `len(contractCallDecoders) > 0` alone would make the
-// event-less-oracle discovery hook (inside dispatchContractCall) depend on some
-// ContractCallDecoder being registered. A discovery sink alone must also activate the walk.
+// TestContractCallPathActive pins the gate deciding whether ProcessLedger walks each op's InvokeContract auth tree:
+// a discovery sink alone must activate the walk, not only a registered ContractCallDecoder.
 func TestContractCallPathActive(t *testing.T) {
 	tests := []struct {
 		name       string

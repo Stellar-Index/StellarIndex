@@ -9,10 +9,8 @@ import (
 
 const goldenStakeContract = "CBRGNWGAC25CPLMOAMR7WBPOF5QTFA5RYXQH4DEJ4K65G2QFLTLMW7RO"
 
-// TestGolden_WithdrawRewards pins classifyAny + the correlation
-// buffer + decodeWithdrawRewards against a real 2-event
-// withdraw_rewards call: ledger 53,588,319, stake contract
-// CBRGNWGAC25…, tx 734306f2….
+// TestGolden_WithdrawRewards pins classifyAny, the correlation buffer and decodeWithdrawRewards against a real 2-event
+// withdraw_rewards call (ledger 53,588,319).
 func TestGolden_WithdrawRewards(t *testing.T) {
 	t.Parallel()
 	closedAt, err := time.Parse(time.RFC3339, "2026-05-15T00:00:00Z")

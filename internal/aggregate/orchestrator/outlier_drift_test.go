@@ -195,10 +195,9 @@ func TestRecordVenueVWAPs_DeletesAbsentSources(t *testing.T) {
 	}
 }
 
-// The outlier centre is a per-print median, so the trade-count trim share
-// cannot tell a trimmed honest block from trimmed dust. window_base_volume
-// publishes each stage's base volume in whole units on every window, so the
-// volume trim share is readable wherever the filter runs.
+// The outlier centre is a per-print median, so the trade-count trim share cannot tell a trimmed honest block from
+// trimmed dust. window_base_volume publishes each stage's base volume in whole units on every window, making the
+// volume trim share readable.
 func TestRefreshPairWindow_RecordsWindowBaseVolumePerStage(t *testing.T) {
 	t0 := time.Now().Add(-4 * time.Minute)
 	at := func(s int) time.Time { return t0.Add(time.Duration(s) * time.Second) }

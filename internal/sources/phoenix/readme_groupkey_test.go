@@ -10,10 +10,8 @@ import (
 
 var camelBoundary = regexp.MustCompile(`([a-z0-9])([A-Z])`)
 
-// TestREADMEGroupingKeyMatchesDecoder pins the README's stated event-grouping
-// tuple to groupKey's fields, so a reader reconstructing the correlation from
-// the doc cannot drop a discriminator the decoder depends on (ContractID
-// isolates each pool's reassembly within a router multihop).
+// TestREADMEGroupingKeyMatchesDecoder pins the README's event-grouping tuple to groupKey's fields; ContractID isolates
+// each pool's reassembly within a router multihop.
 func TestREADMEGroupingKeyMatchesDecoder(t *testing.T) {
 	typ := reflect.TypeOf(groupKey{})
 	fields := make([]string, 0, typ.NumField())

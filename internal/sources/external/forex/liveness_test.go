@@ -14,10 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// fakeFXWriter is a controllable FXQuoteWriter for the liveness tests.
-// It records the batch size it was handed and returns a configurable
-// error so we can exercise the success / persist-failure / empty-batch
-// paths of persistSnapshot independently.
+// fakeFXWriter is a controllable FXQuoteWriter that records the batch size and returns a configurable error.
 type fakeFXWriter struct {
 	err     error
 	gotRows int
@@ -82,10 +79,8 @@ func TestPersistSnapshot_failedWriteLeavesGaugeUntouched(t *testing.T) {
 	}
 }
 
-// TestPersistSnapshot_emptyBatchLeavesGaugeUntouched confirms that a
-// "successful" write of an EMPTY batch (upstream returned no usable
-// rates) does not stamp the gauge. Only a committed NON-EMPTY write is
-// evidence the feed is live.
+// TestPersistSnapshot_emptyBatchLeavesGaugeUntouched pins that a successful write of an EMPTY batch does not stamp
+// the liveness gauge; only a committed non-empty write is evidence the feed is live.
 func TestPersistSnapshot_emptyBatchLeavesGaugeUntouched(t *testing.T) {
 	const sentinel = 43.0
 	obs.ExternalFXLastQuoteUnix.WithLabelValues("massive").Set(sentinel)
@@ -130,10 +125,8 @@ func TestPersistSnapshot_nilWriterIsNoop(t *testing.T) {
 	}
 }
 
-// TestPersistSnapshot_syntheticUSDAnchorDoesNotStamp pins that the
-// liveness gauge measures the UPSTREAM, not the worker. buildSnapshot always prepends the
-// USD=1.0 anchor and the band re-accepts an exact 1.0 forever, so a refresh whose every
-// upstream rate was dropped still commits a one-row batch that says nothing about the feed.
+// TestPersistSnapshot_syntheticUSDAnchorDoesNotStamp pins that the liveness gauge measures the upstream: the
+// synthetic USD=1.0 anchor is always written and always in band, so a one-row batch says nothing about the feed.
 func TestPersistSnapshot_syntheticUSDAnchorDoesNotStamp(t *testing.T) {
 	const sentinel = 45.0
 	obs.ExternalFXLastQuoteUnix.WithLabelValues("massive").Set(sentinel)
@@ -160,10 +153,8 @@ func TestPersistSnapshot_syntheticUSDAnchorDoesNotStamp(t *testing.T) {
 	}
 }
 
-// TestPersistSnapshot_carriedHistoryWithoutCurrentDoesNotStamp: history
-// bars are fetched once a day and re-written every refresh from the
-// worker's carry-forward, so they prove nothing about the feed this
-// hour. Only a committed current upstream rate stamps.
+// TestPersistSnapshot_carriedHistoryWithoutCurrentDoesNotStamp pins that carried-forward history bars, rewritten
+// every refresh, prove nothing about the feed; only a committed current upstream rate stamps.
 func TestPersistSnapshot_carriedHistoryWithoutCurrentDoesNotStamp(t *testing.T) {
 	const sentinel = 46.0
 	obs.ExternalFXLastQuoteUnix.WithLabelValues("massive").Set(sentinel)
@@ -256,18 +247,9 @@ func TestRun_publishesSourceEnabledWhileRunning(t *testing.T) {
 	}
 }
 
-// TestPersistSnapshot_BrokenCurrentFeedNeverRepoisonsPostHeal is the
-// Massive UZS case after the restart-heal, end to end. The current feed KEEPS serving the broken
-// ~1820 bar (true level ~11,800): the deviation arm rejects it into pending, and a repeat of
-// the same broken value would pending-CONFIRM it (two repeats of one broken endpoint are not
-// two independent witnesses), re-poisoning a baseline the heal cannot re-fix because a
-// confirm clears bootstrapUnconfirmed.
-//
-// With the confirm veto, the ticker's heal-grade history majority refutes the candidate every
-// refresh, so the confirm is refused (reason "deviation_history_conflict") across any number
-// of cycles: the broken value NEVER reaches fx_quotes and the baseline never moves.
-// Red-proof: reverting the vetoConfirmByHistory call in acceptRate turns the cycle-3
-// assertions red.
+// TestPersistSnapshot_BrokenCurrentFeedNeverRepoisonsPostHeal pins that after the heal, a current feed that keeps
+// serving the broken bar is refused every cycle ("deviation_history_conflict") because the history majority vetoes
+// the pending confirm; two repeats of one broken endpoint are not two witnesses.
 func TestPersistSnapshot_BrokenCurrentFeedNeverRepoisonsPostHeal(t *testing.T) {
 	w, cw := bandTestWorker(io.Discard)
 	ctx := context.Background()
@@ -321,12 +303,9 @@ func TestPersistSnapshot_BrokenCurrentFeedNeverRepoisonsPostHeal(t *testing.T) {
 	}
 }
 
-// TestPersistSnapshot_GenuineDevaluationConfirms_HistoryFollowed pins
-// the veto's release path: a REAL devaluation the upstream keeps reporting is still
-// pending-confirmed once the trailing-7d majority follows the move. History that AGREES with
-// the candidate cannot refuse it; the veto only fires on a majority that REFUTES.
-// Red-proof: replacing the veto's withinBand(rate, med) release with an unconditional refusal
-// turns the confirm assertion red.
+// TestPersistSnapshot_GenuineDevaluationConfirms_HistoryFollowed pins the veto's release path: a real devaluation
+// is confirmed once the trailing-7d majority follows it, since the veto only fires on a majority that refutes the
+// candidate.
 func TestPersistSnapshot_GenuineDevaluationConfirms_HistoryFollowed(t *testing.T) {
 	w, cw := bandTestWorker(io.Discard)
 	ctx := context.Background()
@@ -374,14 +353,9 @@ func TestPersistSnapshot_GenuineDevaluationConfirms_HistoryFollowed(t *testing.T
 	}
 }
 
-// TestPersistSnapshot_GenuineDevaluationConfirms_SplitWindowNoVeto pins
-// the veto's OTHER release path, the mid-transition days. While the trailing-7d window still
-// spans both levels there is no heal-grade mutually-agreeing majority ([historyMajority] fails
-// the agreement test by construction), so the veto stands down and the two-fetch confirmation
-// behaves as without it: a real devaluation costs one refresh interval of lag, never a wedge.
-// Red-proof: a naive veto against the majority-side median of a 4-of-7 split (30.8..30.9 in a
-// [30.8 30.85 30.9 30.88 49.9 50.0 49.95] window) refuses this confirm and turns the assertion
-// red.
+// TestPersistSnapshot_GenuineDevaluationConfirms_SplitWindowNoVeto pins the veto's other release path: while the
+// 7d window spans both levels there is no mutually-agreeing majority ([historyMajority]), so the veto stands down
+// and a real devaluation costs one refresh of lag, never a wedge.
 func TestPersistSnapshot_GenuineDevaluationConfirms_SplitWindowNoVeto(t *testing.T) {
 	w, cw := bandTestWorker(io.Discard)
 	ctx := context.Background()
@@ -457,10 +431,8 @@ func TestPersistSnapshot_countsRowsAsSourceEntries(t *testing.T) {
 	}
 }
 
-// TestPersistSnapshot_doesNotCountFailedOrEmptyWrites is the honesty
-// half, and it matters more than the headline. A counter that advanced
-// on a failed insert would make a wedged feed look productive — the
-// exact failure the liveness gauge beside it is documented to avoid.
+// TestPersistSnapshot_doesNotCountFailedOrEmptyWrites pins honesty: a counter that advanced on a failed insert
+// would make a wedged feed look productive, the failure the liveness gauge exists to avoid.
 func TestPersistSnapshot_doesNotCountFailedOrEmptyWrites(t *testing.T) {
 	t.Run("failed insert", func(t *testing.T) {
 		obs.SourceEventsTotal.Reset()
@@ -541,14 +513,9 @@ func TestPersistSnapshot_doesNotCountAnchorOrCarriedHistory(t *testing.T) {
 	}
 }
 
-// TestPersistSnapshot_HealedBaselineIsHealedAgainWhenHistoryCorrects
-// is the mirror image of the UZS case: the CURRENT feed is right and the HISTORY endpoint is
-// the broken side. Seven mutually-agreeing wrong bars refute the bootstrap sample, so the heal
-// re-points the baseline at the wrong level (indistinguishable from inside the worker). What
-// must NOT happen is a wedge: once the history endpoint is fixed and its majority refutes the
-// healed baseline, the baseline must be healed again. A heal that marked the ticker
-// "confirmed" would make the first heal final, leaving the correct current rate rejected and
-// vetoed against the same broken bars permanently.
+// TestPersistSnapshot_HealedBaselineIsHealedAgainWhenHistoryCorrects pins the mirror of the UZS case: if a broken
+// history endpoint caused a heal, fixing it must let the baseline heal again; marking the ticker confirmed would
+// make the first heal final and veto the correct current rate forever.
 func TestPersistSnapshot_HealedBaselineIsHealedAgainWhenHistoryCorrects(t *testing.T) {
 	w, _ := bandTestWorker(io.Discard)
 	ctx := context.Background()
@@ -589,16 +556,9 @@ func TestPersistSnapshot_HealedBaselineIsHealedAgainWhenHistoryCorrects(t *testi
 	}
 }
 
-// TestPersistSnapshot_HistoryRowRejectsBadBar guards history rows. Trailing-7d history rows
-// filtered only by >0/finite (no [maxRateDeviation] band) would let a wrong-but-positive
-// upstream bar for a PAST date (here a decimal shift to 9.2) overwrite the correct stored rate.
-// fx_quotes.rate_usd is the denominator of every fiat-quoted usd_volume, so one bad history bar
-// re-scales every EUR-quoted trade valued off that date with nothing to revert it.
-//
-// persistSnapshot therefore bands each history point via acceptHistoryRate against the
-// ticker's current accepted rate: a bar >50% off is dropped, an in-band bar is written.
-// Reverting the history loop to a `<=0 || IsNaN || IsInf` filter turns the "bad bar dropped"
-// assertion red.
+// TestPersistSnapshot_HistoryRowRejectsBadBar pins that history rows go through acceptHistoryRate: a
+// wrong-but-positive past bar (decimal shift to 9.2) would overwrite the stored rate and re-scale every
+// fiat-quoted usd_volume off fx_quotes.rate_usd; a bar >50% off is dropped, an in-band bar written.
 func TestPersistSnapshot_HistoryRowRejectsBadBar(t *testing.T) {
 	w, cw := bandTestWorker(io.Discard)
 	ctx := context.Background()
@@ -639,10 +599,8 @@ func TestPersistSnapshot_HistoryRowRejectsBadBar(t *testing.T) {
 	}
 }
 
-// TestPersistSnapshot_HistoryRowNoBaselineBootstraps — with no current-rate
-// baseline for the ticker (e.g. the ticker appears only in History7d), the
-// history band must not refuse to bootstrap, mirroring acceptRate: dropping
-// legitimate history would starve the feed.
+// TestPersistSnapshot_HistoryRowNoBaselineBootstraps pins that with no current-rate baseline the history band
+// bootstraps, as acceptRate does, rather than dropping legitimate history.
 func TestPersistSnapshot_HistoryRowNoBaselineBootstraps(t *testing.T) {
 	w, cw := bandTestWorker(io.Discard)
 	ctx := context.Background()
@@ -669,12 +627,9 @@ func TestPersistSnapshot_HistoryRowNoBaselineBootstraps(t *testing.T) {
 	}
 }
 
-// TestPersistSnapshot_BootstrapPoisonHealedByHistoryMajority is the Massive UZS case, end to
-// end. At restart the current feed served a broken 1820 (true level ~11,800); the bootstrap arm
-// accepted it sight-unseen, and the guard would then reject the ticker's entire CORRECT
-// trailing-7d series against the poisoned baseline. With the heal, the agreeing history
-// majority refutes the unconfirmed bootstrap, the baseline re-points at the bars' median, the
-// bars are written, and the poisoned current-day row never reaches the writer.
+// TestPersistSnapshot_BootstrapPoisonHealedByHistoryMajority pins the Massive UZS case: a broken bootstrapped
+// current rate is refuted by the agreeing history majority, the baseline re-points at the bars' median, the bars
+// are written, and the poisoned row never reaches the writer.
 func TestPersistSnapshot_BootstrapPoisonHealedByHistoryMajority(t *testing.T) {
 	w, cw := bandTestWorker(io.Discard)
 	ctx := context.Background()
@@ -722,11 +677,9 @@ func TestPersistSnapshot_BootstrapPoisonHealedByHistoryMajority(t *testing.T) {
 	}
 }
 
-// TestPersistSnapshot_ConfirmedBaselineIsNeverHealed pins the heal's
-// deliberate limit: a baseline corroborated by two agreeing current fetches is NOT flipped by
-// an agreeing history majority. A systemically broken history endpoint against a healthy
-// current endpoint is indistinguishable from inside the worker, so the confirmed baseline wins
-// and the bars stay rejected.
+// TestPersistSnapshot_ConfirmedBaselineIsNeverHealed pins the heal's limit: a baseline corroborated by two
+// agreeing current fetches is not flipped by a history majority, since a broken history endpoint is
+// indistinguishable from inside the worker.
 func TestPersistSnapshot_ConfirmedBaselineIsNeverHealed(t *testing.T) {
 	w, cw := bandTestWorker(io.Discard)
 	ctx := context.Background()
@@ -766,10 +719,8 @@ func TestPersistSnapshot_ConfirmedBaselineIsNeverHealed(t *testing.T) {
 	}
 }
 
-// TestPersistSnapshot_RedenominationSplitSeriesDoesNotHeal — a genuine
-// mid-week redenomination splits the trailing series across two levels;
-// the mutual-agreement test must refuse to call either side a "majority",
-// leaving genuine moves to the two-fetch pending confirmation.
+// TestPersistSnapshot_RedenominationSplitSeriesDoesNotHeal pins that a mid-week redenomination splitting the
+// series across two levels has no mutual-agreement majority, leaving the move to two-fetch pending confirmation.
 func TestPersistSnapshot_RedenominationSplitSeriesDoesNotHeal(t *testing.T) {
 	w, cw := bandTestWorker(io.Discard)
 	ctx := context.Background()
@@ -798,13 +749,9 @@ func TestPersistSnapshot_RedenominationSplitSeriesDoesNotHeal(t *testing.T) {
 	}
 }
 
-// TestPersistSnapshot_SplitRejectedSeriesFailsAgreement pins the
-// mutual-agreement band itself (the redenomination test above exercises the min-bars floor
-// instead). Here the bootstrap sample is far from BOTH levels, every bar lands in the rejected
-// set, and that set spans two levels >10% apart: heal-grade count (7 >= 4) but no mutual
-// agreement, so no heal and the baseline is held.
-// Red-proof: widening historyHealAgreement (or removing the agreement loop in historyMajority)
-// turns the baseline assertion red.
+// TestPersistSnapshot_SplitRejectedSeriesFailsAgreement pins the mutual-agreement band: with every bar rejected
+// across two levels >10% apart, the count passes (7 >= 4) but agreement fails, so no heal and the baseline holds.
+// Widening historyHealAgreement turns it red.
 func TestPersistSnapshot_SplitRejectedSeriesFailsAgreement(t *testing.T) {
 	w, cw := bandTestWorker(io.Discard)
 	ctx := context.Background()
@@ -840,10 +787,8 @@ func TestPersistSnapshot_SplitRejectedSeriesFailsAgreement(t *testing.T) {
 	}
 }
 
-// TestPersistSnapshot_RejectsOneBadUpstreamBar pins the fx sanity band. fx_quotes is the
-// denominator of every fiat-quoted usd_volume, so a single mis-scaled upstream bar (a decimal
-// shift, here EUR 0.92 to 9.2) would silently re-scale that currency's entire conversion if
-// persistSnapshot wrote whatever the upstream says without comparing to the last stored rate.
+// TestPersistSnapshot_RejectsOneBadUpstreamBar pins the fx sanity band: fx_quotes is the denominator of every
+// fiat-quoted usd_volume, so one mis-scaled bar (EUR 0.92 to 9.2) must not be written unchecked.
 func TestPersistSnapshot_RejectsOneBadUpstreamBar(t *testing.T) {
 	w, cw := bandTestWorker(io.Discard)
 	ctx := context.Background()
@@ -869,10 +814,8 @@ func TestPersistSnapshot_RejectsOneBadUpstreamBar(t *testing.T) {
 	}
 }
 
-// TestPersistSnapshot_ConfirmedDevaluationIsAccepted is the other half of
-// the band decision: the band must not WEDGE a currency. A real devaluation the upstream keeps
-// reporting is accepted on the next refresh, so the worst case is one refresh interval of lag
-// rather than an indefinitely stale rate.
+// TestPersistSnapshot_ConfirmedDevaluationIsAccepted pins that the band never wedges a currency: a real
+// devaluation the upstream keeps reporting is accepted on the next refresh, costing one interval of lag.
 func TestPersistSnapshot_ConfirmedDevaluationIsAccepted(t *testing.T) {
 	w, cw := bandTestWorker(io.Discard)
 	ctx := context.Background()

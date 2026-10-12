@@ -156,10 +156,9 @@ func TestCapture_SymbolTopic(t *testing.T) {
 	}
 }
 
-// TestCapture_EventIndexDistinguishesSameOpEvents guards against silent loss: without event_index
-// threading every event in one operation captures with event_index=0, so a multi-event op
-// (Phoenix emits 8 per swap) collides on the (ledger, tx_hash, op_index, event_index) PK and ON
-// CONFLICT DO NOTHING drops all but the first. Threaded, the eight events get eight distinct PKs.
+// TestCapture_EventIndexDistinguishesSameOpEvents guards against silent loss: without event_index threading, a
+// multi-event op (Phoenix emits 8 per swap) collides on the (ledger, tx_hash, op_index, event_index) PK and ON
+// CONFLICT DO NOTHING drops all but the first.
 func TestCapture_EventIndexDistinguishesSameOpEvents(t *testing.T) {
 	t.Parallel()
 
@@ -310,10 +309,8 @@ func TestCapture_NonSymbolTopic(t *testing.T) {
 	}
 }
 
-// TestCapture_OpArgsRoundTrip — when events.Event.OpArgs is
-// populated (the dispatcher does this for InvokeContract-emitted
-// events), the row's OpArgsXDR must be the XDR-marshalled ScVec of
-// those args, and the round-trip must reproduce the input ScVals.
+// TestCapture_OpArgsRoundTrip pins that when events.Event.OpArgs is set (InvokeContract-emitted events), OpArgsXDR
+// is the XDR-marshalled ScVec of those args and round-trips to the input ScVals.
 func TestCapture_OpArgsRoundTrip(t *testing.T) {
 	t.Parallel()
 

@@ -20,10 +20,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// Property fuzz targets for the phoenix money path. Every amount lands in a NUMERIC column, so
-// the reference is (hi << 64) + lo computed with big.Int independently of the decoder
-// (ADR-0003). Seeds run as plain tests; the generative run is
-// `go test -run=^$ -fuzz=^FuzzXxx$ -fuzztime=60s ./internal/sources/phoenix/`.
+// Property fuzz targets for the phoenix money path. Amounts land in NUMERIC, so the reference is (hi << 64) + lo in
+// big.Int, computed independently of the decoder (ADR-0003). Seeds run as plain tests.
 
 // i128Ref is the exact value an Int128Parts carries, two's complement.
 func i128Ref(hi int64, lo uint64) *big.Int {
@@ -84,10 +82,8 @@ func amountEq(t *testing.T, what string, got canonical.Amount, want *big.Int) {
 
 // ─── bare i128 bodies ──────────────────────────────────────────────
 
-// FuzzSdkDecodeI128 pins the single amount decoder every phoenix action
-// shares: the full signed 128-bit value must survive (no int64 truncation of
-// Lo, no dropped Hi limb), and a same-parts U128 / i64 body must be refused
-// rather than re-read as an i128.
+// FuzzSdkDecodeI128 pins the amount decoder every phoenix action shares: the full signed 128-bit value survives (no
+// int64 truncation of Lo, no dropped Hi), and a same-parts U128 or i64 body is refused rather than re-read as an i128.
 func FuzzSdkDecodeI128(f *testing.F) {
 	for _, s := range [][2]uint64{
 		{0, 0},
@@ -134,11 +130,9 @@ var mapSwapKeys = [...]string{
 
 const mapSwapRequired = 5 // mapSwapKeys[:5] are the fields decodeSwapMap reads
 
-// FuzzDecodeSwapMap builds the Map body from fuzzed amounts, token seeds, dropped fields,
-// entry order and key encoding, and checks decodeSwapMap against an independent model: accept
-// iff every read field is present under a Symbol key, both amounts are strictly positive and
-// the legs are distinct. On accept the amounts are exact, base is sell_token, quote is
-// buy_token, and actual_received_amount (== offer on the wire) never leaks into the quote.
+// FuzzDecodeSwapMap checks decodeSwapMap against an independent model: accept iff every read field is present under a
+// Symbol key, both amounts are strictly positive and the legs are distinct. On accept amounts are exact, base is
+// sell_token, quote is buy_token, and actual_received_amount (== offer on the wire) never leaks into the quote.
 func FuzzDecodeSwapMap(f *testing.F) {
 	// Real CBENABXP fixture amounts, then the boundaries the positivity gate
 	// and the i128 carry sit on.
@@ -245,11 +239,9 @@ func permute(n int, seed uint64) []int {
 	return out
 }
 
-// FuzzDecoderStringSwap drives the 8 ScvString field-events of one swap through Decoder.Decode
-// in every arrival order. Nothing may emit before the 8th field; the 8th emits exactly one
-// trade whose amounts are the exact offer / return i128s (never actual-received), fanned out
-// on the FIRST arriving field's event index, or ErrMalformedPayload and no trade for a
-// non-positive amount.
+// FuzzDecoderStringSwap drives the 8 ScvString field-events of one swap through Decode in every arrival order: nothing
+// emits before the 8th; the 8th emits one trade with exact offer/return i128s (never actual-received) on the first
+// arriving event index, or ErrMalformedPayload and no trade for a non-positive amount.
 func FuzzDecoderStringSwap(f *testing.F) {
 	f.Add(int64(0), uint64(55194571), int64(0), uint64(273730773), uint64(0), uint16(0))
 	f.Add(int64(0), uint64(0), int64(0), uint64(1), uint64(40319), uint16(7))
@@ -341,10 +333,8 @@ func feed(t *testing.T, d *Decoder, evs []events.Event, order uint64) consumer.E
 	return got
 }
 
-// FuzzDecoderLiquidityStakeAmounts checks that provide_liquidity,
-// withdraw_liquidity and bond carry each fuzzed i128 into the field it was
-// sent on — exactly, and never cross-wired between the A and B legs —
-// whatever the arrival order.
+// FuzzDecoderLiquidityStakeAmounts checks that provide_liquidity, withdraw_liquidity and bond carry each fuzzed i128
+// into the field it was sent on, never cross-wired between the A and B legs, whatever the arrival order.
 func FuzzDecoderLiquidityStakeAmounts(f *testing.F) {
 	f.Add(int64(0), uint64(1_000_000), int64(0), uint64(2_000_000), int64(0), uint64(3_000_000), uint64(0))
 	f.Add(int64(0), ^uint64(0), int64(1), uint64(0), int64(0), uint64(1)<<63, uint64(119))
@@ -454,10 +444,9 @@ func symbolField(m xdr.ScMap, key string) (xdr.ScVal, bool) {
 	return xdr.ScVal{}, false
 }
 
-// FuzzDecodeBodies feeds arbitrary bytes to every body decoder. None may panic, and any body a
-// decoder ACCEPTS must be one it had the right to: an i128 read equals the wire parts exactly,
-// an announced pool is a real C-strkey, and a Map swap has positive amounts that are the
-// Symbol-keyed offer_amount / return_amount of the body and two distinct legs.
+// FuzzDecodeBodies feeds arbitrary bytes to every body decoder: none may panic, and an accepted body must be justified
+// (i128 equals the wire parts, announced pool is a real C-strkey, Map swap has positive Symbol-keyed offer/return
+// amounts and two legs).
 func FuzzDecodeBodies(f *testing.F) {
 	for _, s := range fuzzBodySeeds(f) {
 		f.Add(s)

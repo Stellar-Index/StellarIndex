@@ -162,10 +162,9 @@ func TestDecodeSwap_withFakeDecoder(t *testing.T) {
 	}
 }
 
-// TestDecodeSwap_AmbiguousBothDirectionsRefused: a swap whose FOUR amounts are all non-zero
-// satisfies both direction arms. It must be refused as ErrAmbiguousSwapDirection (which wraps
-// ErrNonDirectionalSwap, so the dispatcher's recognized-no-op handling covers it), never
-// half-decoded into a trade that drops the other leg.
+// TestDecodeSwap_AmbiguousBothDirectionsRefused: a swap whose four amounts are all non-zero satisfies both direction
+// arms and must be refused as ErrAmbiguousSwapDirection (wrapping ErrNonDirectionalSwap, so the dispatcher treats it as
+// a recognized no-op), never half-decoded into a trade.
 func TestDecodeSwap_AmbiguousBothDirectionsRefused(t *testing.T) {
 	prev := decodeSwapAmounts
 	defer func() { decodeSwapAmounts = prev }()
@@ -202,10 +201,9 @@ func TestDecodeSwap_AmbiguousBothDirectionsRefused(t *testing.T) {
 	}
 }
 
-// TestDecodeSwap_ThreeNonZeroLegRefused: a swap with exactly THREE non-zero amounts (0_in,
-// 1_in, 1_out) slips past the all-four ambiguity guard and would decode with the GROSS 0_in
-// while dropping the 1_in leg, fabricating a price into VWAP/OHLC. It must be refused as
-// ErrAmbiguousSwapDirection, like its all-four sibling.
+// TestDecodeSwap_ThreeNonZeroLegRefused: exactly three non-zero amounts (0_in, 1_in, 1_out) slip past the all-four guard
+// and would decode with the GROSS 0_in while dropping the 1_in leg, fabricating a price into VWAP/OHLC. It must be
+// refused as ErrAmbiguousSwapDirection.
 func TestDecodeSwap_ThreeNonZeroLegRefused(t *testing.T) {
 	prev := decodeSwapAmounts
 	defer func() { decodeSwapAmounts = prev }()
@@ -370,10 +368,8 @@ func event(kind string, contract string, ledger uint32, tx string, op int, topic
 	}
 }
 
-// mustClosed is the test-side equivalent of the processPage loop's
-// `e.EventClosedAt() + bail on error`. Every test event is built by
-// `event()` with a well-formed LedgerClosedAt, so parse errors here
-// are a test-fixture bug, not a real condition.
+// mustClosed parses an event's closed-at time; every test event is built with a well-formed LedgerClosedAt, so a parse
+// error is a fixture bug.
 func mustClosed(t *testing.T, e *events.Event) time.Time {
 	t.Helper()
 	ts, err := e.EventClosedAt()

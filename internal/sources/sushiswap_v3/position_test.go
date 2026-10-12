@@ -243,10 +243,8 @@ func TestDecode_SwapFromRegisteredPoolBecomesATrade(t *testing.T) {
 	var _ consumer.Event = trade
 }
 
-// TestDecode_NonDirectionalSwapIsARecognizedNoOp proves the one real
-// degenerate event projects zero rows AND no error — so the ADR-0033
-// re-derive counts its ledger as expected-zero rather than going blind on
-// a matched-but-undecodable event.
+// TestDecode_NonDirectionalSwapIsARecognizedNoOp proves the real degenerate event projects zero rows AND no error, so
+// the ADR-0033 re-derive counts its ledger as expected-zero rather than going blind on a matched-but-undecodable event.
 func TestDecode_NonDirectionalSwapIsARecognizedNoOp(t *testing.T) {
 	d := NewDecoder()
 	ev := swapEvent(mainPool, goldenSwapNonDirectional, 62_712_211, 0, 23)
@@ -363,11 +361,9 @@ func TestDecode_PoolCreatedIsIdempotent(t *testing.T) {
 	}
 }
 
-// TestDecode_GatedPoolWithNoTokenMappingFailsClosed covers the one drift
-// the protocol_contracts warm can produce: a pool admitted to the identity
-// gate by the DB warm, whose creation event has not been replayed, so no
-// token mapping exists. The swap must be dropped and counted, never
-// written with invented asset identities.
+// TestDecode_GatedPoolWithNoTokenMappingFailsClosed covers a pool admitted to the identity gate by the DB warm whose
+// creation event was never replayed, so no token mapping exists: the swap is dropped and counted, never written with
+// invented identities.
 func TestDecode_GatedPoolWithNoTokenMappingFailsClosed(t *testing.T) {
 	const warmedPool = "CDVBYETOFG7UYJAD6CMOAQZXBHEK3PD5ZDZKWMWIY5OXIWATPX4VGMY3"
 	d := NewDecoder(contractid.WithSeed([]string{warmedPool}))
@@ -394,10 +390,8 @@ func TestDecode_GatedPoolWithNoTokenMappingFailsClosed(t *testing.T) {
 	}
 }
 
-// TestDecode_PairErrorOnADirectionalSwapIsReturned pins that emitTrade
-// swallows ONLY ErrNonDirectionalSwap. A token map that names the same
-// asset twice cannot form a pair; that is a registry defect and must
-// surface as a decode error, not be counted as an ordinary dust no-op.
+// TestDecode_PairErrorOnADirectionalSwapIsReturned pins that emitTrade swallows ONLY ErrNonDirectionalSwap: a token map
+// naming the same asset twice is a registry defect and must surface as a decode error, not a dust no-op.
 func TestDecode_PairErrorOnADirectionalSwapIsReturned(t *testing.T) {
 	raw := make([]byte, 32)
 	raw[0] = 0x5e

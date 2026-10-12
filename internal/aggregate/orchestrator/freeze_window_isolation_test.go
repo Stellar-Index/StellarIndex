@@ -251,10 +251,8 @@ func TestFreezeWindowIsolation_RestartDoesNotSpreadALadderAcrossWindows(t *testi
 	f := newWindowIsolationFixture(t)
 	f.freezeTheLongWindow()
 
-	// Deploy: fresh process, same Redis. The long window stays thin from
-	// here (nothing re-evaluates it this tick), so the ONLY window
-	// reaching the freeze step is the short one, and there is no
-	// in-memory sibling state at all.
+	// Deploy: fresh process, same Redis. The long window stays thin, so only the short window reaches the freeze step
+	// and there is no in-memory sibling state at all.
 	f.restart()
 	f.feed(lkgBaseAmount, lkgQuoteAmount, thinBaseAmount, thinQuoteAmount)
 	f.tick(closedBucket)
@@ -324,10 +322,9 @@ func TestFreezeWindowIsolation_ReleasedWindowLadderLeavesTheMarker(t *testing.T)
 		t.Fatal("W3-freeze-1: the marker must stay while the long window is still frozen")
 	}
 
-	// A deploy must not bring the released freeze back. The short window
-	// gets a healthy bucket at a slightly different price, so the value
-	// it serves says unambiguously whether it published (fresh price) or
-	// was refused by a rehydrated ladder (the pinned last-known-good).
+	// A deploy must not bring the released freeze back. The short window gets a healthy bucket at a slightly
+	// different price, so its served value shows whether it published (fresh price) or a rehydrated ladder refused it
+	// (pinned last-known-good).
 	f.restart()
 	f.feed(lkgBaseAmount, nudgedQuoteAmount, lkgBaseAmount, manipQuoteAmount*3)
 	f.tick(closedBucket)

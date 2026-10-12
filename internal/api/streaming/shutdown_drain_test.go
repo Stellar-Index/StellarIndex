@@ -14,18 +14,13 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/api/streaming"
 )
 
-// shutdownTestBudget is the drain budget these tests give
-// http.Server.Shutdown. Production uses 30s; a short budget keeps the
-// negative control (an unwired server, which burns the WHOLE budget)
-// from making the suite slow, and is still two orders of magnitude
-// above what a drained stream should cost.
+// shutdownTestBudget is the drain budget given to http.Server.Shutdown (production uses 30s); short enough that the
+// unwired negative control, which burns the whole budget, stays fast, yet far above a drained stream's cost.
 const shutdownTestBudget = 2 * time.Second
 
-// promptDrainCeiling is what a shutdown with an attached stream must
-// beat. Shutdown polls for idle connections on a backoff starting at
-// ~1ms and capped at 500ms, so the floor is "the poll that follows the
-// handler's return", not zero. 500ms leaves room for that poll on a
-// loaded CI box while still failing loudly on the 30s bug.
+// promptDrainCeiling is what a shutdown with an attached stream must beat. Shutdown polls idle connections on a
+// backoff capped at 500ms, so the floor is the poll after the handler returns; 500ms tolerates a loaded CI box and
+// still fails on the 30s bug.
 const promptDrainCeiling = 500 * time.Millisecond
 
 // sseTestServer is a real http.Server (not httptest) serving one
@@ -36,19 +31,15 @@ type sseTestServer struct {
 	addr string
 }
 
-// startSSEServer boots a server whose /stream endpoint holds an SSE
-// connection open forever. When drain is non-nil it is registered via
-// RegisterOnShutdown and handed to the writer — i.e. the wiring under
-// test. When it is nil the server reproduces the unwired shape.
+// startSSEServer boots a server whose /stream holds an SSE connection open forever. A non-nil drain is registered via
+// RegisterOnShutdown and handed to the writer (the wiring under test); nil reproduces the unwired shape.
 func startSSEServer(t *testing.T, drain *streaming.Drain) *sseTestServer {
 	t.Helper()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /stream", func(w http.ResponseWriter, r *http.Request) {
-		// An event channel nothing ever sends on and nothing ever
-		// closes: the connection ends only because the client went
-		// away or because the drain fired. That is exactly the
-		// long-lived browser stream r1 measured.
+		// An event channel nothing sends on or closes: the connection ends only if the client leaves or the drain
+		// fires, like the long-lived browser stream r1 measured.
 		ch := make(chan streaming.Event)
 		streaming.StreamFromChannel(w, r, ch, streaming.StreamOptions{
 			HeartbeatInterval: time.Hour,
@@ -154,10 +145,9 @@ func TestShutdownWithAnAttachedStreamIsPrompt(t *testing.T) {
 	t.Logf("drain with one attached stream: %v", elapsed)
 }
 
-// TestShutdownWithoutTheDrainSignalBurnsTheBudget is the negative control for the test above: with
-// the drain wiring removed, the same server, handler and client exhaust the budget and Shutdown
-// reports DeadlineExceeded. It stops the prompt-drain test passing for the wrong reason, such as a
-// client that disconnected or a handler that returned on its own.
+// TestShutdownWithoutTheDrainSignalBurnsTheBudget is the negative control: without the drain wiring, the same server,
+// handler and client exhaust the budget and Shutdown reports DeadlineExceeded, so the prompt-drain test cannot pass
+// for the wrong reason.
 func TestShutdownWithoutTheDrainSignalBurnsTheBudget(t *testing.T) {
 	ts := startSSEServer(t, nil)
 	openStream(t, ts)
@@ -203,13 +193,8 @@ func TestShutdownWithNoStreamsStaysFast(t *testing.T) {
 	t.Logf("drain with no streams: %v", elapsed)
 }
 
-// TestStreamEndsCleanlyOnDrain asserts the client-visible shape of a
-// stream the server closed. Today the process exits on top of the open
-// connection and the reverse proxy logs `reading: unexpected EOF`. A
-// drained stream must instead terminate the response body properly:
-// the reader sees a final `:draining` comment frame and then a clean
-// io.EOF, which is what lets an EventSource treat it as a normal
-// reconnect rather than a transport error.
+// TestStreamEndsCleanlyOnDrain pins the client-visible shape of a drained stream: a final `:draining` comment frame
+// then a clean io.EOF, so an EventSource reconnects normally instead of seeing the proxy's `reading: unexpected EOF`.
 func TestStreamEndsCleanlyOnDrain(t *testing.T) {
 	drain := streaming.NewDrain()
 	ts := startSSEServer(t, drain)
@@ -245,10 +230,8 @@ func TestStreamEndsCleanlyOnDrain(t *testing.T) {
 	}
 }
 
-// TestDrainLeavesOrdinaryRequestsAlone encodes the decision NOT to use http.Server.BaseContext:
-// deriving request contexts from the root context would cancel every in-flight request on SIGTERM,
-// making the drain abrupt for non-streaming traffic. A slow ordinary request must still complete,
-// and Shutdown must still wait for it.
+// TestDrainLeavesOrdinaryRequestsAlone pins the decision not to use http.Server.BaseContext, which would cancel every
+// in-flight request on SIGTERM: a slow ordinary request must still complete and Shutdown must still wait for it.
 func TestDrainLeavesOrdinaryRequestsAlone(t *testing.T) {
 	drain := streaming.NewDrain()
 	ts := startSSEServer(t, drain)

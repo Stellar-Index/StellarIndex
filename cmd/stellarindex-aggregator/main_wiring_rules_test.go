@@ -26,20 +26,9 @@ func TestMainWiringRules(t *testing.T) {
 	}
 }
 
-// Source-level tripwire (the freeze_wiring_guard_test.go / internal/api/v1/slo_guard_test.go
-// pattern): the decimals cache's initial, BOOT-time refresh must be fatal.
-//
-// The cache is fail-open, which is right for a periodic refresh: a Postgres blip leaves the
-// last-good snapshot in place. At BOOT there is no snapshot, so fail-open makes Lookup answer
-// "nothing is flagged" for EVERY confirmed non-7-decimals asset, and the orchestrator publishes
-// their windows unnormalized (wrong by 10^(7-decimals)) into prices_1m and every downstream
-// price surface. A price wrong by orders of magnitude is a false statement about the market,
-// and it persists in the continuous aggregates long after the outage ends.
-//
-// Turning `return err` into `logger.Warn(...)` looks like a resilience improvement to anyone
-// who does not know the cold-cache case, hence the tripwire. Behavioural coverage is not
-// available: the branch lives inside run(), which needs a config file, a Postgres pool and a
-// Redis client first, so this asserts on the wiring itself.
+// Source-level tripwire: the decimals cache's BOOT-time refresh must be fatal. With no last-good snapshot, fail-open
+// makes Lookup flag nothing and windows publish wrong by 10^(7-decimals) into prices_1m, persisting in the aggregates.
+// `return err` to Warn looks like resilience; the branch lives in run(), so the wiring is asserted.
 
 func ruleDecimalsRefreshIsFatal(t *testing.T) {
 	fset := token.NewFileSet()
@@ -101,11 +90,9 @@ func bodyReturns(body *ast.BlockStmt) bool {
 	return false
 }
 
-// Source-level tripwire (the freeze_wiring_guard_test.go / TestMainWiringRules pattern):
-// changesummary.New, the ClickHouse close-time reader, and the supply / cross-check refresher
-// builders must be constructed before run()'s dry-run early-return, so a config that fails one
-// is caught by -dry-run instead of only at a real start. The calls live inside run(), which
-// needs a config file, a Postgres pool and a Redis client, so this asserts on the wiring.
+// Source-level tripwire: changesummary.New, the ClickHouse close-time reader and the supply / cross-check refresher
+// builders must be constructed before run()'s dry-run early-return, so -dry-run catches a config that fails one.
+// Asserted on the wiring because the calls live inside run().
 
 func ruleSupplyConstructorsBeforeDryRunReturn(t *testing.T) {
 	fset := token.NewFileSet()
@@ -160,10 +147,8 @@ func ruleSupplyConstructorsBeforeDryRunReturn(t *testing.T) {
 		}
 	}
 
-	// clickhouse.NewExplorerReader is called from several unrelated constructors in run() (the
-	// mev tx-order resolver, the decimals resolver, the priceless-coverage SAC reader); only the
-	// one feeding the supply refresh path is in scope, identified by its assignment to
-	// `supplyCloseTimes`.
+	// clickhouse.NewExplorerReader is called from several constructors in run(); only the one feeding the supply refresh
+	// path is in scope, identified by its assignment to `supplyCloseTimes`.
 	supplyCloseTimesPos := token.NoPos
 	ast.Inspect(runFn.Body, func(n ast.Node) bool {
 		assign, ok := n.(*ast.AssignStmt)
@@ -188,10 +173,8 @@ func ruleSupplyConstructorsBeforeDryRunReturn(t *testing.T) {
 	}
 }
 
-// findDryRunReturnPos locates the `if dryRun { logger.Info("dry-run
-// complete — exiting"); return nil }` statement and returns its Pos.
-// Matched on the dry-run-complete log line, not merely `if dryRun`, since
-// run() also branches on dryRun earlier (the redis ping) without exiting.
+// findDryRunReturnPos locates the `if dryRun { ...; return nil }` statement, matched on the dry-run-complete log line,
+// since run() also branches on dryRun earlier (the redis ping) without exiting.
 func findDryRunReturnPos(body *ast.BlockStmt) token.Pos {
 	pos := token.NoPos
 	ast.Inspect(body, func(n ast.Node) bool {

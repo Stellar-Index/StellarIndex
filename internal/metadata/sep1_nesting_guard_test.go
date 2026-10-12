@@ -13,10 +13,8 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// nestedInlineTables builds the hostile shape: `a = {b={b={…1…}}}`,
-// depth levels deep. Four bytes per level, so depth 4000 is a 16 KB
-// document — well inside the 100 KiB body cap, and measured at 1.8 GiB of
-// decoder allocation before this guard existed.
+// nestedInlineTables builds the hostile shape `a = {b={b={…1…}}}`, depth levels deep at four bytes per level: depth
+// 4000 is a 16 KB document within the 100 KiB body cap that cost 1.8 GiB of decoder allocation without the guard.
 func nestedInlineTables(depth int) []byte {
 	var b strings.Builder
 	b.WriteString("a = ")
@@ -26,13 +24,9 @@ func nestedInlineTables(depth int) []byte {
 	return []byte(b.String())
 }
 
-// TestParseSEP1RefusesDeepNestingWithinBudget guards the parser: a document the byte cap admits
-// must not be allowed to spend gigabytes in the decoder.
-//
-// The assertion covers BOTH halves, because either alone passes a wrong fix: the document must be
-// REFUSED with [ErrTOMLTooDeep], and the refusal must cost near-nothing, since a fix that parsed
-// first and judged afterwards would pass the error check while still being SIGKILLed by the
-// unit's MemoryMax=2G.
+// TestParseSEP1RefusesDeepNestingWithinBudget guards the parser against a document the byte cap admits spending
+// gigabytes in the decoder. Both halves are asserted: refusal with [ErrTOMLTooDeep], and a near-zero refusal cost,
+// since parse-then-judge would still be SIGKILLed by MemoryMax=2G.
 func TestParseSEP1RefusesDeepNestingWithinBudget(t *testing.T) {
 	body := nestedInlineTables(4000)
 	if len(body) > maxBodyBytes {
@@ -102,10 +96,8 @@ func TestParseSEP1AdmitsRealDocuments(t *testing.T) {
 	}
 }
 
-// TestParseSEP1RealDocumentStillRecovers proves the guard did not change
-// what a real document parses TO — the recovery path still reads
-// WisdomTree's eighteen currencies past its unterminated ACCOUNTS
-// string.
+// TestParseSEP1RealDocumentStillRecovers pins that the guard leaves real parses unchanged: recovery still reads
+// WisdomTree's eighteen currencies past its unterminated ACCOUNTS string.
 func TestParseSEP1RealDocumentStillRecovers(t *testing.T) {
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
@@ -144,10 +136,8 @@ func TestCheckTOMLNestingBoundary(t *testing.T) {
 	}
 }
 
-// TestCheckTOMLNestingRawBoundHoldsWithoutTheLexer proves the
-// divergence insurance: even if the string-aware scan were fooled into
-// believing the whole document is one string, the context-free bound
-// still refuses it.
+// TestCheckTOMLNestingRawBoundHoldsWithoutTheLexer pins the divergence insurance: even if the string-aware scan
+// believed the whole document is one string, the context-free bound still refuses it.
 func TestCheckTOMLNestingRawBoundHoldsWithoutTheLexer(t *testing.T) {
 	// An unterminated basic string makes tomlNestingDepth skip to the
 	// newline and see nothing structural at all.
@@ -160,10 +150,9 @@ func TestCheckTOMLNestingRawBoundHoldsWithoutTheLexer(t *testing.T) {
 	}
 }
 
-// TestCheckTOMLNestingRawBoundsRefuseLiteralText pins the accepted cost
-// of the raw backstop (see [maxRawTOMLNestingDepth]): literal text alone
-// trips it at the bound while the string-aware scans see no nesting, and
-// admits it one step below.
+// TestCheckTOMLNestingRawBoundsRefuseLiteralText pins the accepted cost of the raw backstop (see
+// [maxRawTOMLNestingDepth]): literal text alone trips it at the bound, though the string-aware scans see no nesting,
+// and is admitted one step below.
 func TestCheckTOMLNestingRawBoundsRefuseLiteralText(t *testing.T) {
 	cases := map[string]string{
 		"unclosed brackets": "[",
@@ -224,10 +213,8 @@ func dottedKey(n int) string {
 	return strings.TrimSuffix(strings.Repeat("a.", n), ".")
 }
 
-// TestParseSEP1RefusesDeepDottedKeys pins that nesting spelled with dots
-// is held to the same budget as nesting spelled with brackets. Every
-// body here has a bracket depth the older scans admit, and a key path
-// one segment past [maxTOMLNestingDepth].
+// TestParseSEP1RefusesDeepDottedKeys pins that nesting spelled with dots is held to the same budget as brackets: every
+// body has a bracket depth the older scans admit and a key path one segment past [maxTOMLNestingDepth].
 func TestParseSEP1RefusesDeepDottedKeys(t *testing.T) {
 	const n = maxTOMLNestingDepth
 	cases := []struct {
@@ -289,10 +276,9 @@ func TestParseSEP1AdmitsDottedKeysAtTheBound(t *testing.T) {
 	}
 }
 
-// TestParseSEP1AdmitsRealisticDottedShapes runs the key-path scan over a
-// realistic stellar.toml carrying every SEP-1 table shape, plus the
-// dotted data a scan could mistake for keys: URLs, version strings,
-// floats, fractional-second datetimes, dotted quoted keys and comments.
+// TestParseSEP1AdmitsRealisticDottedShapes runs the key-path scan over a realistic stellar.toml with every SEP-1 table
+// shape, plus dotted data a scan could mistake for keys: URLs, versions, floats, fractional-second datetimes, dotted
+// quoted keys, comments.
 func TestParseSEP1AdmitsRealisticDottedShapes(t *testing.T) {
 	floats := strings.TrimSuffix(strings.Repeat("1.5, ", 64), ", ")
 	body := `VERSION = "2.7.0"
@@ -338,10 +324,9 @@ HOST = "core.live.example.co.uk:11625"
 	}
 }
 
-// TestParseSEP1RecoveredSectionIsCheckedStandalone covers the recovery
-// path: an unclosed inline table makes the whole-body scan read the
-// table header below it as array content, but section recovery hands
-// that header's section to the decoder on its own.
+// TestParseSEP1RecoveredSectionIsCheckedStandalone covers recovery: an unclosed inline table makes the whole-body scan
+// read the next table header as array content, but recovery hands that section to the decoder alone and it must be
+// checked there.
 func TestParseSEP1RecoveredSectionIsCheckedStandalone(t *testing.T) {
 	deep := "[" + dottedKey(maxTOMLNestingDepth+8) + "]"
 	body := []byte("broken = {\n" + deep + "\nx = 1\n[DOCUMENTATION]\nORG_NAME = \"Example\"\n")
@@ -366,10 +351,9 @@ func TestParseSEP1RecoveredSectionIsCheckedStandalone(t *testing.T) {
 	}
 }
 
-// inlineChainAcrossLines builds a key path spread over lines: `levels`
-// lines of `k.k.….k = { # \` (segs segments each), closed on the last
-// line. No one line carries more than segs-1 dots, but the path of `z`
-// is levels*segs+1 segments. prefix is the body's opening.
+// inlineChainAcrossLines builds a key path spread over lines: `levels` lines of `k.k.….k = { # \` (segs segments
+// each), closed on the last. No line has more than segs-1 dots, but z's path is levels*segs+1 segments. prefix is the
+// body's opening.
 func inlineChainAcrossLines(prefix string, levels, segs int) []byte {
 	var b strings.Builder
 	b.WriteString(prefix)
@@ -381,10 +365,8 @@ func inlineChainAcrossLines(prefix string, levels, segs int) []byte {
 	return []byte(b.String())
 }
 
-// TestParseSEP1RefusesDottedPathAcrossLines pins that a key path built up
-// over many lines of inline tables is refused before the decoder, both
-// after a multi-line string closed by extra quotes and after one closed
-// by exactly three.
+// TestParseSEP1RefusesDottedPathAcrossLines pins that a key path built over many lines of inline tables is refused
+// before the decoder, after a multi-line string closed by extra quotes and after one closed by exactly three.
 func TestParseSEP1RefusesDottedPathAcrossLines(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -408,10 +390,9 @@ func TestParseSEP1RefusesDottedPathAcrossLines(t *testing.T) {
 	}
 }
 
-// TestCheckTOMLNestingRawPathHoldsWithoutTheLexer is the dotted counterpart of the raw bracket
-// insurance: with the string-aware scans blinded, a key path the raw scan sees only by
-// accumulating it across lines is still refused. No closer sits in data here, since one would
-// cancel an opener in the raw count (see [maxRawTOMLNestingDepth]).
+// TestCheckTOMLNestingRawPathHoldsWithoutTheLexer is the dotted counterpart of the raw bracket insurance: with the
+// string-aware scans blinded, a key path accumulated across lines is still refused. No closer sits in data, since one
+// would cancel an opener (see [maxRawTOMLNestingDepth]).
 func TestCheckTOMLNestingRawPathHoldsWithoutTheLexer(t *testing.T) {
 	// An unterminated multi-line string hides the rest of the body from
 	// the string-aware scans.
@@ -427,10 +408,9 @@ func TestCheckTOMLNestingRawPathHoldsWithoutTheLexer(t *testing.T) {
 	}
 }
 
-// TestCheckTOMLNestingResyncsAfterStrings pins that the string-aware
-// scans end every string form where the decoder does. Each body puts a
-// key path one segment past the bound just after a string or comment
-// edge, where only a scan still in step with the decoder sees it.
+// TestCheckTOMLNestingResyncsAfterStrings pins that the string-aware scans end every string form where the decoder
+// does: each body puts a key path one segment past the bound just after a string or comment edge, visible only to a
+// scan in step with the decoder.
 func TestCheckTOMLNestingResyncsAfterStrings(t *testing.T) {
 	deep := dottedKey(maxTOMLNestingDepth) + " = 1"
 	cases := []struct {
@@ -575,10 +555,9 @@ func TestParseSEP1RefusesDeepPathBehindBOM(t *testing.T) {
 	}
 }
 
-// TestParseSEP1RefusesPathAfterEscapedBackslashClose pins the multi-line basic close the decoder
-// takes after an escaped backslash: `\\""""""` ends the string after all six quotes, so no quote
-// is left to open a string that hides the rest of the line. The `# }` on each line takes the raw
-// scans out of play, so only the string-aware scans can refuse it.
+// TestParseSEP1RefusesPathAfterEscapedBackslashClose pins the multi-line basic close after an escaped backslash:
+// `\\""""""` ends the string after all six quotes, leaving none to open a string hiding the line. The `# }` removes
+// the raw scans, so only the string-aware scans can refuse it.
 func TestParseSEP1RefusesPathAfterEscapedBackslashClose(t *testing.T) {
 	var b strings.Builder
 	b.WriteString("VERSION = \"2.0.0\"\nr = {\n")
@@ -599,14 +578,9 @@ func TestParseSEP1RefusesPathAfterEscapedBackslashClose(t *testing.T) {
 	}
 }
 
-// TestSkipTOMLStringMatchesDecoder compares where skipTOMLString ends a string with where the
-// pinned decoder's lexer ends it, exhaustively over short string bodies.
-//
-// Oracle: for a body s, the document `k = <s>\nz = 1\n` decodes with both keys only if the lexer
-// read a string spanning exactly s (anything left on the line after a value is an error), give or
-// take trailing newlines. Every accepted document must then have skipTOMLString end at len(s). A
-// rejected document carries no claim: the decoder stops at its error, and every string the lexer
-// does close is itself enumerated as a body cut at that close, whose next byte is never a quote.
+// TestSkipTOMLStringMatchesDecoder compares where skipTOMLString ends a string with the pinned decoder lexer,
+// exhaustively over short bodies. Oracle: a document with the body as a value then a second key decodes only if the
+// lexer read a string spanning exactly s, so skipTOMLString must end at len(s).
 func TestSkipTOMLStringMatchesDecoder(t *testing.T) {
 	forms := []struct {
 		open  string

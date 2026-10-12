@@ -10,11 +10,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// TestInstrumentFeed_BindsThePairNotTheCode is the identity rule.
-//
-// Asset codes are not unique on Stellar. A binding that answered on the code would give any
-// issuer of a token called USTRY the real instrument's net asset value, a false financial
-// claim about a token the oracle has never heard of.
+// TestInstrumentFeed_BindsThePairNotTheCode is the identity rule: asset codes are not unique on Stellar, so a code-keyed binding
+// would give any issuer of a token called USTRY the real instrument's net asset value, a false financial claim.
 func TestInstrumentFeed_BindsThePairNotTheCode(t *testing.T) {
 	const impostor = "GAXSPCTVGFIVYGHT7JLJZV57HCN5KUYDJ6DMPLNWUKL7A5A3HKCNW7JW"
 
@@ -32,10 +29,8 @@ func TestInstrumentFeed_BindsThePairNotTheCode(t *testing.T) {
 	}
 }
 
-// TestInstrumentFeed_DoesNotFoldCase. The previous code-keyed join
-// upper-cased both sides, so a token coded XAUM matched the XAUm feed. A
-// case variant is a different token unless a binding says otherwise, and
-// saying otherwise is what the table is for.
+// TestInstrumentFeed_DoesNotFoldCase pins that a case variant is a different token: a token coded XAUM must not match the XAUm feed
+// unless a binding says so.
 func TestInstrumentFeed_DoesNotFoldCase(t *testing.T) {
 	for _, code := range []string{"ustry", "Ustry", "uSTRY"} {
 		if feed, ok := InstrumentFeed(code, etherfuseIssuer); ok {
@@ -48,10 +43,8 @@ func TestInstrumentFeed_DoesNotFoldCase(t *testing.T) {
 	}
 }
 
-// TestNoBindingTargetsAnOffChainReference. A feed that prices a troy
-// ounce of spot metal or one share of a fund is measuring a different
-// quantity from a token's price; binding one would publish a unit
-// conversion as a premium.
+// TestNoBindingTargetsAnOffChainReference pins that no binding targets a feed pricing a different quantity (a troy ounce of spot metal,
+// one fund share), which would publish a unit conversion as a premium.
 func TestNoBindingTargetsAnOffChainReference(t *testing.T) {
 	for _, b := range instrumentBindings {
 		if OffChainReferenceCode(b.Feed) {
@@ -125,10 +118,8 @@ func TestInstrumentBindings_Served(t *testing.T) {
 	}
 }
 
-// TestSpotGoldIsNotComparableToAToken pins the case the off-chain
-// classification exists for. `rwa:XAU` is the FX oracle's spot-gold slot
-// — one troy ounce — while a Stellar token coded XAU is a token of
-// unstated size.
+// TestSpotGoldIsNotComparableToAToken pins the case the off-chain classification exists for: `rwa:XAU` is the FX oracle's spot-gold slot
+// (one troy ounce), while a Stellar token coded XAU is of unstated size.
 func TestSpotGoldIsNotComparableToAToken(t *testing.T) {
 	if !OffChainReferenceCode("XAU") {
 		t.Error("XAU must be reported as an off-chain reference so the refusal has a stated reason")

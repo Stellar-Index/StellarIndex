@@ -6,26 +6,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker/guardscan"
 )
 
-// TestBackgroundWorkersRecover is a guard-coverage test: every detached
-// background goroutine started in this binary must register panic recovery.
-//
-// An unrecovered panic in ANY goroutine terminates the whole Go process, not just that
-// goroutine. This binary runs a large fleet of detached workers plus the metrics HTTP
-// listener, so one worker panic would crash-loop the whole price pipeline.
-//
-// An AST guard, not a behavioural test: the failure that bites is the NEXT worker added
-// without the defer, and a behavioural test would only cover workers that exist today. The
-// worker set is derived from the source. The shared guard's recover-and-log behaviour is
-// proven in internal/worker (TestRecover_ContainsPanicAndLogs).
-//
-// The walk lives in internal/worker/guardscan, shared with the indexer and API guards. It also
-// resolves `go namedFunc(...)`, which a purely literal scan would miss, and fails on any
-// callee it cannot follow.
-//
-// The metrics HTTP-server goroutine is the one deliberate exemption: if the listener dies the
-// process has no reason to live, and recovering would leave it serving nothing. It is
-// allow-listed BY ITS CONTENT (it must call ListenAndServe/Serve), not by line number, so the
-// exemption cannot silently widen to cover an unrelated worker.
+// TestBackgroundWorkersRecover is an AST guard: every detached goroutine must register panic recovery, since one
+// unrecovered panic kills the process. The worker set is derived from source (internal/worker/guardscan). Only the
+// metrics listener is exempt, matched by content (ListenAndServe/Serve).
 func TestBackgroundWorkersRecover(t *testing.T) {
 	sites, err := guardscan.ScanFile("main.go", guardscan.Config{
 		Guards: []string{"worker.Recover", "worker.Report"},

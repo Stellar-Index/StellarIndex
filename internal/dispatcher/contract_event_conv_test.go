@@ -7,11 +7,8 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// contractEventToEventsEvent converts an xdr.ContractEvent into our
-// events.Event wire shape. Used only by ProcessLedger when walking
-// transaction meta. Pin every reject path so a malformed event
-// can't sneak through and mis-attribute the contract id or topic
-// bytes downstream.
+// contractEventToEventsEvent converts an xdr.ContractEvent to events.Event; every reject path is pinned so a
+// malformed event cannot mis-attribute the contract id or topic bytes downstream.
 
 func makeBasicContractEvent(t *testing.T) (xdr.ContractEvent, xdr.ContractId) {
 	t.Helper()

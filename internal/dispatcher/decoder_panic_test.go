@@ -15,19 +15,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// ─── a poison ledger must not crash-loop the indexer ────────
-//
-// A panic in a decoder's Matches or Decode must not unwind to LEDGER granularity: that would
-// discard EVERY source's outputs for the ledger, refuse the cursor advance and crash-loop the
-// indexer on the same ledger. These tests pin the contract: the ONE input is skipped and
-// counted, the sibling decoders and the rest of the ledger complete, and the panic is loud
-// (counter + Error log). Without the recover()/defer blocks at the four dispatch seams, every
-// test below dies with the raw panic.
+// A panic in a decoder's Matches or Decode must not unwind to ledger granularity, which would discard every source's
+// output, refuse the cursor advance and crash-loop the indexer. These tests pin that only the one input is skipped
+// and counted, siblings complete, and the panic is loud.
 
-// panickyDecoder panics in Matches or Decode for events emitted by
-// `contract`, and behaves like an ordinary non-matching decoder for
-// everything else — so a ProcessLedger test can prove the SIBLING
-// event still routes normally through the same decoder chain.
+// panickyDecoder panics in Matches or Decode for events from `contract` and ignores everything else, so a test can
+// prove the sibling event still routes.
 type panickyDecoder struct {
 	name          string
 	contract      string
@@ -216,11 +209,9 @@ type panickyRawSink struct{}
 
 func (panickyRawSink) PushEvent(events.Event) { panic("lake sink fault") }
 
-// TestDispatchOne_RawEventSinkPanicIsNotSwallowed pins the scope of the guard. The lake sink
-// is the durable record that makes "skip the event" acceptable at all; if IT is broken,
-// carrying on would drop the event from the substrate too. So the guard sits AFTER the
-// raw-event hook and a sink fault keeps ledger-level handling (pipeline.ProcessLedger's
-// recover → the ledger is refused → the cursor does not advance).
+// TestDispatchOne_RawEventSinkPanicIsNotSwallowed pins the guard's scope: the lake sink is the durable record that
+// makes skipping an event acceptable, so the guard sits after the raw-event hook and a sink fault keeps ledger-level
+// handling (ledger refused, cursor not advanced).
 func TestDispatchOne_RawEventSinkPanicIsNotSwallowed(t *testing.T) {
 	disp := New(&panickyDecoder{name: "unused-src", contract: "CX"})
 	disp.SetRawEventSink(panickyRawSink{})

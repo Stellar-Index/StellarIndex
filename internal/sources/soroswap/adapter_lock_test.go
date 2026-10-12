@@ -11,15 +11,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// TestDecode_PanicInTheCriticalSectionReleasesTheLock: the dispatcher recovers from a decoder
-// panic, skips that input and carries on (internal/dispatcher/panic_guard.go). A mutex held
-// across the panicking statement then never unlocks, the NEXT event's Matches blocks on RLock and
-// the dispatch goroutine deadlocks with /metrics still answering and the cursor frozen, so
-// systemd sees nothing to restart. A bare Unlock after `d.buf.absorb(...)` is that shape.
-//
-// The nil correlation buffer is a stand-in panic source: the property is that ANY panic raised
-// while the decoder lock is held leaves it released, since "absorb cannot panic today" is a claim
-// about today's body, not an invariant.
+// TestDecode_PanicInTheCriticalSectionReleasesTheLock pins that any panic under the decoder lock releases it. The
+// dispatcher recovers and skips the input, so a lock held across the panic would block the next Matches on RLock and
+// freeze the cursor while /metrics still answers. The nil correlation buffer is a stand-in panic source.
 func TestDecode_PanicInTheCriticalSectionReleasesTheLock(t *testing.T) {
 	pair := makeContractStrkey(t, 0x20)
 	tok0, _ := canonical.NewSorobanAsset(makeContractStrkey(t, 0x10))

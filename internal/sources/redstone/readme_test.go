@@ -11,11 +11,8 @@ import (
 	"testing"
 )
 
-// TestReadmeFeedCountMatchesRegistry stops README.md's "all N mainnet
-// feeds" prose from drifting away from feedRegistry, the same failure
-// mode TestFeedRegistry_CountMatchesItsDocComment already guards for
-// feeds.go's doc comment (Q101: the README said 30 while the registry
-// had grown to 32 via USDT0 and earnUSDC_FUNDAMENTAL).
+// TestReadmeFeedCountMatchesRegistry stops README.md's "all N mainnet feeds" prose drifting from feedRegistry, as
+// TestFeedRegistry_CountMatchesItsDocComment does for feeds.go's doc comment.
 func TestReadmeFeedCountMatchesRegistry(t *testing.T) {
 	raw, err := os.ReadFile("README.md")
 	if err != nil {

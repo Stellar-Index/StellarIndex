@@ -24,11 +24,8 @@ func nodeText(t *testing.T, fset *token.FileSet, n ast.Node) string {
 
 func readMainGo() ([]byte, error) { return os.ReadFile("main.go") }
 
-// shutdownSpan returns the CODE lines between the shutdown select's
-// producer arm and the externalWait() call, with comments stripped.
-//
-// Comments must be stripped: matching `externalWait()` inside explanatory prose above the code
-// yields an empty span and a guard that passes while asserting nothing.
+// shutdownSpan returns the CODE lines between the shutdown select's producer arm and the externalWait() call. Comments
+// are stripped, or matching `externalWait()` in prose yields an empty span and a guard that asserts nothing.
 func shutdownSpan(t *testing.T) []string {
 	t.Helper()
 	data, err := readMainGo()
@@ -61,17 +58,12 @@ func shutdownSpan(t *testing.T) []string {
 	return code[start:end]
 }
 
-// TestNoReturnBetweenShutdownSelectAndDrain closes a hole in the guard above: moving
-// `return fatalErr` to the line AFTER the select passes "no return INSIDE the select" yet still
-// skips the drain.
-//
-// The real invariant is positional: between the shutdown select and externalWait(), any
-// `return` skips the drain.
+// TestNoReturnBetweenShutdownSelectAndDrain closes a hole in the guard above: moving `return fatalErr` to just after the
+// select passes "no return INSIDE the select" yet skips the drain. The invariant is positional: no `return` between the
+// shutdown select and externalWait().
 func TestNoReturnBetweenShutdownSelectAndDrain(t *testing.T) {
-	// Match the `return` TOKEN anywhere on the line, not just at the start.
-	// A prefix check misses `if fatalErr != nil { return fatalErr }`, which
-	// is the most natural way someone would reintroduce this bug — verified
-	// by mutation: the prefix version passed on exactly that line.
+	// Match the `return` token anywhere on the line, not just at the start: a prefix check misses `if fatalErr != nil {
+	// return fatalErr }` (verified by mutation).
 	returnTok := regexp.MustCompile(`\breturn\b`)
 	for i, line := range shutdownSpan(t) {
 		trimmed := strings.TrimSpace(line)
@@ -96,12 +88,8 @@ func TestShutdownCancelsRootBeforeDraining(t *testing.T) {
 		"the external connectors are bound to rootCtx, so the WaitGroup can never drain and the process hangs")
 }
 
-// TestMetricsServerShutsDownAfterTheDrainNotBeforeIt: shutting the metrics server down right
-// after cancel() would make /metrics unscrapable for the whole drain window, exactly when an
-// operator needs to see drain progress.
-//
-// Asserted positionally, like the guards above: metricsSrv.Shutdown must appear AFTER the
-// sinkDone wait, not between cancel() and it.
+// TestMetricsServerShutsDownAfterTheDrainNotBeforeIt: shutting the metrics server down right after cancel() would make
+// /metrics unscrapable during the drain. metricsSrv.Shutdown must appear AFTER the sinkDone wait.
 func TestMetricsServerShutsDownAfterTheDrainNotBeforeIt(t *testing.T) {
 	data, err := readMainGo()
 	if err != nil {

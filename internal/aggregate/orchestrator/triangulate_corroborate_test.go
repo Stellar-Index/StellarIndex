@@ -36,10 +36,8 @@ func makeTradeOn(t *testing.T, pair canonical.Pair, source string, base, quote i
 	}
 }
 
-// TestTriangulationDivergencePct_UncheckedWithoutAComposite — the
-// default state of the entire index: no chain configured, so the
-// confidence step must report "unchecked" rather than a divergence of
-// zero (which reads as perfect agreement).
+// TestTriangulationDivergencePct_UncheckedWithoutAComposite pins that with no chain configured (the default) the
+// confidence step reports unchecked, not a divergence of zero, which would read as perfect agreement.
 func TestTriangulationDivergencePct_UncheckedWithoutAComposite(t *testing.T) {
 	xlmEUR := mkPair(t, "crypto", "XLM", "fiat", "EUR")
 	o := New(nil, nil, Config{Windows: []time.Duration{5 * time.Minute}})
@@ -49,10 +47,8 @@ func TestTriangulationDivergencePct_UncheckedWithoutAComposite(t *testing.T) {
 	}
 }
 
-// TestTriangulationDivergencePct_MeasuresDirectAgainstComposite pins
-// the number the confidence factor consumes: deviation measured
-// AGAINST the composite (the route through the deep markets), matching
-// divergence.Compare's orientation for the cross-oracle factor.
+// TestTriangulationDivergencePct_MeasuresDirectAgainstComposite pins the number the confidence factor consumes:
+// deviation measured against the composite, matching divergence.Compare's orientation for the cross-oracle factor.
 func TestTriangulationDivergencePct_MeasuresDirectAgainstComposite(t *testing.T) {
 	xlmEUR := mkPair(t, "crypto", "XLM", "fiat", "EUR")
 	window := 5 * time.Minute

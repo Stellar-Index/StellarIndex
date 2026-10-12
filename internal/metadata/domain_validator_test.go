@@ -2,11 +2,8 @@ package metadata
 
 import "testing"
 
-// isValidDomainOrHostPort guards the URL builder from injection
-// attempts (query strings, fragments, whitespace, slashes) and from
-// malformed DNS labels. Pin every branch — getting this wrong means
-// SEP-1 resolution would emit a URL the caller didn't intend, with
-// follow-on impact on outbound HTTP requests + SSRF surface area.
+// isValidDomainOrHostPort guards the URL builder against injection (query, fragment, whitespace, slashes) and
+// malformed DNS labels. Pin every branch: a mistake makes SEP-1 resolution emit an unintended URL with SSRF impact.
 
 func TestIsValidDomainOrHostPort_validInputs(t *testing.T) {
 	// Production mode (allowAnyPort=false): bare hosts + an explicit
@@ -51,10 +48,8 @@ func TestIsValidDomainOrHostPort_invalidInputs(t *testing.T) {
 		{"reserved TLD: localhost", "localhost"},
 		{"reserved TLD: bare example", "example"},
 		{"reserved TLD: subdomain of test", "foo.test"},
-		// Finding 2: a non-443 port on an issuer home_domain must be
-		// REJECTED — otherwise the sep1-refresh cron would open a blind
-		// TLS+GET to an arbitrary port on a public host. These three
-		// must not be blessed.
+		// A non-443 port on an issuer home_domain must be REJECTED, or the sep1-refresh cron would open a blind
+		// TLS+GET to an arbitrary port on a public host. These three must not be blessed.
 		{"redis port", "host:6379"},
 		{"http-alt port", "example.com:8080"},
 		{"max non-standard port", "example.com:65535"},
@@ -69,10 +64,8 @@ func TestIsValidDomainOrHostPort_invalidInputs(t *testing.T) {
 	}
 }
 
-// TestIsValidDomainOrHostPort_portRestriction pins Finding 2 directly:
-// in production a :port suffix is accepted only when it is 443; the
-// test escape hatch (allowAnyPort=true, used for httptest servers on
-// ephemeral ports) accepts any syntactic 1-65535 port.
+// TestIsValidDomainOrHostPort_portRestriction pins that in production a :port suffix is accepted only when it is 443,
+// while allowAnyPort=true (httptest servers on ephemeral ports) accepts any syntactic port 1-65535.
 func TestIsValidDomainOrHostPort_portRestriction(t *testing.T) {
 	// Production: only 443 passes.
 	if !isValidDomainOrHostPort("example.com:443", false) {

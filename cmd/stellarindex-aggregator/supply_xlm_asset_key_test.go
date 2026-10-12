@@ -13,11 +13,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
-// TestBuildXLMRefresher_AssetKeyMatchesSupplyAssetKey pins that the XLM refresher registers
-// the "XLM" asset_key supply.AssetKey produces for native (the key StaleComponentLedgersByAsset
-// overrides and outcome-metric labels use), never the "native" canonical.AssetType literal.
-// "native" would silently orphan an operator override under the documented "XLM" key, since
-// the Refresher's per-asset lookup is exact-match on the snapshot's AssetKey.
+// TestBuildXLMRefresher_AssetKeyMatchesSupplyAssetKey pins that the XLM refresher registers the "XLM" key
+// supply.AssetKey produces for native, never the "native" literal, which would orphan a StaleComponentLedgersByAsset
+// override (exact-match lookup).
 func TestBuildXLMRefresher_AssetKeyMatchesSupplyAssetKey(t *testing.T) {
 	cfg := config.Config{}
 	cfg.Stellar.Network = "pubnet"
@@ -36,10 +34,9 @@ func TestBuildXLMRefresher_AssetKeyMatchesSupplyAssetKey(t *testing.T) {
 	}
 }
 
-// TestSupplyRefresherOptions_PerAssetOverrideReachesGate drives each accepted operator
-// spelling of a [supply.stale_component_ledgers_by_asset] key through supplyRefresherOptions
-// into a real Refresher whose snapshot carries the production supply.AssetKey. The component
-// lag exceeds the global default, so the tick is OK only if the per-asset override landed.
+// TestSupplyRefresherOptions_PerAssetOverrideReachesGate drives each accepted spelling of a
+// stale_component_ledgers_by_asset key into a real Refresher with the production AssetKey. Component lag exceeds the
+// global default, so the tick passes only if the override landed.
 func TestSupplyRefresherOptions_PerAssetOverrideReachesGate(t *testing.T) {
 	const phoIssuerAccount = "GAX5TXB5RYJNLBUR477PEXM4X75APK2PGMTN6KEFQSESGWFXEAKFSXJO"
 	const sep41Contract = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"

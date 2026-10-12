@@ -14,13 +14,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// TestRealMainnetFixtures replays every captured fixture in
-// test/fixtures/reflector/<wasm_hash>/*.json through decodeUpdate, so a contract upgrade or a
-// decoder change cannot silently stop matching real events.
-//
-// Per docs/architecture/ingest-pipeline.md#contract-schema-evolution each <wasm_hash>/
-// directory carries fixtures captured under one contract WASM; the dispatcher here grows with
-// decoder variants per hash.
+// TestRealMainnetFixtures replays every captured fixture in test/fixtures/reflector/<wasm_hash>/*.json through
+// decodeUpdate, so a contract upgrade or decoder change cannot silently stop matching real events. Each <wasm_hash>/
+// directory holds fixtures from one contract WASM (docs/architecture/ingest-pipeline.md#contract-schema-evolution).
 func TestRealMainnetFixtures(t *testing.T) {
 	fixRoot := filepath.Join("..", "..", "..", "test", "fixtures", "reflector")
 	entries, err := os.ReadDir(fixRoot)
@@ -188,10 +184,8 @@ func assertGolden(t *testing.T, fixturePath string, updates []canonical.OracleUp
 	}
 }
 
-// variantForContract maps a mainnet contract ID to its Variant.
-// Until we have per-variant capture dirs, use the contract-ID
-// lookup so the real-fixture test can run across all three
-// Reflector feeds without operator intervention.
+// variantForContract maps a mainnet contract ID to its Variant so the real-fixture test runs across all three
+// Reflector feeds until per-variant capture dirs exist.
 func variantForContract(contractID string) Variant {
 	switch contractID {
 	case "CALI2BYU2JE6WVRUFYTS6MSBNEHGJ35P4AVCZYF3B6QOE3QKOB2PLE6M":
