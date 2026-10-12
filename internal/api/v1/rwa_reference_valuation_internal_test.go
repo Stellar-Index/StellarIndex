@@ -10,16 +10,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/rwa"
 )
 
-// Unit tests for the reference-priced valuation: supply x the oracle's value of the instrument.
-//
-// The arithmetic is the whole claim, so it is pinned directly rather than through the handler:
-// the scale is the ASSET's decimals, the arithmetic is exact, and every input that is not a
-// valuation is refused instead of being turned into one.
+// Unit tests for the reference-priced valuation (supply x oracle value), pinned directly: scale is the asset's decimals,
+// arithmetic is exact, and every non-valuation input is refused.
 
-// TestRWAReferenceValue_UsesTheAssetsOwnDecimals guards against a hardcoded scale of 7. A wrong
-// scale looks like a plausible number off by a power of ten, which a reader cannot catch from
-// the output. The two cases use the SAME supply integer and price and differ only in the scale,
-// so a constant in place of the field can only produce one of the two answers.
+// TestRWAReferenceValue_UsesTheAssetsOwnDecimals guards against a hardcoded scale of 7, a plausible number off by a
+// power of ten. Same supply and price at two scales, so a constant can produce only one of the answers.
 func TestRWAReferenceValue_UsesTheAssetsOwnDecimals(t *testing.T) {
 	price := big.NewRat(2, 1) // $2.00 per whole token.
 	cases := []struct {
@@ -45,18 +40,9 @@ func TestRWAReferenceValue_UsesTheAssetsOwnDecimals(t *testing.T) {
 	}
 }
 
-// TestRWAReferenceValue_IsExact proves the ADR-0003 property: exact rational arithmetic end to
-// end, with a single rounding at the last step. float64 carries about fifteen significant
-// digits and this product needs eighteen; the inputs are chosen so the difference reaches the
-// cent:
-//
-//	supply    43985621232331962 smallest units (4,398,562,123.2331962)
-//	reference 9.06529242
-//	exact     39874251874.64
-//	float64   39874251874.65
-//
-// The summary sums the already-rounded per-row strings, so a reader adding up the column lands
-// on the published total.
+// TestRWAReferenceValue_IsExact pins ADR-0003: exact rational arithmetic with a single rounding at the end. The inputs
+// need 18 significant digits, so float64 is off by a cent (exact 39874251874.64 vs float64 39874251874.65), and the
+// summary sums the rounded row strings so the column adds up to the total.
 func TestRWAReferenceValue_IsExact(t *testing.T) {
 	price := ratFromScaledInt(big.NewInt(906529242), 8)
 	got := rwaReferenceValueUSD("43985621232331962", 7, price)
@@ -100,10 +86,8 @@ func TestRWAReferenceValue_RefusesWhatIsNotAValuation(t *testing.T) {
 		{"negative supply is bad data, not a negative valuation", "-1000", 7, price},
 		{"an unparseable supply is not a supply", "many", 7, price},
 		{"a blank supply is not a supply", "", 7, price},
-		// big.Int.Exp answers a negative exponent with 1, so an
-		// unguarded scale would publish the raw smallest-unit count as
-		// dollars — a figure 10^7 too large, and positive, and
-		// plausible.
+		// big.Int.Exp answers a negative exponent with 1, so an unguarded scale would publish the raw smallest-unit count as
+		// dollars, 10^7 too large yet plausible.
 		{"a negative scale is not a scale", "1000", -7, price},
 	}
 	for _, c := range cases {
@@ -227,11 +211,9 @@ func TestRWAReferenceValuation_StatusIsNeverEmpty(t *testing.T) {
 // made-up string would be refused for the wrong reason.
 const rwaTestContractID = "CAAQEAYEAUDAOCAJBIFQYDIOB4IBCEQTCQKRMFYYDENBWHA5DYPSBFLM"
 
-// TestRWAReferenceValuation_ContractMemberIsRefusedByName: a contract-issued member has supply
-// and decimals but gets no reference valuation, because nothing binds a CONTRACT ADDRESS to an
-// oracle feed. The only join is its self-authored SEP-41 symbol, the code-keyed join this
-// package refuses. The refusal must carry its own name: `reference_not_bound` would name a
-// (code, issuer) pair the row lacks, and silence would look like an oversight.
+// TestRWAReferenceValuation_ContractMemberIsRefusedByName: nothing binds a contract address to an oracle feed (only its
+// self-authored SEP-41 symbol, a refused code join). The refusal needs its own name, as `reference_not_bound` would
+// imply a pair.
 func TestRWAReferenceValuation_ContractMemberIsRefusedByName(t *testing.T) {
 	now := time.Now()
 	// A live feed for the very symbol the contract declares. The
@@ -272,15 +254,11 @@ func TestRWAReferenceValuation_ContractMemberIsRefusedByName(t *testing.T) {
 	}
 }
 
-// TestRWAReferenceDropActors_CoverEveryStatusARowCanCarry: the funnel attributes each drop to an
-// actor from a map, and a status with no entry falls through to a default, silently pointing the
-// reader at the wrong party. The map is pinned to the statuses in BOTH directions: a new refusal
-// without an actor fails, and so does a stale entry for a status no longer served.
+// TestRWAReferenceDropActors_CoverEveryStatusARowCanCarry: a status missing from the actor map silently falls to a
+// default and blames the wrong party. Pinned both ways: new refusals need an actor, stale entries fail.
 func TestRWAReferenceDropActors_CoverEveryStatusARowCanCarry(t *testing.T) {
-	// Every status reference_valuation.status can carry, other than
-	// published. The premium-only statuses are excluded deliberately: a
-	// row with a reference and no market price still carries a full
-	// reference valuation, so they can never appear on this field.
+	// Every status reference_valuation.status can carry other than published. Premium-only statuses are excluded since a row
+	// with a reference but no market price still has a full reference valuation.
 	carried := map[string]struct{}{
 		RWAPremiumIssuerFlagged:        {},
 		RWAPremiumReferenceUnavailable: {},
@@ -336,10 +314,8 @@ func TestRWAReferenceDropActors_CoverEveryStatusARowCanCarry(t *testing.T) {
 	}
 }
 
-// TestRWAValuationStages_BalanceIsNotTautological proves the funnel's balance can fail. The two
-// sides are derived differently on purpose: the stage counts rows CARRYING A FIGURE, the drops
-// count rows whose STATUS is not published. They reconcile only if both are the same set of
-// rows, so a "published" status over an absent figure breaks it. Both directions are driven.
+// TestRWAValuationStages_BalanceIsNotTautological proves the funnel balance can fail: stages count rows carrying a
+// figure, drops count rows whose status is not published, so a "published" status over an absent figure breaks it.
 func TestRWAValuationStages_BalanceIsNotTautological(t *testing.T) {
 	money := "1325134.33"
 	honest := []RWAAsset{

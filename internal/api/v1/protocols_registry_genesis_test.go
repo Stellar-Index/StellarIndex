@@ -9,10 +9,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestCCTPRozoGenesisLocksStepAcrossRegistries pins cctp's and rozo's genesis ledger across the
-// three places it is restated: the source package's exported constant, protocols_registry.go's
-// ProtocolMeta, and per_source_gaps.go's DefaultGapDetectorTargets floor. Otherwise correcting
-// one copy leaves the others silently wrong.
+// TestCCTPRozoGenesisLocksStepAcrossRegistries pins cctp's and rozo's genesis ledger across the source package constant,
+// protocols_registry.go ProtocolMeta, and per_source_gaps.go's DefaultGapDetectorTargets floor, so no copy drifts.
 func TestCCTPRozoGenesisLocksStepAcrossRegistries(t *testing.T) {
 	cases := []struct {
 		source  string

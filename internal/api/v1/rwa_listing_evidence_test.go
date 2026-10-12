@@ -38,11 +38,8 @@ func rwaEvidenceServer(t *testing.T, listings v1.RWAListingDirectoryReader) *v1.
 	)
 }
 
-// A set built from a read taken BEFORE the sync landed must say, on the wire, when it looked
-// and what it saw.
-//
-// Without the timestamp this is unanswerable after the fact: re-reading the table later shows
-// a healthy directory while the response still reports a closed arm.
+// A set built from a read taken before the sync landed must say on the wire when it looked and what it saw; without the
+// timestamp, re-reading later shows a healthy directory while the response still reports a closed arm.
 func TestRWAListingEvidence_DatesTheReadThatClosedTheArm(t *testing.T) {
 	// The directory as it stood before the first sync ever completed.
 	before := time.Now().UTC().Add(-time.Second)
@@ -74,11 +71,8 @@ func TestRWAListingEvidence_DatesTheReadThatClosedTheArm(t *testing.T) {
 	}
 }
 
-// One case per state that closes the arm. The verdict is identical in all three; only the
-// evidence separates them.
-//
-// `entries` counts FRESH rows only (storage invariant: Entries = Contracts + Classic, with
-// Stale counted BESIDE them), so the two zero-entry states are told apart by `stale` alone.
+// One case per state that closes the arm; the verdict is identical, only the evidence separates them. `entries` counts
+// fresh rows only (Entries = Contracts + Classic, Stale beside), so the two zero-entry states differ by `stale` alone.
 func TestRWAListingEvidence_SeparatesTheThreeClosedArmStates(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
@@ -154,12 +148,8 @@ func TestRWAListingEvidence_PublishedOnTheHealthyPathToo(t *testing.T) {
 	}
 }
 
-// A read that did not ANSWER has observed nothing, and must publish nothing rather than a
-// census of zeros.
-//
-// Zeros from a failed query look identical to zeros from an empty table, but the second is a
-// finding about the directory and the first about our own connection. An absent block means
-// the source could not be read at all.
+// A read that did not answer observed nothing and must publish nothing, not a census of zeros: zeros from a failed query
+// look like an empty table but are a finding about our connection. An absent block means the source couldn't be read.
 func TestRWAListingEvidence_AFailedReadPublishesNone(t *testing.T) {
 	view := getRWA(t, rwaEvidenceServer(t, &stubRWAListings{err: errRWAListingRead}))
 	if ev := view.Funnel.ListingDirectory; ev != nil {

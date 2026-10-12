@@ -2,10 +2,8 @@ package v1
 
 import "testing"
 
-// TestRwaAssetIssuerCount_ContractsAreNotOneSharedBlankBucket pins that
-// rwaAssetIssuerCount (behind /v1/rwa/assets' summary.issuers) counts
-// each admitted contract as its own issuer, rather than collapsing every
-// contract row's blank Issuer string into a single shared map key.
+// TestRwaAssetIssuerCount_ContractsAreNotOneSharedBlankBucket pins that rwaAssetIssuerCount (summary.issuers) counts each
+// admitted contract as its own issuer, not one shared blank-Issuer map key.
 func TestRwaAssetIssuerCount_ContractsAreNotOneSharedBlankBucket(t *testing.T) {
 	assets := make([]RWAAsset, 0, 26)
 	for i := 0; i < 21; i++ {
@@ -28,11 +26,8 @@ func TestRwaAssetIssuerCount_ContractsAreNotOneSharedBlankBucket(t *testing.T) {
 	}
 }
 
-// TestRwaIssuerCount_AgreesAcrossAssetsAndHistoryViews is the
-// cross-endpoint regression: the SAME membership (21 classic issuers, 5
-// contracts) must publish the SAME issuers count whether it is read
-// through /v1/rwa/assets' rwaAssetIssuerCount or /v1/rwa/history and
-// /v1/rwa/premium's rwaHistoryIssuerCount.
+// TestRwaIssuerCount_AgreesAcrossAssetsAndHistoryViews: the same membership (21 classic issuers, 5 contracts) must publish
+// the same issuers count via rwaAssetIssuerCount and via rwaHistoryIssuerCount (/v1/rwa/history, /premium).
 func TestRwaIssuerCount_AgreesAcrossAssetsAndHistoryViews(t *testing.T) {
 	m := rwaMembership{}
 	assets := make([]RWAAsset, 0, 26)

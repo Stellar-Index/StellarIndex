@@ -28,10 +28,8 @@ func (r *stubNetworkStatsReader) GetNetworkStats(_ context.Context) (timescale.N
 	return r.stats, nil
 }
 
-// TestNetworkStats_503WhenReaderNil pins the "feature-gated reader"
-// degradation. /v1/network/stats backs the explorer's home network
-// strip, so a 503 is the right signal — the strip can hide rather
-// than render zeroes.
+// TestNetworkStats_503WhenReaderNil pins feature-gated degradation: /v1/network/stats backs the explorer's home strip,
+// so 503 lets the strip hide rather than render zeroes.
 func TestNetworkStats_503WhenReaderNil(t *testing.T) {
 	srv := v1.New(v1.Options{})
 	ts := startHTTPTest(t, srv.Handler())
@@ -42,9 +40,7 @@ func TestNetworkStats_503WhenReaderNil(t *testing.T) {
 	}
 }
 
-// TestNetworkStats_HappyPath threads a populated stub through the
-// handler and pins the wire shape — the explorer's HomeNetworkStrip
-// reads these field names verbatim. Volume24hUSD comes through as a
+// TestNetworkStats_HappyPath pins the wire shape the explorer's HomeNetworkStrip reads verbatim; Volume24hUSD is a
 // pointer-to-string per ADR-0003.
 func TestNetworkStats_HappyPath(t *testing.T) {
 	vol := "3958193034.60"
@@ -94,10 +90,8 @@ func TestNetworkStats_HappyPath(t *testing.T) {
 	}
 }
 
-// TestNetworkStats_NullVolumeOmitted pins the omitempty behaviour:
-// when prod has no USD-equivalent trades in the trailing 24h, the
-// volume field is absent from the JSON (callers can distinguish
-// "no data" from "0").
+// TestNetworkStats_NullVolumeOmitted pins omitempty: with no USD-equivalent trades in 24h the volume field is absent,
+// so callers can tell "no data" from "0".
 func TestNetworkStats_NullVolumeOmitted(t *testing.T) {
 	reader := &stubNetworkStatsReader{
 		stats: timescale.NetworkStats{
@@ -120,10 +114,8 @@ func TestNetworkStats_NullVolumeOmitted(t *testing.T) {
 	}
 }
 
-// TestNetworkStats_ReaderError500 — storage failure surfaces as a
-// 500 problem+json so the explorer's 4xx/5xx branch fires rather
-// than a confusing "data: null" success. Logged at WARN; not WARN-
-// asserted here (test binary doesn't tap the logger).
+// TestNetworkStats_ReaderError500: a storage failure surfaces as a 500 problem+json so the explorer's error branch fires
+// instead of a "data: null" success.
 func TestNetworkStats_ReaderError500(t *testing.T) {
 	reader := &stubNetworkStatsReader{err: errors.New("storage broke")}
 	srv := v1.New(v1.Options{NetworkStats: reader})
@@ -139,10 +131,8 @@ func TestNetworkStats_ReaderError500(t *testing.T) {
 	}
 }
 
-// stubStaleNetworkStatsReader implements the (unexported) stale-aware
-// capability structurally: the handler type-asserts on the method set, so
-// a test stub carrying GetNetworkStatsAt exercises the honest-freshness
-// path without reaching for the real TTL cache.
+// stubStaleNetworkStatsReader implements the unexported stale-aware capability structurally (the handler type-asserts
+// the method set), exercising the honest-freshness path without the real TTL cache.
 type stubStaleNetworkStatsReader struct {
 	stats      timescale.NetworkStats
 	observedAt time.Time
@@ -157,10 +147,8 @@ func (r *stubStaleNetworkStatsReader) GetNetworkStatsAt(_ context.Context) (time
 	return r.stats, r.observedAt, r.stale, nil
 }
 
-// TestNetworkStats_HonestStaleAsOf pins /v1/network/stats: when the reader serves an SWR-stale
-// value, the envelope stamps flags.stale=true and an as_of equal to the value's real observation
-// time, never stale:false / as_of=now, which would assert freshness over data a failing refresh
-// has let age. Mirrors the /v1/markets honest-staleness contract.
+// TestNetworkStats_HonestStaleAsOf pins that an SWR-stale value yields flags.stale=true and as_of equal to its real
+// observation time, never stale:false / as_of=now. Mirrors the /v1/markets contract.
 func TestNetworkStats_HonestStaleAsOf(t *testing.T) {
 	observed := time.Date(2026, 8, 25, 10, 0, 0, 0, time.UTC)
 	reader := &stubStaleNetworkStatsReader{

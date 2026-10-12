@@ -11,10 +11,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// rwaSummaryReachableProvenances is every provenance a row in
-// view.Assets can carry into RWAReferenceSummary. The curator provenance
-// is absent on purpose: curated rows are served in CuratedAssets and
-// never enter the verified total.
+// rwaSummaryReachableProvenances is every provenance a view.Assets row can carry into RWAReferenceSummary; the curator
+// provenance is absent because curated rows live in CuratedAssets and never enter the verified total.
 var rwaSummaryReachableProvenances = []string{
 	RWAReferenceOracleNAV,
 	RWAReferenceFundNAV,

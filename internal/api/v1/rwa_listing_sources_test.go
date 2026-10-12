@@ -9,14 +9,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// GET /v1/rwa/assets: C2's second arm rests on TWO sources, and a refusal reason has to name the
-// one that actually failed.
-//
-// The listing directory supplies the arm's recognition. The curated account directory supplies the
-// scam vocabulary C3 reads, and C3 refuses a flagged address whatever named it, so either read
-// failing closes the arm. The two failures are not correlated: the curated directory can be
-// unreadable while the listing directory is fresh, and blaming the listing sync then sends an
-// operator to the wrong system for a fault that is not there.
+// GET /v1/rwa/assets: C2's second arm rests on two sources (listing directory for recognition, curated directory for the
+// scam vocabulary C3 reads), and either failing closes the arm. The failures are uncorrelated, so a refusal reason must
+// name the source that actually failed or the operator is sent to the wrong system.
 
 // rwaTwoSourceServer wires the listing arm with the curated directory
 // reader under the test's control, so each source can be failed on its
@@ -44,10 +39,8 @@ func rwaTwoSourceServer(
 	})
 }
 
-// A failed CURATED read, beside a listing directory that answered, must not be reported as a
-// listing outage. The evidence block is asserted alongside the reason because together they are
-// the contradiction: "listing unavailable" next to a healthy listing directory disagrees with
-// itself, and a reader who trusts the reason goes to the wrong system.
+// A failed curated read beside an answering listing directory must not be reported as a listing outage; the evidence block
+// is asserted too, since "listing unavailable" next to a healthy listing contradicts itself.
 func TestRWAListingSources_CuratedTagFailureIsNotAListingOutage(t *testing.T) {
 	view := getRWA(t, rwaTwoSourceServer(t,
 		// The listing directory ANSWERS, freshly, naming the address.

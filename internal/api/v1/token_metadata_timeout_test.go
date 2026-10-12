@@ -28,10 +28,9 @@ func (p *ctxBudgetProbe) observe(ctx context.Context) {
 	}
 }
 
-// overlayProbeStall is how long the wedged fakes hold a read its caller failed to bound. It
-// must exceed tokenMetadataReadTimeout so a bounded overlay always cancels first, yet still
-// release an UNBOUNDED caller so a regression fails on the named assertion, not the package
-// test timeout.
+// overlayProbeStall is how long wedged fakes hold a read its caller failed to bound. It must exceed
+// tokenMetadataReadTimeout so a bounded overlay cancels first, yet release an unbounded caller so a regression
+// fails on the named assertion, not the package timeout.
 const overlayProbeStall = 4 * time.Second
 
 // errOverlayUnbounded is what the fakes return when they stalled the full
@@ -82,14 +81,9 @@ func sorobanTestAsset(t *testing.T) canonical.Asset {
 	return a
 }
 
-// TestTokenMetadataOverlays_BoundedByOwnBudget pins that both overlays are BEST-EFFORT (their
-// failure mode is the documented decimals default of 7 and a null total_supply), so each must
-// run on its own sub-budget, like resolveTokenDecimals. On the raw request context a slow
-// ClickHouse would hold GET /v1/assets/{id} for the whole request budget before serving the
-// same fallback values.
-//
-// The parent context carries NO deadline, so any deadline the reader observes can only come
-// from the overlay's own sub-budget.
+// TestTokenMetadataOverlays_BoundedByOwnBudget: both overlays are best-effort (fallback is decimals 7 and null total_supply),
+// so each needs its own sub-budget; on the raw request context a slow ClickHouse would hold GET /v1/assets/{id} for the whole
+// budget. The parent context has NO deadline, so any deadline the reader sees comes from the overlay.
 func TestTokenMetadataOverlays_BoundedByOwnBudget(t *testing.T) {
 	asset := sorobanTestAsset(t)
 

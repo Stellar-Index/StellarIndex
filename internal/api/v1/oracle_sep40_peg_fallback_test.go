@@ -13,10 +13,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// /v1/oracle/prices walks the declared USD pegs when the literal asset/fiat:USD series is empty.
-// A peg leg the withholding gate refused must not be skipped like a miss (200 [], "no data"):
-// every sibling surface answers the price-withheld 404. A peg-served series must also be stamped
-// stale as well as triangulated, like the same fallback on lastprice/x_last_price.
+// /v1/oracle/prices walks declared USD pegs when asset/fiat:USD is empty. A peg leg the withholding gate refused must
+// give the price-withheld 404 like sibling surfaces, not 200 []; a peg-served series is stamped stale and triangulated.
 
 func oraclePegs(t *testing.T) (usdc, usdt canonical.Asset) {
 	t.Helper()

@@ -18,10 +18,8 @@ import (
 // contracts than this can never have its count derived from an enumeration.
 const rosterProjectionCap = 5000
 
-// countingContractsReader is a contracts reader that ALSO answers the
-// count-without-enumeration capability, the way timescale.Store does:
-// `projection` is what enumerating a source returns (already truncated at the
-// cap, as the live query would be) and `counts` is the source's true total.
+// countingContractsReader is a contracts reader that also answers count-without-enumeration, like timescale.Store:
+// `projection` is what enumeration returns (already capped) and `counts` is the source's true total.
 type countingContractsReader struct {
 	projection map[string][]string
 	counts     map[string]int64
@@ -87,11 +85,9 @@ func protocolDetail(t *testing.T, base, name string) v1.ProtocolDetailView {
 	return env.Data
 }
 
-// TestProtocolContractCount_TrueTotalNotZeroNotCap covers the protocol whose
-// contracts outnumber the enumerating roster's LIMIT 5000: sorocredit deploys
-// one Collateral-<uuid> child contract per opened position (116,124 on r1). Neither enumeration outcome is a usable count — an absent
-// projection path publishes 0, a capped one publishes 5,000 — so both the
-// directory row and the detail view must publish the counted TRUE total.
+// TestProtocolContractCount_TrueTotalNotZeroNotCap covers sorocredit, which deploys one child contract per position
+// (116,124 on r1), beyond the roster's LIMIT 5000. An absent projection publishes 0 and a capped one 5,000, so the
+// directory row and detail view must both publish the counted true total.
 func TestProtocolContractCount_TrueTotalNotZeroNotCap(t *testing.T) {
 	const trueCount = 116_124
 
@@ -164,10 +160,8 @@ func TestProtocolContractCount_UncountedSourceKeepsRoster(t *testing.T) {
 	}
 }
 
-// TestProtocolContractCount_FailedCountOmitsNotZeros keeps the counted path
-// under the same honesty contract as a failed roster read: an unreadable count
-// omits the source and names it in coverage_note, never a fabricated
-// contract_count: 0.
+// TestProtocolContractCount_FailedCountOmitsNotZeros: an unreadable count omits the source and names it in
+// coverage_note, never a fabricated contract_count: 0, matching the failed-roster-read contract.
 func TestProtocolContractCount_FailedCountOmitsNotZeros(t *testing.T) {
 	reader := &countingContractsReader{countErr: errors.New("served-tier count failed")}
 	ts := httpTestServer(t, v1.New(v1.Options{ProtocolContracts: reader}))

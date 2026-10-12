@@ -26,10 +26,9 @@ func TestMethodologySourcesUseOwnSchema(t *testing.T) {
 	assertSameSet(t, "MethodologySource", specProps, goProps)
 }
 
-// TestDiagnosticsIngestionBackfillCoverageFieldsDocumented pins that the spec names, as
-// properties, density_pct, covered_ledgers, expected_ledgers, gap_free_pct and
-// coverage_snapshot_at, which BackfillCoverageRow serves once the gap detector has run (they are
-// omitempty). A prose disclaimer is not a schema.
+// TestDiagnosticsIngestionBackfillCoverageFieldsDocumented pins that the spec names, as properties, density_pct,
+// covered_ledgers, expected_ledgers, gap_free_pct and coverage_snapshot_at (omitempty; served once the gap
+// detector has run). A prose disclaimer is not a schema.
 func TestDiagnosticsIngestionBackfillCoverageFieldsDocumented(t *testing.T) {
 	doc := loadSpecDoc(t)
 	op := mustMap(t, doc, "paths", "/diagnostics/ingestion", "get")
@@ -48,10 +47,8 @@ func TestDiagnosticsIngestionBackfillCoverageFieldsDocumented(t *testing.T) {
 	}
 }
 
-// TestDiagnosticsIngestionSourcesEntriesAndEnabledDocumented pins the
-// `sources[]` half of that: SourceHealthRow serves entries_24h and
-// enabled unconditionally (no omitempty) and the spec's inline sources
-// item schema omitted both.
+// TestDiagnosticsIngestionSourcesEntriesAndEnabledDocumented pins the `sources[]` half: SourceHealthRow serves
+// entries_24h and enabled unconditionally (no omitempty), so the spec's source item schema must name both.
 func TestDiagnosticsIngestionSourcesEntriesAndEnabledDocumented(t *testing.T) {
 	doc := loadSpecDoc(t)
 	op := mustMap(t, doc, "paths", "/diagnostics/ingestion", "get")

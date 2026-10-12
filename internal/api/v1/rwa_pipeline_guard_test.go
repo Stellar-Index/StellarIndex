@@ -11,18 +11,9 @@ import (
 	"testing"
 )
 
-// The RWA surface reuses the /v1/assets post-query pipeline instead of computing its own
-// valuations, which is why it cannot publish a figure /v1/assets would withhold. That reuse is a
-// hand-copied call sequence in rwaListingRows, so it can silently fall behind: a gate added to
-// buildAssetListPage would leave the RWA page serving the ungated figure.
-//
-// This guard reads both functions and requires the RWA path to make every s.* call the listing
-// path makes, in the same relative order. It is source-level on purpose: the drift is a missing
-// line, which no behavioural test can see without a fixture for the specific missing gate.
-//
-// Listing calls that are not part of the valuation pipeline are named in
-// listingOnlyPipelineCalls with the reason. That list is the register of deliberate divergences,
-// and the test fails if an entry stops appearing in the listing path.
+// The RWA surface reuses the /v1/assets post-query pipeline as a hand-copied call sequence in rwaListingRows, so a gate added
+// to buildAssetListPage could leave RWA serving an ungated figure. This source-level guard requires every s.* call of the
+// listing path in the same order; deliberate divergences are listed in listingOnlyPipelineCalls, and a stale entry fails.
 var listingOnlyPipelineCalls = map[string]string{
 	// Cursor validation and the store read belong to a paged listing;
 	// the RWA set is unpaged and reads per member issuer.
@@ -30,20 +21,12 @@ var listingOnlyPipelineCalls = map[string]string{
 	// The sparkline is an opt-in query parameter on /v1/assets. The RWA
 	// surface takes no query parameters and serves no series.
 	"attachSparkline7dIfRequested": "no include= parameter on this surface, and no price series is served",
-	// The logo overlay writes AssetDetail.Image, which this surface has
-	// no field for. Running it would be a no-op with a per-page scan
-	// attached. It is a DISPLAY fill, never a gate — recording it here
-	// costs nothing that guards a number.
+	// The logo overlay writes AssetDetail.Image, which this surface has no field for, so running it is a no-op with a per-
+	// page scan. It is a display fill, never a gate.
 	"fillImagesFromSep1": "this surface serves no image field, so the overlay would write nothing",
-	// The listing-priced valuation arm is a recorded divergence: the RWA surface already makes
-	// this claim through rwaApplyContractReference, which publishes a `reference` block with
-	// provenance listing_platform_price. Running the arm here would attach a second block under
-	// a different field name that the RWAAsset projection cannot receive, costing a directory
-	// read and a lake read per rebuild for nothing served.
-	//
-	// It is NOT a gate, which is what this register protects: it can only ADD a figure to a row
-	// that has none, never withhold one, so an arm missing it cannot publish anything
-	// /v1/assets would refuse.
+	// The listing-priced valuation arm is a recorded divergence: RWA already publishes this claim as a `reference` block via
+	// rwaApplyContractReference, and a second block would cost reads for nothing served. It can only add a figure, never
+	// withhold one, so skipping it cannot publish anything /v1/assets would refuse.
 	"applyListingValuations": "the RWA surface publishes this claim already, through its own reference block (rwa_reference.go); it is additive, never a gate",
 }
 
@@ -51,16 +34,9 @@ func TestRWAListingPipelineMatchesTheAssetsListing(t *testing.T) {
 	assertRWAPipelineMatchesListing(t, "rwa.go", "rwaListingRows")
 }
 
-// TestRWAContractPipelineMatchesTheAssetsListing holds the CONTRACT arm
-// to the same contract as the classic one.
-//
-// The contract arm reads its own rows (the listing spine cannot express the volume-gate-free
-// read it needs), so it is a second hand-copied call sequence with the same failure mode: a gate
-// added to buildAssetListPage would leave contract rows serving the ungated figure.
-//
-// Three pipeline steps are no-ops on a contract row (no code, no G-issuer) but are still required
-// to be CALLED. A no-op costs nothing, and letting each arm skip steps its author judged
-// irrelevant is how the arms start disagreeing about which gates apply to a valuation.
+// TestRWAContractPipelineMatchesTheAssetsListing holds the contract arm, a second hand-copied call sequence, to the same
+// pipeline as the classic arm. Steps that are no-ops on a contract row must still be CALLED, so the arms cannot drift on
+// which gates apply.
 func TestRWAContractPipelineMatchesTheAssetsListing(t *testing.T) {
 	assertRWAPipelineMatchesListing(t, "rwa_contracts.go", "rwaContractListingRows")
 }
@@ -108,17 +84,9 @@ func assertRWAPipelineMatchesListing(t *testing.T, file, fn string) {
 	}
 }
 
-// TestDirectoryTagsPrecedeTheListingValuationArm.
-//
-// applyListingValuations refuses a row whose issuer carries a scam-class directory tag, read from
-// AssetDetail.IssuerDirectoryTags, which only fillIssuerDirectoryTags populates. So the refusal
-// is alive only where the directory call runs FIRST; otherwise it sees an empty slice and a
-// flagged issuer publishes `listing_reference.price_usd` and `listing_valuation.value_usd` under
-// a `price_usd: null` that the same tag produced.
-//
-// Source-level, like the RWA guard above: the defect is an ORDER, which no single-function
-// behavioural test can see. Checked over every function in the package that makes both calls, so
-// a new listing phase inherits the rule.
+// TestDirectoryTagsPrecedeTheListingValuationArm: applyListingValuations reads IssuerDirectoryTags, which only
+// fillIssuerDirectoryTags fills, so the scam refusal works only if the directory call runs FIRST. Source-level because
+// the defect is an order; checked over every function making both calls so new phases inherit it.
 func TestDirectoryTagsPrecedeTheListingValuationArm(t *testing.T) {
 	const (
 		tags      = "fillIssuerDirectoryTags"

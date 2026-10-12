@@ -9,11 +9,8 @@ import (
 	"testing"
 )
 
-// The summary's `provenances` enum is the set a VERIFIED row can carry
-// into the reference total; curated rows are served apart and never
-// enter it, so the curator provenance belongs on the per-row enum only.
-// Both spec enums are pinned to the Go vocabulary so a new provenance
-// cannot reach the wire without the spec (and its generated clients).
+// The summary's `provenances` enum is what a verified row can carry into the total; curated rows are served apart, so
+// the curator provenance is on the per-row enum only. Both spec enums are pinned to the Go vocabulary.
 func TestRWAReferenceProvenance_SpecEnumsAreTheGoVocabulary(t *testing.T) {
 	summary := make([]string, 0, len(rwaReferenceProvenanceProseOrder))
 	for _, p := range rwaReferenceProvenanceProseOrder {

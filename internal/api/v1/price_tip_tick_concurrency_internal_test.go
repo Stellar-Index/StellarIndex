@@ -17,10 +17,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// blockingTickHistory holds every TradesInRange call until release is
-// closed, recording the peak number of calls in flight at once. A
-// compute reads its pairs sequentially, so that peak is the number of
-// concurrent computeTip calls.
+// blockingTickHistory holds every TradesInRange call until release is closed, recording peak calls in flight. A compute
+// reads its pairs sequentially, so the peak equals concurrent computeTip calls.
 type blockingTickHistory struct {
 	HistoryReader // nil — only TradesInRange is exercised
 	release       chan struct{}
@@ -51,11 +49,9 @@ func (h *blockingTickHistory) TradesInRange(ctx context.Context, pair canonical.
 	}
 }
 
-// TestTipTicks_ConcurrencyIsBoundedOnTheRealTickPath drives both
-// producer shapes' real tick loops with more producers than tick slots
-// against a reader that never answers, and requires that no more
-// computes than slots are ever in flight. The count and rate budgets do
-// not bound this: every producer can fire in the same instant.
+// TestTipTicks_ConcurrencyIsBoundedOnTheRealTickPath drives both producer shapes' real tick loops with more producers
+// than tick slots against a never-answering reader and requires in-flight computes never exceed slots. Count and rate
+// budgets do not bound this: every producer can fire at once.
 func TestTipTicks_ConcurrencyIsBoundedOnTheRealTickPath(t *testing.T) {
 	const slots, producers = 2, 6
 	btc, _ := canonical.ParseAsset("crypto:BTC")

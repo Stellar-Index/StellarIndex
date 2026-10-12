@@ -28,10 +28,9 @@ func startHTTPTest(t *testing.T, h http.Handler) *testServerImpl {
 	return &testServerImpl{URL: ts.URL, ts: ts}
 }
 
-// remainingBeforeProbe reads the caller's rate-limit remainder through probeURL (a request that
-// costs exactly the base token and is answered 400 no-store) and returns it as it stood before
-// the probe's own token. A shared-cacheable 200 carries no X-RateLimit-* (a CDN would replay
-// them to other callers), so a charge it made is observed here; the helper first asserts none.
+// remainingBeforeProbe reads the caller's rate-limit remainder through probeURL (costs exactly the base token,
+// answered 400 no-store) and returns it as it stood before the probe's own token. A shared-cacheable 200 carries
+// no X-RateLimit-* (a CDN would replay them), so a charge it made shows here; the helper first asserts none.
 func remainingBeforeProbe(t *testing.T, cacheable *http.Response, probeURL string) int {
 	t.Helper()
 	if got := cacheable.Header.Get("X-RateLimit-Remaining"); got != "" {

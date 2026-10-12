@@ -178,15 +178,9 @@ func TestCachedOracleReader_DoesNotCacheError(t *testing.T) {
 	}
 }
 
-// TestCachedOracleReader_BoundedUnderAssetChurn: /v1/oracle/latest?asset= is public and
-// unauthenticated, so an anonymous caller enumerating distinct assets must NOT grow the entry map
-// without limit. A long TTL means nothing expires, forcing the SIZE cap to do the bounding, the
-// crawler/attacker shape (fresh, distinct, never-repeated keys).
-//
-// The second half pins the POLICY, not just the bound: the entries dropped must be the oldest. An
-// evict-newest (or evict-the-key-just-asked-for) implementation would satisfy the size assertion
-// while pinning the first keys forever and thrashing one rotating slot, so post-warm-up traffic
-// would never cache.
+// TestCachedOracleReader_BoundedUnderAssetChurn: /v1/oracle/latest?asset= is public, so distinct-asset enumeration must not
+// grow the entry map without limit (long TTL forces the SIZE cap to bound it). Also pins POLICY: the oldest entries are
+// evicted; evict-newest would pass the size check but pin the first keys forever and never cache later traffic.
 func TestCachedOracleReader_BoundedUnderAssetChurn(t *testing.T) {
 	up := &fakeOracleUpstream{}
 	c := NewCachedOracleReader(up, time.Hour)
@@ -235,10 +229,8 @@ func TestCachedOracleReader_BoundedUnderAssetChurn(t *testing.T) {
 	}
 }
 
-// TestCachedOracleReader_LeaderAbortDoesNotFailUnrelatedWaiter: the caller that triggers a cold
-// fill is not privileged. If ITS context is cancelled mid-flight (client disconnect, its own
-// deadline), every OTHER caller single-flighted onto the same key must still get the real result;
-// the leader's abort must not fail an unrelated waiter whose own context is live.
+// TestCachedOracleReader_LeaderAbortDoesNotFailUnrelatedWaiter: if the caller triggering a cold fill is cancelled mid-
+// flight, other callers single-flighted on the key still get the real result.
 func TestCachedOracleReader_LeaderAbortDoesNotFailUnrelatedWaiter(t *testing.T) {
 	up := &fakeOracleUpstream{updatesDelay: 150 * time.Millisecond}
 	c := NewCachedOracleReader(up, 5*time.Second)
@@ -277,10 +269,8 @@ func TestCachedOracleReader_LeaderAbortDoesNotFailUnrelatedWaiter(t *testing.T) 
 	}
 }
 
-// TestCachedOracleReader_StreamsAreCached: LatestOracleStreams rides the same TTL + single-flight
-// as its siblings, since an uncached /v1/oracle/streams re-runs the oracle_updates scan on every
-// hit. N calls inside the window cost ONE upstream scan, and the window is honoured (a call past
-// the TTL refetches).
+// TestCachedOracleReader_StreamsAreCached: LatestOracleStreams shares the TTL + single-flight of its siblings, so N
+// calls in the window cost one upstream scan and a call past the TTL refetches.
 func TestCachedOracleReader_StreamsAreCached(t *testing.T) {
 	up := &fakeOracleUpstream{}
 	c := NewCachedOracleReader(up, 5*time.Second)

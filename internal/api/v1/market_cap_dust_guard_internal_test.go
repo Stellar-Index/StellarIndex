@@ -15,10 +15,8 @@ import (
 
 func strptr(s string) *string { return &s }
 
-// TestDustLiquiditySuppressed pins the shared valuation-integrity predicate
-// that BOTH the listing path (fillMarketCapsFromSupply → computeMarketCapUSD)
-// and the detail path (populateMarketCap) gate on. The AND is load-bearing:
-// only a single backing venue AND a POSITIVE sub-floor 24h volume suppresses.
+// TestDustLiquiditySuppressed pins the shared predicate used by both the listing and detail paths. The AND is
+// load-bearing: suppression needs a single backing venue AND a positive sub-floor 24h volume.
 func TestDustLiquiditySuppressed(t *testing.T) {
 	const floor = 1000.0
 	cases := []struct {
@@ -42,10 +40,8 @@ func TestDustLiquiditySuppressed(t *testing.T) {
 		{"multi-source thin $10", 2, strptr("10"), floor, false},
 		{"multi-source thin, 3 venues", 3, strptr("5"), floor, false},
 		{"floor disabled (0)", 1, strptr("10"), 0, false},
-		// An unmeasured venue count (0) with a POSITIVE,
-		// measured, sub-floor volume suppresses — the measured dust
-		// volume is itself the positive evidence, and the unmeasured-
-		// count arm is where impersonator assets lived.
+		// An unmeasured venue count (0) with a positive, measured, sub-floor volume suppresses: the measured dust volume is
+		// itself the evidence, and the unmeasured-count arm is where impersonator assets lived.
 		{"unmeasured source count (0) + measured dust vol suppresses", 0, strptr("10"), floor, true},
 		{"unmeasured source count (0) + nil volume kept", 0, nil, floor, false},
 		{"volume unknown (nil)", 1, nil, floor, false},
@@ -61,12 +57,8 @@ func TestDustLiquiditySuppressed(t *testing.T) {
 	}
 }
 
-// TestListingMarketCap_DustGuard drives the decision the listing fill loop
-// (fillMarketCapsFromSupply) makes: suppress-and-flag when dust, else compute the market
-// cap via computeMarketCapUSD, over the real functions.
-//
-// Supply 10^17 raw @ 7dp × $0.50 = $5,000,000,000, the "billions" an unguarded dust price
-// would assert.
+// TestListingMarketCap_DustGuard drives the listing fill decision over the real functions: suppress-and-flag when dust,
+// else computeMarketCapUSD. Supply 10^17 raw @ 7dp x $0.50 = $5B is what an unguarded dust price would assert.
 func TestListingMarketCap_DustGuard(t *testing.T) {
 	const (
 		floor = 1000.0
@@ -106,11 +98,8 @@ func TestListingMarketCap_DustGuard(t *testing.T) {
 	}
 }
 
-// TestApplyUnverifiedWarning_ReferenceOnlyTicker: a reference-only ticker (USDT, known to
-// the catalogue as an external asset with no verified Stellar issuance) must still produce
-// the warning and envelope flag. A StellarEntry()==nil bail would silence the warning for
-// the tickers impersonators target hardest, so /v1/assets/USDT-G… would serve clean while
-// the listing flags the same row. Pinned against the real embedded catalogue.
+// TestApplyUnverifiedWarning_ReferenceOnlyTicker: a reference-only ticker (e.g. USDT) must still produce the warning and
+// envelope flag; bailing on StellarEntry()==nil would silence the tickers impersonators target. Uses the real catalogue.
 func TestApplyUnverifiedWarning_ReferenceOnlyTicker(t *testing.T) {
 	cat, err := currency.LoadEmbedded()
 	if err != nil {
@@ -161,10 +150,8 @@ func (g *stubListingGate) Probe(ctx context.Context, base, quote canonical.Asset
 	return g.Allowed(ctx, base, quote, "probe"), true, pricingguard.FloorNone
 }
 
-// TestApplySubstanceGateToListing: the listing's price_usd enrichment (catalogue SQL,
-// outside /v1/price's read path) must respect the same thin-market gate. Withheld rows
-// lose price_usd and the change pills, allowed rows keep them, and fiat/crypto catalogue
-// rows are out of scope.
+// TestApplySubstanceGateToListing: listing price_usd enrichment must respect the thin-market gate. Withheld rows lose
+// price_usd and change pills, allowed rows keep them, fiat/crypto catalogue rows are out of scope.
 func TestApplySubstanceGateToListing(t *testing.T) {
 	peg, err := canonical.ParseAsset("USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
 	if err != nil {

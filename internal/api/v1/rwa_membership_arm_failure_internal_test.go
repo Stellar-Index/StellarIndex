@@ -9,15 +9,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// A rebuild in which one arm's READ FAILED must not become the served set, and must not clear
-// the failure stamp. Caching on "either arm answered" would serve a half-empty membership set
-// (a failed classic scan beside a healthy contract scan) for the full cache lifetime while
-// reporting `stale: false` and no `rebuild_failed_at`. Membership is what this index CALLS a
-// real-world asset, so a half set is wrong coverage that looks fresh.
-//
-// The distinction is WIRED-AND-FAILED versus NOT WIRED. `available: false` says both, and only
-// the first may refuse a cache write, which
-// [TestRefreshRWAMembership_UnwiredArmStillCaches] below holds in place.
+// A rebuild where one arm's read FAILED must not become the served set nor clear the failure stamp; caching on "either
+// arm answered" would serve a half-empty set as fresh. Only wired-and-failed refuses a cache write, not an unwired arm
+// ([TestRefreshRWAMembership_UnwiredArmStillCaches]).
 
 // stubRWAContractArm answers the contract arm's directory scan. Empty
 // by default: what matters here is that the arm ANSWERED, not what it
@@ -46,10 +40,8 @@ func (s *stubRWAContractArm) DirectoryRecognisedIssuersWithoutAsset(
 	return nil, nil
 }
 
-// unwiredSep1Reader satisfies [Sep1CachedReader] and NOT
-// [Sep1BoundCurrencyReader] — the deployment that never wired the
-// attestation scan, which is a configuration statement rather than an
-// outage.
+// unwiredSep1Reader satisfies [Sep1CachedReader] but not [Sep1BoundCurrencyReader]: a deployment that never wired the
+// attestation scan, which is configuration rather than an outage.
 type unwiredSep1Reader struct{}
 
 func (unwiredSep1Reader) GetIssuerSep1Cached(
@@ -121,10 +113,8 @@ func TestRefreshRWAMembership_FailedClassicArmDoesNotOverwrite(t *testing.T) {
 	}
 }
 
-// The mirror case, on the other arm: the contract directory scan fails
-// while the classic scan answers. The classic answer here is EMPTY (the
-// stub scan binds nothing), so caching it would blank the served set
-// just as certainly as the case above.
+// Mirror case: the contract directory scan fails while the classic scan answers with an empty set, and caching that
+// would blank the served set just as surely.
 func TestRefreshRWAMembership_FailedContractArmDoesNotOverwrite(t *testing.T) {
 	reader := newBlockingRWASep1Reader()
 	s := rwaCacheTestServer(reader)
@@ -150,10 +140,8 @@ func TestRefreshRWAMembership_FailedContractArmDoesNotOverwrite(t *testing.T) {
 	}
 }
 
-// An arm that was never WIRED must still cache. Treating it as a
-// failure would rebuild on every request and never cache on a
-// deployment that simply has one reader — the behaviour the either-arm
-// rule was written for, and which the fix above must not take away.
+// An arm that was never wired must still cache; treating it as a failure would rebuild on every request for a deployment
+// with only one reader.
 func TestRefreshRWAMembership_UnwiredArmStillCaches(t *testing.T) {
 	s := rwaCacheTestServer(unwiredSep1Reader{})
 	s.RWAContracts = &stubRWAContractArm{}

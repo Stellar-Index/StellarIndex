@@ -16,11 +16,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// priceChangesAgeStub answers PriceAt by classifying how far ts is
-// behind now into a fixed horizon bucket — so one stub serves the
-// current price AND every horizon reference from a single request.
-// Returning ("", …, ErrPriceAtUnavailable) for a bucket models "no
-// data that far back" (the null-horizon case).
+// priceChangesAgeStub answers PriceAt by mapping how far ts is behind now to a fixed horizon bucket, so one stub serves
+// the current price and every horizon reference. ErrPriceAtUnavailable for a bucket models "no data that far back".
 type priceChangesAgeStub struct{}
 
 func (priceChangesAgeStub) PriceAt(
@@ -67,10 +64,8 @@ func TestHandlePriceChanges_RejectsBadRequests(t *testing.T) {
 	}
 }
 
-// TestHandlePriceChanges_HappyPath pins the multi-horizon shape:
-// current price + a signed delta per horizon, with a horizon that has
-// no data that far back nulled + flagged available:false rather than
-// erroring the whole call.
+// TestHandlePriceChanges_HappyPath pins the multi-horizon shape: current price plus a signed delta per horizon, with a
+// horizon lacking data nulled and flagged available:false rather than erroring the whole call.
 func TestHandlePriceChanges_HappyPath(t *testing.T) {
 	s := &Server{Options: Options{PriceAt: priceChangesAgeStub{}}}
 	rec := httptest.NewRecorder()
@@ -108,10 +103,8 @@ func TestHandlePriceChanges_404WhenNoCurrent(t *testing.T) {
 	}
 }
 
-// TestHandlePriceChanges_StablecoinFallbackTriangulated pins that a
-// native/fiat:USD request with no direct fiat:USD bucket resolves via
-// the operator's USD-pegged classic and flags triangulated — the same
-// proxy chain /v1/price and /v1/price/at use.
+// TestHandlePriceChanges_StablecoinFallbackTriangulated pins that native/fiat:USD with no direct bucket resolves via the
+// operator's USD-pegged classic and flags triangulated, the same proxy chain as /v1/price and /v1/price/at.
 func TestHandlePriceChanges_StablecoinFallbackTriangulated(t *testing.T) {
 	usdc, err := canonical.ParseAsset("USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
 	if err != nil {
@@ -148,11 +141,8 @@ func (priceChangesWithheldStub) PriceAt(
 	return "", time.Time{}, 0, ErrPriceWithheld
 }
 
-// TestHandlePriceChanges_WithheldDistinctFromNotFound pins that
-// when every orientation of the current-price anchor is withheld
-// (rather than simply absent), the 404 must carry the distinct
-// errors/price-withheld type — same contract /v1/price and
-// /v1/price/at carry.
+// TestHandlePriceChanges_WithheldDistinctFromNotFound pins that when every orientation of the current-price anchor is
+// withheld rather than absent, the 404 carries errors/price-withheld, as /v1/price and /v1/price/at do.
 func TestHandlePriceChanges_WithheldDistinctFromNotFound(t *testing.T) {
 	s := &Server{Options: Options{PriceAt: priceChangesWithheldStub{}}}
 	rec := httptest.NewRecorder()
@@ -187,10 +177,8 @@ func (priceChangesHorizonWithheldStub) PriceAt(
 	}
 }
 
-// TestHandlePriceChanges_WithheldHorizonDistinctFromNoData: a horizon
-// whose reference bucket exists but was refused must not read the same
-// as "no history that far back" — both are unavailable, only the
-// refused one is withheld.
+// TestHandlePriceChanges_WithheldHorizonDistinctFromNoData: a horizon whose reference bucket exists but was refused must
+// not read as "no history that far back"; both are unavailable, only the refused one is withheld.
 func TestHandlePriceChanges_WithheldHorizonDistinctFromNoData(t *testing.T) {
 	s := &Server{Options: Options{PriceAt: priceChangesHorizonWithheldStub{}}}
 	rec := httptest.NewRecorder()
@@ -237,10 +225,8 @@ func (s priceChangesPairStub) PriceAt(
 	return "", time.Time{}, 0, ErrPriceAtUnavailable
 }
 
-// TestHandlePriceChanges_ReaderFailureIsNotAbsence: a failed read of the
-// current anchor is not "no current price" (404), and a failed read of
-// one horizon is not available=false beside populated siblings — the
-// spec defines that shape as "no data that far back", never an error.
+// TestHandlePriceChanges_ReaderFailureIsNotAbsence: a failed read of the current anchor is not a 404, and a failed
+// horizon read is not available=false (the spec defines that as "no data that far back"), never an error shape.
 func TestHandlePriceChanges_ReaderFailureIsNotAbsence(t *testing.T) {
 	cases := []struct {
 		name       string

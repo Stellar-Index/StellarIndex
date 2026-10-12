@@ -148,13 +148,9 @@ func (c *bespokeFakeClock) Advance(d time.Duration) {
 	c.t = c.t.Add(d)
 }
 
-// ageBespokeEntry installs a fake clock on srv's bespoke cache, caches blk
-// under key, and steps the clock one minute PAST the staleness horizon.
-// It returns the clock so a test can step it further.
-//
-// The caller's stub must be BLOCKED (stub.block non-nil) for the read that follows:
-// cachedBespoke kicks its detached refresh BEFORE reading the entry, and an instant battery
-// could re-put a fresh-stamped block between the two, serving the aged entry as FRESH.
+// ageBespokeEntry installs a fake clock on srv's bespoke cache, caches blk under key, and steps the clock one minute
+// past the staleness horizon, returning the clock. The caller's stub must be BLOCKED for the following read:
+// cachedBespoke kicks its refresh before reading, and an instant battery could re-put a fresh block, serving aged as FRESH.
 func ageBespokeEntry(t *testing.T, srv *Server, stub *bespokeStub, key string, blk *timescale.BespokeBlock) *bespokeFakeClock {
 	t.Helper()
 	if stub.block == nil {
@@ -227,10 +223,8 @@ func TestCachedBespoke_SingleFlightCollapsesColdCallers(t *testing.T) {
 	}
 }
 
-// TestCachedBespoke_SaturatedGateSkipsRatherThanQueues pins the
-// backpressure contract: a full class gate SKIPS the build (a cold key
-// degrades exactly as an uncached key does, the next build re-kicks)
-// and a cached key keeps serving.
+// TestCachedBespoke_SaturatedGateSkipsRatherThanQueues pins backpressure: a full class gate SKIPS the build (a cold key
+// degrades like an uncached key, the next build re-kicks) and a cached key keeps serving.
 func TestCachedBespoke_SaturatedGateSkipsRatherThanQueues(t *testing.T) {
 	stub := &bespokeStub{}
 	srv := New(Options{ProtocolBespoke: stub})
@@ -301,10 +295,8 @@ func TestHandleProtocolDetail_StaleBespokeSetsEnvelopeFlag(t *testing.T) {
 	waitBespokeIdle(t, srv, key)
 }
 
-// TestPrewarmProtocolDetails_WarmsTheBespokeKeysTheBuildReads is the
-// arg-parity guard (feedback_prewarm_handler_drift): the sweep must warm
-// exactly the (source, category, window) keys the build path reads — one
-// construction site, no drift.
+// TestPrewarmProtocolDetails_WarmsTheBespokeKeysTheBuildReads is the arg-parity guard: the sweep must warm exactly the
+// (source, category, window) keys the build path reads, from one construction site.
 func TestPrewarmProtocolDetails_WarmsTheBespokeKeysTheBuildReads(t *testing.T) {
 	oldPause := protocolDetailPrewarmPause
 	protocolDetailPrewarmPause = 0

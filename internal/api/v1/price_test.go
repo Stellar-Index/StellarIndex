@@ -503,10 +503,8 @@ func TestPrice_Divergence(t *testing.T) {
 // divVerdict is one cached divergence verdict.
 type divVerdict = struct{ firing, checked bool }
 
-// stubAliasDivergenceLooker answers per SPELLING, so a test can put the
-// cached verdict under one member of an alias family and query another —
-// the r1 shape, where the worker refreshes `crypto:XLM/fiat:USD` and
-// nothing is ever written under `native`.
+// stubAliasDivergenceLooker answers per spelling, so a test can cache the verdict under one alias-family member and
+// query another: the r1 shape, where the worker refreshes `crypto:XLM/fiat:USD` and nothing is written under `native`.
 type stubAliasDivergenceLooker struct {
 	// verdicts is keyed on the asset's wire form; an absent spelling is a
 	// cache miss, as with the production adapter for an unindexed base.
@@ -841,10 +839,8 @@ func TestPrice_XLMAlias(t *testing.T) {
 	}
 }
 
-// gatingStubPriceReader also implements the optional proxyPairGate
-// (RecentClosedVWAP1mExists) the stablecoin proxy consults to skip empty
-// pegs before the unbounded last-trade walk. latestCalls records which
-// pairs reached LatestPrice, proving a gated-out peg is never walked.
+// gatingStubPriceReader also implements proxyPairGate (RecentClosedVWAP1mExists), which the stablecoin proxy uses to
+// skip empty pegs before the unbounded last-trade walk; latestCalls proves a gated-out peg is never walked.
 type gatingStubPriceReader struct {
 	stubPriceReader
 	exists      map[string]bool
@@ -975,10 +971,8 @@ func (l *pairKeyedCompositeLooker) LookupCompositeMeta(
 	return m, ok, nil
 }
 
-// The aggregator publishes the GBP composite under crypto:XLM/fiat:GBP
-// only, so on a closed-bucket miss ?asset=native must reach that same
-// composite (value, triangulated flag, router meta) rather than a
-// request-time FX cross. Everything but the echoed asset_id must match.
+// The aggregator publishes the GBP composite under crypto:XLM/fiat:GBP only, so on a closed-bucket miss ?asset=native
+// must reach that composite (value, triangulated flag, router meta), not a request-time FX cross; only asset_id differs.
 func TestPrice_FallbackCompositeIsSpellingIndependent(t *testing.T) {
 	observed := time.Date(2026, 9, 18, 8, 55, 0, 0, time.UTC)
 	looker := &pairKeyedCompositeLooker{
@@ -1032,10 +1026,8 @@ func TestPrice_FallbackCompositeIsSpellingIndependent(t *testing.T) {
 	}
 }
 
-// TestPrice_NonstandardDecimals_NormalizesFlaggedBaseLeg proves /v1/price
-// normalizes a confirmed non-7-decimal base leg on the closed-1m-bucket read, serving the
-// AdjustPrice-corrected value. The stub carries the RAW CAGG ratio 41.32 with decimals()=9
-// against USDC's 7: K = 10^(9-7) = 100, so the true price is 4132.
+// TestPrice_NonstandardDecimals_NormalizesFlaggedBaseLeg pins that /v1/price normalizes a confirmed non-7dp base leg on
+// the closed-1m read: the raw CAGG ratio 41.32 with decimals()=9 vs USDC's 7 gives K=100, so the price served is 4132.
 func TestPrice_NonstandardDecimals_NormalizesFlaggedBaseLeg(t *testing.T) {
 	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 9)
 	key := flaggedAsset + "/fiat:USD"
@@ -1098,10 +1090,8 @@ func TestPrice_NonstandardDecimals_NormalizesFlaggedQuoteLeg(t *testing.T) {
 	}
 }
 
-// TestPrice_NonstandardDecimals_UnflaggedPairServesNormally proves the
-// guard is NOT a false-positive trap: with the cache wired but the
-// requested pair clean, /v1/price serves exactly as it would with no
-// guard configured at all.
+// TestPrice_NonstandardDecimals_UnflaggedPairServesNormally pins that the guard is not a false-positive trap:
+// a clean pair serves exactly as it would with no guard configured.
 func TestPrice_NonstandardDecimals_UnflaggedPairServesNormally(t *testing.T) {
 	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 9)
 	snap := v1.PriceSnapshot{
@@ -1218,10 +1208,8 @@ func TestPrice_DeclaredPegSACTwinServesTheClassicSpellingsCross(t *testing.T) {
 	assertNoPegSelfPairRead(t, reader.pairsAsked())
 }
 
-// TestPrice_DeclaredPegXLMCrossDormantClassicBookOutranksFreshSACPool: the
-// leg walks ONE spelling at a time and reaches the SAC form only when the
-// classic form found nothing. A dormant (stale) classic book still answers;
-// a fresh thin pool must not displace it, and is never read.
+// TestPrice_DeclaredPegXLMCrossDormantClassicBookOutranksFreshSACPool: the leg walks one spelling at a time, SAC only
+// if classic found nothing. A dormant classic book still answers; a fresh thin pool must not displace it.
 func TestPrice_DeclaredPegXLMCrossDormantClassicBookOutranksFreshSACPool(t *testing.T) {
 	reader := dormantBookVsFreshPoolReader(time.Unix(1745000000, 0).UTC(), true)
 	base := pegServer(t, reader)
@@ -1343,10 +1331,8 @@ func TestPrice_NonPegSACAssetStillWalksTheDeclaredPegs(t *testing.T) {
 	}
 }
 
-// TestPrice_DeclaredPegXLMCrossClassicBookFailureEndsTheSpellingWalk: a
-// flagged-issuer refusal or a per-pair read failure on the classic book ends the walk and
-// serves the declaration. Taking either as "no market" would reprice the peg off the SAC
-// spelling's thin pool (2.0000000000), republishing a market the scam gate withheld.
+// TestPrice_DeclaredPegXLMCrossClassicBookFailureEndsTheSpellingWalk: a flagged-issuer refusal or read failure on the
+// classic book ends the walk and serves the declaration, not the SAC thin pool the scam gate withheld.
 func TestPrice_DeclaredPegXLMCrossClassicBookFailureEndsTheSpellingWalk(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -1374,10 +1360,8 @@ func TestPrice_DeclaredPegXLMCrossClassicBookFailureEndsTheSpellingWalk(t *testi
 	}
 }
 
-// TestPrice_DeclaredPegXLMCrossSubstanceRefusalWithholds: a peg whose XLM
-// book the substance gate refuses is withheld on every surface that reads the stablecoin
-// fallback, not answered with the declaration. A refusal naming no gate fails closed the
-// same way; only a flagged-issuer refusal keeps the declaration.
+// TestPrice_DeclaredPegXLMCrossSubstanceRefusalWithholds: a peg whose XLM book the substance gate refuses is withheld,
+// not answered with the declaration. A refusal naming no gate fails closed too; only a flagged-issuer refusal keeps it.
 func TestPrice_DeclaredPegXLMCrossSubstanceRefusalWithholds(t *testing.T) {
 	cases := map[string]error{
 		"substance":    v1.PriceWithheldError(pricingguard.WithheldThinMarket),
@@ -1415,10 +1399,8 @@ func TestPrice_DeclaredPegXLMCrossPivotRefusalWithholds(t *testing.T) {
 	}
 }
 
-// TestPrice_DeclaredPegXLMCrossGateMissIsWhatAdvancesTheSpellingWalk: a
-// probe MISS is what means "this spelling found nothing". The classic book is
-// held but gated out, so it is never read and the live SAC pool prices the
-// cross.
+// TestPrice_DeclaredPegXLMCrossGateMissIsWhatAdvancesTheSpellingWalk: only a probe MISS means "this spelling found
+// nothing". A held-but-gated-out classic book is never read, and the live SAC pool prices the cross.
 func TestPrice_DeclaredPegXLMCrossGateMissIsWhatAdvancesTheSpellingWalk(t *testing.T) {
 	reader := gatingDormantBookReader(time.Unix(1745000000, 0).UTC())
 	base := pegServer(t, reader)
@@ -1453,10 +1435,8 @@ func TestPrice_DeclaredPegXLMCrossGateErrorReadsThroughToTheClassicBook(t *testi
 	assertSACPoolUnread(t, reader.pairsAsked(), "although the classic book answered")
 }
 
-// TestPrice_DeclaredPegXLMCrossDegenerateClassicPriceNeverReachesTheSACBook:
-// a classic price that READ but is zero ends the walk (the spelling
-// answered), crossThroughPivot declines it, and the declaration serves
-// rather than a 2x move onto the SAC pool.
+// TestPrice_DeclaredPegXLMCrossDegenerateClassicPriceNeverReachesTheSACBook: a classic price that read but is zero ends
+// the walk and crossThroughPivot declines it, so the declaration serves rather than a 2x move onto the SAC pool.
 func TestPrice_DeclaredPegXLMCrossDegenerateClassicPriceNeverReachesTheSACBook(t *testing.T) {
 	reader := dormantBookVsFreshPoolReader(time.Unix(1745000000, 0).UTC(), false)
 	book := reader.snapshots[pegClassicXLMBook]
@@ -1517,14 +1497,9 @@ func TestPrice_FlaggedDeclaredPegServesTheDeclarationUnderBothSpellings(t *testi
 	}
 }
 
-// TestPrice_XLMIdentitiesUnchangedOnTheCombinedPath is a CONTROL that cannot
-// currently fail: XLM canonicalises to `native` (no issuer for the gate) and
-// is not a declared peg, so neither the gate's alias resolution nor the peg match has a
-// path to it. It guards a later widening that would reach XLM (a base resolved into the peg
-// match, an XLM form in the peg list).
-//
-// The dollar bucket is held under crypto:XLM alone, so `native` answers only by the
-// literal-first alias fallback; the combined path must leave that behaviour unchanged.
+// TestPrice_XLMIdentitiesUnchangedOnTheCombinedPath is a CONTROL that cannot currently fail: XLM canonicalises to
+// `native` and is not a declared peg. It guards against a later widening that would reach XLM; `native` must still
+// answer only via the literal-first alias fallback (dollar bucket held under crypto:XLM alone).
 func TestPrice_XLMIdentitiesUnchangedOnTheCombinedPath(t *testing.T) {
 	at := time.Unix(1745000000, 0).UTC()
 	// Armed gate (a flagged issuer in the directory) so XLM passing it is a verdict.
@@ -1555,16 +1530,9 @@ func TestPrice_XLMIdentitiesUnchangedOnTheCombinedPath(t *testing.T) {
 	}
 }
 
-// TestPrice_DeclaredPegServesTheObservedXLMCross pins the rule the
-// stablecoin-proxy peg arm broke: the operator's 1:1 declaration is a CONSTANT, and a
-// constant must never pre-empt an observation. Answering the moment the asset is recognised
-// as a declared peg would keep publishing $1 through a real depeg, the one moment the
-// number matters, and disagree with /v1/assets for the same asset.
-//
-// Here USDC has no fiat:USD bucket anywhere (nothing on chain quotes in fiat), but its XLM
-// book on SDEX has repriced: 9.5 XLM per USDC while XLM's own CEX dollar market prints
-// 0.10, a cross of 0.95. The route must serve it as an observation (price_type, observed_at
-// and window_seconds intact) with both legs' venues credited.
+// TestPrice_DeclaredPegServesTheObservedXLMCross: the operator's 1:1 peg declaration is a constant and must never pre-empt an
+// observation, or $1 keeps publishing through a real depeg. USDC with a 9.5 XLM/USDC book and XLM at 0.10 USD must serve the
+// 0.95 cross as an observation (price_type, observed_at, window_seconds intact) crediting both legs' venues.
 func TestPrice_DeclaredPegServesTheObservedXLMCross(t *testing.T) {
 	usdc, err := canonical.ParseAsset(usdcClassicID)
 	if err != nil {
@@ -1632,10 +1600,8 @@ func TestPrice_DeclaredPegServesTheObservedXLMCross(t *testing.T) {
 	}
 }
 
-// TestPrice_DeclaredPegWithNoObservationServesTheDeclaration pins the
-// fallback that remains when NO market prices the peg at all: the flat $1
-// still serves rather than a 404, it is labelled a declaration,
-// and it carries the declaration's adoption stamp — not the clock.
+// TestPrice_DeclaredPegWithNoObservationServesTheDeclaration pins the fallback when no market prices the peg: flat $1
+// still serves (not a 404), labelled a declaration, carrying the declaration's adoption stamp, not the clock.
 func TestPrice_DeclaredPegWithNoObservationServesTheDeclaration(t *testing.T) {
 	usdc, err := canonical.ParseAsset(usdcClassicID)
 	if err != nil {
@@ -1665,10 +1631,8 @@ func TestPrice_DeclaredPegWithNoObservationServesTheDeclaration(t *testing.T) {
 	}
 }
 
-// TestPrice_DeclaredPegDirectUSDObservationWins pins the order: a
-// directly observed fiat:USD market for the peg is served as-is, and the XLM cross is never
-// consulted (no XLM-quoted read of the peg, no read of XLM's dollar market). The cross is a
-// fallback for a missing market, never a competitor to a present one.
+// TestPrice_DeclaredPegDirectUSDObservationWins pins the order: a directly observed fiat:USD market is served as-is and
+// the XLM cross is never consulted. The cross is a fallback for a missing market, not a competitor.
 func TestPrice_DeclaredPegDirectUSDObservationWins(t *testing.T) {
 	usdc, err := canonical.ParseAsset(usdcClassicID)
 	if err != nil {
@@ -1809,14 +1773,9 @@ func TestPrice_DeclaredPegXLMLegPrefersAFreshForm(t *testing.T) {
 	})
 }
 
-// TestPrice_DeclaredPegIsNotStampedAsAFreshObservation pins the wire
-// shape of the declaration under the DEFAULT stamp, the one the API binary runs with: the
-// server's construction time, since the operator declaration carries no timestamp.
-//
-// observed_at must not be time.Now() on every request, or the constant would be
-// indistinguishable on the wire from an observation taken this instant. It must predate the
-// first request, not advance between requests, and never claim to be observed after the
-// response was built.
+// TestPrice_DeclaredPegIsNotStampedAsAFreshObservation pins the declaration's wire shape under the default stamp (server
+// construction time). observed_at must not be time.Now() per request: it predates the first request, does not advance
+// between requests, and never postdates the response.
 func TestPrice_DeclaredPegIsNotStampedAsAFreshObservation(t *testing.T) {
 	usdc, err := canonical.ParseAsset(usdcClassicID)
 	if err != nil {
@@ -1941,10 +1900,8 @@ func TestPrice_FrozenPairServesLastKnownGoodNotTheMovedBucket(t *testing.T) {
 	}
 }
 
-// The freeze lifecycle is per (pair, window) while the marker is per
-// pair: the 5m key can be cold (a thin window is dropped before the
-// freeze step) while 1h holds the value. The held value is served with
-// ITS window, never relabelled as something it is not.
+// The freeze lifecycle is per (pair, window) while the marker is per pair: the 5m key can be cold while 1h holds the
+// value. The held value is served with its own window, never relabelled.
 func TestPrice_FrozenPairFallsToTheWindowThatHoldsAValue(t *testing.T) {
 	srv := v1.New(v1.Options{
 		Prices:       movedBucketReader(),
@@ -2018,10 +1975,8 @@ func TestPrice_UnfrozenPairStillServesTheClosedBucketUntouched(t *testing.T) {
 	}
 }
 
-// XLM is asked for as `native` but priced — and frozen — as crypto:XLM.
-// The alias walk reads crypto:XLM's prices_1m bucket, so the freeze
-// that governs THAT pair must govern the response, or the refused
-// bucket is one spelling away.
+// XLM is requested as `native` but priced and frozen as crypto:XLM. The freeze governing the served pair must govern
+// the response, or the refused bucket is one spelling away.
 func TestPrice_FrozenAliasPairServesItsLastKnownGood(t *testing.T) {
 	srv := v1.New(v1.Options{
 		Prices:       movedBucketReader(), // only crypto:XLM/fiat:GBP has rows
@@ -2088,10 +2043,8 @@ func TestPrice_FreezeOnRequestedLiteralOnlyDoesNotDiscardTheHealthyAliasBucket(t
 	}
 }
 
-// The bound must not weaken the main fix. When the SERVED alias is
-// frozen, a second marker on the requested literal changes nothing: the
-// served pair's held value is what goes out, never the refused bucket
-// and never the literal's held value.
+// The bound must not weaken the main fix: when the served alias is frozen, a second marker on the requested literal
+// changes nothing. The served pair's held value goes out, never the refused bucket or the literal's held value.
 func TestPrice_FrozenServedAliasStillHoldsWhenTheLiteralIsAlsoFrozen(t *testing.T) {
 	srv := v1.New(v1.Options{
 		Prices: movedBucketReader(),
@@ -2190,11 +2143,9 @@ func TestPrice_Withheld_Distinct404Type(t *testing.T) {
 	}
 }
 
-// TestPrice_Withheld_SkipsFallbackChain — the read-time stablecoin
-// proxy (one arm of priceFallback) must NOT rescue a withheld pair: falling back would
-// re-serve the same substanceless market through a side door. The verdict is per pair, as at
-// the production reader seam: native/fiat:USD is withheld while native/<USD peg> holds a
-// servable snapshot, so a handler that ran priceFallback would serve the peg's price with a 200.
+// TestPrice_Withheld_SkipsFallbackChain: the stablecoin proxy arm of priceFallback must NOT rescue a withheld pair, which
+// would re-serve the substanceless market through a side door. The verdict is per pair: native/fiat:USD withheld while
+// native/<USD peg> is servable, so a handler running priceFallback would 200.
 func TestPrice_Withheld_SkipsFallbackChain(t *testing.T) {
 	peg, err := canonical.ParseAsset("USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
 	if err != nil {
@@ -2231,11 +2182,9 @@ func TestPrice_Withheld_SkipsFallbackChain(t *testing.T) {
 	}
 }
 
-// TestPrice_ThinPoolThirdAlias_ClassicQuoteServesTheQuietBook: the
-// classic-keyed, classic-quoted read serves the deep book's STALE bucket, flagged stale, and
-// never consults the fresh SAC/SAC pool. The base's SAC form IS walked (second, against the
-// literal classic quote, a pair no venue produces), which keeps the assertion non-vacuous:
-// the alias family reached the SAC spelling and still could not land on the pool.
+// TestPrice_ThinPoolThirdAlias_ClassicQuoteServesTheQuietBook: the classic-keyed, classic-quoted read serves the deep
+// book's stale bucket (flagged stale) and never the fresh SAC/SAC pool. The SAC base form is walked against the classic
+// quote, keeping the assertion non-vacuous.
 func TestPrice_ThinPoolThirdAlias_ClassicQuoteServesTheQuietBook(t *testing.T) {
 	installPegAliasRegistry(t)
 	fx := newThinPoolFixture(t, pegAliasAquaClassic, pegAliasUSDCClassic, pegAliasAquaSAC, pegAliasUSDCSAC)
@@ -2262,11 +2211,9 @@ func TestPrice_ThinPoolThirdAlias_ClassicQuoteServesTheQuietBook(t *testing.T) {
 	assertNoSACQuotedRead(t, fx.reader.calls)
 }
 
-// TestPrice_ThinPoolThirdAlias_NativeQuoteWalkStaysOnTheLiteralQuote is
-// the same shape for XLM, whose three-way family is unconditional (native / crypto:XLM / the
-// XLM SAC) and whose Soroban book is stored SAC/SAC (see the queryDB doc in
-// internal/storage/timescale/usd_fx_resolver.go). All three base forms are walked, in
-// canonical order, each against classic USDC.
+// TestPrice_ThinPoolThirdAlias_NativeQuoteWalkStaysOnTheLiteralQuote is the same shape for XLM, whose three-way family
+// (native / crypto:XLM / XLM SAC) is unconditional and whose Soroban book is stored SAC/SAC. All three base forms are
+// walked in canonical order against classic USDC.
 func TestPrice_ThinPoolThirdAlias_NativeQuoteWalkStaysOnTheLiteralQuote(t *testing.T) {
 	installPegAliasRegistry(t)
 	fx := newThinPoolFixture(t, "native", pegAliasUSDCClassic, canonical.XLMSacContractID, pegAliasUSDCSAC)
@@ -2288,11 +2235,9 @@ func TestPrice_ThinPoolThirdAlias_NativeQuoteWalkStaysOnTheLiteralQuote(t *testi
 	assertNoSACQuotedRead(t, fx.reader.calls)
 }
 
-// TestPrice_ThinPoolThirdAlias_FiatProxyWalksClassicPegsOnly covers the
-// default request shape, ?quote=fiat:USD, which no on-chain venue quotes and so resolves
-// through the stablecoin proxy. The proxy walks declared pegs in their CLASSIC spelling only
-// (config.TradesConfig.USDPeggedClassics rejects any other form), so the deep book answers
-// and the fresher SAC-quoted pool is never a candidate.
+// TestPrice_ThinPoolThirdAlias_FiatProxyWalksClassicPegsOnly covers ?quote=fiat:USD, which resolves via the stablecoin
+// proxy. The proxy walks declared pegs in classic spelling only, so the deep book answers and the fresher SAC-quoted
+// pool is never a candidate.
 func TestPrice_ThinPoolThirdAlias_FiatProxyWalksClassicPegsOnly(t *testing.T) {
 	usdc := installPegAliasRegistry(t)
 	fx := newThinPoolFixture(t, pegAliasAquaClassic, pegAliasUSDCClassic, pegAliasAquaSAC, pegAliasUSDCSAC)
@@ -2314,13 +2259,9 @@ func TestPrice_ThinPoolThirdAlias_FiatProxyWalksClassicPegsOnly(t *testing.T) {
 	assertNoSACQuotedRead(t, fx.reader.calls)
 }
 
-// TestPrice_ThinPoolThirdAlias_SACKeyedRequestServesTheNamedPool states
-// the other half of the contract and proves the pool is reachable at all (so the three tests
-// above are not passing against a pair the stub could never answer): a caller naming the SAC
-// form on BOTH sides asks about that pool and gets its own price and sources, with no alias
-// fallback ahead of it. The thin-market gates that then apply are the reader's (substance,
-// trailing-baseline guard, freshness), documented in the d7 thin-pool third-alias VWAP
-// review under docs/methodology/.
+// TestPrice_ThinPoolThirdAlias_SACKeyedRequestServesTheNamedPool is the other half of the contract and proves the pool
+// is reachable at all: naming the SAC form on both sides asks about that pool and gets its own price and sources, with no
+// alias fallback. Thin-market gates then apply from the reader (see the d7 review under docs/methodology/).
 func TestPrice_ThinPoolThirdAlias_SACKeyedRequestServesTheNamedPool(t *testing.T) {
 	installPegAliasRegistry(t)
 	fx := newThinPoolFixture(t, pegAliasAquaClassic, pegAliasUSDCClassic, pegAliasAquaSAC, pegAliasUSDCSAC)
@@ -2420,10 +2361,8 @@ func xlmCrossReader(pegLegAt, pivotAt time.Time) *recordingPriceReader {
 	}}
 }
 
-// dormantBookVsFreshPoolReader: the peg's classic SDEX book is dormant
-// (closed bucket, optionally flagged stale) and a thin Soroban pool under
-// the peg's SAC id is fresh. Crossed with the 0.10 pivot they disagree by
-// more than 2x: 0.95 from the book, 2.00 from the pool.
+// dormantBookVsFreshPoolReader: the peg's classic SDEX book is dormant and a thin Soroban pool under its SAC id is
+// fresh. Crossed with the 0.10 pivot they disagree by over 2x (0.95 book, 2.00 pool).
 func dormantBookVsFreshPoolReader(at time.Time, bookStale bool) *recordingPriceReader {
 	return &recordingPriceReader{stubPriceReader: stubPriceReader{
 		snapshots: map[string]v1.PriceSnapshot{
@@ -2521,10 +2460,9 @@ func (r *pegLegErrorReader) LatestPrice(ctx context.Context, a, q canonical.Asse
 	return snap, srcs, stale, err
 }
 
-// withheldClassicBookLivePoolReader is the gate-bypass shape: the peg's
-// classic XLM book fails with classicErr while a live pool holds the SAC id. ScamGate.Withheld
-// is false for any non-classic base, so a walk that took the failure as "no market" would
-// republish the refused market through the ungated spelling.
+// withheldClassicBookLivePoolReader is the gate-bypass shape: the classic XLM book fails with classicErr while a live
+// pool holds the SAC id. ScamGate.Withheld is false for non-classic bases, so treating the failure as "no market"
+// would republish the refused market via the ungated spelling.
 func withheldClassicBookLivePoolReader(at time.Time, classicErr error) *pegLegErrorReader {
 	return &pegLegErrorReader{
 		recordingPriceReader: *dormantBookVsFreshPoolReader(at, false),
@@ -2566,10 +2504,8 @@ func assertPriceWithheld(t *testing.T, url string) {
 	}
 }
 
-// gatingPegReader wires the optional `proxyPairGate` (the bounded
-// recent-bucket probe run before an unbounded last-trade scan) onto the
-// recording reader, and can make the probe MISS or FAIL. `exists` is keyed
-// "<base>/<quote>" and defaults to false (no closed 1m bucket recently).
+// gatingPegReader wires the optional `proxyPairGate` (bounded recent-bucket probe before an unbounded last-trade scan)
+// onto the recording reader and can make the probe MISS or FAIL. `exists` is keyed "<base>/<quote>", default false.
 type gatingPegReader struct {
 	recordingPriceReader
 	exists    map[string]bool
@@ -2605,12 +2541,9 @@ func gatingDormantBookReader(at time.Time) *gatingPegReader {
 	}
 }
 
-// scamGatedPegReader wires the REAL pricingguard.ScamGate onto the recording
-// reader the way storePriceReader does on the served binary: the raw requested base goes to
-// the gate once a row is found, and a refusal becomes a flagged-issuer v1.ErrPriceWithheld.
-// /v1/price has no handler-side gate call, so this seam is the only place a withholding
-// reaches it. The gate is real over a fake directory because the resolution under test lives
-// inside it; a stub keyed on the asset id would pin nothing.
+// scamGatedPegReader wires the REAL pricingguard.ScamGate onto the recording reader as storePriceReader does: the raw
+// requested base goes to the gate once a row is found, and a refusal becomes a flagged-issuer ErrPriceWithheld.
+// The gate is real over a fake directory because the resolution under test lives inside it.
 type scamGatedPegReader struct {
 	recordingPriceReader
 	scam *pricingguard.ScamGate
@@ -2644,11 +2577,9 @@ func maskedPriceBody(t *testing.T, url string) string {
 	return volatilePriceBodyFields.ReplaceAllString(body, `"$1":"<masked>"`)
 }
 
-// flaggedPegLivePoolReader: the declared peg's issuer carries a scam-class
-// directory tag, it has NO classic XLM book, and its SAC spelling holds a live pool that
-// crosses to 2.00. Absent (not refused) is deliberate: "found nothing" is the one verdict
-// that reaches the SAC book at all. The peg is the flagged issuance newSACSpellingFixture
-// keeps for this role, declared per server so installPegAliasRegistry is left untouched.
+// flaggedPegLivePoolReader: the declared peg's issuer carries a scam-class tag, has NO classic XLM book, and its SAC
+// spelling holds a live pool crossing to 2.00. Absent (not refused) is deliberate: "found nothing" is the only verdict
+// that reaches the SAC book. Declared per server so installPegAliasRegistry is untouched.
 func flaggedPegLivePoolReader(at time.Time, f sacSpellingFixture) *scamGatedPegReader {
 	pool := f.sac.String() + "/" + canonical.XLMSacContractID
 	return &scamGatedPegReader{
@@ -2663,11 +2594,9 @@ func flaggedPegLivePoolReader(at time.Time, f sacSpellingFixture) *scamGatedPegR
 	}
 }
 
-// orderedPriceReader is a stubPriceReader that records every (base,
-// quote) pair LatestPrice was asked for, in call order, so a test can prove which pairs were
-// NEVER consulted. It also satisfies the optional proxyPairGate seam, so the stablecoin proxy
-// walk runs in its production (gated) shape: a pair is "recent" exactly when the stub holds
-// a snapshot for it.
+// orderedPriceReader is a stubPriceReader that records every (base, quote) pair LatestPrice was asked for, in order,
+// to prove which pairs were never consulted. It also satisfies proxyPairGate so the proxy walk runs gated: a pair is
+// "recent" exactly when the stub holds a snapshot for it.
 type orderedPriceReader struct {
 	stubPriceReader
 	calls []string
@@ -2684,11 +2613,8 @@ func (r *orderedPriceReader) RecentClosedVWAP1mExists(_ context.Context, base, q
 }
 
 // thinPoolFixture is the D7 shape for one wrapped classic asset:
-//
-//   - deepPair  — the SDEX book, classic/classic, deep but QUIET: its latest closed bucket
-//     is older than the freshness window, so the reader reports it stale.
-//   - thinPair  — the Soroban pool, SAC/SAC, thin but FRESH: one trade printed this minute
-//     at five times the book's price.
+// - deepPair: the SDEX book (classic/classic), deep but quiet, so its latest bucket is stale.
+// - thinPair: the Soroban pool (SAC/SAC), thin but fresh: one trade this minute at 5x the book's price.
 type thinPoolFixture struct {
 	reader   *orderedPriceReader
 	deepPair string
@@ -2764,10 +2690,8 @@ func assertCallOrder(t *testing.T, got, want []string) {
 	}
 }
 
-// usdcClassicID is Circle's mainnet USDC, the ONE peg the shipped operator configuration
-// declares (configs/ansible/roles/archival-node/templates/stellarindex.toml.j2,
-// [trades].usd_pegged_classic_assets). Tests here run in that single-peg shape: with no
-// sibling peg to walk, the only market a depeg can print on is the peg's own XLM book.
+// usdcClassicID is Circle's mainnet USDC, the one peg the shipped operator config declares (usd_pegged_classic_assets).
+// Tests run in that single-peg shape: with no sibling peg, a depeg can only print on the peg's own XLM book.
 const usdcClassicID = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 
 // declaredPegAdoptedAt is a fixed adoption stamp the tests pin the wire

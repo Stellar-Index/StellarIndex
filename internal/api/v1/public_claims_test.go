@@ -19,20 +19,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
 )
 
-// TestPublicClaimsMatchTheDeployment pins the factual claims the README and the OpenAPI
-// `info.description` make about this API. The description is rendered at docs.stellarindex.io,
-// so a stale sentence is a published falsehood. Each claim was checked against the hosted
-// deployment:
-//
-//   - "complete since-inception history" is false: daily XLM/USD OHLC has a start and a gap.
-//   - "back to 2015" on /price/at and /price/changes is false: the early years return no bars.
-//   - "protocol 23" is stale: /v1/ledgers reports the current protocol_version.
-//   - "/healthz, /readyz, /version" 404 on the hosted API: registered routes are /v1-prefixed
-//     and /metrics is loopback-only.
-//   - "SEP-10 web auth" must not be listed flatly as shipped: the handlers answer 503 "no SEP-10
-//     validator wired" without a server signing seed, which the hosted deployment does not set.
-//
-// Assertions run over whitespace-collapsed text so a reflow of the prose cannot hollow them out.
+// TestPublicClaimsMatchTheDeployment pins the factual claims in the README and OpenAPI `info.description`, rendered publicly:
+// no "complete since-inception" or "back to 2015" history, no stale "protocol 23", no /healthz|/readyz|/version (routes are
+// /v1-prefixed, /metrics loopback-only), no flat "SEP-10" (503 without a signing seed). Runs on whitespace-collapsed text.
 func TestPublicClaimsMatchTheDeployment(t *testing.T) {
 	root := repoRootForClaims(t)
 
@@ -73,10 +62,8 @@ func TestPublicClaimsMatchTheDeployment(t *testing.T) {
 			},
 		},
 		{
-			// The rendered reference is a byte copy of the spec
-			// (`make docs-api`); assert it carries the correction so a
-			// spec-only edit that skips the regeneration is caught here
-			// as well as by the CI drift check.
+			// The rendered reference is a byte copy of the spec (`make docs-api`); assert it carries the correction so a spec-only
+			// edit that skips regeneration is caught here as well as by the CI drift check.
 			path: "docs/reference/api/stellar-index.v1.yaml",
 			forbidden: []string{
 				"complete since-inception history",
@@ -85,10 +72,8 @@ func TestPublicClaimsMatchTheDeployment(t *testing.T) {
 			required: []string{"not since-inception"},
 		},
 		{
-			// The /rwa/assets requirement-4 prose named only two
-			// bases while the same operation's 200 example already listed
-			// a third (sep1_isin_declaration, internal/rwa BasisSep1ISIN).
-			// The narrative and its own example disagreed with each other.
+			// The /rwa/assets requirement-4 prose named two bases while the 200 example listed a third (sep1_isin_declaration,
+			// internal/rwa BasisSep1ISIN); the narrative and its example must agree.
 			path: "openapi/stellar-index.v1.yaml",
 			forbidden: []string{
 				"`definition.anchor_classes`) or `oracle_rwa_feed` (an independent oracle publishes a net-asset-value feed for an instrument of this code, per ADR-0028). The oracle arm is keyed",
@@ -107,10 +92,8 @@ func TestPublicClaimsMatchTheDeployment(t *testing.T) {
 			},
 		},
 		{
-			// §7.1 documented a Starter/Pro/Business/
-			// Enterprise ladder (1k/10k/50k) that platform.Tier does not
-			// has, and the account override is a floor
-			// (auth/apikey_postgres.go), not a replacement limit.
+			// §7.1 must not document a Starter/Pro/Business/Enterprise ladder (1k/10k/50k) that platform.Tier lacks; the account
+			// override is a floor (auth/apikey_postgres.go), not a replacement limit.
 			path: "docs/reference/api-design.md",
 			forbidden: []string{
 				"Pro | staff-set",

@@ -8,10 +8,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// Unit tests for the four rules that decide whether a premium may be
-// published. Each one removes a way of serving a number that means
-// something other than what it says, so each gets a test that pins the
-// refusal AND asserts no figure came with it.
+// Unit tests for the four rules deciding whether a premium may be published. Each pins the refusal and asserts no figure
+// accompanied it.
 
 func refUpdate(t *testing.T, source, assetID, quoteID, raw string, decimals uint8, ts time.Time) canonical.OracleUpdate {
 	t.Helper()
@@ -62,12 +60,8 @@ func admittedRowFor(code, issuer, price string) RWAAsset {
 	return a
 }
 
-// TestRWAReference_RefusesANonDollarDenominatedFeed is rule R-A, and it
-// is the denomination rule: a bare `_FUNDAMENTAL` feed publishes net asset value in the token's
-// RESERVE asset, so its value is a ratio and not a dollar figure; treating it as USD serves a
-// wildly wrong price.
-//
-// The refusal must be stated as the denomination problem it is, and no number may accompany it.
+// TestRWAReference_RefusesANonDollarDenominatedFeed is rule R-A: a bare `_FUNDAMENTAL` feed publishes NAV in the token's
+// reserve asset, a ratio not dollars. The refusal must state the denomination problem and carry no number.
 func TestRWAReference_RefusesANonDollarDenominatedFeed(t *testing.T) {
 	now := time.Now()
 	snap := rwaReferenceSnapshotFrom([]canonical.OracleUpdate{
@@ -89,10 +83,8 @@ func TestRWAReference_RefusesANonDollarDenominatedFeed(t *testing.T) {
 	}
 }
 
-// TestRWAReference_RefusesAnOffChainQuantity is rule R-B. `rwa:XAU` is
-// the FX oracle's spot-gold slot (one troy ounce) and a Stellar token coded XAU is a token of
-// unstated size. Their ratio is a unit conversion; published as a percentage it would read as a
-// near-total discount on an ordinary token.
+// TestRWAReference_RefusesAnOffChainQuantity is rule R-B: `rwa:XAU` is spot gold per troy ounce while a token coded XAU
+// has unstated size, so their ratio is a unit conversion that would read as a near-total discount.
 func TestRWAReference_RefusesAnOffChainQuantity(t *testing.T) {
 	now := time.Now()
 	snap := rwaReferenceSnapshotFrom([]canonical.OracleUpdate{
@@ -131,10 +123,8 @@ func TestRWAReference_RefusesANonOracleSource(t *testing.T) {
 	}
 }
 
-// TestRWAReference_RefusesADeclaredPegPrice is rule R-D. A price carried
-// on price_basis is the issuer's declared peg or a hop through another
-// market. Comparing it against an independent valuation and calling the
-// gap a premium reports the issuer's own claim back as a market finding.
+// TestRWAReference_RefusesADeclaredPegPrice is rule R-D: a price_basis price is the issuer's declared peg or a market
+// hop, so comparing it to an independent valuation reports the issuer's own claim as a market finding.
 func TestRWAReference_RefusesADeclaredPegPrice(t *testing.T) {
 	now := time.Now()
 	snap := rwaReferenceSnapshotFrom([]canonical.OracleUpdate{
@@ -202,10 +192,8 @@ func TestRWAReference_PublishesTheGapExactly(t *testing.T) {
 	}
 }
 
-// TestRWAReference_UnpricedAssetKeepsTheReference: an instrument no
-// Stellar market prices still has an independent valuation, and that is
-// worth more than a blank. What must not happen is a premium of zero
-// standing in for a comparison that was never made.
+// TestRWAReference_UnpricedAssetKeepsTheReference: an instrument no Stellar market prices keeps its independent
+// valuation, and a zero premium must not stand in for a comparison never made.
 func TestRWAReference_UnpricedAssetKeepsTheReference(t *testing.T) {
 	now := time.Now()
 	snap := rwaReferenceSnapshotFrom([]canonical.OracleUpdate{
@@ -225,10 +213,8 @@ func TestRWAReference_UnpricedAssetKeepsTheReference(t *testing.T) {
 	}
 }
 
-// TestRWAReference_FlaggedIssuerGetsNoIndependentValuationEither. The
-// scam-flag suppression withholds this issuer's own price everywhere. Handing its token a REAL
-// instrument's oracle NAV instead would publish a dollar figure on an impersonator, sourced from
-// an oracle that never named it.
+// TestRWAReference_FlaggedIssuerGetsNoIndependentValuationEither: scam-flag suppression must also withhold a real
+// instrument's oracle NAV, which would put a dollar figure on an impersonator.
 func TestRWAReference_FlaggedIssuerGetsNoIndependentValuationEither(t *testing.T) {
 	now := time.Now()
 	snap := rwaReferenceSnapshotFrom([]canonical.OracleUpdate{
@@ -294,10 +280,8 @@ func TestRWAReference_PicksTheMostRecentDeterministically(t *testing.T) {
 	}
 }
 
-// TestRWAReference_UnavailableSnapshotStatesItsOwnStatus. A read that
-// did not answer knows nothing either way, and must not report "no oracle publishes a valuation
-// for this instrument". The distinct status is the assertion that matters: without it an outage
-// is indistinguishable on the wire from a genuine absence.
+// TestRWAReference_UnavailableSnapshotStatesItsOwnStatus: a read that did not answer must not report "no oracle
+// publishes a valuation"; the distinct status keeps an outage distinguishable from absence on the wire.
 func TestRWAReference_UnavailableSnapshotPublishesNothing(t *testing.T) {
 	a := admittedRow("USTRY", "1.0400")
 	rwaApplyReference(&a, rwaReferences{}, nil, nil, time.Now())
@@ -325,10 +309,8 @@ func TestRWAReference_UnavailableSnapshotPublishesNothing(t *testing.T) {
 	}
 }
 
-// TestRWAReference_CarriedForwardRowsStillExpire is the age bound on the
-// carry-forward. A snapshot is reused across a failed read, so under a sustained outage its rows
-// age past the seven-day window an active stream is defined by; the bound is absolute. It is
-// enforced on the observation, not the snapshot, so it holds however the row reached the request.
+// TestRWAReference_CarriedForwardRowsStillExpire: the seven-day age bound is enforced on the observation, not the
+// snapshot, so rows carried across a failed read still age out under a sustained outage.
 func TestRWAReference_CarriedForwardRowsStillExpire(t *testing.T) {
 	now := time.Now()
 	snap := rwaReferenceSnapshotFrom([]canonical.OracleUpdate{
@@ -358,11 +340,8 @@ func TestRWAReference_CarriedForwardRowsStillExpire(t *testing.T) {
 	}
 }
 
-// TestRWAReference_RefusesAnUnboundIssuer is R-0, the identity rule.
-//
-// Asset codes are not unique on Stellar. A join on the code alone hands every account issuing a
-// token called USTRY the real instrument's net asset value, publishing a bogus discount to a
-// security the token has nothing to do with.
+// TestRWAReference_RefusesAnUnboundIssuer is R-0, the identity rule: asset codes are not unique on Stellar, and a code-
+// only join would give every issuer of a token called USTRY the real instrument's NAV.
 func TestRWAReference_RefusesAnUnboundIssuer(t *testing.T) {
 	now := time.Now()
 	snap := rwaReferenceSnapshotFrom([]canonical.OracleUpdate{
@@ -425,15 +404,9 @@ func TestRWAReference_ZeroReferenceIsNotDividedBy(t *testing.T) {
 	}
 }
 
-// TestRWAReference_OneRefusalIsReportedIdentically pins the property
-// that keeps the row and the funnel telling one story.
-//
-// Every rule in this file refuses the premium and the reference valuation together. If the two
-// fields could carry different strings for one event, the funnel (which reads only
-// `reference_valuation.status`) would report a reason the row does not show.
-//
-// Every refusal path is driven and checked to reach the status it claims, so a path that silently
-// stopped firing cannot pass by agreeing trivially.
+// TestRWAReference_OneRefusalIsReportedIdentically pins that the row and the funnel (which reads only
+// `reference_valuation.status`) tell one story: premium and reference valuation carry the same reason. Every refusal
+// path is driven so a path that stopped firing cannot pass trivially.
 func TestRWAReference_OneRefusalIsReportedIdentically(t *testing.T) {
 	now := time.Now()
 	live := rwaReferenceSnapshotFrom([]canonical.OracleUpdate{

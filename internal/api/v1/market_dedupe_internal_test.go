@@ -9,13 +9,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// The store folds the two stored directions: `A/B` and `B/A` are one read returning the same
-// rows, differing only in orientation. Every serving path that concatenates several pairs'
-// trades into a single population (the tip window's alias merge, the fiat point combine)
-// must therefore ask for each MARKET once, or every trade lands in the mean twice.
-//
-// Both legs alias, so naming two spellings of one asset family yields a pair and its flip
-// in the same set.
+// The store folds `A/B` and `B/A` into one read, so any path concatenating several pairs' trades into one population
+// must ask for each market once, or every trade lands in the mean twice. Alias legs can yield a pair and its flip.
 
 func mustAsset(t *testing.T, s string) canonical.Asset {
 	t.Helper()
@@ -26,10 +21,8 @@ func mustAsset(t *testing.T, s string) canonical.Asset {
 	return a
 }
 
-// TestTipMergePairsAsksForEachMarketOnce is the reachable case:
-// /v1/price/tip?asset=native&quote=crypto:XLM. Both legs expand to the SAME alias family, so
-// the cross emits native/crypto:XLM AND crypto:XLM/native, which tipWindowVWAP concatenates
-// into one aggregate.VWAP call.
+// TestTipMergePairsAsksForEachMarketOnce: for /v1/price/tip?asset=native&quote=crypto:XLM both legs expand to the same
+// alias family, emitting native/crypto:XLM and its flip into one VWAP call.
 func TestTipMergePairsAsksForEachMarketOnce(t *testing.T) {
 	native := mustAsset(t, "native")
 	cryptoXLM := mustAsset(t, "crypto:XLM")
@@ -75,10 +68,8 @@ func TestTipMergePairsAsksForEachMarketOnce(t *testing.T) {
 	}
 }
 
-// TestDistinctMarketsKeepsOrderAndFirstSpelling pins the two properties
-// every caller depends on: the SAC-last / classic-first orderings the
-// alias family documents survive the dedupe, and a set with nothing to
-// drop comes back unchanged.
+// TestDistinctMarketsKeepsOrderAndFirstSpelling pins that the SAC-last/classic-first alias ordering survives dedupe
+// and a set with nothing to drop is unchanged.
 func TestDistinctMarketsKeepsOrderAndFirstSpelling(t *testing.T) {
 	a := mustAsset(t, "native")
 	b := mustAsset(t, "crypto:XLM")
@@ -116,15 +107,9 @@ func TestDistinctMarketsKeepsOrderAndFirstSpelling(t *testing.T) {
 	}
 }
 
-// TestUSDPeggedConstituentsAskForEachMarketOnce is the same invariant
-// on the fiat combine. The point path's trade merge, the series' per-bucket combine and the
-// coverage probe all read both stored directions, so a constituent appearing as its own flip
-// would be summed into one bucket twice.
-//
-// This holds today by accident rather than construction: the peg expansion emits classic
-// quote spellings only (aggregate.ExpandTargetPairWithClassicPegs skips a non-classic), so a
-// base alias can be a peg quote but never the reverse. Widening the quote leg to a peg's SAC
-// form removes that accident; this test makes the property structural first.
+// TestUSDPeggedConstituentsAskForEachMarketOnce: the fiat combine reads both stored directions, so a constituent must not
+// appear as its own flip. This holds today only because peg expansion emits classic quote spellings; the test makes it
+// structural.
 func TestUSDPeggedConstituentsAskForEachMarketOnce(t *testing.T) {
 	usdc, err := canonical.NewClassicAsset("USDC",
 		"GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")

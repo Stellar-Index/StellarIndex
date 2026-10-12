@@ -68,11 +68,8 @@ func TestLendingPools_EmptyArrayWhenReaderNil(t *testing.T) {
 	}
 }
 
-// TestLendingPools_HappyPath threads a populated stub and pins the
-// per-row wire shape the explorer's /lending page reads (Protocol
-// is hard-coded "blend" today; surfaces in the row regardless of
-// what the storage struct's name field says, since the storage
-// type doesn't have a Protocol field).
+// TestLendingPools_HappyPath pins the per-row wire shape the explorer's /lending page reads; Protocol is
+// hard-coded "blend" because the storage type has no Protocol field.
 func TestLendingPools_HappyPath(t *testing.T) {
 	lastSeen := time.Date(2026, 5, 9, 10, 15, 52, 0, time.UTC)
 	reader := &stubLendingReader{
@@ -145,11 +142,8 @@ func TestLendingPools_HappyPath(t *testing.T) {
 	}
 }
 
-// TestLendingPools_CrossAssetFlowsHaveNoUtilization pins that a pool
-// whose window flows cross reserve assets never gets a utilisation
-// figure: 1e13 XLM stroops supplied and 1e12 USDC units borrowed are
-// not "10% utilised" — the store withholds the sums and the handler
-// must not synthesise a ratio from anything else.
+// TestLendingPools_CrossAssetFlowsHaveNoUtilization pins that a pool whose window flows cross reserve assets gets no
+// utilisation figure (XLM stroops vs USDC units are not a ratio); the handler must not synthesise one.
 func TestLendingPools_CrossAssetFlowsHaveNoUtilization(t *testing.T) {
 	reader := &stubLendingReader{pools: []timescale.BlendPoolSummary{{
 		Pool:     "CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD",
@@ -184,10 +178,8 @@ func TestLendingPools_ReaderError500(t *testing.T) {
 	}
 }
 
-// TestLendingPools_TimeoutReturns503 — the 8s deadline fires when
-// the per-pool aggregates take too long. Returns 503 with a
-// `lending-timeout` problem type so callers can retry rather than
-// treat it as an opaque internal error.
+// TestLendingPools_TimeoutReturns503: the 8s deadline yields a 503 `lending-timeout` problem so callers can retry
+// instead of seeing an opaque internal error.
 func TestLendingPools_TimeoutReturns503(t *testing.T) {
 	reader := &stubLendingReader{err: context.DeadlineExceeded}
 	srv := v1.New(v1.Options{Lending: reader})
@@ -203,10 +195,8 @@ func TestLendingPools_TimeoutReturns503(t *testing.T) {
 	}
 }
 
-// TestLendingPools_NilSliceFromReaderMarshalsAsEmptyArray —
-// regression guard: a reader that returns (nil, nil) shouldn't
-// surface as `data: null`. The handler's `make([]LendingPool, 0)`
-// path keeps the wire-shape consistent.
+// TestLendingPools_NilSliceFromReaderMarshalsAsEmptyArray: a reader returning (nil, nil) must serve an empty array,
+// never `data: null`.
 func TestLendingPools_NilSliceFromReaderMarshalsAsEmptyArray(t *testing.T) {
 	reader := &stubLendingReader{pools: nil}
 	srv := v1.New(v1.Options{Lending: reader})
@@ -222,17 +212,9 @@ func TestLendingPools_NilSliceFromReaderMarshalsAsEmptyArray(t *testing.T) {
 	}
 }
 
-// TestLendingPoolReserves_AssetsTimeoutReturns503 and its sibling below
-// pin the behaviour: the reserves handler's 15s ceiling must surface as a
-// RETRYABLE 503 + `lending-timeout`, exactly like handleLendingPools in
-// the same file already does — not a 500.
-//
-// A 500 tells clients "broken, don't retry", costs an availability
-// point in the sla-probe's 5xx accounting, and is not even a status the
-// OpenAPI spec declares for this path (it declares 400 + 503 only).
-//
-// Proven red against a handler without the mapping: status 500, no
-// `lending-timeout` in the body.
+// TestLendingPoolReserves_AssetsTimeoutReturns503 and its sibling pin that the reserves handler's 15s ceiling surfaces
+// as a retryable 503 + `lending-timeout`, not a 500 (which says "don't retry", counts in 5xx SLA and is undeclared in
+// the spec).
 func TestLendingPoolReserves_AssetsTimeoutReturns503(t *testing.T) {
 	pool := mkCStrkey(t, 7)
 	srv := v1.New(v1.Options{
@@ -343,11 +325,8 @@ func TestLendingPoolReserves_UnknownLineageWithheld(t *testing.T) {
 	}
 }
 
-// TestLendingPoolReserves_Watermark pins ADR-0041 Decision 4 on the
-// Blend per-reserve current-state read: `as_of_ledger` carries the
-// (cached) lake watermark, `flags.stale` fires when its close time
-// trails now beyond the threshold (10min here), and the exact reserve
-// amounts survive the disclosure add unchanged.
+// TestLendingPoolReserves_Watermark pins ADR-0041 Decision 4 on the Blend reserve read: `as_of_ledger` carries the cached
+// lake watermark, `flags.stale` fires past the 10min threshold, and exact reserve amounts are unchanged.
 func TestLendingPoolReserves_Watermark(t *testing.T) {
 	pool := mkCStrkey(t, 7)
 	asset := mkCStrkey(t, 20)
@@ -394,22 +373,12 @@ func TestLendingPoolReserves_Watermark(t *testing.T) {
 	}
 }
 
-// barrierPriceStall caps how long one parked LatestPrice waits when the
-// barrier is never reached. It bounds the RED run (a serial handler pays it
-// once per reserve, then fails the peak assertion) without letting the test
-// hang; the GREEN run never waits at all, because the fan-out saturates the
-// barrier and releases it.
+// barrierPriceStall caps how long one parked LatestPrice waits if the barrier is never reached: it bounds the RED
+// (serial) run without hanging; the GREEN run never waits.
 const barrierPriceStall = 200 * time.Millisecond
 
-// barrierPriceReader is a v1.PriceReader that parks every LatestPrice call
-// until `want` of them are in flight AT ONCE, recording the peak it observed.
-//
-// This is the instrument that detects a serial fan-out. The route's cost is a
-// per-reserve DB fan-out, so the only thing separating a serial handler
-// from a bounded-parallel one is whether those reads OVERLAP — and a stub that answers
-// instantly makes a serial walk and a parallel one look identical. Parking
-// each call turns concurrency into an observable: peak 1 is a serial loop,
-// peak len(reserves) is the bounded fan-out.
+// barrierPriceReader parks every LatestPrice call until `want` are in flight at once and records the peak, because an
+// instant stub cannot tell a serial walk from a parallel one. Peak 1 is serial; peak len(reserves) is bounded fan-out.
 type barrierPriceReader struct {
 	want int
 
@@ -462,25 +431,9 @@ func (r *barrierPriceReader) observed() (peak, calls int) {
 	return r.peak, r.calls
 }
 
-// TestLendingPoolReserves_PricingFansOutBounded is the regression guard
-// on the handler half.
-//
-// /v1/lending/pools/{pool}/reserves timed out at 12.1s on the largest Blend
-// pool while a SMALL pool answered in 9.31s — 78% of the same ceiling. That
-// spread is the signature of a per-row cost: the handler priced each reserve
-// in turn, and every buildReserveView is one or more USD-price round-trips.
-// The route's latency therefore carried a term linear in the reserve count,
-// and the largest pool merely crossed the line first.
-//
-// The guard asserts the PROPERTY, not a duration: every reserve's pricing read
-// must be in flight at the same time (up to the fan-out cap), which is exactly
-// what a serial `for range states` cannot do. A stopwatch assertion would be a
-// function of the box; and the existing exclusion guard
-// (dex_tvl_exclusion_claims_internal_test.go) only ever proved the path was
-// REGISTERED, which is why this shipped.
-//
-// Proven RED against a serial handler: peak concurrency 1 over 6 calls,
-// the run taking 6 × barrierPriceStall.
+// TestLendingPoolReserves_PricingFansOutBounded guards against per-reserve serial pricing (each reserve costs USD-price
+// round-trips, so latency grew linearly with reserve count). It asserts every pricing read is in flight at once up to
+// the cap, not a duration.
 func TestLendingPoolReserves_PricingFansOutBounded(t *testing.T) {
 	pool := mkCStrkey(t, 7)
 
@@ -549,13 +502,8 @@ func TestLendingPoolReserves_PricingFansOutBounded(t *testing.T) {
 	}
 }
 
-// The 8s-ceiling comment on handleLendingPools must not cite specific issue
-// numbers from the cold-path-protection series. Those
-// numbers resolve to OTHER endpoints (pools, sources, coins, chart, history,
-// oracle) — none of them lending — and no PR by any of those numbers exists
-// in this repo's remote. A reader following the reference lands on unrelated
-// content instead of lending's own fix. The comment must describe the
-// pattern without citing numbers that don't point back to lending.
+// The 8s-ceiling comment on handleLendingPools must not cite cold-path-protection issue numbers: they resolve to other
+// endpoints, so it must describe the pattern without them.
 func TestLendingPoolsCommentDoesNotCiteUnrelatedIssueNumbers(t *testing.T) {
 	src, err := os.ReadFile("lending.go")
 	if err != nil {
@@ -585,11 +533,8 @@ func (r *assetKeyedPriceReader) RecentClosedSnapshots(_ context.Context, _, _ ca
 	return []v1.PriceSnapshot{}, nil
 }
 
-// TestLendingPoolReserves_PartialTVLIsLowerBound pins the money invariant on
-// the pool's tvl_usd: a sum that leaves out an unpriced reserve is served
-// with lower_bound=true, and a sum over every reserve is not.
-//
-// RED without the fix: lower_bound absent on the partial sum.
+// TestLendingPoolReserves_PartialTVLIsLowerBound pins the money invariant on tvl_usd: a sum omitting an unpriced reserve
+// is served with lower_bound=true; a sum over every reserve is not.
 func TestLendingPoolReserves_PartialTVLIsLowerBound(t *testing.T) {
 	pool := mkCStrkey(t, 9)
 	priced, unpriced := mkCStrkey(t, 40), mkCStrkey(t, 41)
@@ -655,15 +600,9 @@ func TestLendingPools_CacheUnavailable503(t *testing.T) {
 	assertCacheUnavailable(t, resp)
 }
 
-// TestLendingPoolReserves_NoConfigNeverInventsDecimals:
-// a reserve whose rate config is missing must not be USD-valued with the
-// placeholder exponent 7. Every reserve is priced at $2 per whole token.
-//
-//   - eighteen: an 18-dp Soroban token with no config — valued with the
-//     contract's own declared decimals (3 tokens = $6.00), not 10^11 × that.
-//   - unknown: no config and no declared decimals — USD withheld and left
-//     out of tvl_usd rather than published off by an unknown power of ten.
-//   - xlmSAC: the native SAC with no config — 7 by protocol, still priced.
+// TestLendingPoolReserves_NoConfigNeverInventsDecimals: a reserve with no rate config must not be valued with the
+// placeholder exponent 7. An 18-dp token uses its declared decimals; unknown decimals withhold USD and leave tvl_usd;
+// the native SAC is 7.
 func TestLendingPoolReserves_NoConfigNeverInventsDecimals(t *testing.T) {
 	pool := mkCStrkey(t, 7)
 	eighteen := mkCStrkey(t, 40)
@@ -779,12 +718,9 @@ func TestLendingPoolReserves_UnpricedReserveReportsDeclaredDecimals(t *testing.T
 	}
 }
 
-// TestLendingPoolReserves_PriceScaleMustMatchReserveDecimals: the USD price
-// is normalised through the nonstandard-decimals projection (else 7), so a
-// 6-decimal reserve with no projection row carries the RAW ratio. Dividing
-// its amounts by 10^6 would publish ten times the value (30.00 for 3 tokens
-// at a raw 1, where the truth is 3.00) — the reserve's USD figures are
-// withheld instead and it leaves tvl_usd. With the row, it is valued.
+// TestLendingPoolReserves_PriceScaleMustMatchReserveDecimals: a 6-decimal reserve with no projection row carries the raw
+// price ratio, so dividing by 10^6 would inflate value tenfold; its USD is withheld and it leaves tvl_usd. With the row,
+// it is valued.
 func TestLendingPoolReserves_PriceScaleMustMatchReserveDecimals(t *testing.T) {
 	pool := mkCStrkey(t, 7)
 	asset := mkCStrkey(t, 44)

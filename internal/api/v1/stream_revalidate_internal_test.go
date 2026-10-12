@@ -42,11 +42,9 @@ func streamRequest() *http.Request {
 	return r
 }
 
-// TestStreamRevalidate_RevokedKeyAndExhaustedQuotaFailTheCheck pins the
-// containment property: every stream endpoint gets a Revalidate hook
-// from streamOptions, and it replays the real Auth and MonthlyQuota
-// gates, so a key revoked or a quota exhausted after the stream was
-// admitted fails the next heartbeat's check.
+// TestStreamRevalidate_RevokedKeyAndExhaustedQuotaFailTheCheck pins containment: every stream endpoint gets a
+// Revalidate hook from streamOptions replaying the real Auth and MonthlyQuota gates, so a key revoked or quota
+// exhausted after admission fails the next heartbeat check.
 func TestStreamRevalidate_RevokedKeyAndExhaustedQuotaFailTheCheck(t *testing.T) {
 	keys := &revocableKeys{}
 	var quotaExhausted atomic.Bool
@@ -83,10 +81,8 @@ func TestStreamRevalidate_RevokedKeyAndExhaustedQuotaFailTheCheck(t *testing.T) 
 	}
 }
 
-// TestStreamRevalidate_GateNamesExistInStack — the revalidator selects
-// gates by middlewareStack entry name, so a renamed entry would silently
-// drop out of the per-heartbeat check. Every selected name must be one
-// the fully-configured stack actually emits.
+// TestStreamRevalidate_GateNamesExistInStack: the revalidator selects gates by middlewareStack entry name, so a
+// renamed entry would silently drop out of the heartbeat check. Every selected name must exist in the full stack.
 func TestStreamRevalidate_GateNamesExistInStack(t *testing.T) {
 	pass := flagGate(nil, new(atomic.Int32))
 	s := New(Options{Auth: pass, KeyPolicy: pass, RequireEmailVerified: pass, MonthlyQuota: pass})

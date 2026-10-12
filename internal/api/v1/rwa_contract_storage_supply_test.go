@@ -27,11 +27,8 @@ func (s *storageSupplyStub) ContractStorageSupply(
 	return s.byContract[contractID], nil
 }
 
-// TestContractArmReadsStorageWhenTheEventLogIsEmpty is the regression this path exists for. A
-// token that emits no SEP-41 events is ABSENT from the event reader, not undercounted, and an
-// absent contract sums to a confident zero served as certainly as a measurement. The contract
-// arm must read storage instead.
-//
+// TestContractArmReadsStorageWhenTheEventLogIsEmpty: a token emitting no SEP-41 events is absent from the event reader and
+// would sum to a confident zero, so the contract arm must read storage instead.
 // Red without the storage read: the row publishes "0" on the sep41_lake_flows basis.
 func TestContractArmReadsStorageWhenTheEventLogIsEmpty(t *testing.T) {
 	const contractID = "CAOCXWNXCG63U43DCJSS52FDAFT2ZXY2T2UZF3ZYVZ4LLLFVFRF2GM6Z"
@@ -65,10 +62,8 @@ func TestContractArmReadsStorageWhenTheEventLogIsEmpty(t *testing.T) {
 	}
 }
 
-// TestContractArmKeepsTheEventReadingWhenThereIsHistory is the control, and it
-// is the half that keeps the two bases from being summed or swapped. A token
-// whose log HAS flows is answered by the log; storage is never consulted, so
-// the same tokens can never be counted twice.
+// TestContractArmKeepsTheEventReadingWhenThereIsHistory is the control: a token whose log has flows is answered by the
+// log and storage is never consulted, so the two bases are never summed or swapped.
 func TestContractArmKeepsTheEventReadingWhenThereIsHistory(t *testing.T) {
 	const contractID = "CBGV2QFQBBGEQRUKUMCPO3SZOHDDYO6SCP5CH6TW7EALKVHCXTMWDDOF"
 	total, _ := new(big.Int).SetString("28327867109034", 10)
@@ -97,10 +92,8 @@ func TestContractArmKeepsTheEventReadingWhenThereIsHistory(t *testing.T) {
 	}
 }
 
-// TestContractArmRefusesAnEmptyStorageRead — no balance entries is not a
-// supply of zero, it is the absence of a reading. Publishing it would replace
-// one unfounded zero with another, which is the whole defect this path removes.
-// The row keeps whatever the event reader said, unchanged.
+// TestContractArmRefusesAnEmptyStorageRead: no balance entries is an absent reading, not a zero supply; publishing it
+// would swap one unfounded zero for another. The row keeps what the event reader said.
 func TestContractArmRefusesAnEmptyStorageRead(t *testing.T) {
 	const contractID = "CB53TITR65ZKTREWEWEEKMFAQZAE6IPJONH32JWOFOWJPHZL6ODP6R4F"
 	for _, tt := range []struct {

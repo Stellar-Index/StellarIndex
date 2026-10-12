@@ -64,10 +64,8 @@ func (r *perAssetStaleReader) AssetMarketsAt(_ context.Context, asset string, _ 
 	return r.rows[asset], "", time.Now(), false, nil
 }
 
-// TestFanOutAssetMarketsSurfacesPartialFailure is a
-// regression test: when one leg of an asset_id fan-out errors and another
-// succeeds, the merged response must say so via `stale`, not silently
-// report a partial view as fresh and complete.
+// TestFanOutAssetMarketsSurfacesPartialFailure: when one asset_id fan-out leg errors and another succeeds, the merged
+// response must say so via `stale`, not report a partial view as fresh.
 func TestFanOutAssetMarketsSurfacesPartialFailure(t *testing.T) {
 	reader := &perAssetStaleReader{
 		rows: map[string][]Market{

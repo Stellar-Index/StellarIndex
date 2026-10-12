@@ -14,10 +14,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// deadlineCapturingHistoryReader records the context deadline its
-// TradesInRange sees, so a test can prove the request-scoped deadline
-// (RequestTimeout middleware + the per-handler 8s wrap) actually reaches
-// the DB read seam.
+// deadlineCapturingHistoryReader records the context deadline TradesInRange sees, proving the request-scoped deadline
+// (RequestTimeout middleware + per-handler 8s wrap) reaches the DB read seam.
 type deadlineCapturingHistoryReader struct {
 	stubHistoryReader
 	sawDeadline bool
@@ -69,14 +67,9 @@ func TestRequestTimeout_BoundsReachDBSeam(t *testing.T) {
 	}
 }
 
-// TestRequestTimeout_DefaultAlwaysOn: a Server built without an explicit RequestTimeout still
-// bounds the read (the New() default), so the protection is on by default rather than opt-in.
-//
-// This hits /v1/price/tip rather than /v1/vwap: handlePriceTip calls s.computeTip(r.Context(),
-// ...) straight through to TradesInRange with no per-handler context.WithTimeout, whereas
-// /v1/vwap's own 8s wrap would satisfy the assertion even if defaultRequestTimeout were never
-// installed. With no competing handler-level deadline, the middleware is the only possible
-// source of the bound observed here.
+// TestRequestTimeout_DefaultAlwaysOn: a Server without an explicit RequestTimeout still bounds reads (the New() default).
+// It hits /v1/price/tip, not /v1/vwap: handlePriceTip passes r.Context() straight to TradesInRange, whereas vwap's own 8s
+// wrap would pass even if defaultRequestTimeout were never installed.
 func TestRequestTimeout_DefaultAlwaysOn(t *testing.T) {
 	reader := &deadlineCapturingHistoryReader{trade: mkNativeUSDTrade()}
 	srv := v1.New(v1.Options{History: reader, Prices: &stubPriceReader{}}) // no RequestTimeout set
@@ -94,17 +87,9 @@ func TestRequestTimeout_DefaultAlwaysOn(t *testing.T) {
 	}
 }
 
-// TestRequestTimeout_GlobalDeadlineWritesProblem pins the wire contract when the RequestTimeout
-// middleware's own deadline, not a tighter per-handler one, is what fires.
-//
-// The failure mode is a BODYLESS HTTP 200: clientAborted keys on `r.Context().Err() != nil`,
-// which the middleware's deadline satisfies exactly as a client disconnect does, so the handler
-// returns silently and net/http emits an implicit 200 with content-length 0. A dashboard then
-// parses an empty body and renders "0 reserves / $0 TVL" for a pool holding real supply: a wrong
-// answer served with full confidence, worse than an error.
-//
-// The middleware deadline is a SERVER-side budget: the client is still on the wire and is owed an
-// RFC 9457 problem document it can retry on.
+// TestRequestTimeout_GlobalDeadlineWritesProblem: when the middleware's own deadline fires, clientAborted (ctx.Err != nil)
+// reads it as a disconnect and the handler returns silently, emitting a BODYLESS 200 that a dashboard renders as "$0 TVL". The
+// deadline is a SERVER-side budget, so the still-connected client is owed an RFC 9457 problem document to retry on.
 func TestRequestTimeout_GlobalDeadlineWritesProblem(t *testing.T) {
 	pool := mkCStrkey(t, 7)
 	srv := v1.New(v1.Options{

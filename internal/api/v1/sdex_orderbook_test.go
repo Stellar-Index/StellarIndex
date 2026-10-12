@@ -33,10 +33,8 @@ func orderBookServer(t *testing.T, load bool) *testServer {
 	t.Helper()
 	cache := v1.NewSDEXOrderBookCache(&stubSDEXOfferBookReader{
 		offers: []clickhouse.LiveOffer{
-			// Versions carry nonzero intra_ledger_seq — intra 0 would put
-			// an offer in the version-tie quarantine (unserved until the
-			// lake removal probe clears it; see the internal tests).
-			// Ask: sell 10 XLM at 0.5 USDC/XLM.
+			// Versions carry nonzero intra_ledger_seq, since intra 0 puts an offer in the version-tie quarantine (unserved
+			// until the lake removal probe clears it). Ask: sell 10 XLM at 0.5 USDC/XLM.
 			{KeyXDR: "k1", OfferID: 1, Amount: 100_000_000, Selling: "native", Buying: obUSDC, PriceN: 1, PriceD: 2, Version: 5<<32 | 1},
 			// Bid: sell 6 USDC at 2 XLM/USDC → 0.5 USDC/XLM.
 			{KeyXDR: "k2", OfferID: 2, Amount: 60_000_000, Selling: obUSDC, Buying: "native", PriceN: 2, PriceD: 1, Version: 5<<32 | 2},
@@ -131,11 +129,9 @@ func TestSDEXOrderbook_ProblemPaths(t *testing.T) {
 	}
 }
 
-// TestSDEXOrderbook_WithheldQuarantineIsDisclosed pins that offers held
-// in the version-tie quarantine are counted per side on the response:
-// the best ask can sit on a quarantined key for hours after a restart,
-// and without the count a thinner book is indistinguishable from the
-// whole one.
+// TestSDEXOrderbook_WithheldQuarantineIsDisclosed pins that offers held in the version-tie quarantine are counted
+// per side on the response; the best ask can sit on a quarantined key for hours after restart, and without the
+// count a thinner book is indistinguishable from the whole one.
 func TestSDEXOrderbook_WithheldQuarantineIsDisclosed(t *testing.T) {
 	const eurc = "EURC-GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ"
 	cache := v1.NewSDEXOrderBookCache(&stubSDEXOfferBookReader{

@@ -14,16 +14,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// GET /v1/rwa/assets — the CONTRACT arm.
-//
-// The arm exists because entities holding real-world assets on Stellar via contracts are
-// invisible to the classic arm: the `issuers` table is written from ONE site, the classic-asset
-// registration path, so a contract-issued entity (Franklin Templeton and Spiko are in the
-// curated directory but absent from it) is never collected at all.
-//
-// So these tests cover two things a refusal tally cannot: that a contract the definition
-// admits is served AND valued, and that an entity nothing can reach is REPORTED rather than
-// silently absent.
+// GET /v1/rwa/assets, the contract arm. Contract-issued entities (Franklin Templeton, Spiko) are invisible to the classic
+// arm because `issuers` is written only on classic-asset registration. These tests pin that an admitted contract is served
+// and valued, and that an unreachable entity is reported rather than silently absent.
 
 // Valid C-strkeys used as fixtures. They stand for nothing on the
 // network.
@@ -32,10 +25,8 @@ const (
 	rwaContractPool = "CABAIBQIBIGA4EASCQLBQGQ4DYQCEJBGFAVCYLRQGI2DMOB2HQ7EA4R4"
 )
 
-// stubRWAContractReader serves canned curated-directory scans. It
-// censuses what it serves the way the real query does, so a test
-// asserting on the funnel asserts against an accounting that closes
-// rather than against numbers a stub invented.
+// stubRWAContractReader serves canned curated-directory scans and censuses them as the real query does, so funnel
+// assertions run against an accounting that closes.
 type stubRWAContractReader struct {
 	contracts []timescale.DirectoryEntry
 	unreached []timescale.DirectoryEntry
@@ -314,12 +305,9 @@ func TestRWAContracts_DecimalsDriveTheValuation(t *testing.T) {
 	}
 }
 
-// TestRWAContracts_UnreadScaleValuesNothingFromAnySupply pins that rule.
-//
-// The contract pipeline runs the generic listing fill first, which reads the precise-supply
-// map keyed by contract id for a pure SEP-41 token. With the scale unreadable it divides by
-// the catalogue's default 7, and a decimals_unavailable refusal would leave that cap standing
-// at a tenth of the real figure (a true 6-decimal supply mis-scaled by 10^1).
+// TestRWAContracts_UnreadScaleValuesNothingFromAnySupply: the generic listing fill reads the precise-supply map by contract id
+// and, with the scale unreadable, divides by the catalogue default 7. A decimals_unavailable refusal must not leave that cap
+// standing at a tenth of the real figure (a 6-decimal supply mis-scaled by 10^1).
 func TestRWAContracts_UnreadScaleValuesNothingFromAnySupply(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -399,10 +387,8 @@ func TestRWAContracts_ScanCapMakesTheTotalALowerBound(t *testing.T) {
 	}
 }
 
-// TestRWAContracts_IncompleteSupplyIsUnavailableNeverZero pins the
-// refusal the lake reader's Incomplete flag exists for. A negative net
-// means the flows are incompletely seeded, NOT that supply is negative,
-// and clamping it to zero would read as a fully-burned token.
+// TestRWAContracts_IncompleteSupplyIsUnavailableNeverZero pins the refusal for the lake reader's Incomplete flag: a
+// negative net means incompletely seeded flows, not negative supply, and clamping to zero reads as fully burned.
 func TestRWAContracts_IncompleteSupplyIsUnavailableNeverZero(t *testing.T) {
 	view := getRWA(t, rwaContractServer(t,
 		&stubRWAContractReader{contracts: []timescale.DirectoryEntry{
@@ -439,10 +425,9 @@ func TestRWAContracts_IncompleteSupplyIsUnavailableNeverZero(t *testing.T) {
 	}
 }
 
-// TestRWAContracts_ScamFlagAcquiredAfterAdmissionWithholdsTheValuation pins the gap this arm
-// closes: fillIssuerDirectoryTags keys on the issuer G-address and skips rows without one, so
-// a contract asset was never subject to the directory scam gate. A page admitting contracts on
-// a directory entry must re-read that entry when it turns hostile.
+// TestRWAContracts_ScamFlagAcquiredAfterAdmissionWithholdsTheValuation: fillIssuerDirectoryTags keys on the issuer
+// G-address and skips contract rows, so a page admitting contracts on a directory entry must re-read it when it turns
+// hostile.
 func TestRWAContracts_ScamFlagAcquiredAfterAdmissionWithholdsTheValuation(t *testing.T) {
 	view := getRWA(t, rwaContractServer(t,
 		&stubRWAContractReader{contracts: []timescale.DirectoryEntry{
@@ -503,10 +488,8 @@ func TestRWAContracts_RefusesAPoolContract(t *testing.T) {
 	assertContractDrop(t, view, "directory_contract_addresses", "contract_named_without_issuing_tag", 1)
 }
 
-// TestRWAContracts_ReportsRecognisedEntitiesItCannotReach is the
-// coverage statement. Franklin Templeton is recognised, unflagged, real,
-// and this index holds no token for it — so it appears by NAME rather
-// than being silently absent.
+// TestRWAContracts_ReportsRecognisedEntitiesItCannotReach is the coverage statement: Franklin Templeton is recognised and
+// unflagged but this index holds no token for it, so it appears by name rather than being silently absent.
 func TestRWAContracts_ReportsRecognisedEntitiesItCannotReach(t *testing.T) {
 	const ftAddr = "GBHNGLLIE3KWGKCHIKMHJ5HVZHYIK7WTBE4QF5PLAKL4CJGSEU7HZIW5"
 	view := getRWA(t, rwaContractServer(t,
@@ -531,10 +514,8 @@ func TestRWAContracts_ReportsRecognisedEntitiesItCannotReach(t *testing.T) {
 	assertContractStage(t, view, "directory_recognised_issuing_accounts", 1)
 }
 
-// TestRWAContracts_FunnelBalancesAcrossBothArms is the accounting
-// property. The two arms narrow different populations from different
-// roots, so the arithmetic has to close WITHIN each arm and must not be
-// attempted across the boundary.
+// TestRWAContracts_FunnelBalancesAcrossBothArms: the arms narrow different populations from different roots, so the
+// arithmetic must close within each arm, not across the boundary.
 func TestRWAContracts_FunnelBalancesAcrossBothArms(t *testing.T) {
 	view := getRWA(t, rwaContractServer(t,
 		&stubRWAContractReader{
@@ -595,10 +576,8 @@ func TestRWAContracts_UnwiredReaderSaysNotMeasured(t *testing.T) {
 	}
 }
 
-// TestRWAContracts_CatalogueReadFailureFailsTheResponse pins that an
-// unread contract arm is never served as an absent one: dropping the
-// admitted members would shrink the published totals with no lower_bound
-// and book them as "never observed on chain".
+// TestRWAContracts_CatalogueReadFailureFailsTheResponse pins that an unread contract arm is never served as absent:
+// dropping admitted members would shrink totals with no lower_bound and book them as never observed.
 func TestRWAContracts_CatalogueReadFailureFailsTheResponse(t *testing.T) {
 	catalogue := &stubContractCatalogue{err: errors.New("catalogue read: connection reset")}
 	srv := v1.New(v1.Options{

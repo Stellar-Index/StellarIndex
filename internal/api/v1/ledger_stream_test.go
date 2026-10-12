@@ -173,11 +173,8 @@ func (d *deadlineCapturingCursorsReader) ListCursors(ctx context.Context) ([]tim
 	return []timescale.Cursor{c}, nil
 }
 
-// TestLedgerStream_TickIsBoundedByATimeout: the per-tick cursors read in the ledger-stream
-// producer must run under its OWN bounded deadline, not the raw per-connection context (which
-// RequestTimeout leaves undeadlined on `/stream` paths because the connection is long-lived by
-// design). Otherwise a slow ListCursors call could hold the producer goroutine and its DB
-// connection open indefinitely, once per open connection.
+// TestLedgerStream_TickIsBoundedByATimeout: the per-tick cursor read must run under its own deadline, not the
+// undeadlined per-connection context, or a slow ListCursors holds a goroutine and DB connection indefinitely.
 func TestLedgerStream_TickIsBoundedByATimeout(t *testing.T) {
 	reader := &deadlineCapturingCursorsReader{tickHadDeadline: make(chan bool, 1)}
 	srv := v1.New(v1.Options{Cursors: reader})
@@ -221,10 +218,8 @@ func (c *capOrderingCursorsReader) ListCursors(context.Context) ([]timescale.Cur
 	return []timescale.Cursor{{Source: "ledgerstream", LastLedger: 1000, UpdatedAt: time.Now().UTC()}}, nil
 }
 
-// TestLedgerStream_CapRejectsBeforePreflightCompute: a client rejected by the global
-// concurrency cap must never reach handleLedgerStream's synchronous pre-flight ledgerTip read.
-// If the cap were checked only inside StreamFromChannel, AFTER that read, every rejected request
-// would still pay for a full cursors read, making the cap a counter rather than an admission gate.
+// TestLedgerStream_CapRejectsBeforePreflightCompute: a client rejected by the global concurrency cap must never reach
+// the pre-flight ledgerTip read, so the cap is an admission gate rather than a counter.
 func TestLedgerStream_CapRejectsBeforePreflightCompute(t *testing.T) {
 	streaming.SetMaxConcurrentStreams(1)
 	t.Cleanup(func() { streaming.SetMaxConcurrentStreams(8192) })
@@ -234,10 +229,8 @@ func TestLedgerStream_CapRejectsBeforePreflightCompute(t *testing.T) {
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
-	// Connection #1 occupies the one available global slot. Do()
-	// returns only once headers are flushed, by which point admission,
-	// the prelude read, and the switch into SSE mode have all already
-	// happened — so the slot is provably held before we fire #2.
+	// Connection #1 holds the one global slot: Do() returns only after headers flush, by which point admission and
+	// the switch to SSE have happened, so the slot is held before #2 fires.
 	ctx1, cancel1 := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel1()
 	req1, _ := http.NewRequestWithContext(ctx1, http.MethodGet, ts.URL+"/v1/ledger/stream", nil)

@@ -10,18 +10,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// A flagged asset whose alias family is only PARTLY flagged makes the non-alias-folding Lookup
-// serve a WRONG number rather than none: the price leg is scaled per source pair, whose base
-// may be another spelling of the same asset, while the supply leg is divided by the requested
-// base's decimals, so the two diverge by a power of ten with both plausible.
-//
-// A fixture test over code cannot catch it because the dangerous row is added to
-// `nonstandard_decimals_assets` at RUNTIME; the guard lives in Refresh, over the loaded rows,
-// and this pins it there.
-//
-// XLM makes this realistic: its three canonical spellings (`native`, `crypto:XLM`, its SAC
-// contract id) are disjoint venue populations, so flagging one but not the others is an
-// ordinary data-entry slip.
+// A partly-flagged alias family makes the non-alias-folding Lookup serve a WRONG number: the price leg scales per source pair,
+// the supply leg by the requested base's decimals, so they diverge by a power of ten. The row arrives at RUNTIME, so the guard
+// in Refresh is pinned here; XLM's three disjoint spellings make flagging only one a realistic slip.
 func refreshWith(t *testing.T, rows ...timescale.NonstandardDecimalsAsset) {
 	t.Helper()
 	c := v1.NewNonstandardDecimalsCache(&stubNonstandardDecimalsReader{rows: rows}, nil)

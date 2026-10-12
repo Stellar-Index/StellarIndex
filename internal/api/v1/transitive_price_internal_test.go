@@ -96,10 +96,8 @@ func TestTransitivePriceFor_FallsBackToNextHopWhenTopHopGated(t *testing.T) {
 	}
 }
 
-// The whole safety property of transitive pricing lives in this function, so every arm of its
-// gate is pinned. A two-hop price inherits its weakest leg: serving one whose intermediate was
-// never substance-checked lets a thin middle market reprice everything quoted against it, the
-// manipulation the floors exist to stop.
+// Every arm of the transitive-pricing gate is pinned: a two-hop price inherits its weakest leg, and serving one
+// whose intermediate was never substance-checked lets a thin middle market reprice everything quoted against it.
 func TestTransitivePriceFor_GateMatrix(t *testing.T) {
 	const (
 		assetID = "CAUP7NFABXE5TJRL3FKTPMWRLC7IAXYDCTHQRFSCLR5TMGKHOOQO772J"
@@ -202,9 +200,8 @@ func (g transitiveScamGate) WithheldPair(_ context.Context, base, quote canonica
 	return g.flagged[base.String()] || g.flagged[quote.String()]
 }
 
-// TestTransitivePriceFor_ScamGateOnBothLegs: the helper must gate scam flags as well as
-// substance, or a hop whose issuer the directory flags (with wash volume clearing the floor)
-// would price /v1/assets/{id} transitively while /v1/price refuses the hop. Every case clears
+// TestTransitivePriceFor_ScamGateOnBothLegs: the helper must gate scam flags as well as substance, or a flagged hop
+// with wash volume clearing the floor would price /v1/assets/{id} while /v1/price refuses it. Every case clears
 // the substance gate, so the scam gate alone decides.
 func TestTransitivePriceFor_ScamGateOnBothLegs(t *testing.T) {
 	const (
@@ -285,12 +282,9 @@ func TestTransitivePriceFor_ResolverCalledOnce(t *testing.T) {
 	}
 }
 
-// The transitive fill must run when the asset has NO catalogue row at all.
-//
-// `classic_assets` requires a G-issuer (issuer_g_strkey NOT NULL), so a Soroban-native contract
-// asset can never have a row, which is the premise of transitive pricing. Placing the fill
-// AFTER applyAssetRowToDetail's `sql.ErrNoRows` early return makes it unreachable for exactly
-// those assets, and only a test that feeds no row catches it.
+// The transitive fill must run when the asset has NO catalogue row: `classic_assets` requires a G-issuer, so a Soroban-native
+// contract asset never has one, which is the premise of transitive pricing. Placing the fill after applyAssetRowToDetail's
+// `sql.ErrNoRows` early return makes it unreachable for exactly those assets; only a no-row test catches it.
 func TestApplyAssetRowToDetail_FillsTransitiveWhenNoCatalogueRow(t *testing.T) {
 	const (
 		assetID = "CAUP7NFABXE5TJRL3FKTPMWRLC7IAXYDCTHQRFSCLR5TMGKHOOQO772J"

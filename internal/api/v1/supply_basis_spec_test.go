@@ -19,10 +19,9 @@ var unexcludedListingBases = []supply.Basis{
 	supply.BasisSEP41LakeFlows,
 }
 
-// TestSpecNamesTheUnexcludedCirculatingBases: the listing's fallback arms publish an
-// un-excluded total under circulating_supply while an exclusion basis subtracts the issuer and
-// locked sets. Every such basis must be named where the field is defined, so a consumer
-// comparing a listing row to a detail page can tell a total from a netted figure.
+// TestSpecNamesTheUnexcludedCirculatingBases: listing fallback arms publish an un-excluded total as
+// circulating_supply while an exclusion basis nets out issuer and locked sets. Every such basis must be named where
+// the field is defined, so a consumer can tell a total from a netted figure.
 func TestSpecNamesTheUnexcludedCirculatingBases(t *testing.T) {
 	schemas, _ := loadSpecDoc(t)["components"].(map[string]any)["schemas"].(map[string]any)
 	asset, _ := schemas["Asset"].(map[string]any)

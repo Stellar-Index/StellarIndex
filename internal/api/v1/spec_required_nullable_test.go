@@ -2,10 +2,8 @@ package v1
 
 import "testing"
 
-// TestSpec_RequiredFieldsDocumented pins the `required` half of the spec-drift check:
-// these schemas serve every listed property unconditionally (non-pointer,
-// no omitempty in the Go view struct) but the spec declared no `required`
-// at all, so a generated client typed every one of them optional.
+// TestSpec_RequiredFieldsDocumented pins the `required` half of spec drift: these schemas serve every listed
+// property unconditionally (non-pointer, no omitempty), so without `required` generated clients type them optional.
 func TestSpec_RequiredFieldsDocumented(t *testing.T) {
 	doc := loadSpecDoc(t)
 	schemas := mustMap(t, doc, "components", "schemas")
@@ -56,11 +54,9 @@ func TestSpec_RequiredFieldsDocumented(t *testing.T) {
 	}
 }
 
-// TestSpec_NullablePropertiesMatchGo pins the `nullable` half of the spec-drift check:
-// these ten properties are backed by a plain Go string/int with
-// `omitempty` (never a pointer) — encoding/json OMITS a zero value, it
-// never serialises `null` — so `type: [T, "null"]` documented an outcome
-// that can never occur on the wire.
+// TestSpec_NullablePropertiesMatchGo pins the `nullable` half: these ten properties are plain Go string/int with
+// `omitempty`, so encoding/json omits a zero value and never emits `null`; `type: [T, "null"]` would document an
+// outcome that can't occur.
 func TestSpec_NullablePropertiesMatchGo(t *testing.T) {
 	doc := loadSpecDoc(t)
 	schemas := mustMap(t, doc, "components", "schemas")

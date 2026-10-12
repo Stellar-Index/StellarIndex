@@ -19,10 +19,9 @@ const (
 	fakeIssuerStrkey = "GBADISSUERSOMETHINGTHATWILLNEVERMATCHANYREALACCOUNTAB"
 )
 
-// TestStampListingCollisions pins the per-row trust signal: the listing serves
-// COALESCE(slug, code) AS slug, so a NULL-slug impersonator emits the verified asset's CODE as
-// its slug. unverified_ticker_collision must fire on the impersonator (so the explorer withholds
-// the "verified" badge) and NOT on the real verified row or a code no verified currency claims.
+// TestStampListingCollisions pins the per-row trust signal: the listing serves COALESCE(slug, code), so a NULL-slug
+// impersonator emits the verified asset's CODE as its slug. unverified_ticker_collision must fire on the
+// impersonator (withholding the "verified" badge), not on the real verified row or an unclaimed code.
 func TestStampListingCollisions(t *testing.T) {
 	cat, err := currency.LoadEmbedded()
 	if err != nil {
@@ -84,10 +83,9 @@ func TestStampListingCollisionsTestNet(t *testing.T) {
 	}
 }
 
-// TestApplyAssetRowYieldsToCanonicalPrice pins the precedence: the asset-catalogue overlay
-// (whose listing query mixes SDEX and CEX pairs for native) must NOT clobber a PriceUSD already
-// set by the canonical /v1/price reader (populatePriceUSD → lookupUSDPrice). It fills only when
-// that value is absent.
+// TestApplyAssetRowYieldsToCanonicalPrice pins precedence: the asset-catalogue overlay (whose listing query mixes
+// SDEX and CEX pairs for native) must not clobber a PriceUSD already set by the canonical /v1/price reader; it
+// fills only when absent.
 func TestApplyAssetRowYieldsToCanonicalPrice(t *testing.T) {
 	s := &Server{}
 	rowPrice := "0.2012011674"
@@ -127,10 +125,9 @@ func (c *fallbackAssets) GetAssetByAssetID(_ context.Context, assetID string) (t
 	return timescale.AssetRow{AssetID: assetID}, nil
 }
 
-// TestGlobalAssetViewOnChainFallback pins that when the global CEX/aggregator tier prices a
-// Stellar-only verified token at nil (a miss), buildGlobalAssetView falls back to the on-chain
-// price the /v1/assets listing shows, with VWAPNative authority and a stellar_onchain source
-// marker so the disclosure is honest.
+// TestGlobalAssetViewOnChainFallback pins that when the global CEX/aggregator tier misses a Stellar-only verified
+// token (nil), buildGlobalAssetView falls back to the /v1/assets on-chain price, with VWAPNative authority and a
+// stellar_onchain source marker.
 func TestGlobalAssetViewOnChainFallback(t *testing.T) {
 	cat, err := currency.LoadEmbedded()
 	if err != nil {

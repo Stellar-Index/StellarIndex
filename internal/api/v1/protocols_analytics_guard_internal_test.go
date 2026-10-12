@@ -11,10 +11,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// These tests pin the guards on the protocol-detail analytics path: a FAST-failing rebuild must
-// never displace a good cached entry; the daily-pre-aggregation probe must not latch a
-// transient error for the process lifetime; and the three analytics fills must share one tip
-// read and one fast-vs-raw decision.
+// These tests pin the protocol-detail analytics guards: a fast-failing rebuild never displaces a good cached entry; the
+// daily-pre-aggregation probe does not latch a transient error; the three fills share one tip read and fast-vs-raw decision.
 
 // TestProtoDetailRefresh_FastFailKeepsGoodEntry: a rebuild that fails FAST (store down, enrich
 // errors in ms, rctx.Err() == nil) must keep the good entry; an rctx.Err()-only guard would let
@@ -173,10 +171,8 @@ func (s *scriptedFastStub) ProtocolEventBreakdown(context.Context, []string, uin
 	return nil, nil
 }
 
-// TestFastActivity_TransientProbeErrorIsNotLatched: a transient error on the FIRST availability
-// probe (definitive=false) must degrade only that call; the next call re-probes and can settle
-// on the fast path. Latching the first answer would force raw scans for the process lifetime
-// after one ClickHouse blip.
+// TestFastActivity_TransientProbeErrorIsNotLatched: a transient error on the first availability probe degrades only
+// that call; the next re-probes. Latching would force raw scans for the process lifetime after one ClickHouse blip.
 func TestFastActivity_TransientProbeErrorIsNotLatched(t *testing.T) {
 	stub := &scriptedFastStub{answers: []probeAnswer{{false, false}, {true, true}}}
 	srv := New(Options{ProtocolActivity: stub})
@@ -251,10 +247,8 @@ func (*blockingFastStub) ProtocolContractActivityFast(context.Context, []string,
 	return nil, nil
 }
 
-// TestFastActivity_UnsettledProbeDoesNotSerializeConcurrentCalls: fastActivity must not hold
-// protocolFastMu across DailyActivityAvailable, or a wedged ClickHouse, which never settles,
-// serialises every concurrent detail build behind one stuck probe. A second call must return
-// promptly while the first is still blocked inside the probe.
+// TestFastActivity_UnsettledProbeDoesNotSerializeConcurrentCalls: fastActivity must not hold protocolFastMu across
+// DailyActivityAvailable, or a wedged ClickHouse serialises every detail build. A second call returns while the first blocks.
 func TestFastActivity_UnsettledProbeDoesNotSerializeConcurrentCalls(t *testing.T) {
 	stub := &blockingFastStub{started: make(chan struct{}), release: make(chan struct{})}
 	srv := New(Options{ProtocolActivity: stub})
@@ -334,10 +328,8 @@ func TestBuildProtocolDetail_ContractCountErrorDegradesStatus(t *testing.T) {
 	}
 }
 
-// erroringRosterReader is a contracts reader whose roster ENUMERATION always fails and has no
-// count-without-enumeration path (no CountSourceContracts, so it does not satisfy
-// protocolContractCounter), the common shape for a source without a counter. It isolates a bare
-// roster-read failure from the count-reader failure erroringCountReader exercises.
+// erroringRosterReader is a contracts reader whose roster enumeration always fails and has no count-without-enumeration
+// path (no CountSourceContracts), isolating a bare roster failure from erroringCountReader's count failure.
 type erroringRosterReader struct{ err error }
 
 func (r erroringRosterReader) ListProtocolContracts(context.Context, string) ([]timescale.ProtocolContract, error) {
@@ -352,10 +344,8 @@ func (erroringRosterReader) ProtocolContractIndex(context.Context) (map[string]s
 	return nil, nil
 }
 
-// TestBuildProtocolDetail_RosterReadErrorDegradesStatus: a roster read failure degrades to the
-// same shape as a genuinely empty roster (protocolRoster swallows it to an empty slice), so
-// buildProtocolDetail must not stamp the page "ok": a failed read is not a true empty, and an
-// "ok" status displaces a healthy cached entry (protoDetailRefreshLocked).
+// TestBuildProtocolDetail_RosterReadErrorDegradesStatus: a roster read failure looks like an empty roster
+// (protocolRoster swallows it), so the page must not be stamped "ok", which would displace a healthy cached entry.
 func TestBuildProtocolDetail_RosterReadErrorDegradesStatus(t *testing.T) {
 	meta, ok := protocolByName("cctp")
 	if !ok {
@@ -400,10 +390,8 @@ func (tipErrActivityStub) LakeTipLedger(context.Context) (uint32, error) {
 	return 0, errors.New("lake unreachable")
 }
 
-// TestEnrichProtocolAnalytics_TipErrorDegradesHonestly: a failed lake-tip
-// read must degrade the analytics (status "unavailable"), never serve a
-// silently-mislabeled window (tip==0 would collapse the fast path's
-// cutoff to yesterday while still claiming the 90d window).
+// TestEnrichProtocolAnalytics_TipErrorDegradesHonestly: a failed lake-tip read degrades analytics to "unavailable",
+// never a mislabeled window (tip==0 would collapse the fast cutoff to yesterday while claiming 90d).
 func TestEnrichProtocolAnalytics_TipErrorDegradesHonestly(t *testing.T) {
 	srv := New(Options{ProtocolActivity: tipErrActivityStub{}})
 	meta, ok := protocolByName("soroswap") // factories ⇒ non-empty analytics scope
@@ -420,10 +408,8 @@ func TestEnrichProtocolAnalytics_TipErrorDegradesHonestly(t *testing.T) {
 	}
 }
 
-// TestEnrichProtocolAnalytics_SharedPlanSingleTipRead: the three
-// concurrent fills share ONE tip read and ONE fast-vs-raw decision — no
-// fill may independently re-read the tip (discarding its error) or land
-// on a different source than its siblings.
+// TestEnrichProtocolAnalytics_SharedPlanSingleTipRead: the three concurrent fills share ONE tip read and ONE
+// fast-vs-raw decision; none re-reads the tip (discarding its error) or lands on a different source.
 func TestEnrichProtocolAnalytics_SharedPlanSingleTipRead(t *testing.T) {
 	stub := &scriptedFastStub{
 		answers:     []probeAnswer{{true, true}},
@@ -506,10 +492,8 @@ func (s closeTimeActivityStub) LedgerBySeq(_ context.Context, seq uint32) (click
 	return clickhouse.LedgerHeader{Seq: seq, CloseTime: protocolWindowCloseTime(seq)}, true, nil
 }
 
-// TestProtocolWindowFloor_UsesCloseTimeNotLedgerCount: the raw analytics readers' window cutoff
-// must be the tip's close_time minus protocolActivityWindowDays days, not a ledger-count
-// multiple of the theoretical 17,280/day cadence, which overshoots the requested days on a real
-// chain.
+// TestProtocolWindowFloor_UsesCloseTimeNotLedgerCount: the raw readers' cutoff is the tip's close_time minus
+// protocolActivityWindowDays, not a multiple of the theoretical 17,280 ledgers/day, which overshoots on a real chain.
 func TestProtocolWindowFloor_UsesCloseTimeNotLedgerCount(t *testing.T) {
 	const tip = uint32(10_000_000)
 	srv := New(Options{ProtocolActivity: closeTimeActivityStub{tip: tip}})
@@ -545,12 +529,9 @@ func TestProtocolWindowFloor_GapFarFromBoundary(t *testing.T) {
 	}
 }
 
-// TestEnrichProtocolAnalytics_FastBreakdownErrorForcesBothToRaw pins that a fast breakdown error
-// must not leave the series on the fast (day-grain) window while the breakdown falls back alone
-// to the raw (ledger-window) source. The wire's sum(EventBreakdown)==EventsTotal invariant
-// assumes one shared window per build, so protocolBreakdown and protocolSeries must not fall
-// back independently (a fast series with an erroring fast breakdown would leave rawBreak==1,
-// rawSeries==0).
+// TestEnrichProtocolAnalytics_FastBreakdownErrorForcesBothToRaw pins that a fast breakdown error cannot leave the series
+// on the fast window while the breakdown falls back alone to raw. sum(EventBreakdown)==EventsTotal needs one shared
+// window per build, so breakdown and series must not fall back independently.
 func TestEnrichProtocolAnalytics_FastBreakdownErrorForcesBothToRaw(t *testing.T) {
 	stub := &scriptedFastStub{
 		answers:      []probeAnswer{{true, true}},
@@ -604,10 +585,8 @@ func TestEnrichProtocolAnalytics_FastContractActivityErrorFallsBackToRaw(t *test
 	}
 }
 
-// TestBuildProtocolDetail_VerdictReadErrorDegradesStatus pins that a completeness-verdict read
-// error flips analytics.status to "unavailable". protocolVerdicts must not collapse a read error
-// and a genuinely absent snapshot to the same nil map, or a transient Postgres error could cache
-// an "ok" view with no completeness block, indistinguishable from "never audited".
+// TestBuildProtocolDetail_VerdictReadErrorDegradesStatus pins that a verdict read error flips analytics.status to
+// "unavailable". protocolVerdicts must not conflate it with an absent snapshot, or "ok" is cached looking "never audited".
 func TestBuildProtocolDetail_VerdictReadErrorDegradesStatus(t *testing.T) {
 	meta, ok := protocolByName("cctp")
 	if !ok {
@@ -652,10 +631,8 @@ func TestBuildProtocolDetail_BespokeSurvivesFailingBattery(t *testing.T) {
 	}
 }
 
-// TestBuildProtocolDetail_StaleBespokeIsHonestAndStillComplete: a block
-// past the staleness horizon is still SERVED (complete page) but the view
-// says so, and such an entry counts as healthy for cache displacement —
-// it is not the blank state the guard defends against.
+// TestBuildProtocolDetail_StaleBespokeIsHonestAndStillComplete: a block past the staleness horizon is still served
+// (complete page) but the view says so, and counts as healthy for cache displacement; it is not the blank state.
 func TestBuildProtocolDetail_StaleBespokeIsHonestAndStillComplete(t *testing.T) {
 	stub := &bespokeStub{block: make(chan struct{})}
 	srv := New(Options{ProtocolActivity: prewarmActivityStub{}, ProtocolBespoke: stub})

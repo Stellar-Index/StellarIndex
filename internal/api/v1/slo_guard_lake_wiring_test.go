@@ -8,11 +8,9 @@ import (
 	"testing"
 )
 
-// sloLakeBackedFields are the Server fields TestSLORoutesNeverTouchTheLake forbids in an
-// SLO'd handler: every ClickHouse-backed field (the `er`/`sr` fan-out in
-// cmd/stellarindex-api/main.go) plus the explorer sub-handler, which is built from the whole
-// Options and cannot be derived. Add any cross-region-proxy or S3-fallback client field by
-// hand; lake-wired fields are enforced by TestSLOLakeFieldsCoverLakeWiring.
+// sloLakeBackedFields are the Server fields TestSLORoutesNeverTouchTheLake forbids in an SLO'd handler: every
+// ClickHouse-backed field plus the explorer sub-handler (built from the whole Options, so not derivable).
+// Add cross-region-proxy or S3-fallback client fields by hand; TestSLOLakeFieldsCoverLakeWiring enforces lake fields.
 var sloLakeBackedFields = map[string]bool{
 	"Explorer":              true,
 	"explorerHandler":       true,

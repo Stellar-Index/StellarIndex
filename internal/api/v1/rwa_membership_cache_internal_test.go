@@ -12,24 +12,13 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// The membership cache is the whole of /rwa's latency, so these tests are about WHEN a
-// request waits rather than what it gets.
-//
-// They pin the defect [assets_sep1_images_detached_test.go] pins for the logo map: the set is
-// an expensive indexed scan over every issuer-bound SEP-1 payload plus the curated-directory
-// walk (~10 s) behind a ten-minute TTL, and rebuilding it INLINE on whichever request found
-// the entry expired makes the route bimodal, with an occasional visitor waiting seconds.
-//
-// The assertions need no timing heuristic: the scan is held open for the whole test, so if
-// the read returns at all it did not wait for the rebuild. Against an unguarded rebuild they
-// block until the outer timeout rather than failing on a threshold.
+// The membership cache is all of /rwa's latency, so these tests pin WHEN a request waits. Rebuilding the ~10 s scan
+// inline on whichever request finds the entry expired makes the route bimodal (same defect as the logo map). No timing
+// heuristic: the scan is held open all test, so a read that returns did not wait for the rebuild.
 
-// blockingRWASep1Reader stands in for that scan: it announces that it
-// started, blocks until the test releases it, counts the scans a sequence of reads started,
-// and records whether its context was cancelled while it worked.
-//
-// That last field is the point of detaching: a refresh on the calling request's context
-// would die when the caller gave up and be restarted, unbounded, by the next caller.
+// blockingRWASep1Reader stands in for the scan: it announces start, blocks until released, counts scans, and records
+// whether its context was cancelled. Detaching matters because a refresh on the caller's context would die when the
+// caller gave up and be restarted, unbounded, by the next one.
 type blockingRWASep1Reader struct {
 	entered   chan struct{} // one send per call
 	release   chan struct{} // test closes this to let the scan finish
@@ -202,10 +191,8 @@ func TestCachedRWAMembership_GapsRebuildAttempts(t *testing.T) {
 func TestPrewarmRWA_WaitsForTheBuild(t *testing.T) {
 	reader := newBlockingRWASep1Reader()
 	s := rwaCacheTestServer(reader)
-	// No assets/history readers wired, so the two series arms return
-	// early behind the same guards their handlers apply. The membership
-	// arm — the ~11.5 s one, shared by all three RWA routes — is what
-	// this asserts the prewarm waits for.
+	// With no assets/history readers wired, the two series arms return early behind their handlers' guards; the ~11.5 s
+	// membership arm, shared by all three RWA routes, is what the prewarm is asserted to wait for.
 
 	done := make(chan struct{})
 	go func() { defer close(done); s.PrewarmRWA(context.Background()) }()

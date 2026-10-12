@@ -30,10 +30,8 @@ const (
 	pegAliasPYUSDClassic = "PYUSD-" + pegAliasPYUSDIssuer
 )
 
-// installPegAliasRegistry publishes the process AliasRegistry the served
-// binary builds from `[supply].sac_wrappers`, carrying both wrappers, and
-// resets to the XLM-only default on cleanup. NOT parallel: the registry is
-// process-global (see canonical.InstallAliasRegistry).
+// installPegAliasRegistry publishes the process AliasRegistry built from `[supply].sac_wrappers` with both wrappers and
+// resets to the XLM-only default on cleanup. Not parallel: the registry is process-global.
 func installPegAliasRegistry(t *testing.T) canonical.Asset {
 	t.Helper()
 	reg, err := canonical.NewAliasRegistry(canonical.PubnetPassphrase, map[string]string{
@@ -109,10 +107,9 @@ func isUSDCSpelling(id string) bool {
 	return id == pegAliasUSDCClassic || id == pegAliasUSDCSAC
 }
 
-// throughXLMLegChartURL serves the declared-peg cross fixture of
-// TestChart_DeclaredPeg_FiatUSD_CrossesThroughXLM — the asset leg under
-// USDC-SAC/XLM-SAC and, when withPivot, the pivot under crypto:XLM —
-// behind a reader that fails the reads failFor names.
+// throughXLMLegChartURL serves the declared-peg cross fixture of TestChart_DeclaredPeg_FiatUSD_CrossesThroughXLM (asset
+// leg under USDC-SAC/XLM-SAC, plus the pivot under crypto:XLM when withPivot) behind a reader failing the reads in
+// failFor.
 func throughXLMLegChartURL(t *testing.T, withPivot bool, failFor func(base, quote string) error) string {
 	t.Helper()
 	usdc := installPegAliasRegistry(t)

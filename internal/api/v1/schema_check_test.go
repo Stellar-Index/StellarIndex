@@ -26,10 +26,9 @@ func (f fakeSchemaReader) SchemaMigrationVersion(context.Context) (uint, bool, e
 	return f.version, f.dirty, f.err
 }
 
-// TestSchemaVersionChecker_Ping pins the schema assertion: the checker fails closed when the
-// applied schema head is BELOW what the binary was built against, or when schema_migrations is
-// dirty, and passes only when the head is >= expected and clean. That lets /readyz drain a
-// migrations-skipped or binary-swapped node instead of serving stale data behind a 200.
+// TestSchemaVersionChecker_Ping pins fail-closed: the checker fails when the applied head is below the binary's
+// expected version or schema_migrations is dirty, passing only when head >= expected and clean. /readyz can then
+// drain a migrations-skipped or binary-swapped node.
 func TestSchemaVersionChecker_Ping(t *testing.T) {
 	t.Parallel()
 	exp := v1.ExpectedSchemaVersion
@@ -95,11 +94,9 @@ func TestSchemaVersionChecker_Ping(t *testing.T) {
 	}
 }
 
-// TestSchemaVersionChecker_DirtyAtomicRollbackDoesNotDrain pins that a dirty row at an ATOMIC
-// migration (anything but the 0030 exception) means Postgres rolled the failed attempt back, so
-// the schema is intact at version-1. If that still satisfies ExpectedSchemaVersion, the CRITICAL
-// checker must pass: draining every backend over a rollback that never touched the served schema
-// is the defect. NewSchemaDirtyChecker still surfaces the dirty row, non-critically.
+// TestSchemaVersionChecker_DirtyAtomicRollbackDoesNotDrain pins that a dirty row at an atomic migration (not 0030)
+// means Postgres rolled back, so the schema is intact at version-1. If that still satisfies
+// ExpectedSchemaVersion the critical checker must pass; NewSchemaDirtyChecker still surfaces it, non-critically.
 func TestSchemaVersionChecker_DirtyAtomicRollbackDoesNotDrain(t *testing.T) {
 	t.Parallel()
 	exp := v1.ExpectedSchemaVersion
@@ -124,10 +121,8 @@ func TestSchemaVersionChecker_DirtyAtomicRollbackDoesNotDrain(t *testing.T) {
 	}
 }
 
-// TestExpectedSchemaVersionMatchesMigrationsHead is the registry-parity guard:
-// v1.ExpectedSchemaVersion MUST equal the highest-numbered migration under migrations/. Adding a
-// migration without bumping the constant would silently weaken the schema assertion (the binary
-// would accept a schema older than it was built against), so this fails CI.
+// TestExpectedSchemaVersionMatchesMigrationsHead: v1.ExpectedSchemaVersion must equal the highest migration under
+// migrations/, else a skipped bump silently lets the binary accept an older schema.
 func TestExpectedSchemaVersionMatchesMigrationsHead(t *testing.T) {
 	t.Parallel()
 

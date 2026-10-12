@@ -84,11 +84,9 @@ func TestLakeWatermark_ServesPreviousOnRefreshError(t *testing.T) {
 	}
 }
 
-// TestLakeWatermark_SlowLakeDoesNotSerialiseCallers: the watermark refresh must never run
-// under the process-global lakeWMMu. Every lake-backed route calls lakeWatermark, so one slow
-// ClickHouse round-trip inside the critical section would queue every concurrent request
-// behind a non-context-aware mutex and burn its deadline. Each caller must return within its
-// own budget, and a burst must coalesce onto one read.
+// TestLakeWatermark_SlowLakeDoesNotSerialiseCallers: the refresh must never run under the global lakeWMMu, or one
+// slow ClickHouse read queues every lake route. Each caller returns within its own budget; a burst coalesces onto one
+// read.
 func TestLakeWatermark_SlowLakeDoesNotSerialiseCallers(t *testing.T) {
 	const (
 		callers   = 8
@@ -127,10 +125,8 @@ func TestLakeWatermark_SlowLakeDoesNotSerialiseCallers(t *testing.T) {
 	}
 }
 
-// TestLakeWatermark_ColdFailureIsRateLimited. A failed read must
-// stamp a retry gap. Without one, every subsequent request re-enters the
-// read — against a wedged lake (whose read is bounded only by ClickHouse's
-// 30s ReadTimeout) that is a back-to-back retry train, one per request.
+// TestLakeWatermark_ColdFailureIsRateLimited: a failed read must stamp a retry gap, or a wedged lake gets
+// a back-to-back retry per request.
 func TestLakeWatermark_ColdFailureIsRateLimited(t *testing.T) {
 	wm := &slowWatermark{err: errors.New("lake down")}
 	s := &Server{Options: Options{LakeWatermark: wm}, logger: slog.Default()}
@@ -145,11 +141,8 @@ func TestLakeWatermark_ColdFailureIsRateLimited(t *testing.T) {
 	}
 }
 
-// TestLakeWatermark_LapsedEntryServedWithoutWaitingOnTheLake: once the TTL lapses the cached
-// watermark is still serviceable (its close time only gets older, which is what flags.stale
-// reads). The caller that notices the lapse is served from cache while the refresh runs
-// detached, and a failed refresh neither drops the last-good value nor re-arms an
-// immediate retry.
+// TestLakeWatermark_LapsedEntryServedWithoutWaitingOnTheLake: after TTL lapse the cached watermark is served while the
+// refresh runs detached; a failed refresh keeps the last-good value and does not re-arm an immediate retry.
 func TestLakeWatermark_LapsedEntryServedWithoutWaitingOnTheLake(t *testing.T) {
 	wm := &slowWatermark{delay: 400 * time.Millisecond, err: errors.New("lake down")}
 	s := &Server{Options: Options{LakeWatermark: wm}, logger: slog.Default()}
@@ -183,10 +176,8 @@ func TestLakeWatermark_LapsedEntryServedWithoutWaitingOnTheLake(t *testing.T) {
 	}
 }
 
-// TestLakeWatermark_UnmeasuredFailsClosed: every lake-backed route discards ok
-// and serves flags.stale straight from lakeWatermark, so a wired reader with
-// no measurement must report stale=true — "unknown" served as fresh is the
-// defect. Only an unwired reader (no lake to judge) stays stale=false.
+// TestLakeWatermark_UnmeasuredFailsClosed: a wired reader with no measurement must report stale=true ("unknown" is
+// not fresh); only an unwired reader stays stale=false.
 func TestLakeWatermark_UnmeasuredFailsClosed(t *testing.T) {
 	cases := []struct {
 		name      string

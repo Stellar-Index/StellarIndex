@@ -35,10 +35,8 @@ func (h *escalationHistoryStub) TradesInRange(_ context.Context, pair canonical.
 	}}, nil
 }
 
-// TestComputeTip_EscalatesBeforeClosedBucket pins that an empty
-// default (5s) window widens ONCE to the 30s SLA bound and serves a
-// fresh rolling VWAP instead of falling through to the closed-bucket
-// store price (which live-sampled at ~90s staleness).
+// TestComputeTip_EscalatesBeforeClosedBucket pins that an empty default (5s) window widens ONCE to the 30s SLA bound and
+// serves a fresh rolling VWAP instead of the closed-bucket price (live-sampled at ~90s stale).
 func TestComputeTip_EscalatesBeforeClosedBucket(t *testing.T) {
 	h := &escalationHistoryStub{tradeAge: 20 * time.Second}
 	s := &Server{Options: Options{History: h}}

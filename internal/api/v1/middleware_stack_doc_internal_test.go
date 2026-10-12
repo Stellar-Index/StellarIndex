@@ -35,10 +35,8 @@ func documentedMiddlewareOrder(t *testing.T) []string {
 	return names
 }
 
-// TestMiddlewareStackMatchesPackageDoc: middleware/doc.go is the one
-// document that claims to give the request-path order, and it drifted to
-// half the stack. With every optional middleware wired, the stack the
-// server builds must be exactly the documented list.
+// TestMiddlewareStackMatchesPackageDoc: middleware/doc.go is the one statement of request-path order and had drifted;
+// with every optional middleware wired, the built stack must equal the documented list.
 func TestMiddlewareStackMatchesPackageDoc(t *testing.T) {
 	pass := func(next http.Handler) http.Handler { return next }
 	var optional middleware.Middleware = pass

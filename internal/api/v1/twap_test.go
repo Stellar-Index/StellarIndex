@@ -112,10 +112,9 @@ func TestTWAP_ReaderError500(t *testing.T) {
 	}
 }
 
-// TestTWAP_StablecoinFiatProxyFallback — when the literal X/fiat:USD pair has zero trades but
-// the operator declared a USDC peg, the TWAP handler retries against X/<USDC-classic> and
-// serves the result with flags.triangulated=true, mirroring /v1/price and /v1/price/tip.
-// Without it a fresh deployment 404s on the canonical XLM/USD TWAP query.
+// TestTWAP_StablecoinFiatProxyFallback: when X/fiat:USD has zero trades but the operator declared a USDC peg, the
+// TWAP handler retries X/<USDC-classic> and serves flags.triangulated=true, like /v1/price and /v1/price/tip.
+// Without it a fresh deployment 404s on the canonical XLM/USD TWAP.
 func TestTWAP_StablecoinFiatProxyFallback(t *testing.T) {
 	usdcClassic, err := canonical.ParseAsset("USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
 	if err != nil {
@@ -185,10 +184,9 @@ func getTWAP(t *testing.T, trades []canonical.Trade, from, to time.Time, extra s
 	return env.Data
 }
 
-// TestTWAP_DustFillInLedgerDoesNotCarryInterval: a 2-stroop fill at 7.5
-// shares a ledger with a real fill at 1. The ledger's price is the fills'
-// Σquote/Σbase, so the dust moves it by its size, whichever fill sorts last.
-// trade_count counts only weight-carrying trades — not the unpriced one.
+// TestTWAP_DustFillInLedgerDoesNotCarryInterval: a 2-stroop fill at 7.5 shares a ledger with a real fill at 1. The
+// ledger price is the fills' Σquote/Σbase, so dust moves it by its size whichever sorts last; trade_count counts
+// only weight-carrying trades.
 func TestTWAP_DustFillInLedgerDoesNotCarryInterval(t *testing.T) {
 	t0 := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
 	trades := []canonical.Trade{

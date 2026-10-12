@@ -115,12 +115,9 @@ func TestPriceTipServesWhenNeitherLegIsFlagged(t *testing.T) {
 	}
 }
 
-// TestPriceStreamWithholdsWhenTheQuoteLegIsScamFlagged pins the closed-bucket SSE surface at
-// connect, before the response switches to SSE mode (once SSE headers are out it is too late
-// to send a 404).
-//
-// The connect pre-flight and the per-bucket re-check in forwardClosedStream are the same
-// predicate, Server.closedStreamWithheld, so pinning it pins both halves.
+// TestPriceStreamWithholdsWhenTheQuoteLegIsScamFlagged pins the closed-bucket SSE surface at connect, before SSE mode
+// (after headers it is too late to send a 404). The connect pre-flight and forwardClosedStream's per-bucket re-check
+// share one predicate, Server.closedStreamWithheld, so pinning it pins both.
 func TestPriceStreamWithholdsWhenTheQuoteLegIsScamFlagged(t *testing.T) {
 	flagged, err := canonical.NewClassicAsset("RIO", scamQuoteLegIssuer)
 	if err != nil {

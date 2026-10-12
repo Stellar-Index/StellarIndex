@@ -13,10 +13,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// priceAtReadFailStub fails reads with err and serves every other read
-// from a fresh bucket. failPair, when set, limits the failure to that
-// "<base>/<quote>" orientation; failOlderThan, when set, limits it to
-// instants at least that far in the past (one /v1/price/changes horizon).
+// priceAtReadFailStub fails reads with err and serves all others from a fresh bucket. failPair limits the failure to one
+// "<base>/<quote>" orientation; failOlderThan limits it to instants at least that far back (one price/changes horizon).
 type priceAtReadFailStub struct {
 	err           error
 	failPair      string

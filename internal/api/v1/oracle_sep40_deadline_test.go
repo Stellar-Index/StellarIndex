@@ -7,11 +7,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// deadlinePriceReader fails every PriceReader call the way an expired
-// per-call budget does: the driver's error WRAPPING
-// context.DeadlineExceeded, arriving on a LIVE request (r.Context() is
-// still alive — see handler_budget_deadline_test.go's package doc for why
-// that is the state under test).
+// deadlinePriceReader fails every PriceReader call like an expired per-call budget: an error wrapping
+// context.DeadlineExceeded on a live request (see handler_budget_deadline_test.go's package doc).
 type deadlinePriceReader struct{}
 
 func (deadlinePriceReader) LatestPrice(context.Context, canonical.Asset, canonical.Asset) (PriceSnapshot, []string, bool, error) {

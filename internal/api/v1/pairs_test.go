@@ -73,10 +73,8 @@ func TestPairs_EmptyWhenReaderNil(t *testing.T) {
 }
 
 func TestPairs_NotFoundReturnsEmptyArray(t *testing.T) {
-	// A pair with no trades returns 200 + empty data — NOT a 404.
-	// Spec: PairsEnvelope.data is `type: array`; "no data" is an
-	// empty array, not a 404, so clients can distinguish "no such
-	// pair" from a malformed request without branching on status.
+	// A pair with no trades returns 200 with empty data, not 404: PairsEnvelope.data is an array, so clients can tell "no
+	// such pair" from a malformed request without branching on status.
 	reader := &stubMarketsReader{pairFound: false}
 	srv := v1.New(v1.Options{Markets: reader})
 	ts := httpTestServer(t, srv)

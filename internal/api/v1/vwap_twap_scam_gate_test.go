@@ -13,12 +13,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// Regression suite: /v1/vwap and /v1/twap must withhold a directory-scam-flagged issuer's
-// aggregated price, as /v1/price, /v1/price/tip, /v1/price/batch, the SEP-40 oracle and the
-// asset headline do. Neither endpoint goes through the price reader (both compute from raw
-// trades via their own fetch), so the pricingguard gate at the price-reader seam does not
-// cover them; without their own gate a flagged issuer's /v1/price is a 404 price-withheld
-// while /v1/vwap and /v1/twap return 200 with a price.
+// /v1/vwap and /v1/twap must withhold a scam-flagged issuer's aggregated price like the other price surfaces. They compute from
+// raw trades via their own fetch, bypassing the price-reader gate, so without their own gate /v1/price 404s price-withheld
+// while they return 200 with a price.
 
 // scamGateFor withholds exactly the listed bases and records the surface
 // label each call was made with, so a test can assert the gate was
@@ -120,10 +117,9 @@ func TestTWAPWithholdsScamFlaggedIssuer(t *testing.T) {
 	}
 }
 
-// TestVWAPTWAPGateKeysOnBaseNotQuote — the gate must key on the BASE
-// alone, so it survives the frontend's XLM triangulation. Keying on the
-// pair would let /v1/vwap?base=<flagged>&quote=native through whenever
-// the flagged asset appeared on the other side of a different quote.
+// TestVWAPTWAPGateKeysOnBaseNotQuote: the gate keys on the base alone so it survives the frontend's XLM
+// triangulation; keying on the pair would let /v1/vwap?base=<flagged>&quote=native through whenever the flagged
+// asset appeared on the other side of a different quote.
 func TestVWAPTWAPGateKeysOnBaseNotQuote(t *testing.T) {
 	base, err := canonical.ParseAsset(flaggedIssuerAsset)
 	if err != nil {

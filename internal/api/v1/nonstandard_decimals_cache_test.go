@@ -72,10 +72,8 @@ func TestNonstandardDecimalsCache_RefreshPopulatesLookup(t *testing.T) {
 	}
 }
 
-// TestNonstandardDecimalsCache_RefreshError_FailsOpenKeepsPreviousSnapshot is the guard-cache
-// fail-open test: a refresh error must (a) keep the PREVIOUS good snapshot rather than clear
-// it, and (b) increment obs.NonstandardDecimalsCacheRefreshFailuresTotal. Availability wins
-// over the guard for infra errors; the guard stays effective off the last-good snapshot.
+// TestNonstandardDecimalsCache_RefreshError_FailsOpenKeepsPreviousSnapshot: a refresh error keeps the previous good
+// snapshot and increments NonstandardDecimalsCacheRefreshFailuresTotal; availability wins, guard stays on last-good.
 func TestNonstandardDecimalsCache_RefreshError_FailsOpenKeepsPreviousSnapshot(t *testing.T) {
 	const asset = "CC2RBGYNCFBCVENIDL5BFBWPH4OUZM2UA3OD2K2N54GLMWCC4KWPVAGO"
 	reader := &stubNonstandardDecimalsReader{

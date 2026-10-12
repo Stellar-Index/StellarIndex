@@ -15,11 +15,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/rwa"
 )
 
-// The methodology pages are hand-written and are what a reader uses to
-// re-derive a published figure, so a status, provenance or count they
-// state has to be the one the code emits. These tests pin the
-// vocabularies and counts that drifted before against the constants the
-// read paths actually use.
+// The hand-written methodology pages are used to re-derive published figures, so any status, provenance or count they
+// state
+// must match the code. These tests pin vocabularies and counts that drifted before against the constants read paths use.
 
 const methodologyDir = "../../../docs/methodology"
 

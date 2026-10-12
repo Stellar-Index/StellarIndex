@@ -15,10 +15,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// priceAtStub honours maxStaleness the way the wired producer does
-// (timescale ClosedVWAPAtOrBefore and the pricing guard both refuse a
-// bucket staler than the bound), unless ignoreStaleness asks for the
-// out-of-contract reader the handler's own re-check defends against.
+// priceAtStub honours maxStaleness like the wired producer (a bucket staler than the bound is refused), unless
+// ignoreStaleness models the out-of-contract reader the handler's own re-check defends against.
 type priceAtStub struct {
 	value           string
 	bucketAt        time.Time
@@ -43,10 +41,8 @@ func (s priceAtStub) PriceAt(_ context.Context, _ canonical.Pair, ts time.Time, 
 	return s.value, s.bucketAt, res, s.err
 }
 
-// TestHandlePriceAt pins that a historical instant serves the
-// closed bucket at-or-before it with the BUCKET's own observed_at;
-// a bucket older than the 24h honesty cap 404s instead of
-// fabricating continuity; future ts and missing ts are 400s.
+// TestHandlePriceAt pins that a historical instant serves the closed bucket at-or-before it with the bucket's own
+// observed_at; a bucket older than the 24h cap 404s rather than fabricate continuity; future or missing ts is 400.
 func TestHandlePriceAt(t *testing.T) {
 	ts := time.Date(2019, 6, 1, 12, 0, 0, 0, time.UTC)
 	near := ts.Add(-45 * time.Minute)
@@ -126,10 +122,8 @@ func TestHandlePriceAt_WithheldDistinctFromNotFound(t *testing.T) {
 	}
 }
 
-// TestHandlePriceAt_GuardedIsWithheldNotNoData: a bucket the
-// serving-sanity guard refused exists, so the 404 is price-withheld with
-// the guard's wording — not price-not-found's "no closed bucket", and not
-// the thin-market sentence the bare withheld sentinel gets.
+// TestHandlePriceAt_GuardedIsWithheldNotNoData: a bucket the serving-sanity guard refused exists, so the 404 is price-
+// withheld with the guard's wording, not price-not-found's "no closed bucket" or the thin-market sentence.
 func TestHandlePriceAt_GuardedIsWithheldNotNoData(t *testing.T) {
 	ts := time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC)
 	s := &Server{Options: Options{PriceAt: priceAtStub{err: ErrPriceAtGuarded}}}
@@ -151,10 +145,8 @@ func TestHandlePriceAt_GuardedIsWithheldNotNoData(t *testing.T) {
 	}
 }
 
-// priceAtPairStub answers only for pairs present in byPair (keyed
-// "base/quote"); everything else gets ErrPriceAtUnavailable. Lets the
-// stablecoin-fallback test distinguish the literal fiat:USD read from
-// the peg retry.
+// priceAtPairStub answers only for pairs in byPair ("base/quote") and gives the rest ErrPriceAtUnavailable, so the
+// stablecoin-fallback test can tell the literal fiat:USD read from the peg retry.
 type priceAtPairStub struct {
 	byPair   map[string]string
 	bucketAt time.Time
@@ -211,10 +203,8 @@ func TestHandlePriceAt_StablecoinFallback(t *testing.T) {
 	}
 }
 
-// TestHandlePriceAt_ReaderFailureIsNotNotFound: a reader error that is neither
-// ErrPriceAtUnavailable nor withheld-class says nothing about whether a bucket exists, so
-// /v1/price/at must not answer the "no closed bucket" 404; a timeout is a retryable 503, any
-// other failure a 500.
+// TestHandlePriceAt_ReaderFailureIsNotNotFound: a reader error that is neither ErrPriceAtUnavailable nor withheld-class
+// says nothing about bucket existence, so no "no closed bucket" 404; a timeout is a retryable 503, other failures 500.
 func TestHandlePriceAt_ReaderFailureIsNotNotFound(t *testing.T) {
 	ts := time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC)
 	nativeUSD, err := canonical.NewPair(canonical.NativeAsset(), canonical.Asset{Type: canonical.AssetFiat, Code: "USD"})

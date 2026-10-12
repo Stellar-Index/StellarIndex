@@ -12,10 +12,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// ADR-0053: a single-venue fiat book is one exchange's view; XLM/USD is
-// aggregated across many. Where both exist, the USD-anchored derivation
-// is the better-substantiated number and is served instead — flagged
-// triangulated, with both legs on the wire.
+// ADR-0053: a single-venue fiat book is one exchange's view while XLM/USD is aggregated across many. Where both
+// exist the USD-anchored derivation is better substantiated and is served instead, flagged triangulated with both
+// legs on the wire.
 
 type basisPair struct {
 	price   string

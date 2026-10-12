@@ -7,11 +7,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// TestSortTradesChronological_NeutralToVenueName pins, on the
-// fiat point path: the merged window's slice order picks the served
-// open/close, so inside one ledger close it must follow tx_hash and not
-// the alphabetical rank of the venue names. Swapping the names must leave
-// every print where it was.
+// TestSortTradesChronological_NeutralToVenueName pins that on the fiat point path the merged window's order, which picks
+// open/close, follows tx_hash within a ledger close, not venue-name rank; swapping names moves nothing.
 func TestSortTradesChronological_NeutralToVenueName(t *testing.T) {
 	ts := time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC)
 	want := []string{"aa", "bb", "cc"}

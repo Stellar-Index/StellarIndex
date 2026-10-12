@@ -18,19 +18,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
-// ─── The supply_basis vocabulary has one declaration ─────────────────
-//
-// [supply.Basis]'s typed constants in internal/supply are it. Handlers stamp the wire field
-// straight from a snapshot's Basis (populateSupplyFields, rwaSupplyProvenance), so every
-// constant is a value a consumer can receive. The spec's two `supply_basis` enums are YAML
-// copies that cannot be derived, so they are pinned here (as ohlc_intervals_test.go pins the
-// interval ladder). The docs mirror, Postman collection and types.ts are generated from the
-// spec, so a value missing there is missing from every published contract at once.
+// The supply_basis vocabulary is declared once: the typed constants of [supply.Basis], which handlers stamp onto the wire
+// (populateSupplyFields, rwaSupplyProvenance). The spec's two `supply_basis` enums are underivable YAML copies, pinned here;
+// docs, Postman and types.ts are generated from the spec, so a missing value is missing everywhere.
 
-// TestSupplyBasis_AssetSpecEnumIsTheGoVocabulary — `Asset.supply_basis`
-// carries every Basis constant, in declaration order. A value in one
-// and not the other is either a served basis the closed union rejects
-// or a documented basis nothing can emit.
+// TestSupplyBasis_AssetSpecEnumIsTheGoVocabulary: `Asset.supply_basis` carries every Basis constant, in
+// declaration order; a mismatch is a served basis the union rejects or a documented basis nothing emits.
 func TestSupplyBasis_AssetSpecEnumIsTheGoVocabulary(t *testing.T) {
 	got := specSupplyBasisEnum(t, "Asset")
 	want := goSupplyBases(t)
@@ -41,10 +34,9 @@ func TestSupplyBasis_AssetSpecEnumIsTheGoVocabulary(t *testing.T) {
 	}
 }
 
-// TestSupplyBasis_RWAAssetSpecEnumIsTheGoVocabulary — `RWAAsset.supply_basis` carries every
-// basis a supply can travel WITH. rwaSupplyProvenance names a basis only beside a non-nil
-// circulating_supply, and [supply.BasisNoMetadata] is the basis of a nil figure, so it is
-// the one constant that cannot reach this row.
+// TestSupplyBasis_RWAAssetSpecEnumIsTheGoVocabulary: `RWAAsset.supply_basis` carries every basis a supply can
+// travel with. rwaSupplyProvenance names a basis only beside a non-nil circulating_supply, so
+// [supply.BasisNoMetadata] (the basis of a nil figure) is the one constant that can't reach this row.
 func TestSupplyBasis_RWAAssetSpecEnumIsTheGoVocabulary(t *testing.T) {
 	got := specSupplyBasisEnum(t, "RWAAsset")
 	var want []string
@@ -101,10 +93,8 @@ func specPropertyEnum(t *testing.T, schema, prop string) []string {
 	return p.Enum
 }
 
-// goSupplyBases reads every typed [supply.Basis] constant out of the
-// internal/supply package. The source is the declaration; a hand-kept slice would be a third
-// copy to drift. Every file is walked, not just supply.go, since a constant declared in
-// overlay.go is as servable.
+// goSupplyBases reads every typed [supply.Basis] constant from internal/supply; the source is the declaration, so
+// no hand-kept slice to drift. Every file is walked, as a constant in overlay.go is as servable as one in supply.go.
 func goSupplyBases(t *testing.T) []string {
 	t.Helper()
 	dir := filepath.Join(repoRoot(t), "internal", "supply")
@@ -131,9 +121,8 @@ func isBasisTyped(_ string, vs *ast.ValueSpec) bool {
 	return ok && id.Name == "Basis"
 }
 
-// goFileStringConsts reads the string constants of type typeName declared
-// in file, in declaration order. Distinct from packageStringConsts, which
-// globs a whole directory — this one is scoped to a single file, which
+// goFileStringConsts reads the string constants of type typeName in one file, in declaration order. Unlike
+// packageStringConsts (a whole directory glob), it is scoped to a file, which
 // TestPriceAuthority_SpecEnumIsTheGoVocabulary compares positionally.
 func goFileStringConsts(t *testing.T, file, typeName string) []string {
 	t.Helper()
@@ -169,10 +158,8 @@ func TestSupplyBasis_ListingValuationSpecEnumIsTheGoVocabulary(t *testing.T) {
 	}
 }
 
-// TestPackageStringConsts_WalksEveryFileOfThePackage — the vocabulary
-// walk sees a constant in any non-test file of the package, not only
-// the file the vocabulary started in, and never one from a _test.go
-// file, which no handler can stamp.
+// TestPackageStringConsts_WalksEveryFileOfThePackage: the walk sees a constant in any non-test file of the
+// package, and never one from a _test.go file, which no handler can stamp.
 func TestPackageStringConsts_WalksEveryFileOfThePackage(t *testing.T) {
 	dir := t.TempDir()
 	files := map[string]string{

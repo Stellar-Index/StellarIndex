@@ -10,10 +10,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// Happy path: the ledgerstream cursor is projected into a tip view —
-// latest_ledger from last_ledger, lag_seconds from the cursor age.
-// Backfill rows in the same table must be ignored (non-empty
-// sub_source).
+// Happy path: the ledgerstream cursor becomes a tip view (latest_ledger from last_ledger, lag_seconds from cursor age);
+// backfill rows (non-empty sub_source) are ignored.
 func TestHandleLedgerTip_Happy(t *testing.T) {
 	srv := v1.New(v1.Options{
 		Cursors: &stubCursorsReader{

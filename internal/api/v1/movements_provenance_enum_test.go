@@ -19,15 +19,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// ─── The movements provenance vocabulary has two declaration sites ──
-//
-// explorer.AccountMovements passes `provenance` straight through from the row, so every value a
-// writer stamps is a value a consumer receives. Three writers, two declarations: the
-// [classicmovements.Provenance] const block (classic_derived on the archive; cap67_event on the
-// Postgres recent tail) and [clickhouse.ProvenanceCAP67Derived] (the derive that continues the
-// archive past P23). The spec's `AccountMovement.provenance` enum is a YAML copy of that set, and
-// the explorer types, Postman collection and docs are generated from it, so a value missing from
-// the spec is one every published contract rejects while the API serves it.
+// The movements provenance vocabulary has two declaration sites: [classicmovements.Provenance] and
+// [clickhouse.ProvenanceCAP67Derived]. The spec's AccountMovement.provenance enum copies them and generated contracts
+// derive from it, so a value missing from the spec is served but rejected.
 
 // TestAccountMovementProvenance_SpecEnumIsTheGoVocabulary — the spec
 // enum is exactly the set of provenance values a writer can stamp.
@@ -77,10 +71,8 @@ func specAccountMovementProvenanceEnum(t *testing.T) []string {
 	return p.Enum
 }
 
-// goClassicMovementProvenances reads the [classicmovements.Provenance]
-// const block out of its source file. Parsed rather than imported: that
-// package reaches back into internal/api, and a string copy here would
-// be a third declaration for this test to drift from.
+// goClassicMovementProvenances parses the [classicmovements.Provenance] const block from source instead of importing it:
+// that package imports internal/api, and a string copy would be a third declaration to drift.
 func goClassicMovementProvenances(t *testing.T) []string {
 	t.Helper()
 	file := filepath.Join(repoRoot(t), "internal", "sources", "classicmovements", "events.go")

@@ -19,10 +19,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestMEVKind_SpecEnumIsTheHandlerVocabulary pins /v1/mev's ?kind=
-// allow-list to the spec enum in both directions: a spec value the
-// handler 400s breaks documented clients, and a handler value missing
-// from the spec is served but rejected by every generated client.
+// TestMEVKind_SpecEnumIsTheHandlerVocabulary pins /v1/mev's ?kind= allow-list to the spec enum both ways: a spec value the
+// handler 400s breaks clients, and a handler value missing from the spec is rejected by generated clients.
 func TestMEVKind_SpecEnumIsTheHandlerVocabulary(t *testing.T) {
 	spec := specMEVKindEnum(t)
 	handler := make([]string, 0, len(validMEVKinds))
@@ -63,10 +61,8 @@ func (r *enumStubMEVReader) ListMEVEvents(_ context.Context, kind string, _ int)
 	return nil, nil
 }
 
-// TestMEVKind_HandlerEnforcesSpecEnum drives the real handler: every
-// spec value reaches the store unchanged, a value outside the enum is a
-// 400 invalid-kind problem that never reaches the store, and that
-// problem's detail names every accepted value.
+// TestMEVKind_HandlerEnforcesSpecEnum: every spec value reaches the store unchanged; a value outside the enum is a 400
+// invalid-kind problem that never reaches the store and whose detail names every accepted value.
 func TestMEVKind_HandlerEnforcesSpecEnum(t *testing.T) {
 	reader := &enumStubMEVReader{}
 	h := New(Options{MEV: reader}).Handler()

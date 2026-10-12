@@ -108,10 +108,8 @@ func TestStatusSourceCountQueries_MatchPromtoolFixture(t *testing.T) {
 		}
 	}
 
-	// The point of the fixture: one case is the host WITHOUT the
-	// API-published gauge, one WITH, and the gauge is worth exactly one
-	// on each count — the feed is switched on and emitting, so it must
-	// land in the numerator as well as the denominator.
+	// Fixture: one host without the API-published gauge, one with; the gauge is worth exactly one on each count, since
+	// the feed is on and emitting and so lands in the numerator as well as the denominator.
 	if before == nil {
 		t.Fatalf("%s has no case without stellarindex_source_enabled{job=\"stellarindex_api\",source=\"massive\"} — "+
 			"the pre-fix shape is what the delta is measured against", statusSourceCountsFixture)

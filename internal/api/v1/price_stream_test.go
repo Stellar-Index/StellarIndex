@@ -108,12 +108,8 @@ func TestPriceStream_HubPublishReachesSubscriber(t *testing.T) {
 	}
 }
 
-// TestPriceStream_TopicIsolation: a publish on a DIFFERENT pair's topic must not reach this
-// subscriber, so the handler computes the topic key correctly per (asset, quote).
-//
-// The foreign publish is followed by one on the subscriber's own topic, so the first frame
-// decides it: a leaked foreign event would arrive ahead. The handler subscribes before it
-// writes headers, so both publishes land after the subscription exists.
+// TestPriceStream_TopicIsolation: a publish on a different pair's topic must not reach this subscriber, so the topic key
+// is computed per (asset, quote). A foreign publish is followed by one on its own topic, so a leak would arrive first.
 func TestPriceStream_TopicIsolation(t *testing.T) {
 	hub := streaming.NewHub(0)
 	srv := v1.New(v1.Options{Hub: hub})
@@ -148,10 +144,8 @@ func TestPriceStream_TopicIsolation(t *testing.T) {
 	}
 }
 
-// TestPriceStream_LastEventIDResume — publish 3 events into the Hub
-// before any subscriber connects, then connect with Last-Event-ID
-// pointing at the first one. Subscriber sees only the 2 newer events
-// replayed from the buffer.
+// TestPriceStream_LastEventIDResume: with 3 events published before any subscriber, connecting with Last-Event-ID at the
+// first replays only the 2 newer events from the buffer.
 func TestPriceStream_LastEventIDResume(t *testing.T) {
 	hub := streaming.NewHub(0)
 	srv := v1.New(v1.Options{Hub: hub})
@@ -227,10 +221,9 @@ func readPriceStreamFrame(t *testing.T, br *bufio.Reader, timeout time.Duration)
 	return sb.String()
 }
 
-// TestPriceStream_AliasSubscriptionReceivesCryptoXLMPublishes: the aggregator publishes XLM's
-// CEX-fed VWAP under `crypto:XLM/fiat:USD`, so a `?asset=native` subscriber would otherwise
-// get a healthy 200 and zero frames forever. The handler subscribes to every alias spelling
-// of the pair.
+// TestPriceStream_AliasSubscriptionReceivesCryptoXLMPublishes: the aggregator publishes XLM's CEX VWAP under
+// `crypto:XLM/fiat:USD`, so the handler subscribes to every alias spelling or `?asset=native` would get zero frames
+// forever.
 func TestPriceStream_AliasSubscriptionReceivesCryptoXLMPublishes(t *testing.T) {
 	hub := streaming.NewHub(0)
 	srv := v1.New(v1.Options{Hub: hub})
@@ -324,11 +317,9 @@ func framesUntil(t *testing.T, br *bufio.Reader, sentinel string) []string {
 	}
 }
 
-// TestPriceStream_OneSeriesPerConnection: the aggregator prices XLM as both `native` (SDEX)
-// and `crypto:XLM` (CEX) and publishes each on its own topic every bucket. A connection
-// subscribes to both spellings, so it could receive two price_update frames per bucket from
-// independent series, a sawtooth between SDEX and CEX prices. It must follow ONE series: the
-// caller's own spelling first, the order /v1/price?window= reads the cache in.
+// TestPriceStream_OneSeriesPerConnection: XLM is priced as both `native` (SDEX) and `crypto:XLM` (CEX), each published
+// per bucket; a connection must follow ONE series (caller's spelling first, as /v1/price?window= reads) to avoid a
+// sawtooth.
 func TestPriceStream_OneSeriesPerConnection(t *testing.T) {
 	bucket := time.Now().UTC().Truncate(time.Minute)
 	cases := []struct {
@@ -362,10 +353,8 @@ func TestPriceStream_OneSeriesPerConnection(t *testing.T) {
 	}
 }
 
-// TestPriceStream_FallsBackWhenPreferredSeriesGoesQuiet — the other half
-// of the one-series contract: once the preferred spelling has published nothing
-// for cachekeys.VWAPMaxAge, /v1/price?window= serves the alias key, and
-// so does the stream (the zero-frames fix must survive series selection).
+// TestPriceStream_FallsBackWhenPreferredSeriesGoesQuiet: once the preferred spelling publishes nothing for
+// cachekeys.VWAPMaxAge, the stream falls to the alias series, as /v1/price?window= does.
 func TestPriceStream_FallsBackWhenPreferredSeriesGoesQuiet(t *testing.T) {
 	bucket := time.Now().UTC().Truncate(time.Minute)
 	hub := streaming.NewHub(0)
@@ -384,10 +373,8 @@ func TestPriceStream_FallsBackWhenPreferredSeriesGoesQuiet(t *testing.T) {
 	}
 }
 
-// TestPriceStream_WithheldMarkerFollowsTheSelectedSeries — a publisher's
-// price_withheld names one alias spelling. A crypto:XLM connection whose
-// own series is live must not see native's marker, which would read as
-// its own pair being withheld; with crypto:XLM quiet it falls back to it.
+// TestPriceStream_WithheldMarkerFollowsTheSelectedSeries: price_withheld names one alias spelling, so a live crypto:XLM
+// connection must not see native's marker; with crypto:XLM quiet it falls back to it.
 func TestPriceStream_WithheldMarkerFollowsTheSelectedSeries(t *testing.T) {
 	bucket := time.Now().UTC().Truncate(time.Minute)
 	usd, _ := canonical.ParseAsset("fiat:USD")
@@ -590,16 +577,9 @@ func TestPriceStream_ScamFlaggedIssuer_RefusesConnect(t *testing.T) {
 	}
 }
 
-// TestPriceStream_GateFlipMidStreamWithholdsBucket: the half a connect-time-only check would
-// miss. An SSE connection lives for hours; one opened while a pair still cleared the serve
-// floor (including an attacker's, opened before its dust market was measured or its issuer
-// flagged) must stop being served the moment the verdict flips, because the aggregator keeps
-// publishing that pair's closed bucket regardless (the producer consults no gate).
-//
-// The assertion is on the CONTENT of the next frames, not on silence: a withheld bucket is
-// published between two servable ones, and the subscriber must see a price_withheld marker
-// in its place (never the withheld price, and never nothing, which reads as a quiet market),
-// then the later servable bucket.
+// TestPriceStream_GateFlipMidStreamWithholdsBucket: an SSE connection lives for hours, so a verdict flip after connect must
+// stop service even though the aggregator keeps publishing (the producer consults no gate). Asserts frame CONTENT: a
+// price_withheld marker replaces the withheld bucket (never the price, never silence), then the next servable bucket follows.
 func TestPriceStream_GateFlipMidStreamWithholdsBucket(t *testing.T) {
 	hub := streaming.NewHub(0)
 	gate := newClosedStreamGate(false) // servable at connect
@@ -702,10 +682,9 @@ func TestPriceStream_NoGatesWired_StillStreams(t *testing.T) {
 	}
 }
 
-// TestPriceStream_StalledGateCoalescesBacklog — buckets that queue while
-// the forwarder is inside a slow gate call must share ONE fresh verdict,
-// not pay the gate budget each. Serial per-event gating lets a stalled DB
-// back the Hub queue up until Publish evicts the subscriber.
+// TestPriceStream_StalledGateCoalescesBacklog: buckets queued behind a slow gate call share ONE fresh verdict instead of
+// each paying the gate budget; serial gating lets a stalled DB back up the Hub queue until Publish evicts the
+// subscriber.
 func TestPriceStream_StalledGateCoalescesBacklog(t *testing.T) {
 	hub := streaming.NewHub(0)
 	gate := &stallingGate{entered: make(chan struct{}, 1), hold: make(chan struct{})}
@@ -756,13 +735,8 @@ func TestPriceStream_StalledGateCoalescesBacklog(t *testing.T) {
 	}
 }
 
-// closedStreamGate stands in for both pricingguard gates on the stream path. One struct
-// implements PriceSubstanceGate and PriceScamGate so a test can flip the verdict mid-stream,
-// and every consultation is published on `calls` so a test can synchronise on the gate
-// having been asked rather than sleeping.
-//
-// Mutex-guarded because the per-bucket re-check runs on the forwarder goroutine while the
-// test drives the verdict from its own.
+// closedStreamGate stands in for both pricingguard gates on the stream path (PriceSubstanceGate and PriceScamGate), so a
+// test can flip the verdict mid-stream and sync on `calls`. Mutex-guarded: the re-check runs on the forwarder goroutine.
 type closedStreamGate struct {
 	mu       sync.Mutex
 	withhold bool
@@ -817,12 +791,9 @@ func (g *closedStreamGate) seenSurfaces() []string {
 	return append([]string(nil), g.surfaces...)
 }
 
-// awaitConsultation waits for the gate to be asked once more and reports the verdict it gave,
-// plus whether it was asked at all inside the budget.
-//
-// Deliberately NON-fatal: it is a synchronisation aid, not the assertion. If the gate is
-// never consulted from this path, a t.Fatal here would fail for "nobody asked" and mask the
-// assertion that matters: that the withheld bucket reached the subscriber's wire.
+// awaitConsultation waits for the gate to be asked once more and reports its verdict and whether it was asked in budget.
+// Deliberately non-fatal: a t.Fatal for "nobody asked" would mask the real assertion that the withheld bucket reached
+// the wire.
 func (g *closedStreamGate) awaitConsultation(budget time.Duration) (verdict, asked bool) {
 	select {
 	case v := <-g.calls:

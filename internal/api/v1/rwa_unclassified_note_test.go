@@ -8,12 +8,9 @@ import (
 	"testing"
 )
 
-// `unclassified` is among the largest groups on this breakdown (BENJI and USDY). The word reads
-// as a gap in OUR data, but it describes the ISSUERS': BENJI's own SEP-1 declares
-// `anchor_asset_type = "other"` and USDY's issuer declares none, so publishing a class would
-// contradict one issuer and invent one for the other. A reader comparing with a third party's
-// breakdown (which classifies everything) would take it for missing work, so the group carries
-// the reason with it.
+// `unclassified` (BENJI, USDY) describes the issuers' SEP-1 data, not a gap in ours: BENJI declares
+// `anchor_asset_type = "other"`, USDY declares none, so a published class would contradict or invent one.
+// The group carries that reason so readers comparing with a third-party breakdown don't read it as missing work.
 func TestUnclassifiedGroupCarriesItsReason(t *testing.T) {
 	groups := rwaByClass([]RWAAsset{
 		{Code: "BENJI", AnchorClass: ""},

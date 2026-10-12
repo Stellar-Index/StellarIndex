@@ -295,11 +295,8 @@ func TestObservationsStream_PayloadJSONIsValid(t *testing.T) {
 	}
 }
 
-// TestObservationsStream_DivergenceCheckedStructurallyFalse — the stream
-// twin of TestObservations_DivergenceCheckedStructurallyFalse: every tick
-// of the raw per-source stream reports divergence_checked=false BY
-// DESIGN, with the DivergenceLooker never consulted, even when a firing
-// verdict sits under every spelling of the base.
+// TestObservationsStream_DivergenceCheckedStructurallyFalse: every tick of the raw per-source stream reports
+// divergence_checked=false by design, never consulting the DivergenceLooker even when a verdict fires.
 func TestObservationsStream_DivergenceCheckedStructurallyFalse(t *testing.T) {
 	now := time.Unix(1745000000, 0).UTC()
 	hist := &stubHistoryReader{
@@ -338,10 +335,8 @@ func TestObservationsStream_DivergenceCheckedStructurallyFalse(t *testing.T) {
 	}
 }
 
-// TestObservationsStream_CacheUnavailable503 — The pre-flight
-// computeObservations call (run synchronously before switching to SSE
-// mode, so the handler can still set a non-200 status) lands on the
-// cache-unavailable 503 branch on MISCONF.
+// TestObservationsStream_CacheUnavailable503: the synchronous pre-flight computeObservations (before SSE mode, so a
+// non-200 is still possible) lands on the cache-unavailable 503 branch on MISCONF.
 func TestObservationsStream_CacheUnavailable503(t *testing.T) {
 	hist := &stubHistoryReader{err: miscOnfErr}
 	srv := v1.New(v1.Options{History: hist})

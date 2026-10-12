@@ -11,11 +11,8 @@ import (
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 )
 
-// The SEP-40 single-price surfaces read the same closed prices_1m bucket /v1/price does, so
-// they must also honour a frozen pair: the newest bucket is the one the anomaly checker
-// refused, and lastprice/x_last_price must serve the held last-known-good like /v1/price, not
-// publish it to oracle integrators. These drive the production handlers with the fixture
-// (moved bucket vs held value) and assert the VALUE.
+// The SEP-40 single-price surfaces read the same closed prices_1m bucket as /v1/price, so for a frozen pair
+// lastprice/x_last_price must serve the held last-known-good, not the refused newest bucket. These assert the VALUE.
 
 const (
 	xlmUSD       = "crypto:XLM/fiat:USD"

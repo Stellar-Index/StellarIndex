@@ -5,13 +5,9 @@ import (
 	"testing"
 )
 
-// Depth math is exact integer arithmetic (ADR-0003). Expected values
-// computed independently (arbitrary-precision, floor division):
-//
-//	x=1e9, y=2e9, fee=30bps:
-//	  slip=100bps → Δx = x·70·10⁴/(9970·9900)          = 7_091_983
-//	                Δy = y·9970·Δx/(x·10⁴+9970·Δx)      = 14_042_126
-//	  slip=50bps  → Δx = 2_016_098, Δy = 4_012_035
+// Depth math is exact integer arithmetic (ADR-0003). Expected values were computed independently (arbitrary precision,
+// floor division): x=1e9, y=2e9, fee=30bps; slip=100bps gives dx=7_091_983, dy=14_042_126; slip=50bps gives
+// dx=2_016_098, dy=4_012_035.
 func TestMaxInputWithinSlippage(t *testing.T) {
 	x := big.NewInt(1_000_000_000)
 

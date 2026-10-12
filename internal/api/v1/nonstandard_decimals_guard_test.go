@@ -60,10 +60,8 @@ func globalViewPrice(t *testing.T, vwap string, decimals *v1.NonstandardDecimals
 	return env.Data.PriceUSD
 }
 
-// TestGlobalAsset_NonstandardDecimals_NormalizesVWAPTier pins that the
-// global view's vwap_native tier serves the corrected price, not the raw
-// prices_1m ratio its reader returns. The tier reads `crypto:USDC` /
-// `fiat:USD`; flagging the base at 9dp gives K = 10^(9−7) = 100.
+// TestGlobalAsset_NonstandardDecimals_NormalizesVWAPTier pins that the global view's vwap_native tier serves the
+// corrected price, not the raw prices_1m ratio; flagging the base at 9dp gives K = 10^(9-7) = 100.
 func TestGlobalAsset_NonstandardDecimals_NormalizesVWAPTier(t *testing.T) {
 	got := globalViewPrice(t, "41.32", nonstandardDecimalsCacheWith(t, "crypto:USDC", 9))
 	if got == nil || *got != "4132.0000000000" {

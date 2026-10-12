@@ -17,13 +17,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// gatedDivergenceLooker models a verdict store that has stopped
-// answering: every lookup parks until the test releases it, or until the caller's context
-// gives up. Parking on a channel rather than sleeping keeps the tests fast and free of timing
-// slack; the only real time spent is the sub-budget the handler is measured against.
-//
-// A store that ignored its context could not be modelled this way, and is not what the wired
-// looker does: it reads Redis through go-redis, which honours the deadline.
+// gatedDivergenceLooker models a verdict store that stopped answering: each lookup parks until the test releases it or
+// the caller's context gives up. Parking on a channel keeps tests fast and free of timing slack.
+// It does not model a store ignoring its context; the wired looker reads Redis via go-redis, which honours deadlines.
 type gatedDivergenceLooker struct {
 	release chan struct{} // closed by the test to let parked calls return
 	entered chan struct{} // closed on the first call
@@ -54,16 +50,12 @@ func (g *gatedDivergenceLooker) DivergenceFiringFor(ctx context.Context, _, _ ca
 	}
 }
 
-// stallBudget is the divergence sub-budget the stall tests run against.
-// A never-released lookup costs exactly this, so it is what each stalled emission waits; the
-// regression guarded is the lookup riding the UNSCALED 8s tick budget instead, which every
-// bound below still separates by the same margin as at the production 1s.
+// stallBudget is the divergence sub-budget the stall tests run against; a never-released lookup costs exactly this.
+// The guarded regression is the lookup riding the unscaled 8s tick budget, which the bounds below still separate.
 const stallBudget = 100 * time.Millisecond
 
-// tipStreamServerWithLooker wires a hub-less server (so both the
-// pre-flight frame and every later frame come from this process's own
-// code paths) over one priced pair. A zero budget keeps the production
-// [v1.TipStreamDivergenceBudget].
+// tipStreamServerWithLooker wires a hub-less server (pre-flight and later frames come from this process's own code
+// paths) over one priced pair. A zero budget keeps the production [v1.TipStreamDivergenceBudget].
 func tipStreamServerWithLooker(t *testing.T, div v1.DivergenceLooker, budget time.Duration) string {
 	t.Helper()
 	prices := &stubPriceReader{
@@ -78,16 +70,12 @@ func tipStreamServerWithLooker(t *testing.T, div v1.DivergenceLooker, budget tim
 	return ts.URL
 }
 
-// tipStreamURL is the stream under test. window_seconds=60 (6s at
-// [testStreamSecond]) keeps the producer from ticking during the test, so
-// what is measured is the pre-flight path — the one that sits between the client's request and
-// the response headers.
+// tipStreamURL is the stream under test. window_seconds=60 keeps the producer from ticking, so what is measured is the
+// pre-flight path between the client's request and the response headers.
 const tipStreamURL = "/v1/price/tip/stream?asset=crypto:BTC&quote=fiat:USD&window_seconds=60"
 
-// timedLooker answers after a fixed delay, honouring its context. It is
-// how the budget EDGE is probed: a gate reporting "unchecked" whenever the lookup is not
-// instant would pass every stall test while discarding the verdict on each healthy-but-loaded
-// read, so the guard has to discriminate, not merely fire.
+// timedLooker answers after a fixed delay, honouring its context, to probe the budget EDGE: a gate reporting
+// "unchecked" whenever the lookup is not instant would pass every stall test while discarding healthy-but-loaded reads.
 type timedLooker struct {
 	delay   time.Duration
 	firing  bool
@@ -107,10 +95,8 @@ func (l *timedLooker) DivergenceFiringFor(ctx context.Context, _, _ canonical.As
 	}
 }
 
-// hubTipStreamServer wires the PRODUCTION shape: a Hub, so the recurring
-// frames come from the ONE shared runSharedTipProducer loop rather than
-// the per-connection fallback. Hub-less servers never execute that loop,
-// so without this helper the code path r1 actually runs is untested.
+// hubTipStreamServer wires the PRODUCTION shape: a Hub, so recurring frames come from the shared runSharedTipProducer
+// loop. Hub-less servers never run that loop, leaving the path r1 runs untested.
 func hubTipStreamServer(t *testing.T, div v1.DivergenceLooker, sources []string) string {
 	t.Helper()
 	prices := &stubPriceReader{
@@ -156,10 +142,8 @@ func (h *capturingHandler) count(sub string) int {
 	return n
 }
 
-// budgetBurningPrices spends the caller's whole request budget before
-// the handler reaches its divergence lookup, so lookupDivergenceFlag is
-// entered with an ALREADY-EXPIRED request context. That is the ordinary
-// shape of a request that overran on an earlier read, not a rare one.
+// budgetBurningPrices spends the whole request budget before the divergence lookup, so lookupDivergenceFlag is entered
+// with an already-expired context, the ordinary shape of a request that overran an earlier read.
 type budgetBurningPrices struct {
 	inner *stubPriceReader
 	burn  time.Duration
@@ -195,13 +179,9 @@ func (l *storeDownLooker) DivergenceFiringFor(context.Context, canonical.Asset, 
 	return false, false, 0, errDivergenceStoreDown
 }
 
-// TestPriceDivergence_GenuineStoreErrorIsLoggedEvenPastTheBudget — the
-// deadline suppression must key on the ERROR, not on the context.
-//
-// /v1/price, its ?window= variant, /v1/price/tip and /v1/vwap have no stall reporter of their
-// own; the tip stream's rate-limited warning covers only the stream. Suppressing on "the
-// context is done" would silence a real store outage on all of them once the request budget
-// has blown.
+// TestPriceDivergence_GenuineStoreErrorIsLoggedEvenPastTheBudget: deadline suppression must key on the ERROR, not the
+// context. /v1/price, ?window=, /v1/price/tip and /v1/vwap have no stall reporter of their own; suppressing on
+// "context is done" would silence a real store outage on all of them once the budget blows.
 func TestPriceDivergence_GenuineStoreErrorIsLoggedEvenPastTheBudget(t *testing.T) {
 	for _, path := range []string{
 		"/v1/price?asset=crypto:BTC&quote=fiat:USD",

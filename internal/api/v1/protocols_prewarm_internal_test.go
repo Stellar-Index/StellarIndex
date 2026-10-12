@@ -13,10 +13,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// These tests pin the contract: no user request
-// ever pays for a cold protocol-analytics build, built detail
-// views stale-serve (never blank), and analytics degradation is explicit
-// on the wire (analytics.status) instead of masquerading as zeros.
+// These tests pin that no user request pays for a cold protocol-analytics build, built detail views stale-serve (never
+// blank), and analytics degradation is explicit on the wire (analytics.status), not zeros.
 
 // prewarmActivityStub is a minimal healthy lake reader: a readable tip
 // and empty (but successful) fills — enough for buildProtocolDetail to
@@ -104,11 +102,9 @@ func getProtoDetail(t *testing.T, base, name string) (int, protoDetailEnvelope) 
 	return resp.StatusCode, env
 }
 
-// TestHandleProtocolDetail_StaleServeNeverBlanks verifies the SWR
-// contract on the detail route: a built view past its TTL is
-// served IMMEDIATELY with flags.stale + analytics.status "stale" — the
-// bespoke block never blanks — while one detached rebuild runs, after
-// which the next request is fresh again.
+// TestHandleProtocolDetail_StaleServeNeverBlanks verifies SWR on the detail route: a view past its TTL is served
+// immediately with flags.stale and analytics.status "stale", bespoke block intact, while one detached rebuild runs;
+// the next request is fresh.
 func TestHandleProtocolDetail_StaleServeNeverBlanks(t *testing.T) {
 	stub := &prewarmBespokeStub{}
 	srv := New(Options{ProtocolActivity: prewarmActivityStub{}, ProtocolBespoke: stub})

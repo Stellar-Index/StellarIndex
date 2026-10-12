@@ -61,10 +61,8 @@ func TestMEVEvents_InvalidKindIs400(t *testing.T) {
 	}
 }
 
-// TestMEVEvents_PerHandlerTimeoutCeiling pins that ListMEVEvents runs against a context bounded
-// by a per-handler ceiling well under the blanket RequestTimeout, as /v1/pools and /v1/markets
-// do. Otherwise a cold mev_events scan holds the connection until the 60s deadline instead of
-// returning a fast, retryable 503.
+// TestMEVEvents_PerHandlerTimeoutCeiling pins that ListMEVEvents runs under a per-handler ceiling well below the blanket
+// RequestTimeout, so a cold mev_events scan returns a fast retryable 503, not a 60s hold.
 func TestMEVEvents_PerHandlerTimeoutCeiling(t *testing.T) {
 	reader := &stubMEVReader{}
 	srv := v1.New(v1.Options{MEV: reader, RequestTimeout: 60 * time.Second})

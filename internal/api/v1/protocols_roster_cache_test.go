@@ -55,10 +55,8 @@ func (r *rosterCacheStubReader) callCount(source string) int {
 	return r.listCalls[source]
 }
 
-// TestProtocolsList_RosterServedFromCache: a second /v1/protocols request must NOT re-scan the
-// served tier for a source's contract roster; the count comes from the per-server SWR cache.
-// Calling protocolRoster inline per request would hit the reader once PER request, failing the
-// assertion that blend's registry read ran exactly once across two requests.
+// TestProtocolsList_RosterServedFromCache: a second /v1/protocols request must NOT re-scan the served tier for a roster;
+// the count comes from the per-server SWR cache. Inline protocolRoster would read once per request.
 func TestProtocolsList_RosterServedFromCache(t *testing.T) {
 	reader := &rosterCacheStubReader{
 		bySource: map[string][]timescale.ProtocolContract{
@@ -104,10 +102,8 @@ func TestProtocolsList_RosterServedFromCache(t *testing.T) {
 	}
 }
 
-// TestProtocolsList_RosterFailureOmitsNotZeros: when a source's roster read FAILS and no
-// last-good count is cached, the source is OMITTED from the directory and named in
-// coverage_note, never serialised with a fabricated contract_count: 0. Swallowing the failure
-// into an empty roster would show blend with contract_count 0 and no coverage_note.
+// TestProtocolsList_RosterFailureOmitsNotZeros: when a roster read fails with no last-good count, the source is omitted
+// and named in coverage_note, never serialised with a fabricated contract_count: 0.
 func TestProtocolsList_RosterFailureOmitsNotZeros(t *testing.T) {
 	reader := &rosterCacheStubReader{
 		bySource: map[string][]timescale.ProtocolContract{
