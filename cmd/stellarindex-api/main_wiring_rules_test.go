@@ -164,12 +164,6 @@ func TestMainWiringRules(t *testing.T) {
 			},
 		},
 		{
-			name: "hub_topic_idle_ttl_from_config",
-			check: func(t *testing.T) {
-				requireSetterFedBy(t, m, "SetTopicIdleTTL", "cfg.API.Streaming.TopicIdleTTL", "streaming Hub topic retention is not wired from config")
-			},
-		},
-		{
 			name: "hub_max_topics_from_config",
 			check: func(t *testing.T) {
 				requireSetterFedBy(t, m, "SetMaxTopics", "cfg.API.Streaming.MaxTopics", "streaming Hub topic retention is not wired from config")

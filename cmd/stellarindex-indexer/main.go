@@ -220,7 +220,7 @@ func run(cfgPath string, dryRun bool) error {
 	// ─── Storage ────────────────────────────────────────────────
 	// OpenBackground sets a generous session statement_timeout as the runaway backstop; heavy
 	// batch scans SET LOCAL a longer bound inside their own transactions.
-	store, err := timescale.OpenBackground(rootCtx, cfg.Storage.PostgresDSN, cfg.Storage.BackgroundStatementTimeout)
+	store, err := timescale.OpenBackground(rootCtx, cfg.Storage.PostgresDSN, timescale.BackgroundStatementTimeout)
 	if err != nil {
 		cancel() // nothing else registered yet; release the signal ctx
 		return fmt.Errorf("storage: %w", err)

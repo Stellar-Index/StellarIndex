@@ -169,7 +169,7 @@ func run(cfgPath string, dryRun bool) error {
 	// OpenBackground applies a generous session-level statement_timeout as
 	// the SQL-side runaway backstop. Heavy batch scans SET LOCAL
 	// a longer bound inside their own transactions, overriding it.
-	store, err := timescale.OpenBackground(rootCtx, cfg.Storage.PostgresDSN, cfg.Storage.BackgroundStatementTimeout)
+	store, err := timescale.OpenBackground(rootCtx, cfg.Storage.PostgresDSN, timescale.BackgroundStatementTimeout)
 	if err != nil {
 		cancel() // nothing else registered yet; release the signal ctx
 		return fmt.Errorf("storage: %w", err)
@@ -393,7 +393,7 @@ func run(cfgPath string, dryRun bool) error {
 	// Fans each successful (pair, window) VWAP cache write out to `/v1/price/stream` subscribers
 	// via Redis pub/sub. Always wired (only the channel is configurable; empty means
 	// DefaultChannel) because PUBLISH with no subscribers is a Redis no-op.
-	streamPub, err := redispub.NewPublisher(rdb, cfg.Storage.RedisClosedBucketChannel)
+	streamPub, err := redispub.NewPublisher(rdb, redispub.DefaultChannel)
 	if err != nil {
 		return fmt.Errorf("redispub.NewPublisher: %w", err)
 	}

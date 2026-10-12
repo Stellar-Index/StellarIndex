@@ -4,7 +4,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	cfg "github.com/Stellar-Index/StellarIndex/internal/config"
 )
@@ -54,37 +53,5 @@ func TestOpenExchangeRates_EnvOverridesTOML(t *testing.T) {
 	}
 	if !slices.Contains(got, "external.openexchangerates.app_id") {
 		t.Errorf("overridden = %v, want external.openexchangerates.app_id listed", got)
-	}
-}
-
-func TestMassiveRefreshInterval(t *testing.T) {
-	if got := cfg.Default().External.Massive.RefreshInterval; got != time.Hour {
-		t.Errorf("Default() refresh_interval = %v, want 1h", got)
-	}
-	cases := []struct {
-		in          time.Duration
-		want        time.Duration
-		wantClamped bool
-	}{
-		{0, time.Hour, false},
-		{-time.Minute, time.Hour, false},
-		{time.Minute, cfg.MinMassiveRefreshInterval, true},
-		{cfg.MinMassiveRefreshInterval, cfg.MinMassiveRefreshInterval, false},
-		{30 * time.Minute, 30 * time.Minute, false},
-		{2 * time.Hour, 2 * time.Hour, false},
-	}
-	for _, tc := range cases {
-		got, clamped := cfg.MassiveConfig{RefreshInterval: tc.in}.EffectiveRefreshInterval()
-		if got != tc.want || clamped != tc.wantClamped {
-			t.Errorf("EffectiveRefreshInterval(%v) = (%v, %v), want (%v, %v)", tc.in, got, clamped, tc.want, tc.wantClamped)
-		}
-	}
-
-	c, err := cfg.LoadReader(strings.NewReader(forexBase+"\n[external.massive]\nrefresh_interval = \"30m\"\n"), "test.toml")
-	if err != nil {
-		t.Fatalf("LoadReader: %v", err)
-	}
-	if got := c.External.Massive.RefreshInterval; got != 30*time.Minute {
-		t.Errorf("loaded refresh_interval = %v, want 30m", got)
 	}
 }
