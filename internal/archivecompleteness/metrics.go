@@ -48,7 +48,8 @@ func NewMetricsSnapshot() *MetricsSnapshot {
 	}
 }
 
-// WriteTextfile renders snapshot to w in Prometheus exposition format for node_exporter's textfile collector (ADR-0017); pure, so carrying prior-run state forward is [WriteTextfileAtomic]'s job, and the caller must write `<PATH>.tmp` then rename since partial writes are parse errors.
+// WriteTextfile renders snapshot to w for node_exporter's textfile collector (archive_completeness.prom, ADR-0017); pure, so
+// carrying prior-run state forward is [WriteTextfileAtomic]'s job; callers write `<PATH>.tmp` then rename.
 func WriteTextfile(w io.Writer, snapshot *MetricsSnapshot) error {
 	if snapshot == nil {
 		return nil
