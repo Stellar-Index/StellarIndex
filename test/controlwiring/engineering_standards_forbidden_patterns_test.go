@@ -116,3 +116,39 @@ func bulletContaining(t *testing.T, section, marker string) string {
 	}
 	return strings.Join(lines[start:end], "\n")
 }
+
+func readEngineeringStandardsDoc(t *testing.T, root string) string {
+	t.Helper()
+	docPath := filepath.Join(root, "docs", "engineering-standards.md")
+	raw, err := os.ReadFile(docPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", docPath, err)
+	}
+	return string(raw)
+}
+
+// extractHeadedSections splits doc on Markdown "### " headings and returns,
+// for each heading in want present in doc, the text from that heading up to
+// (but not including) the next "### " or "## " heading.
+func extractHeadedSections(t *testing.T, doc string, want []string) map[string]string {
+	t.Helper()
+	headingRE := regexp.MustCompile(`(?m)^#{2,3} .+$`)
+	idx := headingRE.FindAllStringIndex(doc, -1)
+	out := make(map[string]string, len(want))
+	wantSet := make(map[string]bool, len(want))
+	for _, w := range want {
+		wantSet[w] = true
+	}
+	for i, loc := range idx {
+		heading := doc[loc[0]:loc[1]]
+		if !wantSet[heading] {
+			continue
+		}
+		end := len(doc)
+		if i+1 < len(idx) {
+			end = idx[i+1][0]
+		}
+		out[heading] = doc[loc[0]:end]
+	}
+	return out
+}
