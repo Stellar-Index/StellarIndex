@@ -85,16 +85,8 @@ func (s *Store) CopyMergeSEP41SupplyEvents(ctx context.Context, rows []SEP41Supp
 		values)
 }
 
-// copyMerge streams rows into an ON COMMIT DROP temp table shaped like
-// target, then INSERT..SELECT..ON CONFLICT DO UPDATE (the generation-guarded corrective
-// upsert), in one txn. The temp table has none of the hypertable's constraints or indexes, so
-// COPY streams at wire speed and index cost is paid once per row at merge. updateCols are the
-// value columns corrected on conflict; derive_generation must be among them so the guard
-// advances.
-//
-// COPY goes through pgx's native CopyFrom because the pgx stdlib driver, unlike lib/pq, does
-// not implement driver-level COPY FROM STDIN; conn.Raw reaches the pgx connection so the whole
-// load and merge run as one pgx-native transaction on a single pooled connection.
+// copyMerge COPYs rows into an ON COMMIT DROP temp table shaped like target, then runs a generation-guarded upsert, all in one txn.
+// Uses pgx CopyFrom (stdlib lacks COPY FROM STDIN) via conn.Raw; updateCols must include derive_generation so the guard advances.
 func (s *Store) copyMerge(ctx context.Context, target string, cols []string, conflict string, updateCols []string, values [][]any) error {
 	conn, err := s.db.Conn(ctx)
 	if err != nil {
@@ -113,9 +105,7 @@ func (s *Store) copyMerge(ctx context.Context, target string, cols []string, con
 	})
 }
 
-// copyMergeOnConn runs the create-temp / COPY / merge / commit sequence on
-// one pgx connection inside a single pgx-native transaction. Split from
-// copyMerge so the conn.Raw closure stays a thin unwrap.
+// copyMergeOnConn runs create-temp / COPY / merge / commit in one pgx-native txn; split out to keep the conn.Raw closure thin.
 func copyMergeOnConn(ctx context.Context, pgxConn *pgx.Conn, target string, cols []string, conflict string, updateCols []string, values [][]any) (err error) {
 	tx, err := pgxConn.Begin(ctx)
 	if err != nil {
@@ -142,10 +132,8 @@ func copyMergeOnConn(ctx context.Context, pgxConn *pgx.Conn, target string, cols
 	return nil
 }
 
-// copyMergeUpsertSQL builds the INSERT..SELECT..ON CONFLICT DO UPDATE that
-// promotes COPY'd temp-table rows into target with the per-row writers' generation guard: a
-// re-derive at a >= derive_generation updates the value columns in place and a stale
-// lower-generation replay cannot revert it. A pure builder so the guard is testable without a DB.
+// copyMergeUpsertSQL builds the generation-guarded upsert: a re-derive at >= derive_generation updates in place, a stale replay cannot
+// revert it. A pure builder so the guard is testable without a DB.
 func copyMergeUpsertSQL(target, tmp, colList, conflict string, updateCols []string) string {
 	set := make([]string, len(updateCols))
 	for i, c := range updateCols {

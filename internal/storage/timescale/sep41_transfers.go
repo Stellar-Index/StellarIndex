@@ -117,9 +117,8 @@ func (s *Store) InsertSEP41TransferBatch(ctx context.Context, rows []SEP41Transf
 	return nil
 }
 
-// validateSEP41TransferRows is the row contract every sep41_transfers writer
-// enforces before touching the database, so the per-row and COPY paths cannot
-// disagree on what a storable row is. op names the caller in the error.
+// validateSEP41TransferRows is the pre-DB row contract for every sep41_transfers writer, so per-row and COPY paths agree. op names the
+// caller.
 func validateSEP41TransferRows(op string, rows []SEP41TransferRow) error {
 	for i := range rows {
 		r := &rows[i]
@@ -147,9 +146,8 @@ func validateSEP41TransferRows(op string, rows []SEP41TransferRow) error {
 	return nil
 }
 
-// sep41TransferConflictKey is the sep41_transfers ON CONFLICT identity (ledger_close_time,
-// contract_id, ledger, tx_hash, op_index, event_index). The timestamp is normalised to UTC
-// UnixNano so instants differing only in monotonic reading or location collapse to one key.
+// sep41TransferConflictKey is the ON CONFLICT identity (ledger_close_time, contract_id, ledger, tx_hash, op_index, event_index);
+// the time is normalised to UTC UnixNano so instants differing only in monotonic reading or location collapse.
 type sep41TransferConflictKey struct {
 	observedAtNanos int64
 	contractID      string
@@ -170,9 +168,8 @@ func sep41TransferKeyOf(r *SEP41TransferRow) sep41TransferConflictKey {
 	}
 }
 
-// dedupeSEP41TransferRows collapses rows colliding on the conflict key, keeping the LAST copy
-// (the latest redelivery) in first-seen order. Required because ON CONFLICT DO UPDATE is rejected
-// when one statement presents the same key twice. With no duplicate it returns the input slice.
+// dedupeSEP41TransferRows keeps the LAST copy of rows colliding on the conflict key, in first-seen order: ON CONFLICT DO UPDATE rejects a
+// repeated key in one statement. Returns the input slice when there is no duplicate.
 func dedupeSEP41TransferRows(rows []SEP41TransferRow) []SEP41TransferRow {
 	firstDup := -1
 	seen := make(map[sep41TransferConflictKey]int, len(rows))
@@ -206,21 +203,8 @@ func (s *Store) InsertSEP41Transfer(ctx context.Context, r SEP41TransferRow) err
 	return s.InsertSEP41TransferBatch(ctx, []SEP41TransferRow{r})
 }
 
-// sep41TransferLookbackLadder is the trailing-window ladder [Store.ListSEP41Transfers] walks
-// before the full-history read. Each rung is a `ledger_close_time >= now-D` floor; the first rung
-// that fills the caller's page wins.
-//
-// No index yields one contract's rows in ledger_close_time DESC order (the contract_{from,to}
-// indexes put the address before the time, the primary key leads with time), so an unbounded read
-// sorts every row a busy contract owns before the LIMIT. A floor inside recent data gives an
-// Incremental Sort over the time index so the LIMIT stops early. Rungs must stay narrow enough for
-// chunk exclusion to leave only the newest chunks: 7d is the widest measured to keep the index
-// plan; 90d falls back to per-chunk Seq Scan + Sort.
-//
-// Short-circuiting is safe because every row a floor excludes is older than every row it keeps,
-// so a full page is the newest page. A rung that cannot fill its page walks its whole window
-// (36ms at 1h, 2.2s at 24h, past 9s at 7d), so the ladder is bounded by
-// [SEP41TransferLadderBudget]; see [Store.walkSEP41TransferLadder].
+// sep41TransferLookbackLadder: `ledger_close_time >= now-D` floors tried before the full read; the first rung to fill the page wins.
+// A floor lets an Incremental Sort stop early; 7d is the widest that keeps it (90d seq-scans); see [SEP41TransferLadderBudget].
 var sep41TransferLookbackLadder = []time.Duration{
 	time.Hour,
 	24 * time.Hour,
@@ -235,9 +219,8 @@ func (s *Store) ListSEP41Transfers(ctx context.Context, contractID, fromAddr, to
 	return s.listSEP41TransfersAt(ctx, contractID, fromAddr, toAddr, limit, time.Now(), SEP41TransferLadderBudget)
 }
 
-// listSEP41TransfersAt is [Store.ListSEP41Transfers] with the wall-clock
-// reference and the ladder budget threaded in so the window floors and
-// the cost bound are deterministically testable.
+// listSEP41TransfersAt is [Store.ListSEP41Transfers] with the clock and ladder budget injected so window floors and cost bound are
+// testable.
 func (s *Store) listSEP41TransfersAt(ctx context.Context, contractID, fromAddr, toAddr string, limit int, now time.Time, ladderBudget time.Duration) ([]SEP41TransferRow, error) {
 	if contractID == "" {
 		return nil, errors.New("timescale: ListSEP41Transfers: empty contractID")
@@ -262,11 +245,8 @@ func (s *Store) listSEP41TransfersAt(ctx context.Context, contractID, fromAddr, 
 	return s.listSEP41TransfersSince(ctx, contractID, fromAddr, toAddr, limit, time.Time{})
 }
 
-// walkSEP41TransferLadder runs the rungs of [sep41TransferLookbackLadder] under one shared budget
-// and reports (rows, true, nil) for the first rung that fills the page. (nil, false, nil) tells
-// the caller to fall back to the unbounded read: every rung came back short, or the budget ran
-// out. An error comes back only for a real storage failure or the CALLER's own deadline or
-// cancellation, which leaves nothing to fall back with.
+// walkSEP41TransferLadder runs the rungs under one budget: (rows, true, nil) for the first rung that fills the page; (nil, false, nil) =
+// fall back to the unbounded read. Errors only for a real storage failure or the CALLER's own deadline or cancellation.
 func (s *Store) walkSEP41TransferLadder(ctx context.Context, contractID, fromAddr, toAddr string, limit int, now time.Time, budget time.Duration) ([]SEP41TransferRow, bool, error) {
 	ladderCtx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
@@ -292,10 +272,8 @@ func (s *Store) walkSEP41TransferLadder(ctx context.Context, contractID, fromAdd
 	return nil, false, nil
 }
 
-// sep41TransfersQuery builds one audit-trail read AND its bound args
-// together — one function, so the placeholder numbering can never drift
-// from the arg order as the optional predicates come and go. A zero
-// `since` builds the unbounded (full-history) form.
+// sep41TransfersQuery builds one audit-trail read and its args together so placeholder numbering cannot drift from arg order.
+// A zero `since` builds the unbounded (full-history) form.
 func sep41TransfersQuery(contractID, fromAddr, toAddr string, limit int, since time.Time) (string, []any) {
 	var sb strings.Builder
 	sb.WriteString(`
@@ -328,8 +306,7 @@ func sep41TransfersQuery(contractID, fromAddr, toAddr string, limit int, since t
 	return sb.String(), args
 }
 
-// listSEP41TransfersSince runs one rung of the lookback ladder (or, for
-// a zero `since`, the unbounded fallback) and maps its rows.
+// listSEP41TransfersSince runs one ladder rung (zero `since` = the unbounded fallback) and maps its rows.
 //
 //nolint:gocognit,gocyclo // linear null-projecting row-scan loop.
 func (s *Store) listSEP41TransfersSince(ctx context.Context, contractID, fromAddr, toAddr string, limit int, since time.Time) ([]SEP41TransferRow, error) {
@@ -406,9 +383,7 @@ type SEP41TransferCursor struct {
 // IsSet reports whether the cursor points past the newest row (a continuation page, not the first).
 func (c SEP41TransferCursor) IsSet() bool { return c.Ledger > 0 }
 
-// cursorIndex16 narrows a client-supplied cursor index to the smallint
-// column. Every stored index fits, so clamping keeps the keyset bound's
-// meaning where a wrap to a negative would skip the rest of that tx.
+// cursorIndex16 clamps a client cursor index to the smallint column: a wrap to negative would skip the rest of that tx.
 func cursorIndex16(v uint32) int16 {
 	if v > math.MaxInt16 {
 		return math.MaxInt16
@@ -468,9 +443,8 @@ func sep41TransfersByAddressQuery(direction, filterClause, orderBy string) (stri
         FROM (` + strings.Join(arms, " UNION ALL ") + `) u` + orderBy, nil
 }
 
-// sep41ByAddressArgs builds the positional args every arm shares ($1
-// floor, $2 address, then the optional contract and cursor binds, then
-// the LIMIT) and the per-arm filter clause that references them.
+// sep41ByAddressArgs builds the positional args every arm shares ($1 floor, $2 address, optional contract/cursor binds, LIMIT)
+// and the per-arm filter clause that references them.
 func sep41ByAddressArgs(floorLedger uint32, address, contractID string, cur SEP41TransferCursor, limit int) (args []any, filterClause, limitPh string) {
 	args = []any{int64(floorLedger), address}
 	if contractID != "" {

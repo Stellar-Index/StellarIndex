@@ -75,9 +75,7 @@ func (s *Store) InsertBlendPositionEvent(ctx context.Context, e domain.BlendPosi
 	return nil
 }
 
-// isBlendPositionKind reports whether kind is one of the seven
-// money-market position event kinds. Mirrors the CHECK constraint
-// in migration 0045 (0042 is comet_liquidity).
+// isBlendPositionKind reports whether kind is one of the seven position event kinds; mirrors the CHECK in migration 0045.
 func isBlendPositionKind(kind string) bool {
 	switch kind {
 	case domain.BlendEventSupply,

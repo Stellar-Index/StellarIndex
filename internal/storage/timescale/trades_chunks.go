@@ -43,9 +43,8 @@ type TradeChunk struct {
 // String is the schema-qualified chunk name, as show_chunks prints it.
 func (c TradeChunk) String() string { return c.Schema + "." + c.Name }
 
-// tradesChunksInRangeSelect lists the `trades` chunks whose range intersects [$1, $2), oldest
-// first. Sizes come from chunk_compression_stats, with chunks_detailed_size as the fallback for
-// an uncompressed chunk.
+// tradesChunksInRangeSelect lists `trades` chunks intersecting [$1, $2), oldest first; sizes come from chunk_compression_stats, falling back
+// to chunks_detailed_size for uncompressed chunks.
 const tradesChunksInRangeSelect = `
 	SELECT c.chunk_schema, c.chunk_name, c.range_start, c.range_end, c.is_compressed,
 	       COALESCE(s.before_compression_total_bytes, d.total_bytes, 0)::bigint AS uncompressed_bytes,
@@ -138,16 +137,11 @@ type lockWaitPolicy struct {
 }
 
 var (
-	// tradesChunkDecompressLock bounds decompress_chunk.
-	//
-	// wait: under the API's 15 s request timeout, far above an uncontended lock.
-	// drain: a convoy drains in under 20 s once its head is gone; 15 s clear per 5 s asked.
-	// budget: outlasts a legitimate long reader (statement_timeout backstop is 30 min,
-	// config.BackgroundStatementTimeout) and is finite because failing here is safe.
+	// tradesChunkDecompressLock bounds decompress_chunk. wait sits under the API's 15 s request timeout; drain is 15 s clear per 5 s asked (a
+	// convoy drains in under 20 s); budget outlasts a legitimate long reader (30 min backstop) and is finite because failing here is safe.
 	tradesChunkDecompressLock = lockWaitPolicy{wait: 5 * time.Second, drain: 15 * time.Second, budget: 35 * time.Minute}
-	// tradesChunkCompressLock bounds compress_chunk: same wait and drain, a larger budget because
-	// the chunk is ALREADY decompressed and giving up is the expensive outcome. Finite so a
-	// run-heavy-job.sh run cannot silently outlast its SIGTERM-to-SIGKILL window (2h).
+	// tradesChunkCompressLock bounds compress_chunk: same wait and drain, a larger budget because the chunk is ALREADY decompressed and giving
+	// up is expensive, yet finite so a run-heavy-job.sh run cannot outlast its 2h SIGTERM-to-SIGKILL window.
 	tradesChunkCompressLock = lockWaitPolicy{wait: 5 * time.Second, drain: 15 * time.Second, budget: 90 * time.Minute}
 )
 
@@ -172,9 +166,8 @@ func isLockNotAvailable(err error) bool {
 // errLongLockHolder is wrapped when the budget ran out waiting on a long-running holder.
 var errLongLockHolder = errors.New("a long-running transaction holds a lock on the chunk")
 
-// longLockHolderSelect finds the oldest other transaction older than $3 seconds holding a lock on
-// the chunk or its compressed chunk. It reads only pg_locks, pg_stat_activity and the catalog, so
-// no convoy can queue it.
+// longLockHolderSelect finds the oldest other transaction older than $3 seconds holding a lock on the chunk or its compressed chunk; it
+// reads only pg_locks, pg_stat_activity and the catalog, so no convoy can queue it.
 const longLockHolderSelect = `
 	WITH target AS (
 	  SELECT to_regclass(format('%I.%I', $1::text, $2::text))::oid AS relid
@@ -240,10 +233,8 @@ func (t *lockTally) String() string {
 	return s
 }
 
-// execUnderBoundedLockWait runs one chunk statement, each attempt in its own transaction with lock
-// requests bounded at p.wait, retrying only while a lock refusal was the only failure. Any other
-// error returns at once: retrying an out-of-disk compress is worse than the convoy. Once `live`
-// is done, no retry that would repeat work starts.
+// execUnderBoundedLockWait runs one chunk statement per attempt-transaction, lock requests bounded at p.wait, retrying only on lock refusal;
+// any other error returns at once (retrying an out-of-disk compress is worse than the convoy), and nothing retries once `live` is done.
 func (s *Store) execUnderBoundedLockWait(ctx, live context.Context, p lockWaitPolicy, query string, c TradeChunk) error {
 	clk := s.lockClock
 	r := &lockRetry{t: lockTally{clk: clk, start: clk.now()}, p: p, live: live}
@@ -376,13 +367,8 @@ func (t *lockTally) drain(ctx context.Context, d time.Duration) error {
 	return err
 }
 
-// chunkLockAttempt is one attempt: BEGIN; bound lock requests; take the opening locks with LOCK
-// TABLE (AccessShare on `trades`, then Exclusive on the chunk, the order both functions use);
-// run; COMMIT. inStatement reports a failure from the statement itself, after its locks were
-// held, and stmtElapsed how long it ran.
-//
-// `SET LOCAL` is unwound by Postgres even on error; a session-level `SET` would outlive the call
-// on a pooled connection (pgx's stdlib adapter resets nothing on reuse).
+// chunkLockAttempt is one attempt: BEGIN, bound lock requests, LOCK TABLE (AccessShare on `trades`, then Exclusive on the chunk, the order
+// both functions use), run, COMMIT. `SET LOCAL` unwinds on error; a session `SET` would outlive the call on a pooled connection.
 func (s *Store) chunkLockAttempt(ctx context.Context, clk lockClock, wait time.Duration, query string, c TradeChunk) (stmtElapsed time.Duration, inStatement bool, err error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -405,9 +391,8 @@ func (s *Store) chunkLockAttempt(ctx context.Context, clk lockClock, wait time.D
 	return clk.since(began), false, tx.Commit()
 }
 
-// sleepCtx waits d, or returns early with the context's error. The re-compress uses a detached
-// context ([Store.recompressTradesChunk]) and waits the full pause by design; the decompress
-// abandons the retry on SIGTERM rather than outlast its grace.
+// sleepCtx waits d or returns the context's error; the re-compress waits its full pause on a detached context, the decompress abandons on
+// SIGTERM.
 func sleepCtx(ctx context.Context, d time.Duration) error {
 	t := time.NewTimer(d)
 	defer t.Stop()
@@ -468,9 +453,8 @@ type TradesCompressionPolicy struct {
 // ErrNoTradesCompressionPolicy is returned when `trades` has no compression policy job.
 var ErrNoTradesCompressionPolicy = errors.New("timescale: no compression policy job on trades")
 
-// tradesCompressionPolicySelect resolves the job by procedure name, since job ids differ per host
-// and a custom job carries no hypertable in timescaledb_information.jobs. The lag is read in
-// seconds so no caller parses interval text.
+// tradesCompressionPolicySelect resolves the job by procedure name (job ids differ per host; a custom job has no hypertable in jobs); lag in
+// seconds.
 const tradesCompressionPolicySelect = `
 	SELECT job_id, scheduled,
 	       EXTRACT(EPOCH FROM (config->>'compress_after')::interval)::bigint AS compress_after_seconds
@@ -564,9 +548,8 @@ func (s *Store) RestampTradesChunk(ctx context.Context, c TradeChunk, work func(
 	return res, work(ctx)
 }
 
-// recompressTradesChunk is the deferred half of [Store.RestampTradesChunk]: compress
-// unconditionally on a cancellation-proof context, then fold the work's error (werr) and the
-// compress's into one error the operator can act on.
+// recompressTradesChunk is the deferred half of [Store.RestampTradesChunk]: compress unconditionally on a cancellation-proof context, then
+// fold werr and the compress error into one.
 func (s *Store) recompressTradesChunk(ctx context.Context, c TradeChunk, res *TradeChunkRestampResult, before func(ChunkRestampStep), werr error) error {
 	rctx := context.WithoutCancel(ctx)
 	before(ChunkRestampCompress)
@@ -689,10 +672,8 @@ func (s *Store) TryUSDVolumeRestampLock(ctx context.Context) (release func(conte
 
 // ─── is the policy's proc executing right now? ───────────────────────────
 
-// jobRunningSelect reads both job_stats status columns. `job_status` is the live signal: it says
-// 'Running' while an active backend holds the job's application name, even after alter_job
-// unschedules it mid-run. `last_run_status` is NULL during a run but is read in case a version
-// reports it there. Either saying 'Running' counts.
+// jobRunningSelect reads both status columns: job_status says 'Running' even after alter_job unschedules the job mid-run, last_run_status is
+// NULL during a run but may report it on some versions; either counts.
 const jobRunningSelect = `SELECT job_status, last_run_status FROM timescaledb_information.job_stats WHERE job_id = $1`
 
 // JobRunning reports whether the job's proc is executing now; no stats row means never run.

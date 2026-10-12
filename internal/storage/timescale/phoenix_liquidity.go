@@ -159,10 +159,8 @@ func (s *Store) LatestPhoenixLiquidityFlows(ctx context.Context, windowDays int)
 	return flows, nil
 }
 
-// phoenixPoolFlowRows reads the per-pool provide-minus-withdraw net flow
-// (leg A / leg B) + action counts over the window. Its result set is fully
-// consumed and closed before returning, so LatestPhoenixLiquidityFlows
-// never holds two open cursors.
+// phoenixPoolFlowRows reads per-pool provide-minus-withdraw net flow (legs A/B) and action counts; fully consumed and closed before
+// returning so LatestPhoenixLiquidityFlows never holds two open cursors.
 func (s *Store) phoenixPoolFlowRows(ctx context.Context, since string) ([]PhoenixPoolFlow, error) {
 	const q = `
 		SELECT pool,
@@ -201,10 +199,8 @@ func (s *Store) phoenixPoolFlowRows(ctx context.Context, since string) ([]Phoeni
 	return out, nil
 }
 
-// phoenixPoolTokenPositions resolves (token_a, token_b) per pool from the
-// most recent provide_liquidity in the window — best-effort address
-// recovery for withdraw rows, which omit the token addresses. Returns
-// pool → [tokenA, tokenB].
+// phoenixPoolTokenPositions resolves pool to [tokenA, tokenB] from the latest provide_liquidity in the window; best-effort, as withdraw
+// rows omit tokens.
 func (s *Store) phoenixPoolTokenPositions(ctx context.Context, since string) (map[string][2]string, error) {
 	const q = `
 		SELECT DISTINCT ON (pool) pool, token_a, token_b

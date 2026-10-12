@@ -7,7 +7,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// TransitivePrice is a USD price reached through ONE intermediate hop, returned with that hop, for assets trading against neither direct_usd nor asset_vs_xlm.
+// TransitivePrice is a USD price reached through ONE intermediate hop, returned with that hop, for assets trading against neither
+// direct_usd nor asset_vs_xlm.
 type TransitivePrice struct {
 	// PriceUSD is the derived USD price as an exact NUMERIC string
 	// (ADR-0003 — never float64 on a money path).
@@ -21,20 +22,18 @@ type TransitivePrice struct {
 	HopVolume24hUSD string
 }
 
-// usdProxyQuotes are the quotes whose VWAP is ALREADY a USD price. It must stay identical to the
-// catalogue's direct_usd CTE and the coverage tripwire's `coverageQuoteProxies`, or an asset can
-// be priced by one and priceless by another.
+// usdProxyQuotes are quotes whose VWAP is already a USD price; keep identical to the catalogue's direct_usd CTE and the coverage
+// tripwire's `coverageQuoteProxies`, or an asset is priced by one and priceless by another.
 const usdProxyQuotes = `'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
 	'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75',
 	'fiat:USD'`
 
-// transitiveHopCandidates bounds how many ranked hops
-// TransitiveUSDPriceCandidates returns: enough that a thin top hop cannot
-// hide a sound one behind it, few enough that the caller's per-hop gating
-// stays a small fixed cost on a serving path.
+// transitiveHopCandidates bounds ranked hops returned: enough that a thin top hop cannot hide a sound one, few enough to keep per-hop
+// gating cheap.
 const transitiveHopCandidates = 5
 
-// TransitiveUSDPriceCandidates derives USD prices for `assetID` through each counterparty that itself has a USD price, best first; an empty slice with nil error means no route exists.
+// TransitiveUSDPriceCandidates derives USD prices for `assetID` through each counterparty that itself has a USD price, best first; an
+// empty slice with nil error means no route exists.
 func (s *Store) TransitiveUSDPriceCandidates(ctx context.Context, assetID string) ([]TransitivePrice, error) {
 	rows, err := s.db.QueryContext(ctx, transitiveUSDPriceSQL, assetID, transitiveHopCandidates, canonical.NativeSACContractID())
 	if err != nil {
@@ -55,8 +54,7 @@ func (s *Store) TransitiveUSDPriceCandidates(ctx context.Context, assetID string
 	return out, nil
 }
 
-// transitiveUSDPriceSQL is TransitiveUSDPriceCandidates' query, hoisted to keep the function under
-// the funlen threshold. $1 = asset_id, $2 = candidate limit, $3 = the network's native-XLM SAC.
+// transitiveUSDPriceSQL is TransitiveUSDPriceCandidates' query, hoisted for funlen. $1 = asset_id, $2 = limit, $3 = native-XLM SAC.
 //
 //nolint:gosec // G202: fragments are constant SQL (helper output built from literals and $N placeholders); values bind via $N
 var transitiveUSDPriceSQL = `

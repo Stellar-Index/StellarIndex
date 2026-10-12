@@ -149,9 +149,7 @@ func (s *Store) LatestAccountObservationsAtOrBefore(ctx context.Context, account
 	return out, nil
 }
 
-// scanAccountObservation scans one row in the column order both latest-
-// observation queries select. A Scan error is returned unwrapped so the
-// caller can match sql.ErrNoRows.
+// scanAccountObservation scans the column order both latest-observation queries select; Scan errors stay unwrapped for sql.ErrNoRows.
 func scanAccountObservation(sc interface{ Scan(dest ...any) error }) (AccountObservation, error) {
 	var (
 		row      AccountObservation

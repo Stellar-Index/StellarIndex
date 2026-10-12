@@ -85,26 +85,19 @@ const (
 `
 )
 
-// restampScanSelect assembles one tier's candidate scan; only the leg's column name varies, and
-// it comes from the closed [restampLeg] set.
+// restampScanSelect assembles one tier's candidate scan; only the leg column varies, from the closed [restampLeg] set.
 //
 //nolint:gosec // no caller-supplied text reaches the statement: the column comes from a two-valued enum, every value is a placeholder
 func restampScanSelect(leg restampLeg) string {
 	return restampScanSelectHead + leg.column() + restampScanSelectTail
 }
 
-// restampGate answers which usd_volume tier owns one rebuilt trade, from one tier's point of
-// view: [xlmBaseTierFor], [xlmQuoteTierFor], [cexFiatTierFor]. Each is spelled beside
-// [tradeUSDVolume] so tier definitions and waterfall branch order stay in one file (LOCKSTEP).
+// restampGate answers which usd_volume tier owns one rebuilt trade ([xlmBaseTierFor], [xlmQuoteTierFor], [cexFiatTierFor]); each is spelled
+// beside [tradeUSDVolume] so tier definitions and waterfall branch order stay in one file (LOCKSTEP).
 type restampGate func(canonical.Trade, *USDVolumeQuoteSpec) restampTierVerdict
 
-// restampValuer is a tier's value for one rebuilt trade: always the function the live insert path
-// calls for the same row, never a second spelling. A nil value means the tier DECLINED to price
-// the row, which is reported and never guessed at.
-//
-// The error is for a rate source that could not be read at all. The live insert path swallows
-// that (the trade lands with usd_volume NULL); a backfill must not, or a broken read would report
-// a whole population as unpriceable.
+// restampValuer is a tier's value for one rebuilt trade: the live insert path's own function; nil means the tier DECLINED (reported,
+// never guessed). An error means the rate source was unreadable; the live path swallows that (usd_volume NULL) but a backfill must not.
 type restampValuer func(canonical.Trade) (*string, error)
 
 // restampTierScan is one tier's half of the shared walk: what to scan and
@@ -122,9 +115,8 @@ type restampTierScan struct {
 	Value restampValuer
 }
 
-// restampScanSources filters a tier's registered source list by the caller's allow-list; empty
-// means every source the tier owns. Names outside the tier's registry slice are dropped, since
-// its value function declines them anyway and scanning them only widens the read.
+// restampScanSources filters a tier's source list by the allow-list (empty = all); names outside the tier's registry are dropped (its
+// valuer declines them).
 func restampScanSources(all []string, allow map[string]bool) []string {
 	if len(allow) == 0 {
 		return all
@@ -138,14 +130,8 @@ func restampScanSources(all []string, allow map[string]bool) []string {
 	return out
 }
 
-// planRestampTier scans one bounded window for one tier and returns the rows it would rewrite,
-// plus the disposition of every row it would not.
-//
-// READ-ONLY: this is the whole dry run. [Store.ApplyUSDVolumeRestampPlan] consumes the plan
-// verbatim, so "-write writes exactly the rows the dry run reported" holds by construction.
-// Without an installed USD-volume resolution ([InstallUSDVolumeResolution]) every tier declines
-// every row, a configuration error dressed as a finding, so it is refused up front like
-// [Store.reDeriveNullVolumeGuard].
+// planRestampTier scans one bounded window for one tier: rows it would rewrite plus each skipped row's disposition. READ-ONLY dry run
+// that [Store.ApplyUSDVolumeRestampPlan] consumes verbatim; refused without [InstallUSDVolumeResolution].
 func (s *Store) planRestampTier(ctx context.Context, p RestampScanParams, t restampTierScan) (*RestampPlan, error) {
 	if !p.To.After(p.From) {
 		return nil, fmt.Errorf("timescale: %s restamp: empty window [%s, %s)", t.Tier, p.From, p.To)
@@ -201,22 +187,8 @@ func (s *Store) planRestampTier(ctx context.Context, p RestampScanParams, t rest
 	return plan, nil
 }
 
-// restampDecide judges ONE scanned row for ONE tier.
-//
-// `value` is injected so the rules are testable without a live prices_1m / fx_quotes; production
-// passes a closure over the insert path's own function, so the stored number matches it.
-//
-// Three rules make this a re-derive rather than a guess, for every tier:
-//
-//  1. THE VALUE COMES FROM THE LIVE FUNCTION (`value`).
-//  2. ONLY THAT FUNCTION. A row it declines is REPORTED, never valued through a second route: a
-//     fallback estimate at a HIGH derive_generation is the one state a later correction cannot
-//     claw back.
-//  3. NEVER WRITE NULL OVER A VALUE. A declined row that already carries a number keeps it,
-//     counted in [XLMBaseRestampStats.AnchorDeclinedStored].
-//
-// Read generically, `xlmBaseQuotePegged` is "a leg is a declared USD peg, so an EXACT tier owns
-// this row" and `xlmBaseNotDEX` is "outside this tier's source/leg scope".
+// restampDecide judges ONE scanned row for ONE tier; `value` is the insert path's own function (injected for DB-free tests). A declined
+// row is REPORTED, never valued another way (a high-generation fallback is unrecoverable), and never overwrites a value with NULL.
 func restampDecide(
 	row restampScanRow,
 	spec *USDVolumeQuoteSpec,
@@ -276,10 +248,8 @@ func restampDecide(
 	return out, xlmBaseWrite, nil
 }
 
-// restampScope decides whether one scanned row is IN the tier `gate` describes, and rebuilds it
-// into the [canonical.Trade] the decoder produced so the value function sees the same object as
-// the insert path. The tier decision lives beside [tradeUSDVolume] so branch order cannot drift;
-// this is only the row-shaped part, with [tradeUSDVolume]'s positive-amount bail-outs.
+// restampScope decides whether a scanned row is IN the tier `gate` describes and rebuilds the decoder's [canonical.Trade].
+// The tier decision lives beside [tradeUSDVolume] so branch order cannot drift; this is the row-shaped part.
 func restampScope(row restampScanRow, spec *USDVolumeQuoteSpec, gate restampGate) (canonical.Trade, xlmBaseDisposition, bool) {
 	base, err := canonical.ParseAsset(row.BaseAsset)
 	if err != nil {

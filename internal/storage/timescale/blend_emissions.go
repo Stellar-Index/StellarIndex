@@ -96,9 +96,7 @@ func (s *Store) BlendEmissionWindowStats(ctx context.Context, windowDays int) (*
 	return &out, nil
 }
 
-// buildEmissionAttributes builds the jsonb payload for the
-// attributes column on a per-kind basis. Empty (i.e. {}) for
-// kinds whose fields are all promoted to typed columns.
+// buildEmissionAttributes builds the per-kind attributes jsonb; {} for kinds whose fields are all typed columns.
 func buildEmissionAttributes(e domain.BlendEmissionEvent) map[string]any {
 	attrs := map[string]any{}
 	switch e.Kind {
@@ -114,10 +112,7 @@ func buildEmissionAttributes(e domain.BlendEmissionEvent) map[string]any {
 	return attrs
 }
 
-// isBlendEmissionKind reports whether kind is one of the emission /
-// credit-risk event kinds. Mirrors the CHECK constraint in migration
-// 0045, widened by migration 0097 to admit the V1 pool-factory's
-// update_emissions.
+// isBlendEmissionKind mirrors the migration 0045 CHECK constraint, widened by 0097 for the V1 pool-factory's update_emissions.
 func isBlendEmissionKind(kind string) bool {
 	switch kind {
 	case domain.BlendEventGulp,

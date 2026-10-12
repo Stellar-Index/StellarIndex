@@ -160,9 +160,7 @@ func (s *Store) InsertSoroswapRouterSwap(ctx context.Context, e SoroswapRouterSw
 	return nil
 }
 
-// nullableString returns nil for empty strings so the DB row carries
-// SQL NULL rather than an empty-string literal. Matches the migration's
-// nullable `op_source` / `tx_source` columns.
+// nullableString returns nil for "" so the row carries SQL NULL, matching the nullable `op_source` / `tx_source` columns.
 func nullableString(s string) interface{} {
 	if s == "" {
 		return nil

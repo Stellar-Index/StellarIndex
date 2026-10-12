@@ -67,9 +67,7 @@ func (c DirectoryRWACensus) Check() string {
 	return ""
 }
 
-// directoryRecognisedScanCap bounds the candidate rows one scan materialises. The set is small by
-// construction, so the cap only guards against a sync that suddenly tags thousands of contracts;
-// when it binds, the census says so and the surface reports truncation, never a silently short set.
+// directoryRecognisedScanCap bounds one scan's candidate rows; when it binds, the census says so and the surface reports truncation.
 const directoryRecognisedScanCap = 512
 
 // DirectoryRecognisedContracts returns directory CONTRACT rows with an `issuingTags` tag and no scam-class tag, plus the whole-directory census; the issuing vocabulary is a parameter because internal/rwa imports this package.
@@ -109,9 +107,7 @@ func (s *Store) DirectoryRecognisedContracts(
 	return out, census, nil
 }
 
-// lowerTrimAll normalises a tag vocabulary before it is bound into a query whose predicate
-// lowercases the COLUMN side. Without it a caller passing `Issuer` would match nothing, a silent
-// empty set produced by a spelling.
+// lowerTrimAll normalises tags before binding because the predicate lowercases the COLUMN side; `Issuer` would silently match nothing.
 func lowerTrimAll(vals []string) []string {
 	out := make([]string, 0, len(vals))
 	for _, v := range vals {
@@ -133,9 +129,8 @@ const (
 // (bound at $1). Lowercased on both sides to agree with the Go matcher.
 const directoryHasIssuingTagSQL = `EXISTS (SELECT 1 FROM unnest(tags) t WHERE lower(t) = ANY($1))`
 
-// directoryScamTaggedSQL is the SQL twin of pricingguard's scam check over the SAME
-// [DirectoryScamFlagTags] list, built by the fail-loud literal builder so a tag cannot smuggle a
-// quote into composed SQL.
+// directoryScamTaggedSQL is the SQL twin of pricingguard's scam check over the SAME [DirectoryScamFlagTags]; the literal builder fails
+// loud on quotes.
 var directoryScamTaggedSQL = `EXISTS (SELECT 1 FROM unnest(tags) t ` +
 	`WHERE lower(t) = ANY(` + scamFlagTagsSQLArray + `))`
 
@@ -145,11 +140,8 @@ var directoryContractRecognisedSQL = directoryIsContractSQL +
 	` AND ` + directoryHasIssuingTagSQL +
 	` AND NOT ` + directoryScamTaggedSQL
 
-// directoryRWACensus counts the whole curated directory in one pass,
-// bucketed the way the contract arm narrows it.
-//
-// One query with FILTER aggregates rather than six round trips: every bucket must come from the
-// same snapshot, since separate statements could straddle a directory sync and fail to reconcile.
+// directoryRWACensus counts the whole directory in one FILTER-aggregate query, so every bucket comes from one snapshot and reconciles
+// across a directory sync.
 func (s *Store) directoryRWACensus(ctx context.Context, issuingTags []string) (DirectoryRWACensus, error) {
 	q := `
 		SELECT

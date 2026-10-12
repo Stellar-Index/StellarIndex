@@ -38,14 +38,8 @@ type IssuerAuthFlags struct {
 	AsOfLedger *uint32
 }
 
-// validate refuses a row whose provenance is internally inconsistent, BEFORE it reaches Postgres.
-// Two arms mirror the migration's CHECKs so the failure names the invariant; the third is not
-// expressible as a constraint.
-//
-// The home_domain arm is defence in depth: a merged account's home_domain is a self-declared claim
-// that can no longer be checked against SEP-1's [[CURRENCIES]] back-reference, so persisting it
-// would be an impersonation surface. The lake reader already blanks it; this refuses to be the
-// second way in rather than silently dropping the value.
+// validate refuses an internally inconsistent row before Postgres; two arms mirror the migration CHECKs. The home_domain arm is defence in
+// depth: a merged account's home_domain can no longer be checked against SEP-1, so persisting it would be an impersonation surface.
 func (f IssuerAuthFlags) validate() error {
 	switch f.Source {
 	case "":
@@ -124,9 +118,7 @@ func (s *Store) IssuerGStrkeysNeedingRecheck(ctx context.Context, limit int) ([]
 	return out, nil
 }
 
-// persistHomeDomain is what [Store.PersistIssuerAuthFlags] assigns to
-// home_domain; it is named because the SEP-1 reset must compare against the
-// exact same expression.
+// persistHomeDomain is what [Store.PersistIssuerAuthFlags] assigns to home_domain; the SEP-1 reset must compare against the same expression.
 const persistHomeDomain = `CASE $7::text
 		        WHEN '` + AuthFlagsSourceLive + `' THEN NULLIF($6, '')
 		        WHEN '` + AuthFlagsSourceLastKnownBeforeRemoval + `' THEN NULL

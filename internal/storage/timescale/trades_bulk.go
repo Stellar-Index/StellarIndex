@@ -33,9 +33,8 @@ import (
 // proven empty; otherwise this falls back to the live writer, whose ON CONFLICT ... DO UPDATE is
 // load-bearing for replays, dual-sink retries and CEX WS redelivery.
 
-// tradeBulkColumns is exactly the column list [Store.BatchInsertTrades] and [Store.InsertTrade]
-// write, in the same order, so a row landed by either path is byte-identical. `ingested_at`
-// (column default), `routed_via` and `signer` are absent: their sweepers back-fill from stored rows.
+// tradeBulkColumns is exactly the column list [Store.BatchInsertTrades] and [Store.InsertTrade] write, in order, so rows are
+// byte-identical. `ingested_at` (default), `routed_via` and `signer` are absent: their sweepers back-fill.
 var tradeBulkColumns = []string{
 	"source", "ledger", "tx_hash", "op_index", "ts",
 	"base_asset", "quote_asset",
@@ -204,11 +203,8 @@ func bulkExtents(trades []canonical.Trade) map[string]bulkSourceExtent {
 	return out
 }
 
-// bulkRangeIsEmpty proves (or refuses) the COPY precondition. See [Store.BulkBackfillTrades] for
-// why the (source, ledger, ts) box is a sufficient superset of the PK space the buffer occupies.
-//
-// Every bind parameter is explicitly cast: an untyped parameter beside a timestamptz comparison
-// fails with 42883, which in a precondition check would silently disable the fast path.
+// bulkRangeIsEmpty proves (or refuses) the COPY precondition; see [Store.BulkBackfillTrades] for why the (source, ledger, ts) box suffices.
+// Every bind is cast explicitly: an untyped parameter beside timestamptz fails with 42883 and would silently disable the fast path.
 func (s *Store) bulkRangeIsEmpty(ctx context.Context, trades []canonical.Trade) (bool, string, error) {
 	const q = `
         SELECT EXISTS (
@@ -237,13 +233,9 @@ func (s *Store) bulkRangeIsEmpty(ctx context.Context, trades []canonical.Trade) 
 	return true, "", nil
 }
 
-// resolveBulkUSDVolumes computes `usd_volume` for every row through the SAME [tradeUSDVolume]
-// waterfall the row paths use, fanned across a bounded worker pool.
-//
-// This is where the backfill's wall clock goes: on a historical range the FX resolver misses its
-// cache on most rows. The result is a pure function of the row and of DB state a backfill does
-// not modify, so concurrency changes latency only. A [Store.reDeriveNullVolumeGuard] failure is
-// returned for the lowest row index, so the error does not depend on which goroutine lost a race.
+// resolveBulkUSDVolumes computes `usd_volume` per row through the SAME [tradeUSDVolume] waterfall as the row paths, on a bounded worker
+// pool (FX resolver misses dominate historical ranges). Concurrency changes latency only; a [Store.reDeriveNullVolumeGuard] failure is
+// returned for the lowest row index so the error is deterministic.
 func (s *Store) resolveBulkUSDVolumes(ctx context.Context, rows []canonical.Trade, workers int) ([]sql.NullString, error) {
 	if workers <= 0 {
 		workers = bulkDefaultResolvers
@@ -347,9 +339,7 @@ type panicRecord struct {
 	first error
 }
 
-// record takes an already-recovered panic value; the caller does the recover() and the
-// [worker.Report]. recover() only fires in a function the goroutine deferred, so a helper called
-// from the deferred closure is one frame too deep and would contain nothing.
+// record takes an already-recovered panic value: recover() only fires in the goroutine's deferred function, so the caller must do it.
 func (p *panicRecord) record(where string, rec any) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -370,9 +360,8 @@ func (p *panicRecord) err() error {
 	return p.first
 }
 
-// bulkPartitions splits n rows into at most `writers` contiguous ranges of at least
-// [bulkMinPartition]. Contiguity makes it safe: the input is conflict-key sorted and deduped, so
-// two partitions never present the same trade PK.
+// bulkPartitions splits n rows into at most `writers` contiguous ranges of >= [bulkMinPartition]; the input is conflict-key sorted and
+// deduped, so partitions never share a PK.
 func bulkPartitions(n, writers int) [][2]int {
 	if writers <= 0 {
 		writers = bulkDefaultWriters
@@ -386,9 +375,8 @@ func bulkPartitions(n, writers int) [][2]int {
 	return out
 }
 
-// copyTradePartitions streams the resolved rows into `trades` over parallel binary COPY
-// connections. It returns the ranges that committed even when another partition failed: each is
-// its own transaction, and the caller needs them to keep `source_entry_counts` exact.
+// copyTradePartitions streams rows into `trades` over parallel binary COPYs and returns the committed ranges even when another partition
+// failed (each is its own transaction), which keeps `source_entry_counts` exact.
 func (s *Store) copyTradePartitions(ctx context.Context, rows []canonical.Trade, usd []sql.NullString, opts BulkBackfillOptions) (landed [][2]int, copied int64, err error) {
 	values := s.bulkTradeValues(rows, usd)
 	parts := bulkPartitions(len(rows), opts.Writers)
@@ -474,11 +462,8 @@ func copyTradesOnConn(ctx context.Context, pgxConn *pgx.Conn, values [][]any, de
 	return n, nil
 }
 
-// bulkTradeValues renders the COPY tuples.
-//
-// Conversions mirror the row paths: `maker`/`taker` go through [nullStrXfer] so an absent
-// counterparty lands as SQL NULL, not empty text; amounts are decimal strings so NUMERIC keeps
-// full precision.
+// bulkTradeValues renders the COPY tuples, mirroring the row paths: absent maker/taker become SQL NULL via [nullStrXfer]; amounts are
+// decimal strings so NUMERIC keeps full precision.
 func (s *Store) bulkTradeValues(rows []canonical.Trade, usd []sql.NullString) [][]any {
 	out := make([][]any, len(rows))
 	for i := range rows {
@@ -493,9 +478,8 @@ func (s *Store) bulkTradeValues(rows []canonical.Trade, usd []sql.NullString) []
 	return out
 }
 
-// bumpBulkSourceCounts applies the `source_entry_counts` tally once per buffer: every COPY'd row
-// is a genuine insert (range proven empty, buffer PK-deduped), so no RETURNING is needed.
-// ORDER BY source keeps row-lock order deterministic so two writers cannot form an AB/BA cycle.
+// bumpBulkSourceCounts applies the `source_entry_counts` tally once per buffer (every COPY'd row is a genuine insert, no RETURNING needed).
+// ORDER BY source keeps row-lock order deterministic so writers cannot form an AB/BA cycle.
 func (s *Store) bumpBulkSourceCounts(ctx context.Context, rows []canonical.Trade) error {
 	perSource := make(map[string]int64, 4)
 	for i := range rows {
@@ -524,9 +508,8 @@ func (s *Store) bumpBulkSourceCounts(ctx context.Context, rows []canonical.Trade
 	return nil
 }
 
-// recordBulkLandedEffects runs the batch path's landed-row side effects (outcome metric,
-// last-insert stamp, unit-ratio sentinel, classic-asset registry hook) for the whole set.
-// The registry hook is soft-fail: a registry write must not sink an already-committed load.
+// recordBulkLandedEffects runs the landed-row side effects for the whole batch; the registry hook is soft-fail so it cannot sink a
+// committed load.
 func (s *Store) recordBulkLandedEffects(ctx context.Context, rows []canonical.Trade) {
 	perSource := make(map[string]int, 4)
 	seenAssets := make(map[string]registryObservation, 16)

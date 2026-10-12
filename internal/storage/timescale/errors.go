@@ -10,9 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// sqlStateClass returns the 2-char class of a Postgres SQLSTATE code. The length guard keeps a
-// malformed or empty code (a driver or wrapping bug) from panicking the write-fault classifier;
-// an empty class matches no case and falls to each caller's safe default.
+// sqlStateClass returns a SQLSTATE's 2-char class; the length guard keeps a malformed code from panicking the write-fault classifier.
 func sqlStateClass(code string) string {
 	if len(code) < 2 {
 		return ""

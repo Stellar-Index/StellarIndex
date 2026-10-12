@@ -64,13 +64,8 @@ type GapDetectorTarget struct {
 	CloseTimeColumn string
 }
 
-// sorobanEventsDistinctLedgerCountSQL counts ledgers in [$1, $2] carrying Soroban events from
-// ledger_ingest_log (a PK range scan; soroban_event_count is the LCM-derived census) instead of
-// scanning the huge soroban_events hypertable.
-//
-// It counts ledgers RECORDED as carrying events, not rows present, so density reads HIGH during a
-// writer halt and 0 for a range repaired by `backfill` without `census-backfill`; `verify`
-// surfaces the divergence. Ledgers below the log floor read 0.
+// sorobanEventsDistinctLedgerCountSQL counts ledgers RECORDED as carrying events via ledger_ingest_log (PK range scan), not rows present, so
+// density reads HIGH during a writer halt and 0 for a range repaired without `census-backfill`. Ledgers below the log floor read 0.
 const sorobanEventsDistinctLedgerCountSQL = `SELECT COUNT(*) FROM ledger_ingest_log WHERE ledger_seq BETWEEN $1 AND $2 AND soroban_event_count > 0`
 
 // SourceNetKey is the [sourcenet] name for this target — its [GapDetectorTarget.CanonicalSource] when set, else its Source.
@@ -250,15 +245,8 @@ func ApplicableGapDetectorTargets(targets []GapDetectorTarget, network string, l
 	return out
 }
 
-// perSourceLedgerGapsQuery builds the LAG()-over-DISTINCT gap query for target, separate so its
-// shape is unit-testable without a database.
-//
-// The `seeded` CTE UNION-ALLs a synthetic ledger row at $4 when it is positive and below `from`
-// ($1). Without it a gap spanning a window boundary is invisible: LAG's first row has no `prev_l`
-// and is dropped. $4 is the last ledger the previous cycle observed.
-//
-// timeBound is an extra predicate from [closeTimeBoundPredicate]; empty without a
-// CloseTimeColumn.
+// perSourceLedgerGapsQuery builds the LAG()-over-DISTINCT gap query. The `seeded` CTE adds a synthetic row at $4 (last ledger the previous
+// cycle saw) when positive and below $1, else a gap spanning a window boundary is invisible. timeBound comes from [closeTimeBoundPredicate].
 func perSourceLedgerGapsQuery(target GapDetectorTarget, timeBound string) string {
 	filter := timeBound
 	if target.WhereFilter != "" {
@@ -290,9 +278,8 @@ func perSourceLedgerGapsQuery(target GapDetectorTarget, timeBound string) string
 	`, target.LedgerColumn, target.Table, filter)
 }
 
-// closeTimeBoundPredicate appends the open-ended close-time bounds lo/hi
-// (an invalid side stays unbounded) to args and returns the predicate
-// referencing them.
+// closeTimeBoundPredicate appends the open-ended close-time bounds lo/hi (an invalid side stays unbounded) to args and returns the
+// predicate.
 func closeTimeBoundPredicate(column string, lo, hi sql.NullTime, args []any) (string, []any) {
 	pred := ""
 	if lo.Valid {
@@ -306,10 +293,8 @@ func closeTimeBoundPredicate(column string, lo, hi sql.NullTime, args []any) (st
 	return pred, args
 }
 
-// maxLedgerInWindowQuery builds the "highest present ledger in [from,to]" query for target, which
-// persists the seed [perSourceLedgerGapsQuery] reads on the next cycle. A target with a
-// DistinctLedgerCountSQL override (soroban-events) opted out of the generic scan as a full-table
-// cost, so [Store.MaxLedgerInWindow] skips it rather than substitute a differently scoped answer.
+// maxLedgerInWindowQuery builds the highest-present-ledger query that persists the seed [perSourceLedgerGapsQuery] reads next cycle. Targets
+// with a DistinctLedgerCountSQL override opted out of the generic scan, so [Store.MaxLedgerInWindow] skips them.
 func maxLedgerInWindowQuery(target GapDetectorTarget) string {
 	filter := ""
 	if target.WhereFilter != "" {

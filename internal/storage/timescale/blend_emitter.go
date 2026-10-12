@@ -76,12 +76,8 @@ type BlendEmitterSwapConfigEvent struct {
 	UnlockTime time.Time
 }
 
-// insertBlendEmitterEventQuery is shared by every writer; the three event kinds differ only in
-// which columns are NULL.
-//
-// Generation-guarded corrective upsert: a corrected re-derive lands in place when its generation
-// is >= the stored one, so a live gen-0 replay never reverts it. The drop fan-out issues one Exec
-// per recipient with a distinct recipient_index (a conflict-key part), so no intra-batch dedup.
+// insertBlendEmitterEventQuery is shared by all writers (kinds differ only in NULL columns); a generation-guarded corrective upsert:
+// re-derives land in place at generation >= stored, so a gen-0 replay never reverts them; recipient_index is part of the conflict key.
 const insertBlendEmitterEventQuery = `
     INSERT INTO blend_emitter_events (
         contract_id, ledger, ledger_close_time, tx_hash, op_index,
@@ -108,16 +104,12 @@ const insertBlendEmitterEventQuery = `
       WHERE blend_emitter_events.derive_generation <= EXCLUDED.derive_generation
 `
 
-// blendEmitterExecer is satisfied by both *sql.DB and *sql.Tx, so the
-// single-row writers and InsertBlendEmitterDrop's per-recipient fan-out
-// loop can share one INSERT path.
+// blendEmitterExecer is satisfied by *sql.DB and *sql.Tx so single-row writers and the drop fan-out share one INSERT path.
 type blendEmitterExecer interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
-// execBlendEmitterRow issues one blend_emitter_events INSERT.
-// recipientIndex is always 0 for distribute/q_swap/swap; the drop
-// fan-out loop passes 0..N-1.
+// execBlendEmitterRow issues one blend_emitter_events INSERT; recipientIndex is 0 except in the drop fan-out (0..N-1).
 func execBlendEmitterRow(
 	ctx context.Context, x blendEmitterExecer,
 	contractID string, ledger uint32, closeTime time.Time, txHash string, opIndex, eventIndex uint32,

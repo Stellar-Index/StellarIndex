@@ -124,12 +124,8 @@ func (s *Store) ProjectionDirtyWindows(ctx context.Context) (map[string]Projecti
 	return out, nil
 }
 
-// clearProjectionDirtyWindowQuery deletes a source's dirty window, but ONLY if the stored row is
-// still the one the caller verified; it runs inside [Store.PublishCompletenessVerdict]'s
-// transaction. Package-level so the predicate can be asserted without a database.
-//
-// The bounds catch a WIDENED window but not a same-or-narrower re-record, so `updated_at = $4`
-// is the load-bearing conjunct: any re-record bumps it and the delete matches nothing.
+// clearProjectionDirtyWindowQuery deletes the dirty window only if the stored row is still the verified one; package-level for DB-free
+// tests. Bounds miss a same-or-narrower re-record, so `updated_at = $4` is the load-bearing conjunct: any re-record bumps it.
 const clearProjectionDirtyWindowQuery = `
         DELETE FROM projection_dirty_windows
         WHERE source = $1 AND from_ledger >= $2 AND to_ledger <= $3

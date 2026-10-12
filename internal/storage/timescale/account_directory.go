@@ -275,9 +275,8 @@ func (c *directoryChurn) check(limit DirectoryChurnLimit, res DirectorySyncResul
 	return nil
 }
 
-// scanDirectoryFlaggedAddresses visits every address of `source` carrying a scam-class tag, via
-// the predicate the listing rank and RWA census use (directoryScamTaggedSQL), so "newly flagged"
-// agrees with "has its price withheld".
+// scanDirectoryFlaggedAddresses visits `source`'s scam-tagged addresses via directoryScamTaggedSQL, the predicate the listing rank and
+// RWA census use, so "newly flagged" agrees with "price withheld".
 func scanDirectoryFlaggedAddresses(ctx context.Context, tx *sql.Tx, source string, visit func(addr string)) error {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT address FROM account_directory
@@ -299,9 +298,7 @@ func scanDirectoryFlaggedAddresses(ctx context.Context, tx *sql.Tx, source strin
 	return nil
 }
 
-// dedupDirectoryEntriesByAddress collapses entries sharing an Address, last-wins, preserving the
-// order of survivors. A multi-row upsert chunk may contain each conflict key only once, so this
-// keeps a duplicate-address upstream from aborting ReplaceDirectory's transaction.
+// dedupDirectoryEntriesByAddress collapses duplicate Addresses (last wins, order kept): an upsert chunk may hold each conflict key once.
 func dedupDirectoryEntriesByAddress(entries []DirectoryEntry) []DirectoryEntry {
 	idx := make(map[string]int, len(entries))
 	out := make([]DirectoryEntry, 0, len(entries))
@@ -316,15 +313,9 @@ func dedupDirectoryEntriesByAddress(entries []DirectoryEntry) []DirectoryEntry {
 	return out
 }
 
-// buildDirectoryUpsert renders one multi-row upsert for a chunk: 4 params per row (address, name,
-// domain, tags) and the shared source param once at len(chunk)*4+1. synced_at is now(),
-// transaction-stable, which ReplaceDirectory's prune relies on.
-//
-// The conflict arm is OWNERSHIP-SCOPED (`WHERE account_directory.source = EXCLUDED.source`), so a
-// sync updates only rows it owns and never rewrites `source`. An unconditional arm would let a
-// second upstream STEAL shared addresses (hiding them from the first's prune) and overwrite an
-// operator correction. Rows it does not own are left untouched and counted as
-// [DirectorySyncResult.Shadowed].
+// buildDirectoryUpsert renders a multi-row upsert: 4 params per row, shared source at len(chunk)*4+1; synced_at is transaction-stable
+// now(). The conflict arm is ownership-scoped (source = EXCLUDED.source) so a second upstream cannot steal shared addresses or overwrite
+// an operator correction; unowned rows are counted as [DirectorySyncResult.Shadowed].
 func buildDirectoryUpsert(chunk []DirectoryEntry, source string) (string, []any) {
 	var (
 		sb   strings.Builder

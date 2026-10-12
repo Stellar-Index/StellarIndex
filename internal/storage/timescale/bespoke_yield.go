@@ -35,15 +35,11 @@ const (
 	yieldSeriesNameStrategyEvents      = "Strategy events"
 )
 
-// yieldBreakdownTopN caps the flows-by-vault donut at the top vaults,
-// folding the tail into one "Others" slice (counts only — see
-// foldBreakdownRows' amount caveat).
+// yieldBreakdownTopN caps the flows-by-vault donut, folding the tail into "Others" (counts only, see foldBreakdownRows).
 const yieldBreakdownTopN = 10
 
-// defindexWindowKPIQuery returns the windowed headline figures: gross
-// strategy-layer deposit/withdraw volume (the capital KPIs),
-// vault-layer deposit/withdraw counts, unique depositors, active vaults,
-// and unique actors across both layers. $1 = interval.
+// defindexWindowKPIQuery returns windowed headline figures: strategy-layer volume, vault-layer counts, depositors, vaults, actors. $1 =
+// interval.
 func defindexWindowKPIQuery() string {
 	return `
 		SELECT
@@ -57,10 +53,8 @@ func defindexWindowKPIQuery() string {
 		FROM defindex_flows WHERE ledger_close_time > now() - $1::interval`
 }
 
-// defindexAllTimeKPIQuery returns the retained-history totals across both
-// layers plus the first-observation date. Deliberately NOT window-bounded;
-// defindex_flows carries no retention, but history begins at the source's
-// first ingested event, not vault genesis.
+// defindexAllTimeKPIQuery returns retained-history totals across both layers; deliberately not window-bounded, history starts at first
+// ingested event.
 func defindexAllTimeKPIQuery() string {
 	return `
 		SELECT count(*)::text,
@@ -70,9 +64,7 @@ func defindexAllTimeKPIQuery() string {
 		FROM defindex_flows`
 }
 
-// defindexVaultCountSeriesQuery builds the (direction, bucket, count)
-// vault-layer flow series at the window's grain — folded into the two
-// deposit/withdraw lines by collectKeyedSeries. $1 = interval.
+// defindexVaultCountSeriesQuery builds the (direction, bucket, count) vault-layer series at the window's grain. $1 = interval.
 func defindexVaultCountSeriesQuery(windowDays int) string {
 	trunc, format := bridgeSeriesGrain(windowDays)
 	return `
@@ -83,9 +75,8 @@ func defindexVaultCountSeriesQuery(windowDays int) string {
 		GROUP BY 1, 2 ORDER BY 1, 2 ASC`
 }
 
-// defindexStrategyVolumeSeriesQuery builds the strategy-layer flow volume series split by direction
-// (base units summed across strategies, see the Notes caveat). 'harvest' is excluded: it is yield,
-// not capital moved, and would inflate the capital-volume figure. $1 = interval.
+// defindexStrategyVolumeSeriesQuery builds strategy-layer volume by direction (base units summed across strategies). 'harvest' is excluded:
+// it is yield, not capital moved. $1 = interval.
 func defindexStrategyVolumeSeriesQuery(windowDays int) string {
 	trunc, format := bridgeSeriesGrain(windowDays)
 	return `
@@ -108,9 +99,8 @@ func defindexStrategyEventsSeriesQuery(windowDays int) string {
 		GROUP BY 1 ORDER BY 1 ASC`
 }
 
-// defindexVaultBreakdownQuery returns per-vault window flow counts (vault layer), count-descending,
-// labelled with the curated router name where seeded, else the vault contract id. Counts only,
-// since amounts across vaults are different assets. $1 = interval.
+// defindexVaultBreakdownQuery returns per-vault window flow counts, descending, labelled by curated router name else contract id.
+// Counts only, since vaults hold different assets. $1 = interval.
 func defindexVaultBreakdownQuery() string {
 	return `
 		SELECT COALESCE(r.name, f.contract_id), count(*)::text, count(*)
@@ -119,9 +109,8 @@ func defindexVaultBreakdownQuery() string {
 		GROUP BY 1 ORDER BY count(*) DESC, 1 ASC`
 }
 
-// defindexVaultFlowsTableQuery returns the per-vault window drill-down: deposit/withdraw counts
-// always, plus amounts in the vault's own asset base units only when every window flow carries a
-// single-entry amounts_vec; anything else shows '—' rather than a cross-asset sum. $1 = interval.
+// defindexVaultFlowsTableQuery returns per-vault deposit/withdraw counts, plus amounts only when every flow carries a single-entry
+// amounts_vec; otherwise '—' rather than a cross-asset sum. $1 = interval.
 func defindexVaultFlowsTableQuery() string {
 	return `
 		SELECT COALESCE(r.name, f.contract_id),
@@ -153,9 +142,7 @@ func defindexStrategyTableQuery() string {
 		 ORDER BY count(*) DESC LIMIT 25`
 }
 
-// bespokeYield builds the DeFindex vault bespoke block from defindex_flows:
-// window and retained-history KPIs across both layers, series, the flows-by-vault breakdown and
-// per-vault and per-strategy tables. See the file doc for the amount-honesty rules.
+// bespokeYield builds the DeFindex vault bespoke block from defindex_flows; see the file doc for the amount-honesty rules.
 func (s *Store) bespokeYield(ctx context.Context, source string, windowDays int) (*BespokeBlock, error) {
 	if source != "defindex" {
 		return nil, nil
@@ -209,9 +196,7 @@ func (s *Store) yieldKPIs(ctx context.Context, blk *BespokeBlock, since string, 
 	return nil
 }
 
-// yieldSeriesBlocks appends the vault-layer deposit/withdraw count lines
-// and the strategy-layer volume + event-count lines, all at the window's
-// grain (hourly at 24h, daily otherwise).
+// yieldSeriesBlocks appends the vault count lines and strategy volume/event lines at the window's grain (hourly at 24h, else daily).
 func (s *Store) yieldSeriesBlocks(ctx context.Context, blk *BespokeBlock, since string, windowDays int) error {
 	directional, err := s.collectKeyedSeries(ctx, defindexVaultCountSeriesQuery(windowDays), "flows",
 		func(key string) string {

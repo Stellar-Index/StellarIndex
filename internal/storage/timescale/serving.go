@@ -20,10 +20,8 @@ func OpenBackground(ctx context.Context, dsn string, statementTimeout time.Durat
 	return openWithSessionSetup(ctx, dsn, statementTimeout, false)
 }
 
-// openWithSessionSetup is the shared implementation behind OpenServing and OpenBackground: every
-// connection runs its session SETs on dial (via [statementTimeoutConnector]) and the pool is
-// pinged before returning. statementTimeout <= 0 falls back to plain [Open]; the serving
-// plan-mode override rides the same connector, so it also needs a positive timeout.
+// openWithSessionSetup backs OpenServing and OpenBackground: session SETs run on dial via [statementTimeoutConnector]. statementTimeout <= 0
+// falls back to plain [Open], and the plan-mode override rides the same connector so it needs a positive timeout too.
 func openWithSessionSetup(ctx context.Context, dsn string, statementTimeout time.Duration, forceCustomPlans bool) (*Store, error) {
 	connector, err := boundedConnector(dsn, statementTimeout, forceCustomPlans)
 	if err != nil {
@@ -44,10 +42,8 @@ func openWithSessionSetup(ctx context.Context, dsn string, statementTimeout time
 	return &Store{db: db}, nil
 }
 
-// boundedConnector builds the SET-statement_timeout-on-connect driver
-// connector for a positive timeout, or returns (nil, nil) to signal "no
-// bound — use plain [Open]". Split out so the timeout-arithmetic and the
-// bounded/unbounded decision are unit-testable without a live Postgres.
+// boundedConnector builds the SET-statement_timeout-on-connect connector, or (nil, nil) for "no bound, use [Open]"; split out to unit-test
+// without Postgres.
 func boundedConnector(dsn string, statementTimeout time.Duration, forceCustomPlans bool) (driver.Connector, error) {
 	if statementTimeout <= 0 {
 		return nil, nil
@@ -64,9 +60,7 @@ func boundedConnector(dsn string, statementTimeout time.Duration, forceCustomPla
 	}, nil
 }
 
-// statementTimeoutConnector wraps a driver.Connector so every freshly dialed connection runs
-// `SET statement_timeout` before reaching the pool. The session GUC lasts the connection's life
-// until a transaction overrides it with `SET LOCAL`.
+// statementTimeoutConnector runs `SET statement_timeout` on every new connection; a transaction can override it with `SET LOCAL`.
 type statementTimeoutConnector struct {
 	base      driver.Connector
 	timeoutMS int64

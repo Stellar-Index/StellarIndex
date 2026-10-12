@@ -22,7 +22,8 @@ import (
 //
 // Estimated tiers are out of scope: their value is not reproducible from the row alone.
 
-// ExactTierUSDVolume renders the pegged leg divided by 10^decimals exactly as tradeUSDVolume does (big.Rat.FloatString(8)) so a restamped value is byte-identical to the insert path's; ok=false when the waterfall would not value the row.
+// ExactTierUSDVolume renders the pegged leg divided by 10^decimals exactly as tradeUSDVolume does (big.Rat.FloatString(8)) so a
+// restamped value is byte-identical to the insert path's; ok=false when the waterfall would not value the row.
 func ExactTierUSDVolume(tier USDVolumeTier, decimals int, baseAmount, quoteAmount string) (string, bool) {
 	if !tier.Exact() {
 		return "", false
@@ -42,7 +43,8 @@ func ExactTierUSDVolume(tier USDVolumeTier, decimals int, baseAmount, quoteAmoun
 	return new(big.Rat).SetFrac(leg, scaleDenominator(decimals)).FloatString(usdVolumeRenderDecimals), true
 }
 
-// USDVolumeRestampDecision returns the value the identity says a row should carry and whether writing it would change the row (stored nil is SQL NULL, a change only when fillNull is set); compared by NUMERIC value, not string.
+// USDVolumeRestampDecision returns the value the identity says a row should carry and whether writing it would change the row (stored
+// nil is SQL NULL, a change only when fillNull is set); compared by NUMERIC value, not string.
 func USDVolumeRestampDecision(stored *string, tier USDVolumeTier, decimals int, baseAmount, quoteAmount string, fillNull bool) (want string, changed, ok bool) {
 	want, ok = ExactTierUSDVolume(tier, decimals, baseAmount, quoteAmount)
 	if !ok {
@@ -83,11 +85,9 @@ type USDVolumeRestampParams struct {
 	Generation int64
 }
 
-// exactTierRestampScope renders the group VALUES relation and WHERE clause shared by the dry-run
-// count and the apply UPDATE, so they cannot disagree about candidates. `$1..$3` are
-// from/to/generation. The pegged leg and 10^decimals denominator are decided in Go and only
-// EVALUATED in SQL: `round(leg / denom, 8)` matches `big.Rat.FloatString(8)` (both round half
-// away from zero; for decimals <= 8 the quotient is exact).
+// exactTierRestampScope renders the group VALUES relation and WHERE shared by the dry-run count and apply UPDATE so they cannot
+// disagree. $1..$3 are from/to/generation. The pegged leg and 10^decimals are decided in Go; `round(leg / denom, 8)` matches
+// `big.Rat.FloatString(8)` (exact for decimals <= 8).
 func exactTierRestampScope(p USDVolumeRestampParams) (groupRel, where, identity string, args []any, err error) {
 	if len(p.Groups) == 0 {
 		return "", "", "", nil, fmt.Errorf("timescale: usd-volume restamp: no groups")
@@ -130,7 +130,8 @@ func exactTierRestampScope(p USDVolumeRestampParams) (groupRel, where, identity 
 	return groupRel, where, identity, args, nil
 }
 
-// CountUSDVolumeRestampCandidates is the dry run: it counts the rows [Store.RestampExactTierUSDVolume] would rewrite, using the same scope predicate.
+// CountUSDVolumeRestampCandidates is the dry run: it counts the rows [Store.RestampExactTierUSDVolume] would rewrite, using the same
+// scope predicate.
 func (s *Store) CountUSDVolumeRestampCandidates(ctx context.Context, p USDVolumeRestampParams) (int64, error) {
 	groupRel, where, _, args, err := exactTierRestampScope(p)
 	if err != nil {
@@ -144,7 +145,8 @@ func (s *Store) CountUSDVolumeRestampCandidates(ctx context.Context, p USDVolume
 	return n, nil
 }
 
-// RestampExactTierUSDVolume applies the identity to every candidate row in the caller-sliced window and returns the rows rewritten; rows already satisfying it are untouched.
+// RestampExactTierUSDVolume applies the identity to every candidate row in the caller-sliced window and returns the rows rewritten;
+// rows already satisfying it are untouched.
 func (s *Store) RestampExactTierUSDVolume(ctx context.Context, p USDVolumeRestampParams) (int64, error) {
 	groupRel, where, identity, args, err := exactTierRestampScope(p)
 	if err != nil {
@@ -157,9 +159,8 @@ func (s *Store) RestampExactTierUSDVolume(ctx context.Context, p USDVolumeRestam
 	})
 }
 
-// usdVolumeRestampWrite is one in-place rewrite of `trades.usd_volume`: `rel` joins `trades t`,
-// `where` selects rows, `value` is the new expression, `gen` the derive_generation placeholder.
-// Fragments are code-built; values travel in args.
+// usdVolumeRestampWrite is one in-place rewrite of `trades.usd_volume`: `rel` joins `trades t`, `where` selects, `value` is the new
+// expression, `gen` the derive_generation placeholder. Fragments are code-built; values travel in args.
 type usdVolumeRestampWrite struct {
 	label, scope           string
 	rel, where, value, gen string
@@ -177,20 +178,9 @@ func (w usdVolumeRestampWrite) statements() (logStmt, updateStmt string) {
 	return logStmt, updateStmt
 }
 
-// restampTradesUSDVolume is the one path that rewrites `trades.usd_volume` in place. One
-// transaction copies each target row's before-image into `usd_volume_restamp_log`, rewrites the
-// rows, and refuses to commit unless the two row counts agree.
-//
-// REPEATABLE READ: at READ COMMITTED a writer committing between the two statements would leave
-// the log holding a value the UPDATE never overwrote; now it fails the UPDATE and rolls both back.
-//
-// The decompression cap is lifted (`max_tuples_decompressed_per_dml_transaction = 0`) because
-// history sits in COMPRESSED chunks and the default 100k-tuple cap aborts a day's DML. A CUSTOM
-// plan is forced because the `ts` bounds let the planner prune chunks and a GENERIC plan cannot
-// see them ([Store.applyXLMBaseRestampBatch] carries the measurement).
-//
-// `SET LOCAL`, not `SET`: a session setting would ride the pooled connection (pgx's stdlib
-// adapter does not reset it) and uncap later DML.
+// restampTradesUSDVolume is the one path rewriting `trades.usd_volume` in place: one REPEATABLE READ tx logs before-images to
+// `usd_volume_restamp_log`, rewrites, and refuses to commit unless counts agree. Decompression cap lifted for COMPRESSED history,
+// CUSTOM plan forced so `ts` bounds prune chunks; `SET LOCAL`, not `SET`, so nothing rides the pooled connection.
 func (s *Store) restampTradesUSDVolume(ctx context.Context, w usdVolumeRestampWrite) (int64, error) {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
 	if err != nil {

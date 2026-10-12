@@ -83,9 +83,7 @@ func (s *Store) UpsertBaseline(ctx context.Context, sb StoredBaseline) error {
 	return nil
 }
 
-// nullableBaseline converts a `*baseline.Baseline` into the three
-// (NullFloat, NullFloat, NullInt) pgx-compatible scalars that the
-// `*_1d` / `*_7d` columns expect. Nil pointer → all-NULL.
+// nullableBaseline maps a *baseline.Baseline to the (NullFloat, NullFloat, NullInt) `*_1d`/`*_7d` columns; nil gives all-NULL.
 func nullableBaseline(b *baseline.Baseline) (sql.NullFloat64, sql.NullFloat64, sql.NullInt64) {
 	if b == nil {
 		return sql.NullFloat64{}, sql.NullFloat64{}, sql.NullInt64{}

@@ -9,10 +9,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/domain"
 )
 
-// toAssetAmountRows converts a V1 new_liquidation_auction's decoded
-// bid/lot into blendAssetAmountRow (blend_auctions.go, same package —
-// the JSONB {asset, amount} element shape) for the blend_admin.attributes
-// column. amount is stringified for full i128 precision (ADR-0003).
+// toAssetAmountRows converts a V1 liquidation auction's bid/lot into blendAssetAmountRow for blend_admin.attributes;
+// amount is stringified for full i128 precision (ADR-0003).
 func toAssetAmountRows(in []domain.BlendAssetAmount) []blendAssetAmountRow {
 	if len(in) == 0 {
 		return nil
@@ -24,7 +22,8 @@ func toAssetAmountRows(in []domain.BlendAssetAmount) []blendAssetAmountRow {
 	return out
 }
 
-// InsertBlendAdminEvent appends one Blend admin/pool-config/factory lifecycle event to the blend_admin hypertable, idempotent on its PK, promoting the admin/asset/target columns when the event carries them.
+// InsertBlendAdminEvent appends one Blend admin/pool-config/factory lifecycle event to the blend_admin hypertable, idempotent on its
+// PK, promoting the admin/asset/target columns when the event carries them.
 func (s *Store) InsertBlendAdminEvent(ctx context.Context, e domain.BlendAdminEvent) error {
 	if e.ContractID == "" {
 		return errors.New("timescale: InsertBlendAdminEvent: ContractID is empty")
@@ -107,10 +106,7 @@ func buildAdminAttributes(e domain.BlendAdminEvent) map[string]any {
 	return attrs
 }
 
-// isBlendAdminKind reports whether kind is one of the admin event
-// kinds (including the pool-factory `deploy` and the V1-pool-factory
-// liquidation-auction pair). Mirrors the CHECK constraint in
-// migration 0045, widened by migration 0097.
+// isBlendAdminKind reports whether kind is an admin event kind; mirrors the CHECK in migration 0045, widened by 0097.
 func isBlendAdminKind(kind string) bool {
 	switch kind {
 	case domain.BlendEventSetAdmin,

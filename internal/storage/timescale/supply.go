@@ -215,12 +215,8 @@ func (s *Store) DailyCirculatingSupply(ctx context.Context, assetKey string, fro
 	return out, nil
 }
 
-// assembleSupply parses the text-cast NUMERIC columns into *big.Int and assembles a supply.Supply,
-// so InsertSupply's round-trip and SupplyHistory share one decode path.
-//
-// sacWrappedStr is the nullable sac_wrapped_stroops column. A SQL NULL stays nil, the "unchecked"
-// state that makes the cross-check's escrow leg decline to evaluate; it is deliberately NOT coerced
-// to zero (see [supply.Supply.SACWrappedStroops]).
+// assembleSupply parses text-cast NUMERIC columns to *big.Int for InsertSupply and SupplyHistory. A NULL sacWrappedStr stays nil
+// ("unchecked"), never zero, so the escrow cross-check declines to evaluate (see [supply.Supply.SACWrappedStroops]).
 func assembleSupply(assetKey string, observedAt time.Time, totalStr, circulatingStr string, maxStr sql.NullString, basis string, ledger int64, sacWrappedStr sql.NullString) (supply.Supply, error) {
 	total, ok := new(big.Int).SetString(totalStr, 10)
 	if !ok {

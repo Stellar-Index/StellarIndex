@@ -5,14 +5,10 @@ import (
 	"fmt"
 )
 
-// countRecentEventsQuery is the trailing-24h per-protocol event census behind
-// GET /v1/protocols' events_24h column: one UNION ALL pass over every served
-// protocol table, each leg labelled with the API registry's logical source name.
-//
-// It runs off the request path, only from [Store.RefreshProtocolEventCounts] into the
-// protocol_events_24h rollup; the handler reads the rollup. Several legs sum into one
-// logical source, and the trades and oracle_updates legs GROUP BY source so they also yield
-// CEX/FX/oracle sources that callers ignore. Every leg counts only the last 24h of chunks.
+// countRecentEventsQuery is the trailing-24h per-protocol event census behind /v1/protocols' events_24h: one UNION ALL over every served
+// table, each leg labelled with the API registry's source name. It runs only from [Store.RefreshProtocolEventCounts] into
+// protocol_events_24h; the handler reads the rollup. Several legs sum into one source; the trades and oracle_updates legs GROUP BY source
+// and also yield CEX/FX/oracle sources callers ignore.
 const countRecentEventsQuery = `
 	SELECT source, count(*) AS n
 	  FROM trades
@@ -140,9 +136,8 @@ func (s *Store) CountRecentEventsBySource(ctx context.Context) (map[string]int64
 	return out, nil
 }
 
-// refreshProtocolEventsUpsert folds the census into one row per source (the outer SUM(n)
-// collapses sources that appear in several legs). computed_at is the transaction timestamp so
-// the sibling prune can drop sources not touched this pass.
+// refreshProtocolEventsUpsert folds the census to one row per source (outer SUM(n)); computed_at is the transaction timestamp so the prune
+// can drop untouched sources.
 const refreshProtocolEventsUpsert = `
 INSERT INTO protocol_events_24h AS t (source, events_24h, computed_at)
 SELECT source, SUM(n)::bigint AS events_24h, now()
@@ -152,9 +147,8 @@ ON CONFLICT (source) DO UPDATE
    SET events_24h  = EXCLUDED.events_24h,
        computed_at = EXCLUDED.computed_at`
 
-// refreshProtocolEventsPrune deletes sources that fell out of the 24h window. It shares the
-// upsert's transaction, so now() is the same timestamp: just-upserted rows are not < now() and
-// survive, while untouched rows keep an older computed_at and are dropped.
+// refreshProtocolEventsPrune deletes sources outside the 24h window; same transaction as the upsert, so just-upserted rows (computed_at =
+// now()) survive.
 const refreshProtocolEventsPrune = `DELETE FROM protocol_events_24h WHERE computed_at < now()`
 
 // RefreshProtocolEventCounts recomputes the protocol_events_24h rollup from the live 24h census and atomically replaces it, so /v1/protocols never runs the multi-table census per request; upsert and prune take row locks only.

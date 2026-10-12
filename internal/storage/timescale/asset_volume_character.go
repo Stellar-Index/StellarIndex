@@ -25,9 +25,8 @@ const (
 	VolumeCharacterOperational  = "operational"
 	VolumeCharacterConcentrated = "concentrated"
 
-	// volumeCharacterMinVolumeUSD is the floor below which an asset stays the neutral `market`:
-	// too little priced volume to tell a quiet asset from a pattern. It sits below the known
-	// dust-bot volume so real low-value wash is still caught.
+	// volumeCharacterMinVolumeUSD is the floor below which an asset stays the neutral `market`; below known dust-bot volume so low-value
+	// wash is caught.
 	volumeCharacterMinVolumeUSD = 1000
 
 	// volumeCharacterConcentrationThreshold — over 90% of window volume in a SINGLE (unordered)
@@ -73,13 +72,9 @@ const (
 	volumeCharacterPairKeySQL    = `LEAST(COALESCE(maker, taker), taker), GREATEST(COALESCE(maker, taker), taker)`
 )
 
-// assetVolumeCharacterSQL rolls the trailing-window signals in one query. $1 is the asset's alias
-// array (matched on either side), $2 the window interval, $3 the issuer G-address (empty for
-// native/soroban/fiat, which makes the issuer-side predicate constant-false).
-//
-// The (maker,taker) pair is UNORDERED: LEAST/GREATEST folds both directions of a round-trip
-// into one pair, so A-B and B-A ping-pong reads as one concentrated pair, not two 50% halves.
-// Only usd_volume rows count; an unpriced trade cannot move a share.
+// assetVolumeCharacterSQL rolls the window's signals in one query: $1 alias array, $2 window interval, $3 issuer G-address (empty makes
+// the issuer-side predicate constant-false). The (maker,taker) pair is UNORDERED (LEAST/GREATEST) so ping-pong reads as one pair; only
+// usd_volume rows count.
 const assetVolumeCharacterSQL = `
 WITH w AS (
   SELECT
@@ -113,7 +108,8 @@ SELECT
                  OR counterpart LIKE 'USDC-%'), 0)                                 AS market_styled_vol
 `
 
-// AssetVolumeCharacter computes the signals and character for one asset; an asset with no priced trades in the window is the neutral `market` with zeroed signals.
+// AssetVolumeCharacter computes the signals and character for one asset; an asset with no priced trades in the window is the neutral
+// `market` with zeroed signals.
 func (s *Store) AssetVolumeCharacter(ctx context.Context, assetID string) (AssetVolumeCharacter, error) {
 	issuer := ""
 	if a, err := canonical.ParseAsset(assetID); err == nil {
@@ -138,22 +134,8 @@ func (s *Store) AssetVolumeCharacter(ctx context.Context, assetID string) (Asset
 	return volumeCharacterFromSums(totalNum, total, topPair, selfCross, issuerSide, marketStyled, makers, takers), nil
 }
 
-// deriveVolumeCharacter maps the signals to a character. Pure; the taxonomy is its test oracle:
-//
-//	species                | signature                          | character
-//	-----------------------|------------------------------------|-------------
-//	Operational corridor   | issuer-side, wrap/redeem pair       | operational
-//	Volume-painting wash   | market-styled, issuer sole counter. | concentrated
-//	Third-party ping-pong  | two non-issuer wallets round-trip   | concentrated
-//	Dust-bot               | one account pair, micro trades      | concentrated
-//
-// High issuer-side share ALONE is not wash: a stablecoin mint/redeem corridor is 100%
-// issuer-side by nature. Wash is single-counterparty AND market-styled. In order:
-//   - below the volume floor: `market` (never badge a quiet asset).
-//   - market-styled AND one account pair owns >90% of volume: `concentrated`.
-//   - not market-styled (wrap pair) AND overwhelmingly issuer-side: `operational`.
-//   - one pair owns >90% but the issuer is not the counterparty: `concentrated`.
-//   - otherwise `market`.
+// deriveVolumeCharacter maps signals to a character (pure; the taxonomy is its test oracle). Issuer-side share alone is not wash: a
+// mint/redeem corridor is 100% issuer-side; wash is single-counterparty AND market-styled. Below the volume floor is always `market`.
 func deriveVolumeCharacter(s AssetVolumeCharacter) string {
 	if belowVolumeCharacterFloor(s.VolumeUSD) {
 		return VolumeCharacterMarket

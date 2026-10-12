@@ -173,17 +173,10 @@ func (s *Store) AllPools(ctx context.Context, filter PoolsFilter, cursor string,
 	return out, nextCursor, nil
 }
 
-// perSourcePoolsCTE is the per-(source, base, quote) scan of the pools_per_source_1h CAGG shared
-// by /v1/pools (buildPoolsQuery) and the source-filtered /v1/markets (buildSourceMarketsQuery).
-// One literal makes their agreement structural: filtering the PAIR-WIDE prices_1m/prices_1d CAGGs
-// by `source = ANY(sources)` selects BUCKETS a venue printed in, not its contribution.
-//
-// Callers append their filters, GROUP BY and ordering. $1 is the recency-window lower bound,
-// bound first by every caller, and sacAliasFoldBind's arrays sit at $foldIdx, $foldIdx+1. Rows
-// are alias-folded BEFORE grouping so filters and group keys see one spelling per asset.
-//
-// vol_24h_usd sums trade-time usd_volume only; a trade stamped without one is excluded, never
-// re-marked at today's XLM/USD, and vol_lower_bound says so.
+// perSourcePoolsCTE scans pools_per_source_1h per (source, base, quote), shared by /v1/pools and source-filtered /v1/markets so they
+// agree; pair-wide prices_1m/1d select buckets a venue printed in, not its contribution. $1 is the recency lower bound and
+// sacAliasFoldBind's arrays sit at $foldIdx, $foldIdx+1. Rows are alias-folded BEFORE grouping. vol_24h_usd sums trade-time usd_volume
+// only (vol_lower_bound says so).
 func perSourcePoolsCTE(foldIdx int) string {
 	return `
         WITH ` + aliasFoldCTE(foldIdx) + `,
@@ -214,16 +207,9 @@ func perSourcePoolsCTE(foldIdx int) string {
     `
 }
 
-// poolsFilterSQL renders the /v1/pools filter predicates over raw pools_per_source_1h rows. $4
-// sources and $5 base / $6 quote / $7 asset alias arrays are always bound (see poolsFilterArgs);
-// an empty array disables its predicate, keeping the positional layout stable.
-//
-// Rows hold BOTH stored orientations and every alias spelling, and `canon` folds orientations
-// only afterwards, so each predicate must be invariant under that fold or it drops the other
-// direction's volume before it can be summed:
-//   - base+quote matches the pair in either stored orientation;
-//   - base or quote alone matches that side of the CANONICAL orientation;
-//   - asset (the OR-shape) matches either leg.
+// poolsFilterSQL renders the /v1/pools predicates over raw pools_per_source_1h rows; $4 sources and $5 base / $6 quote / $7 asset alias
+// arrays are always bound (empty disables the predicate). `canon` folds orientation afterwards, so each predicate must be invariant under
+// it: base+quote matches either stored orientation; base or quote alone matches that side of the CANONICAL one; asset matches either leg.
 func poolsFilterSQL(canonBase, canonQuote string) string {
 	return `
            AND (cardinality($4::text[]) = 0 OR p.source = ANY($4))
@@ -315,10 +301,8 @@ func poolsQueryArgs(since time.Time, filter PoolsFilter, cursor string, limit in
 	return append(args, forms, canons, canonical.NativeSACContractID())
 }
 
-// assetAliasBind expands an asset filter to the text[] of its alias forms (native / crypto:XLM /
-// SAC for XLM) so `= ANY($n)` matches every spelling a venue keyed rows under. An empty asset
-// binds an empty NON-nil array: nil binds SQL NULL, cardinality(NULL) is NULL not 0, and the
-// "no filter" short-circuit would exclude every row. An unparseable asset binds as itself.
+// assetAliasBind expands an asset filter to its alias forms for `= ANY($n)`. Empty binds a non-nil empty array: nil is SQL NULL and
+// cardinality(NULL) is NULL, which would exclude every row. An unparseable asset binds as itself.
 func assetAliasBind(asset string) []string {
 	if asset == "" {
 		return []string{}
@@ -330,10 +314,8 @@ func assetAliasBind(asset string) []string {
 	return canonical.AssetAliasStrings(a)
 }
 
-// sacAliasFoldBind binds the alias_fold (form, canon) arrays: every SAC contract spelling mapped
-// to its classic/native form, so a market on SDEX and a Soroban venue groups as one row.
-// crypto:XLM stays unfolded as it keys the off-chain CEX population. Both slices are non-nil for
-// the NULL reason in assetAliasBind.
+// sacAliasFoldBind binds the alias_fold (form, canon) arrays mapping SAC spellings to their classic/native form; crypto:XLM stays unfolded
+// (CEX population). Both slices are non-nil, see assetAliasBind.
 func sacAliasFoldBind() (forms, canons []string) {
 	all := canonical.AllAliasForms()
 	forms, canons = []string{}, []string{}
@@ -369,9 +351,7 @@ func foldSpelling(fold map[string]string, asset string) string {
 	return asset
 }
 
-// expandSACSpellings lists, per requested pair, every stored (base, quote)
-// spelling the alias-folded listing summed into it, as parallel slices
-// keyed by the requested "<base>|<quote>".
+// expandSACSpellings lists, per requested pair, every stored (base, quote) spelling folded into it, keyed by "<base>|<quote>".
 func expandSACSpellings(pairs [][2]string, spellings map[string][]string) (keys, bases, quotes []string) {
 	for _, p := range pairs {
 		key := p[0] + "|" + p[1]
@@ -394,14 +374,8 @@ func aliasFoldCTE(formsIdx int) string {
         )`, formsIdx, formsIdx+1)
 }
 
-// sourceMarketsCommon is the per-venue /v1/markets listing. It reads the SAME pools_per_source_1h
-// CAGG as /v1/pools (via [perSourcePoolsCTE]) and drops the source dimension: one row per
-// canonical pair with THAT venue's own 24h count, USD volume and last price.
-//
-// Not distinctPairsCommon with a source filter: prices_1m/prices_1d carry an
-// `array_agg(DISTINCT source)` column, so `$source = ANY(p.sources)` tests bucket membership, not
-// contribution (a venue with 3 prints would report another venue's 1000). Only pools_per_source_1h
-// has the per-source grain, and its 5-minute end_offset keeps last_price minutes old.
+// sourceMarketsCommon is the per-venue /v1/markets listing over [perSourcePoolsCTE], one row per canonical pair with THAT venue's counts.
+// It is not distinctPairsCommon plus a source filter: prices_1m/1d `source = ANY(p.sources)` tests bucket membership, not contribution.
 func (s *Store) sourceMarketsCommon(ctx context.Context, source, cursor string, limit int, order MarketsOrder) ([]Market, string, error) {
 	if limit < 1 {
 		limit = 100
@@ -428,15 +402,9 @@ func (s *Store) sourceMarketsCommon(ctx context.Context, source, cursor string, 
 	return out, nextCursor, nil
 }
 
-// buildSourceMarketsQuery composes the per-venue listing over [perSourcePoolsCTE]. Columns, cursor
-// formats and ordering are byte-compatible with buildDistinctPairsQuery so [scanDistinctPairs]
-// and [encodeMarketsCursor] serve both; only the grain differs.
-//
-// $1 since, $2 cursor, $3 limit+1 (overfetch by one), $4 source.
-//
-// bucket_close_at is `date_trunc('day', last_trade_at)`, not read from prices_1d: that CAGG is
-// pair-wide and its newest materialized bucket is the PREVIOUS day (6h end_offset,
-// materialized_only).
+// buildSourceMarketsQuery composes the per-venue listing over [perSourcePoolsCTE], byte-compatible with buildDistinctPairsQuery's columns
+// and cursors. $1 since, $2 cursor, $3 limit+1, $4 source. bucket_close_at is date_trunc('day', last_trade_at) because prices_1d is
+// pair-wide and lags a day.
 func buildSourceMarketsQuery(since time.Time, source, cursor string, limit int, order MarketsOrder) (string, []any) {
 	canonBase, canonQuote, flipped := canonOrientSQL(7)
 	forms, canons := sacAliasFoldBind() // $5, $6
@@ -633,9 +601,7 @@ func ValidateMarketsCursor(cursor string, order MarketsOrder) error {
 	return nil
 }
 
-// encodeMarketsCursor formats the last-row cursor for the active
-// ordering — pair-only for MarketsOrderPair, `<vol>:<pair>` for
-// MarketsOrderVolume24hDesc.
+// encodeMarketsCursor formats the last-row cursor: pair-only for MarketsOrderPair, `<vol>:<pair>` for MarketsOrderVolume24hDesc.
 func encodeMarketsCursor(last Market, order MarketsOrder) string {
 	pairKey := last.Pair.Base.String() + "|" + last.Pair.Quote.String()
 	if order == MarketsOrderVolume24hDesc {
@@ -648,11 +614,8 @@ func encodeMarketsCursor(last Market, order MarketsOrder) string {
 	return pairKey
 }
 
-// distinctPairsActivityCTEs is the static head of the /v1/markets query: `d`, the 14-day
-// active-pair set from prices_1d, and `h`, the trailing-24h prices_1m scan carrying volume,
-// count and fresh last_price. It binds only $1 (since), $4 (source), $5 (asset aliases) and
-// $6/$7 (sacAliasFoldBind); buildDistinctPairsQuery appends the `raw` and `canon` CTEs and
-// explains why each CTE reads the view it does.
+// distinctPairsActivityCTEs is the static head of /v1/markets: `d` (14-day active pairs, prices_1d) and `h` (trailing-24h prices_1m scan).
+// It binds $1 since, $4 source, $5 asset aliases, $6/$7 sacAliasFoldBind; buildDistinctPairsQuery appends `raw` and `canon`.
 const distinctPairsActivityCTEs = `
         WITH alias_fold(form, canon) AS (
           SELECT * FROM unnest($6::text[], $7::text[])
@@ -692,13 +655,8 @@ const distinctPairsActivityCTEs = `
         ),
 `
 
-// buildDistinctPairsQuery composes the per-pair-volume CTE and SELECT for DistinctPairs.
-//
-// Cursor formats:
-//   - MarketsOrderPair: `<base>|<quote>`, resumed by a strict-greater comparison.
-//   - MarketsOrderVolume24hDesc: `<vol_or_blank>:<base>|<quote>`. An empty vol prefix sorts as 0,
-//     so cursor ":<pair>" resumes into the null-volume tail. The (vol, pair) keyset compare is
-//     strict-less on vol DESC and strict-greater on pair ASC.
+// buildDistinctPairsQuery composes the per-pair-volume CTE and SELECT. Cursors: MarketsOrderPair is `<base>|<quote>` (strict-greater);
+// MarketsOrderVolume24hDesc is `<vol_or_blank>:<base>|<quote>`, a blank vol sorting as 0 so ":<pair>" resumes into the null-volume tail.
 func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limit int, order MarketsOrder) (string, []any) {
 	// /v1/markets is a directory listing, not a history view: reading prices_1m x 14 days blows
 	// the 8s handler ceiling. So the 14d active-pair set comes from prices_1d and only the 24h
@@ -788,20 +746,11 @@ func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limi
 	}
 }
 
-// pairMarketQuery is the single-pair activity summary behind /v1/pairs. $1 is the
-// MarketsRecencyWindow lower bound, $2/$3 the requested base and quote.
-//
-// LastTradeAt comes from trades (exact to the second), not a CAGG bucket; BucketCloseAt is
-// recomputed from it in Go. Both stored directions (the SDEX decoder records XLM/USDC and
-// USDC/XLM separately) combine into the requested orientation, matching canonOrientSQL:
-// counts and USD volume sum, and last_price is re-expressed via canonical.Orient.
-//
-// Shape: a UNION ALL of two single-direction branches, each aggregate reading the smallest
-// window that produces it. `(A AND B) OR (B AND A)` cannot drive trades_pair_ts_idx /
-// prices_1m_pair_bucket_idx (see [closedVWAP1mAtOrBeforeQuery]), and one shared 14-day aggregate
-// scans millions of rows cold, past the 8s handler ceiling. The `, base_asset` tiebreaker makes
-// the last_price order total once a bucket holds both orientations. Guarded by
-// TestPairMarketQueryShape.
+// pairMarketQuery is the single-pair summary behind /v1/pairs; $1 is the MarketsRecencyWindow bound, $2/$3 base and quote. LastTradeAt
+// comes from trades, not a CAGG bucket. Both stored directions combine into the requested orientation (canonOrientSQL; last_price via
+// canonical.Orient). A UNION ALL of two single-direction branches: `(A AND B) OR (B AND A)` cannot drive trades_pair_ts_idx /
+// prices_1m_pair_bucket_idx (see [closedVWAP1mAtOrBeforeQuery]) and one shared 14-day aggregate exceeds the 8s ceiling cold. `,
+// base_asset` makes the last_price order total. Guarded by TestPairMarketQueryShape.
 const pairMarketQuery = `
         WITH last_trade AS (
             SELECT MAX(ts) AS ts FROM (
@@ -902,9 +851,7 @@ type PairVolumePoint struct {
 	VolumeUSD string
 }
 
-// pairKey is the lookup key for the batched per-pair volume map.
-// Wire shape stays string-based (`<base>|<quote>`) so the v1 API
-// adapter doesn't have to import canonical.Pair.
+// pairKey is the `<base>|<quote>` lookup key for the batched volume map, string-based so the v1 adapter need not import canonical.Pair.
 type pairKey = string
 
 // GetPairsVolumeHistory24hBatch returns per-(base, quote) hourly USD-volume buckets for the trailing 24h, for the /v1/markets sparkline column.

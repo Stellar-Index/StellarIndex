@@ -42,10 +42,8 @@ type OracleRederiveSweepResult struct {
 // the twin set held for the hash join stays small on a full-history run.
 const oracleSweepLedgerWindow = 500_000
 
-// oracleSweepDeletesPerTx keeps one transaction under the TimescaleDB
-// per-DML decompression cap (100k tuples by default): each delete pins
-// source, asset, quote and ts, so it decompresses at most one compressed
-// batch (≤1000 rows).
+// oracleSweepDeletesPerTx keeps a tx under the TimescaleDB 100k-tuple decompression cap: each delete pins source, asset, quote and ts,
+// so it decompresses at most one batch (<=1000 rows).
 const oracleSweepDeletesPerTx = 50
 
 // oracleSweepFutureTS is the band relay window: a stale row this far past
@@ -59,7 +57,9 @@ type oracleSweepCandidate struct {
 	ts, twinTS      time.Time
 }
 
-// SweepOracleRederive deletes oracle_updates rows a ts-changing re-derive left behind (a row below Generation whose identity has a Generation twin with another ts); each DELETE re-checks its twin by exact PK and decrements source_entry_counts in the same transaction.
+// SweepOracleRederive deletes oracle_updates rows a ts-changing re-derive left behind (a row below Generation whose identity has a
+// Generation twin with another ts); each DELETE re-checks its twin by exact PK and decrements source_entry_counts in the same
+// transaction.
 func (s *Store) SweepOracleRederive(ctx context.Context, sw OracleRederiveSweep) (OracleRederiveSweepResult, error) {
 	var res OracleRederiveSweepResult
 	if sw.Source == "" || sw.From == 0 || sw.To < sw.From {
@@ -162,9 +162,7 @@ func (s *Store) oracleSweepOpIndexShifted(ctx context.Context, sw OracleRederive
 	return n, nil
 }
 
-// oracleSweepDeleteSQL deletes one stale row by its exact primary key plus
-// its segmentby columns, and only while its twin ($9 = twin ts) still
-// exists at the run's generation.
+// oracleSweepDeleteSQL deletes one stale row by exact primary key plus segmentby columns, only while its twin ($9 = twin ts) still exists.
 const oracleSweepDeleteSQL = `
     DELETE FROM oracle_updates o
      WHERE o.source = $1 AND o.asset = $2 AND o.quote = $3 AND o.ts = $4

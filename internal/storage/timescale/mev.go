@@ -13,11 +13,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/pgarray"
 )
 
-// tradesForArbScanQuery values each leg at its stored usd_volume, else its XLM leg at the XLM/USD
-// anchor of the trade's own minute ([xlmUSDAnchorGridCTE]). SDEX arb legs often carry NULL
-// usd_volume, so the fallback keeps real cycles from reporting "$0" notionals. With no anchor
-// within xlmUSDAnchorMaxAge the leg stays empty, never re-marked at a stale or later rate.
-// $3 is the network's native-XLM SAC.
+// tradesForArbScanQuery values each leg at stored usd_volume, else its XLM leg at the minute's XLM/USD anchor ([xlmUSDAnchorGridCTE]), so
+// NULL-usd SDEX cycles don't report "$0"; no anchor within xlmUSDAnchorMaxAge leaves it empty. $3 is the native-XLM SAC.
 //
 //nolint:gosec // G202: fragments are constant SQL (helper output built from literals and $N placeholders); values bind via $N
 var tradesForArbScanQuery = `
@@ -105,9 +102,7 @@ func (s *Store) TradesForArbScan(ctx context.Context, since time.Time, limit int
 	return trades, usd, nil
 }
 
-// oracleUpdatesForMEVScanQuery is the OracleUpdatesForMEVScan SQL. `asset NOT LIKE 'raw:%'`
-// excludes unmapped oracle symbols recorded verbatim (canonical.AssetOracleRaw): they are
-// record-layer only and must never become MEV evidence, and the detectors key on asset.
+// oracleUpdatesForMEVScanQuery excludes unmapped `raw:%` oracle symbols (canonical.AssetOracleRaw): record-layer only, never MEV evidence.
 const oracleUpdatesForMEVScanQuery = `
         SELECT source, COALESCE(contract_id, ''), ledger, tx_hash, op_index,
                asset, quote, ts
@@ -197,11 +192,8 @@ func (s *Store) BlendFillsForMEVScan(ctx context.Context, since time.Time, limit
 	return out, nil
 }
 
-// insertMEVEventQuery is idempotent on dedup_key, but a re-scan whose evidence CONTAINS the
-// stored row's legs replaces its evidence columns, so a later overlapping scan with more victims
-// or fills supersedes a partial detection. A scan that saw less never overwrites. detected_at and
-// the ledger keep the first detection's identity. RETURNING xmax = 0 is true only for a fresh
-// insert, so an update is not counted as a new event.
+// insertMEVEventQuery is idempotent on dedup_key: a re-scan whose evidence CONTAINS the stored legs replaces them, a smaller one never
+// does. detected_at and ledger keep the first detection; RETURNING xmax = 0 is true only for a fresh insert.
 const insertMEVEventQuery = `
         INSERT INTO mev_events (
             detected_at, detected_at_ledger, kind,

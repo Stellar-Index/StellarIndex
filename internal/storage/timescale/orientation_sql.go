@@ -25,9 +25,7 @@ const (
 	xlmQuotesBound4 = "'native', $4::text"
 )
 
-// stablecoinInListSQL renders canonical.StablecoinCodes as a sorted, single-quoted SQL IN-list
-// (e.g. "'DAI', 'EURC', …"). Sorted so the query string is stable for the plan cache and golden
-// tests. The codes come from a closed in-repo map, and are still only emitted as quoted literals.
+// stablecoinInListSQL renders canonical.StablecoinCodes as a sorted quoted IN-list, sorted so the query text is plan-cache stable.
 func stablecoinInListSQL() string {
 	codes := make([]string, 0, len(canonical.StablecoinCodes))
 	for c := range canonical.StablecoinCodes {
@@ -37,9 +35,8 @@ func stablecoinInListSQL() string {
 	return strings.Join(codes, ", ")
 }
 
-// quoteRankSQL is a SQL CASE mirroring canonical.quoteRank for col: fiat (4) > stablecoin (3) >
-// XLM (2) > token (1). Rendered per query because declared stablecoin SACs come from the alias
-// registry installed at start-up.
+// quoteRankSQL mirrors canonical.quoteRank for col: fiat 4 > stablecoin 3 > XLM 2 > token 1; per query because stablecoin SACs come from the
+// alias registry.
 func quoteRankSQL(col string, sacIdx int) string {
 	return fmt.Sprintf(`(CASE
         WHEN %[1]s LIKE 'fiat:%%' THEN 4
@@ -48,9 +45,7 @@ func quoteRankSQL(col string, sacIdx int) string {
         ELSE 1 END)`, col, stablecoinInListSQL(), nativeSACParam(sacIdx), stablecoinSACArmSQL(col))
 }
 
-// stablecoinSACArmSQL is quoteRankSQL's rank-3 arm for declared stablecoin SACs, or "" when none
-// (an empty IN list is a syntax error). The forms passed strkey validation, so they are base32
-// literals with no quoting surface.
+// stablecoinSACArmSQL is quoteRankSQL's rank-3 arm for declared stablecoin SACs, or "" when none (an empty IN list is a syntax error).
 func stablecoinSACArmSQL(col string) string {
 	forms := canonical.StablecoinSACForms()
 	if len(forms) == 0 {
@@ -63,9 +58,8 @@ func stablecoinSACArmSQL(col string) string {
 // function of that set alone, so DISTINCT on it equals DISTINCT on canonOrientSQL without the CASE.
 const marketKeySQL = `LEAST(base_asset, quote_asset), GREATEST(base_asset, quote_asset)`
 
-// canonLastPriceSQL is a canonical market's newest last_price across its stored orientations, the
-// flipped row's price inverted. Both orientations routinely share a last_trade_at, so ties go to
-// the canonically stored row rather than scan order. flipped is canonOrientSQL's third expression.
+// canonLastPriceSQL is the newest last_price across a market's orientations, the flipped row inverted; ties go to the canonically stored
+// row.
 func canonLastPriceSQL(flipped string) string {
 	return `(array_agg(
                     CASE WHEN ` + flipped + ` AND last_price IS NOT NULL
@@ -75,16 +69,8 @@ func canonLastPriceSQL(flipped string) string {
                   FILTER (WHERE last_price IS NOT NULL))[1]`
 }
 
-// canonOrientSQL returns SQL expressions for the canonical (base, quote) orientation of a market
-// stored as (base_asset, quote_asset), plus a boolean `flipped` that is true when the stored row is
-// reversed, so the caller inverts that row's price before combining. It mirrors canonical.Orient:
-// the canonical quote is the higher-quoteRank asset, ties broken by the greater asset_id string.
-// Each expression is fully parenthesised and safe to inline.
-//
-// Stored orientation is per source family and the families are inverse: SDEX stores base = the
-// resting offer's AssetSold (what the taker received), Soroban AMMs (aquarius, comet, phoenix,
-// soroswap) store base = token_in (what the taker sold). One economic trade lands in opposite
-// orientations, so any read combining sources must orient here.
+// canonOrientSQL returns SQL for the canonical (base, quote) orientation of a stored market plus `flipped`, mirroring canonical.Orient.
+// Stored orientation is inverse per source family (SDEX base = AssetSold, Soroban AMMs base = token_in), so cross-source reads must orient.
 func canonOrientSQL(sacIdx int) (canonBase, canonQuote, flipped string) {
 	const bcol, qcol = "base_asset", "quote_asset"
 	rb, rq := quoteRankSQL(bcol, sacIdx), quoteRankSQL(qcol, sacIdx)

@@ -26,10 +26,8 @@ type CAGGRefreshWindow struct {
 	Hypertable string
 }
 
-// caggRefreshWindowsSelect lists every continuous aggregate with its
-// refresh policy, if any. Refresh jobs name the view on TimescaleDB 2.26
-// and its materialization hypertable on older 2.x; match either. The
-// offset is read in seconds so no caller parses an interval's text form.
+// caggRefreshWindowsSelect lists each continuous aggregate with its refresh policy; jobs name the view on TimescaleDB 2.26, the
+// materialization hypertable on older 2.x, so both match. The offset is read in seconds.
 const caggRefreshWindowsSelect = `
 	SELECT c.view_name,
 	       c.hypertable_name,

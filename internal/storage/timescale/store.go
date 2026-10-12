@@ -85,11 +85,8 @@ func (s *Store) SetDeriveGeneration(gen int64) {
 	s.deriveGeneration = gen
 }
 
-// reDeriveNullVolumeGuard fails a trade write CLOSED in re-derive mode (deriveGeneration > 0) when
-// the USD-volume resolvers were never installed. A positive generation wins the ON CONFLICT guard,
-// so a nil result from an unwired resolver would overwrite a correct value with NULL that a live
-// gen-0 replay can never restore. It fires only when resolution was never wired: an unpriceable
-// trade in a wired re-derive legitimately writes NULL.
+// reDeriveNullVolumeGuard fails a re-derive write (deriveGeneration > 0) closed when the USD resolvers were never wired: a positive
+// generation wins ON CONFLICT, so a nil would overwrite a correct value with NULL. A wired, unpriceable trade may write NULL.
 func (s *Store) reDeriveNullVolumeGuard(t canonical.Trade, computed *string) error {
 	if s.deriveGeneration > 0 && computed == nil && !s.usdVolumeResolutionInstalled {
 		return fmt.Errorf("timescale: refusing to write trade %s/%s (source=%s ledger=%d) "+
@@ -102,9 +99,8 @@ func (s *Store) reDeriveNullVolumeGuard(t canonical.Trade, computed *string) err
 	return nil
 }
 
-// resolveUSDVolume is the one place a trade write computes its usd_volume. A resolver read error
-// stores NULL on the live path (a later re-derive can repair it) but fails the write in re-derive
-// mode, where the NULL would win the generation guard over a correct stored value.
+// resolveUSDVolume is the one place a trade write computes usd_volume. A resolver read error stores NULL live (repairable by re-derive) but
+// fails a re-derive write, where the NULL would win the generation guard over a correct value.
 func (s *Store) resolveUSDVolume(ctx context.Context, t canonical.Trade) (*string, error) {
 	v, err := tradeUSDVolumeChecked(ctx, t, s.usdVolumeQuoteSpec, s.usdVolumeFXResolver)
 	if err != nil {
@@ -163,10 +159,8 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 	return &Store{db: db}, nil
 }
 
-// sessionConnConfig parses dsn for every pool and pins the session TimeZone to UTC, overriding the
-// server default, PGTZ and any DSN setting. Calendar interval arithmetic on a timestamptz
-// (`now() - INTERVAL '1 day'`) runs in the session zone, so the sargable closed-bucket guards
-// only match the UTC time_bucket grid when the session is UTC; a DST transition shifts them an hour.
+// sessionConnConfig parses dsn and pins the session TimeZone to UTC: interval arithmetic on timestamptz runs in the session zone, so the
+// closed-bucket guards only match the time_bucket grid in UTC (DST would shift them an hour).
 func sessionConnConfig(dsn string) (*pgx.ConnConfig, error) {
 	cfg, err := pgx.ParseConfig(dsn)
 	if err != nil {
@@ -183,11 +177,8 @@ func sessionConnConfig(dsn string) (*pgx.ConnConfig, error) {
 	return cfg, nil
 }
 
-// dsnParseError renders pgx's rejection of dsn without leaking the password. pgx's own redactor
-// stops at the first `/` or `@`, and the error is left unwrapped so no caller can reach
-// ParseConfigError.ConnString. Non-URL DSNs are keyword/value, whose syntax errors quote a
-// password's tail as a key, so none of pgx's text is kept. A URL's inner reason is kept only when
-// the URL parses, since only then it is about an option.
+// dsnParseError renders pgx's rejection without leaking the password: pgx's redactor stops at the first `/` or `@` and keyword/value syntax
+// errors quote a password tail, so only a URL's inner reason is kept, and only when the URL parses.
 func dsnParseError(dsn string, err error) error {
 	const prefix = "timescale: pgx.ParseConfig: "
 	if !strings.HasPrefix(dsn, "postgres://") && !strings.HasPrefix(dsn, "postgresql://") {

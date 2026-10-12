@@ -31,12 +31,8 @@ import (
 // CEXFiatMaxQuoteStaleness is the default and maximum as-of tolerance for the cex-fx tier.
 const CEXFiatMaxQuoteStaleness = fxQuotesSnapLookback
 
-// cexFiatQuoteAssets is the scan's quote-leg allow-list: every fiat code except USD, in the
-// sorted `fiat:<ISO4217>` wire form.
-//
-// It derives from [canonical.KnownFiatCodes] so a new currency is picked up automatically. USD is
-// excluded because a USD quote is already exact (tier 1); scanning it would drag millions of
-// correct rows through the walk.
+// cexFiatQuoteAssets is the quote-leg allow-list: every [canonical.KnownFiatCodes] code except USD (already exact, tier 1), as sorted
+// `fiat:<ISO4217>`.
 func cexFiatQuoteAssets() []string {
 	codes := canonical.KnownFiatCodes()
 	out := make([]string, 0, len(codes))
@@ -55,12 +51,8 @@ func cexFiatRestampSources(allow map[string]bool) []string {
 	return restampScanSources(CEXSourceNames(), allow)
 }
 
-// fxAsOfGate applies the as-of rule above to one window's rows.
-//
-// The read is cached per (ticker, UTC day), saving a query per row: fx_quotes holds one bucket per
-// ticker per day, so the nearest bucket at or before any instant in day D is the same row for
-// every trade in D. The AGE is still measured from each row's OWN timestamp, so two trades in one
-// day can fall on opposite sides of the tolerance.
+// fxAsOfGate applies the as-of rule above per window, caching per (ticker, UTC day) since fx_quotes has one bucket per ticker-day. Age
+// is still measured from each row's OWN timestamp, so two trades in one day can fall either side of the tolerance.
 type fxAsOfGate struct {
 	store *Store
 	max   time.Duration
@@ -87,10 +79,8 @@ func newFXAsOfGate(s *Store, tolerance time.Duration) *fxAsOfGate {
 	return &fxAsOfGate{store: s, max: tolerance, seen: map[fxAsOfKey]fxAsOfEntry{}}
 }
 
-// priceable reports whether `fx_quotes` holds a quote for the fiat asset
-// at or before `at` within the tolerance. A false answer is a REFUSAL to
-// price the row, counted; an error is a failed read, which stops the run
-// rather than being reported as an unpriceable population.
+// priceable reports whether fx_quotes holds a quote at or before `at` within tolerance; false is a counted REFUSAL, an error is a failed
+// read that stops the run.
 func (g *fxAsOfGate) priceable(ctx context.Context, asset canonical.Asset, at time.Time) (bool, error) {
 	if asset.Type != canonical.AssetFiat {
 		return false, nil

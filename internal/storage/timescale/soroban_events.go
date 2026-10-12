@@ -185,10 +185,8 @@ func (s *Store) StreamSorobanEvents(
 	return rows.Err()
 }
 
-// appendSorobanEventsFilter appends StreamSorobanEvents' contract / topic[0]
-// prefilters to sb (after a `ledger BETWEEN $1 AND $2` clause) and returns args
-// extended with their bind values. Shared with FirstSorobanEventLedger so the
-// seek and the stream cannot disagree about which rows a source sees.
+// appendSorobanEventsFilter appends StreamSorobanEvents' contract/topic[0] prefilters after `ledger BETWEEN $1 AND $2`, returning
+// extended args; shared with FirstSorobanEventLedger so the seek and the stream agree on which rows a source sees.
 func appendSorobanEventsFilter(sb *strings.Builder, args []any, contractIDs, topic0Syms, excludeTopic0Syms []string) []any {
 	if len(contractIDs) > 0 {
 		baseIdx := len(args) + 1
@@ -247,9 +245,7 @@ func topic0Args(syms []string) []any {
 	return out
 }
 
-// placeholdersFrom returns "$N, $N+1, …, $N+count-1" — used to
-// embed an IN-clause's placeholders mid-string for parameter-bound
-// queries.
+// placeholdersFrom returns "$N, $N+1, …, $N+count-1" for embedding an IN-clause mid-string.
 func placeholdersFrom(startIdx, count int) string {
 	var sb strings.Builder
 	for i := 0; i < count; i++ {
@@ -345,9 +341,7 @@ func (s *Store) MaxSorobanEventLedger(ctx context.Context) (uint32, bool, error)
 	return uint32(maxL.Int64), true, nil
 }
 
-// nullString maps an empty string to SQL NULL and any other value
-// to a populated sql.NullString. Mirrors `nullNumeric` in
-// cctp_events.go.
+// nullString maps an empty string to SQL NULL (mirrors nullNumeric in cctp_events.go).
 func nullString(v string) sql.NullString {
 	if v == "" {
 		return sql.NullString{}
@@ -355,9 +349,7 @@ func nullString(v string) sql.NullString {
 	return sql.NullString{String: v, Valid: true}
 }
 
-// nullBytes maps a nil byte slice to SQL NULL and any other value
-// to the bytes verbatim. Postgres' bytea column accepts the []byte
-// form natively via the pgx driver.
+// nullBytes maps a nil byte slice to SQL NULL, otherwise the bytes verbatim.
 func nullBytes(v []byte) any {
 	if v == nil {
 		return nil

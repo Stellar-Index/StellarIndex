@@ -80,20 +80,13 @@ func (c ListingDirectoryCensus) Check() string {
 	return ""
 }
 
-// listingRecognitionMaxAge is how long a cached row may be reused as RECOGNITION of an address,
-// measured on `synced_at`. It is spliced into every read so the bound lives in SQL.
-//
-// 48 hours: mappings change at human cadence, so a too-TIGHT bound is the real cost (2 hours on an
-// hourly sync flaps the admitted set on one rate-limited pass). 48h means 48 consecutive missed
-// passes, a DEAD sync, shown as [ListingDirectoryCensus.Stale].
+// listingRecognitionMaxAge bounds reuse of a cached row as RECOGNITION, measured on `synced_at`, spliced into every read. 48h, not
+// tight: a 2h bound on an hourly sync flaps the admitted set on one rate-limited pass; 48h means a dead sync
+// ([ListingDirectoryCensus.Stale]).
 const listingRecognitionMaxAge = "48 hours"
 
-// listingPriceMaxAge is how long the PLATFORM's price may be reused, measured on `priced_at` (its
-// clock), NOT `synced_at`: a frozen price is re-copied with a new `synced_at` every hour, so that
-// bound would launder it as fresh. A MISSING `priced_at` is REJECTED as unverifiable.
-//
-// 24 hours because this price is corroboration, not a trading input; tighter would blank most
-// (illiquid) listings.
+// listingPriceMaxAge bounds reuse of the platform's price on `priced_at` (its clock), NOT `synced_at`, which re-copies a frozen price
+// as fresh. A missing `priced_at` is rejected as unverifiable. 24h because the price is corroboration, not a trading input.
 const listingPriceMaxAge = "24 hours"
 
 // ListingPriceMaxFutureSkew is how far AHEAD of our clock a `priced_at` may sit and still count.
@@ -116,9 +109,8 @@ const (
 // read use it, so they cannot disagree about who qualified.
 const listingRecognisedSQL = `synced_at > now() - INTERVAL '` + listingRecognitionMaxAge + `'`
 
-// listingPriceFreshSQL is the price bound as a predicate on the platform's clock. `IS NOT NULL`
-// rejects a missing publication time explicitly, and the ceiling arm makes the floor a bound (see
-// [ListingPriceMaxFutureSkew]).
+// listingPriceFreshSQL bounds the price on the platform's clock; `IS NOT NULL` rejects a missing time, the ceiling arm makes the floor
+// a bound (see [ListingPriceMaxFutureSkew]).
 const listingPriceFreshSQL = `price_usd IS NOT NULL
 		   AND priced_at IS NOT NULL
 		   AND priced_at > now() - INTERVAL '` + listingPriceMaxAge + `'
@@ -198,12 +190,8 @@ func dedupListingEntriesByAddress(entries []ListingEntry) []ListingEntry {
 	return out
 }
 
-// buildListingUpsert renders one multi-row upsert: 5 params per row (address, listing_id, symbol,
-// price_usd, priced_at) plus one shared source param at len(chunk)*5+1. synced_at is the
-// transaction-stable now() the prune relies on.
-//
-// The price and time placeholders carry EXPLICIT `::numeric` / `::timestamptz` casts, as untyped
-// binds fail type inference; the price is a decimal STRING parsed by Postgres, never a float.
+// buildListingUpsert renders a multi-row upsert: 5 params per row plus a shared source at len(chunk)*5+1; synced_at is the tx-stable now().
+// Explicit `::numeric`/`::timestamptz` casts (untyped binds fail inference); price is a decimal STRING, never a float.
 func buildListingUpsert(chunk []ListingEntry, source string) (string, []any) {
 	var (
 		sb   strings.Builder
@@ -245,10 +233,8 @@ func buildListingUpsert(chunk []ListingEntry, source string) (string, []any) {
 	return sb.String(), args
 }
 
-// listingDirectoryContractsSQL reads the recognised CONTRACT rows.
-//
-// The price columns use a CASE on [listingPriceFreshSQL], not a WHERE: past the price bound the
-// row is STILL RECOGNISED, just unpriced. `price_usd::text` returns the NUMERIC digits verbatim.
+// listingDirectoryContractsSQL reads recognised CONTRACT rows. Price columns use a CASE on [listingPriceFreshSQL], not a WHERE: past the
+// bound the row is still recognised, just unpriced. `price_usd::text` keeps the NUMERIC digits verbatim.
 const listingDirectoryContractsSQL = `
 		SELECT address, listing_id, symbol,
 		       CASE WHEN ` + listingPriceFreshSQL + `
@@ -261,10 +247,7 @@ const listingDirectoryContractsSQL = `
 		   AND ` + listingIsContractSQL + `
 		 ORDER BY address`
 
-// listingDirectoryCensusSQL counts every bucket in one pass.
-//
-// One statement with FILTER aggregates so the buckets share ONE snapshot; separate statements can
-// straddle a sync or the moving `now()` and fail to reconcile.
+// listingDirectoryCensusSQL counts every bucket in one FILTER-aggregate statement so they share one snapshot and reconcile.
 const listingDirectoryCensusSQL = `
 		SELECT
 		  count(*) FILTER (WHERE ` + listingRecognisedSQL + `)              AS entries,
@@ -281,7 +264,8 @@ const listingDirectoryCensusSQL = `
 		                     AND ` + listingPriceFreshSQL + `)              AS priced_classic
 		  FROM asset_listing_directory`
 
-// ListingDirectoryContracts returns the recognised CONTRACT (C-strkey) rows of the listing directory cache within [listingRecognitionMaxAge], plus the census of the whole cache; classic rows are only counted.
+// ListingDirectoryContracts returns the recognised CONTRACT (C-strkey) rows of the listing directory cache within
+// [listingRecognitionMaxAge], plus the census of the whole cache; classic rows are only counted.
 func (s *Store) ListingDirectoryContracts(
 	ctx context.Context,
 ) ([]ListingEntry, ListingDirectoryCensus, error) {
@@ -331,9 +315,8 @@ func (s *Store) listingDirectoryCensus(ctx context.Context) (ListingDirectoryCen
 	return c, nil
 }
 
-// listingDirectoryByAddressSQL is [listingDirectoryContractsSQL] without the address-form
-// predicate: a classic asset can be listed under EITHER its `CODE-GISSUER` id or its SAC C-strkey,
-// and a reader seeing one form misses whichever the platform published. Same two staleness bounds.
+// listingDirectoryByAddressSQL is [listingDirectoryContractsSQL] without the address-form predicate: a classic asset can be listed under
+// its `CODE-GISSUER` id or its SAC C-strkey. Same two staleness bounds.
 const listingDirectoryByAddressSQL = `
 		SELECT address, listing_id, symbol,
 		       CASE WHEN ` + listingPriceFreshSQL + `
@@ -345,7 +328,8 @@ const listingDirectoryByAddressSQL = `
 		 WHERE ` + listingRecognisedSQL + `
 		 ORDER BY address`
 
-// ListingDirectoryByAddress returns every recognised row of the cached listing directory keyed by its exact Stellar address, plus the census of the whole cache.
+// ListingDirectoryByAddress returns every recognised row of the cached listing directory keyed by its exact Stellar address, plus the
+// census of the whole cache.
 func (s *Store) ListingDirectoryByAddress(
 	ctx context.Context,
 ) (map[string]ListingEntry, ListingDirectoryCensus, error) {

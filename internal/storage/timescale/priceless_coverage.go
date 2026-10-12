@@ -54,22 +54,13 @@ type AssetCoverageSignals struct {
 	TopAccountPairTrades7d int64
 }
 
-// coverageQuoteProxies is the USD/XLM-proxy quote set a servable price is derived through,
-// identical to the /v1/assets catalogue's direct_usd + asset_vs_xlm CTEs (USDC classic + its SAC,
-// fiat:USD, native + the XLM SAC) and kept in lockstep with listAssetsBaseSelect: an asset priced
-// only through one of these quotes is "priced" for the coverage check.
-//
-// Composed from the resolver's own lists (transitive_price.go) rather than restated, so the
-// tripwire and Store.TransitiveUSDPriceCandidates cannot disagree about what a proxy is;
-// TestProxyQuoteLists_Lockstep pins the catalogue's IN-lists to the same set. The XLM SAC is bound
-// at $1 in every query that splices this.
+// coverageQuoteProxies is the USD/XLM-proxy quote set, composed from the resolver's lists (transitive_price.go) and kept in lockstep
+// with listAssetsBaseSelect (TestProxyQuoteLists_Lockstep). The XLM SAC is bound at $1 in every query that splices this.
 const coverageQuoteProxies = usdProxyQuotes + `,
 	` + xlmQuotesBound1
 
-// pricelessTradeLegs is the trailing-7d priced trade set seen from each asset's side: one row per
-// (trade, leg). Sources that store swap direction (aquarius) can leave an asset on the QUOTE leg
-// only, so enumerating base_asset alone would never surface it. Proxy quotes are skipped on the
-// quote leg: they are seeded into the priced set, so they can never be candidates.
+// pricelessTradeLegs is the trailing-7d priced trade set, one row per (trade, leg): quote-leg-only assets (aquarius) need the quote
+// side; proxy quotes are skipped there since they are seeded as priced.
 const pricelessTradeLegs = `(
   SELECT base_asset AS asset_id, ts, usd_volume, maker, taker
     FROM trades
@@ -83,24 +74,11 @@ const pricelessTradeLegs = `(
      AND quote_asset NOT IN (` + coverageQuoteProxies + `)
   ) legs`
 
-// popularPricelessCandidatesSQL extracts, per trades asset (either leg) with ANY priced volume in
-// the trailing 7 days, the signal set the tripwire classifies. It PRE-FILTERS to priceless assets
-// above a coarse RAW-volume floor ($1 / 1 trade) so the candidate set stays bounded; the
-// market-character discount, popularity floor and withheld verdict belong to the pure classifier.
-//
-// The counterparty key is UNORDERED (LEAST/GREATEST) so A->B / B->A folds into one pair.
-//
-// ONE POPULATION. Only the SDEX decoder records both sides of a fill; on every Soroban AMM the
-// resting side is the POOL (taker set, maker NULL). Requiring both columns in the numerator while
-// the vol7d denominator took every row would measure two DIFFERENT populations, so an AMM-only
-// asset's share would be 0 and the wash exclusion never fire. The key DEGENERATES to the one known
-// account when a side is unknown (the AMM ping-pong signature).
-//
-// Rows with NO account on either side (external CEX feeds) cannot enter the numerator, so
-// unattributed volume dilutes the share DOWNWARD (the tripwire errs toward paging);
-// attributed_vol_share reports what the share was measured over.
-//
-// COST: a full sweep takes about a minute, inside DefaultSweepTimeout (5 min).
+// popularPricelessCandidatesSQL extracts per-asset signals for priceless assets above a coarse RAW-volume floor ($1 / 1 trade); the
+// classifier owns the real verdict. The counterparty key is UNORDERED (LEAST/GREATEST). ONE POPULATION: only SDEX records both sides
+// (Soroban AMMs set taker only), so the key DEGENERATES to the one known account when a side is unknown; mixing populations would zero
+// an AMM-only share and never fire the wash exclusion. Unattributed rows (CEX) dilute the share DOWNWARD (errs toward paging);
+// attributed_vol_share reports the basis. COST: a full sweep is about a minute, inside DefaultSweepTimeout (5 min).
 const popularPricelessCandidatesSQL = `
 WITH vol7d AS (
   SELECT asset_id,
@@ -213,18 +191,14 @@ func (s *Store) PopularPricelessCandidates(ctx context.Context) ([]AssetCoverage
 	return out, nil
 }
 
-// substanceFloorHaving is the "not decoration" substance gate applied to a GROUP BY asset_id over
-// prices_1m: the same three floors one_hop's `priced` CTE applies. priced_direct shares this HAVING
-// clause so its "is this asset priced?" answer cannot drift from one_hop's; without it a single
-// unqualified prices_1m row would count as directly priced.
+// substanceFloorHaving is the substance gate on GROUP BY asset_id over prices_1m, shared with one_hop's `priced` CTE so priced_direct
+// cannot drift from it (else one unqualified row would count as priced).
 const substanceFloorHaving = `SUM(volume_usd) >= 1000                                   -- pricingguard DefaultSubstanceMinVolumeUSD
      AND COUNT(DISTINCT bucket) >= 20                          -- pricingguard DefaultSubstanceMinBuckets
      AND EXTRACT(EPOCH FROM (MAX(bucket) - MIN(bucket))) >= 21600 -- pricingguard DefaultSubstanceMinSpan (6h)`
 
-// pricelessPricedCTEs is the "what counts as priced" half of the tripwire's query (priced_direct,
-// one_hop and priced) as one text, so a single-asset probe asks EXACTLY the same question the sweep
-// asks. Both queries splice it after their own leading CTEs; it ends with the `priced` CTE closed,
-// no trailing comma.
+// pricelessPricedCTEs is the "what counts as priced" CTEs (priced_direct, one_hop, priced) spliced into both sweep and probe so they ask
+// the same question; it ends with `priced` closed, no trailing comma.
 const pricelessPricedCTEs = `priced_direct AS (
   SELECT base_asset AS asset_id
     FROM prices_1m
@@ -304,9 +278,7 @@ priced AS (
 )
 `
 
-// pricelessServedArm is the served-price arm of the tripwire's priced set:
-// an asset /v1/assets serves a price for is not a coverage gap. Same join
-// bound as listAssetsBaseSelect, so it tracks exactly what the listing serves.
+// pricelessServedArm is the served-price arm: an asset /v1/assets prices is no gap; same join bound as listAssetsBaseSelect.
 const pricelessServedArm = `SELECT asset_id
     FROM asset_price_snapshot
    WHERE computed_at > now() - INTERVAL '` + assetPriceSnapshotMaxAge + `'`

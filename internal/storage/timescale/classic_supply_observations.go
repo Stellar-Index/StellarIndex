@@ -17,10 +17,8 @@ import (
 // SeedIntraLedgerSeq is the intra_ledger_seq a seed writer stamps (math.MaxUint32) so the seed row, the authoritative final state for its ledger, sorts last: a live change never overwrites it and a re-seed does.
 const SeedIntraLedgerSeq = uint32(math.MaxUint32)
 
-// observationWalkVersion is stamped as walk_version on every observation row
-// (migration 0199). It is the numbering intra_ledger_seq was drawn from, so
-// the upsert guard compares positions only within one walk and lets a
-// re-derive under a newer walk replace an older one's row.
+// observationWalkVersion is stamped as walk_version on each row (migration 0199): the upsert guard compares intra_ledger_seq only within one
+// walk.
 const observationWalkVersion = int64(dispatcher.EntryWalkVersion)
 
 // TrustlineObservation is the wire shape for a single trustline-delta row.
@@ -132,9 +130,8 @@ func (s *Store) sumTrustlineCurrent(ctx context.Context, assetKey string, asOfLe
 	return v, nil
 }
 
-// seedTrustlineCurrent folds the asset's history into trustline_balance_current and marks it
-// seeded, in one transaction under the asset's advisory lock (the one 0215's invalidation takes).
-// Strict > so a stale snapshot row never overwrites an equal-key row the trigger rewrote since.
+// seedTrustlineCurrent folds the asset's history into trustline_balance_current and marks it seeded, in one transaction under the asset's
+// advisory lock (the one 0215's invalidation takes). Strict > so a stale snapshot never overwrites an equal-key row the trigger rewrote.
 // unbounded-latest-ok: every holder's latest row, however old, is part of the current balance.
 func (s *Store) seedTrustlineCurrent(ctx context.Context, assetKey string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -243,10 +240,8 @@ func (s *Store) InsertClaimableObservation(ctx context.Context, o ClaimableObser
 	return nil
 }
 
-// claimableObservationUpsert is the INSERT … ON CONFLICT tail shared by the
-// single-row and batch writers, so a seeded row and a live-observed row land
-// through byte-identical SQL. Keep them in lockstep: the seed's whole premise
-// is that its rows are indistinguishable from the observer's.
+// claimableObservationUpsert is the ON CONFLICT tail shared by the single-row and batch writers so seeded and live rows use byte-identical
+// SQL.
 const claimableObservationUpsert = ` ON CONFLICT (claimable_id, ledger, observed_at) DO UPDATE SET
             balance_stroops  = EXCLUDED.balance_stroops,
             is_removal       = EXCLUDED.is_removal,
@@ -303,10 +298,8 @@ func (s *Store) InsertClaimableObservationBatch(ctx context.Context, rows []Clai
 	return nil
 }
 
-// claimableObservationKey is the claimable_observations ON CONFLICT identity
-// (claimable_id, ledger, observed_at). observed_at is normalised to a UTC
-// UnixNano so two instants differing only in location / monotonic reading —
-// which land in the same timestamptz — collapse to one key.
+// claimableObservationKey is the ON CONFLICT identity; observed_at is a UTC UnixNano so instants differing only in location or monotonic
+// reading collapse.
 type claimableObservationKey struct {
 	claimableID     string
 	ledger          uint32
@@ -591,9 +584,7 @@ func (s *Store) SACBalanceForContractAtOrBefore(ctx context.Context, contractHol
 	return scanLatestBalance(ctx, s.db, q, contractHolder, assetKey, int(asOfLedger))
 }
 
-// scanLatestBalance is the shared helper for the per-(holder,
-// asset) lookup methods. Returns zero on sql.ErrNoRows or
-// is_removal=true; non-nil *big.Int otherwise.
+// scanLatestBalance returns zero on sql.ErrNoRows or is_removal=true, else the non-nil balance.
 func scanLatestBalance(ctx context.Context, db *sql.DB, q string, args ...any) (*big.Int, error) {
 	var (
 		raw       string
@@ -616,9 +607,7 @@ func scanLatestBalance(ctx context.Context, db *sql.DB, q string, args ...any) (
 	return v, nil
 }
 
-// scanSum runs `q` with the supplied positional args, expecting
-// a single TEXT-cast NUMERIC result, and returns it as *big.Int.
-// Shared helper for the four Sum* methods above.
+// scanSum runs q expecting one TEXT-cast NUMERIC and returns it as *big.Int.
 func scanSum(ctx context.Context, db *sql.DB, q string, args ...any) (*big.Int, error) {
 	var raw string
 	if err := db.QueryRowContext(ctx, q, args...).Scan(&raw); err != nil {
@@ -656,9 +645,7 @@ func (s *Store) MinClassicComponentLedger(ctx context.Context, assetKey string, 
 	return s.classicObserverWatermark(ctx, asOfLedger)
 }
 
-// classicWatermarkTTL bounds how long [Store.classicObserverWatermark] reuses a cached watermark.
-// It is two orders of magnitude tighter than the ~85-minute staleness threshold it feeds, so
-// caching cannot mask a stalled observer; it only collapses redundant per-asset reads in a tick.
+// classicWatermarkTTL bounds watermark caching; far tighter than the ~85-minute staleness threshold, so it cannot mask a stalled observer.
 const classicWatermarkTTL = 30 * time.Second
 
 type classicWatermarkCache struct {
@@ -668,10 +655,8 @@ type classicWatermarkCache struct {
 	fetchedAt time.Time
 }
 
-// classicObserverWatermark returns the lowest per-observer watermark across the four
-// classic-supply component tables, across all assets. Memoized per [classicWatermarkTTL] (see
-// [classicWatermarkCache]) and keyed on asOfLedger so a backfill replaying historical ledgers is
-// never served a live-tip watermark.
+// classicObserverWatermark returns the lowest watermark across the four classic-supply component tables, memoized per [classicWatermarkTTL]
+// and keyed on asOfLedger so a backfill replaying history is never served a live-tip watermark.
 func (s *Store) classicObserverWatermark(ctx context.Context, asOfLedger uint32) (uint32, error) {
 	c := &s.classicWatermark
 	c.mu.Lock()

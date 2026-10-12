@@ -29,14 +29,13 @@ func (k UpshiftVaultEventKind) IsValid() bool {
 	return false
 }
 
-// isFlow reports whether k is a deposit or withdraw — the two kinds
-// that carry the full (caller, receiver, owner) triple plus both
-// amounts.
+// isFlow reports whether k is a deposit or withdraw, the kinds carrying the full (caller, receiver, owner) triple and both amounts.
 func (k UpshiftVaultEventKind) isFlow() bool {
 	return k == UpshiftDeposit || k == UpshiftWithdraw
 }
 
-// UpshiftVaultEvent is one upshift_vault_events row; fields not meaningful for Kind are written as SQL NULL, not zero, because a real zero amount and an absent one are different facts.
+// UpshiftVaultEvent is one upshift_vault_events row; fields not meaningful for Kind are written as SQL NULL, not zero, because a real
+// zero amount and an absent one are different facts.
 type UpshiftVaultEvent struct {
 	ContractID      string
 	Ledger          uint32
@@ -60,7 +59,8 @@ type UpshiftVaultEvent struct {
 	NewAmount canonical.Amount // deployed_assets_changed
 }
 
-// InsertUpshiftVaultEvent appends one Upshift vault event row, idempotent on the PK via an upsert guarded by derive_generation <= EXCLUDED.derive_generation, so an equal-or-higher replay corrects it.
+// InsertUpshiftVaultEvent appends one Upshift vault event row, idempotent on the PK via an upsert guarded by derive_generation <=
+// EXCLUDED.derive_generation, so an equal-or-higher replay corrects it.
 func (s *Store) InsertUpshiftVaultEvent(ctx context.Context, e UpshiftVaultEvent) error {
 	if e.ContractID == "" {
 		return errors.New("timescale: InsertUpshiftVaultEvent: ContractID is empty")
@@ -144,7 +144,8 @@ func (s *Store) InsertUpshiftVaultEvent(ctx context.Context, e UpshiftVaultEvent
 	return nil
 }
 
-// UpshiftVaultShareSupply is one vault's derived share supply and cumulative underlying flow over the whole recorded history; supply is exact since no mint or burn occurs outside deposit/withdraw.
+// UpshiftVaultShareSupply is one vault's derived share supply and cumulative underlying flow over the whole recorded history; supply is
+// exact since no mint or burn occurs outside deposit/withdraw.
 type UpshiftVaultShareSupply struct {
 	ContractID string
 	// Shares outstanding: minted − burned, in the vault's share units
@@ -163,7 +164,9 @@ type UpshiftVaultShareSupply struct {
 	LatestAt         time.Time
 }
 
-// UpshiftVaultShareSupplies returns the derived share supply for every vault with a recorded flow, ordered by contract id, or (nil, nil) when nothing is indexed; unbounded-latest-ok: a vault whose last deployed_assets_changed predates any floor still has that deployment.
+// UpshiftVaultShareSupplies returns the derived share supply for every vault with a recorded flow, ordered by contract id, or (nil,
+// nil) when nothing is indexed; unbounded-latest-ok: a vault whose last deployed_assets_changed predates any floor still has that
+// deployment.
 func (s *Store) UpshiftVaultShareSupplies(ctx context.Context) ([]UpshiftVaultShareSupply, error) {
 	const q = `
 		WITH flows AS (

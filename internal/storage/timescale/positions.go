@@ -7,22 +7,12 @@ import (
 	"time"
 )
 
-// This file is the read side for GET /v1/accounts/{g_strkey}/positions: six per-protocol fold
-// queries, one per venue table. Each is a `WHERE <user_col> = $1 GROUP BY <venue_col...>` bounded
-// by positionsVenueLimit and served by a user-leading index.
-//
-// Net amounts are a per-venue SUM of signed per-event deltas ("event_derived" basis), because the
-// served tier is append-only and none of these tables track a running balance. sorocredit's
-// credit_positions is the exception (see CreditPositionsByOwner): it has no per-event amount, so
-// its figure is the protocol's own latest published statement ("basis: stateful").
-//
-// Every fold orders by its venue key before the LIMIT so which venues survive positionsVenueLimit
-// is not plan-dependent.
+// positionsVenueLimit bounds each per-venue fold (GET /v1/accounts/{g_strkey}/positions); folds order by venue key first so survivors
+// are not plan-dependent. Nets are SUMs of signed per-event deltas ("event_derived"); sorocredit's credit_positions is "stateful"
+// (latest statement).
 const positionsVenueLimit = 500
 
-// queryFold runs one of this file's `WHERE <user_col> = $1 ... LIMIT $2` fold queries and scans
-// each row via scan, sharing the query/scan/err shell. label is the calling method's name, used
-// in the wrapped error text; each method keeps its own SQL and scanned struct.
+// queryFold runs one `WHERE <user_col> = $1 ... LIMIT $2` fold query and scans each row; label names the caller in the wrapped error.
 func queryFold[T any](ctx context.Context, db *sql.DB, label, query string, args []any, scan func(*sql.Rows) (T, error)) ([]T, error) {
 	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -110,9 +100,8 @@ const (
 		UNION ALL ` + blendBadDebtMovesSQL + ` AND user_address = $1`
 )
 
-// blendPositionsByUserSQL is BlendPositionsByUser's query: the account's
-// blend_positions nets FULL JOINed to its auction moves, so a moved leg
-// is flagged and a leg only a move created still appears.
+// blendPositionsByUserSQL FULL JOINs the account's blend_positions nets to its auction moves, so a moved leg is flagged and a move-only
+// leg appears.
 const blendPositionsByUserSQL = `
 		WITH ev AS (
 		  SELECT pool, asset,

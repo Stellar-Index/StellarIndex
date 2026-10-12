@@ -27,20 +27,15 @@ import (
 	"strconv"
 )
 
-// oracleSeriesNameUpdates is the window-stable name of the total update
-// series; the grain (hourly at the 24h window, daily otherwise) lives in
-// the point timestamps, mirroring the bridge/CCTP series convention.
+// oracleSeriesNameUpdates is the window-stable name of the total update series; the grain lives in the point timestamps.
 const oracleSeriesNameUpdates = "Updates"
 
 // oracleBreakdownTopN caps the "Updates by feed" donut at the top feeds,
 // folding the tail into one honest "Others" slice.
 const oracleBreakdownTopN = 10
 
-// oracleWindowKPIQuery returns the windowed headline counts: updates, distinct feeds, mean
-// updates/day, freshest-update age, and how many feeds are unmapped (`raw:<symbol>` rows, see
-// canonical.AssetOracleRaw). The page counts totality, so unmapped feeds stay inside every count
-// and table and get their own KPI instead of being filtered.
-// $1 = source, $2 = windowDays, $3 = interval.
+// oracleWindowKPIQuery returns the windowed headline counts; unmapped feeds (`raw:<symbol>`, canonical.AssetOracleRaw) stay inside every
+// count and get their own KPI instead of being filtered. $1 = source, $2 = windowDays, $3 = interval.
 func oracleWindowKPIQuery() string {
 	return `
 		SELECT count(*)::text,
@@ -52,9 +47,7 @@ func oracleWindowKPIQuery() string {
 		WHERE source = $1 AND ts > now() - $3::interval`
 }
 
-// oracleMedianIntervalQuery returns the median gap between successive
-// DISTINCT publication timestamps in the window (batch rows share a ts, so row gaps are zero).
-// NULL (fewer than two distinct timestamps) renders as an em dash.
+// oracleMedianIntervalQuery returns the median gap between DISTINCT publication timestamps (batch rows share a ts); NULL if under two.
 // $1 = source, $2 = interval.
 func oracleMedianIntervalQuery() string {
 	return `
@@ -66,10 +59,7 @@ func oracleMedianIntervalQuery() string {
 		FROM d WHERE gap IS NOT NULL`
 }
 
-// oracleAllTimeKPIQuery returns the retained-history totals: every stored
-// update for the source plus the first observation date. Deliberately not window-bounded; it is
-// retained served-tier history, not protocol genesis.
-// $1 = source.
+// oracleAllTimeKPIQuery returns retained-history totals and the first observation date; deliberately not window-bounded. $1 = source.
 func oracleAllTimeKPIQuery() string {
 	return `
 		SELECT count(*)::text, COALESCE(min(ts)::date::text, '—')
@@ -88,10 +78,8 @@ func oracleUpdatesSeriesQuery(windowDays int) string {
 		GROUP BY 1 ORDER BY 1 ASC`
 }
 
-// oraclePerFeedSeriesQuery builds the top-5-feeds-by-window-count series:
-// (feed_label, bucket, count) rows ordered by each feed's window count
-// descending, then bucket — folded into per-feed lines by
-// collectKeyedSeries. $1 = source, $2 = interval.
+// oraclePerFeedSeriesQuery returns (feed_label, bucket, count) rows for the top-5 feeds by window count, folded by collectKeyedSeries.
+// $1 = source, $2 = interval.
 func oraclePerFeedSeriesQuery(windowDays int) string {
 	trunc, format := bridgeSeriesGrain(windowDays)
 	return `
@@ -110,8 +98,7 @@ func oraclePerFeedSeriesQuery(windowDays int) string {
 		ORDER BY t.n DESC, 1, 2 ASC`
 }
 
-// oracleFeedBreakdownQuery returns per-feed window update counts, count-
-// descending; Go folds the tail beyond oracleBreakdownTopN into "Others".
+// oracleFeedBreakdownQuery returns per-feed window counts, descending; Go folds the tail beyond oracleBreakdownTopN into "Others".
 // $1 = source, $2 = interval.
 func oracleFeedBreakdownQuery() string {
 	return `
@@ -129,9 +116,7 @@ func oracleFeedsTableQuery() string {
 		GROUP BY asset, quote ORDER BY count(*) DESC, asset, quote LIMIT 15`
 }
 
-// oracleLatestPricesQuery returns the pre-existing latest-observation
-// table: one row per feed with the raw integer price shown verbatim at its
-// declared decimals — no rescaling or averaging (see the file doc).
+// oracleLatestPricesQuery returns one row per feed: the raw integer price verbatim at its declared decimals, no rescaling or averaging.
 // $1 = source, $2 = interval.
 func oracleLatestPricesQuery() string {
 	return `
@@ -149,9 +134,7 @@ func oracleLatestPricesQuery() string {
 		  ORDER BY ts DESC LIMIT 50`
 }
 
-// bespokeOracle builds the oracle bespoke block (reflector-dex/cex/fx,
-// band, redstone) from oracle_updates scoped by source: cadence KPIs, update series, the
-// updates-by-feed breakdown, per-feed cadence and the latest raw observations.
+// bespokeOracle builds the oracle bespoke block (reflector-dex/cex/fx, band, redstone) from oracle_updates scoped by source.
 func (s *Store) bespokeOracle(ctx context.Context, source string, windowDays int) (*BespokeBlock, error) {
 	since := fmt.Sprintf("%d days", windowDays)
 	blk := &BespokeBlock{
@@ -286,10 +269,8 @@ func (s *Store) oracleTables(ctx context.Context, blk *BespokeBlock, source, sin
 	return nil
 }
 
-// collectKeyedSeries runs a (key, bucket, value) query and folds its
-// ordered rows into one BespokeSeries per key, preserving the query's key
-// order and naming each series via nameFor. Shared by the oracle per-feed
-// lines and the yield per-direction lines (same package, defined once here).
+// collectKeyedSeries folds ordered (key, bucket, value) rows into one BespokeSeries per key, keeping key order and naming via nameFor.
+// Shared by the oracle per-feed lines and the yield per-direction lines.
 func (s *Store) collectKeyedSeries(ctx context.Context, query, unit string, nameFor func(string) string, args ...any) ([]BespokeSeries, error) {
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -315,8 +296,7 @@ func (s *Store) collectKeyedSeries(ctx context.Context, query, unit string, name
 	return out, rows.Err()
 }
 
-// foldBreakdownRows keeps the first topN rows (count-descending) and folds the rest into one
-// "Others" row with the tail's summed counts. Only for count-weighted breakdowns, never token
+// foldBreakdownRows keeps the first topN rows and folds the rest into one "Others" row. Count-weighted breakdowns only, never token
 // amounts: amounts across feeds or vaults are different units and must not be summed.
 func foldBreakdownRows(rows []BespokeBreakdownRow, topN int) []BespokeBreakdownRow {
 	if len(rows) <= topN {

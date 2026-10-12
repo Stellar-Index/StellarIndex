@@ -42,24 +42,9 @@ type MarketDay struct {
 	Trades int64
 }
 
-// DailyMarketDays returns one [MarketDay] per (asset, UTC day) over the
-// inclusive range [from, to], folding EVERY dollar spelling in `quotes`.
-//
-// The dollar spellings (classic USDC, its SAC, `fiat:USD`) carry disjoint venue populations, so the
-// market is their sum, the same union [pricingguard.SubstanceGate] and [Store.GetAssetATH] use.
-// Each asset's [canonical.AssetAliases] forms are mapped back to it in SQL so `hours` counts
-// distinct hours once; a spelling shared by two requested assets is credited to the first only.
-//
-// It reads prices_1h: prices_1d has no intra-day timing, and prices_1m can carry an armable 90-day
-// retention that would silently truncate the series. prices_1h has no retention
-// ([CAGGsLiveForever]) but its depth is not promised: an unmaterialised span reads as "did not
-// trade", so callers counting silent days must bound the count to the span this reader covers.
-//
-// Only rows with the asset as base are read; a dollar-first book reads as no market (a false
-// absence, never a wrong price). Empty `assets` or `quotes` returns (nil, nil). Closed buckets only;
-// bounds floor to their UTC day and `to` reads through its end.
-//
-// dailyMarketDaysQuery is package-level so a query-shape test can pin its sargability.
+// dailyMarketDaysQuery sums every dollar spelling per asset and UTC day from prices_1h (prices_1d lacks intra-day timing; prices_1m can
+// carry retention). Base-side only; closed buckets only; an unmaterialised span reads as "did not trade"; package-level so a test pins
+// sargability.
 const dailyMarketDaysQuery = `
         WITH family AS (
             SELECT spelling, member
@@ -124,9 +109,8 @@ func (s *Store) DailyMarketDays(
 	return out, nil
 }
 
-// marketDayFamilies binds every alias spelling of each requested asset ($1) alongside the asset it
-// folds onto ($5), as parallel arrays. Each spelling is bound once: an asset keeps its own, and a
-// shared alias goes to the first asset naming it.
+// marketDayFamilies binds each requested asset's alias spellings ($1) with the asset they fold onto ($5); a shared alias goes to the
+// first asset.
 func marketDayFamilies(assets []canonical.Asset) (spellings, members []string) {
 	seen := make(map[string]struct{}, len(assets)*2)
 	claim := func(form, member string) {

@@ -126,9 +126,8 @@ var CAGGsOnPrices1m = []string{"twap_1h", "twap_1d"}
 // SupplyCAGG is the continuous aggregate over asset_supply_history; its policy reaches back only 7 days, so older re-derived snapshots need an explicit refresh.
 var SupplyCAGG = CAGGSpec{Name: "supply_1d", MinWindow: 3 * 24 * time.Hour}
 
-// allowedCAGGViews is the allow-list of view names RefreshContinuousAggregate accepts. The name is
-// string-formatted into the SQL (the procedure's first arg is REGCLASS, which pgx cannot
-// placeholder), so the list is what keeps injection out.
+// allowedCAGGViews is the allow-list for RefreshContinuousAggregate; the name is string-formatted (REGCLASS cannot be a placeholder), so
+// this blocks injection.
 var allowedCAGGViews = func() map[string]bool {
 	m := make(map[string]bool, len(TradesCAGGs)+len(OracleCAGGs)+1)
 	for _, c := range TradesCAGGs {
@@ -327,9 +326,8 @@ func (s *Store) BackfillCoverageStats(_ context.Context) ([]BackfillCoverage, er
 	return nil, nil
 }
 
-// supplyCoverageStatsQuery backs [Store.SupplyCoverageStats]. The `newest` CTE orders by `time`
-// alone: close time is monotonic in ledger sequence, so a ledger_sequence tie-break could never
-// fire and would only add a sort key that defeats the single ordered-append seek.
+// supplyCoverageStatsQuery backs [Store.SupplyCoverageStats]; `newest` orders by `time` alone (monotonic in ledger sequence), a tie-break
+// would defeat the single seek.
 const supplyCoverageStatsQuery = `
 	WITH RECURSIVE assets AS (
 	    (SELECT asset_key FROM asset_supply_history ORDER BY asset_key LIMIT 1)
@@ -406,20 +404,10 @@ func (s *Store) SourceEntryCounts(ctx context.Context) (map[string]int64, error)
 	return out, nil
 }
 
-// seedSourceEntryCountsSQL recomputes source_entry_counts from a full GROUP BY over every
-// decoded-event hypertable and overwrites the tally (SET, not ADD, so re-running converges). The
-// incremental bump cannot know pre-counter history, hence the operator one-shot
-// `stellarindex-ops seed-entry-counts` after a backfill, which scans every chunk in one
-// transaction.
-//
-// Its tables stay in lockstep with DefaultGapDetectorTargets via
-// [TestSeedSourceEntryCountsFoldsEveryPerSourceHypertable]; a watched table left out would have
-// its tally overwritten by a re-seed.
-//
-// pipeline/sink.go's bumpEntryCount adds +1 unconditionally, so a replay double-counts; each
-// folded table holds one idempotent row per bumped event, so a re-seed corrects the drift. A
-// source spread over several tables has disjoint event sets, so the outer GROUP BY sum is the
-// honest total. SeedSourceEntryCounts returns the number of source rows reconciled.
+// seedSourceEntryCountsSQL recomputes source_entry_counts via a full GROUP BY over every decoded-event hypertable and overwrites (SET, not
+// ADD, so it converges); the incremental bump cannot know pre-counter history. Its tables stay in lockstep with DefaultGapDetectorTargets
+// via [TestSeedSourceEntryCountsFoldsEveryPerSourceHypertable]. pipeline/sink.go's bumpEntryCount double-counts on replay; the re-seed
+// corrects it.
 const seedSourceEntryCountsSQL = `
         INSERT INTO source_entry_counts AS sec (source, entry_count, updated_at)
         SELECT source, sum(c)::bigint, now()

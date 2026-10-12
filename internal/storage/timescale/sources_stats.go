@@ -55,10 +55,8 @@ func (s *Store) GetSourceStats(ctx context.Context) ([]SourceStats, error) {
 	return out, nil
 }
 
-// sourceStatsQuery builds GetSourceStats's query. canonBase/canonQuote fold a market's two stored
-// orientations (e.g. XLM/USDC and USDC/XLM) into one per_pair group before the outer COUNT(*)
-// yields markets_24h (see canonOrientSQL); otherwise a source printing both directions inflates
-// markets_24h by one per flipped pair.
+// sourceStatsQuery builds GetSourceStats's query; canonBase/canonQuote fold a market's two orientations into one per_pair group (see
+// canonOrientSQL) so markets_24h is not inflated per flipped pair.
 func sourceStatsQuery() string {
 	canonBase, canonQuote, _ := canonOrientSQL(1)
 	return `
@@ -120,13 +118,9 @@ func (s *Store) GetSourceVolumeHistory7d(ctx context.Context) ([]SourceVolumeBuc
 	return s.sourceVolumeHistory(ctx, "7 days")
 }
 
-// sourceVolumeHistory returns per-(source, hour) volume + trade count over a trailing window.
-// `window` is a Postgres interval literal bound as $1, never concatenated.
-//
-// Reads the source_volume_1h CAGG: sum_usd_priced is the trade-time usd_volume sum. Unpriced XLM
-// legs (sum_xlm_base / sum_xlm_quote) are surfaced as xlm_unpriced, not valued at today's
-// XLM/USD, which would move a historical hour with spot. The bucket predicate is
-// dexHourlyBucketWindow, the set the DEX 24h readers select.
+// sourceVolumeHistoryQuery returns per-(source, hour) volume over a trailing `window` bound as $1. It reads source_volume_1h: unpriced
+// XLM legs surface as xlm_unpriced, not valued at today's rate; the bucket predicate is dexHourlyBucketWindow, shared with the DEX 24h
+// readers.
 func sourceVolumeHistoryQuery() string {
 	return `
 		SELECT source,
@@ -224,10 +218,8 @@ func (s *Store) AssetSourceStats(ctx context.Context, asset []string) ([]SourceS
 	return s.scanSourceStats(ctx, assetSourceStatsQuery, asset)
 }
 
-// scanSourceStats runs a (static) per-source-breakdown query with the
-// given bound args and scans the rows. MarketsCount24h is meaningful
-// only for the asset variant (distinct pairs per source); it's 1 for a
-// single pair.
+// scanSourceStats runs a static per-source query and scans rows; MarketsCount24h is meaningful only for the asset variant (1 for a
+// single pair).
 func (s *Store) scanSourceStats(ctx context.Context, query string, args ...any) ([]SourceStats, error) {
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {

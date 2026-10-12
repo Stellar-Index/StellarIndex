@@ -190,9 +190,8 @@ func (s *Store) SEP41GenesisBaselineSeeded(ctx context.Context, contractID strin
 	return seeded, nil
 }
 
-// sep41RollupRow is the parsed sep41_supply_rollup row: the Soroban-era running
-// totals + checkpoint ledger, plus the seeded pre-Soroban genesis baseline
-// (migration 0088). genesisSeeded reflects genesis_baseline_ledger IS NOT NULL.
+// sep41RollupRow is the parsed sep41_supply_rollup row: Soroban-era totals + checkpoint ledger, plus the seeded genesis baseline (0088).
+// genesisSeeded is genesis_baseline_ledger IS NOT NULL.
 type sep41RollupRow struct {
 	rollup        SEP41KindTotals
 	lastLedger    uint32
@@ -302,15 +301,8 @@ func validateSEP41GenesisBaseline(contractID string, genesis SEP41KindTotals) er
 	return nil
 }
 
-// sep41SorobanFloor returns the lowest ledger the Soroban-era slice may include for a contract.
-// The ClickHouse-seeded genesis baseline covers ledger < genesis_baseline_ledger, so the Postgres
-// slice must START at that boundary or the overlap is summed twice. Nothing else enforces the
-// partition, and sep41_supply_events does hold rows below it (CAP-67 replays classic movements as
-// contract events); double-counted burns can push the net below zero.
-//
-// SEP41SupplyEventKindResum shares the floor, or verify-rollup would reconcile two copies of the
-// same mistake and report green. Zero when no baseline is seeded: those rows are then the ONLY
-// record of that history and must keep contributing.
+// sep41SorobanFloor is the lowest ledger the Soroban slice may include; the baseline covers < genesis_baseline_ledger, else it sums twice.
+// Resum shares it so verify-rollup can't agree with itself; 0 when no baseline is seeded.
 func sep41SorobanFloor(cp sep41RollupRow) uint32 {
 	if !cp.genesisSeeded {
 		return 0
@@ -338,9 +330,8 @@ func (s *Store) sep41KindTotalsFullSum(ctx context.Context, contractID string, f
 	return parseSEP41Totals(mintRaw, burnRaw, clawbackRaw)
 }
 
-// sep41KindTotalsRange sums the delta over (afterLedger, asOfLedger]. The `ledger > afterLedger`
-// bound walks only the tail of the (contract_id, ledger DESC) index, so the delta above a fresh
-// checkpoint is cheap regardless of history depth.
+// sep41KindTotalsRange sums the delta over (afterLedger, asOfLedger]; `ledger > afterLedger` walks only the index tail, cheap at any
+// history depth.
 func (s *Store) sep41KindTotalsRange(ctx context.Context, contractID string, afterLedger, floorLedger, asOfLedger uint32) (SEP41KindTotals, error) {
 	const q = `
         SELECT
@@ -394,10 +385,8 @@ func (s *Store) MinSEP41ComponentLedger(ctx context.Context, contractID string, 
 	return s.sep41ObserverWatermark(ctx, asOfLedger)
 }
 
-// sep41ObserverWatermark returns MAX(ledger) across ALL sep41_supply_events at-or-before
-// asOfLedger, the producer's progress. It is memoized like [Store.classicObserverWatermark]: the
-// value is identical for every contract in a tick and the TTL is far below the staleness threshold,
-// so the cache cannot mask a stall.
+// sep41ObserverWatermark returns MAX(ledger) over ALL sep41_supply_events at-or-before asOfLedger, memoized like
+// [Store.classicObserverWatermark] (identical per contract in a tick; TTL far below the staleness threshold, so it cannot mask a stall).
 func (s *Store) sep41ObserverWatermark(ctx context.Context, asOfLedger uint32) (uint32, error) {
 	c := &s.sep41Watermark
 	c.mu.Lock()
@@ -414,10 +403,8 @@ func (s *Store) sep41ObserverWatermark(ctx context.Context, asOfLedger uint32) (
 	return watermark, nil
 }
 
-// validateSEP41SupplyEventRows is the row contract the multi-row
-// sep41_supply_events writers enforce before touching the database, matching
-// InsertSEP41SupplyEvent's guards: one bad row would otherwise fail a CHECK
-// and abort every row in the statement. op names the caller in the error.
+// validateSEP41SupplyEventRows is the pre-DB row contract for the multi-row writers (matches InsertSEP41SupplyEvent): one bad row would
+// fail a CHECK and abort the whole statement. op names the caller in the error.
 func validateSEP41SupplyEventRows(op string, rows []SEP41SupplyEvent) error {
 	for i := range rows {
 		e := &rows[i]
@@ -510,10 +497,8 @@ func (s *Store) InsertSEP41SupplyEventBatch(ctx context.Context, rows []SEP41Sup
 	return nil
 }
 
-// sep41SupplyConflictKey is the sep41_supply_events ON CONFLICT identity
-// (contract_id, ledger, tx_hash, op_index, observed_at, event_kind,
-// event_index). observed_at is normalised to a UTC UnixNano so equal instants
-// collapse to one key regardless of monotonic-clock / location.
+// sep41SupplyConflictKey is the ON CONFLICT identity (contract_id, ledger, tx_hash, op_index, observed_at, event_kind, event_index);
+// observed_at is normalised to UTC UnixNano so equal instants collapse.
 type sep41SupplyConflictKey struct {
 	contractID      string
 	ledger          uint32
@@ -536,9 +521,7 @@ func sep41SupplyKeyOf(e *SEP41SupplyEvent) sep41SupplyConflictKey {
 	}
 }
 
-// dedupeSEP41SupplyRows collapses rows colliding on the conflict key, keeping the LAST copy of each
-// (latest redelivery) in first-seen order; see dedupeSEP41TransferRows. It allocates only when the
-// batch has a duplicate.
+// dedupeSEP41SupplyRows keeps the LAST copy of rows colliding on the conflict key, in first-seen order ([dedupeSEP41TransferRows]).
 func dedupeSEP41SupplyRows(rows []SEP41SupplyEvent) []SEP41SupplyEvent {
 	firstDup := -1
 	seen := make(map[sep41SupplyConflictKey]int, len(rows))
@@ -621,16 +604,12 @@ func (s *Store) AdvanceSEP41SupplyRollup(ctx context.Context, contractID string)
 	}, nil
 }
 
-// sep41RollupLockTimeout bounds how long a fold writer waits for another writer's lock on a
-// sep41_supply_rollup row. The aggregator advances contracts sequentially and a seed or reset can
-// hold a row through a cold full-history fold, so an unbounded wait would stall every later
-// contract. A contended pass yields (an `error` outcome) and retries next cadence.
+// sep41RollupLockTimeout bounds a fold writer's wait on a rollup row lock: a seed or reset can hold it through a cold fold, which would
+// stall every later contract. A contended pass yields (an `error` outcome) and retries next cadence.
 const sep41RollupLockTimeout = 10 * time.Second
 
-// beginSEP41RollupTx opens a fold-writer transaction whose lock waits are
-// bounded by [sep41RollupLockTimeout]. Deliberately no statement_timeout: a
-// cold fold that cannot finish leaves the contract on the slower full-sum read
-// path forever, which is the cost the fold exists to remove.
+// beginSEP41RollupTx opens a fold-writer txn with lock waits bounded by [sep41RollupLockTimeout]. No statement_timeout on purpose: a cold
+// fold that cannot finish leaves the contract on the slower full-sum read path forever.
 func beginSEP41RollupTx(ctx context.Context, db *sql.DB) (*sql.Tx, error) {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
@@ -643,10 +622,8 @@ func beginSEP41RollupTx(ctx context.Context, db *sql.DB) (*sql.Tx, error) {
 	return tx, nil
 }
 
-// foldSEP41RollupLocked adds a contract's newly-settled events into its fold,
-// on a transaction that ALREADY holds the row lock ([lockSEP41RollupRow]).
-// Returns the checkpoint ledger before and after, and whether the projector's
-// cursor row was absent (so nothing could be folded).
+// foldSEP41RollupLocked folds a contract's newly-settled events on a txn that ALREADY holds the row lock ([lockSEP41RollupRow]).
+// Returns the checkpoint ledger before and after, and whether the projector's cursor row was absent (nothing foldable).
 func foldSEP41RollupLocked(ctx context.Context, tx *sql.Tx, contractID string) (fromLedger, toLedger int64, cursorAbsent bool, err error) {
 	// One statement under the caller's lock:
 	//   locked   - the boundary and floor. The row cannot change while locked and the snapshot
@@ -708,18 +685,8 @@ func foldSEP41RollupLocked(ctx context.Context, tx *sql.Tx, contractID string) (
 	return fromLedger, toLedger, cursorAbsent, nil
 }
 
-// lockSEP41RollupRow materialises a contract's sep41_supply_rollup row and takes its write lock, in
-// statements of their own, ahead of the fold.
-//
-// The lock must not be taken inside the folding statement. Under READ COMMITTED the statement
-// snapshot is fixed at start, but `SELECT ... FOR UPDATE` returns the LATEST committed row. A fold
-// locking inside itself could read last_ledger = 0 from a reset committed after its snapshot while
-// summing events as they stood before it, and move last_ledger back above the missing rows.
-// Locking first makes the snapshot see every earlier reset and event write; a later reset waits
-// and re-folds next cadence.
-//
-// ON CONFLICT DO NOTHING waits out an in-progress UPDATE of the row, harmless because it precedes
-// the fold's snapshot.
+// lockSEP41RollupRow materialises and locks the rollup row in statements of their own, BEFORE the fold: a lock taken inside it
+// returns the LATEST row against an older event snapshot, moving last_ledger above missing rows.
 func lockSEP41RollupRow(ctx context.Context, tx *sql.Tx, contractID string) error {
 	const ensure = `
         INSERT INTO sep41_supply_rollup (contract_id)
@@ -873,10 +840,8 @@ func (s *Store) ResetSEP41SupplyRollupFold(ctx context.Context, contractIDs []st
 		len(failed), errors.Join(errs...))
 }
 
-// refoldSEP41RollupRow zeroes one contract's fold and re-folds it in the same
-// transaction. The UPDATE takes the row lock in a statement of its own, ahead
-// of the fold ([lockSEP41RollupRow] says why). Reports false for a contract
-// with no rollup row: there is no fold to invalidate.
+// refoldSEP41RollupRow zeroes one contract's fold and re-folds it in the same txn; the UPDATE locks the row first ([lockSEP41RollupRow]).
+// Reports false for a contract with no rollup row.
 func (s *Store) refoldSEP41RollupRow(ctx context.Context, contractID string) (bool, error) {
 	tx, err := beginSEP41RollupTx(ctx, s.db)
 	if err != nil {
@@ -905,9 +870,7 @@ func (s *Store) refoldSEP41RollupRow(ctx context.Context, contractID string) (bo
 	return true, nil
 }
 
-// sep41RollupZeroFallbackTimeout bounds the zeroing fallback, which runs
-// detached from the caller's ctx: a cancelled reset must still not leave a
-// stale fold behind.
+// sep41RollupZeroFallbackTimeout bounds the zeroing fallback, which runs detached so a cancelled reset still clears a stale fold.
 const sep41RollupZeroFallbackTimeout = time.Minute
 
 func zeroSEP41RollupFold(ctx context.Context, db *sql.DB, contractIDs []string) (int64, error) {

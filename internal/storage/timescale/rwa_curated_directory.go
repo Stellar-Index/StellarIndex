@@ -85,9 +85,7 @@ func (c CuratedRWACensus) Check() string {
 // address". The sync runs daily, so one missed run is survivable and two are not.
 const curatedRWARecognitionMaxAge = "48 hours"
 
-// curatedRWAPriceMaxAge is how long the curator's own price may be served after its day stamp.
-// Price tables refresh on the curator's schedule, not ours, hence a week; a row past it comes back
-// recognised and UNPRICED rather than disappearing.
+// curatedRWAPriceMaxAge is how long a curator price is served after its day stamp; past it the row stays recognised but UNPRICED.
 const curatedRWAPriceMaxAge = "7 days"
 
 const curatedRWARecognisedSQL = `synced_at > now() - INTERVAL '` + curatedRWARecognitionMaxAge + `'`
@@ -168,9 +166,8 @@ func dedupCuratedRWAEntries(entries []CuratedRWAEntry) []CuratedRWAEntry {
 	return out
 }
 
-// buildCuratedRWAUpsert renders one multi-row INSERT … ON CONFLICT for a chunk. The price and its
-// time travel as a pair (an empty price binds NULL for both), so the table's CHECK holds by
-// construction.
+// buildCuratedRWAUpsert renders one multi-row upsert per chunk; price and time travel as a pair (empty price binds NULL for both) so the
+// CHECK holds.
 func buildCuratedRWAUpsert(curator string, entries []CuratedRWAEntry, source string) (string, []any) {
 	var b strings.Builder
 	b.WriteString(`

@@ -55,7 +55,8 @@ type XLMBaseRestampParams struct {
 	MinRelDelta *big.Rat
 }
 
-// XLMBaseRestampRow is one row the re-derive would rewrite: its primary key, the stored value, and the value [usdVolumeViaXLMBaseAnchor] produces for it.
+// XLMBaseRestampRow is one row the re-derive would rewrite: its primary key, the stored value, and the value
+// [usdVolumeViaXLMBaseAnchor] produces for it.
 type XLMBaseRestampRow struct {
 	Source  string
 	Ledger  uint32
@@ -135,7 +136,8 @@ var XLMBaseRelBuckets = []struct {
 	{">=10x", big.NewRat(9, 1)},
 }
 
-// XLMBaseRestampPlan is one window's decisions: the rows to write plus the accounting for every row scanned and not written; a write run hands the SAME plan to ApplyXLMBaseUSDVolumeRestamp, so -write writes exactly what the dry run reported.
+// XLMBaseRestampPlan is one window's decisions: the rows to write plus the accounting for every row scanned and not written; a write
+// run hands the SAME plan to ApplyXLMBaseUSDVolumeRestamp, so -write writes exactly what the dry run reported.
 type XLMBaseRestampPlan struct {
 	Rows  []XLMBaseRestampRow
 	Stats XLMBaseRestampStats
@@ -194,11 +196,8 @@ const (
 	xlmBaseBelowMinRelDelta
 )
 
-// xlmBaseRestampDecide judges ONE scanned row for the xlm-base tier: the shared decision skeleton
-// ([restampDecide]) with this tier's gate.
-//
-// `anchor` is injected so the rules are testable without a live prices_1m; production passes
-// [usdVolumeViaXLMBaseAnchor], so the stored number matches the live insert path.
+// xlmBaseRestampDecide judges ONE scanned row for the xlm-base tier: the shared skeleton ([restampDecide]) with this tier's gate.
+// `anchor` is injected for testability; production passes [usdVolumeViaXLMBaseAnchor] so the stored number matches the live insert path.
 func xlmBaseRestampDecide(
 	row xlmBaseRestampScan,
 	spec *USDVolumeQuoteSpec,
@@ -213,7 +212,8 @@ func xlmBaseRestampDecide(
 	return row2, disp
 }
 
-// PlanXLMBaseUSDVolumeRestamp scans one bounded window and returns the rows the XLM-base re-derive would rewrite plus the disposition of every row it would not; READ-ONLY, the whole dry run, and ApplyXLMBaseUSDVolumeRestamp consumes the plan verbatim.
+// PlanXLMBaseUSDVolumeRestamp scans one bounded window and returns the rows the XLM-base re-derive would rewrite plus the disposition
+// of every row it would not; READ-ONLY, the whole dry run, and ApplyXLMBaseUSDVolumeRestamp consumes the plan verbatim.
 func (s *Store) PlanXLMBaseUSDVolumeRestamp(ctx context.Context, p XLMBaseRestampParams) (*XLMBaseRestampPlan, error) {
 	return s.planRestampTier(ctx, p, restampTierScan{
 		Tier:    "xlm-base",
@@ -288,7 +288,8 @@ func (p *XLMBaseRestampPlan) recordChanged(row XLMBaseRestampRow) {
 	p.Rows = append(p.Rows, row)
 }
 
-// Merge folds another window's statistics into this one; per-row detail is deliberately not carried, so callers keep only the extremes and a sample.
+// Merge folds another window's statistics into this one; per-row detail is deliberately not carried, so callers keep only the extremes
+// and a sample.
 func (s *XLMBaseRestampStats) Merge(o XLMBaseRestampStats) {
 	s.Scanned += o.Scanned
 	s.QuotePegged += o.QuotePegged
@@ -313,7 +314,8 @@ func (s *XLMBaseRestampStats) Merge(o XLMBaseRestampStats) {
 	}
 }
 
-// Residual is scanned minus every disposition; non-zero means a row was filed nowhere, which would understate a population, and NullCandidates is a cross-cut, not a disposition.
+// Residual is scanned minus every disposition; non-zero means a row was filed nowhere, which would understate a population, and
+// NullCandidates is a cross-cut, not a disposition.
 func (s XLMBaseRestampStats) Residual() int64 {
 	filed := s.QuotePegged + s.NotDEX + s.Unparseable +
 		s.AnchorDeclinedNull + s.AnchorDeclinedStored +
@@ -322,28 +324,26 @@ func (s XLMBaseRestampStats) Residual() int64 {
 	return s.Scanned - filed
 }
 
-// xlmBaseRestampApplyBatch is the default rows per UPDATE transaction. Touched rows in COMPRESSED
-// chunks are decompressed in the transaction, so a bounded batch bounds decompression, lock and
-// rollback cost; an interrupted run loses only the in-flight batch (the tool is idempotent).
+// xlmBaseRestampApplyBatch is the default rows per UPDATE tx: bounds decompression, lock and rollback cost in COMPRESSED chunks;
+// an interrupted run loses only the in-flight batch (idempotent).
 const xlmBaseRestampApplyBatch = 2000
 
-// xlmBaseRestampMaxBatch caps the rows per UPDATE transaction, whatever the operator asked for.
-// The extended protocol carries at most 65,535 parameters ([xlmBaseRestampArgsPerRow] per row plus
-// 3 fixed); above that pgx refuses the Exec mid-run, so the cap yields one more transaction instead.
+// xlmBaseRestampMaxBatch caps rows per UPDATE tx: the extended protocol carries at most 65,535 parameters ([xlmBaseRestampArgsPerRow]
+// per row plus 3 fixed); above that pgx refuses the Exec mid-run.
 const xlmBaseRestampMaxBatch = (65535 - 3) / xlmBaseRestampArgsPerRow
 
 // xlmBaseRestampArgsPerRow is the placeholders one row binds: primary key, new value and the
 // plan-read state it must still match.
 const xlmBaseRestampArgsPerRow = 10
 
-// ApplyXLMBaseUSDVolumeRestamp writes the plan's rows and returns how many the database changed; the write set is the plan the dry run printed, with no second predicate evaluated.
+// ApplyXLMBaseUSDVolumeRestamp writes the plan's rows and returns how many the database changed; the write set is the plan the dry run
+// printed, with no second predicate evaluated.
 func (s *Store) ApplyXLMBaseUSDVolumeRestamp(ctx context.Context, plan *XLMBaseRestampPlan, generation int64, batch int) (int64, error) {
 	return s.ApplyUSDVolumeRestampPlan(ctx, plan, generation, batch)
 }
 
-// applyXLMBaseRestampBatches is the batch loop behind both applies. A non-nil `before` runs ahead
-// of EVERY batch and its error stops the loop with the rows written so far (the chunk walk's
-// still-decompressed guard, [Store.ApplyXLMBaseUSDVolumeRestampInChunk]).
+// applyXLMBaseRestampBatches is the batch loop behind both applies; a non-nil `before` runs ahead of EVERY batch and its error stops
+// the loop with rows written so far ([Store.ApplyXLMBaseUSDVolumeRestampInChunk]).
 func (s *Store) applyXLMBaseRestampBatches(ctx context.Context, plan *XLMBaseRestampPlan, generation int64, batch int, before func(context.Context) error) (int64, error) {
 	if plan == nil || len(plan.Rows) == 0 {
 		return 0, nil
@@ -384,9 +384,8 @@ func (s *Store) applyXLMBaseRestampBatches(ctx context.Context, plan *XLMBaseRes
 //   - Pruning needs a CUSTOM plan; a promoted generic plan cannot know the bounds, so
 //     `SET LOCAL plan_cache_mode = force_custom_plan` pins it.
 
-// xlmBaseRestampTSBounds returns the inclusive `ts` span of one batch. It is computed rather than
-// assumed to be the first and last row, so a reordering of the planner scan cannot silently
-// narrow the range the UPDATE may match.
+// xlmBaseRestampTSBounds returns the inclusive `ts` span of a batch, computed rather than assumed first/last row so a planner reorder
+// cannot narrow the UPDATE.
 func xlmBaseRestampTSBounds(rows []XLMBaseRestampRow) (lo, hi time.Time) {
 	lo, hi = rows[0].TS.UTC(), rows[0].TS.UTC()
 	for _, r := range rows[1:] {
@@ -447,7 +446,8 @@ func (s *Store) applyXLMBaseRestampBatch(ctx context.Context, rows []XLMBaseRest
 	})
 }
 
-// MaxTradeLedgerInRange returns the highest on-chain ledger sequence of any trade in [from, to), ok=false when none; it serves the live-overlap guard so a restamp only rewrites history the live ingest tail has passed.
+// MaxTradeLedgerInRange returns the highest on-chain ledger sequence of any trade in [from, to), ok=false when none; it serves the
+// live-overlap guard so a restamp only rewrites history the live ingest tail has passed.
 func (s *Store) MaxTradeLedgerInRange(ctx context.Context, from, to time.Time) (uint32, bool, error) {
 	const q = `SELECT max(ledger) FROM trades WHERE ts >= $1 AND ts < $2 AND ledger > 0`
 	var maxLedger sql.NullInt64

@@ -11,18 +11,13 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 )
 
-// blendAssetAmountRow is the JSONB element shape for the bid /
-// lot columns. Amount is a stringified *big.Int to preserve
-// full i128 precision through the JSON boundary.
+// blendAssetAmountRow is the JSONB element for the bid/lot columns; Amount is a stringified *big.Int to keep full i128 precision.
 type blendAssetAmountRow struct {
 	Asset  string `json:"asset"`
 	Amount string `json:"amount"`
 }
 
-// encodeBlendAssetAmounts converts a slice of decoded asset/amount
-// pairs to a JSONB-ready []byte. Returns nil (which becomes SQL
-// NULL on insert) for empty input — the storage column is
-// nullable to handle delete-event rows.
+// encodeBlendAssetAmounts converts pairs to JSONB; empty input returns nil (SQL NULL), as delete-event rows have a nullable column.
 func encodeBlendAssetAmounts(in []blend.AssetAmount) ([]byte, error) {
 	if len(in) == 0 {
 		return nil, nil
@@ -41,10 +36,7 @@ func encodeBlendAssetAmounts(in []blend.AssetAmount) ([]byte, error) {
 	return b, nil
 }
 
-// decodeBlendAssetAmounts is the inverse — read the JSONB string
-// from Postgres back into the read-side projection. Each entry's
-// amount stays as a decimal string (the caller can parse with
-// big.Int's SetString if numeric ops are needed).
+// decodeBlendAssetAmounts reads the JSONB string back; each amount stays a decimal string (big.Int SetString if numeric ops are needed).
 func decodeBlendAssetAmounts(jsonStr string) ([]BlendAssetAmount, error) {
 	if jsonStr == "" {
 		return nil, nil

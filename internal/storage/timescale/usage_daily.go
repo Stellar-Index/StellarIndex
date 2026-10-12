@@ -10,10 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/usage"
 )
 
-// usageDailyUpsertChunk bounds one multi-row upsert statement. At 7
-// bind parameters per row a chunk stays far below the wire protocol's
-// 65535-parameter cap while amortising the per-statement round-trip
-// over hundreds of rows.
+// usageDailyUpsertChunk bounds one multi-row upsert: 7 params per row stays far under the 65535-parameter cap.
 const usageDailyUpsertChunk = 500
 
 // usageDailyColumns is the bind-parameter width of one usage_daily row.
@@ -34,10 +31,8 @@ func (s *Store) UpsertUsageDaily(ctx context.Context, rows []usage.RollupRow) er
 	return nil
 }
 
-// foldUsageDailyRows rejects an incomplete row and folds duplicate (day, subject, endpoint) keys
-// into one row of per-column maxima, matching what the GREATEST merge would reach row by row.
-// Folding is required because Postgres refuses to touch the same row twice in one ON CONFLICT
-// statement. First-seen order is kept.
+// foldUsageDailyRows rejects incomplete rows and folds duplicate (day, subject, endpoint) keys into per-column maxima, as the GREATEST merge
+// would; required because Postgres refuses to touch one row twice in an ON CONFLICT statement. First-seen order is kept.
 func foldUsageDailyRows(rows []usage.RollupRow) ([]usage.RollupRow, error) {
 	type key struct{ day, subject, endpoint string }
 	index := make(map[key]int, len(rows))

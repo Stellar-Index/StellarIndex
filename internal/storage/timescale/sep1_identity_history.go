@@ -31,9 +31,7 @@ type sep1IdentityView struct {
 	} `json:"Currencies"`
 }
 
-// sep1IdentityChanges diffs the identity fields a holder of the issuer's
-// home_domain controls. A nil prev is a first fetch: nothing established
-// changed, so nothing is returned.
+// sep1IdentityChanges diffs the identity fields the home_domain holder controls; a nil prev is a first fetch and yields nothing.
 func sep1IdentityChanges(prev, next []byte) ([]Sep1IdentityChange, error) {
 	if len(prev) == 0 {
 		return nil, nil
