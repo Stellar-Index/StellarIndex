@@ -24,10 +24,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// Real, checksum-valid G-strkeys (harvested from the codebase) — the asset
-// issuers MUST parse so canonical.ParseAsset extracts the issuer the SQL
-// regex derives, or the issuer-side signal would diverge between the
-// per-asset read and the rollup.
+// Real checksum-valid G-strkeys: issuers must parse so canonical.ParseAsset extracts the issuer the SQL regex derives,
+// else the per-asset read and the rollup diverge on the issuer signal.
 const (
 	audIssuer  = "GA2PZMWITS45LSQF7KWN7SH2YREIUHLC4SNNIYX5D2LTNEML74CANJMO"
 	auddIssuer = "GA2QXW7YFAIR35LGKM2TDCQQZFR33XJCWF4N6SMRLOKX3HL76JKKPA62"
@@ -36,11 +34,8 @@ const (
 	washIssuer = "GA3GJGKCUKPOPL6NYPMSBK7LMFYNW7SJMAJ7ZGWR3KGSHJWJHQRQZA3L"
 	realIssuer = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 
-	// Three more issuers so the listing tests can seed rows that TIE on
-	// the sort keys. Distinct issuers (not one issuer with three codes)
-	// because the tie-break is on the full asset_id, and sharing an
-	// issuer would leave the codes as the only varying part — a weaker
-	// exercise of the keyset walk than the real long tail.
+	// Three more issuers so listing tests can seed rows that TIE on the sort keys. Distinct issuers (not one issuer, three
+	// codes): the tie-break is on the full asset_id, so shared issuers would exercise the keyset walk more weakly.
 	tieIssuerA = "GBXF3MBQLVQIVLY72WFA5F6RSI3GHK365KBKPBRAHSXVLRE4KY4GDJXP"
 	tieIssuerB = "GDH6SHBRFUIPGMSBALDYRMWQA4XCH7VMZUFZ3H3YAHTF2HQFNW2KKV23"
 	tieIssuerC = "GDCQNKPZUBHITG6V3S25OS53K2BD4OGZHORUGF4KLEQ7BXV36YFLZ36T"
@@ -68,11 +63,9 @@ func charPoolMaker(n byte) string {
 	return fmt.Sprintf("%x", xdr.PoolId([32]byte{0: 0x5A, 31: n}))
 }
 
-// insertCharTrade raw-inserts one priced trade with an explicit
-// maker/taker/usd_volume — the account-structure inputs the per-asset read
-// and the rollup both roll over `trades`. Raw insert (not InsertTrade) gives
-// exact control over the three canonical scenarios without depending on the
-// usd_volume derivation tiers.
+// insertCharTrade raw-inserts one priced trade with explicit maker/taker/usd_volume, the inputs both the per-asset read
+// and rollup roll over. Raw insert (not InsertTrade) gives exact scenario control independent of the usd_volume derivation
+// tiers.
 func insertCharTrade(t *testing.T, ctx context.Context, db *sql.DB, nonce int, ts time.Time, base, quote, maker, taker string, usdVol float64) {
 	t.Helper()
 	const q = `INSERT INTO trades
@@ -87,13 +80,9 @@ func insertCharTrade(t *testing.T, ctx context.Context, db *sql.DB, nonce int, t
 	}
 }
 
-// TestAssetVolumeCharacterRollup_OracleMatchesPerAsset is the verification
-// oracle: RefreshAssetVolumeCharacter must produce, per asset, the SAME
-// signals + character the existing per-asset AssetVolumeCharacter returns —
-// the rollup only MOVES the compute off the request path, it must not change
-// the VALUE. Covers the scam-AUD volume-painting wash (concentrated), an
-// issuer wrap-corridor (operational), and a healthy multi-account asset
-// (market).
+// TestAssetVolumeCharacterRollup_OracleMatchesPerAsset: RefreshAssetVolumeCharacter must give, per asset, the SAME signals
+// + character as AssetVolumeCharacter (the rollup only moves compute off the request path). Covers scam-AUD wash
+// (concentrated), issuer wrap-corridor (operational), healthy asset (market).
 func TestAssetVolumeCharacterRollup_OracleMatchesPerAsset(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -183,10 +172,8 @@ func TestAssetVolumeCharacterRollup_OracleMatchesPerAsset(t *testing.T) {
 				t.Errorf("per-asset character = %q, want %q", per.Character, tc.wantChar)
 			}
 
-			// The oracle: the rollup EQUALS the per-asset read. Shares are
-			// compared to FULL precision (both are round4 over the SAME
-			// double sums), character/counts exactly, volume as the exact
-			// NUMERIC text.
+			// The rollup EQUALS the per-asset read: shares to FULL precision (same round4 over the same double sums),
+			// character/counts exactly, volume as exact NUMERIC text.
 			if roll.Character != per.Character {
 				t.Errorf("character: rollup=%q per-asset=%q", roll.Character, per.Character)
 			}
@@ -253,13 +240,9 @@ func TestAssetVolumeCharacterRollup_OracleMatchesPerAsset(t *testing.T) {
 	}
 }
 
-// TestAssetVolumeCharacter_ClassicPoolMakerIsNotAnAccount: a classic
-// liquidity-pool fill carries the hex pool id in trades.maker. One account
-// round-tripping an asset through two classic pools must read as ONE
-// concentrated actor, and neither pool may count as a distinct maker — in
-// the per-asset read and the rollup alike. Unfixed, the two (pool, taker)
-// pairs split the volume into 0.495 halves (character market) and the two
-// pools inflate distinct_makers to 3.
+// TestAssetVolumeCharacter_ClassicPoolMakerIsNotAnAccount: a classic LP fill carries the hex pool id in trades.maker. One
+// account looping an asset through two pools must read as ONE concentrated actor with no pool counted as a distinct maker
+// (per-asset read and rollup); unfixed, volume splits into 0.495 halves (market) and distinct_makers inflates to 3.
 func TestAssetVolumeCharacter_ClassicPoolMakerIsNotAnAccount(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -315,10 +298,9 @@ func TestAssetVolumeCharacter_ClassicPoolMakerIsNotAnAccount(t *testing.T) {
 	}
 }
 
-// TestAssetVolumeCharacter_MakerlessAMMKeyedOnTaker: a Soroban AMM swap
-// stores no maker. One account swapping an asset back and forth through an
-// AMM must read as ONE concentrated actor in both the per-asset read and the
-// rollup, and a maker-less row must not disturb an order-book asset's pairs.
+// TestAssetVolumeCharacter_MakerlessAMMKeyedOnTaker: a Soroban AMM swap stores no maker; one account swapping back and
+// forth reads as ONE concentrated actor (read and rollup), and a maker-less row must not disturb an order-book asset's
+// pairs.
 func TestAssetVolumeCharacter_MakerlessAMMKeyedOnTaker(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -393,11 +375,9 @@ func TestAssetVolumeCharacter_MakerlessAMMKeyedOnTaker(t *testing.T) {
 	}
 }
 
-// TestAssetVolumeCharacterRollup_DemoteSort proves §4-B "annotate + demote":
-// under the default AssetsOrderVolume24hUSDDesc sort, a high-RAW-volume
-// CONCENTRATED (wash) asset ranks BELOW a lower-raw-volume MARKET asset,
-// while the raw volume_24h_usd stays the real, unaltered number and the
-// asset stays present in the directory.
+// TestAssetVolumeCharacterRollup_DemoteSort (§4-B annotate + demote): under the default volume sort a high-raw-volume
+// CONCENTRATED asset ranks below a lower-volume MARKET asset, while raw volume_24h_usd stays unaltered and the asset stays
+// in the directory.
 func TestAssetVolumeCharacterRollup_DemoteSort(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -479,11 +459,8 @@ func seedDirectoryAsset(t *testing.T, ctx context.Context, db *sql.DB, assetID, 
 func seedRawVolume(t *testing.T, ctx context.Context, db *sql.DB, assetID, volUSD string) {
 	t.Helper()
 	if _, err := db.ExecContext(ctx,
-		// Upsert, not a bare insert: a fixture that runs
-		// RefreshAssetListingRollups first (assets_listing_rank_test.go
-		// does, because the listing's price column now comes from
-		// asset_price_snapshot) already has a derived row here, and this
-		// helper's job is to OVERRIDE it with the control value.
+		// Upsert, not insert: fixtures that ran RefreshAssetListingRollups first (the listing price comes from
+		// asset_price_snapshot) already have a derived row, and this helper must OVERRIDE it with the control value.
 		`INSERT INTO asset_volume_24h (asset_id, vol_usd, computed_at)
 		 VALUES ($1, $2, now())
 		 ON CONFLICT (asset_id) DO UPDATE
@@ -527,11 +504,8 @@ SELECT COALESCE(SUM(volume_usd), 0)::text
        AND volume_usd IS NOT NULL
   ) t`
 
-// TestAssetVolumeRollup_MatchesLiveSum proves the asset-volume rollup end-to-end:
-// RefreshAssetVolume24h populates asset_volume_24h with values that are
-// byte-identical to the old inline per-request SUM over prices_1m, the
-// refresh is idempotent, and an asset that ages out of the 24h window is
-// pruned on the next pass.
+// TestAssetVolumeRollup_MatchesLiveSum: RefreshAssetVolume24h fills asset_volume_24h byte-identical to the old inline SUM
+// over prices_1m, is idempotent, and prunes an asset that ages out of the 24h window.
 func TestAssetVolumeRollup_MatchesLiveSum(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -659,12 +633,9 @@ func unpricedTestContract(t *testing.T, b byte) c.Asset {
 	return a
 }
 
-// TestAssetVolume_UnpricedTradesFlagLowerBound runs migration 0212 and the
-// refresh SQL end to end. prices_1m sums coalesce(usd_volume, 0), so an
-// unpriced token/token trade adds 0 to vol_usd; the rollup must count it and
-// every reader must serve the volume as a lower bound. A fully priced asset
-// stays unflagged, and an asset whose only trades the volume sum has not
-// seen gets no row, so it cannot enter the Soroban listing spine.
+// TestAssetVolume_UnpricedTradesFlagLowerBound (migration 0212 + refresh SQL): prices_1m sums coalesce(usd_volume, 0), so
+// an unpriced token/token trade adds 0; the rollup must count it and readers serve a lower bound. Fully priced stays
+// unflagged; an asset the sum has not seen gets no row.
 func TestAssetVolume_UnpricedTradesFlagLowerBound(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -837,24 +808,9 @@ func TestAssetVolume_UnpricedTradesFlagLowerBound(t *testing.T) {
 	}
 }
 
-// TestBespokeDEX24hVolumeCarriesXLMLeg proves the DEX block's 24h USD
-// figures are trade-time only against a real TimescaleDB.
-//
-// source_volume_1h stores sum_usd_priced plus the XLM legs of trades left
-// unpriced. Valuing those legs at today's XLM/USD would make a historical
-// window move with spot, so the reader sums sum_usd_priced and names the
-// excluded XLM as a lower bound. It must agree with the other reader of
-// the CAGG (GetSourceVolumeHistory24h), rendered on the same source page.
-//
-// Fixture (one closed minute ~2h back, all on soroswap):
-//
-//	XLM/USDC   100 XLM for 50 USDC → vwap 0.5, usd_volume = 50  (priced)
-//	token/USDC 7 USDC quote                    usd_volume =  7  (priced)
-//	token/XLM  20 XLM on the QUOTE side        usd_volume NULL → sum_xlm_quote
-//	XLM/token  10 XLM on the BASE side         usd_volume NULL → sum_xlm_base
-//
-// priced             = 50 + 7  = 57  (the 24h USD volume)
-// unpriced XLM       = 20 + 10 = 30 XLM, excluded and named in the hint
+// TestBespokeDEX24hVolumeCarriesXLMLeg: the DEX block's 24h USD figures are trade-time only. Valuing unpriced XLM legs at
+// today's XLM/USD would make history move with spot, so the reader sums sum_usd_priced, names the excluded XLM as a lower
+// bound, and agrees with GetSourceVolumeHistory24h. Fixture (soroswap, one closed minute): priced = 50 + 7 = 57.
 func TestBespokeDEX24hVolumeCarriesXLMLeg(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1006,15 +962,9 @@ func TestBespokeDEX24hVolumeCarriesXLMLeg(t *testing.T) {
 	}
 }
 
-// TestBespokeDEX24hXLMAnchorOutageIsLowerBound — with no native/USD row in
-// prices_1m the unpriced XLM legs are still excluded; the block serves the
-// priced leg as a named lower bound.
-//
-// Fixture: the sibling test's minus its XLM/USDC trade (the only anchor):
-//
-//	token/USDC 7 USDC quote       usd_volume =  7  (priced)
-//	token/XLM  20 XLM quote side  usd_volume NULL → sum_xlm_quote
-//	XLM/token  10 XLM base side   usd_volume NULL → sum_xlm_base
+// TestBespokeDEX24hXLMAnchorOutageIsLowerBound: with no native/USD row in prices_1m the unpriced XLM legs stay excluded
+// and the block serves the priced leg (7 USDC) as a named lower bound. Fixture is the sibling test minus its XLM/USDC
+// anchor trade.
 func TestBespokeDEX24hXLMAnchorOutageIsLowerBound(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1136,14 +1086,9 @@ func bespokeKPI(blk *timescale.BespokeBlock, label string) *timescale.BespokeKPI
 	return nil
 }
 
-// TestBespokeDEX24hBoundaryHourExcludedFromBothReaders pins that a
-// trade in the hour bucket that floors to exactly `now() - 24h` must be
-// excluded by BOTH readers of source_volume_1h identically. Before the
-// fix, GetSourceVolumeHistory24h floored its window with
-// `date_trunc('hour', NOW() - 24h)` (a >=, 25-bucket window) and included
-// this boundary bucket, while the bespoke 24h KPI/series (a strict `>`,
-// 24-bucket window) excluded it — the same trade counted by one 24h
-// reader of the source page and not the other.
+// TestBespokeDEX24hBoundaryHourExcludedFromBothReaders: a trade in the hour bucket flooring to exactly `now() - 24h` must
+// be excluded by BOTH source_volume_1h readers; GetSourceVolumeHistory24h once included it (>=, 25 buckets) while the
+// bespoke KPI/series (strict >, 24 buckets) did not.
 func TestBespokeDEX24hBoundaryHourExcludedFromBothReaders(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1215,19 +1160,9 @@ func TestBespokeDEX24hBoundaryHourExcludedFromBothReaders(t *testing.T) {
 	}
 }
 
-// TestBespokeDEX7dCoversSevenCompleteDays proves every "(7d)" figure in the
-// DEX block covers the same 7 complete UTC days (D-7..D-1) against a real
-// TimescaleDB, CAGG-backed and raw-trade-backed alike.
-//
-// Fixture: one priced soroswap trade at 12:00 UTC on each of D-8..D-1 plus
-// one just after 00:00 today, with USD volumes that are distinct powers of
-// two so every window mis-cut produces a different sum:
-//
-//	D-8 256 (outside)   D-7..D-1  1,2,4,8,16,32,64   D (today) 128 (partial)
-//
-// Want: USD volume 127.00, 7 trades, avg 127/7 = 18.14, top trade 64.00.
-// A rolling `bucket > now() - '7 days'` cut drops the D-7 bucket (126),
-// and a rolling `ts > now() - '7 days'` cut on raw trades takes today's 128.
+// TestBespokeDEX7dCoversSevenCompleteDays: every "(7d)" figure covers the same 7 complete UTC days (D-7..D-1), CAGG- and
+// raw-trade-backed. Distinct power-of-two volumes (D-8 256 outside, D-7..D-1 1..64, today 128 partial) expose any mis-cut:
+// want 127.00, 7 trades, avg 18.14, top 64.00. A rolling bucket cut drops D-7; a rolling raw-trade cut takes today's 128.
 func TestBespokeDEX7dCoversSevenCompleteDays(t *testing.T) {
 	now := time.Now().UTC()
 	today := now.Truncate(24 * time.Hour)
@@ -1338,14 +1273,9 @@ func seedCompleteDaysFixture(t *testing.T, ctx context.Context, store *timescale
 	}
 }
 
-// TestStoreDailyMarketDays_ReadsWholeLastDay executes DailyMarketDays
-// against real TimescaleDB with `to` at the start of the last day, as
-// the /v1/rwa/premium caller passes it. Trades at 00:30 and 15:30 on
-// that day must BOTH count: two hours, a 15-hour span, and the whole
-// day's VWAP. A trade on the following day must not.
-//
-// Day D-1 VWAP = (10 + 30) / (100 + 100) = 0.2; the 00:30 hour alone
-// would read 0.1 with Hours = 1.
+// TestStoreDailyMarketDays_ReadsWholeLastDay: with `to` at the start of the last day (as /v1/rwa/premium passes it),
+// trades at 00:30 and 15:30 both count (2 hours, 15h span, whole-day VWAP (10+30)/(100+100) = 0.2); a next-day trade does
+// not.
 func TestStoreDailyMarketDays_ReadsWholeLastDay(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1419,16 +1349,9 @@ func TestStoreDailyMarketDays_ReadsWholeLastDay(t *testing.T) {
 	}
 }
 
-// TestStoreDailyMarketDays_FoldsSACSpellingOfBase:
-// a token with a configured SAC wrapper trades under both spellings, and
-// the live substance gate counts both. The historical reader must fold
-// the SAC-form rows onto the requested classic asset, and measure hours
-// and span over the UNION: the 00:00 hour traded under both spellings
-// counts once.
-//
-// Classic: 00:10 (100 for 10), 05:30 (100 for 20). SAC: 00:40 (100 for
-// 30), 20:30 (100 for 40). Union: hours {00,05,20} = 3, span 20h, 4
-// trades, VWAP = 100/400 = 0.25. Classic alone reads 2 hours, 5h, 0.15.
+// TestStoreDailyMarketDays_FoldsSACSpellingOfBase: a token with a SAC wrapper trades under both spellings; the reader
+// folds SAC rows onto the classic asset and measures hours/span over the UNION (the 00:00 hour under both counts once): 3
+// hours, 20h, 4 trades, VWAP 0.25 (classic alone 0.15).
 func TestStoreDailyMarketDays_FoldsSACSpellingOfBase(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1643,14 +1566,9 @@ func TestHistoryPointsDirectionUnion(t *testing.T) {
 		t.Errorf("HistoryPoints(empty pair) returned %d buckets, want 0", len(empty))
 	}
 
-	// ── Closed-bucket guard, in its rewritten sargable spelling ─────
-	// A 1-day bucket is served only once it has CLOSED (ADR-0015:
-	// `bucket <= now() - INTERVAL '1 day'`). The seed sits ~2h back, so
-	// which side of that line it falls on depends on the clock: for the
-	// first ~2h of a UTC day the trades land in YESTERDAY's bucket, which
-	// is closed and must be served; for the rest of the day they land in
-	// today's, which is open and must not be. Assert whichever is true —
-	// a fixed "want 0" fails every run between 00:00 and ~02:05 UTC.
+	// Closed-bucket guard (ADR-0015, `bucket <= now() - INTERVAL '1 day'`): the ~2h-old seed lands in yesterday's closed
+	// bucket for the first ~2h of a UTC day, else today's open one. Assert whichever is true; a fixed "want 0" fails between
+	// 00:00 and ~02:05 UTC.
 	var dayRows int
 	if err := store.DB().QueryRowContext(ctx,
 		`SELECT count(*) FROM prices_1d
@@ -1729,11 +1647,8 @@ func TestHistoryPointsDirectionUnion(t *testing.T) {
 	}
 	assertSeries(t, "HistoryPointsInRange(no to, limit 1)", noTo, wantBuckets[:1])
 
-	// Every optional clause at once — the maximal-placeholder path
-	// ($1..$5), which is what /v1/chart issues. The bounds now live
-	// inside both branches and the LIMIT is bound last, so an
-	// off-by-one in the placeholder arithmetic surfaces here as a
-	// bind error or as the wrong window.
+	// Every optional clause at once ($1..$5, what /v1/chart issues): bounds sit inside both branches and LIMIT binds last,
+	// so placeholder off-by-ones surface as a bind error or wrong window.
 	all, err := store.HistoryPointsInRange(ctx, xlmUSDC, timescale.Granularity1m,
 		from, to, 2)
 	if err != nil {
@@ -1742,22 +1657,9 @@ func TestHistoryPointsDirectionUnion(t *testing.T) {
 	assertSeries(t, "HistoryPointsInRange(from, to, limit 2)", all, wantBuckets[:2])
 }
 
-// TestHistoryPointsUnboundedPopulatedReadStreams measures the one shape
-// the unknown-pair cost test does not: /v1/history/since-inception with
-// limit=0 over a pair that HAS a long history. That statement carries no
-// LIMIT and an outer `ORDER BY bucket ASC, base_asset` over a UNION ALL
-// whose branches are index-ordered on bucket alone, so the question is
-// whether the outer sort streams or materialises the pair's whole series.
-//
-// Under the serving pool's plan_cache_mode = force_custom_plan (see
-// OpenServing) it streams: a Merge Append on bucket feeding an
-// Incremental Sort whose groups are one bucket (at most two rows). No
-// full Sort node may appear. Measured on this fixture (3,120 hourly
-// buckets over ~14 chunks): 3.2 ms, 29 kB peak sort memory. Adding
-// base_asset to each branch's ORDER BY changes nothing — within a branch
-// base_asset is bound to a parameter, so the planner drops it as a
-// redundant sort key. A GENERIC plan (not used by the serving pool) is
-// logged for the record: it chose Parallel Append + a full Sort, 17 ms.
+// TestHistoryPointsUnboundedPopulatedReadStreams: since-inception with limit=0 over a long-history pair must stream, not
+// materialise: under the serving pool's force_custom_plan, a Merge Append on bucket feeding an Incremental Sort, no full
+// Sort node (3,120 hourly buckets: 3.2 ms, 29 kB).
 func TestHistoryPointsUnboundedPopulatedReadStreams(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -1851,16 +1753,9 @@ func planNodeTypes(t *testing.T, ctx context.Context, db *sql.DB, planMode, stmt
 	return out
 }
 
-// The since-inception cost fixture. The measured CAGGs' materialisation
-// hypertables are re-chunked to 10 days for the fixture (they inherit
-// 70 days from `trades`' 7-day interval, migration 0062 — MORE chunks
-// is the adverse case for these reads, and 10 days keeps the seed
-// small), so costFixtureDays of hourly trades spreads each over ~14
-// chunks, and costFixturePairs markets trading every hour put ~9,600
-// rows (a multi-level pair index of well over a hundred leaf pages)
-// into each of them. That density is the point: an index PROBE and an
-// every-row WALK are indistinguishable on a chunk whose whole index is
-// one page.
+// The since-inception cost fixture: the CAGG materialisation hypertables are re-chunked to 10 days (more chunks is the
+// adverse case), so hourly trades spread over ~14 chunks with ~9,600 rows each (multi-level pair index). That density is
+// the point: on a one-page index a PROBE and a full WALK look identical.
 const (
 	costFixturePairs  = 40
 	costFixtureDays   = 130
@@ -1868,12 +1763,8 @@ const (
 	// historyMaxPoints in internal/api/v1/history.go — the bucket limit
 	// the anonymous series routes actually pass.
 	costFixtureLimit = 50_000
-	// Ceiling on shared buffers per (chunk, direction) for proving a
-	// pair absent: one b-tree descent. Measured at 2.4–3.0 on this
-	// fixture; 6 leaves slack for a taller tree or a right-link step
-	// without admitting anything that scales with the chunk's rows (one
-	// market's rows in one chunk are ~240 heap fetches here, the whole
-	// chunk ~9,600).
+	// Ceiling on shared buffers per (chunk, direction) to prove a pair absent: one b-tree descent (measured 2.4-3.0; 6 leaves
+	// slack), without admitting anything that scales with chunk rows (one market ~240 heap fetches, whole chunk ~9,600).
 	maxBuffersPerChunkProbe = 6
 )
 
@@ -1913,52 +1804,9 @@ var costReaders = []costReader{
 	},
 }
 
-// TestSeriesReadsUnknownPairCostIsBounded MEASURES the database work an
-// anonymous caller buys by asking /v1/history/since-inception (or
-// /v1/chart with no window) for a well-formed pair that has never
-// traded (the "no literal lower bound" case).
-//
-// These reads have no lower time bound — that is what "since inception"
-// means — so TimescaleDB cannot exclude a single chunk and every chunk
-// of the CAGG appears in the plan. The question is whether that is a
-// DB-burn lever. It is one only if the per-chunk work scales with the
-// chunk's CONTENTS. This test pins that it does not: under the UNION ALL
-// of single-direction branches each chunk is answered by an index probe
-// that finds no entry — no filtered row, two or three index pages — so
-// the whole read costs O(chunks), independent of how much history the
-// chunks hold. Measured here: 68–84 shared buffers and under 1 ms for
-// 14 chunks x 2 directions, against 5,597 buffers and all 124,800 rows
-// fetched-then-discarded for the retired OR disjunction.
-//
-// What this test does NOT show is a saving from any gate in front of
-// the read. There is none, and a gate that itself probes the hypertable
-// buys nothing: the probe IS the per-chunk index descent measured here.
-// Going below O(chunks) needs a lookup that does not touch the
-// hypertable at all (a plain-table pair registry / first-seen bucket),
-// which is a migration, not a change to this query.
-//
-// Two unknown pairs, because "unknown" is not one shape:
-//
-//   - neither asset exists anywhere (native/fiat:EUR here). The planner
-//     can prove this empty from ANY index, so it is the easy case;
-//   - both assets are heavily traded but never with EACH OTHER. This is
-//     the adversarial one: a plan that drives a single-column
-//     (base_asset, bucket) or (quote_asset, bucket) index and tests the
-//     other column as a filter walks every row of a real market in
-//     every chunk before it can answer "none".
-//
-// And two plan modes, because pgx prepares the statement and Postgres
-// may switch a prepared statement to a GENERIC plan after five
-// executions: a property that holds only under the custom plan holds
-// for the first five requests per connection. (The retired OR form is
-// exactly that case — cheap under a custom plan, a full walk under the
-// generic one.)
-//
-// The statements measured are the PRODUCTION ones, not copies: the pool
-// is pinned to a single connection, the Store method runs, and the text
-// pgx prepared for it is read back out of pg_prepared_statements on that
-// same session. A rewrite of a reader is therefore measured as written,
-// and a copy in this file cannot drift from it.
+// TestSeriesReadsUnknownPairCostIsBounded MEASURES the DB work an anonymous caller buys with a never-traded pair on since-
+// inception / chart. With no lower time bound no chunk is excluded, so the read must cost O(chunks) via per-chunk index
+// probes, independent of chunk contents (68-84 buffers vs 5,597 and 124,800 rows for the old OR form).
 func TestSeriesReadsUnknownPairCostIsBounded(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -2012,11 +1860,8 @@ func TestSeriesReadsUnknownPairCostIsBounded(t *testing.T) {
 			}
 		}
 
-		// Instrument check, buffers: the same statement over a pair that
-		// DOES trade must cost far more than the probe ceiling allows.
-		// If it does not, the walker is not reading buffers out of the
-		// plan or the fixture is too thin to tell a probe from a read of
-		// the rows, and the PASSes above mean nothing.
+		// Instrument check: the same statement over a pair that DOES trade must exceed the probe ceiling; if not, the walker isn't
+		// reading buffers from the plan or the fixture is too thin, and the PASSes above mean nothing.
 		control := explainPrepared(t, ctx, db, "force_custom_plan", stmt, costArgs(pairs.traded))
 		t.Logf("%s | control: traded pair, full series: %s", rd.name, control)
 		if ceiling := int64(2*chunks) * maxBuffersPerChunkProbe; control.buffers < 5*ceiling {
@@ -2027,15 +1872,9 @@ func TestSeriesReadsUnknownPairCostIsBounded(t *testing.T) {
 	}
 }
 
-// assertRetiredORFormWalks is the instrument check for the
-// rows-removed-by-filter detector, run on the known-bad case before any
-// PASS is believed: the retired `(A AND B) OR (B AND A)` disjunction
-// form of these readers. Under the generic
-// plan a prepared statement settles into, it must show the walk this
-// test exists to rule out — every row of the CAGG fetched and discarded
-// — and [assertProbeCost]'s own bounds must reject it. The custom-plan
-// runs are logged beside it for the record and not asserted: the
-// planner rescues them with a BitmapOr, which is why the defect hid.
+// assertRetiredORFormWalks is the instrument check on the known-bad case: the retired `(A AND B) OR (B AND A)` form under
+// the generic plan must show the every-row walk and be rejected by assertProbeCost's bounds. Custom-plan runs are logged
+// only (a BitmapOr rescues them, which hid the defect).
 func assertRetiredORFormWalks(t *testing.T, ctx context.Context, db *sql.DB, pairs costPairs) {
 	t.Helper()
 	const orForm = `
@@ -2149,11 +1988,9 @@ func costArgs(p c.Pair) []any {
 	return []any{p.Base.String(), p.Quote.String(), 2*costFixtureLimit + 1}
 }
 
-// seedCostFixture writes one trade per hour per market for
-// costFixtureDays, ending 10 days back so every bucket is closed, and
-// materialises the measured CAGGs over it. Markets FILL01..FILL20 quote
-// in USDC and FILL21..FILL40 in native, so every asset the adversarial
-// unknown pair names is heavily traded — just never against the other.
+// seedCostFixture writes one trade per hour per market for costFixtureDays, ending 10 days back so every bucket is closed,
+// and materialises the CAGGs. FILL01..20 quote in USDC and FILL21..40 in native, so the adversarial unknown pair's assets
+// are heavily traded, never against each other.
 func seedCostFixture(t *testing.T, ctx context.Context, db *sql.DB) {
 	t.Helper()
 	for _, view := range []string{"prices_1h", "twap_1h"} {
@@ -2218,11 +2055,8 @@ func caggChunkCount(t *testing.T, ctx context.Context, db *sql.DB, view string) 
 	return n
 }
 
-// capturePreparedStatement returns the text of the one statement this
-// session has prepared that mentions every needle and is not already in
-// `seen`. database/sql via pgx prepares each distinct query once per
-// connection, and pg_prepared_statements keeps the full text
-// (pg_stat_activity would truncate it at track_activity_query_size).
+// capturePreparedStatement returns the text of the one session-prepared statement mentioning every needle and not in
+// `seen`. pg_prepared_statements keeps the full text; pg_stat_activity truncates at track_activity_query_size.
 func capturePreparedStatement(t *testing.T, ctx context.Context, db *sql.DB, seen []string, needles ...string) string {
 	t.Helper()
 	rows, err := db.QueryContext(ctx, `SELECT statement FROM pg_prepared_statements`)
@@ -2292,15 +2126,9 @@ type explainNode struct {
 	Plans               []explainNode `json:"Plans"`
 }
 
-// explainPrepared runs stmt through PREPARE / EXPLAIN (ANALYZE, BUFFERS)
-// EXECUTE under the given plan_cache_mode, twice — the first run pays
-// for loading the chunks' catalog and relcache entries, which is not
-// the statement's own cost — and returns the second.
-//
-// PREPARE + EXECUTE rather than a parameterised EXPLAIN because only a
-// prepared statement has a generic plan to force. EXECUTE is a utility
-// statement and takes no bind parameters, so the arguments are
-// rendered as literals; they are this test's own asset ids and ints.
+// explainPrepared runs PREPARE / EXPLAIN (ANALYZE, BUFFERS) EXECUTE under the given plan_cache_mode twice and returns the
+// second (the first pays catalog/relcache loading). PREPARE is needed because only a prepared statement has a generic
+// plan; EXECUTE takes no binds, so args are literals.
 func explainPrepared(t *testing.T, ctx context.Context, db *sql.DB, planMode, stmt string, args []any) planCost {
 	t.Helper()
 	const name = "k008_cost_probe"
@@ -2379,26 +2207,9 @@ func parsePlanCost(t *testing.T, raw string) planCost {
 	return out
 }
 
-// TestResumeStalled_ArmsUSDVolumeResolution is the
-// proven-red test. The resume-stalled recovery tool marches stalled cursors
-// through the SAME runBackfillChunk trade-write path as the main `backfill`
-// subcommand, so the store it opens must be armed for a trade-writing
-// re-derive — a POSITIVE derive generation (so a corrected re-derive wins the
-// writers' ON CONFLICT guard) AND the USD-volume resolvers (so on-chain DEX
-// trades resolve a real usd_volume instead of NULL). Opened raw, the store
-// skips this wiring, so a re-derived on-chain DEX trade lands with
-// usd_volume=NULL at gen 0 and the reDeriveNullVolumeGuard is inert (it only
-// fires once the generation is positive).
-//
-// This exercises the exact seam resume-stalled now runs after timescale.Open
-// — [ingest.ArmTradeWriteStore] — then inserts an on-chain DEX (sdex) trade
-// quoted in a USD-pegged classic asset and asserts the tier-1 usd_volume lands
-// non-NULL with the correct value.
-//
-// To reproduce the red state: revert the body of [ingest.ArmTradeWriteStore]
-// to `return nil` (the broken behaviour: no SetDeriveGeneration, no
-// InstallUSDVolumeResolution). InsertTrade then computes usd_volume=NULL and
-// the non-NULL assertion goes red.
+// TestResumeStalled_ArmsUSDVolumeResolution: resume-stalled shares runBackfillChunk with `backfill`, so its store must be
+// armed for trade-writing re-derives: a positive derive generation and the USD-volume resolvers. Opened raw, an on-chain
+// DEX trade lands usd_volume=NULL at gen 0 and reDeriveNullVolumeGuard is inert. Uses ingest.ArmTradeWriteStore.
 func TestResumeStalled_ArmsUSDVolumeResolution(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -2457,20 +2268,9 @@ func TestResumeStalled_ArmsUSDVolumeResolution(t *testing.T) {
 	}
 }
 
-// TestSorobanVolume24hUSD_XLMAnchored proves the XLM-anchored Soroban volume end-to-end: a
-// pure-Soroban SEP-41 token whose liquidity is quoted in XLM gets a REAL
-// trailing-24h USD volume from Store.SorobanVolume24hUSDForAsset, while
-// the plain Store.Volume24hUSDForAsset (which only sees the insert-time
-// usd_volume) reports just the USD-pegged leg.
-//
-// Fixture (all in one closed 1-minute bucket ~2h back):
-//   - native/USDC  vwap 0.5   → the XLM→USD anchor (1 XLM = 0.5 USD)
-//   - token/XLM    20 XLM quoted → XLM-quote leg  → 20 * 0.5 = 10 USD
-//   - XLM/token    10 XLM based  → XLM-base leg   → 10 * 0.5 =  5 USD
-//   - token/USDC    7 USDC       → USD-pegged leg → usd_volume = 7 USD
-//
-// SorobanVolume24hUSDForAsset(token) = 10 + 5 + 7 = 22
-// Volume24hUSDForAsset(token)        =            7   (USD-pegged leg only)
+// TestSorobanVolume24hUSD_XLMAnchored: a Soroban SEP-41 token quoted in XLM gets a real trailing-24h USD volume from
+// SorobanVolume24hUSDForAsset, while plain Volume24hUSDForAsset sees only the USD-pegged leg. Anchor 1 XLM = 0.5 USD:
+// token/XLM 20 -> 10, XLM/token 10 -> 5, token/USDC 7; Soroban reader = 10 + 5 + 7 = 22, plain reader = 7.
 func TestSorobanVolume24hUSD_XLMAnchored(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -2578,17 +2378,9 @@ func TestSorobanVolume24hUSD_EmptyReturnsZero(t *testing.T) {
 	}
 }
 
-// TestSorobanVolume24hUSD_PartlyValuedBucket pins per-trade valuation: a
-// prices_1m bucket where one trade carries an insert-time usd_volume and a
-// same-minute trade on the same pair does not (its FX lookup failed at
-// insert) must value the second trade through the XLM leg, not report the
-// first trade's figure for the whole bucket.
-//
-// Fixture (one closed 1-minute bucket ~2h back, anchor 1 XLM = 0.5 USD):
-//   - token/XLM 10 XLM quoted, usd_volume = 5 (valued at insert)
-//   - token/XLM 20 XLM quoted, usd_volume NULL → 20 * 0.5 = 10
-//
-// SorobanVolume24hUSDForAsset(token) = 5 + 10 = 15
+// TestSorobanVolume24hUSD_PartlyValuedBucket pins per-trade valuation: when one trade in a prices_1m bucket has an insert-
+// time usd_volume and a same-minute trade does not, the second must be valued via the XLM leg, not take the first's figure
+// for the bucket (anchor 0.5: 5 + 20*0.5 = 15).
 func TestSorobanVolume24hUSD_PartlyValuedBucket(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -2814,10 +2606,8 @@ func TestXLMSacAsBase_PriceableThroughEveryPath(t *testing.T) {
 			t.Fatalf("InsertTrade %s/%d: %v", tr.Source, tr.Ledger, err)
 		}
 	}
-	// The aquarius legs have no USD-pegged quote, so insert-time
-	// usd_volume is NULL; in production the usd-volume resolver values
-	// them. Stamp $100 per trade directly — this test is about the READ
-	// paths, and the tripwire / rollup only need the volume to exist.
+	// The aquarius legs have no USD-pegged quote, so insert-time usd_volume is NULL; stamp $100 per trade directly since this
+	// test covers the READ paths and the tripwire/rollup only need the volume to exist.
 	if _, err := store.DB().ExecContext(ctx,
 		`UPDATE trades SET usd_volume = 100 WHERE source = 'aquarius'`); err != nil {
 		t.Fatalf("stamp usd_volume: %v", err)
@@ -2941,15 +2731,9 @@ func TestXLMSacAsBase_PriceableThroughEveryPath(t *testing.T) {
 		}
 	})
 
-	// Price-history series (the sparklines): every bucket that has an
-	// XLM leg in EITHER stored direction must carry a point. The four series CTEs must not read the XLM leg base-side
-	// only, or CBIJ and ZINV had a headline price but an EMPTY series.
-	//
-	// ZDIR is the per-bucket byte-identity guard: the bucket holding its
-	// base-side row (-40m, 2.0 XLM) must price 0.80 even though a
-	// fresher inverted row (-10m, 1.5 XLM) exists — and when that
-	// fresher row falls in a LATER bucket of its own, that bucket is
-	// filled from the inverted arm (0.60), which is the fix working.
+	// Price-history series (sparklines): every bucket with an XLM leg in EITHER stored direction must carry a point; the four
+	// series CTEs must not read the XLM leg base-side only. ZDIR guards per-bucket identity: its base-side bucket prices 0.80
+	// despite a fresher inverted row, which fills its own later bucket (0.60).
 	const bucketFmt = "2006-01-02T15:04:05Z"
 	checkSeries := func(t *testing.T, label string, pts []timescale.AssetPricePoint, want string) {
 		t.Helper()

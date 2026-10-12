@@ -11,10 +11,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// TestStitchTxOutcomes is the D-PART-FAILEDTX core: a failed transaction's
-// operation must be marked FAILED (transaction_successful=false + reason) when
-// shown in a list view, a successful one marked applied, and an operation whose
-// outcome was NOT read must be left UNKNOWN (nil) — never defaulted to success.
+// A failed transaction's operation must be marked FAILED (transaction_successful=false plus reason) in list views, a
+// successful one applied, and an operation whose outcome was not read left UNKNOWN (nil), never defaulted to success.
 func TestStitchTxOutcomes(t *testing.T) {
 	ops := []OpView{
 		{TxHash: "failedtx", Type: "payment"},
@@ -126,10 +124,8 @@ func (r *lakeOutcomeReader) TxOutcomesByHash(_ context.Context, ledgers []uint32
 	return out, nil
 }
 
-// TestStampTxOutcomes_IdleAccountPageIsFullyStamped: an idle account's 50-op page straddles
-// millions of ledgers, so keying the parent-transaction read on that span (not the page's exact
-// ledgers) scales the read with idleness, blows stampTxOutcomes' budget, and leaves every
-// operation with an unknown outcome.
+// An idle account's 50-op page spans millions of ledgers, so keying the parent-transaction read on that span (not the
+// page's exact ledgers) scales with idleness, blows stampTxOutcomes' budget and leaves every outcome unknown.
 func TestStampTxOutcomes_IdleAccountPageIsFullyStamped(t *testing.T) {
 	// 50 ops, one per ledger, ~50k ledgers apart — a real idle-account page
 	// shape (spans of 2.5M-42M ledgers are ordinary on r1).

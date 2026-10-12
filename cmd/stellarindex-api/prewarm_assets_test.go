@@ -9,16 +9,13 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// noCatalogueFillTestLen is a catalogueLen so far above any real
-// assetListingPrewarmLimits value (max 500) that catalogueFillPrewarmOptions
-// always returns empty — used by tests unrelated to catalogue fill so they keep
-// exercising exactly the call set they were written against.
+// noCatalogueFillTestLen is a catalogueLen far above any assetListingPrewarmLimits value (max 500), so
+// catalogueFillPrewarmOptions returns empty; tests unrelated to catalogue fill use it to keep their original call set.
 const noCatalogueFillTestLen = 1 << 20
 
-// The /v1/assets handler overfetches by one (Limit: limit + 1), so a ?limit=50 request looks up
-// the cache key for 51; the +1 arithmetic lives in one place and is asserted here. The limit set
-// is drawn from observed traffic, since a guessed key set becomes a phantom slot that costs a
-// query every cycle and leaves the real caller cold.
+// The /v1/assets handler overfetches by one (Limit: limit + 1), so ?limit=50 looks up the cache key for 51; the +1 lives
+// in one place, asserted here. The limit set comes from observed traffic, as a guessed key set becomes a phantom slot
+// costing a query every cycle while the real caller stays cold.
 
 // TestPrewarmAssetListingsMirrorsTheHandlerOverfetch pins warming userLimit + 1. Warming
 // userLimit warms a key no request looks up, silently, while every user request pays the cold read.
@@ -59,10 +56,8 @@ func TestPrewarmAssetListingsMirrorsTheHandlerOverfetch(t *testing.T) {
 	}
 }
 
-// TestPrewarmAssetListingsCoversTheObservedHotShapes pins the two shapes
-// that production showed to be 84% of all slow time. If either drops out
-// of the set, the most expensive requests on the API go cold again on
-// every cache expiry.
+// TestPrewarmAssetListingsCoversTheObservedHotShapes pins the two shapes that were 84% of slow time in production; if
+// either drops out, the most expensive API requests go cold on every cache expiry.
 func TestPrewarmAssetListingsCoversTheObservedHotShapes(t *testing.T) {
 	has := func(l int) bool {
 		for _, x := range assetListingPrewarmLimits {
@@ -93,10 +88,9 @@ func TestPrewarmAssetListingsNilReaderIsSafe(t *testing.T) {
 	prewarmAssetListings(context.Background(), discardLogger(), nil, nil, 45)
 }
 
-// TestCatalogueFillPrewarmOptionsMirrorsTheUnifiedHandler pins the key the unified landing page's
-// catalogue phase uses for its shortfall: limit (userLimit-catalogueLen)+AssetsListOverfetchBy
-// with Order=Volume24hUSDDesc, not the userLimit+1 key. On ~45 catalogue rows only userLimit
-// 50/100/500 overrun it; 1/5/10 never reach the classic phase.
+// TestCatalogueFillPrewarmOptionsMirrorsTheUnifiedHandler pins the unified landing page's catalogue-phase key: limit
+// (userLimit-catalogueLen)+AssetsListOverfetchBy with Order=Volume24hUSDDesc, not userLimit+1. With ~45 catalogue rows
+// only userLimit 50/100/500 overrun it; 1/5/10 never reach the classic phase.
 func TestCatalogueFillPrewarmOptionsMirrorsTheUnifiedHandler(t *testing.T) {
 	const catalogueLen = 45 // matches serveCatalogueUnifiedPage's own doc comment
 	opts := catalogueFillPrewarmOptions(catalogueLen)

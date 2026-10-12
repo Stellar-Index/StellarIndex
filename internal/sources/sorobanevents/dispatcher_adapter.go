@@ -71,10 +71,8 @@ type AsyncSink struct {
 	batchSz    int
 	drainGrace time.Duration
 
-	// abortFlush interrupts an in-flight or retrying flush. It is s.stopping in steady state;
-	// drainOnStop swaps in a bounded grace timer so the final batches can land. Interrupted rows
-	// are returned to the worker for the drain to retry, or abandoned once the grace expires.
-	// abortFlush and draining are touched only by the single worker goroutine.
+	// abortFlush interrupts an in-flight or retrying flush: s.stopping in steady state, a bounded grace timer during drainOnStop.
+	// Interrupted rows return to the worker for retry or are abandoned at grace expiry. abortFlush and draining: single worker goroutine only.
 	abortFlush <-chan struct{}
 	draining   bool
 	startOnce  sync.Once
@@ -378,15 +376,9 @@ func (s *AsyncSink) drainOnStop(batch *[]Row, flush func()) {
 	}
 }
 
-// flushBatch writes one batch. A write failure blocks and retries with capped backoff; only a
-// positively classified permanent data fault (IsPermanentFault) is isolated and dropped, since
-// dropping on any error would silently lose raw rows during a transient Postgres outage.
-//
-// The retry loop is bounded by s.abortFlush. In steady state Stop() cancels the attempt and the
-// unlanded rows are returned for drainOnStop to retry under DrainGrace; otherwise a Stop racing
-// a healthy write would count a whole batch lost on every deploy
-// (TestAsyncSink_StopDrainsPendingRows_NoChannelClose). During the drain a batch still unlanded
-// at grace expiry is abandoned loudly. Returns the rows neither written nor abandoned.
+// flushBatch writes one batch. A write failure blocks and retries with capped backoff; only a positively classified permanent data
+// fault (IsPermanentFault) is dropped, since dropping on any error would lose raw rows during a transient outage. The retry loop is
+// bounded by s.abortFlush: Stop() cancels it and unlanded rows go to drainOnStop; a batch unlanded at grace expiry is abandoned loudly.
 func (s *AsyncSink) flushBatch(rows []Row) []Row {
 	abort := s.abortFlush
 	backoff := asyncSinkRetryInitialBackoff

@@ -18,11 +18,9 @@ type Observer struct {
 	// wrappers maps SAC contract C-strkey → asset_key (CODE:ISSUER).
 	wrappers map[string]string
 
-	// unknownValShapeDrops counts Balance-keyed changes on a watched contract whose value is
-	// neither a bare i128 nor a map-with-amount. Matches() checks only KEY shape, so a
-	// pure-SEP-41 wrapper with a different storage layout is claimed on every change and fails
-	// every Decode. A sustained non-zero rate means a config problem (undecodable layout), which
-	// generic decode errors cannot distinguish from a blip. Read via [Observer.UnknownValShapeDrops].
+	// unknownValShapeDrops counts Balance-keyed changes on a watched contract whose value is neither a bare i128 nor a map-with-amount.
+	// Matches() checks only KEY shape, so a pure-SEP-41 wrapper with a different layout is claimed on every change and fails every
+	// Decode: a sustained non-zero rate is a config problem. Read via [Observer.UnknownValShapeDrops].
 	unknownValShapeDrops int
 }
 
@@ -131,13 +129,9 @@ func (o *Observer) Decode(ctx dispatcher.LedgerEntryChangeContext) ([]consumer.E
 // UnknownValShapeDrops counts Balance-keyed changes for a watched contract whose value shape [scval.SEP41BalanceAmount] could not decode (see [Observer.unknownValShapeDrops]).
 func (o *Observer) UnknownValShapeDrops() int { return o.unknownValShapeDrops }
 
-// contractDataFromChange returns the ContractDataEntry and is-removal flag for any change
-// variant. Removed rows derive ContractData from the LedgerKey (Contract + Key, no Val).
-//
-// Both halves of the Soroban archival lifecycle arrive here. Eviction is not a change variant:
-// the dispatcher turns each evicted key into a Removed change (dispatcher.walkEvictedKeys) with
-// an empty TxHash and OpIndex -1, since it is ledger-scoped. An evicted balance must stop
-// counting toward supply exactly as a deleted one does, and a later Restored change reverses it.
+// contractDataFromChange returns the ContractDataEntry and is-removal flag for any change variant (Removed rows derive it from the
+// LedgerKey: Contract + Key, no Val). Eviction is not a change variant: the dispatcher turns each evicted key into a Removed change
+// (dispatcher.walkEvictedKeys; empty TxHash, OpIndex -1), so an evicted balance stops counting toward supply; Restored reverses it.
 func contractDataFromChange(change xdr.LedgerEntryChange) (cd *xdr.ContractDataEntry, isRemoval bool, ok bool) {
 	var entry *xdr.LedgerEntry
 	switch change.Type {

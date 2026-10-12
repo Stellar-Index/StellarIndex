@@ -10,30 +10,9 @@ import (
 	"testing"
 )
 
-// ─── The serving kill-switch ─────────────────────────────
-//
-// `sudo touch /etc/caddy/MAINTENANCE_MODE` is the documented way to stop serving during a live
-// data-integrity incident (docs/operations/runbooks/api.md). It must 503 every route, stream
-// routes (/v1/price/stream, /v1/price/tip/stream, /v1/observations/stream, /v1/ledger/stream)
-// included, or a partial switch keeps streaming wrong prices with no signal.
-//
-// OUTSIDE a `route` block Caddy sorts a site's directives by its own fixed order, in which
-// `handle` ranks ABOVE `respond`. A stream proxy in a bare `handle @sse { … }` block therefore
-// compiled ahead of the maintenance 503:
-//
-//	[vars+headers, encode, sse-handle, maintenance-503, /metrics, proxy]
-//
-// so stream requests were proxied before the 503 was reached. `route` is the one construct
-// that makes source order authoritative, so the kill-switch and the stream proxy live in ONE
-// `route` block with the 503 first. These tests pin that in both copies of the file, the
-// hand-kept configs/caddy/Caddyfile.api and the ansible template that reaches the host,
-// because a fix in only one of them is cosmetic.
-//
-// Two properties, both directions:
-//   - switch ENGAGED: nothing, stream routes included, gets past the 503;
-//   - switch DISENGAGED: every stream route still proxies with
-//     `flush_interval -1`, i.e. the fix must not buy the kill-switch by
-//     breaking streaming (buffered SSE = zero bytes).
+// The MAINTENANCE_MODE kill-switch must 503 every route, stream routes included, or streams keep serving wrong prices.
+// Outside a `route` block Caddy ranks `handle` above `respond`, so keep both in one `route`, 503 first, in both
+// Caddyfiles. Disengaged, every stream route must still proxy with `flush_interval -1` (buffered SSE gives zero bytes).
 
 // caddyDirective is one non-comment line of a Caddyfile together with
 // the brace depth its content sits at: depth 1 is a site-block
@@ -44,10 +23,9 @@ type caddyDirective struct {
 	text  string
 }
 
-// caddyDirectives strips comments and blank lines and annotates what is left with its brace
-// depth. `caddy fmt` puts one directive per line, a block opens with a trailing `{` and closes
-// with a line that is only `}`; placeholders such as `{client_ip}` never sit at either end of
-// a line, so they do not disturb the count.
+// caddyDirectives strips comments and blank lines and annotates each remaining line with its brace depth. `caddy fmt`
+// puts one directive per line, a block opens with a trailing `{` and closes with a lone `}`, and placeholders like
+// `{client_ip}` never sit at a line end.
 func caddyDirectives(t *testing.T, path string) []caddyDirective {
 	t.Helper()
 	var out []caddyDirective
@@ -71,12 +49,9 @@ func caddyDirectives(t *testing.T, path string) []caddyDirective {
 	return out
 }
 
-// TestCaddyKillSwitchOutranksTheStreamProxy asserts the ordering property on the text so it
-// holds wherever the suite runs (TestCaddyKillSwitchCompiledOrder below proves it through
-// caddy itself when the binary is on PATH).
-//
-// The assertion is structural, not "line N is before line M": file order does NOT decide this,
-// both directives sitting in one `route` block with maintenance first does.
+// TestCaddyKillSwitchOutranksTheStreamProxy asserts the ordering on the text so it holds wherever the suite runs
+// (TestCaddyKillSwitchCompiledOrder proves it via caddy when on PATH). The assertion is structural: both directives in
+// one `route` block with maintenance first, since file order alone does not decide this.
 func TestCaddyKillSwitchOutranksTheStreamProxy(t *testing.T) {
 	for _, path := range caddyfiles {
 		t.Run(filepath.Base(path), func(t *testing.T) {
@@ -153,10 +128,8 @@ func caddyStreamProxyBlock(t *testing.T, path string) string {
 	return rest[:end]
 }
 
-// ─── The same property, proved through caddy ────────────────────────
-//
-// Caddy's directive order is what a careful reader gets wrong, so when the binary is available
-// the compiled config is the witness, not the text.
+// The same property proved through caddy: directive order is what a careful reader gets wrong, so when the binary is
+// available the compiled config is the witness, not the text.
 
 // caddyCompiledRoute is one route of an adapted config, flattened into
 // evaluation order (a subroute's children run where the subroute sits).

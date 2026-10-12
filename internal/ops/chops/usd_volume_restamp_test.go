@@ -11,10 +11,8 @@ import (
 	"time"
 )
 
-// TestUSDVolumeRestamp_IsDispatchable pins that the restamp tool exists under
-// its runbook name and lives in the WRITING half of the dispatcher: the
-// v1-launch-plan carried "no usd-volume-restamp tool exists yet" as an open
-// item, and the verifier half must never resolve a verb that mutates rows.
+// The restamp tool must exist under its runbook name and sit in the WRITING half of the dispatcher.
+// The verifier half must never resolve a verb that mutates rows.
 func TestUSDVolumeRestamp_IsDispatchable(t *testing.T) {
 	if _, ok := lakeMutatorVerb("usd-volume-restamp"); !ok {
 		t.Fatal(`lakeMutatorVerb("usd-volume-restamp") = not found — the W5.3 restamp tool is not dispatchable`)
@@ -24,10 +22,8 @@ func TestUSDVolumeRestamp_IsDispatchable(t *testing.T) {
 	}
 }
 
-// TestUSDVolumeRestamp_RefusesUnboundedOrLiveWindows: a money-column
-// writer gets no "whole history" default and never touches today's
-// still-being-written chunk. The window check runs before any DB is
-// opened, so this runs without one.
+// A money-column writer gets no "whole history" default and never touches today's still-being-written chunk. The window
+// check runs before any DB is opened, so no DB is needed.
 func TestUSDVolumeRestamp_RefusesUnboundedOrLiveWindows(t *testing.T) {
 	now := time.Date(2026, 8, 28, 13, 0, 0, 0, time.UTC)
 	cases := []struct {
@@ -77,10 +73,8 @@ func TestRestampSourceAllowList(t *testing.T) {
 	}
 }
 
-// TestValidateRestampSourceAllowList_unknownNameRefused pins that an
-// estimated tier's -sources value that names a source outside the tier's
-// own registry must be refused, not silently dropped by
-// [timescale.restampScanSources] into an empty, "clean-looking" scan.
+// An estimated tier's -sources value naming a source outside the tier's own registry must be refused, not silently
+// dropped by restampScanSources into an empty, clean-looking scan.
 func TestValidateRestampSourceAllowList_unknownNameRefused(t *testing.T) {
 	// sdex is a DEX source; -tier cex-fx only recognises CEX sources.
 	err := validateRestampSourceAllowList(restampTierCEXFX, restampSourceAllowList("sdex"))
@@ -125,11 +119,9 @@ func (f fakePrices1mRetention) Prices1mRetentionArmed(context.Context) (bool, er
 	return f.armed, f.err
 }
 
-// TestCheckRestampPrices1mRetention: an armed prices_1m retention policy
-// (migration 0156) refuses every -write, whose CAGG follow-up would rebuild
-// the TWAP rungs from dropped minute rows, and every estimated-tier run,
-// which values rows from prices_1m and would report a dropped range as
-// "anchor declined". Only a dry exact-tier run reads neither.
+// An armed prices_1m retention policy refuses every -write (the CAGG follow-up would rebuild TWAP rungs from dropped
+// rows) and every estimated-tier run (a dropped range would read as "anchor declined"); only a dry exact-tier run reads
+// neither.
 func TestCheckRestampPrices1mRetention(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

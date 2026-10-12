@@ -9,10 +9,9 @@ import (
 	"time"
 )
 
-// ReapCursors is the only irreversible statement in cursor cleanup, and its safety lives in
-// three predicates. The planner in `stellarindex-ops reap-cursors` applies the same rules but
-// does NOT constrain this DELETE (it is predicated on the cutoff, not the previewed keys), so
-// a dropped clause deletes rows no preview showed. Pin all three.
+// ReapCursors is the only irreversible statement in cursor cleanup and its safety lives in three predicates.
+// The reap-cursors planner does not constrain this DELETE (it keys on the cutoff, not previewed keys), so pin
+// all three.
 func TestReapCursors_DeletePredicates(t *testing.T) {
 	cutoff := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
 
@@ -53,10 +52,8 @@ func TestReapCursors_DeletePredicates(t *testing.T) {
 	if got := stmt.arg(t, 2); got != "projected-rebuild" {
 		t.Errorf("$2 = %v, want the -source value", got)
 	}
-	// $3 must reach the driver as a Go []string: pgx's stdlib driver
-	// encodes that as a Postgres text[], which is what ALL() needs. A
-	// scalar or a joined string binds as text and the guard stops
-	// matching.
+	// $3 must reach the driver as a Go []string, which pgx encodes as text[] for ALL(); a scalar or joined string
+	// binds as text and the guard stops matching.
 	protected, ok := stmt.arg(t, 3).([]string)
 	if !ok {
 		t.Fatalf("$3 is %T (%v), want a []string bound as text[]", stmt.arg(t, 3), stmt.arg(t, 3))
@@ -82,10 +79,8 @@ func TestReapCursors_NilProtectedBindsEmptyArray(t *testing.T) {
 	if !ok {
 		t.Fatalf("$3 is %T (%v), want an empty []string", got, got)
 	}
-	// A nil slice is what pgx encodes as SQL NULL, and that is the
-	// failure being pinned: it must reach the driver as a non-nil empty
-	// slice, i.e. an empty text[]. Length alone cannot tell the two
-	// apart.
+	// A nil slice is what pgx encodes as SQL NULL, which is the failure pinned here: the driver must receive a
+	// non-nil empty slice (an empty text[]). Length alone cannot tell them apart.
 	if arr == nil {
 		t.Fatal("$3 is a nil []string — pgx encodes that as NULL, and `source <> ALL(NULL)` is NULL for every row, so the reap would silently delete nothing")
 	}

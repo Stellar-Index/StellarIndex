@@ -12,18 +12,12 @@ import (
 	"time"
 )
 
-// ─── /v1/ohlc routes are ONE table, and the store serves all of it ───
-//
-// 2h, 12h, 3d and 2w are in the serving reader's switch, so OHLCSeriesReBucketed must not keep
-// its own hand-written allow-list of fold literals: requests at those widths would fail with
-// "outInterval not in allow-list", a 500 on the public API. The allow-list is the folded rows
-// of [OHLCRoutes], so check and routing cannot diverge; these tests pin that the table is
-// well-formed and that the store issues a query for every fold it declares.
+// /v1/ohlc routes are ONE table: OHLCSeriesReBucketed must derive its fold allow-list from [OHLCRoutes], or
+// widths like 2h/12h/3d/2w would 500. These tests pin the table is well-formed and every fold is queried.
 
-// TestOHLCSeriesReBucketedServesEveryDeclaredFold drives each folded route through the real
-// OHLCSeriesReBucketed against the scripted driver and requires a statement folding the
-// declared source view by the declared literal. A route the allow-list refuses fails before
-// any SQL is issued, the 500 this guards against.
+// TestOHLCSeriesReBucketedServesEveryDeclaredFold drives each folded route through OHLCSeriesReBucketed and
+// requires a statement folding the declared source view by the declared literal; an allow-list refusal is
+// the 500.
 func TestOHLCSeriesReBucketedServesEveryDeclaredFold(t *testing.T) {
 	bucket := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	row := []driver.Value{
@@ -72,10 +66,8 @@ func TestOHLCSeriesReBucketedServesEveryDeclaredFold(t *testing.T) {
 	t.Logf("executed %d of %d folded routes", folded, folded)
 }
 
-// TestOHLCSeriesReBucketedRefusesUndeclaredFold — the allow-list is the
-// TABLE, not "any literal that appears in it": a source/fold pairing
-// no route declares must be refused before SQL is composed, even when
-// both halves are individually known.
+// TestOHLCSeriesReBucketedRefusesUndeclaredFold: the allow-list is the TABLE, so a source/fold pairing no
+// route declares is refused before SQL is composed, even when both halves are individually known.
 func TestOHLCSeriesReBucketedRefusesUndeclaredFold(t *testing.T) {
 	for _, tc := range []struct {
 		source HistoryGranularity
@@ -144,10 +136,9 @@ func TestOHLCRoutesAreWellFormed(t *testing.T) {
 	}
 }
 
-// TestOHLCRoutesFoldIsAMultipleOfItsSource pins the precondition OHLCSeriesReBucketed
-// documents: time_bucket over source rows only folds cleanly when the output width is an
-// integer multiple of the source bucket (3d of prices_1h is fine; 2h of prices_4h silently
-// drops rows). Widths are parsed from the Postgres INTERVAL text, as the query reads them.
+// TestOHLCRoutesFoldIsAMultipleOfItsSource pins OHLCSeriesReBucketed's precondition: time_bucket folds
+// cleanly only when the output width is an integer multiple of the source bucket (3d of prices_1h is fine; 2h
+// of prices_4h drops rows).
 func TestOHLCRoutesFoldIsAMultipleOfItsSource(t *testing.T) {
 	for _, r := range OHLCRoutes {
 		if !r.Folded() {

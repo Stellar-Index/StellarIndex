@@ -18,10 +18,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/upshift"
 )
 
-// TestFreshSourceStartsAtGenesis: a source with no cursor row starts at its
-// declared Genesis, not at the lake floor (upshift / sushiswap_v3
-// crawled ~85 h of ledgers that cannot hold their events), and the lake
-// floor still wins when it is the later of the two.
+// A source with no cursor row starts at its declared Genesis, not the lake floor (upshift / sushiswap_v3 crawled ~85 h
+// of empty ledgers). The lake floor still wins when it is the later of the two.
 func TestFreshSourceStartsAtGenesis(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -76,10 +74,9 @@ func TestFreshSourceStartsAtGenesisWithoutLake(t *testing.T) {
 	}
 }
 
-// crawlsFromLakeFloor lists the projected sources with no verified
-// first-event constant: a fresh one starts at the lake floor. Adding a
-// projected source means either declaring its Genesis in buildSource or
-// listing it here — never silently inheriting the crawl.
+// crawlsFromLakeFloor lists projected sources with no verified first-event constant; a fresh one starts at the lake
+// floor. A new projected source must declare its Genesis in buildSource or be listed here, never silently inherit the
+// crawl.
 var crawlsFromLakeFloor = map[string]string{
 	"soroswap":        "no package genesis constant",
 	"aquarius":        "no package genesis constant",
@@ -97,10 +94,8 @@ var crawlsFromLakeFloor = map[string]string{
 	"redstone":        "oracle contract is operator-configured",
 }
 
-// TestProjectedSourcesDeclareGenesis is the guard for that class: every
-// source buildSource projects either carries the expected Genesis or is an
-// acknowledged lake-floor crawler. A Genesis is a PUBNET ledger, so only a
-// pubnet-only source may carry one.
+// TestProjectedSourcesDeclareGenesis: every source buildSource projects either carries the expected Genesis or is an
+// acknowledged lake-floor crawler. A Genesis is a pubnet ledger, so only a pubnet-only source may carry one.
 func TestProjectedSourcesDeclareGenesis(t *testing.T) {
 	wantGenesis := map[string]uint32{
 		upshift.SourceName:        upshift.GenesisLedger,

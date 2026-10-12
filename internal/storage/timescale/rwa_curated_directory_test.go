@@ -149,11 +149,9 @@ func TestCuratedRWADirectory_BothBoundsAreEnforcedInSQL(t *testing.T) {
 	}
 }
 
-// TestCuratedRWADirectoryByAddress_CensusAndRowsShareOneTransaction pins the claim that the
-// census and the row read "come from ONE snapshot". Two autocommit statements each take their
-// own READ COMMITTED snapshot, so a sync landing between them can leave the census reporting
-// Stale=N beside rows that disagree with it, breaking its fail-closed signal. Both reads must
-// run in one transaction; the scripted driver's rollback count is the only proof without a DB.
+// TestCuratedRWADirectoryByAddress_CensusAndRowsShareOneTransaction: the census and row reads must share one
+// snapshot, or a sync between them leaves Stale=N beside disagreeing rows. The scripted driver's rollback
+// count is the only proof without a DB.
 func TestCuratedRWADirectoryByAddress_CensusAndRowsShareOneTransaction(t *testing.T) {
 	t.Parallel()
 
@@ -203,10 +201,8 @@ func TestCuratedRWABounds_AreParseableIntervals(t *testing.T) {
 			t.Fatalf("bound %q is not `<n> <unit>`", b)
 		}
 	}
-	// The two clocks are deliberately different lengths and for stated
-	// reasons: recognition is OUR daily sync (48h = one missed run), the
-	// price is the CURATOR's upload cadence (a week). A change that made
-	// them equal or inverted would have to say why.
+	// The two clocks differ deliberately: recognition is our daily sync (48h = one missed run), the price is the
+	// curator's upload cadence (a week). A change that equalised or inverted them must say why.
 	if curatedRWARecognitionMaxAge != "48 hours" || curatedRWAPriceMaxAge != "7 days" {
 		t.Errorf("bounds = (%q, %q); a change here must update the reasoning in the file header", curatedRWARecognitionMaxAge, curatedRWAPriceMaxAge)
 	}

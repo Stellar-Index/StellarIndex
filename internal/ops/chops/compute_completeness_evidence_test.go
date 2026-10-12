@@ -13,11 +13,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestProjectionEvidence_CarryKeepsThePriorProofTime pins what a verdict
-// publishes as the age of its projection evidence. Only a run that reconciled
-// the whole served range stamps it now; a carry restates the prior claim and
-// must keep the prior claim's proof time, or every nightly incremental run
-// would present a weeks-old proof as fresh.
+// TestProjectionEvidence_CarryKeepsThePriorProofTime pins the published age of projection evidence: only a run that
+// reconciled the whole served range stamps now; a carry restates the prior claim and keeps its proof time, or each
+// nightly incremental run would present a weeks-old proof as fresh.
 func TestProjectionEvidence_CarryKeepsThePriorProofTime(t *testing.T) {
 	const servedFrom = uint32(61_609_957)
 	proven := time.Date(2026, 9, 1, 5, 40, 0, 0, time.UTC)

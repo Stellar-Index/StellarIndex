@@ -11,30 +11,18 @@ import (
 	cfg "github.com/Stellar-Index/StellarIndex/internal/config"
 )
 
-// selfHostingGuide is the operator-facing bring-up guide. Its §4.3 tells a
-// fresh operator to `cp configs/example.toml` and edit the keys it names, so
-// the guide and that file are one contract: a key the guide names must exist
-// in the schema AND be visible in the file the reader was told to copy.
+// The self-hosting guide's section 4.3 tells operators to `cp configs/example.toml` and edit named keys. So a key the
+// guide names must exist in the schema and be visible in that file.
 const selfHostingGuide = "docs/operations/self-hosting.md"
 
-// configRefRe matches a backticked, table-qualified config reference in either form the guide
-// uses: "`[storage] clickhouse_addr`" or "`storage.clickhouse_live_sink = false`". Bare keys
-// ("`redis_addr`") are deliberately not matched: without a table they are ambiguous, and prose
-// like "`ledger_entry_changes`" (a ClickHouse table, not a config key) would be swept in.
+// configRefRe matches backticked table-qualified refs: `[storage] clickhouse_addr` or `storage.clickhouse_live_sink =
+// false`. Bare keys are not matched: they are ambiguous, and prose like `ledger_entry_changes` (a ClickHouse table)
+// would be swept in.
 var configRefRe = regexp.MustCompile("`(?:\\[([a-z][a-z_0-9]*)\\] +([a-z][a-z_0-9]*)|([a-z][a-z_0-9]*)\\.([a-z][a-z_0-9]*))")
 
-// TestSelfHostingGuide_ConfigRefs holds the guide to the two promises it makes about
-// configuration:
-//
-//	(1) Every key it names resolves against the real schema. Load rejects unknown keys as a hard
-//	    error, so a key under the wrong table leaves every binary refusing to start with
-//	    "config: unknown keys in ...".
-//	(2) Every key it names is present in configs/example.toml. The guide's §4.3 says to copy that
-//	    file and edit `[storage] clickhouse_addr` / `clickhouse_live_sink`; a key missing from it
-//	    hides the on-by-default ClickHouse dual-sink from an operator with no ClickHouse.
-//
-// Commented-out keys count as present: example.toml documents opt-in knobs that way, and a
-// commented line is still a key the reader can find and edit.
+// Holds the guide to two promises. (1) Every key it names resolves in the schema; Load hard-fails on unknown keys. (2)
+// Every key it names is in configs/example.toml; a missing one hides the default-on ClickHouse dual-sink from operators.
+// Commented-out keys count as present: example.toml documents opt-in knobs that way.
 func TestSelfHostingGuide_ConfigRefs(t *testing.T) {
 	root := filepath.Join("..", "..")
 
@@ -114,11 +102,9 @@ func tomlKeysIn(body string) map[string]bool {
 	return keys
 }
 
-// TestSelfHostingGuide_ClickHouseNativePort pins the one port three places must agree on:
-// storage.clickhouse_addr's default, the ansible role's clickhouse_tcp_port, and the guide's
-// instruction to move clickhouse-server there. ClickHouse's own default native port is 9000,
-// which the guide's MinIO (§4.4) already holds, so a guide that only names the dial address
-// leaves the indexer dialling a port nothing listens on.
+// Pins the one ClickHouse native port three places must agree on: clickhouse_addr's default, the ansible
+// clickhouse_tcp_port, the guide. CH's own default 9000 is held by MinIO (section 4.4), so a guide naming only the dial
+// address leaves the indexer dialling nothing.
 func TestSelfHostingGuide_ClickHouseNativePort(t *testing.T) {
 	root := filepath.Join("..", "..")
 

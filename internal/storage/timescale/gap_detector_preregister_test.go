@@ -11,10 +11,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// gatherGapDetectorRunsTotal collects the runs_total counter through a
-// private registry and returns value-by-label-set. It deliberately does
-// NOT call WithLabelValues on the vec — that would create the very series
-// the test is asserting on — so an absent series is reported as absent.
+// gatherGapDetectorRunsTotal collects the runs_total counter through a private registry and returns
+// value-by-label-set. It never calls WithLabelValues, which would create the series under test, so an absent
+// series is reported absent.
 func gatherGapDetectorRunsTotal(t *testing.T) map[[3]string]float64 {
 	t.Helper()
 	reg := prometheus.NewPedanticRegistry()

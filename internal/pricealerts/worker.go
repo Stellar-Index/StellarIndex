@@ -19,16 +19,12 @@ import (
 // DefaultInterval is the sweep cadence when Options.Interval is unset.
 const DefaultInterval = 30 * time.Second
 
-// alertTimeoutDivisor sets each alert's evaluation budget to a fraction of the sweep interval.
-// The sweep is serial, so without a per-alert deadline one slow alert (a never-traded pair whose
-// VWAP probe walks evicted chunks) would hold every other account's alerts for up to the 30 m
-// background statement timeout.
+// alertTimeoutDivisor sets each alert's evaluation budget to a fraction of the sweep interval. The sweep is serial, so without a
+// per-alert deadline one slow alert would hold every other account's alerts for up to the 30 m background statement timeout.
 const alertTimeoutDivisor = 3
 
-// maxPriceStaleness bounds how old the closed VWAP bucket an alert evaluates against may be.
-// LatestVWAP's own gate (timescale.latestVWAPGateWindow) allows 14 DAYS, which is fine for
-// serving but not for a "price crossed" notification. 15 one-minute buckets is wide against the
-// 30 s default sweep cadence while still rejecting multi-day-stale buckets.
+// maxPriceStaleness bounds how old the closed VWAP bucket an alert evaluates against may be. LatestVWAP's own gate allows 14 DAYS,
+// fine for serving but not for a "price crossed" notification; 15 one-minute buckets is wide against the 30 s sweep cadence.
 const maxPriceStaleness = 15 * time.Minute
 
 // Per-alert outcomes recorded on stellarindex_price_alert_evaluated_total.
@@ -179,14 +175,9 @@ func (w *Worker) sweepOnce(ctx context.Context) string {
 	return "ok"
 }
 
-// evaluateOne evaluates a single alert against the latest closed VWAP. The error is non-nil
-// only for a genuine failure (bad row, price-read, claim or enqueue error, or the alert's
-// deadline); no-price, not-crossed, already-fired, cooling-down, no-subscriber and claim-lost
-// outcomes return nil.
-//
-// The reads and the fan-out each get their own alertTimeout budget. A crossing is claimed before
-// it is enqueued, so a fan-out sharing the reads' leftover budget could claim the crossing and
-// then run out of time before enqueueing it.
+// evaluateOne evaluates a single alert against the latest closed VWAP. Error is non-nil only for a genuine failure (bad row, price
+// read, claim or enqueue error, or the alert's deadline); all no-op outcomes return nil. Reads and fan-out each get their own
+// alertTimeout budget: a crossing is claimed before it is enqueued, so a shared leftover could claim it and run out before enqueueing.
 func (w *Worker) evaluateOne(ctx context.Context, a platform.PriceAlert, now time.Time, reads map[pairKey]vwapRead) (string, error) {
 	readCtx, cancel := context.WithTimeout(ctx, w.alertTimeout)
 	c, outcome, err := w.checkCrossing(readCtx, a, now, reads)
@@ -206,10 +197,8 @@ func (w *Worker) evaluateOne(ctx context.Context, a platform.PriceAlert, now tim
 	return outcome, nil
 }
 
-// failureOutcome classes a stage error as the alert's own deadline or a
-// plain error. The stage context is checked as well as the error chain
-// because a driver may surface a cancelled statement without wrapping
-// context.DeadlineExceeded.
+// failureOutcome classes a stage error as the alert's own deadline or a plain error. The stage context is checked too, because a
+// driver may surface a cancelled statement without wrapping context.DeadlineExceeded.
 func (w *Worker) failureOutcome(stageCtx context.Context, err error) (string, error) {
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(stageCtx.Err(), context.DeadlineExceeded) {
 		return outcomeTimeout, fmt.Errorf("exceeded %s per-alert budget: %w", w.alertTimeout, err)
@@ -346,10 +335,8 @@ func (w *Worker) fire(ctx context.Context, a platform.PriceAlert, now time.Time,
 	return outcomeFired, err
 }
 
-// edgeGate makes the alert edge-triggered: it fires on the first fresh
-// price where the condition holds, then stays disarmed until a fresh price
-// shows the condition cleared. Only fresh prices reach here, so a stale or
-// missing bucket neither fires nor re-arms. An empty outcome means "fire".
+// edgeGate makes the alert edge-triggered: it fires on the first fresh price where the condition holds, then stays disarmed until a
+// fresh price shows it cleared. Only fresh prices reach here. An empty outcome means "fire".
 func (w *Worker) edgeGate(ctx context.Context, a platform.PriceAlert, crossed bool, now time.Time) (string, error) {
 	switch {
 	case !crossed && a.Disarmed:
@@ -393,10 +380,8 @@ func (w *Worker) subscribedHooks(ctx context.Context, accountID uuid.UUID) ([]pl
 	return targets, nil
 }
 
-// enqueueAll enqueues one price.alert delivery per target webhook and returns the count. It
-// attempts every webhook even after a failure: the alert is already marked fired, so aborting
-// early would silently skip every later webhook. Per-webhook errors are joined and returned with
-// the count so the caller can log which targets were missed.
+// enqueueAll enqueues one price.alert delivery per target webhook and returns the count. It attempts every webhook even after a
+// failure (the alert is already marked fired); per-webhook errors are joined so the caller can log which targets were missed.
 func (w *Worker) enqueueAll(ctx context.Context, hooks []platform.CustomerWebhook, payload []byte) (int, error) {
 	enqueued := 0
 	var errs []error

@@ -28,13 +28,9 @@ const MainnetBackstopV1 = blend.MainnetBackstopV1
 // detector's, the reconcile's and a fresh projector cursor's range.
 const BackstopGenesisLedger = blend.FactoryGenesisLedger
 
-// Event names: topic[0] Symbol strings across the V1 + V2 Backstop surface (V1 uses `rw_zone`
-// where V2 uses `rw_zone_add`; V2 also has `rw_zone_remove`, unconfirmed in the lake).
-//
-// SCHEMA PROVENANCE: reverse-engineered from mainnet lake samples; V2 shapes are cross-checked
-// against blend-contracts-v2 backstop/src/events.rs, V1 arities against lake bytes only. Until a
-// full historical replay lands the source is LIVE-CAPTURE ONLY for backfill (README.md
-// Provenance).
+// Event names: topic[0] Symbol strings across the V1 + V2 Backstop surface (V1 `rw_zone` where V2 uses `rw_zone_add`; V2
+// `rw_zone_remove` is unconfirmed in the lake). Schema is reverse-engineered from lake samples (V1 arities from lake bytes only), so
+// the source is LIVE-CAPTURE ONLY for backfill until a full replay lands.
 const (
 	EventDeposit           = "deposit"
 	EventClaim             = "claim"

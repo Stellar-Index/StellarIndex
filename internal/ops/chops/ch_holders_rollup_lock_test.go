@@ -9,10 +9,9 @@ import (
 	"testing"
 )
 
-// TestAcquireHoldersRollupLockSerializesConcurrentRuns pins that a manual
-// `stellarindex-ops ch-holders-rollup` cannot run while another invocation (the 30-minute timer,
-// or a second manual run) is mid-cycle. Without acquireHoldersRollupLock a second invocation
-// proceeds straight into RunHoldersRollup alongside the first.
+// TestAcquireHoldersRollupLockSerializesConcurrentRuns: a manual ch-holders-rollup cannot run while another invocation
+// (the 30-minute timer or a manual run) is mid-cycle. Without acquireHoldersRollupLock a second run enters
+// RunHoldersRollup alongside the first.
 func TestAcquireHoldersRollupLockSerializesConcurrentRuns(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ch-holders-rollup.lock")
 

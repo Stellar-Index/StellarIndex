@@ -13,12 +13,9 @@ import (
 	"time"
 )
 
-// [Store.PairMarketSubstanceAt] is the SQL half of the POINT-IN-TIME thin-market verdict: the
-// market substance in the window ending at a requested instant. Its sibling
-// [Store.PairMarketSubstance] always ends at now, so these tests pin WHERE the window sits.
-//
-// The scripted driver records the query text the store issued; the executing proof against real
-// Postgres is test/integration/pg_pricing_markets_test.go.
+// [Store.PairMarketSubstanceAt] is the SQL half of the point-in-time thin-market verdict, the substance in
+// the window ending at a requested instant (its sibling always ends at now), so these tests pin WHERE the
+// window sits. Executing proof against real Postgres: test/integration/pg_pricing_markets_test.go.
 
 func substanceAtQuery(t *testing.T, asOf time.Time, window time.Duration, g HistoryGranularity) recordedStmt {
 	t.Helper()
@@ -75,10 +72,8 @@ func TestPairMarketSubstanceAt_WindowEndsAtTheInstant(t *testing.T) {
 	}
 }
 
-// Same shape guarantees as the live reader: both stored directions,
-// distinct buckets, the now() closed-bucket guard at the grain's own
-// width, sargable bounds, and the spelling sets bound rather than
-// interpolated.
+// Same shape guarantees as the live reader: both stored directions, distinct buckets, the now() closed-
+// bucket guard at the grain's own width, sargable bounds, and spelling sets bound rather than interpolated.
 func TestPairMarketSubstanceAt_KeepsTheLiveReadersShape(t *testing.T) {
 	pair := testXLMUSDCPair(t)
 	bases, quotes := testXLMUSDCLegs(t)

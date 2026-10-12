@@ -15,10 +15,9 @@ type Decoder interface {
 	Decode(events.Event) ([]consumer.Event, error)
 }
 
-// eventLedgerCarrier is optional for a decoder whose correlation buffer can emit an output while
-// processing a LATER stream event (the phoenix sweep rescue). The re-derive then counts it at its
-// own ledger, where the served row lives; otherwise each rescued trade shows as a +/- per-ledger
-// shift pair in a strict reconcile. 1:1 decoders need not implement it.
+// eventLedgerCarrier is optional for a decoder whose correlation buffer can emit an output while processing a LATER stream event
+// (the phoenix sweep rescue). The re-derive then counts it at its own ledger, where the served row lives; otherwise a strict
+// reconcile shows each rescued trade as a +/- per-ledger shift pair. 1:1 decoders need not implement it.
 type eventLedgerCarrier interface{ EventLedger() uint32 }
 
 // countLedger buckets an output at its own declared ledger when non-zero, else at the stream
@@ -123,12 +122,9 @@ func (t *BlindTracker) Result() BlindSpots {
 	return t.spots
 }
 
-// safeDecode runs dec.Decode under a per-event recover, turning a decoder PANIC into an error for
-// the decode-error path (blind.Undecodable + skip), mirroring the projector's processEventSafely.
-//
-// The projector recovers panics on historical / upgraded-WASM shapes and silently drops those
-// rows; the re-derive exists to make the drops VISIBLE. An escaped panic would crash
-// compute-completeness and freeze EVERY source's verdict instead of flagging a blind spot.
+// safeDecode runs dec.Decode under a per-event recover, turning a decoder PANIC into an error for the decode-error path
+// (blind.Undecodable + skip). The projector silently drops panicking historical rows; the re-derive makes the drops VISIBLE, and an
+// escaped panic would crash compute-completeness and freeze EVERY source's verdict.
 func safeDecode(dec Decoder, ev events.Event) (outs []consumer.Event, err error) {
 	if perr := Guard(func() { outs, err = dec.Decode(ev) }); perr != nil {
 		return nil, fmt.Errorf("decoder panicked on event shape: %w", perr)

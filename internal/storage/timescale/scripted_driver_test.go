@@ -14,19 +14,9 @@ import (
 	"time"
 )
 
-// A database/sql driver that replays a scripted result per statement, in order, and records BOTH
-// the SQL text and the bound arguments of every statement it was asked to run.
-//
-// It is the ONLY no-database driver double in this package; it records bound arguments and can
-// Exec. Store methods whose contract lives in the PLACEHOLDER BINDING ("$1 is the kind, $2 is the
-// limit", "the ON CONFLICT guard gets this store's derive_generation", "the window bound is
-// since.UTC()") cannot be pinned without the args, and write paths need ExecContext. New
-// no-database store tests use this one; do not add a second double.
-//
-// Faithfulness to production: [scriptedConn.CheckNamedValue] accepts every Go value unconverted,
-// as pgx v5's stdlib driver does (pgx encodes values itself), so a []string arg reaches the driver
-// as a []string here and as a Postgres array in production, which is why internal/pgarray is a
-// SCAN adapter only.
+// A database/sql driver that replays a scripted result per statement and records each statement's SQL and
+// bound arguments. It is the only no-database driver double here and can Exec; new store tests use it.
+// CheckNamedValue accepts every Go value unconverted, as pgx v5 does, so []string arrives as a []string.
 
 // scriptedResult is one statement's canned outcome: either rows (for a
 // query) or a row count (for an exec), or an error.
@@ -35,10 +25,9 @@ type scriptedResult struct {
 	rows         [][]driver.Value
 	rowsAffected int64
 	err          error
-	// stall makes this the statement the database never answers: the driver blocks until the
-	// statement's context is done and fails with that context's error, as a deadline cancelling a
-	// running query does. A store method that budgets a read (sub-deadline, fallback) has its
-	// contract in what happens NEXT, which a returning result cannot assert.
+	// stall makes this the statement the database never answers: the driver blocks until the statement's context
+	// is done and fails with its error, like a deadline cancelling a query. A store method that budgets a read
+	// has its contract in what happens next, which a returning result cannot assert.
 	stall bool
 	// delay holds the result back this long, as a statement that does
 	// real work before it answers.
@@ -73,10 +62,9 @@ type scriptedConn struct {
 	// onAdvance receives each result's `advance`.
 	onAdvance func(time.Duration)
 	stmts     []recordedStmt
-	// Transaction bookkeeping. Store methods that replace a rollup
-	// atomically (RefreshAssetListingRollups) have their contract IN the
-	// transaction boundary — "these four statements commit together or
-	// not at all" — which is unassertable without recording it.
+	// Transaction bookkeeping. Store methods that replace a rollup atomically (RefreshAssetListingRollups) have
+	// their contract in the transaction boundary ("commit together or not at all"), which is unassertable
+	// without recording it.
 	commits   int
 	rollbacks int
 }

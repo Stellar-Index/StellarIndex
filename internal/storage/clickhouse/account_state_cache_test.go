@@ -59,12 +59,9 @@ func TestAccountStateCacheNilSafe(t *testing.T) {
 	c.put("G", AccountState{}, time.Now()) // must not panic
 }
 
-// TestAccountStateCached_SaturationReturnsDistinctSentinel pins that when the shared
-// detached-refresh gate is FULL, a cold-miss account-state read returns the DISTINCT, retryable
-// ErrRefreshSaturated sentinel, not the generic errAccountStateRefreshFailed of a real scan
-// failure, so the API maps transient backpressure to a retryable 503 and a genuine failure to a
-// 500. The gate is pre-saturated, so refreshAccountState's TryAcquire fails and no scan (which
-// would need a live ClickHouse conn) runs.
+// TestAccountStateCached_SaturationReturnsDistinctSentinel pins that a cold miss with the detached-refresh
+// gate full returns the retryable ErrRefreshSaturated (503), not errAccountStateRefreshFailed (500). The
+// gate is pre-saturated, so no scan runs.
 func TestAccountStateCached_SaturationReturnsDistinctSentinel(t *testing.T) {
 	t.Parallel()
 	r := &ExplorerReader{
@@ -93,10 +90,9 @@ func TestAccountStateCached_SaturationReturnsDistinctSentinel(t *testing.T) {
 	}
 }
 
-// A NON-OWNER waiter that joined a flight the owner then saturation-skipped must also see
-// ErrRefreshSaturated: otherwise it wakes on the closed channel, finds no cache entry, and
-// reports the 500-class errAccountStateRefreshFailed for pure backpressure. The owner publishes
-// the outcome on the flight entry before end() closes done.
+// A non-owner waiter that joined a flight the owner then saturation-skipped must also see
+// ErrRefreshSaturated, not the 500-class errAccountStateRefreshFailed for pure backpressure. The owner
+// publishes the outcome before end() closes done.
 func TestAccountStateCached_NonOwnerSeesSaturation(t *testing.T) {
 	t.Parallel()
 	r := &ExplorerReader{

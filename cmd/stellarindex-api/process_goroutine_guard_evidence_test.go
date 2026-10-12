@@ -88,11 +88,8 @@ func TestAPIProcess_EveryGoroutineRecovers(t *testing.T) {
 	}
 }
 
-// apiProcessGoFiles lists every non-test .go file in every package of THIS
-// module that the stellarindex-api binary links, in deterministic order.
-//
-// The set comes from go list -deps . because only the linker's dependency closure answers what
-// can panic inside this process. Packages outside the module are excluded.
+// Lists every non-test .go file of this module's packages linked into the stellarindex-api binary, in stable order. Uses
+// go list -deps because only the linker's dependency closure answers what can panic in this process.
 func apiProcessGoFiles(t *testing.T) []string {
 	t.Helper()
 	const modPath = "github.com/Stellar-Index/StellarIndex"

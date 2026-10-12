@@ -14,10 +14,8 @@ type Amount struct {
 	// below guard against nil by constructing on demand.
 	value *big.Int
 
-	// noCompare makes `a == b` a compile error. Otherwise it would compare *big.Int addresses:
-	// FromString("100") == FromString("100") is false, and an `amt == (Amount{})` "was this
-	// set?" guard would misclassify a legitimately decoded zero as present. Use Cmp or Equal.
-	// Zero-width and never read; its presence is the effect.
+	// noCompare makes `a == b` a compile error: it would otherwise compare *big.Int addresses, so FromString("100") == FromString("100")
+	// is false and an `amt == (Amount{})` guard would misclassify a decoded zero as present. Use Cmp or Equal. Zero-width, never read.
 	noCompare [0]func() //nolint:unused // the field exists to make Amount non-comparable, not to be read
 }
 

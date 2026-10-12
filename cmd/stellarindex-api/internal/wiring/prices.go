@@ -156,11 +156,8 @@ func (g GlobalPriceReader) LookupTriangulated(ctx context.Context, base, quote c
 	return v.Value, v.ObservedAt, true, nil
 }
 
-// StorePriceReader adapts *timescale.Store to v1.PriceReader.
-//
-// It reads the closed 1m VWAP bucket first and falls back to the last trade in the trades hypertable.
-// defaultVWAPFreshness: a closed bucket older than this is served stale=true. It sits well above
-// the structural 1-2min closed-bucket floor, so active pairs stay fresh and dormant ones flag.
+// StorePriceReader adapts *timescale.Store to v1.PriceReader: the closed 1m VWAP bucket first, then the last trade in the trades
+// hypertable. defaultVWAPFreshness: an older closed bucket is served stale=true; it sits well above the structural 1-2min floor.
 const defaultVWAPFreshness = 15 * time.Minute
 
 // PriceWithheld is THE withholding chokepoint for every price-serving read seam, keeping the scam and substance gates symmetric; both are nil-receiver safe (nil allows everything).

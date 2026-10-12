@@ -284,12 +284,9 @@ func (g *Guard) classify(ctx context.Context, asset string) (decimals uint32, co
 	return d, true
 }
 
-// report raises the alarm (metric + ERROR log, once per source+asset per process) and, when a
-// Writer is wired, persists the confirmation for the API's read-time guard.
-//
-// The two effects latch independently: the alarm cannot fail so it latches on first observation;
-// the write latches ONLY after a successful upsert. The upsert is idempotent, so a retry or
-// concurrent double-fire is safe.
+// report raises the alarm (metric + ERROR log, once per source+asset per process) and, when a Writer is wired, persists the
+// confirmation for the API's read-time guard. The effects latch independently: the alarm on first observation, the write ONLY
+// after a successful upsert (idempotent, so a retry or double-fire is safe).
 func (g *Guard) report(ctx context.Context, ref timescale.SorobanDEXTradeRef, decimals uint32) {
 	key := ref.Source + "\x00" + ref.Asset
 

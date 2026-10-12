@@ -213,10 +213,8 @@ func (r *Rollup) observe(outcome string, start time.Time) {
 		Observe(time.Since(start).Seconds())
 }
 
-// detailGrouper folds per-class detail rows into per-(day, subject, endpoint) RollupRows one at
-// a time, so a caller streaming off [Counter.ScanDetailFunc] buffers only the far smaller set of
-// aggregates. Unknown classes are ignored so an older binary sweeping hashes written by a newer
-// one cannot misfile counts.
+// detailGrouper folds per-class detail rows into per-(day, subject, endpoint) RollupRows one at a time, so a streaming caller buffers
+// only the aggregates. Unknown classes are ignored so an older binary sweeping newer hashes cannot misfile counts.
 type detailGrouper struct {
 	grouped map[rollupKey]*RollupRow
 	order   []rollupKey

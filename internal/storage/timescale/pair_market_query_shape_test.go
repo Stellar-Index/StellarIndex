@@ -6,29 +6,9 @@ import (
 	"testing"
 )
 
-// [pairMarketQuery] — the single-pair summary behind /v1/pairs — must keep two shape properties,
-// or /v1/pairs becomes the slowest route. The cost is per-REQUEST, not per-cold-slot, because
-// CachedMarketsReader.PairMarket is a pass-through and no prewarm names the route; low organic
-// traffic hides it from the global p99, so only a shape guard would catch a regression.
-//
-// 1. Both stored orientations are a UNION ALL of two single-direction branches, never one
-// `(A AND B) OR (B AND A)` disjunction. The planner cannot drive trades_pair_ts_idx /
-// prices_1m_pair_bucket_idx (base_asset, quote_asset, ts|bucket DESC) from an OR of two different
-// equality pairs, so it falls back to the bare time index and filters the pair after the scan.
-// [TestBothDirectionReadersUseUnionNotOr] guards the same defect for prices_1m; PairMarket is not
-// driven by `ORDER BY bucket DESC LIMIT n`, so that guard did not cover it.
-//
-// 2. Each aggregate is bounded by the smallest window that can produce it. MAX(ts) is a single
-// backwards index probe per direction and count_24h needs only 24 hours; one 14-day
-// (MarketsRecencyWindow) scan of `trades` for both materialised millions of rows and could
-// exceed the API's 8-second handler ceiling on a cold read. This half has no prices_1m analogue,
-// so it is pinned here.
-//
-// Guarding the template text rather than a plan is deliberate, for the reason
-// [TestBothDirectionReadersUseUnionNotOr] gives: it needs no database, so a regression fails in
-// the unit suite. The behaviour-level counterpart (served values correct at the 24-hour /
-// recency-window boundaries) is TestPairMarket_BothDirectionsAndWindowBoundaries in
-// test/integration.
+// [pairMarketQuery] (/v1/pairs) cost is per request, so two shapes are pinned: both orientations as UNION ALL
+// of single-direction branches (an OR defeats the pair index), and each aggregate bounded to its smallest
+// window (MAX(ts) probe, 24h count), not one 14-day scan of `trades`.
 func TestPairMarketQueryShape(t *testing.T) {
 	q := pairMarketQuery
 
@@ -46,10 +26,9 @@ func TestPairMarketQueryShape(t *testing.T) {
 			"orientations and each must be its own indexable branch", n)
 	}
 
-	// ── correctness half: BOTH orientations must still be read ──
-	// A UNION ALL that dropped a leg would be fast and wrong, the trade this guard prevents: the
-	// SDEX decoder records XLM/USDC and USDC/XLM as separate rows, so a single-leg read silently
-	// halves count_24h and vol_24h_usd.
+	// Correctness half: both orientations must still be read. A UNION ALL that dropped a leg would be fast and
+	// wrong: the SDEX decoder records XLM/USDC and USDC/XLM as separate rows, so a single-leg read halves
+	// count_24h and vol_24h_usd.
 	for _, leg := range []struct{ what, sql string }{
 		{"forward, trades", "base_asset = $2 AND t.quote_asset = $3"},
 		{"flipped, trades", "base_asset = $3 AND t.quote_asset = $2"},
@@ -61,10 +40,8 @@ func TestPairMarketQueryShape(t *testing.T) {
 		}
 	}
 
-	// ── window half: nothing may read MarketsRecencyWindow in bulk ──
-	// $1 is the 14-day bound. It may appear ONLY on branches that are
-	// LIMIT 1 index probes (the two last_trade_at reads). Any other use
-	// is a 14-day scan answering a 24-hour question.
+	// Window half: nothing may read MarketsRecencyWindow in bulk. $1 (the 14-day bound) may appear only on the
+	// two LIMIT 1 last_trade_at index probes; any other use is a 14-day scan answering a 24-hour question.
 	if n := strings.Count(q, "$1"); n != 2 {
 		t.Errorf("pairMarketQuery references the MarketsRecencyWindow bound $1 %d "+
 			"times, want exactly 2 (one per last_trade_at direction probe). Every "+

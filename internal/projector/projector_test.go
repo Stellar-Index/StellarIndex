@@ -170,10 +170,8 @@ func TestRun_NilSinkReturnsError(t *testing.T) {
 	}
 }
 
-// TestBuildRegistry_UnknownSourceIsSilent confirms enabled-sources
-// names that aren't in the projector's dispatch table (sdex, band,
-// external CEX/FX) are silently skipped — they're handled
-// elsewhere per ADR-0032 § "Out of scope".
+// TestBuildRegistry_UnknownSourceIsSilent: enabled-sources names absent from the projector's dispatch table (sdex, band,
+// external CEX/FX) are silently skipped, since they are handled elsewhere per ADR-0032 section "Out of scope".
 func TestBuildRegistry_UnknownSourceIsSilent(t *testing.T) {
 	reg, err := BuildRegistry([]string{"sdex", "binance", "kraken", "band"}, oracleConfigEmpty(), nil, nil)
 	if err != nil {
@@ -184,10 +182,9 @@ func TestBuildRegistry_UnknownSourceIsSilent(t *testing.T) {
 	}
 }
 
-// TestBuildRegistry_SEP41NeedsWatchedSet pins the sep41 projector
-// sources reproduce the dispatcher's WATCHED set, not a firehose. With no
-// watched contracts they're skipped (the dispatcher writes nothing
-// either); with a watched set they're registered.
+// TestBuildRegistry_SEP41NeedsWatchedSet: sep41 projector sources reproduce the dispatcher's watched set, not a
+// firehose. With no watched contracts they are skipped (the dispatcher writes nothing either); with a watched set they
+// are registered.
 func TestBuildRegistry_SEP41NeedsWatchedSet(t *testing.T) {
 	names := []string{"sep41_transfers", "sep41_supply"}
 
@@ -208,10 +205,9 @@ func TestBuildRegistry_SEP41NeedsWatchedSet(t *testing.T) {
 	}
 }
 
-// TestBuildRegistry_SEP41RegisteredWithoutEnabledSourcesEntry pins the zero-writer case: the
-// sep41 names are not in config.KnownSources, so enabled_sources can never carry them, yet the
-// dispatcher unconditionally cedes the sep41 domain to the projector. BuildRegistry must
-// register the sep41 sources from the watched-contract set alone.
+// TestBuildRegistry_SEP41RegisteredWithoutEnabledSourcesEntry: sep41 names are not in config.KnownSources, so
+// enabled_sources never carries them, yet the dispatcher cedes the sep41 domain to the projector; BuildRegistry must
+// register them from the watched-contract set alone.
 func TestBuildRegistry_SEP41RegisteredWithoutEnabledSourcesEntry(t *testing.T) {
 	watched := []string{"CWATCHEDCONTRACT0000000000000000000000000000000000000000"}
 
@@ -299,10 +295,9 @@ func TestAdaptiveWindow(t *testing.T) {
 	}
 }
 
-// TestRun_PanicOutsideRowIsRecovered pins that a panic in a source's cycle machinery (rows have
-// their own recover) or the replay-window watcher stops only that goroutine: the process
-// survives, worker_panics_total moves, and Run returns an error once all goroutines stop. A
-// zero-value Store nil-derefs its *sql.DB on first read in both.
+// TestRun_PanicOutsideRowIsRecovered: a panic in a source's cycle machinery or the replay-window watcher stops only that
+// goroutine; the process survives, worker_panics_total moves, and Run returns an error once all goroutines stop. A zero-
+// value Store nil-derefs its *sql.DB on first read.
 func TestRun_PanicOutsideRowIsRecovered(t *testing.T) {
 	const src = "panic-outside-row"
 	srcCounter := obs.WorkerPanicsTotal.WithLabelValues(sourceWorkerName(src))
@@ -335,10 +330,8 @@ func TestRun_PanicOutsideRowIsRecovered(t *testing.T) {
 	}
 }
 
-// TestProjectorGoroutinesRecover is the package-wide guard: every `go`
-// statement in this package's non-test files must defer worker.Recover. The
-// indexer's own guard test scans main.go only and cannot see the goroutines
-// Run fans out. Proven red: removing either guard in Run fails it by line.
+// Package-wide guard: every `go` statement in this package's non-test files must defer worker.Recover.
+// The indexer's guard test scans main.go only and cannot see goroutines Run fans out.
 func TestProjectorGoroutinesRecover(t *testing.T) {
 	files, err := filepath.Glob("*.go")
 	if err != nil {
@@ -368,10 +361,9 @@ func TestProjectorGoroutinesRecover(t *testing.T) {
 	}
 }
 
-// TestBuildRegistry_FoldsWhitespaceAndCaseInSourceNames pins that the registry normalises
-// enabled_sources names the same way config.Validate and pipeline.BuildDispatcher do (trim and
-// lowercase). Without TrimSpace a padded name accepted by Validate would silently miss its
-// projector entry, since buildSource's default case returns ok=false with no error.
+// The registry normalises enabled_sources names like config.Validate and pipeline.BuildDispatcher do (trim and
+// lowercase). Without TrimSpace, a padded name Validate accepts would miss its projector entry, as buildSource's default
+// case returns ok=false with no error.
 func TestBuildRegistry_FoldsWhitespaceAndCaseInSourceNames(t *testing.T) {
 	reg, err := BuildRegistry([]string{"  Comet  "}, config.OracleConfig{}, nil, nil)
 	if err != nil {
@@ -432,10 +424,8 @@ func TestProcessEventSafely_HeldLedgerIsOutputLedger(t *testing.T) {
 	}
 }
 
-// TestProcessEventSafely_ContinuesPastPermanentStopsAtRetryable pins the loop
-// contract at the unit: permanent drops are collected and skipped over, the
-// first retryable/unclassified fault stops the row, and both are reachable
-// from the returned error.
+// Loop contract: permanent drops are collected and skipped over; the first retryable or unclassified fault stops the row.
+// Both are reachable from the returned error.
 func TestProcessEventSafely_ContinuesPastPermanentStopsAtRetryable(t *testing.T) {
 	deadlock := errors.New("deadlock detected") // unclassified → holds
 	outs := []consumer.Event{fakeEvent{}, fakeEvent{}, fakeEvent{}, fakeEvent{}, fakeEvent{}}

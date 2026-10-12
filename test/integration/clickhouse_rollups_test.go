@@ -28,22 +28,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
-// TestCreatorsRollup_BoundaryIsTheNetworks is the test nets' empty-`created`
-// cohort proof, run through the real cycle on a real
-// ClickHouse. A creation on a post-P23-only chain is recorded ONE way: a
-// CAP-67 `transfer` movement paired with a CreateAccount operation. The
-// cycle's post-P23 arm reads exactly that pair — but only for ledgers at or
-// above its boundary, which must be the network's, not pubnet's constant baked
-// into the SQL. Every test-net ledger sits below 58,762,517, so with the pubnet
-// constant the classic arm owns all of them and looks for `create_account`
-// movements that chain never writes: zero account_creator_edges rows, zero
-// `created` cohorts, however full the archive.
-//
-// Fixture: one CreateAccount operation and its funding transfer at a low
-// ledger. The same fixture is rolled up twice — at the pubnet boundary
-// (the wrong boundary on a test net: no edge) and at the chain's start
-// (the network's boundary: one edge) — so the test pins the substitution,
-// not merely that the SQL runs.
+// TestCreatorsRollup_BoundaryIsTheNetworks: the post-P23 arm (transfer + CreateAccount pair) must start at the network's
+// boundary, not pubnet's constant, or test nets (all ledgers below 58,762,517) get zero account_creator_edges and no
+// `created` cohorts.
 func TestCreatorsRollup_BoundaryIsTheNetworks(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -64,10 +51,8 @@ func TestCreatorsRollup_BoundaryIsTheNetworks(t *testing.T) {
 		t.Fatalf("EnsureAccountMovementsTable: %v", err)
 	}
 
-	// The operation, as the indexer's extract lands it: the ledger row (the
-	// per-ledger commit marker the walk's tip is read from) plus the
-	// CreateAccount operation. The operations side contributes the join
-	// key only, so no body is needed.
+	// The ledger row (per-ledger commit marker the walk's tip is read from) plus the CreateAccount operation, which
+	// contributes only the join key, so no body is needed.
 	sink, err := chstore.Open(ctx, addr, 1000)
 	if err != nil {
 		t.Fatalf("open sink: %v", err)
@@ -135,10 +120,8 @@ func TestCreatorsRollup_BoundaryIsTheNetworks(t *testing.T) {
 		return rows, creations
 	}
 
-	// Pubnet's boundary on a chain whose every ledger sits below it: the
-	// classic arm owns ledger 40 and finds no create_account movement —
-	// the test-net symptom, pinned so the substitution below is
-	// shown to be what changes the outcome.
+	// Pubnet's boundary on a chain entirely below it: the classic arm owns ledger 40 and finds no create_account movement
+	// (the test-net symptom), so the substitution below is what changes the outcome.
 	if rows, _ := edgesAt(chstore.P23BoundaryLedger); rows != 0 {
 		t.Fatalf("boundary %d: %d edge rows for a post-P23 creation below the boundary, want 0 "+
 			"(the classic arm cannot see a CAP-67 transfer; if it now does, the arms overlap)",
@@ -155,12 +138,9 @@ func TestCreatorsRollup_BoundaryIsTheNetworks(t *testing.T) {
 	}
 }
 
-// TestCreatorsRollup_CrossCreatorRecycleCreditsLatestCreator pins that an
-// address recycled by DIFFERENT creators (A creates X, X merges, B
-// re-creates X) is live only under the creator of its current incarnation.
-// Crediting every creator that ever created X counts one account once per
-// creator in live_accounts_total and sums its balance into a row whose
-// creation no longer backs it.
+// TestCreatorsRollup_CrossCreatorRecycleCreditsLatestCreator: an address recycled by different creators (A creates X, X
+// merges, B re-creates X) is live only under its current incarnation's creator. Crediting every creator double-counts it
+// in live_accounts_total and sums a balance its creation no longer backs.
 func TestCreatorsRollup_CrossCreatorRecycleCreditsLatestCreator(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -312,18 +292,9 @@ func assertCreatorLive(ctx context.Context, t *testing.T, conn clickhouse.Conn, 
 	}
 }
 
-// TestCreatorsRollup_RecycledAddressCountsOnce is the recycled-address proof
-// against real ClickHouse. stellar.account_creators_ops is one row
-// per creation OPERATION, so one creator recycling one address (create ->
-// merge -> create) produces two rows sharing the same `created`. Joining
-// the board's live_accounts/live_stroops live-entry set onto that per-event
-// table directly counts the still-live address TWICE and sums its balance
-// TWICE, so the board aggregates over the distinct
-// (creator, created) pair before the outer sum.
-//
-// Fixture: one creator, one address created by two distinct operations,
-// live with a single known balance. The served board row must show
-// live_accounts = 1 and live_stroops = that one balance, not 2x.
+// TestCreatorsRollup_RecycledAddressCountsOnce: account_creators_ops has one row per creation operation, so one creator
+// recycling one address (create, merge, create) yields two rows with the same `created`. The board aggregates over the
+// distinct (creator, created) pair before summing, so live_accounts = 1 and live_stroops = the one balance, not 2x.
 func TestCreatorsRollup_RecycledAddressCountsOnce(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -476,13 +447,9 @@ func TestCreatorsRollup_RecycledAddressCountsOnce(t *testing.T) {
 	assertCycleTime(t, miss.ComputedAt, hit.ComputedAt)
 }
 
-// TestHoldersRollupFreshness_ExecutesAgainstServer runs the real
-// ch-holders-rollup cycle, then ages its stamp, against a real ClickHouse
-// server. It proves: the writer's UTC-pinned cycle stamp round-trips
-// as the true instant; a fresh cycle is served from the rollup, including
-// the live-table stamp read for an asset absent from it; and once the cycle
-// is older than the reader's max age, AssetHolders stops serving the rollup
-// and answers from the live per-request scans.
+// TestHoldersRollupFreshness_ExecutesAgainstServer: the UTC-pinned cycle stamp round-trips as the true instant, a fresh
+// cycle is served from the rollup (including the live-table stamp read for an absent asset), and past the reader's max
+// age AssetHolders falls back to the live per-request scans.
 func TestHoldersRollupFreshness_ExecutesAgainstServer(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -569,10 +536,9 @@ func TestHoldersRollupFreshness_ExecutesAgainstServer(t *testing.T) {
 	}
 }
 
-// TestClickHouseMovementsByAsset pins the movements_by_asset table: the MV copies live
-// account_movements rows, both participants of one movement survive FINAL,
-// an Int128 amount above 2^64 stays exact, and the operator catch-up
-// statement (partition-bounded INSERT..SELECT) is idempotent over MV rows and skips superseded source rows (FINAL).
+// TestClickHouseMovementsByAsset: the MV copies live account_movements rows, both participants survive FINAL, an Int128
+// above 2^64 stays exact, and the operator catch-up INSERT..SELECT is idempotent over MV rows and skips superseded
+// source rows (FINAL).
 func TestClickHouseMovementsByAsset(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -764,12 +730,9 @@ func TestClickHouseAssetMovementsReader(t *testing.T) {
 	}
 }
 
-// TestClickHouseCohortHoldingsSumPastInt64 runs a whole cohort cycle over
-// two members each holding math.MaxInt64 of one trustline asset and reads
-// the holding back through the repo's reader. ledger_entries_current.balance
-// is Int64, and ClickHouse's sum() over Int64 returns Int64 and wraps, so a
-// holdings step that widens the sum's result instead of its argument serves
-// -2 here instead of 2*(2^63-1).
+// TestClickHouseCohortHoldingsSumPastInt64: two members each hold math.MaxInt64 of one trustline asset. balance is Int64
+// and ClickHouse sum() over Int64 wraps, so a holdings step that widens the result instead of the argument serves -2
+// instead of 2*(2^63-1).
 func TestClickHouseCohortHoldingsSumPastInt64(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -884,12 +847,9 @@ func TestClickHouseAccountGraphFundedSumPastInt64(t *testing.T) {
 	}
 }
 
-// TestAssetStatsDaily_ExecutesAgainstServer runs the real ch-holders-rollup
-// cycle twice against a real ClickHouse server and reads the day's snapshot
-// back. It proves the trustline count includes zero-balance lines while
-// holders do not, the balance sums stay exact past 2^63, the Gini matches a
-// hand-computed value, and a second cycle on the same day replaces the day's
-// rows rather than adding to them.
+// TestAssetStatsDaily_ExecutesAgainstServer: the trustline count includes zero-balance lines while holders do not, sums
+// stay exact past 2^63, the Gini matches a hand-computed value, and a second cycle on the same day replaces the day's
+// rows instead of adding to them.
 func TestAssetStatsDaily_ExecutesAgainstServer(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -1066,23 +1026,9 @@ func TestDailySupplyFlowsPerKindSplit(t *testing.T) {
 	}
 }
 
-// TestSupplyObservedAt_StampsLedgerCloseTimeNotWallClock is the
-// end-to-end proof against a REAL ClickHouse lake. The bug: the supply-snapshot
-// ledger resolvers (internal/ops/supply/supply.go::resolveSnapshotLedger and
-// cmd/stellarindex-aggregator/main.go::supplyAggregatorLedgers.LatestKnownLedger)
-// stamped a snapshot's ObservedAt with time.Now().UTC() instead of the chosen
-// ledger's real close time — so a re-derived HISTORICAL supply snapshot carried
-// the wall-clock write-time, corrupting point-in-time supply/observation
-// queries (the operator re-derives supply constantly).
-//
-// The fix resolves the ledger's real close_time from stellar.ledgers via
-// *clickhouse.ExplorerReader.CloseTimeForLedger and stamps THAT. This test
-// seeds one stellar.ledgers row whose close_time is ~2.5y stale, resolves it
-// through the production reader, feeds it through the production XLM computer
-// exactly as the resolver→computer path does, and asserts the snapshot's
-// ObservedAt equals the seeded close time — NOT ≈now. Callers that skipped the lake
-// discarded this resolved value entirely (they never read the lake), so this
-// stale, non-wall-clock ObservedAt is precisely what they could not produce.
+// TestSupplyObservedAt_StampsLedgerCloseTimeNotWallClock: a re-derived historical supply snapshot must carry the
+// ledger's real close_time (ExplorerReader.CloseTimeForLedger), not time.Now(), or point-in-time supply queries are
+// corrupted.
 func TestSupplyObservedAt_StampsLedgerCloseTimeNotWallClock(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -1165,15 +1111,9 @@ func TestSupplyObservedAt_StampsLedgerCloseTimeNotWallClock(t *testing.T) {
 	}
 }
 
-// TestSampleAccountIDs_SeededChangeLogFrame proves reconcile-balances' -sample
-// frame on real ClickHouse:
-//
-//   - it is drawn from stellar.ledger_entry_changes, so an account the
-//     ledger_entries_current projection lost is still drawable (the old frame
-//     read the projection and returned nothing here);
-//   - one seed reproduces its cohort exactly, and different seeds draw
-//     different cohorts (the old unseeded cityHash64 order froze one cohort);
-//   - the floor excludes accounts at or below it.
+// TestSampleAccountIDs_SeededChangeLogFrame (reconcile-balances -sample): the frame comes from
+// stellar.ledger_entry_changes, so an account lost from the ledger_entries_current projection is still drawable; one
+// seed reproduces its cohort exactly while different seeds differ; the floor excludes accounts at or below it.
 func TestSampleAccountIDs_SeededChangeLogFrame(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -1254,11 +1194,9 @@ func TestSampleAccountIDs_SeededChangeLogFrame(t *testing.T) {
 	}
 }
 
-// TestDistinctTopicShapes_NonSymbolTopic0 is the proof on a real
-// ClickHouse: events whose topic[0] is not a Symbol all carry an empty topic_0_sym,
-// so keying on (contract, topic_0_sym) alone collapsed them into one shape and
-// one exemplar. They must split on topics_xdr[1], topics_xdr[2] and arity,
-// while Symbol shapes keep their (contract, topic_0_sym) identity.
+// TestDistinctTopicShapes_NonSymbolTopic0: events whose topic[0] is not a Symbol all carry an empty topic_0_sym, so
+// (contract, topic_0_sym) alone collapses them. They must split on topics_xdr[1], topics_xdr[2] and arity, while Symbol
+// shapes keep that identity.
 func TestDistinctTopicShapes_NonSymbolTopic0(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -1322,12 +1260,9 @@ func TestDistinctTopicShapes_NonSymbolTopic0(t *testing.T) {
 	}
 }
 
-// These tests prove the TTL-liveness path end-to-end against a real
-// ClickHouse: rows inserted into stellar.ledger_entry_changes flow through the
-// ttl_live_until_mv materialized view (applied from tier1_schema.sql by the
-// harness) into the slim stellar.ttl_live_until projection, and
-// ClassifyTTLLiveness resolves verdicts from THAT table — the
-// ledger_entries_current scan path is not consulted.
+// TTL-liveness end to end on a real ClickHouse: ledger_entry_changes rows flow through the ttl_live_until_mv view into
+// the slim ttl_live_until projection, and ClassifyTTLLiveness resolves verdicts from that table, not the
+// ledger_entries_current scan.
 
 // ttlAsOf is the reference ledger for verdicts. Fixture ledgers sit far above
 // any other test's ranges to keep the shared container's keys disjoint.
@@ -1340,11 +1275,9 @@ func ttlGovernedKeyXDR(tag string) string {
 	return base64.StdEncoding.EncodeToString([]byte("ttl-liveness-it-governed-" + tag))
 }
 
-// ttlChangeRow renders the lake's TTL change for the entry governed by
-// governedXDR: KeyXDR is the 36-byte TTL LedgerKey (type=00000009 |
-// sha256(decoded governed key)), EntryXDR the TTLEntry
-// (lastModified(4) | data.type(4) | keyHash(32) | liveUntil(4) | ext(4)),
-// truncated/padded to entryLen so malformed shapes can be seeded too.
+// ttlChangeRow renders the lake's TTL change for the entry governed by governedXDR: KeyXDR is the 36-byte TTL LedgerKey
+// (type=00000009 | sha256(decoded governed key)), EntryXDR the TTLEntry (lastModified(4) | data.type(4) | keyHash(32) |
+// liveUntil(4) | ext(4)), truncated/padded to entryLen so malformed shapes can be seeded.
 func ttlChangeRow(governedXDR string, ledger, intra, liveUntil uint32, entryLen int) chstore.LedgerEntryChangeRow {
 	rawKey, err := base64.StdEncoding.DecodeString(governedXDR)
 	if err != nil {
@@ -1439,13 +1372,9 @@ func TestClassifyTTLLiveness_SlimProjectionEndToEnd(t *testing.T) {
 	}
 }
 
-// TestClassifyTTLLiveness_MissingProjectionFailsLoud proves the no-fallback
-// contract on a real server: with stellar.ttl_live_until absent, the
-// classifier returns an error naming the DDL artifact instead of silently
-// degrading every key to TTLUnknown (which would read as "nothing archived").
-// The table is renamed away and restored — integration tests in this package
-// run sequentially, and no ledger_entry_changes insert happens in the window
-// (the MV would otherwise error on its missing target).
+// TestClassifyTTLLiveness_MissingProjectionFailsLoud: with ttl_live_until absent the classifier errors naming the DDL
+// artifact rather than degrading every key to TTLUnknown (which reads as "nothing archived"). The table is renamed away
+// and restored; tests run sequentially and no ledger_entry_changes insert happens in the window (the MV would error).
 func TestClassifyTTLLiveness_MissingProjectionFailsLoud(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -1486,33 +1415,9 @@ func TestClassifyTTLLiveness_MissingProjectionFailsLoud(t *testing.T) {
 	}
 }
 
-// TestSDEXOrderBook_ConvergesAfterLakeHoleIsFilled is the served-data proof
-// for the order book's cursor discipline.
-//
-// The LiveSink drops a WHOLE ledger under buffer pressure, leaving a hole in
-// the lake that ch-live-catchup back-fills minutes later. A reader that
-// bounds its incremental read by max(ledger_seq) of ledger_entry_changes
-// lets Advance read straight across the hole and commit the cursor PAST it;
-// the healed rows then land BELOW the cursor and are never read. An offer
-// removed in the dropped ledger would stay on /v1/sdex/orderbook as resting
-// liquidity — and an offer created in it would never appear — until the API
-// process restarted.
-//
-// This drives the REAL reader and the REAL cache through the REAL endpoint
-// against a real ClickHouse, in the production order of events:
-//
-//	B+1  offer A created                   → Load
-//	B+2  offer A REMOVED, offer B created  ← this ledger is DROPPED
-//	B+3  (empty), B+4 offer C created      → Advance  (hole still open)
-//	B+2  healed by catch-up                → Advance  (no restart, no re-Load)
-//
-// and asserts both halves of the contract: while the hole is open the cursor
-// HOLDS at B+1 (it never crosses the hole), and once the hole is filled the
-// SAME cache advances to B+4 and serves exactly {B, C}.
-//
-// Proven red: on a reader without the hole check the final book is {A, C} — phantom A
-// still served, B never seen — with as_of_ledger already at B+4 after the
-// first Advance.
+// TestSDEXOrderBook_ConvergesAfterLakeHoleIsFilled: the LiveSink drops a whole ledger under buffer pressure and ch-live-
+// catchup back-fills it later. A reader bounded by max(ledger_seq) would advance the cursor past the hole, so healed
+// rows land below it and are never read (a removed offer stays on /v1/sdex/orderbook, a created one never appears).
 func TestSDEXOrderBook_ConvergesAfterLakeHoleIsFilled(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -1528,10 +1433,9 @@ func TestSDEXOrderBook_ConvergesAfterLakeHoleIsFilled(t *testing.T) {
 		assetCode     = "LAKEHOLE"
 	)
 	selling := assetCode + "-" + issuerAccount
-	// Shared-ClickHouse isolation: TestNetworkThroughput_DedupsReingestedLedger
-	// anchors its window on the GLOBAL max(close_time) and reserves 2027/06/15
-	// as that tip. Nothing here keys on close_time (the book orders by
-	// ledger_seq), so stay far below it rather than compete for the tip.
+	// Shared-ClickHouse isolation: TestNetworkThroughput_DedupsReingestedLedger anchors on the global max(close_time) and
+	// reserves 2027/06/15 as that tip. Nothing here keys on close_time (the book orders by ledger_seq), so stay far below
+	// it.
 	closeTime := time.Date(2025, 3, 3, 4, 5, 6, 0, time.UTC)
 
 	sink, err := chstore.Open(ctx, addr, 1000)
@@ -1702,14 +1606,9 @@ func lakeHoleOfferEntryB64(t *testing.T, seller string, offerID int64, code, iss
 	return b64
 }
 
-// TestClickHouseContractActivitySummaryRMTDedup is the live-ClickHouse proof
-// for ContractActivitySummaryFor read stellar.contract_active_ledgers
-// (a ReplacingMergeTree) with a bare count(), so an overlapping backfill window
-// that re-inserts the same (contract, ledger) keys as a second un-merged part
-// inflated ActiveLedgersTotal (a headline card number) and the daily bars up to
-// ~2x until a background merge. The fix counts uniqExact(ledger_seq). SYSTEM STOP
-// MERGES pins the two parts un-merged so the dedup MUST come from the query —
-// reverting the fix makes the total read 6 instead of the 3 distinct ledgers.
+// TestClickHouseContractActivitySummaryRMTDedup: contract_active_ledgers is a ReplacingMergeTree, so a bare count()
+// inflates ActiveLedgersTotal and the daily bars (up to ~2x) when an overlapping backfill leaves un-merged parts. The
+// reader counts uniqExact(ledger_seq);
 func TestClickHouseContractActivitySummaryRMTDedup(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -1772,15 +1671,8 @@ func TestClickHouseContractActivitySummaryRMTDedup(t *testing.T) {
 	}
 }
 
-// TestClickHouseContractEventsRecentPartialBackfill is the live-ClickHouse proof
-// for contract_active_ledgers' availability probe is a
-// LIMIT-1 table-global emptiness check that cannot see PARTIAL backfill
-// coverage. In the applied-but-still-backfilling state the index is globally
-// non-empty (some OTHER contract's rows) but holds NO rows for a quiet contract
-// whose events do exist in contract_events. The old reader trusted that empty
-// per-contract walk and served an authoritative "no events". The fix falls
-// through to the unbounded contract_events scan (the source of truth). Reverting
-// the fix makes ContractEventsRecent return 0 rows here instead of the real event.
+// TestClickHouseContractEventsRecentPartialBackfill: the availability probe is a table-global emptiness check and cannot
+// see partial backfill.
 func TestClickHouseContractEventsRecentPartialBackfill(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -1800,10 +1692,8 @@ func TestClickHouseContractEventsRecentPartialBackfill(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = sink.Close(ctx) })
 
-	// Ingest the quiet contract's event. This also populates
-	// contract_active_ledgers via its MV — which we then TRUNCATE to
-	// reproduce the partial-backfill state (index present, this contract's
-	// coverage NOT yet backfilled).
+	// Ingest the quiet contract's event, which populates contract_active_ledgers via its MV, then TRUNCATE that index to
+	// reproduce partial backfill (index present, this contract not yet covered).
 	ext := chstore.LedgerExtract{
 		Ledger: chstore.LedgerRow{
 			LedgerSeq: ledger, CloseTime: closeTime, LedgerHash: "aa11aa11", PrevHash: "bb22bb22",

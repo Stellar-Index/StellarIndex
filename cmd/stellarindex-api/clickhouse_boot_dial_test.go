@@ -170,10 +170,9 @@ func TestClickhouseBootDialBudget_FitsInsideTheDeployProbeGrace(t *testing.T) {
 	}
 }
 
-// The real driver: a server that accepts TCP but never sends its hello (a
-// ClickHouse still starting) holds clickhouse-go's handshake for the
-// reader's 10s DialTimeout whatever the ctx says. The boot window must cut
-// it off anyway, or it holds the API's listener past the deploy probe.
+// Real driver: a server that accepts TCP but never sends its hello (ClickHouse still starting) holds clickhouse-go's
+// handshake for the 10s DialTimeout regardless of ctx. The boot window must cut it off, or it holds the API listener
+// past the deploy probe.
 func TestDialClickHouseAtBoot_RealDriverSilentServerEndsAtTheDeadline(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

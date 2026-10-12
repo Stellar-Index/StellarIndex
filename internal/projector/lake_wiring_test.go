@@ -111,10 +111,9 @@ func TestFreshSourceStartsAtLakeFloor(t *testing.T) {
 			if fake.minCalls != 1 {
 				t.Fatalf("LakeMinLedger reads on the source connection = %d, want 1", fake.minCalls)
 			}
-			// Two reads on the SAME connection, both from the floor: findSeed's first-event seek
-			// bound, and cycleOneSource's per-cycle tip resolve once seedFromLedger hands back
-			// that floor (nothing durable at or above it yet). Never a second dial (fake.minCalls
-			// above and TestCycleReadsWatermarkOnSourceConnection pin that).
+			// Two reads on the same connection, both from the floor: findSeed's first-event seek bound, and cycleOneSource's per-
+			// cycle tip resolve once seedFromLedger returns that floor. Never a second dial (fake.minCalls and
+			// TestCycleReadsWatermarkOnSourceConnection pin that).
 			if want := []uint32{tc.wantFrom, tc.wantFrom}; !slices.Equal(fake.wmFrom, want) {
 				t.Fatalf("watermark asked from %v, want %v", fake.wmFrom, want)
 			}

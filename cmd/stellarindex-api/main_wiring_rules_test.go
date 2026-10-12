@@ -232,11 +232,9 @@ func TestMainWiringRules(t *testing.T) {
 	}
 }
 
-// TestRun_RegistersTheClickhouseCheckOnTheFailedDialPathToo guards that the ClickHouse readiness
-// checker is registered on a path a failed boot dial also takes. Otherwise a ClickHouse that is
-// down at startup publishes no dependency_up series and the "== 0" alert has nothing to match.
-// Both halves are read from the AST: the wiring package builds the checker outside an else-branch,
-// and run() appends wiring.ClickhouseReadyChecks outside one.
+// TestRun_RegistersTheClickhouseCheckOnTheFailedDialPathToo: the ClickHouse readiness checker must register even when
+// the boot dial fails, or a ClickHouse down at startup publishes no dependency_up series for the "== 0" alert. Read from
+// the AST: neither the wiring builder nor run()'s append sits in an else-branch.
 func ruleClickhouseCheckRegisteredOnFailedDial(t *testing.T) {
 	fset := token.NewFileSet()
 	checkers, err := parser.ParseFile(fset, filepath.Join(wiringDir, "checkers.go"), nil, 0)
@@ -334,10 +332,9 @@ func isClickhouseChecksAppend(n ast.Node) bool {
 	return false
 }
 
-// Source-level tripwire: unlike the aggregator, the API sits behind /v1/readyz, so a failed first
-// decimals load keeps the process up but red (wiring.PrimeNonstandardDecimalsCache). run() must
-// not call nonstandardDecimalsCache.Refresh directly and fatally, or a Postgres blip would put
-// systemd into a restart loop.
+// Source tripwire: the API sits behind /v1/readyz, so a failed first decimals load keeps the process up but red
+// (wiring.PrimeNonstandardDecimalsCache). run() must not call nonstandardDecimalsCache.Refresh fatally, or a Postgres
+// blip causes a systemd restart loop.
 
 func ruleNonstandardDecimalsRefreshNotFatal(t *testing.T) {
 	fset := token.NewFileSet()
@@ -404,10 +401,9 @@ func blockReturns(body *ast.BlockStmt) bool {
 	return false
 }
 
-// TestRun_SignupReaperBindsToThePostgresAccountStoreNotTheDashboardBundle pins that the signup
-// orphan reaper binds to the same store POST /v1/register (ADR-0049) uses, which exists whenever
-// Postgres is reachable. Binding to dashboardBundle.accounts would leave a no-dashboard
-// deployment accepting registrations without ever reaping, since the bundle is zero then.
+// TestRun_SignupReaperBindsToThePostgresAccountStoreNotTheDashboardBundle: the orphan reaper must bind to the store POST
+// /v1/register (ADR-0049) uses, present whenever Postgres is reachable; dashboardBundle.accounts is zero without a
+// dashboard, so registrations would never be reaped.
 func ruleSignupReaperBindsToPostgresStore(t *testing.T) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "main.go", nil, 0)
@@ -448,10 +444,9 @@ func ruleSignupReaperBindsToPostgresStore(t *testing.T) {
 	}
 }
 
-// TestDEXTVLGateIsWiredThroughTheNilAbleBuilder is the wiring half. v1.DEXTVLSources.Gate is an
-// interface, so assigning a struct literal unconditionally is never nil and would make v1's
-// nil-Gate arm unreachable in this binary. It is an AST guard because the wiring sits inside
-// main()'s server construction, which needs a live Postgres.
+// TestDEXTVLGateIsWiredThroughTheNilAbleBuilder: v1.DEXTVLSources.Gate is an interface, so an unconditional struct
+// literal is never nil and would make v1's nil-Gate arm unreachable here. An AST guard, as the wiring sits in main()'s
+// server construction, which needs live Postgres.
 func ruleDEXTVLGateViaNilAbleBuilder(t *testing.T) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "main.go", nil, 0)
@@ -500,10 +495,9 @@ func ruleDEXTVLGateViaNilAbleBuilder(t *testing.T) {
 	}
 }
 
-// TestRun_PrimesNonstandardDecimalsCacheBeforeServing pins the wiring for
-// Q198: run() must prime the cache inline (not inside a goroutine), register
-// the returned check in the readiness set before the server is built, and do
-// so before any consumer of the cache is wired.
+// TestRun_PrimesNonstandardDecimalsCacheBeforeServing: run() must prime the cache inline (not in a goroutine), register
+// the returned check in the readiness set before the server is built, and do so before any consumer of the cache is
+// wired.
 func ruleNonstandardDecimalsPrimedBeforeServing(t *testing.T) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "main.go", nil, 0)

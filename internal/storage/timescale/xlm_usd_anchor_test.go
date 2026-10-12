@@ -13,10 +13,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// TestXLMUSDAnchor_PopulationIsAliasAndDirectionComplete pins the anchor's
-// population to XLM's alias forms in canonical priority order (SAC last, the
-// order the precedence pick depends on) against every USD proxy, read in both
-// stored directions and weighted by volume_usd.
+// TestXLMUSDAnchor_PopulationIsAliasAndDirectionComplete pins the anchor's population to XLM's alias forms
+// in canonical priority order (SAC last, which the precedence pick depends on) against every USD proxy, read
+// in both stored directions and weighted by volume_usd.
 func TestXLMUSDAnchor_PopulationIsAliasAndDirectionComplete(t *testing.T) {
 	t.Parallel()
 	const sac = "'" + canonical.XLMSacContractID + "'"

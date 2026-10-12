@@ -15,14 +15,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// TestOracleStreamUnparsedRowsAreCounted pins that an oracle_updates row whose stored canonical
-// text will not parse is dropped loudly (log and metric). Dropping is correct, since there is
-// nothing to serve for an asset we cannot name, but silence matters here: the documented fix
-// for a mislabelled row is a raw SQL UPDATE on a column with no CHECK constraint, so a typo
-// would make the row vanish from /v1/oracle/streams and look like a successful relabel.
-//
-// This asserts the parser's verdict on the shapes an operator typo produces;
-// [TestLatestOracleStreams_DropsUnparseableRowsLoudly] drives the real reader.
+// TestOracleStreamUnparsedRowsAreCounted pins that an oracle_updates row whose canonical text will not parse
+// is dropped loudly (log and metric): a silent drop would make an operator-typo relabel via raw SQL UPDATE
+// look successful. [TestLatestOracleStreams_DropsUnparseableRowsLoudly] drives the reader.
 func TestOracleStreamUnparsedRowsAreCounted(t *testing.T) {
 	// Shapes a hand-written UPDATE plausibly produces. Each must FAIL to
 	// parse — if canonical ever starts accepting one, the drop (and this
@@ -48,11 +43,9 @@ func TestOracleStreamUnparsedRowsAreCounted(t *testing.T) {
 	}
 }
 
-// TestLatestOracleStreams_DropsUnparseableRowsLoudly drives [Store.LatestOracleStreams] itself
-// through the scripted driver rather than self-incrementing the counter: `dropped` could go
-// unincremented in a parse-fail continue branch, leaving the slog.Warn summary unreachable while
-// the per-row counter still fired. One healthy row, one with an unparseable asset and one with
-// an unparseable quote exercise both continue branches.
+// TestLatestOracleStreams_DropsUnparseableRowsLoudly drives [Store.LatestOracleStreams] through the scripted
+// driver so both parse-fail branches (bad asset, bad quote) are shown to count and reach the slog.Warn
+// summary.
 func TestLatestOracleStreams_DropsUnparseableRowsLoudly(t *testing.T) {
 	var buf bytes.Buffer
 	prevLogger := slog.Default()

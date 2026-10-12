@@ -17,10 +17,8 @@ var (
 	ErrAmountNotI128      = errors.New("sep41_supply: event Value is not I128")
 )
 
-// classify returns the supply-event symbol for a Soroban event's
-// topic[0] (one of mint / burn / clawback), or empty for any
-// other topic. The pre-encoded base64 SCVal blobs in events.go
-// make this a cheap string compare in the dispatch hot path.
+// classify returns the supply-event symbol for a Soroban event's topic[0] (mint / burn / clawback), or empty. Pre-encoded base64
+// SCVal blobs in events.go make this a cheap string compare in the dispatch hot path.
 func classify(ev *events.Event) string {
 	if len(ev.Topic) == 0 {
 		return ""
@@ -60,18 +58,9 @@ func decodeAmount(ev *events.Event) (*big.Int, error) {
 	return out, nil
 }
 
-// amountScVal returns the i128-typed ScVal carrying the event amount,
-// unwrapping the CAP-67 map form when the body is a map instead of a
-// bare i128:
-//
-//	bare i128   (ScvI128)                      → the amount directly
-//	CAP-67 map  { amount: i128, to_muxed_id }  → amount lives in the field
-//
-// A mint / transfer emits the MAP form for a muxed destination or an issuer memo in
-// `to_muxed_id`. An i128-only decode would drop those rows with ErrAmountNotI128, driving
-// mint_total to zero so `burn_total > mint_total` trips the aggregator's dominant-burn guard.
-// Decode by map-field NAME (`amount`), never position
-// (docs/architecture/ingest-pipeline.md#contract-schema-evolution).
+// amountScVal returns the i128 ScVal carrying the event amount, unwrapping the CAP-67 map form { amount: i128, to_muxed_id } when
+// the body is a map instead of a bare i128. A mint / transfer emits the MAP form for a muxed destination or issuer memo; an
+// i128-only decode would drop those rows with ErrAmountNotI128, driving mint_total to zero so the dominant-burn guard trips.
 func amountScVal(sv xdr.ScVal) (xdr.ScVal, error) {
 	switch sv.Type {
 	case xdr.ScValTypeScvI128:
@@ -94,19 +83,10 @@ func amountScVal(sv xdr.ScVal) (xdr.ScVal, error) {
 	}
 }
 
-// decodeCounterparty extracts the recipient (mint) or holder (burn / clawback) Address. Topic
-// COUNT alone does not disambiguate the shape, so it branches on the TYPE of topic[2]:
-//
-//	mint / clawback
-//	  legacy SAC     ["mint", admin(Addr), to(Addr)]            → counterparty = topic[2]
-//	  CAP-67 / spec  ["mint", to(Addr), sep0011_asset(String)]  → counterparty = topic[1]
-//	  bare SEP-41    ["mint", to(Addr)]                          → counterparty = topic[1]
-//	burn             ["burn", from(Addr) (, sep0011_asset)]      → counterparty = topic[1] (all shapes)
-//
-// An Address at topic[2] is the legacy admin-prefixed form; otherwise it is the CAP-67
-// sep0011_asset String or absent, and the counterparty is topic[1]. A fixed-topic[2] decode
-// would drop the dominant CAP-67 shape (ErrScValType on the String) and under-count
-// total_supply. Shorter topic vectors surface ErrShortTopic so the caller drops the row.
+// decodeCounterparty extracts the recipient (mint) or holder (burn / clawback) Address. Topic COUNT does not disambiguate, so it
+// branches on the TYPE of topic[2]: an Address is the legacy admin-prefixed ["mint", admin, to] (counterparty = topic[2]); otherwise
+// it is the CAP-67 sep0011_asset String or absent and the counterparty is topic[1]. A fixed-topic[2] decode would drop the dominant
+// CAP-67 shape (ErrScValType) and under-count total_supply. Shorter topic vectors surface ErrShortTopic.
 func decodeCounterparty(ev *events.Event, kind string) (string, error) {
 	switch kind {
 	case SymbolBurn:

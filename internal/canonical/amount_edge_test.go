@@ -5,10 +5,8 @@ import (
 	"testing"
 )
 
-// Edge-case tests for the Amount-zero-value branches that the
-// existing amount_test.go suite skipped: nil-input constructors,
-// nil-receiver accessors, and the FromUInt256Parts entry point
-// that's currently exercised only transitively through scval.
+// Edge cases for the Amount zero-value branches amount_test.go skipped: nil-input constructors, nil-receiver accessors,
+// and FromUInt256Parts, otherwise exercised only transitively through scval.
 
 func TestNewAmount_nilInput(t *testing.T) {
 	a := NewAmount(nil)

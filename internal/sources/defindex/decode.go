@@ -8,16 +8,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// classify decides whether this is a Blend strategy flow event we
-// decode. Topics are 2-tuples:
-//
-//	topic[0] = String("BlendStrategy")     — pre-encoded, byte-equal
-//	topic[1] = Symbol("deposit"|"withdraw"|"harvest"|…)
-//
-// Both positions are compared as byte-equal base64 against init-time constants, so the reject
-// path does no SCVal parsing. Returns "" for non-strategy events. Per the EVERY-event policy
-// the switch enumerates every topic[1] symbol the contract emits, not just decoded ones
-// (docs/operations/wasm-audits/defindex.md).
+// classify decides whether this is a Blend strategy flow event we decode: topic[0] = String("BlendStrategy"), topic[1] =
+// Symbol("deposit"|"withdraw"|"harvest"|...), compared as pre-encoded base64 so rejects skip SCVal parsing. Returns "" otherwise.
+// The switch enumerates every topic[1] symbol the contract emits (EVERY-event policy; docs/operations/wasm-audits/defindex.md).
 func classify(e *events.Event) string {
 	if len(e.Topic) < 2 {
 		return ""
@@ -36,15 +29,9 @@ func classify(e *events.Event) string {
 	return ""
 }
 
-// classifyVault is the vault-layer twin of classify. Topics are
-// 2-tuples:
-//
-//	topic[0] = String("DeFindexVault")     — pre-encoded, byte-equal
-//	topic[1] = Symbol("deposit"|"withdraw"|<governance/admin>)
-//
-// Per the EVERY-event policy it classifies all 12 vault-layer topic[1] symbols. deposit and
-// withdraw drive a VaultFlow, dfees per-entry DFees and the seven admin topics a VaultAdmin;
-// rebalance and n_wasm have no decoder but are recognised for closed-set completeness.
+// classifyVault is the vault-layer twin of classify: topic[0] = String("DeFindexVault"), topic[1] = Symbol. It classifies all 12
+// vault-layer symbols (EVERY-event policy). deposit and withdraw drive a VaultFlow, dfees per-entry DFees, the seven admin topics a
+// VaultAdmin; rebalance and n_wasm have no decoder but are recognised for closed-set completeness.
 func classifyVault(e *events.Event) string {
 	if len(e.Topic) < 2 {
 		return ""
@@ -81,16 +68,9 @@ func classifyVault(e *events.Event) string {
 	return ""
 }
 
-// classifyFactory is the factory-layer twin of classify /
-// classifyVault. Topics are 2-tuples:
-//
-//	topic[0] = String("DeFindexFactory")    — pre-encoded, byte-equal
-//	topic[1] = Symbol("create"|"n_fee")
-//
-// Factory events are recognised so the drop-counter does not file them as "unmatched topic"
-// (EVERY-event policy). Neither body is decoded: a `create` body is untrusted for registry
-// fan-out because the factory is permissionless (see Decoder.Decode), and `n_fee` is
-// fee-recipient governance. Decoder.Decode drops them without counting ErrUnknownEvent.
+// classifyFactory is the factory-layer twin of classify: topic[0] = String("DeFindexFactory"), topic[1] = "create"|"n_fee". Recognised
+// so the drop counter does not file them as "unmatched topic". Neither body is decoded: a `create` body is untrusted for registry
+// fan-out (permissionless factory, see Decoder.Decode) and `n_fee` is fee-recipient governance.
 func classifyFactory(e *events.Event) string {
 	if len(e.Topic) < 2 {
 		return ""
@@ -107,17 +87,9 @@ func classifyFactory(e *events.Event) string {
 	return ""
 }
 
-// decodeFlow converts one classified strategy event into a StrategyFlow.
-//
-// Body shape (harvest adds an unread price_per_share):
-//
-//	{ from: Address, amount: i128 }              (deposit/withdraw)
-//	{ from: Address, amount: i128,
-//	  price_per_share: i128 }                    (harvest)
-//
-// Fields are pulled by name from the top-level Map (decode-by-name rule,
-// docs/architecture/ingest-pipeline.md#contract-schema-evolution); positional decoding would
-// silently break across contract upgrades.
+// decodeFlow converts one classified strategy event into a StrategyFlow. Body: { from: Address, amount: i128 } (harvest adds an
+// unread price_per_share: i128). Fields are pulled by name (decode-by-name rule,
+// docs/architecture/ingest-pipeline.md#contract-schema-evolution); positional decoding breaks across contract upgrades.
 func decodeFlow(e *events.Event, kind string) (StrategyFlow, error) {
 	closedAt, err := e.EventClosedAt()
 	if err != nil {
@@ -175,22 +147,10 @@ func decodeFlow(e *events.Event, kind string) (StrategyFlow, error) {
 	return flow, nil
 }
 
-// decodeVaultFlow converts one classified DeFindexVault event into a VaultFlow.
-//
-// Body shape (docs/operations/wasm-audits/defindex.md "Body shapes"):
-//
-//	deposit:  { depositor:  Address,
-//	            amounts:           Vec<i128>,
-//	            df_tokens_minted:  i128,
-//	            total_managed_funds_before, total_supply_before }
-//	withdraw: { withdrawer: Address,
-//	            amounts_withdrawn: Vec<i128>,
-//	            df_tokens_burned:  i128,
-//	            total_managed_funds_before, total_supply_before }
-//
-// The `total_*_before` NAV-snapshot fields are ignored (not needed for flow attribution).
-// Fields are pulled by name, so the decoder survives the vault's mid-life WASM upgrade while
-// the names hold.
+// decodeVaultFlow converts one classified DeFindexVault event into a VaultFlow (body shapes: docs/operations/wasm-audits/defindex.md).
+// deposit: { depositor, amounts: Vec<i128>, df_tokens_minted: i128 }; withdraw: { withdrawer, amounts_withdrawn: Vec<i128>,
+// df_tokens_burned: i128 }. The `total_*_before` NAV fields are ignored. Fields are pulled by name, so the decoder survives the
+// vault's mid-life WASM upgrade.
 func decodeVaultFlow(e *events.Event, kind string) (VaultFlow, error) {
 	closedAt, err := e.EventClosedAt()
 	if err != nil {
@@ -273,19 +233,10 @@ func decodeVaultFlow(e *events.Event, kind string) (VaultFlow, error) {
 	return flow, nil
 }
 
-// decodeDFees converts one classified ("DeFindexVault","dfees") event into its
-// per-asset [DFee] entries: one per distributed_fees Vec element, FeeIndex =
-// position.
-//
-// Body shape (proven from lake blobs, see [DFee]):
-//
-//	Map{ distributed_fees: Vec[ (token Address<contract>, amount i128) ] }
-//
-// The tuple is Vec-encoded. Positions 0 (token) and 1 (amount) are read and trailing elements
-// tolerated, so an additive field from a future upgrade does not error the event; fewer than 2
-// elements is ErrMalformedPayload. An empty distributed_fees Vec is a real shape: zero
-// entries, no error, keeping live decode and the completeness re-derive count-consistent. Any
-// other body is ErrMalformedPayload (fail loud, never silent-drop).
+// decodeDFees converts one ("DeFindexVault","dfees") event into per-asset [DFee] entries, one per distributed_fees Vec element
+// (FeeIndex = position). Body: Map{ distributed_fees: Vec[ (token Address, amount i128) ] }. Positions 0 and 1 are read and trailing
+// elements tolerated (additive upgrades); fewer than 2 is ErrMalformedPayload. An empty Vec is a real shape (zero entries, no error),
+// keeping live decode and the completeness re-derive count-consistent. Any other body fails loud.
 func decodeDFees(e *events.Event) ([]DFee, error) {
 	closedAt, err := e.EventClosedAt()
 	if err != nil {

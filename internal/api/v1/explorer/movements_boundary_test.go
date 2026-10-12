@@ -10,15 +10,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// These tests pin the cap67 merge boundary on GET /v1/accounts/{g}/movements:
-//
-//   - A cap67 watermark READ ERROR must not disable the ClickHouse ceiling. An untrimmed archive
-//     plus the Postgres tail would double-list every post-P23 movement, so it fails closed to
-//     the static P23 boundary.
-//
-//   - The CH/PG split must not move under a paginated scroll. Page 1's watermark is pinned into
-//     the cursor, else a mid-session derive advance moves the boundary and the coverage note
-//     falsely claims completeness through the newer watermark.
+// Pins the cap67 merge boundary on /v1/accounts/{g}/movements. A watermark read error must not disable the CH ceiling
+// (untrimmed archive plus Postgres tail double-lists post-P23 rows), so it fails closed to the static P23 boundary. The
+// split must not move mid-scroll: page 1's watermark is pinned into the cursor so the coverage note stays true.
 
 // movementsArmReader drives the CH arm and the cap67 watermark directly so
 // the handler's boundary logic can be exercised without a live ClickHouse.

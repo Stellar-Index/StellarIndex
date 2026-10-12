@@ -5,10 +5,8 @@ import (
 	"testing"
 )
 
-// ValidateMarketsCursor pins the per-shape rejection. Without
-// validation, MarketsOrderPair garbage falls through to a
-// collation-dependent lexicographic skip; MarketsOrderVolume24hDesc
-// garbage hits a Postgres `numeric` cast error and 500s.
+// ValidateMarketsCursor pins per-shape rejection: unvalidated MarketsOrderPair garbage falls to a
+// collation-dependent lexicographic skip, and MarketsOrderVolume24hDesc garbage 500s on a `numeric` cast.
 
 func TestValidateMarketsCursor_emptyAlwaysOK(t *testing.T) {
 	for _, order := range []MarketsOrder{

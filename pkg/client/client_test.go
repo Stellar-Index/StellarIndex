@@ -257,12 +257,8 @@ func TestCreateKey_LabelRequired(t *testing.T) {
 	}
 }
 
-// TestDegenerate2xxEnvelopeIsRejected — PC-4: a well-formed but
-// degenerate 2xx body ({}, {"data":null}) decodes without a JSON
-// error into a zero Envelope. Without the as_of invariant guard the
-// client would hand the caller a silent zero-value success; with it
-// the call fails loudly. The server stamps as_of on every real
-// envelope, so a missing as_of unambiguously flags a non-envelope.
+// A well-formed but degenerate 2xx body ({}, {"data":null}) must fail loudly, not return a zero-value success. The
+// server stamps as_of on every real envelope, so a missing as_of flags a non-envelope.
 func TestDegenerate2xxEnvelopeIsRejected(t *testing.T) {
 	cases := []struct {
 		name string
@@ -289,10 +285,7 @@ func TestDegenerate2xxEnvelopeIsRejected(t *testing.T) {
 	}
 }
 
-// TestValid2xxEnvelopeWithZeroDataStillPasses — the as_of guard must
-// only reject genuinely-degenerate bodies, not a legitimate envelope
-// whose data is empty. A response carrying a real as_of but a
-// zero-value data object stays a success.
+// The as_of guard rejects only degenerate bodies: a real as_of with a zero-value data object stays a success.
 func TestValid2xxEnvelopeWithZeroDataStillPasses(t *testing.T) {
 	_, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

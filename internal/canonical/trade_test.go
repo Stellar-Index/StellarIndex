@@ -63,11 +63,8 @@ func TestTrade_Validate_oneZeroLegIsValid(t *testing.T) {
 func TestTrade_Validate_errors(t *testing.T) {
 	cases := map[string]func(*c.Trade){
 		"empty source": func(t *c.Trade) { t.Source = "" },
-		// "zero ledger" is intentionally NOT an error case —
-		// off-chain sources (Binance/Kraken/Bitstamp/Coinbase)
-		// stamp Ledger=0 deliberately. Storage uniqueness then relies
-		// on Source + TxHash + OpIndex + Timestamp. Documented in
-		// Validate().
+		// "Zero ledger" is intentionally not an error: off-chain sources (Binance/Kraken/Bitstamp/Coinbase) stamp Ledger=0.
+		// Storage uniqueness then relies on Source + TxHash + OpIndex + Timestamp, as documented in Validate().
 		"short tx hash":   func(t *c.Trade) { t.TxHash = "cafe" },
 		"non-hex tx hash": func(t *c.Trade) { t.TxHash = "z" + goodTxHash[1:] },
 		// Uppercase hex decodes but isn't canonical — Postgres would

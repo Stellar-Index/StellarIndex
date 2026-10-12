@@ -5,16 +5,9 @@ import (
 	"testing"
 )
 
-// TestClearProjectionDirtyWindowGuardsOnUpdatedAt pins the dirty-window clear guard.
-//
-// The bounds (`from_ledger >= $2 AND to_ledger <= $3`) only catch a WIDENED window. A replay
-// that re-records the same or a narrower range still satisfies them, so the delete would erase
-// evidence of a rewind this run never verified and the next completeness verdict would carry a
-// clean claim over it. `updated_at = $4` closes that: any re-record bumps updated_at, the
-// delete matches nothing and the window stays pending (fail-closed, at most one extra reconcile).
-//
-// Asserted against the query text because the behaviour lives in SQL; the end-to-end path
-// needs Postgres and is covered by the integration suite.
+// TestClearProjectionDirtyWindowGuardsOnUpdatedAt: the bounds only catch a widened window, so the clear must
+// also require `updated_at = $4`; any re-record bumps it and the window stays pending (fail-closed).
+// Asserted on the query text; the end-to-end path is in the integration suite.
 func TestClearProjectionDirtyWindowGuardsOnUpdatedAt(t *testing.T) {
 	t.Parallel()
 	q := clearProjectionDirtyWindowQuery

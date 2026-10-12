@@ -8,10 +8,9 @@ import (
 	"testing"
 )
 
-// TestWindowedCHBackfills_RefuseImplicitFullRun pins that every windowed ClickHouse backfill
-// refuses a bare invocation (no -from/-to/-full) rather than silently starting the whole
-// ledger-2..tip history outside run-heavy-job.sh. The refusal must fire before any ClickHouse
-// connection is attempted, so these run without a live lake.
+// TestWindowedCHBackfills_RefuseImplicitFullRun: every windowed ClickHouse backfill refuses a bare invocation (no
+// -from/-to/-full) rather than starting the whole ledger-2..tip history outside run-heavy-job.sh. The refusal fires
+// before any connection, so no live lake is needed.
 func TestWindowedCHBackfills_RefuseImplicitFullRun(t *testing.T) {
 	cases := []struct {
 		name string

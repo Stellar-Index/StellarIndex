@@ -6,13 +6,9 @@ import (
 	"time"
 )
 
-// TestRollupStatementsKeepTheSpillValve refuses a statement that sets both
-// max_bytes_before_external_group_by and optimize_aggregation_in_order = 1.
-//
-// The two cancel: in-order aggregation cannot spill to disk, so it disables the external
-// group-by limit beside it and turns an aggregation that would have spilled into a hard
-// max_memory_usage failure. ClickHouse accepts both settings and reports nothing. The rule is
-// general, so any rollup step that pairs them fails here rather than at runtime.
+// TestRollupStatementsKeepTheSpillValve refuses a statement setting both max_bytes_before_external_group_by
+// and optimize_aggregation_in_order = 1. In-order aggregation cannot spill, so it silently disables the
+// external group-by limit and turns a spillable aggregation into a hard max_memory_usage failure.
 func TestRollupStatementsKeepTheSpillValve(t *testing.T) {
 	lists := map[string][]string{}
 	for _, s := range creatorsRollupStatements(P23BoundaryLedger) {

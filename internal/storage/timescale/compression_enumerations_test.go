@@ -55,10 +55,8 @@ var nearUniqueSegmentBy = map[string]string{
 	"trustline_observations":   "asset_key, account_id",
 }
 
-// sliceBetween returns the text of s between the first occurrence of start
-// and the first occurrence of end after it. Fails the test if either marker
-// is missing, so a refactor of the operator file turns this check red
-// instead of vacuous.
+// sliceBetween returns the text of s between the first start and the first end after it. It fails the test if
+// either marker is missing, so a refactor of the operator file turns the check red instead of vacuous.
 func sliceBetween(t *testing.T, s, start, end, what string) string {
 	t.Helper()
 	i := strings.Index(s, start)

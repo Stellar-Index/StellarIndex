@@ -50,15 +50,9 @@ func Reconstruct(row Row) (events.Event, error) {
 	}, nil
 }
 
-// reconstructTopics base64-re-encodes the stored topic XDR into the slice shape decoders expect.
-//
-// It prefers the complete ordered topics_xdr list so events with 5+ topics keep every topic. Legacy
-// rows with an empty TopicsXDR fall back to the fixed topic_0..3 columns, trimmed to TopicCount; they
-// still cap at 4, and a ClickHouse-lake re-project recovers the truncated tail.
-//
-// An empty slot ahead of a non-empty one is a storage gap, not "fewer topics". Decoders read topics
-// by position, so skipping the gap would shift later topics down a slot and hand a decoder the wrong
-// field. Fail closed instead of returning a misaligned slice.
+// reconstructTopics base64-re-encodes the stored topic XDR into the slice decoders expect, preferring the complete topics_xdr list.
+// Legacy rows fall back to topic_0..3 trimmed to TopicCount. An empty slot ahead of a non-empty one is a storage gap: decoders read
+// by position, so fail closed rather than return a misaligned slice.
 func reconstructTopics(row Row) ([]string, error) {
 	if len(row.TopicsXDR) > 0 {
 		return dropTrailingEmpty(row.TopicsXDR, row)

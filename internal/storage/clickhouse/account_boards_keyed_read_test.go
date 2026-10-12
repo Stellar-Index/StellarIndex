@@ -111,11 +111,9 @@ func createDDL(t *testing.T, file, object string) string {
 	return text[start : start+end]
 }
 
-// TestAccountBoardKeyedReadsAreIndexed pins each keyed board read's filter
-// column to something ClickHouse can prune on: the sort-key prefix or a
-// bloom_filter skip index. The rollups are ORDER BY rank for the top-N page,
-// so a bare `WHERE creator = ?` reads every granule to return at most one
-// row. Checked against both the fresh-host DDL and the operator mirror.
+// TestAccountBoardKeyedReadsAreIndexed pins each keyed board read's filter column to a ClickHouse-prunable
+// one: the sort-key prefix or a bloom_filter skip index. Rollups are ORDER BY rank, so a bare creator filter
+// scans every granule. Checked against both the fresh-host DDL and the operator mirror.
 func TestAccountBoardKeyedReadsAreIndexed(t *testing.T) {
 	where := regexp.MustCompile(`FROM (stellar\.\w+) WHERE (\w+) = \?\s*$`)
 	for _, tc := range []struct {

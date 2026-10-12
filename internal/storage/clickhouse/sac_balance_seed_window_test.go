@@ -7,11 +7,9 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2"
 )
 
-// TestWalkSACSeedWindowsRewidensAfterDenseRange drives the full-history SAC
-// seed's window walk through one dense stretch that only fits at the bisection
-// floor. The walk must cover the range exactly once and recover its full width
-// afterwards; a monotonically-narrowing walk crawls the remaining ~10M ledgers
-// at the floor (640 round-trips instead of ~50).
+// TestWalkSACSeedWindowsRewidensAfterDenseRange drives the walk through one dense stretch that fits only at
+// the bisection floor: it must cover the range exactly once and re-widen after, else it crawls ~10M ledgers
+// (640 trips vs ~50).
 func TestWalkSACSeedWindowsRewidensAfterDenseRange(t *testing.T) {
 	const (
 		minLedger = 40_000_000

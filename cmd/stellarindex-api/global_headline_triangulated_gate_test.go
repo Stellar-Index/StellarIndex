@@ -14,15 +14,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 )
 
-// The GlobalAssetView headline has three tiers and all must be gated; the `vwap:` keys are not
-// exempt. Tier 1 (LatestVWAP, the prices_1m bucket) routes through the wiring.PriceWithheld
-// chokepoint. Tier 3 (LookupTriangulated) reads the aggregator's `vwap:<base>:<quote>:<window>`
-// key and is the tier a Stellar-only token reaches, since its <asset>/fiat:USD pair has no
-// prices_1m rows. An ungated tier 3 would show a price and market cap on a flagged issuer's
-// asset page.
-//
-// The gate here is the scam half only, so this test pins the scam verdict; the unflagged case
-// proves the tier still serves.
+// The GlobalAssetView headline has three tiers, all gated, including the `vwap:` keys. Tier 3 (LookupTriangulated) is
+// what a Stellar-only token reaches, and ungated it would show price and market cap for a flagged issuer. This pins the
+// scam verdict; the unflagged case proves the tier still serves.
 
 // headlineFlaggedIssuer is the directory-flagged issuer account. Same
 // fixture the chokepoint's SAC test uses.
@@ -102,10 +96,8 @@ func TestGlobalHeadlineTriangulatedTierWithholdsFlaggedIssuer(t *testing.T) {
 	}
 }
 
-// TestGlobalHeadlineTriangulatedTierServesUnflaggedIssuer is the
-// non-vacuity and non-regression half: the same fixture, an unflagged
-// directory, and the tier must still serve the cached value. Without
-// this, a tier that simply stopped working would pass the test above.
+// TestGlobalHeadlineTriangulatedTierServesUnflaggedIssuer is the non-vacuity half: same fixture, unflagged directory,
+// the tier must still serve the cached value, else a tier that simply stopped working would pass the test above.
 func TestGlobalHeadlineTriangulatedTierServesUnflaggedIssuer(t *testing.T) {
 	base, quote := headlinePair(t)
 	const window = 5 * time.Minute

@@ -96,13 +96,9 @@ func TestCustomerWebhooksUnopenablePreviousKey(t *testing.T) {
 // preSealMigration is the newest migration before 0204 on this branch.
 const preSealMigration = 203
 
-// TestCustomerWebhooksSigningKeySealed executes migration 0204 up and down
-// and the store paths around it: a raw pre-0204 key pair (current and
-// rotation-previous) keeps signing, the startup sweep seals both and
-// clears the raw copies, new and rotated keys are written sealed-only, a
-// store without the seal key fails closed on a sealed row while its
-// key-free lists keep working, and down refuses to drop a column that
-// holds the only copy of a key.
+// Executes migration 0204 up and down plus its store paths: raw pre-0204 keys keep signing, the startup sweep seals both
+// and clears raw copies, new/rotated keys are sealed-only, a store without the seal key fails closed on a sealed row
+// while key-free lists work, and down refuses to drop a column holding the only copy of a key.
 func TestCustomerWebhooksSigningKeySealed(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -297,10 +293,8 @@ func TestCustomerWebhooksSigningKeySealed(t *testing.T) {
 	applyMigrations(t, dsn)
 }
 
-// assertLostSealKeyRecovery pins the documented recovery from a lost or
-// rotated seal key: a sealed row still reads back without its key, a
-// missing seal key is told apart from a wrong one, and the webhook can be
-// edited, deleted and recreated at the same URL without the key.
+// Pins recovery from a lost or rotated seal key: a sealed row still reads back without it, a missing key is told apart
+// from a wrong one, and the webhook can be edited, deleted and recreated at the same URL.
 func assertLostSealKeyRecovery(ctx context.Context, t *testing.T, db *sql.DB, sealing, keyless *postgresstore.WebhookStore, acct uuid.UUID) {
 	t.Helper()
 	const url = "https://recover.example/hook"
@@ -362,12 +356,9 @@ func withMigrator(t *testing.T, dsn string, fn func(*migrate.Migrate) error) err
 	return fn(m)
 }
 
-// assertRotationStaysSealed pins the rotation half of the at-rest
-// invariant: rotating a sealed row keeps both keys sealed and both raw
-// columns empty while the outgoing key still signs through the overlap,
-// a raw row rotated by a sealing store comes out sealed, a store without
-// the seal key refuses to rotate a sealed row, and the schema rejects a
-// previous key held in both forms or without its expiry.
+// Rotation half of the at-rest invariant: rotating a sealed row keeps both keys sealed and raw columns empty while the
+// outgoing key signs through the overlap; a raw row rotated by a sealing store comes out sealed; a store without the
+// seal key refuses; the schema rejects a previous key in both forms or without expiry.
 func assertRotationStaysSealed(ctx context.Context, t *testing.T, db *sql.DB, sealing, keyless *postgresstore.WebhookStore, acct, id uuid.UUID, outgoing []byte) {
 	t.Helper()
 	assertSealedOnly := func(id uuid.UUID, current, previous []byte) {
@@ -440,10 +431,8 @@ func assertRotationStaysSealed(ctx context.Context, t *testing.T, db *sql.DB, se
 
 const dupWebhookURL = "https://hooks.example/stellarindex"
 
-// TestCustomerWebhooksURLUnique pins migration 0180: one webhook
-// per (account, url), surfaced by the store as platform.ErrConflict; the
-// migration refuses — rather than merges or deletes — pre-existing
-// duplicates; and a quota of 0 (TierAnon) admits nothing.
+// Pins migration 0180: one webhook per (account, url), surfaced as platform.ErrConflict; the migration refuses (not
+// merges or deletes) pre-existing duplicates; a quota of 0 (TierAnon) admits nothing.
 func TestCustomerWebhooksURLUnique(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -596,20 +585,9 @@ func execUpMigration(t *testing.T, ctx context.Context, db *sql.DB, name string)
 	return execErr
 }
 
-// The account kill switch was INBOUND-ONLY.
-//
-// Suspending or closing an account stopped its API keys authenticating
-// (internal/auth), but every webhook query was blind to account status:
-// the resolver (ListWebhooksSubscribedTo), both enqueue writers
-// (EnqueueDelivery, AppendDelivery) and the claim query
-// (ListPendingDeliveries). A suspended or closed customer therefore kept
-// accruing queued rows AND kept receiving our data at the endpoints they
-// had registered.
-//
-// This test executes the whole path against real Postgres for an ACTIVE,
-// a SUSPENDED and a CLOSED account, and asserts what each one ENQUEUES
-// as well as what each one DELIVERS. The Go-level worker gate is pinned
-// separately in internal/customerwebhook/worker_test.go.
+// Account kill switch must cover webhooks, not just inbound auth: the resolver, both enqueue writers and the claim query
+// must respect account status, else a suspended or closed customer keeps accruing rows and receiving data. Runs ACTIVE,
+// SUSPENDED and CLOSED accounts on real Postgres, asserting what each enqueues and delivers.
 
 const killSwitchEvent = platform.WebhookEventIncidentSEV1
 
@@ -836,10 +814,8 @@ func assertWorkerDeliversToActiveOnly(
 	}
 }
 
-// assertMidPublishSuspensionIsSuppressed drives the narrow window the
-// enqueue-side gate exists for: the resolver saw an active account and
-// the insert happened after the suspension landed. That is a deliberate
-// withholding, not a lost customer event.
+// The narrow window the enqueue-side gate exists for: the resolver saw an active account, the insert landed after the
+// suspension. That is a deliberate withholding, not a lost customer event.
 func assertMidPublishSuspensionIsSuppressed(
 	t *testing.T, ctx context.Context,
 	accounts *postgresstore.AccountStore, webhooks *postgresstore.WebhookStore,
@@ -888,11 +864,8 @@ func (s *suspendBetweenResolveAndInsert) ListWebhooksSubscribedTo(
 	return subs, err
 }
 
-// seedKillSwitchTrio creates one active, one suspended and one closed
-// account, each with an enabled webhook and one DUE delivery queued
-// while the account was still active — so the only difference between
-// the three is the account's status. With `withEndpoints` each webhook
-// points at a live endpoint that counts the POSTs it receives.
+// Creates an active, a suspended and a closed account, each with an enabled webhook and one DUE delivery queued while
+// active, so only status differs. `withEndpoints` points each webhook at a live endpoint that counts POSTs.
 func seedKillSwitchTrio(
 	t *testing.T, ctx context.Context,
 	accounts *postgresstore.AccountStore, webhooks *postgresstore.WebhookStore,
@@ -996,11 +969,8 @@ func closeAccount(t *testing.T, ctx context.Context, accounts *postgresstore.Acc
 	}
 }
 
-// A plain FIFO claim lets one endpoint's backlog fill the
-// batch and every other customer's events waited behind it (and, with the
-// worker serial per endpoint, behind every one of its timeouts). The claim
-// now takes each due endpoint's oldest rows first and at most five per
-// endpoint per claim. Executes ListPendingDeliveries against real Postgres.
+// A plain FIFO claim let one endpoint's backlog fill the batch and starve other customers. The claim takes each due
+// endpoint's oldest rows first, at most five per endpoint. Runs ListPendingDeliveries on real Postgres.
 func TestCustomerWebhookClaimIsFairAcrossEndpoints(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1082,11 +1052,8 @@ func TestCustomerWebhookClaimIsFairAcrossEndpoints(t *testing.T) {
 	}
 }
 
-// EnqueueDelivery must not drop the caller's delivery ID and nothing
-// else was unique, so re-running `stellarindex-ops emit-incident` after a
-// partial fan-out queued a second copy, under a fresh delivery id, for
-// every subscriber the first run had already reached. This executes the
-// INSERT … ON CONFLICT path and the fan-out re-run against real Postgres.
+// EnqueueDelivery must keep the caller's delivery ID (the unique key), else re-running emit-incident after a partial
+// fan-out queued a second copy for already-reached subscribers. Executes INSERT ... ON CONFLICT and the fan-out re-run.
 func TestCustomerWebhookIdempotentEnqueue(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1208,11 +1175,8 @@ func queuedFor(t *testing.T, ctx context.Context, db *sql.DB, webhookID uuid.UUI
 	return n
 }
 
-// TestCustomerWebhookRotateSecretKeepsQueue executes migration 0200 up and
-// down and the in-place rotation it backs: the key changes on the
-// SAME row, the outgoing key is kept until its expiry, and the webhook's
-// queued deliveries survive — the delete + recreate it replaces cascaded
-// them away.
+// Executes migration 0200 up and down plus in-place rotation: the key changes on the SAME row, the outgoing key is kept
+// until expiry, and queued deliveries survive (delete+recreate cascaded them away).
 func TestCustomerWebhookRotateSecretKeepsQueue(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

@@ -5,11 +5,9 @@ import (
 	"testing"
 )
 
-// Rank-tier lockstep. listingRankTierExpr is the listing's LEADING ORDER BY key and, like
-// adjustedVolume24hExpr, must appear identically in the SELECT (as rank_tier, so the cursor
-// encodes what the query ranked on), the ORDER BY and the keyset WHERE. Dropping it from one
-// makes pagination skip or repeat rows; dropping it from the ORDER BY lets a flagged scam
-// token climb back above real assets on raw volume.
+// Rank-tier lockstep: listingRankTierExpr, the listing's LEADING ORDER BY key, must appear identically in the
+// SELECT (as rank_tier, so the cursor encodes it), the ORDER BY and the keyset WHERE. Dropping it from one
+// skips or repeats rows; from the ORDER BY it lets a flagged scam token outrank real assets.
 
 func TestListingRankTierExpr_ThreeCallSitesStayInStep(t *testing.T) {
 	t.Parallel()
@@ -42,10 +40,8 @@ func TestListingRankTierExpr_ThreeCallSitesStayInStep(t *testing.T) {
 	}
 }
 
-// The observation-count order is an ACTIVITY ranking: it demotes flagged
-// issuers (a safety property that holds whatever the sort key) but must
-// NOT reorder on price, which would silently change the long-standing
-// default /v1/assets contract.
+// The observation-count order is an activity ranking: it demotes flagged issuers whatever the sort key, but
+// must not reorder on price, which would silently change the long-standing default /v1/assets contract.
 func TestListingRankTierExpr_PriceTierIsVolumeOrderOnly(t *testing.T) {
 	t.Parallel()
 	vol := listingRankTierExpr(AssetsOrderVolume24hUSDDesc)
@@ -165,20 +161,9 @@ func TestSplitAssetsCursor_LegacyTwoFieldCursorResumesInTierZero(t *testing.T) {
 	}
 }
 
-// TestAssetsCursorPredicate_MixedDirectionKeysetIsSpelledOut is the class
-// guard for mixed-direction keyset cursors.
-//
-// Every /v1/assets ordering is MIXED-direction: the sort key descends, asset_id ascends to
-// break ties. SQL's row-constructor comparison `(a, b) < ($1, $2)` is SAME-direction on every
-// element, so on a tie it reads as "…AND asset_id < $2", selecting rows already served and
-// skipping unserved ones, then reporting has_more=false as if the walk were complete.
-//
-// The invariant is enforced here rather than by a shared helper because the bug was one arm
-// disagreeing with its sibling (markets and pools already use the expanded form). It is
-// derived from source, so a THIRD ordering added later is covered the day it is written.
-//
-// Restoring `(ca.observation_count, ca.asset_id) < ($2, $3)` fails this test naming
-// AssetsOrderObservationCountDesc.
+// TestAssetsCursorPredicate_MixedDirectionKeysetIsSpelledOut: /v1/assets orderings are mixed-direction, but
+// a row-constructor `(a, b) < ($1, $2)` compares same-direction and corrupts the keyset on ties. Each
+// ordering must use the expanded form; the test derives orderings from source so new ones are covered.
 func TestAssetsCursorPredicate_MixedDirectionKeysetIsSpelledOut(t *testing.T) {
 	t.Parallel()
 	orders := allAssetsOrders()
@@ -212,11 +197,8 @@ func TestAssetsCursorPredicate_MixedDirectionKeysetIsSpelledOut(t *testing.T) {
 	}
 }
 
-// allAssetsOrders enumerates every AssetsOrder the package defines.
-//
-// Derived by walking the values, not listing them, so a THIRD ordering is covered the day it
-// is written. AssetsOrder is a small int enum; walking upward until assetsOrderBy stops
-// producing a distinct ORDER BY finds them all without depending on a name.
+// allAssetsOrders enumerates every AssetsOrder the package defines. It walks the int enum upward until
+// assetsOrderBy stops producing a distinct ORDER BY, so a third ordering is covered the day it is written.
 func allAssetsOrders() []AssetsOrder {
 	var out []AssetsOrder
 	seen := map[string]bool{}

@@ -29,10 +29,9 @@ func installTestnetForBind(t *testing.T) {
 	}
 }
 
-// Every read path that treats the native XLM SAC as XLM binds
-// canonical.NativeSACContractID() instead of the pubnet literal, at the
-// placeholder the SQL names. Installed network is testnet, so a regression
-// to the pubnet constant fails on the bound value.
+// Every read path treating the native XLM SAC as XLM binds canonical.NativeSACContractID() at the SQL's
+// placeholder, not the pubnet literal; the installed network is testnet, so a regression fails on the bound
+// value.
 func TestNativeSACIsBoundNotHardCoded(t *testing.T) {
 	installTestnetForBind(t)
 	ctx := context.Background()

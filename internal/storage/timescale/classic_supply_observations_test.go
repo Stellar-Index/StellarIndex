@@ -8,10 +8,8 @@ import (
 	"time"
 )
 
-// These tests cover the Insert*Observation defensive guards —
-// the Sum* methods need a real DB and live in test/integration/
-// (per CONTRIBUTING.md §Testing, integration tests run
-// via testcontainers-go).
+// These tests cover the Insert*Observation defensive guards; the Sum* methods need a real DB and live in
+// test/integration/ (testcontainers-go).
 
 // TestInsertObservation_RejectsMissingFields: each single-row writer
 // refuses a row missing an identity field or its balance, and names it.
@@ -107,10 +105,9 @@ func TestInsertClaimableObservationBatch_EmptyIsNoop(t *testing.T) {
 	}
 }
 
-// TestDedupeClaimableObservations — Postgres rejects a single ON CONFLICT DO
-// UPDATE statement presenting the same conflict key twice ("cannot affect row
-// a second time"), so intra-batch duplicates must collapse LAST-wins in
-// first-seen order before the statement is built.
+// TestDedupeClaimableObservations: Postgres rejects one ON CONFLICT DO UPDATE presenting the same conflict
+// key twice ("cannot affect row a second time"), so intra-batch duplicates must collapse last-wins in
+// first-seen order first.
 func TestDedupeClaimableObservations(t *testing.T) {
 	at := time.Date(2021, 3, 4, 5, 6, 7, 0, time.UTC)
 	rows := []ClaimableObservation{

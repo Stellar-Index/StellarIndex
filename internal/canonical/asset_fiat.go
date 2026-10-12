@@ -7,15 +7,10 @@ import "sort"
 // AssetFiat carries off-chain fiat currencies (USD, EUR, …) used by oracle prices and FX feeds;
 // they are not Stellar assets. Wire form `fiat:<ISO4217>`.
 
-// knownFiatCodes is the allow-list of 3-letter fiat codes: Reflector FX oracle traffic, wider
-// ISO-4217, and the FULL set the massive.com FX feed (internal/sources/external/forex)
-// publishes into fx_quotes. The batch price endpoint rejects the whole request on the first
-// unparseable code, so the /assets converter can only offer the intersection of this list and
-// the feed. Obsolete codes (CYP/EEK/LTL/LVL/MTL/ROL/SIT/SKK/TRL) never resolve to a price.
-// Crypto tickers are NOT here (see asset_crypto.go).
-//
-// VES is listed only so the reflector-fx row, whose oracle publishes a VES slot every event,
-// types as fiat:VES. XAU (gold) stays OFF: it is a commodity and maps to rwa:XAU (ADR-0028).
+// knownFiatCodes is the allow-list of 3-letter fiat codes: Reflector FX oracle traffic, wider ISO-4217, and the FULL set the
+// massive.com FX feed publishes into fx_quotes. The batch price endpoint rejects the whole request on the first unparseable code,
+// so the /assets converter can only offer the intersection with the feed. Crypto tickers are NOT here (see asset_crypto.go).
+// VES is listed only so the reflector-fx row types as fiat:VES. XAU (gold) stays OFF: it is a commodity, rwa:XAU (ADR-0028).
 var knownFiatCodes = map[string]struct{}{
 	"AED": {}, "ALL": {}, "ARS": {}, "AUD": {}, "AWG": {}, "BAM": {},
 	"BBD": {}, "BDT": {}, "BGN": {}, "BHD": {}, "BIF": {}, "BND": {},

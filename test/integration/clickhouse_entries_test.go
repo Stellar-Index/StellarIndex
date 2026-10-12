@@ -32,11 +32,9 @@ import (
 	chstore "github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// TestChEntryHistory_OneDecodePassWritesBothProjections drives
-// `ch-entry-history` through chops.Run against the real tier-1 DDL: a dry run
-// writes nothing, a -write run fills the account- and asset-keyed tables from
-// one pass and advances the watermark, and an unmerged duplicate in the source
-// collapses to one target row.
+// Drives `ch-entry-history` via chops.Run on the real tier-1 DDL: a dry run writes nothing, -write fills the account- and
+// asset-keyed tables from one decode pass and advances the watermark, and an unmerged source duplicate collapses to one
+// row.
 func TestChEntryHistory_OneDecodePassWritesBothProjections(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -222,10 +220,8 @@ func runEntryHistoryWrite(addr string, from, to uint32) error {
 	})
 }
 
-// TestChEntryHistory_WatermarkRefusesUncoveredWindow proves -write never
-// advances over tx-bearing ledgers stellar.ledger_entry_changes does not
-// cover — here none at all, plus one holding only a snapshot seed row (empty
-// tx_hash) — so the run stops and resumes once entry changes are backfilled.
+// -write must never advance the watermark over tx-bearing ledgers that ledger_entry_changes does not cover (none, or only
+// a snapshot seed row with empty tx_hash); the run stops and resumes once entry changes are backfilled.
 func TestChEntryHistory_WatermarkRefusesUncoveredWindow(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -320,19 +316,9 @@ var (
 // convergeSchema is table -> "column x" / "index y" -> full definition.
 type convergeSchema map[string]map[string]string
 
-// TestClickHouseAlterMigrationsConvergeWithFreshSchema pins that every
-// ALTER-bearing deploy/clickhouse/*.sql artifact (the hand-applied upgrade
-// path r1 took) lands on the same column and skip-index definitions that
-// tier1_schema.sql's CREATE TABLE gives a fresh provision.
-//
-//   - Unconditional ALTERs (DROP+ADD INDEX) execute against the fresh schema,
-//     so applying every artifact must change no tier-1 definition.
-//   - `IF NOT EXISTS` ALTERs are no-ops there, which hides their definitions.
-//     Each is replayed against a structural copy of its table with its
-//     objects dropped, and must rebuild exactly the table's definitions.
-//
-// Ordinal column position is not compared: it depends on the order the files
-// were run, and ch-schema-drift.sh checks it against the live lake.
+// Every ALTER-bearing deploy/clickhouse/*.sql artifact (the hand-applied upgrade path) must land on the same columns and
+// skip indexes as tier1_schema.sql's CREATE TABLE. Unconditional ALTERs run against the fresh schema and must change
+// nothing; `IF NOT EXISTS` ALTERs are replayed on a stripped structural copy and must rebuild it.
 func TestClickHouseAlterMigrationsConvergeWithFreshSchema(t *testing.T) {
 	ctx := context.Background()
 	conn := dialClickHouse(t, ctx, "default")
@@ -425,11 +411,8 @@ func convergeAlterFiles(t *testing.T) []string {
 	return out
 }
 
-// convergeReplayConditionalAdds replays each of name's all-`IF NOT EXISTS`
-// ALTER statements against a copy of its table (`CREATE TABLE … AS`, so no
-// materialized view pins the columns) from which the statement's objects were
-// dropped, and requires the copy to come back identical to the table. It fails
-// on any clause it does not model rather than leaving it unchecked.
+// Replays each all-`IF NOT EXISTS` ALTER against a `CREATE TABLE ... AS` copy (no MV pinning columns) with the statement's
+// objects dropped, and requires the copy to match the table again. Fails on any clause it does not model.
 func convergeReplayConditionalAdds(t *testing.T, ctx context.Context, conn driver.Conn, name string) int {
 	t.Helper()
 	replayed := 0
@@ -458,10 +441,8 @@ func convergeReplayConditionalAdds(t *testing.T, ctx context.Context, conn drive
 	return replayed
 }
 
-// convergeStripStatements returns the DROP clauses that undo body's
-// `ADD … IF NOT EXISTS` clauses, indexes first so a column's own index never
-// blocks its drop. It returns nil for a statement of unconditional clauses
-// (the fresh-schema pass already executed those) and fails on a mix.
+// Returns the DROP clauses that undo body's `ADD ... IF NOT EXISTS` clauses, indexes first so a column's index never
+// blocks its drop. nil for unconditional statements (the fresh-schema pass ran those); fails on a mix.
 func convergeStripStatements(t *testing.T, name, body string) []string {
 	t.Helper()
 	var indexes, columns []string
@@ -588,10 +569,8 @@ func convergeDiff(t *testing.T, step string, want, got map[string]string) {
 	}
 }
 
-// TestClickHouseAssetEntryChanges pins the asset entry-history read: a
-// re-derived row collapses to its newest version before RMT merges, keyset
-// pages never repeat or skip a row, nothing above the derive watermark is
-// served, and an Int128 balance above 2^64 reaches the wire exact.
+// Asset entry-history read: a re-derived row collapses to its newest version before RMT merges, keyset pages never repeat
+// or skip, nothing above the derive watermark is served, and an Int128 balance above 2^64 reaches the wire exact.
 func TestClickHouseAssetEntryChanges(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -726,21 +705,8 @@ func TestClickHouseAssetEntryChanges(t *testing.T) {
 	}
 }
 
-// TestLedgerEntriesCurrent_SameLedgerLastChangeWins is the end-to-end proof of
-// the intra-ledger tie-break against real ClickHouse: when one storage key is
-// changed twice within the SAME ledger (here update-then-remove), the
-// current-state projection stellar.ledger_entries_current must FINAL-resolve to
-// the LAST change (the removal), never resurrect the before-image.
-//
-// Topology exercised: InsertEntryChanges → stellar.ledger_entry_changes → the
-// ledger_entries_current_mv materialized view → stellar.ledger_entries_current
-// (ReplacingMergeTree on version = ledger_seq<<32 | intra_ledger_seq) → FINAL.
-//
-// The two rows are inserted in the ADVERSARIAL order [removed, updated] on
-// purpose: with a plain ReplacingMergeTree(ledger_seq) both rows tie on
-// version, and ClickHouse keeps the LAST-inserted (the 'updated' before-image)
-// — i.e. this exact test goes RED on a plain-ledger_seq schema. The composite version
-// makes the removal (intra_ledger_seq 6 > 5) win regardless of insert order.
+// When one storage key changes twice in the SAME ledger (update then remove), ledger_entries_current FINAL must resolve to
+// the LAST change (the removal), never the before-image. Rows are inserted in the ADVERSARIAL order [removed, updated]:
 func TestLedgerEntriesCurrent_SameLedgerLastChangeWins(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -752,10 +718,8 @@ func TestLedgerEntriesCurrent_SameLedgerLastChangeWins(t *testing.T) {
 	)
 	closeTime := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
-	// Canonical walk order in the ledger: the update (intra_ledger_seq 5) comes
-	// before the removal (intra_ledger_seq 6). Rows are handed to the writer in
-	// the REVERSE (adversarial) order so a ledger_seq-only version would keep
-	// the wrong one.
+	// Canonical ledger order: update (intra 5) before removal (intra 6). Rows are written in REVERSE so a ledger_seq-only
+	// version would keep the wrong one.
 	rows := []chstore.LedgerEntryChangeRow{
 		{
 			LedgerSeq: ledger, CloseTime: closeTime, TxHash: "aa", OpIndex: 1, ChangeIndex: 0,
@@ -805,27 +769,9 @@ func TestLedgerEntriesCurrent_SameLedgerLastChangeWins(t *testing.T) {
 	}
 }
 
-// Integration coverage for `stellarindex-ops supply seed-claimable-balances`'s
-// lake reader. The unit tests in internal/storage/clickhouse cover the Go-side
-// reduction exhaustively; what only a real server can prove is the SQL — the
-// PREWHERE on entry_type, the single argMax over a TUPLE of every projected
-// column, and the tuple's within-ledger ordering — which is exactly where the
-// SAC seed's tie-break bug lived.
-//
-// Every test scopes its assertions to its OWN claimable ids, because the
-// reader is deliberately network-wide (no watched set) and the shared test
-// schema carries other suites' entry-change rows.
-//
-// What ids CANNOT scope is the walk itself: the reader steps the whole lake,
-// min(ledger_seq) to max(ledger_seq), in 250k-ledger windows, so its cost is
-// set by the highest ledger ANY test in the process left behind. One fixture
-// at ledger 4,000,000,000 made every walk here ~16,000 empty windows (53-58 s
-// each unloaded, five walks in this file) and breached the 5-minute deadline
-// under machine load. The fixtures that seed up there now remove
-// their rows; cbsSeedsByID's window check turns any recurrence into an
-// immediate, named failure instead of a load-dependent timeout, and
-// TestClaimableSeed_WalkStaysBoundedAfterHighLedgerFixtures pins the two
-// known offenders in any shard layout and any order.
+// Lake reader behind `supply seed-claimable-balances`. Only a real server proves the SQL: PREWHERE on entry_type, one
+// argMax over a TUPLE of every projected column, and its within-ledger ordering. Assertions are scoped to each test's OWN
+// ids since the reader is network-wide;
 
 const (
 	cbsIssuer   = "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA"
@@ -838,16 +784,11 @@ const (
 	// cbsWalkWindowLedgers is the reader's initial window width
 	// (claimableSeedLedgerWindow, internal/storage/clickhouse).
 	cbsWalkWindowLedgers = uint64(250_000)
-	// cbsMaxWalkWindows is the most windows a seed walk over the SHARED test
-	// lake may take: 2,000 windows = a 500M-ledger span, ~8x mainnet's real
-	// tip (~60M, ~240 windows) and over twice the suite's highest legitimate
-	// fixture (217M, ~870 windows). At the ~3.5 ms an empty window costs,
-	// that is ~7 s.
+	// The most windows a seed walk over the SHARED lake may take: 2,000 (500M-ledger span, ~8x mainnet's tip and over twice
+	// the suite's highest legitimate fixture, 217M). At ~3.5 ms per empty window that is ~7 s.
 	cbsMaxWalkWindows = uint64(2_000)
-	// cbsWalkBudget is the wall-clock ceiling on ONE walk of a bounded lake:
-	// ~4x the worst walk cbsMaxWalkWindows admits, so machine load alone
-	// cannot breach it, and well under the 53 s one walk took with the
-	// 4,000,000,000-ledger fixture in the lake.
+	// Wall-clock ceiling for ONE walk of a bounded lake: ~4x the worst walk cbsMaxWalkWindows admits, so load alone cannot
+	// breach it, and well under the 53 s a walk took with the 4e9 fixture present.
 	cbsWalkBudget = 30 * time.Second
 )
 
@@ -936,11 +877,8 @@ func cbsSeedsByID(t *testing.T, ctx context.Context, addr string, assets map[str
 
 func cbsHex(id [32]byte) string { return xdr.Hash(id).HexString() }
 
-// cbsWalkWindows reports how many initial-width windows a seed walk over the
-// shared lake would take right now, and names the row holding the top of the
-// range so an over-long walk can be traced to the fixture that caused it.
-// Window count — not elapsed time — is the quantity asserted before a walk:
-// it is exact and independent of machine load.
+// Reports how many initial-width windows a seed walk would take now, and names the row holding the range top so an over-
+// long walk traces to its fixture. Window count, not elapsed time, is asserted: it is exact and load-independent.
 func cbsWalkWindows(t *testing.T, ctx context.Context) (uint64, string) {
 	t.Helper()
 	conn := dialClickHouse(t, ctx, "stellar")
@@ -961,11 +899,9 @@ func cbsWalkWindows(t *testing.T, ctx context.Context) (uint64, string) {
 	return windows, fmt.Sprintf("ledgers [%d, %d], top row entry_type=%s tx_hash=%q", lo, hi, entryType, txHash)
 }
 
-// TestClaimableSeed_RecoversPreFloorBalance is the headline case: a claimable
-// balance created long before the live observer existed, never claimed, is
-// recovered from the append-log with its exact asset, amount and TRUE
-// last-modified ledger. Without this reader that balance would not
-// appear in claimable_observations, under-reading AQUA's supply.
+// Headline case: a claimable balance created long before the live observer existed and never claimed is recovered from the
+// append-log with exact asset, amount and TRUE last-modified ledger; otherwise it would be missing from
+// claimable_observations and under-read AQUA's supply.
 func TestClaimableSeed_RecoversPreFloorBalance(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1002,10 +938,8 @@ func TestClaimableSeed_RecoversPreFloorBalance(t *testing.T) {
 	}
 }
 
-// TestClaimableSeed_ClaimedBalanceIsNotSeeded — a balance claimed in a LATER
-// window must not be seeded. This is the cross-window half of the reduction:
-// the removal and the creation are resolved by separate server-side queries
-// and reconciled in Go.
+// A balance claimed in a LATER window must not be seeded (cross-window reduction: removal and creation come from separate
+// server-side queries reconciled in Go).
 func TestClaimableSeed_ClaimedBalanceIsNotSeeded(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1044,15 +978,9 @@ func TestClaimableSeed_ClaimedBalanceIsNotSeeded(t *testing.T) {
 	}
 }
 
-// TestClaimableSeed_SameLedgerRemovalCoherence is the same-ledger tie-break on the
-// real server. A claimable balance created AND claimed inside ONE ledger is an
-// ordinary pattern (one transaction can do both), so ledger_seq alone cannot
-// order the changes. With independent per-column argMax aggregates ClickHouse
-// may resolve the tie differently per column — entry_xdr from the live change,
-// change_type from the removal — and the removed-entry skip never fires,
-// resurrecting a claimed balance into classic supply. One argMax over a tuple
-// of every projected column, keyed on the full within-ledger identity tuple,
-// makes that structurally impossible.
+// Same-ledger tie-break on the real server: a balance created AND claimed in one ledger is ordinary, so ledger_seq cannot
+// order the changes. Independent per-column argMax can take entry_xdr from the live change and change_type from the
+// removal, so the removed-entry skip never fires and a claimed balance is resurrected;
 func TestClaimableSeed_SameLedgerRemovalCoherence(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1070,11 +998,8 @@ func TestClaimableSeed_SameLedgerRemovalCoherence(t *testing.T) {
 			EntryXDR: cbsEntryXDR(t, id, cbsAsset(t, "AQUA"), 123_456, ledger),
 		},
 		{
-			// Different tx, LATER in the ledger's canonical walk. Only
-			// intra_ledger_seq ranks these correctly: tx_hash "cbs03b" >
-			// "cbs03a" here, so this test would also pass on the weaker
-			// lexical tie-break — the intra_ledger_seq gap is what makes it
-			// true by construction rather than by fixture luck.
+			// Different tx, LATER in the ledger's canonical walk. Only intra_ledger_seq ranks it correctly (tx_hash "cbs03b" >
+			// "cbs03a" would also pass a lexical tie-break), so the intra_ledger_seq gap makes this true by construction.
 			LedgerSeq: ledger, CloseTime: ct, TxHash: "cbs03b", OpIndex: 0, ChangeIndex: 0,
 			IntraLedgerSeq: 11, ChangeType: "removed", EntryType: "claimable_balance",
 			KeyXDR: cbsKeyXDR(t, id),
@@ -1088,10 +1013,8 @@ func TestClaimableSeed_SameLedgerRemovalCoherence(t *testing.T) {
 	}
 }
 
-// TestClaimableSeed_NativeAndAssetScope — native (XLM) claimable balances are
-// never seeded (Algorithm 1 does not read claimable_observations, and the live
-// observer declines them), and -assets scoping filters classic ones. The
-// default (nil) scope must include every classic asset.
+// Native (XLM) claimable balances are never seeded (Algorithm 1 does not read claimable_observations and the live observer
+// declines them); -assets scoping filters classic ones; the nil scope includes every classic asset.
 func TestClaimableSeed_NativeAndAssetScope(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1145,22 +1068,8 @@ func TestClaimableSeed_NativeAndAssetScope(t *testing.T) {
 	}
 }
 
-// TestClaimableSeed_WalkStaysBoundedAfterHighLedgerFixtures is the
-// regression test for that. The seed reader walks the process-shared lake from
-// min(ledger_seq) to max(ledger_seq), so a fixture another test leaves at a
-// far-future ledger is paid for by every walk that follows it in the process.
-// Two tests seed up there on purpose — TestBlendPoolReserves_SameLedgerLastChangeWins
-// (ledger 4,000,000,000) and TestBlendPoolReserves_CurrentStateProjectionBoundsTheRead
-// (3,999,900,000 and up) — and each walk after them took ~16,000 empty windows,
-// 53-58 s unloaded, against a 5-minute deadline the two-walk test above
-// breached on a loaded machine.
-//
-// Which shard and which order those tests land in is an accident of the
-// sorted test list, so this test does not depend on it: it RUNS both as
-// subtests, lets their Cleanups fire, and then asserts on the lake they left
-// behind — first the window count (exact, load-independent), then one real
-// walk against a wall-clock budget. Without the purge in either seeder the
-// window count is ~16,000 and the walk exhausts cbsWalkBudget.
+// Regression for walk cost: a fixture another test leaves at a far-future ledger is paid for by every later seed walk. It
+// RUNS TestBlendPoolReserves_SameLedgerLastChangeWins (4e9) and ..._CurrentStateProjectionBoundsTheRead (3,999,900,000+)
 func TestClaimableSeed_WalkStaysBoundedAfterHighLedgerFixtures(t *testing.T) {
 	addr := clickhouseAddr(t)
 
@@ -1187,12 +1096,9 @@ func TestClaimableSeed_WalkStaysBoundedAfterHighLedgerFixtures(t *testing.T) {
 	t.Logf("seed walk: %d windows in %s (budget %s)", windows, elapsed.Round(time.Millisecond), cbsWalkBudget)
 }
 
-// TestSACSeed_ArchivedHolderRetractedAtArchivalLedger drives both SAC seed
-// readers against a real ClickHouse: a watched Balance entry written at
-// lastWrite whose TTL lapsed at liveUntil must come back as a tombstone at
-// liveUntil+1 carrying that ledger's stellar.ledgers close time — not at
-// lastWrite, where the seed's top-of-ledger upsert would overwrite the genuine
-// observation and zero the holder across [lastWrite, archival).
+// Both SAC seed readers: a watched Balance entry written at lastWrite whose TTL lapsed at liveUntil must return a
+// tombstone at liveUntil+1 with that ledger's close time, not at lastWrite where the seed's top-of-ledger upsert would
+// overwrite the genuine observation and zero the holder across [lastWrite, archival).
 func TestSACSeed_ArchivedHolderRetractedAtArchivalLedger(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -1324,26 +1230,9 @@ func sacFullHistoryUnverified(ctx context.Context, addr string, watched map[stri
 	return err
 }
 
-// TestSACFullHistorySeed_RecoversDormantPoolHolder reproduces the exact
-// PHO/BLND VERDICT shape (docs/architecture/
-// supply-pipeline.md "Dormant contract-held SAC balances"): a pool
-// contract's SAC Balance(Address) entry whose last write predates the
-// ClickHouse ledger_entries_current current-state MV's ~62M coverage
-// floor. It writes the row into stellar.ledger_entry_changes (the raw
-// append-log a real ch-backfill would have populated) and then
-// synchronously deletes the mirrored row that the LIVE
-// ledger_entries_current_mv trigger writes on every insert
-// (fhSuppressFromCurrentState) — reproducing the FLOOR'S END STATE
-// (a row present in the raw append-log but absent from the current-state
-// projection) deterministically in a fresh test schema, where the real
-// mechanism (the MV having been created strictly after some historical
-// rows already existed on r1) can't be replicated because the test
-// schema always creates the MV before any row is inserted. Then asserts:
-//
-//  1. StreamSACBalanceSeeds (the default, current-state-backed reader)
-//     finds NOTHING for the dormant holder — reproducing the bug.
-//  2. StreamSACBalanceSeedsFullHistory (the -full-history reader, reading
-//     ledger_entry_changes directly) DOES find it — proving the fix.
+// Reproduces the PHO/BLND shape (docs/architecture/supply-pipeline.md, dormant contract-held SAC balances): a pool
+// contract's Balance entry last written before ledger_entries_current's ~62M coverage floor. The row goes into
+// ledger_entry_changes and its MV mirror is then deleted, giving the floor's end state.
 func TestSACFullHistorySeed_RecoversDormantPoolHolder(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -1364,11 +1253,8 @@ func TestSACFullHistorySeed_RecoversDormantPoolHolder(t *testing.T) {
 	}
 
 	sacContract := fhContractScAddr(t, sac)
-	// A synthetic-but-structurally-valid contract address standing in for
-	// the dormant Phoenix/Blend pool holder — its own identity is
-	// incidental to the test; what matters is that it's a CONTRACT
-	// address (not a G-account) holding the SAC's Balance(Address) entry,
-	// the exact shape the incident's pool holders had.
+	// A structurally valid stand-in for the dormant pool holder: what matters is that it is a CONTRACT address (not a
+	// G-account) holding the SAC Balance(Address) entry, the incident's shape.
 	poolAddr, poolContract := fhSyntheticContractAddr(t, 0xA1)
 	balanceKey := fhBalanceKey(t, poolContract)
 	keyXDR := fhKeyXDR(t, sacContract, balanceKey)
@@ -1395,11 +1281,8 @@ func TestSACFullHistorySeed_RecoversDormantPoolHolder(t *testing.T) {
 	if _, err := chstore.InsertEntryChanges(ctx, addr, []chstore.LedgerEntryChangeRow{fhLiveTTLRow(keyXDR, dormantLedger)}, 0); err != nil {
 		t.Fatalf("InsertEntryChanges (ttl): %v", err)
 	}
-	// The live ledger_entries_current_mv mirrors the row we just inserted
-	// (a fresh test schema always has the MV in place before any insert —
-	// unlike r1, where it was created after ~62M-worth of ch-backfilled
-	// history already existed). Synchronously delete the mirrored copy to
-	// reproduce the floor's actual end state.
+	// The live ledger_entries_current_mv mirrors the inserted row (a fresh schema has the MV before any insert, unlike r1
+	// where it came after ~62M of backfilled history). Delete the mirror synchronously to reproduce the floor's end state.
 	fhSuppressFromCurrentState(t, ctx, addr, keyXDR)
 
 	watched := map[string]string{sac: asset}
@@ -1448,13 +1331,9 @@ func TestSACFullHistorySeed_RecoversDormantPoolHolder(t *testing.T) {
 	}
 }
 
-// TestSACFullHistorySeed_LatestWriteWins proves the server-side
-// `ORDER BY key_xdr, ledger_seq DESC LIMIT 1 BY key_xdr` reduction picks
-// the HIGHEST-ledger write per storage key, not an arbitrary one — the
-// same "latest wins" guarantee ledger_entries_current's
-// ReplacingMergeTree(ledger_seq) provides, reproduced over the raw
-// append-log which can (and does, under ch-backfill re-derive / live
-// capture) hold multiple historical writes to the same key.
+// The server-side `ORDER BY key_xdr, ledger_seq DESC LIMIT 1 BY key_xdr` reduction must pick the HIGHEST-ledger write per
+// key, matching ledger_entries_current's ReplacingMergeTree(ledger_seq), over a raw append-log that can hold several
+// writes to one key (ch-backfill re-derive, live capture).
 func TestSACFullHistorySeed_LatestWriteWins(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -1513,21 +1392,9 @@ func TestSACFullHistorySeed_LatestWriteWins(t *testing.T) {
 	}
 }
 
-// TestSACFullHistorySeed_SameLedgerRemovalCoherence proves: when one
-// storage key is BOTH present and removed within the SAME
-// ledger, the full-history seed must resolve the single genuine latest change
-// coherently (every projected column from that one row) so the removed-entry
-// skip fires and the deleted balance is NOT resurrected.
-//
-// change_index is only a per-transaction counter (extract_entry_changes.go),
-// so ledger_seq does not order intra-ledger changes — the intra-ledger order
-// is (op_index, change_index). The prior query took four INDEPENDENT
-// argMax(col, ledger_seq) aggregates, which ClickHouse resolves per-column on
-// a ledger_seq tie: it could pair the present row's entry_xdr with the removed
-// row's change_type (or vice versa), so the removed skip below missed and the
-// pre-removal before-image balance leaked into the SAC supply seed. The tuple
-// argMax (ledger_seq, tx_hash, op_index, change_index) forces all columns from
-// the one latest row, here the op_index=1 'removed' change → holder skipped.
+// A key both present and removed in the SAME ledger must resolve to the single latest change coherently (every column from
+// one row) so the removed-entry skip fires and the balance is not resurrected. change_index is only a per- transaction
+// counter, so intra-ledger order is (op_index, change_index); independent argMax(col, ledger_seq)
 func TestSACFullHistorySeed_SameLedgerRemovalCoherence(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -1566,11 +1433,8 @@ func TestSACFullHistorySeed_SameLedgerRemovalCoherence(t *testing.T) {
 	}
 
 	watched := map[string]string{sac: asset}
-	// A retraction tombstone (IsRemoval=true, Balance=0) for this holder is
-	// the CORRECT outcome: the removal is the genuine latest
-	// intra-ledger state and must overwrite any prior observation. Only a
-	// live, nonzero-balance emission would mean the deleted balance was
-	// RESURRECTED — that's what this test guards against.
+	// A retraction tombstone (IsRemoval=true, Balance=0) is the CORRECT outcome: the removal is the latest intra-ledger state.
+	// Only a live nonzero-balance emission would mean the deleted balance was resurrected.
 	var resurrected, tombstones int
 	if _, err := chstore.StreamSACBalanceSeedsFullHistory(ctx, addr, watched, chstore.SeedWalk{}, func(seed chstore.SACBalanceSeed) error {
 		if seed.Holder != holder {
@@ -1593,10 +1457,8 @@ func TestSACFullHistorySeed_SameLedgerRemovalCoherence(t *testing.T) {
 	}
 }
 
-// TestSACFullHistorySeed_SameLedgerRecreateWins is the positive complement:
-// removed early then RE-CREATED later in the same ledger → the holder IS
-// emitted, with the re-created balance (the latest intra-ledger change wins,
-// resolved by op_index within the tied ledger_seq).
+// Positive complement: removed early then RE-CREATED later in the same ledger, the holder IS emitted with the re-created
+// balance (latest intra-ledger change wins, resolved by op_index within the tied ledger_seq).
 func TestSACFullHistorySeed_SameLedgerRecreateWins(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -1651,13 +1513,8 @@ func TestSACFullHistorySeed_SameLedgerRecreateWins(t *testing.T) {
 	}
 }
 
-// fhSuppressFromCurrentState synchronously deletes the row matching
-// keyXDR from stellar.ledger_entries_current — used to reproduce, in a
-// fresh test schema, the end state of the real current-state coverage
-// floor (a row present in ledger_entry_changes but absent from the
-// current-state projection). mutations_sync=2 makes the ALTER TABLE
-// DELETE block until the mutation (and any dependent replica/merge work)
-// completes, so the row is guaranteed gone before the test reads it.
+// Synchronously deletes the row matching keyXDR from ledger_entries_current to reproduce the coverage floor's end state
+// (row in ledger_entry_changes, absent from the projection). mutations_sync=2 blocks until the row is gone.
 func fhSuppressFromCurrentState(t *testing.T, ctx context.Context, addr, keyXDR string) {
 	t.Helper()
 	conn, err := clickhouse.Open(&clickhouse.Options{
@@ -1703,11 +1560,8 @@ func fhBalanceKey(t *testing.T, holder xdr.ScAddress) xdr.ScVal {
 	return xdr.ScVal{Type: xdr.ScValTypeScvVec, Vec: &vp}
 }
 
-// fhSyntheticContractAddr builds a structurally-valid, deterministic
-// C-strkey + matching xdr.ScAddress from a single tag byte (via
-// strkey.Encode, so it's always checksum-valid — no hand-typed strkeys
-// to get wrong). Used for stand-in pool/holder addresses whose specific
-// identity doesn't matter to the test.
+// Builds a deterministic, checksum-valid C-strkey and matching xdr.ScAddress from a tag byte (via strkey.Encode) for
+// stand-in pool/holder addresses whose identity does not matter.
 func fhSyntheticContractAddr(t *testing.T, tag byte) (string, xdr.ScAddress) {
 	t.Helper()
 	var raw [32]byte
@@ -1791,13 +1645,9 @@ func fhEntryXDR(t *testing.T, contract xdr.ScAddress, key, val xdr.ScVal, lastMo
 	return b64
 }
 
-// TestSeedWalk_VerifyLakeRefusesAHole pins the coverage leg on both
-// full-history seed readers: a walk asked to verify the lake must refuse,
-// before emitting anything, a range whose stellar.ledgers rows are missing.
-// The shared test lake carries entry changes at ledgers no fixture wrote a
-// ledgers row for, so the hole here is real. Without the check both readers
-// emit the holder / balance below as current state, which is what let a
-// LiveSink drop elect a pre-hole value and stamp it full_history.
+// Coverage leg on both full-history seed readers: a walk asked to verify the lake must refuse, before emitting anything, a
+// range whose stellar.ledgers rows are missing (the shared lake has entry changes at ledgers with no ledgers row, so the
+// hole is real). Without it both emit the holder/balance as current state, letting a LiveSink drop elect a pre-hole value.
 func TestSeedWalk_VerifyLakeRefusesAHole(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1863,16 +1713,9 @@ func TestSeedWalk_VerifyLakeRefusesAHole(t *testing.T) {
 	}
 }
 
-// TestTrustlineAssetsAfter_PoolPrefixExcludesOnlyRealPoolShares is the
-// executing proof that TrustlineAssetsAfter's pool-share
-// exclusion must match only the two spellings TrustLineAssetID emits
-// ("pool:<hex>" and the bare "pool"), never a real credit-asset string that
-// merely starts with the substring "pool" — asset codes are case-sensitive
-// and "poolX" etc. are valid Stellar asset codes (internal/canonical/asset.go
-// validateClassicAssetCode).
-//
-// `NOT startsWith(asset, 'pool')` would drop "poolX-GISSUER..." silently
-// alongside the real pool-share rows; this test goes RED on that predicate.
+// TrustlineAssetsAfter's pool-share exclusion must match only the two spellings TrustLineAssetID emits ("pool:<hex>" and
+// bare "pool"), never a real credit asset that merely starts with "pool" ("poolX" is a valid, case-sensitive code). `NOT
+// startsWith(asset, 'pool')` would silently drop "poolX-GISSUER..."; this test goes RED on it.
 func TestTrustlineAssetsAfter_PoolPrefixExcludesOnlyRealPoolShares(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -1911,10 +1754,8 @@ func TestTrustlineAssetsAfter_PoolPrefixExcludesOnlyRealPoolShares(t *testing.T)
 	}
 	defer func() { _ = scanner.Close() }()
 
-	// "ooo" sorts after every uppercase-coded asset other tests seed
-	// (ASCII uppercase < lowercase) but strictly before "pool", "pool:..."
-	// and "poolX...", so this page captures all three fixture rows without
-	// depending on how many unrelated rows the shared container holds.
+	// "ooo" sorts after every uppercase-coded asset other tests seed but before "pool", "pool:..." and "poolX...", so the page
+	// captures all three fixture rows regardless of unrelated rows in the shared container.
 	seeds, err := scanner.TrustlineAssetsAfter(ctx, "ooo", 50)
 	if err != nil {
 		t.Fatalf("TrustlineAssetsAfter: %v", err)
@@ -1943,12 +1784,9 @@ func TestTrustlineAssetsAfter_PoolPrefixExcludesOnlyRealPoolShares(t *testing.T)
 	}
 }
 
-// legacyBlendReservesSQL is the BlendPoolReserves lookup as it stood
-// before the current-state rewrite, frozen here as the differential oracle: a
-// 250,000-ledger windowed fold over stellar.ledger_entry_changes, resolving
-// the latest entry per key itself. The rewrite must agree with it row for row
-// on every reserve the window could see, while no longer reading one granule
-// per WRITE the pool made inside that window.
+// legacyBlendReservesSQL is the pre-rewrite BlendPoolReserves lookup (a 250,000-ledger windowed fold over
+// ledger_entry_changes), frozen as a differential oracle: the rewrite must agree row for row on every reserve the window
+// could see, without reading one granule per pool WRITE in that window.
 func legacyBlendReservesSQL() string {
 	return `SELECT key_xdr, argMax(entry_xdr, (ledger_seq, intra_ledger_seq)) AS latest_xdr
 		FROM stellar.ledger_entry_changes
@@ -1962,72 +1800,9 @@ func legacyBlendReservesSQL() string {
 // legacyBlendWindowLedgers is the frozen oracle's window width.
 const legacyBlendWindowLedgers = uint32(250_000)
 
-// TestBlendPoolReserves_CurrentStateProjectionBoundsTheRead is the
-// live-ClickHouse proof for (`/v1/lending/pools/{pool}/reserves` →
-// 503 lending-timeout at 12.1s on the largest Blend pool; 9.31s — 78% of the
-// same 12s budget — on a SMALL one).
-//
-// Pathology: the reserve lookup folded the latest entry per key out of
-// stellar.ledger_entry_changes across a 250,000-ledger (~14-day) window. A
-// Blend ResData entry is REWRITTEN on nearly every pool interaction, so one
-// reserve's key alone matches tens of thousands of rows scattered through
-// that window's granules (tens of thousands of rows for the busiest mainnet pool's USDC
-// reserve). The legacy read's cost was therefore a function of pool
-// WRITE ACTIVITY, not of how many reserves were asked for — a multi-second
-// floor under EVERY pool.
-//
-// The fix reads stellar.ledger_entries_current, whose sort key IS
-// (entry_type, key_xdr): ~one row per requested key, the same shape the three
-// sibling pool-state readers (Soroswap / Phoenix / Comet) have always used.
-//
-// Removing that window, however, also removed a bound it was serving by
-// ACCIDENT. An archived (TTL-lapsed) Soroban entry has had no writes since it
-// lapsed, so the narrow window dropped it as a side effect of being narrow,
-// while ledger_entries_current keeps its last-known value forever. Reading the
-// projection without an explicit staleness bound hands a DEAD pool's final
-// reserves to the handler, which prices them at today's USD rate into
-// `tvl_usd` and stamps the current watermark with flags.stale=false — a
-// fabricated TVL where a naive read returned an empty reserve list. So the
-// read is paired with the same archived-entry drop the three sibling readers
-// carry, and this test pins BOTH halves: quiet-but-live must answer, archived
-// must not. Conflating those two is the bug this fixture exists to prevent.
-//
-// Fixture — one pool, five reserves chosen to cover every axis:
-//
-//   - assetHot: ResData rewritten across `churn` ledgers inside the window,
-//     the LAST write carrying a distinct b_rate. This is the pathology: the
-//     legacy fold must read every one of those writes to find the winner.
-//   - assetGone: written, then REMOVED as its final change. Must be absent
-//     from BOTH paths — the removed-key drop is the semantics the old
-//     `HAVING argMax(change_type, ...) != 'removed'` carried, and that the
-//     empty-entry_xdr filter over FINAL must preserve.
-//   - assetTied: two writes in the SAME ledger, the stale one sorting FIRST
-//     in the base table. Pins the intra-ledger tie-break through the new path:
-//     the projection's version is (ledger_seq << 32) | intra_ledger_seq, so
-//     FINAL keeps the LAST intra-ledger change, exactly as the old composite
-//     argMax did.
-//   - assetQuiet: a single write far BELOW the legacy window, with a TTL
-//     entry that is still LIVE. Quiet is not dead: the old shape reported it
-//     absent ("consistent with captured window") and the projection answers.
-//     The genuine coverage win — and it must SURVIVE the archived drop.
-//   - assetArchived: written in the same old ledger as assetQuiet, but with a
-//     LAPSED TTL. As visible to the projection as assetQuiet is; the ONLY
-//     thing separating the two is the TTL verdict. Must be ABSENT, or the
-//     route publishes a dead pool's reserves as current liquidity.
-//
-// The test then:
-//
-//  1. DIFFERENTIAL: the frozen legacy SQL and the reader must agree on the
-//     winning entry for every reserve the window could see (hot, tied), agree
-//     on the removal (gone absent from both), and differ on the two OLD
-//     reserves — quiet ADMITTED where the legacy window could not see it,
-//     archived still absent but now for a stated reason rather than as a
-//     lucky side effect of the scan bound.
-//  2. READ-ROWS: both paths measured via system.query_log. The legacy shape
-//     reads at least the pool's whole in-window write history; the new one
-//     must read a small multiple of the key count. Red-proof: with the old
-//     query text in the reader the two figures are equal and the bound
-//     below fails.
+// Live proof for /v1/lending/pools/{pool}/reserves (503 at 12.1s on the largest pool). The legacy fold read every rewrite
+// of a reserve's ResData key in a 250k-ledger window, so cost tracked pool write activity; the fix reads
+// ledger_entries_current (sort key (entry_type, key_xdr)).
 func TestBlendPoolReserves_CurrentStateProjectionBoundsTheRead(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -2042,24 +1817,16 @@ func TestBlendPoolReserves_CurrentStateProjectionBoundsTheRead(t *testing.T) {
 		quietSeed    = byte(0xC4)
 		archivedSeed = byte(0xC5)
 
-		// Far above every other fixture, so this test's own top (base+churn)
-		// is the lake's max(ledger_seq) and the frozen oracle's 250k window
-		// therefore covers the fixture — in any shard and any test order.
-		// It does not lean on another test: the one other fixture up here
-		// (4_000_000_000, argmax_intra_ledger_seq_readers_test.go) is within
-		// 250k above base, so the window holds with it present too, and that
-		// test removes its rows when it finishes. Asserted below rather than
-		// assumed. This test removes its own rows the same way (see the
-		// purgeLakeFixtureLedgers call below).
+		// Far above every other fixture, so this test's top (base+churn) is the lake's max(ledger_seq) and the frozen oracle's
+		// 250k window covers the fixture in any shard and order. The other fixture up here (4e9) is within 250k above base and
+		// removes its rows when done; asserted below, not assumed.
 		base  = uint32(3_999_900_000)
 		churn = 3_000
 		// Far below the window: the legacy shape cannot see these two.
 		quietLedger = uint32(1_000_000)
 
-		// TTL verdicts are judged against max(ledger_seq) at compute time,
-		// which the suite shares. These two sit far either side of any tip
-		// this test can run under (its own top, base+churn, or 4e9 while
-		// the argmax fixture is live), so the verdicts hold in any order.
+		// TTL verdicts are judged against max(ledger_seq) at compute time, which the suite shares. These two sit far either side
+		// of any tip this test can run under (base+churn, or 4e9 while the argmax fixture is live), so verdicts hold in any order.
 		liveUntilLive     = uint32(4_294_000_000)
 		liveUntilArchived = uint32(1_500_000_000)
 
@@ -2070,12 +1837,9 @@ func TestBlendPoolReserves_CurrentStateProjectionBoundsTheRead(t *testing.T) {
 	)
 	closeTime := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
-	// Everything seeded at [base, base+churn] is removed again when this test
-	// finishes. Rows this high are the table's max(ledger_seq), which bounds
-	// every whole-lake walker in the process: left behind, they cost each
-	// later claimable-balance / SAC full-history seed walk ~16,000 empty
-	// 250k-ledger windows. The quiet + archived rows at quietLedger
-	// stay — they are below any realistic tip and bound nothing.
+	// Everything seeded at [base, base+churn] is removed when the test finishes: rows this high are max(ledger_seq), which
+	// would cost each later whole-lake seed walk ~16,000 empty windows. The quiet + archived rows at quietLedger stay: they
+	// are below any realistic tip and bound nothing.
 	purgeLakeFixtureLedgers(t, addr, base, base+churn)
 
 	pool := contractIDFromSeed(poolSeed)
@@ -2159,10 +1923,8 @@ func TestBlendPoolReserves_CurrentStateProjectionBoundsTheRead(t *testing.T) {
 			IntraLedgerSeq: 1, ChangeType: "updated", EntryType: "contract_data",
 			KeyXDR: archivedKey, EntryXDR: archivedEntry,
 		},
-		// The TTL entries that separate them. ttlChangeRow (ttl_liveness_test.go)
-		// renders the lake's TTL change for a governed key; the
-		// ttl_live_until_mv materialized view turns it into the slim projection
-		// ClassifyTTLLiveness reads.
+		// The TTL entries that separate quiet from archived: ttlChangeRow renders the lake's TTL change for a governed key and the
+		// ttl_live_until_mv view turns it into the projection ClassifyTTLLiveness reads.
 		ttlChangeRow(quietKey, base+1, 1, liveUntilLive, 48),
 		ttlChangeRow(archivedKey, base+1, 1, liveUntilArchived, 48),
 	}
@@ -2170,13 +1932,9 @@ func TestBlendPoolReserves_CurrentStateProjectionBoundsTheRead(t *testing.T) {
 		t.Fatalf("InsertEntryChanges: %v", err)
 	}
 
-	// Collapse ledger_entries_current to its steady state. In production
-	// background merges keep the projection at ~one row per live key, which is
-	// what makes the PK-prefix probe cheap; a container that was seeded
-	// seconds ago has every version still sitting in unmerged parts, so
-	// without this the read_rows figures below would measure merge lag rather
-	// than query shape. FINAL returns the same ANSWER either way — this only
-	// removes the fixture's own artefact.
+	// Collapse ledger_entries_current to its steady state: production merges keep ~one row per live key, but a fresh container
+	// holds every version in unmerged parts, so read_rows would measure merge lag, not query shape. FINAL gives the same
+	// answer.
 	mustExec(`OPTIMIZE TABLE stellar.ledger_entries_current FINAL`)
 
 	// The oracle derives its window from the table's global max ledger, which
@@ -2293,13 +2051,9 @@ func TestBlendPoolReserves_CurrentStateProjectionBoundsTheRead(t *testing.T) {
 		t.Error("assetGone present in the reader's result; want ABSENT — its final change was a removal, and `entry_xdr != ''` over FINAL must drop it exactly as the old HAVING did")
 	}
 
-	// The two OLD reserves — identical to the projection, opposite verdicts.
-	// This pair is the whole point: dropping the 250k-ledger window retired a
-	// capture-window caveat AND removed an accidental staleness bound, and the
-	// fix must land on the right side of both.
-	//
-	// Quiet-but-live: ADMITTED. This is the coverage win — a reserve nobody has
-	// touched in months is not a dead one, and the old shape reported it absent.
+	// The two OLD reserves: same projection, opposite verdicts. Dropping the 250k window retired a capture-window caveat AND
+	// an accidental staleness bound. Quiet-but-live is ADMITTED (untouched for months is not dead; the old shape reported it
+	// absent).
 	q, ok := byAsset[quietStr]
 	if !ok {
 		t.Error("assetQuiet absent from the reader's result — a QUIET reserve is not a dead one; reading the current-state projection is supposed to retire the 250k-ledger capture-window caveat, and the archived-entry drop must not over-reach into live-but-old entries")
@@ -2307,11 +2061,9 @@ func TestBlendPoolReserves_CurrentStateProjectionBoundsTheRead(t *testing.T) {
 		t.Errorf("assetQuiet b_rate = %v, want %d", q.Data.BRate, quietBRate)
 	}
 
-	// Positively archived: ABSENT. The projection still holds this entry's
-	// last-known value and the query returns it — nothing in the SQL can tell
-	// it apart from assetQuiet. Only the TTL verdict can, and if it is not
-	// consulted the handler prices a dead pool's reserves at today's USD rate
-	// into tvl_usd and publishes it with flags.stale=false.
+	// Positively archived: ABSENT. The projection still holds its last value and nothing in the SQL distinguishes it from
+	// assetQuiet; only the TTL verdict does. Skipping it would price a dead pool's reserves into tvl_usd with
+	// flags.stale=false.
 	if got, present := byAsset[archivedStr]; present {
 		t.Errorf("assetArchived present in the reader's result (b_rate=%v) — its TTL lapsed at ledger %d against a lake tip of %d, so its last-known reserves are NOT current liquidity. The pre-#504 250k-ledger window dropped it as a side effect of being narrow; removing that window without an explicit archived-entry drop publishes a fabricated TVL for a dead pool",
 			got.Data.BRate, liveUntilArchived, maxLedger)

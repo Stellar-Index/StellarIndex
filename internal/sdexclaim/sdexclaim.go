@@ -14,10 +14,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// parts destructures one ClaimAtom into the fields every drop rule needs, plus `known` for whether
-// the discriminant is one of the three variants we understand (all zero values when false). A
-// zero-returning helper for unknown variants would count an un-decodable atom as a zero-amount
-// trade, so callers must check known.
+// parts destructures one ClaimAtom into the fields every drop rule needs, plus `known` for whether the discriminant is one of the
+// three variants we understand (all zero values when false). Callers must check known, else an unknown atom counts as a zero-amount
+// trade.
 func parts(a xdr.ClaimAtom) (sold, bought xdr.Int64, soldAsset, boughtAsset xdr.Asset, known bool) {
 	switch a.Type {
 	case xdr.ClaimAtomTypeClaimAtomTypeOrderBook:

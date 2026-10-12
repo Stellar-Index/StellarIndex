@@ -8,10 +8,8 @@ import (
 	"testing"
 )
 
-// TestBridgeSeriesGrain guards the hourly-vs-daily bucketing rule for the
-// bridge flow series: the 24h window (windowDays == 1) MUST bucket by hour —
-// a daily bucket collapses it to a single useless point — and every longer
-// window stays daily.
+// TestBridgeSeriesGrain guards the bridge flow series grain: the 24h window (windowDays == 1) must bucket by
+// hour, since a daily bucket collapses it to one useless point, and every longer window stays daily.
 func TestBridgeSeriesGrain(t *testing.T) {
 	cases := []struct {
 		windowDays int
@@ -43,11 +41,9 @@ func assertCCTPNumericSafe(t *testing.T, q string) {
 	assertNoFloatSQL(t, "cctp flow query", q)
 }
 
-// assertCCTPRawValueReads guards the honesty rule (file-doc rule 1): the legacy event_index-0
-// twins are deleted, so value-carrying flow queries read RAW per-event rows. A per-(tx, op)
-// collapse with max(amount) would silently HALVE a genuine batched double-transfer in one op
-// (same-op same-type groups do occur on the wire). max(amount) is the fingerprint of that
-// collapse; cctpRecvCTE's legitimate one-body-per-op group uses min(body), so it is unambiguous.
+// assertCCTPRawValueReads guards the honesty rule: value-carrying flow queries read RAW per-event rows,
+// since a per-(tx, op) collapse with max(amount) would halve a genuine batched double-transfer.
+// max(amount) is the collapse's fingerprint; cctpRecvCTE's one-body-per-op group uses min(body).
 func assertCCTPRawValueReads(t *testing.T, q string) {
 	t.Helper()
 	if strings.Contains(q, "max(amount)") {
@@ -81,10 +77,9 @@ func TestCCTPValueCTEsReadRawRows(t *testing.T) {
 	}
 }
 
-// TestCCTPFlowSeriesQueryShape guards the CCTP directional flow series SQL: hourly buckets at
-// the 24h window and daily otherwise, honest direction sourcing (inbound = mint_and_withdraw
-// ONLY; mint_and_forward restates the same funds at 10× local scale), dedup, and EXACT NUMERIC
-// division (ADR-0003).
+// TestCCTPFlowSeriesQueryShape guards the CCTP flow series SQL: hourly buckets at 24h and daily otherwise,
+// inbound = mint_and_withdraw only (mint_and_forward restates the same funds at 10x local scale), dedup, and
+// exact NUMERIC division (ADR-0003).
 func TestCCTPFlowSeriesQueryShape(t *testing.T) {
 	hourly := cctpFlowSeriesQuery(1, true)
 	if !strings.Contains(hourly, "date_trunc('hour', ts)") {
@@ -124,10 +119,9 @@ func TestCCTPFlowSeriesQueryShape(t *testing.T) {
 	}
 }
 
-// TestCCTPAggregateQueriesShape covers the phase-2 queries: KPIs, breakdowns,
-// per-chain series and the largest-transfers table are window-bounded +
-// deduped + numeric-safe; the cumulative net-inflow series is explicitly
-// ALL-TIME (no window bound) and must net inbound against outbound.
+// TestCCTPAggregateQueriesShape covers the phase-2 queries: KPIs, breakdowns, per-chain series and the
+// largest transfers are window-bounded, deduped and numeric-safe; the net-inflow series is all-time and nets
+// inbound against outbound.
 func TestCCTPAggregateQueriesShape(t *testing.T) {
 	windowed := map[string]string{
 		"window KPIs":        cctpWindowKPIQuery(),
@@ -192,10 +186,9 @@ func TestCCTPAggregateQueriesShape(t *testing.T) {
 	}
 }
 
-// TestCCTPChainLabels guards the honesty rule for SDF-facing chain
-// attribution: verified tails/domains resolve to their chain names, and
-// anything unrecognised gets an explicit Unverified / Domain N / Unknown
-// label — NEVER a guessed chain.
+// TestCCTPChainLabels guards the honesty rule for chain attribution: verified tails/domains resolve to chain
+// names, and anything unrecognised gets an explicit Unverified / Domain N / Unknown label, never a guessed
+// chain.
 func TestCCTPChainLabels(t *testing.T) {
 	// Verified burn-token tails (Circle-published USDC addresses).
 	for tail, want := range map[string]string{

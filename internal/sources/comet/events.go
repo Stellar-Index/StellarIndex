@@ -37,13 +37,8 @@ const cometTopicArity = 2
 // LiquidityKind discriminates the four liquidity-mutating Comet events; values match the comet_liquidity.event_kind CHECK.
 type LiquidityKind string
 
-// Liquidity kinds map to two directions:
-//
-//	join_pool / deposit  -> direction = "add"    (grows the named token's reserves)
-//	exit_pool / withdraw -> direction = "remove" (shrinks them)
-//
-// The per-kind distinction stays in the row so a reserve-tracker can tell a multi-token join
-// (one event per token, group by tx) from a standalone single-asset deposit.
+// Liquidity kinds map to two directions: join_pool / deposit -> "add" (grows the named token's reserves), exit_pool / withdraw ->
+// "remove". The per-kind distinction stays in the row so a multi-token join (one event per token) is told from a single-asset deposit.
 const (
 	LiquidityJoinPool LiquidityKind = "join_pool"
 	LiquidityExitPool LiquidityKind = "exit_pool"

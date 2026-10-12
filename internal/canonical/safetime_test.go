@@ -116,15 +116,9 @@ func TestSafeUnixSeconds_bounds(t *testing.T) {
 	}
 }
 
-// TestSafeUnix_preEpochCloseTimeKeepsTheCeiling guards the pre-epoch ceiling.
-//
-// The ceiling is uint64(closedAt.Add(window).Unix()). For a pre-1970 closedAt that Unix() is
-// negative and an unchecked cast wraps it to ~1.8e19, disabling the guard: every raw value,
-// 2^63 included, would pass and int64(raw) would stamp a far-past time, the overflow class this
-// helper exists to prevent.
-//
-// Not reachable from production today (all LedgerClosedAt producers are post-1970 and the call
-// sites fail closed on a missing close time), but the guard must not depend on that.
+// The ceiling is uint64(closedAt.Add(window).Unix()); for a pre-1970 closedAt an unchecked cast wraps the negative to
+// ~1.8e19. That would disable the guard so every raw value, 2^63 included, passes and int64(raw) stamps a far-past time.
+// Unreachable in production today (post-1970 producers, call sites fail closed), but the guard must not depend on that.
 func TestSafeUnix_preEpochCloseTimeKeepsTheCeiling(t *testing.T) {
 	preEpoch := time.Date(1969, 1, 1, 0, 0, 0, 0, time.UTC)
 
@@ -161,10 +155,8 @@ func TestUnboundedUnixSeconds_farFutureHonoured(t *testing.T) {
 	}
 }
 
-// TestUnboundedUnixSeconds_overflowWrapNearEpochRejected pins that a raw value near math.MaxUint64
-// (a common "no deadline" sentinel) wraps to a small negative int64 near the 1970 epoch, a
-// plausible Postgres-representable time that a downstream range check would not catch. It must be
-// rejected at the cast itself.
+// A raw value near math.MaxUint64 (a common "no deadline" sentinel) wraps to a small negative int64 near the 1970 epoch,
+// a plausible Postgres time a later range check would miss, so it must be rejected at the cast itself.
 func TestUnboundedUnixSeconds_overflowWrapNearEpochRejected(t *testing.T) {
 	for name, raw := range map[string]uint64{
 		"maxUint64":        math.MaxUint64,

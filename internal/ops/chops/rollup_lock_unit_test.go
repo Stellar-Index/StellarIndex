@@ -9,10 +9,8 @@ import (
 	"testing"
 )
 
-// TestRollupUnitsCanWriteTheirLock pins the unit side of acquireRollupLock:
-// a rollup whose unit runs under ProtectSystem=strict cannot create its lock
-// file unless the lock's directory is in ReadWritePaths, and it then exits 1
-// before doing any work.
+// A rollup unit under ProtectSystem=strict cannot create its lock file unless the lock's directory is in ReadWritePaths,
+// and it then exits 1 before doing any work; this pins the unit side of acquireRollupLock.
 func TestRollupUnitsCanWriteTheirLock(t *testing.T) {
 	for _, tc := range []struct{ unit, lock string }{
 		{"holders-rollup.service.j2", holdersRollupLockPath},

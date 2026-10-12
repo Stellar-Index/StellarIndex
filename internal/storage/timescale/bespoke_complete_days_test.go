@@ -8,11 +8,9 @@ import (
 	"testing"
 )
 
-// These tests pin the server-side partial-bucket honesty rule (a
-// partial-bucket class): every DAILY-grain bespoke series excludes the
-// current, still-accumulating day — its partial bucket renders as a
-// phantom activity/volume cliff on every daily chart — while the 24h
-// window's HOURLY grain keeps its live edge.
+// These tests pin the partial-bucket honesty rule: every DAILY-grain bespoke series excludes the current,
+// still-accumulating day, whose partial bucket reads as a phantom cliff, while the 24h HOURLY grain keeps
+// its live edge.
 
 // TestCompleteDaysOnlyFragment — the helper itself: empty at the 24h
 // (hourly-grain) window, the day cutoff otherwise.

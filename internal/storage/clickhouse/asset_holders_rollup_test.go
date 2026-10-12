@@ -21,11 +21,8 @@ func isHoldersCount(q string) bool {
 	return strings.Contains(q, "stellar.asset_holders_counts")
 }
 
-// TestHoldersRollupSwapIsAtomic pins that the five live↔staging swaps are issued as one multi-pair
-// EXCHANGE TABLES statement, not five sequential EXCHANGE calls. ClickHouse commits a multi-pair
-// EXCHANGE as a single metadata transaction, so a crash, ctx-cancel or restart between swaps cannot
-// leave the board new while counts/stats/histograms hold the previous cycle, the half-swapped state
-// holdersRollupBoard trusts as authoritative.
+// TestHoldersRollupSwapIsAtomic pins that the five live/staging swaps are one multi-pair EXCHANGE TABLES, so
+// a crash between swaps cannot leave the board new while counts/stats/histograms hold the previous cycle.
 func TestHoldersRollupSwapIsAtomic(t *testing.T) {
 	// All five live tables that must swap as a group.
 	wantPairs := []string{
@@ -65,10 +62,9 @@ func TestHoldersRollupSwapIsAtomic(t *testing.T) {
 	}
 }
 
-// TestHoldersRollupStatementsShareOneCycleStamp pins the property readHoldersRollupCycle and
-// readAccountsStatsCycle depend on: every staging INSERT in one cycle bakes in the same computed_at,
-// not each table's own `DEFAULT now()`. Disagreeing stamps would trip every consistency check in
-// holdersRollupBoard/AccountsStats on every read, even for a healthy cycle.
+// TestHoldersRollupStatementsShareOneCycleStamp: every staging INSERT in a cycle must bake in the same
+// computed_at, not each table's `DEFAULT now()`, or the consistency checks trip on every read of a healthy
+// cycle.
 func TestHoldersRollupStatementsShareOneCycleStamp(t *testing.T) {
 	cycleAt := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
 	stamp := "toDateTime('" + cycleAt.Format(holdersRollupTimeLayout) + "', 'UTC')"

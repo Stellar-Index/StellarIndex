@@ -16,10 +16,8 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-// typeMap holds the pgtype core codec registrations (arrays included). It is
-// constructed once and thereafter only read from — [pgtype.Map.Scan] does
-// not mutate the map for the core types — so it is safe for concurrent use
-// across the pool's goroutines.
+// typeMap holds the pgtype core codec registrations (arrays included). Constructed once and only read afterwards
+// ([pgtype.Map.Scan] does not mutate it for core types), so it is safe for concurrent use across the pool's goroutines.
 var typeMap = pgtype.NewMap()
 
 // Strings returns a [sql.Scanner] decoding a Postgres text[] / varchar[] into *dst: SQL NULL gives a nil slice, an empty array "{}" a non-nil zero-length slice.

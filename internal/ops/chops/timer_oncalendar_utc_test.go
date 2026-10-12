@@ -11,14 +11,9 @@ import (
 	"testing"
 )
 
-// ─── OnCalendar= must carry an explicit UTC suffix ─────────────
-//
-// systemd resolves an OnCalendar= expression against the HOST's local timezone, not UTC. Every
-// timer pins an explicit ` UTC` token on its fixed-clock line so the schedule cannot drift with
-// the box's timezone or a DST transition; a non-UTC host would otherwise run a job outside the
-// shared 02:00-06:20 UTC backup/rollup window the other archival-node jobs are planned around.
-//
-// This walks every *.timer.j2 in the role, so a new timer that forgets the suffix fails here.
+// systemd resolves OnCalendar= against the HOST's timezone, so every fixed-clock timer pins an explicit ` UTC` token to
+// avoid drift with timezone or DST and keep jobs inside the shared 02:00-06:20 UTC backup/rollup window. Walks every
+// *.timer.j2 so a new timer without the suffix fails.
 func TestArchivalNodeTimers_OnCalendarPinsUTC(t *testing.T) {
 	root := repoRoot(t)
 	dir := filepath.Join(root, "configs", "ansible", "roles", "archival-node", "templates", "systemd")
@@ -45,10 +40,8 @@ func TestArchivalNodeTimers_OnCalendarPinsUTC(t *testing.T) {
 			if strings.Contains(value, "{{") {
 				continue
 			}
-			// A shorthand hour:minute repeater (e.g. "*:0/15", no seconds
-			// field) fires at the same relative cadence regardless of the
-			// host's zone; it's not the fixed-wall-clock hazard this test is
-			// about, so it's excluded rather than folded into this rule.
+			// A shorthand hour:minute repeater (e.g. "*:0/15") fires at the same relative cadence in any zone, so it is not the
+			// fixed-wall-clock hazard this test targets and is excluded.
 			if strings.Count(value, ":") < 2 {
 				continue
 			}

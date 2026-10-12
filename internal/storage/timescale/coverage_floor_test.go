@@ -17,9 +17,8 @@ import (
 )
 
 // TestEarliestBucket_RejectsUnboundedAndDegenerateWindows pins the two pre-query guards (unknown
-// granularity, non-increasing window), which need no database. A probe whose `to` collapsed onto
-// or behind `from` must error, not answer "no coverage", which would reach a client as
-// `outside_coverage`, an assertion about the data derived from a caller bug.
+// granularity, non-increasing window). A bad window must error, not answer "no coverage", which clients
+// would read as `outside_coverage`.
 func TestEarliestBucket_RejectsUnboundedAndDegenerateWindows(t *testing.T) {
 	s := &Store{} // no db — every case must return before the query
 	pair, err := canonical.NewPair(canonical.NativeAsset(), canonical.Asset{Type: canonical.AssetFiat, Code: "USD"})
@@ -65,13 +64,8 @@ func TestEarliestBucket_RejectsUnboundedAndDegenerateWindows(t *testing.T) {
 	}
 }
 
-// TestEarliestBucketLegs_NarrowsOnlyTheQuoteLeg pins the one difference between the two reads
-// sharing [earliestBucketSQL] that SQL-text assertions cannot see: the bound quote array. The
-// fiat-quoted /v1/ohlc series reads each USD-pegged constituent under the single quote spelling
-// the peg expansion named ([Store.OHLCSeries] takes the pair it is given), so a floor folded
-// across that quote's alias family would measure a market the surface cannot serve (for example
-// a pool quoted in a peg's SAC wrapper). The base leg keeps its family in both reads because
-// callers enumerate the base spellings themselves.
+// TestEarliestBucketLegs_NarrowsOnlyTheQuoteLeg pins the bound quote array that SQL-text assertions cannot
+// see: the quote leg is narrowed to the peg spelling named, while the base leg keeps its alias family.
 func TestEarliestBucketLegs_NarrowsOnlyTheQuoteLeg(t *testing.T) {
 	// XLM carries three canonical forms with no registry installed, so
 	// this needs no fixture: as the QUOTE leg it is the fold under test.
@@ -105,12 +99,9 @@ func TestEarliestBucketLegs_NarrowsOnlyTheQuoteLeg(t *testing.T) {
 	}
 }
 
-// TestEarliestBucketSQL_IsPairIndexShaped guards the property the probe's cost depends on: the
-// pair predicate must be a plain equality against a bound alias form, never `= ANY(array)`.
-// EXPLAIN ANALYZE against prices_1d showed the array form planned as a bucket-ordered scan with
-// the pair as a post-filter (seconds, millions of rows discarded), while the cross-joined
-// equality form reaches prices_1d_pair_bucket_idx as an Index Only Scan (milliseconds). The probe
-// is anonymously reachable, so the shape is asserted rather than left to a comment.
+// TestEarliestBucketSQL_IsPairIndexShaped: the pair predicate must be a plain equality, never `= ANY(array)`,
+// which plans as a bucket-ordered scan with a post-filter instead of an index-only scan.
+// The probe is anonymously reachable, so the shape is asserted.
 func TestEarliestBucketSQL_IsPairIndexShaped(t *testing.T) {
 	if strings.Contains(earliestBucketSQL, "ANY(") {
 		t.Errorf("earliestBucketSQL uses `= ANY(...)` on the pair columns; that plan " +
@@ -139,10 +130,9 @@ func TestEarliestBucketSQL_IsPairIndexShaped(t *testing.T) {
 	}
 }
 
-// TestEarliestBucketStoredSQL_SpansOneOrientation pins that the stored-orientation variant for
-// /v1/history carries the requested arm with the same index-shaped predicate and typed bounds,
-// and no flipped arm, which would give the raw-trade page a floor for rows its read never
-// returns.
+// TestEarliestBucketStoredSQL_SpansOneOrientation pins that the stored-orientation variant for /v1/history
+// carries only the requested arm with the same index-shaped predicate and typed bounds; a flipped arm would
+// give the raw-trade page a floor for rows its read never returns.
 func TestEarliestBucketStoredSQL_SpansOneOrientation(t *testing.T) {
 	for _, want := range []string{
 		"p.base_asset  = b",
@@ -163,10 +153,9 @@ func TestEarliestBucketStoredSQL_SpansOneOrientation(t *testing.T) {
 	}
 }
 
-// TestEarliestBucketSQL_RendersWithoutFormatResidue executes the store's bind (two operands into
-// templates that consume them different numbers of times) and checks for no fmt residue. An
-// `%!(EXTRA …)` or `%!s(MISSING)` is a parse-time syntax error that the probe would swallow as
-// "no signal" and the unit tests above would miss.
+// TestEarliestBucketSQL_RendersWithoutFormatResidue executes the store's bind (two operands into templates
+// that use them different numbers of times) and checks for fmt residue: `%!(EXTRA ...)` or `%!s(MISSING)`
+// is a parse error the probe would swallow as "no signal".
 func TestEarliestBucketSQL_RendersWithoutFormatResidue(t *testing.T) {
 	for name, tmpl := range map[string]string{
 		"either": earliestBucketSQL,

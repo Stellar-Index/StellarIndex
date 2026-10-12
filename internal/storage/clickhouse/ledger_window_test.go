@@ -7,10 +7,8 @@ import (
 	"testing"
 )
 
-// walk transcribes the loop every windowed backfill in this package runs, minus the
-// ClickHouse call, and collects the [lo,hi] windows, so an assertion on it is an assertion
-// about the production walk. The `guard` cap makes a non-terminating walk fail instead of
-// hanging the package.
+// walk transcribes the loop every windowed backfill here runs, minus the ClickHouse call, and collects the
+// [lo,hi] windows. The `guard` cap makes a non-terminating walk fail instead of hanging the package.
 func walk(t *testing.T, from, to, window uint32) [][2]uint32 {
 	t.Helper()
 	const guard = 10_000
@@ -37,10 +35,9 @@ func fmtWindows(ws [][2]uint32) string {
 	return strings.Join(parts, " ")
 }
 
-// TestLedgerWindowHi_WalkCoversRangeExactlyOnce is the core contract: the walk must tile
-// [from,to] with contiguous, non-overlapping, non-empty windows. It pins the last-partial-window
-// class: an unconditional `hi = lo + window - 1` reads past the tip, and a naive `if hi > to`
-// bail drops the remainder, leaving the tail of a backfill unwritten while the job succeeds.
+// TestLedgerWindowHi_WalkCoversRangeExactlyOnce: the walk must tile [from,to] with contiguous,
+// non-overlapping, non-empty windows. An unconditional `hi = lo + window - 1` reads past the tip, and a
+// naive `if hi > to` bail drops the remainder, leaving the backfill's tail unwritten while the job succeeds.
 func TestLedgerWindowHi_WalkCoversRangeExactlyOnce(t *testing.T) {
 	cases := []struct {
 		name             string
@@ -149,10 +146,8 @@ func TestLedgerWindowHi_NoUint32Overflow(t *testing.T) {
 		t.Fatalf("ledgerWindowHi(%d, %d, 1000000) = %d, want %d (must clamp, not wrap)",
 			maxU32-5, maxU32, got, maxU32)
 	}
-	// The naive spelling this guards against, for the record: it wraps.
-	// (Held in variables so the wrap happens at run time — the same
-	// expression written as constants is a compile error, which is itself a
-	// reminder that only the runtime form can ship this bug.)
+	// The naive spelling wraps. It is held in variables so the wrap happens at run time; as constants it is a
+	// compile error.
 	lo, win := maxU32-5, uint32(1_000_000)
 	if naive := lo + win - 1; naive >= lo {
 		t.Fatalf("test premise broken: lo+window-1 = %d did not wrap below lo = %d", naive, lo)
@@ -166,10 +161,9 @@ func TestLedgerWindowHi_NoUint32Overflow(t *testing.T) {
 	}
 }
 
-// TestWindowedBackfills_RejectDegenerateArguments pins the usage contract every windowed
-// backfill validates BEFORE dialing ClickHouse: 0 < from <= to and window > 0. window == 0
-// matters most, since `rem >= window` would then always hold and return a wrapped bound.
-// These reject on the argument check, so addr is deliberately unroutable to prove no dial.
+// TestWindowedBackfills_RejectDegenerateArguments pins that every windowed backfill validates 0 < from <= to
+// and window > 0 before dialing; window == 0 matters most (`rem >= window` would wrap). addr is unroutable to
+// prove no dial.
 func TestWindowedBackfills_RejectDegenerateArguments(t *testing.T) {
 	const unreachable = "127.0.0.1:1" // never dialled: the arg check fires first
 	noLog := func(string, ...any) {}

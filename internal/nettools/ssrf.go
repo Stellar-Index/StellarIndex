@@ -17,26 +17,9 @@ import (
 	"strings"
 )
 
-// extraBlockedNets covers ranges the net.IP stdlib predicates don't flag.
-// Parsed once — a bad CIDR here is a programmer bug.
-//
-//   - 100.64.0.0/10 CGNAT (RFC 6598; Alibaba metadata 100.100.100.200) and
-//     192.0.0.0/24 IETF assignments (Oracle metadata 192.0.0.192).
-//   - 198.18.0.0/15, 0.0.0.0/8, 240.0.0.0/4, 255.255.255.255/32 and
-//     192.88.99.0/24 (deprecated 6to4 relay) — not internet-routable.
-//   - 64:ff9b::/96 and 64:ff9b:1::/48 — NAT64 (RFC 6052/8215). They EMBED
-//     a v4 address: `64:ff9b::a9fe:a9fe` is 169.254.169.254. Go unwraps
-//     only ::ffff:0:0/96, so without these every v4 range is bypassable.
-//   - 2002::/16 — 6to4 (RFC 3056); bits 16..48 EMBED a v4 address
-//     (`2002:a9fe:a9fe::` is 169.254.169.254).
-//   - ::/96 — IPv4-compatible (RFC 4291); low 32 bits EMBED a v4 address.
-//     `::1` and `::` are caught earlier by IsLoopback / IsUnspecified.
-//   - fec0::/10 — site-local (RFC 3879); matches neither IsLinkLocalUnicast
-//     nor IsPrivate.
-//   - ::ffff:0:0:0/96 — IPv4-translated (RFC 2765), not the MAPPED form To4()
-//     unwraps: `::ffff:0:7f00:1` is 127.0.0.1 and bypasses every v4 range.
-//   - 2001::/32 — Teredo (RFC 4380); a relay can forward to an embedded,
-//     obfuscated destination, so the whole prefix is blocked.
+// extraBlockedNets covers ranges the net.IP stdlib predicates miss, parsed once (a bad CIDR is a programmer bug): CGNAT and cloud
+// metadata (100.64.0.0/10, 192.0.0.0/24), non-routable ranges, and v6 forms that EMBED a v4 address (NAT64, 6to4, IPv4-compatible
+// and -translated, Teredo; e.g. `64:ff9b::a9fe:a9fe` is 169.254.169.254), which would otherwise bypass every v4 range.
 var extraBlockedNets = func() []*net.IPNet {
 	out := make([]*net.IPNet, 0, 14)
 	for _, cidr := range []string{

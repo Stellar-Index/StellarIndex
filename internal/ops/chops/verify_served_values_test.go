@@ -19,10 +19,8 @@ import (
 	"time"
 )
 
-// TestRunServedValueChecks_TolerancesAndOutages exercises the three outcome classes against
-// stub servers: within tolerance (ok), drifted beyond tolerance (fail), and ground-truth
-// outage (SKIPPED, NaN rel_err). A dark truth source must read as neither a served-value
-// failure nor a pass: skipped never sets ok, so it cannot mask a real drift behind ok=1.
+// Three outcomes against stub servers: within tolerance (ok), drifted (fail), ground-truth outage (SKIPPED, NaN rel_err).
+// A dark truth source is neither a failure nor a pass; skipped never sets ok, so it cannot mask real drift.
 func TestRunServedValueChecks_TolerancesAndOutages(t *testing.T) {
 	ctx := context.Background()
 
@@ -86,10 +84,8 @@ func TestRunServedValueChecks_TolerancesAndOutages(t *testing.T) {
 	}
 }
 
-// TestReconcileSkippedNeverAssertsOK is the direct F5 regression pin:
-// a skipped (truth-dark) check must render served_value_skipped=1 and
-// NO served_value_ok line at all — never ok=1, which would hide a real
-// drift behind an unavailable ground truth.
+// A skipped (truth-dark) check must render served_value_skipped=1 and NO served_value_ok line, never ok=1, which would
+// hide a real drift behind an unavailable ground truth.
 func TestReconcileSkippedNeverAssertsOK(t *testing.T) {
 	body := renderServedValueProm([]servedValueResult{
 		{name: "dark", relErr: math.NaN(), skipped: true},
@@ -167,10 +163,8 @@ func TestServedSupplyField_NullIsAFailure(t *testing.T) {
 	}
 }
 
-// TestServedSupplyField_ScalesBaseUnits pins the empirical
-// finding: the supply fields are BASE-UNIT decimal strings
-// (stroops for classic), so the reader must scale by 10^-decimals
-// before comparing against natural-unit ground truth.
+// Supply fields are BASE-UNIT decimal strings (stroops for classic), so the reader must scale by 10^-decimals before
+// comparing against natural-unit ground truth.
 func TestServedSupplyField_ScalesBaseUnits(t *testing.T) {
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -214,10 +208,8 @@ func TestServedValuesExitError(t *testing.T) {
 	}
 }
 
-// TestServedValuesVerdict_ListCheckIsNotAValueCheck — the reserve-list
-// check verifies no served NUMBER, so it must not count toward the value
-// checks' all-skipped guard: every value source dark with a verified list
-// still verified no served value and must exit non-zero.
+// The reserve-list check verifies no served NUMBER, so it must not count toward the value checks' all-skipped guard:
+// every value source dark with a verified list still verified no value and must exit non-zero.
 func TestServedValuesVerdict_ListCheckIsNotAValueCheck(t *testing.T) {
 	ok := servedValueResult{name: "v", ok: true}
 	dark := servedValueResult{name: "v", relErr: math.NaN(), skipped: true}
@@ -249,10 +241,9 @@ func TestServedValuesVerdict_ListCheckIsNotAValueCheck(t *testing.T) {
 	}
 }
 
-// TestRunServedValueChecks_Recheck pins the snapshot-race handling: a drift re-reads both
-// sides, passes if the gap clears, and fails only when it persists, naming a stale served
-// snapshot when supply_as_of_ledger did not advance. The 2^53 row would pass a float64
-// comparison (both sides round to the same double) and must fail exactly.
+// Snapshot-race handling: a drift re-reads both sides, passes if the gap clears, fails only if it persists, and names a
+// stale snapshot when supply_as_of_ledger did not advance. The 2^53 row would pass a float64 comparison (both round to
+// one double) and must fail exactly.
 func TestRunServedValueChecks_Recheck(t *testing.T) {
 	type read struct {
 		served string

@@ -19,13 +19,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// Arg-parity between prewarmCaches and the handlers.
-//
-// A cache slot is selected by the exact argument tuple (AllPools keys on Sources, Base, Quote,
-// Asset, cursor, limit and order), so the prewarm only warms a handler's slot if it passes
-// byte-identical arguments. When they drift nothing fails: the prewarm logs success and every
-// user request still pays the cold read. The expected set is therefore derived from the real
-// handlers, by driving HTTP requests through v1.Server, never from the prewarm's own constants.
+// Arg-parity between prewarmCaches and the handlers: a cache slot is chosen by the exact argument tuple, so drift fails
+// nothing yet leaves every user request cold. The expected set is derived by driving HTTP requests through v1.Server,
+// never from the prewarm's own constants.
 
 // ─── recording readers ───────────────────────────────────────────
 
@@ -78,10 +74,8 @@ func sourceMarketsSig(source, cursor string, limit int, order timescale.MarketsO
 	return fmt.Sprintf("SourceMarkets(source=%q cursor=%q limit=%d order=%d)", source, cursor, limit, int(order))
 }
 
-// recordingMarketsReader is a v1.MarketsReader that records every call
-// and returns empty results. It is NOT a mock whose behaviour is under
-// test — it is a probe on the argument tuple, which is the only thing
-// the cache key is built from.
+// recordingMarketsReader is a v1.MarketsReader that records every call and returns empty results; it is a probe on the
+// argument tuple, the only input to the cache key, not a mock whose behaviour is under test.
 type recordingMarketsReader struct{ log *callLog }
 
 func (r *recordingMarketsReader) DistinctPairsExt(_ context.Context, cursor string, limit int, order timescale.MarketsOrder) ([]v1.Market, string, error) {
@@ -116,10 +110,8 @@ func (r *recordingMarketsReader) GetPairsVolumeHistory24hBatch(context.Context, 
 	return map[string][]timescale.PairVolumePoint{}, nil
 }
 
-// newRecordingMarkets returns a cached reader over a recorder. TTL is 0
-// so every call passes straight through: the log then holds the
-// complete call sequence rather than one entry per cache slot, which is
-// what makes a MISSING prewarm visible instead of merely deduplicated.
+// newRecordingMarkets returns a cached reader over a recorder. TTL 0 passes every call through, so the log holds the
+// full call sequence and a MISSING prewarm is visible rather than deduplicated.
 func newRecordingMarkets() (*v1.CachedMarketsReader, *callLog) {
 	log := newCallLog()
 	return v1.NewCachedMarketsReader(&recordingMarketsReader{log: log}, 0), log
@@ -316,10 +308,9 @@ func sortedKeys(m map[string]bool) []string {
 	return out
 }
 
-// TestPrewarmLight_StandaloneListingWarmIsTheLimit198Slot documents what prewarmLight's one
-// hardcoded ListAssetsExt call (Limit 199, zero Order) warms: /v1/assets?limit=198 with no
-// order_by. That limit is not in assetListingPrewarmLimits. It does not assert the warm is
-// worthwhile, which is a product call.
+// TestPrewarmLight_StandaloneListingWarmIsTheLimit198Slot documents that prewarmLight's one hardcoded ListAssetsExt call
+// (Limit 199, zero Order) warms /v1/assets?limit=198 with no order_by, a limit outside assetListingPrewarmLimits. It
+// does not judge whether that is worthwhile.
 func TestPrewarmLight_StandaloneListingWarmIsTheLimit198Slot(t *testing.T) {
 	t.Parallel()
 
@@ -379,10 +370,9 @@ func (r *slowListingAssetsReader) GetNativeAssetRow(ctx context.Context) (timesc
 	return timescale.AssetRow{}, nil
 }
 
-// TestPrewarmLight_NativeAssetRowSurvivesSlowListingWarm pins that the native/verified-asset
-// batch runs under its own fresh deadline, not the shared assetsReaderCtx budget. A slow
-// listing warm would otherwise leave it an expired context, so every call would silently no-op
-// and the next /v1/assets/native request would still pay the cold read.
+// TestPrewarmLight_NativeAssetRowSurvivesSlowListingWarm: the native/verified-asset batch must run under its own fresh
+// deadline, not the shared assetsReaderCtx budget, or a slow listing warm leaves it an expired context and
+// /v1/assets/native stays cold.
 func TestPrewarmLight_NativeAssetRowSurvivesSlowListingWarm(t *testing.T) {
 	orig := assetsPrewarmBatchTimeout
 	assetsPrewarmBatchTimeout = 30 * time.Millisecond
@@ -408,10 +398,8 @@ func TestPrewarmLight_NativeAssetRowSurvivesSlowListingWarm(t *testing.T) {
 	}
 }
 
-// orderLog records call names in the order they happen across both the
-// assets and markets fakes below. callLog (prewarm_parity_test.go) only
-// counts occurrences per signature, which cannot express "before/after";
-// this can.
+// orderLog records call names in order across the assets and markets fakes below; callLog only counts occurrences per
+// signature, so it cannot express before/after.
 type orderLog struct {
 	mu    sync.Mutex
 	names []string

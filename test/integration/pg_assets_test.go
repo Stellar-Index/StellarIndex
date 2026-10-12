@@ -21,22 +21,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestAssetBatchReads_AliasCompleteAndTieBroken proves the listing's batch
-// readers answer exactly what the single-asset detail readers do, and that
-// a same-minute USDC and fiat:USD print resolves to fiat:USD every time on a
-// direct arm. XLM's own price is the anchor, which instead weights that
-// minute by volume_usd: $50 at 0.5 and $4 at 0.4 -> 26.6/54 = 0.49259.
-//
-// Fixture:
-//   - t1 (~2h ago): native/USDC at 0.5 AND native/fiat:USD at 0.4, same minute
-//   - t2 (~5h ago): crypto:XLM/fiat:USD at 3.0 only (XLM's CEX alias form)
-//   - 3 days back: 3 native/USDC trades at 0.5 ($150) and 3 crypto:XLM/fiat:USD
-//     trades at 3.0 ($180), both clearing the ATH substance floor
-//   - t1: TKN/native at 2.0 (priced through the XLM hop), HOP/USDC at 1.0 AND
-//     HOP/fiat:USD at 2.0, and LEG/HOP at 1.0 (priced through HOP's tied USD pick)
-//
-// A batch read keyed on the raw id saw neither the t2 point nor the 3.0
-// high; a pick without a quote tie-break served 0.4 or 0.5 at t1 by scan order.
+// TestAssetBatchReads_AliasCompleteAndTieBroken: the listing's batch readers answer exactly what the single-asset detail
+// readers do, and a same-minute USDC and fiat:USD print resolves to fiat:USD on a direct arm. XLM's own price weights
+// that minute by volume_usd ($50 at 0.5, $4 at 0.4 -> 0.49259).
 func TestAssetBatchReads_AliasCompleteAndTieBroken(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -240,16 +227,9 @@ func deref(p *string) string {
 	return *p
 }
 
-// TestAssetsListing_SorobanTypeAndQ pins that a Soroban-native
-// contract asset has NULL code/issuer_g_strkey/slug (contract assets
-// have no SEP-1 code or issuer account — see listAssetsBaseSelect's
-// discovered-contract arm), so the q predicate's original
-// `COALESCE(ca.slug, ca.code)` was NULL for every such row and
-// `type=soroban&q=<anything>` matched zero rows unconditionally,
-// regardless of whether the contract id itself matched. The fix folds
-// ca.asset_id into that COALESCE, mirroring the base SELECT's own
-// "slug" column, so a query on the contract id (or a prefix of it)
-// finds the row.
+// TestAssetsListing_SorobanTypeAndQ: a Soroban-native contract asset has NULL code/issuer_g_strkey/slug (see
+// listAssetsBaseSelect's discovered-contract arm), so q's `COALESCE(ca.slug, ca.code)` is NULL and
+// `type=soroban&q=<anything>` matches nothing.
 func TestAssetsListing_SorobanTypeAndQ(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -306,23 +286,8 @@ func TestAssetsListing_SorobanTypeAndQ(t *testing.T) {
 	}
 }
 
-// TestAssetDetail_AliasCompleteVolumeAndCount proves the W2-tail batch1
-// fix: the asset-detail overlay readers must count an asset's volume /
-// trade-count across EVERY canonical form of the asset (XLM's native /
-// crypto:XLM / SAC split), not the single `native` spelling the caller
-// passes after normalizeXLMAliases collapses XLM.
-//
-// Fixture (the 24h readers see one closed 1-minute bucket ~2h back; the
-// ATH additionally reads a prior day of the same two pairs):
-//   - native/USDC   (soroswap, USDC recognised as a USD peg) → on-chain
-//     SDEX leg, base_asset='native',      usd_volume = 50
-//   - crypto:XLM/USD (binance, fiat:USD)                     → CEX leg,
-//     base_asset='crypto:XLM',            usd_volume > 0
-//
-// A reader keying on base/quote = 'native' only silently omits the
-// crypto:XLM (CEX) leg — the served volume undercounts and the trade-count
-// is 1 instead of 2. The readers must use base/quote = ANY(alias forms) and
-// see both legs.
+// TestAssetDetail_AliasCompleteVolumeAndCount: the detail overlay readers must count volume and trade-count across every
+// canonical form of XLM (native / crypto:XLM / SAC), not the single `native` spelling left after normalizeXLMAliases.
 func TestAssetDetail_AliasCompleteVolumeAndCount(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -457,12 +422,9 @@ func TestAssetDetail_AliasCompleteVolumeAndCount(t *testing.T) {
 		t.Errorf("GetAssetMarketsCount(native) = %d, want 2", mc)
 	}
 
-	// Top markets: both pairs appear and — critically — the crypto:XLM/USD
-	// pair is labelled as the asset's OWN market (side 'base', counterparty
-	// the USD quote), not mislabelled with crypto:XLM as the counterparty.
-	// The crypto:XLM pair would be absent entirely if per_pair filtered on
-	// 'native'; if the CASE alone were wrong it would surface crypto:XLM as
-	// a counterparty.
+	// Top markets: both pairs appear and the crypto:XLM/USD pair is labelled as the asset's OWN market (side 'base',
+	// counterparty the USD quote). It would vanish if per_pair filtered on 'native', and a wrong CASE alone would surface
+	// crypto:XLM as a counterparty.
 	tops, err := store.GetAssetTopMarkets(ctx, native.String(), 5)
 	if err != nil {
 		t.Fatalf("GetAssetTopMarkets: %v", err)
@@ -489,10 +451,8 @@ func TestAssetDetail_AliasCompleteVolumeAndCount(t *testing.T) {
 		return store.GetAssetPriceHistory7d(ctx, native.String())
 	})
 
-	// ATH reads prices_1d as MAX(day-VWAP) across ALL forms. On the prior
-	// day the crypto:XLM (CEX) leg's day-VWAP is 3.0 and the native/USDC leg
-	// is 0.5; the alias-complete high is therefore 3.0. A base = 'native'-only
-	// read would report 0.5 — omitting the CEX high entirely.
+	// ATH reads prices_1d as MAX(day-VWAP) across all forms: the prior day's crypto:XLM CEX leg is 3.0 and native/USDC 0.5,
+	// so the alias-complete high is 3.0; a native-only read would report 0.5.
 	ath, err := store.GetAssetATH(ctx, native.String())
 	if err != nil {
 		t.Fatalf("GetAssetATH: %v", err)
@@ -657,22 +617,8 @@ func TestAssetATH_SubstanceFloor(t *testing.T) {
 	}
 }
 
-// TestAssetListing_MarketCapUsesTheScaleThePriceIsOn feeds the rollup
-// WRITER's output through the one reader that multiplies it.
-//
-// asset_price_snapshot stores the true-scale price for a confirmed
-// non-7-decimals token. The listing's market cap is that price times a
-// smallest-unit supply divided by 10^decimals, so the divisor has to be
-// the token's real decimals — against a RAW ratio column, the standard 7 would
-// be right only by cancellation. Neither half
-// shows the defect alone: the writer's test reads a correct price, and a
-// cap test fed a hand-written price proves nothing about what the writer
-// stores. This runs the real refresh, the real listing SQL, the real
-// supply read and the real handler, and reads the cap off the wire.
-//
-// Every token circulates exactly 1,000 whole units, at its own scale.
-// With the divisor left at 7 the three flagged rows publish 250000.00,
-// 1400000000000000.00 and 20.00.
+// TestAssetListing_MarketCapUsesTheScaleThePriceIsOn runs the real refresh, listing SQL, supply read and handler: market cap
+// is the true-scale price times smallest-unit supply over 10^decimals, so a divisor stuck at 7 publishes wrong caps.
 func TestAssetListing_MarketCapUsesTheScaleThePriceIsOn(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -750,12 +696,9 @@ func TestAssetListing_MarketCapUsesTheScaleThePriceIsOn(t *testing.T) {
 		}
 	}
 
-	// The same loop for the DETAIL page, whose row comes from the
-	// per-asset SQL instead: that read stays RAW and rounds to 10 + k
-	// places, and the handler corrects it. The 18-decimals token is the
-	// one a flat 10-place precision floor withholds — raw 1.4e-10 is 1.4
-	// quanta on that scale — so it is the one that proves the handler
-	// reads the scale the SQL actually rounded to.
+	// The same loop for the DETAIL page, whose per-asset SQL stays RAW and rounds to 10 + k places while the handler
+	// corrects it. The 18-decimals token is the one a flat 10-place floor withholds (raw 1.4e-10 is 1.4 quanta), so it
+	// proves the handler reads the scale the SQL rounded to.
 	t.Run("detail page price", func(t *testing.T) {
 		var detail struct {
 			Data v1.AssetDetail `json:"data"`
@@ -825,40 +768,17 @@ func TestAssetRegistry_BatchRangeKeepsBothEnds(t *testing.T) {
 	}
 }
 
-// The genuine Franklin Templeton BENJI issuer, and one of the eighteen
-// accounts on pubnet issuing an asset that also calls itself BENJI. They
-// are here as literals because the whole point of this file is that the
-// registry is keyed on (code, issuer) and NEVER on the code: the two rows
-// below share a code and are different assets.
+// The genuine Franklin Templeton BENJI issuer and one of eighteen pubnet accounts issuing an asset that also calls
+// itself BENJI, kept as literals because the registry is keyed on (code, issuer), never code: the two rows share a code
+// and are different assets.
 const (
 	benjiGenuineIssuer      = "GBHNGLLIE3KWGKCHIKMHJ5HVZHYIK7WTBE4QF5PLAKL4CJGSEU7HZIW5"
 	benjiImpersonatorIssuer = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 )
 
-// TestAssetRegistry_HeldButNeverTradedAssetIsRegistered is the regression
-// test for the defect this file exists because of.
-//
-// THE DEFECT. `classic_assets` had exactly one population path: a trade.
-// `registerClassicAssetSeen` is called from InsertTrade and
-// BatchInsertTrades and nowhere else, and `issuers` is written only from
-// inside it. So an asset that is HELD but never traded on the SDEX had no
-// registry row, therefore no issuer row, therefore no SEP-1 attestation
-// fetch, therefore no RWA candidacy — invisible at every step of the chain.
-//
-// Franklin Templeton's BENJI is the case that surfaced it. It has more
-// trustlines than all eighteen impersonating BENJIs combined and zero rows
-// in both tables, because a money-market fund is bought and held rather
-// than day-traded. On the production lake: 512,496
-// classic assets have a trustline, 199,793 had a registry row.
-//
-// HOW THIS FAILS WITHOUT THE FIX. Subtest "held asset with no trade is
-// registered" drives the ONLY thing the lake can tell us about such an
-// asset — that a trustline for it exists — and requires a row in both
-// tables afterwards. With no holdings path (the state of this repo before
-// migration 0158), or with [timescale.Store.RegisterClassicAssetsHeld]
-// neutered to a no-op, it fails on the first assertion: 0 rows in
-// classic_assets for the genuine BENJI, and 0 rows in issuers for its
-// issuer, while the impersonator that happened to trade is present.
+// TestAssetRegistry_HeldButNeverTradedAssetIsRegistered: classic_assets was populated only by a trade
+// (registerClassicAssetSeen from InsertTrade/BatchInsertTrades, which also alone writes `issuers`), so an asset held but
+// never traded had no registry row, issuer row, SEP-1 fetch or RWA candidacy.
 func TestAssetRegistry_HeldButNeverTradedAssetIsRegistered(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1145,38 +1065,9 @@ func insertBenjiTrade(t *testing.T, ctx context.Context, store *timescale.Store,
 	}
 }
 
-// TestAssetRegistry_DuplicateReplayDoesNotMutateCounters pins the
-// end-to-end counter contract:
-// replaying a already-stored trade must NOT advance the
-// `classic_assets.observation_count` or `last_seen_*` columns,
-// even when the in-process dedupe cache is cold (the simulated-
-// process-restart shape).
-//
-// The concern: a backfill operator (or restarted
-// indexer) that re-encounters already-stored trades should not
-// inflate registry counters by one per replay. The
-// `assetRegistryDedupeTTL` fix protects only the same-process
-// hot path; the `RowsAffected == 0` guard inside
-// [Store.InsertTrade] is what protects post-restart replay. This
-// test isolates the post-restart shape by clearing the dedupe
-// cache between the original insert and the replay via
-// [timescale.Store.ResetAssetRegistryDedupeForTest].
-//
-// Three subtests pin the contract:
-//
-//  1. exact replay (same source+ledger+tx_hash+op_index+ts) → no
-//     mutation; observation_count stays at 1.
-//  2. cosmetic re-key (different ts in the same second)            →
-//     a NEW row is inserted, registry advances to 2 (proves the
-//     guard is keyed on RowsAffected, not on asset identity).
-//  3. forward-progress replay (different ledger, same asset, TTL
-//     bypassed) → registry advances correctly, demonstrating the
-//     guard does not over-suppress legitimate updates.
-//
-// Together these three cases prove the registry counter contract
-// holds end-to-end across the realistic operator shapes
-// (replay-after-restart, distinct-trades-on-same-asset, late
-// ledger arrival).
+// TestAssetRegistry_DuplicateReplayDoesNotMutateCounters: replaying an already-stored trade must not advance
+// classic_assets.observation_count or last_seen_*, even with a cold in-process dedupe cache (the post-restart shape,
+// made by Store.ResetAssetRegistryDedupeForTest).
 func TestAssetRegistry_DuplicateReplayDoesNotMutateCounters(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1238,10 +1129,8 @@ func TestAssetRegistry_DuplicateReplayDoesNotMutateCounters(t *testing.T) {
 		t.Fatalf("after first insert: last_seen_ledger = %d, want 52_000_000", gotLastLedger)
 	}
 
-	// Simulate a process restart: cold dedupe cache, same trade
-	// hits InsertTrade again. Without the RowsAffected
-	// guard the registry hook would fire and observation_count
-	// would advance to 2.
+	// Simulate a restart: cold dedupe cache, same trade hits InsertTrade again. Without the RowsAffected guard the registry
+	// hook would fire and observation_count would advance to 2.
 	store.ResetAssetRegistryDedupeForTest()
 	if err := store.InsertTrade(ctx, original); err != nil {
 		t.Fatalf("InsertTrade (replay): %v", err)
@@ -1270,10 +1159,8 @@ func TestAssetRegistry_DuplicateReplayDoesNotMutateCounters(t *testing.T) {
 		t.Errorf("after distinct trade: last_seen_ledger = %d, want 52_000_001", gotLastLedger)
 	}
 
-	// Scenario 3 — replaying scenario-2's trade (now with a cold
-	// cache) again must NOT advance to 3. This pins the post-
-	// restart-stable contract: the registry only ever advances
-	// when a new physical trade row is stored.
+	// Scenario 3: replaying scenario 2's trade with a cold cache must not advance to 3; the registry advances only when a
+	// new physical trade row is stored.
 	store.ResetAssetRegistryDedupeForTest()
 	if err := store.InsertTrade(ctx, newer); err != nil {
 		t.Fatalf("InsertTrade (replay of newer): %v", err)
@@ -1320,22 +1207,8 @@ func countTrades(t *testing.T, store *timescale.Store, source string) int {
 	return n
 }
 
-// /v1/assets ranking + keyset pagination against a real Timescale.
-//
-// The defect: the scam gate withheld a directory-flagged issuer's price
-// and market cap but the ORDERING never followed, so JFKBANK2 —
-// `malicious`/`unsafe`, no price, no market cap, no %-changes — sat at
-// #12 on the live /assets page above USDV, MJQ and BRAVO purely on
-// $62.32K of 24h volume. These tests pin the two halves of the fix that
-// only a real database can prove:
-//
-//  1. rank_tier really demotes (SQL EXISTS over account_directory.tags,
-//     lowercased on both sides), and demotes a flagged asset even when it
-//     IS priced and has the highest volume in the set; and
-//  2. the keyset cursor still walks the whole set exactly once now that
-//     the ORDER BY has a new LEADING key — the failure mode the file's own
-//     comment warns about ("the keyset cursor must encode the same value
-//     the ORDER BY ranks on, or pagination skips or repeats rows").
+// /v1/assets ranking and keyset pagination: the scam gate withheld a flagged issuer's price and market cap but ordering
+// did not follow, so JFKBANK2 (`malicious`/`unsafe`, unpriced) sat at #12 above USDV, MJQ and BRAVO on 24h volume alone.
 
 // rankAsset is one seeded listing row.
 type rankAsset struct {
@@ -1391,11 +1264,8 @@ func seedUSDPrice(t *testing.T, ctx context.Context, db *sql.DB, nonce int, asse
 	}
 }
 
-// seedRankFixture materialises the shared scenario and returns the
-// canonical asset_id per code.
-// derefOr renders a *string for an error message. The assertions below
-// compare through the pointer and print the value, so a failure names the
-// value that was actually wrong rather than a pointer address.
+// seedRankFixture materialises the shared scenario and returns the canonical asset_id per code. derefOr renders a
+// *string for error messages so a failure names the wrong value, not a pointer address.
 func derefOr(p *string) string {
 	if p == nil {
 		return "<nil>"
@@ -1411,11 +1281,8 @@ func seedRankFixture(t *testing.T, ctx context.Context, store *timescale.Store, 
 		id := mustClassicID(t, a.code, a.issuer)
 		ids[a.code] = id
 		seedRankAsset(t, ctx, db, id, a.code, a.issuer, a.obsCount)
-		// Volume is seeded AFTER the rollup refresh below — see there.
-		// Every asset is an honest `market` so the §4-B concentration
-		// demote is a no-op here and rank_tier is the only thing moving
-		// rows — otherwise a passing test could be crediting the wrong
-		// mechanism.
+		// Volume is seeded AFTER the rollup refresh below. Every asset is an honest `market` so the section 4-B concentration
+		// demote is a no-op and rank_tier alone moves rows; otherwise a pass could be crediting the wrong mechanism.
 		seedCharacter(t, ctx, db, id, timescale.VolumeCharacterMarket, 0.10)
 		if len(a.tags) > 0 {
 			seedDirectoryTags(t, ctx, db, a.issuer, a.code+" issuer", a.tags)
@@ -1428,44 +1295,23 @@ func seedRankFixture(t *testing.T, ctx context.Context, store *timescale.Store, 
 		"CALL refresh_continuous_aggregate('prices_1m', NULL, NULL)"); err != nil {
 		t.Fatalf("refresh prices_1m: %v", err)
 	}
-	// The listing does not derive price inside the request:
-	// price_usd, the three change columns and source_count come from
-	// asset_price_snapshot (migration 0154), refreshed alongside
-	// asset_volume_24h by the aggregator's 2-minute worker. Refreshing
-	// prices_1m alone leaves that rollup EMPTY, which makes every asset
-	// unpriced — and an all-unpriced board collapses tier 0 into tier 1,
-	// so the unpriced-demotion this file exists to prove silently stops
-	// being observable. Same posture as RefreshAssetVolume24h in
-	// asset_volume_rollup_test.go: the test has to do the worker's job.
+	// The listing does not derive price per request: price_usd, the three change columns and source_count come from
+	// asset_price_snapshot (migration 0154), refreshed with asset_volume_24h by the 2-minute worker.
 	if err := store.RefreshAssetListingRollups(ctx); err != nil {
 		t.Fatalf("RefreshAssetListingRollups: %v", err)
 	}
-	// Volume goes in LAST, and that ordering is load-bearing. This
-	// fixture uses two different kinds of input on purpose: price is
-	// REAL (seeded trades, materialised through prices_1m into
-	// asset_price_snapshot, so it exercises the production derivation)
-	// while 24h volume is SYNTHETIC — a control value chosen to put the
-	// flagged asset at the TOP of the raw ordering, which is the only
-	// way the demotion is worth proving. RefreshAssetListingRollups
-	// refreshes both rollups in one transaction, so running it after
-	// seedRawVolume recomputes vol_usd from the trades and discards the
-	// control values (FLAGA's 500000 became a derived figure and the
-	// ordering stopped testing anything). Seeding volume afterwards
-	// keeps the control, and the assertion that the raw chain fact is
-	// unaltered stays meaningful.
+	// Volume goes in LAST, and that ordering is load-bearing. Price is real (seeded trades through prices_1m into
+	// asset_price_snapshot) while 24h volume is a synthetic control that puts the flagged asset at the top of the raw
+	// ordering, the only way the demotion is worth proving.
 	for _, a := range assets {
 		seedRawVolume(t, ctx, db, ids[a.code], a.volUSD)
 	}
 	return ids
 }
 
-// rankFixture is the scenario both tests share.
-//
-// Raw 24h volume orders the set FLAGA > NOPRC > GOODA > GOODB > FLAGB >
-// GOODC, which is exactly the raw-volume ranking. FLAGA is deliberately
-// BOTH flagged and priced and the highest-volume row in the set: if the
-// test only used an unpriced flagged asset, the unpriced tier alone would
-// carry it and the scam demotion would go unproven.
+// rankFixture is the scenario both tests share. Raw 24h volume orders FLAGA > NOPRC > GOODA > GOODB > FLAGB > GOODC.
+// FLAGA is deliberately both flagged and priced with the highest volume: with only an unpriced flagged asset, the
+// unpriced tier alone would carry it and the scam demotion would go unproven.
 var rankFixture = []rankAsset{
 	{
 		code: "FLAGA", issuer: audIssuer, volUSD: "500000", priceUSD: "2.5", obsCount: 6000,
@@ -1484,22 +1330,9 @@ var rankFixture = []rankAsset{
 	{code: "NOPRC", issuer: washIssuer, volUSD: "200000", obsCount: 1000},
 }
 
-// tieFixture adds rows that TIE on both sort keys, which rankFixture
-// deliberately does not: every row above has a distinct obsCount and a
-// distinct volUSD, so a walk over it never crosses a tie and never
-// exercises the keyset predicate's tie-break half. That is why the
-// pagination walk passed for months while the observation-count arm
-// compared `(observation_count, asset_id) < ($n, $m)` — a same-direction
-// row constructor against a mixed-direction ORDER BY, which on a tie
-// re-selects rows already served and skips the rest.
-//
-// Kept SEPARATE from rankFixture rather than appended to it:
-// TestAssetsListing_FlaggedAndUnpricedDemotion asserts exact six-element
-// orderings against that var and would break for no benefit.
-//
-// The tie rows are PRICED on purpose. The volume order carries an
-// unpriced→tier-1 arm, so unpriced tie rows would be split across rank
-// tiers and the volume tie-break would go unexercised.
+// tieFixture adds rows that tie on both sort keys, which rankFixture does not (distinct obsCount and volUSD), so a walk
+// never exercises the keyset predicate's tie-break. A `(observation_count, asset_id) < ($n, $m)` same-direction row
+// constructor against a mixed-direction ORDER BY re-selects served rows and skips the rest on a tie.
 var tieFixture = append(append([]rankAsset{}, rankFixture...),
 	rankAsset{code: "TIEDA", issuer: tieIssuerA, volUSD: "7500", priceUSD: "0.75", obsCount: 2500},
 	rankAsset{code: "TIEDB", issuer: tieIssuerB, volUSD: "7500", priceUSD: "0.75", obsCount: 2500},
@@ -1523,10 +1356,8 @@ func codesOf(rows []timescale.AssetRow) []string {
 	return out
 }
 
-// TestAssetsListing_FlaggedAndUnpricedDemotion pins that a
-// directory-flagged asset must not outrank ANY unflagged one, and an
-// unpriced asset must not outrank a priced one, under the default
-// volume-desc listing sort.
+// TestAssetsListing_FlaggedAndUnpricedDemotion: under the default volume-desc sort a directory-flagged asset must not
+// outrank any unflagged one, and an unpriced asset must not outrank a priced one.
 func TestAssetsListing_FlaggedAndUnpricedDemotion(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1608,12 +1439,9 @@ func TestAssetsListing_FlaggedAndUnpricedDemotion(t *testing.T) {
 	}
 }
 
-// TestAssetsListing_KeysetPaginationCoversEveryRow is the risky half:
-// the ORDER BY grew a new LEADING key, so the keyset WHERE must compare
-// that key first and the cursor must encode it. Walking the listing two
-// rows at a time — exactly as the handler does, via the store's own
-// EncodeAssetsCursor — must reproduce the single-page order with no
-// skipped and no repeated row, for BOTH orders.
+// TestAssetsListing_KeysetPaginationCoversEveryRow: ORDER BY has a new leading key, so the keyset WHERE must compare it
+// first and the cursor encode it. Walking two rows at a time via the store's EncodeAssetsCursor, as the handler does,
+// must reproduce the single-page order with no skipped or repeated row, for both orders.
 func TestAssetsListing_KeysetPaginationCoversEveryRow(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1735,17 +1563,9 @@ func TestAssetsReader(t *testing.T) {
 	if next != "" {
 		t.Errorf("next cursor should be empty, got %q", next)
 	}
-	// NATIVE IS THE ONE EXCEPTION, and it is deliberate. XLM exists on
-	// every Stellar network from the genesis ledger, so HasAsset answers
-	// it from first principles rather than from trade evidence and is
-	// true even here. The assertion this replaces predated that rule.
-	//
-	// It is not a hollow yes. The asset detail an index serves for native
-	// is supply, decimals, markets_count and sep1_status — read from
-	// ledger entries, not trades. Futurenet has ONE
-	// XLM trade in its whole history and still serves a full native
-	// payload, while a trade-windowed existence check would have 404'd
-	// the native asset of a network we ask developers to build against.
+	// Native is the one deliberate exception: XLM exists on every network from genesis, so HasAsset answers it from first
+	// principles, true even here. It is not hollow: native's detail (supply, decimals, markets_count, sep1_status) comes
+	// from ledger entries, not trades.
 	if has, _ := store.HasAsset(ctx, c.NativeAsset()); !has {
 		t.Error("HasAsset(native) = false; XLM exists on every Stellar network, traded or not")
 	}
@@ -1808,12 +1628,9 @@ func TestAssetsReader(t *testing.T) {
 		t.Error("HasAsset(EUR) should be false")
 	}
 
-	// Perf: an unknown classic asset must route through
-	// classic_assets PK lookup and return false. The classic_assets
-	// table is populated by InsertTrade's registerClassicAssetSeen
-	// hook; an asset_id never seen by that hook (e.g. a random
-	// 4-char code against a real-but-unrelated G-strkey) must be
-	// known-unknown without touching the trades hypertable.
+	// Perf: an unknown classic asset must route through the classic_assets PK lookup and return false. The table is
+	// populated by InsertTrade's registerClassicAssetSeen hook, so an asset it never saw (e.g. a random 4-char code on an
+	// unrelated G-strkey) is known-unknown without touching the trades hypertable.
 	bogusClassic, err := c.NewClassicAsset(
 		"ZZZZ",
 		"GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
@@ -1829,17 +1646,9 @@ func TestAssetsReader(t *testing.T) {
 		t.Errorf("HasAsset(%s) = true, want false (bogus classic asset)", bogusClassic.String())
 	}
 
-	// The non-classic arm (timescale.Store.hasNonClassicAsset) is a
-	// window-bounded, alias-complete probe. Two halves
-	// of its contract only a real Timescale can settle, and the
-	// package's scripted-driver tests deliberately cannot:
-	//
-	//   (a) the `= ANY($1)` alias array has to BIND — pgx encodes the
-	//       []string as text[] itself, so a shape Postgres rejects
-	//       (42883 and friends) shows up only against a live server;
-	//   (b) the `ts >= $2` floor has to actually EXCLUDE, which is the
-	//       narrowed semantic the fix chose and the thing most likely to
-	//       drift back without a test standing on it.
+	// The non-classic arm (Store.hasNonClassicAsset) is a window-bounded, alias-complete probe. Two halves only a real
+	// Timescale settles (scripted-driver tests cannot): (a) the `= ANY($1)` alias array must BIND (pgx encodes []string as
+	// text[], and a shape Postgres rejects, 42883 and friends, shows only on a live server);
 
 	// (a) native, crypto:XLM and the XLM SAC are one asset under three
 	// canonical ids. Only the `native` leg was seeded above; each of the
@@ -1855,11 +1664,9 @@ func TestAssetsReader(t *testing.T) {
 		}
 	}
 
-	// (b) an asset whose only trade predates the recency window reads as
-	// absent. This is the deliberate narrowing: HasAsset answers for the
-	// population /v1/assets lists (timescale.MarketsRecencyWindow), not
-	// for all of history, because "all of history" needed the unbounded
-	// hypertable scan that took /v1/assets/native past its 15s budget.
+	// (b) an asset whose only trade predates the recency window reads as absent. HasAsset answers for the population
+	// /v1/assets lists (timescale.MarketsRecencyWindow), not all history, whose unbounded hypertable scan took
+	// /v1/assets/native past its 15s budget.
 	stale := sorobanFromSeed(t, 9)
 	staleTrade := c.Trade{
 		Source:      "test",
@@ -1910,12 +1717,9 @@ func TestAssetsReaderPagination(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
-	// Seed 5 soroban assets with strkey-valid C-addresses derived
-	// from seed bytes. Hand-written literals (e.g. "CA001JYLG…XOWMA") would be
-	// 55 chars — one short of the strkey 56-char requirement — and
-	// canonical.NewSorobanAsset rejects them.
-	// checksum-valid addresses indexed deterministically by seed so
-	// pagination ordering stays reproducible.
+	// Seed 5 soroban assets with strkey-valid C-addresses derived from seed bytes: hand-written literals are 55 chars, one
+	// short of the 56-char strkey, and canonical.NewSorobanAsset rejects them. Derivation by seed keeps pagination order
+	// reproducible.
 	assets := []c.Asset{
 		sorobanFromSeed(t, 1),
 		sorobanFromSeed(t, 2),
@@ -1938,10 +1742,8 @@ func TestAssetsReaderPagination(t *testing.T) {
 		}
 	}
 
-	// Request a page size of 2 — expect 3 pages (2+2+2 where last
-	// page includes 1 extra native + 1 overflow = …). Actually
-	// with 5 seeded sorobans + 1 native = 6 distinct assets total.
-	// Iterate with cursor until next is empty.
+	// Page size 2 over 5 seeded sorobans + 1 native = 6 distinct assets, so 3 pages; iterate with the cursor until next is
+	// empty.
 	var allSeen []c.Asset
 	cursor := ""
 	for iter := 0; iter < 10; iter++ {
@@ -1995,11 +1797,8 @@ func mustCryptoTest(code string) c.Asset {
 	return a
 }
 
-// sorobanFromSeed builds a Soroban asset whose C-strkey encodes a
-// 32-byte contract ID whose first byte is `seed`. Produces a valid
-// checksum-encoded C-strkey (56 chars) so canonical.NewSorobanAsset
-// accepts it. Deterministic: the same seed always yields the same
-// address, preserving pagination-order reproducibility.
+// sorobanFromSeed builds a Soroban asset whose C-strkey encodes a 32-byte contract ID with first byte `seed`: a valid
+// 56-char checksummed address that canonical.NewSorobanAsset accepts, deterministic so pagination order is reproducible.
 func sorobanFromSeed(t *testing.T, seed byte) c.Asset {
 	t.Helper()
 	var raw [32]byte
@@ -2033,45 +1832,8 @@ func ids(as []c.Asset) []string {
 	return out
 }
 
-// TestEarliestBucket_AgainstTimescale executes the coverage-floor probe
-// (timescale.Store.EarliestBucket, the read behind the API's
-// `coverage_from` / `outside_coverage` signal) against a real
-// TimescaleDB with the migration chain applied.
-//
-// It exists because the probe fails SILENTLY by design: a read error
-// yields "no signal" plus a warning, never a 5xx. The unit tests in
-// internal/storage/timescale stop at the guards that run before the
-// query, so a column rename, a plan the CAGG's index cannot serve, or a
-// bind-shape mismatch would ship the feature inert with every gate
-// green. This test is the one place the SQL is run.
-//
-// Four properties are pinned on the both-orientations read, each the
-// thing that would otherwise make the served floor too LATE — the one
-// direction of error that turns a quiet window into a false "before
-// the history held":
-//
-//   - alias fold: a market stored under the CEX spelling (crypto:XLM)
-//     is found by its native spelling, and vice versa;
-//   - direction fold: a market stored only in the reverse orientation
-//     is found by the requested one, with the same floor;
-//   - lower bound: a `from` above the first bucket returns the next
-//     one, so the window really is applied;
-//   - closed-bucket guard: a pair whose only daily bucket is still
-//     open reports no floor at all.
-//
-// The stored-orientation read (EarliestBucketAsStored) is then pinned
-// to span ONE orientation, and the quote-literal read
-// (EarliestBucketLiteralQuote) to span ONE quote spelling — the read
-// the fiat-quoted /v1/ohlc series takes, whose combine names each
-// constituent's quote in a single form. Both narrowings are executed
-// against the migrated schema for the same reason the wide read is: the
-// bound arrays differ, and a bind PostgreSQL rejects would be swallowed
-// as "no signal".
-//
-// Finally the reads are exercised through the served surfaces:
-// /v1/ohlc measures a fiat-quoted pair over its USD-pegged
-// constituents, and /v1/history measures the orientation its page read
-// spans — against the real prices_1d, not a double.
+// TestEarliestBucket_AgainstTimescale executes the coverage-floor probe (Store.EarliestBucket, behind `coverage_from` /
+// `outside_coverage`) on a migrated TimescaleDB.
 func TestEarliestBucket_AgainstTimescale(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -2136,11 +1898,8 @@ func TestEarliestBucket_AgainstTimescale(t *testing.T) {
 		mkAPITrade(2, xlmSecond, mustPair(cryptoXLM, usdc), 1_000_000_000, 12_100_000),
 		mkAPITrade(3, aquaFirst, mustPair(usdc, aqua), 10_000_000, 4_000_000_000),
 		mkAPITrade(4, openTS, mustPair(fresh, usdc), 1_000_000_000, 5_000_000),
-		// Market D is quoted in ONE spelling of XLM (crypto:XLM), so a
-		// quote-alias-folded probe finds it from `native` and a
-		// quote-literal one does not. XLM's three canonical forms need
-		// no registry, which keeps this case free of process-global
-		// fixture state.
+		// Market D is quoted in one spelling of XLM (crypto:XLM), so a quote-alias-folded probe finds it from `native` and a
+		// quote-literal one does not. XLM's three forms need no registry, keeping this case free of process-global state.
 		mkAPITrade(5, aquaFirst, mustPair(other, cryptoXLM), 10_000_000, 4_000_000_000),
 	} {
 		if err := store.InsertTrade(ctx, tr); err != nil {
@@ -2238,10 +1997,8 @@ func TestEarliestBucket_AgainstTimescale(t *testing.T) {
 		})
 	}
 
-	// The quote-literal read: the base leg keeps its alias family and
-	// both directions are still folded, but the quote leg is the
-	// spelling that was asked for and nothing else. Market D is stored
-	// under `crypto:XLM` as its quote.
+	// The quote-literal read: the base leg keeps its alias family and both directions are folded, but the quote leg is only
+	// the spelling asked for. Market D is stored with `crypto:XLM` as its quote.
 	literalCases := []struct {
 		name      string
 		pair      c.Pair
@@ -2279,10 +2036,8 @@ func TestEarliestBucket_AgainstTimescale(t *testing.T) {
 		}
 	})
 
-	// The served surfaces, wired the way the binary wires them, against
-	// this prices_1d. The request window ends two days before market B's
-	// only bucket, so every answer below is empty and the floor is the
-	// whole signal.
+	// The served surfaces, wired as the binary wires them, against this prices_1d. The request window ends two days before
+	// market B's only bucket, so every answer is empty and the floor is the whole signal.
 	srv := v1.New(v1.Options{
 		History:           apiHistoryAdapter{s: store},
 		CoverageFloor:     apiCoverageFloorAdapter{s: store},
@@ -2299,10 +2054,8 @@ func TestEarliestBucket_AgainstTimescale(t *testing.T) {
 		} `json:"flags"`
 	}
 
-	// AQUA/fiat:USD holds no bucket under its literal pair; its
-	// /v1/ohlc series is combined from the USD-pegged constituents, one
-	// of which (AQUA/USDC, stored as USDC/AQUA) does. The floor must be
-	// that constituent's, and the window is below it.
+	// AQUA/fiat:USD holds no bucket under its literal pair; its /v1/ohlc series is combined from USD-pegged constituents,
+	// one of which (AQUA/USDC, stored as USDC/AQUA) does. The floor must be that constituent's, and the window is below it.
 	t.Run("served//v1/ohlc fiat quote measures the constituent set", func(t *testing.T) {
 		var got served
 		getJSON(t, api.URL+"/v1/ohlc?base="+aqua.String()+"&quote=fiat:USD&interval=1d"+window, &got)
@@ -2317,11 +2070,8 @@ func TestEarliestBucket_AgainstTimescale(t *testing.T) {
 		}
 	})
 
-	// /v1/history reads BOTH stored orientations, so the two spellings of
-	// one market answer alike: each carries the same floor and the same
-	// flag. This subtest pinned the opposite until the read was folded —
-	// the probe spans exactly what the page read reaches, so widening the
-	// read widened the probe with it.
+	// /v1/history reads both stored orientations, so the two spellings of one market answer alike with the same floor and
+	// flag: the probe spans exactly what the page read reaches.
 	t.Run("served//v1/history measures both orientations alike", func(t *testing.T) {
 		var flipped served
 		getJSON(t, api.URL+"/v1/history?base="+aqua.String()+"&quote="+usdc.String()+window, &flipped)
@@ -2360,12 +2110,7 @@ func (a apiCoverageFloorAdapter) EarliestBucketLiteralQuote(ctx context.Context,
 	return a.s.EarliestBucketLiteralQuote(ctx, pair, timescale.HistoryGranularity(granularity), from, to)
 }
 
-// TestPoolsFilterFoldsOrientationAndAliases executes the /v1/pools
-// filters against the real pools_per_source_1h CAGG. SDEX stores XLM/USDC
-// and USDC/XLM trades as separate rows, and Soroban DEXes key XLM under
-// its SAC, so a filter applied before the orientation fold, or bound as
-// one literal spelling, drops real volume from the pair page and the
-// asset Liquidity tab while still presenting the figures as totals.
+// TestPoolsFilterFoldsOrientationAndAliases executes the /v1/pools filters against the real pools_per_source_1h CAGG.
 func TestPoolsFilterFoldsOrientationAndAliases(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

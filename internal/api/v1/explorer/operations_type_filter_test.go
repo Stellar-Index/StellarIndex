@@ -90,10 +90,9 @@ func TestOperations_TypeFilterRejectsUnknownType(t *testing.T) {
 	}
 }
 
-// ParseLimit bounds ROW count but not the response's BYTE size, and an op's decoded body is
-// attacker-influenced in size. Past operationsResponseByteBudget, further rows must be served
-// UNDECODED (RawXDR empty), bounding the response to roughly the budget however many
-// giant-bodied ops a ledger has.
+// ParseLimit bounds row count, not response bytes, and a decoded op body is attacker-influenced in size. Past
+// operationsResponseByteBudget, further rows are served undecoded (RawXDR empty), bounding the response to about the
+// budget.
 func TestOperations_LedgerPath_BoundsDecodedResponseBytes(t *testing.T) {
 	half := operationsResponseByteBudget / 2
 	rows := []clickhouse.OpRow{

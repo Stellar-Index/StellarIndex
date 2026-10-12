@@ -135,10 +135,9 @@ func TestCometLegsFromRecordEntry(t *testing.T) {
 	})
 }
 
-// TestCometPoolKeys pins the candidate LedgerKeys: both plausible
-// AllRecordData encodings (Vec[Symbol] per the contracttype spec +
-// bare Symbol defensively), persistent durability, decoded back from
-// the marshalled base64.
+// TestCometPoolKeys pins the candidate LedgerKeys: both plausible AllRecordData encodings (Vec[Symbol] per
+// the contracttype spec, and bare Symbol defensively), persistent durability, decoded back from the
+// base64.
 func TestCometPoolKeys(t *testing.T) {
 	var cid xdr.ContractId
 	cid[0] = 0x66

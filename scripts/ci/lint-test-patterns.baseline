@@ -87,10 +87,7 @@ md-read internal/ops/ingest/directory_sync_test.go
 md-read internal/pricingguard/surface_labels_test.go
 md-read internal/sources/aquarius/router_gate_test.go
 md-read internal/sources/blend/doc_parity_test.go
-md-read internal/sources/classicmovements/doc_cardinality_test.go
-md-read internal/sources/phoenix/readme_groupkey_test.go
 md-read internal/sources/redstone/decode_test.go
-md-read internal/sources/redstone/readme_test.go
 md-read internal/sources/reflector/decode_test.go
 md-read internal/sources/sorocredit/audit_doc_test.go
 md-read internal/sources/sushiswap_v3/doc_parity_test.go

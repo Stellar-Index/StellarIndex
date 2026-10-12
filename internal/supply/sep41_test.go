@@ -11,10 +11,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
-// validContractID is a real, valid C-strkey we use across tests; the
-// canonical package validates strkey CRC on construction so we
-// can't pass placeholder values. (Reused from key_test happy-path
-// fixture — the SAC contract address for native XLM on pubnet.)
+// A real, valid C-strkey reused across tests (the pubnet native-XLM SAC address); the canonical package validates strkey
+// CRC on construction, so placeholder values cannot be used.
 const validContractID = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"
 
 // stubSEP41Reader is a minimal supply.SEP41SupplyReader for tests.
@@ -139,10 +137,9 @@ func TestSEP41_Compute_NegativeTotalRejected(t *testing.T) {
 	}
 }
 
-// TestSEP41_Compute_NegativeTotalMissingBaseline: a SAC-wrapper whose pre-Soroban opening balance
-// has not been seeded legitimately reads Σburn > Σmint over the Soroban-era-only window, since its
-// mints predate Soroban. That is a missing range-scoped baseline, not corruption, so surface the
-// benign sentinel and let the refresher report `missing_baseline` (needs a seed) rather than page.
+// A SAC wrapper whose pre-Soroban opening balance is unseeded legitimately reads sum(burn) > sum(mint) over the Soroban-
+// era window, as its mints predate Soroban. That is a missing range-scoped baseline, not corruption: return the benign
+// sentinel so the refresher reports `missing_baseline` rather than paging.
 func TestSEP41_Compute_NegativeTotalMissingBaseline(t *testing.T) {
 	reader := &stubSEP41Reader{
 		comps: supply.SEP41SupplyComponents{
@@ -168,10 +165,8 @@ func TestSEP41_Compute_NegativeTotalMissingBaseline(t *testing.T) {
 	}
 }
 
-// TestSEP41_Compute_GenesisBaselineMakesTotalPositive — once the pre-Soroban
-// baseline IS folded into the totals (the reader returns lifetime mint/burn/
-// clawback), the same SAC-wrapper computes a POSITIVE total and the guard does
-// not trip. This is the steady state for the 9 watched SAC-wrappers.
+// Once the pre-Soroban baseline is folded in (reader returns lifetime mint/burn/clawback), the same SAC wrapper computes
+// a POSITIVE total and the guard does not trip; this is the steady state for the 9 watched SAC wrappers.
 func TestSEP41_Compute_GenesisBaselineMakesTotalPositive(t *testing.T) {
 	reader := &stubSEP41Reader{
 		comps: supply.SEP41SupplyComponents{
@@ -199,13 +194,9 @@ func TestSEP41_Compute_GenesisBaselineMakesTotalPositive(t *testing.T) {
 	}
 }
 
-// TestSEP41_Compute_GenesisBaselineGuardMatrix locks in the genesis-baseline money-math guard as
-// one table: how the sign of the SEP-41 total and the GenesisBaselineSeeded flag route to a
-// published supply, the paging sentinel, or the benign one. The reader folds the pre-Soroban
-// baseline (CH lake, ledger < boundary) into the Soroban-era totals (PG, ledger >= boundary)
-// before Compute runs, so the guard operates on already-folded components. A refactor that drops
-// the seeded-vs-unseeded distinction, lets a negative total through, or shifts a positive total
-// when a zero baseline is present regresses one of these rows.
+// Locks in the genesis-baseline guard as one table: SEP-41 total sign and GenesisBaselineSeeded route to a published
+// supply, the paging sentinel or the benign one. The reader folds the CH baseline into PG Soroban-era totals first;
+// dropping the seeded distinction fails a row.
 func TestSEP41_Compute_GenesisBaselineGuardMatrix(t *testing.T) {
 	asset := mustSoroban(t, validContractID)
 	// Both negative-total sentinels; a case's wantErr is one of these, and the
@@ -242,10 +233,8 @@ func TestSEP41_Compute_GenesisBaselineGuardMatrix(t *testing.T) {
 			wantErr: supply.ErrNegativeTotalSupply,
 		},
 		{
-			// (c) NOT seeded + negative → BENIGN ErrNegativeTotalMissingBaseline
-			// (needs a seed; does not page). A SAC-wrapper's mints predate
-			// Soroban, so the Soroban-era-only window legitimately reads
-			// burn > mint until the opening balance is seeded.
+			// (c) Not seeded and negative: BENIGN ErrNegativeTotalMissingBaseline (needs a seed, does not page); a SAC wrapper's
+			// mints predate Soroban, so the Soroban-era window legitimately reads burn > mint until the opening balance is seeded.
 			name:    "c_unseeded_negative_missing_baseline",
 			mint:    bigInt(2),
 			burn:    bigInt(2_180_000_000_000),
@@ -253,10 +242,8 @@ func TestSEP41_Compute_GenesisBaselineGuardMatrix(t *testing.T) {
 			wantErr: supply.ErrNegativeTotalMissingBaseline,
 		},
 		{
-			// (d) zero baseline / Soroban-only token → total is EXACTLY the
-			// Soroban-era total, unchanged. A seeded ZERO genesis (the seed for
-			// a token with no pre-genesis flows) never touches the guard and
-			// cannot double-count.
+			// (d) Zero baseline / Soroban-only token: total is EXACTLY the Soroban-era total; a seeded ZERO genesis never touches
+			// the guard and cannot double-count.
 			name:      "d_zero_baseline_soroban_only_unchanged",
 			mint:      bigInt(1_000_000_000),
 			burn:      bigInt(0),
@@ -512,17 +499,9 @@ func TestSEP41_Compute_ZeroSupplyTokenIsValid(t *testing.T) {
 	}
 }
 
-// Algorithm 3 must not stamp `basis:"admin_exclusion"` on a snapshot where nothing was excluded:
-// the production reader (StorageSEP41SupplyReader) hardcodes AdminBalance=0 because it does not
-// track `set_admin`, and with no per-asset locked-set circulating == total. A consumer reading
-// `admin_exclusion` believes the issuer's own holdings were netted out of circulating supply and
-// market cap.
-//
-// BasisXLMTotalOnly is the precedent: Algorithm 1 reports `xlm_total_only`, not
-// `xlm_sdf_reserve_exclusion`, when the reserve-account list is empty.
-//
-// This table pins the full basis matrix in both directions: a real exclusion must still read
-// `admin_exclusion`, and a no-op exclusion must read `sep41_total_only`.
+// Algorithm 3 must not stamp basis `admin_exclusion` when nothing was excluded: StorageSEP41SupplyReader hardcodes
+// AdminBalance=0 (no set_admin tracking), so circulating == total and consumers would wrongly believe issuer holdings
+// were netted out. Like BasisXLMTotalOnly, a no-op exclusion must read `sep41_total_only`, a real one `admin_exclusion`.
 func TestSEP41_Compute_BasisNeverClaimsAnExclusionThatDidNotHappen(t *testing.T) {
 	asset := mustSoroban(t, validContractID)
 	lockedHolder := "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
@@ -632,10 +611,9 @@ func TestSEP41_Compute_BasisNeverClaimsAnExclusionThatDidNotHappen(t *testing.T)
 	}
 }
 
-// The two "total only" bases must stay distinct string values and distinct from the exclusion
-// bases: they are wire values consumers switch on, and collapsing any pair would mislabel a
-// snapshot. A slice, not a map literal, since duplicate constant map keys do not compile and a map
-// could never observe a collision.
+// The two "total only" bases must stay distinct from each other and from the exclusion bases: they are wire values
+// consumers switch on. A slice, not a map literal, because duplicate constant map keys do not compile and a map could
+// never observe a collision.
 func TestBasis_TotalOnlyValuesAreDistinct(t *testing.T) {
 	all := []struct {
 		basis supply.Basis

@@ -10,11 +10,9 @@ import (
 	"testing"
 )
 
-// TestChParticipantBackfill_FailureIsNotReportedDone — a run whose
-// backfill returns an error must not print the "done — wrote N rows"
-// completion line; the operator reading stderr would take a failed run
-// for a finished one. ClickHouse on a closed port fails the run at once;
-// the bound resolves from a stub so the failure lands in the pass itself.
+// TestChParticipantBackfill_FailureIsNotReportedDone: a failed backfill must not print the "done - wrote N rows" line,
+// or the operator would take it for a finished run. A closed ClickHouse port fails it at once; the bound resolves from a
+// stub.
 func TestChParticipantBackfill_FailureIsNotReportedDone(t *testing.T) {
 	stubLakeContiguousThrough(t, 10)
 	r, w, err := os.Pipe()

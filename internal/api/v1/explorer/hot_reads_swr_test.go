@@ -14,10 +14,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// These tests pin the stale-while-revalidate contract for the lake-priced explorer reads
-// (contracts directory, asset holders, op-type stats): a stale entry is SERVED (degraded=true,
-// real as_of) while exactly one detached refresh runs; a cold key waits for the detached compute,
-// bounded by the request deadline only; a failed refresh keeps the previous entry.
+// Pins stale-while-revalidate for lake-priced explorer reads (contracts directory, asset holders, op-type stats): a
+// stale entry is served (degraded=true, real as_of) while one detached refresh runs; a cold key waits for it, bounded by
+// the request deadline only; a failed refresh keeps the previous entry.
 
 // swrReader overrides the three reads with countable, controllable stubs.
 type swrReader struct {
@@ -240,10 +239,8 @@ func TestResolveOpTypeStats_NeverComputesInline(t *testing.T) {
 	}
 }
 
-// TestSWRRefresh_ObservesMetrics pins the shared SWR instrumentation on the
-// asset_holders refresher (the other four caches route through the same
-// obs.ObserveExplorerSWRRefresh helper): a successful detached refresh
-// records {cache, ok}, a failing one records {cache, error}.
+// Pins the shared SWR instrumentation on the asset_holders refresher (other caches use the same
+// obs.ObserveExplorerSWRRefresh): a successful detached refresh records {cache, ok}, a failing one {cache, error}.
 func TestSWRRefresh_ObservesMetrics(t *testing.T) {
 	count := func(outcome string) uint64 {
 		return obstest.HistogramSampleCount(t, obs.ExplorerSWRRefreshDurationSeconds, "outcome", outcome)
@@ -267,10 +264,9 @@ func TestSWRRefresh_ObservesMetrics(t *testing.T) {
 
 // ── shared detached-refresh gate ───────────────────
 
-// TestDetachedRefreshGate_SaturationSkipsNotQueues pins the global bound across cache keys:
-// per-key single-flight alone lets fabricated addresses/assets (each a distinct cold key) queue
-// one unbounded lake scan per key on the shared pool. On saturation the refresh is SKIPPED (stale
-// entries keep serving, cold keys miss with a retryable error) and resumes once capacity frees.
+// The detached-refresh bound is global across cache keys: per-key single-flight alone lets fabricated addresses queue
+// one unbounded lake scan each. On saturation the refresh is skipped (stale entries keep serving, cold keys miss
+// retryably) and resumes when capacity frees.
 func TestDetachedRefreshGate_SaturationSkipsNotQueues(t *testing.T) {
 	h, reader := newSWRHandler()
 	gate := h.detachedGate()

@@ -8,10 +8,9 @@ import (
 	"testing"
 )
 
-// The ways SQL text can route an amount through IEEE-754 (ADR-0003): a
-// float cast in any spelling (::float, ::float8, ::real, ::double
-// precision, CAST(... AS real)), the float8()/float4() call form, and a
-// float literal such as 1e6. Case-insensitive, as Postgres is.
+// The ways SQL text can route an amount through IEEE-754 (ADR-0003): a float cast in any spelling (::float,
+// ::float8, ::real, ::double precision, CAST(... AS real)), float8()/float4() calls, and float literals
+// such as 1e6. Case-insensitive, as Postgres is.
 var (
 	floatSQLCast = regexp.MustCompile(
 		`(?i)::\s*(float[48]?|real|double)\b|\bas\s+(float[48]?|real|double)\b|\bfloat[48]\s*\(|\bdouble\s+precision\b`)

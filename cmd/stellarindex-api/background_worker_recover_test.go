@@ -8,17 +8,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker/guardscan"
 )
 
-// TestBackgroundWorkersRecover is a guard-coverage test: every detached
-// background goroutine started in this binary must register panic recovery.
-//
-// An unrecovered panic in any goroutine terminates the whole process, and main() spawns many
-// detached workers. An AST walk, not a behavioural test, derives the worker set from the source
-// so the next worker added without the defer fails too. The walk covers `go namedFunc(…)` as
-// well as `go func(){…}()`; [guardscan] resolves a named callee and fails on one it cannot
-// resolve rather than passing quietly.
-//
-// The http.Server goroutine is the one exemption, matched by content (it must call
-// ListenAndServe/Serve), not by line: if the listener dies the process should die with it.
+// TestBackgroundWorkersRecover: every detached goroutine must register panic recovery, as an unrecovered panic kills the
+// process. An AST walk derives the worker set (incl. `go namedFunc(...)`; [guardscan] fails on unresolvable callees).
+// Only the http.Server goroutine is exempt, matched by content.
 func TestBackgroundWorkersRecover(t *testing.T) {
 	sites, err := guardscan.ScanFile("main.go", guardscan.Config{
 		Guards: []string{"recoverBackgroundWorker"},
@@ -71,14 +63,9 @@ func TestBackgroundWorkersRecover(t *testing.T) {
 	}
 }
 
-// TestBackgroundWorkersJoinShutdownGroup pins that run() waits for its workers before returning,
-// so the process does not exit mid-write (the webhook sender between the customer's accept and
-// MarkDelivered would repeat a delivery on the next boot).
-//
-// Scoped to literals started inside run(), where bgWG is declared. Excluded by content: the
-// listener (httpSrv.Shutdown drains it) and the goroutine that waits on the group (it would
-// deadlock). The three named-function warmers hold no durable write, so waiting would only slow
-// deploys.
+// TestBackgroundWorkersJoinShutdownGroup: run() must wait for its workers so the process does not exit mid-write (a
+// webhook between accept and MarkDelivered would redeliver). Excluded: the listener, the group waiter (deadlock) and the
+// three warmers, which hold no durable write.
 func TestBackgroundWorkersJoinShutdownGroup(t *testing.T) {
 	sites, err := guardscan.ScanFile("main.go", guardscan.Config{
 		Guards: []string{"recoverBackgroundWorker"},

@@ -7,11 +7,9 @@ import (
 	"testing"
 )
 
-// The test-net edge (configs/libvirt/host-Caddyfile) is a separate file
-// from the production template, so the production redaction tests do not
-// cover it. These pin the same properties: no query string, Referer,
-// X-Api-Key, X-Reason or Location in any logger, plus the baseline
-// security headers on every site.
+// The test-net edge (configs/libvirt/host-Caddyfile) is separate from the production template, so the production
+// redaction tests do not cover it. These pin the same properties: no query string, Referer, X-Api-Key, X-Reason or
+// Location in any logger, plus baseline security headers on every site.
 var hostCaddyfile = filepath.Join("..", "..", "configs", "libvirt", "host-Caddyfile")
 
 var hostLogFilterFields = []string{

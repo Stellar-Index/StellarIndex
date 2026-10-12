@@ -11,10 +11,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// errorMetricsHook counts failed commands into
-// [obs.RedisCommandErrorsTotal]. [Build] installs it on every client;
-// many callers treat Redis writes as best-effort and drop the error, so
-// this is the only place a write-refusing Redis (MISCONF, OOM) shows up.
+// errorMetricsHook counts failed commands into [obs.RedisCommandErrorsTotal]; [Build] installs it on every client. Callers treat
+// Redis writes as best-effort and drop the error, so this is the only place a write-refusing Redis (MISCONF, OOM) shows up.
 type errorMetricsHook struct{}
 
 var knownRedisClass = func() map[string]struct{} {

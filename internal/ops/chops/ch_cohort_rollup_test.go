@@ -5,11 +5,8 @@ import (
 	"time"
 )
 
-// TestClosedMonthEdge_ExcludesTheInProgressMonth is the
-// regression: the cycle must read MonthlyUSDVWAPs up to the START of
-// now's calendar month, never up to `now` itself — otherwise the
-// current, still-accumulating prices_1mo bucket is admitted as a
-// settled monthly VWAP.
+// TestClosedMonthEdge_ExcludesTheInProgressMonth: the cycle must read MonthlyUSDVWAPs up to the START of now's calendar
+// month, never `now`, or the still-accumulating prices_1mo bucket is admitted as a settled monthly VWAP.
 func TestClosedMonthEdge_ExcludesTheInProgressMonth(t *testing.T) {
 	cases := []struct {
 		name string

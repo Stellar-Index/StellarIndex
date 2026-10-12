@@ -193,10 +193,8 @@ func TestAccountCohortView_MemoisesSACLabelsAcrossRequests(t *testing.T) {
 	}
 }
 
-// Labels come before prices: a price reader that spends the whole
-// request budget must not leave the contracts table labelled on a dead
-// context. The stub labels only while the ctx is alive, exactly like the
-// real index's roster reads.
+// Labels come before prices: a price reader that burns the whole request budget must not leave the contracts table
+// labelled on a dead context. The stub labels only while ctx is alive, like the real index's roster reads.
 func TestAccountCohortView_LabelsContractsBeforePricingSpendsTheBudget(t *testing.T) {
 	h := &Handler{
 		PricingEnabled: true,
@@ -320,10 +318,8 @@ func TestAccountCohortView_PricesOnlyTheLargestHoldingsAndCountsTheRest(t *testi
 	}
 }
 
-// Every served dollar is exact (ADR-0003): the price string is served as
-// the reader gave it, and balance × price is computed and rounded as a
-// rational, never through a float. 1 unit at 0.015 is 0.02 exactly;
-// through float64 it is 0.0149999… and renders 0.01.
+// Every served dollar is exact (ADR-0003): the price string is served as given and balance x price is computed and
+// rounded as a rational. 1 unit at 0.015 is 0.02 exactly; through float64 it is 0.0149999... and renders 0.01.
 func TestAccountCohortView_USDFiguresAreExact(t *testing.T) {
 	const pennyAsset = "PNY-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 	h := &Handler{
@@ -375,10 +371,9 @@ func deref(s *string) string {
 	return *s
 }
 
-// A month's flows are valued again at THAT month's own price: exact big.Rat rounded once at the
-// end, absent (never zero) where no positive month price was joined, never applied to an unscaled
-// contract token, and summed over priced assets only, so two half-cents make one cent rather than
-// the two a sum of rounded strings gives.
+// A month's flows are valued at that month's own price: exact big.Rat rounded once at the end, absent (never zero)
+// without a positive month price, never applied to an unscaled contract token, summed over priced assets only, so two
+// half-cents make one cent rather than the two a sum of rounded strings gives.
 func TestAccountCohortView_ValuesFlowsAtTheMonthsOwnPrice(t *testing.T) {
 	h := &Handler{
 		PricingEnabled: true,
@@ -623,10 +618,8 @@ func TestAccountCohortView_FlowAssetsTruncatedFlag(t *testing.T) {
 	}
 }
 
-// price_cap is spec-required and non-omitempty, so an uncovered
-// cohort must still report the real cap rather than the zero value — a
-// budget-exhausted price walk (which also serves 0 priced/unpriced) must
-// stay distinguishable from "no market" by price_cap alone.
+// price_cap is spec-required and non-omitempty, so an uncovered cohort must still report the real cap, not zero: a
+// budget-exhausted price walk (also 0 priced/unpriced) must stay distinguishable from "no market" by price_cap alone.
 func TestAccountCohortView_PriceCapSetWhenNotCovered(t *testing.T) {
 	h := &Handler{}
 	snap := clickhouse.AccountCohort{Root: "GROOT", Relation: "created", Covered: false}

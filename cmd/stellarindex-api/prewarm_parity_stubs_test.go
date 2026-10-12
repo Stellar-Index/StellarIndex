@@ -10,11 +10,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// Stub upstreams for the prewarm arg-parity test. They return empty
-// results and, where the parity assertion needs it, record the argument
-// tuple. Nothing here is under test — see prewarm_parity_test.go for
-// why the recorder is a probe on the arguments rather than a mock whose
-// behaviour matters.
+// Stub upstreams for the prewarm arg-parity test: they return empty results and, where needed, record the argument
+// tuple. Nothing here is under test; see prewarm_parity_test.go for why the recorder is a probe, not a behavioural mock.
 
 // ─── AssetsReader ────────────────────────────────────────────────
 

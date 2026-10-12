@@ -22,10 +22,8 @@ func NewDecoder() *Decoder { return &Decoder{} }
 // Compile-time check that *Decoder satisfies dispatcher.Decoder.
 var _ dispatcher.Decoder = (*Decoder)(nil)
 
-// backstopContracts is the set of contract C-strkeys whose events this
-// decoder claims — both the V2 singleton and the V1 deployment that
-// preceded it (a backfill range would replay either). A redeploy is an
-// operator-visible event, so a hard-coded set is the right shape.
+// backstopContracts is the set of contract C-strkeys this decoder claims: the V2 singleton and the V1 deployment before it (a
+// backfill range may replay either). A redeploy is operator-visible, so a hard-coded set is right.
 var backstopContracts = map[string]struct{}{
 	MainnetBackstopV2: {},
 	MainnetBackstopV1: {},

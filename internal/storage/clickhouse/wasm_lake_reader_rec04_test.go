@@ -11,21 +11,9 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// TestContractWasmHash_PartialIndexMissFallsBackToLegacy pins the fallback for a partly
-// backfilled instance-changes index.
-//
-// instanceChangesIndexAvailable is a table-global `LIMIT 1` emptiness probe: it goes true once
-// stellar.contract_instance_changes holds ANY row and cannot see whether the historical backfill
-// has reached a PARTICULAR contract. A not-yet-reached contract then returns zero rows even
-// though its executable is resolvable from current state.
-//
-// Trusting that empty result as not-found would make ContractWasm return
-// ErrContractWasmUnresolved, a confidently wrong "no wasm" 404 for a contract that has code. Only
-// a POSITIVE index verdict (a resolved hash or a SAC verdict) short-circuits; a MISS falls
-// through to the legacy current-state read, which is the source of truth.
-//
-// Reverting the `(err == nil && ok)` guard in contractWasmHash fails this test: the
-// ledger_entries_current read (asserted below) would never be issued.
+// TestContractWasmHash_PartialIndexMissFallsBackToLegacy: the instance-changes index probe is table-global,
+// so a MISS for a not-yet-backfilled contract must fall through to the legacy current-state read, not a false
+// 404. Only a positive index verdict short-circuits.
 func TestContractWasmHash_PartialIndexMissFallsBackToLegacy(t *testing.T) {
 	wantHash := wasmHashN(0xCD)
 
@@ -89,10 +77,9 @@ func TestInstanceGenesisCovers_Below(t *testing.T) {
 	}
 }
 
-// TestContractWasmHash_IndexedResolvesPreCaptureContract pins hop 1 of the wasm lookup: a
-// contract whose instance entry predates live entry capture resolves its current executable
-// (including the SAC verdict) from the genesis-complete contract_instance_changes index,
-// without touching ledger_entries_current.
+// TestContractWasmHash_IndexedResolvesPreCaptureContract pins hop 1 of the wasm lookup: a contract whose
+// instance entry predates live capture resolves its executable (and SAC verdict) from the genesis-complete
+// contract_instance_changes index, without touching ledger_entries_current.
 func TestContractWasmHash_IndexedResolvesPreCaptureContract(t *testing.T) {
 	wantHash := wasmHashN(0xCD)
 	wantHex := hex.EncodeToString(wantHash[:])

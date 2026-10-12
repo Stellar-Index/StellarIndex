@@ -22,16 +22,9 @@ type Observer struct {
 	// uncontended; it makes a concurrent caller miss a pairing rather than race.
 	mu sync.Mutex
 
-	// preImage maps claimable_id hex → asset_key for watched claimable
-	// balances whose entry body was seen earlier in THIS ledger's entry-change walk.
-	//
-	// A Removed change's LedgerKey carries only the BalanceId, not the asset. stellar-core always
-	// emits the full pre-image as a LEDGER_ENTRY_STATE change immediately before the REMOVED for
-	// the same entry (the SDK's change reader relies on the same adjacency), so the asset is
-	// known by the time the removal arrives.
-	//
-	// Scoped to one ledger: reset when a change from a different ledger arrives, which bounds the
-	// map and keeps the memo from outliving its walk.
+	// preImage maps claimable_id hex to asset_key for watched balances whose body was seen earlier in THIS ledger's walk. A Removed
+	// change's LedgerKey has only the BalanceId; stellar-core emits the full pre-image as a STATE change just before the REMOVED.
+	// Scoped to one ledger: reset when a change from a different ledger arrives, which bounds the map.
 	preImage       map[string]string
 	preImageLedger uint32
 }
@@ -148,10 +141,9 @@ func (o *Observer) rememberPreImage(ledger uint32, claimableID, assetKey string)
 	o.preImage[claimableID] = assetKey
 }
 
-// lookupPreImage returns the watched asset_key recorded for claimableID earlier in THIS ledger's
-// walk. A memo from a previous ledger never answers: the pre-image STATE shares a change list
-// with its REMOVED, so a cross-ledger hit means the meta broke that invariant, and skipping beats
-// attributing a removal from stale state.
+// lookupPreImage returns the watched asset_key recorded for claimableID earlier in THIS ledger's walk. A memo from a previous
+// ledger never answers: the pre-image STATE shares a change list with its REMOVED, so a cross-ledger hit means the meta broke that
+// invariant, and skipping beats attributing a removal from stale state.
 func (o *Observer) lookupPreImage(ledger uint32, claimableID string) (string, bool) {
 	o.mu.Lock()
 	defer o.mu.Unlock()

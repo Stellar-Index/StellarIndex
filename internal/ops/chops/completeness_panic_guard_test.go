@@ -43,10 +43,9 @@ func (d panickingCallDecoder) Decode(cc dispatcher.ContractCallContext) ([]consu
 	return []consumer.Event{stubCallEvent{}}, nil
 }
 
-// TestDecodeContractCallTree_PanicIsBlindNotCrash pins, for the
-// ContractCall census (band, soroswap-router): a panicking Matches or Decode
-// must be recorded as a blind spot on its ledger and the rest of the tree
-// still decoded, not unwind through compute-completeness.
+// TestDecodeContractCallTree_PanicIsBlindNotCrash: for the ContractCall census (band, soroswap-router), a panicking
+// Matches or Decode is recorded as a blind spot on its ledger and the rest of the tree still decodes, rather than
+// unwinding through compute-completeness.
 func TestDecodeContractCallTree_PanicIsBlindNotCrash(t *testing.T) {
 	const ledger uint32 = 52_000_001
 	op := clickhouse.ContractCallOp{Ledger: ledger, TxHash: "bb", Source: "GSOURCE"}
@@ -98,10 +97,9 @@ var completenessWriterFiles = map[string]bool{
 	"projected_rebuild.go":          true,
 }
 
-// TestChopsDecoderCallsAreGuarded is the class guard: outside the
-// named writer files, every decoder Matches / Decode / DecodeCounted call in
-// internal/ops/chops must run inside a completeness.Guard closure, so a new
-// oracle loop cannot reintroduce an unguarded decoder on the audit path.
+// TestChopsDecoderCallsAreGuarded is the class guard: outside the named writer files, every decoder Matches / Decode /
+// DecodeCounted call in internal/ops/chops must run inside a completeness.Guard closure, so a new oracle loop cannot add
+// an unguarded decoder on the audit path.
 func TestChopsDecoderCallsAreGuarded(t *testing.T) {
 	files, err := filepath.Glob("*.go")
 	if err != nil {

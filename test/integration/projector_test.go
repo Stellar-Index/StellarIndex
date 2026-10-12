@@ -48,23 +48,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestProjectedRebuild_TwoWindowRunThenResume is the ADR-0048 D3 end-to-end
-// proof: seed a few Rozo v1 Payment events into the ClickHouse lake across
-// three ledger windows, run chops.RunProjectedRebuild against a real
-// Postgres, and assert
-//
-//  1. rows land through the SAME decoder + sink path the live projector
-//     uses (pipeline.HandleEvent — exercised indirectly via
-//     RunProjectedRebuild), and
-//  2. a second invocation with -resume (Resume: true) SKIPS the
-//     already-checkpointed windows entirely — not just idempotently
-//     re-writing them, but never re-streaming ClickHouse for that range —
-//     while still picking up a newly-extended window.
-//
-// Rozo is the fixture source of choice: its decoder gates on a fixed,
-// in-code contract-id set with no factory/child registry to warm and no
-// oracle config to supply, so the test needs no gated-registry seeding —
-// projector.BuildRegistry needs only an empty config.OracleConfig.
+// TestProjectedRebuild_TwoWindowRunThenResume (ADR-0048 D3): Rozo v1 Payments seeded in ClickHouse over three ledger
+// windows go through chops.RunProjectedRebuild into Postgres via the live pipeline.HandleEvent path; a second run with
+// -resume must SKIP checkpointed windows (never re-stream ClickHouse) yet pick up a newly-extended window.
 func TestProjectedRebuild_TwoWindowRunThenResume(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -81,10 +67,8 @@ func TestProjectedRebuild_TwoWindowRunThenResume(t *testing.T) {
 
 	const contractID = rozo.MainnetPaymentContract
 
-	// Three PaymentEvents in three DIFFERENT 100-ledger windows:
-	//   window [1000,1099] -> ledger 1050
-	//   window [1100,1199] -> ledger 1150
-	//   window [1200,1299] -> ledger 1250 (seeded only for the second run)
+	// Three PaymentEvents in three different 100-ledger windows: [1000,1099] -> 1050, [1100,1199] -> 1150, [1200,1299] -> 1250
+	// (second run only).
 	seedRozoPayment(t, ctx, chAddr, contractID, 1050, "tx-a-1111111111111111111111111111111111111111111111111111111111", 1_000_0000000, "alice-memo")
 	seedRozoPayment(t, ctx, chAddr, contractID, 1150, "tx-b-2222222222222222222222222222222222222222222222222222222222", 2_000_0000000, "bob-memo")
 
@@ -165,10 +149,8 @@ func TestProjectedRebuild_TwoWindowRunThenResume(t *testing.T) {
 	assertRozoEventLedgers(t, ctx, store.DB(), []uint32{1050, 1150, 1250})
 }
 
-// assertRozoEventLedgers queries rozo_events directly (no repo reader
-// exists for this narrow assertion) and checks the exact set of distinct
-// ledgers present — proving both "the rows landed" and "no duplicates /
-// no phantom rows from a resumed run re-touching already-done windows".
+// assertRozoEventLedgers queries rozo_events directly and checks the exact set of distinct ledgers: rows landed, and no
+// duplicates or phantom rows from a resumed run re-touching done windows.
 func assertRozoEventLedgers(t *testing.T, ctx context.Context, db *sql.DB, want []uint32) {
 	t.Helper()
 	rows, err := db.QueryContext(ctx, `SELECT ledger FROM rozo_events ORDER BY ledger`)
@@ -197,12 +179,9 @@ func assertRozoEventLedgers(t *testing.T, ctx context.Context, db *sql.DB, want 
 	}
 }
 
-// seedRozoPayment writes one ClickHouse contract_events row shaped exactly
-// like a real Rozo v1 PaymentEvent — the same on-wire ScMap shape
-// rozo.DecodePayment expects ({from, destination, amount, memo}) — plus its
-// minimal ledger header, through the production chstore.Sink so the
-// fixture goes through the same write path any other Tier-1 lake test
-// uses (TestClickHouseLakeRoundTrip).
+// seedRozoPayment writes a ClickHouse contract_events row shaped like a real Rozo v1 PaymentEvent (the ScMap
+// rozo.DecodePayment expects) plus its minimal ledger header, via the production chstore.Sink, as
+// TestClickHouseLakeRoundTrip does.
 func seedRozoPayment(t *testing.T, ctx context.Context, chAddr, contractID string, ledger uint32, txHash string, amountStroops int64, memo string) {
 	t.Helper()
 	closeTime := time.Date(2026, 7, 10, 0, 0, 0, 0, time.UTC).Add(time.Duration(ledger) * 5 * time.Second)
@@ -321,33 +300,9 @@ func prB64(t *testing.T, sv xdr.ScVal) string {
 	return base64.StdEncoding.EncodeToString(b)
 }
 
-// TestProjectedRebuild_FailedInsertDoesNotCheckpoint is the proof, and
-// it is deliberately end-to-end (real ClickHouse + real Postgres) because the
-// bug lived in the seam between them.
-//
-// The old worker discarded pipeline.HandleEvent's error and checkpointed the
-// window unconditionally, justified in-comment by "the idempotent ON CONFLICT
-// write is retried by re-running the range". That justification was false in
-// the tool's DEFAULT mode: -resume=true SKIPS checkpointed windows, so the
-// range was never re-run and the row was gone permanently. A single transient
-// Postgres error during a multi-hour historical backfill silently dropped a
-// row with no unattended path to recovery.
-//
-// It has to be a NON-TRADE event to reproduce: trade events deliberately
-// return nil from HandleEvent (ADR-0041 block-and-retry owns their outcome),
-// so only non-trade inserts can surface an error at this seam. rozo.Event ->
-// persistRozoEvent returns its insert error, which is why this fixture uses
-// it.
-//
-// Nor can the completeness verdict be relied on as the backstop the code
-// pointed operators at: the reconciliation catalogue registers only `trades`
-// for some sources, so a dropped non-trade row is invisible to it.
-//
-// Failure is injected by renaming rozo_events out from under the insert —
-// a real, deterministic Postgres error, not a mock.
-//
-// Proven red: with the old `_ = pipeline.HandleEvent(...)`, run 1
-// checkpoints both windows, run 2 skips them, and the rows are never written.
+// TestProjectedRebuild_FailedInsertDoesNotCheckpoint, end-to-end (real ClickHouse + Postgres) since the bug lived in the
+// seam: the worker discarded HandleEvent's error and checkpointed anyway, but -resume (default) skips checkpointed
+// windows, so one transient Postgres error lost a row permanently.
 func TestProjectedRebuild_FailedInsertDoesNotCheckpoint(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -436,15 +391,9 @@ func TestProjectedRebuild_FailedInsertDoesNotCheckpoint(t *testing.T) {
 	assertRozoEventLedgers(t, ctx, store.DB(), []uint32{3050, 3150})
 }
 
-// The projector's cycle is a read-modify-write up to PerSourceTimeout long,
-// and its commit is a never-regress UPSERT of a position derived from the
-// cycle-start read. A projector-replay RewindCursor landing inside that gap
-// writes a LOWER value, so the in-flight cycle's forward write would pass the
-// guard and put the cursor back at tip — the replay would print success and
-// re-project nothing.
-//
-// RED on the unfixed behaviour: make AdvanceCursorFrom delegate to
-// UpsertCursor (the old commit) and all three tests below fail.
+// The projector cycle is a read-modify-write up to PerSourceTimeout long, committing a never-regress UPSERT from the
+// cycle-start read. A projector-replay RewindCursor landing in that gap writes a LOWER value, then the in-flight forward
+// write passes the guard and restores tip: replay prints success and re-projects nothing.
 
 const casSource = "sep41_supply"
 
@@ -506,12 +455,9 @@ func TestAdvanceCursorFrom_RewindHeldOpenWinsTheRace(t *testing.T) {
 		done <- result{ok, aerr}
 	}()
 
-	// Non-vacuity: the advance must be parked in its cursor-row WRITE behind
-	// the rewind's row lock; anything else means the interleave never armed.
-	// Deliberately not pinned to the fix's exact statement text — the
-	// property is "the cycle's commit is waiting on the rewind", and pinning
-	// the text would make a reverted commit fail HERE instead of on the
-	// clobber below, which is the assertion that matters.
+	// Non-vacuity: the advance must be parked in its cursor-row WRITE behind the rewind's row lock, else the interleave never
+	// armed. Not pinned to the fix's statement text, so a reverted commit fails on the clobber assertion below, which is what
+	// matters.
 	parked := waitForVerdictLockWait(t, ctx, racer.DB(), done2finished(done))
 	t.Logf("cycle commit parked behind the rewind in: %s", strings.Join(strings.Fields(parked), " "))
 	if !strings.Contains(parked, "ingestion_cursors") {
@@ -586,11 +532,8 @@ func TestAdvanceCursorFrom_RewindHeldOpenWinsTheRace(t *testing.T) {
 	}
 }
 
-// TestAdvanceCursorFrom_SequentialContract pins the statement's contract
-// with no concurrency involved: the not-found seed (and its DO NOTHING arm),
-// the refusal of a non-advancing write, the refusal of a stale read, and
-// the half of UpsertCursor's contract the projector's cursor still relies
-// on — first_ledger is set on insert and never moved by an advance.
+// TestAdvanceCursorFrom_SequentialContract (no concurrency): not-found seed and its DO NOTHING arm, refusal of a non-
+// advancing write and of a stale read, and first_ledger set on insert and never moved by an advance.
 func TestAdvanceCursorFrom_SequentialContract(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -677,11 +620,8 @@ func (s *casSink) count(ledger uint32) int {
 	return n
 }
 
-// TestProjectorReplayRewind_SurvivesAnInFlightCycle is the finding end to
-// end: the REAL projector ([projector.New] + Run) over the REAL store, a
-// cycle held open mid-flight, and the REAL [timescale.Store.RewindCursor]
-// — the call projector-replay makes — landing from a second connection.
-// The repair must actually happen: the rewound ledger is sunk again.
+// TestProjectorReplayRewind_SurvivesAnInFlightCycle end to end: REAL projector (New + Run) over the REAL store, a cycle
+// held open, and the real RewindCursor from a second connection. The rewound ledger must be sunk again.
 func TestProjectorReplayRewind_SurvivesAnInFlightCycle(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -786,10 +726,8 @@ type seekCase struct {
 	wantFound                   bool
 }
 
-// TestFirstSorobanEventLedger_MatchesStream executes the Postgres seek the
-// projector seeds a never-run source from, and pins it to StreamSorobanEvents'
-// row set for the same filters (the seed must never skip a row the scan would
-// have returned).
+// TestFirstSorobanEventLedger_MatchesStream: the Postgres seek that seeds a never-run source matches StreamSorobanEvents'
+// row set for the same filters (the seed must never skip a row the scan returns).
 func TestFirstSorobanEventLedger_MatchesStream(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -949,31 +887,9 @@ func seekSeedEvent(t *testing.T, ctx context.Context, chAddr string, ledger uint
 	}
 }
 
-// TestProjectorSinkDurability_TransientFailureDoesNotAdvanceCursor is the
-// proven-red test for the projector advancing
-// its cursor past a silently-swallowed SINK write failure, which permanently
-// drops the row for the sole-writer sep41 domain.
-//
-// It drives the REAL projector ([projector.New] + [projector.Run]) reading
-// one seeded soroban_events row, with a sink that:
-//   - FAILS the first cycle's write with a transient Postgres fault (a
-//     deadlock, SQLSTATE 40P01 — the transient class an old sink swallowed), then
-//   - SUCCEEDS on the retry, delegating to the production
-//     [pipeline.HandleEvent] so the row lands for real.
-//
-// It asserts the two properties the fix must guarantee:
-//
-//	(a) after the transient failure the projector cursor did NOT advance past
-//	    the failing ledger (so the event is not lost); and
-//	(b) the next cycle re-reads that ledger and the row LANDS.
-//
-// RED on the unfixed code: revert cycleOneSource to advance the cursor to
-// `toLedger` UNCONDITIONALLY (ignoring the sink error) — keeping the
-// SinkFunc/HandleEvent error signatures — and assertion (a) fails (the cursor
-// jumps past the failing ledger) and (b) fails (the idle next cycle never
-// re-reads it, so the row is permanently lost). This mirrors the silent-loss
-// path: `-resume` skips it, reconcile re-sums the equally-short table,
-// and obs reports it as `ok`.
+// TestProjectorSinkDurability_TransientFailureDoesNotAdvanceCursor: the REAL projector reads one soroban_events row; the
+// sink fails the first cycle with a transient fault (deadlock 40P01) then succeeds via pipeline.HandleEvent. (a) The
+// cursor must not advance past the failing ledger; (b) the next cycle re-reads it and the row lands.
 func TestProjectorSinkDurability_TransientFailureDoesNotAdvanceCursor(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -992,11 +908,8 @@ func TestProjectorSinkDurability_TransientFailureDoesNotAdvanceCursor(t *testing
 		ledger  = uint32(50_000_010)
 	)
 
-	// Seed one soroban_events row at `ledger`. The fake decoder below ignores
-	// its contents (it always emits one sep41 mint), so the row only needs to
-	// Reconstruct cleanly — hence OpArgsXDR is nil (random op-args would fail
-	// scval decode and soft-fail as a decode error instead of reaching the
-	// sink).
+	// Seed one soroban_events row at `ledger`. The fake decoder ignores contents (always one sep41 mint), so the row only has
+	// to Reconstruct: OpArgsXDR is nil, since random op-args would fail scval decode and soft-fail before reaching the sink.
 	row := mkReconstructableRow(t, ledger)
 	if err := store.InsertSorobanEventsBatch(ctx, []sorobanevents.Row{row}); err != nil {
 		t.Fatalf("seed soroban_events: %v", err)
@@ -1125,10 +1038,8 @@ func (s *durabilitySink) handle(ctx context.Context, ev consumer.Event) error {
 	default:
 	}
 	if fail {
-		// A transient Postgres fault mid-cycle (deadlock_detected, SQLSTATE
-		// 40P01) — precisely the class a swallowing sink would lose.
-		// timescale.IsPermanentDataError classifies it as transient, so the
-		// projector must HOLD its cursor and retry rather than skip.
+		// A transient fault mid-cycle (deadlock 40P01): timescale.IsPermanentDataError classifies it transient, so the projector
+		// must HOLD its cursor and retry.
 		return &pgconn.PgError{Code: "40P01", Message: "deadlock detected (injected)"}
 	}
 	// Real production write path — exercises HandleEvent's new error return.
@@ -1156,10 +1067,8 @@ func (d *fakeSupplyDecoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	}}, nil
 }
 
-// mkReconstructableRow builds one soroban_events row that
-// sorobanevents.Reconstruct accepts (valid contract strkey, 32-byte tx hash,
-// non-empty topic-0 + body) and that carries NO op-args (so Reconstruct does
-// not attempt to scval-decode random bytes).
+// mkReconstructableRow builds a soroban_events row sorobanevents.Reconstruct accepts (valid contract strkey, 32-byte tx
+// hash, non-empty topic-0 + body) with NO op-args, so Reconstruct does not scval-decode random bytes.
 func mkReconstructableRow(t *testing.T, ledger uint32) sorobanevents.Row {
 	t.Helper()
 	var cid [32]byte
@@ -1195,42 +1104,9 @@ func mkReconstructableRow(t *testing.T, ledger uint32) sorobanevents.Row {
 
 const testPassphrase = "Test SDF Network ; September 2015"
 
-// TestEndToEnd_LedgerstreamToTimescale proves the full production
-// ingest path works end-to-end against real infrastructure:
-//
-//	Galexie-shaped .xdr.zst on disk
-//	  → internal/ledgerstream
-//	  → internal/dispatcher (all decoders registered)
-//	  → consumer.Event type-switch
-//	  → internal/storage/timescale
-//	  → Timescale row lands
-//	  → cursor persisted
-//
-// The test uses the SDK's filesystem datastore (not MinIO) — the
-// S3 transport is a separate concern tested in internal/ledgerstream
-// (and by the r1 smoke once 165d is deployed). What's proved here
-// is the wiring that cmd/stellarindex-indexer runs in production.
-//
-// Ledger fixtures are constructed in-test using the SDK's
-// compressxdr helpers, mirroring what Galexie writes. Two
-// sub-tests:
-//
-//  1. plumbing — bounded range of empty ledgers: the pipeline
-//     handles zero-event ledgers without errors, the cursor
-//     advances across all of them, and the dispatcher returns no
-//     outputs.
-//  2. richer fixture — a soroban-flagged envelope carrying a real
-//     Reflector FX update event, whose OracleUpdate lands in
-//     Timescale with the expected asset/price/timestamp. Exercises
-//     the full chain: envelope hash matching → TxMetaV3.SorobanMeta
-//     → tx.GetTransactionEvents() → dispatcher routing →
-//     reflector decoder → timescale.InsertOracleUpdate →
-//     LatestOracleUpdateForAsset round-trip.
-//
-// A future extension (a real LCM carrying a Soroban trade event
-// through the Soroswap/Phoenix/Aquarius paths) would add
-// correlation-buffer coverage; the fixture machinery for it is
-// the same shape as (2).
+// TestEndToEnd_LedgerstreamToTimescale: the production ingest wiring of cmd/stellarindex-indexer end to end: Galexie-
+// shaped .xdr.zst -> ledgerstream -> dispatcher (all decoders) -> Timescale row -> cursor. Uses the SDK filesystem
+// datastore (S3 transport is tested in internal/ledgerstream). Subtests: (1) empty ledgers.
 func TestEndToEnd_LedgerstreamToTimescale(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1245,10 +1121,7 @@ func TestEndToEnd_LedgerstreamToTimescale(t *testing.T) {
 
 	t.Run("bounded range of empty ledgers", func(t *testing.T) {
 		dsDir := t.TempDir()
-		// Note: SDK's BoundedRange(from, to) requires to > from,
-		// so we seed + request at least 2 ledgers. Production
-		// always uses unbounded (to=0); bounded ranges only show
-		// up in backfill CLIs or this integration test.
+		// SDK BoundedRange(from, to) requires to > from, so seed and request at least 2 ledgers; production is unbounded (to=0).
 		seqs := []uint32{62_000_100, 62_000_101, 62_000_102}
 		seedEmptyLedgers(t, ctx, dsDir, seqs)
 
@@ -1272,25 +1145,9 @@ func TestEndToEnd_LedgerstreamToTimescale(t *testing.T) {
 		}
 	})
 
-	// This is the "richer" fixture test promised in the file-level
-	// doc: construct a real-shaped Soroban transaction carrying a
-	// Reflector FX update event, drive it all the way through the
-	// production pipeline, and verify an OracleUpdate row lands.
-	//
-	// Building blocks, top-down:
-	//
-	//  1. xdr.ContractEvent with Reflector's exact wire shape
-	//     (topic[0]=Symbol("REFLECTOR"), topic[1]=Symbol("update"),
-	//     topic[2]=U64 timestamp_ms, body=Map{"update_data": Vec<
-	//     (Symbol("EUR"), i128)>}).
-	//  2. xdr.TransactionEnvelope flagged Soroban
-	//     (Ext.V=1 + SorobanData set) — IsSorobanTx() must return
-	//     true so the SDK reaches TxMetaV3.SorobanMeta.Events.
-	//  3. xdr.LedgerCloseMeta V1 with the envelope in a V0Components
-	//     phase + matching TxProcessing (result hash = envelope hash,
-	//     TxApplyProcessing = TransactionMetaV3 with the event).
-	//  4. Seed into the filesystem datastore, run the existing
-	//     runIngest, then query Timescale for the landed row.
+	// The richer fixture: a real-shaped Soroban tx carrying a Reflector FX update event, driven through the production
+	// pipeline to an OracleUpdate row. Built top-down: (1) ContractEvent in Reflector's wire shape; (2) Soroban-flagged
+	// envelope (Ext.V=1 + SorobanData, so IsSorobanTx() is true).
 	t.Run("soroban LCM with reflector FX update lands OracleUpdate", func(t *testing.T) {
 		dsDir := t.TempDir()
 
@@ -1316,13 +1173,9 @@ func TestEndToEnd_LedgerstreamToTimescale(t *testing.T) {
 		seedSorobanLedger(t, ctx, dsDir, seqs[0], closedAt, ev)
 		seedEmptyLedgers(t, ctx, dsDir, seqs[1:])
 
-		// Dispatcher with just the FX decoder registered — scopes the
-		// test to exactly what we're proving. WithDecoderObserver
-		// stamps a known G-strkey on the row so we can assert on it.
-		// AQUA mainnet issuer — chosen because it's a real, stable
-		// G-strkey that survives the strkey-CRC validation that the
-		// canonical package now enforces (the prior hand-crafted
-		// observer strkey "GA7QYN…" had an invalid checksum).
+		// Dispatcher with just the FX decoder, scoping the test; WithDecoderObserver stamps a known G-strkey for assertion. Uses
+		// the AQUA mainnet issuer, a real G-strkey that passes canonical's strkey-CRC validation (the earlier hand-made observer
+		// strkey did not).
 		const observerStrkey = "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA"
 		fxDecoder := reflector.NewDecoder(reflector.VariantFX, fxContract,
 			reflector.WithDecoderObserver(observerStrkey))
@@ -1377,12 +1230,9 @@ func TestEndToEnd_LedgerstreamToTimescale(t *testing.T) {
 		}
 	})
 
-	// Redstone subtest — proves the OpArgs pathway added with the Redstone decoder:
-	// the dispatcher extracts InvokeContract args from the envelope
-	// and the Redstone decoder zips them against event body entries.
-	// Without OpArgs the decoder has no feed_ids and can't attribute
-	// prices to assets, so a passing test confirms both the wire-up
-	// and the decoder logic together.
+	// Redstone subtest: the OpArgs pathway. The dispatcher extracts InvokeContract args and the decoder zips them against
+	// event body entries; without OpArgs it has no feed_ids and cannot attribute prices, so passing confirms wiring and
+	// decoder together.
 	t.Run("soroban LCM with redstone write_prices lands OracleUpdates", func(t *testing.T) {
 		dsDir := t.TempDir()
 
@@ -1471,18 +1321,14 @@ func TestEndToEnd_LedgerstreamToTimescale(t *testing.T) {
 		}
 	})
 
-	// Comet subtest — weighted-AMM SwapEvent landing a canonical.Trade.
-	// Simpler than Redstone: no OpArgs dependency (tokens live in the
-	// event body by field name), no correlation buffer (single-event
-	// decode per swap, unlike Soroswap's swap+sync pairing).
+	// Comet subtest: a weighted-AMM SwapEvent landing a canonical.Trade. No OpArgs (tokens are in the body) and no correlation
+	// buffer (single-event decode).
 	t.Run("soroban LCM with comet POOL.swap lands Trade", func(t *testing.T) {
 		dsDir := t.TempDir()
 
-		// Pool contract ID — MUST be the curated backstop pool: the
-		// contract-identity gate (ADR-0035/0040) applies, and comet
-		// Matches() rejects any emitter outside comet.MainnetGatedSet, so a
-		// synthetic well-formed address would not land a Trade. Using the
-		// production curated pool also keeps the gate itself in the exercised path.
+		// Pool contract ID MUST be the curated backstop pool: the contract-identity gate (ADR-0035/0040) makes comet Matches()
+		// reject emitters outside comet.MainnetGatedSet, so a synthetic address lands no Trade. It also keeps the gate in the
+		// exercised path.
 		poolRaw, err := strkey.Decode(strkey.VersionByteContract, comet.MainnetBackstopPool)
 		if err != nil {
 			t.Fatalf("decode curated pool strkey: %v", err)
@@ -1586,11 +1432,8 @@ func TestEndToEnd_LedgerstreamToTimescale(t *testing.T) {
 		}
 	})
 
-	// Band subtest — proves the ContractCallDecoder pathway. This is
-	// the "no events" case: Band's StandardReference doesn't emit on
-	// relay(), so the dispatcher routes purely on the InvokeContract
-	// op itself. If the dispatcher's contract-call loop skips
-	// argless/event-only ops, this test catches that.
+	// Band subtest: the ContractCallDecoder pathway, the no-events case (relay() emits nothing), routed purely on the
+	// InvokeContract op. Catches a dispatcher contract-call loop that skips argless/event-only ops.
 	t.Run("soroban LCM with band relay (no events) lands OracleUpdates", func(t *testing.T) {
 		dsDir := t.TempDir()
 
@@ -1674,12 +1517,8 @@ func TestEndToEnd_LedgerstreamToTimescale(t *testing.T) {
 
 // ─── helpers ─────────────────────────────────────────────────────
 
-// runIngest mirrors cmd/stellarindex-indexer's processAndPersist
-// logic in-test: stream ledgers from the datastore, dispatch them,
-// persist each consumer.Event via the appropriate store insert,
-// and upsert the pipeline cursor after each ledger. Returns the
-// total event count emitted + number of ledgers processed + final
-// cursor, so the test can assert on all three.
+// runIngest mirrors the indexer's processAndPersist: stream ledgers, dispatch, persist each consumer.Event via the store
+// insert, upsert the cursor per ledger. Returns event count, ledgers processed and final cursor.
 func runIngest(
 	ctx context.Context, t *testing.T,
 	disp *dispatcher.Dispatcher, lsCfg ledgerstream.Config,
@@ -1691,11 +1530,9 @@ func runIngest(
 	err := ledgerstream.Stream(ctx, lsCfg, from, to, func(lcm xdr.LedgerCloseMeta) error {
 		outputs, err := disp.ProcessLedger(lcm, testPassphrase)
 		if err != nil {
-			// FAIL, don't log-and-continue: this is the
-			// load-bearing Galexie→ledgerstream→dispatcher→sink end-to-end test.
-			// Downgrading a ProcessLedger error to t.Logf meant a real decode
-			// regression (or a fixture that stops matching after an SDK bump)
-			// degraded to "got 0 events, want 1" with the cause only logged.
+			// FAIL, don't log-and-continue: this is the load-bearing Galexie->ledgerstream->dispatcher->sink test. A logged
+			// ProcessLedger error would degrade a real decode regression (or a fixture broken by an SDK bump) to "got 0 events, want
+			// 1" with the cause only logged.
 			t.Errorf("dispatcher rejected ledger %d: %v", lcm.LedgerSequence(), err)
 			return nil
 		}
@@ -1748,11 +1585,8 @@ func persistInTest(ctx context.Context, store *timescale.Store, ev consumer.Even
 	return fmt.Errorf("persistInTest: unhandled event %T", ev)
 }
 
-// newFullDispatcher registers every production decoder — the
-// same set cmd/stellarindex-indexer wires from config when all
-// sources are enabled. Reflector contracts use placeholders because
-// the empty-ledger tests don't emit events that would be matched
-// against them.
+// newFullDispatcher registers every production decoder, as the indexer does with all sources enabled. Reflector contracts
+// are placeholders: the empty-ledger tests emit nothing to match against them.
 func newFullDispatcher(t *testing.T) *dispatcher.Dispatcher {
 	t.Helper()
 	d := dispatcher.New(
@@ -1767,11 +1601,8 @@ func newFullDispatcher(t *testing.T) *dispatcher.Dispatcher {
 	return d
 }
 
-// filesystemLedgerstreamConfig builds a ledgerstream.Config
-// pointing at a local directory — the same config shape
-// cmd/stellarindex-indexer would produce for an S3 datastore, just
-// with Type=Filesystem so we don't need MinIO in the unit
-// integration suite.
+// filesystemLedgerstreamConfig builds a ledgerstream.Config on a local directory (the indexer's S3 shape with
+// Type=Filesystem, no MinIO needed).
 func filesystemLedgerstreamConfig(dir string) ledgerstream.Config {
 	return ledgerstream.Config{
 		DataStore: datastore.DataStoreConfig{
@@ -1784,15 +1615,9 @@ func filesystemLedgerstreamConfig(dir string) ledgerstream.Config {
 	}
 }
 
-// seedEmptyLedgers writes one valid-but-empty xdr.LedgerCloseMeta
-// per sequence in `seqs` to the filesystem datastore rooted at
-// `dir`. Publishes the datastore manifest so the ledgerstream's
-// LoadSchema call finds it.
-//
-// "Empty" here means: a LedgerHeader with the right sequence, a
-// valid (empty) GeneralizedTransactionSet, no transactions. The
-// SDK's ingest reader handles this cleanly — the tx loop hits
-// io.EOF immediately and the dispatcher returns zero outputs.
+// seedEmptyLedgers writes one valid-but-empty LedgerCloseMeta per sequence (right header sequence, empty
+// GeneralizedTransactionSet) to the filesystem datastore at `dir`, and publishes the manifest so LoadSchema finds it. The
+// SDK reader hits io.EOF at once; dispatch returns no outputs.
 func seedEmptyLedgers(t *testing.T, ctx context.Context, dir string, seqs []uint32) {
 	t.Helper()
 	store, err := datastore.NewFilesystemDataStoreWithPath(dir)
@@ -1853,23 +1678,12 @@ func (b byteSliceWriterTo) WriteTo(w io.Writer) (int64, error) {
 	return int64(n), err
 }
 
-// ─── richer Soroban-event fixture helpers ───────────────────────
-// Everything below is scaffolding for the "soroban LCM with
-// reflector FX update" subtest. The key design constraint: the
-// LCM we construct must satisfy both (a) the SDK reader's
-// envelope-hash ↔ TxProcessing matching (storeTransactions at
-// ingest/ledger_transaction_reader.go) and (b) the dispatcher's
-// topic-byte-equality match against the Reflector decoder.
-//
-// We lean on the SDK's own encoders for (a) — HashTransactionInEnvelope
-// + compressxdr.NewXDREncoder — and on internal/scval for (b).
-// Nothing here hand-rolls XDR bytes.
+// Fixture helpers for the Soroban reflector subtest. The LCM must satisfy the SDK reader's envelope-hash <-> TxProcessing
+// matching and the dispatcher's topic-byte-equality match with the Reflector decoder, using the SDK's encoders
+// (HashTransactionInEnvelope, compressxdr) and internal/scval, never hand-rolled XDR.
 
-// mustContractIDFromStrkey decodes a C-strkey into a 32-byte
-// xdr.ContractId. The reflector decoder compares events by the
-// contract's strkey form, so we need the inverse of that here —
-// the decoder gets strkey back from contractIDToStrkey() inside
-// the dispatcher.
+// mustContractIDFromStrkey decodes a C-strkey to a 32-byte xdr.ContractId: the reflector decoder matches on the strkey
+// form, which the dispatcher derives back via contractIDToStrkey().
 func mustContractIDFromStrkey(t *testing.T, s string) xdr.ContractId {
 	t.Helper()
 	raw, err := strkey.Decode(strkey.VersionByteContract, s)
@@ -1905,11 +1719,8 @@ func buildReflectorFXContractEvent(
 		t.Fatalf("symbols/prices length mismatch: %d vs %d", len(symbols), len(prices))
 	}
 
-	// topic[0]=Symbol("REFLECTOR"), topic[1]=Symbol("update") — but
-	// unlike the events.Event pathway (base64 strings), ContractEvent
-	// carries *decoded* ScVals. We pass through the same scval encoder
-	// so the round-trip (encode → dispatcher re-encodes to b64) lands
-	// at identical topic bytes, keeping the byte-equality match live.
+	// topic[0]=Symbol("REFLECTOR"), topic[1]=Symbol("update"). ContractEvent carries decoded ScVals; passing them through the
+	// same scval encoder keeps the dispatcher's re-encoded topic bytes identical, so the byte-equality match stays live.
 	refSym := xdr.ScSymbol(reflector.EventTopic0)
 	updSym := xdr.ScSymbol(reflector.EventTopic1)
 	tsVal := xdr.Uint64(tsMs)
@@ -1953,10 +1764,8 @@ func buildReflectorFXContractEvent(
 	}
 }
 
-// splitBigInt128For128Parts is the integration-test copy of the
-// helper in internal/sources/reflector/decode_test.go. It splits a
-// *big.Int into the (hi int64, lo uint64) pair that xdr.Int128Parts
-// expects, handling negative values via two's-complement unwind.
+// splitBigInt128For128Parts copies the reflector decode_test helper: splits a *big.Int into xdr.Int128Parts (hi int64, lo
+// uint64), unwinding negatives via two's complement.
 func splitBigInt128For128Parts(n *big.Int) (hi int64, lo uint64) {
 	twoTo64 := new(big.Int).Lsh(big.NewInt(1), 64)
 	mask64 := new(big.Int).Sub(twoTo64, big.NewInt(1))
@@ -1972,16 +1781,9 @@ func splitBigInt128For128Parts(n *big.Int) (hi int64, lo uint64) {
 	return int64(hiBig.Uint64()), loBig.Uint64()
 }
 
-// seedSorobanLedger writes a single ledger containing one Soroban
-// transaction whose TxMetaV3 carries the given ContractEvent. The
-// envelope is the minimal Soroban-flagged shape from the SDK's test
-// suite (ingest/ledger_transaction_test.go:48-58): V1 with
-// Ext.V=1 and SorobanData set; IsSorobanTx() returns true so
-// tx.GetTransactionEvents() reaches SorobanMeta.Events.
-//
-// The tx hash stored in TxProcessing[i].Result.TransactionHash must
-// match HashTransactionInEnvelope(envelope, passphrase) — otherwise
-// the reader's hash-lookup fails ("unknown tx hash in LedgerCloseMeta").
+// seedSorobanLedger writes one ledger with one Soroban tx whose TxMetaV3 carries the ContractEvent. Minimal Soroban-
+// flagged V1 envelope (Ext.V=1 + SorobanData) so IsSorobanTx() is true and GetTransactionEvents() reaches
+// SorobanMeta.Events.
 func seedSorobanLedger(
 	t *testing.T,
 	ctx context.Context,
@@ -2010,13 +1812,8 @@ func seedSorobanLedger(
 		t.Fatalf("publish manifest: %v", err)
 	}
 
-	// ─── envelope ────────────────────────────────────────────
-	// Soroban tx envelope shape (same as someSorobanTxEnvelope
-	// in the SDK's tests). Empty Operations slice is fine —
-	// tx.GetTransactionEvents() pulls from SorobanMeta in V3 meta,
-	// not from the op list. The envelope source account is a
-	// deterministic G-strkey so accountIDToStrkey() inside the
-	// dispatcher doesn't error.
+	// Envelope: Soroban shape as in the SDK tests. Empty Operations is fine (events come from SorobanMeta in V3 meta). The
+	// source account is a deterministic G-strkey so accountIDToStrkey() in the dispatcher doesn't error.
 	srcSeed := [32]byte{0x10, 0xDE, 0xAD, 0xBE, 0xEF}
 	for i := 5; i < 32; i++ {
 		srcSeed[i] = byte(i)
@@ -2049,11 +1846,8 @@ func seedSorobanLedger(
 		t.Fatalf("hash envelope: %v", err)
 	}
 
-	// ─── tx result ───────────────────────────────────────────
-	// TxSuccess code with an empty Results slice → Successful()
-	// is true AND OperationResults() returns ([], true). The
-	// dispatcher's classic-op loop iterates over zero ops in that
-	// case, skipping cleanly.
+	// Tx result: TxSuccess with empty Results, so Successful() is true and OperationResults() returns ([], true); the classic-
+	// op loop skips cleanly.
 	emptyOpResults := []xdr.OperationResult{}
 	result := xdr.TransactionResultPair{
 		TransactionHash: xdr.Hash(hash),
@@ -2066,11 +1860,8 @@ func seedSorobanLedger(
 		},
 	}
 
-	// ─── tx meta with our event ──────────────────────────────
-	// SorobanTransactionMeta.ReturnValue is an ScVal (not a pointer)
-	// — its zero value marshals as ScVal{Type:0 = ScvBool} with
-	// B=nil, which nil-derefs inside EncodeTo. Force it to ScvVoid
-	// so the encoder has a valid arm with no payload.
+	// Tx meta with our event. SorobanTransactionMeta.ReturnValue is a non-pointer ScVal whose zero value (ScvBool, B=nil) nil-
+	// derefs in EncodeTo; force ScvVoid so the encoder has a valid arm.
 	meta := xdr.TransactionMeta{
 		V: 3,
 		V3: &xdr.TransactionMetaV3{
@@ -2136,12 +1927,9 @@ func seedSorobanLedger(
 	}
 }
 
-// ─── band-specific fixture helpers ──────────────────────────────
-// Band's Stellar contract emits NO events — it's purely observed
-// via the InvokeContract op args (the dispatcher's ContractCallDecoder
-// path). This helper seeds a ledger whose Soroban tx invokes
-// `StandardReference.relay(from, symbol_rates, resolve_time,
-// request_id)` with the given arg payload and no emitted events.
+// Band-specific helpers: Band's contract emits NO events and is observed only via InvokeContract args (ContractCallDecoder
+// path). This seeds a ledger whose Soroban tx invokes StandardReference.relay(from, symbol_rates, resolve_time,
+// request_id) with no events.
 
 // bandRate is one (symbol, u64_rate_at_E9) pair — mirrors the
 // Vec<(Symbol, u64)> shape of Band's symbol_rates arg.
@@ -2150,11 +1938,8 @@ type bandRate struct {
 	Rate   uint64
 }
 
-// seedBandRelayLedger writes one ledger containing a single
-// Soroban InvokeHostFunction op that targets Band's
-// StandardReference.relay(from, symbol_rates, resolve_time,
-// request_id). The tx succeeds with zero emitted events — the
-// dispatcher reaches the decoder via the ContractCall path only.
+// seedBandRelayLedger writes one ledger with a single InvokeHostFunction op targeting Band's relay(); the tx succeeds with
+// zero events, so the dispatcher reaches the decoder via the ContractCall path only.
 func seedBandRelayLedger(
 	t *testing.T,
 	ctx context.Context,
@@ -2347,15 +2132,8 @@ func seedBandRelayLedger(
 
 // ─── comet-specific fixture helpers ─────────────────────────────
 
-// buildCometSwapEvent assembles a Comet POOL.swap ContractEvent:
-//
-//	topic  = (Symbol("POOL"), Symbol("swap"))
-//	body   = Map { "caller": Address, "token_in": Address,
-//	               "token_out": Address, "token_amount_in": i128,
-//	               "token_amount_out": i128 }
-//
-// Mirrors the contract's `env.events().publish((POOL, swap), event)`
-// call at comet-contracts/contracts/src/c_pool/call_logic/pool.rs:191.
+// buildCometSwapEvent assembles a Comet POOL.swap event: topic (POOL, swap), body Map {caller, token_in, token_out,
+// token_amount_in, token_amount_out}, mirroring the contract's publish call (c_pool/call_logic/pool.rs:191).
 func buildCometSwapEvent(
 	t *testing.T,
 	poolContractID xdr.ContractId,
@@ -2443,19 +2221,11 @@ func bigIntToI128ScVal(t *testing.T, n *big.Int) xdr.ScVal {
 	return xdr.ScVal{Type: xdr.ScValTypeScvI128, I128: &p}
 }
 
-// ─── redstone-specific fixture helpers ──────────────────────────
-// Mirrors the Reflector helpers above but targets the RedStone
-// Adapter's WritePrices shape (single REDSTONE topic, Map body with
-// updater + updated_feeds, plus InvokeContract op args carrying the
-// feed_ids list). These prove the OpArgs plumbing end-to-end.
+// Redstone helpers, like the Reflector ones, for the Adapter's WritePrices shape (REDSTONE topic, Map body with updater +
+// updated_feeds, plus InvokeContract op args carrying feed_ids); they prove the OpArgs plumbing end to end.
 
-// buildRedstoneWritePricesEvent constructs the RedStone Adapter's
-// WritePrices event body:
-//
-//	topic[0] = Symbol("REDSTONE")
-//	body     = Map { "updater": Address, "updated_feeds": Vec<PriceData> }
-//	PriceData = Map { "price": U256, "package_timestamp": u64,
-//	                  "write_timestamp": u64 }
+// buildRedstoneWritePricesEvent builds the WritePrices event: topic Symbol("REDSTONE"), body Map {updater: Address,
+// updated_feeds: Vec<PriceData>}, PriceData = Map {price: U256, package_timestamp: u64, write_timestamp: u64}.
 func buildRedstoneWritePricesEvent(
 	t *testing.T,
 	contractID xdr.ContractId,
@@ -2545,10 +2315,8 @@ func accountStrkeyToAddressScVal(t *testing.T, gStrkey string) xdr.ScVal {
 	return xdr.ScVal{Type: xdr.ScValTypeScvAddress, Address: &addr}
 }
 
-// bigIntToU256ScVal splits a non-negative *big.Int into four uint64
-// words and wraps into ScVal::U256. Mirrors the redstone package-
-// level helper so the integration test doesn't import from the
-// _test.go file.
+// bigIntToU256ScVal splits a non-negative *big.Int into four uint64 words as ScVal::U256 (mirrors the redstone package
+// helper, avoiding an import from its _test.go).
 func bigIntToU256ScVal(t *testing.T, n *big.Int) xdr.ScVal {
 	t.Helper()
 	if n.Sign() < 0 {
@@ -2576,18 +2344,9 @@ func bigIntToU256ScVal(t *testing.T, n *big.Int) xdr.ScVal {
 	return xdr.ScVal{Type: xdr.ScValTypeScvU256, U256: &parts}
 }
 
-// seedRedstoneLedger writes a single ledger containing one Soroban
-// transaction that:
-//
-//  1. Invokes the RedStone Adapter's write_prices(updater, feed_ids,
-//     payload) function — the op args the dispatcher plumbs through
-//     to the decoder as events.Event.OpArgs.
-//  2. Emits one REDSTONE contract event whose body matches the
-//     write_prices call (same updater, same feed count).
-//
-// This is the paired envelope+meta shape a real adapter tx produces
-// on mainnet. The dispatcher's hash-matching + OpArgs extraction are
-// exactly what's being exercised here.
+// seedRedstoneLedger writes one ledger with one Soroban tx that (1) invokes write_prices(updater, feed_ids, payload),
+// whose op args the dispatcher plumbs to the decoder as events.Event.OpArgs, and (2) emits one REDSTONE event matching it
+// (same updater, feed count): the real adapter tx shape.
 func seedRedstoneLedger(
 	t *testing.T,
 	ctx context.Context,
@@ -2686,11 +2445,8 @@ func seedRedstoneLedger(
 		t.Fatalf("hash envelope: %v", err)
 	}
 
-	// ─── tx result: TxSuccess + one (stub) InvokeHostFunctionResult ──
-	// The dispatcher's classic-op walk iterates operations paired
-	// with op results. We include exactly one result matching the
-	// envelope's one op — success with empty sub-value so no
-	// op-decoder consumes it (we registered none).
+	// Tx result: TxSuccess with one stub InvokeHostFunctionResult paired with the envelope's one op; no op-decoder consumes it
+	// (none registered).
 	invokeRes := xdr.InvokeHostFunctionResult{
 		Code: xdr.InvokeHostFunctionResultCodeInvokeHostFunctionSuccess,
 		// Success arm: Hash of the return value. Zero hash is fine —

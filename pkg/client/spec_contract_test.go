@@ -39,19 +39,15 @@ import (
 //     `data`, so a new envelope member or flag could ship in the spec
 //     with no SDK field to land in; the walk in (4) covers it.
 
-// coveredOperation maps one SDK method to the spec operation it
-// calls. payload is the struct the envelope's `data` decodes into —
-// the ELEMENT type when data is an array. nil payload skips the
-// schema check (non-struct payloads, 204 responses).
+// coveredOperation maps one SDK method to the spec operation it calls; payload is the struct `data` decodes into (the
+// ELEMENT type for arrays). A nil payload skips the schema check (non-struct payloads, 204 responses).
 type coveredOperation struct {
 	sdkMethod string
 	method    string
 	path      string // spec path template, without the /v1 prefix
 	payload   any
-	// envelopeRef disambiguates operations whose 200 response is a
-	// oneOf of several envelopes (e.g. /ohlc single-bar vs series,
-	// the dual-shape /assets/{asset_id}): the named component is
-	// the branch this SDK method's payload maps to.
+	// envelopeRef picks the oneOf branch for operations whose 200 response has several envelopes (e.g. /ohlc single-bar vs
+	// series, /assets/{asset_id}); it names the branch this SDK method maps to.
 	envelopeRef string
 }
 
@@ -71,17 +67,9 @@ var coveredOperations = []coveredOperation{
 	{"VWAP", "GET", "/vwap", VWAPResult{}, ""},
 	{"TWAP", "GET", "/twap", TWAPResult{}, ""},
 	{"Assets", "GET", "/assets", AssetDetail{}, ""},
-	// payload: nil — Asset() returns AssetLookup (ADR-0042), a
-	// hand-written dual-shape union with custom UnmarshalJSON/
-	// MarshalJSON, not a struct with static JSON tags the generic
-	// reflection check (jsonTags) can walk. The seen[key] de-dupe in
-	// TestSDKSchemasMatchSpec is also keyed by method+path alone, so a
-	// second entry here for the GlobalAssetEnvelope branch would
-	// silently no-op rather than add coverage. Both branches are
-	// exercised directly instead by TestAssetLookup_UnmarshalJSON_BothBranches
-	// (asset_lookup_test.go), which decodes real kind:"stellar_asset"
-	// and kind:"catalogue" fixtures and asserts every field the two
-	// spec schemas (Asset, GlobalAssetView) document round-trips.
+	// payload is nil: Asset() returns AssetLookup (ADR-0042), a hand-written dual-shape union with custom (Un)MarshalJSON,
+	// which the jsonTags reflection check cannot walk. seen[key] is keyed by method+path, so a second entry would no-op;
+	// TestAssetLookup_UnmarshalJSON_BothBranches covers both branches with real fixtures instead.
 	{sdkMethod: "Asset", method: "GET", path: "/assets/{asset_id}", payload: nil, envelopeRef: "#/components/schemas/AssetEnvelope"},
 	{"AssetMetadata", "GET", "/assets/{asset_id}/metadata", AssetMetadata{}, ""},
 	{"AssetSupplyFlows", "GET", "/assets/{asset_id}/supply/flows", AssetSupplyFlows{}, ""},
@@ -114,10 +102,8 @@ var coveredOperations = []coveredOperation{
 	{"Version", "GET", "/version", Version{}, ""},
 }
 
-// uncoveredOperations is the conscious-decision register: spec
-// operations the SDK deliberately does not cover, each with the
-// reason. Adding an endpoint to the spec without either an SDK
-// method or an entry here fails TestSDKCoversSpec.
+// uncoveredOperations is the register of spec operations the SDK deliberately skips, each with a reason; a spec endpoint
+// with neither an SDK method nor an entry here fails TestSDKCoversSpec.
 var uncoveredOperations = map[string]string{
 	"GET /stablecoins": "new surface; SDK method deferred until a customer asks",
 
@@ -255,11 +241,8 @@ var uncoveredOperations = map[string]string{
 // from the bidirectional property check, keyed "METHOD /path" →
 // field → reason. Keep this SHORT — every entry is live drift debt.
 var schemaExceptions = map[string]map[string]string{
-	// The SDK's Health type is shared by Healthz and Readyz; the
-	// handler serves the same struct on both routes but `checks`
-	// only populates on /readyz (omitempty hides it on /healthz),
-	// and the /healthz spec schema documents the served-on-this-
-	// route fields only.
+	// Health is shared by Healthz and Readyz; `checks` is populated only on /readyz (omitempty hides it on /healthz), and
+	// the /healthz spec schema documents only the fields served on that route.
 	"GET /healthz": {"checks": "shared Health type; checks populates only on /readyz"},
 }
 
@@ -410,12 +393,8 @@ func mergeSchema(doc map[string]any, schema map[string]any) map[string]any {
 	return out
 }
 
-// dataSchemaProps resolves an operation's 200/201-response envelope
-// and returns the property names of its `data` payload — the element
-// schema when data is an array. envelopeRef, when non-empty,
-// overrides resolution for oneOf responses by naming the branch.
-// Second return distinguishes "no object properties to check"
-// (false) from a real property set.
+// dataSchemaProps returns the property names of an operation's 200/201 `data` payload (element schema for arrays).
+// envelopeRef overrides resolution for oneOf; the second return is false when there are no object properties to check.
 func dataSchemaProps(t *testing.T, doc map[string]any, method, path, envelopeRef string) (map[string]bool, bool) {
 	t.Helper()
 	data := dataSchema(t, doc, method, path, envelopeRef)
@@ -509,11 +488,9 @@ func jsonTags(typ reflect.Type) map[string]bool {
 	return out
 }
 
-// TestSDKSchemasMatchSpec — for each covered operation with a struct
-// payload, the spec's data schema and the Go type must match at every
-// depth (modulo the explicit exceptions map): the same field names in
-// both directions, a Go kind that decodes the spec's type, and no
-// `omitempty` on a spec-required field. See [schemaWalker].
+// For each covered operation with a struct payload, the spec's data schema and the Go type must match at every depth.
+// Same field names both ways, a Go kind that decodes the spec's type, no `omitempty` on required fields; exceptions are
+// explicit.
 func TestSDKSchemasMatchSpec(t *testing.T) {
 	doc := loadSpec(t)
 	seen := map[string]bool{}
@@ -542,11 +519,8 @@ func TestSDKSchemasMatchSpec(t *testing.T) {
 	}
 }
 
-// schemaWalker diffs a spec schema against the Go type the SDK decodes
-// it into, recursing through nested objects, array items and
-// additionalProperties maps. A top-level-only name comparison let
-// nested served fields go missing and would pass a money
-// string→float64 regression.
+// schemaWalker diffs a spec schema against the Go type, recursing through objects, array items and additionalProperties.
+// A top-level-only comparison would miss nested fields and pass a money string->float64 regression.
 type schemaWalker struct {
 	doc   map[string]any
 	exc   map[string]string // JSON path → reason, from schemaExceptions
@@ -736,26 +710,9 @@ func (w *schemaWalker) walkStruct(s map[string]any, typ reflect.Type, path strin
 	}
 }
 
-// TestCoveredOperationsBindToRealMethods ties coveredOperations to the code it claims to
-// describe.
-//
-// TestSDKCoversSpec reconciles the TABLE against the OpenAPI spec, so
-// it catches an endpoint the SDK forgot. It cannot catch the table
-// drifting from the SDK: rename a Client method, or delete one, and
-// the table keeps naming the old identifier while the reconciliation
-// stays green — declared-but-not-enforced, the same shape as the rest
-// of that finding's unit.
-//
-// This binds it in both directions:
-//
-//   - every `sdkMethod` in the table must resolve on *Client, so a
-//     rename or deletion fails here rather than rotting silently;
-//   - every exported *Client method must appear in the table or in the
-//     explicit exemption set below, so a NEW method cannot be added
-//     without deciding whether it is a spec operation.
-//
-// The second direction is the load-bearing one. Without it the table
-// only ever describes the subset someone remembered to add to it.
+// TestCoveredOperationsBindToRealMethods: TestSDKCoversSpec misses a renamed or deleted Client method. Every table
+// sdkMethod must resolve on *Client, and every exported *Client method must be in the table or the exemption set, so new
+// methods force a spec decision.
 func TestCoveredOperationsBindToRealMethods(t *testing.T) {
 	t.Parallel()
 
@@ -819,12 +776,9 @@ func TestCoveredOperationsBindToRealMethods(t *testing.T) {
 
 // ─── Envelope + Flags reconciliation ────────────────────────────────
 
-// envelopeMetaRef names the component every 2xx envelope in the spec
-// composes through allOf. The per-operation envelopes add `data` and,
-// on list surfaces, `pagination` as allOf siblings, so the generic
-// wire shape is EnvelopeMeta's own properties plus the union of every
-// composer's siblings — and that union is what Envelope[T] has to
-// carry, because the SDK decodes every operation through it.
+// envelopeMetaRef names the component every 2xx envelope composes through allOf; operations add `data` and `pagination`
+// as siblings. Envelope[T] must carry EnvelopeMeta's properties plus the union of those siblings, as the SDK decodes
+// every operation through it.
 const envelopeMetaRef = "#/components/schemas/EnvelopeMeta"
 
 // composesEnvelopeMeta reports whether schema is an allOf whose parts
@@ -840,13 +794,9 @@ func composesEnvelopeMeta(schema map[string]any) bool {
 	return false
 }
 
-// specEnvelopeProps walks every schema that composes EnvelopeMeta —
-// the named components and the inline response schemas under
-// `paths`, including oneOf branches — and returns the union of their
-// top-level property names, each mapped to the sorted places that
-// declare it. The walk is what gives the check its reach: a member
-// added on one operation's inline response is as much a change to
-// the generic envelope as one added to EnvelopeMeta itself.
+// specEnvelopeProps walks every schema composing EnvelopeMeta (components, inline responses, oneOf branches) and returns
+// the union of top-level property names with the sorted places declaring each; a member on one inline response changes
+// the generic envelope too.
 func specEnvelopeProps(t *testing.T, doc map[string]any) map[string][]string {
 	t.Helper()
 	meta := resolveRef(doc, envelopeMetaRef)
@@ -928,10 +878,8 @@ func specEnvelopeProps(t *testing.T, doc map[string]any) map[string][]string {
 	return out
 }
 
-// specFlagsProps resolves the Flags object the way a consumer meets
-// it — through EnvelopeMeta.properties.flags — whether that is a $ref
-// to a named component or an inline object, and returns its property
-// names.
+// specFlagsProps resolves the Flags object via EnvelopeMeta.properties.flags, whether a $ref or inline, and returns its
+// property names.
 func specFlagsProps(t *testing.T, doc map[string]any) map[string]bool {
 	t.Helper()
 	meta := resolveRef(doc, envelopeMetaRef)
@@ -966,11 +914,9 @@ func describeOrigins(where []string) string {
 	return fmt.Sprintf("%s, +%d more", strings.Join(where[:shown], ", "), len(where)-shown)
 }
 
-// TestSDKEnvelopeMatchesSpec — the generic Envelope[T] must carry
-// exactly the top-level members the spec's envelopes declare, in
-// both directions. A spec member with no SDK field is silently
-// dropped by the decoder for every operation at once; an SDK field
-// no envelope documents is a wire shape the server never sends.
+// TestSDKEnvelopeMatchesSpec: Envelope[T] must carry exactly the top-level members the spec envelopes declare, both
+// ways. A spec member with no SDK field is silently dropped for every operation; an undocumented SDK field is a wire
+// shape never sent.
 func TestSDKEnvelopeMatchesSpec(t *testing.T) {
 	doc := loadSpec(t)
 	specProps := specEnvelopeProps(t, doc)
@@ -997,11 +943,8 @@ func TestSDKEnvelopeMatchesSpec(t *testing.T) {
 	}
 }
 
-// TestSDKFlagsMatchSpec — the advisory Flags object must match the
-// spec's Flags schema property-for-property, in both directions. The
-// decoder ignores unknown fields, so a flag the spec adds and the
-// SDK lacks is not an error at runtime — it is a signal consumers
-// can never read, which is exactly the drift this pins.
+// TestSDKFlagsMatchSpec: the advisory Flags object must match the spec's Flags schema property-for-property, both ways.
+// The decoder ignores unknown fields, so a missing SDK flag is a signal consumers can never read, not a runtime error.
 func TestSDKFlagsMatchSpec(t *testing.T) {
 	doc := loadSpec(t)
 	specProps := specFlagsProps(t, doc)
@@ -1028,12 +971,8 @@ func TestSDKFlagsMatchSpec(t *testing.T) {
 	}
 }
 
-// TestSpecEnvelopeWalkSeesEveryComposer pins the walk behind
-// TestSDKEnvelopeMatchesSpec and TestSDKFlagsMatchSpec to a synthetic
-// document. Against the real spec a walk that skipped inline
-// responses, oneOf branches, or an inline Flags object passes exactly
-// like one that covered them, because nothing is drifting there
-// today; this is the run that tells the two apart.
+// Pins the envelope/flags walk to a synthetic document: against the real spec, a walk that skips inline responses,
+// oneOf branches or inline Flags passes like a full one, since nothing drifts there today.
 func TestSpecEnvelopeWalkSeesEveryComposer(t *testing.T) {
 	str := map[string]any{"type": "string"}
 	obj := func(props ...string) map[string]any {
@@ -1092,14 +1031,9 @@ func TestSpecEnvelopeWalkSeesEveryComposer(t *testing.T) {
 	}
 }
 
-// TestProblemJSONMatchesSpec is the error-path twin of
-// TestSDKSchemasMatchSpec. The `data` walk above never reaches the
-// spec's `Problem` schema — it is a response body, not an envelope —
-// so an extension member added to the server's problem type and to
-// the spec could be missing from problemJSON with every other gate
-// green. Bidirectional: a member in the spec the SDK does not decode
-// is a field consumers cannot read; a tag in the SDK the spec does not
-// document is a field consumers cannot trust.
+// TestProblemJSONMatchesSpec is the error-path twin of TestSDKSchemasMatchSpec; the `data` walk never reaches the
+// `Problem` schema. Both ways: a spec member the SDK does not decode is unreadable; an SDK tag the spec omits is
+// untrustworthy.
 func TestProblemJSONMatchesSpec(t *testing.T) {
 	doc := loadSpec(t)
 	comps, _ := doc["components"].(map[string]any)
@@ -1141,11 +1075,9 @@ func TestProblemJSONMatchesSpec(t *testing.T) {
 
 // ─── Request-side reconciliation ────────────────────────────────────
 
-// sdkRequestHeaders maps "SDKMethod Header-Name" to the request-struct
-// field that carries that header. Every `in: header` parameter of a
-// covered operation needs an entry: a header the SDK cannot send is a
-// server requirement no SDK caller can meet (X-Reason on an operator
-// CreateKey 400'd every time).
+// sdkRequestHeaders maps "SDKMethod Header-Name" to the request field carrying it; every `in: header` parameter of a
+// covered operation needs an entry, since a header the SDK cannot send is a server requirement no caller can meet
+// (X-Reason on CreateKey 400'd).
 var sdkRequestHeaders = map[string]struct {
 	req   any
 	field string

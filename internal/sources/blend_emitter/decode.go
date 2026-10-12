@@ -34,11 +34,8 @@ type distributeFields struct {
 	Amount     canonical.Amount
 }
 
-// decodeDistribute decodes a `distribute` body, verified against a real mainnet fixture:
-//
-//	body = Vec[ Address backstop_id, i128 amount ]
-//
-// It is a fixed 2-element bare Vec, so it is decoded positionally.
+// decodeDistribute decodes a `distribute` body (verified against a mainnet fixture): Vec[ Address backstop_id, i128 amount ], a
+// fixed 2-element bare Vec, so decoded positionally.
 func decodeDistribute(e *events.Event) (distributeFields, error) {
 	body, err := scval.Parse(e.Value)
 	if err != nil {
@@ -74,14 +71,9 @@ type dropRecipient struct {
 	Amount    canonical.Amount
 }
 
-// decodeDrop decodes a `drop` body. Two real fixtures (13 and 3 recipients) confirm the outer
-// Vec length is NOT fixed:
-//
-//	body = Vec[ Vec[ Address recipient, i128 amount ], ... ]
-//
-// Each inner element is a fixed 2-element bare Vec, decoded positionally. It returns the full
-// recipient slice for one contract event; storage fans it out per recipient with a
-// recipient_index, since a coarse PK would collapse a multi-row emission.
+// decodeDrop decodes a `drop` body: Vec[ Vec[ Address recipient, i128 amount ], ... ]. The outer Vec length is NOT fixed (fixtures
+// with 13 and 3 recipients); each inner element is a fixed bare Vec, decoded positionally. Storage fans the recipient slice out
+// with a recipient_index, since a coarse PK would collapse a multi-row emission.
 func decodeDrop(e *events.Event) ([]dropRecipient, error) {
 	body, err := scval.Parse(e.Value)
 	if err != nil {
@@ -128,13 +120,8 @@ type swapConfigFields struct {
 	UnlockTime       uint64 // Unix seconds; the timelock q_swap queues against
 }
 
-// decodeSwapConfig decodes a `q_swap` or `swap` event body:
-//
-//	body = Map{ new_backstop: Address, new_backstop_token: Address,
-//	            unlock_time: u64 }
-//
-// Decode-by-Map-field-name per docs/architecture/ingest-pipeline.md
-// §Contract schema evolution — resilient to a future WASM upgrade adding fields.
+// decodeSwapConfig decodes a `q_swap` or `swap` event body, Map{ new_backstop, new_backstop_token: Address, unlock_time: u64 }, by
+// Map field name (docs/architecture/ingest-pipeline.md#contract-schema-evolution), resilient to WASM upgrades adding fields.
 func decodeSwapConfig(e *events.Event) (swapConfigFields, error) {
 	body, err := scval.Parse(e.Value)
 	if err != nil {

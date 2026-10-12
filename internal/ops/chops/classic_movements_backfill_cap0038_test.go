@@ -16,11 +16,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// TestResolvePendingClaimableBalances_CAP0038SameWindowCreate pins that a claim against a
-// claimable balance created by CAP-0038 auto-liquidation LATER IN THE SAME WINDOW resolves from
-// that window's own batch rather than "unresolved". The CAP-0038 create bypasses dec.Decode (see
-// classicMovementsHandleCAP0038Op) and never reaches dec's BalanceId index, so
-// classicMovementsResolvePendingClaimableBalances must scan res.batch before counting a miss.
+// TestResolvePendingClaimableBalances_CAP0038SameWindowCreate: a claim against a balance created by CAP-0038 auto-
+// liquidation later in the same window must resolve from that window's batch, not count as unresolved. The create
+// bypasses dec.Decode and its BalanceId index, so the resolver must scan res.batch before counting a miss.
 func TestResolvePendingClaimableBalances_CAP0038SameWindowCreate(t *testing.T) {
 	// A claim against a balance_id the Decoder has never seen, via the real Decode() so the
 	// pending ref and its balance_id hex are computed as production does, not hand-built.
@@ -57,10 +55,8 @@ func TestResolvePendingClaimableBalances_CAP0038SameWindowCreate(t *testing.T) {
 		t.Fatalf("Decode(claim) produced %d movements, want 0 (must be pending, not resolved yet)", len(outs))
 	}
 
-	// res.batch already holds this window's CAP-0038-created balance —
-	// built the way classicMovementsHandleCAP0038Op builds it (straight
-	// from classicmovements.DecodeCAP0038Revocation's output), keyed on
-	// the SAME balance_id the claim above references.
+	// res.batch already holds this window's CAP-0038-created balance, built as classicMovementsHandleCAP0038Op builds it
+	// (from classicmovements.DecodeCAP0038Revocation's output), keyed on the same balance_id the claim references.
 	res := &windowResult{
 		windowCounts: map[classicmovements.Kind]int64{},
 		batch: []clickhouse.AccountMovement{

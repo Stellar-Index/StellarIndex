@@ -9,10 +9,9 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// participantLake is one account's stellar.operation_participants rows plus
-// the failed transactions among them. It honours the participant reads'
-// cursor and LIMIT and answers a visibility lookup only for the keys it was
-// sent, so participantKeys' paging and chunking run for real.
+// participantLake is one account's stellar.operation_participants rows plus the failed transactions among
+// them. It honours the reads' cursor and LIMIT and answers visibility lookups only for keys sent, so
+// participantKeys' paging and chunking run for real.
 type participantLake struct {
 	driver.Conn
 	rows    []accountOpKey // newest first; a key may repeat (un-merged parts)
@@ -91,10 +90,8 @@ func walkParticipantKeys(t *testing.T, lake *participantLake, limit int) (got []
 	}
 }
 
-// TestParticipantKeys_ExactPastFailedTxs walks the participant arm page by
-// page and requires exactly the visible keys, in order, with every page but
-// the last full: a failed tx must neither appear nor shorten a page (a short
-// page reads as end of history), even when a whole window is failed.
+// TestParticipantKeys_ExactPastFailedTxs walks the participant arm page by page and requires exactly the
+// visible keys in order, every page but the last full: a failed tx must not appear or shorten a page.
 func TestParticipantKeys_ExactPastFailedTxs(t *testing.T) {
 	lake := &participantLake{failed: map[accountTxKey]bool{}}
 	var want []accountOpKey
@@ -130,10 +127,9 @@ func TestParticipantKeys_ExactPastFailedTxs(t *testing.T) {
 	}
 }
 
-// A run of planted failed txs too long for one request's budget ends the
-// page short at a scan frontier; paging on from the frontier visits every
-// key exactly once and returns exactly the visible ones. Lookups stay chunked
-// at a fixed size, independent of the limit and the free slots.
+// A run of failed txs too long for one request's budget ends the page short at a scan frontier; paging on
+// from it visits every key exactly once and returns exactly the visible ones. Lookups stay chunked at a
+// fixed size.
 func TestParticipantKeys_BudgetEndsPageAtFrontier(t *testing.T) {
 	const (
 		limit  = 50

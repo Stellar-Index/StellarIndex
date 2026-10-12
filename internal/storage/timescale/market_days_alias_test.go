@@ -11,10 +11,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// TestMarketDayFamilies_BindsSACSpellingOntoMember pins the
-// key half: the SAC spelling of a requested classic asset is bound and
-// folds onto that classic member, and a requested spelling always keeps
-// itself even when it is also an alias of an earlier request.
+// TestMarketDayFamilies_BindsSACSpellingOntoMember pins the key half: a requested classic asset's SAC
+// spelling is bound and folds onto that member, and a requested spelling keeps itself even if an earlier
+// request aliases it.
 func TestMarketDayFamilies_BindsSACSpellingOntoMember(t *testing.T) {
 	const (
 		issuerAccount   = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"

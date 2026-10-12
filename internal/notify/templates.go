@@ -90,10 +90,8 @@ func firstUAMatch(ua string, families []struct{ marker, name string }) string {
 
 const magicLinkSubject = "Sign in to Stellar Index"
 
-// renderMagicLink produces the HTML + plaintext bodies for the
-// login email. Two-template approach (one html, one text)
-// keeps the markup auditable; we don't try to derive one from
-// the other.
+// renderMagicLink produces the HTML and plaintext bodies for the login email. Two templates keep the markup auditable; one is not
+// derived from the other.
 func renderMagicLink(in MagicLinkInput) (htmlBody, textBody string, err error) {
 	htmlTmpl, err := template.New("magic_link.html").Parse(magicLinkHTMLTemplate)
 	if err != nil {
@@ -130,10 +128,8 @@ func MagicLinkMessage(from, recipient string, in MagicLinkInput) (Message, error
 	}, nil
 }
 
-// HTML template — minimal markup for broad client compatibility.
-// Inline-styled because most email clients strip <style> tags;
-// table-based layout because Outlook on Windows still renders
-// CSS-flexbox poorly.
+// HTML template: minimal markup for broad client compatibility. Inline-styled because most email clients strip <style>;
+// table-based layout because Outlook on Windows renders CSS-flexbox poorly.
 const magicLinkHTMLTemplate = `<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"></head>

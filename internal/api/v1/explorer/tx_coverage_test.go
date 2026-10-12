@@ -17,10 +17,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// txCoverageReader is a TransactionByHash-found ExplorerReader whose per-op
-// result-code and contract-event sub-reads can be made to error independently,
-// so TxDetail runs its non-fatal-degrade path (tx.go). Everything else returns
-// harmless zero values (embedded capReader).
+// txCoverageReader is an ExplorerReader whose TransactionByHash succeeds and whose per-op result-code and contract-event
+// sub-reads can error independently, driving TxDetail's non-fatal degrade path; the rest returns zero values.
 type txCoverageReader struct {
 	*capReader
 	resultsErr error
@@ -49,10 +47,8 @@ func (r *txCoverageReader) EventsByTx(context.Context, uint32, string) ([]clickh
 	return nil, nil
 }
 
-// txDetailBody drives TxDetail against a txCoverageReader and returns the
-// marshalled wire body. It captures the JSON bytes (not the Go struct) so the
-// assertion is on the WIRE CONTRACT — the exact surface coverage_note is about — and
-// stays valid whether or not the response type carries a coverage_note field.
+// Drives TxDetail against a txCoverageReader and returns the marshalled body, so assertions are on the wire contract
+// (what coverage_note describes) whether or not the response type carries a coverage_note field.
 func txDetailBody(t *testing.T, resultsErr, eventsErr error) map[string]any {
 	t.Helper()
 	var captured []byte
@@ -286,13 +282,9 @@ func TestTxDetail_FeeBumpByInnerHash(t *testing.T) {
 	}
 }
 
-// TestTxDetail_SubReadDeadlineIs503NotAPartial202OK pins the boundary between the two meanings of
-// a failed sub-read on /v1/tx/{hash}.
-//
-// A plain read failure is non-fatal: serve the transaction without per-op result codes or events
-// and say so in coverage_note. A blown DEADLINE is not: the budget belongs to the whole request,
-// so every remaining sub-read is doomed, and a "partial" 200 built from failures would claim the
-// transaction emitted no events. The truthful answer is "retry" (503), matching the fatal reads.
+// Pins the two meanings of a failed sub-read on /v1/tx/{hash}. A plain failure is non-fatal: serve the transaction
+// without per-op result codes or events and say so in coverage_note. A blown deadline is not: the budget is request-
+// wide, so every remaining sub-read is doomed and a partial 200 would claim no events; the truthful answer is 503 retry.
 func TestTxDetail_SubReadDeadlineIs503NotAPartial200OK(t *testing.T) {
 	cases := map[string]struct{ resultsErr, eventsErr error }{
 		"result-code read hits the deadline": {context.DeadlineExceeded, nil},

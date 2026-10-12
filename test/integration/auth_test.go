@@ -331,13 +331,9 @@ func openDB(t *testing.T, dsn string) *sql.DB {
 	return db
 }
 
-// TestAPIRoleGrants_ReadEverythingWriteOnlyPlatform follows production's
-// order: migrations run before the role exists, then ansible creates the
-// role and calls apply_api_role_grants() as a superuser. The role must read
-// every table (a compressed hypertable chunk and a CAGG included), write only
-// apiWritableTables, and be refused 42501 on any write to chain or projected
-// data, on TRUNCATE and on DDL. A table a later migration creates is
-// readable and not writable.
+// Follows production order: migrations, then the role is created and apply_api_role_grants() runs as superuser. The role
+// reads every table (compressed chunks and CAGGs included), writes only apiWritableTables, gets 42501 on chain data,
+// TRUNCATE and DDL; tables created later are readable, not writable.
 func TestAPIRoleGrants_ReadEverythingWriteOnlyPlatform(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -607,20 +603,9 @@ func requireInsufficientPrivilege(t *testing.T, ctx context.Context, db *sql.DB,
 	}
 }
 
-// The store half of the durable per-email
-// code-guess lockout (migration 0122).
-//
-// The handler half lives in
-// internal/api/v1/dashboardauth/login_lockout_test.go and proves the policy:
-// a token re-mint no longer hands out a fresh guess budget. This proves the
-// three things only a real database can:
-//
-//  1. the counter is DURABLE — it is a row, not a Redis key with a TTL, so a
-//     cache flush cannot clear it (which is the entire finding);
-//  2. the UPSERT is atomic under concurrency — parallel wrong guesses for one
-//     address cannot both read n and both write n+1, which would let a
-//     parallel grinder run past the cap;
-//  3. the window/lock arithmetic is Postgres', not Go's.
+// Store half of the durable per-email code-guess lockout (migration 0122); the policy half is in dashboardauth. A real
+// database proves the counter is DURABLE (a row, not a flushable Redis key), the UPSERT is atomic under concurrent wrong
+// guesses, and the window/lock arithmetic is Postgres', not Go's.
 func TestLoginCodeLockout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -801,18 +786,9 @@ func TestLoginCodeLockout(t *testing.T) {
 		}
 	})
 
-	// ── Retention sweep ──
-	//
-	// `login_code_lockouts.email` is ATTACKER-CHOSEN: POST
-	// /v1/auth/verify-code is unauthenticated and accepts any well-formed
-	// address, so one wrong guess against a synthetic address inserts a
-	// row that ClearLoginCodeLockout can never remove (nobody can sign in
-	// as an address that does not exist). Bounded only by the anonymous
-	// rate limit, that is a slow remote table-fill on a disk-fixed host.
-	//
-	// The sweep is what bounds it — and the predicate has to be exactly
-	// right in both directions: reap settled rows, never touch a live
-	// lock.
+	// Retention sweep. login_code_lockouts.email is ATTACKER-CHOSEN (unauthenticated verify-code takes any address) and rows
+	// for nonexistent addresses can never be cleared, so only the sweep bounds the table: it must reap settled rows and never
+	// touch a live lock.
 	t.Run("SweepReapsSettledRowsOnly", func(t *testing.T) {
 		const retention = 48 * time.Hour
 		type fixture struct {
@@ -949,15 +925,8 @@ func TestLoginCodeLockout(t *testing.T) {
 	})
 }
 
-// TestAPI_EndToEnd is the first integration test that proves the
-// HTTP query path works end-to-end:
-//
-//	Timescale → Store.TradesInRange → v1.HistoryReader adapter
-//	  → /v1/history + /v1/vwap + /v1/ohlc + /v1/markets handlers
-//
-// Catches regressions where unit-test stubs mask real storage /
-// schema / adapter drift. Builds the same stack the stellarindex-api
-// binary builds (minus Redis, rate limit, SEP-1 metadata).
+// End-to-end HTTP query path: Timescale -> Store.TradesInRange -> v1.HistoryReader -> /v1/history, /vwap, /ohlc, /markets.
+// Builds the stellarindex-api stack minus Redis, rate limit and SEP-1 metadata, to catch drift unit stubs mask.
 func TestAPI_EndToEnd(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -993,11 +962,8 @@ func TestAPI_EndToEnd(t *testing.T) {
 		}
 	}
 
-	// Force-refresh the CAGGs /v1/markets reads so it sees the seeded
-	// trades before the 30s policy fires. /v1/markets (DistinctPairs)
-	// enumerates pairs from prices_1d (the right-granularity rewrite)
-	// and reads 24h volume from prices_1m — refresh BOTH, else the market
-	// list is empty even though prices_1m has the rows.
+	// Force-refresh the CAGGs /v1/markets reads before the 30s policy fires: pairs come from prices_1d and 24h volume from
+	// prices_1m, so refresh BOTH or the market list is empty.
 	for _, stmt := range []string{
 		`CALL refresh_continuous_aggregate('prices_1m', NULL, NULL)`,
 		`CALL refresh_continuous_aggregate('prices_1d', NULL, NULL)`,
@@ -1007,10 +973,7 @@ func TestAPI_EndToEnd(t *testing.T) {
 		}
 	}
 
-	// Same force-refresh for pools_per_source_1h (migration 0036 —
-	// the durable backing for /v1/pools). Without this the
-	// AllPools sub-test sees an empty CAGG and returns zero rows for
-	// the seeded trades.
+	// Same force-refresh for pools_per_source_1h (backs /v1/pools); otherwise AllPools sees an empty CAGG.
 	if _, err := store.DB().ExecContext(ctx,
 		`CALL refresh_continuous_aggregate('pools_per_source_1h', NULL, NULL)`,
 	); err != nil {
@@ -1103,11 +1066,8 @@ func TestAPI_EndToEnd(t *testing.T) {
 	})
 
 	t.Run("/v1/history cursor drain", func(t *testing.T) {
-		// Walk the 4 seeded trades with limit=1 to exercise cursor
-		// pagination end-to-end. Must return all 4 in chronological
-		// order with no duplicates and no losses — this is the path
-		// that exercises the full-PK tiebreak (otherwise a page
-		// break mid-ledger could drop a row).
+		// Walk the 4 seeded trades with limit=1: all 4 in chronological order, none duplicated or lost. Exercises the full-PK
+		// tiebreak that stops a mid-ledger page break dropping a row.
 		var collected []v1.TradeRow
 		seenKeys := map[string]bool{}
 		cursor := ""
@@ -1167,12 +1127,8 @@ func TestAPI_EndToEnd(t *testing.T) {
 		}
 	})
 
-	// Separate insert + drain for the "multiple trades share
-	// (ts, ledger)" case. The previous drain test had trades at
-	// distinct (ts, ledger) so the (ts, ledger)-only cursor would
-	// pass — but real pagination across high-volume ledgers needs
-	// the full-PK tiebreak. Seed a mini-cluster and prove no row
-	// is dropped when the page break falls mid-cluster.
+	// Trades sharing (ts, ledger): a (ts, ledger)-only cursor passes on distinct pairs, but high-volume ledgers need the full-
+	// PK tiebreak. No row may drop when the page break falls mid-cluster.
 	t.Run("/v1/history cursor tiebreak — same (ts, ledger)", func(t *testing.T) {
 		sharedTS := t0.Add(45 * time.Minute)
 		for nonce := 10; nonce < 13; nonce++ {
@@ -1234,12 +1190,8 @@ func TestAPI_EndToEnd(t *testing.T) {
 	})
 }
 
-// TestAPI_Readyz stands up the same server with a real Timescale
-// ReadyChecker and asserts /v1/readyz reports `ok` + the check
-// round-trip covers the production Ping path. Before: readyz was
-// only unit-tested with stubs — a regression in
-// timescale.Store.DB().PingContext (e.g. a driver swap) wouldn't
-// be caught here.
+// Real Timescale ReadyChecker: /v1/readyz reports `ok` and round-trips the production Ping path
+// (timescale.Store.DB().PingContext), previously unit-tested only with stubs.
 func TestAPI_Readyz(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1306,11 +1258,8 @@ func (c pgReadyChecker) Name() string                   { return "postgres" }
 func (c pgReadyChecker) Critical() bool                 { return true }
 func (c pgReadyChecker) Ping(ctx context.Context) error { return c.s.DB().PingContext(ctx) }
 
-// TestAPI_OracleLatest stands up the v1 handler against a real
-// Timescale with seeded oracle updates and walks the full path:
-// InsertOracleUpdate → DISTINCT ON SQL → canonical parse round-
-// trip → oracleReadingFrom rendering. Covers the behaviour the
-// unit tests can only stub.
+// Real Timescale with seeded oracle updates, full path: InsertOracleUpdate -> DISTINCT ON SQL -> canonical parse ->
+// oracleReadingFrom rendering.
 func TestAPI_OracleLatest(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1391,14 +1340,8 @@ func TestAPI_OracleLatest(t *testing.T) {
 	}
 }
 
-// TestStorage_LatestAggregatorPricesForPair exercises the
-// reader the `aggregator_avg` price-authority tier consumes.
-// Seeds three observations against (XLM, fiat:USD):
-// coingecko + coinmarketcap (both aggregator-class) and
-// reflector-cex (oracle-class). Asks the reader for aggregator
-// sources only and verifies (a) it returns one row per requested
-// aggregator source, (b) reflector is excluded, (c) the rows are
-// the most-recent observation per source.
+// Reader behind the `aggregator_avg` tier: with coingecko + coinmarketcap (aggregator-class) and reflector-cex (oracle-
+// class) seeded, asking for aggregator sources returns the most recent row per source and excludes reflector.
 func TestStorage_LatestAggregatorPricesForPair(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1575,11 +1518,8 @@ func (r apiHistoryAdapter) TWAPPointsInRange(ctx context.Context, pair c.Pair, g
 	return out, nil
 }
 
-// OHLCSeries is required by v1.HistoryReader. The
-// integration test for /v1/history doesn't exercise this path; the
-// stub returns an empty series so the adapter implements the full
-// interface without dragging in the production-side OHLCSeries
-// re-bucketing logic.
+// Required by v1.HistoryReader but unused by the /v1/history test; returns an empty series instead of pulling in the
+// production re-bucketing logic.
 func (r apiHistoryAdapter) OHLCSeries(_ context.Context, _ c.Pair, _ string, _, _ time.Time, _ int) ([]v1.OHLCSeriesBar, error) {
 	return nil, nil
 }
@@ -1685,10 +1625,7 @@ func (r apiMarketsAdapter) AllPools(ctx context.Context, filter timescale.PoolsF
 	return out, next, nil
 }
 
-// mkAPITrade builds a Trade with a unique TxHash per (ledger, nonce).
-// Reuses the integration-test hex-encoding trick from
-// pg_trades_test.go — keeps trade IDs distinct so the primary key
-// doesn't collide.
+// mkAPITrade builds a Trade with a unique TxHash per (ledger, nonce) so primary keys do not collide.
 func mkAPITrade(nonce int, ts time.Time, pair c.Pair, base, quote int64) c.Trade {
 	h := make([]byte, 64)
 	for i := range h {

@@ -12,10 +12,8 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// gateContractEvent builds one capture-eligible contract event whose
-// topic_0 is a supply-flow symbol ("mint") carrying an i128 amount — so
-// the fixture exercises BOTH the contract_events row and the
-// supply_flows row extractEvents derives from it.
+// gateContractEvent builds one capture-eligible contract event with a supply-flow topic_0 ("mint") and an
+// i128 amount, exercising both the contract_events row and the derived supply_flows row.
 func gateContractEvent(t *testing.T) xdr.ContractEvent {
 	t.Helper()
 	var cid xdr.ContractId
@@ -35,13 +33,9 @@ func gateContractEvent(t *testing.T) xdr.ContractEvent {
 	}
 }
 
-// gateTx builds a meta-V4 LedgerTransaction whose single operation meta
-// carries `ev`, with the transaction result set to success or failure.
-//
-// The fixture is deliberately SYNTHETIC on the failure arm: real stellar-core leaves
-// TransactionMetaV4.Operations nil for a failed tx (see
-// xdr.TransactionMeta.GetContractEventsForOperation's comment, "For a failed transaction,
-// txMeta.Operations slice will be nil"). This pins the EXTRACTOR'S gate, not core's meta shape.
+// gateTx builds a meta-V4 LedgerTransaction whose single operation meta carries `ev`, with the tx result set
+// to success or failure. The failure arm is synthetic (core leaves Operations nil for a failed tx): it pins
+// the extractor's gate.
 func gateTx(t *testing.T, ev xdr.ContractEvent, successful bool) ingest.LedgerTransaction {
 	t.Helper()
 	code := xdr.TransactionResultCodeTxSuccess
@@ -74,11 +68,9 @@ func gateTx(t *testing.T, ev xdr.ContractEvent, successful bool) ingest.LedgerTr
 	}
 }
 
-// TestExtractEvents_OpArgsProvenanceGate pins the lake-side twin of the dispatcher's OpArgs
-// provenance rule: an op's top-level InvokeContract args are stored ONLY on events emitted by the
-// invoked contract itself. Otherwise events from OTHER contracts reached as sub-invocations of a
-// wrapper would carry the wrapper's (attacker-chosen) args in op_args_xdr, which is what
-// Redstone's projector reads feed identity out of.
+// TestExtractEvents_OpArgsProvenanceGate pins that an op's InvokeContract args are stored only on events from
+// the invoked contract itself, so sub-invoked contracts do not carry a wrapper's attacker-chosen args in
+// op_args_xdr.
 func TestExtractEvents_OpArgsProvenanceGate(t *testing.T) {
 	calleeID := xdr.ContractId{0xCA, 0x11}
 	otherID := xdr.ContractId{0x0B, 0x22}
@@ -135,15 +127,9 @@ func TestExtractEvents_OpArgsProvenanceGate(t *testing.T) {
 	}
 }
 
-// TestExtractEvents_TxSuccessGate guards walk parity: extractEvents must gate on tx success like
-// dispatcher.ProcessLedger (skips failed txs before dispatching) and dispatcher.CensusLedger
-// (skips them before counting). Otherwise the lake's soroban_event_count covers a larger
-// population than the census oracle it is reconciled against, and eventRow would stamp
-// `in_successful_call = 1` on rows from failed txs.
-//
-// Asserted on the SAME event, twice: it must land (row + count + supply_flow) when the tx
-// succeeded and produce nothing when it failed. The supply_flows half matters independently: a
-// failed-tx mint reaching the lake would credit tokens the chain never minted.
+// TestExtractEvents_TxSuccessGate: extractEvents must skip failed txs like dispatcher.ProcessLedger and
+// CensusLedger, or soroban_event_count outgrows the census and rows get in_successful_call = 1 wrongly. The
+// same event must land (row, count, supply_flow) on success and produce nothing on failure.
 func TestExtractEvents_TxSuccessGate(t *testing.T) {
 	ev := gateContractEvent(t)
 	closeTime := time.Unix(1_700_000_000, 0).UTC()

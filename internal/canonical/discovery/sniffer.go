@@ -107,10 +107,8 @@ func parseTopic0Symbol(ev events.Event) (string, bool) {
 	return sym, true
 }
 
-// classifySymbol maps an SCVal symbol string to its [SEP41EventType].
-// Returns ok=false for symbols that aren't SEP-41 events (e.g. the
-// many DEX-specific symbols this repo also routes — `swap`, `sync`,
-// `deposit`, `withdraw`, etc.).
+// classifySymbol maps an SCVal symbol string to its [SEP41EventType]; ok=false for non-SEP-41 symbols (the DEX-specific `swap`,
+// `sync`, `deposit`, `withdraw`, etc. this repo also routes).
 func classifySymbol(sym string) (SEP41EventType, bool) {
 	switch sym {
 	case "transfer":

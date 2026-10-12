@@ -17,11 +17,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// rwa_curated_directory (migration 0161) census through real Timescale.
-// The curated arm serves only contract rows, so the census must split the
-// recognised population by address form or the classic rows it leaves
-// out vanish from the response. The fixture includes a classic code that
-// begins with C, which a `LIKE 'C%'` contract test would misfile.
+// rwa_curated_directory (migration 0161) census: the curated arm serves only contract rows, so the census must split by
+// address form or the classic rows vanish. The fixture has a classic code starting with C, which a `LIKE 'C%'` test
+// misfiles.
 func TestCuratedRWADirectory_CensusSplitsAddressForms(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -84,20 +82,7 @@ func TestCuratedRWADirectory_CensusSplitsAddressForms(t *testing.T) {
 	}
 }
 
-// curated_rwa_published_series (migration 0162) through real Timescale:
-// the sync's replace-per-series transaction and the reader that serves
-// the curator's latest published total, its split and the whole series.
-//
-// What only a database can prove here:
-//
-//  1. REPLACE is per series and whole: a second run's total series
-//     evicts every month the first run wrote, including months the
-//     second run no longer prints, while a series the run did NOT name
-//     is left exactly as it was.
-//  2. The reader's recognition bound is in the SQL: rows whose
-//     observed_at is past 48h are an absence, not a stale figure.
-//  3. NUMERIC round-trip: the curator's printed decimal comes back as the
-//     same literal (ADR-0003), and `date` comes back as the same day.
+// curated_rwa_published_series (migration 0162): the replace-per-series sync and its reader. Only a database proves: 1.
 func TestCuratedRWAPublished_ReplacePerSeriesAndRead(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -181,11 +166,8 @@ func TestCuratedRWAPublished_ReplacePerSeriesAndRead(t *testing.T) {
 		t.Errorf("split = %+v, want the LATEST month's two rows largest first", got.BySubclass)
 	}
 
-	// ── run 2: the total series alone, one month dropped, one added ──
-	// A replace is per series and whole: July must be gone from the
-	// total series (the curator no longer prints it), September must be
-	// present, and the split series — not named by this run — must be
-	// exactly what run 1 wrote.
+	// Run 2, the total series alone, one month dropped and one added: July must be gone from the total series, September
+	// present, and the split series (not named by this run) exactly what run 1 wrote.
 	if _, err := store.ReplaceCuratedRWAPublished(ctx, curator, []timescale.CuratedRWAPublishedRow{
 		total(month(2025, 8, 31), "4004795860.00"),
 		total(month(2025, 9, 30), "4100000000.00"),
@@ -254,10 +236,8 @@ func TestCuratedRWAPublished_ReplacePerSeriesAndRead(t *testing.T) {
 	}
 }
 
-// TestPersistIssuerAuthFlagsRefusesAnOlderReading — auth_flags_as_of_ledger
-// only moves forward. A labelled reading older than the one on record must
-// not overwrite it: two drain runs landing out of order would otherwise
-// reinstate a home_domain the account had already moved away from.
+// TestPersistIssuerAuthFlagsRefusesAnOlderReading: auth_flags_as_of_ledger only moves forward, so out-of-order drain
+// runs cannot reinstate a home_domain the account already moved away from.
 func TestPersistIssuerAuthFlagsRefusesAnOlderReading(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -348,14 +328,9 @@ func TestPersistIssuerAuthFlagsRefusesAnOlderReading(t *testing.T) {
 	})
 }
 
-// Auth-flag provenance round-trip against a real Postgres.
-//
-// The write half of the fix (PersistIssuerAuthFlags stamping
-// auth_flags_source + auth_flags_as_of_ledger), the queue that keeps it from
-// becoming a one-way latch (IssuerGStrkeysNeedingRecheck), and the read half
-// (GetIssuer) are one loop. Testing either end alone would miss the two
-// things that only appear when they close: migration 0153's CHECKs firing on
-// what the drain actually writes, and a recovered reading's home_domain.
+// Auth-flag provenance round-trip: PersistIssuerAuthFlags (stamps auth_flags_source and auth_flags_as_of_ledger), the
+// IssuerGStrkeysNeedingRecheck queue that stops it being a one-way latch, and GetIssuer form one loop. Testing either
+// end alone misses migration 0153's CHECKs firing on what the drain writes, and a recovered reading's home_domain.
 func TestIssuerAuthFlagsProvenanceRoundTrip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -369,10 +344,8 @@ func TestIssuerAuthFlagsProvenanceRoundTrip(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
-	// Real r1 residue issuers. mergedA was merged away at
-	// 54,564,588 declaring `stellarbrunch.com`; mergedB at 56,082,413 with
-	// flags 0xA declaring `xcrypto.exchange`; live is unresolved on r1 but
-	// has a current AccountEntry at 64,228,661.
+	// Real r1 residue issuers: mergedA was merged away at 54,564,588 declaring `stellarbrunch.com`; mergedB at 56,082,413
+	// with flags 0xA declaring `xcrypto.exchange`; live is unresolved on r1 but has a current AccountEntry at 64,228,661.
 	const (
 		mergedA = "GA2PQOJ26IP24ECRXEZ4BE6BEIB4HNDWSA2E6JVPFIP6KO6BKOEAZ6XW"
 		mergedB = "GA2P3HKTQFBZBWOWPLESMV5AEHJLWJKNAYV5HLXOPBRWUEHFR64FQTKN"
@@ -553,23 +526,7 @@ func TestIssuerAuthFlagsProvenanceRoundTrip(t *testing.T) {
 	})
 }
 
-// A FILLED issuer row must still be re-offered to the chain, against a real
-// Postgres.
-//
-// Making `issuers.home_domain` overwritable was necessary and not sufficient.
-// Nothing scheduled ever re-read a row that already had one: the drain's
-// primary queue is `auth_required IS NULL`, so a row leaves it the moment it
-// is filled, and its re-check queue covers only `last_known_before_removal`
-// rows. `issuer-enrich`, the job whose whole purpose is to sync the column, is
-// a manual one-shot with no timer. So an anchor that moved domain with
-// SetOptions and let the old name lapse kept the lapsed name until an operator
-// ran a backfill by hand — while the hourly SEP-1 refresh kept fetching it,
-// and whoever registered it next could serve a stellar.toml listing the
-// anchor's issuer account back and inherit its verified org identity.
-//
-// The queue is SQL, so none of this is checkable in Go. The last subtest
-// closes the loop the correction exists to open: the SEP-1 refresh's own
-// candidate query must go on to fetch the NEW domain.
+// A filled issuer row must still be re-offered to the chain.
 func TestIssuersNeedingChainRecheck(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -758,10 +715,8 @@ func TestIssuersNeedingChainRecheck(t *testing.T) {
 	})
 
 	t.Run("a merged row stays out of the queue after its own re-check", func(t *testing.T) {
-		// The two queues partition the filled rows; if this one ever picked
-		// up last-known rows they would be read from the lake twice a night.
-		// A merged row leaves it once its persisted reading has cleared the
-		// domain it held while live, which the seed persist above already did.
+		// The two queues partition the filled rows; if this one picked up last-known rows they would be read from the lake twice
+		// a night. A merged row leaves it once its persisted reading cleared the domain it held while live.
 		got, err := store.IssuersNeedingChainRecheck(ctx, 0)
 		if err != nil {
 			t.Fatalf("IssuersNeedingChainRecheck: %v", err)
@@ -785,15 +740,9 @@ func strkeysOf(recs []timescale.IssuerAuthFlagsOnRecord) []string {
 	return out
 }
 
-// A SEP-1 payload is bound to the home_domain it was fetched from, against a
-// real Postgres.
-//
-// The payload records no source domain and every reader pairs it with the
-// CURRENT column, so a writer that moves home_domain and leaves the payload
-// behind serves the old domain's org identity, logo and RWA attestations as
-// the new domain's. Both writers are single SQL statements, so only an
-// executing test can pin that they unbind it — and that a write which does
-// NOT move the domain leaves the payload byte-identical.
+// A SEP-1 payload is bound to the home_domain it was fetched from. The payload records no source domain and readers pair
+// it with the current column, so a writer that moves home_domain and leaves the payload serves the old domain's org
+// identity, logo and RWA attestations as the new one's.
 func TestIssuerHomeDomainChangeUnbindsSep1Payload(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -937,24 +886,7 @@ func TestIssuerHomeDomainChangeUnbindsSep1Payload(t *testing.T) {
 	})
 }
 
-// issuers.home_domain must track the chain, against a
-// real Postgres.
-//
-// Both writers of the column refused a row that already held a value: the
-// enrich job would only write into a NULL-or-empty column, and the
-// auth-flags drain COALESCEd the stored value ahead of the one it had just
-// decoded. Each cited a SEP-1 resolver that is better sourced than the AccountEntry
-// — a resolver that never writes this column; it READS it to pick its fetch
-// target. So the column was write-once, and an anchor that moved domain
-// on-chain and let the old name lapse could never take its identity back:
-// the hourly SEP-1 refresh kept fetching the lapsed name, and whoever
-// registered it next could serve a stellar.toml listing the anchor's issuer
-// back and inherit its verified org identity.
-//
-// Both statements are SQL — one a WHERE clause, one a COALESCE — so neither
-// can be tested in Go. The last subtest closes the loop the fix opens:
-// after the correction, the SEP-1 refresh's own candidate query hands out
-// the NEW domain, which is the whole point of correcting the column.
+// issuers.home_domain must track the chain.
 func TestIssuerHomeDomainTracksTheChain(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1056,10 +988,8 @@ func TestIssuerHomeDomainTracksTheChain(t *testing.T) {
 
 	t.Run("a merged account's reading clears the stored domain", func(t *testing.T) {
 		asOf := uint32(54564588)
-		// validate() refuses to WRITE a merged account's self-declared
-		// domain because it can no longer be verified; keeping one stored
-		// while the account was live is the same impersonation surface, and
-		// the SEP-1 refresh would keep fetching it once it lapses.
+		// validate() refuses to write a merged account's self-declared domain because it can no longer be verified; keeping one
+		// stored while the account was live is the same impersonation surface, and the SEP-1 refresh would keep fetching it.
 		n, err := store.PersistIssuerAuthFlags(ctx, []timescale.IssuerAuthFlags{{
 			GStrkey: merged, Revocable: true,
 			Source: timescale.AuthFlagsSourceLastKnownBeforeRemoval, AsOfLedger: &asOf,
@@ -1177,11 +1107,9 @@ func TestIssuerHomeDomainTracksTheChain(t *testing.T) {
 	})
 }
 
-// A flagged issuer's asset named by an unregistered SAC contract id has
-// no issuer to look up; the scam gate recognises it through
-// DirectoryScamFlaggedClassicAssets. This pins that query against real
-// Timescale: only classic assets of scam-tagged G-accounts are listed,
-// and the gate built over the real store withholds their SAC spelling.
+// A flagged issuer's asset named by an unregistered SAC contract id has no issuer to look up; the scam gate recognises
+// it via DirectoryScamFlaggedClassicAssets. Pins that only classic assets of scam-tagged G-accounts are listed and the
+// gate withholds their SAC spelling.
 func TestScamGate_SACIndexOverRealDirectory(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1264,13 +1192,8 @@ func TestScamGate_SACIndexOverRealDirectory(t *testing.T) {
 	}
 }
 
-// The SEP-1 attestation age bound against a real Postgres (migration 0178).
-//
-// The bound lives in BoundSep1Currencies's SQL and in which writer stamps
-// sep1_payload_fetched_at, and the backfill is an UPDATE in the migration;
-// none of the three exists in Go to unit-test. The failure being pinned: a
-// domain that goes dark keeps its last payload, every failed attempt stamps
-// sep1_resolved_at fresh, and the RWA scan kept admitting from it forever.
+// SEP-1 attestation age bound (migration 0178). The bound lives in BoundSep1Currencies's SQL, the writer stamping
+// sep1_payload_fetched_at and the migration's backfill UPDATE, none unit-testable in Go.
 func TestSep1AttestationAge(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1416,10 +1339,8 @@ func boundIssuers(t *testing.T, ctx context.Context, store *timescale.Store) map
 	return got
 }
 
-// SEP-1 identity change detection and freshness against a real Postgres
-// (migration 0190). The history rows are written inside
-// SetIssuerSep1Payload's transaction and the freshness verdict is SQL in
-// data-freshness.sh; neither exists in Go to unit-test.
+// SEP-1 identity change detection and freshness (migration 0190). History rows are written inside SetIssuerSep1Payload's
+// transaction and the freshness verdict is SQL in data-freshness.sh; neither exists in Go to unit-test.
 func TestSep1IdentityHistoryAndFreshness(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1505,29 +1426,9 @@ func TestSep1IdentityHistoryAndFreshness(t *testing.T) {
 	}
 }
 
-// AllSep1Images against a real Postgres.
-//
-// Every claim here needs the database. The scan is a LATERAL over
-// jsonb_array_elements, which raises 22023 on anything that is not an
-// array — and one such row fails the whole statement, blanking the logo
-// map for every issuer. None of that exists in Go to unit-test, so the
-// only honest test is one that EXECUTES the query against the shapes an
-// attacker-authored stellar.toml can actually put in the column.
-//
-// What this pins is the OUTCOME: the right rows, and no error, across the
-// whole hostile set in one pass. It does NOT distinguish the query's CASE
-// guard from a plain WHERE guard — measured on this image the planner
-// pushes either below the lateral. The CASE is there because that is a
-// property of the plan rather than of the query; see allSep1ImagesQuery.
-//
-// It also re-runs the brand hijack through the
-// real SQL. The provenance rule lives in Go (timescale.sep1ImageFrom, unit
-// tested), but "the rule is applied to what the query actually returns" is
-// a claim about the two together.
-//
-// Production opens the store with timescale.Open and wires it into
-// v1.New(v1.Options{Sep1Cache: store}) (cmd/stellarindex-api/main.go); this
-// test uses that same constructor.
+// AllSep1Images against a real Postgres. The scan is a LATERAL over jsonb_array_elements, which raises 22023 on a non-
+// array, and one such row would fail the statement and blank the logo map for every issuer, so the test executes the
+// query over the hostile shapes an attacker-authored stellar.toml can put in the column.
 func TestAllSep1ImagesProjection(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1639,10 +1540,9 @@ func TestAllSep1ImagesProjection(t *testing.T) {
 	}
 }
 
-// TestSep1PayloadOutlivedDomain pins the one predicate every SEP-1 identity
-// read shares: a held payload stops vouching for an issuer once it is past
-// Sep1AttestationMaxAge, or of unrecorded age, AND its domain is failing now.
-// Neither condition alone may downgrade it.
+// TestSep1PayloadOutlivedDomain pins the predicate every SEP-1 identity read shares: a held payload stops vouching once
+// it is past Sep1AttestationMaxAge or of unrecorded age, AND its domain is failing now. Neither condition alone
+// downgrades it.
 func TestSep1PayloadOutlivedDomain(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1731,20 +1631,7 @@ func TestSep1PayloadOutlivedDomain(t *testing.T) {
 	}
 }
 
-// SEP-1 retry-ladder round-trip against a real Postgres (migration 0159).
-//
-// Every claim here needs the database. The ladder is computed inside the
-// UPDATE (`$2::interval * POWER(2, …)` clamped by `$3::interval`) so that the
-// new failure count and the deferral derived from it cannot disagree, and the
-// queue's new arm is a column predicate — neither exists in Go to unit-test.
-// An untyped bind parameter beside an interval operator also compiles and
-// reviews perfectly while raising 42883 on every call at runtime, so the only
-// honest test of this SQL is one that EXECUTES it.
-//
-// Production opens the store with timescale.Open (internal/ops/ingest/
-// sep1_refresh.go, `store, err := timescale.Open(ctx, cfg.Storage.PostgresDSN)`)
-// and this test uses that same constructor — not OpenServing/OpenBackground,
-// which wrap it with a statement timeout the cron does not set.
+// SEP-1 retry-ladder round-trip (migration 0159).
 func TestSep1RetryBackoff(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1801,11 +1688,8 @@ func TestSep1RetryBackoff(t *testing.T) {
 	})
 
 	t.Run("a repeatedly-failing domain is not selected while a healthy one is", func(t *testing.T) {
-		// This is the defect. Both rows are equally stale — 40 days since
-		// the last attempt, well past `-older-than 24h` — and before the
-		// ladder both were selected, with the dead one AHEAD of the healthy
-		// one whenever its sep1_resolved_at was the older of the two. The
-		// only thing that may keep it out now is its own deferral.
+		// The defect: both rows are equally stale (40 days since the last attempt, well past `-older-than 24h`) and both used to
+		// be selected, the dead one ahead whenever its sep1_resolved_at was older. Only its own deferral may now keep it out.
 		ageSep1ResolvedAt(t, ctx, store, dead, 40*24*time.Hour)
 		ageSep1ResolvedAt(t, ctx, store, healthy, 40*24*time.Hour)
 		ageSep1ResolvedAt(t, ctx, store, recovered, 40*24*time.Hour)
@@ -1944,11 +1828,8 @@ func TestSep1RetryBackoff(t *testing.T) {
 	})
 
 	t.Run("an over-range limit clamps to the ceiling, not to 100", func(t *testing.T) {
-		// Resetting ANY out-of-range limit to 100 would give an operator
-		// raising LIMIT past the cap silently a fraction of the intended
-		// budget. It reads as "the job is slow", never as "your setting was
-		// rejected" — precisely the shape of bug this ladder exists to
-		// remove elsewhere.
+		// Resetting any out-of-range limit to 100 would silently give an operator who raises LIMIT past the cap a fraction of
+		// the intended budget, reading as "the job is slow" rather than "your setting was rejected".
 		const extra = 150
 		rows := make([]seedIssuer, 0, extra)
 		for i := 0; i < extra; i++ {
@@ -2002,10 +1883,8 @@ func sep1Deferral(t *testing.T, ctx context.Context, store *timescale.Store, gSt
 	return time.Duration(secs) * time.Second
 }
 
-// ageSep1ResolvedAt backdates the last-attempt stamp so the `-older-than`
-// arm of the queue is satisfied and the DEFERRAL arm is the only thing left
-// deciding. Without this every row the test just wrote is < 24h old and
-// nothing would be selected for reasons that have nothing to do with 0159.
+// ageSep1ResolvedAt backdates the last-attempt stamp so the `-older-than` arm is satisfied and only the DEFERRAL arm
+// decides; otherwise every fresh row is < 24h old and nothing is selected for reasons unrelated to 0159.
 func ageSep1ResolvedAt(t *testing.T, ctx context.Context, store *timescale.Store, gStrkey string, age time.Duration) {
 	t.Helper()
 	_, err := store.DB().ExecContext(ctx,

@@ -6,11 +6,8 @@ import (
 	"testing"
 )
 
-// These tests cover the Upsert defensive guards — the real round-trip
-// against Postgres (an upsert overwriting the singleton row, not
-// duplicating it) needs testcontainers-go and lives in test/integration/
-// (per CONTRIBUTING.md §Testing), mirroring
-// TestClaimableSeedProvenanceRoundTrip.
+// These tests cover the Upsert defensive guards; the real Postgres round-trip (overwrite, not duplicate,
+// the singleton row) needs testcontainers-go and lives in test/integration/ per CONTRIBUTING.md.
 
 func TestUpsertAccountObservationSeedProvenance_RejectsInvalid(t *testing.T) {
 	for _, tc := range []struct {

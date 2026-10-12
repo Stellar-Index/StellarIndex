@@ -443,15 +443,9 @@ func TestAccountActivity_NilSeams(t *testing.T) {
 	}
 }
 
-// TestAccountTrades_GateBoundsConcurrentScans pins that the handler must
-// acquire accountTradesGate before the expensive per-account scan, so that no
-// more than cap(accountTradesGate) scans ever run at once.
-//
-// It fires cap+1 concurrent requests against a reader that blocks until
-// released. With the gate acquired, exactly `cap` reach the reader and the
-// extra parks in the gate select; peak in-flight is cap. Against the un-fixed
-// handler (gate declared but never acquired) all cap+1 reach the reader at
-// once and peak in-flight is cap+1 — this test fails RED.
+// Pins that the handler acquires accountTradesGate before the per-account scan, so at most cap(gate) scans run at once.
+// Fires cap+1 requests at a blocking reader: exactly cap reach it and the extra parks in the gate select; an unacquired
+// gate lets all cap+1 through and the test fails.
 func TestAccountTrades_GateBoundsConcurrentScans(t *testing.T) {
 	gateCap := cap(accountTradesGate)
 	if gateCap == 0 {
@@ -487,10 +481,8 @@ func TestAccountTrades_GateBoundsConcurrentScans(t *testing.T) {
 		}
 	}
 
-	// Give the extra request a beat to reach — and, when the gate is
-	// acquired, PARK IN — the gate select rather than the reader. This sleep
-	// stays well inside accountTradesGateWait (%v) so the extra does not shed;
-	// it is served once a slot frees below.
+	// Give the extra request time to reach, and park in, the gate select rather than the reader.
+	// The sleep stays well inside accountTradesGateWait (%v) so the extra does not shed; it is served once a slot frees.
 	time.Sleep(150 * time.Millisecond)
 	if got := reader.maxFlight.Load(); got > int32(gateCap) {
 		t.Errorf("peak concurrent trades scans = %d, want <= gate cap %d — the gate is not acquired (unbounded scan)",

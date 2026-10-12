@@ -7,12 +7,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/pkg/client"
 )
 
-// TestAssetDetail_DecodesFullWirePayload pins the SDK's [AssetDetail]
-// against the full wire shape the v1 API returns on
-// `/v1/assets/{id}`. Adding a field to the API should be additive
-// (non-breaking under SemVer) and visible to SDK consumers without
-// dropping to raw HTTP — this test fails if a documented JSON key
-// stops landing on the struct.
+// Pins the SDK's AssetDetail against the full /v1/assets/{id} wire shape, so additive API fields reach SDK consumers.
+// Fails if a documented JSON key stops landing on the struct.
 func TestAssetDetail_DecodesFullWirePayload(t *testing.T) {
 	t.Parallel()
 	const body = `{
@@ -130,9 +126,7 @@ func TestAssetDetail_DecodesMaxSupplyBasis(t *testing.T) {
 	}
 }
 
-// TestAssetDetail_OmitsNullsOnReencode verifies the SDK round-trips
-// nil-pointer F2 / overlay fields back to omitted JSON keys (so a
-// consumer that reads + re-emits doesn't accidentally publish
+// Nil-pointer F2/overlay fields must re-encode as omitted keys, so a consumer re-emitting JSON never publishes
 // `"max_supply": null` when the server didn't.
 func TestAssetDetail_OmitsNullsOnReencode(t *testing.T) {
 	t.Parallel()

@@ -102,11 +102,8 @@ func TestHoldersRollupBoard_ServesAFreshCycle(t *testing.T) {
 	}
 }
 
-// TestHoldersRollupBoard_RetriesOnceWhenACycleSwapsMidRead: a group EXCHANGE landing between the
-// board-rows read and the count read must not serve a board from one cycle paired with a count
-// from another. The stub reports the rows query on cycle1 the first time (read before the swap)
-// and the count query already on cycle2 (read after), so holdersRollupBoard must retry and serve
-// the self-consistent (both cycle2) pair rather than the FIRST, torn one.
+// TestHoldersRollupBoard_RetriesOnceWhenACycleSwapsMidRead: if a cycle swap lands between the rows read and
+// the count read, the board must retry and serve a pair from one cycle, not the torn first read.
 func TestHoldersRollupBoard_RetriesOnceWhenACycleSwapsMidRead(t *testing.T) {
 	cycle1 := time.Now().UTC().Truncate(time.Second).Add(-50 * time.Minute)
 	cycle2 := cycle1.Add(30 * time.Minute)

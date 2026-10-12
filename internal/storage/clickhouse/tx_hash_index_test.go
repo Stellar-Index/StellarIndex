@@ -13,13 +13,9 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// stubRows is a minimal driver.Rows over in-memory rows. The embedded
-// interface panics on any method the fast path should never touch.
-//
-// streamErr, when set, is what Err() reports once the rows are exhausted, modelling a stream
-// that truncates mid-flight (dropped connection, server memory limit). A reader that skips the
-// rows.Err() check reports a partial result as complete, a silent under-count for a backfill or
-// reconcile. Zero keeps Err() always nil.
+// stubRows is a minimal driver.Rows over in-memory rows; the embedded interface panics on unexpected methods.
+// A set streamErr is what Err() reports after exhaustion, modelling a mid-flight truncation; a reader that
+// skips the rows.Err() check would report a partial result as complete.
 type stubRows struct {
 	driver.Rows
 	data      [][]any
@@ -149,10 +145,9 @@ func txRowFor(seq uint32, hash string) []any {
 
 const testTxHash = "ab12cd34ab12cd34ab12cd34ab12cd34ab12cd34ab12cd34ab12cd34ab12cd34"
 
-// probeHit is the availability probe's answer for a healthy, NON-EMPTY
-// index: `SELECT ledger_seq … LIMIT 1` returning one row. The probe
-// requires a row (requireRows) — an empty result means the index is
-// treated as unavailable (see TestTransactionByHashEmptyIndexFallsBackToScan).
+// probeHit is the availability probe's answer for a healthy, non-empty index: `SELECT ledger_seq ... LIMIT
+// 1` returning one row. The probe requires a row, so an empty result marks the index unavailable
+// (TestTransactionByHashEmptyIndexFallsBackToScan).
 func probeHit() *stubRows {
 	return &stubRows{data: [][]any{{uint32(1)}}}
 }
@@ -186,10 +181,9 @@ func TestTransactionByHashFastPath(t *testing.T) {
 }
 
 func TestTransactionByHashIndexMissIsAuthoritativeNotFound(t *testing.T) {
-	// A non-empty index covers genesis to tip, so an index miss is an authoritative "no such
-	// hash": the reader must not fall through to the bloom scan, which would make every garbage
-	// hash an unauthenticated multi-second probe. The scan stays reachable only for an index-path
-	// error, an index/base inconsistency, or an empty index (see the sibling tests).
+	// A non-empty index covers genesis to tip, so a miss is authoritative and must not fall through to the bloom
+	// scan, which would make garbage hashes an unauthenticated multi-second probe. The scan stays for index
+	// errors, index/base inconsistency or an empty index.
 	conn := &stubConn{}
 	conn.respond = func(q string) (driver.Rows, error) {
 		switch {
@@ -219,10 +213,8 @@ func TestTransactionByHashIndexTableAbsent(t *testing.T) {
 	conn.respond = func(q string) (driver.Rows, error) {
 		switch {
 		case isIndexProbe(q):
-			// A ClickHouse SERVER exception — the shape clickhouse-go
-			// actually returns (*clickhouse.Exception). It is what makes
-			// the absence DEFINITIVE, so the probe caches it and stops
-			// asking; a bare error would mean "no answer" and re-probe.
+			// A ClickHouse SERVER exception (*clickhouse.Exception), the shape clickhouse-go returns, makes the
+			// absence DEFINITIVE so the probe caches it; a bare error means "no answer" and re-probes.
 			return nil, &clickhouse.Exception{
 				Code: 60, Name: "UNKNOWN_TABLE",
 				Message: "Table stellar.tx_hash_index does not exist",
@@ -255,11 +247,9 @@ func TestTransactionByHashIndexTableAbsent(t *testing.T) {
 }
 
 func TestTransactionByHashEmptyIndexFallsBackToScan(t *testing.T) {
-	// MV-drop / TRUNCATE case: the index table exists but is empty while stellar.transactions
-	// keeps flowing. Granting authority off mere existence would 404 every real hash, so an
-	// empty index must read as index-unavailable: the lookup takes the bloom-scan path and never
-	// consults the index. Emptiness is not a settled verdict either (backfill or MV re-attach
-	// may repopulate it), so a later call must re-probe, as DailyActivityAvailable does.
+	// MV-drop / TRUNCATE case: the index table exists but is empty while stellar.transactions keeps flowing. An
+	// empty index must read as unavailable (else every real hash 404s) and take the bloom-scan path, and it is
+	// not a settled verdict: a later call must re-probe, as DailyActivityAvailable does.
 	conn := &stubConn{}
 	conn.respond = func(q string) (driver.Rows, error) {
 		switch {
@@ -411,10 +401,9 @@ func TestTransactionByHashMissingCoverageTableFallsBackToScan(t *testing.T) {
 }
 
 func TestTransactionByHashIndexRowWithoutBaseRowFallsBack(t *testing.T) {
-	// An index row whose ledger-scoped read comes up empty (e.g. a partial re-derive) must fall
-	// through to the scan rather than report not-found off the index alone. txByHashIndexed and
-	// the scan fallback's step 2 share the same isLedgerScopedRead query shape
-	// (txByLedgerAndHash), so a counter tells the first (empty) from the second (the real answer).
+	// An index row whose ledger-scoped read comes up empty (e.g. a partial re-derive) must fall through to the
+	// scan, not report not-found off the index alone. Both reads share the txByLedgerAndHash shape, so a
+	// counter tells them apart.
 	conn := &stubConn{}
 	lecCalls := 0
 	conn.respond = func(q string) (driver.Rows, error) {
@@ -449,10 +438,9 @@ func TestTransactionByHashIndexRowWithoutBaseRowFallsBack(t *testing.T) {
 	}
 }
 
-// TestTxByLedgerAndHash_FinalNotIngestedAtTiebreak pins that the ledger-scoped read shared by
-// txByHashIndexed and txByHashScan's step 2 is FINAL-deduped, not `ORDER BY ingested_at DESC
-// LIMIT 1`, which silently picks an unspecified row when two ReplacingMergeTree parts for the
-// same key tie on ingested_at (DateTime has one-second resolution).
+// TestTxByLedgerAndHash_FinalNotIngestedAtTiebreak pins that the ledger-scoped read is FINAL-deduped, not
+// `ORDER BY ingested_at DESC LIMIT 1`, which picks an unspecified row when two parts tie on ingested_at
+// (one-second resolution).
 func TestTxByLedgerAndHash_FinalNotIngestedAtTiebreak(t *testing.T) {
 	conn := &stubConn{}
 	conn.respond = func(q string) (driver.Rows, error) {
@@ -482,11 +470,9 @@ func TestTxByLedgerAndHash_FinalNotIngestedAtTiebreak(t *testing.T) {
 	}
 }
 
-// TestTxHashIndexBackfillQuery_UsesFinal pins that BackfillTxHashIndex's per-window
-// INSERT…SELECT reads stellar.transactions FINAL-deduped, so a re-derive window doesn't enqueue
-// an un-merged duplicate or stale pre-correction row into stellar.tx_hash_index. It dials
-// ClickHouse via openRead (not injectable), so, like StreamEntryChanges, the stubConn harness
-// cannot drive it; the query is a package-level const so its SQL text is testable alone.
+// TestTxHashIndexBackfillQuery_UsesFinal pins that the per-window INSERT...SELECT reads stellar.transactions
+// FINAL, so no un-merged duplicate or stale row reaches tx_hash_index. The query is a const since openRead is
+// not injectable.
 func TestTxHashIndexBackfillQuery_UsesFinal(t *testing.T) {
 	if !strings.Contains(txHashIndexBackfillQuery, "FROM stellar.transactions FINAL") {
 		t.Fatalf("txHashIndexBackfillQuery = %q, want `FROM stellar.transactions FINAL`", txHashIndexBackfillQuery)

@@ -283,10 +283,8 @@ func TestChRebuildProjectedScript_LegacyDoneLineStillSkipsTheWindow(t *testing.T
 	}
 }
 
-// The finding's second scenario. The re-derive dies after the DELETE; the
-// window is emptied. It must be recorded, never marked done, and the NEXT
-// run must rebuild exactly what was emptied before anything else — even a
-// narrowed run, or the hole could be certified.
+// The re-derive dies after the DELETE, leaving the window empty. It must be recorded, never marked done,
+// and the next run must rebuild exactly what was emptied first, even a narrowed run, or the hole could be certified.
 func TestChRebuildProjectedScript_MidRunFailureIsRecordedAndRecoveredFirst(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -436,10 +434,8 @@ func TestChRebuildProjectedScript_NoTradeSourceNoRefresh(t *testing.T) {
 	}
 }
 
-// A failed refresh leaves trades correct and every aggregate over them
-// stale. It must be loud, recorded, and done FIRST by the next run —
-// even one whose range no longer covers the window, and even though the
-// window itself is marked done.
+// A failed refresh leaves trades correct but every aggregate over them stale. It must be loud, recorded, and done FIRST
+// by the next run, even one whose range no longer covers the window and even though the window is marked done.
 func TestChRebuildProjectedScript_FailedRefreshIsRecordedAndRetriedFirst(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -550,10 +546,9 @@ func TestChRebuildProjectedScript_AmbiguousDeleteTellsTheVerdictHow(t *testing.T
 	assertRecordCommand(t, cmd, "61000000", "61999999", "cctp")
 }
 
-// The gap no in-process handler can cover: the box died (kill -9, power
-// loss) between the DELETE and the re-derive, so only $DIRTY survived. The
-// next run must surface that window's obligation BEFORE it starts
-// recovering — the recovery can fail too.
+// The gap no in-process handler covers: the box died (kill -9, power loss) between the DELETE and the re-derive, so only
+// $DIRTY survived. The next run must surface that window's obligation BEFORE starting recovery, since recovery can fail
+// too.
 func TestChRebuildProjectedScript_PendingDirtyWindowTellsTheVerdictAtStartup(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -621,10 +616,9 @@ func TestChRebuildProjectedScript_PrintedRecordCommandIsAcceptedByTheBinary(t *t
 	}
 }
 
-// TestChRebuildProjectedScript_UnusableDirtyMarkerRefusesBeforeAnyDelete:
-// an unwritable/missing state directory must not be silent — otherwise every
-// append to $DIRTY fails and the DELETE runs anyway, so the window is emptied with
-// no record that would ever rebuild it.
+// TestChRebuildProjectedScript_UnusableDirtyMarkerRefusesBeforeAnyDelete: an unwritable or missing state directory must
+// not be silent. Otherwise every append to $DIRTY fails, the DELETE runs anyway, and the window is emptied with no
+// record to rebuild it.
 func TestChRebuildProjectedScript_UnusableDirtyMarkerRefusesBeforeAnyDelete(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -643,10 +637,8 @@ func TestChRebuildProjectedScript_UnusableDirtyMarkerRefusesBeforeAnyDelete(t *t
 	}
 }
 
-// TestChRebuildProjectedScript_DirtyMarkerThatFailsMidRunStopsBeforeTheDelete
-// is the same defect one step later: the state directory is fine at startup
-// and gone by the time the window is marked (a cleanup job, a full disk).
-// mark_dirty's exit code was not checked, so the DELETE went ahead.
+// TestChRebuildProjectedScript_DirtyMarkerThatFailsMidRunStopsBeforeTheDelete: the state directory is fine at startup
+// but gone by marking time (cleanup job, full disk). mark_dirty's exit code was unchecked, so the DELETE went ahead.
 func TestChRebuildProjectedScript_DirtyMarkerThatFailsMidRunStopsBeforeTheDelete(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -778,10 +770,8 @@ func TestChRebuildProjectedScript_PendingDirtyWindowIsFiledBeforeRecovery(t *tes
 	}
 }
 
-// Filing side: a window that re-derived
-// cleanly empties nothing, so it files nothing. One obligation per routine
-// window would point the next nightly at ~12.9M ledgers across 8
-// un-prefiltered sources and time every source's verdict out.
+// Filing side: a window that re-derived cleanly empties nothing, so it files nothing. One obligation per routine window
+// would point the next nightly at ~12.9M ledgers across 8 un-prefiltered sources and time every verdict out.
 func TestChRebuildProjectedScript_CleanWindowFilesNothing(t *testing.T) {
 	t.Parallel()
 	run := runProjectedScript(t, "", map[string]string{"SRC": "cctp"})
@@ -823,10 +813,9 @@ func TestChRebuildProjectedScript_FilingFailureIsLoudAndKeepsTheCommand(t *testi
 	}
 }
 
-// A trade source named in the DELETE but absent from the
-// re-derive is wiped and never rewritten, and the window is marked done.
-// sushiswap_v3 was exactly that — and since the BackfillSafe gate it
-// cannot be added to the re-derive either, so it must not be deleted.
+// A trade source named in the DELETE but absent from the re-derive is wiped and never rewritten, yet the window is
+// marked done. sushiswap_v3 was exactly that; since the BackfillSafe gate it cannot be added to the re-derive, so it
+// must not be deleted.
 func TestChRebuildProjectedScript_DeletesOnlyTradeSourcesItRederives(t *testing.T) {
 	t.Parallel()
 	run := runProjectedScript(t, "", nil)
@@ -921,10 +910,8 @@ func TestChRebuildProjectedScript_PreflightMatchesTheWriteItPrecedes(t *testing.
 	}
 }
 
-// The DELETE batch is one transaction: psql autocommits each statement
-// otherwise, and a failure on the ninth table would leave the first eight
-// emptied. (Executed against real Postgres in
-// test/integration/pg_ops_pipeline_test.go.)
+// The DELETE batch is one transaction: psql autocommits each statement otherwise, and a failure on the ninth table would
+// leave the first eight emptied. Executed against real Postgres in test/integration/pg_ops_pipeline_test.go.
 func TestChRebuildProjectedScript_DeleteBatchIsOneTransaction(t *testing.T) {
 	t.Parallel()
 	run := runProjectedScript(t, "", nil)

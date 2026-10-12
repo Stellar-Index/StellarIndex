@@ -129,17 +129,9 @@ func tradeExists(t *testing.T, store *timescale.Store, source, txHash string, op
 	return n > 0
 }
 
-// TestBatchInsertTrades_PopulatesClassicAssetRegistry proves that
-// the LIVE indexer, which ingests trades EXCLUSIVELY through BatchInsertTrades
-// (persistWorker → batch path), runs the classic-asset / issuer registry hook
-// that the single-row InsertTrade path runs. Otherwise classic_assets +
-// issuers are permanently under-populated for every batch-ingested asset.
-//
-// This test drives a classic-asset trade through BOTH paths and asserts the
-// registry lands identically; the batch-path assertions
-// (classic_assets row present, issuers row present) fail with "no rows" if
-// the registry hook never runs on the batch path.
-// the registry hook never ran on the batch path.
+// TestBatchInsertTrades_PopulatesClassicAssetRegistry: the live indexer ingests only via BatchInsertTrades, which must run
+// the same classic-asset / issuer registry hook as InsertTrade. A classic-asset trade through both paths must land
+// identical classic_assets + issuers rows.
 func TestBatchInsertTrades_PopulatesClassicAssetRegistry(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -231,10 +223,8 @@ func countIssuers(t *testing.T, store *timescale.Store, gStrkey string) int {
 	return n
 }
 
-// The crash tests re-exec this test binary as a child indexer that writes
-// a late trade, prints "committed" once the row is durable, and blocks.
-// The parent SIGKILLs it, so no deferred flush runs, then starts a fresh
-// refresher the way a restarted indexer does.
+// The crash tests re-exec this binary as a child indexer that writes a late trade, prints "committed" once durable and
+// blocks; the parent SIGKILLs it (no deferred flush) and starts a fresh refresher as a restarted indexer would.
 const lateCrashChildEnv = "LATE_REFRESH_CRASH_CHILD"
 
 // TestLateTradeRefresh_SurvivesSIGKILL: a late trade committed through
@@ -244,10 +234,8 @@ func TestLateTradeRefresh_SurvivesSIGKILL(t *testing.T) {
 	testLateTradeCrash(t, "persist", "KILL2720", "00000000000000000000000000000000000000000000000000000000000b0001")
 }
 
-// TestLateTradeRefresh_FlushDuringUncommittedWriteSurvivesSIGKILL: the
-// window is recorded, a full flush (refresh, then clear) runs before the
-// insert commits, the insert commits, and the process is SIGKILLed. The
-// flush's refresh could not see the row, so its window must outlive it.
+// TestLateTradeRefresh_FlushDuringUncommittedWriteSurvivesSIGKILL: a full flush (refresh, then clear) runs before the
+// insert commits, then SIGKILL. That refresh could not see the row, so its window must outlive the flush.
 func TestLateTradeRefresh_FlushDuringUncommittedWriteSurvivesSIGKILL(t *testing.T) {
 	testLateTradeCrash(t, "inflight", "RACE2720", "00000000000000000000000000000000000000000000000000000000000b0002")
 }
@@ -565,11 +553,8 @@ func lateWindow(t *testing.T, ctx context.Context, store *timescale.Store, view 
 	return timescale.CAGGLateRefreshWindow{}
 }
 
-// TestLateTradeRefresh_MaterialisesTradeOlderThanPolicyLookback proves the
-// live write path (PersistEvents + LateTradeRefresher, as the indexer wires
-// them) puts a trade written ~2h late into prices_1m with no manual
-// refresh_continuous_aggregate. prices_1m's policy only reaches back 15
-// minutes, so before the refresher such a row was never materialised.
+// TestLateTradeRefresh_MaterialisesTradeOlderThanPolicyLookback: the live write path (PersistEvents + LateTradeRefresher)
+// puts a trade ~2h late into prices_1m with no manual refresh; the policy only reaches back 15 minutes.
 func TestLateTradeRefresh_MaterialisesTradeOlderThanPolicyLookback(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -720,13 +705,9 @@ func lateRefreshTrade(p c.Pair, ts time.Time, hash string) sdex.TradeEvent {
 	}}
 }
 
-// TestLatestTradeReadsBreakSameLedgerTiesOnTheFullKey: several of one
-// source's trades share (ts, ledger) whenever a ledger fills more than
-// one offer, so both latest-trade readers must break that tie on
-// (tx_hash, op_index) — the key /v1/history orders on — and agree with
-// the newest row TradesInRange serves. The winner is inserted last in
-// each stored direction, so a read that stops at (ts, ledger) meets a
-// loser first.
+// TestLatestTradeReadsBreakSameLedgerTiesOnTheFullKey: a source's trades share (ts, ledger) when a ledger fills several
+// offers, so both latest-trade readers must tie-break on (tx_hash, op_index), as /v1/history does, and match
+// TradesInRange's newest row. The winner is inserted last.
 func TestLatestTradeReadsBreakSameLedgerTiesOnTheFullKey(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -928,32 +909,9 @@ func TestTradeInsertOutcome_NewVsDuplicate(t *testing.T) {
 	}
 }
 
-// TestBulkBackfillTrades_Throughput measures the two trade writers against a
-// PROD-SHAPED target and prints both rates. It is the measurement behind the
-// -bulk-trades flag; a claimed speed-up with no number is worth nothing here.
-//
-// What "prod-shaped" means, and what it still is not:
-//
-//   - The target chunks are POPULATED and COMPRESSED. `trades` compresses at 7
-//     days (migration 0001), so every chunk a historical backfill lands in is
-//     compressed, and TimescaleDB pays a large penalty enforcing the trade PK
-//     against compressed data. Measured on this harness in isolation: landing
-//     rows in a compressed chunk runs at roughly a third of the rate of the
-//     same rows into a fresh one. Skipping this step flatters both writers and
-//     changes their ratio.
-//   - The USD-volume resolvers are installed, exactly as ch_rebuild.go
-//     installs them, so both writers pay real `tradeUSDVolume` resolution.
-//   - It UNDERSTATES the bulk writer. The dominant per-row cost on r1 is FX
-//     resolver latency against a 69 GB `prices_1m`; here `prices_1m` is nearly
-//     empty, so each lookup is about as cheap as a round trip can be. The half
-//     of this change that parallelises those lookups therefore has far less to
-//     recover on a laptop than it does on the real box.
-//   - Docker Desktop is CPU-bound well below r1. Parallel writers saturate
-//     earlier here than they will there.
-//
-// The assertion is deliberately weak — "not slower" — because a tight ratio
-// gate on shared CI hardware fails for reasons that have nothing to do with
-// this code. The NUMBERS are the deliverable; read them in the log.
+// TestBulkBackfillTrades_Throughput prints both writers' rates against a PROD-SHAPED target (the measurement behind -bulk-
+// trades): chunks populated and COMPRESSED (PK enforcement on compressed data runs ~1/3 the rate), USD resolvers installed
+// as in ch_rebuild.go. It understates the bulk writer (r1's cost is FX latency on a 69 GB prices_1m).
 func TestBulkBackfillTrades_Throughput(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Minute)
 	defer cancel()
@@ -967,11 +925,8 @@ func TestBulkBackfillTrades_Throughput(t *testing.T) {
 	}
 	defer func() { _ = db.Close() }()
 
-	// ── build the prod-shaped target ────────────────────────────────────
-	// Half a million rows of another source across the days the backfill
-	// targets, then compress. The backfilled source itself stays absent —
-	// that is the r1 situation: `trades` holds 836M rows and zero sdex rows
-	// below the trade floor.
+	// Build the prod-shaped target: 500k rows of another source over the target days, then compress. The backfilled source
+	// stays absent, as on r1 (836M rows, zero sdex rows below the trade floor).
 	const seedRows = 500_000
 	seedStart := time.Now()
 	if _, err := db.ExecContext(ctx, fmt.Sprintf(`
@@ -1062,24 +1017,9 @@ func TestBulkBackfillTrades_Throughput(t *testing.T) {
 // not have to re-derive it.
 var _ = func() []c.Trade { return nil }
 
-// The `trades` bulk backfill writer (timescale.Store.BulkBackfillTrades) is
-// the opt-in path `stellarindex-ops ch-rebuild -sdex -write -bulk-trades`
-// uses. These tests prove the three things that make it safe to prefer over
-// the live writer on a historical range:
-//
-//  1. it produces the SAME ROWS as Store.BatchInsertTrades on the same input
-//     (identical values in every column either path writes, plus the same
-//     source_entry_counts tally and classic-asset registry effect);
-//  2. it REFUSES its own precondition — a range that already holds rows for
-//     the source falls back to the upsert instead of COPYing into a conflict;
-//  3. it is faster, measured, on a realistically-shaped target.
-//
-// PRODUCTION CONSTRUCTOR. Both paths are reached through timescale.Open +
-// timescale.InstallUSDVolumeResolution + Store.SetDeriveGeneration — exactly
-// what internal/ops/chops/ch_rebuild.go does before it drains (ch_rebuild.go
-// "storage open" / "usd_volume resolution — MANDATORY on this path"). These
-// tests use that constructor, not a hand-built Store, so a wiring change that
-// would break the real tool breaks them too.
+// BulkBackfillTrades (opt-in via `ch-rebuild -sdex -write -bulk-trades`) is safe to prefer on a historical range because:
+// (1) same rows as BatchInsertTrades (every column, source_entry_counts, registry effect); (2) it refuses its own
+// precondition, falling back to upsert when the range holds source rows; (3) it is faster.
 
 const bulkPegIssuer = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 
@@ -1108,10 +1048,8 @@ func bulkAsset(t *testing.T, code string) c.Asset {
 	return a
 }
 
-// bulkTrades builds n SDEX-shaped trades. The pair mix matters: a USDC quote
-// resolves through the declared peg with no DB lookup at all, while the other
-// two shapes fall through to the FX resolver — which is where a historical
-// backfill actually spends its time.
+// bulkTrades builds n SDEX-shaped trades. A USDC quote resolves via the declared peg with no DB lookup; the other two
+// shapes use the FX resolver, where a historical backfill spends its time.
 func bulkTradeSet(t *testing.T, n int, baseLedger uint32, baseTS time.Time, source string) []c.Trade {
 	t.Helper()
 	const nTokens = 200
@@ -1211,10 +1149,8 @@ func sourceEntryCount(t *testing.T, db *sql.DB, source string) int64 {
 	return n.Int64
 }
 
-// TestBulkBackfillTrades_IdenticalToBatchUpsert writes the SAME input through
-// both writers, into two ranges that differ only by the ledger/ts offset, and
-// compares every stored column. A divergence here means the bulk path is not
-// a drop-in for the upsert on an empty range.
+// TestBulkBackfillTrades_IdenticalToBatchUpsert: the same input through both writers into two ranges differing by
+// ledger/ts offset, comparing every stored column; a divergence means the bulk path is not a drop-in on an empty range.
 func TestBulkBackfillTrades_IdenticalToBatchUpsert(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
@@ -1230,25 +1166,15 @@ func TestBulkBackfillTrades_IdenticalToBatchUpsert(t *testing.T) {
 	upsertTS := time.Date(2024, 3, 5, 12, 0, 0, 0, time.UTC)
 	bulkTS := time.Date(2024, 5, 5, 12, 0, 0, 0, time.UTC)
 
-	// Same logical rows, two disjoint identities. Both sets carry a one-side-
-	// zero fill (unstorable) and an exact intra-batch PK duplicate, so
-	// the comparison covers the storability gate and the dedupe collapse too,
-	// not just the happy path.
-	// BOTH sets are source "sdex". A fabricated source name would make this
-	// test pass vacuously: tradeUSDVolume returns nil for any source
-	// external.Lookup does not classify as an exchange, so every usd_volume
-	// would be NULL on both paths and the column comparison would prove
-	// nothing. The two runs are separated by LEDGER WINDOW instead.
+	// Same rows, two disjoint identities, each with a one-side-zero fill and an exact intra-batch PK duplicate (storability
+	// gate + dedupe). Both sets use source "sdex": tradeUSDVolume returns nil for unclassified sources, so a made-up name
+	// would make usd_volume NULL on both paths and prove nothing.
 	const upsertLo, upsertHi = 50_000_000, 50_999_999
 	const bulkLo, bulkHi = 55_000_000, 55_999_999
 	upsertRows := bulkTradeSet(t, n, upsertLo, upsertTS, "sdex")
 	bulkRows := bulkTradeSet(t, n, bulkLo, bulkTS, "sdex")
-	// One unstorable one-side-zero fill and one exact intra-batch PK
-	// duplicate, so the comparison covers the storability gate and the dedupe
-	// collapse. The duplicate is EXACT rather than a differing later copy:
-	// sortTradesByConflictKey uses a non-stable sort, so which of two
-	// equal-key copies survives is unspecified, and a test that depended on
-	// it would be asserting an implementation accident rather than identity.
+	// One unstorable one-side-zero fill and one EXACT intra-batch PK duplicate. sortTradesByConflictKey is not stable, so
+	// which of two equal-key copies survives is unspecified; a differing later copy would assert an implementation accident.
 	spoil := func(rows []c.Trade) []c.Trade {
 		zero := rows[7]
 		zero.QuoteAmount = c.NewAmount(big.NewInt(0))
@@ -1328,11 +1254,8 @@ func TestBulkBackfillTrades_IdenticalToBatchUpsert(t *testing.T) {
 	}
 	t.Logf("compared %d rows; %d carry a resolved usd_volume", len(got), populated)
 
-	// source_entry_counts: the bulk path bumps once for the whole buffer, the
-	// upsert path once per batch. Same landed count either way.
-	// Both runs bumped the one "sdex" tally row; the total is what each path
-	// claims it landed, so a bulk path that mis-counted its own inserts shows
-	// up here.
+	// source_entry_counts: the bulk path bumps once per buffer, upsert once per batch; both runs bump the one "sdex" row,
+	// and the total must equal the landed count, exposing a mis-counting bulk path.
 	if got := sourceEntryCount(t, db, "sdex"); got != int64(2*n) {
 		t.Fatalf("source_entry_counts[sdex] = %d, want %d (%d upserted + %d bulk-copied)",
 			got, 2*n, n, n)
@@ -1348,10 +1271,8 @@ func TestBulkBackfillTrades_IdenticalToBatchUpsert(t *testing.T) {
 	}
 }
 
-// TestBulkBackfillTrades_RefusesNonEmptyRange proves the precondition is
-// CHECKED, not assumed from the caller: one pre-existing row inside the
-// buffer's (source, ledger, ts) box is enough to push the whole buffer onto
-// the upsert path — where the stored row keeps its generation guard.
+// TestBulkBackfillTrades_RefusesNonEmptyRange: the precondition is checked, not assumed; one existing row in the buffer's
+// (source, ledger, ts) box sends the whole buffer to the upsert path, where the stored row keeps its generation guard.
 func TestBulkBackfillTrades_RefusesNonEmptyRange(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
@@ -1402,11 +1323,8 @@ func TestBulkBackfillTrades_RefusesNonEmptyRange(t *testing.T) {
 	}
 }
 
-// TestBulkBackfillTrades_EmptyProbeIsLedgerScoped pins the shape of the
-// precondition query itself: a stored row for the SAME source at a ledger
-// OUTSIDE the buffer's extent must not refuse the fast path (otherwise every
-// re-derive below a populated floor would fall back forever), while a row
-// inside it must.
+// TestBulkBackfillTrades_EmptyProbeIsLedgerScoped: a stored row for the same source at a ledger OUTSIDE the buffer's
+// extent must not refuse the fast path (else re-derives below a populated floor fall back forever); a row inside must.
 func TestBulkBackfillTrades_EmptyProbeIsLedgerScoped(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
@@ -1437,46 +1355,9 @@ func TestBulkBackfillTrades_EmptyProbeIsLedgerScoped(t *testing.T) {
 	}
 }
 
-// TestDecompressTradesChunk_DoesNotConvoyTheDatabase is the DB-backed
-// reproduction of an r1 incident, on the deployed pair
-// (TimescaleDB 2.26.4 / PG 15), and the proof that the fix removes it.
-//
-// WHAT HAPPENED. A deploy restarted stellarindex-aggregator at 00:12:23
-// UTC. Its cold-start VWAP alias-map aggregation spilled to disk
-// (wait_event = IO/BufFileRead) and held AccessShareLock on `trades` for
-// 18+ minutes. A `usd-volume-restamp -chunks` run was mid-window; its
-// decompress_chunk asked for AccessExclusiveLock on a chunk of that
-// hypertable and could not have it, so it QUEUED. A pending exclusive
-// request is not a private wait — PostgreSQL puts every LATER request for
-// that object behind it, however trivial:
-//
-//	decompress_chunk (restamp)      blocked 1,984 s
-//	UPDATE trades  x2 (restamp)     blocked 1,164 s
-//	postgres_exporter scrapes x3    blocked   917 s
-//	chunks_detailed_size (watcher)  blocked   904 s
-//
-// The exporter being in that list is what made it dangerous: alerting went
-// cascade-blind for the whole window while /v1/status read `degraded` and
-// both systemd units read `active`.
-//
-// THE SHAPE OF THIS TEST is those three sessions, in that order:
-//
-//	A — holds AccessShareLock on `trades` in an open transaction (the
-//	    aggregator's spilled read);
-//	B — DecompressTradesChunk on the compressed chunk (the restamp);
-//	C — one trivial `SELECT count(*) FROM trades` issued once B's request
-//	    is observably queued (the postgres_exporter scrape).
-//
-// C is the assertion. Against an UNBOUNDED decompress it never returns: it
-// is queued behind B's pending exclusive request and dies at its own
-// lock_timeout. Against the bounded one B withdraws after
-// tradesChunkDecompressLock.wait (5 s) and spends the next 15 s not
-// asking, so C gets its AccessShareLock and answers.
-//
-// The second half is the crash-safety half: withdrawing must not mean
-// giving up. Once A commits, B's next attempt takes the lock and the chunk
-// ends DECOMPRESSED — the state the caller asked for — rather than the
-// walk failing and leaving a human to finish it.
+// TestDecompressTradesChunk_DoesNotConvoyTheDatabase: an r1 incident reproduction. A long AccessShareLock reader on
+// `trades` (A) makes a decompress_chunk (B) queue for AccessExclusiveLock, and PostgreSQL queues every LATER request
+// behind it, even a trivial exporter scrape (C). C is the assertion: unbounded B starves C to its lock_timeout.
 func TestDecompressTradesChunk_DoesNotConvoyTheDatabase(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -1518,11 +1399,8 @@ func TestDecompressTradesChunk_DoesNotConvoyTheDatabase(t *testing.T) {
 	}
 	chunk := chunks[0]
 
-	// ── session A: the aggregator's long cold-start read ──────────────
-	//
-	// Its own pool, so nothing here can be served by a connection the
-	// store is also using. The transaction stays open — that is what
-	// holds AccessShareLock on the hypertable and its chunk.
+	// Session A: the aggregator's long cold-start read, on its own pool; the open transaction holds AccessShareLock on the
+	// hypertable and chunk.
 	reader, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatal(err)
@@ -1551,12 +1429,8 @@ func TestDecompressTradesChunk_DoesNotConvoyTheDatabase(t *testing.T) {
 	done := make(chan decompressResult, 1)
 	go func() { done <- decompressResult{store.DecompressTradesChunk(ctx, chunk)} }()
 
-	// ── wait until B's request is observably QUEUED ───────────────────
-	//
-	// Both with and without the fix there is a window in which the
-	// decompress is waiting on the lock; without it, that window never
-	// ends. Starting C from inside the window is what makes the two
-	// outcomes differ by behaviour rather than by timing luck.
+	// Wait until B's request is observably QUEUED, so the two outcomes differ by behaviour, not timing luck (unfixed, the
+	// window never ends).
 	probe, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatal(err)
@@ -1564,11 +1438,8 @@ func TestDecompressTradesChunk_DoesNotConvoyTheDatabase(t *testing.T) {
 	t.Cleanup(func() { _ = probe.Close() })
 	waitForQueuedDecompress(t, ctx, probe)
 
-	// ── session C: the postgres_exporter scrape ───────────────────────
-	//
-	// 9 s is deliberately just past the 5 s the bounded decompress may
-	// hold a request pending, and far short of the 904–1,984 s the real
-	// convoy inflicted. A failure here IS the incident.
+	// Session C: the postgres_exporter scrape. 9 s is just past the 5 s B may hold a request pending and far short of the real
+	// convoy's 904-1,984 s; a failure here IS the incident.
 	scrapeCtx, scrapeCancel := context.WithTimeout(ctx, 60*time.Second)
 	defer scrapeCancel()
 	conn, err := probe.Conn(scrapeCtx)
@@ -1593,10 +1464,7 @@ func TestDecompressTradesChunk_DoesNotConvoyTheDatabase(t *testing.T) {
 	}
 	t.Logf("trivial read completed in %s while the decompress was contending", elapsed)
 
-	// ── the decompress must not have GIVEN UP ─────────────────────────
-	//
-	// Withdrawing is only safe because it comes back. Release the reader
-	// and the next attempt takes the lock.
+	// The decompress must not have GIVEN UP: withdrawing is safe only because it retries once the reader is released.
 	if err := readerTx.Commit(); err != nil {
 		t.Fatalf("session A commit: %v", err)
 	}
@@ -1622,27 +1490,9 @@ func TestDecompressTradesChunk_DoesNotConvoyTheDatabase(t *testing.T) {
 	}
 }
 
-// TestDecompressTradesChunk_WithdrawsItsRequestBetweenAttempts pins the
-// mechanism rather than one of its effects: a decompress that cannot have
-// its lock must spend most of its time NOT asking.
-//
-// That is the whole cure. PostgreSQL convoys on a PENDING exclusive
-// request — every later request for the object queues behind it — so the
-// damage is a function of how long ours is outstanding, not of how long we
-// would like the lock. The bounded loop asks for 5 s, withdraws, and stays
-// quiet for 15 s; during that quiet the queue behind it drains, which is
-// what lets a trivial read through. Sampling pg_stat_activity across a
-// full cycle turns that into an assertion: with an UNBOUNDED decompress
-// every sample finds it waiting, because the one request it made never
-// goes away.
-//
-// It carries the crash-safety half too, which is the objection the bound
-// has to answer — a decompress that fails mid-chunk is the state this
-// project fears most. It cannot arise: the statement runs in its own
-// transaction, so a `lock_timeout` expiry (SQLSTATE 55P03) rolls back
-// atomically, the chunk is left exactly as compressed as it was with every
-// row readable, and [timescale.Store.RestampTradesChunk]'s existing
-// contract ("a failed decompress runs nothing") is untouched.
+// TestDecompressTradesChunk_WithdrawsItsRequestBetweenAttempts pins the mechanism: a decompress that cannot get its lock
+// must mostly NOT ask, since convoy damage scales with how long our request is outstanding. Sampling pg_stat_activity over
+// a cycle shows waiting in every sample if unbounded. Crash safety.
 func TestDecompressTradesChunk_WithdrawsItsRequestBetweenAttempts(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -1698,10 +1548,8 @@ func TestDecompressTradesChunk_WithdrawsItsRequestBetweenAttempts(t *testing.T) 
 		t.Fatalf("blocker read: %v", err)
 	}
 
-	// A caller-imposed deadline shorter than the retry budget is how the
-	// stop is reached without waiting 35 minutes for it. It is longer than
-	// one full ask+drain cycle (5 s + 15 s), so a loop that withdraws has
-	// to be caught doing it.
+	// A caller deadline shorter than the retry budget reaches the stop without waiting 35 minutes, yet longer than one
+	// ask+drain cycle (5 s + 15 s) so a withdrawing loop is caught doing it.
 	shortCtx, shortCancel := context.WithTimeout(ctx, 28*time.Second)
 	defer shortCancel()
 	var decompressErr error
@@ -1763,17 +1611,9 @@ const decompressAskingSQL = `
 	     AND query NOT ILIKE '%pg_stat_activity%'
 	     AND wait_event_type = 'Lock')`
 
-// sampleDecompressLockWait polls until it has seen the decompress both
-// ASKING for the lock and, AFTERWARDS, not asking — or until the
-// decompress returns. A bounded loop produces both counts within one
-// cycle; an unbounded one produces only the first, because its single
-// request never goes away.
-//
-// Quiet samples before the first asking one are DISCARDED, deliberately.
-// They are the window before the goroutine's statement reached the
-// server, and counting them would let the test pass on a race rather
-// than on a withdrawal: a quiet sample only means something once we have
-// watched the request exist.
+// sampleDecompressLockWait polls until it sees the decompress ASKING for the lock and afterwards NOT asking, or until it
+// returns. Quiet samples before the first asking one are discarded (statement not yet at the server), else the test could
+// pass on a race.
 func sampleDecompressLockWait(t *testing.T, ctx context.Context, db *sql.DB, finished <-chan struct{}) (asking, quiet int) {
 	t.Helper()
 	tick := time.NewTicker(250 * time.Millisecond)
@@ -1798,11 +1638,8 @@ func sampleDecompressLockWait(t *testing.T, ctx context.Context, db *sql.DB, fin
 	}
 }
 
-// waitForQueuedDecompress blocks until a backend running decompress_chunk
-// is waiting on a heavyweight lock — i.e. the restamp's exclusive request
-// is queued. Polling the server beats sleeping a guessed interval: the
-// window is what the test needs to be inside, and on an unfixed build it
-// opens once and never closes.
+// waitForQueuedDecompress blocks until a decompress_chunk backend waits on a heavyweight lock. Polling beats a guessed
+// sleep; on an unfixed build the window opens once and never closes.
 func waitForQueuedDecompress(t *testing.T, ctx context.Context, db *sql.DB) {
 	t.Helper()
 	deadline := time.Now().Add(60 * time.Second)
@@ -1822,13 +1659,9 @@ func waitForQueuedDecompress(t *testing.T, ctx context.Context, db *sql.DB) {
 	}
 }
 
-// These pin, on the deployed pair (TimescaleDB 2.26.4 / PG 15), what the
-// chunk restamp's 5 s lock bound actually covers and the long-holder check
-// in front of it. Each attempt opens with LOCK TABLE on the locks the
-// function takes first, so a refusal there costs no work; the function's
-// late AccessExclusiveLock request is bounded at the same 5 s; and a
-// transaction that has held a lock on the chunk for over a minute (the
-// incident shape) is waited out before any work starts.
+// Pins what the chunk restamp's 5 s lock bound covers (TimescaleDB 2.26.4 / PG 15): each attempt opens with LOCK TABLE on
+// the locks the function takes first (refusal costs no work), its late AccessExclusiveLock request is bounded at 5 s, and
+// a >1 min lock holder is waited out first.
 
 // openCompressedTradesChunk opens a store on a fresh database holding one
 // compressed `trades` chunk and returns both.
@@ -1940,11 +1773,9 @@ func sampleRestampChunkLocks(t *testing.T, ctx context.Context, db *sql.DB, chun
 	return out
 }
 
-// TestDecompressTradesChunk_WaitsOutALongHolderBeforeWorking is the
-// incident shape: a reader whose transaction has been open for over a
-// minute holds AccessShareLock on the chunk. The decompress must not start
-// work whose end-stage lock that reader would refuse; it waits with no
-// request pending and starts once the reader is gone.
+// TestDecompressTradesChunk_WaitsOutALongHolderBeforeWorking: a reader open over a minute holds AccessShareLock on the
+// chunk; the decompress must not start work whose end-stage lock it would refuse, waits with no request pending, and
+// starts once the reader is gone.
 func TestDecompressTradesChunk_WaitsOutALongHolderBeforeWorking(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -1988,10 +1819,9 @@ func TestDecompressTradesChunk_WaitsOutALongHolderBeforeWorking(t *testing.T) {
 	}
 }
 
-// TestDecompressTradesChunk_RefusedOpeningLockStartsNoWork: a writer's
-// RowExclusiveLock conflicts with the ExclusiveLock both functions open
-// with. The attempt's own LOCK TABLE is what waits and is refused, so
-// decompress_chunk never runs and the error says no work was lost.
+// TestDecompressTradesChunk_RefusedOpeningLockStartsNoWork: a writer's RowExclusiveLock conflicts with the ExclusiveLock
+// both functions open with; the attempt's LOCK TABLE waits and is refused, decompress_chunk never runs, and the error says
+// no work was lost.
 func TestDecompressTradesChunk_RefusedOpeningLockStartsNoWork(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -2033,10 +1863,8 @@ func TestDecompressTradesChunk_RefusedOpeningLockStartsNoWork(t *testing.T) {
 	}
 }
 
-// TestDecompressTradesChunk_EndStageRequestIsBoundedToo: with a young
-// reader on the chunk, the attempt gets its ExclusiveLock and then waits
-// for AccessExclusiveLock on the same chunk — the late request — and that
-// wait ends at the same 5 s bound, inside the statement.
+// TestDecompressTradesChunk_EndStageRequestIsBoundedToo: with a young reader on the chunk, the attempt gets its
+// ExclusiveLock, then the late AccessExclusiveLock wait ends at the same 5 s bound inside the statement.
 func TestDecompressTradesChunk_EndStageRequestIsBoundedToo(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -2087,11 +1915,9 @@ func TestDecompressTradesChunk_EndStageRequestIsBoundedToo(t *testing.T) {
 	}
 }
 
-// Store.EarliestTradeInWindow is the probe backfill-external refuses an
-// overlapping window on. It must be scoped to exactly (source, pair) and
-// the half-open [from, to): a row for another venue, another pair, or
-// outside the window must neither refuse the run nor be reported as the
-// -to bound.
+// Store.EarliestTradeInWindow is the probe backfill-external refuses an overlapping window on. It is scoped to exactly
+// (source, pair) and the half-open [from, to): other venue, pair or out-of-window rows must neither refuse the run nor be
+// reported as the -to bound.
 func TestEarliestTradeInWindow_ScopedToSourcePairAndWindow(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -2258,10 +2084,8 @@ func firstLedger(ts []c.Trade) uint32 {
 	return ts[0].Ledger
 }
 
-// TestTradesInRangeAndMarkets covers the two read-paths backing
-// /v1/history and /v1/markets: time-bounded trade lookup and
-// distinct-pair enumeration. Proves the hypertable indexes + GROUP
-// BY behave correctly end-to-end.
+// TestTradesInRangeAndMarkets: the read paths behind /v1/history and /v1/markets (time-bounded trade lookup, distinct-pair
+// enumeration) against the real hypertable indexes and GROUP BY.
 func TestTradesInRangeAndMarkets(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -2281,11 +2105,8 @@ func TestTradesInRangeAndMarkets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// AQUA's issuer — a real, CRC-valid mainnet G-strkey, distinct
-	// from USDC's issuer above. We need the strkey to round-trip
-	// through canonical.NewClassicAsset's CRC check, so a
-	// hand-crafted "USDC-issuer with last char tweaked" string
-	// (which a format-only validator would accept) is rejected.
+	// AQUA's issuer: a real, CRC-valid mainnet G-strkey distinct from USDC's. It must pass canonical.NewClassicAsset's CRC
+	// check, which a hand-tweaked lookalike (format-only valid) would fail.
 	fake, err := c.NewClassicAsset("AQUA", "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA")
 	if err != nil {
 		t.Fatal(err)
@@ -2343,17 +2164,8 @@ func TestTradesInRangeAndMarkets(t *testing.T) {
 		t.Error("TradesInRange should reject from > to")
 	}
 
-	// ─── DistinctPairs ──────────────────────────────────────────────
-	// Force-refresh prices_1m so DistinctPairs sees the seeded
-	// trades. Per rc.45 (commit 8717bc20), DistinctPairs reads the
-	// 1-min continuous aggregate rather than scanning the raw
-	// trades table — without this refresh the seeded rows are
-	// present in `trades` but absent from `prices_1m` until the
-	// 30 s policy fires (longer than the test window). Mirrors the
-	// pattern in test/integration/auth_test.go:65-74.
-	// DistinctPairs enumerates pairs from prices_1d (the right-granularity
-	// rewrite) and reads 24h volume from prices_1m — refresh BOTH, or
-	// the pair list comes back empty even though prices_1m has the rows.
+	// DistinctPairs enumerates pairs from prices_1d and reads 24h volume from prices_1m; refresh BOTH, or the list comes back
+	// empty even though the rows are in `trades` (the 30 s policy would fire after the test window).
 	for _, stmt := range []string{
 		`CALL refresh_continuous_aggregate('prices_1m', NULL, NULL)`,
 		`CALL refresh_continuous_aggregate('prices_1d', NULL, NULL)`,
@@ -2382,12 +2194,8 @@ func TestTradesInRangeAndMarkets(t *testing.T) {
 		}
 	}
 
-	// ─── DistinctPairs pagination round-trip ────────────────────────
-	// Limit=1 forces paging; confirm the two pairs come back across
-	// pages with a non-empty cursor after page 1 and an empty cursor
-	// after page 2. Guards the recent markets.go change where the
-	// page-break logic was rewritten — the `hasMore` signal must
-	// fire only when a page was actually held back.
+	// DistinctPairs pagination: Limit=1 forces paging; two pairs come back across pages, non-empty cursor after page 1, empty
+	// after page 2. The `hasMore` signal must fire only when a page was actually held back.
 	var paged []timescale.Market
 	cursor := ""
 	for iter := 0; iter < 5; iter++ {
@@ -2410,11 +2218,8 @@ func TestTradesInRangeAndMarkets(t *testing.T) {
 }
 
 func mkIntegrationTrade(source string, nonce int, ts time.Time, pair c.Pair, base, quote int64) c.Trade {
-	// Generate a unique 64-char *hex* tx_hash per (source, nonce).
-	// Earlier revision embedded the literal source string ("sdex")
-	// into the hash, which broke canonical.Trade.Validate's
-	// 64-char-hex check once validation tightened. Now we hex-
-	// encode each source byte so the hash stays parseable.
+	// Unique 64-char hex tx_hash per (source, nonce): hex-encode each source byte so it satisfies canonical.Trade.Validate's
+	// 64-char-hex check.
 	const hex = "0123456789abcdef"
 	h := make([]byte, 64)
 	for i := range h {
@@ -2442,11 +2247,9 @@ func mkIntegrationTrade(source string, nonce int, ts time.Time, pair c.Pair, bas
 	}
 }
 
-// flakeyFXResolver implements timescale.USDVolumeFXResolver. It resolves the
-// prices it knows unless `fail` is set, in which case it returns a transient
-// error — the exact class (deadlock / statement-timeout / pool blip / Patroni
-// failover) that VWAPUSDFXResolver.USDPriceAt surfaces and does NOT
-// negative-cache, so each independent write is a fresh chance to miss.
+// flakeyFXResolver implements timescale.USDVolumeFXResolver; it fails with a transient error when `fail` is set (the
+// deadlock / timeout / pool blip class that USDPriceAt surfaces without negative-caching), so each independent write is a
+// fresh chance to miss.
 type flakeyFXResolver struct {
 	prices map[string]string
 	fail   bool
@@ -2463,27 +2266,9 @@ func (r *flakeyFXResolver) USDPriceAt(_ context.Context, asset c.Asset, _ time.T
 	return p, true, nil
 }
 
-// TestUSDVolumeGenerationAwareNullPreservation is the proven-red regression:
-// in production persist_per_source=true, a DEX trade
-// is DOUBLE-WRITTEN at deriveGeneration=0 by both the dispatcher's
-// BatchInsertTrades and the projector's InsertTrade on the same store. If one
-// writer resolves a usd_volume and the other races the same PK while its FX
-// resolver hits a transient fault (returning nil), an upsert
-// (`usd_volume = EXCLUDED.usd_volume` gated only by
-// `derive_generation <= EXCLUDED.derive_generation`, equal included) overwrote
-// the populated value with NULL — permanently deflating the pair's volume.
-//
-// The fix is GENERATION-AWARE, not a blanket COALESCE: at the LIVE / equal
-// generation a NULL incoming must NOT regress a populated value, but a
-// strictly-HIGHER-generation re-derive is still allowed to write an honest
-// NULL (store.go:147-155, the tier-3b de-poisoning case). This test pins both:
-//
-//   - EQUAL (gen-0) NULL must PRESERVE the stored value. FAILS on the unfixed
-//     `usd_volume = EXCLUDED.usd_volume` (row goes NULL). To reproduce red:
-//     revert the CASE in both writers to `usd_volume = EXCLUDED.usd_volume`.
-//   - HIGHER-generation NULL must CLEAR the stored value. FAILS on the naive
-//     unconditional `COALESCE(EXCLUDED.usd_volume, trades.usd_volume)` the
-//     skeptic panel rejected (which would block the honest de-poisoning NULL).
+// TestUSDVolumeGenerationAwareNullPreservation: with persist_per_source=true a DEX trade is double-written at generation 0
+// (dispatcher batch + projector), so a transient FX fault in one writer must not overwrite a populated usd_volume with
+// NULL. Equal-generation NULL preserves.
 func TestUSDVolumeGenerationAwareNullPreservation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -2560,11 +2345,9 @@ func TestUSDVolumeGenerationAwareNullPreservation(t *testing.T) {
 			"usd_volume = %v, want $5.00 preserved (W1-flowtradeingest-1)", uv)
 	}
 
-	// Higher-generation honest NULL (the tier-3b de-poisoning case): a
-	// properly-wired re-derive at gen 5 that legitimately computes NULL must
-	// be allowed to CLEAR the value. The reDeriveNullVolumeGuard requires
-	// resolution to be installed for a gen>0 NULL write; install it (no-pegs
-	// no-op is enough to flip the installed flag).
+	// Higher-generation honest NULL (tier-3b de-poisoning): a gen-5 re-derive that legitimately computes NULL must CLEAR the
+	// value. reDeriveNullVolumeGuard needs resolution installed for a gen>0 NULL write; a no-pegs no-op install flips the
+	// flag.
 	if err := timescale.InstallUSDVolumeResolution(store, nil, nil); err != nil {
 		t.Fatalf("InstallUSDVolumeResolution: %v", err)
 	}
@@ -2584,10 +2367,8 @@ func TestUSDVolumeGenerationAwareNullPreservation(t *testing.T) {
 	}
 }
 
-// TestInsertTrade_PopulatesUSDVolume proves the L2.2 caveat fix
-// shipped end-to-end: a binance + fiat:USD trade lands with a
-// non-NULL `usd_volume` column matching the expected sum/1e8
-// conversion, and an on-chain trade lands with `usd_volume IS NULL`.
+// TestInsertTrade_PopulatesUSDVolume: a binance + fiat:USD trade lands with non-NULL usd_volume equal to sum/1e8,
+// and an on-chain trade lands with usd_volume NULL.
 func TestInsertTrade_PopulatesUSDVolume(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -2659,26 +2440,8 @@ func TestInsertTrade_PopulatesUSDVolume(t *testing.T) {
 	})
 }
 
-// TestInsertTrade_L76XLMBaseAnchorPopulatesUSDVolume proves the XLM-base
-// anchor end-to-end: with the FX resolver wired (the r1
-// production shape whenever `[trades].usd_pegged_classic_assets` is
-// non-empty), a pure-Soroban SEP-41 trade stored as base=XLM,
-// quote=TOKEN — the orientation [timescale.Store.Volume24hUSDForAsset]'s
-// insert-time tier 3 can't cover, since TOKEN has no direct
-// USD-pegged market — now lands a non-NULL `usd_volume` at INSERT
-// time via the tier-4 XLM-base anchor, not just via the query-time
-// [timescale.Store.SorobanVolume24hUSDForAsset] fallback.
-//
-// Fixture (one closed 1-minute bucket ~2h back):
-//   - native/USDC  vwap 0.5           → the XLM→USD anchor (1 XLM = $0.50)
-//   - XLM/token    10 XLM based       → tier-4 anchor: 10 * 0.5 = $5.00
-//
-// Because usd_volume is now populated AT INSERT, it propagates through
-// prices_1m's `volume_usd` column — so even the PLAIN
-// Volume24hUSDForAsset reader (which only ever summed the insert-time
-// column) now reports the anchored figure, and the anchored
-// SorobanVolume24hUSDForAsset reader's per-trade COALESCE(usd_volume, …) takes
-// the same row without re-deriving it — no double count.
+// TestInsertTrade_L76XLMBaseAnchorPopulatesUSDVolume: with the FX resolver wired, a Soroban SEP-41 trade stored as
+// base=XLM, quote=TOKEN gets a non-NULL usd_volume at INSERT via the tier-4 XLM-base anchor (10 XLM * $0.50 = $5.00).
 func TestInsertTrade_L76XLMBaseAnchorPopulatesUSDVolume(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -2729,13 +2492,8 @@ func TestInsertTrade_L76XLMBaseAnchorPopulatesUSDVolume(t *testing.T) {
 	anchorTrade := mkIntegrationTrade("soroswap", 1, ts, xlmUSDC, 1_000_000_000, 500_000_000) // 100 XLM / 50 USDC → vwap 0.5
 	xlmBaseTrade := mkIntegrationTrade("soroswap", 2, ts, xlmToken, 100_000_000, 300)         // 10 XLM based, 300 (arbitrary) token quote
 
-	// Insert + refresh the anchor FIRST, and only then insert the
-	// tier-4 trade: [timescale.VWAPUSDFXResolver] reads `prices_1m`
-	// (the CAGG), not raw `trades`, so the XLM/USD anchor must
-	// already be materialised by the time InsertTrade's synchronous
-	// tier-4 lookup runs — matching production, where the anchor
-	// leg's bucket was refreshed well before a brand-new trade
-	// arrives.
+	// Insert and refresh the anchor FIRST, then the tier-4 trade: VWAPUSDFXResolver reads the prices_1m CAGG, not raw
+	// `trades`, so the XLM/USD anchor must already be materialised, as in production.
 	if err := store.InsertTrade(ctx, anchorTrade); err != nil {
 		t.Fatalf("InsertTrade anchor: %v", err)
 	}
@@ -2812,11 +2570,9 @@ func candleRows(t *testing.T, source string, pair c.Pair, hourStart time.Time, g
 	return out
 }
 
-// Store.TradesInWindowOutside is what backfill-external's -allow-overlap
-// guard refuses on. Over a window holding an hour of stored 1m candles, a
-// 1h re-run must see all 60 minute rows as ones it would not overwrite
-// (writing it would double the hour's volume), while a 1m re-run sees
-// none. Rows for another venue, pair or outside the window never count.
+// Store.TradesInWindowOutside is what backfill-external's -allow-overlap guard refuses on. Over an hour of stored 1m
+// candles, a 1h re-run sees all 60 minute rows as not overwritten (writing would double the hour's volume), a 1m re-run
+// sees none; other venue/pair/out-of-window rows never count.
 func TestTradesInWindowOutside_CandleGranularityReRun(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -2872,10 +2628,8 @@ func TestTradesInWindowOutside_CandleGranularityReRun(t *testing.T) {
 	}
 }
 
-// TestZeroLegAdmission drives an SDEX zero-quote fill through the real
-// migrated schema and InsertTrade: the row is stored, /v1/history serves it
-// with price null, prices_1m counts it without pricing it, and the
-// /v1/price last-trade fallback (LatestTradesForPair) never returns it.
+// TestZeroLegAdmission: an SDEX zero-quote fill is stored, /v1/history serves it with price null, prices_1m counts it
+// without pricing it, and the /v1/price last-trade fallback (LatestTradesForPair) never returns it.
 func TestZeroLegAdmission(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

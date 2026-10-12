@@ -37,10 +37,8 @@ func TestNewPair_validAndDirectional(t *testing.T) {
 }
 
 func TestEqualEitherWay_rejectsUnrelated(t *testing.T) {
-	// Same-asset-on-both-sides pairs cannot be constructed, so the degenerate "p ≟ p.Flip()" case
-	// never reaches EqualEitherWay. What matters is that a pair sharing one asset but differing in
-	// the other is NOT equal-either-way, or cross-venue normalization would combine unrelated
-	// markets.
+	// A same-asset pair cannot be constructed, so p vs p.Flip() never reaches EqualEitherWay. A pair sharing one asset but
+	// differing in the other must NOT be equal-either-way, or cross-venue normalization combines unrelated markets.
 	xlm := c.NativeAsset()
 	usdc := mustClassic("USDC", usdcIssuer)
 	eurc := mustClassic("EURC", usdcIssuer)
@@ -105,10 +103,9 @@ func TestParsePair_bad(t *testing.T) {
 	}
 }
 
-// A raw oracle symbol is the one asset form the grammar lets carry "/" (real RedStone feed_ids
-// like "SolvBTC.BBN_FUNDAMENTAL/USD" do). It must never be usable as a pair leg (Pair.Validate
-// keys on IsMapped, not the separator), and ParsePair's right-to-left split must not mistake the
-// embedded "/" for the pair separator.
+// A raw oracle symbol is the one asset form allowed to carry "/" (real RedStone feed_ids like
+// "SolvBTC.BBN_FUNDAMENTAL/USD"). It must never be a pair leg (Pair.Validate keys on IsMapped), and ParsePair's right-
+// to-left split must not take the embedded "/" as the separator.
 func TestParsePair_rawSymbolSlashNeverALeg(t *testing.T) {
 	raw, err := c.NewOracleRawAsset("SolvBTC.BBN_FUNDAMENTAL/USD")
 	if err != nil {
@@ -154,10 +151,8 @@ func TestPair_JSON(t *testing.T) {
 }
 
 func TestPair_JSON_rejectsInvalid(t *testing.T) {
-	// Object form passes through each Asset.UnmarshalJSON (which
-	// validates), then the outer Pair.Validate() catches same-asset
-	// and zero-value cases. String form routes through ParsePair
-	// → NewPair, which also validates.
+	// Object form passes through each Asset.UnmarshalJSON (which validates), then Pair.Validate() catches same-asset and
+	// zero-value cases. String form routes through ParsePair -> NewPair, which also validates.
 	cases := map[string]string{
 		"object same-asset": `{"base":"native","quote":"native"}`,
 		"object zero base":  `{"base":"","quote":"native"}`,

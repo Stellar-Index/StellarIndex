@@ -18,23 +18,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestCHRebuildPreflight_AnswersWithoutTouchingTheLakeOrTheServedTier is
-// the executing proof for `ch-rebuild -write -preflight`, driven
-// through the real subcommand on real TimescaleDB.
-//
-// scripts/ops/ch-rebuild-projected.sh DELETEs a window and only then asks
-// ch-rebuild to re-derive it. The refusals must not live inside that second
-// step, or a guard doing its job leaves the window empty. The preflight lets
-// the script ask first — which is only safe if the preflight:
-//
-//  1. really runs the guards — a live projector cursor below -to, and a
-//     range over the buffered ceiling, are each refused here exactly as
-//     the real run refuses them, with NO verdict line on stdout;
-//  2. really stops before the lake — ClickHouse is unreachable in this
-//     test, so the same command WITHOUT -preflight fails on the lake read
-//     (the control), while the preflight succeeds;
-//  3. names what the run would re-derive, in the form the script parses;
-//  4. writes nothing.
+// TestCHRebuildPreflight_AnswersWithoutTouchingTheLakeOrTheServedTier: scripts/ops/ch-rebuild-projected.sh DELETEs a
+// window before asking ch-rebuild to re-derive it, so the refusals must come from a preflight asked first.
 func TestCHRebuildPreflight_AnswersWithoutTouchingTheLakeOrTheServedTier(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -132,15 +117,9 @@ func TestCHRebuildPreflight_AnswersWithoutTouchingTheLakeOrTheServedTier(t *test
 	}
 }
 
-// ReapCursors is the only irreversible statement in the cursor-cleanup
-// path. Its safety rests on three SQL predicates — the cutoff, the
-// -source scope, and `source <> ALL($3)` — and the shape test in
-// internal/storage/timescale pins the text of all three but cannot
-// prove Postgres agrees with the reading. In particular `<> ALL(...)`
-// over a text[] bound as a Go []string is a pgx encode path, and this
-// repo has shipped a param-typing bug before (see
-// divergence_observations_test.go). So: a real table, real rows, a real
-// DELETE, and the live cursor still there afterwards.
+// ReapCursors is the only irreversible statement in cursor cleanup, resting on three SQL predicates (cutoff, -source
+// scope, `source <> ALL($3)`). The shape test pins their text but not that Postgres agrees, notably `<> ALL(...)` over a
+// text[] bound as a Go []string (a pgx encode path; this repo has shipped a param-typing bug).
 func TestReapCursorsProtectsLiveNamespaces(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -237,10 +216,8 @@ func TestReapCursorsProtectsLiveNamespaces(t *testing.T) {
 		t.Errorf("a scoped run deleted a live cursor: %v", left)
 	}
 
-	// An empty protected list is what a caller passing nil would get:
-	// the guard must be the only thing that was holding those rows, so
-	// this run proves the earlier survival came from the predicate and
-	// not from the rows being out of range anyway.
+	// An empty protected list is what a nil caller gets: the guard alone was holding those rows, so this run proves the
+	// earlier survival came from the predicate and not from the rows being out of range.
 	seed()
 	deleted, err = store.ReapCursors(ctx, cutoff, "", nil)
 	if err != nil {

@@ -57,11 +57,9 @@ func mkDedupTestClassicOp(t *testing.T) clickhouse.ClassicOp {
 	}
 }
 
-// TestClassicMovementsDecodeOp_DedupesUnmergedDuplicateRows pins dedup: classicOpsQuery joins
-// two ReplacingMergeTree tables without FINAL, so an unmerged part streams the SAME op twice.
-// The same (ledger, tx_hash, op_index) fed through classicMovementsDecodeOp twice must count
-// once, or -verify's decoded count exceeds ClickHouse's uniqExact count and a genuine write loss
-// becomes indistinguishable from lake duplication.
+// TestClassicMovementsDecodeOp_DedupesUnmergedDuplicateRows: classicOpsQuery joins two ReplacingMergeTree tables without
+// FINAL, so an unmerged part streams the same op twice. The same (ledger, tx_hash, op_index) must count once, or
+// -verify's decoded count exceeds uniqExact and masks real write loss.
 func TestClassicMovementsDecodeOp_DedupesUnmergedDuplicateRows(t *testing.T) {
 	op := mkDedupTestClassicOp(t)
 	dec := classicmovements.NewDecoder()

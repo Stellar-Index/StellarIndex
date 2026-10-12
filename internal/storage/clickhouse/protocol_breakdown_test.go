@@ -6,10 +6,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// TestEffectiveEventName covers the topic name-recovery priority that
-// labels the protocol event-breakdown pane, especially the generalization
-// that recovers a non-Symbol topic[0] action name
-// so phoenix-style events stop landing in "untyped".
+// TestEffectiveEventName covers the topic name-recovery priority behind the protocol event-breakdown pane,
+// including recovering a non-Symbol topic[0] action name so phoenix-style events do not land in "untyped".
 func TestEffectiveEventName(t *testing.T) {
 	var (
 		symPOOL   = scval.MustEncodeSymbol("POOL")

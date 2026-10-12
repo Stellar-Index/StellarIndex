@@ -104,10 +104,8 @@ func Capture(ev events.Event) (Row, error) {
 	}, nil
 }
 
-// decodeTopics base64-decodes EVERY topic into an ordered slice, never truncating. The first four
-// also fill the fixed topic_0..3 columns; the full slice goes to topics_xdr so events with 5+
-// topics (custom-emitted, e.g. Aquarius multi-token pools) keep every topic. topic_count records
-// the full arity.
+// decodeTopics base64-decodes EVERY topic into an ordered slice, never truncating. The first four also fill topic_0..3; the full
+// slice goes to topics_xdr so events with 5+ topics keep every topic. topic_count records the full arity.
 func decodeTopics(topics []string) ([][]byte, error) {
 	out := make([][]byte, len(topics))
 	for i := range topics {
@@ -130,10 +128,8 @@ func topicAt(xs [][]byte, i int) []byte {
 	return nil
 }
 
-// tryDecodeSymbolOrString returns the Symbol/String value of b64Topic, or "" (stored as SQL NULL)
-// otherwise. It is an index convenience only; correctness reads topic_0_xdr. A String goes through
-// AsText because a contract-supplied String may carry a NUL or invalid UTF-8, which AsString would
-// send to Postgres as SQLSTATE 22021 (a permanent, batch-poisoning error).
+// tryDecodeSymbolOrString returns the Symbol/String value of b64Topic, or "" (SQL NULL). An index convenience only; correctness reads
+// topic_0_xdr. A String goes through AsText because a contract-supplied String may carry NUL or invalid UTF-8 (SQLSTATE 22021).
 func tryDecodeSymbolOrString(b64Topic string) string {
 	sv, err := scval.Parse(b64Topic)
 	if err != nil {
@@ -155,10 +151,7 @@ func encodeOpArgsAsScVec(args []string) ([]byte, error) {
 	return scval.EncodeArgsAsScVec(args)
 }
 
-// decodeTxHashHex parses the wire tx_hash (lowercase hex, 64 chars)
-// into 32 raw bytes. The dispatcher stamps hex via
-// `hex.EncodeToString(tx.Result.TransactionHash[:])` so reversing
-// it here is exact.
+// decodeTxHashHex parses the wire tx_hash (lowercase hex, 64 chars) into 32 raw bytes; the dispatcher stamps it with hex.EncodeToString.
 func decodeTxHashHex(h string) ([]byte, error) {
 	if len(h) == 0 {
 		return nil, errors.New("empty tx_hash")

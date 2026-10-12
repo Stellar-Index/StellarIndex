@@ -48,10 +48,9 @@ func (c *wmConn) callCount() int {
 	return c.calls
 }
 
-// TestCap67WatermarkCache_WaiterHonoursItsContext — a slow watermark
-// round-trip must not queue every concurrent /movements request behind a
-// context-blind mutex: a waiter whose deadline passes returns, and it
-// does not issue a second query against the struggling store.
+// TestCap67WatermarkCache_WaiterHonoursItsContext: a slow watermark round-trip must not queue concurrent
+// /movements requests behind a context-blind mutex; a waiter past its deadline returns without a second
+// query.
 func TestCap67WatermarkCache_WaiterHonoursItsContext(t *testing.T) {
 	conn := &wmConn{
 		wm: 70_000_000, block: true,

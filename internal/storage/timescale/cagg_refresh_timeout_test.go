@@ -11,11 +11,9 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// TestCAGGRefreshTimeout_DerivedFromWindow pins the refresh bound: five minutes of refresh per
-// hour of window, floored at ten minutes and capped at four hours. The rows are the windows the
-// backfill actually asks for (a 10k-ledger chunk, the `-parallel 4` weekly slice, the SDEX
-// history driver's 40k-ledger chunk, the padded MinWindow of each coarse rung), so a constant
-// change shows up as a changed expectation here.
+// TestCAGGRefreshTimeout_DerivedFromWindow pins the refresh bound: five minutes per hour of window, floored
+// at ten minutes and capped at four hours. The rows are the windows the backfills actually ask for, so a
+// constant change shows up as a changed expectation.
 func TestCAGGRefreshTimeout_DerivedFromWindow(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -73,10 +71,8 @@ func TestCAGGRefreshTimeout_EveryLiveRungIsBounded(t *testing.T) {
 	}
 }
 
-// TestCAGGRefreshTimeoutError_NamesViewAndWindow: the typed error the
-// caller logs carries the view, the window and the bound in its
-// message, and unwraps to the driver error so SQLSTATE matching on the
-// chain still works.
+// TestCAGGRefreshTimeoutError_NamesViewAndWindow: the typed error names the view, window and bound in its
+// message and unwraps to the driver error so SQLSTATE matching on the chain still works.
 func TestCAGGRefreshTimeoutError_NamesViewAndWindow(t *testing.T) {
 	from := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	to := from.Add(4 * time.Hour)
@@ -100,10 +96,9 @@ func TestCAGGRefreshTimeoutError_NamesViewAndWindow(t *testing.T) {
 	if !isStatementTimeoutErr(fmt.Errorf("wrapped: %w", cause)) {
 		t.Error("isStatementTimeoutErr must see 57014 through a wrap")
 	}
-	// The shape a real refresh_continuous_aggregate produces: the
-	// procedure re-throws the cancellation as internal_error, so the
-	// code is XX000 and only the message says what happened (observed
-	// on timescaledb 2.26.4-pg15 by the integration test).
+	// The shape a real refresh_continuous_aggregate produces: the procedure re-throws the cancellation as
+	// internal_error, so the code is XX000 and only the message says what happened (seen on timescaledb
+	// 2.26.4-pg15).
 	if !isStatementTimeoutErr(&pgconn.PgError{Code: "XX000", Message: "canceling statement due to statement timeout"}) {
 		t.Error("isStatementTimeoutErr must match the XX000 + message shape the refresh procedure emits")
 	}
@@ -118,10 +113,9 @@ func TestCAGGRefreshTimeoutError_NamesViewAndWindow(t *testing.T) {
 	}
 }
 
-// TestRefreshContinuousAggregateWithTimeout_RejectsNonPositive: there is
-// deliberately no "0 disables the bound" arm — an unbounded refresh is
-// the defect. No DB is touched: the guard runs before any connection
-// is taken, so a nil-pool Store proves the ordering.
+// TestRefreshContinuousAggregateWithTimeout_RejectsNonPositive: there is deliberately no "0 disables the
+// bound" arm, as an unbounded refresh is the defect. The guard runs before any connection is taken, which a
+// nil-pool Store proves.
 func TestRefreshContinuousAggregateWithTimeout_RejectsNonPositive(t *testing.T) {
 	s := &Store{}
 	now := time.Now()

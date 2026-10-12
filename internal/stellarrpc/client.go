@@ -151,10 +151,8 @@ func newHTTPStatusError(method string, status int, body []byte) *HTTPStatusError
 	return e
 }
 
-// call is the low-level JSON-RPC round-trip; callers unmarshal the result into their own target.
-// An error envelope with a status below 400 returns the *[JSONRPCError]. Any status >= 400
-// returns an *[HTTPStatusError] (wrapping the *[JSONRPCError] when present); an undecodable body
-// with a status below 400 returns a *[ResponseDecodeError].
+// call is the low-level JSON-RPC round-trip. An error envelope with status below 400 returns *[JSONRPCError]; status >= 400 returns
+// *[HTTPStatusError] (wrapping the *[JSONRPCError] when present); an undecodable body below 400 returns *[ResponseDecodeError].
 func (c *Client) call(ctx context.Context, method string, params any, result any) error {
 	id := c.nextID.Add(1)
 	req := jsonrpcRequest{Version: "2.0", ID: int(id), Method: method, Params: params}

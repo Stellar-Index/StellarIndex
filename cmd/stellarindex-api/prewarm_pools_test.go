@@ -16,10 +16,8 @@ import (
 // explorer's /network page requests (limit=8&order_by=volume_24h_usd_desc). An unwarmed slot makes
 // the first visitor wait on the full trades scan (about 2 s against about 1 ms warm).
 
-// recordingPoolsReader records the AllPools arguments it is asked for. Every
-// other MarketsReader method is an unused stub — prewarmPools calls only
-// AllPools, and a fake that answered more would be pretending to be a
-// database.
+// recordingPoolsReader records the AllPools arguments asked for; other MarketsReader methods are unused stubs, since
+// prewarmPools calls only AllPools and a fake that answered more would pretend to be a database.
 type recordingPoolsReader struct {
 	mu    sync.Mutex
 	calls []poolsCall
@@ -133,10 +131,9 @@ func TestPrewarmPoolsWarmsTheLimitTheExplorerSends(t *testing.T) {
 	}
 }
 
-// TestPrewarmPoolsUsesTheHandlersExactCacheKeyArgs pins that every cache key dimension matches
-// what handlePools looks up, or the warmed slot is a phantom. Sources must be
-// v1.DexSourceNames(), not nil; the order must be MarketsOrderVolume24hDesc, not
-// MarketsOrderPair (0); and the cursor must be empty, since the warmed page is page one.
+// TestPrewarmPoolsUsesTheHandlersExactCacheKeyArgs: every cache key dimension must match handlePools or the warmed slot
+// is a phantom. Sources must be v1.DexSourceNames(), not nil; order MarketsOrderVolume24hDesc, not MarketsOrderPair (0);
+// cursor empty (page one).
 func TestPrewarmPoolsUsesTheHandlersExactCacheKeyArgs(t *testing.T) {
 	rec := &recordingPoolsReader{}
 	cached := v1.NewCachedMarketsReader(rec, 2*time.Minute)

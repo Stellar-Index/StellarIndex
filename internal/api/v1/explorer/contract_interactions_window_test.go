@@ -108,10 +108,8 @@ func TestContractInteractions_QuantizesWindow(t *testing.T) {
 	if got.WindowDays != 90 {
 		t.Fatalf("window_days echo = %d, want 90 (45 must quantise up to the 90 rung)", got.WindowDays)
 	}
-	// Independently derived from the model, not from windowFloorLedger's own
-	// arithmetic: 90 days at the fake reader's 6s cadence is exactly
-	// 90*86400/6 = 1,296,000 ledgers — the boundary is exact (no rounding),
-	// so the smallest sequence at/after it is precisely tip-1,296,000.
+	// Derived from the model, not windowFloorLedger's arithmetic: 90 days at the fake reader's 6s cadence is exactly
+	// 90*86400/6 = 1,296,000 ledgers, so the boundary is exact and the floor is precisely tip-1,296,000.
 	wantSince := tip - 1_296_000
 	if got.SinceLedger != wantSince {
 		t.Fatalf("since_ledger = %d, want %d (floor must be computed from close_time, not a theoretical ledgers/day constant)", got.SinceLedger, wantSince)

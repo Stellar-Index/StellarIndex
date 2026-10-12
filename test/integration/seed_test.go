@@ -14,11 +14,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
-// TestClaimableSeed_RetractsServedClaim is the end-to-end proof: a claimable
-// balance an earlier seed wrote as live, claimed while the live observer was
-// not recording, must stop counting toward classic supply after a re-seed.
-// A seed that could only add rows would leave the served reader
-// summing the claimed balance forever.
+// End-to-end: a claimable balance seeded live, then claimed while the observer wasn't recording, must stop counting
+// toward classic supply after a re-seed. A seed that only added rows would sum it forever.
 func TestClaimableSeed_RetractsServedClaim(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -166,38 +163,9 @@ func TestClaimableSeedProvenanceRoundTrip(t *testing.T) {
 	}
 }
 
-// TestSupplyCrossCheckConvergesAfterPoolBalanceRecovery is the
-// acceptance test for the BLND/EURC/KALE/PHO supply_cross_check_divergence
-// residual ("PHO/BLND VERDICT" incident). It
-// can't run against live r1 data from here, so it reproduces the
-// documented divergence SHAPE with synthetic rows through the REAL
-// Algorithm-2 pipeline (StorageClassicSupplyReader.ClassicSupplyAt →
-// ClassicComputer.Compute, exactly what the aggregator's per-asset
-// Refresher runs) against a real TimescaleDB:
-//
-//  1. Insert only the classic-side components a classic-only system would
-//     have observed (trustlines + a small "already-visible" SAC
-//     balance) — Algorithm 2's total under-counts, exactly like the
-//     documented incident.
-//  2. Cross-check that under-count against a fixed Algorithm-3 total
-//     (the SAC's verified-correct lifetime supply — for PHO/BLND these
-//     are the incident's real on-chain-verified figures; EURC/KALE use
-//     representative round numbers reproducing the same shape) via
-//     supply.CrossCheckForClass(..., WrapClassPartial) — the exact
-//     function CrossCheckRefresher uses. Assert it reports `over`
-//     (WithinTolerance=false), reproducing the alert firing.
-//  3. Insert the "recovered" pool-held SAC balance — the row
-//     `supply seed-sac-balances -full-history` would have written via
-//     clickhouse.StreamSACBalanceSeedsFullHistory + Store
-//     .InsertSACBalanceObservation (test/integration/
-//     clickhouse_entries_test.go covers that extraction step
-//     against ClickHouse; this test covers what happens to Algorithm 2
-//     once the row lands in Postgres, which is the same table either
-//     seed source writes to — sac_balance_observations. No new
-//     aggregation code was needed: SumSACBalancesAtOrBefore already
-//     sums every holder regardless of type).
-//  4. Re-run the cross-check. Assert it now converges
-//     (WithinTolerance=true) — the acceptance criterion.
+// Reproduces the supply_cross_check_divergence shape (BLND/EURC/KALE/PHO) with synthetic rows through the real Algorithm-2
+// pipeline: classic-only components under-count against a fixed Algorithm-3 total and the cross-check reports over; after
+// the recovered pool-held SAC balance lands in sac_balance_observations, the cross-check converges.
 func TestSupplyCrossCheckConvergesAfterPoolBalanceRecovery(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -236,12 +204,8 @@ func TestSupplyCrossCheckConvergesAfterPoolBalanceRecovery(t *testing.T) {
 		// address — the holder the -full-history seed recovers.
 		poolHolder string
 		poolAmount string // decimal string; some of these exceed int64
-		// sacTotal is Algorithm 3's verified lifetime SAC supply — fixed,
-		// not affected by anything this test inserts. PHO/BLND use the
-		// incident's real on-chain-verified figures (docs/architecture/
-		// supply-pipeline.md); EURC/KALE use representative round
-		// numbers reproducing the same "sac_total > classic_total"
-		// shape documented for the residual four.
+		// Algorithm 3's verified lifetime SAC supply, fixed and unaffected by inserts; PHO/BLND use on-chain-verified figures,
+		// EURC/KALE round numbers with the same sac_total > classic_total shape.
 		sacTotal string
 	}{
 		{
@@ -306,14 +270,9 @@ func TestSupplyCrossCheckConvergesAfterPoolBalanceRecovery(t *testing.T) {
 				t.Fatalf("Compute (before): %v", err)
 			}
 
-			// (2) Cross-check BEFORE recovery: the over-mint direction
-			// (sac_total > classic_total) is DIAGNOSTIC-ONLY since the
-			// leg-1 demotion (c4184ddd — BLND retires supply classically
-			// with no SAC burn and PHO minted its whole supply through
-			// the SAC once, so this direction paged for a week on
-			// correct accounting). The new contract this step pins:
-			// WithinTolerance stays TRUE (no page) while OverMintStroops
-			// still reports the excess so the diagnostic isn't lost.
+			// Before recovery the over-mint direction (sac_total > classic_total) is diagnostic-only: WithinTolerance stays true (BLND
+			// retires supply classically with no SAC burn, PHO minted via the SAC once) while OverMintStroops still reports the
+			// excess.
 			resultBefore, err := supply.CrossCheckForClass(before, sacSupply, supply.WrapClassPartial)
 			if err != nil {
 				t.Fatalf("CrossCheckForClass (before): %v", err)
@@ -351,10 +310,7 @@ func TestSupplyCrossCheckConvergesAfterPoolBalanceRecovery(t *testing.T) {
 				t.Fatalf("Compute (after): %v", err)
 			}
 
-			// (4) Acceptance criterion: recovery registers — the
-			// cross-check stays within tolerance AND the over-mint
-			// diagnostic clears (classic+pool now covers the SAC total,
-			// so the reported excess drops to zero).
+			// Acceptance: after recovery the cross-check stays within tolerance and the over-mint diagnostic clears to zero.
 			resultAfter, err := supply.CrossCheckForClass(after, sacSupply, supply.WrapClassPartial)
 			if err != nil {
 				t.Fatalf("CrossCheckForClass (after): %v", err)

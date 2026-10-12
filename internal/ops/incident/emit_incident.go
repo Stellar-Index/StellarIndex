@@ -52,10 +52,8 @@ func findIncidentForEmit(all []incidents.Incident, slug string, eventType platfo
 	return found, nil
 }
 
-// incidentEventKey is the identity PublishOnce keys each subscriber's
-// delivery on: the incident and the transition being announced, never the
-// emit time, so re-running the command after a partial fan-out enqueues
-// only the subscribers it missed instead of paging the rest twice.
+// incidentEventKey is the identity PublishOnce keys each subscriber's delivery on: the incident and transition, never the emit
+// time, so re-running after a partial fan-out enqueues only the missed subscribers.
 func incidentEventKey(found *incidents.Incident, eventType platform.WebhookEventType) string {
 	key := found.Slug + "@" + found.StartedAt.UTC().Format(time.RFC3339Nano)
 	if eventType == platform.WebhookEventIncidentResolved && found.ResolvedAt != nil {
@@ -64,10 +62,8 @@ func incidentEventKey(found *incidents.Incident, eventType platform.WebhookEvent
 	return key
 }
 
-// incidentPayloadFields builds the webhook body a subscriber receives.
-// Extracted from [Emit] to keep that function under the funlen
-// cap; the shape is the same one the dashboard explorer + /v1/incidents
-// render, so a hook subscriber sees what the public status page shows.
+// incidentPayloadFields builds the webhook body a subscriber receives, extracted from [Emit] for the funlen cap. The shape matches
+// the explorer and /v1/incidents, so a hook subscriber sees what the public status page shows.
 func incidentPayloadFields(found *incidents.Incident, eventType platform.WebhookEventType) map[string]any {
 	fields := map[string]any{
 		"event":      string(eventType),

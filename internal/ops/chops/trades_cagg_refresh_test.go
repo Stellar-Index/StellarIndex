@@ -199,11 +199,9 @@ func TestRefreshTradesCAGGsOverLedgers_EmptyRangeIsAnError(t *testing.T) {
 	}
 }
 
-// twap_1h / twap_1d read prices_1m, whose retention (migration 0156) drops
-// minute rows without an invalidation. prices_1m must therefore be FORCED
-// over a window containing every twap window, and the twaps forced after
-// it, or a twap bucket is recomputed from dropped minute rows and its
-// history deleted.
+// twap_1h / twap_1d read prices_1m, whose retention (migration 0156) drops minute rows without invalidation, so
+// prices_1m must be FORCED over a window containing every twap window and the twaps forced after it, or a twap bucket is
+// recomputed from dropped rows and its history deleted.
 func TestRefreshTradesCAGGsOverLedgers_ForcesPrices1mOverEveryTwapWindow(t *testing.T) {
 	f := &fakeTradesCAGGStore{
 		from: time.Date(2025, 3, 10, 12, 0, 0, 0, time.UTC),
@@ -681,11 +679,9 @@ func TestPreviewTradesCAGGRefresh_RefreshesNothing(t *testing.T) {
 	}
 }
 
-// A refresh that returns is not proof prices_1m matches `trades`.
-// Nothing compared them, so a bucket left on the pre-repair rows served
-// stale OHLC / volume with the rebuild reporting success. The refresh now
-// fails on any drift, and the drifting minute may sit on either edge of
-// the span — where a mis-padded refresh would leave it.
+// A refresh that returns does not prove prices_1m matches `trades`; a bucket left on pre-repair rows served stale
+// OHLC/volume while the rebuild reported success. The refresh now fails on any drift, and the drifting minute may sit on
+// either edge of the span, where a mis-padded refresh would leave it.
 func TestRefreshTradesCAGGsOverLedgers_FailsWhenPrices1mDriftsFromTrades(t *testing.T) {
 	from := time.Date(2025, 3, 10, 12, 0, 30, 0, time.UTC)
 	to := time.Date(2025, 5, 14, 12, 7, 45, 0, time.UTC)

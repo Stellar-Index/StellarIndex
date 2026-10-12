@@ -56,11 +56,9 @@ func balancedParenEnd(t *testing.T, s string, start int) int {
 	return -1
 }
 
-// extractCreateTable pulls one `CREATE TABLE ... stellar.<table> ( ... ) ENGINE ... ORDER BY
-// (...)` statement out of a larger blob (a Go string literal, a shell heredoc/quoted string, or a
-// multi-statement .sql file), stopping at the closing paren of ORDER BY's column tuple. None of
-// the source shapes reliably terminates a statement with a character (Go/shell have none; .sql
-// uses `;` but so do inline runbook comments), so ORDER BY is the one anchor common to all.
+// extractCreateTable pulls one `CREATE TABLE ... stellar.<table> (...) ENGINE ... ORDER BY (...)` statement
+// from a Go string, shell heredoc or .sql file, stopping at ORDER BY's closing paren: no source shape
+// reliably ends a statement.
 func extractCreateTable(t *testing.T, src, table string) string {
 	t.Helper()
 	anchor := regexp.MustCompile(`CREATE TABLE(?:\s+IF NOT EXISTS)?\s+stellar\.` + regexp.QuoteMeta(table) + `\s*\(`)
@@ -131,10 +129,8 @@ func TestAccountMovementsDDLMatchesTier1Schema(t *testing.T) {
 		"deploy/clickhouse/tier1_schema.sql", tier1)
 }
 
-// TestLecurV2RebuildScriptMatchesOperatorDDL pins the `setup` phase CREATE TABLE of
-// scripts/ops/d3-lecur-v2-rebuild.sh to deploy/clickhouse/ledger_entries_current_intra_ledger_seq.sql.
-// A drift means the scripted cutover and the documented runbook build two different tables under
-// the same name.
+// TestLecurV2RebuildScriptMatchesOperatorDDL pins the setup CREATE TABLE in d3-lecur-v2-rebuild.sh to
+// ledger_entries_current_intra_ledger_seq.sql, so the script and the runbook build the same table.
 func TestLecurV2RebuildScriptMatchesOperatorDDL(t *testing.T) {
 	root := lockstepRepoRoot(t)
 	script := lockstepReadFile(t, root, filepath.Join("scripts", "ops", "d3-lecur-v2-rebuild.sh"))
@@ -144,11 +140,9 @@ func TestLecurV2RebuildScriptMatchesOperatorDDL(t *testing.T) {
 		"deploy/clickhouse/ledger_entries_current_intra_ledger_seq.sql", operator)
 }
 
-// TestNoOpsScriptRanksLedgerEntryChangesInSQL fails when an operator script or lake DDL numbers
-// rows per ledger with a SQL window. intra_ledger_seq is the position in the Go walk
-// (dispatcher.EntryWalkVersion), whose fee, before, after and refund changes all carry op_index
-// -1, so no ranking over the lake's columns reproduces it. Re-derive through ch-backfill
-// (scripts/ops/ordinal-rederive-chunks.sh) instead.
+// TestNoOpsScriptRanksLedgerEntryChangesInSQL: no script or lake DDL may number rows per ledger with a SQL
+// window, since intra_ledger_seq is the Go walk position and its fee/before/after/refund changes share
+// op_index -1. Re-derive through ch-backfill (scripts/ops/ordinal-rederive-chunks.sh) instead.
 func TestNoOpsScriptRanksLedgerEntryChangesInSQL(t *testing.T) {
 	root := lockstepRepoRoot(t)
 	var files []string

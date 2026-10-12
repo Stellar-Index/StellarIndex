@@ -6,13 +6,9 @@ import (
 	"testing"
 )
 
-// TestWalkCoverage guards the rule every galexie-walking subcommand in this package applies
-// before it reports on what it saw: DELIVERED must equal REQUESTED.
-//
-// Every other ch-gate check measured the walk against itself. `ch.LedgerRows != uint64(walked)`
-// compares the rows ClickHouse holds for the range to the ledgers the walk produced, so when a
-// wrong bucket or a hole tolerated by TolerateTrailingMissing shortens the walk, both sides shrink
-// together and the gate certifies the slice it happened to read.
+// Every galexie-walking subcommand must check DELIVERED == REQUESTED; comparing ch.LedgerRows to the walked ledgers
+// measures the walk against itself, so a wrong bucket or a tolerated trailing hole shrinks both sides and the gate
+// certifies only the slice it happened to read.
 func TestWalkCoverage(t *testing.T) {
 	t.Parallel()
 
@@ -95,10 +91,9 @@ func TestWalkCoverage(t *testing.T) {
 	})
 }
 
-// funcBody returns the source text of the named top-level function in the given file of this
-// package. The call-site wiring below is pinned at the source because chGate needs a config file,
-// a galexie bucket over S3 and a live ClickHouse before it runs a single line, as with
-// ingest.TestRunBackfillChunk_CoverageCheckPrecedesRefreshAndCompletion.
+// Returns the source text of the named top-level function; call-site wiring is pinned at the source because chGate needs
+// a config, a galexie S3 bucket and a live ClickHouse before running a line (as in
+// TestRunBackfillChunk_CoverageCheckPrecedesRefreshAndCompletion).
 func funcBody(t *testing.T, file, fn string) string {
 	t.Helper()
 	b, err := os.ReadFile(file)

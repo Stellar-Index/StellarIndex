@@ -23,13 +23,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestMarketIdentity_BothOrientationsAreOneMarket executes the
-// readers against one market stored in both directions: sdex writes
-// XLM/USDC and USDC/XLM, soroswap only XLM/USDC, aquarius only
-// USDC/XLM. Every reader must see ONE market holding all four trades.
-// Guards against an asset markets count of 2, top_markets listing USDC twice,
-// the per-source asset breakdown giving sdex markets_24h 2, and the pair
-// breakdown dropping aquarius entirely and half of sdex.
+// One market stored in both directions (sdex XLM/USDC and USDC/XLM, soroswap XLM/USDC only, aquarius USDC/XLM only) must
+// read as ONE market with all four trades: asset markets count 1 (not 2), top_markets lists USDC once, sdex markets_24h
+// is 1, and the pair breakdown keeps aquarius and all of sdex.
 func TestMarketIdentity_BothOrientationsAreOneMarket(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -147,10 +143,8 @@ func assertPairSourceStatsBothOrientations(t *testing.T, ctx context.Context, st
 	}
 }
 
-// TestSourceStats_OrderedByVolume pins the per-source breakdown to USD
-// volume order, underivable volume last, on a fixture where trade-count
-// order disagrees: sdex out-trades soroswap at a fraction of its volume,
-// and aquarius trades most but has no USD path.
+// Per-source breakdown orders by USD volume, underivable volume last, on a fixture where trade-count order disagrees:
+// sdex out-trades soroswap at a fraction of its volume, and aquarius trades most but has no USD path.
 func TestSourceStats_OrderedByVolume(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -228,10 +222,8 @@ func assertSourceOrder(t *testing.T, name string, rows []timescale.SourceStats, 
 	}
 }
 
-// TestMarketsAndPoolsDropSelfFoldedPair seeds native ↔ XLM-SAC swaps in
-// both leg orders. Both legs fold to `native`, a pair canonical.NewPair
-// refuses: the listings must drop it in SQL rather than fail the whole
-// /v1/pools request or skip-and-count it on every /v1/markets read.
+// Native <-> XLM-SAC swaps in both leg orders fold both legs to `native`, a pair canonical.NewPair refuses: the listings
+// must drop it in SQL rather than fail the whole /v1/pools request or skip-and-count it on every /v1/markets read.
 func TestMarketsAndPoolsDropSelfFoldedPair(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -305,11 +297,8 @@ func TestMarketsAndPoolsDropSelfFoldedPair(t *testing.T) {
 	}
 }
 
-// TestMarketsAndPoolsFoldSACSpelling executes the /v1/markets and
-// /v1/pools reads against real TimescaleDB. SDEX keys XLM as `native`
-// and Soroban venues key it as its SAC, so a listing that groups on the
-// stored spelling serves one market as two rows, each with part of the
-// 24h volume, and ranks it below markets it outsizes.
+// /v1/markets and /v1/pools on real TimescaleDB. SDEX keys XLM as `native` and Soroban venues as its SAC, so grouping on
+// the stored spelling serves one market as two rows, each with part of the 24h volume, ranked below markets it outsizes.
 func TestMarketsAndPoolsFoldSACSpelling(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -432,16 +421,9 @@ func TestMarketsAndPoolsFoldSACSpelling(t *testing.T) {
 	}
 }
 
-// TestAPI_MarketsAssetFilter_XLMAliasComplete proves the served rate for
-// the /v1/markets?asset= alias-completeness fix against real
-// TimescaleDB: an XLM market keyed under `crypto:XLM` (as every CEX feed
-// writes it) MUST surface for a ?asset=native query, and vice-versa.
-//
-// distinctPairsCommon must not match the asset filter with a scalar
-// `base_asset = $5 OR quote_asset = $5`: ?asset=native would return zero
-// rows for a crypto:XLM-keyed market — the exact undercount this test
-// pins. The filter binds the full alias set and matches with
-// ANY-membership on each leg.
+// An XLM market keyed `crypto:XLM` (as every CEX feed writes it) MUST surface for ?asset=native and vice-versa:
+// distinctPairsCommon must not use a scalar `base_asset = $5 OR quote_asset = $5`, which undercounts. The filter binds
+// the full alias set with ANY-membership on each leg.
 func TestAPI_MarketsAssetFilter_XLMAliasComplete(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -507,25 +489,9 @@ func TestAPI_MarketsAssetFilter_XLMAliasComplete(t *testing.T) {
 	}
 }
 
-// TestMarketsListingGrain pins the two properties the /v1/markets
-// directory read is required to have and did not.
-// Both are executed against a real TimescaleDB with the real CAGGs, in
-// the state r1 is actually in: prices_1d materialized only up to the
-// PREVIOUS UTC midnight, which is what its 6-hour end_offset +
-// materialized_only setting produce for every pair that traded today
-// (migrations/0147, policy row '1d').
-//
-//  1. per-source figures are that SOURCE's. prices_1m / prices_1d are
-//     grouped by (bucket, base, quote) with an
-//     `array_agg(DISTINCT source) AS sources` column, so filtering them
-//     by `$source = ANY(sources)` selects the buckets a venue printed
-//     in and then sums EVERY venue's trades in those buckets. The
-//     fixture below makes that visible: soroswap prints 2 trades worth
-//     $10 into minutes in which sdex printed 6 worth $600.
-//
-//  2. last_price is the latest price, and a market that first traded
-//     today is listed. Reading both from prices_1d served the previous
-//     UTC day's close and dropped same-day-new markets entirely.
+// Two properties of the /v1/markets directory read, on real TimescaleDB and CAGGs in r1's state (prices_1d materialized
+// only to the PREVIOUS UTC midnight; 6h end_offset + materialized_only, migrations/0147): 1. per-source figures are that
+// SOURCE's.
 func TestMarketsListingGrain(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -552,13 +518,9 @@ func TestMarketsListingGrain(t *testing.T) {
 		return dayStart
 	}
 
-	// ── pair A: native/USDC on two venues, same minutes ───────────────
-	// Two older prints, one per venue (3 days back: inside the 14d
-	// recency window, outside the 24h figures window), so the pair has a
-	// materialized prices_1d bucket whose `sources` array holds both
-	// venues. Without them the pair-wide read would simply return no row
-	// and the assertions below could not tell a cross-source sum from an
-	// absent pair.
+	// Pair A: native/USDC on two venues in the same minutes, plus one older print per venue (3 days back: inside the 14d
+	// recency window, outside the 24h figures window) so a materialized prices_1d bucket lists both venues. Without them the
+	// pair-wide read returns no row and a cross-source sum is indistinguishable from an absent pair.
 	seedGrainTrade(t, ctx, db, 1, "sdex", now.Add(-72*time.Hour), "native", usdc, "1", "0.5", "1")
 	seedGrainTrade(t, ctx, db, 2, "soroswap", now.Add(-72*time.Hour), "native", usdc, "1", "0.5", "1")
 	for i := range 6 {
@@ -575,10 +537,8 @@ func TestMarketsListingGrain(t *testing.T) {
 	// ── pair C: first trade is TODAY ──────────────────────────────────
 	seedGrainTrade(t, ctx, db, 40, "sdex", today(2*time.Minute), "crypto:SOL", "fiat:USD", "1", "7", "7")
 
-	// prices_1m and pools_per_source_1h are materialized whole (their
-	// end_offsets are 30 s and 5 min). prices_1d is materialized only up
-	// to the previous UTC midnight — the state its own 6h end_offset
-	// leaves it in for every pair that has traded today.
+	// prices_1m and pools_per_source_1h are materialized whole (end_offsets 30 s and 5 min); prices_1d only to the previous
+	// UTC midnight, the state its 6h end_offset leaves it in for every pair that traded today.
 	for _, stmt := range []string{
 		`CALL refresh_continuous_aggregate('prices_1m', NULL, NULL)`,
 		`CALL refresh_continuous_aggregate('pools_per_source_1h', NULL, NULL)`,
@@ -718,12 +678,9 @@ func numeric(t *testing.T, s *string) float64 {
 	return v
 }
 
-// TestOrientStragglers_CombineBothDirections proves the pair-direction
-// canonicalization reaches the straggler read paths:
-// VWAPsForPair1m, PairMarket, and OHLCSeries each combine BOTH stored
-// directions of a market into the requested orientation, inverting the flipped
-// rows. The SDEX decoder records XLM/USDC and USDC/XLM as separate rows, so a
-// per-direction read misses the flipped-only bucket entirely.
+// Pair-direction canonicalization must reach VWAPsForPair1m, PairMarket and OHLCSeries: each combines BOTH stored
+// directions into the requested orientation, inverting flipped rows. SDEX stores XLM/USDC and USDC/XLM separately, so a
+// per-direction read misses a flipped-only bucket.
 func TestOrientStragglers_CombineBothDirections(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -832,10 +789,8 @@ func TestOrientStragglers_CombineBothDirections(t *testing.T) {
 		}
 	}
 
-	// ── OHLCSeriesReBucketed (5m fold) ─────────────────────────────
-	// Both source buckets combine + invert first, then fold into the
-	// coarser 5m grid. Assert on totals so the check is independent of
-	// which 5m bucket each minute lands in.
+	// OHLCSeriesReBucketed (5m fold): both source buckets combine and invert first, then fold into the 5m grid. Assert on
+	// totals so the check is independent of which 5m bucket each minute lands in.
 	rb, err := store.OHLCSeriesReBucketed(ctx, xlmUSDC, timescale.HistoryGranularity("1m"), "5 minutes", from, to, 0)
 	if err != nil {
 		t.Fatalf("OHLCSeriesReBucketed: %v", err)
@@ -1017,13 +972,9 @@ func TestListAssets_FlaggedContractTokenRanksFlaggedTier(t *testing.T) {
 	}
 }
 
-// TestDistinctPairsRanksCryptoXLMAsQuote checks that quoteRankSQL ranks the crypto:XLM
-// off-chain spelling as XLM (rank 2), not as an ordinary token (rank 1),
-// like "native" and the SAC address. Stored as (base=crypto:XRP,
-// quote=crypto:XLM) — the correct canonical orientation keeps that
-// order (XLM outranks XRP), but a rank tie would break on string
-// comparison ("crypto:XRP" > "crypto:XLM") and flip it, swapping
-// which leg the listing reports as base and which as quote.
+// quoteRankSQL must rank the off-chain `crypto:XLM` as XLM (rank 2) like "native" and the SAC, not as an ordinary token
+// (rank 1). Stored as (base=crypto:XRP, quote=crypto:XLM): a rank tie would break on string comparison and swap which
+// leg is base and quote.
 func TestDistinctPairsRanksCryptoXLMAsQuote(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1078,25 +1029,9 @@ func TestDistinctPairsRanksCryptoXLMAsQuote(t *testing.T) {
 	}
 }
 
-// TestPairMarketSubstanceAt_MeasuresTheMarketAtTheInstant executes the
-// point-in-time substance SQL against real TimescaleDB, and then runs
-// the thin-market gate over it end to end.
-//
-// The defect: /v1/price/at and the /v1/price/changes horizons serve the
-// bucket at-or-before a past `ts`, but the gate deciding whether to
-// serve it measured the trailing 24h ending NOW. The two are unrelated,
-// and the fixture holds one market for each direction that got wrong:
-//
-//   - DEEP/native  — deep and honest 400 days ago, no trades since.
-//     The trailing gate withholds its entire history.
-//   - SEED/native  — one $8.57 burst 400 days ago, thick today. The
-//     trailing gate PASSES it, so the historical read serves the seeded
-//     price.
-//
-// Two decoy trades sit just outside the historical window on either
-// side (one bucket before it opens; the still-open bucket at the
-// instant itself), so an off-by-one on either literal bound changes the
-// counted legs and fails the exact assertions.
+// Point-in-time substance SQL on real TimescaleDB, then the thin-market gate end to end. /v1/price/at and
+// /v1/price/changes serve a past bucket but the gate measured the trailing 24h ending NOW. DEEP/native (deep 400 days
+// ago, no trades since) must not lose its history.
 func TestPairMarketSubstanceAt_MeasuresTheMarketAtTheInstant(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1232,31 +1167,9 @@ func TestPairMarketSubstanceAt_MeasuresTheMarketAtTheInstant(t *testing.T) {
 	}
 }
 
-// TestPairMarket_BothDirectionsAndWindowBoundaries pins the SERVED values
-// of the /v1/pairs single-pair summary against real TimescaleDB, across
-// the three boundaries the single-pair query bounds:
-//
-//   - both stored orientations (the SDEX decoder records XLM/USDC and
-//     USDC/XLM as separate rows) fold into ONE row for the requested
-//     orientation — count_24h sums across directions;
-//   - count_24h counts the trailing 24 hours and nothing older, even
-//     though the pair is active across the whole 14-day recency window;
-//   - last_trade_at is the exact newest trade INSIDE MarketsRecencyWindow
-//     — a trade older than the window neither sets it nor makes an
-//     otherwise-dormant pair visible.
-//
-// Honesty note on what this test is and is not. It is NOT the redness
-// proof for the rewrite: the old and new queries are value-identical by
-// construction (set-identical over 40 sampled live pairs on r1),
-// because the defect was the PLAN, not the answer. The
-// redness proof is TestPairMarketQueryShape in internal/storage/timescale,
-// which fails on the single-aggregate query text. This test exists because the
-// rewrite split one 14-day aggregate into four independently-bounded
-// reads, and the cheapest way for a future edit to make /v1/pairs faster
-// still is to narrow one of those bounds too far — dropping a direction
-// halves count_24h, and pulling the 14-day probe back to 24 hours makes
-// every pair idle for a day vanish from the endpoint. Both would be
-// silent, and both fail here.
+// Served values of the /v1/pairs single-pair summary across the bounds the query uses: both stored orientations fold
+// into ONE row (count_24h sums them); count_24h counts only the trailing 24h though the pair is active across the 14-day
+// recency window.
 func TestPairMarket_BothDirectionsAndWindowBoundaries(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1353,10 +1266,8 @@ func TestPairMarket_BothDirectionsAndWindowBoundaries(t *testing.T) {
 			"round the caller asks", rfound, rm.TradeCount24h, rm.LastTradeAt.UTC(), newest)
 	}
 
-	// A pair whose ONLY trade is older than MarketsRecencyWindow stays
-	// invisible: the 14-day bound on the last_trade_at probes is the
-	// recency gate, and dropping it to 24h (the cheapest way to make this
-	// query faster still) would hide every pair idle for a day.
+	// A pair whose ONLY trade is older than MarketsRecencyWindow stays invisible: the 14-day bound on the last_trade_at
+	// probes is the recency gate; dropping it to 24h would hide every pair idle for a day.
 	aqua, err := canonical.NewClassicAsset("AQUA", "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA")
 	if err != nil {
 		t.Fatal(err)
@@ -1397,10 +1308,8 @@ func TestPairMarket_BothDirectionsAndWindowBoundaries(t *testing.T) {
 	}
 }
 
-// orientationFixture seeds two markets into prices_1m against real
-// TimescaleDB: TWO/native trading both ways in one closed minute, and
-// FLIP/native stored ONLY as (native, FLIP). Every trade prices the
-// non-native leg at 0.5 native and carries $100 of USD volume.
+// Seeds two markets into prices_1m: TWO/native trading both ways in one closed minute, and FLIP/native stored ONLY as
+// (native, FLIP). Every trade prices the non-native leg at 0.5 native with $100 of USD volume.
 type orientationFixture struct {
 	store              *timescale.Store
 	twoXLM, flipXLM    canonical.Pair
@@ -1454,11 +1363,8 @@ func seedOrientationFixture(ctx context.Context, t *testing.T) orientationFixtur
 	return f
 }
 
-// TestPairReadersFoldBothOrientationsAsUnion executes the six pair
-// readers whose orientation fold moved from one OR disjunction to two
-// UNION ALL arms, and pins that the rewrite still reads both
-// stored directions: a flipped-only market is served, a two-sided one
-// is counted once per row, and an absent pair is still a clean miss.
+// The six pair readers whose orientation fold moved from one OR to two UNION ALL arms must still read both stored
+// directions: a flipped-only market is served, a two-sided one is counted once per row, an absent pair is a clean miss.
 func TestPairReadersFoldBothOrientationsAsUnion(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1516,14 +1422,9 @@ func TestPairReadersFoldBothOrientationsAsUnion(t *testing.T) {
 	}
 }
 
-// TestMarketsSparklineMatchesListingVolume executes the /v1/markets
-// sparkline read against the listing it decorates. The handler
-// keys the batch by the listing's CANONICAL rows; FLIP/native is stored
-// only as (native, FLIP), so a read of the stored key alone drew 24 zero
-// bars beside a $100 volume_24h_usd. Every seeded trade sits inside the
-// last hour, so the 24 hourly bars must sum to the headline exactly. A
-// FLIP/XLM-SAC trade is folded into the FLIP/native row, so the bars must
-// read that spelling too.
+// The /v1/markets sparkline read must match the listing it decorates. The handler keys the batch by the listing's
+// CANONICAL rows; FLIP/native is stored only as (native, FLIP), so reading the stored key alone drew 24 zero bars beside
+// a $100 volume_24h_usd. All trades sit in the last hour, so the 24 hourly bars must sum to the headline.
 func TestMarketsSparklineMatchesListingVolume(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

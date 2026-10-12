@@ -22,16 +22,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestClickHouseCohortFlowsCarryTheMonthsOwnPrice runs one whole cohort
-// cycle against live ClickHouse — the month-price loader, every fold,
-// and the EXCHANGE that now swaps stellar.asset_month_usd_prices live
-// beside the cohort tables — then reads the cohort back through the
-// repo's own reader and pins the read-time join: a flow row carries
-// the served tier's price for ITS (asset, month) and nothing else. USDC
-// is priced for May and XLM for May only; the cohort moved USDC in May
-// and XLM in June, so the May USDC row must read "0.998" and the June
-// XLM row must be unpriced although XLM has a row in the table — a join
-// on asset alone, or on month alone, fails this.
+// Pins the read-time join of a whole cohort cycle: a flow row carries the price for ITS (asset, month) only. USDC is
+// priced for May, XLM for May only; the cohort moved USDC in May and XLM in June, so June XLM must be unpriced. A join on
+// asset alone or month alone fails.
 func TestClickHouseCohortFlowsCarryTheMonthsOwnPrice(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -225,11 +218,8 @@ func cohortPositionHolder(user, venue, amount string) timescale.DeFiPositionHold
 	}
 }
 
-// TestClickHouseCohortPositionsSumExactly runs a cohort cycle over DeFi
-// position amounts a float64 cannot hold and requires the exact integer
-// sum back, both from the table and through the reader. 2^53+1 plus 1 is
-// 2^53+2, which a Float64 sum rounds to 2^53; an 18-decimal total loses
-// its low digits.
+// Cohort sums over DeFi amounts a float64 cannot hold must come back exact from table and reader: 2^53+1 plus 1 is 2^53+2,
+// and 18-decimal totals keep their low digits.
 func TestClickHouseCohortPositionsSumExactly(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -317,10 +307,8 @@ func TestClickHouseCohortPositionsRefuseANonIntegerAmount(t *testing.T) {
 
 var cohortPosStellarRef = regexp.MustCompile(`\bstellar\.`)
 
-// TestClickHouseCohortPositionsRetypeMigratesAFloatTable applies the
-// operator file's ALTERs to a pre-retype (Float64) pair of tables and
-// requires both halves of the EXCHANGE pair to come out Int256: a staging
-// twin left Float64 would round every later cycle's exact sum on insert.
+// The operator file's ALTERs on a pre-retype (Float64) pair must leave both EXCHANGE halves Int256; a staging twin left
+// Float64 would round every later cycle's exact sum on insert.
 func TestClickHouseCohortPositionsRetypeMigratesAFloatTable(t *testing.T) {
 	ctx := context.Background()
 	const db = "stellar_cohort_retype"
@@ -374,15 +362,8 @@ func TestClickHouseCohortPositionsRetypeMigratesAFloatTable(t *testing.T) {
 	}
 }
 
-// TestIssuersAndAssetsRegistryReads covers the read paths backing
-// /v1/issuers (list + detail), /v1/coins (with and without the
-// ?issuer= filter), and the issuer→assets join used by the
-// showcase /coins/[slug] issuer tab.
-//
-// The classic_assets + issuers tables are populated by ingest-side
-// observers in production. This test inserts directly so we can
-// exercise the storage queries against a known shape without
-// stitching together an end-to-end ingest harness.
+// Read paths behind /v1/issuers (list, detail), /v1/coins (with and without ?issuer=) and the issuer-to-assets join.
+// Registry rows are inserted directly; in production ingest observers fill them.
 func TestIssuersAndAssetsRegistryReads(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -566,10 +547,8 @@ type seedAsset struct {
 	obs     int64
 }
 
-// seedIssuers + seedClassicAssets insert directly into the registry
-// tables. In production these are populated by the accounts decoder
-// + classic_assets observer; bypassing them here keeps the test
-// focused on the read-path behaviour.
+// seedIssuers and seedClassicAssets insert registry rows directly, bypassing the ingest observers, to keep the test on the
+// read path.
 func seedIssuers(t *testing.T, ctx context.Context, store *timescale.Store, rows []seedIssuer) {
 	t.Helper()
 	for _, r := range rows {
@@ -608,41 +587,9 @@ func seedClassicAssets(t *testing.T, ctx context.Context, store *timescale.Store
 	}
 }
 
-// TestCatalogCorrectionsAndScaffoldDrop pins what migrations 0151 and 0152
-// actually put in (and take out of) the DATABASE — which is the only place
-// this class of defect lives.
-//
-// Why it needs a real database. A `COMMENT ON` string is not repo state: it
-// is a row in pg_description written once, by whichever migration issued it.
-// Editing the original migration's text therefore changes what a FRESH
-// database gets and changes NOTHING about an applied one, so a file-level
-// assertion would pass while every deployed environment still served the
-// wrong string through `\d+`. The same is true in reverse for 0152: the
-// defect was six tables that EXIST in the catalog with no writer, and only
-// information_schema can answer whether they still do.
-//
-// Every assertion below is on the CORRECTED VALUE, not on
-// defined/non-empty:
-//
-//   - trades.usd_volume must no longer claim the aggregator fills it
-//     post-insert (it is valued at INSERT; NULL means "no route" and never
-//     becomes a value on its own — a consumer that polls waits forever).
-//   - aquarius_rewards_events must name twelve kinds, matching its own
-//     event_kind CHECK, and must name config_rewards — the one a stale
-//     "11 kinds" list would omit.
-//   - oracle_updates.contract_id must not name coinmarketcap or the retired
-//     chainlink-http spelling.
-//   - aquarius_protocol_fee.recipient must point at the `token` column
-//     (migration 0139) instead of telling the reader to join a trade.
-//   - soroban_events.topics_xdr must not offer the "ClickHouse-lake
-//     re-project" recovery, which does not exist for that column.
-//   - customer_webhooks.secret_hash must carry the MISNAMED warning: the
-//     column holds the raw HMAC signing key, not a hash of one.
-//   - the six unwired scaffold tables must be GONE, as must the four
-//     orphaned Stripe columns and the two partial indexes over them.
-//
-// Runs under `-tags=integration` only, against the TimescaleDB version r1
-// runs.
+// Pins what migrations 0151/0152 put in and take out of the DATABASE: a COMMENT ON string is a pg_description row, so
+// editing migration text changes nothing on an applied database and file-level assertions pass while deployments serve the
+// old text.
 func TestCatalogCorrectionsAndScaffoldDrop(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -859,10 +806,8 @@ func TestCatalogCorrectionsAndScaffoldDrop(t *testing.T) {
 	}
 }
 
-// assertRewardsKindsMatchCheck proves the corrected "12 kinds" comment lists
-// exactly the values the event_kind CHECK constraint admits — so a future
-// widening of the CHECK that forgets the comment fails here rather than
-// re-creating catalogue drift.
+// Proves the "12 kinds" comment lists exactly the values the event_kind CHECK admits, so widening the CHECK without the
+// comment fails here.
 func assertRewardsKindsMatchCheck(t *testing.T, db *sql.DB, ctx context.Context, comment string) {
 	t.Helper()
 

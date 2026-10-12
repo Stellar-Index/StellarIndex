@@ -14,16 +14,9 @@ import (
 	"time"
 )
 
-// ─── the batch UPDATE must be prunable to the chunk it targets ─────
-//
-// `trades` is a hypertable. An UPDATE that constrains `ts` only through the join (`t.ts = v.ts`)
-// is planned against every chunk, and TimescaleDB services DML on compressed chunks by
-// decompressing them wholesale, so a tiny batch can run for an hour and write huge WAL.
-// Bounding `t.ts` by the batch's own minimum and maximum is redundant against the join (it
-// cannot exclude a row the join would match) and is what lets the planner drop the other chunks.
-//
-// These tests hold the three properties pruning depends on at the only layer that can see them
-// without a database: the statement the store builds and the values it binds.
+// The batch UPDATE must be prunable to the chunk it targets: bounding `t.ts` by the batch min and max lets
+// the planner drop other chunks, avoiding wholesale decompression of compressed ones. These pin the statement
+// and binds.
 
 // pruneRow builds one write-set row at ts.
 func pruneRow(ts time.Time, ledger uint32) XLMBaseRestampRow {
@@ -37,10 +30,8 @@ func pruneRow(ts time.Time, ledger uint32) XLMBaseRestampRow {
 	}
 }
 
-// TestApplyXLMBaseUSDVolumeRestamp_BatchIsPrunableToItsChunk pins the
-// `ts` bounds: present in the statement, and bound to the batch's OWN
-// extremes, so no row the join would match is excluded and no chunk
-// outside the batch's span is planned.
+// TestApplyXLMBaseUSDVolumeRestamp_BatchIsPrunableToItsChunk pins that the statement carries `ts` bounds
+// bound to the batch's own extremes, so no matching row is excluded and no chunk outside its span is planned.
 func TestApplyXLMBaseUSDVolumeRestamp_BatchIsPrunableToItsChunk(t *testing.T) {
 	ctx := context.Background()
 	conn := newCaptureConn()
@@ -113,10 +104,9 @@ func TestApplyXLMBaseUSDVolumeRestamp_BatchIsPrunableToItsChunk(t *testing.T) {
 	}
 }
 
-// TestApplyXLMBaseUSDVolumeRestamp_BatchStaysUnderTheParameterCeiling
-// pins the split: `-chunk-batch` defaults to 20,000 rows, the statement
-// binds xlmBaseRestampArgsPerRow placeholders per row plus 3, and the extended query protocol
-// carries at most 65,535. An unsplit batch aborts the run mid-walk.
+// TestApplyXLMBaseUSDVolumeRestamp_BatchStaysUnderTheParameterCeiling pins the split: `-chunk-batch` defaults
+// to 20,000 rows at xlmBaseRestampArgsPerRow placeholders per row plus 3, and the extended protocol carries
+// at most 65,535, so an unsplit batch aborts the run mid-walk.
 func TestApplyXLMBaseUSDVolumeRestamp_BatchStaysUnderTheParameterCeiling(t *testing.T) {
 	ctx := context.Background()
 	conn := newCaptureConn()
@@ -152,11 +142,9 @@ func TestApplyXLMBaseUSDVolumeRestamp_BatchStaysUnderTheParameterCeiling(t *test
 	}
 }
 
-// -----------------------------------------------------------------
-// Statement-capturing driver fake: records each DML's text, bound arguments and the
-// transaction-local GUCs in force. Kept separate from the GUC fake in
-// usd_volume_restamp_guc_test.go so neither test constrains the other's fake.
-// -----------------------------------------------------------------
+// Statement-capturing driver fake: records each DML's text, bound arguments and the transaction-local GUCs
+// in force. Kept separate from the GUC fake in usd_volume_restamp_guc_test.go so neither test constrains the
+// other's fake.
 
 type captureDML struct {
 	stmt      string

@@ -15,10 +15,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// TestRedisConfidenceLooker_ServesEveryCachedFactor — the adapter copies
-// confidence.Factors into v1.ConfidenceFactors field by field, so a field
-// the aggregator caches but the adapter forgets never reaches the wire.
-// Decoding both sides by JSON name makes any such omission fail here.
+// TestRedisConfidenceLooker_ServesEveryCachedFactor: the adapter copies confidence.Factors into v1.ConfidenceFactors
+// field by field, so a field it forgets never reaches the wire; decoding both sides by JSON name makes any omission
+// fail.
 func TestRedisConfidenceLooker_ServesEveryCachedFactor(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})

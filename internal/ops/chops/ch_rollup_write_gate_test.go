@@ -14,11 +14,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 )
 
-// TestChCensusRollupDryRunTouchesNoClickHouse proves the behavioural half:
-// against an unreachable ClickHouse address, the default (no -write) run
-// must return nil — it never dials out — while -write must fail trying to
-// connect. -from-day sidesteps the incremental path's own CensusMaxDay
-// read so the loop body is the only thing under test.
+// TestChCensusRollupDryRunTouchesNoClickHouse: against an unreachable ClickHouse, the default (no -write) run returns
+// nil without dialling, while -write must fail trying to connect. -from-day sidesteps the incremental path's
+// CensusMaxDay read so only the loop body is tested.
 func TestChCensusRollupDryRunTouchesNoClickHouse(t *testing.T) {
 	unreachable := "127.0.0.1:1" // reserved port, nothing ever listens here
 	today := time.Now().UTC().Format("2006-01-02")
@@ -56,11 +54,9 @@ func TestChHoldersRollupDryRunTouchesNoClickHouse(t *testing.T) {
 	}
 }
 
-// TestBoardRollupsRequireAStatedMode pins the timer-driven board rollups to
-// the shared gate with RequireStatedMode: a unit still calling them flagless
-// must fail, not preview and exit 0 while the boards silently go stale. A
-// dry run neither takes the lock nor dials ClickHouse; -write gets past the
-// gate and fails on the unreachable store.
+// TestBoardRollupsRequireAStatedMode pins the timer-driven board rollups to the shared RequireStatedMode gate: a
+// flagless unit must fail, not preview and exit 0 while boards go stale. A dry run takes no lock and dials nothing;
+// -write passes the gate and fails on the unreachable store.
 func TestBoardRollupsRequireAStatedMode(t *testing.T) {
 	unreachable := "127.0.0.1:1"
 	missingConfig := filepath.Join(t.TempDir(), "absent.toml")

@@ -5,11 +5,9 @@ import (
 	"testing"
 )
 
-// TestGapVerdictTrustworthy pins that a zero-gap FindPerSourceLedgerGaps result for a target
-// whose density comes from a DistinctLedgerCountSQL override (soroban-events, from
-// ledger_ingest_log) is NOT trusted as "clean" unless the census also saw positive evidence. A
-// TRUNCATE of soroban_events leaves no present row to bracket a gap, so it would otherwise read
-// as healthy coverage.
+// TestGapVerdictTrustworthy pins that a zero-gap result for a target whose density comes from a
+// DistinctLedgerCountSQL override (soroban-events) is not trusted as clean without positive census evidence,
+// since a TRUNCATE leaves no row to bracket a gap.
 func TestGapVerdictTrustworthy(t *testing.T) {
 	cases := []struct {
 		name              string

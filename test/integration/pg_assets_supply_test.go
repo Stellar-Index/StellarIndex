@@ -20,13 +20,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
-// TestAssetSupplyHistoryCompressionRestored pins that the migration chain
-// converges on a compressed asset_supply_history even when 0030 half-applied.
-// 0030 commits its decompress + constraint swap inside an explicit
-// BEGIN/COMMIT and re-enables compression in a SEPARATE implicit transaction
-// after it, so a failure there leaves compression off with version 30 dirty;
-// the only recovery, `force 30`, records it applied and nothing after it
-// restores compression except the later repair migration.
+// TestAssetSupplyHistoryCompressionRestored: the migration chain converges on a compressed asset_supply_history even
+// when 0030 half-applied. 0030 re-enables compression in a separate implicit transaction after its COMMIT, so a failure
+// leaves compression off at dirty version 30;
 func TestAssetSupplyHistoryCompressionRestored(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -86,11 +82,9 @@ func assetSupplyHistoryCompressionEnabled(t *testing.T, ctx context.Context, db 
 	return enabled
 }
 
-// TestClassicAssetSlugDownsKeepForeignSlugs executes 0135 down and 0134 down
-// over rows the migrations wrote and one they did not. 0134's up fills only
-// NULL slugs and 0135's writer emits asset_id, so each down may clear only
-// its own forms: slug is a UNIQUE public URL key, and an unconditional
-// `SET slug = NULL` erases one no migration wrote.
+// TestClassicAssetSlugDownsKeepForeignSlugs executes 0135 down and 0134 down over migration-written rows and one they
+// did not write. 0134 fills only NULL slugs and 0135's writer emits asset_id, so each down clears only its own forms:
+// slug is a UNIQUE public URL key and an unconditional `SET slug = NULL` erases foreign ones.
 func TestClassicAssetSlugDownsKeepForeignSlugs(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -145,17 +139,9 @@ func classicAssetSlug(t *testing.T, ctx context.Context, db *sql.DB, assetID str
 	return slug.String
 }
 
-// TestClassicSupplyObservationsRoundTrip exercises the four
-// classic-supply hypertables through real
-// TimescaleDB. Each Sum*AtOrBefore method uses the same
-// DISTINCT ON pattern + WHERE NOT is_removal filter; a SQL
-// regression in the DISTINCT ON ordering or the is_removal
-// handling silently mis-reports Algorithm 2 components.
-//
-// Companion to the SEP-41 coverage. The Insert + DISTINCT-ON
-// + last-writer-wins semantics ship untested at the SQL level
-// without this; Go-layer defensive guards catch
-// invalid inputs but can't detect a SQL regression.
+// TestClassicSupplyObservationsRoundTrip covers the four classic-supply hypertables. Each Sum*AtOrBefore uses the same
+// DISTINCT ON pattern and WHERE NOT is_removal filter; a SQL regression in either silently mis-reports Algorithm 2
+// components, and Go-layer guards cannot detect it.
 func TestClassicSupplyObservationsRoundTrip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -334,11 +320,8 @@ func TestClassicSupplyObservationsRoundTrip(t *testing.T) {
 			t.Errorf("isolated asset sum = %s, want 999", got)
 		}
 
-		// SACBalanceObservationsExist must distinguish "no
-		// observation at all" from "observations exist and (possibly)
-		// sum to zero" — SumSACBalancesAtOrBefore's COALESCE(sum, 0)
-		// alone can't tell those apart, and CrossCheckSubsetBound's
-		// escrow gate relies on that distinction.
+		// SACBalanceObservationsExist must distinguish "no observation" from "observations summing to zero", which
+		// SumSACBalancesAtOrBefore's COALESCE(sum, 0) cannot; CrossCheckSubsetBound's escrow gate relies on it.
 		const neverSeenAsset = "SHX:GDNEVERSEENSACBALANCEOBSERVATIONFORTHISASSETXXXXXXXXXXXX"
 		exists, err := store.SACBalanceObservationsExist(ctx, neverSeenAsset, 5000)
 		if err != nil {
@@ -433,18 +416,9 @@ func insertSAC(t *testing.T, ctx context.Context, store *timescale.Store, contra
 	}
 }
 
-// TestClaimableSameLedgerTieBreak pins the read-path tie-break.
-// Two rows can share a (claimable_id, ledger): an ops seed
-// stamps SeedIntraLedgerSeq (MaxUint32, "authoritative reconstructed final
-// state") while the live observer writes the real per-ledger ordinal. They
-// do NOT collide on the natural key when observed_at differs, so both rows
-// persist and the DISTINCT ON must choose deterministically.
-//
-// Ordering the readers by `ledger DESC` alone leaves the pick to the
-// planner — the same shape as a case where a tie between a
-// `state` before-image and its `updated` after-image serves whichever the
-// engine happens to keep. The seed row must win: it reconstructs the
-// ledger's FINAL state, so it belongs at the end of the intra-ledger order.
+// TestClaimableSameLedgerTieBreak: two rows can share (claimable_id, ledger) because an ops seed stamps
+// SeedIntraLedgerSeq (MaxUint32, "authoritative reconstructed final state") while the live observer writes the real
+// ordinal, and they do not collide on the key when observed_at differs.
 func TestClaimableSameLedgerTieBreak(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -492,24 +466,9 @@ func TestClaimableSameLedgerTieBreak(t *testing.T) {
 	}
 }
 
-// TestMinClassicComponentLedgerUsesObserverWatermark pins that the
-// freshness anchor must be the slowest component OBSERVER's watermark, not
-// the asset's last activity in that component.
-//
-// This reproduces the production shape. All four
-// observers are current (they have written at ledger ~5000 for SOME asset),
-// but the quiet asset's own last claimable event is ancient. That is the
-// normal, healthy state for a write-once entry type — nobody created or
-// claimed a claimable balance for that asset recently — and it must NOT read
-// as staleness.
-//
-// The query must not take MIN over per-ASSET MAX(ledger): the quiet
-// asset's anchor is then pinned to its ancient claimable row. The Refresher then
-// sees a lag past the dormancy horizon and refuses every subsequent snapshot,
-// freezing the asset's served supply permanently. In production this froze 37
-// of 48 watched assets within hours of claimable_observations being seeded
-// from lake history; the only assets still publishing were the three that
-// happened to have live claimable activity.
+// TestMinClassicComponentLedgerUsesObserverWatermark: the freshness anchor is the slowest component OBSERVER's
+// watermark, not the asset's last activity in that component. All four observers are current but the quiet asset's last
+// claimable event is ancient, which is healthy for a write-once entry type and must not read as stale.
 func TestMinClassicComponentLedgerUsesObserverWatermark(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -579,19 +538,8 @@ func TestMinClassicComponentLedgerUsesObserverWatermark(t *testing.T) {
 	}
 }
 
-// TestNonstandardDecimalsAssets_UpsertAndLoad exercises the round trip
-// backing the dex-nonstandard-decimals read-time serving guard (migration
-// 0093): the aggregator's decimals-guard sweep upserts a confirmed
-// offender via UpsertNonstandardDecimalsAsset; the API's
-// NonstandardDecimalsCache loads the full set via
-// LoadNonstandardDecimalsAssets on its refresh cadence.
-//
-// Proves: empty-safe (nothing inserted yet → empty slice, not an error),
-// a fresh insert round-trips faithfully, and a re-confirmation of the same
-// asset (ON CONFLICT DO UPDATE) refreshes decimals/source/confirmed_at
-// rather than producing a duplicate row — the guard's dedup latch means
-// this should be rare in practice, but the upsert must still be safe if a
-// process restart re-confirms the same standing offender.
+// TestNonstandardDecimalsAssets_UpsertAndLoad: the round trip behind the dex-nonstandard-decimals serving guard
+// (migration 0093).
 func TestNonstandardDecimalsAssets_UpsertAndLoad(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -688,13 +636,9 @@ func (r lockstepResolver) TokenDecimals(_ context.Context, contractID string) (u
 	return d, ok, nil
 }
 
-// TestNonstandardDecimalsAssets_LockstepReconcileThroughStore runs the
-// aggregator's lockstep reconcile (decimalsguard.Guard.Reconcile) against
-// the REAL store on a real Postgres: the production wiring passes
-// *timescale.Store as the guard's Writer, and the compile-time assertion
-// in decimalsguard says it satisfies the reconcile seam — this proves the
-// three statements behind that seam (load, upsert-repair, delete-repair)
-// execute and converge the table on the lake.
+// TestNonstandardDecimalsAssets_LockstepReconcileThroughStore runs decimalsguard.Guard.Reconcile against the real
+// *timescale.Store (the production Writer), proving its three statements (load, upsert-repair, delete-repair) execute
+// and converge the table on the lake.
 func TestNonstandardDecimalsAssets_LockstepReconcileThroughStore(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -756,22 +700,9 @@ func TestNonstandardDecimalsAssets_LockstepReconcileThroughStore(t *testing.T) {
 	}
 }
 
-// TestSACBalanceSeedSupersedeAndNumeric exercises the two properties the
-// `supply seed-sac-balances` bootstrap relies on, through real
-// TimescaleDB (the seed reuses Store.InsertSACBalanceObservation +
-// SumSACBalancesAtOrBefore / SACBalanceForContractAtOrBefore):
-//
-//  1. SUPERSEDE / at-or-before-ledger ordering — a seed written at an
-//     OLD ledger must NOT clobber a newer live observation. The readers
-//     pick the most-recent row per (contract_id, holder) by ledger DESC,
-//     so the higher-ledger row wins regardless of insertion order. This
-//     is what makes seeding-then-live-observing (and re-seeding) safe.
-//
-//  2. NUMERIC round-trip — a dormant contract-held SAC balance larger
-//     than 2^63 must survive the *big.Int → NUMERIC → *big.Int trip
-//     intact (ADR-0003; the whole point of seeding dormant C-held
-//     balances is that they can be huge — ~5.9988e14 for a single
-//     Phoenix contract, and nothing caps the aggregate).
+// TestSACBalanceSeedSupersedeAndNumeric: the two properties `supply seed-sac-balances` relies on. 1. At-or-before-ledger
+// ordering: a seed at an OLD ledger must not clobber a newer live observation (readers pick the highest-ledger row per
+// (contract_id, holder)), so seeding, live observing and re-seeding are safe. 2.
 func TestSACBalanceSeedSupersedeAndNumeric(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -842,12 +773,9 @@ func TestSACBalanceSeedSupersedeAndNumeric(t *testing.T) {
 	}
 }
 
-// TestSACBalanceSeedProvenanceRoundTrip exercises the sac_balance_seed_
-// provenance audit table (migration 0102): a fresh contract has no row,
-// the first upsert creates one, and a second upsert with different
-// stats OVERWRITES it (one row per contract, not an append log) — the
-// same "most recent pass" shape as sep41_supply_rollup's genesis-baseline
-// columns (migration 0088).
+// TestSACBalanceSeedProvenanceRoundTrip (migration 0102): a fresh contract has no row, the first upsert creates one, and
+// a second with different stats overwrites it (one row per contract, not an append log), like sep41_supply_rollup's
+// genesis-baseline columns (0088).
 func TestSACBalanceSeedProvenanceRoundTrip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -973,26 +901,8 @@ func TestSACBalanceSeedProvenanceRoundTrip(t *testing.T) {
 	}
 }
 
-// TestSACEvictionFallsOutOfServedSupply is the served-money proof, end to end over real TimescaleDB:
-//
-//	LedgerCloseMeta with an evicted key
-//	  → internal/dispatcher (eviction phase)
-//	  → sac_balances observer
-//	  → timescale.InsertSACBalanceObservation
-//	  → SumSACBalancesAtOrBefore (the served SAC supply component)
-//
-// Soroban state archival is the one way a ledger entry leaves the live
-// state without a transaction touching it, so nothing in transaction meta
-// can report it. Before the eviction phase the archived balance stayed in
-// the served supply FOREVER — the published supply drifted permanently
-// above the truth and never self-corrected.
-//
-// The starting balance is written the way the ops SAC seed writes it, at
-// timescale.SeedIntraLedgerSeq (MaxUint32, "authoritative reconstructed
-// final state for its ledger"). That is the sentinel the read path's
-// tie-break prefers, so it is the row an eviction has to beat: it beats it
-// on LEDGER, which is what makes the fix hold against a re-seed of the
-// dormant holder the seed exists to recover.
+// TestSACEvictionFallsOutOfServedSupply is the served-money proof: LedgerCloseMeta with an evicted key, through the
+// dispatcher eviction phase, the sac_balances observer and InsertSACBalanceObservation, into SumSACBalancesAtOrBefore.
 func TestSACEvictionFallsOutOfServedSupply(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1062,11 +972,8 @@ func TestSACEvictionFallsOutOfServedSupply(t *testing.T) {
 			"published as live supply and nothing will ever take it back out", got)
 	}
 
-	// ── Archival is reversible: a restore must put the balance back, or the
-	// fix has traded a permanent over-count for a permanent under-count.
-	// Routed through the dispatcher's entry-change seam (the eviction path
-	// above is what needed the LCM walk; a restore arrives as an ordinary
-	// apply-phase change).
+	// Archival is reversible: a restore must put the balance back, or the fix trades a permanent over-count for a permanent
+	// under-count. It is routed through the dispatcher's entry-change seam, as an ordinary apply-phase change.
 	restoreEvs, err := disp.RouteEntryChange(dispatcher.LedgerEntryChangeContext{
 		Ledger:         restoreLedger,
 		ClosedAt:       t0.Add(2 * time.Hour),
@@ -1265,24 +1172,9 @@ func TestSupplyCoverageStats_CountsEveryAssetWithNoWindow(t *testing.T) {
 	}
 }
 
-// TestLatestSupplyObservations_BoundsVintage is the storage-side proof of the
-// stale-vintage defect in the listing's supply arm.
-//
-// The listing's authoritative supply arm read supply_1d — a DAILY roll-up of
-// asset_supply_history — with `bucket = max(bucket)` and no vintage bound at
-// all. supply_1d's refresh policy carries an end_offset, so the current day's
-// bucket is never fully covered by a refresh window and never materialises;
-// the newest bucket is therefore always a COMPLETED PREVIOUS day, so the value
-// in it is the last observation of the PREVIOUS UTC day — on r1's 6-hourly
-// refresh, between about 2.9 and about 26.9 hours old, and 17 h 47 m old at
-// the moment of measurement. On r1 that served USDC at 354,858,863.57 against
-// 375,766,247.91 outstanding — 5.57% low, roughly $21M of market cap — while
-// the response envelope reported the figure fresh.
-//
-// Two properties are asserted together because either alone is satisfied by
-// code that still has the bug: the read returns the LATEST observation (not a
-// day-old roll-up of it), and it returns NOTHING for an asset whose newest
-// observation is older than the bound.
+// TestLatestSupplyObservations_BoundsVintage: the listing's supply arm read supply_1d (a daily roll-up) at `bucket =
+// max(bucket)` with no vintage bound. Its refresh end_offset means the newest bucket is a completed previous day (~2.9
+// to 26.9h old), which served USDC 5.57% low (~$21M of market cap) while the envelope said fresh.
 func TestLatestSupplyObservations_BoundsVintage(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1393,11 +1285,9 @@ func keysOf(m map[string]timescale.SupplyObservation) []string {
 	return out
 }
 
-// TestSupplyStorageRoundTrip exercises the InsertSupply →
-// LatestSupply → SupplyHistory paths through real TimescaleDB with
-// the asset_supply_history hypertable migration applied. Together
-// with the unit tests for assembleSupply this is the end-to-end
-// proof of the storage layer for ADR-0011 supply data.
+// TestSupplyStorageRoundTrip: InsertSupply, LatestSupply and SupplyHistory on real TimescaleDB with the
+// asset_supply_history hypertable migration, the end-to-end storage proof for ADR-0011 supply data alongside the
+// assembleSupply unit tests.
 func TestSupplyStorageRoundTrip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

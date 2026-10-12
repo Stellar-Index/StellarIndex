@@ -19,11 +19,9 @@ type usageDailyExec struct {
 	args  []driver.Value
 }
 
-// usageDailyConn is the narrowest driver that lets UpsertUsageDaily run
-// to completion either way it is written — as a transaction of
-// per-row prepared execs or as autocommitted multi-row statements —
-// and records what reached the wire. The statement count IS the
-// round-trip count, which is the property under test.
+// usageDailyConn is the narrowest driver letting UpsertUsageDaily run either as per-row prepared execs in
+// a transaction or as autocommitted multi-row statements, recording what reached the wire; the statement
+// count IS the round-trip count under test.
 type usageDailyConn struct {
 	execs  []usageDailyExec
 	begins int
@@ -180,10 +178,9 @@ func TestUpsertUsageDaily_ChunksLargeBatch(t *testing.T) {
 	}
 }
 
-// TestUpsertUsageDaily_FoldsDuplicateKeys — two rows for one key in a
-// batch become a single tuple carrying the per-column maximum, exactly
-// what the GREATEST merge would have reached applying them in turn
-// (Postgres rejects the same conflict target twice in one statement).
+// TestUpsertUsageDaily_FoldsDuplicateKeys: two rows for one key in a batch become one tuple with the
+// per-column maximum, what the GREATEST merge would reach applying them in turn (Postgres rejects one
+// conflict target twice per statement).
 func TestUpsertUsageDaily_FoldsDuplicateKeys(t *testing.T) {
 	store, conn := newUsageDailyStore()
 	rows := []usage.RollupRow{

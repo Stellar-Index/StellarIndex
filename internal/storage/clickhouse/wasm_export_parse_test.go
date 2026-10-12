@@ -40,10 +40,9 @@ func TestParseWasmExports_RealContract(t *testing.T) {
 			t.Errorf("missing export %q", n)
 			continue
 		}
-		// Every Soroban entry point resolved to a real signature (non-nil
-		// param/result lists prove the type-section walk + import-offset math
-		// chased the index correctly). A contract entry point returns the
-		// host-value i64; "register"/"revoke" take args.
+		// Every Soroban entry point must resolve to a real signature; non-nil param/result lists prove the
+		// type-section walk and import-offset math are right. Contract entry points return the host-value i64;
+		// register/revoke take args.
 		if ex.Results == nil {
 			t.Errorf("export %q: nil results — index resolution failed", n)
 		}
@@ -100,11 +99,9 @@ func uleb(v uint64) []byte {
 	}
 }
 
-// TestParseWasmExports_RejectsMalformed: every input must fail cleanly, never OOM or panic.
-// A huge LEB128 count must not drive a multi-GB prealloc (safeCap bounds make() by the remaining
-// bytes), and a 9-byte varint near MaxInt64 must not overflow `r.i+n` negative past the bounds
-// guard. stellar-core validates WASM at upload, but any entry_xdr corruption that preserves XDR
-// framing reaches this parser.
+// TestParseWasmExports_RejectsMalformed: every input must fail cleanly, never OOM or panic. A huge LEB128
+// count must not drive a multi-GB prealloc (safeCap), and a 9-byte varint near MaxInt64 must not overflow
+// `r.i+n` past the bounds guard.
 func TestParseWasmExports_RejectsMalformed(t *testing.T) {
 	hdr := []byte{0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00}
 	module := func(parts ...[]byte) []byte {

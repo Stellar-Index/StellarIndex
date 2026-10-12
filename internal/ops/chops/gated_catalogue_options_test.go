@@ -22,16 +22,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/upshift"
 )
 
-// registryOnlyContract stands for a pool or vault admitted by a protocol_contracts row (the
-// seam for adding a contract without a redeploy). It is in NO decoder's curated set and has no
-// factory creation event, so only the warmed registry options can make a decoder know it.
+// registryOnlyContract stands for a pool or vault admitted by a protocol_contracts row (no redeploy needed): in no
+// decoder's curated set, no factory creation event, so only the warmed registry options can make a decoder know it.
 // Shape-valid filler, deliberately not a real contract.
 const registryOnlyContract = "CREGISTRYONLYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 
-// gatedProbeTopics gives, per gated source, the topics of one business
-// event that source's Matches() gates on CHILD identity (reg.Has). Every
-// row is calibrated before it is trusted — see calibrateProbe — so a
-// constant that stops classifying fails the test instead of hollowing it.
+// gatedProbeTopics gives, per gated source, the topics of one business event that its Matches() gates on CHILD identity
+// (reg.Has). Every row is calibrated (calibrateProbe) before it is trusted, so a constant that stops classifying fails
+// the test instead of hollowing it.
 var gatedProbeTopics = map[string][]string{
 	comet.SourceName:         {comet.TopicSymbolPool, comet.TopicSymbolSwap},
 	blend_emitter.SourceName: {blend_emitter.TopicSymbolDistribute},
@@ -68,10 +66,8 @@ func probeEvent(source string) events.Event {
 	}
 }
 
-// calibrateProbe proves the probe measures the gate and nothing else: the
-// source's own constructor admits it when — and only when — the contract is
-// seeded. Without this a probe whose topic no longer classifies would make
-// every Matches() below false for the wrong reason.
+// calibrateProbe proves the probe measures only the gate: the source's constructor admits it iff the contract is seeded.
+// Otherwise a probe whose topic stops classifying would make every Matches() below false for the wrong reason.
 func calibrateProbe(t *testing.T, source string) {
 	t.Helper()
 	meta, ok := pipeline.GatedMetaFor(source)
@@ -111,13 +107,9 @@ func bareCatalogue(t *testing.T) []reconSource {
 	return cat
 }
 
-// TestApplyGatedOptions_EveryGatedSourceAdmitsARegistryOnlyContract pins that a bare re-derive
-// catalogue does not reject registry contracts. The live indexer decodes a contract admitted
-// only via protocol_contracts, so a rejecting re-derive leaves phantom served rows on the
-// completeness axis and a truncate + `ch-rebuild -write` rebuilds the table without them.
-//
-// Lockstep over pipeline.GatedSourceNames(), not a hand-kept list: a new gated source has to
-// appear in the catalogue AND be warmed, or this fails.
+// Pins that a bare re-derive catalogue admits registry-only contracts (protocol_contracts), as the live indexer does. A
+// rejecting re-derive leaves phantom served rows; lockstep over pipeline.GatedSourceNames() so new gated sources must be
+// warmed.
 func TestApplyGatedOptions_EveryGatedSourceAdmitsARegistryOnlyContract(t *testing.T) {
 	bare := bareCatalogue(t)
 	warmed, err := applyGatedOptions(bare, warmedLike())
@@ -167,10 +159,8 @@ func TestApplyGatedOptions_EveryGatedSourceAdmitsARegistryOnlyContract(t *testin
 	}
 }
 
-// TestApplyGatedOptions_EmptyRegistryIsTheBareCatalogue — with nothing in
-// protocol_contracts the warmed catalogue must be indistinguishable from the
-// bare one: same curated gate, and a static contractIDs filter that is
-// byte-identical (same members, same ORDER) to the in-code list.
+// With nothing in protocol_contracts the warmed catalogue equals the bare one: same curated gate, and a contractIDs
+// filter byte-identical (same members, same ORDER) to the in-code list.
 func TestApplyGatedOptions_EmptyRegistryIsTheBareCatalogue(t *testing.T) {
 	bare := bareCatalogue(t)
 	empty := map[string][]contractid.Option{}
@@ -234,10 +224,8 @@ func TestUnionContractIDs(t *testing.T) {
 	}
 }
 
-// TestCHRebuild_WarmsTheCatalogueGatesBeforeAnythingReadsThem pins the ch-rebuild call site.
-// chRebuild needs ClickHouse and Postgres past config load, so the wiring is pinned at the
-// source: the warm exists, runs on the freshly built catalogue, and precedes both the preseed
-// (which seeds INTO the decoders the warm rebuilds) and the writer.
+// Pins the ch-rebuild call site at the source (chRebuild needs ClickHouse and Postgres): the warm runs on the fresh
+// catalogue and precedes both the preseed (which seeds INTO the warmed decoders) and the writer.
 func TestCHRebuild_WarmsTheCatalogueGatesBeforeAnythingReadsThem(t *testing.T) {
 	t.Parallel()
 	b, err := os.ReadFile("ch_rebuild.go")
@@ -270,14 +258,9 @@ func TestCHRebuild_WarmsTheCatalogueGatesBeforeAnythingReadsThem(t *testing.T) {
 	}
 }
 
-// TestApplyGatedOptions_TestNetCatalogueHasNothingToWarm bounds the blast radius of the warm
-// call sites on non-pubnet deployments.
-//
-// Every gated source is anchored to PUBNET contract identities (ADR-0035), so
-// filterCatalogueByNetwork drops all of them on testnet / futurenet. The warm is a no-op there
-// and its FAIL-CLOSED leg cannot fire: applyGatedOptions refuses a gated entry with no warmed
-// options, and a test net has none, so even an empty options map is accepted. Otherwise the
-// hourly compute-completeness would turn the test nets' coverage verdict red every tick.
+// Gated sources are anchored to PUBNET contract identities (ADR-0035), so filterCatalogueByNetwork drops them all on
+// test nets. The warm is then a no-op and its fail-closed leg cannot fire; otherwise hourly compute-completeness would
+// go red on test nets.
 func TestApplyGatedOptions_TestNetCatalogueHasNothingToWarm(t *testing.T) {
 	t.Parallel()
 	for _, network := range []string{"testnet", "futurenet"} {

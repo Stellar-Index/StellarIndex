@@ -35,10 +35,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sushiswap_v3"
 )
 
-// ---------------------------------------------------------------------------
-// Harness: an in-memory eventStore that drives the cursor-durability state machine without
-// Postgres. The tests pin WHEN the cursor may move, so the cursor is the assertion surface.
-// ---------------------------------------------------------------------------
+// Harness: an in-memory eventStore driving the cursor-durability state machine without Postgres; the tests pin WHEN the
+// cursor may move, so the cursor is the assertion surface.
 
 type fakeStore struct {
 	mu sync.Mutex
@@ -166,10 +164,8 @@ func (f *fakeStore) cursor() uint32 {
 	return f.projectorCursor
 }
 
-// fakeEvents is an in-memory [eventSource]. StreamEvents and FirstEventLedger
-// serve the events in [from, to] that pass the contract-id prefilter, as the
-// lake reads do (topic filters are ignored); OpenLake hands back lake, or
-// fails when it is nil.
+// fakeEvents is an in-memory [eventSource]: StreamEvents and FirstEventLedger serve events in [from, to] passing the
+// contract-id prefilter, as the lake reads do (topic filters ignored); OpenLake returns lake, or fails when nil.
 type fakeEvents struct {
 	mu  sync.Mutex
 	evs []events.Event
@@ -372,10 +368,8 @@ func runsCount(t *testing.T, source, outcome string) float64 {
 	return testutil.ToFloat64(obs.ProjectorRunsTotal.WithLabelValues(source, outcome))
 }
 
-// decodeErrDecoder matches every row and returns a decode error for all of
-// them — the shape of a shipped decoder REGRESSION that breaks a whole class
-// of valid events at once (the phoenix 5,161-orphaned-swap / I-L4 class), as
-// opposed to the odd scattered poison row.
+// decodeErrDecoder matches every row and returns a decode error for all of them: a shipped decoder regression breaking a
+// whole class of events (the phoenix 5,161-orphaned-swap shape), unlike an odd scattered poison row.
 type decodeErrDecoder struct{}
 
 func (*decodeErrDecoder) Name() string              { return "decode-err" }
@@ -384,13 +378,9 @@ func (*decodeErrDecoder) Decode(events.Event) ([]consumer.Event, error) {
 	return nil, errors.New("field-mapping regression: cannot decode 7-field swap")
 }
 
-// TestCycle_ValidationErrorDoesNotWedge pins that a Validate-failing row (an
-// OracleUpdate rejected by canonical validation, which carries no
-// *pgconn.PgError) is a deterministic data fault: it is skipped and counted on
-// the first cycle, the cursor advances, and later cycles keep making progress.
-//
-// Ledger 102 commits alongside the poison row as the sink-health proof the skip arm needs;
-// a lone poison row is the global-fault shape, pinned (holding) elsewhere in this file.
+// A Validate-failing row (e.g. OracleUpdate rejected by canonical validation, no *pgconn.PgError) is a deterministic
+// data fault: skipped and counted on cycle one. The cursor advances and later cycles progress; ledger 102 commits beside
+// it as the sink-health proof (a lone poison row is the holding global-fault shape).
 func TestCycle_ValidationErrorDoesNotWedge(t *testing.T) {
 	const source = "cor11-validation"
 	rows := []events.Event{lakeEvent(101, 1), lakeEvent(102, 2)}
@@ -422,15 +412,11 @@ func TestCycle_ValidationErrorDoesNotWedge(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// A negative SEP-41 amount rejected by the store's pre-SQL validation (a plain fmt.Errorf,
-// no sentinel, no *pgconn.PgError) must not wedge the transfers projection forever.
-// ---------------------------------------------------------------------------
+// A negative SEP-41 amount rejected by the store's pre-SQL validation (plain fmt.Errorf, no sentinel, no PgError) must
+// not wedge the transfers projection forever.
 
-// TestCycle_NegativeSEP41AmountQuarantinesAfterBudget pins that the store
-// rejects a malformed negative transfer amount BEFORE the statement runs, so the error is
-// un-classifiable by the projector. It is retried under a budget, then quarantined, so the
-// sole-writer transfers projection resumes instead of stalling.
+// The store rejects a malformed negative transfer amount before the statement runs, so the projector can't classify the
+// error. It is retried under a budget, then quarantined, so the sole-writer transfers projection resumes.
 func TestCycle_NegativeSEP41AmountQuarantinesAfterBudget(t *testing.T) {
 	const source = "cor01-negative-amount"
 	// Ledger 101 is poison; 102 commits fine — that success is the sink-health
@@ -465,10 +451,7 @@ func TestCycle_NegativeSEP41AmountQuarantinesAfterBudget(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// The other half of the fix: do NOT over-correct into dropping recoverable
-// work.
-// ---------------------------------------------------------------------------
+// The other half of the fix: do not over-correct into dropping recoverable work.
 
 // TestCycle_HoldsCursorAndNeverQuarantines pins the anti-over-correction
 // property: an infrastructure outage, or a global sink failure where nothing
@@ -565,18 +548,13 @@ func TestCycle_DeadlockRetriesBeforeQuarantine(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Sink-side adaptive shrink: the cycle-level half of the shrinkWindow unit test. A window
-// whose CH scan FINISHES but whose per-event sink writes exhaust PerSourceTimeout ends the
-// cycle with a dead cycleCtx and held transient rows; the window pointer must still shrink,
-// or the identical dense range is retried forever.
-// ---------------------------------------------------------------------------
+// Sink-side adaptive shrink, cycle-level half of the shrinkWindow unit test: a window whose CH scan finishes but whose
+// sink writes exhaust PerSourceTimeout ends the cycle with a dead cycleCtx and held transient rows; the window pointer
+// must still shrink, or the identical dense range is retried forever.
 
-// TestCycle_SinkBudgetExhaustionShrinksWindowAndHoldsCursor drives
-// cycleOneSource under an already-expired cycle budget with a sink that
-// fast-fails every write with context.DeadlineExceeded. Each cycle must halve the adaptive
-// window pointer, flooring at MinBatchLimit, while the cursor holds (a deadline is
-// dispositionRetry: never a skip, a quarantine, or an advance-past-loss).
+// Drives cycleOneSource under an already-expired budget with a sink fast-failing every write with DeadlineExceeded. Each
+// cycle must halve the adaptive window, flooring at MinBatchLimit, while the cursor holds (dispositionRetry: never a
+// skip, quarantine or advance-past-loss).
 func TestCycle_SinkBudgetExhaustionShrinksWindowAndHoldsCursor(t *testing.T) {
 	const source = "sink-budget-shrink"
 	rows := []events.Event{lakeEvent(101, 1), lakeEvent(102, 2)}
@@ -629,11 +607,9 @@ func TestCycle_SinkBudgetExhaustionShrinksWindowAndHoldsCursor(t *testing.T) {
 	}
 }
 
-// TestCycle_DecoderRegressionMarksRunDegradedNotOK pins that when a decoder regression makes
-// a class of valid events fail to decode, the cursor still advances past them (holding would
-// re-wedge the sole-writer source on a deterministic failure), but the cycle is marked
-// runs_total{outcome="decode_degraded"}, never a clean "ok". That lets the per-source
-// decode_error rate alert tell a regression from scattered poison rows.
+// When a decoder regression fails a class of valid events, the cursor still advances (holding would re-wedge the sole-
+// writer source) but the cycle is marked runs_total{outcome="decode_degraded"}, never "ok", so the per-source
+// decode_error rate alert can tell a regression from scattered poison rows.
 func TestCycle_DecoderRegressionMarksRunDegradedNotOK(t *testing.T) {
 	const source = "data6-decode-regression"
 	evs := &fakeEvents{evs: []events.Event{lakeEvent(101, 1), lakeEvent(102, 2)}}
@@ -768,10 +744,8 @@ func TestCycle_FloorStallEscalatesCycleBudget(t *testing.T) {
 	}
 }
 
-// TestCycle_NonFlooredDeadlineDoesNotWedge is the anti-false-positive half: a
-// source that keeps blowing the deadline but is STILL SHRINKING (window above
-// the floor) is adapting, not wedged — the flag must stay 0 until the window
-// bottoms out. Guards against paging on the healthy shrink ramp.
+// Anti-false-positive half: a source that keeps blowing the deadline but is still shrinking (window above the floor) is
+// adapting, not wedged, so the flag stays 0 until the window bottoms out. Avoids paging on the healthy shrink ramp.
 func TestCycle_NonFlooredDeadlineDoesNotWedge(t *testing.T) {
 	const source = "wedge-still-shrinking"
 	rows := []events.Event{lakeEvent(101, 1), lakeEvent(102, 2)}
@@ -817,11 +791,9 @@ func TestCycle_HealthyRowsUnaffected(t *testing.T) {
 	}
 }
 
-// TestCycle_AdjacentDuplicateRowsDecodeOnce pins the entry-point duplicate guard: the lake
-// is an append log read without FINAL, so re-ingested duplicates reach the cycle
-// consecutively. Stateless decoders and keyed sinks absorb that, but BUFFERED decoders
-// (phoenix's multi-event correlation) corrupt: a duplicate re-opens a completed group and
-// cross-assigns fields between legs. Exact-identity re-deliveries must decode exactly once.
+// Entry-point duplicate guard: the lake is an append log read without FINAL, so re-ingested duplicates arrive
+// consecutively. Stateless decoders and keyed sinks absorb them, but buffered decoders (phoenix) corrupt: a duplicate
+// re-opens a completed group and cross-assigns fields between legs. Exact-identity re-deliveries must decode once.
 func TestCycle_AdjacentDuplicateRowsDecodeOnce(t *testing.T) {
 	// Three copies of one row followed by a distinct second row.
 	dup := lakeEvent(101, 1)
@@ -898,11 +870,8 @@ func TestCycle_I128OverflowOutcomePartitionsFromSinkPermanent(t *testing.T) {
 	}
 }
 
-// TestCycle_ReplayRewindMidCycleIsNotClobbered: projector-replay's rewind lands while a
-// cycle is in flight (here from inside that cycle's own sink call). The cycle's commit is
-// derived from the cursor it read at its start; it must NOT put the cursor back at tip, and
-// the next cycle must re-walk the rewound range. A never-regress upsert of commitTo would
-// leave the cursor at 120 and never sink ledger 60 again.
+// TestCycle_ReplayRewindMidCycleIsNotClobbered: a projector-replay rewind landing mid-cycle must not be undone. The
+// commit derives from the start-of-cycle cursor, so it must not reset to tip; the next cycle re-walks the rewound range.
 func TestCycle_ReplayRewindMidCycleIsNotClobbered(t *testing.T) {
 	const (
 		rewoundLedger  = uint32(60)  // below the cursor: already projected, to be re-driven
@@ -988,10 +957,9 @@ func TestCycle_FirstCycleSeedDoesNotOverwriteARowThatAppeared(t *testing.T) {
 	}
 }
 
-// TestCycle_SpentBudgetStillCommitsDurableProgress pins that a cycle
-// whose sink writes commit ledger 101 and then exhaust PerSourceTimeout (102 fails with
-// DeadlineExceeded) must still advance the cursor to 101. The cursor write must not run on
-// the expired cycle context, or the committed work is re-projected on every later cycle.
+// TestCycle_SpentBudgetStillCommitsDurableProgress: when a sink commits ledger 101 and then exhausts PerSourceTimeout,
+// the cursor must still advance to 101; the cursor write must not use the expired cycle context, or work is re-projected
+// forever.
 func TestCycle_SpentBudgetStillCommitsDurableProgress(t *testing.T) {
 	const source = "t066-spent-budget-commit"
 	rows := []events.Event{lakeEvent(101, 1), lakeEvent(102, 2)}
@@ -1048,10 +1016,8 @@ func TestCycle_CarriedOutputQuarantineForgetsTrackerHistory(t *testing.T) {
 	}
 }
 
-// TestCycle_HeldRowWarningIsThrottled pins the log budget for a row the
-// projector keeps retrying: an infra fault holds the cursor every cycle, and the per-row
-// warning must fire on the first failing cycle and every heldRowLogEvery-th after, not once
-// per cycle, which would bury the ERROR lines an operator needs.
+// TestCycle_HeldRowWarningIsThrottled: the per-row warning for a persistently held row fires on the first failing cycle
+// and every heldRowLogEvery-th after, not every cycle, so it cannot bury the ERROR lines an operator needs.
 func TestCycle_HeldRowWarningIsThrottled(t *testing.T) {
 	const source = "rlt142-held-row-log"
 	rows := []events.Event{lakeEvent(101, 1), lakeEvent(102, 2)}
@@ -1161,11 +1127,9 @@ func TestCycle_LogsLastSeenLedger(t *testing.T) {
 	}
 }
 
-// TestCycle_PrefilterTracksLiveFactorySeededGate pins: sushiswap_v3's
-// gate grows LIVE from the factory's pool_created events, so the contract-id prefilter must
-// follow it. A pool created at ledger 101 and traded at 102, inside one window, must have
-// its swap projected before the cursor passes 102; a boot-time snapshot would filter the
-// swap out ahead of Matches and advance the cursor over it.
+// sushiswap_v3's gate grows live from the factory's pool_created events, so the contract-id prefilter must follow it. A
+// pool created at 101 and traded at 102 must be projected before the cursor passes 102; a boot-time snapshot would skip
+// the swap.
 func TestCycle_PrefilterTracksLiveFactorySeededGate(t *testing.T) {
 	reg, err := BuildRegistry([]string{sushiswap_v3.SourceName}, config.OracleConfig{}, nil, nil)
 	if err != nil || len(reg.Sources) != 1 {
@@ -1223,11 +1187,9 @@ func TestCycle_PrefilterTracksLiveFactorySeededGate(t *testing.T) {
 	}
 }
 
-// TestCycle_PrefilterTracksSpectraSecondHop is the two-hop form of the test above. Spectra's
-// gate grows twice in one creation transaction: the factory's pt_deployed admits the PT,
-// then the PT's yt_deployed admits the YT. The yt_deployed is emitted BEFORE pt_deployed, so
-// the first read cannot see it; each widening must hold the window for a re-read, or the YT
-// and its transfer one ledger later are lost.
+// TestCycle_PrefilterTracksSpectraSecondHop: Spectra's gate widens twice in one creation tx (pt_deployed admits the PT,
+// then yt_deployed the YT). yt_deployed is emitted before pt_deployed, so each widening must hold the window for a re-
+// read or the YT's transfer is lost.
 func TestCycle_PrefilterTracksSpectraSecondHop(t *testing.T) {
 	reg, err := BuildRegistry([]string{spectra.SourceName}, config.OracleConfig{}, nil, nil)
 	if err != nil || len(reg.Sources) != 1 {
@@ -1288,19 +1250,9 @@ func TestCycle_PrefilterTracksSpectraSecondHop(t *testing.T) {
 	}
 }
 
-// TestCycle_GlobalPermanentFaultShedsAtMostOneRowPerCycle: a bad migration makes the sink
-// reject EVERY row of the window with a class-23 error. The projector must not drop the
-// whole backlog: it holds every row below the cursor (a visible stall: rising lag,
-// runs_total{outcome="sink_retry"}) while the cycle cannot prove the sink is otherwise
-// healthy, then bleeds at most one row per cycle, and still drains rather than wedging.
-//
-// Without a cap the skip arm runs inline per row: the first cycle would count all five,
-// forget them and advance the cursor to the window's end (110), leaving a caught-up source
-// with five rows missing from the served tier and only an ERROR log to say so.
-//
-// Both rails are pinned: no row leaves the served tier until the no-progress budget is
-// spent, because a window in which nothing committed is the global-fault shape by
-// construction. See TestCycle_PoisonRowWithSinkHealthProofShedsOnCycleOne for the single-row form.
+// TestCycle_GlobalPermanentFaultShedsAtMostOneRowPerCycle: a bad migration makes the sink reject every row with a
+// class-23 error. The cursor holds (visible lag, sink_retry) until the no-progress budget is spent, then sheds one row
+// per cycle; uncapped, the first cycle would forget all five rows.
 func TestCycle_GlobalPermanentFaultShedsAtMostOneRowPerCycle(t *testing.T) {
 	const source = "rlt131-global-not-null"
 	rows := []events.Event{
@@ -1352,11 +1304,9 @@ func TestCycle_GlobalPermanentFaultShedsAtMostOneRowPerCycle(t *testing.T) {
 	}
 }
 
-// TestCycle_PoisonOutputOnAHeldRowDoesNotResetItsRetryBudget guards the shed cap's
-// interaction with holds: a multi-output row can carry BOTH a permanently dropped output and
-// a fault that holds the cursor. Such a row is retried whole, so it must not also be a shed
-// candidate; shedding forgets the row identity, restarts the consecutive-cycle count the
-// quarantine budget is made of, and the sole-writer source would wedge forever.
+// TestCycle_PoisonOutputOnAHeldRowDoesNotResetItsRetryBudget: a multi-output row with both a dropped output and a
+// cursor-holding fault is retried whole, so it must not be a shed candidate; shedding forgets the row's identity, resets
+// the quarantine count and wedges a sole-writer source.
 func TestCycle_PoisonOutputOnAHeldRowDoesNotResetItsRetryBudget(t *testing.T) {
 	const source = "rlt131-drop-plus-held"
 	quarantinedBefore := decodedCount(t, source, "sink_quarantined")
@@ -1388,12 +1338,9 @@ func TestCycle_PoisonOutputOnAHeldRowDoesNotResetItsRetryBudget(t *testing.T) {
 	}
 }
 
-// TestCycle_PoisonShedTakesTheLowestLedgerAndKeepsGoodRowsFlowing pins the
-// other half of the cap: the LOWEST-ledger poison row is shed, so the cursor watermark
-// advances in ledger order, and valid rows between two poison rows commit on the way past.
-//
-// Rows: 101 poison, 102 valid, 103 poison, 104 valid. The cycle may shed 101 only, putting
-// the watermark at 102 (the last fully-committed ledger below the row still held), not 110.
+// TestCycle_PoisonShedTakesTheLowestLedgerAndKeepsGoodRowsFlowing: only the lowest-ledger poison row is shed, so the
+// watermark advances in ledger order. With rows 101 poison, 102 valid, 103 poison, 104 valid, the cycle sheds 101 only
+// and the watermark lands at 102, not 110.
 func TestCycle_PoisonShedTakesTheLowestLedgerAndKeepsGoodRowsFlowing(t *testing.T) {
 	const source = "rlt131-lowest-ledger-first"
 	rows := []events.Event{lakeEvent(101, 1), lakeEvent(102, 2), lakeEvent(103, 3), lakeEvent(104, 4)}
@@ -1425,19 +1372,9 @@ func TestCycle_PoisonShedTakesTheLowestLedgerAndKeepsGoodRowsFlowing(t *testing.
 	}
 }
 
-// TestCycle_PoisonRowWithNoSinkHealthProofHoldsUntilTheNoProgressBudget is the
-// second rail for the shed cap.
-//
-// The per-cycle cap ([PermanentSkipPerCycle]) bounds the RATE at which a global class-22/23
-// fault sheds rows, not the FACT of it. The discriminator between "this row's values are
-// bad" and "the sink rejects everything right now" is the proof the quarantine arm already
-// takes: `madeProgress` (some OTHER event of this cycle durably committed). Without it,
-// [QuarantineAfterCyclesNoProgress] is the budget: hold cycles for long enough for the lag /
-// sink_retry alerts to fire, and only then give up one row per cycle.
-//
-// Related cases: TestCycle_ValidationErrorStillAdvancesAcrossCycles supplies the health proof
-// (a second row that commits) and asserts anti-wedge; TestCycle_DroppedTradeIsNotReportedOK
-// asserts the hold on cycle one and the eventual self-heal.
+// TestCycle_PoisonRowWithNoSinkHealthProofHoldsUntilTheNoProgressBudget: the per-cycle shed cap bounds the rate of a
+// global class-22/23 fault, not the fact of it. Without madeProgress (another event committed) the cursor holds for
+// QuarantineAfterCyclesNoProgress cycles so lag/sink_retry alerts fire, then sheds one row per cycle.
 func TestCycle_PoisonRowWithNoSinkHealthProofHoldsUntilTheNoProgressBudget(t *testing.T) {
 	const source = "rlt131-no-health-proof"
 	// One row, and it is poison: nothing else commits, so this cycle has NO
@@ -1493,10 +1430,9 @@ func TestCycle_PoisonRowWithSinkHealthProofShedsOnCycleOne(t *testing.T) {
 	}
 }
 
-// In soroban_events mode the ledgerstream cursor (the scan bound) advances when a ledger's
-// raw rows are enqueued, before they commit. A cycle that scans to the tip while those rows
-// are still buffered finds nothing, commits the cursor past them, and never reads them
-// again. The barrier must land those rows before the scan.
+// In soroban_events mode the ledgerstream cursor advances when raw rows are enqueued, before they commit. A cycle
+// scanning to tip while rows are still buffered would commit the cursor past them forever, so the barrier must land them
+// before the scan.
 func TestCycle_SorobanEventsModeWaitsForBufferedRawRows(t *testing.T) {
 	var sunk []uint32
 	h := newWedgeHarness(t, "raw-barrier", nil, 200,
@@ -1549,10 +1485,9 @@ func TestCycle_SorobanEventsBarrierFailureHoldsCursor(t *testing.T) {
 	}
 }
 
-// TestCycle_MalformedRowIsLoggedWithIdentity pins that a landing-zone row
-// Reconstruct rejects is counted as reconstruct_error (not decode_error), marks
-// the cycle decode_degraded, and is logged with its full identity and error,
-// throttled to the first and every reconstructErrLogEvery-th failure.
+// TestCycle_MalformedRowIsLoggedWithIdentity: a landing-zone row that Reconstruct rejects counts as reconstruct_error
+// (not decode_error) and marks the cycle decode_degraded. It is logged with full identity and error, throttled to the
+// first and every reconstructErrLogEvery-th failure.
 func TestCycle_MalformedRowIsLoggedWithIdentity(t *testing.T) {
 	const source = "malformed-row-log"
 	const bad = 2*reconstructErrLogEvery + 1
@@ -1603,12 +1538,9 @@ func TestCycle_MalformedRowIsLoggedWithIdentity(t *testing.T) {
 	}
 }
 
-// TestCycle_DroppedOutputDoesNotAbortTheRowsOtherOutputs: once a dropped trade is REPORTED
-// (non-nil), a loop that stops at the first sink error never offers the row's remaining
-// outputs to the sink, and because a permanent fault is SKIPPED the cursor advances past
-// the row, losing those valid outputs under one sink_permanent count. A permanently dropped
-// output must be counted and the loop go on, so [poison trade, valid output] sinks the valid
-// output (ok=1), counts the drop (sink_permanent=1) and advances the cursor.
+// TestCycle_DroppedOutputDoesNotAbortTheRowsOtherOutputs: a permanently dropped output must be counted and the loop must
+// continue, else the cursor skips the row and loses its valid outputs. [poison trade, valid output] sinks the valid one
+// (ok=1), counts the drop (sink_permanent=1) and advances the cursor.
 func TestCycle_DroppedOutputDoesNotAbortTheRowsOtherOutputs(t *testing.T) {
 	const source = "rlt132-sibling-after-drop"
 	okBefore := decodedCount(t, source, "ok")
@@ -1664,10 +1596,9 @@ func TestCycle_PermanentDropsAreCountedPerOutput(t *testing.T) {
 	}
 }
 
-// TestCycle_RetryableFaultAfterADropStillHoldsTheRow: continuing past a permanent drop must
-// not weaken the no-silent-loss rule. A transient fault on a LATER output of the same row
-// still stops the row and holds the cursor below its ledger, and the output after it is NOT
-// offered (the whole row is re-read next cycle; idempotent sinks absorb the repeats).
+// TestCycle_RetryableFaultAfterADropStillHoldsTheRow: continuing past a permanent drop must not weaken no-silent-loss. A
+// transient fault on a later output still stops the row and holds the cursor below its ledger; later outputs are not
+// offered, and idempotent sinks absorb the re-read.
 func TestCycle_RetryableFaultAfterADropStillHoldsTheRow(t *testing.T) {
 	const source = "rlt132-drop-then-transient"
 	permBefore := decodedCount(t, source, "sink_permanent")
@@ -1765,12 +1696,9 @@ func TestCycle_NoCursorSeekFailureFallsBackToCrawl(t *testing.T) {
 	}
 }
 
-// TestCycle_SinkPanicIsShedLikeAPermanentFault pins the projector side of the panic
-// contract: pipeline.HandleEvent recovers a sink panic and wraps it in pipeline.ErrSinkPanic,
-// which the sink's own classifier drops. The projector must read it the same way (with a
-// sink-health proof the row is shed on cycle one under the shed cap, counted as
-// sink_permanent), not as an unclassified fault that re-runs the panicking decode every
-// cycle for the whole quarantine budget.
+// TestCycle_SinkPanicIsShedLikeAPermanentFault: pipeline.HandleEvent wraps a recovered sink panic in
+// pipeline.ErrSinkPanic, which the sink classifier drops. The projector must read it the same way (shed on cycle one
+// given a health proof, counted sink_permanent), not re-run the panicking decode for the whole quarantine budget.
 func TestCycle_SinkPanicIsShedLikeAPermanentFault(t *testing.T) {
 	const source = "q053-sink-panic"
 	rows := []events.Event{lakeEvent(101, 1), lakeEvent(102, 2)}
@@ -1796,21 +1724,9 @@ func TestCycle_SinkPanicIsShedLikeAPermanentFault(t *testing.T) {
 	}
 }
 
-// TestCycle_DroppedTradeIsNotReportedOK pins the outcome end to end through the PRODUCTION
-// sink: cmd/stellarindex-indexer binds the projector's SinkFunc to pipeline.HandleEvent, and
-// so does this test (a nil store is safe: Validate rejects the trade before the store).
-//
-// persistTrade must not return nil for a permanently dropped trade (that is what a landed
-// trade returns), or the cycle would count it emitted under outcome="ok", the label that
-// promises "only events that DURABLY committed", while the row is in neither the served
-// tier nor any loss counter. The drop is labelled sink_permanent, and the source STILL
-// self-heals, because a deterministic fault must not wedge a sole-writer source.
-//
-// The cursor advance is deferred, not dropped. This row is alone in its window, so its cycle
-// cannot tell "this trade is malformed" from "the sink rejects every trade" (a bad
-// migration). The cursor HOLDS for QuarantineAfterCyclesNoProgress cycles (a visible stall:
-// rising lag, runs_total{outcome="sink_retry"}) and only then sheds. Both halves are
-// asserted below; the anti-wedge property is the second.
+// TestCycle_DroppedTradeIsNotReportedOK: persistTrade must not return nil for a permanently dropped trade, or it counts
+// as outcome="ok" (durably committed) while in no tier or loss counter. It is labelled sink_permanent; a lone row cannot
+// tell a bad trade from a global sink fault, so the cursor holds the no-progress budget, then sheds.
 func TestCycle_DroppedTradeIsNotReportedOK(t *testing.T) {
 	const source = "rlt132-dropped-trade"
 	rows := []events.Event{lakeEvent(101, 1)}
@@ -1853,10 +1769,9 @@ func TestCycle_DroppedTradeIsNotReportedOK(t *testing.T) {
 	}
 }
 
-// A lake hole at ledger 101 stalls the watermark at 100 while ledgerstream
-// holds through 200. The source is held, not caught up: it must be counted as
-// watermark_held and report the real 100-ledger lag, or a stalled watermark
-// is indistinguishable from a healthy idle source and no lag alert can fire.
+// A lake hole at ledger 101 stalls the watermark at 100 while ledgerstream holds through 200. The source must count as
+// watermark_held and report the real 100-ledger lag, or a stalled watermark looks like a healthy idle source and no lag
+// alert can fire.
 func TestCycle_WatermarkClampedIdleReportsHeldWithRealLag(t *testing.T) {
 	const src = "wm-held"
 	h := watermarkHarness(t, src, 200, 100)
@@ -1993,12 +1908,9 @@ func spectraEvent(ledger uint32, eventIndex int, contract string, topicsB64 []st
 	return ev
 }
 
-// notNullViolation is the shape a migration that adds a NOT NULL column (or a CHECK the live
-// rows violate) puts on EVERY insert into the affected hypertable: SQLSTATE 23502, class 23,
-// which timescale.IsPermanentDataError reports as a POSITIVE permanent data fault.
-//
-// That is the trap: the verdict is "these VALUES are bad", but the same SQLSTATE arrives from
-// a GLOBAL fault, in which case every row of the window is "poison" at once.
+// notNullViolation is what a migration adding a NOT NULL column puts on every insert: SQLSTATE 23502, class 23, a
+// permanent data fault per timescale.IsPermanentDataError. The trap: the verdict says these values are bad, but a global
+// fault yields the same SQLSTATE, making every row of the window look like poison.
 func notNullViolation() error {
 	return &pgconn.PgError{
 		Code:    "23502",
@@ -2045,10 +1957,9 @@ func testContract(t *testing.T, seed byte) string {
 	return c
 }
 
-// invalidTradeDecoder matches every row and emits ONE soroswap trade the
-// store can never hold: a zero-value canonical.Trade fails Trade.Validate
-// inside Store.InsertTrade before any SQL runs — the pre-SQL twin of a
-// SQLSTATE 22/23 rejection, and deterministic for the row.
+// invalidTradeDecoder matches every row and emits one soroswap trade the store can never hold: a zero-value
+// canonical.Trade fails Trade.Validate before any SQL runs. It is the pre-SQL twin of a SQLSTATE 22/23 rejection and is
+// deterministic for the row.
 type invalidTradeDecoder struct{}
 
 func (*invalidTradeDecoder) Name() string { return "invalid-trade" }

@@ -19,15 +19,7 @@ const DefaultBaseURL = "https://api.stellarindex.io"
 // DefaultTimeout is the HARD wall-clock per-request cap (http.Client.Timeout) applied when [Options.HTTPClient] is nil; a context deadline can only shorten it, so longer requests need your own HTTPClient with a larger (or zero = unbounded) Timeout.
 const DefaultTimeout = 30 * time.Second
 
-// userAgent is sent on every request so server-side telemetry can
-// distinguish SDK callers from raw HTTP clients. Bump the version
-// in tandem with the SDK module's tag.
-//
-// Bumped 0.1.0 -> 0.2.0 for the Client.Asset() breaking change
-// (ADR-0042: return type Envelope[AssetDetail] ->
-// Envelope[AssetLookup]). No pkg/client/vX.Y.Z tag has ever
-// been cut; see docs/architecture/semver-policy.md's
-// opening section (one root tag clock, no pkg/* tags).
+// userAgent is sent on every request so server telemetry can tell SDK callers from raw HTTP. Bump the version with the SDK module's tag.
 const userAgent = "stellarindex-go-sdk/0.2.0"
 
 // Options configures a [Client] at construction.
@@ -172,15 +164,9 @@ func effectivePort(u *url.URL) string {
 	return "80"
 }
 
-// doJSON performs an HTTP request against the server, decoding the
-// response into out (which should be a *Envelope[T] pointer for the
-// 200 path). Centralised here so every endpoint method gets the
-// same auth header, user-agent, problem+json error decoding, and
-// context propagation behaviour.
-// extraHeaders is optional and variadic so every existing call site
-// (43 today) keeps compiling unchanged; a caller that needs to set a
-// request header the common path doesn't cover (e.g. X-Reason on an
-// admin write) passes exactly one map.
+// doJSON performs an HTTP request and decodes the response into out (a *Envelope[T] for the 200 path), so every endpoint gets the
+// same auth header, user-agent, problem+json decoding and context handling. extraHeaders is variadic so existing call sites keep
+// compiling; a caller passes at most one map.
 func (c *Client) doJSON(ctx context.Context, method, path string, query url.Values, body any, out any, extraHeaders ...map[string]string) error {
 	if c.configErr != nil {
 		return c.configErr
@@ -301,9 +287,6 @@ func decodeJSONResponse(resp *http.Response, method, path string, out any) error
 // fields. Internal — surfaced through APIError.Detail.
 var errEmptyJSON = errors.New("server returned non-problem+json error body")
 
-// errNotAnEnvelope is returned by doJSON when a 2xx body decodes
-// without error but is missing the as_of timestamp every server
-// envelope carries — i.e. a degenerate `{}` / `{"data":null}` that
-// would otherwise yield a silent zero-value result. Reached via
-// [Envelope.validateEnvelope].
+// errNotAnEnvelope is returned by doJSON when a 2xx body decodes but lacks the as_of every server envelope carries (a degenerate
+// `{}` or `{"data":null}`), via [Envelope.validateEnvelope].
 var errNotAnEnvelope = errors.New("server returned a response without an as_of timestamp (not a valid envelope)")

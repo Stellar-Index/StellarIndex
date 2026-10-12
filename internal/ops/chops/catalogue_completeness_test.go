@@ -22,24 +22,18 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/upshift"
 )
 
-// Every consumer.Event type the sink persists (enumerated statically from
-// pipeline.handleEvent's type switch) must be covered by a reconTarget in the catalogue or carry
-// an explicit noReconcile waiver with a reason, so a new persisted table cannot go unreconciled
-// silently. Decoders emit some kinds dynamically, so the guard is type-level, backed by
-// TestCatalogue_DeclaredKindsMatchDecoderOutput which instantiates the concrete emitters.
+// Every consumer.Event type the sink persists must be covered by a reconTarget or carry a noReconcile waiver with a
+// reason. The guard is type-level because decoders emit some kinds dynamically;
+// TestCatalogue_DeclaredKindsMatchDecoderOutput backs it.
 
 type routeDisp int
 
 const (
-	// reconciledByKind: the sink routes this event type to `table`, and the
-	// projection axis re-derives it by EventKind() — so `table` MUST be a
-	// reconTarget with a non-empty kinds list (and, when `kind` is spelled
-	// out, that kind MUST be one of them).
+	// reconciledByKind: the sink routes this event type to `table`, and the projection axis re-derives it by EventKind().
+	// So `table` must be a reconTarget with non-empty kinds, and an explicit `kind` must be one of them.
 	reconciledByKind routeDisp = iota
-	// reconciledByCensus: reconciled, but not via soroban_events EventKind
-	// re-derive — the SDEX lake-ops re-derive (src.census) or the event-less
-	// ContractCall census (src.callDec). `table` MUST be a target of such a
-	// source (kinds may legitimately be nil there).
+	// reconciledByCensus: reconciled by the SDEX lake-ops re-derive (src.census) or the ContractCall census (src.callDec).
+	// `table` MUST be a target of such a source; kinds may legitimately be nil.
 	reconciledByCensus
 	// noReconcile: deliberately NOT on the projection axis. `reason` is
 	// mandatory and load-bearing — it is the declared waiver the invariant
@@ -51,24 +45,17 @@ const (
 	waivedInCatalogue
 )
 
-// projRoute declares how ONE (consumer.Event type → persisted table) edge
-// is covered by the projection reconcile axis. A single event type may have
-// several routes (sorocredit.Event fans to four credit_* tables by
-// EventType; aquarius.ReservesEvent lands in two tables by its Kind field).
+// projRoute declares how one (consumer.Event type -> table) edge is covered by the projection reconcile axis. One event
+// type may have several routes (sorocredit.Event fans to four credit_* tables; aquarius.ReservesEvent to two by Kind).
 type projRoute struct {
-	// typeName is "pkg.Type" EXACTLY as pipeline.handleEvent's type switch
-	// spells it (the import ident, which is the dir basename for every
-	// source package). It is matched against the AST of that switch, so a
-	// renamed/removed type breaks the test rather than rotting the list.
+	// typeName is "pkg.Type" exactly as pipeline.handleEvent's type switch spells it (the dir basename).
+	// It is matched against that switch's AST, so a renamed or removed type breaks the test instead of rotting the list.
 	typeName string
 	// table is the served table this edge writes (documentary for
 	// noReconcile; asserted present for the reconciled dispositions).
 	table string
-	// kind, when non-empty, is the EventKind() this edge reconciles; the
-	// catalogue's reconTarget for `table` must list it. Left "" for
-	// reconciledByKind routes whose kind is verified elsewhere
-	// (TestCatalogue_DeclaredKindsMatchDecoderOutput) or is a stable
-	// pre-existing entry — the table-presence check still applies.
+	// kind, when non-empty, is the EventKind() this edge reconciles; the reconTarget for `table` must list it. It is ""
+	// where the kind is verified elsewhere (TestCatalogue_DeclaredKindsMatchDecoderOutput); table presence is still checked.
 	kind string
 	disp routeDisp
 	// reason is REQUIRED for noReconcile: the declared {source/table, why}
@@ -94,11 +81,9 @@ const observationWaiverNoAxis = "LedgerEntry observation (supply observer), not 
 // with no on-chain lake to re-derive against.
 const externalWaiver = "off-chain external (CEX/FX) vendor data — no on-chain lake event to re-derive against"
 
-// projRoutes is the declared coverage for every consumer.Event type the
-// sink persists. TestCatalogue_EveryPersistedEventTypeIsRoutedOrWaived
-// proves it is exhaustive against pipeline.handleEvent — so this is not a
-// hand-maintained list that can silently fall behind: adding a persist arm
-// without a row here fails CI.
+// projRoutes declares coverage for every consumer.Event type the sink persists.
+// TestCatalogue_EveryPersistedEventTypeIsRoutedOrWaived proves it exhaustive against handleEvent, so a new persist arm
+// without a row fails CI.
 var projRoutes = []projRoute{
 	// ── soroswap ──
 	{typeName: "soroswap.TradeEvent", table: "trades", kind: "soroswap.trade", disp: reconciledByKind},
@@ -111,10 +96,9 @@ var projRoutes = []projRoute{
 	{typeName: "aquarius.AdminEvent", table: "aquarius_admin", kind: "aquarius.admin", disp: reconciledByKind},
 	{typeName: "aquarius.FeeEvent", table: "aquarius_protocol_fee", kind: "aquarius.fee", disp: reconciledByKind},
 	{typeName: "aquarius.KillEvent", table: "aquarius_kill_switches", kind: "aquarius.kill", disp: reconciledByKind},
-	// aquarius.ReservesEvent routes to TWO tables by its runtime Kind
-	// field. EventKind() now branches on Kind too ("aquarius.reserves" /
-	// "aquarius.reserves_sync"), so the tables are attributable by kind —
-	// fan-out alone is why they stay off the reconcile axis.
+	// aquarius.ReservesEvent routes to two tables by its runtime Kind field; EventKind() branches on Kind too
+	// ("aquarius.reserves" / "aquarius.reserves_sync"), so the tables are attributable by kind; fan-out alone keeps them off
+	// the reconcile axis.
 	{typeName: "aquarius.ReservesEvent", table: "aquarius_reserves", disp: waivedInCatalogue},
 	{typeName: "aquarius.ReservesEvent", table: "aquarius_reserves_sync", disp: waivedInCatalogue},
 	{typeName: "aquarius.LiquidityEvent", table: "aquarius_liquidity", disp: waivedInCatalogue},
@@ -152,10 +136,9 @@ var projRoutes = []projRoute{
 	{typeName: "blend.EmissionEvent", table: "blend_emissions", disp: reconciledByKind},
 	{typeName: "blend.AdminEvent", table: "blend_admin", disp: reconciledByKind},
 	{typeName: "blend_backstop.Event", table: "blend_backstop_events", disp: reconciledByKind},
-	// blend_emitter: distribute + swap_config are 1:1 (one event → one row) and
-	// reconcile per-ledger; drop FANS OUT (one event → N recipient rows) and is
-	// waived — the reconTarget carves drop rows out of the served side
-	// (whereFilter `event_kind <> 'drop'`) and omits the drop kind.
+	// blend_emitter distribute and swap_config are 1:1 and reconcile per ledger; drop fans out (one event, N recipient rows)
+	// and is waived. The reconTarget carves drop rows out of the served side (whereFilter `event_kind <> 'drop'`) and omits
+	// the drop kind.
 	{typeName: "blend_emitter.DistributeEvent", table: "blend_emitter_events", kind: "blend_emitter.distribute", disp: reconciledByKind},
 	{typeName: "blend_emitter.DropEvent", table: "blend_emitter_events", disp: waivedInCatalogue},
 	{typeName: "blend_emitter.SwapConfigEvent", table: "blend_emitter_events", kind: "blend_emitter.swap_config", disp: reconciledByKind},
@@ -199,11 +182,9 @@ var projRoutes = []projRoute{
 	{typeName: "sac_balances.Observation", table: "sac_balance_observations", disp: noReconcile, reason: observationWaiverNoAxis},
 }
 
-// sinkHandleEventTypes parses pipeline.handleEvent and returns the set of
-// "pkg.Type" names its dispatch type-switch persists — the authoritative,
-// CI-complete (TestLockstep_EveryConsumerEventHasSinkArm) universe of
-// persisted event types. Duplicated minimally from pipeline's own AST guard
-// because that guard's helpers live in an unimportable _test.go.
+// sinkHandleEventTypes parses pipeline.handleEvent and returns the "pkg.Type" names its type switch persists: the
+// authoritative universe (CI-complete via TestLockstep_EveryConsumerEventHasSinkArm). Duplicated because pipeline's AST
+// guard helpers sit in an unimportable _test.go.
 func sinkHandleEventTypes(t *testing.T) map[string]bool {
 	t.Helper()
 	const sinkPath = "../../pipeline/sink.go"
@@ -366,10 +347,8 @@ func TestCatalogue_ReconciledRoutesArePresent(t *testing.T) {
 	}
 }
 
-// TestCatalogue_RuntimeWaiversMatchRoutes: every waivedInCatalogue route has a
-// runtime `waived` entry with a reason on a catalogue source, and every runtime
-// entry is declared by a route — so what "reconciled" excludes is a runtime
-// fact, not one only this test file knows.
+// TestCatalogue_RuntimeWaiversMatchRoutes: every waivedInCatalogue route has a runtime `waived` entry with a reason, and
+// vice versa. What "reconciled" excludes is thus a runtime fact, not one only this test file knows.
 func TestCatalogue_RuntimeWaiversMatchRoutes(t *testing.T) {
 	runtime := map[string]bool{}
 	for _, src := range builtCatalogue(t) {

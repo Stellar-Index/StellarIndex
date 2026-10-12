@@ -8,18 +8,9 @@ import (
 	"testing"
 )
 
-// Class guard: every catalogue consumer warms the gates.
-//
-// warmCatalogueGates / applyGatedOptions give a re-derive the gate the live indexer runs with
-// (curated set ∪ protocol_contracts). buildReconciliationCatalogue takes only a config, so alone
-// it builds each gated decoder bare: a contract admitted through protocol_contracts is decoded
-// live but invisible to an unwarmed re-derive. Its served rows then read as phantoms on
-// /v1/coverage, show a spurious delta in `verify-reconciliation` and `ch-reproject`, and
-// `ch-rebuild -write` rebuilds the table without them.
-//
-// Every non-test consumer of the catalogue must therefore warm it. This test enumerates them
-// from the source tree, not a hand-kept list, so a new consumer fails here. Per-call-site ORDER
-// is pinned below and in TestCHRebuild_WarmsTheCatalogueGatesBeforeAnythingReadsThem.
+// Class guard: every catalogue consumer must warm the gates (warmCatalogueGates: curated set plus protocol_contracts).
+// Unwarmed, a protocol_contracts contract decodes live but not in re-derive, so served rows read as phantoms on
+// /v1/coverage.
 func TestRLT430_EveryCatalogueConsumerWarmsTheGates(t *testing.T) {
 	t.Parallel()
 	files, err := filepath.Glob("*.go")
@@ -52,12 +43,9 @@ func TestRLT430_EveryCatalogueConsumerWarmsTheGates(t *testing.T) {
 	}
 }
 
-// TestCatalogueConsumers_WarmBeforeAnythingReadsTheDecoders pins the ORDER at the three call
-// sites the class guard above only sees the presence of. These commands need ClickHouse and/or
-// Postgres past the config load, so the wiring is pinned at the source: the warm runs on the
-// freshly built catalogue and precedes the first reader of its decoders. The factory preseed
-// seeds INTO the decoders the warm rebuilds, so a later warm would discard the seed, and the
-// recognition attribution reads src.contractIDs, which the warm widens with registry-only children.
+// TestCatalogueConsumers_WarmBeforeAnythingReadsTheDecoders pins the ORDER at the three call sites: the warm runs on the
+// freshly built catalogue and precedes the first decoder reader. The factory preseed seeds INTO the decoders the warm
+// rebuilds, so a later warm discards the seed, and recognition attribution reads src.contractIDs, which the warm widens.
 func TestCatalogueConsumers_WarmBeforeAnythingReadsTheDecoders(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

@@ -46,12 +46,8 @@ const DefaultDecimals uint8 = 14
 // DefaultResolutionSeconds is every Reflector contract's 5-min cadence, exported as the `stellarindex_oracle_resolution_seconds` gauge so the oracle-stale alert has a per-source threshold.
 const DefaultResolutionSeconds = 300
 
-// Event topics, from reflector-contract/oracle/src/events.rs:4-10 (soroban-sdk 25.3.0):
-//
-//	topic[0] = Symbol("REFLECTOR")
-//	topic[1] = Symbol("update")
-//	topic[2] = U64(timestamp)
-//	body     = Map { "update_data": Vec<(ScVal, I128)> }
+// Event topics (reflector-contract/oracle/src/events.rs, soroban-sdk 25.3.0): topic[0] = Symbol("REFLECTOR"), topic[1] =
+// Symbol("update"), topic[2] = U64(timestamp), body = Map { "update_data": Vec<(ScVal, I128)> }.
 const (
 	EventTopic0 = "REFLECTOR"
 	EventTopic1 = "update"

@@ -10,11 +10,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// /v1/network/stats (CachedNetworkStatsReader) was constructed in main but
-// never threaded into prewarmCaches/prewarmLight, so the slot was never
-// warmed — the first request after every binary restart paid
-// the full ~485ms p95 network-wide aggregate inline instead of getting a
-// warm value.
+// /v1/network/stats (CachedNetworkStatsReader) was never threaded into prewarmCaches/prewarmLight, so its slot stayed
+// cold. The first request after each restart paid the full ~485ms p95 aggregate inline.
 
 // recordingNetworkStatsReader records how many times it was called.
 type recordingNetworkStatsReader struct {
@@ -35,11 +32,8 @@ func (r *recordingNetworkStatsReader) seen() int {
 	return r.calls
 }
 
-// TestPrewarmLightWarmsNetworkStats is the guard: prewarmLight — the
-// function the prewarm goroutine actually runs on both its startup pass
-// and its steady-state ticker — must warm the /v1/network/stats slot.
-// CachedNetworkStatsReader must be passed to prewarmLight, or this reader
-// is never called.
+// Guard: prewarmLight, which runs on both the startup pass and the ticker, must warm the /v1/network/stats slot.
+// CachedNetworkStatsReader must be passed to it, or this reader is never called.
 func TestPrewarmLightWarmsNetworkStats(t *testing.T) {
 	rec := &recordingNetworkStatsReader{}
 	cached := v1.NewCachedNetworkStatsReader(rec, 30*time.Second)
