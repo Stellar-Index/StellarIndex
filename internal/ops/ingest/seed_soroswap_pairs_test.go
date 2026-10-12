@@ -3,9 +3,11 @@ package ingest
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -121,5 +123,15 @@ func TestSoroswapFactoriesToSeed(t *testing.T) {
 	}
 	if got := soroswapFactoriesToSeed("CTESTNETFACTORY"); len(got) != 1 || got[0] != "CTESTNETFACTORY" {
 		t.Errorf("non-mainnet factory must be seeded alone, got %v", got)
+	}
+}
+
+// TestSeedEntryCounts_RequiresStatedMode: rederive-from.sh treats exit 0 as "counts reseeded", so a run with no stated mode must fail.
+func TestSeedEntryCounts_RequiresStatedMode(t *testing.T) {
+	if err := seedEntryCounts([]string{"-config", "/nonexistent.toml"}); !errors.Is(err, opsutil.ErrWriteModeUnstated) {
+		t.Fatalf("no mode = %v, want ErrWriteModeUnstated", err)
+	}
+	if err := seedEntryCounts([]string{"-config", "/nonexistent.toml", "-write"}); err == nil || errors.Is(err, opsutil.ErrWriteModeUnstated) {
+		t.Fatalf("-write = %v, want it past the mode check to the config load", err)
 	}
 }
