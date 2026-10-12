@@ -34,9 +34,10 @@ User=root
 # 75 = run-heavy-job.sh skipped this fire (a lock was held): not a
 # failure, but ExecMainStatus=75 keeps it distinct from a run.
 SuccessExitStatus=75
-# Hourly timer-fired: defers (exit 75) while another heavy job runs; the
-# next fire retries.
+# Hourly timer-fired: queues up to 55 min behind another heavy job, inside
+# the hourly period; deferring on every held lock starved the mirror for days.
 Environment=HEAVY_JOB_CLASS=scheduled
+Environment=HEAVY_JOB_LOCK_WAIT=3300
 ExecStart=/usr/local/sbin/run-heavy-job.sh galexie-archive-fill /usr/local/bin/galexie-archive-fill
 # A routine hourly drift fills in seconds-minutes; a large catch-up
 # after an outage (e.g. the original ~346k-ledger hole) can run for
