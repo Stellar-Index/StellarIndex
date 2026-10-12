@@ -2,6 +2,11 @@ package v1
 
 import (
 	"context"
+	"io"
+	"log/slog"
+	"math/big"
+	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -11,6 +16,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
+	"github.com/Stellar-Index/StellarIndex/internal/api/streaming"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
@@ -943,4 +950,249 @@ func tipTestTicksPerMinute(reg *tipProducerRegistry, caller string) int {
 		total += (60 + key.window - 1) / key.window
 	}
 	return total
+}
+
+// Per-caller producer quota: the global ceiling alone lets one address loop pairs x window_seconds, aborting each connection,
+// and fill every slot with detached junk producers (surviving for tipProducerLinger) so other callers get 503. Connection caps
+// cannot see it; without the quota check and mint charge in acquireFor the attacker is admitted every time.
+
+// attackerCaller / bystanderCaller are documentation-range addresses
+// (RFC 5737), not anything routable.
+const (
+	attackerCaller  = "203.0.113.7"
+	bystanderCaller = "198.51.100.9"
+)
+
+// The quota is only as good as its key. IPv6 callers must aggregate to
+// their /64: a quota keyed on the full /128 is bypassed by
+// rotating the low bits of a prefix the caller already controls.
+func TestTipProducerCaller_KeysOnTheRotatableBlock(t *testing.T) {
+	callerFor := func(remoteAddr string) string {
+		req := httptest.NewRequest(http.MethodGet, "/v1/price/tip/stream?asset=native", nil)
+		req.RemoteAddr = remoteAddr
+		return tipProducerCaller(req)
+	}
+
+	v6a := callerFor("[2001:db8:1:2::dead]:51234")
+	v6b := callerFor("[2001:db8:1:2::beef]:51235")
+	if v6a != v6b {
+		t.Errorf("two addresses in one /64 keyed as %q and %q; an IPv6 caller "+
+			"rotating within its own prefix would get a fresh quota per address",
+			v6a, v6b)
+	}
+	if want := "2001:db8:1:2::"; v6a != want {
+		t.Errorf("IPv6 caller key = %q, want the /64 prefix %q", v6a, want)
+	}
+
+	if got, want := callerFor("203.0.113.7:51234"), "203.0.113.7"; got != want {
+		t.Errorf("IPv4 caller key = %q, want the exact address %q", got, want)
+	}
+	if got, want := callerFor("[2001:db8:1:3::1]:51234"), "2001:db8:1:3::"; got != want {
+		t.Errorf("a DIFFERENT /64 keyed as %q, want %q — distinct subscribers must "+
+			"not share one quota bucket", got, want)
+	}
+
+	// Fail-closed: an unresolvable caller shares one bucket rather than
+	// being exempted, and NEVER resolves to the unattributed identity the
+	// quota does not apply to.
+	if got := callerFor(""); got != unknownTipCaller {
+		t.Errorf("unresolvable caller key = %q, want %q", got, unknownTipCaller)
+	}
+	for _, addr := range []string{"", "203.0.113.7:51234", "[2001:db8::1]:1", "not-an-addr"} {
+		if got := callerFor(addr); got == unattributedTipCaller {
+			t.Errorf("RemoteAddr %q resolved to the unattributed caller, which the "+
+				"quota does not apply to — the HTTP path must always be charged", addr)
+		}
+	}
+}
+
+type countingPriceReader struct {
+	noPriceReader
+	calls atomic.Int64
+}
+
+func (c *countingPriceReader) LatestPrice(ctx context.Context, a, q canonical.Asset) (PriceSnapshot, []string, bool, error) {
+	c.calls.Add(1)
+	return c.noPriceReader.LatestPrice(ctx, a, q)
+}
+
+// A stream refused at the producer ceiling must cost no price reads.
+func TestPriceTipStream_ProducerCeilingRefusalRunsNoComputeTip(t *testing.T) {
+	prices := &countingPriceReader{}
+	s := New(Options{
+		Prices: prices,
+		Hub:    streaming.NewHub(0),
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	s.tipProducers.maxProducers = 1
+	held, outcome := s.tipProducers.acquireFor(
+		tipProducerKey{asset: "native", quote: "fiat:EUR", window: 5}, "other", nil,
+		func(ctx context.Context) { <-ctx.Done() })
+	if outcome != tipProducerAdmitted {
+		t.Fatalf("setup: %s", outcome)
+	}
+	defer held()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/price/tip/stream?asset=native&quote=fiat:USD&window_seconds=1", nil)
+	s.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", rec.Code)
+	}
+	if n := prices.calls.Load(); n != 0 {
+		t.Fatalf("computeTip ran %d price reads before the producer refusal", n)
+	}
+}
+
+// blockingTickHistory holds every TradesInRange call until release is closed, recording peak calls in flight. A compute
+// reads its pairs sequentially, so the peak equals concurrent computeTip calls.
+type blockingTickHistory struct {
+	HistoryReader // nil — only TradesInRange is exercised
+	release       chan struct{}
+	inFlight      atomic.Int32
+	peak          atomic.Int32
+}
+
+func (h *blockingTickHistory) TradesInRange(ctx context.Context, pair canonical.Pair, _, to time.Time, _ int) ([]canonical.Trade, error) {
+	n := h.inFlight.Add(1)
+	defer h.inFlight.Add(-1)
+	for {
+		p := h.peak.Load()
+		if n <= p || h.peak.CompareAndSwap(p, n) {
+			break
+		}
+	}
+	select {
+	case <-h.release:
+		return []canonical.Trade{{
+			Source:      "kraken",
+			Pair:        pair,
+			BaseAmount:  canonical.NewAmount(big.NewInt(1_000_0000)),
+			QuoteAmount: canonical.NewAmount(big.NewInt(200_0000)),
+			Timestamp:   to.Add(-time.Second),
+		}}, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// TestTipTicks_ConcurrencyIsBoundedOnTheRealTickPath drives both producer shapes' real tick loops with more producers
+// than tick slots against a never-answering reader and requires in-flight computes never exceed slots. Count and rate
+// budgets do not bound this: every producer can fire at once.
+func TestTipTicks_ConcurrencyIsBoundedOnTheRealTickPath(t *testing.T) {
+	const slots, producers = 2, 6
+	btc, _ := canonical.ParseAsset("crypto:BTC")
+	usd, _ := canonical.ParseAsset("fiat:USD")
+
+	shapes := map[string]func(ctx context.Context, s *Server, i int){
+		"shared": func(ctx context.Context, s *Server, i int) {
+			key := tipProducerKey{asset: btc.String(), quote: usd.String(), window: 60 - i}
+			s.runSharedTipProducer(ctx, key, btc, usd, 60-i)
+		},
+		"per_connection": func(ctx context.Context, s *Server, _ int) {
+			var gen streaming.Generator
+			ch := make(chan streaming.Event, 4)
+			s.runTipStreamProducer(ctx, ch, &gen, btc, usd, 1, streaming.Event{})
+		},
+	}
+	for name, run := range shapes {
+		t.Run(name, func(t *testing.T) {
+			h := &blockingTickHistory{release: make(chan struct{})}
+			s := New(Options{
+				History: h,
+				Prices:  noPriceReader{},
+				Hub:     streaming.NewHub(0),
+				Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+			})
+			s.tipProducers.tickConcurrency = slots
+
+			ctx, cancel := context.WithCancel(context.Background())
+			var wg sync.WaitGroup
+			for i := range producers {
+				wg.Add(1)
+				go func() { defer wg.Done(); run(ctx, s, i) }()
+			}
+			t.Cleanup(func() { cancel(); wg.Wait() })
+
+			deadline := time.Now().Add(5 * time.Second)
+			for h.inFlight.Load() < slots && time.Now().Before(deadline) {
+				time.Sleep(5 * time.Millisecond)
+			}
+			if got := h.inFlight.Load(); got < slots {
+				t.Fatalf("only %d computes started; the tick path never reached the reader", got)
+			}
+			// Every producer has fired by now; give the unbounded shape the
+			// time to pile past the slots.
+			time.Sleep(300 * time.Millisecond)
+			close(h.release)
+			if peak := h.peak.Load(); peak > slots {
+				t.Fatalf("peak concurrent tick computes = %d across %d producers, want <= %d (tick slots)",
+					peak, producers, slots)
+			}
+		})
+	}
+}
+
+// panicOnceHistory panics on its first TradesInRange call and answers
+// with no trades after.
+type panicOnceHistory struct {
+	HistoryReader
+	calls atomic.Int32
+}
+
+func (h *panicOnceHistory) TradesInRange(context.Context, canonical.Pair, time.Time, time.Time, int) ([]canonical.Trade, error) {
+	if h.calls.Add(1) == 1 {
+		panic("tip tick compute panicked")
+	}
+	return nil, nil
+}
+
+// TestTipTicks_SlotIsFreedWhenTheComputePanics pins that a tick slot is
+// released when the compute panics and the producer's recover absorbs
+// it. With one slot, a leaked slot would starve every later tick.
+func TestTipTicks_SlotIsFreedWhenTheComputePanics(t *testing.T) {
+	btc, _ := canonical.ParseAsset("crypto:BTC")
+	usd, _ := canonical.ParseAsset("fiat:USD")
+	h := &panicOnceHistory{}
+	s := New(Options{
+		History: h,
+		Prices:  noPriceReader{},
+		Hub:     streaming.NewHub(0),
+		Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	s.tipProducers.tickConcurrency = 1
+
+	key := tipProducerKey{asset: btc.String(), quote: usd.String(), window: 60}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.runSharedTipProducer(context.Background(), key, btc, usd, 60)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("producer did not exit on its panicking compute")
+	}
+	if got := h.calls.Load(); got != 1 {
+		t.Fatalf("TradesInRange calls = %d, want the 1 that panicked", got)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_, _, err := s.computeTipGated(ctx, btc, usd, 5)
+	if ctx.Err() != nil {
+		t.Fatalf("next tick could not get the only slot (err = %v): the panicked compute leaked it", err)
+	}
+}
+
+// noPriceReader answers every read with ErrPriceNotFound.
+type noPriceReader struct{}
+
+func (noPriceReader) LatestPrice(context.Context, canonical.Asset, canonical.Asset) (PriceSnapshot, []string, bool, error) {
+	return PriceSnapshot{}, nil, false, ErrPriceNotFound
+}
+
+func (noPriceReader) RecentClosedSnapshots(context.Context, canonical.Asset, canonical.Asset, int) ([]PriceSnapshot, error) {
+	return nil, nil
 }
