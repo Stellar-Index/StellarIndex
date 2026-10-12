@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"math/big"
 	"net/http"
@@ -1010,4 +1012,397 @@ func readSSEFrame(br *bufio.Reader, timeout time.Duration) (event, data string) 
 		}
 	}
 	return event, data
+}
+
+// gatedDivergenceLooker models a verdict store that stopped answering: each lookup parks until the test releases it or
+// the caller's context gives up. Parking on a channel keeps tests fast and free of timing slack.
+// It does not model a store ignoring its context; the wired looker reads Redis via go-redis, which honours deadlines.
+type gatedDivergenceLooker struct {
+	release chan struct{} // closed by the test to let parked calls return
+	entered chan struct{} // closed on the first call
+
+	once    sync.Once
+	calls   atomic.Int32
+	firing  bool
+	checked bool
+}
+
+func newGatedDivergenceLooker(firing, checked bool) *gatedDivergenceLooker {
+	return &gatedDivergenceLooker{
+		release: make(chan struct{}),
+		entered: make(chan struct{}),
+		firing:  firing,
+		checked: checked,
+	}
+}
+
+func (g *gatedDivergenceLooker) DivergenceFiringFor(ctx context.Context, _, _ canonical.Asset) (firing, checked bool, window time.Duration, err error) {
+	g.calls.Add(1)
+	g.once.Do(func() { close(g.entered) })
+	select {
+	case <-g.release:
+		return g.firing, g.checked, 0, nil
+	case <-ctx.Done():
+		return false, false, 0, ctx.Err()
+	}
+}
+
+// stallBudget is the divergence sub-budget the stall tests run against; a never-released lookup costs exactly this.
+// The guarded regression is the lookup riding the unscaled 8s tick budget, which the bounds below still separate.
+const stallBudget = 100 * time.Millisecond
+
+// tipStreamServerWithLooker wires a hub-less server (pre-flight and later frames come from this process's own code
+// paths) over one priced pair. A zero budget keeps the production [v1.TipStreamDivergenceBudget].
+func tipStreamServerWithLooker(t *testing.T, div v1.DivergenceLooker, budget time.Duration) string {
+	t.Helper()
+	prices := &stubPriceReader{
+		snapshots: map[string]v1.PriceSnapshot{
+			"crypto:BTC/fiat:USD": {Price: "65000", PriceType: "last_trade"},
+		},
+	}
+	srv := v1.New(v1.Options{Prices: prices, Divergence: div})
+	srv.SetStreamTimingForTest(testStreamSecond, budget)
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+	return ts.URL
+}
+
+// tipStreamURL is the stream under test. window_seconds=60 keeps the producer from ticking, so what is measured is the
+// pre-flight path between the client's request and the response headers.
+const tipStreamURL = "/v1/price/tip/stream?asset=crypto:BTC&quote=fiat:USD&window_seconds=60"
+
+// timedLooker answers after a fixed delay, honouring its context, to probe the budget EDGE: a gate reporting
+// "unchecked" whenever the lookup is not instant would pass every stall test while discarding healthy-but-loaded reads.
+type timedLooker struct {
+	delay   time.Duration
+	firing  bool
+	checked bool
+	calls   atomic.Int32
+}
+
+func (l *timedLooker) DivergenceFiringFor(ctx context.Context, _, _ canonical.Asset) (firing, checked bool, window time.Duration, err error) {
+	l.calls.Add(1)
+	t := time.NewTimer(l.delay)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return l.firing, l.checked, 0, nil
+	case <-ctx.Done():
+		return false, false, 0, ctx.Err()
+	}
+}
+
+// hubTipStreamServer wires the PRODUCTION shape: a Hub, so recurring frames come from the shared runSharedTipProducer
+// loop. Hub-less servers never run that loop, leaving the path r1 runs untested.
+func hubTipStreamServer(t *testing.T, div v1.DivergenceLooker, sources []string) string {
+	t.Helper()
+	prices := &stubPriceReader{
+		snapshots: map[string]v1.PriceSnapshot{
+			"crypto:BTC/fiat:USD": {Price: "65000", PriceType: "last_trade"},
+		},
+		sources: map[string][]string{"crypto:BTC/fiat:USD": sources},
+	}
+	srv := v1.New(v1.Options{Prices: prices, Divergence: div, Hub: streaming.NewHub(0)})
+	srv.SetStreamTimingForTest(testStreamSecond, stallBudget)
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+	return ts.URL
+}
+
+// capturingHandler collects log messages so the rate limit can be
+// asserted on the log itself rather than inferred.
+type capturingHandler struct {
+	mu   sync.Mutex
+	msgs []string
+}
+
+func (h *capturingHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h *capturingHandler) Handle(_ context.Context, r slog.Record) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.msgs = append(h.msgs, r.Message)
+	return nil
+}
+func (h *capturingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *capturingHandler) WithGroup(string) slog.Handler      { return h }
+
+func (h *capturingHandler) count(sub string) int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	n := 0
+	for _, m := range h.msgs {
+		if strings.Contains(m, sub) {
+			n++
+		}
+	}
+	return n
+}
+
+// budgetBurningPrices spends the whole request budget before the divergence lookup, so lookupDivergenceFlag is entered
+// with an already-expired context, the ordinary shape of a request that overran an earlier read.
+type budgetBurningPrices struct {
+	inner *stubPriceReader
+	burn  time.Duration
+}
+
+func (p *budgetBurningPrices) LatestPrice(ctx context.Context, a, q canonical.Asset) (v1.PriceSnapshot, []string, bool, error) {
+	select {
+	case <-time.After(p.burn):
+	case <-ctx.Done():
+		// Keep going regardless: the point is to reach the flag walk with
+		// the budget already spent, which is what the handler does too —
+		// the price is in hand and only the enrichment is left.
+		time.Sleep(20 * time.Millisecond)
+	}
+	// ctx is threaded through unchanged; stubPriceReader ignores it, so
+	// the expired deadline reaches the handler rather than being laundered.
+	return p.inner.LatestPrice(ctx, a, q)
+}
+
+func (p *budgetBurningPrices) RecentClosedSnapshots(ctx context.Context, a, q canonical.Asset, n int) ([]v1.PriceSnapshot, error) {
+	return p.inner.RecentClosedSnapshots(ctx, a, q, n)
+}
+
+// storeDownLooker returns a GENUINE store failure — what go-redis
+// surfaces for connection refused / LOADING, or what a malformed cached
+// blob produces — never a context error.
+type storeDownLooker struct{ calls atomic.Int32 }
+
+var errDivergenceStoreDown = errors.New("divergence: cache get div:crypto:BTC/fiat:USD: dial tcp: connect: connection refused")
+
+func (l *storeDownLooker) DivergenceFiringFor(context.Context, canonical.Asset, canonical.Asset) (firing, checked bool, window time.Duration, err error) {
+	l.calls.Add(1)
+	return false, false, 0, errDivergenceStoreDown
+}
+
+// TestPriceDivergence_GenuineStoreErrorIsLoggedEvenPastTheBudget: deadline suppression must key on the ERROR, not the
+// context. /v1/price, ?window=, /v1/price/tip and /v1/vwap have no stall reporter of their own; suppressing on
+// "context is done" would silence a real store outage on all of them once the budget blows.
+func TestPriceDivergence_GenuineStoreErrorIsLoggedEvenPastTheBudget(t *testing.T) {
+	for _, path := range []string{
+		"/v1/price?asset=crypto:BTC&quote=fiat:USD",
+		"/v1/price/tip?asset=crypto:BTC&quote=fiat:USD",
+	} {
+		t.Run(path, func(t *testing.T) {
+			logs := &capturingHandler{}
+			div := &storeDownLooker{}
+			srv := v1.New(v1.Options{
+				Prices: &budgetBurningPrices{
+					inner: &stubPriceReader{snapshots: map[string]v1.PriceSnapshot{
+						"crypto:BTC/fiat:USD": {Price: "65000", PriceType: "vwap"},
+					}},
+					burn: 400 * time.Millisecond,
+				},
+				Divergence:     div,
+				Logger:         slog.New(logs),
+				RequestTimeout: 150 * time.Millisecond,
+			})
+			ts := httptest.NewServer(srv.Handler())
+			defer ts.Close()
+
+			resp, err := http.Get(ts.URL + path)
+			if err != nil {
+				t.Fatalf("GET: %v", err)
+			}
+			resp.Body.Close()
+
+			if div.calls.Load() == 0 {
+				t.Fatalf("the handler never reached the divergence lookup on %s; budgetBurningPrices guarantees the budget "+
+					"is already spent by the time the flag walk runs, so this precondition must hold", path)
+			}
+			if logs.count("divergence lookup failed") == 0 {
+				t.Errorf("a genuine store failure (%v) reached the lookup with an expired request context and was logged nowhere; "+
+					"%s has no stall reporter to replace it", errDivergenceStoreDown, path)
+			}
+		})
+	}
+}
+
+// Regression suite for the scam gate's quote-leg check on /v1/price/tip (computeTip) and the
+// closed-bucket SSE stream (closedStreamWithheld). `?asset=native&quote=<FLAGGED>` describes the
+// same market that `?asset=<FLAGGED>&quote=native` is withheld for, so asking the gate only the
+// base-only question would publish the flagged issuer's own trades unauthenticated, once per
+// closed bucket for the life of an SSE connection.
+//
+// Driven through the REAL *pricingguard.ScamGate over a stub directory, as in the /v1/vwap
+// quote-leg suite: a fake answering only the base-only question would pass without the
+// pair-aware primitive. The directory records every address it is asked about, so "the QUOTE leg
+// reached the gate" is proved rather than inferred from a status code.
+
+// TestPriceTipWithholdsWhenTheQuoteLegIsScamFlagged pins the request surface. The stub reader
+// holds a snapshot for the inverted orientation, so an ungated handler answers 200 with a price;
+// without it the endpoint would 404 for lack of data and the test would pass vacuously.
+func TestPriceTipWithholdsWhenTheQuoteLegIsScamFlagged(t *testing.T) {
+	flagged, err := canonical.NewClassicAsset("RIO", scamQuoteLegIssuer)
+	if err != nil {
+		t.Fatalf("build flagged classic: %v", err)
+	}
+
+	prices := &stubPriceReader{
+		snapshots: map[string]v1.PriceSnapshot{
+			"native/" + flagged.String(): {
+				AssetID:    "native",
+				Quote:      flagged.String(),
+				Price:      "138.5",
+				PriceType:  "last_trade",
+				ObservedAt: v1.WireTime(time.Unix(1_745_000_000, 0).UTC()),
+			},
+		},
+	}
+	dir := &scamQuoteLegDirectory{flagged: map[string]bool{scamQuoteLegIssuer: true}}
+	srv := v1.New(v1.Options{
+		Prices: prices,
+		Scam:   pricingguard.NewScamGate(dir, pricingguard.ScamGateOptions{}),
+	})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/price/tip?asset=native&quote="+flagged.String())
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("/v1/price/tip?asset=native&quote=%s status = %d, want 404 — naming the "+
+			"flagged issuer as the QUOTE republishes the withheld market's price as its "+
+			"exact reciprocal on the freshest surface we serve. Body: %s",
+			flagged.String(), resp.StatusCode, body)
+	}
+	if !strings.Contains(string(body), "errors/price-withheld") {
+		t.Errorf("body missing the price-withheld problem type: %s", body)
+	}
+	if strings.Contains(string(body), "138.5") {
+		t.Errorf("the withheld price leaked into the refusal body: %s", body)
+	}
+	if len(dir.asked) == 0 {
+		t.Fatal("the directory was never asked about any address — the QUOTE leg never " +
+			"reached the gate, so a 404 here came from something other than the " +
+			"withholding decision")
+	}
+	if dir.asked[0] != scamQuoteLegIssuer {
+		t.Errorf("directory asked about %v, want the QUOTE leg's issuer %q first",
+			dir.asked, scamQuoteLegIssuer)
+	}
+}
+
+// TestPriceTipServesWhenNeitherLegIsFlagged is the blast-radius guard
+// for the request surface: folding the quote leg in must not withhold
+// ordinary markets.
+func TestPriceTipServesWhenNeitherLegIsFlagged(t *testing.T) {
+	prices := &stubPriceReader{
+		snapshots: map[string]v1.PriceSnapshot{
+			"native/fiat:USD": {
+				AssetID:    "native",
+				Quote:      "fiat:USD",
+				Price:      "0.1242",
+				PriceType:  "last_trade",
+				ObservedAt: v1.WireTime(time.Unix(1_745_000_000, 0).UTC()),
+			},
+		},
+	}
+	dir := &scamQuoteLegDirectory{flagged: map[string]bool{}}
+	srv := v1.New(v1.Options{
+		Prices: prices,
+		Scam:   pricingguard.NewScamGate(dir, pricingguard.ScamGateOptions{}),
+	})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/price/tip?asset=native&quote=fiat:USD")
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("/v1/price/tip for an unflagged pair returned %d, want 200 — the "+
+			"pair-aware gate must withhold only flagged issuers. Body: %s",
+			resp.StatusCode, body)
+	}
+	if !strings.Contains(string(body), "0.1242") {
+		t.Errorf("unflagged tip lost its price: %s", body)
+	}
+}
+
+// TestPriceStreamWithholdsWhenTheQuoteLegIsScamFlagged pins the closed-bucket SSE surface at connect, before SSE mode
+// (after headers it is too late to send a 404). The connect pre-flight and forwardClosedStream's per-bucket re-check
+// share one predicate, Server.closedStreamWithheld, so pinning it pins both.
+func TestPriceStreamWithholdsWhenTheQuoteLegIsScamFlagged(t *testing.T) {
+	flagged, err := canonical.NewClassicAsset("RIO", scamQuoteLegIssuer)
+	if err != nil {
+		t.Fatalf("build flagged classic: %v", err)
+	}
+
+	hub := streaming.NewHub(0)
+	dir := &scamQuoteLegDirectory{flagged: map[string]bool{scamQuoteLegIssuer: true}}
+	srv := v1.New(v1.Options{
+		Hub:  hub,
+		Scam: pricingguard.NewScamGate(dir, pricingguard.ScamGateOptions{}),
+	})
+	ts := startHTTPTest(t, srv.Handler())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet,
+		ts.URL+"/v1/price/stream?asset=native&quote="+flagged.String(), nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("/v1/price/stream?asset=native&quote=%s status = %d, want 404 — the "+
+			"flagged market's price, inverted, was fanned out once per closed bucket "+
+			"for the life of the connection. Body: %s",
+			flagged.String(), resp.StatusCode, body)
+	}
+	if !strings.Contains(string(body), "errors/price-withheld") {
+		t.Errorf("body missing the price-withheld problem type: %s", body)
+	}
+	if strings.Contains(resp.Header.Get("Content-Type"), "event-stream") {
+		t.Errorf("response switched into SSE mode on a withheld pair: %s",
+			resp.Header.Get("Content-Type"))
+	}
+	if len(dir.asked) == 0 {
+		t.Fatal("the directory was never asked about any address — the QUOTE leg never " +
+			"reached the gate on the stream surface")
+	}
+	if dir.asked[0] != scamQuoteLegIssuer {
+		t.Errorf("directory asked about %v, want the QUOTE leg's issuer %q first",
+			dir.asked, scamQuoteLegIssuer)
+	}
+}
+
+// TestPriceStreamServesWhenNeitherLegIsFlagged is the blast-radius guard
+// for the stream surface: the pair-aware fold must not stop an ordinary
+// market's closed buckets reaching the wire.
+func TestPriceStreamServesWhenNeitherLegIsFlagged(t *testing.T) {
+	hub := streaming.NewHub(0)
+	dir := &scamQuoteLegDirectory{flagged: map[string]bool{}}
+	srv := v1.New(v1.Options{
+		Hub:  hub,
+		Scam: pricingguard.NewScamGate(dir, pricingguard.ScamGateOptions{}),
+	})
+	ts := startHTTPTest(t, srv.Handler())
+
+	xlm, _ := canonical.ParseAsset("native")
+	usd, _ := canonical.ParseAsset("fiat:USD")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet,
+		ts.URL+"/v1/price/stream?asset=native&quote=fiat:USD", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 — neither leg is flagged", resp.StatusCode)
+	}
+
+	time.Sleep(50 * time.Millisecond)
+	hub.Publish(v1.PriceStreamTopic(xlm, usd, 300), "price_update", []byte(`{"price":"0.11"}`))
+
+	br := bufio.NewReader(resp.Body)
+	if frame := readPriceStreamFrame(t, br, 3*time.Second); !strings.Contains(frame, `"price":"0.11"`) {
+		t.Fatalf("unflagged pair stopped streaming after the pair-aware fold; frame = %q", frame)
+	}
 }
