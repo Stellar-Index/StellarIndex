@@ -908,3 +908,152 @@ func TestOraclePrices_DeclaredPegSACTwinNeverProbesItsOwnClassicForm(t *testing.
 	}
 	assertNoPegSelfPairRead(t, asked)
 }
+
+// The SEP-40 single-price surfaces read the same closed prices_1m bucket as /v1/price, so for a frozen pair
+// lastprice/x_last_price must serve the held last-known-good, not the refused newest bucket. These assert the VALUE.
+
+const (
+	xlmUSD       = "crypto:XLM/fiat:USD"
+	heldUSD      = "0.1011"
+	movedUSD     = "0.1377"
+	lastPriceURL = "/v1/oracle/lastprice?asset=crypto:XLM"
+	xLastURL     = "/v1/oracle/x_last_price?base=crypto:XLM&quote=fiat:USD"
+)
+
+func movedUSDBucketReader() *stubPriceReader {
+	return &stubPriceReader{
+		snapshots: map[string]v1.PriceSnapshot{
+			xlmUSD: {AssetID: "crypto:XLM", Quote: "fiat:USD", Price: movedUSD, PriceType: "vwap", WindowSeconds: 60},
+		},
+		sources: map[string][]string{xlmUSD: {"kraken", "coinbase"}},
+	}
+}
+
+func TestOracleSEP40_FrozenPairServesLastKnownGood(t *testing.T) {
+	for _, path := range []string{lastPriceURL, xLastURL} {
+		t.Run(path, func(t *testing.T) {
+			srv := v1.New(v1.Options{
+				Prices:       movedUSDBucketReader(),
+				Freeze:       frozenPairs{xlmUSD: true},
+				Triangulated: lkgPairs{xlmUSD + "/300": heldUSD},
+			})
+			ts := startHTTPTest(t, srv.Handler())
+
+			status, body := getBody(t, ts.URL+path)
+			if status != http.StatusOK {
+				t.Fatalf("status = %d, want 200: %s", status, body)
+			}
+			if strings.Contains(body, movedUSD) {
+				t.Fatalf("frozen pair served the bucket the freeze refused (%s): %s", movedUSD, body)
+			}
+			for _, want := range []string{`"price":"` + heldUSD + `"`, `"frozen":true`, `"stale":true`, `"single_source":true`} {
+				if !strings.Contains(body, want) {
+					t.Errorf("body missing %s: %s", want, body)
+				}
+			}
+			if strings.Contains(body, "kraken") {
+				t.Errorf("sources still credit the refused bucket's venues: %s", body)
+			}
+		})
+	}
+}
+
+func TestOracleSEP40_FrozenPairWithNothingHeldRefuses(t *testing.T) {
+	for _, path := range []string{lastPriceURL, xLastURL} {
+		t.Run(path, func(t *testing.T) {
+			srv := v1.New(v1.Options{
+				Prices:       movedUSDBucketReader(),
+				Freeze:       frozenPairs{xlmUSD: true},
+				Triangulated: lkgPairs{},
+			})
+			ts := startHTTPTest(t, srv.Handler())
+
+			status, body := getBody(t, ts.URL+path)
+			if status != http.StatusServiceUnavailable {
+				t.Fatalf("status = %d, want 503: %s", status, body)
+			}
+			if strings.Contains(body, movedUSD) {
+				t.Fatalf("refusal leaked the withheld bucket: %s", body)
+			}
+		})
+	}
+}
+
+// The substitution discards the bucket, so pin where it must not fire.
+func TestOracleSEP40_UnfrozenPairServesTheBucketUntouched(t *testing.T) {
+	for _, path := range []string{lastPriceURL, xLastURL} {
+		t.Run(path, func(t *testing.T) {
+			srv := v1.New(v1.Options{
+				Prices:       movedUSDBucketReader(),
+				Freeze:       frozenPairs{},
+				Triangulated: lkgPairs{xlmUSD + "/300": heldUSD},
+			})
+			ts := startHTTPTest(t, srv.Handler())
+
+			status, body := getBody(t, ts.URL+path)
+			if status != http.StatusOK {
+				t.Fatalf("status = %d, want 200: %s", status, body)
+			}
+			for _, want := range []string{`"price":"` + movedUSD + `"`, `"stale":false`, `"frozen_checked":true`} {
+				if !strings.Contains(body, want) {
+					t.Errorf("body missing %s: %s", want, body)
+				}
+			}
+			if strings.Contains(body, heldUSD) || strings.Contains(body, `"frozen":true`) {
+				t.Errorf("unfrozen pair must not be touched by the freeze path: %s", body)
+			}
+		})
+	}
+}
+
+// /v1/oracle/prices walks declared USD pegs when asset/fiat:USD is empty. A peg leg the withholding gate refused must
+// give the price-withheld 404 like sibling surfaces, not 200 []; a peg-served series is stamped stale and triangulated.
+
+func oraclePegs(t *testing.T) (usdc, usdt canonical.Asset) {
+	t.Helper()
+	usdc, err := canonical.ParseAsset("USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if err != nil {
+		t.Fatal(err)
+	}
+	usdt, err = canonical.ParseAsset("USDT-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return usdc, usdt
+}
+
+func pegSeries(quote, price string) []v1.PriceSnapshot {
+	at := time.Unix(1_770_000_000, 0).UTC()
+	return []v1.PriceSnapshot{{
+		AssetID: "native", Quote: quote, Price: price, PriceType: "vwap", ObservedAt: v1.WireTime(at),
+	}}
+}
+
+// A declared peg is an assumption, not a record: SEP-40's answer for "no
+// record" is None, and SEP40Price has no field to tell a declaration from
+// a print. Both point reads refuse it where /v1/price serves it as "peg".
+func TestOracleSEP40PointReads_RefuseADeclaredPeg(t *testing.T) {
+	usdc, _ := oraclePegs(t)
+	srv := v1.New(v1.Options{
+		Prices:            &stubPriceReader{err: v1.ErrPriceNotFound},
+		USDPeggedClassics: []canonical.Asset{usdc},
+	})
+	ts := startHTTPTest(t, srv.Handler())
+
+	status, body := getBody(t, ts.URL+"/v1/price?asset="+usdc.String()+"&quote=fiat:USD")
+	if status != http.StatusOK || !strings.Contains(body, `"price_type":"peg"`) {
+		t.Fatalf("precondition: /v1/price must serve the declaration as price_type peg, got %d: %s", status, body)
+	}
+	for _, path := range []string{
+		"/v1/oracle/lastprice?asset=" + usdc.String(),
+		"/v1/oracle/lastprice?asset=crypto:USDC",
+		"/v1/oracle/x_last_price?base=" + usdc.String() + "&quote=fiat:USD",
+		"/v1/oracle/x_last_price?base=crypto:USDC&quote=fiat:USD",
+		"/v1/oracle/x_last_price?base=crypto:EURC&quote=fiat:EUR",
+	} {
+		status, body := getBody(t, ts.URL+path)
+		if status != http.StatusNotFound || !strings.Contains(body, "errors/price-not-found") {
+			t.Errorf("%s: status = %d, want 404 price-not-found (a declaration is not a SEP-40 record): %s", path, status, body)
+		}
+	}
+}
