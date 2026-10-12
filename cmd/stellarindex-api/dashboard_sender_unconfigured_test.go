@@ -131,10 +131,8 @@ func TestLogin_EmptyResendKey_IsACountedFailureNeverSent(t *testing.T) {
 	}
 }
 
-// TestBuildDashboardSender_WhitespaceOnlyCredential_IsNotATransport: a
-// whitespace-only value is no credential. It must not be handed to Resend as
-// a blank bearer. Asserted at the wiring only — no Send — so this test stays
-// offline on unfixed code too.
+// TestBuildDashboardSender_WhitespaceOnlyCredential_IsNotATransport: a whitespace-only value is no credential and must
+// not reach Resend as a blank bearer. Asserted at the wiring only (no Send), so the test stays offline.
 func TestBuildDashboardSender_WhitespaceOnlyCredential_IsNotATransport(t *testing.T) {
 	t.Setenv(rlt321MailEnv, "  \t")
 	var logs bytes.Buffer

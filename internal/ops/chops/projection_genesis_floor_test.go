@@ -7,10 +7,9 @@ import (
 	"testing"
 )
 
-// Band's shape: genesis is its first on-chain write, but the served tier's
-// first oracle_updates row sits 9.16M ledgers later. The lake holds band
-// writes in that prefix, so projection must fail rather than claim complete
-// from the served tier's own MIN(ledger).
+// Band's shape: genesis is its first on-chain write, but the served tier's first oracle_updates row sits 9.16M ledgers
+// later. The lake holds band writes in that prefix, so projection must fail rather than claim complete from the served
+// tier's own MIN(ledger).
 const (
 	bandGenesis   = uint32(50_842_736)
 	bandServedMin = uint32(60_000_414)

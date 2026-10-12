@@ -5,10 +5,8 @@ package supply
 
 import "testing"
 
-// TestCanonicalizeWatchedClassic pins that the config's CODE-ISSUER (dash) form is
-// canonicalised to the CODE:ISSUER (colon) form the observers match on. Raw config strings
-// would match nothing in the trustline/claimable/LP observers, degrading every classic
-// asset's served supply to its SAC-held slice.
+// The config's CODE-ISSUER (dash) form must be canonicalised to the CODE:ISSUER (colon) form the observers match on; raw
+// config strings match nothing in the trustline/claimable/LP observers and degrade classic supply to its SAC-held slice.
 func TestCanonicalizeWatchedClassic(t *testing.T) {
 	const usdcDash = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 	const usdcColon = "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
@@ -41,10 +39,8 @@ func TestCanonicalizeWatchedClassic(t *testing.T) {
 	}
 }
 
-// TestCanonicalizeWatchedClassicRejectsInvalidColonForm: a colon-form
-// entry is parsed like any other, so a CODE:ISSUER typo or an off-chain
-// prefixed id fails loudly instead of joining the watched set verbatim
-// and matching nothing.
+// A colon-form watched entry is parsed like any other, so a CODE:ISSUER typo or off-chain prefixed id fails loudly.
+// It must not join the watched set verbatim and match nothing.
 func TestCanonicalizeWatchedClassicRejectsInvalidColonForm(t *testing.T) {
 	for _, e := range []string{
 		// Last character altered: the issuer strkey CRC16 fails.
@@ -69,10 +65,8 @@ func TestCanonicalizeWatchedClassicRejectsInvalidColonForm(t *testing.T) {
 	}
 }
 
-// TestCanonicalizePolicyKeys: the classic and SEP-41 computers look
-// per_asset_locked_sets / max_supply_overrides up by exact AssetKey
-// match, so the dash spelling watched_classic_assets documents must be
-// re-keyed to colon form, and a key nothing reads must fail loudly.
+// The classic and SEP-41 computers look up per_asset_locked_sets / max_supply_overrides by exact AssetKey match, so dash
+// spellings must be re-keyed to colon form, and a key nothing reads must fail loudly.
 func TestCanonicalizePolicyKeys(t *testing.T) {
 	const (
 		usdcDash      = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"

@@ -39,10 +39,8 @@ func TestUsageReaderOrNil_RedisAbsent(t *testing.T) {
 	}
 }
 
-// TestUsageReaderOrNil_RedisPresent — when the counter is
-// non-nil, the helper returns a non-nil adapter that bridges
-// to the v1 package. Uses miniredis so the underlying
-// usage.New() doesn't itself short-circuit to nil.
+// TestUsageReaderOrNil_RedisPresent: with a non-nil counter the helper returns a non-nil adapter bridging to the v1
+// package; miniredis keeps usage.New() from short-circuiting to nil.
 func TestUsageReaderOrNil_RedisPresent(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -192,17 +190,9 @@ func TestBuildAPIKeyValidator_BothFlagStates(t *testing.T) {
 	})
 }
 
-// TestResolveSEP10Validator_WiringByConfiguration pins that a configured SEP-10 deployment always
-// gets the replay-guarded validator, never a guard-free one:
-//
-//   - configured (seed+jwt env) + Redis      → *sep10.Validator (GUARDED),
-//     in every auth_mode. (Noop here would be the red case.)
-//   - configured + NO Redis + auth_mode=sep10 → hard error (ErrReplayGuardUnavailable);
-//     never a guard-free validator.
-//   - configured + NO Redis + other mode      → Noop (404), binary still boots.
-//   - configured + NO account lake            → same policy via ErrAccountLoaderUnavailable.
-//   - unconfigured (no seed/jwt env)          → Noop (404), binary still boots
-//     (the common r1 auth_mode=apikey_optional case).
+// A configured SEP-10 deployment always gets the replay-guarded validator, never a guard-free one: Redis present gives
+// *sep10.Validator in every auth_mode. Configured but no Redis or no account lake: hard error under auth_mode=sep10,
+// else Noop (404). Unconfigured: Noop, binary still boots.
 func TestResolveSEP10Validator_WiringByConfiguration(t *testing.T) {
 	server, err := keypair.Random()
 	if err != nil {
@@ -314,10 +304,8 @@ func TestLakeAccountSignersUnboundFailsClosed(t *testing.T) {
 	}
 }
 
-// TestWarnUnsafeBind covers the IPv6 parse fix: a public
-// all-interfaces bind must trigger the unsafe-bind warning whether it's
-// written as IPv4 (0.0.0.0), IPv6 ([::]), or port-only (:3000). strings.Cut(":") would split "[::]:3000" into host "[" and silently
-// ship a public IPv6 bind with no warning.
+// A public all-interfaces bind must warn whether written as 0.0.0.0, [::] or :3000.
+// strings.Cut(":") splits "[::]:3000" into host "[" and would silently ship a public IPv6 bind.
 func TestWarnUnsafeBind(t *testing.T) {
 	// warnLogged runs warnUnsafeBind against a captured logger and
 	// reports whether the SECURITY warning fired.
@@ -395,10 +383,8 @@ func TestWarnCollapsedAnonThrottle(t *testing.T) {
 		t.Error("anon_rate_limit_per_min=0: no anon bucket exists; must NOT warn")
 	}
 
-	// A configured proxy CIDR resolves each client to its real address,
-	// so the throttle discriminates and there is no collapse. This is
-	// the R1 shape (auth_mode=apikey_optional, anon=6000,
-	// trusted_proxy_cidrs=["127.0.0.1/32"]) — it MUST stay silent.
+	// A configured proxy CIDR resolves each client to its real address, so the throttle discriminates and nothing collapses.
+	// This is the R1 shape (apikey_optional, anon=6000, trusted_proxy_cidrs=["127.0.0.1/32"]) and MUST stay silent.
 	if warnLogged("apikey_optional", 6000, []string{"127.0.0.1/32"}) {
 		t.Error("R1 shape (non-empty trusted_proxy_cidrs): must NOT warn")
 	}
@@ -481,10 +467,8 @@ func TestRunSubscriberSupervisedWithBackoff_RestartsPastFailures(t *testing.T) {
 	}
 }
 
-// TestInProcessLoginThrottle_EnforcesPerEmailCap. A single victim inbox must be capped even
-// when every send comes from a DIFFERENT IP (the inbox-bomb
-// dimension a per-IP-only cap can't catch). Asserts the
-// (max+1)th send to the same email is denied.
+// TestInProcessLoginThrottle_EnforcesPerEmailCap: one victim inbox must be capped even when every send comes from a
+// different IP (the inbox-bomb case a per-IP cap misses); the (max+1)th send to the same email is denied.
 func TestInProcessLoginThrottle_EnforcesPerEmailCap(t *testing.T) {
 	th := newInProcessLoginThrottle()
 	ctx := context.Background()
@@ -668,10 +652,8 @@ func TestInProcessSignupIPThrottle_MasksIPv6ToSlash64(t *testing.T) {
 	}
 }
 
-// TestInProcessSignupIPThrottle_EnforcesPerIPCap. Asserts the (max+1)th
-// signup from one IP within the window is denied with
-// auth.ErrSignupRateLimited (what signupIPThrottleOK translates into
-// a 429), while a distinct IP is unaffected.
+// TestInProcessSignupIPThrottle_EnforcesPerIPCap: the (max+1)th signup from one IP in the window is denied with
+// auth.ErrSignupRateLimited (signupIPThrottleOK turns it into a 429), while a distinct IP is unaffected.
 func TestInProcessSignupIPThrottle_EnforcesPerIPCap(t *testing.T) {
 	th := newInProcessSignupIPThrottle()
 	ctx := context.Background()

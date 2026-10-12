@@ -37,16 +37,9 @@ func (s harvestEventStreamer) StreamContractEvents(
 	return nil
 }
 
-// TestDefindexReconcile_CountsStrategyHarvest pins that the ADR-0033/0034 projection
-// RE-DERIVE counts strategy-harvest flows. The served defindex_flows data is correct: the
-// decoder emits a DirectionHarvest StrategyFlow for a ("BlendStrategy","harvest") event (body
-// {from, amount, price_per_share}) and the sink persists it. The event mirrors a real one
-// whose topic[0] is ScvString, so topic_0_sym is empty in the lake.
-//
-// The defindex_flows reconTarget must list "defindex.strategy.harvest" alongside
-// deposit/withdraw, or SumKinds omits every harvest from the EXPECTED side and the source
-// reads complete=false with phantom-row gaps. This runs the REAL decoder over the real
-// re-derive entry point and sums the catalogue's ACTUAL kinds.
+// TestDefindexReconcile_CountsStrategyHarvest: the real harvest event has ScvString topic[0], so topic_0_sym is empty in
+// the lake. The reconTarget must list "defindex.strategy.harvest" or SumKinds omits harvests from EXPECTED, giving
+// complete=false with phantom gaps.
 func TestDefindexReconcile_CountsStrategyHarvest(t *testing.T) {
 	const (
 		// r1 first-mismatch ledger; the strategy contract from the finding.
@@ -83,10 +76,9 @@ func TestDefindexReconcile_CountsStrategyHarvest(t *testing.T) {
 		t.Fatal("defindex source has no defindex_flows target")
 	}
 
-	// A genuine successful strategy harvest, reconstructed as the CH lake reader
-	// would hand it to the decoder: topic[0]=ScvString("BlendStrategy"),
-	// topic[1]=ScvSymbol("harvest"), body {from: Address, amount: i128}
-	// (price_per_share is present on-chain but unread — decode-by-name).
+	// A genuine successful strategy harvest as the CH lake reader hands it to the decoder:
+	// topic[0]=ScvString("BlendStrategy"), topic[1]=ScvSymbol("harvest"), body {from: Address, amount: i128};
+	// price_per_share exists on-chain but is unread (decode-by-name).
 	harvest := events.Event{
 		Type:                     "contract",
 		Ledger:                   harvestLedger,
@@ -133,10 +125,9 @@ func TestDefindexReconcile_CountsStrategyHarvest(t *testing.T) {
 			harvestLedger, got, servedRowCount, flowsTarget.kinds)
 	}
 
-	// End to end: with the served tier holding exactly the one harvest row, the
-	// per-ledger reconcile must find NO gap (the r1 verdict flips green with no
-	// data change). Without it, ReconcileCounts sees expected=0 vs served=1 and
-	// reports a phantom-row gap — the 974-mismatch verdict in miniature.
+	// End to end: with the served tier holding exactly the one harvest row, the per-ledger reconcile must find no gap.
+	// Without the kind, ReconcileCounts sees expected=0 vs served=1 and reports a phantom-row gap, as in the 974-mismatch
+	// verdict.
 	served := map[uint32]int{harvestLedger: servedRowCount}
 	if gaps := completeness.ReconcileCounts(expected, served); len(gaps) != 0 {
 		t.Fatalf("ReconcileCounts flagged %d gap(s) for a correctly-served harvest ledger: %+v — "+

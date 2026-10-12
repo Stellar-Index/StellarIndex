@@ -3,10 +3,9 @@
 
 package projector_test
 
-// Golden reference tables for every list that decides which source is projected, sole-written
-// or dispatcher-written (names and event types only, never Source struct fields). A source
-// added to one list and not another fails here instead of dropping or double-writing rows.
-// External test package: pipeline cannot import projector.
+// Golden tables for every list that decides which source is projected, sole-written or dispatcher-written (names and
+// event types only). A source added to one list but not another fails here instead of dropping or double-writing rows.
+// External test package because pipeline cannot import projector.
 
 import (
 	"os"
@@ -156,11 +155,9 @@ var (
 	knownProjectedNotInConfig = []string{"sep41_supply", "sep41_transfers"}
 	// config sources with no projector case (dispatcher-only writers).
 	knownConfigNotProjected = []string{"band", "sdex", "soroswap-router"}
-	// ch-rebuild-projected.sh KNOWN_SOURCES omits these projected sources: blend_emitter owns
-	// only its non-drop rows (a whole-window DELETE would lose drops the re-derive never
-	// writes), oracles are config-gated and share oracle_updates, sep41 owns a watched-set
-	// slice of its tables, sushiswap_v3 shares trades and is refused as unaudited, and spectra
-	// has derived spectra_markets (refreshSpectraMarket) that a plain DELETE does not rebuild.
+	// ch-rebuild-projected.sh KNOWN_SOURCES omits projected sources a plain window DELETE cannot rebuild: blend_emitter
+	// (owns only non-drop rows), config-gated oracles sharing oracle_updates, sep41 (watched-set slice), sushiswap_v3
+	// (shared trades, unaudited) and spectra (derived spectra_markets via refreshSpectraMarket).
 	knownScriptOmitsProjected = []string{
 		"blend_emitter", "redstone", "reflector-cex", "reflector-dex",
 		"reflector-fx", "sep41_supply", "sep41_transfers", "spectra", "sushiswap_v3",

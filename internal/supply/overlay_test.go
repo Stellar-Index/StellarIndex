@@ -76,10 +76,8 @@ func TestOverlay_OperatorOverridePreserved(t *testing.T) {
 	}
 }
 
-// TestOverlay_AppliesSEP1WhenAvailable — happy path: no operator
-// override, SEP-1 declaration present and parseable; MaxSupply gets
-// populated, MaxSupplyBasis labels the cap as issuer-self-declared,
-// and Basis keeps naming the circulating policy.
+// Happy path with no operator override and a parseable SEP-1 declaration: MaxSupply is populated, MaxSupplyBasis labels
+// the cap issuer-self-declared, and Basis keeps naming the circulating policy.
 func TestOverlay_AppliesSEP1WhenAvailable(t *testing.T) {
 	resolver := &stubMetadataResolver{raw: "21000000000000000", ok: true}
 	snap := supply.Supply{
@@ -133,10 +131,8 @@ func TestOverlay_AbsentDeclarationLeavesNil(t *testing.T) {
 	}
 }
 
-// TestOverlay_PropagatesResolverError — a TOML resolver error
-// surfaces as (snap-unchanged, applied=false, err). Caller decides
-// whether to log + continue or 5xx — but the snap itself stays
-// usable.
+// A TOML resolver error surfaces as (snap-unchanged, applied=false, err).
+// The caller decides whether to log and continue or 5xx; the snap stays usable.
 func TestOverlay_PropagatesResolverError(t *testing.T) {
 	resolver := &stubMetadataResolver{err: errors.New("redis blip")}
 	snap := supply.Supply{
@@ -158,10 +154,8 @@ func TestOverlay_PropagatesResolverError(t *testing.T) {
 	}
 }
 
-// TestOverlay_RejectsNegativeDeclaration — a negative max_supply in
-// stellar.toml is nonsensical (asserts "supply can never exist");
-// Overlay must NOT apply it. Operators see the junk via their own
-// stellar.toml monitoring path; supply silently leaves nil.
+// A negative max_supply in stellar.toml is nonsensical and Overlay must NOT apply it; operators see the junk via their
+// own stellar.toml monitoring, and supply silently stays nil.
 func TestOverlay_RejectsNegativeDeclaration(t *testing.T) {
 	resolver := &stubMetadataResolver{raw: "-100", ok: true}
 	snap := supply.Supply{

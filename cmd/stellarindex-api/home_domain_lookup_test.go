@@ -52,11 +52,9 @@ func (f fakeObservationReader) LatestAccountObservationsAtOrBefore(ctx context.C
 	return out, nil
 }
 
-// TestHomeDomainLookup_ObservedAbsenceBeatsStatic drives the production
-// composition (store adapter → ChainedHomeDomainLookup → assetToDetail):
-// an issuer whose latest account_observations row has no home_domain —
-// cleared by SetOptions (stored NULL) or merged (is_removal) — must serve
-// no home_domain, never the operator's static entry.
+// TestHomeDomainLookup_ObservedAbsenceBeatsStatic runs the production composition (store adapter,
+// ChainedHomeDomainLookup, assetToDetail): an issuer whose latest account_observations row has no home_domain
+// (SetOptions clear or merge) must serve none, never the static entry.
 func TestHomeDomainLookup_ObservedAbsenceBeatsStatic(t *testing.T) {
 	const (
 		cleared   = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
@@ -96,10 +94,8 @@ func TestHomeDomainLookup_ObservedAbsenceBeatsStatic(t *testing.T) {
 	}
 }
 
-// TestAssetsToDetails_OneBatchReadPerPage drives the production listing
-// wiring (newHomeDomainLookups → assetsToDetails): a page of N assets makes
-// one observation read, and each row gets the same home_domain the
-// per-issuer chain would give it.
+// Drives the production listing wiring: a page of N assets makes one observation read.
+// Each row gets the same home_domain the per-issuer chain would give it.
 func TestAssetsToDetails_OneBatchReadPerPage(t *testing.T) {
 	const (
 		cleared   = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
@@ -169,11 +165,9 @@ func (r lookupAssetReader) ListAssets(context.Context, string, int) ([]v1.AssetD
 	return nil, "", nil
 }
 
-// TestAssetDetail_LiveOnChainHomeDomainBeatsStaticMap drives the production
-// wiring (newHomeDomainLookups → assetToDetail → v1 backfill) with a
-// populated [metadata.issuer_home_domains] map. Precedence on
-// /v1/assets/{id}: observation → live ClickHouse account state → static
-// map → curated knownIssuers; an observed clear suppresses the static map.
+// TestAssetDetail_LiveOnChainHomeDomainBeatsStaticMap runs the production wiring with a populated
+// [metadata.issuer_home_domains]. Precedence on /v1/assets/{id}: observation, live ClickHouse account state, static map,
+// curated knownIssuers; an observed clear suppresses the static map.
 func TestAssetDetail_LiveOnChainHomeDomainBeatsStaticMap(t *testing.T) {
 	const (
 		usdcIssuer = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN" // knownIssuers: circle.com

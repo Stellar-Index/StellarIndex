@@ -5,11 +5,9 @@ package canonical
 
 import "testing"
 
-// TestCanonical_FoldsSACOntoClassic: the SAC wrapper form and its classic asset are the SAME
-// asset, so a listing that ranks them as two rows shows it twice. Canonical must map BOTH forms
-// to the classic (priority-first) member so the fold groups them onto one row. A resolver that
-// echoes the input, or returns Aliases()[0] (which leads with the caller's own spelling),
-// would give the two rows different group keys.
+// The SAC wrapper and its classic asset are the SAME asset, so a listing must not rank them as two rows. Canonical must
+// map both forms to the classic (priority-first) member; echoing the input or Aliases()[0] would give different group
+// keys.
 func TestCanonical_FoldsSACOntoClassic(t *testing.T) {
 	installTestRegistry(t, map[string]string{usdcSACAddr: "USDC:" + usdcIssuer})
 

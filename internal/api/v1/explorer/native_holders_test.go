@@ -11,10 +11,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// These tests pin the native-XLM holders behaviour. Native has no trustlines (every account holds
-// XLM in its AccountEntry balance), so a trustline-shaped read yields an empty board. The handler
-// folds every non-SAC XLM alias form (native, crypto:XLM, "XLM") to the single "native" board key,
-// so the account-balance arm runs once and every spelling shares one SWR cache entry.
+// Native XLM holders: native has no trustlines (every account holds XLM in its AccountEntry), so a trustline-shaped read
+// is empty. Every non-SAC XLM alias (native, crypto:XLM, "XLM") folds to one "native" key, sharing one SWR cache entry.
 
 func TestIsNativeHoldersAsset(t *testing.T) {
 	parse := func(s string) canonical.Asset {
@@ -107,10 +105,8 @@ func TestAssetHolders_NativeServesAccountBalanceBoard(t *testing.T) {
 	}
 }
 
-// TestAssetHolders_AliasFormsShareTheNativeBoard: crypto:XLM (and the XLM
-// shorthand) must fold to the SAME cache key as native — one detached
-// flight, one entry. A second spelling after the first is a warm cache hit:
-// the reader runs exactly once across all three requests.
+// crypto:XLM and the XLM shorthand must fold to the same cache key as native: one detached flight, one entry.
+// The reader runs exactly once across all three spellings; later spellings are warm hits.
 func TestAssetHolders_AliasFormsShareTheNativeBoard(t *testing.T) {
 	reader := &holdersKeyReader{capReader: &capReader{probe: &deadlineProbe{}}}
 	h := newProbeHandler(reader, nil)
@@ -133,10 +129,8 @@ func TestAssetHolders_AliasFormsShareTheNativeBoard(t *testing.T) {
 	}
 }
 
-// TestAssetHolders_HorizonSpellingNormalized: ParseAsset admits the "CODE:ISSUER" spelling but the
-// lake stores "CODE-ISSUER". Using the raw string as cache key and query asset would scan for
-// nothing and cache an authoritative-looking EMPTY board under a duplicate key. Both spellings
-// must normalize to one canonical key: one scan, one cache entry, canonical echo on the wire.
+// ParseAsset admits "CODE:ISSUER" but the lake stores "CODE-ISSUER"; using the raw string as key and query would scan
+// nothing and cache an authoritative-looking EMPTY board. Both spellings normalize to one key, one scan, canonical echo.
 func TestAssetHolders_HorizonSpellingNormalized(t *testing.T) {
 	reader := &holdersKeyReader{capReader: &capReader{probe: &deadlineProbe{}}}
 	h := newProbeHandler(reader, nil)

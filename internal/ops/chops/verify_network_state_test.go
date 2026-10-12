@@ -176,10 +176,8 @@ func (l fakeLake) lookup(_ context.Context, entryType string, keys []string) (ma
 	return out, nil
 }
 
-// TestReconcileHotArchive_CAP76AmendmentFailsOnAmendedKeys replays the
-// CAP-0076 shape: the upgrade rewrote archived entries inside the hot-archive
-// bucket list only, so the lake still holds their pre-amendment values. The
-// run must fail on exactly the amended keys and on nothing else.
+// Replays the CAP-0076 shape: the upgrade rewrote archived entries in the hot-archive bucket list only, so the lake
+// holds pre-amendment values. The run must fail on exactly the amended keys and nothing else.
 func TestReconcileHotArchive_CAP76AmendmentFailsOnAmendedKeys(t *testing.T) {
 	const evicted = 59_000_000
 	lake := fakeLake{}

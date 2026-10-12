@@ -12,10 +12,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
 )
 
-// TestClassifySinkFault pins the three-valued taxonomy that replaced the
-// permanent/transient boolean The
-// load-bearing rows are the DETERMINISTIC ones that carry no *pgconn.PgError: they
-// must not fall into "transient" and hold a sole-writer cursor forever.
+// TestClassifySinkFault pins the three-valued fault taxonomy (permanent, transient, unclassified). The load-bearing rows
+// are deterministic faults with no *pgconn.PgError: they must not fall into transient and hold a sole-writer cursor
+// forever.
 func TestClassifySinkFault(t *testing.T) {
 	cases := []struct {
 		name string
@@ -48,10 +47,8 @@ func TestClassifySinkFault(t *testing.T) {
 			want: dispositionSkip,
 		},
 		{
-			// The sink recovers its own panics and wraps them in
-			// pipeline.ErrSinkPanic; its classifier drops the event. Holding it
-			// here instead re-ran the panicking decode every cycle for the whole
-			// unclassified budget.
+			// The sink recovers its own panics and wraps them in pipeline.ErrSinkPanic; its classifier drops the event. Holding it
+			// here would re-run the panicking decode every cycle for the whole unclassified budget.
 			name: "recovered sink panic (pipeline.ErrSinkPanic)",
 			err:  fmt.Errorf("sink: %w", fmt.Errorf("%w for blend/new_auction: runtime error: index out of range", pipeline.ErrSinkPanic)),
 			want: dispositionSkip,

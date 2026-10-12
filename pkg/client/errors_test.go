@@ -8,11 +8,8 @@ import (
 	"time"
 )
 
-// TestAPIError_StatusPredicates pins each Is* predicate behaviour.
-// They're trivial accessors (Status == X) but they're documented
-// public API surface that consumers branch on; a regression in
-// their boolean polarity would silently break consumer-side
-// switch statements.
+// Pins each Is* predicate: they are trivial but public API consumers branch on; a polarity regression would silently
+// break their switches.
 func TestAPIError_StatusPredicates(t *testing.T) {
 	cases := []struct {
 		status       int
@@ -100,10 +97,8 @@ func TestAPIError_ErrorString(t *testing.T) {
 	}
 }
 
-// TestParseAPIError covers the four shape branches: small non-JSON
-// body lands in Detail; oversize non-JSON body is ignored;
-// problem+json decodes into all fields; malformed JSON falls
-// through to a status-only error with errEmptyJSON's message.
+// Four branches: small non-JSON body goes to Detail; oversize non-JSON is ignored; problem+json fills all fields;
+// malformed JSON yields a status-only error with errEmptyJSON's message.
 func TestParseAPIError(t *testing.T) {
 	t.Run("non-JSON small body lands in Detail", func(t *testing.T) {
 		e := parseAPIError(502, "text/plain", "", []byte("upstream timeout"))
@@ -189,10 +184,8 @@ func TestParseAPIError(t *testing.T) {
 		}
 	})
 
-	// PC-3: a JSON content-type body that parses cleanly but carries
-	// NONE of the problem+json fields (a proxy / non-conforming
-	// service's own shape) must not be discarded — its raw text falls
-	// back into Detail exactly as the text/plain branch preserves it.
+	// A JSON body that parses but carries none of the problem+json fields (e.g. from a proxy) must not be discarded: its raw
+	// text falls back into Detail, as the text/plain branch does.
 	t.Run("non-problem-shaped JSON body preserved in Detail", func(t *testing.T) {
 		body := []byte(`{"error":"upstream boom","trace_id":"t-42"}`)
 		e := parseAPIError(500, "application/json", "", body)
@@ -215,10 +208,8 @@ func TestParseAPIError(t *testing.T) {
 	})
 }
 
-// TestParseAPIError_RetryAfter pins the contract: the
-// Retry-After response header is parsed into APIError.RetryAfter for
-// both the delta-seconds and HTTP-date wire forms, and ignored when
-// absent / in the past / unparseable.
+// Retry-After is parsed into APIError.RetryAfter for delta-seconds and HTTP-date forms, and ignored when absent, past or
+// unparseable.
 func TestParseAPIError_RetryAfter(t *testing.T) {
 	t.Run("delta-seconds populates RetryAfter", func(t *testing.T) {
 		e := parseAPIError(429, "application/problem+json", "60", []byte(`{"title":"Rate limited"}`))
@@ -283,21 +274,9 @@ func TestAPIError_ErrorsAs(t *testing.T) {
 	}
 }
 
-// TestParseRetryAfterOverflow pins the Retry-After overflow guard.
-//
-// time.Duration is int64 NANOSECONDS, so a delta-seconds Retry-After
-// above ~292 years wraps. Before the guard, a hostile or misconfigured
-// header of 9223372037 seconds produced a NEGATIVE duration — and a
-// caller sleeping on it retries immediately, the exact opposite of the
-// back-off the header asks for.
-//
-// 0 is the field's documented absent/unparseable sentinel, which
-// RetryAfterDuration already understands. Deliberately NOT a clamp:
-// APIError.RetryAfter is a REPORTING field on a SemVer-stable surface,
-// so clamping would make it lie about what the wire said and would
-// truncate legitimate long hints (the monthly-quota denial advertises
-// "Reset on the 1st UTC"). Picking a ceiling is the caller's back-off
-// policy.
+// Retry-After overflow guard: time.Duration is int64 nanoseconds, so delta-seconds above ~292 years wraps negative
+// (9223372037 s), making a caller retry immediately instead of backing off. Overflow yields 0, the documented absent
+// sentinel; deliberately not a clamp, since RetryAfter reports the wire value and ceilings are caller policy.
 func TestParseRetryAfterOverflow(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -329,11 +308,8 @@ func TestParseRetryAfterOverflow(t *testing.T) {
 	}
 }
 
-// TestParseAPIError_CoverageExtensionMembers pins the two RFC 9457
-// extension members /v1/price/at attaches to its 404 — `coverage_from`
-// and `outside_coverage` — through parseAPIError and onto APIError.
-// Without the mirror a consumer could see the fields in the raw body
-// and nowhere else, which is the drift the SDK exists to prevent.
+// Pins the RFC 9457 extension members /v1/price/at adds to its 404 (`coverage_from`, `outside_coverage`) through
+// parseAPIError onto APIError, so the SDK doesn't drift from the raw body.
 func TestParseAPIError_CoverageExtensionMembers(t *testing.T) {
 	const ct = "application/problem+json"
 
@@ -389,11 +365,8 @@ func TestParseAPIError_CoverageExtensionMembers(t *testing.T) {
 	})
 }
 
-// TestParseAPIError_MonthlyQuotaExtensionMembers pins the two
-// extension members middleware.MonthlyQuota attaches to its 429s —
-// `monthly_quota` and `month_to_date` — through parseAPIError and onto
-// APIError. Same drift class as TestParseAPIError_CoverageExtensionMembers:
-// a member landing in the wire body with no SDK field to decode into.
+// Pins the monthly-quota 429 extension members `monthly_quota` and `month_to_date` through parseAPIError onto APIError.
+// Same drift class as the coverage members: a wire field with no SDK field to decode into.
 func TestParseAPIError_MonthlyQuotaExtensionMembers(t *testing.T) {
 	const ct = "application/problem+json"
 

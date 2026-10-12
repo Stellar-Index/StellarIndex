@@ -5,11 +5,9 @@ package chops
 
 import "testing"
 
-// TestClassicMovementsResumeStart_WidenedFromNotSkipped: a prior, narrower run wrote data
-// only at the TOP of a later, WIDER -from range. MaxAccountMovementLedger still finds that
-// tip, but MinAccountMovementLedger proves the data does NOT start at the new -from, so the
-// resume jump must be refused and the run start at -from, or the widened earlier region is
-// silently never revisited.
+// TestClassicMovementsResumeStart_WidenedFromNotSkipped: a narrower earlier run wrote data only at the TOP of a later,
+// wider -from range. MinAccountMovementLedger shows data does not start at the new -from, so the resume jump must be
+// refused or the widened earlier region is never revisited.
 func TestClassicMovementsResumeStart_WidenedFromNotSkipped(t *testing.T) {
 	const (
 		widenedFrom  = uint32(500_000) // this run's -from, widened below the prior run's start
@@ -29,10 +27,8 @@ func TestClassicMovementsResumeStart_WidenedFromNotSkipped(t *testing.T) {
 	}
 }
 
-// TestClassicMovementsResumeStart_ContiguousFromStartJumps is the
-// legitimate resume case: data in [from,to] genuinely starts AT from
-// (the same -from as the run that wrote it), so jumping to maxLedger
-// is sound per the ledger-ordered-insert invariant.
+// TestClassicMovementsResumeStart_ContiguousFromStartJumps is the legitimate resume: data in [from,to] genuinely starts
+// AT from, so jumping to maxLedger is sound under the ledger-ordered-insert invariant.
 func TestClassicMovementsResumeStart_ContiguousFromStartJumps(t *testing.T) {
 	const (
 		from    = uint32(1_000_000)

@@ -10,10 +10,8 @@ import (
 	"testing"
 )
 
-// TestLowerBoundNamesEveryBasisInTheVocabulary is the guard that matters more than the two
-// positive cases. [Basis.LowerBound] has a default arm, so a basis added later falls through it
-// as "complete", publishing a floor as a total. The test enumerates the whole vocabulary and
-// fails on any member without an explicit expectation, forcing the decision.
+// Basis.LowerBound has a default arm, so a basis added later would fall through as "complete" and publish a floor as a
+// total. The test enumerates the whole vocabulary and fails on any member without an explicit expectation.
 func TestLowerBoundNamesEveryBasisInTheVocabulary(t *testing.T) {
 	want := map[Basis]bool{
 		// Floors. Blind in different ways: the trustline sum misses
@@ -21,10 +19,9 @@ func TestLowerBoundNamesEveryBasisInTheVocabulary(t *testing.T) {
 		BasisClassicTrustlineSum:     true,
 		BasisContractStorageBalances: true,
 
-		// Flow sums. A flow does not know whether the token rests in a trustline, claimable
-		// balance, LP reserve or SAC-held contract balance, so one sum covers all four. Their
-		// failure mode is the opposite of a floor's: an incompletely replayed burn stream
-		// over-counts.
+		// Flow sums cannot tell whether the token rests in a trustline, claimable balance, LP reserve or SAC contract balance,
+		// so one sum covers all four. Their failure mode is opposite to a floor's: an incompletely replayed burn stream over-
+		// counts.
 		BasisClassicLakeFlows: false,
 		BasisSEP41LakeFlows:   false,
 
@@ -59,10 +56,8 @@ func TestLowerBoundNamesEveryBasisInTheVocabulary(t *testing.T) {
 	}
 }
 
-// TestLowerBoundIsFalseForAnUnknownBasis — a string that is not in the
-// vocabulary is not a floor and not a total; it is a value this package did
-// not produce. Claiming a bound for it would be a claim about a reading
-// nothing here made.
+// A string outside the vocabulary is neither a floor nor a total; this package did not produce it, so claiming a bound
+// for it would be a claim about a reading nothing here made.
 func TestLowerBoundIsFalseForAnUnknownBasis(t *testing.T) {
 	if Basis("something_else_entirely").LowerBound() {
 		t.Error("an unrecognised basis was reported as a lower bound")

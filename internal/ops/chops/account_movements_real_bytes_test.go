@@ -122,10 +122,8 @@ func TestAccountMovementsRealBytes_claimableBalanceCreate_fanOut(t *testing.T) {
 	}
 }
 
-// decodeOneRealMovement decodes one real mainnet op/result pair via the production
-// classicmovements.Decoder, as the backfill loop does, and returns its single Movement. It
-// duplicates classicmovements' unexported decodeRealBytes helper because test helpers are not
-// importable across packages.
+// decodeOneRealMovement decodes one real mainnet op/result pair via classicmovements.Decoder, as backfill does.
+// It duplicates classicmovements' unexported decodeRealBytes because test helpers are not importable across packages.
 func decodeOneRealMovement(t *testing.T, bodyB64, resultB64 string, ledger uint32, txHash string, opIndex uint32, fromAddr string, closedAt time.Time) classicmovements.Movement {
 	t.Helper()
 	var body xdr.OperationBody

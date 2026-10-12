@@ -35,10 +35,9 @@ func seedCachedDivergence(t *testing.T, rdb *redis.Client, pair canonical.Pair, 
 	}
 }
 
-// TestDivergenceAdapter_ChecksMatchWorkerQuorum pins that the API's `divergence_checked` flag
-// uses the same source quorum the worker gates WarningFired on. A below-quorum run reached no
-// verdict, so reporting checked=true, warning=false would be a clean bill of health the
-// cross-check never issued.
+// TestDivergenceAdapter_ChecksMatchWorkerQuorum: the API's `divergence_checked` must use the same source quorum the
+// worker gates WarningFired on; a below-quorum run reached no verdict, so checked=true with warning=false would be a
+// false clean bill.
 func TestDivergenceAdapter_ChecksMatchWorkerQuorum(t *testing.T) {
 	const minSources = 2
 

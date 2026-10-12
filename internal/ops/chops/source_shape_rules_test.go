@@ -27,11 +27,9 @@ func TestSourceShapeRules(t *testing.T) {
 	}
 }
 
-// The call sites. seedSoroswapForRecon returning an error is worth nothing if
-// the command prints it and carries on, which is exactly what both did. Read
-// from the AST (precedent: cmd/stellarindex-api/*_wiring_test.go) because both
-// commands open Postgres before they reach the seed and cannot be run here:
-// every call must be the init of an `if … err != nil` whose body RETURNS.
+// A returned seedSoroswapForRecon error is worthless if the command prints it and carries on. Both commands open
+// Postgres first and cannot run here, so read the AST: every call must be the init of an `if ... err != nil` whose body
+// returns.
 func ruleSoroswapSeedErrorIsReturned(t *testing.T) {
 	for file, fn := range map[string]string{
 		"compute_completeness.go":  "computeCompleteness",
@@ -101,10 +99,8 @@ func seedCallSites(root ast.Node) (calls, guarded int) {
 	return calls, guarded
 }
 
-// ruleProjectedRebuildResetsSEP41RollupAfterRun pins the wiring: the
-// reset is only worth anything if projectedRebuild reaches it, and only
-// AFTER RunProjectedRebuild — a reset before the writes lets the worker
-// re-advance the checkpoint past rows the run has yet to write.
+// Pins the wiring: the SEP41 rollup reset must be reached by projectedRebuild and only AFTER RunProjectedRebuild; a
+// reset before the writes lets the worker re-advance the checkpoint past rows the run has yet to write.
 func ruleProjectedRebuildResetsSEP41RollupAfterRun(t *testing.T) {
 	file, err := parser.ParseFile(token.NewFileSet(), "projected_rebuild.go", nil, 0)
 	if err != nil {

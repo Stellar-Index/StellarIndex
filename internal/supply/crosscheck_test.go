@@ -91,10 +91,8 @@ func TestCrossCheck_AsymmetricSign(t *testing.T) {
 	}
 }
 
-// TestCrossCheck_PreservesInputs — ClassicTotal / SACTotal on the
-// result are independent copies of the inputs (so log lines and
-// dashboards can quote them without re-querying), AND mutating them
-// later does not corrupt the originals.
+// ClassicTotal / SACTotal on the result are independent copies of the inputs, so logs and dashboards can quote them and
+// later mutation does not corrupt the originals.
 func TestCrossCheck_PreservesInputs(t *testing.T) {
 	classic := supplyWithTotal(usdcClassicKey, 100)
 	sac := supplyWithTotal(usdcSACKey, 100)
@@ -184,10 +182,8 @@ func TestCrossCheck_ResultIsWrapClassFull(t *testing.T) {
 // ClassicSupplyComponents), so only sac_total > classic_total is a violation; classic_total >
 // sac_total is the normal state for a partially wrapped asset.
 
-// TestCrossCheckSubsetBound_ClassicExceedsSacIsBenign — the AQUA
-// example from the crosscheck.go package doc: classic total ≈ 86.4B,
-// SAC total ≈ 0. An equality compare would fire a false
-// positive; the subset bound must report zero divergence.
+// The AQUA case from the crosscheck.go package doc (classic about 86.4B, SAC about 0): an equality compare would false-
+// positive, so the subset bound must report zero divergence.
 func TestCrossCheckSubsetBound_ClassicExceedsSacIsBenign(t *testing.T) {
 	classic := supplyWithTotal(usdcClassicKey, 86_400_000_000_0000000)
 	sac := supplyWithTotal(usdcSACKey, 0)
@@ -207,10 +203,8 @@ func TestCrossCheckSubsetBound_ClassicExceedsSacIsBenign(t *testing.T) {
 	}
 }
 
-// TestCrossCheckSubsetBound_ExactMatchIsWithin — a fully-wrapped
-// asset's totals happening to match exactly is still a benign zero
-// divergence under the subset bound (it's a special case of ≤, not a
-// distinct code path).
+// A fully-wrapped asset whose totals match exactly is still a benign zero divergence under the subset bound (a special
+// case of <=).
 func TestCrossCheckSubsetBound_ExactMatchIsWithin(t *testing.T) {
 	got, err := supply.CrossCheckSubsetBound(
 		supplyWithTotal(usdcClassicKey, 1_000_000_000),
@@ -225,11 +219,9 @@ func TestCrossCheckSubsetBound_ExactMatchIsWithin(t *testing.T) {
 	}
 }
 
-// TestCrossCheckSubsetBound_OverMintIsDiagnosticOnly: leg 1's premise (cumulative SAC net mint ≤
-// current classic outstanding) fails for BLND (retired classically after SAC minting, with no SAC
-// burn) and PHO (whole supply minted through the SAC, classic outstanding issuer-excluded). The
-// excess is reported as OverMintStroops for operators but must not feed DivergenceStroops or
-// alert.
+// Leg 1's premise (cumulative SAC net mint <= classic outstanding) fails for BLND (retired classically after SAC
+// minting) and PHO (all minted via SAC, classic issuer-excluded). The excess is reported as OverMintStroops but must not
+// feed DivergenceStroops or alert.
 func TestCrossCheckSubsetBound_OverMintIsDiagnosticOnly(t *testing.T) {
 	got, err := supply.CrossCheckSubsetBound(
 		supplyWithTotal(usdcClassicKey, 1_000_000_000),
@@ -282,9 +274,8 @@ func TestCrossCheckSubsetBound_DivergenceNeverNegative(t *testing.T) {
 
 // ─── CrossCheckForClass dispatch ───────────────────────────────────
 
-// TestCrossCheckForClass_Dispatch table-tests every WrapClass (including the zero value and an
-// unrecognized string) on a pair where classic > sac by 2 stroops: a violation under
-// WrapClassFull (equality) but benign under WrapClassPartial (subset bound), so the class decides
+// Table over every WrapClass (including the zero value and an unrecognized string) on a pair with classic > sac by 2
+// stroops: a violation under WrapClassFull (equality), benign under WrapClassPartial (subset bound); the class decides
 // whether identical inputs alert.
 func TestCrossCheckForClass_Dispatch(t *testing.T) {
 	classic := supplyWithTotal(usdcClassicKey, 1_000_000_002)
@@ -321,14 +312,9 @@ func TestCrossCheckForClass_Dispatch(t *testing.T) {
 	}
 }
 
-// ─── Leg 2: the escrow bound ─────────────────────────────────────────
-//
-// CrossCheckSubsetBound has a second conservation bound: classic.SACWrappedStroops ≤
-// sac.TotalSupply. Algorithm 2's SACWrapped (a ledger-entry sum over sac_balance_observations)
-// and Algorithm 3's total (an event-flow sum of mint−burn−clawback) measure the same quantity by
-// independent paths, so escrow exceeding net-mint is impossible under correct accounting. Without
-// the persisted component it is invisible: it only widens the benign classic > sac gap that leg 1
-// ignores.
+// Leg 2, the escrow bound: classic.SACWrappedStroops <= sac.TotalSupply. SACWrapped (ledger-entry sum) and the SAC total
+// (event-flow mint-burn-clawback) measure one quantity by independent paths, so escrow exceeding net mint is impossible;
+// without the persisted component it hides in the benign classic > sac gap.
 
 // supplyWithSACWrapped builds a classic-side Supply carrying Algorithm
 // 2's SACWrapped component alongside the folded total — the shape
@@ -339,10 +325,9 @@ func supplyWithSACWrapped(key string, total, sacWrapped int64) supply.Supply {
 	return s
 }
 
-// TestCrossCheckSubsetBound_EscrowExceedsMintedFires is the core check for the second leg:
-// classic reports 1_000_000 stroops inside the SAC but the SAC's event-derived total is 999_000,
-// so 1000 stroops were escrowed without being minted. Leg 1 sees the normal partially-wrapped
-// shape (sac 999_000 < classic 5_000_000), so a leg-1-only check would report green.
+// Core check for leg 2: classic reports 1_000_000 stroops inside the SAC but the SAC's event-derived total is 999_000,
+// so 1000 were escrowed unminted. Leg 1 sees the normal partial-wrap shape (sac 999_000 < classic 5_000_000), so a
+// leg-1-only check would report green.
 func TestCrossCheckSubsetBound_EscrowExceedsMintedFires(t *testing.T) {
 	classic := supplyWithSACWrapped(usdcClassicKey, 5_000_000, 1_000_000)
 	sac := supplyWithTotal(usdcSACKey, 999_000)
@@ -368,9 +353,7 @@ func TestCrossCheckSubsetBound_EscrowExceedsMintedFires(t *testing.T) {
 	}
 }
 
-// TestCrossCheckSubsetBound_EscrowLegOneStroopTolerated — the second
-// leg reuses CrossCheckTolerance unchanged, so its boundary behaviour
-// must match leg 1's exactly: 1 stroop of honest NUMERIC/i128 rounding
+// Leg 2 reuses CrossCheckTolerance unchanged, so its boundary matches leg 1: 1 stroop of honest NUMERIC/i128 rounding
 // does not page.
 func TestCrossCheckSubsetBound_EscrowLegOneStroopTolerated(t *testing.T) {
 	got, err := supply.CrossCheckSubsetBound(
@@ -388,10 +371,9 @@ func TestCrossCheckSubsetBound_EscrowLegOneStroopTolerated(t *testing.T) {
 	}
 }
 
-// TestCrossCheckSubsetBound_EscrowBelowMintedIsBenign covers the BLND/EURC/KALE/PHO shape:
-// SACWrapped is under-counted (dormant pool balances not yet seeded), so it sits below sac_total.
-// That is benign, cured by `supply seed-sac-balances -full-history`, and leg 2 must stay silent
-// to avoid re-creating that false-positive class.
+// The BLND/EURC/KALE/PHO shape: SACWrapped is under-counted (dormant pool balances not yet seeded) and sits below
+// sac_total. That is benign, cured by `supply seed-sac-balances -full-history`; leg 2 must stay silent to avoid that
+// false-positive class.
 func TestCrossCheckSubsetBound_EscrowBelowMintedIsBenign(t *testing.T) {
 	got, err := supply.CrossCheckSubsetBound(
 		supplyWithSACWrapped(usdcClassicKey, 5_000_000, 200_000),
@@ -411,10 +393,8 @@ func TestCrossCheckSubsetBound_EscrowBelowMintedIsBenign(t *testing.T) {
 	}
 }
 
-// TestCrossCheckSubsetBound_UncheckedWhenNoComponent pins that a classic snapshot without a
-// SACWrapped component reports the escrow leg as unevaluated, never defaulted to zero, which
-// would satisfy 0 ≤ sac_total vacuously and publish a "checked" green verdict that verified
-// nothing.
+// A classic snapshot without a SACWrapped component reports the escrow leg as unevaluated, never defaulted to zero,
+// which would vacuously satisfy 0 <= sac_total and publish a "checked" green verdict that verified nothing.
 func TestCrossCheckSubsetBound_UncheckedWhenNoComponent(t *testing.T) {
 	got, err := supply.CrossCheckSubsetBound(
 		supplyWithTotal(usdcClassicKey, 5_000_000), // nil SACWrappedStroops = pre-0117 row
@@ -441,10 +421,8 @@ func TestCrossCheckSubsetBound_UncheckedWhenNoComponent(t *testing.T) {
 	}
 }
 
-// TestCrossCheckSubsetBound_GaugeCarriesWorseLeg — when both bounds are
-// breached the single divergence gauge must report the LARGER excess,
-// so the existing 1-stroop alert threshold fires on either without a
-// per-leg alert rule.
+// When both bounds are breached the single divergence gauge must report the LARGER excess, so the existing 1-stroop
+// alert threshold fires on either leg without a per-leg rule.
 func TestCrossCheckSubsetBound_GaugeCarriesWorseLeg(t *testing.T) {
 	// sac_total 1_000_050 exceeds classic total 1_000_000 by 50 (leg 1),
 	// and SACWrapped 1_000_500 exceeds sac_total by 450 (leg 2).
@@ -469,10 +447,8 @@ func TestCrossCheckSubsetBound_GaugeCarriesWorseLeg(t *testing.T) {
 	}
 }
 
-// TestCrossCheckSubsetBound_DoesNotAliasInput — the result's *big.Int
-// fields must be defensive copies. The refresher hands the result to a
-// metric emitter and a log line; aliasing the caller's snapshot would
-// let a downstream mutation rewrite the recorded comparison.
+// The result's *big.Int fields must be defensive copies: the refresher hands them to a metric emitter and a log line,
+// and aliasing the caller's snapshot would let downstream mutation rewrite the recorded comparison.
 func TestCrossCheckSubsetBound_DoesNotAliasInput(t *testing.T) {
 	classic := supplyWithSACWrapped(usdcClassicKey, 5_000_000, 1_000_000)
 	got, err := supply.CrossCheckSubsetBound(classic, supplyWithTotal(usdcSACKey, 2_000_000))

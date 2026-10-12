@@ -6,10 +6,8 @@ import (
 	"time"
 )
 
-// TestContractDetailCache_PutProtectsUnexpiredCodeHistory: a "ch:" (code-history) entry has a 24h
-// TTL and is re-stamped once a day, so under global-oldest-cachedAt eviction it is always the
-// oldest next to the 1-5 minute "pos:"/"act:" classes and is evicted first however hot. Eviction
-// must prefer an already-expired entry over an unexpired one, however old the unexpired one is.
+// A "ch:" code-history entry has a 24h TTL re-stamped daily, so under global-oldest-cachedAt eviction it is always
+// oldest beside the 1-5 minute "pos:"/"act:" classes. Eviction must prefer an expired entry over any unexpired one.
 func TestContractDetailCache_PutProtectsUnexpiredCodeHistory(t *testing.T) {
 	c := &contractDetailCache{entries: make(map[string]contractDetailEntry, contractDetailCacheMax)}
 	now := time.Now()
@@ -18,10 +16,8 @@ func TestContractDetailCache_PutProtectsUnexpiredCodeHistory(t *testing.T) {
 	// Computed a while ago but well within its 24h TTL — still hot.
 	c.entries[chKey] = contractDetailEntry{v: "code-history", cachedAt: now.Add(-20 * time.Hour)}
 
-	// Fill the rest of the cache with "pos:" churn entries whose cachedAt
-	// is staggered a few minutes back — chronologically YOUNGER than the
-	// code-history entry, but already past their own 1-minute TTL, exactly
-	// as ordinary distinct-G-address explorer traffic produces over time.
+	// Fill the rest with "pos:" churn entries younger than the code-history entry but past their own 1-minute TTL, as
+	// ordinary distinct-G-address explorer traffic produces.
 	for i := 0; i < contractDetailCacheMax-1; i++ {
 		key := positionsCacheKey + "G" + strconv.Itoa(i)
 		c.entries[key] = contractDetailEntry{
@@ -38,10 +34,8 @@ func TestContractDetailCache_PutProtectsUnexpiredCodeHistory(t *testing.T) {
 	}
 }
 
-// TestContractDetailCache_ActivityKeysCannotEvictContractEntries: a stream
-// of distinct account-activity keys — cheap to compute for any minted
-// G-address — must stay inside its own bound and leave a full, unexpired
-// set of contract entries untouched.
+// A stream of distinct account-activity keys (cheap for any minted G-address) must stay inside its own bound and leave a
+// full set of unexpired contract entries untouched.
 func TestContractDetailCache_ActivityKeysCannotEvictContractEntries(t *testing.T) {
 	c := &contractDetailCache{}
 	for i := range contractDetailCacheMax {

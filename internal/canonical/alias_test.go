@@ -5,11 +5,8 @@ package canonical
 
 import "testing"
 
-// TestXLMSacContractID_MatchesDerivation pins the constant to the
-// DERIVATION rather than to a fixture. A wrong C-address here would put
-// a foreign contract into XLM's equivalence class — i.e. would make an
-// unrelated token's pool eligible to price XLM — so the literal is
-// checked against Asset.SacContractID() on every run.
+// Pins the XLM SAC constant to the derivation, not a fixture, by checking it against Asset.SacContractID() every run. A
+// wrong C-address would put a foreign contract in XLM's equivalence class and let an unrelated token's pool price XLM.
 func TestXLMSacContractID_MatchesDerivation(t *testing.T) {
 	derived, err := NativeAsset().SacContractID()
 	if err != nil {
@@ -166,11 +163,9 @@ func TestAssetAliasStrings(t *testing.T) {
 	}
 }
 
-// TestAllAliasForms pins the SQL-fold projection the volume-character rollup
-// binds: every NON-canonical form maps to its canonical form, and the
-// canonical form itself is NOT a key (it maps to itself via the caller's
-// COALESCE fallback). On the compile-time baseline that is exactly
-// {crypto:XLM → native, <XLM SAC> → native, crypto:EUROC → crypto:EURC}.
+// Pins the SQL-fold projection the volume-character rollup binds: every non-canonical form maps to its canonical form.
+// The canonical form is not a key (the caller's COALESCE covers it). Baseline: {crypto:XLM -> native, <XLM SAC> ->
+// native, crypto:EUROC -> crypto:EURC}.
 func TestAllAliasForms(t *testing.T) {
 	// Reset to the compile-time baseline so the test is independent of
 	// any config-derived registry a prior test installed.

@@ -27,10 +27,8 @@ func ExampleNew() {
 	_ = selfHosted
 }
 
-// ExampleClient_Price demonstrates a current-price lookup. The
-// returned Envelope carries the price plus advisory flags; the
-// caller decides whether to act on `flags.stale` /
-// `flags.divergence_warning` / `flags.frozen`.
+// Example: current-price lookup. The Envelope carries the price plus advisory flags.
+// The caller decides whether to act on `flags.stale`, `flags.divergence_warning` or `flags.frozen`.
 func ExampleClient_Price() {
 	// Stand up a fake server returning a representative response so
 	// the example is self-contained + verified at build time.
@@ -83,10 +81,8 @@ func ExampleClient_Price() {
 	// Output: XLM/USD = 0.13245 (sources: [binance kraken], stale: false)
 }
 
-// ExampleClient_Asset demonstrates fetching the rich asset detail
-// surface — everything wallet UIs need for the Freighter V2
-// asset-detail page (decimals, SEP-1 overlay, F2 supply fields,
-// and SEP-1 issuance declarations).
+// Fetches the rich asset detail wallet UIs need: decimals, SEP-1 overlay, F2 supply fields and SEP-1 issuance
+// declarations.
 func ExampleClient_Asset() {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -131,10 +127,8 @@ func ExampleClient_Asset() {
 		return
 	}
 
-	// resp.Data is an AssetLookup (ADR-0042): a canonical asset_id
-	// always resolves to the stellar_asset branch. StellarAsset()
-	// returns ok=false for the other branch (a catalogue slug like
-	// "usdc") instead of silently handing back a zero-valued struct.
+	// resp.Data is an AssetLookup (ADR-0042): a canonical asset_id resolves to the stellar_asset branch; StellarAsset()
+	// returns ok=false for a catalogue slug like "usdc" instead of a zero-valued struct.
 	asset, ok := resp.Data.StellarAsset()
 	if !ok {
 		fmt.Println("unexpected kind:", resp.Data.Kind())
@@ -147,11 +141,8 @@ func ExampleClient_Asset() {
 	// Output: USDC (USD Coin) — sep1=verified, circulating=12345678900000000, market_cap=$1234567890.00
 }
 
-// ExampleClient_HistorySinceInception demonstrates the historical
-// time-series surface. Granularity is fixed per request; the API
-// returns one bucket per granularity step from inception (or as
-// far back as the trades hypertable goes for the asset) up to
-// the most recent closed bucket.
+// Historical time series: granularity is fixed per request, with one bucket per step from inception (or as far back as
+// trades go) to the latest closed bucket.
 func ExampleClient_HistorySinceInception() {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -218,10 +209,8 @@ func ExampleClient_Assets() {
 	// Output: first page: 2 assets, next=true
 }
 
-// ExampleClient_Me demonstrates the authenticated-caller identity
-// surface. Returns the API key's tier + remaining rate-limit
-// budget so consumers can self-throttle without parsing
-// `X-RateLimit-*` headers on every call.
+// Example: authenticated-caller identity, returning the key's tier and remaining rate-limit budget.
+// Lets consumers self-throttle without parsing `X-RateLimit-*` headers on every call.
 func ExampleClient_Me() {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -287,10 +276,8 @@ func ExampleAPIError() {
 	// Output: asset is not indexed
 }
 
-// ExampleClient_Status shows how to consume the customer-facing
-// system-health rollup. /v1/status always returns 200; degraded
-// state lives in the body's Overall field, so dashboards can poll
-// it without alerting on 503s.
+// /v1/status always returns 200; degraded state lives in the body's Overall field, so dashboards can poll without
+// alerting on 503s.
 func ExampleClient_Status() {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -328,21 +315,9 @@ func ExampleClient_Status() {
 	// Output: ok — p95=3.85ms, 13/17 sources active
 }
 
-// ExampleClient_NetworkStats demonstrates fetching the home-page
-// aggregate snapshot — total 24h USD volume, active markets count,
-// indexed-assets count, latest live ledger, and source-count
-// summary. One round trip replaces fan-out across /v1/assets,
-// /v1/markets, /v1/sources, /v1/diagnostics/cursors.
-//
-// `Volume24hUSD` is `*string` per ADR-0003 (raw cents can exceed
-// int64). nil means the rolling 24h window had no USD-equivalent
-// trades — render `—` rather than fabricating a zero.
-//
-// Note: `total_sources` here counts entries in the static binary
-// registry. /v1/status's `freshness.total_sources` counts sources
-// the operator has ENABLED at runtime — typically a strict subset.
-// See [docs/reference/api](https://docs.stellarindex.io) for the
-// full semantic table.
+// Home-page aggregate snapshot in one round trip. `Volume24hUSD` is `*string` per ADR-0003 (can exceed int64); nil means
+// no USD-equivalent trades, so render `—`, not zero. `total_sources` counts the static registry, not the runtime-enabled
+// set /v1/status reports.
 func ExampleClient_NetworkStats() {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -382,16 +357,8 @@ func ExampleClient_NetworkStats() {
 	// Output: ledger=62490950, markets=23848, assets=86175, exchange/total=11/21, vol24h_usd=3176584845.46668496
 }
 
-// ExampleClient_Incidents demonstrates fetching the
-// incident-postmortem corpus surfaced on status.stellarindex.io.
-// Each entry has a SEV-N severity tier, a lifecycle status, and
-// the full markdown body. ResolvedAt is `*time.Time` (nil for
-// still-active incidents) so callers can distinguish "ongoing"
-// from "resolved at zero time".
-//
-// The corpus ships with the binary (per-deploy), so two regions
-// running different builds may return different lists — clients
-// that need cross-region consistency should diff by Slug.
+// Incident-postmortem corpus for the status site; ResolvedAt is `*time.Time`, nil for still-active incidents. The corpus
+// ships with the binary, so regions on different builds may differ; diff by Slug for cross-region consistency.
 func ExampleClient_Incidents() {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -434,18 +401,9 @@ func ExampleClient_Incidents() {
 	// Output: [SEV-3/resolved] 2026-05-06-postgres-lock-table-full — resolved 2026-05-06 22:39Z
 }
 
-// ExampleClient_LendingPools demonstrates fetching every Blend
-// pool contract observed in the trailing 7d auction stream.
-// Sorted by total auction count desc — first row is the most-
-// active pool. AuctionsTotal is lifetime; Auctions24h is the
-// recent activity slice; UniqueUsers30d is distinct addresses
-// that landed an auction in the last 30 days.
-//
-// Field stability: the wire shape is auction-derived today;
-// per-pool TVL, utilisation, and supply/borrow APYs land via
-// additional fields once the pool-storage reader worker ships.
-// JSON decode ignores unknown fields, so adding new fields is
-// non-breaking — but callers should NOT switch on field count.
+// Lists Blend pools seen in the trailing 7d auction stream, sorted by total auctions desc; AuctionsTotal is lifetime.
+// Wire shape is auction-derived today and will gain fields; decode ignores unknown fields, so callers must not switch on
+// field count.
 func ExampleClient_LendingPools() {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -486,17 +444,9 @@ func ExampleClient_LendingPools() {
 	// Output: blend/CAJJZS…BXBD: 29 auctions/24h, 5691 total, 4 users/30d
 }
 
-// ExampleClient_SACWrappers demonstrates the SAC (Stellar Asset
-// Contract) wrapper registry — a map from Soroban contract address
-// to the "<CODE>:<G_STRKEY>" form of the underlying classic asset.
-// Used to resolve `transfer` events on SAC contracts back to the
-// classic asset they wrap.
-//
-// Returned as a plain Go map; iterate keys for contracts or look
-// up a specific contract directly. The map is operator-config
-// (loaded from /etc/stellarindex.toml at boot), so it's small —
-// typically ~20 entries — and stable across regions running the
-// same config.
+// The SAC wrapper registry maps a Soroban contract address to the underlying classic asset's "<CODE>:<G_STRKEY>" form,
+// used to resolve `transfer` events on SAC contracts. It is operator config (~20 entries), stable across regions with
+// the same config.
 func ExampleClient_SACWrappers() {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -528,15 +478,8 @@ func ExampleClient_SACWrappers() {
 	// Output: XLM SAC (CAS3J7…) wraps: native
 }
 
-// ExampleClient_Chart demonstrates the binned price + USD-volume
-// time series. Distinct from [Client.HistorySinceInception] (which
-// returns the FULL series at one granularity) — Chart trims to a
-// caller-chosen window and resolves a server-default granularity
-// per timeframe (24h → 1h bins, 7d → 4h, 30d → 1d, etc.).
-//
-// Use Chart for "render this asset's last N hours/days"; use
-// HistorySinceInception for full historical exports / analytical
-// work that needs every bucket.
+// Binned price + USD-volume series over a caller-chosen window with server-default granularity per timeframe (24h to 1h
+// bins, 7d to 4h, 30d to 1d). Use HistorySinceInception instead for the full series at one granularity.
 func ExampleClient_Chart() {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -578,17 +521,9 @@ func ExampleClient_Chart() {
 	//   23:00Z: 0.161
 }
 
-// ExampleClient_Observations demonstrates the rawest per-source
-// trade view per ADR-0018 — one row per source that has recorded
-// a trade on (asset, quote). Use this when you want to see
-// "where is this rate coming from?" without the aggregator layer.
-//
-// Empty array (NOT 404) when the pair has no observations.
-// flags.stale is always false on this surface — there's no
-// aggregation contract to fall short of.
-//
-// Aggregate="latest" collapses the per-source array to a 0/1-
-// element slice of the most-recent observation across sources.
+// Rawest per-source trade view per ADR-0018: one row per source with a trade on (asset, quote), before the aggregator
+// layer. Empty array (not 404) when none; flags.stale is always false here; Aggregate="latest" collapses to the newest
+// observation across sources.
 func ExampleClient_Observations() {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -644,17 +579,9 @@ func ExampleClient_Observations() {
 	// sdex @ 14:59:50Z: 0.159
 }
 
-// ExampleClient_ChangeSummary demonstrates the per-entity
-// multi-window delta rollup. The change-summary worker writes one
-// row per (entity_type, entity_id) every 5 min; this method
-// surfaces the latest. EntityType is "coin" or "pair" — the two
-// families the worker computes; for coin entities the API expands
-// friendly slugs (XLM, USDC) into canonical asset_id forms
-// server-side.
-//
-// All H*/D* fields are *float64 — nil distinguishes "no value
-// yet" (window opened recently) from "0% change". Render `—` on
-// nil rather than fabricating a zero.
+// Latest multi-window delta rollup per (entity_type, entity_id), written every 5 min; EntityType is "coin" or "pair"
+// (coin slugs like XLM are expanded server-side). H*/D* fields are *float64: nil means no value yet, so render `—`, not
+// 0%.
 func ExampleClient_ChangeSummary() {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -700,14 +627,8 @@ func ExampleClient_ChangeSummary() {
 	// Output: crypto:XLM: $0.163, 24h=+3.21% 7d=-1.80% (up, increasing)
 }
 
-// ExampleClient_Healthz demonstrates the shallow liveness probe —
-// reports whether the API process is up and the listener
-// responding. Distinct from Readyz (deep dependency check) and
-// Status (customer-facing rollup); use Healthz for k8s-style
-// liveness probing or for "is the binary alive" CI smoke tests.
-//
-// Returns 200 + status="ok" on healthy, 503 (mapped to APIError)
-// on unhealthy. Anonymous-friendly.
+// Shallow liveness probe: 200 + status="ok" when healthy, 503 (mapped to APIError) otherwise; anonymous-friendly.
+// Distinct from Readyz (dependency check) and Status (customer rollup).
 func ExampleClient_Healthz() {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -730,15 +651,8 @@ func ExampleClient_Healthz() {
 	// Output: status=ok uptime=50h26m
 }
 
-// ExampleClient_Readyz demonstrates the deep readiness probe —
-// pings every backing dependency (Postgres, Redis, MinIO if
-// configured) and reports the rollup. Use this for k8s-style
-// readiness probing where "ready to receive traffic" requires
-// every dependency to be reachable, distinct from "process is
-// alive" (which is what Healthz tests).
-//
-// 200 + status="ok" when every check passes; 503 when any
-// dependency check fails.
+// Example: deep readiness probe that pings every backing dependency; 200 + status="ok" when all pass, 503 otherwise.
+// Use for readiness gating, distinct from Healthz, which only tests that the process is alive.
 func ExampleClient_Readyz() {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -761,12 +675,8 @@ func ExampleClient_Readyz() {
 	// Output: ready: ok
 }
 
-// ExampleClient_Version demonstrates fetching the API binary's
-// build metadata (semver tag, build commit, build date, Go
-// version, dirty flag). Useful for client-side build-skew
-// detection (refuse to talk to an API older than the SDK
-// expects) and for incident logs ("which build was running when
-// X happened").
+// API build metadata (semver tag, commit, build date, Go version, dirty flag) for client-side build-skew detection and
+// incident logs.
 func ExampleClient_Version() {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -796,14 +706,8 @@ func ExampleClient_Version() {
 	// Output: v0.5.0-rc.37 (commit 8dc0b9d, go1.25.9)
 }
 
-// ExampleClient_Usage demonstrates the per-day usage rollup
-// surface. Each row is one day of (requests, errors, throttled)
-// counters keyed by date — useful for billing reconciliation,
-// monthly usage CSV exports, and quota-anxiety dashboards.
-//
-// Requires authentication; anonymous calls 401. Returns an
-// empty array when the caller has no usage in the lookback
-// window.
+// Per-day usage rollup (requests, errors, throttled) for billing reconciliation and quota dashboards. Requires
+// authentication (anonymous gets 401); returns an empty array when there is no usage in the window.
 func ExampleClient_Usage() {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -834,15 +738,8 @@ func ExampleClient_Usage() {
 	// 2026-05-09: 11890 requests (8 err, 2 throttled)
 }
 
-// ExampleClient_CreateKey demonstrates issuing a new API key.
-// The returned `Plaintext` is the only place the new key's
-// secret bytes appear — the server never returns it again.
-// Stash it server-side immediately (e.g. write to a secrets
-// manager); displaying it once in the UI then forgetting is
-// the canonical flow for the explorer's /account page.
-//
-// Requires authentication. The new key inherits the caller's
-// identifier + tier.
+// Issues a new API key. `Plaintext` is the only place the secret appears and the server never returns it again, so store
+// it immediately. Requires authentication; the key inherits the caller's identifier and tier.
 func ExampleClient_CreateKey() {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -875,16 +772,9 @@ func ExampleClient_CreateKey() {
 	// Output: created ak_demo_xyz789 (label=production-server-1, plaintext=42 chars)
 }
 
-// ExampleClient_RevokeKey demonstrates revoking an API key
-// permanently. The deletion is unrecoverable — there's no
-// "un-revoke"; a new key has to be issued via CreateKey.
-//
-// keyID is the public ID returned in KeyCreated.KeyID / on each
-// row of Keys — NOT the plaintext secret. An unknown, already-revoked
-// or foreign key ID, and a plaintext secret, all return nil (204).
-//
-// Returns *APIError for 400 (operator caller without X-Reason), 401,
-// 409 and 503; see [Client.RevokeKey].
+// Revocation is permanent; a new key needs CreateKey. keyID is the public ID (KeyCreated.KeyID / Keys rows), not the
+// plaintext secret. An unknown, already-revoked or foreign ID, or a plaintext secret, returns nil (204); *APIError for
+// 400 (operator without X-Reason), 401, 409, 503.
 func ExampleClient_RevokeKey() {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
@@ -902,14 +792,8 @@ func ExampleClient_RevokeKey() {
 	// Output: revoked
 }
 
-// ExampleClient_Keys demonstrates listing every API key the
-// authenticated caller owns. Each row carries the public KeyID
-// + Label + tier + creation timestamp; the plaintext secret is
-// NOT in the response (the server only returns the secret
-// once, at CreateKey time).
-//
-// Useful for building a /account/keys management UI: list, then
-// let the user click "revoke" on the rows they want to remove.
+// Example: list every API key the caller owns (KeyID, Label, tier, creation time).
+// The plaintext secret is never returned; the server shows it once, at CreateKey time.
 func ExampleClient_Keys() {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -942,14 +826,8 @@ func ExampleClient_Keys() {
 	// ak_b — staging (created 2026-05-08)
 }
 
-// ExampleClient_Issuers demonstrates the issuer directory listing.
-// Sorted by total observation count across the issuer's classic
-// assets, descending — surfaces the most-active issuers first
-// (Centre / Anchorage / Stronghold etc.).
-//
-// HomeDomain + OrgName populate as the SEP-1 fetcher worker
-// resolves stellar.toml for each issuer. Pre-resolution they're
-// empty strings (not nil) — the wire shape stays uniform.
+// Issuer directory sorted by total observation count across the issuer's classic assets, descending. HomeDomain/OrgName
+// are empty strings (not nil) until the SEP-1 fetcher resolves stellar.toml.
 func ExampleClient_Issuers() {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -984,15 +862,8 @@ func ExampleClient_Issuers() {
 	// Aquarius — 14764050 observations across 1 assets
 }
 
-// ExampleClient_Issuer demonstrates fetching one issuer's full
-// detail by Stellar G-strkey — the SEP-1 overlay (org name,
-// home domain, auth flags, raw stellar.toml payload) plus a list
-// of every classic asset the issuer has minted that we observe
-// trades for.
-//
-// Auth flags (AuthRequired / AuthRevocable / AuthImmutable /
-// AuthClawback) are pointer-nil pre-resolution; render `—` rather
-// than fabricating false.
+// Example: one issuer's detail by G-strkey: SEP-1 overlay plus classic assets it minted that we observe trades for.
+// Auth flags are pointer-nil pre-resolution; render `—` rather than fabricating false.
 func ExampleClient_Issuer() {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -1033,14 +904,8 @@ func ExampleClient_Issuer() {
 	//   - USDC (50000000 observations)
 }
 
-// ExampleClient_AssetMetadata demonstrates the SEP-1 overlay
-// endpoint — every field the issuer publishes via stellar.toml
-// (org name, image, anchor asset, issuance declarations).
-// Distinct from the F2 supply fields on AssetDetail (which
-// observe live ledger state); SEP-1 fields are issuer-declared.
-//
-// Sep1Status reports the resolution state. Overlay fields populate
-// only when Sep1Status == "verified"; other states leave them nil.
+// SEP-1 overlay: issuer-declared stellar.toml fields, distinct from the observed F2 supply fields on AssetDetail.
+// Overlay fields populate only when Sep1Status == "verified"; other states leave them nil.
 func ExampleClient_AssetMetadata() {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -1080,15 +945,8 @@ func ExampleClient_AssetMetadata() {
 	// Output: USD Coin (Centre Consortium) — anchored to USD
 }
 
-// ExampleClient_History demonstrates raw trade-level audit access
-// over an arbitrary [From, To) window. Distinct from
-// HistorySinceInception (bucketed VWAP/TWAP) — this surface
-// returns the underlying trade rows themselves, the same data
-// the aggregator consumes. Use cases: trade audits, regulatory
-// exports, custom aggregations the server doesn't pre-compute.
-//
-// Pagination via opaque `Cursor`; iterate while `Pagination` is
-// non-nil and `Pagination.Next` is non-empty.
+// Example: raw trade rows over an arbitrary [From, To) window, unlike HistorySinceInception's bucketed VWAP/TWAP.
+// Paginate via opaque `Cursor` while Pagination is non-nil and Pagination.Next is non-empty.
 func ExampleClient_History() {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -1131,22 +989,11 @@ func ExampleClient_History() {
 	// kraken 11:30:05 @ 0.16480
 }
 
-// (The former ExampleClient_Currency example was removed: the
-// standalone `/v1/currencies/{ticker}` route was retired and folded
-// into `/v1/assets` (asset_class=fiat), and the SDK exposes no
-// Currency method. The leftover was a truncated, dangling comment
-// with no function body.)
+// ExampleClient_Currency was removed: /v1/currencies/{ticker} was folded into /v1/assets (asset_class=fiat) and the SDK
+// has no Currency method.
 
-// ExampleClient_Cursors demonstrates the per-source ingest
-// cursor surface — which sources are caught up, which are
-// lagging, how stale the last update is. Used for operator
-// dashboards and the explorer's `/diagnostics` page.
-//
-// Sources that track multiple positions independently (each
-// backfill range, each per-pair cursor) return one row per
-// (source, sub_source) tuple. `LagSeconds` is computed
-// server-side so callers don't need a clock-sync agreement
-// with the API.
+// Per-source ingest cursors: which sources are caught up or lagging, for operator dashboards. Multi-position sources
+// return one row per (source, sub_source); `LagSeconds` is computed server-side, so no clock sync is needed.
 func ExampleClient_Cursors() {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -1180,19 +1027,9 @@ func ExampleClient_Cursors() {
 	// backfill: ledger=62000000 (lag=63000s)
 }
 
-// ExampleClient_PriceBatch demonstrates the bulk pricing surface.
-// One round-trip returns prices for many assets — the recommended
-// path for portfolio + multi-asset views (bulk query support).
-// Cross-region consistent: every
-// returned snapshot is from the same closed-bucket window
-// `/v1/price` would have served for the same instant.
-//
-// Routing is automatic: ≤100 ids → GET, 101..1000 → POST. The
-// envelope's `flags.stale` is the OR over per-row staleness.
-//
-// Missing observations (asset has no indexed data) are silently
-// omitted from the response array — callers needing to detect
-// "asset X had no observation" diff input vs output.
+// Bulk pricing in one round trip; each snapshot is from the same closed-bucket window `/v1/price` would serve. Routing
+// is automatic (up to 100 ids GET, 101..1000 POST); `flags.stale` is the OR over rows; assets with no data are omitted,
+// so diff input vs output.
 func ExampleClient_PriceBatch() {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -1225,15 +1062,8 @@ func ExampleClient_PriceBatch() {
 	// crypto:BTC = 81000.00
 }
 
-// ExampleClient_Pair demonstrates a single-pair lookup — every
-// market the deployment has observed for one (base, quote) tuple,
-// each row attributed to a specific source. Returns a slice of
-// `Market` rows even when only one source has data, so the
-// caller doesn't branch on "1 vs many sources" / "0 vs 404"
-// (the empty array is the canonical "no such pair" signal).
-//
-// Useful for the explorer's `/markets/<base>~<quote>` detail page
-// and for "which venues quote XLM/USDC" UIs.
+// Single-pair lookup returning a slice of Market rows, one per source, even for a single source; the empty array is the
+// canonical "no such pair" signal, so callers needn't branch on 1-vs-many or 0-vs-404.
 func ExampleClient_Pair() {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -1266,20 +1096,9 @@ func ExampleClient_Pair() {
 	// Output: XLM/USD: 2 sources, 12600 trades in last 24h
 }
 
-// ExampleClient_PriceTip demonstrates the fastest-feed tip endpoint.
-// Trades off cross-region byte-identical consistency (which
-// `/v1/price` provides via the closed-bucket VWAP) for lower
-// latency — most callers driving live UIs want this. The
-// `?window_seconds=` knob picks how recent a sample to consider
-// "fresh"; it defaults to 5 s, and a value outside [1, 60] is
-// rejected with a 400 rather than reduced to the maximum.
-//
-// The response's `price_type` reflects which path produced the
-// snapshot: "vwap" when the rolling window had trades, or
-// "last_trade" when the handler fell back to the most-recent
-// observation. It is NOT the literal string "tip" — that was never
-// a value the server emits (the surface is named "tip", the
-// price_type is not).
+// Fastest-feed tip: trades cross-region byte-identical consistency (which `/v1/price` gives) for lower latency.
+// `?window_seconds=` defaults to 5 s; a value outside [1, 60] is rejected with 400, not clamped. `price_type` is "vwap"
+// when the window had trades or "last_trade" on fallback; the server never emits "tip".
 func ExampleClient_PriceTip() {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -1315,13 +1134,8 @@ func ExampleClient_PriceTip() {
 	// Output: XLM/USD tip: 0.16475 (type: vwap, window: 5s)
 }
 
-// ExampleClient_Sources demonstrates listing the source registry —
-// every venue / oracle / aggregator the deployment can ingest from.
-// Class drives "include in VWAP" semantics: only `exchange` rows
-// contribute by default; aggregators and oracles are reported
-// alongside but excluded from the canonical VWAP (mixing them would
-// double-count upstream markets or impose their methodology on
-// our output).
+// ExampleClient_Sources lists the source registry; only `exchange` class rows count toward the canonical VWAP.
+// Aggregators and oracles are reported but excluded, since mixing them would double-count upstream markets.
 func ExampleClient_Sources() {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -1357,12 +1171,8 @@ func ExampleClient_Sources() {
 	// reflector-dex   class=oracle     vwap=false
 }
 
-// ExampleClient_Markets demonstrates listing every (base, quote)
-// pair the deployment has observed at least one trade for, sorted
-// by 24h USD volume descending. Useful for "top markets" UIs and
-// for picking pairs to chart.
-//
-// Server-side limits: Limit ≤ 500. Larger requests return 400.
+// ExampleClient_Markets lists every observed (base, quote) pair, sorted by 24h USD volume descending. Server-side limit:
+// Limit <= 500; larger requests return 400.
 func ExampleClient_Markets() {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -1402,17 +1212,8 @@ func ExampleClient_Markets() {
 	// native/fiat:USD: vol_24h=$98000.50 trades_24h=12345
 }
 
-// ExampleClient_OHLC demonstrates fetching one OHLC bar over an
-// arbitrary range. Server aggregates trades in [from, to) into a
-// single bar — pass a 1-hour range for a 1-hour bar, a 1-day
-// range for a daily bar, etc. For multi-bar series, call
-// repeatedly with adjacent windows or use `/v1/chart` (which
-// returns a series in one request).
-//
-// Truncated=true means the bar covers a window that hit the
-// per-bar trade-count cap — high-volume pairs over long windows
-// are the typical trigger. Treat truncated bars as a hint to
-// narrow the range.
+// ExampleClient_OHLC fetches one bar over an arbitrary [from, to) range; for a series use `/v1/chart`. Truncated=true
+// means the bar hit the per-bar trade-count cap; narrow the range.
 func ExampleClient_OHLC() {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

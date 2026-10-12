@@ -16,10 +16,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// These tests pin that every explorer handler reading the shared ClickHouse pool bounds the
-// read in context.WithTimeout(explorerReadTimeout). The server WriteTimeout does not cancel an
-// in-flight query, so a handler passing raw r.Context() (no deadline) would let a few slow
-// unauthenticated requests hold every connection and wedge every lake-backed endpoint.
+// Pins that every explorer handler reading the shared ClickHouse pool bounds the read in context.WithTimeout(
+// explorerReadTimeout). The server WriteTimeout doesn't cancel an in-flight query, so a raw r.Context() would let a few
+// slow unauthenticated requests hold every connection and wedge every lake-backed endpoint.
 
 // deadlineProbe records the deadline on the FIRST reader call (all of a handler's reads share one
 // context, and the first sees the full budget). A bounded handler yields a Deadline() about
@@ -368,10 +367,8 @@ const (
 	validTestTxHash   = "88526317d98b1eb5a8040123456789abcdef0123456789abcdef0123456789ab"
 )
 
-// TestCapReader_EveryMethodRecordsDeadline keeps the route table honest: a
-// stub that returns without recording its context makes a route over it
-// look unreachable, so the route never gets added and its deadline goes
-// unguarded. Every ExplorerReader / PositionsReader method must record.
+// Keeps the route table honest: a stub that returns without recording its context makes its route look unreachable, so
+// the route is never added and its deadline goes unguarded. Every ExplorerReader / PositionsReader method must record.
 func TestCapReader_EveryMethodRecordsDeadline(t *testing.T) {
 	probe := &deadlineProbe{}
 	stubs := []struct {

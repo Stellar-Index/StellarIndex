@@ -45,10 +45,8 @@ postgres_dsn = "postgres://u:p@h/db"
 	}
 }
 
-// TestLoadReader_MetricsListenSet: MetricsListenSet must
-// distinguish "operator wrote obs.metrics_listen in the file" from
-// "left at Default()'s value", so a consumer (e.g. the aggregator's
-// single-host port shift) can tell an explicit choice from a default.
+// MetricsListenSet must distinguish an explicit obs.metrics_listen in the file from Default()'s value. Consumers such as
+// the aggregator's single-host port shift depend on that.
 func TestLoadReader_MetricsListenSet(t *testing.T) {
 	c, err := cfg.LoadReader(strings.NewReader(`
 [stellar]
@@ -266,10 +264,8 @@ trace_sample = 0.1
 	}
 }
 
-// TestLoadReader_retiredKeyWarnsInsteadOfFailing — deleting a field from Config would make every
-// deployment with an old configs/example.toml fail boot on "unknown keys". A key registered on
-// cfg.RetiredKeys must be tolerated (warn, not fail) while a genuinely unknown key beside it
-// still errors.
+// A key registered in cfg.RetiredKeys must warn, not fail, so old configs/example.toml deployments still boot. A
+// genuinely unknown key beside it must still error.
 func TestLoadReader_retiredKeyWarnsInsteadOfFailing(t *testing.T) {
 	const retiredPath = "external.retired_source"
 	cfg.RetiredKeys[retiredPath] = "source decommissioned in test"
@@ -357,12 +353,9 @@ func TestLoad_ExampleConfigValid(t *testing.T) {
 	}
 }
 
-// TestAnsibleFiatPegStanza_ValidAndComplete pins the r1 template's declared fiat-peg map through
-// the REAL decoder + validator. Nothing else parses the jinja template, so a typo'd issuer or
-// ticker would surface only as an API that refuses to boot on r1 (or a peg that silently never
-// fills). The stanza body is pure TOML but gated behind {% if run_aggregator %}, so the extractor
-// drops jinja control lines to reconstruct the r1 render. Pins the two operator-approved entries:
-// AUDD → AUD and, transitively via the AUDD↔AUDR par corridor, AUDR → AUD.
+// Pins the r1 template's fiat-peg stanza through the real decoder and validator; nothing else parses the jinja template.
+// The extractor drops jinja control lines to rebuild the r1 render. Pins AUDD -> AUD and, via the AUDD<->AUDR par
+// corridor, AUDR -> AUD.
 func TestAnsibleFiatPegStanza_ValidAndComplete(t *testing.T) {
 	wd, err := os.Getwd()
 	if err != nil {
@@ -396,10 +389,8 @@ func TestAnsibleFiatPegStanza_ValidAndComplete(t *testing.T) {
 		if !inStanza {
 			continue
 		}
-		// Drop jinja control lines ({% if/endif %}) and jinja comments
-		// ({# ... #}, possibly spanning lines) so the r1-rendered body (the
-		// {% if run_aggregator %} branch, on for r1) parses as TOML. Safe
-		// here because the stanza has no {% else %} branch to disambiguate.
+		// Drop jinja control lines and (possibly multi-line) jinja comments so the r1 render (run_aggregator on) parses as TOML.
+		// Safe only because the stanza has no {% else %} branch.
 		if strings.HasPrefix(trimmed, "{%") {
 			continue
 		}
@@ -431,10 +422,8 @@ func TestAnsibleFiatPegStanza_ValidAndComplete(t *testing.T) {
 	assertDefaultSubstancePolicy(t, "r1 [pricing_guard]", c.PricingGuard)
 }
 
-// TestAnsibleCookieDomain_DefaultsHostOnly pins the r1 template's cookie_domain jinja default
-// against config.go's documented-safe default: CookieDomain empty means a host-only cookie, but a
-// shipped ansible default could override that with a shared-subdomain value whenever the operator
-// var was unset, shipping the wide cookie by default.
+// Pins the r1 template's cookie_domain jinja default to config.go's safe default: empty means a host-only cookie. An
+// ansible default must not ship a shared-subdomain cookie when the operator var is unset.
 func TestAnsibleCookieDomain_DefaultsHostOnly(t *testing.T) {
 	wd, err := os.Getwd()
 	if err != nil {
@@ -467,10 +456,8 @@ func TestLoad_missingFileErrorsNice(t *testing.T) {
 }
 
 func TestApplyEnvOverrides_CoversEveryEnvTag(t *testing.T) {
-	// Drift check: every field in the config schema that declares an
-	// `env:"…"` tag MUST be honoured by ApplyEnvOverrides. Without
-	// this test a new secret-referencing field could ship with the
-	// env override silently ignored.
+	// Every schema field with an `env:` tag must be honoured by ApplyEnvOverrides. Otherwise a new secret-referencing field
+	// could ship with its env override silently ignored.
 	fields := cfg.Describe()
 	var envVars []string
 	for _, f := range fields {
@@ -508,10 +495,8 @@ func TestApplyEnvOverrides_CoversEveryEnvTag(t *testing.T) {
 	}
 }
 
-// lookupFieldByEnv walks the config via reflect to find the field
-// whose `env:` tag matches envName, then returns its stringified
-// value. Supports only string leaves (which is what all env-tagged
-// fields are today).
+// lookupFieldByEnv walks the config via reflect to find the field whose `env:` tag matches and returns its value.
+// Supports string leaves only, which all env-tagged fields are.
 func lookupFieldByEnv(c *cfg.Config, envName string, fields []cfg.SchemaField) string {
 	v := reflect.ValueOf(c).Elem()
 	for _, f := range fields {
@@ -572,10 +557,9 @@ func TestApplyEnvOverrides(t *testing.T) {
 	}
 }
 
-// TestApplyEnvOverrides_DoesNotCorruptS3KeyNames pins that S3AccessKeyEnv / S3SecretKeyEnv hold the
-// NAME of the env var carrying the credential (buildS3Client does os.Getenv on them), NOT the
-// value. Overwriting the name with the secret makes os.Getenv("AKIA…") return "" and silently
-// drops S3 static creds.
+// S3AccessKeyEnv / S3SecretKeyEnv hold the NAME of the env var carrying the credential (buildS3Client does os.Getenv on
+// them), not the value. Overwriting the name with the secret makes os.Getenv("AKIA…") return "" and silently drops S3
+// static creds.
 func TestApplyEnvOverrides_DoesNotCorruptS3KeyNames(t *testing.T) {
 	t.Setenv("STELLARINDEX_S3_ACCESS_KEY", "AKIAEXAMPLE")
 	t.Setenv("STELLARINDEX_S3_SECRET_KEY", "supersecret")
@@ -593,10 +577,8 @@ func TestApplyEnvOverrides_DoesNotCorruptS3KeyNames(t *testing.T) {
 }
 
 func TestLoadWithEnv_RevalidatesAfterOverride(t *testing.T) {
-	// A file that Validate() accepts, then env override with a
-	// malformed DSN. Load + ApplyEnvOverrides would let this get
-	// past startup and error at DB dial time. LoadWithEnv must
-	// catch it as ErrInvalidConfig.
+	// A file Validate() accepts plus an env override with a malformed DSN would otherwise fail only at DB dial time.
+	// LoadWithEnv must reject it as ErrInvalidConfig.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "c.toml")
 	good := `

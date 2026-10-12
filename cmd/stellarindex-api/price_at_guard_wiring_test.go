@@ -1,16 +1,8 @@
 package main
 
-// Source-level tripwire (the freeze_wiring_guard_test.go pattern): the
-// point-in-time price reader must apply the serving-sanity guard to a
-// prices_1m answer.
-//
-// storePriceAtReader.PriceAt is the seam behind /v1/price/at and every /v1/price/changes horizon,
-// and ClosedVWAPAtOrBefore serves the raw prices_1m bucket first for any instant inside 48 h.
-// Without pricingguard a manipulated minute that /v1/price refuses would be republished.
-//
-// End-to-end coverage is not possible here (storePriceAtReader.s is a concrete
-// *timescale.Store; see price_freshness_seam_test.go), so this walks main.go's AST. The
-// decision itself is proven in internal/pricingguard.
+// Source tripwire (freeze_wiring_guard_test.go pattern): storePriceAtReader.PriceAt, behind /v1/price/at and
+// /v1/price/changes, must apply the serving-sanity guard to a prices_1m answer, else a manipulated minute /v1/price
+// refuses is republished. The store is concrete, so this walks main.go's AST; pricingguard proves the decision.
 
 import (
 	"go/ast"
@@ -123,10 +115,8 @@ func TestRawPrices1mReadersPassTheGuard(t *testing.T) {
 	}
 }
 
-// bodyReferencesAnyMethod reports whether body references x.m for any m in
-// names, on any receiver. A method value (f := r.s.ClosedVWAPAtOrBefore)
-// or a store alias (st := r.s; st.ClosedVWAPAtOrBefore(...)) reads the
-// same raw bucket as a direct call.
+// bodyReferencesAnyMethod reports whether body references x.m for any m in names, on any receiver; a method value (f :=
+// r.s.ClosedVWAPAtOrBefore) or store alias (st := r.s) reads the same raw bucket as a direct call.
 func bodyReferencesAnyMethod(body *ast.BlockStmt, names []string) bool {
 	found := false
 	ast.Inspect(body, func(n ast.Node) bool {

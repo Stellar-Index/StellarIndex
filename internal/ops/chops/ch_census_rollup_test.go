@@ -5,10 +5,8 @@ import (
 	"time"
 )
 
-// The issue's sequence: day D holds a LiveSink hole, so the contiguous lake
-// tip sits on D. The walk must stop at D — computing D+1 would make it the
-// newest day present, and the next resume (max(day)) would never revisit D
-// after ch-live-catchup heals it.
+// Day D holds a LiveSink hole, so the contiguous lake tip sits on D. The walk must stop at D: computing D+1 would make
+// it the newest day present, and the next resume (max(day)) would never revisit D after ch-live-catchup heals it.
 func TestCensusWalkEnd_StopsAtHoledDay(t *testing.T) {
 	d := time.Date(2026, 8, 15, 0, 0, 0, 0, time.UTC)
 	today := d.Add(24 * time.Hour)

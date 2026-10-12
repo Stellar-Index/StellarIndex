@@ -21,10 +21,9 @@ import (
 
 // ─── buildWindowPlan: gap-free, overlap-free, exact coverage ──────────────
 
-// TestBuildWindowPlan_ExactCoverageNoGapsNoOverlaps pins the property the parallel scheduler
-// depends on: whatever the window size, the windows union to EXACTLY [from,to], ascending, with
-// no gap or overlap. A bug would silently drop or double-process ledgers: ON CONFLICT DO NOTHING
-// absorbs an overlap and a gap has no local symptom.
+// The parallel scheduler depends on windows unioning to exactly [from,to], ascending, with no gap or overlap at any
+// window size. A bug would silently drop or double-process ledgers: ON CONFLICT DO NOTHING absorbs an overlap and a gap
+// has no local symptom.
 func TestBuildWindowPlan_ExactCoverageNoGapsNoOverlaps(t *testing.T) {
 	cases := []struct {
 		name           string
@@ -160,10 +159,8 @@ func TestWindowCursorSub_Format(t *testing.T) {
 	}
 }
 
-// TestPendingWindows_ResumeFiltering pins the resume semantics: a window is skipped ONLY when
-// its checkpoint's last_ledger is at or past its OWN upper bound. A missing entry, another
-// source's entry (prefix collision guard) and a stale or partial entry (last < w.To, defensive)
-// must all be retried, never silently skipped.
+// Resume semantics: a window is skipped only when its checkpoint's last_ledger is at or past its OWN upper bound. A
+// missing entry, another source's entry (prefix collision guard) or a stale/partial entry (last < w.To) must be retried.
 func TestPendingWindows_ResumeFiltering(t *testing.T) {
 	plan := []opsutil.RangeChunk{
 		{From: 100, To: 199}, // done
@@ -324,10 +321,8 @@ func TestWriteModeLabel(t *testing.T) {
 	}
 }
 
-// TestBuildWindowPlan_WindowSchedulerIntegration sanity-checks the two
-// units together: every ledger in [from,to] is covered by exactly one
-// claimed window once the scheduler is drained concurrently — the
-// end-to-end property RunProjectedRebuild depends on.
+// Sanity-checks plan and scheduler together: once the scheduler is drained concurrently, every ledger in [from,to] is
+// covered by exactly one claimed window, the property RunProjectedRebuild depends on.
 func TestBuildWindowPlan_WindowSchedulerIntegration(t *testing.T) {
 	const from, to, window = 51_499_546, 51_499_546 + 9_999, 137
 	plan := buildWindowPlan(from, to, window)
@@ -365,10 +360,8 @@ func TestBuildWindowPlan_WindowSchedulerIntegration(t *testing.T) {
 	}
 }
 
-// TestCheckLiveCursorGuard_ErrorMentionsTheRelevantLedgers asserts the
-// refusal message carries the facts an operator needs to act on it
-// (current live-cursor position, requested top, and the override flag)
-// rather than a generic "refused" with no actionable detail.
+// The refusal message must carry what an operator needs to act: the current live-cursor position, the requested top and
+// the override flag, not a generic "refused".
 func TestCheckLiveCursorGuard_ErrorMentionsTheRelevantLedgers(t *testing.T) {
 	err := checkLiveCursorGuard(true, 61_000_000, 62_000_000, false)
 	if err == nil {

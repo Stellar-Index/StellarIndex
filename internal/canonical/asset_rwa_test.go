@@ -123,11 +123,8 @@ func TestIsKnownRWA(t *testing.T) {
 	}
 }
 
-// TestCoverageDoc_ADR0028CodeCountMatchesAllowList guards against the doc
-// and the allow-list drifting apart again: docs/methodology/rwa-coverage-
-// reconciliation.md states how many instrument codes ADR-0028 covers, and
-// that number must equal len(knownRWACodes) rather than be hand-maintained
-// prose that nobody re-counts when the map changes.
+// Guards the ADR-0028 code count in docs/methodology/rwa-coverage-reconciliation.md against drifting from
+// len(knownRWACodes). The doc number must be checked, not hand-maintained prose nobody re-counts.
 func TestCoverageDoc_ADR0028CodeCountMatchesAllowList(t *testing.T) {
 	const docPath = "../../docs/methodology/rwa-coverage-reconciliation.md"
 	b, err := os.ReadFile(docPath)

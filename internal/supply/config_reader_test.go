@@ -124,10 +124,8 @@ func TestConfigReserveBalanceReader_RejectsNegative(t *testing.T) {
 	}
 }
 
-// TestConfigReserveBalanceReader_MissingAccountErrors — silently
-// treating an unknown account as zero would yield an over-stated
-// circulating supply (the exact failure mode ADR-0011 prohibits).
-// The reader must error.
+// Treating an unknown account as zero would over-state circulating supply (the failure mode ADR-0011 prohibits), so the
+// reader must error.
 func TestConfigReserveBalanceReader_MissingAccountErrors(t *testing.T) {
 	r, err := newDatedConfigReader(map[string]string{
 		"GA1": "100",

@@ -5,10 +5,8 @@ import (
 	"testing"
 )
 
-// Oracle capture-totality PR-2: the shared symbol mapper every
-// on-chain oracle decoder (Reflector, Band) routes bare symbols
-// through. Known symbols map to their allow-listed type; anything
-// else lands VERBATIM as raw:<symbol> instead of being dropped.
+// The shared symbol mapper for on-chain oracle decoders (Reflector, Band): known symbols map to their allow-listed type.
+// Anything else lands VERBATIM as raw:<symbol> instead of being dropped.
 func TestMapOracleSymbol(t *testing.T) {
 	cases := []struct {
 		sym    string
@@ -82,10 +80,8 @@ func TestMapOracleSymbol_unrepresentableRefused(t *testing.T) {
 	}
 }
 
-// The fiat → crypto → rwa precedence in MapOracleSymbol is only
-// unobservable while the three allow-lists share no code. Pin that so
-// a future overlap is a deliberate decision, not a silent re-typing of
-// an oracle row.
+// The fiat -> crypto -> rwa precedence in MapOracleSymbol is unobservable only while the three allow-lists share no
+// code. Pinned so a future overlap is a deliberate decision, not a silent re-typing of an oracle row.
 func TestMapOracleSymbol_allowListsDisjoint(t *testing.T) {
 	for code := range knownCryptoCodes {
 		if IsKnownFiat(code) {

@@ -8,14 +8,8 @@ import (
 	"time"
 )
 
-// TestDefault_MatchesStructTags is the backstop for default-tag drift: the `default:` struct tags
-// are documentation-only (they feed the generated config reference via schema.go); the REAL
-// runtime defaults come from Default(). On drift, operators read one value in the docs and get
-// another at runtime, e.g. `persist_per_source` documented `true` while Default() left it
-// `false` would silently drop the whole SEP-41 domain once the projector is enabled "per the docs".
-//
-// It walks every leaf field with a `default:` tag and asserts Default() produces exactly that
-// value, so a new tag MUST be matched by a Default() assignment.
+// TestDefault_MatchesStructTags: `default:` tags are docs only; runtime values come from Default(), so every tagged leaf
+// must match it. Drift (e.g. persist_per_source documented true, Default() false) would silently drop the SEP-41 domain.
 func TestDefault_MatchesStructTags(t *testing.T) {
 	checkDefaultTags(t, reflect.ValueOf(Default()), "")
 }

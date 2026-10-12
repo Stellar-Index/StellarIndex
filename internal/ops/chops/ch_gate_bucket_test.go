@@ -34,10 +34,9 @@ func TestChGate_DefaultsToArchiveBucket(t *testing.T) {
 	}
 }
 
-// TestChGate_GatesOnRequestedCoverage pins the ch-gate call site of the coverage rule. REQUESTED
-// is -to minus -from plus one; DELIVERED is `walked`, one per LedgerCloseMeta the census walk
-// returns. The guard must run before the PASSED banner, and the ClickHouse row count must be
-// measured against the requested span: measuring against `walked` lets a short walk certify itself.
+// TestChGate_GatesOnRequestedCoverage: REQUESTED is -to minus -from plus one; DELIVERED is `walked`, one per
+// LedgerCloseMeta returned. The guard runs before the PASSED banner and measures the ClickHouse row count against the
+// requested span; measuring against `walked` lets a short walk certify itself.
 func TestChGate_GatesOnRequestedCoverage(t *testing.T) {
 	t.Parallel()
 	body := funcBody(t, "ch_gate.go", "chGate")

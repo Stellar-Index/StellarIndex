@@ -7,11 +7,9 @@ import (
 	"path/filepath"
 )
 
-// The script rewrites `trades` over a range years behind tip, and no
-// trades continuous aggregate's refresh policy looks back that far. Without
-// an explicit refresh the served OHLC / volume / TWAP keep the pre-repair
-// rows for good. These tests EXECUTE the shipped script (see
-// ch_rebuild_projected_script_test.go for the stubs).
+// The script rewrites `trades` years behind tip, beyond any trades continuous aggregate's refresh lookback, so without
+// an explicit refresh served OHLC / volume / TWAP keep the pre-repair rows. These tests execute the shipped script
+// (stubs in ch_rebuild_projected_script_test.go).
 
 func (r scriptRun) caggRefreshes() []scriptCall {
 	var out []scriptCall

@@ -77,14 +77,9 @@ func TestOrient_XLMAliasFamilyRanksIdentically(t *testing.T) {
 	}
 }
 
-// TestOrient_StablecoinRankIsIssuerAgnostic is a characterization test. A classic token whose
-// CODE collides with a stablecoin ticker but whose ISSUER is an unrelated (possibly hostile)
-// account still ranks as a quote: orientation deliberately does not know about issuers.
-//
-// That is safe only because no path converts a rank-3 asset into a fiat value without
-// re-checking the issuer (aggregate.FiatProxy refuses every classic asset, including the genuine
-// USDC; see TestFiatProxy_NonCryptoAssetsReturnFalse). Changing this ranking or adding a
-// code-keyed USD substitution must reckon with that invariant first.
+// Characterization: a classic token with a stablecoin CODE but a hostile ISSUER still ranks as a quote. Safe only
+// because nothing turns a rank-3 asset into fiat without re-checking the issuer (aggregate.FiatProxy refuses classic).
+// Changing the ranking or adding code-keyed USD substitution must reckon with that.
 func TestOrient_StablecoinRankIsIssuerAgnostic(t *testing.T) {
 	const scamUSDC = "USDC-GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF5"
 

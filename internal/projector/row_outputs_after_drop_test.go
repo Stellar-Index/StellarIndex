@@ -17,11 +17,9 @@ func poisonTrade(ev events.Event) consumer.Event {
 	return soroswap.TradeEvent{Trade: canonical.Trade{Source: "soroswap", Ledger: ev.Ledger, TxHash: ev.TxHash}}
 }
 
-// scriptedDecoder matches every row and decodes it to a fixed list of outputs
-// built from the row — ONE lake row, SEVERAL outputs. That is a production
-// shape, not a contrivance: soroswap's emitCompleted emits one TradeEvent per
-// completed swap+sync pair absorbed from a single event, and phoenix's
-// decodeSwapEvent emits the rescued evicted trades plus the completed one.
+// scriptedDecoder matches every row and decodes it to a fixed list of outputs: one lake row, several outputs, which is a
+// production shape. Soroswap's emitCompleted emits one TradeEvent per completed swap+sync pair, and phoenix's
+// decodeSwapEvent emits rescued evicted trades plus the completed one.
 type scriptedDecoder struct {
 	build []func(events.Event) consumer.Event
 }
@@ -38,10 +36,9 @@ func (d *scriptedDecoder) Decode(ev events.Event) ([]consumer.Event, error) {
 
 func echoOutput(ev events.Event) consumer.Event { return ledgerEvent{ledger: ev.Ledger} }
 
-// productionTradeSink routes trades through pipeline.HandleEvent — the sink
-// cmd/stellarindex-indexer binds — and hands every other output to other. A
-// nil store is safe for the poison trade: Validate rejects it before the
-// store is touched.
+// productionTradeSink routes trades through pipeline.HandleEvent (the sink cmd/stellarindex-indexer binds) and hands
+// every other output to `other`. A nil store is safe for the poison trade: Validate rejects it before the store is
+// touched.
 func productionTradeSink(other func(consumer.Event) error) SinkFunc {
 	return func(ctx context.Context, ev consumer.Event) error {
 		if _, ok := ev.(soroswap.TradeEvent); ok {

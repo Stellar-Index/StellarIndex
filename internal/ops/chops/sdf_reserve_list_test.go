@@ -367,10 +367,8 @@ func TestRenderServedValueProm_ReserveList(t *testing.T) {
 	})
 
 	t.Run("nil (check not run) emits no sample for it", func(t *testing.T) {
-		// The family's HELP/TYPE header is unconditional (a header with
-		// no samples is valid exposition, and the lint wants every
-		// family's header beside its emitter); what must be absent is
-		// any SAMPLE — a skipped=0 here would claim the check ran.
+		// The family's HELP/TYPE header is unconditional (a header without samples is valid exposition and the lint wants it
+		// beside the emitter); what must be absent is any SAMPLE, since a skipped=0 would claim the check ran.
 		body := renderServedValueProm(value, nil, now)
 		for _, banned := range []string{
 			`stellarindex_served_value_skipped{check="sdf_reserve_list"}`,
@@ -409,10 +407,8 @@ func TestParsePublishedReserveList_UnrecognisedRowIsNeverAPartialList(t *testing
 	}
 }
 
-// TestParsePublishedReserveList_EquivalentSpellingsParseWhole — JS
-// spellings of the SAME table (single quotes, quoted keys, trailing and
-// block comments, a brace inside a comment) must yield the full
-// published set, not a truncated one.
+// JS spellings of the same table (single quotes, quoted keys, trailing and block comments, a brace inside a comment)
+// must yield the full published set, not a truncated one.
 func TestParsePublishedReserveList_EquivalentSpellingsParseWhole(t *testing.T) {
 	fixture := readLumensFixture(t)
 	const (

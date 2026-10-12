@@ -7,11 +7,9 @@ import (
 	"testing"
 )
 
-// promtail-config.yaml.j2's journal drop filter is a single-quoted YAML scalar, which does no
-// backslash-escape processing, so the bytes between the quotes are exactly what promtail's RE2
-// regex compiles. A pattern authored with `\\.` requires a literal backslash before "service"
-// in the unit name, which never appears: the filter matches nothing and the noisy units it
-// names (systemd-tmpfiles-clean.service, systemd-logind.service, cron.service) reach Loki.
+// The promtail journal drop filter is a single-quoted YAML scalar with no backslash escaping, so its bytes are the RE2
+// regex. A `\\.` pattern needs a literal backslash in the unit name, matching nothing, so noisy units (tmpfiles-clean,
+// logind, cron) reach Loki.
 var promtailDropFilterPattern = regexp.MustCompile(`(?m)^\s*regex:\s*'([^']*)'\s*$`)
 
 func readPromtailDropFilter(t *testing.T) *regexp.Regexp {

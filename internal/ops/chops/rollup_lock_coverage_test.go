@@ -9,14 +9,9 @@ import (
 	"testing"
 )
 
-// TestRollupCLIsSerializeOnTheirLock pins that ch-creators-rollup, ch-sponsors-rollup and
-// ch-cohort-rollup refuse to run while another invocation of the SAME job holds its lock, as
-// ch-holders-rollup does (TestAcquireHoldersRollupLockSerializesConcurrentRuns).
-//
-// Unguarded, a manual run would race the 30-minute timer's invocation mid TRUNCATE -> fill ->
-// EXCHANGE on the same global staging tables. Each case holds the lock externally and asserts the
-// entry point returns the contention error BEFORE any network call, so no ClickHouse or config
-// file is needed.
+// ch-creators-rollup, ch-sponsors-rollup and ch-cohort-rollup must refuse to run while another invocation of the same
+// job holds its lock, as ch-holders-rollup does. Unguarded, a manual run races the 30-minute timer mid TRUNCATE -> fill
+// -> EXCHANGE on shared staging tables; each case asserts the contention error before any network call.
 func TestRollupCLIsSerializeOnTheirLock(t *testing.T) {
 	for _, tc := range []struct {
 		name string

@@ -213,10 +213,8 @@ type wordTaint struct {
 	accessor string
 }
 
-// classifyWord recognises the three spellings of the same operand — the
-// word itself, a Must* call, or a local bound to either — so a conversion
-// is judged the same whichever the author picked. A guard that only knew
-// the inline shape was defeated by `lo := p.Lo; int64(lo)`.
+// Recognises the three spellings of the same operand (the word itself, a Must* call, or a local bound to either) so a
+// conversion is judged alike. A guard that knew only the inline shape was defeated by `lo := p.Lo; int64(lo)`.
 func classifyWord(info *types.Info, tainted map[types.Object]wordTaint, expr ast.Expr) (wordTaint, bool) {
 	switch e := ast.Unparen(expr).(type) {
 	case *ast.CallExpr:
@@ -259,10 +257,9 @@ func eachBinding(n ast.Node, fn func(lhs ast.Expr, rhs ast.Expr)) {
 	}
 }
 
-// collectWordTaint records every object bound to a parts word, a Must*
-// result, or another tainted object, iterating to a fixpoint so a chain
-// of locals is seen through. Flow-insensitive on purpose: a local that
-// ever held a word is treated as the word (escape with //i128:ok).
+// Records every object bound to a parts word, a Must* result, or another tainted object, iterating to a fixpoint so
+// local chains are seen through. Flow-insensitive on purpose: a local that ever held a word is treated as the word
+// (escape with //i128:ok).
 func collectWordTaint(info *types.Info, files []*ast.File) map[types.Object]wordTaint {
 	tainted := map[types.Object]wordTaint{}
 	for changed := true; changed; {
@@ -293,10 +290,8 @@ func collectWordTaint(info *types.Info, files []*ast.File) map[types.Object]word
 	return tainted
 }
 
-// checkConversion inspects one call expression; when it is a lossy
-// numeric conversion of a parts-struct word (or a Must* accessor
-// result), directly or through a tainted local, it returns a violation
-// message, else "".
+// Inspects one call expression; a lossy numeric conversion of a parts word (or Must* result), direct or via a tainted
+// local, returns a violation message, else "".
 func checkConversion(info *types.Info, tainted map[types.Object]wordTaint, call *ast.CallExpr) string {
 	if len(call.Args) != 1 {
 		return ""
@@ -424,10 +419,8 @@ func checkTruncatingReciprocal(info *types.Info, pow10 map[types.Object]bool, ca
 	return fmt.Sprintf("big.Int.%s(10^n, x) truncates a reciprocal toward zero, biasing every inverted price low — use scale.InvertScaled / InvertScaledToDecimals (round half-up)", sel.Sel.Name)
 }
 
-// TestI128TruncationGuard — ADR-0003. Repo-wide go/types walk
-// rejecting int64/float/narrowing conversions of i128/u128/i256/u256
-// words. Every finding must be fixed or carry an //i128:ok marker
-// with a reason.
+// ADR-0003: repo-wide go/types walk rejecting int64/float/narrowing conversions of i128/u128/i256/u256 words. Every
+// finding must be fixed or carry an //i128:ok marker with a reason.
 func TestI128TruncationGuard(t *testing.T) {
 	pkgs := loadRepoPackages(t)
 
@@ -488,16 +481,9 @@ func TestI128TruncationGuard(t *testing.T) {
 	}
 }
 
-// TestI128TruncationGuard_PositiveControl proves the DETECTOR still FIRES on the truncation it
-// exists to catch. TestI128TruncationGuard asserts only the ABSENCE of violations on the live
-// tree, so silent rot of partTypes / partFields / mustAccessors / isPartsType (an SDK field
-// rename, a moved Int128Parts, a changed /xdr path) would make "detector works, tree clean"
-// indistinguishable from "detector broken, finds nothing".
-//
-// It is self-contained: a synthetic package whose path ends in "/xdr" with a locally-defined
-// Int128Parts, so it needs no importer and cannot go stale against the real SDK. It exercises
-// every fragile table: partTypes, partFields, isPartsType (the /xdr suffix + Named-type
-// resolution), the field-kind comparison, and mustAccessors (the Must* branch).
+// Proves the detector still FIRES: the main guard only asserts no violations, so rot of partTypes / partFields /
+// mustAccessors / isPartsType would look like "tree clean". Uses a self-contained synthetic "/xdr" package with a local
+// Int128Parts, so it cannot go stale.
 func TestI128TruncationGuard_PositiveControl(t *testing.T) {
 	const src = `package xdr
 
@@ -581,10 +567,8 @@ func sink() {
 	}
 }
 
-// TestI128TruncationGuard_BigNarrowingPositiveControl proves the math/big sink fires on the
-// widen-then-narrow spellings that carry no parts word or Must* call, such as
-// `new(big.Float).SetInt(totalQuote).Float64()`, and stays silent on same-named methods of
-// other types.
+// Proves the math/big sink fires on widen-then-narrow spellings with no parts word or Must* call, such as
+// `new(big.Float).SetInt(totalQuote).Float64()`, and stays silent on same-named methods of other types.
 func TestI128TruncationGuard_BigNarrowingPositiveControl(t *testing.T) {
 	const src = `package sink
 
@@ -654,10 +638,8 @@ func sink(total, part *big.Int, r big.Rat) {
 	}
 }
 
-// TestTruncatingReciprocalGuard_PositiveControl proves the reciprocal
-// check fires on the inline, through-a-local and Mul(scale, scale)
-// spellings and stays quiet on a divisor-side power of ten, a doubled
-// (round-half-up) numerator and exact big.Rat division.
+// Proves the reciprocal check fires on the inline, through-a-local and Mul(scale, scale) spellings.
+// It stays quiet on a divisor-side power of ten, a doubled (round-half-up) numerator and exact big.Rat division.
 func TestTruncatingReciprocalGuard_PositiveControl(t *testing.T) {
 	const src = `package sink
 

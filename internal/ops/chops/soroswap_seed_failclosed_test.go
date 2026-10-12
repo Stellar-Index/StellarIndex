@@ -18,16 +18,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 )
 
-// The soroswap pair seed is a pre-loop input of compute-completeness (and verify-reconciliation)
-// that must fail closed like every sibling precondition, not log and continue. These tests pin
-// BOTH halves of the contract through the production function and a real stellar-rpc client
-// against a scripted JSON-RPC server:
-//
-//   - a seed that is CONFIGURED and fails (no endpoint, RPC error, error part-way through the
-//     sweep) returns an error, and both commands return it instead of printing it;
-//   - a seed that is DISABLED (factory_contract empty, the documented disable and config
-//     default) is not a failure, so failing closed does not abort every source's verdict on
-//     hosts that never had a seed.
+// The soroswap pair seed must fail closed: a CONFIGURED seed that fails (no endpoint, RPC error, mid-sweep error)
+// returns an error. A DISABLED seed (empty factory_contract, the default) is not a failure, so hosts without a seed
+// still get verdicts.
 
 // seedFixtureStrkey returns a deterministic C-strkey.
 func seedFixtureStrkey(t *testing.T, b byte) string {
@@ -198,11 +191,9 @@ func TestSeedSoroswapForRecon_CleanSweepSeedsTheDecoder(t *testing.T) {
 	}
 }
 
-// One transient response on the first call of an otherwise clean one-pair sweep. Real backoff, so
-// each shape takes ~2s. The shapes are the two ends of what a hosted endpoint sends: a proxy's
-// HTML 503, and a rate limit worded as HTTP 429 over a JSON-RPC error envelope with a
-// server-range code. The retry must classify the status from the response, not the client's
-// error text, because the client returns the bare envelope error.
+// One transient response on the first call of a clean one-pair sweep, with real backoff (~2s per shape): a proxy's HTML
+// 503 and a rate limit as HTTP 429 over a JSON-RPC error envelope. The retry must classify status from the response, not
+// the client's error text, which is the bare envelope error.
 func TestSeedSoroswapForRecon_TransientRPCFailureDoesNotFailTheSeed(t *testing.T) {
 	shapes := map[string]func(w http.ResponseWriter, id int){
 		"HTTP 503, HTML body": func(w http.ResponseWriter, _ int) {

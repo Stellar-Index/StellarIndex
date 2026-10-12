@@ -36,10 +36,8 @@ func TestFollowLoop_ErrorRetriesThenCancelExits(t *testing.T) {
 	}
 }
 
-// TestFollowLoop_MidDeriveCancelIsClean: if SIGTERM lands WHILE a catch-up is running, the
-// loop must treat the surfaced ctx error as a clean shutdown (return nil) and NOT log a
-// derive failure. The `ctx.Err()` shortcut in followLoop exists to keep shutdown out of the
-// error log; this captures stderr so deleting the shortcut turns the test red.
+// TestFollowLoop_MidDeriveCancelIsClean: SIGTERM during a catch-up must be a clean shutdown (return nil), not a logged
+// derive failure. It captures stderr so deleting the ctx.Err() shortcut in followLoop turns the test red.
 func TestFollowLoop_MidDeriveCancelIsClean(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -69,10 +67,9 @@ func TestFollowLoop_MidDeriveCancelIsClean(t *testing.T) {
 	}
 }
 
-// TestFollowLoop_RunsCatchUpImmediately: the first catch-up must fire before the
-// first tick elapses (a user opening the page shouldn't wait a full interval for
-// the feed to advance). With a long interval, a single immediate call then a
-// cancel proves the loop doesn't block on the ticker first.
+// TestFollowLoop_RunsCatchUpImmediately: the first catch-up fires before the first tick, so a user opening the page does
+// not wait an interval. A long interval, one immediate call, then cancel proves the loop does not block on the ticker
+// first.
 func TestFollowLoop_RunsCatchUpImmediately(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -91,10 +88,8 @@ func TestFollowLoop_RunsCatchUpImmediately(t *testing.T) {
 	}
 }
 
-// TestFollowLoop_IdleAccounting pins the count handed to each tick: consecutive idle ticks,
-// reset to 0 by a tick that worked and left alone by one that errored. The idle log line and
-// backoff both key off it, so a miscount would hide a stall or back off a live feed. No
-// timing is asserted; the policy itself is TestFollowTick.
+// Pins the idle count handed to each tick: consecutive idle ticks, reset by a tick that worked, kept by one that errored.
+// A miscount would hide a stall or back off a live feed. No timing asserted; policy is TestFollowTick.
 func TestFollowLoop_IdleAccounting(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

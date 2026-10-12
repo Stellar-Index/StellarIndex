@@ -33,10 +33,8 @@ import (
 
 // ─── logging capture ─────────────────────────────────────────────
 
-// logRecorder captures slog output so a test can assert on the WARN /
-// ERROR an operator would see. Several helpers below degrade rather
-// than fail; on those paths the log line is the only signal the
-// degrade happened, so it is part of the contract.
+// logRecorder captures slog output so tests can assert the WARN/ERROR an operator sees. Several helpers degrade rather
+// than fail, so the log line is the only signal and part of the contract.
 type logRecorder struct {
 	mu  sync.Mutex
 	buf bytes.Buffer
@@ -78,11 +76,8 @@ func testRedisClient(t *testing.T) redis.UniversalClient {
 	return rdb
 }
 
-// ─── nilOrMounter ────────────────────────────────────────────────
-//
-// The typed-nil trap: v1.Server gates each dashboard route family on a nil check, and an
-// interface holding a typed-nil pointer is not nil. Without this helper the routes would go
-// live with a nil receiver behind them, answering on a route the operator believes is disabled.
+// Typed-nil trap: v1.Server gates each dashboard route family on a nil check, and an interface holding a typed-nil
+// pointer is not nil. Without this helper routes go live with a nil receiver on a route the operator thinks is disabled.
 
 // TestNilOrMounter_TypedNilBecomesUntypedNil is the direct assertion:
 // what comes back must compare == nil, which the typed nil handed in
@@ -179,10 +174,8 @@ func TestNilOrMounter_UnwiredBundleLeavesDashboardRoutesUnmounted(t *testing.T) 
 
 // ─── buildAuthMiddleware ─────────────────────────────────────────
 
-// TestBuildAuthMiddleware_ModeDispatch pins the auth_mode to middleware mapping. A mode that
-// should return a middleware but returns nil is an auth bypass, since the stack omits absent
-// middleware. The unknown-mode arm logs and falls through to no-auth (fail-open) on purpose;
-// the companion test pins the log, which is the operator's only warning.
+// Pins the auth_mode to middleware mapping: a mode that should yield a middleware but returns nil is an auth bypass.
+// Unknown mode logs and falls through to no-auth (fail-open) on purpose; the companion test pins the log.
 func TestBuildAuthMiddleware_ModeDispatch(t *testing.T) {
 	t.Parallel()
 
@@ -264,10 +257,8 @@ func TestBuildDashboardBundle_UnconfiguredIsNotAnError(t *testing.T) {
 	}
 }
 
-// TestDashboardKeyMirror_WiredWheneverRedisExists pins that the
-// dashboard key mirror depends on Redis alone, never on auth_backend, so a
-// key minted under redis still dies when a postgres-backend instance
-// revokes it.
+// Pins that the dashboard key mirror depends on Redis alone, never on auth_backend, so a key minted under redis still
+// dies when a postgres-backend instance revokes it.
 func TestDashboardKeyMirror_WiredWheneverRedisExists(t *testing.T) {
 	t.Parallel()
 
@@ -300,10 +291,8 @@ func TestDashboardKeyMirror_WiredWheneverRedisExists(t *testing.T) {
 	}
 }
 
-// TestBuildDashboardBundle_ConfiguredWithoutPostgresFailsClosed — the
-// opposite arm. An operator who set base_url expects the dashboard to
-// work; wiring it against a nil *sql.DB would build handlers that
-// nil-panic on the first request instead of failing at startup.
+// Opposite arm: an operator who set base_url expects a working dashboard, so configuring it without Postgres must fail
+// at startup rather than build handlers over a nil *sql.DB that panic on the first request.
 func TestBuildDashboardBundle_ConfiguredWithoutPostgresFailsClosed(t *testing.T) {
 	t.Parallel()
 
@@ -343,10 +332,8 @@ func TestBuildDashboardBundle_ExposesUserStoreForSessionRetention(t *testing.T) 
 	}
 }
 
-// ─── buildWebhookHandlers / buildPriceAlertHandlers ──────────────
-//
-// Neither constructor touches the *sql.DB at construction, so a nil handle reaches them. Pinning
-// that matters because a dropped store would otherwise fail on the first request, not at startup.
+// Neither constructor touches the *sql.DB at construction, so a nil handle reaches them. Pinned because a dropped store
+// would otherwise fail on the first request, not at startup.
 
 func TestBuildWebhookHandlers_ConstructsAndReturnsItsStore(t *testing.T) {
 	t.Parallel()
@@ -378,10 +365,8 @@ func TestBuildPriceAlertHandlers_Constructs(t *testing.T) {
 
 // ─── wireDashboardAuthThrottles ──────────────────────────────────
 
-// TestWireDashboardAuthThrottles_RedisAbsentDegradesToInProcess pins the single-instance
-// fallback. The login throttle stays set, since nil would make magic-link requests an open mail
-// relay. The two Redis-only guards stay unset, since in-process ones cannot give a fleet-wide
-// guarantee. The operator is warned, because the fallback is only safe on one instance.
+// Pins the single-instance fallback without Redis: the login throttle stays set (nil would make magic-link an open mail
+// relay); the two Redis-only guards stay unset (in-process ones can't be fleet-wide); the operator is warned.
 func TestWireDashboardAuthThrottles_RedisAbsentDegradesToInProcess(t *testing.T) {
 	t.Parallel()
 
@@ -407,10 +392,8 @@ func TestWireDashboardAuthThrottles_RedisAbsentDegradesToInProcess(t *testing.T)
 	}
 }
 
-// TestWireDashboardAuthThrottles_RedisPresentWiresAllThree — with Redis
-// every guard is fleet-safe and all three must be set. A missing
-// PasskeyCeremonyGuard here is a replay hole the Redis-less test cannot
-// see, because there the same field is correctly nil.
+// With Redis every guard is fleet-safe, so all three must be set. A missing PasskeyCeremonyGuard is a replay hole the
+// Redis-less test cannot see, since there that field is correctly nil.
 func TestWireDashboardAuthThrottles_RedisPresentWiresAllThree(t *testing.T) {
 	t.Parallel()
 

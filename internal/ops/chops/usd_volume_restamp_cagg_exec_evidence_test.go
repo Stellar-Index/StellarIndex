@@ -16,25 +16,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// A -write run never EXECUTES its own CAGG follow-up.
-//
-// restampCAGGFollowUp (usd_volume_restamp_xlmbase.go) renders the ordered
-// `CALL refresh_continuous_aggregate(...)` block every finished restamp needs, and
-// xlmBaseRestampRun.summary prints it after every run, including a -write run that changed
-// `trades`. No restamp store (xlmBaseRestampStore, xlmQuoteRestampStore, cexFiatRestampStore,
-// estimatedChunkApply) has an ExecContext or timescale.Store.RefreshContinuousAggregate; they
-// carry only Plan/Apply. The exact tier's in-place run and chunk walk likewise print it.
-//
-// Proven by construction: evidenceStore satisfies xlmBaseRestampStore with ONLY Plan+Apply, so
-// the compiler confirms runXLMBaseRestamp needs no execution capability to finish a -write run,
-// and the captured stdout shows the operator handed SQL text instead of a completed refresh.
-//
-// Deliberately not auto-fixed: the print-only contract is the reviewed resolution (see
-// TestXLMBaseRestampFollowUp_* in usd_volume_report_claims_test.go). Making it an executor is a
-// product decision (block a CLI run on a multi-hour refresh? new flag? exit-code semantics?)
-// and would widen the shared chunkRestampTier.finish contract the exact tier implements.
-//
-//	go test -tags t688evidence ./internal/ops/chops/ -run TestWriteRunNeverExecutesItsOwnCAGGFollowUp -v
+// A -write run never executes its own CAGG follow-up: restampCAGGFollowUp output is only printed, and no restamp store
+// has an exec or RefreshContinuousAggregate capability, only Plan/Apply; making it an executor is a product decision, so
+// print-only stays.
 type evidenceStore struct{}
 
 func (evidenceStore) PlanXLMBaseUSDVolumeRestamp(_ context.Context, _ timescale.XLMBaseRestampParams) (*timescale.XLMBaseRestampPlan, error) {

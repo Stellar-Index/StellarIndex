@@ -15,11 +15,9 @@ import (
 )
 
 func validOracle() c.OracleUpdate {
-	// Reflector Pulse shape: price at 14 decimals, i128 payload.
-	// Value here: 12.42 USDC per XLM = 1242000000000000 (at 10^14 scale).
-	// We use the real USDC classic asset as the Quote so the fixture
-	// JSON-round-trips; the separate fiat-sentinel test exercises the
-	// placeholder path.
+	// Reflector Pulse shape: price at 14 decimals, i128 payload; 12.42 USDC per XLM = 1242000000000000 at 10^14 scale. Uses
+	// the real USDC classic asset as Quote so the fixture JSON-round-trips; the fiat-sentinel test covers the placeholder
+	// path.
 	v, _ := new(big.Int).SetString("1242000000000000", 10)
 	return c.OracleUpdate{
 		Source:     "reflector-dex",
@@ -120,11 +118,8 @@ func TestOracle_Validate_errors(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected error, got nil")
 			}
-			// Every Validate failure must wrap the canonical sentinel
-			// so callers can `errors.Is(err, ErrInvalidOracle)` to
-			// classify. A missing %w in a future check would still
-			// trip `err == nil` → t.Fatal above and pass this test
-			// silently; this check catches that regression too.
+			// Every Validate failure must wrap the sentinel so callers can classify with errors.Is(err, ErrInvalidOracle). A missing
+			// %w would still pass the err == nil check above; this check catches it.
 			if !errors.Is(err, c.ErrInvalidOracle) {
 				t.Errorf("err %v does not wrap ErrInvalidOracle", err)
 			}
@@ -132,10 +127,8 @@ func TestOracle_Validate_errors(t *testing.T) {
 	}
 }
 
-// TestOracle_Validate_observerAcceptsEveryAddressKind pins that Band
-// and Redstone stamp Observer from scval.AsAddressStrkey, so Validate
-// must accept every strkey kind that decoder can return — a contract
-// relayer (C…) must not fail the whole batch as an insert error.
+// Band and Redstone stamp Observer from scval.AsAddressStrkey, so Validate must accept every strkey kind it can return.
+// A contract relayer (C...) must not fail the whole batch as an insert error.
 func TestOracle_Validate_observerAcceptsEveryAddressKind(t *testing.T) {
 	var key xdr.Uint256
 	for i := range key {
@@ -172,11 +165,9 @@ func TestOracle_Validate_observerAcceptsEveryAddressKind(t *testing.T) {
 	}
 }
 
-// TestOracle_Validate_rejectsSelfPriced is the M12 guard: an oracle
-// update whose Asset and Quote are the same canonical asset is
-// degenerate (e.g. "USD priced in USD" ⇒ a tautological price of 1) and
-// must be rejected — nothing downstream should ingest a self-referential
-// quote. A genuine cross-asset update must still validate.
+// An oracle update whose Asset and Quote are the same canonical asset is degenerate (a tautological price of 1) and must
+// be rejected. Nothing downstream should ingest a self-referential quote; a genuine cross-asset update must still
+// validate.
 func TestOracle_Validate_rejectsSelfPriced(t *testing.T) {
 	t.Run("native priced in native is rejected", func(t *testing.T) {
 		u := validOracle()

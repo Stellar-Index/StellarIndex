@@ -254,10 +254,9 @@ func TestReportCHRebuildCountsListsEveryReDerivedSource(t *testing.T) {
 	}
 }
 
-// TestReportCHRebuildCountsFailsARequiredSourceThatWroteNothing pins the exit
-// gate for an emptied window: a -require-rows source that re-derived no row
-// fails the run, even when all it produced failed to write, while an
-// unrequired quiet source does not.
+// TestReportCHRebuildCountsFailsARequiredSourceThatWroteNothing pins the exit gate for an emptied window: a -require-
+// rows source that re-derived no row fails the run, even if all it produced failed to write; an unrequired quiet source
+// does not.
 func TestReportCHRebuildCountsFailsARequiredSourceThatWroteNothing(t *testing.T) {
 	cat := []reconSource{{name: "aquarius"}, {name: "blend"}, {name: "cctp"}}
 	reDerived := []string{"aquarius", "blend", "cctp"}
@@ -313,10 +312,9 @@ func TestCHRebuildUnstorableTradeFailsTheRun(t *testing.T) {
 	}
 }
 
-// TestDrainAndWriteCutsTradeBatchesOnLedgerBoundary pins that no ledger's
-// trades are split across two batches. The bulk COPY writer's emptiness probe
-// is `ledger BETWEEN min AND max`; a ledger split across batches N and N+1
-// makes N+1 find N's tail and refuse the COPY on every batch.
+// TestDrainAndWriteCutsTradeBatchesOnLedgerBoundary: no ledger's trades may be split across two batches. The bulk COPY
+// writer's emptiness probe is `ledger BETWEEN min AND max`, so a split ledger makes batch N+1 find N's tail and refuse
+// the COPY every time.
 func TestDrainAndWriteCutsTradeBatchesOnLedgerBoundary(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	ctx := context.Background()
@@ -371,10 +369,8 @@ func TestDrainAndWriteCutsTradeBatchesOnLedgerBoundary(t *testing.T) {
 	}
 }
 
-// TestParseCSVList pins the -contracts flag parse: trimmed, order-preserving,
-// de-duplicated, empty entries dropped. An operator pastes the affected
-// contract C-strkeys as a comma list (often with stray whitespace from a
-// spreadsheet), and the scoped recovery reads exactly that subset.
+// The -contracts flag parse is trimmed, order-preserving, de-duplicated, with empty entries dropped.
+// Operators paste C-strkeys with stray whitespace; scoped recovery must read exactly that subset.
 func TestParseCSVList(t *testing.T) {
 	cases := []struct {
 		name string
@@ -405,10 +401,8 @@ func TestParseCSVList(t *testing.T) {
 	}
 }
 
-// TestContractAllowed pins the -contracts scope gate applied in the general
-// event pass (the containsStr prefilter): no override lets every contract
-// through; a non-empty override admits ONLY its members, so a scoped recovery
-// decodes just the affected contracts' events and skips the rest.
+// TestContractAllowed pins the -contracts scope gate in the general event pass (the containsStr prefilter):
+// no override admits every contract; a non-empty override admits only its members, so scoped recovery skips the rest.
 func TestContractAllowed(t *testing.T) {
 	const (
 		affected = "CBH4M45TOCKF"
@@ -459,10 +453,9 @@ func TestDropReconSources(t *testing.T) {
 	}
 }
 
-// TestSEP41RollupResetPlan pins when a -sep41 -write run resets the sep41_supply_rollup fold
-// checkpoint and for which contracts. A re-derive below the checkpoint must reset the fold or the
-// worker double-counts. It fires only when the supply source is written, scoped to the CH read
-// set (nil is all rows, the -contracts override is scoped).
+// TestSEP41RollupResetPlan pins when a -sep41 -write run resets the sep41_supply_rollup fold checkpoint, and for which
+// contracts. A re-derive below the checkpoint must reset the fold or the worker double-counts; it fires only when supply
+// is written, scoped to the CH read set (nil is all, -contracts is scoped).
 func TestSEP41RollupResetPlan(t *testing.T) {
 	affected := []string{"CBH4M45TOCKF", "CDLZFC3SYJYD"}
 	cases := []struct {
@@ -493,10 +486,9 @@ func TestSEP41RollupResetPlan(t *testing.T) {
 	}
 }
 
-// checkCHRebuildLiveOverlap: ch-rebuild -sources <projected> -to <tip> -write would be a second
-// writer of a projector-owned domain, with a positive derive_generation so its rows win the
-// upsert. A guard on only one of two bulk writers is not a guard. Scripted cursor, mirroring
-// TestCheckLiveCursorGuard.
+// checkCHRebuildLiveOverlap: ch-rebuild -sources <projected> -to <tip> -write would be a second writer of a projector-
+// owned domain, with a positive derive_generation so its rows win the upsert. A guard on only one of two bulk writers is
+// not a guard; scripted cursor mirrors TestCheckLiveCursorGuard.
 func TestCheckCHRebuildLiveOverlap(t *testing.T) {
 	// The live projector is at 63,000,000 for aquarius, is still behind at
 	// 61,000,000 for blend, and has never run for rozo.
@@ -611,11 +603,9 @@ func TestProjectedSourcesInRun_SplitsProjectedFromNot(t *testing.T) {
 	}
 }
 
-// The sep41 pair is projected only when contracts are actually WATCHED
-// (projector.BuildRegistry skips them otherwise, and the dispatcher then
-// writes nothing either) — so the guard's answer is config-dependent, not
-// name-dependent. Pins that the resolution reads the live registry rather
-// than a list someone typed here.
+// The sep41 pair is projected only when contracts are actually WATCHED (projector.BuildRegistry skips them otherwise,
+// and the dispatcher writes nothing either), so the guard's answer is config-dependent. This pins that resolution reads
+// the live registry, not a typed list.
 func TestProjectedSourcesInRun_SEP41FollowsTheWatchedSet(t *testing.T) {
 	sep41Cat := []reconSource{{name: sep41transfers.SourceName}, {name: sep41supply.SourceName}}
 	all := func(string) bool { return true }
@@ -640,10 +630,9 @@ func TestProjectedSourcesInRun_SEP41FollowsTheWatchedSet(t *testing.T) {
 	}
 }
 
-// TestCHRebuild_ModeFlagsFollowTheSharedWriteGate pins ch-rebuild to the
-// shared -write/-dry-run convention. The named-source BackfillSafe refusal
-// is armed only in write mode, so it tells the two modes apart before any
-// datastore is reached; a dry run falls through to the absent config.
+// TestCHRebuild_ModeFlagsFollowTheSharedWriteGate pins ch-rebuild to the shared -write/-dry-run convention. The named-
+// source BackfillSafe refusal is armed only in write mode, so it tells the modes apart before any datastore; a dry run
+// falls through to the absent config.
 func TestCHRebuild_ModeFlagsFollowTheSharedWriteGate(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -732,10 +721,8 @@ func TestCHRebuild_RangeGuardUsesThePassSelection(t *testing.T) {
 	}
 }
 
-// sourcesTestCatalogue is a stand-in for buildReconciliationCatalogue's
-// output shaped like the real one: an event source with a decoder, a
-// ContractCall source, and the census-only sdex entry. Only the names
-// matter to the -sources gate.
+// sourcesTestCatalogue stands in for buildReconciliationCatalogue's output: an event source with a decoder, a
+// ContractCall source, and the census-only sdex entry. Only the names matter to the -sources gate.
 func sourcesTestCatalogue() []reconSource {
 	return []reconSource{
 		{name: "soroswap"},
@@ -745,10 +732,9 @@ func sourcesTestCatalogue() []reconSource {
 	}
 }
 
-// TestCheckCHRebuildSources_unknownNameRefused pins the DO-NOTHING
-// trap: `ch-rebuild -sources sdx` (a typo for sdex) made enabled() false
-// for every real source, so the run decoded nothing, printed its report
-// and exited 0 — a rebuild-of-nothing reported as success.
+// TestCheckCHRebuildSources_unknownNameRefused pins the do-nothing trap: `ch-rebuild -sources sdx` (typo for sdex) made
+// enabled() false for every source, so the run decoded nothing, printed its report and exited 0, reporting a rebuild of
+// nothing as success.
 func TestCheckCHRebuildSources_unknownNameRefused(t *testing.T) {
 	err := checkCHRebuildSources(sourcesTestCatalogue(), []string{"sdx"})
 	if err == nil {
@@ -799,11 +785,8 @@ func TestCheckCHRebuildSources_knownNamesAccepted(t *testing.T) {
 	}
 }
 
-// TestCHRebuildSourceUniverse_carriesTheSEP41Pair guards the promotion
-// caveat: buildReconciliationCatalogue only promotes the SEP-41 sources
-// when [supply] watched_sep41_contracts is configured, so the universe
-// must add them unconditionally or `-sources sep41_supply` would be
-// refused as unknown on a host without the watched set.
+// The source universe must add the SEP-41 pair unconditionally: the catalogue only promotes them when
+// [supply] watched_sep41_contracts is set, else `-sources sep41_supply` is refused as unknown on hosts without it.
 func TestCHRebuildSourceUniverse_carriesTheSEP41Pair(t *testing.T) {
 	got := chRebuildSourceUniverse([]reconSource{{name: "soroswap"}})
 	want := map[string]bool{
@@ -860,10 +843,8 @@ func TestCHRebuild_ValidatesSourcesAgainstTheCatalogue(t *testing.T) {
 
 type recordedWindow = timescale.ProjectionDirtyWindow
 
-// fakeDirtyWindowRecorder stands in for the Postgres store at the one call
-// [recordCHRebuildDirtyWindows] makes. The SQL itself is
-// timescale.Store.RecordProjectionDirtyWindow's, unchanged and already
-// covered; what is new is WHAT this path asks it to write.
+// fakeDirtyWindowRecorder stands in for the Postgres store at the one call recordCHRebuildDirtyWindows makes. The SQL is
+// timescale.Store.RecordProjectionDirtyWindow's and covered elsewhere; this pins what this path asks it to write.
 type fakeDirtyWindowRecorder struct {
 	got    []recordedWindow
 	failOn string
@@ -1001,10 +982,9 @@ func TestCheckCHRebuildRecordDirtyFlags(t *testing.T) {
 	}
 }
 
-// A -write run rewrites served rows below the completeness watermark. Before
-// it writes, it must file the same obligation projector-replay and
-// projected-rebuild file, one per re-derived source, or the next verdict
-// carries its prior clean claim over the rewritten range.
+// A -write run rewrites served rows below the completeness watermark. Before writing it must file the same obligation
+// projector-replay and projected-rebuild file, one per re-derived source, or the next verdict keeps its clean claim over
+// the rewritten range.
 func TestCHRebuild_WriteRecordsDirtyWindowBeforeWriting(t *testing.T) {
 	t.Parallel()
 	b, err := os.ReadFile("ch_rebuild.go")

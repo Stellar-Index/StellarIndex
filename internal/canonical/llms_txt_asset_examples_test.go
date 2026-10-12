@@ -10,16 +10,12 @@ import (
 	"testing"
 )
 
-// llmsTxtAssetIDExample matches the backtick-quoted asset_id examples
-// in llms.txt's intro paragraph — the ones whose prefix or shape
-// declares them as canonical asset identifiers, not incidental code
-// (route paths, HTTP verbs, etc).
+// Matches the backtick-quoted asset_id examples in llms.txt's intro whose prefix or shape marks them as canonical asset
+// identifiers, not incidental code such as route paths or HTTP verbs.
 var llmsTxtAssetIDExample = regexp.MustCompile("`(native|XLM|[a-z]+:[A-Za-z0-9:]+|[A-Z0-9]+-G[A-Z0-9]{55})`")
 
-// TestLlmsTxtAssetExamples_ParseAsCanonicalAssets pins that llms.txt, which AI agents read to
-// learn our asset_id format, only advertises shapes ParseAsset accepts (a colon inside the issuer
-// breaks the classic code:issuer alias split, as `credit:USDC:G…` did). Every asset_id example
-// in the file must round-trip through ParseAsset.
+// llms.txt, which AI agents read to learn the asset_id format, may only advertise shapes ParseAsset accepts. A colon
+// inside the issuer breaks the classic code:issuer split, as `credit:USDC:G...` did; every example must round-trip.
 func TestLlmsTxtAssetExamples_ParseAsCanonicalAssets(t *testing.T) {
 	path := filepath.Join(repoRoot(), "web/explorer/public/llms.txt")
 	b, err := os.ReadFile(path)

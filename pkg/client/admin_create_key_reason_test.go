@@ -10,12 +10,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/pkg/client"
 )
 
-// TestAdminCreateKey_SendsReasonHeader. The server's POST
-// /v1/admin/keys (internal/api/v1/admin_keys.go, handleAdminKeysCreate)
-// requires an `X-Reason` header and 400s without one — every admin
-// write captures a reason into the audit log. Without a
-// Reason field and a way to attach an extra header, [client.Client.AdminCreateKey]
-// could never satisfy the server's contract: every real call would 400.
+// The server's POST /v1/admin/keys requires an `X-Reason` header (audit log) and 400s without it. AdminCreateKey must
+// therefore send Reason as that header.
 func TestAdminCreateKey_SendsReasonHeader(t *testing.T) {
 	var gotReason string
 	var gotBody map[string]any

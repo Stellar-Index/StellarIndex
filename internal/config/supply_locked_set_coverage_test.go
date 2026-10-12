@@ -105,10 +105,8 @@ func TestSupplyValidate_StaleComponentKeysAccepted(t *testing.T) {
 	}
 }
 
-// per_asset_locked_sets / max_supply_overrides keys are matched
-// exactly by the classic and SEP-41 computers: every spelling of a
-// watched asset passes, XLM (Algorithm 1 reads neither map) and any
-// key naming no watched asset fail at boot.
+// per_asset_locked_sets / max_supply_overrides keys are matched exactly by the classic and SEP-41 computers. Every
+// spelling of a watched asset passes; XLM (Algorithm 1 reads neither map) and keys naming no watched asset fail at boot.
 func TestSupplyValidate_PolicyOverrideKeys(t *testing.T) {
 	for _, key := range []string{"PHO-" + phoIssuerAccount, "PHO:" + phoIssuerAccount, sep41Contract} {
 		sc := staleComponentSupplyConfig(nil)

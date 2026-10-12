@@ -9,16 +9,9 @@ import (
 	"testing"
 )
 
-// ─── ha-plan.md's `file:line` citations must resolve ────────
-//
-// docs/architecture/ha-plan.md backs several claims with a `path:line` or `path:start-end`
-// citation into ansible/shell source so a reader can check them. A stale pointer sends an
-// operator mid-incident to the wrong lines, the failure the doc's restore-drill section (§8)
-// warns about for a broken runbook link.
-//
-// This pins the citations against the files they name, so a reflow of
-// 18-pgbackrest-backup.yml (or sla-probe.sh) fails this test instead of leaving a silently
-// wrong line number in the doc.
+// ha-plan.md backs claims with `path:line` / `path:start-end` citations into ansible/shell source; a stale pointer sends
+// an operator mid-incident to the wrong lines. This pins them against the named files so reflowing 18-pgbackrest-
+// backup.yml or sla-probe.sh fails here.
 func TestHAPlanFileLineCitationsResolve(t *testing.T) {
 	doc := readRepoFile(t, "docs/architecture/ha-plan.md")
 

@@ -9,11 +9,9 @@ import (
 	"time"
 )
 
-// Red-proof (oracle capture-totality design, PR-1): on origin/main
-// ParseAsset("raw:BTC") fell into the classic `<code>:<issuer>` split
-// and failed with `invalid asset: account id "BTC" ...`, so a raw:
-// row could never be written (Value → Validate) nor read back (every
-// oracle_updates reader re-parses with ParseAsset → 500).
+// ParseAsset("raw:BTC") must not fall into the classic `<code>:<issuer>` split and fail with an invalid account id.
+// Otherwise a raw: row could never be written (Value -> Validate) nor read back (oracle_updates readers re-parse with
+// ParseAsset).
 func TestOracleRawAsset_wireForm(t *testing.T) {
 	cases := []struct{ wire, code string }{
 		{"raw:BTC", "BTC"},
@@ -108,11 +106,8 @@ func TestOracleRawAsset_validateRejectsForbiddenFields(t *testing.T) {
 	}
 }
 
-// Storage + JSON round-trip: this is what lets every oracle_updates
-// reader (LatestOracleUpdatesForAssets / LatestOracleObservation /
-// LatestAggregatorPricesForPair, which all re-parse the asset column
-// through ParseAsset/Scan) tolerate a raw row instead of failing the
-// whole request.
+// Storage and JSON round-trip: lets every oracle_updates reader (which re-parses the asset column via ParseAsset/Scan)
+// tolerate a raw row instead of failing the whole request.
 func TestOracleRawAsset_sqlAndJSON(t *testing.T) {
 	a, err := NewOracleRawAsset("SolvBTC.BBN_FUNDAMENTAL/USD")
 	if err != nil {
