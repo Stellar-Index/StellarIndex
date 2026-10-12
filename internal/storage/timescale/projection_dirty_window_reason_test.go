@@ -1,6 +1,9 @@
 package timescale
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // The Reason column of projection_dirty_windows is the only thing that distinguishes its
 // two writers, and a reader depends on it: the projector suppresses
@@ -54,5 +57,53 @@ func TestProjectionDirtyWindowIsProjectorReplay(t *testing.T) {
 				t.Errorf("IsProjectorReplay(%q) = %v, want %v", tc.reason, got, tc.want)
 			}
 		})
+	}
+}
+
+// The third writer of projection_dirty_windows: a clean-slate window that
+// scripts/ops/ch-rebuild-projected.sh deleted and did not re-derive. Its provenance must be
+// distinguishable from the other two and must NOT read as a projector-replay rewind, which
+// suppresses stellarindex_projector_lag_high while this row means rows are MISSING.
+func TestCHRebuildEmptiedReason(t *testing.T) {
+	got := CHRebuildEmptiedReason(61_000_000, 61_999_999)
+	if want := "ch-rebuild-projected emptied [61000000,61999999]"; got != want {
+		t.Errorf("CHRebuildEmptiedReason = %q, want %q", got, want)
+	}
+	w := ProjectionDirtyWindow{Source: "cctp", From: 61_000_000, To: 61_999_999, Reason: got}
+	if w.IsProjectorReplay() {
+		t.Errorf("an emptied-window row classifies as a projector-replay rewind (%q) — the lag alert would be suppressed over a range whose rows are gone", got)
+	}
+	// Distinct from the rebuild prefix too: `projected-rebuild -write`
+	// REWROTE its range, this one EMPTIED it, and an operator reading the
+	// table must be able to tell which.
+	if pr := ProjectedRebuildReason(61_000_000, 61_999_999); pr == got {
+		t.Errorf("the emptied reason is indistinguishable from projected-rebuild's: %q", got)
+	}
+}
+
+// TestClearProjectionDirtyWindowGuardsOnUpdatedAt: the bounds only catch a widened window, so the clear must
+// also require `updated_at = $4`; any re-record bumps it and the window stays pending (fail-closed).
+// Asserted on the query text; the end-to-end path is in the integration suite.
+func TestClearProjectionDirtyWindowGuardsOnUpdatedAt(t *testing.T) {
+	t.Parallel()
+	q := clearProjectionDirtyWindowQuery
+
+	if !strings.Contains(q, "updated_at = $4") {
+		t.Error("the clear does not compare updated_at — a subset or identical " +
+			"re-record between this run's read and its clear would be deleted, " +
+			"erasing an unverified rewind and letting the next verdict carry a " +
+			"clean claim over it")
+	}
+	// The bounds must stay: they are what makes a WIDENED window survive.
+	// updated_at alone would delete a widened row whose bounds no longer
+	// match this run's obligation.
+	for _, want := range []string{"from_ledger >= $2", "to_ledger <= $3", "source = $1"} {
+		if !strings.Contains(q, want) {
+			t.Errorf("the clear lost its %q predicate — the bounds and the "+
+				"updated_at guard cover different races and both are required", want)
+		}
+	}
+	if !strings.HasPrefix(strings.TrimSpace(q), "DELETE FROM projection_dirty_windows") {
+		t.Errorf("unexpected statement shape: %q", strings.TrimSpace(q))
 	}
 }

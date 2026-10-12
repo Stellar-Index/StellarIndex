@@ -4,9 +4,13 @@
 package clickhouse
 
 import (
+	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
 func isHoldersProbe(q string) bool {
@@ -82,5 +86,242 @@ func TestHoldersRollupStatementsShareOneCycleStamp(t *testing.T) {
 	}
 	if checked == 0 {
 		t.Fatal("no INSERT statement found — this test would pass vacuously")
+	}
+}
+
+func isHoldersCycleStamp(q string) bool {
+	return strings.Contains(q, "SELECT computed_at FROM stellar.asset_holders_rollup LIMIT 1")
+}
+
+// holdersRollupLake stubs the rollup reads: the asset's board rows and count
+// row (both stamped boardAt; omitted when listed is false) and the live
+// table's cycle stamp tableAt.
+func holdersRollupLake(t *testing.T, listed bool, boardAt, tableAt time.Time) *stubConn {
+	t.Helper()
+	return &stubConn{respond: func(q string) (driver.Rows, error) {
+		switch {
+		case isHoldersProbe(q):
+			return &stubRows{data: [][]any{{uint32(1)}}}, nil
+		case isHoldersRows(q):
+			if !listed {
+				return &stubRows{}, nil
+			}
+			return &stubRows{data: [][]any{{"GHOLDER1", int64(200), boardAt}}}, nil
+		case isHoldersCount(q):
+			if !listed {
+				// max() over no rows: 0 holders, epoch stamp.
+				return &stubRows{data: [][]any{{int64(0), time.Unix(0, 0).UTC()}}}, nil
+			}
+			return &stubRows{data: [][]any{{int64(500), boardAt}}}, nil
+		case isHoldersCycleStamp(q):
+			return &stubRows{data: [][]any{{tableAt}}}, nil
+		}
+		t.Fatalf("unexpected query: %s", q)
+		return nil, nil
+	}}
+}
+
+// TestHoldersRollupBoard_RefusesAStaleCycle: a board whose cycle stamp is older than
+// holdersRollupMaxAge (the rollup timer has wedged) must not be served as the current holders
+// board; ok=false sends AssetHolders to the live per-request scans instead.
+func TestHoldersRollupBoard_RefusesAStaleCycle(t *testing.T) {
+	stale := time.Now().UTC().Truncate(time.Second).Add(-3 * time.Hour)
+	r := &ExplorerReader{conn: holdersRollupLake(t, true, stale, stale)}
+
+	out, total, ok, err := r.holdersRollupBoard(t.Context(), "USDC-"+testIssuer, 100)
+	if err != nil {
+		t.Fatalf("holdersRollupBoard: %v", err)
+	}
+	if ok {
+		t.Fatalf("ok = true for a cycle stamped %s ago — a wedged rollup's board was served as current: board=%+v total=%d",
+			time.Since(stale).Round(time.Minute), out, total)
+	}
+}
+
+// TestHoldersRollupBoard_RefusesAStaleCycleForAnUnlistedAsset: an asset with no row in either
+// table is "authoritatively zero holders" only for a CURRENT cycle. Under a wedged rollup, an
+// asset issued since the last cycle would otherwise be served as having no holders.
+func TestHoldersRollupBoard_RefusesAStaleCycleForAnUnlistedAsset(t *testing.T) {
+	stale := time.Now().UTC().Truncate(time.Second).Add(-3 * time.Hour)
+	r := &ExplorerReader{conn: holdersRollupLake(t, false, time.Time{}, stale)}
+
+	_, total, ok, err := r.holdersRollupBoard(t.Context(), "NEW-"+testIssuer, 100)
+	if err != nil {
+		t.Fatalf("holdersRollupBoard: %v", err)
+	}
+	if ok {
+		t.Fatalf("ok = true (total=%d) for an unlisted asset under a cycle stamped %s ago — a stale empty board was served as authoritative",
+			total, time.Since(stale).Round(time.Minute))
+	}
+}
+
+// TestHoldersRollupBoard_ServesAFreshCycle is the non-vacuity guard for the
+// two tests above: the same shapes with a current stamp must still be served
+// from the rollup (a gate that refused everything would pass them too).
+func TestHoldersRollupBoard_ServesAFreshCycle(t *testing.T) {
+	fresh := time.Now().UTC().Truncate(time.Second).Add(-40 * time.Minute)
+
+	r := &ExplorerReader{conn: holdersRollupLake(t, true, fresh, fresh)}
+	out, total, ok, err := r.holdersRollupBoard(t.Context(), "USDC-"+testIssuer, 100)
+	if err != nil || !ok {
+		t.Fatalf("listed asset, fresh cycle: ok=%v err=%v, want served", ok, err)
+	}
+	if len(out) != 1 || out[0].Balance != 200 || total != 500 {
+		t.Errorf("board=%+v total=%d, want balance=200 total=500", out, total)
+	}
+
+	r = &ExplorerReader{conn: holdersRollupLake(t, false, time.Time{}, fresh)}
+	out, total, ok, err = r.holdersRollupBoard(t.Context(), "NEW-"+testIssuer, 100)
+	if err != nil || !ok {
+		t.Fatalf("unlisted asset, fresh cycle: ok=%v err=%v, want served as zero holders", ok, err)
+	}
+	if len(out) != 0 || total != 0 {
+		t.Errorf("board=%+v total=%d, want empty board, total=0", out, total)
+	}
+}
+
+// TestHoldersRollupBoard_RetriesOnceWhenACycleSwapsMidRead: if a cycle swap lands between the rows read and
+// the count read, the board must retry and serve a pair from one cycle, not the torn first read.
+func TestHoldersRollupBoard_RetriesOnceWhenACycleSwapsMidRead(t *testing.T) {
+	cycle1 := time.Now().UTC().Truncate(time.Second).Add(-50 * time.Minute)
+	cycle2 := cycle1.Add(30 * time.Minute)
+
+	rowsCalls := 0
+	conn := &stubConn{}
+	conn.respond = func(q string) (driver.Rows, error) {
+		switch {
+		case isHoldersProbe(q):
+			return &stubRows{data: [][]any{{uint32(1)}}}, nil
+		case isHoldersRows(q):
+			rowsCalls++
+			if rowsCalls == 1 {
+				return &stubRows{data: [][]any{{"GHOLDER1", int64(100), cycle1}}}, nil
+			}
+			return &stubRows{data: [][]any{{"GHOLDER1", int64(200), cycle2}}}, nil
+		case isHoldersCount(q):
+			// The count side always reports the CURRENT live cycle
+			// (cycle2), so read #1's rows (cycle1) mismatch and read #2's
+			// rows (cycle2) match.
+			return &stubRows{data: [][]any{{int64(500), cycle2}}}, nil
+		}
+		t.Fatalf("unexpected query: %s", q)
+		return nil, nil
+	}
+	r := &ExplorerReader{conn: conn}
+
+	out, total, ok, err := r.holdersRollupBoard(t.Context(), "USDC-"+testIssuer, 100)
+	if err != nil {
+		t.Fatalf("holdersRollupBoard: %v", err)
+	}
+	if !ok {
+		t.Fatal("ok = false on a read that resolved consistent after one retry")
+	}
+	if len(out) != 1 || out[0].Balance != 200 {
+		t.Errorf("board = %+v, want balance=200 (the retried, self-consistent read) — 100 paired with total=500 means a torn read reached the caller", out)
+	}
+	if total != 500 {
+		t.Errorf("total = %d, want 500", total)
+	}
+	if rowsCalls != 2 {
+		t.Errorf("board-rows read ran %d time(s), want exactly 2 (one retry after the cycle-stamp mismatch)", rowsCalls)
+	}
+}
+
+// shrinkGuardConn is a scripted holdersRollupConn: every Exec succeeds and
+// is recorded in issue order, and QueryRow answers a fixed count() per
+// exact "SELECT count() FROM <table>" query.
+type shrinkGuardConn struct {
+	counts    map[string]uint64
+	execCalls []string
+}
+
+func (c *shrinkGuardConn) Exec(_ context.Context, query string, _ ...any) error {
+	c.execCalls = append(c.execCalls, query)
+	return nil
+}
+
+func (c *shrinkGuardConn) QueryRow(_ context.Context, query string, _ ...any) driver.Row {
+	for table, n := range c.counts {
+		if query == "SELECT count() FROM "+table {
+			return &shrinkGuardRow{n: n}
+		}
+	}
+	return &shrinkGuardRow{err: fmt.Errorf("shrinkGuardConn: no scripted count for %q", query)}
+}
+
+type shrinkGuardRow struct {
+	driver.Row
+	n   uint64
+	err error
+}
+
+func (r *shrinkGuardRow) Scan(dest ...any) error {
+	if r.err != nil {
+		return r.err
+	}
+	p, ok := dest[0].(*uint64)
+	if !ok {
+		return fmt.Errorf("shrinkGuardRow: unexpected dest %T, want *uint64", dest[0])
+	}
+	*p = r.n
+	return nil
+}
+
+func (r *shrinkGuardRow) Err() error { return r.err }
+
+// TestRunHoldersRollupRefusesAShrunkenBoard pins that a staging arm far smaller than the live one is not
+// published. The FINAL scan can read far fewer rows without any error, so only a row-count check before the
+// EXCHANGE catches it.
+func TestRunHoldersRollupRefusesAShrunkenBoard(t *testing.T) {
+	conn := &shrinkGuardConn{counts: map[string]uint64{
+		// Staging came out of this cycle's fills with almost nothing —
+		// the shape a truncated/partial FINAL scan produces.
+		"stellar.asset_holders_rollup_staging": 3,
+		// What is CURRENTLY live: a healthy prior cycle's board.
+		"stellar.asset_holders_rollup":         500_000,
+		"stellar.asset_holders_counts_staging": 500,
+		"stellar.asset_holders_counts":         500,
+	}}
+
+	err := runHoldersRollupSteps(context.Background(), conn, func(string, ...any) {})
+	if err == nil {
+		t.Fatal("runHoldersRollupSteps swapped a board that shrank from 500,000 to 3 rows instead of refusing")
+	}
+	if !strings.Contains(err.Error(), "shrink guard") {
+		t.Errorf("error does not name the shrink guard: %v", err)
+	}
+
+	for _, q := range conn.execCalls {
+		if strings.Contains(q, "EXCHANGE TABLES") {
+			t.Errorf("EXCHANGE TABLES was issued despite the shrink — the previous (good) cycle must stay live:\n%s", q)
+		}
+	}
+}
+
+// TestRunHoldersRollupPublishesAHealthyBoard is the guard's negative case:
+// a cycle whose staging counts are in line with (or ahead of) live must
+// still swap, so the shrink guard cannot itself become a standing outage.
+func TestRunHoldersRollupPublishesAHealthyBoard(t *testing.T) {
+	conn := &shrinkGuardConn{counts: map[string]uint64{
+		"stellar.asset_holders_rollup_staging": 500_100,
+		"stellar.asset_holders_rollup":         500_000,
+		"stellar.asset_holders_counts_staging": 505,
+		"stellar.asset_holders_counts":         500,
+		"stellar.asset_stats_daily_staging":    905,
+		assetStatsDailyLatestDay:               900,
+	}}
+
+	if err := runHoldersRollupSteps(context.Background(), conn, func(string, ...any) {}); err != nil {
+		t.Fatalf("runHoldersRollupSteps: %v", err)
+	}
+
+	found := false
+	for _, q := range conn.execCalls {
+		if strings.Contains(q, "EXCHANGE TABLES") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("a healthy cycle did not issue the EXCHANGE TABLES swap")
 	}
 }

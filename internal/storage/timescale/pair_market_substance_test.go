@@ -283,3 +283,205 @@ func TestPairMarketSubstance_EmptySpellingSetErrorsBeforeQuerying(t *testing.T) 
 		}
 	}
 }
+
+// [Store.PairMarketSubstanceAt] is the SQL half of the point-in-time thin-market verdict, the substance in
+// the window ending at a requested instant (its sibling always ends at now), so these tests pin WHERE the
+// window sits. Executing proof against real Postgres: test/integration/pg_pricing_markets_test.go.
+
+func substanceAtQuery(t *testing.T, asOf time.Time, window time.Duration, g HistoryGranularity) recordedStmt {
+	t.Helper()
+	store, conn := newScriptedStore(t, scriptedResult{
+		cols: []string{"volume_usd", "buckets", "span_seconds", "valued_buckets"},
+		rows: [][]driver.Value{{"0", int64(0), int64(0), int64(0)}},
+	})
+	bases, quotes := testXLMUSDCLegs(t)
+	if _, err := store.PairMarketSubstanceAt(context.Background(), bases, quotes, asOf, window, g); err != nil {
+		t.Fatalf("PairMarketSubstanceAt: %v", err)
+	}
+	return conn.only(t)
+}
+
+func literalBound(t *testing.T, sql, op string) time.Time {
+	t.Helper()
+	m := regexp.MustCompile(`bucket ` + regexp.QuoteMeta(op) + ` TIMESTAMPTZ '([^']+)'`).FindStringSubmatch(sql)
+	if m == nil {
+		t.Fatalf("no literal `bucket %s TIMESTAMPTZ '…'` bound in:\n%s", op, indent(sql))
+	}
+	ts, err := time.Parse("2006-01-02 15:04:05-07", m[1])
+	if err != nil {
+		t.Fatalf("bound %q does not parse: %v", m[1], err)
+	}
+	return ts
+}
+
+// The window must END at asOf (closed buckets only) and START one
+// window before it — for an instant years in the past, not at now.
+func TestPairMarketSubstanceAt_WindowEndsAtTheInstant(t *testing.T) {
+	asOf := time.Date(2021, 3, 1, 9, 0, 0, 0, time.UTC)
+	cases := []struct {
+		grain     HistoryGranularity
+		table     string
+		wantUpper time.Time
+	}{
+		{Granularity1m, "FROM prices_1m", asOf.Add(-time.Minute)},
+		{Granularity1h, "FROM prices_1h", asOf.Add(-time.Hour)},
+	}
+	for _, tc := range cases {
+		t.Run(string(tc.grain), func(t *testing.T) {
+			stmt := substanceAtQuery(t, asOf, 24*time.Hour, tc.grain)
+			if !strings.Contains(stmt.sql, tc.table) {
+				t.Errorf("grain %s did not read %q:\n%s", tc.grain, tc.table, indent(stmt.sql))
+			}
+			if got := literalBound(t, stmt.sql, "<="); !got.Equal(tc.wantUpper) {
+				t.Errorf("upper bound = %s, want %s (asOf − one bucket: only buckets already "+
+					"CLOSED at the instant may count, ADR-0015)", got, tc.wantUpper)
+			}
+			if got, want := literalBound(t, stmt.sql, ">="), asOf.Add(-24*time.Hour); !got.Equal(want) {
+				t.Errorf("lower bound = %s, want %s (asOf − window)", got, want)
+			}
+		})
+	}
+}
+
+// Same shape guarantees as the live reader: both stored directions, distinct buckets, the now() closed-
+// bucket guard at the grain's own width, sargable bounds, and spelling sets bound rather than interpolated.
+func TestPairMarketSubstanceAt_KeepsTheLiveReadersShape(t *testing.T) {
+	pair := testXLMUSDCPair(t)
+	bases, quotes := testXLMUSDCLegs(t)
+	stmt := substanceAtQuery(t, time.Date(2024, 6, 1, 15, 0, 0, 0, time.UTC), 24*time.Hour, Granularity1h)
+	norm := regexp.MustCompile(`\s+`).ReplaceAllString(stmt.sql, " ")
+
+	for _, want := range []string{
+		"base_asset = ANY($1) AND quote_asset = ANY($2) AND bucket <= now() - INTERVAL '1 hour'",
+		"UNION ALL",
+		"base_asset = ANY($2) AND quote_asset = ANY($1) AND bucket <= now() - INTERVAL '1 hour'",
+		"AND NOT (base_asset = ANY($1) AND quote_asset = ANY($2))",
+		"GROUP BY bucket",
+	} {
+		if !strings.Contains(norm, want) {
+			t.Errorf("query is missing %q:\n%s", want, indent(stmt.sql))
+		}
+	}
+	if orientationDisjunction.MatchString(stmt.sql) {
+		t.Errorf("the two direction arms must be UNION ALL'd, not OR'd:\n%s", indent(stmt.sql))
+	}
+	if strings.Contains(stmt.sql, "bucket + INTERVAL") {
+		t.Error("non-sargable `bucket + INTERVAL` form: function on the indexed column")
+	}
+	if len(stmt.args) != 2 || !reflect.DeepEqual(stmt.arg(t, 1), assetKeys(bases)) ||
+		!reflect.DeepEqual(stmt.arg(t, 2), assetKeys(quotes)) {
+		t.Errorf("args = %v, want exactly (bases, quotes) bound as $1/$2", stmt.args)
+	}
+	if strings.Contains(stmt.sql, pair.Quote.String()) {
+		t.Error("the quote asset id was interpolated into the SQL text instead of bound")
+	}
+
+	minute := substanceAtQuery(t, time.Now().UTC(), 24*time.Hour, Granularity1m)
+	if !strings.Contains(minute.sql, "bucket <= now() - INTERVAL '1 minute'") {
+		t.Errorf("minute grain lost the 1-minute closed-bucket guard:\n%s", indent(minute.sql))
+	}
+}
+
+// Only the two grains with a stated serve floor are accepted, and a bad
+// argument must fail BEFORE a query is issued.
+func TestPairMarketSubstanceAt_RejectsBadArgumentsBeforeQuerying(t *testing.T) {
+	store, conn := newScriptedStore(t)
+	bases, quotes := testXLMUSDCLegs(t)
+	at := time.Date(2024, 6, 1, 15, 0, 0, 0, time.UTC)
+
+	for _, g := range []HistoryGranularity{Granularity15m, Granularity4h, Granularity1d, HistoryGranularity("trades; --")} {
+		if _, err := store.PairMarketSubstanceAt(context.Background(), bases, quotes, at, time.Hour, g); err == nil {
+			t.Errorf("grain %q: want an error, got nil", g)
+		}
+	}
+	for _, w := range []time.Duration{0, -time.Hour} {
+		if _, err := store.PairMarketSubstanceAt(context.Background(), bases, quotes, at, w, Granularity1h); err == nil {
+			t.Errorf("window %v: want an error, got nil", w)
+		}
+	}
+	if n := len(conn.statements()); n != 0 {
+		t.Errorf("issued %d statement(s) for arguments that must be rejected up front", n)
+	}
+}
+
+// [pairMarketQuery] (/v1/pairs) cost is per request, so two shapes are pinned: both orientations as UNION ALL
+// of single-direction branches (an OR defeats the pair index), and each aggregate bounded to its smallest
+// window (MAX(ts) probe, 24h count), not one 14-day scan of `trades`.
+func TestPairMarketQueryShape(t *testing.T) {
+	q := pairMarketQuery
+
+	// ── the disjunction is the defect; its absence is the guard ──
+	if strings.Contains(q, "OR (base_asset") || strings.Contains(q, "OR (t.base_asset") {
+		t.Errorf("pairMarketQuery folds both directions with an OR disjunction. "+
+			"The planner cannot drive the (base_asset, quote_asset, ts|bucket DESC) "+
+			"indexes from an OR of two (base,quote) pairs, so it degrades to a bare "+
+			"time-index scan with the pair as a post-index filter. Use a UNION ALL of "+
+			"two single-direction branches.\n\nquery:\n%s", q)
+	}
+	if n := strings.Count(q, "UNION ALL"); n < 3 {
+		t.Errorf("pairMarketQuery has %d UNION ALL branches, want >= 3 — the "+
+			"last_trade_at, vol_24h_usd and last_price reads each fold two stored "+
+			"orientations and each must be its own indexable branch", n)
+	}
+
+	// Correctness half: both orientations must still be read. A UNION ALL that dropped a leg would be fast and
+	// wrong: the SDEX decoder records XLM/USDC and USDC/XLM as separate rows, so a single-leg read halves
+	// count_24h and vol_24h_usd.
+	for _, leg := range []struct{ what, sql string }{
+		{"forward, trades", "base_asset = $2 AND t.quote_asset = $3"},
+		{"flipped, trades", "base_asset = $3 AND t.quote_asset = $2"},
+		{"forward, prices_1m", "base_asset = $2 AND quote_asset = $3"},
+		{"flipped, prices_1m", "base_asset = $3 AND quote_asset = $2"},
+	} {
+		if !strings.Contains(q, leg.sql) {
+			t.Errorf("pairMarketQuery lost the %s direction (%q)", leg.what, leg.sql)
+		}
+	}
+
+	// Window half: nothing may read MarketsRecencyWindow in bulk. $1 (the 14-day bound) may appear only on the
+	// two LIMIT 1 last_trade_at index probes; any other use is a 14-day scan answering a 24-hour question.
+	if n := strings.Count(q, "$1"); n != 2 {
+		t.Errorf("pairMarketQuery references the MarketsRecencyWindow bound $1 %d "+
+			"times, want exactly 2 (one per last_trade_at direction probe). Every "+
+			"other aggregate needs at most 24 hours; widening one back to 14 days is "+
+			"how this query came to materialise 17.2M rows for crypto:BTC/crypto:USDT."+
+			"\n\nquery:\n%s", n, q)
+	}
+	// Each $1 branch must terminate at one row — an unbounded branch
+	// re-introduces the full-window walk this guard prevents.
+	probes := regexp.MustCompile(`(?s)t\.ts >= \$1\s+ORDER BY t\.ts DESC LIMIT 1`).FindAllString(q, -1)
+	if len(probes) != 2 {
+		t.Errorf("pairMarketQuery has %d bounded `ts >= $1 ORDER BY ts DESC LIMIT 1` "+
+			"probes, want 2 — MAX(ts) over the recency window must be a single "+
+			"backwards index probe per direction, not an aggregate over the window",
+			len(probes))
+	}
+	// The old form computed count_24h as a FILTER over the 14-day scan.
+	// The FILTER is cheap; the scan it rode on was not.
+	if strings.Contains(q, "count(*) FILTER") {
+		t.Error("pairMarketQuery computes count_24h as a FILTER over a wider scan. " +
+			"Bind the 24-hour predicate into the scan itself so the planner reads " +
+			"only the last day's chunks")
+	}
+	// Every non-$1 branch (count_24h x2, vol_24h_usd x2, last_price x2) must carry its own
+	// 24-hour bound. The $1/$2/$3 checks above prove the $1 branches are the ONLY 14-day reads;
+	// this proves none of the other six reads unbounded or rides the 14-day window back in.
+	if n := strings.Count(q, "NOW() - INTERVAL '24 hours'"); n != 6 {
+		t.Errorf("pairMarketQuery has %d \"NOW() - INTERVAL '24 hours'\" bounds, want "+
+			"6 — one on each of count_24h's two directions, vol_24h_usd's two "+
+			"directions and last_price's two directions. Fewer means a branch lost "+
+			"its bound (an unbounded prices_1m/trades walk); more means a bound was "+
+			"duplicated onto a branch that should stay a $1 recency-window probe."+
+			"\n\nquery:\n%s", n, q)
+	}
+
+	// ── determinism: the last_price sort needs a total order ──
+	// `bucket DESC` alone is not one once a bucket holds both orientations, so which leg won
+	// would be planner-defined. Same tiebreaker, and same reasoning, as the prices_1m readers.
+	if !strings.Contains(q, "ORDER BY bucket DESC, base_asset LIMIT 1") {
+		t.Error("pairMarketQuery's last_price sort lacks the base_asset tiebreaker. " +
+			"With both directions present in one bucket the winner would be " +
+			"planner-defined, which ADR-0015 byte-identical cross-region serving " +
+			"cannot rely on")
+	}
+}
