@@ -3537,25 +3537,16 @@ export interface paths {
          *     true throttled total; do not read a per-route `throttled` of
          *     zero as "this route was never throttled".
          *
-         *     Pipeline: the usage middleware counts every authenticated
-         *     request per (subject, route pattern, outcome class) in
-         *     Redis; the API's rollup worker folds those counters into
-         *     the `usage_daily` Timescale table every 5 minutes, which
-         *     this endpoint reads. Rows can therefore trail live traffic
-         *     by up to ~5 minutes.
+         *     Rows can trail live traffic by up to ~5 minutes.
          *
-         *     Fallback shape: deployments where the rollup table has no
-         *     rows yet (or Postgres is absent) degrade to the legacy
-         *     per-day rows — one row per date with `endpoint` omitted
+         *     Fallback shape: deployments with no per-endpoint rollup yet
+         *     degrade to per-day rows — one row per date with `endpoint` omitted
          *     and `errors`/`throttled` zero. That store holds only the
          *     billable total, so on these rows `requests` equals
          *     `billable` and excludes 5xx; the same shape fills any day
-         *     the rollup worker missed inside a per-endpoint response.
-         *     `billable` means the same thing on both shapes. Redis-less deployments
-         *     return an empty array; the absence of the backend is
-         *     reflected on /v1/readyz under `checks` (NOT `/v1/healthz`
-         *     — the per-dependency `checks` field is `/readyz`-only; the
-         *     `/healthz` liveness probe stays minimal by design).
+         *     a per-endpoint response is missing. `billable` means the same
+         *     thing on both shapes. Deployments without the usage backend
+         *     return an empty array.
          */
         get: operations["getAccountUsage"];
         put?: never;
@@ -5334,10 +5325,7 @@ export interface paths {
          *     its transaction and kept only where that transaction SUCCEEDED, so
          *     operations submitted in failed transactions are excluded from every
          *     figure and from the ranking — nothing about them happened, so no
-         *     reserve was paid and no arrangement was opened. This is not a rounding
-         *     adjustment: measured across the whole archive, 10.8% of sponsorship
-         *     operations sit in failed transactions, and counting them inflated
-         *     `revocations_issued` to better than twice its true value.
+         *     reserve was paid and no arrangement was opened.
          *
          *     EVERYTHING HERE IS HISTORY, NOT LIVE STATE. These figures come from
          *     replaying sponsorship OPERATIONS, so they say what an account has
@@ -5682,10 +5670,8 @@ export interface paths {
          *
          *     CARDINALITY IS THE SHAPE. Inbound is bounded by construction —
          *     at most 25 edges per direction with the EXACT total and a
-         *     `truncated` flag beside it (measured ceilings on the real chain:
-         *     9 distinct creators, 8 distinct sponsors). Outbound is NOT
-         *     bounded — the busiest sponsor covers 785,543 distinct accounts —
-         *     so the default response carries outbound SUMMARIES only, and the
+         *     `truncated` flag beside it. Outbound is NOT
+         *     bounded, so the default response carries outbound SUMMARIES only, and the
          *     edge list is served only when `?relation=` names a direction,
          *     keyset-paged with `?cursor=` (echo back `next_cursor`; the
          *     cursor is the last served counterparty's account id).
@@ -6298,20 +6284,15 @@ export interface components {
              *     balance escrow or a liquidity-pool leg (neither is a real
              *     G-account), and for both legs of a path_payment (each asset
              *     crosses the path's offers/pools; attributes.from/to name both
-             *     accounts) — see stellar.account_movements' DDL comment
-             *     (deploy/clickhouse/tier1_schema.sql) for the full per-kind
-             *     cardinality table.
+             *     accounts).
              */
             counterparty?: string;
             /**
-             * @description classic_derived = reconstructed from the ClickHouse pre-P23 lake
-             *     (ADR-0047); cap67_derived = a post-P23 transfer derived from the
-             *     lake's CAP-67 unified events by `stellarindex-ops
-             *     ch-cap67-movements`, the archive's continuation past P23;
-             *     cap67_event = a post-P23 CAP-67 unified event read from the
-             *     Postgres sep41_transfers "recent tail" (ADR-0048 D5). The tail is
-             *     floored at the derive's watermark, so a ledger is served from one
-             *     of the two post-P23 sides, never both.
+             * @description classic_derived = reconstructed pre-P23 history; cap67_derived =
+             *     a post-P23 movement derived from CAP-67 events, up to the
+             *     archive watermark; cap67_event = a post-P23 CAP-67 event above
+             *     that watermark. A ledger is served from one post-P23 side,
+             *     never both.
              * @enum {string}
              */
             provenance: "classic_derived" | "cap67_derived" | "cap67_event";
@@ -6412,11 +6393,9 @@ export interface components {
             note: string;
         };
         /**
-         * @description An account's unified movement feed (ADR-0048 D5) — the ClickHouse
-         *     pre-P23 classic-movement archive (stellar.account_movements)
-         *     merged, at read time, with the Postgres sep41_transfers post-P23
-         *     "recent tail". Newest first, keyset-paged. See coverage_note for
-         *     the endpoint's honest-degrade contract.
+         * @description An account's unified movement feed: the pre-P23 classic-movement
+         *     archive merged with the post-P23 recent tail. Newest first,
+         *     keyset-paged. See coverage_note for the degrade contract.
          */
         AccountMovements: {
             /** @description The G-strkey this listing is for. */
@@ -6425,17 +6404,11 @@ export interface components {
             /** @description Opaque composite cursor (ledger.tx_hash.op_index.leg_index) for the next older page; absent on the last page. */
             next_cursor?: string;
             /**
-             * @description Honest-degrade signal (mirrors the routed_via/aggregators
-             *     coverage-note pattern), present ONLY when this response is
-             *     NOT the full ADR-0048 D5 merge:
-             *       - the ClickHouse pre-P23 archive is populated by an
-             *         operator-run historical backfill
-             *         (`stellarindex-ops classic-movements-backfill`) and is
-             *         EMPTY on a fresh deployment until that job runs — a
-             *         response may therefore be Postgres-tail-only;
-             *       - the Postgres tail reader isn't wired on this deployment,
-             *         or the read errored for this request — a response may
-             *         therefore be ClickHouse-archive-only.
+             * @description Present ONLY when this response is NOT the full merge:
+             *       - the pre-P23 archive is not populated on this deployment,
+             *         so the response may be tail-only;
+             *       - the recent tail is unavailable or errored for this
+             *         request, so the response may be archive-only.
              *     Absent = both sides contributed to this response.
              */
             coverage_note?: string;
@@ -7781,10 +7754,8 @@ export interface components {
          *     - `triangulated` — set when the served price was derived
          *       via cross-pair multiplication (e.g. XLM/EUR computed from
          *       XLM/USD × USD/EUR) rather than direct trade observation.
-         *       Two paths set it. The aggregator's triangulation pass
-         *       writes the implied VWAP into the same Redis key with a
-         *       `:provenance` marker, and `/v1/price` reads that marker
-         *       and forwards the flag. Separately, a request for a fiat
+         *       Two paths set it: the aggregator's cross-pair triangulation,
+         *       and a request for a fiat
          *       quote we hold no market for is answered by composing the
          *       asset's USD price with the USD→CCY foreign-exchange rate
          *       (ADR-0051) — the local-currency path, which is how the
@@ -8740,10 +8711,6 @@ export interface components {
              *     `issuers` table the classic arm walks is written only when a
              *     CLASSIC asset is registered, so an entity whose Stellar
              *     presence is contract-issued never enters that population.
-             *     Measured on 2026-09-15, Spiko is in this position: recognised,
-             *     correct domain, and absent, because its five T-Bill funds are
-             *     Soroban contracts and no classic asset carries them. Franklin
-             *     Templeton left it when BENJI, a classic asset, was collected.
              *
              *     Serving them admits nothing. It exists so a reader can tell a
              *     recognised entity this surface cannot see from one that does
@@ -9276,9 +9243,8 @@ export interface components {
              *     different ways. `classic_trustline_sum` misses holding
              *     DOMAINS: it is trustline balances only, so claimable balances,
              *     liquidity-pool reserves and SAC-held balances are absent by
-             *     construction — measured across the served set on 2026-09-15
-             *     that was 89.5% of EURMTL, 73.3% of PYUSD, 64.5% of SHX and
-             *     15.4% of USDC. `contract_storage_balances` misses balance
+             *     construction, which can be a large share of the supply.
+             *     `contract_storage_balances` misses balance
              *     entries the lake's current-state projection never captured,
              *     such as one dormant since before its coverage began.
              */
@@ -10711,11 +10677,7 @@ export interface components {
                  *     Different from `/v1/network/stats.total_sources`,
                  *     which counts every source REGISTERED in the binary
                  *     regardless of enable state — typically a strict
-                 *     superset. Measured on r1 2026-09-01: enabled=17,
-                 *     registered=21, active=15 — before the API binary
-                 *     published the `massive` FX worker's own enabled
-                 *     series; with it, enabled and active each read one
-                 *     higher. Absent (not 0) when the freshness query failed.
+                 *     superset. Absent (not 0) when the freshness query failed.
                  */
                 total_sources?: number;
             };
@@ -10960,15 +10922,10 @@ export interface components {
              *       now, so a dead domain's last document is not served as
              *       `verified`.
              *
-             *     The last two are the distinction worth reading carefully,
-             *     because they were one value until 2026-09-16. An asset
-             *     manager's stellar.toml carried an unterminated string on line
-             *     20; one missing quote made the whole file unparseable, so
-             *     thirteen live RWA-class declarations were refused and every
-             *     one of those asset pages reported `not_fetched` — we never
-             *     tried. The fetch had run five days running. A consumer
-             *     reading `unreachable` now knows the document exists and is
-             *     broken, which is the only version of this an issuer can fix.
+             *     The last two are the distinction worth reading carefully:
+             *     `not_fetched` means no fetch was attempted, while
+             *     `unreachable` means the document exists but could not be
+             *     read, which is the only case an issuer can fix.
              * @enum {string}
              */
             sep1_status: "not_applicable" | "not_fetched" | "verified" | "no_match" | "unreachable";
@@ -11690,11 +11647,11 @@ export interface components {
                 cross_oracle_agreement?: number;
                 /** @description True only when a real USD volume fed the liquidity factor. False means the neutral no-information value was substituted because the pair could not be valued in USD — do NOT read false as "liquidity is mid-range"; the neutral sits inside the measured curve's range. */
                 liquidity_measured?: boolean;
-                /** @description Agreement between this pair's direct price and the composite implied by its configured triangulation chain (ADR-0019 amendment 2026-07-25). Same shape as cross_oracle - 1.0 within tolerance, decaying with divergence, 0.7 as the no-data neutral. Disagreement is a manipulation signal; agreement corroborates at half the weight of an independent reference. */
+                /** @description Agreement between this pair's direct price and the composite implied by its configured triangulation chain (ADR-0019). Same shape as cross_oracle - 1.0 within tolerance, decaying with divergence, 0.7 as the no-data neutral. Disagreement is a manipulation signal; agreement corroborates at half the weight of an independent reference. */
                 triangulation_agreement?: number;
                 /** @description True only when a fresh composite existed to compare against. False means no chain is configured or the composite was stale - NOT "the composite agrees". The factor carries zero weight in the confidence score when unchecked, so unchecked pairs score exactly as they did before this factor existed. */
                 triangulation_checked?: boolean;
-                /** @description Density of the pair's 30-day volatility baseline in days-equivalent of 1-minute buckets (buckets / 1440), at most 30; negative when no usable 30-day baseline exists. This is sample density, NOT calendar age - a pair that trades in 200 minutes a day reads about 4.2 however long it has existed. The bootstrap cap releases at 28.5 and, once released, re-engages below 27 (ADR-0019 amendment 2026-09-28). */
+                /** @description Density of the pair's 30-day volatility baseline in days-equivalent of 1-minute buckets (buckets / 1440), at most 30; negative when no usable 30-day baseline exists. This is sample density, NOT calendar age - a pair that trades in 200 minutes a day reads about 4.2 however long it has existed. The bootstrap cap releases at 28.5 and, once released, re-engages below 27 (ADR-0019). */
                 baseline_age_days?: number;
                 /** @description True when the ADR-0019 bootstrap ceiling (0.5) bounded confidence because baseline_age_days is below 28.5 (below 27 for a pair already released, or no baseline exists), so a confidence of 0.5 may be the cap rather than the evidence. False means the multi-factor score was served without the ceiling. */
                 bootstrap_capped?: boolean;
