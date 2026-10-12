@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+
+	"github.com/Stellar-Index/StellarIndex/internal/httpx/httpxtest"
 )
 
 // TestGet_TruncatedBodyFails pins that a body cut short of its declared
@@ -74,4 +77,43 @@ func TestCurrencyNames_RefusesPaginationOffHost(t *testing.T) {
 	if hits := atomic.LoadInt32(&attackerHits); hits != 0 {
 		t.Errorf("attacker host received %d request(s); a cross-host next_url must never be followed (leaks the bearer token)", hits)
 	}
+}
+
+// TestIsFiniteFloat covers the large-magnitude case that the old
+// `f != f+1` inf check got wrong: for |f| >= 2^53, f+1 rounds back
+// to f, so a perfectly finite value reads as non-finite.
+func TestIsFiniteFloat(t *testing.T) {
+	cases := []struct {
+		name string
+		in   float64
+		want bool
+	}{
+		{"zero", 0, true},
+		{"small", 1.2345, true},
+		{"negative", -42.5, true},
+		{"large_positive_above_2e53", 1e300, true},
+		{"exactly_2e53", math.Pow(2, 53), true},
+		{"max_float64", math.MaxFloat64, true},
+		{"nan", math.NaN(), false},
+		{"pos_inf", math.Inf(1), false},
+		{"neg_inf", math.Inf(-1), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isFiniteFloat(tc.in); got != tc.want {
+				t.Errorf("isFiniteFloat(%v) = %v, want %v", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// net/http keeps Authorization across a redirect that changes only the
+// port or scheme of the same hostname.
+func TestClient_KeyDoesNotFollowAnOffOriginRedirect(t *testing.T) {
+	trap := httpxtest.NewRedirectTrap(t, "Authorization")
+	c := NewClient("probe").WithBase(trap.URL)
+	if _, _, err := c.LatestUSDRates(context.Background()); err == nil {
+		t.Error("LatestUSDRates succeeded through a refused redirect")
+	}
+	trap.AssertKeyStayedOnOrigin(t)
 }

@@ -7,6 +7,7 @@ import (
 	"math/big"
 	"slices"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -2704,4 +2705,89 @@ func TestTick_WindowAtTheRowCapCountsAsTruncated(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestOrchestratorVWAPMaxAge_DerivesFromInterval: a raised Config.Interval must give proportionally more missed-tick grace, and a faster interval must not tighten the floor below cachekeys.VWAPMaxAge.
+func TestOrchestratorVWAPMaxAge_DerivesFromInterval(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		interval time.Duration
+		want     time.Duration
+	}{
+		{"default 30s interval keeps the package default", cachekeys.VWAPMaxAge / 10, cachekeys.VWAPMaxAge},
+		{"raised 60s interval widens the grace", 60 * time.Second, 10 * time.Minute},
+		{"raised 5m interval widens the grace a lot", 5 * time.Minute, 50 * time.Minute},
+		{"a faster-than-default interval is still floored", 5 * time.Second, cachekeys.VWAPMaxAge},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o := New(nil, nil, Config{Interval: tc.interval})
+			if got := o.vwapMaxAge(); got != tc.want {
+				t.Errorf("vwapMaxAge() with Interval=%v = %v, want %v", tc.interval, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestOrchestratorVWAPTTL_FlapsLessOnARaisedInterval pins that an interval raised past what cachekeys.VWAPTTL(window)
+// grants widens a long window's TTL, instead of expiring at the default and flapping /v1/price between 200 and 404.
+func TestOrchestratorVWAPTTL_FlapsLessOnARaisedInterval(t *testing.T) {
+	o := New(nil, nil, Config{Interval: 60 * time.Second})
+	window := 24 * time.Hour
+
+	got := o.vwapTTL(window)
+	if got != 10*time.Minute {
+		t.Errorf("vwapTTL(24h) with Interval=60s = %v, want 10m (10 missed ticks)", got)
+	}
+	if unwidened := cachekeys.VWAPTTL(window); got == unwidened {
+		t.Errorf("vwapTTL(24h) with a raised interval = %v, same as the unwidened package default %v — the interval must widen the grace", got, unwidened)
+	}
+}
+
+// wedgedStore is a Store whose trades query for one pair stops
+// answering, the way a query on a half-open connection does: it returns
+// only when its context ends. Every other pair is served normally.
+type wedgedStore struct {
+	*mockStore
+	mu     sync.Mutex
+	wedged string // pair.String(); "" = healed
+}
+
+func (s *wedgedStore) setWedged(pair string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.wedged = pair
+}
+
+func (s *wedgedStore) TradesInRange(ctx context.Context, p canonical.Pair, from, to time.Time, limit int) ([]canonical.Trade, error) {
+	s.mu.Lock()
+	wedged := s.wedged
+	s.mu.Unlock()
+	if p.String() == wedged {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	return s.mockStore.TradesInRange(ctx, p, from, to, limit)
+}
+
+// fxCallRecord is what one FXQuoteAtOrBefore call looked like.
+type fxCallRecord struct {
+	cutoff    time.Time
+	bounded   bool
+	remaining time.Duration
+}
+
+// deadlineRecordingFX answers every FX query and records whether the
+// context it was given carried a deadline.
+type deadlineRecordingFX struct {
+	mu         sync.Mutex
+	observedAt time.Time
+	calls      []fxCallRecord
+}
+
+func (f *deadlineRecordingFX) FXQuoteAtOrBefore(ctx context.Context, _ canonical.Pair, cutoff time.Time, _ []string) (*big.Rat, time.Time, string, error) {
+	dl, ok := ctx.Deadline()
+	f.mu.Lock()
+	f.calls = append(f.calls, fxCallRecord{cutoff: cutoff, bounded: ok, remaining: time.Until(dl)})
+	f.mu.Unlock()
+	return big.NewRat(80, 100), f.observedAt, "massive", nil
 }
