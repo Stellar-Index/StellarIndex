@@ -395,3 +395,102 @@ func TestCHRebuild_PreflightReturnsAfterEveryGuardAndBeforeTheLake(t *testing.T)
 		t.Error("-preflight returns AFTER the first lake read — it is no longer a preflight")
 	}
 }
+
+// The script rewrites `trades` years behind tip, beyond any trades continuous aggregate's refresh lookback, so without
+// an explicit refresh served OHLC / volume / TWAP keep the pre-repair rows. These tests execute the shipped script
+// (stubs in ch_rebuild_projected_script_test.go).
+
+func (r scriptRun) caggRefreshes() []scriptCall {
+	var out []scriptCall
+	for _, c := range r.calls {
+		if c.isCAGGRefresh() {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func staleCAGGFile(dir string) string {
+	return filepath.Join(dir, "state", "rebuild-done-windows.txt.caggs")
+}
+
+// ch-rebuild-projected.sh must itself file the ADR-0033 dirty window whenever it leaves a window empty, or /v1/coverage
+// keeps certifying a range with no rows complete=true. Every emptying state files one window for exactly the deleted
+// sources; a state that empties nothing files none; a failed filing is loud.
+
+// assertFiledWindow checks the one -record-dirty-window invocation names the emptied range and exactly the deleted
+// sources. A wrong window files the wrong obligation, and one carrying -write is refused by the binary
+// (checkCHRebuildRecordDirtyFlags).
+func assertFiledWindow(t *testing.T, run scriptRun, lo, hi, sources string) {
+	t.Helper()
+	recs := run.records()
+	if len(recs) != 1 {
+		t.Fatalf("the script left [%s,%s] EMPTY and filed %d projection dirty window(s), want 1 — "+
+			"until one is filed /v1/coverage carries its prior clean claim over the hole (trace: %s)\n%s",
+			lo, hi, len(recs), run.sequence(), run.log)
+	}
+	rec := recs[0]
+	if rec.flag("-from") != lo || rec.flag("-to") != hi || rec.flag("-sources") != sources {
+		t.Errorf("filed window = [%s,%s] sources=%s, want [%s,%s] sources=%s",
+			rec.flag("-from"), rec.flag("-to"), rec.flag("-sources"), lo, hi, sources)
+	}
+	if rec.has("-write") || rec.has("-preflight") {
+		t.Errorf("the record invocation carries -write/-preflight (%q) — the binary refuses either pairing", rec.args)
+	}
+	if rec.flag("-config") == "" {
+		t.Errorf("the record invocation names no -config (%q), so it cannot reach Postgres", rec.args)
+	}
+}
+
+// An emptied window has TWO records to keep in scripts/ops/ch-rebuild-projected.sh:
+//
+//   - $DIRTY, the local marker that drives this script's own recovery. It must be WRITTEN
+//     before anything is deleted; a failed append may not be shrugged off, or the DELETE
+//     proceeds with nothing left to rebuild the window.
+//   - the ADR-0033 projection dirty window, which the completeness verdict reads. Until the
+//     emptied range is filed there, /v1/coverage keeps its prior clean claim over a hole.
+//
+// These tests EXECUTE the shipped script (the harness in ch_rebuild_projected_script_test.go)
+// and pin both, plus the case that must NOT change: a window that re-derived cleanly files
+// nothing, since filing one per routine window would point the next nightly at a huge
+// ledger range across all sources and time every verdict out.
+
+// verdictNoteRE-ish: the note is matched as plain text on purpose — it is
+// what an operator greps for in /var/log/ch-rebuild-projected.log.
+const verdictNoteHead = "TELL THE VERDICT"
+
+// recordCommandFor returns the `-record-dirty-window` command line the
+// script printed for [lo,hi], or "" if it printed none.
+func recordCommandFor(log, lo, hi string) string {
+	var seen bool
+	for _, line := range strings.Split(log, "\n") {
+		switch {
+		case strings.HasPrefix(line, verdictNoteHead+" ["+lo+","+hi+"]"):
+			seen = true
+		case seen && strings.Contains(line, "-record-dirty-window"):
+			return strings.TrimSpace(line)
+		case seen && strings.HasPrefix(line, verdictNoteHead):
+			seen = false // a different window's note; keep looking
+		}
+	}
+	return ""
+}
+
+// assertRecordCommand checks the printed command names the emptied range
+// and exactly the deleted sources — a note that points at the wrong window
+// files the wrong obligation.
+func assertRecordCommand(t *testing.T, cmd, lo, hi, sources string) {
+	t.Helper()
+	for _, want := range []string{
+		"ch-rebuild", "-from " + lo, "-to " + hi, "-sources " + sources, "-record-dirty-window",
+	} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("printed record command %q does not carry %q", cmd, want)
+		}
+	}
+	if strings.Contains(cmd, "-write") {
+		t.Errorf("printed record command %q carries -write — the record is not a re-derive, and the binary refuses the pair", cmd)
+	}
+}
+
+// ── the local marker: rule 3 is only a rule if the write is CHECKED ──────
