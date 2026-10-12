@@ -242,10 +242,8 @@ func TestObservations_AggregateInvalid(t *testing.T) {
 	}
 }
 
-// TestObservations_EmptyArrayWhenNoData — the pair has no trades.
-// Response is 200 + empty array, NOT 404. The contract treats
-// "no observations" as a legitimate steady-state outcome, especially
-// for divergence-detection callers polling for source coverage.
+// TestObservations_EmptyArrayWhenNoData: a pair with no trades returns 200 and an empty array, not 404; "no
+// observations" is a legitimate steady state for divergence-detection pollers.
 func TestObservations_EmptyArrayWhenNoData(t *testing.T) {
 	hist := &stubHistoryReader{observations: nil}
 	srv := v1.New(v1.Options{History: hist})
@@ -264,12 +262,9 @@ func TestObservations_EmptyArrayWhenNoData(t *testing.T) {
 	}
 }
 
-// TestObservations_EmptyHintsTriangulationWhenAvailable exercises the empty-result hint.
-// /v1/observations is the raw per-source surface (ADR-0018 Surface 3), so a triangulated pair
-// has no rows, yet /v1/price would serve a value via the same Redis VWAP fallback. Without a
-// hint, an empty `data: []` with `triangulated: false` looks like "this pair is unpriced". The
-// handler probes the triangulation cache when its result is empty and unfiltered, and sets
-// `triangulated: true` so consumers query /v1/price.
+// TestObservations_EmptyHintsTriangulationWhenAvailable: a triangulated pair has no raw rows though /v1/price serves it,
+// so an empty unfiltered result probes the triangulation cache and sets `triangulated: true` to point consumers at
+// /v1/price.
 func TestObservations_EmptyHintsTriangulationWhenAvailable(t *testing.T) {
 	hist := &stubHistoryReader{observations: nil}
 	looker := &stubTriangulatedPriceLooker{
@@ -370,11 +365,8 @@ func (h *observationsCallTracker) OHLCSeries(_ context.Context, _ canonical.Pair
 	return nil, nil
 }
 
-// TestObservations_FiatUSDQuoteReachesStorage — `fiat:USD` is this endpoint's default quote
-// and a real stored trade quote: CEX connectors write XLM-USD / BTC-USD / ETH-USD against it,
-// and /v1/observations/stream (same computeObservations, no short-circuit) serves them. A fast
-// path answering from memory would make the default quote the one that never returns an
-// observation.
+// TestObservations_FiatUSDQuoteReachesStorage: `fiat:USD` is the default quote and a real stored quote (CEX connectors
+// write against it), so a memory fast path would make the default quote never return observations.
 func TestObservations_FiatUSDQuoteReachesStorage(t *testing.T) {
 	hist := &observationsCallTracker{
 		rows: []canonical.Trade{
@@ -409,10 +401,8 @@ func TestObservations_RealCexQuotesHitStorage(t *testing.T) {
 		srv := v1.New(v1.Options{History: hist})
 		tsv := startHTTPTest(t, srv.Handler())
 
-		// A non-zero call count is the whole assertion: it proves the
-		// handler consulted storage rather than answering the quote
-		// family from memory. What storage happens to hold is the
-		// separate concern this regression does not fix.
+		// A non-zero call count is the whole assertion: the handler consulted storage rather than answering the quote family
+		// from memory. What storage holds is a separate concern.
 		_ = mustGet(t, tsv.URL+"/v1/observations?asset=native&quote="+q)
 		if n := hist.calls.Load(); n == 0 {
 			t.Errorf("quote=%s: storage NOT queried — real CEX quote is still being short-circuited (F-1325)", q)
@@ -453,10 +443,8 @@ func (r *aliasKeyedHistoryReader) LatestTradePerSource(
 	return r.byPair[pair.String()], nil
 }
 
-// TestObservations_AliasFanIn — the XLM dual-form regression: CEX observations are stored under
-// `crypto:XLM`, so a literal single-pair lookup leaves `?asset=native` blind to them. The
-// handler must scan every alias spelling and merge per source. (Quote is crypto:USDT, not
-// fiat:USD, which short-circuits to the triangulation hint before any scan.)
+// TestObservations_AliasFanIn: CEX observations are stored under `crypto:XLM`, so `?asset=native` must scan every alias
+// spelling and merge per source. Quote is crypto:USDT because fiat:USD short-circuits to the triangulation hint.
 func TestObservations_AliasFanIn(t *testing.T) {
 	now := time.Unix(1745000000, 0).UTC()
 	usdt, _ := canonical.ParseAsset("crypto:USDT")
@@ -537,12 +525,9 @@ func TestObservations_AliasScansRunConcurrently(t *testing.T) {
 	}
 }
 
-// TestObservations_DivergenceCheckedStructurallyFalse — the raw per-source surface carries no
-// aggregated value for the base-level cross-reference verdict to vouch for, so
-// `divergence_checked` is false by design and the DivergenceLooker is never consulted. A firing
-// verdict under every spelling of the base must leave both divergence flags false and the
-// looker untouched. If this starts failing because the surface now consults the looker, the
-// comment in handleObservations and the OpenAPI text must change with it.
+// TestObservations_DivergenceCheckedStructurallyFalse: the raw per-source surface has no aggregated value to vouch for, so
+// divergence_checked is false by design and the looker is never consulted. If that changes, update handleObservations
+// and the OpenAPI text.
 func TestObservations_DivergenceCheckedStructurallyFalse(t *testing.T) {
 	now := time.Unix(1745000000, 0).UTC()
 	hist := &stubHistoryReader{
@@ -604,10 +589,8 @@ func TestObservations_ExcludesExchangeRows(t *testing.T) {
 	}
 }
 
-// TestObservations_CacheUnavailable503 — The fiat:USD short-
-// circuit skips storage, so this test uses a CONCRETE classic quote
-// (USDC-G…) to force the LatestTradePerSource path that actually
-// hits the cache layer.
+// TestObservations_CacheUnavailable503: the fiat:USD short-circuit skips storage, so a concrete classic quote (USDC-G...)
+// forces the LatestTradePerSource path that hits the cache layer.
 func TestObservations_CacheUnavailable503(t *testing.T) {
 	hist := &stubHistoryReader{err: miscOnfErr}
 	srv := v1.New(v1.Options{History: hist})

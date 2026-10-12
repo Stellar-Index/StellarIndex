@@ -8,10 +8,9 @@ import (
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 )
 
-// TestPriceUSDAnchoredFiatCrossRejectsStaleTickerEvenWithFreshSnapshot: the snapshot's
-// PublishedAt is fresh but the BRL ticker's own UpdatedAt is stale. [Server.fxCrossMaxAge]
-// gates on the OLDER of the two (the held-rate rule [tryFiatCrossRate] applies), so a wedged
-// upstream ticker cannot hide behind an otherwise-current snapshot.
+// TestPriceUSDAnchoredFiatCrossRejectsStaleTickerEvenWithFreshSnapshot: snapshot PublishedAt is fresh but the BRL
+// ticker's UpdatedAt is stale. [Server.fxCrossMaxAge] gates on the older of the two (the [tryFiatCrossRate] held-rate
+// rule), so a wedged upstream ticker can't hide behind a current snapshot.
 func TestPriceUSDAnchoredFiatCrossRejectsStaleTickerEvenWithFreshSnapshot(t *testing.T) {
 	reader := &usdLegReader{usdPriceFor: "native", price: xlmUSDPrice}
 	staleAt := time.Now().UTC().Add(-77 * time.Hour)

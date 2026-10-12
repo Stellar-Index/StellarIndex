@@ -206,10 +206,9 @@ func TestSources_NetworkScoped(t *testing.T) {
 	}
 }
 
-// TestSources_EveryRegistryNameClassified guards the network gate's failure
-// direction: sourcenet.Applicable answers false for any name it does not
-// classify, so a new on-chain registry entry that runs on every network would
-// silently vanish from test nets. Only off-chain feeds may rely on that default.
+// TestSources_EveryRegistryNameClassified guards the network gate's failure direction: sourcenet.Applicable answers
+// false for unclassified names, so a new on-chain entry would silently vanish from test nets. Only off-chain feeds
+// may rely on that default.
 func TestSources_EveryRegistryNameClassified(t *testing.T) {
 	offChain := map[string]bool{
 		"binance": true, "kraken": true, "bitstamp": true, "coinbase": true, "poloniex_via_btc": true, // CEX

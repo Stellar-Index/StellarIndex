@@ -36,10 +36,8 @@ func rwaCuratedCacheTestServer(reader RWACuratedDirectoryReader) *Server {
 	}
 }
 
-// The curated snapshot is a process-wide cache shared by every request within its TTL. The
-// request that triggers a refresh must not poison it for everyone else by disconnecting
-// mid-read, so the read runs on a context detached from the caller's, as the membership
-// cache's rebuild does.
+// The curated snapshot is a process-wide cache shared within its TTL, so the refreshing request must not poison it by
+// disconnecting mid-read; the read runs on a context detached from the caller's, like the membership cache rebuild.
 func TestRWACuratedSnapshot_ReadDoesNotInheritCallerCancellation(t *testing.T) {
 	reader := &blockingRWACuratedReader{rows: map[string]timescale.CuratedRWAEntry{
 		"CBUBVYRKTQLMDRUBPP6SH4GO33KZCEEYBIWB5AWNGKODP4A6KPKM2VJ4": {
@@ -81,10 +79,8 @@ func (r *slowRWACuratedReader) LatestCuratedPublished(context.Context, string) (
 	return nil, nil
 }
 
-// The TTL must be stamped only once the read has actually returned. A
-// snapshot cached BEFORE the read completes can claim a freshness
-// window for data it never obtained: the delay a slow read takes must
-// show up in the stamp, not be stamped over the instant the read began.
+// The TTL must be stamped only after the read returns; stamping before would claim freshness for data never obtained, so a
+// slow read's delay must show in the stamp.
 func TestRWACuratedSnapshot_StampsTTLAfterTheReadCompletes(t *testing.T) {
 	const delay = 100 * time.Millisecond
 	reader := &slowRWACuratedReader{

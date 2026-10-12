@@ -13,11 +13,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
-// The absolute dust floor asks whether trading is SMALL, not whether the CLAIMED cap is large
-// against the trading there is. Two vanity mints cleared the floor on four-figure volume yet
-// published caps orders of magnitude past any recognised asset, inflating the headline total.
-//
-// These are the figures the surface actually served, not invented ones.
+// The absolute dust floor asks whether trading is small, not whether the claimed cap is large against it: two vanity mints
+// cleared the floor on four-figure volume yet published huge caps. Figures here are the ones actually served.
 const (
 	// SLVR-GBZVELEQ… "Silver Gram", mintx.co. No SEP-1, no curated
 	// directory entry. 826,462x its own daily volume — 2,264 years to
@@ -27,10 +24,8 @@ const (
 	// GOLD-GBC5ZGK6… "Gold Gram", same domain. 928,117x — 2,542 years.
 	goldCapUSD    = "2754485981.60"
 	goldVolumeUSD = "2967.82084657"
-	// TFT-GBOVQKJY… the HIGHEST ratio among assets that are not those
-	// two: 2,856x, 7.8 years. The default ceiling has to clear this by a
-	// wide margin, because being illiquid is not the same as being
-	// unvalued.
+	// TFT-GBOVQKJY... has the highest ratio among the other assets (2,856x, 7.8 years); the default ceiling must clear it
+	// widely, since illiquid is not unvalued.
 	tftCapUSD    = "6131615.11"
 	tftVolumeUSD = "2147.10"
 	// USDC, for scale: 5.2x. One working week turns the float over.
@@ -38,10 +33,8 @@ const (
 	usdcVolumeUSD = "68388882.73730980"
 )
 
-// TestCapExceedsObservedTurnoverSeparatesTheMeasuredSet chooses the default from the served
-// set: at 50,000 the two mintx.co rows are refused and every other row, including the least
-// liquid, keeps its cap. The gap between TFT and SLVR is a factor of 289, so the line is not
-// finely balanced.
+// TestCapExceedsObservedTurnoverSeparatesTheMeasuredSet: at 50,000 the two mintx.co rows are refused and every other row
+// keeps its cap; the TFT to SLVR gap is 289x, so the line is not finely balanced.
 func TestCapExceedsObservedTurnoverSeparatesTheMeasuredSet(t *testing.T) {
 	const defaultRatio = 50_000
 	for _, tt := range []struct {
@@ -101,10 +94,8 @@ func TestCapExceedsObservedTurnoverIsDisabledAtZero(t *testing.T) {
 	}
 }
 
-// TestCapExceedsObservedTurnoverRefusesNothingOnAnAbsentCap — a cap that was
-// never computed cannot be too large. Both callers already return early on an
-// empty figure, so this is the belt on the braces: the guard must not report
-// "refused" for a row that has nothing to refuse.
+// TestCapExceedsObservedTurnoverRefusesNothingOnAnAbsentCap: a cap never computed cannot be too large; the guard must
+// not report "refused" for a row with nothing to refuse.
 func TestCapExceedsObservedTurnoverRefusesNothingOnAnAbsentCap(t *testing.T) {
 	v := "1"
 	for _, c := range []string{"", "0", "0.00", "-1", "not a number"} {
@@ -135,10 +126,8 @@ func TestCapExceedsObservedTurnoverIsExactAtTheBoundary(t *testing.T) {
 	}
 }
 
-// TestFillRowMarketCapRefusesACapItsOwnMarketNeverValued drives the PRODUCTION listing fill over
-// SLVR's real supply, price and volume with a multi-source price count (so the dust floor cannot
-// fire) and the default ceiling. It is the wiring test: the pure-function cases above would pass
-// against a build that computed the verdict and discarded it.
+// TestFillRowMarketCapRefusesACapItsOwnMarketNeverValued is the wiring test: it drives the production listing fill over
+// SLVR's real figures, so a build that computed the verdict and discarded it fails.
 func TestFillRowMarketCapRefusesACapItsOwnMarketNeverValued(t *testing.T) {
 	s := &Server{Options: Options{MinMarketCapVolumeUSD: 1000, MaxMarketCapVolumeRatio: 50_000}}
 	price := "1.5666161388"
@@ -221,12 +210,8 @@ func TestFillRowMarketCapNativeIsNeverTurnoverSuppressed(t *testing.T) {
 	}
 }
 
-// TestPopulateMarketCapAgreesWithTheListingOnTheSameAsset covers the DETAIL path: the listing
-// and /v1/assets/{id} must agree on whether an asset's cap is published, by rule rather than by
-// accident.
-//
-// The FDV assertion is on the same row deliberately. FDV is the cap over MAX supply, so
-// withholding market_cap_usd while publishing a bigger fdv_usd would defeat the guard.
+// TestPopulateMarketCapAgreesWithTheListingOnTheSameAsset: listing and /v1/assets/{id} must agree on whether a cap is
+// published. FDV is asserted too, since publishing a bigger fdv_usd while withholding market_cap_usd defeats the guard.
 func TestPopulateMarketCapAgreesWithTheListingOnTheSameAsset(t *testing.T) {
 	s := &Server{
 		Options: Options{MinMarketCapVolumeUSD: 1000, MaxMarketCapVolumeRatio: 50_000},
@@ -290,10 +275,8 @@ func slogDiscard() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-// TestPopulateMarketCapFlagsFDVOnlyCeilingBreach covers the row shape the test above does not:
-// market_cap_usd clears the turnover ceiling and publishes while fdv_usd alone breaches it.
-// FDV >= market_cap_usd whenever max_supply > circulating_supply, so this is the common shape
-// for any issuer whose declared cap exceeds what has vested.
+// TestPopulateMarketCapFlagsFDVOnlyCeilingBreach: market_cap_usd clears the turnover ceiling and publishes while
+// fdv_usd alone breaches it, the common shape when declared max supply exceeds what has vested.
 func TestPopulateMarketCapFlagsFDVOnlyCeilingBreach(t *testing.T) {
 	s := &Server{
 		Options: Options{MinMarketCapVolumeUSD: 1000, MaxMarketCapVolumeRatio: 50_000},
@@ -328,10 +311,8 @@ func TestPopulateMarketCapFlagsFDVOnlyCeilingBreach(t *testing.T) {
 	}
 }
 
-// TestFillContractMarketCapsAppliesTheSameCeiling covers the third call site.
-// The RWA contract arm computes its own cap from its own supply reader, so it
-// is a separate place the guard has to be remembered — and an unwired call
-// site is invisible until an asset with the right shape turns up on it.
+// TestFillContractMarketCapsAppliesTheSameCeiling covers the third call site: the RWA contract arm computes its own
+// cap, and an unwired call site would go unnoticed.
 func TestFillContractMarketCapsAppliesTheSameCeiling(t *testing.T) {
 	const contractID = "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA"
 	// 2,000,000,000 tokens at $1.5666 = $3.13B, against $3,791 of volume.

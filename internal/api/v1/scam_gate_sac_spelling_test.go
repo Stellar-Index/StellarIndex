@@ -92,11 +92,9 @@ func (f sacSpellingFixture) gate() *pricingguard.ScamGate {
 	return pricingguard.NewScamGate(f.dir, pricingguard.ScamGateOptions{})
 }
 
-// sacSpellingHistory serves trades for every spelling of the flagged asset against native, so an
-// UNGATED path answers 200 with a real price and the withheld assertions cannot pass vacuously.
-// Two timestamps because the surfaces read different windows: /v1/price/tip needs one inside its
-// rolling seconds-wide window, while /v1/twap and /v1/vwap read a closed-bucket hour that a
-// two-second-old trade sits outside of.
+// sacSpellingHistory serves trades for every spelling of the flagged asset against native, so an ungated path
+// answers 200 and the withheld assertions can't pass vacuously. Two timestamps: /v1/price/tip reads a rolling
+// seconds-wide window, /v1/twap and /v1/vwap read a closed-bucket hour.
 func sacSpellingHistory(t *testing.T, f sacSpellingFixture) *pairAwareHistoryReader {
 	t.Helper()
 	native, err := canonical.ParseAsset("native")
@@ -126,10 +124,9 @@ func sacSpellingHistory(t *testing.T, f sacSpellingFixture) *pairAwareHistoryRea
 	return &pairAwareHistoryReader{tradesByPair: byPair}
 }
 
-// sacSpellingSurfaces are the five price-claim surfaces the raw base reaches the gate on.
-// /v1/price is pinned at its chokepoint in cmd/stellarindex-api
-// (TestPriceWithheldChokepointResolvesSACSpelling) because its gate call lives in the
-// store-backed reader; the other four gate in this package's handlers and are exercised over HTTP.
+// sacSpellingSurfaces are the five price-claim surfaces that pass the raw base to the gate. /v1/price is pinned in
+// cmd/stellarindex-api (TestPriceWithheldChokepointResolvesSACSpelling) as its gate call is in the store-backed
+// reader; the other four are exercised over HTTP here.
 func sacSpellingSurfaces(f sacSpellingFixture) []struct {
 	name string
 	path string
@@ -146,10 +143,8 @@ func sacSpellingSurfaces(f sacSpellingFixture) []struct {
 	}
 }
 
-// TestScamGateWithholdsSACSpellingOnEveryPriceSurface is the headline
-// case: the flagged issuer's price must be refused when the caller
-// spells the asset as its SAC contract id, on every surface that
-// consults the gate.
+// TestScamGateWithholdsSACSpellingOnEveryPriceSurface: the flagged issuer's price must be refused when the caller
+// spells the asset as its SAC contract id, on every surface that consults the gate.
 func TestScamGateWithholdsSACSpellingOnEveryPriceSurface(t *testing.T) {
 	f := newSACSpellingFixture(t, true)
 	for _, s := range sacSpellingSurfaces(f) {
@@ -178,10 +173,8 @@ func TestScamGateWithholdsSACSpellingOnEveryPriceSurface(t *testing.T) {
 	}
 }
 
-// TestScamGateSACSpellingAsksAboutTheClassicIssuer pins the MECHANISM,
-// not just the status code. A 404 could come from anywhere; the gate
-// resolving the wrapper is proven by the directory being asked about the
-// classic issuance's G-address, which the SAC spelling does not contain.
+// TestScamGateSACSpellingAsksAboutTheClassicIssuer pins the mechanism, not just the status: a 404 could come from
+// anywhere, so it asserts the directory was asked about the classic G-address, which the SAC spelling lacks.
 func TestScamGateSACSpellingAsksAboutTheClassicIssuer(t *testing.T) {
 	f := newSACSpellingFixture(t, true)
 	srv := v1.New(v1.Options{History: sacSpellingHistory(t, f), Prices: &stubPriceReader{}, Scam: f.gate()})
@@ -200,10 +193,8 @@ func TestScamGateSACSpellingAsksAboutTheClassicIssuer(t *testing.T) {
 	}
 }
 
-// TestScamGateClassicSpellingUnchanged is the direction guard. A
-// configured classic↔SAC family is ordered classic-first, so resolving
-// a classic base returns it untouched — the spelling that already
-// withheld must keep withholding, by the same issuer lookup.
+// TestScamGateClassicSpellingUnchanged is the direction guard: a classic↔SAC family is ordered classic-first, so
+// a classic base resolves to itself and keeps withholding via the same issuer lookup.
 func TestScamGateClassicSpellingUnchanged(t *testing.T) {
 	f := newSACSpellingFixture(t, true)
 	for _, s := range []struct{ name, path string }{
@@ -259,10 +250,8 @@ func TestScamGateUnflaggedSACSpellingStillServes(t *testing.T) {
 	}
 }
 
-// TestScamGateUndeclaredSACSpellingIsANoOp pins the deployment-shape
-// promise: with no [supply].sac_wrappers entry for the asset there is
-// no classic twin to resolve to, so the wrapper stays its own identity,
-// the directory is never asked, and behaviour is exactly what it was.
+// TestScamGateUndeclaredSACSpellingIsANoOp: with no [supply].sac_wrappers entry there is no classic twin, so the
+// wrapper stays its own identity and the directory is never asked.
 func TestScamGateUndeclaredSACSpellingIsANoOp(t *testing.T) {
 	canonical.InstallAliasRegistry(nil) // XLM-only baseline: no operator wrappers
 	t.Cleanup(func() { canonical.InstallAliasRegistry(nil) })

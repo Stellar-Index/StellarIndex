@@ -12,10 +12,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// stubSEP41TransfersReader is a no-op reader that lets us exercise
-// the handler's request-side validation without a real database.
-// If a validation case fails to short-circuit and reaches the
-// reader, the test will see calledN > 0 and complain.
+// stubSEP41TransfersReader is a no-op reader for exercising request-side validation without a database; a case
+// that fails to short-circuit reaches it and the test sees calledN > 0.
 type stubSEP41TransfersReader struct {
 	calledN int
 }
@@ -33,10 +31,9 @@ func serverWithSEP41Reader(reader SEP41TransfersReader) *Server {
 	return s
 }
 
-// TestSEP41Transfers_LadderBudgetLeavesTheFallbackAtLeastHalf pins the premise of the store's
-// lookback-ladder budget: the handler's deadline is the read's only budget, the ladder may
-// spend at most half, and the rest is the full-history fallback's. The store cannot import
-// this package, so this is the one place the two constants meet.
+// TestSEP41Transfers_LadderBudgetLeavesTheFallbackAtLeastHalf pins the store's lookback-ladder budget premise: the
+// handler deadline is the read's only budget, the ladder may spend at most half, the rest is the full-history
+// fallback's. The store can't import this package, so the two constants meet only here.
 func TestSEP41Transfers_LadderBudgetLeavesTheFallbackAtLeastHalf(t *testing.T) {
 	if 2*timescale.SEP41TransferLadderBudget > sep41TransfersReadTimeout {
 		t.Fatalf("timescale.SEP41TransferLadderBudget=%s is more than half of sep41TransfersReadTimeout=%s — the fallback would run on less time than the ladder that failed to answer",
@@ -161,10 +158,8 @@ func TestSEP41Transfers_AllHolderTypesAccepted_ReachReader(t *testing.T) {
 }
 
 func TestSEP41Transfers_ValidInputs_ReachReader(t *testing.T) {
-	// Sanity: known-good inputs must NOT short-circuit at the
-	// validation layer — they reach the reader, which (in the test
-	// stub) returns an empty list. Verifies the validation isn't
-	// over-strict.
+	// Sanity: known-good inputs must not short-circuit at validation; they reach the reader (the stub returns an empty
+	// list), proving validation isn't over-strict.
 	reader := &stubSEP41TransfersReader{}
 	srv := serverWithSEP41Reader(reader)
 	mux := http.NewServeMux()
@@ -183,10 +178,9 @@ func TestSEP41Transfers_ValidInputs_ReachReader(t *testing.T) {
 	}
 }
 
-// TestSEP41Transfers_UnreachableStorageMapsTo503 is the wire-level half: with Postgres
-// refusing connections, GET /v1/contracts/{id}/transfers must answer the retryable 503 its
-// handler reserves for transient storage failures, not 500 (the `sep41-transfers-error`
-// branch, which a false transientStorageErr(pgxDialRefused()) would reach).
+// TestSEP41Transfers_UnreachableStorageMapsTo503: with Postgres refusing connections, GET
+// /v1/contracts/{id}/transfers must answer the retryable 503 reserved for transient storage failures, not 500
+// (the `sep41-transfers-error` branch).
 func TestSEP41Transfers_UnreachableStorageMapsTo503(t *testing.T) {
 	srv := serverWithSEP41Reader(&unreachableTransfersReader{err: pgxDialRefused()})
 	srv.logger = slog.New(slog.NewTextHandler(io.Discard, nil))

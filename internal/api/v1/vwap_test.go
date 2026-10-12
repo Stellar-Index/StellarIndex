@@ -193,10 +193,8 @@ func TestVWAP_ReaderError500(t *testing.T) {
 	}
 }
 
-// pairAwareHistoryReader implements v1.HistoryReader and serves
-// trades per-pair. Only the methods exercised by the VWAP/TWAP
-// stablecoin-fallback tests are populated; the rest fall through
-// to the embedded stubHistoryReader's defaults.
+// pairAwareHistoryReader implements v1.HistoryReader and serves trades per pair. Only methods used by the
+// VWAP/TWAP stablecoin-fallback tests are populated; the rest use the embedded stubHistoryReader's defaults.
 type pairAwareHistoryReader struct {
 	stubHistoryReader
 	tradesByPair map[string][]canonical.Trade
@@ -270,11 +268,9 @@ func TestVWAP_NoPegLeaves404(t *testing.T) {
 	}
 }
 
-// TestVWAP_CarriesNoDivergenceVerdict — the cross-reference verdict compares the aggregator's
-// shortest-window VWAP now, while /v1/vwap computes over a caller-chosen [from, to) from raw
-// trades, so reporting `divergence_checked: true` would vouch for a number the check never saw.
-// With a checked, firing verdict cached under every spelling, the envelope must still report
-// neither, and the looker must not be asked.
+// TestVWAP_CarriesNoDivergenceVerdict: the cross-reference verdict compares the aggregator's shortest-window VWAP now, while
+// /v1/vwap computes over a caller-chosen [from, to), so `divergence_checked: true` would vouch for a number never checked. With
+// a firing verdict cached under every spelling, the envelope must report neither and the looker must not be asked.
 func TestVWAP_CarriesNoDivergenceVerdict(t *testing.T) {
 	verdict := struct{ firing, checked bool }{firing: true, checked: true}
 	for _, query := range []string{
@@ -408,12 +404,9 @@ func TestVWAP_ProxyDeviationBand(t *testing.T) {
 	}
 }
 
-// TestVWAP_NonstandardDecimals_Normalizes: /v1/vwap computes entirely from raw trades at query
-// time, so a confirmed non-7-decimals pair is served at the CORRECTED price
-// (aggregate.AdjustPrice) rather than declined with 422. See docs/operations/runbooks/dex.md
-// "Root cause analysis". flaggedAsset is decimals()=18; base_amount = 2.5*10^18, quote_amount =
-// 1.242*10^7 (USDC, 7dp) → true price 0.4968, the SAME golden case as internal/aggregate's
-// TestAdjustPrice_Golden18DecimalToken.
+// TestVWAP_NonstandardDecimals_Normalizes: /v1/vwap computes from raw trades, so a confirmed non-7-decimals pair is served at
+// the CORRECTED price (aggregate.AdjustPrice), not declined with 422. Golden case as TestAdjustPrice_Golden18DecimalToken: base
+// 2.5*10^18 (18dp) over quote 1.242*10^7 (USDC 7dp) gives 0.4968.
 func TestVWAP_NonstandardDecimals_Normalizes(t *testing.T) {
 	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 18)
 	baseAmount, ok := new(big.Int).SetString("2500000000000000000", 10)

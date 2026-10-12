@@ -285,10 +285,8 @@ func TestStatusNotices_PublicUnwiredEmpty(t *testing.T) {
 	}
 }
 
-// TestStatusNotices_ListErrorMarksStale pins that a ListActive
-// failure must not be byte-identical to a genuine empty list on the
-// wire — flags.stale distinguishes "nothing to announce" from
-// "couldn't ask".
+// TestStatusNotices_ListErrorMarksStale pins that a ListActive failure is not byte-identical to a genuine empty
+// list: flags.stale distinguishes "nothing to announce" from "couldn't ask".
 func TestStatusNotices_ListErrorMarksStale(t *testing.T) {
 	store := newFakeStatusNoticeStore()
 	store.listErr = errors.New("notice store unavailable")

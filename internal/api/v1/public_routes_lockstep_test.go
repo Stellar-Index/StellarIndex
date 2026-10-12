@@ -6,11 +6,9 @@ import (
 	"testing"
 )
 
-// TestPublicRoutes_MatchOpenAPISecurityNone holds handlePublic and the
-// spec's `security: []` in lockstep in both directions: a route the spec
-// calls public but the server mounts gated 401s under apikey/sep10, and a
-// route the server mounts public but the spec does not declare is an
-// undocumented hole in the credential requirement.
+// TestPublicRoutes_MatchOpenAPISecurityNone keeps handlePublic and the spec's `security: []` in lockstep both ways: a
+// spec-public route mounted gated 401s under apikey/sep10; a server-public route the spec doesn't declare is an
+// undocumented hole.
 func TestPublicRoutes_MatchOpenAPISecurityNone(t *testing.T) {
 	// Credential-BLIND infra probes: exempted by
 	// middleware.isUnauthenticatedInfraPath, not by handlePublic.

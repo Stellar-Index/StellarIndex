@@ -145,11 +145,9 @@ func TestMarketSources_ExpandsXLMAliasForms(t *testing.T) {
 	}
 }
 
-// TestMarketSources_MembershipMatchesSACValuation: the per-source breakdown SQL VALUES a
-// `CAS3J7GY…` leg as XLM (its volume CASE applies the XLM/USD rate), so the handler's form set
-// must include it alongside `native` + `crypto:XLM`; otherwise Soroban XLM trades are excluded
-// from the priced population and /v1/markets/sources?asset=native undercounts volume.
-// Membership and valuation must name the SAME set of forms.
+// TestMarketSources_MembershipMatchesSACValuation: the breakdown SQL values the `CAS3J7GY...` leg as XLM, so the handler's
+// form set must include it with `native` + `crypto:XLM`, or Soroban XLM volume is undercounted. Membership and valuation
+// share one set.
 func TestMarketSources_MembershipMatchesSACValuation(t *testing.T) {
 	reader := &stubMarketSourceReader{asset: []timescale.SourceStats{
 		{Source: "aquarius", TradeCount24h: 1, VolumeUSD24h: sql.NullString{String: "1", Valid: true}},

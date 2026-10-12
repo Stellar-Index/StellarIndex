@@ -22,10 +22,8 @@ var specOpaqueObjectAllowlist = map[string]string{
 	"entry":        "decoded ledger entry; one shape per entry type",
 }
 
-// TestSpecOpaqueObjectsAreAllowlisted fails when a response property is
-// documented as an untyped object — the shape that left protocol
-// `bespoke` and account/me `user`/`account` as `unknown` to every
-// generated consumer although the handler serves a fixed struct.
+// TestSpecOpaqueObjectsAreAllowlisted fails when a response property is documented as an untyped object, which
+// left protocol `bespoke` and account/me `user`/`account` as `unknown` to generated consumers.
 func TestSpecOpaqueObjectsAreAllowlisted(t *testing.T) {
 	doc := loadSpecDoc(t)
 	seen := map[string]bool{}

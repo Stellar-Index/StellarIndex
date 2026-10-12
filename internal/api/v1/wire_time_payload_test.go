@@ -144,13 +144,9 @@ func (s wireTimePriceAtStub) PriceAt(
 	return s.value, s.bucketAt, 60, nil
 }
 
-// TestWireTime_RenderedPayloadsCarryNoLocalOffset is the class test for the timezone leak. It
-// feeds every timestamp-bearing reader a fixture stamped in a NON-UTC zone, then walks the
-// RENDERED JSON of many endpoints and fails on any timestamp that is not `Z`.
-//
-// It scans payloads rather than naming fields on purpose: a new or nested timestamp is covered
-// as soon as its endpoint is in the table below. The structural half of the guarantee (a NEW
-// endpoint cannot opt out) is TestWireTime_NoRawTimeOnTheWire.
+// TestWireTime_RenderedPayloadsCarryNoLocalOffset: feeds every timestamp-bearing reader a NON-UTC fixture, renders many
+// endpoints' JSON and fails on any timestamp not ending `Z`. It scans payloads, not named fields, so new or nested timestamps
+// are covered once their endpoint is tabled; TestWireTime_NoRawTimeOnTheWire covers new endpoints structurally.
 func TestWireTime_RenderedPayloadsCarryNoLocalOffset(t *testing.T) {
 	ts := wireTimePayloadServer(t)
 

@@ -38,9 +38,8 @@ func (payloadOnlyStub) GetIssuerSep1Cached(context.Context, string) (*timescale.
 
 const sep1TestIssuer = "GDMBNMFJ3TRFLASJ6UGETFME3PJPNKPU24C7KFDBEBPQFG2CI6UC3JG6"
 
-// TestSep1StatusSeparatesOurBacklogFromTheirBrokenFile is the regression. Both states reach
-// this code as a nil payload but are opposite findings: one is our queue, the other the
-// issuer's published document. A stellar.toml that fails to parse must not report
+// TestSep1StatusSeparatesOurBacklogFromTheirBrokenFile: both states arrive as a nil payload but are opposite
+// findings (our queue vs the issuer's document). A stellar.toml that fails to parse must not report
 // `not_fetched`, which says we never tried.
 func TestSep1StatusSeparatesOurBacklogFromTheirBrokenFile(t *testing.T) {
 	for _, tt := range []struct {
@@ -68,10 +67,9 @@ func TestSep1StatusSeparatesOurBacklogFromTheirBrokenFile(t *testing.T) {
 	}
 }
 
-// TestSep1StatusClaimsNothingWithoutAFetchStateReader — the seam is optional,
-// consulted by type assertion, and a deployment without it must behave as without the seam.
-// The fallback direction is load-bearing: `not_fetched` blames nobody, `unreachable` blames
-// the issuer, so an unwired reader must never produce the second.
+// TestSep1StatusClaimsNothingWithoutAFetchStateReader: the seam is optional (type assertion), and its absence must
+// behave as no seam. `not_fetched` blames nobody, `unreachable` blames the issuer, so an unwired reader must
+// never produce the latter.
 func TestSep1StatusClaimsNothingWithoutAFetchStateReader(t *testing.T) {
 	s := &Server{Options: Options{Sep1Cache: payloadOnlyStub{}}, logger: discardLogger()}
 
@@ -95,10 +93,8 @@ func TestSep1StatusDoesNotBlameTheIssuerForOurReadFailure(t *testing.T) {
 	}
 }
 
-// TestApplySep1OverlayReportsTheIssuersBrokenFile is the WIRING half. The
-// three tests above call the helper directly, so they stay green against a build that computes
-// the right answer and discards it at the call site. It drives the production overlay and
-// asserts on the field a client reads.
+// TestApplySep1OverlayReportsTheIssuersBrokenFile is the wiring half: the helper tests above stay green if the
+// call site discards the right answer. It drives the production overlay and asserts on the field a client reads.
 func TestApplySep1OverlayReportsTheIssuersBrokenFile(t *testing.T) {
 	asset, err := canonical.ParseAsset("WTGX-" + sep1TestIssuer)
 	if err != nil {
@@ -147,10 +143,9 @@ func (s *sep1HeldPayloadStub) GetIssuerSep1Cached(context.Context, string) (*tim
 	}, nil
 }
 
-// TestApplySep1OverlayAgesOutADeadDomainsPayload — a failed fetch never clears
-// the held payload, so a payload the store reports as outliving its failing
-// domain must not be served as `verified`, nor its org_name. The age/failure
-// truth table itself is SQL: TestSep1PayloadOutlivedDomain (integration).
+// TestApplySep1OverlayAgesOutADeadDomainsPayload: a failed fetch never clears the held payload, so one the store
+// reports as outliving its failing domain must not be served as `verified`, nor its org_name.
+// The age/failure truth table is SQL: TestSep1PayloadOutlivedDomain (integration).
 func TestApplySep1OverlayAgesOutADeadDomainsPayload(t *testing.T) {
 	asset, err := canonical.ParseAsset("WTGX-" + sep1TestIssuer)
 	if err != nil {

@@ -18,10 +18,8 @@ import (
 	"time"
 )
 
-// TestWireTime_MarshalsUTCRegardlessOfLocation is the unit-level
-// contract: the SAME INSTANT renders identically no matter which
-// location the value carries. This is what a plain time.Time field
-// does not give you.
+// TestWireTime_MarshalsUTCRegardlessOfLocation is the unit contract: the same instant renders identically
+// whatever location the value carries, which a plain time.Time field does not give.
 func TestWireTime_MarshalsUTCRegardlessOfLocation(t *testing.T) {
 	instant := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
 	zones := []*time.Location{
@@ -52,10 +50,8 @@ func TestWireTime_MarshalsUTCRegardlessOfLocation(t *testing.T) {
 	}
 }
 
-// TestWireTime_MatchesTimeTimeForUTCValues pins the compatibility
-// claim that made adopting this type safe on 40-odd already-correct
-// fields: for a value that was ALREADY UTC, the bytes are unchanged.
-// Adopting WireTime is therefore not a response-shape change.
+// TestWireTime_MatchesTimeTimeForUTCValues pins that a value already in UTC marshals to unchanged bytes, so
+// adopting WireTime on the 40-odd already-correct fields is not a response-shape change.
 func TestWireTime_MatchesTimeTimeForUTCValues(t *testing.T) {
 	for _, instant := range []time.Time{
 		time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC),
@@ -121,15 +117,9 @@ func TestWireTime_OutOfRangeYearRendersNull(t *testing.T) {
 	}
 }
 
-// TestWireTime_NoRawTimeOnTheWire is the structural ratchet.
-//
-// The payload scan in wire_time_payload_test.go only sees the endpoints it lists. This one
-// parses every struct in every package under internal/api (handlers, sub-packages, SSE
-// producers) and fails if any json-tagged field is a raw time.Time, which renders in whatever
-// location its value carries and so leaks local offsets like `+02:00`.
-//
-// The package set is walked, not listed, so a new package that marshals to a client is covered
-// at once. A struct that never reaches a client is named in wireTimeExclusions; nothing else is.
+// TestWireTime_NoRawTimeOnTheWire (structural ratchet): parses every struct in every package under internal/api and fails on
+// any json-tagged raw time.Time, which renders in its own location and leaks offsets like `+02:00`. Packages are walked, not
+// listed; only structs that never reach a client go in wireTimeExclusions.
 func TestWireTime_NoRawTimeOnTheWire(t *testing.T) {
 	fset := token.NewFileSet()
 	byDir := parseAPITree(t, fset)

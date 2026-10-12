@@ -1,10 +1,7 @@
 package v1
 
-// Unit tests for the pure decisions behind GET /v1/rwa/premium.
-//
-// Three things not reachable from the HTTP surface are pinned here: the ORDER of the pre-read
-// gates (scam flag before the binding), the numbers the per-day thin-market floor is made of, and
-// the join that refuses to carry either leg.
+// Unit tests for the pure decisions behind GET /v1/rwa/premium: the order of the pre-read gates (scam flag before
+// binding), the per-day thin-market floor numbers, and the join that refuses to carry either leg.
 
 import (
 	"context"
@@ -23,10 +20,8 @@ const etherfuseBoundIssuer = "GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4L
 
 func premDay(n int) time.Time { return time.Date(2026, 9, n, 0, 0, 0, 0, time.UTC) }
 
-// premDefaultFloor is the pricingguard-default day floor, for tests
-// that exercise rwaPremiumJoin's join logic and don't care about the
-// configured-vs-default distinction (see TestRWAPremiumDayFloorTracksServingDefaults
-// for that).
+// premDefaultFloor is the pricingguard-default day floor, for rwaPremiumJoin tests that ignore the configured-vs-default
+// distinction (see TestRWAPremiumDayFloorTracksServingDefaults).
 func premDefaultFloor() pricingguard.SubstancePolicy {
 	return (&Server{}).rwaPremiumDayFloorFor()
 }
@@ -41,12 +36,8 @@ func premRat(s string) *big.Rat {
 
 // ─── the pre-read gates, and their order ────────────────────────────
 
-// TestRWAPremiumCandidates_SuppressesAFlaggedIssuerBeforeReadingTheBinding.
-//
-// The member is BOUND (the curated table ties this exact (code, issuer) to the USTRY feed) and
-// carries a scam-class directory tag. If the binding were consulted first, an impersonator would
-// get a real instrument's net asset value and a premium against it. The order is the defence, so
-// the order is the test.
+// TestRWAPremiumCandidates_SuppressesAFlaggedIssuerBeforeReadingTheBinding: a bound member with a scam-class tag must be
+// suppressed before the binding is consulted, or an impersonator gets a real NAV and premium. Order is the defence.
 func TestRWAPremiumCandidates_SuppressesAFlaggedIssuerBeforeReadingTheBinding(t *testing.T) {
 	m := rwaMembership{members: []rwaMember{{
 		code:    "USTRY",
@@ -83,10 +74,8 @@ func TestRWAPremiumCandidates_AnUnboundPairIsRefusedAndCounted(t *testing.T) {
 	}
 }
 
-// TestRWAPremiumCandidates_ReadsNoSupply — a premium compares two
-// prices. The value series needs a Stellar Asset Contract address to
-// key the flow log by and refuses a member without one; this surface
-// must not inherit that refusal, because it never reads a supply.
+// TestRWAPremiumCandidates_ReadsNoSupply: a premium compares two prices, so it must not inherit the value series'
+// refusal of members lacking a SAC address.
 func TestRWAPremiumCandidates_ReadsNoSupply(t *testing.T) {
 	m := rwaMembership{members: []rwaMember{{
 		code:    "USTRY",
@@ -107,16 +96,9 @@ func TestRWAPremiumCandidates_ReadsNoSupply(t *testing.T) {
 
 // ─── the floor ──────────────────────────────────────────────────────
 
-// TestRWAPremiumDayFloorTracksServingDefaults.
-//
-// Two of the day floor's three legs are the serving substance gate's own numbers and MUST stay
-// them: both windows are 24 hours, so the dollar-volume minimum means the same thing, and the span
-// leg is grain-independent. Lowering the serving floor fails this rather than letting the two
-// drift, since a history publishing a claim the live surface refuses is what the gate prevents.
-//
-// It compares against an operator-configured policy that DIFFERS from the pricingguard defaults;
-// comparing against the defaults would pass even if [Server.rwaPremiumDayFloorFor] never read the
-// configured value. The bucket leg is deliberately NOT the serving default and is pinned below.
+// TestRWAPremiumDayFloorTracksServingDefaults: the dollar-volume and span legs of the day floor must equal the serving
+// gate's, so history never publishes a claim the live surface refuses. Compares against a configured policy that differs
+// from the defaults, else it would pass without [Server.rwaPremiumDayFloorFor] reading the config.
 func TestRWAPremiumDayFloorTracksServingDefaults(t *testing.T) {
 	configured := pricingguard.SubstancePolicy{
 		MinVolumeUSD: new(big.Rat).SetInt64(pricingguard.DefaultSubstanceMinVolumeUSD * 7),
@@ -138,19 +120,15 @@ func TestRWAPremiumDayFloorTracksServingDefaults(t *testing.T) {
 	if got.Window != 24*time.Hour {
 		t.Errorf("Window = %v, want 24h — a calendar day", got.Window)
 	}
-	// The serving gate counts MINUTE buckets (1440 a day); this counts HOUR buckets (24 a day),
-	// the coarsest-reaching grain that still says when in a past day trading happened. Inheriting
-	// the configured minute count would demand more hours than a day has and blank every series,
-	// so this leg stays fixed regardless of the operator's MinBuckets.
+	// The serving gate counts minute buckets (1440/day); this leg counts hour buckets (24/day) and stays fixed, since
+	// inheriting the configured minute count would demand more hours than a day has and blank every series.
 	if got.MinBuckets != 2 {
 		t.Errorf("MinBuckets = %d, want 2 hour buckets", got.MinBuckets)
 	}
 }
 
-// TestRWAPremiumDayFloorFor_FallsBackToDefaultsWhenUnconfigured pins the
-// zero-value Server behaviour: a deployment that never set
-// RWAPremiumSubstance (or a test double) gets the pricingguard package
-// defaults, not a nil *big.Rat panic.
+// TestRWAPremiumDayFloorFor_FallsBackToDefaultsWhenUnconfigured pins that a zero-value Server (no RWAPremiumSubstance)
+// gets the pricingguard defaults, not a nil *big.Rat panic.
 func TestRWAPremiumDayFloorFor_FallsBackToDefaultsWhenUnconfigured(t *testing.T) {
 	s := &Server{}
 	got := s.rwaPremiumDayFloorFor()
@@ -230,13 +208,9 @@ func TestRWAPremiumJoin_AThinDayIsWithheldNotPriced(t *testing.T) {
 	}
 }
 
-// TestRWAPremiumJoin_CountsNoUntradedDaysBeforeTheFirstObservedMarket.
-//
-// The oracle has priced this instrument since day 1; the token's first observed market day is day
-// 4. Days 1-3 are NOT reported as days it did not trade, because "did not trade", "did not exist
-// yet" and "the hour aggregate is not materialised that far back" are indistinguishable here, and
-// the third is live: the price aggregates were dropped and re-materialisation is left to the
-// operator.
+// TestRWAPremiumJoin_CountsNoUntradedDaysBeforeTheFirstObservedMarket: days before the token's first market day are not
+// reported as untraded, since "did not trade", "did not exist" and "aggregate not materialised that far back" are
+// indistinguishable (the third is live: price aggregates were dropped).
 func TestRWAPremiumJoin_CountsNoUntradedDaysBeforeTheFirstObservedMarket(t *testing.T) {
 	ref := &rwaFeedSeries{source: "redstone", days: map[time.Time]*big.Rat{
 		premDay(1): premRat("107/100"),
@@ -258,10 +232,8 @@ func TestRWAPremiumJoin_CountsNoUntradedDaysBeforeTheFirstObservedMarket(t *test
 	}
 }
 
-// TestRWAPremiumJoin_NoMarketDaysCountsNothing — a member with no
-// observed market at all is reported by the caller as
-// no_market_history, and must not additionally accrue a tally of days
-// it "did not trade" spanning the oracle's whole publication history.
+// TestRWAPremiumJoin_NoMarketDaysCountsNothing: a member with no observed market is reported as no_market_history and
+// must not also accrue an "untraded days" tally spanning the oracle's whole history.
 func TestRWAPremiumJoin_NoMarketDaysCountsNothing(t *testing.T) {
 	ref := &rwaFeedSeries{source: "redstone", days: map[time.Time]*big.Rat{
 		premDay(1): premRat("107/100"),
@@ -274,10 +246,8 @@ func TestRWAPremiumJoin_NoMarketDaysCountsNothing(t *testing.T) {
 	}
 }
 
-// TestRWAPremiumJoin_AWithheldDayIsNotAlsoCountedAsUntraded — a day the
-// market existed and was refused, and a day nobody traded, are opposite
-// findings. Counting one day as both would let a reader add the two
-// tallies and get more days than the window holds.
+// TestRWAPremiumJoin_AWithheldDayIsNotAlsoCountedAsUntraded: a refused day and an untraded day are opposite findings;
+// counting one as both would let the tallies sum past the window.
 func TestRWAPremiumJoin_AWithheldDayIsNotAlsoCountedAsUntraded(t *testing.T) {
 	ref := &rwaFeedSeries{source: "redstone", days: map[time.Time]*big.Rat{
 		premDay(1): premRat("107/100"),
@@ -401,12 +371,9 @@ func TestRWAPremiumSeriesRows_OrdersByAbsoluteDispersion(t *testing.T) {
 	}
 }
 
-// TestCachedRWAPremiumHistory_RecoversFromAPanicInsteadOfWedgingTheFlight.
-//
-// A bound candidate with s.OracleHistory nil drives buildRWAPremiumHistory into a nil-interface
-// panic in rwaPremiumReferenceDays. Without the recover, s.rwaPremFlight keeps pointing at a
-// channel nobody closes, every later caller queues on it and /v1/rwa/premium never serves again.
-// This proves the single-flight gate clears and a following call is served rather than hanging.
+// TestCachedRWAPremiumHistory_RecoversFromAPanicInsteadOfWedgingTheFlight: a nil OracleHistory panics in
+// rwaPremiumReferenceDays; without the recover rwaPremFlight stays latched and /v1/rwa/premium never serves again. Pins
+// that the gate clears and the next call is served.
 func TestCachedRWAPremiumHistory_RecoversFromAPanicInsteadOfWedgingTheFlight(t *testing.T) {
 	s := &Server{
 		rwaCache: &rwaMembership{

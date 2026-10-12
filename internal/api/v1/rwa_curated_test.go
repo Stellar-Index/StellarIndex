@@ -16,10 +16,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// The curated arm serves a named third party's list under its own
-// basis and its own total. These tests pin the property the whole
-// arrangement rests on — a curated row is NEVER merged into the verified
-// figures — and the arithmetic of the comparison it exists to publish.
+// The curated arm serves a third party's list under its own basis and total. These tests pin that a curated row is never
+// merged into the verified figures, and the arithmetic of the comparison it publishes.
 
 const (
 	// A contract the verified arms know nothing about: VuMe Bond 2030.
@@ -57,10 +55,8 @@ func (s *stubCuratedReader) LatestCuratedPublished(_ context.Context, _ string) 
 	return s.published, nil
 }
 
-// publishedFixtureExecutedAt is when the curator's query last ran, held
-// relative to the test's own clock (not a fixed calendar date) so the
-// fixture stays inside [v1.rwaCuratedPublishedStaleAfter] and
-// [v1.rwaCuratedPublishedMaxAge] no matter when the suite runs.
+// publishedFixtureExecutedAt is the curator's last query time, relative to the test clock so the fixture stays inside
+// [v1.rwaCuratedPublishedStaleAfter] and [v1.rwaCuratedPublishedMaxAge] whenever the suite runs.
 var publishedFixtureExecutedAt = time.Now().UTC().Add(-6 * time.Hour)
 
 // publishedFixture is what the curator's two public queries printed: a
@@ -207,10 +203,8 @@ func TestRWACurated_ServesTheCuratorsRowsApart(t *testing.T) {
 	}
 }
 
-// The curator's free-text company label is the curator's word about a
-// contract row, not an independent label on an issuer G-address (the R3
-// evidence `issuer_directory_name` names) nor a SEP-1 `name`. It is
-// served on `curator.company` and nowhere else.
+// The curator's free-text company label is the curator's word about a contract row, not an issuer-directory label
+// (`issuer_directory_name`) or SEP-1 `name`. It is served on `curator.company` only.
 func TestRWACurated_CompanyIsNotServedAsDirectoryOrSEP1Name(t *testing.T) {
 	curated := &stubCuratedReader{rows: map[string]timescale.CuratedRWAEntry{
 		curatedOnlyVuMe:          curatedEntry(curatedOnlyVuMe, "Realiz", "Corporate Credit", "1.1174"),
@@ -304,10 +298,9 @@ func TestRWACurated_UnavailableAndUnwiredSaySo(t *testing.T) {
 	}
 }
 
-// The curator's per-asset list is private, so in production the arm's
-// rows are empty and what answers is the curator's PUBLISHED total.
-// That state is its own status, carries the published block whole, and
-// the gap to the verified figure is one signed number.
+// The curator's per-asset list is private, so in production rows are empty and its published total answers. That is its
+// own
+// status, carries the published block whole, and the gap to the verified figure is one signed number.
 func TestRWACurated_PublishedTotalsWhenNoRowIsReadable(t *testing.T) {
 	v := getRWA(t, rwaCuratedServer(t, &stubCuratedReader{published: publishedFixture()}))
 	if v.Curated == nil || v.Curated.Status != "published_totals" {
@@ -380,10 +373,8 @@ func TestRWACurated_PublishedTotalsWhenNoRowIsReadable(t *testing.T) {
 	}
 }
 
-// The curator's own execution clock (executed_at) is a SEPARATE fact
-// from our sync's own freshness (observed_at): a sync that keeps
-// succeeding against an unmoving curator-side result must not be read
-// as a fresh headline figure forever.
+// The curator's executed_at is a separate fact from our sync's observed_at: a sync that keeps succeeding against an
+// unmoving curator-side result must not be read as a fresh headline figure forever.
 func TestRWACurated_PublishedTotalAgesOutStaleThenGone(t *testing.T) {
 	stale := getRWA(t, rwaCuratedServer(t, &stubCuratedReader{
 		published: publishedFixtureAt(time.Now().UTC().Add(-60 * time.Hour)), // > 48h, < 7d
@@ -403,11 +394,8 @@ func TestRWACurated_PublishedTotalAgesOutStaleThenGone(t *testing.T) {
 	}
 }
 
-// TestRWACurated_PublishedSplitCarriesItsOwnExecution: the total and the
-// split are two separate query executions. The split is served with its
-// own executed_at, and a split whose query has not run inside the 7-day
-// cutoff is withheld rather than served beside a fresh total as if the
-// two were one execution.
+// TestRWACurated_PublishedSplitCarriesItsOwnExecution: total and split are separate query executions. The split is served
+// with its own executed_at and withheld if its query hasn't run in the 7-day cutoff, not shown beside a fresh total.
 func TestRWACurated_PublishedSplitCarriesItsOwnExecution(t *testing.T) {
 	now := time.Now().UTC()
 	older := publishedFixtureAt(now.Add(-6 * time.Hour))

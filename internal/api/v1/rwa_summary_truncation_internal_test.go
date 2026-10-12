@@ -5,10 +5,8 @@ import (
 	"testing"
 )
 
-// TestRWASummarise_EveryCapMakesALowerBound: each
-// rebuild cap, not only the issuer cap, makes a fully-valued served set's
-// total a lower bound, and the basis names the cap instead of calling the
-// set complete.
+// TestRWASummarise_EveryCapMakesALowerBound: each rebuild cap, not only the issuer cap, makes a fully-valued set's total
+// a lower bound, and the basis names the cap rather than calling the set complete.
 func TestRWASummarise_EveryCapMakesALowerBound(t *testing.T) {
 	cap100 := "100.00"
 	assets := []RWAAsset{{

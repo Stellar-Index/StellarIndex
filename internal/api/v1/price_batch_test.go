@@ -303,18 +303,12 @@ func TestPriceBatch_ReaderError500(t *testing.T) {
 	}
 }
 
-// A server-side request deadline (middleware.RequestTimeout) firing mid-batch must not be treated
-// as a client abort. Returning without writing on any done context, DeadlineExceeded included,
-// makes net/http send an implicit 200 with an empty body for what is a blown server budget.
-//
-// The reader is held open past a tiny RequestTimeout so the deadline fires while the client is
-// still connected, mirroring the CanceledRequestWritesNothing /
-// ExpiredRequestDeadlineUpgrades500To503 split in envelope_test.go.
+// A server-side deadline (middleware.RequestTimeout) firing mid-batch must not be treated as a client abort: returning
+// without writing on any done context makes net/http send an implicit empty 200 for a blown server budget. The reader is
+// held open past a tiny RequestTimeout, mirroring the envelope_test.go split of abort vs deadline-to-503.
 func TestPriceBatch_ExpiredRequestDeadlineReturns503NotBlank200(t *testing.T) {
-	// No startedCh: `native` walks several aliases, each a separate sequential LatestPrice call,
-	// so a startedCh drained once would fill on a later alias's send and deadlock. A flat sleep
-	// before closing release only needs to outlast the request reaching the reader and the 20ms
-	// deadline below.
+	// No startedCh: `native` walks several aliases as sequential LatestPrice calls, so a once-drained startedCh would fill
+	// on a later send and deadlock. A flat sleep before closing release only needs to outlast the 20ms deadline below.
 	release := make(chan struct{})
 	reader := &stubPriceReader{
 		err:       errors.New("boom"),
@@ -471,10 +465,8 @@ func TestPriceBatch_PairsAcceptedAsAssetIdsAlias(t *testing.T) {
 	}
 }
 
-// TestPriceBatch_EchoesRequestedAssetNotStoreAlias pins that a batch row's asset_id is the id the
-// client asked for, not whichever XLM alias the store was keyed under. Otherwise
-// `?asset_ids=native,crypto:XLM` yields two rows both stamped "crypto:XLM", and since misses are
-// omitted, a client keying by asset_id would lose `native` entirely.
+// TestPriceBatch_EchoesRequestedAssetNotStoreAlias pins that a row's asset_id is the id the client asked for, not the
+// store's XLM alias; else `native,crypto:XLM` yields two "crypto:XLM" rows and misses are omitted, losing `native`.
 func TestPriceBatch_EchoesRequestedAssetNotStoreAlias(t *testing.T) {
 	t0 := time.Unix(1_770_000_000, 0).UTC()
 	// Only the crypto:XLM key is populated; `native` must resolve through
@@ -576,10 +568,8 @@ func TestPriceBatch_ChargesOneTokenPerID(t *testing.T) {
 	}
 }
 
-// TestPriceBatch_POSTChargesPerID pins the variant the findings name:
-// the JSON-body route whose 1000-id ceiling is what made one token
-// worth a thousand resolutions. Against the deployed 6000/min anonymous
-// budget a full batch must leave 5000, not 5999.
+// TestPriceBatch_POSTChargesPerID pins that the JSON-body route, whose 1000-id ceiling made one token worth a thousand
+// resolutions, charges per id: against the 6000/min anonymous budget a full batch leaves 5000, not 5999.
 func TestPriceBatch_POSTChargesPerID(t *testing.T) {
 	ts, _ := newBatchLimitedServer(t, 6000)
 
@@ -592,10 +582,9 @@ func TestPriceBatch_POSTChargesPerID(t *testing.T) {
 	}
 }
 
-// TestPriceBatch_OverCeilingBatchSpendsTheWindow pins the rule for a batch priced above the
-// caller's whole budget (1000 ids vs the 60/min default): it is served into an untouched window,
-// since refusing it always would make the 1000-id ceiling unusable behind a Retry-After that
-// never comes true, and it consumes the entire window so the next request is denied.
+// TestPriceBatch_OverCeilingBatchSpendsTheWindow pins that a batch priced above the caller's whole budget (1000 ids vs
+// 60/min) is served into an untouched window and consumes it, so the next request is denied; refusing it always would
+// make the ceiling unusable behind a Retry-After that never comes true.
 func TestPriceBatch_OverCeilingBatchSpendsTheWindow(t *testing.T) {
 	ts, _ := newBatchLimitedServer(t, 60)
 
@@ -729,10 +718,8 @@ func TestPriceBatch_MetersOneUsageUnitPerID(t *testing.T) {
 	}
 }
 
-// TestPriceBatch_WithheldIDsNamedOnEnvelope: a withheld row is omitted
-// from data (unchanged) AND named on `withheld`, so a batch caller can
-// tell "we decline to publish" from "we have nothing" — before, both
-// were a silent omission.
+// TestPriceBatch_WithheldIDsNamedOnEnvelope: a withheld row is omitted from data and named on `withheld`, so a caller
+// can tell "we decline to publish" from "we have nothing".
 func TestPriceBatch_WithheldIDsNamedOnEnvelope(t *testing.T) {
 	srv := v1.New(v1.Options{Prices: &stubPriceReader{err: v1.ErrPriceWithheld}})
 	n, withheld, _ := batchWithheld(t, srv, "native")
@@ -770,10 +757,8 @@ func TestPriceBatch_PlainMissNotWithheld(t *testing.T) {
 	}
 }
 
-// /v1/price/batch stamps the same flag over the same read, so it owes
-// the same value: the frozen row carries the held value, and a frozen
-// row with nothing held is omitted (the batch contract's "no price")
-// rather than shipped as the refused bucket.
+// /v1/price/batch stamps the same flag over the same read, so it owes the same value: a frozen row carries the held
+// value, and one with nothing held is omitted ("no price") rather than shipped as the refused bucket.
 func TestPriceBatch_FrozenRowCarriesLastKnownGood(t *testing.T) {
 	reader := movedBucketReader()
 	reader.snapshots["crypto:BTC/fiat:GBP"] = v1.PriceSnapshot{Price: "51234.5", PriceType: "vwap", WindowSeconds: 60}

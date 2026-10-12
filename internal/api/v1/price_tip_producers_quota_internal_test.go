@@ -6,13 +6,9 @@ import (
 	"testing"
 )
 
-// Per-caller producer quota. The GLOBAL ceiling bounds the total but partitions it by nothing,
-// so one unauthenticated address looping the key space (real pairs × window_seconds 1..60,
-// aborting each connection once headers arrive) could fill every slot with junk producers and
-// 503 every other caller's first request for an unwatched pair. The connection caps cannot see
-// it: the producer is detached by design and survives the aborted connection for
-// tipProducerLinger, which is the window the flood exploits. Without the quota check and mint
-// charge in acquireFor, the attacker is admitted on every attempt.
+// Per-caller producer quota: the global ceiling alone lets one address loop pairs x window_seconds, aborting each connection,
+// and fill every slot with detached junk producers (surviving for tipProducerLinger) so other callers get 503. Connection caps
+// cannot see it; without the quota check and mint charge in acquireFor the attacker is admitted every time.
 
 // attackerCaller / bystanderCaller are documentation-range addresses
 // (RFC 5737), not anything routable.

@@ -7,12 +7,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// `balanced: false` is a statement that something did not add up, with
-// no way to find out what.
-//
-// Each census publishes a Check() returning the invariant it broke, and each adjacent stage
-// pair reports the arithmetic that failed. Those reasons must reach the response rather than
-// being reduced to a boolean at the funnel boundary.
+// `balanced: false` alone says something didn't add up without saying what. Each census's Check() and each adjacent stage
+// pair report the failed invariant, and those reasons must reach the response rather than collapse to a boolean.
 
 // An unbalanced funnel must name what did not close, and the name must
 // be specific enough to act on: which check, and the numbers that
@@ -70,10 +66,9 @@ func TestRWAFunnelImbalance_NamesAServedSetDisagreement(t *testing.T) {
 	}
 }
 
-// balanced and imbalance are one statement in two forms and may never
-// disagree: a reader branching on either must reach the same answer.
-// Without this a later check could set the boolean and forget the
-// sentence, which is how the field went missing in the first place.
+// balanced and imbalance are one statement in two forms and may never disagree, so a reader branching on either reaches
+// the
+// same answer; a later check must not set the boolean and forget the sentence.
 func TestRWAFunnelImbalance_AgreesWithBalanced(t *testing.T) {
 	for _, tc := range []struct {
 		name   string

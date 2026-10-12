@@ -1,10 +1,8 @@
 package v1
 
-// Unit tests for the pure arithmetic behind GET /v1/rwa/history.
-//
-// The endpoint never invents a number, so the key tests pin the ABSENCES: a day the oracle was
-// silent, an untrustworthy flow log, a token that did not exist yet. Each must produce nothing
-// rather than something plausible.
+// Unit tests for the pure arithmetic behind GET /v1/rwa/history. The endpoint never invents a number, so these pin the
+// absences: a silent-oracle day, an untrustworthy flow log, a token not yet existing. Each yields nothing, not something
+// plausible.
 
 import (
 	"math/big"
@@ -25,10 +23,8 @@ func flow(contract string, n int, net string) clickhouse.SupplyFlowDay {
 	return clickhouse.SupplyFlowDay{ContractID: contract, Day: histDay(n), Net: v, Flows: 1}
 }
 
-// TestRWACumulateSupply_RunsTheLogForward — a supply level is the
-// running total of every flow to date, and a day with no flow inherits
-// the level rather than dropping out. That carry is the one this surface
-// permits, and it is permitted because the log is complete.
+// TestRWACumulateSupply_RunsTheLogForward: supply is the running total of all flows to date, and a day with no flow
+// inherits the level; the carry is permitted because the log is complete.
 func TestRWACumulateSupply_RunsTheLogForward(t *testing.T) {
 	levels, ok := rwaCumulateSupply([]clickhouse.SupplyFlowDay{
 		flow("C", 1, "1000"),
@@ -52,10 +48,8 @@ func TestRWACumulateSupply_RunsTheLogForward(t *testing.T) {
 	}
 }
 
-// TestRWACumulateSupply_RefusesANegativeExcursion — a running total
-// below zero is proof the contract's flows are incompletely seeded, not
-// evidence of a negative supply. The WHOLE series is refused, not the
-// offending days: a missing mint understates every level after it.
+// TestRWACumulateSupply_RefusesANegativeExcursion: a negative running total proves incompletely seeded flows, not negative
+// supply. The whole series is refused, since a missing mint understates every later level.
 func TestRWACumulateSupply_RefusesANegativeExcursion(t *testing.T) {
 	levels, ok := rwaCumulateSupply([]clickhouse.SupplyFlowDay{
 		flow("C", 1, "100"),
@@ -93,10 +87,8 @@ func TestRWAHistoryMemberDays_SilentOracleDayIsAGap(t *testing.T) {
 	}
 }
 
-// TestRWAHistoryMemberDays_SupplyCarriesAcrossAQuietDay — the mirror of
-// the test above, and the asymmetry the surface rests on: the supply leg
-// IS carried across a day with no flow, because the flow log records
-// every event that could have moved it.
+// TestRWAHistoryMemberDays_SupplyCarriesAcrossAQuietDay: the mirror of the test above; supply is carried across a day with
+// no flow because the flow log records every event that could move it.
 func TestRWAHistoryMemberDays_SupplyCarriesAcrossAQuietDay(t *testing.T) {
 	levels, _ := rwaCumulateSupply([]clickhouse.SupplyFlowDay{flow("C", 1, "10000000")})
 	prices := map[time.Time]*big.Rat{histDay(1): big.NewRat(3, 1), histDay(9): big.NewRat(3, 1)}
@@ -109,10 +101,8 @@ func TestRWAHistoryMemberDays_SupplyCarriesAcrossAQuietDay(t *testing.T) {
 	}
 }
 
-// TestRWAHistoryMemberDays_NothingBeforeTheFirstMint — a price day
-// preceding the token's first flow yields nothing. A supply of zero
-// times a real net asset value is a perfectly computable dollar figure
-// that means nothing at all.
+// TestRWAHistoryMemberDays_NothingBeforeTheFirstMint: a price day before the token's first flow yields nothing, since zero
+// supply times a real NAV is computable but meaningless.
 func TestRWAHistoryMemberDays_NothingBeforeTheFirstMint(t *testing.T) {
 	levels, _ := rwaCumulateSupply([]clickhouse.SupplyFlowDay{flow("C", 5, "10000000")})
 	prices := map[time.Time]*big.Rat{
@@ -147,10 +137,8 @@ func TestRWAHistoryTotal_DayNobodyCouldBeValuedIsAbsent(t *testing.T) {
 	}
 }
 
-// TestRWAHistoryTotal_CountsAgainstTheWholeSet — a point's coverage is
-// stated against the size of the SET, not against the members that
-// happened to be readable. Otherwise every point would claim full
-// coverage of whatever it managed to sum.
+// TestRWAHistoryTotal_CountsAgainstTheWholeSet: a point's coverage is stated against the size of the set, not the readable
+// members, else every point would claim full coverage of whatever it summed.
 func TestRWAHistoryTotal_CountsAgainstTheWholeSet(t *testing.T) {
 	members := []rwaHistoryMember{
 		{days: []rwaHistoryDay{{day: histDay(1), valueUSD: "10.00"}}},
@@ -197,10 +185,8 @@ func oracleDay(source, feed string, n int, price int64, decimals uint8) timescal
 	}
 }
 
-// TestRWAReduceFeedSeries_PicksOneSourceForTheWholeWindow — two oracles
-// pricing one instrument must not alternate down the line, because a
-// switch of publisher would render as a price move. The pick is made
-// once, on coverage, and is stable.
+// TestRWAReduceFeedSeries_PicksOneSourceForTheWholeWindow: two oracles pricing one instrument must not alternate, as a
+// publisher switch would render as a price move. The pick is made once, on coverage.
 func TestRWAReduceFeedSeries_PicksOneSourceForTheWholeWindow(t *testing.T) {
 	got := rwaReduceFeedSeries([]timescale.OracleDayPoint{
 		oracleDay("redstone", "USDY", 1, 100000000, 8),
@@ -223,10 +209,8 @@ func TestRWAReduceFeedSeries_PicksOneSourceForTheWholeWindow(t *testing.T) {
 	}
 }
 
-// TestRWAReduceFeedSeries_RefusesNonOracleAndNonPositive — R-C from
-// rwa_reference.go (an aggregator writing into the same table for
-// divergence comparison is not an independent valuation) and the
-// non-positive refusal, both carried into the history unchanged.
+// TestRWAReduceFeedSeries_RefusesNonOracleAndNonPositive: R-C from rwa_reference.go (an aggregator writing the same table
+// is not an independent valuation) and the non-positive refusal both carry into history unchanged.
 func TestRWAReduceFeedSeries_RefusesNonOracleAndNonPositive(t *testing.T) {
 	got := rwaReduceFeedSeries([]timescale.OracleDayPoint{
 		oracleDay("coingecko", "USDY", 1, 100000000, 8), // aggregator, not an oracle
@@ -253,12 +237,9 @@ func TestRWAReduceFeedSeries_TieBreaksOnSourceName(t *testing.T) {
 	}
 }
 
-// TestRWAHistoryCandidates_ScamFlagOutranksTheBinding.
-//
-// Membership already refuses a scam-flagged issuer, so this gate covers the one remaining
-// path: an issuer that acquires the tag after the set was built. Suppression must run BEFORE
-// the binding lookup, because a bound member is exactly where a real instrument's net asset
-// value could be published against an impersonator.
+// TestRWAHistoryCandidates_ScamFlagOutranksTheBinding: membership already refuses scam-flagged issuers, so this covers an
+// issuer tagged after the set was built. Suppression runs before the binding lookup, since a bound member is where a real
+// NAV could be published against an impersonator.
 func TestRWAHistoryCandidates_ScamFlagOutranksTheBinding(t *testing.T) {
 	const etherfuse = "GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC"
 	excluded := map[string]int{}
@@ -275,10 +256,8 @@ func TestRWAHistoryCandidates_ScamFlagOutranksTheBinding(t *testing.T) {
 	}
 }
 
-// TestRWAHistoryCandidates_BindsOnThePairAndDerivesTheSAC pins the
-// positive path of the same function: identity is (code, issuer), and
-// the flow log is keyed by the address derived FROM that identity rather
-// than by anything a fixture could assert independently.
+// TestRWAHistoryCandidates_BindsOnThePairAndDerivesTheSAC pins the positive path: identity is (code, issuer), and the flow
+// log is keyed by the SAC address derived from that identity.
 func TestRWAHistoryCandidates_BindsOnThePairAndDerivesTheSAC(t *testing.T) {
 	const etherfuse = "GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC"
 	const impostor = "GAXSPCTVGFIVYGHT7JLJZV57HCN5KUYDJ6DMPLNWUKL7A5A3HKCNW7JW"

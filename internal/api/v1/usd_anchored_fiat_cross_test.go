@@ -11,10 +11,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// A wallet showing a balance in a local currency needs XLM/BRL, XLM/JPY and so on, but only USD,
-// EUR and GBP are quoted directly by any venue we ingest. The USD-anchored layer composes the
-// two fresh halves held: price(asset, CCY) = price(asset, USD) × rate_usd[CCY] (fx_quotes).
-// See ADR-0051.
+// Wallets need XLM/BRL, XLM/JPY etc., but only USD, EUR and GBP are quoted by any ingested venue. The USD-anchored
+// layer composes price(asset, CCY) = price(asset, USD) × rate_usd[CCY] (fx_quotes) from two fresh halves. See ADR-0051.
 
 const (
 	xlmUSDPrice = "0.17794602537043946501"
@@ -100,10 +98,9 @@ func TestPriceDerivesAnyFiatThroughUSD(t *testing.T) {
 	}
 }
 
-// TestPriceWithheldUSDLegIsNotLaunderedThroughFX is the guard that matters most. Every withholding
-// decision (scam-flagged issuer, decimals guard) is made on the USD leg, so if the cross-rate
-// layer re-reads that leg and multiplies it by an FX rate it becomes a side door publishing
-// exactly the price policy declined to publish.
+// TestPriceWithheldUSDLegIsNotLaunderedThroughFX is the key guard: withholding decisions (scam issuer, decimals
+// guard) are made on the USD leg, so a cross-rate layer that re-reads that leg and multiplies by FX would be a side
+// door publishing what policy declined.
 func TestPriceWithheldUSDLegIsNotLaunderedThroughFX(t *testing.T) {
 	reader := &usdLegReader{usdPriceFor: "native", price: xlmUSDPrice, withheld: true}
 	srv := v1.New(v1.Options{Prices: reader, Currencies: brlCurrencies(), FXFixings: brlFixings()})
@@ -157,10 +154,8 @@ func TestPriceNoUSDLegStillMisses(t *testing.T) {
 	}
 }
 
-// TestPriceBatchDerivesAnyFiatThroughUSD — /v1/price/batch shares
-// priceFallback, so the local-currency answer must appear there too.
-// That is the endpoint a wallet actually calls to price a whole
-// portfolio in one round trip.
+// TestPriceBatchDerivesAnyFiatThroughUSD: /v1/price/batch shares priceFallback, so the local-currency answer must
+// appear there too; wallets call it to price a whole portfolio in one round trip.
 func TestPriceBatchDerivesAnyFiatThroughUSD(t *testing.T) {
 	reader := &usdLegReader{usdPriceFor: "native", price: xlmUSDPrice}
 	srv := v1.New(v1.Options{Prices: reader, Currencies: brlCurrencies(), FXFixings: brlFixings()})

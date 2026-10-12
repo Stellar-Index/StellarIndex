@@ -170,11 +170,9 @@ func (r *ohlcPairAwareReader) TradesInRange(_ context.Context, pair canonical.Pa
 	return r.tradesByPair[pair.Base.String()+"/"+pair.Quote.String()], nil
 }
 
-// TestOHLC_StablecoinFiatProxyFallback: when the literal X/fiat:USD pair has zero trades but
-// the operator declared a USDC peg, the OHLC handler retries against X/<USDC-classic> and
-// returns the bar with flags.triangulated=true. Mirrors /v1/chart's chartStablecoinFallback and
-// the same fallback on /v1/price, /v1/price/tip, /v1/vwap, /v1/twap and /v1/oracle/lastprice.
-// Without it /v1/ohlc?base=native&quote=fiat:USD 404s with "no trades in window".
+// TestOHLC_StablecoinFiatProxyFallback: when X/fiat:USD has zero trades but a USDC peg is declared, the handler retries
+// against X/<USDC-classic> and returns the bar with flags.triangulated=true, like the fallback on /v1/chart and
+// /v1/price. Without it /v1/ohlc?base=native&quote=fiat:USD 404s.
 func TestOHLC_StablecoinFiatProxyFallback(t *testing.T) {
 	usdcClassic, err := canonical.ParseAsset("USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
 	if err != nil {
@@ -246,11 +244,9 @@ func TestOHLC_StablecoinFiatProxy_NoPegLeaves404(t *testing.T) {
 	}
 }
 
-// TestOHLC_DefaultOutlierFilterRejectsDustTrade: a bar of normal native/USDC trades plus one
-// 1-stroop ↔ 1-stroop SDEX dust print (price=1.0, ~6× the real ratio) must NOT have High pegged
-// to $1; the default 4σ filter drops the outlier before ComputeOHLC sees it. ComputeOHLC
-// accepts any positive base+quote, so one dust ManageOffer cross would otherwise trump every
-// legitimate print. ?outlier_sigma=0 still surfaces the dust High for raw inspection.
+// TestOHLC_DefaultOutlierFilterRejectsDustTrade: one 1-stroop SDEX dust print (price=1.0, ~6x the real ratio) must not
+// peg High to $1; the default 4 sigma filter drops it before ComputeOHLC. ?outlier_sigma=0 still surfaces it for raw
+// inspection.
 func TestOHLC_DefaultOutlierFilterRejectsDustTrade(t *testing.T) {
 	t0 := time.Unix(1_772_000_000, 0).UTC()
 	trades := make([]canonical.Trade, 0, 30)
@@ -310,10 +306,8 @@ func TestOHLC_InvalidSigma400(t *testing.T) {
 	}
 }
 
-// TestOHLC_NonstandardDecimals proves BOTH modes normalize now:
-// single-bar mode (raw trades, query-time — normalized)
-// and interval= series mode (prices_<n> CAGG — normalized,
-// not declined with 422).
+// TestOHLC_NonstandardDecimals pins that both single-bar mode (raw trades) and interval= series mode (prices_<n> CAGG)
+// normalize, rather than series mode declining with 422.
 func TestOHLC_NonstandardDecimals(t *testing.T) {
 	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 9)
 	xlmUSD, err := canonical.ParseAsset(flaggedAsset)
@@ -350,10 +344,8 @@ func TestOHLC_NonstandardDecimals(t *testing.T) {
 	}
 }
 
-// A count majority of dust prints must not become the single-bar OHLC by trimming a volume
-// majority: 3 × 1,000,000 XLM at 0.100 and 4 × 30,000 XLM at 0.114 would serve a bar of the 4
-// wash prints alone. The window is contested, so the default filter withholds it as
-// all-filtered rather than serving either side or claiming "no trades".
+// A count majority of dust prints must not become the single-bar OHLC by trimming a volume majority (3x1,000,000 XLM at
+// 0.100 vs 4x30,000 at 0.114). The window is contested, so the default filter withholds it as all-filtered.
 func TestOHLC_DustCountMajorityWindowIsWithheldNotServed(t *testing.T) {
 	t0 := time.Unix(1_772_000_000, 0).UTC()
 	trades := make([]canonical.Trade, 0, 7)
@@ -375,10 +367,8 @@ func TestOHLC_DustCountMajorityWindowIsWithheldNotServed(t *testing.T) {
 	}
 }
 
-// TestOHLC_VolumeScale_CEXWindowIsEightDecimals is the headline case: a
-// Coinbase-fed pair's volume integers are at 1e8, and until the bar said
-// so the /markets/[pair] page divided them by a hardcoded 1e7 and printed
-// a quote volume ten times the market's.
+// TestOHLC_VolumeScale_CEXWindowIsEightDecimals: a Coinbase-fed pair's volume integers are at 1e8, and the bar must say
+// so, or /markets/[pair] divides by a hardcoded 1e7 and prints a quote volume ten times too large.
 func TestOHLC_VolumeScale_CEXWindowIsEightDecimals(t *testing.T) {
 	base := time.Unix(1_772_000_000, 0).UTC()
 	// 1000 XLM at $0.25, three times: 750 USD of quote volume.
@@ -403,14 +393,9 @@ func TestOHLC_VolumeScale_CEXWindowIsEightDecimals(t *testing.T) {
 	}
 }
 
-// TestOHLC_VolumeScale_SurvivesOutlierFilterDroppingTheOnlyCEXPrint: the scale must be
-// resolved over the PRE-outlier-filter population, because the lift to the common scale ran
-// over that population and the filter does not un-lift the rows it keeps.
-//
-// Four honest on-chain prints at 1e7 plus one aberrant CEX print at 1e8: the CEX print is
-// dropped by the default sigma, but the four survivors were already multiplied by ten. A bar
-// resolving its scale over the post-filter slice states 7 for integers at 8 and renders 14000
-// USD where the market did 1400.
+// TestOHLC_VolumeScale_SurvivesOutlierFilterDroppingTheOnlyCEXPrint: the scale must be resolved over the PRE-filter
+// population, because the lift ran over it and the filter does not un-lift survivors. Resolving post-filter would state
+// 7 for integers at 8 and render 14000 USD where the market did 1400.
 func TestOHLC_VolumeScale_SurvivesOutlierFilterDroppingTheOnlyCEXPrint(t *testing.T) {
 	base := time.Unix(1_772_000_000, 0).UTC()
 	reader := &stubHistoryReader{
@@ -489,10 +474,8 @@ func TestOHLC_VolumeScale_UnregisteredSourceIsUnknown(t *testing.T) {
 	}
 }
 
-// ohlcScaledBar decodes /v1/ohlc's single-bar payload with the two
-// volume-scale fields as POINTERS on purpose: this file has to compile
-// against a build that does not serve them, so that the assertions below
-// are provably about the served scale and not about a struct tag.
+// ohlcScaledBar decodes the single-bar payload with the two volume-scale fields as POINTERS on purpose, so this file
+// compiles against a build that does not serve them and assertions are about the served scale, not a struct tag.
 type ohlcScaledBar struct {
 	BaseVolume          string `json:"base_volume"`
 	QuoteVolume         string `json:"quote_volume"`
@@ -501,10 +484,8 @@ type ohlcScaledBar struct {
 	TradeCount          int    `json:"trade_count"`
 }
 
-// mkScaledOHLCTrade builds one native/fiat:USD print attributed to
-// `source`, with the raw smallest-unit amounts given verbatim — the
-// point of these fixtures is that the caller chooses the scale, because
-// the source is what decides it (sdex 1e7, coinbase 1e8).
+// mkScaledOHLCTrade builds one native/fiat:USD print attributed to `source` with raw smallest-unit amounts verbatim; the
+// caller chooses the scale because the source decides it (sdex 1e7, coinbase 1e8).
 func mkScaledOHLCTrade(source string, base, quote *big.Int, opIndex uint32, ts time.Time) canonical.Trade {
 	xlm, _ := canonical.ParseAsset("native")
 	usd, _ := canonical.ParseAsset("fiat:USD")
@@ -528,10 +509,8 @@ func scaledUnits(n int64, decimals int) *big.Int {
 		new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil))
 }
 
-// assetUnits renders a served volume integer in the asset's own units,
-// the way a consumer must: value / 10^stated_decimals. A response that
-// states no scale cannot be rendered at all, which is a defect
-// and is reported as such.
+// assetUnits renders a served volume integer as value / 10^stated_decimals, as a consumer must; a response that states
+// no scale cannot be rendered, which is a defect and is reported as such.
 func assetUnits(t *testing.T, raw string, decimals *int) string {
 	t.Helper()
 	if decimals == nil {

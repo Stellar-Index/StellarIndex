@@ -12,12 +12,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
-// TestMarketCap_NativeNeverDustSuppressed_DetailPath: the listing SQL forces native XLM's
-// source_count to NULL (asset_catalogue.go: `WHEN ca.asset_id = 'native' THEN NULL::int`), so XLM,
-// triangulated and definitionally liquid, is NEVER dust-suppressed on the listing. The detail path
-// (populateMarketCap) must agree, or /v1/assets/native and /v1/assets disagree on the flag. A
-// classic asset with the identical (single-venue, sub-floor-volume) shape IS suppressed, proving
-// the carve-out is native-only.
+// TestMarketCap_NativeNeverDustSuppressed_DetailPath: the listing SQL nulls native XLM's source_count so XLM is never
+// dust-suppressed; the detail path must agree. A classic asset of identical shape IS suppressed, so the carve-out is
+// native-only.
 func TestMarketCap_NativeNeverDustSuppressed_DetailPath(t *testing.T) {
 	// 10^17 raw @ 7dp × $0.50 = $5,000,000,000.00.
 	snap := supply.Supply{
@@ -79,13 +76,9 @@ func TestMarketCap_NativeNeverDustSuppressed_DetailPath(t *testing.T) {
 	}
 }
 
-// TestMarketCap_NegativeSupplyOmitted_DetailPath: a negative circulating supply (Σburn > Σmint
-// data error) must NOT serve a negative market_cap_usd on /v1/assets/{id}. usdMarketValue rejects
-// the negative result (matching computeMarketCapUSD's Sign()<0 guard on the listing path), so
-// market_cap_usd is OMITTED while fdv_usd (backed by a positive max supply) still serves.
-//
-// Multi-source + liquid volume keep the dust guard out of the picture, so only the
-// negative-value guard can drop market_cap_usd here.
+// TestMarketCap_NegativeSupplyOmitted_DetailPath: negative circulating supply (burn > mint data error) must omit
+// market_cap_usd on /v1/assets/{id} while fdv_usd still serves. Multi-source liquid volume keeps the dust guard out of
+// play.
 func TestMarketCap_NegativeSupplyOmitted_DetailPath(t *testing.T) {
 	const assetID = "OBSC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 	snap := supply.Supply{
@@ -122,18 +115,8 @@ func TestMarketCap_NegativeSupplyOmitted_DetailPath(t *testing.T) {
 	mustContain(t, body, `"fdv_usd":"5000000000.00"`)
 }
 
-// TestMarketCap_DustLiquiditySuppression_DetailPath exercises the real
-// populateMarketCap path on /v1/assets/{id} across the three cases the
-// valuation-integrity guard must distinguish:
-//
-//  1. dust  (single venue AND sub-floor 24h volume) → market_cap_usd +
-//     fdv_usd SUPPRESSED (null) and market_cap_low_liquidity=true;
-//  2. single-venue but LIQUID ($100k/day) → market cap PRESENT (the AND
-//     means one venue alone is not enough to suppress);
-//  3. MULTI-source but thin ($10/day) → market cap PRESENT (multi-source
-//     alone is not enough to suppress).
-//
-// In every case price_usd still serves: the guard is on the valuation, not the price.
+// TestMarketCap_DustLiquiditySuppression_DetailPath: single-venue AND sub-floor volume suppresses market_cap_usd/fdv_usd
+// and sets market_cap_low_liquidity; single-venue liquid or multi-source thin does not. price_usd always serves.
 func TestMarketCap_DustLiquiditySuppression_DetailPath(t *testing.T) {
 	// Huge supply: an un-guarded dust price would assert billions.
 	snap := supply.Supply{
@@ -200,8 +183,6 @@ func TestMarketCap_DustLiquiditySuppression_DetailPath(t *testing.T) {
 	}
 }
 
-// dustGuardAssetID is an obscure classic asset with a huge supply — the
-// "billions from a dust trade" shape the owner's requirement calls out:
-// 10^17 raw units / 10^7 decimals = 10^10 whole tokens, which at $0.50
-// multiplies to a $5,000,000,000 market cap off whatever price we serve.
+// dustGuardAssetID is an obscure classic asset with a huge supply (10^17 raw, 7dp), the "billions from a dust trade"
+// shape: at $0.50 it yields a $5B market cap.
 const dustGuardAssetID = "OBSC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"

@@ -14,14 +14,9 @@ import (
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 )
 
-// /v1/livez/lake is the ADR-0050 §7.3 lake-route LB probe. It carries readyz's infra
-// exemptions (no auth via middleware/auth.go isUnauthenticatedInfraPath, no anonymous rate
-// limit via middleware/ratelimit.go SkipHealthAndMetrics), which removes every brake an
-// anonymous caller would otherwise hit. Two properties make that safe:
-//
-//  1. one lake query per ROUND, not per request (readyz's single-flight), and
-//  2. nothing internal in the public 503 body: err.Error() would leak the ClickHouse
-//     endpoint to any anonymous caller exactly while the lake is in trouble.
+// /v1/livez/lake is the ADR-0050 §7.3 lake LB probe, exempt from auth and anonymous rate limits, so it must run one lake
+// query per round (single-flight) and keep internals out of the public 503 body (err.Error() would leak the ClickHouse
+// endpoint).
 
 // countingLakeCheck is a "clickhouse" ReadyChecker that counts pings and
 // can flip its verdict mid-test. Ping sleeps briefly so concurrent
@@ -107,10 +102,8 @@ func TestLivezLake_SingleFlightSharesOnePingPerRound(t *testing.T) {
 	}
 }
 
-// TestLivezLake_RoundRefreshesAfterTTL — the cache must not pin a stale
-// verdict: once the 1s window passes, the next probe runs a fresh ping
-// and a recovered lake flips 503 → 200. Companion to the single-flight
-// test (that one alone could be satisfied by caching forever).
+// TestLivezLake_RoundRefreshesAfterTTL: the cache must not pin a stale verdict; after the 1s window a fresh ping runs
+// and a recovered lake flips 503 to 200.
 func TestLivezLake_RoundRefreshesAfterTTL(t *testing.T) {
 	check := &countingLakeCheck{err: errors.New("dial tcp 10.9.9.9:9000: connect: connection refused")}
 	srv := v1.New(v1.Options{ReadyChecks: []v1.ReadyChecker{check}})
@@ -148,10 +141,8 @@ func TestLivezLake_RoundRefreshesAfterTTL(t *testing.T) {
 	}
 }
 
-// TestLivezLake_UnreadyBodyDoesNotEchoPingError — the 503 served to an anonymous caller carries
-// the fixed operator hint, never the driver error: on the real clickhouseChecker
-// (LakeTipLedger) that is a dial error naming the ClickHouse host:port. The error itself must
-// still reach the LOG, so scrubbing the wire does not lose the operator's diagnosis.
+// TestLivezLake_UnreadyBodyDoesNotEchoPingError: the anonymous 503 carries a fixed operator hint, never the driver error
+// (a dial error naming the ClickHouse host:port), while the error still reaches the log.
 func TestLivezLake_UnreadyBodyDoesNotEchoPingError(t *testing.T) {
 	const pingErr = "dial tcp 10.9.9.9:9000: connect: connection refused"
 	logger, logs := captureLogger()

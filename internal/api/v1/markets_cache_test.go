@@ -183,11 +183,8 @@ func TestCachedMarketsReader_HitMissCounter(t *testing.T) {
 	}
 }
 
-// TestCachedMarketsReader_AllPoolsLeaderFailsWaitersDontPanic pins a nil-pointer panic in
-// GET /v1/markets. Under single-flight, the leader's failing upstream call removed the entry
-// from the map (errors are not TTL-cached) before closing the flight chan, so waiters re-read
-// c.entries[key], got nil, and dereferenced `out.pairs`. Waiters must hold a pointer to the
-// same entry they joined on and read entry.err / entry.pairs there, surviving the delete.
+// TestCachedMarketsReader_AllPoolsLeaderFailsWaitersDontPanic pins a nil-pointer panic in GET /v1/markets: the failing
+// leader deletes the entry before closing the flight, so waiters must hold the entry pointer they joined on.
 func TestCachedMarketsReader_AllPoolsLeaderFailsWaitersDontPanic(t *testing.T) {
 	up := &fakeMarketsReader{
 		delay: 100 * time.Millisecond,
@@ -254,20 +251,15 @@ func toString(v any) string {
 	return "unknown"
 }
 
-// swrPoolsStaleTrades / swrPoolsFreshTrades tell the pool row a cold fetch cached from the row
-// a refresh replaces it with: the stub moves the pool's 24h trade count on every call after the
-// first, as a re-scan returning later data would. A fixed row would leave only a stopwatch to
-// separate a caller served the cached entry from one handed the refresh's result.
+// swrPoolsStaleTrades/swrPoolsFreshTrades distinguish the cold-fetched pool row from its refresh: the stub moves the 24h
+// trade count after the first call, so only a value tells a cached serve from the refresh result, not a stopwatch.
 const (
 	swrPoolsStaleTrades = 100
 	swrPoolsFreshTrades = 200
 )
 
-// swrPoolsUpstream is a race-safe AllPools stub for the stale-while-revalidate tests: an atomic
-// call counter, an optional hold parking a call until released, and an atomic "fail on call >=
-// 2" toggle. Failing by call number avoids mid-test field mutation, keeping `go test -race`
-// clean under the concurrent background refresh. Embeds *fakeMarketsReader for the other
-// interface methods.
+// swrPoolsUpstream is a race-safe AllPools stub for SWR tests: atomic call counter, optional hold, and an atomic
+// "fail on call >= 2" toggle that avoids mid-test field mutation under -race. Embeds *fakeMarketsReader.
 type swrPoolsUpstream struct {
 	*fakeMarketsReader
 	calls   atomic.Int64
@@ -290,18 +282,9 @@ func (s *swrPoolsUpstream) AllPools(ctx context.Context, _ timescale.PoolsFilter
 	return []Pool{{Source: "aquarius", Base: "native", TradeCount24h: trades}}, "c", nil
 }
 
-// TestCachedMarketsReader_PoolsSWRServesStaleSingleFlight: every one of 20 concurrent reads of
-// an expired pools entry is served the stale row while exactly one single-flighted background
-// refresh runs, and the row that refresh returns replaces it.
-//
-// The served value is asserted as a value, not by latency: a read-time ceiling would only
-// measure how fast the runner reschedules 20 goroutines. The stub moves the pool's 24h trade
-// count on the refresh, and the refresh is held until every read has returned, so a read that
-// waited for it can only hold the refreshed count and a read served the entry can only hold the
-// stale one, on any runner at any load.
-//
-// The tail releases the hold and pins the refreshed row, keeping the assertion above a
-// discrimination rather than a restatement of the fixture.
+// TestCachedMarketsReader_PoolsSWRServesStaleSingleFlight: 20 concurrent reads of an expired pools entry are all served
+// the stale row while exactly one background refresh runs and then replaces it. Asserted by value (held refresh), not
+// latency.
 func TestCachedMarketsReader_PoolsSWRServesStaleSingleFlight(t *testing.T) {
 	hold := newUpstreamHold(2) // the cold leader runs free; the refresh is parked
 	t.Cleanup(hold.release)
@@ -318,10 +301,8 @@ func TestCachedMarketsReader_PoolsSWRServesStaleSingleFlight(t *testing.T) {
 	}
 	expireMarketsEntries(c)
 
-	// The reads report back on a buffered channel rather than failing
-	// from their own goroutines: a caller blocked on the refresh is a
-	// failure this test has to name, and naming it ends the test while
-	// its siblings are still running.
+	// Reads report on a buffered channel instead of failing from their goroutines, so a caller blocked on the refresh is
+	// named as the failure while siblings still run.
 	const reads = 20
 	type staleRead struct {
 		rows   int
@@ -362,10 +343,8 @@ func TestCachedMarketsReader_PoolsSWRServesStaleSingleFlight(t *testing.T) {
 		t.Fatalf("single-flight violated: %d upstream calls for %d concurrent stale reads, want 2 (1 cold + 1 refresh)", got, reads)
 	}
 
-	// Released, the one refresh settles the entry. Polling by read adds no upstream call: a
-	// stale read checks the in-flight marker, which the refresh holds until it has written its
-	// result, so earlier polls get the stale entry and the first success gets the refreshed
-	// one. The ttl outlives the test, so the entry then stays fresh and the call count is final.
+	// Once released, the one refresh settles the entry; polling adds no upstream call because stale reads see the in-flight
+	// marker until the result is written. The ttl outlives the test, so the call count is final.
 	hold.release()
 	var fresh []Pool
 	var freshErr error

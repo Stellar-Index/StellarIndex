@@ -47,10 +47,8 @@ func (f *cancelTestAccountStore) Suspend(_ context.Context, id uuid.UUID, reason
 	return nil
 }
 
-// cancelTestKeyStore is a minimal [platform.APIKeyStore] double whose
-// Create returns the context error when the context is already done —
-// standing in for a Postgres INSERT that observes a canceled ctx, same
-// as a real *sql.DB call would.
+// cancelTestKeyStore is a minimal [platform.APIKeyStore] double whose Create returns the context error when the context
+// is already done, like a Postgres INSERT observing a canceled ctx.
 type cancelTestKeyStore struct{}
 
 func (cancelTestKeyStore) Create(ctx context.Context, k platform.APIKey, _ int) (platform.APIKey, error) {
@@ -88,10 +86,8 @@ func (cancelTestKeyStore) TouchUsage(_ context.Context, _ string, _ net.IP, _ st
 	return nil
 }
 
-// cancelTestMirror is a minimal [KeyMirror] double that records
-// whether the context it was handed for a rollback was ALREADY dead —
-// the tell: a rollback on the same canceled request context
-// fails immediately, the same way a real Redis SCAN does.
+// cancelTestMirror is a minimal [KeyMirror] double that records whether the context handed to a rollback was already
+// dead; a rollback on the canceled request context fails immediately, as a real Redis SCAN would.
 type cancelTestMirror struct {
 	mu               sync.Mutex
 	createCalls      int
@@ -117,12 +113,9 @@ func (m *cancelTestMirror) RevokeKeyByID(ctx context.Context, _, _ string) error
 	return nil
 }
 
-// TestHandleRegister_ClientCancelDuringKeyCreate: a client disconnecting between the Redis
-// mirror write and the Postgres management-row INSERT must still (a) quarantine the orphaned
-// account for the signup-reaper, and (b) roll the mirror back on a context that is NOT already
-// dead, or the rollback fails like the Postgres write did and a live, unlistable credential
-// outlives the request that minted it. The context.Canceled branch must therefore not return
-// before suspendRegisterOrphan, and the rollback must not reuse the canceled ctx.
+// TestHandleRegister_ClientCancelDuringKeyCreate: a disconnect between the Redis mirror write and the Postgres INSERT must
+// still quarantine the orphan account for the signup-reaper and roll the mirror back on a live context, else a live,
+// unlistable credential outlives the request. The Canceled branch must not return before suspendRegisterOrphan.
 func TestHandleRegister_ClientCancelDuringKeyCreate(t *testing.T) {
 	accounts := &cancelTestAccountStore{}
 	mirror := &cancelTestMirror{}

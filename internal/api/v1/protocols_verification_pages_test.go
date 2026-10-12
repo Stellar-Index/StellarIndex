@@ -14,10 +14,8 @@ const repoRootFromAPIV1 = "../../.."
 // protocolDocsDir is the verification-page tree, repo-relative.
 const protocolDocsDir = "docs/protocols"
 
-// nonProtocolDocs are the pages under docs/protocols deliberately not a /v1/protocols row:
-// the index, the two supply write-ups (indexing domains), and the Blend Emitter (folded into
-// the Blend row). Anything else must be linked by a protocol, which
-// TestProtocolVerificationPages_EveryDocIsLinked enforces.
+// nonProtocolDocs are the docs/protocols pages deliberately not a /v1/protocols row: the index, the two supply write-ups,
+// and the Blend Emitter. Any other doc must be linked by a protocol (TestProtocolVerificationPages_EveryDocIsLinked).
 var nonProtocolDocs = map[string]bool{
 	"README.md":           true,
 	"sep41-supply.md":     true,
@@ -28,10 +26,8 @@ var nonProtocolDocs = map[string]bool{
 	"spectra.md": true,
 }
 
-// TestProtocolVerificationPages_PointAtRealFiles fails on a link the
-// wire would serve as a 404 on GitHub: the web protocol page renders
-// verification_page as a repo blob URL, so a path with no file behind
-// it is a broken link on a public page.
+// TestProtocolVerificationPages_PointAtRealFiles fails on a verification_page link with no file behind it, since the web
+// page renders it as a repo blob URL that would 404.
 func TestProtocolVerificationPages_PointAtRealFiles(t *testing.T) {
 	for _, p := range protocolRegistry {
 		if p.VerificationPage == "" {
@@ -63,10 +59,8 @@ func TestProtocolVerificationPages_ProtocolWithADocLinksIt(t *testing.T) {
 	}
 }
 
-// TestProtocolVerificationPages_EveryDocIsLinked walks the other way: a
-// page nothing points at is invisible to every API consumer, so a new
-// doc must either belong to a protocol row or be declared here as one
-// of the non-protocol pages.
+// TestProtocolVerificationPages_EveryDocIsLinked: a doc nothing points at is invisible to API consumers, so each new doc
+// must belong to a protocol row or be declared as a non-protocol page.
 func TestProtocolVerificationPages_EveryDocIsLinked(t *testing.T) {
 	linked := map[string]bool{}
 	for _, p := range protocolRegistry {

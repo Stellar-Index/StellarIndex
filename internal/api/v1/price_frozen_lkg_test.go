@@ -15,10 +15,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// `flags.frozen=true` promises that the response carries the last-known-good value the freeze is
-// holding (ADR-0019 and the openapi `frozen` wording), not the newest closed prices_1m bucket
-// the anomaly detector refused. These tests drive the production handler with a frozen pair
-// whose prices_1m bucket has MOVED away from the held value, and assert the VALUE, not the flag.
+// `flags.frozen=true` promises the last-known-good value the freeze holds (ADR-0019), not the newest refused prices_1m
+// bucket. These drive the production handler with a bucket that MOVED from the held value and assert the VALUE.
 
 // lkgPairs is the aggregator's VWAP cache, keyed
 // "<asset>/<quote>/<window-seconds>" — the per-(pair, window) value a
@@ -81,10 +79,8 @@ func (h heldSincePairs) LookupTriangulatedVWAP(
 	return v, ok, err
 }
 
-// A freeze serves its held value for the whole hold, so the read time
-// can be tens of minutes past the value's observation. Every surface
-// serving a held value must stamp the value's own observed_at, or a
-// client reads a frozen price as current.
+// A freeze serves its held value for the whole hold, so every surface serving it must stamp the value's own observed_at,
+// or a client reads a frozen price as current.
 func TestFrozenHeldValueCarriesItsOwnObservedAt(t *testing.T) {
 	heldSince := time.Now().UTC().Add(-40 * time.Minute).Truncate(time.Second)
 	stamp := heldSince.Format(time.RFC3339)
@@ -119,12 +115,9 @@ func TestFrozenHeldValueCarriesItsOwnObservedAt(t *testing.T) {
 	}
 }
 
-// The freeze that governs a response is the freeze on the pair whose bucket is being SERVED. A
-// `native` request answered from crypto:XLM's closed bucket is governed by crypto:XLM's marker
-// alone; a marker only on the requested literal (`native/fiat:GBP`) says nothing about the
-// healthy alias bucket in hand. Honouring it would 503 under a "refused bucket" detail that does
-// not exist, drop the batch row, or replace the healthy bucket with a stale held value, while
-// asset=crypto:XLM served 200 throughout.
+// The governing freeze is the one on the pair whose bucket is SERVED: a `native` request answered from crypto:XLM's
+// bucket is governed by crypto:XLM's marker alone. Honouring a marker only on the requested literal would 503, drop the
+// batch row, or replace a healthy bucket with a stale held value, while asset=crypto:XLM served 200.
 
 const (
 	healthyAliasBucket = "0.2500"

@@ -53,10 +53,8 @@ func TestSACWrappers_ReturnsConfiguredMap(t *testing.T) {
 	}
 }
 
-// TestSACWrappers_PostMethodNotAllowed — the surface is GET-only;
-// non-GET methods should reach the mux's 405 handler (rewritten to
-// problem+json by the Envelope404 middleware). Pin it so a future
-// route change doesn't accidentally accept POSTs.
+// TestSACWrappers_PostMethodNotAllowed pins that the surface is GET-only: non-GET reaches the mux's 405,
+// rewritten to problem+json by Envelope404, so a route change can't start accepting POSTs.
 func TestSACWrappers_PostMethodNotAllowed(t *testing.T) {
 	srv := v1.New(v1.Options{})
 	ts := startHTTPTest(t, srv.Handler())

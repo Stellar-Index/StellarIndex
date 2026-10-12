@@ -157,10 +157,8 @@ func TestOracleLatest_SourceFilterThreaded(t *testing.T) {
 	}
 }
 
-// TestOracleLatest_UnknownSource400 — `?source=` with a name that
-// isn't in the in-memory `external.Registry` returns 400 instead
-// of falling through to an empty page (same silent-empty-page
-// anti-pattern fix shipped on /v1/markets and /v1/observations).
+// TestOracleLatest_UnknownSource400: `?source=` naming a source not in external.Registry returns 400, not a silent empty
+// page (same fix as /v1/markets and /v1/observations).
 func TestOracleLatest_UnknownSource400(t *testing.T) {
 	srv := v1.New(v1.Options{Oracle: &stubOracleReader{}})
 	ts := httpTestServer(t, srv)
@@ -204,10 +202,8 @@ func TestOracleLatest_ReaderError500(t *testing.T) {
 	}
 }
 
-// Negative-Price rendering through the full HTTP handler — pins
-// the sign-preserving scaledDecimalString path (the
-// oracleReadingFrom helper is unexported, so this exercises it
-// indirectly).
+// Negative-price rendering through the full HTTP handler pins the sign-preserving scaledDecimalString path, which is
+// reached only indirectly since oracleReadingFrom is unexported.
 func TestOracleLatest_negativePricePreservesSign(t *testing.T) {
 	reader := &stubOracleReader{
 		updates: []canonical.OracleUpdate{
@@ -236,10 +232,8 @@ func TestOracleLatest_negativePricePreservesSign(t *testing.T) {
 	}
 }
 
-// TestOracleLatest_NativeExpandsToCryptoXLM pins the user-facing to oracle-internal asset
-// translation and the full XLM family: /v1/oracle/latest?asset=native must also query `crypto:XLM`
-// (Reflector keys by global ticker) and the XLM SAC C-address (reflector-dex publishes only under
-// it). Omitting either returns an empty array or hides that oracle's reading.
+// TestOracleLatest_NativeExpandsToCryptoXLM pins that /v1/oracle/latest?asset=native also queries `crypto:XLM`
+// (Reflector's key) and the XLM SAC C-address (reflector-dex); omitting either returns empty or hides that oracle.
 func TestOracleLatest_NativeExpandsToCryptoXLM(t *testing.T) {
 	reader := &stubOracleReader{}
 	srv := v1.New(v1.Options{Oracle: reader})
@@ -260,12 +254,9 @@ func TestOracleLatest_NativeExpandsToCryptoXLM(t *testing.T) {
 	}
 }
 
-// TestOracleLatest_ClassicExpandsToCryptoTicker pins the same translation for stablecoin classic
-// credit assets: Reflector publishes USDC under the global `crypto:USDC` ticker, not per issuer.
-//
-// The asset id is Circle's real Stellar issuance because the expansion is gated on the
-// verified-currency catalogue, which is part of the fixture. A verified issuer gets its ticker;
-// TestOracleLatest_ImpersonatorGetsNoVerifiedTicker pins that nobody else does.
+// TestOracleLatest_ClassicExpandsToCryptoTicker pins the same translation for stablecoin classic assets: Reflector
+// publishes USDC under `crypto:USDC`. The id is Circle's real issuance because expansion is gated on the verified
+// catalogue; TestOracleLatest_ImpersonatorGetsNoVerifiedTicker pins that nobody else gets it.
 func TestOracleLatest_ClassicExpandsToCryptoTicker(t *testing.T) {
 	cat, err := currency.LoadEmbedded()
 	if err != nil {
@@ -388,11 +379,8 @@ func TestOracleStreams_EmptyArrayWhenReaderNil(t *testing.T) {
 	}
 }
 
-// TestOracleStreams_FiltersToOracleClass pins the handler's source-class filter: rows from
-// non-ClassOracle sources (CoinGecko = ClassAggregator, ECB = ClassAuthoritySanity) share the
-// oracle_updates hypertable for divergence comparison but must not appear on the public /oracles
-// page. The class is a registry fact, not a per-row flag, so filtering happens at the wire
-// boundary.
+// TestOracleStreams_FiltersToOracleClass pins that rows from non-ClassOracle sources (CoinGecko, ECB) sharing
+// oracle_updates must not appear on the public /oracles page; the class is a registry fact, so filtering is at the wire.
 func TestOracleStreams_FiltersToOracleClass(t *testing.T) {
 	reader := &stubOracleReader{
 		updates: []canonical.OracleUpdate{
@@ -617,10 +605,8 @@ func TestOracleLatest_NativeStillMapsToXLM(t *testing.T) {
 	}
 }
 
-// TestOracleLatest_VerifiedSACInheritsItsClassicIdentity pins the SAC
-// leg: a contract that IS the derived Stellar Asset Contract of a
-// verified asset denotes that asset, so it inherits the classic key and
-// the ticker. An arbitrary contract inherits neither.
+// TestOracleLatest_VerifiedSACInheritsItsClassicIdentity pins that the derived SAC of a verified asset inherits its
+// classic key and ticker; an arbitrary contract inherits neither.
 func TestOracleLatest_VerifiedSACInheritsItsClassicIdentity(t *testing.T) {
 	reader, srv := oracleGateFixture(t)
 	ts := httpTestServer(t, srv)
@@ -641,10 +627,8 @@ func TestOracleLatest_VerifiedSACInheritsItsClassicIdentity(t *testing.T) {
 	}
 }
 
-// TestOracleLatest_NoCatalogueFailsClosed pins the nil-catalogue
-// direction. A deployment with no verified catalogue has no basis on
-// which to grant a global ticker, so it grants none — the opposite of
-// an ungated helper, which would grant one to everybody.
+// TestOracleLatest_NoCatalogueFailsClosed pins that with a nil verified catalogue no global ticker is granted, the
+// opposite of an ungated helper that would grant one to everybody.
 func TestOracleLatest_NoCatalogueFailsClosed(t *testing.T) {
 	reader := &keyedOracleReader{rows: map[string][]canonical.OracleUpdate{}}
 	srv := v1.New(v1.Options{Oracle: reader, NetworkPassphrase: canonical.PubnetPassphrase})
@@ -656,10 +640,8 @@ func TestOracleLatest_NoCatalogueFailsClosed(t *testing.T) {
 	}
 }
 
-// TestOracleStreams_UnmappedRowsOptIn pins the /v1/oracle/streams contract under capture-totality:
-// the storage read is unfiltered, so a raw row reaches the handler. It is omitted by default, and
-// include_unmapped=true (the explorer's opt-in) lists it with mapped:false while mapped rows
-// carry mapped:true.
+// TestOracleStreams_UnmappedRowsOptIn pins that the unfiltered storage read's raw rows are omitted by default and listed
+// with mapped:false under include_unmapped=true, while mapped rows carry mapped:true.
 func TestOracleStreams_UnmappedRowsOptIn(t *testing.T) {
 	reader := &stubOracleReader{
 		updates: []canonical.OracleUpdate{
@@ -735,11 +717,8 @@ func TestOracleLatest_EmitsMapped(t *testing.T) {
 	}
 }
 
-// Identity fixtures for the /v1/oracle/latest ticker gate.
-//
-// circleUSDCAssetID is the verified catalogue's own USDC issuance (internal/currency/data/
-// seed.yaml). impersonatorUSDCAssetID wears the same CODE over AQUA's issuer, the id that would
-// pull Circle's oracle rows out of an un-gated helper.
+// Identity fixtures for the /v1/oracle/latest ticker gate: circleUSDCAssetID is the verified catalogue's USDC issuance;
+// impersonatorUSDCAssetID wears the same CODE over AQUA's issuer, which an un-gated helper would let pull Circle's rows.
 const (
 	circleUSDCAssetID       = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 	impersonatorUSDCAssetID = "USDC-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA"
@@ -750,10 +729,8 @@ const (
 	unrelatedContractID = "CAFJZQWSED6YAWZU3GWRTOCNPPCGBN32L7QV43XX5LZLFTK6JLN34DLN"
 )
 
-// keyedOracleReader answers only for the asset keys it is ASKED for, as `WHERE asset = ANY($1)`
-// does in storage. Recording the candidate set alone would pass on mock bookkeeping; a keyed
-// reader makes it behavioural: an id never translated to `crypto:USDC` cannot get a crypto:USDC
-// row.
+// keyedOracleReader answers only for the asset keys it is asked for, as `WHERE asset = ANY($1)` does, so the test is
+// behavioural: an id never translated to `crypto:USDC` cannot get a crypto:USDC row.
 type keyedOracleReader struct {
 	rows map[string][]canonical.OracleUpdate
 	// asked records the candidate keys the handler expanded to, so a
@@ -779,10 +756,8 @@ func (r *keyedOracleReader) LatestOracleStreams(context.Context) ([]canonical.Or
 	return nil, nil
 }
 
-// oracleGateFixture builds a reader holding one reading under
-// `crypto:USDC` (what band / redstone / reflector-cex actually key
-// Circle's USDC readings by) and a server with the real embedded
-// catalogue + the pubnet passphrase, matching production wiring.
+// oracleGateFixture builds a reader with one reading under `crypto:USDC` (how band/redstone/reflector-cex key it) and a
+// server with the real embedded catalogue and pubnet passphrase, matching production.
 func oracleGateFixture(t *testing.T) (*keyedOracleReader, *v1.Server) {
 	t.Helper()
 	cat, err := currency.LoadEmbedded()

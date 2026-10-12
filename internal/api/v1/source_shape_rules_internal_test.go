@@ -112,10 +112,8 @@ func muxSpecCall(n ast.Node) (mountedRoute, string, bool) {
 
 // TestHandleAdmin_GatesBeforeTheHandler pins the mount-level guard with a
 
-// checkCreateAPIKeyRequestSitesNameMonthlyQuota fails when an HTTP mint
-// path builds an auth.CreateAPIKeyRequest without naming MonthlyQuota:
-// an omitted field persists 0, which the quota middleware reads as
-// unmetered, so every mint site must state its cap explicitly.
+// checkCreateAPIKeyRequestSitesNameMonthlyQuota fails when an HTTP mint path builds an auth.CreateAPIKeyRequest
+// without MonthlyQuota: an omitted field persists 0, which the quota middleware reads as unmetered.
 func checkCreateAPIKeyRequestSitesNameMonthlyQuota(t *testing.T) {
 	files, err := filepath.Glob("*.go")
 	if err != nil {
@@ -178,10 +176,8 @@ func namesField(lit *ast.CompositeLit, field string) bool {
 // carry a doc comment; the rest of the package has not been swept yet.
 var docCommentCleanFiles = []string{"anomalies.go"}
 
-// checkExportedTypesHaveDocComments requires every exported type in
-// docCommentCleanFiles to carry a doc comment starting with its name.
-// These are wire types, and golangci does not enable revive's
-// `exported` rule, so nothing else catches a missing one.
+// checkExportedTypesHaveDocComments requires every exported type in docCommentCleanFiles to carry a doc comment
+// starting with its name. They are wire types and golangci doesn't enable revive's `exported`.
 func checkExportedTypesHaveDocComments(t *testing.T) {
 	var checked int
 	for _, name := range docCommentCleanFiles {
@@ -216,10 +212,8 @@ func checkExportedTypesHaveDocComments(t *testing.T) {
 	}
 }
 
-// checkCompletenessVerdictReadsGoThroughGate: outside diagnostics (which
-// republishes computed_at per row, so each claim carries its own age), the
-// only production read of the verdict rows is completenessVerdicts, which
-// returns them with their stale gate.
+// checkCompletenessVerdictReadsGoThroughGate: outside diagnostics (which republishes computed_at per row), the
+// only production read of verdict rows is completenessVerdicts, which returns them with their stale gate.
 func checkCompletenessVerdictReadsGoThroughGate(t *testing.T) {
 	allowed := map[string]bool{
 		"coverage_verdicts.go:completenessVerdicts":    true,
@@ -259,10 +253,9 @@ func checkCompletenessVerdictReadsGoThroughGate(t *testing.T) {
 	}
 }
 
-// checkScamVerdictIsWrittenWithTheScamReason: a function that asks
-// scamWithheld and then writes the withheld problem must pass
-// PriceWithheldScamIssuer — the reason-free call is exactly how /v1/vwap,
-// /v1/twap and /v1/chart came to call a flagged issuer's market thin.
+// checkScamVerdictIsWrittenWithTheScamReason: a function that asks scamWithheld then writes the withheld problem
+// must pass PriceWithheldScamIssuer; a reason-free call made /v1/vwap, /v1/twap and /v1/chart call a flagged
+// issuer's market thin.
 func checkScamVerdictIsWrittenWithTheScamReason(t *testing.T) {
 	entries, err := os.ReadDir(".")
 	if err != nil {
@@ -323,10 +316,8 @@ func callsIdent(body *ast.BlockStmt, name string) bool {
 	return found
 }
 
-// checkEveryStreamCallSitePassesTheServerDrain: every call into the streaming
-// package's writers must pass s.streamOptions(). An inline
-// streaming.StreamOptions{} builds a stream without the server's shutdown
-// drain and is invisible to every other test.
+// checkEveryStreamCallSitePassesTheServerDrain: every call into the streaming writers must pass s.streamOptions().
+// An inline streaming.StreamOptions{} builds a stream without the shutdown drain, invisible to other tests.
 func checkEveryStreamCallSitePassesTheServerDrain(t *testing.T) {
 	entries, err := os.ReadDir(".")
 	if err != nil {
@@ -402,15 +393,12 @@ func auditStreamCallSites(t *testing.T, path string) int {
 	return found
 }
 
-// TestStreamDrainDoesNotAffectOrdinaryHandlers pins the SCOPE of the
-// signal: BeginStreamDrain must be invisible to every non-stream route.
-// This is the assertion that fails if the drain is ever "simplified"
-// into an http.Server.BaseContext derived from the process root
+// TestStreamDrainDoesNotAffectOrdinaryHandlers pins the scope of the signal: BeginStreamDrain must be invisible to
+// every non-stream route. It fails if the drain is simplified into an http.Server.BaseContext from the process root.
 
-// checkSSEProducerGoroutinesRecover: every goroutine this package spawns registers a recover().
-// An unrecovered panic in any goroutine terminates the process, and middleware.Recoverer wraps
-// only the handler goroutine. The spawned set is derived from the source, and the named producers
-// are pinned so a drifted scan cannot pass.
+// checkSSEProducerGoroutinesRecover: every goroutine this package spawns registers a recover(), since an
+// unrecovered panic kills the process and middleware.Recoverer covers only the handler goroutine. The spawned set
+// is derived from source and named producers are pinned so a drifted scan can't pass.
 func checkSSEProducerGoroutinesRecover(t *testing.T) {
 	fset := token.NewFileSet()
 	entries, err := os.ReadDir(".")
@@ -511,11 +499,9 @@ func checkSSEProducerGoroutinesRecover(t *testing.T) {
 	}
 }
 
-// blockRegistersRecover reports whether body registers panic recovery via a top-level deferred
-// statement: a func literal calling recover() directly, or a deferred call to
-// (*Server).recoverStreamProducer or worker.Recover. All three ARE the deferred function, so
-// recover() still fires in the panicking goroutine; accepting all keeps the guard stable across
-// extractions while still requiring SOME recovery.
+// blockRegistersRecover reports whether body registers panic recovery via a top-level deferred statement: a func
+// literal calling recover(), or a deferred (*Server).recoverStreamProducer or worker.Recover. All three are the
+// deferred function, so recover() still fires; accepting all keeps the guard stable across extractions.
 func blockRegistersRecover(body *ast.BlockStmt) bool {
 	if body == nil {
 		return false

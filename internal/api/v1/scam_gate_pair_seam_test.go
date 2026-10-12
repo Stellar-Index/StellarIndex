@@ -15,13 +15,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 )
 
-// TestProductionScamGateIsPairAware pins the type assertion in
-// v1.scamWithheld to the type that actually runs in production.
-//
-// scamWithheld falls back to the BASE-ONLY question for a gate lacking the pair form. If the
-// production gate ever stopped satisfying the pair form, every handler would quietly serve a
-// flagged issuer's price through the quote leg, with no compile error and no failing test
-// that used a fake. This assertion makes that impossible.
+// TestProductionScamGateIsPairAware pins the type assertion in v1.scamWithheld to the production gate type.
+// scamWithheld falls back to the base-only question for a gate lacking the pair form; if the production gate
+// stopped satisfying it, handlers would serve a flagged issuer's price via the quote leg with no failing test.
 func TestProductionScamGateIsPairAware(t *testing.T) {
 	var gate v1.PriceScamGate = (*pricingguard.ScamGate)(nil)
 	if _, ok := gate.(v1.PriceScamPairGate); !ok {
@@ -31,18 +27,9 @@ func TestProductionScamGateIsPairAware(t *testing.T) {
 	}
 }
 
-// TestScamGateIsAskedThePairQuestion fails when any production file under internal/api/v1
-// (including subpackages) can ask the scam gate the BASE-ONLY question, or asks a pair
-// decider the same leg twice (the base-only question in effect).
-//
-// Proves: every selector named `Withheld` is a finding whatever its receiver (field,
-// parameter, local alias, method value) except the one fallback inside scamWithheld, and no
-// pair-decider call passes the same expression as base and quote. No exemption list.
-//
-// Does NOT prove every price surface consults the gate: a surface asking no gate has no call
-// to match. That coverage is per-surface (pricingguard's package doc) and, for reader-backed
-// seams, cmd/stellarindex-api's TestPriceServingSeamsAreGated and
-// TestV1VWAPCacheSeamsAreGated.
+// TestScamGateIsAskedThePairQuestion fails if any production file under internal/api/v1 can ask the gate the BASE-ONLY question
+// (any selector `Withheld` except the fallback inside scamWithheld) or passes one expression as both legs of a pair decider.
+// Does NOT prove every surface consults the gate; that is per-surface (pricingguard docs, TestPriceServingSeamsAreGated).
 func TestScamGateIsAskedThePairQuestion(t *testing.T) {
 	fset := token.NewFileSet()
 	files := parseScamGateTree(t, fset, ".")

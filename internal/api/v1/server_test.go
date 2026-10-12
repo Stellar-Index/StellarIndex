@@ -17,9 +17,8 @@ import (
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 )
 
-// stubCheck is a ReadyChecker that returns a configurable error. An optional `flight` joins the
-// probe to a rendezvous shared with its siblings so a test can count probes in flight at once
-// (TestReadyz_ProbesRunInParallel). `critical` defaults to true; set it false to exercise the
+// stubCheck is a ReadyChecker returning a configurable error. An optional `flight` joins probes to a rendezvous so
+// tests can count probes in flight (TestReadyz_ProbesRunInParallel). `critical` defaults true; false exercises the
 // degraded-but-serving path.
 type stubCheck struct {
 	name     string
@@ -161,10 +160,8 @@ func TestReadyz_AllChecksPass(t *testing.T) {
 	}
 }
 
-// TestReadyz_CriticalFailureReturns503 — a failing critical
-// check (Postgres) returns 503 with status="unready" + stale
-// flag. Only critical
-// failures take a backend out of HAProxy's pool.
+// TestReadyz_CriticalFailureReturns503: a failing critical check (Postgres) returns 503 with status="unready" and
+// the stale flag. Only critical failures take a backend out of HAProxy's pool.
 func TestReadyz_CriticalFailureReturns503(t *testing.T) {
 	ts := newTestServer(t,
 		&stubCheck{name: "postgres", critical: true, err: errors.New("postgres: connection refused")},
@@ -216,14 +213,9 @@ func TestReadyz_NonCriticalFailureReturns200Degraded(t *testing.T) {
 	}
 }
 
-// TestReadyz_ProbesRunInParallel pins the fan-out in computeReadyz: every ReadyChecker is pinged
-// at once, so a readiness round costs the slowest dependency, not the sum. Three serial 500 ms
-// checks would eat 1.5 s of the 2 s budget, past the ~1 s LB probe timeout that flaps the backend.
-//
-// Concurrency is asserted as a count of probes in flight together, not a wall-clock ceiling:
-// each stub waits for its siblings, so a sequential handler leaves a peak of 1 on any runner at
-// any load. A timing ceiling flaked under CPU load, and the count also catches partial fan-out
-// (two at a time) that a ceiling would pass.
+// TestReadyz_ProbesRunInParallel pins computeReadyz's fan-out: all ReadyCheckers ping at once, so a round costs the slowest
+// dependency, not the sum (three serial 500 ms checks would eat 1.5 s of 2 s, past the ~1 s LB probe timeout). Asserts peak
+// probes in flight (stubs wait for siblings), not wall clock, so it catches partial fan-out and does not flake.
 func TestReadyz_ProbesRunInParallel(t *testing.T) {
 	const probes = 3
 	flight := newProbeFlight(probes)
@@ -271,10 +263,8 @@ func TestVersion(t *testing.T) {
 	if env.Data["build_date"] == "" {
 		t.Error("build_date should be non-empty")
 	}
-	// Commit + Dirty come from runtime/debug.BuildInfo. Under
-	// `go test` they're typically "unknown" (no -buildvcs in the
-	// test invocation); under `go build -buildvcs=true` they're
-	// populated. Either way the keys must be present + non-empty.
+	// Commit + Dirty come from runtime/debug.BuildInfo: typically "unknown" under `go test` (no -buildvcs), populated
+	// under `go build -buildvcs=true`. Either way the keys must be present and non-empty.
 	if env.Data["commit"] == "" {
 		t.Error("commit should be non-empty (defaults to 'unknown' if VCS unavailable)")
 	}
@@ -437,10 +427,9 @@ func TestMiddlewareStackAppliedEndToEnd(t *testing.T) {
 	}
 }
 
-// assertReadyzErrorRedacted: /v1/readyz is unauthenticated and exempt from
-// the anonymous limiter, so a failed check must name the dependency and
-// point at the server log without echoing the driver error, which carries
-// the endpoint (and, from pgx, user and database).
+// assertReadyzErrorRedacted: /v1/readyz is unauthenticated and exempt from the anonymous limiter, so a failed
+// check must name the dependency and point at the server log without echoing the driver error (endpoint, and
+// from pgx user and database).
 func assertReadyzErrorRedacted(t *testing.T, body, check, rawErr string) {
 	t.Helper()
 	if strings.Contains(body, rawErr) {
@@ -581,10 +570,8 @@ func TestMetricsLoopbackOnly_LoopbackPasses(t *testing.T) {
 	}
 }
 
-// TestSecurityTxt pins the RFC 9116 disclosure metadata served at
-// /.well-known/security.txt. Researchers scanning the API origin
-// for vulnerabilities expect this path; without it they have no
-// signposted way to reach the disclosure email.
+// TestSecurityTxt pins the RFC 9116 disclosure metadata at /.well-known/security.txt, where researchers scanning
+// the API origin expect to find the disclosure email.
 func TestSecurityTxt(t *testing.T) {
 	ts := newTestServer(t)
 	resp, err := http.Get(ts.URL + "/.well-known/security.txt")

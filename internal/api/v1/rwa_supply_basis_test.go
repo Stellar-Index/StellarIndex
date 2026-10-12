@@ -11,20 +11,13 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
-// Every reference_valuation on /v1/rwa/assets is circulating_supply multiplied by an oracle
-// price, so the completeness of the supply is half of every total this surface publishes. A row
-// must therefore carry the supply basis and a floor marker, not just the supply.
-//
-// These tests drive the production fills and then the production projection: the reading already
-// names its arm, and what must be pinned is that the name reaches the wire from the internal
-// struct.
+// Every reference_valuation is circulating_supply times an oracle price, so a row must carry the supply basis and a
+// floor marker, not just the supply. Tests drive the production fills and projection to pin that the arm name reaches
+// the wire.
 
-// TestRWARowDeclaresTheTrustlineFallbackAsAFloor runs the RWA fill over an asset the lake cannot
-// answer for, a reachable degraded state once the lake cache has gone cold.
-//
-// In that state the figure is the trustline sum, blind by construction to claimable balances,
-// liquidity-pool reserves and SAC-held supply. The assertion is on the DECLARATION, not the
-// number: serving it is defensible, serving it under the same shape as a four-domain total is not.
+// TestRWARowDeclaresTheTrustlineFallbackAsAFloor: when the lake cannot answer (cold cache) the figure is the trustline
+// sum, blind to claimable balances, LP reserves and SAC supply. Asserts the declaration, not the number: serving it as a
+// floor is defensible, under a four-domain total's shape is not.
 func TestRWARowDeclaresTheTrustlineFallbackAsAFloor(t *testing.T) {
 	s, _ := lakeSupplyServer(t, "") // no lake reading for CETES at all
 	rows := cetesRow()
@@ -97,10 +90,8 @@ func TestRWARowWithNoBasisNamesNoArm(t *testing.T) {
 	}
 }
 
-// TestRWAContractRowNamesTheFlowSum covers the other arm end to end (production fill, then
-// production projection). A contract row's supply comes from a different reader over a different
-// population, so it must carry a basis too; otherwise a contract row and a classic row look the
-// same on the wire even when one is a floor and the other is not.
+// TestRWAContractRowNamesTheFlowSum covers the contract arm end to end: its supply comes from a different reader and
+// population, so it must carry a basis too or contract and classic rows look alike on the wire.
 func TestRWAContractRowNamesTheFlowSum(t *testing.T) {
 	const contractID = "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA"
 	total, _ := new(big.Int).SetString("123450000000", 10)
@@ -133,10 +124,9 @@ func TestRWAContractRowNamesTheFlowSum(t *testing.T) {
 	}
 }
 
-// TestRWARowOmitsSupplyProvenanceWhenThereIsNone guards the serialisation, not the struct. Both
-// fields are omitempty, so a row with no supply must not grow a `supply_basis: ""` or a
-// `circulating_supply_lower_bound: false` that a consumer would read as a positive statement
-// about a figure that is not there.
+// TestRWARowOmitsSupplyProvenanceWhenThereIsNone guards serialisation: both fields are omitempty, so a row with no
+// supply must not grow `supply_basis: ""` or `circulating_supply_lower_bound: false`, which a consumer would read as a
+// statement.
 func TestRWARowOmitsSupplyProvenanceWhenThereIsNone(t *testing.T) {
 	b, err := json.Marshal(RWAAsset{AssetID: "FOO-GAFOO"})
 	if err != nil {
@@ -153,10 +143,8 @@ func TestRWARowOmitsSupplyProvenanceWhenThereIsNone(t *testing.T) {
 	}
 }
 
-// rwaRowFor runs the PRODUCTION projection — the function the handler
-// calls — over one filled listing row, so these tests cannot pass against a
-// projection that drops the fields on the floor. Building an RWAAsset by
-// hand here would assert only that the struct has the fields.
+// rwaRowFor runs the production projection the handler calls over one filled listing row, so tests cannot pass
+// against a projection that drops fields; a hand-built RWAAsset would only assert the struct has them.
 func rwaRowFor(t *testing.T, s *Server, d AssetDetail) RWAAsset {
 	t.Helper()
 	mem := rwaMember{code: "CETES", issuer: cetesIssuer, name: "Cetes", basis: "sep1_declaration", anchorClass: "bond"}

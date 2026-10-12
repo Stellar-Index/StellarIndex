@@ -233,10 +233,9 @@ func TestStatus_FreshnessCounts_ServedZeroVsFailedQuery(t *testing.T) {
 	}
 }
 
-// A FAILED Alertmanager query must NOT serialise as an all-clear: zero counts with no failure
-// signal would read as "0 active alerts" while alerting is blind. The response must carry
-// incidents_status="unknown" on a query error, with counts left at zero (not invented). The raw
-// wire JSON is decoded so the assertion pins what a customer's browser receives.
+// A failed Alertmanager query must not serialise as an all-clear: it must carry incidents_status="unknown" with
+// counts left at zero (not invented), not read as "0 active alerts" while alerting is blind. Raw wire JSON is
+// decoded to pin what a browser receives.
 func TestStatus_IncidentsQueryError_ReportsUnknownNotZero(t *testing.T) {
 	srv := New(Options{
 		RegionName: "r1",
@@ -535,10 +534,8 @@ func TestStatus_OverallRollup(t *testing.T) {
 			want: expect{overall: "down", stale: true, indexer: "down"},
 		},
 		{
-			// Backend errors on every query AND services degrade
-			// to unknown (hbErr != nil branch). api=ok keeps
-			// anyOK=true; indexer/aggregator unknown → mixed →
-			// degraded (the backendErr canary also forces this).
+			// Backend errors on every query and services degrade to unknown (hbErr != nil branch). api=ok keeps anyOK=true;
+			// indexer/aggregator unknown gives mixed, so degraded (the backendErr canary also forces this).
 			name: "backend_error_partial",
 			backend: &fakeStatusBackend{
 				hbErr:  errors.New("prometheus dead"),
@@ -604,10 +601,8 @@ func TestStatus_OverallRollup(t *testing.T) {
 // directly, since the handler always stamps an "ok" api entry and HTTP tests cannot reach it. The
 // "unknown" verdict is distinct from "down" and "ok".
 func TestRollupOverall_AllUnknownBranch(t *testing.T) {
-	// All three services unknown, no canary trips → overall=unknown.
-	// This is the pure evidence-from-prod state: every signal
-	// is unknown + zero LastSeen. Must roll to "unknown",
-	// not "ok".
+	// All three services unknown with no canary tripped: every signal is unknown with zero LastSeen, so overall must
+	// roll to "unknown", not "ok".
 	services := []StatusService{
 		{Name: "api", Status: "unknown"},
 		{Name: "indexer", Status: "unknown"},
@@ -654,10 +649,8 @@ func TestRollupOverallLatencyBreach(t *testing.T) {
 	}
 }
 
-// TestStatusLatencyBreached pins the threshold arithmetic, including the
-// no-data case: WindowSecs==0 means the backend returned nothing
-// measurable, which must NOT read as a breach (absence of data is handled
-// by the unknown/backendErr paths).
+// TestStatusLatencyBreached pins the threshold arithmetic, including no-data: WindowSecs==0 means nothing
+// measurable and must not read as a breach (absence of data is handled by the unknown/backendErr paths).
 func TestStatusLatencyBreached(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -680,11 +673,9 @@ func TestStatusLatencyBreached(t *testing.T) {
 	}
 }
 
-// TestStatus_TicketIncidentsDoNotMoveOverall pins the rollupOverall precedence: `overall`
-// escalates only on a service fault, a metrics-backend error, a breached latency SLO, or a
-// `page`-severity alert. Ticket and informational alerts are an operator backlog, so they leave
-// `overall` "ok" (flags.stale false) however many fire. The counts share a body with the verdict
-// and can look contradictory, but folding tickets in would change what "ok" promises publicly.
+// TestStatus_TicketIncidentsDoNotMoveOverall pins rollupOverall precedence: `overall` escalates only on a service
+// fault, metrics-backend error, breached latency SLO or `page`-severity alert. Ticket and informational alerts
+// leave it "ok" (flags.stale false) however many fire; folding them in would change what "ok" promises publicly.
 func TestStatus_TicketIncidentsDoNotMoveOverall(t *testing.T) {
 	now := time.Now().UTC()
 	recent := now.Add(-3 * time.Second) // within the 60s heartbeat threshold
@@ -784,10 +775,9 @@ func TestStatus_TicketIncidentsDoNotMoveOverall(t *testing.T) {
 	}
 }
 
-// Lean test-net deployments run no aggregator (`run_aggregator: false`); that is a deployment
-// shape, not an outage. A hardcoded {"indexer","aggregator"} list would leave the aggregator
-// "unknown" forever and pin `overall` at "degraded". With the deployment's own service list, a
-// healthy indexer alone rolls up to "ok" and the aggregator is not reported.
+// Lean test-net deployments run no aggregator (`run_aggregator: false`), a deployment shape not an outage. A
+// hardcoded {"indexer","aggregator"} list would pin `overall` at "degraded"; with the deployment's own service
+// list a healthy indexer alone rolls up to "ok" and the aggregator is not reported.
 func TestStatus_DeclaredServicesOnly_AbsentAggregatorIsNotDegraded(t *testing.T) {
 	now := time.Now().UTC()
 	srv := New(Options{
@@ -858,10 +848,8 @@ func TestStatus_UndeclaredServicesDefaultToPubnetPair(t *testing.T) {
 	}
 }
 
-// The deployment TIER was the string literal "production" at the
-// Options construction site, so api.testnet.stellarindex.io answered
-// /v1/status with `"deployment":"production"` and the explorer tagged a
-// test net PRODUCTION. It is an operator fact, so it comes from config.
+// The deployment tier comes from config (an operator fact), not a literal: a hardcoded "production" made
+// api.testnet.stellarindex.io answer `"deployment":"production"` and the explorer tag a test net PRODUCTION.
 func TestStatus_DeploymentTierIsReportedVerbatim(t *testing.T) {
 	srv := New(Options{RegionName: "testnet", RegionDeployment: "testnet"})
 

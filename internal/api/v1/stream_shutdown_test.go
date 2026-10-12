@@ -14,18 +14,13 @@ import (
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 )
 
-// streamDrainCeiling is what an SSE handler must beat between
-// BeginStreamDrain and the response body ending. The writer returns on
-// its next select, so this is generous by orders of magnitude; it
-// exists to fail loudly rather than hang when the wiring is dropped.
+// streamDrainCeiling is what an SSE handler must beat between BeginStreamDrain and the body ending. The writer
+// returns on its next select, so it is generous; it exists to fail loudly instead of hanging if wiring is dropped.
 const streamDrainCeiling = 2 * time.Second
 
-// TestStreamHandlersEndOnTheShutdownDrain runs the drain through the REAL v1 server and routes.
-//
-// The streaming package's own tests prove the writer honours a Drain. This proves the handlers
-// hand the server's Drain to that writer, the half that rots silently: a handler building its
-// StreamOptions inline still compiles and passes every other test here, but stalls a restart
-// while a client is attached.
+// TestStreamHandlersEndOnTheShutdownDrain runs the drain through the real v1 server and routes.
+// The streaming package's tests prove the writer honours a Drain; this proves handlers hand it the server's Drain.
+// A handler building StreamOptions inline still compiles and passes other tests but stalls a restart.
 func TestStreamHandlersEndOnTheShutdownDrain(t *testing.T) {
 	cases := []struct {
 		name string
@@ -74,10 +69,9 @@ func TestStreamHandlersEndOnTheShutdownDrain(t *testing.T) {
 	}
 }
 
-// TestStreamDrainDoesNotAffectOrdinaryHandlers pins the SCOPE of the signal: BeginStreamDrain must
-// be invisible to every non-stream route. It fails if the drain is "simplified" into an
-// http.Server.BaseContext derived from the process root context, which would cancel ordinary
-// in-flight requests at SIGTERM.
+// TestStreamDrainDoesNotAffectOrdinaryHandlers pins the scope: BeginStreamDrain must be invisible to non-stream
+// routes. It fails if the drain becomes an http.Server.BaseContext from the process root, which would cancel
+// ordinary in-flight requests at SIGTERM.
 func TestStreamDrainDoesNotAffectOrdinaryHandlers(t *testing.T) {
 	srv := v1.New(v1.Options{})
 	ts := httptest.NewServer(srv.Handler())
@@ -100,10 +94,8 @@ func TestStreamDrainDoesNotAffectOrdinaryHandlers(t *testing.T) {
 	}
 }
 
-// openTestStream opens an SSE connection, waits for the `:connected`
-// preamble so the connection is genuinely established (and therefore
-// genuinely non-idle), and returns a channel carrying the error from
-// draining the body to its end — nil for a cleanly terminated body.
+// openTestStream opens an SSE connection, waits for the `:connected` preamble so it is genuinely established and
+// non-idle, and returns a channel with the error from draining the body (nil for a clean end).
 func openTestStream(t *testing.T, url string) <-chan error {
 	t.Helper()
 

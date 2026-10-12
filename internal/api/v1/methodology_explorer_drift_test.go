@@ -17,21 +17,9 @@ import (
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 )
 
-// ─── /v1/methodology and the page users actually read ───────────────
-//
-// The API serves a machine-readable methodology document. The explorer's /methodology page is
-// hand-written prose covering a SUPERSET of it (latency SLOs, numeric precision and the freeze
-// policy have no endpoint counterpart), so the page is deliberately not generated from the
-// endpoint.
-//
-// That risks silent divergence on the parts both state: the endpoint says /v1/vwap and
-// /v1/twap default to UNFILTERED and volume-weighting is not an outlier defence, so the page
-// must not tell readers their VWAP was MAD-filtered. Prose is not compiled, and the page is the
-// copy a reader trusts.
-//
-// This file is the compile step for the overlap. It renders the real endpoint, reads the real
-// page, and fails when they disagree on a fact both state. Prose the endpoint does not carry
-// stays free.
+// The explorer's /methodology page is hand-written prose covering a superset of /v1/methodology, so it is not generated.
+// This file renders the real endpoint and page and fails when they disagree on a fact both state (e.g. VWAP is
+// unfiltered by default).
 
 const methodologyPagePath = "web/explorer/src/app/methodology/page.tsx"
 
@@ -44,10 +32,8 @@ const anomaliesPagePath = "web/explorer/src/app/anomalies/page.tsx"
 // package can pin an unexported function's range.
 const freezeEventsSourcePath = "internal/storage/timescale/freeze_events.go"
 
-// TestAnomaliesPage_ReasonsAreReachable pins that every freeze reason the /anomalies page
-// REASONS list names is one of mapFreezeReason's real return values. `single_source` and
-// `manual` must not appear: the automated mapper can never write them, so a reader would look
-// for a reason the timeline cannot show.
+// TestAnomaliesPage_ReasonsAreReachable pins that every freeze reason the /anomalies page lists is a real
+// mapFreezeReason return value; `single_source` and `manual` must not appear since the mapper never writes them.
 func TestAnomaliesPage_ReasonsAreReachable(t *testing.T) {
 	page := methodologyReadRepoFile(t, anomaliesPagePath)
 	mapper := methodologyReadRepoFile(t, freezeEventsSourcePath)
@@ -90,10 +76,8 @@ func methodologyReadRepoFile(t *testing.T, rel string) string {
 	return string(b)
 }
 
-// servedMethodology renders GET /v1/methodology through the real
-// handler and returns the decoded `data` object. Reading the endpoint
-// rather than the source keeps the test honest about what a CLIENT
-// sees, including anything the handler derives at request time.
+// servedMethodology renders GET /v1/methodology through the real handler and returns the decoded `data`, so the test
+// sees what a client sees, including request-time derivations.
 func servedMethodology(t *testing.T) map[string]any {
 	t.Helper()
 	ts := httpTestServer(t, v1.New(v1.Options{}))
@@ -133,10 +117,8 @@ func adrFrontMatterTitle(t *testing.T, root, numericID string) string {
 	return ""
 }
 
-// TestMethodologyPage_ADRCitationsResolve keeps the hand-written page
-// from citing an ADR that does not exist. The page cites ADRs the
-// endpoint does not (0003, 0009) and vice versa; that divergence is
-// fine — a dangling citation is not.
+// TestMethodologyPage_ADRCitationsResolve: the page may cite ADRs the endpoint does not and vice versa, but must
+// never cite an ADR that does not exist.
 func TestMethodologyPage_ADRCitationsResolve(t *testing.T) {
 	root := methodologyRepoRoot(t)
 	page := methodologyReadRepoFile(t, methodologyPagePath)
@@ -157,12 +139,8 @@ func TestMethodologyPage_ADRCitationsResolve(t *testing.T) {
 	}
 }
 
-// TestMethodologyPage_SourceClassesMatchTheEndpoint pins the one list
-// the page and the endpoint both enumerate.
-//
-// The page says a venue carries "one of four source classes" and names them. That count and
-// those names are the endpoint's to define; if a class changes, the page must move with it or
-// readers get a taxonomy the API does not use.
+// TestMethodologyPage_SourceClassesMatchTheEndpoint pins the source-class list both enumerate ("one of four source
+// classes"); the endpoint defines the count and names, and the page must move with it.
 func TestMethodologyPage_SourceClassesMatchTheEndpoint(t *testing.T) {
 	page := methodologyReadRepoFile(t, methodologyPagePath)
 	data := servedMethodology(t)
@@ -215,12 +193,8 @@ func TestMethodologyPage_SourceClassesMatchTheEndpoint(t *testing.T) {
 	}
 }
 
-// TestMethodologyPage_DefersOnOperatorConfiguredFacts guards the facts
-// that are DEPLOYMENT CONFIGURATION rather than design.
-//
-// The stablecoin→fiat proxy map is set by the operator. A hard-coded list of mappings in prose
-// goes stale whenever config changes, so the page must point at the served field instead of
-// restating it.
+// TestMethodologyPage_DefersOnOperatorConfiguredFacts: the stablecoin-to-fiat proxy map is operator config, so the page
+// must point at the served field rather than restate a mapping list that goes stale.
 func TestMethodologyPage_DefersOnOperatorConfiguredFacts(t *testing.T) {
 	page := methodologyReadRepoFile(t, methodologyPagePath)
 
@@ -241,12 +215,8 @@ func TestMethodologyPage_DefersOnOperatorConfiguredFacts(t *testing.T) {
 	}
 }
 
-// TestMethodologyPage_OutlierClaimMatchesTheEndpoint is the regression test for the divergence
-// that motivated this file.
-//
-// The endpoint says the default sigma applies to ONE endpoint and the other two are unfiltered.
-// An unqualified "filtered before the average" on the page would make a reader sizing a trade
-// off /v1/vwap believe in a protection that is not on.
+// TestMethodologyPage_OutlierClaimMatchesTheEndpoint: the default sigma applies to one endpoint and the others are
+// unfiltered, so an unqualified "filtered before the average" on the page would claim a protection /v1/vwap lacks.
 func TestMethodologyPage_OutlierClaimMatchesTheEndpoint(t *testing.T) {
 	page := methodologyReadRepoFile(t, methodologyPagePath)
 	data := servedMethodology(t)
@@ -295,22 +265,13 @@ func TestMethodologyPage_OutlierClaimMatchesTheEndpoint(t *testing.T) {
 	}
 }
 
-// ─── the document against itself ────────────────────────────────────
-//
-// The two tests below never open the page. They hold /v1/methodology to its own contents,
-// because the page-vs-endpoint checks above are worth nothing if the endpoint disagrees with
-// itself. servedMethodology renders the real handler so the served bytes, not the source, are
-// checked.
+// The next two tests never open the page: they hold /v1/methodology to its own contents, since page-vs-endpoint checks are
+// worthless if the endpoint disagrees with itself. They check the served bytes via servedMethodology.
 
 // ─── the remaining claims the page and the endpoint both make ───────
 
-// TestMethodologyPage_FormulaMatchesTheServedPriceMethod pins the
-// headline formula.
-//
-// `aggregation.price_method` is the API's statement of how the served price is derived; the
-// page prints a formula and names it. The page mentions VWAP and TWAP many times, so a plain
-// substring search would prove nothing; the assertion targets the formula block, the page's
-// actual claim about what the number is.
+// TestMethodologyPage_FormulaMatchesTheServedPriceMethod pins the headline formula against
+// `aggregation.price_method`. It targets the formula block, since VWAP/TWAP appear all over the page.
 func TestMethodologyPage_FormulaMatchesTheServedPriceMethod(t *testing.T) {
 	page := methodologyReadRepoFile(t, methodologyPagePath)
 	data := servedMethodology(t)
@@ -335,12 +296,8 @@ func TestMethodologyPage_FormulaMatchesTheServedPriceMethod(t *testing.T) {
 	}
 }
 
-// TestMethodologyPage_VWAPEligibilityMatchesTheEndpoint holds the
-// page's eligibility rule to the served contributor set.
-//
-// The page states the rule as a single class ("each trade i is from a source with class =
-// exchange"), which is only true while exactly one class contributes. Admitting a second class
-// would silently make the page's formula describe a subset of the number it defines.
+// TestMethodologyPage_VWAPEligibilityMatchesTheEndpoint: the page states eligibility as a single class (exchange), true
+// only while one class contributes; admitting a second would make the formula describe a subset.
 func TestMethodologyPage_VWAPEligibilityMatchesTheEndpoint(t *testing.T) {
 	page := methodologyReadRepoFile(t, methodologyPagePath)
 	data := servedMethodology(t)
@@ -375,26 +332,9 @@ func TestMethodologyPage_VWAPEligibilityMatchesTheEndpoint(t *testing.T) {
 	}
 }
 
-// TestMethodologyPage_ClassVenueNamesAgree holds the two copies of
-// the same paragraph together.
-//
-// Each class is described twice in near-identical prose, in methodology.go and in the page's
-// DefList, and both name venues. Two assertions, in the directions checkable without guessing
-// at prose:
-//
-//  1. a venue named in a class's served description must be registered under THAT class in the
-//     same response, so the document cannot describe a venue into the wrong bucket;
-//  2. the page's entry for a class must name every venue the endpoint's entry names, so the
-//     endpoint's copy cannot gain a venue the page never hears about.
-//
-// The reverse of (2), that every registered venue must be named, is deliberately NOT asserted:
-// both copies describe some venues by category ("FX vendors"), and forcing an exhaustive list
-// into prose would make the text worse and the gate noisier. A venue can therefore join the
-// registry without either copy mentioning it; what is gated is that nothing NAMED is wrong.
-//
-// Because the scan matches registry ids, a description should name a venue by its id wherever
-// the brand name is ambiguous: "Soroswap Router" would be read as the exchange-class
-// `soroswap`, so the router class names `soroswap-router` instead.
+// TestMethodologyPage_ClassVenueNamesAgree: a venue named in a class description must be registered under THAT class, and the
+// page's entry must name every venue the endpoint's entry names. The reverse is not asserted (prose describes some by
+// category); descriptions name venues by registry id where the brand is ambiguous (`soroswap-router`, not "Soroswap Router").
 func TestMethodologyPage_ClassVenueNamesAgree(t *testing.T) {
 	page := methodologyReadRepoFile(t, methodologyPagePath)
 	data := servedMethodology(t)
@@ -465,12 +405,8 @@ func methodologyPageClassDef(t *testing.T, page, term string) string {
 	return m[1]
 }
 
-// namedVenues returns which of `ids` the text names, as whole words
-// and case-insensitively.
-//
-// Longest id first, blanking each match as it is claimed, so `soroswap-router` takes its own
-// text before a bare `soroswap` can be read out of the middle of it (`\b` treats the hyphen as
-// a boundary, so the router class would otherwise look like it names an exchange-class venue).
+// namedVenues returns which ids the text names as whole words, case-insensitively. Longest id first, blanking each
+// match, so `soroswap-router` is not misread as the exchange-class `soroswap` (`\b` treats the hyphen as a boundary).
 func namedVenues(text string, ids []string) map[string]bool {
 	ordered := append([]string(nil), ids...)
 	sort.Slice(ordered, func(i, j int) bool { return len(ordered[i]) > len(ordered[j]) })

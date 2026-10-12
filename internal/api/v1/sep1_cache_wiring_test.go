@@ -30,10 +30,9 @@ func (wiringFetchStateSep1Cache) IssuerSep1Unreachable(context.Context, string) 
 	return false, nil
 }
 
-// TestNewWarnsWhenSep1CacheLacksFetchState: the compile-time guard in assets.go only proves
-// the bare *timescale.Store satisfies Sep1FetchStateReader, not the value actually wired as
-// Options.Sep1Cache. Without a boot-time check, a cache lacking the fetch-state method
-// silently reverts every issuer's sep1_status to "not_fetched".
+// TestNewWarnsWhenSep1CacheLacksFetchState: the compile-time guard only proves the bare *timescale.Store satisfies
+// Sep1FetchStateReader, not the value wired as Options.Sep1Cache. Without a boot-time check, a cache lacking it
+// silently reverts every sep1_status to "not_fetched".
 func TestNewWarnsWhenSep1CacheLacksFetchState(t *testing.T) {
 	logger, buf := captureLogger()
 

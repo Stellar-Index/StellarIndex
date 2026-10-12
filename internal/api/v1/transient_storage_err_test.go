@@ -11,10 +11,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// pgxDialRefused reproduces the shape pgx v5 hands a handler when Postgres is not listening: a
-// *pgconn.ConnectError ("failed to connect to `…`: dial error (…)") wrapping the refused dial's
-// *net.OpError. It is built from stdlib types so the test asserts the classification rule, not
-// driver internals.
+// pgxDialRefused reproduces what pgx v5 returns when Postgres isn't listening: a *pgconn.ConnectError wrapping the
+// refused dial's *net.OpError. Built from stdlib types so the test asserts the classification rule, not driver internals.
 func pgxDialRefused() error {
 	op := &net.OpError{
 		Op:   "dial",
@@ -25,11 +23,9 @@ func pgxDialRefused() error {
 	return fmt.Errorf("failed to connect to `host=127.0.0.1 user=si database=stellarindex`: dial error (%w)", op)
 }
 
-// TestTransientStorageErr_UnreachablePostgres pins that a failure to ESTABLISH a connection is
-// classified retryable. The substrings "57014", "bad connection", "broken pipe", "connection
-// reset" and "EOF" all describe a connection that EXISTED and then misbehaved; a restarting,
-// downed or failing-over Postgres hits every handler at once and would otherwise fall through to
-// a 500 "Internal error", an outage that reads as a bug.
+// TestTransientStorageErr_UnreachablePostgres pins that a failure to establish a connection is retryable. The
+// substrings "57014", "bad connection", "broken pipe", "connection reset", "EOF" describe a connection that existed;
+// a downed or failing-over Postgres would otherwise fall through to a 500 that reads as a bug.
 func TestTransientStorageErr_UnreachablePostgres(t *testing.T) {
 	dnsErr := &net.DNSError{Err: "no such host", Name: "postgres.internal", IsNotFound: true}
 

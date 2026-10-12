@@ -6,12 +6,9 @@ import (
 	"time"
 )
 
-// TestTipStreamDivergenceBudgetHoldsItsTwoReferences pins the two relationships the budget
-// constant is argued from, so a change to either reference cannot leave a stale rationale.
-//
-//   - Strictly under the tick budget: an auxiliary read must never consume the whole tick.
-//   - No wider than a fifth of the DEFAULT window: a stalled store may shift an emission
-//     within its period, never replace it.
+// TestTipStreamDivergenceBudgetHoldsItsTwoReferences pins the two relationships the budget constant is argued from:
+// - Strictly under the tick budget: an auxiliary read must never consume the whole tick.
+// - No wider than a fifth of the DEFAULT window: a stalled store may shift an emission, never replace it.
 func TestTipStreamDivergenceBudgetHoldsItsTwoReferences(t *testing.T) {
 	if tipStreamDivergenceBudget >= tipStreamTickTimeout {
 		t.Errorf("tipStreamDivergenceBudget = %v, tipStreamTickTimeout = %v — the auxiliary lookup must be bounded strictly tighter than the computation it rides beside",
@@ -24,10 +21,8 @@ func TestTipStreamDivergenceBudgetHoldsItsTwoReferences(t *testing.T) {
 	}
 }
 
-// TestTipDivergenceStallLogRateLimits — under a sustained stall the warning fires once per
-// interval process-wide, and each emitted line carries the count it swallowed so the volume
-// stays visible. Unbounded, it would be one line per tick per stream (tens of thousands a
-// minute at the 512-producer ceiling). An injected clock pins the policy, not wall time.
+// TestTipDivergenceStallLogRateLimits: under a sustained stall the warning fires once per interval process-wide, each
+// line carrying the count it swallowed. Unbounded, it would be a line per tick per stream. An injected clock pins policy.
 func TestTipDivergenceStallLogRateLimits(t *testing.T) {
 	var l tipDivergenceStallLog
 	base := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
@@ -56,10 +51,8 @@ func TestTipDivergenceStallLogRateLimits(t *testing.T) {
 	}
 }
 
-// TestTipDivergenceStallLogCountIntegrity — lines emitted, plus counts those lines reported,
-// plus the residue still held, must equal the calls made: a limiter that loses stalls under
-// contention prints a quietly wrong number. Runs 512 concurrent producers inside one interval
-// so the age-out cannot fire and conservation is exact.
+// TestTipDivergenceStallLogCountIntegrity: lines emitted + counts reported + residue held must equal calls made, so
+// the limiter loses no stalls under contention. Runs 512 concurrent producers within one interval so exactness holds.
 func TestTipDivergenceStallLogCountIntegrity(t *testing.T) {
 	const (
 		producers   = 512

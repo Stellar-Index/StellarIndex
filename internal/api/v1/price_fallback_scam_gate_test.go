@@ -12,28 +12,13 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// The side door into the withholding decision.
-//
-// /v1/price's reader gate (cmd/stellarindex-api's priceWithheld chokepoint) only fires on the
-// arms of LatestPrice that have a value: the closed-1m-bucket arm and the last-trade arm. Every
-// other exit is ErrPriceNotFound: the synthetic-fiat fast path (a fiat:/crypto: quote never has
-// a literal prices_1m row) and the zero-trades exit. That 404 routes the handler into
-// priceFallback, whose first layer re-serves the aggregator's cached VWAP for the same pair with
-// no gate consultation at all.
-//
-// So a directory-scam-flagged issuer's triangulated pair would answer 200 with the flagged
-// market's own price, the number the same endpoint withholds once a prices_1m row exists. The
-// aggregator that writes that Redis value gates nothing on the write path either (its ScamGate
-// serves the price-alert evaluator alone), so the cache is not a laundered-clean source.
-//
-// Layers 2-4 of the chain already propagate a withheld verdict (tryStablecoinFiatProxy and
-// tryUSDAnchoredFiatCross read through the gated LatestPrice on the proxy pair); layer 1 does
-// not, so the gate belongs at the chain's entry rather than inside one layer.
+// The reader gate only fires on LatestPrice arms with a value; every other exit is ErrPriceNotFound, which routes into
+// priceFallback, whose layer 1 re-serves the aggregator's cached VWAP with no gate check. A scam-flagged issuer's triangulated
+// pair would then answer 200; layers 2-4 propagate withheld, so the gate belongs at the chain's entry, not inside one layer.
 
-// fallbackScamGate is a pair-aware stub (the production *pricingguard.ScamGate is pair-aware,
-// pinned by TestProductionScamGateIsPairAware), so these tests take the same fold production does
-// rather than the base-only compatibility arm. It records the surface labels it was asked with, so
-// a test can assert the gate was consulted and the 404 did not arrive for an unrelated reason.
+// fallbackScamGate is a pair-aware stub (as production's *pricingguard.ScamGate, pinned by
+// TestProductionScamGateIsPairAware) that records the surface labels it was asked with, so a test can assert it was
+// consulted.
 type fallbackScamGate struct {
 	withheld map[string]bool
 	surfaces []string
@@ -48,10 +33,8 @@ func (g *fallbackScamGate) WithheldPair(ctx context.Context, base, quote canonic
 	return g.Withheld(ctx, base, surface) || g.Withheld(ctx, quote, surface)
 }
 
-// fallbackFlaggedAsset is the directory-flagged classic asset. Same
-// shape as the fixture chart_scam_gate_test.go uses: a real-looking
-// issuer address is what the canonical parser demands, and the asset
-// only ever exists inside this test's gate map.
+// fallbackFlaggedAsset is the directory-flagged classic asset, shaped like chart_scam_gate_test.go's fixture: the
+// canonical parser demands a real-looking issuer, and the asset exists only in this test's gate map.
 const fallbackFlaggedAsset = "RIO-GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ"
 
 func fallbackFlaggedBase(t *testing.T) canonical.Asset {
@@ -78,10 +61,8 @@ func (l *cachedVWAPLooker) LookupTriangulatedVWAP(
 	return v1.CachedVWAP{Value: l.value, Triangulated: true, ObservedAt: time.Now().UTC()}, true, nil
 }
 
-// TestPriceFallbackWithholdsScamFlaggedBase is the headline case: the
-// reader misses (ErrPriceNotFound, the synthetic-fiat fast path) and
-// the Redis cache holds a triangulated value for the flagged issuer's
-// pair.
+// TestPriceFallbackWithholdsScamFlaggedBase is the headline case: the reader misses (ErrPriceNotFound, synthetic-fiat
+// fast path) and the Redis cache holds a triangulated value for the flagged issuer's pair.
 func TestPriceFallbackWithholdsScamFlaggedBase(t *testing.T) {
 	base := fallbackFlaggedBase(t)
 	gate := &fallbackScamGate{withheld: map[string]bool{base.String(): true}}
@@ -113,10 +94,8 @@ func TestPriceFallbackWithholdsScamFlaggedBase(t *testing.T) {
 	}
 }
 
-// TestPriceFallbackWithholdsScamFlaggedQuote is the other orientation.
-// The withholding decision is a property of the MARKET, so the price of
-// XLM IN a flagged issuer's asset is the flagged market's price
-// inverted. The chain must ask the PAIR question.
+// TestPriceFallbackWithholdsScamFlaggedQuote is the other orientation: withholding is a property of the market, so XLM
+// priced in a flagged asset is the flagged market inverted, and the chain must ask the pair question.
 func TestPriceFallbackWithholdsScamFlaggedQuote(t *testing.T) {
 	quote := fallbackFlaggedBase(t)
 	gate := &fallbackScamGate{withheld: map[string]bool{quote.String(): true}}
@@ -140,10 +119,8 @@ func TestPriceFallbackWithholdsScamFlaggedQuote(t *testing.T) {
 	}
 }
 
-// TestPriceFallbackServesUnflaggedPair is the non-regression half: the
-// fix must withhold the flagged market and NOTHING else. A gate that
-// refused every fallback would pass the two tests above and 404 the
-// entire triangulated long tail.
+// TestPriceFallbackServesUnflaggedPair is the non-regression half: only the flagged market is withheld; a gate refusing
+// every fallback would pass the other tests and 404 the whole triangulated long tail.
 func TestPriceFallbackServesUnflaggedPair(t *testing.T) {
 	flagged := fallbackFlaggedBase(t)
 	gate := &fallbackScamGate{withheld: map[string]bool{flagged.String(): true}}
@@ -165,10 +142,8 @@ func TestPriceFallbackServesUnflaggedPair(t *testing.T) {
 	}
 }
 
-// TestPriceBatchFallbackWithholdsScamFlaggedBase — /v1/price/batch runs
-// the same chain (resolveBatchRow → priceFallback), so the flagged row
-// must be OMITTED rather than served from cache. Batch omits withheld
-// rows; it never 404s the whole request.
+// TestPriceBatchFallbackWithholdsScamFlaggedBase: /v1/price/batch runs the same chain, so the flagged row is omitted
+// rather than served from cache; batch omits withheld rows and never 404s the request.
 func TestPriceBatchFallbackWithholdsScamFlaggedBase(t *testing.T) {
 	base := fallbackFlaggedBase(t)
 	gate := &fallbackScamGate{withheld: map[string]bool{base.String(): true}}
@@ -192,18 +167,9 @@ func TestPriceBatchFallbackWithholdsScamFlaggedBase(t *testing.T) {
 	}
 }
 
-// TestCachedVWAPSurfacesWithholdScamFlaggedMarket is the class guard: every route that can answer
-// out of the aggregator's VWAP cache must reach the same verdict about the same market. The cache
-// is a shared primitive and each route reaches it by its own path:
-//
-//   - /v1/price: the reader misses (ErrPriceNotFound) and the handler runs priceFallback, whose
-//     layer 1 is the cache; ?window=N is rejected outright and never reaches the cache;
-//   - /v1/price/tip: its own cache branch, gated at the top of computeTip (listed so a regression
-//     there fails alongside its siblings);
-//   - the two SEP-40 passthroughs: the same priceFallback chain, serving oracle integrators.
-//
-// /v1/price/batch is deliberately absent: its wire contract omits a withheld row rather than
-// 404ing the request, and it has its own test.
+// TestCachedVWAPSurfacesWithholdScamFlaggedMarket: every route that can answer from the aggregator's VWAP cache must reach the
+// same verdict on the same market: /v1/price (via priceFallback layer 1), /v1/price/tip (gated in computeTip), SEP-40
+// passthroughs. /v1/price/batch is absent on purpose: it omits withheld rows rather than 404ing and has its own test.
 func TestCachedVWAPSurfacesWithholdScamFlaggedMarket(t *testing.T) {
 	base := fallbackFlaggedBase(t)
 	const cached = "0.00723"

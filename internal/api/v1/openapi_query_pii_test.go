@@ -8,14 +8,9 @@ import (
 	"testing"
 )
 
-// A URL is the least private thing an HTTP request has: it reaches our edge access log, every
-// proxy and CDN in front of it, the browser history and the Referer header of the next page load.
-// Only the first of those is ours to redact, so an address must never travel in a query string.
-//
-// The edge redaction filter is a field enumeration: it masks only the query keys someone thought
-// of, so the next route to put an address in a URL is unfiltered by construction. These two tests
-// are the schema-driven half: nothing may DECLARE an address-bearing query parameter and no
-// handler may READ one, whether or not the edge list was extended.
+// A URL reaches access logs, proxies, CDNs, browser history and Referer, and only the edge log is ours to redact, so an
+// address must never travel in a query string. The edge filter enumerates keys, so a new route is unfiltered by
+// construction; these schema-driven tests pin that nothing declares or reads an address-bearing query parameter.
 
 // personalParamPattern names the query keys that carry a person rather than a thing. It matches
 // substrings, not equality, because the leak arrives as `billing_email` or `user_email` as readily
@@ -116,10 +111,8 @@ func TestHandlersReadNoPersonalQueryParameter(t *testing.T) {
 	}
 }
 
-// repoRoot walks up from the test's working directory to the checkout
-// root, identified by the OpenAPI document. Same approach as
-// loadOpenAPISpec, which has to work from wherever `go test ./...` was
-// invoked.
+// repoRoot walks up from the working directory to the checkout root, identified by the OpenAPI document, like
+// loadOpenAPISpec, so it works wherever `go test ./...` was invoked.
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	dir, err := os.Getwd()

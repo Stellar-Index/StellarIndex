@@ -12,16 +12,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// ─── The /v1/ohlc interval ladder has one declaration ────────────────
-//
-// [timescale.OHLCRoutes] is it. The parser and its 400 body derive from the table; the spec's enum
-// and this package's duration() switch cannot be derived (YAML, and a named-width lookup), so they
-// are pinned here against it.
+// [timescale.OHLCRoutes] is the one declaration of the /v1/ohlc interval ladder; the parser and its 400 body derive from
+// it. The spec enum and this package's duration() switch cannot be derived, so they are pinned against the table here.
 
-// TestOHLCIntervals_SpecEnumIsTheRouteTable — the published enum for
-// `/v1/ohlc`'s `interval` parameter must equal the route table, in
-// order. A value in one and not the other is either a documented
-// interval that 400s or a served interval nobody can discover.
+// TestOHLCIntervals_SpecEnumIsTheRouteTable pins the published `interval` enum equal to the route table, in order; a
+// mismatch is a documented interval that 400s or a served one nobody can discover.
 func TestOHLCIntervals_SpecEnumIsTheRouteTable(t *testing.T) {
 	spec := loadOpenAPISpec(t)
 	// Paths are keyed relative to the `/v1` server base.
@@ -49,10 +44,8 @@ func TestOHLCIntervals_SpecEnumIsTheRouteTable(t *testing.T) {
 	}
 }
 
-// TestOHLCIntervals_EveryRouteHasADuration — default-window sizing
-// multiplies limit by duration(); a route the switch does not know
-// sizes a zero window, which parseOHLCSeriesFromTo then rejects as
-// `to <= from` on a perfectly valid interval.
+// TestOHLCIntervals_EveryRouteHasADuration: default-window sizing multiplies limit by duration(); an unknown route sizes
+// a zero window that parseOHLCSeriesFromTo rejects as `to <= from` on a valid interval.
 func TestOHLCIntervals_EveryRouteHasADuration(t *testing.T) {
 	for _, r := range timescale.OHLCRoutes {
 		if d := ohlcInterval(r.Interval).duration(); d <= 0 {
@@ -64,10 +57,8 @@ func TestOHLCIntervals_EveryRouteHasADuration(t *testing.T) {
 	}
 }
 
-// TestOHLCIntervals_ParserAcceptsExactlyTheRouteTable — parseOHLCInterval
-// accepts every declared interval, refuses everything else with the
-// canonical problem, and the problem's enumeration is generated from
-// the same table rather than written out.
+// TestOHLCIntervals_ParserAcceptsExactlyTheRouteTable pins that parseOHLCInterval accepts every declared interval,
+// refuses the rest with the canonical problem, and that problem's enumeration is generated from the table.
 func TestOHLCIntervals_ParserAcceptsExactlyTheRouteTable(t *testing.T) {
 	// The parser takes the raw value as an argument; the request only
 	// feeds the problem body's `instance`, so a fixed target serves

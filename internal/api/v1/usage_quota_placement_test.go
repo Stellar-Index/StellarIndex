@@ -6,11 +6,9 @@ import (
 	"testing"
 )
 
-// TestUsageTracker_ObservesQuotaDenials pins that UsageTracker is not appended AFTER
-// MonthlyQuota: middleware.Chain makes an earlier entry the OUTER one, and a quota denial returns
-// without calling next, so a monthly-quota 429 would never reach the tracker and a capped
-// customer's usage report would show zero traffic instead of throttling. The tracker must sit
-// OUTSIDE both 429 producers (quota and rate-limit) so it observes either denial.
+// TestUsageTracker_ObservesQuotaDenials pins that UsageTracker is not appended after MonthlyQuota: middleware.Chain
+// makes an earlier entry the outer one and a quota denial skips next, so a quota 429 would never reach the tracker
+// and a capped customer would show zero traffic. It must sit outside both 429 producers (quota and rate-limit).
 func TestUsageTracker_ObservesQuotaDenials(t *testing.T) {
 	var trackerRan bool
 	tracker := func(next http.Handler) http.Handler {

@@ -12,10 +12,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// The independent listing directory holds many recognised CLASSIC rows, all priced, alongside
-// fewer contract rows, so the classic arm must read it too. A classic member the directory
-// priced must not be published as `reference_not_bound` beside contract rows the same directory
-// prices: one source must answer both arms of a surface.
+// The listing directory holds many priced classic rows beside fewer contract rows, so the classic arm must read it too:
+// a classic member the directory priced must not be `reference_not_bound` beside contract rows it prices.
 func TestClassicRowTakesItsListingPrice(t *testing.T) {
 	const id = "WTGX-GDMBNMFJ3TRFLASJ6UGETFME3PJPNKPU24C7KFDBEBPQFG2CI6UC3JG6"
 	now := time.Now().UTC()
@@ -60,10 +58,8 @@ func TestClassicRowTakesItsListingPrice(t *testing.T) {
 	}
 }
 
-// The key is the asset's own CODE-GISSUER and never the code. This
-// network carries twenty-six assets coded BENJI and one of them is
-// Franklin Templeton's; a code-keyed lookup would hand the real
-// instrument's price to whichever account minted the ticker.
+// The key is the asset's CODE-GISSUER, never the code: 26 assets are coded BENJI and one is Franklin Templeton's; a
+// code-keyed lookup would hand the real price to whichever account minted the ticker.
 func TestImpersonatorDoesNotInheritAListingPrice(t *testing.T) {
 	const genuine = "BENJI-GBHNGLLIE3KWGKCHIKMHJ5HVZHYIK7WTBE4QF5PLAKL4CJGSEU7HZIW5"
 	const fake = "BENJI-GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
@@ -89,10 +85,8 @@ func TestImpersonatorDoesNotInheritAListingPrice(t *testing.T) {
 	}
 }
 
-// The directory publishes each asset under ONE address form with no pattern: some by
-// `CODE-GISSUER`, some by the Stellar Asset Contract address alone. Both /v1/assets and this arm
-// resolve through [listingEntryIn] and must try both forms, or a SAC-listed classic member is
-// refused as `reference_not_bound` while the snapshot names its address.
+// The directory lists each asset under one address form (`CODE-GISSUER` or SAC address alone). /v1/assets and this arm
+// resolve via [listingEntryIn] and must try both, or a SAC-listed classic member is refused as `reference_not_bound`.
 func TestClassicRowTakesItsListingPriceUnderTheSACForm(t *testing.T) {
 	const id = "WTGX-GDMBNMFJ3TRFLASJ6UGETFME3PJPNKPU24C7KFDBEBPQFG2CI6UC3JG6"
 	classic, sac := listingAddressesFor(id)
@@ -130,10 +124,8 @@ func TestClassicRowTakesItsListingPriceUnderTheSACForm(t *testing.T) {
 		t.Errorf("reference valuation = %v, want 2298793.20", a.ReferenceValuation.ValueUSD)
 	}
 
-	// Same rule on the CNAV pre-check: a listing price is an observation
-	// and the prospectus NAV is a rule, so a SAC-listed CNAV share class
-	// takes the listing. A classic-only key would miss the
-	// SAC row and publish the prospectus figure over a live price.
+	// Same rule on the CNAV pre-check: a listing price is an observation and the prospectus NAV a rule, so a SAC-listed CNAV
+	// share class takes the listing; a classic-only key would miss it and publish the prospectus figure over a live price.
 	const gBENJI = "gBENJI-GD5J73EKK5IYL5XS3FBTHHX7CZIYRP7QXDL57XFWGC2WVYWT326OBXRP"
 	if _, ok := rwa.ConstantNAV("gBENJI", "GD5J73EKK5IYL5XS3FBTHHX7CZIYRP7QXDL57XFWGC2WVYWT326OBXRP"); !ok {
 		t.Fatal("fixture drift: gBENJI is no longer a CNAV-bound pair; pick another")
@@ -154,10 +146,9 @@ func TestClassicRowTakesItsListingPriceUnderTheSACForm(t *testing.T) {
 	}
 }
 
-// A listing price answers "nobody bound this pair to an oracle". It must
-// NOT overturn a finding about a feed that IS bound — an expired one, a
-// non-USD one, a non-positive net asset value. Publishing a figure while
-// suppressing the finding that refused it is the failure this guards.
+// A listing price answers "nobody bound this pair to an oracle"; it must not overturn a finding about a bound feed
+// (expired,
+// non-USD, non-positive NAV). Publishing a figure while suppressing the finding that refused it is the failure guarded.
 func TestListingDoesNotOverturnAnOracleFinding(t *testing.T) {
 	const id = "USDY-GAJMPX5NBOG6TQFPQGRABJEEB2YE7RFRLUKJDZAZGAD5GFX4J7TADAZ6"
 	now := time.Now().UTC()

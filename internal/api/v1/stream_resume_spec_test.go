@@ -17,10 +17,9 @@ var streamResumeHandlers = map[string]string{
 	"/price/tip/stream": "price_tip_stream.go",
 }
 
-// TestSpec_LastEventIDDeclaredOnlyWhereAHandlerResumes: declaring Last-Event-ID on a stream
-// whose handler never reads it makes a spec-generated client silently lose events published
-// while it was disconnected. A declaration needs an entry above, and that entry's handler must
-// call streaming.LastEventIDFrom.
+// TestSpec_LastEventIDDeclaredOnlyWhereAHandlerResumes: declaring Last-Event-ID on a stream whose handler never
+// reads it makes spec-generated clients silently lose events missed while disconnected. A declaration needs an
+// entry above, and that handler must call streaming.LastEventIDFrom.
 func TestSpec_LastEventIDDeclaredOnlyWhereAHandlerResumes(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join(repoRoot(t), "openapi", "stellar-index.v1.yaml")) //nolint:gosec // repo-relative path
 	if err != nil {

@@ -8,11 +8,9 @@ import (
 	"time"
 )
 
-// `api.status_services` is validated case-insensitively (config/validate.go lower-cases each
-// entry), so statusServicesOr must lower-case too, not only TRIM. The heartbeat map is keyed by
-// Prometheus `job` labels with the `stellarindex-` prefix stripped, always lower-case. Otherwise
-// `["Indexer", "Aggregator"]` passes validation yet reports both services "unknown" on every
-// /v1/status request and `overall` never leaves degraded.
+// `api.status_services` is validated case-insensitively, so statusServicesOr must lower-case as well as trim: the
+// heartbeat map is keyed by lower-case Prometheus `job` labels minus the `stellarindex-` prefix. Otherwise
+// `["Indexer", "Aggregator"]` passes validation but reports both "unknown" and `overall` stays degraded.
 
 // TestStatusServicesOrNormalisesCase pins the boundary transform. It
 // must match the one config validation applies, or a value can pass
@@ -47,10 +45,8 @@ func TestStatusServicesOrNormalisesCase(t *testing.T) {
 	}
 }
 
-// TestCapitalisedStatusServiceResolvesItsHeartbeat is the end-to-end
-// statement of the bug: a capitalised declaration must grade against
-// the same lower-cased heartbeat key Prometheus publishes, not sit at
-// "unknown" forever.
+// TestCapitalisedStatusServiceResolvesItsHeartbeat is the end-to-end statement: a capitalised declaration must
+// grade against the lower-cased heartbeat key Prometheus publishes, not sit at "unknown".
 func TestCapitalisedStatusServiceResolvesItsHeartbeat(t *testing.T) {
 	t.Parallel()
 	// The shape PrometheusStatusBackend.Heartbeats returns: job labels

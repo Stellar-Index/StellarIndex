@@ -86,10 +86,8 @@ func TestPriceReportsWithheldFromProxyLeg(t *testing.T) {
 	}
 }
 
-// TestPriceStillNotFoundWhenNothingWithheld is the blast-radius guard:
-// an asset with no price anywhere must still get price-not-found. If
-// this regressed, every genuine miss would claim to be a withholding
-// decision — the opposite dishonesty.
+// TestPriceStillNotFoundWhenNothingWithheld is the blast-radius guard: an asset with no price anywhere must still
+// get price-not-found, or every genuine miss would claim to be a withholding decision.
 func TestPriceStillNotFoundWhenNothingWithheld(t *testing.T) {
 	peg, err := canonical.ParseAsset(msp06Peg)
 	if err != nil {

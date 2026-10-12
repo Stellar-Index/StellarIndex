@@ -30,10 +30,8 @@ import (
 
 // ─── stubs ──────────────────────────────────────────────────────────
 
-// stubMarketHistory serves canned market days. It records the base
-// assets and the quote spellings it was asked for, so a test can prove
-// the handler joined on the exact (code, issuer) and read the dollar
-// against every spelling of the dollar.
+// stubMarketHistory serves canned market days and records the base assets and quote spellings asked for, so tests can
+// prove the join on exact (code, issuer) and reads against every spelling of the dollar.
 type stubMarketHistory struct {
 	rows        []timescale.MarketDay
 	err         error
@@ -162,10 +160,8 @@ func TestRWAPremium_RefusesASubDailyTimeframe(t *testing.T) {
 
 // ─── degradation ────────────────────────────────────────────────────
 
-// TestRWAPremium_NoMarketReaderPublishesNoSeriesAndSaysWhy — an empty
-// chart here would read as "no token has ever traded away from its
-// instrument's value", which is a finding. Without the market leg the
-// surface states the absence instead.
+// TestRWAPremium_NoMarketReaderPublishesNoSeriesAndSaysWhy: an empty chart would read as "no token ever traded away from
+// NAV", so the absence of the market leg must be stated.
 func TestRWAPremium_NoMarketReaderPublishesNoSeriesAndSaysWhy(t *testing.T) {
 	bound, dir, rows := oneBoundMember()
 	srv := rwaPremiumServer(t, bound, dir, rows, &stubOracleHistory{}, nil)
@@ -194,12 +190,8 @@ func TestRWAPremium_AFailedReadIsNotAnEmptySeries(t *testing.T) {
 
 // ─── the series ─────────────────────────────────────────────────────
 
-// TestRWAPremium_MeasuresTheDaysVWAPAgainstTheDaysOracleClose is the
-// positive path, arithmetic pinned end to end.
-//
-// Day 1: market 1.0800 against a 1.0700 close → +0.9346% premium.
-// Day 2: market 1.0600 against a 1.0700 close → −0.9346% discount.
-// The sign is the point of the surface, so both directions are asserted.
+// TestRWAPremium_MeasuresTheDaysVWAPAgainstTheDaysOracleClose is the positive path with arithmetic pinned: market 1.0800
+// vs close 1.0700 is +0.9346%, 1.0600 vs 1.0700 is -0.9346%. Both signs are asserted.
 func TestRWAPremium_MeasuresTheDaysVWAPAgainstTheDaysOracleClose(t *testing.T) {
 	bound, dir, rows := oneBoundMember()
 	id := premAssetID("USTRY", rwaGoodIssuer)
@@ -261,10 +253,8 @@ func TestRWAPremium_MeasuresTheDaysVWAPAgainstTheDaysOracleClose(t *testing.T) {
 	}
 }
 
-// TestRWAPremium_ReadsTheDollarInEverySpellingItIsWrittenAs — a token's
-// dollar book is split across spellings of the dollar, and reading one
-// of them measures a fraction of the market as though it were all of
-// it. The quote set must at minimum carry the synthetic `fiat:USD`.
+// TestRWAPremium_ReadsTheDollarInEverySpellingItIsWrittenAs: a token's dollar book is split across spellings, and
+// reading one measures a fraction of the market. The quote set must at least carry `fiat:USD`.
 func TestRWAPremium_ReadsTheDollarInEverySpellingItIsWrittenAs(t *testing.T) {
 	bound, dir, rows := oneBoundMember()
 	market := &stubMarketHistory{}
@@ -308,10 +298,8 @@ func TestRWAPremium_BothLegsReadFromABoundedFloor(t *testing.T) {
 
 // ─── the gaps, which are the endpoint ───────────────────────────────
 
-// TestRWAPremium_SilentOracleDayIsAHoleNotACarriedNAV. The market
-// traded on day 2 and the oracle said nothing. Carrying day 1's NAV forward would draw a premium
-// against a valuation nobody published: allowed for the sibling series' SUPPLY leg, never for a
-// price.
+// TestRWAPremium_SilentOracleDayIsAHoleNotACarriedNAV: carrying the prior NAV forward would draw a premium against a
+// valuation nobody published; allowed for the sibling series' supply leg, never for a price.
 func TestRWAPremium_SilentOracleDayIsAHoleNotACarriedNAV(t *testing.T) {
 	bound, dir, rows := oneBoundMember()
 	id := premAssetID("USTRY", rwaGoodIssuer)
@@ -342,10 +330,8 @@ func TestRWAPremium_SilentOracleDayIsAHoleNotACarriedNAV(t *testing.T) {
 	}
 }
 
-// TestRWAPremium_SilentMarketDayIsAHoleNotACarriedPrice. The oracle
-// published every day and the token did not trade on day 2. Carrying
-// day 1's price forward against a moving NAV would draw a premium
-// drifting toward a discount that nobody transacted at.
+// TestRWAPremium_SilentMarketDayIsAHoleNotACarriedPrice: carrying the prior price against a moving NAV would draw a
+// premium drifting toward a discount nobody transacted at.
 func TestRWAPremium_SilentMarketDayIsAHoleNotACarriedPrice(t *testing.T) {
 	bound, dir, rows := oneBoundMember()
 	id := premAssetID("USTRY", rwaGoodIssuer)
@@ -381,10 +367,8 @@ func TestRWAPremium_SilentMarketDayIsAHoleNotACarriedPrice(t *testing.T) {
 	}
 }
 
-// TestRWAPremium_AThinDayIsWithheldAndCounted. This is the gate the endpoint could most easily
-// route around. The point-in-time premium compares against the SERVED price, which a thin market
-// withholds; a history built on the raw daily VWAP would publish, for every past day, the claim
-// the live surface refuses.
+// TestRWAPremium_AThinDayIsWithheldAndCounted: history built on the raw daily VWAP would publish, for past days, the
+// claim the live surface refuses, since the live premium compares against the served (thin-gated) price.
 func TestRWAPremium_AThinDayIsWithheldAndCounted(t *testing.T) {
 	bound, dir, rows := oneBoundMember()
 	id := premAssetID("USTRY", rwaGoodIssuer)
@@ -442,10 +426,8 @@ func TestRWAPremium_EveryDayThinPublishesNothingAndNamesTheReason(t *testing.T) 
 	}
 }
 
-// TestRWAPremium_TwoLegsThatNeverCoincidePublishNothing — both sides
-// exist and never on the same day. Interpolating either onto the
-// other's days is exactly what this surface refuses, so the honest
-// answer is no series and a stated reason.
+// TestRWAPremium_TwoLegsThatNeverCoincidePublishNothing: when the legs never share a day, interpolating either is
+// refused, so the answer is no series plus a stated reason.
 func TestRWAPremium_TwoLegsThatNeverCoincidePublishNothing(t *testing.T) {
 	bound, dir, rows := oneBoundMember()
 	id := premAssetID("USTRY", rwaGoodIssuer)
@@ -500,16 +482,9 @@ func TestRWAPremium_ATokenThatHasNeverTradedIsNamedNotHidden(t *testing.T) {
 
 // ─── suppression, and the order it happens in ───────────────────────
 
-// TestRWAPremium_ScamFlaggedIssuerGetsNoSeries.
-//
-// The flagged issuer holds a (code, issuer) the curated table DOES bind, and both legs answer
-// for it. Nothing is published, because the scam flag excludes at MEMBERSHIP time (rwa.Qualify
-// R3): the issuer never becomes a set member, so no downstream surface can price it.
-//
-// The endpoint carries its OWN suppression as well, ahead of the binding lookup, pinned in
-// TestRWAPremiumCandidates_SuppressesAFlaggedIssuerBeforeReadingTheBinding. It cannot be reached
-// from here because the upstream gate gets there first, which is correct and asserted in both
-// places.
+// TestRWAPremium_ScamFlaggedIssuerGetsNoSeries: the scam flag excludes at membership time (rwa.Qualify R3), so a bound
+// flagged issuer publishes nothing. The endpoint's own earlier suppression is pinned in
+// TestRWAPremiumCandidates_SuppressesAFlaggedIssuerBeforeReadingTheBinding, unreachable from here.
 func TestRWAPremium_ScamFlaggedIssuerGetsNoSeries(t *testing.T) {
 	bound := []timescale.Sep1BoundCurrency{
 		rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond"),
@@ -545,10 +520,8 @@ func TestRWAPremium_ScamFlaggedIssuerGetsNoSeries(t *testing.T) {
 	}
 }
 
-// TestRWAPremium_AnUnboundPairGetsSilenceAndAStatedReason — the
-// commonest refusal by far. A token wearing an instrument's ticker that
-// no curated binding ties to that instrument is a code collision, and
-// pricing it off the code alone is the join internal/rwa refuses.
+// TestRWAPremium_AnUnboundPairGetsSilenceAndAStatedReason: a token with an instrument's ticker but no curated binding is
+// a code collision, and pricing it by code alone is the join internal/rwa refuses.
 func TestRWAPremium_AnUnboundPairGetsSilenceAndAStatedReason(t *testing.T) {
 	bound := []timescale.Sep1BoundCurrency{
 		rwaBound("USTRY", rwaUnknownIssuer, "not-etherfuse.example", "bond"),

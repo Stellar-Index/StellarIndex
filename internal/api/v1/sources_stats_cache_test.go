@@ -79,10 +79,8 @@ func TestCachedSourcesStatsReader_RefetchesAfterTTL(t *testing.T) {
 	}
 }
 
-// TestCachedSourcesStatsReader_SingleFlight — concurrent calls
-// during a slow upstream refetch must share ONE upstream call.
-// This is the property that protects the DB during a thundering-
-// herd page load.
+// TestCachedSourcesStatsReader_SingleFlight: concurrent calls during a slow upstream refetch must share ONE
+// upstream call, protecting the DB from a thundering-herd page load.
 func TestCachedSourcesStatsReader_SingleFlight(t *testing.T) {
 	up := &fakeUpstream{statsDelay: 100 * time.Millisecond}
 	c := NewCachedSourcesStatsReader(up, 60*time.Second)
@@ -210,10 +208,8 @@ func TestCachedSourcesStatsReader_HitMissCounter(t *testing.T) {
 	}
 }
 
-// danglingPRRef is the citation this file's HitMissCounter doc
-// comment used to carry: no such PR exists, and the bare number now
-// resolves to unrelated content. Built from parts so this guard's own
-// source doesn't itself trip the check it performs.
+// danglingPRRef is a PR citation that resolves to unrelated content. Built from parts so this guard's own source
+// doesn't trip the check it performs.
 var danglingPRRef = "#" + "1197"
 
 // TestSourceStatsCacheTestFileHasNoDanglingPRReference guards the rule:

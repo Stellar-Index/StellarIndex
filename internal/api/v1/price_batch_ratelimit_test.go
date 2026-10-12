@@ -36,21 +36,16 @@ func batchIDs(n int) []string {
 // only the base token (TestPriceBatch_ChargeFollowsTheWorkDone pins it).
 var batchProbe = "/v1/price/batch?asset_ids=" + strings.Join(batchIDs(101), ",")
 
-// newBatchLimitedServer wires the price-batch routes behind the
-// PRODUCTION limiter constructor — middleware.RateLimitBySubject, the
-// one cmd/stellarindex-api builds — over a Redis-backed anonymous
-// bucket of the given size. No auth middleware is mounted, so every
-// request is the anonymous caller the findings are about.
+// newBatchLimitedServer wires the price-batch routes behind the production limiter (middleware.RateLimitBySubject) over
+// a Redis-backed anonymous bucket of the given size, with no auth middleware, so every request is the anonymous caller.
 func newBatchLimitedServer(t *testing.T, anonLimit int) (*testServerImpl, *countingPriceReader) {
 	t.Helper()
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rdb.Close() })
 
-	// countingPriceReader (price_tip_stream_admit_internal_test.go) counts LatestPrice
-	// calls, which lets a test assert the one thing a rate-limit denial
-	// exists to guarantee: that the work was NOT done. A 429 written
-	// after the fan-out would be a status code and nothing else.
+	// countingPriceReader counts LatestPrice calls so a test can assert what a rate-limit denial guarantees: the work was
+	// not done. A 429 written after the fan-out would be only a status code.
 	reader := &countingPriceReader{}
 	anon := ratelimit.New(rdb, anonLimit, time.Minute, pinnedWindow)
 	srv := v1.New(v1.Options{

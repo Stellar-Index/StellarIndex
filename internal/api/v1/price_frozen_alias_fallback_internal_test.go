@@ -3,10 +3,9 @@
 
 package v1
 
-// frozenPairBase with no bucket served (`served` is the zero Asset): the
-// fallback chain resolves across the whole alias set without reporting
-// which leg it served, so every spelling's freeze marker governs, and a
-// verdict is "checked" only when every spelling's marker was read.
+// frozenPairBase with no bucket served (`served` is the zero Asset): the fallback chain resolves across the alias set
+// without reporting which leg it served, so every spelling's freeze marker governs and "checked" needs every marker
+// read.
 
 import (
 	"context"

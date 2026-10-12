@@ -13,20 +13,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 )
 
-// TestSLORoutesNeverTouchTheLake pins the multi-region plan's §3a invariant
-// (ADR-0050): no SLO'd route may depend on the ClickHouse lake — or, in the
-// future, any cross-region proxy or S3 fallback. The p95≤200ms/p99≤500ms SLO
-// (ADR-0009, enforced by configs/prometheus/rules.r1/slo.yml over exactly these routes) holds
-// BECAUSE the pricing path is always local Redis+Timescale; a lake reader in one of these
-// handlers would put a multi-second dependency on a 200ms route and, under multi-region, a
-// WAN hop onto the money path.
-//
-// Mechanism: a direct-body AST tripwire that walks every SLO'd handler body for selector
-// reads of the Server's ClickHouse-backed fields. It deliberately skips the transitive call
-// graph (the realistic regression wires `s.Explorer`/`s.TokenSupply` straight into a
-// handler); if a lake dependency is threaded through a helper, add the helper here. The
-// forbidden fields are [sloLakeBackedFields]; TestSLOLakeFieldsCoverLakeWiring fails when
-// main.go wires a lake reader into a Server field that set does not name.
+// TestSLORoutesNeverTouchTheLake (ADR-0050): no SLO'd route may depend on the ClickHouse lake, since the p95<=200ms/p99<=500ms
+// SLO holds BECAUSE pricing is local Redis+Timescale. A direct-body AST tripwire checks handlers for [sloLakeBackedFields] (not
+// the transitive graph; add helpers if threaded), and TestSLOLakeFieldsCoverLakeWiring fails if main.go wires an unlisted one.
 func TestSLORoutesNeverTouchTheLake(t *testing.T) {
 	// The exact route→handler set the Prometheus SLO burn-rate rules cover.
 	sloHandlers := map[string]bool{
@@ -74,12 +63,9 @@ func TestSLORoutesNeverTouchTheLake(t *testing.T) {
 	}
 }
 
-// TestSLORoutesMatchTheCacheBand pins that the SLO burn-rate rules' route
-// set (sloHandlers above, mirrored in slo.yml's `route=~` regex) must be a subset of
-// middleware.SLOPriceRoutes, the single source of truth shared by cachecontrol.go's
-// short-cache-band switch and its probe-TTL test. A route that pages on the p95 SLO but is
-// not in SLOPriceRoutes would sit outside the cache band the SLO's freshness assumption
-// depends on.
+// TestSLORoutesMatchTheCacheBand pins that the SLO burn-rate route set (sloHandlers, mirrored in slo.yml's
+// `route=~`) is a subset of middleware.SLOPriceRoutes, the source of truth for cachecontrol.go's short-cache band.
+// A paging route outside it would sit outside the band the SLO's freshness assumption depends on.
 func TestSLORoutesMatchTheCacheBand(t *testing.T) {
 	inBand := make(map[string]bool, len(middleware.SLOPriceRoutes))
 	for _, p := range middleware.SLOPriceRoutes {

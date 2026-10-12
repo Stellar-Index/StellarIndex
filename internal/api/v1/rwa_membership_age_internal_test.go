@@ -10,13 +10,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// The membership set's own age, on the wire.
-//
-// The envelope's `as_of` is the RESPONSE's instant and moves between requests; read as the set's
-// build time it wrongly suggests continuous refresh. `membership.built_at` is a different event
-// and named so it cannot be substituted for `as_of`: a set is BUILT, a response is AS OF. The two
-// tests below pin that the field tracks the REBUILD and not the request, and that a set serving
-// past its lifetime says so.
+// `membership.built_at` is the membership set's own age; the envelope's `as_of` is the response instant and must not
+// stand in for it. The tests pin that the field tracks the rebuild, not the request, and that a set past its lifetime
+// says so.
 
 func rwaAgeTestServer() *Server {
 	return &Server{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
@@ -170,10 +166,8 @@ func TestRWAMembershipSet_AFailedRebuildRecordsIt(t *testing.T) {
 	}
 }
 
-// stubAgeSep1Reader is the smallest reader that makes a rebuild either
-// succeed or fail on demand. The set it produces is empty, which is
-// fine here: these tests are about WHEN the set was built, never what
-// is in it.
+// stubAgeSep1Reader makes a rebuild succeed or fail on demand; its set is empty because these tests only care about WHEN
+// the set was built.
 type stubAgeSep1Reader struct{ err error }
 
 func (s *stubAgeSep1Reader) GetIssuerSep1Cached(

@@ -8,11 +8,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestPrewarmCoversRWAMembersTheListingNeverRanks guards a gap between two surfaces. The
-// lake-supply prewarm took its population from the assets listing's ranked pages, while
-// /v1/rwa/assets publishes a set chosen by attestation, not rank. A tokenized instrument is bought
-// and held, so a member can sit outside every page ordered by observation count or 24h volume,
-// never be warmed, and permanently serve the trustline floor, a lower supply than the true total.
+// TestPrewarmCoversRWAMembersTheListingNeverRanks: /v1/rwa/assets is chosen by attestation, not rank, so a held member
+// outside every ranked listing page would never be warmed and would permanently serve the lower trustline floor.
 func TestPrewarmCoversRWAMembersTheListingNeverRanks(t *testing.T) {
 	const (
 		code   = "USDY"
@@ -36,10 +33,8 @@ func TestPrewarmCoversRWAMembersTheListingNeverRanks(t *testing.T) {
 	}
 }
 
-// TestPrewarmWarmsAnRWAMemberTheListingDoesNotReturn is the wiring half: the helper above can be
-// perfect while nothing calls it. It drives the production sweep with a listing returning a
-// DIFFERENT asset, so the member reaches the cache only through the join; a build that computes
-// the RWA set and discards it would otherwise pass.
+// TestPrewarmWarmsAnRWAMemberTheListingDoesNotReturn is the wiring half: the listing returns a different asset, so the
+// member reaches the cache only through the join, catching a build that computes the RWA set and discards it.
 func TestPrewarmWarmsAnRWAMemberTheListingDoesNotReturn(t *testing.T) {
 	// The listing ranks CETES. The RWA set holds CETES *and* a member the
 	// listing never returns, which is the shape on r1: a tokenized instrument
@@ -86,10 +81,8 @@ func TestPrewarmNeverForcesAnRWARebuild(t *testing.T) {
 	}
 }
 
-// TestPrewarmDropsMembersTheReadPathWouldNotLookUp — the reduction is the
-// REQUEST PATH's own, so the prewarm cannot warm an asset the read would never
-// ask about. Native has no issuer and a contract-issued member has no
-// (code, issuer) pair, and neither derives a classic SAC.
+// TestPrewarmDropsMembersTheReadPathWouldNotLookUp: the reduction is the request path's own, so native and contract-
+// issued members (no derivable classic SAC) are never warmed.
 func TestPrewarmDropsMembersTheReadPathWouldNotLookUp(t *testing.T) {
 	s := &Server{
 		logger: discardLogger(),

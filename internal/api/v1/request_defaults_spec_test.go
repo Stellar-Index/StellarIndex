@@ -12,10 +12,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
 )
 
-// A declared schema default is a value generated clients send on the
-// caller's behalf, so the server must accept it wherever the parameter is
-// accepted. Both tests below walk the spec rather than naming the value, so
-// a default edited later is held to the same bar.
+// A declared schema default is sent by generated clients, so the server must accept it wherever the parameter is accepted.
+// Both tests walk the spec rather than naming the value, so later default edits are held to the same bar.
 
 // specQuoteDefaults collects the `default` of every `quote` query parameter
 // and every `quote` request-body property in the spec.
@@ -67,11 +65,8 @@ func TestSpecQuoteDefaultsParse(t *testing.T) {
 	}
 }
 
-// TestAssetsOrderByDefaultIsAcceptedWithAssetClass — /v1/assets rejects
-// an explicit order_by combined with asset_class. A schema default on
-// order_by is exactly what a default-filling client sends explicitly, so
-// declaring one made the documented default 400 on every class listing
-// while omitting it succeeded.
+// TestAssetsOrderByDefaultIsAcceptedWithAssetClass: /v1/assets rejects explicit order_by with asset_class, so a schema
+// default on order_by would make the documented default 400 on every class listing while omitting it succeeded.
 func TestAssetsOrderByDefaultIsAcceptedWithAssetClass(t *testing.T) {
 	paths, _ := loadSpecDoc(t)["paths"].(map[string]any)
 	op, _ := paths["/assets"].(map[string]any)["get"].(map[string]any)

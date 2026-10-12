@@ -27,12 +27,8 @@ import (
 // The numbers are MEASURED against the code, not chosen, and each states what it counts.
 // Raising one is allowed; raising one silently is what this file refuses.
 
-// countingHistoryReader is a DECORATOR, not a mock: it counts calls and delegates to a real
-// fixture reader, so the counts come from the handler's own control flow and the data from
-// the stub the rest of the package uses.
-//
-// Every method of [v1.HistoryReader] is overridden rather than left to the embedded value,
-// so a method that grows a new caller is counted from the day it does.
+// countingHistoryReader is a decorator, not a mock: it counts calls and delegates to a real fixture reader.
+// Every [v1.HistoryReader] method is overridden so a method that grows a new caller is counted from day one.
 type countingHistoryReader struct {
 	v1.HistoryReader
 
@@ -96,20 +92,16 @@ func (c *countingHistoryReader) LatestTradePerSource(
 	return c.HistoryReader.LatestTradePerSource(ctx, pair, sourceFilter)
 }
 
-// total is every store round-trip the request made, whichever method
-// carried it. Pinned beside the per-method counts so a fan-out that
-// MOVES between methods (a walk switching from prices_<gran> to
-// twap_<gran>, say) cannot come out even.
+// total is every store round-trip the request made. Pinned beside per-method counts so a fan-out that moves between
+// methods (e.g. prices_<gran> to twap_<gran>) cannot come out even.
 func (c *countingHistoryReader) total() int {
 	return c.tradesInRange + c.tradesInRangeAfter + c.historyPoints +
 		c.historyPointsInRange + c.twapPointsInRange + c.ohlcSeries +
 		c.latestTradePerSource
 }
 
-// countingCoverageFloorReader is the same decorator for the
-// coverage-floor probe, which is a SECOND fan-out on the same
-// request: a floor is consulted only when the serving read came back
-// empty, which is exactly the case that also pays the full walk.
+// countingCoverageFloorReader is the same decorator for the coverage-floor probe, a second fan-out on the same request:
+// a floor is consulted only when the serving read came back empty, which also pays the full walk.
 type countingCoverageFloorReader struct{ calls int }
 
 func (c *countingCoverageFloorReader) EarliestBucket(
@@ -133,10 +125,8 @@ func (c *countingCoverageFloorReader) EarliestBucketLiteralQuote(
 	return time.Time{}, false, nil
 }
 
-// r1SACWrapperUSDC is the SAC wrapper r1 declares for the operator's one USD peg, copied from
-// `[supply.sac_wrappers]` in /etc/stellarindex.toml.
-// TestReadBudget_FixtureMatchesDeployedConfiguration asserts it equals the value derived from
-// the classic asset, so it cannot drift.
+// r1SACWrapperUSDC is the SAC wrapper r1 declares for the one USD peg, from `[supply.sac_wrappers]` in
+// /etc/stellarindex.toml; TestReadBudget_FixtureMatchesDeployedConfiguration asserts it equals the derived value.
 const r1SACWrapperUSDC = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
 
 // productionShapedServer builds the server the way cmd/stellarindex-api does for the surfaces
@@ -177,13 +167,9 @@ func productionShapedServer(
 	return httpTestServer(t, srv)
 }
 
-// installProductionAliasRegistry publishes r1's declared SAC wrappers as the process-wide
-// alias registry for one test, mirroring cmd/stellarindex-api's start-up install and the
-// install/restore idiom of internal/canonical and internal/aggregate.
-//
-// Not parallel-safe (the registry is process-wide), so no caller may call t.Parallel(). Go
-// runs sequential tests to completion before releasing parallel ones, so the package's
-// parallel tests never observe the installed registry.
+// installProductionAliasRegistry publishes r1's SAC wrappers as the process-wide alias registry for one test, mirroring
+// cmd/stellarindex-api start-up. Not parallel-safe: no caller may t.Parallel(); sequential tests finish before parallel
+// ones start.
 func installProductionAliasRegistry(t *testing.T) {
 	t.Helper()
 	reg, err := canonical.NewAliasRegistry(canonical.PubnetPassphrase, map[string]string{
@@ -196,10 +182,8 @@ func installProductionAliasRegistry(t *testing.T) {
 	t.Cleanup(func() { canonical.InstallAliasRegistry(nil) })
 }
 
-// TestReadBudget_FixtureMatchesDeployedConfiguration pins the claim the
-// rest of this file rests on: the registry installed here is the one r1 runs. The SAC
-// contract id is a hash of the classic asset, so deriving it and comparing against the
-// deployed literal proves the fixture is the deployment's own wrapper.
+// TestReadBudget_FixtureMatchesDeployedConfiguration pins that the installed registry is r1's: the SAC id is a hash of the
+// classic asset, so deriving it and comparing to the deployed literal proves the fixture is the real wrapper.
 func TestReadBudget_FixtureMatchesDeployedConfiguration(t *testing.T) {
 	usdc, err := canonical.NewClassicAsset("USDC", testUSDCIssuer)
 	if err != nil {
@@ -215,22 +199,9 @@ func TestReadBudget_FixtureMatchesDeployedConfiguration(t *testing.T) {
 	}
 }
 
-// TestReadBudget_ColdRequestFanOut pins how many store round-trips each
-// chart/history surface makes when the store answers NOTHING, the costliest state and the one
-// the 8s ceiling is spent in. The numbers are measured under the production-shaped
-// construction above; what produces them:
-//
-//	3 spellings of the base (native, crypto:XLM and XLM's SAC —
-//	  canonical.AssetAliases' unconditional three-way split)
-//	× 1 literal fiat quote                                    =  3 alias reads
-//	3 spellings of the base
-//	× (1 classic peg + 5 abstract USD backers)                = 18 proxy reads
-//	3 spellings of the base
-//	× 1 held-back spelling (the peg's SAC wrapper)            =  3 proxy reads
-//	                                                           ────
-//	                                                             24
-//
-// A crypto quote has no proxy list at all, which is why it costs 3.
+// TestReadBudget_ColdRequestFanOut pins store round-trips per chart/history surface when the store answers NOTHING, measured
+// under the production-shaped server: 3 base spellings x (1 literal fiat quote + 6 proxy pegs) + 3 held-back SAC reads = 24. A
+// crypto quote has no proxy list, so it costs 3.
 func TestReadBudget_ColdRequestFanOut(t *testing.T) {
 	installProductionAliasRegistry(t)
 
@@ -319,11 +290,8 @@ func TestReadBudget_ColdRequestFanOut(t *testing.T) {
 	}
 }
 
-// TestReadBudget_CoveredWindowCostsOneRead is the other half of the cold-fan-out pair: the
-// SAME handler and walk, one read. The walk stops once the merge covers the requested window,
-// so a pair whose literal spelling holds a full series never reaches the proxy list.
-// Pinning only the cold number would let a change that broke the early stop, making every
-// warm request pay the full walk, pass unnoticed.
+// TestReadBudget_CoveredWindowCostsOneRead: the same walk costs one read once the merge covers the window.
+// Pinning only the cold number would let a broken early stop (every warm request paying the full walk) pass.
 func TestReadBudget_CoveredWindowCostsOneRead(t *testing.T) {
 	installProductionAliasRegistry(t)
 
@@ -375,10 +343,8 @@ func TestReadBudget_CoveredWindowCostsOneRead(t *testing.T) {
 	}
 }
 
-// TestReadBudget_AliasRegistryWidensTheWalk pins the gap between what a bare unit test
-// measures and what the deployment runs. With no alias registry installed (the state of
-// every other test in this package) resolution uses the XLM-only baseline, where the classic
-// peg has ONE canonical form and the held-back pass reads nothing: 21 calls, not 24.
+// TestReadBudget_AliasRegistryWidensTheWalk pins that without an alias registry (every other test) the XLM-only baseline
+// gives the classic peg one canonical form and the held-back pass reads nothing: 21 calls, not 24.
 func TestReadBudget_AliasRegistryWidensTheWalk(t *testing.T) {
 	const path = "/v1/chart?asset=native&quote=fiat:USD&timeframe=24h"
 
@@ -408,11 +374,8 @@ func TestReadBudget_AliasRegistryWidensTheWalk(t *testing.T) {
 	})
 }
 
-// TestReadBudget_ProductionCacheWrapperIsTransparent pins why the counts above are what
-// production pays: cmd/stellarindex-api wires History as
-// v1.NewCachedHistoryReader(store, 2*time.Minute), which caches LatestTradePerSource ONLY, so
-// the chart's reads reach the database one for one. If a change caches a chart method, the
-// budgets above must be re-derived here rather than quietly over-counting.
+// TestReadBudget_ProductionCacheWrapperIsTransparent pins that NewCachedHistoryReader(store, 2m) caches only
+// LatestTradePerSource, so chart reads hit the DB one for one; if a chart method gets cached, re-derive the budgets.
 func TestReadBudget_ProductionCacheWrapperIsTransparent(t *testing.T) {
 	installProductionAliasRegistry(t)
 	const path = "/v1/chart?asset=native&quote=fiat:USD&timeframe=24h"

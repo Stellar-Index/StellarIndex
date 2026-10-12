@@ -13,10 +13,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// filteringSep1Reader serves canned bound entries THROUGH the caller's keep filter, as the
-// production scan does (timescale.boundSep1CurrenciesFromPayload counts a refused entry as
-// EntriesFiltered and never materialises it). The sibling test calls admitClassicCandidates
-// directly and never meets the filter; this reader lets a test meet it.
+// filteringSep1Reader serves canned bound entries through the caller's keep filter, as the production scan does (refused
+// entries count as EntriesFiltered), so a test can meet the filter that admitClassicCandidates bypasses.
 type filteringSep1Reader struct {
 	bound []timescale.Sep1BoundCurrency
 }
@@ -61,12 +59,9 @@ func (d fixedDirectory) DirectoryEntriesByAddresses(_ context.Context, addresses
 	return out, nil
 }
 
-// The failure guarded: the sibling arm and the ISIN arm can pass their own tests yet have no
-// live effect when the scan's pre-filter reads only the code and the anchor TYPE. A
-// Franklin-shaped declaration (code no oracle prices, type `other`, a well-formed ISIN in
-// anchor_asset) is then counted as EntriesFiltered before either arm runs. This drives the
-// production filter through the production build and asserts the row the two arms exist for
-// is admitted, with the recognition the sibling arm publishes.
+// Guards against a scan pre-filter that reads only code and anchor TYPE: a Franklin-shaped declaration (unpriced code,
+// type `other`, ISIN in anchor_asset) would be filtered before either arm runs. Drives the production filter and asserts
+// the row is admitted with the sibling arm's recognition.
 func TestBuildRWAClassicMembership_FranklinShapedCandidatePassesThePreFilter(t *testing.T) {
 	const (
 		listed   = "GBHNGLLIE3KWGKCHIKMHJ5HVZHYIK7WTBE4QF5PLAKL4CJGSEU7HZIW5"

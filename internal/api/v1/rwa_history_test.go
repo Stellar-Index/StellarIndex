@@ -31,10 +31,9 @@ import (
 
 // ─── stubs ──────────────────────────────────────────────────────────
 
-// stubOracleHistory serves canned day buckets. It records the assets asked about so a test
-// can prove the handler joined on the FEED, not the Stellar asset code, and applies the
-// store's inclusive `bucket >= from AND bucket <= to` window so the handler's bound is the
-// bound it gets.
+// stubOracleHistory serves canned day buckets, records the assets asked about so a test can prove the handler joined on
+// the
+// feed rather than the Stellar asset code, and applies the store's inclusive `bucket >= from AND bucket <= to` window.
 type stubOracleHistory struct {
 	rows  []timescale.OracleDayPoint
 	err   error
@@ -61,10 +60,8 @@ func (s *stubOracleHistory) DailyOraclePrices(
 	return out, nil
 }
 
-// stubFlowSupply is a TokenSupplyReader that ALSO answers the daily
-// flow-history seam — the shape *clickhouse.SupplyReader has in
-// production. A test wanting to prove the optional seam degrades cleanly
-// wires stubTokenSupplies instead, which does not implement it.
+// stubFlowSupply is a TokenSupplyReader that also answers the daily flow-history seam, as *clickhouse.SupplyReader does;
+// stubTokenSupplies lacks it, to prove the optional seam degrades cleanly.
 type stubFlowSupply struct {
 	days []clickhouse.SupplyFlowDay
 	err  error
@@ -99,10 +96,8 @@ func (s *stubFlowSupply) DailySupplyFlowsForContracts(
 
 // ─── fixture helpers ────────────────────────────────────────────────
 
-// rwaHistSAC is the deterministic Stellar Asset Contract address the
-// flow log is keyed by. Derived rather than hardcoded: the handler
-// derives it the same way, and a hardcoded fixture would let the two
-// drift apart without a test noticing.
+// rwaHistSAC is the deterministic SAC address the flow log is keyed by, derived like the handler does so the two can't
+// drift apart unnoticed.
 func rwaHistSAC(t *testing.T, code, issuer string) string {
 	t.Helper()
 	sac, err := canonical.Asset{Type: canonical.AssetClassic, Code: code, Issuer: issuer}.SacContractID()
@@ -245,10 +240,8 @@ func TestRWAHistory_RefusesAnUnknownGroupBy(t *testing.T) {
 
 // ─── degradation ────────────────────────────────────────────────────
 
-// TestRWAHistory_NoPriceReaderPublishesNoSeriesAndSaysWhy — an empty
-// chart is a claim about the sector. Without the price leg the surface
-// states the absence rather than serving a flat nothing that reads as
-// "the sector is worth zero".
+// TestRWAHistory_NoPriceReaderPublishesNoSeriesAndSaysWhy: an empty chart is a claim about the sector; without the price
+// leg the surface states the absence rather than a flat nothing reading as "worth zero".
 func TestRWAHistory_NoPriceReaderPublishesNoSeriesAndSaysWhy(t *testing.T) {
 	bound, dir, rows := oneBoundMember()
 	srv := rwaHistoryServer(t, bound, dir, rows, &stubFlowSupply{}, nil)
@@ -258,10 +251,9 @@ func TestRWAHistory_NoPriceReaderPublishesNoSeriesAndSaysWhy(t *testing.T) {
 	}
 }
 
-// TestRWAHistory_AColdFailedBuildIsNotASectorOfZero — a process whose
-// first assembly failed has no last-good history to fall back on. The
-// answer is a retryable 503, not assets 0 / members 0 dated year 1 that
-// the route's public CDN band would replay for five minutes.
+// TestRWAHistory_AColdFailedBuildIsNotASectorOfZero: with no last-good history after a failed first assembly, the answer
+// is
+// a retryable 503, not assets 0 / members 0 dated year 1 that the CDN band would replay for five minutes.
 func TestRWAHistory_AColdFailedBuildIsNotASectorOfZero(t *testing.T) {
 	bound, dir, rows := oneBoundMember()
 	srv := rwaHistoryServer(t, bound, dir, rows,
@@ -395,10 +387,8 @@ func TestRWAHistory_AnAbortingClientDoesNotAbortTheSharedBuild(t *testing.T) {
 	}
 }
 
-// TestRWAHistory_NoSupplySeamPublishesNoSeries — the supply leg is
-// type-asserted off the token-supply reader, so a deployment whose
-// reader predates the seam must degrade to no series rather than to a
-// series valued at a supply of zero.
+// TestRWAHistory_NoSupplySeamPublishesNoSeries: the supply leg is type-asserted off the token-supply reader, so a reader
+// predating the seam must yield no series, not one valued at zero supply.
 func TestRWAHistory_NoSupplySeamPublishesNoSeries(t *testing.T) {
 	bound, dir, rows := oneBoundMember()
 	sac := rwaHistSAC(t, "USTRY", rwaGoodIssuer)
@@ -458,10 +448,8 @@ func TestRWAHistory_ValuesSupplyTimesTheDaysOracleClose(t *testing.T) {
 	}
 }
 
-// TestRWAHistory_TodayIsNotAClosedDay — the last point is yesterday's
-// close. Today's oracle bucket is still being re-materialised and today's
-// flows are still arriving, so a point on today would move under a reader
-// who fetched it twice. /v1/rwa/premium stops at the same day.
+// TestRWAHistory_TodayIsNotAClosedDay: the last point is yesterday's close; today's oracle bucket and flows are still
+// changing, so a point on today would move between fetches. /v1/rwa/premium stops at the same day.
 func TestRWAHistory_TodayIsNotAClosedDay(t *testing.T) {
 	bound, dir, rows := oneBoundMember()
 	sac := rwaHistSAC(t, "USTRY", rwaGoodIssuer)
@@ -522,10 +510,8 @@ func TestRWAHistory_SilentOracleDayIsAHoleNotAZero(t *testing.T) {
 	}
 }
 
-// TestRWAHistory_NothingBeforeTheFirstMint — the oracle has priced the
-// instrument since before the token existed. Those days must not be
-// valued at a supply of zero, which would draw a real line along the
-// axis and read as "the sector was worth nothing then".
+// TestRWAHistory_NothingBeforeTheFirstMint: days when the oracle priced the instrument before the token existed must not
+// be valued at zero supply, which would draw a line reading "the sector was worth nothing".
 func TestRWAHistory_NothingBeforeTheFirstMint(t *testing.T) {
 	bound, dir, rows := oneBoundMember()
 	sac := rwaHistSAC(t, "USTRY", rwaGoodIssuer)
@@ -543,10 +529,8 @@ func TestRWAHistory_NothingBeforeTheFirstMint(t *testing.T) {
 	}
 }
 
-// TestRWAHistory_IncompleteFlowLogRefusesTheMember — a running total
-// that goes negative means the lake's seeding is incomplete, not that
-// the token has negative supply. The member is refused with a reason a
-// reader (and an operator) can act on.
+// TestRWAHistory_IncompleteFlowLogRefusesTheMember: a negative running total means incomplete lake seeding, not negative
+// supply; the member is refused with a reason a reader or operator can act on.
 func TestRWAHistory_IncompleteFlowLogRefusesTheMember(t *testing.T) {
 	bound, dir, rows := oneBoundMember()
 	sac := rwaHistSAC(t, "USTRY", rwaGoodIssuer)
@@ -587,10 +571,8 @@ func TestRWAHistory_NoFlowsAtAllIsItsOwnReason(t *testing.T) {
 	}
 }
 
-// TestRWAHistory_UnboundMemberIsExcludedNotDropped — a set member with
-// no curated (code, issuer) → feed binding cannot be valued, and the
-// total must say so rather than quietly become a smaller claim under the
-// same label.
+// TestRWAHistory_UnboundMemberIsExcludedNotDropped: a member with no curated (code, issuer) to feed binding can't be
+// valued, and the total must say so rather than become a smaller claim under the same label.
 func TestRWAHistory_UnboundMemberIsExcludedNotDropped(t *testing.T) {
 	sac := rwaHistSAC(t, "USTRY", rwaGoodIssuer)
 	srv := rwaHistoryServer(t,

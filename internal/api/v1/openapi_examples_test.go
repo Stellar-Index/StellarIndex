@@ -11,23 +11,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// TestOpenAPIExamplesParseAsCanonicalAssets walks the OpenAPI spec
-// and asserts that every documented `asset` / `asset_id` / `base` /
-// `quote` / `asset_ids` parameter example is a value the canonical
-// asset parser actually accepts.
-//
-// Why: short symbols like `USDC` / `XLM` in examples are rejected by the canonical-asset
-// validator, so Scalar's default test requests would return 400. This fails at PR time if an
-// example such as `example: BTC` on `/v1/price?asset=` is added.
-//
-// Two namespaces are accepted:
-//   - canonical asset IDs (`native`, `<code>-<G…>`, `<contract>`) parsed by
-//     canonical.ParseAsset.
-//   - SEP-40 oracle keys (`crypto:XLM`, `fiat:EUR`), which canonical.ParseAsset also accepts.
-//
-// Tickers on `/v1/currencies/{ticker}` are ISO-4217 codes, not canonical assets, so 3-letter
-// alpha tokens pass a permissive matcher. The asset slug (`/v1/coins/{slug}`) has its own
-// resolver.
+// TestOpenAPIExamplesParseAsCanonicalAssets: every `asset`/`asset_id`/`base`/`quote`/`asset_ids` example in the spec must be
+// accepted by canonical.ParseAsset (canonical ids or SEP-40 keys like `crypto:XLM`), else Scalar's test requests 400 (e.g.
+// `BTC`). `/v1/currencies/{ticker}` ISO-4217 codes pass a permissive matcher; `/v1/coins/{slug}` has its own resolver.
 func TestOpenAPIExamplesParseAsCanonicalAssets(t *testing.T) {
 	spec := loadOpenAPISpec(t)
 
@@ -77,10 +63,8 @@ func TestOpenAPIExamplesParseAsCanonicalAssets(t *testing.T) {
 			"either the spec is empty or this test's discovery is broken")
 	}
 
-	// Path-param exemptions: ticker (ISO-4217) and slug (asset slug
-	// resolver) deliberately accept short forms that the strict
-	// canonical parser would reject. This test covers the strict
-	// surfaces; loose-input handlers have their own tests.
+	// Path-param exemptions: ticker (ISO-4217) and slug deliberately accept short forms the strict canonical parser rejects;
+	// loose-input handlers have their own tests.
 	exempt := map[string]bool{
 		"ticker": true,
 		"slug":   true,

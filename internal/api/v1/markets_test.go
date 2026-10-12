@@ -87,10 +87,8 @@ func (r *stubMarketsReader) AllPools(_ context.Context, _ timescale.PoolsFilter,
 	return out, r.nextCur, nil
 }
 
-// GetPairsVolumeHistory24hBatch mirrors the producer's shape: the SQL
-// CROSS JOINs every requested key with a 24-hour generate_series and
-// COALESCEs gaps to '0', so every key gets exactly 24 points, oldest
-// first. hourVolumes seeds non-zero buckets by hour index (0 = oldest).
+// GetPairsVolumeHistory24hBatch mirrors the producer: every requested key gets exactly 24 hourly points, oldest first,
+// gaps COALESCEd to '0'. hourVolumes seeds non-zero buckets by hour index (0 = oldest).
 func (r *stubMarketsReader) GetPairsVolumeHistory24hBatch(_ context.Context, pairs [][2]string) (map[string][]timescale.PairVolumePoint, error) {
 	r.sparkPairs = pairs
 	if r.sparkErr != nil {
@@ -192,10 +190,8 @@ func TestMarkets_ReturnsPairsWithCursor(t *testing.T) {
 	}
 }
 
-// TestMarkets_IncludeSparkline pins the ?include=sparkline contract on
-// the Market wire type: 24 hourly buckets per row, oldest → newest,
-// each row carrying ITS pair's series with zero-filled gaps, and
-// volume_usd passed through as an exact decimal string.
+// TestMarkets_IncludeSparkline pins ?include=sparkline: 24 hourly buckets per row, oldest to newest, each row with its own
+// pair's zero-filled series, and volume_usd as an exact decimal string.
 func TestMarkets_IncludeSparkline(t *testing.T) {
 	ts1 := time.Unix(1_772_000_000, 0).UTC()
 	const bigVol = "123456789012345678901234.5"
@@ -307,10 +303,8 @@ func (u *swrStaleMarketsUpstream) DistinctPairsExt(ctx context.Context, cursor s
 	return u.stubMarketsReader.DistinctPairsExt(ctx, cursor, limit, order)
 }
 
-// TestMarkets_SWRStaleServeStampsHonestFlags: /v1/markets served from the stale-while-revalidate
-// path (an expired entry served while its background refresh keeps failing) must report
-// flags.stale=true and as_of = the rows' actual observation time, never stale:false / as_of=now
-// over old rows. A fresh serve stays stale:false. Mirrors the /v1/contracts stale-serve test.
+// TestMarkets_SWRStaleServeStampsHonestFlags: an expired entry served while refresh keeps failing must report
+// flags.stale=true and as_of = the rows' real observation time; a fresh serve stays stale:false.
 func TestMarkets_SWRStaleServeStampsHonestFlags(t *testing.T) {
 	const ttl = 40 * time.Millisecond
 	up := &swrStaleMarketsUpstream{
@@ -440,10 +434,8 @@ func TestPools_SWRStaleServeStampsHonestFlags(t *testing.T) {
 	}
 }
 
-// TestMarkets_LastTradeAtVsBucketCloseAt pins the wire contract: every row ships both
-// `last_trade_at` (minute-precise) and `bucket_close_at` (daily bucket-start) as distinct
-// values. `last_trade_at` must not carry the midnight bucket-start, or clients computing
-// staleness see spuriously large values.
+// TestMarkets_LastTradeAtVsBucketCloseAt pins that rows ship distinct `last_trade_at` (minute-precise) and
+// `bucket_close_at` (daily bucket-start); last_trade_at must not carry midnight, which skews client staleness.
 func TestMarkets_LastTradeAtVsBucketCloseAt(t *testing.T) {
 	// 2026-05-25T14:23:00Z — mid-bucket, NOT midnight.
 	lastTrade := time.Date(2026, 5, 25, 14, 23, 0, 0, time.UTC)
@@ -551,10 +543,8 @@ func TestMarkets_KnownSource200(t *testing.T) {
 	}
 }
 
-// TestMarkets_AssetFilter_HappyPath pins the `?asset=` query param
-// dispatching to AssetMarkets. The stub returns the same fixture
-// rows for every reader method, so we assert a 200 + non-empty body
-// rather than per-asset filtering (which is the storage layer's job).
+// TestMarkets_AssetFilter_HappyPath pins `?asset=` dispatching to AssetMarkets. The stub returns the same rows for every
+// method, so it asserts 200 + non-empty body; per-asset filtering is the storage layer's job.
 func TestMarkets_AssetFilter_HappyPath(t *testing.T) {
 	srv := v1.New(v1.Options{Markets: &stubMarketsReader{
 		pairs: []v1.Market{{Base: "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN", Quote: "native"}},
@@ -705,10 +695,8 @@ func TestPools_AssetAndBaseTogether400(t *testing.T) {
 	}
 }
 
-// TestPools_InvalidBase400 / TestPools_InvalidQuote400 — the AND-shape
-// base/quote filters flowed raw into the trades-hypertable scan; a
-// malformed value 400s up front rather
-// than reaching the query. Mirrors the `?asset=` guard.
+// TestPools_InvalidBase400 / TestPools_InvalidQuote400: malformed base/quote filters must 400 up front rather than reach
+// the trades-hypertable scan, mirroring the `?asset=` guard.
 func TestPools_InvalidBase400(t *testing.T) {
 	srv := v1.New(v1.Options{Markets: &stubMarketsReader{}})
 	ts := httpTestServer(t, srv)
@@ -836,10 +824,8 @@ func TestMarkets_AssetFilterIsCanonicalised(t *testing.T) {
 	}
 }
 
-// TestMarkets_CachedRows_IncludeEnrichmentDoesNotLeakAcrossRequests is the enrichment leg (the
-// decimals leg is in markets_cache_shared_rows_test.go). ?include=sparkline,inception must not
-// write volume_history_24h / first_trade_at onto the cache entry's own rows, or later requests
-// for the page get enrichment they never opted into (`include` is not in the cache key).
+// TestMarkets_CachedRows_IncludeEnrichmentDoesNotLeakAcrossRequests: ?include=sparkline,inception must not write
+// enrichment onto the cache entry's rows, since `include` is not in the cache key.
 func TestMarkets_CachedRows_IncludeEnrichmentDoesNotLeakAcrossRequests(t *testing.T) {
 	ts, up := sharedRowsServer(t)
 

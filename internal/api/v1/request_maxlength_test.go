@@ -22,10 +22,8 @@ import (
 // cjk repeats a 3-byte code point n times: n code points, 3n bytes.
 func cjk(n int) string { return strings.Repeat("名", n) }
 
-// TestRequestMaxLengthCountsCodePoints pins each request-body maxLength
-// to the unit the spec (JSON Schema: code points) and Postgres
-// (length(): characters) both use. A byte count rejects a spec-valid
-// CJK/emoji value at a third of its documented limit.
+// TestRequestMaxLengthCountsCodePoints pins request-body maxLength to code points (JSON Schema, Postgres length());
+// a byte count rejects a spec-valid CJK/emoji value at a third of its documented limit.
 func TestRequestMaxLengthCountsCodePoints(t *testing.T) {
 	type parseFn func(http.ResponseWriter, *http.Request) bool
 	accountKey := func(w http.ResponseWriter, r *http.Request) bool { _, ok := parseCreateKeyRequest(w, r); return ok }
@@ -78,10 +76,8 @@ func TestRequestMaxLengthCountsCodePoints(t *testing.T) {
 	}
 }
 
-// byteLenCapAllowlist is every function under internal/api allowed a
-// byte-counted string cap, keyed "<path under internal/api>:<func>". Each
-// bounds an ASCII-only domain or a storage/log size, not a spec maxLength.
-// An entry that exempts nothing fails the guard, so the list only shrinks.
+// byteLenCapAllowlist lists functions under internal/api allowed a byte-counted string cap ("<path>:<func>"), each
+// bounding an ASCII-only domain or storage/log size. An entry that exempts nothing fails, so the list only shrinks.
 var byteLenCapAllowlist = map[string]string{
 	"v1/explorer/search.go:isLedgerSeq":                      "ASCII decimal ledger sequence",
 	"v1/middleware/idempotency.go:Idempotency":               "header size bound on the stored key",
@@ -95,10 +91,8 @@ var byteLenCapAllowlist = map[string]string{
 	"v1/dashboardpricealerts/handlers.go:validateAsset":      "ASCII asset-id grammar",
 }
 
-// TestNoByteLengthCapsOnRequestStrings is the class guard: under
-// internal/api it fails on `len(s) > N` / `len(s) >= N` where s is a
-// string and N >= 2 — the shape every byte-counted maxLength took. A spec
-// maxLength counts code points: use utf8.RuneCountInString.
+// TestNoByteLengthCapsOnRequestStrings fails on `len(s) > N` / `>= N` (s a string, N >= 2) under internal/api, the shape
+// of every byte-counted maxLength; use utf8.RuneCountInString.
 func TestNoByteLengthCapsOnRequestStrings(t *testing.T) {
 	if testing.Short() {
 		t.Skip("type-checks internal/api; skipped in -short")

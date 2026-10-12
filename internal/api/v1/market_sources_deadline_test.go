@@ -7,11 +7,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// deadlineMarketSourceReader fails the per-source aggregate the way the
-// handler's own budget does: the driver's error WRAPPING
-// context.DeadlineExceeded, arriving on a LIVE request (r.Context() is
-// still alive — see handler_budget_deadline_test.go's package doc for
-// why that is the state under test, not an already-expired r.Context()).
+// deadlineMarketSourceReader fails the per-source aggregate with an error wrapping context.DeadlineExceeded on a live
+// request (r.Context() still alive), the state under test per handler_budget_deadline_test.go.
 type deadlineMarketSourceReader struct{}
 
 func (deadlineMarketSourceReader) PairSourceStats(context.Context, []string, []string) ([]timescale.SourceStats, error) {

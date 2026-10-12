@@ -16,17 +16,9 @@ const (
 	cexScale     = 8
 )
 
-// TestCombinedBarServesTrueExtremes pins the combined fiat series contract: the bucket
-// high/low are the plain max/min of the constituent extremes, with NO price-distance filtering.
-// Filter on trade SIZE, never on price divergence: dust is excluded at the individual TRADE
-// level by the notional floor on the CAGG extremes (proved DB-backed in
-// test/integration/pg_pricing_test.go), and a genuine large trade far from VWAP is a real
-// market event whose suppression would edit reality.
-// finalizeCombined renders the bucket and cross-checks that it derived
-// the lift target the caller expected. `scales` lists the scale of every
-// bar handed to acc.add, in the same order; the bucket takes their
-// maximum itself, so a mismatch here means the accumulator stopped
-// tracking its own scale rather than that the expectation is stale.
+// TestCombinedBarServesTrueExtremes: combined bucket high/low are plain max/min of constituents, with NO price-distance filter.
+// Dust is excluded per TRADE by the CAGG notional floor; a genuine large off-VWAP trade is real and must not be suppressed.
+// finalizeCombined cross-checks the lift target; `scales` lists each bar's scale in acc.add order.
 func finalizeCombined(t *testing.T, acc *ohlcBucketAcc, ts time.Time, scales ...int) OHLCSeriesBar {
 	t.Helper()
 	want := ohlcBarScaleUnknown
@@ -48,10 +40,8 @@ func TestCombinedBarServesTrueExtremes(t *testing.T) {
 		O: "0.1789", H: "0.1792", L: "0.1776", C: "0.1777",
 		VBase: "1000000", VQuote: "178000", N: 2099,
 	}, onChainScale)
-	// A thin SDEX constituent whose high is a REAL 1.00-USDC-per-XLM fill —
-	// it cleared the $0.01 notional floor in the CAGG, so it is a market
-	// event that happened and must be served. Bucket vwap ≈ 0.178, so the
-	// removed 2× band (ceiling ≈ 0.356) would have dropped it.
+	// A thin SDEX constituent whose high is a real 1.00 USDC/XLM fill cleared the $0.01 notional floor, so it must be served;
+	// bucket vwap is about 0.178, so the removed 2x band (ceiling about 0.356) would have dropped it.
 	acc.add(&OHLCSeriesBar{
 		O: "0.1790", H: "1.0000000000", L: "0.0500000000", C: "0.1780",
 		VBase: "500000", VQuote: "89100", N: 3177,
@@ -109,20 +99,9 @@ func TestCombinedBarSingleConstituentExtremes(t *testing.T) {
 	}
 }
 
-// TestCombinedBarScaleDrivesVolumeWeighting pins per-venue scale handling at the accumulator:
-// the SAME two constituent bars must combine to different (and each correct) numbers depending
-// on the scale their venues declare.
-//
-// One 1000-unit leg at price 0.10 and one 1000-unit leg at 0.12:
-//
-//   - declared 7dp and 8dp, the 7dp leg is really 1000 units and the 8dp leg is really 1000
-//     units, so the bar is 2000 units at the common 8dp scale and the weighted price is 0.11;
-//   - declared BOTH 8dp, the first leg really is a tenth of the second, so 1.1e11 units and
-//     0.1181818181 is right and the lift must not touch it.
-//
-// The second case is the byte-identical guard [aggregate.NormalizeAmountScale] gives uniform
-// windows, restated for bars: bars sharing one scale come out unchanged, so served numbers
-// move only because of the declared scale.
+// TestCombinedBarScaleDrivesVolumeWeighting: the same two bars (1000 units at 0.10 and 0.12) combine to 2000 units at 0.11 when
+// declared 7dp+8dp, but to 1.1e11 units at 0.1181818181 when both 8dp. Equal-scale bars must come out unchanged (the
+// aggregate.NormalizeAmountScale guarantee), so served numbers move only with the declared scale.
 func TestCombinedBarScaleDrivesVolumeWeighting(t *testing.T) {
 	pow10 := func(n int) string {
 		s := "1"
@@ -212,10 +191,8 @@ func TestCombinedBarUnknownScaleIsNeverLifted(t *testing.T) {
 			"scales internally takes the finest, the lift that cannot inflate its "+
 			"own weight against its peers", got, cexScale)
 	}
-	// A source absent from external.Registry must not be
-	// answered with the registry's CEX-flavoured 8-decimal fallback
-	// either — same defect as the point-path commonAmountScaleDecimals,
-	// same shared amountScaleDecimalsFor resolver.
+	// A source absent from external.Registry must not get the registry's CEX-flavoured 8-decimal fallback, the same defect as
+	// the point-path commonAmountScaleDecimals, via the shared amountScaleDecimalsFor resolver.
 	if got := barScaleDecimals([]string{"brand_new_dex"}); got != ohlcBarScaleUnknown {
 		t.Errorf("barScaleDecimals([brand_new_dex]) = %d, want %d — \"brand_new_dex\" has "+
 			"no registry entry, so its scale is unknown, not the registry's 8dp default",
@@ -242,10 +219,8 @@ func TestCombinedBarUnknownScaleIsNeverLifted(t *testing.T) {
 	}
 }
 
-// TestCombinedBarStatesScaleOnWire: a combined bucket must STATE the smallest-unit scale its
-// v_base/v_quote were lifted to, not just carry it internally. A zero VBaseDecimals/
-// VQuoteDecimals is indistinguishable on the wire from a genuine 0dp scale and wrong for the
-// common 7dp/8dp buckets.
+// TestCombinedBarStatesScaleOnWire: a combined bucket must state the smallest-unit scale its v_base/v_quote were lifted
+// to. A zero decimals value is indistinguishable on the wire from a real 0dp scale and wrong for 7dp/8dp buckets.
 func TestCombinedBarStatesScaleOnWire(t *testing.T) {
 	acc := newOHLCBucketAcc()
 	acc.add(&OHLCSeriesBar{
@@ -268,10 +243,8 @@ func TestCombinedBarStatesScaleOnWire(t *testing.T) {
 	}
 }
 
-// TestCombinedBarWithUnknownScaleStatesNone: a bucket holding an
-// unknown-scale bar sums its unlifted integers beside lifted ones, so no
-// single scale describes v_base/v_quote. It must state null, not the lift
-// target of the known bars and never the -1 sentinel.
+// TestCombinedBarWithUnknownScaleStatesNone: a bucket with an unknown-scale bar sums unlifted and lifted integers, so no
+// single scale fits; it must state null, never the known bars' lift target or the -1 sentinel.
 func TestCombinedBarWithUnknownScaleStatesNone(t *testing.T) {
 	acc := newOHLCBucketAcc()
 	acc.add(&OHLCSeriesBar{

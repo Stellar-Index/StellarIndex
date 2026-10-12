@@ -91,11 +91,9 @@ func TestProbeOneHost_OK(t *testing.T) {
 	}
 }
 
-// TestProbeOneHost_CertFailingVerificationIsStillRead guards the production dial, which
-// verifies the chain: an expired or mis-issued leaf fails the handshake, and must not be counted
-// as a bare dial_error with its NotAfter unread (no gauge, and the condition the probe exists to
-// catch reported as "unreachable"). The handshake error carries the unverified chain; the probe
-// must record the leaf and say which failure.
+// TestProbeOneHost_CertFailingVerificationIsStillRead guards the production dial, which verifies the chain: an
+// expired or mis-issued leaf fails the handshake but must not become a bare dial_error with NotAfter unread. The
+// handshake error carries the unverified chain; the probe must record the leaf and say which failure.
 func TestProbeOneHost_CertFailingVerificationIsStillRead(t *testing.T) {
 	for _, tc := range []struct {
 		name     string

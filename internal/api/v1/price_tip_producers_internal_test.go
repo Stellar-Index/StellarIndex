@@ -14,10 +14,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// Registry mechanics (RT-1): the whole point of the shared-producer
-// shape is ONE compute loop per distinct pair regardless of viewer
-// count, so these pin start-once, refcounted stop, linger absorption,
-// and context cancellation — white-box, no server or DB involved.
+// Registry mechanics: the shared-producer shape means ONE compute loop per distinct pair regardless of viewer count.
+// These white-box tests pin start-once, refcounted stop, linger absorption and context cancellation.
 
 func TestTipProducerRegistry_StartsOncePerKeyAcrossConcurrentAcquires(t *testing.T) {
 	var reg tipProducerRegistry
@@ -206,10 +204,8 @@ func TestTipProducerRegistry_CeilingBoundsDetachedProducers(t *testing.T) {
 	}
 }
 
-// A pair that ALREADY has a producer must keep admitting subscribers at
-// the ceiling: those cost nothing extra to serve, and refusing them
-// would turn a popular pair's own viewers away — the opposite of the
-// protection intended.
+// A pair that already has a producer must keep admitting subscribers at the ceiling: they cost nothing extra, and
+// refusing them would turn away a popular pair's own viewers.
 func TestTipProducerRegistry_CeilingStillAdmitsExistingPair(t *testing.T) {
 	const ceiling = 4
 	reg := &tipProducerRegistry{maxProducers: ceiling}
@@ -269,12 +265,9 @@ func TestTipProducerRegistry_NegativeCeilingDisablesTheBound(t *testing.T) {
 	}
 }
 
-// TestTipProducerRegistry_RespawnsAfterPanicWhileSubscriberStillConnected: worker.Recover stops
-// a panicking compute loop's goroutine without releasing the registry entry (release() is never
-// called on a panic), so refs stays unchanged. Without the re-start under test, nothing
-// re-invokes start while refs > 0, since release()'s linger only fires once the LAST subscriber
-// leaves. A still-connected subscriber (the one holding rel below) would get heartbeats only,
-// forever: the "no new emits" symptom.
+// TestTipProducerRegistry_RespawnsAfterPanicWhileSubscriberStillConnected: worker.Recover stops a panicking compute loop
+// without release(), so refs stays unchanged and nothing re-invokes start while refs > 0. Without the re-start, a
+// still-connected subscriber would get heartbeats only, forever.
 func TestTipProducerRegistry_RespawnsAfterPanicWhileSubscriberStillConnected(t *testing.T) {
 	reg := &tipProducerRegistry{restartBackoffFor: testRestartBackoff}
 	var starts atomic.Int32
@@ -304,10 +297,8 @@ func TestTipProducerRegistry_RespawnsAfterPanicWhileSubscriberStillConnected(t *
 	}
 }
 
-// TestTipProducerRegistry_RespawnsAfterStartReturnsWhileSubscriberStillConnected
-// is the production shape of the same defect: runSharedTipProducer
-// recovers its own panic (recoverStreamProducer) and RETURNS normally, so
-// the registry sees an uncancelled exit rather than a panic.
+// TestTipProducerRegistry_RespawnsAfterStartReturnsWhileSubscriberStillConnected is the production shape of the same
+// defect: runSharedTipProducer recovers its own panic and returns normally, an uncancelled exit.
 func TestTipProducerRegistry_RespawnsAfterStartReturnsWhileSubscriberStillConnected(t *testing.T) {
 	reg := &tipProducerRegistry{restartBackoffFor: testRestartBackoff}
 	var starts atomic.Int32
@@ -729,11 +720,9 @@ func TestTipProducerRegistry_JoiningAnExistingProducerIsNeverCharged(t *testing.
 	}
 }
 
-// The charge follows the entry's HOLDERS, not whoever minted it. A caller who opened a popular
-// pair and closed every stream no longer influences the entry's life, so it must not stay
-// charged or it is refused new pairs while holding none. The charge moves to a caller still
-// holding the entry; the linger after the LAST holder leaves stays charged to that holder, the
-// window the abort-loop flood exploits.
+// The charge follows the entry's holders, not whoever minted it: a caller who closed every stream must not stay charged
+// or it is refused new pairs while holding none. The charge moves to a remaining holder; the linger after the last
+// holder leaves stays charged to it, which is the window the abort-loop flood exploits.
 func TestTipProducerRegistry_MinterLeavingHandsTheChargeToAHolder(t *testing.T) {
 	reg := &tipProducerRegistry{maxPerCaller: 1, lingerFor: time.Hour}
 	start := func(ctx context.Context) { <-ctx.Done() }

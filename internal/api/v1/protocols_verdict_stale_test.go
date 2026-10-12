@@ -34,10 +34,8 @@ func envelopeStale(t *testing.T, url string) bool {
 	return env.Flags.Stale
 }
 
-// TestProtocols_StaleWhenRepublishedVerdictIsOld pins that /v1/protocols
-// and /v1/protocols/{name} republish the completeness_snapshots rows
-// /v1/coverage gates, so a verdict 30h old must raise flags.stale on all
-// three — not only on /v1/coverage.
+// TestProtocols_StaleWhenRepublishedVerdictIsOld pins that /v1/protocols and /v1/protocols/{name} republish the
+// completeness_snapshots rows /v1/coverage gates, so a 30h-old verdict raises flags.stale on all three.
 func TestProtocols_StaleWhenRepublishedVerdictIsOld(t *testing.T) {
 	snaps := []timescale.CompletenessSnapshot{{
 		Source: "blend", Genesis: 51_499_546, Tip: 63_000_000, Watermark: 63_000_000,

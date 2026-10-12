@@ -28,10 +28,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/signupreaper"
 )
 
-// fakeRegisterAccountStore implements the full [platform.AccountStore]
-// so the same instance can back both the register handler (Create)
-// and the Postgres API-key validator (Get) in the key-works-after-
-// mint test.
+// fakeRegisterAccountStore implements the full [platform.AccountStore] so one instance backs both the register handler
+// (Create) and the Postgres API-key validator (Get) in the key-works-after-mint test.
 type fakeRegisterAccountStore struct {
 	mu      sync.Mutex
 	byID    map[uuid.UUID]platform.Account
@@ -405,10 +403,8 @@ func TestRegister_ThrottleUnavailableFailsClosedAndCounts(t *testing.T) {
 	}
 }
 
-// TestRegister_KeyWorksAfterMint — the minted plaintext authenticates
-// through the SAME validator production uses for Postgres-backed keys
-// (auth.PostgresAPIKeyValidator over the account + key stores), and
-// carries the free-tier budget onto the Subject.
+// TestRegister_KeyWorksAfterMint: the minted plaintext authenticates through the production Postgres validator
+// (auth.PostgresAPIKeyValidator) and carries the free-tier budget onto the Subject.
 func TestRegister_KeyWorksAfterMint(t *testing.T) {
 	accounts := newFakeRegisterAccountStore()
 	keys := newFakeRegisterKeyStore()
@@ -584,11 +580,8 @@ func TestRegister_MirrorFailureIsNotA200(t *testing.T) {
 	}
 }
 
-// TestRegister_MirrorFailureSuspendsOrphanForReaper: when the credential mirror fails, register
-// must (a) commit NO durable api_keys row (mirror-first ordering) and (b) quarantine the
-// leftover account as a `signup-race:` suspension so signupreaper reclaims it. Otherwise an
-// active account + api_keys pair that can never authenticate stays, and ReapSuspendedOrphans
-// cannot match it.
+// TestRegister_MirrorFailureSuspendsOrphanForReaper: on mirror failure register commits no api_keys row (mirror-first) and
+// suspends the leftover account as `signup-race:` so signupreaper reclaims it; else ReapSuspendedOrphans can't match it.
 func TestRegister_MirrorFailureSuspendsOrphanForReaper(t *testing.T) {
 	accounts := newFakeRegisterAccountStore()
 	keys := newFakeRegisterKeyStore()
@@ -625,10 +618,8 @@ func TestRegister_MirrorFailureSuspendsOrphanForReaper(t *testing.T) {
 	}
 }
 
-// TestRegister_ManagementRowFailureRollsBackMirror: when the mirror succeeds but the durable
-// management row then fails, the mirrored credential must be rolled back so no working key
-// outlives its management record (an unlistable, unrevokable key), and the orphan account is
-// still suspended for the reaper.
+// TestRegister_ManagementRowFailureRollsBackMirror: when the mirror succeeds but the management row fails, the mirrored
+// credential is rolled back (no unlistable, unrevokable key) and the orphan account is still suspended for the reaper.
 func TestRegister_ManagementRowFailureRollsBackMirror(t *testing.T) {
 	accounts := newFakeRegisterAccountStore()
 	keys := newFakeRegisterKeyStore()

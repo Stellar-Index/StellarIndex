@@ -11,10 +11,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// Two issuer accounts declaring one ISIN are surfaced on every admitted
-// row that declares it, counting refused declarers and each account
-// once, and the collision never demotes: membership, basis and the
-// constant-NAV reference on the verified pair are what they were.
+// Two issuer accounts declaring one ISIN are surfaced on every admitted row declaring it (each account counted once,
+// refused declarers included); the collision never demotes membership, basis or the constant-NAV reference.
 func TestAdmitClassicCandidates_ISINCollisionAcrossIssuers(t *testing.T) {
 	const (
 		franklinIB = "GD5J73EKK5IYL5XS3FBTHHX7CZIYRP7QXDL57XFWGC2WVYWT326OBXRP"
@@ -102,11 +100,8 @@ func TestAdmitClassicCandidates_ISINCollisionAcrossIssuers(t *testing.T) {
 	}
 }
 
-// The franklintempleton.com case: its SEP-1 binds BENJI on a
-// directory-listed account and gBENJI on an account the directory never
-// listed, both on the same domain. The sibling arm admits gBENJI and
-// says so; an unlisted issuer on a domain with no listed sibling stays
-// refused; and the direct arm keeps its label on the listed account.
+// The franklintempleton.com case: SEP-1 binds BENJI on a directory-listed account and gBENJI on an unlisted one, same
+// domain. The sibling arm admits gBENJI and says so; an unlisted issuer with no listed sibling stays refused.
 func TestAdmitClassicCandidates_SiblingOnTheSameDomain(t *testing.T) {
 	const (
 		listed   = "GBHNGLLIE3KWGKCHIKMHJ5HVZHYIK7WTBE4QF5PLAKL4CJGSEU7HZIW5"
