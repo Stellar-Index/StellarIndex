@@ -51,7 +51,7 @@ type ReadyChecker interface {
 // expected` because a NEWER schema is safe in a rolling deploy or rollback; a dirty row alone is
 // not a mismatch, see [nonAtomicMigrationVersions]. TestExpectedSchemaVersionMatchesMigrationsHead
 // fails CI if a migration is added unbumped.
-const ExpectedSchemaVersion uint = 214
+const ExpectedSchemaVersion uint = 215
 
 // nonAtomicMigrationVersions lists migrations whose up.sql commits mid-file, breaking
 // golang-migrate's one-transaction-per-file guarantee. A dirty flag at any version NOT in

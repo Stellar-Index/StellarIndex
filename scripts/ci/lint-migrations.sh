@@ -669,9 +669,12 @@ rebuild_ckpt_missing() {
 
 # blanking_stmts <file>: the statements that blank data, one per line.
 # A DO block's first statement follows its BEGIN, hence the second form.
+# A CREATE FUNCTION body runs when called, not at migrate time, so it is skipped.
 blanking_stmts() {
   sql_stmts "$1" | awk '
     { s = tolower($0) }
+    infn { if (gsub(/\$\$/, "&", s) % 2) infn = 0; next }
+    s ~ /^create (or replace )?function / { if (gsub(/\$\$/, "&", s) % 2) infn = 1; next }
     s ~ /^truncate / || s ~ / begin truncate / { print; next }
     (s ~ /^delete from / || s ~ / begin delete from /) && s !~ / where / { print; next }
     s ~ /^drop materialized view / { dropped = 1 }
