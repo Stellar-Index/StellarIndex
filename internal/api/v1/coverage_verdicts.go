@@ -184,30 +184,26 @@ func unverifiedSources(audited []string, snaps []timescale.CompletenessSnapshot,
 	return out
 }
 
-// coverageVerdictStaleLedgers bounds how far the network tip may run past a verdict's tip_ledger
-// before the verdict stops being a claim about the CURRENT chain. The audit is daily; 34560 ledgers
-// is ~2 audit periods at 5 s/ledger, a backstop that tolerates a slow run without flapping. The age
-// gate is the primary "the audit stopped" signal and fires first.
+// coverageVerdictStaleLedgers bounds how far the tip may run past a verdict's tip_ledger before it stops describing the CURRENT
+// chain: ~2 daily audit periods at 5 s/ledger, a backstop; the age gate fires first.
 const coverageVerdictStaleLedgers uint32 = 34560
 
-// coverageVerdictStaleAge is the wall-clock gate, deliberately tighter than the ledger gate: one
-// daily period plus a two-hour grace flags a missed run the morning it fails. It decides alone when
-// no cursor is available.
+// coverageVerdictStaleAge is the wall-clock gate, tighter than the ledger gate: one daily period plus two hours flags a missed
+// run that morning. It decides alone without a cursor.
 const coverageVerdictStaleAge = 26 * time.Hour
 
-// coverageVerdictEvidenceStaleAge bounds the age of the evidence behind a clean projection claim.
-// The -pass audit re-proves a claim up to one audit period after [completeness.MaxProjectionCarryAge];
-// two more periods absorb two missed re-proof nights. The SDEX census and sep41_transfers are
-// re-proved weekly by their own timers, not by the pass.
+// coverageVerdictEvidenceStaleAge bounds the evidence age behind a clean projection claim: the -pass audit re-proves up to one
+// period after [completeness.MaxProjectionCarryAge], plus two periods for missed nights. The SDEX census and sep41_transfers
+// are re-proved weekly by their own timers.
 const coverageVerdictEvidenceStaleAge = completeness.MaxProjectionCarryAge + 3*coverageVerdictStaleAge
 
 // coverageIngestStallAge is the ledgerstream cursor age past which ingest counts as stalled. The
 // cursor moves every ~5 s ledger, so it cannot fire healthy.
 const coverageIngestStallAge = 10 * time.Minute
 
-// handleCoverageVerdicts serves GET /v1/coverage, every source's latest ADR-0033 completeness
-// verdict. `flags.stale` carries the live-tip gate ([Server.coverageVerdictsStale]): every row field
-// is frozen at compute time, so without it a dead audit would keep serving "complete" forever.
+// handleCoverageVerdicts serves GET /v1/coverage, every source's latest ADR-0033 verdict. Row fields are frozen at compute
+// time, so `flags.stale` carries the live-tip gate ([Server.coverageVerdictsStale]); without it a dead audit would serve
+// "complete" forever.
 func (s *Server) handleCoverageVerdicts(w http.ResponseWriter, r *http.Request) {
 	if s.CompletenessReader == nil {
 		writeProblem(w, r,
@@ -328,22 +324,11 @@ func recognitionAxisView(sn timescale.CompletenessSnapshot) *RecognitionAxisView
 	return v
 }
 
-// coverageVerdictsStale is the live-tip gate: is this `complete: true` a statement about the chain
-// as it is NOW? The rows are stamped at compute time, so a dead audit still reads `coverage_pct: 1`.
-//
-// Four independent signals, OR'd (fail-closed; any one is `flags.stale`, ADR-0018):
-//
-//   - LEDGER GAP: the network tip has run more than [coverageVerdictStaleLedgers] past the
-//     verdict's own tip. The tip is the cursor extrapolated by wall-clock time
-//     ([completeness.NetworkTipLowerBound]), since the bare cursor would always agree with it.
-//   - VERDICT AGE: computed_at older than [coverageVerdictStaleAge], or absent.
-//   - EVIDENCE AGE: a source claiming projection_ok whose projection_evidenced_at is older than
-//     [coverageVerdictEvidenceStaleAge], or unknown (computed_at is restamped by runs that only
-//     carry the claim forward). Audit axes carry no projection claim and are exempt.
-//   - INGEST STALL: the ledgerstream cursor has not been written for [coverageIngestStallAge]; a
-//     frozen cursor plus a running audit keeps the gap at 0 and computed_at fresh.
-//
-// An EMPTY verdict list is not flagged; without a cursor read the age signals decide.
+// coverageVerdictsStale is the live-tip gate: is `complete: true` true of the chain NOW? Four OR'd, fail-closed signals
+// (ADR-0018): LEDGER GAP (tip via [completeness.NetworkTipLowerBound] past the verdict's by [coverageVerdictStaleLedgers]);
+// VERDICT AGE ([coverageVerdictStaleAge]); EVIDENCE AGE (projection_ok older than [coverageVerdictEvidenceStaleAge] or unknown;
+// audit axes exempt); INGEST STALL (cursor unwritten for [coverageIngestStallAge]; a frozen cursor keeps gap 0). An EMPTY list
+// is not flagged; without a cursor the age signals decide.
 func (s *Server) coverageVerdictsStale(ctx context.Context, snaps []timescale.CompletenessSnapshot) bool {
 	if len(snaps) == 0 {
 		return false
@@ -369,9 +354,8 @@ func (s *Server) coverageVerdictsStale(ctx context.Context, snaps []timescale.Co
 	return false
 }
 
-// liveTip returns the ledgerstream cursor's last ledger and write time. ok=false when no reader is
-// wired, the row is missing or the read failed; callers degrade rather than fail. The read is
-// bounded at 5s so a slow Postgres cannot hold a public GET open.
+// liveTip returns the ledgerstream cursor's last ledger and write time; ok=false when no reader, no row or a failed read
+// (callers degrade). Bounded at 5s so a slow Postgres cannot hold a public GET open.
 func (s *Server) liveTip(ctx context.Context) (LedgerTipView, bool) {
 	if s.Cursors == nil {
 		return LedgerTipView{}, false

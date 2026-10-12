@@ -28,9 +28,8 @@ type AuditSink interface {
 	Append(ctx context.Context, e platform.AuditEntry) error
 }
 
-// adminCreateKeyRequest is the POST /v1/admin/keys body. Unlike the
-// self-service /v1/account/keys, the operator names the TARGET
-// identifier and may pin tier, rate limit and scopes explicitly.
+// adminCreateKeyRequest is the POST /v1/admin/keys body; unlike self-service, the operator names the TARGET identifier and may
+// pin tier, rate limit and scopes.
 type adminCreateKeyRequest struct {
 	// Identifier is the owner reference the new key authenticates
 	// as (e.g. "acct:<slug>" or a signup email identifier).
@@ -55,14 +54,8 @@ type adminCreateKeyRequest struct {
 	Account string `json:"account,omitempty"`
 }
 
-// handleAdminKeysCreate serves POST /v1/admin/keys — the operator
-// key-mint path. Only TierOperator subjects (staff-issued, never public) may call it.
-//
-// Requires an `X-Reason` header, as PATCH /v1/admin/accounts and DELETE /v1/admin/keys/{keyID}
-// do, since minting a privileged credential is equally consequential.
-//
-// Every successful mint is structured-logged, plus a best-effort audit_log row ("key.mint",
-// ActorStaff) when an [AuditSink] is wired.
+// handleAdminKeysCreate serves POST /v1/admin/keys (TierOperator only). Requires X-Reason like the other admin writes; each
+// mint is logged plus a best-effort key.mint audit row when an [AuditSink] is wired.
 func (s *Server) handleAdminKeysCreate(w http.ResponseWriter, r *http.Request) {
 	subject, ok := auth.SubjectFrom(r.Context())
 	if !ok || subject.Tier == auth.TierAnonymous || subject.Tier == "" {
@@ -166,9 +159,8 @@ func (s *Server) handleAdminKeysCreate(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// clampMintToCaller applies [auth.ClampToMinter] ahead of the store's own
-// re-check so a refused escalation is a 403 naming the reason, logged at WARN with the actor and
-// counted in [obs.MintScopeClampRefusedTotal]; otherwise repeated probing leaves no alertable signal.
+// clampMintToCaller applies [auth.ClampToMinter] ahead of the store's re-check, so a refused escalation is a 403 naming the
+// reason, logged at WARN and counted in [obs.MintScopeClampRefusedTotal].
 func (s *Server) clampMintToCaller(
 	w http.ResponseWriter, r *http.Request, caller auth.Subject, scopes []string, rateLimitPerMin int,
 ) ([]string, bool) {
@@ -187,15 +179,9 @@ func (s *Server) clampMintToCaller(
 	return nil, false
 }
 
-// revokeKeyEverywhere revokes a credential in every store that might
-// hold a live record for it. Redis is the working credential under auth_backend=redis, and the
-// Postgres api_keys row is the durable record mint also writes; revoking only Redis would leave
-// revoked_at NULL, so the row keeps counting toward the active-key ceiling. Both legs are scoped
-// to identifier and treat "no such key" and "another owner's key" identically, so neither
-// enumerates or revokes another account's keys.
-//
-// Returns [auth.ErrKeyNotFound] when NEITHER leg revoked anything, so a typo is never reported
-// as a revoke.
+// revokeKeyEverywhere revokes in every store that may hold the key (Redis and the Postgres api_keys row, else revoked_at stays
+// NULL and the row keeps counting toward the cap). Both legs are scoped to identifier and treat "no such key" and "another
+// owner's key" alike. Returns [auth.ErrKeyNotFound] only when NEITHER leg revoked anything.
 func (s *Server) revokeKeyEverywhere(ctx context.Context, identifier, keyID, reason string) error {
 	err := s.Accounts.RevokeKeyByID(ctx, identifier, keyID)
 	revoked := err == nil
@@ -219,11 +205,9 @@ func (s *Server) revokeKeyEverywhere(ctx context.Context, identifier, keyID, rea
 	return err
 }
 
-// revokeOwnedPlatformKey revokes keyID's Postgres api_keys row only
-// when that row's account is the one identifier names. The store's Revoke is scoped by account
-// UUID while the operator names the owner by identifier, so the resolution happens here. A
-// missing, foreign or already-revoked row, or no store to prove ownership, returns
-// [platform.ErrNotFound] without revoking (fail closed, no enumeration oracle).
+// revokeOwnedPlatformKey revokes keyID's Postgres row only if its account is the one identifier names (the store scopes by
+// account UUID, so ownership is resolved here). Missing, foreign or already-revoked rows, or no store, return
+// [platform.ErrNotFound]: fail closed, no enumeration oracle.
 func (s *Server) revokeOwnedPlatformKey(ctx context.Context, identifier, keyID, reason string) error {
 	keys := s.APIKeyBudgets.Platform
 	if keys == nil {
@@ -248,19 +232,9 @@ func (s *Server) revokeOwnedPlatformKey(ctx context.Context, identifier, keyID, 
 	return keys.Revoke(ctx, k.AccountID, keyID, uuid.Nil, reason)
 }
 
-// handleAdminKeysRevoke serves DELETE
-// /v1/admin/keys/{keyID}?identifier=<owner> — the operator kill switch for
-// a leaked or abused credential. Self-service revoke is scoped to the caller's OWN identifier and
-// would need the compromised customer's credential, so this is staff's only way to kill an
-// arbitrary key.
-//
-// `identifier` is required rather than inferred: the key store is indexed by (identifier,
-// key_id), and scoping to a named owner stops a mistyped key id reaching another customer's
-// account.
-//
-// Operator-tier only; requires an `X-Reason` header. 204 only when a key was actually revoked;
-// 404, with no audit row, when none matches, so a typo reads as a failure, never a contained
-// leak. "No such key" and "another owner's key" share the 404 (no enumeration oracle).
+// handleAdminKeysRevoke serves DELETE /v1/admin/keys/{keyID}?identifier=<owner>, staff's only way to kill an arbitrary key. identifier is
+// required (the store is indexed by it, and it stops a mistyped id hitting another customer). Operator-only, X-Reason required; 204 only if
+// a key was revoked, else 404 with no audit row, identical for "no such key" and "another owner's key".
 func (s *Server) handleAdminKeysRevoke(w http.ResponseWriter, r *http.Request) {
 	subject, ok := s.requireOperator(w, r, "/v1/admin/keys/{keyID}")
 	if !ok {
@@ -328,10 +302,8 @@ func (s *Server) handleAdminKeysRevoke(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// recordAdminKeyRevokeAudit persists the "key.revoke" audit row.
-// Best-effort, same contract as recordAdminKeyMintAudit — a sink failure
-// logs at WARN and never blocks the revoke, because failing to kill a
-// leaked credential because the audit log is down is the worse outcome.
+// recordAdminKeyRevokeAudit persists the key.revoke row; best-effort, since failing to kill a leaked credential because the
+// audit log is down is the worse outcome.
 func (s *Server) recordAdminKeyRevokeAudit(
 	r *http.Request, actor auth.Subject, identifier, keyID, reason string,
 ) {
@@ -450,9 +422,8 @@ func parseAdminCreateKeyRequest(w http.ResponseWriter, r *http.Request) (adminCr
 	return req, true
 }
 
-// requireMintAccountExists refuses an acct:<slug> mint whose account is
-// not in the platform store, so a key cannot be pre-planted on a slug a
-// later registration would inherit. An empty slug (non-account identifier) passes.
+// requireMintAccountExists refuses an acct:<slug> mint for an account not in the platform store, so a key cannot be pre-planted
+// on a slug a later registration would inherit.
 func (s *Server) requireMintAccountExists(w http.ResponseWriter, r *http.Request, slug string) bool {
 	if slug == "" {
 		return true
@@ -484,10 +455,8 @@ func (s *Server) requireMintAccountExists(w http.ResponseWriter, r *http.Request
 	return false
 }
 
-// recordAdminKeyMintAudit persists the "key.mint" audit row.
-// Best-effort — a sink failure logs at WARN and never blocks the
-// mint (audit-log unavailability must not break staff workflows,
-// same contract as platform.AuditStore.Append documents).
+// recordAdminKeyMintAudit persists the key.mint row; best-effort, audit-log unavailability must not break staff workflows (same
+// as platform.AuditStore.Append).
 func (s *Server) recordAdminKeyMintAudit(
 	r *http.Request, actor auth.Subject, req adminCreateKeyRequest, minted auth.APIKeyRecord, reason string,
 ) {

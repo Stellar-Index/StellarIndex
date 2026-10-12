@@ -18,11 +18,9 @@ import (
 // /v1/assets/{id} catalogue overlay (see [Server.fetchAssetExtensionResults]).
 const assetExtensionTimeout = 4 * time.Second
 
-// applyAssetExtensionFields lifts the trailing-window activity + history fields from the
-// assetsReader catalogue onto AssetDetail. Skipped for fiat:* / external:* assets (no catalogue
-// row) and when no AssetsReader is wired. Sub-fetches run in parallel and are best-effort: a
-// failure logs at Debug and leaves its field nil, and a missing row (never traded) is not an error.
-// assetExtensionResults holds the parallel-fetch results, split out for the gocognit ceiling.
+// applyAssetExtensionFields lifts trailing-window activity and history fields onto AssetDetail, best-effort (failure leaves the
+// field nil; skipped for fiat:*/external:*). assetExtensionResults holds the parallel-fetch results, split out for the gocognit
+// ceiling.
 type assetExtensionResults struct {
 	topMarkets    []timescale.AssetTopMarket
 	topMarketsErr error
@@ -55,12 +53,9 @@ func (s *Server) applyAssetExtensionFields(ctx context.Context, detail *AssetDet
 	s.logAssetExtensionFailures(assetID, results)
 }
 
-// fetchAssetExtensionResults runs the 6 reader calls in parallel.
-//
-// Each goroutine runs DETACHED from the handler, outside middleware.Recoverer, so an unrecovered
-// reader panic would kill the API process. worker.Recover leaves the field zero with a nil *Err,
-// the same as a reader that returned nothing, which is already this overlay's best-effort
-// contract. Nothing is cached, so the next request retries every field.
+// fetchAssetExtensionResults runs the six reader calls in parallel. Each goroutine is DETACHED from the handler (outside
+// middleware.Recoverer), so worker.Recover leaves the field zero rather than letting a reader panic kill the process. Nothing
+// is cached.
 func (s *Server) fetchAssetExtensionResults(ctx context.Context, assetID string) assetExtensionResults {
 	var (
 		r  assetExtensionResults
@@ -180,12 +175,9 @@ func observationCountWire(row timescale.AssetRow) *int64 {
 	return &obs
 }
 
-// applyAssetExtensionResults populates the array-shaped fields from the parallel-fetch results;
-// each field is independent, so one failure doesn't fail the others.
-//
-// The three PRICE fields (both histories and the ATH) arrive as RAW ratios and are normalised for a
-// confirmed non-7-decimals asset (normalizeCatalogueUSD), else they would sit unscaled beside the
-// already-normalised price_usd.
+// applyAssetExtensionResults populates the array fields independently. The three PRICE fields (both histories and the ATH)
+// arrive as RAW ratios and are normalised for a confirmed non-7-decimals asset (normalizeCatalogueUSD), else they would sit
+// unscaled beside price_usd.
 func (s *Server) applyAssetExtensionResults(detail *AssetDetail, asset canonical.Asset, r assetExtensionResults) {
 	if r.topMarketsErr == nil && len(r.topMarkets) > 0 {
 		detail.TopMarkets = topMarketsToWire(r.topMarkets)
@@ -213,30 +205,17 @@ func (s *Server) applyAssetExtensionResults(detail *AssetDetail, asset canonical
 	}
 }
 
-// catalogueUSDRoundDigits is the ROUND(..., 10) the catalogue SQL applies to every USD price text
-// (price_usd and each history point; the ATH is NOT rounded). It matters because that rounding
-// happens BEFORE decimals normalisation can.
+// catalogueUSDRoundDigits is the ROUND(..., 10) the catalogue SQL applies to USD price text (not the ATH); it happens BEFORE
+// decimals normalisation can.
 const catalogueUSDRoundDigits = 10
 
-// catalogueUSDMinQuanta is the fewest rounding quanta (10^-catalogueUSDRoundDigits) a SQL-rounded
-// raw ratio must retain for a scaled-UP value to be published; 1000 bounds the carried rounding
-// error at 0.05%.
+// catalogueUSDMinQuanta is the fewest rounding quanta a SQL-rounded raw ratio must keep for a scaled-UP value to publish; 1000
+// bounds the carried error at 0.05%.
 const catalogueUSDMinQuanta = 1000
 
-// normalizeCatalogueUSD applies the non-7-decimals forward normalisation to a USD price the
-// catalogue readers produced from RAW ratios. ok=false means the value must be withheld.
-//
-// ONE FACTOR: every catalogue price is a ratio against a USD proxy, or against XLM times XLM/USD,
-// with every quote leg on the standard scale, so the factor is 10^(asset decimals - standard)
-// whichever arm answered ([Server.normalizeTransitiveUSD]). Assets with no confirmed non-7-decimals
-// row (every classic asset and native XLM) pass through byte-identical.
-//
-// WITHHOLDING: for a flagged asset an unparseable or non-positive value cannot be corrected and
-// must not be published raw. When `rounded`, SQL already cut the RAW ratio to
-// catalogueUSDRoundDigits places and scaling UP by 10^k multiplies that error by 10^k (an
-// 18-decimals token worth $1 has a raw ratio that rounds to zero). Below catalogueUSDMinQuanta the
-// result would be precise-looking fiction, so the point becomes a gap. Scaling DOWN shrinks the
-// error and needs no floor.
+// normalizeCatalogueUSD applies 10^(decimals - standard) normalisation to a USD price made from RAW ratios (classic and native
+// XLM pass through). ok=false means withhold: an unparseable or non-positive flagged value cannot be corrected, and scaling UP
+// a `rounded` price multiplies SQL rounding error, so below catalogueUSDMinQuanta the point becomes a gap.
 func (s *Server) normalizeCatalogueUSD(value string, asset canonical.Asset, rounded bool) (string, bool) {
 	baseDec := aggregate.ResolveDecimals(s.NonstandardDecimals, asset)
 	quoteDec := aggregate.ResolveDecimals(s.NonstandardDecimals, defaultPriceQuote)
@@ -256,9 +235,8 @@ func (s *Server) normalizeCatalogueUSD(value string, asset canonical.Asset, roun
 	return ratToDecimal(aggregate.AdjustPrice(raw, baseDec, quoteDec), ohlcPriceDigits), true
 }
 
-// normalizedAssetPointsToWire is [assetPointsToWire] with every priced point passed through
-// [Server.normalizeCatalogueReadUSD]. A withheld point becomes a null-priced bucket, the shape the
-// series already uses for no trades, so the client's bucket grid is unchanged.
+// normalizedAssetPointsToWire is [assetPointsToWire] with each priced point normalised via [Server.normalizeCatalogueReadUSD];
+// a withheld point becomes a null-priced bucket, keeping the client's grid.
 func (s *Server) normalizedAssetPointsToWire(pts []timescale.AssetPricePoint, asset canonical.Asset) []AssetPricePoint {
 	out := assetPointsToWire(pts)
 	for i := range out {
@@ -327,10 +305,9 @@ func assetPointsToWire(pts []timescale.AssetPricePoint) []AssetPricePoint {
 	return out
 }
 
-// fillTransitivePrice fills a one-hop USD price when nothing else could price the asset. It is
-// reached from BOTH arms of applyAssetRowToDetail (row declined, or no row) because the no-row arm
-// is the case the feature exists for. It no-ops unless PriceUSD is still nil, and
-// transitivePriceFor gates both legs on scam and substance.
+// fillTransitivePrice fills a one-hop USD price when nothing else could price the asset. Reached from BOTH arms of
+// applyAssetRowToDetail (row declined, or no row); no-ops unless PriceUSD is nil, and transitivePriceFor gates both legs on
+// scam and substance.
 func (s *Server) fillTransitivePrice(ctx context.Context, detail *AssetDetail, asset canonical.Asset, assetID string) {
 	if detail == nil || detail.PriceUSD != nil {
 		return

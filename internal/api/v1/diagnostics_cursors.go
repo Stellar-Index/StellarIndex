@@ -24,16 +24,13 @@ type Cursor struct {
 	State       string `json:"state"`
 }
 
-// statusActiveMaxAge is the lag ceiling for `?status=active`. 10 minutes is generous for the live
-// indexer (cursor updates every ~5s) and still excludes completed backfill cursors that linger
-// for days or weeks.
+// statusActiveMaxAge is the lag ceiling for `?status=active`: generous for the live indexer (cursor updates ~5s), still
+// excluding completed backfill cursors that linger for weeks.
 const statusActiveMaxAge = 10 * time.Minute
 
-// cursorAbandonedAge is the age past which a cursor in a one-shot job's namespace is reported as
-// `abandoned` and dropped from the DEFAULT response; live namespaces are exempt (see
-// [cursorStateFor]). Nothing checkpoints weekly, so a week-old row records finished or abandoned
-// work, and `ingestion_cursors` has no retention policy, so those rows would otherwise swamp
-// every public response.
+// cursorAbandonedAge is the age past which a one-shot-namespace cursor is `abandoned` and dropped from the DEFAULT response
+// (live namespaces exempt, see [cursorStateFor]); `ingestion_cursors` has no retention policy, so those rows would swamp every
+// response.
 const cursorAbandonedAge = 7 * 24 * time.Hour
 
 // Cursor lifecycle states. Derived, not stored: an abandoned shard's writer went away without
@@ -53,13 +50,9 @@ const (
 	cursorsMaxLimit     = 2000
 )
 
-// cursorStateFor derives a row's lifecycle state from its source and lag, using the same
-// thresholds `?status=` filters on so state and filters cannot disagree.
-//
-// A row in a live cursor namespace ([timescale.LiveCursorSources]) is never `abandoned`: nothing
-// abandons the indexer's or projector's resume point, so an old row there means ingest is STUCK,
-// the condition this endpoint exists to surface. Ageing it out would hide the incident; it is the
-// same rule `reap-cursors` applies to the same list.
+// cursorStateFor derives lifecycle state from source and lag with the same thresholds `?status=` filters on. A live-namespace
+// row ([timescale.LiveCursorSources]) is never `abandoned`: an old row there means ingest is STUCK, the condition this endpoint
+// surfaces (same rule as `reap-cursors`).
 func cursorStateFor(source string, lag time.Duration) string {
 	switch {
 	case lag <= statusActiveMaxAge:
@@ -71,9 +64,7 @@ func cursorStateFor(source string, lag time.Duration) string {
 	}
 }
 
-// cursorsQuery is the parsed + validated query string of one
-// /v1/diagnostics/cursors request. Built by parseCursorsQuery so
-// handleCursors stays a fetch-filter-page function.
+// cursorsQuery is the parsed and validated query of one /v1/diagnostics/cursors request, built by parseCursorsQuery.
 type cursorsQuery struct {
 	maxAge           time.Duration
 	statusStale      bool
@@ -84,10 +75,8 @@ type cursorsQuery struct {
 	offset           int
 }
 
-// keeps reports whether a row survives every filter this query
-// carries. `state` and `lag` describe the same row; both are passed
-// so the abandoned test reads off the published state rather than
-// re-deriving it.
+// keeps reports whether a row survives every filter; `state` and `lag` are both passed so the abandoned test reads the
+// published state, not a re-derivation.
 func (q cursorsQuery) keeps(source, state string, lag time.Duration) bool {
 	switch {
 	case q.source != "" && source != q.source:
@@ -107,9 +96,7 @@ func (q cursorsQuery) keeps(source, state string, lag time.Duration) bool {
 	return true
 }
 
-// parseCursorsQuery validates every query param handleCursors accepts,
-// writing the Problem+JSON response itself and returning ok=false when
-// one is malformed.
+// parseCursorsQuery validates every handleCursors param, writing the Problem+JSON itself and returning ok=false when malformed.
 func parseCursorsQuery(w http.ResponseWriter, r *http.Request) (cursorsQuery, bool) {
 	var q cursorsQuery
 
@@ -178,13 +165,8 @@ func parseCursorsQuery(w http.ResponseWriter, r *http.Request) (cursorsQuery, bo
 	return q, true
 }
 
-// handleCursors serves GET /v1/diagnostics/cursors; parameters are
-// documented in the OpenAPI spec.
-//
-// The response defaults to non-abandoned rows, since permanent one-shot shard rows would
-// otherwise dominate it. Live namespaces are never `abandoned`, so stuck ingest cannot drop out
-// of the default view. Unknown `source` values return an empty array rather than 400, so a typo
-// and a brand-new source look the same.
+// handleCursors serves GET /v1/diagnostics/cursors (params in OpenAPI). Defaults to non-abandoned rows; live namespaces are
+// never `abandoned`, so stuck ingest cannot drop out. Unknown `source` returns an empty array, not 400.
 func (s *Server) handleCursors(w http.ResponseWriter, r *http.Request) {
 	if s.Cursors == nil {
 		writeProblem(w, r,
@@ -233,10 +215,8 @@ func (s *Server) handleCursors(w http.ResponseWriter, r *http.Request) {
 	writeEnvelope(w, env)
 }
 
-// pageCursors slices the filtered listing to one page and returns the
-// `pagination.next` offset token, empty when the page is the last one.
-// Always returns a non-nil slice so `data` marshals as [] rather than
-// null on an over-the-end offset.
+// pageCursors slices the filtered listing to one page and returns the `pagination.next` offset token (empty on the last page);
+// always non-nil so `data` marshals as [] not null.
 func pageCursors(rows []Cursor, offset, limit int) ([]Cursor, string) {
 	if offset >= len(rows) {
 		return []Cursor{}, ""
@@ -248,9 +228,8 @@ func pageCursors(rows []Cursor, offset, limit int) ([]Cursor, string) {
 	return rows, ""
 }
 
-// writeCursorsListError maps a ListCursors error to a Problem+JSON response. A generic 500 would
-// not distinguish "postgres briefly stalled" (retry) from "endpoint broken" (escalate), so
-// transient and timeout shapes map to 503. Split out of handleCursors for the gocognit ceiling.
+// writeCursorsListError maps a ListCursors error to Problem+JSON: transient and timeout shapes give 503 (retry), not a generic
+// 500 ("endpoint broken"). Split from handleCursors for the gocognit ceiling.
 func (s *Server) writeCursorsListError(w http.ResponseWriter, r *http.Request, listCtx context.Context, err error) {
 	if clientAborted(r, err) {
 		return

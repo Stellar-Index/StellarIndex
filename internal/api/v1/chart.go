@@ -40,13 +40,9 @@ type ChartSeries struct {
 	DataEndsAt      *WireTime `json:"data_ends_at,omitempty"`
 }
 
-// markDiscontinuity stamps the interior-gap signal onto a series about to be written.
-//
-// `points` has no holes, so without this a quiet market is indistinguishable from a span the
-// deployment cannot answer: `truncated` covers only the series START and the coverage annotation
-// only an EMPTY series. The threshold is the next bucket on the granularity's own grid
-// ([chartBucketStep]), not a fixed duration, since `prices_1mo` buckets are calendar months. Only
-// the WIDEST gap is reported; an unknown grid emits nothing because a false gap claim is worse.
+// markDiscontinuity stamps the interior-gap signal onto a series about to be written: `points` has no holes, so a quiet market
+// would otherwise look like a span we cannot answer. Threshold is the next bucket on the granularity's grid
+// ([chartBucketStep]); only the WIDEST gap is reported, and an unknown grid emits nothing (a false gap claim is worse).
 func (c *ChartSeries) markDiscontinuity() {
 	for i := 1; i < len(c.Points); i++ {
 		next := chartBucketStep(c.Points[i-1].T.Time(), c.Granularity)
@@ -67,11 +63,8 @@ func (c *ChartSeries) markDiscontinuity() {
 	}
 }
 
-// chartBucketStep returns the START of the bucket following the one at t, on the same grid
-// `time_bucket(<gran>, ts, 'UTC')` lays down in the CAGGs. The zero time means no known grid.
-//
-// `1mo` advances by a CALENDAR month, deliberately not [chartGranularityGrace]'s fixed duration,
-// which is wrong for 7 months of every year.
+// chartBucketStep returns the START of the bucket after t on the CAGG `time_bucket` grid, zero if unknown. `1mo` advances by a
+// CALENDAR month, unlike [chartGranularityGrace]'s fixed duration.
 func chartBucketStep(t time.Time, gran string) time.Time {
 	u := t.UTC()
 	switch gran {
@@ -94,25 +87,20 @@ func chartBucketStep(t time.Time, gran string) time.Time {
 	}
 }
 
-// writeChartJSON is the single write seam for every /v1/chart series response, so no chart
-// shape reaches the wire without its gap signal ([ChartSeries.markDiscontinuity]). The default
-// vwap path uses [Server.writeChartSeries], which also adds the coverage annotation.
+// writeChartJSON is the single write seam for /v1/chart series, so every shape carries its gap signal
+// ([ChartSeries.markDiscontinuity]); the vwap path goes via [Server.writeChartSeries], which adds coverage.
 func writeChartJSON(w http.ResponseWriter, series ChartSeries, flags Flags) {
 	series.markDiscontinuity()
 	writeJSON(w, series, flags)
 }
 
-// chartTimeframeSpec captures what each prescribed timeframe
-// translates to: a window duration and a default granularity.
-// `all` has zero duration → no lower bound (since-inception).
+// chartTimeframeSpec is a timeframe's window duration and default granularity; `all` has zero duration (no lower bound).
 type chartTimeframeSpec struct {
 	Duration       time.Duration
 	DefaultGranule string
 }
 
-// chartTimeframes is the canonical timeframe → spec table per
-// ADR-0020. Adding a new timeframe is a one-line change here plus
-// an OpenAPI enum update.
+// chartTimeframes is the timeframe-to-spec table per ADR-0020; a new entry also needs the OpenAPI enum.
 var chartTimeframes = map[string]chartTimeframeSpec{
 	"1h":  {Duration: time.Hour, DefaultGranule: "1m"},
 	"24h": {Duration: 24 * time.Hour, DefaultGranule: "15m"},
@@ -122,26 +110,15 @@ var chartTimeframes = map[string]chartTimeframeSpec{
 	"all": {Duration: 0, DefaultGranule: "1d"},
 }
 
-// seriesWithheldForScam applies the directory-scam gate to a served price SERIES,
-// writing the withheld problem and reporting true when it must not be served.
-// `surface` is the low-cardinality metric label ("chart", "history_series").
-//
-// An ungated chart hands over a flagged issuer's whole trajectory, making a manufactured market
-// look legitimate. Placement is load-bearing: called before dispatchSpecialisedChart and from
-// handleHistorySinceInception, so ONE check covers every variant. It asks about BOTH legs via
-// [scamWithheld], so naming the flagged asset as the quote cannot yield the inverted trajectory.
-// It is not in the history reader because /v1/history and /v1/observations keep raw trades
-// visible: raw trades versus an AGGREGATED price claim is the line.
+// seriesWithheldForScam applies the directory-scam gate to a served price SERIES, writing the withheld problem and reporting true; `surface`
+// is the low-cardinality metric label. Placement is load-bearing: before dispatchSpecialisedChart and from handleHistorySinceInception, and
+// via [scamWithheld] it asks about BOTH legs. Raw /v1/history and /v1/observations trades stay visible; an AGGREGATED price claim does not.
 func (s *Server) seriesWithheldForScam(w http.ResponseWriter, r *http.Request, pair canonical.Pair, surface string) bool {
 	return s.writeIfScamWithheld(w, r, pair.Base, pair.Quote, surface)
 }
 
-// handleChart serves
-// GET /v1/chart?asset=<id>&quote=<id>&timeframe=<tf>&granularity=<g>&price_type=<pt>
-//
-// Defaults: quote=USD, timeframe=24h, price_type=vwap. The response is a CAGG-served series of
-// CLOSED buckets (ADR-0015). twap (twap_1h / twap_1d CAGGs, snapped to 1h or 1d) and market_cap
-// are dispatched in dispatchSpecialisedChart before the default vwap path.
+// handleChart serves GET /v1/chart (defaults quote=USD, timeframe=24h, price_type=vwap): a CAGG series of CLOSED buckets
+// (ADR-0015). twap and market_cap are dispatched in dispatchSpecialisedChart first.
 func (s *Server) handleChart(w http.ResponseWriter, r *http.Request) {
 	if s.History == nil {
 		writeProblem(w, r,
@@ -283,16 +260,13 @@ func (s *Server) dispatchSpecialisedChart(
 	return false
 }
 
-// fiatChartGranularity snaps any requested granularity onto the one grain fx_quotes serves: one
-// row per ticker per UTC day. The SNAPPED value is stamped on the response so
-// [markDiscontinuity] and the truncation check measure the grid actually served.
+// fiatChartGranularity snaps any granularity to the one fx_quotes serves (daily); the SNAPPED value is stamped so
+// [markDiscontinuity] and truncation measure the grid served.
 func fiatChartGranularity(string) string {
 	return string(timescale.Granularity1d)
 }
 
-// twapChartGranularity snaps a requested granularity onto one of the two TWAP CAGG grains:
-// sub-daily to 1h, daily and up to 1d. The TWAP surface is deliberately coarser than VWAP to keep
-// the CAGG footprint to two views; handleChartTWAP reports the snapped grain.
+// twapChartGranularity snaps to the two TWAP CAGG grains (sub-daily to 1h, else 1d); handleChartTWAP reports the snapped grain.
 func twapChartGranularity(gran string) string {
 	switch gran {
 	case "1d", "1w", "1mo":
@@ -314,9 +288,8 @@ var chartTWAPGranularityLadder = []timescale.HistoryGranularity{
 	timescale.Granularity1h, timescale.Granularity1d,
 }
 
-// chartGranularityFits reports whether the `gran` grid over `window` has at most
-// [historyMaxPoints] points. An unknown grain "fits" so the reader's [ErrUnknownGranularity]
-// still becomes the 400 that enumerates the served set.
+// chartGranularityFits reports whether the `gran` grid over `window` has at most [historyMaxPoints] points; an unknown grain
+// "fits" so [ErrUnknownGranularity] still becomes the 400.
 func chartGranularityFits(gran string, window time.Duration) bool {
 	width := timescale.HistoryGranularity(gran).BucketDuration()
 	if width <= 0 {
@@ -326,14 +299,9 @@ func chartGranularityFits(gran string, window time.Duration) bool {
 	return (window+width-1)/width <= historyMaxPoints
 }
 
-// chartFitGranularity is the grain a window is SERVED at: `gran` when its grid fits, else the
-// finest COARSER rung of `ladder` that does.
-//
-// The reader caps a response at [historyMaxPoints] and truncation takes the EARLIEST buckets, so
-// an unfitted `?timeframe=1y&granularity=1m` would be a 200 covering 36 of 365 days still labelled
-// "1m". Coarsening also makes [chartWindow.covered] reachable. It depends on the REQUEST alone, so
-// `window <= 0` (point count is a property of the DATA) or an exhausted ladder returns `gran`
-// untouched: serving the requested grain truncated beats naming a grain never read.
+// chartFitGranularity is the grain a window is SERVED at: `gran` if it fits, else the finest COARSER rung of `ladder` that
+// does. The reader truncates the EARLIEST buckets, so an unfitted 1y at 1m would be a 200 covering 36 of 365 days labelled
+// "1m". Depends on the REQUEST alone: `window <= 0` or an exhausted ladder returns `gran` untouched.
 func chartFitGranularity(ladder []timescale.HistoryGranularity, gran string, window time.Duration) string {
 	if window <= 0 || chartGranularityFits(gran, window) {
 		return gran
@@ -351,9 +319,8 @@ func chartFitGranularity(ladder []timescale.HistoryGranularity, gran string, win
 	return gran
 }
 
-// handleChartTWAP serves /v1/chart?price_type=twap for a non-fiat base from the twap_1h / twap_1d
-// CAGGs. It mirrors the VWAP path (closed buckets, stablecoin-USD proxy fallback) but snaps the
-// granularity to the TWAP grain served.
+// handleChartTWAP serves price_type=twap for a non-fiat base from the twap_1h / twap_1d CAGGs, mirroring the VWAP path (closed
+// buckets, stablecoin-USD proxy fallback) at the TWAP grain.
 func (s *Server) handleChartTWAP(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -435,11 +402,8 @@ func (s *Server) handleChartTWAP(
 	writeChartJSON(w, series, Flags{Triangulated: walk.proxied, Stale: walk.degraded, Degraded: walk.degraded})
 }
 
-// handleChartFiat serves /v1/chart for fiat:fiat pairs from the fx_quotes hypertable, one row per
-// ticker per UTC day.
-//
-// The reader returns the CCY-per-USD rate: fiat:CCY/fiat:USD uses InverseUSD, fiat:USD/fiat:CCY
-// uses RateUSD, and a cross is triangulated by [Server.handleChartFiatCross].
+// handleChartFiat serves fiat:fiat pairs from fx_quotes, one row per ticker per UTC day. The reader gives CCY-per-USD:
+// fiat:CCY/fiat:USD uses InverseUSD, fiat:USD/fiat:CCY RateUSD, and a cross goes to [Server.handleChartFiatCross].
 func (s *Server) handleChartFiat(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -533,10 +497,8 @@ func (s *Server) handleChartFiat(
 	writeChartJSON(w, series, Flags{})
 }
 
-// handleChartFiatCross serves cross pairs (neither side USD) as rate_usd[quote] / rate_usd[base],
-// the algebra /v1/price's tryFiatCrossRate uses. A day missing either leg is skipped, never
-// forward-filled, so each point is two same-day observations. Division is big.Rat (ADR-0003) and
-// the response stamps flags.triangulated.
+// handleChartFiatCross serves non-USD fiat crosses as rate_usd[quote] / rate_usd[base] (as /v1/price's tryFiatCrossRate). A day
+// missing either leg is skipped, never forward-filled; division is big.Rat (ADR-0003); flags.triangulated is set.
 func (s *Server) handleChartFiatCross(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -635,9 +597,8 @@ func crossFiatChartPoints(basePts, quotePts []FXQuotePoint) []HistoryPointWire {
 	return wire
 }
 
-// chartGranularityGrace is the gap between `from` and the first bucket above which the response
-// counts as retention-truncated: one granularity period, since less is just an empty first
-// bucket. Unknown grains get a generous 1-day grace to avoid false positives.
+// chartGranularityGrace is the first-bucket gap above which a response counts as retention-truncated: one granularity period;
+// unknown grains get 1 day to avoid false positives.
 func chartGranularityGrace(gran string) time.Duration {
 	switch gran {
 	case "1m":
@@ -659,15 +620,9 @@ func chartGranularityGrace(gran string) time.Duration {
 	}
 }
 
-// chartBucketMerge accumulates a chart series bucket by bucket: the FIRST source
-// offered a bucket owns it, and every later source is suppressed for that bucket
-// AND FOR NO OTHER.
-//
-// Per-bucket rule of [docs/architecture/aggregation-plan.md] "The fiat quote leg, per bucket".
-// First-hit once per RESPONSE would make the source set a function of the WINDOW, so one bucket
-// would render differently across windows, and a walk gated on an EMPTY series cannot fill a hole.
-// Sources are NOT blended within a bucket, so this never publishes a VWAP no venue set produced
-// (the /v1/vwap point-path gate).
+// chartBucketMerge accumulates a series bucket by bucket: the FIRST source offered a bucket owns it, and later sources are suppressed for
+// that bucket only ("The fiat quote leg, per bucket" in docs/architecture/aggregation-plan.md). Once-per-response first-hit would make the
+// source set depend on the WINDOW. Sources are never blended within a bucket, so no VWAP is published that no venue set produced.
 type chartBucketMerge struct {
 	byBucket map[time.Time]HistoryPoint
 }
@@ -676,9 +631,7 @@ func newChartBucketMerge() *chartBucketMerge {
 	return &chartBucketMerge{byBucket: make(map[time.Time]HistoryPoint)}
 }
 
-// add claims every bucket of `points` no earlier source claimed and reports how many, which is
-// how a caller learns whether a source contributed (so whether the response is proxied).
-// Buckets are keyed in UTC because [time.Time] compares location as well as instant.
+// empty reports whether no bucket is held. Buckets are keyed in UTC because [time.Time] compares location as well as instant.
 func (m *chartBucketMerge) empty() bool { return len(m.byBucket) == 0 }
 
 func (m *chartBucketMerge) add(points []HistoryPoint) int {
@@ -694,9 +647,8 @@ func (m *chartBucketMerge) add(points []HistoryPoint) int {
 	return claimed
 }
 
-// series returns the merged buckets in ascending order, which [ChartSeries.markDiscontinuity]
-// assumes and map iteration does not give. earliest is the oldest claimed bucket (zero when none);
-// [chartWindow.covered] anchors its grid walk on it.
+// earliest is the oldest claimed bucket (zero when none); [chartWindow.covered] anchors its grid walk on it. Merged series must
+// be ascending ([ChartSeries.markDiscontinuity] assumes it).
 func (m *chartBucketMerge) earliest() time.Time {
 	var first time.Time
 	for b := range m.byBucket {
@@ -719,31 +671,17 @@ func (m *chartBucketMerge) series() []HistoryPoint {
 	return out
 }
 
-// chartWindow is the request a source walk has to cover: the read's lower bound and bucket grid.
-// A zero `from` is unbounded below, so coverage can never be established and the walk runs its
-// whole list.
+// chartWindow is the request a source walk must cover: the read's lower bound and bucket grid. A zero `from` is unbounded, so
+// coverage is never established and the walk runs its whole list.
 type chartWindow struct {
 	from time.Time
 	gran string
 }
 
-// covered reports whether `m` already holds EVERY bucket the reader can return for
-// this window, so no remaining source can add one and the walk may stop with a result
-// identical to the full walk's.
-//
-// It is exact: the store returns only CLOSED buckets at or after `from` and every claimed bucket
-// is a `time_bucket` grid point, so the grid's count of DISTINCT buckets means all of them. No
-// grid point may lie between `from` and the earliest held: the point one step BEFORE the earliest
-// lies before `from`, which needs no grid origin.
-//
-// TWO UNENFORCED PRECONDITIONS:
-//  1. Every claimed bucket is a grid point; true only because every read goes to
-//     `prices_<gran>` / `twap_<gran>`.
-//  2. The reader's closed-bucket clock is not ahead of the handler's; true only because the API
-//     and Postgres share one UTC host (docs/architecture/ha-plan.md §3.6).
-//
-// Either failure silently truncates the series with NO wire signal, because a clean `covered`
-// stop deliberately does not set `flags.stale`.
+// covered reports whether `m` already holds EVERY bucket the reader can return, so the walk may stop identically to the full
+// walk (the store returns only CLOSED grid-point buckets at or after `from`). Two UNENFORCED preconditions: every claimed
+// bucket is a grid point (reads go to `prices_<gran>` / `twap_<gran>`), and the reader's closed-bucket clock is not ahead of
+// the handler's (one UTC host, docs/architecture/ha-plan.md §3.6). A failure truncates silently, with no `flags.stale`.
 func (w chartWindow) covered(m *chartBucketMerge, now time.Time) bool {
 	if w.from.IsZero() || m.empty() {
 		return false
@@ -799,10 +737,7 @@ func chartFixedBucketWidth(gran string) (time.Duration, bool) {
 	}
 }
 
-// chartBucketPrev is [chartBucketStep] backwards: the start of the
-// bucket immediately preceding the one starting at t. Safe for `1mo`
-// because a monthly bucket start is always midnight on the 1st, where
-// month arithmetic does not overflow into the following month.
+// chartBucketPrev is [chartBucketStep] backwards; safe for `1mo` since a monthly bucket start is midnight on the 1st.
 func chartBucketPrev(t time.Time, gran string) time.Time {
 	u := t.UTC()
 	if d, fixed := chartFixedBucketWidth(gran); fixed {
@@ -814,14 +749,9 @@ func chartBucketPrev(t time.Time, gran string) time.Time {
 	return time.Time{}
 }
 
-// chartWalkBudget bounds the reads a source walk makes ONCE IT ALREADY HOLDS A SERIES TO SERVE.
-// Reads while the merge is empty produce the base answer and keep the handler's 8s ceiling.
-//
-// The walk multiplies reads by up to 24 (3 alias spellings + 21 proxies) inside one 8s budget,
-// and every HistoryPointsInRange is an uncached CAGG scan. Unbounded, a slow constituent at
-// `timeframe=1y&granularity=1m` turns a ~1.2s 200 into a `503 chart-timeout`. 2s exceeds a warm
-// read at the grains that matter (~3k rows per pair for `1d`/`all`) yet abandons the fine-grain
-// case after one read. A walk that stops here serves what it merged and stamps flags.stale.
+// chartWalkBudget bounds reads a walk makes ONCE IT HOLDS A SERIES; reads on an empty merge keep the handler's 8s ceiling. The
+// walk fans out up to 24 uncached CAGG scans, so unbounded a slow constituent at 1y/1m turns a 200 into a `503 chart-timeout`.
+// A walk stopped here serves what it merged and stamps flags.stale.
 const chartWalkBudget = 2 * time.Second
 
 // chartWalkResult is what one source walk produced, beyond the points.
@@ -870,10 +800,8 @@ type chartRead func(ctx context.Context, p canonical.Pair, from, to time.Time, l
 // chartSpan is a half-open bucket range [from, to) of a [chartRead].
 type chartSpan struct{ from, to time.Time }
 
-// missingSpans returns the window's readable buckets `m` does not hold, as ranges on the grid
-// [chartWindow.covered] counts. A later source only claims unclaimed buckets, so reading these
-// ranges merges exactly what a full-window read would while bounding the scan width. nil when the
-// window is unbounded below or the grain unknown.
+// missingSpans returns the window's readable buckets `m` does not hold, as ranges on the [chartWindow.covered] grid, so later
+// reads scan only the gaps. nil when unbounded below or the grain is unknown.
 func (w chartWindow) missingSpans(m *chartBucketMerge, now time.Time) []chartSpan {
 	if w.from.IsZero() || m.empty() || chartBucketStep(m.earliest(), w.gran).IsZero() {
 		return nil
@@ -903,9 +831,8 @@ func (w chartWindow) missingSpans(m *chartBucketMerge, now time.Time) []chartSpa
 	return coalesceChartSpans(runs)
 }
 
-// coalesceChartSpans bridges ascending, disjoint runs across their narrowest
-// gaps while the bridged width stays within the runs' own, so the spans scan
-// at most twice the missing width in at most len(runs) reads.
+// coalesceChartSpans bridges ascending disjoint runs across their narrowest gaps while the bridged width stays within the runs'
+// own: at most twice the missing width in at most len(runs) reads.
 func coalesceChartSpans(runs []chartSpan) []chartSpan {
 	if len(runs) < 2 {
 		return runs
@@ -953,10 +880,8 @@ func (s *Server) newChartWalk(pair canonical.Pair, win chartWindow, read chartRe
 	return &chartWalk{s: s, pair: pair, win: win, read: read, merge: newChartBucketMerge()}
 }
 
-// chartSourceClass is the axis the walk's ERROR handling splits on. An ALIAS source is the
-// requested pair in another spelling, so its failure IS the answer (bad `?granularity=`, dead
-// store, cancelled client). A PROXY source is a peg or backer quote standing in for it; its
-// failure is skipped and may never be the answer.
+// chartSourceClass splits the walk's ERROR handling. An ALIAS source is the requested pair in another spelling, so its failure
+// IS the answer; a PROXY source (peg or backer quote) failure is skipped and never the answer.
 type chartSourceClass int
 
 const (
@@ -964,18 +889,9 @@ const (
 	chartSourceProxy
 )
 
-// step reads one source pair into the merge. It returns false when the walk must
-// stop, and an error only on the one class of read whose failure is the answer.
-//
-// TWO axes; conflating them is a regression in both directions:
-//
-//   - BUDGET is merge state. A read on an EMPTY merge keeps the handler's whole 8s ceiling because
-//     it usually IS the answer (most large assets are served through a PROXY read); once the merge
-//     holds a series a further read can only FILL, so [chartWalkBudget] bounds it.
-//   - ERRORS are source CLASS, not merge state: splitting on merge state would turn a failing
-//     early proxy (on an empty merge) into a `503` instead of a `200` with the series.
-//
-// A proxy failure therefore CONTINUES; after a budget timeout the next iteration sees it spent.
+// step reads one source into the merge; false means stop, and an error is returned only for a read whose failure is the answer. Two axes,
+// not to be conflated: BUDGET follows merge state (empty merge keeps the full 8s; once a series is held [chartWalkBudget] bounds fills),
+// ERRORS follow source CLASS (an early proxy failure must not become a `503` instead of a `200`); a proxy failure CONTINUES.
 func (w *chartWalk) step(ctx context.Context, sp canonical.Pair, class chartSourceClass) (bool, error) {
 	if w.merge.empty() {
 		// Nothing merged yet: this read can still be the answer, so it keeps the handler's
@@ -1003,9 +919,8 @@ func (w *chartWalk) step(ctx context.Context, sp canonical.Pair, class chartSour
 	return w.fill(ctx, sp, spans), nil
 }
 
-// fill reads one source over `spans` inside [chartWalkBudget], reporting
-// whether the walk may continue. flags.stale is set exactly when a read
-// failed or the budget cut the walk short.
+// fill reads one source over `spans` inside [chartWalkBudget], reporting whether the walk may continue; flags.stale is set
+// exactly when a read failed or the budget cut the walk short.
 func (w *chartWalk) fill(ctx context.Context, sp canonical.Pair, spans []chartSpan) bool {
 	if len(spans) > 1 {
 		// A one-bucket read over the spans' hull shows whether this source
@@ -1061,22 +976,17 @@ func (w *chartWalk) claim(sp canonical.Pair, points []HistoryPoint) {
 	}
 }
 
-// adjustSourcePoints applies the dex-nonstandard-decimals normalisation with the SOURCE pair's
-// own legs, per source rather than over the merged array: the factor 10^(baseDecimals -
-// quoteDecimals) belongs to the pair the bucket was READ from, and the requested pair's factor
-// would scale a bucket by an asset that never appeared in it.
+// adjustSourcePoints applies the nonstandard-decimals normalisation per SOURCE pair, not over the merged array: the
+// 10^(baseDecimals - quoteDecimals) factor belongs to the pair the bucket was READ from.
 func (s *Server) adjustSourcePoints(sp canonical.Pair, points []HistoryPoint) []HistoryPoint {
 	return adjustHistoryPointPrices(points,
 		aggregate.ResolveDecimals(s.NonstandardDecimals, sp.Base),
 		aggregate.ResolveDecimals(s.NonstandardDecimals, sp.Quote))
 }
 
-// chartSeriesPoints is the one entry point every chart surface uses: the directly observed
-// markets ([Server.chartObservedPoints]) and, only when those answered nothing, the series derived
-// through XLM ([Server.fiatSeriesThroughXLM]).
-//
-// The derived route stays a WHOLE-SERIES last resort, not a per-bucket filler: mixing composed
-// buckets into a traded series would put two kinds of number in one array.
+// chartSeriesPoints is the one entry point for chart surfaces: observed markets ([Server.chartObservedPoints]), then only if
+// those answered nothing the series derived through XLM ([Server.fiatSeriesThroughXLM]). Derived is a WHOLE-SERIES last resort,
+// never a per-bucket filler (two kinds of number in one array).
 func (s *Server) chartSeriesPoints(
 	ctx context.Context,
 	pair canonical.Pair,
@@ -1101,9 +1011,8 @@ func (s *Server) chartSeriesPoints(
 	return nil, res, nil
 }
 
-// chartObservedPoints merges every DIRECTLY OBSERVED source (alias spellings, then for a fiat quote
-// the stablecoin proxies) into one per-bucket series. No derivation, so a leg of
-// [Server.fiatSeriesThroughXLM] can read it without the cross recursing into itself.
+// chartObservedPoints merges every DIRECTLY OBSERVED source (alias spellings, then fiat-quote stablecoin proxies) with no
+// derivation, so a [Server.fiatSeriesThroughXLM] leg can read it without recursing.
 func (s *Server) chartObservedPoints(
 	ctx context.Context,
 	pair canonical.Pair,
@@ -1120,18 +1029,10 @@ func (s *Server) chartObservedPoints(
 	return w.merge.series(), w.res, nil
 }
 
-// chartStablecoinFallback handles the X/fiat -> X/<proxy> path. The literal fiat-quoted pair
-// rarely has CAGG rows because the stablecoin -> fiat mapping is aggregator policy applied at
-// read time; the depth lives under the stablecoin and classic-peg pairs. It fills buckets the
-// requested quote's own spellings left unanswered. A non-fiat quote has no proxies.
-//
-// It runs on EVERY fiat-quoted request, not only an empty series, since a series with a hole isn't
-// empty; [chartBucketMerge]'s per-bucket claim stops a proxy displacing a bucket the requested
-// quote answered. It must never COST the series: reads once the merge holds a series are bounded
-// by [chartWalkBudget], and a failed read marks the response degraded and moves on. The walk stops
-// once the window is fully claimed ([chartWindow.covered]).
-//
-// `read` fetches one pair's closed-bucket series (prices_<gran> for VWAP, twap_<gran> for TWAP).
+// chartStablecoinFallback handles X/fiat via X/<proxy> (the stablecoin-to-fiat mapping is aggregator policy applied at read
+// time). It runs on EVERY fiat-quoted request, since a series with a hole is not empty; [chartBucketMerge] stops a proxy
+// displacing a bucket the requested quote answered. It must never COST the series: reads once one is held are bounded by
+// [chartWalkBudget], failures mark the response degraded, and the walk stops at [chartWindow.covered].
 func (s *Server) chartStablecoinFallback(ctx context.Context, w *chartWalk) error {
 	if w.pair.Quote.Type != canonical.AssetFiat {
 		return nil
@@ -1148,17 +1049,10 @@ func (s *Server) chartStablecoinFallback(ctx context.Context, w *chartWalk) erro
 	return nil
 }
 
-// chartFiatProxyPairs is the ordered proxy-source list a fiat-quoted chart series is filled from,
-// the analogue of the constituents the live VWAP combines. It includes the abstract stablecoin
-// backers: a classic-pegs-only list finds nothing where USD depth is CEX-sourced.
-//
-// Order is deterministic for cross-region stability (ADR-0015) and load-bearing: under
-// [chartBucketMerge] the first pair holding a bucket owns it. Two passes across ALL peg families:
-// (1) ESTABLISHED spellings, classic pegs in config order then abstract backers (sorted, via
-// aggregate.FiatBackers); (2) HELD-BACK spellings, in practice a peg's SAC wrapper, where every
-// Soroban AMM's dollar leg is stored. Per-family ordering would let one family's thin SAC pool
-// own a bucket another family's classic book can answer. The base leg keeps its own ordering
-// ([canonical.AssetAliases], SAC last).
+// chartFiatProxyPairs is the ordered proxy list for a fiat-quoted series, including abstract stablecoin backers. Order is deterministic
+// across regions (ADR-0015) and load-bearing, as the first pair holding a bucket owns it: pass 1 ESTABLISHED spellings (classic pegs in
+// config order, then sorted aggregate.FiatBackers), pass 2 HELD-BACK spellings (a peg's SAC wrapper) across ALL families, so one family's
+// thin SAC pool cannot own a bucket another's classic book answers. The base leg keeps [canonical.AssetAliases] order (SAC last).
 func (s *Server) chartFiatProxyPairs(pair canonical.Pair) []canonical.Pair {
 	established, heldBack := s.chartFiatProxyQuotes(pair.Quote)
 	out := s.chartProxyPairsFor(pair, established, nil)
@@ -1237,10 +1131,9 @@ func (s *Server) chartProxyPairsFor(
 	return out
 }
 
-// chartAliasPairs is the requested pair in every canonical spelling of both legs (the XLM
-// dual-form cross), in [canonical.AssetAliases] priority order: literal first, SAC last. Identity
-// combinations are dropped. Separate from the read so [Server.chartCoverageSet] enumerates exactly
-// what the serving read does.
+// chartAliasPairs is the requested pair in every canonical spelling of both legs (XLM dual-form), in [canonical.AssetAliases]
+// order (literal first, SAC last), identity dropped. Separate from the read so [Server.chartCoverageSet] enumerates exactly
+// what serving reads.
 func (s *Server) chartAliasPairs(pair canonical.Pair) []canonical.Pair {
 	out := make([]canonical.Pair, 0, len(assetAliases(pair.Base))*len(assetAliases(pair.Quote)))
 	for _, b := range assetAliases(pair.Base) {
@@ -1255,14 +1148,10 @@ func (s *Server) chartAliasPairs(pair canonical.Pair) []canonical.Pair {
 	return distinctMarkets(out)
 }
 
-// chartMergeAliasPairs reads every alias spelling of the requested pair into `m`,
-// so each bucket is served by the highest-priority spelling that holds it.
-//
-// A literal-keyed read alone would be blind to venues publishing XLM under the other id
-// (`?asset=native` vs the CEX-fed `crypto:XLM/<quote>`). An alias is the same asset, not a proxy,
-// so a hit does NOT raise flags.triangulated, and spellings rank per BUCKET rather than blend
-// (no VWAP no venue set produced). An alias error (e.g. [ErrUnknownGranularity]) propagates; once
-// a spelling has answered, a later failure degrades instead (see [chartSourceClass]).
+// chartMergeAliasPairs reads every alias spelling of the pair into `m`, each bucket going to the highest-priority spelling
+// holding it (a literal read misses `native` vs `crypto:XLM/<quote>` venues). An alias is not a proxy, so flags.triangulated
+// stays false; spellings rank per BUCKET, never blend. An alias error (e.g. [ErrUnknownGranularity]) propagates; once one has
+// answered, a later failure degrades ([chartSourceClass]).
 func (s *Server) chartMergeAliasPairs(ctx context.Context, w *chartWalk) error {
 	for _, ap := range s.chartAliasPairs(w.pair) {
 		cont, err := w.step(ctx, ap, chartSourceAlias)
@@ -1284,21 +1173,10 @@ func (s *Server) chartVWAPReader(gran string) chartRead {
 	}
 }
 
-// fiatSeriesThroughXLM derives a fiat-quoted series for a non-XLM asset by crossing
-// its XLM-quoted series with XLM's own series in that fiat, bucket by bucket:
-// price(asset, CCY)[t] = price(asset, XLM)[t] x price(XLM, CCY)[t].
-//
-// The XLM-pivot twin of tryUSDAnchoredFiatCross (ADR-0051), for when the declared USD peg has no
-// USD leg to anchor on. It is the fiat fallback's LAST route, so it only fills an otherwise absent
-// series; flags.triangulated=true.
-//
-// The proxy walk can't price the numeraire itself; crossing the USDC/XLM book with XLM's CEX
-// dollar series gives the peg's traded price, where a depeg is visible, whereas a flat 1.0 from
-// the declaration would hide it.
-//
-// Both legs use [Server.chartObservedPoints] (no cross of crosses). The asset leg is read first so
-// an asset with no XLM market costs no pivot read. Only buckets on BOTH legs are emitted. A leg's
-// alias-class read error is returned: swallowing it would serve a failed read as an empty series.
+// fiatSeriesThroughXLM derives a fiat-quoted series by crossing asset/XLM with XLM/CCY per bucket (XLM-pivot twin of
+// tryUSDAnchoredFiatCross, ADR-0051), for a declared USD peg with no USD leg; the fiat fallback's LAST route, sets flags.triangulated. The
+// traded price shows a depeg a flat 1.0 would hide. Both legs use [Server.chartObservedPoints] (no cross of crosses), asset leg first; only
+// buckets on BOTH legs emit; a leg's alias-class error is returned, not served as empty.
 func (s *Server) fiatSeriesThroughXLM(
 	ctx context.Context, pair canonical.Pair, win chartWindow,
 	read chartRead,
@@ -1333,9 +1211,8 @@ func (s *Server) fiatSeriesThroughXLM(
 	return crossed, res, nil
 }
 
-// fiatCrossLegsThroughXLM is the gate and leg enumeration of [Server.fiatSeriesThroughXLM]: for a
-// fiat-quoted, non-fiat, non-XLM base it returns base/XLM and XLM/quote, else ok=false. Separate so
-// [Server.chartCoverageSet] enumerates the SAME legs the serving read multiplies.
+// fiatCrossLegsThroughXLM is the gate and leg list of [Server.fiatSeriesThroughXLM] (fiat-quoted, non-fiat, non-XLM base gives
+// base/XLM and XLM/quote), shared so [Server.chartCoverageSet] enumerates the SAME legs.
 func fiatCrossLegsThroughXLM(pair canonical.Pair) ([2]canonical.Pair, bool) {
 	if pair.Quote.Type != canonical.AssetFiat || pair.Base.Type == canonical.AssetFiat {
 		return [2]canonical.Pair{}, false
@@ -1355,10 +1232,8 @@ func fiatCrossLegsThroughXLM(pair canonical.Pair) ([2]canonical.Pair, bool) {
 	return [2]canonical.Pair{assetLeg, xlmLeg}, true
 }
 
-// crossSeriesThroughPivot merge-joins two ascending closed-bucket series and emits
-// base/pivot x pivot/quote per shared bucket, as [crossFiatChartPoints] does for fiat legs. A
-// bucket missing on either side is skipped, never carried forward. VolumeUSD is the base leg's,
-// unchanged by the pivot.
+// crossSeriesThroughPivot merge-joins two ascending series into base/pivot x pivot/quote per shared bucket; a bucket missing on
+// either side is skipped, never carried forward. VolumeUSD is the base leg's.
 func crossSeriesThroughPivot(basePts, pivotPts []HistoryPoint) []HistoryPoint {
 	n := len(basePts)
 	if len(pivotPts) < n {
@@ -1391,10 +1266,9 @@ func crossSeriesThroughPivot(basePts, pivotPts []HistoryPoint) []HistoryPoint {
 	return out
 }
 
-// crossThroughPivot is the one multiplication under every pivot cross (base/pivot x pivot/quote)
-// on NUMERIC text: exact big.Rat (ADR-0003), rendered via [ratToDecimal]. ok=false when a leg
-// fails to parse or is not strictly positive: that is a miss, not a zero. Series and point
-// surfaces share it so rounding and refusals cannot drift apart.
+// crossThroughPivot is the one pivot multiplication on NUMERIC text: exact big.Rat (ADR-0003) via [ratToDecimal]. ok=false when
+// a leg is unparseable or not strictly positive (a miss, not a zero). Shared by series and point surfaces so rounding and
+// refusals cannot drift.
 func crossThroughPivot(basePerPivot, pivotPerQuote string) (string, bool) {
 	br, pr := ratFromDecimal(basePerPivot), ratFromDecimal(pivotPerQuote)
 	if br == nil || pr == nil || br.Sign() <= 0 || pr.Sign() <= 0 {
@@ -1403,10 +1277,9 @@ func crossThroughPivot(basePerPivot, pivotPerQuote string) (string, bool) {
 	return ratToDecimal(new(big.Rat).Mul(br, pr), ohlcPriceDigits), true
 }
 
-// adjustHistoryPointPrices applies the dex-nonstandard-decimals normalization to every point's VWAP
-// (docs/operations/runbooks/dex.md). VolumeUSD is NOT touched: it is already USD-denominated.
-// Points are returned UNCHANGED when baseDecimals == quoteDecimals, for byte-identical wire
-// output: the CAGG's NUMERIC::text formatting differs from [ratToDecimal]'s fixed 10 digits.
+// adjustHistoryPointPrices applies the nonstandard-decimals normalisation to each VWAP (docs/operations/runbooks/dex.md);
+// VolumeUSD is untouched (already USD). Equal decimals return points UNCHANGED for byte-identical output, as the CAGG's
+// NUMERIC::text differs from [ratToDecimal]'s fixed 10 digits.
 func adjustHistoryPointPrices(points []HistoryPoint, baseDecimals, quoteDecimals int) []HistoryPoint {
 	if baseDecimals == quoteDecimals || len(points) == 0 {
 		return points
@@ -1443,10 +1316,7 @@ func parseChartPair(w http.ResponseWriter, r *http.Request) (canonical.Pair, boo
 	return pair, true
 }
 
-// parseChartParams resolves timeframe, granularity, and price_type
-// — applying ADR-0020 defaults and rejecting unsupported values.
-// Returns (raw timeframe, timeframe spec, granularity, price_type,
-// ok). ok=false on any validation failure (problem written).
+// parseChartParams resolves timeframe, granularity and price_type with ADR-0020 defaults; ok=false after writing the problem.
 func parseChartParams(w http.ResponseWriter, r *http.Request) (string, chartTimeframeSpec, string, string, bool) {
 	tfRaw := r.URL.Query().Get("timeframe")
 	if tfRaw == "" {
@@ -1488,9 +1358,7 @@ func parseChartParams(w http.ResponseWriter, r *http.Request) (string, chartTime
 	return tfRaw, tf, gran, priceType, true
 }
 
-// parseChartAssetQuote pulls `asset` (required) + `quote` (default
-// fiat:USD per defaultPriceQuote) from the chart request. Returns
-// ok=false after writing a problem response on any parse error.
+// parseChartAssetQuote parses `asset` (required) and `quote` (default defaultPriceQuote); ok=false after writing the problem.
 func parseChartAssetQuote(w http.ResponseWriter, r *http.Request) (canonical.Asset, canonical.Asset, bool) {
 	rawAsset, ok := resolveAssetOrBaseParam(w, r)
 	if !ok {
@@ -1517,10 +1385,8 @@ func parseChartAssetQuote(w http.ResponseWriter, r *http.Request) (canonical.Ass
 	return asset, quote, true
 }
 
-// handleChartMarketCap serves /v1/chart?price_type=market_cap.
-//
-// Fiat base: daily M2 (verified-currency catalogue) x inverse_usd (fx_quotes daily snapshot).
-// Non-fiat base: routed to handleChartMarketCapCrypto. The quote is always fiat:USD.
+// handleChartMarketCap serves price_type=market_cap. Fiat base: daily M2 (catalogue) x inverse_usd (fx_quotes); non-fiat goes
+// to handleChartMarketCapCrypto. The quote is always fiat:USD.
 func (s *Server) handleChartMarketCap(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -1618,10 +1484,8 @@ func (s *Server) handleChartMarketCap(
 	writeChartJSON(w, series, Flags{})
 }
 
-// writeChartTimeout answers a chart read that blew its own budget while
-// the request was still live, rather than falling through to an empty
-// series at 200 with no flag: a deadline is retryable capacity, not an
-// absence of data.
+// writeChartTimeout answers a chart read that blew its budget with a retryable 503 rather than an empty 200 with no flag: a
+// deadline is capacity, not absence of data.
 func (s *Server) writeChartTimeout(w http.ResponseWriter, r *http.Request, leg, ticker string) {
 	w.Header().Set("Retry-After", "5")
 	writeProblem(w, r, "https://api.stellarindex.io/errors/chart-timeout", "Chart query timed out",
@@ -1629,10 +1493,8 @@ func (s *Server) writeChartTimeout(w http.ResponseWriter, r *http.Request, leg, 
 		fmt.Sprintf("%s for %s did not return inside the request budget; retry shortly.", leg, ticker))
 }
 
-// marketCapReadFailed triages a failed market-cap leg read. A client hangup
-// writes nothing; a blown budget is retryable capacity and gets the
-// chart-timeout 503; anything else degrades to an empty series that is
-// flagged stale rather than presented as fact.
+// marketCapReadFailed triages a failed leg read: client hangup writes nothing; a blown budget gets the `chart-timeout` 503;
+// anything else is an empty series flagged stale, not presented as fact.
 func (s *Server) marketCapReadFailed(w http.ResponseWriter, r *http.Request, ctx context.Context, err error, leg string, pair canonical.Pair, tfRaw, gran string, from time.Time, msg string, kv ...any) {
 	if clientAborted(r, err) {
 		return
@@ -1645,11 +1507,8 @@ func (s *Server) marketCapReadFailed(w http.ResponseWriter, r *http.Request, ctx
 	writeChartJSON(w, emptyMarketCapSeries(pair, tfRaw, gran, from), Flags{Stale: true, Degraded: true})
 }
 
-// writeMarketCapTimeout answers a market-cap read that blew its deadline with the same
-// `chart-timeout` 503 the vwap and twap paths use.
-//
-// A deadline must not degrade to emptyMarketCapSeries at 200: a caller would render "market cap
-// $0" for an asset with real supply, indistinguishable from no data. Only a 5xx says retry.
+// writeMarketCapTimeout answers a blown market-cap deadline with the same `chart-timeout` 503 as vwap/twap: an empty 200 would
+// render "market cap $0" for an asset with real supply. Only a 5xx says retry.
 func (s *Server) writeMarketCapTimeout(w http.ResponseWriter, r *http.Request, leg string, pair canonical.Pair, tfRaw, gran string) {
 	s.logger.Warn("market_cap crypto: deadline exceeded",
 		"leg", leg, "asset", pair.Base.String(), "quote", pair.Quote.String(),
@@ -1660,10 +1519,8 @@ func (s *Server) writeMarketCapTimeout(w http.ResponseWriter, r *http.Request, l
 		"the market-cap series' price + supply reads didn't both return inside the request budget; retry shortly.")
 }
 
-// emptyMarketCapSeries is the no-data response shape (empty points array, not null).
-//
-// Callers reaching it from a read FAILURE must flag the envelope Stale: an unflagged empty series
-// claims "this asset has no market cap", not "we could not compute one".
+// emptyMarketCapSeries is the no-data shape (empty points array, not null). Callers reaching it from a read FAILURE must set
+// flags.stale: unflagged it claims "no market cap", not "could not compute".
 func emptyMarketCapSeries(pair canonical.Pair, tfRaw, gran string, _ time.Time) ChartSeries {
 	return ChartSeries{
 		AssetID:     pair.Base.String(),
@@ -1675,10 +1532,9 @@ func emptyMarketCapSeries(pair canonical.Pair, tfRaw, gran string, _ time.Time) 
 	}
 }
 
-// handleChartMarketCapCrypto serves /v1/chart?price_type=market_cap for an on-chain base: each
-// day's USD price (prices_1d with the stablecoin-USD proxy fallback) x that day's circulating
-// supply (supply_1d CAGG, forward-filled). Off-chain crypto:* assets have no on-chain supply
-// (supply.AssetKey errors), so they return an empty series rather than a fabricated cap.
+// handleChartMarketCapCrypto serves market_cap for an on-chain base: daily USD price (prices_1d, stablecoin-USD proxy fallback)
+// x forward-filled supply_1d. Off-chain crypto:* assets have no on-chain supply (supply.AssetKey errors) and return an empty
+// series, not a fabricated cap.
 func (s *Server) handleChartMarketCapCrypto(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -1778,10 +1634,9 @@ func (s *Server) handleChartMarketCapCrypto(
 	writeChartJSON(w, series, Flags{Triangulated: walk.proxied, Stale: walk.degraded || supplyStale, Degraded: walk.degraded})
 }
 
-// marketCapSeriesRefused applies the detail page's valuation guards ([Server.marketCapRefused],
-// then the turnover ceiling on the latest cap) so the chart cannot plot a valuation the headline
-// refuses. Today's verdict applies to the whole series, since the inputs (venue count, trailing-24h
-// volume) are current readings. Unmeasured inputs never refuse.
+// marketCapSeriesRefused applies the detail page's valuation guards ([Server.marketCapRefused], then the turnover ceiling on
+// the latest cap) so the chart cannot plot a valuation the headline refuses. Today's verdict covers the whole series (inputs
+// are current readings); unmeasured inputs never refuse.
 func (s *Server) marketCapSeriesRefused(ctx context.Context, base canonical.Asset, wire []HistoryPointWire) (refused, lowLiquidity bool) {
 	if len(wire) == 0 {
 		return false, false
@@ -1803,16 +1658,14 @@ func (s *Server) marketCapSeriesRefused(ctx context.Context, base canonical.Asse
 	return false, false
 }
 
-// marketCapSupplyMaxCarry bounds how far a supply_1d bucket may be forward-filled onto later price
-// days. The newest bucket is a completed prior day, so today legitimately reads yesterday's supply,
-// and two days covers the window after midnight before the CAGG refresh. Past that the observer has
-// missed whole days and the product would be today's price times a supply nobody is measuring.
+// marketCapSupplyMaxCarry bounds forward-filling a supply_1d bucket onto later price days: two days covers the post-midnight
+// CAGG refresh window; beyond it the observer has missed days and the product would pair today's price with an unmeasured
+// supply.
 const marketCapSupplyMaxCarry = 48 * time.Hour
 
-// marketCapPoints forward-fills daily supply onto the daily USD-price series and multiplies, using
-// the latest supply at-or-before each day, carried at most marketCapSupplyMaxCarry. Inputs are
-// ascending by bucket. A day with no usable supply is skipped, never emitted as zero; supplyStale
-// reports that the carry bound cut at least one day.
+// marketCapPoints multiplies the daily USD price by the latest supply at-or-before each day, carried at most
+// marketCapSupplyMaxCarry; inputs ascending. A day with no usable supply is skipped, never zero; supplyStale reports that the
+// carry bound cut a day.
 func marketCapPoints(pricePts []HistoryPoint, supPts []timescale.SupplyDayPoint, baseDecimals int) (wire []HistoryPointWire, supplyStale bool) {
 	wire = make([]HistoryPointWire, 0, len(pricePts))
 	si := 0
@@ -1839,10 +1692,8 @@ func marketCapPoints(pricePts []HistoryPoint, supPts []timescale.SupplyDayPoint,
 	return wire, supplyStale
 }
 
-// fiatSupplyWholeUnits converts the catalogue's (supply, decimals) tuple into an EXACT whole-unit
-// big.Rat. Supplies are decimal strings in the smallest unit; fiat M2 has decimals 0, tokens 7 or
-// 18. Exact by construction (ADR-0003): float64 would truncate past 53 bits (~9.0e15). Returns
-// ok=false when supplyStr isn't a decimal or decimals is negative.
+// fiatSupplyWholeUnits converts (supply, decimals) into an EXACT whole-unit big.Rat (ADR-0003: float64 truncates past 2^53);
+// ok=false when supplyStr is not a decimal or decimals is negative.
 func fiatSupplyWholeUnits(supplyStr string, decimals int) (*big.Rat, bool) {
 	if decimals < 0 {
 		return nil, false

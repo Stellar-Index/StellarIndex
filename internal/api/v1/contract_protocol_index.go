@@ -8,19 +8,16 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// contractProtocolIndexTTL bounds how stale a COMPLETE contract → protocol
-// map may be. Rosters change when a factory deploys a new instance; ten
-// minutes late on a label is fine, a registry read per contract is not.
+// contractProtocolIndexTTL bounds how stale a COMPLETE contract-to-protocol map may be; a late label is fine, a registry read
+// per contract is not.
 const contractProtocolIndexTTL = 10 * time.Minute
 
-// contractProtocolIndexRetryTTL is how long an INCOMPLETE map (a roster read failed) is served
-// before rebuilding: short enough that a registry blip does not leave cohorts unlabelled for
-// the full TTL, long enough that an outage does not make every request a failing read storm.
+// contractProtocolIndexRetryTTL is how long an INCOMPLETE map (a roster read failed) is served: short so a blip does not
+// unlabel cohorts for the full TTL, long enough to avoid a failing-read storm.
 const contractProtocolIndexRetryTTL = 30 * time.Second
 
-// contractProtocolIndexBuildTimeout bounds one build. A request-triggered build runs detached
-// from the request that noticed the map was due, so a spent request budget can neither stall
-// on it nor cut it short into a statics-only map served to everyone.
+// contractProtocolIndexBuildTimeout bounds one build; it runs detached from the triggering request, so a spent request budget
+// can neither stall on it nor cut it into a statics-only map served to everyone.
 const contractProtocolIndexBuildTimeout = 5 * time.Second
 
 type contractProtocolIndex struct {
@@ -34,10 +31,8 @@ type contractProtocolIndex struct {
 	inFlight bool
 }
 
-// contractProtocol names the protocol a C... contract belongs to: the registry's statics plus
-// every roster instance (the same read /v1/protocols/{name}/contracts serves), cached for
-// contractProtocolIndexTTL. A miss is a contract no protocol claims. Nil-safe: a deployment
-// with no protocol readers labels nothing.
+// contractProtocol names the protocol a C... contract belongs to (registry statics plus roster instances, as
+// /v1/protocols/{name}/contracts), cached for contractProtocolIndexTTL. A miss is a contract no protocol claims; nil-safe.
 func (s *Server) contractProtocol(ctx context.Context, contractID string) (string, bool) {
 	idx := s.contractProtocolIndexFor(ctx)
 	name, ok := idx[contractID]
@@ -52,10 +47,8 @@ func (s *Server) PrewarmContractProtocolIndex(ctx context.Context) {
 	s.rebuildContractProtocolIndex(ctx)
 }
 
-// contractProtocolIndexFor serves the current map and, when it is due,
-// starts ONE rebuild in the background; it never builds on the caller's
-// goroutine. Until the first build lands the map is nil, which labels
-// nothing — the answer a contract no protocol claims gets.
+// contractProtocolIndexFor serves the current map and, when due, starts ONE background rebuild, never on the caller's
+// goroutine. A nil map (before the first build) labels nothing.
 func (s *Server) contractProtocolIndexFor(ctx context.Context) map[string]string {
 	s.contractIndex.mu.Lock()
 	m := s.contractIndex.byID
@@ -69,9 +62,7 @@ func (s *Server) contractProtocolIndexFor(ctx context.Context) map[string]string
 	return m
 }
 
-// claimContractProtocolIndexBuild reports whether the map is due for a
-// build and, if so, marks one in flight so no other caller starts a
-// second.
+// claimContractProtocolIndexBuild reports whether a build is due and marks it in flight so no second starts.
 func (s *Server) claimContractProtocolIndexBuild() bool {
 	s.contractIndex.mu.Lock()
 	defer s.contractIndex.mu.Unlock()
@@ -87,9 +78,8 @@ func (s *Server) claimContractProtocolIndexBuild() bool {
 	return true
 }
 
-// rebuildContractProtocolIndex runs one claimed build and publishes it.
-// inFlight is cleared from a defer so a panic in the build cannot leave
-// it stuck true, with every later call serving the old map forever.
+// rebuildContractProtocolIndex runs one claimed build and publishes it; inFlight is cleared in a defer so a panic cannot leave
+// it stuck true with the old map served forever.
 func (s *Server) rebuildContractProtocolIndex(ctx context.Context) {
 	defer func() {
 		s.contractIndex.mu.Lock()
@@ -111,10 +101,9 @@ func (s *Server) rebuildContractProtocolIndex(ctx context.Context) {
 	s.contractIndex.complete = complete
 }
 
-// carryForwardFailedProtocols keeps the previous map's labels for protocols whose roster read
-// failed, so a transient registry error cannot unlabel known contracts. A protocol that
-// answered is taken as it answered, and on a conflict the fresh build wins. built is private
-// to the caller and extended in place; prev is published and never written.
+// carryForwardFailedProtocols keeps the previous map's labels for protocols whose roster read failed, so a transient error
+// cannot unlabel contracts; answered protocols win on conflict. built is extended in place; prev is published and never
+// written.
 func carryForwardFailedProtocols(prev, built map[string]string, failed []string) map[string]string {
 	if len(failed) == 0 || len(prev) == 0 {
 		return built
@@ -134,9 +123,8 @@ func carryForwardFailedProtocols(prev, built map[string]string, failed []string)
 	return built
 }
 
-// buildContractProtocolIndex walks the registry, statics first then the roster, so the roster
-// (the more specific source) wins a contract both name. complete is false, and failed names
-// the sources, when any roster read errored: the map is still served but not cached for long.
+// buildContractProtocolIndex walks statics then the roster, so the more specific roster wins a shared contract. complete=false
+// (failed names the sources) when a roster read errored: served but not cached for long.
 func (s *Server) buildContractProtocolIndex(ctx context.Context) (byID map[string]string, complete bool, failed []string) {
 	out := make(map[string]string, 1024)
 	for _, meta := range protocolRegistry {

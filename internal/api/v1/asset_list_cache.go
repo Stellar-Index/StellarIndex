@@ -11,16 +11,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// assetListCacheTTL is how long a rendered /v1/assets listing page is
-// served as fresh. Every overlay on the page (substance verdicts, supply,
-// directory tags) is itself cached for a minute or more, so 30s adds
-// little age while taking the whole overlay fan-out off the request path.
+// assetListCacheTTL is how long a rendered /v1/assets page is fresh; the overlays are each cached a minute or more, so 30s adds
+// little age while removing the fan-out from the request path.
 const assetListCacheTTL = 30 * time.Second
 
-// assetListCacheMaxAge bounds stale-while-revalidate: past it a page is
-// rebuilt on the request rather than replayed. Matches the listing rows'
-// own 2-minute cache, so a replayed page is never older than its rows
-// could be.
+// assetListCacheMaxAge bounds stale-while-revalidate: past it a page is rebuilt on the request. Matches the listing rows'
+// 2-minute cache, so a replayed page is never older than its rows could be.
 const assetListCacheMaxAge = 2 * time.Minute
 
 // assetListCacheMaxEntries bounds the cache; the key carries free-text
@@ -36,10 +32,8 @@ type assetListEntry struct {
 	flight   bool
 }
 
-// assetListResponseCache is the response-level cache for the default
-// /v1/assets listing (handleAssetListFromAssets). The overlays (supply, issuer directory,
-// substance re-measurement, token decimals) fan out to Postgres and ClickHouse per request;
-// caching the rendered page covers all of them, as assetDetailResponseCache does for detail.
+// assetListResponseCache caches the rendered default /v1/assets listing (handleAssetListFromAssets), covering all the
+// per-request overlay fan-out, as assetDetailResponseCache does for detail.
 type assetListResponseCache struct {
 	mu      sync.Mutex
 	entries map[string]*assetListEntry
@@ -57,9 +51,8 @@ func newAssetListResponseCache(ttl, maxAge time.Duration) *assetListResponseCach
 	}
 }
 
-// lookup returns the body to replay for key. Past the TTL it returns the
-// stale-flagged body and, for exactly one caller until the refresh
-// settles, refresh=true. Past maxAge it misses.
+// lookup returns the body to replay for key. Past the TTL it returns the stale-flagged body and refresh=true to exactly one
+// caller until the refresh settles; past maxAge it misses.
 func (c *assetListResponseCache) lookup(key string) (body []byte, refresh, ok bool) {
 	if c == nil || c.ttl <= 0 {
 		return nil, false, false
@@ -152,9 +145,8 @@ func assetListCacheKey(r *http.Request) string {
 	return r.URL.Query().Encode()
 }
 
-// assetListPageCacheable reports whether a built page may be replayed. A
-// stale-flagged page (unmeasured substance, stale rows) or one carrying a
-// transient read failure would outlive the outage that shaped it.
+// assetListPageCacheable reports whether a built page may be replayed: a stale-flagged page or one with a transient read
+// failure would outlive the outage that shaped it.
 func assetListPageCacheable(env Envelope, rows []AssetDetail) bool {
 	if env.Flags.Stale {
 		return false
@@ -167,9 +159,8 @@ func assetListPageCacheable(env Envelope, rows []AssetDetail) bool {
 	return true
 }
 
-// refreshAssetListPage rebuilds a listing page off the request path and
-// stores it when cacheable. The clone carries r's query (include=…) onto
-// the detached build, which runs on the fill's own budget.
+// refreshAssetListPage rebuilds a listing page off the request path and stores it when cacheable; the clone carries r's query
+// onto a detached build on its own budget.
 func (s *Server) refreshAssetListPage(
 	r *http.Request, key string, filters assetListFilters, cursor string, limit int, order timescale.AssetsOrder,
 ) {

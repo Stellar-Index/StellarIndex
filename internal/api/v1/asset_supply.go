@@ -18,12 +18,9 @@ type TokenSupplyReader interface {
 	NativeTotalCoins(ctx context.Context) (totalCoins int64, ledger uint32, err error)
 }
 
-// isNativeSupplyAlias reports whether a raw {asset_id} segment names XLM in any canonical spelling.
-// It parses rather than string-matching, because a literal comparison is case-sensitive and
-// /v1/assets/xlm/supply would 404 as "no supply data". The XLM SAC address is deliberately NOT
-// routed here even though canonical.AssetAliases lists it: the SAC's supply is the amount
-// currently WRAPPED, a different quantity from the header's total_coins, served by the contract
-// branch.
+// isNativeSupplyAlias reports whether {asset_id} names XLM in any canonical spelling (parsed, since a literal compare is
+// case-sensitive and /v1/assets/xlm/supply would 404). The XLM SAC is deliberately NOT routed here: its supply is the amount
+// WRAPPED, not the header's total_coins.
 func isNativeSupplyAlias(assetID string) bool {
 	parsed, err := canonical.ParseAsset(assetID)
 	if err != nil {
@@ -186,10 +183,9 @@ type ContractStorageSupplyReader interface {
 	ContractStorageSupply(ctx context.Context, contractID string) (clickhouse.ContractStorageSupply, error)
 }
 
-// storageSupplyResponse builds the storage-derived answer for a token the event log cannot speak
-// to. ok=false means no defensible answer (404), since a flowless token's event reading is an
-// unfounded zero. Every refusal is silent to the client: a fallback must not turn a 200 into a 502
-// because its own optional source declined.
+// storageSupplyResponse builds the storage-derived answer for a token the event log cannot speak to; ok=false means no
+// defensible answer (404), since a flowless token's event reading is an unfounded zero. Refusals are silent: an optional
+// fallback must not turn a 200 into a 502.
 func (s *Server) storageSupplyResponse(ctx context.Context, assetID, contractID string) (AssetSupply, bool, bool) {
 	if s.ContractStorageSupply == nil {
 		return AssetSupply{}, false, false
@@ -233,10 +229,8 @@ func (s *Server) storageSupplyResponse(ctx context.Context, assetID, contractID 
 	return resp, stale, true
 }
 
-// resolveSupplyContractID maps an asset_id to the contract_id supply_flows is keyed by: a C-strkey
-// is itself; a classic (CODE-ISSUER) derives its SAC, a pure function of (asset, passphrase) valid
-// even before deployment. sac_wrappers is deliberately NOT consulted: an entry can only equal the
-// derived SAC or point supply at another contract.
+// resolveSupplyContractID maps an asset_id to the contract_id supply_flows is keyed by: a C-strkey is itself, a classic asset
+// derives its SAC (valid before deployment). sac_wrappers is deliberately NOT consulted.
 func (s *Server) resolveSupplyContractID(assetID string) (string, bool) {
 	if canonical.IsContractID(assetID) {
 		return assetID, true

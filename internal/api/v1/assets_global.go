@@ -103,10 +103,8 @@ func (s *Server) buildGlobalAssetView(ctx context.Context, vc *currency.Verified
 	return s.fillGlobalPriceFromOnChain(ctx, view, vc)
 }
 
-// populateGlobalCryptoPrice fills the price block for a crypto or stablecoin catalogue entry via
-// the three-tier global chain (vwap_native → aggregator_avg → triangulated). It leaves the
-// fields nil when no GlobalPriceReader is wired or every tier misses; the caller then applies
-// the on-chain fallback.
+// populateGlobalCryptoPrice fills the price block via the three-tier global chain (vwap_native, aggregator_avg, triangulated);
+// fields stay nil when no GlobalPriceReader is wired or every tier misses, and the caller applies the on-chain fallback.
 func (s *Server) populateGlobalCryptoPrice(ctx context.Context, view GlobalAssetView, vc *currency.VerifiedCurrency) GlobalAssetView {
 	if s.globalPrice == nil {
 		return view
@@ -157,15 +155,9 @@ func (s *Server) populateGlobalCryptoPrice(ctx context.Context, view GlobalAsset
 	return view
 }
 
-// fillGlobalPriceFromOnChain is the headline-price fallback for a Stellar-only verified token:
-// when the global CEX/aggregator tier produced no price, serve the SAME on-chain per-asset USD
-// price the /v1/assets listing shows, from the catalogue entry's Stellar-network twin. It is only
-// set when the per-asset reader returns a non-nil PriceUSD for the twin asset_id.
-//
-// Disclosure: authority is AuthorityOnChainListing, not vwap_native, because the listing price
-// clears no trade-count floor and no freshness ceiling. price_sources carries a "stellar_onchain"
-// marker and price_as_of stays nil (no observation time). No-op when the price is already set, no
-// per-asset reader is wired, or the catalogue entry has no Stellar issuance.
+// fillGlobalPriceFromOnChain is the headline-price fallback for a Stellar-only verified token: when the global tier has no price, serve the
+// on-chain listing price of the catalogue entry's Stellar twin. Authority is AuthorityOnChainListing, not vwap_native (no trade-count floor,
+// no freshness ceiling), so price_sources carries "stellar_onchain" and price_as_of stays nil. No-op if a price is set.
 func (s *Server) fillGlobalPriceFromOnChain(ctx context.Context, view GlobalAssetView, vc *currency.VerifiedCurrency) GlobalAssetView {
 	if view.PriceUSD != nil || s.AssetsReader == nil {
 		return view
@@ -184,9 +176,8 @@ func (s *Server) fillGlobalPriceFromOnChain(ctx context.Context, view GlobalAsse
 	return view
 }
 
-// populateFiatView fills the price and market-cap block for a fiat currency. USD is
-// identity-priced; other fiats use the fiat:CCY/fiat:USD rate from [Server.fiatUSDPriceFor].
-// The view is returned as-is when no rate is available.
+// populateFiatView fills a fiat currency's price and market cap: USD is identity-priced, others use the fiat:CCY/fiat:USD rate
+// from [Server.fiatUSDPriceFor]; unchanged when no rate exists.
 func (s *Server) populateFiatView(ctx context.Context, view GlobalAssetView, vc *currency.VerifiedCurrency) GlobalAssetView {
 	if strings.EqualFold(vc.Ticker, "USD") {
 		identity := "1.00000000000000"
@@ -212,11 +203,9 @@ func (s *Server) populateFiatView(ctx context.Context, view GlobalAssetView, vc 
 	return view
 }
 
-// decimalsCorrectedGlobalReader is where the global view's vwap_native tier becomes a served
-// price. [aggregate.GlobalPriceReader] returns the RAW prices_1m quote/base ratio with no
-// decimals, so [New] wraps every reader in this: LatestVWAP applies aggregate.AdjustPrice with
-// the legs the bucket was read under (the alias ComputeGlobalPrice asked for, not the requested
-// spelling). The other two tiers are already whole-unit prices and pass through.
+// decimalsCorrectedGlobalReader makes the vwap_native tier a served price: [aggregate.GlobalPriceReader] returns the RAW
+// prices_1m ratio, so LatestVWAP applies aggregate.AdjustPrice with the legs the bucket was read under (the alias
+// ComputeGlobalPrice asked for). The other two tiers are whole-unit already.
 type decimalsCorrectedGlobalReader struct {
 	aggregate.GlobalPriceReader
 	decimals *NonstandardDecimalsCache
@@ -248,9 +237,8 @@ func (g decimalsCorrectedGlobalReader) LatestVWAP(ctx context.Context, base, quo
 	return ratToDecimal(aggregate.AdjustPrice(raw, baseDec, quoteDec), ohlcPriceDigits), asOf, tradeCount, sources, true, nil
 }
 
-// assetForCurrency builds the canonical asset to query global pricing for: `fiat:CCY` for fiat
-// slugs, `crypto:TICKER` otherwise. Non-allow-listed tickers return ok=false and the caller
-// renders the identity without a price block.
+// assetForCurrency builds the canonical asset for global pricing (`fiat:CCY` or `crypto:TICKER`); non-allow-listed tickers
+// return ok=false and render without a price block.
 func assetForCurrency(vc *currency.VerifiedCurrency) (canonical.Asset, bool) {
 	if vc.Class == currency.ClassFiat {
 		a, err := canonical.NewFiatAsset(vc.Ticker)
@@ -262,16 +250,9 @@ func assetForCurrency(vc *currency.VerifiedCurrency) (canonical.Asset, bool) {
 	return globalBaseForTicker(vc.Ticker)
 }
 
-// fiatUSDPriceFor resolves a non-USD fiat's USD price, when it was observed and what produced it.
-// It is the single fallback chain shared by the LISTING ([Server.fiatMarketCapUSD]) and DETAIL
-// ([Server.populateFiatView]) paths so they cannot drift. PriceReader alone returns
-// ErrPriceNotFound for any fiat-quoted request (no on-chain fiat/fiat trades).
-//
-// Order is load-bearing: fx_quotes first (the authoritative store the forex worker lands in),
-// PriceReader only as a last resort for deployments without fx_quotes wiring.
-//
-// InverseUSD, not RateUSD: rate_usd is UNITS-OF-TICKER PER 1 USD (JPY 163.09), inverse_usd is "1
-// unit in USD". Swapping them is a 24,000x error for JPY.
+// fiatUSDPriceFor resolves a non-USD fiat's USD price, shared by the LISTING and DETAIL paths so they cannot drift. Order is
+// load-bearing: fx_quotes first, PriceReader only as a last resort (it returns ErrPriceNotFound for fiat quotes). Use
+// InverseUSD ("1 unit in USD"), NOT RateUSD (units per USD): swapping them is a 24,000x error for JPY.
 func (s *Server) fiatUSDPriceFor(ctx context.Context, ticker string) (price string, asOf time.Time, sources []string, ok bool) {
 	// Path 1: fx_quotes.
 	if s.FXHistory != nil {
@@ -306,16 +287,9 @@ func (s *Server) fiatUSDPriceFor(ctx context.Context, ticker string) (price stri
 	return snap.Price, snap.ObservedAt.Time(), srcs, true
 }
 
-// fiatMarketCapUSD computes market_cap_usd for a fiat catalogue entry. USD is special-cased to
-// identity (price = 1.00); every other fiat goes through the FX-rate fallback chain:
-//
-//  1. fxHistory (fx_quotes): the latest point in a trailing 7-day window, using its InverseUSD as
-//     the fiat to USD price. This is authoritative because the continuous forex worker lands there.
-//  2. PriceReader.LatestPrice as a last resort. It cannot go first: storePriceReader fast-paths a
-//     `quote.Type==fiat` request to ErrPriceNotFound (see cmd/stellarindex-api/main.go), so it
-//     never returns a value for fiat to fiat.
-//
-// Returns nil when neither path returns a price or the supply parse fails.
+// fiatMarketCapUSD computes market_cap_usd for a fiat entry: USD is identity (1.00); others use the latest fx_quotes point in a
+// trailing 7 days (InverseUSD, authoritative). PriceReader.LatestPrice is last resort only: storePriceReader fast-paths fiat
+// quotes to ErrPriceNotFound. Nil when neither returns a price or the supply parse fails.
 func (s *Server) fiatMarketCapUSD(ctx context.Context, vc *currency.VerifiedCurrency) *string {
 	if vc.CirculatingSupply == "" {
 		return nil
@@ -330,9 +304,8 @@ func (s *Server) fiatMarketCapUSD(ctx context.Context, vc *currency.VerifiedCurr
 	return computeFiatMarketCap(vc.CirculatingSupply, vc.SupplyDecimals, price)
 }
 
-// computeFiatMarketCap returns supplyStr / 10^decimals x priceStr to 2 fractional digits, or nil
-// when an operand cannot be parsed. Scaling goes through fiatSupplyWholeUnits so this figure and
-// the market-cap chart agree for any catalogue supply_decimals.
+// computeFiatMarketCap returns supplyStr / 10^decimals x priceStr to 2 dp, nil when unparseable; it scales via
+// fiatSupplyWholeUnits so it agrees with the market-cap chart.
 func computeFiatMarketCap(supplyStr string, decimals int, priceStr string) *string {
 	if supplyStr == "" || priceStr == "" {
 		return nil
@@ -351,10 +324,8 @@ func computeFiatMarketCap(supplyStr string, decimals int, priceStr string) *stri
 	return &out
 }
 
-// globalBaseForTicker returns the canonical asset to query the global price for. The
-// `crypto:<TICKER>` form lets CEX trades and aggregators fill tiers 1 and 2 against one key.
-// Non-allow-listed tickers (typically Stellar-only tokens) return ok=false, so their headline
-// price is unavailable here and consumers use the Stellar network's deep_link.
+// globalBaseForTicker returns the canonical `crypto:<TICKER>` asset so CEX trades and aggregators fill tiers 1 and 2 against
+// one key; non-allow-listed tickers (Stellar-only tokens) return ok=false and consumers use the deep_link.
 func globalBaseForTicker(ticker string) (canonical.Asset, bool) {
 	a, err := canonical.NewCryptoAsset(ticker)
 	if err != nil {
@@ -363,11 +334,8 @@ func globalBaseForTicker(ticker string) (canonical.Asset, bool) {
 	return a, true
 }
 
-// handleGlobalAsset serves the verified-currency global view at `/v1/assets/{slug}`, called by
-// `handleAssetGet` when the path matches a catalogue slug.
-//
-// It always returns 200 with whatever the reader chain produced: `price_usd: null` is the
-// legitimate state for a Stellar-only token with no global price.
+// handleGlobalAsset serves the verified-currency global view at `/v1/assets/{slug}` (via handleAssetGet). Always 200:
+// `price_usd: null` is legitimate for a Stellar-only token with no global price.
 func (s *Server) handleGlobalAsset(w http.ResponseWriter, r *http.Request, vc *currency.VerifiedCurrency) {
 	view := s.buildGlobalAssetView(r.Context(), vc)
 	writeJSON(w, view, Flags{})
@@ -397,9 +365,8 @@ type VerifiedCurrencyListItem struct {
 	Issuer  string `json:"issuer,omitempty"`
 }
 
-// handleAssetsVerified serves GET /v1/assets/verified, the full verified-currency catalogue.
-// Order is the seed-file order, which the loader preserves, so it is deterministic. It returns
-// 503 when no catalogue is wired and an empty list on a test net, where no issuer exists.
+// handleAssetsVerified serves GET /v1/assets/verified in deterministic seed-file order; 503 when no catalogue is wired, empty
+// on a test net.
 func (s *Server) handleAssetsVerified(w http.ResponseWriter, r *http.Request) {
 	if !s.servesPubnetReference() {
 		writeJSON(w, []VerifiedCurrencyListItem{}, Flags{})
@@ -419,9 +386,8 @@ func (s *Server) handleAssetsVerified(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out, Flags{})
 }
 
-// attachVerifiedImages fills each verified row's Image from the issuer's cached SEP-1 currency
-// entry. It is bounded by the catalogue size, reads only the sep1_payload cache (no live
-// HTTPS) and is best-effort per row. The same isSafeImageURL gate as the detail overlay applies.
+// attachVerifiedImages fills each row's Image from the issuer's cached SEP-1 entry (sep1_payload cache only, no live HTTPS),
+// best-effort per row, behind the same isSafeImageURL gate as the detail overlay.
 func (s *Server) attachVerifiedImages(ctx context.Context, entries []*currency.VerifiedCurrency, out []VerifiedCurrencyListItem) {
 	if s.Sep1Cache == nil {
 		return
@@ -488,10 +454,8 @@ func verifiedStellarIdentity(se *currency.IssuanceEntry) (assetID, issuer string
 	return a.String(), a.Issuer
 }
 
-// attachFiatMarketCaps computes market_cap_usd for fiat rows in parallel via fiatMarketCapUSD
-// (M2 x FX rate). No-op only when NEITHER rate source is wired: fiatMarketCapUSD tries fxHistory
-// first and the USD ticker needs no reader, so gating on `s.Prices == nil` alone would skip every
-// fiat market cap on a deployment that wired fxHistory but not PriceReader.
+// attachFiatMarketCaps computes fiat market caps in parallel via fiatMarketCapUSD. No-op only when NEITHER rate source is
+// wired: gating on `s.Prices == nil` alone would skip every fiat cap on a deployment with fxHistory but no PriceReader.
 func (s *Server) attachFiatMarketCaps(ctx context.Context, entries []*currency.VerifiedCurrency, out []VerifiedCurrencyListItem) {
 	if s.Prices == nil && s.FXHistory == nil {
 		return

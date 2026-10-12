@@ -173,23 +173,17 @@ const (
 	backupSLOSnapshot = 36 * time.Hour
 )
 
-// backupClockSkewTolerance bounds how far a stamp may sit in the FUTURE of the API's own clock
-// and still be judged on its face.
-//
-// Ages cross clocks (API host vs the backup host's stamps), so a sub-minute negative age is NTP
-// divergence on a fresh item: it floors to 0 and keeps its verdict. A minute is 15x inside the
-// tightest SLO (WAL, 15 min), so it cannot mask a breach. Beyond it the reading bounds nothing, so
-// the verdict is "unknown" (degrading the roll-up), never a green zero. Same shape as
-// canonical.SafeUnixFutureWindow, tighter because these are our hosts.
+// backupClockSkewTolerance bounds how far a stamp may sit in the FUTURE of the API clock and still be judged: a sub-minute
+// negative age is NTP skew and floors to 0; beyond it the verdict is "unknown" (degrades the roll-up), never a green zero. 15x
+// inside the tightest SLO (WAL, 15 min), so it cannot mask a breach.
 const backupClockSkewTolerance = time.Minute
 
 // backupsCacheTTL bounds how often the handler re-queries Prometheus; the freshest signal moves on
 // a 5-min WAL cadence, and 60 s keeps a status page polling every 30 s from doubling the load.
 const backupsCacheTTL = 60 * time.Second
 
-// backupsQueryBudget bounds a rebuild's Prometheus fan-out. It runs on its own detached context
-// (see handleDiagnosticsBackups), not the triggering request's, because the rebuild is shared via
-// s.backups.buildMu with every request queued behind it.
+// backupsQueryBudget bounds a rebuild's Prometheus fan-out; it runs on its own detached context (see handleDiagnosticsBackups)
+// because the rebuild is shared via s.backups.buildMu with every queued request.
 const backupsQueryBudget = 3 * time.Second
 
 // errBackupsQueryPanicked is recorded when a query goroutine panicked, so it counts toward `failed`.
@@ -204,9 +198,8 @@ type backupMetricsSource interface {
 // BackupMetricsSource is the exported alias of the seam so other packages can supply one via Options.BackupMetrics.
 type BackupMetricsSource = backupMetricsSource
 
-// freshnessVerdict judges an age against an SLO. A nil age is "unknown", never a fresh zero, and
-// neither is an age beyond backupClockSkewTolerance in the future. That case carries its RAW
-// negative age so an operator can see the skew: the one "unknown" verdict with a non-nil age.
+// freshnessVerdict judges an age against an SLO. A nil age, or one beyond backupClockSkewTolerance in the future, is "unknown",
+// never a fresh zero; the future case keeps its RAW negative age so the skew is visible.
 func freshnessVerdict(age *time.Duration, slo time.Duration) FreshnessVerdict {
 	out := FreshnessVerdict{Status: freshnessUnknown, SLOSeconds: int64(slo / time.Second)}
 	if age == nil {
@@ -267,9 +260,9 @@ func ageSince(now time.Time, ts *time.Time) *time.Duration {
 	return &d
 }
 
-// parseBackupLabelTime extracts the start time from a pgBackRest label: `YYYYMMDD-HHMMSSF` for a
-// full, `<full-label>_YYYYMMDD-HHMMSS[D|I]` for a diff/incr, where the LAST segment is the
-// backup's own start. Labels use the host's local clock; provisioned hosts run UTC.
+// parseBackupLabelTime extracts the start time from a pgBackRest label (`YYYYMMDD-HHMMSSF` full,
+// `<full-label>_YYYYMMDD-HHMMSS[D|I]` diff/incr; the LAST segment is the backup's own start). Labels use the host's local
+// clock; hosts run UTC.
 func parseBackupLabelTime(label string) (time.Time, bool) {
 	seg := label
 	if i := strings.LastIndexByte(label, '_'); i >= 0 {
@@ -285,8 +278,7 @@ func parseBackupLabelTime(label string) (time.Time, bool) {
 	return t, true
 }
 
-// repoKind maps a pgBackRest repo key onto the role's convention:
-// repo1 is the on-host copy, repo2 the S3 offsite copy
+// repoKind maps a pgBackRest repo key to the role's convention: repo1 on-host, repo2 S3 offsite
 // (configs/ansible/roles/archival-node/templates/pgbackrest.conf.j2).
 func repoKind(key string) string {
 	switch key {
@@ -388,9 +380,8 @@ func buildBackupsSnapshot(ctx context.Context, logger *slog.Logger, src backupMe
 	return out
 }
 
-// postgresProjection is projectPostgres's result: the wire section plus the ages the verdicts are
-// judged on (durations, so exporter-computed ages are used verbatim, not re-derived from a rounded
-// timestamp).
+// postgresProjection is projectPostgres's result: the wire section plus the ages verdicts are judged on (durations, so
+// exporter-computed ages are used verbatim, not re-derived from a rounded timestamp).
 type postgresProjection struct {
 	section   BackupPostgres
 	fullAge   *time.Duration
@@ -536,9 +527,8 @@ func projectRestoreDrill(success, failures, mtime []promSample) BackupRestoreDri
 	return out
 }
 
-// firstUnixTime reads the first sample of a unix-seconds gauge as a
-// UTC time; nil for an empty vector or a non-positive stamp (an
-// epoch-0 placeholder is "never", not 1970).
+// firstUnixTime reads the first sample of a unix-seconds gauge as UTC; nil for an empty vector or non-positive stamp (epoch-0
+// placeholder is "never", not 1970).
 func firstUnixTime(samples []promSample) *time.Time {
 	for _, s := range samples {
 		if v, ok := s.Float(); ok && v > 0 {
@@ -599,12 +589,9 @@ func (s *Server) rebuildBackups() BackupsDiagnostics {
 	return s.backups.snap
 }
 
-// handleDiagnosticsBackups serves GET /v1/diagnostics/backups: 503 when no metrics backend is
-// wired, otherwise 200 with the trust state in the body.
-//
-// Cached in-process (backupsCacheTTL) plus an explicit `public, max-age=60`, overriding the
-// `/v1/diagnostics/` no-cache rule in middleware/cachecontrol.go because the document is not
-// per-caller.
+// handleDiagnosticsBackups serves GET /v1/diagnostics/backups: 503 when no metrics backend is wired, else 200 with the trust
+// state. Cached in-process (backupsCacheTTL) plus `public, max-age=60`, overriding the `/v1/diagnostics/` no-cache rule in
+// middleware/cachecontrol.go (not per-caller).
 func (s *Server) handleDiagnosticsBackups(w http.ResponseWriter, r *http.Request) {
 	if s.backupMetrics == nil {
 		writeProblem(w, r,

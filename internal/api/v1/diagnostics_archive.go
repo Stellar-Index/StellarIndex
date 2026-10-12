@@ -58,14 +58,9 @@ type ArchiveGapRangeView struct {
 	End   uint32 `json:"end"`
 }
 
-// handleDiagnosticsArchive serves GET /v1/diagnostics/archive from the report file.
-//
-// Degradation ladder:
-//   - Options.ArchiveReportPath empty → 503 (deployment opted out).
-//   - File missing → 404 (no report yet; legitimate on a fresh host, not a server bug).
-//   - File unreadable / unparseable → 500 with a log line (permissions, torn write, drift).
-//
-// Caching is covered by the `/v1/diagnostics/` prefix rule in middleware/cachecontrol.go.
+// handleDiagnosticsArchive serves GET /v1/diagnostics/archive from the report file: 503 when ArchiveReportPath is empty (opted
+// out), 404 when no report yet (fresh host, not a bug), 500 + log when unreadable/unparseable. Caching: the `/v1/diagnostics/`
+// prefix rule in middleware/cachecontrol.go.
 func (s *Server) handleDiagnosticsArchive(w http.ResponseWriter, r *http.Request) {
 	if s.ArchiveReportPath == "" {
 		writeProblem(w, r,

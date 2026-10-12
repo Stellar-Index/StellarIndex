@@ -46,20 +46,17 @@ type ChangeSummaryResponse struct {
 	Acceleration    string `json:"acceleration,omitempty"`
 }
 
-// allowedChangeSummaryEntityTypes pins the entity_type values the API accepts: the families a
-// change-summary worker actually writes, both computed off one aggregator pair's 1-minute VWAP.
-// The table CHECK also reserves 'protocol' and 'source', but no worker computes them, so accepting
-// them would only yield a misleading 404; reopening one means landing its worker, this set and the
-// OpenAPI enum together.
+// allowedChangeSummaryEntityTypes pins the entity_type values a change-summary worker actually writes. The table CHECK also
+// reserves 'protocol' and 'source', but accepting them would only yield a misleading 404; reopening one means landing its
+// worker, this set and the OpenAPI enum together.
 var allowedChangeSummaryEntityTypes = map[string]struct{}{
 	"coin": {},
 	"pair": {},
 }
 
-// changeSummaryCoinCandidates returns the entity_id forms to try for a coin lookup: the worker
-// writes rows under the canonical asset_id (`native`, `crypto:XLM`, `USDC-GA5Z...`) but consumers
-// use the slug (`XLM`). The literal input is always first so an exact match short-circuits;
-// non-coin types return only it, since the pair form is an exact `base/quote` string.
+// changeSummaryCoinCandidates returns the entity_id forms to try for a coin: the worker keys rows by canonical asset_id
+// (`native`, `crypto:XLM`, `USDC-GA5Z...`) but consumers use the slug (`XLM`). The literal input goes first; non-coin types
+// return only it.
 func changeSummaryCoinCandidates(entityType, entityID string) []string {
 	if entityType != "coin" {
 		return []string{entityID}
@@ -111,9 +108,8 @@ func changeSummaryCoinCandidates(entityType, entityID string) []string {
 	return out
 }
 
-// handleChangeSummary serves GET /v1/changes/{entity_type}/{id}: 503 when no reader is wired, 400
-// for a bad entity_type, 404 when the entity has no row yet. The cache header is short-lived
-// because the worker refreshes every 5 minutes.
+// handleChangeSummary serves GET /v1/changes/{entity_type}/{id}: 503 no reader, 400 bad entity_type, 404 no row yet. The cache
+// header is short because the worker refreshes every 5 minutes.
 func (s *Server) handleChangeSummary(w http.ResponseWriter, r *http.Request) {
 	if s.ChangeSummary == nil {
 		writeProblem(w, r,
@@ -188,23 +184,16 @@ func (s *Server) handleChangeSummary(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, s.changeSummaryResponse(row), Flags{Stale: stale})
 }
 
-// changeSummaryStaleAfter is the row-age past which a served change
-// summary is flagged stale. Matches the openapi contract for this
-// surface: the worker refreshes every 5 minutes, and a row older than
-// 10 minutes means it is lagging.
+// changeSummaryStaleAfter is the row age past which a summary is flagged stale: 10 minutes against the worker's 5-minute
+// refresh, per the openapi contract.
 const changeSummaryStaleAfter = 10 * time.Minute
 
 // changeSummaryGateSurface labels this surface on the withholding metrics.
 const changeSummaryGateSurface = "change_summary"
 
-// changeSummaryWithheld applies /v1/price's withholding verdict to a stored row and writes the
-// withheld problem when it fires: every value is an aggregated price claim, so a market /v1/price
-// refuses to price must not be priced here. Decided at read time so a new verdict (flagged issuer,
-// thinned market) covers rows written before it.
-//
-// A "pair" row names its market exactly. A "coin" row names only the base, so the substance side
-// asks whether ANY plausible backing market clears the floor and the scam side asks about the
-// base. An id that does not parse is withheld rather than served unvetted.
+// changeSummaryWithheld applies /v1/price's withholding verdict to a stored row and writes the withheld problem when it fires: every value
+// is an aggregated price claim. Decided at read time so new verdicts cover older rows. A "pair" row names its market; a "coin" row names
+// only the base, so substance asks whether ANY plausible market clears the floor. An unparseable id is withheld.
 func (s *Server) changeSummaryWithheld(w http.ResponseWriter, r *http.Request, row timescale.ChangeSummaryRow) bool {
 	base, quote, ok := changeSummaryLegs(row.EntityType, row.EntityID)
 	if !ok {
@@ -234,12 +223,8 @@ func (s *Server) changeSummaryWithheld(w http.ResponseWriter, r *http.Request, r
 	return true
 }
 
-// changeSummaryLegs returns the market a stored row's absolute values are priced in, read from the
-// STORED entity id (what the worker keyed the row on), never what the caller typed:
-//
-//   - "pair": the id IS the source pair (`base/quote`).
-//   - "coin": the id is the base only. The worker does not record which aggregator pair it used,
-//     so the quote leg is assumed to be [defaultPriceQuote]; removing that needs a schema change.
+// changeSummaryLegs returns the market a stored row is priced in, from the STORED entity id, never the caller's input. "pair":
+// the id is `base/quote`. "coin": base only, so the quote is assumed [defaultPriceQuote] (removing that needs a schema change).
 func changeSummaryLegs(entityType, entityID string) (base, quote canonical.Asset, ok bool) {
 	switch entityType {
 	case "pair":
@@ -258,18 +243,10 @@ func changeSummaryLegs(entityType, entityID string) (base, quote canonical.Asset
 	return canonical.Asset{}, canonical.Asset{}, false
 }
 
-// changeSummaryResponse projects a stored row onto the wire shape, decimals-normalising every
-// absolute value.
-//
-// change_summary_5m holds RAW prices_1m ratios. The *_delta_pct fields, streak and acceleration
-// labels survive that because both legs share one raw series and the factor cancels; the absolute
-// figures (current_value, window values, ATH/ATL) do not, so they are scaled here for a confirmed
-// non-7-decimals token, matching /v1/price.
-//
-// WHY AT READ TIME, not in the worker: the upsert RATCHETS ath_value / atl_value (GREATEST /
-// LEAST), and a token is flagged only after it has been trading. Normalising at write would switch
-// a row's scale mid-life and pin the ratchet to an extreme from the other scale. Keeping the table
-// raw keeps one scale per row and follows the confirmed-decimals table the moment it changes.
+// changeSummaryResponse projects a stored row onto the wire. change_summary_5m holds RAW prices_1m ratios: deltas, streaks and
+// accelerations survive (the factor cancels) but absolute figures are scaled here for a confirmed non-7-decimals token, as
+// /v1/price. AT READ TIME because the upsert RATCHETS ath_value/atl_value (GREATEST/LEAST): normalising at write would switch
+// scale mid-life and pin the ratchet to an extreme from the other scale.
 func (s *Server) changeSummaryResponse(row timescale.ChangeSummaryRow) ChangeSummaryResponse {
 	scale := s.changeSummaryValueScale(row.EntityType, row.EntityID)
 	resp := ChangeSummaryResponse{
@@ -300,11 +277,9 @@ func (s *Server) changeSummaryResponse(row timescale.ChangeSummaryRow) ChangeSum
 	return resp
 }
 
-// changeSummaryValueScale returns the exact non-standard-decimals factor for a stored row's
-// absolute values, or nil when there is nothing to scale (the common case). The legs are
-// [changeSummaryLegs]'; a "coin" row's assumed quote is the standard scale, exact for every quote
-// it is realistically computed against (XLM, stablecoins, fiat or global tickers). An unparseable
-// id names nothing the confirmed table could hold, so it scales by nothing.
+// changeSummaryValueScale returns the exact non-standard-decimals factor for a row's absolute values, nil when nothing to
+// scale. A "coin" row's assumed quote is the standard scale, exact for every realistic quote; an unparseable id scales by
+// nothing.
 func (s *Server) changeSummaryValueScale(entityType, entityID string) *big.Rat {
 	base, quote, ok := changeSummaryLegs(entityType, entityID)
 	if !ok {
@@ -318,10 +293,8 @@ func (s *Server) changeSummaryValueScale(entityType, entityID string) *big.Rat {
 	return aggregate.DecimalsAdjustment(baseDec, quoteDec)
 }
 
-// scaledMoneyStr applies the decimals factor to a stored decimal string; a nil scale returns v
-// unchanged. There is no float64 round-trip: big.Rat multiplies exactly, and ratDecimalString
-// renders it back exactly because the scale is a power of ten (see [aggregate.DecimalsAdjustment]),
-// so the denominator only picks up factors of 2 and 5.
+// scaledMoneyStr applies the decimals factor to a stored decimal string (nil scale returns v). No float64: big.Rat multiplies
+// exactly and ratDecimalString renders it exactly, as the scale is a power of ten ([aggregate.DecimalsAdjustment]).
 func scaledMoneyStr(v string, scale *big.Rat) string {
 	if scale == nil {
 		return v
@@ -350,10 +323,8 @@ func scaledMoneyStrPtr(v *string, scale *big.Rat) *string {
 	return &out
 }
 
-// ratDecimalString renders r as an exact base-10 decimal string. ok=false
-// if r's reduced denominator has a prime factor other than 2 or 5 (i.e.
-// r is not a terminating decimal) — not expected at this call site, but
-// the caller falls back to the unscaled string rather than panicking.
+// ratDecimalString renders r as an exact decimal string; ok=false if r does not terminate (denominator has a prime factor other
+// than 2 or 5), and the caller falls back to the unscaled string.
 func ratDecimalString(r *big.Rat) (string, bool) {
 	den := new(big.Int).Set(r.Denom())
 	two, five, one := big.NewInt(2), big.NewInt(5), big.NewInt(1)

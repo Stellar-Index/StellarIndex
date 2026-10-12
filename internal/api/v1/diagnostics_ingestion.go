@@ -138,10 +138,9 @@ type BackfillCoverageRow struct {
 	CompletenessComputedAt *WireTime `json:"completeness_computed_at,omitempty"`
 }
 
-// sourceGenesisLedger maps each source to the earliest ledger it can have data for: 2 for SDEX
-// (ledger 1 has no operations), the audited minimum create_contract ledger for a protocol, or 0
-// when not applicable. It is the DensityPct denominator: too early makes 100% unreachable, too
-// late hides early-history gaps, so never use a rounded estimate.
+// sourceGenesisLedger maps each source to the earliest ledger it can have data for (2 for SDEX; the audited minimum
+// create_contract ledger for a protocol; 0 n/a). It is the DensityPct denominator: too early makes 100% unreachable, too late
+// hides early gaps; never a rounded estimate.
 var sourceGenesisLedger = map[string]int64{
 	"sdex": 2,
 	// Soroban: MIN first-deploy ledger across the source's contracts, from the per-source WASM
@@ -258,11 +257,9 @@ type SourceHealthRow struct {
 	MarketsCount24h int64  `json:"markets_count_24h"`
 }
 
-// handleDiagnosticsIngestion serves GET /v1/diagnostics/ingestion.
-//
-// Readers fan out under one deadline and soft-fail per reader, so one stuck dependency empties
-// its section instead of failing the response. Cache is public max-age=15s: the data moves at
-// most every few seconds, so 15s smooths status-page refresh load without hiding degradation.
+// handleDiagnosticsIngestion serves GET /v1/diagnostics/ingestion. Readers fan out under one deadline and soft-fail per reader
+// (a stuck dependency empties its section, not the response). Public max-age=15s smooths status-page load without hiding
+// degradation.
 func (s *Server) handleDiagnosticsIngestion(w http.ResponseWriter, r *http.Request) {
 	// Prefer the background-refreshed snapshot (sub-millisecond versus a 200-500ms inline build).
 	// Fall back to an inline build when the refresher has not fired yet or has gone stale, so a
@@ -285,17 +282,15 @@ func (s *Server) handleDiagnosticsIngestion(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, out, ingestionFlags(out))
 }
 
-// ingestionFlags maps a built IngestionDiagnostics onto the wire Flags. flags.stale fires when a
-// critical filler soft-failed or LatestLedger == 0, so an all-zeros response from a failing
-// reader cascade is never mistaken for a network with zero ledgers and trades.
+// ingestionFlags maps a built snapshot onto Flags. flags.stale fires when a critical filler soft-failed or LatestLedger == 0,
+// so an all-zeros failing-reader response is never read as a network with zero ledgers.
 func ingestionFlags(snap IngestionDiagnostics) Flags {
 	stale := snap.degraded || snap.Ledger.LatestLedger == 0
 	return Flags{Stale: stale, Degraded: snap.degraded}
 }
 
-// ingestionSnapshotEntry wraps a snapshot for atomic storage. computedAt lets the handler detect
-// a stopped refresher; builtAt is the served as_of, which a kept last-good snapshot preserves
-// while computedAt moves on.
+// ingestionSnapshotEntry wraps a snapshot for atomic storage: computedAt detects a stopped refresher; builtAt is the served
+// as_of, preserved by a kept last-good snapshot.
 type ingestionSnapshotEntry struct {
 	snap       IngestionDiagnostics
 	computedAt time.Time
@@ -504,9 +499,8 @@ func (s *Server) overlaySourceCoverageV2(ctx context.Context, rows *[]BackfillCo
 	}
 }
 
-// overlayCompleteness fills the ADR-0033 watermark fields from completeness_snapshots. It only
-// touches completeness_* fields (and display ledgers when unset) for sources with a snapshot;
-// the system "recognition" snapshot has no per-source row and is not overlaid.
+// overlayCompleteness fills the ADR-0033 watermark fields from completeness_snapshots, touching only completeness_* fields (and
+// display ledgers when unset) for sources with a snapshot; the system "recognition" snapshot is not overlaid.
 func (s *Server) overlayCompleteness(ctx context.Context, rows *[]BackfillCoverageRow) {
 	if s.CompletenessReader == nil {
 		return
@@ -554,9 +548,8 @@ func targetScanCadence(targetSource string) time.Duration {
 	return timescale.GapDetectorInterval
 }
 
-// sourceFromTargetSource maps a per-table gap-detector target name back to the per-protocol
-// source name ("blend-positions" → "blend"). Only the multi-table protocols (blend, phoenix,
-// sep41) need explicit mapping.
+// sourceFromTargetSource maps a per-table gap-detector target back to its protocol source ("blend-positions" to "blend"); only
+// multi-table protocols (blend, phoenix, sep41) need mapping.
 func sourceFromTargetSource(targetSource string) string {
 	switch targetSource {
 	case "blend-positions", "blend-emissions", "blend-admin", "blend-auctions":
@@ -575,9 +568,8 @@ func sourceFromTargetSource(targetSource string) string {
 	return targetSource
 }
 
-// fillIngestionLedger copies network-stats onto out.Ledger. Soft-fail: a stuck reader leaves
-// zero defaults but sets the shared degraded flag, so the response is marked flags.stale rather
-// than passing zeros off as a fresh read.
+// fillIngestionLedger copies network-stats onto out.Ledger. Soft-fail: a stuck reader leaves zeros but sets the shared degraded
+// flag, so flags.stale marks it rather than passing zeros off as a fresh read.
 func (s *Server) fillIngestionLedger(ctx context.Context, out *IngestionDiagnostics, degraded *atomic.Bool) {
 	if s.NetworkStats == nil {
 		degraded.Store(true)
@@ -637,9 +629,8 @@ func (s *Server) fillIngestionFXCoverage(ctx context.Context, out *IngestionDiag
 	}
 }
 
-// fillIngestionCAGGCoverage reads prices_1h's MIN/MAX bucket, the real historical-span answer
-// under ADR-0034 (the trades table is only the served tier). The type assertion no-ops on test
-// fakes that do not implement CAGGCoverageReader.
+// fillIngestionCAGGCoverage reads prices_1h's MIN/MAX bucket, the real historical-span answer under ADR-0034 (trades is only
+// the served tier). The type assertion no-ops on fakes lacking CAGGCoverageReader.
 func (s *Server) fillIngestionCAGGCoverage(ctx context.Context, out *IngestionDiagnostics) {
 	reader, ok := s.FXHistory.(CAGGCoverageReader)
 	if !ok || reader == nil {
@@ -678,10 +669,8 @@ func (s *Server) fillIngestionEntryCounts(ctx context.Context, out *IngestionDia
 	out.entryCounts = counts
 }
 
-// buildBackfillCoverage returns the per-source row skeleton (name, genesis, entries, expected
-// ledgers); overlaySourceCoverageV2 fills the data-derived fields afterwards (ADR-0031).
-// Cursors never enter coverage. entryCounts supplies `entries`, exact even mid-backfill;
-// cacheRows only carries off-chain CEX/FX row presence, so an empty cache just drops those rows.
+// buildBackfillCoverage returns the per-source row skeleton; overlaySourceCoverageV2 fills data-derived fields (ADR-0031).
+// Cursors never enter coverage. entryCounts supplies exact `entries`; cacheRows carries only off-chain CEX/FX presence.
 func buildBackfillCoverage(cacheRows []timescale.BackfillCoverage, entryCounts map[string]int64, tip int64) []BackfillCoverageRow {
 	out := make([]BackfillCoverageRow, 0, len(sourceGenesisLedger)+len(cacheRows))
 
@@ -744,10 +733,8 @@ func (s *Server) fillIngestionSupplyCoverage(ctx context.Context, out *Ingestion
 	}
 }
 
-// aggregateBackfill collapses per-range backfill cursor rows into one BackfillDecoderState per
-// decoder set. The cursor sub_source format is "<start>-<end>:<decoder-set>" (e.g.
-// "50534290-51275895:sdex,soroswap"). RangesActive counts ranges whose last_ledger < range_end,
-// i.e. still catching up.
+// aggregateBackfill collapses per-range backfill cursor rows into one BackfillDecoderState per decoder set; sub_source is
+// "<start>-<end>:<decoder-set>" and RangesActive counts ranges with last_ledger < range_end.
 func aggregateBackfill(rows []timescale.Cursor) []BackfillDecoderState {
 	type group struct {
 		total       int
@@ -850,9 +837,8 @@ func ledgerStreamLagSeconds(rows []timescale.Cursor) int64 {
 	return 0
 }
 
-// buildSourceHealth projects the static external.Registry onto the wire shape, joined with the
-// 24h sourcesStats. Sources with no recent trades render as 0/empty rather than absent: zero
-// trades in 24h is a signal, not a hidden row.
+// buildSourceHealth projects the static external.Registry onto the wire shape joined with 24h sourcesStats; sources with no
+// recent trades render 0/empty, not absent (zero trades in 24h is a signal).
 func buildSourceHealth(ctx context.Context, s *Server) []SourceHealthRow {
 	// Entries-24h from the per-source Prometheus event counter runs FIRST under its own short
 	// deadline: the trades aggregation below is slow under backfill load and can consume the whole

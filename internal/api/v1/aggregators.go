@@ -34,10 +34,8 @@ type AggregatorRow struct {
 	Notes []string `json:"notes,omitempty"`
 }
 
-// aggregatorRowNotes returns the coverage caveats for a registry row, or nil. auto_discovered
-// rows are evidence-observed, not vendor- or WASM-audit-verified. Other router rows count direct
-// calls and calls wrapped by an unregistered contract under one name
-// (timescale.TagTradesRoutedVia), which the API cannot separate.
+// aggregatorRowNotes returns coverage caveats for a registry row: auto_discovered rows are evidence-observed, not
+// audit-verified, and router rows merge direct and wrapped calls under one name (timescale.TagTradesRoutedVia).
 func aggregatorRowNotes(kind string, autoDiscovered bool) []string {
 	switch {
 	case kind != "router":
@@ -56,18 +54,9 @@ func aggregatorRowNotes(kind string, autoDiscovered bool) []string {
 	}
 }
 
-// handleAggregators serves GET /v1/aggregators.
-//
-// Lists the routers registry with each entry's routed-via attribution (trade count and USD
-// volume) over the trailing 24 h. The window is a rolling observation over the trades
-// hypertable, recomputed per request via the partial routed_via index, NOT a closed-bucket
-// series: treat it like /v1/network/stats, not /v1/vwap.
-//
-// A sub-invocation router call is attributed to its outermost wrapping contract when that is
-// itself a registered 'router'-kind entry (timescale.TagTradesRoutedVia); otherwise it falls
-// back to the plain router's name. Row Notes explain the degrade (aggregatorRowNotes).
-//
-// Every routers row is a seeded pubnet contract, so a test net serves an empty list.
+// handleAggregators serves GET /v1/aggregators with routed-via attribution (trades, USD volume) over a rolling 24h recomputed
+// per request, NOT closed buckets: treat like /v1/network/stats, not /v1/vwap. Attribution goes to the outermost registered
+// 'router' wrapper, else the plain router. Test nets serve an empty list.
 func (s *Server) handleAggregators(w http.ResponseWriter, r *http.Request) {
 	if !s.servesPubnetReference() {
 		writeJSON(w, []AggregatorRow{}, Flags{})

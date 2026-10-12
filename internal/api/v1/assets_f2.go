@@ -46,9 +46,8 @@ type SorobanVolumeReader interface {
 	SorobanVolume24hUSDForAsset(ctx context.Context, assetKey string) (usd string, lowerBound bool, err error)
 }
 
-// applyF2Fields populates the F2 supply / market-cap / FDV fields on detail, best-effort. Per
-// ADR-0011 nothing is fabricated: no max_supply means no fdv_usd, no USD price means no
-// market_cap_usd or fdv_usd, and no supply snapshot leaves all six F2 fields nil.
+// applyF2Fields fills the F2 supply/market-cap/FDV fields best-effort; nothing is fabricated (ADR-0011): no max_supply means no
+// fdv_usd, no USD price means no market_cap_usd/fdv_usd, no supply snapshot leaves all six nil.
 func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset canonical.Asset) {
 	key, keyErr := supply.AssetKey(asset)
 
@@ -146,11 +145,9 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 	}
 }
 
-// populateVolume24h fills detail.VolumeUSD24h via the [VolumeReader], best-effort. Pure-Soroban
-// SEP-41 assets use the XLM-anchored [SorobanVolumeReader] when available, since the plain reader
-// reports a bogus "0" for them. A Soroban lookup ERROR falls back to the plain reader; that
-// figure omits XLM-legged trades, so it is flagged as a lower bound. Reports whether the plain
-// read failed.
+// populateVolume24h fills detail.VolumeUSD24h. Pure-Soroban SEP-41 assets use the XLM-anchored [SorobanVolumeReader] (the plain
+// reader reports a bogus "0"); on its ERROR the plain reader is used but flagged a lower bound, as it omits XLM-legged trades.
+// Reports whether the plain read failed.
 func (s *Server) populateVolume24h(ctx context.Context, detail *AssetDetail, asset canonical.Asset) (failed bool) {
 	if s.Volume == nil {
 		return false
@@ -202,9 +199,7 @@ func (s *Server) fetchSupplySnapshot(ctx context.Context, key string) (snap supp
 	return snap, true, false
 }
 
-// populateSupplyFields sets the raw supply integers + basis on
-// detail. Each field skipped when its source is nil/zero — per
-// ADR-0011 we don't fabricate.
+// populateSupplyFields sets the raw supply integers and basis; a nil/zero source leaves its field unset (ADR-0011).
 func populateSupplyFields(detail *AssetDetail, snap supply.Supply) {
 	if snap.TotalSupply != nil {
 		v := snap.TotalSupply.String()
@@ -236,18 +231,14 @@ func populateSupplyFields(detail *AssetDetail, snap supply.Supply) {
 	}
 }
 
-// supplyObservationStale reports whether an observer snapshot is older
-// than preciseSupplyMaxAge — the bound the listing's precise arm applies
-// to the same asset_supply_history rows. A reading with no vintage (the
-// lake-flows fallback) is live, not stale.
+// supplyObservationStale reports whether a snapshot is older than preciseSupplyMaxAge, the bound the listing's precise arm
+// applies to the same rows; a reading with no vintage (lake-flows fallback) is live.
 func supplyObservationStale(snap supply.Supply, now time.Time) bool {
 	return !snap.ObservedAt.IsZero() && now.Sub(snap.ObservedAt) > preciseSupplyMaxAge
 }
 
-// populatePriceUSD inlines detail.PriceUSD via the lookupUSDPrice path; a no-op if another path
-// already set PriceUSD. It returns the number of DISTINCT venues that backed the price, the
-// liquidity signal for the dust-liquidity valuation guard; 0 when no price was found or one was
-// already set.
+// populatePriceUSD inlines detail.PriceUSD via lookupUSDPrice (no-op if already set) and returns the number of DISTINCT venues
+// behind it, the liquidity signal for the dust-liquidity guard; 0 if none found or already set.
 func (s *Server) populatePriceUSD(ctx context.Context, detail *AssetDetail, asset canonical.Asset) int {
 	if s.Prices == nil || detail.PriceUSD != nil {
 		return 0
@@ -290,11 +281,9 @@ func clearThinWhenUnpriced(d *AssetDetail) {
 	}
 }
 
-// thinDetailPricePass is the detail's opted-in second pass: re-read the price with the request's
-// thin legs released, after pass 1 withheld it on measured evidence. It runs only the price
-// producers, never applyF2Fields, so no market cap, FDV or change derives from a thin price.
-// "unattributed" is excluded because on detail it labels the issuer suppression, which no thin
-// release may override.
+// thinDetailPricePass is the opted-in second pass: re-read the price with thin legs released after pass 1 withheld it. It runs
+// only price producers, never applyF2Fields, so no market cap, FDV or change derives from a thin price. "unattributed" is
+// excluded: on detail it labels issuer suppression, which no thin release may override.
 func (s *Server) thinDetailPricePass(ctx context.Context, detail *AssetDetail, asset canonical.Asset, off *ThinAdmission) {
 	if detail.PriceUSD != nil || off.Evidence() == nil {
 		return
@@ -321,11 +310,9 @@ func (s *Server) thinDetailPricePass(ctx context.Context, detail *AssetDetail, a
 	}
 }
 
-// marketCapRefused is the pre-figure half of the valuation guards shared by the detail cap and
-// the market-cap chart, so they cannot disagree on whether an asset has a valuation. An
-// unverified ticker collision refuses outright (a look-alike of a verified currency must not
-// publish price x supply). Single-venue sub-floor trading refuses as low liquidity. The turnover
-// ceiling tests the computed figure, so each caller applies [capExceedsObservedTurnover] itself.
+// marketCapRefused is the pre-figure half of the valuation guards shared by the detail cap and the market-cap chart so they
+// cannot disagree. An unverified ticker collision refuses outright; single-venue sub-floor trading refuses as low liquidity.
+// Callers apply [capExceedsObservedTurnover] themselves, since it tests the computed figure.
 func (s *Server) marketCapRefused(asset canonical.Asset, priceSourceCount int, volume24hUSD *string) (refused, lowLiquidity bool) {
 	if s.VerifiedCurrencies != nil && asset.Type == canonical.AssetClassic {
 		if _, collision := s.VerifiedCurrencies.StellarCollision(asset.Code, asset.Issuer); collision {
@@ -339,9 +326,8 @@ func (s *Server) marketCapRefused(asset canonical.Asset, priceSourceCount int, v
 	return false, false
 }
 
-// populateMarketCap fills market_cap_usd + fdv_usd from the supply snapshot and the
-// already-populated detail.PriceUSD, avoiding a second prices_1m lookup. Compute failures log at
-// WARN and leave the field nil.
+// populateMarketCap fills market_cap_usd and fdv_usd from the supply snapshot and the already-populated detail.PriceUSD (no
+// second prices_1m lookup); failures log at WARN and leave the field nil.
 func (s *Server) populateMarketCap(ctx context.Context, detail *AssetDetail, asset canonical.Asset, snap supply.Supply, key string, priceSourceCount int) {
 	if detail.PriceUSD == nil {
 		// No price (no reader wired, or lookup found none): nothing to compute against.
@@ -409,30 +395,24 @@ func (s *Server) populateMarketCap(ctx context.Context, detail *AssetDetail, ass
 	}
 }
 
-// lookupUSDPrice consults the PriceReader for the asset's USD price, returning ("", false) on any
-// failure; callers treat that as "market_cap unavailable".
-//
-// No on-chain trade quotes in fiat:USD (they quote in classic USDC or another declared peg), so a
-// literal LatestPrice(asset, fiat:USD) returns ErrPriceNotFound for nearly every asset. On a miss
-// this walks usd_pegged_classic_assets and rewrites asset/fiat:USD to asset/<peg>, mirroring the
-// handler's tryStablecoinFiatProxy, which the F2 paths bypass.
+// lookupUSDPrice returns the asset's USD price, ("", false) on any failure ("market_cap unavailable"). No on-chain trade quotes
+// in fiat:USD, so on a miss it walks usd_pegged_classic_assets and rewrites asset/fiat:USD to asset/<peg>, mirroring the
+// handler's tryStablecoinFiatProxy which the F2 paths bypass.
 func (s *Server) lookupUSDPrice(ctx context.Context, asset canonical.Asset) (string, bool) {
 	l := s.lookupUSDPriceWithSources(ctx, asset)
 	return l.price, l.price != ""
 }
 
-// usdPriceLookup is [Server.lookupUSDPriceWithSources]'s verdict: served
-// (price set), withheld (withheld set) or absent (neither). Withheld is
-// its own state so a withheld asset cannot read as one that never traded.
+// usdPriceLookup is [Server.lookupUSDPriceWithSources]'s verdict: served, withheld or absent. Withheld is its own state so a
+// withheld asset cannot read as one that never traded.
 type usdPriceLookup struct {
 	price    string
 	sources  int
 	withheld PriceWithheldReason
 }
 
-// lookupUSDPriceWithSources is [Server.lookupUSDPrice] plus the number of DISTINCT venues behind
-// the price (the liquidity signal for [dustLiquiditySuppressed]) and the withholding verdict.
-// lookupUSDPrice wraps it for callers that can only use a served price.
+// lookupUSDPriceWithSources is [Server.lookupUSDPrice] plus the DISTINCT venue count (liquidity signal for
+// [dustLiquiditySuppressed]) and the withholding verdict.
 func (s *Server) lookupUSDPriceWithSources(ctx context.Context, asset canonical.Asset) usdPriceLookup {
 	if s.Prices == nil {
 		// Prices is independently optional, and populateChange24h reaches here without
@@ -475,10 +455,8 @@ func (s *Server) lookupUSDPriceWithSources(ctx context.Context, asset canonical.
 	return usdPriceLookup{}
 }
 
-// populateChange24h fills detail.Change24hPct via the [Change24hReader] and the market-cap
-// [PriceReader]. Best-effort: no current price or no 24h-ago bucket leaves the field null, and
-// only real read errors log at WARN. USD-against-USD is meaningless; lookupUSDPrice already
-// returns ("", false) for it. Reports whether the 24h-ago read failed.
+// populateChange24h fills detail.Change24hPct via the [Change24hReader] and market-cap [PriceReader]; no current price or
+// 24h-ago bucket leaves it null and only real read errors log at WARN. Reports whether the 24h-ago read failed.
 func (s *Server) populateChange24h(ctx context.Context, detail *AssetDetail, asset canonical.Asset) (failed bool) {
 	if s.Change24h == nil {
 		return false
@@ -509,9 +487,8 @@ func (s *Server) populateChange24h(ctx context.Context, detail *AssetDetail, ass
 	return false
 }
 
-// pctChange returns (now - then) / then * 100 as a signed decimal string with two fractional
-// digits ("+1.27", "-0.05", "0.00"). `then` must be > 0. Pure big.Rat math, so extreme prices stay
-// precise; the explicit "+" lets consumers tell "0.00" (no change) from a missing field.
+// pctChange returns (now - then) / then * 100 as a signed 2-dp decimal string ("+1.27", "0.00"); `then` must be > 0. big.Rat
+// math keeps extreme prices precise; the explicit "+" separates "0.00" (no change) from a missing field.
 func pctChange(nowStr, thenStr string) (string, error) {
 	now, ok := new(big.Rat).SetString(nowStr)
 	if !ok {
@@ -539,13 +516,9 @@ func pctChange(nowStr, thenStr string) (string, error) {
 	return out, nil
 }
 
-// sep1DeclaredMaxResolver adapts the SEP-1 [[CURRENCIES]] fields already stamped on the
-// AssetDetail into [supply.MetadataResolver], without a second issuers-table read.
-//
-// Precedence: max_number beats fixed_number (a fixed total implies the cap); is_unlimited=true
-// blocks both, since a declared number beside it is contradictory. SEP-1 declares DISPLAY units
-// but the snapshot carries RAW units, so the resolver scales by 10^detail.Decimals; unscaled it
-// would understate max_supply and FDV by 10^7 for classic assets.
+// sep1DeclaredMaxResolver adapts SEP-1 [[CURRENCIES]] fields on the AssetDetail into [supply.MetadataResolver] (no second
+// issuers read). max_number beats fixed_number; is_unlimited=true blocks both. SEP-1 declares DISPLAY units but snapshots are
+// RAW, so it scales by 10^detail.Decimals, else max_supply and FDV are understated 10^7 for classic assets.
 type sep1DeclaredMaxResolver struct {
 	detail *AssetDetail
 }
@@ -576,11 +549,9 @@ func (r sep1DeclaredMaxResolver) SEP1MaxSupply(_ context.Context, _ canonical.As
 	return raw, true, nil
 }
 
-// sep1DisplayToRawUnits converts a SEP-1 display-unit decimal string to a raw-unit integer string
-// at the asset's decimals. ok=false unless the result is a non-negative INTEGER: unparseable
-// input, negatives, and more fractional digits than the asset has decimals (fractional stroops
-// are junk, not roundable). Rational ("1/3") and e-notation are rejected because stellar.toml
-// numerics are plain decimals and big.Rat.SetString would silently accept both.
+// sep1DisplayToRawUnits converts a SEP-1 display decimal to a raw-unit integer string; ok=false unless the result is a
+// non-negative INTEGER (no negatives, no fractional stroops). Rational and e-notation are rejected because big.Rat.SetString
+// would silently accept both.
 func sep1DisplayToRawUnits(display string, decimals int) (string, bool) {
 	if decimals < 0 || strings.ContainsAny(display, "/eE") {
 		return "", false
@@ -597,13 +568,9 @@ func sep1DisplayToRawUnits(display string, decimals int) (string, bool) {
 	return rat.Num().String(), true
 }
 
-// usdMarketValue computes amountStroops x usdPriceStr / 10^decimals as a decimal string with two
-// fractional digits. Pure big.Rat math, so huge supplies and tiny prices stay precise. It errors
-// on an unparseable price or negative decimals; amountStroops==0 yields "0.00", a legitimate
-// "no circulating supply".
-//
-// A NEGATIVE result is an error, matching [computeMarketCapUSD] on the listing path: burns
-// exceeding mints is a data error, and every caller leaves the field unset rather than serve it.
+// usdMarketValue computes amountStroops x usdPriceStr / 10^decimals as a 2-dp decimal string with big.Rat (exact for huge
+// supplies); zero amount yields "0.00". A NEGATIVE result is an error, as in [computeMarketCapUSD]: burns exceeding mints is a
+// data error and callers leave the field unset.
 func usdMarketValue(amountStroops *big.Int, usdPriceStr string, decimals int) (string, error) {
 	if amountStroops == nil {
 		return "", errors.New("usdMarketValue: amountStroops is nil")

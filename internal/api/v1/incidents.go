@@ -17,11 +17,8 @@ type IncidentsList struct {
 	Count     int                  `json:"count"`
 }
 
-// handleIncidents serves GET /v1/incidents.
-//
-// Returns every incident post embedded in the binary (`internal/incidents/data/*.md`), parsed at
-// startup and cached on the Server; new posts ship with a redeploy. There is no filtering or
-// pagination because the corpus is a few entries per year.
+// handleIncidents serves GET /v1/incidents: every incident post embedded in the binary (`internal/incidents/data/*.md`), parsed
+// at startup and cached; new posts ship with a redeploy. No filtering or pagination (a few entries per year).
 func (s *Server) handleIncidents(w http.ResponseWriter, r *http.Request) {
 	// Nil-to-empty: a fresh deployment with no embedded posts
 	// (s.incidents == nil) would otherwise marshal as `null` rather
@@ -37,10 +34,7 @@ func (s *Server) handleIncidents(w http.ResponseWriter, r *http.Request) {
 	}, Flags{})
 }
 
-// atomFeed mirrors the RFC-4287 Atom syndication shape we emit.
-// Hand-rolled rather than pulling in a feed-generator dep —
-// Atom has only a handful of required fields and the writer
-// stays under a screen of code.
+// atomFeed mirrors the RFC-4287 Atom shape we emit; hand-rolled to avoid a feed-generator dependency.
 type atomFeed struct {
 	XMLName xml.Name    `xml:"feed"`
 	Xmlns   string      `xml:"xmlns,attr"`
@@ -75,11 +69,9 @@ type atomEntry struct {
 	} `xml:"content"`
 }
 
-// handleIncidentsAtom serves GET /v1/incidents.atom.
-//
-// Atom 1.0 feed of the same data as /v1/incidents, with <link> pointing at the status page. Per
-// RFC 4287 the feed's `<updated>` is the most recent `<entry>`'s `<updated>`; each entry's `<id>`
-// is a stable URN derived from the slug so feed readers dedupe across crawls.
+// handleIncidentsAtom serves GET /v1/incidents.atom: the same data as /v1/incidents as Atom 1.0. Per RFC 4287 the feed
+// `<updated>` is the newest entry's `<updated>`; each entry `<id>` is a stable URN from the slug so readers dedupe across
+// crawls.
 func (s *Server) handleIncidentsAtom(w http.ResponseWriter, r *http.Request) {
 	const baseURL = "https://status.stellarindex.io"
 	// feedEstablished is the stable <updated> for a feed with zero entries: time.Now() would make
@@ -144,9 +136,7 @@ func (s *Server) handleIncidentsAtom(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// summaryFromMarkdown extracts the first paragraph from a markdown
-// post — same heuristic the status page's `normaliseIncident` uses,
-// kept simple so it stays readable in a feed reader.
+// summaryFromMarkdown extracts the first paragraph of a post, the same heuristic as the status page's `normaliseIncident`.
 func summaryFromMarkdown(body string) string {
 	body = strings.TrimSpace(body)
 	if body == "" {

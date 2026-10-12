@@ -2,12 +2,9 @@ package v1
 
 import "context"
 
-// knownIssuers is a hand-curated fallback map from issuer G-strkey to (home_domain, org_name),
-// applied at the wire boundary while `issuers.home_domain` is empty so top issuers render with
-// readable names. Each entry is sourced from the issuer's public stellar.toml.
-//
-// Never add an entry without verifying the G-strkey controls the home_domain (for example via
-// the stellar.toml ACCOUNTS array). A wrong mapping is worse than a null.
+// knownIssuer is an entry in the hand-curated fallback map from issuer G-strkey to (home_domain, org_name), applied while
+// `issuers.home_domain` is empty. Never add one without verifying the G-strkey controls the home_domain (e.g. the stellar.toml
+// ACCOUNTS array): a wrong mapping is worse than a null.
 type knownIssuer struct {
 	HomeDomain string
 	OrgName    string
@@ -150,12 +147,9 @@ var knownIssuers = map[string]knownIssuer{
 	},
 }
 
-// onChainHomeDomain returns the issuer account's live self-declared home_domain from the CH
-// account state, and whether an attempted read was untrustworthy (errored, deadline included).
-// No explorer reader wired never attempts a read, so degraded=false and callers fall through to
-// the curated map. "" with degraded=false is a verified absence. On-chain is consulted ahead of
-// knownIssuers because the field is signed by the account's keys and follows rebrands, while the
-// map goes stale silently and SEP-1 verification would resolve against a stale domain.
+// onChainHomeDomain returns the issuer's live home_domain from CH account state and whether an attempted read was untrustworthy (errored,
+// deadline included). No reader means no attempt: degraded=false and callers use the curated map; "" with degraded=false is a verified
+// absence. On-chain goes ahead of knownIssuers because it is key-signed and follows rebrands; the map goes stale silently.
 func (s *Server) onChainHomeDomain(ctx context.Context, issuer string) (domain string, degraded bool) {
 	if s.Explorer == nil {
 		return "", false
@@ -170,13 +164,9 @@ func (s *Server) onChainHomeDomain(ctx context.Context, issuer string) (domain s
 	return st.HomeDomain, false
 }
 
-// backfillHomeDomain fills an empty detail.HomeDomain for a classic asset: on-chain account
-// state first, then s.StaticHomeDomain, then the curated knownIssuers map. Both asset-detail
-// surfaces share it so their SEP-1 overlays verify against the same domain.
-//
-// degraded=true means the on-chain read itself failed (unwired, deadline, store error). The
-// curated map is then deliberately NOT consulted: it would serve a stale domain, and let SEP-1
-// verify against it, under the same 200 as a live read. Callers fold degraded into the stale flag.
+// backfillHomeDomain fills an empty detail.HomeDomain for a classic asset: on-chain state, then s.StaticHomeDomain, then knownIssuers;
+// shared so both asset-detail surfaces verify SEP-1 against the same domain. degraded=true (on-chain read failed) deliberately skips the
+// curated map, which would serve a stale domain under the same 200 as a live read; callers fold it into the stale flag.
 func (s *Server) backfillHomeDomain(ctx context.Context, detail *AssetDetail) (degraded bool) {
 	if detail.HomeDomain != nil && *detail.HomeDomain != "" {
 		return false

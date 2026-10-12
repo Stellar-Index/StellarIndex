@@ -26,11 +26,8 @@ type AssetVolumeCharacterSignals struct {
 	IsMarketStyled         bool    `json:"is_market_styled"`
 }
 
-// applyVolumeCharacter stamps volume_character + its signals onto the
-// detail. Best-effort: a nil reader, a fiat/native-only asset with no
-// trades, or a lookup failure leaves the fields omitted and never fails
-// the asset response. ANALYTICS-only — it reads nothing from and writes
-// nothing to the price/verification/gate surfaces.
+// applyVolumeCharacter stamps volume_character and its signals, best-effort (a nil reader, no trades or a lookup failure omits
+// them). ANALYTICS-only: it touches no price, verification or gate surface.
 func (s *Server) applyVolumeCharacter(ctx context.Context, detail *AssetDetail, asset canonical.Asset) {
 	if s.VolumeCharacter == nil {
 		return

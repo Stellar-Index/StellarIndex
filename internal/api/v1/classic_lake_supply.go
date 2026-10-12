@@ -40,30 +40,25 @@ const (
 	// timeout because it does not run on a request's context.
 	classicLakeSupplyBudget = 2 * time.Minute
 
-	// classicLakeSupplyBatch caps how many contracts one refresh sums. Read cost scales with the
-	// flow count (millions for a mature token), so list length is the only handle on it. A listing
-	// page of up to 500 assets is served a batch at a time across requests.
+	// classicLakeSupplyBatch caps contracts summed per refresh; read cost scales with flow count (millions for a mature token), so
+	// list length is the only handle.
 	classicLakeSupplyBatch = 32
 
 	// classicLakeSupplyColdWait bounds how long a request blocks when nothing it asked about is
 	// cached yet. A request that times out still leaves the detached refresh running.
 	classicLakeSupplyColdWait = 750 * time.Millisecond
 
-	// preciseSupplyMaxAge bounds how old a supply observation may be and still outrank the lake
-	// arms. Too loose and a dead observer keeps publishing a figure nobody is computing; too tight
-	// and a healthy asset falls to the lake arm, which over-counts (see [classicSupplyReading]).
+	// preciseSupplyMaxAge bounds how old a supply observation may be and still outrank the lake arms: too loose keeps a dead
+	// observer's figure, too tight falls to the over-counting lake arm ([classicSupplyReading]).
 	preciseSupplyMaxAge = 6 * time.Hour
 
-	// classicLakeSupplyPrewarmGap spaces the background prewarm's batches. It is not the retry gap,
-	// which stops a per-request retry storm: the prewarm is one serial driver that abandons the
-	// pass on the first empty read (see [Server.warmClassicLakeSupply]), so it only owes
-	// ClickHouse spacing between batches.
+	// classicLakeSupplyPrewarmGap spaces prewarm batches (ClickHouse spacing only); the prewarm is one serial driver that abandons
+	// the pass on the first empty read ([Server.warmClassicLakeSupply]).
 	classicLakeSupplyPrewarmGap = 2 * time.Second
 )
 
-// classicLakeSupplyReader is the narrow bulk capability this file needs from the token-supply
-// reader. It is type-asserted off [Server.tokenSupply] rather than added to [TokenSupplyReader],
-// so existing stubs keep compiling and opt out. Production wiring is *clickhouse.SupplyReader.
+// classicLakeSupplyReader is the bulk capability type-asserted off [Server.tokenSupply] (not added to [TokenSupplyReader]) so
+// existing stubs opt out; production wires *clickhouse.SupplyReader.
 type classicLakeSupplyReader interface {
 	TokenSupplyForContracts(ctx context.Context, contractIDs []string) (map[string]clickhouse.TokenSupply, error)
 }
@@ -75,13 +70,9 @@ type lakeSupplyEntry struct {
 	at    time.Time
 }
 
-// classicSACContractID resolves a listing row's asset_id to the contract stellar.supply_flows is
-// keyed by, for CLASSIC assets only.
-//
-// Native XLM is excluded: the XLM SAC's supply is the amount currently wrapped, a different
-// quantity from the ledger header's total_coins. Soroban contract rows are excluded because their
-// supply already reaches the RWA contract arm; admitting them would newly publish market caps for
-// every SEP-41 token on the listing.
+// classicSACContractID resolves a row's asset_id to its supply_flows contract, CLASSIC assets only: native XLM is excluded (the
+// XLM SAC supply is the wrapped amount, not total_coins), and Soroban rows too (their supply uses the RWA arm; admitting them
+// would publish caps for every SEP-41 token).
 func classicSACContractID(assetID string) (string, bool) {
 	asset, err := canonical.ParseAsset(assetID)
 	if err != nil || asset.Type != canonical.AssetClassic {
@@ -94,13 +85,9 @@ func classicSACContractID(assetID string) (string, bool) {
 	return sac, true
 }
 
-// higherClassicSupply returns the larger of two raw decimal supply readings (`lake` on a tie) with
-// the basis that produced it.
-//
-// A lake figure below the trustline sum is incomplete seeding, so the trustline sum wins; at or
-// above it the lake wins because it includes supply the trustline sum cannot see. An unparseable
-// reading is treated as absent, not zero. The basis is returned because the lake sum covers all
-// four holding domains while the trustline sum is only a lower bound.
+// higherClassicSupply returns the larger raw supply (`lake` on a tie) with its basis. A lake figure below the trustline sum is
+// incomplete seeding, so the trustline sum wins; otherwise the lake wins (it sees all four holding domains, the trustline sum
+// is a lower bound). Unparseable counts as absent, not zero.
 func higherClassicSupply(lake, trustline string) (string, supply.Basis) {
 	l, lok := new(big.Int).SetString(lake, 10)
 	t, tok := new(big.Int).SetString(trustline, 10)
@@ -118,16 +105,9 @@ func higherClassicSupply(lake, trustline string) (string, supply.Basis) {
 	}
 }
 
-// classicSupplyReading resolves one listing row's circulating supply and its basis.
-//
-// It is the one place the preference order lives; two copies could publish a floor and a
-// four-domain total under the same field name.
-//
-// Order: the supply observation, then the lake-flows total, then the trustline sum, never below
-// the trustline floor. Do not invert it: the lake arm over-counts when its flow history carries
-// replayed mints whose burns are missing, which no completeness check can see (see
-// [supply.BasisClassicLakeFlows]). The observation is bounded by [preciseSupplyMaxAge] so a stale
-// reading cannot outrank a live lake figure that disagrees with it.
+// classicSupplyReading resolves a row's circulating supply and basis; the one place the preference order lives, so a floor and a four-domain
+// total never share a field name. Order: observation, lake flows, trustline sum, never below the trustline floor. Do not invert: the lake
+// arm over-counts when replayed mints lack burns ([supply.BasisClassicLakeFlows]). The observation is bounded by [preciseSupplyMaxAge].
 func classicSupplyReading(
 	assetID string, precise map[string]timescale.SupplyObservation, lake, broad map[string]string,
 ) (string, supply.Basis) {
@@ -139,9 +119,8 @@ func classicSupplyReading(
 	return higherClassicSupply(lake[assetID], broad[assetID])
 }
 
-// stampCirculatingSupply publishes `circ` on a listing row with its basis. It is nil-guarded so a
-// supply another branch attached deliberately (dust-suppressed, ticker-collision) is not
-// overwritten; the basis travels with the value, so a row never mixes arms.
+// stampCirculatingSupply publishes `circ` with its basis; nil-guarded so a supply another branch attached deliberately
+// (dust-suppressed, ticker-collision) is not overwritten.
 func stampCirculatingSupply(row *AssetDetail, circ string, basis supply.Basis) {
 	if row.CirculatingSupply != nil || circ == "" {
 		return
@@ -154,13 +133,9 @@ func stampCirculatingSupply(row *AssetDetail, circ string, basis supply.Basis) {
 	}
 }
 
-// classicLakeSupply returns asset_id → circulating supply from the lake's mint/burn flows, for
-// whichever of `rows` it can answer for.
-//
-// Best-effort: no reader, a read error or a cold cache yield a smaller map, never a failed
-// response; the caller falls back to the trustline sum. The refresh is detached: a lake sum that
-// outgrows the request timeout must not die on a caller's context before it records the attempt,
-// or the cache would latch into permanent failure.
+// classicLakeSupply returns asset_id to circulating supply from lake mint/burn flows for the rows it can answer. Best-effort: no reader, an
+// error or a cold cache gives a smaller map and the caller falls back to the trustline sum. The refresh is detached: a sum outgrowing the
+// request timeout must not die on a caller's context before recording the attempt, or the cache latches into failure.
 func (s *Server) classicLakeSupply(ctx context.Context, rows []AssetDetail) map[string]string {
 	if s.TokenSupply == nil {
 		return nil
@@ -209,9 +184,8 @@ func classicLakeSupplyCandidates(rows []AssetDetail) map[string]string {
 	return wanted
 }
 
-// readClassicLakeSupply serves what the cache holds for `wanted` and kicks a detached refresh for
-// the rest. It returns the served map, the missing asset ids, and the in-flight refresh's
-// completion channel (nil when none is running).
+// readClassicLakeSupply serves the cache for `wanted`, kicks a detached refresh for the rest, and returns the map, missing ids
+// and the in-flight completion channel (nil when none).
 func (s *Server) readClassicLakeSupply(
 	rd classicLakeSupplyReader, wanted map[string]string,
 ) (map[string]string, []string, chan struct{}) {
@@ -244,10 +218,9 @@ func (s *Server) readClassicLakeSupply(
 	return out, missing, flight
 }
 
-// liveLakeSupplyLocked reports one asset's cached reading and whether that entry is still live.
-// An empty value is live and negative, hence the second boolean instead of "" meaning absent.
-// Caller holds lakeSupplyMu. The request path and the prewarm share this notion of liveness, so
-// the prewarm cannot refill slots the handler considers warm or skip ones it considers cold.
+// liveLakeSupplyLocked reports one asset's cached reading and whether it is live; an empty value is live and negative, hence
+// the second boolean. Caller holds lakeSupplyMu. Request path and prewarm share it so the prewarm never refills warm slots or
+// skips cold ones.
 func (s *Server) liveLakeSupplyLocked(assetID string) (string, bool) {
 	entry, cached := s.lakeSupply[assetID]
 	if !cached || time.Since(entry.at) >= classicLakeSupplyTTL {
@@ -269,9 +242,8 @@ func (s *Server) missingLakeSupplyLocked(wanted map[string]string) []string {
 	return missing
 }
 
-// classicLakeSupplyBatchOf takes the first [classicLakeSupplyBatch] entries of `missing` as an
-// asset_id → contract batch. One place, because batch size is the only handle on a supply_flows
-// sum's cost.
+// classicLakeSupplyBatchOf takes the first [classicLakeSupplyBatch] of `missing`; one place, as batch size is the only handle
+// on a supply_flows sum's cost.
 func classicLakeSupplyBatchOf(missing []string, wanted map[string]string) map[string]string {
 	batch := make(map[string]string, classicLakeSupplyBatch)
 	for _, assetID := range missing {
@@ -283,13 +255,9 @@ func classicLakeSupplyBatchOf(missing []string, wanted map[string]string) map[st
 	return batch
 }
 
-// refreshClassicLakeSupply sums one batch of contracts' lake flows on a detached context and folds
-// the result into the cache.
-//
-// Every asset in the batch gets an entry: one that is absent, has a nil total, or is Incomplete
-// (Σ(burn+clawback) > Σmint, meaning incompletely seeded flows, not negative supply) is cached
-// empty until the TTL lapses. A read error caches nothing: it says the lake is unavailable, not
-// anything about the assets.
+// refreshClassicLakeSupply sums one batch on a detached context and folds it into the cache. Every asset in the batch gets an
+// entry: absent, nil total or Incomplete (Σ(burn+clawback) > Σmint, i.e. incompletely seeded flows) is cached empty until the
+// TTL lapses. A read error caches nothing: the lake is unavailable, which says nothing about the assets.
 func (s *Server) refreshClassicLakeSupply(rd classicLakeSupplyReader, batch map[string]string, done chan struct{}) {
 	// Deferred so a panic cannot leave the single-flight marker set, which would freeze the cache
 	// for the life of the process.
@@ -360,13 +328,9 @@ func (s *Server) PrewarmClassicLakeSupply(ctx context.Context, opts []timescale.
 	s.warmClassicLakeSupply(ctx, rd, wanted)
 }
 
-// rwaClassicPrewarmSet asks the RWA surface which classic assets it serves, so a member absent from
-// every ranked listing page is warmed anyway.
-//
-// It goes through [Server.cachedRWAMembership] and so behaves like a request: a stale set is served
-// during a detached, single-flighted rebuild, and a never-built cache waits for the first build
-// (bounded by ctx). The reduction is the request path's own, so it cannot warm an asset the read
-// path would not look up.
+// rwaClassicPrewarmSet asks the RWA surface which classic assets it serves, so a member on no ranked page is still warmed. It
+// goes through [Server.cachedRWAMembership] (stale set served during a single-flighted rebuild; a never-built cache waits,
+// bounded by ctx) with the request path's own reduction.
 func (s *Server) rwaClassicPrewarmSet(ctx context.Context) map[string]string {
 	m := s.cachedRWAMembership(ctx)
 	if len(m.members) == 0 {
@@ -380,11 +344,9 @@ func (s *Server) rwaClassicPrewarmSet(ctx context.Context) map[string]string {
 	return classicLakeSupplyCandidates(details)
 }
 
-// classicLakeSupplyPrewarmSet asks the listing which assets it serves for `opts` and reduces the
-// answer with the request path's own derivation ([Server.listAssetsExtAt],
-// [classicLakeSupplyCandidates]), so the prewarm cannot warm a phantom slot while real requests
-// still pay the cold fill. The (Limit+1)th overfetch asset is warmed too: it rides a batch that
-// ran anyway.
+// classicLakeSupplyPrewarmSet reduces the listing's answer for `opts` with the request path's own derivation
+// ([Server.listAssetsExtAt], [classicLakeSupplyCandidates]), so the prewarm cannot warm a phantom slot while requests pay the
+// cold fill. The overfetch asset is warmed too.
 func (s *Server) classicLakeSupplyPrewarmSet(
 	ctx context.Context, opts []timescale.ListAssetsOptions,
 ) map[string]string {
@@ -412,12 +374,9 @@ func (s *Server) classicLakeSupplyPrewarmSet(
 	return wanted
 }
 
-// warmClassicLakeSupply fills `wanted` one bounded batch at a time until every asset has an entry.
-//
-// Serial (one batch in flight, then a pause) because a supply_flows sum scales with the flow count
-// of its contracts. It stops on the first batch that made no progress: the refresh writes an entry
-// for every asset on success and nothing on a read error, so "the missing set did not shrink"
-// means the lake read failed. The next sweep retries rather than walking into the same failure.
+// warmClassicLakeSupply fills `wanted` one bounded batch at a time, serially (a supply_flows sum scales with flow count). It
+// stops on the first batch that made no progress: a successful refresh writes an entry per asset, so a missing set that did not
+// shrink means the lake read failed; the next sweep retries.
 func (s *Server) warmClassicLakeSupply(
 	ctx context.Context, rd classicLakeSupplyReader, wanted map[string]string,
 ) {
@@ -436,11 +395,9 @@ func (s *Server) warmClassicLakeSupply(
 	}
 }
 
-// warmClassicLakeSupplyBatch starts (or joins) one refresh and waits for it. It returns how many of
-// `wanted` are still uncached, and whether the pass should continue.
-//
-// The retry gap is not consulted (see [classicLakeSupplyPrewarmGap]) but is advanced, so a
-// request-path refresh cannot start the instant a prewarm batch lands on the same table.
+// warmClassicLakeSupplyBatch starts or joins one refresh and waits; returns how many of `wanted` are uncached and whether to
+// continue. The retry gap is advanced but not consulted ([classicLakeSupplyPrewarmGap]), so a request-path refresh cannot start
+// the instant a batch lands.
 func (s *Server) warmClassicLakeSupplyBatch(
 	ctx context.Context, rd classicLakeSupplyReader, wanted map[string]string,
 ) (int, bool) {

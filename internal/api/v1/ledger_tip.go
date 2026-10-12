@@ -15,11 +15,9 @@ type LedgerTipView struct {
 	LagSeconds   int64    `json:"lag_seconds"`
 }
 
-// handleLedgerTip serves GET /v1/ledger/tip, a lightweight poll target that avoids the
-// expensive /v1/diagnostics/ingestion snapshot (24h volume, backfill state, supply, ...).
-//
-// Cache-Control is max-age=2: the cursor advances every ~5s, so a 2s edge cache absorbs a
-// refreshing status page without hiding a stall. Push clients use /v1/ledger/stream.
+// handleLedgerTip serves GET /v1/ledger/tip, a light poll target avoiding the expensive /v1/diagnostics/ingestion snapshot.
+// Cache-Control max-age=2 (cursor advances ~5s) absorbs a refreshing status page without hiding a stall; push clients use
+// /v1/ledger/stream.
 func (s *Server) handleLedgerTip(w http.ResponseWriter, r *http.Request) {
 	if s.Cursors == nil {
 		writeProblem(w, r,
@@ -53,10 +51,8 @@ func (s *Server) handleLedgerTip(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, view, Flags{})
 }
 
-// ledgerTip is the shared core of [Server.handleLedgerTip] and the /v1/ledger/stream producer.
-//
-// It returns ok=false with no error when the ledgerstream cursor row does not exist yet, a
-// legitimate cold-start state. A non-nil error means the cursors read itself failed.
+// ledgerTip is the shared core of [Server.handleLedgerTip] and the /v1/ledger/stream producer. ok=false with no error means the
+// ledgerstream cursor row does not exist yet (cold start); a non-nil error means the cursors read failed.
 func (s *Server) ledgerTip(ctx context.Context) (LedgerTipView, bool, error) {
 	rows, err := s.Cursors.ListCursors(ctx)
 	if err != nil {
@@ -79,9 +75,8 @@ func (s *Server) ledgerTip(ctx context.Context) (LedgerTipView, bool, error) {
 	}, true, nil
 }
 
-// findLedgerstreamCursor picks the live-ingest cursor out of a
-// ListCursors result. The live row is (source = "ledgerstream", sub_source = ""); backfill
-// cursors share the table with a non-empty sub_source. Mirrors ledgerStreamLagSeconds.
+// findLedgerstreamCursor picks the live-ingest cursor out of a ListCursors result: (source = "ledgerstream", sub_source = "");
+// backfill cursors share the table with a non-empty sub_source. Mirrors ledgerStreamLagSeconds.
 func findLedgerstreamCursor(rows []timescale.Cursor) (timescale.Cursor, bool) {
 	for _, c := range rows {
 		if c.Source == cursorSourceLedgerstream && c.Sub == "" {

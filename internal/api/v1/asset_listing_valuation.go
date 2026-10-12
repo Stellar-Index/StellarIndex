@@ -132,9 +132,8 @@ type AssetListingDirectoryReader interface {
 
 // ─── snapshot ───────────────────────────────────────────────────────
 
-// assetListingSnapshotTTL is a request-rate bound on reusing one directory read, not a freshness
-// one: the SQL carries its own 48h and 24h bounds, and this is far shorter so it never delays a
-// correction.
+// assetListingSnapshotTTL bounds how often one directory read is reused; it is not a freshness bound (the SQL has its own
+// 48h/24h) and is short so it never delays a correction.
 const assetListingSnapshotTTL = 60 * time.Second
 
 // assetListingReadBudget bounds one refresh read. It runs detached from the request under the
@@ -159,13 +158,9 @@ type assetListingCache struct {
 	at   time.Time
 }
 
-// assetListingSnapshot returns the cached directory read, refreshing it past
-// [assetListingSnapshotTTL].
-//
-// Fails CLOSED like [Server.rwaCuratedSnapshot]: a failed read is cached as unavailable, because
-// carrying the last good one forward would keep publishing dollar figures from an unreadable
-// directory. The read uses a context detached from the request (a disconnect cannot poison the
-// shared cache) with its own deadline (a hung read cannot hold the mutex).
+// assetListingSnapshot returns the cached directory read, refreshed past [assetListingSnapshotTTL]. Fails CLOSED like
+// [Server.rwaCuratedSnapshot]: a failed read is cached as unavailable, since carrying the last good one forward would keep
+// publishing dollar figures from an unreadable directory. The read uses a detached context with its own deadline.
 func (s *Server) assetListingSnapshot(ctx context.Context) assetListing {
 	return s.assetListingSnapshotWithin(ctx, assetListingReadBudget)
 }
@@ -207,11 +202,8 @@ func (s *Server) readAssetListing(ctx context.Context) assetListing {
 
 // ─── the binding ────────────────────────────────────────────────────
 
-// listingAddressesFor returns the two addresses a listing may name this asset by, classic first.
-// Native XLM yields only the SAC form, since it has no `CODE-GISSUER` id.
-//
-// Errors are dropped: the only way to reach one is an asset type with no SAC, which answers like
-// an unlisted asset. A Soroban token is its own contract and is served by the RWA contract arm.
+// listingAddressesFor returns the two addresses a listing may name this asset by, classic first; native XLM yields only the SAC
+// form. Errors (an asset type with no SAC) are dropped and answer like an unlisted asset.
 func listingAddressesFor(assetID string) (classic, sac string) {
 	asset, err := canonical.ParseAsset(assetID)
 	if err != nil {
@@ -231,8 +223,7 @@ func listingAddressesFor(assetID string) (classic, sac string) {
 	return classic, sac
 }
 
-// entryFor resolves the one directory row that names this asset, and which route named it.
-// Classic goes first because it is the platform's direct statement; the order only picks the
+// entryFor resolves the one directory row naming this asset and which route named it; classic goes first and only picks the
 // published `address_form`.
 func (l assetListing) entryFor(assetID string) (timescale.ListingEntry, string, bool) {
 	if !l.available {
@@ -241,9 +232,8 @@ func (l assetListing) entryFor(assetID string) (timescale.ListingEntry, string, 
 	return listingEntryIn(l.byAddress, assetID)
 }
 
-// listingEntryIn is the address-resolution rule over any by-address map: classic id first, SAC
-// second. It is the one place the rule lives, so /v1/assets and the /v1/rwa/assets classic arm
-// cannot disagree on whether a SAC-listed member is bound. A nil map answers "not listed".
+// listingEntryIn is the single address-resolution rule (classic id first, SAC second) so /v1/assets and the /v1/rwa/assets
+// classic arm cannot disagree on whether a SAC-listed member is bound. A nil map answers "not listed".
 func listingEntryIn(byAddress map[string]timescale.ListingEntry, assetID string) (timescale.ListingEntry, string, bool) {
 	classic, sac := listingAddressesFor(assetID)
 	if classic != "" {
@@ -261,9 +251,8 @@ func listingEntryIn(byAddress map[string]timescale.ListingEntry, assetID string)
 
 // ─── the pass ───────────────────────────────────────────────────────
 
-// applyListingValuations attaches a listing-sourced valuation, or the reason there is none, to
-// every verified-catalogue row publishing no market cap. Best-effort: any missing input yields
-// fewer figures, never a failed response.
+// applyListingValuations attaches a listing-sourced valuation, or the reason there is none, to every verified-catalogue row
+// with no market cap. Best-effort: a missing input yields fewer figures, never a failed response.
 func (s *Server) applyListingValuations(ctx context.Context, rows []AssetDetail) {
 	if s.VerifiedCurrencies == nil {
 		return
@@ -314,9 +303,8 @@ func (s *Server) applyListingValuations(ctx context.Context, rows []AssetDetail)
 	}
 }
 
-// listingValuationCandidate reports whether this row is one this arm may speak about, and records
-// the terminal status when it is not. These refusals hold whatever the listing says, so they are
-// decided before the directory is read.
+// listingValuationCandidate reports whether this arm may speak about the row, recording the terminal status when not; these
+// refusals hold whatever the listing says, so they run before the directory is read.
 func (s *Server) listingValuationCandidate(row *AssetDetail) bool {
 	// Not a catalogued identity: no status, since the listing has no standing to price an
 	// unattested asset.
@@ -349,9 +337,8 @@ func (s *Server) listingValuationCandidate(row *AssetDetail) bool {
 	return true
 }
 
-// listingPriceRefusal returns the status refusing this entry's price, or "" when it may be
-// served. The storage reader already blanks a price past its 24-hour bound; the age is re-checked
-// against [rwaReferenceMaxAge] so the documented bound holds however the row arrived.
+// listingPriceRefusal returns the status refusing the entry's price, or "". The age is re-checked against [rwaReferenceMaxAge]
+// so the documented bound holds however the row arrived.
 func listingPriceRefusal(entry timescale.ListingEntry, now time.Time) string {
 	if entry.PriceUSD == "" {
 		return ListingValuationNoListingPrice
@@ -381,12 +368,9 @@ func listingReferenceOf(entry timescale.ListingEntry, form string, now time.Time
 	}
 }
 
-// publishListingValuation multiplies the row's supply by the reference price already attached to
-// it, or records why it cannot.
-//
-// `lake` is the net mint-burn-clawback total over the asset's SAC; taking the larger of it and a
-// trustline floor is safe because the trustline sum is a provable lower bound. The reading is
-// published inside the valuation block and the row's `circulating_supply` is left alone.
+// publishListingValuation multiplies the row's supply by its attached reference price, or records why it cannot. `lake` is the
+// net mint-burn-clawback total over the SAC; the larger of it and a trustline floor is safe because the trustline sum is a
+// provable lower bound. The reading stays inside the valuation block; `circulating_supply` is untouched.
 func (s *Server) publishListingValuation(row *AssetDetail, lake string) {
 	circ, reading := listingSupplyReading(row, lake)
 	if circ == "" {
@@ -415,11 +399,9 @@ func (s *Server) publishListingValuation(row *AssetDetail, lake string) {
 	}
 }
 
-// listingSupplyReading picks the multiplicand from the row's supply reading and the lake's flow
-// total. The lake may replace the row's reading only when that is a provable floor
-// ([supply.Basis.LowerBound]) or absent, since [higherClassicSupply] is sound only against a sum
-// of minted balances. An observation outranks the lake ([classicSupplyReading]) because the lake
-// over-counts replayed mints with missing burns; a reading with no basis is kept too.
+// listingSupplyReading picks the multiplicand from the row's reading and the lake flow total. The lake may replace the row's reading only
+// when that is a provable floor ([supply.Basis.LowerBound]) or absent ([higherClassicSupply] is sound only against minted balances); an
+// observation outranks the lake ([classicSupplyReading]), which over-counts replayed mints with missing burns.
 func listingSupplyReading(row *AssetDetail, lake string) (string, supply.Basis) {
 	if row.CirculatingSupply == nil || *row.CirculatingSupply == "" {
 		return higherClassicSupply(lake, "")
@@ -435,12 +417,9 @@ func listingSupplyReading(row *AssetDetail, lake string) (string, supply.Basis) 
 	return served, basis
 }
 
-// listingValueUSD = (circulating / 10^decimals) x price, as a 2-dp decimal string; empty on any
-// input that is not a valuation.
-//
-// Exact rational arithmetic (ADR-0003), one 2-dp rounding at the end. A negative scale is guarded
-// because [big.Int.Exp] answers a negative exponent with 1, which would publish the raw count as
-// dollars.
+// listingValueUSD = (circulating / 10^decimals) x price as a 2-dp decimal string, empty if the input is not a valuation. Exact
+// rational arithmetic (ADR-0003); a negative scale is guarded because [big.Int.Exp] returns 1 for a negative exponent, which
+// would publish the raw count as dollars.
 func listingValueUSD(circRaw string, decimals int, price *big.Rat) string {
 	if price == nil || decimals < 0 {
 		return ""

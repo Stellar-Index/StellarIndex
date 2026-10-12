@@ -135,26 +135,16 @@ type KeyCreated struct {
 	Scopes    []string `json:"scopes,omitempty"`
 }
 
-// createKeyRequest is the inbound POST body. The server adopts the caller's Identifier (callers
-// can only mint keys sharing their owner reference) and ignores Tier: the new key inherits the
-// caller's tier verbatim. Operators mint for other identifiers/tiers via POST /v1/admin/keys; an
-// operator rotating its OWN credential here is held to the same audit contract (X-Reason header
-// + persisted key.mint row).
-//
-// Scopes is optional: for a full-access caller, absent/empty mints a full-access key and
-// non-empty confines it to the listed route families (platform.KnownKeyScopes). A SCOPED caller
-// can only delegate a subset of its own scopes: an empty request inherits them rather than
-// granting full access, and a scope the caller lacks is rejected (see middleware.ClampMintScopes).
-// A caller can only NARROW, and the child inherits the caller's expiry, quota and rate limit (see
-// auth.ChildKeyRequest).
+// createKeyRequest is the POST body. Identifier and Tier come from the caller, never the body; a SCOPED caller can only NARROW
+// (empty Scopes inherits, an unowned scope is rejected, see middleware.ClampMintScopes) and the child inherits expiry, quota
+// and rate limit (auth.ChildKeyRequest). Operator self-mints need X-Reason + a persisted key.mint row.
 type createKeyRequest struct {
 	Label  string   `json:"label"`
 	Scopes []string `json:"scopes,omitempty"`
 }
 
-// validateScopes normalises + validates a mint request's scope
-// list against the platform vocabulary. Returns ("", true) on
-// success (with duplicates removed) or (problem detail, false).
+// validateScopes dedupes and checks a mint request's scopes against the platform vocabulary; returns a problem detail and false
+// on failure.
 func validateScopes(raw []string) ([]string, string) {
 	if len(raw) == 0 {
 		return nil, ""
@@ -175,12 +165,8 @@ func validateScopes(raw []string) ([]string, string) {
 	return out, ""
 }
 
-// handleAccountMe serves GET /v1/account/me.
-//
-// Returns the authenticated caller's account info. Session callers populate the nested
-// user/account objects; API-key callers populate the top-level key_* fields. When both are
-// present the session wins, because it identifies a real user while a key only identifies a
-// credential. Anonymous callers receive 401.
+// handleAccountMe serves GET /v1/account/me. A session wins over an API key when both are present (it identifies a user, a key
+// only a credential); anonymous gets 401.
 func (s *Server) handleAccountMe(w http.ResponseWriter, r *http.Request) {
 	// Magic-link session takes precedence when both are present.
 	if s.SessionPeeker != nil {
@@ -230,21 +216,9 @@ func (s *Server) handleAccountMe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out, Flags{})
 }
 
-// handleAccountUsage serves GET /v1/account/usage.
-//
-// Preferred path: the [UsageRollupReader] over the `usage_daily` hypertable (one row per day and
-// endpoint family, trailing 30 days). Fallback: the legacy [UsageReader] per-day Redis totals when
-// the rollup reader is unwired, errors, or has no rows for this subject. A day missing from the
-// rollup (a worker-outage gap, not zero traffic) is backfilled from the legacy reader.
-//
-// Keying goes through [middleware.UsageKeyForSubject] so the writer and both readers stay in
-// lock-step: `id:<Identifier>` (the OWNER ACCOUNT), with `key:<KeyID>` only for credentials with
-// no owner, so rows cover every key the account holds and survive rotation. A magic-link session
-// reads under `id:acct:<slug>` via [usageKeyForSession]; anonymous callers get 401. `?from=` /
-// `?to=` are reserved in the OpenAPI spec but ignored.
-//
-// Backend absent: 200 with an empty data array. Callers who must tell "no usage" from "backend
-// not wired" probe `/v1/readyz`.
+// handleAccountUsage serves GET /v1/account/usage from the [UsageRollupReader], falling back to the legacy [UsageReader] when the rollup is
+// unwired, errors or is empty; days missing from the rollup (worker-outage gap, not zero traffic) are backfilled from legacy. Keys go
+// through [middleware.UsageKeyForSubject] so writer and readers stay in lock-step. Anonymous gets 401; no backend gives 200 with empty data.
 func (s *Server) handleAccountUsage(w http.ResponseWriter, r *http.Request) {
 	key := ""
 	if s.SessionPeeker != nil {
@@ -278,10 +252,8 @@ func (s *Server) handleAccountUsage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, s.readUsageLegacy(r, key), Flags{})
 }
 
-// usageKeyForSession derives the account-scoped usage key a dashboard session reads under: the
-// SAME key an API key minted on that account writes under ([middleware.UsageKeyForSubject]'s
-// Identifier branch, `id:` + [auth.AccountIdentifier]). It routes through the shared derivation
-// so the two cannot drift; the synthetic Subject's Tier only clears the anonymous guard.
+// usageKeyForSession derives the usage key a session reads under, via [middleware.UsageKeyForSubject] so it cannot drift from
+// what the account's API keys write under.
 func usageKeyForSession(accountSlug string) string {
 	if accountSlug == "" {
 		return ""
@@ -292,10 +264,8 @@ func usageKeyForSession(accountSlug string) string {
 	})
 }
 
-// readUsageRollup reads the per-endpoint rollups for the subject and backfills any day the
-// rollup worker produced NO row for from the legacy per-day reader, so a worker-outage gap
-// mid-window does not silently vanish. Only "the rollup reader produced nothing usable"
-// (unwired, read error, zero rows) falls back to the legacy shape entirely; ok=false means that.
+// readUsageRollup reads per-endpoint rollups and backfills days the worker produced no row for, so an outage gap does not
+// vanish; ok=false means nothing usable, fall back to legacy entirely.
 func (s *Server) readUsageRollup(r *http.Request, key string) ([]UsageRow, bool) {
 	if s.UsageRollupReader == nil {
 		return nil, false
@@ -325,10 +295,8 @@ func (s *Server) readUsageRollup(r *http.Request, key string) ([]UsageRow, bool)
 	return out, true
 }
 
-// backfillMissingUsageDays fills, from the legacy per-day reader, any day in the trailing 30-day
-// window absent from `present` (the days the rollup produced a row for): a rollup-worker gap,
-// not a zero-traffic day, which the rollup still emits. Best-effort: a legacy read failure means
-// no backfill, as in [Server.readUsageLegacy].
+// backfillMissingUsageDays fills days absent from present from the legacy reader (a worker gap, not a zero-traffic day); a
+// legacy read failure means no backfill.
 func (s *Server) backfillMissingUsageDays(r *http.Request, key string, present map[string]struct{}) []UsageRow {
 	if s.UsageReader == nil {
 		return nil
@@ -348,10 +316,8 @@ func (s *Server) backfillMissingUsageDays(r *http.Request, key string, present m
 	return backfilled
 }
 
-// readUsageLegacy reads the per-day Redis totals (no endpoint
-// dimension). Every failure degrades to the locked empty-list wire
-// shape rather than a 5xx — usage is a dashboard nicety, never
-// worth failing a customer integration over.
+// readUsageLegacy reads the per-day Redis totals; every failure degrades to the empty-list wire shape, never a 5xx, since usage
+// is a dashboard nicety.
 func (s *Server) readUsageLegacy(r *http.Request, key string) []UsageRow {
 	if s.UsageReader == nil {
 		return []UsageRow{}
@@ -378,18 +344,9 @@ func legacyUsageRow(d UsageDay) UsageRow {
 	}
 }
 
-// handleAccountKeysCreate serves POST /v1/account/keys.
-//
-// Issues a fresh API key for the authenticated caller, inheriting the caller's Identifier and
-// Tier, so a paid customer rotates credentials without escalating.
-//
-// Anonymous → 401. Any tier but apikey/operator (i.e. sep10) → 403. Missing/empty body → 400.
-// Store unavailable → 503 (no Redis wired).
-//
-// Operator-tier callers keep tier inheritance (the staff rotation path) but pay the admin-write
-// price: X-Reason is required (400 without) and the mint lands a "key.mint" audit row naming the
-// actor, as POST /v1/admin/keys does. Otherwise an operator credential could spawn further
-// operator credentials with no reason and no audit trail.
+// handleAccountKeysCreate serves POST /v1/account/keys, inheriting the caller's Identifier and Tier. Anonymous 401; sep10 tier
+// 403; bad body 400; no store 503. Operator callers must send X-Reason (400 without) and land a key.mint audit row, else an
+// operator credential could spawn more operators unaudited.
 func (s *Server) handleAccountKeysCreate(w http.ResponseWriter, r *http.Request) {
 	subject, ok := auth.SubjectFrom(r.Context())
 	if !ok || subject.Tier == auth.TierAnonymous || subject.Tier == "" {
@@ -474,10 +431,8 @@ func (s *Server) handleAccountKeysCreate(w http.ResponseWriter, r *http.Request)
 	})
 }
 
-// accountKeyIdempotencySubject scopes an Idempotency-Key on POST /v1/account/keys to the
-// authenticating CREDENTIAL, not just its identifier: siblings share an identifier but not
-// scopes, and a replay hands back a minted plaintext, so a narrower sibling must never replay a
-// wider one's mint. Empty (no dedupe) for anonymous.
+// accountKeyIdempotencySubject scopes an Idempotency-Key to the authenticating CREDENTIAL: a replay returns minted plaintext,
+// so a narrower sibling must never replay a wider one's mint.
 func accountKeyIdempotencySubject(r *http.Request) string {
 	subject, ok := auth.SubjectFrom(r.Context())
 	if !ok || subject.Tier == auth.TierAnonymous || subject.Tier == "" {
@@ -530,9 +485,8 @@ func parseCreateKeyRequest(w http.ResponseWriter, r *http.Request) (createKeyReq
 	return req, true
 }
 
-// operatorReasonOK enforces the admin-write X-Reason contract on the self-service key routes
-// only for operator-tier callers; customer mints/revokes are bounded to their own identifier and
-// tier and are not staff actions. Returns ok=false when it has already written the 400.
+// operatorReasonOK enforces the X-Reason contract on self-service key routes for operator-tier callers only; returns false
+// after writing the 400.
 func (s *Server) operatorReasonOK(w http.ResponseWriter, r *http.Request, subject auth.Subject) (string, bool) {
 	if subject.Tier != auth.TierOperator {
 		return "", true
@@ -549,10 +503,8 @@ func (s *Server) operatorReasonOK(w http.ResponseWriter, r *http.Request, subjec
 	return reason, true
 }
 
-// recordAccountKeyMintAudit logs and persists the "key.mint" audit row for an operator-tier
-// self-service mint, shaped like the admin mint so one query over key.mint rows finds every
-// operator credential; "route" tells the two apart. Best-effort as in recordAdminKeyMintAudit:
-// a sink failure logs at WARN and never blocks the mint.
+// recordAccountKeyMintAudit persists the key.mint row for an operator self-service mint, shaped like the admin mint (the route
+// field tells them apart). Best-effort: a sink failure logs at WARN and never blocks the mint.
 func (s *Server) recordAccountKeyMintAudit(
 	r *http.Request, actor auth.Subject, label string, scopes []string, mintedKeyID, reason string,
 ) {
@@ -591,10 +543,8 @@ func (s *Server) recordAccountKeyMintAudit(
 	}, "key_mint", "account key mint")
 }
 
-// recordAccountKeyRevokeAudit logs and persists the "key.revoke" audit
-// row for an operator-tier self-service revoke. Best-effort, same
-// contract as recordAdminKeyRevokeAudit — the revoke already happened
-// and must not be undone by an audit-sink outage.
+// recordAccountKeyRevokeAudit persists the key.revoke row for an operator self-service revoke; best-effort, the revoke must not
+// be undone by a sink outage.
 func (s *Server) recordAccountKeyRevokeAudit(
 	r *http.Request, actor auth.Subject, keyID, reason string,
 ) {
@@ -627,9 +577,8 @@ func (s *Server) recordAccountKeyRevokeAudit(
 	}, "key_revoke", "account key revoke")
 }
 
-// appendKeyAudit stamps the request-derived fields (UA, IP, timestamp)
-// onto entry and appends it best-effort, counting a sink failure under
-// the given AdminAuditWriteFailuresTotal surface label.
+// appendKeyAudit stamps UA, IP and time onto entry and appends best-effort, counting a sink failure under the given surface
+// label.
 func (s *Server) appendKeyAudit(r *http.Request, entry platform.AuditEntry, surface, what string) {
 	entry.UserAgent = r.UserAgent()
 	entry.Timestamp = time.Now().UTC()
@@ -643,24 +592,13 @@ func (s *Server) appendKeyAudit(r *http.Request, entry platform.AuditEntry, surf
 	}
 }
 
-// defaultAccountKeyQuota is the self-service active-key ceiling one
-// caller identifier may hold when [Options.AccountKeyQuota] is unset.
-//
-// 25 is the free tier's rung of the dashboard ladder ([platform.Tier.MaxActiveKeys], free 25 →
-// partner 250). It sits above what any legitimate caller holds while still turning an unbounded
-// mint loop into a 409. Operators tune it via [Options.AccountKeyQuota].
+// defaultAccountKeyQuota is the self-service active-key ceiling per identifier when [Options.AccountKeyQuota] is unset; 25
+// matches the free tier's [platform.Tier.MaxActiveKeys] and turns an unbounded mint loop into a 409.
 const defaultAccountKeyQuota = 25
 
-// mintAccountKey issues a self-service key under the per-identifier
-// active-key cap. Returns false when it has already written the response.
-//
-// Without a cap one caller could mint keys in a loop, each a live credential and a permanent Redis
-// record. The store enforces it in the same critical section as the write
-// ([auth.RedisAPIKeyStore.CreateCapped]): a handler-side count then Create would let a
-// concurrent burst all read the same count below the cap.
-//
-// An unverifiable count fails CLOSED (503, no mint): unbounded minting is the abuse the cap exists
-// to stop.
+// mintAccountKey issues a self-service key under the per-identifier cap, enforced inside the store's critical section
+// ([auth.RedisAPIKeyStore.CreateCapped]) so a concurrent burst cannot all read a count below the cap. An unverifiable count
+// fails CLOSED (503); returns false after writing the response.
 func (s *Server) mintAccountKey(w http.ResponseWriter, r *http.Request, req auth.CreateAPIKeyRequest) (auth.APIKeyRecord, string, bool) {
 	quota := s.AccountKeyQuota
 	if quota == 0 {
@@ -706,13 +644,8 @@ func (s *Server) mintAccountKey(w http.ResponseWriter, r *http.Request, req auth
 	return auth.APIKeyRecord{}, "", false
 }
 
-// handleAccountKeysList serves GET /v1/account/keys.
-//
-// Returns every API key whose Identifier matches the authenticated caller's, as public-safe
-// APIKeyRecord projections (plaintext is retrievable only at Create time).
-//
-// Anonymous → 401. Store unavailable → 503. Authenticated callers always get a list, possibly
-// empty, sorted by CreatedAt ascending so the original signup key comes first.
+// handleAccountKeysList serves GET /v1/account/keys: public-safe records for the caller's Identifier, oldest first. Anonymous
+// 401; no store 503.
 func (s *Server) handleAccountKeysList(w http.ResponseWriter, r *http.Request) {
 	subject, ok := auth.SubjectFrom(r.Context())
 	if !ok || subject.Tier == auth.TierAnonymous || subject.Tier == "" {
@@ -761,15 +694,9 @@ func (s *Server) handleAccountKeysList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out, Flags{})
 }
 
-// handleAccountKeysRevoke serves DELETE /v1/account/keys/{keyID}.
-//
-// Revokes the API key whose KeyID matches the path parameter, scoped to the caller's Identifier.
-// Anonymous → 401; missing keyID → 400; store unwired → 503; everything else → 204, including
-// "key not found", so a keyID's existence on another account does not leak. An operator's audit
-// row is written only when a key was actually revoked.
-//
-// Revoking the key the request authenticated with would orphan it mid-request, so that returns
-// 409 and the UI can prompt for an alternate key.
+// handleAccountKeysRevoke serves DELETE /v1/account/keys/{keyID}, scoped to the caller's Identifier. Missing key returns 204
+// too, so another account's keyIDs do not leak; revoking the key the request used is 409. Operator audit row only when a key
+// was actually revoked.
 func (s *Server) handleAccountKeysRevoke(w http.ResponseWriter, r *http.Request) {
 	subject, ok := auth.SubjectFrom(r.Context())
 	if !ok || subject.Tier == auth.TierAnonymous || subject.Tier == "" {

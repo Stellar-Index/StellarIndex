@@ -112,9 +112,8 @@ func writeJSON(w http.ResponseWriter, data any, flags Flags, sources ...string) 
 	})
 }
 
-// dataVintage folds the fill times of the cached reads a response is built
-// from into its as_of: the oldest fill when every read was cached, so an
-// unchanged payload replays byte-identical (and its ETag 304s), else now.
+// dataVintage folds the fill times of the cached reads behind a response into its as_of: the oldest fill when all were cached
+// (unchanged payload replays byte-identical, ETag 304s), else now.
 type dataVintage struct {
 	oldest time.Time
 	live   bool
@@ -167,12 +166,9 @@ func writeEnvelopeStatus(w http.ResponseWriter, status int, env Envelope) {
 	_ = json.NewEncoder(w).Encode(env)
 }
 
-// writeProblem writes an RFC 9457 error response; typeURL is the stable error-type URL
-// (https://api.stellarindex.io/errors/<name>).
-//
-// A 500 whose request deadline has already expired becomes the retryable timeout problem. That
-// covers the blanket middleware deadline only; a path holding the error from a handler's own
-// budget must call writeProblemErr.
+// writeProblem writes an RFC 9457 error; typeURL is the stable error-type URL (https://api.stellarindex.io/errors/<name>). A
+// 500 whose request deadline already expired becomes the retryable timeout problem; this covers only the blanket middleware
+// deadline, so a handler's own budget must use writeProblemErr.
 func writeProblem(w http.ResponseWriter, r *http.Request, typeURL, title string, status int, detail string) {
 	writeProblemCoverage(w, r, typeURL, title, status, detail, nil, false, nil, "")
 }
@@ -231,21 +227,16 @@ const (
 	retryAfterRequestTimeout = "5"
 )
 
-// requestDeadlineExpired reports whether the blanket middleware.RequestTimeout deadline has fired,
-// so writeProblem can upgrade a 500 to a retryable 503: a deadline is capacity, not a fault.
-//
-// It cannot see a handler's own shorter context.WithTimeout budget expiring while r.Context() is
-// alive, the dominant shape; that is why writeProblemErr exists. A genuine fault reported after
-// the deadline is relabelled a timeout; the ERROR log keeps the real error.
+// requestDeadlineExpired reports whether the blanket middleware.RequestTimeout fired, so writeProblem can upgrade a 500 to a
+// retryable 503 (capacity, not fault). It cannot see a handler's own shorter budget expiring (hence writeProblemErr); the ERROR
+// log keeps the real error.
 func requestDeadlineExpired(r *http.Request) bool {
 	return errors.Is(r.Context().Err(), context.DeadlineExceeded)
 }
 
-// writeProblemErr is writeProblem for a call site holding the failing error: a deadline error
-// rewrites a 500/502 to the retryable request-timeout 503, since a deadline is a bound this
-// process imposed. A 4xx stays the client's answer; a 503 keeps its own type. Keyed on errors.Is,
-// so a driver that re-phrases the cancellation (SQLSTATE 57014) is missed; sites with a per-call
-// ctx should branch on handlerTimedOut and use this only as the fallback.
+// writeProblemErr is writeProblem for a site holding the error: a deadline error rewrites a 500/502 to the retryable timeout
+// 503; a 4xx stays, a 503 keeps its type. errors.Is misses a driver-rephrased cancellation (SQLSTATE 57014), so sites with a
+// per-call ctx should branch on handlerTimedOut first.
 func writeProblemErr(
 	w http.ResponseWriter, r *http.Request, err error,
 	typeURL, title string, status int, detail string,
@@ -258,25 +249,16 @@ func writeProblemErr(
 	writeProblem(w, r, typeURL, title, status, detail)
 }
 
-// clientAborted reports whether the client cancelled its request. When true, handlers SHOULD
-// return without writing: the client is gone, and obs.HTTPMetrics labels it 499 rather than 500.
-//
-// Only [context.Canceled] counts. [context.DeadlineExceeded] is a server-side budget expiring with
-// the client still on the wire; returning silently would emit a bodyless 200 (an
-// authoritative-looking empty result) counted into the latency SLO's success numerator.
-//
-// Handler order: clientAborted, handlerTimedOut (503), then 500.
+// clientAborted reports whether the client cancelled (handlers SHOULD return without writing; obs.HTTPMetrics labels it 499).
+// Only [context.Canceled] counts: a DeadlineExceeded is a server budget expiring, and returning silently would emit a bodyless
+// 200 counted into the latency SLO. Order: clientAborted, handlerTimedOut (503), then 500.
 func clientAborted(r *http.Request, _ error) bool {
 	return errors.Is(r.Context().Err(), context.Canceled)
 }
 
-// handlerTimedOut reports whether a handler-scoped context (context.WithTimeout capping one
-// storage call) hit its deadline. Use it on the per-call context, NOT r.Context().
-//
-// The Postgres driver returns `canceling statement due to user request` (SQLSTATE 57014), which
-// does NOT unwrap to [context.DeadlineExceeded], so the per-call context's Err() is the reliable
-// signal. A true verdict is recorded for metering ([middleware.MarkReadDeadline]): a timed-out
-// read is billable.
+// handlerTimedOut reports whether a handler-scoped context hit its deadline; use it on the per-call context, NOT r.Context().
+// Postgres 57014 does not unwrap to [context.DeadlineExceeded], so the context's Err() is the signal. A true verdict is
+// recorded for metering ([middleware.MarkReadDeadline]): a timed-out read is billable.
 func handlerTimedOut(callCtx context.Context, err error) bool {
 	timedOut := errors.Is(err, context.DeadlineExceeded) ||
 		callCtx.Err() == context.DeadlineExceeded
@@ -286,14 +268,9 @@ func handlerTimedOut(callCtx context.Context, err error) bool {
 	return timedOut
 }
 
-// transientStorageErr reports whether a storage error looks like a transient infrastructure
-// hiccup rather than a server bug; handlers SHOULD map true to a retryable 503.
-//
-// It catches SQLSTATE 57014 without a context cancellation (statement_timeout, lock_timeout,
-// idle_in_transaction_session_timeout), bad connections, and EOF / broken pipe. The SQLSTATE match
-// is string-based so this layer does not depend on pgconn's typed error; `57014` is stable.
-//
-// Caller order: clientAborted, handlerTimedOut, transientStorageErr, then 500.
+// transientStorageErr reports whether a storage error looks like transient infrastructure (handlers SHOULD map true to
+// retryable 503): SQLSTATE 57014 without cancellation, bad connections, EOF/broken pipe. String-matched so this layer avoids
+// pgconn types. Order: clientAborted, handlerTimedOut, transientStorageErr, then 500.
 func transientStorageErr(err error) bool {
 	if err == nil {
 		return false
@@ -318,10 +295,9 @@ func transientStorageErr(err error) bool {
 	return false
 }
 
-// unreachableStorageErr reports whether err is a failure to reach the storage dependency.
-// Structural checks come first because they survive rewording; the substrings cover wrappers that
-// render the cause into a string. Keep in step with the ClickHouse-side lakeUnreachable
-// (explorer/reader.go), which cannot import this package.
+// unreachableStorageErr reports whether err is a failure to reach storage. Structural checks first (they survive rewording);
+// substrings cover wrappers. Keep in step with ClickHouse-side lakeUnreachable (explorer/reader.go), which cannot import this
+// package.
 func unreachableStorageErr(err error) bool {
 	var opErr *net.OpError
 	if errors.As(err, &opErr) {

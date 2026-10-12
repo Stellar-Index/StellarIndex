@@ -73,11 +73,8 @@ type FreezeEventView struct {
 	Escalated         *bool           `json:"escalated"`
 }
 
-// handleAnomalies serves GET /v1/anomalies — the freeze timeline
-// (ADR-0019). `?firing=true` restricts to firing pairs; `?limit=` (default 100, max 500);
-// `?window_days=` scopes the reason tally (default 30); `?include=daily` adds the day×reason
-// tally. The live firing count and reason breakdown are always reported. Returns 200 with an
-// empty payload when no reader is wired.
+// handleAnomalies serves GET /v1/anomalies, the freeze timeline (ADR-0019); `?firing=true`, `?limit=` (default 100, max 500),
+// `?window_days=` (default 30), `?include=daily`. 200 with an empty payload when no reader is wired.
 func (s *Server) handleAnomalies(w http.ResponseWriter, r *http.Request) {
 	if s.Anomalies == nil {
 		writeJSON(w, AnomaliesView{ReasonTally: []ReasonCountV{}, Events: []FreezeEventView{}}, Flags{})
@@ -154,9 +151,7 @@ func (s *Server) handleAnomalies(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out, Flags{})
 }
 
-// anomaliesDaily fetches + shapes the `?include=daily` day×reason
-// block. ok=false means the response has already been written (error
-// or aborted client) and the caller must return.
+// anomaliesDaily builds the `?include=daily` block; ok=false means the response was already written and the caller must return.
 func (s *Server) anomaliesDaily(w http.ResponseWriter, r *http.Request, windowDays int) ([]DailyReasonCountV, bool) {
 	daily, err := s.Anomalies.FreezeDailyReasonCounts(r.Context(), windowDays)
 	if err != nil {
@@ -239,11 +234,9 @@ type DivergenceRefV struct {
 	RefObservedAt *string `json:"ref_observed_at"`
 }
 
-// handleDivergence serves GET /v1/divergence — the current
-// cross-reference divergence board: per (asset, quote) pair, our price beside the latest
-// comparison against each reference within `?window_days=` (default 7), widest |delta_pct| first.
-// `?firing=true` keeps pairs with a firing reference; `?limit=` counts pairs (default 100, max
-// 500). Returns 200 with an empty payload when no reader is wired.
+// handleDivergence serves GET /v1/divergence: per (asset, quote) our price beside the latest comparison per reference within
+// `?window_days=` (default 7), widest |delta_pct| first. `?limit=` counts pairs (default 100, max 500). 200 with an empty
+// payload when no reader is wired.
 func (s *Server) handleDivergence(w http.ResponseWriter, r *http.Request) {
 	if s.Divergences == nil {
 		writeJSON(w, DivergenceView{Pairs: []DivergencePairV{}}, Flags{})
@@ -271,10 +264,8 @@ func (s *Server) handleDivergence(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, s.groupDivergenceRows(r.Context(), rows), Flags{})
 }
 
-// groupDivergenceRows folds per-reference rows into one entry per pair,
-// keeping the reader's pair order. A pair /v1/price withholds is omitted:
-// our_price is that market's price, and each ref_price with its delta_pct
-// restates it.
+// groupDivergenceRows folds per-reference rows into one entry per pair in reader order. A pair /v1/price withholds is omitted,
+// since our_price and each ref_price/delta_pct would restate it.
 func (s *Server) groupDivergenceRows(ctx context.Context, rows []timescale.DivergenceRow) DivergenceView {
 	withheld := s.storedMarketGate(divergenceGateSurface)
 	out := DivergenceView{Pairs: []DivergencePairV{}}
@@ -330,10 +321,8 @@ const (
 	divergenceGateSurface = "divergence"
 )
 
-// storedMarketGate returns /v1/price's withholding verdict for stored rows
-// keyed on (asset_id, quote_id), memoised per market for one response. It is decided at read time
-// so a newly flagged issuer or thin market also applies to rows already stored. With a gate
-// wired, an id that does not parse cannot be vetted and is withheld; with no gate nothing is.
+// storedMarketGate returns /v1/price's withholding verdict for stored (asset_id, quote_id) rows, memoised per response and
+// decided at read time so new flags apply to stored rows. With a gate wired an unparseable id is withheld.
 func (s *Server) storedMarketGate(surface string) func(ctx context.Context, assetID, quoteID string) (bool, PriceWithheldReason) {
 	type verdict struct {
 		withheld bool
@@ -396,18 +385,13 @@ type DivergenceSeriesRefV struct {
 	Firing    bool   `json:"firing,omitempty"`
 }
 
-// divergenceSeriesDays whitelists the `?days=` windows the series
-// endpoint serves. Each maps to a fixed bucket width in the reader (timescale.DivergenceSeriesBucket),
-// capping a response near 360 points; an open-ended window would allow an unbounded history scan.
+// divergenceSeriesDays whitelists the `?days=` windows, each with a fixed bucket width (timescale.DivergenceSeriesBucket)
+// capping a response near 360 points; open-ended windows would allow an unbounded scan.
 var divergenceSeriesDays = map[int]bool{1: true, 7: true, 30: true}
 
-// handleDivergenceSeries serves GET /v1/divergence/series — the Δ%
-// time-series for ONE pair against every reference: `?pair=<asset_id>~<quote_id>` (the markets
-// slug convention), `?days=` in {1, 7, 30} (default 7). There is no per-reference selector; a
-// reference's prices are served only beside the others.
-//
-// Cache policy is private, no-store, via an explicit policyForPath arm shared with /v1/divergence
-// and /v1/anomalies. Returns 200 with empty points when no reader is wired or the window is empty.
+// handleDivergenceSeries serves GET /v1/divergence/series: Δ% for ONE pair (`?pair=<asset_id>~<quote_id>`) against every
+// reference, `?days=` in {1, 7, 30}. Cache policy is private, no-store via an explicit policyForPath arm. 200 with empty points
+// when no reader is wired.
 func (s *Server) handleDivergenceSeries(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	pair := q.Get("pair")
@@ -489,9 +473,8 @@ func groupDivergenceSeries(points []timescale.DivergenceSeriesPoint) []Divergenc
 	return out
 }
 
-// divergenceSeriesWithheld writes the response and reports true when the
-// requested legs do not parse (400) or /v1/price withholds the market
-// (404, with the gate's reason): every point carries our_price.
+// divergenceSeriesWithheld writes the response and returns true when the legs do not parse (400) or /v1/price withholds the
+// market (404 with the gate's reason), since every point carries our_price.
 func (s *Server) divergenceSeriesWithheld(w http.ResponseWriter, r *http.Request, base, quote string) bool {
 	baseAsset, berr := canonical.ParseAsset(base)
 	quoteAsset, qerr := canonical.ParseAsset(quote)
@@ -508,9 +491,8 @@ func (s *Server) divergenceSeriesWithheld(w http.ResponseWriter, r *http.Request
 	return false
 }
 
-// parseWindowDays reads an optional ?window_days= positive int in
-// [1, 365]; def when absent. A present but invalid value writes a 400, like the sibling ?days=
-// and ?limit= params, so a caller is never told its window was honored when it was ignored.
+// parseWindowDays reads an optional ?window_days= in [1, 365], def when absent; an invalid value writes a 400 rather than being
+// silently ignored.
 func parseWindowDays(w http.ResponseWriter, r *http.Request, def int) (int, bool) {
 	raw := r.URL.Query().Get("window_days")
 	if raw == "" {
