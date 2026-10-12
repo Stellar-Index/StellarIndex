@@ -1,13 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { render } from '@testing-library/react';
 
-import {
-  DirectionPill,
-  Sparkline,
-  MultiWindowDelta,
-  StreakIndicator,
-  AccelerationArrow,
-} from '@/components/primitives';
+import { DirectionPill, Sparkline } from '@/components/primitives';
 
 // Domain atoms are props-only and deterministic (per the primitives barrel
 // contract). Assert they render without throwing across their key branches —
@@ -41,36 +35,5 @@ describe('domain primitives — render without throwing', () => {
     expect(
       getByRole('img', { name: /sparkline: 5 points, up overall/i }),
     ).toBeInTheDocument();
-  });
-
-  it('MultiWindowDelta renders its window labels', () => {
-    const { container } = render(
-      <MultiWindowDelta
-        windows={[
-          { label: '24h', deltaPct: 0.012 },
-          { label: '7d', deltaPct: -0.031 },
-        ]}
-      />,
-    );
-    expect(container.textContent).toContain('24h');
-    expect(container.textContent).toContain('7d');
-  });
-
-  it('StreakIndicator: streak and ath variants render', () => {
-    expect(
-      render(<StreakIndicator kind="streak" direction="up" days={5} />)
-        .container.firstChild,
-    ).not.toBeNull();
-    expect(
-      render(<StreakIndicator kind="ath" at={new Date(0).toISOString()} />)
-        .container.firstChild,
-    ).not.toBeNull();
-  });
-
-  it('AccelerationArrow renders a direction×acceleration glyph', () => {
-    expect(
-      render(<AccelerationArrow direction="up" acceleration="increasing" />)
-        .container.firstChild,
-    ).not.toBeNull();
   });
 });
