@@ -196,9 +196,8 @@ func newRawSwap(e *events.Event, closedAt time.Time) *RawSwap {
 	}
 }
 
-// absorb stores one field-event in the appropriate RawSwap slot. It returns the completed swap
-// (non-nil once all 8 slots are populated), entries evicted for being older than maxAge, and
-// ErrUnknownField / decode errors for the current event.
+// absorb stores one field-event in its RawSwap slot. Returns the completed swap (nil until all 8 slots are filled),
+// entries evicted past maxAge, and ErrUnknownField / decode errors for this event.
 func (b *buffer) absorb(e *events.Event, fieldTopic string, closedAt time.Time) (completed *RawSwap, evicted []RawSwap, err error) {
 	// Eviction ages against the event's ClosedAt, not wall-clock, so backfill compares against the
 	// timeline being replayed. Liquidity/stake orphans are counted via takeOtherEvicted.
@@ -274,10 +273,9 @@ func (b *buffer) drain() (swaps []RawSwap, otherOrphans int) {
 	return swaps, otherOrphans
 }
 
-// rotateOpen drops the open group at k when e would land in an already filled slot as a DIFFERENT
-// event (the first field of a second action through the same contract in the same op), since
-// overwriting would splice two actions into one row. The same EventIndex is a redelivery and
-// overwrites idempotently. Returns the number dropped.
+// rotateOpen drops the open group at k when e would land in an already filled slot as a DIFFERENT event (a second action
+// through the same contract in the same op), which overwriting would splice into one row. Same EventIndex = redelivery.
+// Returns the count dropped.
 func rotateOpen[R interface{ slot(string) *events.Event }](m map[groupKey]R, k groupKey, e *events.Event, fieldTopic string) int {
 	r, ok := m[k]
 	if !ok {

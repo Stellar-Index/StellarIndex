@@ -12,9 +12,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
 )
 
-// Per-IP concurrent-SSE-connection cap. The global cap ([maxConcurrentStreams]) alone lets one
-// stalled client hold the entire budget, so each address gets its own ceiling. Disabled by default
-// (0); the binary wires it via [SetMaxStreamsPerIP] and [SetStreamClientIPResolver].
+// Per-IP concurrent-SSE cap: the global cap ([maxConcurrentStreams]) alone lets one stalled client hold the whole budget. Disabled by
+// default (0);
+// wired via [SetMaxStreamsPerIP] and [SetStreamClientIPResolver].
 var (
 	maxStreamsPerIP int64 // 0 = disabled
 
@@ -40,9 +40,8 @@ func SetStreamClientIPResolver(f func(*http.Request) string) {
 	streamClientIPMu.Unlock()
 }
 
-// defaultStreamClientIP returns the direct socket peer host. Correct
-// for direct connections; when a reverse proxy fronts the API the
-// binary replaces this with a forwarded-header-aware resolver.
+// defaultStreamClientIP returns the direct socket peer host; behind a reverse proxy the binary replaces it with a forwarded-header-aware
+// resolver.
 func defaultStreamClientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
@@ -64,9 +63,8 @@ func resolveStreamClientIP(r *http.Request) string {
 	return ratelimit.ThrottleIPKey(ip)
 }
 
-// acquireIPStreamSlot reserves one per-IP slot for r's client; ok=false means the client is at its
-// cap and the caller must reject. release MUST be called when the stream ends. With the cap
-// disabled it always succeeds with a no-op release.
+// acquireIPStreamSlot reserves one per-IP slot; ok=false means the client is at its cap and the caller must reject. release MUST be called
+// when the stream ends (a no-op when the cap is disabled).
 func acquireIPStreamSlot(r *http.Request) (release func(), ok bool) {
 	limit := atomic.LoadInt64(&maxStreamsPerIP)
 	if limit <= 0 {

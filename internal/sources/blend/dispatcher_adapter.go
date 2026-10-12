@@ -225,10 +225,7 @@ func (d *Decoder) decodeByKind(ev events.Event) ([]consumer.Event, error) { //no
 	}
 }
 
-// firstTopicHex returns a short identifying string for the event's
-// topic[0] when no decoder branch matched — used in error messages
-// only. Empty topic / non-symbol topic fall through to a
-// placeholder rather than failing the error format itself.
+// firstTopicHex returns a short topic[0] description for error messages only; non-symbol topics get a placeholder.
 func firstTopicHex(e *events.Event) string {
 	if len(e.Topic) == 0 {
 		return "<empty>"

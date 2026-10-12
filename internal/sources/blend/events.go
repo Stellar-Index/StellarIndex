@@ -17,11 +17,8 @@ import (
 // SourceName is the stable source name used in metrics labels, registry keys and storage rows.
 const SourceName = "blend"
 
-// Event names: topic[0] of every Blend pool / pool-factory event, as a Soroban Symbol.
-//
-// Non-auction kinds are also the persisted `event_kind` in the blend_* tables, so they live in
-// [domain.BlendEventSupply] and siblings (storage validates against them and cannot import this
-// package); these alias those. The auction consts have no storage-side switch.
+// Event names: topic[0] of every Blend pool / pool-factory event. Non-auction kinds alias the persisted `event_kind` in
+// [domain.BlendEventSupply] and siblings (storage validates against them and cannot import this package).
 const (
 	// Auction events (PRIMARY — directional price signals).
 	EventNewAuction    = "new_auction"
@@ -132,9 +129,7 @@ var (
 	TopicSymbolDeleteLiquidationAuction = scval.MustEncodeSymbol(EventDeleteLiquidationAuction)
 )
 
-// AuctionType discriminator — verified against
-// pool/src/auctions/auction.rs constants. The contract emits
-// `auction_type: u32` as topic[1] on every auction event.
+// AuctionType discriminator from pool/src/auctions/auction.rs, emitted as u32 in topic[1] of every auction event.
 const (
 	AuctionTypeUserLiquidation uint32 = 0
 	AuctionTypeBadDebt         uint32 = 1

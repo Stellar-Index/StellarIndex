@@ -129,9 +129,8 @@ func stitchChunks(results []chunkResult) error {
 	return nil
 }
 
-// checkpointAnchorOutcome is one checkpoint's cross-anchor verdict.
-// A divergence (our hash != the archive's) is not a member: it aborts
-// the walk with an error rather than being tallied.
+// checkpointAnchorOutcome is one checkpoint's cross-anchor verdict; a divergence (our hash != the archive's) is not a member: it aborts
+// the walk with an error.
 type checkpointAnchorOutcome int
 
 const (
@@ -159,9 +158,10 @@ func (o checkpointAnchorOutcome) String() string {
 	return "unknown"
 }
 
-// classifyCheckpointAnchor classifies the mirror's header hash for checkpoint seq against ours. An ABSENT file is "missed" only when the mirror
-// covers that checkpoint; above its high-water the walk is ahead of the fill job by design, and counting those would make ADR-0017's invariant unenforceable.
-// Read failures and hash divergence abort the chunk walk.
+// classifyCheckpointAnchor classifies the mirror's header hash for checkpoint seq against ours. An ABSENT file is "missed" only when the
+// mirror covers that checkpoint; above its high-water
+// the walk is ahead of the fill job by design, and counting those would make the invariant unenforceable. Read failures and hash
+// divergence abort the chunk walk.
 func classifyCheckpointAnchor(archiveRoot string, seq uint32, ourHash sdkxdr.Hash, cov archiveMirrorCoverage) (checkpointAnchorOutcome, error) {
 	expected, hit, err := readArchivedLedgerHash(archiveRoot, seq)
 	switch {
@@ -180,8 +180,9 @@ func classifyCheckpointAnchor(archiveRoot string, seq uint32, ourHash sdkxdr.Has
 	return checkpointAnchorMatched, nil
 }
 
-// verifyChunk walks one chunk and returns counters and boundary hashes. Every chunk checks PreviousLedgerHash continuity whatever the tier,
-// or a checkpoint-only run would have no gap detection; cross-chunk boundaries are stitchChunks's job. Errors abort the walk.
+// verifyChunk walks one chunk and returns counters and boundary hashes. Every chunk checks PreviousLedgerHash continuity whatever the
+// tier, or a checkpoint-only run would have no
+// gap detection; cross-chunk boundaries are stitchChunks's job. Errors abort the walk.
 //
 //nolint:gocognit,funlen,gocyclo // walk-loop linearity beats premature splitting
 func verifyChunk(
@@ -287,10 +288,8 @@ func verifyChunk(
 	return res, err
 }
 
-// chunkOrchestratorOpts carries resume-aware hooks for
-// [runVerifyChunks]. The zero value is the legacy single-pass shape:
-// chunks are numbered 0..len-1 in the progress log + result array,
-// and no per-chunk completion is reported anywhere.
+// chunkOrchestratorOpts carries resume-aware hooks for [runVerifyChunks]; the zero value is the single-pass shape (chunks numbered
+// 0..len-1, no per-chunk completion reported).
 type chunkOrchestratorOpts struct {
 	// MirrorCoverage is the checkpoint span the cross-anchor mirror
 	// holds, measured once before the walk. The zero value (Known

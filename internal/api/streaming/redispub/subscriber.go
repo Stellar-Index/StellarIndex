@@ -47,9 +47,8 @@ type topicMark struct {
 	producer   string
 }
 
-// forwardedPruneAt is the topic count at which marks older than
-// observedAtMaxAge are swept; validateEvent rejects anything that old,
-// so a swept mark can no longer admit a duplicate.
+// forwardedPruneAt is the topic count at which marks older than observedAtMaxAge are swept; validateEvent rejects anything that old, so a
+// swept mark can't admit a duplicate.
 const forwardedPruneAt = 4096
 
 // duplicateProducerLogEvery rate-limits the two-producers warning: with
@@ -140,18 +139,17 @@ const channelFullLogFormat = "redis: %v channel is full for %s (message is dropp
 // per binary, so a second install would only replace an identical wrapper.
 var channelDropCounterOnce sync.Once
 
-// installChannelDropCounter installs a go-redis logger that counts [obs.APIStreamSubscribeTotal]'s
-// dropped_slow_consumer outcome on each PubSub.Channel drop, then forwards the line unchanged.
-// Process-wide, which is safe only while this package is the sole PubSub.Channel caller.
+// installChannelDropCounter installs a go-redis logger that counts [obs.APIStreamSubscribeTotal]'s dropped_slow_consumer on each
+// PubSub.Channel drop, then forwards the line unchanged.
+// Process-wide, safe only while this package is the sole PubSub.Channel caller.
 func installChannelDropCounter() {
 	channelDropCounterOnce.Do(func() {
 		redis.SetLogger(channelDropCountingLogger{})
 	})
 }
 
-// channelDropCountingLogger implements go-redis's internal.Logging
-// interface structurally (Printf(ctx, format, args...)) without
-// importing its internal package.
+// channelDropCountingLogger implements go-redis's internal.Logging structurally (Printf(ctx, format, args...)) without importing its
+// internal package.
 type channelDropCountingLogger struct{}
 
 func (channelDropCountingLogger) Printf(_ context.Context, format string, v ...interface{}) {
@@ -161,9 +159,8 @@ func (channelDropCountingLogger) Printf(_ context.Context, format string, v ...i
 	slog.Default().Warn(fmt.Sprintf(format, v...))
 }
 
-// Sentinels validateEvent wraps so handleMessage can label the drop by
-// cause: a clock-skewed API host rejects EVERY event as future-dated,
-// and must not read as a wire-format bug.
+// Sentinels validateEvent wraps so handleMessage can label the drop by cause: a clock-skewed API host rejects EVERY event as future-dated,
+// which must not read as a wire-format bug.
 var (
 	errObservedAtFuture = errors.New("observed_at is in the future")
 	errObservedAtStale  = errors.New("observed_at is too old")
@@ -301,9 +298,8 @@ type closedBucketWireData struct {
 	CoveredFrom   *wiretime.Time `json:"covered_from,omitempty"`
 }
 
-// frozenBucketEnvelope is the price_frozen frame. The aggregator is the
-// freeze's author, so frozen is a checked verdict; stale is not evaluated
-// on this path and is absent.
+// frozenBucketEnvelope is the price_frozen frame: the aggregator authored the freeze, so frozen is a checked verdict; stale is not
+// evaluated here and is absent.
 type frozenBucketEnvelope struct {
 	Data  frozenBucketWireData `json:"data"`
 	AsOf  wiretime.Time        `json:"as_of"`
@@ -324,32 +320,26 @@ type frozenFlags struct {
 }
 
 const (
-	// maxWindowSeconds bounds ClosedBucketEvent.WindowSeconds. Operators may override the
-	// aggregator windows and the API cannot see that config, so it bounds by sanity (positive,
-	// under a year) rather than an allowlist that would drop a reconfigured window.
+	// maxWindowSeconds bounds ClosedBucketEvent.WindowSeconds by sanity (positive, under a year), not an allowlist, since operators may
+	// override the aggregator windows unseen by the API.
 	maxWindowSeconds = int64(366 * 24 * 60 * 60)
 
-	// observedAtFutureSkew is how far ahead of local time a bucket-end
-	// timestamp may sit before we treat it as forged — absorbs clock
-	// skew between the aggregator and API hosts.
+	// observedAtFutureSkew is how far ahead of local time a bucket-end timestamp may sit before it is treated as forged; absorbs
+	// aggregator/API clock skew.
 	observedAtFutureSkew = 5 * time.Minute
 
-	// observedAtMaxAge bounds how stale a closed-bucket event may be. ObservedAt is the window's
-	// END, so even the 24h window lands within a minute of real time; a day of slack absorbs
-	// delivery lag without admitting an ancient replayed price.
+	// observedAtMaxAge bounds how stale a closed-bucket event may be: ObservedAt is the window's END, so even 24h lands within a minute of
+	// real time; a day of slack absorbs lag without admitting an ancient replayed price.
 	observedAtMaxAge = 24 * time.Hour
 )
 
-// maxValueDecimal is the exclusive upper bound on a published VWAP: 10^18 is far beyond any real
-// quote-per-base price yet rejects overflow-style garbage. It is defense-in-depth; network
-// isolation is the primary control against a plausible-but-forged price.
+// maxValueDecimal is the exclusive upper bound on a published VWAP: 10^18 is far beyond any real price yet rejects overflow-style garbage
+// (defense in depth; network isolation is the primary control).
 var maxValueDecimal = new(big.Rat).SetInt(
 	new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil),
 )
 
-// validateEvent rejects any decoded ClosedBucketEvent that a trusted
-// aggregator would never have produced. Returns nil when the event is
-// safe to fan out.
+// validateEvent rejects any decoded ClosedBucketEvent a trusted aggregator would never have produced; nil means safe to fan out.
 func validateEvent(ev *ClosedBucketEvent, now time.Time) error {
 	if ev.Asset == "" || ev.Quote == "" {
 		return errors.New("empty asset or quote")
@@ -460,9 +450,9 @@ func parseValueDecimal(s string) (*big.Rat, error) {
 	return v, nil
 }
 
-// topicForPair returns the Hub topic key for an (asset, quote, window) triple, mirroring
-// `internal/api/v1.PriceStreamTopic` (a sentinel test keeps them in sync). The window is in the
-// key so per-window publishes land on separate topics instead of interleaving on one.
+// topicForPair returns the Hub topic key for an (asset, quote, window) triple, mirroring `internal/api/v1.PriceStreamTopic` (a sentinel
+// test keeps them in sync);
+// the window is in the key so per-window publishes don't interleave on one topic.
 func topicForPair(asset, quote string, windowSeconds int64) string {
 	return "closed:" + asset + "/" + quote + "/" + strconv.FormatInt(windowSeconds, 10)
 }

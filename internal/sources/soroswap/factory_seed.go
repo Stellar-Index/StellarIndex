@@ -15,21 +15,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/stellarrpc"
 )
 
-// seedThrottle is the delay between simulateTransaction calls in a factory sweep. Public
-// stellar-rpc endpoints behind Cloudflare return 429 above ~3-5 req/s even for cached responses;
-// 300ms stays under that, so a 200-pair sweep takes ~3min.
+// seedThrottle is the delay between simulateTransaction calls in a factory sweep: public stellar-rpc endpoints behind
+// Cloudflare return 429 above ~3-5 req/s even for cached responses; 300ms stays under that.
 const seedThrottle = 300 * time.Millisecond
 
-// Per-call retry budget for the sweep's simulateTransaction round-trips.
-//
-// The sweep is 1+3N sequential calls (~640 on pubnet) against a PUBLIC third-party endpoint.
-// compute-completeness and verify-reconciliation fail CLOSED on a seed error, so without a retry
-// one dropped connection or 429 would abort the nightly pass for every source. Fail-closed is
-// right for a down endpoint, not for one blip.
-//
-// seedMaxAttempts is the TOTAL tries per call; the wait before retry k is seedBackoffBase <<
-// (k-1): 1s, 2s, 4s, 8s. The budget is per CALL, not per sweep, and is bounded overall by the
-// caller's context (15 min).
+// Per-call retry budget for the sweep's ~640 sequential simulateTransaction calls against a PUBLIC endpoint.
+// compute-completeness and verify-reconciliation fail CLOSED on a seed error, so one dropped connection or 429 would abort
+// the nightly pass for every source. seedMaxAttempts is TOTAL tries per call; the wait before retry k is seedBackoffBase <<
+// (k-1). The budget is per CALL, bounded overall by the caller's context (15 min).
 const (
 	seedMaxAttempts = 5
 	seedBackoffBase = time.Second
@@ -71,9 +64,8 @@ func (d *Decoder) SeedFromFactoryRPC(ctx context.Context, rpc *stellarrpc.Client
 	return seeded, nil
 }
 
-// seedOnePair resolves pair i of the factory: its address and both
-// token identities. Three throttled view calls; the throttle waits
-// honour ctx like the retry backoff does.
+// seedOnePair resolves pair i of the factory: its address and both token identities, via three throttled view calls
+// (throttle waits honour ctx).
 func seedOnePair(ctx context.Context, rpc *stellarrpc.Client, factoryContract string, i uint32) (pairAddr string, token0, token1 canonical.Asset, err error) {
 	if err = seedSleep(ctx, seedThrottle); err != nil {
 		return "", token0, token1, fmt.Errorf("soroswap seed: all_pairs(%d): %w", i, err)
@@ -125,9 +117,8 @@ func callAddressStrkey(ctx context.Context, rpc *stellarrpc.Client, contract, fn
 	return scval.AsAddressStrkey(sv)
 }
 
-// callView builds the envelope, submits it (retrying transient round-trip failures, see
-// [simulateWithRetry]) and parses the result SCVal. Everything after the round-trip is
-// deterministic and never retried: a contract rejection, an empty result set, an unparseable SCVal.
+// callView builds the envelope, submits it (retrying transient round-trip failures, see [simulateWithRetry]) and parses the
+// result SCVal. Everything after the round-trip is deterministic and never retried.
 func callView(ctx context.Context, rpc *stellarrpc.Client, contract, fn string, args []scval.ScVal) (scval.ScVal, error) {
 	b64, err := stellarrpc.InvokeContractTxEnvelope("", contract, fn, args)
 	if err != nil {
@@ -146,12 +137,9 @@ func callView(ctx context.Context, rpc *stellarrpc.Client, contract, fn string, 
 	return scval.Parse(resp.Results[0].XDR)
 }
 
-// simulateWithRetry issues one simulateTransaction, retrying transient failures up to
-// seedMaxAttempts tries with exponential backoff.
-//
-// A failure that is not [retryableSimulateErr] is returned at once, unchanged. A spent budget
-// returns the LAST error wrapped with the attempt count, so the caller still fails closed and
-// sees the cause. A cancelled ctx ends the loop immediately, including mid-backoff.
+// simulateWithRetry issues one simulateTransaction, retrying transient failures up to seedMaxAttempts with exponential backoff.
+// A non-[retryableSimulateErr] failure returns at once; a spent budget returns the LAST error wrapped with the attempt count
+// (caller still fails closed); a cancelled ctx ends the loop immediately, including mid-backoff.
 func simulateWithRetry(ctx context.Context, rpc *stellarrpc.Client, b64 string) (*stellarrpc.SimulationResponse, error) {
 	for attempt := 1; ; attempt++ {
 		resp, err := rpc.SimulateTransaction(ctx, b64)
@@ -173,28 +161,19 @@ func simulateWithRetry(ctx context.Context, rpc *stellarrpc.Client, b64 string) 
 	}
 }
 
-// JSON-RPC 2.0 error codes the classification names. -32603 is "Internal error"; -32000..-32099 is
-// the implementation-defined SERVER range where hosted providers put "rate limit exceeded" and
-// "upstream unavailable". The other reserved codes describe the REQUEST and are deterministic.
+// JSON-RPC 2.0 error codes the classification names: -32603 is "Internal error"; -32000..-32099 is the implementation-defined
+// SERVER range where hosted providers put rate-limit/unavailable. Other reserved codes describe the REQUEST (deterministic).
 const (
 	jsonRPCInternalError  = -32603
 	jsonRPCServerErrorMin = -32099
 	jsonRPCServerErrorMax = -32000
 )
 
-// retryableSimulateErr reports whether a failed simulateTransaction round-trip is worth
-// re-issuing. It classifies on the TYPED stellarrpc errors, never message text. In order:
-//
-//  1. HTTP status >= 400 decides alone, whatever the body: 408, 429 and 5xx retry; other 4xx fail
-//     at once. Status outranks an envelope code because it is the proxy or rate limiter speaking.
-//  2. A JSON-RPC error envelope on status < 400 retries for -32603, -32000..-32099 and HTTP-style
-//     codes (408, 429, 5xx); others fail at once.
-//  3. A body that does not decode as an envelope on status < 400 (empty, cut short, a proxy page
-//     served as 200) retries; a deterministic one costs only the bounded budget.
-//  4. Transport errors: the request never completed, or the body was cut short.
-//
-// Anything else fails at once. Contract-level rejections arrive as a successful round-trip with
-// SimulationResponse.Error set and never reach here.
+// retryableSimulateErr reports whether a failed simulateTransaction round-trip is worth re-issuing, classifying on TYPED
+// stellarrpc errors, never message text. HTTP status >= 400 decides alone (408, 429, 5xx retry; other 4xx fail at once; it
+// outranks an envelope code). On status < 400: a JSON-RPC envelope retries for -32603, -32000..-32099 and 408/429/5xx; an
+// undecodable body (empty, cut short, proxy page) retries; transport errors retry. Contract-level rejections arrive as a
+// successful round-trip with SimulationResponse.Error set and never reach here.
 func retryableSimulateErr(err error) bool {
 	var statusErr *stellarrpc.HTTPStatusError
 	if errors.As(err, &statusErr) {
@@ -214,9 +193,8 @@ func retryableSimulateErr(err error) bool {
 	return errors.As(err, &netErr) || errors.Is(err, io.ErrUnexpectedEOF)
 }
 
-// retryableStatusCode reports whether an HTTP status (or a JSON-RPC code
-// a provider borrowed from HTTP) names a transient condition: request
-// timeout, rate limit, or any server-side failure.
+// retryableStatusCode reports whether an HTTP status (or a JSON-RPC code borrowed from HTTP) is transient: request timeout,
+// rate limit, or any server-side failure.
 func retryableStatusCode(code int) bool {
 	return code == http.StatusRequestTimeout || code == http.StatusTooManyRequests || (code >= 500 && code <= 599)
 }

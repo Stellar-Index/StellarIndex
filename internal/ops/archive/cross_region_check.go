@@ -196,9 +196,7 @@ func resolveAnchor(toFlag string, window time.Duration) (time.Time, error) {
 	return time.Now().UTC().Add(-window).Truncate(window), nil
 }
 
-// fetchAllRegions hits every region's endpoint in parallel for the
-// same (pair, from, to). Returns a slice in the same order as the
-// regions input.
+// fetchAllRegions hits every region's endpoint in parallel for the same (pair, from, to); the result keeps the regions input's order.
 func fetchAllRegions(
 	ctx context.Context,
 	client *http.Client,
@@ -278,9 +276,7 @@ func fetchOneRegion(
 	return &direct, nil
 }
 
-// splitPair turns "native/fiat:USD" into ("native", "fiat:USD").
-// Pair strings use a single forward slash separator between base
-// and quote.
+// splitPair turns "native/fiat:USD" into ("native", "fiat:USD"); pair strings use a single forward slash between base and quote.
 func splitPair(p string) (base, quote string, err error) {
 	parts := strings.SplitN(p, "/", 2)
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
@@ -289,9 +285,8 @@ func splitPair(p string) (base, quote string, err error) {
 	return parts[0], parts[1], nil
 }
 
-// analyseRegionResults compares one (pair, bucket) sample across regions and writes a divergence report.
-// diverged: >=2 regions disagree. compared is false when fewer than 2 responded, so the sample proves
-// nothing and must not count toward all consistent.
+// analyseRegionResults compares one (pair, bucket) sample across regions and writes a divergence report: diverged = >=2 regions disagree.
+// compared is false when fewer than 2 responded, so the sample proves nothing and must not count toward all consistent.
 //
 //nolint:gocognit,gocyclo // linear diagnostic; splitting it would hide the compare → report flow
 func analyseRegionResults(

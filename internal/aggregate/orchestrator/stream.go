@@ -21,10 +21,9 @@ func (o *Orchestrator) streamBucketOnce(
 	o.publishToStream(ctx, pair, window, value, bucketEnd, coverage)
 }
 
-// streamFrozenOnce puts a refused bucket on the stream in place of its
-// value, once per bucket like [Orchestrator.streamBucketOnce]: without it
-// a frozen series is indistinguishable from a quiet market. firedAt is the
-// freeze's fire time; the bucket it truncates to is the first one refused.
+// streamFrozenOnce puts a refused bucket on the stream in place of its value, once per bucket like [Orchestrator.streamBucketOnce], so a
+// frozen series isn't
+// indistinguishable from a quiet market. firedAt is the freeze's fire time; the bucket it truncates to is the first refused.
 func (o *Orchestrator) streamFrozenOnce(
 	ctx context.Context, pair canonical.Pair, window time.Duration, bucketEnd, firedAt time.Time,
 ) {

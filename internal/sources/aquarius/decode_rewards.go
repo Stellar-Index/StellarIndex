@@ -16,9 +16,7 @@ import (
 // Bodies are Vec-shaped (Soroban's only wire form for a Rust tuple), so decoding is positional
 // by necessity, and arity is checked before each positional read.
 
-// decodeRewardsEvent dispatches on the already-classified event kind
-// and returns the decoded RewardsEvent. Called from Decode() after
-// Matches() has gated on contract identity.
+// decodeRewardsEvent dispatches on the classified kind; Decode() calls it after Matches() has gated on contract identity.
 func decodeRewardsEvent(e *events.Event, kind string, closedAt time.Time) (RewardsEvent, error) {
 	switch kind {
 	case EventPoolState:
@@ -63,16 +61,8 @@ func rewardsEnvelope(e *events.Event, kind RewardsAction, closedAt time.Time) Re
 	}
 }
 
-// decodePoolState decodes `pool_state`.
-//
-//	topics: [Symbol("pool_state")]                          (topic_count=1)
-//	body:   Vec[U256, I32, I128]
-//
-// BEST-EFFORT: in the same tx, a `position_update` on the same pool carries [lo, hi, <identical
-// i128>] with field[1] strictly between lo and hi. So field[1] looks like a range/tick-style
-// checkpoint index and field[2] mirrors the correlated position's amount; this is an observed
-// correlation, not a confirmed semantic. No user topic; fires on every reward-affecting pool
-// interaction, making it the densest rewards-gauge topic.
+// decodePoolState decodes `pool_state`: topics [Symbol(kind)], body Vec[U256, I32, I128]. BEST-EFFORT: field[1] looks like a
+// range/tick checkpoint and field[2] mirrors the same-tx position_update amount; observed, not confirmed. No user topic.
 func decodePoolState(e *events.Event, closedAt time.Time) (RewardsEvent, error) {
 	elts, err := decodeRewardsBodyVec(e, 3)
 	if err != nil {
@@ -97,14 +87,8 @@ func decodePoolState(e *events.Event, closedAt time.Time) (RewardsEvent, error) 
 	return rv, nil
 }
 
-// decodeClaimReward decodes `claim_reward`.
-//
-//	topics: [Symbol("claim_reward"), Address(reward_token), Address(user)]  (topic_count=3)
-//	body:   Vec[I128]  (length 1: the claimed amount)
-//
-// topic[2] is always a G-strkey (the claiming account); topic[1] is a C-strkey reward-token
-// address, most commonly the pool's designated reward token. This is the protocol-native
-// reward-claim path.
+// decodeClaimReward decodes `claim_reward`: topics [Symbol(kind), Address(reward_token), Address(user)], body Vec[I128] (len 1).
+// topic[2] is the claimer's G-strkey; topic[1] is a C-strkey reward token.
 func decodeClaimReward(e *events.Event, closedAt time.Time) (RewardsEvent, error) {
 	if len(e.Topic) != 3 {
 		return RewardsEvent{}, fmt.Errorf("%w: claim_reward expected 3 topics, got %d", ErrMalformedPayload, len(e.Topic))
@@ -135,15 +119,8 @@ func decodeClaimReward(e *events.Event, closedAt time.Time) (RewardsEvent, error
 	return rv, nil
 }
 
-// decodeSetRewardsConfig decodes `set_rewards_config` — the POOL-side
-// counterpart to the router's `config_rewards` (decodeConfigRewards).
-//
-//	topics: [Symbol("set_rewards_config")]  (topic_count=1)
-//	body:   Vec[U64, U128]  = [expires_at (unix seconds), amount]
-//
-// The same tx's `config_rewards` router event carries an IDENTICAL amount and expires_at for the
-// same pool, confirming the field identities (the strongest mapping in this file). No user topic:
-// admin/router-triggered.
+// decodeSetRewardsConfig decodes the pool-side `set_rewards_config`: topics [Symbol(kind)], body Vec[U64, U128] = [expires_at, amount].
+// The same-tx router `config_rewards` carries identical values, confirming the mapping. No user topic.
 func decodeSetRewardsConfig(e *events.Event, closedAt time.Time) (RewardsEvent, error) {
 	elts, err := decodeRewardsBodyVec(e, 2)
 	if err != nil {
@@ -163,15 +140,9 @@ func decodeSetRewardsConfig(e *events.Event, closedAt time.Time) (RewardsEvent, 
 	return rv, nil
 }
 
-// decodePositionUpdate decodes `position_update`.
-//
-//	topics: [Symbol("position_update"), Address(user)]  (topic_count=2)
-//	body:   Vec[I32, I32, I128] = [range_from, range_to, delta]
-//
-// `delta` is SIGNED: a withdrawal repeats the same [range_from, range_to] with the i128 negated.
-// Because it can be negative it is NOT promoted to the universal (always >= 0) Amount field; it
-// lands in Attributes as a signed decimal string. The range_from/range_to names are BEST-EFFORT
-// (see decodePoolState).
+// decodePositionUpdate decodes `position_update`: topics [Symbol(kind), Address(user)], body Vec[I32, I32, I128]
+// = [range_from, range_to, delta].
+// delta is SIGNED (withdrawal negates it), so it lands in Attributes as a decimal string, not the always-nonnegative Amount.
 func decodePositionUpdate(e *events.Event, closedAt time.Time) (RewardsEvent, error) {
 	if len(e.Topic) != 2 {
 		return RewardsEvent{}, fmt.Errorf("%w: position_update expected 2 topics, got %d", ErrMalformedPayload, len(e.Topic))
@@ -204,15 +175,8 @@ func decodePositionUpdate(e *events.Event, closedAt time.Time) (RewardsEvent, er
 	return rv, nil
 }
 
-// decodeGaugeDeposit decodes the bare `deposit` event, distinct from `deposit_liquidity`
-// (decode.go).
-//
-//	topics: [Symbol("deposit"), Address(ref), Address(user)]  (topic_count=3)
-//	body:   Vec[I128, I128] = [amount_0, amount_1]
-//
-// topic[1] is a constant C-strkey per pool (BEST-EFFORT: a gauge/position-manager reference, not
-// necessarily a token); topic[2] is the depositing user's G-strkey. The wire does not say which
-// pool token each i128 belongs to, so both land in Attributes rather than a promoted Amount.
+// decodeGaugeDeposit decodes the bare `deposit` (not deposit_liquidity): topics [Symbol(kind), Address(ref), Address(user)],
+// body Vec[I128, I128]. The wire does not say which pool token each i128 is, so both land in Attributes, not Amount.
 func decodeGaugeDeposit(e *events.Event, closedAt time.Time) (RewardsEvent, error) {
 	if len(e.Topic) != 3 {
 		return RewardsEvent{}, fmt.Errorf("%w: deposit expected 3 topics, got %d", ErrMalformedPayload, len(e.Topic))
@@ -245,14 +209,8 @@ func decodeGaugeDeposit(e *events.Event, closedAt time.Time) (RewardsEvent, erro
 	return rv, nil
 }
 
-// decodeClaimFees decodes `claim_fees`.
-//
-//	topics: [Symbol("claim_fees"), Address(user), Address(token_a), Address(token_b)]  (topic_count=4)
-//	body:   Vec[I128, I128] = [amount_a, amount_b]
-//
-// topic[1] is the claiming user's G-strkey (the user is FIRST here, unlike every other rewards
-// event) and topic[2]/topic[3] are C-strkeys of the pool's two fee-bearing tokens. Either amount
-// can legitimately be 0 (one-sided fee accrual).
+// decodeClaimFees decodes `claim_fees`: topics [Symbol(kind), Address(user), Address(token_a), Address(token_b)], body Vec[I128, I128].
+// The user is FIRST here, unlike other rewards events; either amount may be 0 (one-sided accrual).
 func decodeClaimFees(e *events.Event, closedAt time.Time) (RewardsEvent, error) {
 	if len(e.Topic) != 4 {
 		return RewardsEvent{}, fmt.Errorf("%w: claim_fees expected 4 topics, got %d", ErrMalformedPayload, len(e.Topic))
@@ -290,12 +248,8 @@ func decodeClaimFees(e *events.Event, closedAt time.Time) (RewardsEvent, error) 
 	return rv, nil
 }
 
-// decodeRewardsGaugeClaim decodes `rewards_gauge_claim`: same shape as claim_reward but the amount
-// is U128 on the wire, and the reward token may differ (it can pay out the XLM SAC), suggesting a
-// third-party-incentive gauge path distinct from the protocol-native claim_reward.
-//
-//	topics: [Symbol("rewards_gauge_claim"), Address(reward_token), Address(user)]  (topic_count=3)
-//	body:   Vec[U128]  (length 1: the claimed amount)
+// decodeRewardsGaugeClaim decodes `rewards_gauge_claim`: shaped like claim_reward (topics [kind, reward_token, user]) but body
+// Vec[U128] (len 1) and the reward token may differ (third-party incentive path).
 func decodeRewardsGaugeClaim(e *events.Event, closedAt time.Time) (RewardsEvent, error) {
 	if len(e.Topic) != 3 {
 		return RewardsEvent{}, fmt.Errorf("%w: rewards_gauge_claim expected 3 topics, got %d", ErrMalformedPayload, len(e.Topic))
@@ -323,11 +277,7 @@ func decodeRewardsGaugeClaim(e *events.Event, closedAt time.Time) (RewardsEvent,
 	return rv, nil
 }
 
-// decodeGaugeClaim decodes the bare `claim` event (claim accrued AQUA rewards). Unlike every other
-// rewards kind, the body is a BARE I128, not a Vec.
-//
-//	topics: [Symbol("claim"), Address(user)]  (topic_count=2)
-//	body:   I128  (the claimed amount, NOT wrapped in a Vec)
+// decodeGaugeClaim decodes the bare `claim` (AQUA rewards): topics [Symbol(kind), Address(user)]; body is a BARE I128, not a Vec.
 func decodeGaugeClaim(e *events.Event, closedAt time.Time) (RewardsEvent, error) {
 	if len(e.Topic) != 2 {
 		return RewardsEvent{}, fmt.Errorf("%w: claim expected 2 topics, got %d", ErrMalformedPayload, len(e.Topic))
@@ -353,13 +303,8 @@ func decodeGaugeClaim(e *events.Event, closedAt time.Time) (RewardsEvent, error)
 	return rv, nil
 }
 
-// decodeRewardsGaugeScheduleReward decodes `rewards_gauge_schedule_reward`.
-//
-//	topics: [Symbol("rewards_gauge_schedule_reward"), Address(reward_token)]  (topic_count=2)
-//	body:   Vec[U64, U64, U128] = [starts_at, ends_at, amount]
-//
-// starts_at < ends_at in every sample, consistent with scheduling a future distribution window.
-// No user topic: an admin/operator action.
+// decodeRewardsGaugeScheduleReward decodes `rewards_gauge_schedule_reward`: topics [Symbol(kind), Address(reward_token)],
+// body Vec[U64, U64, U128] = [starts_at, ends_at, amount]. No user topic (admin action).
 func decodeRewardsGaugeScheduleReward(e *events.Event, closedAt time.Time) (RewardsEvent, error) {
 	if len(e.Topic) != 2 {
 		return RewardsEvent{}, fmt.Errorf("%w: rewards_gauge_schedule_reward expected 2 topics, got %d", ErrMalformedPayload, len(e.Topic))
@@ -392,13 +337,8 @@ func decodeRewardsGaugeScheduleReward(e *events.Event, closedAt time.Time) (Rewa
 	return rv, nil
 }
 
-// decodeSetRewardsState decodes `set_rewards_state`.
-//
-//	topics: [Symbol("set_rewards_state"), Address(admin)]  (topic_count=2)
-//	body:   Vec[Bool]  (length 1: the new enabled state)
-//
-// topic[1] is populated in UserAddress for schema symmetry with the other kinds, though it is a
-// pool admin/manager address here, not an end-user LP.
+// decodeSetRewardsState decodes `set_rewards_state`: topics [Symbol(kind), Address(admin)], body Vec[Bool] (len 1, new enabled state).
+// topic[1] fills UserAddress for schema symmetry but is a pool admin, not an LP.
 func decodeSetRewardsState(e *events.Event, closedAt time.Time) (RewardsEvent, error) {
 	if len(e.Topic) != 2 {
 		return RewardsEvent{}, fmt.Errorf("%w: set_rewards_state expected 2 topics, got %d", ErrMalformedPayload, len(e.Topic))
@@ -421,14 +361,8 @@ func decodeSetRewardsState(e *events.Event, closedAt time.Time) (RewardsEvent, e
 	return rv, nil
 }
 
-// decodeRewardsGaugeAdd decodes `rewards_gauge_add` (gauge registration). No user topic: a
-// factory/admin-level action.
-//
-//	topics: [Symbol("rewards_gauge_add")]  (topic_count=1)
-//	body:   Vec[Address, Address]  (length 2)
-//
-// BEST-EFFORT: body[0] recurs across samples (a shared gauge-manager/factory reference); body[1]
-// varies per pool (the newly registered gauge or reward-token contract).
+// decodeRewardsGaugeAdd decodes `rewards_gauge_add` (no user topic): topics [Symbol(kind)], body Vec[Address, Address] (len 2).
+// BEST-EFFORT: body[0] is a shared manager/factory reference; body[1] is the newly registered gauge or reward token.
 func decodeRewardsGaugeAdd(e *events.Event, closedAt time.Time) (RewardsEvent, error) {
 	elts, err := decodeRewardsBodyVec(e, 2)
 	if err != nil {
@@ -448,16 +382,8 @@ func decodeRewardsGaugeAdd(e *events.Event, closedAt time.Time) (RewardsEvent, e
 	return rv, nil
 }
 
-// decodeConfigRewards decodes the ROUTER-side `config_rewards`, the companion to the pool-side
-// `set_rewards_config` (decodeSetRewardsConfig); it duplicates that event's (amount, expires_at)
-// pair per pool.
-//
-//	topics: [Symbol("config_rewards"), Vec[Address, Address]]  (topic_count=2)
-//	body:   Vec[Address(pool), U128(amount), U64(expires_at)]
-//
-// This topic is only ever emitted by the router, the canonical trust root. The body's amount and
-// expires_at match the correlated pool's set_rewards_config in the same tx. topic[1] is a nested
-// Vec of two addresses (BEST-EFFORT: an initiator/reference pair), stored whole in Attributes.
+// decodeConfigRewards decodes the ROUTER-side `config_rewards` (repeats the pool's set_rewards_config amount/expires_at): topics
+// [Symbol(kind), Vec[Address, Address]] (stored whole in Attributes), body Vec[Address(pool), U128(amount), U64(expires_at)].
 func decodeConfigRewards(e *events.Event, closedAt time.Time) (RewardsEvent, error) {
 	if len(e.Topic) != 2 {
 		return RewardsEvent{}, fmt.Errorf("%w: config_rewards expected 2 topics, got %d", ErrMalformedPayload, len(e.Topic))
@@ -503,9 +429,7 @@ func decodeConfigRewards(e *events.Event, closedAt time.Time) (RewardsEvent, err
 	return rv, nil
 }
 
-// decodeRewardsBodyVec parses e.Value and asserts it is a Vec of
-// exactly n elements — the common shape every rewards-gauge kind
-// except the bare `claim` uses.
+// decodeRewardsBodyVec asserts e.Value is a Vec of exactly n elements (every rewards kind except the bare `claim`).
 func decodeRewardsBodyVec(e *events.Event, n int) ([]scval.ScVal, error) {
 	body, err := scval.Parse(e.Value)
 	if err != nil {

@@ -9,9 +9,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// changeSummaryPriceSource adapts the timescale Store to the
-// changesummary.PriceSource interface. Lives in the binary to avoid
-// the worker-package importing the storage package directly.
+// changeSummaryPriceSource adapts the timescale Store to changesummary.PriceSource; it lives in the binary so the worker never imports
+// storage.
 type changeSummaryPriceSource struct{ store *timescale.Store }
 
 func (a changeSummaryPriceSource) TimedVWAPs1m(ctx context.Context, pair canonical.Pair, from, to time.Time) ([]changesummary.TimedValue, error) {
@@ -26,9 +25,8 @@ func (a changeSummaryPriceSource) TimedVWAPs1m(ctx context.Context, pair canonic
 	return out, nil
 }
 
-// changeSummarySink translates the worker's storage-neutral Row into
-// the timescale row shape and forwards the upsert. Same boundary
-// pattern as contributionSink.
+// changeSummarySink maps the worker's storage-neutral Row onto the timescale row shape and forwards the upsert (same boundary as
+// contributionSink).
 type changeSummarySink struct{ store *timescale.Store }
 
 func (a changeSummarySink) UpsertChangeSummary(ctx context.Context, row changesummary.Row) error {
@@ -55,10 +53,8 @@ func (a changeSummarySink) UpsertChangeSummary(ctx context.Context, row changesu
 	})
 }
 
-// buildChangeSummaryEntities maps the aggregator's configured pairs
-// into changesummary.Entity rows, two per pair: a "coin" keyed on the base asset's canonical id
-// (read by /coins/{slug}) and a "pair" keyed on "base/quote" (read by /pairs/{base}/{quote}).
-// The rollup math is identical for both.
+// buildChangeSummaryEntities emits two Entity rows per pair: a "coin" keyed on the base asset's canonical id (/coins/{slug}) and a "pair"
+// keyed "base/quote" (/pairs/{base}/{quote}); the rollup math is identical for both.
 func buildChangeSummaryEntities(pairs []canonical.Pair) []changesummary.Entity {
 	out := make([]changesummary.Entity, 0, 2*len(pairs))
 	seenCoins := make(map[string]struct{}, len(pairs))

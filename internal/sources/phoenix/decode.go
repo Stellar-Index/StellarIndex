@@ -71,9 +71,7 @@ func (r *RawSwap) fieldsPresent() int {
 	return n
 }
 
-// assign stores e in the slot identified by topic[1]. Returns
-// ErrUnknownField for non-swap-field events — the caller skips
-// those.
+// assign stores e in the slot named by topic[1]; ErrUnknownField for non-swap-field events, which the caller skips.
 func (r *RawSwap) assign(e *events.Event, fieldTopic string) error {
 	switch fieldTopic {
 	case TopicSymbolSender:
@@ -98,9 +96,8 @@ func (r *RawSwap) assign(e *events.Event, fieldTopic string) error {
 	return nil
 }
 
-// slot returns the event stored in the slot for fieldTopic, or nil if empty or not a swap field.
-// absorb uses it to detect a second swap re-using the same groupKey before it overwrites the
-// first swap's slots.
+// slot returns the event stored for fieldTopic, or nil if empty or not a swap field; absorb uses it to detect a second swap
+// reusing the same groupKey before it overwrites the first.
 func (r *RawSwap) slot(fieldTopic string) *events.Event {
 	switch fieldTopic {
 	case TopicSymbolSender:
@@ -123,12 +120,9 @@ func (r *RawSwap) slot(fieldTopic string) *events.Event {
 	return nil
 }
 
-// groupKey is the (ledger, tx_hash, op_index, contract_id) tuple; the 8 field events of one swap
-// all come from one pool contract. ContractID is load-bearing for a router multihop, where
-// different pools' swaps share (ledger, tx, op): without it an incomplete leg from pool A would be
-// hijacked by pool B's field-events, stamped with A's first-field event_index (wrong
-// FanoutOpIndex) and A's leg lost. EventIndex is deliberately NOT in the key: each of the 8
-// field-events has a distinct one, which would shatter the grouping.
+// groupKey is (ledger, tx_hash, op_index, contract_id): the 8 field events of one swap come from one pool. ContractID matters for
+// router multihops, where different pools share (ledger, tx, op) and would hijack each other's legs. EventIndex is NOT in the key:
+// each field event has a distinct one, which would shatter the grouping.
 type groupKey struct {
 	Ledger     uint32
 	TxHash     string
@@ -145,9 +139,7 @@ func keyOf(e *events.Event) groupKey {
 	}
 }
 
-// classify identifies a Phoenix swap event by matching
-// (topic[0], topic[1]). Returns the topic[1] blob when this is a
-// swap-field event; returns "" otherwise.
+// classify identifies a Phoenix swap event by (topic[0], topic[1]); returns the topic[1] blob for a swap-field event, else "".
 func classify(e *events.Event) (fieldTopic string, isSwap bool) {
 	if len(e.Topic) < 2 {
 		return "", false
@@ -158,10 +150,7 @@ func classify(e *events.Event) (fieldTopic string, isSwap bool) {
 	return e.Topic[1], true
 }
 
-// action is the family of Phoenix events we recognise: swap, liquidity,
-// stake, reward, governance and factory shapes, listed below. The dispatcher
-// hot path uses classifyAny so a single topic[0] match drives the
-// routing without three separate Matches() calls per event.
+// action is the family of Phoenix events we recognise; the dispatcher hot path uses classifyAny so one topic[0] match drives routing.
 type action int
 
 const (
@@ -205,8 +194,7 @@ const (
 
 type topicPair struct{ t0, t1 string }
 
-// topicPairActions lists every accepted (topic[0], topic[1]) for the
-// single-event shapes; any other topic[1] under these topic[0]s stays
+// topicPairActions lists every accepted (topic[0], topic[1]) for single-event shapes; any other topic[1] under these stays
 // actionUnknown, a visible recognition gap rather than a guess.
 var topicPairActions = map[topicPair]action{
 	{TopicCreateDistributionFlow, TopicSymbolDRAsset}: actionCreateDistributionFlow,
@@ -220,9 +208,8 @@ var topicPairActions = map[topicPair]action{
 	{TopicToggleTrading, TopicToggleTradingEnabled}:   actionToggleTrading,
 }
 
-// classifyAny is the union of classify + liquidity / stake topic matching. It returns (action,
-// topic[1] blob) for any recognised action ("" topic[1] for single-topic Map shapes), else
-// (actionUnknown, "").
+// classifyAny is classify plus liquidity / stake topic matching: (action, topic[1] blob), "" blob for single-topic Map shapes,
+// else (actionUnknown, "").
 func classifyAny(e *events.Event) (action, string) {
 	// Newer Map-body swap: a single ScvSymbol("swap") topic with an ScvMap body of all fields.
 	// Checked before the two-topic String schema below. See README Q5 and
@@ -282,13 +269,9 @@ func classifyAny(e *events.Event) (action, string) {
 	return actionUnknown, ""
 }
 
-// decodeAnnouncedPool extracts the pool address the FACTORY's ("create","liquidity_pool") event
-// announces (the ADR-0035/0040 fan-out seam).
-//
-// The body is a single ScvAddress. Upstream it is the return value of the factory's deploy_v2 call
-// and create_liquidity_pool takes no pool-address parameter, so the address cannot be
-// caller-supplied; that is what makes this self-registration safe (see
-// docs/operations/wasm-audits/phoenix.md). It must be a contract (C-strkey), else malformed.
+// decodeAnnouncedPool extracts the pool address the factory's ("create","liquidity_pool") event announces (ADR-0035/0040 seam).
+// The body is one ScvAddress, the return value of the factory's deploy_v2, so it cannot be caller-supplied; that makes
+// self-registration safe (docs/operations/wasm-audits/phoenix.md). Must be a C-strkey contract, else malformed.
 func decodeAnnouncedPool(e *events.Event) (string, error) {
 	body, err := scval.Parse(e.Value)
 	if err != nil {
@@ -380,9 +363,7 @@ func decodeSwap(r *RawSwap) (canonical.Trade, error) {
 	}, nil
 }
 
-// checkSwapAmounts rejects a negative leg as malformed (indeterminate)
-// and a zero leg as ErrZeroAmountSwap: a determinate dust swap that
-// projects no row.
+// checkSwapAmounts rejects a negative leg as malformed and a zero leg as ErrZeroAmountSwap (a determinate dust swap, no row).
 func checkSwapAmounts(offer, returned canonical.Amount) error {
 	if offer.Sign() < 0 || returned.Sign() < 0 {
 		return fmt.Errorf("%w: negative amount (offer %s / return %s)",
@@ -397,9 +378,8 @@ func checkSwapAmounts(offer, returned canonical.Amount) error {
 // mapFieldActualReceived is the Map-schema spelling of FieldActualReceived.
 const mapFieldActualReceived = "actual_received_amount"
 
-// noteReceivedDivergence surfaces a swap whose pool-received sell amount
-// differs from offer_amount (a fee-on-transfer sell token) without changing
-// the stored base leg, which stays offer_amount (see decodeSwap's doc).
+// noteReceivedDivergence surfaces a swap whose pool-received sell amount differs from offer_amount (fee-on-transfer sell token)
+// without changing the stored base leg (see decodeSwap).
 func noteReceivedDivergence(pool, txHash string, ledger uint32, offer, received canonical.Amount) {
 	if received.Equal(offer) {
 		return
@@ -410,13 +390,9 @@ func noteReceivedDivergence(pool, txHash string, ledger uint32, offer, received 
 		"offer_amount", offer.String(), "actual_received", received.String())
 }
 
-// decodeSwapMap decodes the newer single-event Phoenix swap schema (Q5): one ScvSymbol("swap")
-// event whose body is an ScvMap keyed by Symbols. Unlike decodeSwap it needs no correlation
-// buffer.
-//
-// Field mapping is identical to decodeSwap: BaseAmount = offer_amount, QuoteAmount =
-// return_amount, never actual_received_amount (the pool's INPUT echo). Decode is by Map-field
-// name (ingest-pipeline.md#contract-schema-evolution), so extra or reordered fields are safe.
+// decodeSwapMap decodes the newer single-event swap schema (Q5): one ScvSymbol("swap") event with an ScvMap body, no correlation
+// buffer. Mapping matches decodeSwap (offer_amount / return_amount, never actual_received_amount); decoded by Map-field name, so
+// extra or reordered fields are safe.
 func decodeSwapMap(ev *events.Event, closedAt time.Time) (canonical.Trade, error) {
 	addr, amount, err := mapBodyReaders(ev.Value)
 	if err != nil {
@@ -525,10 +501,8 @@ const (
 	mapFieldActualReceivedB = "actual_received_b"
 )
 
-// decodeProvideLiquidityMap decodes the Map schema's single-event
-// provide_liquidity into the same LiquidityChange decodeProvideLiquidity
-// builds from the String schema's 5 events. Decode is by field name, so
-// extra or reordered keys don't break it.
+// decodeProvideLiquidityMap decodes the Map schema's single-event provide_liquidity into the LiquidityChange decodeProvideLiquidity
+// builds from the String schema's 5 events; decoded by field name, so extra or reordered keys are safe.
 func decodeProvideLiquidityMap(ev *events.Event, closedAt time.Time) (LiquidityChange, error) {
 	addr, amount, err := mapBodyReaders(ev.Value)
 	if err != nil {
@@ -570,9 +544,8 @@ func decodeProvideLiquidityMap(ev *events.Event, closedAt time.Time) (LiquidityC
 	}, nil
 }
 
-// decodeWithdrawLiquidityMap is decodeProvideLiquidityMap's withdraw
-// counterpart. The body's Option-typed auto_unstake_* keys are not read,
-// mirroring the String schema's dropped `auto unbonded` event.
+// decodeWithdrawLiquidityMap is the withdraw counterpart of decodeProvideLiquidityMap; the Option-typed auto_unstake_* keys are
+// not read, mirroring the String schema's dropped `auto unbonded` event.
 func decodeWithdrawLiquidityMap(ev *events.Event, closedAt time.Time) (LiquidityChange, error) {
 	addr, amount, err := mapBodyReaders(ev.Value)
 	if err != nil {
@@ -641,9 +614,7 @@ func sdkDecodeAsset(valueB64 string) (canonical.Asset, error) {
 	return canonical.NewSorobanAsset(addr)
 }
 
-// sdkDecodeI128 converts a bare ScvI128 body to canonical.Amount.
-// Used for offer_amount, actual received amount, return_amount,
-// spread_amount, referral_fee_amount.
+// sdkDecodeI128 converts a bare ScvI128 body (offer, received, return, spread, referral amounts) to canonical.Amount.
 func sdkDecodeI128(valueB64 string) (canonical.Amount, error) {
 	sv, err := scval.Parse(valueB64)
 	if err != nil {
@@ -912,9 +883,7 @@ func (r *RawWithdrawRewards) assign(e *events.Event, fieldTopic string) error {
 
 // ─── Finalisers ─────────────────────────────────────────────────
 
-// decodeProvideLiquidity turns a complete RawProvideLiquidity into
-// the canonical LiquidityChange that the consumer projects onto a
-// phoenix_liquidity row.
+// decodeProvideLiquidity turns a complete RawProvideLiquidity into the LiquidityChange projected onto a phoenix_liquidity row.
 func decodeProvideLiquidity(r *RawProvideLiquidity) (LiquidityChange, error) {
 	if !r.Complete() {
 		return LiquidityChange{}, fmt.Errorf("%w: provide_liquidity have %d/%d fields",
@@ -956,10 +925,8 @@ func decodeProvideLiquidity(r *RawProvideLiquidity) (LiquidityChange, error) {
 	}, nil
 }
 
-// decodeWithdrawLiquidity turns a complete RawWithdrawLiquidity
-// into the canonical LiquidityChange. Shares live on the dedicated field; per-token return amounts
-// go in AmountA / AmountB. TokenA / TokenB stay empty because the event carries only the
-// share-token; downstream joins against the provide_liquidity rows that established the pool.
+// decodeWithdrawLiquidity turns a complete RawWithdrawLiquidity into a LiquidityChange: shares on the dedicated field, per-token
+// returns in AmountA / AmountB. TokenA / TokenB stay empty (the event carries only the share-token); join provide_liquidity rows.
 func decodeWithdrawLiquidity(r *RawWithdrawLiquidity) (LiquidityChange, error) {
 	if !r.Complete() {
 		return LiquidityChange{}, fmt.Errorf("%w: withdraw_liquidity have %d/%d fields",
@@ -996,9 +963,7 @@ func decodeWithdrawLiquidity(r *RawWithdrawLiquidity) (LiquidityChange, error) {
 	}, nil
 }
 
-// decodeStake turns a complete RawStake into the canonical
-// StakeChange. Same shape services bond / unbond — the action
-// label is set from the buffer's group key.
+// decodeStake turns a complete RawStake into a StakeChange; bond and unbond share the shape, the action label comes from the group key.
 func decodeStake(r *RawStake) (StakeChange, error) {
 	if !r.Complete() {
 		return StakeChange{}, fmt.Errorf("%w: have %d/%d fields",
@@ -1034,9 +999,8 @@ func decodeStake(r *RawStake) (StakeChange, error) {
 	}, nil
 }
 
-// decodeWithdrawRewards turns a complete RawWithdrawRewards into a
-// StakeChange. LPToken holds the reward-token address (not an LP share token). Amount is left
-// zero; the sink (persistPhoenixStake) writes NULL rather than "0" for reward actions.
+// decodeWithdrawRewards turns a complete RawWithdrawRewards into a StakeChange. LPToken holds the reward-token address; Amount is
+// left zero and persistPhoenixStake writes NULL rather than "0" for reward actions.
 func decodeWithdrawRewards(r *RawWithdrawRewards) (StakeChange, error) {
 	if !r.Complete() {
 		return StakeChange{}, fmt.Errorf("%w: withdraw_rewards have %d/%d fields",
@@ -1063,10 +1027,8 @@ func decodeWithdrawRewards(r *RawWithdrawRewards) (StakeChange, error) {
 	}, nil
 }
 
-// decodeDistributeRewards decodes a single distribute_rewards event
-// directly — no correlation buffer needed, the action carries exactly
-// one field (asset) per real-lake confirmation. Pool-wide: User stays
-// empty (the wire carries no user field for this action).
+// decodeDistributeRewards decodes a single distribute_rewards event (one field, asset; no correlation buffer). Pool-wide: User
+// stays empty.
 func decodeDistributeRewards(ev *events.Event, closedAt time.Time) (StakeChange, error) {
 	asset, err := decodeAddress(ev.Value)
 	if err != nil {

@@ -226,9 +226,8 @@ func MainnetGatedSet() []string {
 	return out
 }
 
-// Pre-encoded base64 SCVal::String blobs for topic[0] and topic[1], computed at init. Phoenix
-// emits both topic positions as Strings (not Symbols) because the pool contract publishes
-// `(str_literal, str_literal)` tuples.
+// Pre-encoded base64 SCVal::String blobs for topic[0] and topic[1]. Phoenix emits both slots as Strings, not Symbols, because the
+// pool contract publishes `(str_literal, str_literal)` tuples.
 var (
 	TopicSymbolSwap = scval.MustEncodeString(EventActionSwap) // topic[0]
 
@@ -272,9 +271,7 @@ var (
 	TopicToggleTradingEnabled = scval.MustEncodeString("enabled")
 )
 
-// Liquidity-management topic[0] encodings + topic[1] field names. As with swap above, contracts
-// publish tuple-literals such as `.publish(("provide_liquidity", "sender"), ...)`, so both slots
-// serialise as ScVal::String.
+// Liquidity-management topic[0] encodings + topic[1] field names; like swap, both slots serialise as ScVal::String tuple-literals.
 var (
 	TopicSymbolProvideLiquidity  = scval.MustEncodeString(EventActionProvideLiquidity)  // topic[0]
 	TopicSymbolWithdrawLiquidity = scval.MustEncodeString(EventActionWithdrawLiquidity) // topic[0]

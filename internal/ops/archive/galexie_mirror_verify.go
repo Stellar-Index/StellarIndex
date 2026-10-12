@@ -127,9 +127,8 @@ func galexieMirrorVerify(args []string) error {
 	return nil
 }
 
-// buildMirrorStores resolves the local mirror (MinIO, the hot S3 block)
-// and the upstream dataset (the cold block, with its own isolated
-// credentials — see pipeline.NewColdS3Client).
+// buildMirrorStores resolves the local mirror (MinIO, the hot S3 block) and the upstream dataset (cold block, with its own isolated
+// credentials, see pipeline.NewColdS3Client).
 func buildMirrorStores(cfg config.Config, bucketOverride string) (local, upstream mirrorStore, err error) {
 	bucketPath, err := opsutil.HistoricReadBucket(cfg, bucketOverride)
 	if err != nil {
@@ -232,9 +231,8 @@ func mirrorPartitionInScope(p hotPartition, opts mirrorVerifyOpts) bool {
 	return opts.to == 0 || p.start <= opts.to
 }
 
-// compareMirrorPartition lists one partition on both sides and
-// classifies every key. Local is listed first so an object upstream
-// publishes mid-run reads as missing locally, never as local-only.
+// compareMirrorPartition lists one partition on both sides and classifies every key. Local is listed first so an object upstream publishes
+// mid-run reads as missing locally, never local-only.
 func compareMirrorPartition(ctx context.Context, local, upstream mirrorStore, part string) (mirrorVerifyResult, error) {
 	var res mirrorVerifyResult
 	localObjs, err := listMirrorObjects(ctx, local, part)
@@ -269,9 +267,8 @@ func compareMirrorPartition(ctx context.Context, local, upstream mirrorStore, pa
 	return res, nil
 }
 
-// compareMirrorObject returns "" for a match, "unverifiable" when a
-// multipart ETag (not a body MD5) leaves only the size to compare and
-// it agrees, or the mismatch cause.
+// compareMirrorObject returns "" for a match, "unverifiable" when a multipart ETag (not a body MD5) leaves only the size to compare and it
+// agrees, or the mismatch cause.
 func compareMirrorObject(local, upstream mirrorObject) string {
 	if local.etag == upstream.etag && local.size == upstream.size {
 		return ""

@@ -36,9 +36,8 @@ const (
 	maxPriorTextfileBytes = 1 << 20
 )
 
-// verifyArchiveMismatchReasons is the closed reason set
-// verify_archive_chunks.go can emit. Sorted, and emitted in full on
-// every write so the series exist before the first divergence.
+// verifyArchiveMismatchReasons is the closed reason set verify_archive_chunks.go can emit; sorted and emitted in full on every write so
+// the series exist before the first divergence.
 var verifyArchiveMismatchReasons = []string{"chain", "checkpoint", "sdf-sample", "sequence"}
 
 // collectVerifyArchiveMismatches reads THIS run's mismatch counts from the process registry, summed over chunk_idx;
@@ -109,10 +108,9 @@ func writeVerifyArchiveTextfile(path, tier string, runTotals map[string]uint64, 
 	return nil
 }
 
-// renderVerifyArchiveTextfile writes the counter block in Prometheus
-// exposition format. Every reason in verifyArchiveMismatchReasons is
-// emitted, including the ones absent from totals — that is the
-// zero-seeding described in the file header, not padding.
+// renderVerifyArchiveTextfile writes the counter block in Prometheus exposition format. Every reason in verifyArchiveMismatchReasons is
+// emitted, including those absent from totals:
+// that is the zero-seeding from the file header, not padding.
 func renderVerifyArchiveTextfile(w io.Writer, tier string, totals map[string]uint64, lastSuccess int64) error {
 	if _, err := fmt.Fprintf(w, "# HELP %s %s\n# TYPE %s counter\n",
 		verifyArchiveMismatchMetric, verifyArchiveMismatchHelp, verifyArchiveMismatchMetric); err != nil {
@@ -205,10 +203,8 @@ func readPriorVerifyArchiveTextfile(path, tier string) map[string]uint64 {
 	return totals
 }
 
-// parseTextfileSample splits one exposition-format sample line into
-// its metric name, label set, and integer value. Returns ok=false
-// for anything it does not fully understand — see the best-effort
-// contract on readPriorVerifyArchiveTextfile.
+// parseTextfileSample splits one exposition-format sample line into metric name, label set and integer value; ok=false for anything it
+// does not fully understand (see readPriorVerifyArchiveTextfile's best-effort contract).
 func parseTextfileSample(line string) (name string, labels map[string]string, value uint64, ok bool) {
 	fields := strings.Fields(line)
 	if len(fields) != 2 {

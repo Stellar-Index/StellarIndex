@@ -79,9 +79,8 @@ var _ consumer.Event = LiquidityEvent{}
 // until ClosedAt is older than maxAge, then are returned as orphans and dropped. Age-based
 // eviction bounds memory when a swap never gets its sync.
 
-// defaultOrphanMaxAge is how long an incomplete entry waits for its partner. Swap+sync share a
-// transaction and should arrive adjacently, so five minutes is a generous ceiling that absorbs
-// out-of-order quirks without holding events that will never resolve.
+// defaultOrphanMaxAge: how long an incomplete entry waits for its partner. Swap+sync share a tx and arrive adjacently,
+// so 5m is a generous ceiling for out-of-order quirks.
 const defaultOrphanMaxAge = 5 * time.Minute
 
 type buffer struct {
@@ -98,9 +97,8 @@ func newBuffer() *buffer {
 	}
 }
 
-// absorb records an event and returns the pairs that just completed, including a swap-only group
-// rotated out by a same-pair re-entry. Stale orphans are returned separately as evicted so the
-// caller can count them; they are never returned as completed.
+// absorb records an event and returns the pairs that just completed, including a swap-only group rotated out by a same-pair
+// re-entry. Stale orphans are returned separately as evicted, never as completed.
 func (b *buffer) absorb(e *events.Event, kind string, closedAt time.Time) (completed []RawPair, evicted []RawPair) {
 	// Evict stale orphans first to keep the map bounded. The reference time is the incoming
 	// event's ClosedAt, not wall-clock, so backfill compares against the replayed timeline.
@@ -140,9 +138,8 @@ func (b *buffer) absorb(e *events.Event, kind string, closedAt time.Time) (compl
 	return completed, evicted
 }
 
-// rotates reports whether e lands in an already-occupied slot of p as a
-// DIFFERENT event (another EventIndex), i.e. a second swap/sync through
-// the same pair in the same op rather than a redelivery.
+// rotates reports whether e lands in an occupied slot of p as a DIFFERENT event (another EventIndex): a second swap/sync
+// through the same pair in one op, not a redelivery.
 func (p *RawPair) rotates(kind string, e *events.Event) bool {
 	var prior *events.Event
 	switch kind {
@@ -154,9 +151,8 @@ func (p *RawPair) rotates(kind string, e *events.Event) bool {
 	return prior != nil && prior.EventIndex != e.EventIndex
 }
 
-// sweepStale removes and returns every entry whose ClosedAt is older than maxAge relative to `ref`,
-// normally the latest event's ClosedAt. Never use nowFn() during backfill: historical ClosedAt is
-// far behind wall-clock, so every entry would evict before its partner arrived.
+// sweepStale removes entries whose ClosedAt is older than maxAge relative to ref (the latest event's ClosedAt).
+// Never use nowFn() in backfill: historical ClosedAt is far behind wall-clock, so every entry would evict early.
 func (b *buffer) sweepStale(ref time.Time) []RawPair {
 	if b.maxAge <= 0 {
 		return nil
@@ -175,9 +171,8 @@ func (b *buffer) sweepStale(ref time.Time) []RawPair {
 	return evicted
 }
 
-// orphans returns every incomplete entry; called after a bounded-
-// range ingest finishes so metrics can attribute the leak. Does
-// not mutate the buffer.
+// orphans returns every incomplete entry, without mutating the buffer; called after a bounded-range ingest so metrics
+// can attribute the leak.
 func (b *buffer) orphans() []RawPair {
 	out := make([]RawPair, 0, len(b.m))
 	for _, p := range b.m {
