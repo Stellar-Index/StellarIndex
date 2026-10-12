@@ -13,6 +13,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate/anomaly"
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/baseline"
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/freeze"
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
@@ -1124,5 +1125,132 @@ func TestFreezeLifecycle_UnpricedBucketsKeepTheFreezeAlive(t *testing.T) {
 				t.Errorf("AnomalyFreezeReleasedTotal{operator} delta = %v with no operator action", d)
 			}
 		})
+	}
+}
+
+// A release must not clear a sibling it has never seen. The marker is pair-scoped with one ladder per window, and "last window" was decided from o.freezeStates alone, which misses windows not yet at the freeze step in this process (under the volume floor, or after a restart).
+// Clearing then retired an escalated freeze that ADR-0019 holds until manual unfreeze, leaving nothing to re-fire on.
+
+func coldSiblingDecision() anomaly.Decision {
+	return anomaly.Decision{
+		Action: anomaly.ActionFreeze,
+		Class:  anomaly.ClassCrypto,
+		Reason: "phase2:3_signal_AND",
+	}
+}
+
+// newWiredFreezeFixture is newFreezeFixture with the production writer — a
+// real freeze.Writer with a ladder store on the fixture's miniredis — so
+// marker and ladder expiry are real. Drive it with advance, not tick.
+func newWiredFreezeFixture(t *testing.T) *freezeFixture {
+	t.Helper()
+	f := newFreezeFixture(t)
+	w, err := freeze.NewWriter(f.rdb, 0,
+		freeze.WithLadderStore(newSinkShapedLadderStore(), 0),
+		freeze.WithClock(func() time.Time { return f.now }))
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	f.orch = New(f.store, f.rdb, Config{
+		Pairs:        []canonical.Pair{f.pair},
+		Windows:      []time.Duration{freezeTestWindow},
+		Interval:     time.Hour,
+		FreezeWriter: w,
+		Baselines: stubBaselineSource{multi: baseline.MultiBaseline{
+			Day30: &baseline.Baseline{Median: 0, MAD: 0.001, N: maxDay30Returns},
+		}},
+	})
+	f.orch.clock = func() time.Time { return f.now }
+	f.orch.prevVWAPs[f.stateKey()] = big.NewRat(lkgQuoteAmount, lkgBaseAmount)
+	// Outlive the first advance; from then on only the freeze keeps it.
+	f.mr.SetTTL(f.vwapKey(), 2*closedBucket)
+	return f
+}
+
+// advance moves both the fixture clock and miniredis's TTL clock by d, then
+// runs one Tick.
+func (f *freezeFixture) advance(t *testing.T, d time.Duration) {
+	t.Helper()
+	f.mr.FastForward(d)
+	f.tick(t, d)
+}
+
+// TestFrozenLeg_DoesNotOutliveTheHold bounds the carry-over: an unevaluated window's in-memory ladder is never advanced or released, so an unbounded read would refuse chains through that pair long after the marker and LKG expired. The bound is hold plus marker grace.
+func TestFrozenLeg_DoesNotOutliveTheHold(t *testing.T) {
+	leg := xlmUsdtPair(t)
+	window := 5 * time.Minute
+	cache, _ := newTestRedis(t)
+	o := New(nil, cache, Config{
+		Pairs:   []canonical.Pair{leg},
+		Windows: []time.Duration{window},
+	})
+	now := time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC)
+	o.clock = func() time.Time { return now }
+	grace := o.cfg.Phase2Thresholds.Lifecycle.WithDefaults().MarkerGrace
+
+	st := o.freezeStates[leg.String()+":"+window.String()]
+	st.FiredAt = now.Add(-20 * time.Minute)
+	st.HoldUntil = now.Add(-time.Minute) // hold over, inside the grace
+	o.freezeStates[leg.String()+":"+window.String()] = st
+	if !o.frozenLeg(leg, window) {
+		t.Error("a leg inside its marker grace must still be refused: its LKG is still in cache")
+	}
+
+	now = st.HoldUntil.Add(grace + time.Second)
+	if o.frozenLeg(leg, window) {
+		t.Error("a leg whose hold and grace have both lapsed is still refused — its marker and " +
+			"LKG are gone, and nothing will ever clear this in-memory ladder while the " +
+			"window stays empty")
+	}
+
+	// A different window of the same pair is not implicated.
+	now = st.HoldUntil.Add(-time.Minute)
+	if o.frozenLeg(leg, time.Hour) {
+		t.Error("the 1h window read as frozen on the 5m window's ladder")
+	}
+}
+
+// TestFreezeKeepsTheHeldValuesObservationStamp pins the writer half of the observed_at contract: every publish writes the value's :observed_at sibling, and a freeze keeps the stamp alive as long as the held value. The key is spelled out on the wire because the reader is another binary.
+func TestFreezeKeepsTheHeldValuesObservationStamp(t *testing.T) {
+	f := newFreezeFixture(t)
+	stampKey := f.vwapKey() + ":observed_at"
+
+	// A healthy two-venue bucket publishes; its stamp is its bucket end.
+	f.feed(t, lkgQuoteAmount, "soroswap", "phoenix")
+	f.tick(t, closedBucket)
+	published := f.now.Truncate(closedBucket)
+	assertStamp(t, f, stampKey, published, "after the publish")
+
+	// A manipulated single-source print freezes the pair, and the hold
+	// outlives several window-lengths of buckets.
+	for i := 0; i < 3; i++ {
+		f.feed(t, manipQuoteAmount, "soroswap")
+		f.tick(t, closedBucket)
+		if !f.state().Active() {
+			t.Fatalf("bucket %d: manipulated print did not hold the freeze", i+1)
+		}
+		if got := f.served(t); got != lkgFormatted {
+			t.Fatalf("bucket %d: served %q, want the held %q", i+1, got, lkgFormatted)
+		}
+		assertStamp(t, f, stampKey, published, "during the hold")
+		if valTTL, atTTL := f.mr.TTL(f.vwapKey()), f.mr.TTL(stampKey); atTTL != valTTL || atTTL <= freezeTestWindow {
+			t.Errorf("bucket %d: stamp TTL = %v, value TTL = %v — the stamp must be kept alive "+
+				"with the held value, past its %v window", i+1, atTTL, valTTL, freezeTestWindow)
+		}
+	}
+}
+
+func assertStamp(t *testing.T, f *freezeFixture, key string, want time.Time, when string) {
+	t.Helper()
+	raw, err := f.mr.Get(key)
+	if err != nil {
+		t.Fatalf("%s: no observed_at stamp beside the served value: %v", when, err)
+	}
+	got, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		t.Fatalf("%s: stamp %q is not RFC 3339: %v", when, raw, err)
+	}
+	if !got.Equal(want) {
+		t.Errorf("%s: stamp = %s, want %s (the held value's own bucket end)", when, got, want)
 	}
 }

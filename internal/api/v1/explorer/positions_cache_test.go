@@ -2,10 +2,17 @@ package explorer
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -214,4 +221,128 @@ func TestAccountPositions_CoverageOrderIsDeterministic(t *testing.T) {
 			t.Fatalf("coverage note is scheduling-dependent: run %d = %q, run 0 = %q", i, note, first)
 		}
 	}
+}
+
+type blendRowsReader struct {
+	*slowPositionsReader
+	rows []timescale.BlendPositionFold
+}
+
+func (r *blendRowsReader) BlendPositionsByUser(context.Context, string) ([]timescale.BlendPositionFold, error) {
+	return r.rows, nil
+}
+
+// Only a net-underlying leg names a token, so only it carries a scale; a
+// superseded leg's amount is not in token units and an unreadable token
+// omits the field rather than guessing 7.
+func TestBuildBlendPositions_DecimalsOnlyOnNetUnderlying(t *testing.T) {
+	const unreadable = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+	reader := &blendRowsReader{slowPositionsReader: &slowPositionsReader{}, rows: []timescale.BlendPositionFold{
+		{Pool: "P1", Asset: validTestContract, HasSupplyLeg: true, SupplyNet: "5", HasBorrowLeg: true, BorrowSuperseded: true, BorrowTokens: "3"},
+		{Pool: "P2", Asset: unreadable, HasSupplyLeg: true, SupplyNet: "5"},
+	}}
+	h := newProbeHandler(&capReader{probe: &deadlineProbe{}}, reader)
+	h.TokenDecimals = func(_ context.Context, contractID string) (int, bool) {
+		return 18, contractID == validTestContract
+	}
+	got := h.buildBlendPositions(context.Background(), validTestAccount, func(s string) string { return s }, &positionsCoverage{})
+	var dec []any
+	for _, e := range got {
+		if e.Decimals == nil {
+			dec = append(dec, nil)
+		} else {
+			dec = append(dec, *e.Decimals)
+		}
+	}
+	if want := []any{18, nil, nil}; fmt.Sprint(dec) != fmt.Sprint(want) {
+		t.Errorf("decimals = %v, want %v (supply, superseded borrow, unreadable)", dec, want)
+	}
+}
+
+// TestAmountSemanticsMatchOpenAPIEnum keeps the AmountSemantics*
+// constants and the spec's amount_semantics enum in lockstep: a value
+// the handler emits but the spec omits breaks every generated client.
+func TestAmountSemanticsMatchOpenAPIEnum(t *testing.T) {
+	src, err := os.ReadFile("positions.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var consts []string
+	for _, m := range regexp.MustCompile(`(?m)^\s*AmountSemantics\w+\s*=\s*"([^"]+)"`).FindAllSubmatch(src, -1) {
+		consts = append(consts, string(m[1]))
+	}
+
+	spec, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "openapi", "stellar-index.v1.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`(?m)^\s*enum: \[(net_underlying_at_event_time[^\]]*)\]`).FindSubmatch(spec)
+	if m == nil {
+		t.Fatal("amount_semantics enum not found in openapi/stellar-index.v1.yaml")
+	}
+	var enum []string
+	for _, v := range strings.Split(string(m[1]), ",") {
+		enum = append(enum, strings.TrimSpace(v))
+	}
+
+	slices.Sort(consts)
+	slices.Sort(enum)
+	if len(consts) == 0 || !slices.Equal(consts, enum) {
+		t.Errorf("AmountSemantics constants %v, spec enum %v", consts, enum)
+	}
+}
+
+// slowPositionsReader answers every fold after `delay`, counting how
+// many folds are in flight at once. Two folds fail so the coverage
+// merge is exercised too.
+type slowPositionsReader struct {
+	delay      time.Duration
+	inFlight   atomic.Int32
+	maxFlight  atomic.Int32
+	blendFails bool
+}
+
+func (r *slowPositionsReader) enter() {
+	n := r.inFlight.Add(1)
+	for {
+		m := r.maxFlight.Load()
+		if n <= m || r.maxFlight.CompareAndSwap(m, n) {
+			break
+		}
+	}
+	time.Sleep(r.delay)
+	r.inFlight.Add(-1)
+}
+
+func (r *slowPositionsReader) BlendPositionsByUser(context.Context, string) ([]timescale.BlendPositionFold, error) {
+	r.enter()
+	if r.blendFails {
+		return nil, errors.New("blend down")
+	}
+	return nil, nil
+}
+
+func (r *slowPositionsReader) BlendBackstopSharesByUser(context.Context, string) ([]timescale.BlendBackstopFold, error) {
+	r.enter()
+	return nil, errors.New("backstop down")
+}
+
+func (r *slowPositionsReader) PhoenixStakeByUser(context.Context, string) ([]timescale.PhoenixStakeFold, error) {
+	r.enter()
+	return nil, nil
+}
+
+func (r *slowPositionsReader) DefindexVaultSharesByUser(context.Context, string) ([]timescale.DefindexVaultFold, error) {
+	r.enter()
+	return nil, nil
+}
+
+func (r *slowPositionsReader) CreditPositionsByOwner(context.Context, string) ([]timescale.CreditPositionFold, error) {
+	r.enter()
+	return nil, nil
+}
+
+func (r *slowPositionsReader) AquariusGaugeByUser(context.Context, string) ([]timescale.AquariusGaugeFold, error) {
+	r.enter()
+	return nil, errors.New("aquarius down")
 }
