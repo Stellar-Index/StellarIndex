@@ -79,8 +79,7 @@ const accountGraphHistoryTotalsQuery = `
 	FROM stellar.account_sponsor_edges
 	WHERE sponsor = ?`
 
-// AccountGraphHistoryPoint is one calendar month of one relation's activity; a month
-// with neither a new counterparty nor a placed event has no point.
+// AccountGraphHistoryPoint is one calendar month of one relation's activity; a month with no new counterparty or placed event has no point.
 type AccountGraphHistoryPoint struct {
 	// Start is the first instant of the month, UTC.
 	Start time.Time
@@ -92,8 +91,7 @@ type AccountGraphHistoryPoint struct {
 	Events uint64
 }
 
-// AccountGraphHistorySide is one relation's series plus the whole-history
-// totals that qualify it.
+// AccountGraphHistorySide is one relation's series plus the whole-history totals that qualify it.
 type AccountGraphHistorySide struct {
 	Points []AccountGraphHistoryPoint
 	// Accounts is distinct counterparties; Events the operations behind them. Exact.
@@ -108,18 +106,13 @@ type AccountGraphHistorySide struct {
 	Coverage AccountGraphCoverage
 }
 
-// AccountGraphHistory is one account's activity over time in both graph
-// relations. Everything here is history; nothing is a live-state figure.
+// AccountGraphHistory is one account's activity over time in both graph relations; all history, no live-state figure.
 type AccountGraphHistory struct {
 	Created   AccountGraphHistorySide
 	Sponsored AccountGraphHistorySide
 }
 
-// AccountGraphHistory reads one account's monthly activity in both relations. Every read is a
-// primary-key range on (creator, ...) or (sponsor, ...), so cost is that account's own edges
-// (cheap even for the busiest creator); an SWR cache would add an unbounded key space for nothing.
-// ok=false (not an error) when either arm is not exchanged live yet: a half-provisioned graph
-// would claim the account never created anything.
+// AccountGraphHistory reads one account's monthly activity via primary-key ranges; ok=false (not an error) when either arm is not exchanged live yet.
 func (r *ExplorerReader) AccountGraphHistory(ctx context.Context, account string) (AccountGraphHistory, bool, error) {
 	if !r.probeSchema(ctx, &r.accountCreatorEdgesProbe,
 		`SELECT creator FROM stellar.account_creator_edges LIMIT 1`, true) {

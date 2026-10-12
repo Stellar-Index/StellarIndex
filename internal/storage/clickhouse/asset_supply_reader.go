@@ -20,20 +20,7 @@ const classicCirculatingSupplyQuery = `SELECT asset, toString(sum(toInt128(balan
 		WHERE entry_type = 'trustline' AND change_type != 'removed' AND balance > 0
 		GROUP BY asset` + explorerScanSettings + `, max_execution_time = 150`
 
-// ClassicCirculatingSupply returns per-asset circulating supply derived from the current trustline
-// set: sum(balance) over every non-removed, positive trustline for each classic asset. The map key
-// is the canonical CODE-ISSUER form; the value is the raw integer total at 7 decimals, as a string
-// holding an i128 sum (summed as Int128, never truncated).
-//
-// THIS IS A LOWER BOUND, NOT THE SUPPLY. A classic asset's supply sits in FOUR places: trustlines,
-// claimable balances, liquidity-pool reserves, and the balances its SAC holds for CONTRACT
-// (C-address) holders. ledger_entries_current populates `asset` for trustlines ONLY
-// (extract_entry_changes.go, ownerAndAsset), so this query is blind to the other three. Every
-// trustline balance was minted, so the sum is a provable floor. Callers should prefer the precise
-// supply_1d figure, then the lake-flows total over the asset's SAC contract
-// (internal/api/v1/classic_lake_supply.go), and only then this.
-//
-// Callers MUST cache the result: the GROUP BY is far too heavy for a hot path.
+// ClassicCirculatingSupply returns per-asset sum of positive trustline balances (CODE-ISSUER to i128 string, 7 decimals); a LOWER BOUND, not the supply (blind to claimable balances, LP reserves and SAC holders), and callers MUST cache it.
 func (r *ExplorerReader) ClassicCirculatingSupply(ctx context.Context) (map[string]string, error) {
 	rows, err := r.conn.Query(ctx, classicCirculatingSupplyQuery)
 	if err != nil {

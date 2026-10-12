@@ -9,14 +9,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// AccountsWealthCacheTTL is how long a wealth ranking stays servable.
-//
-// The query is a FINAL scan of ledger_entries_current (43.6M rows, ~11 s for the count alone),
-// so it must be precomputed; the response carries the snapshot's own ledger (AsOfLedger).
+// AccountsWealthCacheTTL is how long a wealth ranking stays servable; the underlying FINAL scan of ledger_entries_current is too slow to run per request, so it is precomputed.
 const AccountsWealthCacheTTL = 15 * time.Minute
 
-// AccountsWealthRefreshTimeout bounds one background refresh: well above the ~11-20 s the
-// query needs, but finite so a wedged query cannot pin the refresher.
+// AccountsWealthRefreshTimeout bounds one background refresh: well above the ~11-20 s query, but finite so a wedged query cannot pin the refresher.
 const AccountsWealthRefreshTimeout = 3 * time.Minute
 
 // accountsWealthMaxLimit is the size of the single ranking the cache stores; requests get the
@@ -39,8 +35,7 @@ func wealthBasis(assets []string) string {
 	return WealthBasisUSD
 }
 
-// AccountWealthSnapshot is one computed ranking and its vintage; the cache holds one (top
-// [accountsWealthMaxLimit]) and callers get it sliced.
+// AccountWealthSnapshot is one computed ranking and its vintage; the cache holds one (top accountsWealthMaxLimit) and callers get it sliced.
 type AccountWealthSnapshot struct {
 	Rows  []AccountWealth
 	Basis string
@@ -116,14 +111,7 @@ func (c *accountsWealthCache) endFlight(ch chan struct{}) {
 	close(ch)
 }
 
-// AccountsByWealthCached serves the ranking from cache, refreshing in the background when
-// stale; the slow scan never runs on the caller's deadline.
-//
-//   - fresh: served as-is; handlers stamp the snapshot's AsOf/AsOfLedger, never a serve-time
-//     watermark read (a torn read).
-//   - stale: served with its real asOf during a detached single-flight refresh; the handler
-//     compares asOf to AccountsWealthCacheTTL to set `stale`.
-//   - empty: ok=false immediately (honest warming state) and the refresh is kicked.
+// AccountsByWealthCached serves the ranking from cache and refreshes in the background when stale (single-flight); an empty cache returns ok=false immediately and kicks the refresh.
 func (r *ExplorerReader) AccountsByWealthCached(
 	ctx context.Context, assets, prices []string, limit int,
 ) (AccountWealthSnapshot, bool) {
@@ -155,8 +143,7 @@ func clampWealth(rows []AccountWealth, limit int) []AccountWealth {
 	return rows
 }
 
-// PrewarmAccountsByWealth refreshes the ranking synchronously for the prewarm loop, blocking
-// up to AccountsWealthRefreshTimeout.
+// PrewarmAccountsByWealth refreshes the ranking synchronously for the prewarm loop, blocking up to AccountsWealthRefreshTimeout.
 func (r *ExplorerReader) PrewarmAccountsByWealth(
 	ctx context.Context, assets, prices []string,
 ) error {

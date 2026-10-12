@@ -11,11 +11,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// TrustlineAssetSeed is one distinct classic asset the lake holds a trustline for.
-//
-// It answers only whether this (code, issuer) EXISTS on Stellar. Balance, holder count and supply
-// belong to the asset_holders_* rollup and the supply pipeline; repeating them here would add a
-// second, stale answer.
+// TrustlineAssetSeed is one distinct classic asset the lake holds a trustline for; answers only whether (code, issuer) EXISTS, balance and supply belong to the holders rollup and supply pipeline.
 type TrustlineAssetSeed struct {
 	// Asset is the lake's asset string, the canonical `CODE-GISSUER` form for a credit trustline
 	// (internal/xdrjson.TrustLineAssetID). The caller parses it with canonical.ParseAsset rather
@@ -32,10 +28,7 @@ type TrustlineAssetSeed struct {
 	LastAt  time.Time
 }
 
-// HoldingsScanner pages the lake's distinct trustline-held classic assets.
-//
-// It holds one heavy-read connection ([openRead]) for the whole walk: unbounded execution time, a
-// per-query memory ceiling and external spill, so outgrowing memory costs time, not an OOM.
+// HoldingsScanner pages the lake's distinct trustline-held classic assets over one heavy-read connection (unbounded time, memory ceiling, external spill).
 type HoldingsScanner struct {
 	conn driver.Conn
 }
@@ -107,18 +100,7 @@ func (h *HoldingsScanner) CountTrustlineAssets(ctx context.Context) (int64, erro
 	return int64(n), nil //nolint:gosec // a distinct-asset count cannot approach 2^63
 }
 
-// TrustlineAssetsAfter returns up to `limit` distinct classic assets sorting strictly after
-// `after`, ascending.
-//
-// Keyset pagination lets a resumed run re-enter exactly where the previous one stopped. Pass "" for
-// the first page and the last Asset of page N for page N+1; an empty result means the walk is done.
-//
-// entry_type is the FIRST sort-key column, so `entry_type = 'trustline'` prunes granules. Each
-// page re-aggregates the trustline range, so bigger pages mean fewer passes at more memory each.
-//
-// Native XLM and pool-share trustlines are excluded in SQL: they have no (code, issuer)
-// identity. The two exact-match predicates cover the `pool:<hex>` form and the bare `pool`
-// fallback without matching a real credit asset code such as "poolX" (codes are case-sensitive).
+// TrustlineAssetsAfter returns up to `limit` distinct classic assets strictly after `after` ascending (keyset pagination; "" for the first page, empty result means done), excluding native and pool-share trustlines.
 func (h *HoldingsScanner) TrustlineAssetsAfter(ctx context.Context, after string, limit int) ([]TrustlineAssetSeed, error) {
 	if limit <= 0 {
 		return nil, fmt.Errorf("clickhouse: TrustlineAssetsAfter: limit must be positive, got %d", limit)

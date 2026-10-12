@@ -16,19 +16,7 @@ import (
 // while refusing a kilobyte of text where a ticker belongs.
 const maxTokenSymbolRunes = 32
 
-// TokenSymbol resolves a token contract's `symbol()` from the lake, by the route [TokenDecimals]
-// uses: the token-sdk METADATA map in contract instance storage, with no WASM execution.
-//
-// found=false (nil error) when the instance is not captured, has no METADATA symbol, or the
-// value is not a plausible ticker; callers treat that as "no usable metadata", not an empty symbol.
-//
-// # What this value may and may not be used for
-//
-// It is contract-authored text, as trustworthy as a classic asset code: any contract may call
-// itself BENJI. The RWA definition reads it only under C4, after C2 and C3 established that an
-// independent third party named that exact contract address. It answers WHICH instrument a
-// vouched-for address holds, never WHETHER an address is vouched for; a join on this value
-// alone is the code-only identity the definition refuses.
+// TokenSymbol resolves a token contract's symbol() from its instance METADATA map; the text is contract-authored and untrusted (any contract may call itself BENJI), so never use it alone as an identity; found=false means no usable metadata.
 func (r *ExplorerReader) TokenSymbol(ctx context.Context, contractID string) (string, bool, error) {
 	raw, err := strkey.Decode(strkey.VersionByteContract, contractID)
 	if err != nil {

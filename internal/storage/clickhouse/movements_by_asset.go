@@ -11,16 +11,10 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// MovementsByAssetBackfillMarker is the stellar.cap67_movements_watermark name
-// the operator writes once deploy/clickhouse/movements_by_asset.sql Step 3
-// verifies every partition through the TIP captured at MV creation. Until it
-// exists, movements_by_asset holds only rows written since its MV was created.
+// MovementsByAssetBackfillMarker is the stellar.cap67_movements_watermark name written once the history copy is verified; until it exists, movements_by_asset holds only rows written since its MV was created.
 const MovementsByAssetBackfillMarker = "movements_by_asset_backfill"
 
-// AssetMovementRow is one movement of one asset from stellar.movements_by_asset:
-// the participant rows of a movement collapsed back to a single from/to entry.
-// An empty From or To is a side the decoder does not attribute (a claimable
-// balance create, an LP leg), never a guess.
+// AssetMovementRow is one movement of one asset from stellar.movements_by_asset, with participant rows collapsed to one from/to entry; an empty From or To is an unattributed side, never a guess.
 type AssetMovementRow struct {
 	Ledger          uint32
 	LedgerCloseTime time.Time
@@ -65,11 +59,7 @@ func assetMovementsSQL(hasCursor, exactDedup bool) string {
 	return sb.String()
 }
 
-// AssetMovements returns one asset's movements from stellar.movements_by_asset, newest first,
-// keyset-paged by (ledger, tx_hash, op_index, leg_index), never above maxLedger (inclusive).
-// asset is the id the table stores ("native", "CODE-ISSUER", or a contract id); the caller folds
-// aliases. Any participant row rebuilds a movement, since each carries both sides. The newest
-// ingested_at wins, which also drops a stale row a re-derive left under a different address.
+// AssetMovements returns one asset's movements, newest first, keyset-paged, never above maxLedger; the caller folds asset aliases, and the newest ingested_at wins per movement.
 func (r *ExplorerReader) AssetMovements(ctx context.Context, asset string, limit int, cur AccountMovementCursor, maxLedger uint32) ([]AssetMovementRow, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 25
@@ -148,8 +138,7 @@ func scanAssetMovementRow(rows driver.Rows, asset string) (assetMovementVersion,
 	return v, nil
 }
 
-// AssetMovementsBackfilledThru returns the ledger through which the operator
-// verified movements_by_asset's history copy (0 = not yet, or no marker table).
+// AssetMovementsBackfilledThru returns the ledger through which the operator verified movements_by_asset's history copy (0 = not yet, or no marker table).
 func (r *ExplorerReader) AssetMovementsBackfilledThru(ctx context.Context) (uint32, error) {
 	const q = `SELECT max(thru_ledger) FROM stellar.cap67_movements_watermark WHERE name = ?`
 	var thru uint32

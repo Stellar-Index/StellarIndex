@@ -13,10 +13,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// ContractStorageSupply is a token's supply summed from the balance ledger entries its contract
-// holds in Soroban storage, not from the event log. It is a DISTRIBUTION level; the event-derived
-// supply ([TokenSupply]) is an accumulation, too low for a log with gaps and a confident zero
-// for a token with no events. Never add the two; see the method for the handover rule.
+// ContractStorageSupply is a token's supply summed from balance ledger entries in Soroban storage, a DISTRIBUTION level that must never be added to the event-derived accumulation ([TokenSupply]).
 type ContractStorageSupply struct {
 	ContractID string
 
@@ -61,15 +58,12 @@ type ContractStorageSupply struct {
 	sawInstance bool
 }
 
-// HasSelfChecks reports whether the contract published anything to cross-check. Gate SelfConsistent
-// on it: "nothing to check" is not a verdict.
+// HasSelfChecks reports whether the contract published anything to cross-check; gate SelfConsistent on it, since "nothing to check" is not a verdict.
 func (s ContractStorageSupply) HasSelfChecks() bool {
 	return s.DeclaredTotal != nil || s.DeclaredHolders != nil
 }
 
-// SelfConsistent reports whether every cross-check the contract offered agreed with what we
-// decoded. TRUE when it offered none (absence of contradiction); gate on HasSelfChecks to tell the
-// difference.
+// SelfConsistent reports whether every cross-check the contract offered agreed with the decode, TRUE when it offered none; gate on HasSelfChecks.
 func (s ContractStorageSupply) SelfConsistent() bool {
 	if s.DeclaredTotal != nil && s.Total != nil && s.DeclaredTotal.Cmp(s.Total) != 0 {
 		return false
@@ -80,19 +74,13 @@ func (s ContractStorageSupply) SelfConsistent() bool {
 	return true
 }
 
-// ErrStorageSupplyIsStellarAsset is a REFUSAL for a Stellar Asset Contract: its storage holds only
-// the wrapped slice of a classic asset (the rest is in trustlines, claimable balances and pool
-// reserves), so summing it understates supply with no sign of being wrong (6.8x on KALE). The
-// classic path serves the asset's supply.
+// ErrStorageSupplyIsStellarAsset refuses a Stellar Asset Contract, whose storage holds only the wrapped slice of a classic asset and would silently understate supply; the classic path serves it.
 var ErrStorageSupplyIsStellarAsset = fmt.Errorf("clickhouse: contract is a Stellar Asset Contract; its storage holds only the wrapped slice of a classic asset")
 
-// ErrStorageSupplyTooManyEntries is a refusal above maxContractStorageBalanceEntries: every entry
-// is decoded in Go, and a truncated sum is a wrong supply that looks right.
+// ErrStorageSupplyTooManyEntries refuses above maxContractStorageBalanceEntries, since a truncated sum is a wrong supply that looks right.
 var ErrStorageSupplyTooManyEntries = fmt.Errorf("clickhouse: contract holds more storage balance entries than this reader will decode")
 
-// ErrStorageSupplyNoInstance: balances exist but no instance entry was captured. The instance is
-// the only evidence separating a Wasm token from a SAC, so the SAC refusal has not been evaluated,
-// merely not fired. See ErrStorageSupplyIsStellarAsset.
+// ErrStorageSupplyNoInstance means balances exist but no instance entry was captured, so the SAC refusal could not be evaluated (see ErrStorageSupplyIsStellarAsset).
 var ErrStorageSupplyNoInstance = fmt.Errorf("clickhouse: no contract instance entry captured, so the Stellar-Asset-Contract check could not be run")
 
 // maxContractStorageBalanceEntries bounds one storage-supply read, which pays a full decode per
@@ -138,28 +126,12 @@ const contractStorageSupplyQuery = `
 	  AND (substring(key_xdr, ?, ?) IN (?) OR substring(key_xdr, ?, ?) = ?)
 	LIMIT ?`
 
-// ContractStorageSupplyReader is the seam the storage-derived supply reading is
-// served through. Implemented by [ExplorerReader].
+// ContractStorageSupplyReader is the seam the storage-derived supply reading is served through, implemented by [ExplorerReader].
 type ContractStorageSupplyReader interface {
 	ContractStorageSupply(ctx context.Context, contractID string) (ContractStorageSupply, error)
 }
 
-// ContractStorageSupply sums a token's supply out of its Soroban contract storage, for tokens the
-// SEP-41 / CAP-67 event log cannot see (they are ABSENT from supply_flows, so events sum to a
-// confident zero).
-// Handover: a token with both a storage level and an event accumulation takes the storage reading
-// outright and the two are never added; a level cannot be wrong from missing history. Events stay
-// a cross-check.
-// Expiry: the lake never records an eviction, so every balance is judged against
-// stellar.ttl_live_until at the lake tip. A lapsed TEMPORARY balance is dropped; a lapsed
-// PERSISTENT one is archived, still owned, and stays in Total (disclosed via
-// ArchivedEntries/ArchivedTotal). A key with no TTL row is kept.
-// Blind spot: only entries the current-state projection captured are seen, so the figure is a LOWER
-// BOUND; callers must carry the bound to the wire. The contract's HolderCount exposes the gap.
-// Refusals: ErrStorageSupplyIsStellarAsset, ErrStorageSupplyTooManyEntries,
-// ErrStorageSupplyNoInstance, and failure when the TTL lookup cannot run (an unjudged sum could
-// include deleted balances). A contract with no balances returns zero Total, BalanceEntries == 0
-// and no error; do not publish that as a supply.
+// ContractStorageSupply sums a token's supply from its Soroban storage (a LOWER BOUND the caller must carry to the wire, TTL-judged at the lake tip, taking precedence over events, never added to them); zero balances is not a supply.
 func (r *ExplorerReader) ContractStorageSupply(ctx context.Context, contractID string) (ContractStorageSupply, error) {
 	prefix, err := contractDataKeyPrefix(contractID)
 	if err != nil {

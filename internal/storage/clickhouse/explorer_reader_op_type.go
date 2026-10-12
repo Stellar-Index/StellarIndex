@@ -6,20 +6,13 @@ import (
 	"fmt"
 )
 
-// OpTypePage is one type-filtered operations page. ScannedFrom is the lowest
-// ledger the read covered: a page shorter than its limit continues strictly
-// below it, and 0 means the scan reached genesis.
+// OpTypePage is one type-filtered operations page; ScannedFrom is the lowest ledger covered, a short page continues strictly below it, and 0 means the scan reached genesis.
 type OpTypePage struct {
 	Rows        []OpRow
 	ScannedFrom uint32
 }
 
-// RecentOperationsOfType is RecentOperations restricted to opTypes (the lake's enum strings,
-// e.g. "OperationTypePayment"), newest first, on the same keyset cursor.
-//
-// stellar.operations has no op_type skip index, so the filter cannot prune. Each page scans at
-// most recentLedgersTailWindow ledgers below its anchor and never falls back to an unbounded
-// read: a rare type yields a short or empty page whose continuation is OpTypePage.ScannedFrom.
+// RecentOperationsOfType is RecentOperations restricted to opTypes, scanning at most recentLedgersTailWindow ledgers per page (no op_type skip index), so a rare type yields a short page continuing at OpTypePage.ScannedFrom.
 func (r *ExplorerReader) RecentOperationsOfType(ctx context.Context, limit int, cur ExplorerCursor, opTypes []string) (OpTypePage, error) {
 	if len(opTypes) == 0 {
 		return OpTypePage{}, errors.New("clickhouse: recent operations of type: no op types")

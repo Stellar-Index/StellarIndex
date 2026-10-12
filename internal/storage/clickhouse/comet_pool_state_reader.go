@@ -29,18 +29,13 @@ const (
 	cometFieldBalance        = "balance"
 )
 
-// CometPoolLeg is one token's current balance record inside a Comet
-// pool. Balance is full-precision i128 (*big.Int, ADR-0003) in token
-// base units.
+// CometPoolLeg is one token's current balance record inside a Comet pool; Balance is a full-precision i128 (*big.Int, ADR-0003) in token base units.
 type CometPoolLeg struct {
 	Token   string // token contract C-strkey (the record map's key)
 	Balance *big.Int
 }
 
-// CometPoolState is one Comet pool contract's decoded CURRENT state:
-// every bound token's balance from the pool's AllRecordData persistent
-// entry in the certified lake. Legs are sorted by token strkey for
-// deterministic output.
+// CometPoolState is one Comet pool's decoded CURRENT state: every bound token's balance, with Legs sorted by token strkey.
 type CometPoolState struct {
 	Pool string // pool contract C-strkey
 	Legs []CometPoolLeg
@@ -59,15 +54,7 @@ const cometPoolStateQuery = `SELECT key_xdr, ledger_seq, entry_xdr
 	WHERE entry_type = 'contract_data' AND key_xdr IN (?) AND entry_xdr != ''
 	SETTINGS max_threads = 4, max_memory_usage = 8000000000`
 
-// CometPoolReserves reads the CURRENT per-token balance records for the given Comet pool contracts
-// from the lake in one batched `key_xdr IN (...)` lookup. Semantics mirror SoroswapPairReserves /
-// PhoenixPoolReserves:
-//
-//   - Pools with NO captured record entry, or a TTL-ARCHIVED one, are absent from both returns;
-//     absence is "reserves unavailable", never zero.
-//   - Pools whose entry does NOT decode to the recognised Map<Address, Record{balance: i128, ...}>
-//     shape come back in the second return (undecodable, sorted) so callers can count them. ANY
-//     malformed record fails the whole pool: a partial balance set would understate TVL.
+// CometPoolReserves reads CURRENT per-token balances for the pools in one batched lookup; absent or TTL-archived pools are "unavailable", never zero, and any malformed record fails the whole pool (second return).
 func (r *ExplorerReader) CometPoolReserves(ctx context.Context, pools []string) (map[string]CometPoolState, []string, error) {
 	keys := make([]string, 0, len(pools)*2)
 	poolByKey := make(map[string]string, len(pools)*2)

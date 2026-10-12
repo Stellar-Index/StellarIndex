@@ -11,11 +11,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// NativeLiquidityPoolState is one classic (CAP-38) constant-product pool's CURRENT reserve
-// state (ADR-0039), read from the `liquidity_pool` LedgerEntry in the lake. Both sides are
-// always present, unlike the watched-asset-gated `lp_reserve_observations` supply path.
-// Reserves are 7-decimal stroops kept as *big.Int (ADR-0003) even though they fit in int64, so
-// the shared constant-product depth math treats them like the Soroban AMM path.
+// NativeLiquidityPoolState is one classic (CAP-38) constant-product pool's CURRENT reserve state (ADR-0039) from the `liquidity_pool` entry; reserves are 7-decimal stroops kept as *big.Int (ADR-0003).
 type NativeLiquidityPoolState struct {
 	PoolHex     string // 32-byte LiquidityPoolId, lowercase hex (Horizon/SDEX form)
 	PoolStrkey  string // L-strkey (SEP-23)
@@ -31,10 +27,7 @@ type NativeLiquidityPoolState struct {
 	Ledger uint32
 }
 
-// NativeLiquidityPoolReserves reads the CURRENT reserves for the given classic pools in one
-// batched `key_xdr IN (...)` lookup on the (entry_type, key_xdr) primary-key prefix. Pool ids
-// may be L-strkey (SEP-23) or 32-byte hex. Pools not captured, removed, or not ConstantProduct
-// are absent; callers treat absence as "reserves unavailable", never as zero.
+// NativeLiquidityPoolReserves reads CURRENT reserves for classic pools (L-strkey or 32-byte hex ids) in one batched key_xdr lookup; uncaptured, removed or non-ConstantProduct pools are absent, meaning "unavailable", never zero.
 func (r *ExplorerReader) NativeLiquidityPoolReserves(ctx context.Context, poolIDs []string) (map[string]NativeLiquidityPoolState, error) {
 	keys := make([]string, 0, len(poolIDs))
 	for _, p := range poolIDs {
@@ -81,12 +74,7 @@ func (r *ExplorerReader) NativeLiquidityPoolReserves(ctx context.Context, poolID
 	return out, nil
 }
 
-// NativeLiquidityPoolsRanked reads EVERY classic constant-product pool's current state and
-// returns the top `limit` by pool-share trustline count (liquidity providers), the only
-// cross-pool-comparable size signal without USD pricing of arbitrary assets (reserves are in
-// per-pair units). Ties break on pool id for a stable order. The scan is one PK-prefix-scoped
-// aggregate over the `liquidity_pool` entry_type; callers cache the result rather than re-scan
-// per request.
+// NativeLiquidityPoolsRanked reads every classic constant-product pool and returns the top `limit` by pool-share trustline count (ties by pool id); one full-entry-type aggregate, so callers cache the result.
 func (r *ExplorerReader) NativeLiquidityPoolsRanked(ctx context.Context, limit int) ([]NativeLiquidityPoolState, error) {
 	// argMax over the ReplacingMergeTree versions (manual dedup, cheaper than FINAL for a
 	// whole-prefix scan) gives the latest entry per pool; a trailing removal (empty entry_xdr)

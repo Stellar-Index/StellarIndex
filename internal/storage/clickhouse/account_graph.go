@@ -15,13 +15,10 @@ const (
 	GraphRelationSponsored = "sponsored"
 )
 
-// AccountGraphInboundCap bounds inbound edges per direction: a guard rail, not a page
-// (measured: no account has more than 9 distinct creators or 8 sponsors). The served total is
-// the exact count, so truncation is visible.
+// AccountGraphInboundCap bounds inbound edges per direction (a guard rail, not a page); the served total is the exact count so truncation is visible.
 const AccountGraphInboundCap = 25
 
-// AccountGraphEdge is one edge: a counterparty plus the relationship's weight. One row per
-// distinct pair, not per operation; Events counts creations or sponsorship arrangements started.
+// AccountGraphEdge is one counterparty edge per distinct pair (not per operation); Events counts creations or sponsorship arrangements started.
 type AccountGraphEdge struct {
 	// Account is the other end: creator/sponsor on an inbound edge, created/sponsored outbound.
 	Account string
@@ -35,9 +32,7 @@ type AccountGraphEdge struct {
 	LastAt        time.Time
 }
 
-// AccountGraphSide is the whole-history summary of one outbound direction, independent of
-// any page. Accounts counts distinct counterparties, Events operations; they differ sharply
-// for a recycling creator, so neither stands in for the other.
+// AccountGraphSide is the whole-history summary of one outbound direction; Accounts counts distinct counterparties, Events operations, and neither stands in for the other.
 type AccountGraphSide struct {
 	Accounts      uint64
 	Events        uint64
@@ -48,9 +43,7 @@ type AccountGraphSide struct {
 	LastAt        time.Time
 }
 
-// AccountGraphCoverage is the span one arm aggregated, read from the cycle that built that
-// arm's edges. The arms come from independent cycles and sources, so they stay separate:
-// creation reaches genesis, sponsorship only protocol 14.
+// AccountGraphCoverage is the span one arm aggregated; the arms come from independent cycles so they stay separate (creation reaches genesis, sponsorship only protocol 14).
 type AccountGraphCoverage struct {
 	FromLedger uint32
 	ThruLedger uint32
@@ -59,12 +52,7 @@ type AccountGraphCoverage struct {
 	ComputedAt time.Time
 }
 
-// AccountGraph is one account's neighbourhood in the sponsorship and creation graph. Everything
-// here is history: a sponsorship edge says an arrangement was started, never that one is in force,
-// since RevokeSponsorship names its entry inside undecoded body_xdr and arrangements also lapse
-// on entry deletion or merge with no operation. Inbound (CreatedBy / SponsoredBy) is capped by
-// AccountGraphInboundCap with an exact total; outbound is summarised and paged (Page) because one
-// sponsor can cover hundreds of thousands of accounts.
+// AccountGraph is one account's creation and sponsorship neighbourhood; all history, never live state (an edge says an arrangement started, not that it is in force); inbound is capped, outbound summarised and paged.
 type AccountGraph struct {
 	// CreatedBy is a list because an address can be created, merged away and created again
 	// (by the same or another funder); edges are collapsed to distinct pairs before serving.
@@ -179,10 +167,7 @@ const (
 	LIMIT ?`
 )
 
-// AccountGraph reads one account's neighbourhood. relation selects the paged OUTBOUND
-// direction (GraphRelationCreated, GraphRelationSponsored, or "" for none); inbound edges and
-// both outbound summaries are always returned. ok=false (not an error) when either arm has
-// not been exchanged live: a half-provisioned graph would claim "created by nobody".
+// AccountGraph reads one account's neighbourhood (relation selects the paged outbound direction); ok=false (not an error) when either arm is not exchanged live, since a half-provisioned graph would claim "created by nobody".
 func (r *ExplorerReader) AccountGraph(ctx context.Context, account, relation string, limit int, cursor string) (AccountGraph, bool, error) {
 	if !r.probeSchema(ctx, &r.accountCreatorEdgesProbe,
 		`SELECT creator FROM stellar.account_creator_edges LIMIT 1`, true) {

@@ -28,8 +28,7 @@ import (
 // honestly on error, whereas a LIMIT would serve a short answer as complete.
 const protocolRawScanRowCeiling = ` SETTINGS max_rows_to_read = 600000000, read_overflow_mode = 'throw'`
 
-// ProtocolEventTypeCount is one (event symbol → count) row of a protocol's
-// event-type distribution.
+// ProtocolEventTypeCount is one (event symbol, count) row of a protocol's event-type distribution.
 type ProtocolEventTypeCount struct {
 	EventType string // topic[0] symbol (e.g. "swap", "deposit", "new_pair")
 	Count     uint64
@@ -48,8 +47,7 @@ type ProtocolContractActivity struct {
 	LastSeen   time.Time
 }
 
-// LakeTipLedger returns the highest ledger_seq in the lake (cheap: small ledgers table), to derive
-// a recent-window cutoff.
+// LakeTipLedger returns the highest ledger_seq in the lake (cheap: small ledgers table), to derive a recent-window cutoff.
 func (r *ExplorerReader) LakeTipLedger(ctx context.Context) (uint32, error) {
 	var tip uint32
 	if err := r.conn.QueryRow(ctx, `SELECT max(ledger_seq) FROM stellar.ledgers`).Scan(&tip); err != nil {
@@ -64,11 +62,7 @@ func (r *ExplorerReader) LakeTipLedger(ctx context.Context) (uint32, error) {
 // 10,000 ledgers (~14h) far exceeds the heal time and ADR-0041 Decision 3's 1h page threshold.
 const lakeWatermarkGapWindow = 10_000
 
-// LakeWatermark returns the lake's CONTIGUOUS captured tip (highest ledger with no hole within
-// lakeWatermarkGapWindow below the raw max) and its close time. Handlers surface it as
-// `as_of_ledger` and compare the close time to now for `flags.stale`. The raw max(ledger_seq) can
-// point PAST a live-sink drop, yet consumers read `as_of_ledger` as "everything up to here is
-// captured"; contiguousWatermarkOn is the query the projector clamps to.
+// LakeWatermark returns the lake's CONTIGUOUS captured tip and its close time (surfaced as `as_of_ledger`); the raw max(ledger_seq) can point past a live-sink drop.
 func (r *ExplorerReader) LakeWatermark(ctx context.Context) (uint32, time.Time, error) {
 	var rawTip uint32
 	if err := r.conn.QueryRow(ctx, `SELECT max(ledger_seq) FROM stellar.ledgers`).Scan(&rawTip); err != nil {
@@ -96,8 +90,7 @@ func (r *ExplorerReader) LakeWatermark(ctx context.Context) (uint32, time.Time, 
 	return wm, closedAt, nil
 }
 
-// ProtocolEventBreakdown returns the event-type distribution (topic[0] symbol to count) for a
-// protocol's contracts, descending. sinceLedger>0 bounds to a recent window; 0 is all-time.
+// ProtocolEventBreakdown returns the event-type distribution (topic[0] symbol to count) for a protocol's contracts, descending; sinceLedger>0 bounds to a recent window, 0 is all-time.
 func (r *ExplorerReader) ProtocolEventBreakdown(ctx context.Context, contractIDs []string, sinceLedger uint32) ([]ProtocolEventTypeCount, error) {
 	if len(contractIDs) == 0 {
 		return nil, nil
@@ -230,9 +223,7 @@ const protocolDailyActivityQuery = `SELECT toString(toDate(close_time)) AS d, co
 		  AND close_time < toStartOfDay(now())
 		GROUP BY d ORDER BY d ASC` + protocolRawScanRowCeiling
 
-// ProtocolDailyActivity returns daily event counts from sinceLedger forward (>0 required),
-// ascending. Complete days only: the partial current day would render as a phantom cliff, and
-// ProtocolEventBreakdown shares the bound so sum(breakdown) reconciles with the series total.
+// ProtocolDailyActivity returns ascending daily event counts from sinceLedger (>0 required), complete days only so the partial current day does not render as a phantom cliff.
 func (r *ExplorerReader) ProtocolDailyActivity(ctx context.Context, contractIDs []string, sinceLedger uint32) ([]ProtocolDailyPoint, error) {
 	if len(contractIDs) == 0 {
 		return nil, nil
@@ -261,9 +252,7 @@ const protocolContractActivityQuery = `SELECT contract_id, count() AS c, max(clo
 		  AND close_time < toStartOfDay(now())
 		GROUP BY contract_id ORDER BY c DESC LIMIT 1000` + protocolRawScanRowCeiling
 
-// ProtocolContractActivity returns per-contract event counts and last-seen for the roster from
-// sinceLedger forward (>0 required: an all-time scan blows the 30 s budget), descending, complete
-// days only.
+// ProtocolContractActivity returns per-contract event counts and last-seen from sinceLedger (>0 required, an all-time scan blows the 30 s budget), descending, complete days only.
 func (r *ExplorerReader) ProtocolContractActivity(ctx context.Context, contractIDs []string, sinceLedger uint32) ([]ProtocolContractActivity, error) {
 	if len(contractIDs) == 0 {
 		return nil, nil
@@ -290,10 +279,7 @@ func (r *ExplorerReader) ProtocolContractActivity(ctx context.Context, contractI
 // a Summing MV's retry overcount, at ~0.1-0.5% error. Callers probe DailyActivityAvailable and
 // fall back to the raw readers.
 
-// DailyActivityAvailable reports whether the pre-aggregation exists with rows. definitive=true only
-// when the server ANSWERED (table missing or rows found). A transport error or deadline is not an
-// answer and must not be cached, or one blip would latch the raw scans for the process lifetime.
-// An empty table is non-definitive too: not backfilled yet, and the LIMIT 1 probe is cheap.
+// DailyActivityAvailable reports whether the pre-aggregation exists with rows; definitive=true only when the server ANSWERED, so a transport error, deadline or empty table must not be cached.
 func (r *ExplorerReader) DailyActivityAvailable(ctx context.Context) (available, definitive bool) {
 	rows, err := r.conn.Query(ctx,
 		`SELECT 1 FROM stellar.contract_events_daily LIMIT 1`)
@@ -310,8 +296,7 @@ func (r *ExplorerReader) DailyActivityAvailable(ctx context.Context) (available,
 	return false, false
 }
 
-// ProtocolDailyActivityFast is ProtocolDailyActivity over the pre-aggregation; sinceDay bounds the
-// window at day grain.
+// ProtocolDailyActivityFast is ProtocolDailyActivity over the pre-aggregation; sinceDay bounds the window at day grain.
 func (r *ExplorerReader) ProtocolDailyActivityFast(ctx context.Context, contractIDs []string, sinceDay time.Time) ([]ProtocolDailyPoint, error) {
 	if len(contractIDs) == 0 {
 		return nil, nil
@@ -337,10 +322,7 @@ func (r *ExplorerReader) ProtocolDailyActivityFast(ctx context.Context, contract
 	return out, rows.Err()
 }
 
-// ProtocolContractActivityFast is ProtocolContractActivity over the pre-aggregation, at day grain
-// (last-seen is day-precise). It replaces the raw FINAL per-contract scan, whose merge-on-read blew
-// the 2 GiB per-query limit (Code 241), which is the "unavailable" verdict on /v1/protocols/{name}.
-// Counts match the raw path within the rollup's uniqCombined error.
+// ProtocolContractActivityFast is ProtocolContractActivity over the pre-aggregation at day grain, replacing the raw FINAL scan that blew the 2 GiB per-query limit; counts match within the rollup's uniqCombined error.
 func (r *ExplorerReader) ProtocolContractActivityFast(ctx context.Context, contractIDs []string, sinceDay time.Time) ([]ProtocolContractActivity, error) {
 	if len(contractIDs) == 0 {
 		return nil, nil
@@ -368,8 +350,7 @@ func (r *ExplorerReader) ProtocolContractActivityFast(ctx context.Context, contr
 	return out, rows.Err()
 }
 
-// ProtocolEventBreakdownFast is ProtocolEventBreakdown over the pre-aggregation; t1_xdr/t0_xdr
-// carry the raw topics for name recovery (effectiveEventName).
+// ProtocolEventBreakdownFast is ProtocolEventBreakdown over the pre-aggregation; t1_xdr/t0_xdr carry the raw topics for name recovery (effectiveEventName).
 func (r *ExplorerReader) ProtocolEventBreakdownFast(ctx context.Context, contractIDs []string, sinceDay time.Time) ([]ProtocolEventTypeCount, error) {
 	if len(contractIDs) == 0 {
 		return nil, nil

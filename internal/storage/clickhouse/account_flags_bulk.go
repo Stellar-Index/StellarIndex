@@ -8,10 +8,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// AuthFlagsSource records HOW an [AccountAuthFlags] value was obtained, so a consumer
-// can tell a CURRENT reading from a historical one. Persisted verbatim into
-// `issuers.auth_flags_source`. Merged-away issuers' flags are knowable only as of their removal
-// ledger; serving them without provenance would assert a current policy for a dead account.
+// AuthFlagsSource records HOW an AccountAuthFlags value was obtained (current vs historical), persisted verbatim into issuers.auth_flags_source.
 type AuthFlagsSource string
 
 const (
@@ -24,10 +21,7 @@ const (
 	AuthFlagsSourceLastKnownBeforeRemoval AuthFlagsSource = "last_known_before_removal"
 )
 
-// AccountAuthFlags is one account's decoded AccountEntry auth flags.
-// Bitmask: AUTH_REQUIRED=1, AUTH_REVOCABLE=2, AUTH_IMMUTABLE=4, AUTH_CLAWBACK=8.
-// Decoded here so bit positions cannot drift from Server.enrichIssuerFromAccountState,
-// which decodes the same way.
+// AccountAuthFlags is one account's decoded auth-flag bitmask (REQUIRED=1, REVOCABLE=2, IMMUTABLE=4, CLAWBACK=8), decoded the same way as Server.enrichIssuerFromAccountState.
 type AccountAuthFlags struct {
 	Required  bool
 	Revocable bool
@@ -91,14 +85,7 @@ func decodeAccountAuthFlags(entryXDR string) (AccountAuthFlags, bool) {
 	}, true
 }
 
-// BulkAccountAuthFlags returns auth flags for the G-strkeys, omitting accounts with
-// no live entry (absence is a measurement). Every value has Source = [AuthFlagsSourceLive].
-// Merged accounts are NOT resolved here; see [ExplorerReader.RemovedAccountsLastKnownAuthFlags],
-// whose historical answer must keep its provenance.
-//
-// Matches on key_xdr, not account_id: ledger_entries_current is ORDER BY (entry_type, key_xdr),
-// so key_xdr is a sort-key prefix (0.069 s vs 5.18 s via the account_id skip-index). One query
-// per call; the caller batches to fit its memory budget and max_query_size.
+// BulkAccountAuthFlags returns live auth flags for the G-strkeys (absent account means no live entry), matching on key_xdr (sort-key prefix) in one query per call; merged accounts are not resolved here.
 func (r *ExplorerReader) BulkAccountAuthFlags(ctx context.Context, gStrkeys []string) (map[string]AccountAuthFlags, error) {
 	out := make(map[string]AccountAuthFlags, len(gStrkeys))
 	if len(gStrkeys) == 0 {
@@ -147,24 +134,7 @@ func (r *ExplorerReader) BulkAccountAuthFlags(ctx context.Context, gStrkeys []st
 	return out, nil
 }
 
-// RemovedAccountsLastKnownAuthFlags resolves flags of MERGED accounts from their last
-// state before removal. Values carry Source = [AuthFlagsSourceLastKnownBeforeRemoval],
-// AsOfLedger = the removal ledger, and an EMPTY HomeDomain. Live keys and keys with
-// no `removed` row are absent.
-//
-// Scoped single-ledger read, not a key scan: an unbounded `key_xdr IN (?)` over
-// ledger_entry_changes leans on idx_lec_key_xdr, a bloom skip-index over a 150B-row table whose
-// false-positive rate is a pruning floor. The lake records the PRE-IMAGE in the removal ledger
-// itself, so the read is partition-pruned to the removal ledgers.
-//
-// change_type != 'removed' admits `state` rows on purpose: the `state` row before the `removed`
-// one IS the pre-image; `updated` rows are ordered against it.
-//
-// ARGMAX key (ledger_seq, intra_ledger_seq, change_index): change_index restarts per
-// TRANSACTION and intra_ledger_seq is 0 on rows not re-derived after the ADR-0038 walk fix, so
-// change_index is the fallback (valid because a merge's same-ledger changes share its tx).
-// Residual: set_options and account_merge in TWO txs of one ledger on a non-re-derived range can
-// resolve to the pre-set_options flags.
+// RemovedAccountsLastKnownAuthFlags resolves MERGED accounts' flags from their pre-image in the removal ledger (Source=LastKnownBeforeRemoval, empty HomeDomain); live keys and keys with no `removed` row are absent.
 func (r *ExplorerReader) RemovedAccountsLastKnownAuthFlags(ctx context.Context, gStrkeys []string) (map[string]AccountAuthFlags, error) {
 	out := make(map[string]AccountAuthFlags, len(gStrkeys))
 	if len(gStrkeys) == 0 {

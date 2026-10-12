@@ -8,10 +8,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// MintBurnFlow is one supply-affecting token event from the lake: a CAP-67
-// classic or SEP-41 mint / burn / clawback. Supply per contract is
-// Σmint − Σburn − Σclawback. The amount lives in DataXDR (a base64 i128 scval,
-// or a map for some SEP-41 variants) — the caller decodes it.
+// MintBurnFlow is one supply-affecting token event (CAP-67 or SEP-41 mint/burn/clawback); the amount is in DataXDR (base64 scval), which the caller decodes.
 type MintBurnFlow struct {
 	Ledger     uint32
 	CloseTime  time.Time
@@ -23,14 +20,7 @@ type MintBurnFlow struct {
 	DataXDR    string
 }
 
-// StreamMintBurnFlows streams the supply flows (mint/burn/clawback contract events) for [from,to]
-// inclusive, ordered by ledger. These include CAP-67 classic-asset issuance/destruction back to
-// genesis AND SEP-41 token mint/burn/clawback, so the sum over all history gives total supply for
-// EVERY token (baseline = 0 at genesis).
-//
-// useFinal toggles FINAL: with it, ReplacingMergeTree parts dedup at read time (correct, but the
-// all-history merge is ~40x slower). Without it the scan double-counts re-run partitions:
-// acceptable only for a quick estimate. The topic_0_sym IN filter keeps the scan to supply flows.
+// StreamMintBurnFlows streams mint/burn/clawback events for [from,to] ordered by ledger; useFinal dedups ReplacingMergeTree parts (correct, ~40x slower), without it re-run partitions double-count (estimates only).
 func StreamMintBurnFlows(ctx context.Context, addr string, from, to uint32, useFinal bool, fn func(MintBurnFlow) error) error {
 	conn, err := openRead(ctx, addr)
 	if err != nil {

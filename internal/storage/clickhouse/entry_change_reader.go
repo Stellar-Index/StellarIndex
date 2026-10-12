@@ -8,10 +8,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// EntryChange is one op-scoped ledger_entry_changes row: a snapshot of a LedgerEntry produced by
-// ONE classic operation, decoded for ADR-0047's movement reconstruction (LiquidityPoolDeposit/
-// Withdraw and CAP-0038 revocation-edge arms). Entry is nil for a 'removed' change (the row
-// carries only the key); every other ChangeType carries the full decoded LedgerEntry.
+// EntryChange is one op-scoped ledger_entry_changes row decoded for ADR-0047 movement reconstruction; Entry is nil for a 'removed' change.
 type EntryChange struct {
 	Ledger      uint32
 	ClosedAt    time.Time
@@ -38,14 +35,7 @@ const streamEntryChangesQuery = `
 	ORDER BY ledger_seq, tx_hash, op_index, change_index
 `
 
-// StreamEntryChanges reads OP-SCOPED (op_index >= 0) rows for [from,to] restricted to entryType
-// ('liquidity_pool' or 'claimable_balance'), invoking fn in (ledger_seq, tx_hash, op_index,
-// change_index) order, stellar-core's own per-op order, so the first row of an op is "before"
-// and the last "after" without a sort.
-//
-// Returns ZERO rows for a range whose per-op fidelity hasn't been backfilled (the legacy census
-// feed stamps op_index=-1 only), indistinguishable in SQL from a window with no such changes.
-// Callers MUST run CountOpScopedEntryChanges first (ADR-0047 D2: detect and skip honestly).
+// StreamEntryChanges streams OP-SCOPED rows for [from,to] of one entryType in stellar-core per-op order; returns ZERO rows for a range not backfilled per-op, so callers MUST run CountOpScopedEntryChanges first.
 func StreamEntryChanges(ctx context.Context, addr string, from, to uint32, entryType string, fn func(EntryChange) error) error {
 	if entryType == "" {
 		return fmt.Errorf("clickhouse: StreamEntryChanges: entryType is empty")
@@ -101,15 +91,7 @@ func StreamEntryChanges(ctx context.Context, addr string, from, to uint32, entry
 	return rows.Err()
 }
 
-// CountOpScopedEntryChanges returns how many op-scoped (op_index >= 0) rows exist for [from,to]:
-// the window-level fidelity probe to run, once per window, before trusting an "empty per-op
-// group" from StreamEntryChanges. Zero (with a non-empty window) means the per-op backfill
-// hasn't reached this range: treat its LiquidityPoolDeposit/Withdraw and CAP-0038-eligible
-// AllowTrust/SetTrustLineFlags ops as entry-changes-unavailable without querying per op.
-//
-// Returns uint64 because the clickhouse-go driver rejects scanning a UInt64 into *int64.
-// uniqExact over the PRIMARY KEY tuple, not count(): the table is a ReplacingMergeTree, so
-// un-merged duplicate parts would inflate the count into a false fidelity signal.
+// CountOpScopedEntryChanges counts op-scoped rows for [from,to] via uniqExact over the primary key (not count(), which unmerged duplicates inflate); zero in a non-empty window means per-op backfill has not reached it.
 func CountOpScopedEntryChanges(ctx context.Context, addr string, from, to uint32) (uint64, error) {
 	conn, err := openRead(ctx, addr)
 	if err != nil {

@@ -10,10 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// AccountStateCacheTTL bounds how long a cached account state is served. Deliberately short: the
-// cache breaks contention, not for freshness. AccountState FINAL-scans ledger_entries_current
-// (~0.4s alone) but balloons to the 8s handler ceiling when many detail requests run concurrently
-// under the 2-thread api_serving profile; cache hits also cut concurrent scans.
+// AccountStateCacheTTL bounds how long a cached account state is served; short on purpose, since the cache breaks contention on the FINAL scan rather than providing freshness.
 const AccountStateCacheTTL = 30 * time.Second
 
 // accountStateCacheMax bounds resident entries: a few hot accounts plus one-off churn. On
@@ -80,10 +77,7 @@ const accountStateRefreshTimeout = 3 * time.Minute
 var errAccountStateRefreshFailed = errors.New(
 	"clickhouse: detached account-state refresh produced no entry")
 
-// AccountStateCached serves account state from the TTL cache; on a miss it kicks one detached scan
-// per account and waits bounded by the caller's deadline only. Detached because a whale account's
-// scan would otherwise die with the request, the cache never fill, and every retry pay the
-// timeout. The scan runs on its own budget; a timed-out request 503s and the retry lands warm.
+// AccountStateCached serves account state from the TTL cache; a miss kicks one detached scan per account (so a whale scan survives the request) and waits only up to the caller's deadline.
 func (r *ExplorerReader) AccountStateCached(ctx context.Context, account string) (AccountState, bool, error) {
 	if st, ok, fresh := r.stateCache.get(account); ok {
 		if !fresh {

@@ -10,11 +10,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// ClassicOp is one lake-derived classic operation eligible for pre-P23 movement reconstruction
-// (ADR-0047): op body, result and tx-level context for a classicmovements decoder via
-// dispatcher.OpContext. Source is the op's effective source (already resolved at extract time);
-// the caller wires it into OpContext.TxSource, as ch-rebuild's SDEX pass does, and leaves
-// OpContext.OpSource empty.
+// ClassicOp is one lake-derived classic operation for pre-P23 movement reconstruction (ADR-0047); Source is the already-resolved effective source, wired into OpContext.TxSource with OpSource left empty.
 type ClassicOp struct {
 	Ledger   uint32
 	ClosedAt time.Time
@@ -36,18 +32,7 @@ func classicOpTypeInList(opTypes []string) string {
 	return strings.Join(quoted, ",")
 }
 
-// StreamClassicOps reads stellar.operations JOIN operation_results for
-// [from,to] inclusive, restricted to opTypes (xdr.OperationType.String() values) AND successful
-// transactions, rebuilds op.Body and the OperationResult from the retained XDR blobs, and
-// invokes fn for each in dispatcher emission order. This is the SHARED ADR-0047 lake-read
-// harness: later phases extend the CALLER's opTypes list, not this function.
-//
-// Same NO-FINAL / grace_hash-join rationale as StreamSDEXOps: duplicate rows from unmerged parts
-// are harmless on the WRITE side (account_movements is a ReplacingMergeTree, ADR-0048 D2) but
-// not on the READ side, where a duplicate op fans out to k*m identical ClassicOp rows. Callers
-// that count MUST dedupe on (ledger_seq, tx_hash, op_index), as classicMovementsDecodeOpsSurface
-// does. Failed transactions are excluded because their op results can carry data for ops that
-// were rolled back.
+// StreamClassicOps streams successful-tx operations for [from,to] of the given opTypes in dispatcher order, with NO FINAL, so callers that count MUST dedupe on (ledger_seq, tx_hash, op_index).
 func StreamClassicOps(ctx context.Context, addr string, from, to uint32, opTypes []string, fn func(ClassicOp) error) error {
 	if len(opTypes) == 0 {
 		return fmt.Errorf("clickhouse: StreamClassicOps: opTypes is empty")

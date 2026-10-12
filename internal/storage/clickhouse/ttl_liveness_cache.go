@@ -10,10 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// TTLVerdictCacheTTL bounds how stale a served archived-pair verdict set may
-// be before a background re-classification starts. TTL lapse moves on
-// day/week scales, while each recompute scans the ~586M-row ttl prefix;
-// running it inline per request held /v1/pools/reserves in the 503 class.
+// TTLVerdictCacheTTL bounds how stale a served archived-pair verdict set may be before a background re-classification starts (each recompute scans the ~586M-row ttl prefix).
 const TTLVerdictCacheTTL = 30 * time.Minute
 
 // ttlVerdictRefreshTimeout bounds one detached re-classification (minutes

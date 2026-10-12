@@ -15,9 +15,7 @@ const (
 	opRevokeSponsoring = "OperationTypeRevokeSponsorship"
 )
 
-// AccountSponsorRow is one league-table row. Every figure is IMMUTABLE HISTORY (arrangements begun,
-// revocations issued), not sponsorships still standing: an arrangement also ends when the entry
-// goes away (trustline removed, offer cancelled, account merged) and no operation records that.
+// AccountSponsorRow is one league-table row of IMMUTABLE HISTORY (arrangements begun, revocations issued), not sponsorships still standing.
 type AccountSponsorRow struct {
 	Rank                uint32
 	Sponsor             string
@@ -30,11 +28,7 @@ type AccountSponsorRow struct {
 	LastSeenAt          time.Time
 }
 
-// AccountSponsors is one cycle's snapshot: a board slice, the totals and the span aggregated.
-// It deliberately carries NO live sponsored set: figures replay sponsorship OPERATIONS, and a
-// sponsorship also lapses (entry deleted, account merged) with no operation, so a "currently
-// sponsoring" number here would OVERSTATE. FromLedger/ThruLedger are data-derived (ADR-0031); the
-// protocol 14 floor is sponsorship's own genesis, not a gap.
+// AccountSponsors is one cycle's snapshot (board slice, totals, span) that deliberately carries NO live sponsored set, which would overstate since sponsorships lapse with no operation.
 type AccountSponsors struct {
 	Board                  []AccountSponsorRow
 	SponsorsTotal          int64
@@ -218,10 +212,7 @@ func RunSponsorsRollup(ctx context.Context, addr string, logf func(format string
 	return runRollupCycle(ctx, addr, "sponsors rollup", sponsorsRollupStatements, logf)
 }
 
-// AccountSponsors reads the rollup snapshot: the top `limit` rows plus totals and span. ok=false
-// (not an error) when no cycle has completed or the board has no span to qualify it.
-// A non-empty `account` narrows Board to that sponsor's row; see ExplorerReader.AccountCreators
-// (rank is whole-aggregation, and an address past the cap would read as absent, not unranked).
+// AccountSponsors reads the rollup snapshot (top `limit` rows, totals, span); ok=false (not an error) when no cycle has completed or the board has no span.
 func (r *ExplorerReader) AccountSponsors(ctx context.Context, limit int, account string) (AccountSponsors, bool, error) {
 	if !r.probeSchema(ctx, &r.accountSponsorsProbe,
 		`SELECT rank FROM stellar.account_sponsors_rollup LIMIT 1`, true) {

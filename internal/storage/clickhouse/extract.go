@@ -15,10 +15,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sdexclaim"
 )
 
-// ExtractLedger structurally decodes one LedgerCloseMeta into Tier-1 rows. Decoder-independent: it
-// records shape and raw XDR, not protocol meaning. ledger_entry_changes (extract_entry_changes.go)
-// walk the tx-meta op-change and fee-meta streams like dispatcher.walkEntryChanges. A per-tx read
-// error is skipped and counted, not fatal, so one bad tx cannot lose a ledger.
+// ExtractLedger structurally decodes one LedgerCloseMeta into decoder-independent Tier-1 rows (shape and raw XDR, not protocol meaning); a per-tx read error is skipped and counted, not fatal.
 func ExtractLedger(lcm xdr.LedgerCloseMeta, passphrase string) (LedgerExtract, error) {
 	seq := lcm.LedgerSequence()
 	closeTime := lcm.ClosedAt().UTC()

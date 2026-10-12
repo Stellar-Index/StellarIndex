@@ -16,17 +16,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// ClassicTokenTopic0Syms are the CAP-67 / SEP-41 token-event topic[0] symbols. They
-// dominate contract_events (>99.99% of a partition) and no DEX/lending decoder reads
-// them, so those re-derivations exclude them. sep41_supply and sep41_transfers DO
-// use them: never exclude when re-deriving those.
+// ClassicTokenTopic0Syms are the CAP-67/SEP-41 token-event topic[0] symbols (>99.99% of contract_events); excluded for DEX/lending re-derivations, but NEVER for sep41_supply and sep41_transfers.
 var ClassicTokenTopic0Syms = []string{
 	"transfer", "mint", "burn", "clawback", "approve", "set_admin", "set_authorized",
 }
 
-// FirehoseExcludeSyms is ClassicTokenTopic0Syms minus set_admin: Blend and Comet emit
-// a pool-level set_admin sharing topic[0] with the token one, so excluding it would
-// drop protocol admin events. Keep in lockstep with internal/projector.firehoseExcludeSyms.
+// FirehoseExcludeSyms is ClassicTokenTopic0Syms minus set_admin (Blend and Comet pool-level set_admin shares topic[0]); keep in lockstep with internal/projector.firehoseExcludeSyms.
 var FirehoseExcludeSyms = []string{
 	"transfer", "mint", "burn", "clawback", "approve", "set_authorized",
 }
@@ -87,19 +82,7 @@ func forEachLedgerWindow(from, to, stride uint32, fn func(lo, hi uint32) error) 
 	}
 }
 
-// StreamContractEventsFiltered is the projector's forward-read source: contract_events for [from,to]
-// narrowed by contract_id IN / topic_0_sym IN, rebuilt as events.Event in apply order (SQL sorts by
-// tx_hash; scanInApplyOrder re-sorts each ledger by tx_index). ID and TransactionIndex stay zero.
-// Empty filters leave Decoder.Matches as the only gate. excludeTopic0Syms (nil = none) drops the
-// CAP-67 firehose in SQL (ClassicTokenTopic0Syms).
-// useFinal=false (projector): windows are small and writes idempotent, so duplicate
-// ReplacingMergeTree parts are absorbed. A COUNTING consumer must not double-count them: pass true,
-// or dedup adjacent rows in Go (ORDER BY makes duplicates consecutive; gentler on the shared host).
-// FINAL + contract_id filter + wide range is the protocol_reader.go trap; the sole useFinal=true
-// caller is deliberate (openRead has no execution-time cap and it streams), but a new request-path
-// caller needs its own row ceiling.
-// withOpArgs reads op_args_xdr, a wide column only decoders reading events.Event.OpArgs (redstone)
-// need. withStateWriteKeys resolves StateWriteKeys from ledger_entry_changes (state_write_keys.go).
+// StreamContractEventsFiltered is the projector's forward read of contract_events for [from,to] filtered by contract_id/topic_0_sym, in apply order; useFinal=false lets duplicates through, so a COUNTING consumer must pass true or dedup adjacent rows.
 func StreamContractEventsFiltered(ctx context.Context, addr string, from, to uint32, contractIDs, topic0Syms, excludeTopic0Syms []string, useFinal, withOpArgs, withStateWriteKeys bool, fn func(events.Event) error) error {
 	where := contractEventsFilterWhere(contractIDs, topic0Syms, excludeTopic0Syms)
 	return streamContractEventsWhere(ctx, addr, from, to, contractIDs, where, useFinal, withOpArgs, withStateWriteKeys, fn)
@@ -196,10 +179,7 @@ func contractEventsQuery(where string, useFinal, withOpArgs bool) string {
 		%s`, opArgsCol, final, where, boundedScanSettings)
 }
 
-// FirstContractEventLedgerFiltered returns the lowest ledger in [from, to]
-// holding a row StreamContractEventsFiltered would stream for the same
-// filters, and false when the range holds none. The projector seeds a
-// never-run source from it.
+// FirstContractEventLedgerFiltered returns the lowest ledger in [from, to] holding a row StreamContractEventsFiltered would stream for the same filters, false if none.
 func FirstContractEventLedgerFiltered(ctx context.Context, addr string, from, to uint32, contractIDs, topic0Syms, excludeTopic0Syms []string) (uint32, bool, error) {
 	if to < from {
 		return 0, false, nil
@@ -291,8 +271,7 @@ func contractEventsWhere(contractIDs []string, topicPred string, excludeTopic0Sy
 	return where
 }
 
-// StreamContractEvents reads contract_events FINAL for [from,to] in apply order,
-// always with op_args_xdr. excludeTopic0 (nil = none) skips the CAP-67 firehose.
+// StreamContractEvents reads contract_events FINAL for [from,to] in apply order, always with op_args_xdr; excludeTopic0 (nil = none) skips the CAP-67 firehose.
 func StreamContractEvents(ctx context.Context, addr string, from, to uint32, excludeTopic0 []string, fn func(events.Event) error) error {
 	conn, err := openRead(ctx, addr)
 	if err != nil {

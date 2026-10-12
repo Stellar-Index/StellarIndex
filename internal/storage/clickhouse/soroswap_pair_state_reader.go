@@ -28,10 +28,7 @@ const (
 	soroswapKeyReserve1 = 3
 )
 
-// SoroswapPairState is one Soroswap pair contract's decoded CURRENT
-// state (ADR-0039): post-interaction reserves straight from the pair's
-// instance storage in the certified lake. Reserves are full-precision
-// i128 (*big.Int, ADR-0003) in token base units.
+// SoroswapPairState is one Soroswap pair's decoded CURRENT state (ADR-0039) read from instance storage; reserves are full-precision i128 *big.Int (ADR-0003) in token base units.
 type SoroswapPairState struct {
 	Pair     string // pair contract C-strkey
 	Token0   string // token contract C-strkey, from instance storage
@@ -44,8 +41,7 @@ type SoroswapPairState struct {
 	Ledger uint32
 }
 
-// TokenDisplayMeta is a token's display metadata from its instance METADATA entry (the entry
-// TokenDecimals reads). Best-effort: HasMeta=false means callers keep their own defaults.
+// TokenDisplayMeta is a token's best-effort display metadata from its instance METADATA entry; HasMeta=false means callers keep their own defaults.
 type TokenDisplayMeta struct {
 	Symbol   string
 	Name     string

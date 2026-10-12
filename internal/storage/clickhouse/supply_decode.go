@@ -8,10 +8,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// SupplyFlowTopic0Syms are the topic[0] symbols whose events change a token's
-// supply under CAP-67 (classic SAC) / SEP-41: a mint adds, a burn/clawback
-// removes. Total supply(contract) = Σmint − Σburn − Σclawback over all history
-// (baseline 0 at the asset/contract's genesis).
+// SupplyFlowTopic0Syms are the topic[0] symbols that change token supply under CAP-67/SEP-41 (mint adds, burn/clawback removes); supply = Σmint − Σburn − Σclawback over all history.
 var SupplyFlowTopic0Syms = []string{"mint", "burn", "clawback"}
 
 // IsSupplyFlowSym reports whether a topic[0] symbol is a supply-affecting event.
@@ -24,11 +21,7 @@ func IsSupplyFlowSym(sym string) bool {
 	}
 }
 
-// DecodeSupplyAmount extracts the (positive) magnitude from a mint/burn/clawback
-// event's data body: a bare i128 or the SEP-41/CAP-67 map {amount, to_muxed_id, ...}
-// (AGENTS.md SEP-41 note). ok=false with a short reason for an undecodable
-// body. The amount is a *big.Int (ADR-0003: i128 never truncated). Shared by
-// ingest and the ch-supply* tools so both decode identically.
+// DecodeSupplyAmount extracts the positive magnitude from a mint/burn/clawback data body (bare i128 or the SEP-41/CAP-67 map) as a *big.Int (ADR-0003); ok=false with a reason when undecodable.
 func DecodeSupplyAmount(sv xdr.ScVal) (*big.Int, string, bool) {
 	if amt, err := scval.AsAmountFromI128(sv); err == nil {
 		return amt.BigInt(), "", true
@@ -50,9 +43,7 @@ func DecodeSupplyAmount(sv xdr.ScVal) (*big.Int, string, bool) {
 	return nil, sv.Type.String(), false
 }
 
-// DecodeSupplyAmountXDR parses a base64 scval data body then decodes the amount
-// — the string-input form used by the CH-reading supply tools (the ingest
-// extractor already holds the parsed xdr.ScVal and calls DecodeSupplyAmount).
+// DecodeSupplyAmountXDR is DecodeSupplyAmount for a base64 scval data body, the form the CH-reading supply tools use.
 func DecodeSupplyAmountXDR(dataXDR string) (*big.Int, string, bool) {
 	sv, err := scval.Parse(dataXDR)
 	if err != nil {
