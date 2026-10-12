@@ -14,14 +14,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// cohortPricesFrom is the first month the cycle prices: the network's
-// genesis month. Every USD-quoted month the served tier holds is
-// loaded, so a cohort's oldest flow can be valued at its own month.
+// cohortPricesFrom is the network's genesis month: every USD-quoted month the served tier holds is loaded, so a
+// cohort's oldest flow is valued at its own month.
 var cohortPricesFrom = time.Date(2015, time.September, 1, 0, 0, 0, 0, time.UTC)
 
-// closedMonthEdge is the exclusive upper bound for [Store.MonthlyUSDVWAPs]: the start of now's
-// month. The current month is still accumulating, so admitting it would serve a flickering partial
-// VWAP (ADR-0015's closed-bucket rule).
+// closedMonthEdge is the exclusive upper bound for [Store.MonthlyUSDVWAPs]: now's month start, since admitting the
+// accumulating month would serve a flickering partial VWAP (ADR-0015 closed-bucket rule).
 func closedMonthEdge(now time.Time) time.Time {
 	now = now.UTC()
 	return time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
@@ -33,16 +31,13 @@ func sourceAmountDecimals(source string) int {
 	return external.Lookup(source).AmountScaleDecimals()
 }
 
-// cohortRollupLockPath is where chCohortRollup takes its exclusive
-// advisory lock. Same state directory as the other rollup locks (see
-// holdersRollupLockPath).
+// cohortRollupLockPath is chCohortRollup's exclusive advisory lock, in the same state directory as the other rollup
+// locks (see holdersRollupLockPath).
 const cohortRollupLockPath = "/var/lib/stellarindex/ch-cohort-rollup.lock"
 
-// ch-cohort-rollup rolls up what the accounts an address created or sponsored went on to hold and
-// do, per root, into the account_cohort_* tables backing /v1/accounts/{g}/graph/cohort. The served
-// tier's DeFi positions and monthly USD VWAPs are staged into ClickHouse first so the join runs
-// beside the membership. Runs AFTER the creators and sponsors rollups, whose edge tables it reads,
-// and takes the exclusive lock described at acquireRollupLock (rollup_lock.go).
+// ch-cohort-rollup rolls up what the accounts an address created or sponsored went on to hold and do into the account_cohort_* tables
+// behind /v1/accounts/{g}/graph/cohort. Runs AFTER the creators and sponsors rollups (it reads their edge tables) and takes the lock at
+// acquireRollupLock.
 func chCohortRollup(args []string) error {
 	fs, gate := opsutil.NewMutatingFlagSet("ch-cohort-rollup")
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")

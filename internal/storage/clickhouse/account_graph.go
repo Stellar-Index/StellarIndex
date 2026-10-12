@@ -75,9 +75,8 @@ type AccountGraph struct {
 	Page []AccountGraphEdge
 }
 
-// accountGraphInboundQuery reads both inbound directions in one round-trip. `count() OVER ()`
-// is evaluated before the LIMIT, so each arm carries the exact inbound count beside the capped
-// slice. Both are primary-key range reads (ORDER BY (created, creator) / (sponsored, sponsor)).
+// accountGraphInboundQuery reads both inbound directions in one trip; `count() OVER ()` is evaluated before the LIMIT so each arm carries
+// the exact inbound count beside the capped slice. Both are primary-key range reads.
 const accountGraphInboundQuery = `
 	SELECT * FROM (
 	    SELECT '` + GraphRelationCreated + `' AS rel,
@@ -105,9 +104,8 @@ const accountGraphInboundQuery = `
 	    LIMIT ?
 	)`
 
-// accountGraphOutboundQuery summarises both outbound directions in one round-trip; each arm
-// aggregates a primary-key range, so cost follows that account's edges, not the table.
-// An arm with accounts = 0 means "no relationship", not a span starting at ledger 0.
+// accountGraphOutboundQuery summarises both outbound directions in one trip, each a primary-key range. An arm with accounts = 0 means "no
+// relationship", not a span starting at ledger 0.
 const accountGraphOutboundQuery = `
 	SELECT '` + GraphRelationCreated + `' AS rel,
 	       toUInt64(count()) AS accounts,
@@ -148,9 +146,8 @@ const accountGraphCoverageQuery = `
 	FROM stellar.account_sponsors_stats
 	WHERE metric IN ('from_ledger', 'thru_ledger', 'from_time', 'thru_time')`
 
-// The outbound page reads are keyset-paged on the counterparty id (second ORDER BY column), so
-// a page is a primary-key range bounded by LIMIT. An empty cursor sorts below every strkey,
-// so the first page needs no separate statement.
+// The outbound page reads are keyset-paged on the counterparty id (second ORDER BY column); an empty cursor sorts below every strkey, so
+// the first page needs no separate statement.
 const (
 	accountGraphCreatedPageQuery = `
 	SELECT created, creations, funded_stroops, first_ledger, last_ledger, first_at, last_at

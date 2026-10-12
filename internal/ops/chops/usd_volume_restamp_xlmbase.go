@@ -34,9 +34,8 @@ type xlmBaseRestampStore interface {
 	ApplyXLMBaseUSDVolumeRestamp(ctx context.Context, plan *timescale.XLMBaseRestampPlan, generation int64, batch int) (int64, error)
 }
 
-// xlmBaseRestampRun carries one ESTIMATED tier's fixed inputs and running totals across days or
-// chunks. Despite the name it serves every estimated tier (xlm-base, xlm-quote, cex-fx), which
-// differ only in the [estimatedTierProfile] below.
+// xlmBaseRestampRun carries one ESTIMATED tier's fixed inputs and running totals across days or chunks; despite the name it serves every
+// estimated tier (xlm-base, xlm-quote, cex-fx), which differ only in the [estimatedTierProfile] below.
 type xlmBaseRestampRun struct {
 	// tier is the -tier value this run repairs; plan and apply are that
 	// tier's own halves of the walk.
@@ -89,10 +88,8 @@ func runXLMBaseRestamp(ctx context.Context, store xlmBaseRestampStore, cfgPath s
 	return runEstimatedRestamp(ctx, newXLMBaseRestampRun(store, opts), cfgPath, from, to, opts)
 }
 
-// runEstimatedRestamp is the in-place day walk for whichever estimated
-// tier the run carries: one UTC day at a time, oldest first, each day in
-// -slice windows. Every tier walks it the same way — what differs is the
-// population the run's planner returns.
+// runEstimatedRestamp is the in-place day walk for whichever estimated tier the run carries: one UTC day at a time, oldest first, each in
+// -slice windows; only the population the run's planner returns differs per tier.
 func runEstimatedRestamp(ctx context.Context, run *xlmBaseRestampRun, cfgPath string, from, to time.Time, opts xlmBaseRestampOptions) error {
 	fmt.Fprintf(os.Stderr, "usd-volume-restamp: tier=%s window [%s, %s] slice=%s batch=%d generation=%d max-generation=%d fill_null=%v min_rel_delta=%s%s\n",
 		run.tier, from.Format(time.DateOnly), to.Format(time.DateOnly), opts.Slice, opts.Batch,
@@ -110,10 +107,8 @@ func runEstimatedRestamp(ctx context.Context, run *xlmBaseRestampRun, cfgPath st
 	return nil
 }
 
-// estimatedPlan is a tier's window planner: the store method that scans
-// [lo, hi) and decides every row in it. The seam is what lets one run
-// type carry three tiers — the driver, the walk, the batching and the
-// reporting are identical, and only the population differs.
+// estimatedPlan is a tier's window planner (scans [lo, hi) and decides every row); this seam lets one run type carry three tiers, since
+// only the population differs.
 type estimatedPlan func(ctx context.Context, p timescale.RestampScanParams) (*timescale.RestampPlan, error)
 
 // estimatedTierProfile is everything that distinguishes one estimated
@@ -153,9 +148,8 @@ func xlmBaseTierProfile(store xlmBaseRestampStore) estimatedTierProfile {
 	}
 }
 
-// newXLMBaseRestampRun builds an xlm-base run from its resolved options.
-// Shared by the day walk and the chunk walk so the two cannot drift in
-// what a run carries.
+// newXLMBaseRestampRun builds an xlm-base run from resolved options, shared by the day and chunk walks so they cannot drift in what a run
+// carries.
 func newXLMBaseRestampRun(store xlmBaseRestampStore, opts xlmBaseRestampOptions) *xlmBaseRestampRun {
 	return newEstimatedRestampRun(opts, xlmBaseTierProfile(store))
 }
@@ -189,9 +183,8 @@ func newEstimatedRestampRun(opts xlmBaseRestampOptions, p estimatedTierProfile) 
 	}
 }
 
-// summary renders the run's closing block: the row count, the
-// planned-vs-changed warning, the CAGG follow-up and the acceptance line.
-// Printed after the report by both walks.
+// summary renders the run's closing block (row count, planned-vs-changed warning, CAGG follow-up, acceptance line), printed after the
+// report by both walks.
 func (r *xlmBaseRestampRun) summary(cfgPath string, from, to time.Time) string {
 	var b strings.Builder
 	verb := "would restamp"
@@ -214,18 +207,13 @@ func (r *xlmBaseRestampRun) summary(cfgPath string, from, to time.Time) string {
 	return b.String()
 }
 
-// xlmBaseRestampCAGGs is the ordered list of continuous aggregates a finished restamp must be
-// followed by, with each one's minimum refresh window (Timescale rejects a window narrower than 2x
-// the bucket with SQLSTATE 22023).
-//
-// verify-usd-volume reads `trades` directly, but served volume reads aggregates whose auto-refresh
-// reaches back only days to months, so without this step the check goes green while the API
-// serves pre-restamp numbers. It aliases [timescale.TradesCAGGs] so the lists cannot drift.
+// xlmBaseRestampCAGGs is the ordered continuous aggregates a finished restamp must be followed by, with each one's minimum refresh window
+// (Timescale rejects under 2x the bucket, SQLSTATE 22023). Served volume reads aggregates that auto-refresh only days to months back, so
+// without this verify-usd-volume goes green while the API serves pre-restamp numbers. Aliases [timescale.TradesCAGGs].
 var xlmBaseRestampCAGGs = timescale.TradesCAGGs
 
-// followUp is the run's post-write block: the ordered CAGG refresh every
-// tier must be followed by, plus the `-min-rel-delta` guidance that only
-// the XLM-base anchor re-derive has measurements for.
+// followUp is the run's post-write block: the ordered CAGG refresh every tier needs plus the `-min-rel-delta` guidance only the XLM-base
+// re-derive has measurements for.
 func (r *xlmBaseRestampRun) followUp(from, to time.Time) string {
 	if r.tier == restampTierXLMBase {
 		return xlmBaseRestampFollowUp(from, to)
@@ -233,16 +221,14 @@ func (r *xlmBaseRestampRun) followUp(from, to time.Time) string {
 	return restampCAGGFollowUp(from, to)
 }
 
-// xlmBaseRestampFollowUp renders the post-write follow-up: the ordered CAGG refresh block both
-// tiers print plus the anchor re-derive's `-min-rel-delta` guidance. It returns a string so the
-// ordering is testable.
+// xlmBaseRestampFollowUp renders the post-write follow-up (ordered CAGG refresh block plus `-min-rel-delta` guidance); returns a string so
+// the ordering is testable.
 func xlmBaseRestampFollowUp(from, to time.Time) string {
 	return restampCAGGFollowUp(from, to) + xlmBaseMinRelDeltaGuidance
 }
 
-// xlmBaseMinRelDeltaGuidance is the anchor re-derive's flag advice; the
-// exact tier has no such threshold (it repairs an identity, and a row is
-// either on it or off it).
+// xlmBaseMinRelDeltaGuidance is the anchor re-derive's flag advice; the exact tier has no such threshold (a row is either on the identity
+// or off it).
 const xlmBaseMinRelDeltaGuidance = "\nFLAG GUIDANCE — `-min-rel-delta 0.001` is the recommended setting for a full-window\n" +
 	"run. The re-derive reads the FINALISED prices_1m bucket while the original insert\n" +
 	"read the partially-materialised real-time bucket for the same minute, so a large\n" +
@@ -253,12 +239,9 @@ const xlmBaseMinRelDeltaGuidance = "\nFLAG GUIDANCE — `-min-rel-delta 0.001` i
 	"of <0.1% each. It never suppresses a NULL fill, which is where the coverage\n" +
 	"recovery lives, so the tool's whole point survives the flag.\n\n"
 
-// restampCAGGFollowUp renders the ordered CAGG refresh block every finished restamp needs: served
-// volume reads continuous aggregates, which do not refresh this far back on their own.
-//
-// The window [from 00:00Z, to+1d 00:00Z) is padded by [timescale.PadRefreshWindow] to clear
-// Timescale's 2-bucket minimum: padding re-materialises unchanged buckets cheaply, whereas a
-// rejected call leaves a partially stale surface.
+// restampCAGGFollowUp renders the ordered CAGG refresh block every finished restamp needs: served volume reads aggregates that don't
+// refresh this far back. Window [from 00:00Z, to+1d 00:00Z) is padded by [timescale.PadRefreshWindow] to clear Timescale's 2-bucket
+// minimum; a rejected call leaves a stale surface.
 func restampCAGGFollowUp(from, to time.Time) string {
 	lo := from.UTC().Truncate(24 * time.Hour)
 	hi := to.UTC().Truncate(24*time.Hour).AddDate(0, 0, 1)
@@ -289,9 +272,7 @@ func restampCAGGFollowUp(from, to time.Time) string {
 	return b.String()
 }
 
-// xlmBaseRestampOptions is the already-resolved flag set the run needs.
-// Kept as a struct so runXLMBaseRestamp's signature stays readable and
-// so tests can build one without a flag.FlagSet.
+// xlmBaseRestampOptions is the already-resolved flag set, a struct so tests can build one without a flag.FlagSet.
 type xlmBaseRestampOptions struct {
 	Allow         map[string]bool
 	FillNull      bool
@@ -328,13 +309,11 @@ func (r *xlmBaseRestampRun) day(ctx context.Context, day time.Time) error {
 type xlmBaseWalkMode int
 
 const (
-	// xlmBaseWalkFull folds every slice into the report and, under
-	// -write, applies its plan. The day walk and the inside of a
-	// decompressed chunk.
+	// xlmBaseWalkFull folds every slice into the report and, under -write, applies its plan: the day walk and the inside of a decompressed
+	// chunk.
 	xlmBaseWalkFull xlmBaseWalkMode = iota
-	// xlmBaseWalkProbe is the chunk walk's read-only pre-check: it plans slice by slice, folds
-	// nothing into the report (the caller folds a clean count) and stops at the first slice that
-	// would change a row, so a clean chunk is skipped undecompressed.
+	// xlmBaseWalkProbe is the chunk walk's read-only pre-check: plans slice by slice, folds nothing (the caller folds a clean count) and
+	// stops at the first slice that would change a row, so a clean chunk is skipped undecompressed.
 	xlmBaseWalkProbe
 )
 
@@ -345,9 +324,8 @@ type xlmBaseWalk struct {
 	written int64
 }
 
-// xlmBaseApply is the write half of a walk. The day walk passes the
-// store's own apply; the chunk walk passes the one that checks the chunk
-// is still decompressed ahead of every batch.
+// xlmBaseApply is the write half of a walk: the day walk passes the store's apply, the chunk walk one that checks the chunk is still
+// decompressed before every batch.
 type xlmBaseApply func(ctx context.Context, plan *timescale.XLMBaseRestampPlan, generation int64, batch int) (int64, error)
 
 // walk plans (and, in full mode under -write, applies) [lo, hi) in
@@ -356,9 +334,7 @@ func (r *xlmBaseRestampRun) walk(ctx context.Context, lo, hi time.Time, mode xlm
 	return r.walkWith(ctx, lo, hi, mode, r.apply)
 }
 
-// walkWith is [xlmBaseRestampRun.walk] with the apply chosen by the
-// caller. Nothing here knows whether [lo, hi) is a UTC day or a chunk's
-// slice of the run window; that is the caller's business.
+// walkWith is [xlmBaseRestampRun.walk] with the apply chosen by the caller, agnostic of whether [lo, hi) is a UTC day or a chunk's slice.
 func (r *xlmBaseRestampRun) walkWith(ctx context.Context, lo, hi time.Time, mode xlmBaseWalkMode, apply xlmBaseApply) (xlmBaseWalk, error) {
 	w := xlmBaseWalk{stats: timescale.NewXLMBaseRestampStats()}
 	for s := lo; s.Before(hi); s = s.Add(r.slice) {
@@ -404,9 +380,7 @@ func (r *xlmBaseRestampRun) walkWith(ctx context.Context, lo, hi time.Time, mode
 	return w, nil
 }
 
-// observe folds a window's changed rows into the running extremes and the
-// report sample. The rows themselves are then dropped — a whole-span run
-// touches ~28M of them and none of it belongs in memory.
+// observe folds a window's changed rows into the running extremes and report sample, then drops them: a whole-span run touches ~28M rows.
 func (r *xlmBaseRestampRun) observe(plan *timescale.XLMBaseRestampPlan) {
 	for i := range plan.Rows {
 		row := plan.Rows[i]
@@ -433,10 +407,8 @@ func (r *xlmBaseRestampRun) observe(plan *timescale.XLMBaseRestampPlan) {
 	}
 }
 
-// printResumeHint tells the operator exactly how to continue an
-// interrupted run. The tool is idempotent (a row already holding the
-// anchor's value is not a candidate), so restarting at the day that
-// failed re-checks it cheaply rather than re-writing it.
+// printResumeHint tells the operator how to continue an interrupted run; the tool is idempotent (a row already holding the anchor's value
+// is not a candidate), so restarting at the failed day re-checks it cheaply rather than re-writing it.
 func (r *xlmBaseRestampRun) printResumeHint(cfgPath string, failed, to time.Time, opts xlmBaseRestampOptions) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "\nRESUME: stellarindex-ops usd-volume-restamp -config %s -tier %s -from %s -to %s",
@@ -453,9 +425,8 @@ func (r *xlmBaseRestampRun) printResumeHint(cfgPath string, failed, to time.Time
 	fmt.Fprintln(os.Stderr, b.String())
 }
 
-// printReport writes the decision block. Always printed after a run —
-// under -report it is the whole output, and after a -write run it is the
-// record of what the run did.
+// printReport writes the decision block after every run: under -report it is the whole output, after -write it is the record of what the
+// run did.
 func (r *xlmBaseRestampRun) printReport(from, to time.Time) {
 	s := r.totals
 	days := int(to.Sub(from).Hours()/24) + 1
@@ -547,9 +518,8 @@ func ratPercent(r *big.Rat) string {
 	return new(big.Rat).Mul(r, big.NewRat(100, 1)).FloatString(4) + "%"
 }
 
-// parseMinRelDelta turns -min-rel-delta (a fraction, 0.01 for 1%) into a *big.Rat. Empty or "0"
-// writes every differing row, the default, since leaving a money column slightly wrong is not
-// defensible; the knob only bounds a first production run to the large moves.
+// parseMinRelDelta turns -min-rel-delta (a fraction, 0.01 = 1%) into a *big.Rat. Empty or "0" writes every differing row, the default,
+// since leaving a money column slightly wrong is not defensible; the knob only bounds a first production run to the large moves.
 func parseMinRelDelta(s string) (*big.Rat, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -568,16 +538,10 @@ func parseMinRelDelta(s string) (*big.Rat, error) {
 	return r, nil
 }
 
-// checkRestampLiveOverlap is the one-writer contract for a `trades` re-stamp, analogous to
-// projected-rebuild's [checkLiveCursorGuard].
-//
-// `trades.usd_volume` has one live writer, the indexer at the `ledgerstream` cursor, so a restamp
-// is legitimate only behind that cursor. If the tail is below the window's top, the restamp's
-// high derive_generation wins ON CONFLICT and discards the ingest value, or rewrites a row the
-// tail is about to overwrite, reporting a correction that did not survive.
-//
-// haveLive=false (no cursor) is a conservative REFUSAL: an indexer that never ran will walk this
-// range. allowOverlap is the operator's override, asserting the indexer will not touch it.
+// checkRestampLiveOverlap is the one-writer contract for a `trades` re-stamp (cf. [checkLiveCursorGuard]): `trades.usd_volume` has one live
+// writer, the indexer at the `ledgerstream` cursor, so a restamp is legitimate only behind it, else its high derive_generation wins ON
+// CONFLICT and discards the ingest value. haveLive=false (no cursor) is a conservative REFUSAL; allowOverlap asserts the indexer will not
+// touch the range.
 func checkRestampLiveOverlap(haveLive bool, liveLastLedger, windowTopLedger uint32, allowOverlap bool) error {
 	if allowOverlap {
 		return nil
@@ -603,11 +567,8 @@ func checkRestampLiveOverlap(haveLive bool, liveLastLedger, windowTopLedger uint
 		cur, windowTopLedger, windowTopLedger)
 }
 
-// resolveWindowTopLedger finds the highest on-chain ledger the restamp
-// window can contain, for [checkRestampLiveOverlap].
-//
-// Ledger sequence is monotonic in `ts`, so the answer lives in the window's last day. Empty days
-// are walked back past; a window with no on-chain rows returns (0, nil), vacuously safe.
+// resolveWindowTopLedger finds the highest on-chain ledger the window can contain for [checkRestampLiveOverlap]; ledger is monotonic in
+// `ts`, so it walks back from the last day past empty days. A window with no on-chain rows returns (0, nil), vacuously safe.
 func resolveWindowTopLedger(ctx context.Context, store *timescale.Store, from, to time.Time) (uint32, error) {
 	for day := to; !day.Before(from); day = day.AddDate(0, 0, -1) {
 		top, ok, err := store.MaxTradeLedgerInRange(ctx, day, day.AddDate(0, 0, 1))

@@ -28,14 +28,11 @@ import (
 // dashboard.stellar.org's circulatingSupply computation.
 const sdfReserveListURL = "https://raw.githubusercontent.com/stellar/dashboard/master/common/lumens.js"
 
-// sdfReserveListCheck is the check name this verdict is emitted under
-// in the served_value_* families (skipped/last-run share the harness's
-// existing alerting; the drift verdict has its own gauge family).
+// sdfReserveListCheck is the check name in the served_value_* families; the drift verdict has its own gauge family.
 const sdfReserveListCheck = "sdf_reserve_list"
 
-// reserveListDrift is the set difference. missing is published but not configured (we overstate
-// circulating supply); extra is configured but no longer published (we understate it). Both
-// are sorted and duplicate-free.
+// reserveListDrift is the set difference: missing is published but not configured (we overstate circulating supply), extra is configured
+// but no longer published (we understate it). Both are sorted and duplicate-free.
 type reserveListDrift struct {
 	missing []string
 	extra   []string
@@ -43,10 +40,8 @@ type reserveListDrift struct {
 
 func (d reserveListDrift) empty() bool { return len(d.missing) == 0 && len(d.extra) == 0 }
 
-// reserveListResult is the list check's verdict. skipped means the published list was
-// unreachable, unparseable or implausibly far off (availability, not a verdict; drift is then
-// set only for the log line, never a gauge). err means our own config could not be read, which
-// is a failure, not a skip.
+// reserveListResult is the list check's verdict. skipped = published list unreachable, unparseable or implausibly far off (availability,
+// not a verdict; drift is then log-only, never a gauge). err = our own config could not be read: a failure, not a skip.
 type reserveListResult struct {
 	configured []string
 	published  []string
@@ -64,10 +59,8 @@ func (r reserveListResult) verified() bool { return !r.skipped && r.err == nil }
 // skipped one (a dark published list must not read as "in step").
 func (r reserveListResult) ok() bool { return r.verified() && r.drift.empty() }
 
-// diffReserveList computes the symmetric difference of two account
-// lists. Inputs are deduplicated and the outputs sorted; comparison is
-// exact (G-strkeys are case-sensitive base32, so no normalisation is
-// applied — a mis-cased key is a wrong key).
+// diffReserveList is the symmetric difference of two account lists (deduplicated, sorted); comparison is exact since G-strkeys are
+// case-sensitive, so a mis-cased key is a wrong key.
 func diffReserveList(configured, published []string) reserveListDrift {
 	have := make(map[string]struct{}, len(configured))
 	for _, a := range configured {
@@ -93,32 +86,25 @@ func diffReserveList(configured, published []string) reserveListDrift {
 	return d
 }
 
-// maxPlausibleReserveRetirements bounds how many accounts one run may report as no longer
-// published. SDF retires rows one at a time, so a larger set more likely means a reshaped source
-// than real retirements, and the diff is refused. It is a conservative bound, not an SDF figure.
+// maxPlausibleReserveRetirements bounds accounts reported as no longer published per run: SDF retires rows one at a time, so a larger set
+// more likely means a reshaped source, and the diff is refused. A conservative bound, not an SDF figure.
 const maxPlausibleReserveRetirements = 3
 
 var (
-	// reserveAccountsOpen locates the `accounts` table; its extent is
-	// found by accountsTableBody's brace-depth scan, never a regex, so
-	// a brace inside a row or a comment cannot end it early.
+	// reserveAccountsOpen locates the `accounts` table; its extent comes from accountsTableBody's brace-depth scan so a brace in a row or
+	// comment can't end it early.
 	reserveAccountsOpen = regexp.MustCompile(`\bconst\s+accounts\s*=\s*\{`)
-	// upgradeReserveConst captures the network-upgrade reserve account,
-	// which lives OUTSIDE the accounts table but inside
-	// noncirculatingSupply(). `\s*` spans the line break the file's
-	// formatter puts after the `=`.
+	// upgradeReserveConst captures the network-upgrade reserve account, outside the accounts table but inside noncirculatingSupply(); `\s*`
+	// spans the line break the file's formatter puts after the `=`.
 	upgradeReserveConst = regexp.MustCompile(`\bnetworkUpgradeReserveAccount\s*=\s*(?:"(G[A-Z2-7]{55})"|'(G[A-Z2-7]{55})')`)
-	// reserveEntry is the ONLY row grammar the table is accepted in:
-	// `key: "G…"` (either JS quote style, bare or quoted key), followed
-	// by a comma or the end of the table. A row in any other shape fails
-	// the whole parse rather than being skipped.
+	// reserveEntry is the ONLY accepted row grammar: `key: "G…"` (either JS quote style, bare or quoted key) then a comma or end of table;
+	// any other shape fails the whole parse rather than being skipped.
 	reserveEntry = regexp.MustCompile(`^\s*(?:[A-Za-z_$][A-Za-z0-9_$]*|"[^"\n]*"|'[^'\n]*')\s*:\s*(?:"(G[A-Z2-7]{55})"|'(G[A-Z2-7]{55})')\s*(?:,|$)`)
 )
 
-// parsePublishedReserveList extracts the accounts table rows plus networkUpgradeReserveAccount
-// from common/lumens.js. Commented-out rows are excluded, which is how a retirement shows as
-// extra. Any unrecognised shape, even one row, is an error and never a partial list, so the
-// caller skips rather than reporting phantom extra accounts.
+// parsePublishedReserveList extracts the accounts rows plus networkUpgradeReserveAccount from common/lumens.js; commented-out rows are
+// excluded (a retirement shows as extra). Any unrecognised shape is an error, never a partial list, so the caller skips instead of
+// reporting phantom extras.
 func parsePublishedReserveList(src string) ([]string, error) {
 	body, err := accountsTableBody(src)
 	if err != nil {
@@ -177,9 +163,8 @@ func firstLine(s string) string {
 	return s
 }
 
-// accountsTableBody returns the text between `const accounts = {` and
-// its MATCHING close brace, comments removed. String literals are copied
-// through whole so a brace or `//` inside one is not structure.
+// accountsTableBody returns the text between `const accounts = {` and its MATCHING close brace, comments removed; string literals are
+// copied whole so a brace or `//` inside one is not structure.
 func accountsTableBody(src string) (string, error) {
 	loc := reserveAccountsOpen.FindStringIndex(src)
 	if loc == nil {
@@ -211,9 +196,8 @@ func accountsTableBody(src string) (string, error) {
 	return "", fmt.Errorf("the `accounts` table in %s is not closed — source shape changed", sdfReserveListURL)
 }
 
-// jsTokenLen is the length of the lexical unit at the start of s: a
-// whole comment (a line comment stops before its newline), a whole
-// quoted string, or one byte. -1 means an unterminated comment or string.
+// jsTokenLen is the length of the lexical unit at the start of s (a whole comment, a whole quoted string, or one byte); -1 means
+// unterminated.
 func jsTokenLen(s string) int {
 	switch {
 	case strings.HasPrefix(s, "//"):
@@ -264,10 +248,8 @@ func fetchPublishedReserveList(ctx context.Context, c *http.Client, url string) 
 	return parsePublishedReserveList(string(src))
 }
 
-// loadConfiguredReserveAccounts reads [supply] sdf_reserve_accounts from the toml, the only
-// source of the configured set. It is a partial decode rather than config.Load so an unrelated
-// validation failure cannot turn the check into a daily failure. The result is deduplicated
-// and sorted.
+// loadConfiguredReserveAccounts reads [supply] sdf_reserve_accounts from the toml via a partial decode, so an unrelated validation failure
+// can't turn the check into a daily failure. The result is deduplicated and sorted.
 func loadConfiguredReserveAccounts(path string) ([]string, error) {
 	var cfg struct {
 		Supply struct {

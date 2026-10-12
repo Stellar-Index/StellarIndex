@@ -17,11 +17,9 @@ import (
 	"time"
 )
 
-// verify-served-values reconciles served values against independent ground truth (XLM supply vs
-// the SDF lumen API, USDC supply vs Stellar Expert, the configured SDF reserve list vs SDF's
-// published one) and emits node_exporter textfile gauges. Every truth is point-in-time state,
-// never a windowed counter. -textfile (served_values.prom) empty prints to stdout; empty -config
-// skips the list check.
+// verify-served-values reconciles served values against independent truth (XLM supply vs SDF lumen API, USDC supply vs Stellar Expert, SDF
+// reserve list) into textfile gauges; all truths are point-in-time state. Empty -textfile (served_values.prom) prints to stdout; empty
+// -config skips the list check.
 func verifyServedValues(args []string) error {
 	fs := flag.NewFlagSet("verify-served-values", flag.ContinueOnError)
 	apiBase := fs.String("api", "http://127.0.0.1:3000", "Base URL of our API (loopback on r1)")
@@ -52,9 +50,8 @@ func verifyServedValues(args []string) error {
 	return servedValuesVerdict(os.Stderr, results, list)
 }
 
-// servedValuesVerdict writes one status line per check to w and returns
-// the run's exit error. The list check can FAIL the run but never counts
-// toward the value checks' all-skipped guard (see servedValuesExitError).
+// servedValuesVerdict writes one status line per check and returns the exit error. The list check can FAIL the run but never counts toward
+// the value checks' all-skipped guard (servedValuesExitError).
 func servedValuesVerdict(w io.Writer, results []servedValueResult, list *reserveListResult) error {
 	failed, skipped := 0, 0
 	if list != nil {
@@ -87,10 +84,8 @@ func servedValuesVerdict(w io.Writer, results []servedValueResult, list *reserve
 	return servedValuesExitError(len(results), failed, skipped)
 }
 
-// servedValuesExitError decides the exit status. total and skipped count VALUE checks only; failed
-// counts any check, the list check included. A failed check fails the run, and so does a run where
-// every value check skipped (fail closed: nothing was verified). The list check stays out of that
-// denominator so a verified list cannot mask dark value sources; a partial skip stays clean.
+// servedValuesExitError: total and skipped count VALUE checks only; failed counts any check. A failure, or every value check skipped
+// (nothing verified, fail closed), fails the run; the list check stays out of the denominator so it cannot mask dark value sources.
 func servedValuesExitError(total, failed, skipped int) error {
 	if failed > 0 {
 		return fmt.Errorf("%d served-value check(s) failed", failed)
@@ -101,8 +96,7 @@ func servedValuesExitError(total, failed, skipped int) error {
 	return nil
 }
 
-// servedValueResult is one reconciled check. ok and skipped are mutually exclusive: ok is a
-// pass, neither is drift, skipped is an unverified dark truth source. skipped must never assert
+// servedValueResult is one reconciled check; ok and skipped are mutually exclusive (neither = drift). skipped must never assert
 // served_value_ok=1, or a dark truth source would hide drift behind a green gauge.
 type servedValueResult struct {
 	name      string
@@ -115,10 +109,8 @@ type servedValueResult struct {
 	note      string
 }
 
-// servedValueCheck declares one reconciliation: how to read our
-// served value, how to read the independent truth, and how far apart
-// they may drift. Both sides are exact NATURAL-UNIT rationals (ADR-0003:
-// supplies above 2^53 base units do not survive float64).
+// servedValueCheck declares one reconciliation: how to read our value, the independent truth, and the allowed drift. Both sides are exact
+// natural-unit rationals (ADR-0003: supplies above 2^53 base units do not survive float64).
 type servedValueCheck struct {
 	name      string
 	tolerance float64 // relative, e.g. 0.02 = 2%
@@ -183,10 +175,8 @@ func observeCheck(ctx context.Context, c *http.Client, apiBase string, chk serve
 	return o
 }
 
-// runServedValueChecks reads every check once, then re-reads only the
-// drifted ones after a single shared wait (the longest recheckAfter among
-// them). passTimeout bounds each read pass; the wait is outside it and ends
-// early, failing the drifted checks, if ctx is done.
+// runServedValueChecks reads every check once, then re-reads only drifted ones after one shared wait (longest recheckAfter). passTimeout
+// bounds each read pass, not the wait; ctx done ends the wait early and fails the drifted checks.
 func runServedValueChecks(ctx context.Context, c *http.Client, apiBase string, checks []servedValueCheck, passTimeout time.Duration, log io.Writer) []servedValueResult {
 	first := make([]supplyObservation, len(checks))
 	out := make([]servedValueResult, len(checks))
@@ -234,10 +224,8 @@ func isMeasuredDrift(r servedValueResult) bool {
 	return !r.ok && !r.skipped && !math.IsNaN(r.relErr)
 }
 
-// settleRecheck decides a drifted check from its second read. A gap that clears is the snapshot
-// race, not a served-value defect. A persisting gap fails, and blames the served value only once
-// its snapshot ledger has advanced past the first read's; otherwise the snapshot is stale. A
-// failed re-read keeps the first verdict (fail closed).
+// settleRecheck decides a drifted check from its second read: a gap that clears is the snapshot race; a persisting gap fails, blaming the
+// served value only once its snapshot ledger advanced past the first read's. A failed re-read keeps the first verdict (fail closed).
 func settleRecheck(chk servedValueCheck, first supplyObservation, firstResult servedValueResult, second supplyObservation) servedValueResult {
 	if second.sErr != nil || second.tErr != nil {
 		firstResult.note += fmt.Sprintf("; recheck read failed, first verdict stands: %v", errors.Join(second.sErr, second.tErr))
@@ -256,8 +244,7 @@ func settleRecheck(chk servedValueCheck, first supplyObservation, firstResult se
 	return r
 }
 
-// classifyObservation classifies one read: within tolerance is ok, drift is a fail, and a
-// served-side fetch error is a fail. A truth-side outage is SKIPPED with NaN rel_err: it is
+// classifyObservation: within tolerance is ok; drift and a served-side fetch error fail. A truth-side outage is SKIPPED with NaN rel_err:
 // availability, not evidence against our value, and never a pass.
 func classifyObservation(chk servedValueCheck, o supplyObservation) servedValueResult {
 	r := servedValueResult{name: chk.name, tolerance: chk.tolerance, note: chk.note}
@@ -285,10 +272,8 @@ func classifyObservation(chk servedValueCheck, o supplyObservation) servedValueR
 	return r
 }
 
-// renderServedValueProm renders the textfile body. One gauge family
-// per concern so alerts stay one-liner PromQL. list is nil when the
-// reserve-list check did not run (no -config); a nil list emits
-// nothing for it rather than a verdict.
+// renderServedValueProm renders the textfile body, one gauge family per concern so alerts stay one-liner PromQL. list is nil when the
+// reserve-list check did not run (no -config) and emits nothing for it.
 func renderServedValueProm(results []servedValueResult, list *reserveListResult, now time.Time) string {
 	b := &jsonSafeBuilder{}
 	b.line("# HELP stellarindex_served_value_rel_err Relative error of a served value vs its independent ground truth.")
@@ -379,10 +364,8 @@ func writeAtomic(path, body string) error {
 
 // ─── served-side readers ────────────────────────────────────────────
 
-// servedSupplyField reads a supply field from our GET /v1/assets/{id}. Supply is a decimal
-// string in base units (stroops for classic), so it is scaled by 10^-decimals before comparing
-// with natural-unit truth. supply_as_of_ledger is read alongside so a recheck can tell a new
-// snapshot from a stale one.
+// servedSupplyField reads a supply field from GET /v1/assets/{id}: a decimal string in base units (stroops for classic), scaled by
+// 10^-decimals against natural-unit truth. supply_as_of_ledger is read alongside so a recheck can tell a new snapshot from a stale one.
 func servedSupplyField(assetID, field string, decimals int) func(context.Context, *http.Client, string) (servedReading, error) {
 	return func(ctx context.Context, c *http.Client, apiBase string) (servedReading, error) {
 		var env struct {

@@ -8,15 +8,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// chTxIndexBackfill fills stellar.tx_hash_index (the hash-ordered GET /v1/tx/{hash} lookup table)
-// from stellar.transactions history in windowed, resumable INSERT…SELECT chunks. The
-// tx_hash_index_mv materialized view indexes everything ingested after the schema deploy; this
-// covers the ~10.2B rows behind it. Pure ClickHouse-side SQL, no galexie walk or config needed.
-//
-// Run the full-history backfill alone, under the root-<2G watchdog, since heavy CH load can wedge
-// the CH log channel on the small root partition. Each window prints a resume point; re-run with
-// that -from after an interrupt. The flag defaults (-from 2 / -to 0=tip) would make a bare
-// invocation start the whole backfill, so the run needs an explicit -from, -to, or -full.
+// chTxIndexBackfill fills stellar.tx_hash_index (GET /v1/tx/{hash} lookup) from stellar.transactions history in windowed, resumable
+// INSERT…SELECT chunks (the tx_hash_index_mv MV covers later rows). Run the full backfill alone, under the root-<2G watchdog: heavy CH load
+// can wedge the CH log channel on the small root partition. A bare invocation is refused (needs -from, -to or -full); each window prints a
+// resume point.
 type txIndexBackfillPlan struct {
 	chAddr string
 	from   uint32
@@ -35,10 +30,8 @@ func (p txIndexBackfillPlan) coversHistory() bool {
 	return p.from <= genesisLedger && p.to == 0
 }
 
-// parseTxIndexBackfillFlags parses the ch-txindex-backfill flags and enforces
-// the safe default described on chTxIndexBackfill: no implicit full-history
-// run. It does not touch ClickHouse (tip resolution happens in the runner),
-// so the guard is unit-testable without a live lake.
+// parseTxIndexBackfillFlags parses the flags and enforces the safe default of chTxIndexBackfill (no implicit
+// full-history run) without touching ClickHouse, so the guard is unit-testable without a lake.
 func parseTxIndexBackfillFlags(args []string) (txIndexBackfillPlan, error) {
 	fs, gate := opsutil.NewMutatingFlagSet("ch-txindex-backfill")
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")

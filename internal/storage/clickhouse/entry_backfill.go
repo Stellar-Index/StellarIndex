@@ -12,12 +12,10 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// seedIntraLedgerSeq is the intra_ledger_seq a snapshot/seed backfill row stamps: math.MaxUint32,
-// the top of the per-ledger position space. A snapshot 'state' row is the authoritative final
-// state as of LastModifiedLedgerSeq (ADR-0034), so it sits at the END of that ledger's order: a
-// live change can never overwrite it in ledger_entries_current's version comparison, while a
-// re-snapshot (equal sentinel) stays corrective. Mirrors timescale.SeedIntraLedgerSeq; a local
-// const so the lake layer does not depend on the served-tier package.
+// seedIntraLedgerSeq is the intra_ledger_seq a snapshot/seed backfill row stamps: math.MaxUint32, the END of that ledger's order
+// (ADR-0034: a snapshot 'state' row is authoritative), so a live change never overwrites it in ledger_entries_current's version comparison
+// while a re-snapshot stays corrective. Mirrors timescale.SeedIntraLedgerSeq; local so the lake layer does not depend on the served-tier
+// package.
 const seedIntraLedgerSeq = uint32(0xFFFFFFFF) // math.MaxUint32
 
 // SnapshotEntryRow builds a ledger_entry_changes row from a live snapshot entry using the indexer's own helpers; ok=false on a marshal error (skip the entry, never abort the backfill).
@@ -58,9 +56,8 @@ func SnapshotEntryRow(post *xdr.LedgerEntry, closeTime time.Time) (LedgerEntryCh
 	}, true
 }
 
-// isSnapshotSeedRow reports whether a ledger_entry_changes row has
-// SnapshotEntryRow's shape. Live rows never match: a fee-phase `state` row
-// carries its tx hash, and an eviction (also tx-less) is `removed`.
+// isSnapshotSeedRow reports whether a ledger_entry_changes row has SnapshotEntryRow's shape. Live rows never match: a fee-phase `state`
+// row carries its tx hash, and an eviction (also tx-less) is `removed`.
 func isSnapshotSeedRow(txHash string, opIndex int32, changeType string) bool {
 	return txHash == "" && opIndex == -1 && changeType == "state"
 }
@@ -140,17 +137,14 @@ func insertEntryChunk(ctx context.Context, conn clickhouse.Conn, chunk []LedgerE
 	return nil
 }
 
-// maxChangeIndexProbeAttempts bounds resolveChangeIndexCollisions' re-hash
-// loop. A real collision resolves within a handful of probes; this is a
-// fail-closed ceiling, not a realistic count.
+// maxChangeIndexProbeAttempts bounds resolveChangeIndexCollisions' re-hash loop: a fail-closed ceiling, not a realistic count (real
+// collisions resolve within a handful of probes).
 const maxChangeIndexProbeAttempts = 1 << 20
 
-// resolveChangeIndexCollisions makes ChangeIndex unique within every
-// (ledger_seq, tx_hash, op_index) group in rows, the tuple prefix the ReplacingMergeTree ORDER BY
-// shares change_index with. A 32-bit crc32(key) collides often enough in a multi-million-row
-// backfill to silently drop a row at merge time. Colliding rows are walked in KeyXDR-sorted
-// order, never arrival order, and re-hashed with an incrementing salt until free, so the outcome
-// depends only on the SET of keys and a resumed backfill stays idempotent.
+// resolveChangeIndexCollisions makes ChangeIndex unique within every (ledger_seq, tx_hash, op_index) group, the tuple prefix the
+// ReplacingMergeTree ORDER BY shares with change_index: a 32-bit crc32(key) collides often enough in a multi-million-row backfill to
+// silently drop a row at merge. Colliding rows are walked in KeyXDR-sorted order (never arrival order) and re-hashed with an incrementing
+// salt, so the outcome depends only on the SET of keys and a resumed backfill stays idempotent.
 func resolveChangeIndexCollisions(rows []LedgerEntryChangeRow) error {
 	type groupKey struct {
 		ledgerSeq uint32
@@ -173,9 +167,8 @@ func resolveChangeIndexCollisions(rows []LedgerEntryChangeRow) error {
 	return nil
 }
 
-// resolveGroupCollisions assigns each row in idxs (all sharing one
-// ledger_seq/tx_hash/op_index group) a ChangeIndex distinct from every other
-// row in the group, mutating rows in place.
+// resolveGroupCollisions assigns each row in idxs (one ledger_seq/tx_hash/op_index group) a ChangeIndex distinct within the group,
+// mutating rows in place.
 func resolveGroupCollisions(rows []LedgerEntryChangeRow, idxs []int) error {
 	sort.Slice(idxs, func(a, b int) bool {
 		return rows[idxs[a]].KeyXDR < rows[idxs[b]].KeyXDR
@@ -196,9 +189,7 @@ func resolveGroupCollisions(rows []LedgerEntryChangeRow, idxs []int) error {
 	return nil
 }
 
-// changeIndexProbe re-hashes key with an incrementing salt — the fallback
-// discriminator when the base crc32(key) collides with another key in the
-// same group.
+// changeIndexProbe re-hashes key with an incrementing salt, the fallback when the base crc32(key) collides within the group.
 func changeIndexProbe(key string, attempt uint32) uint32 {
 	buf := make([]byte, len(key)+4)
 	copy(buf, key)

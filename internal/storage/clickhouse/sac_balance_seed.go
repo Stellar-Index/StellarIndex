@@ -123,10 +123,8 @@ func streamCurrentStateSeeds(
 	return flush()
 }
 
-// emitLiveSeeds resolves each buffered seed's liveness and passes it to fn,
-// retracting archived ones as tombstones at their archival ledger (a row served
-// while live would otherwise stay the latest observation). A key with no TTL row
-// fails the pass; see resolveSACArchivals.
+// emitLiveSeeds resolves each buffered seed's liveness and passes it to fn, retracting archived ones as tombstones at their archival
+// ledger. A key with no TTL row fails the pass; see resolveSACArchivals.
 func emitLiveSeeds(
 	ctx context.Context,
 	conn driver.Conn,
@@ -164,11 +162,10 @@ type sacArchival struct {
 	closeTime time.Time
 }
 
-// resolveSACArchivals maps each key of lastWrite whose TTL lapsed before asOfLedger to its archival ledger.
-// The tombstone goes at the ARCHIVAL ledger, never the last write: a last-write tombstone would
-// overwrite the real observation (seeds sit at timescale.SeedIntraLedgerSeq) and zero the holder
-// across [lastWrite, archival). Fails closed on a key with no TTL row; a live_until below the
-// entry's last write is stale TTL data, so the key stays live.
+// resolveSACArchivals maps each key of lastWrite whose TTL lapsed before asOfLedger to its archival ledger. The tombstone goes at the
+// ARCHIVAL ledger, never the last write: that would overwrite the real observation (seeds sit at timescale.SeedIntraLedgerSeq) and zero
+// the holder across [lastWrite, archival). Fails closed on a key with no TTL row; a live_until below the last write is stale TTL data, so
+// the key stays live.
 func resolveSACArchivals(ctx context.Context, conn driver.Conn, lastWrite map[string]uint32, asOfLedger uint32) (map[string]sacArchival, error) {
 	out := make(map[string]sacArchival)
 	if len(lastWrite) == 0 {
@@ -209,10 +206,8 @@ func resolveSACArchivals(ctx context.Context, conn driver.Conn, lastWrite map[st
 // errSACSeedTTLUnresolved: a watched Balance key has no stellar.ttl_live_until row.
 var errSACSeedTTLUnresolved = errors.New("clickhouse: sac seed: watched Balance entries have no stellar.ttl_live_until row")
 
-// sacArchivalLedgers maps each lapsed key to its archival ledger (live_until+1).
-// Every contract_data entry has a TTL, so a missing row means the projection does
-// not cover it (e.g. skipped ttl_live_until.sql backfill). Either guess would
-// misstate supply, so the seed refuses.
+// sacArchivalLedgers maps each lapsed key to its archival ledger (live_until+1). A missing TTL row means the projection does not cover it
+// (e.g. skipped ttl_live_until.sql backfill); either guess would misstate supply, so the seed refuses.
 func sacArchivalLedgers(lastWrite, liveUntil map[string]uint32, asOfLedger uint32) (map[string]uint32, error) {
 	archivedAt := make(map[string]uint32)
 	var unresolved []string
@@ -322,10 +317,8 @@ func walkSACSeedWindows(minLedger, maxLedger uint32, scan func(from, to uint32) 
 }
 
 const (
-	// sacSeedLedgerWindow is the span of one scan step. It divides the table's
-	// PARTITION BY intDiv(ledger_seq, 1000000) evenly, and ledger_seq leads the ORDER
-	// BY, so a window is a primary-key range within one partition. 250,000 was measured:
-	// 1.5-1.8 GiB peak in the densest Soroban stretches vs died at 1,000,000.
+	// sacSeedLedgerWindow is one scan step: it divides the PARTITION BY intDiv(ledger_seq, 1000000) evenly, so a window is a primary-key
+	// range within one partition. 250,000 was measured: 1.5-1.8 GiB peak in the densest stretches vs died at 1,000,000.
 	sacSeedLedgerWindow = 250_000
 	// sacSeedMinLedgerWindow is the bisection floor (250k >> 4); if a window this small
 	// does not fit, the size is not the problem and the error should surface.
@@ -337,9 +330,8 @@ const (
 	chMemoryLimitExceeded = 241
 )
 
-// sacWatchedContractNeedles renders the watched set as raw-byte literals for the
-// multiSearchAny prefilter pushed into the SQL: the table has no contract_id
-// column, and reducing over every contract_data key exceeded the query budget.
+// sacWatchedContractNeedles renders the watched set as raw-byte literals for the multiSearchAny prefilter pushed into the SQL: the table
+// has no contract_id column, and reducing over every contract_data key exceeded the query budget.
 func sacWatchedContractNeedles(watched map[string]string) ([]string, error) {
 	needles := make([]string, 0, len(watched))
 	for strk := range watched {
@@ -353,10 +345,8 @@ func sacWatchedContractNeedles(watched map[string]string) ([]string, error) {
 	return needles, nil
 }
 
-// entryChangeLedgerBounds reads the append-log's [min, max] ledger from part metadata (ledger_seq leads ORDER BY).
-// Not floored at a Soroban-activation constant: integration fixtures write contract_data below it.
-// NOT hole-safe: max(ledger_seq) says nothing about ledgers below it, so a reader
-// that persists a cursor must bound itself with ledgerContiguityFrom instead.
+// entryChangeLedgerBounds reads the append-log's [min, max] ledger from part metadata; not floored at a Soroban-activation constant
+// (integration fixtures write below it). NOT hole-safe: a reader that persists a cursor must bound itself with ledgerContiguityFrom.
 func entryChangeLedgerBounds(ctx context.Context, conn driver.Conn) (uint32, uint32, error) {
 	var lo, hi uint32
 	const q = `SELECT min(ledger_seq), max(ledger_seq) FROM stellar.ledger_entry_changes`
@@ -366,18 +356,16 @@ func entryChangeLedgerBounds(ctx context.Context, conn driver.Conn) (uint32, uin
 	return lo, hi, nil
 }
 
-// ledgerContiguity is the lake's completeness picture at and above one ledger, read
-// off stellar.ledgers (the commit marker Sink.Flush writes last; see
-// ContiguousWatermark). Zero means "none" in every field.
+// ledgerContiguity is the lake's completeness picture at and above one ledger, read off stellar.ledgers (the commit marker Sink.Flush
+// writes last; see ContiguousWatermark). Zero means "none" in every field.
 type ledgerContiguity struct {
 	lakeMax    uint32 // highest ledger present anywhere in the lake
 	firstGap   uint32 // lowest MISSING ledger between two present ledgers >= from
 	minPresent uint32 // lowest PRESENT ledger >= from (> from ⟹ from itself is a hole)
 }
 
-// ledgerContiguityFrom is ContiguousWatermark's read on a caller-owned connection,
-// with the same SQL and normalisation. The DISTINCT scan is bounded below by `from`,
-// so pass a ledger near the tip, never the lake floor (the sort exceeds the CH memory cap).
+// ledgerContiguityFrom is ContiguousWatermark's read on a caller-owned connection, with the same SQL and normalisation. The DISTINCT scan
+// is bounded below by `from`: pass a ledger near the tip, never the lake floor (the sort exceeds the CH memory cap).
 func ledgerContiguityFrom(ctx context.Context, conn driver.Conn, from uint32) (ledgerContiguity, error) {
 	const q = `
 		SELECT
@@ -402,20 +390,13 @@ func ledgerContiguityFrom(ctx context.Context, conn driver.Conn, from uint32) (l
 	return ledgerContiguity{lakeMax: uint32(chMax), firstGap: uint32(firstGap), minPresent: uint32(minPresent)}, nil
 }
 
-// scanSACSeedWindow reduces one window server-side to at most one row per storage key and offers each to red.
-// One argMax over a TUPLE of every projected column, keyed on the full within-ledger identity
-// (ledger_seq, intra_ledger_seq, tx_hash, op_index, change_index): per-column argMax(col,
-// ledger_seq) could mix a present entry_xdr with a later 'removed' change_type and resurrect a
-// deleted balance. intra_ledger_seq leads so the winner matches ledger_entries_current's
-// tie-break; legacy rows with 0 fall through to (tx_hash, op_index, change_index). Output aliases
-// must not shadow source columns (ILLEGAL_AGGREGATION), hence win_ prefixes.
-// The memory ceiling is deliberately below 8 GB: a window that does not fit should bisect rather
-// than starve the host (galexie's captive core shares it).
-// GROUP-BY SPILL IS OFF: its threshold tracks the whole query's memory, dominated by the wide
-// entry_xdr read, so spilling flushed near-empty tables. max_bytes_ratio_before_external_group_by
-// is unset because the 24.8 server in the integration harness lacks it.
-// PREWHERE on entry_type, as in claimable_balance_seed.go: WHERE does not stop ClickHouse
-// running base64Decode on other entry types' key_xdr first.
+// scanSACSeedWindow reduces one window server-side to at most one row per storage key and offers each to red. One argMax over a TUPLE of
+// every projected column keyed on the full within-ledger identity: per-column argMax(col, ledger_seq) could mix a present entry_xdr with
+// a later 'removed' change_type and resurrect a deleted balance. Output aliases must not shadow source columns (ILLEGAL_AGGREGATION),
+// hence win_ prefixes. The memory ceiling is deliberately below 8 GB so a window that does not fit bisects rather than starving the host.
+// GROUP-BY SPILL IS OFF: its threshold tracks the whole query, dominated by the wide entry_xdr, so it flushed near-empty tables. PREWHERE
+// on entry_type, as in claimable_balance_seed.go: WHERE does not stop ClickHouse running base64Decode on other entry types' key_xdr
+// first.
 func scanSACSeedWindow(ctx context.Context, conn driver.Conn, needles []string, from, to uint32, red *sacSeedReducer) error {
 	q := `SELECT key_xdr,
 		       tupleElement(win, 1) AS win_ledger_seq,
@@ -474,9 +455,8 @@ func isMemoryLimitExceeded(err error) bool {
 	return errors.As(err, &chErr) && chErr.Code == chMemoryLimitExceeded
 }
 
-// lakeEntryChangeOrder is the within-ledger identity tuple of one entry change (ledger_seq,
-// intra_ledger_seq, tx_hash, op_index, change_index), compared lexicographically. Every windowed
-// latest-write-wins reduction over ledger_entry_changes must share it (this seed and
+// lakeEntryChangeOrder is the within-ledger identity tuple of one entry change (ledger_seq, intra_ledger_seq, tx_hash, op_index,
+// change_index). Every windowed latest-write-wins reduction over ledger_entry_changes must share it (this seed and
 // StreamClaimableBalanceSeeds), or a same-ledger removal can resurrect a deleted entry.
 type lakeEntryChangeOrder struct {
 	ledgerSeq      uint32
@@ -511,10 +491,8 @@ type sacSeedWinner struct {
 	closeTime  time.Time
 }
 
-// sacSeedReducer finishes the latest-write-wins reduction across windows in Go.
-// Memory is bounded by distinct watched Balance keys: other keys the byte-match
-// prefilter admits (allowances, third-party storage) are rejected on first sight,
-// and a removed winner is stored without its entry_xdr.
+// sacSeedReducer finishes the latest-write-wins reduction across windows in Go. Memory is bounded by distinct watched Balance keys: other
+// prefilter hits (allowances, third-party storage) are rejected on first sight.
 type sacSeedReducer struct {
 	watched map[string]string
 	best    map[string]sacSeedWinner // key_xdr → latest change seen
@@ -524,10 +502,8 @@ func newSACSeedReducer(watched map[string]string) *sacSeedReducer {
 	return &sacSeedReducer{watched: watched, best: make(map[string]sacSeedWinner)}
 }
 
-// offer folds one window-winning row into the per-key reduction. Idempotent and order-independent
-// (keeps the max under lakeEntryChangeOrder.after), so a bisected retry re-reading a window
-// changes nothing. Removals are tracked like any change so a removal in window N suppresses a
-// live balance from window N-1; emit turns them into tombstones.
+// offer folds one window-winning row into the per-key reduction; idempotent and order-independent, so a bisected retry changes nothing.
+// Removals are tracked like any change so a removal in window N suppresses a live balance from window N-1.
 func (r *sacSeedReducer) offer(keyXDR, entryXDR, changeType string, closeTime time.Time, ord lakeEntryChangeOrder) error {
 	if prev, seen := r.best[keyXDR]; seen {
 		if !ord.after(prev.order) {
@@ -554,12 +530,9 @@ func (r *sacSeedReducer) offer(keyXDR, entryXDR, changeType string, closeTime ti
 	return nil
 }
 
-// retractArchived replaces the winner of every key whose entry was ARCHIVED (TTL
-// lapsed before asOfLedger) with a removal at the archival ledger and returns the count. Call
-// after the window walk and before emit; the lake keeps an archived value forever, so otherwise
-// an archived balance is seeded as current. Only a positively resolved, lapsed TTL retracts: an
-// unresolved key fails the pass (see resolveSACArchivals), since retracting a dormant-but-live
-// balance would understate supply.
+// retractArchived replaces the winner of every key whose entry was ARCHIVED (TTL lapsed before asOfLedger) with a removal at the archival
+// ledger; call after the window walk and before emit, since the lake keeps an archived value forever. Only a positively resolved, lapsed
+// TTL retracts: an unresolved key fails the pass, since retracting a dormant-but-live balance would understate supply.
 func (r *sacSeedReducer) retractArchived(ctx context.Context, conn driver.Conn, asOfLedger uint32) (int, error) {
 	lastWrite := make(map[string]uint32, len(r.best))
 	for k, w := range r.best {
@@ -581,9 +554,8 @@ func (r *sacSeedReducer) retractArchived(ctx context.Context, conn driver.Conn, 
 	return len(archivals), nil
 }
 
-// emit decodes each key's final winner and hands survivors to fn in ascending key_xdr
-// order (reproducible output). Only the final winner is decoded: corrupt XDR on a
-// superseded change is not an error, on a live one it is.
+// emit decodes each key's final winner and hands survivors to fn in ascending key_xdr order (reproducible output). Only the final winner
+// is decoded: corrupt XDR on a superseded change is not an error, on a live one it is.
 func (r *sacSeedReducer) emit(fn func(SACBalanceSeed) error) error {
 	keys := make([]string, 0, len(r.best))
 	for k := range r.best {
@@ -606,9 +578,8 @@ func (r *sacSeedReducer) emit(fn func(SACBalanceSeed) error) error {
 	return nil
 }
 
-// sacWatchedBalanceKey reports whether keyXDR is a Balance(Address) key of a WATCHED
-// wrapper: a key-only prefilter that keeps sacSeedReducer from retaining the
-// allowance and third-party keys multiSearchAny also matches.
+// sacWatchedBalanceKey reports whether keyXDR is a Balance(Address) key of a WATCHED wrapper: a key-only prefilter that keeps
+// sacSeedReducer from retaining the allowance and third-party keys multiSearchAny also matches.
 func sacWatchedBalanceKey(keyXDR string, watched map[string]string) (bool, error) {
 	var lk xdr.LedgerKey
 	if err := xdr.SafeUnmarshalBase64(keyXDR, &lk); err != nil {
@@ -627,9 +598,8 @@ func sacWatchedBalanceKey(keyXDR string, watched map[string]string) (bool, error
 	return scval.IsSEP41BalanceKey(lk.ContractData.Key), nil
 }
 
-// watchedKeyDecodeErr classifies a key_xdr that failed to decode. Only a key
-// carrying a WATCHED contract id (same raw byte match as sacWatchedContractNeedles)
-// is lake corruption; any other undecodable key is skipped so one bad row elsewhere cannot abort the seed.
+// watchedKeyDecodeErr classifies a key_xdr that failed to decode. Only a key carrying a WATCHED contract id (same raw byte match as
+// sacWatchedContractNeedles) is lake corruption; any other undecodable key is skipped so one bad row elsewhere cannot abort the seed.
 func watchedKeyDecodeErr(keyXDR string, watched map[string]string, decodeErr error) error {
 	raw, err := base64.StdEncoding.DecodeString(keyXDR)
 	if err != nil {
@@ -644,10 +614,9 @@ func watchedKeyDecodeErr(keyXDR string, watched map[string]string, decodeErr err
 	return nil
 }
 
-// sacBalanceSeedFromRow decodes one ledger_entries_current row into a SACBalanceSeed.
-// matched=false (no error) for non-Balance keys and keys of non-watched contracts.
-// Errors only for a WATCHED contract's undecodable live key or Balance value.
-// A removed entry on a watched Balance key is a tombstone (IsRemoval, Balance=0).
+// sacBalanceSeedFromRow decodes one ledger_entries_current row into a SACBalanceSeed. matched=false (no error) for non-Balance keys and
+// non-watched contracts; errors only for a WATCHED contract's undecodable key or value. A removed entry on a watched Balance key is a
+// tombstone (IsRemoval, Balance=0).
 func sacBalanceSeedFromRow(keyXDR, entryXDR, changeType string, ledgerSeq uint32, closeTime time.Time, watched map[string]string) (SACBalanceSeed, bool, error) {
 	// Decode the LedgerKey first (cheap) to reject non-watched contracts and non-Balance
 	// keys before touching the value-bearing entry_xdr.

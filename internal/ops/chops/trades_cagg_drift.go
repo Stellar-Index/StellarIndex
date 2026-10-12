@@ -13,14 +13,12 @@ import (
 )
 
 const (
-	// tradesDriftSamples windows of tradesDriftWindow each are compared
-	// across a refreshed span; a span shorter than all of them together is
-	// compared whole. The first and last windows sit on the span's edges.
+	// tradesDriftSamples windows of tradesDriftWindow are compared across a refreshed span (the first and last on its edges); a shorter
+	// span is compared whole.
 	tradesDriftSamples = 8
 	tradesDriftWindow  = time.Hour
-	// prices1mSettle is prices_1m's policy start_offset (migration 0165,
-	// 15 minutes) plus a margin: minutes newer than this may hold a live
-	// insert the policy has not materialised yet, which is not drift.
+	// prices1mSettle is prices_1m's policy start_offset (migration 0165, 15 minutes) plus margin: newer minutes may hold a live insert not
+	// yet materialised, not drift.
 	prices1mSettle = 20 * time.Minute
 	// tradesDriftShown caps the drifting pairs printed per window.
 	tradesDriftShown = 20
@@ -31,11 +29,8 @@ type tradesDriftStore interface {
 	TradesPrices1mDrift(ctx context.Context, from, to time.Time) ([]timescale.TradesPrices1mDrift, error)
 }
 
-// tradesDriftSampleWindows returns the whole-minute windows to compare
-// over the trades span [from, to]: one window over all of it when it is
-// short, else tradesDriftSamples windows of tradesDriftWindow spread evenly
-// from its first minute to its last. Everything at or after cutoff is left
-// out.
+// tradesDriftSampleWindows returns the whole-minute windows to compare over [from, to]: one over a short span, else tradesDriftSamples
+// spread evenly; everything at or after cutoff is left out.
 func tradesDriftSampleWindows(from, to, cutoff time.Time) [][2]time.Time {
 	const (
 		n     = tradesDriftSamples
@@ -69,11 +64,9 @@ func tradesDriftSampleWindows(from, to, cutoff time.Time) [][2]time.Time {
 	return out
 }
 
-// checkTradesPrices1mDrift compares `trades` with prices_1m over sampled
-// windows of [from, to], prints the drifting pairs, and fails on any
-// disagreement; it returns how many windows it compared. Run after a
-// refresh, a difference means prices_1m — and every view built on it —
-// still serves rows `trades` no longer holds.
+// checkTradesPrices1mDrift compares `trades` with prices_1m over sampled windows of [from, to], prints drifting pairs, fails on any
+// disagreement and returns the windows compared; after a refresh a difference means prices_1m and its dependent views still serve rows
+// `trades` no longer holds.
 func checkTradesPrices1mDrift(ctx context.Context, s tradesDriftStore, from, to, now time.Time, out io.Writer) (int, error) {
 	wins := tradesDriftSampleWindows(from, to, now.Add(-prices1mSettle))
 	drifted := 0

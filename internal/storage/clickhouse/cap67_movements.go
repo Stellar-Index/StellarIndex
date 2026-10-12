@@ -151,13 +151,10 @@ func SetCap67MovementsWatermark(ctx context.Context, addr string, from, thru uin
 	return nil
 }
 
-// cap67AdvanceProven reports whether recording [from, thru] keeps the watermark the top of a
-// hole-free, fully-derived prefix, erroring (never skipping) when not. Unproven when `from` is
-// above watermark+1 (an operator jump would stamp undone ledgers; a first run, watermark 0, has no
-// prefix and -floor-ledger is where coverage starts), the lake has a hole in the window
-// (cap67WindowContiguous), or the events are missing (cap67WindowEventsPresent).
-// A window at or below the watermark is an idempotent re-derive (ReplacingMergeTree): neither
-// refused nor written.
+// cap67AdvanceProven reports whether recording [from, thru] keeps the watermark the top of a hole-free, fully-derived prefix, erroring
+// (never skipping) when not: `from` above watermark+1 (a first run, watermark 0, starts at -floor-ledger), a lake hole
+// (cap67WindowContiguous), or missing events (cap67WindowEventsPresent). A window at or below the watermark is an idempotent re-derive
+// (ReplacingMergeTree), neither refused nor written.
 func cap67AdvanceProven(ctx context.Context, conn driver.Conn, from, thru uint32) (bool, error) {
 	wm, err := cap67WatermarkOn(ctx, conn)
 	if err != nil {
@@ -179,9 +176,8 @@ func cap67AdvanceProven(ctx context.Context, conn driver.Conn, from, thru uint32
 	return true, nil
 }
 
-// cap67WindowContiguous errors (wrapping ErrCap67MovementsHole) unless stellar.ledgers holds
-// every ledger in [from, thru]. DISTINCT because un-merged RMT duplicates must not mask a
-// hole. A primary-key range over one derive window, so it reads at most `-window` pruned rows.
+// cap67WindowContiguous errors (wrapping ErrCap67MovementsHole) unless stellar.ledgers holds every ledger in [from, thru]. DISTINCT
+// because un-merged RMT duplicates must not mask a hole.
 func cap67WindowContiguous(ctx context.Context, conn driver.Conn, from, thru uint32) error {
 	present, err := windowLedgersPresent(ctx, conn, from, thru)
 	if err != nil {
@@ -203,10 +199,9 @@ func windowLedgersPresent(ctx context.Context, conn driver.Conn, from, thru uint
 	return present, err
 }
 
-// cap67WindowEventsPresent errors (wrapping ErrCap67MovementsEventShortfall) when
-// contract_events holds fewer rows in [from, thru] than ledgers declares via
-// soroban_event_count. Contiguity alone misses a dropped events partition. Unmerged RMT
-// duplicates only raise present, so they never cause a false refusal.
+// cap67WindowEventsPresent errors (wrapping ErrCap67MovementsEventShortfall) when contract_events holds fewer rows in [from, thru] than
+// ledgers declares via soroban_event_count (contiguity alone misses a dropped events partition). Unmerged RMT duplicates only raise
+// present.
 func cap67WindowEventsPresent(ctx context.Context, conn driver.Conn, from, thru uint32) error {
 	var expected, present uint64
 	if err := conn.QueryRow(ctx, cap67WindowEventCensusQuery, from, thru, from, thru).Scan(&expected, &present); err != nil {
@@ -230,9 +225,8 @@ const cap67WindowEventCensusQuery = `
 		)),
 		(SELECT toUInt64(count()) FROM stellar.contract_events WHERE ledger_seq BETWEEN ? AND ?)`
 
-// Supply-kind coverage rows in stellar.cap67_movements_watermark: mint/burn/clawback joined
-// later, so their derived ledgers form their own range. from only moves down (min) and thru
-// only up (max), so unmerged RMT rows never misreport it.
+// Supply-kind coverage rows in stellar.cap67_movements_watermark: mint/burn/clawback joined later, so they form their own range. from only
+// moves down (min) and thru only up (max), so unmerged RMT rows never misreport it.
 const (
 	cap67SupplyFromName = "cap67_movements_supply_from"
 	cap67SupplyThruName = "cap67_movements_supply_thru"

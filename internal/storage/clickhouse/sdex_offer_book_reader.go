@@ -12,19 +12,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/xdrjson"
 )
 
-// SDEX live-offer reads (order-book substrate).
-// The book is the set of LIVE `offer` entries. ledger_entries_current holds ~1.02B offer rows
-// including dead offers' trailing state, and the assets live only inside entry_xdr, so no
-// per-pair predicate is possible without decoding. Serving a pair straight off it, or off the
-// append-only ledger_entry_changes stream, is not honest within a read budget, so the book is
-// IN-PROCESS: one full-slice load at start ([LoadLiveOffers]), then partition-pruned
-// increments ([OfferChangesSince]) into SDEXOrderBookCache. The book lags the tip by one
-// advance cadence.
-// FINAL streams a merge over the (entry_type, key_xdr) sort order, so memory is
-// merge-buffer-bounded, not key-cardinality-bounded as a GROUP BY/argMax would be. max_threads=4
-// pins fan-out (the default used ~40x the memory). optimize_move_to_prewhere_if_final is off, as
-// in blendReserveStateQuery: PREWHERE on change_type ahead of the FINAL collapse can surface a
-// superseded, non-removed offer version.
+// SDEX live-offer reads (order-book substrate). ledger_entries_current holds ~1.02B offer rows including dead offers' trailing state and
+// the assets live only inside entry_xdr, so no per-pair predicate is possible without decoding: the book is IN-PROCESS: one full load at
+// start ([LoadLiveOffers]), then partition-pruned increments ([OfferChangesSince]) into SDEXOrderBookCache, lagging the tip by one
+// advance cadence. FINAL streams a merge over (entry_type, key_xdr), so memory is merge-buffer-bounded, unlike GROUP BY/argMax;
+// max_threads=4 pins fan-out (default used ~40x the memory). optimize_move_to_prewhere_if_final is off, as in blendReserveStateQuery:
+// PREWHERE on change_type ahead of the FINAL collapse can surface a superseded offer version.
 const liveOfferScanSettings = "SETTINGS max_threads = 4, max_memory_usage = 8589934592, optimize_move_to_prewhere_if_final = 0"
 
 // LiveOffer is one live classic offer; amounts and prices are int64 stroops and int32 price rationals (not i128), so callers aggregate with big math.
@@ -56,16 +49,14 @@ type OfferChange struct {
 	Offer   LiveOffer
 }
 
-// offerBookLoadHoleLookback is how far below the tip a full load looks for an
-// unhealed hole. A contiguity scan from the lake floor is a whole-lake window sort
-// (over the CH memory cap), so the load anchors in the last 100k ledgers (~6 days
-// at 5 s); an older hole is an operator incident, and the periodic re-load re-anchors.
+// offerBookLoadHoleLookback is how far below the tip a full load looks for an unhealed hole: a scan from the lake floor is a whole-lake
+// window sort (over the CH memory cap), so the load anchors in the last 100k ledgers (~6 days); an older hole is an operator incident,
+// and the periodic re-load re-anchors.
 const offerBookLoadHoleLookback = 100_000
 
-// offerBookTip is the hole-safe upper read bound: the highest ledger reachable from
-// `from` without crossing a missing one. anchored=true (`from` is cursor+1): a missing `from`
-// returns from-1 and the cursor HOLDS. anchored=false (no cursor): `from` is only a floor and the
-// run starts at the first present ledger, else a boundary hole would be reported forever.
+// offerBookTip is the hole-safe upper read bound: the highest ledger reachable from `from` without crossing a missing one. anchored=true
+// (`from` is cursor+1): a missing `from` returns from-1 and the cursor HOLDS. anchored=false (no cursor): `from` is only a floor and the
+// run starts at the first present ledger.
 func offerBookTip(from uint32, anchored bool, lc ledgerContiguity) uint32 {
 	if !anchored && lc.minPresent > from {
 		from = lc.minPresent

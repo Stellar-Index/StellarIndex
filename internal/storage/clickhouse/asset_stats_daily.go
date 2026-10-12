@@ -10,11 +10,9 @@ import (
 // as live: the newest stored day, which this cycle replaces or succeeds.
 const assetStatsDailyLatestDay = `stellar.asset_stats_daily WHERE day = (SELECT max(day) FROM stellar.asset_stats_daily)`
 
-// assetStatsSnapshotFill computes one arm of the day's snapshot into staging.
-// Ranks run over every non-removed entry, zero balances included: they sort after every positive
-// balance, so they shift no holder's rank and add nothing to any sum. With x ranked descending
-// (r = 1 is the largest) the Gini over the n positive holders is ((n+1)·S − 2·Σ r·x) / (n·S); the
-// numerator is exact in Int128 for any n below 2^31, only the ratio is float.
+// assetStatsSnapshotFill computes one arm of the day's snapshot into staging. Ranks run over every non-removed entry, zero balances
+// included (they sort last, shifting no rank and adding to no sum). With x ranked descending (r = 1 largest) the Gini over n positive
+// holders is ((n+1)·S − 2·Σ r·x) / (n·S); the numerator is exact in Int128 for any n below 2^31, only the ratio is float.
 func assetStatsSnapshotFill(at, day, rankedSource string) string {
 	return `INSERT INTO stellar.asset_stats_daily_staging
 	     (day, asset, holders, trustlines, balance_total, top10_balance, top100_balance, gini, computed_at)
@@ -36,9 +34,8 @@ func assetStatsSnapshotFill(at, day, rankedSource string) string {
 	          max_bytes_before_external_group_by = 4000000000, max_bytes_before_external_sort = 4000000000, max_execution_time = 600`
 }
 
-// assetStatsSnapshotFills is the snapshot's fill: trustline assets, then
-// native XLM from account entries — the two populations holdersBoardSteps
-// ranks, without its positive-balance filter so trustlines counts zero ones.
+// assetStatsSnapshotFills is the snapshot's fill: trustline assets, then native XLM from account entries, as holdersBoardSteps ranks them
+// but without its positive-balance filter, so trustlines counts zero ones.
 func assetStatsSnapshotFills(cycleAt time.Time) []string {
 	at := "'" + cycleAt.UTC().Format(holdersRollupTimeLayout) + "', 'UTC'"
 	day := cycleAt.UTC().Format("2006-01-02")
@@ -64,10 +61,8 @@ func assetStatsSnapshotReplace(cycleAt time.Time) string {
 		cycleAt.UTC().Format("2006-01-02") + "' FROM stellar.asset_stats_daily_staging"
 }
 
-// runAssetStatsSnapshot records the cycle's per-asset snapshot for its UTC
-// day. It runs after the board swap so a failure here never holds back the
-// boards, and behind the same shrink guard so a truncated scan cannot
-// overwrite a good day.
+// runAssetStatsSnapshot records the cycle's per-asset snapshot for its UTC day. It runs after the board swap so a failure never holds back
+// the boards, and behind the same shrink guard so a truncated scan cannot overwrite a good day.
 func runAssetStatsSnapshot(ctx context.Context, conn holdersRollupConn, cycleAt time.Time, logf func(format string, args ...any)) error {
 	fills := assetStatsSnapshotFills(cycleAt)
 	total := len(fills) + 1

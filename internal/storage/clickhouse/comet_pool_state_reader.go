@@ -12,18 +12,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// Comet pool (Balancer-v1 Soroban port) PERSISTENT-storage layout, from the protocol's public Rust
-// source (CometDEX/comet-contracts-v1, c_pool/storage_types.rs + metadata.rs).
-//
-// DataKey is a #[contracttype] enum of unit variants, so each variant encodes as
-// ScvVec[ScvSymbol("<Variant>")]. DataKey::AllRecordData is Map<Address, Record>, PERSISTENT, the
-// per-token balance records this reader consumes:
-//
-//	Record { balance: i128, weight: i128, scalar: i128, index: u32 }
-//
-// Decode is by field name, so only the `balance` i128 is required. The reader probes BOTH key
-// encodings (Vec[Symbol] per the spec, bare Symbol defensively) since upgrades may change it. A
-// pool matching neither is undecodable: fail-to-absent, never a misread number.
+// Comet pool PERSISTENT-storage layout (CometDEX/comet-contracts-v1 c_pool): DataKey::AllRecordData is Map<Address, Record{balance,
+// weight, scalar: i128; index: u32}>, keyed ScvVec[ScvSymbol("<Variant>")]. Decode is by field name; only `balance` is required. The
+// reader probes BOTH key encodings (Vec[Symbol] per spec, bare Symbol defensively); a pool matching neither is fail-to-absent, never a
+// misread number.
 const (
 	cometRecordDataKeySymbol = "AllRecordData"
 	cometFieldBalance        = "balance"
@@ -45,9 +37,7 @@ type CometPoolState struct {
 	Ledger uint32
 }
 
-// cometPoolStateQuery is the batched current-state lookup — a
-// PK-prefix probe on (entry_type, key_xdr), bounded by construction to
-// 2 candidate keys per curated pool (today: one pool). SETTINGS pins
+// cometPoolStateQuery is a batched PK-prefix probe on (entry_type, key_xdr), bounded to 2 candidate keys per curated pool. SETTINGS pins
 // per the shared guard-rail rationale (ttlLivenessBatchQuery).
 const cometPoolStateQuery = `SELECT key_xdr, ledger_seq, entry_xdr
 	FROM stellar.ledger_entries_current FINAL
@@ -97,10 +87,8 @@ func (r *ExplorerReader) CometPoolReserves(ctx context.Context, pools []string) 
 	return out, undecodable, nil
 }
 
-// cometPoolKeys builds the candidate persistent LedgerKeys for a
-// pool's DataKey::AllRecordData entry — the spec'd Vec[Symbol]
-// encoding first, then the defensive bare-Symbol form (see the
-// VALIDATE-ON-R1 note above). At most one exists on-chain.
+// cometPoolKeys builds the candidate persistent LedgerKeys for a pool's DataKey::AllRecordData entry: the spec'd Vec[Symbol] encoding
+// first, then the defensive bare-Symbol form. At most one exists on-chain.
 func cometPoolKeys(pool string) ([]string, error) {
 	cid, err := contractIDFromStrkey(pool)
 	if err != nil {
@@ -123,9 +111,8 @@ func cometPoolKeys(pool string) ([]string, error) {
 	return keys, nil
 }
 
-// scanCometPoolStates folds fetched rows into per-pool winning state. badPools collects pools with
-// a present-but-undecodable entry; a pool is in both only if one candidate key decoded and another
-// did not, which the caller resolves in favour of the decoded state.
+// scanCometPoolStates folds fetched rows into per-pool winning state. badPools collects pools with a present-but-undecodable entry; a pool
+// in both had one candidate decode and another not, which the caller resolves in favour of the decoded state.
 func scanCometPoolStates(rows driver.Rows, poolByKey map[string]string) (map[string]CometPoolState, map[string]string, map[string]bool, error) {
 	out := make(map[string]CometPoolState)
 	keyByPool := make(map[string]string)
@@ -157,10 +144,8 @@ func scanCometPoolStates(rows driver.Rows, poolByKey map[string]string) (map[str
 	return out, keyByPool, badPools, nil
 }
 
-// cometLegsFromRecordEntry decodes an AllRecordData entry into
-// per-token balance legs. ok=false when the entry isn't the
-// recognised Map<Address, Record{balance: i128, …}> shape — ANY
-// malformed record fails the whole entry (refuse to partially read).
+// cometLegsFromRecordEntry decodes an AllRecordData entry into per-token balance legs; ok=false unless it is the recognised Map<Address,
+// Record{balance: i128, ...}> shape. ANY malformed record fails the whole entry (no partial reads).
 func cometLegsFromRecordEntry(b64 string) ([]CometPoolLeg, bool) {
 	val, ok := contractDataValue(b64)
 	if !ok || val.Type != xdr.ScValTypeScvMap || val.Map == nil || *val.Map == nil {
@@ -182,9 +167,8 @@ func cometLegsFromRecordEntry(b64 string) ([]CometPoolLeg, bool) {
 	return legs, true
 }
 
-// cometBalanceFromRecord pulls the `balance` i128 out of a Record map
-// by field name (works across Record field-set generations; the
-// SEP-41 map-or-i128 trap class — always type-test, never assume).
+// cometBalanceFromRecord pulls the `balance` i128 out of a Record map by field name (works across Record field-set generations);
+// type-test, never assume (the SEP-41 map-or-i128 trap).
 func cometBalanceFromRecord(val xdr.ScVal) (*big.Int, bool) {
 	if val.Type != xdr.ScValTypeScvMap || val.Map == nil || *val.Map == nil {
 		return nil, false

@@ -19,10 +19,8 @@ import (
 // the relative-move flags are refused: an identity has no move distribution. Without `-write` it
 // only counts and decompresses nothing (fail-closed dry run).
 
-// exactChunkStore is the exact tier's seam: the driver's chunk and policy
-// primitives, the day walk's classify/count/apply trio, and the in-chunk
-// apply that re-reads the chunk's is_compressed ahead of the UPDATE.
-// *timescale.Store satisfies it.
+// exactChunkStore is the exact tier's seam: driver chunk/policy primitives, the day walk's classify/count/apply trio, and the in-chunk
+// apply that re-reads is_compressed ahead of the UPDATE. *timescale.Store satisfies it.
 type exactChunkStore interface {
 	chunkRestampStore
 	exactRestampStore
@@ -38,9 +36,7 @@ type exactChunkTier struct {
 	rows int64
 }
 
-// runExactChunkRestamp is the `-tier exact -chunks` entry point, called by
-// usdVolumeRestamp once the shared window/flag/live-tail validation has
-// passed.
+// runExactChunkRestamp is the `-tier exact -chunks` entry point, called by usdVolumeRestamp after shared validation.
 func runExactChunkRestamp(ctx context.Context, store exactChunkStore, run *restampRun, cfgPath string, from, to time.Time, copts chunkRestampOptions) error {
 	return runChunkRestamp(ctx, store, cfgPath, from, to, copts, &exactChunkTier{run: run, store: store})
 }
@@ -52,9 +48,8 @@ func (t *exactChunkTier) header(from, to time.Time, _ chunkRestampOptions) strin
 		from.Format(time.DateOnly), to.Format(time.DateOnly), t.run.slice, t.run.generation, t.run.fillNull)
 }
 
-// walk covers [lo, hi) day by day: classify the day (once — the cache
-// survives a chunk boundary that splits it), then walk the intersection
-// of that day with the chunk's slice in -slice windows.
+// walk covers [lo, hi) day by day: classify the day once (the cache survives a chunk boundary splitting it), then walk the day/chunk-slice
+// intersection in -slice windows.
 func (t *exactChunkTier) walk(ctx context.Context, lo, hi time.Time, apply exactTierApply, probe bool) (int64, error) {
 	var rows int64
 	for day := lo.UTC().Truncate(24 * time.Hour); day.Before(hi); day = day.AddDate(0, 0, 1) {
@@ -86,10 +81,8 @@ func (t *exactChunkTier) walk(ctx context.Context, lo, hi time.Time, apply exact
 	return rows, nil
 }
 
-// probe counts candidates read-only and stops at the first slice that
-// would change a row. A chunk that probes clean is skipped by the driver
-// without ever being decompressed, which is what makes a rerun walk past
-// the finished prefix at dry-run cost.
+// probe counts candidates read-only and stops at the first slice that would change a row; a clean chunk is skipped undecompressed, so a
+// rerun passes the finished prefix at dry-run cost.
 func (t *exactChunkTier) probe(ctx context.Context, lo, hi time.Time) (bool, error) {
 	n, err := t.walk(ctx, lo, hi, t.store.CountUSDVolumeRestampCandidates, true)
 	return n > 0, err
@@ -106,8 +99,7 @@ func (t *exactChunkTier) preview(ctx context.Context, lo, hi time.Time) (string,
 	return fmt.Sprintf("would change %d row(s)", n), nil
 }
 
-// restamp applies the identity inside the decompressed chunk. Every
-// slice's UPDATE goes through the store's guarded in-chunk apply, which
+// restamp applies the identity inside the decompressed chunk; every slice's UPDATE goes through the store's guarded in-chunk apply, which
 // refuses to write when the chunk reads compressed again.
 func (t *exactChunkTier) restamp(ctx context.Context, c timescale.TradeChunk, lo, hi time.Time) (chunkRestampOutcome, error) {
 	inChunk := func(ctx context.Context, p timescale.USDVolumeRestampParams) (int64, error) {
@@ -132,9 +124,8 @@ func (t *exactChunkTier) resume(cfgPath string, from, to time.Time, copts chunkR
 	return exactChunkResumeHint(cfgPath, from, to, t.run, copts)
 }
 
-// exactChunkResumeHint builds the RESUME command carrying the run's generation and every
-// population-shaping flag. Finished chunks are skipped; the failed chunk was re-compressed
-// unless the error says LEFT DECOMPRESSED.
+// exactChunkResumeHint builds the RESUME command carrying the run's generation and population-shaping flags; finished chunks are skipped,
+// the failed chunk was re-compressed unless the error says LEFT DECOMPRESSED.
 func exactChunkResumeHint(cfgPath string, from, to time.Time, run *restampRun, copts chunkRestampOptions) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "\nRESUME: stellarindex-ops usd-volume-restamp -config %s -tier %s -chunks -from %s -to %s -generation %d",

@@ -14,16 +14,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// verifyRecognition implements ADR-0033 Claim 2a (recognition): it pulls every distinct
-// (contract_id, topic_0_sym) shape in the lake's contract_events over a ledger range and runs each
-// through the production decoder chain. A shape no decoder claims is a recognition gap, an
-// on-chain event we would silently drop, which is what a WASM upgrade adding a topic looks like.
-//
-// The scan is computeRecognitionGapsCH, the same census compute-completeness publishes as
-// recognition_ok, so the two cannot disagree. Exit is non-zero when any gap exists or the range
-// read no shapes at all. It uses the dispatcher the indexer builds from
-// ingestion.enabled_sources, so the verdict reflects what the deployment handles, not a topic
-// list that could drift.
+// verifyRecognition implements ADR-0033 Claim 2a: every (contract_id, topic_0_sym) shape in contract_events must be claimed by a decoder,
+// else a gap. It runs computeRecognitionGapsCH, the census behind recognition_ok, so they cannot disagree. Non-zero exit on any gap or an
+// empty range.
 func verifyRecognition(args []string) error {
 	fs := flag.NewFlagSet("verify-recognition", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
@@ -86,11 +79,8 @@ func verifyRecognition(args []string) error {
 	return fmt.Errorf("%d unrecognized event shape(s) — a decoder is missing a topic (ADR-0033 EVERY-event policy)", len(gaps))
 }
 
-// soroswapRecognitionSeed loads the soroswap pair registry and returns the dispatcher option that
-// seeds the soroswap decoder's pair-tokens cache, as compute-completeness does. Without it
-// Matches() rejects every real SoroswapPair event and each becomes a false recognition gap.
-// Shared by verify-recognition and ch-recognition; it fails closed on a load error, since a
-// partial registry would silently under-recognize.
+// soroswapRecognitionSeed loads the soroswap pair registry as the dispatcher option seeding the decoder's pair-tokens cache; without it
+// Matches() rejects every real SoroswapPair event as a false gap. Shared with ch-recognition; fails closed on a load error.
 func soroswapRecognitionSeed(ctx context.Context, store *timescale.Store) (soroswap.DecoderOption, error) {
 	pairs, err := store.LoadSoroswapPairRegistry(ctx)
 	if err != nil {

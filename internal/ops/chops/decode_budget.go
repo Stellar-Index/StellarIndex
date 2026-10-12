@@ -12,9 +12,8 @@ func registerDecodeBudget(fs *flag.FlagSet) *uint64 {
 		"records a run may skip as undecodable before it exits non-zero (default 0: any skip fails the run AFTER every window completes, so an unattended re-derive that dropped rows is never reported as a success; raise it only once the skips are understood)")
 }
 
-// enforceDecodeBudget is the run's verdict on its soft-skips. The skips are
-// logged per window but never stop the derive; this makes a run that dropped
-// more rows than the operator accepted exit non-zero.
+// enforceDecodeBudget makes a run that soft-skipped more rows than the operator accepted exit non-zero; the skips are only logged per
+// window.
 func enforceDecodeBudget(cmd string, skipped, budget uint64) error {
 	if skipped <= budget {
 		return nil

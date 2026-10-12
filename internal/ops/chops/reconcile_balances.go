@@ -24,10 +24,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// reconcileBalances is the reconcile-balances subcommand: it compares our latest native balance
-// per account against public Horizon, which is allowed here only as an operator-invoked,
-// read-only truth source (ADR-0001 bans it from ingest). Exactly one of -account/-sample is
-// required; the exit code is the MISMATCH count capped at 255, see [reconcileExitError].
+// reconcileBalances compares our latest native balance per account with public Horizon, allowed only as an operator-run read-only truth
+// source (ADR-0001 bans it from ingest). Exactly one of -account/-sample; exit code is the MISMATCH count capped at 255, see
+// [reconcileExitError].
 func reconcileBalances(args []string) error { //nolint:funlen // linear: flag parse+validate, resolve account set, per-account loop, report.
 	fs := flag.NewFlagSet("reconcile-balances", flag.ContinueOnError)
 	account := fs.String("account", "", "reconcile exactly this account (G...); mutually exclusive with -sample")
@@ -93,9 +92,8 @@ func reconcileBalances(args []string) error { //nolint:funlen // linear: flag pa
 	return exitErr
 }
 
-// defaultReconcileRecentLedgers is ~1 day of ledgers at ~5 s each: recent
-// enough that a snapshot approximates chain state, and a change-log window
-// small enough for the -sample GROUP BY to answer in seconds.
+// defaultReconcileRecentLedgers is ~1 day of ledgers: recent enough that a snapshot approximates chain state, small enough for the -sample
+// GROUP BY.
 const defaultReconcileRecentLedgers = 17_280
 
 // reconcileSampleFrame is the parsed -sample frame flags; the *Set fields
@@ -121,9 +119,8 @@ func uint32FlagFunc(dst *uint32) func(string) error {
 	}
 }
 
-// reconcileSampleFloor is the -sample frame's ledger floor: an explicit
-// -min-recent-ledger wins, otherwise the window trails the lake tip, so it
-// stays the same width as the chain grows.
+// reconcileSampleFloor is the -sample ledger floor: explicit -min-recent-ledger wins, else the window trails the lake tip at constant
+// width.
 func reconcileSampleFloor(tip uint32, f reconcileSampleFrame) uint32 {
 	if f.minSet {
 		return f.minRecentLedger
@@ -193,9 +190,8 @@ const (
 	// outcomeError: our ClickHouse read failed. Only this outcome counts toward the
 	// -max-error-rate guard.
 	outcomeError reconcileOutcome = "ERROR"
-	// outcomeTruthUnavailable: Horizon was unreachable or unparseable. Excluded from the error
-	// rate so a rate-limit episode cannot fail a healthy -sample gate; a run with no
-	// comparisons at all still fails via the verified==0 guard in reconcileExitError.
+	// outcomeTruthUnavailable: Horizon unreachable or unparseable; excluded from the error rate so a rate-limit episode cannot fail a
+	// healthy -sample gate (a run with no comparisons still fails via the verified==0 guard in reconcileExitError).
 	outcomeTruthUnavailable reconcileOutcome = "TRUTH_UNAVAILABLE"
 )
 
@@ -258,9 +254,7 @@ func reconcileOneAccount(ctx context.Context, client *http.Client, chAddr, horiz
 	return res
 }
 
-// classifyBalances compares our latest-recorded stroop balance
-// against Horizon's current stroop balance and returns MATCH or
-// MISMATCH plus the absolute delta.
+// classifyBalances compares our latest stroop balance with Horizon's and returns MATCH or MISMATCH plus the absolute delta.
 func classifyBalances(ourStroops, refStroops, toleranceStroops int64) (reconcileOutcome, int64) {
 	delta := ourStroops - refStroops
 	if delta < 0 {
@@ -296,27 +290,17 @@ type horizonAccountResponse struct {
 // native-XLM entry of an account's balances[] array.
 const horizonNativeAssetType = "native"
 
-// errNoNativeBalance signals a well-formed Horizon response with no
-// native-asset entry — shouldn't happen for a real account (every
-// Stellar account holds a native-XLM balance by construction) but
-// guarded rather than assumed.
+// errNoNativeBalance: a well-formed Horizon response with no native entry; impossible for a real account, so guarded rather than assumed.
 var errNoNativeBalance = errors.New("reconcile-balances: horizon account response has no native balance entry")
 
-// horizonMaxRetriesOn429 bounds how many times fetchHorizonNativeBalance
-// retries a single account after a 429 before giving up and reporting
-// it as an error — keeps one rate-limited account from stalling a
-// -sample run indefinitely.
+// horizonMaxRetriesOn429 bounds 429 retries per account so one rate-limited account cannot stall a -sample run indefinitely.
 const horizonMaxRetriesOn429 = 3
 
-// horizonMaxResponseBytes caps how much of a Horizon response body
-// this tool will read — a public HTTP endpoint's response should
-// never legitimately be large for a single-account lookup; this is a
-// DoS guard, not an expected limit.
+// horizonMaxResponseBytes caps the Horizon body read; a single-account lookup is never legitimately large, so this is a DoS guard.
 const horizonMaxResponseBytes = 1 << 20 // 1 MiB
 
-// fetchHorizonNativeBalance returns Horizon's native balance in exact stroops, never float64.
-// status is the final HTTP status (0 on transport failure); 404 means MERGED_OR_ABSENT. It
-// retries 429s up to horizonMaxRetriesOn429, honoring Retry-After.
+// fetchHorizonNativeBalance returns Horizon's native balance in exact stroops, never float64. status is the final HTTP status (0 on
+// transport failure); 404 means MERGED_OR_ABSENT. It retries 429s up to horizonMaxRetriesOn429, honoring Retry-After.
 func fetchHorizonNativeBalance(ctx context.Context, client *http.Client, base, account string) (*big.Int, int, error) {
 	url := strings.TrimRight(base, "/") + "/accounts/" + account
 	for attempt := 0; ; attempt++ {
@@ -337,9 +321,7 @@ func fetchHorizonNativeBalance(ctx context.Context, client *http.Client, base, a
 	}
 }
 
-// fetchHorizonNativeBalanceOnce performs a single Horizon request
-// attempt. Split out of fetchHorizonNativeBalance so the 429-retry
-// loop above stays a plain, easy-to-audit for loop.
+// fetchHorizonNativeBalanceOnce is one request attempt, split out so the 429-retry loop stays easy to audit.
 func fetchHorizonNativeBalanceOnce(ctx context.Context, client *http.Client, url string) (bal *big.Int, status int, retryAfter time.Duration, err error) {
 	req, rerr := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if rerr != nil {
@@ -428,13 +410,9 @@ func clampExitCode(n int) int {
 	return n
 }
 
-// reconcileExitError maps a completed run's tally to its exit error (nil = clean) and a reason for
-// stderr. It fails a run on mismatches, on an error rate above -max-error-rate, on verifying zero
-// accounts or fewer than requested (either mode), and on staleMergedHeld.
-//
-// errored counts our-side (ClickHouse) failures only; Horizon outages are excluded. n is the
-// results produced (fewer than requested when cancelled), verified the MATCH or MISMATCH count,
-// and staleMergedHeld the accounts Horizon reports gone that we still hold funded.
+// reconcileExitError maps a run's tally to its exit error (nil = clean) and a stderr reason: fails on mismatches, an error rate above
+// -max-error-rate, verifying zero or fewer than requested accounts, and staleMergedHeld (Horizon says gone, we hold funded). errored counts
+// our-side failures only.
 func reconcileExitError(mismatches, errored, n, requested, verified int, maxErrorRate float64, staleMergedHeld int) (reason string, err error) {
 	// Too many OUR-side errors ⟹ verified nothing reliable; fail even at
 	// zero mismatches.
@@ -489,8 +467,7 @@ func countVerified(results []reconcileResult) int {
 	return n
 }
 
-// printReconcileReport writes the full per-account + summary report to w and
-// returns the MISMATCH count (the exit code), the ERROR count (for the fail-closed error-rate
+// printReconcileReport writes the per-account and summary report and returns the MISMATCH count (exit code), the ERROR count (error-rate
 // guard) and staleMergedHeld, the MERGED_OR_ABSENT accounts we still hold funded.
 func printReconcileReport(w io.Writer, results []reconcileResult) (mismatched, errored, staleMergedHeld int) {
 	var matched, noData, mergedAbsent, truthUnavail int

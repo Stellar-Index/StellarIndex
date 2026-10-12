@@ -126,10 +126,8 @@ func (r *ExplorerReader) NativeLiquidityPoolsRanked(ctx context.Context, limit i
 	return all, nil
 }
 
-// nativeLPStateFromEntry decodes one `liquidity_pool` LedgerEntry into
-// a two-sided reserve state. ok=false when the entry isn't a
-// ConstantProduct pool or an asset side can't be canonicalised — refuse
-// to guess rather than misreport.
+// nativeLPStateFromEntry decodes a `liquidity_pool` LedgerEntry into a two-sided reserve state. ok=false for a non-ConstantProduct pool
+// or an asset side that cannot be canonicalised: refuse rather than misreport.
 func nativeLPStateFromEntry(b64 string) (NativeLiquidityPoolState, bool) {
 	var entry xdr.LedgerEntry
 	if xdr.SafeUnmarshalBase64(b64, &entry) != nil {
@@ -204,10 +202,8 @@ func poolIDToXDR(s string) (xdr.PoolId, error) {
 	return pid, nil
 }
 
-// classicAssetID converts an xdr.Asset (a classic-pool reserve side) to
-// its canonical asset_id string: "native", or "<CODE>-<ISSUER>" for
-// credit alphanum4/12. ok=false for any other (impossible for a
-// classic LP) asset type.
+// classicAssetID converts a classic-pool reserve xdr.Asset to its asset_id: "native" or "<CODE>-<ISSUER>". ok=false for any other asset
+// type.
 func classicAssetID(a xdr.Asset) (string, bool) {
 	switch a.Type {
 	case xdr.AssetTypeAssetTypeNative:

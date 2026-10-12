@@ -17,13 +17,10 @@ const TTLVerdictCacheTTL = 30 * time.Minute
 // under load): generous so it isn't abandoned, bounded so it can't pin the flight.
 const ttlVerdictRefreshTimeout = 5 * time.Minute
 
-// ttlLivenessCache is a stale-while-revalidate snapshot of per-key TTL liveness verdicts, fronting
-// [ClassifyTTLLiveness] for SoroswapPairReserves.
-//
-// Fresh: served from memory. Stale or new keys: served anyway (missing keys read as TTLUnknown,
-// which callers KEEP: fail-open) while ONE detached recompute runs. Never filled: the caller waits
-// on that compute, bounded by its OWN deadline; the compute outlives a caller that gives up, so the
-// retry serves warm. compute is injected so the cache is unit-testable without ClickHouse.
+// ttlLivenessCache is a stale-while-revalidate snapshot of per-key TTL verdicts, fronting [ClassifyTTLLiveness] for SoroswapPairReserves.
+// Fresh: served from memory. Stale or new keys: served anyway (missing keys read as TTLUnknown, which callers KEEP: fail-open) while ONE
+// detached recompute runs. Never filled: the caller waits on that compute, bounded by its OWN deadline; the compute outlives a caller
+// that gives up, so the retry serves warm.
 type ttlLivenessCache struct {
 	mu        sync.Mutex
 	verdicts  map[string]TTLLiveness
@@ -36,23 +33,20 @@ type ttlLivenessCache struct {
 	onErr func(error)
 }
 
-// ttlFlight is one in-flight classification. done closes when it finishes;
-// err carries its failure (nil on success), readable only AFTER done closes
-// (the close is the happens-before edge).
+// ttlFlight is one in-flight classification. done closes when it finishes; err (nil on success) is readable only AFTER done closes (the
+// close is the happens-before edge).
 type ttlFlight struct {
 	done chan struct{}
 	err  error
 }
 
-// errTTLRefreshPanicked is what waiters on a flight whose recompute panicked
-// receive: a real error, so a panic reads as a failed refresh rather than a
+// errTTLRefreshPanicked is what waiters on a panicked recompute receive: a real error, so a panic reads as a failed refresh rather than a
 // silent success serving an empty verdict set.
 var errTTLRefreshPanicked = errors.New(
 	"clickhouse: ttl-liveness detached refresh panicked; verdict snapshot unchanged")
 
-// endFlight clears the in-flight marker and publishes `err` to every waiter.
-// It must run from a DEFER in the refresh goroutine: containing a panic
-// without releasing here would block coldFill's waiters forever.
+// endFlight clears the in-flight marker and publishes `err` to every waiter. It must run from a DEFER in the refresh goroutine:
+// containing a panic without releasing here would block coldFill's waiters forever.
 func (c *ttlLivenessCache) endFlight(fl *ttlFlight, err error) {
 	c.mu.Lock()
 	c.flight = nil
@@ -85,9 +79,8 @@ func (c *ttlLivenessCache) resolve(ctx context.Context, keys []string) (map[stri
 	return c.coldFill(ctx, keys)
 }
 
-// fromSnapshot serves the requested keys from a filled snapshot. filled=false
-// when nothing was ever stored; needsRefresh=true when stale or a key is
-// missing (the CALLER kicks the recompute, keeping the detach a single call site).
+// fromSnapshot serves the requested keys from a filled snapshot. filled=false when nothing was ever stored; needsRefresh=true when stale
+// or a key is missing (the CALLER kicks the recompute, keeping the detach a single call site).
 func (c *ttlLivenessCache) fromSnapshot(keys []string) (out map[string]TTLLiveness, filled, needsRefresh bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -131,10 +124,9 @@ func (c *ttlLivenessCache) store(verdicts map[string]TTLLiveness) {
 	c.mu.Unlock()
 }
 
-// kickRefresh starts ONE detached recompute (returning the existing flight while one is up). It
-// computes the UNION of the caller's keys and the snapshot's: store() replaces the whole map, so a
-// subset (?pool=) would evict other pairs' verdicts and re-open the fail-open TTLUnknown->keep
-// path. Keys that leave the registry linger until restart; the registry is grow-only.
+// kickRefresh starts ONE detached recompute (returning the existing flight while one is up) over the UNION of the caller's keys and the
+// snapshot's: store() replaces the whole map, so a subset (?pool=) would evict other pairs' verdicts and re-open the fail-open
+// TTLUnknown->keep path.
 func (c *ttlLivenessCache) kickRefresh(keys []string) *ttlFlight {
 	c.mu.Lock()
 	if c.flight != nil {

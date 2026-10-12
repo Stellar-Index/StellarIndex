@@ -21,11 +21,9 @@ import (
 // re-expands it. Do not add explorerScanSettings here (max_threads = 4 was ~2x slower for
 // identical I/O); the bound applied is protocolRawScanRowCeiling.
 
-// protocolRawScanRowCeiling refuses a raw scan the ExplorerReader connection could not finish
-// anyway (max_execution_time 30 s at ~18.6 M rows/s fits ~558 M rows). Without it the read
-// decompresses a huge volume before the kill. 600 M is that budget rounded up: a tripwire, not a
-// policy bound. read_overflow_mode='throw' REFUSES rather than truncating; callers already degrade
-// honestly on error, whereas a LIMIT would serve a short answer as complete.
+// protocolRawScanRowCeiling refuses a raw scan the ExplorerReader connection could not finish anyway (30 s at ~18.6 M rows/s fits ~558 M
+// rows); 600 M is a tripwire. read_overflow_mode='throw' REFUSES rather than truncating: callers degrade honestly on error, a LIMIT would
+// serve a short answer as complete.
 const protocolRawScanRowCeiling = ` SETTINGS max_rows_to_read = 600000000, read_overflow_mode = 'throw'`
 
 // ProtocolEventTypeCount is one (event symbol, count) row of a protocol's event-type distribution.
@@ -56,10 +54,9 @@ func (r *ExplorerReader) LakeTipLedger(ctx context.Context) (uint32, error) {
 	return tip, nil
 }
 
-// lakeWatermarkGapWindow bounds how far below the raw max LakeWatermark looks for a hole. The live
-// sink only drops ledgers near the tip, healed by the ~10-minute ch-live-catchup timer; certifying
-// genesis-to-tip on every cached refresh would hit the memory cap described at substrateWindow.
-// 10,000 ledgers (~14h) far exceeds the heal time and ADR-0041 Decision 3's 1h page threshold.
+// lakeWatermarkGapWindow bounds how far below the raw max LakeWatermark looks for a hole: the live sink only drops ledgers near the tip
+// (healed by the ~10-minute ch-live-catchup timer), and genesis-to-tip each refresh would hit the substrateWindow memory cap. 10,000
+// ledgers (~14h) far exceeds ADR-0041 Decision 3's 1h page threshold.
 const lakeWatermarkGapWindow = 10_000
 
 // LakeWatermark returns the lake's CONTIGUOUS captured tip and its close time (surfaced as `as_of_ledger`); the raw max(ledger_seq) can point past a live-sink drop.
@@ -113,11 +110,9 @@ func (r *ExplorerReader) ProtocolEventBreakdown(ctx context.Context, contractIDs
 	return scanEventBreakdown(rows)
 }
 
-// protocolEventBreakdownQuery builds the raw breakdown query, split out so the shape (FINAL, the
-// ledger bound, the row ceiling) is unit-testable; losing any is silent and expensive.
-// FINAL is REQUIRED: contract_events is ReplacingMergeTree(ingested_at) and unmerged duplicates are
-// large (+45% on a busy contract), so dropping it overstates every headline count. LIMIT 1 BY
-// cannot replace it: ingested_at is DateTime (1 s) and cannot break a same-second tie.
+// protocolEventBreakdownQuery builds the raw breakdown query, split out so its shape (FINAL, ledger bound, row ceiling) is unit-testable.
+// FINAL is REQUIRED: contract_events is ReplacingMergeTree(ingested_at) with large unmerged duplicates (+45% on a busy contract); LIMIT 1
+// BY cannot replace it (ingested_at is 1 s, no same-second tie-break).
 func protocolEventBreakdownQuery(windowed bool) string {
 	q := `SELECT topic_0_sym,
 		       if(topic_0_sym = '', topics_xdr[2], '') AS t1,
@@ -164,10 +159,9 @@ func scanEventBreakdown(rows driver.Rows) ([]ProtocolEventTypeCount, error) {
 	return out, nil
 }
 
-// effectiveEventName resolves the display label: topic_0_sym; else topic[1] as a Symbol for a
-// namespace-marker String topic[0] (Soroswap; Symbol-ONLY so it cannot match Phoenix's String
-// field names); else topic[0] as a Symbol or String (Phoenix action names). Returns "" when no
-// topic yields a name (folded into "untyped" upstream).
+// effectiveEventName resolves the display label: topic_0_sym; else topic[1] as a Symbol under a String-marker topic[0] (Soroswap;
+// Symbol-ONLY so it cannot match Phoenix's String field names); else topic[0] as Symbol or String (Phoenix). Returns "" when none yields
+// a name (folded into "untyped" upstream).
 func effectiveEventName(topic0Sym, topic1XDR, topic0XDR string) string {
 	if topic0Sym != "" {
 		return topic0Sym

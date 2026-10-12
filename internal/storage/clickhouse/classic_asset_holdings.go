@@ -50,19 +50,10 @@ func (h *HoldingsScanner) Close() error {
 	return h.conn.Close()
 }
 
-// trustlineAssetsPageQuery is one page of the walk, keyset-paginated on the asset string.
-//
-// NO FINAL: the GROUP BY on `asset` with min/max over `ledger_seq` already folds the duplicate
-// versions FINAL would collapse, and the read-time merge is the costliest part of this scan. Any
-// row present is a ledger at which a trustline existed, so the answer only errs toward MORE
-// evidence. max() is merge-invariant; min() is not, but the writer takes LEAST across runs, so
-// first_seen can only move EARLIER, toward the truth.
-//
-// NO change_type FILTER: a deleted trustline is still proof the asset exists (the holders rollup
-// excludes `removed` because it answers "who holds this now").
-//
-// Spill settings are inherited from [openRead]. Do NOT set optimize_aggregation_in_order here:
-// beside an external-group-by threshold it CANCELS the spill valve and turns a spill into an OOM.
+// trustlineAssetsPageQuery is one page of the walk, keyset-paginated on the asset string. NO FINAL: GROUP BY `asset` with min/max over
+// `ledger_seq` already folds duplicates, so the answer only errs toward MORE evidence (the writer takes LEAST across runs, so first_seen
+// only moves EARLIER). NO change_type FILTER: a deleted trustline still proves the asset exists. Spill settings come from [openRead]; do
+// NOT set optimize_aggregation_in_order, which CANCELS the spill valve (OOM).
 const trustlineAssetsPageQuery = `
 	SELECT asset,
 	       min(ledger_seq) AS first_ledger,

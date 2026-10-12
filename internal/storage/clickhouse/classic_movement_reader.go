@@ -21,9 +21,8 @@ type ClassicOp struct {
 	OpResult xdr.OperationResult
 }
 
-// classicOpTypeInList renders an op-type slice as a SQL IN list:
-// 'a','b',.... opTypes MUST be compile-time constants (e.g. classicmovements.SupportedOpTypes()),
-// never user input: they are interpolated into the query, as in tradeOpTypeInList.
+// classicOpTypeInList renders an op-type slice as a SQL IN list. opTypes MUST be compile-time constants (e.g.
+// classicmovements.SupportedOpTypes()), never user input: they are interpolated, as in tradeOpTypeInList.
 func classicOpTypeInList(opTypes []string) string {
 	quoted := make([]string, len(opTypes))
 	for i, t := range opTypes {
@@ -53,17 +52,10 @@ func StreamClassicOps(ctx context.Context, addr string, from, to uint32, opTypes
 	return streamClassicOpRows(rows, fn)
 }
 
-// classicOpsQuery is StreamClassicOps' SQL, built separately so its text is independently
-// assertable (StreamClassicOps dials its own connection; see sdexOpsQuery).
-//
-// Shape and rationale are sdexOpsQuery's, clause for clause: the successful-tx restriction is a
-// grace_hash INNER JOIN over a `GROUP BY tx_hash` derived table, never an IN-subquery (the set
-// build blew the 10 GiB budget on a dense window), spelled BEFORE the outer WHERE so ClickHouse
-// still propagates the ledger window through o.ledger_seq = r.ledger_seq and primary-key-prunes
-// stellar.operation_results.
-//
-// The FOUR bind parameters are, in order: the derived table's from + to (written FIRST), then
-// the outer ledger window's from + to. opTypes is INTERPOLATED; see classicOpTypeInList.
+// classicOpsQuery is StreamClassicOps' SQL, separate so its text is assertable; shape follows sdexOpsQuery: the successful-tx restriction
+// is a grace_hash INNER JOIN over a `GROUP BY tx_hash` derived table, never an IN-subquery (blew the 10 GiB budget), BEFORE the outer WHERE
+// so the ledger window still prunes stellar.operation_results. FOUR binds, in order: the derived table's from + to (FIRST), then the outer
+// window's from + to. opTypes is INTERPOLATED.
 func classicOpsQuery(opTypes []string) string {
 	return fmt.Sprintf(`
 		SELECT o.ledger_seq, o.close_time, o.tx_hash, o.op_index, o.source_account,
@@ -82,10 +74,8 @@ func classicOpsQuery(opTypes []string) string {
 		SETTINGS join_algorithm = 'grace_hash', grace_hash_join_initial_buckets = 32`, classicOpTypeInList(opTypes))
 }
 
-// streamClassicOpRows decodes an open classicOpsQuery result set and invokes fn
-// once per row, in the order ClickHouse returned them. Split out of
-// StreamClassicOps so the decode + fan-out half is drivable against a stub
-// driver.Rows. fn's error aborts the stream and is returned VERBATIM.
+// streamClassicOpRows decodes an open classicOpsQuery result set and invokes fn per row, in ClickHouse's order; split out so it is
+// drivable against a stub driver.Rows. fn's error aborts the stream and is returned VERBATIM.
 func streamClassicOpRows(rows driver.Rows, fn func(ClassicOp) error) error {
 	for rows.Next() {
 		var (

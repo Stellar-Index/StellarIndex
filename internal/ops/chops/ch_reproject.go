@@ -17,9 +17,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// chReproject re-derives a ledger range from the ClickHouse lake with the existing decoders and
-// compares per-ledger counts to the served Postgres protocol tables (ADR-0034). Soroswap is
-// re-derived without RPC pair-seeding, so its undercount for earlier pairs is expected and flagged.
+// chReproject re-derives a range from the lake and compares per-ledger counts to the served Postgres protocol tables (ADR-0034). Soroswap
+// is re-derived without RPC pair-seeding, so its undercount for earlier pairs is expected and flagged.
 func chReproject(args []string) error { //nolint:gocognit,gocyclo,funlen // linear: build cats, two re-derives, compare; splitting reduces clarity.
 	fs := flag.NewFlagSet("ch-reproject", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")
@@ -228,9 +227,8 @@ func chReproject(args []string) error { //nolint:gocognit,gocyclo,funlen // line
 // with the served tables.
 var errChReprojectDiverged = errors.New("ch-reproject: CH re-derivation diverges from the served tables")
 
-// chReprojectVerdict maps the compared targets to the exit status. The report
-// is on stdout, but a caller scripting $? must not read a divergence as a
-// match — the contract ch-gate keeps and this command's help promises.
+// chReprojectVerdict maps compared targets to the exit status: a caller scripting $? must not read a divergence as a
+// match, the contract ch-gate keeps.
 func chReprojectVerdict(diverged []string) error {
 	if len(diverged) > 0 {
 		fmt.Printf("\nch-reproject: differences found — review above (CH>served = recovered loss; CH<served = CH gap)\n")

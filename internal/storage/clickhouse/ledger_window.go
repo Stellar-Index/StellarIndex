@@ -1,11 +1,7 @@
 package clickhouse
 
-// ledgerWindowHi returns the INCLUSIVE upper bound of the ledger window that starts at lo, for a
-// walk over [from, to] in windows of `window` ledgers, shared by every windowed, resumable lake job.
-// A naive `hi := lo + window - 1` breaks two things: the FINAL window must be clamped to `to`
-// rather than dropped or over-run, and the addition must not overflow uint32, so the REMAINING
-// span (`to - lo >= window`) is tested first. Callers guarantee 0 < from <= to, window > 0, and lo
-// within [from, to].
+// ledgerWindowHi returns the INCLUSIVE upper bound of the window at lo over [from, to]: the last window is clamped to `to`, and `to - lo
+// >= window` is tested first so lo+window cannot overflow uint32. Callers guarantee 0 < from <= to, window > 0, lo in [from, to].
 func ledgerWindowHi(lo, to, window uint32) uint32 {
 	if rem := to - lo; rem >= window { // window fits without uint overflow
 		return lo + window - 1
@@ -13,13 +9,8 @@ func ledgerWindowHi(lo, to, window uint32) uint32 {
 	return to
 }
 
-// adaptiveLedgerWindow carries the ledger-window width for a windowed walk of
-// stellar.ledger_entry_changes: narrow on a ClickHouse memory-limit error, widen again after
-// sustained success, so one dense range cannot pin the window at its floor for the rest of the
-// chain. The asymmetry is deliberate: narrowing is immediate (one failure halves the width)
-// because a failed window is a wasted scan; widening needs widenAfter consecutive clean windows
-// because re-widening into a range that just failed would oscillate. The per-query memory ceiling
-// is never raised, only the amount of chain per query.
+// adaptiveLedgerWindow is a walk's width over ledger_entry_changes: narrows at once on a memory-limit error, widens only after widenAfter
+// clean windows (re-widening into a just-failed range would oscillate). The memory ceiling is never raised.
 type adaptiveLedgerWindow struct {
 	initial    uint32
 	floor      uint32
@@ -57,10 +48,8 @@ func (w *adaptiveLedgerWindow) succeeded() {
 	w.clean = 0
 }
 
-// walkLedgerWindows calls scan over [minLedger, maxLedger] in ascending,
-// non-overlapping windows sized by win. A memory-limit error retries the SAME
-// start narrower until win's floor; any other error, or a memory-limit error at
-// the floor, is returned unchanged.
+// walkLedgerWindows scans [minLedger, maxLedger] in ascending windows sized by win. A memory-limit error retries the SAME start narrower;
+// any other error, or one at the floor, is returned unchanged.
 func walkLedgerWindows(minLedger, maxLedger uint32, win *adaptiveLedgerWindow, scan func(from, to uint32) error) error {
 	for start := minLedger; ; {
 		end := ledgerWindowHi(start, maxLedger, win.width)

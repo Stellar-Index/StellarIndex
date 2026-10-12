@@ -11,24 +11,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/xdrjson"
 )
 
-// extractLedgerEntryChanges populates ext.Changes with one row per LedgerEntryChange in the
-// whole ledger, mirroring dispatcher.walkLedgerEntryChanges so lake rows match the live hook:
-//
-//   - Every tx is walked, failed ones too: a failed tx's fee debit is committed.
-//   - The walk is ledger-wide and three-phase, as the SDK's ingest.LedgerChangeReader: every
-//     tx's fee changes, then apply-phase changes, then PostTxApplyFeeChanges (P23 Soroban
-//     fee refunds; LCM V2 only). intra_ledger_seq thus ranks an apply change above a later
-//     tx's fee change and a refund above both, so the change that wins FINAL dedup is the
-//     ledger-final balance. Ledger UPGRADE changes are not walked (no tx_hash).
-//   - A fourth phase records state-archival EVICTIONS as `removed` rows, only for temporary
-//     entries and TTL keys: persistent entries and contract code are archived and restorable,
-//     so they stay live. Skipped keys still take their walk position.
-//
-// Within each block changes follow entrywalk.Canonical order (core's block order is hash-map order
-// and differs between exports). change_index is a per-TRANSACTION counter, stable across
-// re-ingest so the ReplacingMergeTree write is idempotent. A change that won't marshal is skipped
-// and counted, never fatal, and still takes its intra_ledger_seq, the per-LEDGER position folded
-// into the RMT version so the last change to a key wins FINAL dedup deterministically.
+// extractLedgerEntryChanges populates ext.Changes with one row per LedgerEntryChange, mirroring dispatcher.walkLedgerEntryChanges. Every tx
+// is walked, failed too (its fee debit is committed), in three ledger-wide phases like ingest.LedgerChangeReader (fees, apply,
+// PostTxApplyFeeChanges), so intra_ledger_seq makes the FINAL-dedup winner the ledger-final balance; upgrade changes are not walked. A
+// fourth phase records EVICTIONS as `removed` rows for temporary entries and TTL keys only; skipped keys keep their walk position. Blocks
+// follow entrywalk.Canonical order. change_index is per-TRANSACTION and stable across re-ingest (idempotent RMT write); an unmarshalable
+// change is skipped, counted, never fatal.
 func extractLedgerEntryChanges(ext *LedgerExtract, txs []ingest.LedgerTransaction, evicted []xdr.LedgerKey, seq uint32, closeTime time.Time) {
 	var entryChangeSeq uint32
 	// change_index is per-transaction, so it must survive the gap between the two
@@ -91,10 +79,9 @@ func extractLedgerEntryChanges(ext *LedgerExtract, txs []ingest.LedgerTransactio
 	emitEvictions(ext, evicted, seq, closeTime, entryChangeSeq)
 }
 
-// emitEvictions appends one `removed` row per evicted key: empty tx_hash, op_index -1,
-// change_index counting within the group. A persistent entry or contract code moves to the hot
-// archive and stays restorable, so its last live row stays current. Every key takes its walk
-// position, written or not, matching the dispatcher.
+// emitEvictions appends one `removed` row per evicted key: empty tx_hash, op_index -1, change_index counting within the group. A
+// persistent entry or contract code moves to the hot archive and stays restorable, so its last live row stays current. Every key takes its
+// walk position, written or not.
 func emitEvictions(ext *LedgerExtract, evicted []xdr.LedgerKey, seq uint32, closeTime time.Time, intraSeq uint32) {
 	var changeIdx uint32
 	for i := range evicted {
@@ -134,9 +121,8 @@ func emitChangeSet(changes []xdr.LedgerEntryChange, opIdx int, emit func(int, xd
 	}
 }
 
-// entryChangeRow builds one LedgerEntryChangeRow from an xdr.LedgerEntryChange; ok=false when
-// it can't be marshalled. A P23 `restored` change is a post-image: dropping it leaves a
-// restored entry's TTL row at its lapsed value and the liveness filter serves it as archived.
+// entryChangeRow builds one LedgerEntryChangeRow; ok=false when it can't be marshalled. A P23 `restored` change is a post-image: dropping
+// it leaves a restored entry's TTL row at its lapsed value and the liveness filter serves it as archived.
 func entryChangeRow(seq uint32, closeTime time.Time, txHash string, opIndex int32, changeIdx uint32, c xdr.LedgerEntryChange) (LedgerEntryChangeRow, bool) {
 	row := LedgerEntryChangeRow{
 		LedgerSeq:   seq,
@@ -187,15 +173,10 @@ func entryChangeRow(seq uint32, closeTime time.Time, txHash string, opIndex int3
 	return row, true
 }
 
-// ownerAndAsset extracts the owner account (G-strkey) and asset ("CODE-ISSUER" / "native" /
-// "pool:<hex>") from a ledger key. Both empty for entry types with no single owner (claimable
-// balances, pools, contract data/code, ttl, config); asset is empty for all but trustlines.
-//
-// The empty asset on other holding types is structural: the key does not name the asset (a
-// claimable balance's key is a hash, a pool holds two assets, a SAC Balance entry names only its
-// contract, derivable only forward via canonical.Asset.SacContractID). Any per-asset supply summed
-// off this column is a trustline-only LOWER BOUND; the lake-flows total over the SAC contract
-// (stellar.supply_flows) sees all four domains. See ClassicCirculatingSupply.
+// ownerAndAsset extracts the owner account (G-strkey) and asset ("CODE-ISSUER" / "native" / "pool:<hex>") from a ledger key; both empty for
+// entry types with no single owner. Asset is empty for all but trustlines because other keys do not name it (claimable balance key is a
+// hash, a pool holds two assets, a SAC Balance names only its contract), so per-asset supply summed off this column is a trustline-only
+// LOWER BOUND; stellar.supply_flows sees all four domains. See ClassicCirculatingSupply.
 func ownerAndAsset(key xdr.LedgerKey) (accountID, asset string) {
 	switch key.Type {
 	case xdr.LedgerEntryTypeAccount:

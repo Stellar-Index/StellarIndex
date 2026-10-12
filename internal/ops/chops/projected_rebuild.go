@@ -32,17 +32,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/wasmaudit"
 )
 
-// projectedRebuild is the bulk catch-up path for projected (Soroban-derived) sources.
-//
-// projector-replay is capped by the live projector's tick cadence and has no parallelism; this
-// adds workers at 10-20x the rate. Use replay under ~1M ledgers, this above
-// (docs/operations/runbooks/projector.md#stellarindex_projector_replay_stalled).
-//
-// Rows are IDENTICAL to the live projector's (same decoder registry, same pipeline.HandleEvent
-// sink) and ON CONFLICT DO NOTHING makes the two writers idempotent against each other.
-// ONE WRITER: it never touches the live projector's cursor and refuses to run while that cursor
-// is inside [-from,-to] (checkLiveCursorGuard) unless -allow-live-overlap, which stays row-safe
-// but races two writers over one range. Per-window ingestion_cursors checkpoints make -resume exact.
+// projectedRebuild is the bulk catch-up path for projected sources: 10-20x projector-replay's rate; use replay under ~1M ledgers, this
+// above (docs/operations/runbooks/projector.md#stellarindex_projector_replay_stalled). ONE WRITER: rows are identical to the live
+// projector's and ON CONFLICT DO NOTHING keeps both idempotent, but it refuses a range the live cursor is inside (checkLiveCursorGuard)
+// unless -allow-live-overlap. Per-window checkpoints make -resume exact.
 func projectedRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear: parse+validate, build the live decoder, the live-cursor guard, run, report — splitting scatters the guard rationale away from its call site.
 	fs, gate := opsutil.NewMutatingFlagSet("projected-rebuild")
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")
@@ -218,14 +211,12 @@ type sep41RollupResetter interface {
 	ResetSEP41SupplyRollupFold(ctx context.Context, contractIDs []string) (int64, error)
 }
 
-// sep41RollupResetTimeout bounds the post-run reset, which runs on a context
-// detached from SIGINT so an interrupted run still resets what it wrote. It
-// re-folds every watched contract's history, so it is sized for cold folds.
+// sep41RollupResetTimeout bounds the post-run reset, on a context detached from SIGINT so an interrupted run still
+// resets what it wrote; it re-folds every watched contract's history, so it is sized for cold folds.
 const sep41RollupResetTimeout = 10 * time.Minute
 
-// resetSEP41RollupAfterRebuild fully resets the sep41_supply_rollup fold after a -write rebuild
-// of sep41_supply. Rewritten history sits at or below the checkpoint and the worker folds only
-// `ledger > last_ledger`, so without it the rows never reach served supply.
+// resetSEP41RollupAfterRebuild fully resets the sep41_supply_rollup fold after a -write rebuild of sep41_supply:
+// rewritten history sits at or below the checkpoint and the worker folds only `ledger > last_ledger`.
 func resetSEP41RollupAfterRebuild(ctx context.Context, w io.Writer, store sep41RollupResetter, source string, write bool) error {
 	if source != sep41supply.SourceName {
 		return nil
@@ -244,9 +235,8 @@ func resetSEP41RollupAfterRebuild(ctx context.Context, w io.Writer, store sep41R
 	return nil
 }
 
-// finishProjectedRebuild records the verdict on the job heartbeat too, since under
-// run-heavy-job.sh nobody reads the exit code and stellarindex_ops_job_run_failed alerts on
-// stellarindex_ops_job_last_exit_ok == 0. An interrupted run exits 0 but is not recorded as clean.
+// finishProjectedRebuild records the verdict on the job heartbeat too: under run-heavy-job.sh nobody reads the exit code
+// and stellarindex_ops_job_run_failed alerts on stellarindex_ops_job_last_exit_ok == 0. An interrupted run is not recorded clean.
 func finishProjectedRebuild(hb *opsutil.JobHeartbeat, r ProjectedRebuildResult, runErr error, interrupted bool) error {
 	err := projectedRebuildOutcome(r, runErr, interrupted)
 	hb.Stop(err == nil && runErr == nil)
@@ -257,9 +247,8 @@ func finishProjectedRebuild(hb *opsutil.JobHeartbeat, r ProjectedRebuildResult, 
 // error but did not land every row.
 var errProjectedRebuildIncomplete = errors.New("projected-rebuild: run did not land every row")
 
-// projectedRebuildOutcome maps a finished run to the command's exit status.
-// The loss report goes to stdout, but a caller that reads only the exit code
-// (a script, a `&&` chain) must not see success for a run that lost rows.
+// projectedRebuildOutcome maps a finished run to the exit status: a caller reading only the exit code must not see
+// success for a run that lost rows.
 func projectedRebuildOutcome(r ProjectedRebuildResult, runErr error, interrupted bool) error {
 	if runErr != nil {
 		if interrupted {
@@ -279,24 +268,20 @@ func projectedRebuildOutcome(r ProjectedRebuildResult, runErr error, interrupted
 }
 
 const (
-	// projectedRebuildCursorSource is the ingestion_cursors "source"
-	// column value for this tool's own per-window checkpoints — distinct
-	// from "projector" (the live tail's cursor, never touched here).
+	// projectedRebuildCursorSource is the ingestion_cursors "source" for this tool's per-window checkpoints, distinct from
+	// "projector" (the live tail's cursor, never touched here).
 	projectedRebuildCursorSource = "projected-rebuild"
 
-	// projectedRebuildDefaultWindow: this tool streams and never buffers a window, so the size
-	// sets only checkpoint and scheduling granularity. Smaller windows give more resume points
-	// and spread better across workers when density is uneven.
+	// projectedRebuildDefaultWindow: the tool streams and never buffers a window, so size sets only checkpoint and
+	// scheduling granularity; smaller windows give more resume points and spread better when density is uneven.
 	projectedRebuildDefaultWindow = 50_000
 
 	// projectedRebuildDefaultWorkers / Max: see RunProjectedRebuild's
 	// PG-pool-sizing doc note.
 	projectedRebuildDefaultWorkers = 3
 
-	// Each worker holds two ClickHouse queries at once (the event stream and
-	// the nested tx_index lookup); the ops_batch profile admits 8 per user
-	// (clickhouse_ops_batch_max_concurrent_queries), and one slot stays free
-	// so a stray read cannot trip code 202.
+	// Each worker holds two ClickHouse queries (event stream + nested tx_index lookup); the ops_batch profile admits 8 per user
+	// (clickhouse_ops_batch_max_concurrent_queries) and one slot stays free so a stray read cannot trip code 202.
 	projectedRebuildQueriesPerWorker = 2
 	projectedRebuildQueryBudget      = 8
 	projectedRebuildMaxWorkers       = (projectedRebuildQueryBudget - 1) / projectedRebuildQueriesPerWorker
@@ -311,13 +296,9 @@ func gateProjectedRebuild(ctx context.Context, cfg config.Config, store *timesca
 	return wasmaudit.GateReplay(ctx, cfg.Storage.ClickHouseAddr, cfg.Oracle, store.LoadProtocolContracts, []string{source}, from, to)
 }
 
-// checkProjectedRebuildBackfillSafe refuses a source whose decoder was not audited against every
-// WASM generation in its history, the hazard backfill and ch-rebuild -write also refuse.
-// [external.ReplayBackfillSafe] resolves the names; an unregistered one is refused.
-//
-// Armed in dry-run too, unlike ch-rebuild: the dry run previews the -write run, and a multi-hour
-// preview of a refused run is a plan nobody can execute. No override flag: the way through is the
-// audit plus the registry flip.
+// checkProjectedRebuildBackfillSafe refuses a source whose decoder was not audited against every WASM generation in its history
+// ([external.ReplayBackfillSafe]; unregistered is refused). Armed in dry-run too, unlike ch-rebuild: a multi-hour preview of a refused run
+// is a plan nobody can execute. No override.
 func checkProjectedRebuildBackfillSafe(source string, from uint32) error {
 	if external.ReplayBackfillSafe(source) {
 		return nil
@@ -340,12 +321,9 @@ func liveCursorCovers(haveLive bool, liveLastLedger, to uint32) bool {
 	return haveLive && liveLastLedger >= to
 }
 
-// checkLiveCursorGuard is the one-writer contract as a pure function. It errors unless the live
-// cursor for the source is at or above `to`, so the bulk job only fills history behind the live
-// tail. allowOverlap is the operator's explicit override.
-//
-// haveLive=false (the projector has never run for this source) is treated as "cursor at 0" and
-// refused by default, since a never-run projector WILL eventually walk this range.
+// checkLiveCursorGuard is the one-writer contract as a pure function: errors unless the live cursor is at or above `to`; allowOverlap
+// overrides. haveLive=false (projector never ran for this source) counts as cursor 0 and is refused, since it WILL eventually walk this
+// range.
 func checkLiveCursorGuard(haveLive bool, liveLastLedger, to uint32, allowOverlap bool) error {
 	if allowOverlap {
 		return nil
@@ -400,13 +378,9 @@ type ProjectedRebuildOptions struct {
 	Heartbeat *opsutil.JobHeartbeat
 }
 
-// applyProjectedEvent decodes one lake event and writes its outputs, returning how many rows it
-// emitted and how many failed to insert. A non-zero failure count is inserts a re-run can still
-// land, so the caller must not checkpoint the window (see [checkpointWindow]).
-//
-// A *[pipeline.TradeDroppedError] is counted separately and does not hold the window, since it
-// fails identically on re-run and the live projector skips it too. A failed output never stops the
-// loop; the row's other outputs still reach the sink.
+// applyProjectedEvent decodes one lake event and writes its outputs, returning rows emitted and insert failures; failures a re-run can land
+// mean the caller must not checkpoint ([checkpointWindow]). A *[pipeline.TradeDroppedError] is counted apart and does not hold the window
+// (fails identically on re-run).
 func applyProjectedEvent(
 	ctx context.Context,
 	opts ProjectedRebuildOptions,
@@ -458,13 +432,9 @@ func writeProjectedOutputs(
 	return emitted, insertErrs
 }
 
-// checkpointWindow records a completed window, or deliberately does not when rows were lost inside
-// it: -resume skips checkpointed windows, so checkpointing anyway would lose the row for good,
-// while an unset cursor makes the next resumed run redo the window idempotently.
-//
-// insertErrs excludes permanently rejected trades: what remains is a failed non-trade insert or a
-// retry abandoned on cancellation. Re-running is the only unattended recovery, as completeness
-// registers only `trades` for some sources (aquarius) and cannot see other rows.
+// checkpointWindow records a completed window, or deliberately not when rows were lost: -resume skips checkpointed windows, so
+// checkpointing would lose the row for good. insertErrs excludes rejected trades; re-running is the only unattended recovery (completeness
+// registers only `trades` for some sources).
 func checkpointWindow(
 	ctx context.Context,
 	opts ProjectedRebuildOptions,
@@ -624,9 +594,8 @@ func capProjectedRebuildWorkers(n int) int {
 	return max(1, min(n, projectedRebuildMaxWorkers))
 }
 
-// selectProjectedSource returns the registry entry named by -source.
-// BuildRegistry always appends the sep41 sources when contracts are watched,
-// so a non-projected name must not fall through to whatever entry is first.
+// selectProjectedSource returns the registry entry named by -source; BuildRegistry always appends the sep41 sources
+// when contracts are watched, so a non-projected name must not fall through to the first entry.
 func selectProjectedSource(registry projector.Registry, name string) (projector.Source, error) {
 	want := strings.TrimSpace(name)
 	for _, s := range registry.Sources {
@@ -652,10 +621,8 @@ func collectEvictedOrphans(src projector.Source, logger *slog.Logger) int64 {
 	return n
 }
 
-// projectedRebuildCounters holds the atomic progress counters
-// RunProjectedRebuild's worker pool and progress-log goroutine share.
-// Bundled into one type so both call sites take a single parameter
-// instead of five separate atomic pointers.
+// projectedRebuildCounters bundles the atomic progress counters shared by RunProjectedRebuild's worker pool and
+// progress-log goroutine.
 type projectedRebuildCounters struct {
 	windowsDone      atomic.Int64
 	completedLedgers atomic.Int64
@@ -684,10 +651,8 @@ func (c *projectedRebuildCounters) addKind(k string) {
 	c.kindMu.Unlock()
 }
 
-// runProjectedRebuildWorker claims pending windows off sched, streams each from the lake through
-// opts.Source's decoder and, under -write, sinks events via pipeline.HandleEvent and checkpoints
-// the window. It returns the first fatal stream error; a decode error is a soft-fail (see
-// decodeProjectedEvent).
+// runProjectedRebuildWorker claims windows off sched, streams each through opts.Source's decoder and, under -write, sinks via
+// pipeline.HandleEvent and checkpoints. It returns the first fatal stream error; a decode error is a soft-fail (decodeProjectedEvent).
 func runProjectedRebuildWorker(ctx context.Context, sched *windowScheduler, opts ProjectedRebuildOptions, logger *slog.Logger, counters *projectedRebuildCounters) error {
 	for {
 		w, ok := sched.claim()
@@ -720,10 +685,8 @@ func runProjectedRebuildWorker(ctx context.Context, sched *windowScheduler, opts
 	}
 }
 
-// runProjectedRebuildProgressLoop prints one progress line every interval
-// (default projectedRebuildProgressInterval) until progressCtx is done.
-// Extracted so RunProjectedRebuild's main body stays about the run
-// control-flow, not log formatting.
+// runProjectedRebuildProgressLoop prints one progress line per interval (default projectedRebuildProgressInterval)
+// until progressCtx is done.
 func runProjectedRebuildProgressLoop(
 	progressCtx context.Context, logger *slog.Logger, sourceName string, interval time.Duration,
 	start time.Time, totalWindows int, pendingLedgers int64,
@@ -761,9 +724,8 @@ func runProjectedRebuildProgressLoop(
 	}
 }
 
-// buildWindowPlan divides [from,to] into contiguous, non-overlapping windows of at most `window`
-// ledgers, returned up front because dynamic scheduling needs the full set. It is nil for an empty
-// or invalid range.
+// buildWindowPlan divides [from,to] into contiguous, non-overlapping windows of at most `window` ledgers, up front
+// since dynamic scheduling needs the full set; nil for an empty or invalid range.
 func buildWindowPlan(from, to, window uint32) []opsutil.RangeChunk {
 	if to < from || window == 0 {
 		return nil
@@ -783,17 +745,14 @@ func buildWindowPlan(from, to, window uint32) []opsutil.RangeChunk {
 	return out
 }
 
-// windowCursorSub is the per-window ingestion_cursors sub_source key "<source>:<wlo>-<whi>". It is
-// independent of -from/-to, so a changed -window leaves old checkpoints unmatched, which is safe
-// because ON CONFLICT DO NOTHING absorbs reprocessing.
+// windowCursorSub is the per-window ingestion_cursors sub_source key "<source>:<wlo>-<whi>", independent of -from/-to:
+// a changed -window leaves old checkpoints unmatched, safe because ON CONFLICT DO NOTHING absorbs reprocessing.
 func windowCursorSub(name string, w opsutil.RangeChunk) string {
 	return fmt.Sprintf("%s:%d-%d", name, w.From, w.To)
 }
 
-// loadDoneWindows returns this source's already-checkpointed window
-// sub_source keys mapped to their recorded last_ledger, reading
-// ingestion_cursors ONCE (source=projected-rebuild) rather than one query
-// per planned window — cheap even for a plan with hundreds of windows.
+// loadDoneWindows returns this source's checkpointed window sub_source keys mapped to last_ledger, reading
+// ingestion_cursors (source=projected-rebuild) ONCE rather than one query per planned window.
 func loadDoneWindows(ctx context.Context, store *timescale.Store, name string) (map[string]uint32, error) {
 	all, err := store.ListCursors(ctx)
 	if err != nil {
@@ -837,10 +796,8 @@ func newWindowScheduler(windows []opsutil.RangeChunk) *windowScheduler {
 	return &windowScheduler{windows: windows}
 }
 
-// claim atomically reserves the next unclaimed window. Safe for
-// concurrent use by any number of goroutines; each index 0..len-1 is
-// returned to exactly one caller, and callers see ok=false once every
-// window has been claimed.
+// claim atomically reserves the next unclaimed window; safe for concurrent use, each window goes to exactly one
+// caller, and ok=false once all are claimed.
 func (s *windowScheduler) claim() (opsutil.RangeChunk, bool) {
 	i := s.next.Add(1) - 1
 	if i < 0 || int(i) >= len(s.windows) {
@@ -849,9 +806,9 @@ func (s *windowScheduler) claim() (opsutil.RangeChunk, bool) {
 	return s.windows[i], true
 }
 
-// decodeProjectedEvent runs one lake event through src's decoder via [dispatcher.DecodeRow], with
-// the same Matches/Decode/panic-recover discipline as the live projector. A decode error or panic
-// is a soft-fail the caller counts and does not propagate, as a malformed row re-fails identically.
+// decodeProjectedEvent runs one lake event through src's decoder via [dispatcher.DecodeRow] with the live projector's
+// Matches/Decode/panic-recover discipline. A decode error or panic is a soft-fail the caller counts, as a malformed row re-fails
+// identically.
 func decodeProjectedEvent(name string, dec dispatcher.Decoder, ev events.Event, logger *slog.Logger) (outs []consumer.Event, softFail bool) {
 	o, matched, derr := dispatcher.DecodeRow(name, dec, ev, logger)
 	if !matched {
@@ -870,12 +827,9 @@ func writeModeLabel(write bool) string {
 	return "DRY-RUN (count only)"
 }
 
-// projectedRebuildLossLines renders the summary's loss report: the two ways a -write run can finish
-// without landing every row, kept apart because the operator's next step is OPPOSITE for each.
-//
-//   - Held windows: a re-run retries them, so say so as an instruction. Do not point at
-//     compute-completeness, which cannot see non-trade tables (aquarius registers only `trades`).
-//   - Permanent drops: a re-run cannot land them and their windows are checkpointed.
+// projectedRebuildLossLines renders the two ways a -write run can finish without landing every row, kept apart because the operator's next
+// step is OPPOSITE: held windows (a re-run retries; compute-completeness cannot see non-trade tables) vs permanent drops (a re-run cannot
+// land them; windows are checkpointed).
 func projectedRebuildLossLines(r ProjectedRebuildResult) []string {
 	var lines []string
 	if r.WindowsHeld > 0 {

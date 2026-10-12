@@ -17,8 +17,7 @@ type oracleRederiveSweeper interface {
 	SweepOracleRederive(ctx context.Context, sw timescale.OracleRederiveSweep) (timescale.OracleRederiveSweepResult, error)
 }
 
-// oracleRederiveSweepScope reports whether a re-derived source writes
-// on-chain oracle_updates rows, and whether its identity needs (asset,
+// oracleRederiveSweepScope reports whether a re-derived source writes on-chain oracle_updates rows and whether its identity needs (asset,
 // quote): band's op_index is shared by nested relays in one op.
 func oracleRederiveSweepScope(source string) (sweep, assetScoped bool) {
 	switch source {
@@ -30,10 +29,8 @@ func oracleRederiveSweepScope(source string) (sweep, assetScoped bool) {
 	return false, false
 }
 
-// sweepOracleRederive runs the end-of-run stale-row sweep for one source a
-// completed re-derive wrote at generation gen over [from, to]. Only the
-// re-derive commands that stamp their own generation call it: a dry run
-// counts against any newer generation and deletes nothing.
+// sweepOracleRederive runs the end-of-run stale-row sweep for a source re-derived at generation gen over [from, to]; only commands that
+// stamp their own generation call it (a dry run counts against any newer generation and deletes nothing).
 func sweepOracleRederive(ctx context.Context, w io.Writer, store oracleRederiveSweeper, cmd, source string, from, to uint32, gen int64, write bool) error {
 	sweep, assetScoped := oracleRederiveSweepScope(source)
 	if !sweep {
@@ -57,9 +54,7 @@ func sweepOracleRederive(ctx context.Context, w io.Writer, store oracleRederiveS
 	return nil
 }
 
-// sweepCHRebuildOracle sweeps each oracle source ch-rebuild's contract-call
-// pass re-derived. A source with a failed write is skipped: the run did not
-// complete it.
+// sweepCHRebuildOracle sweeps each oracle source ch-rebuild re-derived; a source with a failed write is skipped as not completed.
 func sweepCHRebuildOracle(ctx context.Context, w io.Writer, store oracleRederiveSweeper, cat []reconSource, enabled func(string) bool, contractCalls bool, failed map[string]int, lo, hi uint32, gen int64, write bool) error {
 	if !contractCalls {
 		return nil

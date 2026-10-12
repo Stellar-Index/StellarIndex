@@ -19,17 +19,15 @@ import (
 // reported and left as is, never blanked or replaced by a second-choice estimate, and
 // token/token pairs with no trustworthy leg stay out.
 
-// xlmQuoteRestampStore is the slice of [timescale.Store] the XLM-quote
-// mirror walks through. A seam rather than the concrete store so the walk
-// can be driven against a scripted double; production passes the store.
+// xlmQuoteRestampStore is the slice of [timescale.Store] the XLM-quote mirror walks through, a seam so the walk can run against a scripted
+// double.
 type xlmQuoteRestampStore interface {
 	PlanXLMQuoteUSDVolumeRestamp(ctx context.Context, p timescale.RestampScanParams) (*timescale.RestampPlan, error)
 	ApplyUSDVolumeRestampPlan(ctx context.Context, plan *timescale.RestampPlan, generation int64, batch int) (int64, error)
 }
 
-// cexFiatRestampStore is the same for the fiat-quote re-derive. Its
-// planner takes the as-of tolerance, the one input the shared walk knows
-// nothing about.
+// cexFiatRestampStore is the same for the fiat-quote re-derive; its planner takes the as-of tolerance, which the shared walk knows nothing
+// about.
 type cexFiatRestampStore interface {
 	PlanCEXFiatUSDVolumeRestamp(ctx context.Context, p timescale.RestampScanParams, maxStaleness time.Duration) (*timescale.RestampPlan, error)
 	ApplyUSDVolumeRestampPlan(ctx context.Context, plan *timescale.RestampPlan, generation int64, batch int) (int64, error)

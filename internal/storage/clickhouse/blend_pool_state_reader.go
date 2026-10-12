@@ -20,17 +20,11 @@ type BlendReserveState struct {
 	Metrics       blend.ReserveMetrics
 }
 
-// blendReserveStateQuery is a batched PK-prefix probe of ledger_entries_current's
-// (entry_type, key_xdr) sort key, like the sibling pool-state readers. Do not fold the latest
-// entry per key out of ledger_entry_changes: a ResData entry is rewritten on nearly every pool
-// interaction, so scan cost scales with pool activity.
-// FINAL resolves versions: version = (ledger_seq << 32) | intra_ledger_seq, so the last change
-// in intra-ledger order wins. A 'removed' change carries only its key, so a winning row with
-// empty entry_xdr is a removal; that filter must run AFTER the collapse (before it, an older
-// same-ledger update resurrects a deleted key), hence optimize_move_to_prewhere_if_final = 0.
-// Rows stamped before intra_ledger_seq existed tie arbitrarily until re-derived. Staleness of
-// quiet reserves is bounded by [dropArchivedBlendReserves]. The thread and memory pins are guard
-// rails (see ttlLivenessBatchQuery).
+// blendReserveStateQuery is a batched PK-prefix probe of ledger_entries_current's (entry_type, key_xdr) key; do not fold the latest entry
+// out of ledger_entry_changes (ResData is rewritten on nearly every pool interaction). FINAL resolves versions ((ledger_seq << 32) |
+// intra_ledger_seq); a winning row with empty entry_xdr is a 'removed' change, filtered AFTER the collapse (else an older same-ledger
+// update resurrects it), hence optimize_move_to_prewhere_if_final = 0. Pre-intra_ledger_seq rows tie until re-derived. Quiet-reserve
+// staleness is bounded by [dropArchivedBlendReserves]; thread/memory pins: see ttlLivenessBatchQuery.
 const blendReserveStateQuery = `SELECT key_xdr, entry_xdr
 	FROM stellar.ledger_entries_current FINAL
 	WHERE entry_type = 'contract_data' AND key_xdr IN (?) AND entry_xdr != ''
@@ -72,10 +66,8 @@ func (r *ExplorerReader) BlendPoolReserves(ctx context.Context, pool string, ver
 	return assembleBlendReserveStates(pool, assets, dataByAsset, configs, bstop), nil
 }
 
-// assembleBlendReserveStates builds states in the caller's asset order. Without the
-// config: config-free metrics and placeholder decimals 7 (DecimalsFound=false). APR
-// also needs the backstop rate: a nil bstop withholds it (HasAPR=false) rather than
-// serving the gross rate as the supply APR.
+// assembleBlendReserveStates builds states in the caller's asset order. Without the config: config-free metrics and placeholder decimals 7
+// (DecimalsFound=false). A nil bstop withholds APR (HasAPR=false) rather than serving the gross rate as the supply APR.
 func assembleBlendReserveStates(
 	pool string, assets []string,
 	dataByAsset map[string]*blend.ReserveData,
@@ -142,9 +134,8 @@ func blendReserveKeys(poolID xdr.ContractId, assets []string) ([]string, map[str
 	return keys, refByKey
 }
 
-// scanBlendReserveParts decodes rows into per-asset ResData and the backstop rate, and
-// reports the keys that produced a row (matched). The TTL filter is scoped to matched:
-// judging keys the lake never returned could over-drop reserves we would have served.
+// scanBlendReserveParts decodes rows into per-asset ResData and the backstop rate, and reports the keys that produced a row (matched). The
+// TTL filter is scoped to matched: judging keys the lake never returned could over-drop reserves we would have served.
 func scanBlendReserveParts(rows interface {
 	Next() bool
 	Scan(...any) error
@@ -185,11 +176,9 @@ func scanBlendReserveParts(rows interface {
 	return dataByAsset, bstop, matched, nil
 }
 
-// dropArchivedBlendReserves removes reserve state whose entry is TTL-archived. Soroban evicts an
-// entry once its TTL lapses but ledger_entries_current keeps its last value, so an archived
-// reserve would be priced into tvl_usd as phantom liquidity. FAIL-OPEN: only a positively lapsed
-// liveUntilLedgerSeq drops anything; TTLUnknown KEEPS the reserve. An archived pool INSTANCE drops
-// every reserve under it.
+// dropArchivedBlendReserves removes reserve state whose entry is TTL-archived: ledger_entries_current keeps the last value after Soroban
+// evicts, which would price phantom liquidity into tvl_usd. FAIL-OPEN: only a positively lapsed liveUntilLedgerSeq drops; TTLUnknown KEEPS
+// the reserve. An archived pool INSTANCE drops every reserve under it.
 func dropArchivedBlendReserves(
 	ctx context.Context,
 	verdicts *ttlLivenessCache,
@@ -232,9 +221,8 @@ func contractDataValue(b64 string) (xdr.ScVal, bool) {
 	return cd.Val, true
 }
 
-// backstopRateFromInstance pulls PoolConfig.bstop_rate (7 decimals) from the instance
-// storage map. ok=false on a missing Config: 0 is a legal rate, so a miss must not
-// read as 0 (that serves the gross rate as supply APR).
+// backstopRateFromInstance pulls PoolConfig.bstop_rate (7 decimals) from the instance storage map. ok=false on a missing Config: 0 is a
+// legal rate, so a miss must not read as 0 (that serves the gross rate as supply APR).
 func backstopRateFromInstance(val xdr.ScVal) (rate uint32, ok bool) {
 	inst, isInst := val.GetInstance()
 	if !isInst || inst.Storage == nil {

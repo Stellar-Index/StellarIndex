@@ -10,10 +10,8 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// tradeOpTypes is the set of operation types that can emit ClaimAtoms (classic SDEX trades), as
-// stored in stellar.operations.op_type. Mirrors internal/sources/sdex.matchesTradeOp. It
-// prefilters the lake scan to trade-bearing ops. They are compile-time constants, so inlining
-// them into the IN list is injection-safe and avoids driver-specific slice binding for IN (?).
+// tradeOpTypes are the op types (stellar.operations.op_type) that can emit ClaimAtoms, mirroring internal/sources/sdex.matchesTradeOp;
+// they prefilter the lake scan. Compile-time constants, so inlining them into the IN list is injection-safe.
 var tradeOpTypes = []string{
 	"OperationTypeManageSellOffer",
 	"OperationTypeManageBuyOffer",
@@ -60,19 +58,13 @@ func StreamSDEXOps(ctx context.Context, addr string, from, to uint32, fn func(SD
 	return streamSDEXOpRows(rows, fn)
 }
 
-// sdexOpsQuery is StreamSDEXOps' SQL, built here so its text stays independently assertable
-// (StreamSDEXOps dials its own connection, so stubConn cannot drive it).
-// The successful-tx restriction is a grace_hash INNER JOIN over a derived table, not an
-// IN-subquery: IN materialises the tx-hash set first and blew the query budget on a dense
-// window, while grace_hash keeps join memory bounded. GROUP BY tx_hash gives the derived table
-// SET semantics so un-merged duplicates cannot fan one op row out into two (NO FINAL).
-// The join is spelled BEFORE the outer WHERE, as in contractCallOpsQuery; that placement is
-// load-bearing: wrapping the outer ledger window in a derived table stops ClickHouse
-// propagating it through o.ledger_seq = r.ledger_seq, and stellar.operation_results loses
-// primary-key pruning entirely.
-// The FOUR bind parameters are, in order: the derived table's from + to (written FIRST), then the
-// outer window's from + to. Reordering without moving the argument list is a silent wrong-window
-// read; pinned by test. The op-type filter is INTERPOLATED, not bound: see tradeOpTypeInList.
+// sdexOpsQuery is StreamSDEXOps' SQL, built here so its text stays assertable. The successful-tx restriction is a grace_hash INNER JOIN
+// over a derived table, not an IN-subquery (IN blew the budget on a dense window); GROUP BY tx_hash gives the derived table SET semantics
+// so un-merged duplicates cannot fan one op row out into two (NO FINAL). The join is spelled BEFORE the outer WHERE, as in
+// contractCallOpsQuery: wrapping the outer ledger window in a derived table stops ClickHouse propagating it through o.ledger_seq =
+// r.ledger_seq and operation_results loses PK pruning. The FOUR bind parameters are, in order: the derived table's from + to, then the
+// outer window's from + to; reordering without moving the argument list is a silent wrong-window read (pinned by test). The op-type
+// filter is INTERPOLATED, not bound: see tradeOpTypeInList.
 func sdexOpsQuery() string {
 	return fmt.Sprintf(`
 		SELECT o.ledger_seq, o.close_time, o.tx_hash, o.op_index, o.source_account,
@@ -91,10 +83,8 @@ func sdexOpsQuery() string {
 		SETTINGS join_algorithm = 'grace_hash', grace_hash_join_initial_buckets = 32`, tradeOpTypeInList())
 }
 
-// streamSDEXOpRows decodes an open sdexOpsQuery result set and invokes fn once per row, in the
-// order ClickHouse returned them; split out so it is drivable against a stub driver.Rows.
-// fn's error aborts the stream and is returned VERBATIM: callers use a sentinel from fn as a
-// stop signal, so it must not be wrapped.
+// streamSDEXOpRows decodes an open sdexOpsQuery result set and invokes fn once per row; split out to be drivable against a stub
+// driver.Rows. fn's error aborts the stream and is returned VERBATIM (callers use a sentinel as a stop signal).
 func streamSDEXOpRows(rows driver.Rows, fn func(SDEXOp) error) error {
 	for rows.Next() {
 		var (

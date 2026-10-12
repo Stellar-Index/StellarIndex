@@ -15,19 +15,17 @@ const holdersRollupTopN = 500
 // holdersRollupTimeLayout is the ClickHouse DateTime literal format for the cycle stamp.
 const holdersRollupTimeLayout = "2006-01-02 15:04:05"
 
-// holdersRollupExchangeStatement is the multi-pair EXCHANGE TABLES swapping all five live
-// tables as one metadata transaction, so a crash cannot leave the board new and counts old.
-// Always the last statement; every staging arm must be filled first.
+// holdersRollupExchangeStatement is the multi-pair EXCHANGE TABLES swapping all five live tables as one metadata transaction, so a crash
+// cannot leave the board new and counts old. Always the last statement, after every staging arm is filled.
 const holdersRollupExchangeStatement = `EXCHANGE TABLES stellar.asset_holders_rollup_staging AND stellar.asset_holders_rollup,
                  stellar.asset_holders_counts_staging AND stellar.asset_holders_counts,
                  stellar.accounts_stats_staging AND stellar.accounts_stats,
                  stellar.accounts_wealth_histogram_staging AND stellar.accounts_wealth_histogram,
                  stellar.accounts_trustline_histogram_staging AND stellar.accounts_trustline_histogram`
 
-// holdersRollupStatements builds one recompute cycle: truncate staging, fill both arms
-// (trustline assets + native XLM), counts and accounts-analytics, then exchange. Every INSERT
-// stamps computed_at with cycleAt, not each table's `DEFAULT now()`, so all five tables share
-// one stamp; readers compare it across round trips to detect a swap landing mid-read.
+// holdersRollupStatements builds one recompute cycle: truncate staging, fill both arms, counts and accounts-analytics, then exchange.
+// Every INSERT stamps computed_at with cycleAt (not `DEFAULT now()`) so all five tables share one stamp; readers compare it to detect a
+// mid-read swap.
 func holdersRollupStatements(cycleAt time.Time) []string {
 	// Explicit 'UTC': a bare toDateTime(literal) uses the server timezone and would skew the
 	// age holdersRollupFresh gates on.
@@ -164,10 +162,9 @@ func accountsHistogramSteps(at string) []string {
 	}
 }
 
-// holdersRollupShrinkGuardMinRatio is the floor a staging arm's row count may fall to
-// relative to the live table before RunHoldersRollup refuses to publish. EXCHANGE only makes
-// the swap atomic; a FINAL scan can finish with far fewer rows and no error (mid-flight merge,
-// max_execution_time truncation). Holder counts move gradually, so a healthy cycle never trips it.
+// holdersRollupShrinkGuardMinRatio is the floor a staging arm's row count may fall to versus the live table before publishing is refused.
+// EXCHANGE only makes the swap atomic; a FINAL scan can finish with far fewer rows and no error (mid-flight merge, max_execution_time
+// truncation).
 const holdersRollupShrinkGuardMinRatio = 0.5
 
 // holdersRollupShrinkGuardTables pairs each staging arm the swap is about to
@@ -184,9 +181,8 @@ type holdersRollupConn interface {
 	QueryRow(ctx context.Context, query string, args ...any) driver.Row
 }
 
-// holdersRollupShrinkGuard aborts the cycle, leaving the previous one live, when a staging
-// arm shrank below holdersRollupShrinkGuardMinRatio of its live counterpart. A live count of
-// zero (first cycle) has nothing to compare and is skipped.
+// holdersRollupShrinkGuard aborts the cycle, leaving the previous one live, when a staging arm shrank below
+// holdersRollupShrinkGuardMinRatio of its live counterpart; a live count of zero (first cycle) is skipped.
 func holdersRollupShrinkGuard(ctx context.Context, conn holdersRollupConn) error {
 	for _, pair := range holdersRollupShrinkGuardTables {
 		if err := shrinkGuardCompare(ctx, conn, pair[0], pair[1]); err != nil {
@@ -226,9 +222,8 @@ func RunHoldersRollup(ctx context.Context, addr string, logf func(format string,
 	return runHoldersRollupSteps(ctx, conn, logf)
 }
 
-// runHoldersRollupSteps runs the fills, the shrink guard (after every arm is filled, before
-// the swap, so a broken cycle leaves the previous one live), the swap, then the daily
-// snapshot, on an open connection; split out so tests need no ClickHouse.
+// runHoldersRollupSteps runs the fills, the shrink guard (after all arms, before the swap, so a broken cycle leaves the previous one
+// live), the swap, then the daily snapshot; split out so tests need no ClickHouse.
 func runHoldersRollupSteps(ctx context.Context, conn holdersRollupConn, logf func(format string, args ...any)) error {
 	cycleAt := time.Now()
 	if err := runHoldersRollupSwap(ctx, conn, cycleAt, logf); err != nil {
@@ -257,16 +252,13 @@ func runHoldersRollupSwap(ctx context.Context, conn holdersRollupConn, cycleAt t
 	return nil
 }
 
-// holdersRollupMaxAge is the oldest cycle stamp holdersRollupBoard will serve: run + timer
-// OnUnitInactiveSec=30min + RandomizedDelaySec=2min + next run. Runs under ~44 min stay
-// inside it; slower ones (unit allows 80min) age the board out and readers fall back to scans.
+// holdersRollupMaxAge is the oldest cycle stamp holdersRollupBoard will serve: run + timer OnUnitInactiveSec=30min +
+// RandomizedDelaySec=2min + next run. Runs over ~44 min (unit allows 80min) age the board out and readers fall back to scans.
 const holdersRollupMaxAge = 2 * time.Hour
 
-// holdersRollupBoard is AssetHolders' precomputed fast path (keyed sub-millisecond reads).
-// ok=false when the rollup is unavailable or its stamp is older than holdersRollupMaxAge; the
-// caller falls back to per-request scans, an honest slow answer over a fast stale one. The board
-// and count tables are exchanged together but read in two round trips, so a swap between them
-// could pair different cycles; a computed_at mismatch retries once.
+// holdersRollupBoard is AssetHolders' precomputed fast path; ok=false when the rollup is unavailable or older than holdersRollupMaxAge,
+// and the caller falls back to scans (honest slow over fast stale). Board and count are read in two trips, so a swap between them could
+// pair different cycles; a computed_at mismatch retries once.
 func (r *ExplorerReader) holdersRollupBoard(ctx context.Context, asset string, limit int) ([]AssetHolder, int64, bool, error) {
 	if !r.probeSchema(ctx, &r.holdersRollupProbe,
 		`SELECT rank FROM stellar.asset_holders_rollup LIMIT 1`, true) {
@@ -289,9 +281,8 @@ func (r *ExplorerReader) holdersRollupBoard(ctx context.Context, asset string, l
 	return out, total, true, nil
 }
 
-// readHoldersRollupCycle reads the board, its count and each side's computed_at stamp, and
-// reports whether both landed in the same cycle (see holdersRollupBoard). The returned stamp
-// is the older one carrying a stamp; unstamped when the asset has no row in either table.
+// readHoldersRollupCycle reads the board, its count and each side's computed_at, and reports whether both landed in the same cycle. The
+// returned stamp is the older one carrying a stamp; unstamped when the asset has no row in either table.
 func (r *ExplorerReader) readHoldersRollupCycle(ctx context.Context, asset string, limit int) ([]AssetHolder, int64, time.Time, bool, error) {
 	out, boardAt, err := r.readHoldersRollupRows(ctx, asset, limit)
 	if err != nil {
@@ -308,16 +299,14 @@ func (r *ExplorerReader) readHoldersRollupCycle(ctx context.Context, asset strin
 	return out, total, at, boardAt.Equal(countAt), nil
 }
 
-// holdersRollupStamped reports whether a computed_at read carried a real
-// cycle stamp: an empty board scans to the zero time, an empty max() to the
-// Unix epoch.
+// holdersRollupStamped reports whether a computed_at read carried a real cycle stamp: an empty board scans to the zero time, an empty
+// max() to the Unix epoch.
 func holdersRollupStamped(at time.Time) bool {
 	return at.Unix() > 0
 }
 
-// holdersRollupFresh reports whether a board's cycle is young enough to serve. An asset in
-// neither table has no stamp, yet "no row" is only authoritative for a current cycle, so read
-// the live table's stamp, which every row of one cycle shares.
+// holdersRollupFresh reports whether a board's cycle is young enough to serve. "No row" is authoritative only for a current cycle, so an
+// asset in neither table is judged by the live table's stamp, which every row of one cycle shares.
 func (r *ExplorerReader) holdersRollupFresh(ctx context.Context, at time.Time) (bool, error) {
 	if !holdersRollupStamped(at) {
 		if err := r.conn.QueryRow(ctx, `

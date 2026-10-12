@@ -5,16 +5,10 @@ import (
 	"fmt"
 )
 
-// classicCirculatingSupplyQuery is the trustline GROUP BY behind
-// [ExplorerReader.ClassicCirculatingSupply].
-//
-// It carries explorerScanSettings because it is SCAN-SHAPED over ledger_entries_current; capping
-// max_threads at 4 bounds the memory footprint.
-//
-// max_execution_time is set explicitly: the Go client pins the connection default to 30s, BELOW
-// this query's runtime. 150s sits above the observed maximum and must stay inside the caller's
-// 3-minute detached-refresh budget (classicSupplyRefreshBudget), or the server would keep working
-// on a query nobody is waiting for.
+// classicCirculatingSupplyQuery is the trustline GROUP BY behind [ExplorerReader.ClassicCirculatingSupply]. It is SCAN-SHAPED over
+// ledger_entries_current, hence explorerScanSettings (max_threads 4 bounds memory). max_execution_time is explicit because the Go client
+// pins the default to 30s, below this query's runtime; 150s must stay inside classicSupplyRefreshBudget (3 min) or the server works for
+// nobody.
 const classicCirculatingSupplyQuery = `SELECT asset, toString(sum(toInt128(balance))) AS circ
 		FROM stellar.ledger_entries_current FINAL
 		WHERE entry_type = 'trustline' AND change_type != 'removed' AND balance > 0

@@ -20,12 +20,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// usdVolumeRestamp is the corrective write half of verify-usd-volume. -tier picks the repair:
-// exact (SQL identity), xlm-base and xlm-quote (re-derived in Go from prices_1m), or cex-fx (from
-// fx_quotes). Every tier is a dry run by default, refuses to run over the live ledgerstream cursor
-// (one writer) unless -allow-live-overlap, and is reversible through usd_volume_restamp_log. An
-// unpriceable row is left as is, never blanked or estimated. Token/token pairs are excluded
-// because their only rate is a counterparty-authored bridge.
+// usdVolumeRestamp is the corrective write half of verify-usd-volume; -tier picks the repair: exact (SQL identity), xlm-base/xlm-quote
+// (from prices_1m), cex-fx (fx_quotes). Dry run by default; refuses the live ledgerstream cursor (one writer) without -allow-live-overlap;
+// reversible via usd_volume_restamp_log; unpriceable rows are left as is.
 func usdVolumeRestamp(args []string) error { //nolint:gocognit,gocyclo,funlen // linear: parse, validate the tier's flag set, open+wire the store, run the live-overlap guard, dispatch — splitting scatters each guard away from the flag it guards.
 	fs := flag.NewFlagSet("usd-volume-restamp", flag.ContinueOnError)
 	cfgPath := fs.String("config", "/etc/stellarindex.toml", "path to stellarindex.toml (Postgres DSN + the operator's USD peg list)")
@@ -266,10 +263,8 @@ const (
 // them: the SQL identity first, then the three estimated re-derives.
 var restampTiers = []string{restampTierExact, restampTierXLMBase, restampTierXLMQuote, restampTierCEXFX}
 
-// restampTierIsEstimated reports whether a tier's value is a function of
-// a RATE at the row's timestamp rather than of the row alone. The three
-// estimated tiers share a run, a flag set and a chunk tier; the exact
-// tier shares none of them, which is what the flag rules below encode.
+// restampTierIsEstimated reports whether a tier's value depends on a RATE at the row's timestamp rather than the row alone; the three
+// estimated tiers share a run, flag set and chunk tier, the exact tier shares none of them (which the flag rules encode).
 func restampTierIsEstimated(tier string) bool {
 	return tier == restampTierXLMBase || tier == restampTierXLMQuote || tier == restampTierCEXFX
 }
@@ -278,9 +273,8 @@ func restampTierIsEstimated(tier string) bool {
 // UPDATE transaction may decompress out of a compressed chunk.
 const defaultRestampBatch = 2000
 
-// restampEstimatedOnlyFlags only mean something for an estimated tier. Passing one with
-// -tier exact is an error, not a silent no-op, because the operator would be misled on a money
-// column. The chunk flags are not listed since both tiers share the chunk walk.
+// restampEstimatedOnlyFlags only mean something for an estimated tier; with -tier exact they error rather than no-op, since the operator
+// would be misled on a money column. The chunk flags are not listed since both tiers share the chunk walk.
 var restampEstimatedOnlyFlags = []string{"report", "sample", "batch", "min-rel-delta", "max-generation", "chunk-batch"}
 
 // restampCEXFXOnlyFlags only mean something for -tier cex-fx; other tiers have no such tolerance.
@@ -312,9 +306,7 @@ func validateRestampChunkFlags(chunks bool, set map[string]bool) error {
 	return nil
 }
 
-// validateRestampTierFlags rejects an unknown -tier, an estimated-tier
-// flag passed alongside -tier exact, and a cex-fx flag passed with any
-// other tier.
+// validateRestampTierFlags rejects an unknown -tier, an estimated-tier flag with -tier exact, and a cex-fx flag with any other tier.
 func validateRestampTierFlags(tier string, set map[string]bool) error {
 	if tier != restampTierExact && !restampTierIsEstimated(tier) {
 		return fmt.Errorf("usd-volume-restamp: -tier %q: want one of %s", tier, strings.Join(quoteAll(restampTiers), ", "))
@@ -377,9 +369,8 @@ type prices1mRetentionReader interface {
 	Prices1mRetentionArmed(ctx context.Context) (bool, error)
 }
 
-// checkRestampPrices1mRetention refuses a run while migration 0156's prices_1m retention policy
-// is armed: estimated tiers read prices_1m, and the policy's next drop undoes the CAGG follow-up.
-// A dry exact-tier run touches neither and is allowed.
+// checkRestampPrices1mRetention refuses a run while migration 0156's prices_1m retention policy is armed: estimated tiers read prices_1m
+// and its next drop undoes the CAGG follow-up. A dry exact-tier run touches neither and is allowed.
 func checkRestampPrices1mRetention(ctx context.Context, s prices1mRetentionReader, tier string, write bool) error {
 	if !write && !restampTierIsEstimated(tier) {
 		return nil
@@ -397,9 +388,8 @@ func checkRestampPrices1mRetention(ctx context.Context, s prices1mRetentionReade
 		"force-refresh prices_1m over any range it already dropped, and re-run (tier %s, write=%v)", tier, write)
 }
 
-// restampLiveOverlapGuard resolves the window's top ledger and applies
-// [checkRestampLiveOverlap]. Applies to BOTH tiers: they write the same
-// column of the same table, so they carry the same one-writer hazard.
+// restampLiveOverlapGuard resolves the window's top ledger and applies [checkRestampLiveOverlap] to BOTH tiers: same column of the same
+// table, same one-writer hazard.
 func restampLiveOverlapGuard(ctx context.Context, store *timescale.Store, from, to time.Time, allowOverlap bool) error {
 	top, err := resolveWindowTopLedger(ctx, store, from, to)
 	if err != nil {
@@ -418,9 +408,8 @@ func restampLiveOverlapGuard(ctx context.Context, store *timescale.Store, from, 
 	return nil
 }
 
-// resolveRestampWindow parses the inclusive -from/-to day pair. It refuses an empty or reversed
-// pair (no whole-history default on a money writer) and any window reaching today, whose chunk
-// the live ingest is still valuing.
+// resolveRestampWindow parses the inclusive -from/-to day pair; it refuses an empty or reversed pair (no whole-history default on a money
+// writer) and any window reaching today, whose chunk the live ingest is still valuing.
 func resolveRestampWindow(fromFlag, toFlag string, now time.Time) (from, to time.Time, err error) {
 	if fromFlag == "" || toFlag == "" {
 		return from, to, fmt.Errorf("usd-volume-restamp: -from and -to are required (YYYY-MM-DD, inclusive UTC days)")
@@ -456,10 +445,9 @@ func restampSourceAllowList(csv string) map[string]bool {
 	return out
 }
 
-// validateRestampSourceAllowList refuses a -sources name outside the tier's registry. The
-// estimated tiers silently drop unregistered names, so a typo would scan nothing and exit 0
-// looking like a clean window (mirrors checkCHRebuildSources). The exact tier is not gated: it
-// filters groups found in the data, so a typo shows as an empty day.
+// validateRestampSourceAllowList refuses a -sources name outside the tier's registry: estimated tiers silently drop unregistered names, so
+// a typo would scan nothing and exit 0 (mirrors checkCHRebuildSources). The exact tier filters groups found in the data, so a typo shows as
+// an empty day.
 func validateRestampSourceAllowList(tier string, allow map[string]bool) error {
 	if len(allow) == 0 || !restampTierIsEstimated(tier) {
 		return nil
@@ -484,9 +472,8 @@ func validateRestampSourceAllowList(tier string, allow map[string]bool) error {
 		unknown, tier, strings.Join(known, ", "))
 }
 
-// restampTierSourceUniverse is the registry an estimated tier's
-// -sources allow-list is validated against: DEX names for the two XLM
-// anchor tiers, CEX names for the off-chain fiat tier.
+// restampTierSourceUniverse is the registry an estimated tier's -sources is validated against: DEX names for the XLM anchor tiers, CEX
+// names for cex-fx.
 func restampTierSourceUniverse(tier string) []string {
 	if tier == restampTierCEXFX {
 		return timescale.CEXSourceNames()
@@ -494,10 +481,8 @@ func restampTierSourceUniverse(tier string) []string {
 	return timescale.DEXSourceNames()
 }
 
-// exactRestampStore is the slice of [timescale.Store] the exact-tier walk
-// classifies, counts and writes through. A seam rather than the concrete
-// store so the chunk walk (usd_volume_restamp_chunks_exact.go) can be
-// driven against a scripted double; production passes the store itself.
+// exactRestampStore is the slice of [timescale.Store] the exact-tier walk uses, a seam so the chunk walk
+// (usd_volume_restamp_chunks_exact.go) can run against a double.
 type exactRestampStore interface {
 	TradeValuationByDay(ctx context.Context, day time.Time) ([]timescale.TradeValuationGroup, error)
 	CountUSDVolumeRestampCandidates(ctx context.Context, p timescale.USDVolumeRestampParams) (int64, error)
@@ -523,10 +508,8 @@ type restampRun struct {
 	days map[time.Time]exactTierDay
 }
 
-// exactTierDay is one UTC day's classification: the exact-tier groups the
-// run may touch, how many groups the day had in total, and the verifier's
-// Σ|Δ| over the targets — the "before" figure the operator compares
-// against verify-usd-volume's report.
+// exactTierDay is one UTC day's classification: the exact-tier groups the run may touch, the day's total group count, and the verifier's
+// Σ|Δ| over the targets (the "before" figure compared against verify-usd-volume's report).
 type exactTierDay struct {
 	targets []timescale.USDVolumeRestampGroup
 	groups  int
@@ -562,13 +545,11 @@ func (r *restampRun) groupDays() int64 {
 	return n
 }
 
-// exactTierApply is the write half of an exact-tier walk: the store's own
-// UPDATE for the day walk, the chunk-guarded one for the chunk walk, and
-// the candidate count for either walk's dry run.
+// exactTierApply is the write half of an exact-tier walk: the store's UPDATE for the day walk, the chunk-guarded one for the chunk walk, or
+// the dry-run candidate count.
 type exactTierApply func(ctx context.Context, p timescale.USDVolumeRestampParams) (int64, error)
 
-// apply is the run's own write half. The dry run counts through the SAME
-// scope predicate the UPDATE evaluates, so it is the write's exact
+// apply is the run's write half; the dry run counts through the SAME scope predicate the UPDATE evaluates, so it is the write's exact
 // preview.
 func (r *restampRun) apply() exactTierApply {
 	if r.write {
@@ -593,9 +574,7 @@ type exactSpan struct {
 	dated bool
 }
 
-// sliceWalk walks [lo, hi) one -slice window at a time. Nothing here
-// knows whether the span is a UTC day or a chunk's slice of the run
-// window; that is the caller's business.
+// sliceWalk walks [lo, hi) one -slice window at a time, agnostic of whether the span is a UTC day or a chunk's slice of the run window.
 func (r *restampRun) sliceWalk(ctx context.Context, s exactSpan) (int64, error) {
 	var rows int64
 	for lo := s.lo; lo.Before(s.hi); lo = lo.Add(r.slice) {
@@ -654,9 +633,8 @@ func (r *restampRun) day(ctx context.Context, day time.Time) (int64, int64, erro
 	return rows, int64(len(d.targets)), nil
 }
 
-// exactTierGroups filters a day's groups to the exact-tier targets this
-// run may touch and sums the verifier's |delta| over them — the "before"
-// figure the operator compares against verify-usd-volume's report.
+// exactTierGroups filters a day's groups to the exact-tier targets this run may touch and sums the verifier's |delta| over them (the
+// "before" figure).
 func (r *restampRun) exactTierGroups(groups []timescale.TradeValuationGroup) ([]timescale.USDVolumeRestampGroup, *big.Rat) {
 	before := new(big.Rat)
 	var targets []timescale.USDVolumeRestampGroup

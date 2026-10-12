@@ -10,10 +10,8 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// maxTokenSymbolRunes bounds the accepted on-chain `symbol` declaration.
-// The value is self-declared by the token contract, so a hostile or broken token can put
-// anything in it. SEP-41 and classic asset codes top out at 12 characters; 32 leaves headroom
-// while refusing a kilobyte of text where a ticker belongs.
+// maxTokenSymbolRunes bounds the accepted on-chain `symbol`: it is self-declared, so a hostile token can put anything in it. SEP-41 and
+// classic asset codes top out at 12 characters; 32 leaves headroom while refusing a kilobyte of text where a ticker belongs.
 const maxTokenSymbolRunes = 32
 
 // TokenSymbol resolves a token contract's symbol() from its instance METADATA map; the text is contract-authored and untrusted (any contract may call itself BENJI), so never use it alone as an identity; found=false means no usable metadata.
@@ -49,12 +47,9 @@ func (r *ExplorerReader) TokenSymbol(ctx context.Context, contractID string) (st
 	return sym, ok, rows.Err()
 }
 
-// symbolFromInstanceEntry decodes one contract-instance LedgerEntry and
-// returns the token-sdk METADATA map's `symbol` string.
-//
-// The token-sdk writes symbol as an ScString; some tokens write an ScSymbol, the same text in
-// another ScVal variant. Both are accepted, since refusing the second would report "no
-// metadata" for a token that has some; nothing else is.
+// symbolFromInstanceEntry decodes a contract-instance LedgerEntry and returns the token-sdk METADATA map's `symbol`. The sdk writes an
+// ScString but some tokens write an ScSymbol; both are accepted (refusing the second would report "no metadata" for a token that has
+// some), nothing else is.
 func symbolFromInstanceEntry(b64 string) (string, bool) {
 	var entry xdr.LedgerEntry
 	if xdr.SafeUnmarshalBase64(b64, &entry) != nil {
@@ -96,12 +91,8 @@ func scValText(v xdr.ScVal) string {
 	return ""
 }
 
-// sanitiseTokenSymbol trims a declared symbol and refuses one that is
-// not a plausible ticker.
-//
-// The refusal is deliberate: the value is compared against an allow-list of instrument codes, and
-// control characters, newlines or an essay mean the token is not declaring a symbol at all.
-// Reporting it absent is true and safe; trimming it toward a match is neither.
+// sanitiseTokenSymbol trims a declared symbol and refuses one that is not a plausible ticker: control characters, newlines or an essay
+// mean the token declares no symbol, and reporting it absent is true and safe, trimming it toward a match is neither.
 func sanitiseTokenSymbol(s string) (string, bool) {
 	s = strings.TrimSpace(s)
 	if s == "" {

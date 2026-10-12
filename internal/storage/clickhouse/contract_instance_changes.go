@@ -8,23 +8,17 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// Backfill targets for the instance timeline. The v2 name exists only while
-// deploy/clickhouse/contract_instance_changes_tx_key.sql rebuilds an
-// old-key table beside the live one.
+// Backfill targets for the instance timeline. The v2 name exists only while deploy/clickhouse/contract_instance_changes_tx_key.sql
+// rebuilds an old-key table beside the live one.
 const (
 	ContractInstanceChangesTable   = "contract_instance_changes"
 	ContractInstanceChangesV2Table = "contract_instance_changes_v2"
 )
 
-// contractInstanceBackfillQuery fills one ledger window of the named instance-timeline table from
-// ledger_entry_changes history, with the same fixed-offset extraction as
-// contract_instance_changes_mv (deploy/clickhouse/contract_instance_changes.sql; keep the two in
-// lockstep). Windowed on ledger_seq (the source's primary-key prefix); the target RMT collapses
-// re-runs of overlapping windows. table is one of the two constants above, never caller text.
-//
-// FINAL on the source read: a corrected re-ingest can leave the stale part beside the fix, and
-// both would tie on the target's DEFAULT now() ingested_at, letting the stale wasm_hash survive
-// the collapse. FINAL is bounded by the window.
+// contractInstanceBackfillQuery fills one ledger window of the named table from ledger_entry_changes with the same fixed-offset extraction
+// as contract_instance_changes_mv (deploy/clickhouse/contract_instance_changes.sql; keep the two in lockstep). table is one of the two
+// constants above, never caller text. FINAL on the source read: a corrected re-ingest can leave the stale part beside the fix, and both
+// tie on the target's DEFAULT now() ingested_at, letting the stale wasm_hash survive the collapse; the window bounds FINAL.
 func contractInstanceBackfillQuery(table string) string {
 	return fmt.Sprintf(`
 	INSERT INTO stellar.%s

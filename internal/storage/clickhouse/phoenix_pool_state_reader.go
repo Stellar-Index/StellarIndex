@@ -12,22 +12,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// Phoenix pool PERSISTENT-storage layout, from phoenix-contracts (contracts/pool/src/storage.rs).
-// DataKey is a #[repr(u32)] enum, so storage keys are plain ScvU32 values (as in Soroswap pairs):
-//
-//	U32(0) = TotalShares (i128)
-//	U32(1) = ReserveA    (i128)   <- read
-//	U32(2) = ReserveB    (i128)   <- read
-//	U32(3) = Admin
-//	U32(4) = Initialized
-//
-// plus `CONFIG` -> a Config struct (ScvMap keyed by field-name Symbols) whose `token_a` / `token_b`
-// Address fields carry the token identities (read). All are PERSISTENT contract_data entries, not
-// the instance entry.
-// Pools upgrade in place (two WASM generations: phoenix.MainnetPools vs MainnetMapPools), so after
-// an upgrade check that ledger_entries_current FINAL still returns three contract_data rows for
-// phoenixPoolKeys and that reserves match the latest phoenix_trades post-state. A mismatch
-// surfaces as undecodable pools: fail-to-absent.
+// Phoenix pool PERSISTENT-storage layout (phoenix-contracts contracts/pool/src/storage.rs): keys are plain ScvU32; U32(1)/U32(2) are
+// ReserveA/ReserveB (i128), and `CONFIG` is a map whose `token_a`/`token_b` carry the token identities. Pools upgrade in place
+// (phoenix.MainnetPools vs MainnetMapPools): after an upgrade check that ledger_entries_current FINAL still returns three contract_data
+// rows per phoenixPoolKeys and that reserves match the latest phoenix_trades post-state; a mismatch surfaces as undecodable pools
+// (fail-to-absent).
 const (
 	phoenixKeyReserveA = 1 // DataKey::ReserveA
 	phoenixKeyReserveB = 2 // DataKey::ReserveB
@@ -49,9 +38,8 @@ type PhoenixPoolState struct {
 	Ledger uint32
 }
 
-// phoenixPoolStateQuery is the batched current-state lookup: a PK-prefix probe on
-// (entry_type, key_xdr), 3 keys per curated pool. The SETTINGS pins are guard rails (see
-// ttlLivenessBatchQuery) so a planner shift fails this query loudly.
+// phoenixPoolStateQuery is the batched current-state lookup: a PK-prefix probe on (entry_type, key_xdr), 3 keys per curated pool. The
+// SETTINGS pins are guard rails (see ttlLivenessBatchQuery) so a planner shift fails this query loudly.
 const phoenixPoolStateQuery = `SELECT key_xdr, ledger_seq, entry_xdr
 	FROM stellar.ledger_entries_current FINAL
 	WHERE entry_type = 'contract_data' AND key_xdr IN (?) AND entry_xdr != ''
@@ -298,9 +286,8 @@ func symbolScVal(s string) xdr.ScVal {
 	return xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &sym}
 }
 
-// persistentContractDataKeyXDR builds the base64 LedgerKey for a
-// PERSISTENT contract_data entry under `cid` with storage key `key` —
-// matching the lake's key_xdr column verbatim.
+// persistentContractDataKeyXDR builds the base64 LedgerKey of a PERSISTENT contract_data entry under `cid` with storage key `key`,
+// matching the lake's key_xdr verbatim.
 func persistentContractDataKeyXDR(cid xdr.ContractId, key xdr.ScVal) (string, error) {
 	id := cid
 	lk := xdr.LedgerKey{

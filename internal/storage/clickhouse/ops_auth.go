@@ -10,22 +10,10 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2"
 )
 
-// Ops-batch ClickHouse identity: the LOW-priority counterpart of the `api_serving` profile.
-//
-// Ops jobs and the aggregator contend INSIDE clickhouse-server; cgroup caps do not help, but a
-// separate CH user lets CH's scheduler deprioritise ops. Every ops-side connection resolves its
-// Auth through [chAuth], from the ENVIRONMENT:
-//
-//	STELLARINDEX_CLICKHOUSE_OPS_USER      (e.g. "ops_batch")
-//	STELLARINDEX_CLICKHOUSE_OPS_PASSWORD
-//
-// Environment, not argv (world-readable via /proc, lands in the journal), and not config (not all
-// ops subcommands load it). Live daemons may use a named `live_daemon` user the same way.
-//
-// Precedence ([chAuthFrom]): ops pair, then live pair, then CH `default`. Ops first because batch
-// units source both env files. With every pair unset Auth.Username is empty, CH's `default` user.
-// The ops pair must reach ONLY batch jobs: each live-daemon unit strips it with
-// `UnsetEnvironment=` (TestOpsBatchIdentityNeverReachesLiveDaemons).
+// Ops-batch ClickHouse identity: the LOW-priority counterpart of the `api_serving` profile, so CH's scheduler deprioritises ops jobs. Ops
+// connections resolve Auth through [chAuth] from the environment (not argv: world-readable via /proc): STELLARINDEX_CLICKHOUSE_OPS_USER
+// and STELLARINDEX_CLICKHOUSE_OPS_PASSWORD. Precedence ([chAuthFrom]): ops pair, live pair, then CH `default`. The ops pair must reach
+// ONLY batch jobs: live-daemon units strip it with `UnsetEnvironment=` (TestOpsBatchIdentityNeverReachesLiveDaemons).
 const (
 	// OpsUserEnv names the env var holding the ops-batch CH username.
 	OpsUserEnv = "STELLARINDEX_CLICKHOUSE_OPS_USER"
@@ -66,9 +54,8 @@ func opsAuthFrom(getenv func(string) string) (clickhouse.Auth, error) {
 	return pairAuth(getenv, OpsUserEnv, OpsPasswordEnv, "ops_batch identity")
 }
 
-// pairAuth reads one username/password env pair against `stellar`. A password WITHOUT a username is
-// refused rather than ignored: clickhouse-go would send it as the `default` user's password, which
-// CH rejects, and a half-set pair is a templating mistake worth surfacing at open time.
+// pairAuth reads one username/password env pair against `stellar`. A password WITHOUT a username is refused: clickhouse-go would send it
+// as the `default` user's password, and a half-set pair is a templating mistake.
 func pairAuth(getenv func(string) string, userEnv, passEnv, what string) (clickhouse.Auth, error) {
 	user, pass := getenv(userEnv), getenv(passEnv)
 	if user == "" && pass != "" {

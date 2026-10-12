@@ -38,10 +38,8 @@ type assetMovementVersion struct {
 const assetMovementCols = `address, ledger, ledger_close_time, tx_hash, op_index, leg_index, direction,
 	movement_kind, provenance, counterparty, amount, attributes, ingested_at`
 
-// assetMovementsSQL reads one asset's participant rows newest first, at or
-// below the ledger ceiling. The window form has no LIMIT 1 BY so ClickHouse
-// can stop reading in key order — on `native` the asset range is billions of
-// rows; exactDedup keeps only the newest row per movement.
+// assetMovementsSQL reads one asset's participant rows newest first at or below the ledger ceiling. The window form has no LIMIT 1 BY so
+// ClickHouse can stop reading in key order (`native` spans billions of rows); exactDedup keeps only the newest row per movement.
 func assetMovementsSQL(hasCursor, exactDedup bool) string {
 	var sb strings.Builder
 	sb.WriteString("SELECT " + assetMovementCols + " FROM stellar.movements_by_asset WHERE asset = ? AND ledger <= ?")

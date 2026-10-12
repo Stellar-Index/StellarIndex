@@ -87,9 +87,8 @@ func (r *ExplorerReader) readAccountsStatsCycle(ctx context.Context) (AccountsSt
 	return s, after.Equal(s.ComputedAt), nil
 }
 
-// accountsStatsComputedAt is the live cycle stamp of stellar.accounts_stats,
-// used both to seed ComputedAt (readStatsMetrics) and, re-read here, to
-// detect a swap landing during AccountsStats' read sequence.
+// accountsStatsComputedAt is the live cycle stamp of stellar.accounts_stats: seeds ComputedAt and, re-read, detects a swap landing during
+// AccountsStats' read sequence.
 func (r *ExplorerReader) accountsStatsComputedAt(ctx context.Context) (time.Time, error) {
 	var at time.Time
 	if err := r.conn.QueryRow(ctx, `SELECT max(computed_at) FROM stellar.accounts_stats`).Scan(&at); err != nil {

@@ -16,11 +16,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// verifyReconciliation implements ADR-0033 Claim 2b: per ledger, the rows a source should have
-// produced must equal the rows in its table. Soroban sources re-run the real decoder over the
-// lake's contract_events ([expectedProjection]); event-less ContractCall sources re-derive from
-// InvokeContract ops; SDEX goes through the decoder and the served write filter, not the census,
-// which counts one-side-zero fills the trades table cannot hold. Exits non-zero on mismatch.
+// verifyReconciliation implements ADR-0033 Claim 2b: per ledger, the rows a source should have produced must equal its table's. Soroban
+// sources re-run the decoder over contract_events ([expectedProjection]); event-less ContractCall sources re-derive from ops; SDEX uses
+// the decoder and served write filter, not the census (it counts one-side-zero fills trades cannot hold).
 func verifyReconciliation(args []string) error { //nolint:gocognit,gocyclo,funlen // linear per-source loop; splitting reduces clarity (same as backfillRouter).
 	fs := flag.NewFlagSet("verify-reconciliation", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
@@ -134,10 +132,8 @@ func verifyReconciliation(args []string) error { //nolint:gocognit,gocyclo,funle
 	return nil
 }
 
-// verifyReconExpected returns a source's per-target expected rows from the
-// lake. SDEX goes through sdexProjectionExpected, which also refuses a range
-// whose lake substrate is not contiguous; every other source takes the same
-// expected side compute-completeness -ch publishes.
+// verifyReconExpected returns a source's per-target expected rows. SDEX goes through sdexProjectionExpected, which also refuses a range
+// whose substrate is not contiguous; others take the expected side compute-completeness -ch publishes.
 func verifyReconExpected(ctx context.Context, chAddr string, src reconSource, lo, hi uint32) (func(reconTarget) map[uint32]int, completeness.BlindSpots, error) {
 	if src.census {
 		expected, blind, err := sdexProjectionExpected(ctx, chAddr, lo, hi)
@@ -162,19 +158,15 @@ func sumCounts(m map[uint32]int) int {
 	return total
 }
 
-// reconciliationIsVacuous reports whether a no-gap target saw zero events on both sides. A
-// source redeployed behind a new contract id writes nothing, so two empty maps look like a full
-// reconciliation unless refused.
+// reconciliationIsVacuous reports a no-gap target with zero events on both sides: a source redeployed behind a new contract id writes
+// nothing, so two empty maps would look like a full reconciliation.
 func reconciliationIsVacuous(expTotal, actTotal int) bool {
 	return expTotal == 0 && actTotal == 0
 }
 
-// seedSoroswapForRecon seeds the soroswap pair registry from the factory via RPC so the re-derive
-// resolves pairs created before the audited range. An empty oracle.soroswap.factory_contract
-// disables the seed. A factory with no RPC endpoint, or a failed sweep, is an error the caller
-// must not swallow: a partly seeded registry expects 0 rows for unseeded pairs and would publish
-// projection_ok=false over healthy data. Notices carry no command prefix; compute-completeness
-// shares this.
+// seedSoroswapForRecon seeds the soroswap pair registry from the factory via RPC so the re-derive resolves earlier pairs; empty
+// oracle.soroswap.factory_contract disables it. A missing RPC endpoint or failed sweep is an error the caller must not swallow: unseeded
+// pairs expect 0 rows and would publish projection_ok=false over healthy data.
 func seedSoroswapForRecon(ctx context.Context, cfg config.Config, dec *soroswap.Decoder) error {
 	factory := cfg.Oracle.Soroswap.FactoryContract
 	if factory == "" {

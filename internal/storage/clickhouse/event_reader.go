@@ -53,16 +53,14 @@ func sqlQuoteEscapedList(ss []string) string {
 	return strings.Join(q, ",")
 }
 
-// boundedScanSettings is the per-query clause for full-history scans. The connection cap does not
-// bound them: the in-order read pool's wide-column buffers are undertracked per query yet counted
-// server-wide. Work shape bounds the footprint (2 threads, 8 GiB tracked, external group-by/sort
-// spill at 4 GiB), so a growing lake costs time, never an OOM kill.
+// boundedScanSettings is the per-query clause for full-history scans; the connection cap does not bound them (the in-order read pool's
+// wide-column buffers are undertracked per query yet counted server-wide). 2 threads, 8 GiB tracked, spill at 4 GiB: a growing lake costs
+// time, never an OOM kill.
 const boundedScanSettings = "SETTINGS max_threads = 2, max_memory_usage = 8589934592, " +
 	"max_bytes_before_external_group_by = 4294967296, max_bytes_before_external_sort = 4294967296"
 
-// forEachLedgerWindow invokes fn over consecutive [lo,hi] windows covering [from,to].
-// Windows end at stride boundaries minus one, so a stride dividing the 1M partition
-// size touches the fewest partitions. No-op when to < from.
+// forEachLedgerWindow invokes fn over consecutive [lo,hi] windows covering [from,to], ending at stride boundaries minus one (a stride
+// dividing the 1M partition size touches the fewest partitions). No-op when to < from.
 func forEachLedgerWindow(from, to, stride uint32, fn func(lo, hi uint32) error) error {
 	if to < from || stride == 0 {
 		return nil
@@ -124,11 +122,9 @@ func streamContractEventsWhere(ctx context.Context, addr string, from, to uint32
 	return nil
 }
 
-// topic0Predicate renders the topic[0] prefilter and matches BOTH encodings: extract.go fills
-// topic_0_sym from GetSym() (Symbol only), so it is empty for an ScvString topic[0] (phoenix) and
-// filtering on it alone silently matches nothing. topics_xdr[1] is also tested against the
-// ScvString encoding, since widening the column would mean re-extracting the lake. It only widens
-// the prefilter; each decoder's Matches() remains the final gate.
+// topic0Predicate renders the topic[0] prefilter matching BOTH encodings: topic_0_sym is filled from GetSym() (Symbol only), empty for an
+// ScvString topic[0] (phoenix), so filtering on it alone silently matches nothing; topics_xdr[1] is also tested against the ScvString
+// encoding (widening the column would mean re-extracting the lake). Only a prefilter; each decoder's Matches() remains the final gate.
 func topic0Predicate(topic0Syms []string) string {
 	asStrings := make([]string, 0, len(topic0Syms))
 	for _, s := range topic0Syms {
@@ -146,10 +142,9 @@ func topic0Predicate(topic0Syms []string) string {
 	return "(" + pred + ")"
 }
 
-// symbolTopic0Predicate is topic0Predicate without the ScvString arm, for a
-// decoder that matches topic[0] only as an ScvSymbol. Testing topics_xdr[1]
-// reads that wide column for every granule the contract filter keeps, while
-// topic_0_sym alone lets a selective topic filter skip them.
+// symbolTopic0Predicate is topic0Predicate without the ScvString arm, for decoders matching topic[0] only as a Symbol: testing
+// topics_xdr[1] reads that wide column for every granule the contract filter keeps, while topic_0_sym alone lets a selective filter skip
+// them.
 func symbolTopic0Predicate(topic0Syms []string) string {
 	return "topic_0_sym IN (" + sqlQuoteList(topic0Syms) + ")"
 }
@@ -215,10 +210,8 @@ func firstContractEventLedgerQuery(contractIDs, topic0Syms, excludeTopic0Syms []
 		%s`, contractEventsFilterWhere(contractIDs, topic0Syms, excludeTopic0Syms), boundedScanSettings)
 }
 
-// maxInlineContractIDs caps how many contract ids are inlined as SQL
-// literals (~60 bytes each). A factory's gated set can hold 100k+ children,
-// which as literals overflows ClickHouse's 256 KiB max_query_size, so a
-// larger set is sent as the external table contractIDsTable instead.
+// maxInlineContractIDs caps contract ids inlined as SQL literals (~60 bytes each): a factory's gated set can hold 100k+ children, which
+// overflows ClickHouse's 256 KiB max_query_size, so a larger set is sent as the external table contractIDsTable.
 const maxInlineContractIDs = 1000
 
 const contractIDsTable = "gated_contract_ids"
@@ -241,9 +234,8 @@ func withContractIDsTable(ctx context.Context, contractIDs []string) (context.Co
 	return clickhouse.Context(ctx, clickhouse.WithExternalTable(tbl)), nil
 }
 
-// contractEventsFilterWhere renders the `WHERE ledger_seq BETWEEN ? AND ?`
-// clause plus the contract / topic[0] prefilters, shared by the stream and
-// the first-ledger seek so they cannot disagree about which rows match.
+// contractEventsFilterWhere renders the `WHERE ledger_seq BETWEEN ? AND ?` clause plus the contract / topic[0] prefilters, shared by the
+// stream and the first-ledger seek so they cannot disagree about which rows match.
 func contractEventsFilterWhere(contractIDs, topic0Syms, excludeTopic0Syms []string) string {
 	topicPred := ""
 	if len(topic0Syms) > 0 {
@@ -297,9 +289,8 @@ func StreamContractEvents(ctx context.Context, addr string, from, to uint32, exc
 	return scanInApplyOrder(ctx, conn, rows, true, fn)
 }
 
-// scanInApplyOrder scans rows through an [applyOrderer], so fn sees each
-// ledger's events in transaction apply order rather than the table's tx_hash
-// sort. The lookups use the pool's second connection while rows holds the first.
+// scanInApplyOrder scans rows through an [applyOrderer] so fn sees each ledger's events in apply order, not the table's tx_hash sort. The
+// lookups use the pool's second connection while rows holds the first.
 func scanInApplyOrder(ctx context.Context, conn driver.Conn, rows driver.Rows, withOpArgs bool, fn func(events.Event) error) error {
 	o := newApplyOrderer(ctx, connTxIndexLookup(conn), fn)
 	if err := scanContractEvents(rows, withOpArgs, o.add); err != nil {

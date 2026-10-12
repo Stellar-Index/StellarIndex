@@ -83,18 +83,15 @@ var ErrStorageSupplyTooManyEntries = fmt.Errorf("clickhouse: contract holds more
 // ErrStorageSupplyNoInstance means balances exist but no instance entry was captured, so the SAC refusal could not be evaluated (see ErrStorageSupplyIsStellarAsset).
 var ErrStorageSupplyNoInstance = fmt.Errorf("clickhouse: no contract instance entry captured, so the Stellar-Asset-Contract check could not be run")
 
-// maxContractStorageBalanceEntries bounds one storage-supply read, which pays a full decode per
-// entry inside a request budget. 25,000 is far above the closed holder sets this basis serves (1 to
-// 12 holders) and below the largest pubnet holder sets (~62k), which are event-emitting tokens
-// answered by the flow-derived reading first.
+// maxContractStorageBalanceEntries bounds one storage-supply read, which pays a full decode per entry inside a request budget. 25,000 is
+// far above the closed holder sets this basis serves (1 to 12) and below the largest pubnet sets (~62k), answered by the flow-derived
+// reading first.
 const maxContractStorageBalanceEntries = 25_000
 
-// balanceKeyMarker is the fixed base64 window a Balance(Address) contract-data key carries;
-// instanceKeyMarker is the instance one. A key's first 40 bytes are (type, address type, contract
-// id), so the SCVal key lands at a FIXED base64 offset: plain string comparisons, no per-row XDR
-// parse. Markers are a PRE-FILTER ONLY; survivors are re-checked by balanceKeyHolder.
-// `BalanceCheckpoints` shares the leading symbol text `Balance` and differs only in the symbol
-// LENGTH bytes the marker pins.
+// balanceKeyMarker / instanceKeyMarker are the fixed base64 windows a Balance(Address) / instance contract-data key carries (the first 40
+// bytes are type, address type, contract id), so the SCVal key lands at a FIXED offset: plain string comparisons, no XDR parse. PRE-FILTER
+// ONLY; survivors are re-checked by balanceKeyHolder. `BalanceCheckpoints` shares the `Balance` text and differs only in the symbol LENGTH
+// bytes.
 const (
 	balanceKeyMarker = "ABAAAAABAAAAAgAAAA8AAAAHQmFsYW5jZQAAAAAS"
 	// holderCountKeyMarker matches Vec[Symbol("HolderCount")], a top-level persistent entry: the
@@ -111,11 +108,9 @@ const (
 	markerOffset = contractKeyPrefixChars + 5
 )
 
-// contractStorageSupplyQuery reads one contract's balance + instance entries. startsWith() on
-// key_xdr is a primary-key prefix range ((entry_type, key_xdr) lead the ORDER BY), as in
-// TokenDecimals. FINAL is mandatory: ledger_entries_current is a ReplacingMergeTree, so without
-// it an updated balance returns once per unmerged part and stale copies are summed.
-// `change_type != 'removed'` drops deleted entries.
+// contractStorageSupplyQuery reads one contract's balance + instance entries. startsWith() on key_xdr is a primary-key prefix range, as in
+// TokenDecimals. FINAL is mandatory: ledger_entries_current is a ReplacingMergeTree, so otherwise an updated balance returns once per
+// unmerged part and stale copies are summed. `change_type != 'removed'` drops deleted entries.
 const contractStorageSupplyQuery = `
 	SELECT key_xdr, entry_xdr, ledger_seq
 	FROM stellar.ledger_entries_current FINAL
@@ -204,9 +199,8 @@ func (r *ExplorerReader) settleLapsedBalances(ctx context.Context, s *ContractSt
 	return nil
 }
 
-// settle re-derives the sum under TTL verdicts at tip: lapsed temporary dropped, lapsed persistent
-// kept as archived. A live_until below the entry's own last write is stale TTL data (a write needs
-// a live entry), so the key stays live.
+// settle re-derives the sum under TTL verdicts at tip: lapsed temporary dropped, lapsed persistent kept as archived. A live_until below
+// the entry's own last write is stale TTL data (a write needs a live entry), so the key stays live.
 func (s *ContractStorageSupply) settle(liveUntil map[string]uint32, tip uint32) {
 	s.Total, s.BalanceEntries, s.AsOfLedger = new(big.Int), 0, 0
 	s.ArchivedEntries, s.ArchivedTotal = 0, nil
@@ -236,9 +230,8 @@ type storageRow struct {
 	ledger           uint32
 }
 
-// scanInstanceFirst decodes only the instance entry and holds every other row back undecoded: the
-// SAC refusal depends on the instance alone and must not wait behind, or be pre-empted by a decode
-// error in, up to 25k balance decodes it will discard.
+// scanInstanceFirst decodes only the instance entry and holds other rows back undecoded: the SAC refusal depends on the instance alone and
+// must not wait behind, or be pre-empted by a decode error in, up to 25k balance decodes it will discard.
 func (s *ContractStorageSupply) scanInstanceFirst(rows driver.Rows) ([]storageRow, error) {
 	var deferred []storageRow
 	seen := 0
@@ -269,9 +262,8 @@ func (s *ContractStorageSupply) scanInstanceFirst(rows driver.Rows) ([]storageRo
 	return deferred, nil
 }
 
-// isInstanceKeyB64 reports whether a stored key carries the contract-instance
-// marker the query's server-side filter admits it by. A row it misses is still
-// decoded later, and apply identifies the instance by decode, not by marker.
+// isInstanceKeyB64 reports whether a stored key carries the instance marker the query's server-side filter admits it by. A row it misses
+// is still decoded later; apply identifies the instance by decode, not by marker.
 func isInstanceKeyB64(keyB64 string) bool {
 	start := markerOffset - 1 // markerOffset is 1-indexed for SQL substring()
 	return strings.HasPrefix(keyB64[min(start, len(keyB64)):], instanceKeyMarker)
@@ -372,10 +364,9 @@ func (s *ContractStorageSupply) applyInstance(val xdr.ScVal) {
 	}
 }
 
-// instanceStorageKeyName returns an instance-storage entry's name under either live encoding: a
-// bare Symbol (soroban-token-sdk METADATA) or a single-element vector holding a symbol (Rust
-// #[contracttype] fieldless enum variant, used by hand-written tokens with a DataKey enum). Reading
-// only the bare symbol leaves DecimalsFound=false and no cross-check for exactly those tokens.
+// instanceStorageKeyName returns an instance-storage entry's name under either live encoding: a bare Symbol (soroban-token-sdk METADATA)
+// or a one-element vector holding a symbol (#[contracttype] fieldless enum variant, hand-written tokens). Reading only the bare symbol
+// leaves DecimalsFound=false and no cross-check for exactly those tokens.
 func instanceStorageKeyName(key xdr.ScVal) (string, bool) {
 	if sym, ok := key.GetSym(); ok {
 		return string(sym), true
@@ -388,10 +379,9 @@ func instanceStorageKeyName(key xdr.ScVal) (string, bool) {
 	return string(sym), ok
 }
 
-// balanceKeyHolder reports whether a key is a per-holder balance: the two-element vector
-// [Symbol("Balance"), Address]. The exact-arity check is the point: BalanceCheckpoints(Address)
-// holds a vector of past balances, and a prefix match would sum balance history into supply
-// (roughly doubling the deal tokens).
+// balanceKeyHolder reports whether a key is a per-holder balance: the two-element vector [Symbol("Balance"), Address]. Exact arity is the
+// point: BalanceCheckpoints(Address) holds past balances, and a prefix match would sum balance history into supply (roughly doubling deal
+// tokens).
 func balanceKeyHolder(key xdr.ScVal) bool {
 	if key.Type != xdr.ScValTypeScvVec {
 		return false
@@ -407,10 +397,8 @@ func balanceKeyHolder(key xdr.ScVal) bool {
 	return (*vec)[1].Type == xdr.ScValTypeScvAddress
 }
 
-// balanceAmount pulls the i128 out of a balance value: a bare i128 (soroban-token-sdk) or a map
-// with an `amount` field (SAC / older token-sdk BalanceValue).
-// An i128 is reassembled from signed Hi and unsigned Lo: reading Lo as signed corrupts every
-// balance whose low word has the top bit set.
+// balanceAmount pulls the i128 out of a balance value: a bare i128 (soroban-token-sdk) or a map with an `amount` field (SAC / older sdk).
+// An i128 is reassembled from signed Hi and unsigned Lo: reading Lo as signed corrupts every balance whose low word has the top bit set.
 func balanceAmount(val xdr.ScVal) (*big.Int, bool) {
 	switch val.Type {
 	case xdr.ScValTypeScvI128:
@@ -437,9 +425,8 @@ func balanceAmount(val xdr.ScVal) (*big.Int, bool) {
 	return nil, false
 }
 
-// contractDataKeyPrefix returns the base64 prefix of every contract-data key for one contract: 39
-// of the 40 leading bytes (type, address discriminant, contract id) are whole base64 groups, so the
-// 52-char prefix lets the lookup ride the (entry_type, key_xdr) primary key.
+// contractDataKeyPrefix returns the base64 prefix of every contract-data key for one contract: 39 of the 40 leading bytes are whole base64
+// groups, so the 52-char prefix lets the lookup ride the (entry_type, key_xdr) primary key.
 func contractDataKeyPrefix(contractID string) (string, error) {
 	raw, err := strkey.Decode(strkey.VersionByteContract, contractID)
 	if err != nil {

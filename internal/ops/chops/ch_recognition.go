@@ -16,14 +16,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// chRecognition is the ClickHouse-backed ADR-0033 Claim 2a (recognition) audit. It pulls every
-// distinct (contract_id, topic_0_sym) shape from the CH lake, the certified source, so the serving
-// DB is untouched, and runs each through the production decoder chain's Matches(). A shape no
-// decoder claims is a recognition gap: an on-chain event the system would silently drop.
-//
-// The CAP-67 classic-token firehose (transfer/mint/burn) is excluded by default: no enabled
-// decoder claims it, so it would report the whole SAC layer as unrecognized and drown the
-// protocol signal. Pass -include-firehose to audit it too.
+// chRecognition is the ADR-0033 Claim 2a (recognition) audit: it runs every distinct (contract_id, topic_0_sym) shape in the CH lake
+// through the production decoder chain's Matches(); an unclaimed shape is an on-chain event silently dropped. The CAP-67 firehose is
+// excluded unless -include-firehose.
 func chRecognition(args []string) error { //nolint:gocognit,funlen // linear: parse, scan, recognize, report.
 	fs := flag.NewFlagSet("ch-recognition", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")
@@ -142,9 +137,8 @@ func chRecognition(args []string) error { //nolint:gocognit,funlen // linear: pa
 	return fmt.Errorf("%d unrecognized event shape(s) — a decoder is missing a topic (ADR-0033 EVERY-event policy)", len(gaps))
 }
 
-// chRecognitionDispatcher builds the production decoder dispatcher ch-recognition audits against.
-// It warms the factory-anchored gated registries and the soroswap pair-tokens seed from a
-// short-lived Postgres store (protocol_contracts and soroswap_pairs live there), then closes it.
+// chRecognitionDispatcher builds the production decoder dispatcher ch-recognition audits against, warming the
+// factory-anchored gated registries and soroswap pair-tokens seed from a short-lived Postgres store.
 func chRecognitionDispatcher(ctx context.Context, cfg config.Config) (*dispatcher.Dispatcher, error) {
 	store, err := timescale.Open(ctx, cfg.Storage.PostgresDSN)
 	if err != nil {

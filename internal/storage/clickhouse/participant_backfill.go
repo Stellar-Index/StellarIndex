@@ -12,19 +12,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/xdrjson"
 )
 
-// operationParticipantRows derives the stellar.operation_participants rows for one operation: the
-// ONE derivation shared by the live extractor (extractOps) and ch-participant-backfill, so the two
-// cannot drift.
-//
-// It returns one row per NON-source G-account the op body touches (xdrjson.ParticipantAccounts).
-// Soroban InvokeContract ops contribute NO participant: their args and auth entries are
-// attacker-controllable at decode time. The op's own source_account is EXCLUDED: the account-history
-// reader UNIONs it from operations.source_account (explorer_reader.AccountOperations), so a source
-// row would double-count it. Asset ISSUERS and counterparties of op types xdrjson doesn't
-// field-decode are not captured, so a re-derive reproduces live output.
-//
-// A malformed body_xdr returns the decode error; callers soft-skip and count it. Sorted,
-// deduplicated output makes a re-derive idempotent under the RMT.
+// operationParticipantRows derives the stellar.operation_participants rows for one op: the ONE derivation shared by the live extractor
+// (extractOps) and ch-participant-backfill. One row per NON-source G-account the body touches (xdrjson.ParticipantAccounts); the op
+// source is excluded because AccountOperations UNIONs operations.source_account. Soroban InvokeContract ops yield none
+// (attacker-controllable args/auth). A malformed body_xdr returns the decode error; sorted, deduplicated output keeps a re-derive
+// idempotent under the RMT.
 func operationParticipantRows(bodyB64, opSource string, ledger uint32, closeTime time.Time, txHash string, txIndex, opIndex uint32) ([]OperationParticipantRow, error) {
 	accts, err := xdrjson.ParticipantAccounts(bodyB64)
 	if err != nil {
@@ -57,9 +49,7 @@ type ParticipantBackfillStats struct {
 	DecodeErrors uint64 // op bodies that failed to decode (soft-skipped)
 }
 
-// participantInsertBatch is how many participant rows accumulate before a
-// batch INSERT is sent. Bounds the write-side buffer independently of the read
-// window, so a dense post-Soroban window never materialises in the heap.
+// participantInsertBatch is the row count buffered before a batch INSERT, bounding the write-side heap independently of the read window.
 const participantInsertBatch = 50_000
 
 // BackfillOperationParticipants fills stellar.operation_participants for [from,to] by re-deriving from operations.body_xdr (CH-internal, windowed, resumable, idempotent on the ReplacingMergeTree key); dryRun writes nothing.
@@ -108,9 +98,8 @@ func BackfillOperationParticipants(ctx context.Context, addr string, from, to, w
 	}
 }
 
-// backfillParticipantWindow streams one [lo,hi] ledger window of stellar.operations,
-// decodes each op's participant set, and (unless dryRun) batch-inserts the
-// non-source participants. Returns the per-window stats.
+// backfillParticipantWindow streams one [lo,hi] window of stellar.operations, derives each op's participants and (unless dryRun)
+// batch-inserts the non-source ones.
 func backfillParticipantWindow(ctx context.Context, readConn, writeConn driver.Conn, lo, hi uint32, dryRun bool) (ParticipantBackfillStats, error) {
 	var stats ParticipantBackfillStats
 	// No ORDER BY / no FINAL: a plain range scan streams with bounded memory, whereas an ORDER BY
@@ -152,15 +141,12 @@ func backfillParticipantWindow(ctx context.Context, readConn, writeConn driver.C
 	return stats, nil
 }
 
-// errOpBodyDecode wraps an operation whose body_xdr failed to decode. The
-// backfill soft-skips + counts these (resilient like the live extractor) rather
-// than aborting the window — a lake op body decoded once at ingest, so a failure
-// here is vanishingly rare, but one bad row must not lose the rest of a window.
+// errOpBodyDecode wraps an operation whose body_xdr failed to decode. The backfill soft-skips and counts these (as the live extractor
+// does): one bad row must not lose the rest of a window.
 var errOpBodyDecode = errors.New("clickhouse: operation body decode failed")
 
-// scanOpParticipants reads one operation row and derives its non-source
-// participants. A decode failure is returned wrapped in errOpBodyDecode (a
-// soft-skip signal); any other error is a fatal row-read error.
+// scanOpParticipants reads one operation row and derives its non-source participants. A decode failure is wrapped in errOpBodyDecode
+// (soft-skip signal); any other error is fatal.
 func scanOpParticipants(rows driver.Rows) ([]OperationParticipantRow, error) {
 	var (
 		ledger    uint32
@@ -181,18 +167,15 @@ func scanOpParticipants(rows driver.Rows) ([]OperationParticipantRow, error) {
 	return prs, nil
 }
 
-// participantWriter buffers participant rows and flushes them to ClickHouse in
-// fixed batches (a no-op in dry-run). It keeps the per-op-row loop in
-// backfillParticipantWindow flat.
+// participantWriter buffers participant rows and flushes them in fixed batches (a no-op in dry-run).
 type participantWriter struct {
 	conn   driver.Conn // nil in dry-run
 	dryRun bool
 	buf    []OperationParticipantRow
 }
 
-// add appends an op's participant rows, flushing once the batch threshold is
-// crossed. A single op contributes only a few rows, so the buffer overshoots
-// participantInsertBatch by at most that handful.
+// add appends an op's participant rows and flushes once the batch threshold is crossed; the buffer overshoots participantInsertBatch by
+// at most one op's rows.
 func (w *participantWriter) add(ctx context.Context, rows []OperationParticipantRow) error {
 	w.buf = append(w.buf, rows...)
 	if len(w.buf) >= participantInsertBatch {
@@ -228,10 +211,8 @@ func insertParticipantBatch(ctx context.Context, conn driver.Conn, rows []Operat
 	return wrapSend(b.Send(), "operation_participants")
 }
 
-// openParticipantWrite dials ClickHouse for the participant backfill's batch
-// INSERTs — the cheap-append write class (a finite execution ceiling), distinct
-// from openRead's heavy-FINAL read class. Kept separate from the streaming read
-// pool so a flush never contends with the open read cursor.
+// openParticipantWrite dials ClickHouse for batch INSERTs: the cheap-append write class (finite execution ceiling), distinct from
+// openRead's heavy-FINAL class, and kept apart from the streaming read pool so a flush never contends with the open read cursor.
 func openParticipantWrite(ctx context.Context, addr string) (driver.Conn, error) {
 	// Identity from the environment; see ops_auth.go.
 	auth, err := chAuth()

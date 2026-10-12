@@ -24,11 +24,9 @@ type twapCoverStore interface {
 // scope is read a day at a time, newest first, and stops at the first gap.
 const twapCoverPiece = 24 * time.Hour
 
-// newestUncoveredTwapRead returns the newest minute a non-forced run of plan feeds into a twap
-// bucket where prices_1m still disagrees with trades after its own invalidated minutes are
-// rebuilt, with the drifting pairs; ok is false when every such minute agrees. A twap bucket
-// reads every minute of the bucket, so a minute dropped by retention above prices_1m's earliest
-// bucket would be recomputed as nothing. Minutes at or after cutoff belong to the live policies.
+// newestUncoveredTwapRead returns the newest minute a non-forced plan feeds into a twap bucket where prices_1m still disagrees with trades
+// (plus drifting pairs; ok=false if none): a twap bucket reads every minute, so a retention-dropped minute recomputes as nothing. Minutes
+// at/after cutoff belong to live policies.
 func newestUncoveredTwapRead(ctx context.Context, s twapCoverStore, plan []timescale.CAGGRefreshStep, cutoff time.Time) (
 	[2]time.Time, []timescale.TradesPrices1mDrift, bool, error,
 ) {
@@ -56,9 +54,8 @@ func newestUncoveredTwapRead(ctx context.Context, s twapCoverStore, plan []times
 	return [2]time.Time{}, nil, false, nil
 }
 
-// twapCoverScope is every minute a twap step of plan would read into a
-// bucket it recomputes, less the minutes the plan's prices_1m step rebuilds
-// from trades first. Sorted, disjoint, whole minutes.
+// twapCoverScope is every minute a twap step of plan would read into a recomputed bucket, less minutes the plan's prices_1m step rebuilds
+// first; sorted, disjoint, whole minutes.
 func twapCoverScope(ctx context.Context, s twapCoverStore, plan []timescale.CAGGRefreshStep) ([][2]time.Time, error) {
 	i := slices.IndexFunc(plan, func(st timescale.CAGGRefreshStep) bool { return st.View == "prices_1m" })
 	if i < 0 {
@@ -88,8 +85,7 @@ func twapCoverScope(ctx context.Context, s twapCoverStore, plan []timescale.CAGG
 	return subtractRanges(mergeRanges(read), rebuilt), nil
 }
 
-// refuseUncoveredTwapReads refuses a non-forced plan whose twap steps
-// would recompute a bucket from minutes prices_1m does not hold
+// refuseUncoveredTwapReads refuses a non-forced plan whose twap steps would recompute a bucket from minutes prices_1m does not hold
 // ([newestUncoveredTwapRead]), printing the drifting pairs to out.
 func refuseUncoveredTwapReads(ctx context.Context, s twapCoverStore, plan []timescale.CAGGRefreshStep, from, to uint32, now time.Time, out io.Writer) error {
 	w, rows, ok, err := newestUncoveredTwapRead(ctx, s, plan, now.Add(-prices1mSettle))

@@ -6,10 +6,9 @@ import (
 	"time"
 )
 
-// contractActiveLedgersBackfillQuery fills one ledger window of stellar.contract_active_ledgers
-// from contract_events history. GROUP BY (not DISTINCT) so the collapse can SPILL via
-// max_bytes_before_external_group_by. The target's ReplacingMergeTree collapses re-runs of
-// overlapping windows (this index carries no counts), so the backfill is idempotent.
+// contractActiveLedgersBackfillQuery fills one ledger window of stellar.contract_active_ledgers from contract_events. GROUP BY (not
+// DISTINCT) so the collapse can SPILL via max_bytes_before_external_group_by; the target's ReplacingMergeTree collapses overlapping
+// re-runs (no counts), so it is idempotent.
 const contractActiveLedgersBackfillQuery = `
 	INSERT INTO stellar.contract_active_ledgers (contract_id, ledger_seq, close_time)
 	SELECT contract_id, ledger_seq, any(close_time)
