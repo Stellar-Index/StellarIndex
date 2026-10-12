@@ -6,8 +6,7 @@ import (
 	"time"
 )
 
-// Tier identifies the rate-limit + feature-access bucket a caller belongs to. The string values
-// appear in metrics labels and the rate-limit key, so changing them is a wire break.
+// Tier identifies the rate-limit and feature-access bucket of a caller; its string values appear in metric labels and rate-limit keys, so changing them is a wire break.
 type Tier string
 
 const (
@@ -27,8 +26,7 @@ const (
 // String makes Tier usable as a Prometheus label value.
 func (t Tier) String() string { return string(t) }
 
-// Subject is the authenticated identity on a request, set before the rate-limit middleware so
-// per-tier limits work; for anonymous requests Identifier is a RemoteIP + User-Agent hash.
+// Subject is the authenticated identity on a request, set before rate limiting; for anonymous requests Identifier is a RemoteIP + User-Agent hash.
 type Subject struct {
 	// Identifier is the stable identity (G-strkey for SEP-10, owner-account reference for API
 	// keys) or, for anonymous, a per-IP+UA hash that is not stable across deploys.
@@ -96,17 +94,13 @@ type Subject struct {
 	ExpiresAt time.Time
 }
 
-// SubjectPermissionEntry mirrors platform.KeyPermissionEntry so auth need not import platform:
-// either Endpoint (exact `<METHOD> <PATH>`) or EndpointPrefix, never both. The JSON tags are
-// required: the Redis cache round-trips this type, and dropping them would silently bypass
-// KeyPolicy on cache hits.
+// SubjectPermissionEntry mirrors platform.KeyPermissionEntry (Endpoint or EndpointPrefix, never both); the JSON tags are required because the Redis cache round-trips it and dropping them would bypass KeyPolicy on cache hits.
 type SubjectPermissionEntry struct {
 	Endpoint       string `json:"endpoint,omitempty"`
 	EndpointPrefix string `json:"endpoint_prefix,omitempty"`
 }
 
-// Anonymous returns the subject attached when no credential is presented (or auth_mode=none); the
-// identifier is typically a RemoteIP + UA hash, which the rate limiter keys on.
+// Anonymous returns the subject attached when no credential is presented (or auth_mode=none), keyed on an identifier such as a RemoteIP + UA hash.
 func Anonymous(identifier string) Subject {
 	return Subject{Identifier: identifier, Tier: TierAnonymous}
 }
@@ -123,8 +117,7 @@ func WithSubject(ctx context.Context, s Subject) context.Context {
 	return context.WithValue(ctx, subjectKey, s)
 }
 
-// SubjectFrom extracts the Subject from ctx; false means none was attached (always attached after
-// the auth middleware), to be treated as anonymous-with-empty-id.
+// SubjectFrom extracts the Subject from ctx; false means none was attached and the caller must treat it as anonymous.
 func SubjectFrom(ctx context.Context) (Subject, bool) {
 	v := ctx.Value(subjectKey)
 	if v == nil {

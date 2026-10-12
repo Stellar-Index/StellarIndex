@@ -20,23 +20,16 @@ const webhookKeySealVersion byte = 1
 
 const webhookKeySealLabel = "stellarindex customer-webhook signing-key seal v1"
 
-// ErrWebhookKeyUnsealable is returned when a stored signing key cannot
-// be opened: no seal key is configured, or the sealed bytes fail
-// authentication under the configured one.
+// ErrWebhookKeyUnsealable is returned when a stored signing key cannot be opened: no seal key is configured or the sealed bytes fail authentication.
 var ErrWebhookKeyUnsealable = errors.New("platform: webhook signing key cannot be unsealed")
 
-// ErrWebhookSealKeyMissing is the [ErrWebhookKeyUnsealable] case where no
-// seal key is configured: setting one can still open the key, whereas an
-// authentication failure under a configured key never will.
+// ErrWebhookSealKeyMissing is the [ErrWebhookKeyUnsealable] case where no seal key is configured; setting one can still open the key, an authentication failure never will.
 var ErrWebhookSealKeyMissing = fmt.Errorf("%w: no seal key is configured", ErrWebhookKeyUnsealable)
 
-// WebhookKeySealer seals customer-webhook signing keys at rest with
-// AES-256-GCM. The webhook id is the associated data, so a sealed key
-// copied onto another row does not open there.
+// WebhookKeySealer seals customer-webhook signing keys at rest with AES-256-GCM, using the webhook id as associated data so a sealed key copied onto another row does not open.
 type WebhookKeySealer struct{ aead cipher.AEAD }
 
-// NewWebhookKeySealer derives the sealing key from secret, which must
-// be at least [MinWebhookSealSecretLen] bytes.
+// NewWebhookKeySealer derives the sealing key from secret, which must be at least [MinWebhookSealSecretLen] bytes.
 func NewWebhookKeySealer(secret []byte) (*WebhookKeySealer, error) {
 	if len(secret) < MinWebhookSealSecretLen {
 		return nil, fmt.Errorf("platform: webhook seal secret is %d bytes, want at least %d",

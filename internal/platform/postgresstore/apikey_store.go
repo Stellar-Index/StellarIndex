@@ -133,8 +133,7 @@ func parseCIDRArray(in []string) []netip.Prefix {
 	return out
 }
 
-// Create inserts a pre-hashed key. The capped path (maxActiveKeysPerAccount > 0) runs under the account's apikey advisory lock ([lockAccount]), since an unlocked count-CTE lets two callers at cap-1 both insert under MVCC.
-// Returns [platform.ErrAPIKeyQuotaExceeded] when the cap is met; zero or negative disables it (staff seeding).
+// Create inserts a pre-hashed key; the capped path (maxActiveKeysPerAccount > 0) runs under the account's advisory lock and returns [platform.ErrAPIKeyQuotaExceeded] at the cap, zero or negative disables it.
 func (r *APIKeyStore) Create(ctx context.Context, k platform.APIKey, maxActiveKeysPerAccount int) (platform.APIKey, error) {
 	args, err := buildAPIKeyCreateArgs(k)
 	if err != nil {
@@ -302,8 +301,7 @@ func (r *APIKeyStore) GetByHash(ctx context.Context, keyHash []byte) (platform.A
 	return out, nil
 }
 
-// CountActiveForAccount counts the account's non-revoked keys: the same
-// predicate apiKeyInsertCapped gates on, served by api_keys_account_active_idx.
+// CountActiveForAccount counts the account's non-revoked keys, the same predicate apiKeyInsertCapped gates on.
 func (r *APIKeyStore) CountActiveForAccount(ctx context.Context, accountID uuid.UUID) (int, error) {
 	const q = `SELECT COUNT(*) FROM api_keys WHERE account_id = $1 AND revoked_at IS NULL`
 	var n int
@@ -313,8 +311,7 @@ func (r *APIKeyStore) CountActiveForAccount(ctx context.Context, accountID uuid.
 	return n, nil
 }
 
-// ListActiveForAccount returns the account's non-revoked keys, oldest first.
-// Its size is bounded by the per-account active cap, never by revoked history.
+// ListActiveForAccount returns the account's non-revoked keys, oldest first, bounded by the per-account active cap.
 func (r *APIKeyStore) ListActiveForAccount(ctx context.Context, accountID uuid.UUID) ([]platform.APIKey, error) {
 	const q = `SELECT ` + apiKeyColumns + ` FROM api_keys
 		WHERE account_id = $1 AND revoked_at IS NULL
@@ -322,9 +319,7 @@ func (r *APIKeyStore) ListActiveForAccount(ctx context.Context, accountID uuid.U
 	return r.queryKeys(ctx, "list active api keys", q, accountID)
 }
 
-// ListForAccount returns every active key plus at most revokedLimit of the
-// most recently created revoked keys, oldest first. moreRevoked reports that
-// older revoked keys exist and were left out.
+// ListForAccount returns every active key plus at most revokedLimit recent revoked keys, oldest first; moreRevoked reports older revoked keys were left out.
 func (r *APIKeyStore) ListForAccount(
 	ctx context.Context, accountID uuid.UUID, revokedLimit int,
 ) (keys []platform.APIKey, moreRevoked bool, err error) {
@@ -373,9 +368,7 @@ func (r *APIKeyStore) queryKeys(ctx context.Context, op, q string, args ...any) 
 	return out, rows.Err()
 }
 
-// Update writes the editable fields of k.ID, only when accountID owns
-// it. A CHECK violation (quota, rate limit) surfaces as a generic error,
-// not platform.ErrConflict: it is not a uniqueness conflict.
+// Update writes the editable fields of k.ID only when accountID owns it; a CHECK violation surfaces as a generic error, not platform.ErrConflict.
 func (r *APIKeyStore) Update(ctx context.Context, accountID uuid.UUID, k platform.APIKey) error {
 	permissionsJSON, err := encodePermissions(k.Permissions)
 	if err != nil {
@@ -416,8 +409,7 @@ func (r *APIKeyStore) Update(ctx context.Context, accountID uuid.UUID, k platfor
 	return nil
 }
 
-// Revoke soft-deletes id, only when accountID owns it. Idempotent:
-// an already-revoked key keeps its revoked_at and gets the new reason.
+// Revoke soft-deletes id only when accountID owns it; idempotent, an already-revoked key keeps its revoked_at and gets the new reason.
 func (r *APIKeyStore) Revoke(ctx context.Context, accountID uuid.UUID, id string, byUserID uuid.UUID, reason string) error {
 	const q = `
 		UPDATE api_keys SET
@@ -437,9 +429,7 @@ func (r *APIKeyStore) Revoke(ctx context.Context, accountID uuid.UUID, id string
 	return nil
 }
 
-// TouchUsage updates the last-seen fields. id is the authenticated
-// key's own ID (see [platform.APIKeyStore]); the caller debounces
-// against hot-row contention and this method is unconditional.
+// TouchUsage updates the last-seen fields of the authenticated key id; unconditional, the caller debounces.
 func (r *APIKeyStore) TouchUsage(ctx context.Context, id string, ip net.IP, userAgent string) error {
 	const q = `
 		UPDATE api_keys SET
@@ -499,9 +489,7 @@ type cidrArray []netip.Prefix
 
 func ipAllowlistArray(prefixes []netip.Prefix) cidrArray { return cidrArray(prefixes) }
 
-// Value formats the prefix list as a Postgres array literal —
-// `{10.0.0.0/8,192.168.1.0/24}`. Empty slice → `{}` matching the
-// schema default.
+// Value formats the prefix list as a Postgres array literal like `{10.0.0.0/8,192.168.1.0/24}`; an empty slice gives `{}`.
 func (a cidrArray) Value() (driver.Value, error) {
 	if len(a) == 0 {
 		return "{}", nil

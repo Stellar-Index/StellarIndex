@@ -24,8 +24,7 @@ const (
 // never be delivered, so a placeholder address cannot reach a stranger.
 const placeholderEmailDomain = "@passkey.invalid"
 
-// PlaceholderEmail is the unique, undeliverable address stored for a user who
-// signed up with a passkey and gave no email (users.email is NOT NULL, unique).
+// PlaceholderEmail is the unique, undeliverable address stored for a passkey user who gave no email (users.email is NOT NULL, unique).
 func PlaceholderEmail(userID uuid.UUID) string {
 	return "passkey-" + userID.String() + placeholderEmailDomain
 }

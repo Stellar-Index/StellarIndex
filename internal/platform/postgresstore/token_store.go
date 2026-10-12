@@ -19,23 +19,18 @@ type TokenStore struct {
 	sweepBatchRows int
 }
 
-// NewTokenStore returns the Postgres-backed implementation.
-// `now` defaults to time.Now.UTC; tests inject a fixed clock.
+// NewTokenStore returns the Postgres-backed implementation; the clock defaults to time.Now.UTC.
 func NewTokenStore(s *Store) *TokenStore {
 	return &TokenStore{s: s, now: func() time.Time { return time.Now().UTC() }, sweepBatchRows: defaultSweepBatchRows}
 }
 
-// WithClock overrides the time source. Tests that pin
-// "expired five minutes ago" semantics use this.
+// WithClock overrides the time source, for tests.
 func (r *TokenStore) WithClock(now func() time.Time) *TokenStore {
 	r.now = now
 	return r
 }
 
-// WithSweepBatchSize overrides the per-statement row cap the reaper
-// sweeps below use. Tests use a small value so a batch boundary is
-// reachable without seeding tens of thousands of rows; production
-// leaves the default (defaultSweepBatchRows).
+// WithSweepBatchSize overrides the per-statement row cap of the reaper sweeps (default defaultSweepBatchRows); tests use a small value.
 func (r *TokenStore) WithSweepBatchSize(n int) *TokenStore {
 	r.sweepBatchRows = n
 	return r
@@ -48,9 +43,7 @@ const (
 	sweepMaxBatchesPerCall = 25
 )
 
-// CreateMagicLinkToken inserts a new row. Caller already
-// generated the random plaintext + computed sha256 and is
-// responsible for emailing the plaintext to the user.
+// CreateMagicLinkToken inserts a row; the caller generates the random plaintext and sha256 and emails the plaintext.
 func (r *TokenStore) CreateMagicLinkToken(ctx context.Context, t platform.MagicLinkToken) error {
 	ip, err := ipString(t.RequestedIP)
 	if err != nil {
@@ -70,8 +63,7 @@ func (r *TokenStore) CreateMagicLinkToken(ctx context.Context, t platform.MagicL
 	return nil
 }
 
-// ConsumeMagicLinkToken atomically marks the row consumed and returns it. Absent and already-consumed both give platform.ErrNotFound (a reused token must look like a typo); past expires_at gives platform.ErrTokenExpired.
-// One UPDATE...RETURNING does lookup, expiry check and consumption, so concurrent requests cannot both succeed.
+// ConsumeMagicLinkToken atomically marks the row consumed in one UPDATE...RETURNING; absent or already-consumed gives platform.ErrNotFound, past expires_at gives platform.ErrTokenExpired.
 func (r *TokenStore) ConsumeMagicLinkToken(ctx context.Context, tokenHash []byte) (platform.MagicLinkToken, error) {
 	now := r.now()
 	const q = `
@@ -109,9 +101,7 @@ func (r *TokenStore) ConsumeMagicLinkToken(ctx context.Context, tokenHash []byte
 	return out, nil
 }
 
-// ReserveLoginCode charges one attempt to the email's NEWEST active login token if under maxAttempts and returns the row (the handler recomputes the code from TokenHash).
-// Only the newest token is a candidate, so older tokens never widen the set of codes a guess can hit (see [platform.TokenStore.ReserveLoginCode]).
-// Charge and cap check are one statement: FOR UPDATE makes a racing call wait, and the UPDATE re-checks `attempts < $3` against the committed value.
+// ReserveLoginCode charges one attempt to the email's NEWEST active login token if under maxAttempts, atomically (FOR UPDATE plus re-check of `attempts < $3`), and returns the row; older tokens never widen the guessable set.
 func (r *TokenStore) ReserveLoginCode(ctx context.Context, email string, maxAttempts int) (platform.MagicLinkToken, error) {
 	now := r.now()
 	const q = `
@@ -155,9 +145,7 @@ func (r *TokenStore) ReserveLoginCode(ctx context.Context, email string, maxAtte
 	return t, nil
 }
 
-// HasLiveLoginCode is ReserveLoginCode's selection without the charge:
-// the same newest-token predicate, answered true only when that token
-// is still under maxAttempts.
+// HasLiveLoginCode is ReserveLoginCode's selection without the charge: true only when the newest token is still under maxAttempts.
 func (r *TokenStore) HasLiveLoginCode(ctx context.Context, email string, maxAttempts int) (bool, error) {
 	const q = `
 		SELECT COALESCE((
@@ -178,9 +166,7 @@ func (r *TokenStore) HasLiveLoginCode(ctx context.Context, email string, maxAtte
 	return live, nil
 }
 
-// RegisterFailedLoginCode records one failed 6-digit-code attempt against the EMAIL and returns the lockout state. The counter is independent of any token because per-mint `attempts` reset on re-mint and the Redis send throttle can be cleared, which would give an attacker an indefinite guess budget.
-// One statement, so concurrent attempts cannot both write `n+1`: a fresh or fully-elapsed unlocked window restarts at 1, otherwise the count increments;
-// crossing maxFailures stamps locked_until, and an already-locked row keeps its lock so a grinder cannot extend a victim's lockout.
+// RegisterFailedLoginCode records one failed code attempt against the EMAIL (independent of any token, so re-minting cannot reset the guess budget) in one statement, stamping locked_until at maxFailures and never extending an existing lock.
 func (r *TokenStore) RegisterFailedLoginCode(
 	ctx context.Context, email string, maxFailures int, window, lockFor time.Duration,
 ) (platform.LoginCodeLockout, error) {
@@ -275,8 +261,7 @@ func (r *TokenStore) LoginCodeLockoutStatus(ctx context.Context, email string) (
 	return out, nil
 }
 
-// ClearLoginCodeLockout drops the durable counter after a successful
-// sign-in through either door. Idempotent — no row is not an error.
+// ClearLoginCodeLockout drops the durable counter after a successful sign-in; idempotent.
 func (r *TokenStore) ClearLoginCodeLockout(ctx context.Context, email string) error {
 	if email == "" {
 		return errors.New("postgresstore: ClearLoginCodeLockout: email is empty")
@@ -288,8 +273,7 @@ func (r *TokenStore) ClearLoginCodeLockout(ctx context.Context, email string) er
 	return nil
 }
 
-// SweepLoginCodeLockouts deletes SETTLED lockout rows older than olderThan (driving [logincodereaper.Reaper]): `email` is attacker-chosen via unauthenticated verify-code, so rows would otherwise grow without bound.
-// A row with a LIVE lock is never deleted at any age; the bool reports the per-call cap was hit with every batch full, so the reaper re-sweeps.
+// SweepLoginCodeLockouts deletes SETTLED lockout rows older than olderThan (email is attacker-chosen, so rows would grow unbounded), never a LIVE lock; the bool reports the per-call cap was hit so the reaper re-sweeps.
 func (r *TokenStore) SweepLoginCodeLockouts(ctx context.Context, olderThan time.Time) (int64, bool, error) {
 	const q = `
 		DELETE FROM login_code_lockouts
@@ -318,10 +302,7 @@ func (r *TokenStore) SweepLoginCodeLockouts(ctx context.Context, olderThan time.
 	return deleted, true, nil
 }
 
-// CountLoginCodeLockouts returns the current row count. Feeds the
-// [obs.LoginCodeLockoutRows] gauge so table growth is visible on a
-// metric an operator already watches, rather than first appearing as a
-// volume-level disk-full page.
+// CountLoginCodeLockouts returns the row count, feeding the [obs.LoginCodeLockoutRows] gauge.
 func (r *TokenStore) CountLoginCodeLockouts(ctx context.Context) (int64, error) {
 	var n int64
 	if err := r.s.db.QueryRowContext(ctx,
@@ -331,8 +312,7 @@ func (r *TokenStore) CountLoginCodeLockouts(ctx context.Context) (int64, error) 
 	return n, nil
 }
 
-// SweepExpiredMagicLinkTokens deletes rows with `expires_at` before olderThan (driving [magiclinkreaper.Reaper]): email and requested_ip are ATTACKER-CHOSEN durable PII inserted by unauthenticated login, so the table would grow without bound.
-// An expired row is terminal (consume and reserve both require expires_at > now); retention keeps it a while so classifyMagicLinkMiss can tell expired from absent.
+// SweepExpiredMagicLinkTokens deletes rows with expires_at before olderThan (email and requested_ip are attacker-chosen PII, so unbounded otherwise); retained a while so classifyMagicLinkMiss can tell expired from absent.
 func (r *TokenStore) SweepExpiredMagicLinkTokens(ctx context.Context, olderThan time.Time) (int64, error) {
 	const q = `
 		DELETE FROM magic_link_tokens
@@ -360,10 +340,7 @@ func (r *TokenStore) SweepExpiredMagicLinkTokens(ctx context.Context, olderThan 
 	return total, nil
 }
 
-// CountMagicLinkTokens returns the current row count. Feeds the
-// [obs.MagicLinkTokenRows] gauge so table growth is visible on a metric
-// an operator already watches, rather than first appearing as a
-// volume-level disk-full page.
+// CountMagicLinkTokens returns the row count, feeding the [obs.MagicLinkTokenRows] gauge.
 func (r *TokenStore) CountMagicLinkTokens(ctx context.Context) (int64, error) {
 	var n int64
 	if err := r.s.db.QueryRowContext(ctx,
@@ -456,8 +433,7 @@ func (r *TokenStore) CreateInvite(ctx context.Context, i platform.Invite) error 
 	return nil
 }
 
-// AcceptInvite atomically marks accepted + returns the row.
-// Same expired/not-found classification as ConsumeMagicLinkToken.
+// AcceptInvite atomically marks the invite accepted and returns the row, with the same expired/not-found classification as ConsumeMagicLinkToken.
 func (r *TokenStore) AcceptInvite(ctx context.Context, tokenHash []byte) (platform.Invite, error) {
 	now := r.now()
 	const q = `
@@ -505,8 +481,7 @@ func (r *TokenStore) classifyInviteMiss(ctx context.Context, tokenHash []byte) e
 	return platform.ErrNotFound
 }
 
-// RevokeInvite marks revoked. Owner / admin uses this to
-// cancel pending invites. Idempotent.
+// RevokeInvite marks an invite revoked so an owner or admin can cancel it; idempotent.
 func (r *TokenStore) RevokeInvite(ctx context.Context, tokenHash []byte) error {
 	const q = `
 		UPDATE invites
@@ -522,8 +497,7 @@ func (r *TokenStore) RevokeInvite(ctx context.Context, tokenHash []byte) error {
 	return nil
 }
 
-// ListInvitesForAccount returns active (unrevoked, unaccepted)
-// invites — used by the team-management UI.
+// ListInvitesForAccount returns active (unrevoked, unaccepted) invites for the team-management UI.
 func (r *TokenStore) ListInvitesForAccount(ctx context.Context, accountID uuid.UUID) ([]platform.Invite, error) {
 	// Filter on `r.now()`, not SQL `now()` (Postgres server time), like
 	// every other expiry check in this file, so [WithClock]'s injected

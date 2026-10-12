@@ -14,9 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// WebAuthnCredentialStore is the Postgres impl of
-// [platform.WebAuthnCredentialStore] (webauthn_credentials,
-// migration 0140).
+// WebAuthnCredentialStore is the Postgres impl of [platform.WebAuthnCredentialStore] (webauthn_credentials).
 type WebAuthnCredentialStore struct{ s *Store }
 
 // NewWebAuthnCredentialStore wraps the shared handle.

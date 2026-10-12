@@ -26,8 +26,7 @@ func NewUserStore(s *Store) *UserStore {
 	return &UserStore{s: s, sweepBatchRows: defaultSweepBatchRows}
 }
 
-// WithSweepBatchSize overrides the per-statement row cap of
-// SweepEndedSessions so tests can reach a batch boundary cheaply.
+// WithSweepBatchSize overrides the per-statement row cap of SweepEndedSessions, for tests.
 func (r *UserStore) WithSweepBatchSize(n int) *UserStore {
 	r.sweepBatchRows = n
 	return r
@@ -73,8 +72,7 @@ func scanUser(row interface {
 	return u, nil
 }
 
-// CreateUser inserts a new user row. A non-nil u.ID is kept (a passkey signup
-// binds it into the credential before the row exists); nil takes the default.
+// CreateUser inserts a user row; a non-nil u.ID is kept (passkey signup binds it first), nil takes the default.
 func (r *UserStore) CreateUser(ctx context.Context, u platform.User) (platform.User, error) {
 	const q = `
 		INSERT INTO users (
@@ -150,9 +148,7 @@ func (r *UserStore) ListUsersForAccount(ctx context.Context, accountID uuid.UUID
 	return out, rows.Err()
 }
 
-// UpdateUser writes the mutable fields. Immutable (id,
-// account_id, email, created_at, is_staff) are ignored. Staff
-// flips go through a dedicated admin path (not in this PR).
+// UpdateUser writes the mutable fields; id, account_id, email, created_at and is_staff are immutable and ignored.
 func (r *UserStore) UpdateUser(ctx context.Context, u platform.User) error {
 	const q = `
 		UPDATE users SET
@@ -285,8 +281,7 @@ func (r *UserStore) GetSessionByTokenHash(ctx context.Context, tokenHash []byte)
 	return out, nil
 }
 
-// TouchSession updates the last-seen fields; the caller debounces to once a minute, this method always writes.
-// ip_last_seen is `inet NOT NULL`, so a nil ip must not become a fake "0.0.0.0" (clientIP can return nil) and corrupt the forensics column; COALESCE keeps the existing value instead.
+// TouchSession updates the last-seen fields, always writing (the caller debounces); a nil ip keeps the existing value via COALESCE rather than a fake 0.0.0.0.
 func (r *UserStore) TouchSession(ctx context.Context, id uuid.UUID, ip net.IP, userAgent string) error {
 	const q = `
 		UPDATE sessions SET
@@ -333,8 +328,7 @@ func (r *UserStore) RevokeAllUserSessions(ctx context.Context, userID uuid.UUID)
 	return nil
 }
 
-// RevokeOtherUserSessions logs the user out everywhere except
-// keepSessionID. Idempotent.
+// RevokeOtherUserSessions logs the user out everywhere except keepSessionID; idempotent.
 func (r *UserStore) RevokeOtherUserSessions(ctx context.Context, userID, keepSessionID uuid.UUID) error {
 	const q = `UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND id <> $2 AND revoked_at IS NULL`
 	_, err := r.s.db.ExecContext(ctx, q, userID, keepSessionID)
@@ -344,8 +338,7 @@ func (r *UserStore) RevokeOtherUserSessions(ctx context.Context, userID, keepSes
 	return nil
 }
 
-// CapUserSessions revokes the user's oldest live sessions beyond maxLive,
-// never keepSessionID. Idempotent.
+// CapUserSessions revokes the user's oldest live sessions beyond maxLive, never keepSessionID; idempotent.
 func (r *UserStore) CapUserSessions(ctx context.Context, userID, keepSessionID uuid.UUID, maxLive int) error {
 	if maxLive < 1 {
 		return fmt.Errorf("cap user sessions: maxLive %d < 1", maxLive)

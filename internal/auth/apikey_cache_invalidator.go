@@ -10,9 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 )
 
-// RedisKeyCacheInvalidator evicts one API-key record from the Redis cache PostgresAPIKeyValidator populates, for mutations outside the Revoke handler (e.g. the admin tier clamp), else postgres-backend keys keep the old budget for the ~1h TTL.
-// WIRING HAZARD: it also DELs `apikey:<hash>`, which under the default redis backend IS the canonical credential (plaintext shown once, Postgres holds only the hash), destroying a customer's key irrecoverably.
-// Construct only via NewKeyCacheInvalidatorForBackend (nil for every non-postgres backend); a nil cache or receiver makes calls no-ops.
+// RedisKeyCacheInvalidator evicts one API-key record from the Redis cache the Postgres validator populates; WIRING HAZARD: under the redis backend its DEL target is the canonical credential, so construct only via NewKeyCacheInvalidatorForBackend (nil/receiver-nil calls no-op).
 type RedisKeyCacheInvalidator struct {
 	cache redis.Cmdable
 }
@@ -20,8 +18,7 @@ type RedisKeyCacheInvalidator struct {
 // BackendPostgres is the `[api].auth_backend` value running PostgresAPIKeyValidator with a rebuildable `apikey-cache:<hash>` cache; any other value (default "redis") runs RedisAPIKeyValidator, where `apikey:<hash>` is canonical.
 const BackendPostgres = "postgres"
 
-// NewKeyCacheInvalidatorForBackend returns the invalidator mutation paths should use under authBackend, or nil when it has no separate cache. Only BackendPostgres gets one: under redis the only DEL target would be the credential itself.
-// Assign the result to an interface field only when non-nil; a typed-nil pointer defeats the `== nil` guards that skip uncounted evictions.
+// NewKeyCacheInvalidatorForBackend returns the invalidator for authBackend, or nil when there is no separate cache (only BackendPostgres gets one; assign to an interface only when non-nil to avoid a typed-nil).
 func NewKeyCacheInvalidatorForBackend(authBackend string, cache redis.Cmdable) *RedisKeyCacheInvalidator {
 	if authBackend != BackendPostgres || cache == nil {
 		return nil
@@ -34,9 +31,7 @@ func NewRedisKeyCacheInvalidator(cache redis.Cmdable) *RedisKeyCacheInvalidator 
 	return &RedisKeyCacheInvalidator{cache: cache}
 }
 
-// InvalidateCachedKey deletes the records keyed by the SHA-256 hex hash
-// of the plaintext — see [evictCachedKey]. No-op when the cache (or the
-// receiver) is nil. Idempotent — deleting an absent key is not an error.
+// InvalidateCachedKey deletes the records keyed by the SHA-256 hex hash of the plaintext; idempotent, and a no-op when the cache or receiver is nil.
 func (i *RedisKeyCacheInvalidator) InvalidateCachedKey(ctx context.Context, hexHash string) error {
 	if i == nil || i.cache == nil {
 		return nil

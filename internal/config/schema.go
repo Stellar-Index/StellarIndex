@@ -8,8 +8,7 @@ import (
 	"time"
 )
 
-// SchemaField is one row in the generated reference — the flat,
-// dotted form an operator would look up.
+// SchemaField is one row in the generated reference, in flat dotted form.
 type SchemaField struct {
 	Path     string // e.g. "region.id"
 	Type     string // Go type label ("string", "int", "[]string", …)
@@ -19,10 +18,7 @@ type SchemaField struct {
 	Required bool   // true if no default supplied
 }
 
-// Describe walks the struct and returns every leaf field as a
-// SchemaField. Nested substructs are flattened with dots in Path.
-// Panics on a leaf field missing the `doc:` tag — the whole point
-// of the exercise is to force docs.
+// Describe walks the struct and returns every leaf field as a SchemaField with dotted Path; panics on a leaf missing the `doc:` tag.
 func Describe() []SchemaField {
 	return describe(reflect.TypeOf(Config{}), "")
 }
@@ -134,10 +130,7 @@ func typeLabel(t reflect.Type) string {
 	}
 }
 
-// EmitMarkdown writes the reference doc to w. The output starts with
-// the required `<!-- GENERATED FILE - DO NOT EDIT -->` banner so
-// lint-docs.sh §7 is happy; regen via
-// `go run ./cmd/stellarindex-ops docs-config > docs/reference/config/README.md`.
+// EmitMarkdown writes the reference doc to w, starting with the required `<!-- GENERATED FILE - DO NOT EDIT -->` banner; regen via `go run ./cmd/stellarindex-ops docs-config > docs/reference/config/README.md`.
 func EmitMarkdown(w io.Writer) error {
 	fields := Describe()
 

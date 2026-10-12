@@ -11,22 +11,16 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// RedisTouchDebouncer is the Redis-SETNX adapter for middleware.TouchDebouncer: it gates APIKeyStore.TouchUsage to at most one UPDATE per (keyID, TTL) window on the hot api_keys row.
-// Key `touch:apikey:<keyID>` with a sentinel value (only existence matters); the TTL covers a crash between the SETNX and TouchUsage.
+// RedisTouchDebouncer is the Redis-SETNX adapter for middleware.TouchDebouncer, gating TouchUsage to at most one UPDATE per (keyID, TTL) window.
 type RedisTouchDebouncer struct {
 	rdb redis.Cmdable
 	ttl time.Duration
 }
 
-// DefaultTouchDebounceTTL is the recommended SETNX TTL when the
-// caller doesn't pass a custom value. Operators reading "last
-// seen" tolerate up-to-5-minute staleness; tighter intervals add
-// UPDATE pressure with no product benefit.
+// DefaultTouchDebounceTTL (5m) is the SETNX TTL used when the caller passes none.
 const DefaultTouchDebounceTTL = 5 * time.Minute
 
-// NewRedisTouchDebouncer constructs a debouncer. rdb MUST be
-// non-nil — the api binary only wires this when Redis is
-// reachable. Pass `0` for `ttl` to use [DefaultTouchDebounceTTL].
+// NewRedisTouchDebouncer constructs a debouncer; rdb MUST be non-nil and ttl 0 uses [DefaultTouchDebounceTTL].
 func NewRedisTouchDebouncer(rdb redis.Cmdable, ttl time.Duration) *RedisTouchDebouncer {
 	if rdb == nil {
 		panic("auth: NewRedisTouchDebouncer: rdb must not be nil")
