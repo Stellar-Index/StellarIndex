@@ -9,10 +9,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 )
 
-// noopMiddleware passes the request through unchanged. Sufficient
-// to exercise the optional-middleware append branches in
-// Server.Handler — we don't need real CORS/RateLimit behaviour for
-// this coverage.
+// noopMiddleware passes the request through unchanged, enough to exercise the optional-middleware branches in Server.Handler.
 func noopMiddleware(label string, hits *int) middleware.Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

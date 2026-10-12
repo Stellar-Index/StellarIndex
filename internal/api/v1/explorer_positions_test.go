@@ -11,10 +11,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// stubPositionsReader is a canned explorerpkg.PositionsReader
-// (structural — this file doesn't import that package, only satisfies
-// its method set, same convention as stubSEP41MovementsReader in
-// explorer_movements_test.go).
+// stubPositionsReader is a canned explorerpkg.PositionsReader, satisfied structurally without importing that package (same
+// convention as stubSEP41MovementsReader in explorer_movements_test.go).
 type stubPositionsReader struct {
 	blend       []timescale.BlendPositionFold
 	blendErr    error
@@ -101,10 +99,9 @@ func TestExplorer_AccountPositions_LabelReadFailureMarksDegraded(t *testing.T) {
 	}
 }
 
-// TestExplorer_AccountPositions_Fold pins the per-protocol fold -> wire-shape mapping across
-// blend supply and borrow legs (same pool/asset, independent positions), backstop, phoenix,
-// defindex, sorocredit and an aquarius gauge with negative net delta ("unwound"). Net-zero
-// and closed positions are excluded by default and included with ?include_closed=true.
+// TestExplorer_AccountPositions_Fold pins the per-protocol fold to wire-shape mapping across blend supply and borrow legs,
+// backstop, phoenix, defindex, sorocredit and an aquarius gauge with negative net delta ("unwound"). Net-zero and closed
+// positions are excluded by default and included with ?include_closed=true.
 func TestExplorer_AccountPositions_Fold(t *testing.T) {
 	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
 	opened := now.Add(-72 * time.Hour)
@@ -299,11 +296,9 @@ func TestExplorer_AccountPositions_EmptyIsHonest(t *testing.T) {
 	}
 }
 
-// TestExplorer_AccountPositions_AuctionSupersededBlendLeg pins how a Blend leg moved by a
-// liquidation auction is served: never its pre-liquidation underlying net. A partly seized leg
-// (and a filler's leg created only by a received lot, whose own net is "0") is open with
-// amount ""; a leg whose b/d-token balance is exactly zero is a closed "0"; an untouched leg
-// keeps its net.
+// TestExplorer_AccountPositions_AuctionSupersededBlendLeg: a Blend leg moved by a liquidation auction is never served as its
+// pre-liquidation net. A partly seized or filler-received leg is open with amount ""; an exactly zero b/d-token leg is a closed
+// "0"; an untouched leg keeps its net.
 func TestExplorer_AccountPositions_AuctionSupersededBlendLeg(t *testing.T) {
 	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
 	reader := &stubPositionsReader{blend: []timescale.BlendPositionFold{
@@ -334,10 +329,8 @@ func TestExplorer_AccountPositions_AuctionSupersededBlendLeg(t *testing.T) {
 	assertPositions(t, servePositions(t, reader, true), open)
 }
 
-// TestExplorer_AccountPositions_UnpublishedCreditHasNoAmount pins that a
-// sorocredit position with no published statement is served with amount
-// "" and amount_semantics not_yet_published — never "0" presented as the
-// protocol's published figure — and stays open by default.
+// TestExplorer_AccountPositions_UnpublishedCreditHasNoAmount: a sorocredit position with no published statement is served with
+// amount "" and amount_semantics not_yet_published, never "0", and stays open by default.
 func TestExplorer_AccountPositions_UnpublishedCreditHasNoAmount(t *testing.T) {
 	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
 	got := servePositions(t, &stubPositionsReader{credit: []timescale.CreditPositionFold{{

@@ -91,10 +91,8 @@ func TestHandleIssuersList_InvalidLimit400(t *testing.T) {
 	}
 }
 
-// TestHandleIssuersList_HappyPath pins the wire shape — every field
-// the explorer's /issuers table reads. ScamReason populates from
-// the curated known_scams.go map; not asserted directly here
-// (depends on whether the test G-strkey is in the map).
+// TestHandleIssuersList_HappyPath pins the wire shape, every field the explorer's /issuers table reads. ScamReason is not
+// asserted since it depends on whether the test G-strkey is in the curated map.
 func TestHandleIssuersList_HappyPath(t *testing.T) {
 	reader := &stubIssuersReader{
 		list: []timescale.IssuerSummary{
@@ -176,18 +174,9 @@ func TestHandleIssuersList_ReaderError500(t *testing.T) {
 	}
 }
 
-// TestHandleIssuersList_ClientAbortedNo500 — regression for the
-// clientAborted guard. When
-// the inbound request is canceled mid-flight (concurrent callers /
-// the sla-probe / a browser navigating away), the driver surfaces the
-// canceled ListIssuers query as SQLSTATE 57014. That is a client
-// abort, NOT a server fault: the handler must return quietly, never
-// a 500 (a 500 pollutes the 5xx rate + SLA availability — it was the
-// sole sla-probe SLA-harness blocker). Without the
-// clientAborted guard the canceled-context error falls through to
-// the generic `Issuers list failed` 500. clientAborted keys off
-// r.Context().Err(), so any storage error + a canceled request ctx
-// must NOT 500.
+// TestHandleIssuersList_ClientAbortedNo500: a request canceled mid-flight surfaces the ListIssuers query as SQLSTATE 57014, a
+// client abort and not a server fault. The clientAborted guard (keyed on r.Context().Err()) must not 500, which would pollute the
+// 5xx rate and SLA availability.
 func TestHandleIssuersList_ClientAbortedNo500(t *testing.T) {
 	reader := &stubIssuersReader{
 		listErr: errors.New("pq: canceling statement due to user request"),
@@ -221,10 +210,8 @@ func TestHandleIssuer_503WhenReaderNil(t *testing.T) {
 	}
 }
 
-// TestHandleIssuer_NotFound404 — sql.ErrNoRows surfaces as 404
-// with `issuer-not-found` problem type; the handler must distinguish
-// ErrNoRows from generic
-// storage failures (which 500).
+// TestHandleIssuer_NotFound404: sql.ErrNoRows must surface as 404 `issuer-not-found`, distinct from generic storage failures
+// (500).
 func TestHandleIssuer_NotFound404(t *testing.T) {
 	reader := &stubIssuersReader{rowErr: sql.ErrNoRows}
 	srv := v1.New(v1.Options{Issuers: reader})
@@ -240,11 +227,8 @@ func TestHandleIssuer_NotFound404(t *testing.T) {
 	}
 }
 
-// TestHandleIssuer_LowercaseInputUppercased — the handler upper-
-// cases the path segment before hitting storage so URL clients
-// that auto-lowercase don't dead-end: `/v1/issuers/ga5zsejyb...` must not
-// 404 while the uppercase form returns the row. Verified by checking what
-// the storage stub received.
+// TestHandleIssuer_LowercaseInputUppercased: the handler upper-cases the path segment before storage so URLs from auto-
+// lowercasing clients still resolve. Checked via what the storage stub received.
 func TestHandleIssuer_LowercaseInputUppercased(t *testing.T) {
 	reader := &stubIssuersReader{
 		row: timescale.IssuerRow{
@@ -306,12 +290,8 @@ func TestHandleIssuer_HappyPath_WithAssets(t *testing.T) {
 	}
 }
 
-// TestHandleIssuer_ScamSuppressesSEP1Payload — scam-identity suppression must
-// clear SEP1Payload alongside HomeDomain/OrgName. The raw
-// stellar.toml JSONB carries the same impersonated org_name/
-// home_domain the two string fields are cleared of; served verbatim,
-// a client decoding sep1_payload would recover the
-// exact identity the suppression exists to hide.
+// TestHandleIssuer_ScamSuppressesSEP1Payload: scam suppression must clear SEP1Payload along with HomeDomain/OrgName, since the
+// raw stellar.toml JSONB carries the same impersonated identity the suppression exists to hide.
 func TestHandleIssuer_ScamSuppressesSEP1Payload(t *testing.T) {
 	const counterfeiter = "GBYBVWOOVC4EJVRIF4HMWG5B7POLCS7JRPY5KYR3BCLEK24IJQOGUARD"
 	reader := &stubIssuersReader{
@@ -348,13 +328,8 @@ func TestHandleIssuer_ScamSuppressesSEP1Payload(t *testing.T) {
 	}
 }
 
-// TestHandleIssuer_AssetsSoftFail — when ListIssuerAssets fails,
-// the issuer card still renders without it. The handler logs at
-// WARN and proceeds with assets = nil. Critical for explorer UX:
-// a failure to load the per-asset list shouldn't 500 the whole
-// issuer detail page. It must also carry a coverage_note so a
-// failed read is distinguishable on the wire from a genuine
-// zero-asset issuer.
+// TestHandleIssuer_AssetsSoftFail: when ListIssuerAssets fails the issuer card still renders (WARN log, assets nil) rather than
+// 500ing the page, and carries a coverage_note so the failure is distinguishable from a genuine zero-asset issuer.
 func TestHandleIssuer_AssetsSoftFail(t *testing.T) {
 	reader := &stubIssuersReader{
 		row: timescale.IssuerRow{
@@ -389,11 +364,8 @@ func TestHandleIssuer_AssetsSoftFail(t *testing.T) {
 	}
 }
 
-// TestHandleIssuer_ServesThePersistedProvenance — a recovered reading is only
-// safe to serve because it arrives LABELLED. If the handler drops the label,
-// a client sees four auth flags with no way to tell that they describe an
-// account which has been removed, which is a quieter defect than the
-// unresolved row it replaced.
+// TestHandleIssuer_ServesThePersistedProvenance: a recovered flags reading is safe to serve only when LABELLED; without the
+// label a client cannot tell the flags describe a removed account.
 func TestHandleIssuer_ServesThePersistedProvenance(t *testing.T) {
 	reader := &stubIssuersReader{row: timescale.IssuerRow{
 		GStrkey:             mergedIssuerG,
@@ -435,11 +407,9 @@ func TestHandleIssuer_ServesThePersistedProvenance(t *testing.T) {
 	}
 }
 
-// TestHandleIssuer_PersistedLastKnownIsReofferedToTheLiveReader — a
-// `last_known_before_removal` row stops being true the moment the account is
-// re-created at the same address, and the drain's primary queue
-// (`auth_required IS NULL`) never revisits a filled row, so the read path
-// must re-offer it to the live reader.
+// TestHandleIssuer_PersistedLastKnownIsReofferedToTheLiveReader: a `last_known_before_removal` row stops being true if the
+// account is re-created, and the drain queue (`auth_required IS NULL`) never revisits it, so the read path must re-offer it to
+// the live reader.
 func TestHandleIssuer_PersistedLastKnownIsReofferedToTheLiveReader(t *testing.T) {
 	reader := &stubIssuersReader{row: timescale.IssuerRow{
 		GStrkey:             mergedIssuerG,
@@ -491,11 +461,9 @@ func TestHandleIssuer_PersistedLastKnownIsReofferedToTheLiveReader(t *testing.T)
 	}
 }
 
-// TestHandleIssuer_PersistedLiveReadingIsReReadThroughThePointLookup — a
-// filled `live` row is re-read too (it can hold a domain the account has since
-// moved away from), and it is re-read through the narrow key_xdr point lookup
-// rather than AccountStateCached, whose fan-out to trustlines and offers would
-// put a cold lake read on every issuer page.
+// TestHandleIssuer_PersistedLiveReadingIsReReadThroughThePointLookup: a filled `live` row is re-read too (its domain may have
+// moved), via the narrow key_xdr point lookup rather than AccountStateCached, whose trustline/offer fan-out would add a cold lake
+// read to every issuer page.
 func TestHandleIssuer_PersistedLiveReadingIsReReadThroughThePointLookup(t *testing.T) {
 	reader := &stubIssuersReader{row: timescale.IssuerRow{
 		GStrkey:             mergedIssuerG,
@@ -527,11 +495,8 @@ func TestHandleIssuer_PersistedLiveReadingIsReReadThroughThePointLookup(t *testi
 	}
 }
 
-// TestHandleIssuer_LiveAccountStateStampsLiveProvenance — when the enrichment
-// resolves a LIVE AccountEntry, the response must say so and pin the ledger
-// the reading is true as of. Without that a consumer cannot tell a current
-// policy from a last-known one, which is the whole point of being able to
-// resolve the merged issuers at all.
+// TestHandleIssuer_LiveAccountStateStampsLiveProvenance: a LIVE AccountEntry must be labelled as such with the ledger it is true
+// as of, so consumers can tell a current policy from a last-known one.
 func TestHandleIssuer_LiveAccountStateStampsLiveProvenance(t *testing.T) {
 	reader := &stubIssuersReader{row: timescale.IssuerRow{GStrkey: provenanceIssuer}}
 	explorer := &stubExplorerReader{accountState: clickhouse.AccountState{
@@ -570,12 +535,8 @@ func TestHandleIssuer_LiveAccountStateStampsLiveProvenance(t *testing.T) {
 	}
 }
 
-// TestHandleIssuer_LiveAccountEntryOutranksPersistedFlags — the re-creation
-// case. Once the drain can persist a merged issuer's last-known flags, a row
-// whose account has been RE-CREATED on-chain must resolve back to its live
-// values and be labelled `live`. The account's own current AccountEntry is
-// the authority on its own policy; the persisted column is a cache of it, and
-// the drain's queue (`auth_required IS NULL`) will never revisit the row to
+// TestHandleIssuer_LiveAccountEntryOutranksPersistedFlags: for an account RE-CREATED on-chain, the live AccountEntry is the
+// authority and must override the persisted last-known flags and be labelled `live`; the drain never revisits the row to
 // correct it.
 func TestHandleIssuer_LiveAccountEntryOutranksPersistedFlags(t *testing.T) {
 	stale := true
@@ -625,14 +586,9 @@ func TestHandleIssuer_LiveAccountEntryOutranksPersistedFlags(t *testing.T) {
 	}
 }
 
-// TestHandleIssuer_NoLiveEntryNeverClaimsProvenance — absence from the
-// current-state projection is what a MERGED account and a lake-coverage gap
-// BOTH look like (r1's projection holds no `removed` row below ledger
-// 38,000,000 at all, so an account merged before that is simply missing). The
-// read path may therefore neither upgrade a persisted reading to `live` nor
-// conclude `last_known_before_removal` on its own: it leaves the flags alone
-// and says nothing about them. Only the drain, which reads an actual
-// `removed` row and its removal ledger, may write the historical label.
+// TestHandleIssuer_NoLiveEntryNeverClaimsProvenance: absence from the current-state projection looks the same for a merged
+// account and a lake-coverage gap, so the read path must neither upgrade to `live` nor conclude `last_known_before_removal`.
+// Only the drain, reading an actual `removed` row, may write the historical label.
 func TestHandleIssuer_NoLiveEntryNeverClaimsProvenance(t *testing.T) {
 	persisted := true
 	reader := &stubIssuersReader{row: timescale.IssuerRow{

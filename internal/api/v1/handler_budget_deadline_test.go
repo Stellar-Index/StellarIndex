@@ -31,10 +31,8 @@ func deadlineOnLiveRequestErr(what string) error {
 	return fmt.Errorf("%s: %w", what, context.DeadlineExceeded)
 }
 
-// deadlineHistoryReader fails TradesInRange the way an expired 8s budget
-// does. It asserts nothing about the context it is passed — the test's
-// whole point is that r.Context() is UNEXPIRED at the moment the error is
-// classified.
+// deadlineHistoryReader fails TradesInRange as an expired 8s budget would, while r.Context() is still UNEXPIRED when the error
+// is classified; that is the point of the test.
 type deadlineHistoryReader struct{ HistoryReader }
 
 func (deadlineHistoryReader) TradesInRange(
@@ -128,10 +126,8 @@ func (deadlineTokenSupplyReader) TokenSupply(
 	return clickhouse.TokenSupply{}, deadlineOnLiveRequestErr("sum supply_flows")
 }
 
-// The 502 leg of the same upgrade, and the only handler family that raises one.
-// /v1/assets/{asset_id}/supply reports a failed lake read as StatusBadGateway, so the 8s
-// ceiling this process imposed would read as an upstream fault. As with the 500 legs above,
-// the deadline is neither this server's fault nor its upstream's, and it clears on retry.
+// The 502 leg of the upgrade: /v1/assets/{asset_id}/supply reports a failed lake read as 502, so our own 8s deadline must become
+// a retryable 503, not read as an upstream fault.
 func TestHandlerOwnBudget_AssetSupplyDeadlineOnLiveRequestIs503(t *testing.T) {
 	s := quietServer()
 	s.TokenSupply = deadlineTokenSupplyReader{}
@@ -171,10 +167,8 @@ func TestHandlerOwnBudget_NonDeadlineFaultStays500(t *testing.T) {
 	}
 }
 
-// And on the 502 leg: a lake read that genuinely failed still attributes
-// the failure upstream. Pins the supply upgrade to the DEADLINE rather
-// than to "any supply read error", which would erase the one status that
-// tells an operator to go look at ClickHouse.
+// A genuinely failed lake read on the supply endpoint still returns 502. Pins the upgrade to the deadline, not to any read error,
+// so operators still see the status that points at ClickHouse.
 type brokenTokenSupplyReader struct{ TokenSupplyReader }
 
 func (brokenTokenSupplyReader) TokenSupply(
@@ -198,11 +192,8 @@ func TestHandlerOwnBudget_AssetSupplyNonDeadlineFaultStays502(t *testing.T) {
 	}
 }
 
-// TestHandlerOwnBudget_MarketSourcesDeadlineOnLiveRequestIs503: a store-side deadline in
-// /v1/markets/sources must not fall through as a plain 500 market-sources-error, which reads
-// as a permanent failure rather than a retryable capacity signal. It must report a retryable
-// 503 naming the specific endpoint, like the cold-path aggregates with their own per-call
-// context (history.go, chart.go `-timeout` types), not the generic requestTimeoutType.
+// TestHandlerOwnBudget_MarketSourcesDeadlineOnLiveRequestIs503: a store-side deadline in /v1/markets/sources must be a retryable
+// 503 naming the endpoint (like the other cold-path aggregates), not a permanent-looking 500.
 func TestHandlerOwnBudget_MarketSourcesDeadlineOnLiveRequestIs503(t *testing.T) {
 	for _, q := range []string{
 		"/v1/markets/sources?asset=native",
@@ -236,10 +227,8 @@ func TestHandlerOwnBudget_MarketSourcesDeadlineOnLiveRequestIs503(t *testing.T) 
 	}
 }
 
-// TestHandlerOwnBudget_MarketSourcesNonDeadlineFaultStays500 guards
-// against satisfying the upgrade above by relabelling EVERY failure as a
-// timeout, which would hide real storage faults from the 5xx dashboards
-// that separate "we are broken" from "we are slow".
+// TestHandlerOwnBudget_MarketSourcesNonDeadlineFaultStays500 guards against relabelling every failure as a timeout, which would
+// hide real storage faults from the 5xx dashboards.
 func TestHandlerOwnBudget_MarketSourcesNonDeadlineFaultStays500(t *testing.T) {
 	s := quietServer()
 	s.MarketSources = brokenMarketSourceReader{}
@@ -253,10 +242,8 @@ func TestHandlerOwnBudget_MarketSourcesNonDeadlineFaultStays500(t *testing.T) {
 	}
 }
 
-// TestHandlerOwnBudget_OracleSEP40DeadlineOnLiveRequestIs503: a store-side deadline in
-// /v1/oracle/lastprice, /v1/oracle/prices and /v1/oracle/x_last_price must not surface as a
-// plain 500 (a permanent-looking failure). Each must report a retryable 503 naming the
-// endpoint, the same contract as /v1/markets/sources.
+// TestHandlerOwnBudget_OracleSEP40DeadlineOnLiveRequestIs503: a store-side deadline in /v1/oracle/lastprice, /prices and
+// /x_last_price must be a retryable 503 naming the endpoint, not a plain 500.
 func TestHandlerOwnBudget_OracleSEP40DeadlineOnLiveRequestIs503(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -315,10 +302,8 @@ func TestHandlerOwnBudget_OracleSEP40DeadlineOnLiveRequestIs503(t *testing.T) {
 	}
 }
 
-// TestHandlerOwnBudget_OracleSEP40NonDeadlineFaultStays500 guards against
-// satisfying the upgrade above by relabelling EVERY failure as a timeout,
-// which would hide real storage faults from the 5xx dashboards that
-// separate "we are broken" from "we are slow".
+// TestHandlerOwnBudget_OracleSEP40NonDeadlineFaultStays500 guards against relabelling every failure as a timeout, which would
+// hide real storage faults from the 5xx dashboards.
 func TestHandlerOwnBudget_OracleSEP40NonDeadlineFaultStays500(t *testing.T) {
 	s := quietServer()
 	s.Prices = brokenPriceReader{}

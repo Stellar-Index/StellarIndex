@@ -66,11 +66,8 @@ func (p *erroringTVLPricer) callsFor(id string) int {
 
 var errTVLPriceRead = errors.New("pq: canceling statement due to statement timeout")
 
-// priceReadErrorSources is the shared fixture with soroswap pair B's first leg swapped for a
-// WELL-FORMED token nobody prices. The shared tvlTestUnpriced cannot stand in: it fails strkey
-// validation, so it is excluded as malformed_token before any price is read (see
-// dex_tvl_pools_internal_test.go) and a fault armed on it never fires. Only soroswap holds the
-// swapped-in token; its healthy figure is still $25.50 because an unpriced leg contributes nothing.
+// priceReadErrorSources is the shared fixture with soroswap pair B's first leg swapped for a well-formed token nobody prices;
+// tvlTestUnpriced fails strkey validation first, so a price-read fault armed on it would never fire.
 func priceReadErrorSources(t *testing.T) (DEXTVLSources, *erroringTVLPricer, string) {
 	t.Helper()
 	src := tvlTestSources()

@@ -7,11 +7,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// stubSep1Cache implements v1.Sep1CachedReader in-memory. Mirrors
-// `Store.GetIssuerSep1Cached` semantics: returns the cached payload
-// for known issuers, (nil, nil) when the row exists but has no
-// payload yet, (nil, sql.ErrNoRows) for unknown issuers, or a
-// configured error to exercise the error branch.
+// stubSep1Cache implements v1.Sep1CachedReader in memory, mirroring Store.GetIssuerSep1Cached: payload for known issuers, (nil,
+// nil) for a row with no payload yet, (nil, sql.ErrNoRows) for unknown issuers, or a configured error.
 type stubSep1Cache struct {
 	byIssuer map[string]*timescale.IssuerSep1Cached
 	err      error

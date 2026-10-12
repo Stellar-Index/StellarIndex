@@ -25,11 +25,8 @@ func TestCacheKey_ScalarGrammar(t *testing.T) {
 	}
 }
 
-// TestCacheKey_SeparatorByteCannotForgeFieldBoundary guards that a value containing the byte a
-// '|'-delimited grammar would use as a separator must NOT let two different dimension splits
-// collide onto one key: str("a|b").str("c") and str("a").str("b|c") would both render as
-// "...a|b|c...", and one caller's cached page could be served to another whose (issuer, code)
-// pair split the same raw bytes differently.
+// TestCacheKey_SeparatorByteCannotForgeFieldBoundary: a value containing the '|' separator must not let two different dimension
+// splits collide (str("a|b").str("c") vs str("a").str("b|c")), or one caller's cached page could serve another's.
 func TestCacheKey_SeparatorByteCannotForgeFieldBoundary(t *testing.T) {
 	crossed := newCacheKey("ListAssetsExt").str("a|b").str("c").build()
 	straight := newCacheKey("ListAssetsExt").str("a").str("b|c").build()
@@ -39,10 +36,8 @@ func TestCacheKey_SeparatorByteCannotForgeFieldBoundary(t *testing.T) {
 	}
 }
 
-// TestCacheKey_StrSetCommaCannotForgeMemberBoundary is the strSet
-// analogue: a single member containing the OLD ','-joined separator
-// must not collide with two members that split the same bytes
-// differently.
+// TestCacheKey_StrSetCommaCannotForgeMemberBoundary: strSet analogue; one member containing the old ',' separator must not
+// collide with two members splitting the same bytes differently.
 func TestCacheKey_StrSetCommaCannotForgeMemberBoundary(t *testing.T) {
 	oneMember := newCacheKey("AllPools").strSet([]string{"a,b"}).build()
 	twoMembers := newCacheKey("AllPools").strSet([]string{"a", "b"}).build()

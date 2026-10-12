@@ -11,11 +11,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 )
 
-// TestTrailingSlashRedirectCarriesCORS pins that the trailing-slash
-// 308 must carry Access-Control-Allow-Origin. When TrailingSlashRedirect
-// ran OUTSIDE the CORS middleware, browsers killed the cross-origin
-// redirect and every trailing-slash API URL was as dead as the 404 the
-// redirect exists to prevent.
+// TestTrailingSlashRedirectCarriesCORS: the trailing-slash 308 must carry Access-Control-Allow-Origin, otherwise browsers kill
+// the cross-origin redirect and every trailing-slash API URL is as dead as the 404 it prevents.
 func TestTrailingSlashRedirectCarriesCORS(t *testing.T) {
 	s := New(Options{
 		CORS: middleware.CORS(middleware.CORSOptions{

@@ -63,10 +63,8 @@ func TestDivergence_ServesReferenceObservationTime(t *testing.T) {
 	}
 }
 
-// TestDivergence_GroupsReferencesPerPair — a reference's price is served
-// only inside its pair, beside our price and the other references; the
-// pair-level our_price/observed_at come from the newest comparison and
-// the reader's pair order is kept.
+// TestDivergence_GroupsReferencesPerPair: a reference's price is served only inside its pair beside our price and the other
+// references; pair-level our_price/observed_at come from the newest comparison and the reader's pair order is kept.
 func TestDivergence_GroupsReferencesPerPair(t *testing.T) {
 	newer := time.Date(2026, 7, 3, 22, 0, 0, 0, time.UTC)
 	older := newer.Add(-10 * time.Minute)

@@ -7,14 +7,9 @@ import (
 	"testing"
 )
 
-// TestAssetClassRefusesWhatItCannotFilter: an unrecognised asset_class must be refused, not fall
-// through to the default listing with 200, or the filter silently does not apply and a consumer
-// asking for real-world assets gets unrelated tokens with nothing to reveal it.
-//
-// `rwa` is in the table deliberately: it is the value someone reaches for first, there is no
-// such class by design, and the refusal has to name where that set actually lives. `%20rwa%20`
-// is there because the normaliser trims before the guard, so a padded spelling must refuse too
-// rather than slip through as the empty default.
+// TestAssetClassRefusesWhatItCannotFilter: an unrecognised asset_class must be refused, not fall through to the default
+// listing with 200, which would silently ignore the filter. `rwa` is deliberately in the table (no such class exists; the
+// refusal must name where the set lives) and `%20rwa%20` checks the normaliser trims before the guard.
 func TestAssetClassRefusesWhatItCannotFilter(t *testing.T) {
 	for _, class := range []string{"rwa", "real_world_asset", "tokenized", "bogus", "RWA", "%20rwa%20"} {
 		t.Run(class, func(t *testing.T) {
@@ -35,10 +30,8 @@ func TestAssetClassRefusesWhatItCannotFilter(t *testing.T) {
 	}
 }
 
-// TestAssetClassAcceptsEveryValueItDispatchesOn is the control. The refusal
-// must not narrow what already worked — every accepted spelling, including
-// the three aliases the normaliser folds and the empty default, has to get
-// past the guard.
+// TestAssetClassAcceptsEveryValueItDispatchesOn is the control: the refusal must not narrow what already worked, including the
+// three folded aliases and the empty default.
 func TestAssetClassAcceptsEveryValueItDispatchesOn(t *testing.T) {
 	for _, class := range []string{
 		"", "all", "fiat", "stablecoin", "crypto",

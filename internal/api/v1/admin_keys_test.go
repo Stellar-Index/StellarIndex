@@ -148,11 +148,9 @@ func TestAdminKeysCreate_Happy(t *testing.T) {
 	}
 }
 
-// TestAdminKeysCreate_RateLimitDefaultsToCaller pins that a mint request omitting
-// rate_limit_per_min inherits the caller's own ceiling, not the deployment default (0), which can
-// exceed it: ClampToMinter only checks rateLimitPerMin > 0, so omitting the field would let a
-// scoped operator mint a higher-limit key. The clamped value must reach the store call, the
-// response and the audit row alike.
+// TestAdminKeysCreate_RateLimitDefaultsToCaller: a mint omitting rate_limit_per_min inherits the caller's own ceiling, not the
+// deployment default, since ClampToMinter only checks values > 0. The clamped value must reach the store, response and audit
+// row.
 func TestAdminKeysCreate_RateLimitDefaultsToCaller(t *testing.T) {
 	store := &fakeAccountStore{
 		rec:   auth.APIKeyRecord{KeyID: "kid_minted02"},
@@ -317,10 +315,8 @@ func TestAdminKeysRevoke_RevokesPostgresManagementRowToo(t *testing.T) {
 	}
 }
 
-// TestAdminKeysRevoke_NonOwnerIdentifierLeavesPostgresRowLive pins the
-// route's identifier=<owner> contract on the Postgres leg: Revoke is
-// keyed by id alone, so naming the wrong owner must not reach another
-// account's row. 204 either way, so key ids can't be enumerated.
+// TestAdminKeysRevoke_NonOwnerIdentifierLeavesPostgresRowLive: Revoke is keyed by id alone, so naming the wrong owner must not
+// reach another account's row. It answers 204 either way so key ids cannot be enumerated.
 func TestAdminKeysRevoke_NonOwnerIdentifierLeavesPostgresRowLive(t *testing.T) {
 	platformKeys, accts := seedOwnedPlatformKey("victim-co", "kid_victim01")
 	ts := newAdminTestServerWithPlatformKeys(t, operatorSubject(), &fakeAccountStore{}, platformKeys, accts)
@@ -348,10 +344,8 @@ func TestAdminKeysRevoke_NoAccountStoreLeavesPostgresRowLive(t *testing.T) {
 	assertPlatformKeyLive(t, platformKeys, "kid_victim01")
 }
 
-// TestAdminKeysRevoke_TolerantOfRedisOnlyKey pins the other half: a
-// key that was minted through an admin/self-service path (Redis
-// only, no Postgres row) must still revoke cleanly — the Postgres
-// leg is best-effort and ErrNotFound there is not a failure.
+// TestAdminKeysRevoke_TolerantOfRedisOnlyKey: a key minted through an admin or self-service path (Redis only, no Postgres row)
+// must still revoke cleanly; the Postgres leg is best-effort and ErrNotFound there is not a failure.
 func TestAdminKeysRevoke_TolerantOfRedisOnlyKey(t *testing.T) {
 	platformKeys := newFakeRegisterKeyStore() // no row for kid_redisonly
 	ts := newAdminTestServerWithPlatformKeys(t, operatorSubject(), &fakeAccountStore{}, platformKeys,
@@ -364,10 +358,9 @@ func TestAdminKeysRevoke_TolerantOfRedisOnlyKey(t *testing.T) {
 	}
 }
 
-// TestAdminKeysCreate_InheritsTargetIdentifierCeiling: POST /v1/admin/keys takes no monthly_quota,
-// so a key minted for a metered customer's identifier must take the ceiling that identifier's
-// credentials already carry, through the production store and validator. The audit row records
-// the ceiling actually issued.
+// TestAdminKeysCreate_InheritsTargetIdentifierCeiling: POST /v1/admin/keys takes no monthly_quota, so a key for a metered
+// customer's identifier must take the ceiling its existing credentials carry, via the production store and validator. The
+// audit row records the ceiling actually issued.
 func TestAdminKeysCreate_InheritsTargetIdentifierCeiling(t *testing.T) {
 	const planQuota int64 = 250_000
 	mr := miniredis.RunT(t)
@@ -418,10 +411,8 @@ func TestAdminKeysCreate_InheritsTargetIdentifierCeiling(t *testing.T) {
 	}
 }
 
-// An admin-minted key's identifier is its metering subject
-// (middleware.UsageKeyForSubject), so an acct:<slug> identifier draws
-// down that account's monthly quota. Such a mint must name the account
-// explicitly and the account must exist; nothing is created otherwise.
+// An admin-minted key's identifier is its metering subject, so an acct:<slug> identifier draws down that account's monthly
+// quota. Such a mint must name the account explicitly and the account must exist; nothing is created otherwise.
 func TestAdminKeysCreate_AccountBinding(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -508,10 +499,9 @@ func TestAdminKeysCreate_NarrowedOperatorCannotMintAboveItsRateLimit(t *testing.
 	}
 }
 
-// The operator kill switch must not answer 204 or write a key.revoke audit row for a revoke that
-// matched nothing: a mistyped identifier would tell on-call the leak was contained while the key
-// kept authenticating. Driven through the production store so its not-found contract and the
-// handler's mapping of it are proven together.
+// The operator kill switch must not answer 204 or write a key.revoke audit row for a revoke that matched nothing, or a typo
+// would tell on-call the leak was contained. Driven through the production store so its not-found contract and the handler
+// mapping are proven together.
 func TestAdminKeysRevoke_TypoedIdentifierIs404WithNoAuditRow(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})

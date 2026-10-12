@@ -104,10 +104,8 @@ func TestAssetsOrderByReachesTheStore(t *testing.T) {
 	}
 }
 
-// TestAssetsOrderByGarbageIs400 — an unrecognised value must fail
-// loudly, the way /v1/markets does. A 200 with the observation-count
-// ordering would leave a client typo indistinguishable from a served
-// ranking.
+// TestAssetsOrderByGarbageIs400: an unrecognised order value must fail loudly, as /v1/markets does, so a client typo is not
+// indistinguishable from a served ranking.
 func TestAssetsOrderByGarbageIs400(t *testing.T) {
 	stub, rec := serveAssetList(t, "/v1/assets?order_by=TOTAL_GARBAGE")
 	if rec.Code != http.StatusBadRequest {
@@ -126,10 +124,8 @@ func TestAssetsOrderByGarbageIs400(t *testing.T) {
 	}
 }
 
-// TestAssetsOrderByWithAssetClassIs400 — the catalogue and unified
-// listings rank on their own fixed schemes, each with a keyset cursor
-// encoding THAT scheme's keys, so they cannot honour a caller-chosen order. They must say so
-// rather than accept the parameter and silently ignore it.
+// TestAssetsOrderByWithAssetClassIs400: catalogue and unified listings rank on fixed schemes with their own keyset cursors, so
+// they cannot honour a caller-chosen order and must reject the parameter rather than silently ignore it.
 func TestAssetsOrderByWithAssetClassIs400(t *testing.T) {
 	for _, class := range []string{"all", "fiat", "stablecoin", "crypto"} {
 		t.Run(class, func(t *testing.T) {
@@ -160,12 +156,9 @@ func TestAssetsAssetClassWithoutOrderByStillServes(t *testing.T) {
 	}
 }
 
-// TestAssetsCursorIsEncodedUnderTheActiveOrder — the two orders have
-// DIFFERENT keyset shapes (`<rank_tier>:<observation_count>:<asset_id>`
-// vs `<rank_tier>:<vol_or_blank>:<asset_id>`). Validating an incoming cursor under the wrong
-// order rejects a good one; encoding the next one under the wrong order emits keys the next
-// page's predicate reads positionally as something else, skipping or repeating rows instead of
-// erroring. So the order must reach BOTH cursor calls, not just the query.
+// TestAssetsCursorIsEncodedUnderTheActiveOrder: the two orders have different keyset shapes, so validating or encoding a cursor
+// under the wrong order rejects good cursors or emits keys the next page misreads (skipping or repeating rows). The order must
+// reach both cursor calls, not just the query.
 func TestAssetsCursorIsEncodedUnderTheActiveOrder(t *testing.T) {
 	// A cursor valid under the volume order must be accepted when that
 	// order is the one requested.

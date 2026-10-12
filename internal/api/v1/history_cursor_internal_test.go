@@ -5,10 +5,8 @@ import (
 	"time"
 )
 
-// TestHistoryCursorRoundTrip pins the timestamp-precision contract.
-// Postgres TIMESTAMPTZ stores microsecond precision, but the encoder
-// preserves nanoseconds so it stays correct if the storage layer
-// ever upgrades. Pre-epoch and leap-day timestamps round-trip too.
+// TestHistoryCursorRoundTrip pins timestamp precision: the encoder keeps nanoseconds (Postgres stores microseconds) so it
+// survives a storage upgrade; pre-epoch and leap-day timestamps round-trip too.
 func TestHistoryCursorRoundTrip(t *testing.T) {
 	cases := map[string]historyCursor{
 		"whole second": {

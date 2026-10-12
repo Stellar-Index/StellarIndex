@@ -58,10 +58,8 @@ func (f *fakeIssuersUpstream) ListIssuers(ctx context.Context, limit int) ([]tim
 	}, nil
 }
 
-// TestCachedIssuersReader_HitsCachedValue — once warmed the upstream
-// must NOT be called again within the TTL window. This is the cache-
-// aside path: the second request must NOT pay the
-// 196ms+ HashAggregate scan.
+// TestCachedIssuersReader_HitsCachedValue: once warmed, the upstream is not called again within the TTL (cache-aside), sparing
+// the second request the 196ms+ HashAggregate scan.
 func TestCachedIssuersReader_HitsCachedValue(t *testing.T) {
 	up := &fakeIssuersUpstream{}
 	c := NewCachedIssuersReader(up, 5*time.Minute)
@@ -92,10 +90,8 @@ func TestCachedIssuersReader_RefetchesAfterTTL(t *testing.T) {
 	}
 }
 
-// TestCachedIssuersReader_SingleFlight — concurrent callers during a
-// slow upstream refetch share ONE upstream call. This is the
-// thundering-herd protection that matters for /v1/issuers post-cache
-// expiry under explorer pageload fanout.
+// TestCachedIssuersReader_SingleFlight: concurrent callers during a slow upstream refetch share ONE upstream call, protecting
+// against a thundering herd on /v1/issuers after expiry.
 func TestCachedIssuersReader_SingleFlight(t *testing.T) {
 	up := &fakeIssuersUpstream{listDelay: 100 * time.Millisecond}
 	c := NewCachedIssuersReader(up, 5*time.Minute)
@@ -152,10 +148,8 @@ func TestCachedIssuersReader_LimitSweepSharesOneFill(t *testing.T) {
 	}
 }
 
-// TestCachedIssuersReader_TTLZeroIsBypass — ttl=0 disables the
-// cache. Every call hits upstream. Mirrors the
-// CachedSourcesStatsReader/CachedAssetsReader knob used in
-// integration tests that want the wrapper inert.
+// TestCachedIssuersReader_TTLZeroIsBypass: ttl=0 disables the cache so every call hits upstream, matching the knob on
+// CachedSourcesStatsReader/CachedAssetsReader used by integration tests.
 func TestCachedIssuersReader_TTLZeroIsBypass(t *testing.T) {
 	up := &fakeIssuersUpstream{}
 	c := NewCachedIssuersReader(up, 0)

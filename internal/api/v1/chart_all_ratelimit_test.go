@@ -5,10 +5,8 @@ import (
 	"testing"
 )
 
-// TestChartAll_ChargesByGranularity: timeframe=all has no window for
-// chartFitGranularity to coarsen against, so the grain must select the
-// price exactly as on /v1/history/since-inception; a bounded timeframe
-// is already capped by coarsening and stays at the base token.
+// TestChartAll_ChargesByGranularity: timeframe=all has no window to coarsen against, so the grain must select the price as on
+// /v1/history/since-inception; a bounded timeframe is already capped by coarsening and stays at the base token.
 func TestChartAll_ChargesByGranularity(t *testing.T) {
 	const pair = "/v1/chart?base=native&quote=fiat:USD"
 	cases := []struct {

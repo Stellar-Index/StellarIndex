@@ -33,10 +33,8 @@ const (
 	tvlTestCometPool  = "CAS3FL6TLZKDGGSISDBWGGPXT3NRR4DYTZD7YOD3HMYO6LTJUVGRVEAM"
 )
 
-// Per-pool last-change ledgers on the shared fixture, unequal and interleaved across protocols
-// so a snapshot's as_of_ledger is right only if it takes the MAX over that protocol's own pools
-// (pairB > pairA within soroswap; phoenix is the global high, comet the global low), never a
-// first/last/any-pool ledger.
+// Per-pool last-change ledgers on the shared fixture, unequal and interleaved across protocols, so a snapshot's as_of_ledger is
+// right only if it takes the MAX over that protocol's own pools, never a first/last/any-pool ledger.
 const (
 	tvlTestLedgerPairA    uint32 = 63_000_001
 	tvlTestLedgerPairB    uint32 = 63_000_050
@@ -293,10 +291,9 @@ func TestDEXTVLCache_MissingReadersOmitProtocols(t *testing.T) {
 	}
 }
 
-// TestDEXTVLCache_RefreshObservesMetrics pins the paired counter+histogram instrumentation: an
-// all-ok refresh records outcome="ok" and a refresh with a failing protocol records
-// outcome="error". It uses obstest because per-label histogram children aren't reachable
-// through testutil.CollectAndCount.
+// TestDEXTVLCache_RefreshObservesMetrics pins the paired counter+histogram instrumentation: an all-ok refresh records
+// outcome="ok", one with a failing protocol records "error". Uses obstest since per-label histogram children are unreachable via
+// testutil.
 func TestDEXTVLCache_RefreshObservesMetrics(t *testing.T) {
 	okBefore := obstest.HistogramSampleCount(t, obs.DEXTVLRefreshDurationSeconds, "outcome", "ok")
 	errBefore := obstest.HistogramSampleCount(t, obs.DEXTVLRefreshDurationSeconds, "outcome", "error")
@@ -319,10 +316,9 @@ func TestDEXTVLCache_RefreshObservesMetrics(t *testing.T) {
 	}
 }
 
-// TestDEXTVLCache_PriceReadErrorCarriesThePreviousFigureForward: every protocol on the shared
-// fixture holds XLM, so a failed XLM read must carry all four forward at their previous figures
-// and surface as a refresh error, not publish soroswap at $10.50 (its pegged leg alone) where
-// it was $25.50.
+// TestDEXTVLCache_PriceReadErrorCarriesThePreviousFigureForward: every fixture protocol holds XLM, so a failed XLM read carries
+// all four forward at their previous figures and surfaces as a refresh error, not soroswap at $10.50 (pegged leg only) instead
+// of $25.50.
 func TestDEXTVLCache_PriceReadErrorCarriesThePreviousFigureForward(t *testing.T) {
 	src, pricer, _ := priceReadErrorSources(t)
 	c := NewDEXTVLCache(src)
@@ -383,10 +379,8 @@ func TestDEXTVLCache_PriceReadErrorCarriesThePreviousFigureForward(t *testing.T)
 	}
 }
 
-// TestDEXTVLCache_PriceReadErrorIsScopedToTheProtocolsThatHoldTheToken
-// keeps the blast radius honest: only soroswap's pair B holds the
-// no-market token, so only soroswap carries forward. The other three
-// never asked the failing question and publish this cycle's figure.
+// TestDEXTVLCache_PriceReadErrorIsScopedToTheProtocolsThatHoldTheToken: only soroswap's pair B holds the no-market token, so
+// only soroswap carries forward; the other three never asked the failing question and publish this cycle's figure.
 func TestDEXTVLCache_PriceReadErrorIsScopedToTheProtocolsThatHoldTheToken(t *testing.T) {
 	src, pricer, noMarketID := priceReadErrorSources(t)
 	c := NewDEXTVLCache(src)
@@ -418,10 +412,8 @@ func TestDEXTVLCache_PriceReadErrorIsScopedToTheProtocolsThatHoldTheToken(t *tes
 	}
 }
 
-// TestDEXTVLCache_UnpricedTokenIsStillNotAnError is the other side of the distinction: a
-// protocol cannot be failed whenever a leg has no rate. A no-market token answers (ok=false,
-// nil error), which is a fact about the token, so the refresh succeeds and the leg reads
-// no_served_price.
+// TestDEXTVLCache_UnpricedTokenIsStillNotAnError: a no-market token answers (ok=false, nil error), a fact about the token, so
+// the refresh succeeds and the leg reads no_served_price rather than failing the protocol.
 func TestDEXTVLCache_UnpricedTokenIsStillNotAnError(t *testing.T) {
 	src, _, _ := priceReadErrorSources(t)
 	c := NewDEXTVLCache(src)
@@ -518,14 +510,9 @@ func TestDEXTVLCache_GatedTokenContributesNoValue(t *testing.T) {
 	}
 }
 
-// TestDEXTVLCache_NoGateKeepsTodaysFigures pins the nil direction: a deployment with
-// [pricing_guard] disabled wires no gate, values legs without screening, and its Basis must not
-// claim a screen that did not run.
-//
-// This arm is reachable in production: cmd/stellarindex-api's buildDEXTVLValueGate returns a
-// nil interface when neither guard was built (TestBuildDEXTVLValueGate_NilWhenNoGuardIsWired).
-// Wiring a non-pointer struct unconditionally would make this test pin a path the binary
-// cannot take.
+// TestDEXTVLCache_NoGateKeepsTodaysFigures pins the nil direction: with [pricing_guard] disabled no gate is wired, legs are
+// valued unscreened, and Basis must not claim a screen that did not run. Reachable in production: buildDEXTVLValueGate returns a
+// nil interface.
 func TestDEXTVLCache_NoGateKeepsTodaysFigures(t *testing.T) {
 	c := NewDEXTVLCache(tvlTestSources())
 	if err := c.Refresh(context.Background()); err != nil {
@@ -540,10 +527,8 @@ func TestDEXTVLCache_NoGateKeepsTodaysFigures(t *testing.T) {
 	}
 }
 
-// TestDEXTVLCache_GatedAquariusLegCountsUnpriced covers the fourth
-// protocol, whose leg loop is shaped differently (address-less legs are
-// skipped before valuation) — the gate must apply on the arm that DOES
-// resolve a token.
+// TestDEXTVLCache_GatedAquariusLegCountsUnpriced covers the protocol whose leg loop skips address-less legs before valuation:
+// the gate must apply on the arm that does resolve a token.
 func TestDEXTVLCache_GatedAquariusLegCountsUnpriced(t *testing.T) {
 	gate := &stubTVLGate{withhold: map[string]bool{tvlTestUSDCSAC: true}}
 	src := tvlTestSources()
@@ -579,12 +564,8 @@ func TestDEXTVLCache_GatedAquariusLegCountsUnpriced(t *testing.T) {
 	}
 }
 
-// TestDEXTVLCache_BasisNamesOnlyTheScreensThatRan: Basis is a public claim about which trust
-// screens ran on each reserve leg, rendered verbatim by the explorer's TVL tooltip
-// (web/explorer/src/app/protocols/ProtocolTvlPanel.tsx). It must not be one fixed sentence
-// naming both screens whenever any gate is wired, or an operator with [pricing_guard]
-// disable_substance_gate = true (substance gate nil, scam gate wired) would publish "or a market
-// below the substance floor" for legs no substance screen touched.
+// TestDEXTVLCache_BasisNamesOnlyTheScreensThatRan: Basis is a public claim, rendered verbatim by the explorer's TVL tooltip,
+// about which trust screens ran. With disable_substance_gate = true it must not mention the substance floor.
 func TestDEXTVLCache_BasisNamesOnlyTheScreensThatRan(t *testing.T) {
 	const (
 		bothScreens = "; unpriced legs contribute 0, and a leg whose asset the serving trust gates " +
@@ -631,15 +612,9 @@ func TestDEXTVLCache_BasisNamesOnlyTheScreensThatRan(t *testing.T) {
 	}
 }
 
-// TestDEXTVLCache_SelfListedTokenIsNotValued: the factory lets anyone pair any token, so a
-// self-listed token's reserve magnitude and its prices_1m VWAP are both authored by its
-// creator (one wash swap clears the resolver's one-cent floor, a few dollars clears the
-// substance floor). Without the identity screen its whole reserve is valued into tvl_usd with
-// the pool counted priced and no lower-bound marker.
-//
-// A verified-catalogue asset reached through its SAC must still be valued even when the
-// operator never declared that SAC as a wrapper, or the screen would silently drop legitimate
-// liquidity.
+// TestDEXTVLCache_SelfListedTokenIsNotValued: anyone can pair any token, so a self-listed token's reserves and VWAP are
+// creator-authored. Without the identity screen its reserve is valued into tvl_usd with no lower-bound marker.
+// A verified-catalogue asset reached through an undeclared SAC must still be valued.
 func TestDEXTVLCache_SelfListedTokenIsNotValued(t *testing.T) {
 	cat, err := currency.LoadEmbedded()
 	if err != nil {
@@ -713,10 +688,8 @@ func TestDEXTVLCache_SelfListedTokenIsNotValued(t *testing.T) {
 	}
 }
 
-// TestDEXTVLCache_IdentityScreenFailsClosedWithoutCatalogue pins the nil
-// direction: with no catalogue wired only native XLM and a declared USD
-// peg are identified, so a priced self-listed token still contributes
-// nothing. A missing wire must shrink the figure, never inflate it.
+// TestDEXTVLCache_IdentityScreenFailsClosedWithoutCatalogue pins the nil direction: with no catalogue only native XLM and a
+// declared USD peg are identified, so a missing wire shrinks the figure, never inflates it.
 func TestDEXTVLCache_IdentityScreenFailsClosedWithoutCatalogue(t *testing.T) {
 	v := newTVLValuer(stubTVLPricer{rates: map[string]string{
 		"native": "0.5", tvlTestSelfListed: "1000",
@@ -784,11 +757,8 @@ func TestDEXTVLCache_ProtocolColdAndUnknown(t *testing.T) {
 	}
 }
 
-// TestDEXTVLCache_FirstCycleReadFailureIsNamedNotVanished: a protocol whose first reserve read
-// fails has no previous figure to carry and would vanish from the snapshot, never reaching
-// reconcileDEXTVLTotal's loop. tvl_total would then drop it with no excluded entry and
-// lower_bound=false, and its drill-down 404 would say "not wired on this deployment" for a
-// derivation that is wired.
+// TestDEXTVLCache_FirstCycleReadFailureIsNamedNotVanished: a protocol whose first reserve read fails has no previous figure
+// to carry and must still appear as an excluded entry with lower_bound set, not vanish from tvl_total and the drill-down.
 func TestDEXTVLCache_FirstCycleReadFailureIsNamedNotVanished(t *testing.T) {
 	src := tvlTestSources()
 	src.SoroswapPairs = stubTVLPairsReader{err: errors.New("registry down")}
@@ -816,10 +786,8 @@ func TestDEXTVLCache_FirstCycleReadFailureIsNamedNotVanished(t *testing.T) {
 	}
 }
 
-// TestDEXTVLCache_AquariusBasisStatesItsIdentityLimits pins the
-// doc-truth half: aquarius carries most of the headline, and its token
-// identities are positional recovery over a table with no transaction
-// order. The Basis every consumer reads must say so.
+// TestDEXTVLCache_AquariusBasisStatesItsIdentityLimits pins that Basis says aquarius token identities are positional
+// recovery over a table with no transaction order, since aquarius carries most of the headline.
 func TestDEXTVLCache_AquariusBasisStatesItsIdentityLimits(t *testing.T) {
 	c := NewDEXTVLCache(tvlTestSources())
 	if err := c.Refresh(context.Background()); err != nil {
@@ -836,10 +804,8 @@ func TestDEXTVLCache_AquariusBasisStatesItsIdentityLimits(t *testing.T) {
 	}
 }
 
-// TestDEXTVLCache_EmptyReserveReadIsUnavailableNotZero: a configured pool set whose reader
-// returns no pools (curated mainnet ids absent from the lake, an empty registry) must not
-// publish tvl_usd "0.00" with pools_total 0 as a fresh, exact figure admitted to the headline
-// with lower_bound=false; the reader contract forbids "zero TVL".
+// TestDEXTVLCache_EmptyReserveReadIsUnavailableNotZero: a reader returning no pools must not publish tvl_usd "0.00" as a
+// fresh exact figure admitted to the headline; the reader contract forbids "zero TVL".
 func TestDEXTVLCache_EmptyReserveReadIsUnavailableNotZero(t *testing.T) {
 	src := tvlTestSources()
 	src.PhoenixReserves = stubPhoenixReserveReader{states: map[string]clickhouse.PhoenixPoolState{}}

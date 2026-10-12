@@ -18,10 +18,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// fakeAccountStore is the handler-level test double for
-// [v1.AccountStore]. Records arguments + returns a canned record so
-// the handler test exercises the wire shape without pulling in
-// miniredis.
+// fakeAccountStore is the handler-level test double for [v1.AccountStore]; it records arguments and returns a canned record so
+// handler tests exercise the wire shape without miniredis.
 type fakeAccountStore struct {
 	gotReq    auth.CreateAPIKeyRequest
 	rec       auth.APIKeyRecord
@@ -101,10 +99,8 @@ func fakeAuthMiddleware(s auth.Subject) middleware.Middleware {
 	}
 }
 
-// newAccountTestServer wires a Server with a controlled subject +
-// optional account store. Subject's zero value means "anonymous /
-// no auth attached" — the handlers should respond 401 for those
-// requests.
+// newAccountTestServer wires a Server with a controlled subject and optional account store. A zero Subject means anonymous, so
+// handlers must answer 401.
 func newAccountTestServer(t *testing.T, subject auth.Subject, store v1.AccountStore) *httptest.Server {
 	t.Helper()
 	srv := v1.New(v1.Options{
@@ -401,10 +397,8 @@ func getUsageRows(t *testing.T, ts *httptest.Server) []v1.UsageRow {
 	return env.Data
 }
 
-// TestAccountUsage_RollupRows: the rollup reader backs the wire shape, one row per (day, endpoint)
-// with endpoint, errors and throttled populated. It is keyed by the subject the tracker middleware
-// writes under, the owner account (id:<Identifier>) and not the credential, so the endpoint covers
-// every key the account holds and survives a key rotation.
+// TestAccountUsage_RollupRows: the rollup reader backs the wire shape, one row per (day, endpoint), keyed by the owner account
+// (id:<Identifier>) rather than the credential, so it covers every key the account holds and survives rotation.
 func TestAccountUsage_RollupRows(t *testing.T) {
 	rollup := &fakeUsageRollupReader{rows: []v1.UsageEndpointDay{
 		{Date: "2026-07-02", Endpoint: "/v1/price", Requests: 120, Errors: 3, Throttled: 0},
@@ -460,10 +454,8 @@ func TestAccountUsage_RollupFallsBackToLegacy(t *testing.T) {
 	}
 }
 
-// TestAccountUser_UnverifiedEmailOmitsTheTimestampRatherThanZeroing: a user who never verified
-// their email or never logged in must render as an absent field, not the zero instant as a
-// string, which the SDK's *time.Time side would unmarshal into a non-nil pointer
-// indistinguishable from a real time.
+// TestAccountUser_UnverifiedEmailOmitsTheTimestampRatherThanZeroing: a never-verified email or never-logged-in user renders as
+// an absent field, not a zero instant that the SDK would unmarshal into a non-nil *time.Time.
 func TestAccountUser_UnverifiedEmailOmitsTheTimestampRatherThanZeroing(t *testing.T) {
 	u := v1.AccountUser{ID: "usr_1", Email: "new@example.com"}
 	body, err := json.Marshal(u)
@@ -496,10 +488,9 @@ func TestAccountUser_UnverifiedEmailOmitsTheTimestampRatherThanZeroing(t *testin
 	}
 }
 
-// TestAccountUsage_BillableSameMeaningOnBothShapes pins that `billable` carries the rollup's
-// quota-counted units, and that a legacy row (the rollup-gap backfill inside a per-endpoint
-// response and the whole-response fallback alike) reports its billable total as `billable`, so
-// summing one column reconciles on either shape.
+// TestAccountUsage_BillableSameMeaningOnBothShapes pins that `billable` means the rollup's quota-counted units, and that
+// legacy rows (backfill and whole-response fallback) report their billable total there, so one column reconciles on either
+// shape.
 func TestAccountUsage_BillableSameMeaningOnBothShapes(t *testing.T) {
 	subject := auth.Subject{Identifier: "owner-b", KeyID: "kid_b", Tier: auth.TierAPIKey}
 	legacy := &fakeUsageReader{days: []v1.UsageDay{
@@ -527,10 +518,8 @@ func TestAccountUsage_BillableSameMeaningOnBothShapes(t *testing.T) {
 	}
 }
 
-// TestAccountUsage_RollupBackfillsMissingDay: a day the rollup worker never produced a row for (an
-// outage gap, not a zero-traffic day) must be filled in from the legacy per-day reader rather than
-// dropped from the trailing 30-day window. Guards against readUsageRollup returning ok=true as
-// soon as len(days) > 0, which stops handleAccountUsage consulting the legacy reader.
+// TestAccountUsage_RollupBackfillsMissingDay: a day the rollup worker produced no row for must be filled from the legacy per-
+// day reader, not dropped. Guards readUsageRollup returning ok=true as soon as len(days) > 0.
 func TestAccountUsage_RollupBackfillsMissingDay(t *testing.T) {
 	rollup := &fakeUsageRollupReader{rows: []v1.UsageEndpointDay{
 		{Date: "2026-07-03", Endpoint: "/v1/price", Requests: 40, Errors: 1, Throttled: 7},
@@ -586,10 +575,9 @@ func TestAccountUsage_RollupBackfill_LegacyUnwired(t *testing.T) {
 	}
 }
 
-// TestAccountUsage_SessionAuthenticated: a magic-link dashboard session with no API key attached
-// must read its account's usage, not 401. Gating solely on auth.SubjectFrom would 401 every
-// signed-in dashboard user, because only the API-key auth middleware calls auth.WithSubject in
-// production, and the frontend would swallow it into an empty usage page.
+// TestAccountUsage_SessionAuthenticated: a magic-link dashboard session with no API key must read its usage, not 401. Only the
+// API-key middleware calls auth.WithSubject in production, so gating solely on auth.SubjectFrom would 401 every dashboard
+// user.
 func TestAccountUsage_SessionAuthenticated(t *testing.T) {
 	rollup := &fakeUsageRollupReader{rows: []v1.UsageEndpointDay{
 		{Date: "2026-07-02", Endpoint: "/v1/price", Requests: 10, Errors: 0, Throttled: 0},

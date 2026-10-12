@@ -39,11 +39,8 @@ func TestExplorer_Search_Classifies(t *testing.T) {
 	}
 }
 
-// TestExplorer_Search_AccountRoutesToAccountState: classifySearch must not
-// route every G-address to /v1/issuers/{g}, which only serves accounts that
-// are actually issuers and 404s for ordinary ones. AccountState is
-// mounted at /v1/accounts/{g_strkey} and covers both, so search can route
-// there and truthfully claim Supported=true.
+// TestExplorer_Search_AccountRoutesToAccountState: classifySearch must not route every G-address to /v1/issuers/{g}, which 404s
+// for non-issuers. AccountState at /v1/accounts/{g_strkey} covers both, so search routes there with Supported=true.
 func TestExplorer_Search_AccountRoutesToAccountState(t *testing.T) {
 	base := explorerTestServer(t, &stubExplorerReader{})
 	q := "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"

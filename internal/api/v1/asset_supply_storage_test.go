@@ -15,16 +15,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
-// The lake reader MUST satisfy the seam. A supply source that is silently not
-// wired reports zero rather than failing, which is the whole bug class this
-// endpoint's storage fallback exists to close — so the assertion is
-// compile-time rather than a runtime nil check.
+// The lake reader must satisfy the seam. An unwired supply source reports zero instead of failing, the bug class the storage
+// fallback exists to close, so the assertion is compile-time rather than a runtime nil check.
 var _ ContractStorageSupplyReader = (*clickhouse.ExplorerReader)(nil)
 
-// storageDealContractID and storageDealTotal are the private-credit deal token
-// measured on r1: six balance entries summing to this figure, which
-// equals the contract's own declared TotalSupply and matches its declared
-// HolderCount of six.
+// storageDealContractID and storageDealTotal are the private-credit deal token measured on r1: six balance entries summing to
+// the contract's own declared TotalSupply and matching its declared HolderCount of six.
 const (
 	storageDealContractID = "CAOCXWNXCG63U43DCJSS52FDAFT2ZXY2T2UZF3ZYVZ4LLLFVFRF2GM6Z"
 	storageDealTotal      = "344995973100000"
@@ -129,10 +125,8 @@ func TestSupplyFallsBackToContractStorageWhenNoFlows(t *testing.T) {
 	}
 }
 
-// TestSupplyDoesNotConsultStorageWhenFlowsExist is the double-count guard.
-//
-// Event-derived and storage-derived supply measure the SAME tokens from opposite ends (issuance
-// and distribution). Adding them, or preferring one after summing both, would double the figure.
+// TestSupplyDoesNotConsultStorageWhenFlowsExist is the double-count guard: event-derived and storage-derived supply measure
+// the same tokens from opposite ends, so summing them or preferring one after summing both would double the figure.
 func TestSupplyDoesNotConsultStorageWhenFlowsExist(t *testing.T) {
 	st := &fakeStorageSupply{out: dealStorageSupply()}
 	flows := clickhouse.TokenSupply{
@@ -157,10 +151,8 @@ func TestSupplyDoesNotConsultStorageWhenFlowsExist(t *testing.T) {
 	}
 }
 
-// TestSupplyIsNotFoundWhenNoFlowsAndStorageDeclines pins that a flowless token
-// whose storage fallback declines gets a 404, never the unfounded zero
-// supply_flows scans to: a refusal of the optional source must not turn into a
-// "fully burned" claim.
+// TestSupplyIsNotFoundWhenNoFlowsAndStorageDeclines: a flowless token whose storage fallback declines gets a 404, never the
+// unfounded zero supply_flows scans to, so a refused optional source cannot read as "fully burned".
 func TestSupplyIsNotFoundWhenNoFlowsAndStorageDeclines(t *testing.T) {
 	cases := []struct {
 		name string
@@ -187,11 +179,8 @@ func TestSupplyIsNotFoundWhenNoFlowsAndStorageDeclines(t *testing.T) {
 	}
 }
 
-// TestSupplyStorageFallbackFlagsInconsistency pins that a contract whose own
-// holder count exceeds what we can see is still SERVED, but marked.
-//
-// That gap is what an archived contract-data entry looks like from here. Refusing would hide a
-// real, mostly-correct figure; serving it silently would present a floor as a total.
+// TestSupplyStorageFallbackFlagsInconsistency: a contract whose own holder count exceeds what we can see is still served but
+// marked. Refusing would hide a mostly-correct figure; serving it silently would present a floor as a total.
 func TestSupplyStorageFallbackFlagsInconsistency(t *testing.T) {
 	out := dealStorageSupply()
 	missing := uint32(8) // contract says eight holders; the lake shows six

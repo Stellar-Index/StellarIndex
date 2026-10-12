@@ -44,13 +44,8 @@ var tvlReconcileFixture = []tvlReconcileLeg{
 	{"comet", tvlTestUSDCSAC, 21_000_000},
 }
 
-// tvlReconcileExpected sums tvlReconcileFixture per protocol using the two documented valuation
-// identities and nothing from dex_tvl_cache.go:
-//
-//   - a declared USD peg (USDC here, 7 decimals) is worth exactly $1 × raw / 10^decimals;
-//   - anything else is raw × rate / 10^7, the anchor-scale identity in tvlValuer.legUSD.
-//
-// An unpriceable leg contributes exactly zero (the lower-bound rule).
+// tvlReconcileExpected sums tvlReconcileFixture per protocol using only the documented identities, (not dex_tvl_cache.go):
+// a declared USD peg is $1 x raw / 10^decimals; anything else is raw x rate / 10^7. An unpriceable leg contributes zero.
 func tvlReconcileExpected() (map[string]*big.Rat, *big.Rat) {
 	perProtocol := map[string]*big.Rat{}
 	grand := new(big.Rat)
@@ -232,10 +227,8 @@ func TestDEXTVLTotal_RefusesACarriedForwardProtocol(t *testing.T) {
 	}
 }
 
-// TestDEXTVLTotal_RefusesUnbalancedPoolAccounting drives the remaining
-// two refusals directly: a part whose pool counts do not balance (its
-// coverage claim, and therefore its lower-bound story, is unprovable)
-// and a part whose published figure is not a usable decimal.
+// TestDEXTVLTotal_RefusesUnbalancedPoolAccounting drives the remaining two refusals: a part whose pool counts do not balance
+// (its coverage claim is unprovable) and a part whose published figure is not a usable decimal.
 func TestDEXTVLTotal_RefusesUnbalancedPoolAccounting(t *testing.T) {
 	at := time.Date(2026, 9, 3, 4, 30, 32, 0, time.UTC)
 	stamp := at.Format(time.RFC3339)
@@ -302,13 +295,8 @@ func TestDEXTVLTotal_ColdStartHasNoTotal(t *testing.T) {
 	}
 }
 
-// TestDEXTVLTotal_AllRefusedPublishesNoTotal: when reconciliation admits nothing, the total must
-// be absent, not "0.00".
-//
-// The sibling refusal tests each refuse one protocol, so a real number always survives. Refuse
-// every one and the summing loop lands on an empty *big.Rat, which renders as a plausible "$0.00"
-// next to non-zero per-protocol figures. `tvl_total` is a pointer with `omitempty` so it can be
-// absent, giving a consumer silence rather than a fabricated zero.
+// TestDEXTVLTotal_AllRefusedPublishesNoTotal: when reconciliation admits nothing the total must be absent, not "0.00".
+// An empty *big.Rat would render a plausible "$0.00"; tvl_total is an omitempty pointer so it can be silent instead.
 func TestDEXTVLTotal_AllRefusedPublishesNoTotal(t *testing.T) {
 	at := time.Now().UTC()
 	stamp := at.Format(time.RFC3339)
@@ -335,10 +323,8 @@ func TestDEXTVLTotal_AllRefusedPublishesNoTotal(t *testing.T) {
 	}
 }
 
-// TestDEXTVLTotal_NoStaleIssueCitation guards against citing the closed D4 DEX
-// TVL tracking issue, and dex_tvl_total.go's comments and the
-// classic-liquidity-pools exclusion Reason must not cite it as if it were
-// still open tracking work.
+// TestDEXTVLTotal_NoStaleIssueCitation guards that dex_tvl_total.go comments and the classic-liquidity-pools exclusion Reason
+// do not cite the closed D4 DEX TVL tracking issue as still-open work.
 func TestDEXTVLTotal_NoStaleIssueCitation(t *testing.T) {
 	src, err := os.ReadFile("dex_tvl_total.go")
 	if err != nil {

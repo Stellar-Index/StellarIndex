@@ -16,10 +16,8 @@ import (
 // twin lookup filters ListAssetsExt by this exact issuer (lookupCatalogueTwin).
 const dustGuardUSDCIssuer = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 
-// dustTwinAssets serves a USDC listing twin whose price came from a SINGLE
-// venue (source_count=1) with a POSITIVE sub-floor 24h volume ($10) — the
-// shape that trips the dust-liquidity guard on the LISTING path — plus a huge
-// circulating supply, so an un-guarded cap would assert billions.
+// dustTwinAssets serves a USDC listing twin priced from a single venue (source_count=1) with a positive sub-floor 24h volume
+// ($10), which trips the dust-liquidity guard, plus a huge supply so an unguarded cap would assert billions.
 type dustTwinAssets struct {
 	AssetsReader // nil embedded — only ListAssetsExt + LatestSupplyObservations are called
 }
@@ -48,12 +46,9 @@ func (s *dustTwinAssets) LatestSupplyObservations(
 	return observedSupply(map[string]string{"USDC-" + dustGuardUSDCIssuer: "100000000000000000"}), nil
 }
 
-// TestCatalogueTwinDustFlagPropagates: a verified-currency catalogue row whose Stellar twin trips
-// the dust-liquidity guard (source_count=1 AND positive sub-floor volume) must surface
-// market_cap_low_liquidity on the catalogue-LISTING row, matching the twin's classic row and
-// detail page. mergeTwinStats must carry the flag as well as the (nil) cap, or the listing row
-// silently shows neither. Twins are not exempt from the guard's source-count map: the twin row
-// comes from ListAssetsExt, which DOES populate source_count.
+// TestCatalogueTwinDustFlagPropagates: a catalogue row whose twin trips the dust-liquidity guard (source_count=1, positive sub-
+// floor volume) must show market_cap_low_liquidity on the listing row, so mergeTwinStats must carry the flag as well as the nil
+// cap. Twins are not exempt: ListAssetsExt populates source_count.
 func TestCatalogueTwinDustFlagPropagates(t *testing.T) {
 	cat, err := currency.LoadEmbedded()
 	if err != nil {

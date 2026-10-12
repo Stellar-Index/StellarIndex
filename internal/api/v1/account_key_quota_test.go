@@ -187,10 +187,8 @@ func TestAccountKeysCreate_QuotaDisabled(t *testing.T) {
 	}
 }
 
-// TestAccountKeysCreate_QuotaReadFailureFailsClosed pins the direction
-// of the degrade: if the count can't be read, the mint is refused. The
-// check exists because an unbounded mint is the abuse, so "couldn't
-// count, mint anyway" would hand the abuser the bypass.
+// TestAccountKeysCreate_QuotaReadFailureFailsClosed pins that an unreadable key count refuses the mint; minting anyway would
+// hand an abuser the bypass the quota exists to stop.
 func TestAccountKeysCreate_QuotaReadFailureFailsClosed(t *testing.T) {
 	store := &fakeAccountStore{listErr: errors.New("redis blip")}
 	ts := newAccountQuotaTestServer(t, auth.Subject{
@@ -212,10 +210,9 @@ func TestAccountKeysCreate_QuotaReadFailureFailsClosed(t *testing.T) {
 	}
 }
 
-// TestAccountKeysCreate_SEP10SubjectRefused: a SEP-10 identifier is a
-// keypair anyone can generate offline, so the per-identifier cap does not
-// bound it, and sep10 mode never honours the minted key anyway. The mint
-// is refused before the store is touched, even with the quota disabled.
+// TestAccountKeysCreate_SEP10SubjectRefused: a SEP-10 identifier is a keypair anyone can generate offline, so the per-
+// identifier cap cannot bound it and sep10 mode never honours the minted key. The mint is refused before the store, even with
+// quota disabled.
 func TestAccountKeysCreate_SEP10SubjectRefused(t *testing.T) {
 	store := &fakeAccountStore{
 		rec:   auth.APIKeyRecord{KeyID: "kid_new"},
@@ -270,10 +267,8 @@ func TestAccountKeysCreate_OperatorRequiresReason(t *testing.T) {
 	}
 }
 
-// TestAccountKeysCreate_OperatorSelfMintIsAudited — with X-Reason the
-// operator keeps tier inheritance (the documented rotation contract) and
-// the mint lands one key.mint audit row naming the actor key, the minted
-// key and the reason.
+// TestAccountKeysCreate_OperatorSelfMintIsAudited: with X-Reason the operator keeps tier inheritance and the mint lands one
+// key.mint audit row naming the actor key, the minted key and the reason.
 func TestAccountKeysCreate_OperatorSelfMintIsAudited(t *testing.T) {
 	store := &fakeAccountStore{
 		rec:   auth.APIKeyRecord{KeyID: "kid_child", Label: "rotate", Tier: auth.TierOperator},
@@ -502,10 +497,8 @@ func TestAccountKeysCreate_ChildRecordHasIdleTTL(t *testing.T) {
 	}
 }
 
-// TestAccountKeysCreate_InheritsEmailVerification — the child carries
-// the parent's verification stamp into the store request. Proven red on
-// origin/main: CreateAPIKeyRequest had no such field and the child was
-// born unverified.
+// TestAccountKeysCreate_InheritsEmailVerification: the child carries the parent's verification stamp into the store request,
+// so it is not born unverified.
 func TestAccountKeysCreate_InheritsEmailVerification(t *testing.T) {
 	verifiedAt := time.Date(2026, 8, 1, 9, 30, 0, 0, time.UTC)
 	store := &fakeAccountStore{rec: auth.APIKeyRecord{KeyID: "kid_child"}, plain: "sip_child"}
@@ -527,10 +520,8 @@ func TestAccountKeysCreate_InheritsEmailVerification(t *testing.T) {
 	}
 }
 
-// TestAccountKeysCreate_UnverifiedParentStaysUnverified — negative pin:
-// the stamp is copied, never invented. (The gate blocks an unverified
-// signup parent before it reaches this handler; this pins the handler's
-// own behaviour independent of the middleware.)
+// TestAccountKeysCreate_UnverifiedParentStaysUnverified: the stamp is copied, never invented. Pins the handler's own behaviour
+// independent of the middleware gate.
 func TestAccountKeysCreate_UnverifiedParentStaysUnverified(t *testing.T) {
 	store := &fakeAccountStore{rec: auth.APIKeyRecord{KeyID: "kid_child"}, plain: "sip_child"}
 	ts := newAccountTestServer(t, auth.Subject{

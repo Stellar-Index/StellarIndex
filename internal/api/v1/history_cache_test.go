@@ -21,11 +21,8 @@ const (
 	histFreshLedger = 200
 )
 
-// fakeHist is a HistoryReader whose only real method is LatestTradePerSource; the embedded
-// interface is nil, so any other method panics. Call accounting is atomic and the failure toggle
-// is keyed on call number so `go test -race` stays clean under the detached fill. An optional hold
-// parks a call until the test releases it, ordering a caller against an in-flight fill without
-// a clock.
+// fakeHist is a HistoryReader implementing only LatestTradePerSource (the embedded interface is nil, other methods panic). Counts
+// are atomic and failures keyed on call number for -race; an optional hold parks a call so tests order against an in-flight fill.
 type fakeHist struct {
 	HistoryReader
 	calls   atomic.Int64
@@ -106,10 +103,8 @@ func TestCachedHistoryReader_ColdThenFreshHit(t *testing.T) {
 	}
 }
 
-// coldCallerDeadline is the request budget the cold caller below runs
-// out of. It is a stimulus rather than a bound: the fill it races is
-// held open until after the caller has returned, so ANY finite
-// deadline expires first, and nothing asserts on this number.
+// coldCallerDeadline is the cold caller's request budget. It is a stimulus, not a bound: the fill is held open past the caller's
+// return, so any finite deadline expires first.
 const coldCallerDeadline = 30 * time.Millisecond
 
 // TestCachedHistoryReader_DetachedColdFillWarms pins that a cold caller whose ctx deadline is
@@ -177,15 +172,9 @@ func TestCachedHistoryReader_DetachedColdFillWarms(t *testing.T) {
 	}
 }
 
-// TestCachedHistoryReader_SWRServesStaleSingleFlight: every one of 20 concurrent reads of an
-// expired entry is served THE STALE TRADE while exactly one single-flighted detached refresh runs,
-// and the trade that refresh returns replaces it.
-//
-// The assertion is on the served value, not timing: the fake moves the latest trade forward a
-// ledger on the refresh and the refresh is HELD until every read returns, so a read that waited
-// for it could only hold ledger 200 and a stale read only ledger 100, at any load. The tail
-// releases the hold and pins the refreshed trade, so the check discriminates rather than restating
-// the fixture.
+// TestCachedHistoryReader_SWRServesStaleSingleFlight: 20 concurrent reads of an expired entry all get the stale trade while
+// exactly one detached refresh runs, then the refreshed trade replaces it. Asserts on served value (ledger 100 stale vs 200
+// fresh) with the refresh held until all reads return, so it is load-independent.
 func TestCachedHistoryReader_SWRServesStaleSingleFlight(t *testing.T) {
 	hold := newUpstreamHold(2) // the cold fill runs free; the refresh is parked
 	t.Cleanup(hold.release)
@@ -371,10 +360,8 @@ func TestCachedHistoryReader_ColdFillPanic_SurfacesErrorAndStaysRetryable(t *tes
 	}
 }
 
-// TestCachedHistoryReader_StaleRefreshPanic_KeepsStaleAndRetries is the (A') half: with a prior
-// good value, the correct degradation is to keep serving it and clear the in-flight marker so the
-// next expiry retries. (A') only kicks a refresh when e.flight == nil, so a leftover flight would
-// pin the key to one stale value forever.
+// TestCachedHistoryReader_StaleRefreshPanic_KeepsStaleAndRetries: when a refresh panics, keep serving the prior value and clear
+// the in-flight marker; a leftover flight would pin the key to one stale value forever.
 func TestCachedHistoryReader_StaleRefreshPanic_KeepsStaleAndRetries(t *testing.T) {
 	up := &panickingHist{}
 	c := NewCachedHistoryReader(up, 20*time.Millisecond)

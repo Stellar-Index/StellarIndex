@@ -31,25 +31,9 @@ var apiGoroutineGuards = []string{"worker.Recover", "worker.Report", "recoverStr
 // (the spawn idiom changes, the tree moves) fails.
 const apiGoroutineFloor = 40
 
-// TestAPIDetachedGoroutinesRecover is the package-tree twin of each binary's main.go guard test:
-// every detached goroutine started anywhere under internal/api/v1, subpackages included, must
-// register panic recovery.
-//
-// An unrecovered panic in any goroutine terminates the whole process. cmd/stellarindex-api's
-// guard covers the workers main() starts, but the API's real fleet (stale-while-revalidate
-// refreshers, snapshot fillers, per-row fan-outs, SSE producers) is started here, out of reach
-// of a main.go-scoped walk; one nil map from a degraded read would take down every in-flight
-// request.
-//
-// It is an AST guard, not a behavioural test, because the failure that bites is the next
-// refresher added without the defer; a behavioural test only covers goroutines that exist today.
-// It derives the goroutine set from source, like cmd/stellarindex-api's
-// TestBackgroundWorkersRecover, and subsumes but does not replace
-// TestSourceShapeRules/sse_producer_goroutines_recover (which also pins producers by name).
-//
-// There is no exemption list: main.go exempts the HTTP listener because a dead listener means a
-// live process serving nothing, and every goroutine here is one whose death should degrade a
-// single response, not the process.
+// TestAPIDetachedGoroutinesRecover: every detached goroutine under internal/api/v1, subpackages included, must register panic
+// recovery, since an unrecovered panic kills the process and main.go's guard cannot see the API's refreshers, fillers and SSE
+// producers. It is an AST guard so the next one added without the defer is caught; no exemption list.
 func TestAPIDetachedGoroutinesRecover(t *testing.T) {
 	var checked int
 	var unguarded []string

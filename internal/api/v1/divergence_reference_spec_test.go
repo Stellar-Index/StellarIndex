@@ -21,10 +21,8 @@ var divergenceReferences = map[string]bool{
 	divergence.SyntheticCrossName: true,
 }
 
-// TestDivergenceReferenceSpecEnumsMatchAllowList pins every OpenAPI
-// `reference` enum under /divergence* to divergenceReferences: a
-// source the worker records but the spec omits makes a generated
-// client reject a valid response.
+// TestDivergenceReferenceSpecEnumsMatchAllowList pins every OpenAPI `reference` enum under /divergence* to divergenceReferences:
+// a source the worker records but the spec omits makes a generated client reject a valid response.
 func TestDivergenceReferenceSpecEnumsMatchAllowList(t *testing.T) {
 	want := make([]string, 0, len(divergenceReferences))
 	for ref := range divergenceReferences {

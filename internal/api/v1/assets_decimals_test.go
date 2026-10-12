@@ -146,11 +146,9 @@ const (
 	aliasUSDCSAC     = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
 )
 
-// TestAssetDetail_SACFormResolvesCanonical: GET /v1/assets/{USDC-SAC} must serve the
-// CANONICAL classic USDC detail (same asset_id as /v1/assets/{USDC-classic}), resolved from
-// the config AliasRegistry with NO lake round-trip (no explorer wired here), so a SAC-form
-// link lands on the asset's real page instead of a second, thin "SAC" identity. Without the
-// handleAssetGet canonicalization the SAC C-address echoes back as its own asset_id.
+// TestAssetDetail_SACFormResolvesCanonical: GET /v1/assets/{USDC-SAC} must serve the canonical classic USDC detail (same
+// asset_id), resolved from the config AliasRegistry with no lake round-trip, so a SAC link lands on the real page. Without
+// handleAssetGet canonicalization the SAC address echoes back as its own asset_id.
 func TestAssetDetail_SACFormResolvesCanonical(t *testing.T) {
 	// Process-global registry — must not run parallel; reset on cleanup.
 	reg, err := canonical.NewAliasRegistry(canonical.PubnetPassphrase, map[string]string{aliasUSDCSAC: "USDC:" + aliasUSDCIssuer})
@@ -173,10 +171,8 @@ func TestAssetDetail_SACFormResolvesCanonical(t *testing.T) {
 	}
 }
 
-// TestAssetDetail_WithheldPrice_ServesNoPriceHistory — same invariant on
-// the asset DETAIL payload, where the leak was widest: r1 served
-// price_usd null beside 24 hourly and 7 daily priced points for every
-// scam-flagged asset.
+// TestAssetDetail_WithheldPrice_ServesNoPriceHistory: the same invariant on the detail payload, where the leak was widest; a
+// scam-flagged asset with price_usd null must not carry priced hourly or daily history points.
 func TestAssetDetail_WithheldPrice_ServesNoPriceHistory(t *testing.T) {
 	const scamID = "JFKBANK2-" + scamAUDIssuer
 	hist24 := []timescale.AssetPricePoint{

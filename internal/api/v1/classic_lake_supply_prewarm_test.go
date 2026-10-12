@@ -34,10 +34,8 @@ func discardLakeLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-// prewarmLakeStub answers the bulk lake-flows read and records each read as a
-// BATCH rather than a flat list, so a test can assert the background driver
-// respects classicLakeSupplyBatch instead of asking for the whole population
-// in one query.
+// prewarmLakeStub answers the bulk lake-flows read and records each read as a batch, so a test can assert the background driver
+// respects classicLakeSupplyBatch instead of requesting the whole population in one query.
 type prewarmLakeStub struct {
 	mu         sync.Mutex
 	byContract map[string]clickhouse.TokenSupply
@@ -134,11 +132,8 @@ func classicListingRow(code string) timescale.AssetRow {
 	}
 }
 
-// lakeSupplyPrewarmServer builds a Server through the production constructor ([New]) with the
-// three seams cmd/stellarindex-api/main.go wires: TokenSupply, AssetsReader and Explorer (here
-// the trustline-only sum it really is). It is constructed, not struct-literalled, because a
-// prewarm that works on a hand-assembled Server but not via New(Options{…}) is a green suite
-// hiding a dangerous branch; the wiring is the thing under test.
+// lakeSupplyPrewarmServer builds a Server through the production constructor [New] with the three seams main.go wires
+// (TokenSupply, AssetsReader, Explorer). Constructed, not struct-literalled, because the wiring is what is under test.
 func lakeSupplyPrewarmServer(
 	t *testing.T, rows []timescale.AssetRow, lakeTotals map[string]string,
 ) (*Server, *prewarmLakeStub, *prewarmListingAssets) {
@@ -179,10 +174,8 @@ func lakeSupplyPrewarmServer(
 	return s, lake, assets
 }
 
-// oneShapeOpts is the single listing shape these tests warm. Production passes
-// assetListingPrewarmOptions() (cmd/stellarindex-api), whose parity with the handler's options
-// is pinned by prewarm_parity_test.go there; this package owns that whatever shapes it is
-// handed, the assets those pages serve end up cached.
+// oneShapeOpts is the single listing shape these tests warm. Production passes assetListingPrewarmOptions(), whose parity with
+// the handler's options is pinned in cmd/stellarindex-api; this package owns that any handed shape ends up cached.
 var oneShapeOpts = []timescale.ListAssetsOptions{{
 	Limit: 501, Order: timescale.AssetsOrderObservationCountDesc,
 }}
@@ -233,12 +226,9 @@ func TestPrewarmClassicLakeSupplyFillsTheCacheWithNoRequest(t *testing.T) {
 	}
 }
 
-// TestPrewarmedCacheServesTheFirstListingWithoutReadingTheLake is the arg-parity guard, as
-// behaviour rather than restated arithmetic. A prewarm only helps if it warms the slot the
-// handler looks up; a prewarm computing its key independently can drift (Order, Sources, Limit),
-// warming a phantom slot while every real request pays the cold fill. A test recomputing the key
-// would drift the same way, so it prewarms, runs the real listing fill, and requires no further
-// lake read, which only holds if the keys coincide.
+// TestPrewarmedCacheServesTheFirstListingWithoutReadingTheLake is the arg-parity guard as behaviour: a prewarm only helps if it
+// warms the slot the handler looks up. It prewarms, runs the real listing fill, and requires no further lake read, which only
+// holds if the keys coincide.
 func TestPrewarmedCacheServesTheFirstListingWithoutReadingTheLake(t *testing.T) {
 	t.Parallel()
 
@@ -277,10 +267,9 @@ func TestPrewarmedCacheServesTheFirstListingWithoutReadingTheLake(t *testing.T) 
 	}
 }
 
-// TestPrewarmClassicLakeSupplyCoversTheWholeListingPageInBoundedBatches: a listing page covers up
-// to 500 assets but the request path warms only classicLakeSupplyBatch per request. One prewarm
-// pass must cover the whole page, still in bounded batches, since a supply_flows sum scales with
-// the flow count of its contracts and a mature token carries millions of rows.
+// TestPrewarmClassicLakeSupplyCoversTheWholeListingPageInBoundedBatches: a page covers up to 500 assets but the request path
+// warms classicLakeSupplyBatch; one prewarm pass must cover the whole page in bounded batches, since supply_flows sums scale
+// with flow count.
 func TestPrewarmClassicLakeSupplyCoversTheWholeListingPageInBoundedBatches(t *testing.T) {
 	t.Parallel()
 
@@ -313,10 +302,8 @@ func TestPrewarmClassicLakeSupplyCoversTheWholeListingPageInBoundedBatches(t *te
 	}
 }
 
-// TestPrewarmClassicLakeSupplyStopsOnLakeFailure: a refresh caches nothing on a read error, so a
-// failing lake makes no progress. The pass must be abandoned rather than walk the remaining
-// assets into the same failure, the outage shape classicLakeSupplyRetryGap prevents on the
-// request path.
+// TestPrewarmClassicLakeSupplyStopsOnLakeFailure: a refresh caches nothing on a read error, so the pass must be abandoned rather
+// than walk the remaining assets into the same failure, the outage shape classicLakeSupplyRetryGap prevents on the request path.
 func TestPrewarmClassicLakeSupplyStopsOnLakeFailure(t *testing.T) {
 	t.Parallel()
 

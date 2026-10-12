@@ -39,13 +39,9 @@ func sample(labels map[string]any, v float64) promSample {
 
 func d(dur time.Duration) *time.Duration { return &dur }
 
-// TestFreshnessVerdict pins the SLO judgement: an age past the SLO is "stale", within it "ok", and
-// no data is "unknown", never a fresh zero.
-//
-// The future-dated rows matter: a stamp past backupClockSkewTolerance must read "unknown" with its
-// RAW negative age, NOT "ok" with a clamped 0, or a forward-skewed host clock or corrupt future
-// label would paint an arbitrarily stale backup green on the public status page. Sub-tolerance
-// skew still floors to 0 and keeps its verdict, since it bounds the true age at a few seconds.
+// TestFreshnessVerdict pins the SLO judgement: past the SLO is "stale", within it "ok", no data "unknown", never a fresh zero.
+// A stamp past backupClockSkewTolerance must read "unknown" with its raw negative age, not "ok" with a clamped 0, or a skewed
+// clock would paint a stale backup green; sub-tolerance skew floors to 0 and keeps its verdict.
 func TestFreshnessVerdict(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -294,11 +290,8 @@ func TestBuildBackupsSnapshot_AbsentAndFailed(t *testing.T) {
 	}
 }
 
-// TestBuildBackupsSnapshot_FutureDatedOffsite is the document-level guard: every source is fresh
-// EXCEPT the off-site repo, whose pgBackRest label is stamped days in the future (forward host
-// clock or corrupt label). Unchecked, it would render "ok · 0s ago" and an arbitrarily stale
-// off-site copy would sit behind an all-clear. It must read "unknown" with the raw negative age
-// and drag the roll-up off "ok", which also sets flags.stale on the wire.
+// TestBuildBackupsSnapshot_FutureDatedOffsite: with every source fresh except an off-site label stamped days in the future,
+// it must read "unknown" with the raw negative age and drag the roll-up off "ok" (setting flags.stale), not render "ok".
 func TestBuildBackupsSnapshot_FutureDatedOffsite(t *testing.T) {
 	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	stanza := "stellarindex"
@@ -341,10 +334,8 @@ func TestBuildBackupsSnapshot_FutureDatedOffsite(t *testing.T) {
 	}
 }
 
-// TestBackupsPromQL pins the matcher text: the exporter's aggregate
-// pseudo-stanza must be excluded (as storage.yml's alerts do), the
-// full-size query must select fulls only, and the drill mtime must
-// match the textfile by basename regardless of directory.
+// TestBackupsPromQL pins the matcher text: the exporter's aggregate pseudo-stanza is excluded, the full-size query selects
+// fulls only, and the drill mtime matches the textfile by basename regardless of directory.
 func TestBackupsPromQL(t *testing.T) {
 	for _, q := range []string{promBackupSinceLast, promBackupInfo, promBackupFullSize} {
 		if !strings.Contains(q, `stanza!~"all-stanzas.*"`) {
@@ -359,10 +350,8 @@ func TestBackupsPromQL(t *testing.T) {
 	}
 }
 
-// TestHandleDiagnosticsBackups_EndToEnd round-trips the handler through a canned Prometheus HTTP
-// fake, pinning the wire JSON field names the explorer panel consumes, the 60 s cache header, the
-// flags.stale mirror, and that a second request is served from the in-process cache (one round of
-// Prometheus queries, not two).
+// TestHandleDiagnosticsBackups_EndToEnd round-trips the handler through a canned Prometheus fake, pinning the wire JSON field
+// names the explorer panel consumes, the 60 s cache header, the flags.stale mirror, and in-process caching (one query round).
 func TestHandleDiagnosticsBackups_EndToEnd(t *testing.T) {
 	var hits atomic.Int64
 	prom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -453,10 +442,8 @@ func TestHandleDiagnosticsBackups_EndToEnd(t *testing.T) {
 	}
 }
 
-// TestBuildBackupsSnapshot_PanickingQueryCountsAsFailed: a query goroutine that panics must count
-// toward `failed` (and so degrade SourceStatus) like one that returned an error. A panic leaves
-// results[i] and errs[i] at zero values, which the failed-count loop would read as "returned
-// nothing" and keep SourceStatus "ok" though a Prometheus query never ran.
+// TestBuildBackupsSnapshot_PanickingQueryCountsAsFailed: a panicking query goroutine must count as failed and degrade
+// SourceStatus; its zero-valued result and error would otherwise read as "returned nothing" and keep status "ok".
 func TestBuildBackupsSnapshot_PanickingQueryCountsAsFailed(t *testing.T) {
 	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	src := &fakeBackupMetrics{
@@ -471,10 +458,8 @@ func TestBuildBackupsSnapshot_PanickingQueryCountsAsFailed(t *testing.T) {
 	}
 }
 
-// blockingBackupMetrics answers every queryVector call only after
-// proceed is closed, then reports the ctx it was actually handed
-// (ctx.Err(), nil on a live ctx). It exists to observe WHICH context
-// a shared rebuild's Prometheus fan-out runs on.
+// blockingBackupMetrics answers every queryVector call only after proceed is closed, then reports the ctx it was handed,
+// to observe which context a shared rebuild's Prometheus fan-out runs on.
 type blockingBackupMetrics struct {
 	proceed chan struct{}
 }
@@ -487,11 +472,8 @@ func (b *blockingBackupMetrics) queryVector(ctx context.Context, _ string) ([]pr
 	return nil, nil
 }
 
-// TestHandleDiagnosticsBackups_LeaderCtxCancelDoesNotPoisonSharedCache guards the leader-ctx
-// hazard: the Prometheus fan-out must not run on the ctx of whichever request holds s.backups.mu
-// when the cache is stale. The result is cached for EVERY request behind it, so if that leader's
-// client disconnected mid-flight, its canceled ctx would fail every query and an "unknown"
-// snapshot would be served to unrelated followers. Same shape as CachedOracleReader.fetch.
+// TestHandleDiagnosticsBackups_LeaderCtxCancelDoesNotPoisonSharedCache: the fan-out must not run on the ctx of the request
+// holding s.backups.mu. Its result is cached for all followers, so a disconnected leader would cache an "unknown" snapshot.
 func TestHandleDiagnosticsBackups_LeaderCtxCancelDoesNotPoisonSharedCache(t *testing.T) {
 	proceed := make(chan struct{})
 	src := &blockingBackupMetrics{proceed: proceed}
@@ -572,10 +554,8 @@ func (s *switchableBackupMetrics) queryVector(_ context.Context, expr string) ([
 	return nil, nil
 }
 
-// TestHandleDiagnosticsBackups_KeepsPreviousSnapshotOnAllFailedRebuild: an all-failed rebuild
-// (every Prometheus query erroring) must not clobber a known-good cached snapshot with an
-// all-"unknown" document. Replacing s.backups.snap regardless of SourceStatus would let one
-// transient failure round paint the public backups status "unknown" over a healthy previous build.
+// TestHandleDiagnosticsBackups_KeepsPreviousSnapshotOnAllFailedRebuild: an all-failed rebuild must not replace a known-good
+// cached snapshot with an all-"unknown" one, or one transient failure round blanks the public backups status.
 func TestHandleDiagnosticsBackups_KeepsPreviousSnapshotOnAllFailedRebuild(t *testing.T) {
 	fake := &switchableBackupMetrics{}
 	srv := New(Options{BackupMetrics: fake})

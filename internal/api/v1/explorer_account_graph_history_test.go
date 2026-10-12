@@ -54,15 +54,9 @@ func histMonth(year int, month time.Month) time.Time {
 	return time.Date(year, month, 1, 0, 0, 0, 0, time.UTC)
 }
 
-// graphHistorySnapshot is the base fixture; every figure is consistent with the reader's contract:
-//
-//	created:   3 edges (3 new accounts) across 3 months, 7 creations of
-//	           which 5 are placed and 2 are not.
-//	sponsored: 2 edges across 2 months, 2 arrangements, all placed.
-//
-// The deliberate GAP is 2022 in the creation arm: the account is active
-// in 2021-03 and 2023-07 and silent in between. Nothing may invent a
-// point for the quiet months.
+// graphHistorySnapshot is the base fixture, consistent with the reader's contract: created has 3 edges (3 new accounts) across
+// 3 months, 7 creations of which 5 are placed; sponsored has 2 edges across 2 months, 2 arrangements, all placed.
+// The deliberate gap is 2022 in the creation arm (active 2021-03 and 2023-07); no point may be invented for quiet months.
 func graphHistorySnapshot() clickhouse.AccountGraphHistory {
 	return clickhouse.AccountGraphHistory{
 		Created: clickhouse.AccountGraphHistorySide{
@@ -135,10 +129,8 @@ func TestAccountGraphHistory_ServesTheBucketsAsGiven(t *testing.T) {
 	}
 }
 
-// THE honesty rule of this surface: a period with no observation is a
-// gap, not a zero. The fixture is silent from 2021-04 to 2023-06, so no
-// point may exist for any of those months and no value may be carried
-// across them.
+// Honesty rule: a period with no observation is a gap, not a zero. The fixture is silent from 2021-04 to 2023-06, so no point
+// may exist for those months and no value may be carried across them.
 func TestAccountGraphHistory_QuietMonthsAreGapsNotZeros(t *testing.T) {
 	reader := &stubExplorerReader{graphHistory: graphHistorySnapshot()}
 	env := getGraphHistory(t, reader, "/v1/accounts/"+graphSubject+"/graph/history")
@@ -196,10 +188,8 @@ func TestAccountGraphHistory_NewAccountsSumToTheTotal(t *testing.T) {
 	}
 }
 
-// Events the served tier cannot place in a month are declared, counted
-// exactly, and flagged as a lower bound — never smeared across the
-// interval and never dropped silently. This is the same posture
-// /v1/rwa/assets takes with excluded[].
+// Events the served tier cannot place in a month are declared, counted exactly and flagged as a lower bound, never smeared
+// across the interval or dropped silently (same posture as /v1/rwa/assets excluded[]).
 func TestAccountGraphHistory_UnplacedEventsAreDeclaredNotSmeared(t *testing.T) {
 	reader := &stubExplorerReader{graphHistory: graphHistorySnapshot()}
 	env := getGraphHistory(t, reader, "/v1/accounts/"+graphSubject+"/graph/history")
@@ -254,10 +244,8 @@ func TestAccountGraphHistory_FullyPlacedSeriesIsNotFlagged(t *testing.T) {
 	}
 }
 
-// The two arms cover different spans — creation reaches genesis,
-// sponsorship only reaches protocol 14 — so each series carries its own,
-// and merging them would present sponsorship's floor as a gap in the
-// creation record.
+// The two arms cover different spans (creation reaches genesis, sponsorship only protocol 14), so each series carries its own;
+// merging would present sponsorship's floor as a gap in the creation record.
 func TestAccountGraphHistory_ArmsCarrySeparateCoverage(t *testing.T) {
 	reader := &stubExplorerReader{graphHistory: graphHistorySnapshot()}
 	env := getGraphHistory(t, reader, "/v1/accounts/"+graphSubject+"/graph/history")
@@ -290,10 +278,8 @@ func TestAccountGraphHistory_EmptySeriesIsNotNull(t *testing.T) {
 	}
 }
 
-// Before the rollup's first cycle the graph tables are empty, and a
-// series over them would answer "this account has never created
-// anything" — a claim, not an absence. The route must warm-503 instead,
-// exactly as /graph does.
+// Before the rollup's first cycle the graph tables are empty, and a series over them would claim "never created anything".
+// The route must warm-503, as /graph does.
 func TestAccountGraphHistory_WarmingIs503(t *testing.T) {
 	reader := &stubExplorerReader{} // no coverage span == no cycle has run
 	base := explorerTestServer(t, reader)

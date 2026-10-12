@@ -19,10 +19,8 @@ import (
 // Shared fakes for the tier-clamp (key-budget) seam. These lived in
 // stripe_webhook_test.go by the admin clamp tests, the only remaining consumers.
 
-// fakeSelfServiceKeyManager is the test double for
-// [v1.SelfServiceKeyManager]. Records every UpdateRateLimit call so
-// assertions can confirm the handler called the right key with the
-// right budget.
+// fakeSelfServiceKeyManager is the test double for v1.SelfServiceKeyManager, recording every UpdateRateLimit call so tests can
+// assert the right key and budget.
 type fakeSelfServiceKeyManager struct {
 	mu      sync.Mutex
 	keys    map[string][]auth.APIKeyRecord // identifier → keys
@@ -60,10 +58,8 @@ func (r *recordingAuditSink) Append(_ context.Context, e platform.AuditEntry) er
 	return r.err
 }
 
-// fakePlatformAPIKeysForBridge is the [platform.APIKeyStore] test
-// double for the clamp seam. ListActiveForAccount returns the seeded
-// non-revoked keys; Update records every call so assertions can
-// confirm which keys were rewritten.
+// fakePlatformAPIKeysForBridge is the platform.APIKeyStore double for the clamp seam: ListActiveForAccount returns the seeded
+// non-revoked keys and Update records calls so tests can confirm which keys were rewritten.
 type fakePlatformAPIKeysForBridge struct {
 	mu      sync.Mutex
 	byAcct  map[uuid.UUID][]platform.APIKey

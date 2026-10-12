@@ -23,10 +23,8 @@ func (s *wmStub) LakeWatermark(context.Context) (uint32, time.Time, error) {
 	return s.ledger, s.closedAt, nil
 }
 
-// TestExplorer_AccountStateAndHolders_Watermark pins ADR-0041 Decision 4 on
-// the lake-backed explorer reads: `as_of_ledger` carries the (cached) lake
-// watermark and `flags.stale` fires when its close time trails now beyond
-// the threshold (10min here, comfortably past the 300s threshold).
+// TestExplorer_AccountStateAndHolders_Watermark pins ADR-0041 Decision 4 on lake-backed explorer reads: `as_of_ledger`
+// carries the cached lake watermark and `flags.stale` fires when its close time trails now beyond the threshold.
 func TestExplorer_AccountStateAndHolders_Watermark(t *testing.T) {
 	// cachedLedger is the account state's OWN vintage (stamped at cache fill), deliberately
 	// different from serveTimeLedger to prove the two are decoupled; otherwise as_of_ledger
@@ -138,12 +136,8 @@ func TestExplorer_AccountState_RejectsBadStrkey(t *testing.T) {
 	}
 }
 
-// TestExplorer_AccountState_RejectsChecksumInvalidStrkey is the
-// regression: a strkey with the right SHAPE (56 chars, leading 'G', valid base32 alphabet)
-// but a corrupted CRC checksum must be rejected with 400 before it reaches the lake reader,
-// matching every sibling account endpoint, which validates via canonical.IsAccountID. A
-// shape-only check let it through; the stub reader below would then answer 200, proving the
-// checksum-invalid input reached the reader.
+// TestExplorer_AccountState_RejectsChecksumInvalidStrkey: a strkey with valid shape but a corrupted CRC must get 400 before
+// reaching the lake reader, as sibling endpoints do via canonical.IsAccountID; a shape-only check let it through.
 func TestExplorer_AccountState_RejectsChecksumInvalidStrkey(t *testing.T) {
 	reader := &stubExplorerReader{accountState: clickhouse.AccountState{Exists: true, Balance: 1}}
 	base := explorerTestServer(t, reader)
@@ -188,11 +182,8 @@ func TestExplorer_AssetHolders(t *testing.T) {
 	}
 }
 
-// TestExplorer_AccountsList_Watermark pins ADR-0041 Decision 4 on the /v1/accounts wealth
-// ranking (a current-state read over the ledger_entry_changes projection): `as_of_ledger`
-// carries the ranking snapshot's own ledger, NOT the later serve-time watermark, and
-// `flags.stale` fires when the serve-time watermark's close time trails now beyond the
-// threshold. An empty stubPriceReader prices nothing, so the stub wealth rows are served as is.
+// TestExplorer_AccountsList_Watermark pins ADR-0041 Decision 4 on the /v1/accounts wealth ranking: `as_of_ledger` is the
+// ranking snapshot's own ledger, not the serve-time watermark, and `flags.stale` fires when the watermark trails now.
 func TestExplorer_AccountsList_Watermark(t *testing.T) {
 	reader := &stubExplorerReader{
 		wealth:       []clickhouse.AccountWealth{{AccountID: testG, Value: big.NewRat(12345, 100)}},

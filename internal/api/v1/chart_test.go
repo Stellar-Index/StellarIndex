@@ -26,11 +26,8 @@ func (s *stubFXHistoryReader) ListFXHistory(_ context.Context, _ string, _, _ ti
 	return s.points, s.err
 }
 
-// TestChart_Fiat_GranularitySnappedToDaily:
-// fx_quotes is a one-row-per-UTC-day series, so a fiat:fiat chart must
-// report granularity=1d (never the requested sub-daily grain) and must
-// not raise truncated/discontinuous against a daily grid it was never
-// measured on.
+// TestChart_Fiat_GranularitySnappedToDaily: fx_quotes holds one row per UTC day, so a fiat:fiat chart reports granularity=1d and
+// must not raise truncated/discontinuous against a daily grid it was never measured on.
 func TestChart_Fiat_GranularitySnappedToDaily(t *testing.T) {
 	from := time.Now().UTC().Add(-24 * time.Hour)
 	d1 := from.Add(2 * time.Hour) // 2h after `from`: > 15m grace, < 24h grace
@@ -142,11 +139,8 @@ func TestChart_Fiat_CrossPair_NoSharedDays_EmptySeries(t *testing.T) {
 	}
 }
 
-// TestChart_TWAP_ServesTimeWeightedSeries — price_type=twap now serves
-// a series from the twap_1h / twap_1d CAGGs (migration 0081)
-// instead of a 400. The default 24h timeframe's 15m grain
-// snaps onto the 1h TWAP CAGG, and the response reports the grain
-// actually served + price_type=twap.
+// TestChart_TWAP_ServesTimeWeightedSeries: price_type=twap is served from the twap_1h / twap_1d CAGGs; the default 24h
+// timeframe's 15m grain snaps onto the 1h CAGG and the response reports the grain served plus price_type=twap.
 func TestChart_TWAP_ServesTimeWeightedSeries(t *testing.T) {
 	t0 := time.Unix(1_770_000_000, 0).UTC().Truncate(time.Hour)
 	v := "1234.5"
@@ -223,10 +217,8 @@ func TestChart_TWAP_GranularitySnapping(t *testing.T) {
 	}
 }
 
-// TestChart_TWAP_StablecoinFallback — the twap chart path reuses the
-// shared X/fiat:USD → X/<USD-pegged classic> fallback: an empty literal
-// twap series for native/fiat:USD falls back to the proxied peg pair's
-// twap buckets and flags triangulated.
+// TestChart_TWAP_StablecoinFallback: the twap path reuses the shared X/fiat:USD to X/<USD-pegged classic> fallback; an empty
+// literal twap series for native/fiat:USD falls back to the proxied peg pair's buckets and flags triangulated.
 func TestChart_TWAP_StablecoinFallback(t *testing.T) {
 	usdc, err := canonical.NewClassicAsset(
 		"USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
@@ -362,10 +354,8 @@ func (r *pairKeyedHistoryReader) OHLCSeries(_ context.Context, _ canonical.Pair,
 	return nil, nil
 }
 
-// TestChart_StablecoinFallback exercises the X/fiat:USD →
-// X/<USD-pegged classic> retry. /v1/chart for native/fiat:USD
-// with no literal points but USDC trades available should return
-// the USDC points and tag the envelope flags.triangulated=true.
+// TestChart_StablecoinFallback: /v1/chart for native/fiat:USD with no literal points but USDC trades returns the USDC points and
+// sets flags.triangulated=true.
 func TestChart_StablecoinFallback(t *testing.T) {
 	usdc, err := canonical.NewClassicAsset(
 		"USDC",
@@ -437,16 +427,9 @@ func TestChart_StablecoinFallback(t *testing.T) {
 	}
 }
 
-// TestChart_NativeReadsCryptoXLMAlias is the chart-side half of the
-// alias-blind regression: the literal-keyed CAGG read left
-// `?asset=native` unable to see the series stored under `crypto:XLM`.
-// chartStablecoinFallback did not cover it — it crosses the base aliases
-// with PROXY quotes only and skips the requested quote, so
-// crypto:XLM/fiat:USD was the one combination never read.
-//
-// An alias form is the same asset in another canonical spelling, so the
-// response must NOT be stamped triangulated and must echo the id the
-// client asked for.
+// TestChart_NativeReadsCryptoXLMAlias: `?asset=native` must see the series stored under `crypto:XLM`; the fallback crosses base
+// aliases with proxy quotes only, so crypto:XLM/fiat:USD was never read. An alias is not triangulation: no triangulated flag,
+// and the response echoes the id the client asked for.
 func TestChart_NativeReadsCryptoXLMAlias(t *testing.T) {
 	t0 := time.Unix(1_770_000_000, 0).UTC()
 	reader := &pairKeyedHistoryReader{
@@ -485,13 +468,9 @@ func TestChart_NativeReadsCryptoXLMAlias(t *testing.T) {
 	}
 }
 
-// TestChart_StablecoinFallback_CryptoBacker exercises the
-// broadened fiat-proxy fallback: it also reaches the
-// abstract stablecoin backers (crypto:USDT/USDC/…) crossed with the
-// XLM base aliases — so a native/fiat:USD chart whose only USD depth is
-// the CEX-sourced crypto:XLM/crypto:USDT series (binance) is found even
-// with NO operator classic pegs configured. The old classic-pegs-only
-// fallback returned an empty series here.
+// TestChart_StablecoinFallback_CryptoBacker: the fiat-proxy fallback also reaches abstract stablecoin backers (crypto:USDT/USDC)
+// crossed with XLM base aliases, so native/fiat:USD finds CEX-sourced crypto:XLM/crypto:USDT depth with no classic pegs
+// configured.
 func TestChart_StablecoinFallback_CryptoBacker(t *testing.T) {
 	t0 := time.Unix(1_770_000_000, 0).UTC()
 	reader := &pairKeyedHistoryReader{
@@ -551,12 +530,8 @@ func TestChart_StablecoinFallback_CryptoBacker(t *testing.T) {
 	}
 }
 
-// TestChart_TruncatedFlagOnRetentionShortfall — when the requested
-// timeframe extends before the earliest available data, the
-// envelope flips Truncated=true and surfaces both DataStartsAt and
-// RequestedFrom so consumers can render a "history begins ..." hint
-// instead of guessing whether the deployment is data-thin or the
-// asset is genuinely flat.
+// TestChart_TruncatedFlagOnRetentionShortfall: when the timeframe starts before the earliest data, the envelope sets
+// Truncated=true with DataStartsAt and RequestedFrom, so consumers can show "history begins ..." instead of guessing.
 func TestChart_TruncatedFlagOnRetentionShortfall(t *testing.T) {
 	// 7 days of 1d points, but request `timeframe=1y` (=365d window).
 	now := time.Now().UTC().Truncate(24 * time.Hour)
@@ -926,10 +901,8 @@ func TestChart_NotTruncated(t *testing.T) {
 	}
 }
 
-// The direct fiat chart leg (one USD-quoted series, no cross) renders
-// through the same magnitude-relative decimal renderer as every other
-// price surface: a hyperinflation-shaped rate below 1e-10 USD must not
-// collapse to "0.0000000000", and a normal rate keeps its ten places.
+// The direct fiat chart leg renders through the same magnitude-relative decimal renderer as every other price surface: a rate
+// below 1e-10 USD must not collapse to "0.0000000000", and a normal rate keeps its ten places.
 func TestChart_Fiat_DirectLeg_TinyRateSurvives(t *testing.T) {
 	d1 := time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC)
 	d2 := time.Date(2024, 1, 3, 0, 0, 0, 0, time.UTC)
@@ -997,20 +970,9 @@ func TestChart_Fiat_RatesAbove2to53StayExact(t *testing.T) {
 	}
 }
 
-// A request whose grid outruns the response cap is served at the
-// finest grain that fits, and the response says so — while a request
-// that fits is untouched at every grain.
-//
-// Both halves are asserted at once because either alone is a
-// half-check: an echo test that never exercises a fitting pair would
-// pass on a handler that coarsened everything, and a fitting-pair test
-// alone would pass on that behaviour.
-//
-// `granularity` on the wire is the signal, and it is asserted TOGETHER
-// with the grain the reader was called at: a response that echoed
-// `15m` while reading `1m` would be a new lie in the field this change
-// exists to make true, and the reverse (reading 15m, echoing 1m) is
-// the bug itself.
+// A request whose grid outruns the response cap is served at the finest grain that fits and the response says so, while a
+// fitting request is untouched. Both halves are asserted, with the echoed granularity matching the grain the reader was called
+// at.
 func TestChart_CoarsensAGranularityTheWindowCannotCarry(t *testing.T) {
 	for _, tc := range []chartGranularityFitCase{
 		{
@@ -1216,11 +1178,8 @@ func TestChart_ThinPoolNeverDisplacesAnAnsweredBucket(t *testing.T) {
 	}
 }
 
-// A bucket depends only on itself, never on what else the window contains.
-// The sources sit on opposite sides of the 1mo boundary: over 1y the CEX
-// spelling answers somewhere, over 1mo nowhere, so a per-response first-hit
-// would serve the pool's days in the narrow window and suppress them in the
-// wide one.
+// A bucket depends only on itself, never on what else the window contains. Sources sit on opposite sides of the 1mo boundary, so
+// a per-response first-hit would serve the pool's days in the narrow window and suppress them in the wide one.
 func TestChart_ABucketRendersTheSameInEveryWindow(t *testing.T) {
 	ts := holedServer(t, newChartOHLCStore(map[string]map[time.Time]string{
 		"crypto:XLM/fiat:USD":                              holedDays(holedCEXPrice, 40, 31),
@@ -1256,12 +1215,9 @@ func TestChart_DiscontinuousSignal(t *testing.T) {
 	}
 }
 
-// Series carried by a proxy route keep every bucket and say they were
-// triangulated. The declared peg's own dollar series has no observed market
-// under any spelling, so the chart derives it through XLM (/v1/ohlc serves
-// nothing for it); the merge must leave that route last, whole-series, and
-// reached only when nothing observed answered. An asset whose whole series
-// comes from a proxy quote (AQUA, yXLM on production) keeps every bucket.
+// Series carried by a proxy route keep every bucket and say they were triangulated. A declared peg's own dollar series is
+// derived through XLM, must be the last route and reached only when nothing observed answered; whole-proxy assets keep every
+// bucket.
 func TestChart_ProxyRoutedSeriesSurviveTheMerge(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
@@ -1421,10 +1377,8 @@ func TestChart_MonthlyGranularityGapSignal(t *testing.T) {
 	}
 }
 
-// Common path, not an edge: 59 of the 60 largest assets report
-// flags.triangulated=true, so every proxy read runs on an empty merge. A proxy
-// that fails before the series is found must be skipped, not answered with
-// (RED with the error split on merge emptiness: 503, zero points).
+// Common path, not an edge: most large assets report flags.triangulated=true, so every proxy read runs on an empty merge. A
+// proxy that fails before the series is found must be skipped, not answered with an error (503, zero points).
 func TestChart_FailingEarlyProxyStillFindsTheSeries(t *testing.T) {
 	pool := holedDays(holedPoolPrice, 5, 1)
 	for _, tc := range []struct {
@@ -1463,12 +1417,9 @@ func TestChart_FailingEarlyProxyStillFindsTheSeries(t *testing.T) {
 	}
 }
 
-// [chartWindow.covered] has two conditions: no readable grid point before the
-// earliest hit, and as many distinct buckets as the grid has points. A wrong
-// `true` silently truncates a money series with no stale flag, so both branches
-// of the count are pinned: a covered window stops after one read without
-// flags.stale; one interior bucket missing (held by a proxy) keeps walking.
-// RED under a bare `return ok`: the missing day is never filled.
+// [chartWindow.covered] needs no readable grid point before the earliest hit and as many distinct buckets as grid points. A
+// wrong `true` silently truncates a money series with no stale flag, so both count branches are pinned: covered stops after one
+// read; one missing interior bucket keeps walking.
 func TestChart_CoveredWindowStopsTheWalkOnlyWhenCovered(t *testing.T) {
 	const missing = 100
 	for _, tc := range []struct {
@@ -1521,11 +1472,9 @@ func TestChart_CoveredWindowStopsTheWalkOnlyWhenCovered(t *testing.T) {
 	}
 }
 
-// A window with a bucket no source traded in can never be covered, so every
-// remaining source is read. Each read must cost only the buckets still missing,
-// so the walk ends by exhausting its list without flags.stale, and a later
-// source that holds a missing bucket is still merged. The scattered case is
-// RED while reads are capped by range count rather than missing width.
+// A window with a bucket no source traded in can never be covered, so every source is read, each costing only the buckets still
+// missing. The walk ends by exhausting its list without flags.stale, and a later source holding a missing bucket is still
+// merged.
 func TestChart_UnfillableHoleDoesNotRunTheWalkToBudget(t *testing.T) {
 	var scattered []int
 	for n := 12; n <= 360; n += 12 {
@@ -1598,22 +1547,9 @@ func TestChart_UnfillableHoleDoesNotRunTheWalkToBudget(t *testing.T) {
 	}
 }
 
-// TestChart_MarketCap_RequestDeadlineIs503NotEmptySeries pins the wire
-// answer when the blanket request deadline fires inside
-// /v1/chart?price_type=market_cap.
-//
-// The market-cap legs must not map ANY read error, deadline included,
-// to emptyMarketCapSeries at HTTP 200 with Flags{} — no stale marker, no
-// error. An empty series is syntactically valid, so a caller renders
-// "market cap $0" for an asset holding real supply and cannot tell that
-// from a genuine no-data window: the same wrong-answer-with-full-
-// confidence failure as the bodyless 200 on
-// /v1/lending/pools/{pool}/reserves, and just as invisible to any
-// 5xx-based availability signal.
-//
-// RequestTimeout is set below every per-handler budget so the deadline
-// the reader observes is the blanket one — the case no per-handler
-// arithmetic can reach.
+// TestChart_MarketCap_RequestDeadlineIs503NotEmptySeries pins that the blanket request deadline firing inside market_cap answers
+// an error, never emptyMarketCapSeries at 200 with Flags{}, which callers render as "market cap $0" for a real asset.
+// RequestTimeout is set below every per-handler budget so the deadline observed is the blanket one.
 func TestChart_MarketCap_RequestDeadlineIs503NotEmptySeries(t *testing.T) {
 	srv := v1.New(v1.Options{
 		History: stallingMarketCapHistory{&stubHistoryReader{}},
@@ -1648,10 +1584,8 @@ func TestChart_MarketCap_RequestDeadlineIs503NotEmptySeries(t *testing.T) {
 	}
 }
 
-// TestChart_MarketCap_ReadFailureFlagsStale covers the non-deadline half
-// of the same degrade: a plain read failure still serves the empty series
-// (the shape callers depend on), but flags.stale now says the series is
-// empty because the read failed — not because the asset has no market cap.
+// TestChart_MarketCap_ReadFailureFlagsStale: a plain read failure still serves the empty series, but flags.stale says it is
+// empty because the read failed, not because the asset has no market cap.
 func TestChart_MarketCap_ReadFailureFlagsStale(t *testing.T) {
 	srv := v1.New(v1.Options{
 		History:            &stubHistoryReader{pointsErr: errChartReadBroke},
@@ -1714,11 +1648,8 @@ func TestChart_Fiat_RequestDeadlineIs503NotEmptySeries(t *testing.T) {
 	}
 }
 
-// TestChart_EmptySeriesCarriesCoverageFrom — /v1/chart's window always
-// ends at now, so it can never sit BELOW the floor; the floor itself is
-// the answer there. An empty 24h chart with `coverage_from: 2018-07-01`
-// says "quiet"; the same chart with the field absent says "nothing is
-// held for this pair".
+// TestChart_EmptySeriesCarriesCoverageFrom: the chart window always ends at now, so it can never sit below the floor; the floor
+// is the answer. An empty 24h chart with coverage_from says "quiet"; without the field it says "nothing held".
 func TestChart_EmptySeriesCarriesCoverageFrom(t *testing.T) {
 	probe := &coverageFloorProbe{floor: xlmCoverageFloor, found: true}
 	ts := emptyHistoryServer(t, probe)
@@ -1737,10 +1668,8 @@ func TestChart_EmptySeriesCarriesCoverageFrom(t *testing.T) {
 	}
 }
 
-// TestChart_FiatQuoteFloorIsTheProxySet — /v1/chart serves a fiat quote
-// from its proxy list after the literal pair, so an empty 24h chart for
-// AQUA/fiat:USD with only AQUA/USDC buckets says "quiet since the peg's
-// floor", not "nothing held".
+// TestChart_FiatQuoteFloorIsTheProxySet: a fiat quote is served from its proxy list after the literal pair, so an empty 24h
+// chart for AQUA/fiat:USD with only AQUA/USDC buckets says "quiet since the peg's floor", not "nothing held".
 func TestChart_FiatQuoteFloorIsTheProxySet(t *testing.T) {
 	t.Parallel()
 	usdc := mustParseAsset(t, usdcClassicID)
@@ -1759,13 +1688,8 @@ func TestChart_FiatQuoteFloorIsTheProxySet(t *testing.T) {
 	assertCoverage(t, env, &pegFloor2021, false)
 }
 
-// TestChart_XLMCrossFloorIsTheLaterLeg — the chart's last route derives
-// a fiat series through XLM, bucket by bucket, so it exists only where
-// BOTH legs do: its floor is the LATER leg's. Folding XLM's own fiat
-// floor (2018) into the set as if it were a direct constituent would
-// hand every asset with any XLM market a floor from before that asset
-// existed. And when the asset leg holds nothing, the cross cannot be
-// served at all, and XLM's floor must not surface through it.
+// TestChart_XLMCrossFloorIsTheLaterLeg: the through-XLM series exists only where both legs do, so its floor is the later leg's.
+// Folding XLM's own fiat floor in would predate the asset, and an empty asset leg must not surface XLM's floor.
 func TestChart_XLMCrossFloorIsTheLaterLeg(t *testing.T) {
 	t.Parallel()
 	aqua := mustParseAsset(t, aquaClassicID)
@@ -1828,14 +1752,8 @@ func TestChart_DegradedFailureExitsAreNoStore(t *testing.T) {
 	}
 }
 
-// TestChart_NonstandardDecimals_NormalizesPriceNotVolumeUSD pins the
-// /v1/chart contract (this endpoint is
-// not declined; the raw prices_<gran> ratio is corrected:
-//
-//   - each point's `p`: raw CAGG ratio × K (10^(9−7) = 100 here).
-//   - each point's `v_usd`: UNCHANGED — prices_<gran>.volume_usd is
-//     Σ(usd_volume) (migration 0002), already USD-denominated at
-//     trade-valuation time and invariant to the pair's decimals split.
+// TestChart_NonstandardDecimals_NormalizesPriceNotVolumeUSD: each point's `p` is the raw CAGG ratio times K (10^(9-7) = 100
+// here); `v_usd` is unchanged because prices_<gran>.volume_usd is already USD-denominated and invariant to the decimals split.
 func TestChart_NonstandardDecimals_NormalizesPriceNotVolumeUSD(t *testing.T) {
 	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 9)
 	t0 := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
@@ -1884,20 +1802,9 @@ func TestChart_NonstandardDecimals_7dpByteIdentical(t *testing.T) {
 	}
 }
 
-// TestChart_StablecoinFallback_ReachesPegSACTwin pins the USD-proxy walk
-// on the PEG's own spellings, not just the classic one the operator typed
-// into `[trades].usd_pegged_classic_assets`.
-//
-// A declared peg is an asset, not a spelling. Soroban AMMs (Aquarius,
-// Phoenix, Soroswap) trade the SAC wrapper, so a pool's USD leg is stored
-// quoted in the USDC SAC and never in USDC-GA5Z… — and the walk, bound to
-// the classic form alone, read the one spelling the depth is not under.
-// Measured on r1: a Soroban-traded asset returned 0 chart
-// points against fiat:USD while the identical window quoted in the USDC
-// SAC returned 39.
-//
-// RED without the fix: 0 points — the only pair holding the series
-// (SAC base × SAC peg) is never read.
+// TestChart_StablecoinFallback_ReachesPegSACTwin: the USD-proxy walk must also read the peg's SAC spelling, not just the classic
+// one configured. Soroban AMMs trade the SAC wrapper, so a classic-only walk returned 0 points where the SAC quote held the
+// series.
 func TestChart_StablecoinFallback_ReachesPegSACTwin(t *testing.T) {
 	usdc := installPegAliasRegistry(t)
 	t0 := time.Unix(1_770_000_000, 0).UTC()
@@ -1937,16 +1844,8 @@ func TestChart_StablecoinFallback_ReachesPegSACTwin(t *testing.T) {
 	}
 }
 
-// TestChart_StablecoinFallback_EveryClassicPegBeforeAnySAC pins the
-// ordering across the PEG dimension with the base held fixed: with two
-// declared pegs, every peg's classic form is read before any peg's SAC
-// form. A per-peg interleave ([pegA classic, pegA SAC, pegB classic])
-// would read peg A's thin Soroban pool before peg B's deep classic book
-// and re-price a series the classic-only walk already served from that
-// book — the one outcome widening the walk must never produce.
-//
-// RED with a per-peg interleave: the thin pool (0.0041) is served in
-// place of the deep book (0.0099).
+// TestChart_StablecoinFallback_EveryClassicPegBeforeAnySAC: with two declared pegs, every peg's classic form is read before any
+// SAC form. A per-peg interleave would let a thin Soroban pool re-price a series the deep classic book already served.
 func TestChart_StablecoinFallback_EveryClassicPegBeforeAnySAC(t *testing.T) {
 	usdc := installPegAliasRegistry(t)
 	pyusd := mustClassicAsset(t, "PYUSD", pegAliasPYUSDIssuer)
@@ -1982,11 +1881,8 @@ func TestChart_StablecoinFallback_EveryClassicPegBeforeAnySAC(t *testing.T) {
 	}
 }
 
-// TestChart_StablecoinFallback_SkipsPegSpellingOfTheBase pins the other
-// half of widening the walk: a base and a proxy quote that are the SAME
-// asset in two spellings must not be read at all. Their pair has no rows
-// by construction, and every combination shares the handler's one 8s
-// deadline.
+// TestChart_StablecoinFallback_SkipsPegSpellingOfTheBase: a base and proxy quote that are the same asset in two spellings must
+// not be read; their pair has no rows by construction and every combination shares the handler's one 8s deadline.
 func TestChart_StablecoinFallback_SkipsPegSpellingOfTheBase(t *testing.T) {
 	usdc := installPegAliasRegistry(t)
 	reader := &pairKeyedHistoryReader{byPair: map[string][]v1.HistoryPoint{}}
@@ -2006,24 +1902,9 @@ func TestChart_StablecoinFallback_SkipsPegSpellingOfTheBase(t *testing.T) {
 	}
 }
 
-// TestChart_DeclaredPeg_FiatUSD_CrossesThroughXLM pins the numeraire's
-// own dollar series. The declared USD peg has no USD-quoted buckets under
-// any spelling — every USD series on chain is served by rewriting the
-// quote to THIS asset — and the proxy walk cannot proxy the peg through
-// itself, so USDC, the largest asset on the deployment, charted as an
-// empty series beside a 24h volume in the tens of millions. Its dollar
-// depth is the USDC/XLM book and the USDC-SAC/XLM-SAC pools; crossed
-// with XLM's CEX-quoted dollar series bucket by bucket, that is the
-// peg's actual traded dollar price.
-//
-// The fixture stores classic USDC's trades under its SAC identity
-// (the Soroban pool: USDC-SAC quoted in the XLM SAC) and XLM's dollar
-// series under `crypto:XLM`; the request names the classic id. Three
-// pool buckets against two XLM buckets prove the join emits only buckets
-// present on both legs. Prices are exact products rendered at 10
-// digits: 5 × 0.2 and 5.05 × 0.198.
-//
-// RED without the cross: 0 points.
+// TestChart_DeclaredPeg_FiatUSD_CrossesThroughXLM: the declared USD peg has no USD-quoted buckets under any spelling and the
+// proxy walk cannot proxy it through itself, so USDC would chart empty. Its price is derived by crossing the peg/XLM pools with
+// XLM's dollar series bucket by bucket, emitting only buckets present on both legs.
 func TestChart_DeclaredPeg_FiatUSD_CrossesThroughXLM(t *testing.T) {
 	usdc := installPegAliasRegistry(t)
 	t0 := time.Unix(1_770_000_000, 0).UTC()
@@ -2067,14 +1948,8 @@ func TestChart_DeclaredPeg_FiatUSD_CrossesThroughXLM(t *testing.T) {
 	}
 }
 
-// TestChart_FiatFallback_XLMCrossRunsLast pins where the cross sits in
-// the chain: after every directly observed market. A pool quoted in the
-// peg's SAC is a traded series and must be served as-is, and once it has
-// answered the XLM legs are not read at all — a derived value never
-// displaces an observed one, and never costs a read it cannot use.
-//
-// RED with the cross ahead of the proxy walk: the derived 0.0040000000
-// is served in place of the pool's 0.0041.
+// TestChart_FiatFallback_XLMCrossRunsLast: the XLM cross sits after every directly observed market; a pool quoted in the peg's
+// SAC is served as-is and the XLM legs are then not read. A derived value never displaces an observed one.
 func TestChart_FiatFallback_XLMCrossRunsLast(t *testing.T) {
 	usdc := installPegAliasRegistry(t)
 	t0 := time.Unix(1_770_000_000, 0).UTC()
@@ -2105,13 +1980,8 @@ func TestChart_FiatFallback_XLMCrossRunsLast(t *testing.T) {
 	}
 }
 
-// TestChart_DeclaredPeg_ThroughXLM_LegReadFailureIsNotAnEmptySeries pins
-// that a failed alias read on either leg of the derived through-XLM
-// series is answered as the failure it is — 503 on a deadline, 500 on a
-// store error — as the same failure on the requested pair's own read is,
-// never as a cacheable, unflagged `200 points: []`.
-//
-// RED without the fix: 200 with 0 points and flags.stale=false.
+// TestChart_DeclaredPeg_ThroughXLM_LegReadFailureIsNotAnEmptySeries: a failed alias read on either through-XLM leg answers as
+// the failure it is (503 on deadline, 500 on store error), never as a cacheable unflagged `200 points: []`.
 func TestChart_DeclaredPeg_ThroughXLM_LegReadFailureIsNotAnEmptySeries(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -2152,12 +2022,8 @@ func TestChart_DeclaredPeg_ThroughXLM_LegReadFailureIsNotAnEmptySeries(t *testin
 	}
 }
 
-// TestChart_DeclaredPeg_ThroughXLM_DegradedEmptyLegFlagsStale pins that
-// a pivot leg left empty by failed PROXY reads (a degraded walk, not an
-// answer-class error) marks the empty reply flags.stale=true: the empty
-// series may be the failure's doing, not the market's.
-//
-// RED without the fix: flags.stale=false.
+// TestChart_DeclaredPeg_ThroughXLM_DegradedEmptyLegFlagsStale: a pivot leg left empty by failed proxy reads marks the empty
+// reply flags.stale=true, since the emptiness may be the failure's doing, not the market's.
 func TestChart_DeclaredPeg_ThroughXLM_DegradedEmptyLegFlagsStale(t *testing.T) {
 	url := throughXLMLegChartURL(t, false, func(base, quote string) error {
 		if isXLMSpelling(base) && isUSDCSpelling(quote) {

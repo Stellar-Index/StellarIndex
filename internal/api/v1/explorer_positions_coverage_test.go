@@ -11,11 +11,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestExplorer_AccountPositions_PartialReadFailureIsDisclosed: each of the six per-protocol
-// folds logs and returns an empty slice on a read error, so without the coverage field a
-// response where some reads failed is identical on the wire to "this account holds no
-// positions", and a caller cannot tell a missing lending position from a repaid one. The
-// static `note` covers valuation semantics, not coverage.
+// TestExplorer_AccountPositions_PartialReadFailureIsDisclosed: the six per-protocol folds log and return empty on a read error,
+// so without the coverage field a partial failure is indistinguishable from "holds no positions" (a missing lending position
+// vs a repaid one). The static `note` covers valuation semantics, not coverage.
 func TestExplorer_AccountPositions_PartialReadFailureIsDisclosed(t *testing.T) {
 	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
 	boom := errors.New("clickhouse: connection refused")

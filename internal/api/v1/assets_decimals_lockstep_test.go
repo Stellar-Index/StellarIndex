@@ -73,10 +73,8 @@ func assetDetailMismatchVal() float64 {
 	return testutil.ToFloat64(obs.NonstandardDecimalsLockstepMismatchTotal.WithLabelValues("asset_detail", ""))
 }
 
-// The projection says 9 (so the price is normalised ×100 → 4132) but the
-// lake says 6. Supply at 6 dp × price at 9 dp is 4,132,000,000.00 — a
-// thousand times the truth. The cap must be REFUSED with the reason flag;
-// decimals still reports the lake, price_usd still serves.
+// Projection says 9 decimals (price normalised x100) but the lake says 6, so supply at 6 dp times price at 9 dp is 1000x the
+// truth. The cap must be refused with the reason flag; decimals still reports the lake and price_usd still serves.
 func TestAssetsF2_DecimalsLockstep_ProjectionDisagreesWithLake(t *testing.T) {
 	before := assetDetailMismatchVal()
 	srv := v1.New(v1.Options{
@@ -113,10 +111,8 @@ func TestAssetsF2_DecimalsLockstep_ProjectionDisagreesWithLake(t *testing.T) {
 	}
 }
 
-// The lake says 9 but the projection has NO row for this token (the guard
-// has not seeded it yet — dormant token, or guard lag). The price is then
-// the RAW ratio 41.32 (nothing normalised it) while the supply is divided
-// by 10^9: 1000 × 41.32 = 41,320.00, a hundredth of the truth. Refuse.
+// The lake says 9 decimals but the projection has no row yet (dormant token or guard lag), so the price is the raw ratio while
+// supply is divided by 10^9, giving a hundredth of the truth. The cap must be refused.
 func TestAssetsF2_DecimalsLockstep_LakeNonstandardProjectionUnseeded(t *testing.T) {
 	before := assetDetailMismatchVal()
 	const otherAsset = "CAUP7NFABXE5TJRL3FKTPMWRLC7IAXYDCTHQRFSCLR5TMGKHOOQO772J"

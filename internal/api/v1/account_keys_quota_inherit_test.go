@@ -24,10 +24,8 @@ import (
 // (pinned below), because the ceiling is opt-in by contract and defaulting it would 429 keys that
 // never had one.
 
-// mintChildKeySubject drives the PRODUCTION chain for a self-service
-// rotation — handler → [auth.RedisAPIKeyStore] →
-// [auth.RedisAPIKeyValidator] — and returns the Subject the auth layer
-// hands the quota middleware for the freshly minted child.
+// mintChildKeySubject drives the production rotation chain (handler, RedisAPIKeyStore, RedisAPIKeyValidator) and returns the
+// Subject the auth layer hands the quota middleware for the freshly minted child.
 func mintChildKeySubject(t *testing.T, parent auth.Subject) auth.Subject {
 	t.Helper()
 	mr := miniredis.RunT(t)

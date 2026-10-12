@@ -2,10 +2,8 @@ package v1
 
 import "testing"
 
-// TestIsSafeImageURL pins the image URL gate. `image` comes verbatim from an
-// issuer-controlled stellar.toml [[CURRENCIES]] entry, and a bare `http://` / `https://`
-// prefix check would let attribute-breakout characters through to a consumer rendering
-// `<img src={data.image}>`.
+// TestIsSafeImageURL pins the image URL gate. `image` comes verbatim from an issuer-controlled stellar.toml, and a bare
+// http(s):// prefix check would let attribute-breakout characters reach consumers rendering `<img src={data.image}>`.
 func TestIsSafeImageURL(t *testing.T) {
 	cases := []struct {
 		name string

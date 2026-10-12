@@ -11,10 +11,8 @@ import (
 	"time"
 )
 
-// TestHandleDiagnosticsIngestion_StaleSnapshotFallsBackToInlineBuild pins that a stopped
-// background refresher cannot freeze the endpoint: once the snapshot's computedAt is older than
-// ingestionSnapshotMaxAge, the handler falls back to the inline build rather than serving the
-// dead snapshot's frozen ledger data.
+// TestHandleDiagnosticsIngestion_StaleSnapshotFallsBackToInlineBuild pins that a stopped refresher cannot freeze the endpoint:
+// past ingestionSnapshotMaxAge the handler builds inline instead of serving the dead snapshot.
 func TestHandleDiagnosticsIngestion_StaleSnapshotFallsBackToInlineBuild(t *testing.T) {
 	srv := New(Options{})
 
@@ -54,10 +52,8 @@ func TestHandleDiagnosticsIngestion_StaleSnapshotFallsBackToInlineBuild(t *testi
 	}
 }
 
-// TestHandleSourceHealth_StaleSnapshotFallsBackToInlineBuild pins the
-// same fix for the sibling call site: handleSourceHealth reads the
-// identical s.ingestionSnapshot and must go through freshIngestionSnapshot
-// too, or a dead refresher freezes GET /v1/sources/{name}/health forever.
+// TestHandleSourceHealth_StaleSnapshotFallsBackToInlineBuild pins the same fix for the sibling call site: handleSourceHealth
+// must also use freshIngestionSnapshot, or a dead refresher freezes GET /v1/sources/{name}/health.
 func TestHandleSourceHealth_StaleSnapshotFallsBackToInlineBuild(t *testing.T) {
 	srv := New(Options{})
 

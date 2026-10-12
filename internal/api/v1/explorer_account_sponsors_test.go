@@ -40,10 +40,8 @@ type accountSponsorsEnvelope struct {
 	} `json:"data"`
 }
 
-// protocol14Floor is where sponsorship was introduced on the network —
-// the first BeginSponsoringFutureReserves operation that exists. It is
-// the honest floor of any sponsorship history, and the fixture uses it
-// so the coverage assertions pin a real chain fact rather than genesis.
+// protocol14Floor is the first BeginSponsoringFutureReserves operation on the network, the honest floor of any sponsorship
+// history; the fixture uses it so coverage assertions pin a real chain fact rather than genesis.
 const protocol14Floor = 32747295
 
 func sponsorsSnapshot() clickhouse.AccountSponsors {
@@ -175,10 +173,8 @@ func TestExplorer_AccountSponsors_PublishesAmbiguousExclusion(t *testing.T) {
 	}
 }
 
-// No live-state field may appear on this surface. Sponsorship is
-// revocable and the operation stream cannot observe the current set, so
-// a field implying it would be the defect this endpoint is scoped
-// against.
+// No live-state field may appear on this surface: sponsorship is revocable and the operation stream cannot observe the
+// current set, so such a field would be the defect this endpoint is scoped against.
 func TestExplorer_AccountSponsors_ClaimsNoLiveState(t *testing.T) {
 	base := explorerTestServer(t, &stubExplorerReader{accountSponsors: sponsorsSnapshot()})
 

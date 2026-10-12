@@ -12,14 +12,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
-// The LISTING page must resolve a Soroban row's decimals() from the lake, not only from the
-// confirmed nonstandard_decimals_assets projection, which lags a freshly-observed or
-// not-yet-DEX-traded token. Otherwise a listing row keeps the default 7 while the SAME asset's
-// detail page reads the true scale, putting market cap 10^(7-decimals)x off between surfaces.
-//
-// listingLockstepDecStub is the internal-package counterpart of the
-// v1_test package's lockstepDecStub (unexported TokenDecimalsReader,
-// unreachable from here).
+// The listing must resolve a Soroban row's decimals() from the lake, not only from the lagging confirmed
+// nonstandard_decimals_assets projection, or listing and detail disagree and market cap is 10^(7-decimals)x off.
+// listingLockstepDecStub is the internal-package counterpart of v1_test's lockstepDecStub (unreachable from here).
 type listingLockstepDecStub struct {
 	d     uint32
 	found bool
@@ -40,11 +35,8 @@ func (r *listingLockstepConfirmedReader) LoadNonstandardDecimalsAssets(_ context
 	return r.rows, nil
 }
 
-// TestFillRowMarketCap_SorobanLockstep_LakeNonstandardProjectionUnseeded: consulting ONLY the
-// confirmed projection (nil here, the guard has not seeded this contract) would leave
-// row.Decimals at the default 7. 1000 tokens at 9dp (raw 1000000000000) at the wrong divisor
-// would publish market_cap_usd="41320.00", a hundredth of the true 41,320,000,000,000.00,
-// instead of refusing.
+// TestFillRowMarketCap_SorobanLockstep_LakeNonstandardProjectionUnseeded: consulting only the (unseeded) confirmed projection
+// would leave Decimals at 7 and publish a 9dp token's market cap a hundredth of its true value instead of refusing.
 func TestFillRowMarketCap_SorobanLockstep_LakeNonstandardProjectionUnseeded(t *testing.T) {
 	const contractID = "CAUP7NFABXE5TJRL3FKTPMWRLC7IAXYDCTHQRFSCLR5TMGKHOOQO772J"
 	s := &Server{Options: Options{TokenDecimals: &listingLockstepDecStub{d: 9, found: true}}}

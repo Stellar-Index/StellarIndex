@@ -17,12 +17,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// blockingSep1Reader is a SEP-1 image reader that stands in for the slow scan: it announces that
-// it started, then blocks until the test releases it, and records whether the context it was
-// handed was cancelled while it worked.
-//
-// That last field is the point: a refresh running on the calling request's context dies when the
-// client gives up. A detached refresh must never see its caller's cancellation.
+// blockingSep1Reader stands in for the slow scan: it announces it started, blocks until released, and records whether its context
+// was cancelled. A detached refresh must never see its caller's cancellation.
 type blockingSep1Reader struct {
 	entered   chan struct{} // one send per call
 	release   chan struct{} // test closes this to let the scan finish
@@ -58,12 +54,9 @@ func (b *blockingSep1Reader) AllSep1Images(ctx context.Context) ([]timescale.Sep
 	return b.imgs, nil
 }
 
-// TestCachedSep1Images_RequestNeverBlocksOnRefresh is the regression for the /v1/assets stall:
-// whichever request found the logo map expired rebuilt it INLINE on its own context.
-//
-// The assertion needs no timing heuristic. The reader is held open for the whole test, so if
-// cachedSep1Images returns at all, it returned without waiting for the scan. Against a blocking
-// implementation the test does not fail on a threshold; it deadlocks until the outer timeout.
+// TestCachedSep1Images_RequestNeverBlocksOnRefresh: the request that found the logo map expired must not rebuild it inline on its
+// own context. The reader is held open, so if cachedSep1Images returns at all it did not wait for the scan; a blocking
+// implementation deadlocks rather than failing on a threshold.
 func TestCachedSep1Images_RequestNeverBlocksOnRefresh(t *testing.T) {
 	t.Parallel()
 
@@ -105,10 +98,8 @@ func TestCachedSep1Images_RequestNeverBlocksOnRefresh(t *testing.T) {
 	}
 }
 
-// TestCachedSep1Images_CancelledRequestDoesNotDiscardRefresh pins the
-// second half of the r1 failure: the abandoned request took the scan down
-// with it, nothing was cached, and the next request started the whole
-// thing again — a loop that ran for two days.
+// TestCachedSep1Images_CancelledRequestDoesNotDiscardRefresh: an abandoned request must not take the scan down with it, else
+// nothing is cached and the next request restarts the scan in an endless loop.
 func TestCachedSep1Images_CancelledRequestDoesNotDiscardRefresh(t *testing.T) {
 	t.Parallel()
 
@@ -145,10 +136,8 @@ func TestCachedSep1Images_CancelledRequestDoesNotDiscardRefresh(t *testing.T) {
 	}
 }
 
-// TestCachedSep1Images_FailedRefreshServesLastGoodAndDoesNotStorm pins the
-// retry gap. Before it, a failing scan left sep1ImagesAt un-advanced, so
-// every subsequent request kicked the whole 448 MB scan again for as long
-// as the failure lasted.
+// TestCachedSep1Images_FailedRefreshServesLastGoodAndDoesNotStorm: a failing scan must advance sep1ImagesAt so requests do not
+// each re-kick the whole 448 MB scan for as long as the failure lasts; the last good map keeps being served.
 func TestCachedSep1Images_FailedRefreshServesLastGoodAndDoesNotStorm(t *testing.T) {
 	t.Parallel()
 
@@ -187,10 +176,9 @@ func TestCachedSep1Images_FailedRefreshServesLastGoodAndDoesNotStorm(t *testing.
 	}
 }
 
-// TestNewServer_PrewarmSep1ImagesThroughProductionConstructor exercises the
-// constructor production uses (v1.New with Options.Sep1Cache) rather than a &Server{} literal,
-// so a regression that drops Sep1Cache from the Options mapping is caught here. It then serves a
-// real /v1/assets response through the real handler and checks the logo lands on a row.
+// TestNewServer_PrewarmSep1ImagesThroughProductionConstructor uses the production constructor (v1.New with Options.Sep1Cache),
+// not a &Server{} literal, so dropping Sep1Cache from the Options mapping is caught; it then checks a logo lands on a real
+// /v1/assets row.
 func TestNewServer_PrewarmSep1ImagesThroughProductionConstructor(t *testing.T) {
 	t.Parallel()
 

@@ -140,12 +140,8 @@ func graphSnapshot() clickhouse.AccountGraph {
 	}
 }
 
-// graphEdges builds n synthetic outbound edges, ascending by account id so a keyset walk is
-// deterministic.
-//
-// The ids are REAL G-strkeys (CRC-checked), not strkey-shaped strings: the handler validates a
-// cursor as an account id, so fakes would hit the 400 path on page two and never reach the
-// pagination this file pins.
+// graphEdges builds n synthetic outbound edges, ascending by account id so a keyset walk is deterministic.
+// Ids are real CRC-checked G-strkeys, since fakes would hit the 400 cursor validation on page two.
 func graphEdges(t *testing.T, n int) []clickhouse.AccountGraphEdge {
 	t.Helper()
 	ids := make([]string, 0, n)
@@ -233,10 +229,8 @@ func TestExplorer_AccountGraph_InboundIsBidirectionalAndPlural(t *testing.T) {
 	}
 }
 
-// The high-cardinality direction MUST be paged: one sponsor can cover hundreds of thousands of
-// accounts. This pins that the default response carries NO outbound edge list, that asking
-// for one is bounded by ?limit=, that a full page hands back a cursor, and that walking the
-// cursor terminates.
+// The high-cardinality direction must be paged (one sponsor can cover hundreds of thousands of accounts): the default response
+// has no outbound edge list, ?limit= bounds it, a full page returns a cursor, and walking cursors terminates.
 func TestExplorer_AccountGraph_PaginatesTheHighCardinalityDirection(t *testing.T) {
 	reader := &stubExplorerReader{
 		accountGraph:        graphSnapshot(),
@@ -436,10 +430,8 @@ func TestExplorer_AccountGraph_InboundTruncationIsVisible(t *testing.T) {
 	}
 }
 
-// The two arms are separate cycles over separate sources and their
-// coverage must NOT be merged: creation history reaches genesis,
-// sponsorship history only reaches protocol 14, where the feature began
-// to exist. One merged span would present that floor as a gap.
+// The two arms are separate cycles over separate sources and their coverage must not be merged: creation reaches genesis,
+// sponsorship only protocol 14, and one merged span would present that floor as a gap.
 func TestExplorer_AccountGraph_CoverageArmsStaySeparate(t *testing.T) {
 	base := explorerTestServer(t, &stubExplorerReader{accountGraph: graphSnapshot()})
 

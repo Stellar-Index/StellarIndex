@@ -95,16 +95,9 @@ func TestIssuerGet_ScamSuppressionSurvivesAccountState(t *testing.T) {
 	}
 }
 
-// TestIssuerGet_LiveOnChainBeatsAStoredHomeDomain.
-//
-// The stored column is a copy of the AccountEntry field and is effectively write-once, so it is
-// at best an older reading of the entry the handler holds now. If an anchor moves domain with
-// SetOptions and lets the old name lapse, the stale row keeps being SEP-1 refreshed, and whoever
-// registers the lapsed name can publish a stellar.toml listing the issuer and inherit its verified
-// identity. The anchor's own on-chain change has to be able to correct that.
-//
-// The auth flags in the same function are already replaced by the same entry; this pins
-// home_domain to the same rule.
+// TestIssuerGet_LiveOnChainBeatsAStoredHomeDomain: the stored home_domain is a write-once copy, so a stale row could let whoever
+// registers a lapsed domain publish a stellar.toml and inherit the issuer's verified identity. The live on-chain value must win,
+// as the auth flags already do.
 func TestIssuerGet_LiveOnChainBeatsAStoredHomeDomain(t *testing.T) {
 	const anchor = "GBFXOHVAS7DXHZPMPZL4HDPPMGSSJBWDGEOXSYHMPTSJKDFHPPFXFZ2K"
 	reader := &stubIssuersReader{
@@ -142,10 +135,8 @@ func TestIssuerGet_LiveOnChainBeatsAStoredHomeDomain(t *testing.T) {
 	}
 }
 
-// TestIssuerGet_StoredHomeDomainSurvivesASilentLiveEntry keeps the rule above from over-reaching.
-// An AccountEntry that resolves without a domain is not a retraction: a merged account's reading
-// is persisted without one on purpose, and the lake may not carry the field. Only a non-empty live
-// value replaces the stored one.
+// TestIssuerGet_StoredHomeDomainSurvivesASilentLiveEntry: a live AccountEntry with no domain is not a retraction (merged accounts
+// persist without one; the lake may lack the field). Only a non-empty live value replaces the stored one.
 func TestIssuerGet_StoredHomeDomainSurvivesASilentLiveEntry(t *testing.T) {
 	const anchor = "GBFXOHVAS7DXHZPMPZL4HDPPMGSSJBWDGEOXSYHMPTSJKDFHPPFXFZ2K"
 	reader := &stubIssuersReader{
@@ -174,10 +165,8 @@ func TestIssuerGet_StoredHomeDomainSurvivesASilentLiveEntry(t *testing.T) {
 	}
 }
 
-// TestIssuerGet_DrainedRowServesTheChainsHomeDomain — the row is the exact
-// shape the drain leaves behind (flags resolved, source `live`, a home_domain
-// that was true when it was written), and the account has since declared a
-// different one on-chain. The response must carry the chain's answer.
+// TestIssuerGet_DrainedRowServesTheChainsHomeDomain: a drained row (flags resolved, source `live`, then-true home_domain) whose
+// account has since declared a different domain on-chain must serve the chain's answer.
 func TestIssuerGet_DrainedRowServesTheChainsHomeDomain(t *testing.T) {
 	const anchor = "GARDNV3Q7YGT4AKSDF25LT32YSCCW4EV22Y2TV3I2PU2MMXJTEDL5T55"
 	reader := &stubIssuersReader{row: timescale.IssuerRow{
@@ -229,10 +218,9 @@ func TestIssuerGet_DrainedRowKeepsItsDomainWhenTheEntryDeclaresNone(t *testing.T
 	}
 }
 
-// TestIssuerGet_LiveDomainUnbindsTheStoredSEP1Identity — when the chain
-// declares a different home_domain than the one the stored SEP-1 payload was
-// fetched from, the response must not pair the new domain with the old
-// domain's verified org identity. Read through the narrow point lookup.
+// TestIssuerGet_LiveDomainUnbindsTheStoredSEP1Identity: when the chain's home_domain differs from the one the stored SEP-1
+// payload was fetched from, the response must not pair the new domain with the old verified org identity. Uses the narrow point
+// lookup.
 func TestIssuerGet_LiveDomainUnbindsTheStoredSEP1Identity(t *testing.T) {
 	flags := &stubIssuerAuthFlags{live: map[string]clickhouse.AccountAuthFlags{
 		mergedIssuerG: {Required: true, HomeDomain: "current.example", Source: clickhouse.AuthFlagsSourceLive, AsOfLedger: 64228661},

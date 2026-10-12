@@ -64,10 +64,8 @@ func TestParseFromToClamped_ExplicitToPreserved(t *testing.T) {
 	}
 }
 
-// TestParseFromToClamped_ExplicitToInOpenBucketClamps pins ADR-0015: the most-recent row
-// served is ALWAYS closed, even when the client asked for a specific `to`. An explicit `to`
-// inside the still-filling bucket (here, wall-clock now) honoured verbatim would serve a
-// partial, unflagged window indistinguishable from a closed-bucket answer.
+// TestParseFromToClamped_ExplicitToInOpenBucketClamps pins ADR-0015: the most recent row served is always closed, so an explicit
+// `to` inside the still-filling bucket is clamped, not honoured as a partial unflagged window.
 func TestParseFromToClamped_ExplicitToInOpenBucketClamps(t *testing.T) {
 	now := time.Now().UTC()
 	req := httptest.NewRequest(http.MethodGet,
@@ -179,10 +177,8 @@ func TestParseFromTo_WindowParam(t *testing.T) {
 	}
 }
 
-// TestParseFromTo_WindowAndFrom_Conflict pins the loud-rejection
-// rule. Passing both `window` and `from` is ambiguous (they both
-// control the start time); a 400 is louder than picking one
-// silently — which is what happens if `window` is ignored.
+// TestParseFromTo_WindowAndFrom_Conflict: `window` and `from` both set the start time, so passing both is rejected with a 400
+// rather than silently picking one.
 func TestParseFromTo_WindowAndFrom_Conflict(t *testing.T) {
 	url := "/v1/twap?window=24h&from=2026-01-01T00:00:00Z"
 	req := httptest.NewRequest(http.MethodGet, url, nil)

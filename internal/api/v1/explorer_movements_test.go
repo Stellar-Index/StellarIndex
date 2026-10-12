@@ -76,10 +76,8 @@ func (s *stubSEP41MovementsReader) ListSEP41TransfersByAddress(_ context.Context
 
 const otherG = "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H"
 
-// TestExplorer_AccountMovements_Merge pins the ADR-0048 D5 merge: a
-// ClickHouse pre-P23 page + a Postgres post-P23 tail page combine into
-// one newest-first feed, truncated to `limit`, with a next_cursor
-// pointing at the last row served.
+// TestExplorer_AccountMovements_Merge pins the ADR-0048 D5 merge: a ClickHouse pre-P23 page and a Postgres post-P23 tail
+// combine into one newest-first feed, truncated to `limit`, with next_cursor at the last row served.
 func TestExplorer_AccountMovements_Merge(t *testing.T) {
 	now := time.Date(2026, 7, 10, 0, 0, 0, 0, time.UTC)
 	chReader := &stubExplorerReader{movements: []clickhouse.AccountMovementRow{

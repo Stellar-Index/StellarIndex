@@ -36,10 +36,9 @@ func observedSupply(circ map[string]string) map[string]timescale.SupplyObservati
 	return out
 }
 
-// TestClassicSupplyReading_StaleObservationYieldsToLake: an observation too old to serve must
-// not outrank a disagreeing live lake reading. The vintage bound lives in the store query, so
-// one past [preciseSupplyMaxAge] never reaches this map; the row must then be answered by the
-// lake, with the basis saying so, not by nothing or the trustline-only floor.
+// TestClassicSupplyReading_StaleObservationYieldsToLake: an observation too old to serve is absent from the map (the vintage
+// bound is in the store query), so the row must be answered by the lake with the basis saying so, not by nothing or the
+// trustline floor.
 func TestClassicSupplyReading_StaleObservationYieldsToLake(t *testing.T) {
 	const (
 		usdc      = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
@@ -63,10 +62,8 @@ func TestClassicSupplyReading_StaleObservationYieldsToLake(t *testing.T) {
 	}
 }
 
-// TestClassicSupplyReading_LiveObservationOutranksDisagreeingLake is the other
-// half of the same decision, and the reason the arm order was NOT inverted to
-// fix USDC. PHO's lake total is 2.57x its real supply; BLND's is 11.5% over.
-// A fresh observation must win both, however loudly the lake disagrees.
+// TestClassicSupplyReading_LiveObservationOutranksDisagreeingLake: the arm order is not inverted because the lake over-counts
+// some assets (PHO 2.57x, BLND 11.5%); a fresh observation must win however loudly the lake disagrees.
 func TestClassicSupplyReading_LiveObservationOutranksDisagreeingLake(t *testing.T) {
 	cases := []struct {
 		name                       string
@@ -112,10 +109,8 @@ func TestClassicSupplyReading_LiveObservationOutranksDisagreeingLake(t *testing.
 	}
 }
 
-// TestClassicSupplyReading_TrustlineFloorHoldsWithoutObservation keeps the
-// pre-existing floor guard honest once the observation arm is absent: a lake
-// total BELOW the trustline sum is incomplete seeding, not a smaller truth, so
-// the floor wins and says it is a floor.
+// TestClassicSupplyReading_TrustlineFloorHoldsWithoutObservation: a lake total below the trustline sum is incomplete seeding, so
+// with no observation the floor wins and says it is a floor.
 func TestClassicSupplyReading_TrustlineFloorHoldsWithoutObservation(t *testing.T) {
 	const asset = "FOO-GAFOO"
 	circ, basis := classicSupplyReading(asset,
@@ -142,10 +137,8 @@ func TestClassicSupplyReading_NoArmAnswers(t *testing.T) {
 	}
 }
 
-// TestClassicSupplyReading_EmptyObservationFallsThrough — an observation row
-// present but carrying no value must not swallow the row. The map is keyed on
-// presence, so an entry with an empty reading would otherwise shadow both lake
-// arms and publish nothing.
+// TestClassicSupplyReading_EmptyObservationFallsThrough: the map is keyed on presence, so an entry with an empty reading must
+// not shadow both lake arms and publish nothing.
 func TestClassicSupplyReading_EmptyObservationFallsThrough(t *testing.T) {
 	const asset = "FOO-GAFOO"
 	circ, basis := classicSupplyReading(asset,
@@ -204,11 +197,8 @@ func TestLatestPreciseSupply_AsksForABoundedRead(t *testing.T) {
 	}
 }
 
-// TestStampCirculatingSupplyNeverOverwrites covers the guard, not the happy path. The
-// dust-suppressed and ticker-collision paths attach a supply DELIBERATELY before this fill
-// runs, and a later arm must not replace it with one it merely found. The basis is asserted
-// too, since the pair travels together: a stamp that skipped the value but wrote the name
-// would claim a supply source that did not produce it.
+// TestStampCirculatingSupplyNeverOverwrites covers the guard: dust-suppressed and ticker-collision paths attach a supply
+// deliberately first, and a later arm must not replace it. The basis is asserted too, since value and name travel together.
 func TestStampCirculatingSupplyNeverOverwrites(t *testing.T) {
 	existing := "42"
 	row := AssetDetail{CirculatingSupply: &existing}
@@ -223,10 +213,8 @@ func TestStampCirculatingSupplyNeverOverwrites(t *testing.T) {
 	}
 }
 
-// TestStampCirculatingSupplyRefusesAnUnnamedArm — an empty basis is not a
-// claim. The value is a chain fact and is published either way; the name is
-// omitted rather than written as "", which a consumer reading the field as a
-// string would have to special-case.
+// TestStampCirculatingSupplyRefusesAnUnnamedArm: an empty basis is not a claim. The value is published either way; the name is
+// omitted rather than written as "".
 func TestStampCirculatingSupplyRefusesAnUnnamedArm(t *testing.T) {
 	var row AssetDetail
 

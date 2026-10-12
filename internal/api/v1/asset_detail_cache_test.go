@@ -6,11 +6,8 @@ import (
 	"time"
 )
 
-// TestAssetDetailResponseCache_BoundedUnderIDChurn is the regression proof
-// that enumerating many distinct asset_ids must NOT grow the cache
-// without limit. A long TTL is used so nothing expires — forcing the SIZE cap
-// (not expiry) to do the bounding, which is exactly the crawler/attacker
-// scenario (fresh, distinct, never-repeated ids).
+// TestAssetDetailResponseCache_BoundedUnderIDChurn proves enumerating many distinct asset_ids cannot grow the cache without
+// limit. A long TTL forces the size cap, not expiry, to do the bounding (the crawler scenario).
 func TestAssetDetailResponseCache_BoundedUnderIDChurn(t *testing.T) {
 	c := newAssetDetailResponseCache(time.Hour)
 	for i := 0; i < assetDetailCacheMaxEntries+500; i++ {

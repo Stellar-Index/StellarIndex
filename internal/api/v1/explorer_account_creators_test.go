@@ -50,10 +50,8 @@ func stroops(t *testing.T, s string) *big.Int {
 	return v
 }
 
-// creatorsSnapshot is a two-row board whose span is deliberately NARROWER
-// than the chain: it starts at ledger 33,000,000, not genesis. Every
-// coverage assertion below reads that back, so a handler that reported a
-// wider span than the projection holds would fail.
+// creatorsSnapshot is a two-row board whose span is deliberately narrower than the chain (starts at ledger 33,000,000, not
+// genesis), so a handler reporting a wider span than the projection holds fails the coverage assertions.
 func creatorsSnapshot(t *testing.T) clickhouse.AccountCreators {
 	t.Helper()
 	return clickhouse.AccountCreators{
@@ -142,10 +140,8 @@ func TestExplorer_AccountCreators_WireShape(t *testing.T) {
 	}
 }
 
-// TestExplorer_AccountCreators_ServedSpanMatchesProjection guards against reporting a coverage
-// span wider than the rows behind it. The snapshot's span starts at ledger 33,000,001, NOT
-// genesis, and the response must say so; a handler that hardcoded genesis or derived the span
-// from anything but the projection fails here.
+// TestExplorer_AccountCreators_ServedSpanMatchesProjection guards against a coverage span wider than the rows behind it:
+// the snapshot starts at ledger 33,000,001, not genesis, and the response must say so.
 func TestExplorer_AccountCreators_ServedSpanMatchesProjection(t *testing.T) {
 	snap := creatorsSnapshot(t)
 	reader := &stubExplorerReader{accountCreators: snap}

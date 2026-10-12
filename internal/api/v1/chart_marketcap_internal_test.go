@@ -76,10 +76,8 @@ func TestMarketCapPoints_NoSupply(t *testing.T) {
 	}
 }
 
-// M2: the supply leg divides by 10^baseDecimals, NOT a hardcoded 10^7. A 9dp token's supply is
-// in 10^9 units, so a 10^12 balance is 1000 whole tokens; dividing by 10^7 would report
-// 100,000 and a market cap 100x too large. VWAP here is already the decimals-normalized USD
-// price (corrected upstream in handleChartMarketCapCrypto via adjustHistoryPointPrices).
+// The supply leg divides by 10^baseDecimals, not a hardcoded 10^7: a 9dp token with a 10^12 balance is 1000 whole tokens, not
+// 100,000. VWAP here is already the decimals-normalized USD price (corrected upstream via adjustHistoryPointPrices).
 func TestMarketCapPoints_NonstandardDecimalsSupplyLeg(t *testing.T) {
 	price := []HistoryPoint{{Bucket: day(2026, 7, 1), VWAP: "5.00"}}
 	// 10^12 stroops @9dp = 1000 whole tokens.
@@ -172,10 +170,8 @@ func TestFormatCrossRate(t *testing.T) {
 	}
 }
 
-// TestFiatMarketCap_HonoursSupplyDecimals — the listing (fiatMarketCapUSD) and global
-// (populateFiatView) market caps must scale catalogue supply by 10^supply_decimals exactly as
-// the chart's fiatSupplyWholeUnits does; a cents-denominated M2 (supply_decimals=2) would
-// otherwise be overstated 100x on those two surfaces.
+// TestFiatMarketCap_HonoursSupplyDecimals: listing (fiatMarketCapUSD) and global (populateFiatView) market caps must scale
+// supply by 10^supply_decimals like fiatSupplyWholeUnits, or a supply_decimals=2 M2 is overstated 100x.
 func TestFiatMarketCap_HonoursSupplyDecimals(t *testing.T) {
 	vc := &currency.VerifiedCurrency{
 		Ticker:            "USD",

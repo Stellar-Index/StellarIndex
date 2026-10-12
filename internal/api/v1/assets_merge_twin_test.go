@@ -5,14 +5,9 @@ import (
 	"testing"
 )
 
-// A catalogue row that inherits its classic twin's circulating supply
-// must inherit the twin's SCALE with it.
-//
-// `circulating_supply` is consumed as a raw integer in the asset's smallest unit, paired with
-// `decimals`. A catalogue row's own Decimals is vc.SupplyDecimals, which is 0 for every
-// Stellar-issued entry (the curated seed states fiat M2 in whole units). Copying a 7-decimal
-// stroop value onto a decimals=0 row makes the pair self-inconsistent, so every consumer scaling
-// by 10^decimals renders it 10^7 too large.
+// A catalogue row that inherits its classic twin's circulating supply must inherit the twin's scale too: the supply is a raw
+// smallest-unit integer paired with `decimals`, and the catalogue's own SupplyDecimals is 0, so copying a 7dp stroop value onto
+// it would render 10^7 too large.
 func TestMergeTwinStats_CarriesDecimalsWithSupply(t *testing.T) {
 	t.Parallel()
 
@@ -49,11 +44,8 @@ func TestMergeTwinStats_LeavesOwnSupplyAndDecimalsAlone(t *testing.T) {
 	}
 }
 
-// TestMergeTwinStats_CarriesTheListingValuation: the listing-priced arm runs on the twin row (the
-// one carrying the asset_id the directory's addresses derive from, the price and the gate
-// outcome), so the catalogue row it stands in for only sees the result if the merge carries it.
-// Otherwise a value computed on the twin is correct on the classic row and detail page but absent
-// from the catalogue-listing row that the /rwa stablecoin tile sums.
+// TestMergeTwinStats_CarriesTheListingValuation: the valuation arm runs on the twin row (it holds the asset_id, price and gate
+// outcome), so the catalogue row only sees it if the merge carries it; otherwise the /rwa stablecoin tile sum misses it.
 func TestMergeTwinStats_CarriesTheListingValuation(t *testing.T) {
 	value := "2581052.90"
 	twin := AssetDetail{
@@ -93,10 +85,8 @@ func TestMergeTwinStats_CarriesTheListingValuation(t *testing.T) {
 	}
 }
 
-// TestMergeTwinStats_CarriesARefusalToo — a status with no figure has to
-// cross as well. A catalogue row silently missing the block reads as
-// "this arm does not apply here", which is a different statement from
-// "it applies and the directory could not be read".
+// TestMergeTwinStats_CarriesARefusalToo: a status with no figure must also cross, since a missing block reads as "arm does not
+// apply" rather than "applies, but the directory could not be read".
 func TestMergeTwinStats_CarriesARefusalToo(t *testing.T) {
 	var dst AssetDetail
 	mergeTwinStats(&dst, AssetDetail{
@@ -126,17 +116,9 @@ func TestMergeTwinStats_CarriesLowerBoundWithVolume(t *testing.T) {
 	}
 }
 
-// The catalogue row is priced on its own, so the twin's
-// scam suppression has to be CARRIED, not merely performed.
-//
-// A catalogue row carries no issuer (projectCatalogueRow sets none; `type: "global"` rows are
-// issuer-less), so fillIssuerDirectoryTags skips it and its suppression never reaches the row.
-// That would be harmless if the row's money came only from its twin, but
-// fillCataloguePricesForPage runs before fillCatalogueStatsForPage and fills price_usd /
-// market_cap_usd from buildGlobalAssetView's global tier, and mergeTwinStats fills only what is
-// nil. A flagged issuer's verified currency would then serve a price and market cap on the
-// catalogue phase of /v1/assets, /v1/assets?asset_class=... and /v1/external/assets, while the
-// classic row suppressCatalogueTwins discards, and its detail page, served null.
+// The catalogue row is priced on its own, so the twin's scam suppression must be carried, not just performed. Catalogue rows have
+// no issuer (fillIssuerDirectoryTags skips them) and fillCataloguePricesForPage fills price and cap before mergeTwinStats, which
+// only fills nils; a flagged currency would otherwise show a price while its classic row and detail serve null.
 func TestMergeTwinStats_CarriesTheScamSuppressionOntoTheCatalogueRow(t *testing.T) {
 	t.Parallel()
 
@@ -193,10 +175,8 @@ func TestMergeTwinStats_CarriesTheScamSuppressionOntoTheCatalogueRow(t *testing.
 	}
 }
 
-// The other half of the same rule: an issuer the directory merely
-// LABELS keeps every figure. The suppression is scoped to the
-// scam-class tags, and a fix that quietly nulled an anchor's price
-// would be a worse defect than the one it replaced.
+// An issuer the directory merely labels keeps every figure: suppression is scoped to scam-class tags, and nulling an anchor's
+// price would be worse than the bug being fixed.
 func TestMergeTwinStats_AnUnflaggedIssuerKeepsItsFigures(t *testing.T) {
 	t.Parallel()
 

@@ -24,10 +24,8 @@ func TestForEachBounded_RunsEveryIndexOnce(t *testing.T) {
 	}
 }
 
-// TestForEachBounded_RespectsConcurrencyLimit — the observed peak
-// concurrency never exceeds the limit. This is the property the
-// helper exists for: per-row DB fan-out must not scale with row
-// count (connection-pool exhaustion).
+// TestForEachBounded_RespectsConcurrencyLimit: observed peak concurrency never exceeds the limit, so per-row DB fan-out does not
+// scale with row count and exhaust the connection pool.
 func TestForEachBounded_RespectsConcurrencyLimit(t *testing.T) {
 	const (
 		n     = 200

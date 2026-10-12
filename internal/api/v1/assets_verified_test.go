@@ -153,10 +153,9 @@ func TestAssetsVerified_FiatMarketCap(t *testing.T) {
 	}
 }
 
-// TestAssetsVerified_FiatMarketCap_FXHistoryOnlyNoPriceReader guards that attachFiatMarketCaps
-// does not skip its whole fan-out when PriceReader is nil: fiatMarketCapUSD tries fxHistory
-// first, and the USD row needs no reader at all (identity price). With only FXHistory wired,
-// USD and CNY must both still carry a market_cap_usd.
+// TestAssetsVerified_FiatMarketCap_FXHistoryOnlyNoPriceReader: attachFiatMarketCaps must not skip its fan-out when PriceReader is
+// nil, since fiatMarketCapUSD tries fxHistory first and USD needs no reader. With only FXHistory wired, USD and CNY both get
+// market_cap_usd.
 func TestAssetsVerified_FiatMarketCap_FXHistoryOnlyNoPriceReader(t *testing.T) {
 	cat := newTestCatalogue(t)
 	// USD-base rate for CNY: 1 USD = 7.14286 CNY → InverseUSD ~= 0.14.

@@ -17,10 +17,8 @@ import (
 // stubCursorsReader is declared in diagnostics_cursors_test.go;
 // reused here for the degraded-on-cursors-error path.
 
-// decodeIngestionEnvelope reads the envelope produced by
-// /v1/diagnostics/ingestion. Data is left as json.RawMessage because
-// IngestionDiagnostics is large and the tests below only need the
-// flag block + a few ledger fields.
+// decodeIngestionEnvelope reads the /v1/diagnostics/ingestion envelope; Data stays json.RawMessage because the tests only
+// need the flag block and a few ledger fields.
 type ingestionEnvelope struct {
 	Data struct {
 		Ledger struct {
@@ -34,11 +32,8 @@ type ingestionEnvelope struct {
 	} `json:"flags"`
 }
 
-// TestDiagnosticsIngestion_StaleWhenNetworkStatsErrors pins the stale-on-error path: when the
-// GetNetworkStats reader errors, the snapshot's ledger fields stay at zero and the response MUST
-// flip flags.stale:true rather than serve fresh-looking zeros. Peer endpoints like
-// /v1/network/stats return the error or real data, so a handler reporting stale:false with every
-// counter at 0 would contradict them.
+// TestDiagnosticsIngestion_StaleWhenNetworkStatsErrors: when GetNetworkStats errors, ledger fields stay zero and the response
+// must set flags.stale:true rather than serve fresh-looking zeros, consistent with peer endpoints like /v1/network/stats.
 func TestDiagnosticsIngestion_StaleWhenNetworkStatsErrors(t *testing.T) {
 	reader := &stubNetworkStatsReader{err: errors.New("storage broke")}
 	srv := v1.New(v1.Options{NetworkStats: reader})
@@ -83,10 +78,8 @@ func TestDiagnosticsIngestion_StaleWhenReadersNotWired(t *testing.T) {
 	}
 }
 
-// TestDiagnosticsIngestion_FreshWhenReadersOK pins the happy path:
-// every wired reader returns data → flags.stale:false. Regression
-// guard so the fix doesn't over-fire stale:true on healthy
-// production responses.
+// TestDiagnosticsIngestion_FreshWhenReadersOK pins the happy path (all readers return data gives flags.stale:false) so the
+// stale fix does not over-fire on healthy responses.
 func TestDiagnosticsIngestion_FreshWhenReadersOK(t *testing.T) {
 	vol := "3958193034.60"
 	netReader := &stubNetworkStatsReader{
@@ -153,13 +146,9 @@ func TestDiagnosticsIngestion_StaleWhenCursorsErrors(t *testing.T) {
 	}
 }
 
-// TestDiagnosticsIngestion_ServesBothCompletenessAxes pins both axes of the two-axis verdict
-// (ADR-0033/ADR-0034): `lake_complete` (archive proven genesis-to-tip) and `complete` (that plus
-// the retention-scoped projection reconcile). A source is routinely lake_complete=true with
-// complete=false.
-//
-// The snapshot the public status page reads must carry both, or the page cannot tell "the data
-// does not exist" from "the data exists and the projection is catching up".
+// TestDiagnosticsIngestion_ServesBothCompletenessAxes pins both verdict axes: `lake_complete` (archive proven genesis-to-tip)
+// and `complete` (plus the retention-scoped projection reconcile). A source is routinely lake_complete=true, complete=false;
+// the status page needs both to tell "data does not exist" from "projection catching up".
 func TestDiagnosticsIngestion_ServesBothCompletenessAxes(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	srv := v1.New(v1.Options{

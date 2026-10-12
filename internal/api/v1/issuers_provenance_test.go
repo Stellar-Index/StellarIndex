@@ -20,10 +20,8 @@ import (
 
 const provenanceIssuer = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 
-// TestIssuerAuthFlagsSourceIsLockstepped — `auth_flags_source` is an enumerated string set with
-// copies never colocated: the Go constants, the published OpenAPI enum, and the Postgres CHECK in
-// migration 0153. Adding a member to one only compiles green while the database rejects every
-// write and spec-derived clients cannot express the value, so the copies are reconciled here.
+// TestIssuerAuthFlagsSourceIsLockstepped: `auth_flags_source` has copies in the Go constants, the OpenAPI enum and the Postgres
+// CHECK in migration 0153. A member added to one compiles but makes the DB reject writes or clients unable to express it.
 func TestIssuerAuthFlagsSourceIsLockstepped(t *testing.T) {
 	want := []string{
 		string(clickhouse.AuthFlagsSourceLastKnownBeforeRemoval),

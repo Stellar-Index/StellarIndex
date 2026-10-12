@@ -35,11 +35,8 @@ func (g *gatedFill) wait(ctx context.Context) error {
 	}
 }
 
-// assertLeaderCancelSparesWaiter drives one cold key: the leader starts the
-// fill on a cancellable ctx, a healthy waiter joins it, then the leader
-// aborts. The leader must get its own ctx error; the waiter must get the
-// upstream value from the SAME single upstream call; and the key must stay
-// cached for the next caller.
+// assertLeaderCancelSparesWaiter drives one cold key: the leader aborts mid-fill and gets its own ctx error, a joined waiter gets
+// the upstream value from the same single upstream call, and the key stays cached for the next caller.
 func assertLeaderCancelSparesWaiter[T any](
 	t *testing.T,
 	g *gatedFill,

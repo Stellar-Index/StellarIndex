@@ -97,11 +97,9 @@ func (erroringAccountStateReader) AccountStateCached(
 	return clickhouse.AccountState{}, false, context.DeadlineExceeded
 }
 
-// TestBackfillHomeDomain_ReadFailureDoesNotFallBackToStaticMap: an on-chain read failure
-// (deadline, store error) must NOT be treated as a verified absence. Collapsing "read failed"
-// and "no domain" would fill from the hand-maintained knownIssuers map and serve a possibly
-// stale domain as live-confirmed, with SEP-1 verifying against it. On a read failure
-// HomeDomain stays nil and the caller is told the read degraded.
+// TestBackfillHomeDomain_ReadFailureDoesNotFallBackToStaticMap: an on-chain read failure is not a verified absence. Falling
+// back to the hand-maintained knownIssuers map would serve a possibly stale domain as live-confirmed, so HomeDomain stays nil
+// and the caller is told the read degraded.
 func TestBackfillHomeDomain_ReadFailureDoesNotFallBackToStaticMap(t *testing.T) {
 	usdc := "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 	s := &Server{Options: Options{Explorer: erroringAccountStateReader{}}}
@@ -119,10 +117,8 @@ func TestBackfillHomeDomain_ReadFailureDoesNotFallBackToStaticMap(t *testing.T) 
 	}
 }
 
-// TestKnownIssuers_NoOverlapWithScams — a G-strkey that's both
-// "known legitimate" AND "known scam" is a curation contradiction.
-// The scam path takes precedence in the API surface but the
-// contradictory state shouldn't exist in the source.
+// TestKnownIssuers_NoOverlapWithScams: a G-strkey both "known legitimate" and "known scam" is a curation contradiction that
+// should not exist in the source, even though the scam path wins in the API.
 func TestKnownIssuers_NoOverlapWithScams(t *testing.T) {
 	for g := range knownIssuers {
 		if _, scam := scamIssuers[g]; scam {

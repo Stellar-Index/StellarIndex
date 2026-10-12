@@ -48,10 +48,8 @@ func (r *keyedChangeSummaryReader) GetChangeSummary(_ context.Context, _, entity
 	return timescale.ChangeSummaryRow{}, sql.ErrNoRows
 }
 
-// TestHandleChangeSummary_ResolvesXLMSACForm: when the change-summary worker has written the XLM
-// rollup only under the SAC C-address (a Soroban-sourced row), a caller asking for
-// /v1/changes/coin/native must still resolve it. Without the SAC form the candidate set for
-// `native` would be [native, crypto:XLM] and the lookup would 404.
+// TestHandleChangeSummary_ResolvesXLMSACForm: when the rollup exists only under the XLM SAC C-address, /v1/changes/coin/native
+// must still resolve it; without the SAC form the candidates are [native, crypto:XLM] and the lookup 404s.
 func TestHandleChangeSummary_ResolvesXLMSACForm(t *testing.T) {
 	reader := &keyedChangeSummaryReader{
 		rows: map[string]timescale.ChangeSummaryRow{
@@ -121,11 +119,9 @@ func TestHandleChangeSummary_InvalidEntityType400(t *testing.T) {
 	}
 }
 
-// TestHandleChangeSummary_UnservedEntityType400 — `protocol` and
-// `source` are reserved by the change_summary_5m CHECK but no worker computes them (a protocol
-// sums across pools, a source across assets; neither reduces to the single canonical pair the
-// rollup keys on). A 404 would be indistinguishable from worker lag on families that will never
-// have a row. They must be rejected at the boundary, and the 400 detail must not advertise them.
+// TestHandleChangeSummary_UnservedEntityType400: `protocol` and `source` are reserved by the change_summary_5m CHECK but no
+// worker computes them, so a 404 would look like worker lag forever. They must be rejected with a 400 that does not advertise
+// them.
 func TestHandleChangeSummary_UnservedEntityType400(t *testing.T) {
 	cases := map[string]string{"protocol": "soroswap", "source": "binance"}
 	for entityType, entityID := range cases {
@@ -162,11 +158,8 @@ func TestHandleChangeSummary_UnservedEntityType400(t *testing.T) {
 	}
 }
 
-// TestHandleChangeSummary_PairIDPercentEncoded — a `pair` entity_id
-// carries a `/` inside it (`base/quote`), so the whole id has to arrive percent-encoded in one
-// path segment. Pins that the router hands the handler the DECODED id, which is what the worker
-// keyed the row under; unencoded, the request would split across two segments and match no
-// route. The SDK relies on this by escaping the id for callers.
+// TestHandleChangeSummary_PairIDPercentEncoded: a `pair` entity_id contains `/`, so it arrives percent-encoded in one path
+// segment; the router must hand the handler the decoded id the worker keyed the row under. The SDK relies on escaping the id.
 func TestHandleChangeSummary_PairIDPercentEncoded(t *testing.T) {
 	reader := &stubChangeSummaryReader{
 		row: timescale.ChangeSummaryRow{
@@ -189,10 +182,8 @@ func TestHandleChangeSummary_PairIDPercentEncoded(t *testing.T) {
 	}
 }
 
-// TestHandleChangeSummary_NotFound404 — the worker hasn't computed
-// a row yet (or the entity was added after the last refresh).
-// Surfaces as 404 so the explorer renders an empty state rather
-// than a confusing 500.
+// TestHandleChangeSummary_NotFound404: a row the worker hasn't computed yet (or an entity added since the last refresh) is a 404,
+// so the explorer renders an empty state rather than a 500.
 func TestHandleChangeSummary_NotFound404(t *testing.T) {
 	reader := &stubChangeSummaryReader{err: sql.ErrNoRows}
 	srv := v1.New(v1.Options{ChangeSummary: reader})
@@ -341,10 +332,8 @@ func TestHandleChangeSummary_ReaderError500(t *testing.T) {
 	}
 }
 
-// TestHandleChangeSummary_StaleFlag pins flags.stale to row age against
-// the openapi contract (5-minute refresh, >10min lagging): a fresh row
-// serves stale=false, a row well past the 10-minute line serves
-// stale=true even though the data itself is otherwise valid.
+// TestHandleChangeSummary_StaleFlag pins flags.stale to row age per the openapi contract (5-minute refresh, lagging after 10
+// min): a fresh row serves stale=false; a row well past 10 minutes serves stale=true while still valid.
 func TestHandleChangeSummary_StaleFlag(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -434,12 +423,9 @@ func TestChangeSummary_MoneyFieldsAreJSONStrings(t *testing.T) {
 	}
 }
 
-// /v1/changes must not publish the rollup's RAW ratios as absolute money values: for a confirmed
-// 9-decimals base they are 100x low, unlike /v1/price which normalises the same bucket. The
-// percentages are scale-free (both legs come from one raw series) and must NOT move.
-//
-// The inputs also catch a naive float multiply: 1.15×100, 0.07×100 and 4.35×100 are all inexact
-// in binary floating point (114.99999999999999, 7.000000000000001, 434.99999999999994).
+// /v1/changes must not publish the rollup's raw ratios as absolute money: for a confirmed 9-decimals base they are 100x low,
+// unlike /v1/price. Percentages are scale-free and must not move. The inputs also catch a float multiply: 1.15x100, 0.07x100 and
+// 4.35x100 are all inexact in binary floating point.
 func TestHandleChangeSummary_NormalisesNonstandardDecimals(t *testing.T) {
 	pairID := flaggedAsset + "/native"
 	for _, tc := range []struct{ entityType, entityID string }{
@@ -528,10 +514,8 @@ func TestHandleChangeSummary_SevenDecimalsByteIdentical(t *testing.T) {
 	}
 }
 
-// /v1/changes published current_value, the window values and the 30-day
-// ATH/ATL for a market /v1/price withholds: no scam gate and no substance
-// gate stood between change_summary_5m and the wire. Every value
-// on the row is an aggregated price claim for that market.
+// /v1/changes must not publish current_value, window values or 30-day ATH/ATL for a market /v1/price withholds: every value on
+// the row is an aggregated price claim, so the scam and substance gates apply.
 func TestHandleChangeSummary_WithholdsWhatPriceWithholds(t *testing.T) {
 	flagged := chartFlaggedBase(t).String()
 	cases := []struct {

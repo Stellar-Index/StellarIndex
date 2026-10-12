@@ -10,11 +10,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// togglingAquariusReader alternates the single pool's reserve between
-// two well-known amounts on every read, so consecutive Refresh() cycles
-// publish two DIFFERENT (and independently verifiable) tvl_usd figures
-// rather than merely two different as_of stamps that could collide at
-// RFC3339's second resolution.
+// togglingAquariusReader alternates the pool's reserve between two known amounts on every read, so consecutive Refresh()
+// cycles publish distinct verifiable tvl_usd figures rather than as_of stamps that could collide at one-second resolution.
 type togglingAquariusReader struct {
 	n atomic.Int64
 }

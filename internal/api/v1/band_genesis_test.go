@@ -2,23 +2,13 @@ package v1
 
 import "testing"
 
-// bandGenesisLedger is Band's first on-chain write.
-//
-// It is NOT discoverable the obvious way: Band's Soroban contract emits zero events, so
-// `min(ledger_seq) FROM contract_events` returns 0 rows and reads as "no data". The number comes
-// from `contract_instance_changes` (whose own floor, 50,457,429, is below it, so this is Band's
-// first write and not the table's edge), corroborated by contract_data writes in
-// `ledger_entry_changes` from the same ledger and by the WASM audit.
-//
-// Two of the four constants that carry it must not say 60,000,000: that would shorten the range
-// every completeness and gap check evaluates for Band by 9.16M ledgers, so the source could read
-// CLEAN over a window excluding most of its history, the worst shape for a coverage claim.
+// bandGenesisLedger is Band's first on-chain write. Band emits no events, so it comes from `contract_instance_changes`,
+// corroborated by ledger_entry_changes and the WASM audit. A constant of 60,000,000 would drop 9.16M ledgers from every
+// completeness and gap check, letting Band read CLEAN over a window missing most of its history.
 const bandGenesisLedger = 50_842_736
 
-// TestBandGenesis_ProtocolRegistry pins the copy in the protocol
-// directory. a368b5c4's message claimed a single test pinned all four
-// sites; an independent review reverted this one and the whole suite
-// stayed green, so the claim was false and these assertions are the fix.
+// TestBandGenesis_ProtocolRegistry pins Band's genesis ledger in the protocol directory, a site not covered by the other tests
+// that pin the shared constant.
 func TestBandGenesis_ProtocolRegistry(t *testing.T) {
 	for _, p := range protocolRegistry {
 		if p.Name != "band" {

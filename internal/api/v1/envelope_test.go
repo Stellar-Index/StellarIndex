@@ -16,10 +16,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestWriteJSON_DefaultEnvelopeShape pins the wire shape every
-// 2xx handler relies on: 200 status, application/json
-// Content-Type, AsOf populated, Sources omitted when empty,
-// Flags present (zero-valued).
+// TestWriteJSON_DefaultEnvelopeShape pins the wire shape every 2xx handler relies on: 200, application/json, AsOf populated,
+// Sources omitted when empty, Flags present (zero-valued).
 func TestWriteJSON_DefaultEnvelopeShape(t *testing.T) {
 	rec := httptest.NewRecorder()
 	before := time.Now().UTC()
@@ -78,10 +76,8 @@ func TestWriteJSON_WithSourcesIncluded(t *testing.T) {
 	}
 }
 
-// TestWriteEnvelope_PreservesAsOf checks that a pre-set AsOf is
-// honoured (writeEnvelopeStatus only fills in when zero). Handlers
-// with their own clock — bucket-end timestamps, observed_at carry-
-// forward — depend on this.
+// TestWriteEnvelope_PreservesAsOf checks a pre-set AsOf is honoured (only filled when zero), which handlers with their own
+// clock (bucket-end timestamps, observed_at carry-forward) depend on.
 func TestWriteEnvelope_PreservesAsOf(t *testing.T) {
 	custom := time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)
 	rec := httptest.NewRecorder()
@@ -99,10 +95,8 @@ func TestWriteEnvelope_PreservesAsOf(t *testing.T) {
 	}
 }
 
-// TestWriteEnvelope_FillsZeroAsOf — when AsOf is zero on the way
-// in, writeEnvelopeStatus stamps it with now(). Mirrors what
-// writeJSON does so handlers that pass an Envelope but forget to
-// set AsOf still produce a valid response.
+// TestWriteEnvelope_FillsZeroAsOf: a zero AsOf is stamped with now(), mirroring writeJSON, so handlers that forget to set it
+// still produce a valid response.
 func TestWriteEnvelope_FillsZeroAsOf(t *testing.T) {
 	rec := httptest.NewRecorder()
 	before := time.Now().UTC()
@@ -383,10 +377,8 @@ func TestWriteProblem_LiveRequestKeepsInternalError500(t *testing.T) {
 	}
 }
 
-// A CANCELLED request context is the client-abort case, not a deadline:
-// the handler must return silently (clientAborted) and must NOT reach the
-// upgrade. Pins the two done-nesses apart at the writeProblem level, the
-// same split clientaborted_test.go pins at the predicate level.
+// A cancelled request context is client-abort, not a deadline: the handler must return silently (clientAborted) and not reach
+// the upgrade. Pins the two apart at the writeProblem level, as clientaborted_test.go does at the predicate level.
 func TestWriteProblem_CanceledRequestWritesNothing(t *testing.T) {
 	req := anomaliesRequest()
 	ctx, cancel := context.WithCancel(req.Context())
@@ -422,14 +414,9 @@ func (deadAnomalyReader) CountFiringFreezes(context.Context) (int64, error) {
 	return 0, errAnomalyStoreBroke
 }
 
-// /v1/anomalies is the archetype of the many handler error paths this covers: it hands
-// r.Context() STRAIGHT to the store, so it has no per-call context for handlerTimedOut to
-// inspect and no timeout branch; the only deadline that can fire is the blanket
-// middleware.RequestTimeout one, and its sole error path is an `errors/internal` 500.
-//
-// That 500 contradicts the API-wide rule that a server-side deadline is a RETRYABLE 503
-// (writeLendingReservesTimeout, the explorer's writeReadTimeout), the rule the sla-probe scores
-// availability_pct on: a 500 books a permanent failure for a condition a retry would clear.
+// /v1/anomalies passes r.Context() straight to the store, so only the blanket RequestTimeout deadline can fire, and its sole
+// error path was an `errors/internal` 500. A server-side deadline must be a retryable 503 (the rule sla-probe scores
+// availability on); a 500 books a permanent failure for a condition a retry would clear.
 func newAnomaliesServer() *Server {
 	return &Server{
 		Options: Options{Anomalies: deadAnomalyReader{}},

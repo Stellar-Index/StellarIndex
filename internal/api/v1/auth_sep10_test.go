@@ -285,16 +285,9 @@ func TestSEP10Token_VerificationFailed_401(t *testing.T) {
 	}
 }
 
-// TestSEP10Unavailable_TellsTheCallerWhatToDoInstead pins the BODY of the 404, not just its
-// code.
-//
-// Four branches produce this answer (no validator wired on either route, and ErrNotImplemented
-// from Challenge or Verify) and they must carry one string. Restating the error code in prose
-// gives a caller nothing to act on and cannot distinguish a permanent deployment posture from
-// an outage worth retrying, so the body must say WHY it refuses and WHAT WORKS INSTEAD.
-//
-// The assertions check substance, not wording, so the sentence can be rewritten without a test
-// edit, but not hollowed out to a bare code or allowed to drift between branches.
+// TestSEP10Unavailable_TellsTheCallerWhatToDoInstead pins the body of the 404, not just its code. All four branches (no validator
+// on either route, ErrNotImplemented from Challenge or Verify) must carry one string saying why it refuses and what works
+// instead, so a caller can tell a permanent posture from a retryable outage. Assertions check substance, not exact wording.
 func TestSEP10Unavailable_TellsTheCallerWhatToDoInstead(t *testing.T) {
 	notImplemented := func() *stubSEP10Validator {
 		return &stubSEP10Validator{

@@ -38,10 +38,8 @@ func (s *stubSupplyLooker) DailyCirculatingSupply(_ context.Context, _ string, _
 	return s.daily, s.err
 }
 
-// stubVolumeReader implements v1.VolumeReader for tests. Records the
-// assetKey passed in so tests can assert the API call site supplies
-// the trade-table representation (canonical.Asset.String()) rather
-// than the supply-table representation (supply.AssetKey()).
+// stubVolumeReader implements v1.VolumeReader and records the assetKey passed in, so tests can assert the API supplies the
+// trade-table representation (canonical.Asset.String()) rather than the supply-table one (supply.AssetKey()).
 type stubVolumeReader struct {
 	gotKey     string
 	volume     string
@@ -59,10 +57,9 @@ func (s *stubVolumeReader) Volume24hUSDForAsset(_ context.Context, assetKey stri
 	return s.volume, s.lowerBound, nil
 }
 
-// TestF2_VolumeReaderReceivesTradeTableKey: the VolumeReader contract pins assetKey to the
-// trades.base_asset/quote_asset shape (canonical `asset.String()`). For native XLM that is
-// "native", NOT "XLM" as in the supply package; supply.AssetKey() would never match a trade
-// row and volume would stay "0" for native.
+// TestF2_VolumeReaderReceivesTradeTableKey: VolumeReader's assetKey must match trades.base_asset/quote_asset (asset.String()),
+// which for native XLM is "native", not "XLM". supply.AssetKey() would never match a trade row and native volume would stay
+// "0".
 func TestF2_VolumeReaderReceivesTradeTableKey(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -177,10 +174,9 @@ func TestF2_PrefilledVolumeIsLowerBoundWhenBothReadersFail(t *testing.T) {
 	}
 }
 
-// TestF2_SorobanAssetUsesAnchoredVolume — a pure-Soroban SEP-41 asset's
-// volume_24h_usd must come from the XLM-anchored SorobanVolumeReader, not
-// the plain reader (which reports a bogus "0" because it only sees the
-// insert-time usd_volume that XLM-quoted Soroban trades never populate).
+// TestF2_SorobanAssetUsesAnchoredVolume: a pure-Soroban SEP-41 asset's volume_24h_usd must come from the XLM-anchored
+// SorobanVolumeReader; the plain reader reports a bogus "0" because XLM-quoted Soroban trades never populate insert-time
+// usd_volume.
 func TestF2_SorobanAssetUsesAnchoredVolume(t *testing.T) {
 	const contractID = "CAFJZQWSED6YAWZU3GWRTOCNPPCGBN32L7QV43XX5LZLFTK6JLN34DLN"
 	vol := &stubDualVolumeReader{plain: "0", soroban: "98765.43"}
@@ -237,10 +233,8 @@ func TestF2_NonSorobanUsesPlainVolume(t *testing.T) {
 	}
 }
 
-// stubChange24hReader implements v1.Change24hReader for tests.
-// Returns the per-asset price string from `prices`, or unavailable
-// when the asset key isn't seeded; an explicit `err` short-circuits
-// for the postgres-unavailable test path.
+// stubChange24hReader implements v1.Change24hReader: it returns the seeded per-asset price string, unavailable for unseeded
+// keys, and short-circuits on an explicit err for the postgres-unavailable path.
 type stubChange24hReader struct {
 	prices map[string]string
 	err    error
@@ -416,11 +410,9 @@ func TestF2_NoMaxSupply_OmitsFDV(t *testing.T) {
 	mustContain(t, body, `"market_cap_usd":"3493000000.00"`)
 }
 
-// TestF2_SEP1DeclaredMaxOverlay: ADR-0011 max_supply precedence step 2, via supply.Overlay.
-// A classic asset with an uncapped snapshot (no operator override) and an issuer stellar.toml
-// declaring max_number must serve max_supply in RAW units (display × 10^decimals), compute
-// fdv_usd from it, and set max_supply_basis="sep1_declared_max" so the wire says the cap is
-// issuer-declared, while supply_basis keeps naming the circulating policy.
+// TestF2_SEP1DeclaredMaxOverlay: ADR-0011 max_supply precedence step 2 via supply.Overlay. A classic asset with an uncapped
+// snapshot and a stellar.toml max_number serves max_supply in raw units (display x 10^decimals), computes fdv_usd from it, and
+// sets max_supply_basis="sep1_declared_max" while supply_basis keeps naming the circulating policy.
 func TestF2_SEP1DeclaredMaxOverlay(t *testing.T) {
 	assetID := "USDC-" + testUSDCIssuer
 	snap := supply.Supply{
@@ -471,10 +463,8 @@ func TestF2_SEP1DeclaredMaxOverlay(t *testing.T) {
 	mustContain(t, body, `"max_number":"50000000"`)
 }
 
-// TestF2_SEP1DeclaredMaxOverlay_UnlimitedBlocks — an issuer that
-// declares is_unlimited=true is saying the supply is uncapped; a
-// number alongside it is contradictory and must NOT become
-// max_supply. Snapshot basis stays the algorithm default.
+// TestF2_SEP1DeclaredMaxOverlay_UnlimitedBlocks: an issuer declaring is_unlimited=true says supply is uncapped; a number
+// beside it is contradictory and must not become max_supply. Snapshot basis stays the algorithm default.
 func TestF2_SEP1DeclaredMaxOverlay_UnlimitedBlocks(t *testing.T) {
 	assetID := "USDC-" + testUSDCIssuer
 	snap := supply.Supply{
@@ -596,11 +586,9 @@ func TestF2_PriceLookupErrorFallsThrough(t *testing.T) {
 	}
 }
 
-// TestLookupUSDPrice_StablecoinFiatProxyFallback: when the literal native/fiat:USD lookup
-// misses (the steady state on mainnet, where nothing quotes in fiat:USD), lookupUSDPrice walks
-// the operator's classic USD pegs, like the handler-side tryStablecoinFiatProxy but at the
-// F2-population layer where priceFallback is unreachable. Otherwise market_cap_usd, fdv_usd
-// and change_24h_pct stay null on every on-chain asset.
+// TestLookupUSDPrice_StablecoinFiatProxyFallback: when the literal native/fiat:USD lookup misses (the mainnet steady state),
+// lookupUSDPrice walks the operator's classic USD pegs, as tryStablecoinFiatProxy does but at the F2-population layer where
+// priceFallback is unreachable. Otherwise market_cap_usd, fdv_usd and change_24h_pct stay null on every on-chain asset.
 func TestLookupUSDPrice_StablecoinFiatProxyFallback(t *testing.T) {
 	usdcClassic, err := canonical.ParseAsset("USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
 	if err != nil {
@@ -643,10 +631,8 @@ func TestLookupUSDPrice_StablecoinFiatProxyFallback(t *testing.T) {
 	mustContain(t, body, `"market_cap_usd"`)
 }
 
-// TestChange24hPct_HappyPath — current USD price + a 24h-ago
-// reader yield a signed two-decimal percentage on the wire. Pinned
-// to catch sign-format regressions (the leading "+" is part of the
-// wire contract).
+// TestChange24hPct_HappyPath: current USD price plus a 24h-ago reader yield a signed two-decimal percentage; the leading "+"
+// is part of the wire contract.
 func TestChange24hPct_HappyPath(t *testing.T) {
 	priceStub := &stubPriceReader{
 		snapshots: map[string]v1.PriceSnapshot{
@@ -668,11 +654,8 @@ func TestChange24hPct_HappyPath(t *testing.T) {
 	mustContain(t, body, `"change_24h_pct":"+1.81"`)
 }
 
-// TestChange24hPct_NilPriceReader_NoPanic: Options documents Prices as independently optional
-// ("nil → 503"), so Prices==nil with Change24h!=nil is legal. populateChange24h reaches the
-// price lookup on a child goroutine (no middleware.Recoverer cover), so a missing nil-guard
-// would crash the whole process, not 500 one request. The request must serve cleanly with the
-// field absent.
+// TestChange24hPct_NilPriceReader_NoPanic: Prices==nil with Change24h!=nil is legal; populateChange24h runs on a child goroutine
+// with no Recoverer, so a missing nil-guard would crash the process. The request must serve with the field absent.
 func TestChange24hPct_NilPriceReader_NoPanic(t *testing.T) {
 	change24hStub := &stubChange24hReader{prices: map[string]string{"native": "0.07"}}
 	srv := v1.New(v1.Options{Change24h: change24hStub}) // Prices left nil
@@ -688,10 +671,8 @@ func TestChange24hPct_NilPriceReader_NoPanic(t *testing.T) {
 	}
 }
 
-// TestChange24hPct_NoComparisonBucket — asset has a current price
-// but the 24h-ago window is empty (asset first traded < 24h ago,
-// or pruned). ErrChange24hUnavailable is silent — field absent on
-// the wire, no warning logged.
+// TestChange24hPct_NoComparisonBucket: a current price with an empty 24h-ago window leaves the field absent, with no warning
+// logged.
 func TestChange24hPct_NoComparisonBucket(t *testing.T) {
 	priceStub := &stubPriceReader{
 		snapshots: map[string]v1.PriceSnapshot{
@@ -748,10 +729,8 @@ func TestChange24hPct_NotWired_FieldAbsent(t *testing.T) {
 	}
 }
 
-// TestChange24hPct_ReaderErrorFallsThrough — a non-Unavailable
-// reader error (postgres down) falls through silently. Best-effort
-// posture matches volume_24h_usd / market_cap_usd: feature
-// unavailable, asset body still serves 200.
+// TestChange24hPct_ReaderErrorFallsThrough: a non-Unavailable reader error falls through silently (best-effort, like
+// volume_24h_usd); the asset body still serves 200.
 func TestChange24hPct_ReaderErrorFallsThrough(t *testing.T) {
 	priceStub := &stubPriceReader{
 		snapshots: map[string]v1.PriceSnapshot{
@@ -777,9 +756,6 @@ func TestChange24hPct_ReaderErrorFallsThrough(t *testing.T) {
 var _ = canonical.AssetClassic
 
 // mustContain fails the test when body doesn't include needle.
-// Local to the F2 test file; helpers in the rest of the package
-// don't expose this shape and the inline strings.Contains pattern
-// repeats often enough here to warrant a one-liner.
 func mustContain(t *testing.T, body, needle string) {
 	t.Helper()
 	if !strings.Contains(body, needle) {

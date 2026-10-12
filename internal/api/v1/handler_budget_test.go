@@ -105,11 +105,8 @@ func TestHandlerBudgets_StayInsideTheRequestTimeout(t *testing.T) {
 	}
 }
 
-// TestPriceAtAndPriceChangesHaveRequestBudgets pins the price-at and price-changes budgets directly
-// against their two files, since the general walker above only validates budgets that EXIST and
-// is blind to a handler with none. price_at.go's alias walk and price_changes.go's up-to-five
-// sequential PriceAt calls need a per-request context.WithTimeout, or a slow run holds its pool
-// connection until the client gives up.
+// TestPriceAtAndPriceChangesHaveRequestBudgets pins budgets in price_at.go and price_changes.go directly, since the general
+// walker only validates budgets that exist; without one a slow run holds its pool connection until the client gives up.
 func TestPriceAtAndPriceChangesHaveRequestBudgets(t *testing.T) {
 	for _, file := range []string{"price_at.go", "price_changes.go"} {
 		fset := token.NewFileSet()
@@ -131,13 +128,8 @@ func TestPriceAtAndPriceChangesHaveRequestBudgets(t *testing.T) {
 	}
 }
 
-// TestRWAHistoryBudgetsStayInsideTheRequestTimeout pins the RWA history budgets directly
-// against rwaHistoryBudget and rwaPremiumHistoryBudget, rather than relying on the general
-// walker above. Neither is a literal context.WithTimeout(r.Context(), …): cachedRWAValueHistory
-// and cachedRWAPremiumHistory take a plain ctx because the background prewarm in rwa.go also
-// calls them, so the walker's receiver-name check correctly misses them. They are still
-// reachable synchronously off the request context (the leader branch builds inline on a cache
-// miss), so they owe the same ceiling as every other handler budget.
+// TestRWAHistoryBudgetsStayInsideTheRequestTimeout pins rwaHistoryBudget and rwaPremiumHistoryBudget directly: they are not
+// literal WithTimeout(r.Context()) calls, so the walker misses them, yet they are reachable off the request context.
 func TestRWAHistoryBudgetsStayInsideTheRequestTimeout(t *testing.T) {
 	if rwaHistoryBudget > maxHandlerBudget {
 		t.Errorf("rwaHistoryBudget %s exceeds maxHandlerBudget %s (request timeout %s) — "+
@@ -180,16 +172,8 @@ func exprString(e ast.Expr) string {
 	return buf.String()
 }
 
-// TestMaxHandlerBudgetMatchesConfigBound ties this package's compile-time
-// ceiling to the one api.request_timeout is validated against.
-//
-// maxHandlerBudget is derived from defaultRequestTimeout, the FALLBACK. The deadline a
-// deployment installs is Options.RequestTimeout, fed from the operator-settable
-// api.request_timeout, and internal/config rejects a value that does not exceed
-// [config.APIMaxHandlerBudget]. These are two spellings of one number, so this asserts they
-// match: if they drift, a smaller api.request_timeout passes validation while every handler
-// capped near it has a budget that can never fire, and
-// TestHandlerBudgets_StayInsideTheRequestTimeout stays green because it only sees the constant.
+// TestMaxHandlerBudgetMatchesConfigBound ties maxHandlerBudget (derived from the fallback defaultRequestTimeout) to
+// config.APIMaxHandlerBudget; on drift a smaller api.request_timeout passes validation while handler budgets can never fire.
 func TestMaxHandlerBudgetMatchesConfigBound(t *testing.T) {
 	if maxHandlerBudget != config.APIMaxHandlerBudget {
 		t.Fatalf("maxHandlerBudget = %s but config.APIMaxHandlerBudget = %s — the boot-time "+
@@ -203,10 +187,8 @@ func TestMaxHandlerBudgetMatchesConfigBound(t *testing.T) {
 	}
 }
 
-// isRequestWithTimeout reports whether call is
-// context.WithTimeout(r.Context(), …): a budget derived from the
-// inbound request, as opposed to a background or store-scoped one that
-// the request deadline does not bound.
+// isRequestWithTimeout reports whether call is context.WithTimeout(r.Context(), ...), a budget bounded by the inbound request
+// rather than a background or store-scoped one.
 func isRequestWithTimeout(call *ast.CallExpr) bool {
 	sel, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok || sel.Sel.Name != "WithTimeout" || len(call.Args) != 2 {
@@ -256,10 +238,8 @@ func durationConsts(files []*ast.File) map[string]time.Duration {
 	return out
 }
 
-// durationValue evaluates the forms a budget is written in: `N *
-// time.Unit`, a named constant, and a constant offset by a literal
-// (`defaultRequestTimeout - 3*time.Second`). Anything else reports
-// false rather than guessing.
+// durationValue evaluates `N * time.Unit`, a named constant, and a constant offset by a literal; anything else reports false
+// rather than guessing.
 func durationValue(e ast.Expr, consts map[string]time.Duration) (time.Duration, bool) {
 	switch v := e.(type) {
 	case *ast.Ident:
@@ -411,12 +391,8 @@ func funcDecls(t *testing.T, fset *token.FileSet, fn func(src apiSource, fd *ast
 	}
 }
 
-// inlineDetachments names every function that detaches a context with
-// context.WithoutCancel on the goroutine it runs on, rather than inside a
-// `go` statement, and why the time that adds is acceptable. A detached context is invisible to
-// the request deadline, so time under one on a request goroutine is accounted for by no handler
-// budget or api.request_timeout. A detached cache build belongs on its own goroutine; an entry
-// here is a deliberate, bounded exception.
+// inlineDetachments names functions that call context.WithoutCancel on the request goroutine (not inside a `go` statement) and
+// why the added time is acceptable; detached time is counted by no handler budget, so entries are deliberate bounded exceptions.
 var inlineDetachments = map[string]string{
 	"register.go#mintRegisterKey": "error path only: rolls back a mirror write the failed " +
 		"request left behind, which must not fail on that request's dead context; 5s",
@@ -447,13 +423,8 @@ var inlineDetachments = map[string]string{
 		"ctx via the select, and the fill by usdPriceMapFillTimeout (60s)",
 }
 
-// TestDetachedContextsLeaveTheRequestGoroutine covers what the budget
-// walker above cannot see: context.WithTimeout(context.WithoutCancel(ctx), d)
-// is not a request-derived budget, so that walker never evaluates it, yet on a request goroutine
-// its d is added to whatever the handler already spent and can push past the ceiling.
-//
-// Every context.WithoutCancel in the API tree must sit inside a `go` statement (the call or its
-// arguments), or its function must be named in inlineDetachments with a reason.
+// TestDetachedContextsLeaveTheRequestGoroutine: WithTimeout(WithoutCancel(ctx), d) escapes the budget walker, yet on a request
+// goroutine d adds to time already spent. Every WithoutCancel must sit inside a `go` statement or be named in inlineDetachments.
 func TestDetachedContextsLeaveTheRequestGoroutine(t *testing.T) {
 	fset := token.NewFileSet()
 	seen, used := 0, map[string]bool{}
@@ -513,14 +484,9 @@ var longBudgets = map[string]string{
 	"sdex_orderbook.go#loadWithin": "the order-book load, reached only through MaintainTick",
 }
 
-// TestLongBudgetsAreDetached closes the other half of the walker's blind
-// spot: it matches context.WithTimeout(r.Context(), d) literally, so a budget on a ctx PARAMETER
-// a handler passes r.Context() into is never checked. Such a budget past the blanket deadline
-// means a cut valuation can only be served as if it were a refusal.
-//
-// A budget above maxHandlerBudget must hang off context.Background(), context.TODO() or
-// context.WithoutCancel(…), or its function must be named in longBudgets with the reason no
-// request goroutine runs it.
+// TestLongBudgetsAreDetached: the budget walker misses budgets on a ctx parameter fed r.Context(). A budget above
+// maxHandlerBudget must hang off Background/TODO/WithoutCancel, or be named in longBudgets with the reason no request goroutine
+// runs it.
 func TestLongBudgetsAreDetached(t *testing.T) {
 	fset := token.NewFileSet()
 	used := map[string]bool{}

@@ -386,11 +386,9 @@ func TestFindMatchingCachedCurrency_exactCaseWinsOverFold(t *testing.T) {
 	}
 }
 
-// The wire price renderers floor at ohlcPriceDigits. A strictly positive
-// price whose first significant digit lies beyond that place must NOT
-// render as an all-zero string (which reparses as price 0); the scale is
-// extended magnitude-relatively, exactly as the aggregator's own
-// formatRatFixed does. Normal-magnitude prices stay byte-identical.
+// Wire price renderers floor at ohlcPriceDigits, but a positive price whose first significant digit lies beyond that must not
+// render as an all-zero string (reparses as 0); scale extends magnitude-relatively as formatRatFixed does. Normal prices are
+// unchanged.
 func TestRatToDecimal_extendsScaleForSubDigitPrices(t *testing.T) {
 	cases := []struct {
 		name string

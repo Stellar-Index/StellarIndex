@@ -35,13 +35,8 @@ func installFoldRegistry(t *testing.T) {
 func i64(v int64) *int64    { return &v }
 func strp(v string) *string { return &v }
 
-// TestFoldAliasTwins_MergesSACIntoClassic is the "USDC shows twice" fix:
-// a SAC-form base row and its classic asset in the same listing input fold
-// into ONE canonical (classic) row whose 24h volume + trade count are the
-// SUM of both forms; the SAC standalone row is suppressed.
-//
-// RED without foldAliasTwins: the input is returned unchanged — two rows
-// (classic USDC and the CCW67T… SAC), the second the leaking duplicate.
+// TestFoldAliasTwins_MergesSACIntoClassic: a SAC-form row and its classic asset in the same listing fold into one classic row
+// whose 24h volume and trade count are the sum of both forms; the standalone SAC row is suppressed.
 func TestFoldAliasTwins_MergesSACIntoClassic(t *testing.T) {
 	installFoldRegistry(t)
 	s := &Server{}
@@ -67,12 +62,8 @@ func TestFoldAliasTwins_MergesSACIntoClassic(t *testing.T) {
 	}
 }
 
-// TestFoldAliasTwins_SuppressesLoneSAC: a SAC row whose canonical classic
-// twin is NOT in the page (it was the verified-catalogue row served in the
-// catalogue phase) is still dropped — a stray SAC row is the duplicate the
-// fold removes. An unrelated asset is left untouched.
-//
-// RED without foldAliasTwins: the SAC row survives as its own directory row.
+// TestFoldAliasTwins_SuppressesLoneSAC: a SAC row whose classic twin is not in the page (it was served in the catalogue phase) is
+// still dropped as a duplicate; an unrelated asset is untouched.
 func TestFoldAliasTwins_SuppressesLoneSAC(t *testing.T) {
 	installFoldRegistry(t)
 	s := &Server{}
@@ -126,12 +117,9 @@ func (a *offPageSpine) GetAssetByAssetID(ctx context.Context, assetID string) (t
 	return a.armFilteringAssets.GetAssetByAssetID(ctx, assetID)
 }
 
-// TestAssetsUnifiedFoldsContractArmWhateverItsPage.
-// A Soroban-heavy wrapper outranks its own classic row on the
-// volume-desc spine, so the two land out of order on one page or on
-// different pages. Either way the classic row must publish the classic +
-// contract sum on an unfiltered request, and a wrapper merged in-page
-// must not be added a second time by the off-page point read.
+// TestAssetsUnifiedFoldsContractArmWhateverItsPage: a Soroban-heavy wrapper can outrank its classic row, landing on the same or a
+// different page. Either way the classic row must publish classic + contract on an unfiltered request, and a wrapper merged in-
+// page must not be added again by the off-page point read.
 func TestAssetsUnifiedFoldsContractArmWhateverItsPage(t *testing.T) {
 	installSpineFoldRegistry(t)
 	classic := timescale.AssetRow{AssetID: spineClassic, Code: "TESTX", IssuerGStrkey: spineIssuer, Volume24hUSD: strp("1000")}
