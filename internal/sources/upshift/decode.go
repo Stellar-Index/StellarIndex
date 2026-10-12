@@ -9,16 +9,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// classify returns the event kind for a topic[0] this protocol emits, or "" otherwise, by
-// byte-equality against pre-encoded Symbols (no SCVal parse on the reject path).
-//
-// It enumerates EVERY symbol either vault has emitted (the package-doc census), not just the
-// four that produce rows, so a recognized-but-undecoded event counts as expected-zero in the
-// ADR-0033 re-derive instead of leaving its ledger blind. A symbol not listed is a schema
-// change we do not claim: Matches returns false and the recognition audit surfaces it.
-//
-// classify is topic-only routing, not attribution; the contract-identity gate is
-// [Decoder.Matches], consulted first (ADR-0035).
+// classify returns the event kind for a topic[0] this protocol emits, or "", by byte-equality against pre-encoded Symbols. It
+// enumerates EVERY symbol either vault has emitted, so a recognized-but-undecoded event counts as expected-zero in the ADR-0033
+// re-derive; an unlisted symbol is a schema change we do not claim. Topic-only routing: the identity gate is [Decoder.Matches] (ADR-0035).
 func classify(e *events.Event) string {
 	if len(e.Topic) == 0 {
 		return ""
@@ -90,15 +83,9 @@ func decodeAddrTopic(e *events.Event, i int, field string) (string, error) {
 	return addr, nil
 }
 
-// bodyI128Fields pulls the named i128 fields out of a Map body, in the order asked for.
-//
-// Fields are read BY NAME, never by position (docs/architecture/ingest-pipeline.md
-// #contract-schema-evolution): an upgrade that appends a field must stay readable, and
-// `deployed_assets_changed` puts `new_amount` FIRST on the wire, so positional decoding would
-// swap old and new.
-//
-// Map entries never cross a function boundary: naming their type would pull the raw XDR
-// package into an event decoder, which ADR-0013 scopes to internal/scval.
+// bodyI128Fields pulls the named i128 fields out of a Map body, in the order asked for. Fields are read BY NAME, never position
+// (docs/architecture/ingest-pipeline.md#contract-schema-evolution): `deployed_assets_changed` puts `new_amount` FIRST on the
+// wire. Map entries never cross a function boundary: ADR-0013 scopes the raw XDR package to internal/scval.
 func bodyI128Fields(e *events.Event, kind string, fields ...string) ([]canonical.Amount, error) {
 	sv, err := scval.Parse(e.Value)
 	if err != nil {
@@ -123,13 +110,8 @@ func bodyI128Fields(e *events.Event, kind string, fields ...string) ([]canonical
 	return out, nil
 }
 
-// decodeFlow decodes a `deposit` or `withdraw`.
-//
-//	topics [Symbol, caller Address, receiver Address, owner Address]
-//	body   Map{ assets: i128, shares: i128 }
-//
-// The (caller, receiver, owner) reading is the OpenZeppelin ERC-4626 `Withdraw` ordering; the
-// package doc has the lake evidence and the caveat that `deposit` never exercised it.
+// decodeFlow decodes a `deposit` or `withdraw`: topics [Symbol, caller, receiver, owner], body Map{ assets: i128, shares: i128 }.
+// The (caller, receiver, owner) reading is the OpenZeppelin ERC-4626 `Withdraw` ordering; the package doc has the lake evidence.
 func decodeFlow(e *events.Event, kind string) (Event, error) {
 	if len(e.Topic) < 4 {
 		return Event{}, fmt.Errorf("%w: %s expects 4 topics, got %d", ErrShortTopic, kind, len(e.Topic))
@@ -156,18 +138,9 @@ func decodeFlow(e *events.Event, kind string) (Event, error) {
 	return out, nil
 }
 
-// decodeTransfer decodes a share-token `transfer`.
-//
-//	topics [Symbol, from Address, to Address]
-//	body   i128  OR  Map{ amount: i128, to_muxed_id: Address|Void }
-//
-// BOTH body forms are accepted: the bare i128 (original SEP-41) and the CAP-67 Map. Vaults
-// so far emit the Map with a Void `to_muxed_id`, but pinning that shape would break any
-// pre-CAP-67 replay. The bare form is tried first; the Map is the fallback ONLY on a type
-// mismatch, and any other i128 read failure is returned as a real error.
-//
-// `to_muxed_id` is not stored: it is a recipient routing detail, not a vault-economics fact,
-// and internal/sources/sep41_transfers carries the full SEP-41 shape.
+// decodeTransfer decodes a share-token `transfer`: topics [Symbol, from, to], body i128 OR Map{ amount: i128, to_muxed_id }. BOTH
+// forms are accepted (bare SEP-41 i128 and CAP-67 Map; pinning the Map would break pre-CAP-67 replay): the bare form is tried
+// first, the Map only on a type mismatch, and any other i128 read failure is a real error. `to_muxed_id` is not stored.
 func decodeTransfer(e *events.Event) (Event, error) {
 	if len(e.Topic) < 3 {
 		return Event{}, fmt.Errorf("%w: transfer expects 3 topics, got %d", ErrShortTopic, len(e.Topic))
@@ -204,14 +177,9 @@ func decodeTransfer(e *events.Event) (Event, error) {
 	return out, nil
 }
 
-// decodeDeployedAssets decodes a `deployed_assets_changed`.
-//
-//	topics [Symbol, operator Address]
-//	body   Map{ old_amount: i128, new_amount: i128 }
-//
-// This is the vault-level total of capital DEPLOYED into strategies, before and after the
-// change. The idle balance is in no event, so these are one leg of the vault's assets, never
-// the whole; see [Event.OldAmount].
+// decodeDeployedAssets decodes a `deployed_assets_changed`: topics [Symbol, operator], body Map{ old_amount, new_amount: i128 }.
+// This is the vault-level capital DEPLOYED into strategies; the idle balance is in no event, so it is one leg of the vault's
+// assets, never the whole (see [Event.OldAmount]).
 func decodeDeployedAssets(e *events.Event) (Event, error) {
 	if len(e.Topic) < 2 {
 		return Event{}, fmt.Errorf("%w: %s expects 2 topics, got %d",

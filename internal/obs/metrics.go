@@ -223,10 +223,8 @@ func registerFreezeLifecycleMetrics() {
 	)
 }
 
-// registerAppMetricsTail registers the remainder of the app metric set
-// — split out of registerAppMetrics purely to keep each function under
-// the funlen ceiling as the metric set grows (same reason init() calls
-// registerAppMetrics).
+// registerAppMetricsTail registers the rest of the app metric set, split out of registerAppMetrics only to keep each function
+// under the funlen ceiling.
 func registerAppMetricsTail() {
 	Registry.MustRegister(
 		CEXStreamEntrySkipsTotal, CEXStreamSubscriptionRejected,

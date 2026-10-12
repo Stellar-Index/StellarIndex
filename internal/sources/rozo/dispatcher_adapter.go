@@ -14,10 +14,8 @@ type Decoder struct{}
 // NewDecoder constructs a Rozo Decoder; it is stateless and safe to share.
 func NewDecoder() *Decoder { return &Decoder{} }
 
-// withIndex stamps the intra-op event index onto the projected Event. EventIndex is the
-// rozo_events PK discriminator that keeps two events of the SAME event_type from ONE operation
-// from collapsing to a single row; it comes from the dispatcher live and from the lake's
-// event_index column on re-derive.
+// withIndex stamps the intra-op event index onto the projected Event. EventIndex is the rozo_events PK discriminator that keeps two
+// events of the SAME event_type from ONE operation from collapsing to a row; it comes from the dispatcher live and the lake on re-derive.
 func withIndex(idx int, e Event) []consumer.Event {
 	e.EventIndex = uint32(idx) //nolint:gosec // EventIndex is non-negative by Soroban spec.
 	return []consumer.Event{e}

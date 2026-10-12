@@ -207,10 +207,8 @@ func (e *Eraser) afterCommit(
 	return nil
 }
 
-// deleteRedis removes the identifier's key records and index entries, the
-// Postgres keys' validator records and cache rows, and every usage
-// counter. Rate-limit and touch-debounce keys expire within minutes and
-// are keyed by the same identifiers, so they are left to their TTL.
+// deleteRedis removes the identifier's key records and index entries, the Postgres keys' validator records and cache rows, and
+// every usage counter. Rate-limit and touch-debounce keys expire within minutes, so they are left to their TTL.
 func (e *Eraser) deleteRedis(
 	ctx context.Context, slug string, subjects, keyHashes []string,
 ) (keys int, deleted int64, err error) {

@@ -288,18 +288,10 @@ func (cat *Catalogue) indexStellarEntries(vc *VerifiedCurrency) error {
 	return nil
 }
 
-// indexTickerOnlyEntry indexes, by ticker, an entry with no classic Stellar code (no issuance, or
-// a Soroban-only one), so StellarCollision can speak about `reference_only` entries (USDT, BTC).
-// No legitimate classic asset can bear a ticker verified as off-Stellar, so every classic
-// `USDT-G…` is an impersonator.
-//
-// A legitimately-anchored wrapper gets no ticker allowlist, which would reopen this vector
-// (see docs/architecture/domain-traps.md); add its issuance as a `network: stellar` entry on the
-// SAME seed.yaml entry instead.
-//
-// A SOVEREIGN CURRENCY is the exception, so ClassFiat lands in byFiatCode: SEP-1 tells an anchor
-// to denominate a deposit token by its ISO code, so a regulated `USD-G…` is not impersonating the
-// dollar. A fiat entry with a verified Stellar issuance collides like any other.
+// indexTickerOnlyEntry indexes, by ticker, an entry with no classic Stellar code (no issuance, or a Soroban-only one), so
+// StellarCollision can speak about `reference_only` entries (USDT, BTC): no legitimate classic asset can bear a ticker verified as
+// off-Stellar. A wrapper gets no ticker allowlist (see docs/architecture/domain-traps.md); add its issuance as a `network: stellar`
+// entry on the SAME seed.yaml entry. A SOVEREIGN CURRENCY (ClassFiat) lands in byFiatCode: a regulated `USD-G...` is no impersonator.
 func (cat *Catalogue) indexTickerOnlyEntry(vc *VerifiedCurrency) error {
 	codeKey := strings.ToUpper(vc.Ticker)
 	if codeKey == "" {

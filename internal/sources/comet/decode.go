@@ -41,21 +41,9 @@ func classifySwap(e *events.Event) bool {
 	return classify(e) == EventSwap
 }
 
-// decodeSwap converts one (POOL, swap) event into a canonical.Trade. The body carries token_in
-// and token_out Addresses itself, so no pool registry is needed.
-//
-// SwapEvent body (comet-contracts-v1 c_pool/event.rs):
-//
-//	Map {
-//	  "caller":           Address,
-//	  "token_in":         Address,
-//	  "token_out":        Address,
-//	  "token_amount_in":  i128,
-//	  "token_amount_out": i128,
-//	}
-//
-// Trade direction: the trader sold token_in into the pool and bought token_out, so base =
-// token_in, quote = token_out.
+// decodeSwap converts one (POOL, swap) event into a canonical.Trade. The body carries token_in and token_out Addresses and
+// token_amount_in / token_amount_out i128s (plus caller), so no pool registry is needed. The trader sold token_in into the pool and
+// bought token_out: base = token_in, quote = token_out.
 func decodeSwap(e *events.Event, closedAt time.Time) (canonical.Trade, error) {
 	if !classifySwap(e) {
 		return canonical.Trade{}, ErrNotCometSwap
@@ -117,45 +105,26 @@ type liquidityFields struct {
 	PoolAmountIn canonical.Amount // withdraw-only; BPT-share count burned
 }
 
-// decodeJoinPool converts one (POOL, join_pool) event body into a
-// liquidityFields struct. Body shape from event.rs JoinEvent:
-//
-//	Map { caller: Address, token_in: Address, token_amount_in: i128 }
-//
-// An N-token pool join yields N events, each decoded independently; grouping is downstream
-// (comet_liquidity keeps (ledger, tx_hash) so a reserve-tracker can re-aggregate).
+// decodeJoinPool converts one (POOL, join_pool) body Map { caller, token_in: Address, token_amount_in: i128 } into liquidityFields.
+// An N-token join yields N events decoded independently; grouping is downstream (comet_liquidity keeps (ledger, tx_hash)).
 func decodeJoinPool(e *events.Event) (liquidityFields, error) {
 	return decodeLiquiditySingleToken(e, "token_in", "token_amount_in")
 }
 
-// decodeExitPool converts one (POOL, exit_pool) event body. Body
-// shape from event.rs ExitEvent:
-//
-//	Map { caller: Address, token_out: Address, token_amount_out: i128 }
-//
-// Like join_pool, multi-token exit emits one event per token.
+// decodeExitPool converts one (POOL, exit_pool) body Map { caller, token_out: Address, token_amount_out: i128 }. Like join_pool, a
+// multi-token exit emits one event per token.
 func decodeExitPool(e *events.Event) (liquidityFields, error) {
 	return decodeLiquiditySingleToken(e, "token_out", "token_amount_out")
 }
 
-// decodeDeposit converts one (POOL, deposit) event body. Body shape
-// from event.rs DepositEvent (single-asset LP add):
-//
-//	Map { caller: Address, token_in: Address, token_amount_in: i128 }
-//
-// Identical wire shape to JoinEvent; topic[1] distinguishes the kind.
+// decodeDeposit converts one (POOL, deposit) body (single-asset LP add): Map { caller, token_in, token_amount_in: i128 }. Same wire
+// shape as JoinEvent; topic[1] distinguishes the kind.
 func decodeDeposit(e *events.Event) (liquidityFields, error) {
 	return decodeLiquiditySingleToken(e, "token_in", "token_amount_in")
 }
 
-// decodeWithdraw converts one (POOL, withdraw) event body. Body
-// shape from event.rs WithdrawEvent (single-asset LP remove):
-//
-//	Map { caller: Address, token_out: Address,
-//	      token_amount_out: i128, pool_amount_in: i128 }
-//
-// Unlike the other three it also carries `pool_amount_in`, the BPT (pool-share) count burned
-// for the withdrawn underlying, surfaced for reserve tracking and total-supply derivation.
+// decodeWithdraw converts one (POOL, withdraw) body (single-asset LP remove): Map { caller, token_out, token_amount_out: i128,
+// pool_amount_in: i128 }. Unlike the other three it carries `pool_amount_in`, the BPT count burned, for reserve and supply tracking.
 func decodeWithdraw(e *events.Event) (liquidityFields, error) {
 	fields, err := decodeLiquiditySingleToken(e, "token_out", "token_amount_out")
 	if err != nil {
@@ -227,10 +196,8 @@ func decodeLiquiditySingleToken(e *events.Event, tokenField, amountField string)
 	return liquidityFields{Caller: caller, Token: token, Amount: amount}, nil
 }
 
-// decodeLiquidityEvent dispatches one (POOL, <kind>) event into a
-// typed LiquidityEvent row. Returns ErrNotCometEvent if the event
-// isn't one of the four liquidity variants (swap is handled by
-// decodeSwap upstream of this).
+// decodeLiquidityEvent dispatches one (POOL, <kind>) event into a typed LiquidityEvent row; ErrNotCometEvent if it is not one of
+// the four liquidity variants (swap is handled by decodeSwap upstream).
 func decodeLiquidityEvent(e *events.Event, closedAt time.Time) (LiquidityEvent, error) {
 	kind := classify(e)
 	if kind == "" {
@@ -290,10 +257,8 @@ func decodeLiquidityEvent(e *events.Event, closedAt time.Time) (LiquidityEvent, 
 
 var decodeSwapBody = sdkDecodeSwapBody
 
-// sdkDecodeSwapBody unpacks the SwapEvent map. Decode-by-name per
-// docs/architecture/ingest-pipeline.md#contract-schema-evolution — benign field
-// additions in future WASM versions won't break us, unknown fields
-// are ignored.
+// sdkDecodeSwapBody unpacks the SwapEvent map by field name (docs/architecture/ingest-pipeline.md#contract-schema-evolution), so
+// benign field additions in future WASM versions are ignored.
 func sdkDecodeSwapBody(valueB64 string) (swapFields, error) {
 	body, err := scval.Parse(valueB64)
 	if err != nil {

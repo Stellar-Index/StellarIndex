@@ -8,12 +8,9 @@ import (
 	"sync/atomic"
 )
 
-// installedPassphrase overrides [PubnetPassphrase] as the network that [Asset.SacContractID]
-// derives against; nil means pubnet. Written once at start-up (see [InstallNetworkPassphrase]);
-// the atomic pointer keeps that publish race-free and lets tests swap it.
-//
-// Same idiom as [InstallAliasRegistry]: leaf callers have no config.Config in scope, so the
-// value is published once rather than threaded through every SacContractID caller.
+// installedPassphrase overrides [PubnetPassphrase] as the network [Asset.SacContractID] derives against; nil means pubnet. Written
+// once at start-up ([InstallNetworkPassphrase]); the atomic pointer keeps that race-free and lets tests swap it. Same idiom as
+// [InstallAliasRegistry]: leaf callers have no config.Config in scope.
 var installedPassphrase atomic.Pointer[string]
 
 // InstallNetworkPassphrase publishes p as the process-wide passphrase [Asset.SacContractID] derives against; call ONCE at start-up, pubnet until then, and an empty p resets to pubnet.

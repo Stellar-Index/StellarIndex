@@ -290,13 +290,9 @@ const (
 	maxLiveStartRetryWait = 30 * time.Second
 )
 
-// applyLiveRetryPolicy stamps the live-tail retry overrides onto the BufferedStorageBackend config.
-// It is split out of [Stream] so the property that attempts times wait covers the budget is
-// unit-testable.
-//
-// Order is load-bearing: RetryWait is overridden first because the attempt count is derived from
-// it; deriving from the SDK's 30s default while the worker sleeps 500ms would shrink tolerance 60x.
-// Callers must gate on the range being unbounded.
+// applyLiveRetryPolicy stamps the live-tail retry overrides onto the BufferedStorageBackend config; split out of [Stream] so the
+// attempts-times-wait budget is unit-testable. Order is load-bearing: RetryWait is overridden first because the attempt count is
+// derived from it (the SDK's 30s default against a 500ms worker sleep would shrink tolerance 60x). Callers gate on an unbounded range.
 func applyLiveRetryPolicy(cfg Config, buffered *ledgerbackend.BufferedStorageBackendConfig) {
 	if cfg.LiveRetryWait > 0 {
 		buffered.RetryWait = cfg.LiveRetryWait
@@ -332,19 +328,11 @@ func validateRange(r ledgerbackend.Range) error {
 	return nil
 }
 
-// maybeTolerateTrailingMissing converts a bounded-stream missing-file error into a clean
-// walk-complete (nil) when Config.TolerateTrailingMissing is set AND the missing sequence is within
-// the trailing window of To. All other errors pass through.
-//
-// A single-ledger range (from == to) whose one ledger is the missing one requires delivered > 0,
-// else Stream would return nil with ZERO callbacks, indistinguishable from a walked empty range.
-// A wider range is not held to this: BufferedStorageBackend can race-cancel its prefetch buffer
-// on a trailing-edge miss and deliver zero to all present ledgers
-// (TestStream_TolerateTrailingMissing_HappyPath), so requiring it would make backfills flaky.
-//
-// resolveTip is consulted only for a miss that passes every cheaper check. To is often a chunk
-// boundary, so only the store's latest ledger tells a not-yet-written object from a hole with later
-// ledgers on disk.
+// maybeTolerateTrailingMissing turns a bounded-stream missing-file error into a clean walk-complete (nil) when
+// Config.TolerateTrailingMissing is set AND the missing sequence is within the trailing window of To; other errors pass through.
+// A single-ledger range requires delivered > 0 (else nil with ZERO callbacks looks like an empty walk); a wider range is not held
+// to it, as the prefetch buffer can race-cancel on a trailing-edge miss. resolveTip is consulted last: only the store's latest
+// ledger tells a not-yet-written object from a hole.
 func maybeTolerateTrailingMissing(cfg Config, from, to, delivered uint32, err error, resolveTip func() (uint32, error)) error {
 	if err == nil {
 		return nil
@@ -540,10 +528,8 @@ func bufferedConfig(cfg Config) ledgerbackend.BufferedStorageBackendConfig {
 	return ingest.DefaultBufferedStorageBackendConfig(lpf)
 }
 
-// walkDataStore builds the buffered storage backend over store and runs the GetLedger walk, the
-// shared tail of [streamTiered] and [streamHot]. It closes store on every return path because the
-// SDK's BufferedStorageBackend.Close does not, which would leak connections/file handles. Parity
-// with ApplyLedgerMetadata (from-clamp, error wrapping) except single-ledger ranges are accepted.
+// walkDataStore builds the buffered storage backend over store and runs the GetLedger walk, the shared tail of [streamTiered] and
+// [streamHot]. It closes store on every return path because the SDK's BufferedStorageBackend.Close does not (connection leak).
 func walkDataStore(
 	ctx context.Context,
 	cfg Config,

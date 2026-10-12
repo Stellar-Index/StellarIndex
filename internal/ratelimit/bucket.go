@@ -122,10 +122,8 @@ func New(rdb redis.Cmdable, limit int, window time.Duration, opts ...Option) *Bu
 // InProcess reports whether the Bucket runs on the in-process fallback (rdb was nil) rather than Redis, so the binary can log the enforcing backend.
 func (b *Bucket) InProcess() bool { return b.local != nil }
 
-// observeRedisFailure stamps the dwell-time clock + reports whether
-// it's elapsed. True → caller maps to [ErrThrottleUnavailable];
-// false → caller surfaces the wrapped Redis error and the handler
-// falls open. Disabled (negative dwellTime) always returns false.
+// observeRedisFailure stamps the dwell-time clock and reports whether it has elapsed: true maps to [ErrThrottleUnavailable], false
+// surfaces the wrapped Redis error and the handler falls open. A negative dwellTime disables it (always false).
 func (b *Bucket) observeRedisFailure() bool {
 	if b.dwellTime < 0 {
 		return false
@@ -142,10 +140,9 @@ func (b *Bucket) observeRedisFailure() bool {
 	return now.Sub(b.redisErrorSince) > b.dwellTime
 }
 
-// observeRedisSuccess advances the recovery streak. The fail-closed clock clears only after
-// dwellTime of UNBROKEN successes, so a flapping Redis trips fail-CLOSED rather than failing open
-// forever. A success after dwellTime with no failure also clears it, so an old outage cannot make
-// an unrelated blip fail closed.
+// observeRedisSuccess advances the recovery streak. The fail-closed clock clears only after dwellTime of UNBROKEN successes, so a
+// flapping Redis trips fail-CLOSED; a success after dwellTime with no failure also clears it, so an old outage cannot fail an
+// unrelated blip closed.
 func (b *Bucket) observeRedisSuccess() {
 	now := b.nowFn()
 	b.mu.Lock()
@@ -168,11 +165,9 @@ func (b *Bucket) Max() int { return b.max }
 // Window returns the configured window size.
 func (b *Bucket) Window() time.Duration { return b.window }
 
-// lua is the atomic rate-limit check. KEYS[1] is the key; ARGV is TTL seconds (window * 2), max,
-// and cost (>= 1). It returns [count, retry_after_seconds], with retry_after 0 when allowed.
-//
-// The expiry is armed when the post-increment count EQUALS the cost, i.e. this call created
-// the key. Keying it on 1 would leave a key first written by a cost-N charge with no TTL.
+// lua is the atomic rate-limit check. KEYS[1] is the key; ARGV is TTL seconds (window * 2), max, and cost (>= 1). It returns
+// [count, retry_after_seconds] (0 when allowed). Expiry is armed when the post-increment count EQUALS the cost: keying it on 1
+// would leave a key first written by a cost-N charge with no TTL.
 const lua = `
 local cost = tonumber(ARGV[3])
 local current = redis.call('INCRBY', KEYS[1], cost)
@@ -294,13 +289,9 @@ func clampCost(cost, effectiveMax int) int {
 	return cost
 }
 
-// localCharge is the in-process fixed-window path taken when rdb was nil. It mirrors the Redis
-// path's Result derivation so callers cannot tell the backends apart, and never errors: the
-// fallback exists to stay enforced when Redis is unavailable.
-//
-// The weight is spent as cost single-token takes: each is a map write under a mutex, cost is
-// bounded by the effective limit, and capacity/overflow routing stays in one implementation. The
-// verdict is read off the LAST take, so interleaving can only make it stricter, never looser.
+// localCharge is the in-process fixed-window path taken when rdb was nil; it mirrors the Redis Result derivation and never errors,
+// so enforcement survives a Redis outage. The weight is spent as cost single-token takes (cost is bounded by the limit); the verdict
+// is read off the LAST take, so interleaving can only make it stricter.
 func (b *Bucket) localCharge(key string, cost, effectiveMax int, minute int64) Result {
 	now := b.nowFn()
 	var (

@@ -108,10 +108,8 @@ func sweepStalePIDFiles(path string) {
 	}
 }
 
-// processAlive reports whether pid is addressable. Signal 0 performs the
-// permission + existence checks without delivering anything. A permission
-// error means the process EXISTS under another uid, which is alive for our
-// purposes; any other error (ESRCH) means it is gone.
+// processAlive reports whether pid is addressable. Signal 0 checks permission and existence without delivering anything. A
+// permission error means the process EXISTS under another uid (alive); any other error (ESRCH) means it is gone.
 func processAlive(pid int) bool {
 	p, err := os.FindProcess(pid) // never fails on unix
 	if err != nil {

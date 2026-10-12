@@ -458,10 +458,8 @@ func eventFromSwapMinterConfigSet(s SwapMinterConfigSet, observedAt time.Time) E
 	}
 }
 
-// eventFromTokenDecimalConfigAdded projects a decoded
-// TokenDecimalConfigAdded. `token` promotes to Token; the nested
-// config's canonical_decimals/local_decimals land flattened in
-// Attributes.
+// eventFromTokenDecimalConfigAdded projects a decoded TokenDecimalConfigAdded: `token` promotes to Token; the nested config's
+// canonical_decimals/local_decimals land flattened in Attributes.
 func eventFromTokenDecimalConfigAdded(t TokenDecimalConfigAdded, observedAt time.Time) Event {
 	return Event{
 		ContractID: t.ContractID,

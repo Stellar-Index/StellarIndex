@@ -29,11 +29,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// scamFlagTagSet is the lookup form of timescale.DirectoryScamFlagTags, which lives next to the
-// account_directory table because the /v1/assets ranking SQL uses it and storage cannot import
-// this package. It MUST mirror web/explorer/src/lib/directory-tags.ts (DIRECTORY_SCAM_FLAG_TAGS)
-// so every asset with a scam banner also has its price withheld and is demoted. Matched on
-// timescale.CanonicalDirectoryTag; scam_test.go and directory-tags.test.ts pin each side.
+// scamFlagTagSet is the lookup form of timescale.DirectoryScamFlagTags (kept beside account_directory because storage cannot import
+// this package). It MUST mirror web/explorer/src/lib/directory-tags.ts (DIRECTORY_SCAM_FLAG_TAGS); scam_test.go and
+// directory-tags.test.ts pin each side.
 var scamFlagTagSet = func() map[string]struct{} {
 	m := make(map[string]struct{}, len(timescale.DirectoryScamFlagTags))
 	for _, t := range timescale.DirectoryScamFlagTags {
@@ -228,20 +226,9 @@ func (g *ScamGate) Withheld(ctx context.Context, base canonical.Asset, surface s
 	return g.withheldLeg(ctx, base, surface)
 }
 
-// withheldLeg is the single-asset predicate both exported forms fold over: "is THIS asset's
-// issuer directory-scam-flagged?". Nil-receiver safe; fail-open on directory error.
-//
-// A CLASSIC asset is judged on its issuer G-address and a contract token on its own C-address;
-// native / fiat / crypto-CEX assets have no address to flag.
-//
-// The asset is first resolved to its CANONICAL family form (canonical.CanonicalAsset): a SAC
-// wrapper has no G-address, so without resolution a flagged issuer's price would stay servable via
-// the wrapper's C-address. XLM's SAC canonicalises to `native`, which has no issuer.
-//
-// A SAC with no `[supply].sac_wrappers` entry resolves to itself (a C-address cannot be inverted),
-// so a contract leg is matched against [ScamGate.flaggedSAC]: the derived SAC ids of every
-// registered classic asset whose issuer is flagged. Derivation, not metadata, is the trust anchor,
-// so a genuine SEP-41 token can never match.
+// withheldLeg is the single-asset predicate both exported forms fold over: is THIS asset's issuer directory-scam-flagged? Nil-receiver
+// safe; fail-open on directory error. Classic assets are judged on the issuer G-address, contract tokens on their C-address; the asset
+// is first resolved via canonical.CanonicalAsset, else a SAC wrapper would keep a flagged issuer's price servable ([ScamGate.flaggedSAC]).
 func (g *ScamGate) withheldLeg(ctx context.Context, asset canonical.Asset, surface string) bool {
 	if g == nil {
 		return false

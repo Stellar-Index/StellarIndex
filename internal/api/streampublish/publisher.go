@@ -145,10 +145,8 @@ func (p *Publisher) pollLoop(ctx context.Context, pair canonical.Pair) {
 	}
 }
 
-// tickOnce publishes one pair's latest price if ObservedAt advanced. It is best-effort: a reader
-// error logs at WARN so a Postgres outage does not take down other pairs. ErrPriceNotFound is
-// silent (no closed bucket, or outside the freshness window); ErrPriceWithheld publishes
-// price_withheld (see [Publisher.publishWithheld]).
+// tickOnce publishes one pair's latest price if ObservedAt advanced. Best-effort: a reader error logs at WARN so a Postgres outage
+// does not take down other pairs. ErrPriceNotFound is silent; ErrPriceWithheld publishes price_withheld ([Publisher.publishWithheld]).
 func (p *Publisher) tickOnce(ctx context.Context, pair canonical.Pair, topic string) {
 	pollCtx, cancel := context.WithTimeout(ctx, p.interval)
 	defer cancel()
@@ -216,10 +214,8 @@ func (p *Publisher) tickOnce(ctx context.Context, pair canonical.Pair, topic str
 	obs.StreamPublishTotal.WithLabelValues("price_stream").Inc()
 }
 
-// streamFlags is the subset of v1.Flags this publisher evaluates; a flag
-// it does not evaluate is absent rather than a false it never checked.
-// Frozen is set only on price_frozen: a frozen bucket is never published
-// as a price_update.
+// streamFlags is the subset of v1.Flags this publisher evaluates; an unevaluated flag is absent rather than a false it never checked.
+// Frozen is set only on price_frozen: a frozen bucket is never published as a price_update.
 type streamFlags struct {
 	Stale         bool `json:"stale"`
 	Frozen        bool `json:"frozen,omitempty"`
@@ -234,10 +230,8 @@ type frozenBucket struct {
 	WindowSeconds int         `json:"window_seconds"`
 }
 
-// frozenVerdict reads the freeze marker of every alias of the pair's base, as /v1/price does when
-// it cannot tell which alias the bucket came from. Any frozen alias governs; checked is true only
-// when every read succeeded, so an unknown verdict never travels as "confirmed not frozen". A read
-// error fails open to publishing without frozen_checked.
+// frozenVerdict reads the freeze marker of every alias of the pair's base, as /v1/price does. Any frozen alias governs; checked is
+// true only when every read succeeded, so an unknown verdict never travels as "confirmed not frozen". A read error fails open.
 func (p *Publisher) frozenVerdict(ctx context.Context, pair canonical.Pair) (frozen, checked bool) {
 	if p.frozen == nil {
 		return false, false
@@ -291,10 +285,8 @@ type withheldPair struct {
 	AsOf    v1.WireTime            `json:"as_of"`
 }
 
-// publishWithheld puts a withholding on the wire once per reason, so an
-// open stream reads it as withheld rather than as a pair with no trades.
-// Forgetting the last published bucket republishes it once the pair is
-// served again, even if no new bucket has closed since.
+// publishWithheld puts a withholding on the wire once per reason, so an open stream reads withheld rather than "no trades".
+// Forgetting the last published bucket republishes it once the pair is served again.
 func (p *Publisher) publishWithheld(pair canonical.Pair, topic string, reason v1.PriceWithheldReason) {
 	p.mu.Lock()
 	prev, seen := p.withheld[topic]

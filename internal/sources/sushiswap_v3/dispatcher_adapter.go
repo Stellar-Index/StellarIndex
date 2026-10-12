@@ -101,10 +101,8 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	}
 }
 
-// seedFromCreation registers a newly created pool in both the identity gate and the token map.
-// Matches has already proven the event came from a canonical factory, so the body's pool address
-// is trustworthy. Idempotent: the factory re-emits `pool_created` for a pool inside its creation
-// transaction, and a replay re-observes every event.
+// seedFromCreation registers a new pool in both the identity gate and the token map. Matches already proved the event came from a
+// canonical factory, so the body's pool address is trustworthy. Idempotent: the factory re-emits `pool_created` and replay re-observes.
 func (d *Decoder) seedFromCreation(ev events.Event) error {
 	fields, err := decodePoolCreated(ev.Value)
 	if err != nil {

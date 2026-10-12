@@ -133,10 +133,8 @@ func int256String(p xdr.Int256Parts) string {
 	return r.String()
 }
 
-// truncateDisplay bounds one rendered fragment.
-//
-// Cuts on a rune boundary: a byte slice through a multi-byte rune yields invalid UTF-8, which a
-// strict-UTF-8 sink rejects. The string is contract-supplied, so the input is attacker-chosen.
+// truncateDisplay bounds one rendered fragment. It cuts on a rune boundary: a byte slice through a multi-byte rune yields invalid
+// UTF-8, which a strict sink rejects (the string is contract-supplied, so attacker-chosen).
 func truncateDisplay(s string) string {
 	const maxLen = 120
 	if len(s) <= maxLen {

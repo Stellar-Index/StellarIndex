@@ -156,12 +156,8 @@ func (c *Client) PriceBatch(ctx context.Context, q PriceBatchQuery) (*Envelope[[
 	return &env, nil
 }
 
-// priceBatchGETMax / priceBatchPOSTMax mirror the server's
-// `priceBatchMaxAssets` / `priceBatchMaxAssetsPOST` constants
-// in `internal/api/v1/price.go`. Duplicating them here is
-// deliberate — the SDK ships SemVer-stable per ADR-0005, so
-// importing the unexported server-side constants would couple
-// SDK consumers to internal/.
+// priceBatchGETMax / priceBatchPOSTMax mirror the server's priceBatchMaxAssets / priceBatchMaxAssetsPOST in internal/api/v1/price.go.
+// Duplicated on purpose: the SDK is SemVer-stable (ADR-0005), so importing server constants would couple consumers to internal/.
 const (
 	priceBatchGETMax  = 100
 	priceBatchPOSTMax = 1000

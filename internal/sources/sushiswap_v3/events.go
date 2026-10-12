@@ -28,10 +28,8 @@ import (
 // SourceName is the stable canonical source string: the trades.source value, projector cursor sub_source key, metrics label and config.IngestionConfig.EnabledSources entry.
 const SourceName = "sushiswap_v3"
 
-// Event names — topic[0] of every SushiSwap V3 pool/factory event is a
-// one-element Symbol topic vector holding one of these literals. Verified
-// against the lake: these seven pool symbols plus the factory's four are
-// the COMPLETE emitted surface over the protocol's whole history.
+// Event names: topic[0] of every SushiSwap V3 event is a one-element Symbol vector. Verified against the lake, these seven pool and
+// four factory symbols are the COMPLETE emitted surface.
 const (
 	// Pool events.
 	EventSwap    = "swap"
@@ -523,12 +521,9 @@ func MainnetGatedSet() []string {
 	return out
 }
 
-// classify decides what kind of SushiSwap V3 event this is, by byte-equality on the pre-encoded
-// topic[0] Symbol. Returns "" for anything unrecognized.
-//
-// Topic shape carries no identity (one-element Symbol vector; `swap` / `mint` / `burn` are
-// among the most-emitted pubnet symbols), so classify answers only "which of our event names",
-// never "is this ours"; that is [Decoder.Matches]'s job, from contract identity.
+// classify decides which SushiSwap V3 event this is, by byte-equality on the pre-encoded topic[0] Symbol ("" if unrecognized). Topic
+// shape carries no identity (`swap` / `mint` / `burn` are among the most-emitted pubnet symbols), so "is this ours" is
+// [Decoder.Matches]'s job, from contract identity.
 func classify(e *events.Event) string {
 	if len(e.Topic) != 1 {
 		return ""

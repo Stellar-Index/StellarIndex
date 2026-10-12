@@ -420,10 +420,9 @@ func (g *SubstanceGate) logTransition(base, quote canonical.Asset, allowed bool,
 	}
 }
 
-// measureUnion is the alias-union measurement shared by the live and point-in-time gates: `read`
-// measures all spellings of base against all of quote as ONE market. One read, not a per-spelling
-// fold, since legs trading in the same minutes would be counted repeatedly. measured=false means
-// an infrastructure error; the entry's expiry is unset.
+// measureUnion is the alias-union measurement shared by the live and point-in-time gates: `read` measures all spellings of base
+// against all of quote as ONE market (a per-spelling fold would count legs trading in the same minutes repeatedly). measured=false
+// means an infrastructure error; the entry's expiry is unset.
 func (g *SubstanceGate) measureUnion(
 	ctx context.Context, base, quote canonical.Asset, policy SubstancePolicy, measuredAt, windowEnd time.Time,
 	read func(ctx context.Context, bases, quotes []canonical.Asset) (timescale.MarketSubstance, error),
@@ -454,13 +453,9 @@ func (g *SubstanceGate) measureUnion(
 	}, true
 }
 
-// hourGrainPolicy is the floor for legs counted at HOUR grain (a historical instant, see
-// [SubstanceGate.AllowedAt]): the strictest floor that never refuses a market the minute-grain
-// policy p admits, so history and live agree under every legal policy.
-//
-// Buckets: n distinct minutes fill at least ceil(n/60) hours, and a span of an hour or more
-// puts the first and last minute in different hours. Span: minutes S apart sit at least
-// floor(S/1h) whole hours apart. Volume is grain-independent.
+// hourGrainPolicy is the floor for legs counted at HOUR grain ([SubstanceGate.AllowedAt]): the strictest floor that never refuses a
+// market the minute-grain policy p admits. n distinct minutes fill at least ceil(n/60) hours; minutes S apart sit at least floor(S/1h)
+// hours apart; volume is grain-independent.
 func hourGrainPolicy(p SubstancePolicy) SubstancePolicy {
 	const minutesPerHour = int64(time.Hour / time.Minute)
 	h := p
@@ -472,14 +467,9 @@ func hourGrainPolicy(p SubstancePolicy) SubstancePolicy {
 	return h
 }
 
-// policyAt returns the grain a point-in-time measurement is counted at and the floor that grain
-// is held to, for an instant `age` behind now.
-//
-// The boundary is the point-in-time READER's own ([timescale.PriceAtMinuteRungMaxAge]): inside it
-// the served number can be a raw prices_1m bucket, the attacker-authorable minute this gate is
-// for, so the live grain and floor apply with only the window moved. 48h + one window is inside
-// every prices_1m retention the schema has carried. Past it the reader serves hour and day bars,
-// so legs are counted on prices_1h, which is indefinite and re-materialised with prices_1d.
+// policyAt returns the grain a point-in-time measurement is counted at and its floor, for an instant `age` behind now. Inside
+// [timescale.PriceAtMinuteRungMaxAge] the served number can be a raw prices_1m bucket (attacker-authorable), so live grain applies;
+// past it the reader serves hour/day bars and legs are counted on prices_1h.
 func (g *SubstanceGate) policyAt(age time.Duration) (timescale.HistoryGranularity, SubstancePolicy) {
 	if age <= timescale.PriceAtMinuteRungMaxAge {
 		return timescale.Granularity1m, g.policy

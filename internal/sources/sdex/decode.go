@@ -25,10 +25,8 @@ func matchesTradeOp(op xdr.Operation) bool {
 	return false
 }
 
-// extractClaimAtoms pulls the OffersClaimed slice from whichever
-// op-result variant this op produced. Returns nil when the op
-// succeeded but matched no offers (no trade occurred), or when the
-// op failed — both are "no trades," not an error.
+// extractClaimAtoms pulls the OffersClaimed slice from whichever op-result variant this op produced; nil when the op matched no
+// offers or failed (both are "no trades", not an error).
 func extractClaimAtoms(op xdr.Operation, result xdr.OperationResult) []xdr.ClaimAtom { //nolint:gocognit // switch over 5 trade op types, with a dual result-arm fallback for passive offers; linear and clearer unsplit.
 	if result.Code != xdr.OperationResultCodeOpInner {
 		return nil
@@ -92,10 +90,8 @@ func extractClaimAtoms(op xdr.Operation, result xdr.OperationResult) []xdr.Claim
 	return nil
 }
 
-// decodeClaimAtom turns one ClaimAtom into a canonical.Trade. tradeIndex is the claim's
-// 0-based position within the op, used with a fanout stride to make OpIndex unique for
-// multi-claim trades. Taker is the tx-level source for every claim: later claims are chained
-// fills of the same offer-side action.
+// decodeClaimAtom turns one ClaimAtom into a canonical.Trade. tradeIndex is the claim's 0-based position within the op, used with a
+// fanout stride to make OpIndex unique. Taker is the tx-level source for every claim (later claims are chained fills).
 func decodeClaimAtom(
 	atom xdr.ClaimAtom,
 	ledgerSeq uint32,
@@ -191,12 +187,9 @@ func decodeClaimAtom(
 	}, nil
 }
 
-// xdrAssetToCanonical converts an xdr.Asset to canonical.Asset.
-//
-// The rule for which on-chain assets are representable, and so which fills become trade
-// rows, lives in [canonical.AssetFromXDR] so internal/sdexclaim applies the identical test;
-// otherwise the census and ClickHouse extractor would count fills this function rejects and
-// their "should equal COUNT(trades)" oracles could never balance.
+// xdrAssetToCanonical converts an xdr.Asset to canonical.Asset. Which on-chain assets are representable lives in
+// [canonical.AssetFromXDR] so internal/sdexclaim applies the identical test; otherwise the census and extractor would count fills
+// this function rejects and their "should equal COUNT(trades)" oracles could not balance.
 func xdrAssetToCanonical(a xdr.Asset) (canonical.Asset, error) {
 	return canonical.AssetFromXDR(a)
 }

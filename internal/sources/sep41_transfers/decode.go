@@ -38,10 +38,8 @@ func classify(ev *events.Event) string {
 	}
 }
 
-// decodeTransfer parses ("transfer", from, to[, sep0011_asset]) +
-// i128 OR map{amount, to_muxed_id} body. Per AGENTS.md SEP-41
-// "transfer data EITHER simple i128 OR map" — type-test before
-// MustI128.
+// decodeTransfer parses ("transfer", from, to[, sep0011_asset]) with an i128 OR map{amount, to_muxed_id} body (AGENTS.md SEP-41):
+// type-test before MustI128.
 func decodeTransfer(ev *events.Event) (string, string, *big.Int, error) {
 	if len(ev.Topic) < 3 {
 		return "", "", nil, fmt.Errorf("%w: transfer expects 3 topics, got %d", ErrShortTopic, len(ev.Topic))
@@ -140,10 +138,8 @@ func decodeApprove(ev *events.Event) (string, string, *big.Int, uint32, error) {
 	return from, spender, amt.BigInt(), liveUntil, nil
 }
 
-// decodeSetAdmin parses ("set_admin"[, admin]) + Address(new_admin).
-// Per stellar-docs SAC example token contract, the SetAdmin event
-// uses `data_format = "single-value"` with the new admin Address
-// in the body.
+// decodeSetAdmin parses ("set_admin"[, admin]) + Address(new_admin); per the SAC example token contract the event uses
+// `data_format = "single-value"` with the new admin in the body.
 func decodeSetAdmin(ev *events.Event) (string, string, error) {
 	from, err := decodeOptionalAdminTopic(ev)
 	if err != nil {
@@ -163,10 +159,8 @@ func decodeSetAdmin(ev *events.Event) (string, string, error) {
 	return from, newAdmin, nil
 }
 
-// decodeSetAuthorized parses ("set_authorized", id[, sep0011_asset]) + bool,
-// and the legacy SAC ("set_authorized", admin, id, sep0011_asset) that
-// CAP-67 replaced. Topic count does not disambiguate, so the legacy form is
-// recognised by topic[2] being an Address, as sep41_supply does for mint.
+// decodeSetAuthorized parses ("set_authorized", id[, sep0011_asset]) + bool, and the legacy SAC ("set_authorized", admin, id,
+// sep0011_asset) that CAP-67 replaced. Topic count does not disambiguate; the legacy form is recognised by topic[2] being an Address.
 func decodeSetAuthorized(ev *events.Event) (string, bool, error) {
 	if len(ev.Topic) < 2 {
 		return "", false, fmt.Errorf("%w: set_authorized expects >=2 topics, got %d", ErrShortTopic, len(ev.Topic))

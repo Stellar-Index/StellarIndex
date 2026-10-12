@@ -136,10 +136,8 @@ func (e *APIError) IsRateLimited() bool { return e.Status == 429 }
 // IsServerError reports whether the error is a 5xx.
 func (e *APIError) IsServerError() bool { return e.Status >= 500 }
 
-// parseAPIError decodes a problem+json body into an [APIError].
-// Falls back to a status-only error when the body isn't JSON or
-// doesn't have the expected shape. `retryAfter` is the raw value of
-// the HTTP `Retry-After` response header (empty when absent).
+// parseAPIError decodes a problem+json body into an [APIError], falling back to a status-only error when the body is not JSON or
+// lacks the expected shape. retryAfter is the raw Retry-After header (empty when absent).
 func parseAPIError(status int, contentType, retryAfter string, body []byte) *APIError {
 	apiErr := &APIError{Status: status, RetryAfter: parseRetryAfter(retryAfter)}
 
@@ -185,11 +183,8 @@ func parseAPIError(status int, contentType, retryAfter string, body []byte) *API
 	return apiErr
 }
 
-// parseRetryAfter converts an HTTP `Retry-After` header value into a
-// back-off duration. Per RFC 9110 §10.2.3 the value is either a
-// non-negative delta-seconds integer or an HTTP-date. Returns 0 for an
-// empty/unparseable header, or for an HTTP-date already in the past
-// (so callers never sleep on a negative duration).
+// parseRetryAfter converts a Retry-After header (RFC 9110 §10.2.3: delta-seconds or HTTP-date) into a back-off duration. Returns 0
+// for empty, unparseable, or past-dated values so callers never sleep on a negative duration.
 func parseRetryAfter(v string) time.Duration {
 	v = strings.TrimSpace(v)
 	if v == "" {
@@ -233,10 +228,8 @@ func parseRetryAfter(v string) time.Duration {
 	return 0
 }
 
-// problemJSON is the wire shape of an RFC 9457 problem+json
-// response. Mirrors internal/api/v1.Problem, and the spec's `Problem`
-// schema — TestProblemJSONMatchesSpec holds the two in lockstep, so a
-// member added to one and not the other fails rather than drifting.
+// problemJSON is the wire shape of an RFC 9457 problem+json response. It mirrors internal/api/v1.Problem and the spec's Problem
+// schema; TestProblemJSONMatchesSpec holds them in lockstep.
 type problemJSON struct {
 	Type            string     `json:"type"`
 	Title           string     `json:"title"`

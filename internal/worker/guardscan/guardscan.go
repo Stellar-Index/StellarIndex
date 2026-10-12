@@ -206,14 +206,9 @@ func (sc *Scanner) ScanFile(path string) ([]Site, error) {
 	return sites, nil
 }
 
-// recurseIntoCallee covers nested goroutines: a resolved callee may itself start goroutines, in
-// another file or package, that ScanFile (one file only) would never see. It walks the callee
-// body for its OWN `go` statements and recurses, attributing each site to the callee's file and
-// enclosing function.
-//
-// visited is keyed by "file:line" of the declaration (stable across the several *token.FileSet
-// values in play) and seeded with every decl the caller walks directly, so no decl is re-added
-// and a recursive or mutually-recursive spawn helper is descended into once.
+// recurseIntoCallee covers nested goroutines: a resolved callee may start goroutines in another file or package that ScanFile would
+// never see. visited is keyed "file:line" of the declaration and seeded with every decl the caller walks, so a (mutually) recursive
+// spawn helper is descended into once.
 func (r *resolver) recurseIntoCallee(callee *resolvedCallee, visited map[string]bool, sites *[]Site) {
 	if callee == nil || callee.decl.Body == nil {
 		return
@@ -249,10 +244,8 @@ type pkgIndex struct {
 	files map[*ast.FuncDecl]*ast.File
 }
 
-// resolvedCallee carries what a recursive scan needs to look inside a
-// named callee's own body for further `go` statements: the declaration,
-// the file it lives in (for import resolution) and the package index it
-// belongs to (for resolving its own local calls).
+// resolvedCallee carries what a recursive scan needs to look inside a named callee: its declaration, its file (for import
+// resolution) and its package index (for resolving its own local calls).
 type resolvedCallee struct {
 	decl *ast.FuncDecl
 	file *ast.File
@@ -374,10 +367,8 @@ func (r *resolver) resolveSelector(s *Site, sel *ast.SelectorExpr, file *ast.Fil
 	return &resolvedCallee{decl: decl, file: idx.files[decl], self: idx, fset: idx.fset}
 }
 
-// typeOfIdent finds a local identifier's declared type without a type checker, for the three
-// shapes with a written-down type: the enclosing function's receiver/parameters/named results,
-// `var x pkg.T`, and `x := pkg.NewT(…)` with NewT declared in a parseable package. Anything else
-// returns false, which the caller turns into KindUnresolved.
+// typeOfIdent finds a local identifier's declared type without a type checker, for three written-down shapes: the enclosing func's
+// receiver/params/results, `var x pkg.T`, and `x := pkg.NewT(…)`. Anything else returns false (the caller yields KindUnresolved).
 func (r *resolver) typeOfIdent(name string, file *ast.File, enclosing *ast.FuncDecl, self *pkgIndex) (pkgAlias, typeName string, ok bool) {
 	if enclosing != nil {
 		if p, t, ok := typeFromFieldLists(name, enclosing.Recv, enclosing.Type.Params, enclosing.Type.Results); ok {
@@ -731,10 +722,8 @@ func importPathFor(file *ast.File, local string) (string, bool) {
 	return "", false
 }
 
-// lastSegment is the conventional package name of an unaliased import.
-// It is a convention, not a guarantee (a package may declare a name that
-// differs from its directory), which is one more reason an unresolved
-// site fails rather than passes.
+// lastSegment is the conventional package name of an unaliased import. A convention, not a guarantee (a package may declare a name
+// differing from its directory), so an unresolved site fails rather than passes.
 func lastSegment(path string) string {
 	if i := strings.LastIndex(path, "/"); i >= 0 {
 		return path[i+1:]
