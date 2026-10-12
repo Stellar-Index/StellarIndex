@@ -3,6 +3,7 @@ package clickhouse
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -424,4 +425,216 @@ func TestContractCodeHistory_GenesisWatermark(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestContractWasmHash_PartialIndexMissFallsBackToLegacy: the instance-changes index probe is table-global,
+// so a MISS for a not-yet-backfilled contract must fall through to the legacy current-state read, not a false
+// 404. Only a positive index verdict short-circuits.
+func TestContractWasmHash_PartialIndexMissFallsBackToLegacy(t *testing.T) {
+	wantHash := wasmHashN(0xCD)
+
+	var legacyRead bool
+	conn := &stubConn{}
+	conn.respond = func(q string) (driver.Rows, error) {
+		switch {
+		case strings.Contains(q, "contract_instance_changes") && strings.Contains(q, "SELECT ledger_seq"):
+			// Availability probe: the index EXISTS and is non-empty
+			// (some other contract has been backfilled) -> "usable".
+			return &stubRows{data: [][]any{{uint32(1)}}}, nil
+		case strings.Contains(q, "SELECT tx_hash, intra_ledger_seq FROM stellar.contract_instance_changes"):
+			// Key-shape probe: the tx-keyed table.
+			return &stubRows{}, nil
+		case strings.Contains(q, "contract_instance_changes") && strings.Contains(q, "is_sac"):
+			// Per-contract lookup: THIS contract's instance write has not
+			// been backfilled yet -> zero rows (a PARTIAL-coverage miss,
+			// invisible to the probe).
+			return &stubRows{}, nil
+		case strings.Contains(q, "ledger_entries_current"):
+			// Legacy current-state read resolves the executable.
+			legacyRead = true
+			return &stubRows{data: [][]any{{instanceEntryB64(t, wantHash)}}}, nil
+		default:
+			t.Fatalf("unexpected query: %s", q)
+			return nil, nil
+		}
+	}
+	r := &ExplorerReader{conn: conn}
+
+	var cid [32]byte
+	copy(cid[:], []byte("contract-id-32-bytes-padding----"))
+
+	got, ok, err := r.contractWasmHash(context.Background(), cid)
+	if err != nil {
+		t.Fatalf("contractWasmHash returned error: %v", err)
+	}
+	if !ok {
+		t.Fatal("contractWasmHash returned ok=false on a partial-index miss: an empty " +
+			"per-contract walk against an applied-but-still-backfilling index was trusted " +
+			"as authoritative 'no wasm' (REC-04) instead of falling through to the legacy read")
+	}
+	if got != wantHash {
+		t.Fatalf("resolved hash = %x, want %x (must come from the legacy current-state read)", got, wantHash)
+	}
+	if !legacyRead {
+		t.Fatal("the legacy ledger_entries_current read was never issued: the index miss " +
+			"was not treated as 'unknown, fall back'")
+	}
+}
+
+func TestInstanceGenesisCovers_Below(t *testing.T) {
+	conn := &stubConn{}
+	conn.respond = func(string) (driver.Rows, error) { return &stubRows{data: [][]any{{uint32(100)}}}, nil }
+	r := newExplorerReader(conn)
+	if !r.instanceGenesisCovers(context.Background(), 100) {
+		t.Error("ledger at watermark must be covered")
+	}
+	if r.instanceGenesisCovers(context.Background(), 101) {
+		t.Error("ledger above watermark must not be covered")
+	}
+}
+
+// TestContractWasmHash_IndexedResolvesPreCaptureContract pins hop 1 of the wasm lookup: a contract whose
+// instance entry predates live capture resolves its executable (and SAC verdict) from the genesis-complete
+// contract_instance_changes index, without touching ledger_entries_current.
+func TestContractWasmHash_IndexedResolvesPreCaptureContract(t *testing.T) {
+	wantHash := wasmHashN(0xCD)
+	wantHex := hex.EncodeToString(wantHash[:])
+
+	conn := &stubConn{}
+	conn.respond = func(q string) (driver.Rows, error) {
+		switch {
+		case strings.Contains(q, "ledger_entries_current"):
+			t.Fatalf("indexed path must not read ledger_entries_current: %s", q)
+			return nil, nil
+		case strings.Contains(q, "contract_instance_changes LIMIT 1"): // probe
+			return &stubRows{data: [][]any{{uint32(1)}}}, nil
+		default: // indexed hash lookup
+			return &stubRows{data: [][]any{{uint8(0), wantHex}}}, nil
+		}
+	}
+	r := &ExplorerReader{conn: conn}
+
+	var cid xdr.Hash
+	copy(cid[:], []byte("contract-id-32-bytes-padding----"))
+	got, ok, err := r.contractWasmHash(context.Background(), cid)
+	if err != nil || !ok {
+		t.Fatalf("contractWasmHash: ok=%v err=%v", ok, err)
+	}
+	if got != wantHash {
+		t.Fatalf("hash = %x, want %x", got, wantHash)
+	}
+
+	// SAC verdict is authoritative from the index (no legacy fallback).
+	conn2 := &stubConn{}
+	conn2.respond = func(q string) (driver.Rows, error) {
+		switch {
+		case strings.Contains(q, "ledger_entries_current"):
+			t.Fatalf("SAC verdict must not fall through to legacy: %s", q)
+			return nil, nil
+		case strings.Contains(q, "contract_instance_changes LIMIT 1"):
+			return &stubRows{data: [][]any{{uint32(1)}}}, nil
+		default:
+			return &stubRows{data: [][]any{{uint8(1), ""}}}, nil
+		}
+	}
+	r2 := &ExplorerReader{conn: conn2}
+	if _, _, err := r2.contractWasmHash(context.Background(), cid); !errors.Is(err, ErrContractIsSAC) {
+		t.Fatalf("SAC row: err = %v, want ErrContractIsSAC", err)
+	}
+}
+
+// replayStub answers ReplayCodeHistory's reads: the genesis watermark, the
+// tx-key probe, the indexed timeline and the latest-instance lookup.
+type replayStub struct {
+	watermark    []any // nil = no row
+	watermarkErr error
+	timeline     [][]any
+	latest       [][]any
+}
+
+func (s replayStub) conn(t *testing.T) *stubConn {
+	t.Helper()
+	c := &stubConn{}
+	c.respond = func(q string) (driver.Rows, error) {
+		switch {
+		case strings.Contains(q, "entry_history_watermark"):
+			if s.watermarkErr != nil {
+				return nil, s.watermarkErr
+			}
+			if s.watermark == nil {
+				return &stubRows{}, nil
+			}
+			return &stubRows{data: [][]any{s.watermark}}, nil
+		case strings.Contains(q, "SELECT tx_hash, intra_ledger_seq FROM stellar.contract_instance_changes LIMIT 1"):
+			return &stubRows{data: [][]any{{"", uint32(0)}}}, nil
+		case strings.Contains(q, "SELECT ledger_seq, close_time, wasm_hash"):
+			return &stubRows{data: s.timeline}, nil
+		case strings.Contains(q, "SELECT is_sac, wasm_hash"):
+			return &stubRows{data: s.latest}, nil
+		}
+		t.Fatalf("unexpected query: %s", q)
+		return nil, nil
+	}
+	return c
+}
+
+func TestReplayCodeHistory(t *testing.T) {
+	h := wasmHashN(0xAB)
+	hashHex := hex.EncodeToString(h[:])
+	base := time.Unix(1700000000, 0).UTC()
+	oneVersion := [][]any{{uint32(100), base, hashHex}}
+
+	t.Run("watermark 0 refuses", func(t *testing.T) {
+		c := replayStub{watermark: []any{uint32(0)}, timeline: oneVersion}.conn(t)
+		_, err := (&ExplorerReader{conn: c}).ReplayCodeHistory(context.Background(), testContractID)
+		if !errors.Is(err, ErrInstanceHistoryIncomplete) {
+			t.Fatalf("err = %v, want ErrInstanceHistoryIncomplete", err)
+		}
+		for _, q := range c.queries {
+			if strings.Contains(q, "wasm_hash") {
+				t.Fatalf("read a timeline without the genesis watermark: %s", q)
+			}
+		}
+	})
+	t.Run("watermark read error refuses", func(t *testing.T) {
+		boom := errors.New("boom")
+		c := replayStub{watermarkErr: boom, timeline: oneVersion}.conn(t)
+		_, err := (&ExplorerReader{conn: c}).ReplayCodeHistory(context.Background(), testContractID)
+		if !errors.Is(err, boom) {
+			t.Fatalf("err = %v, want the watermark read error", err)
+		}
+	})
+	t.Run("versions served", func(t *testing.T) {
+		c := replayStub{watermark: []any{uint32(60_000_000)}, timeline: oneVersion}.conn(t)
+		got, err := (&ExplorerReader{conn: c}).ReplayCodeHistory(context.Background(), testContractID)
+		if err != nil || len(got) != 1 || got[0].WasmHash != hashHex || got[0].Ledger != 100 {
+			t.Fatalf("got %+v, %v; want one version %s at 100", got, err, hashHex)
+		}
+	})
+	t.Run("truncated refuses", func(t *testing.T) {
+		rows := make([][]any, contractCodeHistoryMaxRows)
+		for i := range rows {
+			hi := wasmHashN(byte(i % 2))
+			rows[i] = []any{uint32(i + 1), base, hex.EncodeToString(hi[:])}
+		}
+		c := replayStub{watermark: []any{uint32(60_000_000)}, timeline: rows}.conn(t)
+		_, err := (&ExplorerReader{conn: c}).ReplayCodeHistory(context.Background(), testContractID)
+		if !errors.Is(err, ErrCodeHistoryTruncated) {
+			t.Fatalf("err = %v, want ErrCodeHistoryTruncated", err)
+		}
+	})
+	t.Run("no instance rows refuses", func(t *testing.T) {
+		c := replayStub{watermark: []any{uint32(60_000_000)}}.conn(t)
+		_, err := (&ExplorerReader{conn: c}).ReplayCodeHistory(context.Background(), testContractID)
+		if !errors.Is(err, ErrContractWasmUnresolved) {
+			t.Fatalf("err = %v, want ErrContractWasmUnresolved", err)
+		}
+	})
+	t.Run("SAC", func(t *testing.T) {
+		c := replayStub{watermark: []any{uint32(60_000_000)}, latest: [][]any{{uint8(1), ""}}}.conn(t)
+		_, err := (&ExplorerReader{conn: c}).ReplayCodeHistory(context.Background(), testContractID)
+		if !errors.Is(err, ErrContractIsSAC) {
+			t.Fatalf("err = %v, want ErrContractIsSAC", err)
+		}
+	})
 }
