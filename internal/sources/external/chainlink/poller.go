@@ -20,11 +20,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// Poller implements external.Poller for Chainlink Data Feeds.
-//
-// It emits one canonical.OracleUpdate per new (feed_address, roundId). The dedup cache is
-// in-memory, so the first poll after a restart re-emits the latest round per feed; the storage
-// PK's ON CONFLICT rejects that idempotently. The runner serialises PollOnce per source.
+// Poller implements external.Poller for Chainlink Data Feeds, emitting one OracleUpdate per new (feed_address, roundId); the dedup cache is in-memory, so a restart re-emits the latest round, which the storage PK rejects idempotently.
 type Poller struct {
 	// Client is the EVM JSON-RPC client for the operator-supplied endpoint.
 	Client *Client
@@ -203,12 +199,7 @@ func (p *Poller) pollFeedOnce(ctx context.Context, pair canonical.Pair, spec Fee
 	return pollResult{update: u, pair: pair, round: rnd}, true
 }
 
-// PollOnce implements external.Poller: one OracleUpdate per pair whose round is new, never
-// trades (Chainlink is oracle-class).
-//
-// Per-feed failures (including stale and carried-forward rounds) are logged and counted on
-// stellarindex_chainlink_feed_polls_total, not bubbled, so one bad feed cannot stop the others.
-// At most p.Concurrency eth_call requests run at once, for shared RPC endpoints.
+// PollOnce implements external.Poller: one OracleUpdate per pair whose round is new, never trades; per-feed failures are logged and counted, not bubbled, and at most p.Concurrency eth_calls run at once.
 func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canonical.Trade, []canonical.OracleUpdate, error) { //nolint:gocognit,gocyclo // dispatch-heavy; splitting hurts readability
 	logger := p.Logger
 	if logger == nil {

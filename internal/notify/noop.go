@@ -5,21 +5,13 @@ import (
 	"sync"
 )
 
-// NoopSender is a test double: it records every Send (readable through Sent / Last) without
-// dispatching, and reports success.
-//
-// A running binary must never fall back to it when the provider credential is missing: nothing
-// outside the process can read Sent, so the mail is lost while the nil return is counted as
-// result="sent". A deployment with no credential wires [UnconfiguredSender], whose Send errors.
-//
-// Validation still runs, so tests cannot pass with a template that would fail at first real send.
+// NoopSender is a test double that records every Send without dispatching and reports success; a running binary must NEVER fall back to it when the credential is missing (wire UnconfiguredSender, whose Send errors), and validation still runs.
 type NoopSender struct {
 	mu   sync.Mutex
 	Sent []Message
 }
 
-// Send records the message after running the same validation
-// the real provider would.
+// Send records the message after running the same validation the real provider would.
 func (n *NoopSender) Send(_ context.Context, msg Message) error {
 	if err := validate(msg); err != nil {
 		return err
@@ -37,8 +29,7 @@ func (n *NoopSender) SentCount() int {
 	return len(n.Sent)
 }
 
-// Last returns the most-recently-sent message; ok=false if
-// none yet.
+// Last returns the most-recently-sent message; ok=false if none yet.
 func (n *NoopSender) Last() (Message, bool) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -48,8 +39,7 @@ func (n *NoopSender) Last() (Message, bool) {
 	return n.Sent[len(n.Sent)-1], true
 }
 
-// Reset clears the recorded slice — for tests that mint
-// multiple users and want to inspect each round in isolation.
+// Reset clears the recorded slice, for tests that inspect each round in isolation.
 func (n *NoopSender) Reset() {
 	n.mu.Lock()
 	defer n.mu.Unlock()

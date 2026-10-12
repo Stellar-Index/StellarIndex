@@ -8,9 +8,7 @@ import (
 	"strings"
 )
 
-// Message is the transactional-email envelope every Sender accepts. From may carry a display
-// name ("Name <addr@example>"); each To element must be a bare [CanonicalRecipient] address,
-// which validate enforces. Resend sends HTML and Text as multipart.
+// Message is the transactional-email envelope every Sender accepts; From may carry a display name, and each To element must be a bare CanonicalRecipient address, which validate enforces.
 type Message struct {
 	From    string
 	To      []string
@@ -21,32 +19,24 @@ type Message struct {
 	Tags map[string]string
 }
 
-// Sender ships Messages. Concrete impls must be safe for
-// concurrent use.
+// Sender ships Messages; concrete implementations must be safe for concurrent use.
 type Sender interface {
 	Send(ctx context.Context, msg Message) error
 }
 
-// ErrInvalidMessage is returned when a message fails pre-send validation. It is wrapped with %w
-// so callers can map it with errors.Is.
+// ErrInvalidMessage is returned when a message fails pre-send validation, wrapped with %w so callers can map it with errors.Is.
 var ErrInvalidMessage = errors.New("notify: invalid message")
 
-// ErrProviderRejected is returned when the provider rejected the message (bad From, bad recipient,
-// unverified domain). It is distinct from ErrTransient so callers can drop rather than retry.
+// ErrProviderRejected is returned when the provider rejected the message (bad From, bad recipient, unverified domain); distinct from ErrTransient so callers drop rather than retry.
 var ErrProviderRejected = errors.New("notify: provider rejected")
 
-// ErrTransient indicates a 429 / 5xx / network error from the
-// provider. [ResendSender] has already spent its bounded retries.
+// ErrTransient indicates a 429 / 5xx / network error from the provider, after ResendSender has spent its bounded retries.
 var ErrTransient = errors.New("notify: transient provider failure")
 
-// ErrNotConfigured is returned by a transport with no provider credential. It is a FAILURE,
-// never a success: counting it as sent would hide undeliverable sign-in mail from the
-// failure-ratio alert.
+// ErrNotConfigured is returned by a transport with no provider credential; it is a FAILURE, never a success, since counting it as sent would hide undeliverable sign-in mail from the failure-ratio alert.
 var ErrNotConfigured = errors.New("notify: mail transport is not configured")
 
-// UnconfiguredSender is the transport for a deployment with no provider credential. Every Send
-// fails with ErrNotConfigured, so missing mail is an error at each call site. Wire this, not
-// [NoopSender] (which reports success), whenever production config lacks the credential.
+// UnconfiguredSender is the transport for a deployment with no provider credential: every Send fails with ErrNotConfigured; wire this, not NoopSender (which reports success), whenever production config lacks the credential.
 type UnconfiguredSender struct {
 	// Reason names WHAT is missing (e.g. the unset env var). It is appended to the error, so it
 	// must never carry a credential value or any part of one.
@@ -64,10 +54,7 @@ func (u UnconfiguredSender) Send(context.Context, Message) error {
 // MailConfigured reports false: there is no credential to send with.
 func (UnconfiguredSender) MailConfigured() bool { return false }
 
-// IsUnconfigured reports whether s is known, before any Send, to be unable to deliver: nil, or
-// a transport whose optional `MailConfigured() bool` method returns false. Call sites refuse up
-// front, before minting a token or promising an email. A Sender without the method is taken at
-// its word; its Send error is the signal.
+// IsUnconfigured reports whether s is known, before any Send, to be unable to deliver: nil, or a transport whose optional `MailConfigured() bool` returns false; a Sender without the method is taken at its word.
 func IsUnconfigured(s Sender) bool {
 	if s == nil {
 		return true
@@ -81,13 +68,10 @@ func IsUnconfigured(s Sender) bool {
 // maxRecipientLen is the RFC 5321 §4.5.3.1.3 path limit less the angle brackets.
 const maxRecipientLen = 254
 
-// ErrInvalidRecipient is returned by [CanonicalRecipient] for input
-// that is not exactly one deliverable mailbox.
+// ErrInvalidRecipient is returned by CanonicalRecipient for input that is not exactly one deliverable mailbox.
 var ErrInvalidRecipient = errors.New("notify: invalid recipient address")
 
-// CanonicalRecipient reduces raw input to the one spelling of a mailbox that every mail-keyed
-// store and Message.To uses: the lowercased RFC 5322 addr-spec without display name or angle
-// brackets. Otherwise `"x" <a@b.com>` and `a@b.com` become distinct accounts and throttle keys.
+// CanonicalRecipient reduces raw input to the one lowercased RFC 5322 addr-spec spelling every mail-keyed store and Message.To uses, so display-name and bare forms cannot become distinct accounts and throttle keys.
 func CanonicalRecipient(raw string) (string, error) {
 	addr, err := mail.ParseAddress(strings.ToLower(strings.TrimSpace(raw)))
 	if err != nil {

@@ -13,9 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// Result is the outcome of one divergence comparison. Carries
-// enough detail for both the aggregator's flag-gating decision and
-// the operator's diagnostic dashboards.
+// Result is the outcome of one divergence comparison, with enough detail for the aggregator's flag-gating decision and operator dashboards.
 type Result struct {
 	// Pair is the pair being compared.
 	Pair canonical.Pair
@@ -104,8 +102,7 @@ type CompareOptions struct {
 	OverallTimeout time.Duration
 }
 
-// DefaultPerReferenceTimeout bounds each price-reference call when
-// the caller sets none.
+// DefaultPerReferenceTimeout bounds each price-reference call when the caller sets none.
 const DefaultPerReferenceTimeout = 5 * time.Second
 
 // overallTimeoutFactor scales PerReferenceTimeout into the default overall budget; references run concurrently, so 2x leaves slack while still bounding the call.
@@ -255,9 +252,7 @@ func collectOutcomes(
 	return prices
 }
 
-// CountAgreeing returns how many `sources` corroborate `ourPrice` within `thresholdPct` percent (ADR-0019 Phase 3); a delta exactly AT the threshold agrees.
-// An empty map returns 0, which consumers MUST read as "unchecked", never "every reference disagrees": gate on SuccessCount first. Non-finite or non-positive ourPrice returns 0 and
-// non-finite or non-positive reference prices are skipped.
+// CountAgreeing returns how many `sources` corroborate `ourPrice` within `thresholdPct` percent (a delta exactly AT the threshold agrees); an empty map returns 0, which consumers MUST read as "unchecked", never "every reference disagrees".
 func CountAgreeing(ourPrice float64, sources map[string]float64, thresholdPct float64) int {
 	if !isFinitePositive(ourPrice) || math.IsNaN(thresholdPct) || thresholdPct < 0 {
 		return 0

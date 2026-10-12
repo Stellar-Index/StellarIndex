@@ -9,10 +9,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// ErrUnknownBalanceValShape is returned by [SEP41BalanceAmount] when a
-// SEP-41 / SAC balance value is neither a bare i128 nor a map carrying
-// an `amount` i128 field. Callers errors.Is against it to distinguish
-// an unexpected value shape from a wire-decode failure.
+// ErrUnknownBalanceValShape is returned by SEP41BalanceAmount when a balance value is neither a bare i128 nor a map with an `amount` i128, distinguishing it from a wire-decode failure.
 var ErrUnknownBalanceValShape = errors.New("scval: SEP-41 balance value is neither i128 nor map-with-amount")
 
 // balanceKeySymbol is the base64 SCVal::Symbol("Balance") blob the
@@ -20,12 +17,7 @@ var ErrUnknownBalanceValShape = errors.New("scval: SEP-41 balance value is neith
 // Pre-encoded once for cheap byte-equality on the hot decode path.
 var balanceKeySymbol = MustEncodeSymbol("Balance")
 
-// IsSEP41BalanceKey reports whether key matches the
-// `DataKey::Balance(Address)` shape — a Vec of length 2 with
-// Symbol("Balance") at index 0.
-//
-// This is the single balance-key predicate, shared by the live sac_balances observer and the
-// lake-seed reader so both recognise exactly the same on-wire shape.
+// IsSEP41BalanceKey reports whether key is the `DataKey::Balance(Address)` shape (Vec of length 2, Symbol("Balance") at index 0); the single predicate shared by the live observer and the lake-seed reader.
 func IsSEP41BalanceKey(key xdr.ScVal) bool {
 	vec, err := AsVec(key)
 	if err != nil || len(vec) != 2 {
@@ -43,9 +35,7 @@ func IsSEP41BalanceKey(key xdr.ScVal) bool {
 	return enc == balanceKeySymbol
 }
 
-// HolderFromBalanceKey extracts the holder Address (index 1) from a
-// confirmed-shape Balance(Address) key, returning its strkey
-// (G… / C… / M… / …).
+// HolderFromBalanceKey extracts the holder Address (index 1) from a confirmed-shape Balance(Address) key as a strkey.
 func HolderFromBalanceKey(key xdr.ScVal) (string, error) {
 	vec, err := AsVec(key)
 	if err != nil || len(vec) < 2 {
@@ -58,9 +48,7 @@ func HolderFromBalanceKey(key xdr.ScVal) (string, error) {
 	return addr, nil
 }
 
-// SEP41BalanceAmount returns the i128 amount from a SEP-41 / SAC balance value as a *big.Int,
-// never truncated to int64. The value is either a bare i128 or a map carrying an `amount` i128
-// (the native SAC's BalanceValue shape); any other shape returns [ErrUnknownBalanceValShape].
+// SEP41BalanceAmount returns the i128 amount of a SEP-41 / SAC balance value as a *big.Int, never truncated to int64; any shape other than a bare i128 or an `amount` map returns ErrUnknownBalanceValShape.
 func SEP41BalanceAmount(val xdr.ScVal) (*big.Int, error) {
 	switch val.Type {
 	case xdr.ScValTypeScvI128:
@@ -91,10 +79,7 @@ func SEP41BalanceAmount(val xdr.ScVal) (*big.Int, error) {
 	}
 }
 
-// ContractIDFromScAddress returns the C-strkey form of addr when it is a
-// Contract-variant ScAddress, and ok=false otherwise. Unlike
-// [AsAddressStrkey] (which encodes any of the five ScAddress variants), this narrows to the
-// Contract case so a non-contract holder address can't masquerade as a SAC wrapper.
+// ContractIDFromScAddress returns the C-strkey of a Contract-variant ScAddress and ok=false otherwise, so a non-contract holder cannot masquerade as a SAC wrapper.
 func ContractIDFromScAddress(addr xdr.ScAddress) (string, bool) {
 	if addr.Type != xdr.ScAddressTypeScAddressTypeContract {
 		return "", false

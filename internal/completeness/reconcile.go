@@ -9,9 +9,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// Decoder is the per-source decode surface re-run over the lake's contract_events. Matches and
-// Decode are the SAME functions the projector uses, so the re-derive cannot disagree with it
-// through a parallel implementation.
+// Decoder is the per-source decode surface re-run over the lake's contract_events; Matches and Decode are the SAME functions the projector uses, so the re-derive cannot disagree through a parallel implementation.
 type Decoder interface {
 	Matches(events.Event) bool
 	Decode(events.Event) ([]consumer.Event, error)
@@ -34,28 +32,14 @@ func countLedger(out consumer.Event, streamLedger uint32) uint32 {
 	return streamLedger
 }
 
-// ProjectionGap is a ledger where the rows the decoder would emit from raw events (Expected)
-// disagree with the rows present in the protocol table (Actual). Expected > Actual is a
-// projection/persistence drop; Actual > Expected is a phantom row or duplicate. Either is a real
-// discrepancy localized to one ledger (ADR-0033 Claim 2b).
-//
-// SCOPE: ROW-COUNT only. A clean ledger proves the right NUMBER of rows exist, not that their
-// derived columns (amounts, prices, decoded fields) are correct; a decoder bug writing the right
-// count with wrong values passes ReconcileCounts silently. A clean result must not be described as
-// "complete" or "verified correct" for VALUE correctness.
+// ProjectionGap is a ledger where decoder-expected rows disagree with the protocol table (ADR-0033 Claim 2b). SCOPE: ROW-COUNT only; a clean ledger does not prove derived values are correct, so never call it "complete" or "verified correct" for VALUE correctness.
 type ProjectionGap struct {
 	Ledger   uint32
 	Expected int
 	Actual   int
 }
 
-// BlindSpots records the raw rows a re-derive SKIPPED because it could not turn them into a
-// comparable expectation.
-//
-// A row the projector could not decode produced no served row, and one the re-derive cannot
-// decode produces no expected row, so ReconcileCounts sees expected == actual == 0 and reports
-// the ledger CLEAN. The blindness is the only honest signal, so it is returned rather than logged;
-// a caller certifying completeness must treat "could not evaluate this ledger" as NOT clean.
+// BlindSpots records the raw rows a re-derive SKIPPED because it could not make a comparable expectation; such a ledger reconciles expected == actual == 0 and looks CLEAN, so a caller certifying completeness must treat it as NOT clean.
 type BlindSpots struct {
 	// Ledgers holds every ledger with at least one blind row, ascending and deduped. Callers
 	// that pin the watermark append these; others use [BlindSpots.Any].
@@ -89,8 +73,7 @@ func (b BlindSpots) Merge(o BlindSpots) BlindSpots {
 // Rows is the total blind-row count across both classes.
 func (b BlindSpots) Rows() int { return b.UndecodableMatched + b.Unreconstructable }
 
-// Any reports whether the re-derive was blind anywhere, so a clean ReconcileCounts proves
-// nothing for the affected ledgers.
+// Any reports whether the re-derive was blind anywhere, so a clean ReconcileCounts proves nothing for the affected ledgers.
 func (b BlindSpots) Any() bool { return b.Rows() > 0 }
 
 // Detail renders the verdict-line summary; empty when there is nothing to report.
@@ -103,10 +86,7 @@ func (b BlindSpots) Detail() string {
 		len(b.Ledgers), b.UndecodableMatched, b.Unreconstructable, b.Ledgers[0])
 }
 
-// BlindTracker accumulates [BlindSpots] during a stream, keeping the ledger set deduped.
-//
-// Exported because the ContractCall census in internal/ops/chops soft-fails per row the same way.
-// One tracker means one definition of "blind", so no site can invent a weaker one.
+// BlindTracker accumulates BlindSpots during a stream, keeping the ledger set deduped; exported so internal/ops/chops shares one definition of "blind".
 type BlindTracker struct {
 	seen  map[uint32]bool
 	spots BlindSpots
@@ -156,9 +136,7 @@ func safeDecode(dec Decoder, ev events.Event) (outs []consumer.Event, err error)
 	return outs, err
 }
 
-// Guard runs fn under a recover and returns a recovered panic as an error. Every completeness
-// oracle runs decoder code under it, so a panic the dispatcher recovers per input becomes a blind
-// spot on the audit path, not a crash that freezes every remaining verdict (see [safeDecode]).
+// Guard runs fn under a recover and returns a recovered panic as an error, so a decoder panic becomes a blind spot on the audit path instead of a crash that freezes every remaining verdict.
 func Guard(fn func()) (err error) {
 	defer func() {
 		if rec := recover(); rec != nil {
@@ -184,14 +162,7 @@ type EventStreamer interface {
 	StreamContractEvents(ctx context.Context, from, to uint32, contractIDs, topic0Syms []string, fn func(events.Event) error) error
 }
 
-// ReDeriveOutputCountsByKindFromEvents re-runs the decoder over the lake's contract_events in
-// [from, to] and returns output counts keyed by EventKind(), then ledger. One decoder routes kinds
-// to different tables (blend emits five kinds across four tables), so per-table reconciliation
-// must count ONLY that table's kinds; [SumKinds] projects them.
-//
-// contractIDs / topic0Syms are the projector's prefilters (empty = match by topic across all
-// contracts). An event failing Decode is skipped and returned as a [BlindSpots] entry, so a clean
-// reconcile over unreadable events is not certified complete. Unreconstructable is always 0 here.
+// ReDeriveOutputCountsByKindFromEvents re-runs the decoder over the lake's contract_events in [from, to] and returns output counts by EventKind(), then ledger; per-table reconciliation must count ONLY that table's kinds (see SumKinds), and an event failing Decode becomes a BlindSpots entry, never a certified-clean result.
 func ReDeriveOutputCountsByKindFromEvents(
 	ctx context.Context,
 	es EventStreamer,
@@ -243,8 +214,7 @@ func ReDeriveOutputCountsByKindFromEvents(
 	return byKind, blind.Result(), nil
 }
 
-// SumKinds sums a by-kind count map over the given EventKinds: the expected per-ledger row count
-// for the table those kinds route to.
+// SumKinds sums a by-kind count map over the given EventKinds: the expected per-ledger row count for the table those kinds route to.
 func SumKinds(byKind map[string]map[uint32]int, kinds ...string) map[uint32]int {
 	out := make(map[uint32]int)
 	for _, k := range kinds {
@@ -255,12 +225,7 @@ func SumKinds(byKind map[string]map[uint32]int, kinds ...string) map[uint32]int 
 	return out
 }
 
-// ReconcileCounts diffs expected (decoder re-derive) against actual (protocol-table rows) per
-// ledger and returns every disagreeing ledger, ascending. Empty means Claim 2b's ROW-COUNT
-// invariant holds for the range.
-//
-// COUNT-ONLY (see ProjectionGap): an empty result does not certify the rows' derived VALUES, so
-// never label a range "complete" for value correctness on this alone.
+// ReconcileCounts diffs expected (decoder re-derive) against actual (protocol-table rows) per ledger and returns every disagreeing ledger, ascending; COUNT-ONLY, so an empty result does not certify derived VALUES.
 func ReconcileCounts(expected, actual map[uint32]int) []ProjectionGap {
 	var gaps []ProjectionGap
 	seen := make(map[uint32]bool, len(expected))

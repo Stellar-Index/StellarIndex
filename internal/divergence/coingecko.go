@@ -18,8 +18,7 @@ import (
 	externalcoingecko "github.com/Stellar-Index/StellarIndex/internal/sources/external/coingecko"
 )
 
-// CoinGeckoReference looks up prices via /api/v3/simple/price with the ingest poller's Pro/Demo keys (keyless is 429-throttled); best-effort, a 429 is ErrPriceUnavailable.
-// It batches per tick: one request covers EVERY configured (id, quote) pair and is cached for [batchTTL] (default 25s vs the 30s tick), keeping it far inside the demo-tier 10K daily limit.
+// CoinGeckoReference looks up prices via /api/v3/simple/price with the ingest poller's Pro/Demo keys, best-effort (a 429 is ErrPriceUnavailable); one batched request per tick covers EVERY configured pair and is cached for batchTTL.
 type CoinGeckoReference struct {
 	httpClient *http.Client
 	baseURL    string
@@ -115,8 +114,7 @@ const defaultCoinGeckoMaxAge = 30 * time.Minute
 // coinGeckoLastUpdatedKey is the sentinel CoinGecko folds into each id's object under include_last_updated_at=true; it is not a vs_currency, so [fetchBatch] lifts it out of the price map.
 const coinGeckoLastUpdatedKey = "last_updated_at"
 
-// NewCoinGeckoReference constructs a CoinGecko-backed reference. An empty opts.IDMap falls back to a built-in default (else every call is `ErrAssetUnsupported` and observations stay empty).
-// Operator entries merge OVER the defaults: an entry can be overridden or added, never removed by omission.
+// NewCoinGeckoReference constructs a CoinGecko-backed reference; an empty opts.IDMap falls back to a built-in default, and operator entries merge OVER the defaults (never removed by omission).
 func NewCoinGeckoReference(opts CoinGeckoOptions) *CoinGeckoReference {
 	baseURL := opts.BaseURL
 	if baseURL == "" {
@@ -190,8 +188,7 @@ func defaultCoinGeckoIDMap() map[string]string {
 // Name implements [Reference].
 func (c *CoinGeckoReference) Name() string { return "coingecko" }
 
-// LookupQuote implements [Reference]; AsOf is the id's upstream last_updated_at. Staleness gate: a quote older than [maxAge] against observedAt (zero falls back to wall time) or missing the timestamp
-// reads "unavailable", never agreement or divergence (see [CoinGeckoReference.staleness]). The first call in batchTTL issues ONE request; the rest read the in-memory map.
+// LookupQuote implements Reference with AsOf the id's last_updated_at; a quote older than maxAge against observedAt, or missing the timestamp, reads "unavailable", never agreement or divergence.
 func (c *CoinGeckoReference) LookupQuote(ctx context.Context, pair canonical.Pair, observedAt time.Time) (Quote, error) {
 	cgID, ok := c.idMap[pair.Base.String()]
 	if !ok {
