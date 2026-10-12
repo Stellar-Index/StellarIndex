@@ -111,7 +111,7 @@ func TestExplorerScanQueries_ShapePreserved(t *testing.T) {
 	}
 	for _, q := range []string{recentOperationsQuery(true, true), recentOperationsQuery(true, false)} {
 		// The keyset comparison is index-prunable: `ledger_seq < ? OR (ledger_seq = ? AND (tx_index, op_index) < (?,
-		// ?))`. The forbidden tuple-only spelling is pinned in explorer_reader_deep_cursor_test.go; this asserts a
+		// ?))`. The forbidden tuple-only spelling is pinned in explorer_reader_union_bounds_test.go; this asserts a
 		// full-key keyset.
 		if !strings.Contains(q, recentOperationsCursorPredicate) {
 			t.Errorf("recentOperationsQuery(true, …) missing its keyset cursor comparison:\n%s", q)

@@ -2,6 +2,7 @@ package clickhouse
 
 import (
 	"context"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -180,5 +181,299 @@ func TestAccountOpTypeCounts_QueryShape(t *testing.T) {
 		if strings.Contains(arm, " OR ") {
 			t.Errorf("arm %d must not OR predicates (skip-index defeat):\n%s", i+1, arm)
 		}
+	}
+}
+
+// Each keyset cursor must carry a redundant leading-key bound beside its
+// tuple comparison. KeyCondition does not prune on a multi-column tuple, so
+// without the bound a deep page reads every primary-key row above the cursor.
+func TestKeysetCursors_CarryLeadingKeyBound(t *testing.T) {
+	for name, tc := range map[string]struct {
+		q, clause string
+		perQuery  int
+	}{
+		"account transactions": {sourcedTxKeysExactQuery(true), "ledger_seq <= ? AND (ledger_seq, tx_index) < (?, ?)", 1},
+		"account operations":   {sourcedOpKeysExactQuery(true, false), "ledger_seq <= ? AND (ledger_seq, tx_index, op_index) < (?, ?, ?)", 1},
+		"account operations (watermark)": {
+			sourcedOpKeysExactQuery(true, true), "ledger_seq <= ? AND (ledger_seq, tx_index, op_index) < (?, ?, ?)", 1,
+		},
+		"contract events":       {contractEventsRecentQuery(true, false), "ledger_seq <= ? AND (ledger_seq, tx_hash, op_index, event_index) < (?, ?, ?, ?)", 1},
+		"contract events dedup": {contractEventsRecentDedupQuery(true, true), "ledger_seq <= ? AND (ledger_seq, tx_hash, op_index, event_index) < (?, ?, ?, ?)", 1},
+		"account movements": {
+			accountMovementsQuery(AccountMovementFilter{HasMaxLedger: true}, true),
+			"ledger <= ? AND (ledger, tx_hash, op_index, leg_index) < (?, ?, ?, ?)", 1,
+		},
+	} {
+		if got := strings.Count(tc.q, tc.clause); got != tc.perQuery {
+			t.Errorf("%s: %d cursor clauses with a leading-key bound, want %d:\n%s", name, got, tc.perQuery, tc.q)
+		}
+	}
+}
+
+// The extra placeholder must bind the cursor's own ledger, in clause order,
+// on every reader that issues a cursor page.
+func TestKeysetCursors_LeadingKeyBoundBindsCursorLedger(t *testing.T) {
+	const limit = 7
+	empty := func(string) (driver.Rows, error) { return &stubRows{}, nil }
+	ctx := context.Background()
+
+	t.Run("account transactions", func(t *testing.T) {
+		conn := &stubConn{respond: withOpsBySourceRows(empty)}
+		cur := ExplorerCursor{Ledger: 63_000_000, A: 4}
+		if _, _, err := (&ExplorerReader{conn: conn}).AccountTransactions(ctx, "GTEST", limit, cur); err != nil {
+			t.Fatalf("AccountTransactions: %v", err)
+		}
+		// An empty window proves an exhausted arm, so the last query is the
+		// participant arm's first window.
+		assertBinds(t, conn, []any{"GTEST", cur.Ledger, cur.Ledger, cur.A, windowRows(limit, windowFactorKeys)})
+	})
+	t.Run("contract events", func(t *testing.T) {
+		conn := &stubConn{respond: empty}
+		cur := ContractEventsCursor{Ledger: 55_000_000, TxHash: "ab", OpIndex: 1, EventIndex: 2}
+		if _, err := (&ExplorerReader{conn: conn}).ContractEventsRecent(ctx, "CTEST", limit, cur); err != nil {
+			t.Fatalf("ContractEventsRecent: %v", err)
+		}
+		assertBinds(t, conn, []any{"CTEST", cur.Ledger, cur.Ledger, cur.TxHash, cur.OpIndex, cur.EventIndex, limit + contractEventsDedupHeadroom})
+	})
+	t.Run("account movements", func(t *testing.T) {
+		conn := &stubConn{respond: empty}
+		cur := AccountMovementCursor{Ledger: 40_000_000, TxHash: "cd", OpIndex: 3, LegIndex: 1}
+		filter := AccountMovementFilter{Kind: "k", MaxLedger: 41_000_000, HasMaxLedger: true}
+		if _, err := (&ExplorerReader{conn: conn}).AccountMovements(ctx, "GTEST", limit, cur, filter); err != nil {
+			t.Fatalf("AccountMovements: %v", err)
+		}
+		assertBinds(t, conn, []any{"GTEST", "k", filter.MaxLedger, cur.Ledger, cur.Ledger, cur.TxHash, cur.OpIndex, cur.LegIndex, windowRows(limit, windowFactorKeys)})
+	})
+}
+
+func assertBinds(t *testing.T, conn *stubConn, want []any) {
+	t.Helper()
+	q, got := conn.queries[len(conn.queries)-1], conn.args[len(conn.args)-1]
+	if n := strings.Count(q, "?"); n != len(got) {
+		t.Fatalf("query has %d placeholders, reader bound %d args: %v\n%s", n, len(got), got, q)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("args = %v, want %v", got, want)
+	}
+}
+
+// A deep operations cursor must not scan O(table): ClickHouse cannot index a tuple comparison, so only
+// `ledger_seq >= lower` prunes and a publicly mintable `?cursor=` reads up to the tip. These tests pin the
+// rewritten SQL shape so the tuple-only form cannot return.
+
+// tupleOnlyCursor is the un-prunable form. It must not appear in any
+// RecentOperations arm.
+const tupleOnlyCursor = "(ledger_seq, tx_index, op_index) < (?, ?, ?)"
+
+func TestRecentOperationsCursor_PredicateIsPrimaryIndexPrunable(t *testing.T) {
+	for _, bounded := range []bool{true, false} {
+		q := recentOperationsQuery(true, bounded)
+		if strings.Contains(q, tupleOnlyCursor) {
+			t.Fatalf("cursor arm (bounded=%v) is back on the un-prunable tuple comparison — this IS #484:\n%s", bounded, q)
+		}
+		// The leading term is the whole point: `ledger_seq < ?` is what
+		// KeyCondition can turn into a mark range.
+		if !strings.Contains(q, "ledger_seq < ?") {
+			t.Errorf("cursor arm (bounded=%v) has no index-usable leading `ledger_seq < ?` term:\n%s", bounded, q)
+		}
+		// The equality arm is what keeps the rewrite EXACT: without it the
+		// page would skip every remaining operation of the cursor's own
+		// ledger.
+		if !strings.Contains(q, "ledger_seq = ? AND (tx_index, op_index) < (?, ?)") {
+			t.Errorf("cursor arm (bounded=%v) lost the same-ledger tie-break; paging across a ledger boundary would skip rows:\n%s", bounded, q)
+		}
+		// Parenthesisation is load-bearing: AND binds tighter than OR, so without it `AND ledger_seq >= ?` and the
+		// LIMIT-BY tail attach to the equality arm alone and return every operation below the cursor.
+		if !strings.Contains(q, recentOperationsCursorPredicate) ||
+			!strings.HasPrefix(recentOperationsCursorPredicate, "(") ||
+			!strings.HasSuffix(recentOperationsCursorPredicate, ")") {
+			t.Errorf("cursor predicate is not wrapped in its own parentheses (bounded=%v):\n%s", bounded, q)
+		}
+	}
+	// The tail-window lower bound must survive on the bounded arm — the rewrite is
+	// what makes that bound bite, not a replacement for it.
+	if !strings.Contains(recentOperationsQuery(true, true), "AND ledger_seq >= ?") {
+		t.Error("the bounded cursor arm lost #444's tail-window lower bound")
+	}
+}
+
+// The row budget backstops shapes the rewrite cannot bound (the unbounded near-tip fallback). It belongs
+// on the CURSOR arms only: the unbounded first-page fallback announces a huge row count and takes no
+// caller input.
+func TestRecentOperationsCursor_CarriesARowBudgetTheFirstPageDoesNot(t *testing.T) {
+	for _, bounded := range []bool{true, false} {
+		q := recentOperationsQuery(true, bounded)
+		for _, want := range []string{"max_rows_to_read = 200000000", "read_overflow_mode = 'throw'"} {
+			if !strings.Contains(q, want) {
+				t.Errorf("cursor arm (bounded=%v) missing %q — a pathological cursor would be SERVED, not refused:\n%s", bounded, want, q)
+			}
+		}
+		requireScanSettings(t, "recentOperationsQuery(cursor)", q)
+	}
+	for _, bounded := range []bool{true, false} {
+		q := recentOperationsQuery(false, bounded)
+		if strings.Contains(q, "max_rows_to_read") {
+			t.Errorf("first-page arm (bounded=%v) must NOT carry the cursor row budget — r1 measured its unbounded fallback at 217.44M announced rows, so the ceiling would break #444's correctness net:\n%s", bounded, q)
+		}
+	}
+}
+
+// TestRecentOperationsCursor_RewriteIsExactlyEquivalent evaluates both predicate forms over an exhaustive
+// ledger to pin (L,T,O) < (l,t,o) <=> L < l or (L = l and (T,O) < (t,o)); dropping the equality arm skips or
+// repeats boundary rows.
+func TestRecentOperationsCursor_RewriteIsExactlyEquivalent(t *testing.T) {
+	type key struct{ L, T, O uint32 }
+	// A miniature operations table: ledger 10 has a single operation,
+	// ledger 11 has two txs with two ops each, ledger 12 has one op.
+	table := []key{
+		{10, 0, 0},
+		{11, 0, 0},
+		{11, 0, 1},
+		{11, 1, 0},
+		{11, 1, 1},
+		{12, 0, 0},
+	}
+	tuple := func(r, c key) bool { // (L,T,O) < (l,t,o), lexicographic
+		if r.L != c.L {
+			return r.L < c.L
+		}
+		if r.T != c.T {
+			return r.T < c.T
+		}
+		return r.O < c.O
+	}
+	rewrite := func(r, c key) bool { // ledger_seq < l OR (ledger_seq = l AND (t,o) < (t,o))
+		if r.L < c.L {
+			return true
+		}
+		if r.L != c.L {
+			return false
+		}
+		if r.T != c.T {
+			return r.T < c.T
+		}
+		return r.O < c.O
+	}
+
+	for _, tc := range []struct {
+		name string
+		cur  key
+		want []key
+	}{
+		{"first op of a ledger", key{11, 0, 0}, []key{{10, 0, 0}}},
+		{"last op of a ledger", key{11, 1, 1}, []key{{10, 0, 0}, {11, 0, 0}, {11, 0, 1}, {11, 1, 0}}},
+		{"mid-ledger, second tx", key{11, 1, 0}, []key{{10, 0, 0}, {11, 0, 0}, {11, 0, 1}}},
+		{"ledger holding a single operation", key{10, 0, 0}, nil},
+		{"cursor above the newest row", key{12, 0, 1}, []key{{10, 0, 0}, {11, 0, 0}, {11, 0, 1}, {11, 1, 0}, {11, 1, 1}, {12, 0, 0}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var tupleRows, rewriteRows []key
+			for _, row := range table {
+				if tuple(row, tc.cur) {
+					tupleRows = append(tupleRows, row)
+				}
+				if rewrite(row, tc.cur) {
+					rewriteRows = append(rewriteRows, row)
+				}
+			}
+			// The tuple form is the SPEC here; assert the rewrite matches
+			// it AND that both match the independently-written expectation
+			// (so a bug shared by both forms cannot pass).
+			if len(tupleRows) != len(tc.want) {
+				t.Fatalf("tuple form selected %v, want %v", tupleRows, tc.want)
+			}
+			for i := range tc.want {
+				if tupleRows[i] != tc.want[i] {
+					t.Fatalf("tuple form selected %v, want %v", tupleRows, tc.want)
+				}
+			}
+			if len(rewriteRows) != len(tupleRows) {
+				t.Fatalf("rewrite selected %v, tuple form selected %v", rewriteRows, tupleRows)
+			}
+			for i := range tupleRows {
+				if rewriteRows[i] != tupleRows[i] {
+					t.Fatalf("rewrite selected %v, tuple form selected %v", rewriteRows, tupleRows)
+				}
+			}
+		})
+	}
+}
+
+// TestAccountListings_ArmsPageAccountKeyedTables: arms must page ops_by_source and operation_participants
+// by primary-key prefix (`account = ?` + cursor + bound), never `pk IN (SELECT ...)` on the wide table,
+// which costs the account's whole history per page. The wide table gets literal key lists only.
+func TestAccountListings_ArmsPageAccountKeyedTables(t *testing.T) {
+	cur := ExplorerCursor{Ledger: 63_000_000, A: 4, B: 2}
+	for name, tc := range map[string]struct {
+		wide, cursor string
+		run          func(*ExplorerReader) error
+	}{
+		"operations": {"FROM stellar.operations", "(ledger_seq, tx_index, op_index) < (?, ?, ?)", func(r *ExplorerReader) error {
+			_, _, err := r.AccountOperations(context.Background(), "GTEST", 9, cur)
+			return err
+		}},
+		"transactions": {"FROM stellar.transactions", "(ledger_seq, tx_index) < (?, ?)", func(r *ExplorerReader) error {
+			_, _, err := r.AccountTransactions(context.Background(), "GTEST", 9, cur)
+			return err
+		}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			conn := &stubConn{}
+			conn.respond = withOpsBySourceRows(func(q string) (driver.Rows, error) {
+				if strings.Contains(q, "FROM stellar.operation_participants") && !isVisibilityLookup(q) {
+					if name == "transactions" {
+						return &stubRows{data: [][]any{txKeyRow(62_000_000, 0)}}, nil
+					}
+					return &stubRows{data: [][]any{keyRow(62_000_000, 0, 0)}}, nil
+				}
+				return &stubRows{}, nil
+			})
+			if err := tc.run(&ExplorerReader{conn: conn}); err != nil {
+				t.Fatal(err)
+			}
+			var sourced, participant int
+			for _, q := range conn.queries {
+				if strings.Contains(q, tc.wide) && strings.Contains(q, "IN (SELECT") {
+					t.Errorf("wide table resolved through a subquery — one granule per account key:\n%s", q)
+				}
+				switch {
+				case isOpsBySourceProbe(q) || isVisibilityLookup(q):
+				case strings.Contains(q, "FROM stellar.ops_by_source WHERE source_account = ?"):
+					sourced++
+				case strings.Contains(q, "FROM stellar.operation_participants WHERE account = ?"):
+					participant++
+				default:
+					continue
+				}
+				if !isOpsBySourceProbe(q) && !isVisibilityLookup(q) && !strings.Contains(q, tc.cursor) {
+					t.Errorf("key read must apply the cursor on the key table:\n%s", q)
+				}
+			}
+			if sourced == 0 || participant == 0 {
+				t.Errorf("key reads: sourced=%d participant=%d, want both on their account-keyed tables: %v", sourced, participant, conn.queries)
+			}
+		})
+	}
+}
+
+// The exact sourced arms must ORDER BY the full sort key and
+// dedupe on it BEFORE their own LIMIT, else an un-merged duplicate part eats a
+// slot or the account's whole history materialises.
+func TestAccountListings_ExactSourcedArmIsBounded(t *testing.T) {
+	for name, tc := range map[string]struct{ q, order, dedupe string }{
+		"transactions": {sourcedTxKeysExactQuery(true), "ORDER BY ledger_seq DESC, tx_index DESC", "LIMIT 1 BY ledger_seq, tx_index LIMIT ?"},
+		"operations": {
+			sourcedOpKeysExactQuery(true, true), "ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC",
+			"LIMIT 1 BY ledger_seq, tx_index, op_index LIMIT ?",
+		},
+	} {
+		if !strings.Contains(tc.q, tc.order) || !strings.Contains(tc.q, tc.dedupe) {
+			t.Errorf("%s exact arm lost its ORDER BY / LIMIT 1 BY … LIMIT:\n%s", name, tc.q)
+		}
+	}
+	const limit = 37
+	_, args := exactOpsArm(t, withOpsBySourceRows(func(string) (driver.Rows, error) { return &stubRows{}, nil }), limit, ExplorerCursor{})
+	if got := args[len(args)-1]; got != limit {
+		t.Errorf("exact arm page size = %v, want %d — a smaller per-arm limit drops rows at the merge seam", got, limit)
 	}
 }

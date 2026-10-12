@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
@@ -738,5 +739,267 @@ func TestSACSeedReducer_RetractArchivedAtArchivalLedger(t *testing.T) {
 	}
 	if got[0].LedgerSeq != archLiveUntil+1 || !got[0].CloseTime.Equal(archCloseTime) {
 		t.Errorf("tombstone at ledger %d / %v, want archival ledger %d / %v", got[0].LedgerSeq, got[0].CloseTime, archLiveUntil+1, archCloseTime)
+	}
+}
+
+// archivalConn answers the three queries archival resolution issues: the
+// ttl_live_until existence probe, the live_until lookup (keyed by key_xdr, so
+// fixtures need not hash), and the stellar.ledgers close-time lookup.
+func archivalConn(t *testing.T, liveUntil map[string]uint32, closeTimes map[uint32]time.Time) *stubConn {
+	t.Helper()
+	ttlRows := make([][]any, 0, len(liveUntil))
+	for k, lu := range liveUntil {
+		h, err := TTLKeyHash(k)
+		if err != nil {
+			t.Fatalf("TTLKeyHash: %v", err)
+		}
+		ttlRows = append(ttlRows, []any{h, lu})
+	}
+	ledgerRows := make([][]any, 0, len(closeTimes))
+	for seq, ct := range closeTimes {
+		ledgerRows = append(ledgerRows, []any{seq, ct})
+	}
+	return &stubConn{respond: func(q string) (driver.Rows, error) {
+		switch {
+		case strings.Contains(q, "EXISTS TABLE stellar.ttl_live_until"):
+			return &stubRows{data: [][]any{{uint8(1)}}}, nil
+		case strings.Contains(q, "FROM stellar.ttl_live_until"):
+			return &stubRows{data: ttlRows}, nil
+		case strings.Contains(q, "FROM stellar.ledgers"):
+			return &stubRows{data: ledgerRows}, nil
+		}
+		t.Fatalf("unexpected query: %s", q)
+		return nil, nil
+	}}
+}
+
+func queriedLedgers(c *stubConn) bool {
+	for _, q := range c.queries {
+		if strings.Contains(q, "FROM stellar.ledgers") {
+			return true
+		}
+	}
+	return false
+}
+
+const (
+	archLastWrite = uint32(62_400_123)
+	archLiveUntil = uint32(62_500_000)
+	archAsOf      = uint32(63_000_000)
+)
+
+var archCloseTime = time.Date(2025, 3, 1, 12, 0, 5, 0, time.UTC)
+
+func liveSeed(t *testing.T, holder string, amount int64, ledger uint32) SACBalanceSeed {
+	t.Helper()
+	return SACBalanceSeed{
+		ContractID: seedSAC,
+		AssetKey:   seedAsset,
+		Holder:     holder,
+		Balance:    big.NewInt(amount),
+		LedgerSeq:  ledger,
+		CloseTime:  time.Date(2024, 11, 1, 0, 0, 0, 0, time.UTC),
+		keyXDR:     mustKeyXDR(t, mustContractScAddr(t, seedSAC), seedBalanceKey(t, holder)),
+	}
+}
+
+func collectLive(t *testing.T, conn driver.Conn, seeds []SACBalanceSeed) ([]SACBalanceSeed, error) {
+	t.Helper()
+	var got []SACBalanceSeed
+	err := emitLiveSeeds(context.Background(), conn, seeds, archAsOf, func(s SACBalanceSeed) error {
+		got = append(got, s)
+		return nil
+	})
+	return got, err
+}
+
+// An archived current-state entry is retracted AT ITS ARCHIVAL LEDGER (live_until+1, that ledger's close
+// time), never at its last write: the seed's top-of-ledger intra seq would overwrite the genuine
+// observation there and zero the holder across [last write, archival).
+func TestEmitLiveSeeds_ArchivedTombstoneAtArchivalLedger(t *testing.T) {
+	archived := liveSeed(t, seedHolder, 100_000_000, archLastWrite)
+	live := liveSeed(t, seedSyntheticHolder(t, 0x42), 7, archLastWrite)
+	conn := archivalConn(t,
+		map[string]uint32{archived.keyXDR: archLiveUntil, live.keyXDR: archAsOf},
+		map[uint32]time.Time{archLiveUntil + 1: archCloseTime})
+
+	got, err := collectLive(t, conn, []SACBalanceSeed{archived, live})
+	if err != nil {
+		t.Fatalf("emitLiveSeeds: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("emitted %d seeds, want 2 (one tombstone, one live): %+v", len(got), got)
+	}
+	tomb, kept := got[0], got[1]
+	if !tomb.IsRemoval || tomb.Balance.Sign() != 0 || tomb.Holder != seedHolder {
+		t.Errorf("archived holder emitted as %+v, want an IsRemoval zero-balance tombstone for %s", tomb, seedHolder)
+	}
+	if tomb.LedgerSeq != archLiveUntil+1 {
+		t.Errorf("tombstone LedgerSeq = %d, want archival ledger %d (live_until+1), not last write %d", tomb.LedgerSeq, archLiveUntil+1, archLastWrite)
+	}
+	if !tomb.CloseTime.Equal(archCloseTime) {
+		t.Errorf("tombstone CloseTime = %v, want the archival ledger's close time %v", tomb.CloseTime, archCloseTime)
+	}
+	if kept.IsRemoval || kept.Balance.Cmp(big.NewInt(7)) != 0 || kept.LedgerSeq != archLastWrite {
+		t.Errorf("live holder (live_until == asOf) emitted as %+v, want its unchanged balance", kept)
+	}
+}
+
+// A live_until below the entry's own last write is impossible for real data
+// (a write needs a live entry), so it cannot prove archival: fail open.
+func TestEmitLiveSeeds_StaleTTLBelowLastWriteKeepsLive(t *testing.T) {
+	s := liveSeed(t, seedHolder, 100, archLastWrite)
+	conn := archivalConn(t, map[string]uint32{s.keyXDR: archLastWrite - 1}, nil)
+
+	got, err := collectLive(t, conn, []SACBalanceSeed{s})
+	if err != nil {
+		t.Fatalf("emitLiveSeeds: %v", err)
+	}
+	if len(got) != 1 || got[0].IsRemoval || got[0].Balance.Cmp(big.NewInt(100)) != 0 || got[0].LedgerSeq != archLastWrite {
+		t.Fatalf("got %+v, want the live seed unchanged", got)
+	}
+	if queriedLedgers(conn) {
+		t.Error("looked up close times with nothing archived")
+	}
+}
+
+// Without the archival ledger's close time there is no honest observed_at for
+// the tombstone; the seed stops rather than invent one.
+func TestEmitLiveSeeds_MissingArchivalLedgerErrors(t *testing.T) {
+	s := liveSeed(t, seedHolder, 100, archLastWrite)
+	conn := archivalConn(t, map[string]uint32{s.keyXDR: archLiveUntil}, nil)
+
+	if _, err := collectLive(t, conn, []SACBalanceSeed{s}); err == nil || !strings.Contains(err.Error(), "62500001") {
+		t.Fatalf("err = %v, want a missing-archival-ledger error naming ledger 62500001", err)
+	}
+}
+
+// A removed current-state row is already a tombstone at its removal ledger;
+// its TTL is not consulted.
+func TestEmitLiveSeeds_RemovalPassesThroughWithoutTTL(t *testing.T) {
+	s := liveSeed(t, seedHolder, 0, archLastWrite)
+	s.IsRemoval = true
+	conn := archivalConn(t, map[string]uint32{s.keyXDR: archLiveUntil}, map[uint32]time.Time{archLiveUntil + 1: archCloseTime})
+
+	got, err := collectLive(t, conn, []SACBalanceSeed{s})
+	if err != nil {
+		t.Fatalf("emitLiveSeeds: %v", err)
+	}
+	if len(got) != 1 || !got[0].IsRemoval || got[0].LedgerSeq != archLastWrite {
+		t.Fatalf("got %+v, want the removal tombstone at its removal ledger %d", got, archLastWrite)
+	}
+}
+
+// corruptBalanceKeyXDR is a contract_data LedgerKey for contractStrkey whose
+// XDR is truncated just past the contract hash: the contract is still
+// readable from the raw prefix, but the key no longer decodes.
+func corruptBalanceKeyXDR(t *testing.T, contractStrkey string) string {
+	t.Helper()
+	valid := mustKeyXDR(t, mustContractScAddr(t, contractStrkey), seedBalanceKey(t, seedHolder))
+	raw, err := base64.StdEncoding.DecodeString(valid)
+	if err != nil {
+		t.Fatalf("decode fixture key: %v", err)
+	}
+	return base64.StdEncoding.EncodeToString(raw[:44])
+}
+
+// The current-state stream keeps going past a corrupt unwatched row and still
+// emits the watched holder behind it.
+func TestStreamCurrentStateSeeds_UnwatchedCorruptKeyDoesNotAbort(t *testing.T) {
+	ct := time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)
+	rows := &stubRows{data: [][]any{
+		{corruptBalanceKeyXDR(t, otherSAC), "", "updated", seedLedger, ct},
+		{seedKeyFor(t), seedEntryFor(t, 100_000_000, seedLedger), "updated", seedLedger, ct},
+	}}
+	conn := archivalConn(t, map[string]uint32{seedKeyFor(t): seedLedger + 1_000}, nil)
+
+	var got []SACBalanceSeed
+	err := streamCurrentStateSeeds(context.Background(), conn, driver.Rows(rows), seedWatched(), seedLedger+1, func(s SACBalanceSeed) error {
+		got = append(got, s)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("streamCurrentStateSeeds aborted on an unwatched corrupt key: %v", err)
+	}
+	if len(got) != 1 || got[0].Holder != seedHolder || got[0].Balance.Cmp(big.NewInt(100_000_000)) != 0 {
+		t.Fatalf("got %+v, want the watched holder's 100000000 balance", got)
+	}
+}
+
+// TestWalkSACSeedWindowsRewidensAfterDenseRange drives the walk through one dense stretch that fits only at
+// the bisection floor: it must cover the range exactly once and re-widen after, else it crawls ~10M ledgers
+// (640 trips vs ~50).
+func TestWalkSACSeedWindowsRewidensAfterDenseRange(t *testing.T) {
+	const (
+		minLedger = 40_000_000
+		maxLedger = 49_999_999
+		denseEnd  = minLedger + 2*sacSeedMinLedgerWindow - 1
+	)
+	oom := &clickhouse.Exception{Code: chMemoryLimitExceeded, Name: "MEMORY_LIMIT_EXCEEDED"}
+
+	type span struct{ from, to uint32 }
+	var ok []span
+	err := walkSACSeedWindows(minLedger, maxLedger, func(from, to uint32) error {
+		if from <= denseEnd && to-from+1 > sacSeedMinLedgerWindow {
+			return oom
+		}
+		ok = append(ok, span{from, to})
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk: %v", err)
+	}
+
+	next := uint32(minLedger)
+	for i, s := range ok {
+		if s.from != next || s.to < s.from {
+			t.Fatalf("window %d = [%d,%d], want it to start at %d (gap or overlap)", i, s.from, s.to, next)
+		}
+		next = s.to + 1
+	}
+	if next != maxLedger+1 {
+		t.Fatalf("walk stopped at %d, want %d", next-1, maxLedger)
+	}
+
+	var widest uint32
+	for _, s := range ok {
+		if s.from > denseEnd {
+			widest = max(widest, s.to-s.from+1)
+		}
+	}
+	if widest != sacSeedLedgerWindow {
+		t.Errorf("widest window after the dense stretch = %d, want it re-widened to %d", widest, sacSeedLedgerWindow)
+	}
+	if len(ok) > 80 {
+		t.Errorf("walk took %d clean windows over %d ledgers — the window never recovered from the dense stretch",
+			len(ok), maxLedger-minLedger+1)
+	}
+}
+
+// TestWalkSACSeedWindowsSurfacesFloorAndForeignErrors pins the two exits the
+// adaptive policy must not swallow: a memory-limit error at the floor, and any
+// non-memory error at any width.
+func TestWalkSACSeedWindowsSurfacesFloorAndForeignErrors(t *testing.T) {
+	oom := &clickhouse.Exception{Code: chMemoryLimitExceeded}
+	var widths []uint32
+	err := walkSACSeedWindows(1, 10_000_000, func(from, to uint32) error {
+		widths = append(widths, to-from+1)
+		return oom
+	})
+	if !errors.Is(err, oom) {
+		t.Fatalf("err = %v, want the floor's memory-limit error surfaced", err)
+	}
+	if got := widths[len(widths)-1]; got != sacSeedMinLedgerWindow {
+		t.Fatalf("last attempt width = %d, want the floor %d", got, sacSeedMinLedgerWindow)
+	}
+
+	boom := errors.New("boom")
+	calls := 0
+	err = walkSACSeedWindows(1, 10_000_000, func(uint32, uint32) error {
+		calls++
+		return boom
+	})
+	if !errors.Is(err, boom) || calls != 1 {
+		t.Fatalf("err = %v after %d calls, want boom surfaced on the first call", err, calls)
 	}
 }
