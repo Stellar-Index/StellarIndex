@@ -318,8 +318,7 @@ export interface paths {
         };
         /**
          * Verified-currency catalogue listing.
-         * @description Returns every entry in the binary's verified-currency
-         *     catalogue (`internal/currency/data/seed.yaml`) — the
+         * @description Returns every entry in the verified-currency catalogue — the
          *     hand-curated set of verified Stellar assets (USDC, EURC,
          *     AQUA, …) that the API surfaces with a "verified" badge.
          *
@@ -364,8 +363,7 @@ export interface paths {
          *       `Asset` shape (per-Stellar-asset detail with SEP-1
          *       overlay + F2 supply fields).
          *
-         *     Slugs match a hand-curated catalogue
-         *     (`internal/currency/data/seed.yaml`); unknown slugs fall
+         *     Slugs match a hand-curated catalogue; unknown slugs fall
          *     through to canonical parsing, then to **classic-asset slug
          *     resolution**: every classic asset's public slug is its
          *     fully-qualified asset_id (`CODE-GFULLISSUER`), matched
@@ -503,7 +501,7 @@ export interface paths {
          * Top holders of an asset by current balance.
          * @description The accounts holding the largest balances of an asset, plus the total
          *     count of holders with a positive balance — reconstructed from the
-         *     latest `ledger_entry_changes` state per account (ADR-0038 Phase C).
+         *     latest `ledger_entry_changes` state per account .
          *     For issued assets the balance is the holder's trustline balance; for
          *     native XLM — which has no trustlines — it is the account's own XLM
          *     balance, and `holder_count` is the exact number of funded accounts.
@@ -778,7 +776,7 @@ export interface paths {
         };
         /**
          * Point-in-time price (closed bucket at-or-before a timestamp)
-         * @description The pair's closed VWAP bucket at-or-before `ts` — the cost-basis / PnL / tax-tooling lookup. The answer comes from the FINEST CAGG resolution that covers the instant: `prices_1m` for recent timestamps, coarser bars (down to daily, back to 2018) for older ones. Daily coverage is not yet continuous — an instant in an uncovered stretch resolves to no bucket and 404s rather than being interpolated. `observed_at` is the BUCKET's close time, never `ts`, and `window_seconds` reports the resolution used (60 for a 1-minute bar, 86400 for a daily bar) — so callers see exactly how far the nearest observation was and at what granularity. A nearest bucket more than 24 hours before `ts` is a 404 (the endpoint refuses to fabricate continuity across dead markets). When the literal pair (and its aliases) has no bucket and the quote is `fiat:USD`, the lookup retries each operator-declared USD-pegged classic (the same stablecoin-proxy chain as /v1/price) and returns the peg's bucket with `flags.triangulated=true`, echoing the requested quote. The 404 carries `coverage_from` and `outside_coverage` as extension members, measured over the pair AND those pegs together — the earliest bucket any of them holds — so an instant a peg covers is reported as a gap, not as predating the history held. A bucket that exists but is refused — by the thin-market or scam-issuer gate, or by the serving-sanity guard when a 1-minute bucket deviates grossly from the buckets before it (or has none to be checked against) and no clean bucket falls within the lookback — is a 404 of type `price-withheld`, never `price-not-found`. A failed store read is never a 404: a timeout or transient storage error is a 503 `price-unavailable` (retry), any other failure a 500. Current price: /v1/price or /v1/price/tip. Multi-horizon change: /v1/price/changes.
+         * @description The pair's closed VWAP bucket at-or-before `ts` — the cost-basis / PnL / tax-tooling lookup. The answer comes from the FINEST CAGG resolution that covers the instant: `prices_1m` for recent timestamps, coarser bars (down to daily, back to 2018) for older ones. An instant in an uncovered stretch resolves to no bucket and 404s rather than being interpolated. `observed_at` is the BUCKET's close time, never `ts`, and `window_seconds` reports the resolution used (60 for a 1-minute bar, 86400 for a daily bar) — so callers see exactly how far the nearest observation was and at what granularity. A nearest bucket more than 24 hours before `ts` is a 404 (the endpoint refuses to fabricate continuity across dead markets). When the literal pair (and its aliases) has no bucket and the quote is `fiat:USD`, the lookup retries each operator-declared USD-pegged classic (the same stablecoin-proxy chain as /v1/price) and returns the peg's bucket with `flags.triangulated=true`, echoing the requested quote. The 404 carries `coverage_from` and `outside_coverage` as extension members, measured over the pair AND those pegs together — the earliest bucket any of them holds — so an instant a peg covers is reported as a gap, not as predating the history held. A bucket that exists but is refused — by the thin-market or scam-issuer gate, or by the serving-sanity guard when a 1-minute bucket deviates grossly from the buckets before it (or has none to be checked against) and no clean bucket falls within the lookback — is a 404 of type `price-withheld`, never `price-not-found`. A failed store read is never a 404: a timeout or transient storage error is a 503 `price-unavailable` (retry), any other failure a 500.
          */
         get: operations["getPriceAt"];
         put?: never;
@@ -798,7 +796,7 @@ export interface paths {
         };
         /**
          * Multi-horizon price change (1h / 24h / 7d / 30d in one call)
-         * @description The current closed price plus the signed percentage change over 1h, 24h, 7d, and 30d — the wallet/portfolio delta strip in a single request (RFP §6). Each horizon's reference is the closed VWAP at-or-before `now − horizon`, resolved by the SAME point-in-time engine as /v1/price/at (finest CAGG resolution that covers the instant; daily bars reach back to 2018), so long horizons still answer for pairs whose minute-level history has aged out of the served tier. A horizon with no data that far back (a young pair, or a market that predates the window) is returned with all fields `null` and `available: false` — NEVER an error, so a fresh listing still returns its 1h/24h moves. A horizon whose reference bucket exists but was refused by a serving gate (the thin-market or scam-issuer gate, or the serving-sanity guard that rejects a manipulated minute) is the same null shape with `withheld: true`, so it is never mistaken for missing history. Each horizon carries `reference_at` + `resolution` so callers see exactly which bucket (and at what granularity) the delta was measured against. A 404 only when the pair has no CURRENT price to anchor on. A failed store read — of the anchor or of any horizon — is never a 404 or `available: false`: a timeout or transient storage error is a 503 `price-unavailable` (retry), any other failure a 500. `quote` defaults to `fiat:USD`; when no direct fiat:USD bucket exists the same stablecoin-proxy chain as /v1/price resolves it via an operator-declared USD peg (`flags.triangulated`).
+         * @description The current closed price plus the signed percentage change over 1h, 24h, 7d, and 30d — the wallet/portfolio delta strip in a single request. Each horizon's reference is the closed VWAP at-or-before `now − horizon`, resolved by the SAME point-in-time engine as /v1/price/at (finest CAGG resolution that covers the instant; daily bars reach back to 2018), so long horizons still answer for pairs whose minute-level history has aged out of the served tier. A horizon with no data that far back (a young pair, or a market that predates the window) is returned with all fields `null` and `available: false` — NEVER an error, so a fresh listing still returns its 1h/24h moves. A horizon whose reference bucket exists but was refused by a serving gate (the thin-market or scam-issuer gate, or the serving-sanity guard that rejects a manipulated minute) is the same null shape with `withheld: true`, so it is never mistaken for missing history. Each horizon carries `reference_at` + `resolution` so callers see exactly which bucket (and at what granularity) the delta was measured against. A 404 only when the pair has no CURRENT price to anchor on. A failed store read — of the anchor or of any horizon — is never a 404 or `available: false`: a timeout or transient storage error is a 503 `price-unavailable` (retry), any other failure a 500. `quote` defaults to `fiat:USD`; when no direct fiat:USD bucket exists the same stablecoin-proxy chain as /v1/price resolves it via an operator-declared USD peg (`flags.triangulated`).
          */
         get: operations["getPriceChanges"];
         put?: never;
@@ -988,7 +986,7 @@ export interface paths {
          *     - `?source=X` narrows to a single source (0- or 1-element array).
          *     - `?aggregate=latest` collapses to the single newest trade across
          *       sources (preserves the array wire shape; length 1).
-         *     - **Freshness is PER OBSERVATION, not envelope-level (W8.11).**
+         *     - **Freshness is PER OBSERVATION, not envelope-level.**
          *       `flags.stale` is **always** `false` here (there is no aggregation
          *       contract to fall short of), and the envelope `as_of` is the
          *       RESPONSE time, not the data's age. A source can be arbitrarily
@@ -1180,15 +1178,9 @@ export interface paths {
          *     `quote_asset` it was stored under, which is not necessarily the
          *     spelling that was asked for.
          *
-         *     A market is served from BOTH stored orientations. The decoder
-         *     records `base/quote` and `quote/base` as separate rows, and rows
-         *     held the other way round are re-expressed into the orientation
-         *     requested: the two legs swap, the two amounts swap with them,
-         *     and `price` — always quote/base — is the exact reciprocal of the
-         *     stored one. The swap is performed on the smallest-unit integer
-         *     amounts, so nothing is rounded on the way. `base_asset` /
-         *     `quote_asset` on such a row report the orientation served, not
-         *     the one stored. An empty first page carries `coverage_from`
+         *     A market is served from BOTH stored orientations, re-expressed
+         *     exactly as on `/v1/observations` (`base_asset` / `quote_asset`
+         *     report the orientation served). An empty first page carries `coverage_from`
          *     (and, when the window ends at or before it,
          *     `flags.outside_coverage`) measured over both orientations, the
          *     same population this page returns. A page reached by `cursor`
@@ -1211,11 +1203,6 @@ export interface paths {
          *       number of sources that recorded that single operation, and is
          *       independent of `limit`: a `limit=1` request over a
          *       three-source group returns three rows.
-         *
-         *     Bucketed/granularity-based history (VWAP/TWAP series at 1m/15m/...)
-         *     will ship via the aggregator binary (see
-         *     cmd/stellarindex-aggregator) on a different response shape —
-         *     not this endpoint.
          *
          *     CSV: send `Accept: text/csv` for the same page as CSV with a header
          *     row (same `limit` and `cursor`). Cells carry the JSON's exact text:
@@ -1267,10 +1254,7 @@ export interface paths {
          *     so there is nothing to derive a served width from and the
          *     requested `granularity` is always the one served — a `1m`
          *     request on a long-lived pair therefore stops early rather than
-         *     being coarsened. Measured 2026-09-09 on `native`/`fiat:USD`:
-         *     `granularity=1m` returned exactly 50 000 points ending
-         *     2018-02-21, while `granularity=1d` returned 3 341 points
-         *     spanning 2017-01-17 to yesterday. `flags.stale` is raised when
+         *     being coarsened. `flags.stale` is raised when
          *     the series may be short. For a bounded window with an
          *     automatically fitted width, use `/v1/chart`.
          *
@@ -1281,7 +1265,7 @@ export interface paths {
          *     price series keyed like `/v1/price`, not a trade feed.
          *
          *     `granularity=1m` may additionally be bounded to the last 90
-         *     days (migration 0156); coarser widths hold the deployment's
+         *     days; coarser widths hold the deployment's
          *     full history. This surface reads oldest-bucket-first, so where
          *     that window is enabled the bound is the first thing it meets.
          *
@@ -1329,10 +1313,7 @@ export interface paths {
          *     (`timeframe`, `granularity`) grid is wider than that, the
          *     series is served at the finest width that fits and
          *     `data.granularity` reports the width actually served —
-         *     `timeframe=1y&granularity=1m` is served at `15m`. The
-         *     alternative, which this replaces, was the oldest 50 000
-         *     minute buckets of the year with nothing on the wire to say the
-         *     window had been cut to a tenth. `timeframe=all` is never
+         *     `timeframe=1y&granularity=1m` is served at `15m`. `timeframe=all` is never
          *     coarsened (its size is a property of the data, not of the
          *     request). `1m` may additionally be bounded to 90 days on a
          *     given deployment — see the `granularity` parameter.
@@ -1665,8 +1646,7 @@ export interface paths {
          * Current per-pool-contract AMM reserves + constant-product depth.
          * @description CURRENT reserve state for AMM pool contracts, decoded straight
          *     from each pool's Soroban contract storage in the certified lake
-         *     (ADR-0039, same mechanism as
-         *     `/v1/lending/pools/{pool}/reserves`) — plus a depth table
+         *     (ADR-0039) — plus a depth table
          *     derived from those reserves under the constant-product model.
          *
          *     HONEST-COVERAGE CONTRACT: reserves are served only for venues
@@ -1684,9 +1664,7 @@ export interface paths {
          *     change — reserves are current as of that ledger and unchanged
          *     since. Separately, the envelope's `flags.stale` reflects lake
          *     freshness (ADR-0041): it fires when the lake watermark's close
-         *     time trails now by more than 300s (a wedged galexie→ClickHouse
-         *     sink makes every reserve read stale regardless of per-pool
-         *     last-change ledger). The `depth` table is a MODEL-DERIVED estimate (labelled
+         *     time trails now by more than 300s. The `depth` table is a MODEL-DERIVED estimate (labelled
          *     via `model: constant_product`, x·y=k with the 0.3% fee on
          *     input): per slippage tier and direction, the largest input
          *     whose AVERAGE execution price stays within the tier of the mid
@@ -1717,21 +1695,15 @@ export interface paths {
          * @description CURRENT two-sided reserves for Stellar's protocol-native
          *     (CAP-38) constant-product liquidity pools, read straight from
          *     the `liquidity_pool` LedgerEntry in the certified lake's
-         *     current-state table (ADR-0039, the same read-time-decode design
-         *     as `/v1/pools/reserves` and
-         *     `/v1/lending/pools/{pool}/reserves`) — plus a depth table under
+         *     current-state table (ADR-0039) — plus a depth table under
          *     the constant-product model.
          *
          *     Native pools are DISTINCT from Soroban AMM protocols (Soroswap,
          *     Aquarius, Phoenix, Comet — see `/v1/pools/reserves`): they are
          *     built into the ledger by CAP-38 with no smart contract, and
          *     their reserves are TWO-sided on-chain (both `reserve_a` and
-         *     `reserve_b` live in the entry). Unlike the Soroban AMM path —
-         *     where reserves are consumed transiently at trade decode and
-         *     persisted nowhere — the full per-pool reserve state is honestly
-         *     available for every native pool. (The supply-verification path
-         *     only records the operator-watched side of watched-asset pools;
-         *     this endpoint reads both sides of every pool.)
+         *     `reserve_b` live in the entry). Both sides of every native pool
+         *     are served.
          *
          *     Reserves are exact base-unit (stroop) decimal strings (ADR-0003;
          *     classic assets are always 7 decimals). `as_of_ledger` stamps the
@@ -1820,9 +1792,8 @@ export interface paths {
          *     with no captured entry is absent.
          *
          *     Freshness (ADR-0041): `as_of_ledger` is the lake watermark this
-         *     current-state read is fresh to (the highest captured ledger at
-         *     serve time); `flags.stale` fires when the watermark's close time
-         *     trails now by more than 300s (a wedged sink).
+         *     current-state read is fresh to; `flags.stale` fires when the
+         *     watermark's close time trails now by more than 300s.
          */
         get: operations["getLendingPoolReserves"];
         put?: never;
@@ -2027,18 +1998,15 @@ export interface paths {
         /**
          * Latest observation per (oracle, asset, quote) — 7d window.
          * @description Returns one row per distinct (source, asset, quote) triple
-         *     in the trailing 7 days. Backs the explorer's /oracles
-         *     price-streams table. Sources with no observation in the
+         *     in the trailing 7 days. Sources with no observation in the
          *     window are absent from the result.
          *
          *     Oracle symbols that map to no canonical asset are still
          *     recorded verbatim as `raw:<symbol>` rows (capture totality)
-         *     but are OMITTED here by default so the public row set is
-         *     unchanged for existing consumers. Pass
+         *     but are OMITTED here by default. Pass
          *     `include_unmapped=true` to list them; every row then carries
          *     `mapped` (false for `raw:` rows — reference-only,
-         *     orientation-unknown, never compared or aggregated). The
-         *     explorer's /oracles page opts in and badges them.
+         *     orientation-unknown, never compared or aggregated).
          *
          *     On an unmapped row the `quote` is ASSUMED, not observed. A
          *     symbol we cannot map carries no reliable denomination, so the
@@ -2071,12 +2039,8 @@ export interface paths {
          *     cursor keyed on `<base>|<quote>`). Each entry reports the
          *     pair's most recent trade timestamp + a 24h trade count.
          *
-         *     The recency window keeps the listing scoped to "active
-         *     markets" — pairs that haven't traded in 14 days don't
-         *     appear. This also bounds the underlying scan against the
-         *     trades hypertable so chunk pruning keeps response times
-         *     sub-second on a hypertable with hundreds of millions of
-         *     rows.
+         *     Pairs that haven't traded within the recency window don't
+         *     appear.
          */
         get: operations["listMarkets"];
         put?: never;
@@ -2098,10 +2062,7 @@ export interface paths {
          * Per-source 24h volume breakdown for a pair or asset.
          * @description Trailing-24h USD volume + trade count grouped by source, for
          *     either a single market pair (`base` + `quote`) or an asset
-         *     across every pair it appears in (`asset`). Backs the
-         *     volume-by-source breakdown (pie) on the market-pair + asset
-         *     pages — the `/v1/history` feed only samples recent trades, so
-         *     an accurate 24h share needs this server-side aggregate.
+         *     across every pair it appears in (`asset`).
          *
          *     Volume derivation matches `/v1/sources?include=stats`: the sum
          *     of trade-time `usd_volume`. A trade with no `usd_volume` is
@@ -2190,11 +2151,6 @@ export interface paths {
          *     `approve` / `set_admin` / `set_authorized` event the
          *     decoder observed; `mint` / `burn` / `clawback` live
          *     separately in supply analytics.
-         *
-         *     Powers the per-account net-position queries that
-         *     CoinGecko / CoinMarketCap structurally cannot offer —
-         *     they only see exchange-side flows, not on-chain
-         *     transfers.
          */
         get: operations["getContractTransfers"];
         put?: never;
@@ -2215,9 +2171,7 @@ export interface paths {
         /**
          * Multi-window delta strip for one entity.
          * @description Returns the pre-computed multi-window delta strip + ATH/ATL +
-         *     streak + acceleration for one (entity_type, id) tuple. Powers
-         *     every list view + price card on the showcase site
-         *     (data-inventory §6.1). Refreshed every 5 minutes by the
+         *     streak + acceleration for one (entity_type, id) tuple. Refreshed every 5 minutes by the
          *     change-summary worker; stale rows (>10 min) indicate the
          *     worker is lagging. Every value is computed from CLOSED
          *     1-minute buckets only (ADR-0015): the minute still filling
@@ -2257,10 +2211,8 @@ export interface paths {
          * Per-source ingest cursor positions.
          * @description Returns rows of the `ingestion_cursors` table — the
          *     per-source markers the dispatcher persists after each ledger
-         *     is processed. Used for operator-facing diagnostics and the
-         *     showcase /diagnostics page (so you can see at a glance which
-         *     sources are caught up, which are lagging, and how stale the
-         *     last update is).
+         *     is processed: which sources are caught up, which are lagging,
+         *     and how stale the last update is.
          *
          *     Sources that track multiple positions independently (e.g.
          *     Soroswap tracks the factory cursor + one cursor per pair)
@@ -2290,8 +2242,7 @@ export interface paths {
          *
          *     Pass `?max_age=<duration>` for an arbitrary freshness
          *     threshold — useful when polling from monitoring tools that
-         *     can't post-filter. The explorer's `/diagnostics` page applies
-         *     the same filter client-side, defaulting to 1h.
+         *     can't post-filter.
          *
          *     Pass `?source=<name>` for an exact-match filter on the
          *     `source` column — typical values are `ledgerstream` (the
@@ -2326,10 +2277,7 @@ export interface paths {
          * Per-region ingestion snapshot — ledger tip, backfill, FX, supply, sources.
          * @description One snapshot of the region's ingest state, composed from
          *     the cursors table, network_stats CAGG, fx_quotes hypertable,
-         *     asset_supply_history, and the static source registry. Designed as the single fetch
-         *     the public status page makes for its "Ingestion · <region>"
-         *     panel — so the page renders the whole panel without scraping
-         *     five separate endpoints.
+         *     asset_supply_history, and the static source registry.
          *
          *     Sections:
          *       - `region`         — name + deployment (r1/production today).
@@ -2341,9 +2289,7 @@ export interface paths {
          *       - `sources`        — every source in the registry joined with
          *                            its trailing-24h trades/volume/markets.
          *
-         *     Cache: `public, max-age=15`. The underlying readers change
-         *     on second-scale (cursor updates, supply ticks); 15s smooths
-         *     a refreshing status page without hiding degradation.
+         *     Cache: `public, max-age=15`.
          */
         get: operations["getDiagnosticIngestion"];
         put?: never;
@@ -2448,17 +2394,9 @@ export interface paths {
         };
         /**
          * Customer-facing incident posts.
-         * @description Returns every customer-facing incident post the binary has
-         *     embedded (`internal/incidents/data/*.md`), parsed at startup
-         *     from YAML frontmatter + markdown body. Sorted by
-         *     `started_at` descending (most recent first).
-         *
-         *     Posts are added to the binary at build time — there is no
-         *     runtime write path. Files starting with `_` (templates) are
-         *     skipped at parse time. New incidents ship with a redeploy.
-         *
-         *     Powers the "Incident history" section on
-         *     status.stellarindex.io. Distinct from `/v1/status` which
+         * @description Returns every customer-facing incident post, sorted by
+         *     `started_at` descending (most recent first). Posts ship with a
+         *     redeploy; there is no runtime write path. Distinct from `/v1/status` which
          *     reports the *currently active* incidents from Alertmanager.
          */
         get: operations["listIncidents"];
@@ -2480,15 +2418,11 @@ export interface paths {
         /**
          * Atom feed of customer-facing incidents.
          * @description RFC-4287 Atom 1.0 syndication of every customer-facing
-         *     incident post (`internal/incidents/data/*.md`). Designed
-         *     for Feedly, Slack's RSS bot, and similar feed consumers
-         *     who want push-style notifications when a new incident
-         *     ships without polling JSON.
+         *     incident post, for feed consumers.
          *
          *     Same corpus as `/v1/incidents`; entry `<id>` is a stable
          *     URN so feed readers dedupe correctly across crawls.
-         *     Cache-Control: public, max-age=300 (5 min) — the corpus
-         *     only changes on redeploy so longer caching is fine.
+         *     Cache-Control: public, max-age=300.
          */
         get: operations["getIncidentsAtomFeed"];
         put?: never;
@@ -2565,9 +2499,7 @@ export interface paths {
          *     not integrated — which is reported in its own top-level
          *     `recognition` object, NOT as a row in `sources` and NOT in
          *     `complete_sources` / `total_sources`. It is a discovery backlog,
-         *     not missing data, and it can never reach zero on a public
-         *     network, so counting it as a failed source made the headline
-         *     permanently and unfixably red. A source silently dropping its
+         *     not missing data. A source silently dropping its
          *     OWN events is the opposite case: that appears as
          *     `recognition_ok: false` on that source's row in `sources`, and
          *     it does fail the headline. `total_sources` always equals
@@ -2595,8 +2527,7 @@ export interface paths {
          *     indexed protocol's hand-curated identity (category, one-line
          *     description, genesis ledger, verified factory / trust-root
          *     contracts) joined with three dynamic columns — registered
-         *     contract-instance count (`protocol_contracts`; the
-         *     `soroswap_pairs` registry for soroswap), trailing-24h decoded
+         *     contract-instance count (`protocol_contracts`), trailing-24h decoded
          *     event count across the protocol's served tables, and the
          *     latest ADR-0033 completeness verdict summary (the same
          *     `completeness_snapshots` row `/coverage` serves in full).
@@ -2610,10 +2541,8 @@ export interface paths {
          *     so the endpoint never 5xxes on a partial deployment. Served
          *     with `public, max-age=60`.
          *
-         *     `contract_count` is served from a prewarmed, stale-while-
-         *     revalidate cache (the roster is a `SELECT DISTINCT … LIMIT 5000`
-         *     served-tier scan, and this route is unauthenticated, so scanning
-         *     per protocol on every origin miss was a DoS surface). When a
+         *     `contract_count` is served from a prewarmed,
+         *     stale-while-revalidate cache. When a
          *     source's roster read FAILS and no last-good count is cached, the
          *     source is OMITTED from `protocols` and named in `coverage_note`
          *     rather than published with a fabricated `contract_count: 0` — a
@@ -2744,11 +2673,8 @@ export interface paths {
          *     `buying` the QUOTE; classic asset forms only (`native`,
          *     `CODE-G...`) — SDEX offers cannot reference Soroban assets.
          *
-         *     Source of truth is an IN-PROCESS live offer book maintained off
-         *     the certified lake: loaded once at process start (the offer
-         *     slice carries its assets only inside the entry XDR, so per-pair
-         *     lake reads are not viable within the read budget) and advanced
-         *     with incremental change reads every ~60s — `as_of_ledger` /
+         *     Served from an in-process live offer book maintained off the
+         *     certified lake and advanced every ~60s — `as_of_ledger` /
          *     `snapshot_at` state exactly how fresh the served book is. Until
          *     the initial load completes the endpoint returns a 503 problem
          *     (`orderbook-loading`), never a fabricated empty book.
@@ -2800,9 +2726,8 @@ export interface paths {
          *     advances on ledgers that produced a trade row; the two agree
          *     within a few ledgers in steady state.
          *
-         *     Cache: `public, max-age=2` — the cursor advances every ~5s,
-         *     so a 2s edge cache smooths a refreshing status page without
-         *     hiding a stall. For push semantics use `/v1/ledger/stream`.
+         *     Cache: `public, max-age=2`. For push semantics use
+         *     `/v1/ledger/stream`.
          */
         get: operations["getLedgerTip"];
         put?: never;
@@ -2861,21 +2786,13 @@ export interface paths {
         };
         /**
          * Consolidated home-page aggregate stats.
-         * @description Single-call replacement for the home network-strip's
-         *     previous fan-out across `/v1/markets`, `/v1/assets`,
-         *     `/v1/sources`, and `/v1/diagnostics/cursors`. Returns
-         *     total trailing-24h USD volume, count of pairs that
+         * @description Returns total trailing-24h USD volume, count of pairs that
          *     recorded volume in 24h, total `classic_assets` row count,
          *     latest ledger across the live cursor namespaces, and
          *     the count of registered exchange-class sources.
          *
-         *     Computed from a single SQL query over `prices_1m`,
-         *     `classic_assets`, and `ingestion_cursors`. The source
-         *     counts are derived from the in-memory `external.Registry`,
-         *     not the DB.
-         *
-         *     Useful for dashboards / status displays / embed widgets
-         *     that just want a quick health-of-the-network number.
+         *     The source counts come from the in-memory source registry, not
+         *     the DB.
          */
         get: operations["getNetworkStats"];
         put?: never;
@@ -3209,10 +3126,7 @@ export interface paths {
          *     `actor` saying who can move it. It exists because a small served
          *     set and a silent pipeline look identical from outside: read the
          *     funnel to tell "the network holds this many real-world assets"
-         *     apart from "most candidates never reached the definition". The
-         *     two views are complementary — `refused[]` reports the
-         *     requirements that were evaluated, `funnel` reports every stage
-         *     including the ones upstream of any evaluation.
+         *     apart from "most candidates never reached the definition".
          *
          *     VALUATION. Every figure comes from the same catalogue read,
          *     substance gate, supply-derived market cap, dust-liquidity guard
@@ -13649,11 +13563,9 @@ export interface operations {
              *     (`lake-absent`). Either way, do not route lake traffic here;
              *     pricing routes may still be healthy — check `/v1/readyz`.
              *
-             *     `data.detail` is a FIXED operator hint, never the underlying
-             *     driver error — the route is public and unmetered, so it must
-             *     not publish connection detail (host, port, credentials path)
-             *     to anonymous callers while the lake is in trouble. The real
-             *     ping error is logged by the API server.
+             *     `data.detail` is a fixed operator hint, never the underlying
+             *     driver error (the route is public; no connection detail is
+             *     published).
              */
             503: {
                 headers: {
@@ -13839,12 +13751,9 @@ export interface operations {
                  *     slug / name, applied server-side across BOTH phases of the
                  *     unified listing (catalogue + the ~191K classic long tail).
                  *
-                 *     Applied on the default listing and on `asset_class=all`.
-                 *     NOT applied on `asset_class=fiat|stablecoin|crypto`: those
-                 *     listings serve their whole class, so `q` is accepted and
-                 *     has no effect there — the response names
-                 *     it in `flags.filters_ignored`, so a client can tell the
-                 *     over-broad page from a match.
+                 *     Applied on the default listing and on `asset_class=all`; accepted
+                 *     but ignored on `asset_class=fiat|stablecoin|crypto` (named in
+                 *     `flags.filters_ignored`).
                  *
                  *     A row's `volume_24h_usd` under this filter is the volume of
                  *     the arm the filter admitted — see **Row filters and
@@ -13913,12 +13822,7 @@ export interface operations {
                  *
                  *     Omitted: the legacy classic-assets page (unfiltered).
                  *
-                 *     **Any other value is a 400.** It used to fall through to the
-                 *     unfiltered listing and return 200, so `asset_class=rwa` came
-                 *     back byte-identical to `asset_class=bogus` and to no
-                 *     asset_class at all — a governance token and a wrapped lumen
-                 *     answering a request for real-world assets, with nothing in
-                 *     the response to say the filter had not applied.
+                 *     **Any other value is a 400.**
                  *
                  *     There is no `rwa` class here by design. That set is decided
                  *     by issuer attestation rather than by a class column, and it
@@ -13935,18 +13839,11 @@ export interface operations {
                 asset_class?: "fiat" | "stablecoin" | "crypto" | "blockchain" | "cryptocurrency" | "cryptocurrencies" | "all";
                 /**
                  * @description Filter the listing to assets minted by the supplied
-                 *     issuer G-strkey. Sourced from the same ListCoinsExt
-                 *     path the legacy issuer-scoped listing used; rows
-                 *     include the full coin-overlay shape (price_usd /
-                 *     volume_24h_usd / change_*_pct / etc) when a
-                 *     CoinsReader is wired.
+                 *     issuer G-strkey.
                  *
-                 *     Applied on the default listing and on `asset_class=all`.
-                 *     NOT applied on `asset_class=fiat|stablecoin|crypto`: those
-                 *     listings serve their whole class, so `issuer` is accepted
-                 *     and has no effect there — the response names
-                 *     it in `flags.filters_ignored`, so a client can tell the
-                 *     over-broad page from a match.
+                 *     Applied on the default listing and on `asset_class=all`; accepted
+                 *     but ignored on `asset_class=fiat|stablecoin|crypto` (named in
+                 *     `flags.filters_ignored`).
                  *
                  *     A row's `volume_24h_usd` under this filter is the volume of
                  *     the arm the filter admitted — see **Row filters and
@@ -13955,7 +13852,7 @@ export interface operations {
                  */
                 issuer?: string;
                 /**
-                 * @description Structural asset-class filter (BACKLOG #54), distinct from
+                 * @description Structural asset-class filter, distinct from
                  *     the `asset_class` catalogue dispatch above. One of `native`,
                  *     `classic`, `soroban`, `fiat`; `any` (or omitted) disables
                  *     the filter. Any other value returns 400.
@@ -13967,12 +13864,9 @@ export interface operations {
                  *     `type=classic` and XLM by `type=native` even though both
                  *     rows are served as `global`.
                  *
-                 *     Applied on the default listing and on `asset_class=all`.
-                 *     NOT applied on `asset_class=fiat|stablecoin|crypto`: those
-                 *     listings serve their whole class, so `type` is accepted and
-                 *     has no effect there — the response names
-                 *     it in `flags.filters_ignored`, so a client can tell the
-                 *     over-broad page from a match.
+                 *     Applied on the default listing and on `asset_class=all`; accepted
+                 *     but ignored on `asset_class=fiat|stablecoin|crypto` (named in
+                 *     `flags.filters_ignored`).
                  *
                  *     **Row filters and `volume_24h_usd`.** All four row filters
                  *     (`type`, `code`, `issuer`, `q`) push down to the listing
@@ -14020,12 +13914,9 @@ export interface operations {
                  *     `issuer` to pin a single classic asset. A malformed value
                  *     returns 400.
                  *
-                 *     Applied on the default listing and on `asset_class=all`.
-                 *     NOT applied on `asset_class=fiat|stablecoin|crypto`: those
-                 *     listings serve their whole class, so `code` is accepted and
-                 *     has no effect there — the response names
-                 *     it in `flags.filters_ignored`, so a client can tell the
-                 *     over-broad page from a match.
+                 *     Applied on the default listing and on `asset_class=all`; accepted
+                 *     but ignored on `asset_class=fiat|stablecoin|crypto` (named in
+                 *     `flags.filters_ignored`).
                  *
                  *     A row's `volume_24h_usd` under this filter is the volume of
                  *     the arm the filter admitted — see **Row filters and
@@ -17452,16 +17343,11 @@ export interface operations {
                 /**
                  * @description Sort order. `volume_24h_usd_desc` (default) orders by
                  *     24h USD volume desc (NULLS LAST), then by
-                 *     `<base>|<quote>` for ties — surfaces the high-activity
-                 *     pairs first without paginating through ~5K alphabetic
-                 *     dust pairs.
+                 *     `<base>|<quote>` for ties.
                  *
-                 *     `pair` returns markets in lex order of
-                 *     `<base>|<quote>` — stable for paginating the full set,
-                 *     but surfaces spam-token pairs (`0-…`, `0TAX-…`) at the
-                 *     top of the listing. It stays available as an explicit
-                 *     option so callers paginating the entire universe of
-                 *     pairs aren't broken.
+                 *     `pair` returns markets in lex order of `<base>|<quote>` —
+                 *     stable for paginating the full set, but surfaces spam-token
+                 *     pairs at the top.
                  *
                  *     Cursor format differs per ordering; keep using the
                  *     cursor returned by the previous response.
@@ -18020,15 +17906,8 @@ export interface operations {
                  *     deltas of one trading pair's price). Determines how `{id}`
                  *     is interpreted — see the `id` parameter.
                  *
-                 *     Both families come off the same series — the 1-minute VWAP
-                 *     of an aggregator-configured pair — which is why they are
-                 *     the two the worker can compute. Families that would need a
-                 *     different series (per-protocol activity, per-ingest-source
-                 *     volume) have no producer and are not served: the
-                 *     `change_summary_5m` discriminator reserves room for them,
-                 *     but nothing writes those rows, so they are absent from
-                 *     this contract rather than documented and permanently
-                 *     empty.
+                 *     Both families come off the 1-minute VWAP of an
+                 *     aggregator-configured pair; no other family is served.
                  * @example coin
                  */
                 entity_type: "coin" | "pair";
@@ -18039,12 +17918,8 @@ export interface operations {
                  *     - `coin`: the BASE asset of a configured pair, in any of
                  *       its identifier forms — friendly slug (`XLM`), canonical
                  *       asset_id (`native`, `crypto:XLM`, `USDC-GA5Z…`), or bare
-                 *       classic code (`USDC` → also tries `crypto:USDC`). The
-                 *       handler expands the input into every candidate the
-                 *       change-summary worker might have keyed under and
-                 *       returns the first hit. Without expansion, a typo of
-                 *       the canonical form would 404 even when data is
-                 *       populated under a sibling form.
+                 *       classic code (`USDC` → also tries `crypto:USDC`). Every
+                 *       candidate form is tried and the first hit returned.
                  *     - `pair`: `base/quote` form (e.g. `crypto:XLM/fiat:USD`).
                  *       The `/` belongs to the id, not to the path, so the whole
                  *       id occupies one path segment and must be percent-encoded
@@ -18162,7 +18037,7 @@ export interface operations {
         parameters: {
             query?: {
                 /**
-                 * @description Semantic convenience filter (R-015). Values:
+                 * @description Semantic convenience filter. Values:
                  *       - `active` — only rows with `lag_seconds <= 600` (10 min).
                  *         Excludes completed backfill cursors that linger in the
                  *         table after their range finished.
@@ -19113,8 +18988,7 @@ export interface operations {
                                  *     consumer reading only
                                  *     complete/coverage_pct/genesis_ledger therefore
                                  *     overstates the served claim by that whole span
-                                 *     — this field is the correction, and it is the
-                                 *     same number `detail` has always named in prose.
+                                 *     — this field is the correction.
                                  *
                                  *     Omitted when the audit recorded no floor: a
                                  *     verdict written before this field existed, or a
@@ -19172,11 +19046,8 @@ export interface operations {
                              *
                              *     This is a **discovery backlog** (which decoder to build
                              *     next), **not missing data**: no source published in `sources`
-                             *     is dropping events because of it. It can only read clean if
-                             *     no un-indexed Soroban contract exists anywhere on the
-                             *     network, so it is reported here with its own vocabulary
-                             *     rather than as a permanently-failed row in `sources`, and it
-                             *     is excluded from `complete_sources` / `total_sources`.
+                             *     is dropping events because of it. It is excluded from
+                             *     `complete_sources` / `total_sources`.
                              *
                              *     `null` when the completeness audit has not produced a census
                              *     on this deployment — the key is always present so that
@@ -19308,9 +19179,7 @@ export interface operations {
                             total_protocols: number;
                             tvl_total?: components["schemas"]["DEXTVLTotal"];
                             /**
-                             * @description Honest-degrade signal (mirrors the
-                             *     `coverage_note` on `/accounts/{id}/movements`
-                             *     and `/tx/{hash}`): present ONLY when one or
+                             * @description Honest-degrade signal: present ONLY when one or
                              *     more sources were OMITTED from `protocols`
                              *     because their contract-roster read failed and
                              *     no cached count was available. Names the
@@ -19910,21 +19779,10 @@ export interface operations {
                              */
                             exchange_sources: number;
                             /**
-                             * @description Count of ALL registered sources (every entry in
-                             *     `internal/sources/external.Registry`). Different
+                             * @description Count of ALL registered sources. Different
                              *     from `/v1/status`'s `freshness.total_sources`,
                              *     which counts only sources the operator has
                              *     ENABLED at runtime — typically a strict subset.
-                             *     Measured on r1 2026-09-03: registry=28,
-                             *     enabled=25, active=24 (25 and 26 once
-                             *     this gauge is published) — before the API binary
-                             *     published the `massive` FX worker's own enabled
-                             *     series; with it, enabled and active each read
-                             *     one higher.
-                             *     The two `total_sources` measure different things
-                             *     by design; see the field doc on
-                             *     `internal/api/v1.NetworkStats` for the full
-                             *     semantic table.
                              */
                             total_sources: number;
                         };
