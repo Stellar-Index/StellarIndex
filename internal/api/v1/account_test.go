@@ -12,6 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
+
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
@@ -628,4 +631,72 @@ func TestAccountUsage_NoSessionNoSubject_Unauthenticated(t *testing.T) {
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("status = %d, want 401", resp.StatusCode)
 	}
+}
+
+// POST /v1/account/keys must carry the caller's OWN effective monthly quota onto the child it
+// mints. Otherwise a child of a METERED parent persists MonthlyQuota=0, middleware.MonthlyQuota's
+// `MonthlyQuota <= 0` short-circuit leaves it UNMETERED, and a capped customer can mint an
+// uncapped credential.
+//
+// It copies a cap and never invents one: a parent with no cap still mints an uncapped child
+// (pinned below), because the ceiling is opt-in by contract and defaulting it would 429 keys that
+// never had one.
+
+// mintChildKeySubject drives the production rotation chain (handler, RedisAPIKeyStore, RedisAPIKeyValidator) and returns the
+// Subject the auth layer hands the quota middleware for the freshly minted child.
+func mintChildKeySubject(t *testing.T, parent auth.Subject) auth.Subject {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	ts := newAccountTestServer(t, parent, auth.NewRedisAPIKeyStore(rdb))
+	resp := postJSONNoReason(t, ts.URL+"/v1/account/keys", `{"label":"rotated"}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("POST /v1/account/keys status = %d, want 201", resp.StatusCode)
+	}
+	var body struct {
+		Data struct {
+			KeyID     string `json:"key_id"`
+			Plaintext string `json:"plaintext"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode mint response: %v", err)
+	}
+	if body.Data.Plaintext == "" {
+		t.Fatal("mint response carried no plaintext")
+	}
+	sub, err := auth.NewRedisAPIKeyValidator(rdb).Lookup(context.Background(), body.Data.Plaintext)
+	if err != nil {
+		t.Fatalf("lookup minted child: %v", err)
+	}
+	return sub
+}
+
+func postJSONNoReason(t *testing.T, url, body string) *http.Response {
+	t.Helper()
+	resp, err := http.Post(url, "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST %s: %v", url, err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	return resp
+}
+
+// With SignupRequireEmailVerification
+// on (the default), a verified /v1/signup customer who rotated via
+// POST /v1/account/keys got a child record with Identifier signup-<hash>
+// and ZERO EmailVerifiedAt — RequireEmailVerified then 403'd that child
+// forever, since nothing can verify a non-signup KeyID after the fact.
+
+// fakeSessionPeeker is the handler-level test double for [v1.SessionPeeker]; it returns a canned SessionInfo regardless of
+// context.
+type fakeSessionPeeker struct {
+	info v1.SessionInfo
+	ok   bool
+}
+
+func (f *fakeSessionPeeker) SessionFromContext(_ context.Context) (v1.SessionInfo, bool) {
+	return f.info, f.ok
 }

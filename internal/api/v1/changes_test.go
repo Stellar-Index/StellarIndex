@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -592,4 +593,13 @@ func TestHandleChangeSummary_ServesWhenGatesAllow(t *testing.T) {
 			t.Errorf("%s: current_value = %q, want \"1.15\"", entityType, got.CurrentValue)
 		}
 	}
+}
+
+// getChangeSummaryStatus fetches /v1/changes and returns the status and body.
+func getChangeSummaryStatus(t *testing.T, srv *v1.Server, entityType, entityID string) (int, string) {
+	t.Helper()
+	ts := startHTTPTest(t, srv.Handler())
+	resp := mustGet(t, ts.URL+"/v1/changes/"+entityType+"/"+url.PathEscape(entityID))
+	body, _ := readAll(resp)
+	return resp.StatusCode, body
 }
