@@ -122,14 +122,13 @@ Triggered by a recent deploy: revert first, investigate after. Latent bug weeks 
 
 ### 5.1 Status page
 
-`https://stellarindex.io/status`, a static Next.js export at [`web/status/`](../../web/status/), deployed to
-Cloudflare Pages on every push to `main`. It is separate from the API so it survives an API outage. The old
-cstate/Upptime scaffolds are gone; [`status-page-setup.md`](status-page-setup.md) and
-[`rollback.md`](rollback.md) may still describe them.
+`https://status.stellarindex.io`, a static export of [`web/status/`](../../web/status/) on its own Cloudflare
+Pages project, deployed by `status-page.yml`. It makes no API call and does not share the explorer's build, so it
+publishes during an API outage: post there first. `https://stellarindex.io/status` (explorer route) adds live
+component health but rebuilds with the explorer, which an API outage can block.
 
-**Source of truth:** `web/status/` (site + components). Post an incident by editing
-`internal/incidents/data/<slug>.md` (the same corpus is embedded in the API binary, so `/v1/incidents` and
-`web/status/` stay in lockstep) and pushing to `main`.
+**Source of truth:** `internal/incidents/data/<slug>.md`. Both pages and `/v1/incidents` (embedded in the API
+binary) render that corpus. Push the file to `main`, then `gh workflow run status-page.yml --ref main`.
 
 **How to post:** [`runbooks/sev-status-page-update.md`](runbooks/sev-status-page-update.md), the binding
 runbook for every SEV-1/SEV-2 update (cadence, safe-to-publish detail, workstation-down fallback).

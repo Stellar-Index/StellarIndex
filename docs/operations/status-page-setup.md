@@ -27,7 +27,7 @@ web/explorer/src/app/status/   ← the live page
   StatusPageClient.tsx           ← polls the live API at runtime
   incident/[slug]/               ← per-incident postmortem pages
   src/lib/incidents.ts           ← build-time loader of the same data/*.md
-web/status/                    ← redirect-only remnant
+web/status/                    ← standalone incident page (status.stellarindex.io)
 ```
 
 The page is **NOT independent of the API.** `StatusPageClient.tsx` fetches
@@ -46,7 +46,8 @@ Hetzner/AWS/Vultr origins), but every live panel degrades to stale/unreachable.
    `started_at`, `affected_components`).
 2. Append the customer-facing body (Identification → Impact →
    Timeline → What we did) per the template.
-3. Commit + push to `main`. The explorer redeploys the new
+3. Commit + push to `main`, then publish the standalone page with
+   `gh workflow run status-page.yml --ref main`. The explorer redeploys its
    page within ~2 minutes; once the API binary is also redeployed, webhook
    subscribers receive `incident.sev1` / `incident.resolved` via
    `stellarindex-ops emit-incident`.

@@ -13,9 +13,10 @@ status: current
 > domain**. It refuses to run unless `CF_BOOTSTRAP_I_UNDERSTAND=1` is set.
 > Treat this page as the procedure for standing up a NEW zone.
 
-The live status page is `https://stellarindex.io/status`. `status.stellarindex.io`
-and its `stellarindex-status` project are **redirect-only**
-(`web/status/public/_redirects` 301s every path to `/status`).
+`status.stellarindex.io` (project `stellarindex-status`, `web/status/`) is the
+standalone incident page: built from `internal/incidents/data` with no API call,
+so it publishes during an outage. `stellarindex.io/status` is the explorer's
+live-health page; `/incident/*` on the status domain 301s to it.
 
 | Surface | Project | Domain |
 |---|---|---|
