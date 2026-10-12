@@ -15,8 +15,7 @@ import (
 // SourceName is the registry key for this source.
 const SourceName = "cctp"
 
-// GenesisLedger is the ledger of the MessageTransmitter's first on-chain event, the lower bound for
-// any re-derive or gap scan. ProtocolMeta.GenesisLedger for "cctp" must equal it.
+// GenesisLedger is the ledger of the MessageTransmitter's first on-chain event, the lower bound for any re-derive or gap scan; ProtocolMeta.GenesisLedger for "cctp" must equal it.
 const GenesisLedger uint32 = 62_146_641
 
 // Mainnet contract addresses, per https://developers.circle.com/cctp/references/stellar-contracts.
@@ -97,16 +96,7 @@ var (
 	TopicSymbolUnDenylisted              = scval.MustEncodeSymbol(EventUnDenylisted)
 )
 
-// DepositForBurn is the canonical projection of one `deposit_for_burn` event
-// from TokenMessengerMinter (v2); schema in docs/protocols/cctp.md.
-//
-// Wire: topics = ["deposit_for_burn", burn_token, depositor, min_finality_threshold]; body = ScMap
-// { amount, mint_recipient, destination_domain, destination_token_messenger, destination_caller,
-// max_fee, hook_data }.
-//
-// mint_recipient, destination_token_messenger and destination_caller are 32-byte buffers (EVM
-// destinations: 12 zero-pad bytes, then the 20-byte address). They are kept as raw lowercase hex
-// without 0x; downstream re-formats per destination chain.
+// DepositForBurn is the canonical projection of one `deposit_for_burn` event from TokenMessengerMinter (v2); 32-byte address fields are kept as raw lowercase hex (schema in docs/protocols/cctp.md).
 type DepositForBurn struct {
 	Ledger     uint32
 	TxHash     string
@@ -129,11 +119,7 @@ type DepositForBurn struct {
 	HookData                  string // hex; opaque post-mint payload
 }
 
-// MintAndWithdraw is the canonical projection of one `mint_and_withdraw` event from
-// TokenMessengerMinter (v2).
-//
-//	topics = ["mint_and_withdraw", mint_recipient, mint_token]
-//	body   = ScMap { amount, fee_collected }
+// MintAndWithdraw is the canonical projection of one `mint_and_withdraw` event from TokenMessengerMinter (v2).
 type MintAndWithdraw struct {
 	Ledger     uint32
 	TxHash     string
@@ -148,9 +134,7 @@ type MintAndWithdraw struct {
 	FeeCollected string // i128
 }
 
-// MintAndForward is the canonical projection of one `mint_and_forward` event: the CctpForwarder
-// minting and relaying onward to the final recipient. Single Symbol topic; body map
-// {amount: i128, forward_recipient: Address, token: Address}.
+// MintAndForward is the canonical projection of one `mint_and_forward` event: the CctpForwarder minting and relaying onward to the final recipient.
 type MintAndForward struct {
 	Ledger     uint32
 	TxHash     string
@@ -163,13 +147,7 @@ type MintAndForward struct {
 	Amount           string // i128
 }
 
-// OwnershipTransfer is the canonical projection of one `ownership_transfer` event. Ownable2Step:
-// this fires when the current owner initiates a transfer; the new owner must accept before
-// `ownership_transfer_completed` fires. `old_owner` is type-tested in case an upgrade emits it
-// unset.
-//
-//	topics = ["ownership_transfer"]
-//	body   = { live_until_ledger: u32, new_owner: Address, old_owner: Address }
+// OwnershipTransfer is the canonical projection of one `ownership_transfer` event.
 type OwnershipTransfer struct {
 	Ledger     uint32
 	TxHash     string
@@ -182,12 +160,7 @@ type OwnershipTransfer struct {
 	OldOwner        string // Stellar Address strkey; "" if void
 }
 
-// OwnershipTransferCompleted is the canonical projection of one `ownership_transfer_completed`
-// event: the new owner accepted a pending [OwnershipTransfer]. `new_owner` is the only field,
-// for both bootstrap and later transfers.
-//
-//	topics = ["ownership_transfer_completed"]
-//	body   = { new_owner: Address }
+// OwnershipTransferCompleted is the canonical projection of one `ownership_transfer_completed` event: the new owner accepted a pending [OwnershipTransfer].
 type OwnershipTransferCompleted struct {
 	Ledger     uint32
 	TxHash     string
@@ -198,14 +171,7 @@ type OwnershipTransferCompleted struct {
 	NewOwner string // Stellar Address strkey
 }
 
-// AdminChanged is the canonical projection of one `admin_changed` event: the contract's
-// operational admin role (distinct from `owner`) was reassigned.
-//
-// At bootstrap `old_admin` is ScvVoid, later reassignments populate it, so the decoder type-tests
-// `old_admin` rather than assuming an Address.
-//
-//	topics = ["admin_changed"]
-//	body   = { new_admin: Address, old_admin: Address | Void }
+// AdminChanged is the canonical projection of one `admin_changed` event: the contract's operational admin role (distinct from `owner`) was reassigned.
 type AdminChanged struct {
 	Ledger     uint32
 	TxHash     string
@@ -217,12 +183,7 @@ type AdminChanged struct {
 	OldAdmin string // Stellar Address strkey; "" if void (bootstrap — no previous admin)
 }
 
-// RemoteTokenMessengerAdded is the canonical projection of one `remote_token_messenger_added`
-// event: TokenMessengerMinter registering the counterpart TokenMessenger on another CCTP domain
-// (one per supported remote domain).
-//
-//	topics = ["remote_token_messenger_added"]
-//	body   = { domain: u32, token_messenger: BytesN<32> }
+// RemoteTokenMessengerAdded is the canonical projection of one `remote_token_messenger_added` event: TokenMessengerMinter registering the counterpart TokenMessenger on another CCTP domain (one per supported remote domain).
 type RemoteTokenMessengerAdded struct {
 	Ledger     uint32
 	TxHash     string
@@ -234,12 +195,7 @@ type RemoteTokenMessengerAdded struct {
 	TokenMessenger string // hex; BytesN<32> — the remote TokenMessenger's identity on that domain
 }
 
-// TokenPairLinked is the canonical projection of one `token_pair_linked` event:
-// TokenMessengerMinter registering which remote-domain token a local Stellar token burns/mints
-// against. Pairs 1:1 with [RemoteTokenMessengerAdded] by domain.
-//
-//	topics = ["token_pair_linked"]
-//	body   = { local_token: Address, remote_domain: u32, remote_token: BytesN<32> }
+// TokenPairLinked is the canonical projection of one `token_pair_linked` event: TokenMessengerMinter registering which remote-domain token a local Stellar token burns/mints against.
 type TokenPairLinked struct {
 	Ledger     uint32
 	TxHash     string
@@ -252,13 +208,7 @@ type TokenPairLinked struct {
 	RemoteToken  string // hex; BytesN<32> — the remote chain's token identity
 }
 
-// MessageSent is the canonical projection of one `message_sent` event from MessageTransmitter
-// (v2), emitted alongside `deposit_for_burn` for every outbound transfer.
-//
-//	topics = ["message_sent"]   (single-topic event)
-//	body   = Bytes (raw)
-//
-// The bytes are the cross-chain envelope destination-chain attestation services consume; kept as hex.
+// MessageSent is the canonical projection of one `message_sent` event from MessageTransmitter (v2), emitted alongside `deposit_for_burn` for every outbound transfer.
 type MessageSent struct {
 	Ledger     uint32
 	TxHash     string
@@ -269,11 +219,7 @@ type MessageSent struct {
 	Message string // hex of the serialised envelope
 }
 
-// MessageReceived is the canonical projection of one `message_received` event from
-// MessageTransmitter (v2), emitted alongside `mint_and_withdraw` for every inbound transfer.
-//
-//	topics = ["message_received", caller, nonce, finality_threshold_executed]
-//	body   = ScMap { source_domain, sender, message_body }
+// MessageReceived is the canonical projection of one `message_received` event from MessageTransmitter (v2), emitted alongside `mint_and_withdraw` for every inbound transfer.
 type MessageReceived struct {
 	Ledger     uint32
 	TxHash     string
@@ -296,11 +242,7 @@ type MessageReceived struct {
 //
 // All are rare; the schemas come from real lake events, as upstream documents almost none of them.
 
-// AdminChangeStarted is the canonical projection of one `admin_change_started` event: fires when
-// an admin change is initiated (`admin_changed` fires when it takes effect). `old_admin` is
-// type-tested via [scval.AsAddressOrVoid] because it is void at bootstrap.
-//
-// Body: { new_admin: Address, old_admin: Address | Void }.
+// AdminChangeStarted is the canonical projection of one `admin_change_started` event: fires when an admin change is initiated (`admin_changed` fires when it takes effect).
 type AdminChangeStarted struct {
 	Ledger     uint32
 	TxHash     string
@@ -312,12 +254,7 @@ type AdminChangeStarted struct {
 	OldAdmin string // Stellar Address strkey; "" if void
 }
 
-// AttesterEnabled is the canonical projection of one `attester_enabled` event: MessageTransmitter
-// enabling one attester's signing key. One event per attester, so several can share a tx.
-// Two topics; body is an empty map.
-//
-//	topics = ["attester_enabled", attester]
-//	body   = {}
+// AttesterEnabled is the canonical projection of one `attester_enabled` event: MessageTransmitter enabling one attester's signing key.
 type AttesterEnabled struct {
 	Ledger     uint32
 	TxHash     string
@@ -328,13 +265,7 @@ type AttesterEnabled struct {
 	Attester string // hex; BytesN<20> — secp256k1-recovered attester address
 }
 
-// AttesterManagerUpdated is the canonical projection of one `attester_manager_updated` event: the
-// attester-manager role was reassigned. `old_attester_manager` is ScvVoid at bootstrap, so it is
-// type-tested via [scval.AsAddressOrVoid]; note the void is in a TOPIC field, not the body.
-// Three topics; body is an empty map.
-//
-//	topics = ["attester_manager_updated", old_attester_manager, new_attester_manager]
-//	body   = {}
+// AttesterManagerUpdated is the canonical projection of one `attester_manager_updated` event: the attester-manager role was reassigned; old_attester_manager is Void at bootstrap and is type-tested via [scval.AsAddressOrVoid].
 type AttesterManagerUpdated struct {
 	Ledger     uint32
 	TxHash     string
@@ -346,11 +277,7 @@ type AttesterManagerUpdated struct {
 	NewAttesterManager string // Stellar Address strkey
 }
 
-// Denylisted is the canonical projection of one `denylisted` event: an account was added to
-// TokenMessengerMinter's denylist. Two topics; body is an empty map.
-//
-//	topics = ["denylisted", account]
-//	body   = {}
+// Denylisted is the canonical projection of one `denylisted` event: an account was added to TokenMessengerMinter's denylist.
 type Denylisted struct {
 	Ledger     uint32
 	TxHash     string
@@ -361,12 +288,7 @@ type Denylisted struct {
 	Account string // Stellar Address strkey
 }
 
-// UnDenylisted is the canonical projection of one `un_denylisted` event: an account was removed
-// from TokenMessengerMinter's denylist (the inverse of [Denylisted]). Two topics; body is an
-// empty map.
-//
-//	topics = ["un_denylisted", account]
-//	body   = {}
+// UnDenylisted is the canonical projection of one `un_denylisted` event: an account was removed from TokenMessengerMinter's denylist (the inverse of [Denylisted]).
 type UnDenylisted struct {
 	Ledger     uint32
 	TxHash     string
@@ -377,12 +299,7 @@ type UnDenylisted struct {
 	Account string // Stellar Address strkey
 }
 
-// DenylisterChanged is the canonical projection of one `denylister_changed` event: the denylister
-// role was reassigned. `old_denylister` is ScvVoid at bootstrap and type-tested via
-// [scval.AsAddressOrVoid], as in [AttesterManagerUpdated]. Three topics; body is an empty map.
-//
-//	topics = ["denylister_changed", old_denylister, new_denylister]
-//	body   = {}
+// DenylisterChanged is the canonical projection of one `denylister_changed` event: the denylister role was reassigned.
 type DenylisterChanged struct {
 	Ledger     uint32
 	TxHash     string
@@ -394,11 +311,7 @@ type DenylisterChanged struct {
 	NewDenylister string // Stellar Address strkey
 }
 
-// FeeRecipientSet is the canonical projection of one `fee_recipient_set` event: the address that
-// receives collected fees changed. Single topic; body ScMap.
-//
-//	topics = ["fee_recipient_set"]
-//	body   = { fee_recipient: Address }
+// FeeRecipientSet is the canonical projection of one `fee_recipient_set` event: the address that receives collected fees changed.
 type FeeRecipientSet struct {
 	Ledger     uint32
 	TxHash     string
@@ -409,11 +322,7 @@ type FeeRecipientSet struct {
 	FeeRecipient string // Stellar Address strkey
 }
 
-// MaxMessageBodySizeUpdated is the canonical projection of one `max_message_body_size_updated`
-// event: MessageTransmitter's message size ceiling changed. Single topic; body ScMap.
-//
-//	topics = ["max_message_body_size_updated"]
-//	body   = { new_max_message_body_size: u32 }
+// MaxMessageBodySizeUpdated is the canonical projection of one `max_message_body_size_updated` event: MessageTransmitter's message size ceiling changed.
 type MaxMessageBodySizeUpdated struct {
 	Ledger     uint32
 	TxHash     string
@@ -424,11 +333,7 @@ type MaxMessageBodySizeUpdated struct {
 	NewMaxMessageBodySize uint32
 }
 
-// MinFeeControllerSet is the canonical projection of one `min_fee_controller_set` event: the
-// min-fee-controller role was reassigned. Two topics; body is an empty map.
-//
-//	topics = ["min_fee_controller_set", min_fee_controller]
-//	body   = {}
+// MinFeeControllerSet is the canonical projection of one `min_fee_controller_set` event: the min-fee-controller role was reassigned.
 type MinFeeControllerSet struct {
 	Ledger     uint32
 	TxHash     string
@@ -439,12 +344,7 @@ type MinFeeControllerSet struct {
 	MinFeeController string // Stellar Address strkey
 }
 
-// PauserChanged is the canonical projection of one `pauser_changed` event: the pause-role address
-// was reassigned. Emitted by all three contracts. The body field is named `new_address`, not
-// `new_pauser`. Single topic; body ScMap.
-//
-//	topics = ["pauser_changed"]
-//	body   = { new_address: Address }
+// PauserChanged is the canonical projection of one `pauser_changed` event: the pause-role address was reassigned; the body field is `new_address`, not `new_pauser`.
 type PauserChanged struct {
 	Ledger     uint32
 	TxHash     string
@@ -455,11 +355,7 @@ type PauserChanged struct {
 	NewAddress string // Stellar Address strkey
 }
 
-// RescuerChanged is the canonical projection of one `rescuer_changed` event: the rescue-role
-// address was reassigned. Emitted by all three contracts. Single topic; body ScMap.
-//
-//	topics = ["rescuer_changed"]
-//	body   = { new_rescuer: Address }
+// RescuerChanged is the canonical projection of one `rescuer_changed` event: the rescue-role address was reassigned.
 type RescuerChanged struct {
 	Ledger     uint32
 	TxHash     string
@@ -470,11 +366,7 @@ type RescuerChanged struct {
 	NewRescuer string // Stellar Address strkey
 }
 
-// SetTokenController is the canonical projection of one `set_token_controller` event: the
-// token-controller role was reassigned. Single topic; body ScMap.
-//
-//	topics = ["set_token_controller"]
-//	body   = { token_controller: Address }
+// SetTokenController is the canonical projection of one `set_token_controller` event: the token-controller role was reassigned.
 type SetTokenController struct {
 	Ledger     uint32
 	TxHash     string
@@ -485,12 +377,7 @@ type SetTokenController struct {
 	TokenController string // Stellar Address strkey
 }
 
-// SignatureThresholdUpdated is the canonical projection of one `signature_threshold_updated`
-// event: MessageTransmitter's required attestation signature count changed. Single topic; body
-// ScMap.
-//
-//	topics = ["signature_threshold_updated"]
-//	body   = { new_signature_threshold: u32, old_signature_threshold: u32 }
+// SignatureThresholdUpdated is the canonical projection of one `signature_threshold_updated` event: MessageTransmitter's required attestation signature count changed.
 type SignatureThresholdUpdated struct {
 	Ledger     uint32
 	TxHash     string
@@ -502,12 +389,7 @@ type SignatureThresholdUpdated struct {
 	OldSignatureThreshold uint32
 }
 
-// SetBurnLimitPerMessage is the canonical projection of one `set_burn_limit_per_message` event:
-// the per-message burn ceiling for one local token was set. `token` is a genuine Stellar Address
-// strkey (the SAC of [TokenPairLinked]'s `local_token`), so it promotes to [Event.Token].
-//
-//	topics = ["set_burn_limit_per_message", token]
-//	body   = { burn_limit_per_message: i128 }
+// SetBurnLimitPerMessage is the canonical projection of one `set_burn_limit_per_message` event: the per-message burn ceiling for one local token was set.
 type SetBurnLimitPerMessage struct {
 	Ledger     uint32
 	TxHash     string
@@ -519,12 +401,7 @@ type SetBurnLimitPerMessage struct {
 	BurnLimitPerMessage string // i128 canonical-decimals; a policy ceiling, kept out of Event.Amount
 }
 
-// SwapMinterConfigSet is the canonical projection of one `swap_minter_config_set` event: a
-// swap-minter configuration was set for one local token. The body's `swap_minter_config` is a
-// NESTED map, flattened here into two fields. Two topics; body ScMap.
-//
-//	topics = ["swap_minter_config_set", token]
-//	body   = { swap_minter_config: { allow_asset: Address, swap_minter: Address } }
+// SwapMinterConfigSet is the canonical projection of one `swap_minter_config_set` event: a swap-minter configuration was set for one local token.
 type SwapMinterConfigSet struct {
 	Ledger     uint32
 	TxHash     string
@@ -537,13 +414,7 @@ type SwapMinterConfigSet struct {
 	SwapMinter string // Stellar Address strkey
 }
 
-// TokenDecimalConfigAdded is the canonical projection of one `token_decimal_config_added` event:
-// a canonical/local decimal mapping was registered for one local token (CCTP canonical decimals
-// need not match the chain's local decimals, e.g. canonical 6 vs local 7). The body's
-// `token_decimal_config` is a nested map, flattened here into two fields.
-//
-//	topics = ["token_decimal_config_added", token]
-//	body   = { token_decimal_config: { canonical_decimals: u32, local_decimals: u32 } }
+// TokenDecimalConfigAdded is the canonical projection of one `token_decimal_config_added` event: a canonical/local decimal mapping was registered for one local token (CCTP canonical decimals need not match the chain's local decimals, e.g. canonical 6 vs local 7).
 type TokenDecimalConfigAdded struct {
 	Ledger     uint32
 	TxHash     string

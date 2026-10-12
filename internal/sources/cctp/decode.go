@@ -9,23 +9,16 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// ErrUnknownEvent flags an event whose topic[0] symbol isn't one of CCTP's 26 (see events.go).
-// The dispatcher matches by topic bytes, which another protocol could share, so IsCCTPContract
-// (dispatcher_adapter.go) must filter by ContractID before Classify is trusted.
+// ErrUnknownEvent flags an event whose topic[0] isn't one of CCTP's 26; IsCCTPContract must filter by ContractID before Classify is trusted.
 var ErrUnknownEvent = errors.New("cctp: unknown event topic")
 
-// ErrMalformedBody surfaces schema drift: a body Map missing a declared field, or a field of the
-// wrong SCVal kind. Contracts upgrade in place, so this error is the canary for changed shapes.
+// ErrMalformedBody surfaces schema drift: a body Map missing a declared field, or a field of the wrong SCVal kind.
 var ErrMalformedBody = errors.New("cctp: malformed event body")
 
-// ErrMalformedTopic flags a topic slice shorter than the event
-// type requires.
+// ErrMalformedTopic flags a topic slice shorter than the event type requires.
 var ErrMalformedTopic = errors.New("cctp: malformed event topics")
 
-// Classify reports which CCTP event the given Event is, or empty
-// string if topic[0] doesn't match. Classify alone does not gate on
-// contract identity — callers (Matches, Decode, both in this
-// package) apply IsCCTPContract before trusting the result.
+// Classify reports which CCTP event e is, or empty string if topic[0] doesn't match; it does not gate on contract identity, so callers apply IsCCTPContract first.
 func Classify(e *events.Event) string { //nolint:gocyclo,gocognit,cyclop // one case per CCTP topic (26, the full mainnet census — docs/protocols/cctp.md); flattening keeps the dispatch table auditable against the contract source
 	if len(e.Topic) < 1 {
 		return ""
@@ -87,23 +80,7 @@ func Classify(e *events.Event) string { //nolint:gocyclo,gocognit,cyclop // one 
 	return ""
 }
 
-// DecodeDepositForBurn turns one DepositForBurn-shaped Event into
-// a canonical DepositForBurn value.
-//
-// Topic layout:
-//
-//	topic[0] = Symbol("deposit_for_burn")
-//	topic[1] = Address(burn_token)
-//	topic[2] = Address(depositor)
-//	topic[3] = U32(min_finality_threshold)
-//
-// Body (ScMap, alphabetical-by-key):
-//
-//	{ amount: i128, destination_caller: BytesN<32>,
-//	  destination_domain: u32, destination_token_messenger: BytesN<32>,
-//	  hook_data: Bytes, max_fee: i128, mint_recipient: BytesN<32> }
-//
-// Uses scval helpers (ADR-0013) so xdr stays out of this file's imports.
+// DecodeDepositForBurn turns one DepositForBurn-shaped Event into a canonical DepositForBurn value.
 func DecodeDepositForBurn(e *events.Event) (DepositForBurn, error) { //nolint:gocognit,funlen,gocyclo // straight-line field decode; splitting fans the per-field error context across helpers
 	if len(e.Topic) < 4 {
 		return DepositForBurn{}, fmt.Errorf("%w: deposit_for_burn needs 4 topics, got %d", ErrMalformedTopic, len(e.Topic))
@@ -227,16 +204,7 @@ func DecodeDepositForBurn(e *events.Event) (DepositForBurn, error) { //nolint:go
 	}, nil
 }
 
-// DecodeMintAndWithdraw turns one MintAndWithdraw event into the
-// canonical struct.
-//
-// Topic layout:
-//
-//	topic[0] = Symbol("mint_and_withdraw")
-//	topic[1] = Address(mint_recipient)
-//	topic[2] = Address(mint_token)
-//
-// Body: { amount: i128, fee_collected: i128 }.
+// DecodeMintAndWithdraw turns one MintAndWithdraw event into the canonical struct.
 func DecodeMintAndWithdraw(e *events.Event) (MintAndWithdraw, error) {
 	if len(e.Topic) < 3 {
 		return MintAndWithdraw{}, fmt.Errorf("%w: mint_and_withdraw needs 3 topics, got %d", ErrMalformedTopic, len(e.Topic))
@@ -300,13 +268,7 @@ func DecodeMintAndWithdraw(e *events.Event) (MintAndWithdraw, error) {
 	}, nil
 }
 
-// DecodeMessageSent turns one MessageSent event into the canonical
-// struct. Topic-only event (one topic, body carries the message).
-//
-// Wire shape:
-//
-//	topic[0] = Symbol("message_sent")
-//	value    = ScMap { message: Bytes }   (or raw ScBytes if the macro layout shifts)
+// DecodeMessageSent turns one MessageSent event into the canonical struct.
 func DecodeMessageSent(e *events.Event) (MessageSent, error) {
 	body, err := scval.Parse(e.Value)
 	if err != nil {
@@ -347,17 +309,7 @@ func DecodeMessageSent(e *events.Event) (MessageSent, error) {
 	}, nil
 }
 
-// DecodeMessageReceived turns one MessageReceived event into the
-// canonical struct.
-//
-// Topic layout:
-//
-//	topic[0] = Symbol("message_received")
-//	topic[1] = Address(caller)
-//	topic[2] = BytesN<32>(nonce)
-//	topic[3] = U32(finality_threshold_executed)
-//
-// Body: { source_domain: u32, sender: BytesN<32>, message_body: Bytes }.
+// DecodeMessageReceived turns one MessageReceived event into the canonical struct.
 func DecodeMessageReceived(e *events.Event) (MessageReceived, error) {
 	if len(e.Topic) < 4 {
 		return MessageReceived{}, fmt.Errorf("%w: message_received needs 4 topics, got %d", ErrMalformedTopic, len(e.Topic))
@@ -441,14 +393,7 @@ func DecodeMessageReceived(e *events.Event) (MessageReceived, error) {
 	}, nil
 }
 
-// DecodeMintAndForward turns one mint_and_forward event into the
-// canonical struct.
-//
-// Topic layout:
-//
-//	topic[0] = Symbol("mint_and_forward")   (the ONLY topic)
-//
-// Body: { amount: i128, forward_recipient: Address, token: Address }.
+// DecodeMintAndForward turns one mint_and_forward event into the canonical struct.
 func DecodeMintAndForward(e *events.Event) (MintAndForward, error) {
 	if len(e.Topic) < 1 {
 		return MintAndForward{}, fmt.Errorf("%w: mint_and_forward needs 1 topic, got %d", ErrMalformedTopic, len(e.Topic))
@@ -498,10 +443,7 @@ func DecodeMintAndForward(e *events.Event) (MintAndForward, error) {
 	}, nil
 }
 
-// DecodeOwnershipTransfer turns one `ownership_transfer` event into
-// the canonical struct. Single-topic event; body ScMap.
-//
-// Body: { live_until_ledger: u32, new_owner: Address, old_owner: Address }.
+// DecodeOwnershipTransfer turns one `ownership_transfer` event into the canonical struct.
 func DecodeOwnershipTransfer(e *events.Event) (OwnershipTransfer, error) {
 	if len(e.Topic) < 1 {
 		return OwnershipTransfer{}, fmt.Errorf("%w: ownership_transfer needs 1 topic, got %d", ErrMalformedTopic, len(e.Topic))
@@ -554,11 +496,7 @@ func DecodeOwnershipTransfer(e *events.Event) (OwnershipTransfer, error) {
 	}, nil
 }
 
-// DecodeOwnershipTransferCompleted turns one
-// `ownership_transfer_completed` event into the canonical struct.
-// Single-topic event; body ScMap.
-//
-// Body: { new_owner: Address }.
+// DecodeOwnershipTransferCompleted turns one `ownership_transfer_completed` event into the canonical struct.
 func DecodeOwnershipTransferCompleted(e *events.Event) (OwnershipTransferCompleted, error) {
 	if len(e.Topic) < 1 {
 		return OwnershipTransferCompleted{}, fmt.Errorf("%w: ownership_transfer_completed needs 1 topic, got %d", ErrMalformedTopic, len(e.Topic))
@@ -591,11 +529,7 @@ func DecodeOwnershipTransferCompleted(e *events.Event) (OwnershipTransferComplet
 	}, nil
 }
 
-// DecodeAdminChanged turns one `admin_changed` event into the
-// canonical struct. Single-topic event; body ScMap.
-//
-// Body: { new_admin: Address, old_admin: Address | Void }. The bootstrap event carries
-// `old_admin = Void`, so it is type-tested via [scval.AsAddressOrVoid], not assumed an Address.
+// DecodeAdminChanged turns one `admin_changed` event into the canonical struct; old_admin is Void at bootstrap, so it is type-tested via [scval.AsAddressOrVoid], not assumed an Address.
 func DecodeAdminChanged(e *events.Event) (AdminChanged, error) {
 	if len(e.Topic) < 1 {
 		return AdminChanged{}, fmt.Errorf("%w: admin_changed needs 1 topic, got %d", ErrMalformedTopic, len(e.Topic))
@@ -638,11 +572,7 @@ func DecodeAdminChanged(e *events.Event) (AdminChanged, error) {
 	}, nil
 }
 
-// DecodeRemoteTokenMessengerAdded turns one
-// `remote_token_messenger_added` event into the canonical struct.
-// Single-topic event; body ScMap. TokenMessengerMinter only.
-//
-// Body: { domain: u32, token_messenger: BytesN<32> }.
+// DecodeRemoteTokenMessengerAdded turns one `remote_token_messenger_added` event into the canonical struct.
 func DecodeRemoteTokenMessengerAdded(e *events.Event) (RemoteTokenMessengerAdded, error) {
 	if len(e.Topic) < 1 {
 		return RemoteTokenMessengerAdded{}, fmt.Errorf("%w: remote_token_messenger_added needs 1 topic, got %d", ErrMalformedTopic, len(e.Topic))
@@ -685,11 +615,7 @@ func DecodeRemoteTokenMessengerAdded(e *events.Event) (RemoteTokenMessengerAdded
 	}, nil
 }
 
-// DecodeTokenPairLinked turns one `token_pair_linked` event into the
-// canonical struct. Single-topic event; body ScMap. TokenMessengerMinter
-// only.
-//
-// Body: { local_token: Address, remote_domain: u32, remote_token: BytesN<32> }.
+// DecodeTokenPairLinked turns one `token_pair_linked` event into the canonical struct.
 func DecodeTokenPairLinked(e *events.Event) (TokenPairLinked, error) {
 	if len(e.Topic) < 1 {
 		return TokenPairLinked{}, fmt.Errorf("%w: token_pair_linked needs 1 topic, got %d", ErrMalformedTopic, len(e.Topic))
@@ -744,10 +670,7 @@ func DecodeTokenPairLinked(e *events.Event) (TokenPairLinked, error) {
 
 // ─── Lower-signal admin/governance events ───────────────────────────
 
-// DecodeAdminChangeStarted turns one `admin_change_started` event into
-// the canonical struct. Single-topic event; body ScMap.
-//
-// Body: { new_admin: Address, old_admin: Address | Void }.
+// DecodeAdminChangeStarted turns one `admin_change_started` event into the canonical struct.
 func DecodeAdminChangeStarted(e *events.Event) (AdminChangeStarted, error) {
 	if len(e.Topic) < 1 {
 		return AdminChangeStarted{}, fmt.Errorf("%w: admin_change_started needs 1 topic, got %d", ErrMalformedTopic, len(e.Topic))
@@ -790,13 +713,7 @@ func DecodeAdminChangeStarted(e *events.Event) (AdminChangeStarted, error) {
 	}, nil
 }
 
-// DecodeAttesterEnabled turns one `attester_enabled` event into the
-// canonical struct. 2-topic event; body carries no fields.
-//
-// Topic layout:
-//
-//	topic[0] = Symbol("attester_enabled")
-//	topic[1] = BytesN<20>(attester)
+// DecodeAttesterEnabled turns one `attester_enabled` event into the canonical struct.
 func DecodeAttesterEnabled(e *events.Event) (AttesterEnabled, error) {
 	if len(e.Topic) < 2 {
 		return AttesterEnabled{}, fmt.Errorf("%w: attester_enabled needs 2 topics, got %d", ErrMalformedTopic, len(e.Topic))
@@ -819,18 +736,7 @@ func DecodeAttesterEnabled(e *events.Event) (AttesterEnabled, error) {
 	}, nil
 }
 
-// DecodeAttesterManagerUpdated turns one `attester_manager_updated`
-// event into the canonical struct. 3-topic event; body carries no
-// fields.
-//
-// Topic layout:
-//
-//	topic[0] = Symbol("attester_manager_updated")
-//	topic[1] = Address(old_attester_manager) | Void
-//	topic[2] = Address(new_attester_manager)
-//
-// old_attester_manager is type-tested via [scval.AsAddressOrVoid]; the bootstrap event carries it
-// Void.
+// DecodeAttesterManagerUpdated turns one `attester_manager_updated` event into the canonical struct.
 func DecodeAttesterManagerUpdated(e *events.Event) (AttesterManagerUpdated, error) {
 	if len(e.Topic) < 3 {
 		return AttesterManagerUpdated{}, fmt.Errorf("%w: attester_manager_updated needs 3 topics, got %d", ErrMalformedTopic, len(e.Topic))
@@ -862,13 +768,7 @@ func DecodeAttesterManagerUpdated(e *events.Event) (AttesterManagerUpdated, erro
 	}, nil
 }
 
-// DecodeDenylisted turns one `denylisted` event into the canonical
-// struct. 2-topic event; body carries no fields.
-//
-// Topic layout:
-//
-//	topic[0] = Symbol("denylisted")
-//	topic[1] = Address(account)
+// DecodeDenylisted turns one `denylisted` event into the canonical struct.
 func DecodeDenylisted(e *events.Event) (Denylisted, error) {
 	if len(e.Topic) < 2 {
 		return Denylisted{}, fmt.Errorf("%w: denylisted needs 2 topics, got %d", ErrMalformedTopic, len(e.Topic))
@@ -891,14 +791,7 @@ func DecodeDenylisted(e *events.Event) (Denylisted, error) {
 	}, nil
 }
 
-// DecodeUnDenylisted turns one `un_denylisted` event into the
-// canonical struct. 2-topic event; body carries no fields. Same shape
-// as [DecodeDenylisted].
-//
-// Topic layout:
-//
-//	topic[0] = Symbol("un_denylisted")
-//	topic[1] = Address(account)
+// DecodeUnDenylisted turns one `un_denylisted` event into the canonical struct.
 func DecodeUnDenylisted(e *events.Event) (UnDenylisted, error) {
 	if len(e.Topic) < 2 {
 		return UnDenylisted{}, fmt.Errorf("%w: un_denylisted needs 2 topics, got %d", ErrMalformedTopic, len(e.Topic))
@@ -921,15 +814,7 @@ func DecodeUnDenylisted(e *events.Event) (UnDenylisted, error) {
 	}, nil
 }
 
-// DecodeDenylisterChanged turns one `denylister_changed` event into
-// the canonical struct. 3-topic event; body carries no fields. Same
-// old|void / new topic shape as [DecodeAttesterManagerUpdated].
-//
-// Topic layout:
-//
-//	topic[0] = Symbol("denylister_changed")
-//	topic[1] = Address(old_denylister) | Void
-//	topic[2] = Address(new_denylister)
+// DecodeDenylisterChanged turns one `denylister_changed` event into the canonical struct.
 func DecodeDenylisterChanged(e *events.Event) (DenylisterChanged, error) {
 	if len(e.Topic) < 3 {
 		return DenylisterChanged{}, fmt.Errorf("%w: denylister_changed needs 3 topics, got %d", ErrMalformedTopic, len(e.Topic))
@@ -961,10 +846,7 @@ func DecodeDenylisterChanged(e *events.Event) (DenylisterChanged, error) {
 	}, nil
 }
 
-// DecodeFeeRecipientSet turns one `fee_recipient_set` event into the
-// canonical struct. Single-topic event; body ScMap.
-//
-// Body: { fee_recipient: Address }.
+// DecodeFeeRecipientSet turns one `fee_recipient_set` event into the canonical struct.
 func DecodeFeeRecipientSet(e *events.Event) (FeeRecipientSet, error) {
 	if len(e.Topic) < 1 {
 		return FeeRecipientSet{}, fmt.Errorf("%w: fee_recipient_set needs 1 topic, got %d", ErrMalformedTopic, len(e.Topic))
@@ -995,11 +877,7 @@ func DecodeFeeRecipientSet(e *events.Event) (FeeRecipientSet, error) {
 	}, nil
 }
 
-// DecodeMaxMessageBodySizeUpdated turns one
-// `max_message_body_size_updated` event into the canonical struct.
-// Single-topic event; body ScMap.
-//
-// Body: { new_max_message_body_size: u32 }.
+// DecodeMaxMessageBodySizeUpdated turns one `max_message_body_size_updated` event into the canonical struct.
 func DecodeMaxMessageBodySizeUpdated(e *events.Event) (MaxMessageBodySizeUpdated, error) {
 	if len(e.Topic) < 1 {
 		return MaxMessageBodySizeUpdated{}, fmt.Errorf("%w: max_message_body_size_updated needs 1 topic, got %d", ErrMalformedTopic, len(e.Topic))
@@ -1030,13 +908,7 @@ func DecodeMaxMessageBodySizeUpdated(e *events.Event) (MaxMessageBodySizeUpdated
 	}, nil
 }
 
-// DecodeMinFeeControllerSet turns one `min_fee_controller_set` event
-// into the canonical struct. 2-topic event; body carries no fields.
-//
-// Topic layout:
-//
-//	topic[0] = Symbol("min_fee_controller_set")
-//	topic[1] = Address(min_fee_controller)
+// DecodeMinFeeControllerSet turns one `min_fee_controller_set` event into the canonical struct.
 func DecodeMinFeeControllerSet(e *events.Event) (MinFeeControllerSet, error) {
 	if len(e.Topic) < 2 {
 		return MinFeeControllerSet{}, fmt.Errorf("%w: min_fee_controller_set needs 2 topics, got %d", ErrMalformedTopic, len(e.Topic))
@@ -1059,11 +931,7 @@ func DecodeMinFeeControllerSet(e *events.Event) (MinFeeControllerSet, error) {
 	}, nil
 }
 
-// DecodePauserChanged turns one `pauser_changed` event into the
-// canonical struct. Single-topic event; body ScMap. NOTE: the body field is `new_address`, not
-// `new_pauser`.
-//
-// Body: { new_address: Address }.
+// DecodePauserChanged turns one `pauser_changed` event into the canonical struct.
 func DecodePauserChanged(e *events.Event) (PauserChanged, error) {
 	if len(e.Topic) < 1 {
 		return PauserChanged{}, fmt.Errorf("%w: pauser_changed needs 1 topic, got %d", ErrMalformedTopic, len(e.Topic))
@@ -1094,10 +962,7 @@ func DecodePauserChanged(e *events.Event) (PauserChanged, error) {
 	}, nil
 }
 
-// DecodeRescuerChanged turns one `rescuer_changed` event into the
-// canonical struct. Single-topic event; body ScMap.
-//
-// Body: { new_rescuer: Address }.
+// DecodeRescuerChanged turns one `rescuer_changed` event into the canonical struct.
 func DecodeRescuerChanged(e *events.Event) (RescuerChanged, error) {
 	if len(e.Topic) < 1 {
 		return RescuerChanged{}, fmt.Errorf("%w: rescuer_changed needs 1 topic, got %d", ErrMalformedTopic, len(e.Topic))
@@ -1128,10 +993,7 @@ func DecodeRescuerChanged(e *events.Event) (RescuerChanged, error) {
 	}, nil
 }
 
-// DecodeSetTokenController turns one `set_token_controller` event into
-// the canonical struct. Single-topic event; body ScMap.
-//
-// Body: { token_controller: Address }.
+// DecodeSetTokenController turns one `set_token_controller` event into the canonical struct.
 func DecodeSetTokenController(e *events.Event) (SetTokenController, error) {
 	if len(e.Topic) < 1 {
 		return SetTokenController{}, fmt.Errorf("%w: set_token_controller needs 1 topic, got %d", ErrMalformedTopic, len(e.Topic))
@@ -1162,11 +1024,7 @@ func DecodeSetTokenController(e *events.Event) (SetTokenController, error) {
 	}, nil
 }
 
-// DecodeSignatureThresholdUpdated turns one
-// `signature_threshold_updated` event into the canonical struct.
-// Single-topic event; body ScMap.
-//
-// Body: { new_signature_threshold: u32, old_signature_threshold: u32 }.
+// DecodeSignatureThresholdUpdated turns one `signature_threshold_updated` event into the canonical struct.
 func DecodeSignatureThresholdUpdated(e *events.Event) (SignatureThresholdUpdated, error) { //nolint:dupl // parallel to DecodeMaxMessageBodySizeUpdated's shape but a distinct 2-field event; extracting a shared helper would obscure which fields belong to which contract event
 	if len(e.Topic) < 1 {
 		return SignatureThresholdUpdated{}, fmt.Errorf("%w: signature_threshold_updated needs 1 topic, got %d", ErrMalformedTopic, len(e.Topic))
@@ -1206,15 +1064,7 @@ func DecodeSignatureThresholdUpdated(e *events.Event) (SignatureThresholdUpdated
 	}, nil
 }
 
-// DecodeSetBurnLimitPerMessage turns one `set_burn_limit_per_message`
-// event into the canonical struct.
-//
-// Topic layout:
-//
-//	topic[0] = Symbol("set_burn_limit_per_message")
-//	topic[1] = Address(token)
-//
-// Body: { burn_limit_per_message: i128 }.
+// DecodeSetBurnLimitPerMessage turns one `set_burn_limit_per_message` event into the canonical struct.
 func DecodeSetBurnLimitPerMessage(e *events.Event) (SetBurnLimitPerMessage, error) {
 	if len(e.Topic) < 2 {
 		return SetBurnLimitPerMessage{}, fmt.Errorf("%w: set_burn_limit_per_message needs 2 topics, got %d", ErrMalformedTopic, len(e.Topic))
@@ -1256,16 +1106,7 @@ func DecodeSetBurnLimitPerMessage(e *events.Event) (SetBurnLimitPerMessage, erro
 	}, nil
 }
 
-// DecodeSwapMinterConfigSet turns one `swap_minter_config_set` event
-// into the canonical struct. The body's `swap_minter_config` field is
-// a NESTED map — flattened into AllowAsset / SwapMinter.
-//
-// Topic layout:
-//
-//	topic[0] = Symbol("swap_minter_config_set")
-//	topic[1] = Address(token)
-//
-// Body: { swap_minter_config: { allow_asset: Address, swap_minter: Address } }.
+// DecodeSwapMinterConfigSet turns one `swap_minter_config_set` event into the canonical struct.
 func DecodeSwapMinterConfigSet(e *events.Event) (SwapMinterConfigSet, error) { //nolint:dupl // parallel structure to DecodeTokenDecimalConfigAdded's nested-map unwrap but distinct field names/types; a shared helper would obscure which fields belong to which contract event
 	if len(e.Topic) < 2 {
 		return SwapMinterConfigSet{}, fmt.Errorf("%w: swap_minter_config_set needs 2 topics, got %d", ErrMalformedTopic, len(e.Topic))
@@ -1326,17 +1167,7 @@ func DecodeSwapMinterConfigSet(e *events.Event) (SwapMinterConfigSet, error) { /
 	}, nil
 }
 
-// DecodeTokenDecimalConfigAdded turns one `token_decimal_config_added`
-// event into the canonical struct. The body's `token_decimal_config`
-// field is a NESTED map — flattened into CanonicalDecimals /
-// LocalDecimals.
-//
-// Topic layout:
-//
-//	topic[0] = Symbol("token_decimal_config_added")
-//	topic[1] = Address(token)
-//
-// Body: { token_decimal_config: { canonical_decimals: u32, local_decimals: u32 } }.
+// DecodeTokenDecimalConfigAdded turns one `token_decimal_config_added` event into the canonical struct.
 func DecodeTokenDecimalConfigAdded(e *events.Event) (TokenDecimalConfigAdded, error) { //nolint:dupl // parallel structure to DecodeSwapMinterConfigSet's nested-map unwrap but distinct field names/types; a shared helper would obscure which fields belong to which contract event
 	if len(e.Topic) < 2 {
 		return TokenDecimalConfigAdded{}, fmt.Errorf("%w: token_decimal_config_added needs 2 topics, got %d", ErrMalformedTopic, len(e.Topic))

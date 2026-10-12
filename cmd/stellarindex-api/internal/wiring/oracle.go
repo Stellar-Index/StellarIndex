@@ -30,12 +30,7 @@ func (r StoreOracleReader) LatestOracleStreams(ctx context.Context) ([]canonical
 	return r.S.LatestOracleStreams(ctx)
 }
 
-// CachedOracleReader wraps an inner OracleReader with a Redis read-through cache. The inner
-// DISTINCT ON (source) sort is expensive (~580 ms p95) while oracle readings only refresh every
-// 1-5 minutes, so a 30 s entry absorbs polling fan-out without hurting freshness.
-//
-// A miss queries the inner reader then SETs; a hit skips the DB. Cache errors on either side
-// fall through to the inner reader, never fail open.
+// CachedOracleReader wraps an inner OracleReader with a Redis read-through cache; cache errors on either side fall through to the inner reader.
 type CachedOracleReader struct {
 	Inner v1.OracleReader
 	RDB   redis.UniversalClient
@@ -59,9 +54,7 @@ type oracleLatestEntry struct {
 	Updates    []canonical.OracleUpdate `json:"updates"`
 }
 
-// LatestOracleUpdatesForAssetsAt is LatestOracleUpdatesForAssets plus the
-// time the served rows were computed. A legacy bare-array entry carries no
-// time, so it is read as a miss rather than stamped.
+// LatestOracleUpdatesForAssetsAt is LatestOracleUpdatesForAssets plus the time the served rows were computed.
 func (r CachedOracleReader) LatestOracleUpdatesForAssetsAt(ctx context.Context, assets []canonical.Asset, sourceFilter string) ([]canonical.OracleUpdate, time.Time, error) {
 	if r.RDB == nil {
 		computedAt := time.Now()
@@ -120,10 +113,7 @@ func (r CachedOracleReader) decodeEntry(key cachekeys.OracleLatestKey, raw []byt
 	return entry, !entry.ComputedAt.IsZero()
 }
 
-// LatestOracleStreams pass-through — the underlying scan is one
-// query against oracle_updates with DISTINCT ON. Cheap enough to
-// skip the cache layer at this volume; revisit if the page becomes
-// a hot endpoint.
+// LatestOracleStreams pass-through — the underlying scan is one query against oracle_updates with DISTINCT ON.
 func (r CachedOracleReader) LatestOracleStreams(ctx context.Context) ([]canonical.OracleUpdate, error) {
 	return r.Inner.LatestOracleStreams(ctx)
 }
