@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -298,4 +299,28 @@ func TestCachedOracleReader_StreamsAreCached(t *testing.T) {
 	if got := up.streamsCalls.Load(); got != 3 {
 		t.Fatalf("upstream LatestOracleStreams called %d times total, want 3 (1 cached run + 2 across an expired TTL)", got)
 	}
+}
+
+// deadlinePriceReader fails every PriceReader call like an expired per-call budget: an error wrapping
+// context.DeadlineExceeded on a live request (see handler_budget_deadline_test.go's package doc).
+type deadlinePriceReader struct{}
+
+func (deadlinePriceReader) LatestPrice(context.Context, canonical.Asset, canonical.Asset) (PriceSnapshot, []string, bool, error) {
+	return PriceSnapshot{}, nil, false, deadlineOnLiveRequestErr("read price")
+}
+
+func (deadlinePriceReader) RecentClosedSnapshots(context.Context, canonical.Asset, canonical.Asset, int) ([]PriceSnapshot, error) {
+	return nil, deadlineOnLiveRequestErr("read closed snapshots")
+}
+
+// brokenPriceReader fails with a plain read error carrying no deadline
+// signal — the other half of the contract pinned above.
+type brokenPriceReader struct{}
+
+func (brokenPriceReader) LatestPrice(context.Context, canonical.Asset, canonical.Asset) (PriceSnapshot, []string, bool, error) {
+	return PriceSnapshot{}, nil, false, io.ErrUnexpectedEOF
+}
+
+func (brokenPriceReader) RecentClosedSnapshots(context.Context, canonical.Asset, canonical.Asset, int) ([]PriceSnapshot, error) {
+	return nil, io.ErrUnexpectedEOF
 }

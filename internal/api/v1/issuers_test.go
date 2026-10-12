@@ -709,3 +709,52 @@ func splitCommaSorted(s string) []string {
 	sort.Strings(out)
 	return out
 }
+
+// stubIssuerAuthFlags is the narrow point-lookup seam; calls records every
+// key it was asked for.
+type stubIssuerAuthFlags struct {
+	live  map[string]clickhouse.AccountAuthFlags
+	calls []string
+}
+
+func (s *stubIssuerAuthFlags) BulkAccountAuthFlags(_ context.Context, keys []string) (map[string]clickhouse.AccountAuthFlags, error) {
+	s.calls = append(s.calls, keys...)
+	out := make(map[string]clickhouse.AccountAuthFlags, len(keys))
+	for _, k := range keys {
+		if f, ok := s.live[k]; ok {
+			out[k] = f
+		}
+	}
+	return out, nil
+}
+
+func getIssuer(t *testing.T, opts v1.Options, g string) v1.Issuer {
+	t.Helper()
+	ts := startHTTPTest(t, v1.New(opts).Handler())
+	var env struct {
+		Data v1.Issuer `json:"data"`
+	}
+	resp := mustGet(t, ts.URL+"/v1/issuers/"+g)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	mustDecode(t, resp, &env)
+	return env.Data
+}
+
+// drainedVerifiedRow is a filled, live-sourced row whose SEP-1 identity was
+// fetched from, and verified against, lapsed-former.example.
+func drainedVerifiedRow() timescale.IssuerRow {
+	resolved := "2026-09-01T00:00:00Z"
+	return timescale.IssuerRow{
+		GStrkey:             mergedIssuerG,
+		HomeDomain:          "lapsed-former.example",
+		OrgName:             "Former Domain Org",
+		OrgVerified:         true,
+		AuthRequired:        boolPtr(true),
+		AuthFlagsSource:     string(clickhouse.AuthFlagsSourceLive),
+		AuthFlagsAsOfLedger: u32(64100000),
+		SEP1ResolvedAt:      &resolved,
+		SEP1Payload:         json.RawMessage(`{"OrgName":"Former Domain Org","OrgVerified":true}`),
+	}
+}
