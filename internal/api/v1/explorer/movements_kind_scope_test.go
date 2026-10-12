@@ -184,6 +184,7 @@ func TestMovementsCoverage_StructuredKinds(t *testing.T) {
 		{"no archive", 0, "", supplyRange{}, "partial", "not_served"},
 		{"full", floor + 100, "", supplyRange{from: floor, thru: floor + 100}, "served", "served"},
 		{"supply backfilling", floor + 100, "", supplyRange{from: floor + 40, thru: floor + 100}, "served", "partial"},
+		{"supply lagging the watermark", floor + 100, "", supplyRange{from: floor, thru: floor + 60}, "served", "partial"},
 		{"tail errored", floor + 100, "tail down", supplyRange{from: floor, thru: floor + 100}, "partial", "served"},
 	}
 	for _, tc := range cases {

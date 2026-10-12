@@ -42,13 +42,25 @@ const KIND_LABEL: Record<KindCoverage['kind'], string> = {
   fill: 'Order-book fills',
 };
 
-// Fees are not movement rows by design (ADR-0047 D3): each transaction's
-// fee_charged is shown in the account's Transactions table.
-const feesShownPerTx = (c: KindCoverage) =>
-  c.kind === 'fee' && c.status === 'not_served';
+// Fees and order-book fills are not movement rows by design (ADR-0047 D3):
+// fee_charged is shown per transaction, and fills in the Trades panel (from
+// P23 on, CAP-67 also reports each fill as a transfer). Not a coverage gap.
+const SHOWN_ELSEWHERE: Partial<Record<KindCoverage['kind'], string>> = {
+  fee: 'shown per transaction',
+  fill: 'shown in Trades',
+};
+
+const shownElsewhere = (c: KindCoverage) =>
+  c.status === 'not_served' ? SHOWN_ELSEWHERE[c.kind] : undefined;
+
+/** True only while a kind this feed serves is genuinely incomplete. */
+export function coverageIncomplete(c: KindCoverage): boolean {
+  return c.status !== 'served' && shownElsewhere(c) === undefined;
+}
 
 export function coverageDetail(c: KindCoverage): string {
-  if (feesShownPerTx(c)) return 'shown per transaction';
+  const elsewhere = shownElsewhere(c);
+  if (elsewhere) return elsewhere;
   if (c.status === 'not_served') return 'not served';
   const range = c.from_ledger
     ? `ledgers ${c.from_ledger}-${c.through_ledger ?? 'tip'}`
@@ -72,9 +84,9 @@ function CoverageStrip({
             tone={
               c.status === 'served'
                 ? 'ok'
-                : feesShownPerTx(c)
-                  ? 'neutral'
-                  : 'warn'
+                : coverageIncomplete(c)
+                  ? 'warn'
+                  : 'neutral'
             }
           >
             {KIND_LABEL[c.kind]}: {coverageDetail(c)}
