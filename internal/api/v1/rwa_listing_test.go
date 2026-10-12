@@ -749,3 +749,282 @@ func rwaWireDecimals(t *testing.T, decimals map[string]uint32) (json.RawMessage,
 	t.Fatalf("contract row %s not served", rwaListedBoundEUTBL)
 	return nil, false
 }
+
+// GET /v1/rwa/assets: C2's second arm rests on two sources (listing directory for recognition, curated directory for the
+// scam vocabulary C3 reads), and either failing closes the arm. The failures are uncorrelated, so a refusal reason must
+// name the source that actually failed or the operator is sent to the wrong system.
+
+// rwaTwoSourceServer wires the listing arm with the curated directory
+// reader under the test's control, so each source can be failed on its
+// own.
+func rwaTwoSourceServer(
+	t *testing.T, listings v1.RWAListingDirectoryReader, dir *stubDirectoryReader,
+) *v1.Server {
+	t.Helper()
+	return v1.New(v1.Options{
+		Sep1Cache: &stubSep1BoundReader{},
+		Directory: dir,
+		AssetsReader: &rwaListStub{
+			stubAssetsReaderExt: &stubAssetsReaderExt{},
+			byIssuer:            map[string][]timescale.AssetRow{},
+		},
+		RWAContracts: &stubRWAContractReader{accounts: 18000},
+		RWAListings:  listings,
+		ContractCatalogue: &stubContractCatalogue{rows: map[string]timescale.AssetRow{
+			rwaListedBoundEUTBL: rwaContractRow(rwaListedBoundEUTBL, nil),
+		}},
+		TokenSymbol:           &stubTokenSymbols{byID: map[string]string{}},
+		TokenSupply:           &stubTokenSupplies{byID: map[string]string{rwaListedBoundEUTBL: "28327867109034"}},
+		TokenDecimals:         &stubTokenDecimalsRdr{byID: map[string]uint32{rwaListedBoundEUTBL: 5}},
+		MinMarketCapVolumeUSD: 1000,
+	})
+}
+
+// A failed curated read beside an answering listing directory must not be reported as a listing outage; the evidence block
+// is asserted too, since "listing unavailable" next to a healthy listing contradicts itself.
+func TestRWAListingSources_CuratedTagFailureIsNotAListingOutage(t *testing.T) {
+	view := getRWA(t, rwaTwoSourceServer(t,
+		// The listing directory ANSWERS, freshly, naming the address.
+		&stubRWAListings{rows: []timescale.ListingEntry{
+			listed(rwaListedBoundEUTBL, "eutbl", "eutbl", "1.22"),
+		}},
+		// The curated directory does not.
+		&stubDirectoryReader{err: errors.New("curated directory read failed")},
+	))
+
+	bindings := stageCount(t, view, "curated_contract_bindings")
+	if bindings == 0 {
+		t.Fatal("no bindings enumerated: the fixture cannot express the defect")
+	}
+	if n := dropCount(view, "curated_contract_bindings", rwa.RejectContractListingUnavailable); n != 0 {
+		t.Errorf("%d bindings dropped under %q while the listing directory answered — "+
+			"the alarm names a source that is working and sends an operator to the wrong system",
+			n, rwa.RejectContractListingUnavailable)
+	}
+	if n := dropCount(view, "curated_contract_bindings", rwa.RejectContractCuratedTagsUnavailable); n != bindings {
+		t.Errorf("drop under %q = %d, want every one of the %d bindings",
+			rwa.RejectContractCuratedTagsUnavailable, n, bindings)
+	}
+	// The contradiction the reason would have produced, asserted from
+	// the other side: the listing source demonstrably answered.
+	ev := view.Funnel.ListingDirectory
+	if ev == nil {
+		t.Fatal("no evidence published for a read that answered")
+	}
+	if ev.Entries != 1 || ev.Contracts != 1 || ev.Stale != 0 {
+		t.Errorf("evidence = %+v, want the healthy directory the read actually saw", ev)
+	}
+	// Nothing is admitted either way: C3 was not evaluated, so it may
+	// not be assumed satisfied.
+	if _, ok := assetByContract(view, rwaListedBoundEUTBL); ok {
+		t.Error("a row was admitted with C3 unevaluated — a scam flag could not have refused it")
+	}
+	// And the tally the response publishes agrees with the funnel,
+	// rather than the two disagreeing about which source failed.
+	if n := refusalCount(view, rwa.RejectContractListingUnavailable); n != 0 {
+		t.Errorf("refused[] still reports %d under the listing outage reason", n)
+	}
+	if n := refusalCount(view, rwa.RejectContractCuratedTagsUnavailable); n != bindings {
+		t.Errorf("refused[] reports %d under the curated reason, want %d", n, bindings)
+	}
+}
+
+// The converse, so a fix that merely renamed the reason cannot pass. A
+// genuine LISTING outage must still be reported as one.
+func TestRWAListingSources_ListingOutageStillNamesTheListing(t *testing.T) {
+	view := getRWA(t, rwaTwoSourceServer(t,
+		&stubRWAListings{err: errors.New("listing read failed")},
+		&stubDirectoryReader{entries: map[string]timescale.DirectoryEntry{}},
+	))
+
+	bindings := stageCount(t, view, "curated_contract_bindings")
+	if n := dropCount(view, "curated_contract_bindings", rwa.RejectContractListingUnavailable); n != bindings {
+		t.Errorf("listing outage drop = %d, want every one of the %d bindings", n, bindings)
+	}
+	if n := dropCount(view, "curated_contract_bindings", rwa.RejectContractCuratedTagsUnavailable); n != 0 {
+		t.Errorf("%d bindings blamed on the curated read while IT answered", n)
+	}
+}
+
+// refusalCount reads one reason out of the response's single `refused[]`
+// tally — the view a consumer gets that knows nothing about arms.
+func refusalCount(v v1.RWAAssetsView, reason string) int {
+	for _, r := range v.Refused {
+		if r.Reason == reason {
+			return r.Assets
+		}
+	}
+	return 0
+}
+
+// GET /v1/rwa/assets — the EVIDENCE behind C2's second arm, as opposed
+// to its verdict.
+//
+// The response must publish the evidence behind a closed arm, not only the verdict, because
+// three unrelated states produce the same "nothing corroborated" verdict:
+//
+//   - a directory nobody has ever synced,
+//   - a sync that stopped days ago and left every row to age out,
+//   - a healthy directory this set simply predates.
+//
+// They call for different responses (run the sync, fix the sync, do nothing), so they must be
+// told apart on the wire. The tests below are one per state plus the two states that publish
+// no evidence at all.
+
+// rwaEvidenceServer wires the listing arm with nothing else able to
+// admit a row, so the funnel under test is arm 2's alone.
+func rwaEvidenceServer(t *testing.T, listings v1.RWAListingDirectoryReader) *v1.Server {
+	t.Helper()
+	return rwaListingServer(t, listings,
+		map[string]timescale.AssetRow{
+			rwaListedBoundEUTBL: rwaContractRow(rwaListedBoundEUTBL, nil),
+		},
+		map[string]string{rwaListedBoundEUTBL: "28327867109034"},
+		map[string]uint32{rwaListedBoundEUTBL: 5},
+		map[string]timescale.DirectoryEntry{},
+	)
+}
+
+// A set built from a read taken before the sync landed must say on the wire when it looked and what it saw; without the
+// timestamp, re-reading later shows a healthy directory while the response still reports a closed arm.
+func TestRWAListingEvidence_DatesTheReadThatClosedTheArm(t *testing.T) {
+	// The directory as it stood before the first sync ever completed.
+	before := time.Now().UTC().Add(-time.Second)
+	view := getRWA(t, rwaEvidenceServer(t, &stubRWAListings{}))
+	after := time.Now().UTC().Add(time.Second)
+
+	ev := view.Funnel.ListingDirectory
+	if ev == nil {
+		t.Fatal("the arm closed and published no evidence for it: a reader " +
+			"holding only the verdict cannot tell a stopped sync from a set " +
+			"that predates a working one")
+	}
+	at := ev.ObservedAt.Time()
+	if at.Before(before) || at.After(after) {
+		t.Errorf("observed_at = %s, want the instant of the read (between %s and %s)",
+			at.Format(time.RFC3339Nano), before.Format(time.RFC3339Nano), after.Format(time.RFC3339Nano))
+	}
+	if at.Location() != time.UTC {
+		t.Errorf("observed_at carries a %v offset; the wire contract is UTC", at.Location())
+	}
+	// And it is the read's instant, not the response's: a timestamp
+	// stamped at render time would date every response to now and
+	// answer the opposite of the question asked.
+	if ev.Entries != 0 || ev.Stale != 0 {
+		t.Errorf("evidence = %+v, want the empty directory the read actually saw", ev)
+	}
+	if n := stageCount(t, view, "listing_corroborated_contracts"); n != 0 {
+		t.Fatalf("corroborated = %d — the fixture must close the arm for this to mean anything", n)
+	}
+}
+
+// One case per state that closes the arm; the verdict is identical, only the evidence separates them. `entries` counts
+// fresh rows only (Entries = Contracts + Classic, Stale beside), so the two zero-entry states differ by `stale` alone.
+func TestRWAListingEvidence_SeparatesTheThreeClosedArmStates(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		listings  *stubRWAListings
+		entries   int
+		contracts int
+		stale     int
+		reading   string
+	}{
+		{
+			name:     "never synced",
+			listings: &stubRWAListings{},
+			reading:  "the table is empty and nothing has ever written to it: run the sync",
+		},
+		{
+			// Every row ages out together, because synced_at is stamped
+			// once per sync transaction. The recognised set empties
+			// while every read keeps succeeding.
+			name:     "the sync stopped",
+			listings: &stubRWAListings{stale: 17},
+			stale:    17,
+			reading:  "rows are present and every one is past the bound: go and fix the sync",
+		},
+		{
+			// A directory that lists Stellar assets only by their
+			// classic CODE-GISSUER ids names no contract address at
+			// all. The arm has nothing to consult and nothing is wrong.
+			name: "healthy, but it names no contract address",
+			listings: &stubRWAListings{census: &timescale.ListingDirectoryCensus{
+				Entries: 33, Classic: 33,
+			}},
+			entries: 33,
+			reading: "fresh rows, none of them contracts: nothing to fix",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			view := getRWA(t, rwaEvidenceServer(t, tc.listings))
+			if n := stageCount(t, view, "listing_corroborated_contracts"); n != 0 {
+				t.Fatalf("corroborated = %d, want 0 — every case here closes the arm", n)
+			}
+			ev := view.Funnel.ListingDirectory
+			if ev == nil {
+				t.Fatalf("no evidence published; a reader cannot reach %q from the verdict alone", tc.reading)
+			}
+			if ev.Entries != tc.entries || ev.Contracts != tc.contracts || ev.Stale != tc.stale {
+				t.Errorf("evidence = {entries %d, contracts %d, stale %d}, want {%d, %d, %d} — %s",
+					ev.Entries, ev.Contracts, ev.Stale, tc.entries, tc.contracts, tc.stale, tc.reading)
+			}
+			if ev.ObservedAt.IsZero() {
+				t.Error("evidence carries counts with no instant: the counts can be re-derived " +
+					"from the table afterwards, the moment this set looked cannot")
+			}
+		})
+	}
+}
+
+// A HEALTHY arm publishes its evidence too. Otherwise a change emitting the block only on the
+// closed path would pass everything above, and the comparison of this set's read against the
+// sync's clock would be unavailable exactly when confirming a recovery.
+func TestRWAListingEvidence_PublishedOnTheHealthyPathToo(t *testing.T) {
+	view := getRWA(t, rwaEvidenceServer(t, &stubRWAListings{
+		rows: []timescale.ListingEntry{listed(rwaListedBoundEUTBL, "eutbl", "eutbl", "1.22")},
+	}))
+	if n := stageCount(t, view, "listing_corroborated_contracts"); n != 1 {
+		t.Fatalf("corroborated = %d, want 1 — the fixture must OPEN the arm here", n)
+	}
+	ev := view.Funnel.ListingDirectory
+	if ev == nil {
+		t.Fatal("an open arm published no evidence: the block is not a failure report")
+	}
+	if ev.Entries != 1 || ev.Contracts != 1 || ev.Stale != 0 {
+		t.Errorf("evidence = %+v, want one fresh contract row", ev)
+	}
+}
+
+// A read that did not answer observed nothing and must publish nothing, not a census of zeros: zeros from a failed query
+// look like an empty table but are a finding about our connection. An absent block means the source couldn't be read.
+func TestRWAListingEvidence_AFailedReadPublishesNone(t *testing.T) {
+	view := getRWA(t, rwaEvidenceServer(t, &stubRWAListings{err: errRWAListingRead}))
+	if ev := view.Funnel.ListingDirectory; ev != nil {
+		t.Fatalf("a failed read published evidence %+v — zeros from a query that "+
+			"never completed read as a directory holding no rows, which is a "+
+			"finding nobody made", ev)
+	}
+	// The outage is still reported; it is the EVIDENCE that is absent,
+	// not the verdict.
+	bindings := stageCount(t, view, "curated_contract_bindings")
+	if n := dropCount(view, "curated_contract_bindings", rwaRejectListingUnavailable); n != bindings {
+		t.Errorf("outage drop = %d, want every one of the %d bindings", n, bindings)
+	}
+}
+
+// No reader wired is the other no-evidence state, and for the stronger
+// reason: nobody looked at all.
+func TestRWAListingEvidence_UnwiredReaderPublishesNone(t *testing.T) {
+	view := getRWA(t, rwaEvidenceServer(t, nil))
+	if ev := view.Funnel.ListingDirectory; ev != nil {
+		t.Fatalf("an unwired reader published evidence %+v — nothing was observed", ev)
+	}
+}
+
+// Fixture constants kept beside the tests that read them.
+var errRWAListingRead = errors.New("listing read failed")
+
+// rwaRejectListingUnavailable is the reason an outage is published
+// under, spelled once here so a rename in internal/rwa reaches these
+// tests through the compiler.
+const rwaRejectListingUnavailable = rwa.RejectContractListingUnavailable

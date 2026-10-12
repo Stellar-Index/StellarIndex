@@ -187,3 +187,24 @@ func TestRWACuratedSnapshot_ReadCarriesTheReadBudget(t *testing.T) {
 		}
 	}
 }
+
+// TestRWACuratedSummarise_DegradedContractReadIsUnavailableNotServedZero: an answered curated snapshot says nothing about the
+// SEPARATE catalogue read. A failed catalogue read (rows == nil, degraded == true) must not fall through the default branch as
+// "served" with Assets: 0, like a genuinely empty recognised set.
+func TestRWACuratedSummarise_DegradedContractReadIsUnavailableNotServedZero(t *testing.T) {
+	snap := rwaCurated{available: true, wired: true}
+	now := time.Now().UTC()
+
+	degraded := rwaCuratedSummarise(snap, nil, true, nil, now)
+	if degraded.Status != "unavailable" {
+		t.Errorf("degraded read: Status = %q, want %q", degraded.Status, "unavailable")
+	}
+
+	notDegraded := rwaCuratedSummarise(snap, nil, false, nil, now)
+	if notDegraded.Status != "served" {
+		t.Errorf("genuinely empty set: Status = %q, want %q (must stay served)", notDegraded.Status, "served")
+	}
+	if notDegraded.Assets != 0 {
+		t.Errorf("genuinely empty set: Assets = %d, want 0", notDegraded.Assets)
+	}
+}
