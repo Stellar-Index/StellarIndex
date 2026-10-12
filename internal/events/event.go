@@ -12,8 +12,7 @@ import (
 	"time"
 )
 
-// Event is a single Soroban contract event. JSON tags follow the stellar-rpc getEvents response
-// shape, which the RPC client and fixture replays still populate.
+// Event is a single Soroban contract event; JSON tags follow the stellar-rpc getEvents response shape, which the RPC client and fixture replays still populate.
 type Event struct {
 	Type                     string `json:"type"` // contract | system | diagnostic
 	Ledger                   uint32 `json:"ledger"`
@@ -51,10 +50,7 @@ type Event struct {
 	StateWriteKeys []string `json:"stateWriteKeys,omitempty"`
 }
 
-// EventClosedAt parses the RFC 3339 LedgerClosedAt string into a time.Time.
-//
-// An empty LedgerClosedAt is an error, not the zero time: a zero timestamp reaching the trades
-// hypertable breaks VWAP windows and time-ordered queries.
+// EventClosedAt parses the RFC 3339 LedgerClosedAt string; an empty value is an error, not the zero time, since a zero timestamp reaching the trades hypertable breaks VWAP windows and time-ordered queries.
 func (e *Event) EventClosedAt() (time.Time, error) {
 	if e.LedgerClosedAt == "" {
 		return time.Time{}, fmt.Errorf("events: event %s has empty ledgerClosedAt", e.ID)

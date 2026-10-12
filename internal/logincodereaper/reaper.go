@@ -27,24 +27,19 @@ import (
 
 // Defaults for a zero Options.
 const (
-	// DefaultInterval is the sweep cadence. Hourly is cheap: bounded
-	// indexed range DELETEs plus one count.
+	// DefaultInterval is the sweep cadence; hourly is cheap (bounded indexed range DELETEs plus one count).
 	DefaultInterval = time.Hour
-	// DefaultDrainPause is the gap between passes while a sweep keeps
-	// hitting the store's per-call cap. The insert rate is
-	// attacker-driven, so a capped pass must not wait a full Interval:
-	// that would bound the drain rate below the insert rate.
-	DefaultDrainPause = 5 * time.Second
 	// DefaultDrainPause is the gap between passes that hit the store's cap; the
 	// insert rate is attacker-driven, so waiting a full Interval would lose the race.
+	DefaultDrainPause = 5 * time.Second
+	// DefaultRetention MUST stay longer than dashboardauth.durableCodeFailureWindow
+	// (24 h) so a sweep never shortens a live counting window; 48 h keeps a day of forensics.
 	DefaultRetention = 48 * time.Hour
 )
 
-// DefaultRetention MUST stay longer than dashboardauth.durableCodeFailureWindow
-// (24 h) so a sweep never shortens a live counting window; 48 h keeps a day of forensics.
+// LockoutStore is the reaper's narrow seam, kept off platform.TokenStore so token fakes need not implement deletes (as signupreaper.OrphanStore).
 type LockoutStore interface {
-	// LockoutStore is the reaper's narrow seam, kept off platform.TokenStore so token
-	// fakes need not implement deletes (as signupreaper.OrphanStore).
+	// SweepLoginCodeLockouts deletes settled rows older than olderThan, reporting the count and whether the per-call cap was hit.
 	SweepLoginCodeLockouts(ctx context.Context, olderThan time.Time) (int64, bool, error)
 	// CountLoginCodeLockouts returns the current row count.
 	CountLoginCodeLockouts(ctx context.Context) (int64, error)
@@ -65,8 +60,7 @@ type Options struct {
 	Clock func() time.Time
 }
 
-// Reaper periodically deletes settled login-code lockout rows and
-// publishes the table's size.
+// Reaper periodically deletes settled login-code lockout rows and publishes the table's size.
 type Reaper struct {
 	store      LockoutStore
 	interval   time.Duration
@@ -76,8 +70,7 @@ type Reaper struct {
 	now        func() time.Time
 }
 
-// New builds a Reaper. Panics if store is nil (a wiring bug — the
-// caller must gate construction on the Postgres token store existing).
+// New builds a Reaper; it panics if store is nil, a wiring bug since the caller must gate construction on the Postgres token store existing.
 func New(store LockoutStore, opts Options) *Reaper {
 	if store == nil {
 		panic("logincodereaper: New requires a non-nil store")
@@ -109,8 +102,7 @@ func New(store LockoutStore, opts Options) *Reaper {
 	return r
 }
 
-// Run sweeps immediately (the table may have grown while the process was down),
-// then every Interval, or after DrainPause while a pass reports a backlog.
+// Run sweeps immediately (the table may have grown while the process was down), then every Interval, or after DrainPause while a pass reports a backlog.
 func (r *Reaper) Run(ctx context.Context) error {
 	r.logger.Info("login-code-lockout reaper started",
 		"interval", r.interval, "retention", r.retention)
@@ -129,9 +121,7 @@ func (r *Reaper) Run(ctx context.Context) error {
 	}
 }
 
-// Sweep runs one pass, refreshes the row-count gauge, and reports whether the store
-// stopped at its cap. Errors are counted and retried next tick; the gauge still
-// refreshes after a failed DELETE, when the row count matters most.
+// Sweep runs one pass, refreshes the row-count gauge and reports whether the store stopped at its cap; errors are counted and retried next tick, and the gauge refreshes even after a failed DELETE, when the row count matters most.
 func (r *Reaper) Sweep(ctx context.Context) bool {
 	deleted, more, err := r.store.SweepLoginCodeLockouts(ctx, r.now().Add(-r.retention))
 	switch {

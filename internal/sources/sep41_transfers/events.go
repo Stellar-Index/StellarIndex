@@ -26,18 +26,8 @@ var (
 	TopicSymbolSetAuthorized = scval.MustEncodeSymbol(SymbolSetAuthorized)
 )
 
-// Event is one decoded SEP-41 audit-trail event. Kind discriminates
-// which of the four topics fired; non-applicable fields are
-// zero/nil per kind:
-//
-//	transfer       -> FromAddr, ToAddr, Amount populated
-//	approve        -> FromAddr (from), ToAddr (spender), Amount, LiveUntilLedger populated
-//	set_admin      -> FromAddr (admin, optional), ToAddr (new_admin) populated
-//	set_authorized -> ToAddr (id), Authorized populated
-//
-// A transfer's ToAddr is always its topic[2] Address. The CAP-67 map body's
-// to_muxed_id is not captured: the row keys the holder's account, so a muxed
-// payment and a plain one to the same account stay on one ?to= history.
+// Event is one decoded SEP-41 audit-trail event; Kind selects which of FromAddr, ToAddr, Amount, LiveUntilLedger and Authorized are set.
+// A transfer's ToAddr is its topic[2] Address; the CAP-67 to_muxed_id is not captured, so muxed and plain payments to one account share one ?to= history.
 type Event struct {
 	ContractID      string
 	Ledger          uint32

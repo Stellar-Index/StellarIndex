@@ -72,8 +72,7 @@ type Deps struct {
 // catalogue's floor), the lower bound of its pair walk.
 const soroswapGenesis = 50_746_266
 
-// GateReplay is the production replay gate: it opens the lake at chAddr and
-// runs Gate. to == 0 means the lake tip. There is no skip: an unreachable lake refuses.
+// GateReplay is the production replay gate: it opens the lake at chAddr and runs Gate (to == 0 means the lake tip). There is no skip; an unreachable lake refuses.
 func GateReplay(ctx context.Context, chAddr string, oracle config.OracleConfig,
 	protocolContracts func(ctx context.Context, source string) ([]string, error),
 	sources []string, from, to uint32,
@@ -123,8 +122,7 @@ func policyCheck(sources []string) ([]string, error) {
 	return perWASM, nil
 }
 
-// Gate refuses unless every WASM version active in [from, to] on every
-// contract each source's replay decoder admits is attested for that source.
+// Gate refuses unless every WASM version active in [from, to] on every contract each source's replay decoder admits is attested for that source.
 func Gate(ctx context.Context, d Deps, h History, manifest map[string]Entry, sources []string, from, to uint32) error {
 	perWASM, err := policyCheck(sources)
 	if err != nil {
@@ -192,8 +190,7 @@ func activeVersions(vs []clickhouse.ContractCodeVersion, from, to uint32) []clic
 	return out
 }
 
-// ContractSet is every contract the source's replay decoder admits by tip:
-// its in-code set, the protocol_contracts warm, and every factory child.
+// ContractSet is every contract the source's replay decoder admits by tip: its in-code set, the protocol_contracts warm, and every factory child.
 func ContractSet(ctx context.Context, d Deps, source string, tip uint32) ([]string, error) {
 	set := map[string]struct{}{}
 	add := func(ids ...string) {

@@ -13,20 +13,7 @@ import (
 	io_prom_dto "github.com/prometheus/client_model/go"
 )
 
-// HistogramSampleCount returns the cumulative sample count summed across every series whose
-// label set contains (labelKey, labelValue), like the wire-format `_count`.
-//
-// Use it to assert an observation was recorded, independent of bucket values, which depend on
-// test-machine speed. Typical pattern:
-//
-//	before := obstest.HistogramSampleCount(t,
-//		obs.MyHistogram, "outcome", "ok")
-//	// ... exercise the code path ...
-//	after := obstest.HistogramSampleCount(t,
-//		obs.MyHistogram, "outcome", "ok")
-//	if after <= before {
-//		t.Errorf("histogram did not advance")
-//	}
+// HistogramSampleCount returns the cumulative sample count summed across every series whose label set contains (labelKey, labelValue), like the wire-format `_count`; use a before/after pair to assert an observation was recorded independent of machine-speed-dependent bucket values.
 func HistogramSampleCount(t *testing.T, vec *prometheus.HistogramVec, labelKey, labelValue string) uint64 {
 	t.Helper()
 	ch := make(chan prometheus.Metric, 16)

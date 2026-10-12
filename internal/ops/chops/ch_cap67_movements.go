@@ -340,8 +340,7 @@ func resolveStart(wm, floor, lakeMin uint32) uint32 {
 	return max(floor, lakeMin)
 }
 
-// Cap67Range resolves the derive range: from=0 resumes from the watermark (see resolveStart) and
-// the upper bound is the contiguous lake tip, with a non-zero `to` clamped to it.
+// Cap67Range resolves the derive range: from=0 resumes from the watermark (see resolveStart), and the upper bound is the contiguous lake tip, with a non-zero `to` clamped to it.
 func Cap67Range(ctx context.Context, chAddr string, from, to, floorLedger uint32) (uint32, uint32, error) {
 	return resolveDeriveRange(ctx, chAddr, "ch-cap67-movements", from, to, floorLedger, clickhouse.Cap67MovementsWatermark)
 }

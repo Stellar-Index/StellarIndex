@@ -1395,8 +1395,7 @@ func (a supplyAggregatorStoreLookup) LatestAccountObservationAtOrBefore(ctx cont
 	}, nil
 }
 
-// MaxAccountObservationLedger forwards the account-observer watermark used by
-// the XLM freshness gate.
+// MaxAccountObservationLedger forwards the account-observer watermark used by the XLM freshness gate.
 func (a supplyAggregatorStoreLookup) MaxAccountObservationLedger(ctx context.Context, asOfLedger uint32) (uint32, error) {
 	return a.s.MaxAccountObservationLedger(ctx, asOfLedger)
 }
@@ -2478,8 +2477,7 @@ func newLazyCloseTimeReader(ctx context.Context, addr string, logger *slog.Logge
 	return r
 }
 
-// LatestLedgerAtOrBefore blocks the calling refresh tick until the dial
-// resolves (success or shutdown), never permanently degrading the guard.
+// LatestLedgerAtOrBefore blocks the calling refresh tick until the dial resolves (success or shutdown), never permanently degrading the guard.
 func (r *lazyCloseTimeReader) LatestLedgerAtOrBefore(ctx context.Context, maxSeq uint32) (uint32, time.Time, bool, error) {
 	select {
 	case <-r.ready:
@@ -2492,9 +2490,7 @@ func (r *lazyCloseTimeReader) LatestLedgerAtOrBefore(ctx context.Context, maxSeq
 	return r.reader.LatestLedgerAtOrBefore(ctx, maxSeq)
 }
 
-// Close releases the reader if the dial had already settled. It must not wait for an in-flight
-// dial: defers run LIFO, so the rootCtx cancel that stops the retry loop may not have run yet, and
-// blocking here would deadlock a non-signal error return. An in-flight dial dies with the process.
+// Close releases the reader if the dial had already settled; it must not wait for an in-flight dial, since defers run LIFO and the rootCtx cancel that stops the retry loop may not have run yet, which would deadlock a non-signal error return. An in-flight dial dies with the process.
 func (r *lazyCloseTimeReader) Close() {
 	select {
 	case <-r.ready:

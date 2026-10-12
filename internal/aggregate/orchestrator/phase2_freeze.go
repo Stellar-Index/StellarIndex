@@ -27,8 +27,7 @@ const (
 	DefaultPhase2SourceCountMaxFreeze = 1    // freeze when source_count <= this
 )
 
-// Phase2Thresholds is the operator-tunable Phase 2 freeze condition and the ADR-0019 lifecycle it feeds; zero values take defaults.
-// The first three fields decide WHETHER a bucket fires; the [freeze.Policy] fields decide HOW LONG it holds and what ends it.
+// Phase2Thresholds is the operator-tunable Phase 2 freeze condition and the ADR-0019 lifecycle it feeds; zero values take defaults. The first three fields decide WHETHER a bucket fires; the [freeze.Policy] fields decide how long it holds and what ends it.
 type Phase2Thresholds struct {
 	ConfidenceMaxFreeze  float64
 	ZScoreMinFreeze      float64

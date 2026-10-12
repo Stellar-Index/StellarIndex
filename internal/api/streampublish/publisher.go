@@ -24,16 +24,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// PriceReader is the publisher's read-side dependency, satisfied by the same adapter the
-// /v1/price handler uses; declared here to avoid an import cycle into v1's Server.
+// PriceReader is the publisher's read-side dependency, satisfied by the adapter the /v1/price handler uses; declared here to avoid an import cycle into v1's Server.
 type PriceReader interface {
 	LatestPrice(ctx context.Context, asset, quote canonical.Asset) (
 		snapshot v1.PriceSnapshot, sources []string, stale bool, err error,
 	)
 }
 
-// Publisher polls a fixed set of pairs and republishes every newly closed bucket to a Hub.
-// Construct via [New], then run [Run] in a long-lived goroutine; it starts one goroutine per pair.
+// Publisher polls a fixed set of pairs and republishes every newly closed bucket to a Hub; construct via [New] and run [Run] in a long-lived goroutine, which starts one goroutine per pair.
 type Publisher struct {
 	hub      *streaming.Hub
 	reader   PriceReader
@@ -50,9 +48,7 @@ type Publisher struct {
 	withheld map[string]v1.PriceWithheldReason
 }
 
-// Options holds Publisher's optional knobs, per the repo's trailing-struct
-// constructor convention (docs/engineering-standards.md 14.2) — the zero
-// value is a valid, fully-functional Publisher.
+// Options holds Publisher's optional knobs (trailing-struct constructor convention, docs/engineering-standards.md 14.2); the zero value is a valid, fully-functional Publisher.
 type Options struct {
 	// Decimals is the confirmed-decimals cache used to correct a raw snapshot before publishing
 	// (see [v1.NormalizeRawPriceSnapshot]). nil treats every pair as standard-decimals.
@@ -65,10 +61,7 @@ type Options struct {
 	Frozen v1.FrozenLooker
 }
 
-// New constructs a Publisher. The reader is the same PriceReader
-// the /v1/price handler uses; the hub is the same instance passed
-// to v1.Options.Hub. Interval clamps to 1 s minimum (zero / negative
-// uses [DefaultInterval]).
+// New constructs a Publisher reading via the same PriceReader as /v1/price and publishing to the hub passed as v1.Options.Hub; interval clamps to 1 s minimum (zero or negative uses [DefaultInterval]).
 func New(hub *streaming.Hub, reader PriceReader, interval time.Duration, logger *slog.Logger, opts Options) *Publisher {
 	if hub == nil {
 		panic("streampublish: hub must not be nil")
@@ -97,13 +90,10 @@ func New(hub *streaming.Hub, reader PriceReader, interval time.Duration, logger 
 	}
 }
 
-// DefaultInterval is the per-pair poll cadence when [New] gets 0 or negative. 5 s catches a new
-// 1-minute bucket well inside the 30 s freshness target without hammering the reader.
+// DefaultInterval is the per-pair poll cadence when [New] gets 0 or negative; 5 s catches a new 1-minute bucket well inside the 30 s freshness target without hammering the reader.
 const DefaultInterval = 5 * time.Second
 
-// Run starts one polling goroutine per pair and blocks until ctx is cancelled, returning
-// ctx.Err() so errgroup callers keep the cancel cause. Pairs are immutable for the Publisher's
-// lifetime, which avoids add/remove bookkeeping.
+// Run starts one polling goroutine per pair and blocks until ctx is cancelled, returning ctx.Err() so errgroup callers keep the cancel cause; pairs are immutable for the Publisher's lifetime, avoiding add/remove bookkeeping.
 func (p *Publisher) Run(ctx context.Context, pairs []canonical.Pair) error {
 	if len(pairs) == 0 {
 		// No pairs configured — nothing to do, but block until

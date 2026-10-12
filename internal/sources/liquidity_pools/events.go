@@ -10,9 +10,7 @@ const (
 	ObservationKind = "liquidity_pools.observation"
 )
 
-// Observation is one per-(pool, asset_side, ledger) reserve
-// delta. A single LP change emits up to two Observations — one
-// per asset side that's in the watched set.
+// Observation is one per-(pool, asset_side, ledger) reserve delta; a single LP change emits up to two, one per watched asset side.
 type Observation struct {
 	// PoolID is the pool's identity hex (LiquidityPoolId).
 	PoolID string

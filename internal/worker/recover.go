@@ -10,35 +10,15 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// Recover turns a panic in a DETACHED background worker goroutine into a logged
-// error instead of a whole-process crash (an unrecovered panic in ANY goroutine
-// kills the process). Every long-running `go` worker must register it.
-//
-// It MUST be deferred from INSIDE the goroutine body:
-//
-//	go func() {
-//		defer worker.Recover(logger, "my-worker")
-//		runForever(ctx)
-//	}()
-//
-// recover() only fires from a function the panicking goroutine itself deferred,
-// so this cannot be hoisted into a helper the goroutine merely calls. A guard
-// around the goroutine that CALLS a Run method does not protect the inner
-// per-item goroutines Run fans out; each needs its own deferred Recover.
-//
-// The panicking worker STOPS (not restarted): a crash-looping worker becomes a
-// silently idle one, better than taking down healthy siblings but a real
-// degradation, hence Error level plus the full stack.
+// Recover logs a panic in a detached worker goroutine instead of crashing; defer it INSIDE each goroutine body, since recover() only catches the goroutine's own panic.
+// The panicking worker stops and is not restarted, hence Error level plus the full stack.
 func Recover(logger *slog.Logger, name string) {
 	if r := recover(); r != nil {
 		Report(logger, name, r)
 	}
 }
 
-// Report records an ALREADY-RECOVERED panic. recover() works only one frame deep, so a caller
-// with its own deferred function (stellarindex-api's recoverBackgroundWorker) cannot delegate to
-// [Recover] and hands the recovered value here, so every binary moves the same counter the page
-// rule reads.
+// Report records an ALREADY-RECOVERED panic: recover() works only one frame deep, so a caller with its own deferred function (stellarindex-api's recoverBackgroundWorker) hands the value here, and every binary moves the same counter the page rule reads.
 func Report(logger *slog.Logger, name string, r any) {
 	if logger == nil {
 		logger = slog.Default()

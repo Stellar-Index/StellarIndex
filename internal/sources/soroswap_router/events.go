@@ -36,9 +36,7 @@ const (
 	CallKindSubInvocation = "sub_invocation"
 )
 
-// RouterSwap is one call to `swap_exact_tokens_for_tokens` (input fixed, output >= AmountOutMin) or
-// `swap_tokens_for_exact_tokens` (output fixed, input <= AmountInMax); each hop's pair emits its own
-// Trade. Path has 2 entries for a direct swap, 3+ for multi-hop.
+// RouterSwap is one call to `swap_exact_tokens_for_tokens` (input fixed, output >= AmountOutMin) or `swap_tokens_for_exact_tokens` (output fixed, input <= AmountInMax); each hop's pair emits its own Trade. Path has 2 entries for a direct swap, 3+ for multi-hop.
 type RouterSwap struct {
 	Source     string // always SourceName
 	Ledger     uint32
@@ -74,8 +72,7 @@ type RouterSwap struct {
 	AuthOccurrence int
 }
 
-// Event wraps a RouterSwap as a consumer.Event: one soroswap_router_swaps row per invocation, after
-// which the routed-via sweeper tags same-tx trades (internal/pipeline/routedvia.go; `tag-routed-via` for history).
+// Event wraps a RouterSwap as a consumer.Event: one soroswap_router_swaps row per invocation, after which the routed-via sweeper tags same-tx trades (internal/pipeline/routedvia.go).
 type Event struct {
 	Swap RouterSwap
 }
@@ -86,11 +83,7 @@ func (e Event) EventKind() string { return "soroswap-router.swap" }
 // Source implements [consumer.Event].
 func (e Event) Source() string { return SourceName }
 
-// CallSig is the per-call discriminator in the soroswap_router_swaps PK, since one op can carry
-// several router swaps. It hashes the economic identity (function, recipient, path, amounts) so
-// auth-tree duplicates of one call dedup via ON CONFLICT; deadline and CallPath/CallDepth/CallKind
-// describe position and are excluded. AuthOccurrence is the one positional input (identical calls
-// in one auth entry are separate executions); occurrence 0 adds nothing, keeping stored sigs stable.
+// CallSig is the per-call discriminator in the soroswap_router_swaps PK (one op can carry several router swaps). It hashes the economic identity (function, recipient, path, amounts) so auth-tree duplicates dedup via ON CONFLICT; deadline and CallPath/CallDepth/CallKind are excluded, and AuthOccurrence (0 adds nothing, keeping stored sigs stable) separates identical calls in one auth entry.
 func (s RouterSwap) CallSig() string {
 	parts := make([]string, 0, len(s.Path)+5)
 	parts = append(parts, s.Function, s.Recipient)

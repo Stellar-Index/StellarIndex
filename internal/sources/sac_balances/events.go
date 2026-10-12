@@ -10,8 +10,7 @@ const (
 	ObservationKind = "sac_balances.observation"
 )
 
-// Observation is one SAC balance entry delta. Identity is
-// (contract_id, holder).
+// Observation is one SAC balance entry delta, identified by (contract_id, holder).
 type Observation struct {
 	// ContractID is the SAC wrapper's C-strkey.
 	ContractID string

@@ -363,8 +363,7 @@ func checkLiveCursorGuard(haveLive bool, liveLastLedger, to uint32, allowOverlap
 		cur, to, to)
 }
 
-// ProjectedRebuildOptions bundles projected-rebuild's resolved dependencies, apart from the flag
-// parser, so the executor is callable from tests without a config file or live projector.
+// ProjectedRebuildOptions bundles projected-rebuild's resolved dependencies apart from the flag parser, so the executor is callable from tests without a config file or live projector.
 type ProjectedRebuildOptions struct {
 	Store  *timescale.Store
 	ChAddr string
@@ -518,14 +517,8 @@ type ProjectedRebuildResult struct {
 	Elapsed    time.Duration
 }
 
-// RunProjectedRebuild plans windows, drops done ones under Resume, and runs Workers goroutines
-// that claim windows from a shared scheduler and stream each through the decoder into
-// pipeline.HandleEvent unbuffered, to fit run-heavy-job.sh's memory cap.
-//
-// A window stream error is fatal unless ctx was canceled; only fully completed windows are
-// checkpointed, so -resume restarts exactly. A decode error or permanently rejected trade is a
-// counted soft-fail that still checkpoints, because it would re-fail identically; any other
-// insert failure holds the window (see [applyProjectedEvent]).
+// RunProjectedRebuild streams each planned window unbuffered through the decoder into pipeline.HandleEvent with Workers goroutines, skipping done windows under Resume.
+// Only completed windows checkpoint; decode errors and permanently rejected trades are counted soft-fails, any other insert failure holds the window.
 func RunProjectedRebuild(ctx context.Context, opts ProjectedRebuildOptions) (ProjectedRebuildResult, error) {
 	logger := opts.Logger
 	if logger == nil {

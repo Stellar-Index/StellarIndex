@@ -1569,8 +1569,7 @@ func newInProcessLoginThrottle() *inProcessLoginThrottle {
 	}
 }
 
-// Allow implements dashboardauth.LoginThrottle. The in-process bucket never errors, so the
-// discarded errors are always nil.
+// Allow implements dashboardauth.LoginThrottle; the in-process bucket never errors, so the discarded errors are always nil.
 func (t *inProcessLoginThrottle) Allow(ctx context.Context, ip, email string) (bool, error) {
 	allowed := true
 	if ip != "" {
@@ -1953,8 +1952,7 @@ func buildDEXTVLValueGate(
 	return dexTVLValueGate{substance: substance, scam: scam, usdPegs: usdPegs}
 }
 
-// Screens lists only the screens this deployment wired, scam directory first. A nil sub-guard
-// allows everything, so naming it would claim a screen that never ran.
+// Screens lists only the screens this deployment wired, scam directory first; a nil sub-guard allows everything, so naming it would claim a screen that never ran.
 func (g dexTVLValueGate) Screens() []string {
 	screens := make([]string, 0, 2)
 	if g.scam != nil {
@@ -1966,9 +1964,7 @@ func (g dexTVLValueGate) Screens() []string {
 	return screens
 }
 
-// ValueWithheld reports whether asset's reserves must contribute no USD value. Native XLM is
-// never withheld. The per-quote fan-out is one question to the Gate, so the metrics count the
-// asset once per refresh.
+// ValueWithheld reports whether asset's reserves must contribute no USD value; native XLM is never withheld, and the per-quote fan-out is one question to the Gate so metrics count the asset once per refresh.
 func (g dexTVLValueGate) ValueWithheld(ctx context.Context, asset canonical.Asset) bool {
 	gate := pricingguard.Gate{Substance: g.substance, Scam: g.scam}
 	return gate.AssetValueWithholding(ctx, asset, g.usdPegs, dexTVLGateSurface) != pricingguard.NotWithheld

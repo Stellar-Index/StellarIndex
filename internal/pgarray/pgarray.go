@@ -22,13 +22,10 @@ import (
 // across the pool's goroutines.
 var typeMap = pgtype.NewMap()
 
-// Strings returns a [sql.Scanner] that decodes a Postgres text[] / varchar[]
-// value into *dst. A SQL NULL decodes to a nil slice; an empty array "{}"
-// decodes to a non-nil zero-length slice.
+// Strings returns a [sql.Scanner] decoding a Postgres text[] / varchar[] into *dst: SQL NULL gives a nil slice, an empty array "{}" a non-nil zero-length slice.
 func Strings(dst *[]string) sql.Scanner { return scanner[[]string]{oid: pgtype.TextArrayOID, dst: dst} }
 
-// Bytea returns a [sql.Scanner] that decodes a Postgres bytea[] value into
-// *dst, with the same NULL / empty semantics as [Strings].
+// Bytea returns a [sql.Scanner] decoding a Postgres bytea[] into *dst, with the same NULL / empty semantics as [Strings].
 func Bytea(dst *[][]byte) sql.Scanner { return scanner[[][]byte]{oid: pgtype.ByteaArrayOID, dst: dst} }
 
 type scanner[T any] struct {
@@ -36,9 +33,7 @@ type scanner[T any] struct {
 	dst *T
 }
 
-// Scan implements [sql.Scanner]. pgx's stdlib driver hands the array over as
-// the Postgres text representation (a string, or []byte); a NULL arrives as
-// nil.
+// Scan implements [sql.Scanner]; pgx's stdlib driver hands the array over as Postgres text (a string or []byte), and a NULL as nil.
 func (s scanner[T]) Scan(src any) error {
 	if src == nil {
 		var zero T

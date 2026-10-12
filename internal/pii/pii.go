@@ -8,11 +8,7 @@ package pii
 
 import "strings"
 
-// MaskEmail renders an address safe to log: one leading character of the local part, then the
-// domain. It is lossy by design: enough to correlate log lines, not to recover the address.
-//
-// Anything it cannot parse as an address is hidden ENTIRELY, because a permissive redactor
-// fails by leaking plaintext. The empty string stays empty so an absent value logs as absent.
+// MaskEmail renders an address safe to log: one leading character of the local part, then the domain, lossy by design (enough to correlate log lines, not to recover the address). Anything it cannot parse as an address is hidden ENTIRELY, because a permissive redactor fails by leaking plaintext; the empty string stays empty.
 func MaskEmail(email string) string {
 	at := strings.LastIndex(email, "@")
 	if at <= 0 {

@@ -36,8 +36,7 @@ type FXStore interface {
 	FXQuoteAtOrBefore(ctx context.Context, pair canonical.Pair, cutoff time.Time, fxSources []string) (*big.Rat, time.Time, string, error)
 }
 
-// Cache is the subset of redis.UniversalClient we need, as an interface for test replacement.
-// Get returns redis.Nil for an absent key (an empty-window leg); triangulation skips that chain for the tick.
+// Cache is the subset of redis.UniversalClient we need, as an interface for test replacement; Get returns redis.Nil for an absent key (an empty-window leg), and triangulation skips that chain for the tick.
 type Cache interface {
 	Set(ctx context.Context, key string, value any, expiration time.Duration) *redis.StatusCmd
 	Get(ctx context.Context, key string) *redis.StringCmd
@@ -45,8 +44,7 @@ type Cache interface {
 	TxPipelined(ctx context.Context, fn func(redis.Pipeliner) error) ([]redis.Cmder, error)
 }
 
-// FreezeMarker records an ActionFreeze decision (production: freeze.Writer); all methods MUST be idempotent on (asset, quote).
-// frozenValue is the last-known-good VWAP, formatRatFixed(prev, 12), empty with no prior bucket; it reaches freeze_events via the EventSink, not the Redis marker.
+// FreezeMarker records an ActionFreeze decision (production: freeze.Writer); all methods MUST be idempotent on (asset, quote). frozenValue is the last-known-good VWAP (formatRatFixed(prev, 12), empty with no prior bucket) and reaches freeze_events via the EventSink, not the Redis marker.
 type FreezeMarker interface {
 	// Mark writes a marker with the default TTL and no lifecycle state, for the triangulated-composite
 	// refusal: a per-tick decision about a DERIVED price with no freeze lifecycle of its own.
@@ -65,8 +63,7 @@ type FreezeMarker interface {
 	Clear(ctx context.Context, asset, quote canonical.Asset) error
 }
 
-// WindowedFreezeMarker is the window-aware half of [FreezeMarker]: the marker is pair-wide but windows freeze independently, so a pair-level ladder let a cold window adopt a sibling's FiredAt, HoldUntil, ExtensionsUsed and Escalated.
-// Optional: a writer that can't scope keeps pair-wide behaviour, which errs towards holding.
+// WindowedFreezeMarker is the window-aware half of [FreezeMarker]: the marker is pair-wide but windows freeze independently, so a pair-level ladder let a cold window adopt a sibling's FiredAt, HoldUntil, ExtensionsUsed and Escalated. Optional: a writer that cannot scope keeps pair-wide behaviour, which errs towards holding.
 type WindowedFreezeMarker interface {
 	// MarkHoldForWindow is [FreezeMarker.MarkHold] recording `window` as the owner of `state`,
 	// merged with the ladders the marker holds for the pair's other windows.
@@ -239,15 +236,13 @@ type ContributionRecord struct {
 	SourceUSDVolume map[string]*big.Rat
 }
 
-// DivergenceRefresher keeps `div:<base>/<quote>` populated (production: [internal/divergence.Service]); ourPrice is the pair's shortest-window VWAP.
-// RefreshPinnedPair is for a frozen pair, whose cached VWAP is the pinned last-known-good: references refresh but no verdict is reached against it.
+// DivergenceRefresher keeps `div:<base>/<quote>` populated (production: [internal/divergence.Service]); ourPrice is the pair's shortest-window VWAP. RefreshPinnedPair serves a frozen pair, whose cached VWAP is the pinned last-known-good: references refresh but no verdict is reached against it.
 type DivergenceRefresher interface {
 	RefreshPair(ctx context.Context, pair canonical.Pair, ourPrice float64, observedAt time.Time) error
 	RefreshPinnedPair(ctx context.Context, pair canonical.Pair, pinnedPrice float64, observedAt time.Time) error
 }
 
-// StreamPublisher fans closed-bucket events out (production: redispub.Publisher); best-effort, since the VWAP cache is durable. coverage is nil when unknown.
-// PublishFrozenBucket is called instead for a bucket a freeze refused so a frozen series isn't silent; frozenSince is its first refused bucket's end.
+// StreamPublisher fans closed-bucket events out (production: redispub.Publisher), best-effort since the VWAP cache is durable; coverage is nil when unknown. PublishFrozenBucket is called for a bucket a freeze refused so a frozen series is not silent; frozenSince is its first refused bucket's end.
 type StreamPublisher interface {
 	PublishClosedBucket(ctx context.Context, pair canonical.Pair, window time.Duration, valueDecimal string, observedAt time.Time, coverage *cachekeys.WindowCoverage) error
 	PublishFrozenBucket(ctx context.Context, pair canonical.Pair, window time.Duration, observedAt, frozenSince time.Time) error

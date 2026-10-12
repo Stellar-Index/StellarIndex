@@ -5,8 +5,8 @@ import (
 	"time"
 )
 
-// SEP10Validator is the server side of SEP-10: Challenge issues a transaction to sign, Verify accepts it and issues a JWT, VerifyJWT checks the JWT (called per request when auth_mode=sep10).
-// Production is internal/auth/sep10.Validator; NoopSEP10Validator is the fallback when required config is missing (every method returns ErrNotImplemented, so /v1/auth/sep10/* answers 404), whereas auth_mode=sep10 with missing config is a hard startup failure.
+// SEP10Validator is the SEP-10 server side: Challenge issues a tx to sign, Verify accepts it and issues a JWT, VerifyJWT checks it per request.
+// NoopSEP10Validator (all ErrNotImplemented, so /v1/auth/sep10/* is 404) covers missing config; auth_mode=sep10 with missing config fails startup.
 type SEP10Validator interface {
 	// Challenge generates a SEP-10 challenge transaction for the account: unsigned and never
 	// submitted, a structured nonce. The stub returns [ErrNotImplemented].
@@ -19,8 +19,7 @@ type SEP10Validator interface {
 	VerifyJWT(ctx context.Context, jwt string) (Subject, error)
 }
 
-// Challenge is a SEP-10 challenge transaction; the client signs TransactionXDR and the other
-// fields are echoed for its diagnostics.
+// Challenge is a SEP-10 challenge transaction; the client signs TransactionXDR and the other fields are echoed for its diagnostics.
 type Challenge struct {
 	// TransactionXDR — base64 XDR of the unsigned transaction, signed by the client's account key.
 	TransactionXDR string
@@ -36,8 +35,7 @@ type Challenge struct {
 	ValidUntil time.Time
 }
 
-// Token is what [SEP10Validator.Verify] returns: the JWT plus
-// metadata the client uses to know when to refresh.
+// Token is what [SEP10Validator.Verify] returns: the JWT plus metadata the client uses to know when to refresh.
 type Token struct {
 	// JWT — the bearer token the client sends on subsequent
 	// requests as `Authorization: Bearer <JWT>`.

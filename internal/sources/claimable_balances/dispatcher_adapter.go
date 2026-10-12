@@ -14,10 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 )
 
-// Observer is the dispatcher-facing ClaimableBalanceEntry observer (ADR-0022), a
-// [dispatcher.LedgerEntryChangeDecoder] driven by the same watched-asset config as the trustlines
-// observer. Removals (claims) are resolved through the pre-image STATE change that stellar-core
-// emits immediately before them.
+// Observer is the dispatcher-facing ClaimableBalanceEntry observer (ADR-0022), a [dispatcher.LedgerEntryChangeDecoder] driven by the same watched-asset config as the trustlines observer; removals (claims) are resolved through the pre-image STATE change stellar-core emits just before them.
 type Observer struct {
 	watched map[string]struct{}
 
@@ -41,8 +38,7 @@ type Observer struct {
 
 var ErrEmptyWatchSet = errors.New("claimable_balances: cannot construct Observer with empty watched-asset list")
 
-// NewObserver constructs an [Observer] watching the supplied
-// asset_key list.
+// NewObserver constructs an [Observer] watching the supplied asset_key list.
 func NewObserver(watched []string) (*Observer, error) {
 	if len(watched) == 0 {
 		return nil, ErrEmptyWatchSet
@@ -63,11 +59,7 @@ func NewObserver(watched []string) (*Observer, error) {
 
 func (*Observer) Name() string { return SourceName }
 
-// Matches implements [dispatcher.LedgerEntryChangeDecoder].
-//
-// Body-carrying variants match when the entry is a ClaimableBalance with a classic credit asset
-// in the watched set. A Removed variant matches only when the pre-image memo already knows the
-// balance; a removal we cannot attribute to a watched asset stays unmatched.
+// Matches implements [dispatcher.LedgerEntryChangeDecoder]: a body-carrying variant matches when the entry is a ClaimableBalance with a classic credit asset in the watched set; a Removed variant only when the pre-image memo already knows the balance, so an unattributable removal stays unmatched.
 func (o *Observer) Matches(change xdr.LedgerEntryChange) bool {
 	if change.Type == xdr.LedgerEntryChangeTypeLedgerEntryRemoved {
 		id, ok := removedClaimableID(change)
@@ -93,14 +85,7 @@ func (o *Observer) Matches(change xdr.LedgerEntryChange) bool {
 	return watched
 }
 
-// Decode implements [dispatcher.LedgerEntryChangeDecoder].
-//
-// A Removed change emits a removal Observation (Balance zero, IsRemoval true) so the served
-// aggregate stops counting a claimed balance. The removal is an absorbing state, not a delta, so
-// re-ingesting a ledger rewrites the identical row rather than double-subtracting.
-//
-// A State change carries only the pre-image; it feeds the memo and emits nothing, since emitting
-// would persist a stale balance.
+// Decode implements [dispatcher.LedgerEntryChangeDecoder]. A Removed change emits a removal Observation (Balance zero, IsRemoval true) so the served aggregate stops counting a claimed balance; removal is an absorbing state, not a delta, so re-ingest rewrites the identical row. A State change carries only the pre-image: it feeds the memo and emits nothing, since that would persist a stale balance.
 func (o *Observer) Decode(ctx dispatcher.LedgerEntryChangeContext) ([]consumer.Event, error) {
 	if ctx.Change.Type == xdr.LedgerEntryChangeTypeLedgerEntryRemoved {
 		id, ok := removedClaimableID(ctx.Change)

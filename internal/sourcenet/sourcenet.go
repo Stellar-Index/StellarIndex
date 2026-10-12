@@ -40,8 +40,7 @@ var allNetworks = map[string]struct{}{
 	"ledger_entries":  {},
 }
 
-// Applicable reports whether source exists on network, and if not, the operator-facing reason.
-// Unknown networks are treated like pubnet so a misspelling can never silently hide a source.
+// Applicable reports whether source exists on network and, if not, the operator-facing reason; unknown networks are treated like pubnet so a misspelling can never silently hide a source.
 func Applicable(source, network string) (bool, string) {
 	if network == "" || network == Pubnet {
 		return true, ""
@@ -52,9 +51,7 @@ func Applicable(source, network string) (bool, string) {
 	return false, fmt.Sprintf("no contract set registered for network %s — the %s decoder is anchored to pubnet contract identities (ADR-0035)", network, source)
 }
 
-// Known reports whether source is classified (ledger-anchored or pubnet-only). Consumers outside
-// config.KnownSources use it to fail CI on an unclassified name rather than let [Applicable]
-// silently exclude it from every non-pubnet network.
+// Known reports whether source is classified (ledger-anchored or pubnet-only), so consumers outside config.KnownSources can fail CI on an unclassified name rather than let [Applicable] silently exclude it from every non-pubnet network.
 func Known(source string) bool {
 	if _, ok := allNetworks[source]; ok {
 		return true
@@ -73,8 +70,7 @@ type NotApplicable struct {
 	Reason string
 }
 
-// Filter partitions sources into the applicable set (input order) and the excluded set
-// (source-sorted, with reasons). Every consumer uses it, so catalogue and endpoint cannot disagree.
+// Filter partitions sources into the applicable set (input order) and the excluded set (source-sorted, with reasons); every consumer uses it, so catalogue and endpoint cannot disagree.
 func Filter(sources []string, network string) (applicable []string, excluded []NotApplicable) {
 	for _, s := range sources {
 		ok, reason := Applicable(s, network)
@@ -88,9 +84,7 @@ func Filter(sources []string, network string) (applicable []string, excluded []N
 	return applicable, excluded
 }
 
-// PubnetOnlySources lists the sources anchored to pubnet contract identities, which a non-pubnet
-// network must report as not applicable. It lets the API name them without importing the ops
-// catalogue; a test cross-checks it against config.KnownSources.
+// PubnetOnlySources lists the sources anchored to pubnet contract identities, which a non-pubnet network must report as not applicable; it lets the API name them without importing the ops catalogue, and a test cross-checks it against config.KnownSources.
 var PubnetOnlySources = []string{
 	"aquarius", "band", "blend", "blend_backstop", "blend_emitter", "cctp", "comet",
 	"defindex", "phoenix", "redstone", "reflector-cex", "reflector-dex", "reflector-fx",
@@ -98,8 +92,7 @@ var PubnetOnlySources = []string{
 	"spectra", "upshift",
 }
 
-// NotApplicableOn lists, source-sorted with reasons, every canonical
-// source that does not exist on network. Empty on pubnet.
+// NotApplicableOn lists, source-sorted with reasons, every canonical source that does not exist on network; empty on pubnet.
 func NotApplicableOn(network string) []NotApplicable {
 	_, excluded := Filter(PubnetOnlySources, network)
 	return excluded

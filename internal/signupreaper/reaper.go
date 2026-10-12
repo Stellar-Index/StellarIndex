@@ -19,8 +19,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// SignupRaceReasonPrefix is the `suspended_reason` prefix the recovery path stamps on the losing
-// account; the reaper matches only reasons starting with this exact literal.
+// SignupRaceReasonPrefix is the `suspended_reason` prefix the recovery path stamps on the losing account; the reaper matches only reasons starting with this exact literal.
 const SignupRaceReasonPrefix = "signup-race:"
 
 // Defaults for a zero Options.
@@ -29,8 +28,7 @@ const (
 	DefaultMinAge   = 24 * time.Hour
 )
 
-// OrphanStore is the reaper's narrow write seam (*postgresstore.AccountStore), kept off
-// platform.AccountStore so every account fake need not implement the delete surface.
+// OrphanStore is the reaper's narrow write seam (*postgresstore.AccountStore), kept off platform.AccountStore so every account fake need not implement the delete surface.
 type OrphanStore interface {
 	// ReapSuspendedOrphans deletes accounts Suspended with a reason starting with reasonPrefix
 	// and suspended before olderThan, returning the rows removed. The predicate is conservative.
@@ -65,8 +63,7 @@ type Reaper struct {
 	now      func() time.Time
 }
 
-// New builds a Reaper. Panics if store is nil: a wiring bug, since the caller must gate
-// construction on the account store being present.
+// New builds a Reaper; it panics if store is nil, a wiring bug since the caller must gate construction on the account store being present.
 func New(store OrphanStore, opts Options) *Reaper {
 	if store == nil {
 		panic("signupreaper: New requires a non-nil store")
@@ -94,8 +91,7 @@ func New(store OrphanStore, opts Options) *Reaper {
 	return r
 }
 
-// Run drives the sweep loop until ctx is cancelled. Sweeps once
-// immediately, then every Interval. Returns ctx.Err() on cancellation.
+// Run drives the sweep loop until ctx is cancelled: one sweep immediately, then every Interval; it returns ctx.Err().
 func (r *Reaper) Run(ctx context.Context) error {
 	tick := time.NewTicker(r.interval)
 	defer tick.Stop()
@@ -111,8 +107,7 @@ func (r *Reaper) Run(ctx context.Context) error {
 	}
 }
 
-// Sweep runs one reap pass and records the paired metric. Errors are swallowed after being
-// recorded (best-effort worker); the outcome label is what the alert rule reads.
+// Sweep runs one reap pass and records the paired metric; errors are swallowed after being recorded (best-effort worker), and the outcome label is what the alert rule reads.
 func (r *Reaper) Sweep(ctx context.Context) {
 	start := r.now()
 	deleted, outcome := r.sweepOnce(ctx)
