@@ -31,10 +31,7 @@ type ledgerCloseTimeReader interface {
 // It is the lookup's own scan window ([clickhouse.LatestLedgerLookbackLedgers]) so refusal and read cannot drift; same value as cmd/stellarindex-aggregator maxSupplyLakeClampLedgers.
 const maxAutoSnapshotClampLedgers = clickhouse.LatestLedgerLookbackLedgers
 
-// cursorReader is the ingestion-cursor half of resolveSnapshotLedger's
-// inputs, kept as an interface for the same reason ledgerCloseTimeReader
-// is: so the auto-resolve branch is unit-testable without Postgres.
-// Satisfied by *timescale.Store.
+// cursorReader is the ingestion-cursor input of resolveSnapshotLedger, an interface so auto-resolve is testable without Postgres.
 type cursorReader interface {
 	ListCursors(ctx context.Context) ([]timescale.Cursor, error)
 }
@@ -177,10 +174,8 @@ func supplySnapshot(args []string) error {
 	return nil
 }
 
-// persistSnapshot writes snap and, when its day bucket is older than
-// supply_1d's refresh policy reaches, refreshes that bucket explicitly
-// so a corrective re-derive reaches the market-cap chart. A failed
-// refresh fails the run: the row is written but not yet served.
+// persistSnapshot writes snap and, when its day bucket is older than supply_1d's refresh policy reaches, refreshes it explicitly. A
+// failed refresh fails the run: the row is written but not yet served.
 func persistSnapshot(ctx context.Context, store *timescale.Store, snap supply.Supply, now time.Time) error {
 	if err := store.InsertSupply(ctx, snap); err != nil {
 		return fmt.Errorf("InsertSupply: %w", err)
@@ -201,16 +196,12 @@ func persistSnapshot(ctx context.Context, store *timescale.Store, snap supply.Su
 	return nil
 }
 
-// supplyCAGGPolicyCover is how far back supply_1d's own refresh policy
-// (migration 0066, start_offset 7 days) is trusted to pick a snapshot
-// up: a day short of the offset, so a bucket straddling the policy
-// window's start is refreshed here rather than left to rounding.
+// supplyCAGGPolicyCover is how far back supply_1d's own refresh policy is trusted to pick a snapshot up: a day short of its 7-day
+// start_offset, so a straddling bucket is refreshed here.
 const supplyCAGGPolicyCover = 6 * 24 * time.Hour
 
-// supplyCAGGRefreshWindow returns the supply_1d range to refresh for a
-// snapshot observed at observedAt, or ok=false when the policy covers
-// it. The range is the snapshot's UTC day padded by a day each side,
-// which meets [timescale.SupplyCAGG]'s MinWindow.
+// supplyCAGGRefreshWindow returns the supply_1d range to refresh for a snapshot observed at observedAt (its UTC day padded a day each
+// side, meeting [timescale.SupplyCAGG]'s MinWindow), or ok=false when the policy covers it.
 func supplyCAGGRefreshWindow(observedAt, now time.Time) (from, to time.Time, ok bool) {
 	day := observedAt.UTC().Truncate(24 * time.Hour)
 	if !day.Before(now.Add(-supplyCAGGPolicyCover)) {
@@ -219,10 +210,7 @@ func supplyCAGGRefreshWindow(observedAt, now time.Time) (from, to time.Time, ok 
 	return day.Add(-24 * time.Hour), day.Add(48 * time.Hour), true
 }
 
-// supplyStoreLookup adapts *timescale.Store to
-// supply.AccountObservationLookup. The timescale row carries a
-// pointer-or-NULL HomeDomain that the supply reader doesn't need;
-// we project to the smaller AccountObservationRow shape.
+// supplyStoreLookup adapts *timescale.Store to supply.AccountObservationLookup, projecting to the smaller AccountObservationRow.
 type supplyStoreLookup struct{ s *timescale.Store }
 
 func (a supplyStoreLookup) LatestAccountObservationAtOrBefore(ctx context.Context, accountID string, asOfLedger uint32) (supply.AccountObservationRow, error) {
@@ -242,10 +230,8 @@ func (a supplyStoreLookup) MaxAccountObservationLedger(ctx context.Context, asOf
 	return a.s.MaxAccountObservationLedger(ctx, asOfLedger)
 }
 
-// supplySnapshotMaybeEmitFailure writes a fail-marker textfile (so
-// the staleness alert keys on time-since-last-pass) and returns
-// the original error. Empty textfileOut skips the emit but still
-// returns the error.
+// supplySnapshotMaybeEmitFailure writes a fail-marker textfile (so the staleness alert keys on time-since-last-pass) and returns cause;
+// an empty textfileOut skips the emit.
 func supplySnapshotMaybeEmitFailure(textfileOut, assetRaw string, startedAt time.Time, cause error) error {
 	if textfileOut != "" {
 		// Best-effort fail emit — don't mask the original cause.
@@ -387,10 +373,8 @@ type supplyAuditArgs struct {
 
 const supplyAuditUsage = "usage: supply audit <asset> -config PATH [-cross-check <asset>] [-history-hours N]"
 
-// parseSupplyAuditArgs parses flags on both sides of the asset. Go's flag
-// package stops at the first positional, so a single fs.Parse left every
-// flag after the asset unread and the documented `supply audit native
-// -config PATH` failed with "-config is required".
+// parseSupplyAuditArgs parses flags on both sides of the asset: Go's flag package stops at the first positional, so `supply audit native
+// -config PATH` would otherwise fail.
 func parseSupplyAuditArgs(args []string) (supplyAuditArgs, error) {
 	var a supplyAuditArgs
 	fs := flag.NewFlagSet("supply audit", flag.ContinueOnError)
@@ -532,10 +516,8 @@ func runSupplyCrossCheck(
 	return crossCheckAndReport(os.Stdout, primarySnap, otherSnap, wrapClass, primaryKey)
 }
 
-// crossCheckAndReport runs the comparison and prints its verdict. A pair
-// whose snapshots are too many ledgers apart is reported as MISALIGNED
-// and returned as an error: the aggregator's refresher refuses the same
-// pair, so the CLI must not print a verdict the daemon would not give.
+// crossCheckAndReport prints the comparison verdict. Snapshots too many ledgers apart are reported MISALIGNED as an error, as the
+// aggregator's refresher refuses the same pair.
 func crossCheckAndReport(w io.Writer, primarySnap, otherSnap supply.Supply, wrapClass supply.WrapClass, primaryKey string) error {
 	result, err := supply.CrossCheckForClass(primarySnap, otherSnap, wrapClass)
 	if errors.Is(err, supply.ErrCrossCheckMisaligned) {

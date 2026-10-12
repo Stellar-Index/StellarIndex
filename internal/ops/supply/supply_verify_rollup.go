@@ -157,10 +157,8 @@ func reportRollupDrifts(out io.Writer, drifts []completeness.TotalsDrift, checke
 	_ = w.Flush()
 }
 
-// reportRollupMissing prints the watched contracts that came back with no
-// sep41_supply_rollup checkpoint row at all — the case reportRollupDrifts
-// can't show, since a missing contract contributes no drift and no
-// checked count.
+// reportRollupMissing prints watched contracts with no sep41_supply_rollup checkpoint row, the case reportRollupDrifts cannot show (no
+// drift, no checked count).
 func reportRollupMissing(out io.Writer, missing []string) {
 	if len(missing) == 0 {
 		return

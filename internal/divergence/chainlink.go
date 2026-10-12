@@ -133,10 +133,8 @@ func NewChainlinkReference(opts ChainlinkOptions) *ChainlinkReference {
 	}
 }
 
-// defaultChainlinkFeedMap returns the built-in seed of pair →
-// AggregatorV3 contract addresses, derived from the ingest source's
-// [externalchainlink.DefaultFeedMap] so the two can't drift onto
-// different proxies, or different staleness budgets, for the same pair.
+// defaultChainlinkFeedMap returns the built-in pair to AggregatorV3 contract seed, derived from [externalchainlink.DefaultFeedMap] so the
+// two can't drift onto different proxies or staleness budgets for the same pair.
 func defaultChainlinkFeedMap() map[string]chainlinkFeedSpec {
 	src := externalchainlink.DefaultFeedMap()
 	out := make(map[string]chainlinkFeedSpec, len(src))

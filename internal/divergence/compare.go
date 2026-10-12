@@ -342,10 +342,8 @@ func isFinitePositive(x float64) bool {
 	return !math.IsNaN(x) && !math.IsInf(x, 0) && x > 0
 }
 
-// median returns the median of a sorted slice. For even-length
-// slices it returns the arithmetic mean of the two middle values.
-// Caller MUST sort the slice ascending; we don't sort here so the
-// median computation is O(1) for the comparator's hot path.
+// median returns the median of a sorted slice (mean of the two middle values for even length). The caller MUST sort ascending; it does
+// not, keeping the comparator's hot path O(1).
 func median(sorted []float64) float64 {
 	n := len(sorted)
 	if n == 0 {

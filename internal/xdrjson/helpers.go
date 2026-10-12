@@ -15,10 +15,8 @@ import (
 // amount renders a classic Int64 stroop amount as a decimal string (ADR-0003).
 func amount(stroops int64) string { return strconv.FormatInt(stroops, 10) }
 
-// muxedAddr renders an xdr.MuxedAccount as its strkey WITHOUT panicking.
-// MuxedAccount.Address() panics on an unknown key-type discriminant; GetAddress
-// returns ("", false) instead, so a single malformed destination degrades to an
-// empty string rather than 500-ing the whole transaction response.
+// muxedAddr renders an xdr.MuxedAccount as its strkey without panicking: Address() panics on an unknown key-type discriminant, so
+// GetAddress is used and a malformed destination degrades to "" rather than 500-ing the transaction.
 func muxedAddr(m xdr.MuxedAccount) string {
 	s, _ := m.GetAddress()
 	return s
@@ -49,10 +47,8 @@ func assetID(a xdr.Asset) string {
 	}
 }
 
-// assetCode trims the trailing NUL padding from a fixed-width asset code and validates it with
-// [canonical.ValidateAssetCode], the rule internal/canonical.AssetFromXDR enforces. ok=false for a
-// code AssetFromXDR would refuse, so this package never mints an asset id the canonical layer
-// disagrees with.
+// assetCode trims NUL padding from a fixed-width code and validates it with [canonical.ValidateAssetCode], the rule AssetFromXDR
+// enforces; ok=false for a code it would refuse, so this package never mints an asset id the canonical layer disagrees with.
 func assetCode(raw []byte) (string, bool) {
 	code := strings.TrimRight(string(raw), "\x00")
 	if canonical.ValidateAssetCode(code) != nil {
@@ -130,10 +126,8 @@ func changeTrustAsset(c xdr.ChangeTrustAsset) string {
 	}
 }
 
-// poolShareLine derives a change-trust pool-share line's "pool:<hex>" id from
-// its constituent-asset parameters. ok=false (rendered as "unknown_asset")
-// only for a liquidity-pool type the SDK's own NewPoolId doesn't recognise —
-// currently none; a forward-compat guard, not a live path.
+// poolShareLine derives a change-trust pool-share line's "pool:<hex>" id from its asset parameters; "unknown_asset" is a forward-compat
+// guard for a liquidity-pool type the SDK's NewPoolId doesn't recognise (none today).
 func poolShareLine(params xdr.LiquidityPoolParameters) string {
 	cp, ok := params.GetConstantProduct()
 	if !ok {

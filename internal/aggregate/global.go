@@ -238,10 +238,8 @@ func tryTriangulatedTier(
 	return GlobalPriceResult{}, false, nil
 }
 
-// filterFreshAggregatorRows drops observations older than
-// `maxAge`. Zero `maxAge` is "no filter" — every observation
-// passes through. The result is a fresh slice; the input's backing
-// array is left untouched.
+// filterFreshAggregatorRows drops observations older than maxAge (zero means no filter); the result is a fresh slice and the input is
+// untouched.
 func filterFreshAggregatorRows(rows []canonical.OracleUpdate, maxAge time.Duration) []canonical.OracleUpdate {
 	if maxAge <= 0 {
 		return rows
@@ -256,10 +254,8 @@ func filterFreshAggregatorRows(rows []canonical.OracleUpdate, maxAge time.Durati
 	return out
 }
 
-// aggregatorCommonDecimals is the shared fixed scale every aggregator
-// price is projected onto before it is compared or averaged — matches
-// the /v1/oracle/lastprice surface and exceeds every wired
-// aggregator's native precision (CoinGecko=8, CMC=8).
+// aggregatorCommonDecimals is the fixed scale every aggregator price is projected onto before comparing or averaging; it matches
+// /v1/oracle/lastprice and exceeds every wired aggregator's precision (CoinGecko=8, CMC=8).
 const aggregatorCommonDecimals = 14
 
 // aggregatorMinForOutlierReject is the fewest sources at which an outlier is identifiable; with 1-2 sources there is no majority, so they are averaged unchanged.
@@ -375,10 +371,8 @@ func averageAggregatorPrices(rows []canonical.OracleUpdate) (string, time.Time, 
 	return formatScaledDecimal(avgScaled, target, commonDecimals), latest, true
 }
 
-// formatScaledDecimal renders avg (scaled by `pow10`) as a fixed-
-// fractional decimal string with `decimals` fractional digits.
-// e.g. avg = 100_010_000_000_000, pow10 = 10^14, decimals = 14
-// → "1.00010000000000".
+// formatScaledDecimal renders avg (scaled by pow10) as a decimal string with `decimals` fractional digits, e.g. avg=100_010_000_000_000,
+// pow10=10^14, decimals=14 gives "1.00010000000000".
 func formatScaledDecimal(avg, pow10 *big.Int, decimals int) string {
 	// Integer and fractional parts via big.Int division.
 	intPart := new(big.Int).Quo(avg, pow10)

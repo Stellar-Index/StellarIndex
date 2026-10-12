@@ -31,16 +31,12 @@ type CoinGeckoReference struct {
 	// any asset not in the map yields ErrAssetUnsupported.
 	idMap map[string]string
 
-	// quoteMap maps canonical quote currency to CoinGecko's
-	// supported vs_currency code (e.g. "fiat:USD" → "usd",
-	// "fiat:EUR" → "eur"). Limited set; CoinGecko supports the
-	// common fiats + a few major cryptos.
+	// quoteMap maps a canonical quote currency to CoinGecko's vs_currency code (e.g. "fiat:USD" to "usd"); a limited set of common fiats and
+	// a few major cryptos.
 	quoteMap map[string]string
 
-	// batchTTL is the window over which a single batched
-	// /simple/price response is reused. Default 25s — short enough
-	// to capture price moves on the next tick, long enough that
-	// the per-tick fan-out across pairs reuses one HTTP call.
+	// batchTTL is how long one batched /simple/price response is reused (default 25s): short enough to catch the next tick's moves, long
+	// enough that the per-tick fan-out across pairs shares one HTTP call.
 	batchTTL time.Duration
 
 	// maxAge is the staleness ceiling for upstream last_updated_at: an older quote is ErrPriceUnavailable, since a FROZEN price served as fresh can mask or fabricate a divergence.
@@ -334,10 +330,8 @@ func (c *CoinGeckoReference) fetchBatch(ctx context.Context, ids, quotes []strin
 	return parsed, updatedAt, nil
 }
 
-// sortedValues returns the unique values of m in sorted order. Sort
-// is for deterministic URL composition (helps with caching layers
-// and test assertions); de-dup handles the `crypto:XLM` + `native`
-// both-map-to-`stellar` case so we don't pay for the same id twice.
+// sortedValues returns the unique values of m, sorted for deterministic URL composition; de-dup handles `crypto:XLM` and `native` both
+// mapping to `stellar` so the same id is not fetched twice.
 func sortedValues(m map[string]string) []string {
 	seen := make(map[string]struct{}, len(m))
 	out := make([]string, 0, len(m))

@@ -33,10 +33,8 @@ func VWAP(w ScaledWindow) (*big.Rat, error) {
 	return new(big.Rat).SetFrac(sumQuote, sumBase), nil
 }
 
-// priceable reports whether a trade belongs to the priced population:
-// both legs strictly positive. [VWAP], [TWAP], [SourceContributions] and
-// the Total*Volume sums share it so the price and the volumes served
-// beside it are computed over the same trades.
+// priceable reports whether a trade is in the priced population (both legs strictly positive); [VWAP], [TWAP], [SourceContributions] and
+// the Total*Volume sums share it so price and volumes cover the same trades.
 func priceable(t *canonical.Trade) bool {
 	return t.BaseAmount.BigInt().Sign() > 0 && t.QuoteAmount.BigInt().Sign() > 0
 }

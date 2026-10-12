@@ -159,10 +159,8 @@ type localIndex struct {
 	bucketOf []int
 	buckets  []*priceBucket
 	window   *robustRef
-	// anchorTol is the anchor tolerance: sigma · max(window scale,
-	// localScaleRelCeiling·|window centre|). A local reference is
-	// trusted only when its centre is within anchorTol of the window
-	// centre or of lastAnchored.
+	// anchorTol is sigma · max(window scale, localScaleRelCeiling·|window centre|); a local reference is trusted only when its centre is
+	// within it of the window centre or lastAnchored.
 	anchorTol *big.Rat
 	// lastAnchored is the centre of the most recent trusted local
 	// reference in time order (nil before the first) — the chain a
@@ -187,10 +185,8 @@ func TradeOrderLess(a, b *canonical.Trade) bool {
 	return a.Source < b.Source
 }
 
-// newLocalIndex sorts the usable prices by trade time (ties broken by
-// [TradeOrderLess], so the arrangement is a function of the trade set
-// and not of the caller's merge order) and partitions them into
-// opts.Bucket-wide buckets.
+// newLocalIndex sorts usable prices by trade time (ties by [TradeOrderLess], so order depends on the trade set, not the caller's merge
+// order) and partitions them into opts.Bucket-wide buckets.
 func newLocalIndex(trades []canonical.Trade, validIdx []int, prices []*big.Rat, opts LocalOutlierOptions) *localIndex {
 	ix := &localIndex{opts: opts, prices: prices, window: newRobustRef(prices)}
 	ix.order = make([]int, len(prices))
@@ -250,10 +246,8 @@ func withinTol(a, b, tol *big.Rat) bool {
 	return d.Cmp(tol) <= 0
 }
 
-// anchorBuckets builds each qualifying bucket's reference in time
-// order and keeps only the anchored ones. The chain runs over
-// buckets alone here: a bucket after a thin stretch still chains from
-// the last dense bucket before it (or from the window).
+// anchorBuckets builds each qualifying bucket's reference in time order and keeps only anchored ones; the chain runs over buckets alone,
+// so a bucket after a thin stretch still chains from the last dense bucket (or the window).
 func (ix *localIndex) anchorBuckets() {
 	ix.lastAnchored = nil
 	for _, b := range ix.buckets {

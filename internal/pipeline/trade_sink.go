@@ -49,10 +49,8 @@ func isCtxErr(err error) bool {
 type faultClass int
 
 const (
-	// faultInfra — an infrastructure fault (DB unreachable, restarting,
-	// out of connections/disk/memory) OR any error we cannot positively
-	// classify. Policy: block-and-retry with capped backoff until it
-	// lands or the context is cancelled. Never dropped.
+	// faultInfra is an infrastructure fault or any error we cannot positively classify: block-and-retry with capped backoff until it lands
+	// or ctx is cancelled, never dropped.
 	faultInfra faultClass = iota
 
 	// faultData: positively permanent for this row (class 22/23, a canonical validation sentinel, or a recovered sink panic); isolate, count, skip.

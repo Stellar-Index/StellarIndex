@@ -133,10 +133,9 @@ func medianAt(pkgs []payloadPackage, tsMS uint64) (*big.Int, bool) {
 	return sum.Rsh(sum, 1), true
 }
 
-// attributeSubset maps each surviving updated_feeds entry to one feed_id whose payload median equals
-// its price, ORDER-PRESERVING: updated_feeds is a subsequence of feed_ids, so the constraint only
-// disambiguates (it resolved 170 ledgers from 60104689 where a price matched two medians). A DP counts
-// alignments; zero or more than one refuses, leaving the event honest-blind.
+// attributeSubset maps each surviving updated_feeds entry to one feed_id whose payload median equals its price, ORDER-PRESERVING:
+// updated_feeds is a subsequence of feed_ids, so order only disambiguates. A DP counts alignments; zero or more than one refuses, leaving
+// the event honest-blind.
 func attributeSubset(prices []priceDataDecoded, feedIDs []string, payload []byte) ([]string, error) {
 	byFeed, err := parsePayload(payload)
 	if err != nil {

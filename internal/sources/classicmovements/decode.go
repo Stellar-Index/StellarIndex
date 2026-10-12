@@ -29,10 +29,8 @@ func SupportedOpTypes() []string {
 	}
 }
 
-// matchesSupportedOp reports whether op is one of this package's
-// op-only in-scope classic operation types. See recognition_test.go
-// for the exhaustive-enum guard
-// that pins this switch.
+// matchesSupportedOp reports whether op is one of this package's op-only in-scope classic operation types; recognition_test.go's
+// exhaustive-enum guard pins this switch.
 func matchesSupportedOp(op xdr.Operation) bool {
 	switch op.Body.Type {
 	case xdr.OperationTypeCreateAccount, xdr.OperationTypePayment,
@@ -45,10 +43,8 @@ func matchesSupportedOp(op xdr.Operation) bool {
 	return false
 }
 
-// decodeOp dispatches one classic op to its decoder. Zero movements is not an error: a failed op
-// moved nothing, and a claim/clawback whose create is not yet resolved is also zero movements
-// (see decodeClaimClaimableBalance). An out-of-scope op type is a loud ErrUnsupportedOpType, not
-// a silent empty return. It is a method because the claim/clawback arms use d's BalanceId index.
+// decodeOp dispatches one classic op to its decoder. Zero movements is not an error (failed op, or a claim/clawback whose create is
+// unresolved); an out-of-scope op type is a loud ErrUnsupportedOpType. A method because claim/clawback use d's BalanceId index.
 func (d *Decoder) decodeOp(ledger uint32, closedAt time.Time, txHash string, opIndex uint32, fromAddr string, op xdr.Operation, result xdr.OperationResult) ([]Movement, error) {
 	switch op.Body.Type {
 	case xdr.OperationTypeCreateAccount:
@@ -185,15 +181,9 @@ func opSucceeded(result xdr.OperationResult) bool {
 	return result.Code == xdr.OperationResultCodeOpInner
 }
 
-// baseAccountAddress resolves a MUXED-typed counterparty (PaymentOp.Destination, ClawbackOp.From,
-// AccountMergeOp.Destination) to the G-strkey of the account that holds the balance.
-//
-// An M-strkey is only a routing label with no ledger entry. account_movements is queried by
-// G-strkey equality, so a row recorded under an M-address would be missing from the real
-// account's feed. This matches xdrjson.ParticipantAccounts and the lake's op extractor.
-//
-// The memo id is not carried: it has no balance effect. AccountId-typed counterparties cannot be
-// muxed and need no resolution.
+// baseAccountAddress resolves a MUXED counterparty to the G-strkey holding the balance: account_movements is queried by G-strkey
+// equality, so a row under an M-address would be missing from the real account's feed (matches xdrjson.ParticipantAccounts and the lake
+// extractor). The memo id has no balance effect and is dropped.
 func baseAccountAddress(m xdr.MuxedAccount) (string, error) {
 	switch m.Type {
 	case xdr.CryptoKeyTypeKeyTypeEd25519, xdr.CryptoKeyTypeKeyTypeMuxedEd25519:
@@ -253,10 +243,8 @@ func decodePathPaymentStrictReceive(ledger uint32, closedAt time.Time, txHash st
 		body.SendAsset, sourceAmount, succ.Last)
 }
 
-// decodePathPaymentStrictSend reconstructs a 'path_payment' movement
-// for a successful PathPaymentStrictSend op. Unlike StrictReceive,
-// the source amount is exact in the body (SendAmount) — no Offers
-// derivation needed.
+// decodePathPaymentStrictSend reconstructs a 'path_payment' movement for a successful op; unlike StrictReceive the source amount is exact
+// in the body (SendAmount).
 func decodePathPaymentStrictSend(ledger uint32, closedAt time.Time, txHash string, opIndex uint32, fromAddr string, op xdr.Operation, result xdr.OperationResult) ([]Movement, error) {
 	if !opSucceeded(result) {
 		return nil, nil
@@ -285,10 +273,8 @@ func decodePathPaymentStrictSend(ledger uint32, closedAt time.Time, txHash strin
 		body.SendAsset, body.SendAmount, succ.Last)
 }
 
-// buildPathPaymentMovement assembles the two 'path_payment' legs
-// shared by StrictReceive and StrictSend once each has resolved its
-// own source amount: leg 0 = the sender's outflow in sendAsset, leg 1
-// = the destination's inflow in last.Asset.
+// buildPathPaymentMovement assembles the two 'path_payment' legs shared by both variants: leg 0 is the sender's outflow in sendAsset, leg
+// 1 the destination's inflow in last.Asset.
 func buildPathPaymentMovement(ledger uint32, closedAt time.Time, txHash string, opIndex uint32, fromAddr string, sendAsset xdr.Asset, sendAmount xdr.Int64, last xdr.SimplePaymentResult) ([]Movement, error) {
 	if last.Amount <= 0 {
 		return nil, fmt.Errorf("%w: non-positive dest Amount %d (ledger %d tx %s op %d)",
@@ -339,16 +325,9 @@ func buildPathPaymentMovement(ledger uint32, closedAt time.Time, txHash string, 
 	}, nil
 }
 
-// pathPaymentStrictReceiveSourceAmount derives the exact amount of sendAsset the taker paid.
-// The body only has SendMax (a ceiling) and the result has no single source-amount field.
-//
-// stellar-core appends Success.Offers in strict hop order (real_bytes_test.go), so the first
-// hop's claims are a contiguous prefix with AssetBought == SendAsset; a hop filled across several
-// offers keeps all of them there. This sums that full prefix, not just Offers[0], and stops at the
-// first offer for a different asset.
-//
-// Empty Offers means nothing was crossed (SendAsset == DestAsset), so the amount consumed is
-// exactly lastAmount.
+// pathPaymentStrictReceiveSourceAmount derives the exact sendAsset the taker paid (the body has only the SendMax ceiling). stellar-core
+// appends Success.Offers in strict hop order (real_bytes_test.go), so it sums the first hop's full contiguous prefix with AssetBought ==
+// SendAsset, not just Offers[0]; empty Offers means SendAsset == DestAsset, so the amount is lastAmount.
 func pathPaymentStrictReceiveSourceAmount(sendAsset xdr.Asset, offers []xdr.ClaimAtom, lastAmount xdr.Int64) (xdr.Int64, error) {
 	if len(offers) == 0 {
 		return lastAmount, nil
@@ -392,11 +371,9 @@ func pathPaymentStrictReceiveSourceAmount(sendAsset xdr.Asset, offers []xdr.Clai
 //
 // Every kind is exactly one row per op (leg_index 0); none has a second asset leg.
 
-// decodeCreateClaimableBalance reconstructs a 'claimable_balance_create' movement: source
-// account -> escrow. ToAddress is empty (NULL) because the funds go to a Claimants list until
-// claimed. Attributes carries balance_id (hex of the V0 hash bytes, as in claimable_balances)
-// and claimant destination addresses only; the ClaimPredicate tree is not modelled, so exact
-// claim conditions must come from the raw op body in stellar.operations.
+// decodeCreateClaimableBalance reconstructs a 'claimable_balance_create' movement, source account -> escrow with ToAddress NULL.
+// Attributes carry balance_id (hex of the V0 hash bytes) and claimant addresses only; the ClaimPredicate tree is not modelled, so exact
+// conditions come from the raw op body in stellar.operations.
 func decodeCreateClaimableBalance(ledger uint32, closedAt time.Time, txHash string, opIndex uint32, fromAddr string, op xdr.Operation, result xdr.OperationResult) ([]Movement, error) {
 	if !opSucceeded(result) {
 		return nil, nil
@@ -454,10 +431,8 @@ func decodeCreateClaimableBalance(ledger uint32, closedAt time.Time, txHash stri
 	}}, nil
 }
 
-// decodeClaimClaimableBalance reconstructs a 'claimable_balance_claim' movement: escrow ->
-// claimer (fromAddr, the op's source). FromAddress is empty (NULL) because the escrow has no
-// G-address. If the BalanceId is unresolved it returns zero movements, not an error, and records
-// a PendingClaimableBalanceRef for the caller's second pass.
+// decodeClaimClaimableBalance reconstructs a 'claimable_balance_claim' movement, escrow -> claimer with FromAddress NULL (escrow has no
+// G-address). An unresolved BalanceId returns zero movements, not an error, and records a PendingClaimableBalanceRef for the second pass.
 func (d *Decoder) decodeClaimClaimableBalance(ledger uint32, closedAt time.Time, txHash string, opIndex uint32, fromAddr string, op xdr.Operation, result xdr.OperationResult) ([]Movement, error) {
 	if !opSucceeded(result) {
 		return nil, nil
@@ -575,12 +550,9 @@ func (d *Decoder) decodeClawbackClaimableBalance(ledger uint32, closedAt time.Ti
 	}}, nil
 }
 
-// decodeClawback reconstructs a 'clawback' movement for the plain Clawback op: holder -> issuer,
-// asset destroyed. Asset, From and Amount are all in the body.
-//
-// FromAddress is body.From (the holder), NOT fromAddr. ToAddress is fromAddr, the asset's issuer
-// (the protocol requires the issuer to submit a clawback). This is the reverse of every other
-// op-only kind, where fromAddr is the movement's FromAddress (TestRealBytes_clawback_success).
+// decodeClawback reconstructs a 'clawback' movement, holder -> issuer, asset destroyed. FromAddress is body.From (the holder), NOT
+// fromAddr; ToAddress is fromAddr, the issuer who must submit it. This reverses every other op-only kind
+// (TestRealBytes_clawback_success).
 func decodeClawback(ledger uint32, closedAt time.Time, txHash string, opIndex uint32, fromAddr string, op xdr.Operation, result xdr.OperationResult) ([]Movement, error) {
 	if !opSucceeded(result) {
 		return nil, nil

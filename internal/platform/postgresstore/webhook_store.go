@@ -381,10 +381,8 @@ func (c *WebhookStore) EnqueueDelivery(ctx context.Context, d platform.WebhookDe
 	return nil
 }
 
-// alreadyEnqueued explains an EnqueueDelivery that inserted nothing
-// because d.ID already exists. It returns nil when no such row exists, so
-// the caller falls through to the kill-switch explanation. An existing ID
-// on a DIFFERENT webhook is a key collision, never an idempotent replay.
+// alreadyEnqueued explains an EnqueueDelivery that inserted nothing because d.ID exists; nil when no such row. An existing ID on a
+// DIFFERENT webhook is a key collision, never an idempotent replay.
 func (c *WebhookStore) alreadyEnqueued(ctx context.Context, id, webhookID uuid.UUID) error {
 	var owner uuid.UUID
 	err := c.s.db.QueryRowContext(ctx,
@@ -404,10 +402,8 @@ func (c *WebhookStore) alreadyEnqueued(ctx context.Context, id, webhookID uuid.U
 // ErrWebhookAccountInactive is wrapped when a delivery is refused because the owning account is suspended or closed; a POLICY refusal, not a lost event, and WebhookSuppressed() reports true so fan-out can count it apart.
 var ErrWebhookAccountInactive = errors.New("postgresstore: webhook account is not active")
 
-// accountInactiveError reports an enqueue refused by the account kill
-// switch. It carries the observed status so the caller's log line names
-// WHY, and implements the WebhookSuppressed() behavioural contract
-// customerwebhook.Fanout matches on.
+// accountInactiveError is an enqueue refused by the account kill switch; it carries the observed status for the log and implements the
+// WebhookSuppressed() contract customerwebhook.Fanout matches on.
 type accountInactiveError struct {
 	op        string
 	webhookID uuid.UUID
@@ -425,10 +421,8 @@ func (e accountInactiveError) Unwrap() error { return ErrWebhookAccountInactive 
 // WebhookSuppressed marks a delivery withheld by policy rather than lost to a failure.
 func (e accountInactiveError) WebhookSuppressed() bool { return true }
 
-// refuseEnqueue turns an enqueue that matched no row into the specific
-// reason it matched none: the webhook is gone, the account is not
-// active, or the reason lookup itself failed — which is surfaced as an
-// error, never flattened into a suppression.
+// refuseEnqueue turns an enqueue that matched no row into its reason: webhook gone, account not active, or a failed reason lookup, which
+// is surfaced as an error, never flattened into a suppression.
 func (c *WebhookStore) refuseEnqueue(ctx context.Context, op string, webhookID uuid.UUID) error {
 	status, err := c.WebhookAccountStatus(ctx, webhookID)
 	switch {
@@ -459,10 +453,8 @@ func (c *WebhookStore) WebhookAccountStatus(ctx context.Context, webhookID uuid.
 	return platform.AccountStatus(status), nil
 }
 
-// maxClaimPerWebhook caps one endpoint's rows in a single claim. At the
-// worker's 10s attempt timeout, 5 rows bound a stalled endpoint's lane to
-// under a minute per poll; a healthy endpoint with a backlog drains at 5
-// rows per poll instead of a whole batch.
+// maxClaimPerWebhook caps one endpoint's rows per claim: at the 10s attempt timeout, 5 rows bound a stalled endpoint's lane to under a
+// minute per poll while a healthy backlog still drains.
 const maxClaimPerWebhook = 5
 
 // ListPendingDeliveries atomically claims up to limit due deliveries (FOR UPDATE SKIP LOCKED, fair-shared per endpoint, 5-minute lease); rows of non-ACTIVE accounts are parked, and the EXISTS must not join `accounts`.

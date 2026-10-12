@@ -198,10 +198,8 @@ type claimableSeedTally struct {
 	haveLedgerBounds bool
 }
 
-// observe folds one seeded balance's ledger into the tally's [min, max] bound.
-// The MIN is the evidence that matters: it is how an operator sees the pass
-// actually reached below the live observer's 63,301,831 floor rather than
-// re-confirming what was already there.
+// observe folds a seeded balance's ledger into the tally's [min, max]; the MIN shows the pass reached below the live observer's
+// 63,301,831 floor.
 func (t *claimableSeedTally) observe(ledger uint32) {
 	if !t.haveLedgerBounds {
 		t.minLedger, t.maxLedger, t.haveLedgerBounds = ledger, ledger, true
@@ -324,10 +322,8 @@ func (w *claimableSeedWriter) failedErr() error {
 		w.failed, len(w.failures), errors.Join(w.failures...))
 }
 
-// printClaimableSeedSummary prints one stable line per asset (sorted by
-// asset_key, so two runs diff cleanly) plus a totals footer. The per-asset
-// ledger range is the operator's evidence that the pass reached below the live
-// observer's floor.
+// printClaimableSeedSummary prints one stable line per asset (sorted by asset_key so runs diff cleanly) plus totals; the ledger range is
+// the evidence the pass reached below the live observer's floor.
 func printClaimableSeedSummary(w *claimableSeedWriter, assets map[string]struct{}, dryRun bool) {
 	keys := make([]string, 0, len(w.tallies))
 	for k := range w.tallies {

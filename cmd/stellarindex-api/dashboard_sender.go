@@ -10,17 +10,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/notify"
 )
 
-// buildDashboardSender picks the mail transport the dashboard auth flow
-// (and, through the bundle, the public signup flow) sends through.
-//
-// An unset or blank Resend credential wires notify.UnconfiguredSender, whose every Send is an
-// error: login refuses with 503 and a counted failure, and signup reports
-// email_verification_sent:false. Suppressed addresses are filtered by notify.SuppressingSender.
-//
-// This deliberately does NOT refuse to boot: a missing mail credential must not take down price
-// serving. Passkey sign-in and existing sessions keep working.
-//
-// Only the NAME of the env var is ever logged, never the value or any part of it.
+// buildDashboardSender picks the dashboard auth and signup mail transport. A blank Resend credential wires notify.UnconfiguredSender
+// (login 503, signup email_verification_sent:false) and deliberately does not refuse to boot; only the env var NAME is ever logged.
 func buildDashboardSender(cfg config.DashboardConfig, logger *slog.Logger) (notify.Sender, error) {
 	inner, err := buildDashboardTransport(cfg, logger)
 	if err != nil {

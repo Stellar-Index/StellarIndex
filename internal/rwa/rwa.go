@@ -70,10 +70,8 @@ func AnchorClass(declared string) string {
 	return c
 }
 
-// contractAnchorClasses is [anchorClasses] plus `fund`. A curated binding's class is our
-// own reviewed statement, not a declaration read, so it may use terms SEP-1 lacks; `fund`
-// exists because the Spiko Amundi swap fund is neither `stock` nor `bond` in exposure.
-// Widening it admits nothing: C1-C3 still decide membership.
+// contractAnchorClasses is [anchorClasses] plus `fund`: a curated binding's class is our own reviewed statement, so it may use terms
+// SEP-1 lacks (the Spiko Amundi swap fund is neither `stock` nor `bond`). Widening it admits nothing: C1-C3 still decide membership.
 var contractAnchorClasses = func() map[string]struct{} {
 	out := make(map[string]struct{}, len(anchorClasses)+1)
 	for c := range anchorClasses {

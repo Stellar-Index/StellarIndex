@@ -68,10 +68,8 @@ func SinkModeForProjector(projectorEnabled, persistPerSource bool) SinkMode {
 	return SinkModeSkipProjected
 }
 
-// skipInSink reports whether the dispatcher's events-goroutine must
-// SKIP writing ev under mode because a running projector owns the
-// write. The single source of truth for the two drain loops
-// (persistWorker + drainBufferedEvents) so they can never disagree.
+// skipInSink reports whether the events goroutine must skip ev under mode because a running projector owns the write; the single source
+// of truth for both drain loops.
 func skipInSink(ev consumer.Event, mode SinkMode) bool {
 	switch mode {
 	case SinkModeSkipProjected:
@@ -785,10 +783,8 @@ func handleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 	}
 }
 
-// eventSource returns the metrics/log attribution label for ev,
-// substituting "_unknown" for a source a decoder left empty (a label
-// must never be blank — it makes the row invisible on every per-source
-// dashboard).
+// eventSource returns the attribution label for ev, "_unknown" when a decoder left it empty (a blank label hides the row on every
+// per-source dashboard).
 func eventSource(ev consumer.Event) string {
 	if s := ev.Source(); s != "" {
 		return s
@@ -1393,10 +1389,8 @@ func persistBlendEmitterDistribute(ctx context.Context, logger *slog.Logger, sto
 	return nil
 }
 
-// persistBlendEmitterDrop writes one `drop` event, fanned out to one
-// row per recipient by Store.InsertBlendEmitterDrop (single
-// transaction — see its godoc for why a partial fan-out can't
-// happen).
+// persistBlendEmitterDrop writes one drop event, fanned out per recipient by Store.InsertBlendEmitterDrop in a single transaction (no
+// partial fan-out).
 func persistBlendEmitterDrop(ctx context.Context, logger *slog.Logger, store *timescale.Store, e blend_emitter.DropEvent) error {
 	recipients := make([]timescale.BlendEmitterRecipient, len(e.Recipients))
 	for i, r := range e.Recipients {
@@ -2007,10 +2001,8 @@ func persistSEP41SupplyEvent(ctx context.Context, logger *slog.Logger, store *ti
 	return nil
 }
 
-// persistSEP41TransferEvent routes one sep41_transfers audit-trail
-// event (transfer / approve / set_admin / set_authorized) to the
-// sep41_transfers hypertable. It enables per-account net-position queries — the Stellar moat
-// feature CG/CMC structurally cannot offer.
+// persistSEP41TransferEvent routes one sep41_transfers audit-trail event (transfer / approve / set_admin / set_authorized) to its
+// hypertable.
 func persistSEP41TransferEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, e sep41_transfers.Event) error {
 	if err := store.InsertSEP41Transfer(ctx, SEP41TransferRowOf(e)); err != nil {
 		obs.SourceInsertErrorsTotal.WithLabelValues(sep41_transfers.SourceName, "sep41_transfers_event").Inc()

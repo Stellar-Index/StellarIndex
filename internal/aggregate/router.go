@@ -34,10 +34,8 @@ const (
 	// routerOutlierPermitPct is the median-relative band in percent within which a composite survives outlier omission (40, as in the Rates Engine).
 	routerOutlierPermitPct = 40
 
-	// routerDivergenceSpreadPct is the post-omission survivor spread, in
-	// percent of the median, above which [CombineRoutes] flags the
-	// result diverged even though no single route was rejected — the
-	// surviving routes still disagree by more than this much.
+	// routerDivergenceSpreadPct is the post-omission survivor spread (percent of the median) above which [CombineRoutes] flags divergence
+	// even if no single route was rejected.
 	routerDivergenceSpreadPct = 40
 
 	// routerCorroborationAgreePct is the TIGHT pairwise band, in percent, within which two surviving routes count as corroborating each other, measured
@@ -278,10 +276,8 @@ func omitOutlierIndices(rates []*big.Rat, permitDivergentPct int) []int {
 	return keep
 }
 
-// scoredRoute pairs a route's exact composite price with its
-// weakest-link confidence AND the legs it was computed from, so outlier
-// omission, confidence gating, and the edge-disjointness test that backs
-// the corroboration count all stay aligned to the same route.
+// scoredRoute pairs a route's exact composite price with its weakest-link confidence and its legs, keeping outlier omission, confidence
+// gating and the edge-disjointness corroboration count aligned to the same route.
 type scoredRoute struct {
 	legs       []RouteLeg
 	price      *big.Rat
@@ -550,10 +546,8 @@ func routeEdgeSet(route []RouteLeg) map[string]struct{} {
 	return set
 }
 
-// provenanceEdgeKey namespaces a leg's [RouteLeg.Provenance] entry so it can
-// never collide with an [undirectedEdgeKey] market key in the same set: two
-// routes sharing a provenance key are exactly as non-independent as two
-// routes sharing a market edge.
+// provenanceEdgeKey namespaces a leg's [RouteLeg.Provenance] so it never collides with an [undirectedEdgeKey] market key: routes sharing
+// a provenance key are as non-independent as routes sharing a market edge.
 func provenanceEdgeKey(p string) string {
 	return "provenance\x00" + p
 }

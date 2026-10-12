@@ -17,10 +17,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// lateTradeSlack widens every view's lateness margin past its policy's
-// schedule and bucket width: job-scheduler delay, clock skew, and the
-// time prices_1m takes to materialise a minute before the twaps built on
-// it can see it.
+// lateTradeSlack widens every view's lateness margin for scheduler delay, clock skew and prices_1m materialisation before twaps can see a
+// minute.
 const lateTradeSlack = 5 * time.Minute
 
 const (
@@ -183,10 +181,8 @@ var lateTradeViewNames = func() []string {
 	return out
 }()
 
-// beginWrite durably records the hour hull of the trades already late
-// before they are written; call end once the write has returned, and
-// committed once it has succeeded. Without a late trade it records nothing
-// and end is a no-op.
+// beginWrite durably records the hour hull of already-late trades before they are written; call end once the write returns, committed
+// once it succeeds.
 func (r *LateTradeRefresher) beginWrite(ctx context.Context, trades []canonical.Trade) (end func(), err error) {
 	found, err := r.recordLate(ctx, trades, true)
 	if !found {
@@ -204,10 +200,8 @@ func (r *LateTradeRefresher) beginWrite(ctx context.Context, trades []canonical.
 	return end, nil
 }
 
-// committed observes a successful write's trades and durably records any
-// its own duration made late: they were on time at beginWrite, and memory
-// alone dies with the process. A failed record fails the write, so its
-// retry, or a restart's redelivery, records them.
+// committed durably records trades that its own write duration made late, since memory alone dies with the process. A failed record fails
+// the write so its retry or redelivery records them.
 func (r *LateTradeRefresher) committed(ctx context.Context, trades []canonical.Trade) error {
 	r.ObserveTrades(trades...)
 	_, err := r.recordLate(ctx, trades, false)
@@ -469,10 +463,8 @@ func (r *LateTradeRefresher) clearSettled(ctx context.Context, view string, out 
 	return r.clearDurable(ctx, view, gen, guard)
 }
 
-// clearDurable deletes view's durable row at gen, unless a late write was in
-// flight when the flush read it or has begun since: that write may commit
-// after the refresh ran, and only its row would remember it. A kept row is
-// unioned into the next flush, which this kicks. Needs r.flushMu.
+// clearDurable deletes view's durable row at gen unless a late write was in flight or began since: it may commit after the refresh, and
+// only its row remembers it. Needs r.flushMu.
 func (r *LateTradeRefresher) clearDurable(ctx context.Context, view string, gen int64, g lateClearGuard) error {
 	r.mu.Lock()
 	ok := g.idle && r.entered == g.entered
@@ -650,10 +642,8 @@ func (r *LateTradeRefresher) loadPolicies(ctx context.Context) error {
 	return nil
 }
 
-// policyCoverage is how far behind a write its trade's bucket can sit and
-// still be re-aggregated by view c's policy: the next run starts at most
-// one schedule after the write and covers only buckets wholly inside its
-// start_offset.
+// policyCoverage is how far behind a write its trade's bucket can sit and still be re-aggregated by view c's policy: the next run starts
+// at most one schedule later and covers only buckets inside start_offset.
 func policyCoverage(c timescale.CAGGSpec, w timescale.CAGGRefreshWindow) time.Duration {
 	bucket := c.Bucket
 	if bucket == timescale.MonthBucket {
@@ -709,9 +699,7 @@ func (r *LateTradeRefresher) writer(store *timescale.Store) tradeWriter {
 	return observingTradeWriter{tradeWriter: store, late: r}
 }
 
-// observingTradeWriter records every late trade write before it, and again
-// after it if the write ran long enough to make more trades late, and
-// reports every one that succeeded. A failed record fails the write, so the
+// observingTradeWriter records late trade writes before and after the write and reports successes; a failed record fails the write so the
 // sink's retry covers it.
 type observingTradeWriter struct {
 	tradeWriter

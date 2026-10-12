@@ -149,10 +149,8 @@ const (
 	seedOutcomeSeeded
 )
 
-// seedOneAccount fetches one watched account's latest AccountEntry seed from
-// the lake and either reports it MISSING/REMOVED or inserts the observation
-// (skipped on dry-run). Factored out of supplySeedObservations to keep the
-// per-account branching out of the pass-level loop (gocognit).
+// seedOneAccount fetches one watched account's latest AccountEntry seed and reports it MISSING/REMOVED or inserts it (skipped on
+// dry-run); split out to keep the pass loop simple.
 func seedOneAccount(ctx context.Context, reader *clickhouse.ExplorerReader, store *timescale.Store, dryRun bool, acc string) (seedAccountOutcome, uint32, error) {
 	seed, err := reader.LatestAccountEntrySeed(ctx, acc)
 	if err != nil {

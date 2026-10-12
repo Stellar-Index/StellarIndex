@@ -142,10 +142,8 @@ func fetchHubbleSorobanEventCounts(
 	return out, nil
 }
 
-// hubbleSorobanEventsDryRun returns the BigQuery dry-run byte
-// estimate for the same query the live path would run. Useful so
-// operators can preview cost before running for real (events table
-// is much larger than trades table).
+// hubbleSorobanEventsDryRun returns the BigQuery dry-run byte estimate for the query the live path would run, to preview cost (the events
+// table is much larger than trades).
 func hubbleSorobanEventsDryRun(
 	ctx context.Context,
 	bq hubbleBQ,
@@ -229,10 +227,8 @@ func topicFilterEncodings(s string) ([]string, error) {
 	return out, nil
 }
 
-// emitHubbleSorobanCounts writes the result in the requested format
-// to stdout. JSON is an array of {ledger, count}; CSV mirrors the
-// same. "total" emits one number — sum across the range — for
-// piping into shell arithmetic.
+// emitHubbleSorobanCounts writes the result to stdout: JSON is an array of {ledger, count}, CSV mirrors it, "total" emits one number (the
+// range sum) for shell arithmetic.
 func emitHubbleSorobanCounts(counts map[uint32]int, format string) error {
 	ledgers := make([]uint32, 0, len(counts))
 	for k := range counts {

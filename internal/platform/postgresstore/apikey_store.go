@@ -114,10 +114,8 @@ func parseUUIDNullString(s sql.NullString) uuid.UUID {
 	return id
 }
 
-// parseCIDRArray decodes the textual cidr[] form Postgres ships.
-// Malformed entries are skipped rather than failing the whole row;
-// the dashboard surfaces "X invalid prefixes" via a separate
-// validation pass when the operator edits the allowlist.
+// parseCIDRArray decodes Postgres's textual cidr[] form; malformed entries are skipped rather than failing the row (the dashboard flags
+// invalid prefixes on allowlist edit).
 func parseCIDRArray(in []string) []netip.Prefix {
 	if len(in) == 0 {
 		return nil
@@ -171,10 +169,8 @@ func (r *APIKeyStore) Create(ctx context.Context, k platform.APIKey, maxActiveKe
 	return out, nil
 }
 
-// buildAPIKeyCreateArgs marshals the platform.APIKey fields into
-// the positional args the apiKeyInsert* statements expect. Split
-// out of [APIKeyStore.Create] so that function stays under the
-// funlen lint cap.
+// buildAPIKeyCreateArgs marshals platform.APIKey into the positional args the apiKeyInsert* statements expect; split out of
+// [APIKeyStore.Create] for the funlen cap.
 func buildAPIKeyCreateArgs(k platform.APIKey) ([]any, error) {
 	permissionsJSON, err := encodePermissions(k.Permissions)
 	if err != nil {
@@ -211,10 +207,8 @@ func finalizeAPIKeyCreate(out platform.APIKey, err error) (platform.APIKey, erro
 	return platform.APIKey{}, fmt.Errorf("create api key: %w", err)
 }
 
-// apiKeyInsertCapped is the gated INSERT used when the caller
-// passes maxActiveKeysPerAccount > 0. Combined with the
-// pg_advisory_xact_lock the per-account quota cannot be
-// exceeded by concurrent callers.
+// apiKeyInsertCapped is the gated INSERT for maxActiveKeysPerAccount > 0; with the advisory lock, concurrent callers cannot exceed the
+// per-account quota.
 const apiKeyInsertCapped = `
 	WITH active_count AS (
 	    SELECT COUNT(*) AS n
@@ -455,10 +449,8 @@ func (r *APIKeyStore) TouchUsage(ctx context.Context, id string, ip net.IP, user
 
 // ─── helpers ──────────────────────────────────────────────────────
 
-// encodePermissions serialises to JSON bytes ready for the jsonb
-// column. Empty Permissions{} encodes to {"all":false} which is
-// distinct from the schema default {"all":true}; callers who
-// want the default must set All=true explicitly before Create.
+// encodePermissions serialises to the jsonb column. Empty Permissions{} encodes to {"all":false}, not the schema default {"all":true};
+// set All=true explicitly for the default.
 func encodePermissions(p platform.KeyPermissions) ([]byte, error) {
 	return json.Marshal(p)
 }
@@ -481,10 +473,8 @@ func nullTime(t time.Time) sql.NullTime {
 	return sql.NullTime{Time: t, Valid: true}
 }
 
-// ipAllowlistArray serialises a netip.Prefix slice into a Postgres
-// cidr[] driver value. pq doesn't ship a typed cidr-array helper,
-// so we hand-roll the textual `{cidr,cidr}` form which Postgres
-// accepts for parameterised inserts via array_in.
+// cidrArray is a netip.Prefix slice as a Postgres cidr[] driver value; pq has no typed cidr-array helper, so it hand-rolls the textual
+// `{cidr,cidr}` form array_in accepts.
 type cidrArray []netip.Prefix
 
 func ipAllowlistArray(prefixes []netip.Prefix) cidrArray { return cidrArray(prefixes) }

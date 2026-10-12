@@ -284,10 +284,8 @@ func (w *Writer) markHold(
 	return nil
 }
 
-// saveWindowLadder is [Writer.saveLadder] for one window's durable ladder.
-// An inactive `state` retires the entry. Counted on the same failure
-// counter, for the same reason: a durable ladder that silently is not
-// there is only discovered when a Redis loss needs it.
+// saveWindowLadder is [Writer.saveLadder] for one window's durable ladder (an inactive state retires it), counted on the same failure
+// counter: a silently missing durable ladder is only found when a Redis loss needs it.
 func (w *Writer) saveWindowLadder(
 	ctx context.Context,
 	asset, quote canonical.Asset,

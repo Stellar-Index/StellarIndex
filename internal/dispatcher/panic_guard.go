@@ -23,23 +23,10 @@ type panicSite struct {
 	OpIndex int
 }
 
-// recordDecoderPanic converts a recovered decoder panic into the decode error every dispatch seam
-// already skips on. Decoders run on adversary-influenced ledger data; an unrecovered panic would
-// discard every source's output for the ledger and refuse the cursor advance, turning one decoder
-// bug into a total ingest outage.
-//
-// The skip is defensible only because it is durably recorded:
-//   - The raw event is already in the ClickHouse lake (dispatchOne pushes to rawEventSink BEFORE
-//     the decoder pass), so `projector-replay` / `ch-rebuild` can re-derive it (invariant 8).
-//   - The decode-error delta reaches decoder_stats, and ADR-0033's re-derive marks the ledger a
-//     blind spot (/v1/coverage complete=false).
+// recordDecoderPanic turns a recovered decoder panic into the decode error every seam skips on; unrecovered, adversary-influenced data
+// would refuse the cursor advance (total ingest outage). The skip is durable: the raw event is already in the lake, so replay re-derives
+// it. A panicking Matches counts like Decode and stops a first-match scan.
 //   - DecoderPanicsTotal pages (stellarindex_decoder_panicked).
-//
-// A panicking Matches counts like a panicking Decode, and a first-match seam stops scanning: the
-// next decoder would inherit a broken decoder's events, a misattribution ADR-0033 cannot see.
-//
-// seenCounted says whether bumpEventsSeen already ran; if not it is bumped here so the error-rate
-// denominator stays one attempt per error.
 func (d *Dispatcher) recordDecoderPanic(name string, seenCounted bool, r any, site panicSite) error {
 	if name == "" {
 		name = "unknown"
@@ -61,10 +48,8 @@ func (d *Dispatcher) recordDecoderPanic(name string, seenCounted bool, r any, si
 	return fmt.Errorf("%w: %s: %v", ErrDecoderPanic, name, r)
 }
 
-// log returns the dispatcher's logger, falling back to slog.Default()
-// when the caller never wired one (the ops diagnostics build a bare
-// Dispatcher). Never nil: a nil-deref on the panic path would turn a
-// recovered panic back into a fatal one.
+// log returns the dispatcher's logger, falling back to slog.Default() (diagnostics build a bare Dispatcher); never nil, since a nil-deref
+// on the panic path would make a recovered panic fatal.
 func (d *Dispatcher) log() *slog.Logger {
 	if d.logger != nil {
 		return d.logger

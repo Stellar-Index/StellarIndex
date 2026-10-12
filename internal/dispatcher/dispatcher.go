@@ -234,10 +234,8 @@ type Dispatcher struct {
 	// downstream price gap surfaced it.
 	txReadErrors int
 
-	// txEventReadErrors counts txs whose GetTransactionEvents() errored (e.g. an unsupported
-	// TransactionMeta version). soroban_events and the census would drop in lock-step and the
-	// ADR-0033 reconcile still read "complete", so a sustained climb means Soroban ingestion is
-	// broken whatever the completeness verdict says.
+	// txEventReadErrors counts txs whose GetTransactionEvents() errored (e.g. unsupported TransactionMeta version). soroban_events and the
+	// census drop in lock-step, so a sustained climb means Soroban ingestion is broken whatever the completeness verdict says.
 	txEventReadErrors int
 
 	// entryMetaUnsupported counts txs whose apply-phase entry-change walk was skipped for an
@@ -253,10 +251,8 @@ type Dispatcher struct {
 	// the count makes a protocol change visible.
 	ledgerUpgradeEntries int
 
-	// uncorroboratedCalls is the per-source count of calls an [ExecutionCorroborationRequirer]
-	// decoder matched but the dispatcher dropped as only DECLARED in the auth tree. Non-zero on an
-	// oracle is a price-forgery attempt or a routing-shape change (a relayer nesting relay() under
-	// a wrapper); either needs review.
+	// uncorroboratedCalls counts, per source, calls an [ExecutionCorroborationRequirer] decoder matched but the dispatcher dropped as only
+	// DECLARED in the auth tree; non-zero on an oracle is a price-forgery attempt or a routing-shape change.
 	uncorroboratedCalls map[string]int
 }
 
@@ -612,20 +608,9 @@ func (d *Dispatcher) ProcessLedger(lcm xdr.LedgerCloseMeta, passphrase string) (
 	return outputs, nil
 }
 
-// walkLedgerEntryChanges dispatches EVERY LedgerEntryChange in the ledger to the entry-decoder
-// chain, in the order stellar-core committed them. Two requirements:
-//
-//  1. FAILED TXS ARE INCLUDED: core commits their fee debit. Skipping them over-reports the balance
-//     and diverges from the lake's clickhouse.extractEntryChanges.
-//  2. THE WALK IS LEDGER-WIDE AND PHASED: a per-tx walk would rank tx2's fee after tx1's ops on a
-//     shared account and publish a fee-phase balance as final; omitting phase 3 does the same.
-//
-// Phases: 1 every tx's FeeChanges; 2 every tx's apply-phase meta; 3 every tx's
-// PostTxApplyFeeChanges (P23 refunds; LCM V2 only); 4 the ledger's EVICTED keys as synthetic
-// Removed changes ([walkEvictedKeys]). Ledger upgrades are not walked; [ProcessLedger] counts them.
-//
-// Only V3/V4 meta is handled; anything else is COUNTED in the default arm, else entry observation
-// would stop silently.
+// walkLedgerEntryChanges dispatches EVERY LedgerEntryChange in stellar-core commit order, failed txs included (their fee debits commit).
+// The walk is ledger-wide and phased (fees, apply meta, post-apply fees, evictions), else a fee-phase balance publishes as final;
+// non-V3/V4 meta is COUNTED, not skipped silently.
 func (d *Dispatcher) walkLedgerEntryChanges(lcm xdr.LedgerCloseMeta, txs []ingest.LedgerTransaction, ledgerSeq uint32, closedAt time.Time) []consumer.Event {
 	var seq uint32
 	dispatchFor := func(txHash string) func(int, xdr.LedgerEntryChange) []consumer.Event {
@@ -707,14 +692,9 @@ func (d *Dispatcher) noteLedgerUpgrades(ups []xdr.UpgradeEntryMeta, ledgerSeq ui
 	d.log().Info("dispatcher: ledger carries upgrades", "ledger", ledgerSeq, "types", types)
 }
 
-// walkEvictedKeys dispatches one synthetic Removed change per ledger key core EVICTED at close
-// (CAP-62). An expired entry appears in no tx meta; unwalked, an evicted SAC balance would stand
-// forever and served supply would drift ABOVE the truth. Removed is absorbing and a later Restored
-// reverses it.
-//
-// The lake walker gives evicted keys the same positions but writes `removed` only for deleted
-// entries (entry_walk_parity_test.go pins them together). Unreadable keys are counted and logged
-// with the ledger number, since each dropped eviction overstates a balance and needs a replay.
+// walkEvictedKeys dispatches one synthetic Removed change per key core EVICTED at close (CAP-62): an expired entry is in no tx meta, so
+// unwalked an evicted SAC balance would stand and served supply drift ABOVE the truth. Unreadable keys are counted and logged with the
+// ledger, since each needs a replay.
 func (d *Dispatcher) walkEvictedKeys(lcm evictedKeysSource, ledgerSeq uint32, dispatch func(int, xdr.LedgerEntryChange) []consumer.Event) []consumer.Event {
 	keys, err := lcm.EvictedLedgerKeys()
 	if err != nil {
@@ -817,18 +797,14 @@ func (d *Dispatcher) bumpUncorroborated(name string) {
 	d.statsMu.Unlock()
 }
 
-// contractCallPathActive reports whether ProcessLedger walks the auth trees at all: true when a
-// ContractCallDecoder is registered OR a discovery sink is installed, since the oracle-call discovery hook
-// (docs/architecture/oracle-manipulation-defense.md §"Event-less discovery") runs only inside that walk and
-// must not depend on Band being registered. Neither means zero per-op overhead.
+// contractCallPathActive reports whether ProcessLedger walks auth trees: a ContractCallDecoder is registered OR a discovery sink is
+// installed, since oracle-call discovery runs only in that walk and must not depend on Band being registered.
 func (d *Dispatcher) contractCallPathActive() bool {
 	return len(d.contractCallDecoders) > 0 || d.discoverySink != nil
 }
 
-// dispatchContractCall runs one call through the contract-call decoder chain; first match owns it. Every call
-// first goes through [discovery.SniffOracleCall] (a map lookup on FunctionName), the event-less twin of
-// dispatchOne's discovery: Band-alikes publish no event, so a topic sniffer never sees them. It runs whether
-// or not a decoder matches (docs/architecture/oracle-manipulation-defense.md §"Event-less discovery").
+// dispatchContractCall runs one call through the contract-call decoder chain; first match owns it. Every call first goes through
+// [discovery.SniffOracleCall], the event-less twin of dispatchOne's discovery (Band-alikes publish no event), matched or not.
 func (d *Dispatcher) dispatchContractCall(ctx ContractCallContext) (outs []consumer.Event, err error) {
 	if d.discoverySink != nil {
 		if hit, ok := discovery.SniffOracleCall(discovery.OracleCallInput{
@@ -917,10 +893,8 @@ func (d *Dispatcher) RouteEntryChange(ctx LedgerEntryChangeContext) ([]consumer.
 	return d.dispatchEntryChange(ctx)
 }
 
-// dispatchOp offers one operation to EVERY registered op decoder. Op decoders are per-domain
-// observers (sdex trades, classic movements) whose op-type sets overlap on path payments, so
-// first-match routing would drop one domain's rows. A decoder's error or panic costs only its own
-// output for this op: it is counted per decoder and returned joined beside the others' outputs.
+// dispatchOp offers one operation to EVERY registered op decoder: domains (sdex trades, classic movements) overlap on path payments, so
+// first-match routing would drop rows. A decoder's error or panic costs only its own output, counted per decoder.
 func (d *Dispatcher) dispatchOp(ctx OpContext) ([]consumer.Event, error) {
 	var (
 		outs []consumer.Event
@@ -974,10 +948,8 @@ func (d *Dispatcher) Route(ev events.Event) ([]consumer.Event, error) {
 	return d.dispatchOne(ev)
 }
 
-// dispatchOne runs one event through the Matches/Decode chain; it errors only when the matching
-// decoder fails, and unclaimed events are counted and dropped. Before decoding, the event goes to
-// [discovery.Sniff], [discovery.SniffOracleEvent] and the [RawEventSink], so events a decoder
-// rejects still reach discovered_assets and soroban_events.
+// dispatchOne runs one event through the Matches/Decode chain; it errors only when the matching decoder fails, and unclaimed events are
+// counted and dropped. Rejected events still reach [discovery.Sniff], [discovery.SniffOracleEvent] and the [RawEventSink] first.
 func (d *Dispatcher) dispatchOne(ev events.Event) (outs []consumer.Event, err error) {
 	if d.discoverySink != nil {
 		if hit, ok := discovery.Sniff(ev); ok {
@@ -1023,10 +995,8 @@ func (d *Dispatcher) dispatchOne(ev events.Event) (outs []consumer.Event, err er
 	return nil, nil
 }
 
-// contractEventToEventsEvent flattens an xdr.ContractEvent into events.Event, returning nil for
-// non-contract (diagnostic) events. ProcessLedger passes nil opArgs and attaches them after conversion, once
-// the provenance gate knows the emitter; the parameter serves callers that already established provenance.
-// evIdx becomes EventIndex, keeping (ledger, tx_hash, op_index, event_index) unique per event (ADR-0033).
+// contractEventToEventsEvent flattens an xdr.ContractEvent, nil for diagnostic events. ProcessLedger passes nil opArgs and attaches them
+// once the provenance gate knows the emitter; evIdx becomes EventIndex, keeping (ledger, tx_hash, op_index, event_index) unique.
 func contractEventToEventsEvent(ce xdr.ContractEvent, ledgerSeq uint32, txHash string, opIdx, evIdx int, closedAt string, opArgs []string) *events.Event {
 	if ce.Type != xdr.ContractEventTypeContract {
 		return nil
@@ -1080,10 +1050,8 @@ func contractEventToEventsEvent(ce xdr.ContractEvent, ledgerSeq uint32, txHash s
 	}
 }
 
-// invokeCall is one Soroban InvokeContract call: C-strkey contract, raw Symbol function, base64 SCVal args
-// (the events.Event.OpArgs format). CallPath is its auth-tree position: empty is top-level, else each int
-// indexes the parent's SubInvocations ([0,1] = second sub of the first sub), used to dedup or tag
-// attribution (docs/adr/0052-contract-call-tree-routing.md).
+// invokeCall is one Soroban InvokeContract call (C-strkey contract, raw Symbol function, base64 SCVal args). CallPath is its auth-tree
+// position: empty is top-level, else each int indexes the parent's SubInvocations ([0,1] = second sub of the first sub).
 type invokeCall struct {
 	ContractID   string
 	FunctionName string
@@ -1096,10 +1064,8 @@ type invokeCall struct {
 	AuthOccurrence int
 }
 
-// buildInvokeCallFromArgs projects an [xdr.InvokeContractArgs] (the top-level HostFunction or an auth-tree
-// node) into an [invokeCall], or nil if the address won't encode as a C-strkey. path is copied, so callers
-// may reuse it. ancestorChain is the ancestors ABOVE this node (outermost first); this call's contract is
-// appended, so pass the slice as received, not already extended.
+// buildInvokeCallFromArgs projects an [xdr.InvokeContractArgs] into an [invokeCall], nil if the address won't encode as a C-strkey. path
+// is copied; ancestorChain holds the ancestors ABOVE this node and this call's contract is appended, so pass it unextended.
 func buildInvokeCallFromArgs(ic *xdr.InvokeContractArgs, path []int, ancestorChain []string) *invokeCall {
 	contractStrkey := ""
 	switch ic.ContractAddress.Type {
@@ -1146,10 +1112,8 @@ func buildInvokeCallFromArgs(ic *xdr.InvokeContractArgs, path []int, ancestorCha
 	}
 }
 
-// walkAuthTree appends every InvokeContract call reachable from node (itself, then descendants, pre-order
-// DFS) to out, extending path with each child index and, for ContractFn nodes, ancestorChain with the node's
-// contract (ContractCallContext.CallPathContracts). CreateContract / CreateContractV2 nodes have no function
-// to match, so they emit nothing and leave ancestorChain unchanged, but their SubInvocations are walked.
+// walkAuthTree appends every InvokeContract call reachable from node (pre-order DFS) to out, extending path and, for ContractFn nodes,
+// ancestorChain. CreateContract nodes emit nothing but their SubInvocations are walked.
 func walkAuthTree(node *xdr.SorobanAuthorizedInvocation, path []int, ancestorChain []string, out *[]*invokeCall) {
 	childChain := ancestorChain
 	if node.Function.Type == xdr.SorobanAuthorizedFunctionTypeSorobanAuthorizedFunctionTypeContractFn {
@@ -1177,11 +1141,9 @@ func authRootCall(node *xdr.SorobanAuthorizedInvocation) *invokeCall {
 	return buildInvokeCallFromArgs(&ic, nil, nil)
 }
 
-// walkAuthEntries flattens an op's auth entries, classifying EACH independently as the op's
-// top-level call or a nested call to re-root under it. An all-or-nothing re-root breaks a co-signed
-// tx whose entry 0 is the top-level call and entry 1 a deeper call: entries 1..n would export as
-// the ENTRY POINT, under-reporting the wrapper on /v1/aggregators, and two calls could share the
-// (TxHash, OpIndex, CallPath) dedup key.
+// walkAuthEntries flattens an op's auth entries, classifying EACH as the op's top-level call or a nested call to re-root: an
+// all-or-nothing re-root breaks a co-signed tx (entries 1..n exported as the ENTRY POINT, and two calls could share a (TxHash, OpIndex,
+// CallPath) dedup key).
 func walkAuthEntries(auth []xdr.SorobanAuthorizationEntry, top *invokeCall) []*invokeCall {
 	var calls []*invokeCall
 
@@ -1247,10 +1209,8 @@ func walkAuthEntry(root *xdr.SorobanAuthorizedInvocation, path []int, ancestorCh
 	}
 }
 
-// containsCall reports whether calls already holds the same invocation as c (same contract,
-// function, argument encoding). Identity is deliberately NOT CallPath: the question is whether the
-// auth walk already emitted the top-level call under some path, since emitting it twice would double
-// every downstream decode.
+// containsCall reports whether calls already holds the same invocation as c (contract, function, argument encoding). Identity is
+// deliberately NOT CallPath: emitting the top-level call twice would double every downstream decode.
 func containsCall(calls []*invokeCall, c *invokeCall) bool {
 	for _, existing := range calls {
 		if sameInvocation(existing, c) {
@@ -1274,16 +1234,9 @@ func sameInvocation(a, b *invokeCall) bool {
 	return true
 }
 
-// extractInvokeContractCallTrees returns, parallel to ops, every call reachable from each op: the
-// top-level invocation plus every nested call in its auth tree (nil for other ops). It is the
-// ContractCallDecoder routing source; [extractInvokeContractCalls] is top-level only, for OpArgs.
-//
-// The top-level call is always emitted with CallPath == []. An auth entry's root is the subtree
-// NEEDING authorization, often a nested call, so when no walked call matches the top level it is
-// prepended and entry j is re-rooted at [j]: the auth-entry ordinal, stable across re-derives and
-// not claiming to be the root. Dedup on (contract, function, args) keeps a top-level call that is
-// its own auth root from emitting twice (a duplicate trade row). Cross-entry duplicates are left to
-// consumers; AuthOccurrence tells a repeated execution in one entry from a re-listing by another.
+// extractInvokeContractCallTrees returns, parallel to ops, every call reachable from each op (nil for other ops): the ContractCallDecoder
+// routing source. The top-level call is always emitted with CallPath == [] (prepended if no walked call matches, with entry j re-rooted
+// at [j]); dedup on (contract, function, args) avoids duplicate trade rows.
 func extractInvokeContractCallTrees(ops []xdr.Operation) [][]*invokeCall { //nolint:gocognit // dispatch-heavy; splitting would reduce linearity
 	if len(ops) == 0 {
 		return nil

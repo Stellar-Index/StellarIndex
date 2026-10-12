@@ -14,10 +14,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// supplySeedSEP41Genesis seeds each watched SEP-41 contract's pre-Soroban per-kind OPENING BALANCE into
-// sep41_supply_rollup: the observer fills sep41_supply_events only from Soroban genesis, so classic-issued SAC supply would
-// fail the negative-total guard. It sums the lake's pre-Soroban supply_flows (ADR-0034, replay-derived, so re-run
-// if re-derived). Idempotent (baseline SET, fold rebuilt in one transaction); without -write it is a dry run.
+// supplySeedSEP41Genesis seeds each watched SEP-41 contract's pre-Soroban OPENING BALANCE into sep41_supply_rollup, since the observer
+// fills events only from Soroban genesis and classic-issued SAC supply would fail the negative-total guard. Idempotent (baseline SET,
+// fold rebuilt in one transaction); dry run without -write.
 func supplySeedSEP41Genesis(args []string) error {
 	fs := flag.NewFlagSet("supply seed-sep41-genesis", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
@@ -118,10 +117,8 @@ func validateGenesisLedgerBoundary(genesisLedger uint) error {
 	return nil
 }
 
-// seedOneSEP41Genesis sums one contract's pre-Soroban (ledger < boundary)
-// per-kind flows from the CH lake and upserts them as the genesis baseline
-// (unless dryRun). Returns whether the baseline is non-zero (for the summary
-// count). store is nil on dry-run.
+// seedOneSEP41Genesis sums one contract's pre-Soroban (ledger < boundary) per-kind flows from the lake and upserts them as the genesis
+// baseline unless dryRun (store is nil then); returns whether the baseline is non-zero.
 func seedOneSEP41Genesis(ctx context.Context, reader *clickhouse.SupplyReader, store *timescale.Store, contractID string, boundary uint32, dryRun bool) (bool, error) {
 	below, err := reader.TokenSupplyBelowLedger(ctx, contractID, boundary)
 	if err != nil {

@@ -155,10 +155,9 @@ func QualifyContract(c ContractCandidate) Verdict {
 	return Verdict{Reject: RejectNoContractBasis}
 }
 
-// contractRecognitionOf returns exactly one of the recognition source or the refusal; the
-// scam check has already run. Arm 1 is tried first (stronger row); arm 2 may rescue an
-// untagged directory entry. Refusals go most-specific-first: untagged entry, outage,
-// whichever arm-2 half answered, then nobody named it.
+// contractRecognitionOf returns exactly one of the recognition source or the refusal; the scam check has already run. Arm 1 is tried
+// first (stronger row); arm 2 may rescue an untagged directory entry. Refusals go most-specific-first: untagged entry, outage, whichever
+// arm-2 half answered, then nobody named it.
 func contractRecognitionOf(c ContractCandidate) (recognition, reject string) {
 	_, bound := contractInstrumentOf(c.ContractID)
 	listed := c.ListingAvailable && c.ListingNamed
@@ -186,10 +185,9 @@ func contractRecognitionOf(c ContractCandidate) (recognition, reject string) {
 	}
 }
 
-// contractInstrument is one ADR-0040 curated binding: an address from a primary source (issuer
-// docs or a signed statement, not an explorer), a falsifiable instrument name, and an
-// [anchorClasses] class. It never admits alone (arm 2's second half), so a bound address nobody
-// else names is refused under [RejectContractCuratedNotListed].
+// contractInstrument is one ADR-0040 curated binding: an address from a primary source (issuer docs or a signed statement, not an
+// explorer), a falsifiable instrument name and an [anchorClasses] class. It never admits alone (arm 2's second half), so a bound address
+// nobody else names is refused under [RejectContractCuratedNotListed].
 type contractInstrument struct {
 	// ContractID is matched exactly: a strkey is CRC-checked and case-significant.
 	ContractID string

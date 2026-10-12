@@ -70,10 +70,9 @@ type Refresher struct {
 	strictFreshnessRequired   bool
 	maxDormantComponentLedger uint32
 
-	// lastComponentLedger remembers each asset's last-evaluated MinComponentLedger. A DORMANT asset's
-	// value freezes while the tip advances, which would reject every future tick; an UNCHANGED value is
-	// therefore accepted (OutcomeKindDormant) up to the dormancy horizon. A moved or first-seen lagging
-	// value is rejected.
+	// lastComponentLedger remembers each asset's last-evaluated MinComponentLedger. A DORMANT asset's value freezes while the tip advances,
+	// which would reject every future tick, so an UNCHANGED value is accepted (OutcomeKindDormant) up to the dormancy horizon; a moved or
+	// first-seen lagging value is rejected.
 	lastComponentLedger map[string]uint32
 
 	// lastWrittenTotal is the total_supply of the last snapshot this
@@ -203,10 +202,9 @@ func (r *Refresher) Tick(ctx context.Context) Outcome {
 	return Outcome{Kind: OutcomeKindOK, Snapshot: snap, BandBreach: breach}
 }
 
-// applyStaleComponentGate returns (outcome, true) when the gate decides the tick (stale-component
-// REJECTION, or dormant ACCEPT which inserts here), else (zero, false). Past the threshold: CHANGED since
-// the last tick (or first tick lagging) rejects; UNCHANGED re-stamps (OutcomeKindDormant) within the
-// dormancy horizon. A dead producer reads as dormant until [DefaultMaxDormantComponentLedgers].
+// applyStaleComponentGate returns (outcome, true) when the gate decides the tick (stale-component REJECTION, or dormant ACCEPT), else
+// (zero, false). Past the threshold a CHANGED (or first-tick lagging) value rejects; an UNCHANGED one re-stamps (OutcomeKindDormant)
+// within the dormancy horizon, so a dead producer reads as dormant until [DefaultMaxDormantComponentLedgers].
 func (r *Refresher) applyStaleComponentGate(ctx context.Context, snap Supply) (Outcome, bool) {
 	threshold := r.staleComponentLedger
 	thresholdSource := "default"
@@ -285,10 +283,8 @@ func (r *Refresher) applyStaleComponentGate(ctx context.Context, snap Supply) (O
 	return Outcome{Kind: OutcomeKindDormant, Snapshot: snap, BandBreach: r.checkWriteBand(snap)}, true
 }
 
-// checkWriteBand compares a just-written snapshot's total against the
-// previous total this Refresher wrote for the asset and returns "up" or
-// "down" when it moved more than [WriteBandFactor]x, else "". A zero or
-// absent previous total has no ratio to test, so it never fires.
+// checkWriteBand compares a just-written snapshot's total with the previous total this Refresher wrote for the asset and returns "up" or
+// "down" when it moved more than [WriteBandFactor]x, else ""; a zero or absent previous total never fires.
 func (r *Refresher) checkWriteBand(snap Supply) string {
 	if snap.TotalSupply == nil {
 		return ""

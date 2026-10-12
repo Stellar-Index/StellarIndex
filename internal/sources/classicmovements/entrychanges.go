@@ -210,15 +210,9 @@ type lpEntryChangeView struct {
 	removed    bool
 }
 
-// liquidityPoolBeforeAfter walks an op's liquidity_pool entry-changes group (in change_index
-// order, as stellar-core emits it) and extracts the before/after constant-product state. "before"
-// comes from a 'state' row (absent for a brand-new pool); "after" from the LAST 'created' or
-// 'updated' row.
-//
-// removed reports a 'removed' row: core erases the entry when the last shares are withdrawn
-// ('state' + 'removed', no 'updated'). It has a key only (Entry nil), so it is not an "after", but
-// the caller reads it as a zero-reserve after. The group is scoped to one op and
-// entry_type='liquidity_pool', so any 'removed' row is this pool's.
+// liquidityPoolBeforeAfter walks an op's liquidity_pool entry-changes group (change_index order) for the before/after constant-product
+// state: before from a 'state' row (absent for a new pool), after from the LAST 'created'/'updated' row. A 'removed' row (last shares
+// withdrawn: key only, Entry nil) is reported so the caller reads a zero-reserve after.
 func liquidityPoolBeforeAfter(changes []EntryChangeXDR) lpEntryChangeView {
 	var v lpEntryChangeView
 	for _, c := range changes {
@@ -378,11 +372,9 @@ type createdClaimableBalanceRef struct {
 	BalanceIDHex string
 }
 
-// createdClaimableBalances extracts every 'created' ClaimableBalanceEntry (the CAP-0038
-// liquidation signal), sorted by balance id. The order becomes leg_index, part of
-// account_movements' key, and change order within an op differs between exports of the same
-// ledger. Non-'created' changes are ignored: AllowTrust/SetTrustLineFlags never claim or claw
-// back, so only 'created' rows are expected.
+// createdClaimableBalances extracts every 'created' ClaimableBalanceEntry (the CAP-0038 liquidation signal), sorted by balance id: the
+// order becomes leg_index, part of account_movements' key, and change order within an op differs between exports of one ledger.
+// Non-'created' changes are ignored.
 func createdClaimableBalances(changes []EntryChangeXDR) []createdClaimableBalanceRef {
 	var out []createdClaimableBalanceRef
 	for _, c := range changes {

@@ -170,10 +170,8 @@ type sacSeedTally struct {
 	haveLedgerBounds bool
 }
 
-// add folds one streamed seed into the tally. A tombstone (IsRemoval) is a
-// retraction, not a holder: it is counted apart and kept out of the sum and
-// the ledger bounds, so provenance's holders_seeded and min/max_ledger_seen
-// describe only balances actually seeded.
+// add folds one streamed seed into the tally. A tombstone (IsRemoval) is a retraction, not a holder: counted apart and kept out of the
+// sum and ledger bounds so provenance describes only balances actually seeded.
 func (t *sacSeedTally) add(seed clickhouse.SACBalanceSeed) {
 	if seed.IsRemoval {
 		t.retracted++
@@ -184,10 +182,8 @@ func (t *sacSeedTally) add(seed clickhouse.SACBalanceSeed) {
 	t.observe(seed.LedgerSeq)
 }
 
-// observe folds one seeded entry's ledger into the tally's [min, max]
-// bound, used to populate sac_balance_seed_provenance.min_ledger_seen /
-// max_ledger_seen — the evidence that a -full-history pass actually
-// reached below the current-state floor, not just a source-label claim.
+// observe folds one entry's ledger into [min, max], feeding sac_balance_seed_provenance.min_ledger_seen/max_ledger_seen: evidence a
+// -full-history pass reached below the current-state floor.
 func (t *sacSeedTally) observe(ledger uint32) {
 	if !t.haveLedgerBounds {
 		t.minLedger, t.maxLedger, t.haveLedgerBounds = ledger, ledger, true
@@ -210,10 +206,8 @@ func (t *sacSeedTally) matched() int {
 	return t.holders + t.retracted
 }
 
-// unmatchedSACWrappersErr fails the pass for every watched wrapper that
-// matched no Balance entry at all. Such a wrapper gets no provenance row: a
-// row with zero holders and NULL bounds is indistinguishable from a mis-keyed
-// [supply.sac_wrappers] entry, and would read as a completed seed.
+// unmatchedSACWrappersErr fails the pass for every watched wrapper that matched no Balance entry: a provenance row with zero holders and
+// NULL bounds is indistinguishable from a mis-keyed [supply.sac_wrappers] entry.
 func unmatchedSACWrappersErr(watched map[string]string, tallies map[string]*sacSeedTally) error {
 	var unmatched []string
 	for cid, ak := range watched {
@@ -298,10 +292,8 @@ func sacSeedProvenance(cid, ak string, source timescale.SACBalanceSeedSource, ev
 	return p, nil
 }
 
-// printSACSeedSummary prints one stable line per watched wrapper
-// (sorted by asset_key then contract id) plus a totals footer. Wrappers
-// with no current Balance entries in the lake are printed with
-// holders=0 so the operator sees which had nothing to seed.
+// printSACSeedSummary prints one stable line per watched wrapper (sorted by asset_key then contract id) plus totals; wrappers with no
+// Balance entries show holders=0.
 func printSACSeedSummary(watched map[string]string, tallies map[string]*sacSeedTally, total int, dryRun bool) {
 	type row struct {
 		contractID, assetKey string

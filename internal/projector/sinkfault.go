@@ -22,20 +22,15 @@ const PermanentSkipPerCycle = 1
 // every Nth after, so a held row retrying every [Interval] does not bury the ERROR lines.
 const heldRowLogEvery = 20
 
-// sinkDisposition is the projector's verdict for ONE sink write failure: may the cursor advance
-// past this row?
-//
-// It is three-valued, not a boolean: a boolean would fold "known transient" and "unclassified"
-// into one retry-forever bucket, so a deterministic failure the classifier missed would hold the
-// per-source cursor forever and halt a sole-writer domain such as sep41, visible only as lag.
+// sinkDisposition is the verdict for ONE sink write failure: may the cursor advance past this row? Three-valued, not a boolean: folding
+// "known transient" and "unclassified" into one retry-forever bucket would let a missed deterministic failure hold a per-source cursor
+// forever and halt a sole-writer domain such as sep41, visible only as lag.
 type sinkDisposition int
 
 const (
-	// dispositionSkip is a row-local, deterministic data fault: the DB rejected the row's VALUES
-	// (SQLSTATE class 22/23) or it failed a canonical value-shape check before SQL. Retrying
-	// cannot succeed, so the row is skipped loudly once a cycle also proved the sink healthy, at
-	// most [PermanentSkipPerCycle] per cycle because those classes also arrive globally. Without
-	// that proof the wait is [QuarantineAfterCyclesNoProgress]; a row over the cap holds the cursor.
+	// dispositionSkip is a row-local, deterministic data fault: the DB rejected the row's VALUES (SQLSTATE class 22/23) or it failed a
+	// canonical value-shape check before SQL. It is skipped loudly once a cycle proved the sink healthy, at most [PermanentSkipPerCycle] per
+	// cycle since those classes also arrive globally; otherwise it waits [QuarantineAfterCyclesNoProgress].
 	dispositionSkip sinkDisposition = iota
 
 	// dispositionRetry is an infrastructure or shutdown fault (Postgres down or at capacity,
@@ -65,16 +60,9 @@ func (d sinkDisposition) String() string {
 	}
 }
 
-// valueShapeSentinels are the canonical errors meaning "this row's VALUES are invalid", which
-// retrying cannot change. They are the pre-SQL twin of SQLSTATE class 22/23:
-// `Store.InsertOracleUpdate` returns `OracleUpdate.Validate`'s error verbatim.
-//
-// Deliberately EXCLUDED:
-//
-//   - canonical.ErrUnknownAsset depends on registry state a later cycle may have warmed.
-//   - canonical.ErrPairMismatch is a cross-row comparison, not a row verdict.
-//
-// Both fall to [dispositionUnclassified], where the retry budget bounds the damage.
+// valueShapeSentinels are the canonical errors meaning "this row's VALUES are invalid" (the pre-SQL twin of SQLSTATE class 22/23).
+// Deliberately EXCLUDED: canonical.ErrUnknownAsset (registry state a later cycle may have warmed) and canonical.ErrPairMismatch (a
+// cross-row comparison); both fall to [dispositionUnclassified], where the retry budget bounds the damage.
 var valueShapeSentinels = []error{
 	canonical.ErrInvalidOracle,
 	canonical.ErrInvalidTrade,
@@ -84,11 +72,8 @@ var valueShapeSentinels = []error{
 	canonical.ErrI128Overflow,
 }
 
-// classifySinkFault maps a sink write error onto its [sinkDisposition]. A nil error classifies as
-// [dispositionRetry], the never-skip side.
-//
-// Ordering matters: positive identifications run first and unclassified is the residue, so a
-// fault we understand is never absorbed by the budget arm.
+// classifySinkFault maps a sink write error onto its [sinkDisposition]; nil classifies as [dispositionRetry], the never-skip side.
+// Positive identifications run first and unclassified is the residue, so a fault we understand is never absorbed by the budget arm.
 func classifySinkFault(err error) sinkDisposition {
 	if err == nil {
 		return dispositionRetry
@@ -145,11 +130,8 @@ type rowIdentity struct {
 	eventIndex int
 }
 
-// poisonTracker counts CONSECUTIVE failing cycles per row identity for ONE source. It is
-// goroutine-local (one per source loop), so it needs no locking.
-//
-// The map is bounded by the rows failing inside one [BatchLimit] window: [poisonTracker.retain]
-// drops every identity that did not fail in the last cycle.
+// poisonTracker counts CONSECUTIVE failing cycles per row identity for ONE source; goroutine-local, no locking. It is bounded by the rows
+// failing inside one [BatchLimit] window: [poisonTracker.retain] drops every identity that did not fail in the last cycle.
 type poisonTracker struct {
 	fails map[rowIdentity]int
 }

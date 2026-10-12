@@ -283,10 +283,8 @@ func (r *AccountStore) RenameUsageSubjects(ctx context.Context, subjects []strin
 	return n, nil
 }
 
-// renameUsageSubjects sums the old subjects' counters per (day, endpoint)
-// into erased — they are distinct counters — and merges with GREATEST
-// into an erased row a previous pass wrote, since that row already holds
-// the same counters.
+// renameUsageSubjects sums the old subjects' counters per (day, endpoint) into erased, merging with GREATEST into a row a previous pass
+// wrote since it already holds the same counters.
 func renameUsageSubjects(ctx context.Context, tx *sql.Tx, subjects []string, erased string) (int64, error) {
 	if erased == "" || !strings.HasPrefix(erased, "erased:") {
 		return 0, fmt.Errorf("rename usage subjects: target %q is not an erased:<id> subject", erased)
