@@ -2,6 +2,7 @@ package supply
 
 import (
 	"math/big"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -143,5 +144,68 @@ func TestSACSeedProvenance_FullHistoryNeedsLakeEvidence(t *testing.T) {
 	cs, err := sacSeedProvenance("CPHO", "PHO:G1", timescale.SACBalanceSeedSourceCurrentState, clickhouse.SeedEvidence{}, tally)
 	if err != nil || cs.LakeVerifiedThrough != nil {
 		t.Errorf("current_state: err=%v LakeVerifiedThrough=%v, want a row with no coverage claim", err, cs.LakeVerifiedThrough)
+	}
+}
+
+// TestAccountObservationSeedProvenance pins the audit record supplySeedObservations upserts only at the end of a COMPLETE pass (never on -dry-run or mid-loop): nil ledger bounds when nothing was seeded, else populated, with watched/missing G-strkeys carried through.
+func TestAccountObservationSeedProvenance(t *testing.T) {
+	watched := []string{"GA", "GB", "GC"}
+
+	t.Run("nothing seeded means nil ledger bounds", func(t *testing.T) {
+		missingAccounts := []string{"GB", "GC"}
+		p := accountObservationSeedProvenance(watched, 0, 2, 1, 0, 0, false, missingAccounts)
+		if p.AccountsWatched != 3 || p.AccountsSeeded != 0 || p.AccountsMissing != 2 || p.AccountsRemoved != 1 {
+			t.Errorf("counts = %+v, want {watched:3 seeded:0 missing:2 removed:1}", p)
+		}
+		if !reflect.DeepEqual(p.WatchedAccounts, watched) {
+			t.Errorf("WatchedAccounts = %v, want %v", p.WatchedAccounts, watched)
+		}
+		if !reflect.DeepEqual(p.MissingAccounts, missingAccounts) {
+			t.Errorf("MissingAccounts = %v, want %v", p.MissingAccounts, missingAccounts)
+		}
+		if p.MinLedgerSeen != nil || p.MaxLedgerSeen != nil {
+			t.Errorf("ledger bounds = [%v, %v], want nil/nil when nothing was seeded", p.MinLedgerSeen, p.MaxLedgerSeen)
+		}
+	})
+
+	t.Run("a complete pass carries the seeded ledger range", func(t *testing.T) {
+		p := accountObservationSeedProvenance(watched, 3, 0, 0, 30_000_000, 63_400_000, true, nil)
+		if p.AccountsWatched != 3 || p.AccountsSeeded != 3 {
+			t.Errorf("counts = %+v, want {watched:3 seeded:3}", p)
+		}
+		if len(p.MissingAccounts) != 0 {
+			t.Errorf("MissingAccounts = %v, want empty when nothing is missing", p.MissingAccounts)
+		}
+		if p.MinLedgerSeen == nil || *p.MinLedgerSeen != 30_000_000 || p.MaxLedgerSeen == nil || *p.MaxLedgerSeen != 63_400_000 {
+			t.Errorf("ledger bounds = [%v, %v], want [30000000, 63400000]", p.MinLedgerSeen, p.MaxLedgerSeen)
+		}
+	})
+}
+
+// TestValidateGenesisLedgerBoundary: a -genesis-ledger above the true Soroban genesis double-counts flows in the CH and PG slices, so it must be rejected; equal passes.
+func TestValidateGenesisLedgerBoundary(t *testing.T) {
+	genesis := uint(clickhouse.SorobanGenesisLedger)
+	cases := []struct {
+		name    string
+		ledger  uint
+		wantErr bool
+	}{
+		{"zero-rejected", 0, true},
+		{"one-accepted", 1, false},
+		{"below-genesis-accepted", genesis - 1, false},
+		{"at-genesis-accepted-default", genesis, false},
+		{"one-above-genesis-rejected", genesis + 1, true},
+		{"far-above-genesis-rejected", genesis + 10_000_000, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateGenesisLedgerBoundary(tc.ledger)
+			if tc.wantErr && err == nil {
+				t.Errorf("validateGenesisLedgerBoundary(%d) = nil, want error", tc.ledger)
+			}
+			if !tc.wantErr && err != nil {
+				t.Errorf("validateGenesisLedgerBoundary(%d) = %v, want nil", tc.ledger, err)
+			}
+		})
 	}
 }

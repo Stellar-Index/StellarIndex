@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -477,5 +478,167 @@ func TestSep1RefreshLoopDryRunWritesNothing(t *testing.T) {
 	}
 	if got := fmt.Sprint(log.steps()); got != "[fetch GBEHIND]" {
 		t.Errorf("dry run call log = %s; want [fetch GBEHIND] — no row may be written", got)
+	}
+}
+
+// TestTomlListsIssuer: tomlListsIssuer must canonicalise as timescale.Sep1EntryBindsTo does (case-fold, trim), or a lowercase-keyed issuer gets org_verified false while AllSep1Images already treats it as bound.
+func TestTomlListsIssuer(t *testing.T) {
+	const gStrkey = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+
+	cases := []struct {
+		name       string
+		currencies []metadata.Currency
+		want       bool
+	}{
+		{
+			name:       "exact match",
+			currencies: []metadata.Currency{{Code: "USDC", Issuer: gStrkey}},
+			want:       true,
+		},
+		{
+			name:       "issuer typed lowercase",
+			currencies: []metadata.Currency{{Code: "USDC", Issuer: "ga5zsejyb37jrc5avcia5mop4rhtm335x2kgx3ihojapp5re34k4kzvn"}},
+			want:       true,
+		},
+		{
+			name:       "issuer with surrounding whitespace",
+			currencies: []metadata.Currency{{Code: "USDC", Issuer: " " + gStrkey + " "}},
+			want:       true,
+		},
+		{
+			name:       "different issuer",
+			currencies: []metadata.Currency{{Code: "USDC", Issuer: "GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2"}},
+			want:       false,
+		},
+		{
+			name:       "not shaped like a strkey",
+			currencies: []metadata.Currency{{Code: "USDC", Issuer: "not-an-account"}},
+			want:       false,
+		},
+		{
+			name:       "no currencies",
+			currencies: nil,
+			want:       false,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := tomlListsIssuer(c.currencies, gStrkey); got != c.want {
+				t.Errorf("tomlListsIssuer(%+v, %q) = %v, want %v", c.currencies, gStrkey, got, c.want)
+			}
+		})
+	}
+}
+
+// TestPayloadRoundTripsCurrencyAuthority checks the refresh cron's payload reads back field for field, undeclared booleans staying undeclared.
+func TestPayloadRoundTripsCurrencyAuthority(t *testing.T) {
+	yes, no := true, false
+	sep := &metadata.SEP1{
+		FetchedAt: time.Now().UTC(),
+		Currencies: []metadata.Currency{
+			{
+				Code: "BOND", Issuer: "GAAA", Status: "live",
+				IsAssetAnchored:        &yes,
+				AttestationOfReserve:   "https://example.com/reserves.pdf",
+				RedemptionInstructions: "Redeem through the portal.",
+				Regulated:              &no,
+				ApprovalServer:         "https://example.com/tx_approve",
+				ApprovalCriteria:       "KYC required.",
+			},
+			{Code: "BARE", Issuer: "GAAA"},
+		},
+	}
+	b, err := marshalSep1Payload(sep, true)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var got timescale.IssuerSep1Cached
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(got.Currencies) != 2 {
+		t.Fatalf("currencies = %d, want 2", len(got.Currencies))
+	}
+
+	c := got.Currencies[0]
+	if c.Status != "live" ||
+		c.AttestationOfReserve != "https://example.com/reserves.pdf" ||
+		c.RedemptionInstructions != "Redeem through the portal." ||
+		c.ApprovalServer != "https://example.com/tx_approve" ||
+		c.ApprovalCriteria != "KYC required." {
+		t.Errorf("string declarations lost in the payload: %+v", c)
+	}
+	if c.IsAssetAnchored == nil || !*c.IsAssetAnchored {
+		t.Errorf("IsAssetAnchored = %v, want true", c.IsAssetAnchored)
+	}
+	if c.Regulated == nil || *c.Regulated {
+		t.Errorf("Regulated = %v, want a declared false", c.Regulated)
+	}
+
+	bare := got.Currencies[1]
+	if bare.IsAssetAnchored != nil || bare.Regulated != nil {
+		t.Errorf("undeclared booleans came back declared: is_asset_anchored=%v regulated=%v", bare.IsAssetAnchored, bare.Regulated)
+	}
+}
+
+// TestPayloadCarriesTheTablesThatCouldNotBeRead: unreadable tables must survive the storage boundary, or consumers read absent as declared-nothing.
+func TestPayloadCarriesTheTablesThatCouldNotBeRead(t *testing.T) {
+	sep := &metadata.SEP1{
+		OrgName:   "WisdomTree, Inc.",
+		FetchedAt: time.Now().UTC(),
+		Documentation: map[string]string{
+			"ORG_NAME": "WisdomTree, Inc.",
+		},
+		Currencies: []metadata.Currency{{Code: "WTGX", Issuer: "GDMBNMFJ3TRFLASJ6UGETFME3PJPNKPU24C7KFDBEBPQFG2CI6UC3JG6"}},
+		RecoveredSections: []metadata.SkippedSection{
+			{Header: "(top-level keys)", Err: "toml: line 20: strings cannot contain newlines"},
+		},
+	}
+
+	b, err := marshalSep1Payload(sep, true)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	raw, ok := got["RecoveredSections"]
+	if !ok {
+		t.Fatal("the stored payload does not carry RecoveredSections — a partial read is indistinguishable from a complete one once written")
+	}
+	list, ok := raw.([]any)
+	if !ok || len(list) != 1 {
+		t.Fatalf("RecoveredSections = %#v, want one entry", raw)
+	}
+	entry, _ := list[0].(map[string]any)
+	if entry["Header"] != "(top-level keys)" {
+		t.Errorf("Header = %v, want the skipped table named", entry["Header"])
+	}
+	if entry["Err"] == "" || entry["Err"] == nil {
+		t.Error("Err is empty — the reason the table was skipped did not survive")
+	}
+}
+
+// TestWholeDocumentPayloadCarriesNoRecoveryKey: a fully parsed document must not grow a recovery key.
+func TestWholeDocumentPayloadCarriesNoRecoveryKey(t *testing.T) {
+	sep := &metadata.SEP1{
+		OrgName:       "Example",
+		FetchedAt:     time.Now().UTC(),
+		Documentation: map[string]string{"ORG_NAME": "Example"},
+		Currencies:    []metadata.Currency{{Code: "AAA", Issuer: "GAAA"}},
+	}
+	b, err := marshalSep1Payload(sep, false)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, ok := got["RecoveredSections"]; ok {
+		t.Errorf("a whole-document parse wrote RecoveredSections; payload = %s", b)
 	}
 }
