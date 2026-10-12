@@ -2039,3 +2039,83 @@ func TestChart_DeclaredPeg_ThroughXLM_DegradedEmptyLegFlagsStale(t *testing.T) {
 		t.Error("flags.stale = false; a cross left empty by a failed leg read must be flagged degraded")
 	}
 }
+
+// chartGuardLookalike is AQUA's code under an issuer that is not Aquarius':
+// a verified-ticker collision the detail page refuses to value.
+const chartGuardLookalike = "AQUA-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+
+// chartGranularityFitCase is one (timeframe, requested grain) request
+// and the grain the response must both READ and REPORT.
+type chartGranularityFitCase struct {
+	timeframe string
+	requested string
+	served    string
+	why       string
+}
+
+// errChartReadBroke is a plain read failure carrying no deadline signal,
+// so the deadline and non-deadline halves below are told apart by the
+// request context alone.
+var errChartReadBroke = errors.New("prices_1d: broke")
+
+// stallingMarketCapHistory blocks its price-series read until the caller's context is done, then returns that error, as a cold
+// prices_1d scan does when a deadline beats it. Everything else is the ordinary stub, so only the market-cap price leg stalls.
+type stallingMarketCapHistory struct{ *stubHistoryReader }
+
+func (stallingMarketCapHistory) HistoryPointsInRange(
+	ctx context.Context, _ canonical.Pair, _ string, _, _ time.Time, _ int,
+) ([]v1.HistoryPoint, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// stallingFXHistory blocks until the request budget expires, the way a
+// slow fx_quotes read does, and returns the context's own error.
+type stallingFXHistory struct{}
+
+func (stallingFXHistory) ListFXHistory(ctx context.Context, _ string, _, _ time.Time) ([]v1.FXQuotePoint, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// TestChartAll_ChargesByGranularity: timeframe=all has no window to coarsen against, so the grain must select the price as on
+// /v1/history/since-inception; a bounded timeframe is already capped by coarsening and stays at the base token.
+func TestChartAll_ChargesByGranularity(t *testing.T) {
+	const pair = "/v1/chart?base=native&quote=fiat:USD"
+	cases := []struct {
+		name, query   string
+		wantRemaining int
+	}{
+		{"all default grain", "&timeframe=all", 99},
+		{"all 1d", "&timeframe=all&granularity=1d", 99},
+		{"all 4h", "&timeframe=all&granularity=4h", 94},
+		{"all 1m", "&timeframe=all&granularity=1m", 87},
+		{"bounded 1m", "&timeframe=1h&granularity=1m", 99},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ts, _ := newSinceInceptionLimitedServer(t, 100)
+			resp := mustGet(t, ts.URL+pair+tc.query)
+			got := remainingBeforeProbe(t, resp, ts.URL+"/v1/chart")
+			if got != tc.wantRemaining {
+				t.Fatalf("remaining = %d, want %d (status %d)", got, tc.wantRemaining, resp.StatusCode)
+			}
+		})
+	}
+}
+
+// TestChartAll_DeniedGrainDoesNoRead: the surcharge lands before the read.
+func TestChartAll_DeniedGrainDoesNoRead(t *testing.T) {
+	ts, reader := newSinceInceptionLimitedServer(t, 13)
+	if resp := mustGet(t, ts.URL+"/v1/chart?base=native&quote=fiat:USD&timeframe=1h"); resp.StatusCode != http.StatusOK {
+		t.Fatalf("bounded request status = %d, want 200", resp.StatusCode)
+	}
+	reader.oneMinuteReads.Store(0)
+	resp := mustGet(t, ts.URL+"/v1/chart?base=native&quote=fiat:USD&timeframe=all&granularity=1m")
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want 429", resp.StatusCode)
+	}
+	if n := reader.oneMinuteReads.Load(); n != 0 {
+		t.Fatalf("store served %d 1m read(s) for a denied request", n)
+	}
+}
