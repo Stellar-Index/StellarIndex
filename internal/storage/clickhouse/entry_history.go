@@ -60,10 +60,8 @@ type AssetEntryChange struct {
 	Balance *big.Int
 }
 
-// entryHistorySourceQuery streams the window in the source's sort-key order,
-// which puts each 'state' pre-image directly before the change it precedes.
-// No FINAL: an unmerged duplicate re-derives a byte-identical target row, and
-// both targets are ReplacingMergeTrees on the same identity.
+// entryHistorySourceQuery streams the window in the source's sort-key order, putting each 'state' pre-image directly before its change. No
+// FINAL: an unmerged duplicate re-derives a byte-identical target row, and both targets are ReplacingMergeTrees on the same identity.
 const entryHistorySourceQuery = `
 	SELECT ledger_seq, close_time, tx_hash, op_index, change_index, intra_ledger_seq,
 	       change_type, entry_type, key_xdr, entry_xdr
@@ -187,11 +185,9 @@ var ErrEntryHistorySkippedPrefix = errors.New("clickhouse: entry-history window 
 // ErrEntryHistoryEntryChangeShortfall reports a refused advance where entry changes were read for fewer ledgers than stellar.ledgers declares tx-bearing.
 var ErrEntryHistoryEntryChangeShortfall = errors.New("clickhouse: entry-history window lacks ledger_entry_changes coverage")
 
-// entryHistoryWindowCovered compares the tx-bearing ledgers the derive READ
-// (non-empty tx_hash; snapshot seed rows carry none) with stellar.ledgers. A lake-state check
-// after the read would pass once a concurrent ch-backfill filled the window, though the derive
-// saw none of those rows. Only tx-bearing ledgers hold tx-scoped rows, so the counts compare
-// as sets.
+// entryHistoryWindowCovered compares the tx-bearing ledgers the derive READ (non-empty tx_hash; seed rows carry none) with
+// stellar.ledgers. A lake-state check after the read would pass once a concurrent ch-backfill filled the window though the derive saw none
+// of those rows; only tx-bearing ledgers hold tx-scoped rows, so the counts compare as sets.
 func entryHistoryWindowCovered(ctx context.Context, conn driver.Conn, from, thru uint32, readTxLedgers uint64) error {
 	const q = `SELECT uniqExact(ledger_seq) FROM stellar.ledgers WHERE ledger_seq BETWEEN ? AND ? AND tx_count > 0`
 	cov := ECWindowCoverage{From: from, To: thru, ECCoveredTxLedgers: readTxLedgers}

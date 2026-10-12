@@ -12,10 +12,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// applyOrderLedgerBatch is how many distinct ledgers accumulate before one
-// tx_index lookup. Each lookup is a primary-key IN read on
-// stellar.transactions (sort key (ledger_seq, tx_index)), so a batch costs
-// one point query over at most this many ledgers' transactions.
+// applyOrderLedgerBatch is how many distinct ledgers accumulate before one tx_index lookup, a primary-key IN read on stellar.transactions
+// (sort key (ledger_seq, tx_index)).
 const applyOrderLedgerBatch = 64
 
 type ledgerTx struct {
@@ -27,12 +25,9 @@ type ledgerTx struct {
 // transaction in the given ledgers, keyed by (ledger, tx hash).
 type txIndexLookup func(ctx context.Context, ledgers []uint32) (map[ledgerTx]uint32, error)
 
-// applyOrderer re-sorts streamed contract events within each ledger into transaction APPLY
-// order. The table sorts by (ledger_seq, tx_hash, ...), a lexical order, so a pool's first trade
-// whose tx hash sorts before its add_pool's would reach a live-grown registry first and be
-// dropped. The SQL keeps the sort key so ClickHouse streams in read order; the per-ledger
-// reorder is buffered and stable, so exact duplicates stay adjacent for consumers that skip
-// them by previous key.
+// applyOrderer re-sorts streamed contract events within each ledger into transaction APPLY order. The table sorts by (ledger_seq, tx_hash,
+// ...), lexical, so a pool's first trade whose hash sorts before its add_pool's would reach a live-grown registry first and be dropped.
+// The reorder is buffered and stable, so exact duplicates stay adjacent for consumers that skip them by previous key.
 type applyOrderer struct {
 	ctx     context.Context
 	lookup  txIndexLookup
@@ -60,10 +55,8 @@ func (o *applyOrderer) add(ev events.Event) error {
 	return nil
 }
 
-// flush resolves the batch's tx_index values, stable-sorts by
-// (ledger, tx_index) and forwards every event. A transaction missing from
-// stellar.transactions fails the stream: its apply order is unknown, and
-// guessing it is the bug this type exists to remove.
+// flush resolves the batch's tx_index values, stable-sorts by (ledger, tx_index) and forwards every event. A transaction missing from
+// stellar.transactions fails the stream: guessing its apply order is the bug this type exists to remove.
 func (o *applyOrderer) flush() error {
 	if len(o.buf) == 0 {
 		return nil
@@ -102,10 +95,8 @@ func (o *applyOrderer) flush() error {
 	return nil
 }
 
-// connTxIndexLookup reads tx_index for every transaction in the given
-// ledgers. Unmerged ReplacingMergeTree duplicates carry the same tx_index,
-// so no FINAL is needed. A fee bump's inner hash maps too, in case an event
-// row is keyed by it.
+// connTxIndexLookup reads tx_index for every transaction in the ledgers. Unmerged ReplacingMergeTree duplicates carry the same tx_index,
+// so no FINAL is needed. A fee bump's inner hash maps too, in case an event row is keyed by it.
 func connTxIndexLookup(conn driver.Conn) txIndexLookup {
 	return func(ctx context.Context, ledgers []uint32) (map[ledgerTx]uint32, error) {
 		rows, err := conn.Query(ctx, txIndexByLedgersQuery(ledgers))

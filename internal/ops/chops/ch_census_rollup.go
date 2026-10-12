@@ -10,17 +10,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// chCensusRollup maintains stellar.contracts_census_daily (the day-keyed per-contract event counts
-// behind the /v1/contracts directory, deploy/clickhouse/contracts_census_daily.sql).
-//
-// Default (timer) mode recomputes the current UTC day plus any days missing since the newest one
-// present, each as one whole-day compute + atomic REPLACE PARTITION, so re-runs are idempotent.
-// A -write run never reads past the contiguous lake tip (the LiveSink drops whole ledgers under
-// buffer pressure, leaving holes near the tip): the walk stops at the day holding that tip,
-// recomputed once ch-live-catchup heals the hole. A recompute smaller than the live partition is
-// refused unless -shrink-ok. -backfill walks every day from the lake's first contract event (or
-// -from-day) to today; it is heavy, so serialize it on r1 under run-heavy-job.sh. Dry run by
-// default (opsutil.WriteGate).
+// chCensusRollup maintains stellar.contracts_census_daily (behind /v1/contracts, deploy/clickhouse/contracts_census_daily.sql): each day is
+// one whole-day compute + atomic REPLACE PARTITION, never read past the contiguous lake tip (holes near it are recomputed after
+// ch-live-catchup heals them). A recompute smaller than the live partition is refused unless -shrink-ok; -backfill is heavy, serialize it
+// under run-heavy-job.sh. Dry run by default.
 func chCensusRollup(args []string) error {
 	fs := flag.NewFlagSet("ch-census-rollup", flag.ContinueOnError)
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
@@ -94,10 +87,8 @@ func chCensusRollup(args []string) error {
 	return nil
 }
 
-// censusWalkEnd is the last day the -write walk may recompute: today, or the day holding the
-// contiguous lake tip (tipDay, ok from clickhouse.ContiguousThroughDay) when earlier. A day past a
-// hole is not computed, so the resume point stays at or before the holed day and it is recomputed
-// after the heal, not skipped.
+// censusWalkEnd is the last day the -write walk may recompute: today, or the day holding the contiguous lake tip when
+// earlier. A day past a hole is not computed, so the resume point stays at or before it and it is recomputed after the heal.
 func censusWalkEnd(from, today, tipDay time.Time, ok bool, logf func(string, ...any)) time.Time {
 	if !ok {
 		logf("lake is not contiguous from the start of %s (a hole at the day boundary, or ingest has not reached it) — "+

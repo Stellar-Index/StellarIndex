@@ -25,9 +25,8 @@ type ReconcileEventStreamer struct {
 	SymbolTopic0Only bool
 }
 
-// reconcileStreamWindow bounds each query to at most one partition of parts (250k divides the 1M
-// partition): one full-history query held a wide in-order read open across every partition. History
-// growth adds windows, not per-query memory.
+// reconcileStreamWindow bounds each query to at most one partition of parts (250k divides the 1M partition): one full-history query held a
+// wide in-order read open across every partition. History growth adds windows, not per-query memory.
 const reconcileStreamWindow = 250_000
 
 // StreamContractEvents streams events for [from,to] narrowed by the source's prefilter, with NO FINAL: unmerged duplicates stay adjacent and the reconcile dedups by identity.
@@ -94,9 +93,8 @@ func contiguousWatermarkUpTo(ctx context.Context, conn driver.Conn, from, to uin
 	return boundedWatermark(from, to, uint32(chMax), uint32(firstGap), uint32(minPresent), uint32(maxInWindow)), nil
 }
 
-// boundedWatermark is watermark for a scan limited to [from, to]: the scan cannot see a hole
-// running past `to`, so when it reports no gap but the window's highest ledger is below the clamp,
-// contiguity ends there.
+// boundedWatermark is watermark for a scan limited to [from, to]: the scan cannot see a hole past `to`, so when it reports no gap but the
+// window's highest ledger is below the clamp, contiguity ends there.
 func boundedWatermark(from, to, chMax, firstGap, minPresent, maxInWindow uint32) uint32 {
 	w := min(watermark(from, chMax, firstGap, minPresent), to)
 	if firstGap == 0 && maxInWindow != 0 && maxInWindow < w {
@@ -151,18 +149,16 @@ func lakeMinLedgerOn(ctx context.Context, conn driver.Conn) (uint32, error) {
 	return uint32(lo), nil // ledger sequences fit uint32
 }
 
-// substrateWindow bounds each substrate query: both checks full-sort their range and a whole-lake
-// span exceeds the query memory cap. Both properties are local (neighbour contiguity, neighbour
-// hash-link), so windows with a 1-ledger overlap prove the same claim at bounded memory.
+// substrateWindow bounds each substrate query: both checks full-sort their range and a whole-lake span exceeds the memory cap. Both
+// properties are local, so windows with a 1-ledger overlap prove the same claim at bounded memory.
 const substrateWindow = 5_000_000
 
 // substrateChainGenesis is ledger 1, which has no predecessor, so the earliest checkable link is at
 // ledger 2. substrateQueryLo never goes below it.
 const substrateChainGenesis = uint64(1)
 
-// substrateQueryLo is a window query's lower bound, one ledger BELOW the span it certifies, so the
-// seam pair (wlo-1, wlo) is hash-checked, including the first window's (from-1, from) junction.
-// Guarded at substrateChainGenesis against underflow.
+// substrateQueryLo is a window query's lower bound, one ledger BELOW the span it certifies, so the seam pair (wlo-1, wlo) is hash-checked,
+// including the first window's (from-1, from) junction. Guarded at substrateChainGenesis against underflow.
 func substrateQueryLo(wlo, from uint64) uint64 {
 	switch {
 	case wlo > from:
@@ -309,10 +305,9 @@ func substrateLocateHole(ctx context.Context, addr string, from, to uint32) (pro
 	return problem, true, fmt.Sprintf("substrate: missing ledger at %d (window-seam hole)", problem), nil
 }
 
-// substrateHeadProblem is the pure low-ledger coverage decision: an empty range or a missing head,
-// which the gap scan cannot see. The problem ledger keeps the consumer's `problem < genesis =>
-// source-OK` test correct for coverage failures: empty returns `to` so EVERY source fails; a
-// missing head returns haveMin-1 so only sources whose data begins in the absent head fail.
+// substrateHeadProblem is the pure low-ledger coverage decision (an empty range or missing head, which the gap scan cannot see). The
+// problem ledger keeps the consumer's `problem < genesis => source-OK` test correct: empty returns `to` so EVERY source fails; a missing
+// head returns haveMin-1 so only sources whose data begins in the absent head fail.
 func substrateHeadProblem(from, to uint32, present bool, haveMin uint32) (problem uint32, hasProblem bool, detail string) {
 	if !present {
 		return to, true, fmt.Sprintf("substrate: no ledgers present in [%d,%d] (empty range — not intact)", from, to)
@@ -323,15 +318,10 @@ func substrateHeadProblem(from, to uint32, present bool, haveMin uint32) (proble
 	return 0, false, ""
 }
 
-// watermark is the pure interpretation of a ContiguousWatermark result:
-//   - chMax < from: from-1 (CH has not reached `from`)
-//   - minPresent > from: from-1 (hole AT `from`)
-//   - firstGap == 0: chMax (complete to the tip)
-//   - otherwise: firstGap-1
-//
-// The minPresent guard closes a data-loss blind spot: with `from` absent, {from+1, ...} is
-// contiguous, so returning chMax would let the projector skip `from` and permanently drop its
-// sole-writer rows. Order matters: from-1 wins over any interior gap above a missing `from`.
+// watermark interprets a ContiguousWatermark result: chMax < from or minPresent > from (hole AT `from`) gives from-1; firstGap == 0 gives
+// chMax (complete to the tip); otherwise firstGap-1. The minPresent guard closes a data-loss blind spot: with `from` absent, {from+1, ...}
+// looks contiguous, so returning chMax would let the projector skip `from` and permanently drop its sole-writer rows. from-1 wins over any
+// interior gap.
 func watermark(from, chMax, firstGap, minPresent uint32) uint32 {
 	if from == 0 {
 		// Ledger 0 does not exist, and from-1 would wrap to MaxUint32, read as "complete forever".

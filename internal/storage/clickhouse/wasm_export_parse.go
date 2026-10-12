@@ -25,9 +25,8 @@ const (
 	secExport   = 7
 )
 
-// valType maps a wasm value-type byte to its mnemonic. Covers the four numeric
-// types Soroban contracts use; anything else (vector/reftypes) renders as a
-// hex token so the output is still well-formed.
+// valType maps a wasm value-type byte to its mnemonic. Covers the four numeric types Soroban contracts use; anything else
+// (vector/reftypes) renders as a hex token so output stays well-formed.
 func valType(b byte) string {
 	switch b {
 	case 0x7f:
@@ -57,10 +56,9 @@ type reader struct {
 
 func (r *reader) eof() bool { return r.i >= len(r.b) }
 
-// safeCap bounds a make() prealloc hint by the reader's remaining bytes. A LEB128 count is
-// attacker-influenced (a ~5-byte field encodes ~5e9), so an uncapped make([]T, 0, count) could
-// allocate gigabytes or panic before the loop reaches errTruncated. Every element takes at least
-// one byte, so an oversized count still errors normally when the loop runs off the end.
+// safeCap bounds a make() prealloc hint by the reader's remaining bytes: a LEB128 count is attacker-influenced (a ~5-byte field encodes
+// ~5e9), so an uncapped make([]T, 0, count) could allocate gigabytes or panic. Every element takes at least one byte, so an oversized
+// count still errors normally.
 func (r *reader) safeCap(count uint64) int {
 	rem := len(r.b) - r.i
 	if rem < 0 {
@@ -101,10 +99,9 @@ func (r *reader) uvarint() (uint64, error) {
 	}
 }
 
-// bytes reads n raw bytes. The bound is `n > len(r.b)-r.i`, not `r.i+n > len(r.b)`: n comes from
-// an attacker-authored LEB128 and can be near MaxInt64, where r.i+n overflows negative, passes the
-// check and panics in the slice expression. The subtraction cannot overflow because
-// r.i <= len(r.b) holds after every mutation in this file.
+// bytes reads n raw bytes. The bound is `n > len(r.b)-r.i`, not `r.i+n > len(r.b)`: n is attacker-authored LEB128 and can be near
+// MaxInt64, where r.i+n overflows negative and panics in the slice expression. The subtraction cannot overflow because r.i <= len(r.b)
+// holds after every mutation in this file.
 func (r *reader) bytes(n int) ([]byte, error) {
 	if n < 0 || n > len(r.b)-r.i {
 		return nil, errTruncated
@@ -127,10 +124,8 @@ func (r *reader) name() (string, error) {
 	return string(raw), nil
 }
 
-// parseWasmExports walks the module and returns its exported FUNCTIONS with
-// resolved param/result types. Exports of memories/tables/globals are omitted
-// (the endpoint surfaces the callable API). An empty result with nil error
-// means a valid module that exports no functions.
+// parseWasmExports walks the module and returns its exported FUNCTIONS with resolved param/result types; memory/table/global exports are
+// omitted. An empty result with nil error means a valid module that exports no functions.
 func parseWasmExports(b []byte) ([]WasmExport, error) {
 	if len(b) < 8 || binary.LittleEndian.Uint32(b[0:4]) != 0x6d736100 { // "\0asm"
 		return nil, errBadMagic
@@ -227,10 +222,8 @@ func readValTypes(r *reader) ([]string, error) {
 	return out, nil
 }
 
-// parseImportSection returns the count of imported FUNCTIONS — these occupy
-// func indices [0, importedFuncs), so an export's local func index is offset by
-// this. Non-function imports (table/memory/global) are skipped but still
-// length-walked so the section cursor stays aligned.
+// parseImportSection returns the count of imported FUNCTIONS, which occupy func indices [0, importedFuncs) and so offset an export's
+// local func index. Non-function imports are skipped but still length-walked so the section cursor stays aligned.
 func parseImportSection(r *reader) (int, error) {
 	count, err := r.uvarint()
 	if err != nil {
@@ -259,10 +252,8 @@ func parseImportSection(r *reader) (int, error) {
 	return funcs, nil
 }
 
-// skipImportDesc consumes one import's descriptor for the given external-kind
-// byte, length-walking non-function imports so the section cursor stays
-// aligned. Returns true when the import is a function (it occupies a func
-// index, shifting the local-func-index offset).
+// skipImportDesc consumes one import's descriptor for the external-kind byte, length-walking non-function imports so the section cursor
+// stays aligned; returns true when the import is a function (it occupies a func index).
 func skipImportDesc(r *reader, kind byte) (bool, error) {
 	switch kind {
 	case 0x00: // func: typeidx
@@ -343,10 +334,8 @@ func parseExportSection(r *reader) ([]rawExport, error) {
 	return out, nil
 }
 
-// resolveExports turns the raw function exports into typed WasmExports by
-// chasing func index, minus imports, to local index, type index and signature. An export that
-// cannot be resolved (a re-exported import or an out-of-range index) is kept with empty
-// signatures, not dropped: the name is the load-bearing field.
+// resolveExports turns raw function exports into typed WasmExports (func index, minus imports, to local index, type index, signature). An
+// unresolvable export (re-exported import, out-of-range index) is kept with empty signatures: the name is load-bearing.
 func resolveExports(raw []rawExport, types []funcType, funcTypeIdx []uint32, importedFuncs int) []WasmExport {
 	out := make([]WasmExport, 0, len(raw))
 	for _, e := range raw {

@@ -40,9 +40,8 @@ func sorobanEraFloor(cfg config.Config) uint32 {
 	return cfg.Stellar.SorobanGenesisLedger
 }
 
-// sourceSubstrateOK is the per-source Claim-1 verdict: OK iff there is no problem or the problem
-// ledger lies strictly below the source's genesis. This relies on SubstrateProblem returning the
-// range tip for an empty or truncated lake, so no source can green itself on an absent lake.
+// sourceSubstrateOK is the per-source Claim-1 verdict: OK iff no problem or the problem ledger is below genesis. Relies on
+// SubstrateProblem returning the range tip for an empty or truncated lake.
 func sourceSubstrateOK(problem uint32, hasProblem bool, genesis uint32) bool {
 	return !hasProblem || problem < genesis
 }
@@ -59,10 +58,8 @@ type substrateScan struct {
 // testable without a live lake.
 type substrateScanner func(ctx context.Context, from, to uint32) (problem uint32, hasProblem bool, detail string, err error)
 
-// substrateForGenesis returns the CH substrate verdict for one source's own [max(floor,genesis),
-// tip], scanning once per distinct floor. A single shared scan would let a hole below a
-// high-genesis source hide a later hole in its range, and a head-guard hit skip every walk.
-// floor > tip (-skip-substrate) returns the zero value without scanning.
+// substrateForGenesis scans the CH substrate once per distinct floor, over [max(floor,genesis), tip]: a shared scan would let a hole below
+// a high-genesis source hide a later one in its range. floor > tip (-skip-substrate) returns zero without scanning.
 func substrateForGenesis(ctx context.Context, scan substrateScanner, cache map[uint32]substrateScan, genesis, floor, tip uint32) (substrateScan, error) {
 	if floor > tip {
 		return substrateScan{}, nil
@@ -83,13 +80,8 @@ func substrateForGenesis(ctx context.Context, scan substrateScanner, cache map[u
 	return res, nil
 }
 
-// computeCompleteness derives the per-source completeness watermark (substrate, recognition and
-// projection, ADR-0033) and writes it to completeness_snapshots.
-//
-// Recognition gaps on a contract-pinned source cap that source; gaps on contracts no source owns
-// go to a system-wide snapshot. Projection is bounded below by the served tier's own data per
-// target (projectionScopes), never a retention guess. Exit status reports whether the pass ran,
-// not the verdict; a per-source error keeps that source's prior verdict and exits non-zero.
+// computeCompleteness derives per-source completeness watermarks (substrate, recognition, projection; ADR-0033) into
+// completeness_snapshots. Exit status says whether the pass ran, not the verdict; a per-source error keeps that source's prior verdict.
 func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo // linear computor; one block per claim.
 	fs, gate := opsutil.NewMutatingFlagSet("compute-completeness")
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
@@ -558,10 +550,8 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	return srcErr
 }
 
-// evaluateEachSource runs eval for each selected source and joins the failures, so one error
-// cannot withhold fresh verdicts from the rest; an errored source keeps its prior verdict. A done
-// ctx stops the walk and names the skipped sources. perSource > 0 bounds each eval so a slow
-// one fails alone instead of consuming the run's deadline.
+// evaluateEachSource runs eval per selected source and joins failures so one error cannot withhold the others' verdicts (an errored source
+// keeps its prior). perSource > 0 bounds each eval; a done ctx names the skipped sources.
 func evaluateEachSource(ctx context.Context, catalogue []reconSource, only string, perSource time.Duration, eval func(context.Context, reconSource) error) error {
 	var errs []error
 	for i, src := range catalogue {
@@ -592,10 +582,8 @@ func evaluateEachSource(ctx context.Context, catalogue []reconSource, only strin
 	return errors.Join(errs...)
 }
 
-// orderForPass runs sources that re-verify from genesis after those resuming incrementally, so a
-// long re-verify cannot starve the cheap ones of a verdict. Within the from-genesis group the
-// census (SDEX) source runs last, just after any reproofOutlastsPass source, since its op
-// re-derive can outlast the whole pass.
+// orderForPass runs from-genesis re-verifies after incremental sources so a long one cannot starve the cheap ones; the census (SDEX)
+// source goes last, after any reproofOutlastsPass source.
 func orderForPass(catalogue []reconSource, prior map[string]priorProjection, priorWatermark map[string]uint32) []reconSource {
 	ordered := make([]reconSource, 0, len(catalogue))
 	var fromGenesis, heavyFromGenesis, censusFromGenesis []reconSource
@@ -614,10 +602,8 @@ func orderForPass(catalogue []reconSource, prior map[string]priorProjection, pri
 	return append(append(append(ordered, fromGenesis...), heavyFromGenesis...), censusFromGenesis...)
 }
 
-// projectionFloor is the projection reconcile floor for one source. In -pass mode it resumes from
-// the prior watermark, falling to genesis when there is none, when the prior verdict failed (the
-// watermark sits at tip, so the failing range would never be re-seen), or when the carry expired.
-// Outside -pass it is max(genesis, -from); projectionClaim still decides what is published.
+// projectionFloor is the reconcile floor: -pass resumes from the prior watermark, or genesis if none, the prior failed (watermark sits at
+// tip) or the carry expired; otherwise max(genesis, -from).
 func projectionFloor(genesis uint32, pass bool, prior priorProjection, priorWatermark uint32, fromLedger uint) uint32 {
 	if pass {
 		if !prior.known || !prior.ok || prior.evidenceExpired {
@@ -638,9 +624,8 @@ func projectionFloor(genesis uint32, pass bool, prior priorProjection, priorWate
 // cursor stops being a usable verdict tip: ~1h at [completeness.SlowestLedgerClose].
 const maxTipCursorLagLedgers uint32 = 600
 
-// tipFromLiveCursor resolves the verdict tip from the live ledgerstream cursor, refusing one the
-// network has provably left behind (ADR-0033). A frozen ingest would otherwise stamp a fresh
-// computed_at on a stale tip; refusing writes no snapshot, so verdicts age into the stale gate.
+// tipFromLiveCursor resolves the verdict tip from the live cursor, refusing one the network has left behind (ADR-0033): a frozen ingest
+// must not stamp a fresh computed_at on a stale tip.
 func tipFromLiveCursor(cur timescale.Cursor, now time.Time) (uint32, error) {
 	floor := completeness.NetworkTipLowerBound(cur.LastLedger, cur.UpdatedAt, now)
 	if lag := floor - cur.LastLedger; lag > maxTipCursorLagLedgers {
@@ -662,9 +647,7 @@ func verdictTipFromCursorRead(to uint32, cur timescale.Cursor, readErr error, no
 	return resolveVerdictTip(to, cur, now, allowFrozen)
 }
 
-// resolveVerdictTip picks the verdict tip. The frozen-cursor guard also applies to an explicit
-// -to, since the nightly wrapper passes one and would otherwise keep refreshing computed_at
-// against a stalled ingest.
+// resolveVerdictTip picks the verdict tip; the frozen-cursor guard also covers an explicit -to, which the nightly wrapper passes.
 func resolveVerdictTip(to uint32, cur timescale.Cursor, now time.Time, allowFrozen bool) (uint32, error) {
 	live, err := tipFromLiveCursor(cur, now)
 	switch {
@@ -676,9 +659,8 @@ func resolveVerdictTip(to uint32, cur timescale.Cursor, now time.Time, allowFroz
 	return live, nil
 }
 
-// sourceProjectionFloor is projectionFloor for one catalogue source. In -pass a genesis-claimed
-// source whose clean prior covered only above genesis re-verifies from genesis, since
-// projectionClaim would refuse to carry that prior.
+// sourceProjectionFloor is projectionFloor for one source; in -pass, a genesis-claimed source whose clean prior covered only above genesis
+// re-verifies from genesis (projectionClaim refuses that carry).
 func sourceProjectionFloor(src reconSource, pass bool, prior priorProjection, priorWatermark uint32, fromLedger uint) uint32 {
 	if pass && src.servedWindowReason == "" && prior.verifiedFrom > src.genesis {
 		return src.genesis
@@ -686,10 +668,8 @@ func sourceProjectionFloor(src reconSource, pass bool, prior priorProjection, pr
 	return projectionFloor(src.genesis, pass, prior, priorWatermark, fromLedger)
 }
 
-// validatePassFlags fails closed when -pass is combined with the per-source and per-chunk knobs it
-// replaces: -source and -from defeat the single full-range proof (-from also truncates the
-// substrate scan), and -skip-substrate and -skip-recognition carry a prior verdict instead of
-// proving it fresh. Rejecting them stops a partial pass from looking complete.
+// validatePassFlags rejects -pass with -source, -from, -skip-substrate or -skip-recognition: each defeats the single full-range proof or
+// carries a prior verdict, so a partial pass would look complete.
 func validatePassFlags(pass bool, source string, fromLedger uint, skipSubstrate, skipRecognition bool) error {
 	if !pass {
 		return nil
@@ -707,10 +687,8 @@ func validatePassFlags(pass bool, source string, fromLedger uint, skipSubstrate,
 	return nil
 }
 
-// runRecognitionScan runs the recognition audit (Claim 2a) and fails closed on a scan error: an
-// empty gap slice from a failed scan looks clean and would publish recognition_ok and complete
-// for every source. skip (-skip-recognition) returns neither gaps nor an error. The scan is a
-// func value so the contract is testable without a live ClickHouse or Postgres.
+// runRecognitionScan fails closed on a scan error: an empty gap slice from a failed scan looks clean and would publish recognition_ok and
+// complete for every source. scan is a func so the contract is testable.
 func runRecognitionScan(skip bool, scan func() ([]completeness.RecognitionGap, error)) ([]completeness.RecognitionGap, error) {
 	if skip {
 		return nil, nil
@@ -722,10 +700,8 @@ func runRecognitionScan(skip bool, scan func() ([]completeness.RecognitionGap, e
 	return gaps, nil
 }
 
-// loadRegistryOwners folds the protocol_contracts and soroswap-pair registries (the same sets the
-// recognition gate warms) into ownerOf, so topic-matched sources can attribute and fail
-// recognition on their own pools. It fails closed on a read error; the pure fold is
-// mergeRegistryOwners.
+// loadRegistryOwners folds the protocol_contracts and soroswap-pair registries into ownerOf so topic-matched sources fail recognition on
+// their own pools; fails closed on a read error. Pure fold: mergeRegistryOwners.
 func loadRegistryOwners(ctx context.Context, store *timescale.Store, ownerOf map[string][]string) error {
 	gatedChildren := make(map[string][]string)
 	for _, source := range pipeline.GatedSourceNames() {
@@ -747,10 +723,8 @@ func loadRegistryOwners(ctx context.Context, store *timescale.Store, ownerOf map
 	return nil
 }
 
-// mergeRegistryOwners folds registry-derived contract-to-source membership into ownerOf. A
-// contract already pinned by a source's static contractIDs gains no registry owner, so curated
-// sources keep exact attribution; a contract claimed by two registries gets both owners. The
-// "soroswap" literal mirrors the catalogue entry's name.
+// mergeRegistryOwners adds registry owners to ownerOf, except for contracts already pinned by a source's static contractIDs (curated
+// sources keep exact attribution). The "soroswap" literal mirrors the catalogue name.
 func mergeRegistryOwners(ownerOf map[string][]string, gatedChildren map[string][]string, soroswapPairs []string) {
 	pinned := make(map[string]bool, len(ownerOf))
 	for c := range ownerOf {
@@ -770,9 +744,8 @@ func mergeRegistryOwners(ownerOf map[string][]string, gatedChildren map[string][
 	}
 }
 
-// contractOwners maps each static contract ID to every source that pins it. Sources may share a
-// contract set (sep41_transfers and sep41_supply), and a single-owner map would leave one of
-// them unable to fail recognition.
+// contractOwners maps each static contract ID to every source pinning it; sources may share a set (sep41_transfers, sep41_supply), so a
+// single-owner map would leave one unable to fail recognition.
 func contractOwners(catalogue []reconSource) map[string][]string {
 	ownerOf := map[string][]string{}
 	for _, src := range catalogue {
@@ -789,9 +762,8 @@ func addOwner(ownerOf map[string][]string, contract, source string) {
 	}
 }
 
-// attributeRecognitionGaps splits the global recognition scan's gaps, using ownerOf, into a
-// per-source map (capping that source's recognition axis) and the unattributed remainder, which
-// flows to the system `recognition` snapshot. Pure.
+// attributeRecognitionGaps splits the global scan's gaps via ownerOf into per-source gaps (capping that source's recognition axis) and the
+// unattributed rest for the system `recognition` snapshot. Pure.
 func attributeRecognitionGaps(ownerOf map[string][]string, gaps []completeness.RecognitionGap) (map[string][]uint32, []completeness.RecognitionGap) {
 	recBySource := map[string][]uint32{}
 	var unattributed []completeness.RecognitionGap
@@ -810,10 +782,8 @@ func attributeRecognitionGaps(ownerOf map[string][]string, gaps []completeness.R
 	return recBySource, unattributed
 }
 
-// sourceRecognitionOK is the per-source Claim-2a verdict: it fails when a gap attributed to the
-// source falls at or after its genesis, returning those ledgers for the coverage watermark.
-// Under -skip-recognition no scan runs, so, like substrateClaim, it carries the prior verdict
-// only if known, clean and covering this run's tip; otherwise it fails closed.
+// sourceRecognitionOK is the per-source Claim-2a verdict: fails on a gap at or after genesis. Under -skip-recognition it carries the prior
+// verdict only if known, clean and covering this run's tip, else fails closed.
 func sourceRecognitionOK(genesis, hi uint32, attributed []uint32, skipRecognition bool, prior priorProjection) (bool, []uint32) {
 	ok := true
 	var problems []uint32
@@ -838,9 +808,8 @@ func sourceRecognitionOK(genesis, hi uint32, attributed []uint32, skipRecognitio
 	}
 }
 
-// recognitionClaim states what this run knows about the recognition axis, mirroring the
-// substrateClaim and projectionClaim carry contract: recOK alone cannot tell a clean scan from
-// -skip-recognition trusting the prior audit with no new evidence.
+// recognitionClaim states what this run knows about the recognition axis (mirrors substrateClaim/projectionClaim): recOK alone cannot tell
+// a clean scan from -skip-recognition trusting the prior audit.
 func recognitionClaim(recOK, skipRecognition bool) string {
 	switch {
 	case !recOK && skipRecognition:
@@ -854,9 +823,8 @@ func recognitionClaim(recOK, skipRecognition bool) string {
 	}
 }
 
-// projectionFoundProblem reports whether the CH aggregate reconcile FOUND a failure. It localises
-// none to a ledger, so the snapshot must carry this instead of FirstProblem; an unevaluated
-// projection, or one that failed only on scope, is not a find.
+// projectionFoundProblem reports whether the CH aggregate reconcile FOUND a failure; it localises none to a ledger, so the snapshot
+// carries this instead of FirstProblem. Unevaluated or scope-only failures are not a find.
 func projectionFoundProblem(delta int, blind completeness.BlindSpots, floorLoss []string) bool {
 	return delta != 0 || blind.Any() || len(floorLoss) > 0
 }
@@ -879,11 +847,8 @@ type projectionScope struct {
 // empty reports a degenerate scope, which reconcileTarget skips uncounted.
 func (sc projectionScope) empty() bool { return sc.From > sc.To }
 
-// targetScope derives one target's reconcile range from its own MIN(ledger) over [genesis, hi].
-// It is per target because each table's history starts at a different ledger. An empty target
-// floors at genesis, failing closed, so a wiped table reconciles expected>0 against served=0.
-// runFrom can only raise the scope; projectionClaim handles what that excludes. A deleted bottom
-// edge is caught by detectFloorLoss; reconciling below the served rows would invent gaps.
+// targetScope derives one target's reconcile range from its own MIN(ledger) over [genesis, hi]; an empty target floors at genesis (fail
+// closed). runFrom only raises it (projectionClaim handles that); reconciling below served rows invents gaps.
 func targetScope(servedMin uint32, haveServedRows bool, genesis, runFrom, hi uint32) projectionScope {
 	lo := servedMin
 	if !haveServedRows || lo < genesis {
@@ -898,10 +863,8 @@ func targetScope(servedMin uint32, haveServedRows bool, genesis, runFrom, hi uin
 	return projectionScope{From: lo, To: hi}
 }
 
-// projectionScopes resolves every target's reconcile scope and returns the scopes (parallel to
-// src.targets), servedFrom (the bottom of the range the served axis claims) and runFrom (where
-// this run's reconcile starts). servedFrom < runFrom is the case projectionClaim gates. It costs
-// one indexed MIN(ledger) per target.
+// projectionScopes resolves each target's reconcile scope (parallel to src.targets), servedFrom (bottom of the served axis's claim) and
+// runFrom (this run's start); servedFrom < runFrom is what projectionClaim gates. One indexed MIN(ledger) per target.
 func projectionScopes(ctx context.Context, store *timescale.Store, src reconSource, genesis, runFrom, hi uint32) (scopes []projectionScope, servedMins []servedFloor, servedFromOut, runFromOut uint32, err error) {
 	if len(src.targets) == 0 {
 		return nil, nil, genesis, genesis, nil
@@ -918,9 +881,8 @@ func projectionScopes(ctx context.Context, store *timescale.Store, src reconSour
 	return scopes, servedMins, servedFrom, runLo, nil
 }
 
-// scopesFromServed is the pure half of projectionScopes. A source without a servedWindowReason
-// scopes every target from genesis, so a never-projected prefix reconciles as expected>0 against
-// served=0 instead of the floor moving past it.
+// scopesFromServed is the pure half of projectionScopes. A source without a servedWindowReason scopes every target from genesis so a
+// never-projected prefix reconciles as expected>0 vs served=0.
 func scopesFromServed(src reconSource, servedMins []servedFloor, genesis, runFrom, hi uint32) (scopes []projectionScope, servedFrom, runFromOut uint32) {
 	scopes = make([]projectionScope, len(servedMins))
 	servedFrom, runLo := hi, hi
@@ -939,18 +901,15 @@ func scopesFromServed(src reconSource, servedMins []servedFloor, genesis, runFro
 	return scopes, servedFrom, runLo
 }
 
-// servedFloor is one target's live bottom edge, MIN(ledger) over the reconcile window, and
-// whether it held anything. Callers compare it with the durable floor, which targetScope cannot
-// do because it derives its floor from this same value.
+// servedFloor is one target's live MIN(ledger) over the reconcile window and whether it held anything; compared with the durable floor,
+// which targetScope cannot do (it derives its floor from this value).
 type servedFloor struct {
 	min     uint32
 	present bool
 }
 
-// detectFloorLoss compares each target's live bottom edge with the durable floor and returns a
-// detail line per target whose oldest rows are missing. Only a floor the served tier cannot
-// rewrite distinguishes deleted rows from never-projected ones. A target with no recorded floor
-// is skipped (a zero floor would flag every target); an empty target that had one is reported.
+// detectFloorLoss returns a detail line per target whose oldest rows are missing versus the durable floor, which the served tier cannot
+// rewrite. A target with no recorded floor is skipped (zero would flag all); an empty one that had a floor is reported.
 func detectFloorLoss(src reconSource, servedMins []servedFloor, floors map[string]timescale.CompletenessTargetFloor) []string {
 	var out []string
 	for i, sm := range servedMins {
@@ -980,10 +939,8 @@ func detectFloorLoss(src reconSource, servedMins []servedFloor, floors map[strin
 	return out
 }
 
-// floorsToRecord is the pure half of recordFloors: per target, the live MIN(ledger), only when the
-// reconcile scope reached that bottom edge (a clipped scan has no evidence below the clip, and
-// banking it would disarm detectFloorLoss). A target with no served rows is skipped: recording
-// genesis would make its first real row read as lost ledgers, which LEAST() can never undo.
+// floorsToRecord is the pure half of recordFloors: live MIN(ledger) per target, only when the scope reached the bottom edge (a clipped
+// scan would bank a floor and disarm detectFloorLoss). Empty targets are skipped: LEAST() could never undo a recorded genesis.
 func floorsToRecord(src reconSource, scopes []projectionScope, servedMins []servedFloor) []timescale.CompletenessTargetFloor {
 	out := make([]timescale.CompletenessTargetFloor, 0, len(src.targets))
 	for i, tgt := range src.targets {
@@ -1070,11 +1027,9 @@ type priorProjection struct {
 // expiry is staggered across nights.
 const maxEvidenceRefloorsPerPass = 3
 
-// expireStaleCarries marks as expired, oldest evidence first, at most maxEvidenceRefloorsPerPass
-// sources whose clean projection claim was last fully reconciled over maxAge ago (or never), and
-// returns their names. Sources that outlast the pass are never marked, because a deadline-cut
-// re-floor would repeat nightly without refreshing; the weekly -source run re-proves them.
-// maxAge <= 0 disables it.
+// expireStaleCarries marks, oldest first, at most maxEvidenceRefloorsPerPass sources whose clean claim was last fully reconciled over
+// maxAge ago (or never), returning their names. Sources that outlast the pass are never marked (a deadline-cut re-floor repeats nightly);
+// maxAge <= 0 disables.
 func expireStaleCarries(prior map[string]priorProjection, catalogue []reconSource, now time.Time, maxAge time.Duration) []string {
 	var expired []string
 	for _, src := range catalogue {
@@ -1119,10 +1074,8 @@ func projectionEvidence(projOK bool, servedFrom, runFrom uint32, prior priorProj
 	}
 }
 
-// buildPriorVerdicts turns the last snapshots into per-axis carry-forward inputs, plus each
-// source's last watermark (the -pass projection floor). Substrate and recognition reconcile to
-// the tip, but projection only to s.Watermark, so bounding its prior by s.Tip would carry a
-// clean claim over a band no run reconciled.
+// buildPriorVerdicts turns the last snapshots into per-axis carry inputs plus each source's last watermark (the -pass floor). Projection
+// is bounded by s.Watermark, not s.Tip: only substrate and recognition reconcile to the tip.
 func buildPriorVerdicts(snaps []timescale.CompletenessSnapshot) (priorProj, priorSub, priorRec map[string]priorProjection, priorWatermark map[string]uint32) {
 	priorProj = make(map[string]priorProjection, len(snaps))
 	priorSub = make(map[string]priorProjection, len(snaps))
@@ -1141,21 +1094,10 @@ func buildPriorVerdicts(snaps []timescale.CompletenessSnapshot) (priorProj, prio
 	return priorProj, priorSub, priorRec, priorWatermark
 }
 
-// projectionClaim gates what a run may publish on the served `complete` axis, given the range it
-// actually reconciled. An incremental run passes -from = min(watermark), which sits at tip when
-// the lake is clean, so without this gate it would never re-see a mismatch and complete=false
-// could regress to true.
-//
-// Rules, fail-closed, in order:
-//  1. A mismatch found by this run always fails.
-//  2. A run reconciling from at or below servedFrom covered the whole served range and may publish
-//     true: the only way a failing verdict is cleared.
-//  3. A partial run may carry a prior clean verdict for the prefix it skipped, only if the prior
-//     is contiguous (prior.tip+1 >= runFrom), reached down to servedFrom, and every present target
-//     has a proven floor (unprovenCarryTargets). Confirm, never upgrade.
-//  4. Anything else publishes false.
-//
-// The detail states the range verified; `complete=true` is not genesis-to-tip.
+// projectionClaim gates what a run may publish on the served `complete` axis: an incremental -from sits at tip, so complete=false could
+// regress to true. Fail-closed: a mismatch fails; reconciling from <= servedFrom may publish true (the only way a failing verdict
+// clears); a partial run carries a prior clean verdict only if contiguous (prior.tip+1 >= runFrom), reaching servedFrom, every present
+// target's floor proven; else false.
 func projectionClaim(servedFrom, runFrom, hi uint32, runClean bool, runDetail string, prior priorProjection, scope claimScope) (bool, string) {
 	if !runClean {
 		return false, "projection: " + runDetail
@@ -1180,9 +1122,8 @@ func projectionClaim(servedFrom, runFrom, hi uint32, runClean bool, runDetail st
 	}
 }
 
-// projectionWithoutEvidence refuses a clean claim that no served row stands behind. An empty
-// expectation matching an empty served tier looks like a real proof but is what a wrong or
-// redeployed contract identity produces. It returns vacuous=true with the reason.
+// projectionWithoutEvidence refuses a clean claim no served row stands behind: an empty expectation matching an empty served tier is what
+// a wrong or redeployed contract identity produces. Returns vacuous=true with the reason.
 func projectionWithoutEvidence(projOK bool, nTargets int, servedMins []servedFloor, genesis, hi uint32) (bool, string) {
 	if !projOK {
 		return false, ""
@@ -1201,11 +1142,8 @@ type verdictPublisher interface {
 	PublishCompletenessVerdict(ctx context.Context, snap timescale.CompletenessSnapshot, clearWindow *timescale.DirtyWindowClear) (timescale.VerdictPublication, error)
 }
 
-// publishSourceVerdict stores a verdict and, when this run earned the clear, discharges the
-// replay-rewind window in the same transaction, but only if the verdict was stored: the
-// never-regress guard can reject a low -to run, and the window must then survive to force the next
-// full run to re-reconcile rewritten rows. The clear is optimistic, so a concurrent replay's
-// re-record also survives.
+// publishSourceVerdict stores a verdict and, only if it was stored (the never-regress guard can reject a low -to run), discharges the
+// replay-rewind window in the same transaction; otherwise the window survives to force a full re-reconcile.
 func publishSourceVerdict(ctx context.Context, store verdictPublisher, snap timescale.CompletenessSnapshot, win timescale.ProjectionDirtyWindow, earned bool) (timescale.VerdictPublication, error) {
 	var clearWindow *timescale.DirtyWindowClear
 	if earned {
@@ -1227,21 +1165,10 @@ func verdictNotStoredNote(pub timescale.VerdictPublication, tip uint32, windowPe
 	return note
 }
 
-// substrateClaim gates the lake verdict on the range the scan covered; it is projectionClaim's
-// twin. The scan covers [scanFrom, hi] but the claim is about [genesis, hi], so a clean suffix
-// must not certify genesis-to-tip. The detail names the verified range and is served on
-// /v1/coverage.
-//
-// Rules, fail-closed, in order:
-//  1. A problem found by this run always fails.
-//  2. A scan starting at or below genesis covered the whole claim and may publish true; this is
-//     the only way a failing verdict clears.
-//  3. A partial run may carry a prior clean verdict only if it is contiguous with this run's
-//     window (prior.tip+1 >= scanFrom).
-//  4. Anything else publishes false.
-//
-// scanFrom > hi (-skip-substrate) falls through to rules 3 and 4, so a failing prior is never
-// upgraded without evidence.
+// substrateClaim gates the lake verdict on the scanned range (projectionClaim's twin): a clean suffix [scanFrom, hi] must not certify
+// genesis-to-tip. Fail-closed: a problem fails; a scan from <= genesis may publish true (the only way a failing verdict clears); a
+// partial run carries a prior clean verdict only if contiguous (prior.tip+1 >= scanFrom), as does scanFrom > hi (-skip-substrate); else
+// false.
 func substrateClaim(genesis, hi, scanFrom uint32, scanClean bool, problem uint32, prior priorProjection) (bool, string) {
 	if !scanClean {
 		return false, fmt.Sprintf("substrate: lake gap/break at %d", problem)
@@ -1266,11 +1193,9 @@ func substrateClaim(genesis, hi, scanFrom uint32, scanClean bool, problem uint32
 	}
 }
 
-// substrateFloorLoss is detectFloorLoss for the substrate axis: a carried prefix would otherwise
-// let a dropped partition of the oldest ledgers leave lake_complete asserting a hash-chained
-// archive from genesis. The floor is the fixed genesis, so floorHasProblem is a 1-ledger probe,
-// fired only when a prefix is carried. It sees a rising bottom edge, not an interior hole, which
-// needs a full re-scan.
+// substrateFloorLoss is detectFloorLoss for the substrate axis: a carried prefix would let a dropped partition of the oldest ledgers leave
+// lake_complete asserting a hash chain from genesis. floorHasProblem is a 1-ledger probe, fired only when a prefix is carried; it sees a
+// rising bottom edge, not an interior hole.
 func substrateFloorLoss(genesis, subScanFrom, floorProblem uint32, floorHasProblem bool) (uint32, bool, string) {
 	if subScanFrom <= genesis || !floorHasProblem {
 		return 0, false, ""
@@ -1288,10 +1213,8 @@ func (src reconSource) readsContractEvents() bool {
 	return !src.census && src.callDec == nil
 }
 
-// eventCensusLoss is the per-source verdict on the contract_events census: the first short
-// partition reaching [genesis, ∞) fails the source, at max(first event ledger, genesis) so
-// ComputeWatermark cannot drop it as below genesis. Substrate proves only stellar.ledgers, so
-// without this a dropped event partition would leave lake_complete true over unread events.
+// eventCensusLoss fails the source at max(first short event partition's ledger, genesis) (so ComputeWatermark cannot drop it as below
+// genesis). Substrate proves only stellar.ledgers, so a dropped event partition would otherwise leave lake_complete true.
 func eventCensusLoss(src reconSource, genesis uint32, shortfalls []clickhouse.EventCensusShortfall) (uint32, bool, string) {
 	if !src.readsContractEvents() {
 		return 0, false, ""
@@ -1309,11 +1232,9 @@ func eventCensusLoss(src reconSource, genesis uint32, shortfalls []clickhouse.Ev
 	return 0, false, ""
 }
 
-// lakeCoverageProblem is the numeric twin of substrateClaim: the ledger to inject into the
-// coverage watermark's problem set when the claim refuses an otherwise-clean suffix scan, so the
-// watermark does not read full coverage beside substrate_ok=false. It returns 0 when the claim
-// holds or the scan already found a more precise problem. A clean prior opens the unverified
-// band at prior.tip+1; a missing or failing prior floors at genesis.
+// lakeCoverageProblem is substrateClaim's numeric twin: the ledger injected into the coverage watermark's problem set when the claim
+// refuses a clean suffix scan, so coverage does not read full beside substrate_ok=false. 0 when the claim holds or the scan found a more
+// precise problem; else prior.tip+1 (clean prior) or genesis.
 func lakeCoverageProblem(genesis uint32, scanClean, substrateOK bool, prior priorProjection) uint32 {
 	if substrateOK || !scanClean {
 		return 0
@@ -1325,11 +1246,8 @@ func lakeCoverageProblem(genesis uint32, scanClean, substrateOK bool, prior prio
 	return floor
 }
 
-// reconcileProjectionAggregate is the ClickHouse-backed projection check (ADR-0033 Claim 2b). It
-// compares strict per-ledger counts, since a totals compare lets a real drop at one ledger net
-// against a phantom overcount elsewhere; sources with mismatched ledger keying opt out via
-// reconSource.aggregate. It returns the summed per-ledger deltas (0 = clean). The expected side
-// is derived once over the union of target scopes and clipped per target.
+// reconcileProjectionAggregate is the ClickHouse projection check (ADR-0033 Claim 2b), strict per ledger (totals let a drop net against a
+// phantom overcount); sources with mismatched keying opt out via reconSource.aggregate. Returns summed deltas (0 = clean).
 func reconcileProjectionAggregate(ctx context.Context, store *timescale.Store, chStreamer completeness.EventStreamer, chAddr string, src reconSource, scopes []projectionScope) (int, completeness.BlindSpots, string, error) {
 	if len(scopes) == 0 {
 		return 0, completeness.BlindSpots{}, "", nil
@@ -1361,10 +1279,8 @@ func reconcileProjectionAggregate(ctx context.Context, store *timescale.Store, c
 	return totalDelta, blind, strings.Join(details, "; "), nil
 }
 
-// expectedProjection re-derives the expected side of Claim 2b once over [lo, hi] and returns a
-// per-target accessor plus the blind spots hit. The event and ContractCall oracles can be blind;
-// a call whose Decode errors is missing from both the census and the ch-rebuild writer and nets
-// to zero. The SDEX census soft-fails per claim, so it cannot drop a row from one side only.
+// expectedProjection re-derives Claim 2b's expected side once over [lo, hi]: a per-target accessor plus blind spots. A ContractCall whose
+// Decode errors is missing from census and writer alike and nets to zero; the SDEX census soft-fails per claim.
 func expectedProjection(ctx context.Context, chStreamer completeness.EventStreamer, chAddr string, src reconSource, lo, hi uint32) (func(reconTarget) map[uint32]int, completeness.BlindSpots, error) {
 	switch {
 	case src.callDec != nil:
@@ -1421,17 +1337,10 @@ func expectedProjection(ctx context.Context, chStreamer completeness.EventStream
 	}
 }
 
-// gatedPrefilter builds the contract-id prefilter for a factory-gated source so the re-derive
-// reads only its gated contracts. The set is a superset of what the decoder can accept in
-// [lo,hi], so counts are unchanged and Matches() stays the final gate. It is the union of:
-//
-//   - (a) the decoder's gate after preseeding to lo (GatedContractSet), plus
-//   - (b) every child the lake announces through hi, walked on a throwaway decoder so the real
-//     stream's in-order seeding is undisturbed.
-//
-// Factory ids are always included so in-window children still self-seed. The walk must match
-// String topics as well as Symbols, and runs under completeness.Guard so a panicking creation
-// event becomes a blind spot.
+// gatedPrefilter builds the contract-id prefilter for a factory-gated source: a superset of what the decoder accepts in [lo,hi]
+// (Matches() stays the gate). It is the gate preseeded to lo (GatedContractSet) plus every child announced through hi, walked on a
+// throwaway decoder; factory ids always included. The walk must match String topics as well as Symbols, and runs under completeness.Guard
+// so a panic becomes a blind spot.
 func gatedPrefilter(ctx context.Context, chStreamer completeness.EventStreamer, src reconSource, hi uint32) ([]string, completeness.BlindSpots, error) {
 	set := make(map[string]struct{})
 	blind := completeness.NewBlindTracker()
@@ -1504,11 +1413,9 @@ func reconcileTarget(ctx context.Context, store *timescale.Store, src reconSourc
 	return d, detail, nil
 }
 
-// reDeriveSDEXCensusViaDecoder re-derives the expected SDEX trade count per ledger by running the
-// decoder over the lake's operations and counting distinct, valid, priceable trades (served rows
-// upsert, so a colliding op_index overwrites). One-side-zero fills are excluded here and from the
-// served count (reconTarget.countFilter), so the residual is only ops the served tier dropped.
-// Read-only; windowed to stay under the CH memory cap.
+// reDeriveSDEXCensusViaDecoder re-derives the expected SDEX trade count per ledger via the decoder, counting distinct valid priceable
+// trades (served rows upsert, so a colliding op_index overwrites). One-side-zero fills are excluded here and from the served count
+// (countFilter). Read-only.
 func reDeriveSDEXCensusViaDecoder(ctx context.Context, chAddr string, from, to uint32) (map[uint32]int, completeness.BlindSpots, error) {
 	out := make(map[uint32]int)
 	blind := completeness.NewBlindTracker()
@@ -1559,14 +1466,9 @@ func reDeriveSDEXCensusViaDecoder(ctx context.Context, chAddr string, from, to u
 	return out, blind.Result(), nil
 }
 
-// contractCallRowID is a ContractCall event's served-row identity: its table PK minus the
-// per-ledger constants. The auth tree surfaces one call at several CallPaths for co-signed or
-// nested-auth txs, and the served upsert dedups on these columns, so the census counts distinct
-// identities.
-//   - soroswap-router: PK (…, tx_hash, op_index, call_sig); callSig separates distinct swaps in
-//     one op while identical auth-tree duplicates share it. ts unused.
-//   - band: PK (…, tx_hash, op_index, ts); op_index is fanned per feed, so (tx, op, ts) is
-//     unique per update. callSig unused.
+// contractCallRowID is a ContractCall event's served-row identity (table PK minus per-ledger constants); the auth tree repeats a call
+// across CallPaths. soroswap-router PK: (..., tx_hash, op_index, call_sig), ts unused. band PK: (..., tx_hash, op_index, ts), op_index
+// fanned per feed, callSig unused.
 type contractCallRowID struct {
 	tx      string
 	op      uint32
@@ -1588,11 +1490,9 @@ func contractCallRowIdentity(ev consumer.Event) (contractCallRowID, bool) {
 	return contractCallRowID{}, false
 }
 
-// reDeriveContractCallCensus re-derives the expected row count per ledger for an event-less
-// ContractCall source, where it is the projection oracle. It counts distinct contractCallRowID
-// identities, not raw events, so auth-tree duplicates the served upsert collapses do not read as
-// a gap. It shares forEachContractCallEvent with the ch-rebuild writer so a re-verify of written
-// rows reaches a zero delta.
+// reDeriveContractCallCensus re-derives expected rows per ledger for an event-less ContractCall source, counting distinct
+// contractCallRowID so auth-tree duplicates the upsert collapses are no gap. Shares forEachContractCallEvent with the ch-rebuild writer
+// (zero-delta re-verify).
 func reDeriveContractCallCensus(ctx context.Context, chAddr, contractStrkey string, dec dispatcher.ContractCallDecoder, from, to uint32) (map[uint32]int, completeness.BlindSpots, error) {
 	seen := make(map[uint32]map[contractCallRowID]struct{})
 	blind, err := forEachContractCallEvent(ctx, chAddr, contractStrkey, dec, from, to, func(ledger uint32, ev consumer.Event) error {
@@ -1618,10 +1518,8 @@ func reDeriveContractCallCensus(ctx context.Context, chAddr, contractStrkey stri
 	return out, blind, nil
 }
 
-// forEachContractCallEvent streams the lake's InvokeContract ops touching contractStrkey, runs
-// dec over each op's auth-tree calls (as the live dispatcher does) and calls fn per decoded
-// event. It is the single decode path shared by the census and the ch-rebuild writer, so the
-// write path produces exactly what the census expects. Windowed to bound the tx IN-set.
+// forEachContractCallEvent streams the lake's InvokeContract ops for contractStrkey, runs dec over each op's auth-tree calls (as the live
+// dispatcher does) and calls fn per event. The single decode path shared with the ch-rebuild writer. Windowed to bound the tx IN-set.
 //
 // linear pipeline; splitting hurts the read (mirrors reDeriveSDEXCensusViaDecoder).
 //
@@ -1651,10 +1549,8 @@ func forEachContractCallEvent(ctx context.Context, chAddr, contractStrkey string
 	return blind.Result(), nil
 }
 
-// decodeContractCallTree decodes every call in one op's call tree that dec owns, forwarding
-// events to fn and recording decode failures on blind. It is split out so the accounting is
-// testable without a lake. The ch-rebuild writer shares it, so a malformed call is missing from
-// both the served tier and the census and would net to zero; hence the skip is counted.
+// decodeContractCallTree decodes every call in one op's tree that dec owns, recording decode failures on blind. The ch-rebuild writer
+// shares it, so a malformed call is missing from served tier and census alike and nets to zero; hence the skip is counted.
 func decodeContractCallTree(
 	op clickhouse.ContractCallOp,
 	calls []dispatcher.ContractCall,
@@ -1721,10 +1617,8 @@ func absDiff(a, b int) int {
 	return b - a
 }
 
-// projectionDelta compares one target's expected and served counts by ledger. The default is
-// strict per ledger, since a window-totals compare lets a real drop net against a phantom
-// elsewhere. An aggregate waiver nets only up to its boundary; one without a boundary reconciles
-// strict. It returns the sum of per-ledger deltas (0 = clean) and a detail string.
+// projectionDelta compares one target's expected and served counts strictly per ledger (totals let a drop net against a phantom). An
+// aggregate waiver nets only up to its boundary. Returns summed deltas (0 = clean) and a detail.
 func projectionDelta(src reconSource, table string, expected, actual map[uint32]int, lo, hi uint32) (int, string) {
 	w := src.aggregate
 	switch {
@@ -1830,16 +1724,13 @@ func countsAbove(m map[uint32]int, b uint32) map[uint32]int {
 	return out
 }
 
-// recognitionGlobalExcludeSyms is the topic exclusion for the global recognition census. It
-// must be FirehoseExcludeSyms, not the wider ClassicTokenTopic0Syms, which would hide the
-// Blend/Comet set_admin collision on the shared "POOL" topic. A var so tests can check the wiring.
+// recognitionGlobalExcludeSyms must be FirehoseExcludeSyms, not the wider ClassicTokenTopic0Syms, which would hide the Blend/Comet
+// set_admin collision on the shared "POOL" topic. A var so tests can check the wiring.
 var recognitionGlobalExcludeSyms = clickhouse.FirehoseExcludeSyms
 
-// computeRecognitionGapsCH is the ClickHouse recognition audit: distinct (contract, topic) shapes
-// from the lake run through the dispatcher's Recognize(), off the serving DB. The global scan
-// excludes FirehoseExcludeSyms (transfer/mint/burn), but watched SEP-41 contracts consume exactly
-// those topics, so watchedSep41RecognitionShapes re-adds them scoped to the watched set; they are
-// recognised only because buildCensusDispatcher also registers the sep41 event decoders.
+// computeRecognitionGapsCH is the ClickHouse recognition audit: distinct (contract, topic) shapes from the lake through the dispatcher's
+// Recognize(). The global scan excludes FirehoseExcludeSyms; watchedSep41RecognitionShapes re-adds them for the watched set (recognised
+// because buildCensusDispatcher registers sep41 decoders).
 func computeRecognitionGapsCH(ctx context.Context, cfg config.Config, chAddr string, gated map[string][]contractid.Option, from, tip uint32, soroswapOpts ...soroswap.DecoderOption) ([]completeness.RecognitionGap, error) {
 	disp, err := buildCensusDispatcher(cfg, gated, soroswapOpts...)
 	if err != nil {
@@ -1888,9 +1779,8 @@ func buildCensusDispatcher(cfg config.Config, gated map[string][]contractid.Opti
 	return disp, nil
 }
 
-// watchedSep41RecognitionShapes is the watched-set half of the recognition census: the topics
-// FirehoseExcludeSyms drops globally, restricted to watched_sep41_contracts, so a watched source
-// dropping its own event kinds still produces a gap. An empty watch list audits nothing.
+// watchedSep41RecognitionShapes is the watched-set half of the census: topics FirehoseExcludeSyms drops globally, restricted to
+// watched_sep41_contracts, so a watched source dropping its own event kinds still gaps. An empty watch list audits nothing.
 func watchedSep41RecognitionShapes(ctx context.Context, cfg config.Config, chAddr string, from, tip uint32) ([]clickhouse.TopicShape, error) {
 	watched := cfg.Supply.WatchedSEP41Contracts
 	if len(watched) == 0 {
@@ -1899,9 +1789,8 @@ func watchedSep41RecognitionShapes(ctx context.Context, cfg config.Config, chAdd
 	return clickhouse.DistinctTopicShapesForWatchedContracts(ctx, chAddr, from, tip, clickhouse.FirehoseExcludeSyms, watched)
 }
 
-// recognitionScanEmptyErr fails closed on a scan that read zero event shapes, since no samples
-// means no gaps and would read as genuinely clean. verify-recognition refuses the same vacuous
-// pass. It is reachable for any pre-Soroban range.
+// recognitionScanEmptyErr fails closed on a scan that read zero shapes (no samples would read as clean); verify-recognition refuses the
+// same vacuous pass. Reachable for any pre-Soroban range.
 func recognitionScanEmptyErr(nShapes int, from, tip uint32) error {
 	if nShapes > 0 {
 		return nil

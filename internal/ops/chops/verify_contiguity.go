@@ -23,11 +23,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// verifyContiguity is the verify-contiguity subcommand, a read-only ClickHouse check of the raw
-// lake (ADR-0034). Check 1: every ledger_seq in [-from,-to] is present in stellar.ledgers.
-// Check 2: every tx-bearing ledger has an entry_changes row at/above -ec-floor (0 derives it from
-// the lake, see resolveECFloor). The exit code is the failure count capped at 255; entries below
-// the floor are reported, never counted.
+// verifyContiguity is the read-only ClickHouse raw-lake check (ADR-0034): Check 1, every ledger_seq in [-from,-to] is in stellar.ledgers;
+// Check 2, every tx-bearing ledger has an entry_changes row at/above -ec-floor (0 derives it, see resolveECFloor). Exit code is the
+// failure count capped at 255; entries below the floor are reported, never counted.
 func verifyContiguity(args []string) error {
 	fs := flag.NewFlagSet("verify-contiguity", flag.ContinueOnError)
 	cfgPath := fs.String("config", "/etc/stellarindex.toml", "path to stellarindex.toml — used only to resolve the default -ch-addr (this tool reads ClickHouse only, never Postgres); a missing/unreadable file is tolerated when -ch-addr is passed explicitly")
@@ -141,9 +139,8 @@ func resolveECFloor(ctx context.Context, addr string, flagFloor, from, to uint32
 	return floor, nil
 }
 
-// autoECFloor is the auto -ec-floor: the lower edge of entry-change coverage,
-// clamped to -from. With no edge in range the floor is -from, so the whole
-// range is hard-gated (fail closed). Pure — unit-testable without a lake.
+// autoECFloor is the auto -ec-floor: the lower edge of entry-change coverage clamped to -from; with no edge in range it is -from, hard-
+// gating the whole range (fail closed). Pure.
 func autoECFloor(edge uint32, found bool, from uint32) uint32 {
 	if !found || edge < from {
 		return from
@@ -172,10 +169,7 @@ func resolveCHAddr(chAddrFlag, cfgPath string) string {
 	return defaultCHAddr
 }
 
-// toLedgerSeq safely narrows a uint64 flag value to the uint32 range
-// stellar.ledgers.ledger_seq actually uses, erroring on overflow instead of
-// silently wrapping (money/precision discipline applied to ledger
-// arithmetic, not just token amounts: never truncate silently).
+// toLedgerSeq narrows a uint64 flag to the uint32 range of stellar.ledgers.ledger_seq, erroring on overflow instead of wrapping.
 func toLedgerSeq(flagName string, v uint64) (uint32, error) {
 	if v > math.MaxUint32 {
 		return 0, fmt.Errorf("verify-contiguity: %s=%d exceeds a ledger sequence's uint32 range", flagName, v)
@@ -183,9 +177,8 @@ func toLedgerSeq(flagName string, v uint64) (uint32, error) {
 	return uint32(v), nil
 }
 
-// independentTipShortfallTolerance is the safety margin between the
-// independent tip and the lake's own max ledger before a verifier fails closed. It matches
-// run-compute-completeness.sh: a smaller shortfall is normal lag, not truncation.
+// independentTipShortfallTolerance is the margin between the independent tip and the lake's max ledger before a verifier fails closed;
+// matches run-compute-completeness.sh (a smaller shortfall is normal lag, not truncation).
 const independentTipShortfallTolerance = 100
 
 // independentTip is a tip reading from a source other than the table under audit. A bound taken
@@ -196,9 +189,8 @@ type independentTip struct {
 	err    error
 }
 
-// independentTips reads both independent tips. The ledgerstream cursor is
-// our own ingest of the same Galexie bucket, so it stalls with the lake when
-// Galexie does; the configured history archive keeps advancing through that.
+// independentTips reads both independent tips. The ledgerstream cursor stalls with the lake when Galexie does; the history archive keeps
+// advancing through that.
 func independentTips(ctx context.Context, cfgPath string) []independentTip {
 	cursor := independentTip{source: "ledgerstream cursor"}
 	archive := independentTip{source: "history archive"}
@@ -231,9 +223,8 @@ func ledgerstreamCursorTip(ctx context.Context, dsn string) (uint32, error) {
 // degrades to the warn-and-continue path instead of hanging the verifier.
 const historyArchiveTipTimeout = 30 * time.Second
 
-// historyArchiveTip reads the archive's root HAS currentLedger. It trails
-// the network tip by up to one checkpoint plus upload latency, so a lake
-// shortfall measured against it understates the real one.
+// historyArchiveTip reads the archive's root HAS currentLedger, which trails the network tip by up to one checkpoint plus upload latency,
+// so a shortfall measured against it is understated.
 func historyArchiveTip(ctx context.Context, archiveURL string) (uint32, error) {
 	if archiveURL == "" {
 		return 0, errors.New("stellar.history_archive_url is not set")
@@ -258,10 +249,8 @@ func historyArchiveTip(ctx context.Context, archiveURL string) (uint32, error) {
 	return has.CurrentLedger, nil
 }
 
-// resolveVerifyTo decides a verifier's resolved -to given the ClickHouse
-// lake's own max ledger and one independent tip, failing closed rather
-// than silently certifying a truncated lake as PASSED. Pure —
-// no I/O — so it is unit-testable without ClickHouse or Postgres.
+// resolveVerifyTo decides a verifier's resolved -to from the lake's max ledger and one independent tip, failing closed rather than
+// certifying a truncated lake as PASSED. Pure.
 func resolveVerifyTo(toolName, tipSource string, chMax, independentTip uint32) (uint32, error) {
 	if independentTip > chMax && independentTip-chMax > independentTipShortfallTolerance {
 		return 0, fmt.Errorf("%s: ClickHouse lake max ledger %d is %d ledger(s) short of the independent tip %d (%s) — refusing to certify a truncated lake as PASSED; pass -to explicitly to override",
@@ -270,9 +259,8 @@ func resolveVerifyTo(toolName, tipSource string, chMax, independentTip uint32) (
 	return chMax, nil
 }
 
-// resolveVerifyToTips applies resolveVerifyTo against every tip that could
-// be read. An unreadable tip is warned about, never fatal, so offline runs
-// still work; with none readable the bound is ClickHouse's own max.
+// resolveVerifyToTips applies resolveVerifyTo to every readable tip. An unreadable tip is warned about, never fatal (offline runs work);
+// with none readable the bound is ClickHouse's own max.
 func resolveVerifyToTips(toolName string, chMax uint32, tips []independentTip, warn io.Writer) (uint32, error) {
 	checked := 0
 	for _, tip := range tips {
@@ -292,10 +280,8 @@ func resolveVerifyToTips(toolName string, chMax uint32, tips []independentTip, w
 	return chMax, nil
 }
 
-// resolveToSeq implements "-to 0 means auto", bounding the resolved range
-// to what ClickHouse actually holds while failing closed if that is a
-// real shortfall against any independently-sourced tip (see
-// resolveVerifyToTips).
+// resolveToSeq implements "-to 0 means auto": bounded by what ClickHouse holds, failing closed on a real shortfall against any independent
+// tip (resolveVerifyToTips).
 func resolveToSeq(ctx context.Context, toolName, cfgPath, addr string, to uint64) (uint32, error) {
 	if to != 0 {
 		return toLedgerSeq("-to", to)
@@ -307,9 +293,7 @@ func resolveToSeq(ctx context.Context, toolName, cfgPath, addr string, to uint64
 	return resolveVerifyToTips(toolName, chMax, independentTips(ctx, cfgPath), os.Stderr)
 }
 
-// checkFieldValue renders one verify-contiguity summary field: "SKIPPED"
-// when the check that produces it was not requested via -check, else the
-// count. Pure — unit-testable without a live lake.
+// checkFieldValue renders one verify-contiguity summary field: "SKIPPED" when its check was not requested via -check, else the count.
 func checkFieldValue(ran bool, v uint64) string {
 	if !ran {
 		return "SKIPPED"
@@ -317,9 +301,7 @@ func checkFieldValue(ran bool, v uint64) string {
 	return fmt.Sprintf("%d", v)
 }
 
-// contiguityChecksRunLabel renders the -check tokens that actually ran,
-// for the summary line's checks_run= field. Pure — unit-testable without
-// a live lake.
+// contiguityChecksRunLabel renders the -check tokens that ran, for the summary's checks_run= field.
 func contiguityChecksRunLabel(ledgers, entryChanges bool) string {
 	var ran []string
 	if ledgers {
@@ -338,10 +320,8 @@ func contiguityChecksRunLabel(ledgers, entryChanges bool) string {
 // PARTITION BY intDiv(ledger_seq, 1000000) so each window touches one partition.
 const contiguityBucketStride = 1_000_000
 
-// contiguityGapRangeCap bounds how many individual gap ranges Check 1's
-// finer pass will enumerate across the whole run — a lake with millions of
-// missing ledgers (e.g. -from/-to spanning an unbackfilled region) must
-// never turn this report into an unbounded print loop.
+// contiguityGapRangeCap bounds the gap ranges Check 1's finer pass enumerates across the run, so millions of missing ledgers cannot become
+// an unbounded print loop.
 const contiguityGapRangeCap = 200
 
 // runLedgerContiguityCheck is Check 1. It runs one cheap whole-range query and pays for the
@@ -403,10 +383,8 @@ func runLedgerContiguityCheck(ctx context.Context, addr string, from, to uint32)
 	return missingTotal, nil
 }
 
-// ledgerCheckOKLine is Check 1's no-gap verdict. It claims "exactly once"
-// only when count() agrees with uniqExact; otherwise it names the un-merged
-// duplicate rows (ReplacingMergeTree collapses them on merge and readers
-// dedupe with FINAL), which are informational, not a gap. Pure.
+// ledgerCheckOKLine is Check 1's no-gap verdict. It claims "exactly once" only when count() agrees with uniqExact; otherwise it names the
+// un-merged ReplacingMergeTree duplicate rows (readers dedupe with FINAL), informational, not a gap.
 func ledgerCheckOKLine(duplicateRows uint64) string {
 	if duplicateRows == 0 {
 		return "check 1: OK — every ledger present exactly once"
@@ -425,9 +403,8 @@ func (g gapRange) Count() uint64 {
 	return uint64(g.To-g.From) + 1
 }
 
-// groupMissingIntoRanges collapses sorted ascending missing ledger_seq values into [From,To]
-// ranges, capped at capRanges. truncated reports more ranges than the cap, so the caller never
-// silently under-reports.
+// groupMissingIntoRanges collapses sorted missing ledger_seq values into [From,To] ranges capped at capRanges; truncated reports more
+// ranges than the cap so callers never under-report silently.
 func groupMissingIntoRanges(missing []uint32, capRanges int) (ranges []gapRange, truncated bool) {
 	i := 0
 	for i < len(missing) {
@@ -511,9 +488,8 @@ func ecFloorSegments(from, to, ecFloor uint32) (pendingFrom, pendingTo uint32, h
 	return pendingFrom, pendingTo, hasPending, gatedFrom, gatedTo, hasGated
 }
 
-// formatCoverageLine renders one window's report line for both checks; tag carries the verdict.
-// missing saturates at zero like clickhouse.ECWindowCoverage.Missing(), so a present count above
-// expected cannot wrap the uint64.
+// formatCoverageLine renders one window's line for both checks; missing saturates at zero like clickhouse.ECWindowCoverage.Missing(), so
+// present above expected cannot wrap the uint64.
 func formatCoverageLine(from, to uint32, expected, present uint64, tag string) string {
 	var missing uint64
 	if present < expected {

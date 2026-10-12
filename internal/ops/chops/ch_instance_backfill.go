@@ -10,13 +10,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// chInstanceBackfill fills stellar.contract_instance_changes (the per-contract instance-executable
-// timeline behind the explorer's code-history read) from ledger_entry_changes history in windowed,
-// resumable INSERT...SELECT chunks. The contract_instance_changes_mv view covers everything ingested
-// after the DDL applies; this covers the history behind it, and MUST run to completion promptly
-// because the reader trusts a present, non-empty index as complete. Cautions as for the sibling
-// backfills: serialize, run under run-heavy-job.sh, resume with the printed -from; a bare
-// invocation is refused without -from/-to or -full.
+// chInstanceBackfill fills stellar.contract_instance_changes from ledger_entry_changes history in windowed, resumable INSERT...SELECT
+// chunks (the MV covers later rows). MUST run to completion promptly: the reader trusts a present, non-empty index as complete. Serialize
+// under run-heavy-job.sh.
 func chInstanceBackfill(args []string) error {
 	fs, gate := opsutil.NewMutatingFlagSet("ch-instance-backfill")
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
@@ -60,14 +56,12 @@ func chInstanceBackfill(args []string) error {
 		})
 }
 
-// instanceGenesisFrom is the highest -from that still counts as a genesis
-// start (ledger 1 is never in a lake; the flag defaults to 2). A resumed -from N
-// run never marks: nothing proves an earlier run filled [2, N), so re-run from 2.
+// instanceGenesisFrom is the highest -from still counted as a genesis start (ledger 1 is never in a lake). A resumed
+// -from N run never marks: nothing proves an earlier run filled [2, N).
 const instanceGenesisFrom = 2
 
-// instanceMVSettle is how long the view must have existed before the run. Sink
-// writes stellar.ledgers last, so a view born mid-flush can miss a ledger the
-// backfill's tip does not yet include.
+// instanceMVSettle is how long the view must have existed: Sink writes stellar.ledgers last, so a view born mid-flush
+// can miss a ledger the backfill's tip does not yet include.
 const instanceMVSettle = 10 * time.Minute
 
 // Seams so the watermark decision is testable without a live lake.
@@ -78,11 +72,9 @@ var (
 	resolveInstanceTop      = resolveBackfillTop
 )
 
-// runInstanceBackfill fills [from, last] and records the genesis watermark only when that claim is
-// provable; otherwise the reader keeps its scan (a wrong "no history" is worse than a slow one).
-// The mark needs: a genesis start, no explicit -to, the same settled view before and after the
-// run, and a contiguous tip at or above the raw lake tip read first. confirm gets the resolved top
-// and reports whether to write.
+// runInstanceBackfill fills [from, last] and records the genesis watermark only when provable (a wrong "no history" is worse than a slow
+// scan): a genesis start, no explicit -to, the same settled view before and after, and a contiguous tip at or above the raw lake tip read
+// first.
 func runInstanceBackfill(ctx context.Context, addr, table string, from, toFlag, window uint32,
 	confirm func(last uint32) bool, logf func(string, ...any),
 ) error {

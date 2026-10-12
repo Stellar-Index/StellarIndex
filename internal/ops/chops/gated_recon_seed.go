@@ -9,11 +9,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// preseedFactoryChildren seeds a factory-anchored source's contractid.Registry by decoding the
-// factory's creation events from genesis up to `to` (idempotent; no-op for non-gated sources).
-// A sub-range re-derive would otherwise drop every earlier child's events and report a false
-// "missing rows" delta. It reads the ClickHouse lake. A creation event whose decoder panics
-// (completeness.Guard) is returned as a blind spot.
+// preseedFactoryChildren seeds a factory-anchored source's contractid.Registry from genesis to `to` (idempotent); a sub-range re-derive
+// would otherwise drop earlier children's events and report false "missing rows". A creation event whose decoder panics
+// (completeness.Guard) is a blind spot.
 func preseedFactoryChildren(ctx context.Context, es completeness.EventStreamer, src reconSource, to uint32) (completeness.BlindSpots, error) {
 	if len(src.factories) == 0 || src.dec == nil {
 		return completeness.BlindSpots{}, nil
@@ -51,9 +49,8 @@ func preseedFactoryChildren(ctx context.Context, es completeness.EventStreamer, 
 	return blind.Result(), nil
 }
 
-// preseedResultMessage reports a preseed walk's outcome, including zero. Zero over a non-empty
-// window is suspicious: an empty registry makes the gated Matches() reject every real child's
-// events, which the re-derive then reports as missing rows rather than a decoder-blind gap.
+// preseedResultMessage reports a preseed outcome, including zero: over a non-empty window an empty registry makes gated Matches() reject
+// every child, which the re-derive then reports as missing rows rather than a decoder-blind gap.
 func preseedResultMessage(name string, seeded int) string {
 	if seeded > 0 {
 		return fmt.Sprintf("verify-reconciliation: pre-seeded %d %s factory children (gate registry)\n", seeded, name)

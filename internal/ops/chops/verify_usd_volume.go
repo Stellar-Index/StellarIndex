@@ -19,10 +19,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// verifyUSDVolume checks the VALUE of usd_volume; the standing alerts only check coverage. Tiers
-// 1/2/2b are exact rescalings of a USD-pegged leg, so any mismatch fails the run. Tiers 3/4 are
-// legitimately inexact and their sums are printed, not judged. Read-only against Postgres; exit
-// is non-zero only for an exact-tier violation, so a clean run says nothing about tier 3/4.
+// verifyUSDVolume checks the VALUE of usd_volume (alerts only check coverage). Tiers 1/2/2b are exact rescalings of a USD-pegged leg, so
+// any mismatch fails the run; tiers 3/4 are inexact and only printed. Read-only against Postgres.
 func verifyUSDVolume(args []string) error {
 	fs := flag.NewFlagSet("verify-usd-volume", flag.ContinueOnError)
 	cfgPath := fs.String("config", "/etc/stellarindex.toml", "path to stellarindex.toml (Postgres DSN + the operator's USD peg list)")
@@ -78,31 +76,24 @@ func verifyUSDVolume(args []string) error {
 	return nil
 }
 
-// xlmBaseBoundTolerance is the relative tolerance of the XLM-base bound: stored Σusd_volume must
-// land within [1-tol, 1+tol] of Σbase_amount/1e7 times the day's XLM/USD VWAP. It is a sanity
-// bound, not an identity.
-//
-// Trades are anchored at their own minute's price and the bound at the day VWAP, so honest days
-// drift (worst measured 1.2206). Tightening below ~1.25 without a notional floor makes false
-// fires routine. A breach where stored and expected both round to $0.00 is exempt.
+// xlmBaseBoundTolerance: stored Σusd_volume must be within [1-tol, 1+tol] of Σbase_amount/1e7 × the day's XLM/USD VWAP; a bound, not an
+// identity. Trades price per minute, the bound at day VWAP, so honest days drift (worst 1.2206); below ~1.25 needs a notional floor.
+// $0.00 both sides is exempt.
 const xlmBaseBoundTolerance = 0.30
 
 // xlmBaseBoundDustCeiling is half a cent: below it a value renders as
 // $0.00, and a ratio between two such values is sub-cent quantisation.
 var xlmBaseBoundDustCeiling = big.NewRat(1, 200)
 
-// xlmBaseBoundIsDust reports whether both sides of a bound comparison
-// round to $0.00. It deliberately requires BOTH: a $160 group stored at
-// $0.0002, or a $0.001 group stored at $5, is a valuation error at any
-// size and must still count.
+// xlmBaseBoundIsDust reports whether both sides round to $0.00. It requires BOTH: a $160 group stored at $0.0002, or $0.001 stored at $5,
+// is a valuation error at any size.
 func xlmBaseBoundIsDust(stored, expected *big.Rat) bool {
 	return new(big.Rat).Abs(stored).Cmp(xlmBaseBoundDustCeiling) < 0 &&
 		new(big.Rat).Abs(expected).Cmp(xlmBaseBoundDustCeiling) < 0
 }
 
-// xlmBaseLegScale returns the denominator that lifts a raw XLM base-amount sum to whole XLM. The
-// scale is a connector property: DEX rows stamp 1e7, CEX rows 1e8, FX pollers 1e6. It uses the
-// same subclass dispatch as the insert path's usdVolumeDecimals.
+// xlmBaseLegScale returns the denominator lifting a raw XLM base-amount sum to whole XLM; the scale is a connector property (DEX 1e7, CEX
+// 1e8, FX 1e6), dispatched like the insert path's usdVolumeDecimals.
 func xlmBaseLegScale(source string) *big.Rat {
 	baseDecimals := int64(7) // on-chain stroop scale
 	md := external.Lookup(source)
@@ -226,10 +217,8 @@ func newTierRollup() *usdVolumeTierRollup {
 	return &usdVolumeTierRollup{sumUSD: new(big.Rat), worstDelta: new(big.Rat)}
 }
 
-// classifyExactTierGroups classifies one day's groups and checks each exact-tier identity,
-// printing diagnostics. It returns the violation, judged and unparseable counts plus the tier
-// rollups. The caller must fold parseErrs into violations so a mis-spelled asset id cannot leave
-// a clean exit.
+// classifyExactTierGroups classifies one day's groups and checks each exact-tier identity, returning violation, judged and unparseable
+// counts plus tier rollups. The caller must fold parseErrs into violations so a mis-spelled asset id cannot leave a clean exit.
 //
 //nolint:gocognit // one linear pass: classify → accumulate → judge exact tiers → print.
 func classifyExactTierGroups(

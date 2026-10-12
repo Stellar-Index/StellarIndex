@@ -14,20 +14,16 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// sdexServedPK is the served trades primary key minus its per-ledger
-// constants: source is always "sdex" and ts is the ledger close time, so
-// within a ledger the ON CONFLICT (source, ledger, tx_hash, op_index, ts)
-// key reduces to (tx_hash, op_index). The 1024 op_index fanout stride
-// collides for >1024-claim ops, and the served tier de-dups those.
+// sdexServedPK is the served trades primary key minus its per-ledger constants (source "sdex", ts = close time): within a ledger ON
+// CONFLICT reduces to (tx_hash, op_index). The 1024 op_index fanout stride collides for >1024-claim ops; the served tier de-dups those.
 type sdexServedPK struct {
 	tx string
 	op uint32
 }
 
-// sdexServedCensus is the per-ledger set of priceable SDEX trades (decoder output that passes
-// canonical.Trade.Validate and is not a one-side-zero fill), keyed by the served primary key; the
-// served side counts with the matching sdexPriceableFilter. It is the only SDEX projection oracle,
-// because the ledger_ingest_log census keeps one-side-zero fills.
+// sdexServedCensus is the per-ledger set of priceable SDEX trades (passes canonical.Trade.Validate, not a one-side-zero fill) keyed by
+// served primary key; the only SDEX projection oracle, since the ledger_ingest_log census keeps one-side-zero fills. Served side counts via
+// sdexPriceableFilter.
 type sdexServedCensus map[uint32]map[sdexServedPK]struct{}
 
 func (c sdexServedCensus) add(outs []consumer.Event) {
@@ -53,10 +49,8 @@ func (c sdexServedCensus) addTo(out map[uint32]int) {
 	}
 }
 
-// sdexProjectionExpected is the SDEX expected-row oracle for callers that do
-// not prove the lake substrate themselves: it refuses a range whose lake
-// ledgers are not contiguous and hash-linked (a missing ledger would read as
-// zero expected trades) and otherwise re-derives through the served
+// sdexProjectionExpected is the SDEX expected-row oracle for callers that don't prove the lake substrate: it refuses a range whose lake
+// ledgers are not contiguous and hash-linked (a missing ledger would read as zero expected trades), else re-derives through the served
 // projection.
 func sdexProjectionExpected(ctx context.Context, chAddr string, lo, hi uint32) (map[uint32]int, completeness.BlindSpots, error) {
 	problem, has, detail, err := clickhouse.SubstrateProblem(ctx, chAddr, lo, hi)

@@ -35,11 +35,9 @@ const (
 	hotArchiveMismatchSample = 20
 )
 
-// verifyNetworkState compares the lake's derived current state with state the network publishes:
-// hot-archive entries against ledger_entries_current (upgrades can rewrite them without any
-// ledger-meta change), and native XLM holdings plus fee_pool against total_coins exactly.
-// Exit code counts mismatches (a run that compared nothing counts 1), capped at 255; keys the lake
-// lacks or that changed after the checkpoint are coverage, not faithfulness.
+// verifyNetworkState compares the lake's derived state with network-published state: hot-archive entries vs ledger_entries_current, and
+// native XLM holdings plus fee_pool vs total_coins exactly. Exit code counts mismatches (comparing nothing counts 1), capped at 255; keys
+// the lake lacks or that changed after the checkpoint are coverage, not faithfulness.
 func verifyNetworkState(args []string) error {
 	fs := flag.NewFlagSet("verify-network-state", flag.ContinueOnError)
 	cfgPath := fs.String("config", "/etc/stellarindex.toml", "path to stellarindex.toml — the network passphrase and history archive URL come from it, so it must load")
@@ -151,10 +149,8 @@ func runHotArchiveCheck(ctx context.Context, reader *clickhouse.NetworkStateRead
 	return &n, nil
 }
 
-// pickHotArchiveCheckpoint returns want when it is a checkpoint both sides
-// have reached, or (want=0) the newest such checkpoint. A checkpoint above
-// the lake tip would compare the network's state with a lake that has not
-// yet ingested the ledgers that produced it.
+// pickHotArchiveCheckpoint returns want when both sides have reached it, or (want=0) the newest such checkpoint; one above the lake tip
+// would compare against a lake that has not ingested its ledgers.
 func pickHotArchiveCheckpoint(cm historyarchive.CheckpointManager, want uint64, lakeTip, archTip uint32) (uint32, error) {
 	limit := min(lakeTip, archTip)
 	if want == 0 {
@@ -201,9 +197,8 @@ type archivedEntry struct {
 	data []byte // the archived entry's LedgerEntryData XDR
 }
 
-// reconcileHotArchive compares each archived entry with the lake's row for
-// its key, batching lookups per entry type. open builds the entry iterator
-// on a context this function cancels before any early return.
+// reconcileHotArchive compares each archived entry with the lake's row for its key, batching lookups per entry type. open builds the
+// iterator on a context this function cancels before any early return.
 func reconcileHotArchive(ctx context.Context, open func(context.Context) iter.Seq2[xdr.LedgerEntry, error], checkpoint uint32, lookup hotArchiveLookup) (hotArchiveCounts, error) {
 	n := hotArchiveCounts{checkpoint: checkpoint}
 	ictx, cancel := context.WithCancel(ctx)

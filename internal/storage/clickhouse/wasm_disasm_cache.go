@@ -5,9 +5,8 @@ import (
 	"time"
 )
 
-// wasmDisasmCacheMax bounds resident entries. Disassembly text is the biggest
-// per-entry payload this reader caches, so the cap is small; on overflow the
-// oldest entry is evicted.
+// wasmDisasmCacheMax bounds resident entries. Disassembly text is the biggest per-entry payload this reader caches, so the cap is small;
+// on overflow the oldest entry is evicted.
 const wasmDisasmCacheMax = 256
 
 // wasmDisasmEntry is one contract's cached disassembly stage output.
@@ -20,9 +19,8 @@ type wasmDisasmEntry struct {
 	cachedAt time.Time
 }
 
-// wasmDisasmCache is a bounded, no-TTL cache of wabt output keyed by wasm hash: the bytes behind
-// a content-addressed hash never change, so the cap only bounds memory. Only SUCCESSFUL runs are
-// cached (see buildWasmDisassembly), so a transient failure is retried, not pinned.
+// wasmDisasmCache is a bounded, no-TTL cache of wabt output keyed by wasm hash (content-addressed bytes never change). Only SUCCESSFUL
+// runs are cached (see buildWasmDisassembly), so a transient failure is retried, not pinned.
 type wasmDisasmCache struct {
 	mu      sync.Mutex
 	entries map[string]wasmDisasmEntry
@@ -82,10 +80,8 @@ type wasmModuleEntry struct {
 	cachedAt  time.Time
 }
 
-// wasmModuleCache memoises the contract_code blob per wasm hash so a repeat
-// request skips the lake read and the export parse. Like wasmDisasmCache it
-// has no TTL: the bytes behind a content-addressed hash never change. A lake
-// miss is not cached, so code that lands later is found on the next request.
+// wasmModuleCache memoises the contract_code blob per wasm hash (content-addressed, so no TTL) to skip the lake read and export parse. A
+// lake miss is not cached, so code that lands later is found on the next request.
 type wasmModuleCache struct {
 	mu      sync.Mutex
 	entries map[string]wasmModuleEntry

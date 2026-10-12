@@ -10,11 +10,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// chParticipantBackfill fills the non-source side of stellar.operation_participants for historical
-// ledgers by re-deriving from stellar.operations.body_xdr inside the lake. It shares the live
-// derivation (clickhouse.operationParticipantRows) and writes only non-source participants, since
-// source rows too would double-count each op. Windowed, resumable and idempotent; run it under
-// /usr/local/sbin/run-heavy-job.sh, as heavy CH load can wedge the log channel.
+// chParticipantBackfill fills the non-source side of stellar.operation_participants by re-deriving from stellar.operations.body_xdr; source
+// rows are excluded as they would double-count each op. Windowed, resumable, idempotent; run under run-heavy-job.sh (heavy CH load can
+// wedge the log channel).
 func chParticipantBackfill(args []string) error {
 	fs := flag.NewFlagSet("ch-participant-backfill", flag.ContinueOnError)
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
@@ -62,9 +60,8 @@ func chParticipantBackfill(args []string) error {
 	return enforceDecodeBudget("ch-participant-backfill", stats.DecodeErrors, *maxDecodeErrs)
 }
 
-// participantBackfillSummary is the run's final stderr line. Participants
-// counts rows derived at scan time, so it is only a written count on a
-// clean run; a failed run says so and defers to the error's resume point.
+// participantBackfillSummary is the final stderr line. Participants counts rows derived at scan time, so it is a
+// written count only on a clean run; a failed run says so and defers to the error's resume point.
 func participantBackfillSummary(stats clickhouse.ParticipantBackfillStats, dryRun bool, berr error) string {
 	if berr != nil {
 		return fmt.Sprintf("ch-participant-backfill: FAILED — scanned %d ops, derived %d participant rows, not all confirmed written (%d decode-errors); re-run with the -from and -to resume point in the error",
@@ -86,10 +83,9 @@ var backfillOperationParticipants = clickhouse.BackfillOperationParticipants
 // bound resolution is testable without a live lake.
 var minParticipantLedger = clickhouse.MinParticipantLedger
 
-// resolveParticipantTo resolves the inclusive upper ledger, always within the lake's contiguous
-// tip from `from` (resolveBackfillTop), since a hole read across is never derived. toFlag==0
-// targets the live-capture floor minus one, or the tip when the table is empty. That floor is
-// live only on a first run, so a resumed run must carry the -to its first run printed.
+// resolveParticipantTo resolves the inclusive upper ledger within the contiguous tip (resolveBackfillTop). toFlag==0 targets the
+// live-capture floor minus one, or the tip when the table is empty; that floor is live only on a first run, so a resumed run must carry the
+// -to the first printed.
 func resolveParticipantTo(ctx context.Context, chAddr string, from, toFlag uint32) (uint32, error) {
 	if toFlag != 0 {
 		return resolveBackfillTop(ctx, chAddr, from, toFlag)

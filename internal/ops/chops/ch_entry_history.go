@@ -19,9 +19,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/xdrjson"
 )
 
-// ch-entry-history derives the account- and asset-keyed entry-change history from one decode pass
-// of stellar.ledger_entry_changes, windowed and resumable via stellar.entry_history_watermark.
-// Without -write it only reports the rows and bytes each entry type would add.
+// ch-entry-history derives the account- and asset-keyed entry-change history from one decode pass of
+// stellar.ledger_entry_changes, windowed and resumable via stellar.entry_history_watermark; without -write it only reports sizes.
 func chEntryHistory(args []string) error {
 	fs := flag.NewFlagSet("ch-entry-history", flag.ContinueOnError)
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
@@ -97,9 +96,8 @@ var (
 	entryHistoryFlushRowCount = 50_000
 )
 
-// deriveEntryHistoryWindow projects one window and returns the rows written
-// (or, on a dry run, the rows that would be) and the distinct ledgers it read
-// transaction-scoped changes for — the watermark's coverage proof.
+// deriveEntryHistoryWindow projects one window, returning rows written (or that would be) and the distinct ledgers it
+// read transaction-scoped changes for, the watermark's coverage proof.
 func deriveEntryHistoryWindow(ctx context.Context, addr string, lo, hi uint32, dryRun bool, st *entryHistoryStats) (int64, uint64, error) {
 	p := newEntryHistoryProjector()
 	var (
@@ -155,9 +153,8 @@ func deriveEntryHistoryWindow(ctx context.Context, addr string, lo, hi uint32, d
 	return written, txLedgers, nil
 }
 
-// entryHistoryProjector turns source rows into history rows. It needs source sort-key order:
-// core emits each update's and removal's 'state' pre-image just before it in the same
-// (tx, op_index) group, so only the latest pre-image per key in the current group is kept.
+// entryHistoryProjector turns source rows into history rows and needs source sort-key order: core emits each update's
+// and removal's 'state' pre-image just before it in the same (tx, op_index) group, so only the latest per key is kept.
 type entryHistoryProjector struct {
 	ledger uint32
 	tx     string
@@ -248,9 +245,8 @@ func entryFields(e *xdr.LedgerEntry) (map[string]any, error) {
 	return f, nil
 }
 
-// changedFields names the decoded fields an update or restore altered. With
-// no pre-image to compare against, an update reports every field rather than
-// none, so a field-filtered history read can never miss it.
+// changedFields names the fields an update or restore altered; with no pre-image it reports every field, so a
+// field-filtered history read never misses it.
 func changedFields(changeType string, prev, post map[string]any) []string {
 	if changeType != "updated" && changeType != "restored" {
 		return nil
@@ -285,9 +281,7 @@ func fieldNames(m map[string]any) []string {
 	return out
 }
 
-// entryParty is one account an entry concerns, in one role, with the asset and
-// amount that account holds through the entry (owner of an account/trustline,
-// claimant of a claimable balance), if any.
+// entryParty is one account an entry concerns, in one role, with the asset and amount it holds through the entry, if any.
 type entryParty struct {
 	account, role, asset string
 	balance              int64
@@ -341,9 +335,8 @@ func keyParties(k *xdr.LedgerKey) []entryParty {
 	return nil
 }
 
-// accountRows fans a change out to every account it concerns before or after:
-// a sponsor whose sponsorship the change revoked still sees it. A party only
-// the pre-image names holds nothing through the entry any more (balance 0).
+// accountRows fans a change out to every account it concerns before or after (a sponsor whose sponsorship was revoked
+// still sees it); a party only the pre-image names holds nothing through the entry any more (balance 0).
 func accountRows(ref clickhouse.EntryChangeRef, prev, post *xdr.LedgerEntry, key *xdr.LedgerKey) []clickhouse.AccountEntryChange {
 	var parties []entryParty
 	if post != nil {
@@ -430,9 +423,8 @@ func poolAssetID(id xdr.PoolId) string {
 	return xdrjson.TrustLineAssetID(xdr.TrustLineAsset{Type: xdr.AssetTypeAssetTypePoolShare, LiquidityPoolId: &id})
 }
 
-// assetRows fans a change out to every asset it concerns. Account entries are
-// deliberately absent: native's per-holder history is every account-entry
-// change, already served account-keyed.
+// assetRows fans a change out to every asset it concerns. Account entries are absent: native's per-holder history is
+// every account-entry change, already served account-keyed.
 func assetRows(ref clickhouse.EntryChangeRef, prev, post *xdr.LedgerEntry, key *xdr.LedgerKey) []clickhouse.AssetEntryChange {
 	var assets []entryAsset
 	if post != nil {
@@ -464,9 +456,8 @@ func assetRows(ref clickhouse.EntryChangeRef, prev, post *xdr.LedgerEntry, key *
 // sequence bump touch.
 var feeSeqFields = map[string]bool{"balance": true, "seq_num": true, "seq_ledger": true, "seq_time": true}
 
-// entryHistoryStats is the sizing measurement: rows per table and entry type,
-// decoded-field JSON bytes, and how many account rows are tx-level
-// fee/sequence-only updates (the candidate to leave out of the backfill).
+// entryHistoryStats is the sizing measurement: rows per table and entry type, decoded-field JSON bytes, and tx-level
+// fee/sequence-only account updates (the candidate to leave out of the backfill).
 type entryHistoryStats struct {
 	accountRows, assetRows, fieldBytes map[string]int64
 	feeSeqOnly                         int64

@@ -177,9 +177,8 @@ func (r *NetworkStateReader) foldCurrentLumens(ctx context.Context, t *LumenTall
 	return pending, rows.Err()
 }
 
-// keyHoldsNativeLumens reports whether an entry under this key can hold native
-// XLM. Only contract_data is decidable from the key: an evicted temporary
-// entry (an allowance) has a `removed` row and no pre-image, yet holds none.
+// keyHoldsNativeLumens reports whether an entry under this key can hold native XLM. Only contract_data is decidable from the key: an
+// evicted temporary entry (an allowance) has a `removed` row and no pre-image, yet holds none.
 func keyHoldsNativeLumens(entryType, keyXDR string, sac xdr.ContractId) (bool, error) {
 	if entryType != "contract_data" {
 		return true, nil
@@ -195,10 +194,8 @@ func keyHoldsNativeLumens(entryType, keyXDR string, sac xdr.ContractId) (bool, e
 	return isNativeSACBalance(cd.Contract, cd.Key, sac), nil
 }
 
-// foldPreimageLumens resolves each pending key to its state as of t.Ledger
-// from the first change after it: a `state` or `restored` row carries that
-// state, a `created` row means the key did not exist yet. Snapshot seed rows
-// are skipped: they hold an entry's post-state, never a pre-image.
+// foldPreimageLumens resolves each pending key's state as of t.Ledger from the first later change: `state`/`restored` carry it, `created`
+// means the key did not exist yet. Snapshot seed rows are skipped: they hold a post-state, never a pre-image.
 func (r *NetworkStateReader) foldPreimageLumens(ctx context.Context, t *LumenTally, sac xdr.ContractId, pending []string) error {
 	if len(pending) == 0 {
 		return nil

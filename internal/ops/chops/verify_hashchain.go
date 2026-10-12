@@ -13,11 +13,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// verifyHashChain is the verify-hashchain subcommand: for every ledger n in [-from,-to],
-// prev_hash must equal ledger n-1's ledger_hash (ADR-0034). Windows split the chain at bucket
-// seams, so it checks in-window links (lagInFrame over ledger_seq) and a lookup at each seam.
-// A gap reads as a break in both; run verify-contiguity first to tell it from a bad hash.
-// Exit code is the broken-link count capped at 255. Read-only; ClickHouse only.
+// verifyHashChain checks prev_hash == ledger n-1's ledger_hash for every n in [-from,-to] (ADR-0034): in-window (lagInFrame) plus a lookup
+// at each bucket seam. A gap reads as a break; run verify-contiguity first. Exit code is the broken-link count capped at 255; read-only.
 func verifyHashChain(args []string) error {
 	fs := flag.NewFlagSet("verify-hashchain", flag.ContinueOnError)
 	cfgPath := fs.String("config", "/etc/stellarindex.toml", "path to stellarindex.toml — used only to resolve the default -ch-addr (this tool reads ClickHouse only, never Postgres); a missing/unreadable file is tolerated when -ch-addr is passed explicitly")
@@ -72,9 +69,8 @@ func verifyHashChain(args []string) error {
 // cannot become an unbounded print loop.
 const hashChainLinkCap = 200
 
-// runHashChainCheck runs both checks over [from,to] in contiguityBucketStride windows. The
-// windowed counts and per-seam lookups are cheap and always run; per-ledger localization only
-// runs for windows already flagged broken.
+// runHashChainCheck runs both checks over [from,to] in contiguityBucketStride windows; per-ledger localization runs only for windows
+// already flagged broken.
 func runHashChainCheck(ctx context.Context, addr string, from, to uint32) (inWindowBroken, boundaryBroken uint64, err error) {
 	fmt.Printf("\n=== verify-hashchain: hash-chain check [%d,%d] (1M-ledger windows) ===\n", from, to)
 
@@ -195,9 +191,8 @@ func boundaryTag(b clickhouse.HashChainBoundaryResult) string {
 	}
 }
 
-// saturatingSub returns a-b floored at 0. The headline and detail queries run moments apart, so
-// concurrent ingest could make the detail return fewer rows, and a raw uint64 subtraction
-// would wrap to ~1.8e19 instead of reporting zero more.
+// saturatingSub returns a-b floored at 0: the headline and detail queries run moments apart, so concurrent ingest could make the detail
+// smaller and a raw uint64 subtraction would wrap to ~1.8e19.
 func saturatingSub(a, b uint64) uint64 {
 	if b >= a {
 		return 0

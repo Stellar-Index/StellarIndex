@@ -25,10 +25,8 @@ const (
 	CohortRelationSponsored = "sponsored"
 )
 
-// cohortScanSettings is the board rollups' budget with more threads: the cycle reads the whole
-// movements archive daily. Measured on a 1M-ledger window (657M rows): the boards' argMax
-// de-dup exceeded 8 GiB at 2 and 6 threads; FINAL at 6 threads took 151 s at 2.7 GiB. So the
-// walk uses FINAL per window and every join spills rather than sizing the ~25M-row membership.
+// cohortScanSettings is the board rollups' budget with more threads: the argMax de-dup exceeded 8 GiB at 2 and 6 threads over 657M rows,
+// so the walk uses FINAL per window and every join spills rather than sizing the ~25M-row membership.
 const cohortScanSettings = "SETTINGS max_threads = 6, max_memory_usage = 8589934592, " +
 	"max_bytes_before_external_group_by = 4294967296, max_bytes_before_external_sort = 4294967296, " +
 	"join_algorithm = 'grace_hash', grace_hash_join_initial_buckets = 16, " +
@@ -37,9 +35,8 @@ const cohortScanSettings = "SETTINGS max_threads = 6, max_memory_usage = 8589934
 // cohortWalkSettings bounds each window of the movements walk.
 const cohortWalkSettings = cohortScanSettings + ", max_execution_time = 1800"
 
-// cohortJoinSettings is for the one-shot joins against
-// ledger_entries_current and account_activity: the same budget with more
-// time, since they are not windowed.
+// cohortJoinSettings is cohortScanSettings with more time, for the one-shot (non-windowed) joins against ledger_entries_current and
+// account_activity.
 const cohortJoinSettings = cohortScanSettings + ", max_execution_time = 3600"
 
 // cohortFoldSettings bounds the folds over the cycle's own working
@@ -66,9 +63,8 @@ var cohortLoadedTables = map[string]bool{
 	"asset_month_usd_prices": true,
 }
 
-// cohortRollupStatements is one cycle: membership, the joins needing no walk, the movements
-// walk and its folds, the DeFi positions join (reads defi_position_holders_staging, loaded
-// before these run), then the swap.
+// cohortRollupStatements is one cycle: membership, no-walk joins, the movements walk and folds, the DeFi positions join (reads
+// defi_position_holders_staging, loaded before), then the swap.
 var cohortRollupStatements = []rollupStep{
 	{sql: `TRUNCATE TABLE stellar.account_cohort_members`},
 	{sql: `INSERT INTO stellar.account_cohort_members (rel, root, member)
@@ -249,9 +245,8 @@ func RunCohortRollup(ctx context.Context, addr string, holders []timescale.DeFiP
 	return runRollupSteps(ctx, conn, tip, "cohort rollup", cohortRollupStatements, logf)
 }
 
-// positionHolderAmount is h.Amount as a canonical base-10 integer, or an error: the fold sums
-// exactly, so a fractional or empty amount fails the cycle (prior snapshot stays live) rather
-// than being rounded or dropped from an exact total.
+// positionHolderAmount is h.Amount as a canonical base-10 integer; a fractional or empty amount fails the cycle (prior snapshot stays
+// live) rather than being rounded or dropped from an exact total.
 func positionHolderAmount(h timescale.DeFiPositionHolder) (string, error) {
 	a, err := canonical.FromString(h.Amount)
 	if err != nil || h.Amount == "" {
@@ -476,9 +471,8 @@ func (r *ExplorerReader) readCohortHoldings(ctx context.Context, out *AccountCoh
 	return rows.Err()
 }
 
-// cohortFlowsSQL and cohortFlowsFallbackSQL differ only in price_usd_then: the fallback drops
-// the LEFT JOIN and literals it empty (read as nil) so one Scan serves both. Used when the
-// OPTIONAL asset_month_usd_prices is absent, which must not take the flows read down.
+// cohortFlowsSQL and cohortFlowsFallbackSQL differ only in price_usd_then: the fallback literals it empty so one Scan serves both when the
+// OPTIONAL asset_month_usd_prices is absent.
 const cohortFlowsSQL = `
 		SELECT f.month, f.asset, f.inflow, f.outflow, f.movements, f.active_accounts,
 		       ifNull(p.vwap_usd, '') AS price_usd_then
@@ -508,10 +502,8 @@ const cohortFlowsFallbackSQL = `
 		  ))
 		ORDER BY f.month, f.asset`
 
-// readCohortFlows serves every month for the CohortFlowAssetsLimit assets moved most, plus the
-// all-assets row. Assets past the cap are not summed into "other" (units differ); the view
-// says so (assets_truncated). Each row carries the month's USD price via a LEFT JOIN on
-// (asset, month); the empty string is the miss, read as nil.
+// readCohortFlows serves every month for the CohortFlowAssetsLimit assets moved most, plus the all-assets row. Assets past the cap are not
+// summed into "other" (units differ); the view says so (assets_truncated).
 func (r *ExplorerReader) readCohortFlows(ctx context.Context, out *AccountCohort) error {
 	rows, err := r.conn.Query(ctx, cohortFlowsSQL,
 		out.Relation, out.Root, CohortAllAssets, out.Relation, out.Root, CohortAllAssets, CohortFlowAssetsLimit)

@@ -10,15 +10,12 @@ import (
 	"syscall"
 )
 
-// acquireRollupLock takes an exclusive, non-blocking flock on path and returns the release
-// function. job names the caller in every message so a colliding operator can tell which rollup
-// holds the lock.
+// acquireRollupLock takes an exclusive, non-blocking flock on path and returns the release; job names the caller so a colliding operator
+// can tell who holds it.
 //
-// Every rollup cycle runs TRUNCATE(staging) -> fill -> EXCHANGE TABLES on global staging tables.
-// Two racing processes have no safe outcome: one can truncate an arm the other is mid-INSERT
-// into, or both can issue the final EXCHANGE. systemd only serializes the timer against itself,
-// not against a manual `stellarindex-ops <job>`, so the guard lives here. Contention is an error
-// (fail closed), never a block.
+// Every rollup cycle runs TRUNCATE(staging) -> fill -> EXCHANGE TABLES on global staging tables; two racing processes can truncate an arm
+// the other is mid-INSERT into, or both EXCHANGE. systemd only serializes the timer against itself, not a manual `stellarindex-ops <job>`.
+// Contention fails closed, never blocks.
 func acquireRollupLock(job, path string) (func(), error) {
 	path = filepath.Clean(path)
 	dir := filepath.Dir(path)

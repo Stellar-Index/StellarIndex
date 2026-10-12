@@ -30,10 +30,8 @@ func Run(args []string) error {
 	return fmt.Errorf("internal/ops/chops: unknown subcommand %q", args[0])
 }
 
-// lakeMutatorVerb resolves the WRITING half: the ADR-0034 lake
-// backfill/gate/reproject/rebuild tools plus the projected-source and
-// classic-movement backfills, and usd-volume-restamp — the served-tier
-// corrective write for verify-usd-volume's exact-tier violations.
+// lakeMutatorVerb resolves the WRITING half: lake backfill/gate/reproject/rebuild, projected-source and classic-movement backfills, and
+// usd-volume-restamp (the served-tier write for verify-usd-volume's exact-tier violations).
 func lakeMutatorVerb(verb string) (func([]string) error, bool) {
 	switch verb {
 	case "ch-backfill":
@@ -90,10 +88,8 @@ func historyDeriveVerb(verb string) (func([]string) error, bool) {
 	}
 }
 
-// verifierVerb resolves the verification half: the completeness, reconciliation, contiguity,
-// hash-chain and value checks. None touch trade/event data. Most are read-only; compute-completeness
-// writes its verdict (completeness_snapshots + the projection floors it earns), which is
-// bookkeeping about the data, never the data itself.
+// verifierVerb resolves the verification half; none touch trade/event data. compute-completeness writes its verdict (completeness_snapshots
+// + the projection floors it earns), bookkeeping about the data, never the data.
 func verifierVerb(verb string) (func([]string) error, bool) {
 	switch verb {
 	case "verify-recognition":

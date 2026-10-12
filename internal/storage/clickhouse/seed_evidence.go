@@ -71,10 +71,8 @@ func resolveSeedWalk(ctx context.Context, conn driver.Conn, addr string, walk Se
 	})
 }
 
-// verifySeedWalk clamps the walk to the stellar.ledgers tip and proves
-// [lo, tip] intact. Sink.Flush writes stellar.ledgers LAST, so an entry change
-// above its tip belongs to a ledger still being flushed and is left for the
-// live observer rather than reduced half-written.
+// verifySeedWalk clamps the walk to the stellar.ledgers tip and proves [lo, tip] intact. Sink.Flush writes stellar.ledgers LAST, so an
+// entry change above its tip belongs to a ledger still being flushed and is left for the live observer rather than reduced half-written.
 func verifySeedWalk(lo, hi, lakeTip uint32, check substrateCheck) (SeedEvidence, error) {
 	if lakeTip < hi {
 		hi = lakeTip

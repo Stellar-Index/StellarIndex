@@ -38,10 +38,8 @@ func (t *estimatedChunkTier) header(from, to time.Time, copts chunkRestampOption
 		t.opts.Generation, t.opts.MaxGeneration, t.opts.FillNull, ratPercent(t.opts.MinRelDelta), t.run.headerFlags)
 }
 
-// probe plans [lo, hi) slice by slice and stops at the first slice that
-// would change a row. A clean probe has counted the whole slice, so it is
-// folded into the report: the window the report names includes skipped
-// chunks. A dirty probe's partial count is dropped; restamp recounts it.
+// probe plans [lo, hi) slice by slice and stops at the first slice that would change a row; a clean probe's count is folded into the report
+// (so it names the skipped chunks too), a dirty probe's partial count is dropped and restamp recounts it.
 func (t *estimatedChunkTier) probe(ctx context.Context, lo, hi time.Time) (bool, error) {
 	w, err := t.run.walk(ctx, lo, hi, xlmBaseWalkProbe)
 	if err != nil {
@@ -100,19 +98,15 @@ func (t *estimatedChunkTier) resume(cfgPath string, from, to time.Time, copts ch
 
 // ─── the two mirror tiers' chunk entry points ───────────────────────────
 
-// xlmQuoteChunkStore is the xlm-quote tier's chunk seam: the driver's
-// chunk/policy/lock primitives, the tier's plan/apply pair, and the
-// in-chunk apply that re-reads the chunk's is_compressed ahead of every
-// batch. *timescale.Store satisfies it.
+// xlmQuoteChunkStore is the xlm-quote tier's chunk seam: driver chunk/policy/lock primitives, the tier's plan/apply pair, and the in-chunk
+// apply that re-reads is_compressed ahead of every batch. *timescale.Store satisfies it.
 type xlmQuoteChunkStore interface {
 	chunkRestampStore
 	xlmQuoteRestampStore
 	ApplyUSDVolumeRestampPlanInChunk(ctx context.Context, c timescale.TradeChunk, plan *timescale.RestampPlan, generation int64, batch int) (int64, error)
 }
 
-// runXLMQuoteChunkRestamp is the `-tier xlm-quote -chunks` entry point,
-// called by usdVolumeRestamp once the shared window/flag/live-tail
-// validation has passed.
+// runXLMQuoteChunkRestamp is the `-tier xlm-quote -chunks` entry point, called by usdVolumeRestamp after shared validation.
 func runXLMQuoteChunkRestamp(ctx context.Context, store xlmQuoteChunkStore, cfgPath string, from, to time.Time, opts xlmBaseRestampOptions, copts chunkRestampOptions) error {
 	run := newEstimatedRestampRun(opts, xlmQuoteTierProfile(store))
 	run.batch = copts.Batch

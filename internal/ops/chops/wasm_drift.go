@@ -60,11 +60,9 @@ func (r wasmDriftReport) drifting() int {
 	return n
 }
 
-// wasmDrift is the stellarindex-ops `wasm-drift` subcommand: every contract of a gated source with
-// an audit log must run a hash that log string-checked, because contracts upgrade in place and a
-// decoder audited against one build can silently misread the next. Usage: wasm-drift [-config
-// PATH] [-ch-addr H:P] [-source NAME] [-textfile PATH]. Read-only; touches ClickHouse only. Exit
-// code = drifting contracts (capped at 255).
+// wasmDrift is the `wasm-drift` subcommand: every contract of a gated source with an audit log must run a hash that log string-checked, as
+// contracts upgrade in place. Usage: wasm-drift [-config PATH] [-ch-addr H:P] [-source NAME] [-textfile PATH]. Read-only; exit code =
+// drifting contracts (capped 255).
 func wasmDrift(args []string) error {
 	fs := flag.NewFlagSet("wasm-drift", flag.ContinueOnError)
 	cfgPath := fs.String("config", "/etc/stellarindex.toml", "path to stellarindex.toml — used only to resolve the default -ch-addr")
@@ -136,9 +134,8 @@ func wasmDriftSources(only string) ([]string, error) {
 	return nil, fmt.Errorf("wasm-drift: -source %q is not a gated source (one of: %s)", only, strings.Join(names, ", "))
 }
 
-// runWasmDrift checks every contract of every audited source in sources
-// against the manifest. A source with no manifest entry has nothing to
-// drift from, so it is reported unaudited instead of flagging every contract.
+// runWasmDrift checks every contract of every audited source against the manifest; a source with no manifest entry is reported unaudited,
+// not flagged per contract.
 func runWasmDrift(ctx context.Context, lake wasmDriftLake, manifest map[string]wasmaudit.Entry, sources []string, tip uint32) (wasmDriftReport, error) {
 	audited := make(map[string]bool)
 	for _, e := range manifest {

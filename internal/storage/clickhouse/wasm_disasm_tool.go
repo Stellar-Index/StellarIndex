@@ -18,17 +18,14 @@ import (
 // ~50 KB module is sub-second; the timeout only fires on a pathological input.
 const wasmToolTimeout = 10 * time.Second
 
-// maxDisasmOutputBytes caps the WAT / decompile text we retain so a large
-// module can't blow the JSON response (and the explorer can lazy-load the rest
-// via a future raw-WAT endpoint if needed). ~2 MB is generous for human
-// inspection; bigger outputs are truncated with a marker.
+// maxDisasmOutputBytes caps the WAT / decompile text retained so a large module can't blow the JSON response; bigger outputs are
+// truncated with a marker.
 const maxDisasmOutputBytes = 2 << 20 // 2 MiB
 
-// buildWasmDisassembly fills info.Wat + info.Decompiled best-effort and appends to info.ToolNote.
-// It never fails the caller; a missing tool or tool error leaves the field empty with a note.
-// info.WasmHash is a content address, so a cached SUCCESSFUL run is served without fork/exec.
-// Only full success populates r.disasmCache: caching a failure would pin a transient condition
-// (tool not yet installed, a load-induced timeout) as a permanent false negative for that hash.
+// buildWasmDisassembly fills info.Wat + info.Decompiled best-effort and appends to info.ToolNote; it never fails the caller.
+// info.WasmHash is a content address, so a cached SUCCESSFUL run is served without fork/exec. Only full success populates r.disasmCache:
+// caching a failure would pin a transient condition (tool not yet installed, a load-induced timeout) as a permanent false negative for
+// that hash.
 func (r *ExplorerReader) buildWasmDisassembly(ctx context.Context, info *ContractWasmInfo, code []byte) {
 	if cached, ok := r.disasmCache.get(info.WasmHash); ok {
 		info.Wat = cached.wat
@@ -61,10 +58,9 @@ func (r *ExplorerReader) buildWasmDisassembly(ctx context.Context, info *Contrac
 	}
 }
 
-// runWasmTool runs a wabt binary against the wasm module and returns its text output. The second
-// return is a human note: empty on success, else why the stage is absent. wabt reads the module
-// from a real file path (this build treats "-" as a literal filename) and "-o -" is silently
-// empty, so input and output are staged through temp files, removed before returning.
+// runWasmTool runs a wabt binary against the wasm module and returns its text output plus a human note (empty on success). wabt reads the
+// module from a real file path (this build treats "-" as a literal filename) and "-o -" is silently empty, so input and output are staged
+// through temp files, removed before returning.
 func runWasmTool(ctx context.Context, tool string, code []byte, extraArgs ...string) (string, string) {
 	if _, err := exec.LookPath(tool); err != nil {
 		return "", tool + " not on PATH (install wabt to enable)"
@@ -111,9 +107,8 @@ func runWasmTool(ctx context.Context, tool string, code []byte, extraArgs ...str
 	return text, ""
 }
 
-// stageWasmTempFiles writes code to a temp input file and returns the input +
-// (empty) output paths plus a cleanup that removes both. The output path is
-// created+closed so the tool can write to it.
+// stageWasmTempFiles writes code to a temp input file and returns the input + (empty) output paths plus a cleanup that removes both; the
+// output path is created+closed so the tool can write to it.
 func stageWasmTempFiles(code []byte) (inPath, outPath string, cleanup func(), err error) {
 	in, err := os.CreateTemp("", "stellarindex-wasm-*.wasm")
 	if err != nil {

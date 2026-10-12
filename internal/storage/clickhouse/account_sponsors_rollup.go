@@ -73,38 +73,21 @@ const factsCTE = `
 	    FROM stellar.account_sponsors_ops WHERE otype = '` + opRevokeSponsoring + `'
 	)`
 
-// sponsorsGatedArmSettings is the settings for the cycle's one walked step, which joins two lake
-// archives. query_plan_join_swap_table = 0 PINS the build side to the window's sponsorship
-// operations (a few million rows) so a planner swap cannot build a hash table over that window's
-// far larger transactions. The 1800 s cap (not the walk's 600 s) matches the sibling's joining
-// arm: the streaming side grows with ALL transaction volume.
+// sponsorsGatedArmSettings is for the one walked step joining two lake archives: query_plan_join_swap_table = 0 PINS the build side to the
+// window's sponsorship ops so the planner cannot hash the far larger transactions. The 1800 s cap matches the sibling joining arm.
 const sponsorsGatedArmSettings = boundedScanSettings +
 	", query_plan_join_swap_table = 0, max_execution_time = 1800"
 
-// sponsorEdgesSettings is the graph arm's one aggregation (sponsorship ops collapsed to distinct
-// (sponsor, sponsored) pairs); its peak stays below the board join's, so it does not raise the
-// cycle's ceiling. No optimize_aggregation_in_order: the working table is ORDER BY (lseq, tidx,
-// oidx) and this groups by sponsor, so there is no order to exploit, and in-order aggregation
-// cannot spill, so it cancels the external-group-by limit. The 1800 s cap is because this step is
-// not walked: a pair can span lake partitions, so a per-window aggregation would emit an edge
-// more than once.
+// sponsorEdgesSettings: no optimize_aggregation_in_order (the table is ORDER BY (lseq, tidx, oidx), this groups by sponsor, and in-order
+// cannot spill so it cancels the external-group-by limit). Not walked, since a pair can span partitions and would emit an edge twice;
+// hence 1800 s.
 const sponsorEdgesSettings = boundedScanSettings + ", max_execution_time = 1800"
 
-// sponsorsRollupStatements is the full recompute: WALK stellar.operations one 1M-ledger lake
-// partition at a time into the working table (narrow, deduplicated, APPLIED sponsorship ops, no
-// body_xdr; see deploy/clickhouse/account_sponsors_rollup.sql), derive every served figure from
-// those rows so the board and its coverage span cannot describe different data, then EXCHANGE
-// atomically. An interrupted cycle leaves the previous board.
-// The walk joins the transaction because stellar.operations has no success gate and keeps
-// operations of FAILED transactions. Under CAP-33 the sponsoring relationship writes no ledger
-// entry, so transactions.successful is the only evidence Begin and End applied.
-// The join is on the full (ledger_seq, tx_index) identity with both sides collapsed explicitly:
-// stellar.transactions is a ReplacingMergeTree with bulk-duplicated rows, so an uncollapsed join
-// would multiply each operation. HAVING resolves `successful` by argMax over ingested_at.
-// Walked because unwalked it is one statement over a multi-TiB archive joined to a larger one.
-// Per-window grouping is exact: both tables are PARTITION BY intDiv(ledger_seq, 1000000), so no
-// group straddles a window. The window predicate is carried TWICE (two binds) because a join
-// condition prunes neither side.
+// sponsorsRollupStatements is the full recompute: WALK stellar.operations one 1M-ledger partition at a time into the working table (APPLIED
+// sponsorship ops; deploy/clickhouse/account_sponsors_rollup.sql), derive every figure from those rows, then EXCHANGE atomically. The walk
+// joins the transaction because stellar.operations keeps FAILED txs' ops and, under CAP-33, transactions.successful is the only evidence
+// Begin/End applied; both sides collapse on (ledger_seq, tx_index) (RMT bulk duplicates; HAVING argMax over ingested_at). The window
+// predicate is bound TWICE: a join prunes neither side.
 var sponsorsRollupStatements = []rollupStep{
 	{sql: `TRUNCATE TABLE stellar.account_sponsors_ops`},
 	{walk: true, windowBinds: 2, sql: `INSERT INTO stellar.account_sponsors_ops (lseq, tidx, oidx, otype, src, ctime)

@@ -14,20 +14,13 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// chSupply derives total supply for EVERY token from the ClickHouse lake by
-// summing CAP-67 classic + SEP-41 mint/burn/clawback flows per contract:
+// chSupply derives total supply for EVERY token from the lake (ADR-0034) by summing CAP-67 classic + SEP-41 flows per contract_id (the
+// asset's SAC or token contract):
 //
 //	supply(contract) = Σ mint − Σ burn − Σ clawback   (baseline 0 at genesis)
 //
-// (ADR-0034 + docs/architecture/storage-considerations.md#supply-flows-in-the-lake.) The contract_id
-// is the asset's SAC (classic) or token (SEP-41) contract, a unique per-token key.
-//
-// Defaults to a report (top-N contracts by supply + coverage count). Windowed per partition for
-// the full-history run; one all-history pass holds a single bounded in-memory map.
-//
-// Per-token supply is not persisted: the serving path sums `stellar.supply_flows` live
-// (SupplyReader.TokenSupply, "no rollup refresh" by design). -seed-flows keeps supply_flows
-// complete, gated by the shared -write flag (without it, it counts the rows it would write).
+// Not persisted: the serving path sums `stellar.supply_flows` live (SupplyReader.TokenSupply, "no rollup refresh" by design); -seed-flows
+// keeps supply_flows complete and is gated by the shared -write flag (else it counts).
 func chSupply(args []string) error { //nolint:gocognit,gocyclo,funlen // linear: parse, stream+accumulate, optional seed, report; splitting hurts clarity.
 	fs, gate := opsutil.NewMutatingFlagSet("ch-supply")
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")
@@ -163,10 +156,8 @@ func chSupply(args []string) error { //nolint:gocognit,gocyclo,funlen // linear:
 	return nil
 }
 
-// checkCHSupplyMode ties the shared gate to -seed-flows, the only write. A
-// seeding caller must state its mode: run-ch-supply.sh treats exit 0 as
-// "window seeded", so a silent preview would stall supply_flows. -write
-// without -seed-flows has nothing to apply and is refused, not ignored.
+// checkCHSupplyMode ties the shared gate to -seed-flows, the only write. run-ch-supply.sh treats exit 0 as "window
+// seeded", so a silent preview would stall supply_flows; -write without -seed-flows has nothing to apply and is refused.
 func checkCHSupplyMode(seedFlows bool, gate *opsutil.WriteGate) error {
 	if !seedFlows {
 		if gate.Enabled() {
@@ -180,9 +171,8 @@ func checkCHSupplyMode(seedFlows bool, gate *opsutil.WriteGate) error {
 	return nil
 }
 
-// supplyFlowSeeder batches -seed-flows rows into stellar.supply_flows (the
-// stream is ~570M rows, so they cannot be held like the report map). Without
-// write it only counts, so a -dry-run seed reports what it would write.
+// supplyFlowSeeder batches -seed-flows rows into stellar.supply_flows (~570M rows, too many to hold like the report
+// map). Without write it only counts.
 type supplyFlowSeeder struct {
 	chAddr    string
 	on, write bool

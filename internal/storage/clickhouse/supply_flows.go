@@ -10,10 +10,8 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// supplyFlowsDDL is the stellar.supply_flows definition (sync with
-// deploy/clickhouse/tier1_schema.sql). The i128 amount is decoded at ingest, so supply
-// is a pure SQL sum. ORDER BY leads with contract_id for per-token reads; the
-// (ledger,tx,op,event) suffix is the event identity, so re-ingest is idempotent.
+// supplyFlowsDDL is the stellar.supply_flows definition (sync with deploy/clickhouse/tier1_schema.sql). The i128 amount is decoded at
+// ingest, so supply is a pure SQL sum; the (ledger,tx,op,event) ORDER BY suffix is the event identity, so re-ingest is idempotent.
 const supplyFlowsDDL = `
 	CREATE TABLE IF NOT EXISTS stellar.supply_flows (
 		contract_id  String,
@@ -93,9 +91,8 @@ type TokenSupply struct {
 	Incomplete bool
 }
 
-// supplySumQuery sums a contract's supply_flows. FINAL dedups the RMT parts for the
-// contract's small contract_id-ordered range; sums are Int256 because Σmint alone can
-// exceed i128, then returned as *big.Int (ADR-0003). No flows scans to zeros.
+// supplySumQuery sums a contract's supply_flows. FINAL dedups the RMT parts for the contract's small contract_id-ordered range; sums are
+// Int256 because Σmint alone can exceed i128, then returned as *big.Int (ADR-0003). No flows scans to zeros.
 const supplySumQuery = `
 	SELECT
 		toString(sum(toInt256(if(kind = 'mint', amount, toInt128(0))))) AS mint,
@@ -193,11 +190,9 @@ func (r *SupplyReader) TokenSupply(ctx context.Context, contractID string) (Toke
 	return querySupply(ctx, r.conn, contractID)
 }
 
-// supplySumByContractsQuery is [supplySumQuery] for a SET of contracts in ONE read.
-// `contract_id` LEADS the ORDER BY, so the IN-list is a set of primary-key prefix ranges and
-// GROUP BY cardinality is bounded by the list; FINAL's setup cost is paid once, not N times.
-// Int256 and string projection as in [supplySumQuery] (ADR-0003). Contracts with no flows are
-// ABSENT; see [SupplyReader.TokenSupplyForContracts].
+// supplySumByContractsQuery is [supplySumQuery] for a SET of contracts in ONE read: `contract_id` LEADS the ORDER BY, so the IN-list is
+// primary-key prefix ranges and FINAL's setup cost is paid once. Int256 and string projection as in [supplySumQuery] (ADR-0003).
+// Contracts with no flows are ABSENT; see [SupplyReader.TokenSupplyForContracts].
 const supplySumByContractsQuery = `
 	SELECT
 		contract_id,
@@ -279,11 +274,9 @@ type SupplyFlowDay struct {
 	Flows uint64
 }
 
-// supplyFlowsDailyByContractsQuery buckets a contract set's flows by UTC close day.
-// `contract_id` leads the ORDER BY, so the IN-list is primary-key prefix ranges. The sign comes
-// from an explicit multiIf over the three DDL kinds, not `if(kind = 'mint', +, -)`: a fourth kind
-// would silently SUBTRACT under the two-armed form, whereas here it adds zero and `flows` still
-// counts it. Int256, stringified (ADR-0003).
+// supplyFlowsDailyByContractsQuery buckets a contract set's flows by UTC close day. The sign comes from an explicit multiIf over the
+// three DDL kinds, not `if(kind = 'mint', +, -)`: a fourth kind would silently SUBTRACT under the two-armed form, whereas here it adds
+// zero and `flows` still counts it. Int256, stringified (ADR-0003).
 const supplyFlowsDailyByContractsQuery = `
 	SELECT
 		contract_id,

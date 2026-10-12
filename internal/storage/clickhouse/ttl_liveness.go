@@ -28,14 +28,9 @@ const (
 	ttlLedgerKeyLen  = ttlKeyHashOffset + ttlKeyHashLen
 )
 
-// ttlEntryLen is the decoded size of a TTL LedgerEntry:
-//
-//	lastModifiedLedgerSeq (4) | data.type (4) | keyHash (32) |
-//	liveUntilLedgerSeq (4)    | ext.v (4)     = 48
-//
-// so liveUntilLedgerSeq starts at byte 40. The SQL DDL (tier1_schema.sql, ttl_live_until.sql)
-// is guarded on these exact lengths so an unrecognised shape is [TTLUnknown] (entry kept), never
-// misread as archived. ttl_liveness_test.go asserts both files against these.
+// ttlEntryLen is the decoded size of a TTL LedgerEntry: lastModifiedLedgerSeq (4) | data.type (4) | keyHash (32) | liveUntilLedgerSeq (4)
+// | ext.v (4) = 48, so liveUntilLedgerSeq starts at byte 40. The SQL DDL (tier1_schema.sql, ttl_live_until.sql) is guarded on these exact
+// lengths so an unrecognised shape is [TTLUnknown] (entry kept), never misread as archived. ttl_liveness_test.go asserts both files.
 const (
 	ttlEntryLen         = 48
 	ttlLiveUntilOffset0 = 40
@@ -45,9 +40,8 @@ const (
 // inside ClickHouse's default 256 KiB max_query_size (5,000 failed the parse cap).
 const ttlLivenessBatchSize = 1_500
 
-// errTTLLiveUntilTableMissing means the slim projection is not provisioned. Refusing loudly is
-// deliberate: degrading every key to TTLUnknown would make the archived-balance filter a
-// silent no-op.
+// errTTLLiveUntilTableMissing means the slim projection is not provisioned. Refusing loudly is deliberate: degrading every key to
+// TTLUnknown would make the archived-balance filter a silent no-op.
 var errTTLLiveUntilTableMissing = errors.New(
 	"clickhouse: stellar.ttl_live_until does not exist — apply deploy/clickhouse/ttl_live_until.sql " +
 		"(table + materialized view, then its Step-2 windowed backfill) before running TTL-liveness reads; " +
@@ -102,9 +96,8 @@ func TTLVerdictAt(liveUntil, asOfLedger uint32) TTLLiveness {
 	}
 }
 
-// resolveTTLLiveUntil returns the latest parsed liveUntilLedgerSeq for each
-// base64 LedgerKey in keyXDRs that has a nonzero TTL row. Keys with no row, a
-// zero row, or an undecodable key are absent from the result.
+// resolveTTLLiveUntil returns the latest parsed liveUntilLedgerSeq for each base64 LedgerKey in keyXDRs that has a nonzero TTL row; keys
+// with no row, a zero row, or an undecodable key are absent.
 func resolveTTLLiveUntil(ctx context.Context, conn driver.Conn, keyXDRs []string) (map[string]uint32, error) {
 	out := make(map[string]uint32, len(keyXDRs))
 	if len(keyXDRs) == 0 {
@@ -142,10 +135,9 @@ func ensureTTLLiveUntilTable(ctx context.Context, conn driver.Conn) error {
 	return nil
 }
 
-// ttlLivenessBatchQuery renders the per-batch lookup. argMax(live_until, version) keeps the
-// latest TTL state per key (version = (ledger_seq<<32) | intra_ledger_seq), correct over
-// un-merged duplicates without FINAL. The SETTINGS pins are guard rails: unpinned max_threads
-// fans a read out far beyond its cost, so a layout shift fails loudly instead of starving the host.
+// ttlLivenessBatchQuery renders the per-batch lookup. argMax(live_until, version) keeps the latest TTL state per key (version =
+// (ledger_seq<<32) | intra_ledger_seq), correct over un-merged duplicates without FINAL. The SETTINGS pins are guard rails: unpinned
+// max_threads fans a read out far beyond its cost, so a layout shift fails loudly.
 func ttlLivenessBatchQuery(placeholders []string) string {
 	return fmt.Sprintf(`
 		SELECT lower(hex(key_hash)) AS key_hash_hex,

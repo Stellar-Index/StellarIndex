@@ -43,11 +43,9 @@ const assetEntryChangeCols = `ledger, close_time, tx_hash, op_index, change_inde
 // the page top (~1 day); each short read widens it 4x.
 const assetExactDedupSpan = 1 << 14
 
-// assetEntryChangesSQL reads one asset's rows newest first at or below the
-// ceiling. The window form has no LIMIT 1 BY so ClickHouse can stop reading
-// in key order (native offers and claimable balances span billions of rows);
-// exactDedup keeps only the newest re-derive per key, above a ledger floor
-// because LIMIT 1 BY otherwise walks the asset's whole range.
+// assetEntryChangesSQL reads one asset's rows newest first at or below the ceiling. The window form has no LIMIT 1 BY so ClickHouse can
+// stop in key order (native offers and claimable balances span billions of rows); exactDedup keeps the newest re-derive per key, above a
+// ledger floor because LIMIT 1 BY otherwise walks the asset's whole range.
 func assetEntryChangesSQL(hasCursor, exactDedup bool) string {
 	var sb strings.Builder
 	sb.WriteString("SELECT " + assetEntryChangeCols + " FROM stellar.asset_entry_changes WHERE asset = ? AND ledger <= ?")
@@ -103,10 +101,8 @@ func (r *ExplorerReader) AssetEntryChanges(ctx context.Context, asset string, li
 	return out, nil
 }
 
-// assetEntryChangesExact runs the exact LIMIT 1 BY read over [floor, top],
-// widening the floor 4x until it holds limit keys or reaches ledger 0. Every
-// version of a key shares its ledger, so the first limit keys of a range that
-// holds limit keys are the unbounded query's first limit keys.
+// assetEntryChangesExact runs the exact LIMIT 1 BY read over [floor, top], widening the floor 4x until it holds limit keys or reaches
+// ledger 0. Every version of a key shares its ledger, so those limit keys equal the unbounded query's first limit keys.
 func (r *ExplorerReader) assetEntryChangesExact(ctx context.Context, asset string, hasCursor bool, args []any, top uint32, limit int) ([]assetEntryChangeVersion, error) {
 	q := assetEntryChangesSQL(hasCursor, true)
 	for span := uint64(assetExactDedupSpan); ; span *= 4 {

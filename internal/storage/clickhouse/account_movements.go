@@ -106,10 +106,8 @@ func FanOutAccountMovement(m AccountMovement) []AccountMovementRow {
 	}
 }
 
-// accountMovementsDDL mirrors deploy/clickhouse/tier1_schema.sql, which is what gets
-// applied; this copy lets EnsureAccountMovementsTable create the table on a fresh
-// ClickHouse. CREATE TABLE IF NOT EXISTS does not retrofit idx_cb_balance_id onto
-// an existing table.
+// accountMovementsDDL mirrors deploy/clickhouse/tier1_schema.sql (what gets applied) so EnsureAccountMovementsTable can create the table
+// on a fresh ClickHouse; CREATE TABLE IF NOT EXISTS does not retrofit idx_cb_balance_id onto an existing table.
 const accountMovementsDDL = `
 	CREATE TABLE IF NOT EXISTS stellar.account_movements (
 		address           String,
@@ -222,10 +220,8 @@ func marshalAccountMovementAttributes(attrs map[string]any) (string, error) {
 	return string(b), nil
 }
 
-// sortAccountMovementRowsForInsert orders by LEDGER first, then the remaining ORDER BY
-// columns. ClickHouse has no transaction across chunks and resume checkpoints on
-// max(ledger), so ledger-first makes every ledger below the highest written one
-// complete; address-first would silently skip addresses past a failure point.
+// sortAccountMovementRowsForInsert orders by LEDGER first: ClickHouse has no cross-chunk transaction and resume checkpoints on
+// max(ledger), so ledger-first keeps every ledger below the highest written one complete; address-first would skip addresses.
 func sortAccountMovementRowsForInsert(rows []AccountMovementRow) {
 	sort.Slice(rows, func(i, j int) bool {
 		a, b := &rows[i], &rows[j]
@@ -321,9 +317,8 @@ type ClaimableBalanceCreateRow struct {
 	CreatedBy string
 }
 
-// cbLookupExtTableChunkSize caps ids per external-table semijoin query. Ids travel as
-// column data, so there is no max_query_size exposure; the cap only bounds the
-// server-side hash set and driver batch.
+// cbLookupExtTableChunkSize caps ids per external-table semijoin query; ids travel as column data (no max_query_size exposure), so it only
+// bounds the server-side hash set and driver batch.
 const cbLookupExtTableChunkSize = 1_000_000
 
 // chunkStrings splits ids into sub-slices of at most n; n<=0 means no chunking.
@@ -368,10 +363,9 @@ func FindClaimableBalanceCreates(ctx context.Context, addr string, balanceIDHexe
 	return out, nil
 }
 
-// cbLookupCreatesQuery matches chunk ids against the `cb_ids` external table.
-// SETTINGS is in the SQL text because per-query WithSettings did not reach the
-// server alongside WithExternalTable. use_skip_indexes=0 is load-bearing: the
-// bloom index against a large IN-set matches every granule and blew the memory limit.
+// cbLookupCreatesQuery matches chunk ids against the `cb_ids` external table. SETTINGS is in the SQL text because per-query WithSettings
+// did not reach the server alongside WithExternalTable; use_skip_indexes=0 is load-bearing (the bloom index matched every granule, blew
+// memory).
 const cbLookupCreatesQuery = `
 	SELECT JSONExtractString(attributes, 'balance_id') AS balance_id, asset, amount, address
 	FROM stellar.account_movements
@@ -479,10 +473,8 @@ func (c AccountMovementCursor) IsSet() bool { return c.Ledger > 0 }
 const accountMovementCols = `ledger, ledger_close_time, tx_hash, op_index, leg_index, direction,
 	movement_kind, provenance, asset, counterparty, amount, attributes`
 
-// accountMovementsQuery builds the SQL for the filter dimensions and cursor presence.
-// Keyed read: `address = ?` is a contiguous primary-key range, but it still
-// carries explorerScanSettings because un-merged parts during backfill fan out
-// per-part stream setup.
+// accountMovementsQuery builds the SQL for the filter dimensions and cursor presence. The keyed read (`address = ?`) is a contiguous
+// primary-key range but still carries explorerScanSettings: un-merged parts during backfill fan out per-part stream setup.
 func accountMovementsQuery(filter AccountMovementFilter, hasCursor bool) string {
 	return accountMovementsSQL(filter, hasCursor, true)
 }

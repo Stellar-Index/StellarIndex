@@ -40,9 +40,8 @@ type AccountAuthFlags struct {
 	AsOfLedger uint32
 }
 
-// accountLedgerKeys maps G-strkeys to LedgerKey base64, returning the reverse index
-// (key_xdr to G-strkey) and the deduplicated key list. A malformed G-strkey is
-// skipped, not a batch failure.
+// accountLedgerKeys maps G-strkeys to LedgerKey base64 and returns the reverse index plus the deduplicated key list; a malformed G-strkey
+// is skipped, not a batch failure.
 func accountLedgerKeys(gStrkeys []string) (map[string]string, []string) {
 	byKey := make(map[string]string, len(gStrkeys))
 	keys := make([]string, 0, len(gStrkeys))
@@ -60,9 +59,8 @@ func accountLedgerKeys(gStrkeys []string) (map[string]string, []string) {
 	return byKey, keys
 }
 
-// decodeAccountAuthFlags decodes a base64 LedgerEntry. ok=false for an empty,
-// undecodable or non-account entry, so one bad entry cannot cost the batch; a decode
-// failure is also the signature of being behind a protocol upgrade.
+// decodeAccountAuthFlags decodes a base64 LedgerEntry; ok=false for empty, undecodable or non-account entries so one bad entry cannot cost
+// the batch. A decode failure is also the signature of being behind a protocol upgrade.
 func decodeAccountAuthFlags(entryXDR string) (AccountAuthFlags, bool) {
 	if entryXDR == "" {
 		return AccountAuthFlags{}, false
@@ -213,10 +211,8 @@ func (r *ExplorerReader) RemovedAccountsLastKnownAuthFlags(ctx context.Context, 
 	return out, nil
 }
 
-// accountRemovalLedgers returns key_xdr to the ledger that merged the account away,
-// for keys the current-state projection records as `removed`. The projection holds
-// no `removed` row below its floor, so older merges stay unresolved: a coverage gap,
-// not a reader defect.
+// accountRemovalLedgers returns key_xdr to the merging ledger for keys the current-state projection records as `removed`; it holds none
+// below its floor, so older merges stay unresolved (a coverage gap, not a reader defect).
 func (r *ExplorerReader) accountRemovalLedgers(ctx context.Context, keys []string) (map[string]uint32, error) {
 	const q = `SELECT key_xdr, ledger_seq
 		FROM stellar.ledger_entries_current FINAL

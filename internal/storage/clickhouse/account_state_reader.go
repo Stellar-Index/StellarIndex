@@ -148,9 +148,8 @@ func (r *ExplorerReader) accountEntry(ctx context.Context, account string) (Acco
 	return st, nil
 }
 
-// accountTrustlinesQuery is a primary-index range read: an account's trustline keys
-// share a key_xdr prefix (accountEntryKeyPrefix); the exact account_id equality
-// closes the prefix's one-byte residual. The scan-settings pin is a guard rail.
+// accountTrustlinesQuery is a primary-index range read: an account's trustline keys share a key_xdr prefix (accountEntryKeyPrefix); the
+// exact account_id equality closes the prefix's one-byte residual. The scan-settings pin is a guard rail.
 const accountTrustlinesQuery = `SELECT asset, entry_xdr AS ex, balance AS bal
 		FROM stellar.ledger_entries_current FINAL
 		WHERE entry_type = 'trustline' AND key_xdr LIKE ?
@@ -214,8 +213,7 @@ func accountStateFromEntry(entryXDR string, bal int64, ledgerSeq uint32) (Accoun
 	return st, true
 }
 
-// trustlineStateFromEntry builds one trustline from its key-derived asset
-// id, balance column and stored TrustLineEntry XDR. A corrupt entry keeps
+// trustlineStateFromEntry builds one trustline from its key-derived asset id, balance column and TrustLineEntry XDR; a corrupt entry keeps
 // the balance and leaves the entry-only fields zero.
 func trustlineStateFromEntry(asset, entryXDR string, bal int64) TrustlineState {
 	t := TrustlineState{Asset: asset, Balance: bal, PoolShare: strings.HasPrefix(asset, "pool:")}
@@ -275,9 +273,8 @@ func (r *ExplorerReader) accountOffers(ctx context.Context, account string) ([]O
 	return out, rows.Err()
 }
 
-// Two FINAL scans over the trustline prefix (idx_lecur_asset bloom). Cost scales with
-// the asset's holder count, hence the explorerScanSettings pin; repeat latency is
-// hot_reads.go's job.
+// Two FINAL scans over the trustline prefix (idx_lecur_asset bloom); cost scales with the asset's holder count, hence the
+// explorerScanSettings pin. Repeat latency is hot_reads.go's job.
 const (
 	assetHoldersQuery = `SELECT account_id, balance
 		FROM stellar.ledger_entries_current FINAL
@@ -289,10 +286,8 @@ const (
 		WHERE entry_type = 'trustline' AND asset = ? AND change_type != 'removed' AND balance > 0` + explorerScanSettings
 )
 
-// Native XLM has no trustlines, so the queries above would return an empty board with
-// holder_count 0 by construction. Rank the 'account' rows instead: entry_type leads
-// the sort key, so it is a primary-index range read. Served via the SWR cache
-// (hot_reads.go), never on a request deadline once warm.
+// Native XLM has no trustlines, so the queries above would give an empty board with holder_count 0. Rank the 'account' rows instead
+// (entry_type leads the sort key: primary-index range read), served via the SWR cache (hot_reads.go).
 const (
 	nativeHoldersQuery = `SELECT account_id, balance
 		FROM stellar.ledger_entries_current FINAL
@@ -360,12 +355,10 @@ type AccountWealth struct {
 	Locked bool
 }
 
-// balance is stroops (1e7); k = "native" for the account entry, else the trustline
-// asset; only priced rows (has(assets, k)) count. The sum is Decimal256, never Float64, because
-// it is the served figure; stroop-to-unit division happens in Go. Background refresh only
-// (accounts_wealth_cache.go): the FINAL scan is slow, so threads, memory and max_execution_time
-// are pinned in SQL text (test-assertable; the driver drops context settings, see
-// cbLookupCreatesQuery).
+// balance is stroops (1e7); k = "native" for the account entry, else the trustline asset; only priced rows (has(assets, k)) count. The sum
+// is Decimal256, never Float64, because it is the served figure; stroop-to-unit division happens in Go. Background refresh only
+// (accounts_wealth_cache.go): FINAL is slow, so threads, memory and max_execution_time are pinned in SQL text (the driver drops context
+// settings, see cbLookupCreatesQuery).
 const accountsByWealthQuery = `WITH arrayMap(p -> toDecimal256(p, 18), ?) AS px,
 		sum(toDecimal256(balance, 0) * arrayElement(px, indexOf(?, k))) AS stroop_value
 		SELECT account_id, toString(stroop_value),
@@ -539,11 +532,9 @@ func accountKeyXDR(gStrkey string) (string, error) {
 	return b64, nil
 }
 
-// accountEntryKeyPrefix returns a base64 prefix matching every key_xdr of the given
-// entry type for the account, turning the read into a primary-index range. Both key shapes start
-// [type (4B)][AccountId (4B + 32B)], contiguous under ORDER BY. Base64 is prefix-stable only at
-// 3-byte boundaries, so cut at 39 bytes (52 chars); the caller's exact `account_id = ?` closes
-// the one-byte residual.
+// accountEntryKeyPrefix returns a base64 prefix matching every key_xdr of the entry type for the account (a primary-index range). Both key
+// shapes start [type (4B)][AccountId (4B + 32B)]; base64 is prefix-stable only at 3-byte boundaries, so cut at 39 bytes (52 chars) and let
+// the caller's exact `account_id = ?` close the one-byte residual.
 func accountEntryKeyPrefix(gStrkey string, entryType xdr.LedgerEntryType) (string, error) {
 	var aid xdr.AccountId
 	if err := aid.SetAddress(gStrkey); err != nil {

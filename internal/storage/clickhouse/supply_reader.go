@@ -36,11 +36,8 @@ func StreamMintBurnFlows(ctx context.Context, addr string, from, to uint32, useF
 	return streamMintBurnFlowRows(rows, fn)
 }
 
-// mintBurnFlowsQuery is StreamMintBurnFlows' SQL, built here so its text stays independently
-// assertable (it dials its own connection via openRead; see sdexOpsQuery's note on the seam).
-//
-// TWO bind parameters: the ledger window's from + to. useFinal is a SHAPE toggle, not a bound
-// value, so the two variants must differ ONLY by the FINAL keyword.
+// mintBurnFlowsQuery is StreamMintBurnFlows' SQL, built here so its text stays assertable. TWO bind parameters (the ledger window's from
+// + to); useFinal is a SHAPE toggle, so the two variants must differ ONLY by the FINAL keyword.
 func mintBurnFlowsQuery(useFinal bool) string {
 	final := ""
 	if useFinal {
@@ -53,10 +50,8 @@ func mintBurnFlowsQuery(useFinal bool) string {
 		  AND topic_0_sym IN ('mint','burn','clawback')`, final)
 }
 
-// streamMintBurnFlowRows decodes an open mintBurnFlowsQuery result set and
-// invokes fn once per row, in the order ClickHouse returned them. Split out of
-// StreamMintBurnFlows so the decode + fan-out half is drivable against a stub
-// driver.Rows. fn's error aborts the stream and is returned VERBATIM.
+// streamMintBurnFlowRows decodes an open mintBurnFlowsQuery result set and invokes fn once per row, in ClickHouse's order; split out to
+// be drivable against a stub driver.Rows. fn's error aborts the stream and is returned VERBATIM.
 func streamMintBurnFlowRows(rows driver.Rows, fn func(MintBurnFlow) error) error {
 	for rows.Next() {
 		var (

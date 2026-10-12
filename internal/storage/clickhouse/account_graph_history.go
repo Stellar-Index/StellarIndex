@@ -27,10 +27,8 @@ import (
 // A month with nothing in it emits no point and nothing is carried forward. Coverage is the span
 // the rollup aggregated: an absent month inside it was quiet, one outside it was not observed.
 
-// accountGraphHistoryPeriodsQuery buckets both arms' edges by month in one trip, each sub-select a
-// PRIMARY-KEY RANGE READ (ORDER BY (creator, created) and (sponsor, sponsored)). The first-event
-// arm has w=1 and the last-event arm w=0, so new_accounts counts edges while events counts placed
-// events. toDateTime(..., 'UTC') pins the zone because toStartOfMonth yields a zone-less Date.
+// accountGraphHistoryPeriodsQuery buckets both arms' edges by month, each sub-select a PRIMARY-KEY RANGE READ. The first-event arm has w=1
+// and the last-event arm w=0, so new_accounts counts edges while events counts placed events. toDateTime(..., 'UTC') pins the zone.
 const accountGraphHistoryPeriodsQuery = `
 	SELECT rel, bucket, toUInt64(sum(w)) AS new_accounts, toUInt64(sum(ev)) AS events
 	FROM (
@@ -61,8 +59,7 @@ const accountGraphHistoryPeriodsQuery = `
 	GROUP BY rel, bucket
 	ORDER BY rel, bucket`
 
-// accountGraphHistoryTotalsQuery is the whole-history denominator, read off the same
-// edge rows as the buckets. unplaced = greatest(events - 2, 0) per edge, computed in
+// accountGraphHistoryTotalsQuery is the whole-history denominator over the same edge rows. unplaced = greatest(events - 2, 0) per edge, in
 // Int64 because a UInt64 `creations - 2` wraps for a single-event edge.
 const accountGraphHistoryTotalsQuery = `
 	SELECT '` + GraphRelationCreated + `' AS rel,

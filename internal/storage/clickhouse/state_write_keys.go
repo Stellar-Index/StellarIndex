@@ -33,9 +33,8 @@ import (
 // the scan keeps the latest ingested_at per change_index, as FINAL would, so no FINAL is needed
 // and a re-ingested correction beats its stale predecessor.
 
-// stateWriteKeyBatch is how many streamed events accumulate per ledger_entry_changes lookup.
-// Buffered events hold wide OpArgs, so keep it small; 128 is well under a megabyte for
-// redstone while cutting query count by two orders of magnitude.
+// stateWriteKeyBatch is how many streamed events accumulate per ledger_entry_changes lookup. Buffered events hold wide OpArgs, so keep it
+// small; 128 is well under a megabyte for redstone while cutting query count by two orders of magnitude.
 const stateWriteKeyBatch = 128
 
 // opRef identifies one operation in the lake.
@@ -75,9 +74,8 @@ func (e *stateWriteKeyEnricher) add(ev events.Event) error {
 	return nil
 }
 
-// flush resolves keys for the buffered batch and forwards every event. A lookup error is
-// fatal (the stream fails); an op with no change rows yields no keys, so a coverage hole
-// degrades consumers to their no-keys fallback instead of failing the stream.
+// flush resolves keys for the buffered batch and forwards every event. A lookup error is fatal (the stream fails); an op with no change
+// rows yields no keys, so a coverage hole degrades consumers to their no-keys fallback instead of failing the stream.
 func (e *stateWriteKeyEnricher) flush() error {
 	if len(e.buf) == 0 {
 		return nil
@@ -137,10 +135,9 @@ func fetchOpEntryChanges(ctx context.Context, conn driver.Conn, batch []events.E
 	return acc.out, nil
 }
 
-// opChangeAccumulator folds ORDER BY change_index rows into per-op lists, deduping repeated
-// change_index rows from un-merged parts by keeping the LATEST ingested_at (FINAL-merge
-// semantics). Keeping the first-seen row could resurrect a stale pre-correction row, since
-// read order among duplicate parts is not version order. Pure, for unit tests.
+// opChangeAccumulator folds ORDER BY change_index rows into per-op lists, deduping repeated change_index rows from un-merged parts by
+// keeping the LATEST ingested_at (FINAL-merge semantics); keeping the first-seen row could resurrect a stale pre-correction row. Pure,
+// for unit tests.
 type opChangeAccumulator struct {
 	out     map[opRef][]entryChangeLite
 	lastIdx map[opRef]uint32
@@ -155,9 +152,8 @@ func newOpChangeAccumulator(sizeHint int) *opChangeAccumulator {
 	}
 }
 
-// add folds one row. Duplicates of one logical row are adjacent (ORDER BY change_index); a
-// repeated change_index replaces the previous row only when ingested_at is strictly newer.
-// Ties keep the first: equal versions carry identical content.
+// add folds one row. Duplicates of one logical row are adjacent (ORDER BY change_index); a repeated change_index replaces the previous
+// row only when ingested_at is strictly newer (ties keep the first: equal versions carry identical content).
 func (a *opChangeAccumulator) add(ref opRef, lite entryChangeLite, ingestedAt time.Time) {
 	if prev, ok := a.lastIdx[ref]; ok && prev == lite.ChangeIndex {
 		if ingestedAt.After(a.lastIng[ref]) {
@@ -171,9 +167,8 @@ func (a *opChangeAccumulator) add(ref opRef, lite entryChangeLite, ingestedAt ti
 	a.out[ref] = append(a.out[ref], lite)
 }
 
-// stateWriteKeysQuery renders the batched lookup. The ledger BETWEEN prunes partitions; the
-// tuple IN pins exact ops (the ORDER BY prefix, so index lookups). tx_hash values from the lake
-// are quote-escaped like every lake literal (see sqlQuoteEscaped). Pure, for unit tests.
+// stateWriteKeysQuery renders the batched lookup: the ledger BETWEEN prunes partitions, the tuple IN pins exact ops (the ORDER BY
+// prefix). tx_hash values are quote-escaped like every lake literal (see sqlQuoteEscaped). Pure.
 func stateWriteKeysQuery(refs []opRef) string {
 	minL, maxL := refs[0].Ledger, refs[0].Ledger
 	tuples := make([]string, 0, len(refs))
@@ -197,9 +192,8 @@ func stateWriteKeysQuery(refs []opRef) string {
 		minL, maxL, strings.Join(tuples, ","))
 }
 
-// changedWriteKeysForContract applies the changed-write rule to one op's change rows and
-// returns the keys owned by contractID (C-strkey) in first-write order. A per-key parse
-// failure excludes that key (toward the consumer's fallback, never a guess).
+// changedWriteKeysForContract applies the changed-write rule to one op's change rows and returns the keys owned by contractID (C-strkey)
+// in first-write order. A per-key parse failure excludes that key (toward the consumer's fallback, never a guess).
 func changedWriteKeysForContract(rows []entryChangeLite, contractID string) []string {
 	if len(rows) == 0 {
 		return nil
@@ -282,11 +276,9 @@ func (ks *lakeKeyState) valueChanged() bool {
 	return true
 }
 
-// contractDataEntryVal parses entry_xdr and returns the owning C-strkey plus the
-// ContractDataEntry.Val bytes. decodable=false (unmarshal failed): the caller must poison the
-// row's KEY (see changedWriteKeysForContract), not drop the row. decodable=true with ok=false:
-// not contract-data or account-owned, skip. nil val with ok=true: Val marshal failure, so callers
-// exclude the key.
+// contractDataEntryVal parses entry_xdr into the owning C-strkey plus ContractDataEntry.Val bytes. decodable=false (unmarshal failed):
+// the caller must poison the row's KEY (see changedWriteKeysForContract), not drop the row. decodable=true, ok=false: not contract-data
+// or account-owned, skip. nil val with ok=true: Val marshal failure, so callers exclude the key.
 func contractDataEntryVal(entryB64 string) (contractID string, val []byte, ok, decodable bool) {
 	var entry xdr.LedgerEntry
 	if err := xdr.SafeUnmarshalBase64(entryB64, &entry); err != nil {

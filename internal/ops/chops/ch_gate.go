@@ -17,9 +17,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// chGate runs the backfill acceptance gates over a ledger range: it recomputes the census from
-// galexie and fails if stored per-ledger counts or child-table rows diverge, then reports
-// footprint. It is read-only, so it is safe to re-run.
+// chGate runs the backfill acceptance gates over a range: recomputes the census from galexie, fails if stored per-ledger
+// counts or child-table rows diverge, then reports footprint. Read-only, safe to re-run.
 func chGate(args []string) error { //nolint:gocognit,gocyclo,funlen // linear walk + compare + report; splitting reduces clarity.
 	fs := flag.NewFlagSet("ch-gate", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")
@@ -195,9 +194,8 @@ func chGate(args []string) error { //nolint:gocognit,gocyclo,funlen // linear wa
 	return nil
 }
 
-// walkCoverage fails unless the walk delivered every requested ledger. Short walks are routine
-// (-bucket defaults to the trimmed live bucket; TolerateTrailingMissing hides holes near -to)
-// and Stream still returns nil. Read-only sibling of [backfillCoverage], used by ch-gate.
+// walkCoverage fails unless the walk delivered every requested ledger: short walks are routine (-bucket defaults to the
+// trimmed live bucket; TolerateTrailingMissing hides holes near -to) and Stream still returns nil. Read-only [backfillCoverage].
 func walkCoverage(cmd string, from, to uint32, walked int, bucket string) error {
 	requested := uint64(to) - uint64(from) + 1
 	if uint64(walked) == requested {
@@ -253,9 +251,8 @@ func gateLedger(lcm sdkxdr.LedgerCloseMeta, passphrase string) (want gateCounts,
 	return want, mismatch, nil
 }
 
-// lcmTxOpCounts counts a ledger's transactions and operations straight off
-// the LCM, bypassing the tx reader: ExtractLedger skips a tx the reader
-// cannot decode, so its own TxCount/OpCount cannot witness that drop.
+// lcmTxOpCounts counts transactions and operations straight off the LCM: ExtractLedger skips a tx the reader cannot
+// decode, so its own TxCount/OpCount cannot witness that drop.
 func lcmTxOpCounts(lcm sdkxdr.LedgerCloseMeta) (tx, op uint64) {
 	tx = uint64(lcm.CountTransactions())
 	for _, env := range lcm.TransactionEnvelopes() {

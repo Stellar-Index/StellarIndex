@@ -8,22 +8,17 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// maxSaneTokenDecimals bounds the accepted on-chain `decimal`. A token self-declares a u32,
-// and unit math divides by 10^decimals, so absurd scales would zero out market-cap and display
-// amounts. 38 mirrors the NUMERIC(38) ceiling; above it is "no usable metadata" (default kept).
+// maxSaneTokenDecimals bounds the accepted on-chain `decimal`: a token self-declares a u32 and unit math divides by 10^decimals, so
+// absurd scales would zero out amounts. 38 mirrors the NUMERIC(38) ceiling; above it is "no usable metadata".
 const maxSaneTokenDecimals = 38
 
-// tokenDecimalsKeys are the METADATA map keys that carry the scale, in preference order.
-// `decimal` is the soroban-token-sdk's name (SACs); hand-written tokens, including tokenized
-// Treasury funds, use `decimals`, so both are read. A missed reading publishes a wrong figure: a
-// 5-decimal fund read at the default 7 shows one hundredth of its capitalisation. Never blended:
-// see [decimalsFromInstanceEntry].
+// tokenDecimalsKeys are the METADATA map keys that carry the scale, in preference order: `decimal` (soroban-token-sdk, SACs) and
+// `decimals` (hand-written tokens). A missed reading publishes a wrong figure (a 5-decimal fund read at the default 7 shows one hundredth
+// of its capitalisation). Never blended: see [decimalsFromInstanceEntry].
 var tokenDecimalsKeys = []string{"decimal", "decimals"}
 
-// tokenMetadataMapKeys are the instance-storage keys whose value is a map that may carry the
-// scale, in preference order. `METADATA` is the soroban-token-sdk convention; private-credit deal
-// tokens have no METADATA key and instead hold `Config`, a map whose `decimals` is the scale.
-// Both maps are read and never blended: differing scales are refused by [decimalsFromInstance].
+// tokenMetadataMapKeys are the instance-storage keys whose map may carry the scale, in preference order: `METADATA` (soroban-token-sdk)
+// and `Config` (private-credit deal tokens). Both are read and never blended: differing scales are refused by [decimalsFromInstance].
 var tokenMetadataMapKeys = []string{"METADATA", "Config"}
 
 // TokenDecimals resolves a token contract's decimals() from its instance METADATA map without executing WASM; found=false (nil error) when unavailable, and callers keep their default (7).
@@ -59,10 +54,9 @@ func (r *ExplorerReader) TokenDecimals(ctx context.Context, contractID string) (
 	return d, ok, rows.Err()
 }
 
-// decimalsFromInstanceEntry decodes one contract-instance LedgerEntry and returns its declared
-// scale as read by [decimalsFromInstance]. ok=false when it isn't an instance or no usable
-// scale exists: none, out of bounds, or two that DISAGREE. Disagreement is refused, not
-// resolved by preference, since picking one would invent an exponent for a money figure.
+// decimalsFromInstanceEntry decodes one contract-instance LedgerEntry and returns its declared scale as read by [decimalsFromInstance].
+// ok=false when it isn't an instance or no usable scale exists (none, out of bounds, or two that DISAGREE: refused, not resolved by
+// preference, since picking one would invent an exponent for a money figure).
 func decimalsFromInstanceEntry(b64 string) (uint32, bool) {
 	var entry xdr.LedgerEntry
 	if xdr.SafeUnmarshalBase64(b64, &entry) != nil {
@@ -79,10 +73,9 @@ func decimalsFromInstanceEntry(b64 string) (uint32, bool) {
 	return decimalsFromInstance(inst)
 }
 
-// decimalsFromInstance reads the declared scale from a decoded instance, under either map
-// spelling in [tokenMetadataMapKeys] and either field spelling in [tokenDecimalsKeys].
-// ok=false when no scale is stored, one is out of bounds, or two DISAGREE (across map names
-// for the same reason as across field names: choosing would invent an exponent).
+// decimalsFromInstance reads the declared scale from a decoded instance under either map spelling in [tokenMetadataMapKeys] and either
+// field spelling in [tokenDecimalsKeys]. ok=false when none is stored, one is out of bounds, or two DISAGREE (choosing would invent an
+// exponent).
 func decimalsFromInstance(inst xdr.ScContractInstance) (uint32, bool) {
 	if inst.Storage == nil {
 		return 0, false

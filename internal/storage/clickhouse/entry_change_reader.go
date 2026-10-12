@@ -19,13 +19,10 @@ type EntryChange struct {
 	Entry       *xdr.LedgerEntry
 }
 
-// streamEntryChangesQuery backs StreamEntryChanges. FINAL:
-// stellar.ledger_entry_changes is ReplacingMergeTree(ingested_at); a re-derived window leaves
-// un-merged duplicate parts, and without dedup fn would run TWICE for one change, over-counting
-// the movement reconstruction. FINAL, not `LIMIT 1 BY`: this is an operator-run backfill, entry_xdr
-// is KB-scale and `LIMIT n BY` has breached memory budgets on wide columns, and the
-// `ledger_seq BETWEEN ? AND ?` window bounds FINAL's merge cost. The ORDER BY (the per-op grouping
-// order callers rely on) is kept.
+// streamEntryChangesQuery backs StreamEntryChanges. FINAL: ledger_entry_changes is ReplacingMergeTree(ingested_at) and a re-derived window
+// leaves un-merged duplicates, so fn would run TWICE for one change, over-counting the movement reconstruction. FINAL, not `LIMIT 1 BY`:
+// entry_xdr is KB-scale and `LIMIT n BY` has breached memory on wide columns; the `ledger_seq BETWEEN ? AND ?` window bounds FINAL's merge
+// cost. The ORDER BY (the per-op grouping order callers rely on) is kept.
 const streamEntryChangesQuery = `
 	SELECT ledger_seq, close_time, tx_hash, op_index, change_index, change_type, entry_xdr
 	FROM stellar.ledger_entry_changes FINAL

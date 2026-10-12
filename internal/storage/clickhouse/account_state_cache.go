@@ -31,10 +31,9 @@ func newAccountStateCache() *accountStateCache {
 	return &accountStateCache{entries: make(map[string]accountStateEntry)}
 }
 
-// get returns the cached state whenever one exists, past the TTL too (fresh=false); staleness
-// is the caller's judgment. An expired entry as a hard miss left a whale account (scan outruns
-// the budget) warm only briefly after each fill and 503 otherwise. ok=false only when never
-// computed. Nil-safe: a zero-value reader is a permanent miss.
+// get returns the cached state whenever one exists, past the TTL too (fresh=false); staleness is the caller's call, since a hard miss on
+// expiry left whale accounts (scan outruns the budget) 503ing. ok=false only when never computed. Nil-safe: a zero-value reader is a
+// permanent miss.
 func (c *accountStateCache) get(account string) (st AccountState, ok, fresh bool) {
 	if c == nil {
 		return AccountState{}, false, false
@@ -107,11 +106,9 @@ func (r *ExplorerReader) AccountStateCached(ctx context.Context, account string)
 	}
 }
 
-// refreshAccountState kicks one detached scan for account (returning the existing flight's channel
-// while one is up), outliving the request that noticed the miss. saturated is true only when this
-// call owned the flight and the shared refresh gate was full. Non-owners read the entry's
-// saturated flag, set by the owner before end() closes done (the close is the happens-before
-// edge, as ttlFlight.err), so every waiter sees a skipped flight as retryable backpressure.
+// refreshAccountState kicks one detached scan for account (returning the existing flight's channel), outliving the request. saturated is
+// true only when this call owned the flight and the shared refresh gate was full; non-owners read the entry's flag, set before end()
+// closes done.
 func (r *ExplorerReader) refreshAccountState(account string) (fl *stateFlightEntry, saturated bool) {
 	fl, owner := r.stateFlight.begin(account)
 	if !owner {
@@ -153,9 +150,8 @@ func (r *ExplorerReader) refreshAccountState(account string) (fl *stateFlightEnt
 	return fl, false
 }
 
-// stateFlightEntry is one in-flight account-state refresh. done closes when
-// the flight ends; saturated is written only by the flight owner before
-// end() closes done, so waiters may read it after <-done without locking.
+// stateFlightEntry is one in-flight refresh; saturated is written only by the owner before end() closes done, so waiters read it after
+// <-done without locking.
 type stateFlightEntry struct {
 	done      chan struct{}
 	saturated bool

@@ -45,9 +45,8 @@ type AccountWealthSnapshot struct {
 	AsOfLedger uint32
 }
 
-// accountsWealthCache is a TTL + single-flight cache in front of
-// [ExplorerReader.AccountsByWealth]. The query needs 11-20 s against the handler's 8 s
-// deadline, so it must never run on a request; a warm stale entry beats hanging.
+// accountsWealthCache is a TTL + single-flight cache in front of [ExplorerReader.AccountsByWealth]. The query needs 11-20 s against the
+// handler's 8 s deadline, so it must never run on a request; a warm stale entry beats hanging.
 type accountsWealthCache struct {
 	mu     sync.Mutex
 	entry  AccountWealthSnapshot
@@ -59,10 +58,8 @@ func newAccountsWealthCache() *accountsWealthCache {
 	return &accountsWealthCache{}
 }
 
-// get returns the cached ranking and fetch time whenever one was ever stored, including past
-// the TTL: staleness is the caller's decision, and a real old ranking with an honest as-of
-// beats blanking the route. ok=false only when nothing was stored. A nil cache is a
-// permanent miss.
+// get returns the cached ranking and fetch time whenever one was ever stored, past the TTL too: staleness is the caller's decision.
+// ok=false only when nothing was stored; a nil cache is a permanent miss.
 func (c *accountsWealthCache) get() (AccountWealthSnapshot, bool) {
 	if c == nil {
 		return AccountWealthSnapshot{}, false

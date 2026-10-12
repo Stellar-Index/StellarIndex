@@ -130,18 +130,14 @@ func (w ECWindowCoverage) Missing() uint64 {
 	return w.TxLedgers - w.ECCoveredTxLedgers
 }
 
-// ecTxScopedRow selects transaction-scoped ledger_entry_changes rows. Snapshot
-// seeds (SnapshotEntryRow) and eviction rows carry an empty tx_hash; tx_hash is
-// the second sort-key column, so the ledger_seq range still prunes granules.
+// ecTxScopedRow selects transaction-scoped ledger_entry_changes rows: snapshot seeds (SnapshotEntryRow) and eviction rows carry an empty
+// tx_hash. tx_hash is the second sort-key column, so the ledger_seq range still prunes granules.
 const ecTxScopedRow = "tx_hash != ''"
 
-// ecWindowCoverageQuery is the Check-2 per-window scan; a builder so a unit test pins the shape.
-// It uses uniqExact(ledger_seq), not count(), because stellar.ledgers is ReplacingMergeTree and
-// count() double-counts un-merged re-ingests. uniqExactIf(... IN (subquery)) restricts coverage to
-// the tx-bearing set the total uses, so tx_count == 0 ledgers never count as coverage. Both sides
-// are primary-key range scans bounded by the stride window; the subquery admits only
-// ecTxScopedRow rows, since a snapshot or eviction row is not coverage.
-// The four `?` bind positionally: (subquery lo, hi, outer lo, hi).
+// ecWindowCoverageQuery is the Check-2 per-window scan (a builder so a unit test pins the shape). uniqExact(ledger_seq), not count(),
+// because stellar.ledgers is ReplacingMergeTree and count() double-counts un-merged re-ingests. uniqExactIf(... IN (subquery)) restricts
+// coverage to the tx-bearing set the total uses, admitting only ecTxScopedRow rows (a snapshot or eviction row is not coverage). Both
+// sides are primary-key range scans bounded by the stride window. The four `?` bind positionally: (subquery lo, hi, outer lo, hi).
 func ecWindowCoverageQuery() string {
 	return `
 		SELECT

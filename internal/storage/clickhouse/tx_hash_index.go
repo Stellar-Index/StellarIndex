@@ -8,12 +8,10 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// txHashIndexBackfillQuery backs BackfillTxHashIndex's per-window INSERT...SELECT. FINAL on the
-// source read: stellar.transactions is ReplacingMergeTree(ingested_at), so a re-ingested window can
-// hold un-merged duplicate PARTS, and without FINAL the INSERT would index the STALE tx_hash beside
-// the corrected one (same ingested_at-tie ambiguity as txByLedgerAndHash). FINAL is bounded by the
-// ledger_seq window. The ARRAY JOIN indexes a fee bump's inner hash beside its outer one, as
-// tx_hash_index_inner_mv does.
+// txHashIndexBackfillQuery backs BackfillTxHashIndex's per-window INSERT...SELECT. FINAL on the source: stellar.transactions is
+// ReplacingMergeTree(ingested_at), so a re-ingested window can hold un-merged duplicate PARTS and without FINAL the INSERT would index
+// the STALE tx_hash beside the corrected one; FINAL is bounded by the ledger_seq window. The ARRAY JOIN indexes a fee bump's inner hash
+// beside its outer one, as tx_hash_index_inner_mv does.
 const txHashIndexBackfillQuery = `INSERT INTO stellar.tx_hash_index (tx_hash, ledger_seq, tx_index)
 	SELECT h, ledger_seq, tx_index FROM stellar.transactions FINAL
 	ARRAY JOIN arrayFilter(x -> x != '', [tx_hash, inner_tx_hash]) AS h
@@ -50,10 +48,9 @@ func MarkTxHashIndexCovered(ctx context.Context, addr string, from, to uint32) e
 	return nil
 }
 
-// runWindowedBackfill walks [from, to] in windows of `window` ledgers, running exec once per window
-// and reporting progress plus the exact resume point. Shared by BackfillTxHashIndex and
-// BackfillContractInstanceChanges; keep the resume-point wording identical, operators paste
-// `-from %d` back in on restart.
+// runWindowedBackfill walks [from, to] in windows of `window` ledgers, running exec once per window and reporting the exact resume point.
+// Shared by BackfillTxHashIndex and BackfillContractInstanceChanges; keep the resume wording identical: operators paste `-from %d` back
+// in on restart.
 func runWindowedBackfill(ctx context.Context, conn driver.Conn, from, to, window uint32, label string, exec func(ctx context.Context, conn driver.Conn, lo, hi uint32) error, logf func(format string, args ...any)) error {
 	start := time.Now()
 	for lo := from; ; {

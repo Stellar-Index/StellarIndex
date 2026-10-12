@@ -26,11 +26,9 @@ type censusExecConn interface {
 // ErrCensusShrink marks a recompute that produced fewer rows or events than the live partition holds; the partition is left untouched.
 var ErrCensusShrink = errors.New("census day recompute is smaller than the live partition")
 
-// censusDayInsert computes one day's census into the given PRIVATE staging table. A day is not
-// expressible in ledger_seq (the sort key), so the filter rides on close_time and pruning
-// depends on contract_events' idx_ce_close_time minmax index; without it the answer is still
-// right, from a full scan. The staging name is crypto-random per run, never user input, so the
-// Format-built identifier is safe.
+// censusDayInsert computes one day's census into the PRIVATE staging table. A day is not expressible in ledger_seq (the sort key), so the
+// filter rides on close_time and pruning needs contract_events' idx_ce_close_time minmax index (without it, still right, from a full
+// scan). The staging name is crypto-random per run, never user input, so the Format-built identifier is safe.
 func censusDayInsert(staging string) string {
 	return fmt.Sprintf(`
 	INSERT INTO stellar.%s (day, contract_id, events, last_ledger, last_seen)
@@ -47,9 +45,8 @@ func censusDayInsert(staging string) string {
 	         max_bytes_before_external_group_by = 4000000000, max_execution_time = 1800`, staging)
 }
 
-// privateStagingTable mints a per-run staging table name with a crypto-random
-// suffix: the 30-min timer and a manual `ch-census-rollup -backfill` are
-// separate processes and must never share a staging table.
+// privateStagingTable mints a per-run staging name with a crypto-random suffix: the 30-min timer and a manual `ch-census-rollup -backfill`
+// are separate processes and must never share a staging table.
 func privateStagingTable() (string, error) {
 	var b [8]byte
 	if _, err := rand.Read(b[:]); err != nil {

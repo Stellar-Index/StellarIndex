@@ -45,9 +45,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// reconTarget is one protocol table a source writes, plus the EventKinds that route to it. The
-// re-derive counts only these kinds, since counting all outputs would overcount a table in a
-// multi-table source.
+// reconTarget is one protocol table a source writes plus the EventKinds routed to it; the re-derive counts only those kinds, since counting
+// all outputs would overcount a table in a multi-table source.
 type reconTarget struct {
 	table       string
 	whereFilter string   // "" = whole table belongs to this source
@@ -138,9 +137,8 @@ type reconSource struct {
 	reproofOutlastsPass string
 }
 
-// aggregateWaiver is a source's opt-out from strict per-ledger reconcile. boundary is the highest
-// ledger of the keying vintage that justifies netting; boundary 0 reconciles strict, so an
-// unbounded netting exception cannot mark a source complete.
+// aggregateWaiver opts a source out of strict per-ledger reconcile; boundary is the highest ledger of the keying vintage justifying
+// netting, and boundary 0 reconciles strict so an unbounded netting exception cannot mark a source complete.
 type aggregateWaiver struct {
 	reason   string
 	boundary uint32
@@ -176,9 +174,8 @@ func targetLabel(table, filter string) string {
 	return table + "[" + filter + "]"
 }
 
-// projectionScope renders which served tables the reconcile counted and which it waived, for the
-// verdict detail. scopes is parallel to s.targets; an empty scope was skipped, so it is named as
-// not reconciled. The text carries no "; " because detail is joined on that separator.
+// projectionScope renders which served tables the reconcile counted and waived for the verdict detail; scopes is parallel to s.targets
+// (empty = skipped). The text carries no "; " because detail is joined on that separator.
 func (s reconSource) projectionScope(scopes []projectionScope) string {
 	rec := make([]string, 0, len(s.targets))
 	var uncounted []string
@@ -230,10 +227,9 @@ type gatedDecoder interface {
 	GatedContractSet() []string
 }
 
-// buildReconciliationCatalogue assembles the per-source reconciliation set, so compute-completeness,
-// verify-reconciliation and ch-reproject share one. The soroswap decoder is returned separately
-// so the caller can seed its pair registry (its swap event omits token identities). It errors
-// only on a malformed watched C-strkey.
+// buildReconciliationCatalogue assembles the per-source reconciliation set shared by compute-completeness, verify-reconciliation and
+// ch-reproject; the soroswap decoder is returned separately so the caller can seed its pair registry. Errors only on a malformed watched
+// C-strkey.
 //
 //nolint:funlen // linear per-source catalogue; one entry per projected source, splitting scatters the reconcile spec.
 func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.Decoder, error) {
@@ -528,10 +524,9 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 	return cat, soroswapDec, nil
 }
 
-// filterCatalogueByNetwork drops catalogue sources that do not exist on network. Decoders are
-// anchored to pubnet contract identities (ADR-0035), so on test networks they match nothing and
-// their genesis floors sit above the tip, which would read incomplete forever. It returns the
-// survivors and the dropped names so the caller can log them and delete stale snapshots.
+// filterCatalogueByNetwork drops sources absent on network: decoders are anchored to pubnet contract identities (ADR-0035), so on test
+// networks they match nothing and their genesis floors sit above the tip (incomplete forever). Returns survivors and dropped names for
+// logging and stale-snapshot deletion.
 func filterCatalogueByNetwork(cat []reconSource, network string) (kept []reconSource, dropped []string) {
 	names := make([]string, 0, len(cat))
 	for _, src := range cat {
@@ -556,11 +551,9 @@ func filterCatalogueByNetwork(cat []reconSource, network string) (kept []reconSo
 	return kept, dropped
 }
 
-// warmCatalogueGates gives every contract-gated source the live indexer's gate: its curated set
-// plus children recorded in protocol_contracts. Without it, a contract admitted that way is decoded
-// live but invisible to re-derives, so its served rows read as phantoms and `ch-rebuild -write`
-// drops them. Read-only (withHook=false), since a re-derive that registered contracts would
-// manufacture its own evidence. Call it before anything touches src.dec, as the decoders are rebuilt.
+// warmCatalogueGates gives every gated source the live indexer's gate (curated set plus protocol_contracts children); without it served
+// rows read as phantoms and `ch-rebuild -write` drops them. Read-only (withHook=false) so a re-derive can't manufacture evidence; call
+// before anything touches src.dec.
 func warmCatalogueGates(ctx context.Context, store *timescale.Store, logger *slog.Logger, cat []reconSource) ([]reconSource, error) {
 	gated, err := pipeline.GatedRegistryOptions(ctx, store, logger, ctx, false)
 	if err != nil {
@@ -569,10 +562,8 @@ func warmCatalogueGates(ctx context.Context, store *timescale.Store, logger *slo
 	return applyGatedOptions(cat, gated)
 }
 
-// applyGatedOptions is the pure half of warmCatalogueGates: it rebuilds each gated source's
-// decoder, newGatedDec and contractIDs with gated[source] applied, using the registry the indexer
-// builds from (pipeline.GatedMetaFor). A decoder type mismatch or a gated source missing from
-// gated fails closed.
+// applyGatedOptions is the pure half of warmCatalogueGates: rebuilds each gated source's decoder, newGatedDec and contractIDs from
+// gated[source] (pipeline.GatedMetaFor). A decoder type mismatch or a gated source missing from gated fails closed.
 func applyGatedOptions(cat []reconSource, gated map[string][]contractid.Option) ([]reconSource, error) {
 	out := make([]reconSource, len(cat))
 	copy(out, cat)
@@ -648,9 +639,8 @@ func unionContractIDs(base, extra []string) []string {
 	return append(out, added...)
 }
 
-// entryDecoderSourceNames lists RegisterSupplyEntryDecoders' five sources. They read LedgerEntry
-// changes, not soroban_events, so they are never a reconSource; naming them lets
-// validateSourceFilter say "known but not on this axis" instead of "unknown source".
+// entryDecoderSourceNames lists RegisterSupplyEntryDecoders' five sources (LedgerEntry changes, never a reconSource) so
+// validateSourceFilter can say "known but not on this axis" instead of "unknown source".
 var entryDecoderSourceNames = map[string]bool{
 	accounts.SourceName:           true,
 	trustlines.SourceName:         true,
@@ -659,9 +649,8 @@ var entryDecoderSourceNames = map[string]bool{
 	sac_balances.SourceName:       true,
 }
 
-// validateSourceFilter fails CLOSED when a -source filter names no catalogue source; otherwise a
-// typo'd -source skips every source and the run reports "no gaps" having verified nothing. The
-// valid set is exactly what buildReconciliationCatalogue returned. only == "" is always valid.
+// validateSourceFilter fails CLOSED when -source names no catalogue source; a typo'd filter would skip everything and report "no gaps".
+// only == "" is valid.
 func validateSourceFilter(only string, cat []reconSource) error {
 	if only == "" {
 		return nil
@@ -679,10 +668,9 @@ func validateSourceFilter(only string, cat []reconSource) error {
 	return fmt.Errorf("-source %q matches no reconciliation source for this config; known sources: %s", only, strings.Join(names, ", "))
 }
 
-// buildSEP41ReconSources builds sep41_transfers and sep41_supply, gated on the watched set like
-// pipeline.RegisterSupplyEventDecoders so a re-derive reproduces what the dispatcher wrote. The
-// watched contracts double as the contractIDs prefilter, since SEP-41 topics are the CAP-67
-// firehose. It errors on an empty watched set, because silence would read as nothing to recover.
+// buildSEP41ReconSources builds sep41_transfers and sep41_supply gated on the watched set like pipeline.RegisterSupplyEventDecoders; the
+// watched contracts also serve as the contractIDs prefilter (SEP-41 topics are the CAP-67 firehose). Errors on an empty watched set:
+// silence would read as nothing to recover.
 func buildSEP41ReconSources(cfg config.Config) ([]reconSource, error) {
 	watched := cfg.Supply.WatchedSEP41Contracts
 	floor := sorobanEraFloor(cfg)
@@ -732,10 +720,8 @@ func buildSEP41ReconSources(cfg config.Config) ([]reconSource, error) {
 	}, nil
 }
 
-// contractIDFilter renders a watched set as the served-side SQL predicate scoping a target to the
-// contracts the expected-side decoder is gated on. It comes from operator config and is
-// interpolated into SQL, so each id is strkey-decoded first: a valid C-strkey is base32 and cannot
-// carry a quote. Sorted because the filter is part of the completeness_target_floors key.
+// contractIDFilter renders the watched set as the served-side SQL predicate; it is interpolated into SQL, so each id is strkey-decoded
+// first (a valid C-strkey cannot carry a quote). Sorted because the filter is part of the completeness_target_floors key.
 func contractIDFilter(watched []string) (string, error) {
 	ids := make([]string, 0, len(watched))
 	for i, c := range watched {

@@ -20,10 +20,8 @@ import (
 // the free-space guard. This file runs the day walk's plan/apply pair (usd_volume_restamp_xlmbase.go),
 // generation guard included, on one chunk through the guarded apply.
 
-// xlmBaseChunkStore is the xlm-base tier's seam: the driver's chunk and
-// policy primitives, the day walk's plan/apply pair, and the in-chunk
-// apply that re-reads the chunk's is_compressed ahead of every batch.
-// *timescale.Store satisfies it.
+// xlmBaseChunkStore is the xlm-base tier's seam: driver chunk/policy primitives, the day walk's plan/apply pair, and the in-chunk apply
+// that re-reads is_compressed ahead of every batch. *timescale.Store satisfies it.
 type xlmBaseChunkStore interface {
 	chunkRestampStore
 	xlmBaseRestampStore
@@ -42,9 +40,8 @@ func runXLMBaseChunkRestamp(ctx context.Context, store xlmBaseChunkStore, cfgPat
 		&estimatedChunkTier{run: run, opts: opts, inChunk: inChunk})
 }
 
-// chunkRestampResumeHint builds the RESUME command carrying the run's generation and every
-// population-shaping flag. Finished chunks are skipped; the failed chunk was re-compressed
-// unless the error says LEFT DECOMPRESSED.
+// chunkRestampResumeHint builds the RESUME command carrying the run's generation and population-shaping flags; finished chunks are skipped,
+// the failed chunk was re-compressed unless the error says LEFT DECOMPRESSED.
 func chunkRestampResumeHint(cfgPath string, from, to time.Time, run *xlmBaseRestampRun, opts xlmBaseRestampOptions, copts chunkRestampOptions) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "\nRESUME: stellarindex-ops usd-volume-restamp -config %s -tier %s -chunks -from %s -to %s -generation %d",
@@ -67,9 +64,8 @@ func chunkRestampResumeHint(cfgPath string, from, to time.Time, run *xlmBaseRest
 	return b.String()
 }
 
-// xlmBaseResumeFlags renders the population-shaping flags and slice both walks' RESUME lines
-// carry. Dropping -sources would restamp every DEX source; dropping -max-generation would admit
-// rows the first run excluded.
+// xlmBaseResumeFlags renders the population-shaping flags and slice both walks' RESUME lines carry; dropping -sources would restamp every
+// DEX source, dropping -max-generation would admit rows the first run excluded.
 func xlmBaseResumeFlags(opts xlmBaseRestampOptions) string {
 	var b strings.Builder
 	if opts.FillNull {
@@ -88,10 +84,8 @@ func xlmBaseResumeFlags(opts xlmBaseRestampOptions) string {
 	return b.String()
 }
 
-// exactRatFlag renders r so [parseMinRelDelta] reads back exactly r: every
-// decimal digit when r has a finite expansion, else the a/b fraction. A
-// rounded threshold resumes over a different write set, and one rounded
-// to zero resumes with no threshold at all.
+// exactRatFlag renders r so [parseMinRelDelta] reads back exactly r (every decimal digit if finite, else a/b): a rounded threshold resumes
+// over a different write set, and one rounded to zero resumes with no threshold at all.
 func exactRatFlag(r *big.Rat) string {
 	if n, exact := r.FloatPrec(); exact {
 		return r.FloatString(n)
@@ -99,15 +93,12 @@ func exactRatFlag(r *big.Rat) string {
 	return r.RatString()
 }
 
-// defaultChunkBatch is -chunk-batch's default. Ten times the day walk's
-// -batch: inside a decompressed chunk an UPDATE is a plain heap write,
-// so the per-transaction footprint the smaller batch bounded is gone.
+// defaultChunkBatch is -chunk-batch's default, 10x the day walk's -batch: inside a decompressed chunk an UPDATE is a plain heap write, so
+// the per-transaction footprint the smaller batch bounded is gone.
 const defaultChunkBatch = 20_000
 
-// restampSourcesFlag renders `-sources` for a RESUME line, deterministically
-// ordered. Empty when the run had no allow-list (every source the tier
-// owns), which is the default and must not be spelled out. A resume that
-// dropped it would restamp every source where one was asked for.
+// restampSourcesFlag renders `-sources` for a RESUME line, deterministically ordered; empty (the default) when no allow-list, and a resume
+// that dropped a real one would restamp every source where one was asked for.
 func restampSourcesFlag(allow map[string]bool) string {
 	if len(allow) == 0 {
 		return ""

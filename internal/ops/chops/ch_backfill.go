@@ -17,9 +17,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// runCHBackfill walks a bounded ledger range from galexie and writes the Tier-1 rows to
-// ClickHouse (ADR-0034). It is idempotent (ReplacingMergeTree). -parallel N splits the range
-// into N contiguous chunks, each with its own goroutine and Sink.
+// runCHBackfill walks a bounded ledger range from galexie into ClickHouse (ADR-0034), idempotent via ReplacingMergeTree.
+// -parallel N splits the range into N contiguous chunks, each with its own goroutine and Sink.
 func chBackfill(args []string) error {
 	fs, gate := opsutil.NewMutatingFlagSet("ch-backfill")
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")
@@ -104,9 +103,8 @@ func chBackfill(args []string) error {
 	return nil
 }
 
-// backfillProgress owns a walk's pace reporting: the periodic stderr rate line and the
-// node_exporter heartbeat that tells a wedged walk from a working one. Both share one
-// mutex-guarded counter.
+// backfillProgress reports walk pace: a stderr rate line and the node_exporter heartbeat that tells a wedged walk
+// from a working one, sharing one mutex-guarded counter.
 type backfillProgress struct {
 	hb      *opsutil.JobHeartbeat
 	mu      sync.Mutex
@@ -116,9 +114,8 @@ type backfillProgress struct {
 	ok      bool
 }
 
-// newBackfillProgress starts the heartbeat. heartbeatPath is the -heartbeat
-// flag; see opsutil.NewJobHeartbeat for the empty-path resolution (and for
-// why this is silently inert off-r1).
+// newBackfillProgress starts the heartbeat; heartbeatPath is the -heartbeat flag (empty-path resolution and why it is
+// inert off-r1: opsutil.NewJobHeartbeat).
 func newBackfillProgress(heartbeatPath string) *backfillProgress {
 	hb := opsutil.NewJobHeartbeat("ch-backfill", heartbeatPath, nil)
 	if hb.Enabled() {
@@ -163,10 +160,8 @@ func (p *backfillProgress) reportRate() {
 		total, elapsed.Round(time.Second), rate)
 }
 
-// markOK records that the walk reached its success path. Anything that
-// returns before this — including a short/interrupted walk rejected by
-// backfillCoverage — stops as a FAILED run, so the published
-// stellarindex_ops_job_last_exit_ok matches the process exit code.
+// markOK records the success path; any earlier return, including a short walk rejected by backfillCoverage, stops as
+// a FAILED run so stellarindex_ops_job_last_exit_ok matches the process exit code.
 func (p *backfillProgress) markOK() {
 	p.mu.Lock()
 	p.ok = true
@@ -188,11 +183,8 @@ func backfillBucket(cfg config.Config, override string, from, to uint32) (string
 	return opsutil.ResolveStreamBucket(cfg, override, from, to)
 }
 
-// backfillCoverage turns a walk that did not cover its requested range into a hard error naming
-// the bucket. TolerateTrailingMissing makes an entirely absent range look like a clean walk, and
-// scripts/ops/ch-full-backfill.sh records a window as done only on exit 0, so a vacuous success
-// would drop that window forever. A partial or interrupted walk fails too. Re-running is
-// idempotent, so failing closed costs a re-run and failing open costs a silent hole.
+// backfillCoverage fails a walk that missed its range, naming the bucket: TolerateTrailingMissing makes an absent range look clean and
+// scripts/ops/ch-full-backfill.sh banks a window only on exit 0. Failing closed costs a re-run (idempotent); failing open a silent hole.
 func backfillCoverage(from, to uint32, streamed int64, bucket string, interrupted bool) error {
 	want := int64(to) - int64(from) + 1
 	switch {
@@ -209,10 +201,8 @@ func backfillCoverage(from, to uint32, streamed int64, bucket string, interrupte
 	return nil
 }
 
-// chBackfillChunk walks one chunk's range with its own Sink. A ClickHouse write failure is
-// fatal so errgroup cancels siblings. dryRun opens no Sink and writes nothing, but still
-// fetches and decodes every ledger; the ADR-0043 restore drill uses it because
-// clickhouse.Open pins the stellar database, so a scratch lake is not possible.
+// chBackfillChunk walks one chunk with its own Sink; a ClickHouse write failure is fatal so errgroup cancels siblings.
+// dryRun opens no Sink but still decodes every ledger (ADR-0043 drill: clickhouse.Open pins the stellar database).
 func chBackfillChunk(
 	ctx context.Context,
 	idx int,
@@ -263,10 +253,8 @@ func chBackfillChunk(
 	return sink.Flush(ctx)
 }
 
-// changesOnlyExtract keeps an extract's ledgers row and ledger entry changes
-// and drops everything else. The ledgers row stays because Sink.Flush writes
-// it last as the per-ledger commit marker for the changes. Built from an empty
-// value so a table added to LedgerExtract later is excluded, not rewritten.
+// changesOnlyExtract keeps the ledgers row (Sink.Flush writes it last as the per-ledger commit marker) and the entry
+// changes. Built from an empty value so a table added to LedgerExtract later is excluded, not rewritten.
 func changesOnlyExtract(e clickhouse.LedgerExtract) clickhouse.LedgerExtract {
 	return clickhouse.LedgerExtract{Ledger: e.Ledger, Changes: e.Changes}
 }

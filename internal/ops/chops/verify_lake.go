@@ -14,10 +14,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 )
 
-// verifyLake is the verify-lake subcommand, the daily "is the lake sound?" verdict and restore
-// gate: ledger contiguity, entry-change coverage above -ec-floor, hash-chain integrity and the
-// raw-table census. Exit code is the failure count capped at 255; -textfile writes the .prom
-// only after every requested check completed, so an erroring run leaves the stale alert to fire.
+// verifyLake is the daily lake-soundness verdict and restore gate (contiguity, entry-change coverage above -ec-floor, hash chain, raw-
+// table census). Exit code is the failure count capped at 255; -textfile writes the .prom only after every requested check completed, so
+// an erroring run leaves the stale alert to fire.
 func verifyLake(args []string) error {
 	fs := flag.NewFlagSet("verify-lake", flag.ContinueOnError)
 	cfgPath := fs.String("config", "/etc/stellarindex.toml", "path to stellarindex.toml — used only to resolve the default -ch-addr (this tool reads ClickHouse only, never Postgres); a missing/unreadable file is tolerated when -ch-addr is passed explicitly")
@@ -135,9 +134,8 @@ func runLakeChecks(ctx context.Context, c lakeChecks, addr string, from, to, ecF
 	return n, nil
 }
 
-// lakeExitCode computes verify-lake's exit code from the composed checks'
-// failure counts, capped at the max process exit code (255) — mirrors
-// verify-contiguity's and verify-hashchain's own capping. Pure.
+// lakeExitCode computes verify-lake's exit code from the checks' failure counts, capped at 255 like verify-contiguity and verify-
+// hashchain. Pure.
 func lakeExitCode(gaps, deficiency, broken, censusShort uint64) int {
 	total := gaps + deficiency + broken + censusShort
 	if total > 255 {
@@ -146,9 +144,8 @@ func lakeExitCode(gaps, deficiency, broken, censusShort uint64) int {
 	return int(total) //nolint:gosec // capped above; always in [0,255].
 }
 
-// renderLakeVerifyProm renders lake_verify.prom. A check narrowed out via
-// -checks emits no failures series, so a narrowed run never reads as a pass
-// for a check it did not perform. Pure.
+// renderLakeVerifyProm renders lake_verify.prom. A check narrowed out via -checks emits no failures series, so a narrowed run never reads
+// as a pass for a check it did not perform. Pure.
 func renderLakeVerifyProm(c lakeChecks, n lakeCounts, from, to uint32, now time.Time) string {
 	var b strings.Builder
 	b.WriteString("# HELP stellarindex_lake_verify_failures Failures verify-lake found per check over its range (missing ledgers, entry-change deficiencies, broken hash links, short raw-table partitions). Emitted only for checks that ran.\n")
@@ -179,9 +176,8 @@ func renderLakeVerifyProm(c lakeChecks, n lakeCounts, from, to uint32, now time.
 	return b.String()
 }
 
-// lakeCheckLine formats one verify-lake summary line. A check narrowed out
-// via -checks prints "SKIPPED (not requested)" rather than a zero count, so "not run" is never
-// read as "ran, found zero".
+// lakeCheckLine formats one verify-lake summary line; a check narrowed out via -checks prints "SKIPPED (not requested)", never a zero
+// count, so "not run" is not read as "found zero".
 func lakeCheckLine(label string, ran bool, detail string) string {
 	if !ran {
 		return fmt.Sprintf("  %-15s SKIPPED (not requested)\n", label+":")
@@ -189,10 +185,7 @@ func lakeCheckLine(label string, ran bool, detail string) string {
 	return fmt.Sprintf("  %-15s %s\n", label+":", detail)
 }
 
-// lakeChecksRunLabel renders the -checks tokens that actually ran, for the
-// summary line's checks_run= field — so a pasted report is self-describing
-// about its own coverage without the reader having to infer it from which
-// lines say SKIPPED. Pure — unit-testable without a live lake.
+// lakeChecksRunLabel renders the -checks tokens that ran, for the summary's checks_run= field, so a pasted report states its own coverage.
 func lakeChecksRunLabel(c lakeChecks) string {
 	var ran []string
 	if c.contiguity {

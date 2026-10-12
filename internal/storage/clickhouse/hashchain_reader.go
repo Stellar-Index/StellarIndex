@@ -23,12 +23,8 @@ func (w HashChainWindowResult) Checked() uint64 {
 	return w.Present - 1
 }
 
-// hashChainWindowLinksQuery computes Present and Broken in one pass over [from,to], so cost is one
-// query per window however many links are broken.
-//
-// FINAL is required: this reads ledger_hash/prev_hash VALUES through a window function, and an
-// unmerged duplicate row for a ledger_seq would tie the ORDER BY lagInFrame relies on.
-// boundedScanSettings caps memory.
+// hashChainWindowLinksQuery computes Present and Broken in one pass over [from,to]. FINAL is required: an unmerged duplicate ledger_seq
+// would tie the ORDER BY lagInFrame relies on.
 const hashChainWindowLinksQuery = `
 	SELECT count() AS present, countIf(want_prev != '' AND prev_hash != want_prev) AS broken
 	FROM (
@@ -69,9 +65,8 @@ type HashChainBoundaryResult struct {
 	Linked                         bool
 }
 
-// hashChainBoundaryQuery reads both endpoints of a seam in one round trip. FINAL for the same
-// reason as hashChainWindowLinksQuery; on a 2-row lookup the merge cost is immaterial, and no
-// later pass re-checks a boundary result.
+// hashChainBoundaryQuery reads both endpoints of a seam in one round trip. FINAL as in hashChainWindowLinksQuery; the merge is immaterial
+// on 2 rows.
 const hashChainBoundaryQuery = `SELECT ledger_seq, ledger_hash, prev_hash FROM stellar.ledgers FINAL WHERE ledger_seq IN (?, ?)`
 
 // QueryHashChainBoundary is the point lookup for one window seam, reading at most two rows; seq==0 returns a zero-value result without querying (no predecessor, avoids uint32 underflow).
@@ -125,10 +120,8 @@ type BrokenHashLink struct {
 	WantPrev  string
 }
 
-// brokenHashLinksQuery mirrors hashChainWindowLinksQuery's inner shape but
-// returns individual rows instead of a count — the finer localization pass
-// verify-hashchain pays for only after QueryHashChainWindowLinks already
-// flagged a window's Broken count as nonzero.
+// brokenHashLinksQuery is hashChainWindowLinksQuery's shape returning individual rows: the localization pass verify-hashchain runs only
+// for a window whose Broken count is nonzero.
 const brokenHashLinksQuery = `
 	SELECT ledger_seq, prev_hash, want_prev
 	FROM (

@@ -14,14 +14,10 @@ import (
 // acquireHoldersRollupLock), in the state directory the sibling systemd units already run from.
 const holdersRollupLockPath = "/var/lib/stellarindex/ch-holders-rollup.lock"
 
-// ch-holders-rollup recomputes every asset's top-500 holders board and holder count into staging
-// tables and atomically EXCHANGEs them live (deploy/clickhouse/asset_holders_rollup.sql). The two
-// ledger_entries_current FINAL scans are too heavy to run PER REQUEST, so a 30-minute timer runs
-// them once per cycle and the API serves keyed sub-millisecond reads. An exclusive advisory lock
-// (acquireRollupLock in rollup_lock.go) is taken first, since systemd's single-instance guarantee
-// covers only the timer and a hand-run `stellarindex-ops ch-holders-rollup` bypasses it. Dry run
-// by default (opsutil.WriteGate): without -write it takes no lock and opens no connection; the
-// systemd unit passes -write explicitly.
+// ch-holders-rollup recomputes every asset's top-500 holders board and holder count into staging and atomically EXCHANGEs them live
+// (deploy/clickhouse/asset_holders_rollup.sql); the ledger_entries_current FINAL scans are too heavy per request. Dry run by default:
+// without -write it takes no lock (acquireRollupLock, rollup_lock.go; systemd's single-instance guard covers only the timer) and opens no
+// connection.
 func chHoldersRollup(args []string) error {
 	fs := flag.NewFlagSet("ch-holders-rollup", flag.ContinueOnError)
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")

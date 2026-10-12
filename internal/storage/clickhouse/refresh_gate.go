@@ -19,9 +19,8 @@ type RefreshGate struct {
 	client  int            // slots held by client-keyed classes
 }
 
-// serverKeyedClasses are the refresh classes whose keys the server fixes
-// (one or a handful, kicked by operator prewarm loops). Every other class
-// is keyed on caller-chosen ids, so a client can mint cold keys at will.
+// serverKeyedClasses are the refresh classes whose keys the server fixes (one or a handful, kicked by operator prewarm loops); every
+// other class is keyed on caller-chosen ids, so a client can mint cold keys at will.
 var serverKeyedClasses = map[string]bool{
 	"contracts_dir":      true,
 	"contract_stats":     true,

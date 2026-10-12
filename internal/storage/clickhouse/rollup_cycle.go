@@ -7,21 +7,16 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// rollupLedgerWindow is the ledger span ONE walked statement covers: a single lake partition.
-// Both archives a cycle reads are PARTITION BY intDiv(<ledger column>, 1000000)
-// (deploy/clickhouse/tier1_schema.sql), so a window predicate prunes to one partition's parts.
+// rollupLedgerWindow is the ledger span ONE walked statement covers: a single lake partition. Both archives a cycle reads are PARTITION
+// BY intDiv(<ledger column>, 1000000) (deploy/clickhouse/tier1_schema.sql), so a window predicate prunes to one partition's parts.
 const rollupLedgerWindow = 1_000_000
 
-// rollupWalkSettings is the per-statement settings clause for a walked step: the bounded
-// full-history scan class (boundedScanSettings) plus a per-WINDOW execution cap. The cap is per
-// window, not per cycle: 600 s leaves >20x headroom over the widest window, yet fails one wedged
-// window fast instead of spending the unit's whole TimeoutStartSec budget on it.
+// rollupWalkSettings is a walked step's settings: boundedScanSettings plus a per-WINDOW (not per-cycle) execution cap; 600 s leaves >20x
+// headroom over the widest window yet fails one wedged window fast.
 const rollupWalkSettings = boundedScanSettings + ", max_execution_time = 600"
 
-// rollupStep is one statement of a recompute cycle.
-//
-// A step with walk set is a TEMPLATE: it carries one window's inclusive ledger bounds as bind
-// parameters and runRollupCycle executes it once per window. Every other step runs once, in order.
+// rollupStep is one statement of a recompute cycle. A step with walk set is a TEMPLATE carrying one window's inclusive ledger bounds as
+// bind parameters, run once per window by runRollupCycle; every other step runs once, in order.
 type rollupStep struct {
 	sql  string
 	walk bool
@@ -45,18 +40,11 @@ func windowBindArgs(lo, hi uint32, pairs int) []any {
 	return args
 }
 
-// runRollupCycle executes a recompute cycle: each step in order, walked
-// steps repeated over consecutive rollupLedgerWindow-wide ledger windows
-// from ledger 1 up to the lake tip.
-//
-// A single statement over the whole archive holds a dedupe hash table sized by ALL of history
-// plus, where it joins, a build side sized by every account; that outgrows any fixed ceiling as
-// the chain grows. Walking makes population per-window, and the account-population join runs
-// ONCE against the narrow working table the walk wrote. A join kept in a walked step has a
-// window-bounded build side.
-//
-// The walk writes to a working table, not staging, so an interrupted cycle leaves the live
-// board untouched; the single EXCHANGE is the one moment anything becomes visible.
+// runRollupCycle runs each step in order, repeating walked steps over consecutive rollupLedgerWindow windows from ledger 1 to the lake
+// tip. One statement over the whole archive holds a dedupe table sized by ALL of history plus a build side sized by every account;
+// walking makes the population per-window, and the account join runs ONCE against the narrow working table. The walk writes a working
+// table, not staging, so an interrupted cycle leaves the live board untouched; the single EXCHANGE is the one moment anything becomes
+// visible.
 func runRollupCycle(ctx context.Context, addr, label string, steps []rollupStep, logf func(format string, args ...any)) error {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -71,9 +59,8 @@ func runRollupCycle(ctx context.Context, addr, label string, steps []rollupStep,
 	return runRollupSteps(ctx, conn, tip, label, steps, logf)
 }
 
-// rollupExecer is the slice of driver.Conn a cycle uses. Naming it keeps
-// the step loop — which is where the walk lives — drivable without a
-// ClickHouse connection.
+// rollupExecer is the slice of driver.Conn a cycle uses, so the step loop (where the walk lives) is drivable without a ClickHouse
+// connection.
 type rollupExecer interface {
 	Exec(ctx context.Context, query string, args ...any) error
 }
@@ -118,9 +105,8 @@ func runRollupSteps(ctx context.Context, conn rollupExecer, tip uint32, label st
 	return nil
 }
 
-// lakeTipLedger reads the highest ledger_seq in the lake's ledgers table. The walk's upper bound
-// is the tip rather than each source table's own max: a lagging source just yields empty
-// windows, which partition pruning answers without reading a part.
+// lakeTipLedger reads the highest ledger_seq in the lake's ledgers table. The walk's bound is the tip, not each source table's own max: a
+// lagging source just yields empty windows, which partition pruning answers without reading a part.
 func lakeTipLedger(ctx context.Context, conn driver.Conn) (uint32, error) {
 	var hi uint64
 	if err := conn.QueryRow(ctx, `SELECT toUInt64(max(ledger_seq)) FROM stellar.ledgers`).Scan(&hi); err != nil {

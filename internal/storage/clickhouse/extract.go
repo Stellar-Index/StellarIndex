@@ -124,9 +124,8 @@ func extractTx(ext *LedgerExtract, tx ingest.LedgerTransaction, seq uint32, clos
 	extractEvents(ext, tx, seq, closeTime, txHash, opArgsByIndex(tx.Envelope.Operations()), tx.Result.Successful())
 }
 
-// sorobanMetering is the per-tx Soroban resource snapshot; zero for classic txs.
-// DECLARED values come from the envelope, ACTUAL fees from the tx meta. There is no
-// actual-instructions field: pubnet meta carries none (see internal/xdrjson/operation.go).
+// sorobanMetering is the per-tx Soroban resource snapshot; zero for classic txs. DECLARED values come from the envelope, ACTUAL fees from
+// the tx meta. There is no actual-instructions field: pubnet meta carries none (see internal/xdrjson/operation.go).
 type sorobanMetering struct {
 	Instructions     uint32
 	DiskReadBytes    uint32
@@ -142,9 +141,8 @@ type sorobanMetering struct {
 	FeeMetaUnsupported bool
 }
 
-// extractSorobanMetering pulls the resource bid (envelope) and charged fees (meta).
-// Variant-aware: a fee-bump unwraps to its inner V1 tx (a naive .V1.Tx nil-panics)
-// and meta may be V3 or V4. Zero for non-Soroban txs.
+// extractSorobanMetering pulls the resource bid (envelope) and charged fees (meta). Variant-aware: a fee-bump unwraps to its inner V1 tx
+// (a naive .V1.Tx nil-panics) and meta may be V3 or V4. Zero for non-Soroban txs.
 func extractSorobanMetering(tx ingest.LedgerTransaction) sorobanMetering {
 	sd, ok := sorobanDataFromEnvelope(tx.Envelope)
 	if !ok {
@@ -178,9 +176,8 @@ type feeBump struct {
 	InnerResultCode int32
 }
 
-// extractFeeBump reads the outer fee-bump layer. The SDK's Account()/MaxFee() answer
-// for the INNER tx, so payer, bid, inner hash and inner failure code exist nowhere
-// else in the row; the last two come from the InnerResultPair.
+// extractFeeBump reads the outer fee-bump layer. The SDK's Account()/MaxFee() answer for the INNER tx, so payer, bid, inner hash and inner
+// failure code exist nowhere else in the row; the last two come from the InnerResultPair.
 func extractFeeBump(tx ingest.LedgerTransaction) feeBump {
 	if !tx.Envelope.IsFeeBump() || tx.Envelope.FeeBump == nil {
 		return feeBump{}
@@ -259,10 +256,8 @@ type opInvokeArgs struct {
 	Args       []string
 }
 
-// opArgsByIndex returns the top-level InvokeContract call per op index (nil
-// otherwise), matching dispatcher.extractInvokeContractCalls (same MarshalBinary +
-// base64.Std) so op_args_xdr equals events.Event.OpArgs. A slot whose contract cannot
-// be strkey-encoded yields nil, not args of unverifiable provenance.
+// opArgsByIndex returns the top-level InvokeContract call per op index (nil otherwise), matching dispatcher.extractInvokeContractCalls
+// (same MarshalBinary + base64.Std) so op_args_xdr equals events.Event.OpArgs. A slot whose contract cannot be strkey-encoded yields nil.
 func opArgsByIndex(ops []xdr.Operation) []*opInvokeArgs {
 	out := make([]*opInvokeArgs, len(ops))
 	for i := range ops {
@@ -359,13 +354,11 @@ func appendOpResult(ext *LedgerExtract, seq uint32, txHash string, opIndex uint3
 	})
 }
 
-// extractEvents appends one tx's eligible contract-event rows. An event of op i carries
-// opArgs[i].Args ONLY when its own contract is opArgs[i].ContractID (the dispatcher's provenance
-// gate): wrapper-reached events get empty op_args_xdr, so args-requiring decoders (Redstone)
-// refuse instead of reading attacker-chosen args. A failed tx contributes nothing, as in
-// dispatcher.ProcessLedger and CensusLedger, so ledgers.soroban_event_count ==
-// COUNT(contract_events) == census (ch-gate), in_successful_call = 1 holds for every row, and
-// supply_flows never credits unapplied mint/burn amounts.
+// extractEvents appends one tx's eligible contract-event rows. An event of op i carries opArgs[i].Args ONLY when its own contract is
+// opArgs[i].ContractID (the dispatcher's provenance gate): wrapper-reached events get empty op_args_xdr, so args-requiring decoders
+// (Redstone) refuse instead of reading attacker-chosen args. A failed tx contributes nothing, as in dispatcher.ProcessLedger and
+// CensusLedger, so ledgers.soroban_event_count == COUNT(contract_events) == census (ch-gate) and supply_flows never credits unapplied
+// mint/burn amounts.
 func extractEvents(ext *LedgerExtract, tx ingest.LedgerTransaction, seq uint32, closeTime time.Time, txHash string, opArgs []*opInvokeArgs, successful bool) {
 	if !successful {
 		return
@@ -468,9 +461,8 @@ func eventRow(ce xdr.ContractEvent, seq uint32, closeTime time.Time, txHash stri
 	}, true
 }
 
-// claimAtomCount mirrors dispatcher.claimAtomCount (same op types, success gating) so
-// classic_trade_effect_count equals the SDEX decoder's output. The per-atom rule is
-// [sdexclaim.IsRealTrade] on both sides (TestClaimAtomCount_LockStepWithDecoder).
+// claimAtomCount mirrors dispatcher.claimAtomCount (same op types, success gating) so classic_trade_effect_count equals the SDEX decoder's
+// output. The per-atom rule is [sdexclaim.IsRealTrade] on both sides (TestClaimAtomCount_LockStepWithDecoder).
 func claimAtomCount(op xdr.Operation, result xdr.OperationResult) int { //nolint:gocognit // switch over 5 trade op types, with a dual result-arm fallback for passive offers; linear and clearer unsplit.
 	if result.Code != xdr.OperationResultCodeOpInner {
 		return 0

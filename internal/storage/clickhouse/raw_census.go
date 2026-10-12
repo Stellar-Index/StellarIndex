@@ -33,18 +33,16 @@ type RawTableTotal struct {
 // rawCensusHeader is one partition's Σ of the per-ledger header counts.
 type rawCensusHeader struct{ tx, op, ev uint64 }
 
-// rawCensusSpec binds a raw table to the header count that declares its rows.
-// A presence-only table has no exact per-ledger count in the header: it owes
-// rows wherever the partition has operations, but fewer than op_count.
+// rawCensusSpec binds a raw table to the header count that declares its rows. A presence-only table has no exact per-ledger count: it
+// owes rows wherever the partition has operations, but fewer than op_count.
 type rawCensusSpec struct {
 	table        string
 	presenceOnly bool
 	expected     func(rawCensusHeader) uint64
 }
 
-// rawCensusTables is the census population in report order: every per-ledger
-// raw table except ledgers (the reference) and ledger_entry_changes (checked
-// by verify-lake's entry-changes coverage).
+// rawCensusTables is the census population in report order: every per-ledger raw table except ledgers (the reference) and
+// ledger_entry_changes (verify-lake's entry-changes coverage).
 var rawCensusTables = []rawCensusSpec{
 	{table: "transactions", expected: func(h rawCensusHeader) uint64 { return h.tx }},
 	{table: "operations", expected: func(h rawCensusHeader) uint64 { return h.op }},
@@ -144,9 +142,8 @@ func rawCensusPresent(ctx context.Context, conn driver.Conn, tables ...string) (
 	return out, rows.Err()
 }
 
-// rawCensusShortfalls compares expected header sums with present row counts;
-// a partition absent from present reads as 0 rows. Output is in
-// rawCensusTables order, then by partition. Pure.
+// rawCensusShortfalls compares expected header sums with present row counts (a partition absent from present reads as 0), in
+// rawCensusTables order then by partition. Pure.
 func rawCensusShortfalls(expected map[uint32]rawCensusHeader, present map[string]map[uint32]uint64) ([]RawTableShortfall, []RawTableTotal) {
 	parts := make([]uint32, 0, len(expected))
 	for p := range expected {

@@ -8,11 +8,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// cap67SupplyFill derives mint, burn and clawback over ledgers the main watermark covers but the
-// supply range does not: first the stretch above the range up to the watermark (a window whose
-// supply extension failed), then the stretch below it down to the derive floor. Transfers there are
-// already in the archive, so only the supply topics are streamed. The API states the supply range
-// it reads back, so the claim follows this fill rather than preceding it.
+// cap67SupplyFill derives mint, burn and clawback where the main watermark covers but the supply range does not: above the range up to the
+// watermark, then below it down to the derive floor. The API states the supply range it reads back, so the claim follows this fill.
 type cap67SupplyFill struct {
 	chAddr      string
 	window      uint32
@@ -33,9 +30,8 @@ var (
 // lasting refusal (a lake hole below the range) logs about once a minute.
 const cap67SupplyFillPause = 60
 
-// cap67SupplyFillWindow picks the next window to fill; ok=false when the
-// range already spans [floor, watermark] or has not started (the forward
-// derive starts it).
+// cap67SupplyFillWindow picks the next window; ok=false when the range already spans [floor, watermark] or has not
+// started (the forward derive starts it).
 func cap67SupplyFillWindow(cov clickhouse.Cap67Coverage, floor, window uint32) (lo, hi uint32, ok bool) {
 	if cov.Thru == 0 || cov.SupplyFrom == 0 {
 		return 0, 0, false
@@ -97,9 +93,8 @@ func (f *cap67SupplyFill) drain(ctx context.Context) (skipped uint64, err error)
 	}
 }
 
-// tick runs at most one fill window per follow tick, so the forward derive
-// keeps its real-time cadence. A failure is logged and the fill sits out
-// cap67SupplyFillPause ticks; it never fails the forward derive.
+// tick runs at most one fill window per follow tick so the forward derive keeps its cadence; a failure is logged and
+// the fill sits out cap67SupplyFillPause ticks, never failing the forward derive.
 func (f *cap67SupplyFill) tick(ctx context.Context) bool {
 	if f.paused > 0 {
 		f.paused--
