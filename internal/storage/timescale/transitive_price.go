@@ -7,15 +7,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// TransitivePrice is a USD price reached through ONE intermediate hop, returned with that hop.
-//
-// The catalogue prices the long tail only via `direct_usd` and `asset_vs_xlm`, both built on the
-// classic-only `classic_assets`, so an asset trading against neither (every Soroban-native
-// asset included) is otherwise unpriceable however deep its market.
-//
-// The hop is returned because a transitive price is only as trustworthy as its weakest leg: the
-// caller MUST gate both asset-to-hop and hop-to-proxy, or a thin middle market reprices
-// everything downstream of it.
+// TransitivePrice is a USD price reached through ONE intermediate hop, returned with that hop, for assets trading against neither direct_usd nor asset_vs_xlm.
 type TransitivePrice struct {
 	// PriceUSD is the derived USD price as an exact NUMERIC string
 	// (ADR-0003 — never float64 on a money path).
@@ -42,17 +34,7 @@ const usdProxyQuotes = `'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34
 // stays a small fixed cost on a serving path.
 const transitiveHopCandidates = 5
 
-// TransitiveUSDPriceCandidates derives USD prices for `assetID` through each counterparty that
-// itself has a USD price, best first. An empty slice with nil error means no route exists.
-//
-//   - DIRECTION. prices_1m stores a pair both ways and `vwap` is the price of base in quote: a row
-//     (asset, hop) is used as is, (hop, asset) is INVERTED. Skipping that gives a reciprocal price.
-//   - HOP RANKING. By 24h USD volume of the asset<->hop market, then hop id for determinism. The
-//     hop's own USD/XLM market is not gated here.
-//   - SEVERAL CANDIDATES. Up to [transitiveHopCandidates], so a deep near leg whose hop fails the
-//     caller's gate cannot hide a shallower hop that passes.
-//
-// Closed buckets only: the in-flight minute is excluded.
+// TransitiveUSDPriceCandidates derives USD prices for `assetID` through each counterparty that itself has a USD price, best first; an empty slice with nil error means no route exists.
 func (s *Store) TransitiveUSDPriceCandidates(ctx context.Context, assetID string) ([]TransitivePrice, error) {
 	rows, err := s.db.QueryContext(ctx, transitiveUSDPriceSQL, assetID, transitiveHopCandidates, canonical.NativeSACContractID())
 	if err != nil {

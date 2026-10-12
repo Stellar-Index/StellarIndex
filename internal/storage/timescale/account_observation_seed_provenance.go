@@ -11,13 +11,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/pgarray"
 )
 
-// AccountObservationSeedProvenanceScope is the fixed singleton key for
-// account_observation_seed_provenance. `supply seed-observations` has no -assets-style scope:
-// every pass seeds the whole `[supply] sdf_reserve_accounts` watchlist, so one row is enough.
+// AccountObservationSeedProvenanceScope is the fixed singleton key for account_observation_seed_provenance, since every seed pass covers the whole sdf_reserve_accounts watchlist.
 const AccountObservationSeedProvenanceScope = "sdf_reserve_accounts"
 
-// AccountObservationSeedProvenance is one complete `supply seed-observations`
-// pass's audit record (migration 0189).
+// AccountObservationSeedProvenance is one complete `supply seed-observations` pass's audit record (migration 0189).
 type AccountObservationSeedProvenance struct {
 	AccountsWatched int
 	WatchedAccounts []string // len must equal AccountsWatched; stored sorted
@@ -30,11 +27,7 @@ type AccountObservationSeedProvenance struct {
 	SeededAt        time.Time
 }
 
-// UpsertAccountObservationSeedProvenance records (or overwrites) the most recent complete seed
-// pass. A row whose counts do not sum to the watchlist size is refused, since it would claim
-// coverage the pass never walked. WatchedAccounts/MissingAccounts must match
-// AccountsWatched/AccountsMissing in length, making a `missing` count traceable to an account,
-// and are sorted here so the stored value is deterministic regardless of caller order.
+// UpsertAccountObservationSeedProvenance records the latest complete seed pass, refusing a row whose counts do not sum to the watchlist size or whose account lists mismatch the counts.
 func (s *Store) UpsertAccountObservationSeedProvenance(ctx context.Context, p AccountObservationSeedProvenance) error {
 	if p.AccountsWatched <= 0 {
 		return errors.New("timescale: UpsertAccountObservationSeedProvenance: AccountsWatched must be > 0 — the pass did not cover a watchlist")
@@ -92,8 +85,7 @@ func (s *Store) UpsertAccountObservationSeedProvenance(ctx context.Context, p Ac
 	return nil
 }
 
-// AccountObservationSeedProvenanceRow returns the singleton provenance row;
-// ok=false when no complete pass has stamped it.
+// AccountObservationSeedProvenanceRow returns the singleton provenance row; ok=false when no complete pass has stamped it.
 func (s *Store) AccountObservationSeedProvenanceRow(ctx context.Context) (AccountObservationSeedProvenance, bool, error) {
 	const q = `
         SELECT accounts_watched, watched_accounts, accounts_seeded, accounts_missing,

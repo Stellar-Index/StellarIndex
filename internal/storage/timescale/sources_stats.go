@@ -27,12 +27,7 @@ type SourceStats struct {
 	MarketsCount24h int64
 }
 
-// GetSourceStats returns trailing-24h trade counts grouped by source. Sources with no trades in
-// 24h are absent; callers join against the static external.Registry to fill in.
-//
-// Volume is SUM(usd_volume), stamped at trade time. Trades with no usd_volume are never valued at
-// today's XLM price (history would move with spot); they are counted in UnpricedTrades24h so the
-// caller can mark a lower bound.
+// GetSourceStats returns trailing-24h trade counts and volume grouped by source; sources with no trades are absent, and volume is SUM(usd_volume) stamped at trade time, so unvalued trades are never repriced at today's rate.
 func (s *Store) GetSourceStats(ctx context.Context) ([]SourceStats, error) {
 	q := sourceStatsQuery()
 	rows, err := s.db.QueryContext(ctx, q, canonical.NativeSACContractID())
@@ -104,9 +99,7 @@ func sourceStatsQuery() string {
 	`
 }
 
-// SourceVolumeBucket is one hour-resolution USD-volume datapoint
-// for a single source. Hour is the bucket start (UTC); VolumeUSD
-// is the sum of usd_volume stamped at trade time, narrowed to the bucket.
+// SourceVolumeBucket is one hour-resolution USD-volume datapoint for a single source.
 type SourceVolumeBucket struct {
 	Source     string
 	Hour       time.Time
@@ -117,15 +110,12 @@ type SourceVolumeBucket struct {
 	XLMUnpriced bool
 }
 
-// GetSourceVolumeHistory24h returns one row per (source, hour) for the trailing 24h, for
-// per-source sparklines. Hours with no trades are absent; callers zero-fill client-side.
+// GetSourceVolumeHistory24h returns one row per (source, hour) for the trailing 24h, for per-source sparklines.
 func (s *Store) GetSourceVolumeHistory24h(ctx context.Context) ([]SourceVolumeBucket, error) {
 	return s.sourceVolumeHistory(ctx, "24 hours")
 }
 
-// GetSourceVolumeHistory7d is the 7-day variant (168 hourly buckets per source). It reads the
-// source_volume_1h CAGG, not raw trades: deriving from raw trades for the heaviest source (SDEX)
-// took ~18s, past the API's 8s ceiling.
+// GetSourceVolumeHistory7d is the 7-day variant (168 hourly buckets per source), read from the source_volume_1h CAGG because deriving from raw SDEX trades overran the API's 8s ceiling.
 func (s *Store) GetSourceVolumeHistory7d(ctx context.Context) ([]SourceVolumeBucket, error) {
 	return s.sourceVolumeHistory(ctx, "7 days")
 }
@@ -224,17 +214,12 @@ const (
 	`
 )
 
-// PairSourceStats returns trailing-24h per-source USD volume + trade count for a single
-// (base, quote) market, ordered by USD volume desc (unpriced last), then trade count, then
-// source. The recent-trades feed only samples a page, so an accurate 24h share needs this.
-// base / quote are each the full set of canonical forms (the handler expands via assetAliases).
+// PairSourceStats returns trailing-24h per-source USD volume and trade count for one (base, quote) market, ordered by USD volume desc (unpriced last); base/quote are the full set of canonical forms to match.
 func (s *Store) PairSourceStats(ctx context.Context, base, quote []string) ([]SourceStats, error) {
 	return s.scanSourceStats(ctx, pairSourceStatsQuery, base, quote)
 }
 
-// AssetSourceStats returns trailing-24h per-source USD volume + trade count over every market the
-// asset appears in (base OR quote side), in PairSourceStats' order. asset is the full set of
-// canonical FORMS to match (see PairSourceStats) so a multi-form asset's legs aggregate together.
+// AssetSourceStats returns trailing-24h per-source USD volume and trade count over every market the asset appears in (either side), in PairSourceStats' order; asset is the full set of canonical forms so multi-form assets aggregate together.
 func (s *Store) AssetSourceStats(ctx context.Context, asset []string) ([]SourceStats, error) {
 	return s.scanSourceStats(ctx, assetSourceStatsQuery, asset)
 }

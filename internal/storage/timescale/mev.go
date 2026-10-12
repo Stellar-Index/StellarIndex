@@ -52,13 +52,7 @@ var tradesForArbScanQuery = `
          ORDER BY t.ledger DESC, t.tx_hash DESC, t.op_index DESC
     `
 
-// TradesForArbScan returns the NEWEST `limit` on-chain trades (ledger > 0, with a taker) after
-// `since`, ascending by (ledger, tx_hash, op_index) as the MEV detector groups, plus each
-// trade's USD volume ("" when NULL).
-//
-// The cap keeps the newest rows: the worker re-scans a trailing window every tick, so an
-// oldest-first LIMIT would drop the same burst tail every time. len == limit means the window
-// was truncated; the worker counts that and trims the possibly-partial oldest ledger.
+// TradesForArbScan returns the NEWEST `limit` on-chain trades (ledger > 0, with a taker) after `since`, ascending by (ledger, tx_hash, op_index), plus each trade's USD volume ("" when NULL).
 func (s *Store) TradesForArbScan(ctx context.Context, since time.Time, limit int) ([]canonical.Trade, []string, error) {
 	if limit <= 0 {
 		limit = 50_000
@@ -125,8 +119,7 @@ const oracleUpdatesForMEVScanQuery = `
          LIMIT $2
     `
 
-// OracleUpdatesForMEVScan returns the newest `limit` on-chain, mapped-asset oracle updates after
-// `since`, ascending by ledger (newest kept, as in TradesForArbScan). Satisfies mev.OracleScanner.
+// OracleUpdatesForMEVScan returns the newest `limit` on-chain, mapped-asset oracle updates after `since`, ascending by ledger; satisfies mev.OracleScanner.
 func (s *Store) OracleUpdatesForMEVScan(ctx context.Context, since time.Time, limit int) ([]domain.MEVOracleRef, error) {
 	if limit <= 0 {
 		limit = 50_000
@@ -155,9 +148,7 @@ func (s *Store) OracleUpdatesForMEVScan(ctx context.Context, since time.Time, li
 	return out, nil
 }
 
-// BlendFillsForMEVScan returns the newest `limit` Blend liquidation fills (event_kind='fill',
-// auction_type 0=UserLiquidation / 1=BadDebt; Interest auctions are not liquidations) after
-// `since`, ascending by ledger (newest kept, as in TradesForArbScan). Satisfies mev.AuctionScanner.
+// BlendFillsForMEVScan returns the newest `limit` Blend liquidation fills (event_kind='fill', auction_type 0 or 1; interest auctions excluded) after `since`, ascending by ledger; satisfies mev.AuctionScanner.
 func (s *Store) BlendFillsForMEVScan(ctx context.Context, since time.Time, limit int) ([]domain.MEVAuctionFill, error) {
 	if limit <= 0 {
 		limit = 50_000
@@ -230,10 +221,7 @@ const insertMEVEventQuery = `
         RETURNING (xmax = 0)
     `
 
-// InsertMEVEvent persists a detected MEV event (see insertMEVEventQuery).
-// Returns inserted=true only for a new event. profit_usd is written NULL:
-// no detector estimates attacker profit, and trade notional is not profit.
-// Satisfies mev.Sink.
+// InsertMEVEvent persists a detected MEV event and returns inserted=true only for a new one; profit_usd is written NULL since trade notional is not profit; satisfies mev.Sink.
 func (s *Store) InsertMEVEvent(ctx context.Context, e domain.MEVStoredEvent) (bool, error) {
 	// 0021's CHECK (array_length(tx_hashes, 1) > 0) passes '{}' (the length
 	// is NULL), so an event with no evidence transaction must be refused here.
@@ -256,7 +244,6 @@ func (s *Store) InsertMEVEvent(ctx context.Context, e domain.MEVStoredEvent) (bo
 }
 
 // MEVEventRow is one mev_events row for the /v1/mev read path.
-// Amounts/detail are pass-through (the API maps to the wire shape).
 type MEVEventRow struct {
 	EventID          string
 	DetectedAt       time.Time
@@ -270,9 +257,7 @@ type MEVEventRow struct {
 	ProfitUSD        string // "" when NULL
 }
 
-// ListMEVEvents returns the most-recent MEV events, newest first. kind "" returns all kinds; a
-// non-empty kind uses the per-kind index. A limit outside [1, 500] falls back to the 50-row
-// default rather than clamping, as in ListIssuers; /v1/mev already rejects it with 400.
+// ListMEVEvents returns the most-recent MEV events, newest first. kind "" returns all kinds; a non-empty kind uses the per-kind index.
 func (s *Store) ListMEVEvents(ctx context.Context, kind string, limit int) ([]MEVEventRow, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 50

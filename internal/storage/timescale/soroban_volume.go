@@ -45,12 +45,7 @@ var sorobanVolume24hUSDQuery = `
           FROM valued
     `
 
-// SorobanVolume24hUSDForAsset is the XLM-anchored variant of [Store.Volume24hUSDForAsset] for
-// pure-Soroban SEP-41 assets quoted in XLM; see [sorobanVolume24hUSDQuery] for the valuation.
-//
-// It returns "0" (not an error) when no trade in the window could be valued. lowerBound is true
-// when some trade was excluded as unvaluable. `assetKey` is the canonical asset string stored in
-// trades.base_asset / quote_asset.
+// SorobanVolume24hUSDForAsset is the XLM-anchored variant of Store.Volume24hUSDForAsset for Soroban SEP-41 assets quoted in XLM; returns "0" (not an error) when no trade could be valued, and the total is a lower bound.
 func (s *Store) SorobanVolume24hUSDForAsset(ctx context.Context, assetKey string) (usd string, lowerBound bool, err error) {
 	var unpriced int64
 	if err := s.db.QueryRowContext(ctx, sorobanVolume24hUSDQuery, assetKey, canonical.NativeSACContractID()).Scan(&usd, &unpriced); err != nil {

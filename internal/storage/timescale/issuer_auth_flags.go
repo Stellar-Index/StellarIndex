@@ -19,9 +19,7 @@ const (
 	AuthFlagsSourceLastKnownBeforeRemoval = "last_known_before_removal"
 )
 
-// IssuerAuthFlags is one issuer's decoded AccountEntry auth flags, ready
-// to persist. Mirrors clickhouse.AccountAuthFlags; kept as a separate
-// type so the served-tier store does not import the lake reader.
+// IssuerAuthFlags is one issuer's decoded AccountEntry auth flags, mirroring clickhouse.AccountAuthFlags as a separate type so the served tier does not import the lake reader.
 type IssuerAuthFlags struct {
 	GStrkey    string
 	Required   bool
@@ -70,9 +68,7 @@ func (f IssuerAuthFlags) validate() error {
 	return nil
 }
 
-// IssuerGStrkeysNeedingFlags returns issuer G-strkeys whose auth flags are
-// not yet persisted, oldest-first by primary key so repeated bounded runs make forward
-// progress instead of re-walking the same head. A limit <= 0 returns every candidate.
+// IssuerGStrkeysNeedingFlags returns issuer G-strkeys without persisted auth flags, oldest-first by primary key so bounded runs make forward progress; limit <= 0 returns every candidate.
 func (s *Store) IssuerGStrkeysNeedingFlags(ctx context.Context, limit int) ([]string, error) {
 	q := `SELECT g_strkey FROM issuers WHERE auth_required IS NULL ORDER BY g_strkey`
 	args := []any{}
@@ -100,18 +96,7 @@ func (s *Store) IssuerGStrkeysNeedingFlags(ctx context.Context, limit int) ([]st
 	return out, nil
 }
 
-// IssuerGStrkeysNeedingRecheck returns issuer G-strkeys whose persisted auth flags are a LAST-KNOWN
-// reading from a merged-away account, oldest-first by primary key like
-// [Store.IssuerGStrkeysNeedingFlags]. A limit <= 0 returns every candidate.
-//
-// A second queue is needed because an account can be re-created at the same address after an
-// account_merge, making a `last_known_before_removal` reading false, and these rows already have
-// auth_required so the primary queue (`auth_required IS NULL`) never revisits them.
-//
-// `live` rows are NOT re-checked: the read path re-reads the live AccountEntry per request and
-// outranks the persisted value. A `last_known` row is one the read path cannot correct, because
-// absence from the current-state projection looks the same for a merged account and a
-// lake-coverage gap; only this job, which reads an actual `removed` row, may conclude "removed".
+// IssuerGStrkeysNeedingRecheck returns issuer G-strkeys whose persisted auth flags are a last-known reading from a merged-away account, oldest-first by primary key; limit <= 0 returns every candidate.
 func (s *Store) IssuerGStrkeysNeedingRecheck(ctx context.Context, limit int) ([]string, error) {
 	q := `SELECT g_strkey FROM issuers WHERE auth_flags_source = $1 ORDER BY g_strkey`
 	args := []any{AuthFlagsSourceLastKnownBeforeRemoval}
@@ -163,23 +148,7 @@ var persistIssuerAuthFlagsQuery = `
 		   AND ($7::text = '' OR $8::integer IS NULL OR auth_flags_as_of_ledger IS NULL
 		        OR auth_flags_as_of_ledger <= $8::integer)`
 
-// PersistIssuerAuthFlags writes decoded auth flags for the given issuers, returning how many rows
-// it changed. UPDATE, not upsert: account entries must not invent issuer rows.
-//
-// home_domain follows the reading's provenance, and a changed domain unbinds the row's SEP-1
-// state in the same statement (sep1ResetOnHomeDomainChange):
-//
-//   - live: set to exactly what the AccountEntry declares; "" CLEARS it.
-//   - last_known_before_removal: cleared, since a merged account's domain can no longer be
-//     verified against SEP-1 and keeping it is an impersonation surface.
-//   - "" (unlabelled): a non-empty value overwrites; an empty one is ignored.
-//
-// No COALESCE keeping the stored value: the SEP-1 resolver reads this column, so a write-once
-// column would stop an anchor that moved or cleared its domain from taking it back.
-//
-// auth_flags_source and auth_flags_as_of_ledger move together or not at all. A labelled reading
-// older than the one on record is refused and not counted, so out-of-order drain runs cannot
-// reinstate a home_domain the account moved away from.
+// PersistIssuerAuthFlags writes decoded auth flags for the given issuers and returns rows changed; UPDATE not upsert so account entries never invent issuer rows, and a changed home_domain unbinds the row's SEP-1 state.
 func (s *Store) PersistIssuerAuthFlags(ctx context.Context, flags []IssuerAuthFlags) (int, error) {
 	if len(flags) == 0 {
 		return 0, nil

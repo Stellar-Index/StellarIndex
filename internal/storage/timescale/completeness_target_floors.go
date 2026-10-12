@@ -5,12 +5,7 @@ import (
 	"fmt"
 )
 
-// CompletenessTargetFloor is one projection target's durable verification floor (ADR-0033).
-//
-// VerifiedFrom is the lowest ledger the target has ever been reconciled from. Deriving the floor
-// from MIN(ledger) of the target itself would blind the check to deletions: if the oldest rows
-// are lost, MIN(ledger) rises with them, so "rows were dropped" and "never projected below
-// there" become indistinguishable.
+// CompletenessTargetFloor is one projection target's durable verification floor; VerifiedFrom is the lowest ledger ever reconciled, kept apart from MIN(ledger) so deletions of the oldest rows cannot hide.
 type CompletenessTargetFloor struct {
 	Source string
 	// Table and Filter together identify the target. Filter is reconTarget.whereFilter ("" when
@@ -21,14 +16,7 @@ type CompletenessTargetFloor struct {
 	VerifiedFrom uint32
 }
 
-// UpsertCompletenessTargetFloor records that `floor.Table` has been
-// reconciled from `floor.VerifiedFrom`, keeping the LOWEST value ever seen.
-//
-// LEAST() is deliberate, not a plain assignment: the floor must only ever fall. A run from a lower
-// ledger is new ground; a run starting higher is either real loss (the caller of
-// [Store.CompletenessTargetFloors] must fail on it, not record it) or a narrowed `-from` window,
-// which says nothing about the true floor. Letting the column rise would let such a run ratchet
-// the floor up to the post-loss MIN and hide the very loss the durable floor exists to expose.
+// UpsertCompletenessTargetFloor records that `floor.Table` was reconciled from `floor.VerifiedFrom`, keeping the LOWEST value ever seen via LEAST(); the floor only falls, a higher start is loss or a narrower run.
 func (s *Store) UpsertCompletenessTargetFloor(ctx context.Context, floor CompletenessTargetFloor) error {
 	const q = `
         INSERT INTO completeness_target_floors (
@@ -48,12 +36,7 @@ func (s *Store) UpsertCompletenessTargetFloor(ctx context.Context, floor Complet
 	return nil
 }
 
-// CompletenessTargetFloors returns every recorded floor, keyed by
-// (source, table, filter) via [TargetFloorKey].
-//
-// A target absent from the map has no recorded floor yet and means "nothing to compare against",
-// never a floor of zero; reporting loss against an unestablished floor would fail every target on
-// its first run.
+// CompletenessTargetFloors returns every recorded floor keyed by (source, table, filter) via [TargetFloorKey]; an absent target has no floor yet (nothing to compare), never a floor of zero.
 func (s *Store) CompletenessTargetFloors(ctx context.Context) (map[string]CompletenessTargetFloor, error) {
 	const q = `
         SELECT source, target_table, target_filter, projection_verified_from
@@ -81,10 +64,6 @@ func (s *Store) CompletenessTargetFloors(ctx context.Context) (map[string]Comple
 }
 
 // TargetFloorKey builds the map key for a (source, table, filter) target.
-// Exported so callers key lookups identically instead of reimplementing the join.
-//
-// The separator is "\x00" because whereFilter is arbitrary SQL: a printable separator could
-// appear in the filter text itself and collide two distinct targets onto one key.
 func TargetFloorKey(source, table, filter string) string {
 	return source + "\x00" + table + "\x00" + filter
 }

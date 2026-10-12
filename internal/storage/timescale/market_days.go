@@ -15,9 +15,7 @@ import (
 // gives the published worth, this one what was observed paid. A premium to net asset value is their
 // ratio, so both share a clock and grain and neither is derived from the other.
 
-// MarketDay is one UTC day of one asset's observed dollar market: the day's VWAP plus the three
-// measurements the thin-market floor is made of. They travel with the price, not as a WHERE clause,
-// because the floor is the caller's policy and a too-thin day is a finding, not a row to drop.
+// MarketDay is one UTC day of one asset's observed dollar market: the VWAP plus the three thin-market measurements, returned rather than filtered because the floor is the caller's policy.
 type MarketDay struct {
 	// Day is the UTC day bucket (time_bucket('1 day', bucket)).
 	Day time.Time

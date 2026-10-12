@@ -19,8 +19,7 @@ import (
 // failure of usd_volume = pegged_leg_amount / 10^decimals means the wrong scale, leg, peg list or
 // backfill vintage.
 
-// USDVolumeTier names how a trade's `usd_volume` was derived, mirroring the waterfall in
-// [tradeUSDVolume]. Stable strings: they appear in the operator report.
+// USDVolumeTier names how a trade's `usd_volume` was derived, mirroring the waterfall in [tradeUSDVolume].
 type USDVolumeTier string
 
 const (
@@ -42,18 +41,12 @@ const (
 	TierUnvaluable USDVolumeTier = "unvaluable"
 )
 
-// Exact reports whether the tier's identity is a pure rescaling of a stored leg, so a mismatch
-// is a defect rather than an estimate's error.
+// Exact reports whether the tier's identity is a pure rescaling of a stored leg, so a mismatch is a defect rather than an estimate's error.
 func (t USDVolumeTier) Exact() bool {
 	return t == TierQuotePegged || t == TierBasePegged
 }
 
-// TradeValuationGroup is one (source, base, quote) group's raw sums over a single UTC day.
-// Amounts are decimal strings straight off NUMERIC, never float64, so comparison stays exact.
-//
-// The sums cover priced rows only (`usd_volume IS NOT NULL`): SUM(usd_volume) skips unpriced rows
-// while SUM(quote_amount) would not, so mixing them in would fail the identity by construction.
-// UnpricedRows carries that population separately.
+// TradeValuationGroup is one (source, base, quote) group's raw sums over a single UTC day; amounts are decimal strings off NUMERIC, never float64, and cover priced rows only (usd_volume IS NOT NULL).
 type TradeValuationGroup struct {
 	Source     string
 	BaseAsset  string
@@ -67,9 +60,7 @@ type TradeValuationGroup struct {
 	SumQuoteAmount string
 }
 
-// TradeValuationByDay returns the per-(source, base, quote) valuation sums for the UTC day
-// containing `day`. Grouped by pair because the peg set lives in Go, not SQL, so the caller
-// classifies each group with [ClassifyUSDVolumeTier]. The ts range keeps the scan to one chunk.
+// TradeValuationByDay returns the per-(source, base, quote) valuation sums for the UTC day containing `day`, grouped by pair because the peg set lives in Go so the caller classifies each group with ClassifyUSDVolumeTier.
 func (s *Store) TradeValuationByDay(ctx context.Context, day time.Time) ([]TradeValuationGroup, error) {
 	start := day.UTC().Truncate(24 * time.Hour)
 	const q = `
@@ -120,13 +111,7 @@ func (g TradeValuationGroup) PeggedLegSum(tier USDVolumeTier) string {
 	}
 }
 
-// USDVolumeRoundingSlack is the largest |Σusd_volume − Σleg/10^d| that per-row rendering can
-// legitimately produce for an exact tier, in USD.
-//
-// [tradeUSDVolume] renders each row as `big.Rat(leg, 10^d).FloatString(8)`. For d ≤ 8 that is
-// lossless, so the slack is exactly zero. Only a peg declared by [USDVolumeQuoteSpec] with more
-// than 8 decimals introduces rounding, bounded by half an ulp per row: the derived worst case of
-// a known rounding rule, not a calibrated threshold.
+// USDVolumeRoundingSlack is the largest |sum(usd_volume) - sum(leg/10^d)| per-row rendering can legitimately produce for an exact tier, in USD; zero for d <= 8 where the FloatString(8) rendering is lossless.
 func USDVolumeRoundingSlack(decimals int, rows int64) *big.Rat {
 	if decimals <= usdVolumeRenderDecimals || rows <= 0 {
 		return new(big.Rat)
@@ -141,11 +126,7 @@ func USDVolumeRoundingSlack(decimals int, rows int64) *big.Rat {
 // kept beside the slack it determines.
 const usdVolumeRenderDecimals = 8
 
-// ExactTierDelta returns Σusd_volume − Σpegged_leg/10^decimals for an exact tier: the signed
-// USD error of the stored column against the identity the insert path claims. ok=false when the
-// sums do not parse as decimals (a corrupt NUMERIC render, itself reportable). Exact rational
-// arithmetic, never float64: a drift below a float64 ulp on a nine-figure daily volume is what
-// this check exists to see.
+// ExactTierDelta returns sum(usd_volume) - sum(pegged_leg/10^decimals) for an exact tier, the signed USD error against the insert path's identity; ok=false when the sums do not parse as decimals; computed in exact rational arithmetic.
 func ExactTierDelta(g TradeValuationGroup, tier USDVolumeTier, decimals int) (delta *big.Rat, ok bool) {
 	leg := g.PeggedLegSum(tier)
 	if leg == "" {
@@ -163,13 +144,7 @@ func ExactTierDelta(g TradeValuationGroup, tier USDVolumeTier, decimals int) (de
 	return new(big.Rat).Sub(stored, expected), true
 }
 
-// DayCloseVWAPXLMUSD returns the daily VWAP for crypto:XLM/fiat:USD (the CEX-fed series, whose
-// inputs are not authorable on-chain) from prices_1d. ok=false when the day has no bucket, and
-// callers then skip the XLM-base bound rather than judge against a missing rate.
-//
-// Tier-4 rows anchor usd_volume to base_amount/1e7 x the per-minute XLM/USD, while this reads a
-// day bucket of a different series, so an honest day scores up to
-// max(intraday_hi/day_vwap, day_vwap/intraday_lo). See [chops.xlmBaseBoundTolerance].
+// DayCloseVWAPXLMUSD returns the daily VWAP for crypto:XLM/fiat:USD (the CEX-fed series, not authorable on-chain) from prices_1d; ok=false when the day has no bucket, and callers then skip the XLM-base bound.
 func (s *Store) DayCloseVWAPXLMUSD(ctx context.Context, day time.Time) (string, bool, error) {
 	start := day.UTC().Truncate(24 * time.Hour)
 	const q = `

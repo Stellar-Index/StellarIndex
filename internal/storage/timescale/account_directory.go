@@ -13,10 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/pgarray"
 )
 
-// DirectoryEntry is one curated label for a Stellar address (G-account or C-contract strkey),
-// synced from the stellar-expert public directory by `stellarindex-ops directory-sync` and shown
-// with attribution. NOT display-only: a scam-class tag withholds the issuer's price and demotes
-// its listing rank (DirectoryScamFlagTags); a recognition tag admits it to the RWA surface.
+// DirectoryEntry is one curated address label synced from the stellar-expert directory; NOT display-only, as a scam-class tag withholds the issuer's price and demotes its rank.
 type DirectoryEntry struct {
 	Address string
 	Name    string
@@ -25,21 +22,7 @@ type DirectoryEntry struct {
 	Source  string
 }
 
-// DirectoryScamFlagTags is THE tag vocabulary that marks an address as scam-class. Three
-// consumers must not drift:
-//
-//  1. pricingguard.IsDirectoryScamFlagged (price/market-cap withholding, payload suppression),
-//  2. the /v1/assets listing SQL, which ranks a flagged issuer's assets BELOW every unflagged
-//     one (listingRankTierExpr), and
-//  3. the explorer's DIRECTORY_SCAM_FLAG_TAGS (web/explorer/src/lib/directory-tags.ts), which
-//     draws the "Flagged" pill.
-//
-// Tags are stored in [CanonicalDirectoryTags] form so the Go matcher (which trims), the SQL
-// predicates and the explorer (which only fold case) see identical bytes; the frontend list is
-// pinned equal by pricingguard's TestScamFlagTagSet_MatchesFrontend.
-//
-// Lowercase-ASCII by construction: mustSQLTextArrayLiteral, which inlines this list into the
-// listing's ORDER BY, rejects anything else at package init.
+// DirectoryScamFlagTags is the single tag vocabulary marking an address scam-class; pricingguard, the /v1/assets ranking SQL and the explorer's DIRECTORY_SCAM_FLAG_TAGS must not drift from it.
 var DirectoryScamFlagTags = []string{
 	"malicious",
 	"unsafe",
@@ -53,30 +36,16 @@ var DirectoryScamFlagTags = []string{
 // Postgres's 65535 bind-param cap while keeping a full sync to tens of round trips.
 const directoryUpsertChunk = 500
 
-// DirectoryOperatorOverrideSource is the reserved `source` for a row an OPERATOR owns instead of
-// an upstream sync: the durable escape hatch for a third-party FALSE POSITIVE, whose scam-class
-// tag would otherwise withhold the issuer's price, demote its ranking and draw a "Flagged" pill.
-// A hand UPDATE of tags is overwritten by the next daily sync.
-//
-// Ownership is the `source` column: ReplaceDirectory only touches and prunes rows carrying ITS
-// source (see buildDirectoryUpsert), so an override survives every sync. Write it with
-// `stellarindex-ops directory-override -clear-scam-flag` ([Store.ClearDirectoryScamFlag]); undo
-// with `-delete` ([Store.DeleteDirectoryOverride]), after which the next sync restores upstream.
-//
-// An override REPLACES the upstream label, not layers over it: one row per address keeps the
-// consumers listed at DirectoryScamFlagTags in agreement.
+// DirectoryOperatorOverrideSource is the reserved `source` for operator-owned rows, the durable fix for a third-party false positive that ReplaceDirectory never touches or prunes.
 const DirectoryOperatorOverrideSource = "operator-override"
 
-// ErrDirectoryNotScamFlagged is returned by [Store.ClearDirectoryScamFlag] when the row carries no
-// scam-class tag; nothing is written, so a mistyped address cannot freeze an unflagged row.
+// ErrDirectoryNotScamFlagged is returned by [Store.ClearDirectoryScamFlag] when the row carries no scam-class tag; nothing is written.
 var ErrDirectoryNotScamFlagged = errors.New("directory: row carries no scam-class tag")
 
-// ErrDirectoryOverrideReasonRequired is returned by [Store.ClearDirectoryScamFlag] for a blank
-// reason: lifting a safety gate needs a recorded why.
+// ErrDirectoryOverrideReasonRequired is returned by [Store.ClearDirectoryScamFlag] for a blank reason: lifting a safety gate needs a recorded why.
 var ErrDirectoryOverrideReasonRequired = errors.New("directory: an operator override needs a non-blank reason")
 
-// ErrDirectoryOverrideOperatorRequired is returned by [Store.ClearDirectoryScamFlag] for a blank
-// operator: a lifted safety gate needs a named decider.
+// ErrDirectoryOverrideOperatorRequired is returned by [Store.ClearDirectoryScamFlag] for a blank operator: a lifted safety gate needs a named decider.
 var ErrDirectoryOverrideOperatorRequired = errors.New("directory: an operator override needs a non-blank operator")
 
 // DirectoryTagsWithoutScamFlags returns tags minus every scam-class tag, order kept.
@@ -107,9 +76,7 @@ func CanonicalDirectoryTag(tag string) string {
 	return strings.ToLower(strings.TrimSpace(tag))
 }
 
-// CanonicalDirectoryTags is the form every account_directory writer stores: canonical tags, blanks
-// and repeats dropped, order kept, never nil (tags is NOT NULL). One stored form lets the SQL
-// predicates, which do not trim, agree with the Go matchers, which do.
+// CanonicalDirectoryTags is the form every account_directory writer stores: canonical, deduplicated, order kept, never nil (tags is NOT NULL), so SQL predicates agree with the Go matchers.
 func CanonicalDirectoryTags(tags []string) []string {
 	out := make([]string, 0, len(tags))
 	for _, t := range tags {
@@ -120,33 +87,20 @@ func CanonicalDirectoryTags(tags []string) []string {
 	return out
 }
 
-// DirectoryChurnLimit bounds how far ONE sync may move a source's snapshot. Rows pruned and
-// addresses newly scam-flagged are each capped at max(Floor, ceil(Fraction x rows held before the
-// sync)); addresses un-flagged (pruned or tag cleared) at max(UnflagFloor, ceil(Fraction x
-// addresses flagged before)). A snapshot past any cap is refused whole with
-// [ErrDirectoryChurnExceeded] and the table is left as it was.
-//
-// A scam tag withholds the issuer's price and market cap (pricingguard.ScamGate), so a truncated
-// or mis-generated snapshot could otherwise clear those flags, or flag thousands of issuers, with
-// nothing failing. The un-flag cap is sized on the flagged set because flagged rows are a minority
-// and a row-sized cap would admit clearing most of them. A legitimate mass change ships with
-// `directory-sync -accept-churn`; a source's first sync is unbounded. The numbers are unmeasured.
+// DirectoryChurnLimit bounds how far ONE sync may move a source's snapshot.
 type DirectoryChurnLimit struct {
 	Fraction    float64
 	Floor       int64
 	UnflagFloor int64
 }
 
-// DefaultDirectoryChurnLimit is what [Store.ReplaceDirectory] applies: 5 % of held rows (floor 100,
-// so a small table is not jammed by its own arithmetic) and 5 % of flagged addresses (floor 10)
-// for un-flags.
+// DefaultDirectoryChurnLimit is what [Store.ReplaceDirectory] applies: 5% of held rows (floor 100) and 5% of flagged addresses (floor 10) for un-flags.
 var DefaultDirectoryChurnLimit = DirectoryChurnLimit{Fraction: 0.05, Floor: 100, UnflagFloor: 10}
 
 // DirectoryChurnUnbounded accepts any snapshot: the operator's opt-in for a known mass change.
 var DirectoryChurnUnbounded = DirectoryChurnLimit{}
 
-// ErrDirectoryChurnExceeded is returned (wrapped, with the numbers) when a snapshot would prune,
-// newly flag or un-flag more than the limit allows; nothing is written.
+// ErrDirectoryChurnExceeded is returned when a snapshot would prune, newly flag or un-flag more than the limit allows; nothing is written.
 var ErrDirectoryChurnExceeded = errors.New("directory: snapshot exceeds the churn ceiling")
 
 // ceiling is the row cap for a source that held `existing` rows, or ok=false when the sync is
@@ -189,11 +143,7 @@ func (s *Store) ReplaceDirectory(ctx context.Context, source string, entries []D
 	return res.Upserted, res.Pruned, err
 }
 
-// ReplaceDirectoryWithin upserts the full entry set for one source and prunes rows of that source
-// the upstream no longer carries, refusing the whole snapshot if it moves more than `limit`.
-// It runs in one transaction: now() is transaction-stable, so every upserted row gets the same
-// synced_at and the prune is "same source, older synced_at". A failure or churn refusal (judged
-// after the prune) rolls everything back, never leaving a half-applied snapshot.
+// ReplaceDirectoryWithin upserts one source's full entry set and prunes rows it no longer carries in one transaction, refusing the whole snapshot if churn exceeds `limit`.
 func (s *Store) ReplaceDirectoryWithin(ctx context.Context, source string, entries []DirectoryEntry, limit DirectoryChurnLimit) (res DirectorySyncResult, err error) {
 	if source == "" {
 		return res, errors.New("directory: source must be non-empty")
@@ -404,19 +354,7 @@ func buildDirectoryUpsert(chunk []DirectoryEntry, source string) (string, []any)
 	return sb.String(), args
 }
 
-// ClearDirectoryScamFlag corrects a third-party FALSE POSITIVE: it takes the address's row over as
-// [DirectoryOperatorOverrideSource] with every scam-class tag removed and the name, domain and
-// other tags kept, so no `directory-sync` touches it until the override is deleted.
-//
-// Keeping the other tags is the point: the row also feeds the RWA recognition funnel, which admits
-// an issuer on a tag such as `issuer` (directoryHasIssuingTagSQL). Replacing the tag set wholesale
-// would clear the flag and silently drop the issuer from that funnel.
-//
-// operator and reason are stored (override_by, override_reason) so the lifted flag can be
-// reviewed; a blank either is refused before anything is read.
-//
-// found=false (no error) means the address has no row. A row with no scam-class tag is refused
-// with [ErrDirectoryNotScamFlagged].
+// ClearDirectoryScamFlag corrects a third-party false positive by taking the row over as [DirectoryOperatorOverrideSource] with scam-class tags removed and other tags kept, so RWA recognition survives.
 func (s *Store) ClearDirectoryScamFlag(ctx context.Context, address, operator, reason string) (before, after DirectoryEntry, found bool, err error) {
 	if strings.TrimSpace(operator) == "" {
 		return before, after, false, ErrDirectoryOverrideOperatorRequired
@@ -461,9 +399,7 @@ func (s *Store) ClearDirectoryScamFlag(ctx context.Context, address, operator, r
 	return before, after, true, nil
 }
 
-// DeleteDirectoryOverride removes an operator override, reporting whether one existed. It is
-// scoped to [DirectoryOperatorOverrideSource] so it can never delete an upstream-owned row; the
-// next `directory-sync` re-inserts the upstream label, which makes this the undo.
+// DeleteDirectoryOverride removes an operator override, reporting whether one existed; scoped to [DirectoryOperatorOverrideSource] so it never deletes an upstream-owned row.
 func (s *Store) DeleteDirectoryOverride(ctx context.Context, address string) (bool, error) {
 	const q = `
 		DELETE FROM account_directory
@@ -476,8 +412,7 @@ func (s *Store) DeleteDirectoryOverride(ctx context.Context, address string) (bo
 	return n > 0, nil
 }
 
-// DirectoryEntryByAddress returns the label for one address; ok=false (not an error) when absent,
-// the common case for arbitrary explorer lookups.
+// DirectoryEntryByAddress returns the label for one address; ok=false (not an error) when absent, the common case for arbitrary explorer lookups.
 func (s *Store) DirectoryEntryByAddress(ctx context.Context, address string) (DirectoryEntry, bool, error) {
 	const q = `
 		SELECT address, name, domain, tags, source
@@ -495,10 +430,7 @@ func (s *Store) DirectoryEntryByAddress(ctx context.Context, address string) (Di
 	return e, true, nil
 }
 
-// DirectoryScamFlaggedClassicAssets lists every registered classic asset whose issuer carries a
-// scam-class tag ([DirectoryScamFlagTags]), so the scam pricing gate can recognise a flagged
-// issuer's asset under its SAC contract id, which carries no issuer. Rows are returned as stored;
-// the caller validates them.
+// DirectoryScamFlaggedClassicAssets lists registered classic assets whose issuer carries a scam-class tag, so the pricing gate can recognise them under their issuer-less SAC id; rows are unvalidated.
 func (s *Store) DirectoryScamFlaggedClassicAssets(ctx context.Context) ([]canonical.Asset, error) {
 	q := `
 		SELECT ca.code, ca.issuer_g_strkey
@@ -526,8 +458,7 @@ func (s *Store) DirectoryScamFlaggedClassicAssets(ctx context.Context) ([]canoni
 	return out, nil
 }
 
-// DirectoryEntriesByAddresses resolves a batch of addresses in one query, returning only those
-// present. The caller bounds the batch (the API layer caps it).
+// DirectoryEntriesByAddresses resolves a batch of addresses in one query, returning only those present.
 func (s *Store) DirectoryEntriesByAddresses(ctx context.Context, addresses []string) (map[string]DirectoryEntry, error) {
 	if len(addresses) == 0 {
 		return map[string]DirectoryEntry{}, nil

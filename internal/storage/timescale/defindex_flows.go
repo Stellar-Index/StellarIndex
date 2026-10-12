@@ -7,9 +7,7 @@ import (
 	"time"
 )
 
-// DefindexLayer discriminates which protocol layer emitted the
-// flow. String values match the defindex_flows.layer CHECK
-// constraint (migration 0050).
+// DefindexLayer discriminates which protocol layer emitted the flow.
 type DefindexLayer string
 
 const (
@@ -27,8 +25,6 @@ func (l DefindexLayer) IsValid() bool {
 }
 
 // DefindexDirection discriminates deposit / withdraw / harvest.
-// Matches the defindex_flows.direction CHECK constraint (migration 0138
-// widens it to admit harvest — strategy yield realised into the vault).
 type DefindexDirection string
 
 const (
@@ -47,14 +43,6 @@ func (d DefindexDirection) IsValid() bool {
 }
 
 // DefindexFlow is one defindex_flows row.
-//
-// Strategy-layer rows set Amount (single-asset) and leave AmountsVec and DfTokens empty; Actor is
-// the vault contract C-strkey moving capital.
-//
-// Vault-layer rows set AmountsVec (one entry per basket asset) and DfTokens (share-token delta)
-// and leave Amount empty; Actor is the end-user G-strkey (or routing C-strkey).
-//
-// All amount fields are decimal-string numerics (ADR-0003).
 type DefindexFlow struct {
 	Ledger          uint32
 	LedgerCloseTime time.Time
@@ -75,8 +63,7 @@ type DefindexFlow struct {
 	DfTokens   string
 }
 
-// InsertDefindexFlow appends one defindex_flows row, idempotent on
-// (ledger_close_time, contract_id, ledger, tx_hash, op_index, layer).
+// InsertDefindexFlow appends one defindex_flows row, idempotent on (ledger_close_time, contract_id, ledger, tx_hash, op_index, layer).
 func (s *Store) InsertDefindexFlow(ctx context.Context, e DefindexFlow) error {
 	if e.TxHash == "" {
 		return errors.New("timescale: InsertDefindexFlow: TxHash is empty")

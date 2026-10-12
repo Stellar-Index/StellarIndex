@@ -11,20 +11,7 @@ import (
 // so a runaway table cannot stall the detail page. Realistic counts sit far below it.
 const poolTokensRowLimit = 40000
 
-// PoolTokens maps each of a pool-based protocol's contracts to the token
-// contract C-strkeys it holds, sourced from the protocol's per-token
-// liquidity / reserve table, so the /v1/protocols/{name} roster can render an asset pair
-// ("XLM/USDC") instead of two raw C-strkeys.
-//
-// Returns (nil, nil), never an error, for a source without such a table:
-//   - soroswap is enriched from soroswap_pairs instead;
-//   - sdex / oracles / bridges hold no pools;
-//   - sorocredit's collateral model has no stable pool-to-reserve set, so it stays on the
-//     raw-contract roster.
-//
-// Order follows the pool's canonical token order where the table records one (aquarius
-// token_index; phoenix token_a then token_b). comet (order-free on the wire) and blend (a
-// reserve SET of blend_positions.asset, not a pair) sort deterministically.
+// PoolTokens maps each pool-based protocol contract to the token C-strkeys it holds, from the protocol's liquidity/reserve table, so rosters can render pairs; returns (nil, nil), never an error, when none are known.
 func (s *Store) PoolTokens(ctx context.Context, source string) (map[string][]string, error) {
 	switch source {
 	case "phoenix":

@@ -32,9 +32,7 @@ const (
 	accountTradesMaxLimit     = 200
 )
 
-// AccountTradeRow is one per-address trade row. Amounts are decimal strings straight from the
-// NUMERIC columns (i128 amounts exceed double precision; nothing here may pass through a float).
-// USDVolume is "" when the stored column is NULL (the trade could not be valued), never "0".
+// AccountTradeRow is one per-address trade row; amounts are decimal strings from NUMERIC (never float) and USDVolume is "" when the trade could not be valued, never "0".
 type AccountTradeRow struct {
 	Source      string
 	Ledger      uint32
@@ -59,9 +57,7 @@ type AccountTradeRow struct {
 	Signer string
 }
 
-// AccountTradesCursor is the keyset position for ListAccountTrades —
-// the (ts, ledger, tx_hash, op_index) of the last served row. Zero
-// value (Ts.IsZero()) means first page.
+// AccountTradesCursor is the keyset position for ListAccountTrades — the (ts, ledger, tx_hash, op_index) of the last served row.
 type AccountTradesCursor struct {
 	Ts      time.Time
 	Ledger  uint32
@@ -180,9 +176,7 @@ func clampAccountTradesLimit(limit int) int {
 	return limit
 }
 
-// ListAccountTrades returns the address's trades (taker or maker side),
-// newest first, keyset-paged. Empty slice + nil error when the address
-// has no attributed trades.
+// ListAccountTrades returns the address's trades (taker or maker side), newest first, keyset-paged.
 func (s *Store) ListAccountTrades(ctx context.Context, address string, limit int, cur AccountTradesCursor) ([]AccountTradeRow, time.Time, error) {
 	limit = clampAccountTradesLimit(limit)
 	horizon := s.tradesUncompressedHorizon(ctx)
@@ -220,10 +214,7 @@ func (s *Store) ListAccountTrades(ctx context.Context, address string, limit int
 	return out, horizon, nil
 }
 
-// CountAccountTrades returns the address's attributed trade count (taker or maker side, each row
-// once) SINCE the returned horizon, the compression boundary below which the per-account partial
-// indexes do not exist. The OR stays deliberate: with the ts floor the scan is confined to indexed
-// uncompressed chunks, where a bitmap-or counts each row once.
+// CountAccountTrades returns the address's trade count (taker or maker, each row once) since the returned horizon, below which the per-account partial indexes do not exist; keep the ts floor so the OR stays on indexed chunks.
 func (s *Store) CountAccountTrades(ctx context.Context, address string) (int64, time.Time, error) {
 	horizon := s.tradesUncompressedHorizon(ctx)
 	const q = `SELECT count(*) FROM trades WHERE (taker = $1 OR maker = $1) AND ts >= $2`

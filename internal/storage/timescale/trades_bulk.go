@@ -52,8 +52,7 @@ const (
 	bulkMinPartition = 2_000
 )
 
-// BulkBackfillOptions tunes [Store.BulkBackfillTrades]. The zero value is the
-// supported default.
+// BulkBackfillOptions tunes [Store.BulkBackfillTrades].
 type BulkBackfillOptions struct {
 	// Resolvers is the number of goroutines computing `usd_volume`; 0 = [bulkDefaultResolvers],
 	// 1 is serial like [Store.BatchInsertTrades].
@@ -100,20 +99,7 @@ type BulkBackfillResult struct {
 	FallbackReason string
 }
 
-// BulkBackfillTrades writes a large buffer of historical trades, using COPY only when the target
-// range is provably empty.
-//
-// Per source it probes `trades` for any row inside the buffer's ledger and ts extents. Every
-// possible PK collision (source, ledger, tx_hash, op_index, ts) satisfies that predicate, so empty
-// is a proof; the ledger bound obeys the no-unbounded-trade-scan rule and the ts bound prunes
-// chunks. Any hit falls back to [Store.BatchInsertTrades] ([BulkBackfillPathUpsert]).
-//
-// Rows and side effects match [Store.BatchInsertTrades]: same [Store.filterStorableTrades] gate,
-// conflict-key sort + dedupe, and [tradeUSDVolume] behind [Store.reDeriveNullVolumeGuard].
-//
-// Probe and COPY are not one transaction: a writer in between fails a stream with a unique
-// violation, caught and replayed through the idempotent upsert. Only the attempt counters
-// (obs.TradeInsertsTotal, obs.SourceInsertErrorsTotal) count those rows twice.
+// BulkBackfillTrades writes a large buffer of historical trades, using COPY only when the target range is provably empty per source (otherwise it falls back to the upsert so no PK collision is skipped).
 func (s *Store) BulkBackfillTrades(ctx context.Context, trades []canonical.Trade, opts BulkBackfillOptions) (BulkBackfillResult, error) {
 	if len(trades) == 0 {
 		return BulkBackfillResult{Path: BulkBackfillPathCopy}, nil

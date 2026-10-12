@@ -10,13 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/domain"
 )
 
-// InsertBlendEmissionEvent appends one Blend emission / credit-risk event (gulp / claim /
-// reserve_emission_update / gulp_emissions / bad_debt / defaulted_debt) to blend_emissions.
-// Idempotent on the PK (pool, ledger, tx_hash, op_index, event_kind, ledger_close_time).
-//
-// The amount is i128 stored as NUMERIC via decimal string. Asset / User are NULL when the
-// event kind does not carry them. Per-kind extras (reserve_emission_update fields, claim's
-// reserve_token_ids) go into the attributes jsonb rather than typed columns.
+// InsertBlendEmissionEvent appends one emission/credit-risk event to blend_emissions, idempotent on the PK; the i128 amount is stored as NUMERIC via decimal string.
 func (s *Store) InsertBlendEmissionEvent(ctx context.Context, e domain.BlendEmissionEvent) error {
 	if e.Pool == "" {
 		return errors.New("timescale: InsertBlendEmissionEvent: Pool is empty")
@@ -69,9 +63,7 @@ func (s *Store) InsertBlendEmissionEvent(ctx context.Context, e domain.BlendEmis
 	return nil
 }
 
-// BlendEmissionSummary is the windowed emission / credit-risk summary read from
-// blend_emissions. ClaimVolume sums claimed emissions in token base units (i128/NUMERIC, never
-// int64). CreditRisk counts bad_debt + defaulted_debt events, a genuine risk signal to surface.
+// BlendEmissionSummary is the windowed emission/credit-risk summary from blend_emissions; ClaimVolume sums claimed emissions in base units (NUMERIC, never int64) and CreditRisk counts bad_debt + defaulted_debt.
 type BlendEmissionSummary struct {
 	Claims      int64
 	ClaimVolume canonical.Amount
@@ -80,12 +72,7 @@ type BlendEmissionSummary struct {
 	TotalEvents int64
 }
 
-// BlendEmissionWindowStats reads the windowed Blend emission / credit-risk
-// summary (claims, claim volume, gulps, credit-risk events). Claim amounts are token base units
-// (per-asset decimals) kept as canonical.Amount.
-//
-// Empty-safe: returns (nil, nil) when no emission event exists in the window so the KPI is
-// omitted. windowDays <= 0 is treated as 90.
+// BlendEmissionWindowStats reads the windowed Blend emission / credit-risk summary (claims, claim volume, gulps, credit-risk events).
 func (s *Store) BlendEmissionWindowStats(ctx context.Context, windowDays int) (*BlendEmissionSummary, error) {
 	if windowDays <= 0 {
 		windowDays = 90

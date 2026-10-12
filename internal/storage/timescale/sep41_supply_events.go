@@ -10,10 +10,7 @@ import (
 	"time"
 )
 
-// SEP41EventKind discriminates the three supply-affecting SEP-41
-// event variants. Stable string values matching the migration's
-// CHECK constraint and `internal/canonical/discovery`'s symbol
-// names.
+// SEP41EventKind discriminates the three supply-affecting SEP-41 event variants.
 type SEP41EventKind string
 
 const (
@@ -22,9 +19,7 @@ const (
 	SEP41EventClawback SEP41EventKind = "clawback"
 )
 
-// IsValid reports whether k is one of the three supply-affecting
-// kinds. Caller surfaces unknown kinds as a 400 / decode error
-// (the observer enforces this at Decode time).
+// IsValid reports whether k is one of the three supply-affecting kinds.
 func (k SEP41EventKind) IsValid() bool {
 	switch k {
 	case SEP41EventMint, SEP41EventBurn, SEP41EventClawback:
@@ -34,7 +29,6 @@ func (k SEP41EventKind) IsValid() bool {
 }
 
 // SEP41SupplyEvent is one mint / burn / clawback event row.
-// Mirrors the sep41_supply_events columns.
 type SEP41SupplyEvent struct {
 	ContractID string
 	Ledger     uint32
@@ -50,10 +44,7 @@ type SEP41SupplyEvent struct {
 	Counterparty string // empty when not present (reserved for future variants)
 }
 
-// InsertSEP41SupplyEvent appends one event row, idempotent on the PK (event_index and event_kind
-// separate multiple supply events from one op). ON CONFLICT DO UPDATE guarded by derive_generation
-// corrects the value on a higher-or-equal-generation replay and no-ops a stale one, so the running
-// sum stays correct. Invalid input is rejected before the DB.
+// InsertSEP41SupplyEvent appends one event row, idempotent on the PK (event_index and event_kind separate multiple supply events from one op).
 func (s *Store) InsertSEP41SupplyEvent(ctx context.Context, e SEP41SupplyEvent) error {
 	if e.ContractID == "" {
 		return errors.New("timescale: InsertSEP41SupplyEvent: ContractID is empty")
@@ -106,9 +97,7 @@ func (s *Store) InsertSEP41SupplyEvent(ctx context.Context, e SEP41SupplyEvent) 
 	return nil
 }
 
-// SEP41NetMintAtOrBefore returns the running supply sum for `contractID` at-or-before
-// `asOfLedger` (ADR-0011 Algorithm 3): sum(mint) - sum(burn, clawback). On success the result is
-// non-nil; zero means no supply-affecting events yet.
+// SEP41NetMintAtOrBefore returns the running supply sum for `contractID` at or before `asOfLedger` as sum(mint) - sum(burn, clawback); non-nil on success, zero meaning no supply-affecting events yet.
 func (s *Store) SEP41NetMintAtOrBefore(ctx context.Context, contractID string, asOfLedger uint32) (*big.Int, error) {
 	const q = `
         SELECT COALESCE(
@@ -130,25 +119,14 @@ func (s *Store) SEP41NetMintAtOrBefore(ctx context.Context, contractID string, a
 	return v, nil
 }
 
-// SEP41KindTotals carries the per-kind running sums for one SEP-41 contract, kept distinct rather
-// than pre-netted as in [SEP41NetMintAtOrBefore] so clawback volume stays visible apart from
-// voluntary burns (ADR-0011 Algorithm 3).
+// SEP41KindTotals carries the per-kind running sums for one SEP-41 contract, kept distinct (not pre-netted) so clawback volume stays visible apart from voluntary burns.
 type SEP41KindTotals struct {
 	Mint     *big.Int
 	Burn     *big.Int
 	Clawback *big.Int
 }
 
-// SEP41KindTotalsAtOrBefore returns the per-kind sums for `contractID` at-or-before `asOfLedger`.
-//
-// Fast path: the checkpoint in `sep41_supply_rollup` plus the live tail above it, a disjoint union
-// (rollup up to last_ledger, then last_ledger < ledger <= asOfLedger). The full aggregate prunes no
-// chunk and takes minutes at scale, so it is only the fallback when no rollup row exists or
-// asOfLedger predates the checkpoint. Both paths return identical totals.
-//
-// A seeded pre-Soroban genesis baseline is ADDED when asOfLedger is at-or-above its boundary, so
-// the result is LIFETIME supply. The slices must partition the ledgers, so Soroban-side queries
-// are floored at the boundary ([sep41SorobanFloor]). Each component is non-nil.
+// SEP41KindTotalsAtOrBefore returns the per-kind sums for `contractID` at or before `asOfLedger` from the sep41_supply_rollup checkpoint plus the live tail above it, a disjoint union.
 func (s *Store) SEP41KindTotalsAtOrBefore(ctx context.Context, contractID string, asOfLedger uint32) (SEP41KindTotals, error) {
 	cp, ok, err := s.sep41RollupCheckpoint(ctx, contractID)
 	if err != nil {
@@ -194,10 +172,7 @@ func (s *Store) SEP41KindTotalsAtOrBefore(ctx context.Context, contractID string
 	return soroban, nil
 }
 
-// SEP41GenesisBaselineSeeded reports whether a pre-Soroban genesis baseline is seeded for the
-// contract (false when no rollup row exists). The SEP-41 computer uses it to tell a missing
-// baseline (negative Soroban-era total expected, benign `missing_baseline`) from a real
-// inconsistency (seeded and STILL negative, impossible, paging `compute_error`).
+// SEP41GenesisBaselineSeeded reports whether a pre-Soroban genesis baseline is seeded for the contract (false when no rollup row exists).
 func (s *Store) SEP41GenesisBaselineSeeded(ctx context.Context, contractID string) (bool, error) {
 	const q = `
         SELECT genesis_baseline_ledger IS NOT NULL
@@ -270,19 +245,7 @@ func (s *Store) sep41RollupCheckpoint(ctx context.Context, contractID string) (s
 	return row, true, nil
 }
 
-// UpsertSEP41GenesisBaseline seeds (or re-seeds) a contract's pre-Soroban per-kind opening balance
-// into sep41_supply_rollup and re-derives the worker-owned fold beneath it in one transaction. The
-// genesis columns are SET, not added, so re-running converges.
-//
-// genesis_baseline_ledger is also the Soroban-era slice's floor ([sep41SorobanFloor]). The worker
-// only looks ABOVE its own last_ledger, so a fold built under another floor would never re-apply
-// this one and the CAP-67-replayed pre-boundary band would count twice. The fold is therefore
-// rebuilt on EVERY seed, in the transaction, so readers never see last_ledger = 0 and the unbounded
-// aggregate. A contending aggregator pass yields after [sep41RollupLockTimeout].
-//
-// Invariant: the fold columns sum EXACTLY the rows with COALESCE(genesis_baseline_ledger, 0) <=
-// ledger <= last_ledger. baselineLedger is the EXCLUSIVE upper bound of the seeded sum. Totals are
-// Postgres NUMERIC, i128-safe (ADR-0003).
+// UpsertSEP41GenesisBaseline seeds a contract's pre-Soroban per-kind opening balance into sep41_supply_rollup and re-derives the worker-owned fold in one transaction; genesis columns are SET, not added, so re-running converges.
 func (s *Store) UpsertSEP41GenesisBaseline(ctx context.Context, contractID string, genesis SEP41KindTotals, baselineLedger uint32) error {
 	if err := validateSEP41GenesisBaseline(contractID, genesis); err != nil {
 		return err
@@ -415,14 +378,7 @@ func parseSEP41Totals(mintRaw, burnRaw, clawbackRaw string) (SEP41KindTotals, er
 	return SEP41KindTotals{Mint: mint, Burn: burn, Clawback: clawback}, nil
 }
 
-// MinSEP41ComponentLedger returns how far the SEP-41 supply-event PRODUCER has progressed
-// at-or-before `asOfLedger`: the watermark across all contracts, not this contract's own last
-// event. Zero when the contract has no events at all (gate-skip signal).
-//
-// It is NOT `MAX(ledger) WHERE contract_id = $1`: that is activity, not freshness. A token whose
-// supply hasn't changed is not stale, and a gate reading it as a stalled producer would freeze
-// served supply ([Store.MinClassicComponentLedger] guards the same trap). A genuinely stalled
-// projector is still caught: it stalls the watermark for all contracts at once.
+// MinSEP41ComponentLedger returns how far the SEP-41 supply-event PRODUCER has progressed at or before `asOfLedger` (the watermark across all contracts); zero when the contract has no events (gate-skip signal), and not MAX(ledger).
 func (s *Store) MinSEP41ComponentLedger(ctx context.Context, contractID string, asOfLedger uint32) (uint32, error) {
 	const instrumentedQ = `
 		SELECT EXISTS (SELECT 1 FROM sep41_supply_events
@@ -492,9 +448,7 @@ func parseSEP41Numeric(raw, label string) (*big.Int, error) {
 	return v, nil
 }
 
-// InsertSEP41SupplyEventBatch is the multi-row sibling of InsertSEP41SupplyEvent for full-history
-// re-derives, where per-row round-trips cap write throughput. Same derive_generation guard and
-// validation rules as the single-row path.
+// InsertSEP41SupplyEventBatch is the multi-row sibling of InsertSEP41SupplyEvent for full-history re-derives, where per-row round-trips cap write throughput.
 func (s *Store) InsertSEP41SupplyEventBatch(ctx context.Context, rows []SEP41SupplyEvent) error {
 	if len(rows) == 0 {
 		return nil
@@ -623,8 +577,7 @@ const (
 	sep41SupplyCursorSub    = "sep41_supply"
 )
 
-// SEP41RollupAdvance reports what one AdvanceSEP41SupplyRollup pass
-// folded, for the worker's metrics + logging.
+// SEP41RollupAdvance reports what one AdvanceSEP41SupplyRollup pass folded, for the worker's metrics + logging.
 type SEP41RollupAdvance struct {
 	ContractID string
 	FromLedger uint32 // checkpoint ledger before the pass
@@ -636,18 +589,7 @@ type SEP41RollupAdvance struct {
 	CursorAbsent bool
 }
 
-// AdvanceSEP41SupplyRollup folds a contract's newly-SETTLED sep41_supply_events into its
-// sep41_supply_rollup checkpoint, keeping the SEP41KindTotalsAtOrBefore fast path cheap. It is
-// idempotent and monotonic; amounts are summed in NUMERIC (ADR-0003).
-//
-// A row is settled when `ledger < max(ledger)` (the tip may be mid-write) AND `ledger <=` the
-// projector's durable sep41_supply cursor. A failed sink write caps the cursor below the held
-// ledger L and L is retried; folding past L would strand its row below last_ledger, where neither
-// the fold nor the reader's delta looks. With no cursor row the pass folds nothing (CursorAbsent).
-//
-// last_ledger and genesis_baseline_ledger are read inside the fold, under the row lock taken first
-// ([lockSEP41RollupRow]). Reading earlier would let a concurrent reset land in the gap and this
-// pass push last_ledger back over the zeroed totals, a permanent undercount.
+// AdvanceSEP41SupplyRollup folds a contract's newly-settled sep41_supply_events into its sep41_supply_rollup checkpoint; idempotent and monotonic, summed in NUMERIC (ADR-0003).
 func (s *Store) AdvanceSEP41SupplyRollup(ctx context.Context, contractID string) (SEP41RollupAdvance, error) {
 	if contractID == "" {
 		return SEP41RollupAdvance{}, errors.New("timescale: AdvanceSEP41SupplyRollup: empty contractID")
@@ -800,23 +742,14 @@ func lockSEP41RollupRow(ctx context.Context, tx *sql.Tx, contractID string) erro
 	return nil
 }
 
-// SEP41RollupCheckpoint is the WORKER-OWNED fold state of one sep41_supply_rollup row: the
-// per-kind running totals (Fold) over sep41_supply_events up to LastLedger. It EXCLUDES the
-// pre-Soroban genesis-baseline columns, a separately seeded constant from the ClickHouse lake that
-// is not part of the derived-checkpoint reconcile.
+// SEP41RollupCheckpoint is the worker-owned fold state of one sep41_supply_rollup row (per-kind running totals up to LastLedger), excluding the separately seeded genesis-baseline columns.
 type SEP41RollupCheckpoint struct {
 	ContractID string
 	Fold       SEP41KindTotals
 	LastLedger uint32
 }
 
-// ListSEP41RollupCheckpoints returns the worker-owned fold state of every sep41_supply_rollup row,
-// or only contractIDs when non-empty (scoped, resumable auditing); genesis columns are out of scope.
-//
-// This is the "checkpoint" side of the derived-checkpoint reconcile
-// ([completeness.ReconcileRunningTotals]): each Fold is diffed against
-// [Store.SEP41SupplyEventKindResum], so a double-fold shows as Fold = k x resum. It scans only the
-// small rollup table, NOT the sep41_supply_events hypertable.
+// ListSEP41RollupCheckpoints returns the worker-owned fold state of every sep41_supply_rollup row, or only contractIDs when non-empty; the checkpoint side of the derived-checkpoint reconcile.
 func (s *Store) ListSEP41RollupCheckpoints(ctx context.Context, contractIDs []string) ([]SEP41RollupCheckpoint, error) {
 	const base = `
         SELECT contract_id, mint_total::text, burn_total::text, clawback_total::text, last_ledger
@@ -855,16 +788,7 @@ func (s *Store) ListSEP41RollupCheckpoints(ctx context.Context, contractIDs []st
 	return out, nil
 }
 
-// SEP41SupplyEventKindResum is the AUTHORITATIVE per-kind re-sum of sep41_supply_events for
-// contractID up to asOfLedger, the "truth" side of the derived-checkpoint reconcile
-// ([completeness.ReconcileRunningTotals]).
-//
-// It sums the exact PG rows the checkpoint folds, NOT the ClickHouse lake (the PG observer and the
-// lake legitimately differ for map/muxed variants). It is the full aggregate the fast path
-// deliberately AVOIDS: the hypertable is chunked by observed_at, not ledger, so a
-// contract_id+ledger-bounded sum prunes no chunks and scans them all. It therefore runs under a
-// generous caller-supplied SET LOCAL statement_timeout, for the slow-cadence operator check, NEVER
-// the per-tick hot path. The three NUMERIC sums parse to *big.Int, i128-safe (ADR-0003).
+// SEP41SupplyEventKindResum is the authoritative per-kind re-sum of sep41_supply_events for contractID up to asOfLedger, the truth side of the derived-checkpoint reconcile; it sums the exact PG rows the checkpoint folds.
 func (s *Store) SEP41SupplyEventKindResum(ctx context.Context, contractID string, asOfLedger uint32, statementTimeout time.Duration) (SEP41KindTotals, error) {
 	if contractID == "" {
 		return SEP41KindTotals{}, errors.New("timescale: SEP41SupplyEventKindResum: empty contractID")
@@ -904,17 +828,7 @@ func (s *Store) SEP41SupplyEventKindResum(ctx context.Context, contractID string
 	return parseSEP41Totals(mintRaw, burnRaw, clawbackRaw)
 }
 
-// ResetSEP41SupplyRollupFold rebuilds the worker-owned fold columns of sep41_supply_rollup from
-// zero over a re-derived sep41_supply_events history; nil/empty contractIDs resets every row.
-//
-// The worker only folds `ledger > last_ledger`, so history rewritten below the checkpoint is never
-// re-examined: a full re-derive double-counts and a scoped recovery undercounts. It is not a
-// TRUNCATE: the genesis_* baseline columns must survive.
-//
-// Each contract is zeroed and re-folded to the settled cursor in one transaction (as in
-// [Store.UpsertSEP41GenesisBaseline]), so readers never see last_ledger = 0 and the unbounded
-// aggregate. A contract whose re-fold does not commit (lock timeout, cancelled ctx) is zeroed alone
-// and left for the worker; the call returns an error naming how many fell back.
+// ResetSEP41SupplyRollupFold rebuilds the worker-owned fold columns of sep41_supply_rollup from zero over re-derived history (nil/empty resets every row), since the worker only folds ledger > last_ledger.
 func (s *Store) ResetSEP41SupplyRollupFold(ctx context.Context, contractIDs []string) (int64, error) {
 	ids := contractIDs
 	if len(ids) == 0 {

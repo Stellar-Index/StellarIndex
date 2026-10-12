@@ -10,10 +10,7 @@ import (
 	"time"
 )
 
-// CAGGRefreshWindow is one continuous aggregate's refresh-policy
-// lookback: how far behind now() a refresh still re-aggregates buckets.
-// A row landing with a timestamp older than StartOffset is never
-// materialized into the view by the policy.
+// CAGGRefreshWindow is one continuous aggregate's refresh-policy lookback; a row older than StartOffset is never materialized into the view by the policy.
 type CAGGRefreshWindow struct {
 	View string
 	// HasPolicy is false when the view has no refresh policy job at all.
@@ -47,8 +44,7 @@ const caggRefreshWindowsSelect = `
 	 ORDER BY c.view_name
 `
 
-// CAGGRefreshWindows returns the refresh-policy lookback of every
-// continuous aggregate in the database, ordered by view name.
+// CAGGRefreshWindows returns the refresh-policy lookback of every continuous aggregate in the database, ordered by view name.
 func (s *Store) CAGGRefreshWindows(ctx context.Context) ([]CAGGRefreshWindow, error) {
 	rows, err := s.db.QueryContext(ctx, caggRefreshWindowsSelect)
 	if err != nil {

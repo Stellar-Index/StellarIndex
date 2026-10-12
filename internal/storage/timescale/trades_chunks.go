@@ -61,8 +61,7 @@ const tradesChunksInRangeSelect = `
 	 ORDER BY c.range_start
 `
 
-// TradesChunksInRange returns every `trades` chunk intersecting [from, to), in range order.
-// Catalog-only: it never touches a chunk.
+// TradesChunksInRange returns every trades chunk intersecting [from, to) in range order; catalog-only, it never touches a chunk.
 func (s *Store) TradesChunksInRange(ctx context.Context, from, to time.Time) ([]TradeChunk, error) {
 	rows, err := s.db.QueryContext(ctx, tradesChunksInRangeSelect, from.UTC(), to.UTC())
 	if err != nil {
@@ -93,8 +92,7 @@ const (
 	tradesChunkBytes      = `SELECT total_bytes::bigint FROM chunks_detailed_size('trades') WHERE chunk_schema = $1 AND chunk_name = $2`
 )
 
-// DecompressTradesChunk decompresses one chunk (no-op if already), taking locks under a bounded
-// wait with retry; see the convoy note below.
+// DecompressTradesChunk decompresses one chunk (no-op if already), taking locks under a bounded wait with retry; see the convoy note below.
 func (s *Store) DecompressTradesChunk(ctx context.Context, c TradeChunk) error {
 	if err := s.execUnderBoundedLockWait(ctx, ctx, tradesChunkDecompressLock, tradesChunkDecompress, c); err != nil {
 		return fmt.Errorf("timescale: decompress chunk %s: %w", c, err)
@@ -102,8 +100,7 @@ func (s *Store) DecompressTradesChunk(ctx context.Context, c TradeChunk) error {
 	return nil
 }
 
-// CompressTradesChunk compresses one chunk (no-op if already) under the decompress's per-request
-// bound but a far larger budget, because giving up LEAVES THE CHUNK DECOMPRESSED.
+// CompressTradesChunk compresses one chunk (no-op if already) under a far larger budget than decompress, because giving up leaves the chunk decompressed.
 func (s *Store) CompressTradesChunk(ctx context.Context, c TradeChunk) error {
 	return s.compressTradesChunk(ctx, ctx, c)
 }
@@ -440,8 +437,7 @@ const tradesDataVolumePathSelect = `
 	 WHERE c.oid = 'trades'::regclass
 `
 
-// TradesDataVolumePath returns the directory holding the `trades` hypertable. data_directory needs
-// pg_read_all_settings; the error is returned as-is so the caller can fall back to an operator figure.
+// TradesDataVolumePath returns the directory holding the trades hypertable; data_directory needs pg_read_all_settings and the error is returned as-is so the caller can fall back to an operator figure.
 func (s *Store) TradesDataVolumePath(ctx context.Context) (string, error) {
 	var path string
 	if err := s.db.QueryRowContext(ctx, tradesDataVolumePathSelect).Scan(&path); err != nil {
@@ -483,8 +479,7 @@ const tradesCompressionPolicySelect = `
 	   AND proc_name = 'trades_compression_policy'
 `
 
-// TradesCompressionPolicy returns the `trades` compression policy job, or
-// [ErrNoTradesCompressionPolicy]; a caller that would pause it must refuse on that.
+// TradesCompressionPolicy returns the `trades` compression policy job, or [ErrNoTradesCompressionPolicy]; a caller that would pause it must refuse on that.
 func (s *Store) TradesCompressionPolicy(ctx context.Context) (TradesCompressionPolicy, error) {
 	var (
 		p       TradesCompressionPolicy
@@ -514,8 +509,7 @@ func (s *Store) SetJobScheduled(ctx context.Context, jobID int, scheduled bool) 
 	return nil
 }
 
-// TradeChunkRestampResult is what one bracketed chunk cost: sizes before, decompressed and after
-// recompression, and wall time. An uncompressed chunk reports before, before again, then after.
+// TradeChunkRestampResult is what one bracketed chunk cost: sizes before, decompressed and after recompression, and wall time.
 type TradeChunkRestampResult struct {
 	Chunk             TradeChunk
 	BytesBefore       int64
@@ -524,10 +518,7 @@ type TradeChunkRestampResult struct {
 	Elapsed           time.Duration
 }
 
-// ChunkRestampStep names the two bracket statements that can outlive the process issuing them
-// (run-heavy-job.sh's TimeoutStopSec is sized for them); a dropped connection aborts the
-// statement with the chunk in whatever state it was in. Each is announced through the caller's
-// `before` hook so a trace exists before it is issued.
+// ChunkRestampStep names the two bracket statements that can outlive the process issuing them; a dropped connection aborts the statement with the chunk in whatever state it was in.
 type ChunkRestampStep int
 
 const (
@@ -537,19 +528,7 @@ const (
 	ChunkRestampCompress
 )
 
-// RestampTradesChunk runs `work` inside the chunk, restoring the state the chunk was listed in
-// ([TradeChunk.Compressed]) afterwards:
-//
-//	compressed at listing:    size → decompress_chunk → size → work → compress_chunk → size
-//	uncompressed at listing:  size → work → size
-//
-// Once decompressed, every exit path recompresses, including a failed `work` and a cancelled
-// context: the compress uses a detached context because SIGTERM is the likeliest failure. Only a
-// failed recompress leaves the chunk decompressed, and the error says so. A chunk uncompressed
-// at listing stays that way (newer chunks stay open for cursor-regression upserts).
-//
-// `before`, if set, receives the step about to be issued so the caller can print the by-hand
-// repair first.
+// RestampTradesChunk runs `work` inside the chunk and restores the state it was listed in (TradeChunk.Compressed): decompress, work, recompress if it was compressed.
 func (s *Store) RestampTradesChunk(ctx context.Context, c TradeChunk, work func(context.Context) error, before func(ChunkRestampStep)) (res TradeChunkRestampResult, err error) {
 	res = TradeChunkRestampResult{Chunk: c}
 	start := time.Now()
@@ -628,8 +607,7 @@ func (s *Store) TradesChunkCompressed(ctx context.Context, c TradeChunk) (bool, 
 	return compressed, nil
 }
 
-// ErrTradesChunkRecompressed is returned by [Store.ApplyXLMBaseUSDVolumeRestampInChunk] when the
-// chunk reads is_compressed = true ahead of a batch; the batch is not written.
+// ErrTradesChunkRecompressed is returned by Store.ApplyXLMBaseUSDVolumeRestampInChunk when the chunk reads is_compressed = true ahead of a batch; the batch is not written.
 var ErrTradesChunkRecompressed = errors.New("timescale: chunk was re-compressed underneath the restamp")
 
 // stillDecompressed is the guard as a pre-write hook, shared by both tiers' in-chunk applies so
@@ -648,15 +626,12 @@ func (s *Store) stillDecompressed(c TradeChunk) func(context.Context) error {
 	}
 }
 
-// ApplyXLMBaseUSDVolumeRestampInChunk is [Store.ApplyXLMBaseUSDVolumeRestamp] for a plan inside
-// chunk c, guarded before every batch. On [ErrTradesChunkRecompressed] earlier rows stay
-// committed and the caller stops the walk.
+// ApplyXLMBaseUSDVolumeRestampInChunk is [Store.ApplyXLMBaseUSDVolumeRestamp] for a plan inside chunk c, guarded before every batch.
 func (s *Store) ApplyXLMBaseUSDVolumeRestampInChunk(ctx context.Context, c TradeChunk, plan *XLMBaseRestampPlan, generation int64, batch int) (int64, error) {
 	return s.ApplyUSDVolumeRestampPlanInChunk(ctx, c, plan, generation, batch)
 }
 
-// RestampExactTierUSDVolumeInChunk is [Store.RestampExactTierUSDVolume] for a window inside chunk
-// c, guarded once per slice: the exact tier has no row batching (its transaction IS the slice).
+// RestampExactTierUSDVolumeInChunk is Store.RestampExactTierUSDVolume for a window inside chunk c, guarded once per slice because the exact tier has no row batching.
 func (s *Store) RestampExactTierUSDVolumeInChunk(ctx context.Context, c TradeChunk, p USDVolumeRestampParams) (int64, error) {
 	if err := s.stillDecompressed(c)(ctx); err != nil {
 		return 0, err
@@ -673,8 +648,7 @@ func (s *Store) RestampExactTierUSDVolumeInChunk(ctx context.Context, c TradeChu
 // could be handed to other statements and the release run on a different one). Postgres drops
 // the lock with the connection, e.g. on SIGKILL.
 
-// USDVolumeRestampLockName is the text hashed into the lock key (`hashtext(name)`), so an operator
-// can reproduce the key by name.
+// USDVolumeRestampLockName is the text hashed into the lock key (`hashtext(name)`), so an operator can reproduce the key by name.
 const USDVolumeRestampLockName = "usd-volume-restamp:trades"
 
 const (
@@ -685,8 +659,7 @@ const (
 // ErrUSDVolumeRestampLockHeld is returned by [Store.TryUSDVolumeRestampLock] when another run is alive.
 var ErrUSDVolumeRestampLockHeld = errors.New("timescale: advisory lock hashtext('" + USDVolumeRestampLockName + "') is held by another session")
 
-// TryUSDVolumeRestampLock takes the run lock on a dedicated connection and returns the release,
-// which also closes it. It never waits: a held lock is [ErrUSDVolumeRestampLockHeld].
+// TryUSDVolumeRestampLock takes the run lock on a dedicated connection and returns the release, which also closes it; it never waits and a held lock is ErrUSDVolumeRestampLockHeld.
 func (s *Store) TryUSDVolumeRestampLock(ctx context.Context) (release func(context.Context) error, err error) {
 	conn, err := s.db.Conn(ctx)
 	if err != nil {

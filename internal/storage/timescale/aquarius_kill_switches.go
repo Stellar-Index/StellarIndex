@@ -16,9 +16,7 @@ var validAquariusKillActions = map[string]bool{
 	"kill_gauges_claim": true, "unkill_gauges_claim": true,
 }
 
-// AquariusKillSwitchEvent is one observed Aquarius circuit-breaker
-// toggle (migration 0130). The event carries no body — the row is the
-// event identity plus the Action.
+// AquariusKillSwitchEvent is one observed Aquarius circuit-breaker toggle (migration 0130).
 type AquariusKillSwitchEvent struct {
 	ContractID      string
 	Ledger          uint32
@@ -29,10 +27,7 @@ type AquariusKillSwitchEvent struct {
 	Action          string
 }
 
-// InsertAquariusKillSwitch lands one circuit-breaker toggle, idempotent on (ledger_close_time,
-// contract_id, ledger, tx_hash, op_index, event_index) with a generation-guarded corrective upsert.
-// It rejects an empty ContractID / TxHash, a zero LedgerCloseTime and an Action outside the closed
-// set.
+// InsertAquariusKillSwitch lands one circuit-breaker toggle, idempotent on its PK via a generation-guarded corrective upsert; rejects empty ContractID/TxHash, zero LedgerCloseTime and an Action outside the closed set.
 func (s *Store) InsertAquariusKillSwitch(ctx context.Context, e AquariusKillSwitchEvent) error {
 	if e.ContractID == "" {
 		return errors.New("timescale: InsertAquariusKillSwitch: ContractID is empty")

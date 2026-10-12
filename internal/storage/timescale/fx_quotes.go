@@ -14,10 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// FXQuote is one (date, ticker) snapshot from the forex pipeline.
-// Rates are NUMERIC in the DB. RateUSD is the write input; the read
-// path returns both columns as exact NUMERIC text so no served price
-// passes through a float (ADR-0003).
+// FXQuote is one (date, ticker) forex snapshot; RateUSD is the write input and reads return exact NUMERIC text so no served price passes through a float.
 type FXQuote struct {
 	Bucket time.Time
 	Ticker string
@@ -34,18 +31,7 @@ type FXQuote struct {
 	Source         string
 }
 
-// InsertFXQuoteBatch upserts fx quotes, idempotent on the (ticker, bucket) primary key. A re-run
-// updates rate_usd, inverse_usd and source but keeps the first observed_at.
-//
-// The upsert is generation-guarded because rate_usd is the denominator of every fiat-quoted
-// usd_volume: DO UPDATE applies only if `derive_generation <= EXCLUDED.derive_generation`. The
-// live worker writes generation 0; fx-history-backfill stamps a POSITIVE generation
-// ([SetDeriveGeneration]) so its corrected rate survives a later live refresh.
-//
-// The per-source `entries` tally is bumped inline: `xmax = 0` marks a genuinely new row, and the
-// HAVING clause skips duplicates, updates and guard skips, so a re-run never inflates it.
-//
-// Empty slice is a no-op.
+// InsertFXQuoteBatch upserts fx quotes idempotently on (ticker, bucket), keeping the first observed_at; the upsert is generation-guarded because rate_usd is the denominator of every fiat-quoted usd_volume.
 func (s *Store) InsertFXQuoteBatch(ctx context.Context, quotes []FXQuote) error {
 	if len(quotes) == 0 {
 		return nil
@@ -97,8 +83,7 @@ func (s *Store) InsertFXQuoteBatch(ctx context.Context, quotes []FXQuote) error 
 	return nil
 }
 
-// ListFXHistory returns daily snapshots for `ticker` in [from, to], ascending (empty when nothing
-// matches), for the `history_*` fields of /v1/currencies/{ticker}.
+// ListFXHistory returns daily snapshots for `ticker` in [from, to], ascending (empty when nothing matches), for the `history_*` fields of /v1/currencies/{ticker}.
 func (s *Store) ListFXHistory(ctx context.Context, ticker string, from, to time.Time) ([]FXQuote, error) {
 	const stmt = `
 		SELECT bucket, ticker, rate_usd::text, inverse_usd::text, COALESCE(source, '')
@@ -126,9 +111,7 @@ func (s *Store) ListFXHistory(ctx context.Context, ticker string, from, to time.
 	return out, nil
 }
 
-// LatestFXQuotes returns the newest fx_quotes row per ticker whose bucket
-// is at or after since, rates as exact NUMERIC text. The forex worker
-// seeds its held rates from it on cold start.
+// LatestFXQuotes returns the newest fx_quotes row per ticker whose bucket is at or after since, rates as exact NUMERIC text.
 func (s *Store) LatestFXQuotes(ctx context.Context, since time.Time) ([]FXQuote, error) {
 	const stmt = `
 		SELECT DISTINCT ON (ticker)
@@ -344,13 +327,7 @@ const fxQuoteBucketAtOrBeforeSelect = `
 	 LIMIT 1
 `
 
-// FXQuoteBucketAtOrBefore returns the newest `fx_quotes` bucket for ticker at or before `at`,
-// looking back no further than `lookback`. ok=false means no quote in [at-lookback, at]; the
-// caller must REFUSE to price rather than reach forward or extrapolate.
-//
-// AT OR BEFORE is day-bucket granularity, not publication time: the rate is overwritten by later
-// refreshes that day and by trailing-7d history bars, so it can be published up to a day after
-// `at`. Never a later bucket, though.
+// FXQuoteBucketAtOrBefore returns the newest `fx_quotes` bucket for ticker at or before `at` within `lookback`; ok=false means the caller must REFUSE to price, never reach forward or extrapolate.
 func (s *Store) FXQuoteBucketAtOrBefore(ctx context.Context, ticker string, at time.Time, lookback time.Duration) (time.Time, bool, error) {
 	var bucket time.Time
 	err := s.db.QueryRowContext(ctx, fxQuoteBucketAtOrBeforeSelect,

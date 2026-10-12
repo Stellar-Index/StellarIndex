@@ -141,10 +141,7 @@ func (s *Store) lowersCachedMinLedger(assetID string, minLedger uint32) bool {
 	return ok && minLedger < prev
 }
 
-// ResetAssetRegistryDedupeForTest clears the dedupe cache to simulate a restart between a trade
-// insert and its replay. The replay test asserts `observation_count` does NOT advance, because the
-// [Store.InsertTrade] `RowsAffected == 0` guard short-circuits the hook even with a cold cache; the
-// reset keeps the TTL cache from masking a regression in that guard. Test-only.
+// ResetAssetRegistryDedupeForTest clears the dedupe cache to simulate a restart between a trade insert and its replay, so the TTL cache cannot mask a regression in the RowsAffected == 0 guard.
 func (s *Store) ResetAssetRegistryDedupeForTest() {
 	s.assetRegistryDedupe.Range(func(k, _ any) bool {
 		s.assetRegistryDedupe.Delete(k)
@@ -198,10 +195,7 @@ func (s *Store) registerIssuerSeen(ctx context.Context, gStrkey string) error {
 	return nil
 }
 
-// ClassicAssetBySlug resolves a PUBLIC slug to its classic (code, issuer) identity. The slug IS the
-// fully-qualified asset_id, so this mostly serves case-mangled URLs: a lowercased full form fails
-// strkey parsing in the canonical parser and lands here. Exact match wins over the case-folded
-// match. ok=false (not an error) when no row carries the slug.
+// ClassicAssetBySlug resolves a public slug (the fully-qualified asset_id) to its classic (code, issuer), serving case-mangled URLs; exact match beats case-folded and ok=false (not an error) when none matches.
 func (s *Store) ClassicAssetBySlug(ctx context.Context, slug string) (code, issuer string, ok bool, err error) {
 	const q = `
 		SELECT code, issuer_g_strkey
@@ -228,12 +222,7 @@ func (s *Store) ClassicAssetBySlug(ctx context.Context, slug string) (code, issu
 // few hundred statements.
 const classicAssetHoldingBatchMax = 2000
 
-// ClassicAssetHolding is one holdings-derived observation of a classic asset: trustline evidence
-// that the asset EXISTS, independent of any trade.
-//
-// First/Last bracket the ledgers the evidence spans and may be equal. Neither is the asset genesis
-// ledger: a trustline entry carries its last-modified ledger, so First is only an upper bound on
-// genesis that improves as later scans meet older trustlines.
+// ClassicAssetHolding is one holdings-derived observation of a classic asset (trustline evidence it exists); First/Last bracket the evidence ledgers and First is only an upper bound on genesis.
 type ClassicAssetHolding struct {
 	// Asset must be canonical.AssetClassic; native and pool-share trustlines are skipped since the
 	// registry is keyed on (code, issuer).
@@ -245,20 +234,7 @@ type ClassicAssetHolding struct {
 	LastAt      time.Time
 }
 
-// RegisterClassicAssetsHeld records holdings evidence for a batch of classic assets, creating the
-// `classic_assets` and `issuers` rows when none exist (the second source; see the file header).
-// What it does NOT do is load-bearing:
-//
-//   - It never touches observation_count (trade observations only), so the explorer column,
-//     listing rank and scam-triage sweep keep their meaning. A row created here starts at 0.
-//   - It never touches first_trade_* / last_trade_*, so "last traded" stays NULL for an asset
-//     that has never traded.
-//   - It never touches slug: a slug is a public URL, and ON CONFLICT keeps the existing one.
-//   - It does not populate the [Store] dedupe caches; a bulk walk seeding them would suppress the
-//     next trade's observation_count increment.
-//
-// Returns the asset and issuer rows the statement reports as affected. Postgres counts an ON
-// CONFLICT DO UPDATE row whether or not a value changed, so the asset figure is "rows considered".
+// RegisterClassicAssetsHeld records holdings evidence for classic assets, creating missing `classic_assets` and `issuers` rows; it never touches observation_count, which counts trade observations only.
 func (s *Store) RegisterClassicAssetsHeld(ctx context.Context, obs []ClassicAssetHolding) (assets, issuers int64, err error) {
 	for start := 0; start < len(obs); start += classicAssetHoldingBatchMax {
 		end := min(start+classicAssetHoldingBatchMax, len(obs))
@@ -402,8 +378,7 @@ func (s *Store) upsertHeldAssetsBatch(ctx context.Context, rows []ClassicAssetHo
 	return n, nil
 }
 
-// ClassicAssetRegistryStats is the registry coverage the backfill reports, split by source so a
-// row count that mixes both is not misread.
+// ClassicAssetRegistryStats is the registry coverage the backfill reports, split by source so a row count that mixes both is not misread.
 type ClassicAssetRegistryStats struct {
 	// Total is every row in classic_assets.
 	Total int64
@@ -420,8 +395,7 @@ type ClassicAssetRegistryStats struct {
 	TradeOnly int64
 }
 
-// ClassicAssetRegistryStats counts the registry by observation source with one sequential scan of a
-// plain table; the backfill calls it before and after to show its delta.
+// ClassicAssetRegistryStats counts the registry by observation source with one sequential scan of a plain table, called by the backfill before and after to show its delta.
 func (s *Store) ClassicAssetRegistryStats(ctx context.Context) (ClassicAssetRegistryStats, error) {
 	const q = `
 		SELECT count(*)::bigint,

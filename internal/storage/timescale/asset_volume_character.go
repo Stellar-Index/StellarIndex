@@ -43,8 +43,7 @@ const (
 	volumeCharacterIssuerSideThreshold = 0.90
 )
 
-// AssetVolumeCharacter is the signal set for one asset over the trailing window plus the derived
-// character. Shares are fractions in [0,1] rounded to 4 dp.
+// AssetVolumeCharacter is the signal set for one asset over the trailing window plus the derived character.
 type AssetVolumeCharacter struct {
 	WindowDays int
 	// VolumeUSD is the priced window volume the shares are computed against: the exact NUMERIC
@@ -114,8 +113,7 @@ SELECT
                  OR counterpart LIKE 'USDC-%'), 0)                                 AS market_styled_vol
 `
 
-// AssetVolumeCharacter computes the signals and derived character for one asset; an asset with
-// no priced trades in the window is the neutral `market` with zeroed signals.
+// AssetVolumeCharacter computes the signals and character for one asset; an asset with no priced trades in the window is the neutral `market` with zeroed signals.
 func (s *Store) AssetVolumeCharacter(ctx context.Context, assetID string) (AssetVolumeCharacter, error) {
 	issuer := ""
 	if a, err := canonical.ParseAsset(assetID); err == nil {

@@ -7,20 +7,7 @@ import (
 	"time"
 )
 
-// SoroswapRouterSwap is one soroswap_router_swaps row: a single observed router invocation
-// (`swap_exact_tokens_for_tokens` / `swap_tokens_for_exact_tokens`).
-//
-// Identity is (ledger, tx_hash, op_index, call_sig): op_index separates router invocations in one
-// tx, call_sig separates distinct router swaps within one op (aggregator / batch calls).
-//
-// AmountIn / AmountOut are decimal-string numerics (i128 via *big.Int, ADR-0003). Path is the hop
-// sequence of raw token C-strkeys (at least 2 by router precondition).
-//
-// CAVEAT: the amounts are the call's two i128 args as declared, not both realized. One side is
-// exact and the other a slippage bound: amount_out_min (a floor) for swap_exact_tokens_for_tokens,
-// amount_in_max (a ceiling) for swap_tokens_for_exact_tokens. Read function_name before treating
-// either as realized; realized per-hop fills live in the per-pair soroswap swap events (trades)
-// for the same tx.
+// SoroswapRouterSwap is one soroswap_router_swaps row, a single observed router invocation; identity is (ledger, tx_hash, op_index, call_sig) so several router calls in one tx stay distinct.
 type SoroswapRouterSwap struct {
 	Ledger          uint32
 	LedgerCloseTime time.Time
@@ -55,8 +42,7 @@ type SoroswapRouterSwap struct {
 	CallKind  string
 }
 
-// InsertSoroswapRouterSwap appends one row, idempotent on (ledger_close_time, ledger, tx_hash,
-// op_index, call_sig). It rejects empty PK columns, function name and path before touching the DB.
+// InsertSoroswapRouterSwap appends one row, idempotent on (ledger_close_time, ledger, tx_hash, op_index, call_sig).
 func (s *Store) InsertSoroswapRouterSwap(ctx context.Context, e SoroswapRouterSwap) error {
 	if e.TxHash == "" {
 		return errors.New("timescale: InsertSoroswapRouterSwap: TxHash is empty")

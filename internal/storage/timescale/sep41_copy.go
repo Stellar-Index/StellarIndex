@@ -10,13 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 )
 
-// CopyMergeSEP41Transfers bulk-loads rows via the COPY protocol into a
-// temp table, then merges with the same generation-guarded corrective upsert as the per-row
-// InsertSEP41TransferBatch. Built for full-history re-derives, where multi-row INSERTs pay
-// parse/plan per statement and are too slow. derive_generation is COPY'd per row and the merge
-// is a gen-guarded DO UPDATE, so a re-derive at a >= generation corrects a wrong value in
-// place and a stale lower-generation replay cannot revert it. Omitting derive_generation would
-// default rows to generation 0, and a DO NOTHING merge would silently drop the correction.
+// CopyMergeSEP41Transfers bulk-loads rows via COPY into a temp table and merges with the same generation-guarded corrective upsert as InsertSEP41TransferBatch, for full-history re-derives.
 func (s *Store) CopyMergeSEP41Transfers(ctx context.Context, rows []SEP41TransferRow) error {
 	if len(rows) == 0 {
 		return nil
@@ -59,8 +53,7 @@ func (s *Store) CopyMergeSEP41Transfers(ctx context.Context, rows []SEP41Transfe
 		values)
 }
 
-// CopyMergeSEP41SupplyEvents is the sep41_supply_events sibling, with the same
-// generation-guarded DO UPDATE semantics as the per-row InsertSEP41SupplyEvent.
+// CopyMergeSEP41SupplyEvents is the sep41_supply_events sibling, with the same generation-guarded DO UPDATE semantics as the per-row InsertSEP41SupplyEvent.
 func (s *Store) CopyMergeSEP41SupplyEvents(ctx context.Context, rows []SEP41SupplyEvent) error {
 	if len(rows) == 0 {
 		return nil

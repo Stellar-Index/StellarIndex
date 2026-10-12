@@ -42,10 +42,7 @@ const (
 	caggRefreshRestoreTimeout = 5 * time.Second
 )
 
-// CAGGRefreshTimeout returns the statement_timeout for one refresh_continuous_aggregate CALL
-// over the given window: [CAGGRefreshTimeoutPerWindowHour] per hour, clamped to
-// [[CAGGRefreshTimeoutFloor], [CAGGRefreshTimeoutCeiling]]. A zero or negative window gets the
-// floor; the CALL rejects that window itself, so the bound only has to exist.
+// CAGGRefreshTimeout returns the statement_timeout for one refresh_continuous_aggregate CALL: [CAGGRefreshTimeoutPerWindowHour] per hour clamped to [[CAGGRefreshTimeoutFloor], [CAGGRefreshTimeoutCeiling]]; a non-positive window gets the floor.
 func CAGGRefreshTimeout(window time.Duration) time.Duration {
 	if window <= 0 {
 		return CAGGRefreshTimeoutFloor
@@ -62,10 +59,7 @@ func CAGGRefreshTimeout(window time.Duration) time.Duration {
 	return bound
 }
 
-// CAGGRefreshTimeoutError is returned by [Store.RefreshContinuousAggregate] when the per-CALL
-// bound fired (statement_timeout or the Go-side deadline). The trades are untouched and a re-run
-// refreshes them. It unwraps to the driver error so errors.Is(context.DeadlineExceeded) and
-// pgconn.PgError matching work.
+// CAGGRefreshTimeoutError is returned by [Store.RefreshContinuousAggregate] when the per-CALL bound fired (statement_timeout or the Go-side deadline).
 type CAGGRefreshTimeoutError struct {
 	View    string
 	From    time.Time

@@ -21,10 +21,7 @@ const relationDataVolumePathSelect = `
 	 WHERE c.oid = $1::regclass
 `
 
-// RelationDataVolumePath returns the directory whose filesystem holds
-// `relation`. Reading data_directory needs pg_read_all_settings (or
-// superuser); the error is returned as-is so the caller can fall back to an
-// operator-supplied figure rather than guessing.
+// RelationDataVolumePath returns the directory whose filesystem holds `relation`.
 func (s *Store) RelationDataVolumePath(ctx context.Context, relation string) (string, error) {
 	var path string
 	if err := s.db.QueryRowContext(ctx, relationDataVolumePathSelect, relation).Scan(&path); err != nil {

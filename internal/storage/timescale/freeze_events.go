@@ -16,10 +16,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// FreezeEventSink is the timescale-backed freeze.EventSink. It records each clear-to-firing
-// transition in `freeze_events` for the /anomalies timeline. RecordFreeze is a no-op while a
-// row with recovered_at IS NULL exists for the pair. The Redis marker stays the source of
-// truth for liveness; this only mirrors transitions for offline reads.
+// FreezeEventSink is the timescale-backed freeze.EventSink recording each clear-to-firing transition in `freeze_events`; RecordFreeze is a no-op while an unrecovered row exists, and Redis stays the liveness source of truth.
 type FreezeEventSink struct {
 	db        *sql.DB
 	clock     func() time.Time
@@ -29,22 +26,15 @@ type FreezeEventSink struct {
 	onFreeze FreezeHook
 }
 
-// FreezeHook is the post-insert callback. It is best-effort: the sink logs and drops errors so
-// a downstream failure cannot undo the INSERT. frozenValue is empty on a first-tick freeze
-// (no prior bucket), never the column's "0" filler.
+// FreezeHook is the best-effort post-insert callback (errors are logged and dropped so they cannot undo the INSERT); frozenValue is empty on a first-tick freeze, never the column's "0" filler.
 type FreezeHook func(ctx context.Context, asset, quote canonical.Asset, frozenValue string, decision anomaly.Decision)
 
-// LedgerProvider reads the most recently ingested ledger sequence, stamped as
-// `frozen_at_ledger`. Implementations must be concurrent-safe and cheap: it is called on the
-// aggregator's hot path.
+// LedgerProvider reads the most recently ingested ledger sequence stamped as `frozen_at_ledger`; implementations must be concurrent-safe and cheap as it runs on the aggregator hot path.
 type LedgerProvider interface {
 	LatestLedger() uint32
 }
 
-// NewFreezeEventSink constructs the sink. clock + getLedger are
-// optional; nil clock falls back to time.Now, nil getLedger means
-// frozen_at_ledger is stamped 0 (acceptable for tests; production
-// always wires a real provider).
+// NewFreezeEventSink constructs the sink; nil clock falls back to time.Now and nil getLedger stamps frozen_at_ledger 0 (tests only, production wires a real provider).
 func NewFreezeEventSink(s *Store, opts ...FreezeEventSinkOption) *FreezeEventSink {
 	sink := &FreezeEventSink{
 		db:    s.db,
@@ -59,26 +49,21 @@ func NewFreezeEventSink(s *Store, opts ...FreezeEventSinkOption) *FreezeEventSin
 // FreezeEventSinkOption tunes a FreezeEventSink at construction.
 type FreezeEventSinkOption func(*FreezeEventSink)
 
-// WithFreezeHook installs a closure that runs after a successful row insert (idempotent
-// no-ops don't fire). Best-effort: hook panics and errors don't propagate.
+// WithFreezeHook installs a closure that runs after a successful row insert (idempotent no-ops don't fire).
 func WithFreezeHook(hook FreezeHook) FreezeEventSinkOption {
 	return func(s *FreezeEventSink) {
 		s.onFreeze = hook
 	}
 }
 
-// WithFreezeLedgerProvider wires the ledger seam so inserts stamp a
-// real frozen_at_ledger instead of the 0 sentinel. Mirrors
-// WithDivergenceLedgerProvider (divergence_observations.go).
+// WithFreezeLedgerProvider wires the ledger seam so inserts stamp a real frozen_at_ledger instead of the 0 sentinel.
 func WithFreezeLedgerProvider(p LedgerProvider) FreezeEventSinkOption {
 	return func(s *FreezeEventSink) {
 		s.getLedger = p
 	}
 }
 
-// RecordFreeze implements freeze.EventSink. It is a no-op when a row with recovered_at IS NULL
-// already exists for the pair (another Mark is just a TTL refresh). The check and INSERT share
-// one transaction; if two callers hit the same microsecond, the PK conflict makes one a no-op.
+// RecordFreeze implements freeze.EventSink.
 func (s *FreezeEventSink) RecordFreeze(ctx context.Context, asset, quote canonical.Asset, frozenValue string, decision anomaly.Decision) error {
 	now := s.clock().UTC()
 	var ledger uint32
@@ -160,19 +145,7 @@ func (s *FreezeEventSink) RecordFreeze(ctx context.Context, asset, quote canonic
 	return nil
 }
 
-// SaveLadder persists the lifecycle state onto the open `freeze_events` row for (asset, quote).
-// Implements freeze.LadderStore. It is the durable copy, so a Redis flush cannot take an
-// ESCALATED freeze down with it.
-//
-// It is an UPDATE of the open row only:
-//
-//   - No INSERT. RecordFreeze owns row creation; inserting here would race it and open a second
-//     firing row for one pair.
-//   - No row returns [ErrNotFound], not a silent nil: a failed RecordFreeze insert, an operator
-//     closing the row, or an unapplied ladder migration (then EVERY write matches nothing). The
-//     caller cannot act on it but must be able to COUNT it.
-//
-// Idempotent: each write is the whole current state, so the next tick corrects a lost write.
+// SaveLadder persists lifecycle state onto the open `freeze_events` row for (asset, quote) as the durable copy surviving a Redis flush; UPDATE only, as RecordFreeze owns row creation.
 func (s *FreezeEventSink) SaveLadder(ctx context.Context, asset, quote canonical.Asset, state freeze.State) error {
 	var holdUntil any
 	if !state.HoldUntil.IsZero() {
@@ -215,18 +188,7 @@ func (s *FreezeEventSink) SaveLadder(ctx context.Context, asset, quote canonical
 	return nil
 }
 
-// LoadLadder reads the durable ladder for (asset, quote). Implements freeze.LadderStore.
-//
-// It returns ok=false unless there is an OPEN row (recovered_at IS NULL) with hold_until NOT NULL.
-// Neither condition is redundant:
-//
-//   - recovered_at IS NULL separates "Redis lost the marker" from "an operator ended this
-//     freeze"; freeze-unfreeze stamps recovered_at, so the override stands.
-//   - hold_until NOT NULL excludes rows with no ladder. Rehydrating a zero ladder would read as
-//     "fired just now, 0 extensions" and reset the escalation clock.
-//
-// The caller ([freeze.Writer.LoadState]) applies the freshness bound; this reports the stored
-// state verbatim so an operator tool can show a lapsed ladder.
+// LoadLadder reads the durable ladder for (asset, quote), ok=false unless there is an OPEN row (recovered_at IS NULL) with hold_until NOT NULL, so an operator-ended freeze is not resurrected.
 func (s *FreezeEventSink) LoadLadder(ctx context.Context, asset, quote canonical.Asset) (freeze.State, bool, error) {
 	const q = `
 		SELECT frozen_at, hold_until,
@@ -442,19 +404,7 @@ func windowLadderKey(window time.Duration) string {
 	return strconv.FormatInt(int64(window/time.Second), 10)
 }
 
-// SaveWindowLadder persists `state` as `window`'s ladder on the pair's open row, leaving other
-// windows untouched, and refreshes the pair-level columns as the summary. Implements
-// freeze.WindowLadderStore.
-//
-// An inactive `state` retires the window's entry; retiring the last one nulls hold_until, the
-// same "ladder retired" state [FreezeEventSink.SaveLadder] writes.
-//
-// It is read-merge-write under the pair's advisory lock (the one RecordFreeze takes), not a
-// single jsonb UPDATE, because the summary is a fold over decoded states and the pre-per-window
-// row rule depends on the row's prior state. The lock is advisory, not a row lock, for
-// RecordFreeze's reason and because `freeze_events` is a compressed hypertable.
-//
-// As SaveLadder: UPDATE only, never INSERT, and "no open row" is [ErrNotFound].
+// SaveWindowLadder persists `state` as `window`'s ladder on the pair's open row, leaving other windows untouched; an inactive state retires the entry and retiring the last nulls hold_until.
 func (s *FreezeEventSink) SaveWindowLadder(
 	ctx context.Context,
 	asset, quote canonical.Asset,
@@ -532,13 +482,7 @@ func writeWindowLadders(
 	return nil
 }
 
-// LoadWindowLadders reads every window's durable ladder for (asset, quote). Implements
-// freeze.WindowLadderStore.
-//
-// ok=false on exactly [FreezeEventSink.LoadLadder]'s conditions (no OPEN row, or hold_until IS
-// NULL), so an operator override and a retired ladder read the same through either method.
-// `unowned` is the ownerless ladder of a pre-per-window row, kept under key "0". States are
-// verbatim; the caller applies the freshness bound.
+// LoadWindowLadders reads every window's durable ladder for (asset, quote).
 func (s *FreezeEventSink) LoadWindowLadders(
 	ctx context.Context,
 	asset, quote canonical.Asset,
@@ -579,10 +523,7 @@ func pairAdvisoryLockKey(asset, quote string) int64 {
 	return int64(h.Sum64()) //nolint:gosec // narrowing to int64 is acceptable; pg accepts signed bigint
 }
 
-// ListOpen returns every (asset, quote) with a `freeze_events` row where recovered_at IS NULL.
-// It is a lock-free snapshot; the recovery worker can race a fresh RecordFreeze safely because
-// both end states are idempotent. It returns the freeze package's OpenFreezePair so that package
-// does not depend on this adapter.
+// ListOpen returns every (asset, quote) with an unrecovered `freeze_events` row as a lock-free snapshot; racing a fresh RecordFreeze is safe because both end states are idempotent.
 func (s *FreezeEventSink) ListOpen(ctx context.Context) ([]freeze.OpenFreezePair, error) {
 	const q = `
 		SELECT asset_id, quote_id
@@ -616,10 +557,7 @@ func (s *FreezeEventSink) ListOpen(ctx context.Context) ([]freeze.OpenFreezePair
 	return out, nil
 }
 
-// MarkRecovered closes the currently-firing row for (asset, quote). It is called by a recovery
-// worker, not by the freeze.Writer.Mark path. releasedBy is "operator:<actor>" or
-// "system:<worker>"; anything else is refused before the UPDATE. With no open row it returns
-// ErrNotFound, which the caller can swallow.
+// MarkRecovered closes the currently-firing row for (asset, quote) for the recovery worker; releasedBy must be "operator:<actor>" or "system:<worker>", and no open row returns ErrNotFound.
 func (s *FreezeEventSink) MarkRecovered(ctx context.Context, asset, quote canonical.Asset, releasedBy string) error {
 	if !validReleasedBy(releasedBy) {
 		return fmt.Errorf("timescale: MarkRecovered %s/%s: released_by %q must be \"operator:<actor>\" or \"system:<worker>\"",
@@ -664,9 +602,7 @@ func validReleasedBy(v string) bool {
 	return false
 }
 
-// FreezeEventRow is one freeze_events row for the /v1/anomalies read path. RecoveredAt is nil
-// while the freeze is firing. Detail is the raw jsonb text. The ADR-0019 lifecycle fields are nil
-// on a pre-ladder row, or once the freeze has cleared and the ladder no longer applies.
+// FreezeEventRow is one freeze_events row for the /v1/anomalies read path.
 type FreezeEventRow struct {
 	AssetID           string
 	QuoteID           string
@@ -683,9 +619,7 @@ type FreezeEventRow struct {
 	Corroborated      *bool
 }
 
-// ListFreezeEvents returns freeze events newest-first. firingOnly
-// restricts to currently-firing (recovered_at IS NULL) via the
-// partial index; otherwise the full timeline (capped). limit ≤ 500.
+// ListFreezeEvents returns freeze events newest-first; firingOnly restricts to unrecovered rows via the partial index, otherwise the capped full timeline; limit <= 500.
 func (s *Store) ListFreezeEvents(ctx context.Context, firingOnly bool, limit int) ([]FreezeEventRow, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
@@ -754,9 +688,7 @@ func (s *Store) ListFreezeEvents(ctx context.Context, firingOnly bool, limit int
 	return out, nil
 }
 
-// CountFiringFreezes returns the EXACT number of currently-firing freezes (recovered_at IS NULL),
-// via the partial index ListFreezeEvents' firingOnly arm uses. A LIMIT-capped page would report
-// a freeze storm of any size as exactly 500; a count also skips row and detail JSONB reads.
+// CountFiringFreezes returns the EXACT number of currently-firing freezes (recovered_at IS NULL), via the partial index ListFreezeEvents' firingOnly arm uses.
 func (s *Store) CountFiringFreezes(ctx context.Context) (int64, error) {
 	const q = `SELECT count(*) FROM freeze_events WHERE recovered_at IS NULL`
 	var n int64
@@ -772,9 +704,7 @@ type FreezeReasonCount struct {
 	Count  int64
 }
 
-// FreezeReasonCounts tallies freezes per reason over the trailing
-// `sinceDays` days (frozen_at within the window). Powers the
-// /anomalies per-reason breakdown.
+// FreezeReasonCounts tallies freezes per reason over the trailing `sinceDays` days (frozen_at within the window).
 func (s *Store) FreezeReasonCounts(ctx context.Context, sinceDays int) ([]FreezeReasonCount, error) {
 	if sinceDays <= 0 {
 		sinceDays = 30
@@ -801,20 +731,14 @@ func (s *Store) FreezeReasonCounts(ctx context.Context, sinceDays int) ([]Freeze
 	return out, rows.Err()
 }
 
-// FreezeDailyReasonCount is one (UTC day, reason) cell of the
-// /anomalies day×reason calendar heatmap.
+// FreezeDailyReasonCount is one (UTC day, reason) cell of the /anomalies day×reason calendar heatmap.
 type FreezeDailyReasonCount struct {
 	Day    time.Time
 	Reason string
 	Count  int64
 }
 
-// FreezeDailyReasonCounts tallies freezes per (UTC day, reason) over the trailing `sinceDays`
-// days. Zero-freeze days have no rows; the chart renders the absence.
-//
-// The WHERE keeps frozen_at bare (no function on the column) so chunk exclusion prunes to the
-// window; date_trunc appears only in SELECT/GROUP BY. The handler caps sinceDays at 365, bounding
-// the scan.
+// FreezeDailyReasonCounts tallies freezes per (UTC day, reason) over the trailing `sinceDays`; frozen_at stays bare in WHERE so chunk exclusion prunes, and zero-freeze days have no rows.
 func (s *Store) FreezeDailyReasonCounts(ctx context.Context, sinceDays int) ([]FreezeDailyReasonCount, error) {
 	if sinceDays <= 0 {
 		sinceDays = 30

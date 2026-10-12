@@ -22,10 +22,7 @@ import (
 // 10^6. The USD-volume paths below read external.Registry's AmountDecimals via
 // Metadata.AmountScaleDecimals() instead of a hard-coded 8, which would mis-value FX trades 100x.
 
-// USDVolumeFXResolver returns the asset's USD price as of `at` as a decimal string for
-// [tradeUSDVolume]'s FX tiers. ("", false, nil) means no usable anchor; real I/O errors
-// propagate and the trade still inserts with NULL usd_volume. It MUST be safe for concurrent
-// calls: it runs on the trade-insert hot path.
+// USDVolumeFXResolver returns the asset's USD price as of `at` as a decimal string for the FX tiers; ("", false, nil) means no usable anchor, and it MUST be safe for concurrent calls.
 type USDVolumeFXResolver interface {
 	USDPriceAt(ctx context.Context, asset canonical.Asset, at time.Time) (string, bool, error)
 }
@@ -473,9 +470,7 @@ func baseAnchorEligible(a canonical.Asset) bool {
 // only fires for on-chain DEX trades whose quote assets all share this scale.
 const stellarClassicDecimals = 7
 
-// WouldPopulateUSDVolume reports whether [Store.InsertTrade] would stamp a non-null `usd_volume`
-// under the installed [USDVolumeQuoteSpec] and [USDVolumeFXResolver] (full waterfall). An FX-tier
-// hit calls the resolver synchronously, so production resolvers must be hot-path cheap.
+// WouldPopulateUSDVolume reports whether InsertTrade would stamp a non-null usd_volume under the installed quote spec and FX resolver; an FX-tier hit calls the resolver synchronously, so it must be hot-path cheap.
 func (s *Store) WouldPopulateUSDVolume(ctx context.Context, t canonical.Trade) bool {
 	return tradeUSDVolume(ctx, t, s.usdVolumeQuoteSpec, s.usdVolumeFXResolver) != nil
 }
@@ -505,10 +500,7 @@ func usdVolumeDecimals(asset canonical.Asset, md external.Metadata, quoteSpec *U
 	}
 }
 
-// ClassifyUSDVolumeTier reports which waterfall tier the insert path would use for a
-// (source, base, quote) trade, and that tier's decimal scale, by calling the same functions as
-// [tradeUSDVolume] in the same order. An unparseable asset yields [TierEstimated] with an error.
-// A nil spec means on-chain pairs never resolve a peg.
+// ClassifyUSDVolumeTier reports which waterfall tier the insert path would use for a (source, base, quote) trade and that tier's decimal scale, calling the same functions as tradeUSDVolume in the same order.
 func ClassifyUSDVolumeTier(source, baseID, quoteID string, spec *USDVolumeQuoteSpec) (USDVolumeTier, int, error) {
 	md := external.Lookup(source)
 	if md.Class != external.ClassExchange {
@@ -558,10 +550,7 @@ func quoteIsUSDOrUSDPegged(a canonical.Asset) bool {
 	return proxy.Type == canonical.AssetFiat && proxy.Code == "USD"
 }
 
-// ErrNoFXQuote is returned by [Store.FXQuoteAtOrBefore] when no FX
-// observation exists for the requested pair at-or-before the cutoff.
-// Callers fall back to the cached VWAP path (degraded but functional)
-// and surface the fallback via the AggregatorFXSnapFallbackTotal metric.
+// ErrNoFXQuote is returned by [Store.FXQuoteAtOrBefore] when no FX observation exists for the requested pair at-or-before the cutoff.
 var ErrNoFXQuote = errors.New("timescale: no FX quote at or before cutoff")
 
 // isDexUnitRatioTrade reports whether a landed on-chain trade has base_amount == quote_amount
@@ -621,14 +610,7 @@ func (s *Store) usdLabel(t canonical.Trade, v *string) string {
 	return usdPopulatedLabel(t.Pair, v != nil, thin)
 }
 
-// InsertTrade validates and writes one trade, returning nil on insert or
-// conflict on (source, ledger, tx_hash, op_index, ts).
-//
-// The conflict is DO UPDATE guarded by `derive_generation <= EXCLUDED`, so an equal-or-higher
-// generation OVERWRITES the value columns, usd_volume included. A re-derive without the
-// USD-volume resolvers would overwrite correct values with NULL, hence
-// [InstallUSDVolumeResolution] and [Store.reDeriveNullVolumeGuard]. usd_volume comes from
-// [tradeUSDVolume]; on-chain pegs need [Store.SetUSDVolumeQuoteSpec], else it is NULL.
+// InsertTrade validates and writes one trade, returning nil on insert or conflict on (source, ledger, tx_hash, op_index, ts).
 func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
 	if err := t.Validate(); err != nil {
 		return err
@@ -992,14 +974,7 @@ func (s *Store) insertTradeRows(ctx context.Context, insertRows []canonical.Trad
 	return s.scanBatchTradeOutcome(ctx, query, args)
 }
 
-// BatchInsertTrades writes trades with one multi-row upsert per sub-batch of at most
-// [tradeInsertMaxRows] rows, since per-INSERT roundtrip latency caps indexer throughput. Conflict
-// semantics match [Store.InsertTrade]; re-runs are idempotent in row count but not inert in value.
-//
-// [Store.filterStorableTrades] drops invalid rows first so one cannot sink an all-or-nothing
-// sub-batch. Sub-batches commit separately in conflict-key order and stop at the first failure;
-// the committed prefix still gets its metrics and registry hook (a replay would see updates). The
-// error is a [*TradeSubBatchError] wrapping the cause; callers replay the whole batch.
+// BatchInsertTrades writes trades with one multi-row upsert per sub-batch of at most tradeInsertMaxRows rows, with InsertTrade's conflict semantics; re-runs are idempotent in row count but not inert in value.
 func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade) error {
 	if len(trades) == 0 {
 		return nil
@@ -1048,9 +1023,7 @@ type batchTradeOutcome struct {
 	committedRows                    int
 }
 
-// TradeSubBatchError is a BatchInsertTrades failure: rows [0, Start) of the
-// Total conflict-key-sorted, deduplicated rows committed, sub-batch
-// [Start, End) failed with Err, and nothing from Start on was written.
+// TradeSubBatchError is a BatchInsertTrades failure: rows [0, Start) committed, sub-batch [Start, End) failed with Err, and nothing from Start on was written.
 type TradeSubBatchError struct {
 	Start, End, Total       int
 	FirstLedger, LastLedger uint32
@@ -1171,10 +1144,7 @@ func (s *Store) filterStorableTrades(trades []canonical.Trade) []canonical.Trade
 	return storable
 }
 
-// IsOneSideZeroFill reports whether t is the SDEX rounding artifact where
-// exactly one leg rounded to 0 while the other stayed positive. Such a trade
-// is stored but unpriceable. A both-zero atom is dropped in the decoder, and
-// a negative leg is never a valid Stellar amount, so neither qualifies.
+// IsOneSideZeroFill reports whether t is the SDEX rounding artifact where exactly one leg rounded to 0 and the other stayed positive; such a trade is stored but unpriceable.
 func IsOneSideZeroFill(t canonical.Trade) bool {
 	bs, qs := t.BaseAmount.Sign(), t.QuoteAmount.Sign()
 	return bs >= 0 && qs >= 0 && (bs == 0) != (qs == 0)
@@ -1216,12 +1186,7 @@ func newRegistryObservation(ledger uint32, ts time.Time) registryObservation {
 // time-unbounded walk, so an unclamped limit could materialise the market.
 const maxLatestTradesForPair = 1000
 
-// LatestTradesForPair returns up to `limit` most-recent trades for the market, in either stored
-// direction, oriented as requested; empty slice + nil if none. Each arm keeps rows tying its cut
-// on (ts, ledger) so the outer sort breaks ties on /v1/history's full key. Unbounded in time for
-// the reasons in [Store.LatestTradePerSource]: it backs /v1/price's last-trade arm, and a window
-// would stop pricing a quiet market. Zero-leg rows are excluded; `limit` is clamped to
-// [maxLatestTradesForPair].
+// LatestTradesForPair returns up to `limit` most-recent trades for the market, in either stored direction, oriented as requested; empty slice + nil if none.
 func (s *Store) LatestTradesForPair(ctx context.Context, p canonical.Pair, limit int) ([]canonical.Trade, error) {
 	if limit <= 0 {
 		limit = 100
@@ -1296,16 +1261,7 @@ func offChainSourcesArg() string {
 	return strings.Join(names, ",")
 }
 
-// LatestTradePerSource returns each source's most-recent trade on the market,
-// in either stored direction, oriented as requested; sourceFilter "" means all.
-//
-// Each direction runs DISTINCT ON (source) by ts, ledger DESC (a skip scan over
-// trades_pair_source_ts_idx); a LATERAL picks within the ledger by (tx_hash, op_index), and a
-// source seen both ways is folded by [tradeIsLaterInMarket]. No time bound: each arm is an index
-// seek (worst case under 300 ms) and quiet networks would otherwise report nothing.
-// [TestRawTradeReadsSpanBothStoredDirections] and [TestLatestTradeReadsTakeNoRecencyBound] pin
-// this.
-// unbounded-latest-ok: "last trade seen" has no window that preserves it; TestLatestTradeReadsTakeNoRecencyBound pins it.
+// LatestTradePerSource returns each source's most-recent trade on the market, in either stored direction, oriented as requested; sourceFilter "" means all; unbounded-latest-ok: "last trade seen" has no window that preserves it;
 func (s *Store) LatestTradePerSource(ctx context.Context, p canonical.Pair, sourceFilter string) ([]canonical.Trade, error) {
 	const q = `
         (SELECT t.source, t.ledger, t.tx_hash, t.op_index, t.ts,
@@ -1444,20 +1400,10 @@ func tradeIsLaterInMarket(a, b canonical.Trade) bool {
 	}
 }
 
-// MaxTradesInRangeLimit is the hard ceiling [Store.TradesInRange] clamps its limit to. Config
-// validation refuses a max_trades_per_window above it: a silent clamp stops the scan widening AND
-// keeps the orchestrator's truncation detector (len(t) >= cfg.MaxTradesPerWindow) from ever
-// firing, so real truncation would read as 0%.
+// MaxTradesInRangeLimit is the hard ceiling [Store.TradesInRange] clamps its limit to.
 const MaxTradesInRangeLimit = 10000
 
-// TradesInRange returns the market's trades with ts in [from, to), in either
-// stored direction, oriented as requested and ordered (ts, ledger) ASC.
-//
-// It feeds /v1/vwap, /v1/twap, single-bar /v1/ohlc, /v1/price/tip and the orchestrator. One
-// direction alone is biased (the high comes out low). The per-row leg swap suffices
-// because every downstream aggregate is defined on the integer amounts. Two limited arms keep
-// the NEWEST rows, so `len(rows) == limit` still signals truncation. limit <= 0 means 1000,
-// clamped to [MaxTradesInRangeLimit].
+// TradesInRange returns the market's trades with ts in [from, to) in either stored direction, oriented as requested and ordered (ts, ledger) ASC; one direction alone is biased, so both are read.
 func (s *Store) TradesInRange(ctx context.Context, p canonical.Pair, from, to time.Time, limit int) ([]canonical.Trade, error) {
 	if limit <= 0 {
 		limit = 1000
@@ -1530,10 +1476,7 @@ func (s *Store) TradesInRange(ctx context.Context, p canonical.Pair, from, to ti
 	return out, nil
 }
 
-// TradesInRangeAfter is TradesInRange with a full-PK cursor: rows whose
-// (ts, ledger, tx_hash, op_index, source) is strictly greater than `after*`.
-// The PK, not (ts, ledger), because several trades can share (ts, ledger).
-// A zero afterTs disables the cursor.
+// TradesInRangeAfter is TradesInRange with a full-PK cursor (ts, ledger, tx_hash, op_index, source) strictly greater than the after* values, since several trades can share (ts, ledger); a zero afterTs disables it.
 func (s *Store) TradesInRangeAfter(
 	ctx context.Context,
 	p canonical.Pair,
@@ -1547,8 +1490,7 @@ func (s *Store) TradesInRangeAfter(
 		afterLedger, afterTxHash, afterSource, afterOpIndex, limit)
 }
 
-// TradesInRangeAfterFromSource is [Store.TradesInRangeAfter] restricted to
-// rows written by one source. An empty source is the unfiltered read.
+// TradesInRangeAfterFromSource is [Store.TradesInRangeAfter] restricted to rows written by one source.
 func (s *Store) TradesInRangeAfterFromSource(
 	ctx context.Context,
 	p canonical.Pair,
@@ -1673,19 +1615,7 @@ func (s *Store) tradesInRangeAfter(
 	return out, nil
 }
 
-// FXQuoteAtOrBefore returns the latest FX observation for `pair` at or before
-// `cutoff`, from sources in `fxSources`.
-//
-//  1. `fx_quotes`, when `fxSources` contains [fxQuotesSourceLabel] and both sides are fiat: the
-//     newest daily row per ticker within [fxQuotesSnapLookback], USD legs exact 1 (see
-//     [fxSnapFromRows]). Legs covered by fx_fixings (bar_end <= cutoff - [FXFixingLag], within
-//     [fxFixingStoreMaxAge]) price from those first.
-//  2. `trades` filtered by `fxSources`, structurally empty today (no FX source writes trades);
-//     latest ts wins, ties by source name DESC.
-//
-// Returns [ErrNoFXQuote] when neither has a quote (and for empty `fxSources` without a query).
-// `price` is an exact *big.Rat: per-trade quote/base, where the uniform FX 1e6 scale cancels, or
-// the scale-free rate_usd ratio. cutoff is rounded to UTC to match InsertTrade.
+// FXQuoteAtOrBefore returns the latest FX observation for `pair` at or before `cutoff` from sources in `fxSources`, preferring the daily fx_quotes snapshot when both sides are fiat.
 func (s *Store) FXQuoteAtOrBefore(
 	ctx context.Context,
 	pair canonical.Pair,
@@ -1774,7 +1704,6 @@ func (s *Store) FXQuoteAtOrBefore(
 }
 
 // CountTrades returns the total number of rows in the trades table.
-// O(hypertable scan) on TimescaleDB; use sparingly (diagnostics + tests).
 func (s *Store) CountTrades(ctx context.Context) (int64, error) {
 	var n int64
 	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM trades`).Scan(&n)
@@ -1848,9 +1777,7 @@ func dedupeSortedTradesByConflictKey(sorted []canonical.Trade) []canonical.Trade
 	return out
 }
 
-// EarliestTradeInWindow returns the earliest stored ts for (source, pair)
-// in [from, to), and false when the window holds no row. Served by
-// trades_pair_source_ts_idx (migration 0037).
+// EarliestTradeInWindow returns the earliest stored ts for (source, pair) in [from, to), and false when the window holds no row.
 func (s *Store) EarliestTradeInWindow(ctx context.Context, source string, pair canonical.Pair, from, to time.Time) (time.Time, bool, error) {
 	const q = `
         SELECT ts
@@ -1875,10 +1802,7 @@ func (s *Store) EarliestTradeInWindow(ctx context.Context, source string, pair c
 	return ts.UTC(), true, nil
 }
 
-// TradesInWindowOutside counts the stored (source, pair) rows in
-// [from, to) whose (tx_hash, ts) is not one of keep's, and returns the
-// earliest of them. Those are rows an upsert of keep would leave beside
-// its own, so writing keep over the window would count their volume twice.
+// TradesInWindowOutside counts the stored (source, pair) rows in [from, to) whose (tx_hash, ts) is not one of keep's, and returns the earliest of them.
 func (s *Store) TradesInWindowOutside(ctx context.Context, source string, pair canonical.Pair, from, to time.Time, keep []canonical.Trade) (int64, time.Time, error) {
 	const q = `
         SELECT count(*), min(t.ts)

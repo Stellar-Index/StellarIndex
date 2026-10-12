@@ -8,11 +8,7 @@ import (
 	"time"
 )
 
-// AquariusProtocolFeeEvent is one observed Aquarius protocol-fee event, discriminated by Kind:
-//   - "set_protocol_fee": the four Fee* fields are the per-token old and new protocol fee (u32);
-//     Recipient/Amount unused.
-//   - "claim_protocol_fee": Recipient is the fee-sweep destination and Amount the swept i128
-//     decimal string; Fee* unused.
+// AquariusProtocolFeeEvent is one protocol-fee event discriminated by Kind: "set_protocol_fee" fills the four Fee* fields (u32); "claim_protocol_fee" fills Recipient and Amount (i128 decimal string).
 type AquariusProtocolFeeEvent struct {
 	ContractID      string
 	Ledger          uint32
@@ -35,10 +31,7 @@ type AquariusProtocolFeeEvent struct {
 	Amount    string // decimal i128; "" on set_protocol_fee
 }
 
-// InsertAquariusProtocolFee lands one protocol-fee event, idempotent on the table PK with the
-// generation-guarded upsert (migration 0110). Per-kind columns are NULL for the other kind.
-// Rejects an empty ContractID/TxHash, a zero LedgerCloseTime, an unknown Kind and, on claim, an
-// empty Recipient or Amount up front.
+// InsertAquariusProtocolFee lands one protocol-fee event, idempotent on the table PK with the generation-guarded upsert (migration 0110).
 func (s *Store) InsertAquariusProtocolFee(ctx context.Context, e AquariusProtocolFeeEvent) error {
 	if e.ContractID == "" {
 		return errors.New("timescale: InsertAquariusProtocolFee: ContractID is empty")

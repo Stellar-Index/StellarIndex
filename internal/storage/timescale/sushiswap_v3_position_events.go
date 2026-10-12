@@ -8,10 +8,7 @@ import (
 	"time"
 )
 
-// SushiswapV3PositionEvent is one pool `mint`, `burn` or `collect` row.
-//
-// Amounts are decimal-string u128 values stored verbatim into NUMERIC columns. Liquidity is ""
-// for a collect (SQL NULL); Sender and Recipient are "" when the event does not carry them.
+// SushiswapV3PositionEvent is one pool mint, burn or collect row; amounts are decimal-string u128 stored verbatim into NUMERIC, and Liquidity is "" for a collect (SQL NULL).
 type SushiswapV3PositionEvent struct {
 	Pool            string
 	Ledger          uint32
@@ -32,9 +29,7 @@ type SushiswapV3PositionEvent struct {
 	Amount1         string // decimal u128
 }
 
-// InsertSushiswapV3PositionEvent appends one position event, idempotent on the table PK. The
-// generation-guarded upsert lets a corrected re-derive land in place when its generation is >= the
-// stored one, so a live gen-0 replay never reverts it.
+// InsertSushiswapV3PositionEvent appends one position event, idempotent on the PK via a generation-guarded upsert so a corrected re-derive lands and a live gen-0 replay never reverts it.
 func (s *Store) InsertSushiswapV3PositionEvent(ctx context.Context, e SushiswapV3PositionEvent) error {
 	if err := validateSushiswapV3PositionEvent(e); err != nil {
 		return err

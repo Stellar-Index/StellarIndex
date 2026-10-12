@@ -17,20 +17,7 @@ import (
 // timeout there orphans backends (see gapDetectorStatementTimeoutMS).
 const opsVerifyStatementTimeoutMS = 7200000 // 2 hours, in ms
 
-// MinLedger returns the smallest ledger present in a per-source table over
-// [from, to], i.e. where that target's served data actually begins. It is the lower bound of the
-// projection reconcile (chops.targetScope); a hardcoded floor such as `tip - 1_500_000` would
-// certify only the last ~100 days while the served tier holds full history.
-//
-// No reconcile target has a retention policy, so a rising value here is unambiguously served-tier
-// loss, not a drop_chunks artifact. The optional prices_1m retention does not weaken that: it is a
-// continuous aggregate with no `ledger` column and not a reconcile target (raw event and trade
-// tables only). chops.detectFloorLoss compares this value against the durable floor in
-// completeness_target_floors, so it must stay a raw observation, never clamped or defaulted.
-// Returns ok=false if no rows.
-//
-// Identifiers are interpolated; callers must pass compile-time-trusted values (as for
-// CountRowsByLedger).
+// MinLedger returns the smallest ledger in a per-source table over [from, to], i.e. where that target's served data begins, the lower bound of the projection reconcile; a hardcoded floor would certify only a recent slice.
 func (s *Store) MinLedger(ctx context.Context, table, ledgerColumn, whereFilter string, from, to uint32) (uint32, bool, error) {
 	filter := ""
 	if whereFilter != "" {
@@ -58,15 +45,7 @@ func (s *Store) MinLedger(ctx context.Context, table, ledgerColumn, whereFilter 
 	return uint32(minL.Int64), true, nil
 }
 
-// CountRowsByLedger returns rows-per-ledger for a per-source protocol table over [from, to], the
-// "actual" side of the projection reconciliation (the expected side is the decoder re-derive,
-// internal/completeness.ReDeriveOutputCounts).
-//
-// table / ledgerColumn / whereFilter are interpolated into the SQL, so callers must pass
-// compile-time-trusted identifiers (as for GapDetectorTarget), never user input.
-//
-// opsVerifyStatementTimeoutMS backstops the GROUP BY on large full-history hypertables; the
-// caller's context is the real bound.
+// CountRowsByLedger returns rows-per-ledger for a per-source protocol table over [from, to], the actual side of projection reconciliation; table, ledgerColumn and whereFilter are interpolated, so callers must pass trusted constants.
 func (s *Store) CountRowsByLedger(ctx context.Context, table, ledgerColumn, whereFilter string, from, to uint32) (map[uint32]int, error) {
 	if to < from {
 		return nil, fmt.Errorf("timescale: CountRowsByLedger: to (%d) < from (%d)", to, from)

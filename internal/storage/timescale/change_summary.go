@@ -10,9 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// ChangeSummaryRow mirrors the change_summary_5m table. Pointer
-// fields are nullable — a young entity with <1h of history has
-// every window pointer left nil; the SQL writes those as NULL.
+// ChangeSummaryRow mirrors the change_summary_5m table.
 type ChangeSummaryRow struct {
 	EntityType   string
 	EntityID     string
@@ -38,10 +36,7 @@ type ChangeSummaryRow struct {
 	Acceleration    string
 }
 
-// UpsertChangeSummary inserts or replaces the row keyed on
-// (entity_type, entity_id). Refreshed every 5 min by the worker —
-// stale rows (>10 min) are surfaced via the diagnostics page so an
-// operator can spot a stalled worker.
+// UpsertChangeSummary inserts or replaces the row keyed on (entity_type, entity_id).
 func (s *Store) UpsertChangeSummary(ctx context.Context, row ChangeSummaryRow) error {
 	if row.EntityType == "" {
 		return errors.New("timescale: UpsertChangeSummary: empty entity_type")
@@ -110,9 +105,7 @@ func (s *Store) UpsertChangeSummary(ctx context.Context, row ChangeSummaryRow) e
 	return nil
 }
 
-// GetChangeSummary returns the current row for (entity_type,
-// entity_id), or sql.ErrNoRows when the worker hasn't computed it
-// yet. API handlers translate that into the price-not-found path.
+// GetChangeSummary returns the current row for (entity_type, entity_id), or sql.ErrNoRows before the worker has computed it.
 func (s *Store) GetChangeSummary(ctx context.Context, entityType, entityID string) (ChangeSummaryRow, error) {
 	const q = `
 		SELECT entity_type, entity_id, refreshed_at, current_value::text,
@@ -172,10 +165,7 @@ func (s *Store) GetChangeSummary(ctx context.Context, entityType, entityID strin
 	return row, nil
 }
 
-// DeleteChangeSummary removes the row for (entity_type, entity_id) and
-// reports whether one existed. The upsert ratchets ath/atl for good, so
-// this is the only way to clear a pinned extreme; the worker rebuilds the
-// row from the trailing window on its next pass.
+// DeleteChangeSummary removes the row for (entity_type, entity_id) and reports whether one existed; the only way to clear an ath/atl pinned by the upsert ratchet.
 func (s *Store) DeleteChangeSummary(ctx context.Context, entityType, entityID string) (bool, error) {
 	res, err := s.db.ExecContext(ctx,
 		`DELETE FROM change_summary_5m WHERE entity_type = $1 AND entity_id = $2`,
@@ -270,12 +260,7 @@ const timedVWAPs1mForChangeSummaryQuery = `
 		 ORDER BY bucket ASC, base_asset ASC
 	`
 
-// TimedVWAPs1m adapts TimedVWAPsForPair1m to [changesummary.PriceSource] without exposing the
-// baseline package's TimedVWAP type. Points are oldest-first, each combined across both stored
-// directions so the value is the price of Base in Quote.
-//
-// `At` is the bucket end (`bucket + 1 minute`), which the change-summary worker timestamps a closed
-// bucket by; it is added in Go so the query keeps the raw per-direction shape the combine needs.
+// TimedVWAPs1mForChangeSummary adapts TimedVWAPsForPair1m to [changesummary.PriceSource]; points are oldest-first, combined across both directions as the price of Base in Quote, with `At` the bucket end.
 func (s *Store) TimedVWAPs1mForChangeSummary(ctx context.Context, pair canonical.Pair, from, to time.Time) ([]ChangeSummaryPoint, error) {
 	rows, err := s.db.QueryContext(ctx, timedVWAPs1mForChangeSummaryQuery,
 		pair.Base.String(), pair.Quote.String(), from.UTC(), to.UTC())
@@ -298,9 +283,7 @@ func (s *Store) TimedVWAPs1mForChangeSummary(ctx context.Context, pair canonical
 	return out, nil
 }
 
-// ChangeSummaryPoint is the read-projection used by the changesummary
-// worker. Decoupled from baseline.TimedVWAP so the worker package
-// doesn't need to import baseline.
+// ChangeSummaryPoint is the read-projection used by the changesummary worker.
 type ChangeSummaryPoint struct {
 	At    time.Time
 	Value string

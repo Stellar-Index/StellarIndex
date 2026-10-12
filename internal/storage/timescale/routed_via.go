@@ -30,15 +30,7 @@ import (
 // chunks.
 const routedViaTsSlack = 5 * time.Minute
 
-// TagTradesRoutedVia back-tags trades.routed_via for every trade sharing (ledger, tx_hash) with a
-// soroswap_router_swaps row whose ledger_close_time is in [from, to), and returns the count tagged.
-//
-// routerName is the fallback written when the swap cannot be attributed to a more specific
-// registered wrapper; tradeSource scopes eligible trades (see the policies above). The live
-// sweeper and the historical tag-routed-via pass both call here so the predicate cannot drift.
-//
-// An UPDATE into compressed trades chunks (older than the 7-day horizon) decompresses the touched
-// segments, so historical passes must run windowed, not as one giant statement.
+// TagTradesRoutedVia back-tags trades.routed_via for every trade sharing (ledger, tx_hash) with a soroswap_router_swaps row in [from, to) and returns the count; routerName is the fallback when the swap cannot be attributed more specifically.
 func (s *Store) TagTradesRoutedVia(ctx context.Context, routerName, tradeSource string, from, to time.Time) (int64, error) {
 	if routerName == "" {
 		return 0, errors.New("timescale: TagTradesRoutedVia: routerName is empty")
@@ -82,9 +74,7 @@ func (s *Store) TagTradesRoutedVia(ctx context.Context, routerName, tradeSource 
 	return n, nil
 }
 
-// RouterSwapLedgerBounds returns the (min, max) ledger present in
-// soroswap_router_swaps. ok=false when the table is empty. Drives
-// the default window bounds of `stellarindex-ops tag-routed-via`.
+// RouterSwapLedgerBounds returns the (min, max) ledger present in soroswap_router_swaps. ok=false when the table is empty.
 func (s *Store) RouterSwapLedgerBounds(ctx context.Context) (minLedger, maxLedger uint32, ok bool, err error) {
 	var lo, hi sql.NullInt64
 	if err := s.db.QueryRowContext(ctx,
@@ -98,10 +88,7 @@ func (s *Store) RouterSwapLedgerBounds(ctx context.Context) (minLedger, maxLedge
 	return uint32(lo.Int64), uint32(hi.Int64), true, nil
 }
 
-// RouterSwapTimeBounds returns the (min, max) ledger_close_time of soroswap_router_swaps rows in
-// the inclusive ledger range [fromLedger, toLedger]; ok=false means no rows, so the caller skips
-// the window without touching trades. It ranges on the integer ledger column (cheap btree) so
-// historical passes window by ledger while TagTradesRoutedVia stays time-bounded for pruning.
+// RouterSwapTimeBounds returns the (min, max) ledger_close_time of soroswap_router_swaps in the inclusive ledger range, ok=false when empty so the caller skips the window without touching trades.
 func (s *Store) RouterSwapTimeBounds(ctx context.Context, fromLedger, toLedger uint32) (minTS, maxTS time.Time, ok bool, err error) {
 	var lo, hi sql.NullTime
 	if err := s.db.QueryRowContext(ctx,
@@ -118,9 +105,7 @@ func (s *Store) RouterSwapTimeBounds(ctx context.Context, fromLedger, toLedger u
 	return lo.Time.UTC(), hi.Time.UTC(), true, nil
 }
 
-// AggregatorRollupRow is one /v1/aggregators row: a routers-registry entry joined with its
-// routed-trade stats since `since`. Volume is a NUMERIC decimal string (ADR-0003), nil when no
-// routed trade carried a USD valuation (usd_volume is backfilled and can lag).
+// AggregatorRollupRow is one /v1/aggregators row: a routers-registry entry joined with its routed-trade stats; Volume is a NUMERIC decimal string, nil when no routed trade carried a USD valuation.
 type AggregatorRollupRow struct {
 	ContractID     string
 	Name           string
@@ -133,13 +118,7 @@ type AggregatorRollupRow struct {
 	LastRoutedAt *time.Time
 }
 
-// AggregatorRollup returns every routers-registry entry with its routed-trade rollup for trades
-// with ts >= since. Entries with no routed trades still appear (LEFT JOIN) with zero counts, as
-// aggregator-vault entries always do because per-tx tagging only applies to kind='router'.
-//
-// The scan is cheap: trades_routed_via_idx is a partial index over the rare non-NULL routed_via
-// rows and the ts bound prunes chunks. `since` comes from the caller, not now() in SQL, so the
-// predicate stays parameter-sargable.
+// AggregatorRollup returns every routers-registry entry with its routed-trade rollup for trades with ts >= since; entries with no routed trades still appear (LEFT JOIN) with zero counts.
 func (s *Store) AggregatorRollup(ctx context.Context, since time.Time) ([]AggregatorRollupRow, error) {
 	const q = `
         SELECT r.contract_id, r.name, r.kind, r.protocol_slug, r.auto_discovered,

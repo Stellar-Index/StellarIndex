@@ -13,17 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// Market is one distinct (base, quote) pair summary with activity
-// statistics. Returned by [Store.DistinctPairs].
-//
-// Volume24hUSD is the trailing-24h USD volume from prices_1m, or, for a source-filtered listing,
-// from pools_per_source_1h so it is that venue's own contribution (see [Store.SourceMarkets]).
-// It is nil when zero so a pair with no USD-equivalent trades emits JSON null, not "0".
-//
-//   - LastTradeAt is the start of the newest prices_1m bucket with a trade in the 24h window,
-//     falling back to BucketCloseAt for pairs active within 14d but idle for 24h.
-//   - BucketCloseAt is the UTC-midnight start of the pair's last active day bucket. It is always
-//     populated but is not a freshness signal; LastTradeAt is.
+// Market is one distinct (base, quote) pair summary returned by [Store.DistinctPairs]; Volume24hUSD is from prices_1m, or from pools_per_source_1h for a source-filtered listing so it is that venue's own contribution.
 type Market struct {
 	Pair          canonical.Pair
 	LastTradeAt   time.Time
@@ -40,10 +30,7 @@ type Market struct {
 	LastPrice *string
 }
 
-// Pool is one (source, base, quote) tuple — same shape as Market
-// but with the source dimension preserved. Returned by [Store.AllPools]
-// to back the /v1/pools listing where the same pair traded on
-// multiple venues becomes multiple rows.
+// Pool is one (source, base, quote) tuple — same shape as Market but with the source dimension preserved.
 type Pool struct {
 	Source        string
 	Pair          canonical.Pair
@@ -58,18 +45,10 @@ type Pool struct {
 	LastPrice *string
 }
 
-// MarketsRecencyWindow bounds the trades scanned by DistinctPairs; pairs idle longer are excluded
-// from `/v1/markets`, whose contract is "active markets", not every pair ever seen. It is a var
-// so tests can override it.
-//
-// 14 days keeps the compressed chunks at the boundary within shared buffers; 30 days took ~9 s
-// and 90 days ~16-19 s, past the 30 s client deadline. A materialised market catalogue would remove
-// the bound.
+// MarketsRecencyWindow bounds the trades scanned by DistinctPairs, so idle pairs drop out of `/v1/markets` ("active markets"); a var so tests can override it.
 var MarketsRecencyWindow = 14 * 24 * time.Hour
 
-// MarketsOrder controls the sort and cursor scheme used by DistinctPairs. The default is
-// alphabetic by `<base>|<quote>`, which paginates the whole active set stably; Volume24hDesc lets
-// `/markets` surface high-volume pairs first instead of behind ~5K dust pairs.
+// MarketsOrder controls the sort and cursor scheme used by DistinctPairs.
 type MarketsOrder int
 
 const (
@@ -80,10 +59,7 @@ const (
 	MarketsOrderVolume24hDesc
 )
 
-// DistinctPairs returns one page of recently-active (base, quote) pairs with last trade time, 24h
-// trade count and 24h USD volume. The cursor format depends on the order; empty starts at the
-// beginning. limit clamps to [1, 500]. Only chunks inside MarketsRecencyWindow are scanned, so
-// chunk pruning bounds I/O on a hypertable of hundreds of millions of trades.
+// DistinctPairs returns one page of recently-active (base, quote) pairs with last trade time, 24h count and 24h USD volume; limit clamps to [1, 500] and only chunks inside MarketsRecencyWindow are scanned.
 func (s *Store) DistinctPairs(ctx context.Context, cursor string, limit int) ([]Market, string, error) {
 	return s.DistinctPairsExt(ctx, cursor, limit, MarketsOrderPair)
 }
@@ -93,27 +69,17 @@ func (s *Store) DistinctPairsExt(ctx context.Context, cursor string, limit int, 
 	return s.distinctPairsCommon(ctx, "", "", cursor, limit, order)
 }
 
-// SourceMarkets returns one page of pairs the source observed in the trailing MarketsRecencyWindow,
-// with that venue's own 24h figures from the per-source CAGG /v1/pools reads. It bypasses
-// distinctPairsCommon because the pair-wide price CAGGs have no per-source grain. See
-// [sourceMarketsCommon].
+// SourceMarkets returns one page of pairs the source observed in the trailing MarketsRecencyWindow with that venue's own 24h figures from the per-source CAGG, bypassing distinctPairsCommon since the pair-wide CAGGs lack a source grain.
 func (s *Store) SourceMarkets(ctx context.Context, source, cursor string, limit int, order MarketsOrder) ([]Market, string, error) {
 	return s.sourceMarketsCommon(ctx, source, cursor, limit, order)
 }
 
-// AssetMarkets returns one page of pairs where the canonical asset_id is on either side
-// (`base_asset = $asset OR quote_asset = $asset`), backing `/v1/markets?asset=` without a global
-// scan and client-side filter.
+// AssetMarkets returns one page of pairs with the canonical asset_id on either side, backing `/v1/markets?asset=` without a global scan.
 func (s *Store) AssetMarkets(ctx context.Context, asset, cursor string, limit int, order MarketsOrder) ([]Market, string, error) {
 	return s.distinctPairsCommon(ctx, "", asset, cursor, limit, order)
 }
 
 // PoolsFilter narrows AllPools by venue and/or pair; zero-value fields mean no filter.
-//
-// A pair filter (Base and Quote both set) matches either stored orientation and returns rows in
-// the canonical orientation (canonical.Orient). Single-side filters match that side of the
-// canonical orientation. Every asset filter matches all alias forms (canonical.AssetAliasStrings).
-// Asset is the OR-shape (base = X OR quote = X); combining it with Base/Quote is undefined.
 type PoolsFilter struct {
 	Sources []string
 	Base    string
@@ -121,11 +87,7 @@ type PoolsFilter struct {
 	Asset   string
 }
 
-// AllPools returns every (source, base, quote) tuple observed in the trailing MarketsRecencyWindow,
-// backing /v1/pools. Unlike DistinctPairsExt it does not collapse across sources.
-//
-// The cursor is "<vol_or_blank>:<source>|<base>|<quote>" for volume-desc and
-// "<source>|<base>|<quote>" for pair-asc: DistinctPairsExt's keyset shape with source prepended.
+// AllPools returns every (source, base, quote) tuple observed in the trailing MarketsRecencyWindow for /v1/pools, not collapsed across sources; the cursor shape depends on the order (volume-desc vs pair-asc).
 func (s *Store) AllPools(ctx context.Context, filter PoolsFilter, cursor string, limit int, order MarketsOrder) ([]Pool, string, error) { //nolint:gocognit // limit clamp + order branch + scan loop are linear; splitting would scatter the request lifecycle
 	if limit < 1 {
 		limit = 100
@@ -639,10 +601,7 @@ func buildMarketRow(baseRaw, quoteRaw string, lastAt, bucketCloseAt time.Time, c
 	return m, nil
 }
 
-// ValidateMarketsCursor returns an error if a non-empty cursor does not match the shape
-// encodeMarketsCursor emits for the order; handlers should answer 400. Otherwise a bad pair cursor
-// becomes a collation-dependent lexicographic skip, and a bad volume cursor raises a Postgres
-// numeric-syntax error in `split_part($cursor, ':', 1)::numeric`, a 500 that burns CPU per request.
+// ValidateMarketsCursor errors when a non-empty cursor does not match the shape encodeMarketsCursor emits for the order, so handlers can answer 400 instead of a collation-dependent skip or a Postgres numeric-syntax error.
 func ValidateMarketsCursor(cursor string, order MarketsOrder) error {
 	if cursor == "" {
 		return nil
@@ -895,10 +854,7 @@ const pairMarketQuery = `
           FROM last_trade lt
     `
 
-// PairMarket returns the activity summary for one (base, quote) pair. The bool is false when it
-// has not traded inside MarketsRecencyWindow; callers answer an empty list (200), not a 404, per
-// the /v1/pairs envelope. The window bounds I/O by chunk pruning and keeps the result consistent
-// with DistinctPairs: a pair it hides is hidden here too.
+// PairMarket returns the activity summary for one (base, quote) pair; false when it has not traded inside MarketsRecencyWindow, so callers answer an empty list (200), not a 404.
 func (s *Store) PairMarket(ctx context.Context, base, quote canonical.Asset) (Market, bool, error) {
 	since := time.Now().UTC().Add(-MarketsRecencyWindow)
 	var (
@@ -940,10 +896,7 @@ func (s *Store) PairMarket(ctx context.Context, base, quote canonical.Asset) (Ma
 	return m, true, nil
 }
 
-// PairVolumePoint is one hourly USD-volume sample for a single
-// (base, quote) pair, used by the per-pair sparkline endpoint.
-// Hour is the bucket start (UTC); VolumeUSD is numeric-stringified
-// for full precision through the JSON boundary.
+// PairVolumePoint is one hourly USD-volume sample for a (base, quote) pair; Hour is the UTC bucket start and VolumeUSD is a numeric string for full precision.
 type PairVolumePoint struct {
 	Hour      time.Time
 	VolumeUSD string
@@ -954,11 +907,7 @@ type PairVolumePoint struct {
 // adapter doesn't have to import canonical.Pair.
 type pairKey = string
 
-// GetPairsVolumeHistory24hBatch returns per-(base, quote) hourly USD-volume buckets for the
-// trailing 24h, for the /v1/markets sparkline column. It reads volume_usd from prices_1m across
-// all sources. Each key sums BOTH stored orientations and the SAC spellings the listing folded
-// into it, so the bars sum to the row's volume_24h_usd; one UNION ALL arm per direction keeps
-// each an index equality. Holes are zero-filled so every series has 24 entries, oldest first.
+// GetPairsVolumeHistory24hBatch returns per-(base, quote) hourly USD-volume buckets for the trailing 24h, for the /v1/markets sparkline column.
 func (s *Store) GetPairsVolumeHistory24hBatch(ctx context.Context, pairs [][2]string) (map[pairKey][]PairVolumePoint, error) {
 	if len(pairs) == 0 {
 		return map[pairKey][]PairVolumePoint{}, nil
@@ -1034,11 +983,7 @@ func (s *Store) GetPairsVolumeHistory24hBatch(ctx context.Context, pairs [][2]st
 	return out, nil
 }
 
-// FirstTradeBatch returns each requested pair's first daily bucket in prices_1d (the "since
-// inception" anchor). Day precision is deliberate: prices_1d reaches back to each pair's first
-// trade and the per-pair MIN is index-assisted, so the ?include= path on /v1/markets stays cheap.
-// Both orientations and the folded SAC spellings are consulted; the earliest wins. Missing pairs
-// are absent from the map.
+// FirstTradeBatch returns each requested pair's first daily bucket in prices_1d (the "since inception" anchor).
 func (s *Store) FirstTradeBatch(ctx context.Context, pairs [][2]string) (map[string]time.Time, error) {
 	if len(pairs) == 0 {
 		return map[string]time.Time{}, nil

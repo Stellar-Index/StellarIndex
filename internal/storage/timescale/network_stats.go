@@ -8,9 +8,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// NetworkStats is the aggregate counts powering the home network
-// strip on stellarindex.io. Single SQL query computes them all so
-// the explorer doesn't need 4 separate fetches.
+// NetworkStats is the aggregate counts powering the home network strip on stellarindex.io.
 type NetworkStats struct {
 	// Volume24hUSD: SUM of prices_1m.volume_usd across every pair
 	// over the trailing 24h. Decimal string per ADR-0003 (the
@@ -36,9 +34,6 @@ type NetworkStats struct {
 }
 
 // GetNetworkStats returns the home-page aggregate stats in one call.
-// Cheap query: hypertable-bound time filter for volume; one COUNT
-// for distinct markets; one COUNT for classic_assets; one MAX for
-// the live cursor.
 func (s *Store) GetNetworkStats(ctx context.Context) (NetworkStats, error) {
 	q := networkStatsQuery()
 	var (

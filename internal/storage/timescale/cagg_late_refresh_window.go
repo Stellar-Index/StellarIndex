@@ -9,12 +9,10 @@ import (
 	"time"
 )
 
-// CAGGLateFamilyTrades is the cagg_late_refresh_windows family of the
-// [TradesCAGGs].
+// CAGGLateFamilyTrades is the cagg_late_refresh_windows family of the [TradesCAGGs].
 const CAGGLateFamilyTrades = "trades"
 
-// CAGGLateRefreshWindow is one view's persisted late-write window
-// (migration 0211).
+// CAGGLateRefreshWindow is one view's persisted late-write window (migration 0211).
 type CAGGLateRefreshWindow struct {
 	View      string
 	From, To  time.Time
@@ -24,9 +22,7 @@ type CAGGLateRefreshWindow struct {
 	Gen int64
 }
 
-// RecordCAGGLateRefreshWindow records, or widens, [from, to] on each of
-// views in family. Every row it touches gets a new gen. Call it before the
-// write it covers commits.
+// RecordCAGGLateRefreshWindow records, or widens, [from, to] on each of views in family.
 func (s *Store) RecordCAGGLateRefreshWindow(ctx context.Context, family string, views []string, from, to time.Time) error {
 	const q = `
         INSERT INTO cagg_late_refresh_windows AS w (family, view, from_ts, to_ts)
@@ -67,9 +63,7 @@ func (s *Store) CAGGLateRefreshWindows(ctx context.Context, family string) ([]CA
 	return out, nil
 }
 
-// ClearCAGGLateRefreshWindow deletes view's window only if its gen is
-// still gen, so a widen since it was read survives. deleted reports
-// whether a row went.
+// ClearCAGGLateRefreshWindow deletes view's window only if its gen is still gen, so a widen since it was read survives. deleted reports whether a row went.
 func (s *Store) ClearCAGGLateRefreshWindow(ctx context.Context, family, view string, gen int64) (deleted bool, err error) {
 	res, err := s.db.ExecContext(ctx, clearCAGGLateRefreshWindowQuery, family, view, gen)
 	if err != nil {

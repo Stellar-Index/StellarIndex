@@ -24,16 +24,7 @@ func toAssetAmountRows(in []domain.BlendAssetAmount) []blendAssetAmountRow {
 	return out
 }
 
-// InsertBlendAdminEvent appends one Blend admin / pool-config / pool-factory lifecycle event
-// (set_admin, update_pool, queue/cancel_set_reserve, set_reserve, set_status, deploy) to the
-// blend_admin hypertable, idempotent on (contract_id, ledger, tx_hash, op_index, event_kind,
-// ledger_close_time).
-//
-// The admin / asset / target columns are promoted when the event kind carries them, else NULL (see
-// blend.AdminEvent); the kind-specific remainder lands in the attributes jsonb column.
-//
-// i128 amounts (update_pool.min_collateral, ReserveConfig.supply_cap) are decimal strings inside
-// jsonb (ADR-0003): a jsonb number is lossy, a decimal string round-trips at full precision.
+// InsertBlendAdminEvent appends one Blend admin/pool-config/factory lifecycle event to the blend_admin hypertable, idempotent on its PK, promoting the admin/asset/target columns when the event carries them.
 func (s *Store) InsertBlendAdminEvent(ctx context.Context, e domain.BlendAdminEvent) error {
 	if e.ContractID == "" {
 		return errors.New("timescale: InsertBlendAdminEvent: ContractID is empty")

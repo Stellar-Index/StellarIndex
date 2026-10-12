@@ -12,17 +12,13 @@ import (
 // LedgerProvider is defined by freeze_events.go.
 // Reusing it here keeps the seam consistent across sinks.
 
-// DivergenceSink is the timescale-backed divergence.ObservationSink. It persists every
-// per-reference comparison to the `divergence_observations` hypertable, because the worker's
-// Redis aggregate (median + firing flag) loses the per-reference deltas after the next tick.
+// DivergenceSink is the timescale-backed divergence.ObservationSink.
 type DivergenceSink struct {
 	db        *sql.DB
 	getLedger LedgerProvider
 }
 
-// NewDivergenceSink constructs the sink. Pass an optional ledger
-// provider so observations carry observed_at_ledger; nil falls
-// back to ledger 0 (acceptable for tests).
+// NewDivergenceSink constructs the sink.
 func NewDivergenceSink(s *Store, opts ...DivergenceSinkOption) *DivergenceSink {
 	sink := &DivergenceSink{db: s.db}
 	for _, opt := range opts {
@@ -34,20 +30,14 @@ func NewDivergenceSink(s *Store, opts ...DivergenceSinkOption) *DivergenceSink {
 // DivergenceSinkOption tunes a DivergenceSink at construction.
 type DivergenceSinkOption func(*DivergenceSink)
 
-// WithDivergenceLedgerProvider wires the ledger seam so inserts
-// capture observed_at_ledger.
+// WithDivergenceLedgerProvider wires the ledger seam so inserts capture observed_at_ledger.
 func WithDivergenceLedgerProvider(p LedgerProvider) DivergenceSinkOption {
 	return func(s *DivergenceSink) {
 		s.getLedger = p
 	}
 }
 
-// RecordObservation implements divergence.ObservationSink. It inserts one row per call; the PK
-// (asset_id, quote_id, reference, observed_at) makes a same-microsecond duplicate a no-op via
-// ON CONFLICT.
-//
-// obs.OurPrice / RefPrice / DeltaPct are decimal strings bound straight into NUMERIC columns,
-// never a Go float64, mirroring the ::text cast the read paths use to return them as strings.
+// RecordObservation implements divergence.ObservationSink, inserting one row per call (a same-microsecond duplicate is a no-op via ON CONFLICT); OurPrice/RefPrice/DeltaPct are decimal strings bound into NUMERIC, never float.
 func (s *DivergenceSink) RecordObservation(ctx context.Context, obs domain.DivergenceObservationRecord) error {
 	var ledger uint32
 	if s.getLedger != nil {
@@ -85,8 +75,7 @@ func (s *DivergenceSink) RecordObservation(ctx context.Context, obs domain.Diver
 	return nil
 }
 
-// DivergenceRow is one divergence_observations row for the /v1/divergence
-// read path. Prices + delta are decimal strings (ADR-0003).
+// DivergenceRow is one divergence_observations row for the /v1/divergence read path.
 type DivergenceRow struct {
 	AssetID          string
 	QuoteID          string
@@ -102,13 +91,7 @@ type DivergenceRow struct {
 	RefObservedAt *time.Time
 }
 
-// ListDivergenceLatest returns the LATEST observation per (asset, quote, reference) within the
-// trailing `sinceDays` window, for at most `limit` (<= 500) pairs. Every reference of a returned
-// pair is included, so a pair is never served with part of its comparison set. Pairs rank by
-// widest |delta_pct|; firingOnly keeps pairs with a reference firing at its latest observation.
-//
-// DISTINCT ON (asset, quote, reference) with the matching ORDER prefix uses the
-// (asset, quote, reference, observed_at DESC) index to pick each newest row without a sort.
+// ListDivergenceLatest returns the LATEST observation per (asset, quote, reference) in the trailing `sinceDays` for at most `limit` (<= 500) pairs, including every reference of a returned pair, ranked by widest |delta_pct|.
 func (s *Store) ListDivergenceLatest(ctx context.Context, sinceDays int, firingOnly bool, limit int) ([]DivergenceRow, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
@@ -166,11 +149,7 @@ func (s *Store) ListDivergenceLatest(ctx context.Context, sinceDays int, firingO
 	return out, nil
 }
 
-// DivergenceSeriesPoint is one downsampled (bucket, reference) cell of a pair's divergence
-// history. Values are the LAST observation in the bucket, not an average, which would smooth
-// away the spikes the chart exists to show; LastAt lets a caller pick the newest our_price across
-// references. Firing is true when ANY observation in the bucket breached threshold, so a brief
-// breach cannot vanish. Values are decimal strings.
+// DivergenceSeriesPoint is one downsampled (bucket, reference) cell of a pair's divergence history holding the LAST observation in the bucket, not an average, so spikes survive.
 type DivergenceSeriesPoint struct {
 	Bucket    time.Time
 	Reference string
@@ -181,9 +160,7 @@ type DivergenceSeriesPoint struct {
 	Firing    bool
 }
 
-// DivergenceSeriesBucket maps a whitelisted window to its bucket width, chosen so a series is
-// always ≤ ~360 points regardless of worker cadence: the read budget is enforced here, not
-// assumed from config. Exported so the API handler can surface the bucket width.
+// DivergenceSeriesBucket maps a whitelisted window to its bucket width so a series is always <= ~360 points regardless of worker cadence; exported so the API handler can surface the width.
 func DivergenceSeriesBucket(days int) time.Duration {
 	switch {
 	case days <= 1:
@@ -195,13 +172,7 @@ func DivergenceSeriesBucket(days int) time.Duration {
 	}
 }
 
-// ListDivergenceSeries returns the bucketed Δ% history of every reference for ONE (asset, quote)
-// pair over the trailing `sinceDays` window, ascending by bucket then reference.
-//
-// divergence_observations_pair_ref_idx (asset_id, quote_id, reference, observed_at DESC) covers
-// the two equality predicates; each of the ≤ 8 references is a range scan over its window.
-// Chunk exclusion needs the bare observed_at bound, so the column is never wrapped in a function
-// in WHERE (time_bucket appears only in SELECT/GROUP BY). GROUP BY folds to ≤ ~360 buckets.
+// ListDivergenceSeries returns the bucketed delta-% history of every reference for ONE (asset, quote) pair over the trailing `sinceDays`, ascending by bucket then reference, on divergence_observations_pair_ref_idx.
 func (s *Store) ListDivergenceSeries(ctx context.Context, assetID, quoteID string, sinceDays int) ([]DivergenceSeriesPoint, error) {
 	if sinceDays <= 0 {
 		sinceDays = 7

@@ -14,8 +14,7 @@ const (
 	Sep1FieldCurrencyImage = "currency_image"
 )
 
-// Sep1IdentityChange is one transition of an identity field between the
-// held sep1_payload and the one replacing it. Old/New "" = absent.
+// Sep1IdentityChange is one transition of an identity field between the held sep1_payload and the one replacing it.
 type Sep1IdentityChange struct {
 	Field    string
 	Currency string // `<Code>-<Issuer>` as declared; currency_image only

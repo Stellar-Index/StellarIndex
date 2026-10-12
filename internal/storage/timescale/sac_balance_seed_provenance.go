@@ -8,9 +8,7 @@ import (
 	"time"
 )
 
-// SACBalanceSeedSource discriminates which ClickHouse reader produced a
-// [SACBalanceSeedProvenance] row (migration 0102). Background:
-// docs/architecture/supply-pipeline.md "Dormant contract-held SAC balances".
+// SACBalanceSeedSource discriminates which ClickHouse reader produced a [SACBalanceSeedProvenance] row (migration 0102).
 type SACBalanceSeedSource string
 
 const (
@@ -27,8 +25,7 @@ const (
 	SACBalanceSeedSourceFullHistory SACBalanceSeedSource = "full_history"
 )
 
-// SACBalanceSeedProvenance is one `supply seed-sac-balances` pass's
-// audit record for a single watched SAC-wrapper contract.
+// SACBalanceSeedProvenance is one `supply seed-sac-balances` pass's audit record for a single watched SAC-wrapper contract.
 type SACBalanceSeedProvenance struct {
 	ContractID    string
 	AssetKey      string
@@ -46,10 +43,7 @@ type SACBalanceSeedProvenance struct {
 	SeededAt         time.Time
 }
 
-// UpsertSACBalanceSeedProvenance records (or overwrites) the most recent seed pass for a contract;
-// a re-run of `supply seed-sac-balances` replaces the prior row's stats and timestamp. Pure audit
-// trail: never read by the supply computation (ClassicSupplyAt / SumSACBalancesAtOrBefore), only
-// by ops reporting.
+// UpsertSACBalanceSeedProvenance records the latest seed pass for a contract, replacing the prior row's stats and timestamp; a pure audit trail never read by the supply computation.
 func (s *Store) UpsertSACBalanceSeedProvenance(ctx context.Context, p SACBalanceSeedProvenance) error {
 	if p.ContractID == "" {
 		return errors.New("timescale: UpsertSACBalanceSeedProvenance: empty ContractID")
@@ -111,10 +105,7 @@ func (s *Store) UpsertSACBalanceSeedProvenance(ctx context.Context, p SACBalance
 	return nil
 }
 
-// SACBalanceSeedProvenanceFor reads the most recent seed-pass record for
-// one contract. Returns (zero value, false, nil) when the contract has
-// never been seeded — distinct from an error, since "never seeded" is
-// the expected state for a freshly-added [supply.sac_wrappers] entry.
+// SACBalanceSeedProvenanceFor reads the latest seed-pass record for one contract; (zero value, false, nil) when never seeded, which is the expected state for a new wrapper, not an error.
 func (s *Store) SACBalanceSeedProvenanceFor(ctx context.Context, contractID string) (SACBalanceSeedProvenance, bool, error) {
 	if contractID == "" {
 		return SACBalanceSeedProvenance{}, false, errors.New("timescale: SACBalanceSeedProvenanceFor: empty contractID")
