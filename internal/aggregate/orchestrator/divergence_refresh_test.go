@@ -113,10 +113,8 @@ func TestRefreshDivergenceAll_PublishesWiredGauge(t *testing.T) {
 	}
 }
 
-// TestRefreshDivergenceAll_NoCachedVWAP — pair has no VWAP entry
-// (cold start, frozen, all-empty windows). Refresher is NOT called;
-// outcome is a no-op (no-vwap counter would tick if a metric
-// registry was wired, but the predicate is the call count).
+// TestRefreshDivergenceAll_NoCachedVWAP pins that a pair with no VWAP entry (cold start, frozen, all-empty windows)
+// is a no-op: the refresher is not called.
 func TestRefreshDivergenceAll_NoCachedVWAP(t *testing.T) {
 	t.Parallel()
 	rdb, _ := newTestRedis(t)
@@ -210,10 +208,8 @@ func TestRefreshDivergenceAll_ReversedWindowsUseShortest(t *testing.T) {
 	}
 }
 
-// TestRefreshDivergenceAll_ParseErrorSkipsCall — a malformed VWAP
-// in the cache (writer regression) doesn't propagate to the
-// refresher. The pair is skipped silently (parse_error counter
-// would tick).
+// TestRefreshDivergenceAll_ParseErrorSkipsCall pins that a malformed cached VWAP never reaches the refresher; the
+// pair is skipped.
 func TestRefreshDivergenceAll_ParseErrorSkipsCall(t *testing.T) {
 	t.Parallel()
 	rdb, _ := newTestRedis(t)
@@ -238,10 +234,8 @@ func TestRefreshDivergenceAll_ParseErrorSkipsCall(t *testing.T) {
 	}
 }
 
-// TestRefreshDivergenceAll_RefresherErrorDoesNotAbortOtherPairs —
-// per-pair errors are logged + counted; subsequent pairs still
-// process. Mirrors the per-asset isolation pattern used by the
-// supply cross-check refresher.
+// TestRefreshDivergenceAll_RefresherErrorDoesNotAbortOtherPairs pins per-pair isolation: an error is logged and
+// counted, and later pairs still process.
 func TestRefreshDivergenceAll_RefresherErrorDoesNotAbortOtherPairs(t *testing.T) {
 	t.Parallel()
 	rdb, _ := newTestRedis(t)
@@ -355,10 +349,8 @@ func TestRefreshDivergenceAll_MinIntervalSkipsConsecutiveTicks(t *testing.T) {
 	}
 }
 
-// TestRefreshDivergenceAll_MinIntervalZeroPreservesLegacy asserts
-// that DivergenceMinInterval=0 (the zero-value, also the legacy
-// default for callers that haven't migrated) bypasses the gate
-// entirely — every call invokes the refresher.
+// TestRefreshDivergenceAll_MinIntervalZeroPreservesLegacy pins that DivergenceMinInterval=0 (the zero value) bypasses
+// the gate entirely, so every call invokes the refresher.
 func TestRefreshDivergenceAll_MinIntervalZeroPreservesLegacy(t *testing.T) {
 	t.Parallel()
 	rdb, _ := newTestRedis(t)
@@ -388,10 +380,8 @@ func TestRefreshDivergenceAll_MinIntervalZeroPreservesLegacy(t *testing.T) {
 	}
 }
 
-// TestShortestWindowIsTheDivergenceRefreshWindow — the divergence service
-// stamps ShortestWindow(configured) on every verdict, so it must be exactly
-// the window refreshDivergenceAll compares, Windows[0] of the orchestrator
-// New builds from the same configuration.
+// TestShortestWindowIsTheDivergenceRefreshWindow pins that ShortestWindow(configured), stamped on every verdict, is
+// exactly the window refreshDivergenceAll compares: Windows[0] of the orchestrator New builds from the same config.
 func TestShortestWindowIsTheDivergenceRefreshWindow(t *testing.T) {
 	for _, ws := range [][]time.Duration{
 		nil,

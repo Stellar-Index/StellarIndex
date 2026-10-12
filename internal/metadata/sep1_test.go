@@ -109,10 +109,8 @@ func TestResolver_RejectsRedirectToDifferentHost(t *testing.T) {
 	}
 }
 
-// TestResolver_RejectsRedirectToSameHostOtherPort drives the redirect
-// end-to-end: the issuer's server 302s to a second server on the same
-// host but another port. Following it would cache the other port's
-// TOML under the issuer's key and, in production, dial an arbitrary port.
+// TestResolver_RejectsRedirectToSameHostOtherPort drives the redirect end to end: a 302 to the same host on another
+// port would cache that port's TOML under the issuer's key and, in production, dial an arbitrary port.
 func TestResolver_RejectsRedirectToSameHostOtherPort(t *testing.T) {
 	other := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(fixtureTOML))
@@ -318,11 +316,9 @@ func TestResolver_AcceptsHostPort(t *testing.T) {
 	}
 }
 
-// TestResolver_TruncatesOversizedFields: the 1 MiB whole-body cap does not bound a single
-// field, so a hostile issuer could serve a ~1 MiB ORG_NAME that we store and serve verbatim
-// (every /v1/issuers response, the explorer's issuer <h1>). Each copied string is capped at
-// parse time on a UTF-8 rune boundary; multibyte runes at the boundary prove the cut is not
-// mid-codepoint (a byte-count cut would corrupt the final "é", which utf8.ValidString catches).
+// TestResolver_TruncatesOversizedFields pins that each copied string is capped at parse time on a UTF-8 rune boundary,
+// since the 1 MiB body cap does not bound one field (a hostile ORG_NAME is served in /v1/issuers and the explorer h1).
+// Multibyte runes at the cut let utf8.ValidString catch a mid-codepoint cut.
 func TestResolver_TruncatesOversizedFields(t *testing.T) {
 	const (
 		shortCap = 256  // maxShortFieldRunes
@@ -418,10 +414,8 @@ func newLocalResolver(t *testing.T, srv *httptest.Server) *metadata.Resolver {
 	return r
 }
 
-// useTestServerClient replaces the Resolver's HTTP client with the
-// httptest.Server's pre-configured client (which trusts the test
-// server's self-signed cert). Needed because metadata.NewResolver
-// builds its own transport with TLS verify on.
+// useTestServerClient swaps the Resolver's HTTP client for the httptest.Server's, which trusts its self-signed cert,
+// since metadata.NewResolver builds its own transport with TLS verify on.
 func useTestServerClient(r *metadata.Resolver, srv *httptest.Server) *metadata.Resolver {
 	// Exported constructor for tests: metadata.WithClient lets us
 	// swap. If not available, test file would need unexported
@@ -490,10 +484,8 @@ func TestResolver_RejectsDeclaredOversizedBody(t *testing.T) {
 	}
 }
 
-// TestResolver_RejectsStreamedOversizedBody pins the second, independent
-// guard: a body arriving WITHOUT (or despite) an honest Content-Length (chunked, or a lying
-// header) must still be capped once actual bytes exceed the limit, or it would smuggle an
-// unbounded body past the Content-Length check.
+// TestResolver_RejectsStreamedOversizedBody pins the second, independent guard: a body without (or despite) an honest
+// Content-Length (chunked, or a lying header) must still be capped once actual bytes exceed the limit.
 func TestResolver_RejectsStreamedOversizedBody(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// No Content-Length set: net/http switches to chunked transfer and

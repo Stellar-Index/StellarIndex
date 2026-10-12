@@ -27,10 +27,9 @@ var maxReturnsByWindow = map[string]int{
 	"Day30": maxDay30Returns,
 }
 
-// TestFixturesStayInsideTheProducerRange fails on a test fixture this
-// package's producers cannot emit: a baseline.Baseline N above its
-// window's return count, or a BaselineAgeDays above 30. Such a fixture
-// once hid that the bootstrap cap could never lift in production.
+// TestFixturesStayInsideTheProducerRange fails on a fixture this package's producers cannot emit: a baseline.Baseline
+// N above its window's return count, or a BaselineAgeDays above 30. Such a fixture hid that the bootstrap cap could
+// never lift.
 func TestFixturesStayInsideTheProducerRange(t *testing.T) {
 	entries, err := os.ReadDir(".")
 	if err != nil {

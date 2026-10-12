@@ -163,10 +163,8 @@ func FuzzSdkDecodeSwapAmounts(f *testing.F) {
 	})
 }
 
-// FuzzDecodeSwap pins direction resolution against an independent model:
-// exactly one strictly-positive in-leg on one token and one out-leg on the
-// other is a trade (base = in token, amounts carried verbatim); anything
-// else is refused, as Ambiguous once three or more legs are positive.
+// FuzzDecodeSwap pins direction resolution against an independent model: exactly one strictly-positive in-leg on one token and one out-leg
+// on the other is a trade (base = in token, amounts verbatim); anything else is refused, as Ambiguous once three or more legs are positive.
 func FuzzDecodeSwap(f *testing.F) {
 	seedI128s(f, func(p []xdr.Int128Parts) {
 		if len(p) == 4 {
@@ -467,11 +465,9 @@ func FuzzClassify(f *testing.F) {
 	})
 }
 
-// FuzzBufferCorrelation drives the swap/sync buffer with arbitrary events over colliding
-// (ledger, tx, op, pool) keys and checks it against a model: a completed pair shares the full
-// key including the emitting pool; a same-kind event with a new EventIndex on an occupied
-// slot rotates the group out (swap-only as completed, sync-only as evicted) while a
-// redelivery (same EventIndex) overwrites in place; nothing else completes, evicts or lingers.
+// FuzzBufferCorrelation drives the swap/sync buffer over colliding (ledger, tx, op, pool) keys against a model: a completed pair shares
+// the full key including the pool; a same-kind event with a new EventIndex on an occupied slot rotates the group out (swap-only
+// completed, sync-only evicted), a redelivery (same EventIndex) overwrites in place, and nothing else completes, evicts or lingers.
 func FuzzBufferCorrelation(f *testing.F) {
 	f.Add([]byte{0x00, 0x01})
 	f.Add([]byte{0x00, 0x04, 0x01, 0x05})

@@ -14,10 +14,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/api/streaming"
 )
 
-// TestStream_PerIPConcurrentCap is the regression: a single client
-// IP can hold at most MaxStreamsPerIP concurrent SSE connections; the
-// (N+1)th is rejected with 503. On the unfixed code (no per-IP cap) the
-// (N+1)th would open with 200, so this fails RED without the fix.
+// TestStream_PerIPConcurrentCap pins that one client IP holds at most MaxStreamsPerIP concurrent SSE connections and
+// the (N+1)th gets 503; without the cap it would open with 200.
 func TestStream_PerIPConcurrentCap(t *testing.T) {
 	const capN = 3
 
@@ -94,10 +92,8 @@ func TestStream_PerIPConcurrentCap(t *testing.T) {
 	}
 }
 
-// TestStream_PerIPCapAggregatesIPv6Slash64: the per-IP SSE cap must key IPv6 clients on their /64
-// prefix, not the /128 address, or a client holding a delegated /64 rotates addresses and never
-// meets the cap. Every connection uses a different address from one /64; with capN=3 the 4th MUST
-// be rejected.
+// TestStream_PerIPCapAggregatesIPv6Slash64 pins that the per-IP SSE cap keys IPv6 clients on their /64, so a client
+// rotating addresses within a delegated /64 still meets it: with capN=3 the 4th connection must be rejected.
 func TestStream_PerIPCapAggregatesIPv6Slash64(t *testing.T) {
 	const capN = 3
 

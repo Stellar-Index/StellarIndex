@@ -58,10 +58,8 @@ func TestCaptureEligible(t *testing.T) {
 func TestClaimAtomCount(t *testing.T) {
 	t.Parallel()
 
-	// The atoms must name two distinct assets. Zero-valued AssetSold/AssetBought is native on
-	// both legs, a self-cross stellar-core never emits and internal/sources/sdex drops
-	// (canonical.NewPair rejects base == quote). sdexclaim.RealTradeCount applies the
-	// decoder's full rule set, so the atoms must look like real ones.
+	// The atoms must name two distinct assets: zero-valued AssetSold/AssetBought is native on both legs, a self-cross
+	// stellar-core never emits and the sdex decoder drops (canonical.NewPair rejects base == quote).
 	usdc := xdr.Asset{
 		Type: xdr.AssetTypeAssetTypeCreditAlphanum4,
 		AlphaNum4: &xdr.AlphaNum4{
@@ -74,10 +72,8 @@ func TestClaimAtomCount(t *testing.T) {
 	}
 	native := xdr.Asset{Type: xdr.AssetTypeAssetTypeNative}
 
-	// realClaims builds n value-moving claims (non-zero amounts, distinct
-	// assets) — RealTradeCount keeps these. mixedClaims appends `zero`
-	// both-zero no-op crosses (dust / rounding artifacts the census must
-	// drop to equal COUNT(trades)).
+	// realClaims builds n value-moving claims that RealTradeCount keeps; mixedClaims appends `zero` both-zero no-op
+	// crosses the census must drop to equal COUNT(trades).
 	realClaims := func(n int) []xdr.ClaimAtom {
 		c := make([]xdr.ClaimAtom, n)
 		for i := range c {
@@ -199,12 +195,9 @@ func TestCensusLedger_emptyLedger(t *testing.T) {
 	}
 }
 
-// TestCaptureEligible_UnmarshallableEventCountsAsSinkDoes pins captureEligible's contract
-// that "the census count equals the soroban_events row count for the ledger". It must apply
-// the sink's full gate, including the ScVal MarshalBinary round-trip in
-// contractEventToEventsEvent: an event whose topic or body fails to marshal is dropped by
-// the sink, so counting it would make the reconcile report a projector shortfall that does
-// not exist.
+// TestCaptureEligible_UnmarshallableEventCountsAsSinkDoes pins that the census count equals the soroban_events row
+// count: an event whose topic or body fails ScVal MarshalBinary is dropped by the sink, so counting it would fake a
+// projector shortfall.
 func TestCaptureEligible_UnmarshallableEventCountsAsSinkDoes(t *testing.T) {
 	t.Parallel()
 	base, _ := makeBasicContractEvent(t)

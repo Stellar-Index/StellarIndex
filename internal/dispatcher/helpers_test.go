@@ -179,10 +179,7 @@ func TestExtractInvokeContractCalls_invokeContract(t *testing.T) {
 
 // ─── AddContractCallDecoder ────────────────────────────────────
 
-// fakeCCDecoder implements ContractCallDecoder for the registration
-// test. Matches signature: (contractID, functionName string) -> bool
-// per the package's contract; Decode signature takes a single
-// ContractCallContext.
+// fakeCCDecoder implements ContractCallDecoder for the registration test.
 type fakeCCDecoder struct{ name string }
 
 func (f *fakeCCDecoder) Name() string             { return f.name }

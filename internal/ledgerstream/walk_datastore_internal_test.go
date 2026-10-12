@@ -31,12 +31,9 @@ func (c *closeTrackingStore) Close() error {
 	return c.DataStore.Close()
 }
 
-// TestWalkDataStore_ClosesStoreOnEveryReturnPath guards the close path: the SDK's
-// BufferedStorageBackend.Close never closes the datastore it was built over, so walkDataStore must
-// close the store itself on every return path or leak connections/file handles.
-//
-// It drives a range that fails validateRange, which runs after schema load and backend
-// construction succeed, and confirms the store is still closed exactly once by the top-level defer.
+// TestWalkDataStore_ClosesStoreOnEveryReturnPath guards the close path: the SDK's BufferedStorageBackend.Close never
+// closes the datastore, so walkDataStore must close it on every return path. A range failing validateRange (after
+// schema load and backend construction succeed) must still close the store exactly once via the top-level defer.
 func TestWalkDataStore_ClosesStoreOnEveryReturnPath(t *testing.T) {
 	tmp := t.TempDir()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -79,13 +76,9 @@ func TestWalkDataStore_ClosesStoreOnEveryReturnPath(t *testing.T) {
 	}
 }
 
-// TestWalkDataStore_LiveRetryBudgetRidesOutADatastoreOutage drives the SDK's real fetch-worker
-// retry loop over a datastore that fails 8 times, then succeeds. 8 exceeds the SDK's RetryLimit of
-// 5, so a policy overriding only RetryWait would cancel with "maximum retries exceeded", which in
-// the indexer is a process exit.
-//
-// Wait/budget are scaled down (10ms / 2s) for speed; the policy function is the one production
-// calls.
+// TestWalkDataStore_LiveRetryBudgetRidesOutADatastoreOutage drives the SDK's real fetch-worker retry loop over a
+// datastore failing 8 times, then succeeding. 8 exceeds the SDK's RetryLimit of 5, so a policy overriding only
+// RetryWait would cancel with "maximum retries exceeded", a process exit in the indexer.
 func TestWalkDataStore_LiveRetryBudgetRidesOutADatastoreOutage(t *testing.T) {
 	tmp := t.TempDir()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

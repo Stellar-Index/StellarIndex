@@ -30,10 +30,7 @@ func TestDecoder_Name(t *testing.T) {
 	}
 }
 
-// testPool is a synthetic pool strkey the test decoder seeds so
-// Matches() gate checks pass without depending on the curated
-// mainnet list (which newTestDecoder also carries, being built on
-// NewDecoder).
+// testPool is a synthetic pool strkey the test decoder seeds so Matches() passes without the curated mainnet list.
 const testPool = "C-test-pool-strkey"
 
 // newTestDecoder mirrors phoenix's helper: production seed + one
@@ -110,10 +107,8 @@ func TestDecoder_GateRejectsForeignContract(t *testing.T) {
 	}
 }
 
-// TestDecoder_AddPoolRegistersNewPool pins the router fan-out
-// (ADR-0035): a router add_pool announcement registers the new pool
-// so its subsequent trades pass the gate; the same announcement from
-// a non-router contract is rejected outright.
+// TestDecoder_AddPoolRegistersNewPool pins the router fan-out (ADR-0035): a router add_pool registers the pool so its
+// trades pass the gate; the same announcement from a non-router contract is rejected.
 func TestDecoder_AddPoolRegistersNewPool(t *testing.T) {
 	d := NewDecoder()
 	newPool := makeContractStrkey(t, 0x7A)
@@ -161,13 +156,9 @@ func TestDecoder_AddPoolRegistersNewPool(t *testing.T) {
 	}
 }
 
-// TestDecoder_ChHashOrderCanDropRegisteredPoolTrade pins Q040's hazard at the Decoder: its
-// registry grows live from add_pool alone, so a same-ledger trade delivered before its pool's
-// add_pool is permanently missed (Matches() false, a silent skip in processEventSafely).
-// stellar.contract_events sorts a ledger by tx_hash, which can put the trade first, so lake
-// readers re-sort into apply order (internal/storage/clickhouse/apply_order.go, tested by
-// TestApplyOrderer_SameLedgerAddPoolPrecedesTrade). This test shows deterministically, with no
-// ClickHouse, that only the event order changes the outcome.
+// TestDecoder_ChHashOrderCanDropRegisteredPoolTrade pins that a same-ledger trade delivered before its pool's add_pool
+// is permanently missed (Matches() false, silent skip), since the registry grows live from add_pool alone. Lake
+// readers re-sort into apply order; only event order changes the outcome.
 func TestDecoder_ChHashOrderCanDropRegisteredPoolTrade(t *testing.T) {
 	newPool := makeContractStrkey(t, 0x9C)
 	announce := events.Event{
@@ -208,10 +199,8 @@ func TestDecoder_ChHashOrderCanDropRegisteredPoolTrade(t *testing.T) {
 		t.Fatal("chronological order: Matches(trade) = false after add_pool registered it, want true")
 	}
 
-	// stellar.contract_events' ORDER BY (ledger_seq, tx_hash, op_index,
-	// event_index) delivers these two SAME-LEDGER events in the
-	// opposite (hash) order: trade, then add_pool. That is what the
-	// live projector actually streams.
+	// stellar.contract_events orders a ledger by tx_hash, so these same-ledger events arrive trade first, then
+	// add_pool.
 	hashOrder := NewDecoder()
 	if hashOrder.Matches(trade) {
 		t.Fatal("hash order: Matches(trade) = true before add_pool was ever seen — test setup invalid")
@@ -388,10 +377,8 @@ func TestDecoder_MatchesRewards_gated(t *testing.T) {
 	}
 }
 
-// TestDecoder_MatchesAdmin_routerOnlyGated pins that the router-scoped governance kinds
-// (config_rewards, pool_gauge_switch_token) are gated on the canonical router trust root only.
-// No pool emits them, so a registered pool or arbitrary contract must not match (see
-// decode_admin.go's package doc).
+// TestDecoder_MatchesAdmin_routerOnlyGated pins that router-scoped governance kinds (config_rewards,
+// pool_gauge_switch_token) match the canonical router only: no pool emits them, so a registered pool must not match.
 func TestDecoder_MatchesAdmin_routerOnlyGated(t *testing.T) {
 	d := NewDecoder()
 	pool := MainnetPools[0]
@@ -430,12 +417,9 @@ func TestDecoder_MatchesAdmin_routerOnlyGated(t *testing.T) {
 	}
 }
 
-// TestDecoder_MatchesPoolGovernance_recognized pins the seven pool-emittable governance kinds
-// (apply_upgrade, commit_upgrade, set_privileged_addrs, apply/commit_transfer_ownership,
-// enable/disable_emergency_mode). Registered pools legitimately emit them, so a reg.IsFactory-only
-// gate would be an ADR-0033 recognition gap. A registered pool and the router must match; a
-// foreign contract and the flagged parallel router must fail closed. Matches() reads only
-// topic[0], so a bare topic[0] proves the gate.
+// TestDecoder_MatchesPoolGovernance_recognized pins the seven pool-emittable governance kinds: a registered pool and
+// the router must match, a foreign contract and the flagged parallel router must fail closed (ADR-0033 recognition gap
+// otherwise).
 func TestDecoder_MatchesPoolGovernance_recognized(t *testing.T) {
 	d := NewDecoder()
 	pool := MainnetPools[0]
@@ -523,10 +507,8 @@ func TestDecoder_Decode_PoolApplyUpgrade_endToEnd(t *testing.T) {
 	}
 }
 
-// TestDecoder_Decode_RewardsAndAdmin_endToEnd exercises Decode() (not
-// just Matches()) for one representative kind from each new family,
-// using real captured bytes, proving the dispatcher-facing seam wires
-// decodeRewardsEvent / decodeAdminEvent correctly end-to-end.
+// TestDecoder_Decode_RewardsAndAdmin_endToEnd runs Decode() on real bytes for one kind per new family, proving the
+// dispatcher-facing seam wires decodeRewardsEvent and decodeAdminEvent.
 func TestDecoder_Decode_RewardsAndAdmin_endToEnd(t *testing.T) {
 	d := NewDecoder()
 	closedAtStr := "2026-07-10T00:00:00Z"

@@ -36,10 +36,8 @@ func (s *entryChangeSpy) Decode(ctx LedgerEntryChangeContext) ([]consumer.Event,
 // follows across the ledger.
 const ecWalkAccount = "GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ"
 
-// mkEntryWalkTx builds one transaction for a synthetic ledger: a distinct
-// source account (so the envelope hashes differ), the given fee changes,
-// and the given single-operation apply-phase changes. success drives the
-// TransactionResultCode so the failed-tx path can be exercised.
+// mkEntryWalkTx builds one transaction for a synthetic ledger with a distinct source account, the given fee changes
+// and apply-phase changes; success sets the TransactionResultCode so the failed-tx path can be exercised.
 func mkEntryWalkTx(
 	t *testing.T,
 	seed byte,
@@ -166,11 +164,9 @@ func balanceOf(c xdr.LedgerEntryChange) int64 {
 	return int64(c.Updated.Data.Account.Balance)
 }
 
-// TestProcessLedger_FailedTxFeeChangesAreObserved: a FAILED transaction still debits its fee
-// on chain and the lake's clickhouse.extractEntryChanges records it. The live dispatcher must
-// not `continue` past the whole tx before the entry-change walk, or the balance observer
-// misses the debit and the live path and lake disagree by exactly the failed-tx fee set, so a
-// re-derive from the lake could never reconcile.
+// TestProcessLedger_FailedTxFeeChangesAreObserved: a failed transaction still debits its fee on chain and the lake
+// records it, so the live walk must not skip the tx before the entry-change walk, or live and lake disagree by the
+// failed-tx fee set.
 func TestProcessLedger_FailedTxFeeChangesAreObserved(t *testing.T) {
 	// Ledger: one successful tx, then one FAILED tx whose fee debits
 	// ecWalkAccount from 1000 to 900.
@@ -201,12 +197,9 @@ func TestProcessLedger_FailedTxFeeChangesAreObserved(t *testing.T) {
 	}
 }
 
-// TestProcessLedger_FeePhasePrecedesApplyPhase: stellar-core charges the fee for EVERY
-// transaction in the tx set before applying ANY, so every fee change precedes every
-// apply-phase change. A per-tx walk (tx1 fee, tx1 apply, tx2 fee) would give tx2's FEE-phase
-// balance a HIGHER IntraLedgerSeq than tx1's APPLY-phase balance for the same account, and
-// IntraLedgerSeq is the tiebreak that makes the FINAL change win the balance upsert, so a
-// fee-phase balance would be published as ledger-final.
+// TestProcessLedger_FeePhasePrecedesApplyPhase: core charges every fee before applying any transaction, so all fee
+// changes precede all apply changes. A per-tx walk would give a later tx's fee-phase balance a higher IntraLedgerSeq
+// than an earlier apply-phase one and publish it as ledger-final.
 func TestProcessLedger_FeePhasePrecedesApplyPhase(t *testing.T) {
 	// One account, touched twice in one ledger:
 	//   tx1 fee   → balance 990   (fee phase)
@@ -253,10 +246,8 @@ func TestProcessLedger_FeePhasePrecedesApplyPhase(t *testing.T) {
 	}
 }
 
-// TestProcessLedger_FailedTxStillSkipsPriceSignal keeps the half of the
-// pre-existing behaviour that is correct: a failed transaction's
-// operations produced no effect, so no op/event/contract-call decoder may
-// fire for it. Only its committed entry changes are observed.
+// TestProcessLedger_FailedTxStillSkipsPriceSignal pins that a failed transaction's operations had no effect, so no
+// op/event/contract-call decoder fires for it; only its committed entry changes are observed.
 func TestProcessLedger_FailedTxStillSkipsPriceSignal(t *testing.T) {
 	// A ManageSellOffer op that a decoder watches for. It is inside a
 	// FAILED tx, so it produced no effect and must never be routed.
@@ -294,10 +285,8 @@ func TestProcessLedger_FailedTxStillSkipsPriceSignal(t *testing.T) {
 	}
 }
 
-// TestProcessLedger_BlockOrderDoesNotChangePositions: stellar-core lists a
-// block's keys in hash-map order, so two exports of one ledger can disagree on
-// it. Each key's IntraLedgerSeq must not depend on which export was read, or a
-// re-derive from the other export renumbers what the guards compare.
+// TestProcessLedger_BlockOrderDoesNotChangePositions: core lists a block's keys in hash-map order, so two exports of
+// one ledger can differ; each key's IntraLedgerSeq must not depend on which export was read.
 func TestProcessLedger_BlockOrderDoesNotChangePositions(t *testing.T) {
 	change := func(seed byte, balance int64) xdr.LedgerEntryChange {
 		id, err := xdr.NewAccountId(xdr.PublicKeyTypePublicKeyTypeEd25519, xdr.Uint256{seed})
@@ -342,10 +331,8 @@ func TestProcessLedger_BlockOrderDoesNotChangePositions(t *testing.T) {
 	}
 }
 
-// TestProcessLedger_PanickingDecoderLosesOnlyItsOwnEvent is the
-// end-to-end shape of the incident: ProcessLedger must return nil (so
-// the caller persists the cursor and the process keeps running) while
-// the SIBLING source's event still decodes.
+// TestProcessLedger_PanickingDecoderLosesOnlyItsOwnEvent is the end-to-end case: ProcessLedger returns nil so the
+// cursor persists, and the sibling source's event still decodes.
 func TestProcessLedger_PanickingDecoderLosesOnlyItsOwnEvent(t *testing.T) {
 	for _, tc := range []struct {
 		name          string
@@ -401,10 +388,7 @@ func TestProcessLedger_PanickingDecoderLosesOnlyItsOwnEvent(t *testing.T) {
 }
 
 func TestProcessLedger_emptyLedgerYieldsNoOutputs(t *testing.T) {
-	// A LedgerCloseMeta with no transactions should produce zero
-	// outputs and no error. Validates that the reader construction
-	// path doesn't trip on empty ledgers (common during Stellar's
-	// quiet periods on testnet).
+	// A LedgerCloseMeta with no transactions must produce zero outputs and no error, as on quiet testnet ledgers.
 	lcm := emptyLedgerCloseMeta(t, 42)
 
 	disp := New(&fakeDecoder{name: "unused", topic0: "zzz"})
@@ -421,11 +405,9 @@ func TestProcessLedger_emptyLedgerYieldsNoOutputs(t *testing.T) {
 	}
 }
 
-// TestProcessLedger_EvictedKeysReachTheEntryDecoders: Soroban state archival is the one way an
-// entry leaves live state WITHOUT a transaction touching it. When its TTL lapses, core evicts
-// it at ledger close and reports it only in the LedgerCloseMeta's evicted-keys list, which the
-// three-phase tx-meta walk cannot see. Without it an archived SAC balance's last write stands
-// as the holder's balance forever and the served supply stays permanently above the truth.
+// TestProcessLedger_EvictedKeysReachTheEntryDecoders: TTL eviction removes an entry without any transaction touching
+// it and appears only in the evicted-keys list, which the tx-meta walk cannot see; without it an archived SAC
+// balance stands forever and served supply stays above the truth.
 func TestProcessLedger_EvictedKeysReachTheEntryDecoders(t *testing.T) {
 	env, proc := mkEntryWalkTx(t, 0x55, true, nil, []xdr.LedgerEntryChange{accountBalanceChange(1000)})
 	lcm := mkEntryWalkLedger(4244,
@@ -582,14 +564,9 @@ func TestProcessLedger_UpgradesCountedWithoutEntryDecoders(t *testing.T) {
 	}
 }
 
-// ─── OpArgs provenance gate + lazy state-write enrichment ────────────
-//
-// The op's top-level InvokeContract args belong to the CALLEE of that call. Attaching them to
-// EVERY event the op produced, including events from OTHER contracts reached as
-// sub-invocations, lets a wrapper contract call adapter.write_prices with the genuine signed
-// payload while its own attacker-chosen args reach the adapter-event decoder as the
-// write_prices args (feed-attribution steering). These tests pin the gate at the ProcessLedger
-// level: args attach exactly when invoked-contract == emitting-contract.
+// The op's top-level InvokeContract args belong to the callee. Attaching them to every event the op produced,
+// including other contracts' sub-invocations, lets a wrapper steer feed attribution with attacker-chosen args. These
+// tests pin that args attach exactly when invoked-contract == emitting-contract.
 
 // provContracts: A is the invoked (callee) contract, B a sub-invoked
 // contract emitting in the same op.

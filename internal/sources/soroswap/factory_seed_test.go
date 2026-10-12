@@ -15,10 +15,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/stellarrpc"
 )
 
-// mockSorobanRPC stages a JSON-RPC server that responds to
-// simulateTransaction with the provided result XDR. Each call gets
-// the next entry from `results`; subsequent calls reuse the last
-// entry. Lets us script multi-step factory sweeps.
+// mockSorobanRPC stages a JSON-RPC server answering simulateTransaction with the next entry of `results`,
+// reusing the last once exhausted, to script multi-step factory sweeps.
 func mockSorobanRPC(t *testing.T, results []string, errMsg string) *httptest.Server {
 	t.Helper()
 	idx := 0

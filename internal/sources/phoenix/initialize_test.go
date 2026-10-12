@@ -6,10 +6,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// Real mainnet initialize bodies from the ClickHouse lake (pool CBENABXP…). Each is a single
-// Address (the announced token contract); topic[1] carries the slot. The base64 bodies are
-// split into concatenated chunks only so gitleaks doesn't flag the short high-entropy Address
-// XDR as a generic-api-key false positive; they decode identically.
+// Real mainnet initialize bodies (pool CBENABXP...): each is a single Address (the announced token contract) with the
+// slot in topic[1]. The base64 is chunked only so gitleaks does not flag the short Address XDR as a generic-api-key.
 const (
 	realInitTokenABody = "AAAAEgAAAAEltP" + "zYWa7C+mNIQ4xI" + "mzw8EMmLbSG+T9" + "PLMMtolT75dw=="
 	realInitTokenBBody = "AAAAEgAAAAGt78" + "5ZruUpaPdgYdSU" + "wlJbdWWfpClqZf" + "SZ7ynlZHfklg=="
@@ -59,13 +57,9 @@ func TestDecodeInitialize_realBodies(t *testing.T) {
 	}
 }
 
-// Real per-pool STAKE contract initialize event from the ClickHouse lake: stake contract
-// CABWEFVX…, ledger 51,572,026, tx 02cea787…, topic = ("initialize","LP Share token staking
-// contract"), body = a single Address (the LP-share token). The base64 body is chunked for
-// gitleaks like the pool-init bodies above. The stake-contract gated seed makes Matches() true
-// for this shape, and decodeInitializeEvent must not error on it: it must Decode to NO output
-// (recognized, not projected), NOT an error, or projection re-derive hits undecodable blind
-// ledgers.
+// Real per-pool stake contract initialize event (body one Address, the LP-share token). The stake seed makes Matches()
+// true, so decodeInitializeEvent must Decode to no output (recognized, not projected), not an error, or re-derive hits
+// undecodable blind ledgers. Base64 is chunked for gitleaks.
 const (
 	realStakeInitContract = "CABWEFVXUB3XWYPTWFETEGJR2WRGE2ZKYYLZDLV3EBUVFMOU4ENK4DJC"
 	realStakeInitBody     = "AAAAEgAAAAFmKV" + "chSUzLfJpaiqii" + "gI0VlWhzDQX79" + "g+CV3YA/NDDsA=="

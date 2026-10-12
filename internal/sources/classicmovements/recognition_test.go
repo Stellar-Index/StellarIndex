@@ -26,11 +26,9 @@ func allClassicOpTypes(t *testing.T) []xdr.OperationType {
 	return out
 }
 
-// opOnlyInScope is the authoritative expected set for the op-only decode surface (Matches /
-// decodeOp / Decoder.Decode). It is hand-written, not derived from SupportedOpTypes, so the test
-// fails when those three drift apart. LiquidityPoolDeposit/Withdraw and the CAP-0038
-// AllowTrust/SetTrustLineFlags edge case belong to the separate entry-changes surface, guarded by
-// entrychanges_test.go's TestRecognition_EntryChangeOpTypes*.
+// opOnlyInScope is the authoritative expected set for the op-only decode surface (Matches / decodeOp / Decoder.Decode), hand-written
+// rather than derived from SupportedOpTypes so the test fails when they drift apart. LiquidityPoolDeposit/Withdraw and the CAP-0038 edge
+// cases belong to the entry-changes surface (entrychanges_test.go's TestRecognition_EntryChangeOpTypes*).
 var opOnlyInScope = map[xdr.OperationType]bool{
 	xdr.OperationTypeCreateAccount:            true,
 	xdr.OperationTypePayment:                  true,
@@ -109,10 +107,8 @@ func TestRecognition_SupportedOpTypesMatchesOpOnlyInScope(t *testing.T) {
 	}
 }
 
-// TestRecognition_DecodeRejectsOutOfScopeTypesLoudly requires Decode of an out-of-scope op type to
-// fail with ErrUnsupportedOpType rather than silently return zero movements, so a new type cannot
-// fall through to "no rows" forever. An in-scope control must not hit that error (it may still
-// fail for other reasons on a zero-value body; decode_test.go covers the success path).
+// TestRecognition_DecodeRejectsOutOfScopeTypesLoudly requires Decode of an out-of-scope op type to fail with ErrUnsupportedOpType
+// rather than return zero movements, so a new type cannot fall through to "no rows" forever. An in-scope control must not hit that error.
 func TestRecognition_DecodeRejectsOutOfScopeTypesLoudly(t *testing.T) {
 	d := NewDecoder()
 	for _, typ := range allClassicOpTypes(t) {

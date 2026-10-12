@@ -82,16 +82,9 @@ func TestDivergenceRefreshOutcomesAreSeeded(t *testing.T) {
 	}
 }
 
-// TestCustomerWebhookDeliveryOutcomesAreSeeded: in the same shape as its divergence sibling above.
-//
-// Every alert on this counter uses rate()/increase(). A CounterVec child does not exist until
-// its first .Inc(), and rate()/increase() over a series whose FIRST sample in the window is
-// also its first ever computes 0, so on a fresh process the first `exhausted` (a delivery
-// permanently lost) and the first `mark_error` (the duplicate-delivery loop) raise nothing.
-// The alerts would then need a SECOND occurrence in the same window.
-//
-// The subject set is derived from the EMITTER, so a new outcome added to
-// customerwebhook/worker.go without a matching seed fails immediately.
+// TestCustomerWebhookDeliveryOutcomesAreSeeded: alerts on this counter use rate()/increase(), which compute 0 when a
+// series' first sample is its first ever, so unseeded, the first `exhausted` (lost delivery) or `mark_error`
+// (duplicate loop) raises nothing. The subject set derives from the emitter, so an unseeded new outcome fails.
 func TestCustomerWebhookDeliveryOutcomesAreSeeded(t *testing.T) {
 	src, err := os.ReadFile("../customerwebhook/worker.go")
 	if err != nil {

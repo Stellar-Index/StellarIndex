@@ -461,10 +461,8 @@ func TestCompositeReference_ToleranceBoundary(t *testing.T) {
 	}
 }
 
-// TestCompositeReference_RefreshOrderPutsLegsFirst — the reference is
-// evaluated inside the target's refresh, so its priced legs must
-// refresh earlier in the same tick whatever order the operator listed
-// the pairs in; and with the mechanism off the order is untouched.
+// TestCompositeReference_RefreshOrderPutsLegsFirst pins that priced legs refresh before the target in the same tick,
+// whatever order the pairs were listed in; with the mechanism off the order is untouched.
 func TestCompositeReference_RefreshOrderPutsLegsFirst(t *testing.T) {
 	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
 	usdGBP := mkPair(t, "fiat", "USD", "fiat", "GBP")
@@ -627,10 +625,8 @@ func TestCompositeReference_ReleaseBandHoldsVenueOffset(t *testing.T) {
 
 // ─── the verdict gauges must not outlive the evaluated set ───────────────
 
-// compositeSeriesFor counts the series c holds for one (pair, window),
-// independently of whatever other tests in this package left on the
-// package-level collector. A registry can hold a collector that another
-// registry already holds, so this is a read-only lens on it.
+// compositeSeriesFor counts the series c holds for one (pair, window), independent of other tests' leftovers on the
+// package-level collector. It is a read-only lens, since another registry may already hold the collector.
 func compositeSeriesFor(t *testing.T, c prometheus.Collector, pair, window string) int {
 	t.Helper()
 	reg := prometheus.NewPedanticRegistry()
@@ -709,10 +705,8 @@ func TestCompositeReference_VerdictGaugeRetiredWhenPairLeavesTheEvaluatedSet(t *
 	}
 }
 
-// A target that stays eligible while one of its legs stops resolving
-// must not keep that leg's last per-leg series: the gauges describe THIS
-// tick's reading, and a stale leg_sources=2 next to an "unavailable"
-// verdict tells an on-call reader the leg is healthy when it is dry.
+// A target that stays eligible while one of its legs stops resolving must not keep that leg's last per-leg series: a
+// stale leg_sources=2 beside an unavailable verdict would tell on-call the leg is healthy when it is dry.
 func TestCompositeReference_LegSeriesRetiredWhenLegDropsOnEligibleTarget(t *testing.T) {
 	// A target no other test in this package uses, so the series counted
 	// here can only have come from this test.

@@ -9,10 +9,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/divergence"
 )
 
-// TestRefreshPinnedPair_ReachesNoVerdict: a pinned refresh polls the
-// references (fresh Median) but neither sets nor clears the warning, fires
-// no hook, and marks the entry Pinned. Its observations are still recorded,
-// against the pinned price.
+// TestRefreshPinnedPair_ReachesNoVerdict pins that a pinned refresh polls the references (fresh Median) but neither
+// sets nor clears the warning, fires no hook, and marks the entry Pinned; observations are still recorded against the
+// pinned price.
 func TestRefreshPinnedPair_ReachesNoVerdict(t *testing.T) {
 	refs := []divergence.Reference{
 		&stubReference{name: "coingecko", price: 1.00},

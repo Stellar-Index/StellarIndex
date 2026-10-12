@@ -9,10 +9,9 @@ import (
 	"testing"
 )
 
-// TestNewCrossAnchorFiller_NetworkGuard: the built-in DefaultCrossAnchorSources are all PUBNET
-// archives, so a filler for a non-pubnet archive with no explicit sources MUST be refused;
-// otherwise `archive-completeness fill` on a test-net VM writes pubnet checkpoints into the
-// test-net archive root, which galexie/indexer then ingest as test-net data.
+// TestNewCrossAnchorFiller_NetworkGuard pins that, since DefaultCrossAnchorSources are all PUBNET archives, a filler
+// for a non-pubnet archive with no explicit sources is refused; otherwise `archive-completeness fill` would write
+// pubnet checkpoints into a test-net root that galexie/indexer ingest as test-net data.
 func TestNewCrossAnchorFiller_NetworkGuard(t *testing.T) {
 	dir := t.TempDir()
 
@@ -44,10 +43,8 @@ func TestNewCrossAnchorFiller_NetworkGuard(t *testing.T) {
 	}
 }
 
-// TestNewCrossAnchorFiller_HalfBlankOwnerDoesNotDefaultToRoot is the
-// setting only one of OwnerUser/OwnerGroup
-// must leave the OTHER half untouched (os.Chown's -1 sentinel), not fall
-// back to Go's int zero-value, which is uid/gid 0 (root).
+// TestNewCrossAnchorFiller_HalfBlankOwnerDoesNotDefaultToRoot pins that setting only one of OwnerUser/OwnerGroup
+// leaves the other untouched (os.Chown's -1 sentinel) rather than Go's int zero value, uid/gid 0 (root).
 func TestNewCrossAnchorFiller_HalfBlankOwnerDoesNotDefaultToRoot(t *testing.T) {
 	dir := t.TempDir()
 

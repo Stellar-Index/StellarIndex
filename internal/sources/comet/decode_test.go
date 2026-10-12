@@ -208,10 +208,9 @@ func TestDecodeSwap_WrongTopic_Rejects(t *testing.T) {
 	}
 }
 
-// TestDecodeSwap_DoesNotReadContractID pins that decodeSwap is a pure
-// body decoder: it never reads ContractID. The contract-identity gate
-// lives in Decoder.Matches (ADR-0035/0040) and is pinned in
-// adapter_test.go; calling decodeSwap directly bypasses it.
+// TestDecodeSwap_DoesNotReadContractID pins that decodeSwap is a pure body decoder that never reads ContractID; the
+// identity gate lives in Decoder.Matches (ADR-0035/0040, pinned in adapter_test.go) and calling decodeSwap directly
+// bypasses it.
 func TestDecodeSwap_DoesNotReadContractID(t *testing.T) {
 	caller := accountStrkeyFromSeed(t, 0x10)
 	tokenIn := contractStrkeyFromSeed(t, 0x20)
@@ -291,10 +290,8 @@ type cometSwapFixture struct {
 	Value          string   `json:"value"`
 }
 
-// TestRealMainnetFixtures_comet replays a real captured Comet POOL swap event through the
-// dispatcher-facing path (Matches + Decode), unlike the rest of this file which synthesises
-// its bytes. It proves the documented SwapEvent Map shape against bytes the chain produced,
-// not just against upstream Rust source.
+// TestRealMainnetFixtures_comet replays a real captured Comet POOL swap through Matches + Decode, unlike the
+// synthesised bytes elsewhere in this file, proving the documented SwapEvent Map shape against chain-produced bytes.
 func TestRealMainnetFixtures_comet(t *testing.T) {
 	root := filepath.Join("..", "..", "..", "test", "fixtures", "comet")
 	dirs, err := os.ReadDir(root)
@@ -397,10 +394,9 @@ func runCometRealFixture(t *testing.T, path string) {
 	}
 }
 
-// TestRealMainnetFixtures_cometSelfPair replays real self-pair swaps
-// (token_in == token_out) from the curated pool through Matches + Decode.
-// Production drops them to zero rows with no error so the completeness
-// re-derive counts them as expected=0 rather than as undecodable.
+// TestRealMainnetFixtures_cometSelfPair replays real self-pair swaps (token_in == token_out) from the curated pool
+// through Matches + Decode. Production drops them to zero rows with no error, so completeness re-derive counts
+// expected=0, not undecodable.
 func TestRealMainnetFixtures_cometSelfPair(t *testing.T) {
 	dir := filepath.Join("..", "..", "..", "test", "fixtures", "comet",
 		"8abc28913035c07411ed5d134e6bfeab4723d97ddd4d1a22a0605d35c94d1a36", "self_pair")

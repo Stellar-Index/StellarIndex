@@ -91,10 +91,9 @@ func TestSubstanceGated_Applicability(t *testing.T) {
 	}
 }
 
-// fakeSubstanceReader returns the canned substance of the one pair key
-// the requested spelling sets cover, and counts calls. Canned aggregates
-// cannot be unioned (shared minutes are invisible in them), so a request
-// covering two canned keys is an error; minuteStore models that case.
+// fakeSubstanceReader returns the canned substance of the one pair key the requested spellings cover and counts
+// calls; canned aggregates cannot be unioned, so a request covering two keys is an error (minuteStore models that
+// case).
 type fakeSubstanceReader struct {
 	byPair map[string]timescale.MarketSubstance
 	err    error
@@ -215,10 +214,9 @@ func TestSubstanceGate_FailsOpenOnStoreError(t *testing.T) {
 	}
 }
 
-// TestSubstanceGate_VerdictReportsUnmeasured pins the gate half: a
-// store error is reported as NO verdict (allowed=false, measured=false)
-// to callers that must not publish an unverified price, and is counted,
-// while Allowed keeps its single-lookup fail-open.
+// TestSubstanceGate_VerdictReportsUnmeasured pins that a store error yields no verdict (allowed=false,
+// measured=false) for callers that must not publish an unverified price, and is counted, while Allowed keeps its
+// single-lookup fail-open.
 func TestSubstanceGate_VerdictReportsUnmeasured(t *testing.T) {
 	classic := mustAsset(t, "SCAM-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V")
 	native := mustAsset(t, "native")
@@ -314,10 +312,8 @@ func (h countingHandler) Handle(_ context.Context, r slog.Record) error {
 func (h countingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
 func (h countingHandler) WithGroup(string) slog.Handler      { return h }
 
-// TestSubstanceGate_LogsOnTransitionsOnly — the steady state
-// (hundreds of thin pairs re-measured every TTL expiry) produced
-// 6,000 WARNs/hour on r1. The metric carries the volume;
-// the log carries only verdict CHANGES.
+// TestSubstanceGate_LogsOnTransitionsOnly pins that the steady state (hundreds of thin pairs re-measured per TTL)
+// logs only verdict CHANGES, since it produced 6,000 WARNs/hour; the metric carries the volume.
 func TestSubstanceGate_LogsOnTransitionsOnly(t *testing.T) {
 	classic := mustAsset(t, "SCAM-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V")
 	native := mustAsset(t, "native")
@@ -391,10 +387,8 @@ func substanceLegs(minutes []int64, grain time.Duration) (buckets, spanSeconds i
 	return int64(len(seen)), hi - lo
 }
 
-// substanceLayouts is the weakest-shaped market for the policy (packed
-// minutes, the last pushed out to the span floor) plus every union of
-// up to two runs of consecutive minutes drawn from a grid of hours,
-// in-hour offsets and lengths.
+// substanceLayouts is the weakest-shaped market for the policy (packed minutes, the last pushed to the span floor)
+// plus every union of up to two runs of consecutive minutes from a grid of hours, in-hour offsets and lengths.
 func substanceLayouts(pol SubstancePolicy) [][]int64 {
 	packed := make([]int64, 0, pol.MinBuckets)
 	for m := range pol.MinBuckets - 1 {
@@ -475,10 +469,8 @@ func TestSubstanceGate_HourGrainFloorAgreesWithMinuteFloorForAnyPolicy(t *testin
 	}
 }
 
-// TestNewSubstanceGate_LogsTheEffectivePolicy: r1 sets no
-// substance keys, so it runs at library defaults no config file shows.
-// The gate states the floors it resolved at construction, so a boot log
-// answers "what floor is this deployment enforcing" without a code read.
+// TestNewSubstanceGate_LogsTheEffectivePolicy pins that the gate logs the floors it resolved at construction, so a
+// boot log shows what a deployment enforces even when it runs on library defaults no config file shows.
 func TestNewSubstanceGate_LogsTheEffectivePolicy(t *testing.T) {
 	var buf bytes.Buffer
 	NewSubstanceGate(nil, SubstanceGateOptions{
@@ -743,11 +735,9 @@ func TestSubstanceGate_WithheldCountCarriesTheFloor(t *testing.T) {
 	}
 }
 
-// TestSubstanceGate_UnvaluedMarketIsWithheldAndNamed: a market
-// with real persistence but no USD valuation — the SEP-41/SEP-41 shape,
-// 800 buckets over 22h — stays withheld (an unvaluable volume cannot be
-// verified, and waiving the floor would admit the self-minted pair the
-// gate exists for), but under its own floor, not as a thin market.
+// TestSubstanceGate_UnvaluedMarketIsWithheldAndNamed pins that a market with persistence but no USD valuation (the
+// SEP-41/SEP-41 shape) stays withheld, since waiving the floor would admit the self-minted pair, but under its own
+// floor, not as thin.
 func TestSubstanceGate_UnvaluedMarketIsWithheldAndNamed(t *testing.T) {
 	a := mustAsset(t, "TOKA-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V")
 	b := mustAsset(t, "TOKB-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA")
@@ -772,11 +762,9 @@ type minuteRow struct {
 	usd         int64
 }
 
-// minuteStore models prices_1m as rows and answers the substance question
-// the way the SQL does: distinct buckets, summed volume and span over
-// every row the request selects, in both stored orientations. It is a
-// model of the table, not a canned answer, so it can only agree with a
-// gate that asks for the union in one read.
+// minuteStore models prices_1m as rows and answers the substance question as the SQL does (distinct buckets,
+// summed volume and span over every selected row, both orientations), so it only agrees with a gate that asks for
+// the union in one read.
 type minuteStore struct{ rows []minuteRow }
 
 func (m *minuteStore) measure(match func(base, quote string) bool) timescale.MarketSubstance {
@@ -826,10 +814,9 @@ func (m *minuteStore) PairMarketSubstanceAt(
 	return m.PairMarketSubstance(ctx, bases, quotes, window)
 }
 
-// XLM's SDEX leg (native) and CEX leg (crypto:XLM) trading in the SAME ten
-// minutes are ten minutes of market, not twenty. Counting each spelling's
-// distinct minutes and adding them let a market clear the 20-minute floor
-// on half the persistence it demands.
+// XLM's SDEX leg (native) and CEX leg (crypto:XLM) trading in the same ten minutes are ten minutes of market, not
+// twenty: summing each spelling's distinct minutes let a market clear the 20-minute floor on half the required
+// persistence.
 func TestSubstanceGate_AliasUnionCountsSharedMinutesOnce(t *testing.T) {
 	usdc := mustAsset(t, "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
 	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)

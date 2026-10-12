@@ -20,11 +20,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 )
 
-// The anomaly.freeze and divergence.firing webhooks push the pair's
-// aggregated price (frozen_value / our_price) to customers, signed. They
-// must consult the same withholding decision /v1/price serves under, on
-// BOTH legs, or a flagged issuer's price is delivered that the API refuses
-// to publish.
+// The anomaly.freeze and divergence.firing webhooks push the pair's aggregated price to customers, signed. They must
+// consult the same withholding decision /v1/price serves under, on BOTH legs, or a flagged issuer's price is delivered
+// that the API refuses.
 
 type recordingPublisher struct {
 	events   []platform.WebhookEventType
@@ -205,10 +203,9 @@ func TestDivergenceFiringHook_UnflaggedPairStillDelivers(t *testing.T) {
 	}
 }
 
-// TestWebhookPublishSitesAreGated fails when a customer-webhook Publish in
-// this binary's non-test sources is not preceded, in the same function
-// literal, by the withholding decision — so a new push surface cannot
-// deliver a price the API withholds.
+// TestWebhookPublishSitesAreGated fails when a customer-webhook Publish in this binary's non-test sources is not
+// preceded, in the same function literal, by the withholding decision, so a new push surface cannot deliver a price
+// the API withholds.
 func TestWebhookPublishSitesAreGated(t *testing.T) {
 	fset := token.NewFileSet()
 	pkgs, err := parser.ParseDir(fset, ".", func(fi fs.FileInfo) bool {
@@ -242,10 +239,8 @@ func TestWebhookPublishSitesAreGated(t *testing.T) {
 	}
 }
 
-// webhookPublishAndGate reports whether body calls X.Publish with a
-// platform.WebhookEvent* argument, and whether it asks a pricingguard.Gate.
-// A call through a method value (send := pub.Publish; send(...)) publishes
-// too. The gate side stays call-only: a bare reference asks nothing.
+// webhookPublishAndGate reports whether body calls X.Publish with a platform.WebhookEvent* argument (also via a method
+// value), and whether it asks a pricingguard.Gate. The gate side is call-only: a bare reference asks nothing.
 func webhookPublishAndGate(body *ast.BlockStmt) (publishes, gated bool) {
 	senders := publishMethodValues(body)
 	ast.Inspect(body, func(n ast.Node) bool {

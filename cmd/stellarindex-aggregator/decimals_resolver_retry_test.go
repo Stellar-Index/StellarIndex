@@ -1,16 +1,8 @@
 package main
 
-// The decimals-assumption guard must be DELAYED by a cold lake, never disabled by one.
-//
-// A resolver dialled once inline at startup would, on one failed ping, log a WARN and leave the
-// guard (Backfill and periodic Sweep both) nonexistent for that process. A reboot makes that the
-// expected case: clickhouse-server spends minutes loading metadata for the lake and the
-// aggregator unit's ordering does not wait for it. A non-7-decimal SEP-41 token listing
-// afterwards then gets no nonstandard_decimals_assets row, aggregate.AdjustPrice applies no
-// correction, and every served price on its pairs is skewed by 10^(7-decimals), silently, since
-// no metric separates "the guard found nothing" from "the guard never ran".
-//
-// Fails against single-dial wiring: one dial, no retry, guard never armed.
+// The decimals-assumption guard must be DELAYED by a cold lake, never disabled by one. A single inline dial that fails
+// at boot leaves Backfill and Sweep nonexistent for the process, so non-7-decimal SEP-41 prices go uncorrected by
+// 10^(7-decimals), silently. Fails against single-dial wiring: one dial, no retry, guard never armed.
 
 import (
 	"context"

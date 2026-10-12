@@ -57,10 +57,8 @@ func TestVariantSourceName(t *testing.T) {
 }
 
 func TestQuoteForVariant(t *testing.T) {
-	// CEX and FX publish an explicit USD base. DEX (CALI2BYU…) is
-	// denominated in whatever its SEP-40 base() returns — the pubnet USDC
-	// SAC — so it must be stamped with that SAC, never fiat:USD (ingest-time
-	// stablecoin normalisation hides a depeg) and never native (XLM).
+	// CEX and FX publish an explicit USD base. DEX is denominated in its SEP-40 base(), the pubnet USDC SAC, so it must
+	// be stamped with that SAC, never fiat:USD (ingest-time stablecoin normalisation hides a depeg) and never native.
 	usd, _ := canonical.NewFiatAsset("USD")
 	usdcSAC, err := canonical.NewSorobanAsset("CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75")
 	if err != nil {
@@ -166,10 +164,8 @@ func TestDecodeUpdate_fanout(t *testing.T) {
 }
 
 func TestDecodeUpdate_OpIndexStrideIsFixed(t *testing.T) {
-	// Regression guard: an OpIndex of `OperationIndex × len(prices) + i`
-	// could collide across events in the same tx with different vector
-	// sizes. With a fixed stride (opIndexFanoutStride),
-	// the op_index ranges never overlap.
+	// Guards against OpIndex collisions: a base of `OperationIndex * len(prices) + i` could collide across events in
+	// one tx with different vector sizes; a fixed stride (opIndexFanoutStride) keeps ranges disjoint.
 	prev, prevTS := decodeUpdateBody, decodeUpdateTimestamp
 	defer func() { decodeUpdateBody, decodeUpdateTimestamp = prev, prevTS }()
 	decodeUpdateTimestamp = func(_ string) (uint64, error) { return 0, nil }
@@ -240,11 +236,9 @@ func TestDecodeUpdate_OpIndexStrideIsFixed(t *testing.T) {
 	}
 }
 
-// TestDecodeUpdate_EventIndexPreventsSameOpCollision guards a same-op collision: two Reflector
-// update events from the same operation (equal OperationIndex) at different positions in its
-// contract-event list (different EventIndex) would collide if the synthetic OpIndex fanout base
-// were OperationIndex alone. The base must include EventIndex so such events get disjoint
-// 1024-wide OpIndex blocks.
+// TestDecodeUpdate_EventIndexPreventsSameOpCollision: two update events from one operation at different EventIndex
+// would collide if the synthetic OpIndex base were OperationIndex alone; the base must include EventIndex so they
+// get disjoint 1024-wide OpIndex blocks.
 func TestDecodeUpdate_EventIndexPreventsSameOpCollision(t *testing.T) {
 	prev, prevTS := decodeUpdateBody, decodeUpdateTimestamp
 	defer func() { decodeUpdateBody, decodeUpdateTimestamp = prev, prevTS }()
@@ -292,12 +286,9 @@ func TestDecodeUpdate_EventIndexPreventsSameOpCollision(t *testing.T) {
 	}
 }
 
-// TestDecodeUpdate_OpIndexStableAcrossAllowlistState: decodeUpdate's OpIndex is derived from the
-// raw update_data vector position, so the known slots of a mixed known/unknown batch must carry
-// the same OpIndex regardless of allow-list state. The unknown slot is a raw:<symbol> row that
-// consumes position 1 and is emitted, so the known row at position 2 keeps OpIndex 2, never the
-// compacted 1. A later allow-list extension then re-derives the same PK and promotes the row in
-// place instead of orphaning or duplicating it.
+// TestDecodeUpdate_OpIndexStableAcrossAllowlistState: OpIndex derives from the raw update_data vector position, so
+// known slots keep the same OpIndex regardless of allow-list state. An unknown slot is emitted as a raw:<symbol> row
+// consuming its position, so a later allow-list extension re-derives the same PK and promotes the row in place.
 func TestDecodeUpdate_OpIndexStableAcrossAllowlistState(t *testing.T) {
 	prev, prevTS := decodeUpdateBody, decodeUpdateTimestamp
 	defer func() { decodeUpdateBody, decodeUpdateTimestamp = prev, prevTS }()
@@ -404,10 +395,8 @@ func TestDecodeUpdate_emptyPricesIsNoOp(t *testing.T) {
 }
 
 func TestDecodeUpdate_rejectsPriceVectorLargerThanStride(t *testing.T) {
-	// Safety: a prices vector bigger than opIndexFanoutStride would
-	// overflow the fanned-out OpIndex range into the next operation's
-	// synthetic slot and cause PK collisions in oracle_updates.
-	// Refuse loudly with ErrPriceVectorOverflow instead.
+	// A prices vector larger than opIndexFanoutStride would overflow into the next operation's synthetic OpIndex range
+	// and collide PKs in oracle_updates, so it must be refused with ErrPriceVectorOverflow.
 	prev, prevTS := decodeUpdateBody, decodeUpdateTimestamp
 	defer func() { decodeUpdateBody, decodeUpdateTimestamp = prev, prevTS }()
 	decodeUpdateTimestamp = func(_ string) (uint64, error) { return 0, nil }
@@ -452,10 +441,8 @@ func TestDecoder_NamesPerVariant(t *testing.T) {
 }
 
 func TestUpdateEvent_sourceMatchesUpdate(t *testing.T) {
-	// The UpdateEvent.Source() must return the same thing as the
-	// contained OracleUpdate's Source field — otherwise metric
-	// labels drift between what the event reports and what the
-	// row persisted to oracle_updates carries.
+	// UpdateEvent.Source() must equal the contained OracleUpdate's Source, or metric labels drift from what
+	// oracle_updates persists.
 	u := canonical.OracleUpdate{Source: SourceCEX}
 	e := UpdateEvent{Update: u}
 	if e.Source() != SourceCEX {
@@ -463,10 +450,9 @@ func TestUpdateEvent_sourceMatchesUpdate(t *testing.T) {
 	}
 }
 
-// oracle_updates carries ts in its primary key, so a decoder change that shifts the ts of a
-// stored event makes a re-derive insert a second row instead of conflicting. These goldens pin
-// the exact ts per input; a failure means a ts-derivation change needs its own cleanup run (see
-// "Re-deriving a timestamp" in docs/architecture/ingest-pipeline.md).
+// oracle_updates carries ts in its primary key, so a decoder change shifting a stored event's ts makes a re-derive
+// insert a second row instead of conflicting. These goldens pin the exact ts per input; a failure needs its own
+// cleanup run (see "Re-deriving a timestamp" in docs/architecture/ingest-pipeline.md).
 func TestDecodeUpdate_TimestampGolden(t *testing.T) {
 	closedAt := time.Date(2026, 4, 23, 12, 0, 0, 0, time.UTC)
 	ceil := closedAt.Add(24 * time.Hour) // literal: a change to the shared window must trip this
@@ -720,10 +706,9 @@ func TestDecoder_Decode_emptyUpdateDataIsNoOp(t *testing.T) {
 }
 
 func TestDecoder_Decode_malformedClosedAtFailsClosed(t *testing.T) {
-	// LedgerClosedAt empty: the decoder fails closed (returns the error) rather than substituting
-	// time.Now(). closedAt is the fallback when topic[2] is missing or outside its sanity window,
-	// so a wall-clock value would mis-timestamp the row during a backfill replay. Matches the
-	// comet/blend/phoenix siblings.
+	// With LedgerClosedAt empty the decoder fails closed rather than substituting time.Now(): closedAt is the fallback
+	// when topic[2] is missing or out of window, so a wall-clock value would mis-timestamp the row on backfill replay
+	// (matches the comet/blend/phoenix siblings).
 	usd := xdr.ScSymbol("USD")
 	symSv := xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &usd}
 	body := encodeUpdateBody(t, []xdr.ScVal{symSv}, []*big.Int{big.NewInt(1_000_000_000_000)})
@@ -745,10 +730,8 @@ func TestDecoder_Decode_malformedClosedAtFailsClosed(t *testing.T) {
 }
 
 func TestDecoder_Decode_topicTimestampWinsOverClosedAt(t *testing.T) {
-	// With a present LedgerClosedAt, the in-window topic[2] oracle
-	// timestamp is what lands on the OracleUpdate (the ledger close
-	// time is only a fallback when topic[2] is missing / out of the
-	// sanity window).
+	// With LedgerClosedAt present, the in-window topic[2] oracle timestamp lands on the OracleUpdate; the ledger close
+	// time is only a fallback.
 	usd := xdr.ScSymbol("USD")
 	symSv := xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &usd}
 	body := encodeUpdateBody(t, []xdr.ScVal{symSv}, []*big.Int{big.NewInt(1_000_000_000_000)})
@@ -791,10 +774,9 @@ func TestDecoder_Decode_propagatesDecodeError(t *testing.T) {
 	}
 }
 
-// quoteForVariant has a default branch for unknown Variant values (e.g. a future oracle variant
-// not yet wired up). Pin: it returns fiat:USD (every real Reflector oracle denominates in
-// USD-equivalent) rather than zero, since a zero asset would later break canonical.NewPair.
-// TestQuoteForVariant covers DEX/CEX/FX; this adds the default branch.
+// quoteForVariant's default branch for unknown Variant values (e.g. a future oracle) must return fiat:USD (real
+// Reflector oracles denominate in USD-equivalent) rather than a zero asset, which would break canonical.NewPair
+// later. TestQuoteForVariant covers DEX/CEX/FX; this covers the default.
 
 func TestQuoteForVariant_unknownFallsBackToUSD(t *testing.T) {
 	const bogus Variant = 99

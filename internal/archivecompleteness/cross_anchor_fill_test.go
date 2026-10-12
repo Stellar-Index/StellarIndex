@@ -31,10 +31,9 @@ func goodGzipBody() []byte {
 	return buf.Bytes()
 }
 
-// checkpointGzipBody builds a REAL gzip'd, framed-XDR checkpoint file body for ledger `seq`: one
-// LedgerHeaderHistoryEntry with Header.LedgerSeq = seq, as validateCheckpointContent requires
-// before a fetched file is placed. Real files hold 64 such records, but validateCheckpointContent
-// stops at the first match, so one suffices.
+// checkpointGzipBody builds a real gzip'd, framed-XDR checkpoint body for ledger `seq`: one LedgerHeaderHistoryEntry
+// with Header.LedgerSeq = seq, as validateCheckpointContent requires. Real files hold 64 records but it stops at the
+// first match.
 func checkpointGzipBody(seq uint32) []byte {
 	entry := sdkxdr.LedgerHeaderHistoryEntry{
 		Header: sdkxdr.LedgerHeader{LedgerSeq: sdkxdr.Uint32(seq)},
@@ -66,10 +65,8 @@ func seqFromRelPath(t *testing.T, relPath string) uint32 {
 	return uint32(seq)
 }
 
-// fakeSource wraps an httptest.Server with per-checkpoint behaviour.
-// behaviour returns (status, body) for a given relPath; the test
-// expresses fault patterns (404 always, 500 once, etc.) by
-// returning the right tuple.
+// fakeSource wraps an httptest.Server with per-checkpoint behaviour: behaviour returns (status, body) for a relPath,
+// so tests express fault patterns (404 always, 500 once) through the returned tuple.
 func fakeSource(t *testing.T, behaviour func(relPath string) (int, []byte)) *httptest.Server {
 	t.Helper()
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -422,10 +419,8 @@ func TestFill_EmptyMissingList(t *testing.T) {
 	}
 }
 
-// TestFiller_ParentDirsAreTraversable drives Fill into an empty archive
-// root and asserts every directory it creates on the way to the placed
-// checkpoint is o+rx: the non-root verifier needs +x on each one, and
-// fetchOne once created them 0750, making every placed file EACCES.
+// TestFiller_ParentDirsAreTraversable pins that every directory Fill creates on the way to a placed checkpoint is
+// o+rx, since the non-root verifier needs +x on each and 0750 directories made every placed file EACCES.
 func TestFiller_ParentDirsAreTraversable(t *testing.T) {
 	// Pin the umask so the assertion measures the mode fetchOne requests,
 	// not the host's umask; non-parallel, so no other test observes it.
@@ -459,10 +454,9 @@ func TestFiller_ParentDirsAreTraversable(t *testing.T) {
 	}
 }
 
-// At the Fill layer: a source that fails EVERY try must still
-// appear in the attempt denominator, otherwise its failure ratio has
-// nothing to divide by. Two sources, the first always 500, the second
-// always healthy — the failing one must show attempts == failures.
+// At the Fill layer a source that fails EVERY try must still appear in the attempt denominator, or its failure ratio
+// has nothing to divide by. With one always-500 and one healthy source, the failing one must show attempts ==
+// failures.
 func TestFill_PerSourceFailuresUseRealSourceNames(t *testing.T) {
 	root := t.TempDir()
 

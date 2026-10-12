@@ -10,32 +10,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 )
 
-// Oracle auth-tree price forgery.
-//
-// The Band decoder reads the price straight from the InvokeContract call args, and the dispatcher
-// routes ContractCall decoders from the Soroban auth tree (extractInvokeContractCallTrees). A
-// SorobanAuthorizationEntry's RootInvocation is submitter-supplied and the host does NOT require
-// every declared authorization to be exercised, so an attacker can append a source-account auth
-// entry naming the Band StandardReference contract with FORGED relay() rates to a transaction
-// that does something else. Without corroboration the dispatcher decodes that never-executed
-// entry into a recognised oracle price.
-//
-// These tests drive the REAL Band decoder through the REAL dispatcher.ProcessLedger auth-tree
-// walk with real XDR, so they pin end-to-end behaviour, not a mock:
-//
-//   - a forged (auth-only-DECLARED, never-executed) Band relay entry produces ZERO price events
-//     and is counted as uncorroborated;
-//   - a genuine top-level Band relay call still produces its price.
-//
-// Band must implement ExecutionCorroborationRequirer and the dispatcher must compute
-// ExecutionCorroborated, or the first test fails.
+// Oracle auth-tree price forgery: auth entries need not be exercised, so an attacker can declare a Band relay() with
+// forged rates in an unrelated tx. Driving the real decoder through the real dispatcher auth-tree walk: a forged,
+// never-executed entry yields zero prices (counted uncorroborated); a genuine top-level relay still prices.
 
 const testPassphrase = network.TestNetworkPassphrase
 
-// relayArgsScVals builds a relay() argument vector
-// (from, symbol_rates, resolve_time, request_id) as raw ScVals, so the
-// same payload can be planted either as a genuine top-level call or as a
-// forged auth-tree entry.
+// relayArgsScVals builds a relay() argument vector (from, symbol_rates, resolve_time, request_id) as raw ScVals,
+// usable as a genuine call or a forged auth entry.
 func relayArgsScVals(t *testing.T, symbol string, rateE9, resolveSec, requestID uint64) []xdr.ScVal {
 	t.Helper()
 
@@ -172,10 +154,8 @@ func countBandUpdates(outs []interface{ Source() string }) int {
 	return n
 }
 
-// TestProcessLedger_ForgedBandAuthEntry_NotRecognisedAsPrice is the headline forgery proof: a
-// benign top-level call to a NON-Band contract carries a forged source-account auth entry naming
-// Band StandardReference with fabricated relay() rates. It never executed, so the dispatcher must
-// not decode it into a price.
+// TestProcessLedger_ForgedBandAuthEntry_NotRecognisedAsPrice: a benign call to a non-Band contract carrying a forged
+// auth entry naming Band StandardReference with fabricated relay() rates never executed, so no price may be decoded.
 func TestProcessLedger_ForgedBandAuthEntry_NotRecognisedAsPrice(t *testing.T) {
 	const forgedRateE9 = uint64(1_000_000_000_000_000) // $1,000,000/BTC — the fabricated print
 	bandCID := contractIDFromStrkey(t, adapterC)

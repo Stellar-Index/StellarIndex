@@ -9,10 +9,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// mustClosed is the test-side equivalent of the processPage
-// `e.EventClosedAt() + bail on error` guard. Test fixtures always
-// have well-formed RFC 3339 timestamps, so parse failure here is a
-// fixture bug.
+// mustClosed mirrors the processPage EventClosedAt-and-bail guard; fixtures have valid RFC 3339 timestamps, so a parse
+// failure is a fixture bug.
 func mustClosed(t *testing.T, e *events.Event) time.Time {
 	t.Helper()
 	ts, err := e.EventClosedAt()
@@ -149,16 +147,9 @@ func TestBufferSeparatesSwapsByGroupKey(t *testing.T) {
 	}
 }
 
-// TestDecoderSeparatesMultiPoolSameOpSwaps pins the multi-hop-router corruption case: swaps from
-// two DIFFERENT pool contracts within the SAME (ledger, tx_hash, op_index) must reassemble into
-// SEPARATE buffer entries. Without ContractID in groupKey, an INCOMPLETE leg from pool A (a lost
-// field-event, or an upgraded WASM emitting <8 fields) shares a slot with pool B, so pool B's
-// field-events complete it into ONE mixed trade (pool A's amounts, pool B's token, a stale
-// FanoutOpIndex) while pool A's leg is lost.
-//
-// This drives the FULL Decoder path (absorb → decodeSwap → TradeEvent) and asserts the tokens,
-// amounts and op_index. The interleave is chosen so the keyless code is unambiguously red: pool A
-// is missing SellToken and pool B emits SellToken FIRST.
+// TestDecoderSeparatesMultiPoolSameOpSwaps: swaps from two pools in the same (ledger, tx_hash, op_index) must
+// reassemble separately. Without ContractID in groupKey, an incomplete leg from pool A is completed by pool B's
+// field-events into one mixed trade while A's leg is lost.
 func TestDecoderSeparatesMultiPoolSameOpSwaps(t *testing.T) {
 	// Distinct assets per pool so contamination is observable.
 	poolAbuy, err := canonical.NewClassicAsset("EURC", testAddress)
@@ -475,10 +466,8 @@ func TestBufferBackfillOldEventsComplete(t *testing.T) {
 
 // ─── helpers ──────────────────────────────────────────────────────
 
-// allEightSwapEvents returns 8 synthetic events with stable
-// (ledger, tx, op) = (100, phoenixTxHash, 0). Order: sender,
-// sell_token, offer_amount, actual_received, buy_token,
-// return_amount, spread, referral.
+// allEightSwapEvents returns 8 synthetic events at (ledger, tx, op) = (100, phoenixTxHash, 0), in order: sender,
+// sell_token, offer_amount, actual_received, buy_token, return_amount, spread, referral.
 func allEightSwapEvents() []*events.Event {
 	return allEightSwapEventsKeyed(100, phoenixTxHash, 0)
 }

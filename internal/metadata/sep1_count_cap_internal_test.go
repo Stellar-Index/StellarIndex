@@ -6,10 +6,9 @@ import (
 	"testing"
 )
 
-// TestParseSEP1_CapsDocumentationFieldCount and TestParseSEP1_CapsCurrencyCount: the per-field
-// rune caps bound the BYTES of one value, not the COUNT of DOCUMENTATION keys or CURRENCIES
-// entries a hostile stellar.toml carries. Each is stored and served verbatim, so an unbounded
-// count is a growth vector even under the 1 MiB whole-body cap.
+// TestParseSEP1_CapsDocumentationFieldCount and TestParseSEP1_CapsCurrencyCount: per-field rune caps bound the bytes
+// of one value, not the count of DOCUMENTATION keys or CURRENCIES entries, which are stored and served verbatim, so an
+// unbounded count is a growth vector under the 1 MiB body cap.
 
 // wantMaxDocumentationFields and wantMaxCurrencies mirror maxDocumentationFields and
 // maxCurrencies as literals, not symbol references, so the test fails on an unbounded count

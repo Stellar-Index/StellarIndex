@@ -124,10 +124,8 @@ func FuzzResolveCompositeReference(f *testing.F) {
 func TestReleaseCorroborated_DecidedInExactRatSpace(t *testing.T) {
 	ref := compositeReference{
 		verdict: compositeVerdictRefuted,
-		// The float64 mirror alone says "release" (1.9 <= 2.0 band) —
-		// deliberately inconsistent with deviationRatio below, so the
-		// only way this test can pass is if releaseCorroborated reads
-		// deviationRatio.
+		// The float64 mirror alone says release (1.9 <= 2.0 band), deliberately inconsistent with deviationRatio
+		// below, so the test passes only if releaseCorroborated reads deviationRatio.
 		divergencePct: 1.9,
 		// The exact ratio actually measured: 3%, past the 2% band.
 		deviationRatio: big.NewRat(3, 100),

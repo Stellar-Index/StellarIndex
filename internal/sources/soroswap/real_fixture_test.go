@@ -15,16 +15,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// Replay real mainnet Soroswap swap + sync fixtures into decodeSwap. Validates that:
-//
-//   - topic classification works on real topic bytes,
-//   - sdkDecodeSwapAmounts extracts all four i128 fields from the
-//     real ScvMap body (not synthetic),
-//   - swap/sync correlation by (ledger, tx_hash, op_index) matches
-//     the real on-chain ordering.
-//
-// Fixtures live at test/fixtures/soroswap/<wasm_hash>/{swap,sync}_*.json. A swap and sync of
-// the same trade share the leading txHash prefix in their filename, which pairs them here.
+// Replays real mainnet Soroswap swap + sync fixtures into decodeSwap, validating topic classification on real bytes,
+// sdkDecodeSwapAmounts extracting all four i128 fields from the real ScvMap body, and swap/sync correlation by (ledger, tx_hash, op_index).
+// Fixtures live at test/fixtures/soroswap/<wasm_hash>/{swap,sync}_*.json; a swap and sync of one trade share the txHash filename prefix.
 
 type soroswapFixture struct {
 	ContractID     string   `json:"contract_id"`
@@ -176,10 +169,8 @@ func runSoroswapFixture(t *testing.T, swap, sync *soroswapFixture) {
 		t.Fatalf("classify(sync) = %q, want sync", got)
 	}
 
-	// We don't have a captured new_pair event for this pair — so
-	// seed the tokens with placeholders generated with valid CRC
-	// checksums (NewSorobanAsset's format check is lenient, but
-	// building with strkey.Encode keeps future validators happy).
+	// No captured new_pair event exists for this pair, so the tokens are seeded with placeholders built via strkey.Encode
+	// for valid CRC checksums.
 	tokenA := mustSorobanAsset(t, 0x01)
 	tokenB := mustSorobanAsset(t, 0x02)
 

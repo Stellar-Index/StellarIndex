@@ -6,10 +6,9 @@ import (
 	"time"
 )
 
-// snapshotWithHistory builds a Snapshot whose Currencies establish today's
-// baseline AND whose History7d carries the given trailing-day points per
-// ticker. The current-rate loop runs first in persistSnapshot, so it seeds
-// the per-ticker band baseline the history points are measured against.
+// snapshotWithHistory builds a Snapshot whose Currencies set today's baseline and whose History7d carries the
+// given points; persistSnapshot runs the current-rate loop first, which seeds the band baseline the history is
+// measured against.
 func snapshotWithHistory(current map[string]float64, history map[string][]HistoryPoint) *Snapshot {
 	s := snapshotOf(current)
 	s.History7d = history
@@ -38,12 +37,9 @@ func TestGuardSnapshot_StuckStreakCountsRefreshesNotBars(t *testing.T) {
 	}
 }
 
-// TestAcceptHistoryRate_StuckUpstreamReclassifies is the Massive ETB=44
-// incident: a provider serving the SAME broken history bar
-// refresh after refresh must keep being REFUSED, but stop counting as
-// fresh `history_deviation` once the streak passes the threshold — so
-// the rejection alert only carries new information. A different rejected
-// value, or an in-band acceptance, resets the streak.
+// TestAcceptHistoryRate_StuckUpstreamReclassifies pins that a provider repeating the same broken history bar stays
+// refused but stops counting as fresh `history_deviation` past the threshold; a different rejected value resets
+// the streak.
 func TestAcceptHistoryRate_StuckUpstreamReclassifies(t *testing.T) {
 	w, _ := bandTestWorker(io.Discard)
 	w.guards["ETB"] = &rateGuard{lastAccepted: 161.75}
@@ -75,10 +71,8 @@ func TestAcceptHistoryRate_StuckUpstreamReclassifies(t *testing.T) {
 		t.Fatalf("streak after new value = (%d, %v), want (1, 55)", g.stuckCount, g.stuckRejectedRate)
 	}
 
-	// An in-band bar is accepted but must NOT reset the streak (the ETB
-	// fix). A good sibling bar in the same sweep clearing a different
-	// broken bar's streak is exactly what kept `_stuck` from ever
-	// engaging. The 55-streak persists across the in-band accept.
+	// An in-band bar is accepted but must NOT reset the streak, or good sibling bars would keep `_stuck` from ever
+	// engaging.
 	if !w.acceptHistoryRate("ETB", 160.0) {
 		t.Fatal("in-band history bar must be accepted")
 	}
@@ -87,13 +81,9 @@ func TestAcceptHistoryRate_StuckUpstreamReclassifies(t *testing.T) {
 	}
 }
 
-// TestAcceptHistoryRate_BrokenBarWithGoodSiblingsReachesStuck is the ETB
-// incident in miniature: a persistently-broken dated bar (44), refused
-// sweep after sweep, INTERLEAVED with the accepted good sibling bars (160)
-// of the same trailing window. It must still accumulate to the _stuck
-// threshold. Guards against each sweep's good bars resetting the streak the
-// broken bar just incremented, which oscillates 0↔1 so the alert
-// never de-noises and pages for days.
+// TestAcceptHistoryRate_BrokenBarWithGoodSiblingsReachesStuck pins that a broken bar interleaved with accepted
+// good bars still reaches the _stuck threshold, instead of the streak oscillating 0 and 1 so the alert never
+// de-noises.
 func TestAcceptHistoryRate_BrokenBarWithGoodSiblingsReachesStuck(t *testing.T) {
 	w, _ := bandTestWorker(io.Discard)
 	w.guards["ETB"] = &rateGuard{lastAccepted: 160}
@@ -118,12 +108,8 @@ func TestAcceptHistoryRate_BrokenBarWithGoodSiblingsReachesStuck(t *testing.T) {
 	}
 }
 
-// TestAcceptHistoryRate_StuckStreakToleratesJitter — the second half of
-// the UZS incident: the stuck reclassification keyed on EXACT float
-// equality of consecutive rejected values, and a live broken upstream
-// jitters (11791.69 → 11785 → 11817.69 …), so the streak reset every
-// refresh and the alert never quieted. Rejections within
-// [stuckSameRateTolerance] of the tracked value must extend the streak.
+// TestAcceptHistoryRate_StuckStreakToleratesJitter pins that rejections within [stuckSameRateTolerance] of the
+// tracked value extend the streak; exact float equality reset it on every jitter of a live broken upstream.
 func TestAcceptHistoryRate_StuckStreakToleratesJitter(t *testing.T) {
 	w, _ := bandTestWorker(io.Discard)
 	w.guards["UZS"] = &rateGuard{lastAccepted: 1820}
@@ -145,13 +131,9 @@ func TestAcceptHistoryRate_StuckStreakToleratesJitter(t *testing.T) {
 	}
 }
 
-// TestGuardSnapshot_CachedTodayHistoryBarNeverOverwritesCurrentRow pins
-// The history window includes the publication date and
-// that bar is cached from the day's first fetch until the date rolls.
-// Appended after the current row, the per-row upsert let the frozen bar
-// replace every later refresh's current rate, so fx_quotes(EUR, today)
-// disagreed with the served cache all day. The current row must be the
-// only writer of today's bucket; today's bar stays in the served history.
+// TestGuardSnapshot_CachedTodayHistoryBarNeverOverwritesCurrentRow pins that the cached bar for today, which the
+// history window includes, never overwrites the current row in fx_quotes; the current row is the only writer of
+// today's bucket, and the bar stays in served history.
 func TestGuardSnapshot_CachedTodayHistoryBarNeverOverwritesCurrentRow(t *testing.T) {
 	w, _ := bandTestWorker(io.Discard)
 	today := time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC)

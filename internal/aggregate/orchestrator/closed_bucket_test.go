@@ -101,10 +101,8 @@ func TestRefresh_SameBucketRetickDoesNotAdvanceReleaseStreak(t *testing.T) {
 	}
 }
 
-// A healthy single-venue market trending +1%/hour must not freeze at
-// window boundaries. Truncating each window to its own size makes the
-// 1h/24h VWAP a step function whose whole-window move lands in one
-// scored step against a per-minute baseline.
+// A healthy single-venue market trending +1%/hour must not freeze at window boundaries: truncating each window to its
+// own size would make the 1h/24h VWAP a step function whose whole-window move lands in one scored step.
 func TestRefresh_TrendingMarketDoesNotFreezeAtWindowBoundaries(t *testing.T) {
 	for _, window := range []time.Duration{time.Hour, 24 * time.Hour} {
 		t.Run(window.String(), func(t *testing.T) {

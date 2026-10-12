@@ -38,10 +38,8 @@ func ecbServer(t *testing.T, body string, status int) *httptest.Server {
 	return srv
 }
 
-// newTestWorker builds a Worker whose PRIMARY deterministically fails,
-// by pointing the real client at an endpoint that always 500s. That is
-// the state the fallback exists for, and it avoids mocking massive's
-// wire format just to exercise the failover.
+// newTestWorker builds a Worker whose primary always fails by pointing the real client at an endpoint that returns
+// 500.
 func newTestWorker(t *testing.T) *Worker {
 	t.Helper()
 	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -265,10 +263,8 @@ func TestWorker_DefaultActiveSourceIsPrimary(t *testing.T) {
 	}
 }
 
-// A zero-value Worker (struct literal, as several sibling tests build) must stamp the PRIMARY,
-// not an empty string. Reading w.activeSource directly would write source="" for those tests
-// (TestPersistSnapshot_stampsLivenessGaugeOnCommittedWrite,
-// TestAcceptRate_HistoryConflictVetoReclassifiesWhenStuck).
+// A zero-value Worker must stamp the PRIMARY as its source, not an empty string, as several sibling tests build
+// one.
 func TestSourceLabel_ZeroValueWorkerFallsBackToPrimary(t *testing.T) {
 	if got := (&Worker{}).sourceLabel(); got != fxSource {
 		t.Fatalf("sourceLabel() = %q, want %q", got, fxSource)

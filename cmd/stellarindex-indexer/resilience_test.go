@@ -11,10 +11,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// TestRetryUntil_RetriesUntilTheDependencyComesBack is the behavioural half of the signer-tagger
-// resilience guard. startSignerTagger must not dial ClickHouse once: a single failure would
-// disable AMM signer attribution for the process lifetime and leave trades.signer NULL after a
-// ClickHouse restart. What matters is that attempt N+1 happens at all.
+// TestRetryUntil_RetriesUntilTheDependencyComesBack is the behavioural half of the signer-tagger resilience guard:
+// startSignerTagger must not dial ClickHouse once, or a single failure disables signer attribution for the process
+// lifetime.
 func TestRetryUntil_RetriesUntilTheDependencyComesBack(t *testing.T) {
 	calls := 0
 	start := time.Now()
@@ -89,12 +88,9 @@ func TestRetryUntil_StopsOnCancellation(t *testing.T) {
 	}
 }
 
-// TestWaitBounded_ReturnsFalseWhenTheWaitOutlivesTheBudget covers the indexer's shutdown path.
-// externalWait() must not be called bare between deadline-bounded steps, or one wedged CEX/FX
-// connector holds the binary until systemd SIGKILLs it, skipping the sink drain.
-//
-// The false return is load-bearing: main uses it to NOT close the shared events channel, since
-// a still-running connector is still a sender and a send on a closed channel panics.
+// TestWaitBounded_ReturnsFalseWhenTheWaitOutlivesTheBudget covers shutdown: externalWait() must not be called bare, or a
+// wedged connector holds the binary until SIGKILL. The false return is load-bearing: main must then NOT close the shared
+// events channel, since a still-running connector is a sender and a send on a closed channel panics.
 func TestWaitBounded_ReturnsFalseWhenTheWaitOutlivesTheBudget(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()

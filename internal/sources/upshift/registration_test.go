@@ -1,7 +1,5 @@
-// This file is an EXTERNAL test package on purpose. The registries it
-// checks (the projector, the pipeline sink, the gated registry) import the
-// source package, so an in-package test could not reach them without an
-// import cycle.
+// This file is an external test package on purpose: the registries it checks (projector, pipeline sink, gated
+// registry) import the source package, so an in-package test would create an import cycle.
 package upshift_test
 
 import (
@@ -50,10 +48,9 @@ func TestRegistration_ProjectorBuildsTheSource(t *testing.T) {
 	if got.Name != source {
 		t.Fatalf("source name = %s, want %s", got.Name, source)
 	}
-	// The contract-id prefilter is not optional here. This source's own
-	// symbols are `deposit`, `withdraw` and `transfer`; without the
-	// prefilter a far-behind catch-up window streams the CAP-67 firehose,
-	// of which `transfer` alone is the large majority.
+	// The contract-id prefilter is not optional: this source's symbols are deposit, withdraw and transfer, and
+	// without it a far-behind catch-up window streams the CAP-67 firehose, of which transfer alone is the large
+	// majority.
 	for _, vault := range upshift.MainnetGatedSet() {
 		if !slices.Contains(got.PrefilterContractIDs(), vault) {
 			t.Errorf("the prefilter omits curated vault %s — its events would never be read", vault)
@@ -76,13 +73,9 @@ func TestRegistration_SinkProjectsTheVaultEvent(t *testing.T) {
 	}
 }
 
-// TestRegistration_GatedRegistryCarriesTheCuratedSet covers the ADR-0035/0040 warm. A missing
-// entry means the identity gate never resumes from protocol_contracts across a restart, so
-// events of a vault admitted without a redeploy are silently dropped.
-//
-// Factories and CreationSym must stay EMPTY: neither vault has a creation event in the lake,
-// so a factory would send the genesis-seed walk after events that do not exist and report an
-// empty registry as complete.
+// TestRegistration_GatedRegistryCarriesTheCuratedSet covers the ADR-0035/0040 warm: a missing entry means the
+// identity gate never resumes from protocol_contracts across a restart, silently dropping events of an
+// operator-admitted vault. Factories and CreationSym must stay empty: neither vault has a creation event.
 func TestRegistration_GatedRegistryCarriesTheCuratedSet(t *testing.T) {
 	meta, ok := pipeline.GatedMetaFor(source)
 	if !ok {
@@ -110,10 +103,8 @@ func TestRegistration_GatedRegistryCarriesTheCuratedSet(t *testing.T) {
 	}
 }
 
-// TestRegistration_NetworkApplicability — a source not classified here is
-// silently dropped from every non-pubnet coverage verdict AND from the gap
-// detector, which is exactly the "indexes but never appears in the verdict"
-// class.
+// TestRegistration_NetworkApplicability pins that every source is classified: an unclassified source is silently
+// dropped from every non-pubnet coverage verdict and the gap detector, indexing but never appearing in the verdict.
 func TestRegistration_NetworkApplicability(t *testing.T) {
 	if !sourcenet.Known(source) {
 		t.Fatalf("%s is not classified in sourcenet — it would be missing from every network's verdict", source)
@@ -126,11 +117,9 @@ func TestRegistration_NetworkApplicability(t *testing.T) {
 	}
 }
 
-// TestRegistration_SourceMetadata: omission makes the source invisible to /v1/sources and to
-// the aggregator's class lookup.
-//
-// The vaults must NOT be in VWAP: their events are derivative actions on other protocols'
-// prices, not price observations. (RedStone's earnUSDC share price arrives via the oracle path.)
+// TestRegistration_SourceMetadata pins that omission makes the source invisible to /v1/sources and the aggregator's
+// class lookup. The vaults must not be in VWAP: their events are derivative actions on other protocols' prices, not
+// price observations.
 func TestRegistration_SourceMetadata(t *testing.T) {
 	meta := external.Lookup(source)
 	if meta.Class != external.ClassRouter {

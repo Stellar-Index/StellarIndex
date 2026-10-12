@@ -133,13 +133,9 @@ func TestMarginalBuckets_ScalesAReturnAcrossEmptyMinutes(t *testing.T) {
 	}
 }
 
-// backlogCase ticks a single-source market at 1.0 with one print per minute
-// across the window, decides three more buckets while ingest stalls, then
-// lands four minutes at 2.0 in one batch: the batch's two newest minutes
-// agree, and only the level before the batch shows the +100% move. With
-// unpriceableNewest the batch's newest minute holds only a zero-quote print,
-// which survives the filters but has no VWAP. It returns whether the catch-up
-// bucket published and whether the window's freeze is active.
+// backlogCase ticks a single-source market at 1.0 per minute across the window, decides three buckets during a stall,
+// then lands four minutes at 2.0 in one batch. With unpriceableNewest the newest minute has only a zero-quote print
+// (no VWAP). It returns whether the catch-up bucket published and whether the freeze is active.
 func backlogCase(t *testing.T, window time.Duration, cfg Config, unpriceableNewest bool) (published, frozen bool) {
 	t.Helper()
 	pair := xlmUSDPair(t)

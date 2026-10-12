@@ -164,10 +164,9 @@ func TestReseedFrozenVWAP_RestoresHeldCoverage(t *testing.T) {
 	}
 }
 
-// TestReseedFrozenVWAP_NeverStampsCoverageBesideComposite: a composite
-// serving on the key carries no coverage (unknown). A reseed whose value
-// write no-ops against it must not stamp the held direct window's coverage
-// beside it.
+// TestReseedFrozenVWAP_NeverStampsCoverageBesideComposite pins that a composite serving on the key carries no
+// coverage (unknown), so a reseed whose value write no-ops against it must not stamp the held direct window's
+// coverage beside it.
 func TestReseedFrozenVWAP_NeverStampsCoverageBesideComposite(t *testing.T) {
 	pair := xlmUsdtPair(t)
 	const window = time.Hour

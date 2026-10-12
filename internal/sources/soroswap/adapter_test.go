@@ -74,10 +74,8 @@ func TestDecoder_Matches_pairAndFactoryTopics(t *testing.T) {
 		{"registered pair sync", events.Event{Topic: []string{TopicPrefixPair, TopicSymbolSync}, ContractID: registered}, true},
 		{"registered pair deposit", events.Event{Topic: []string{TopicPrefixPair, TopicSymbolDeposit}, ContractID: registered}, true},
 		{"registered pair withdraw", events.Event{Topic: []string{TopicPrefixPair, TopicSymbolWithdraw}, ContractID: registered}, true},
-		// Pair events from an UNREGISTERED contract (topic collision) do NOT.
-		// deposit/withdraw fail CLOSED on an unseeded pair too — an unseeded
-		// pair is a recognition gap (no row), NOT a NULL-token row (migration
-		// 0127 header + emitLiquidity doc).
+		// Pair events from an UNREGISTERED contract (topic collision) do not match. deposit/withdraw also fail CLOSED on an unseeded pair:
+		// that is a recognition gap (no row), not a NULL-token row.
 		{"foreign pair swap", events.Event{Topic: []string{TopicPrefixPair, TopicSymbolSwap}, ContractID: foreign}, false},
 		{"unseeded pair deposit", events.Event{Topic: []string{TopicPrefixPair, TopicSymbolDeposit}, ContractID: foreign}, false},
 		{"unseeded pair withdraw", events.Event{Topic: []string{TopicPrefixPair, TopicSymbolWithdraw}, ContractID: foreign}, false},
@@ -240,10 +238,9 @@ func TestDecoder_Decode_swapSyncWithRegistryEmitsTradeEvent(t *testing.T) {
 	}
 }
 
-// TestDecoder_Decode_twoPoolsOneOp_interleaved: a router multi-hop swaps through two pools
-// inside one operation. A correlation buffer keyed on (ledger, tx, op) alone would let pool B's
-// swap overwrite pool A's, completing a trade with B's amounts under A's token mapping. Each
-// pool must correlate independently, whatever order the events arrive in.
+// TestDecoder_Decode_twoPoolsOneOp_interleaved pins that a router multi-hop through two pools in one operation
+// correlates each pool independently. A buffer keyed on (ledger, tx, op) alone would let pool B's swap overwrite pool
+// A's and complete a trade with B's amounts under A's token mapping.
 func TestDecoder_Decode_twoPoolsOneOp_interleaved(t *testing.T) {
 	poolA := makeContractStrkey(t, 0x20)
 	poolB := makeContractStrkey(t, 0x21)
@@ -401,10 +398,8 @@ func TestDecoder_Decode_skimEmitsSkimEvent(t *testing.T) {
 	}
 }
 
-// TestDecoder_Decode_skimPropagatesEventIndex confirms the SkimEvent
-// carries the source event's in-op index rather than a hardcoded 0.
-// The migration 0043 PK includes event_index, so two skims in the
-// same op must keep distinct indices to avoid collapsing.
+// TestDecoder_Decode_skimPropagatesEventIndex pins that SkimEvent carries the source event's in-op index, not a hardcoded 0,
+// because the PK includes event_index and two skims in one op must stay distinct.
 func TestDecoder_Decode_skimPropagatesEventIndex(t *testing.T) {
 	d := NewDecoder()
 	pair := makeContractStrkey(t, 0x21)
@@ -423,10 +418,7 @@ func TestDecoder_Decode_skimPropagatesEventIndex(t *testing.T) {
 }
 
 func TestDecoder_Decode_skimDoesNotFeedSwapBuffer(t *testing.T) {
-	// A skim event is independent of the swap+sync correlation
-	// buffer. After processing a standalone skim, the buffer's
-	// in-flight count must remain 0 (no swap-without-sync warning
-	// would otherwise leak through).
+	// A skim is independent of the swap+sync correlation buffer: after a standalone skim the in-flight count must stay 0.
 	d := NewDecoder()
 	pair := makeContractStrkey(t, 0x20)
 
@@ -465,10 +457,8 @@ func mustParseRFC3339(t *testing.T, s string) time.Time {
 	return ts
 }
 
-// Deposit is not a silent no-op (it emits a LiquidityEvent — see
-// TestDecoder_Decode_depositEmitsLiquidityEvent). A deposit topic with a
-// MALFORMED body must surface as a decode ERROR — a recognition gap
-// the ADR-0033 re-derive can see — never a silently-swallowed event.
+// A deposit topic with a MALFORMED body must surface as a decode ERROR, a recognition gap the completeness re-derive can see,
+// never a silently swallowed event.
 func TestDecoder_Decode_depositMalformedBodyErrors(t *testing.T) {
 	d := NewDecoder()
 	_, err := d.Decode(events.Event{
@@ -593,10 +583,9 @@ func TestDecoder_Drain_emitsSwapOnlyAndCountsBareSync(t *testing.T) {
 	}
 }
 
-// TestDecoder_GatedContractSetIsExactlyWhatMatchesAccepts pins the enumeration the completeness
-// re-derive scopes its lake read to: every verified factory, seeded pair and announced new_pair,
-// and nothing Matches would reject. A narrower set drops real events from the expected side (a
-// false projection red); a wider one only costs read volume.
+// TestDecoder_GatedContractSetIsExactlyWhatMatchesAccepts pins the enumeration the completeness re-derive scopes its lake read to:
+// every verified factory, seeded pair and announced new_pair, and nothing Matches would reject.
+// A narrower set drops real events from the expected side (a false red); a wider one only costs read volume.
 func TestDecoder_GatedContractSetIsExactlyWhatMatchesAccepts(t *testing.T) {
 	token0 := makeContractStrkey(t, 0x10)
 	token1 := makeContractStrkey(t, 0x11)
@@ -630,10 +619,8 @@ func TestDecoder_GatedContractSetIsExactlyWhatMatchesAccepts(t *testing.T) {
 	}
 }
 
-// Real mainnet deposit + withdraw bodies captured from the ClickHouse lake (deposit pair
-// CDLMAKG5…, withdraw pair CA3PA2NY…). Proves sdkDecodeLiquidity extracts all five i128 fields
-// and the `to` provider from the real on-chain ScvMap shape, not a synthetic body. Deposit and
-// withdraw share one struct.
+// Real mainnet deposit and withdraw bodies captured from the ClickHouse lake. They prove sdkDecodeLiquidity extracts all five i128 fields
+// and the `to` provider from the real ScvMap shape; deposit and withdraw share one struct.
 const (
 	realDepositBody  = "AAAAEQAAAAEAAAAGAAAADwAAAAhhbW91bnRfMAAAAAoAAAAAAAAAAAAAAAAM7ZpEAAAADwAAAAhhbW91bnRfMQAAAAoAAAAAAAAAAAAAAAnHZSQAAAAADwAAAAlsaXF1aWRpdHkAAAAAAAAKAAAAAAAAAAAAAAAAryjoaQAAAA8AAAANbmV3X3Jlc2VydmVfMAAAAAAAAAoAAAAAAAAAAAAAAAFFR+O9AAAADwAAAA1uZXdfcmVzZXJ2ZV8xAAAAAAAACgAAAAAAAAAAAAAA9gsmmTQAAAAPAAAAAnRvAAAAAAASAAAAAAAAAAB/8XxHTA1msG+0b3b1TJd6rspEiEzR8MYWBjCsXdFIow=="
 	realWithdrawBody = "AAAAEQAAAAEAAAAGAAAADwAAAAhhbW91bnRfMAAAAAoAAAAAAAAAAAAAAAAGfa6bAAAADwAAAAhhbW91bnRfMQAAAAoAAAAAAAAAAAAABJMjWbR7AAAADwAAAAlsaXF1aWRpdHkAAAAAAAAKAAAAAAAAAAAAAAAFcwMiGgAAAA8AAAANbmV3X3Jlc2VydmVfMAAAAAAAAAoAAAAAAAAAAAAAAAAAAAAFAAAADwAAAA1uZXdfcmVzZXJ2ZV8xAAAAAAAACgAAAAAAAAAAAAAAAAADR4UAAAAPAAAAAnRvAAAAAAASAAAAAAAAAAAqgK2+TSm3Zi13f+1ZI/dUxFKl2W6gSs4aa+ABaSQiZw=="
@@ -777,10 +764,8 @@ func TestDecoder_Decode_depositEmitsLiquidityEvent(t *testing.T) {
 	}
 }
 
-// TestDecoder_Decode_withdrawUnseededPairInIsolationStillEmits calls Decode directly, bypassing
-// the dispatcher's Matches gate: on an unseeded pair it still emits the liquidity row with empty
-// token identities rather than dropping the event. This is not the production path; see the
-// sibling test below.
+// TestDecoder_Decode_withdrawUnseededPairInIsolationStillEmits calls Decode directly, bypassing the dispatcher's Matches gate:
+// on an unseeded pair it still emits the liquidity row with empty token identities. This is not the production path.
 func TestDecoder_Decode_withdrawUnseededPairInIsolationStillEmits(t *testing.T) {
 	d := NewDecoder()
 	pair := makeContractStrkey(t, 0x21) // never SeedPair'd
@@ -809,10 +794,9 @@ func TestDecoder_Decode_withdrawUnseededPairInIsolationStillEmits(t *testing.T) 
 	}
 }
 
-// TestDecoder_Matches_withdrawUnseededPairIsRejected pins the production behaviour for the same
-// unseeded pair: the dispatcher calls Matches before Decode, and Matches returns false for a
-// pair-contract event whose pair was never registered via SeedPair or a factory new_pair event,
-// so Decode's every-event emission above is unreachable on the live ingest path.
+// TestDecoder_Matches_withdrawUnseededPairIsRejected pins the production behaviour: Matches runs before Decode and
+// rejects a pair-contract event whose pair was never registered via SeedPair or a factory new_pair event, so the every-
+// event emission above is unreachable live.
 func TestDecoder_Matches_withdrawUnseededPairIsRejected(t *testing.T) {
 	d := NewDecoder()
 	pair := makeContractStrkey(t, 0x21) // never SeedPair'd
@@ -827,11 +811,9 @@ func TestDecoder_Matches_withdrawUnseededPairIsRejected(t *testing.T) {
 	}
 }
 
-// A route that re-enters one pair inside one op shares a groupKey (ledger, tx, op, pair) across
-// both swaps. With non-contiguous emission (swap1, swap2, sync1, sync2) the second swap must not
-// overwrite the first in place, which would lose a trade without counting an orphan. The first
-// swap is rotated out and emitted on its own (decodeSwap reads only the swap body), and both
-// trades land on distinct op_index values.
+// A route re-entering one pair inside one op shares a groupKey (ledger, tx, op, pair) across both swaps. With non-contiguous emission
+// (swap1, swap2, sync1, sync2) the second swap must not overwrite the first, which would lose a trade without counting an orphan:
+// the first is rotated out and emitted alone, and both trades land on distinct op_index values.
 func TestDecoder_Decode_samePoolTwiceInOp_nonContiguous(t *testing.T) {
 	pool := makeContractStrkey(t, 0x20)
 	t0, _ := canonical.NewSorobanAsset(makeContractStrkey(t, 0x10))
@@ -906,12 +888,9 @@ func TestDecoder_Decode_redeliveredSwapIsIdempotent(t *testing.T) {
 	}
 }
 
-// TestDecoder_UnknownContractDrops_countsSameAsSkippedUnknownPair pins that a completed
-// swap+sync whose pair has no token mapping is dropped with (nil, nil), indistinguishable from
-// "not a trade" to the caller, so it must surface through the dispatcher's duck-typed reporter
-// interface (like EvictedOrphans) for internal/pipeline.emitDispatcherMetricDeltas to wire to
-// obs.SourceDecodeErrorsTotal. Decoder must expose UnknownContractDrops so the drop has a
-// reader.
+// TestDecoder_UnknownContractDrops_countsSameAsSkippedUnknownPair pins that a completed swap+sync with no token mapping
+// is dropped with (nil, nil), indistinguishable from "not a trade", so Decoder must expose UnknownContractDrops via the
+// dispatcher's duck-typed reporter interface for emitDispatcherMetricDeltas to feed obs.SourceDecodeErrorsTotal.
 func TestDecoder_UnknownContractDrops_countsSameAsSkippedUnknownPair(t *testing.T) {
 	d := NewDecoder()
 	pair := makeContractStrkey(t, 0x20)
@@ -931,10 +910,8 @@ func TestDecoder_UnknownContractDrops_countsSameAsSkippedUnknownPair(t *testing.
 	}
 }
 
-// TestDecoder_EvictedOrphans_excludesBareSyncEvictions pins that a bare `sync` (deposit,
-// withdraw or skim traffic, README Q2) aging out of the correlation buffer with no preceding
-// swap must not inflate EvictedOrphans, the real-loss signal (a swap that never got its sync).
-// The two classes must not feed a single `evictedOrphans` counter.
+// TestDecoder_EvictedOrphans_excludesBareSyncEvictions pins that a bare `sync` (deposit, withdraw or skim traffic) aging out of the buffer
+// does not inflate EvictedOrphans, the real-loss signal (a swap that never got its sync); the two classes must not share a counter.
 func TestDecoder_EvictedOrphans_excludesBareSyncEvictions(t *testing.T) {
 	d := NewDecoder()
 	pair := makeContractStrkey(t, 0x21)

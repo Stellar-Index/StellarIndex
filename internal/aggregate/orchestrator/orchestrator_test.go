@@ -1320,10 +1320,8 @@ func (r *recordingStreamPublisher) PublishClosedBucket(
 	return r.err
 }
 
-// A published bucket fans out once with the same pair, window and value.
-// observed_at is the minute-truncated bucket boundary, not the tick's
-// wall clock, so closed-bucket payloads are byte-identical across
-// subscribers and regions (ADR-0015).
+// A published bucket fans out once with the same pair, window and value. observed_at is the minute-truncated bucket
+// boundary, not the tick's wall clock, so payloads are byte-identical across subscribers and regions (ADR-0015).
 func TestTick_StreamPublisher_FiresOnSuccessfulPublish(t *testing.T) {
 	pair := xlmUsdtPair(t)
 	store := &mockStore{
@@ -1587,10 +1585,9 @@ func TestTick_TriangulationRefusesUnusableFXSnap(t *testing.T) {
 	}
 }
 
-// TestTick_DecimalsLookup_NormalizesNonstandardLeg proves the forward-
-// normalization wiring: a pair whose base leg is a confirmed 18-decimal
-// Soroban token gets its published VWAP scaled
-// by 10^(18-7), not served at the raw stroop-scale ratio.
+// TestTick_DecimalsLookup_NormalizesNonstandardLeg pins the forward-normalization wiring: a pair whose base leg is a
+// confirmed 18-decimal Soroban token gets its published VWAP scaled by 10^(18-7), not served at the raw stroop-scale
+// ratio.
 func TestTick_DecimalsLookup_NormalizesNonstandardLeg(t *testing.T) {
 	// Real on-chain contract id (the founding decimals
 	// incident, per docs/operations/runbooks/dex.md)
@@ -1646,10 +1643,8 @@ func TestTick_DecimalsLookup_NormalizesNonstandardLeg(t *testing.T) {
 	}
 }
 
-// TestTick_DecimalsLookup_NilIsByteIdenticalNoOp proves the default (nil
-// DecimalsLookup, matching every deployment/test that predates this field)
-// produces the exact same published VWAP as the 7dp path — the
-// regression-safety half of constraint #5 (7dp assets untouched).
+// TestTick_DecimalsLookup_NilIsByteIdenticalNoOp pins that a nil DecimalsLookup publishes the exact same VWAP as the
+// 7dp path, so 7dp assets are untouched.
 func TestTick_DecimalsLookup_NilIsByteIdenticalNoOp(t *testing.T) {
 	store := &mockStore{
 		trades: []canonical.Trade{
@@ -2041,10 +2036,8 @@ func TestTick_WedgedStoreCallIsCutAndTheNextTickRecovers(t *testing.T) {
 	}
 }
 
-// TestTick_CallerCancellationIsNotATimeout — shutdown is unchanged: the
-// caller's cancellation still ends the tick at once with
-// context.Canceled (which Run deliberately does not log), and is not
-// dressed up as a wedge.
+// TestTick_CallerCancellationIsNotATimeout pins that the caller's cancellation ends the tick at once with
+// context.Canceled (which Run deliberately does not log) and is not reported as a wedge.
 func TestTick_CallerCancellationIsNotATimeout(t *testing.T) {
 	pair := mustStalenessPair(t, mustCrypto(t, "BTC"), mustFiat(t, "USD"))
 	cache, _ := newTestRedis(t)
@@ -2435,10 +2428,8 @@ func TestTick_Triangulation_FXSnap_HappyPath(t *testing.T) {
 	}
 }
 
-// TestTick_Triangulation_FXSnap_FallbackOnNoQuote — when the snap
-// path has no row at-or-before bucketEnd, the orchestrator falls back
-// to the cached-VWAP path AND increments the fallback counter. The
-// chain still publishes (degraded but functional).
+// TestTick_Triangulation_FXSnap_FallbackOnNoQuote pins that when the snap path has no row at or before bucketEnd, the
+// orchestrator falls back to the cached-VWAP path, increments the fallback counter, and still publishes.
 func TestTick_Triangulation_FXSnap_FallbackOnNoQuote(t *testing.T) {
 	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
 	usdEUR := mkPair(t, "fiat", "USD", "fiat", "EUR")
@@ -2672,10 +2663,9 @@ func TestTick_ShortWindowVWAP_KeepsItsWindowTTL(t *testing.T) {
 	}
 }
 
-// TestTick_WindowAtTheRowCapCountsAsTruncated pins the truncation
-// detector: a window whose fetch comes back at MaxTradesPerWindow rows
-// was cut by the store's LIMIT, and operators only learn that from
-// AggregatorWindowTruncatedTotal. A window under the cap must not count.
+// TestTick_WindowAtTheRowCapCountsAsTruncated pins the truncation detector: a window fetched at MaxTradesPerWindow
+// rows was cut by the store's LIMIT, which AggregatorWindowTruncatedTotal is the only signal of. A window under the
+// cap must not count.
 func TestTick_WindowAtTheRowCapCountsAsTruncated(t *testing.T) {
 	const maxRows = 3
 	now := time.Now()

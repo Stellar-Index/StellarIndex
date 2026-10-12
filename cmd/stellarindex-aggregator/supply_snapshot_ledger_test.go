@@ -61,14 +61,9 @@ func (c *capturingSupplyInserter) InsertSupply(_ context.Context, snap supply.Su
 	return nil
 }
 
-// TestSupplyAggregatorLedgers_ClampsToLandedLakeTip: ingestion_cursors (Postgres, realtime)
-// leads ClickHouse stellar.ledgers (CH sink) by design, so the cursor can sit one ledger past
-// max(stellar.ledgers). Demanding an exact stellar.ledgers row for the cursor fails refreshes in
-// that window closed as `no_ledger`, in bursts that push whole cohorts of watched assets past the
-// per-asset error_dominant threshold together.
-//
-// Resolution must clamp to the newest LANDED ledger at or before the cursor and stamp THAT
-// ledger's real close time, so the tick produces a snapshot instead of an error.
+// TestSupplyAggregatorLedgers_ClampsToLandedLakeTip: ingestion_cursors leads ClickHouse stellar.ledgers by design, so
+// an exact row for the cursor fails refreshes as `no_ledger` in bursts. Resolution must clamp to the newest landed
+// ledger at or before the cursor and stamp THAT ledger's real close time.
 func TestSupplyAggregatorLedgers_ClampsToLandedLakeTip(t *testing.T) {
 	const (
 		cursorLedger = uint32(64_274_510)
@@ -131,10 +126,9 @@ func TestSupplyAggregatorLedgers_ClampsToLandedLakeTip(t *testing.T) {
 	}
 }
 
-// TestSupplyAggregatorLedgers_FailsClosedOnEmptyLake pins the fail-closed
-// half: no landed row at or before the cursor means the lake is empty or
-// wholly gapped, and resolution must error (retryable `no_ledger`) rather
-// than fall back to a wall-clock stamp.
+// TestSupplyAggregatorLedgers_FailsClosedOnEmptyLake pins the fail-closed half: no landed row at or before the cursor
+// means an empty or gapped lake, so resolution errors (retryable `no_ledger`) rather than falling back to a wall-clock
+// stamp.
 func TestSupplyAggregatorLedgers_FailsClosedOnEmptyLake(t *testing.T) {
 	ledgers := supplyAggregatorLedgers{
 		s:          &fakeSupplyCursors{cursors: []timescale.Cursor{{Source: "ledgerstream", LastLedger: 64_274_510}}},
@@ -159,10 +153,8 @@ func TestSupplyAggregatorLedgers_FailsClosedOnEmptyLake(t *testing.T) {
 	}
 }
 
-// TestSupplyAggregatorLedgers_FailsClosedOnStalledLake bounds the clamp: a
-// lake trailing the cursor by more than maxSupplyLakeClampLedgers is a
-// stalled sink, not a landing race, and silently stamping a snapshot that
-// far behind the chain would hide the stall.
+// TestSupplyAggregatorLedgers_FailsClosedOnStalledLake bounds the clamp: a lake trailing the cursor by more than
+// maxSupplyLakeClampLedgers is a stalled sink, and stamping a snapshot that far behind would hide the stall.
 func TestSupplyAggregatorLedgers_FailsClosedOnStalledLake(t *testing.T) {
 	const cursorLedger = uint32(64_274_510)
 	ledgers := supplyAggregatorLedgers{
@@ -200,11 +192,9 @@ func TestSupplyAggregatorLedgers_FailsClosedOnStalledLake(t *testing.T) {
 	}
 }
 
-// TestSupplyAggregatorLedgers_BoundsByTheChainCursor applies the chain-cursor bound to the
-// aggregator path. ingestion_cursors holds JOB positions, not chain positions: with the indexer
-// behind and an operator backfilling near the tip, MAX(last_ledger) hands the backfill job's
-// position to the clamp, so the snapshot can be stamped at a ledger no component balance was
-// observed at, and the stalled-lake bound is measured against a job's progress, not the chain's.
+// TestSupplyAggregatorLedgers_BoundsByTheChainCursor: ingestion_cursors holds JOB positions, not chain positions, so
+// with the indexer behind and a backfill near the tip, MAX(last_ledger) would stamp a ledger no component balance was
+// observed at.
 func TestSupplyAggregatorLedgers_BoundsByTheChainCursor(t *testing.T) {
 	const chainLedger = uint32(63_000_000)
 	lakeClose := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
@@ -266,11 +256,8 @@ func TestSupplyAggregatorLedgers_PropagatesCursorReadError(t *testing.T) {
 	}
 }
 
-// TestSupplyLakeClampMatchesLookupWindow pins the clamp to the window the lake lookup actually
-// scans, keeping them one constant. A resolver that refuses past 512 while the lookup reads every
-// partition below the cursor pays chain-history-sized reads (per watched asset, every tick) for
-// rows it can never accept, and one that accepts further back than the lookup reads would fail
-// closed on a lake that is merely lagging.
+// TestSupplyLakeClampMatchesLookupWindow pins the clamp to the window the lake lookup scans, as one constant. A wider
+// lookup pays chain-sized reads for rows it never accepts; a wider clamp fails closed on a merely lagging lake.
 func TestSupplyLakeClampMatchesLookupWindow(t *testing.T) {
 	if maxSupplyLakeClampLedgers != clickhouse.LatestLedgerLookbackLedgers {
 		t.Errorf("maxSupplyLakeClampLedgers = %d but the lookup scans %d ledgers below the cursor — the refusal bound and the scan window must be the same constant",

@@ -6,11 +6,8 @@ import (
 	"testing"
 )
 
-// The package doc must not claim blanket panic isolation for the
-// dispatcher-to-Timescale sink goroutine (main.go's second
-// go func()): it is deliberately unguarded, so a
-// stale claim here would send an on-call responder looking for a
-// recover() that does not exist.
+// The package doc must not claim blanket panic isolation: the dispatcher-to-Timescale sink goroutine is deliberately
+// unguarded, and a stale claim would send an on-call responder looking for a recover() that does not exist.
 func TestPackageDocDoesNotOverclaimPanicIsolation(t *testing.T) {
 	data, err := os.ReadFile("main.go")
 	if err != nil {

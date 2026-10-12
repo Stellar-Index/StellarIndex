@@ -9,10 +9,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// TestParseTrailingMissingSeq covers the SDK error-message parse —
-// the only reliable identifier of "trailing-edge missing file"
-// given the SDK uses pkg/errors.Wrapf with no typed sentinel
-// (github.com/stellar/go-stellar-sdk/ingest/ledgerbackend.ledger_buffer).
+// TestParseTrailingMissingSeq covers the SDK error-message parse, the only reliable identifier of a trailing-edge
+// missing file since the SDK (ledgerbackend.ledger_buffer) uses pkg/errors.Wrapf with no typed sentinel.
 func TestParseTrailingMissingSeq(t *testing.T) {
 	t.Parallel()
 

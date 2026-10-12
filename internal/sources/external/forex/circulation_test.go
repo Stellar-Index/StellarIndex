@@ -6,10 +6,8 @@ import (
 	"time"
 )
 
-// TestLoadCirculationTable_ParsesCleanly — the embedded CSV must
-// parse without skipped rows. A skipped row indicates a typo
-// (malformed amount, bad date, missing field) — we don't want
-// those silently shipping to /v1/currencies.
+// TestLoadCirculationTable_ParsesCleanly pins that the embedded CSV parses with no skipped rows, since a skip
+// means a typo that would silently ship to /v1/currencies.
 func TestLoadCirculationTable_ParsesCleanly(t *testing.T) {
 	table, err := loadCirculationTable()
 	if err != nil {
@@ -49,10 +47,8 @@ func TestLoadCirculationTable_MajorsPresent(t *testing.T) {
 	}
 }
 
-// TestLoadCirculationTable_BroadCoverage — with the WB
-// expansion the table covers ~106 of 110 Massive currencies. Lock
-// the floor at 100 so a future curation regression that drops most
-// of the WB rows fails the test.
+// TestLoadCirculationTable_BroadCoverage locks the table at 100+ currencies so a curation regression that drops
+// most World Bank rows fails.
 func TestLoadCirculationTable_BroadCoverage(t *testing.T) {
 	table, err := loadCirculationTable()
 	if err != nil {
@@ -63,10 +59,8 @@ func TestLoadCirculationTable_BroadCoverage(t *testing.T) {
 	}
 }
 
-// TestLoadCirculationTable_AsOfReasonable — `as_of` dates must not be in the future (typo
-// guard) nor uselessly old. The World Bank publishes some emerging-market series with a
-// multi-year lag (legitimately 5-7 years old); the 8-year floor catches genuine staleness
-// without rejecting those still better-than-null entries.
+// TestLoadCirculationTable_AsOfReasonable pins that `as_of` is never in the future and no older than 8 years; the
+// World Bank series for some emerging markets legitimately lag 5-7 years.
 func TestLoadCirculationTable_AsOfReasonable(t *testing.T) {
 	table, err := loadCirculationTable()
 	if err != nil {

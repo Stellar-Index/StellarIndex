@@ -1,10 +1,8 @@
 // Copyright (c) 2026 Stellar Index contributors.
 // SPDX-License-Identifier: Apache-2.0
 
-// Package dispatcher_test (EXTERNAL) hosts the lock-step guard.
-// It has to live out here: the guard drives the REAL SDEX decoder via
-// sdex.AuditOp, and internal/sources/sdex imports internal/dispatcher —
-// an in-package _test.go importing it would be an import cycle.
+// Package dispatcher_test is external because the guard drives the real SDEX decoder via sdex.AuditOp, and
+// internal/sources/sdex imports internal/dispatcher, so an in-package test would be an import cycle.
 package dispatcher_test
 
 import (
@@ -114,17 +112,9 @@ func lsManageSellOfferOp(claims []xdr.ClaimAtom) (xdr.Operation, xdr.OperationRe
 
 // ─── the guard ───────────────────────────────────────────────────────
 
-// TestClaimAtomCount_LockStepWithDecoder guards the lock-step between the claim-atom count and
-// the decoder.
-//
-// The census (ADR-0033) proves the decoders lost nothing: `census.ClassicTradeEffectCount MUST
-// equal COUNT(trades WHERE source='sdex')`, and the lake's `classic_trade_effect_count` makes
-// the same promise. The counter (sdexclaim.RealTradeCount) must therefore drop exactly what the
-// decoder drops (unknown atom types, unconvertible assets, self-crosses), or each mismatch is a
-// permanent gap in the reconcile that hides real trade loss.
-//
-// The table drives the ACTUAL decoder (sdex.AuditOp → extractClaimAtoms → decodeClaimAtom) and
-// the ACTUAL shared counter, and demands they agree atom for atom.
+// TestClaimAtomCount_LockStepWithDecoder pins that sdexclaim.RealTradeCount drops exactly what the SDEX decoder
+// drops (unknown atom types, unconvertible assets, self-crosses); any mismatch is a permanent census gap that hides
+// real trade loss. It drives the real decoder and counter atom for atom.
 func TestClaimAtomCount_LockStepWithDecoder(t *testing.T) {
 	t.Parallel()
 
@@ -238,13 +228,9 @@ func TestClaimAtomCount_LockStepWithDecoder(t *testing.T) {
 	}
 }
 
-// TestClaimAtomCount_BothCountersDelegate is the structural half of the lock-step. The table
-// above proves sdexclaim agrees with the decoder; this proves both claimAtomCount COPIES still
-// route through sdexclaim instead of re-implementing the predicate, which "mirrors X" comments
-// cannot enforce (same technique as internal/pipeline/lockstep_ast_test.go).
-//
-// clickhouse.claimAtomCount is unexported, so this reads the source; an edit that inlines an
-// amount check back into either copy fails here.
+// TestClaimAtomCount_BothCountersDelegate pins that both claimAtomCount copies still route through sdexclaim rather
+// than re-implementing the predicate; clickhouse.claimAtomCount is unexported, so this reads the source and fails on
+// an inlined amount check.
 func TestClaimAtomCount_BothCountersDelegate(t *testing.T) {
 	t.Parallel()
 

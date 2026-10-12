@@ -35,11 +35,8 @@ func TestConstantNAV_IsExactOnBothHalvesAndWellFormed(t *testing.T) {
 	}
 }
 
-// Every binding is evidenced by its OWN share class's page and carries
-// a review bound derived from the date that page was read. The IB
-// binding once cited the AB class's page — a VerifiedOn claim pointing
-// at evidence for a different share class — which is the drift this
-// pins shut: the source URL must name the binding's own ISIN.
+// TestConstantNAV_EveryBindingIsEvidencedAndBounded pins that each binding cites its OWN share class's page:
+// the source URL must name the binding's own ISIN, and the review bound derives from the date that page was read.
 func TestConstantNAV_EveryBindingIsEvidencedAndBounded(t *testing.T) {
 	bindings := ConstantNAVBindings()
 	if len(bindings) == 0 {

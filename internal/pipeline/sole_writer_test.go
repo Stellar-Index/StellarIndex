@@ -55,10 +55,8 @@ func TestIsSoleWriterProjected_Membership(t *testing.T) {
 	}
 }
 
-// TestSpec_SoleWriterSubsetOfProjected — every sole-writer event MUST
-// also be projected. If it weren't, the dispatcher's events goroutine
-// would skip it (per skipInSink) while no projector source wrote it:
-// total silent loss.
+// TestSpec_SoleWriterSubsetOfProjected: every sole-writer event MUST also be projected, or the dispatcher's events
+// goroutine skips it (per skipInSink) while no projector writes it: total silent loss.
 func TestSpec_SoleWriterSubsetOfProjected(t *testing.T) {
 	for _, ev := range soleWriterEvents() {
 		if !IsSoleWriterProjected(ev) {

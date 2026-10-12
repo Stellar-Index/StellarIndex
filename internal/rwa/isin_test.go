@@ -5,12 +5,9 @@ package rwa
 
 import "testing"
 
-// The two ISINs Franklin Templeton declares for its Stellar share classes, published ISINs
-// with documented check digits, and the shapes an `anchor_asset` field contains when an issuer
-// fills it with prose.
-//
-// Every positive fixture had its check digit reproduced by a separate ISO 6166 implementation:
-// a fixture whose expected value comes from the implementation under test asserts nothing.
+// Fixtures: the two ISINs Franklin Templeton declares for its Stellar share classes, and the shapes an `anchor_asset`
+// takes when prose fills it. Every positive fixture's check digit was reproduced by a separate ISO 6166 implementation,
+// since an expected value from the code under test asserts nothing.
 func TestIsISIN(t *testing.T) {
 	for _, tc := range []struct {
 		in   string
@@ -105,10 +102,8 @@ func TestDeclaredClassOutranksTheISINArm(t *testing.T) {
 	}
 }
 
-// THE GUARD. The arm relaxes R4, not R2 or R3. An ISIN is the issuer's
-// own claim and is checked for form only, so it must never carry a
-// candidate past the two requirements that bind the identity — which is
-// the whole reason it is safe to accept a self-declared value here.
+// THE GUARD: the ISIN arm relaxes R4, not R2 or R3. An ISIN is the issuer's own claim, checked for form only,
+// so it must never carry a candidate past the requirements that bind the identity.
 func TestISINNeverBypassesBindingOrRecognition(t *testing.T) {
 	base := Candidate{
 		Code: "gBENJI", Issuer: "GD5J73EKK5IYL5XS3FBTHHX7CZIYRP7QXDL57XFWGC2WVYWT326OBXRP",

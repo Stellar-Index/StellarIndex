@@ -9,11 +9,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// The thin-market gate must not measure a window ending NOW for reads
-// that serve the price AS OF a past instant. These
-// tests pin the property — the verdict for an instant is made
-// from the market that existed at that instant — in both directions a
-// NOW-anchored window gets wrong.
+// The thin-market gate must judge a read serving the price AS OF a past instant by the market that existed at that
+// instant, not a window ending NOW; these tests pin that in both directions a NOW-anchored window gets wrong.
 
 var (
 	thickSubstance = timescale.MarketSubstance{VolumeUSD: "250000.5", Buckets: 900, SpanSeconds: 23 * 3600}

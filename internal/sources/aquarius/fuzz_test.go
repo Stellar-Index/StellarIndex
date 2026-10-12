@@ -94,10 +94,8 @@ func fixtureSeeds(tb testing.TB) []fuzzSeed {
 	return seeds
 }
 
-// FuzzDecodeTrade drives the trade body's three i128 words and checks the
-// decoded amounts against a big.Int reference: negatives are malformed,
-// a zero side is the recognised no-op, and everything else round-trips
-// exactly across the full 128 bits with sold→base, bought→quote.
+// FuzzDecodeTrade checks the trade body's three i128 words against a big.Int reference: negatives are malformed, a
+// zero side is a recognised no-op, and the rest round-trips exactly over 128 bits with sold->base, bought->quote.
 func FuzzDecodeTrade(f *testing.F) {
 	f.Add(int64(0), uint64(100), int64(0), uint64(90), int64(0), uint64(1))
 	f.Add(int64(0), uint64(2), int64(0), uint64(0), int64(0), uint64(0))
@@ -219,10 +217,8 @@ func FuzzDecodeAmountVecEvents(f *testing.F) {
 	})
 }
 
-// FuzzDecoderDecode_invariants pushes arbitrary body bytes through every
-// recognised kind via the production Decode entry point. Whatever is
-// emitted must satisfy the served tier's money invariants — a decode that
-// succeeds on a shape the sink must refuse is a defect.
+// FuzzDecoderDecode_invariants pushes arbitrary bodies through every recognised kind via Decode; whatever is emitted
+// must satisfy the served tier's money invariants.
 func FuzzDecoderDecode_invariants(f *testing.F) {
 	kinds := fuzzKinds()
 	for _, s := range fixtureSeeds(f) {
@@ -320,10 +316,9 @@ var (
 	}
 )
 
-// FuzzMatches_identityGate: whatever the topics, an event matches only
-// when its emitter is trusted for that kind — a registered pool for
-// pool-flow kinds, the router for router-scoped kinds and add_pool,
-// either for the pool-emittable governance kinds, never anyone else.
+// FuzzMatches_identityGate pins that an event matches only when its emitter is trusted for that kind: a registered
+// pool for pool-flow kinds, the router for router-scoped kinds and add_pool, either for pool-emittable governance
+// kinds.
 func FuzzMatches_identityGate(f *testing.F) {
 	kinds := fuzzKinds()
 	for k := range kinds {

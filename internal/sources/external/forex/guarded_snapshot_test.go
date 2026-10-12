@@ -12,19 +12,12 @@ import (
 	"time"
 )
 
-// The served in-memory snapshot and the fx sanity band.
-//
-// /v1/price's two fiat paths read the forex Cache directly, so installing the snapshot built from
-// the RAW upstream map before the band runs protects fx_quotes and nothing else.
-//
-// These tests drive the production entry point, [Worker.refreshOnce], against a fake of massive's
-// two REST endpoints. They never call the band helpers directly: the defect was an ORDERING
-// between the band and the install, which only the real refresh path can show.
+// The served in-memory snapshot and the fx sanity band: these tests drive [Worker.refreshOnce] against a fake of
+// massive's two endpoints, because the defect was the ORDER of band and install, which only the real refresh path
+// shows.
 
-// fakeMassive serves the grouped-daily FX endpoint and the reference
-// tickers endpoint. `current` answers the most recent UTC date (what
-// LatestUSDRates reads); `history` answers every earlier date. A nil
-// `history` means the upstream has no dated bars at all.
+// fakeMassive serves the grouped-daily FX and reference-tickers endpoints: `current` answers the latest UTC date
+// and `history` every earlier date; a nil `history` means no dated bars at all.
 type fakeMassive struct {
 	mu      sync.Mutex
 	current map[string]float64
@@ -212,10 +205,8 @@ func TestRefreshOnce_BandRejectedRateIsNeverInstalled(t *testing.T) {
 	}
 }
 
-// TestRefreshOnce_HealedBootstrapIsRefusedNotServed: at restart the FIRST sample is the broken
-// one and the bootstrap arm accepts it, then the ticker's dated bars refute it (the heal scrubs
-// the row from the fx_quotes batch). A scrubbed row is not a guarded rate, so the cache serves
-// NOTHING for the ticker rather than the refuted sample.
+// TestRefreshOnce_HealedBootstrapIsRefusedNotServed pins that when the broken first sample is bootstrapped and
+// then refuted by dated bars, the cache serves nothing for that ticker rather than the refuted sample.
 func TestRefreshOnce_HealedBootstrapIsRefusedNotServed(t *testing.T) {
 	up := &fakeMassive{
 		current: map[string]float64{"UZS": 1820, "EUR": 0.92},
@@ -244,10 +235,8 @@ func TestRefreshOnce_HealedBootstrapIsRefusedNotServed(t *testing.T) {
 	}
 }
 
-// TestRefreshOnce_ConfirmedMoveReachesTheCache pins the other half of the
-// two-strike band: a REAL devaluation the upstream keeps reporting is
-// held for one refresh and then served. The reorder must not turn the
-// band into a permanent freeze.
+// TestRefreshOnce_ConfirmedMoveReachesTheCache pins that a real devaluation the upstream keeps reporting is held
+// for one refresh and then served, so the band is never a permanent freeze.
 func TestRefreshOnce_ConfirmedMoveReachesTheCache(t *testing.T) {
 	up := &fakeMassive{
 		current: map[string]float64{"EGP": 30, "EUR": 0.92},
@@ -311,10 +300,8 @@ func TestRefreshOnce_HeldRateExpires(t *testing.T) {
 	}
 }
 
-// TestRefreshOnce_ECBFallbackJoinsAgainstPrimaryNames is the finding's
-// scenario: massive's grouped-aggregates product is quota-limited (429)
-// while its reference endpoint still answers, so the refresh pairs ECB's
-// UPPER-case rates with massive's lower-case names.
+// TestRefreshOnce_ECBFallbackJoinsAgainstPrimaryNames pins the join when massive's rates are quota-limited (429)
+// but names answer: ECB's UPPER-case rates must match massive's lower-case names.
 func TestRefreshOnce_ECBFallbackJoinsAgainstPrimaryNames(t *testing.T) {
 	up := &fakeMassive{
 		groupedStatus: http.StatusTooManyRequests,
@@ -349,12 +336,9 @@ func TestRefreshOnce_ECBFallbackJoinsAgainstPrimaryNames(t *testing.T) {
 	}
 }
 
-// TestRefreshOnce_ReusedNamesJoinAgainstPrimaryRates: rates are healthy, the NAMES endpoint
-// fails, and the worker reuses the last snapshot's names (re-keyed by UPPER-case Ticker) against
-// the primary's lower-case rates.
-//
-// The assertion is on the NEW rate, not on presence: a collapsed join does not make EUR vanish
-// (the snapshot holds the last guarded rate), it silently pins it at the previous value.
+// TestRefreshOnce_ReusedNamesJoinAgainstPrimaryRates pins the join when the names endpoint fails and UPPER-case
+// reused names meet lower-case primary rates. It asserts the NEW rate, since a collapsed join silently pins the
+// previous value.
 func TestRefreshOnce_ReusedNamesJoinAgainstPrimaryRates(t *testing.T) {
 	up := &fakeMassive{
 		current: map[string]float64{"EUR": 0.92, "UZS": 11800},
@@ -387,10 +371,9 @@ func TestRefreshOnce_ReusedNamesJoinAgainstPrimaryRates(t *testing.T) {
 	}
 }
 
-// TestRefreshOnce_ColdStartWithoutNamesStillInstallsSnapshot: with no snapshot ever installed,
-// the rates fetch succeeds (in production via the ECB fallback) but the names endpoint errors.
-// Names are static display labels, so the refresh must still install the rates, labelled by
-// ticker, rather than leave the feed empty. The cold path must not return before cache.Set.
+// TestRefreshOnce_ColdStartWithoutNamesStillInstallsSnapshot pins that with no prior snapshot and a failing names
+// endpoint, rates are still installed, labelled by ticker, because names are static labels; the cold path must not
+// return before cache.Set.
 func TestRefreshOnce_ColdStartWithoutNamesStillInstallsSnapshot(t *testing.T) {
 	up := &fakeMassive{
 		current: map[string]float64{"EUR": 0.92, "UZS": 11800},

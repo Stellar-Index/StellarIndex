@@ -13,10 +13,9 @@ import (
 // OracleReference.LookupQuote keys derive from validated legs, and Store.LatestOracleObservation matches `asset = ANY($2)` exactly.
 // This test asserts the PROPERTY (no raw key reaches the reader), so it survives refactors and fails if any link breaks.
 
-// keyRecordingOracleReader captures every key set it is asked for, so a
-// test can assert on what divergence REQUESTED — not merely on what it
-// did with the answer. A guard that only checked the response would pass
-// against a reader that was never asked the dangerous question.
+// keyRecordingOracleReader captures every key set it is asked for, so a test can assert on what divergence requested,
+// not just what it did with the answer; a guard checking only the response would pass against a reader never asked
+// the dangerous question.
 type keyRecordingOracleReader struct {
 	baseKeys  []string
 	quoteKeys []string
@@ -96,10 +95,8 @@ func TestDivergenceNeverAsksTheOracleForARawKey(t *testing.T) {
 	}
 }
 
-// TestOracleAssetKeysNeverSynthesisesARawKey guards the expander this
-// package binds its oracle keys through (the alias registry). Its alias
-// families are exactly the kind of expansion that could grow a raw arm
-// later without anyone noticing the layer violation.
+// TestOracleAssetKeysNeverSynthesisesARawKey guards the alias-registry expander this package binds its oracle keys
+// through: its alias families are the kind of expansion that could grow a raw arm later without anyone noticing.
 func TestOracleAssetKeysNeverSynthesisesARawKey(t *testing.T) {
 	native, _ := canonical.ParseAsset("native")
 	usd, _ := canonical.NewFiatAsset("USD")

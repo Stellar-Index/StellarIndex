@@ -7,15 +7,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// Real lake bytes: ledger 53,626,410,
-// tx 3870e2fc05a8a37f7ec7b01faaf222f91a353e8ca5273afe03c86b56963ba760,
-// op 0 event 2, a `trade` event from REGISTERED pool CCY2PXGM… whose body is
-// (sold=2, bought=0, fee=0): a genuine dust swap whose output rounded to zero.
-//
-// The event must decode as a RECOGNIZED NO-OP (nil rows, nil error): not an error, which
-// blinds the projection reconcile, and not a canonical.Trade, which Validate would reject
-// (a zero side breaks price derivation). Same classification as redstone's empty
-// write_prices batch.
+// Real lake bytes (ledger 53,626,410): a trade from a registered pool with body (sold=2, bought=0, fee=0), a dust
+// swap. It must decode as a recognised no-op (nil rows, nil error): an error blinds the projection reconcile, and a
+// zero side breaks price derivation.
 const (
 	zeroAmountTradeContract = "CCY2PXGMKNQHO7WNYXEWX76L2C5BH3JUW3RCATGUYKY7QQTRILBZIFWV"
 	zeroAmountTradeValue    = "AAAAEAAAAAEAAAADAAAACgAAAAAAAAAAAAAAAAAAAAIAAAAKAAAAAAAAAAAAAAAAAAAAAAAAAAoAAAAAAAAAAAAAAAAAAAAA"
@@ -57,10 +51,8 @@ func TestDecoderDecode_zeroAmountTradeIsNoOp(t *testing.T) {
 	}
 }
 
-// A self-pair trade (token_sold == token_bought) decodes fully but maps
-// to zero rows (canonical.ErrPairMismatch) — the same recognised no-op
-// comet applies to the exploit self-swap primitive. As an error it would
-// count as undecodable-but-matched and fail the source's verdict closed.
+// A self-pair trade (token_sold == token_bought) maps to zero rows (canonical.ErrPairMismatch), a recognised no-op as
+// in comet; as an error it would count as undecodable-but-matched and fail the source's verdict closed.
 func TestDecoderDecode_selfPairTradeIsNoOp(t *testing.T) {
 	dec := NewDecoder()
 	ev := zeroAmountTradeEvent()

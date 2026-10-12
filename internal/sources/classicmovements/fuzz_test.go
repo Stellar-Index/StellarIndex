@@ -365,10 +365,9 @@ func fuzzPoolEntry(assetA, assetB xdr.Asset, reserveA, reserveB int64) *xdr.Ledg
 	}}
 }
 
-// FuzzDecodeOp drives arbitrary (OperationBody, OperationResult) XDR through the op-only
-// decode surface. Properties: nothing out of scope is decoded; a failed op moves nothing;
-// every amount is the exact int64 the protocol defines for its kind (no truncation or sign
-// flip); counterparties are G-strkeys, never M-strkeys; every error is a classified sentinel.
+// FuzzDecodeOp drives arbitrary (OperationBody, OperationResult) XDR through the op-only decode surface. Properties:
+// nothing out of scope is decoded; a failed op moves nothing; every amount is the exact int64 the protocol defines (no
+// truncation or sign flip); counterparties are G-strkeys, never M-strkeys; every error is a classified sentinel.
 func FuzzDecodeOp(f *testing.F) {
 	for _, fx := range realOpFixtures {
 		body, err := base64.StdEncoding.DecodeString(fx[0])
@@ -516,10 +515,8 @@ func checkFuzzPathPayment(t *testing.T, body xdr.OperationBody, result xdr.Opera
 	}
 }
 
-// FuzzClaimableBalanceIndex models the in-run BalanceId index as a
-// FIFO of distinct ids with a fixed capacity: after any sequence of
-// creates (duplicates included), exactly the newest `ring` distinct ids
-// resolve, each to the amount its latest create carried.
+// FuzzClaimableBalanceIndex models the in-run BalanceId index as a fixed-capacity FIFO of distinct ids: after any sequence of creates
+// (duplicates included), exactly the newest `ring` distinct ids resolve, each to the amount its latest create carried.
 func FuzzClaimableBalanceIndex(f *testing.F) {
 	f.Add([]byte{0, 1, 2, 3, 4}, uint8(3), int64(10))
 	f.Add([]byte{0, 1, 0, 2, 0, 3}, uint8(2), int64(-1))

@@ -24,10 +24,8 @@ func TestNormalizeMethod(t *testing.T) {
 		{"get", "GET"},
 		{"Post", "POST"},
 		{"PATCH", "PATCH"},
-		// Any verb outside the standard set collapses to the bounded
-		// "other" label. net/http accepts arbitrary tokens as methods,
-		// so passing them through verbatim would be an unbounded metric-label
-		// cardinality DoS.
+		// Any verb outside the standard set collapses to the bounded "other" label; passing arbitrary net/http method
+		// tokens through would be a metric-label cardinality DoS.
 		{"propfind", "other"},
 		{"PROPFIND", "other"},
 		{"", "other"},
@@ -39,10 +37,8 @@ func TestNormalizeMethod(t *testing.T) {
 	}
 }
 
-// TestNormalizeMethod_CardinalityIsBounded is the regression proof for
-// label cardinality: an attacker sending many distinct junk method tokens must NOT
-// be able to mint one metric-label child per token. Every unknown verb —
-// however many distinct ones — must map to the single "other" bucket.
+// TestNormalizeMethod_CardinalityIsBounded: many distinct junk method tokens must not mint one metric-label child
+// each; every unknown verb maps to the single "other" bucket.
 func TestNormalizeMethod_CardinalityIsBounded(t *testing.T) {
 	labels := map[string]struct{}{}
 	attacks := []string{
@@ -186,10 +182,8 @@ func TestStatusRecorder_Flush_proxiesWhenInnerSupportsFlusher(t *testing.T) {
 	}
 }
 
-// nonFlusher is a writer that deliberately does NOT implement
-// http.Flusher. statusRecorder.Flush must be a no-op rather than
-// panicking — SSE endpoints sometimes get wrapped by middleware
-// that strips the Flusher interface.
+// nonFlusher deliberately does not implement http.Flusher; statusRecorder.Flush must be a no-op rather than panic,
+// since middleware can strip Flusher from SSE writers.
 type nonFlusher struct {
 	header http.Header
 }
@@ -206,12 +200,9 @@ func TestStatusRecorder_Flush_noopWhenInnerDoesntImplementFlusher(t *testing.T) 
 	r.Flush()
 }
 
-// A fast 500 must NOT count in the success histogram, or it would report as "good" against
-// the latency SLO numerator. Its elapsed time lands only in HTTPRequestDuration (the full
-// distribution); HTTPRequestSuccessDuration stays untouched.
-//
-// This drives the REAL middleware chain (HTTPMetrics → CaptureRoute → ServeMux) and asserts
-// on before/after deltas of the actual counters.
+// A fast 500 must not count in the success histogram or it reports as good against the latency SLO numerator; its
+// time lands only in HTTPRequestDuration. This drives the real chain (HTTPMetrics, CaptureRoute, ServeMux) and
+// asserts before/after deltas of the actual counters.
 func TestHTTPMetrics_Fast5xxDoesNotCountAsSuccess(t *testing.T) {
 	const (
 		method = "GET"

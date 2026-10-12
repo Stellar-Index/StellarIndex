@@ -18,10 +18,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 )
 
-// TestEndToEndRouting_withRealFixtures wires every source with captured
-// mainnet fixtures into one Dispatcher, feeds each fixture through
-// Dispatcher.Route, and verifies the right decoder claimed each event
-// without duplication or loss.
+// TestEndToEndRouting_withRealFixtures feeds captured mainnet fixtures for every source through Dispatcher.Route and
+// verifies the right decoder claimed each event without duplication or loss.
 func TestEndToEndRouting_withRealFixtures(t *testing.T) {
 	disp := dispatcher.New(
 		reflector.NewDecoder(reflector.VariantDEX,
@@ -158,10 +156,9 @@ func validateOutput(o interface{}) error {
 	return nil
 }
 
-// sorobanLegs pins the contract form on both legs of a Soroban venue's
-// trade. The alias-aware price reads assume a pool never shares a pair key
-// with a classic book, so a decoder folding a SAC leg onto its classic
-// asset would leak pool prints into classic-quoted reads.
+// sorobanLegs pins the contract form on both legs of a Soroban venue's trade: alias-aware price reads assume a pool
+// never shares a pair key with a classic book, so a decoder folding a SAC leg onto its classic asset would leak pool
+// prints into classic-quoted reads.
 func sorobanLegs(tr canonical.Trade) error {
 	for _, leg := range []canonical.Asset{tr.Pair.Base, tr.Pair.Quote} {
 		if leg.Type != canonical.AssetSoroban {
@@ -215,14 +212,9 @@ func soroswapDecoderWithStubbedTokens(t *testing.T) *soroswap.Decoder {
 	return d
 }
 
-// orderedFixturesForReplay reorders fixture paths to match on-chain ordering, which matters for
-// sources with correlation buffers. Alphabetical os.ReadDir order puts all swap_* files before any
-// sync_* file, spanning gaps larger than the buffer's orphan-eviction maxAge and stranding every
-// swap before its sync arrives.
-//
-// On-chain, swap and sync of one trade land in the same tx and the dispatcher sees them adjacent.
-// This pairs swap_* with sync_* of the same tx_hash prefix and yields them consecutively. For
-// sources without correlation buffers (reflector / aquarius / phoenix) alphabetical order is fine.
+// orderedFixturesForReplay reorders fixtures to on-chain order for sources with correlation buffers: alphabetical
+// order puts all swap_* before any sync_*, exceeding the buffer's orphan-eviction maxAge. It pairs swap_* with
+// sync_* of the same tx_hash prefix; other sources can stay alphabetical.
 func orderedFixturesForReplay(t *testing.T, source string, files []string) []string {
 	t.Helper()
 	if source != "soroswap" {

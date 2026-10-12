@@ -189,10 +189,9 @@ type fakeUnknownContractReporter struct {
 
 func (f *fakeUnknownContractReporter) UnknownContractDrops() int { return f.drops }
 
-// TestStats_UnknownContractDropsSurfacedViaDuckTypedInterface pins that a decoder dropping a fully
-// decoded event for want of a contract-identity mapping (returning (nil, nil), invisible to the
-// dispatcher's DecodeErrors counter) still surfaces through Stats() for internal/pipeline to
-// wire to a metric.
+// TestStats_UnknownContractDropsSurfacedViaDuckTypedInterface pins that a decoder dropping a decoded event for lack
+// of a contract-identity mapping (returning (nil, nil), invisible to DecodeErrors) still surfaces through Stats()
+// for internal/pipeline to wire to a metric.
 func TestStats_UnknownContractDropsSurfacedViaDuckTypedInterface(t *testing.T) {
 	dec := &fakeUnknownContractReporter{
 		fakeDecoder: fakeDecoder{name: "soroswap", topic0: "T"},
@@ -309,10 +308,8 @@ func TestRouteOp_decodeErrorCountedPerSource(t *testing.T) {
 	}
 }
 
-// TestRouteOp_everyMatchingDecoderRuns pins that op decoders are
-// per-domain observers of one op, so two that claim the same op type
-// must both decode it and both be counted. First-match routing handed
-// the op to the earlier registration only and recorded the loss nowhere.
+// TestRouteOp_everyMatchingDecoderRuns pins that op decoders are per-domain observers, so two claiming the same op
+// type must both decode and be counted.
 func TestRouteOp_everyMatchingDecoderRuns(t *testing.T) {
 	trades := &fakeOpDecoder{
 		name:     "trades",
@@ -396,10 +393,8 @@ func (r *recordingSink) Push(hit discovery.Hit) {
 	r.hits = append(r.hits, hit)
 }
 
-// TestDispatch_DiscoveryHook_FiresOnSEP41Event — when a sink is
-// installed and the event is a SEP-41 transfer/mint/burn/clawback,
-// the dispatcher pushes a Hit BEFORE running decoders. Decoders
-// still run normally.
+// TestDispatch_DiscoveryHook_FiresOnSEP41Event pins that an installed sink gets a Hit for a SEP-41
+// transfer/mint/burn/clawback before decoders run, and decoders still run.
 func TestDispatch_DiscoveryHook_FiresOnSEP41Event(t *testing.T) {
 	sink := &recordingSink{}
 	dec := &fakeDecoder{name: "alpha", topic0: scval.MustEncodeSymbol("transfer")}
@@ -465,10 +460,8 @@ func TestDispatch_DiscoveryHook_NilSinkIsNoop(t *testing.T) {
 	}
 }
 
-// TestDispatch_DiscoveryHook_FiresOnOracleSuggestiveEvent — the
-// broader oracle-event sniffer (docs/architecture/oracle-manipulation-defense.md
-// §"Event-shaped discovery") must also push, independent of whether any Decoder
-// claims the event (no decoder registered here at all).
+// TestDispatch_DiscoveryHook_FiresOnOracleSuggestiveEvent pins that the oracle-event sniffer
+// (docs/architecture/oracle-manipulation-defense.md) pushes a Hit even when no Decoder claims the event.
 func TestDispatch_DiscoveryHook_FiresOnOracleSuggestiveEvent(t *testing.T) {
 	sink := &recordingSink{}
 	disp := New()
@@ -582,15 +575,9 @@ func TestDispatch_RawEventHook_NilSinkIsNoop(t *testing.T) {
 	}
 }
 
-// TestStats_concurrentWithDispatch guards statsMu: the dispatch goroutine's mutations of
-// eventsSeen / decodeErrors / unmatchedHits must not race the statsflush goroutine's Stats()
-// snapshot (a fatal "concurrent map read and map write"). Under `-race` it fails loudly if the
-// lock is removed.
-//
-// The matched arm exercises eventsSeen + decodeErrors (the decoder errors every call), the
-// unmatched arm exercises unmatchedHits, and a second goroutine hammers Stats() throughout. The
-// decoder is stateless so the writers sharing it do not race; the dispatcher's counters are the
-// only shared mutable state under test.
+// TestStats_concurrentWithDispatch guards statsMu: dispatch-side updates of eventsSeen, decodeErrors and
+// unmatchedHits must not race the statsflush goroutine's Stats() snapshot; under -race it fails if the lock is
+// removed. The decoder is stateless, so only the counters are shared.
 func TestStats_concurrentWithDispatch(t *testing.T) {
 	t.Parallel()
 

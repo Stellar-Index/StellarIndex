@@ -125,11 +125,8 @@ func TestSelectGuardedVWAP1m_DepegServedNotRejected(t *testing.T) {
 	}
 }
 
-// ─── SelectGuardedVWAP1m: full-row surfacing (headline path) ──────
-//
-// The /v1/assets/{slug} GlobalAssetView headline path surfaces the FULL row (VWAP + Bucket→asOf
-// + TradeCount + Sources). On a manipulation rejection every served field must come from the
-// last-known-good bucket, not the candidate; TradeCount is not exercised by the cases above.
+// SelectGuardedVWAP1m full-row surfacing: on a manipulation rejection every field of the headline row (VWAP,
+// Bucket as asOf, TradeCount, Sources) must come from the last-known-good bucket, not the candidate.
 
 // mkGlobalRow builds a combined-direction closed-bucket row at a given
 // minutes-ago offset with the supplied VWAP, trade count, and a single
@@ -331,11 +328,9 @@ func TestGuardServedVWAP1mConfidence_ValidatedBucketIsConfident(t *testing.T) {
 	if served.VWAP != candidate.VWAP || lowConfidence || substituted {
 		t.Fatalf("validated bucket must be confident and unsubstituted, byte-identical; got served=%s lowConfidence=%v substituted=%v", served.VWAP, lowConfidence, substituted)
 	}
-	// Thin (non-empty, < guardMinSamples) history is still a validated centre, so confident, AND
-	// the candidate must be served unchanged (within the wider thin band), not swapped for
-	// last-known-good. The fixture must be genuinely thin (12 rows is not; guardMinSamples is 5)
-	// and check both `served` and `substituted`, since only a thin store exercises [aggregate]'s
-	// wider thin-history band.
+	// Thin (non-empty, < guardMinSamples) history is still a validated centre, so the candidate is served
+	// unchanged within the wider thin band, not swapped for last-known-good. The fixture must be genuinely thin
+	// (guardMinSamples is 5) and check both `served` and `substituted`.
 	thinStore := fakeTrailing{rows: steadyRows(3)}
 	served, lowConfidence, substituted = GuardServedVWAP1mConfidence(context.Background(), thinStore, nil, testPair(t), mkRow(0, "5.0"))
 	if served.VWAP != "5.0" || lowConfidence || substituted {
@@ -351,10 +346,8 @@ func TestGuardServedVWAP1mConfidence_ValidatedBucketIsConfident(t *testing.T) {
 	}
 }
 
-// A rejected candidate (the guard swapping in an older last-known-good bucket) must surface
-// substituted=true so a caller stapling enrichment from a SEPARATE, independently-keyed cache
-// (confidence score, composite-router flags) knows it answers for the current tick, not for the
-// older bucket actually served.
+// A rejected candidate must surface substituted=true so a caller stapling enrichment from a separate cache
+// (confidence score, composite-router flags) knows it answers for the current tick, not the older bucket served.
 func TestGuardServedVWAP1mConfidence_RejectedCandidateIsSubstituted(t *testing.T) {
 	candidate := mkRow(0, "100.0") // 100x fat-finger vs. the steady 1.0 baseline
 	rows := steadyRows(12)
@@ -381,10 +374,8 @@ func TestGuardServedVWAP1m_TrailingFetchErrorFailsOpen(t *testing.T) {
 	}
 }
 
-// A fail-open trailing-fetch error must not be silent — it stands
-// down the manipulation/fat-finger band with only a log line as a trace, so
-// it needs a counter an alert can fire on. Proves the counter actually
-// increments on the real fail-open paths, not just that logging happened.
+// A fail-open trailing-fetch error stands down the manipulation/fat-finger band, so it needs a counter an alert
+// can fire on; this proves the counter increments on the real fail-open paths.
 func TestGuardServedVWAP1mConfidence_TrailingFetchErrorIncrementsMetric(t *testing.T) {
 	before := testutil.ToFloat64(obs.PricingGuardTrailingFetchFailedTotal.WithLabelValues("latest"))
 	store := fakeTrailing{err: errors.New("boom")}
@@ -406,10 +397,9 @@ func dormantRows(n, ageDays int, vwap string) []timescale.Vwap1mRow {
 }
 
 func TestGuardServedVWAP1mConfidence_DormantBaselineIsNotABaseline(t *testing.T) {
-	// A pair that last traded 40 buckets at 0.001 two hundred days ago
-	// relists at a real 0.01. That history is not a trailing baseline: the
-	// fresh price is served flagged low-confidence, never swapped for the
-	// 200-day-old row as a confident price.
+	// A pair that last traded 40 buckets at 0.001 two hundred days ago and relists at 0.01 has no trailing
+	// baseline: the fresh price is served flagged low-confidence, never swapped for the 200-day-old row as
+	// confident.
 	store := fakeTrailing{rows: dormantRows(SampleFetch, 200, "0.001")}
 	relist := mkRow(0, "0.01")
 	served, lowConfidence, substituted := GuardServedVWAP1mConfidence(context.Background(), store, nil, testPair(t), relist)

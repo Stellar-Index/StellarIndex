@@ -57,11 +57,9 @@ func fuzzEvent(topic1, value string) events.Event {
 	}
 }
 
-// FuzzDecodeSwap drives both swap amounts across the full i128 range
-// through the production Decode entry point. Non-positive sides and
-// self-pairs are recognised zero-row drops; everything else must emit one
-// trade whose amounts equal the big.Int reference and whose base is
-// token_in.
+// FuzzDecodeSwap drives both swap amounts across the full i128 range through the production Decode entry point.
+// Non-positive sides and self-pairs are recognised zero-row drops; all else emits one trade with big.Int-reference
+// amounts and base token_in.
 func FuzzDecodeSwap(f *testing.F) {
 	f.Add(int64(0), uint64(1_000_000), int64(0), uint64(990_000), false)
 	f.Add(int64(0), uint64(5), int64(0), uint64(5), true)
@@ -120,10 +118,9 @@ var liquidityCases = []struct {
 	{TopicSymbolWithdraw, LiquidityWithdraw, "token_out", "token_amount_out"},
 }
 
-// FuzzDecodeLiquidity drives the token amount and (for withdraw) the BPT
-// burn across the full i128 range. Emitted rows must satisfy the
-// comet_liquidity CHECKs (amount > 0; pool_amount_in > 0 on withdraw,
-// absent otherwise) and carry the exact reference values.
+// FuzzDecodeLiquidity drives the token amount and (for withdraw) the BPT burn across the full i128 range. Emitted rows
+// must satisfy the comet_liquidity CHECKs (amount > 0; pool_amount_in > 0 on withdraw, absent otherwise) and carry the
+// exact reference values.
 func FuzzDecodeLiquidity(f *testing.F) {
 	for k := range liquidityCases {
 		f.Add(uint8(k), int64(0), uint64(700_000), int64(0), uint64(12_345))

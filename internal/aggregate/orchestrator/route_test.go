@@ -238,10 +238,9 @@ func TestRouterTarget_DustEdgeIsLowConfidenceNotPublished(t *testing.T) {
 	}
 }
 
-// TestRouterTarget_SingleRouteUnchanged is regression (c): a target with
-// exactly one route behaves like the pre-router static single-chain
-// multiply — the served composite is the EXACT rational product, stamped
-// triangulated, backed by pathCount == 1.
+// TestRouterTarget_SingleRouteUnchanged pins that a target with exactly one route behaves like the static
+// single-chain multiply: the served composite is the exact rational product, stamped triangulated, with pathCount ==
+// 1.
 func TestRouterTarget_SingleRouteUnchanged(t *testing.T) {
 	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
 	usdGBP := mkPair(t, "fiat", "USD", "fiat", "GBP")
@@ -351,10 +350,9 @@ func TestRouterFreeze_LooselyAgreeingRoutesDoNotSuppress(t *testing.T) {
 	eurGBP := mkPair(t, "fiat", "EUR", "fiat", "GBP")
 	xlmGBP := mkPair(t, "crypto", "XLM", "fiat", "GBP")
 
-	// route1 XLM→USD→GBP = 0.10 × 0.80 = 0.08; route2 XLM→EUR→GBP =
-	// 0.10 × 0.90 = 0.09 — 12.5% apart: inside the 40% loose band (both
-	// survive, pathCount=2, not diverged) but WAY outside the ~3% tight
-	// corroboration band.
+	// route1 XLM->USD->GBP = 0.10 x 0.80 = 0.08; route2 XLM->EUR->GBP = 0.10 x 0.90 = 0.09. They are 12.5% apart:
+	// inside the 40% loose band (both survive, pathCount=2, not diverged) but far outside the ~3% tight corroboration
+	// band.
 	chains := []TriangulationChain{
 		{Target: xlmGBP, Legs: []canonical.Pair{xlmUSD, usdGBP}},
 		{Target: xlmGBP, Legs: []canonical.Pair{xlmEUR, eurGBP}},
@@ -375,10 +373,8 @@ func TestRouterFreeze_LooselyAgreeingRoutesDoNotSuppress(t *testing.T) {
 	}
 }
 
-// TestRouterFreeze_SharedBottleneckDoesNotSuppress is R2: two agreeing
-// routes that both funnel through one shared edge are NOT independent, so
-// they must NOT suppress the freeze. pathCount=2 must not feed the
-// freeze; the independent corroboration count is 1.
+// TestRouterFreeze_SharedBottleneckDoesNotSuppress pins that two agreeing routes funnelling through one shared edge
+// are not independent: pathCount=2 must not suppress the freeze, and the independent corroboration count is 1.
 func TestRouterFreeze_SharedBottleneckDoesNotSuppress(t *testing.T) {
 	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
 	usdEUR := mkPair(t, "fiat", "USD", "fiat", "EUR")
@@ -387,10 +383,8 @@ func TestRouterFreeze_SharedBottleneckDoesNotSuppress(t *testing.T) {
 	eurGBP := mkPair(t, "fiat", "EUR", "fiat", "GBP")
 	xlmGBP := mkPair(t, "crypto", "XLM", "fiat", "GBP")
 
-	// Two 3-hop routes to GBP that CONVERGE on EUR→GBP (the bottleneck):
-	//   A: XLM→USD→EUR→GBP = 0.10 × 0.90 × 0.80 = 0.072
-	//   B: XLM→BTC→EUR→GBP = 1e-5 × 9000 × 0.80 = 0.072
-	// They agree exactly, but share EUR→GBP — one independent path, not two.
+	// Two 3-hop routes to GBP converge on EUR->GBP (the bottleneck) and agree exactly at 0.072 (via USD->EUR, and via
+	// BTC->EUR), but share that edge: one independent path, not two.
 	chains := []TriangulationChain{
 		{Target: xlmGBP, Legs: []canonical.Pair{xlmUSD, usdEUR, eurGBP}},
 		{Target: xlmGBP, Legs: []canonical.Pair{xlmBTC, btcEUR, eurGBP}},
@@ -402,9 +396,8 @@ func TestRouterFreeze_SharedBottleneckDoesNotSuppress(t *testing.T) {
 		btcEUR: "9000.000000000000",
 		eurGBP: "0.800000000000",
 	})
-	// 0, not 1: the crypto legs here are cache-only, so each route's weakest
-	// link sits at the bootstrap cap and cannot corroborate at all.
-	// The shared-edge collapse itself is pinned in the router package
+	// 0, not 1: the crypto legs here are cache-only, so each route's weakest link sits at the bootstrap cap and
+	// cannot corroborate. The shared-edge collapse itself is pinned in the router package
 	// (TestRouter_CorroborationSharedBottleneck).
 	if corroboration != 0 {
 		t.Errorf("corroborationCount=%d, want 0 — cache-only routes sit at the bootstrap cap and "+
@@ -492,10 +485,9 @@ func TestRouterTarget_FXDryRerouteGatedAndFlagged(t *testing.T) {
 		}
 	})
 
-	// ── at the bootstrap cap: a cache-only substitute must NOT publish ──
-	// The cached XLM/USD leg enters at the bootstrap cap, which every
-	// unscored edge also carries; the reroute floor is strictly above it, so
-	// the direct price keeps serving and the substitution is flagged.
+	// At the bootstrap cap a cache-only substitute must not publish: the cached XLM/USD leg enters at the cap that
+	// every unscored edge carries, and the reroute floor is strictly above it, so the direct price keeps serving and
+	// the substitution is flagged.
 	t.Run("at_bootstrap_cap_direct_serves", func(t *testing.T) {
 		o, cache := buildO(t, false)
 		nextBucket(o)
@@ -544,10 +536,9 @@ func TestRecordComposite_RetainsMonotonicClock(t *testing.T) {
 	}
 }
 
-// TestRouteTarget_RerouteAboveBootstrapCapPublishes keeps the positive side
-// of the reroute floor covered: a leg-substitution reroute whose weakest leg
-// scores strictly above the bootstrap cap still publishes over the direct
-// price, flagged Rerouted.
+// TestRouteTarget_RerouteAboveBootstrapCapPublishes covers the positive side of the reroute floor: a leg-substitution
+// reroute whose weakest leg scores strictly above the bootstrap cap still publishes over the direct price, flagged
+// Rerouted.
 func TestRouteTarget_RerouteAboveBootstrapCapPublishes(t *testing.T) {
 	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
 	xlmEUR := mkPair(t, "crypto", "XLM", "fiat", "EUR")

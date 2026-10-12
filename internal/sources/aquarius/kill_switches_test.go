@@ -8,10 +8,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// kill/unkill events carry a single topic (Symbol(action)) and an
-// SCV_VOID body ("AAAAAQ==") — verified in the lake. emitKill validates
-// that shape (requireVoidBody) but otherwise reads only the action +
-// identity; the body's content carries no additional information.
+// kill/unkill events carry one Symbol(action) topic and an SCV_VOID body; emitKill validates that shape and reads only
+// the action and identity.
 func TestDecode_killSwitch(t *testing.T) {
 	d := NewDecoder()
 	ev := events.Event{
@@ -43,11 +41,8 @@ func TestDecode_killSwitch(t *testing.T) {
 	}
 }
 
-// TestDecode_killSwitchRejectsNonVoidBody pins Q043: emitKill must
-// validate the documented single-topic/void-body shape (the same
-// requireVoidBody check decode_admin.go's emergency-mode pair applies)
-// instead of building a KillEvent from ContractID/Ledger/TxHash alone
-// without ever looking at Topic length or Value.
+// TestDecode_killSwitchRejectsNonVoidBody pins that emitKill validates the single-topic/void-body shape
+// (requireVoidBody, as the emergency-mode pair does) rather than building a KillEvent from the identity fields alone.
 func TestDecode_killSwitchRejectsNonVoidBody(t *testing.T) {
 	d := NewDecoder()
 	ev := events.Event{

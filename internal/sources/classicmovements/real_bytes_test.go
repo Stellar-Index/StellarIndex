@@ -10,10 +10,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 )
 
-// Real pre-P23 mainnet bytes from the ClickHouse lake (stellar.operations joined to
-// stellar.operation_results), not synthetic fixtures. Each case pins the decoder against
-// actual on-chain data far below the P23 boundary. decode_test.go covers the synthetic
-// edge cases this data does not exercise (native-asset payment, malformed amounts).
+// Real pre-P23 mainnet bytes from the ClickHouse lake (stellar.operations joined to stellar.operation_results), not synthetic fixtures.
+// decode_test.go covers the synthetic edge cases this data does not exercise (native-asset payment, malformed amounts).
 func TestRealBytes_payment_success(t *testing.T) {
 	// ledger 40000000, tx 0761af68c3cd6f5fc9a94b5ffca8129ccd6a3a6faa515fe1169706a8521ba248, op_index 2.
 	// source_account (from) = GA2QXW7YFAIR35LGKM2TDCQQZFR33XJCWF4N6SMRLOKX3HL76JKKPA62
@@ -136,10 +134,8 @@ func TestRealBytes_createAccount_success(t *testing.T) {
 	assertMovementEqual(t, movements[0], want, "2732091143")
 }
 
-// TestRealBytes_payment_failed_sourceNoAccount is the path-negative case: a real failed
-// payment whose outer OperationResultCode is opNO_ACCOUNT, so the op never reached its own
-// PaymentResult union. It must decode to zero movements, not an error: this is routine
-// on-chain failure.
+// TestRealBytes_payment_failed_sourceNoAccount is the path-negative case: a real failed payment whose outer result code is opNO_ACCOUNT,
+// so the op never reached its PaymentResult union. It must decode to zero movements, not an error, as a routine on-chain failure.
 func TestRealBytes_payment_failed_sourceNoAccount(t *testing.T) {
 	const (
 		bodyB64   = "AAAAAQAAAAA3mZB7bnHFoxwyZpTTMRdQvzdJKQrlJgLjpW6jCNCEtwAAAAJSQU5ESTEAAAAAAAAAAAAAjNPgGB5OHDkXLDlbk4XOaCVSZtwsVbgQoA84G19p0YkAAAAAAAAAAQ=="
@@ -155,10 +151,8 @@ func TestRealBytes_payment_failed_sourceNoAccount(t *testing.T) {
 	}
 }
 
-// TestRealBytes_resultCodeIsOpNoAccount pins the exact outer result
-// code the "failed" fixture above decodes to, independent of this
-// package's Decode logic — a canary against a future go-stellar-sdk
-// upgrade silently renumbering the enum.
+// TestRealBytes_resultCodeIsOpNoAccount pins the outer result code the failed fixture decodes to, independent of this package's Decode,
+// as a canary against a go-stellar-sdk upgrade renumbering the enum.
 func TestRealBytes_resultCodeIsOpNoAccount(t *testing.T) {
 	var res xdr.OperationResult
 	if err := xdr.SafeUnmarshalBase64("/////g==", &res); err != nil {
@@ -259,10 +253,8 @@ func TestRealBytes_pathPaymentStrictSend_success(t *testing.T) {
 
 // ─── Phase 3: ClaimableBalance create/claim/clawback + Clawback ───
 
-// TestRealBytes_createClaimableBalance_success is a real pre-P23
-// mainnet CreateClaimableBalance: GALA funded into escrow with two
-// claimants. Pins the generated BalanceId (from the RESULT, not
-// derivable from the body) and the claimants list.
+// TestRealBytes_createClaimableBalance_success is a real pre-P23 CreateClaimableBalance funding GALA into escrow with two claimants;
+// it pins the generated BalanceId (from the RESULT, not derivable from the body) and the claimants list.
 func TestRealBytes_createClaimableBalance_success(t *testing.T) {
 	// ledger 40000000, tx 05fd6eea40b036204d6817d4ba945663e3071e2331385de78f38a9b9bed661cc, op_index 0.
 	const (
@@ -380,10 +372,8 @@ func TestRealBytes_clawback_success(t *testing.T) {
 	}
 }
 
-// TestRealBytes_clawbackClaimableBalance_failed pins a REAL failed
-// ClawbackClaimableBalance (ClawbackClaimableBalanceNotClawbackEnabled)
-// — zero movements, no pending ref recorded (the op never resolved
-// to a real value-moving attempt, so there's nothing to correlate).
+// TestRealBytes_clawbackClaimableBalance_failed pins a REAL failed ClawbackClaimableBalance (NotClawbackEnabled): zero
+// movements and no pending ref, since the op never resolved to a value-moving attempt and there is nothing to correlate.
 func TestRealBytes_clawbackClaimableBalance_failed(t *testing.T) {
 	// ledger 40086192, tx 5a1b65b21d6a2db081eb57e2e3075089553bdd36ad78f7dc8fdacaaff5b2ed2b, op_index 0.
 	const (
@@ -417,10 +407,9 @@ func TestRealBytes_clawbackClaimableBalance_failed(t *testing.T) {
 
 // ─── Phase 4 (op-only half): AccountMerge ──────────────────────────
 
-// TestRealBytes_accountMerge_success is a real pre-P23 mainnet
-// AccountMerge: pins the exact XLM amount from
-// AccountMergeResult.SourceAccountBalance (249999900 — NOT derivable
-// from the body, which carries only the destination).
+// TestRealBytes_accountMerge_success is a real pre-P23 AccountMerge pinning the exact XLM amount from
+// AccountMergeResult.SourceAccountBalance (249999900), which is not derivable from the body, which carries only the
+// destination.
 func TestRealBytes_accountMerge_success(t *testing.T) {
 	// ledger 40000173, tx 8503c256346c2cd6c6864d4c33f8e502f87ec3f1413688210017563e4e0b2117, op_index 0.
 	const (
@@ -450,12 +439,9 @@ func TestRealBytes_accountMerge_success(t *testing.T) {
 	}
 }
 
-// ─── Phase 4 (entry-changes half): LiquidityPoolDeposit/Withdraw ──
-//
-// Real LP deposit/withdraw op bodies below both the P23 boundary and ledger_entry_changes'
-// per-op fidelity floor. In that era StreamEntryChanges returns zero rows for these ops
-// because the entry-change data is absent, not because nothing happened. DecodeLiquidityPoolOp
-// must return ErrEntryChangesUnavailable (never a guessed amount) against real op bytes.
+// Phase 4 (entry-changes half): real LiquidityPoolDeposit/Withdraw op bodies below both the P23 boundary and
+// ledger_entry_changes' fidelity floor. There StreamEntryChanges returns zero rows because the data is absent, not
+// because nothing happened, so DecodeLiquidityPoolOp must return ErrEntryChangesUnavailable, never a guessed amount.
 
 func TestRealBytes_liquidityPoolDeposit_entryChangesUnavailable(t *testing.T) {
 	// ledger 50000031, tx 294abbd9b62ed717abb6e7008cf86ba7b99c9e5a6a20444350fc418bf2d00071, op_index 0.

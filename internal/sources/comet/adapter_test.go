@@ -106,10 +106,9 @@ func TestDecoder_Decode_MalformedBodyReturnsError(t *testing.T) {
 	}
 }
 
-// TestDecoder_Decode_SelfPairSwap_NoEventNoError: a self-pair swap (token_in == token_out, the
-// exploit primitive) decodes cleanly but maps to ZERO rows, so Decode must return (nil, nil), NOT
-// an error. An error would make the completeness re-derive count each as an undecodable blind spot
-// and hold the `comet` source `complete=false` forever.
+// TestDecoder_Decode_SelfPairSwap_NoEventNoError pins that a self-pair swap (token_in == token_out, the exploit
+// primitive) maps to zero rows and Decode returns (nil, nil), not an error, which would make completeness re-derive
+// count each as an undecodable blind spot and hold `comet` complete=false forever.
 func TestDecoder_Decode_SelfPairSwap_NoEventNoError(t *testing.T) {
 	d := NewDecoder()
 	caller := accountStrkeyFromSeed(t, 0x10)
@@ -209,10 +208,9 @@ func TestDecoder_Decode_SelfPairSwap_ReplayDoesNotIncrement(t *testing.T) {
 	}
 }
 
-// TestDecoder_Decode_NonPositiveAmounts_IncrementsDetectionMetric is the non-positive-amount
-// analog of the self-pair metric test: a cleanly decoded swap with a zero/negative amount yields
-// zero honest rows and must bump obs.AMMNonPositiveSwapTotal{source="comet"}, so an operator can
-// tell "armed but quiet" from "never wired".
+// TestDecoder_Decode_NonPositiveAmounts_IncrementsDetectionMetric pins that a cleanly decoded swap with a zero or
+// negative amount yields zero rows and bumps obs.AMMNonPositiveSwapTotal{source="comet"}, so "armed but quiet" differs
+// from "never wired".
 func TestDecoder_Decode_NonPositiveAmounts_IncrementsDetectionMetric(t *testing.T) {
 	d := NewDecoder()
 	d.now = func() time.Time { return mustTime(t, "2026-08-25T03:56:02Z") } // +5m, LIVE case
@@ -243,10 +241,9 @@ func TestDecoder_Decode_NonPositiveAmounts_IncrementsDetectionMetric(t *testing.
 	}
 }
 
-// TestDecoder_Decode_NonPositiveAmounts_ReplayDoesNotIncrement is the non-positive-amount analog
-// of the self-pair replay test. reconciliation_catalogue.go and verify_decoders.go build their own
-// un-disabled comet.NewDecoder() to replay history; without the recency gate every completeness
-// sweep would inflate this counter and defeat its "happening now" signal.
+// TestDecoder_Decode_NonPositiveAmounts_ReplayDoesNotIncrement pins the recency gate: reconciliation_catalogue.go and
+// verify_decoders.go replay history with their own un-disabled comet.NewDecoder(), and without the gate every
+// completeness sweep would inflate this counter.
 func TestDecoder_Decode_NonPositiveAmounts_ReplayDoesNotIncrement(t *testing.T) {
 	d := NewDecoder()
 	d.now = func() time.Time { return mustTime(t, "2026-08-26T06:00:00Z") } // ~26h later, replay case
@@ -276,10 +273,9 @@ func TestDecoder_Decode_NonPositiveAmounts_ReplayDoesNotIncrement(t *testing.T) 
 	}
 }
 
-// TestDecoder_WithoutMetrics_SuppressesBothDetectionCounters: the projector builds an INDEPENDENT
-// comet.Decoder beside the dispatcher's (ADR-0032 parallel double-write), and both decode the same
-// live event, so without an opt-out detections count twice. WithoutMetrics must suppress BOTH
-// counters while leaving the (nil, nil) drop unchanged.
+// TestDecoder_WithoutMetrics_SuppressesBothDetectionCounters pins that WithoutMetrics suppresses BOTH counters while
+// the (nil, nil) drop is unchanged; the projector builds an independent comet.Decoder beside the dispatcher's
+// (ADR-0032 double-write), so detections would count twice.
 func TestDecoder_WithoutMetrics_SuppressesBothDetectionCounters(t *testing.T) {
 	d := NewDecoder().WithoutMetrics()
 	d.now = func() time.Time { return mustTime(t, "2026-08-25T03:56:02Z") } // LIVE case
@@ -320,10 +316,8 @@ func TestDecoder_WithoutMetrics_SuppressesBothDetectionCounters(t *testing.T) {
 	}
 }
 
-// TestDecoder_Decode_HappyPath_NoDetectionMetric is the false-positive guard:
-// a NORMAL distinct-pair swap must NOT bump the exploit metric. Without this,
-// the exploit alert would be noise — exactly what a self-pair-only signal must
-// avoid.
+// TestDecoder_Decode_HappyPath_NoDetectionMetric is the false-positive guard: a normal distinct-pair swap must NOT
+// bump the exploit metric, or the self-pair alert would be noise.
 func TestDecoder_Decode_HappyPath_NoDetectionMetric(t *testing.T) {
 	d := NewDecoder()
 	caller := accountStrkeyFromSeed(t, 0x10)
@@ -353,11 +347,9 @@ func TestDecoder_Decode_HappyPath_NoDetectionMetric(t *testing.T) {
 	}
 }
 
-// TestDecoder_GateRejectsForeignContract pins ADR-0035/0040: Comet's `("POOL", "swap")` topic is
-// the Balancer-v1 event family shared by EVERY deployment of that WASM, so it is forgeable. A
-// perfect swap shape from an unregistered contract must NOT be attributed to comet, while the same
-// event from the curated pool (Blend's backstop) must. Decode stays shape-only; the gate lives in
-// Matches, which the dispatcher consults first.
+// TestDecoder_GateRejectsForeignContract pins ADR-0035/0040: Comet's `("POOL", "swap")` topic is shared by every
+// deployment of that WASM and so forgeable. A perfect swap from an unregistered contract must not be attributed to
+// comet, while the curated pool (Blend's backstop) must. Decode is shape-only; the gate is in Matches.
 func TestDecoder_GateRejectsForeignContract(t *testing.T) {
 	d := NewDecoder() // production gate: in-code curated set only
 	caller := accountStrkeyFromSeed(t, 0x10)
@@ -438,10 +430,8 @@ func TestDecoder_Matches_AllFivePoolKinds(t *testing.T) {
 }
 
 func TestDecoder_Matches_RejectsUnknownPoolKind(t *testing.T) {
-	// A hypothetical contract upgrade emits (POOL, "bind") — until
-	// the decoder grows a handler for it the dispatcher should NOT
-	// claim it. That keeps the orphan-events counter honest and
-	// surfaces the schema drift to operators.
+	// A hypothetical upgrade emitting (POOL, "bind") must not be claimed until the decoder handles it, keeping the
+	// orphan-events counter honest and surfacing the schema drift.
 	d := NewDecoder()
 	bind := mustEncodeSymbolForTest(t, "bind")
 	ev := events.Event{Topic: []string{TopicSymbolPool, bind}}

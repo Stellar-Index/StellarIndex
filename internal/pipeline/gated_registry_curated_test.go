@@ -112,10 +112,8 @@ func TestGatedRegistryOptions_curatedSetSeededWithEmptyTable(t *testing.T) {
 	}
 }
 
-// TestGatedRegistryOptions_curatedSetUnionsWithTable pins that the warm
-// ADDS the curated set to the table's rows rather than replacing them: a
-// contract admitted by an operator (or by a live creation event) must
-// survive alongside the in-code set.
+// TestGatedRegistryOptions_curatedSetUnionsWithTable pins that the warm ADDS the curated set to the table's rows, so a
+// contract admitted by an operator or a live creation event survives alongside the in-code set.
 func TestGatedRegistryOptions_curatedSetUnionsWithTable(t *testing.T) {
 	const admitted = "CDADMITTEDBYOPERATORAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 	name, meta := anyCuratedSource(t)

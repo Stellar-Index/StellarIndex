@@ -7,10 +7,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 )
 
-// realisticGStrkey is a syntactically-valid 56-char G-prefixed
-// strkey reused as a fixture below. The accounts.NewObserver
-// constructor only checks for non-empty strings; stricter strkey
-// validation happens upstream at config.Validate.
+// realisticGStrkey is a syntactically-valid 56-char G-prefixed strkey fixture; accounts.NewObserver only checks non-
+// empty, and strict validation happens upstream at config.Validate.
 const realisticGStrkey = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 
 // TestRegisterSupplyEntryDecoders_AccountsNoOpWhenEmpty pins the safe default: no supply opt-in means no registration and no error.
@@ -43,10 +41,9 @@ func TestRegisterSupplyEntryDecoders_AccountsRegistersWhenWatched(t *testing.T) 
 	}
 }
 
-// TestRegisterSupplyEntryDecoders_AccountsRegistersForIssuersOnly pins the
-// decoupling of issuer home_domain observation from the SDF reserve list:
-// watching an issuer must not require adding it to sdf_reserve_accounts,
-// which would subtract its XLM from circulating supply.
+// TestRegisterSupplyEntryDecoders_AccountsRegistersForIssuersOnly pins that issuer home_domain observation is
+// decoupled from the SDF reserve list: watching an issuer must not require sdf_reserve_accounts, which would subtract
+// its XLM from supply.
 func TestRegisterSupplyEntryDecoders_AccountsRegistersForIssuersOnly(t *testing.T) {
 	disp := dispatcher.New()
 	meta := config.MetadataConfig{WatchedIssuerAccounts: []string{realisticGStrkey}}
@@ -126,10 +123,8 @@ func TestRegisterSupplyEntryDecoders_SACRegistersWhenWrappers(t *testing.T) {
 	}
 }
 
-// TestRegisterSupplyEntryDecoders_FullConfigRegistersFive exercises
-// the full opt-in surface: every watched-set populated → every
-// LedgerEntryChangeDecoder registered. (sep41_supply is an event-
-// stream Decoder, not in this helper's scope; follow-up PR.)
+// TestRegisterSupplyEntryDecoders_FullConfigRegistersFive: with every watched set populated, every
+// LedgerEntryChangeDecoder is registered. sep41_supply is an event-stream Decoder, outside this helper.
 func TestRegisterSupplyEntryDecoders_FullConfigRegistersFive(t *testing.T) {
 	disp := dispatcher.New()
 	cfg := config.SupplyConfig{
@@ -152,10 +147,8 @@ func TestRegisterSupplyEntryDecoders_FullConfigRegistersFive(t *testing.T) {
 // entry — not a credential.
 const realisticCStrkey = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUOZWS4HG3B5UPHHC2QQA"
 
-// TestRegisterSupplyEventDecoders_NoOpWhenEmpty pins the safe
-// default for the event-stream sister of RegisterSupplyEntryDecoders.
-// Empty WatchedSEP41Contracts → no decoder attached, no behaviour
-// change.
+// TestRegisterSupplyEventDecoders_NoOpWhenEmpty pins the safe default: empty WatchedSEP41Contracts attaches no
+// decoder.
 func TestRegisterSupplyEventDecoders_NoOpWhenEmpty(t *testing.T) {
 	disp := dispatcher.New()
 	registered, err := RegisterSupplyEventDecoders(disp, config.SupplyConfig{})

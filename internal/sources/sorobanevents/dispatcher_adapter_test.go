@@ -89,10 +89,9 @@ func TestAsyncSink_PushEventBacksPressure_BufferFull_NoDrops(t *testing.T) {
 		BatchSize:     batchSz,
 		FlushInterval: 10 * time.Second, // disable time-based flush in test
 		WriteTimeout:  time.Second,
-		// Generous drain grace: the default (2xWriteTimeout) is a REAL-TIME bound that a loaded
-		// scheduler under CI + race detector can exceed, making the drain give up and lose the
-		// last batch. The invariant here is back-pressure/no-drops, not drain latency, so pin
-		// the grace far above any plausible scheduler stall.
+		// Generous drain grace: the default (2x WriteTimeout) is a real-time bound a loaded CI scheduler under the
+		// race detector can exceed, losing the last batch; the invariant is back-pressure with no drops, not drain
+		// latency.
 		DrainGrace: 30 * time.Second,
 	})
 	sink.Start()
@@ -106,10 +105,8 @@ func TestAsyncSink_PushEventBacksPressure_BufferFull_NoDrops(t *testing.T) {
 		}
 	}()
 
-	// Give the producer time to fill the buffer + batch (cap = buf +
-	// batchSz at most) and block on the next send. If the old
-	// non-blocking semantics were in play, all 8 pushes would return
-	// near-instantly and DroppedCount would jump.
+	// Give the producer time to fill the buffer and batch and block on the next send; under non-blocking semantics
+	// all 8 pushes would return instantly and DroppedCount would jump.
 	select {
 	case <-pushed:
 		t.Fatalf("PushEvent returned before writer was released — back-pressure not applied")
@@ -176,10 +173,8 @@ func TestAsyncSink_StopDrainsPendingRows_NoChannelClose(t *testing.T) {
 	}
 }
 
-// TestAsyncSink_StopReleasesBlockedProducers verifies the
-// shutdown-race semantics: a PushEvent already blocked on a full
-// channel must return (counted as dropped) once Stop is signalled,
-// rather than deadlocking the producer.
+// TestAsyncSink_StopReleasesBlockedProducers pins the shutdown race: a PushEvent already blocked on a full channel
+// must return (counted dropped) once Stop is signalled, not deadlock.
 func TestAsyncSink_StopReleasesBlockedProducers(t *testing.T) {
 	t.Parallel()
 
@@ -212,10 +207,8 @@ func TestAsyncSink_StopReleasesBlockedProducers(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 	}
 
-	// Stop must unblock the producer. We don't release the writer:
-	// the worker's pending InsertSorobanEventsBatch will hit the
-	// per-batch WriteTimeout (1s) and the worker will exit; Stop
-	// returns once the worker is done.
+	// Stop must unblock the producer. The writer is not released: the worker's pending batch hits the 1s
+	// WriteTimeout and the worker exits, so Stop returns.
 	stopReturned := make(chan struct{})
 	go func() {
 		sink.Stop()
@@ -273,13 +266,9 @@ func (w *flakyWriter) callCount() int {
 	return w.calls
 }
 
-// TestAsyncSink_FlushBatch_RetriesInfraFaultUntilItLands guards against a flush that gives up on
-// the first error: a sustained Postgres blip would silently eat a window of raw soroban_events
-// rows with no lost-rows counter or ERROR signal to alert on or re-derive from.
-//
-// An unclassified/infra fault must be retried with backpressure until it lands (WrittenCount
-// reaches the full row count, LostCount stays zero), matching the trades path's asymmetric
-// policy: retry is the default, drop requires positive proof of permanence.
+// TestAsyncSink_FlushBatch_RetriesInfraFaultUntilItLands guards against giving up on the first error, which would
+// silently eat raw soroban_events rows on a Postgres blip. An unclassified fault is retried with backpressure
+// until it lands (WrittenCount full, LostCount zero); drop requires positive proof of permanence.
 func TestAsyncSink_FlushBatch_RetriesInfraFaultUntilItLands(t *testing.T) {
 	t.Parallel()
 
@@ -314,10 +303,9 @@ func TestAsyncSink_FlushBatch_RetriesInfraFaultUntilItLands(t *testing.T) {
 	}
 }
 
-// TestAsyncSink_FlushBatch_PermanentFaultCountsLostNotRetried pins the other half of the
-// flush-retry contract: a POSITIVELY classified permanent data fault (pq class 23, e.g. a unique
-// violation) is counted on LostCount and not retried, since a deterministic violation can never
-// succeed and would wedge the sink on one poison batch.
+// TestAsyncSink_FlushBatch_PermanentFaultCountsLostNotRetried pins that a positively classified permanent fault
+// (pq class 23, e.g. unique violation) is counted on LostCount and not retried, since retrying would wedge the
+// sink on one poison batch.
 func TestAsyncSink_FlushBatch_PermanentFaultCountsLostNotRetried(t *testing.T) {
 	t.Parallel()
 
@@ -331,10 +319,8 @@ func TestAsyncSink_FlushBatch_PermanentFaultCountsLostNotRetried(t *testing.T) {
 		WriteTimeout:  time.Second,
 		Logger:        slog.New(slog.NewTextHandler(&logBuf, nil)),
 		// The app layer injects IsPermanentFault in production (a source package must not import
-		// internal/storage). Wire the same pq class-23 predicate here: left unset, the pq error
-		// would retry until shutdown and the count-only assertions below would pass for the
-		// WRONG reason (see TestAsyncSink_FlushBatch_UnwiredIsPermanentFault_RetriesEvenAPqError)
-		// instead of proving immediate abandonment. The log-reason assertion pins the distinction.
+		// internal/storage), so wire the pq class-23 predicate here; unset, the pq error would retry until
+		// shutdown and the count assertions would pass for the wrong reason.
 		IsPermanentFault: func(err error) bool {
 			var pgErr *pgconn.PgError
 			return errors.As(err, &pgErr) && pgErr.Code[:2] == "23"
@@ -366,12 +352,9 @@ func TestAsyncSink_FlushBatch_PermanentFaultCountsLostNotRetried(t *testing.T) {
 	}
 }
 
-// TestAsyncSink_FlushBatch_UnwiredIsPermanentFault_RetriesEvenAPqError
-// pins the safe default of the injected predicate: a caller that does NOT wire
-// AsyncSinkOptions.IsPermanentFault must never drop a row, even one a real IsPermanentDataError
-// would classify as permanent, so unwired fails toward "retry forever" rather than silently
-// discarding rows from the catch-all landing zone. It is proven via Stop()'s shutdown-abandon
-// path (LostCount rises) so the test does not block forever on a real DB.
+// TestAsyncSink_FlushBatch_UnwiredIsPermanentFault_RetriesEvenAPqError pins the safe default: a caller that does
+// not wire AsyncSinkOptions.IsPermanentFault never drops a row, even a real permanent one, so unwired fails toward
+// retry. It is proven via Stop()'s shutdown-abandon path (LostCount rises) so it does not block on a real DB.
 func TestAsyncSink_FlushBatch_UnwiredIsPermanentFault_RetriesEvenAPqError(t *testing.T) {
 	t.Parallel()
 
@@ -405,10 +388,8 @@ func TestAsyncSink_FlushBatch_UnwiredIsPermanentFault_RetriesEvenAPqError(t *tes
 	}
 }
 
-// transientOnceWriter fails its first batch write with a transient
-// (non-permanent) error and succeeds on every attempt after that. That distinguishes "the retry
-// loop is alive during the shutdown drain" from "the drain abandons on first error" without
-// depending on scheduler races.
+// transientOnceWriter fails its first batch write with a transient error and succeeds afterwards, distinguishing a
+// live retry loop during the shutdown drain from a drain that abandons on first error, without scheduler races.
 type transientOnceWriter struct {
 	mu      sync.Mutex
 	calls   int
@@ -432,14 +413,9 @@ func (w *transientOnceWriter) WrittenRows() int {
 	return w.written
 }
 
-// TestAsyncSink_ShutdownDrainRetriesTransientFailure pins that a transient write failure during
-// the shutdown drain is retried, not abandoned.
-//
-// flushBatch aborts a retrying write when its abort signal fires so a stuck write cannot hold
-// shutdown hostage. The signal must not be s.stopping: the DRAIN runs entirely after it closes,
-// so any first-attempt error would discard the final buffered rows of the catch-all landing
-// zone that the completeness census reconciles against. The drain gets its own bounded grace
-// window, keeping "stop was requested" distinct from "stop has waited long enough".
+// TestAsyncSink_ShutdownDrainRetriesTransientFailure pins that a transient write failure during the shutdown drain
+// is retried, not abandoned. flushBatch's abort signal must not be s.stopping, since the drain runs after it
+// closes and would discard the final buffered rows; the drain gets its own grace window.
 func TestAsyncSink_ShutdownDrainRetriesTransientFailure(t *testing.T) {
 	t.Parallel()
 
@@ -476,10 +452,9 @@ func TestAsyncSink_ShutdownDrainRetriesTransientFailure(t *testing.T) {
 	}
 }
 
-// stopRacedWriter models a steady-state batch write that is IN FLIGHT when Stop() fires. The
-// first call parks until its ctx is cancelled (the instant s.stopping closes) and returns
-// ctx.Err(), as a real pgx INSERT does mid-statement. Every later call succeeds. Deterministic:
-// no dependence on which of two ready select cases the scheduler picks.
+// stopRacedWriter models a batch write in flight when Stop() fires: the first call parks until its ctx is
+// cancelled and returns ctx.Err(), as a real pgx INSERT does; later calls succeed. It is deterministic, with no
+// dependence on select scheduling.
 type stopRacedWriter struct {
 	entered chan struct{} // closed when the first (in-flight) call starts
 	mu      sync.Mutex
@@ -519,12 +494,9 @@ func (w *stopRacedWriter) Calls() int {
 	return w.calls
 }
 
-// TestAsyncSink_StopRacingInFlightSteadyStateFlush_RowsLandNotLost pins the shutdown data-loss
-// class where Stop() fires while a steady-state batch write is in flight. If flushBatch aborts
-// on s.stopping, the write's ctx is cancelled and the batch is ABANDONED as lost: rows already
-// accepted into the sink are discarded on every indexer restart in the soroban_events raw
-// landing zone. The interrupted batch must instead be carried into the shutdown drain and
-// retried under DrainGrace.
+// TestAsyncSink_StopRacingInFlightSteadyStateFlush_RowsLandNotLost pins that a batch write in flight when Stop()
+// fires is not abandoned as lost (which would discard accepted rows on every restart) but carried into the
+// shutdown drain and retried under DrainGrace.
 func TestAsyncSink_StopRacingInFlightSteadyStateFlush_RowsLandNotLost(t *testing.T) {
 	t.Parallel()
 
@@ -571,10 +543,8 @@ func TestAsyncSink_StopRacingInFlightSteadyStateFlush_RowsLandNotLost(t *testing
 	}
 }
 
-// TestAsyncSink_StartTwice_IsNoOp pins Start's documented idempotency.
-// Without the once-guard a second Start launched a second run()
-// goroutine; both raced to close(s.done) on Stop and the loser panicked
-// the whole process with "close of closed channel".
+// TestAsyncSink_StartTwice_IsNoOp pins Start's idempotency: without the once-guard a second run() goroutine would
+// race to close(s.done) on Stop and panic with "close of closed channel".
 func TestAsyncSink_StartTwice_IsNoOp(t *testing.T) {
 	t.Parallel()
 
@@ -599,10 +569,8 @@ func TestAsyncSink_StartTwice_IsNoOp(t *testing.T) {
 	}
 }
 
-// TestAsyncSink_PushEventAfterStop_NeverOrphansARow pins the
-// shutdown-race accounting: a PushEvent that arrives once Stop has fired must be counted
-// dropped, never enqueued. A blocking select with both a free slot and a closed stopping ready
-// picks one at random, so about half the late rows would land in a channel nobody reads,
+// TestAsyncSink_PushEventAfterStop_NeverOrphansARow pins that a PushEvent after Stop is counted dropped, never
+// enqueued: a select with a free slot and a closed stopping picks at random, orphaning about half the late rows,
 // counted neither written, dropped nor lost.
 func TestAsyncSink_PushEventAfterStop_NeverOrphansARow(t *testing.T) {
 	t.Parallel()
@@ -634,10 +602,9 @@ func TestAsyncSink_PushEventAfterStop_NeverOrphansARow(t *testing.T) {
 	}
 }
 
-// TestAsyncSink_PushEventDuringStop_EveryRowAccounted hammers PushEvent
-// from several producers while Stop runs and checks the ledger balances: every pushed row is
-// written, dropped or lost, and the buffer is empty once Stop returns, so the drain's final poll
-// must not run until every in-flight producer has left PushEvent.
+// TestAsyncSink_PushEventDuringStop_EveryRowAccounted hammers PushEvent from several producers during Stop and
+// checks the ledger balances: every row is written, dropped or lost, and the drain's final poll waits for every
+// in-flight producer to leave PushEvent.
 func TestAsyncSink_PushEventDuringStop_EveryRowAccounted(t *testing.T) {
 	t.Parallel()
 
@@ -703,10 +670,8 @@ func (w *poisonWriter) InsertSorobanEventsBatch(_ context.Context, rows []Row) e
 	return nil
 }
 
-// TestAsyncSink_FlushBatch_PermanentFaultIsolatesPoisonRow pins the
-// batch-splitting contract: one poison row in a batch loses exactly that
-// row. Abandoning the whole batch would count BatchSize-1 good
-// rows lost and missing from soroban_events for one bad one.
+// TestAsyncSink_FlushBatch_PermanentFaultIsolatesPoisonRow pins batch splitting: one poison row loses exactly that
+// row, not the whole batch's good rows.
 func TestAsyncSink_FlushBatch_PermanentFaultIsolatesPoisonRow(t *testing.T) {
 	t.Parallel()
 
@@ -753,11 +718,9 @@ func TestAsyncSink_FlushBatch_PermanentFaultIsolatesPoisonRow(t *testing.T) {
 	}
 }
 
-// TestAsyncSink_LowestUnlandedLedger_CoversShutdownDropsAndAbandons pins
-// the signal backfill caps its resume cursor on: a graceful Stop while a producer is blocked on
-// back-pressure drops that ledger's remaining rows, and a batch the drain grace cannot land is
-// abandoned. The lowest such ledger must be reported, or the cursor is checkpointed past rows
-// that never reached soroban_events.
+// TestAsyncSink_LowestUnlandedLedger_CoversShutdownDropsAndAbandons pins the signal backfill caps its resume
+// cursor on: the lowest ledger with rows dropped at graceful Stop or in an abandoned batch must be reported, or
+// the cursor passes rows that never reached soroban_events.
 func TestAsyncSink_LowestUnlandedLedger_CoversShutdownDropsAndAbandons(t *testing.T) {
 	t.Parallel()
 
@@ -805,14 +768,9 @@ func TestAsyncSink_LowestUnlandedLedger_NoneOnCleanStop(t *testing.T) {
 	}
 }
 
-// This sink deliberately breaks the "contain and keep running" contract for worker.Recover. The
-// dispatcher calls PushEvent SYNCHRONOUSLY on its hot path, so a contained-and-dead drain would
-// leave every source's PushEvent blocked forever on the full channel. run() must instead let the
-// panic propagate so the process crashes and its systemd unit (Restart=always) restarts it from
-// the durable ledger cursor.
-//
-// The test cannot use sink.Start()+Stop(), since the panic would crash the whole test binary.
-// Calling run() directly in a goroutine that recovers it observes the same unwind safely.
+// This sink deliberately breaks worker.Recover's "contain and keep running" contract: the dispatcher calls
+// PushEvent synchronously, so a dead drain would block every source. run() must let the panic propagate so systemd
+// restarts from the durable ledger cursor. The test calls run() in a recovering goroutine.
 func TestAsyncSink_PanickingWriterCrashesRatherThanWedges(t *testing.T) {
 	const workerName = "soroban-events-sink-drain"
 	before := testutil.ToFloat64(obs.WorkerPanicsTotal.WithLabelValues(workerName))

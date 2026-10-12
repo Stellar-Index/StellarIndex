@@ -1,10 +1,7 @@
 package sushiswap_v3
 
-// Golden bodies captured read-only from the certified ClickHouse lake
-// (stellar.contract_events). Each constant is the exact
-// base64 SCVal the chain emitted — no hand-edited bytes anywhere in this
-// file, so a decode change that alters real-world behaviour fails the
-// golden tests rather than passing against a convenient fixture.
+// Golden bodies captured read-only from the certified lake (stellar.contract_events): each constant is the exact base64
+// SCVal the chain emitted, with no hand-edited bytes, so a real-world decode change fails the goldens.
 const (
 	// goldenSwapSellToken0 — pool CCR2CH4G… (XLM/USDC, 0.30%), ledger
 	// 64,200,014, tx 33ccf403…1b8d, op 0, event 2. Post-upgrade WASM.
@@ -16,16 +13,12 @@ const (
 	// sold token1 (USDC) and bought token0 (XLM).
 	goldenSwapSellToken1 = "AAAAEQAAAAEAAAAHAAAADwAAAAdhbW91bnQwAAAAAAr///////////////2rcVW2AAAADwAAAAdhbW91bnQxAAAAAAoAAAAAAAAAAAAAAABn261QAAAADwAAAAlsaXF1aWRpdHkAAAAAAAAJAAAAAAAAAAAAABT/pVmN9AAAAA8AAAAJcmVjaXBpZW50AAAAAAAAEgAAAAAAAAAAJB/6WJIl4kbG0JuQFoHF0vDAhPVAOyZmcjYRjEFqGvEAAAAPAAAABnNlbmRlcgAAAAAAEgAAAAAAAAAAJB/6WJIl4kbG0JuQFoHF0vDAhPVAOyZmcjYRjEFqGvEAAAAPAAAADnNxcnRfcHJpY2VfeDk2AAAAAAALAAAAAAAAAAAAAAAAAAAAAAAAAABqqiy42aaCFuU64usAAAAPAAAABHRpY2sAAAAE//+7mQ=="
 
-	// goldenSwapPreUpgrade — same pool, ledger 61,493,095,
-	// tx f6fb00ef…c308, op 0, event 14. Emitted by the ORIGINAL pool WASM,
-	// before the factory-driven upgrades at ledgers 61,594,973 and
-	// 62,898,378. Proves one decoder covers the full history.
+	// goldenSwapPreUpgrade: same pool, ledger 61,493,095, emitted by the ORIGINAL pool WASM before the factory-driven
+	// upgrades at ledgers 61,594,973 and 62,898,378; proves one decoder covers the full history.
 	goldenSwapPreUpgrade = "AAAAEQAAAAEAAAAHAAAADwAAAAdhbW91bnQwAAAAAAoAAAAAAAAAAAAAAAAFuAFpAAAADwAAAAdhbW91bnQxAAAAAAr/////////////////CT5hAAAADwAAAAlsaXF1aWRpdHkAAAAAAAAJAAAAAAAAAAAAAAAAHZIo3QAAAA8AAAAJcmVjaXBpZW50AAAAAAAAEgAAAAAAAAAAxRy/OA51yJ4u3YL0mKNf2jKqkAy3kYfYMFIdzMphcBgAAAAPAAAABnNlbmRlcgAAAAAAEgAAAAAAAAAAxRy/OA51yJ4u3YL0mKNf2jKqkAy3kYfYMFIdzMphcBgAAAAPAAAADnNxcnRfcHJpY2VfeDk2AAAAAAALAAAAAAAAAAAAAAAAAAAAAAAAAABlKxxd8TMIn9sIRdQAAAAPAAAABHRpY2sAAAAE//+3dw=="
 
-	// goldenSwapNonDirectional — same pool, ledger 62,712,211,
-	// tx c485886b…c6b1, op 0, event 23. amount0=1, amount1=0: a one-unit
-	// dust swap whose output rounded to nothing. The ONLY non-directional
-	// swap in the protocol whole-history sweep (1 of 97,349).
+	// goldenSwapNonDirectional: same pool, ledger 62,712,211; amount0=1, amount1=0, a dust swap whose output rounded to
+	// nothing. The only non-directional swap in the whole-history sweep (1 of 97,349).
 	goldenSwapNonDirectional = "AAAAEQAAAAEAAAAHAAAADwAAAAdhbW91bnQwAAAAAAoAAAAAAAAAAAAAAAAAAAABAAAADwAAAAdhbW91bnQxAAAAAAoAAAAAAAAAAAAAAAAAAAAAAAAADwAAAAlsaXF1aWRpdHkAAAAAAAAJAAAAAAAAAAAAAFR1m4fYNAAAAA8AAAAJcmVjaXBpZW50AAAAAAAAEgAAAAG9AFfpIbrMRk93c+6TptM5kPuBIbWbozdfezhPfUjRpQAAAA8AAAAGc2VuZGVyAAAAAAASAAAAAb0AV+khusxGT3dz7pOm0zmQ+4EhtZujN197OE99SNGlAAAADwAAAA5zcXJ0X3ByaWNlX3g5NgAAAAAACwAAAAAAAAAAAAAAAAAAAAAAAAAAYr8YxM6DxyxqMW+4AAAADwAAAAR0aWNrAAAABP//tZI="
 
 	// goldenPoolCreated — factory CD3KRKGD…, ledger 61,487,379,

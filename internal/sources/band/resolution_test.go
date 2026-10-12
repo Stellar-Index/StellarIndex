@@ -17,16 +17,12 @@ import (
 // These tests pin that RELATIONSHIP, not the number: asserting `== 3600` would pass just as
 // happily on a future value that is wrong in the same way.
 
-// staleAlertMultiplier mirrors obs.OracleStaleBudgetMultiplier — the
-// `10 ×` that lives in the budget gauge the oracle-stale rule reads. The mirror is pinned by
-// TestStaleAlertMultiplierMatchesTheShippedBudget rather than trusted,
-// because the two together decide when band tickets.
+// staleAlertMultiplier mirrors obs.OracleStaleBudgetMultiplier (the 10x in the budget gauge the oracle-stale rule
+// reads); TestStaleAlertMultiplierMatchesTheShippedBudget pins the mirror.
 const staleAlertMultiplier = 10
 
-// TestStaleAlertMultiplierMatchesTheShippedBudget stops this file from
-// reasoning about a threshold the fleet no longer applies. If the
-// default budget multiplier moves, the cadence assertions below must
-// move with it or they pin arithmetic nothing performs.
+// TestStaleAlertMultiplierMatchesTheShippedBudget keeps this file reasoning about the threshold the fleet applies; if
+// the default multiplier moves, the cadence assertions below must move with it.
 func TestStaleAlertMultiplierMatchesTheShippedBudget(t *testing.T) {
 	if staleAlertMultiplier != obs.OracleStaleBudgetMultiplier {
 		t.Fatalf("staleAlertMultiplier = %d but obs.OracleStaleBudgetMultiplier = %d — "+
@@ -53,11 +49,8 @@ func TestStaleThresholdIsLooserThanBandsActualCadence(t *testing.T) {
 	}
 }
 
-// TestResolutionIsNotAbsurdlyLoose is the other side, and it is the
-// half that stops this fix from becoming the opposite bug. Silencing a
-// noisy alert by inflating its threshold is always available and always
-// wrong; the constant has to stay close to the real cadence so a
-// genuine Band outage is still detected in reasonable time.
+// TestResolutionIsNotAbsurdlyLoose is the upper bound: inflating a threshold to silence an alert is always wrong, so
+// the constant must stay near the real cadence for a genuine Band outage to be detected in reasonable time.
 func TestResolutionIsNotAbsurdlyLoose(t *testing.T) {
 	if DefaultResolutionSeconds > 4*measuredRelayIntervalSeconds {
 		t.Errorf("DefaultResolutionSeconds = %d is more than 4× Band's measured "+
@@ -68,11 +61,9 @@ func TestResolutionIsNotAbsurdlyLoose(t *testing.T) {
 	}
 }
 
-// TestResolutionIsPositive — a zero or negative resolution makes the
-// threshold zero or negative, so `time() - last_update > 0` is true
-// forever. The gauge is set unconditionally at dispatcher registration
-// (pipeline.BuildDispatcher), so a bad constant reaches production
-// without any other check catching it.
+// TestResolutionIsPositive: a zero or negative resolution makes the threshold non-positive, so `time() - last_update >
+// 0` is always true; the gauge is set at dispatcher registration (pipeline.BuildDispatcher), so nothing else would
+// catch it.
 func TestResolutionIsPositive(t *testing.T) {
 	if DefaultResolutionSeconds <= 0 {
 		t.Fatalf("DefaultResolutionSeconds = %d; a non-positive resolution makes "+

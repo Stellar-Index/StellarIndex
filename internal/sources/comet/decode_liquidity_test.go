@@ -12,10 +12,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// encodeLiquidityBody builds a Map body for the join_pool / exit_pool /
-// deposit variants — three-field body (caller, <tokenField>,
-// <amountField>). Used by both per-event decoder tests and the
-// dispatcher-adapter routing tests.
+// encodeLiquidityBody builds the Map body for the join_pool / exit_pool / deposit variants (caller, <tokenField>,
+// <amountField>), used by the per-event decoder tests and the dispatcher-adapter routing tests.
 func encodeLiquidityBody(t *testing.T, caller, token string, tokenField, amountField string, amount *big.Int) string {
 	t.Helper()
 	callerSv := addressScValFromStrkey(t, caller)
@@ -359,10 +357,8 @@ func TestDecodeLiquidity_MissingCaller_Malformed(t *testing.T) {
 	}
 }
 
-// TestDecodeLiquidity_LargeI128 preserves the ADR-0003 invariant
-// even on the liquidity-event surface — a multi-token join with a
-// large reserve token must round-trip through *big.Int / NUMERIC
-// without truncation.
+// TestDecodeLiquidity_LargeI128 preserves ADR-0003 on the liquidity surface: a multi-token join with a large i128
+// reserve must round-trip through *big.Int / NUMERIC without truncation.
 func TestDecodeLiquidity_LargeI128(t *testing.T) {
 	caller := accountStrkeyFromSeed(t, 0x4d)
 	token := contractStrkeyFromSeed(t, 0x4e)
@@ -384,10 +380,9 @@ func TestDecodeLiquidity_LargeI128(t *testing.T) {
 	}
 }
 
-// TestDecodeLiquidity_PopulatesEventIndex pins that the liquidity path carries
-// events.Event.EventIndex onto the row, so two same-(kind,token) liquidity events from ONE
-// operation don't collapse on the comet_liquidity PK via ON CONFLICT. (The swap path fans
-// op_index via canonical.FanoutOpIndex; the liquidity path keys on event_index directly.)
+// TestDecodeLiquidity_PopulatesEventIndex pins that the liquidity path carries events.Event.EventIndex onto the row,
+// so two same-(kind,token) events from one operation do not collapse on the comet_liquidity PK via ON CONFLICT (the
+// swap path fans op_index via canonical.FanoutOpIndex).
 func TestDecodeLiquidity_PopulatesEventIndex(t *testing.T) {
 	caller := accountStrkeyFromSeed(t, 0x70)
 	token := contractStrkeyFromSeed(t, 0x71)
@@ -423,10 +418,9 @@ func TestClassify_MatchesPoolSwap(t *testing.T) {
 	}
 }
 
-// A withdraw burns a strictly positive BPT count: comet_liquidity CHECKs
-// pool_amount_in > 0 (migration 0042) and InsertCometLiquidity refuses
-// anything else with an unclassified error, which the sink retries as an
-// infrastructure fault forever. The decoder must reject it instead.
+// A withdraw burns a strictly positive BPT count: comet_liquidity CHECKs pool_amount_in > 0 (migration 0042) and
+// InsertCometLiquidity refuses anything else with an unclassified error the sink retries forever, so the decoder must
+// reject it.
 func TestDecodeWithdraw_nonPositivePoolAmountInRejected(t *testing.T) {
 	caller := accountStrkeyFromSeed(t, 0x50)
 	token := contractStrkeyFromSeed(t, 0x51)

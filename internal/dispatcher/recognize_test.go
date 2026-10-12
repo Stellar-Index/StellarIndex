@@ -20,10 +20,8 @@ type validatingFakeDecoder struct {
 
 func (d *validatingFakeDecoder) Validate(ev events.Event) error { return d.validateErr }
 
-// TestRecognize verifies Recognize reports a match (with decoder name)
-// for handled topics, false for unhandled, and — importantly — has no
-// side effects on the dispatcher's stats counters (so a recognition
-// audit doesn't pollute the live unmatched/seen tallies).
+// TestRecognize verifies Recognize reports a match with the decoder name for handled topics, false for unhandled,
+// and leaves the dispatcher's stats counters untouched.
 func TestRecognize(t *testing.T) {
 	disp := New(
 		&fakeDecoder{name: "alpha", topic0: "swap"},
@@ -68,10 +66,8 @@ func TestRecognize_ValidateFailureIsRecognitionGap(t *testing.T) {
 	}
 }
 
-// TestRecognize_OverlappingMatchDoesNotFallThrough: when two decoders match the same event shape
-// and the first's Validate() fails, Recognize must report a gap (ok == false), not fall through
-// to the second. dispatchOne commits to the first Matches()==true decoder and never tries later
-// ones; Recognize must agree.
+// TestRecognize_OverlappingMatchDoesNotFallThrough: when the first matching decoder's Validate() fails, Recognize
+// must report a gap, not fall through, because dispatchOne commits to the first Matches()==true decoder.
 func TestRecognize_OverlappingMatchDoesNotFallThrough(t *testing.T) {
 	first := &validatingFakeDecoder{
 		fakeDecoder: fakeDecoder{name: "first", topic0: "overlap"},
@@ -86,14 +82,9 @@ func TestRecognize_OverlappingMatchDoesNotFallThrough(t *testing.T) {
 	}
 }
 
-// TestRecognize_PanicResolvesToUnrecognised: Recognize walks every decoder's Matches and is
-// called from the completeness recogniser and ops subcommands that do not recover, so one
-// malformed row must not take the whole verification run down.
-//
-// The DIRECTION of the answer is load-bearing. A panic must resolve to "not recognised", which
-// pushes the shape into the unrecognised-on-unowned-contract bucket and turns the recognition
-// axis RED. Naming the panicking decoder as owner would certify a shape nothing can decode, a
-// false green on the one axis that exists to catch shapes we do not understand.
+// TestRecognize_PanicResolvesToUnrecognised: Recognize runs from callers that do not recover, so one malformed row
+// must not take down a verification run. A panic must resolve to not recognised so the recognition axis goes RED;
+// naming the panicking decoder as owner would be a false green.
 func TestRecognize_PanicResolvesToUnrecognised(t *testing.T) {
 	dec := &panickyDecoder{name: "panic-recognise-src", contract: "CPOISON", panicInMatch: true}
 	disp := New(dec)

@@ -7,14 +7,9 @@ import (
 	"github.com/stellar/go-stellar-sdk/ingest"
 )
 
-// A MinIO blip must not tear the live tail down. The SDK's fetch worker consumes a retry attempt
-// for every non-NotExist datastore error and gives up after RetryLimit, but consumes nothing for
-// "the tip isn't written yet"; both sleep the same RetryWait, so shortening it for tip latency
-// shrinks fault tolerance (5 x 500ms = 2.5s) and a MinIO restart crash-loops the unit.
-//
-// Tolerance is expressed as a time budget with the attempt count derived from the wait in force.
-// These tests pin the arithmetic and the end-to-end behaviour against a datastore that faults N
-// times and then succeeds.
+// A MinIO blip must not tear the live tail down. The SDK fetch worker spends a retry attempt on every non-NotExist
+// error but none on "tip not written yet", and both sleep RetryWait, so shortening it for tip latency shrinks fault
+// tolerance (5 x 500ms = 2.5s). Tolerance is a time budget with attempts derived from the wait; these tests pin that.
 
 func TestLiveRetryLimit_DerivesAttemptsFromBudget(t *testing.T) {
 	for _, tc := range []struct {

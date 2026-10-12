@@ -12,15 +12,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// Golden decode tests for the update_reserves / deposit_liquidity / withdraw_liquidity surface.
-// The topic+body blobs below are untouched base64 SCVals captured from the lake
-// (stellar.contract_events), proving the reserve / amount / share i128 paths match what the pool
-// emitted.
-//
-// Source pool: CAB6MICC2WKRT372U3FRPKGGVB5R3FDJSMWSLPF2UJNJPYMBZ76RQVYE (a curated MainnetPools
-// entry). All are 2-token (volatile) pools except realDeposit3Token, a 3-token stableswap deposit
-// from CC3HFYXIBYO3NPPKHQMWZDNSGSTZ6DUG26WHDF2UGTC3VBY56SESDFQM, proving the N-token fan-out
-// rather than a hard-coded a/b shape.
+// Golden decode tests for update_reserves / deposit_liquidity / withdraw_liquidity from untouched lake SCVals, proving
+// the reserve, amount and share i128 paths. All pools are 2-token except realDeposit3Token, a 3-token stableswap
+// deposit.
 
 const (
 	// update_reserves — topic[0] only (no token addresses); body is a
@@ -165,10 +159,8 @@ func TestDecodeLiquidity_realWithdraw(t *testing.T) {
 	}
 }
 
-// TestDecodeLiquidity_real3TokenDeposit proves the N-token fan-out:
-// a stableswap deposit with 3 tokens (topic_count 4, body length 4 =
-// 3 amounts + shares) decodes to 3 (token, amount) pairs, not a
-// truncated 2-token a/b shape.
+// TestDecodeLiquidity_real3TokenDeposit pins the N-token fan-out: a 3-token stableswap deposit (topic_count 4, body of
+// 3 amounts + shares) decodes to 3 (token, amount) pairs, not a truncated a/b shape.
 func TestDecodeLiquidity_real3TokenDeposit(t *testing.T) {
 	e := &events.Event{
 		ContractID: "CC3HFYXIBYO3NPPKHQMWZDNSGSTZ6DUG26WHDF2UGTC3VBY56SESDFQM",

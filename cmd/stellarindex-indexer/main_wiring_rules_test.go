@@ -28,17 +28,9 @@ func TestMainWiringRules(t *testing.T) {
 	}
 }
 
-// TestCHLiveSinkDialIsNonFatalAndRetried is a structural guard.
-//
-// clickhouse.NewLiveSink must not be dialled once, inline, in realMain: a single failure is a
-// fatal boot error, so a host whose ClickHouse is still loading metadata after a reboot (the
-// cold-boot race startSignerTagger's docstring describes) could not ingest until an operator
-// restarted the indexer. The dial must go through startCHLiveSink, which retries in its own
-// goroutine and never blocks or fails realMain.
-//
-// Asserted structurally, like TestShutdownSelectNeverReturnsBeforeTheDrain in
-// shutdown_drain_test.go: the wiring lives inline in realMain, which needs a full dependency
-// tree (config, Postgres, Redis) to run.
+// TestCHLiveSinkDialIsNonFatalAndRetried is a structural guard: clickhouse.NewLiveSink must not be dialled once inline
+// in realMain, since one failure (ClickHouse still loading after a reboot) would be fatal. The dial goes through
+// startCHLiveSink, which retries in its own goroutine.
 func ruleCHLiveSinkDialNonFatalAndRetried(t *testing.T) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "main.go", nil, parser.ParseComments)
@@ -100,11 +92,8 @@ func ruleCHLiveSinkDialNonFatalAndRetried(t *testing.T) {
 	})
 }
 
-// TestDryRunExitsBeforeBackgroundWorkers pins that `-dry-run` ("load config +
-// open connections + exit without ingesting") returns from run() before any
-// background worker is launched. The routed-via and signer taggers UPDATE trades on their
-// immediate first sweep and on shutdown, and the decoder-stats flusher writes on its shutdown
-// drain, so a launcher before the dry-run return turns a config check into a production write.
+// TestDryRunExitsBeforeBackgroundWorkers pins that `-dry-run` returns from run() before any background worker launches,
+// since the taggers and the decoder-stats flusher write on their first sweep or shutdown drain.
 func ruleDryRunExitsBeforeBackgroundWorkers(t *testing.T) {
 	fset := token.NewFileSet()
 	body := runBody(t, fset)
@@ -189,10 +178,9 @@ func runBody(t *testing.T, fset *token.FileSet) *ast.BlockStmt {
 	return nil
 }
 
-// TestRunGatesPhase4OnCAGGCoverage pins that run() passes the selected sink
-// mode through pipeline.VerifySoleWriterCAGGCoverage, and returns its error,
-// before the sink goroutine starts — otherwise persist_per_source = false
-// could be deployed on projector-lag evidence alone.
+// TestRunGatesPhase4OnCAGGCoverage pins that run() passes the sink mode through pipeline.VerifySoleWriterCAGGCoverage
+// and returns its error before the sink goroutine starts, so persist_per_source = false cannot deploy on projector-lag
+// evidence alone.
 func ruleRunGatesPhase4OnCAGGCoverage(t *testing.T) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "main.go", nil, 0)
@@ -265,19 +253,9 @@ func isReturn(s ast.Stmt) bool {
 	return ok
 }
 
-// TestShutdownSelectNeverReturnsBeforeTheDrain is a guard-coverage test.
-//
-// The shutdown path is: wait for either a signal or the producer's exit, then externalWait ->
-// close(events) -> wait for sinkDone -> wait for the projector. Everything the producer already
-// emitted still sits in the events channel buffer when that select fires, and every one of those
-// events has ALREADY been counted against the cursor. So a `return` inside the select discards
-// them permanently: the next start resumes past them and the hole is silent.
-//
-// The path is real: pipeline.ProcessLedger recovers a decoder panic INTO a ledger error that
-// arrives on exactly this channel, so a single malformed event can trigger it.
-//
-// Asserted structurally because the sequence lives inline in realMain, which needs a full
-// dependency tree to run.
+// TestShutdownSelectNeverReturnsBeforeTheDrain is a guard-coverage test: events the producer already emitted sit in the
+// channel buffer and are already counted against the cursor, so a `return` inside the shutdown select discards them
+// silently. Real, since ProcessLedger turns a decoder panic into a ledger error on that channel; asserted structurally.
 func ruleShutdownSelectNeverReturnsBeforeTheDrain(t *testing.T) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "main.go", nil, parser.ParseComments)
@@ -318,10 +296,8 @@ func ruleShutdownSelectNeverReturnsBeforeTheDrain(t *testing.T) {
 	}
 }
 
-// TestIndexerActsOnSinkShutdownLoss pins the wiring: PersistEvents'
-// ShutdownLoss must be kept and handed to the rewind once the sink is
-// done. Discarding it leaves an abandoned trade behind a cursor that
-// has already moved past it.
+// TestIndexerActsOnSinkShutdownLoss pins that PersistEvents' ShutdownLoss is kept and handed to the rewind once the sink
+// is done; discarding it leaves an abandoned trade behind an already-advanced cursor.
 func ruleIndexerActsOnSinkShutdownLoss(t *testing.T) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "main.go", nil, 0)

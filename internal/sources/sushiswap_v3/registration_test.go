@@ -1,7 +1,5 @@
-// This file is an EXTERNAL test package on purpose. The registries it
-// checks (the projector, the pipeline sink, the gated registry) import the
-// source package, so an in-package test could not reach them without an
-// import cycle.
+// This is an EXTERNAL test package on purpose: the registries it checks (projector, pipeline sink, gated registry)
+// import the source package, so an in-package test would create an import cycle.
 package sushiswap_v3_test
 
 import (
@@ -50,11 +48,9 @@ func TestRegistration_ProjectorBuildsTheSource(t *testing.T) {
 	if got.Name != source {
 		t.Fatalf("source name = %s, want %s", got.Name, source)
 	}
-	// The contract-id prefilter is not optional here. Without it the
-	// per-cycle lake read is unscoped, and this source's own `mint` and
-	// `burn` symbols are 33% and 12% of all pubnet contract events — a
-	// far-behind catch-up window would stream the CAP-67 firehose and
-	// wedge the source.
+	// The contract-id prefilter is not optional: without it the per-cycle lake read is unscoped, and this source's own
+	// `mint` and `burn` symbols are 33% and 12% of all pubnet contract events, so a far-behind catch-up would stream the
+	// firehose and wedge.
 	if len(got.PrefilterContractIDs()) == 0 {
 		t.Fatal("projector source has no contract-id prefilter")
 	}
@@ -82,10 +78,9 @@ func TestRegistration_SinkProjectsTheTradeEvent(t *testing.T) {
 	}
 }
 
-// TestRegistration_GatedRegistryCarriesTheFactory — the ADR-0035 warm. A
-// missing entry means the identity gate never resumes from
-// protocol_contracts across a restart, so a pool created after the curated
-// table was frozen has its events silently dropped.
+// TestRegistration_GatedRegistryCarriesTheFactory is the ADR-0035 warm: a missing entry means the identity gate never
+// resumes from protocol_contracts across a restart, so pools created after the curated table was frozen are silently
+// dropped.
 func TestRegistration_GatedRegistryCarriesTheFactory(t *testing.T) {
 	meta, ok := pipeline.GatedMetaFor(source)
 	if !ok {
@@ -112,10 +107,8 @@ func TestRegistration_GatedRegistryCarriesTheFactory(t *testing.T) {
 	}
 }
 
-// TestRegistration_NetworkApplicability — a source not classified here is
-// silently dropped from every non-pubnet coverage verdict AND from the gap
-// detector, which is exactly the "indexes but never appears in the verdict"
-// class.
+// TestRegistration_NetworkApplicability: a source not classified here is silently dropped from every non-pubnet coverage
+// verdict and from the gap detector, the "indexes but never appears in the verdict" class.
 func TestRegistration_NetworkApplicability(t *testing.T) {
 	if !sourcenet.Known(source) {
 		t.Fatalf("%s is not classified in sourcenet — it would be missing from every network's verdict", source)

@@ -19,10 +19,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obstest"
 )
 
-// The live 2026-07-07 Stellar Dashboard /lumens body (see
-// docs/methodology/xlm-circulating-supply.md). Note it does NOT carry
-// an explicit circulatingSupply field — the reference derives it as
-// total − mandate − upgradeReserve − feePool = 34,066,264,765.22 XLM.
+// dashboardLumensBody is a captured live Stellar Dashboard /lumens body (see
+// docs/methodology/xlm-circulating-supply.md). It carries no explicit circulatingSupply; the reference derives total
+// - mandate - upgradeReserve - feePool = 34,066,264,765.22 XLM.
 const dashboardLumensBody = `{
   "updatedAt": "2026-07-07T01:06:15.982Z",
   "originalSupply": "100000000000",

@@ -20,14 +20,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external/wsclient"
 )
 
-// obs.HTTPRequestsTotal is a PROCESS-GLOBAL counter that no test resets,
-// so an absolute expectation on a scrape row ("… } 1") asserts only that the binary ran the
-// test once; `go test -count=2` would fail it with the middleware behaving perfectly. What the
-// middleware owes is the DELTA its own requests cause, so that is what these helpers pin.
-//
-// The assertions stay on the scrape TEXT rather than the Collector: the exact row format is
-// what the alert rules and the SLO recording rule read, and it is the only check here that
-// the metric is registered at all.
+// obs.HTTPRequestsTotal is process-global and never reset, so absolute scrape expectations break under `go test
+// -count=2`; these helpers pin the DELTA a test's requests cause. Assertions stay on scrape text because that row
+// format is what alert rules and the SLO recording rule read, and it proves the metric is registered.
 
 // httpRequestsBaseline reads a label set's counter before a test issues
 // its requests.
@@ -44,10 +39,7 @@ func httpRequestsRow(method, route, status string, v float64) string {
 }
 
 func TestHandler_ExposesMetrics(t *testing.T) {
-	// Warm up every registered Vec with at least one child so the
-	// scrape output includes its HELP/TYPE header. Prometheus
-	// CounterVec/GaugeVec without children don't appear in scrapes
-	// (by design — there's nothing to show).
+	// Warm every registered Vec with one child, since CounterVec/GaugeVec without children do not appear in scrapes.
 	obs.HTTPRequestsTotal.WithLabelValues("GET", "/_warmup", "200").Inc()
 	obs.HTTPRequestDuration.WithLabelValues("GET", "/_warmup").Observe(0.001)
 	obs.SourceEventsTotal.WithLabelValues("_warmup").Inc()
@@ -92,10 +84,9 @@ func TestHandler_ExposesMetrics(t *testing.T) {
 		"stellarindex_source_last_event_unix",
 		"stellarindex_source_enabled",
 		"stellarindex_source_decode_errors_total",
-		// This entry is the ONLY check that the counter is REGISTERED. The redstone decoder
-		// test reads the Collector via testutil.ToFloat64 and never consults obs.Registry, so
-		// dropping the MustRegister line would leave every other test green while the metric
-		// vanished from /metrics and its alert could never fire.
+		// This entry is the only check that the counter is registered: the redstone decoder test reads the Collector
+		// directly, so dropping MustRegister would leave other tests green while the metric vanished from /metrics and its
+		// alert never fired.
 		"stellarindex_source_unrepresentable_symbols_total",
 		"stellarindex_source_orphan_events_total",
 		"stellarindex_source_insert_errors_total",
@@ -223,10 +214,8 @@ func TestHTTPMetrics_LowercaseMethodIsCanonicalised(t *testing.T) {
 }
 
 func TestHTTPMetrics_ClientAbortLabelled499(t *testing.T) {
-	// A handler that never calls WriteHeader combined with a
-	// ctx-cancelled request simulates the "client hung up before
-	// we wrote anything" case. Without the 499 label it'd record
-	// as 200 (statusRecorder default).
+	// A handler that never calls WriteHeader plus a ctx-cancelled request simulates a client hang-up before any write;
+	// it must be labelled 499, not the statusRecorder default 200.
 	h := obs.HTTPMetrics(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Don't write anything; rely on ctx cancellation to
 		// indicate client abort.
@@ -277,10 +266,9 @@ func TestHTTPMetrics_UnmatchedRouteLabelled(t *testing.T) {
 	}
 }
 
-// TestHTTPMetrics_RouteSurvivesWithContextChain pins the route label under an inner
-// middleware calling r.WithContext(...): it creates a new http.Request, and ServeMux sets
-// Pattern on that one, not the one HTTPMetrics holds. Without obs.CaptureRoute wired
-// innermost, every request labels as "unmatched" and the SLO burn-rate alerts break.
+// TestHTTPMetrics_RouteSurvivesWithContextChain pins the route label under an inner middleware calling
+// r.WithContext(...): the new request, not HTTPMetrics' one, gets ServeMux's Pattern. Without obs.CaptureRoute
+// innermost every request labels as unmatched and the SLO burn-rate alerts break.
 func TestHTTPMetrics_RouteSurvivesWithContextChain(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/probe", func(w http.ResponseWriter, _ *http.Request) {
@@ -321,10 +309,9 @@ func TestHTTPMetrics_RouteSurvivesWithContextChain(t *testing.T) {
 	}
 }
 
-// A panicking handler unwinds past CaptureRoute to a recoverer wired OUTSIDE it (production:
-// Recoverer sits between Logger and CaptureRoute), so a capture written after next.ServeHTTP
-// never runs and the 500 would merge into the route="unmatched" 404 bucket. The capture must
-// survive the unwind.
+// TestHTTPMetrics_RouteSurvivesHandlerPanic: a panicking handler unwinds past CaptureRoute to an outer Recoverer, so
+// a capture written after next.ServeHTTP never runs and the 500 would merge into the route=unmatched 404 bucket. The
+// capture must survive the unwind.
 func TestHTTPMetrics_RouteSurvivesHandlerPanic(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/probe", func(http.ResponseWriter, *http.Request) {
@@ -360,10 +347,9 @@ func TestHTTPMetrics_RouteSurvivesHandlerPanic(t *testing.T) {
 	}
 }
 
-// TestHTTPMetrics_SyntheticUASkipsHistogram pins that requests with
-// `User-Agent: stellarindex-smoke/N` (the smoke timer) MUST NOT contribute to
-// http_requests_total or the http_request_duration_seconds histogram. Otherwise every smoke
-// fire pollutes the SLO recording rule with cold-cache samples customers never see.
+// TestHTTPMetrics_SyntheticUASkipsHistogram pins that `User-Agent: stellarindex-smoke/N` requests contribute to
+// neither http_requests_total nor the duration histogram, or each smoke fire pollutes the SLO recording rule with
+// cold-cache samples.
 func TestHTTPMetrics_SyntheticUASkipsHistogram(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/synthetic-probe", func(w http.ResponseWriter, _ *http.Request) {
@@ -410,12 +396,9 @@ func TestHTTPMetrics_SyntheticUASkipsHistogram(t *testing.T) {
 	}
 }
 
-// TestHTTPMetrics_SpoofedSyntheticUAIsNotSkipped proves the client-controlled User-Agent
-// alone cannot let an external caller spoofing `User-Agent: stellarindex-smoke/1` erase its
-// traffic from the customer-facing SLO metrics. Every outside request crosses haproxy, which
-// appends X-Forwarded-For; only the three legitimate synthetic sources bypass it by hitting
-// the loopback listener directly. A request carrying X-Forwarded-For therefore came from
-// outside whatever its User-Agent claims, and must be counted like any customer request.
+// TestHTTPMetrics_SpoofedSyntheticUAIsNotSkipped: a client-controlled User-Agent alone must not let a caller erase
+// its traffic from the SLO metrics. Outside requests cross haproxy, which appends X-Forwarded-For; only loopback
+// synthetic sources lack it, so a request carrying it is counted like any customer's.
 func TestHTTPMetrics_SpoofedSyntheticUAIsNotSkipped(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/spoof-probe", func(w http.ResponseWriter, _ *http.Request) {
@@ -449,10 +432,9 @@ func TestHTTPMetrics_SpoofedSyntheticUAIsNotSkipped(t *testing.T) {
 	}
 }
 
-// TestHTTPMetrics_StreamRouteSkipsDurationHistogram pins that an SSE / streaming route
-// (pattern ending in /stream) is still counted in http_requests_total but kept OUT of the
-// http_request_duration_seconds histogram. Its "duration" is the connection lifetime, which
-// would pin p99 at the +Inf bucket and burn the latency SLO.
+// TestHTTPMetrics_StreamRouteSkipsDurationHistogram pins that an SSE route (pattern ending /stream) is counted in
+// http_requests_total but kept out of the duration histogram, since its duration is the connection lifetime and
+// would pin p99 at +Inf and burn the latency SLO.
 func TestHTTPMetrics_StreamRouteSkipsDurationHistogram(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/streamtest/stream", func(w http.ResponseWriter, _ *http.Request) {
@@ -486,10 +468,9 @@ func TestHTTPMetrics_StreamRouteSkipsDurationHistogram(t *testing.T) {
 	}
 }
 
-// TestZeroSeed_BoundedCountersPreRegistered verifies that the bounded counters whose alert
-// rules reference rate()/increase() have all their label combos pre-registered at zero, so
-// PromQL returns 0 rather than "no data" before the first event. Otherwise operators cannot
-// tell "intentionally zero" from "alert references a dead metric."
+// TestZeroSeed_BoundedCountersPreRegistered verifies bounded counters used by rate()/increase() alerts have all
+// label combos registered at zero, so PromQL returns 0 rather than no data and operators can tell intentional zero
+// from a dead metric.
 func TestZeroSeed_BoundedCountersPreRegistered(t *testing.T) {
 	ts := httptest.NewServer(obs.Handler())
 	defer ts.Close()
@@ -503,20 +484,16 @@ func TestZeroSeed_BoundedCountersPreRegistered(t *testing.T) {
 	s := string(body)
 
 	mustContain := []string{
-		// Served-tier shutdown loss. Expected to sit at zero across every
-		// clean deploy, and the process exits seconds after any increment,
-		// so an ABSENT series would be indistinguishable from "never lost
-		// a row" — which is exactly the pre-counter state (log-only loss).
+		// Served-tier shutdown loss sits at zero across clean deploys and the process exits seconds after any increment,
+		// so an absent series would be indistinguishable from never having lost a row.
 		`stellarindex_sink_undrained_rows_total{kind="trade",sink="persist_events"} 0`,
 		`stellarindex_sink_undrained_rows_total{kind="event",sink="persist_events"} 0`,
 		`stellarindex_aggregator_triangulations_total{outcome="ok"} 0`,
 		`stellarindex_aggregator_triangulations_total{outcome="missing_leg"} 0`,
 		`stellarindex_aggregator_triangulations_total{outcome="parse_error"} 0`,
 		`stellarindex_aggregator_triangulations_total{outcome="redis_error"} 0`,
-		// frozen_leg ("a chain refused to publish because one of its legs was frozen") is the
-		// outcome that matters most to an operator; unseeded, a
-		// `rate(...{outcome="frozen_leg"}[15m])` panel reads "no data", indistinguishable from
-		// a dead metric, rather than a healthy zero.
+		// frozen_leg (a chain refused to publish because a leg was frozen) matters most to operators; unseeded, its rate()
+		// panel reads no data, not a healthy zero.
 		`stellarindex_aggregator_triangulations_total{outcome="frozen_leg"} 0`,
 		// The self-pair exploit detector is by-design flat-at-zero; without
 		// this seed an operator can't distinguish "armed" from "dead metric."
@@ -535,10 +512,8 @@ func TestZeroSeed_BoundedCountersPreRegistered(t *testing.T) {
 		// Both are fail-open / best-effort paths that are silent when healthy, so "absent" and
 		// "zero" must be distinguishable or the alert reads as a dead metric.
 		`stellarindex_monthly_quota_fail_open_total 0`,
-		// W1-flow-register-4: the dwell-guarded fail-CLOSED twin. Its whole
-		// point is to be silent until a SUSTAINED counter outage forces a
-		// 429, so — like its fail-open sibling — "absent" and "zero" must be
-		// distinguishable or the alert is indistinguishable from a dead metric.
+		// The dwell-guarded fail-CLOSED twin is silent until a sustained counter outage forces a 429, so absent and zero
+		// must be distinguishable, or the alert looks like a dead metric.
 		`stellarindex_monthly_quota_fail_closed_total 0`,
 		`stellarindex_admin_audit_write_failures_total{surface="account_override"} 0`,
 		`stellarindex_admin_audit_write_failures_total{surface="key_mint"} 0`,
@@ -566,17 +541,13 @@ func TestZeroSeed_BoundedCountersPreRegistered(t *testing.T) {
 		`stellarindex_anomaly_freeze_ladder_write_failures_total{op="mark_hold"} 0`,
 		`stellarindex_anomaly_freeze_ladder_write_failures_total{op="clear"} 0`,
 		`stellarindex_anomaly_freeze_ladder_rehydrated_total 0`,
-		// all three login-code-lockout failure paths are silent at the HTTP layer by design
-		// (defence-in-depth over the per-token cap, so it fails soft). `status_check` means the
-		// lockout is not enforced AT ALL while responses look healthy; an absent series would
-		// read as a dead metric rather than a disabled control.
+		// All three login-code-lockout failure paths are silent at the HTTP layer by design; `status_check` means the
+		// lockout is not enforced at all, so an absent series would read as a dead metric rather than a disabled control.
 		`stellarindex_login_code_lockout_errors_total{op="status_check"} 0`,
 		`stellarindex_login_code_lockout_errors_total{op="register"} 0`,
 		`stellarindex_login_code_lockout_errors_total{op="sweep"} 0`,
-		// The table's key is attacker-chosen and the endpoint that writes
-		// it is unauthenticated, so the row count is a security signal,
-		// not capacity trivia. Gauges register at zero; asserted here so
-		// a future refactor cannot drop it from the registry list.
+		// The table's key is attacker-chosen and its endpoint unauthenticated, so the row count is a security signal;
+		// asserted so a refactor cannot drop it from the registry.
 		`stellarindex_login_code_lockout_rows 0`,
 		`stellarindex_login_code_lockout_rows_deleted_total 0`,
 		// Notify (Resend) sends. A mail outage is otherwise silent (the login handler swallows
@@ -600,11 +571,9 @@ func TestZeroSeed_BoundedCountersPreRegistered(t *testing.T) {
 	}
 }
 
-// TestCEXStreamDisconnectReasons_MatchesEmittedSet guards that obs.CEXStreamDisconnectReasons
-// (and so CEXStreamDisconnectTotal's Help text and the README enum, both generated from it)
-// lists exactly the reason strings the classifiers produce. A set of
-// reset|broken_pipe|timeout|dial|server_requested|other would silently omit "stall"
-// (wsclient's half-open-socket detector) and "subscription_rejected" (coinbase).
+// TestCEXStreamDisconnectReasons_MatchesEmittedSet guards that obs.CEXStreamDisconnectReasons (and the Help text and
+// README enum generated from it) lists exactly the reasons the classifiers produce, including "stall" (half-open
+// socket) and "subscription_rejected" (coinbase).
 func TestCEXStreamDisconnectReasons_MatchesEmittedSet(t *testing.T) {
 	emitted := map[string]bool{
 		// wsclient.ClassifyDisconnect covers every venue at the wire

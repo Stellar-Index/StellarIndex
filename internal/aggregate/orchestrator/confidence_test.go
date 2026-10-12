@@ -451,10 +451,9 @@ func TestApproxUSDVolume_NonUSDQuotedIsUnmeasuredNotZero(t *testing.T) {
 	}
 }
 
-// minuteSeries builds a 1-minute (vwap, bucket_end) series over the 30 days
-// ending at now, keeping minutes where keep is true (nil keeps all). It is
-// the densest shape prices_1m can hold, fed through the refresher's
-// SplitByLookback -> NewMultiBaseline path.
+// minuteSeries builds a 1-minute (vwap, bucket_end) series over the 30 days ending at now, keeping minutes where keep
+// is true (nil keeps all). It is the densest shape prices_1m can hold, fed through SplitByLookback ->
+// NewMultiBaseline.
 func minuteSeries(now time.Time, keep func(minute int) bool) []baseline.TimedVWAP {
 	const minutesIn30d = 30 * 24 * 60
 	start := now.Add(-baseline.Window30d)
@@ -685,10 +684,9 @@ func TestConfidence_ServedFactorsCarryBootstrapState(t *testing.T) {
 	}
 }
 
-// TestConfidence_BootstrapGateHoldsStateAcrossTicks — the orchestrator
-// carries each pair's gate state into its next score, so a released pair
-// whose density dips into the 27.0–28.5 band keeps its score, and a
-// re-capped pair needs the full 28.5 to release again.
+// TestConfidence_BootstrapGateHoldsStateAcrossTicks pins that the gate state carries into the next score: a released
+// pair whose density dips into the 27.0-28.5 band keeps its score, and a re-capped pair needs the full 28.5 to
+// release again.
 func TestConfidence_BootstrapGateHoldsStateAcrossTicks(t *testing.T) {
 	pair := xlmUSDPair(t)
 	now := time.Now().UTC()

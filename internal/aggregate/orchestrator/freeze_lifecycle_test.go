@@ -179,10 +179,9 @@ func seedDivergenceCache(t *testing.T, cache Cache, pair canonical.Pair, res div
 	}
 }
 
-// agreeingLens is the divergence entry production writes when the references
-// sit AT level while we serve servedPrice. OurPrice is the SERVED price
-// (mid-freeze that is the pinned LKG, never the refused candidate); the
-// release gate reads only Median and compares it to the FRESH candidate.
+// agreeingLens is the divergence entry production writes when references sit AT level while we serve servedPrice.
+// OurPrice is the served price (mid-freeze, the pinned last-known-good); the release gate reads only Median, against
+// the fresh candidate.
 func agreeingLens(pair canonical.Pair, servedPrice, level float64) divergence.CachedResult {
 	pct := 0.0
 	if level > 0 {
@@ -320,10 +319,8 @@ func TestFreezeLifecycle_AutoUnfreezeAfterTwoHealthyBucketsPastTheHold(t *testin
 	}
 }
 
-// A pair with no corroborating lens (no divergence entry, no triangulation)
-// cannot prove a calm level is the market rather than a parked manipulation
-// (the shadow comparator reads any held level as calm), so the streak must not
-// accumulate and the ladder walks to an operator.
+// A pair with no corroborating lens (no divergence entry, no triangulation) cannot prove a calm level is the market
+// rather than a parked manipulation, so the streak must not accumulate and the ladder walks to an operator.
 func TestFreezeLifecycle_NoLensMeansNoAutoRelease(t *testing.T) {
 	f := newFreezeFixture(t)
 
@@ -505,10 +502,8 @@ func TestFreezeLifecycle_OperatorOverrideReleases(t *testing.T) {
 	}
 }
 
-// A restart mid-freeze must not restart the 2-hour escalation clock nor
-// publish the refused bucket. The new process has no prev-VWAP comparator, so
-// it holds on the marker state alone: an unscored bucket is no evidence of
-// recovery.
+// A restart mid-freeze must not restart the 2-hour escalation clock nor publish the refused bucket. The new process
+// has no prev-VWAP comparator, so it holds on the marker state alone: an unscored bucket is no evidence of recovery.
 func TestFreezeLifecycle_RehydratesLadderAcrossRestart(t *testing.T) {
 	f := newFreezeFixture(t)
 	f.feed(t, manipQuoteAmount, "soroswap")
@@ -548,10 +543,9 @@ func (m *flakyLoadFreezeMarker) LoadState(ctx context.Context, asset, quote cano
 	return m.recordingFreezeMarker.LoadState(ctx, asset, quote)
 }
 
-// A marker read that ERRORS on a restarted process's first evaluation is not
-// evidence the pair is unfrozen. That bucket is unscored, so it cannot re-fire
-// the freeze itself; caching "never frozen" published the withheld bucket and
-// never re-read the marker.
+// A marker read that errors on a restarted process's first evaluation is not evidence the pair is unfrozen. That
+// bucket is unscored and cannot re-fire the freeze, so the read must withhold and retry rather than cache
+// never-frozen.
 func TestFreezeLifecycle_ColdMarkerReadErrorWithholdsAndRetries(t *testing.T) {
 	f := newFreezeFixture(t)
 	f.feed(t, manipQuoteAmount, "soroswap")
@@ -580,10 +574,9 @@ func TestFreezeLifecycle_ColdMarkerReadErrorWithholdsAndRetries(t *testing.T) {
 	}
 }
 
-// Phase 1 (per-class deviation) and Phase 2 (per-asset baseline) share ONE
-// lifecycle per freeze:<asset>:<quote> key. Two owners would let a Phase 1 fire
-// truncate a Phase 2 hold to the silence grace, or hold a pair forever without
-// escalating. A Phase 1 freeze must keep holding after Phase 1 stops flagging.
+// Phase 1 (per-class deviation) and Phase 2 (per-asset baseline) share ONE lifecycle per freeze:<asset>:<quote> key.
+// Two owners would truncate a Phase 2 hold or hold forever without escalating; a Phase 1 freeze keeps holding after
+// it stops flagging.
 func TestFreezeLifecycle_Phase1SharesTheLadder(t *testing.T) {
 	pair := xlmUsdtPair(t)
 	cache, mr := newTestRedis(t)
@@ -909,10 +902,9 @@ func TestFreezeLifecycle_AutoUnfreezeAtANewStablePriceLevel(t *testing.T) {
 	}
 }
 
-// TestFreezeLifecycle_RefireAfterOverrideReturnsEscalated — the operator
-// force-unfreezes an escalated pair and the anomaly is still live. The
-// override must not zero the state: the re-fire would be a fresh 10-minute hold
-// with extensions_used=0 that would not page again for two hours.
+// TestFreezeLifecycle_RefireAfterOverrideReturnsEscalated pins that force-unfreezing an escalated pair whose anomaly
+// is still live does not zero the state: a re-fire as a fresh hold with extensions_used=0 would not page again for
+// two hours.
 func TestFreezeLifecycle_RefireAfterOverrideReturnsEscalated(t *testing.T) {
 	f := newFreezeFixture(t)
 	escalated := freeze.State{
@@ -949,10 +941,8 @@ func TestFreezeLifecycle_RefireAfterOverrideReturnsEscalated(t *testing.T) {
 	}
 }
 
-// TestFreezeLifecycle_ReleaseModeTellsOperatorFromLapse — a live freeze
-// whose marker and ladder are gone was always counted as mode="operator",
-// so a lapse nobody performed polluted the series the on-call reads as the
-// manual-unfreeze rate. freeze-unfreeze's tombstone is what separates them.
+// TestFreezeLifecycle_ReleaseModeTellsOperatorFromLapse pins that a live freeze whose marker and ladder are gone is
+// not counted as mode=operator; freeze-unfreeze's tombstone separates a manual unfreeze from a lapse.
 func TestFreezeLifecycle_ReleaseModeTellsOperatorFromLapse(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
@@ -1005,10 +995,9 @@ func TestFreezeLifecycle_ReleaseModeTellsOperatorFromLapse(t *testing.T) {
 	}
 }
 
-// TestFreezeLifecycle_ReleaseDuringRedisLossKeepsEscalatedSibling drives
-// the real entry point. After a deploy the 5m window is live in memory and
-// the 1h window — under the volume floor — has not reached the freeze step.
-// Redis loses the marker, and the 5m window earns its release.
+// TestFreezeLifecycle_ReleaseDuringRedisLossKeepsEscalatedSibling drives the real entry point: after a deploy the 5m
+// window is live, the 1h window (under the volume floor) has not reached the freeze step, Redis loses the marker, and
+// the 5m window earns its release.
 func TestFreezeLifecycle_ReleaseDuringRedisLossKeepsEscalatedSibling(t *testing.T) {
 	f := newProductionWiredFixture(t)
 	ctx := context.Background()

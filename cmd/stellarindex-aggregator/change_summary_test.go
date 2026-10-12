@@ -15,10 +15,8 @@ import (
 // sole producer for.
 const changesSpecPath = "/changes/{entity_type}/{id}"
 
-// specParameter is the slice of an OpenAPI parameter object this
-// test reads: the documented value set (schema.enum) and the two places an example can live.
-// Scalar prefers the parameter-level `example`, the Postman generator the schema-level one,
-// so an example that 404s in either location is one a user will actually send.
+// specParameter is the slice of an OpenAPI parameter object this test reads: the schema.enum value set and the two
+// places an example can live. Scalar uses the parameter-level `example`, the Postman generator the schema-level one.
 type specParameter struct {
 	Name    string `yaml:"name"`
 	In      string `yaml:"in"`
@@ -37,10 +35,8 @@ type changesSpecDoc struct {
 	Paths map[string]map[string]specOperation `yaml:"paths"`
 }
 
-// examples returns the distinct documented example strings for the
-// parameter, in the order tooling would find them. The two locations
-// normally carry the same value; deduping keeps one bad example from
-// being reported once per location pairing.
+// examples returns the distinct documented example strings for the parameter, deduped so one bad example is not
+// reported once per location.
 func (p specParameter) examples() []string {
 	var out []string
 	add := func(v any) {
@@ -60,16 +56,9 @@ func (p specParameter) examples() []string {
 	return out
 }
 
-// TestChangeSummarySpecMatchesEmittedEntities reconciles the
-// documented surface of GET /v1/changes/{entity_type}/{id} with the
-// only thing that populates it — buildChangeSummaryEntities over the
-// aggregator's pair set.
-//
-// change_summary_5m has exactly one writer, this worker, which can only key an entity on a
-// canonical pair's VWAP series. The spec must not advertise families (`coin`, `protocol`,
-// `pair`, `source`) it does not emit or use `source`/`binance` as its example: that example
-// and the SDK call built from it would 404 on every deployment, blaming worker lag for rows
-// no worker computes. Every named family and the example must be ones this producer writes.
+// TestChangeSummarySpecMatchesEmittedEntities reconciles GET /v1/changes/{entity_type}/{id} with its only writer,
+// which keys entities on a canonical pair's VWAP series. The spec must not advertise families (`coin`, `protocol`,
+// `pair`, `source`) or an example (`source`/`binance`) it never writes; they would 404.
 func TestChangeSummarySpecMatchesEmittedEntities(t *testing.T) {
 	families, entities := emittedChangeSummarySurface(t)
 
@@ -111,10 +100,8 @@ func TestChangeSummarySpecMatchesEmittedEntities(t *testing.T) {
 	}
 }
 
-// emittedChangeSummarySurface returns the families and the
-// "type/id" entity keys the worker writes for the built-in pair set, which is what the
-// reference deployment runs (no [aggregate].pairs override) and so the honest floor of what
-// the endpoint can serve.
+// emittedChangeSummarySurface returns the families and "type/id" entity keys the worker writes for the built-in pair
+// set, the honest floor of what the endpoint serves on the reference deployment (no [aggregate].pairs override).
 func emittedChangeSummarySurface(t *testing.T) (families, entities map[string]struct{}) {
 	t.Helper()
 	families = map[string]struct{}{}

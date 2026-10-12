@@ -127,10 +127,8 @@ func TestSdkDecodeAddress_wrongKind(t *testing.T) {
 // ─── Classify drift guard ──────────────────────────────────────
 
 func TestTopicConstantsMatchEncoderOutput(t *testing.T) {
-	// Each TopicSymbol* is computed at init via scval.MustEncodeString.
-	// Verify their discriminators are all ScvString (0x0E) — if a
-	// future refactor accidentally switches one to Symbol (0x0F),
-	// classify() would stop matching on real events.
+	// Every TopicSymbol* must carry the ScvString discriminator (0x0E); a switch to Symbol (0x0F) would stop
+	// classify() matching.
 	cases := []string{
 		TopicSymbolSwap,
 		TopicSymbolSender,

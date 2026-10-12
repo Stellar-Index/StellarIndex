@@ -13,11 +13,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// /v1/price/at and every /v1/price/changes horizon resolve an instant through a ladder whose
-// finest rung is the SAME raw prices_1m closed bucket /v1/price serves, so they need the
-// trailing-baseline guard too or they republish the manipulated minute /v1/price refuses. These
-// pin the point-in-time entry point's decisions, including the at-or-before staleness contract
-// that differs from the latest-bucket one.
+// /v1/price/at and /v1/price/changes resolve an instant through a ladder whose finest rung is the same raw
+// prices_1m bucket /v1/price serves, so they need the trailing-baseline guard too. These pin the point-in-time
+// decisions, including the at-or-before staleness contract.
 
 // baseTS is the candidate bucket's close, i.e. the instant a caller
 // asking "price at now" would pass.
@@ -58,11 +56,9 @@ func TestSelectGuardedVWAP1mAt_SaneBucketServedUnchanged(t *testing.T) {
 }
 
 func TestSelectGuardedVWAP1mAt_StaleLKGWithheldNotServed(t *testing.T) {
-	// The last-known-good is older than the rejected candidate by construction, so it must
-	// re-clear the caller's own at-or-before bound. The newest clean bucket closes 11 minutes
-	// before `ts` and the caller allowed 5; serving it would breach the staleness contract
-	// /v1/price/at advertises, so the answer is "no price at this instant" (404 / null horizon),
-	// not the manipulated value.
+	// The last-known-good is older than the candidate, so it must re-clear the caller's at-or-before bound: here
+	// the newest clean bucket is 11 minutes before `ts` against an allowed 5, so the answer is "no price at this
+	// instant" (404 / null horizon), not the manipulated value.
 	candidate := mkRow(0, "100.0")
 	rows := make([]timescale.Vwap1mRow, 12)
 	for i := range rows {
@@ -84,10 +80,9 @@ func TestSelectGuardedVWAP1mAt_StaleLKGWithheldNotServed(t *testing.T) {
 }
 
 func TestSelectGuardedVWAP1mAt_EmptyBaselineWithheld(t *testing.T) {
-	// No trailing bucket to judge against is the pair's first-ever minute,
-	// the one a lone manipulated print most easily owns. /v1/price serves it
-	// flagged stale; a point-in-time answer has no stale flag, so it is
-	// withheld rather than published as a validated price.
+	// A pair's first-ever minute has no trailing bucket to judge against and is the easiest for a lone manipulated
+	// print to own; /v1/price serves it flagged stale, but a point-in-time answer has no stale flag, so it is
+	// withheld.
 	candidate := mkRow(0, "1.01")
 	served, ok := SelectGuardedVWAP1mAt(candidate, nil, baseTS, time.Hour)
 	if ok {
@@ -98,10 +93,8 @@ func TestSelectGuardedVWAP1mAt_EmptyBaselineWithheld(t *testing.T) {
 	}
 }
 
-// historyReader answers both trailing reads the way the store does over
-// one newest-first history: the now-anchored read returns the newest
-// `limit` buckets, the anchored read the newest `limit` strictly before
-// the anchor.
+// historyReader answers both trailing reads as the store does over one newest-first history: the now-anchored read
+// returns the newest `limit` buckets, the anchored read the newest `limit` strictly before the anchor.
 type historyReader struct{ rows []timescale.Vwap1mRow }
 
 func (h historyReader) RecentClosedVWAP1mCombined(_ context.Context, _ canonical.Pair, limit int) ([]timescale.Vwap1mRow, error) {
@@ -119,10 +112,9 @@ func (h historyReader) ClosedVWAP1mCombinedBefore(_ context.Context, _ canonical
 }
 
 func TestGuardServedVWAP1mAt_HistoricalCandidateJudgedAgainstItsOwnPast(t *testing.T) {
-	// Three hours of flat 1.0 with a 100x print two hours back — the
-	// reference behind /v1/price/changes' 1h/24h horizons. The newest
-	// SampleFetch buckets are all NEWER than that candidate, so a baseline
-	// fetched from now holds nothing to judge it by.
+	// Three hours of flat 1.0 with a 100x print two hours back, the reference for the 1h/24h horizons: the newest
+	// SampleFetch buckets are all newer than that candidate, so a baseline fetched from now has nothing to judge
+	// it by.
 	history := make([]timescale.Vwap1mRow, 180)
 	for i := range history {
 		history[i] = mkRow(i, "1.0")
@@ -211,10 +203,8 @@ func mustPair(t *testing.T) canonical.Pair {
 	return p
 }
 
-// TestSelectGuardedVWAP1mAt_StalenessBoundaryIsTheBucketClose pins both
-// edges of the at-or-before contract: the substitute's age is measured
-// from its bucket CLOSE (start + 1m), and a gap exactly equal to
-// maxStaleness is still inside it.
+// TestSelectGuardedVWAP1mAt_StalenessBoundaryIsTheBucketClose pins both edges of the at-or-before contract: age is
+// measured from the bucket CLOSE (start + 1m), and a gap exactly equal to maxStaleness is still inside it.
 func TestSelectGuardedVWAP1mAt_StalenessBoundaryIsTheBucketClose(t *testing.T) {
 	candidate := mkRow(0, "100.0")
 	rows := make([]timescale.Vwap1mRow, 12)

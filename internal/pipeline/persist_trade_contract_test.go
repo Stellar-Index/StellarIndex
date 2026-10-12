@@ -34,10 +34,8 @@ func TestPersistTrade_PermanentFaultIsReportedNotSwallowed(t *testing.T) {
 			tr.Source, tr.Ledger, tr.TxHash, tr.OpIndex)
 	}
 
-	// The cause must stay reachable: the projector classifies with
-	// timescale.IsPermanentDataError (SQLSTATE 22/23) and SKIPS — an opaque
-	// wrapper would classify as "unclassified" and HOLD a sole-writer cursor
-	// on a row that can never land.
+	// The cause must stay reachable: the projector classifies with timescale.IsPermanentDataError (SQLSTATE 22/23) and
+	// SKIPS. An opaque wrapper would classify as unclassified and HOLD a sole-writer cursor on a row that can never land.
 	if !timescale.IsPermanentDataError(err) {
 		t.Error("timescale.IsPermanentDataError(err) = false; the projector would hold the cursor on a dropped trade instead of skipping it")
 	}
@@ -152,10 +150,9 @@ func firstExternalSource(t *testing.T) string {
 	return ""
 }
 
-// TestPersistTrade_AbandonOnShutdown — if the context is cancelled while
-// an infra fault persists (shutdown), persistTrade must give up (not
-// hang) and count the abandon under kind="trade_abandoned" (not "trade",
-// which means dropped); the row is recoverable from the CH lake.
+// TestPersistTrade_AbandonOnShutdown: if the context is cancelled while an infra fault persists, persistTrade must
+// give up rather than hang and count kind="trade_abandoned" (not "trade", which means dropped); the row is recoverable
+// from the CH lake.
 func TestPersistTrade_AbandonOnShutdown(t *testing.T) {
 	before := counter(t, obs.SourceInsertErrorsTotal, "sdex", "trade_abandoned")
 	store := &fakeTradeStore{} // stays unhealthy

@@ -7,10 +7,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 )
 
-// TestLedgerstreamConfig_NoColdTier verifies the legacy single-
-// source path is unchanged when the operator hasn't opted in to
-// the cold tier (ADR-0027). ColdDataStore must be zero-valued so
-// ledgerstream.Stream takes the SDK's ApplyLedgerMetadata path.
+// TestLedgerstreamConfig_NoColdTier verifies that without the cold-tier opt-in (ADR-0027) ColdDataStore stays zero-
+// valued, so ledgerstream.Stream takes the SDK's ApplyLedgerMetadata path.
 func TestLedgerstreamConfig_NoColdTier(t *testing.T) {
 	t.Parallel()
 	cfg := config.Config{

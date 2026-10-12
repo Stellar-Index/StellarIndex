@@ -7,19 +7,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// ─── Golden real-lake decode-VALUE tests ───────────────────
-//
-// See internal/sources/defindex/golden_realbytes_test.go for the convention: capture the exact
-// on-chain bytes of one real event, drive the real decoder through both seams, Decoder.Matches
-// (the ADR-0035 contract-identity gate) and Decoder.Decode, and assert the exact decoded field
-// values. Recognition and row counts can both pass while the decoded values are wrong.
-//
-// decode_admin_test.go pins these governance bodies at the decodeAdminEvent() level; these tests
-// prove the same bytes survive the whole path: the registry gate admits the emitting POOL (not
-// just the router) and the arity-decoded values reach the consumer.Event.
-//
-// Fixtures are byte-identical to the lake's stellar.contract_events rows; each cites its
-// ledger_seq / tx_hash / op_index / event_index for re-verification.
+// Golden real-lake decode-value tests: real bytes go through Decoder.Matches (the ADR-0035 identity gate) and
+// Decoder.Decode with exact value assertions, proving the registry admits the emitting pool and decoded values reach
+// the consumer.Event. Fixtures cite ledger_seq / tx_hash / op_index / event_index of the lake row.
 
 // mainnetPool is a curated Aquarius pool (in MainnetPools) that emitted the arity-sensitive
 // governance events below. Being registered, Matches() admits its events (reg.Has); a
@@ -229,10 +219,8 @@ func TestGolden_aquariusPoolTrade_ledger55436194(t *testing.T) {
 	if tr.Pair.Quote.Type != canonical.AssetSoroban || tr.Pair.Quote.ContractID != wantTokenOut {
 		t.Errorf("Quote (token_out) = %+v, want soroban %q", tr.Pair.Quote, wantTokenOut)
 	}
-	// Amounts: BaseAmount = sold (body[0]), QuoteAmount = bought (body[1]).
-	// Mutation guard (non-vacuous): change wantSold/wantBought by one
-	// digit, or swap wantTokenIn/wantTokenOut, and the test FAILS — the
-	// values and their positions are pinned.
+	// BaseAmount = sold (body[0]), QuoteAmount = bought (body[1]); changing a want* value or swapping tokens fails the
+	// test.
 	if got := tr.BaseAmount.String(); got != wantSold {
 		t.Errorf("BaseAmount (sold) = %q, want %q", got, wantSold)
 	}
@@ -252,21 +240,9 @@ func TestGolden_aquariusPoolTrade_ledger55436194(t *testing.T) {
 	}
 }
 
-// ─── Golden real-lake decode-VALUE test: set_protocol_fee Vec body ──
-//
-// A set_protocol_fee event on a registered Aquarius pool carries a single-element Vec[u32] with
-// the new pool-wide protocol-fee fraction, not the Map[fee_protocol{0,1}_{new,old}: u32] shape
-// seen on unregistered contracts. Under the ADR-0035 gate only registered pools reach the
-// decoder, so the Vec form is the only shape that arrives; a Map-only decoder (scval.AsMap fails
-// on a Vec) leaves every event "undecodable-but-matched" and blocks completeness certification.
-//
-// Two real registered-pool events are driven through Decoder.Matches and Decoder.Decode,
-// asserting the exact FeeEvent values.
-//
-// Wire semantics (see decodeSetProtocolFee): the pool's fee API is a single
-// set_protocol_fee_fraction with a `new_fraction` topic (docs/operations/wasm-audits), so the one
-// u32 is the new fraction for the whole pool: Fee0New == Fee1New == fraction. The body carries
-// no old value, so HasOldFee is false (the sink lands *_old columns NULL, never a fabricated 0).
+// Golden test for set_protocol_fee: a registered Aquarius pool carries a one-element Vec[u32], not the Map shape of
+// unregistered contracts, so a Map-only decoder would leave events matched but undecodable. The u32 is the pool-wide
+// fraction (Fee0New == Fee1New); there is no old value, so HasOldFee is false and *_old columns land NULL, never 0.
 
 // realVecSetFeeBody is the data_xdr of every registered-pool
 // set_protocol_fee event: SCV_VEC of length 1 holding SCV_U32(5000)

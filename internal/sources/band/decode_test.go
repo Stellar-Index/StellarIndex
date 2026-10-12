@@ -192,10 +192,8 @@ func TestDecodeRelay_TrailingArgIgnored(t *testing.T) {
 	}
 }
 
-// TestDecodeRelay_ContractRelayerValidates pins that `relay` declares
-// `from` as a Soroban Address, so the relayer may be a contract. Every
-// decoded update must still pass OracleUpdate.Validate — the check the
-// store runs before INSERT — or the whole batch's prices are lost.
+// TestDecodeRelay_ContractRelayerValidates pins that relay's `from` is a Soroban Address, so the relayer may be a
+// contract; every decoded update must still pass OracleUpdate.Validate or the whole batch's prices are lost.
 func TestDecodeRelay_ContractRelayerValidates(t *testing.T) {
 	raw, err := strkey.Decode(strkey.VersionByteContract, adapterC)
 	if err != nil {
@@ -236,10 +234,8 @@ func TestDecodeRelay_ContractRelayerValidates(t *testing.T) {
 	}
 }
 
-// TestDecodeForceRelay_FarFutureResolveTimeClampsToClose pins that a garbage far-future
-// resolve_time falls back to the ledger close time rather than overflowing the timestamptz
-// INSERT. force_relay (unconditional admin path, no acceptance window) clamps; relay() drops, see
-// TestDecodeRelay_FutureResolveTimeBeyondContractWindowIsDropped.
+// TestDecodeForceRelay_FarFutureResolveTimeClampsToClose pins that a far-future resolve_time falls back to ledger
+// close instead of overflowing the timestamptz INSERT. force_relay (admin, no window) clamps; relay() drops.
 func TestDecodeForceRelay_FarFutureResolveTimeClampsToClose(t *testing.T) {
 	const farFuture = uint64(3_000_000_000_000_000_000) // ~year 95 billion
 	closedAt := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
@@ -268,10 +264,8 @@ func TestDecodeForceRelay_FarFutureResolveTimeClampsToClose(t *testing.T) {
 	}
 }
 
-// TestDecodeForceRelay_OverflowResolveTimeClampsToClose covers u64 values above math.MaxInt64
-// that the FarFuture test does not: they wrap negative in the int64() cast, stamping a far-past
-// time that a one-sided `ts.After(close+24h)` guard misses and that overflows the timestamptz
-// INSERT.
+// TestDecodeForceRelay_OverflowResolveTimeClampsToClose covers u64 values above math.MaxInt64, which wrap negative in
+// the int64() cast and slip past a one-sided ts.After(close+24h) guard, then overflow the timestamptz INSERT.
 func TestDecodeForceRelay_OverflowResolveTimeClampsToClose(t *testing.T) {
 	closedAt := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 	for name, resolve := range map[string]uint64{
@@ -367,10 +361,8 @@ func TestDecodeRelay_USDSymbolSkipped(t *testing.T) {
 	}
 }
 
-// Oracle capture-totality: an unmapped symbol is RECORDED as a
-// raw:<symbol> row at its own vector slot, not skipped. NOTACOIN yields
-// a raw row and BTC keeps OpIndex 1: the raw row fills slot 0 (no existing
-// row moves).
+// Oracle capture-totality: an unmapped symbol is recorded as a raw:<symbol> row at its own vector slot, not skipped.
+// NOTACOIN yields a raw row in slot 0 and BTC keeps OpIndex 1.
 func TestDecodeRelay_UnknownSymbolRecordedAsRaw(t *testing.T) {
 	args := []string{
 		encodeAddressArg(t, relayerG),
@@ -517,10 +509,9 @@ func TestDecoder_MatchesOnlyRelayFunctions(t *testing.T) {
 	}
 }
 
-// TestDecodeRelay_FutureResolveTimeBeyondContractWindowIsDropped: a resolve_time beyond Band's
-// +1h acceptance window must be dropped, not clamped to the ledger close. relay() silently no-ops
-// there (the tx still succeeds), so writing the update, even stamped at closedAt, would let a
-// rate the chain never applied win the `ORDER BY ts DESC` latest-read.
+// TestDecodeRelay_FutureResolveTimeBeyondContractWindowIsDropped: a resolve_time beyond Band's +1h window is dropped,
+// not clamped, because relay() silently no-ops there; writing it would let a never-applied rate win the ORDER BY ts
+// DESC latest-read.
 func TestDecodeRelay_FutureResolveTimeBeyondContractWindowIsDropped(t *testing.T) {
 	closedAt := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 
@@ -573,12 +564,9 @@ func TestDecodeRelay_FutureResolveTimeBeyondContractWindowIsDropped(t *testing.T
 	}
 }
 
-// The tests below pin decodeRelayArgs's remaining structural rejects so a malformed Band
-// invocation cannot reach the storage layer:
-//   - force_relay with too few args
-//   - unknown function name (returns ErrNotBandCall — guards the
-//     ContractCallDecoder routing seam)
-//   - resolve_time pre-epoch fallback to ledger close time
+// Pins decodeRelayArgs's structural rejects so a malformed Band invocation cannot reach storage: force_relay with too
+// few args, an unknown function name (ErrNotBandCall, guarding the ContractCallDecoder routing seam), pre-epoch
+// resolve_time fallback.
 
 func TestDecodeForceRelay_TooFewArgs_Malformed(t *testing.T) {
 	// force_relay needs 3 args; pass 1.
@@ -628,10 +616,8 @@ func TestDecodeRelay_PreEpochResolveTimeIsDropped(t *testing.T) {
 }
 
 func TestDecodeForceRelay_PreEpochResolveTimeFallsBackToClosedAt(t *testing.T) {
-	// force_relay is the unconditional admin path — it has no
-	// resolve_time acceptance window to mirror, so a garbage
-	// resolve_time still clamps to ledger close rather than being
-	// dropped.
+	// force_relay is the unconditional admin path with no resolve_time window to mirror, so a garbage resolve_time
+	// clamps to ledger close.
 	closedAt := time.Unix(1_745_000_500, 0).UTC()
 	args := []string{
 		encodeSymbolRatesArg(t, []struct {
@@ -678,10 +664,8 @@ func TestDecodeRelay_FutureResolveTimeBeyondOffsetIsDropped(t *testing.T) {
 }
 
 func TestDecodeRelay_MalformedSymbolRatesArg_Rejected(t *testing.T) {
-	// Pass a non-Vec for symbol_rates — the parse step itself
-	// succeeds but AsVec must reject. Surface as ErrMalformedArgs
-	// so dispatcher's drop-stat counter increments rather than
-	// crashing the ledger pass.
+	// A non-Vec symbol_rates parses but AsVec must reject it as ErrMalformedArgs, so the drop-stat counter increments
+	// instead of crashing the ledger pass.
 	notAVec := xdr.ScSymbol("not-a-vec")
 	bogusSv := xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &notAVec}
 	bogusBytes, err := bogusSv.MarshalBinary()
@@ -707,10 +691,9 @@ func TestDecodeRelay_MalformedSymbolRatesArg_Rejected(t *testing.T) {
 // happy-path test in this same package via shared types.
 var _ = canonical.NewFiatAsset
 
-// oracle_updates carries ts in its primary key, so a decoder change that shifts the ts of a
-// stored event makes a re-derive INSERT a second row instead of conflicting. These goldens pin
-// the exact ts per input for both entry points; a failure means the change needs its own cleanup
-// (see "Re-deriving a timestamp" in docs/architecture/ingest-pipeline.md).
+// oracle_updates carries ts in its primary key, so a decoder change shifting a stored ts makes a re-derive INSERT a
+// second row. These goldens pin the exact ts per input for both entry points; see "Re-deriving a timestamp" in
+// docs/architecture/ingest-pipeline.md.
 func TestDecodeRelayArgs_TimestampGolden(t *testing.T) {
 	closedAt := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 	sec := func(d time.Duration) uint64 { return uint64(closedAt.Add(d).Unix()) }

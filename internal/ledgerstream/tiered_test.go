@@ -16,10 +16,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// fakeStore is a minimal DataStore used to assert TieredDataStore's
-// fallback semantics. Only the methods exercised by the tests are
-// implemented meaningfully; the rest return ErrNotImplemented so
-// any new test path that depends on them fails loudly.
+// fakeStore is a minimal DataStore for TieredDataStore's fallback semantics; unexercised methods return
+// ErrNotImplemented so any new test path depending on them fails loudly.
 type fakeStore struct {
 	name      string
 	files     map[string]string // path → body
@@ -133,11 +131,8 @@ func readAllString(rc io.ReadCloser) string {
 }
 
 // TestTiered_GetFile_BothMissing_EmitsMetric guards that a read missing BOTH tiers increments
-// obs.LedgerstreamTierReadTotal{outcome="both_missing"} by exactly 1, the metric the
-// `both_missing` page reads. The metric is package-level so the emit is always live; a
-// registry-gated per-instance counter would be a nil no-op and the page could never fire.
-//
-// Not t.Parallel(): it asserts a delta on a process-global counter other tests also increment.
+// obs.LedgerstreamTierReadTotal{outcome="both_missing"} by exactly 1, the metric the both_missing page reads. It is
+// package-level so the emit is always live. Not t.Parallel(): it asserts a delta on a process-global counter.
 func TestTiered_GetFile_BothMissing_EmitsMetric(t *testing.T) {
 	hot := newFakeStore("hot")
 	cold := newFakeStore("cold")
@@ -219,10 +214,8 @@ func TestTiered_GetFile_HotTransientError_DoesNotFallThrough(t *testing.T) {
 	cold := newFakeStore("cold")
 	cold.files["ledgers/55555.xdr"] = "COLD-BODY-NEVER-SEEN"
 
-	// Simulate a transient network error on the hot side. Per the
-	// fail-loud-not-silent design, this MUST propagate without
-	// trying cold — masking a misconfigured hot endpoint is the
-	// failure mode this guards against.
+	// Simulate a transient network error on the hot side. It MUST propagate without trying cold: masking a misconfigured
+	// hot endpoint is the failure mode this guards against.
 	transient := errors.New("dial tcp: i/o timeout")
 	hot.getErr["ledgers/55555.xdr"] = transient
 
@@ -364,15 +357,9 @@ func TestIsNotFound(t *testing.T) {
 	}
 }
 
-// TestTiered_GetFile_BothMissing_ErrorNamesBothTiers guards against "a short walk reads as full
-// coverage". both_missing is the data-integrity page condition (a genuine hole), so the error must
-// name both tiers, not the cold store's error verbatim, which looks identical to a routine hot miss.
-// The SDK wraps it as "ledger object containing sequence N is missing" and, on a bounded ops walk,
-// TolerateTrailingMissing turns that into a clean complete, leaving only a counter nobody reads.
-//
-// The wrap must not change control flow: IsNotFound and the SDK's ledger_buffer branch on
-// errors.Is(err, os.ErrNotExist) to choose between retrying an unbounded range and aborting a
-// bounded one, so this asserts that identity survives as well as the wording.
+// TestTiered_GetFile_BothMissing_ErrorNamesBothTiers guards against a short walk reading as full coverage.
+// both_missing is a genuine hole, so the error must name both tiers, not echo the cold error. The wrap must keep
+// errors.Is(err, os.ErrNotExist) identity, which IsNotFound and the SDK branch on.
 func TestTiered_GetFile_BothMissing_ErrorNamesBothTiers(t *testing.T) {
 	t.Parallel()
 	hot := newFakeStore("hot")

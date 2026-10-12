@@ -138,11 +138,9 @@ func packageEventConstants(t *testing.T) map[string]string {
 	return out
 }
 
-// TestClassify_completenessVsUpstream is a forcing function: adding an Event* constant without
-// wiring it into kindByTopicSymbol/classify() fails it. It AST-enumerates the package's Event*
-// constants (see packageEventConstants), so the enumeration cannot drift from events.go. The
-// fixture also documents the closed set of topics aquarius emits (verified against
-// aquarius-amm/liquidity_pool_events/src/lib.rs).
+// TestClassify_completenessVsUpstream is a forcing function: an Event* constant not wired into
+// kindByTopicSymbol/classify() fails it. It AST-enumerates the package constants (packageEventConstants) and documents
+// the closed set of aquarius topics.
 func TestClassify_completenessVsUpstream(t *testing.T) {
 	consts := packageEventConstants(t)
 	if len(consts) == 0 {
@@ -177,10 +175,8 @@ func TestPoolTypeString(t *testing.T) {
 	}
 }
 
-// TestDecodeTrade_withFakeDecoders uses the package-level hook vars
-// to substitute decoders for the topic + body SCVals. Exercises the
-// full direction-assignment path without the real XDR codec —
-// real_fixture_test.go covers that path against mainnet captures.
+// TestDecodeTrade_withFakeDecoders substitutes the package-level decoder hooks to exercise direction assignment
+// without XDR; real_fixture_test.go covers the real codec.
 func TestDecodeTrade_withFakeDecoders(t *testing.T) {
 	prevAmt, prevAsset, prevAddr := decodeTradeAmounts, decodeAssetTopic, decodeAddressTopic
 	defer func() {

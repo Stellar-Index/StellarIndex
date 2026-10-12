@@ -440,10 +440,8 @@ func TestRefreshPair_DefaultsApplied(t *testing.T) {
 	base := time.Now()
 	refreshQuiet(t, svc, rdb, xlmUSD(t), 1.04, base)
 
-	// 6% deviation → warning fires, but only once the divergence has
-	// PERSISTED past the default debounce window. The
-	// first refresh must NOT fire — that is the fast-move false-warning
-	// class the debounce removes; a sustained 6% gap must clear it.
+	// 6% deviation: the warning fires only once the divergence has persisted past the default debounce window. The
+	// first refresh must not fire (the fast-move false-warning class the debounce removes); a sustained 6% gap must.
 	t0 := base.Add(time.Hour)
 	if err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.06, t0); err != nil {
 		t.Fatalf("RefreshPair: %v", err)
@@ -504,10 +502,8 @@ func TestRefreshPair_FiresObservationSink(t *testing.T) {
 		if !r.Firing {
 			t.Errorf("ref %s: Firing=false, want true (10%% delta exceeds 5%% threshold)", r.Reference)
 		}
-		// ADR-0003: OurPrice/RefPrice/DeltaPct are decimal
-		// strings, never float64 — asserting exact strings (not just
-		// "parses to a float") pins the shortest-round-trip format
-		// the worker must emit, matching the read side's ::text cast.
+		// ADR-0003: OurPrice/RefPrice/DeltaPct are decimal strings, never float64. Asserting exact strings pins the
+		// shortest-round-trip format the worker must emit, matching the read side's ::text cast.
 		if r.OurPrice != "1.1" {
 			t.Errorf("ref %s: OurPrice = %q, want decimal string \"1.1\"", r.Reference, r.OurPrice)
 		}
@@ -602,10 +598,9 @@ func TestRefreshPair_ObservationCarriesReferenceAsOf(t *testing.T) {
 	}
 }
 
-// TestRefreshPair_StampsVerdictWindow — the cached verdict names the
-// aggregation window its OurPrice was computed over, so an API
-// surface serving a different window can tell the verdict does not speak to
-// its value; a service built without a window leaves the verdict unscoped.
+// TestRefreshPair_StampsVerdictWindow pins that the cached verdict names the window its OurPrice was computed over,
+// so an API surface serving a different window can tell it does not speak to its value; a service built without a
+// window leaves it unscoped.
 func TestRefreshPair_StampsVerdictWindow(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -637,10 +632,8 @@ func TestRefreshPair_StampsVerdictWindow(t *testing.T) {
 	}
 }
 
-// TestRefreshPair_ObservationFallsBackWhenNoComparisonTime — a caller
-// that supplies no comparison time keeps the previous behaviour (the
-// worker's own computed-at) rather than persisting a zero timestamp
-// into observed_at, which is part of the row's conflict key.
+// TestRefreshPair_ObservationFallsBackWhenNoComparisonTime pins that a caller supplying no comparison time gets the
+// worker's own computed-at, rather than a zero timestamp in observed_at, which is part of the row's conflict key.
 func TestRefreshPair_ObservationFallsBackWhenNoComparisonTime(t *testing.T) {
 	sink := &recordingObservationSink{}
 	svc, _, _ := newTestService(t, []divergence.Reference{
@@ -667,10 +660,9 @@ func TestRefreshPair_ObservationFallsBackWhenNoComparisonTime(t *testing.T) {
 	}
 }
 
-// TestNoUnfalsifiableWarningNegatives keeps the single-refresh "must not
-// fire" out of this package: under the default WarningPersistence debounce,
-// `if x.WarningFired {` after fewer than two refreshes passes whatever the
-// gate under test decides. Use refreshQuiet, or also assert FiringSince.
+// TestNoUnfalsifiableWarningNegatives bans single-refresh must-not-fire checks: under the default WarningPersistence
+// debounce, `if x.WarningFired {` after fewer than two refreshes passes whatever the gate decides. Use refreshQuiet,
+// or also assert FiringSince.
 func TestNoUnfalsifiableWarningNegatives(t *testing.T) {
 	files, err := filepath.Glob("*_test.go")
 	if err != nil || len(files) == 0 {
@@ -1348,10 +1340,8 @@ func TestCompare_PanicInOneReferenceIsolated(t *testing.T) {
 	}
 }
 
-// TestCompare_PanicWithErrorValue — a panic with an error type
-// (e.g. runtime.Error from a nil-deref) renders via fmt's %v
-// verbose form. Pinned because the label is part of the
-// operator-facing dashboard surface.
+// TestCompare_PanicWithErrorValue pins that a panic with an error type (e.g. runtime.Error from a nil-deref) renders
+// via fmt's %v verbose form, because the label is part of the operator-facing dashboard surface.
 func TestCompare_PanicWithErrorValue(t *testing.T) {
 	refs := []divergence.Reference{
 		&panickingReference{name: "nil-deref", panicValue: errors.New("runtime: invalid memory address")},
@@ -1366,10 +1356,8 @@ func TestCompare_PanicWithErrorValue(t *testing.T) {
 	}
 }
 
-// TestCompare_PanicInName — even Name() panicking shouldn't
-// crash the comparator. The failure surfaces under the synthetic
-// "_unknown" name so operators see "something panicked here"
-// without losing the rest of the run.
+// TestCompare_PanicInName pins that even Name() panicking does not crash the comparator: the failure surfaces under
+// the synthetic _unknown name, so operators see something panicked without losing the rest of the run.
 func TestCompare_PanicInName(t *testing.T) {
 	refs := []divergence.Reference{
 		&stubReference{name: "good", price: 0.10},
@@ -1608,10 +1596,9 @@ func TestMaxComparableAge_FXPairUsesFXBudget(t *testing.T) {
 	}
 }
 
-// reflector-dex prices the SDEX book our VWAP is built from, so on an
-// SDEX walk it "agrees" with us and disarmed the nobody-agrees leg: two
-// independent references at -6% and +6% put the median on our price and
-// only reflector-dex corroborated it.
+// reflector-dex prices the SDEX book our VWAP is built from, so on an SDEX walk it agrees with us and disarmed the
+// nobody-agrees leg: with two independent references at -6% and +6% the median sits on our price and only
+// reflector-dex corroborated it.
 func TestRefreshPair_ReflectorDEXCannotCorroborate(t *testing.T) {
 	refs := []divergence.Reference{
 		&stubReference{name: divergence.OracleSourceReflectorDEX, price: 1.10},
@@ -1832,10 +1819,8 @@ func TestRefreshPair_TTLCoversWorstCasePass(t *testing.T) {
 	}
 }
 
-// TestCountAgreeing pins the cross-oracle agreement math (ADR-0019
-// Phase 3): a reference agrees when its per-reference delta is at or
-// below the threshold, mirroring the complement of the observation
-// sink's strict `>` firing test.
+// TestCountAgreeing pins the cross-oracle agreement math (ADR-0019 Phase 3): a reference agrees when its
+// per-reference delta is at or below the threshold, the complement of the observation sink's strict > firing test.
 func TestCountAgreeing(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -1860,10 +1845,8 @@ func TestCountAgreeing(t *testing.T) {
 			want:      2,
 		},
 		{
-			// Delta exactly AT threshold counts as agreement (<=),
-			// mirroring flushObservations' strict > firing test.
-			// Binary-exact values so the boundary is truly exact:
-			// ref=1.0, our=1.5 → |0.5|/1.0*100 = 50.0 == threshold.
+			// Delta exactly AT threshold counts as agreement (<=), mirroring flushObservations' strict > firing test.
+			// Binary-exact values keep the boundary exact: ref=1.0, our=1.5 gives |0.5|/1.0*100 = 50.0 == threshold.
 			name:      "delta exactly at threshold agrees",
 			ourPrice:  1.5,
 			sources:   map[string]float64{"a": 1.0},
@@ -1945,10 +1928,8 @@ func TestCountAgreeing(t *testing.T) {
 	}
 }
 
-// TestRefreshPair_AgreementCountPersisted — RefreshPair computes the
-// agreement count against the worker's threshold and persists it in
-// the cached JSON, distinct from SuccessCount ("responded" vs
-// "corroborates").
+// TestRefreshPair_AgreementCountPersisted pins that RefreshPair computes the agreement count against the worker's
+// threshold and persists it in the cached JSON, distinct from SuccessCount (responded vs corroborates).
 func TestRefreshPair_AgreementCountPersisted(t *testing.T) {
 	refs := []divergence.Reference{
 		&stubReference{name: "a", price: 1.00},
@@ -2342,10 +2323,9 @@ func TestOracleReference_BaseKeysCoverEveryAliasFamily(t *testing.T) {
 	}
 }
 
-// TestOracleReference_QuoteKeysNeverMapUSDCToUSD: reflector-dex rows are
-// quoted in the USDC SAC. A fiat:USD pair must not bind any USDC form (that
-// would compare a USDC price as USD and hide a depeg), while a classic-USDC
-// pair must reach the SAC-quoted rows through the alias registry.
+// TestOracleReference_QuoteKeysNeverMapUSDCToUSD pins that reflector-dex rows are quoted in the USDC SAC: a fiat:USD
+// pair must not bind any USDC form (it would hide a depeg), while a classic-USDC pair reaches the SAC-quoted rows via
+// the alias registry.
 func TestOracleReference_QuoteKeysNeverMapUSDCToUSD(t *testing.T) {
 	const usdcClassic = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 	const usdcSACContract = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
@@ -2567,10 +2547,8 @@ func TestRefreshPair_FastMoveDoesNotFalseWarn(t *testing.T) {
 	}
 }
 
-// TestRefreshPair_SustainedDivergenceStillWarns proves the debounce
-// does not blind a genuine divergence: the same over-threshold gap,
-// still present one debounce window later, DOES fire. This is the
-// "genuine-divergence detection preserved" half of the fix.
+// TestRefreshPair_SustainedDivergenceStillWarns pins that the debounce does not blind a genuine divergence: the same
+// over-threshold gap, still present one debounce window later, does fire.
 func TestRefreshPair_SustainedDivergenceStillWarns(t *testing.T) {
 	refs := []divergence.Reference{
 		&stubReference{name: "coingecko", price: 1.00},
@@ -2872,10 +2850,9 @@ func TestRefreshPair_RestartDoesNotResurrectClearedWarning(t *testing.T) {
 	}
 }
 
-// TestRefreshPair_GapDoesNotMatureStreak: a pair that fired once,
-// then went unevaluated for hours (no VWAP, parse error, below quorum), must
-// not publish on the single firing observation after the gap. Elapsed time
-// across an unobserved interval is not evidence the divergence persisted.
+// TestRefreshPair_GapDoesNotMatureStreak pins that a pair that fired once, then went unevaluated for hours (no VWAP,
+// parse error, below quorum), must not publish on the single firing observation after the gap: elapsed time is not
+// evidence of persistence.
 func TestRefreshPair_GapDoesNotMatureStreak(t *testing.T) {
 	var fired int
 	svc, rdb, _ := newTestService(t, depeggedRefs(), divergence.ServiceOptions{

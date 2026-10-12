@@ -7,11 +7,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 )
 
-// TestNewECBPoller_UsesConfiguredInterval is the regression test:
-// `poll_interval` under `[external.ecb]` was accepted at config load,
-// validated, and then discarded — startExternalConnectors never read it,
-// so the poller always ran at its 6h built-in default regardless of what
-// an operator configured.
+// TestNewECBPoller_UsesConfiguredInterval is the regression test for `[external.ecb] poll_interval` being validated and
+// then ignored, so the poller always ran at its 6h default.
 func TestNewECBPoller_UsesConfiguredInterval(t *testing.T) {
 	t.Parallel()
 

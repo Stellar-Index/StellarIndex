@@ -94,10 +94,8 @@ func TestNewColdS3Client_AnonymousDespiteAmbientCredentials(t *testing.T) {
 		t.Fatalf("newColdS3Client: %v", err)
 	}
 	opts := client.Options()
-	// s3.New's ignoreAnonymousAuth replaces the anonymous sentinel
-	// with nil, which is how the signing middleware learns to leave
-	// the request unsigned. A non-nil provider here means the client
-	// WILL sign — with whatever it holds.
+	// s3.New's ignoreAnonymousAuth replaces the anonymous sentinel with nil, which tells the signing middleware to leave
+	// the request unsigned. A non-nil provider here means the client WILL sign with whatever it holds.
 	if opts.Credentials != nil {
 		got, retrieveErr := opts.Credentials.Retrieve(context.Background())
 		t.Errorf("cold client Credentials = %T (AccessKeyID=%q, err=%v), want nil (anonymous)",
@@ -196,10 +194,8 @@ func TestColdDataStoreFactory_SendsUnsignedRequests(t *testing.T) {
 	}
 }
 
-// TestColdCredentials_StaticFromNamedEnvVars covers the private-bucket
-// shape: both s3_cold_*_key_env names set, credentials read from those
-// env vars at call time — and NOT from the ambient AWS_* pair, which is
-// simultaneously present and different.
+// TestColdCredentials_StaticFromNamedEnvVars covers the private-bucket shape: credentials come from the
+// s3_cold_*_key_env variables at call time, not from the ambient AWS_* pair, which is present and different.
 func TestColdCredentials_StaticFromNamedEnvVars(t *testing.T) {
 	setAmbientMinIOCredentials(t)
 	t.Setenv("STELLARINDEX_S3_COLD_ACCESS_KEY", "cold-tier-access-key")

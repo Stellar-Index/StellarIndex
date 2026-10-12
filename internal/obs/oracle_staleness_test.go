@@ -88,10 +88,9 @@ func TestOracleStalenessBudget_HeartbeatIsNotMultiplied(t *testing.T) {
 	}
 }
 
-// TestOracleStalenessBudget_OverrideAppliesToOnePairOnly is the blast-radius case. An override
-// is a claim about ONE asset; it must not reach the asset next to it, nor the same asset on
-// another source (reflector-dex's DAI is a different feed with a different publication rhythm
-// from reflector-cex's).
+// TestOracleStalenessBudget_OverrideAppliesToOnePairOnly is the blast-radius case: an override is a claim about one
+// asset, so it must not reach a neighbouring asset or the same asset on another source (reflector-dex DAI differs
+// from reflector-cex DAI).
 func TestOracleStalenessBudget_OverrideAppliesToOnePairOnly(t *testing.T) {
 	obs.DeclareOracleResolution("test-cex", 300)
 	obs.DeclareOracleResolution("test-dex", 300)
@@ -115,10 +114,8 @@ func TestOracleStalenessBudget_OverrideAppliesToOnePairOnly(t *testing.T) {
 	}
 }
 
-// TestSetOracleStalenessOverrides_Replaces pins install-not-accumulate
-// semantics: deleting a row from the config and restarting must delete
-// the override. A register that only ever grew would make a retired
-// exception permanent and invisible.
+// TestSetOracleStalenessOverrides_Replaces pins install-not-accumulate semantics: removing a config row and
+// restarting must remove the override, or a retired exception becomes permanent and invisible.
 func TestSetOracleStalenessOverrides_Replaces(t *testing.T) {
 	obs.DeclareOracleResolution("test-replace", 300)
 	obs.SetOracleStalenessOverrides([]obs.OracleStalenessOverride{

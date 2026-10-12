@@ -95,10 +95,8 @@ func TestPersistWorker_ShutdownRacingInFlightTradeFlush_RowsLandNotLost(t *testi
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		// workerID 1: not the blocking-drain worker, so the worker exits
-		// straight after its own shutdown flush. A nil-store event
-		// persister is fine — only trade-shaped events flow, and they go
-		// through tw.
+		// workerID 1 is not the blocking-drain worker, so it exits right after its own shutdown flush. A nil-store event
+		// persister is fine: only trade-shaped events flow, through tw.
 		persistWorker(ctx, discardLogger(), storeEventPersister(discardLogger(), nil), store, in, SinkModeAll, 1, nil, nil)
 	}()
 

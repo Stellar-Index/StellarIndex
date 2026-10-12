@@ -43,14 +43,9 @@ func poolCreatedEvent(contractID, body string, ledger uint32) events.Event {
 	}
 }
 
-// TestMatches_ForeignContractEmittingOurTopicsIsRejected is the ADR-0035 gate, the load-bearing
-// test of this package.
-//
-// Every event in this protocol carries a ONE-element Symbol topic, and the symbols are the most
-// generic on the network (`mint` and `burn` are a large share of ALL contract events). A
-// topic-only decoder would attribute much of the network's token traffic to this source.
-// Replace [Decoder.Matches]'s identity check with a topic check and every case below flips to
-// true.
+// TestMatches_ForeignContractEmittingOurTopicsIsRejected is the ADR-0035 gate and this package's load-bearing test.
+// Every event has a ONE-element generic Symbol topic (`mint`, `burn`), so a topic-only decoder would claim much of the
+// network's token traffic; swapping in a topic check flips every case.
 func TestMatches_ForeignContractEmittingOurTopicsIsRejected(t *testing.T) {
 	d := NewDecoder()
 	for _, topic := range []struct {
@@ -78,10 +73,8 @@ func TestMatches_ForeignContractEmittingOurTopicsIsRejected(t *testing.T) {
 	}
 }
 
-// TestMatches_ForeignFactoryCannotSeedTheRegistry is the registry-poisoning
-// case. If any contract could announce a pool, it could name token
-// identities of its own choosing, register itself, and then have its own
-// swaps recorded as real trades at prices it controls.
+// TestMatches_ForeignFactoryCannotSeedTheRegistry is the registry-poisoning case: if any contract could announce a pool,
+// it could pick token identities, register itself, and have its own swaps recorded as real trades at prices it controls.
 func TestMatches_ForeignFactoryCannotSeedTheRegistry(t *testing.T) {
 	d := NewDecoder()
 	ev := poolCreatedEvent(foreignContract, goldenPoolCreated, 61_487_379)
@@ -125,10 +118,8 @@ func TestMatches_CanonicalFactoryAndRegisteredPoolsAreAccepted(t *testing.T) {
 	}
 }
 
-// TestMatches_UnrelatedTopicFromARegisteredPoolIsNotClaimed keeps the gate
-// from becoming a blanket claim on a pool contract. A registered pool that
-// also emits, say, a SEP-41 `transfer` must leave that event for the
-// source that owns it.
+// TestMatches_UnrelatedTopicFromARegisteredPoolIsNotClaimed keeps the gate from claiming a whole pool contract: a
+// registered pool's SEP-41 `transfer` must be left for the source that owns it.
 func TestMatches_UnrelatedTopicFromARegisteredPoolIsNotClaimed(t *testing.T) {
 	d := NewDecoder()
 	ev := events.Event{
@@ -161,10 +152,8 @@ func TestSeedPool_AdmitsAPoolAndItsTokens(t *testing.T) {
 	}
 }
 
-// TestGatedContractSet_IsTheProjectorPrefilter proves the prefilter the
-// projector installs covers the factory AND every pool. Missing the
-// factory would stop new pools ever registering; missing a pool would drop
-// its trades.
+// TestGatedContractSet_IsTheProjectorPrefilter proves the projector prefilter covers the factory AND every pool: a
+// missing factory stops new pools registering, and a missing pool drops its trades.
 func TestGatedContractSet_IsTheProjectorPrefilter(t *testing.T) {
 	d := NewDecoder()
 	set := d.GatedContractSet()

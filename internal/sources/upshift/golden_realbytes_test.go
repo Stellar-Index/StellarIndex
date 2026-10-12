@@ -6,20 +6,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// ─── Golden real-lake decode-VALUE tests ────────────────────────────
-//
-// CONVENTION (shared with internal/sources/defindex/golden_realbytes_test.go
-// and internal/sources/aquarius/golden_realbytes_test.go):
-//
-// Each fixture is the EXACT on-chain bytes of one real event (topics_xdr + data_xdr, base64 as
-// the ClickHouse lake stores them in stellar.contract_events), cited with its ledger_seq /
-// tx_hash / op_index / event_index so it can be re-pulled and re-verified. No hand-encoded
-// SCVals.
-//
-// Every test drives the PRODUCTION decoder through both seams, Decoder.Matches (the ADR-0035
-// contract-identity gate) and Decoder.Decode (classify + body decode + consumer.Event wrap),
-// and asserts the exact decoded field VALUES. Recognition and row COUNT both pass for a decoder
-// that puts WRONG values in the right number of rows; only a value assertion catches that.
+// Golden real-lake decode-VALUE tests (same convention as defindex and aquarius). Each fixture is the exact on-chain
+// bytes of one real event (topics_xdr + data_xdr from stellar.contract_events), cited by ledger_seq, tx_hash,
+// op_index, event_index. Tests drive Decoder.Matches (ADR-0035 gate) and Decode and assert exact values.
 
 // mustDecodeOne drives the production decoder and returns the single
 // Event it emitted, failing if the gate rejects the fixture or the

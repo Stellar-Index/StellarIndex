@@ -15,10 +15,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// fuzzRows decodes "minutesAgo:vwap;minutesAgo:vwap;…" into trailing rows
-// relative to mkRow's anchor. Malformed entries are dropped; exponent forms
-// are skipped because Postgres NUMERIC text never carries one and a huge
-// exponent only measures big.Rat's allocator.
+// fuzzRows decodes "minutesAgo:vwap;..." into trailing rows relative to mkRow's anchor, dropping malformed entries
+// and exponent forms (Postgres NUMERIC text never carries one, and a huge exponent only measures big.Rat's
+// allocator).
 func fuzzRows(spec string) []timescale.Vwap1mRow {
 	var rows []timescale.Vwap1mRow
 	for _, e := range strings.Split(spec, ";") {
@@ -64,11 +63,9 @@ var selectGuardedSeeds = []struct{ cand, rows string }{
 	{"3/1", "1:1;2:1;3:1;4:1;5:1;6:1;7:1;8:1"},
 }
 
-// FuzzSelectGuardedVWAP1m pins the guard's selection against an independent reconstruction
-// of its contract: the baseline is the strictly older rows (index-aligned), the decision is
-// aggregate.GuardServedVWAP's, a served substitute is a parseable older row, rows at/after the
-// candidate never influence the answer, and the decision is invariant under exact positive
-// rescaling of every price (the band is ratio/MAD-homogeneous).
+// FuzzSelectGuardedVWAP1m pins the selection against an independent reconstruction: the baseline is the strictly
+// older rows, the decision is aggregate.GuardServedVWAP's, rows at or after the candidate never matter, and it is
+// invariant under exact positive rescaling of prices.
 func FuzzSelectGuardedVWAP1m(f *testing.F) {
 	for _, s := range selectGuardedSeeds {
 		f.Add(s.cand, s.rows)
@@ -199,10 +196,9 @@ func FuzzSelectGuardedVWAP1mAt(f *testing.F) {
 	})
 }
 
-// FuzzSubstanceOK checks the floor against an exact big.Int/big.Rat reference and its
-// monotonicity: more volume, buckets or span never turn a pass into a withhold. Span is a
-// DB-measured interval inside the policy window, so it stays non-negative and well short of
-// time.Duration's overflow.
+// FuzzSubstanceOK checks the floor against an exact big.Int/big.Rat reference and monotonicity (more volume,
+// buckets or span never turn a pass into a withhold); span stays non-negative and well short of time.Duration
+// overflow.
 func FuzzSubstanceOK(f *testing.F) {
 	f.Add("1000", int64(20), int64(6*3600), "1000", int64(20), int64(6*3600))
 	f.Add("999.9999999", int64(20), int64(6*3600), "1000", int64(20), int64(6*3600))
@@ -255,10 +251,8 @@ func FuzzSubstanceOK(f *testing.F) {
 	})
 }
 
-// FuzzSubstancePolicyFromValues: whatever the config holds, the defaulted
-// policy's volume floor is strictly positive (never zero, never nil), and a
-// finite positive configured floor is carried exactly — no float rounding
-// on its way into the rational compare.
+// FuzzSubstancePolicyFromValues pins that the defaulted volume floor is always strictly positive and a finite
+// positive configured floor is carried exactly, with no float rounding into the rational compare.
 func FuzzSubstancePolicyFromValues(f *testing.F) {
 	f.Add(1000.0, 20, 360, 24)
 	f.Add(0.0, 0, 0, 0)
@@ -314,10 +308,9 @@ func FuzzPairCacheKey(f *testing.F) {
 	})
 }
 
-// FuzzIsDirectoryScamFlagged: every scam-class tag is recognised whatever its case and
-// whitespace, among any other tags, in any position; a set with no scam-class member is never
-// flagged. The SQL predicates' rule (lower(t), no trim) over the stored canonical form must
-// agree, or the churn guard and rank tier split from the price gate.
+// FuzzIsDirectoryScamFlagged pins that every scam-class tag is recognised regardless of case, whitespace, position
+// or other tags, and a set with none is never flagged; the SQL predicates (lower(t), no trim) must agree or the
+// churn guard and rank tier split from the price gate.
 func FuzzIsDirectoryScamFlagged(f *testing.F) {
 	sqlRule := func(stored []string) bool {
 		for _, t := range stored {

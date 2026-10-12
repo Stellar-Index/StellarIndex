@@ -8,12 +8,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// Pair-leg suite.
-//
-// A gate asked about ONE asset makes the withholding decision depend on which leg the client
-// named first: the same market asked the other way round would be published as the exact
-// reciprocal of the number just refused. These tests pin the decision as a property of the
-// MARKET.
+// Pair-leg suite: a gate asked about one asset would decide by which leg the client named first, publishing the
+// exact reciprocal of a refused number when asked the other way round. These pin the decision as a property of the
+// market.
 
 // pairLegDirectory flags exactly the listed G-addresses and records
 // every address it was asked about.
@@ -99,11 +96,9 @@ func TestScamGateWithheldPair_EitherLeg(t *testing.T) {
 	})
 }
 
-// TestScamGateWithheldPair_ResolvesSACOnTheQuoteLeg — the canonical family resolution must
-// apply to the quote leg too. It lives inside withheldLeg so neither leg can be the ungated
-// spelling; resolving only the base would re-open the SAC bypass one orientation at a time.
-//
-// NOT parallel: the alias registry is process-global.
+// TestScamGateWithheldPair_ResolvesSACOnTheQuoteLeg pins that canonical family resolution applies to the quote leg
+// too (it lives inside withheldLeg), or the SAC bypass reopens one orientation at a time. NOT parallel: the alias
+// registry is process-global.
 func TestScamGateWithheldPair_ResolvesSACOnTheQuoteLeg(t *testing.T) {
 	flagged, _, native := pairLegAssets(t)
 

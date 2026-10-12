@@ -42,10 +42,8 @@ func fuzzSymbolAsset(sym string) (xdr.ScVal, bool) {
 	return xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &s}, true
 }
 
-// FuzzDecodeUpdate drives the full decodeUpdate path with a
-// well-formed single-slot event whose price, asset, timestamp and
-// indices are fuzzed, and checks the emitted row against an
-// independently computed expectation.
+// FuzzDecodeUpdate drives decodeUpdate with a well-formed single-slot event whose price, asset, timestamp and
+// indices are fuzzed, and checks the emitted row against an independently computed expectation.
 func FuzzDecodeUpdate(f *testing.F) {
 	const close2026 = int64(1_776_000_000) // 2026-04-12, seconds
 	f.Add(int64(0), uint64(20_000_000_000_000), "BTC", false, uint64(1_776_000_000_000), uint8(0), uint8(0), uint8(1))
@@ -137,11 +135,9 @@ func FuzzDecodeUpdate(f *testing.F) {
 	})
 }
 
-// FuzzSdkDecodeUpdateBodyRaw feeds arbitrary XDR to the body decoder.
-// Beyond not panicking, a success must mean the body really was the
-// #[contractevent] Map carrying update_data, with exactly one entry per
-// update_data slot (slot stability) — a foreign shape must be
-// refused, not mis-decoded.
+// FuzzSdkDecodeUpdateBodyRaw feeds arbitrary XDR to the body decoder; beyond not panicking, success must mean the
+// body was the #[contractevent] Map carrying update_data with exactly one entry per slot (slot stability), and a
+// foreign shape must be refused, not mis-decoded.
 func FuzzSdkDecodeUpdateBodyRaw(f *testing.F) {
 	fixRoot := filepath.Join("..", "..", "..", "test", "fixtures", "reflector")
 	dirs, _ := os.ReadDir(fixRoot)

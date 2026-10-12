@@ -12,13 +12,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/archivecompleteness"
 )
 
-// `verify` rewrites the whole textfile atomically on every run and only sets
-// LastSuccessTimestamp on a clean, non-vacuous run. The writer must not omit the last_success
-// line when the timestamp is zero: node_exporter's textfile collector re-reads the file on
-// every scrape, so the SERIES DISAPPEARS, and
-// `(time() - archive_completeness_last_success_timestamp) > 26h` yields no samples over an
-// absent series, silencing the staleness alert in exactly the persistent-failure state it
-// exists for.
+// `verify` sets LastSuccessTimestamp only on a clean, non-vacuous run. The writer must not omit last_success when it
+// is zero: the series would vanish on scrape and `(time() - archive_completeness_last_success_timestamp) > 26h` would
+// yield no samples, silencing the staleness alert exactly when it must fire.
 
 // sampleValue extracts a single unlabelled sample's value from a
 // textfile body. Fails the test when the series is absent — which is
@@ -62,10 +58,8 @@ func readTextfile(t *testing.T, path string) string {
 	return string(b)
 }
 
-// TestWriteTextfileAtomic_LastSuccessSurvivesFailedRun is the core
-// a clean run stamps the timestamp, a subsequent
-// RESIDUAL run rewrites the file, and the last_success series must
-// still be present AND still carry the clean run's value.
+// TestWriteTextfileAtomic_LastSuccessSurvivesFailedRun pins the core: after a clean run stamps the timestamp, a later
+// RESIDUAL run rewrites the file and the last_success series must still be present with the clean run's value.
 func TestWriteTextfileAtomic_LastSuccessSurvivesFailedRun(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "archive_completeness.prom")
 	cleanAt := time.Date(2026, 7, 25, 3, 0, 0, 0, time.UTC)
@@ -82,10 +76,8 @@ func TestWriteTextfileAtomic_LastSuccessSurvivesFailedRun(t *testing.T) {
 		t.Fatalf("after clean run: last_success = %d, want %d", got, cleanAt.Unix())
 	}
 
-	// Runs 2 and 3 — residuals, so no fresh success timestamp. The
-	// series must persist unchanged across BOTH rewrites (a
-	// carry-forward that only survives one generation would still
-	// blind the 48h critical-stale alert).
+	// Runs 2 and 3 are residuals with no fresh success timestamp. The series must persist across BOTH rewrites; a
+	// carry-forward surviving one generation would still blind the 48h critical-stale alert.
 	for run := 2; run <= 3; run++ {
 		residual := archivecompleteness.NewMetricsSnapshot()
 		residual.FilesMissing["cross-anchor"] = 7
@@ -117,11 +109,8 @@ func TestWriteTextfileAtomic_LastSuccessSurvivesFailedRun(t *testing.T) {
 	}
 }
 
-// The repair counters carry the `_total` suffix and a
-// `# TYPE … counter` declaration, and the alert rules apply
-// increase() to them. Both promises are only true if the value on
-// disk accumulates across runs instead of being replaced by each
-// run's fragment.
+// The repair counters carry the `_total` suffix and a `# TYPE … counter` declaration, and alert rules apply increase()
+// to them, so the on-disk value must accumulate across runs instead of being replaced by each run's fragment.
 func TestWriteTextfileAtomic_RepairCountersAccumulate(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "archive_completeness.prom")
 
