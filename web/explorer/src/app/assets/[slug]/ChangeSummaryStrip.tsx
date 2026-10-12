@@ -1,14 +1,27 @@
 'use client';
 
+import { TrendingDown, TrendingUp } from 'lucide-react';
+
 import { useChangeSummary, type ChangeSummary } from '@/api/hooks';
-import {
-  AccelerationArrow,
-  FreshnessMarker,
-  MultiWindowDelta,
-  StreakIndicator,
-  type DeltaWindow,
-} from '@/components/primitives';
+import { DirectionPill, FreshnessMarker } from '@/components/primitives';
 import { compareDecimalStrings, formatPriceSmall } from '@/lib/format';
+
+type DeltaWindow = {
+  label: string;
+  /** Percent change: 5.2 means +5.2%. Null = no data. */
+  deltaPct: number | null;
+};
+
+type Acceleration = 'increasing' | 'flat' | 'decreasing';
+
+const ACCELERATION: Record<string, { glyph: string; label: string }> = {
+  'up:increasing': { glyph: '↗↗', label: 'accelerating up' },
+  'up:flat': { glyph: '↗→', label: 'steady up' },
+  'up:decreasing': { glyph: '↗↘', label: 'decelerating up' },
+  'down:increasing': { glyph: '↘↘', label: 'accelerating down' },
+  'down:flat': { glyph: '↘→', label: 'steady down' },
+  'down:decreasing': { glyph: '↘↗', label: 'recovering' },
+};
 
 /**
  * unwrapChangeSummary — useChangeSummary returns the bare row; the
@@ -82,10 +95,18 @@ export function ChangeSummaryStrip({
       data-testid="change-summary-strip"
     >
       <FreshnessMarker flags={q.data?.flags} />
-      {hasAny && <MultiWindowDelta windows={windows} compact wrap />}
+      {hasAny && (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-xs">
+          {windows.map((w) => (
+            <span key={w.label} className="inline-flex items-center gap-1">
+              <span className="text-ink-muted">{w.label}:</span>
+              <DirectionPill deltaPct={w.deltaPct} compact />
+            </span>
+          ))}
+        </div>
+      )}
       {streakOk && (
-        <StreakIndicator
-          kind="streak"
+        <StreakChip
           direction={summary.streak_direction as 'up' | 'down'}
           days={summary.streak_days ?? 0}
         />
@@ -108,5 +129,48 @@ export function ChangeSummaryStrip({
         </span>
       )}
     </div>
+  );
+}
+
+export function StreakChip({
+  direction,
+  days,
+}: {
+  direction: 'up' | 'down';
+  days: number;
+}) {
+  const Icon = direction === 'up' ? TrendingUp : TrendingDown;
+  const tone =
+    direction === 'up'
+      ? 'bg-up-subtle/50 text-up-strong'
+      : 'bg-down-subtle/50 text-down-strong';
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${tone}`}
+    >
+      <Icon className="h-3 w-3" aria-hidden />
+      {days} {days === 1 ? 'day' : 'days'} {direction}
+    </span>
+  );
+}
+
+/** First derivative (direction) × second (acceleration) as one glyph. */
+export function AccelerationArrow({
+  direction,
+  acceleration,
+}: {
+  direction: 'up' | 'down';
+  acceleration: Acceleration;
+}) {
+  const a = ACCELERATION[`${direction}:${acceleration}`];
+  const tone = direction === 'up' ? 'text-up-strong' : 'text-down-strong';
+  return (
+    <span
+      className={`text-xs font-bold tabular-nums ${tone}`}
+      aria-label={a.label}
+      title={a.label}
+    >
+      {a.glyph}
+    </span>
   );
 }

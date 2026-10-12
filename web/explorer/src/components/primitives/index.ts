@@ -9,17 +9,8 @@
 export { DirectionPill } from './DirectionPill';
 export type { DirectionPillProps } from './DirectionPill';
 
-export { MultiWindowDelta } from './MultiWindowDelta';
-export type { MultiWindowDeltaProps, DeltaWindow } from './MultiWindowDelta';
-
 export { Sparkline } from './Sparkline';
 export type { SparklineProps } from './Sparkline';
-
-export { StreakIndicator } from './StreakIndicator';
-export type { StreakIndicatorProps } from './StreakIndicator';
-
-export { AccelerationArrow } from './AccelerationArrow';
-export type { AccelerationArrowProps } from './AccelerationArrow';
 
 export { RollingNumber } from './RollingNumber';
 
