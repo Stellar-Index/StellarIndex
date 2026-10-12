@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"context"
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/contractid"
@@ -9,6 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/aquarius"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/defindex"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 func TestGatedMetaFor_blend(t *testing.T) {
@@ -141,4 +143,32 @@ func TestGatedMetaFor_defindexCreationSymIsFactoryTopic0(t *testing.T) {
 	if !defindex.NewDecoder().Matches(ev) {
 		t.Errorf("CreationSym %q is not the topic[0] of a defindex factory create event", m.CreationSym)
 	}
+}
+
+// fakeSpectraStore layers an in-memory spectra_markets double over the
+// protocol_contracts one.
+type fakeSpectraStore struct {
+	fakeProtocolContractStore
+	markets []timescale.SpectraMarket
+}
+
+func (f *fakeSpectraStore) SpectraMarkets(context.Context) ([]timescale.SpectraMarket, error) {
+	return f.markets, nil
+}
+
+// fakeSushiStore layers an in-memory sushiswap_v3_pools double over the
+// protocol_contracts one.
+type fakeSushiStore struct {
+	fakeProtocolContractStore
+	pools   []timescale.SushiswapV3Pool
+	written []timescale.SushiswapV3Pool
+}
+
+func (f *fakeSushiStore) LoadSushiswapV3Pools(context.Context) ([]timescale.SushiswapV3Pool, error) {
+	return f.pools, nil
+}
+
+func (f *fakeSushiStore) UpsertSushiswapV3Pool(_ context.Context, p timescale.SushiswapV3Pool) error {
+	f.written = append(f.written, p)
+	return nil
 }
