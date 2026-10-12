@@ -39,3 +39,8 @@ galexie-archive-tip-lag.service:ProtectKernelTunables
 galexie-archive-tip-lag.service:ProtectKernelModules
 galexie-archive-tip-lag.service:ProtectControlGroups
 stellar-core-auto-upgrade.service:NoNewPrivileges  # apt-get update seteuid()s to _apt; NNP makes it fail
+
+# Runs as root by omitting User=: an explicit User=root together with
+# NoNewPrivileges and ProtectKernel* makes runuser's setuid to postgres
+# fail with EPERM on systemd 255, and pg_dump needs that switch.
+config-backup.service:User
