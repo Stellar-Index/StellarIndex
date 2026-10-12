@@ -13,16 +13,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform/postgresstore"
 )
 
-// ExportStore is the Postgres half of an export; *postgresstore.AccountStore
-// satisfies it.
+// ExportStore is the Postgres half of an export (*postgresstore.AccountStore).
 type ExportStore interface {
 	ExportAccount(
 		ctx context.Context, accountID, requester uuid.UUID, now time.Time, extra postgresstore.ExtraKeysFunc,
 	) (platform.AccountExport, error)
 }
 
-// Exporter builds an account's data export: the Postgres document plus
-// the self-service keys only the Redis validator store holds.
+// Exporter builds an account's data export: the Postgres document plus the self-service keys only the Redis validator store holds.
 type Exporter struct {
 	Store ExportStore
 	Redis redis.Cmdable

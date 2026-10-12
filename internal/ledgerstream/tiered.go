@@ -16,32 +16,18 @@ import (
 // ErrBothTiersMissing marks a read that neither the hot nor the cold tier could serve.
 var ErrBothTiersMissing = errors.New("missing in BOTH tiers (hot, then cold)")
 
-// TieredDataStore wraps a hot + cold [datastore.DataStore] in a fallback chain (ADR-0027). Reads
-// try hot first and fall through to cold on not-found only; writes target hot, cold is read-only.
-//
-// Transient hot errors propagate immediately so a misconfigured hot endpoint is not masked by a
-// slow cold fallback that succeeds.
-//
-// Tier metrics are obs package-level, not per-instance: production leaves Config.Registry nil
-// (SDK registration panics across repeated Stream calls), so a per-instance metric would be nil
-// and the `both_missing` page could never fire. A `cold` rate spike on live ingest means the trim
-// window is too tight.
+// TieredDataStore wraps hot + cold [datastore.DataStore] in a fallback chain (ADR-0027): reads fall to cold on not-found only, writes go to hot, and transient hot errors propagate so a bad hot endpoint isn't masked. Tier metrics are package-level (Config.Registry is nil in production), so `both_missing` can fire.
 type TieredDataStore struct {
 	hot  datastore.DataStore
 	cold datastore.DataStore
 }
 
-// NewTieredDataStore builds a TieredDataStore wrapping hot + cold. Metrics are package-level and
-// registered once at boot, so repeated construction across Stream calls is safe.
+// NewTieredDataStore wraps hot + cold; metrics are package-level and registered once, so repeated construction across Stream calls is safe.
 func NewTieredDataStore(hot, cold datastore.DataStore) *TieredDataStore {
 	return &TieredDataStore{hot: hot, cold: cold}
 }
 
-// IsNotFound reports whether err is a missing-key error from any datastore backend. All backends
-// normalize to os.ErrNotExist (the SDK's S3 store converts NoSuchKey/NotFound), so no string
-// matching is needed; manifest-empty errors ([datastore.ErrNoLedgerFiles] etc.) also count.
-// Transient errors (timeouts, auth, throttling) do not match, so they never falsely trigger a
-// cold fallback.
+// IsNotFound reports whether err is a missing-key error from any backend (all normalize to os.ErrNotExist; manifest-empty errors count too). Transient errors (timeouts, auth, throttling) never match, so they never trigger a cold fallback.
 func IsNotFound(err error) bool {
 	if err == nil {
 		return false
@@ -52,9 +38,7 @@ func IsNotFound(err error) bool {
 	return errors.Is(err, datastore.ErrNoLedgerFiles) || errors.Is(err, datastore.ErrNoValidLedgerFiles)
 }
 
-// GetFile reads from hot; on IsNotFound, reads from cold.
-// Transient errors from hot propagate without trying cold. The int64 is the object size in
-// bytes, passed through from the underlying store.
+// GetFile reads from hot, falling to cold on IsNotFound only; transient hot errors propagate. The int64 is the object size in bytes.
 func (t *TieredDataStore) GetFile(ctx context.Context, path string) (io.ReadCloser, int64, error) {
 	rc, size, err := t.hot.GetFile(ctx, path)
 	if err == nil {
@@ -113,9 +97,7 @@ func (t *TieredDataStore) GetFileLastModified(ctx context.Context, filePath stri
 	return t.cold.GetFileLastModified(ctx, filePath)
 }
 
-// Exists returns true if either tier has the object. Hot is
-// preferred (sub-ms intra-host); cold is consulted only when hot
-// returns false.
+// Exists reports whether either tier has the object, consulting cold only when hot says no.
 func (t *TieredDataStore) Exists(ctx context.Context, path string) (bool, error) {
 	ok, err := t.hot.Exists(ctx, path)
 	if err != nil {
@@ -139,9 +121,7 @@ func (t *TieredDataStore) Size(ctx context.Context, path string) (int64, error) 
 	return t.cold.Size(ctx, path)
 }
 
-// ListFilePaths returns the union of hot + cold listings, deduplicated with hot winning, so a
-// backfill spanning the hot/cold boundary sees every partition. Order is hot-first then cold-only;
-// callers needing a sorted view sort downstream.
+// ListFilePaths returns the deduplicated union of hot + cold listings (hot wins), so a backfill spanning the boundary sees every partition; hot-first order, sort downstream if needed.
 func (t *TieredDataStore) ListFilePaths(ctx context.Context, options datastore.ListFileOptions) ([]string, error) {
 	hot, err := t.hot.ListFilePaths(ctx, options)
 	if err != nil {
@@ -169,8 +149,7 @@ func (t *TieredDataStore) ListFilePaths(ctx context.Context, options datastore.L
 	return out, nil
 }
 
-// PutFile always targets the hot tier. The cold tier (AWS public
-// bucket) is treated as read-only.
+// PutFile always targets the hot tier; the cold tier (AWS public bucket) is read-only.
 func (t *TieredDataStore) PutFile(ctx context.Context, path string, in io.WriterTo, metaData map[string]string) error {
 	return t.hot.PutFile(ctx, path, in, metaData)
 }
@@ -180,9 +159,7 @@ func (t *TieredDataStore) PutFileIfNotExists(ctx context.Context, path string, i
 	return t.hot.PutFileIfNotExists(ctx, path, in, metaData)
 }
 
-// Close closes both tiers. A hot-side Close error masks any
-// cold-side Close error; callers that need both should call them
-// individually before wrapping in a TieredDataStore.
+// Close closes both tiers; a hot-side error masks a cold-side one.
 func (t *TieredDataStore) Close() error {
 	hotErr := t.hot.Close()
 	coldErr := t.cold.Close()

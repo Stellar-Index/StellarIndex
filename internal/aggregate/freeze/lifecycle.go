@@ -43,8 +43,7 @@ const (
 	DefaultOverrideMemory = 2 * time.Hour
 )
 
-// DefaultMarkerGrace is how long the Redis marker outlives its hold so a missed tick cannot
-// blink flags.frozen off; duration is state, not a TTL.
+// DefaultMarkerGrace is how long the Redis marker outlives its hold so a missed tick cannot blink flags.frozen off; duration is state, not a TTL.
 var DefaultMarkerGrace = cachekeys.FreezeTTL
 
 // Policy is the operator-tunable ADR-0019 lifecycle; the zero value is valid via [Policy.WithDefaults].
@@ -76,8 +75,7 @@ type Policy struct {
 	OverrideMemory time.Duration
 }
 
-// WithDefaults replaces zero fields with ADR-0019 defaults; a zero UnfreezeConfidenceMin would
-// pass any positive confidence, so 0 becomes 0.30.
+// WithDefaults replaces zero fields with ADR-0019 defaults; a zero UnfreezeConfidenceMin would pass any positive confidence, so 0 becomes 0.30.
 func (p Policy) WithDefaults() Policy {
 	if p.InitialHold <= 0 {
 		p.InitialHold = DefaultInitialHold
@@ -109,8 +107,7 @@ func (p Policy) WithDefaults() Policy {
 	return p
 }
 
-// State is one pair's freeze-lifecycle authority (the marker carries a copy for restarts); the
-// zero value is "not frozen".
+// State is one pair's freeze-lifecycle authority (the marker carries a copy for restarts); the zero value is "not frozen".
 type State struct {
 	// FiredAt is when the freeze first engaged; preserved across extensions.
 	FiredAt time.Time `json:"fired_at,omitempty"`
@@ -140,8 +137,7 @@ type State struct {
 	OverriddenAt time.Time `json:"overridden_at,omitempty"`
 }
 
-// Overridden returns the inactive State an override leaves behind: the ended ladder,
-// remembered from now.
+// Overridden returns the inactive State an override leaves behind: the ended ladder, remembered from now.
 func (s State) Overridden(now time.Time) State {
 	return State{ExtensionsUsed: s.ExtensionsUsed, Escalated: s.Escalated, OverriddenAt: now}
 }
@@ -177,8 +173,7 @@ type Signal struct {
 	ReleaseCorroborated bool
 }
 
-// Transition names what the lifecycle did on one evaluation; the strings are stable (logs and
-// metric labels).
+// Transition names what the lifecycle did on one evaluation; the strings are stable (logs and metric labels).
 type Transition string
 
 const (
@@ -218,8 +213,7 @@ type Outcome struct {
 	MarkerTTL time.Duration
 }
 
-// Evaluate advances the lifecycle by one bucket; pure, so persistence, marker IO, metrics and
-// logging are the caller's.
+// Evaluate advances the lifecycle by one bucket; pure, so persistence, marker IO, metrics and logging are the caller's.
 func (p Policy) Evaluate(prev State, sig Signal) Outcome {
 	p = p.WithDefaults()
 

@@ -8,16 +8,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// StreamArchiveThenLive reads ledgers in [from, inf) by chaining a bounded read from `archive`
-// over [from, seam-1] with an unbounded read from `live` starting at seam.
-//
-//   - seam <= 1 or from >= seam → archive unused; plain unbounded Stream(live, from, 0, ...).
-//     (seam==1 is folded in with seam==0: a bounded read of [from,0] would hit Stream's to==0
-//     unbounded sentinel and tail the archive forever.)
-//   - from < seam → bounded archive read then unbounded live read.
-//
-// Restart safety: the cursor is written after every successful batch, so a crash in either phase
-// resumes from cursor+1 and replays the same progression. A nil logger disables phase logging.
+// StreamArchiveThenLive chains a bounded archive read over [from, seam-1] with an unbounded live read from seam. seam <= 1 or from >= seam skips the archive (seam==1 would hit Stream's to==0 unbounded sentinel). The cursor is written after each batch, so a crash resumes from cursor+1; nil logger disables phase logging.
 func StreamArchiveThenLive(
 	ctx context.Context,
 	archive, live Config,

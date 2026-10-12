@@ -10,17 +10,14 @@ const (
 	BootstrapConfidenceCap = 0.5
 )
 
-// BootstrapDensityDays is [BootstrapDays] in the bucket-density unit this package is handed.
-// Density tops out at 30.0 only for a pair trading every minute, so gating at 30.0 never
-// released the cap; buckets accrue at most 1,440/day, so 28.5 still proves 28.5 calendar days.
+// BootstrapDensityDays is [BootstrapDays] in bucket-density units: density tops out at 30.0 only for a pair trading every minute, so gating at 30.0 never released the cap; buckets accrue at most 1,440/day, so 28.5 proves 28.5 calendar days.
 const BootstrapDensityDays = BootstrapDays * bootstrapDensityFraction
 
 // bootstrapDensityFraction is the share of a perfectly observed 30-day window that counts
 // as mature; r1's densest pairs run ~99.2%, well inside it.
 const bootstrapDensityFraction = 0.95
 
-// BootstrapReengageDensityDays is the gate's lower hysteresis edge: a released pair is
-// capped again only below it, absorbing a ~3-day ingestion gap. It cannot release anything.
+// BootstrapReengageDensityDays is the gate's lower hysteresis edge: a released pair is re-capped only below it, absorbing a ~3-day ingestion gap; it cannot release anything.
 const BootstrapReengageDensityDays = BootstrapDays * bootstrapReengageFraction
 
 const bootstrapReengageFraction = 0.90
@@ -71,8 +68,7 @@ type Inputs struct {
 	BootstrapReleased bool
 }
 
-// Factors is the per-factor decomposition served beside the score, so consumers can see
-// why confidence dropped.
+// Factors is the per-factor decomposition served beside the score, so consumers can see why confidence dropped.
 type Factors struct {
 	ZScore                 float64 `json:"z_score"`
 	SourceCount            float64 `json:"source_count"`
@@ -118,9 +114,7 @@ type Weights struct {
 	BaselineQuality        float64
 }
 
-// DefaultWeights is all ones except triangulation at 0.5: a composite reuses our own legs,
-// so it corroborates at about half an independent reference. The discount lives here so the
-// triangulation and cross-oracle factors stay directly comparable on the wire.
+// DefaultWeights is all ones except triangulation at 0.5: a composite reuses our own legs, so it corroborates at about half an independent reference.
 func DefaultWeights() Weights {
 	return Weights{
 		ZScore:                 1.0,

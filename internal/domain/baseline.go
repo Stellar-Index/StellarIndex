@@ -5,8 +5,7 @@ import (
 	"time"
 )
 
-// BaselineTimedVWAP is one prices_1m VWAP bucket read by the volatility-baseline
-// refresher (origin: internal/aggregate/baseline.TimedVWAP).
+// BaselineTimedVWAP is one prices_1m VWAP bucket read by the volatility-baseline refresher (origin: internal/aggregate/baseline.TimedVWAP).
 type BaselineTimedVWAP struct {
 	VWAP      float64
 	BucketEnd time.Time

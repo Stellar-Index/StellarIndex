@@ -7,17 +7,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 )
 
-// Event is the single [consumer.Event] this package emits, discriminated by Kind and written
-// to the `upshift_vault_events` hypertable. Populated fields depend on Kind, and the
-// migration's CHECK constraints enforce the same table:
-//
-//	deposit / withdraw        Caller, Receiver, Owner, Assets, Shares
-//	transfer                  Caller (from), Receiver (to), Shares (amount)
-//	deployed_assets_changed   Caller (operator), OldAmount, NewAmount
-//
-// Amounts are RAW i128 (canonical.Amount → NUMERIC per ADR-0003). Shares and assets are on
-// different scales (ERC-4626 decimals offset of 6, see the package doc), so nothing here
-// divides one by the other or bakes in a decimals assumption.
+// Event is the single [consumer.Event] this package emits, discriminated by Kind, written to `upshift_vault_events`; populated fields per Kind match the migration's CHECK constraints. Amounts are RAW i128 (canonical.Amount, ADR-0003); shares and assets are on different scales (ERC-4626 offset 6), so nothing divides one by the other.
 type Event struct {
 	// ContractID is the emitting vault — always a member of the gated
 	// set, since Matches has already run.

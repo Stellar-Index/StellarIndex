@@ -7,25 +7,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// Decoder is the dispatcher-facing view of sorocredit (ADR-0035 contract-identity gating). The
-// single trust root is the main contract ([MainnetContract]), which emits every business + config
-// event and deploys the per-position `Collateral-<uuid>` children (via NewCollateralContract).
-//
-// The gate is a blend-style childgate: NewCollateralContract is honored only from the trust root
-// and announces a child C-address that the decoder Seeds; every other event is honored from the
-// trust root OR a registered child.
-//
-// In practice all eight event types come from the trust root and the children emit NOTHING, so the
-// IsFactory check is what gates; the childgate is forward-compat defense for a contract version
-// that routes events through children. For the same reason this source is NOT in
-// pipeline.gatedSources: DB-warming ~139k never-emitting children is pure overhead, unlike blend
-// whose seeded pools do emit. Live in-memory seeding suffices.
+// Decoder is the dispatcher-facing sorocredit view, gated on contract identity (ADR-0035): the single trust root is [MainnetContract], which emits all events and deploys `Collateral-<uuid>` children via NewCollateralContract (honored only from the root, which Seeds the child). All eight events in practice come from the root; the child gate is forward-compat, and not in pipeline.gatedSources to avoid DB-warming ~139k silent children.
 type Decoder struct {
 	reg *contractid.Registry
 }
 
-// NewDecoder constructs a sorocredit Decoder. The main contract is installed first as the intrinsic
-// trust root (WithFactories); caller opts (WithSeed / WithHook) layer on top.
+// NewDecoder constructs a sorocredit Decoder with the main contract installed first as the trust root (WithFactories); caller opts layer on top.
 func NewDecoder(opts ...contractid.Option) *Decoder {
 	base := []contractid.Option{contractid.WithFactories([]string{MainnetContract})}
 	return &Decoder{reg: contractid.New(append(base, opts...)...)}
@@ -37,17 +24,10 @@ var _ dispatcher.Decoder = (*Decoder)(nil)
 // Name implements [dispatcher.Decoder].
 func (*Decoder) Name() string { return SourceName }
 
-// GatedContractSet returns the trust root plus every registered child, the contracts Matches can
-// accept. The completeness re-derive scopes its lake read to it so counts match live admission.
+// GatedContractSet returns the trust root plus every registered child, the contracts Matches can accept; the completeness re-derive scopes its lake read to it.
 func (d *Decoder) GatedContractSet() []string { return d.reg.GatedSet() }
 
-// Matches implements [dispatcher.Decoder]. Gates on CONTRACT IDENTITY, not the topic symbol
-// (ADR-0035): two other mainnet contracts emit the same eight symbols.
-//
-//   - NewCollateralContract matches ONLY from the trust root (IsFactory), so a child or look-alike
-//     emitting this topic can't inject a contract into the registry.
-//   - every other event matches from the trust root OR a registered child (Has); the child branch
-//     is forward-compat (see the Decoder doc).
+// Matches implements [dispatcher.Decoder], gating on CONTRACT IDENTITY, not the topic symbol (ADR-0035; two other mainnet contracts emit the same eight symbols). NewCollateralContract matches only from the trust root (IsFactory); every other event from the root or a registered child (Has).
 func (d *Decoder) Matches(ev events.Event) bool {
 	kind := classify(&ev)
 	if kind == "" {
@@ -59,9 +39,7 @@ func (d *Decoder) Matches(ev events.Event) bool {
 	return d.reg.IsFactory(ev.ContractID) || d.reg.Has(ev.ContractID)
 }
 
-// Decode implements [dispatcher.Decoder], returning one consumer.Event per recognised event. A
-// NewCollateralContract also Seeds the announced child C-address; Matches already proved the trust
-// root emitted it, so the child is genuine.
+// Decode implements [dispatcher.Decoder], returning one consumer.Event per recognised event; a NewCollateralContract also Seeds the announced child, genuine because Matches proved the root emitted it.
 func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	outs, err := project(&ev)
 	if err != nil {

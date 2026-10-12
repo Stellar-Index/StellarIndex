@@ -11,9 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 )
 
-// Observer is the dispatcher-facing TrustlineEntry observer (ADR-0022), implementing
-// [dispatcher.LedgerEntryChangeDecoder]. It fires only on trustlines whose asset_key is in the
-// operator-configured watched set; native and pool-share variants are skipped in Match.
+// Observer is the dispatcher-facing TrustlineEntry observer (ADR-0022), a [dispatcher.LedgerEntryChangeDecoder] firing only on trustlines whose asset_key is in the operator-configured watched set; native and pool-share variants are skipped in Match.
 type Observer struct {
 	// watched maps asset_key (CODE:ISSUER) → struct{}{}. Map
 	// lookup is O(1) per change; the watched set is bounded by
@@ -21,15 +19,10 @@ type Observer struct {
 	watched map[string]struct{}
 }
 
-// ErrEmptyWatchSet is returned by [NewObserver] when the input
-// list is empty. An observer with no assets to watch is a
-// configuration error — operators that don't want trustline
-// observation should simply not register the observer.
+// ErrEmptyWatchSet is returned by [NewObserver] for an empty list: an observer with nothing to watch is a configuration error; operators who don't want it should not register it.
 var ErrEmptyWatchSet = errors.New("trustlines: cannot construct Observer with empty watched-asset list")
 
-// NewObserver constructs an [Observer] watching the supplied
-// asset_key list. Asset keys are deduplicated; empty strings
-// rejected as a configuration error.
+// NewObserver constructs an [Observer] watching the asset_key list; keys are deduplicated and empty strings rejected as a configuration error.
 func NewObserver(watched []string) (*Observer, error) {
 	if len(watched) == 0 {
 		return nil, ErrEmptyWatchSet
@@ -51,9 +44,7 @@ func NewObserver(watched []string) (*Observer, error) {
 // Name implements [dispatcher.LedgerEntryChangeDecoder].
 func (*Observer) Name() string { return SourceName }
 
-// Matches implements [dispatcher.LedgerEntryChangeDecoder]. It is true when the change touches a
-// TrustlineEntry whose asset is a classic credit (alphanum4/12) with its asset_key in the watched
-// set. The work is bounded (discriminators, key derivation, map lookup) with no balance parsing.
+// Matches implements [dispatcher.LedgerEntryChangeDecoder]: true when the change touches a TrustlineEntry for a classic credit (alphanum4/12) whose asset_key is watched; bounded work, no balance parsing.
 func (o *Observer) Matches(change xdr.LedgerEntryChange) bool {
 	if !changeIsTrustline(change) {
 		return false
@@ -73,8 +64,7 @@ func (o *Observer) Matches(change xdr.LedgerEntryChange) bool {
 	return watched
 }
 
-// Decode implements [dispatcher.LedgerEntryChangeDecoder].
-// Emits exactly one [Observation] per matched change.
+// Decode implements [dispatcher.LedgerEntryChangeDecoder], emitting exactly one [Observation] per matched change.
 func (o *Observer) Decode(ctx dispatcher.LedgerEntryChangeContext) ([]consumer.Event, error) {
 	accountID, assetKey, balance, isRemoval, err := extractTrustlineFromChange(ctx.Change)
 	if err != nil {

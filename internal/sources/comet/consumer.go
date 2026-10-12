@@ -7,10 +7,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 )
 
-// TradeEvent is the [consumer.Event] Comet's Decoder emits on a
-// successful (POOL, swap) decode. The indexer's event sink type-
-// switches on this and calls store.InsertTrade — same shape as
-// soroswap.TradeEvent / aquarius.TradeEvent / phoenix.TradeEvent.
+// TradeEvent is the [consumer.Event] Comet's Decoder emits on a successful (POOL, swap) decode; the sink type-switches on it and calls store.InsertTrade.
 type TradeEvent struct {
 	Trade canonical.Trade
 }
@@ -21,12 +18,7 @@ func (TradeEvent) EventKind() string { return "comet.trade" }
 // Source implements [consumer.Event].
 func (TradeEvent) Source() string { return SourceName }
 
-// LiquidityEvent is the [consumer.Event] emitted for a (POOL, join_pool | exit_pool | deposit |
-// withdraw) decode. A multi-token join_pool / exit_pool yields one LiquidityEvent per token.
-//
-// The indexer's sink type-switches on this and calls store.InsertCometLiquidity
-// (`comet_liquidity` hypertable). PoolAmountIn is populated only for withdraw (BPT-share count
-// burned); the writer translates a zero or unset Amount to SQL NULL on the other kinds.
+// LiquidityEvent is the [consumer.Event] for a (POOL, join_pool | exit_pool | deposit | withdraw) decode, one per token for a multi-token join/exit; stored in `comet_liquidity`. PoolAmountIn is set only for withdraw (BPT burned); the writer maps a zero/unset Amount to SQL NULL on other kinds.
 type LiquidityEvent struct {
 	ContractID string
 	Ledger     uint32

@@ -24,17 +24,13 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// DefaultInterval is the sweep cadence; a gap pages a ticket, not an SLO, and the
-// windows are 24h/7d, so a slow cadence keeps the full-catalogue scan cheap.
+// DefaultInterval is the sweep cadence; a gap pages a ticket, not an SLO, and windows are 24h/7d, so a slow cadence keeps the full-catalogue scan cheap.
 const DefaultInterval = 10 * time.Minute
 
-// DefaultSweepTimeout bounds one candidate read (~55s warm); a timed-out sweep is
-// skipped and the gauge keeps its last good value.
+// DefaultSweepTimeout bounds one candidate read (~55s warm); a timed-out sweep is skipped and the gauge keeps its last good value.
 const DefaultSweepTimeout = 5 * time.Minute
 
-// DefaultProbeTimeout bounds one candidate's classic-alias probe. Each probe derives
-// from the sweep's parent context so a long sweep's shrinking deadline cannot time
-// many out together and mimic a mass coverage gap.
+// DefaultProbeTimeout bounds one candidate's classic-alias probe; each derives from the sweep's parent context so a shrinking deadline can't time many out together and mimic a mass coverage gap.
 const DefaultProbeTimeout = 15 * time.Second
 
 // Popularity and market-character thresholds; "withheld" is asked of the serving
@@ -52,9 +48,7 @@ const (
 	washConcentrationThreshold = 0.90
 )
 
-// CandidateReader is the storage seam the tripwire needs: the per-asset
-// coverage signals for every priceless, actively-traded asset. Satisfied
-// by *timescale.Store.PopularPricelessCandidates.
+// CandidateReader is the storage seam: per-asset coverage signals for every priceless, actively-traded asset (*timescale.Store.PopularPricelessCandidates).
 type CandidateReader interface {
 	PopularPricelessCandidates(ctx context.Context) ([]timescale.AssetCoverageSignals, error)
 }
@@ -87,8 +81,7 @@ type Options struct {
 	Clock func() time.Time
 }
 
-// Worker sweeps the catalogue on a ticker and publishes the
-// priceless-popular coverage gauge + sweep-health metrics.
+// Worker sweeps the catalogue on a ticker and publishes the priceless-popular coverage gauge and sweep-health metrics.
 type Worker struct {
 	reader CandidateReader
 	// resolveSAC is atomic because a background dial retry may set it while Sweep runs.
@@ -102,8 +95,7 @@ type Worker struct {
 	now          func() time.Time
 }
 
-// New builds a Worker. Panics if reader is nil (a wiring bug — the caller
-// gates construction on the store being present).
+// New builds a Worker; panics if reader is nil (a wiring bug, the caller gates on the store being present).
 func New(reader CandidateReader, opts Options) *Worker {
 	if reader == nil {
 		panic("pricelesscoverage: New requires a non-nil reader")
@@ -139,14 +131,12 @@ func New(reader CandidateReader, opts Options) *Worker {
 	return w
 }
 
-// SetResolveSAC wires the SAC resolver after construction; safe concurrently with
-// Run/Sweep, so start-up neither blocks on the lake dial nor gives up after one failure.
+// SetResolveSAC wires the SAC resolver after construction; safe concurrently with Run/Sweep, so start-up neither blocks on the lake dial nor gives up after one failure.
 func (w *Worker) SetResolveSAC(f func(ctx context.Context, contractID string) (string, bool)) {
 	w.resolveSAC.Store(&f)
 }
 
-// Run sweeps once immediately (fresh before the staleness alert's grace window),
-// then every Interval, until ctx is cancelled.
+// Run sweeps once immediately (fresh before the staleness alert's grace window), then every Interval until ctx is cancelled.
 func (w *Worker) Run(ctx context.Context) error {
 	tick := time.NewTicker(w.interval)
 	defer tick.Stop()
@@ -161,8 +151,7 @@ func (w *Worker) Run(ctx context.Context) error {
 	}
 }
 
-// Sweep runs one coverage pass and publishes the metrics. Errors are counted and
-// swallowed; the gauge updates only on success so a read failure cannot flap to 0.
+// Sweep runs one coverage pass and publishes metrics; errors are counted and swallowed, and the gauge updates only on success so a read failure cannot flap to 0.
 func (w *Worker) Sweep(ctx context.Context) {
 	sweepCtx, cancel := context.WithTimeout(ctx, w.sweepTimeout)
 	defer cancel()
@@ -275,8 +264,7 @@ func washConcentrated(s timescale.AssetCoverageSignals) bool {
 	return s.TopAccountPairVolShare >= washConcentrationThreshold
 }
 
-// SubstanceWithheld builds [Options.Withheld] from the serving substance gate and the
-// USD pegs, asking what /v1/assets asks. Unparseable or unmeasured means not withheld.
+// SubstanceWithheld builds [Options.Withheld] from the serving substance gate and USD pegs, asking what /v1/assets asks; unparseable or unmeasured means not withheld.
 func SubstanceWithheld(gate pricingguard.SubstanceVerdicter, usdPegs []canonical.Asset) func(context.Context, string) bool {
 	if gate == nil {
 		return nil

@@ -9,19 +9,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// ParticipantAccounts returns the non-source G-account strkeys an operation touches: the
-// counterparty side the participant index needs so an account's received activity (payment
-// destination, trustor, merge target, clawback victim, ...) is queryable.
-//
-// Keyed on op type, only fields that are genuine account addresses are collected (muxed
-// destinations resolve to their underlying G-account). Opaque free text (manage_data name/value,
-// memo, contract string arg) is never interpreted as a participant even when it spells a valid
-// G-strkey: a per-type allowlist is the only way to keep an attacker-controlled blob out of a
-// victim account's history. Soroban InvokeContract ops contribute nothing: call arguments and
-// auth entries are attacker-controllable at this layer (auth signatures are verified only by the
-// network during apply, and failed-tx op bodies are decoded too). Soroban received activity belongs
-// to the event-based /movements path. The op's own source account is a lake column, so it is not
-// returned. Output is deduplicated and sorted so a re-derive is idempotent.
+// ParticipantAccounts returns the non-source G-account strkeys an op touches, from a per-type allowlist of genuine account fields only. Free text (manage_data, memo, contract args) and Soroban InvokeContract args/auth are attacker-controlled and never interpreted. Output is deduped and sorted.
 func ParticipantAccounts(bodyB64 string) ([]string, error) {
 	var body xdr.OperationBody
 	if err := scval.UnmarshalBase64(bodyB64, &body); err != nil {

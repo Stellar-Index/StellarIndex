@@ -23,14 +23,10 @@ import (
 // SourceName is the canonical string stamped on every event this package emits.
 const SourceName = "comet"
 
-// MainnetBackstopPool is the single known Comet pool on mainnet, Blend's BLND/USDC backstop.
-// Comet is not run as a standalone DEX on Stellar; the wasm-audit census
-// (docs/operations/wasm-audits/comet.md) found exactly one deployed pool.
+// MainnetBackstopPool is the single known Comet pool on mainnet, Blend's BLND/USDC backstop (the wasm-audit census, docs/operations/wasm-audits/comet.md, found exactly one).
 const MainnetBackstopPool = "CAS3FL6TLZKDGGSISDBWGGPXT3NRR4DYTZD7YOD3HMYO6LTJUVGRVEAM"
 
-// MainnetGatedSet is the curated Comet pool allowlist, the ADR-0040 gate trust root (no factory
-// deploy event to anchor on). A new pool must be operator-admitted before its events are
-// attributed; until then it fail-closes as a visible ADR-0033 recognition gap.
+// MainnetGatedSet is the curated Comet pool allowlist, the ADR-0040 trust root (no factory event to anchor on); a new pool must be operator-admitted, until then it fails closed as a visible ADR-0033 recognition gap.
 func MainnetGatedSet() []string { return []string{MainnetBackstopPool} }
 
 // cometTopicArity is the minimum topic count on every Comet event: [Symbol("POOL"),
@@ -38,8 +34,7 @@ func MainnetGatedSet() []string { return []string{MainnetBackstopPool} }
 // topics still classifies on its first two; the identity gate in Matches, not arity, is trusted.
 const cometTopicArity = 2
 
-// LiquidityKind discriminates the four liquidity-mutating Comet events; values match the
-// comet_liquidity.event_kind CHECK constraint.
+// LiquidityKind discriminates the four liquidity-mutating Comet events; values match the comet_liquidity.event_kind CHECK.
 type LiquidityKind string
 
 // Liquidity kinds map to two directions:
@@ -65,8 +60,7 @@ func (k LiquidityKind) IsValid() bool {
 	return false
 }
 
-// Direction is the add/remove polarity of a liquidity event, matching the
-// comet_liquidity.direction CHECK constraint.
+// Direction is the add/remove polarity of a liquidity event, matching the comet_liquidity.direction CHECK.
 func (k LiquidityKind) Direction() string {
 	switch k {
 	case LiquidityJoinPool, LiquidityDeposit:

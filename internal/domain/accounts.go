@@ -5,8 +5,7 @@ import (
 	"time"
 )
 
-// AccountObservation is one persisted AccountEntry delta (ADR-0021); origin
-// type internal/sources/accounts.Observation adds the consumer.Event methods.
+// AccountObservation is one persisted AccountEntry delta (ADR-0021); internal/sources/accounts.Observation adds the consumer.Event methods.
 type AccountObservation struct {
 	// AccountID is the G-strkey of the observed account.
 	AccountID string

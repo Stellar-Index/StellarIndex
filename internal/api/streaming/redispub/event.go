@@ -2,21 +2,13 @@ package redispub
 
 import "time"
 
-// DefaultChannel is the Redis pub/sub channel the [Publisher] writes and the Subscriber reads.
-// Deployments sharing one Redis override it with `[storage].redis_closed_bucket_channel`, which
-// both the aggregator and the API read.
+// DefaultChannel is the Redis pub/sub channel the [Publisher] writes and the Subscriber reads; override via `[storage].redis_closed_bucket_channel` on both aggregator and API.
 const DefaultChannel = "stellarindex:closed-bucket:v1"
 
-// KindFrozen marks a [ClosedBucketEvent] standing in for a bucket a freeze refused: it carries the
-// bucket's identity and no value. The empty Kind is a published price, so events from producers
-// that omit the field still decode as prices.
+// KindFrozen marks a [ClosedBucketEvent] for a bucket a freeze refused: identity, no value. The empty Kind is a price, so producers omitting the field still decode as prices.
 const KindFrozen = "frozen"
 
-// ClosedBucketEvent is the JSON wire shape published per (pair, window) VWAP cache write, carrying
-// the minimum the subscriber needs to rebuild the SSE topic and payload.
-//
-// Additions are non-breaking because decoding ignores unknown fields; removals or type changes
-// require a new channel name (see [DefaultChannel]).
+// ClosedBucketEvent is the JSON wire shape per (pair, window) VWAP cache write. Additions are non-breaking (unknown fields are ignored); removals or type changes need a new channel name (see [DefaultChannel]).
 type ClosedBucketEvent struct {
 	// Asset + Quote are the canonical asset strings; the subscriber routes by (Asset, Quote,
 	// WindowSeconds) into `closed:<asset>/<quote>/<window_seconds>` Hub topics.

@@ -172,9 +172,7 @@ func mustUSDFiat() canonical.Asset {
 	return a
 }
 
-// PriceEntry is one (asset, price) slot of update_data. sdkDecodeUpdateBody keeps exactly one per
-// raw position (an unmapped symbol becomes `raw:<symbol>`): OpIndex derives from POSITION, so compacting
-// would shift other rows' keys on an allow-list change; instead a re-derive promotes raw:X → crypto:X in place.
+// PriceEntry is one (asset, price) slot of update_data, kept one per raw position (unmapped symbol becomes `raw:<symbol>`): OpIndex derives from POSITION, so compacting would shift other rows' keys; a re-derive promotes raw:X to crypto:X in place.
 type PriceEntry struct {
 	Asset canonical.Asset
 	Price canonical.Amount

@@ -40,14 +40,10 @@ func (v Variant) SourceName() string {
 	}
 }
 
-// DefaultDecimals is the Reflector price scale unless [WithDecoderDecimals] overrides it. 14 is
-// confirmed on-chain for DEX only and ASSUMED for CEX/FX: the pure decoder makes no startup RPC call,
-// so a re-pointed `[oracle.reflector]` contract at another scale mis-scales prices silently; confirm its
-// decimals() and set `dex_decimals` / `cex_decimals` / `fx_decimals`.
+// DefaultDecimals is the Reflector price scale unless [WithDecoderDecimals] overrides it: confirmed on-chain for DEX only and ASSUMED for CEX/FX. The decoder makes no startup RPC call, so a re-pointed contract at another scale mis-scales silently; confirm decimals() and set `dex_decimals` / `cex_decimals` / `fx_decimals`.
 const DefaultDecimals uint8 = 14
 
-// DefaultResolutionSeconds is every Reflector contract's 5-min cadence (Q3), exported as the
-// `stellarindex_oracle_resolution_seconds` gauge so the oracle-stale alert has a per-source threshold.
+// DefaultResolutionSeconds is every Reflector contract's 5-min cadence, exported as the `stellarindex_oracle_resolution_seconds` gauge so the oracle-stale alert has a per-source threshold.
 const DefaultResolutionSeconds = 300
 
 // Event topics, from reflector-contract/oracle/src/events.rs:4-10 (soroban-sdk 25.3.0):

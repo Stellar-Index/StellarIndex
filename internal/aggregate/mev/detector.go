@@ -58,9 +58,7 @@ func (c Candidate) DedupKey() string {
 	return c.Kind + ":" + c.TxHash + ":" + c.Taker
 }
 
-// DetectArbitrage returns one Candidate per atomic-arbitrage cycle, grouped by (tx_hash, taker).
-// A component is a cycle when its hop graph (distinct (venue, unordered pair) edges) has edges >= nodes;
-// trades collapse to hops first because SDEX emits one trade per claim atom. usdVolume is an optional parallel size signal only.
+// DetectArbitrage returns one Candidate per atomic-arbitrage cycle grouped by (tx_hash, taker); a component is a cycle when its hop graph (distinct (venue, unordered pair) edges) has edges >= nodes, with trades collapsed to hops first since SDEX emits one trade per claim atom. usdVolume is an optional parallel size signal.
 func DetectArbitrage(trades []canonical.Trade, usdVolume []string) []Candidate {
 	type group struct {
 		idxs []int

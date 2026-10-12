@@ -62,9 +62,7 @@ type cascadeDetail struct {
 	Note          string             `json:"note"`
 }
 
-// DetectLiquidationCascades scans Blend fills for clusters: a fill preceded by a fill against a DIFFERENT
-// position within cascadeWindowLedgers, with an oracle update in the bracket. One candidate per
-// cascade-extending fill, anchored on its identity so overlapping re-scans dedup.
+// DetectLiquidationCascades scans Blend fills for a fill preceded by a fill against a DIFFERENT position within cascadeWindowLedgers with an oracle update in the bracket; one candidate per cascade-extending fill, anchored on its identity so overlapping re-scans dedup.
 func DetectLiquidationCascades(fills []AuctionFill, oracles []OracleRef) []Candidate {
 	if len(fills) < 2 {
 		return nil

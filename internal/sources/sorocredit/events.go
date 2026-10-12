@@ -24,17 +24,13 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// SourceName is the registry key for this source — appears in metrics
-// labels, cursor rows, and storage attribution. Stable.
+// SourceName is the stable registry key for this source (metrics labels, cursor rows, storage attribution).
 const SourceName = "sorocredit"
 
-// MainnetContract is the protocol's single main contract on mainnet, the ONE trust root for the
-// event surface (ADR-0035). It emits every business and config event and deploys the
-// per-position `Collateral-<uuid>` child contracts.
+// MainnetContract is the protocol's single main contract and the ONE trust root for the event surface (ADR-0035); it emits every event and deploys the `Collateral-<uuid>` children.
 const MainnetContract = "CCG5EWFY2KCWWYYEIUMIRG6WSAQFLDR5QE5FMCWY25N36XA5GYTCPQWR"
 
-// GenesisLedger is the first ledger at which the main contract emitted any event, the lower
-// bound for the per-source gap detector and the ADR-0033 reconcile re-derive.
+// GenesisLedger is the first ledger at which the main contract emitted any event, the lower bound for the gap detector and the reconcile re-derive.
 const GenesisLedger uint32 = 61_620_822
 
 // Event topic[0] symbols, exactly as they appear on the wire (Soroban
@@ -95,9 +91,7 @@ var classifyBySym = func() map[string]EventType {
 	return m
 }()
 
-// EventSymbols returns the eight topic[0] symbols this source consumes, for the projector's SQL
-// topic prefilter. They are distinctive (not in the CAP-67 classic-token firehose), so the
-// prefilter pulls this source's events and the identity gate then rejects the look-alike emitters.
+// EventSymbols returns the eight topic[0] symbols this source consumes, for the projector's SQL topic prefilter; the identity gate then rejects look-alike emitters.
 func EventSymbols() []string {
 	syms := make([]string, len(topicClassifications))
 	for i, c := range topicClassifications {
@@ -106,8 +100,7 @@ func EventSymbols() []string {
 	return syms
 }
 
-// EventType routes a decoded event to its served-tier table. The values are stable: they appear
-// in EventKind(), the `event_type` CHECK on credit_events and the reconciliation kind filters.
+// EventType routes a decoded event to its served-tier table; values are stable (they appear in EventKind(), the `event_type` CHECK on credit_events and reconciliation filters).
 type EventType string
 
 const (
@@ -141,13 +134,7 @@ var (
 	ErrMalformedPayload = errors.New("sorocredit: malformed event payload")
 )
 
-// Event is the single [consumer.Event] this source emits, one per decoded contract event. The
-// [EventType] routes it to credit_positions / credit_statements / credit_settlements /
-// credit_events; the sink type-switches on this Go type once, then on EventType.
-//
-// Promoted string fields are strkeys or decimal-i128 strings; empty means the event type has no
-// such field and the writer stores SQL NULL. Amount is a decimal i128 string (ADR-0003, NEVER
-// int64). Attributes holds the event-specific remainder as jsonb.
+// Event is the single [consumer.Event] this source emits; [EventType] routes it to its table. Promoted string fields are strkeys or decimal-i128 strings (empty = SQL NULL); Amount is a decimal i128 string (ADR-0003, never int64); Attributes holds the rest as jsonb.
 type Event struct {
 	// Universal identity (from events.Event).
 	ContractID string
@@ -173,9 +160,7 @@ type Event struct {
 	Attributes map[string]any
 }
 
-// EventKind implements [consumer.Event]. It varies with EventType so the ADR-0033 reconciliation
-// catalogue can attribute re-derived counts per table and metrics get a precise label; all kinds
-// start with "sorocredit.".
+// EventKind implements [consumer.Event]; it varies with EventType (all start "sorocredit.") so reconciliation attributes counts per table.
 func (e Event) EventKind() string { return SourceName + "." + string(e.EventType) }
 
 // Source implements [consumer.Event] — matches [SourceName].

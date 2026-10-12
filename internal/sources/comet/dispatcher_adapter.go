@@ -13,17 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// Decoder is the dispatcher-facing view of Comet. Single instance per indexer.
-//
-// Routing is by the shared ("POOL", <event_name>) topic, but attribution is gated on contract
-// identity (ADR-0035/0040): any look-alike of the Balancer-v1 WASM emits the same topics and
-// could otherwise inject fabricated trades under `source = "comet"`.
-//
-// No creation event announces new pools, so the gate is a curated set: MainnetGatedSet is the
-// trust root and the protocol_contracts warm admits a pool without a redeploy.
-//
-// Claims swap (TradeEvent) and join_pool / exit_pool / deposit / withdraw (LiquidityEvent) from
-// a registered pool. BPT transfers use the SEP-41 surface (sep41_supply).
+// Decoder is the dispatcher-facing view of Comet (one per indexer). Routing is by the shared ("POOL", <event_name>) topic but attribution is gated on contract identity (ADR-0035/0040), since any Balancer-v1 look-alike emits the same topics and could inject fabricated trades. No creation event announces pools, so MainnetGatedSet is the trust root and the protocol_contracts warm admits a pool without a redeploy. BPT transfers use the SEP-41 surface.
 type Decoder struct {
 	reg *contractid.Registry
 
@@ -42,9 +32,7 @@ type Decoder struct {
 // re-fire the burst alert. Generous: live decode lags by seconds, and a >1h tip lag pages itself.
 const selfPairLiveWindow = time.Hour
 
-// NewDecoder constructs a Comet Decoder. The in-code MainnetGatedSet is installed first; caller
-// opts (the protocol_contracts warm) layer on top. There are no factories: pools have no
-// creation event to self-register from.
+// NewDecoder constructs a Comet Decoder with the in-code MainnetGatedSet installed first and caller opts (the protocol_contracts warm) on top; there are no factories since pools have no creation event.
 func NewDecoder(opts ...contractid.Option) *Decoder {
 	base := []contractid.Option{contractid.WithSeed(MainnetGatedSet())}
 	return &Decoder{reg: contractid.New(append(base, opts...)...), now: time.Now, countMetrics: true}
@@ -67,9 +55,7 @@ func (d *Decoder) bumpDroppedSwapMetric(counter *prometheus.CounterVec, closedAt
 // Name implements [dispatcher.Decoder].
 func (d *Decoder) Name() string { return SourceName }
 
-// Matches implements [dispatcher.Decoder]. Gates on contract identity, not topic bytes: the bare
-// ("POOL", <event>) tuple is shared by every Balancer-v1 deployment, so it is forgeable. An
-// event from an unregistered contract is left visible to the recognition audit, never attributed.
+// Matches implements [dispatcher.Decoder], gating on contract identity, not topic: the bare ("POOL", <event>) tuple is shared by every Balancer-v1 deployment and so forgeable. Events from unregistered contracts stay visible to the recognition audit, never attributed.
 func (d *Decoder) Matches(ev events.Event) bool {
 	if classify(&ev) == "" {
 		return false
@@ -77,12 +63,7 @@ func (d *Decoder) Matches(ev events.Event) bool {
 	return d.reg.Has(ev.ContractID)
 }
 
-// Decode implements [dispatcher.Decoder]. It returns one consumer.Event on success: TradeEvent
-// for swap, LiquidityEvent for the other four kinds. A decode error is non-fatal: counted and
-// skipped.
-//
-// Decode is shape-only (no registry lookup); the identity gate lives in Matches, which the
-// dispatcher consults first. Direct callers (tests, fixture tooling) bypass it by design.
+// Decode implements [dispatcher.Decoder]: a TradeEvent for swap, a LiquidityEvent for the other four kinds; a decode error is counted and skipped. Shape-only (no registry lookup): the identity gate is Matches, so direct callers bypass it by design.
 func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	kind := classify(&ev)
 	if kind == "" {

@@ -51,28 +51,20 @@ var AlertOutcomes = []string{
 	outcomeCoolingDown, outcomeNoSubscriber, outcomeClaimLost, outcomeError, outcomeTimeout,
 }
 
-// AlertStore is the read/mark seam the evaluator needs from the
-// platform price-alert store. Satisfied by
-// postgresstore.PriceAlertStore.
+// AlertStore is the read/mark seam the evaluator needs from the platform price-alert store (postgresstore.PriceAlertStore).
 type AlertStore interface {
 	ListEnabledPriceAlerts(ctx context.Context) ([]platform.PriceAlert, error)
 	ClaimPriceAlertFire(ctx context.Context, a platform.PriceAlert, firedAt time.Time) (bool, error)
 	RearmPriceAlert(ctx context.Context, id uuid.UUID, lastFiredAt time.Time) (bool, error)
 }
 
-// WebhookEnqueuer is the account-scoped delivery seam. The evaluator
-// lists the owning account's webhooks, filters to the ones subscribed
-// to `price.alert`, and enqueues one delivery each. Satisfied by
-// postgresstore.WebhookStore.
+// WebhookEnqueuer is the account-scoped delivery seam: the evaluator lists the owning account's webhooks, filters to those subscribed to `price.alert`, and enqueues one delivery each (postgresstore.WebhookStore).
 type WebhookEnqueuer interface {
 	ListWebhooksForAccount(ctx context.Context, accountID uuid.UUID) ([]platform.CustomerWebhook, error)
 	EnqueueDelivery(ctx context.Context, d platform.WebhookDelivery) error
 }
 
-// PriceReader returns the latest CLOSED 1-minute VWAP for a pair. Production wraps
-// timescale.Store.LatestClosedVWAP1mForPair (both stored orientations) and tries every
-// canonical.AssetAliases spelling of both legs. ok=false with a nil error means no closed bucket
-// in scope: a benign no-op, not a failure.
+// PriceReader returns the latest CLOSED 1-minute VWAP for a pair; production wraps timescale.Store.LatestClosedVWAP1mForPair and tries every canonical.AssetAliases spelling of both legs. ok=false with nil error means no closed bucket in scope: a benign no-op, not a failure.
 type PriceReader interface {
 	LatestVWAP(ctx context.Context, base, quote canonical.Asset) (price string, bucketClose time.Time, ok bool, err error)
 }
@@ -86,8 +78,7 @@ type Options struct {
 	Clock func() time.Time
 }
 
-// Worker sweeps enabled price alerts on a ticker and enqueues
-// `price.alert` webhook deliveries once per threshold crossing.
+// Worker sweeps enabled price alerts on a ticker and enqueues `price.alert` webhook deliveries once per threshold crossing.
 type Worker struct {
 	alerts       AlertStore
 	webhooks     WebhookEnqueuer
@@ -98,9 +89,7 @@ type Worker struct {
 	now          func() time.Time
 }
 
-// New builds a Worker. Panics if any store seam is nil (a wiring bug —
-// the caller must gate construction on the platform schema being
-// present).
+// New builds a Worker; panics if any store seam is nil (a wiring bug, the caller gates on the platform schema being present).
 func New(alerts AlertStore, webhooks WebhookEnqueuer, prices PriceReader, opts Options) *Worker {
 	if alerts == nil || webhooks == nil || prices == nil {
 		panic("pricealerts: New requires non-nil alerts, webhooks and prices")
@@ -129,9 +118,7 @@ func New(alerts AlertStore, webhooks WebhookEnqueuer, prices PriceReader, opts O
 	return w
 }
 
-// Run drives the sweep loop until ctx is cancelled. Sweeps once
-// immediately, then every Interval (usage.Rollup shape). Returns
-// ctx.Err() on cancellation.
+// Run sweeps once immediately, then every Interval until ctx is cancelled (returning ctx.Err()).
 func (w *Worker) Run(ctx context.Context) error {
 	tick := time.NewTicker(w.interval)
 	defer tick.Stop()
@@ -149,10 +136,7 @@ func (w *Worker) Run(ctx context.Context) error {
 	}
 }
 
-// Sweep runs one evaluation pass and records the paired metric. Exported
-// so tests can drive a single pass deterministically. Errors are
-// swallowed after being recorded (best-effort background worker) — the
-// outcome is what the metric + alert rule read.
+// Sweep runs one evaluation pass and records the paired metric; exported so tests can drive a single pass. Errors are recorded then swallowed (best-effort worker); the metric and alert rule read the outcome.
 func (w *Worker) Sweep(ctx context.Context) {
 	start := w.now()
 	outcome := w.sweepOnce(ctx)
@@ -473,9 +457,7 @@ func subscribed(events []string, want string) bool {
 	return false
 }
 
-// PriceAlertPayload is the JSON body POSTed to the customer's webhook
-// when a price alert fires. Documented in the OpenAPI spec as
-// PriceAlertWebhookPayload.
+// PriceAlertPayload is the JSON body POSTed to the customer's webhook when a price alert fires (OpenAPI PriceAlertWebhookPayload).
 type PriceAlertPayload struct {
 	Event         string `json:"event"`          // always "price.alert"
 	AlertID       string `json:"alert_id"`       // the price_alerts row id

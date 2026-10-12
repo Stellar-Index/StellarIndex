@@ -19,23 +19,17 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// RedisSubscriber is the subset of the Redis client surface
-// [Subscriber] needs. Declared as an interface so tests can
-// substitute miniredis without pulling the full UniversalClient.
+// RedisSubscriber is the subset of the Redis client [Subscriber] needs, so tests can substitute miniredis.
 type RedisSubscriber interface {
 	Subscribe(ctx context.Context, channels ...string) *redis.PubSub
 }
 
-// Hub is the subset of [streaming.Hub] the subscriber needs.
-// Declared as an interface so tests can substitute a recorder
-// without spinning up the full Hub.
+// Hub is the subset of [streaming.Hub] the subscriber needs, so tests can substitute a recorder.
 type Hub interface {
 	Publish(topic, eventType string, data []byte) string
 }
 
-// Subscriber listens on the channel the [Publisher] writes (see [DefaultChannel]) and republishes
-// each [ClosedBucketEvent] on the Hub, on the same topic key as `internal/api/v1.PriceStreamTopic`.
-// The per-topic dedupe state is mutex-guarded; every other field is read-only after construction.
+// Subscriber listens on the [Publisher]'s channel ([DefaultChannel]) and republishes each [ClosedBucketEvent] on the Hub under the `internal/api/v1.PriceStreamTopic` key. Per-topic dedupe state is mutex-guarded; other fields are read-only after construction.
 type Subscriber struct {
 	cache   RedisSubscriber
 	channel string
@@ -62,9 +56,7 @@ const forwardedPruneAt = 4096
 // two aggregators live every (pair, window) bucket arrives twice.
 const duplicateProducerLogEvery = time.Minute
 
-// NewSubscriber constructs a Subscriber bound to the given Redis
-// channel + Hub. Empty channel falls back to [DefaultChannel].
-// nil logger falls back to [slog.Default].
+// NewSubscriber constructs a Subscriber for the given channel and Hub; empty channel falls back to [DefaultChannel], nil logger to [slog.Default].
 func NewSubscriber(cache RedisSubscriber, channel string, hub Hub, logger *slog.Logger) (*Subscriber, error) {
 	if cache == nil {
 		return nil, errors.New("redispub: RedisSubscriber is required")
@@ -201,14 +193,7 @@ func rejectionOutcome(err error) string {
 // Channel returns the Redis channel this Subscriber listens on.
 func (s *Subscriber) Channel() string { return s.channel }
 
-// Run blocks until ctx is cancelled, republishing each Redis message on the Hub, and returns
-// ctx.Err() on clean shutdown.
-//
-// A Redis failure does NOT end Run: go-redis v9 retries a dropped pubsub connection internally and
-// closes the message channel only when the PubSub itself is closed. An outage therefore shows as a
-// flat `ok` outcome on stellarindex_api_stream_subscribe_total while the aggregator keeps
-// publishing, which stellarindex_api_price_stream_not_delivering alerts on; the channel-closed
-// error below is a backstop.
+// Run republishes each Redis message on the Hub until ctx is cancelled (returns ctx.Err()). A Redis outage does not end Run (go-redis retries internally) and shows as a flat `ok` on stellarindex_api_stream_subscribe_total, which stellarindex_api_price_stream_not_delivering alerts on; the channel-closed error is a backstop.
 func (s *Subscriber) Run(ctx context.Context) error {
 	pubsub := s.cache.Subscribe(ctx, s.channel)
 	defer func() {

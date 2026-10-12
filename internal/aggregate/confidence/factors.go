@@ -21,14 +21,10 @@ const (
 	liquidityCeilingUSD = 1_000_000.0
 )
 
-// LiquidityUnmeasured is the [Inputs.LiquidityUSD] sentinel for "could not value in USD",
-// as opposed to "measured and thin"; any negative value counts, as in the other factors.
+// LiquidityUnmeasured is the [Inputs.LiquidityUSD] sentinel for "could not value in USD", as opposed to "measured and thin"; any negative value counts.
 const LiquidityUnmeasured = -1.0
 
-// LiquidityUnmeasuredFactor is the neutral no-signal midpoint for [LiquidityUnmeasured].
-// Deliberately not tracked to the curve: unmeasured pairs are the thin single-source ones where
-// a false freeze is most damaging. Read [Factors.LiquidityMeasured], since a measured ~$31.6K
-// bucket also scores 0.5.
+// LiquidityUnmeasuredFactor is the neutral no-signal midpoint for [LiquidityUnmeasured], deliberately not tracked to the curve since unmeasured pairs are thin single-source ones where a false freeze is most damaging; a measured ~$31.6K bucket also scores 0.5, so read [Factors.LiquidityMeasured].
 const LiquidityUnmeasuredFactor = 0.5
 
 // crossOracleTolerancePct: within 1% of the cross-oracle median is full agreement (ADR-0019).
@@ -52,8 +48,7 @@ const triangulationNeutralFactor = 0.7
 // baselineFullDays is the age at which a baseline is fully mature (ADR-0019).
 const baselineFullDays = 30.0
 
-// ZScoreFactor maps a baseline z-score to [0, 1]: 1.0 at z=0, ~0.5 at z=5, ~0 at z=10.
-// Negative, NaN and Inf clamp to 0.
+// ZScoreFactor maps a baseline z-score to [0, 1]: 1.0 at z=0, ~0.5 at z=5, ~0 at z=10; negative, NaN and Inf clamp to 0.
 func ZScoreFactor(z float64) float64 {
 	if math.IsNaN(z) || z < 0 {
 		return 0
@@ -72,8 +67,7 @@ func SourceCountFactor(n int) float64 {
 	return clamp01(1.0 / (1.0 + math.Exp(-(float64(n) - sourceCountInflectionN))))
 }
 
-// DiversityFactor is 0 for no class, 0.5 for one, 1.0 for two or more: CEX + DEX
-// agreement beats three CEXs that may share an upstream feed bug.
+// DiversityFactor is 0 for no class, 0.5 for one, 1.0 for two or more: CEX + DEX agreement beats three CEXs that may share an upstream feed bug.
 func DiversityFactor(classCount int) float64 {
 	switch {
 	case classCount <= 0:
@@ -85,10 +79,7 @@ func DiversityFactor(classCount int) float64 {
 	}
 }
 
-// LiquidityFactor log-interpolates USD bucket volume between the floor (0) and ceiling (1).
-// A negative volume is [LiquidityUnmeasured] and reads neutral, but a measured near-zero
-// stays 0: it is the real signal the freeze needs, and collapsing the two pinned the
-// freeze's confidence leg true for every pair not valued in USD. NaN returns 0.
+// LiquidityFactor log-interpolates USD bucket volume between floor (0) and ceiling (1). Negative ([LiquidityUnmeasured]) reads neutral but a measured near-zero stays 0, the real signal the freeze needs; collapsing the two pinned the freeze's confidence leg true for non-USD pairs. NaN returns 0.
 func LiquidityFactor(usdVolume float64) float64 {
 	if math.IsNaN(usdVolume) {
 		return 0
@@ -110,9 +101,7 @@ func LiquidityFactor(usdVolume float64) float64 {
 	)
 }
 
-// CrossOracleFactor is 1.0 within [crossOracleTolerancePct], then decays exponentially
-// (5% → ~0.5, 10% → ~0.21). A negative divergence means no cross-oracle data and returns
-// the ADR-0019 neutral 0.7, so assets without external references are not dragged down.
+// CrossOracleFactor is 1.0 within [crossOracleTolerancePct], then decays exponentially (5% -> ~0.5, 10% -> ~0.21); negative divergence means no cross-oracle data and returns the ADR-0019 neutral 0.7.
 func CrossOracleFactor(divergencePct float64) float64 {
 	if math.IsNaN(divergencePct) {
 		return 0
@@ -129,10 +118,7 @@ func CrossOracleFactor(divergencePct float64) float64 {
 	return clamp01(math.Exp(-excess * math.Ln2 / crossOracleHalfLifePct))
 }
 
-// TriangulationAgreementFactor scores a direct price against its triangulated composite,
-// shaped like [CrossOracleFactor] (2% → 1.0, 6% → ~0.5, 20% → ~0.05). Divergence decays
-// hard rather than reverting to neutral: on mostly single-source pairs the thin direct
-// print is the likelier liar. Negative means no composite; NaN returns 0.
+// TriangulationAgreementFactor scores a direct price against its triangulated composite, shaped like [CrossOracleFactor] (2% -> 1.0, 6% -> ~0.5, 20% -> ~0.05); it decays hard rather than reverting to neutral because on single-source pairs the thin direct print is the likelier liar. Negative means no composite; NaN returns 0.
 func TriangulationAgreementFactor(divergencePct float64) float64 {
 	if math.IsNaN(divergencePct) {
 		return 0
@@ -148,9 +134,7 @@ func TriangulationAgreementFactor(divergencePct float64) float64 {
 	return clamp01(math.Exp(-excess * math.Ln2 / triangulationHalfLifePct))
 }
 
-// BaselineQualityFactor ramps 0.5 → 1.0 over 30 days-equivalent of 1-minute samples
-// (density, not calendar age, so a sparse pair stays low). Negative or NaN means
-// untrained and returns the same 0.5 as zero history.
+// BaselineQualityFactor ramps 0.5 -> 1.0 over 30 days-equivalent of 1-minute samples (density, not calendar age); negative or NaN means untrained and returns 0.5.
 func BaselineQualityFactor(daysHistory float64) float64 {
 	if math.IsNaN(daysHistory) || daysHistory < 0 {
 		return 0.5
