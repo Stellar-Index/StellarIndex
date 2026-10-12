@@ -16,11 +16,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// The published availability figure on the /sla page is the authority. The burn-rate alert
-// budgets, the sla-probe default target and the operator documents must all state the same
-// number, so changing the page fails the build until every dependent site follows. Assertions
-// run over whitespace-collapsed content, and prose sites check both that the stale figure is
-// gone and the corrected one is present.
+// The availability figure published on /sla is the authority: burn-rate alert budgets, the sla-probe default target and
+// operator docs must state the same number, so changing the page fails the build until every dependent site follows.
+// Prose sites check the stale figure is gone and the new one present, over whitespace-collapsed content.
 
 const (
 	slaPage       = "web/explorer/src/app/sla/page.tsx"
@@ -44,11 +42,8 @@ func publishedAvailability(t *testing.T) string {
 	return m[1]
 }
 
-// availabilityBudget derives the error budget the alerts must use from
-// the published percentage, in exact decimal arithmetic: 99.9 → 0.001,
-// 99.99 → 0.0001. Returned both as the canonical literal and as a
-// float for tolerance comparison against whatever literal the rules
-// carry.
+// Derives the alert error budget from the published percentage in exact decimal arithmetic (99.9 -> 0.001, 99.99 ->
+// 0.0001), returned as the canonical literal and as a float for tolerance comparison against the rules' literal.
 func availabilityBudget(t *testing.T, pct string) (string, float64) {
 	t.Helper()
 	whole, frac, ok := strings.Cut(pct, ".")
@@ -152,21 +147,16 @@ func TestPublishedAvailabilityFigureGovernsTheAlertBudget(t *testing.T) {
 	}
 }
 
-// TestOperatorDocsStateThePublishedAvailabilityFigure pins the documents
-// a responder or a customer reads that restate the figure or the burn
-// arithmetic derived from it. The literals here are the 99.9 % set; a
-// legitimate change to the public page fails this test at every site
-// that has to follow, which is the point.
+// Pins the documents a responder or customer reads that restate the figure or its burn arithmetic. The literals are the
+// 99.9 % set; a legitimate change to the public page fails this test at every site that must follow, which is the point.
 func TestOperatorDocsStateThePublishedAvailabilityFigure(t *testing.T) {
 	cases := []struct {
 		path      string
 		forbidden []string
 		required  []string
-		// quotesOriginalFigure marks a record that legitimately carries
-		// the 99.99 % wording: ADR-0008 states it as the original design
-		// target beside the published figure, and the coverage matrix quotes
-		// the proposal's claim verbatim before grading it. Both are pinned
-		// on their correction instead of swept.
+		// Marks records that legitimately carry the 99.99 % wording: ADR-0008 states it as the original design target beside the
+		// published figure, and the coverage matrix quotes the proposal's claim verbatim before grading it. Both are pinned on
+		// their correction instead of swept.
 		quotesOriginalFigure bool
 	}{
 		{

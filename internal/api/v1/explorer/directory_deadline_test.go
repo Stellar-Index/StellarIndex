@@ -23,10 +23,9 @@ func (deadlineDirectoryReader) DirectoryEntriesByAddresses(
 	return nil, fmt.Errorf("read account_directory: %w", context.DeadlineExceeded)
 }
 
-// GET /v1/directory must map a blown explorerReadTimeout to a `...-timeout` 503 like every sibling
-// listing (retryableColdMiss). The request context is still alive then (the 8s budget fires inside
-// the 15s blanket deadline), so nothing downstream corrects a 500, and the sla-probe would book an
-// availability failure for a condition a retry clears.
+// GET /v1/directory must map a blown explorerReadTimeout to a ...-timeout 503 like sibling listings (retryableColdMiss).
+// The request context is still alive then (8s budget inside the 15s deadline), so a 500 is never corrected and the sla-
+// probe would book an availability failure for something a retry clears.
 func TestDirectoryLookup_ReadDeadlineIs503NotInternal500(t *testing.T) {
 	const addr = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 	h := &Handler{

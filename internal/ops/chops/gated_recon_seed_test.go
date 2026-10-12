@@ -11,10 +11,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// A factory whose genesis is at or after the re-derive's start ledger `to` deployed no children
-// before `to`, so the [genesis, to) preseed window is empty, or inverted (genesis > to) when a
-// whole-lake ch-reproject starts below a later-deploying factory's genesis. The guard must return
-// before touching the streamer; a nil streamer proves it (a walk would panic).
+// A factory whose genesis is at or after the re-derive start `to` deployed no children before it, so the preseed window
+// is empty or inverted. The guard must return before touching the streamer; a nil streamer proves it, since a walk would
+// panic.
 func TestPreseedFactoryChildrenSkipsEmptyOrInvertedWindow(t *testing.T) {
 	src := reconSource{
 		name:      "phoenix",
@@ -61,10 +60,9 @@ func TestExpectedProjectionPreseedsFactoryChildFromTheLake(t *testing.T) {
 	}
 }
 
-// A preseed walk over a real, non-empty window that finds zero
-// factory children must not go silent — an empty gate registry then makes
-// every pre-existing pool's events look like a real projection gap for the
-// rest of the re-derive instead of the decoder-blind spot it actually is.
+// A preseed walk over a real non-empty window that finds zero factory children must not go silent: an empty gate
+// registry would make every pre-existing pool's events look like a projection gap instead of the decoder-blind spot it
+// is.
 func TestPreseedResultMessageWarnsOnZeroSeeded(t *testing.T) {
 	msg := preseedResultMessage("blend", 0)
 	if !strings.Contains(msg, "WARNING") || !strings.Contains(msg, "blend") {

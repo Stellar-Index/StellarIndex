@@ -13,21 +13,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/api/streaming"
 )
 
-// ─── Proxy timeouts vs the SSE heartbeat ─────────────────────────
-//
-// An idle SSE stream stays alive only because the API writes a `:keepalive` comment every
-// streaming.DefaultHeartbeatInterval, so every bound on the stream path must outlast a
-// heartbeat gap. A transport `read_timeout` shorter than the heartbeat, or any server `write`
-// timeout or `stream_timeout` (absolute caps, not idle bounds), would cut every quiet stream
-// on a schedule while still passing `caddy validate`.
-//
-// The rule, applied to the stream path in both Caddyfiles:
-//   - absolute caps (server write timeout, stream_timeout): forbidden;
-//   - per-read bounds (transport read/write/response-header timeouts): unset, or at least
-//     caddySSEMinIdleBound, two heartbeats so one late heartbeat does not end the stream.
-//
-// Server read_body/read_header/idle timeouts are left alone: they bound the request and the
-// gap between requests, not a response in flight.
+// Proxy timeouts vs SSE heartbeat: idle streams live on the `:keepalive` every streaming.DefaultHeartbeatInterval, so
+// stream-path bounds must outlast a heartbeat gap. Absolute caps (server write timeout, stream_timeout) are forbidden;
+// per-read transport timeouts must be unset or at least caddySSEMinIdleBound (two heartbeats).
 
 // caddySSEMinIdleBound is the shortest per-read timeout the stream path
 // may carry.
@@ -142,10 +130,8 @@ func TestCaddySSETimeoutsOutlastTheHeartbeat(t *testing.T) {
 	}
 }
 
-// TestCaddySSETimeoutPinIsNotVacuous feeds the real files, each with a
-// stream-breaking timeout spliced in, through the same check: a
-// checker that cannot see the SSE stanza or the server block would
-// otherwise pass the real files trivially.
+// TestCaddySSETimeoutPinIsNotVacuous feeds the real files, each with a stream-breaking timeout spliced in, through the
+// same check. Otherwise a checker that cannot see the SSE stanza or server block would pass the real files trivially.
 func TestCaddySSETimeoutPinIsNotVacuous(t *testing.T) {
 	mutants := map[string]struct{ from, to string }{
 		"short transport read_timeout": {"flush_interval -1\n", "flush_interval -1\n\t\t\ttransport http {\n\t\t\t\tread_timeout 10s\n\t\t\t}\n"},

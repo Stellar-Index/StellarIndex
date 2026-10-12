@@ -23,10 +23,8 @@ var rawCredentialEnvAllowed = map[string]string{
 	"cmd/stellarindex-migrate/main.go:STELLARINDEX_POSTGRES_DSN":    "migrate runs without a config file; it reads the same var the schema declares for storage.postgres_dsn",
 }
 
-// TestNoRawCredentialEnvReadsOutsideConfig keeps every credential inside
-// the config schema, where it is documented in docs/reference/config, set
-// by ApplyEnvOverrides, and logged by LoadWithEnv as a path, never a value.
-// A raw os.Getenv of a key elsewhere is invisible to all three.
+// Keeps every credential inside the config schema, where it is documented, set by ApplyEnvOverrides and logged as a
+// path. A raw os.Getenv elsewhere is invisible to all three.
 func TestNoRawCredentialEnvReadsOutsideConfig(t *testing.T) {
 	root, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {

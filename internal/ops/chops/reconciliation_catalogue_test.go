@@ -29,10 +29,8 @@ var testWatchedSEP41 = []string{
 	"CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
 }
 
-// wantSEP41Filter is the served-side predicate both sep41 targets must
-// carry for testWatchedSEP41 — sorted, single-quoted, `contract_id IN`.
-// Spelled out literally rather than re-derived via contractIDFilter so
-// the test cannot agree with a broken builder.
+// The served-side predicate both sep41 targets must carry for testWatchedSEP41: sorted, single-quoted, `contract_id IN`.
+// Spelled out literally rather than re-derived via contractIDFilter so the test cannot agree with a broken builder.
 const wantSEP41Filter = "contract_id IN (" +
 	"'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75', " +
 	"'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC')"
@@ -67,10 +65,9 @@ func TestBuildReconciliationCatalogue_PromotesSEP41WhenWatched(t *testing.T) {
 	}
 }
 
-// TestBuildReconciliationCatalogue_GenesisMirrorsProtocolRegistry pins the lake-derived genesis
-// of cctp (ledger 62,146,641, the MessageTransmitter's first event) and rozo (60,829,397, first
-// event across all four contracts). They are literals so the test cannot agree with a re-drifted
-// catalogue; a floor above the true genesis leaves served rows outside every verdict.
+// Pins lake-derived genesis of cctp (ledger 62,146,641, MessageTransmitter's first event) and rozo (60,829,397, first
+// event across all four contracts). Literals, so the test cannot agree with a re-drifted catalogue; a floor above true
+// genesis leaves served rows outside every verdict.
 func TestBuildReconciliationCatalogue_GenesisMirrorsProtocolRegistry(t *testing.T) {
 	want := map[string]uint32{
 		"cctp": 62_146_641,
@@ -160,10 +157,9 @@ func TestBuildSEP41ReconSources_OptIn(t *testing.T) {
 		if len(tgt.kinds) != 1 || tgt.kinds[0] != w.kind {
 			t.Errorf("%s: kinds = %v, want [%q]", src.name, tgt.kinds, w.kind)
 		}
-		// The sep41 targets are watched-set slices of their tables, so whole-table ownership
-		// (whereFilter == "") would count unwatched contracts' rows on the served side only, a
-		// surplus that never closes. The exact predicate is pinned because it is part of the
-		// durable completeness_target_floors key.
+		// The sep41 targets are watched-set slices of their tables, so whole-table ownership (whereFilter == "") would count
+		// unwatched contracts' rows on the served side only, a surplus that never closes. The exact predicate is pinned as part
+		// of the durable completeness_target_floors key.
 		if tgt.whereFilter != wantSEP41Filter {
 			t.Errorf("%s: whereFilter = %q, want %q (watched-set scoping matching the expected side)",
 				src.name, tgt.whereFilter, wantSEP41Filter)
@@ -241,11 +237,9 @@ func TestSEP41Filter_ScopesToWatchedSetOnly(t *testing.T) {
 	}
 }
 
-// TestSEP41Filter_StableAcrossOrdering — whereFilter is part of the
-// durable completeness_target_floors key (timescale.TargetFloorKey), so
-// the same watched set listed in a different order must render the same
-// predicate. An order-sensitive filter would orphan the recorded floor
-// on every config reshuffle and silently disable detectFloorLoss.
+// whereFilter is part of the durable completeness_target_floors key (timescale.TargetFloorKey), so the same watched set
+// in a different order must render the same predicate; otherwise a config reshuffle orphans the recorded floor and
+// silently disables detectFloorLoss.
 func TestSEP41Filter_StableAcrossOrdering(t *testing.T) {
 	fwd := config.Config{}
 	fwd.Supply.WatchedSEP41Contracts = []string{testWatchedSEP41[0], testWatchedSEP41[1]}
@@ -282,10 +276,8 @@ func TestSEP41Filter_RejectsNonStrkey(t *testing.T) {
 	}
 }
 
-// TestCatalogue_OpArgsOnlyForRedstone pins the wide-column trim: only redstone consumes
-// events.Event.OpArgs, so only it may read the wide op_args_xdr column. Every other source,
-// critically the sep41 pair streaming the CAP-67 firehose, must keep needsOpArgs false or the
-// lake read regrows the memory profile that OOM-killed compute-completeness.
+// Only redstone consumes events.Event.OpArgs, so only it may read the wide op_args_xdr column.
+// The sep41 pair streaming the CAP-67 firehose must keep needsOpArgs false, or the lake read regrows the OOM profile.
 func TestCatalogue_OpArgsOnlyForRedstone(t *testing.T) {
 	cfg := testConfigWithAllSources()
 	cfg.Supply.WatchedSEP41Contracts = testWatchedSEP41
@@ -321,10 +313,9 @@ func TestCatalogue_OpArgsOnlyForRedstone(t *testing.T) {
 	}
 }
 
-// TestBlendEmitterDropFanoutWaived pins that the fan-out drop event is carved out. One DropEvent
-// writes a row per recipient, so a per-ledger count reconcile would false-flag every drop ledger.
-// The table is mixed (distribute and swap are 1:1), so the catalogue excludes only drop rows from
-// the served side (whereFilter event_kind <> 'drop') and omits the drop kind from the re-derive.
+// The fan-out drop event is carved out: one DropEvent writes a row per recipient, so a per-ledger count reconcile would
+// false-flag every drop ledger. The table is mixed (distribute and swap are 1:1), so the catalogue excludes only drop
+// rows served-side (event_kind <> 'drop') and omits drop from the re-derive.
 func TestBlendEmitterDropFanoutWaived(t *testing.T) {
 	cat, _, err := buildReconciliationCatalogue(testConfigWithAllSources())
 	if err != nil {
@@ -364,10 +355,8 @@ func TestBlendEmitterDropFanoutWaived(t *testing.T) {
 	}
 }
 
-// TestValidateSourceFilter is the F7 fail-open regression: a -source
-// filter that names no catalogue source must fail CLOSED, not silently
-// skip every source and report success. Empty (all sources) and a real
-// name both pass.
+// A -source filter naming no catalogue source must fail closed, not silently skip every source and report success; empty
+// (all sources) and a real name both pass.
 func TestValidateSourceFilter(t *testing.T) {
 	cat := []reconSource{{name: "soroswap"}, {name: "aquarius"}, {name: "sdex"}}
 	cases := []struct {
@@ -463,10 +452,9 @@ func TestFilterCatalogueByNetwork(t *testing.T) {
 	}
 }
 
-// TestBandGenesisAgreesAcrossEveryConstant pins that every Band genesis constant agrees. A
-// disagreement silently shortens the range completeness and gap checks evaluate. The true value
-// comes from contract_instance_changes, because Band's contract emits zero events and a
-// min-ledger probe on contract_events returns no rows.
+// Every Band genesis constant must agree; a disagreement silently shortens the range completeness and gap checks
+// evaluate. The true value comes from contract_instance_changes because Band's contract emits zero events, so a min-
+// ledger probe on contract_events returns no rows.
 func TestBandGenesisAgreesAcrossEveryConstant(t *testing.T) {
 	const bandGenesis = 50_842_736
 
@@ -502,11 +490,9 @@ var (
 	quotedIdentRe   = regexp.MustCompile(`'([a-zA-Z0-9_.]+)'`)
 )
 
-// standingRetentionRelations replays every add/remove_retention_policy
-// call over the up-migrations in order and returns the relations still
-// holding a policy, mapped to the migration that attached it. Every
-// quoted identifier in a call's arguments counts as its relation, so an
-// unusual spelling over-reports rather than vanishes.
+// Replays every add/remove_retention_policy call over the up-migrations in order, returning relations still holding a
+// policy. Every quoted identifier in a call's arguments counts as a relation, so odd spellings over-report rather than
+// vanish.
 func standingRetentionRelations(t *testing.T) map[string]string {
 	t.Helper()
 	ups, err := filepath.Glob(filepath.Join(repoRoot(t), "migrations", "[0-9]*_*.up.sql"))
@@ -588,10 +574,9 @@ var packageGenesis = map[string]uint32{
 	"defindex":       defindex.GenesisLedger,
 }
 
-// TestCatalogueGenesisLocksStepWithGapDetectorTargets pins each catalogued source's genesis to
-// the earliest Genesis across its DefaultGapDetectorTargets rows (a sub-table may start later,
-// never earlier) and to the source package constant where one exists, so reconciliation and gap
-// density never score different ledger ranges.
+// Pins each catalogued source's genesis to the earliest Genesis across its DefaultGapDetectorTargets rows (a sub-table
+// may start later, never earlier) and to the source package constant where one exists, so reconciliation and gap density
+// never score different ledger ranges.
 func TestCatalogueGenesisLocksStepWithGapDetectorTargets(t *testing.T) {
 	cfg := testConfigWithAllSources()
 	cfg.Supply.WatchedSEP41Contracts = testWatchedSEP41
@@ -668,10 +653,8 @@ func TestReconTargetCountFilter_PriceableOnlyForSDEX(t *testing.T) {
 	}
 }
 
-// TestBuildReconciliationCatalogue_ReflectorDecimals drives a real mainnet
-// event per Reflector variant through the catalogue decoder that ch-rebuild
-// re-derives with: it must stamp the same configured scale the projector
-// does, or a re-derive overwrites correctly scaled oracle_updates rows.
+// Drives a real mainnet event per Reflector variant through the catalogue decoder ch-rebuild re-derives with: it must
+// stamp the same configured scale the projector does, or a re-derive overwrites correctly scaled oracle_updates rows.
 func TestBuildReconciliationCatalogue_ReflectorDecimals(t *testing.T) {
 	dir := filepath.Join("..", "..", "..", "test", "fixtures", "reflector", "v6-2026-04-23")
 	for _, tc := range []struct {

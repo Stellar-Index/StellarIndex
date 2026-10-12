@@ -69,10 +69,8 @@ func TestWriteSnapshotMetrics_OmitsMaxWhenNil(t *testing.T) {
 	}
 }
 
-// TestWriteSnapshotMetrics_FailRun — failed runs (pass=false) emit
-// unit_failed=1 and OMIT last_success_timestamp. The staleness alert
-// keys on time-since-last-success, so omitting on failure preserves
-// the previous-scrape value.
+// Failed runs (pass=false) emit unit_failed=1 and OMIT last_success_timestamp; the staleness alert keys on time since
+// last success, so omitting preserves the previous-scrape value.
 func TestWriteSnapshotMetrics_FailRun(t *testing.T) {
 	snap := Supply{
 		AssetKey:          "XLM",
@@ -242,10 +240,9 @@ func TestWriteSnapshotFailureTextfile_CarriesLastSuccessTimestamp(t *testing.T) 
 	}
 }
 
-// TestWriteSnapshotFailureTextfile_NoPriorFileEmitsNothing — a first-ever
-// run that fails has no success to carry. The series must stay absent so
-// `_never_initialized` (absent_over_time … == 1) still fires, rather than
-// a fabricated timestamp making an uninitialized deployment look healthy.
+// A first-ever failing run has no success to carry, so the series stays absent and `_never_initialized`
+// (absent_over_time == 1) still fires, instead of a fabricated timestamp making an uninitialized deployment look
+// healthy.
 func TestWriteSnapshotFailureTextfile_NoPriorFileEmitsNothing(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "supply_snapshot.prom")
@@ -278,10 +275,8 @@ func assetKeyLabels(body string) []string {
 	return keys
 }
 
-// TestWriteSnapshotFailureTextfile_UnreadablePriorFileIsNotErased pins the
-// fail-safe choice: when the previous exposition exists but cannot be read,
-// leave it in place (the staleness alerts keep escalating on the surviving
-// series) rather than truncate it to publish unit_failed.
+// Fail-safe: when the previous exposition exists but cannot be read, leave it in place (staleness alerts keep escalating
+// on the surviving series) rather than truncate it to publish unit_failed.
 func TestWriteSnapshotFailureTextfile_UnreadablePriorFileIsNotErased(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root bypasses the read permission bit")
@@ -351,10 +346,8 @@ func TestWriteVerifyRollupTextfile_PassRun(t *testing.T) {
 	}
 }
 
-// TestWriteVerifyRollupTextfile_DriftAndMissingFailWithoutFreshTimestamp —
-// a run with drift or missing checkpoints is not a "pass": unit_failed=1
-// and no fresh last_success_timestamp is emitted (the previous file's
-// samples are carried forward instead, by [writeAtomicCarryingLastSuccess]).
+// A run with drift or missing checkpoints is not a pass: unit_failed=1 and no fresh last_success_timestamp, with the
+// previous file's samples carried forward by writeAtomicCarryingLastSuccess.
 func TestWriteVerifyRollupTextfile_DriftAndMissingFailWithoutFreshTimestamp(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "supply_verify_rollup.prom")
@@ -378,10 +371,8 @@ func TestWriteVerifyRollupTextfile_DriftAndMissingFailWithoutFreshTimestamp(t *t
 	}
 }
 
-// TestWriteVerifyRollupTextfile_FailureCarriesLastSuccess is the
-// verify-rollup analogue of TestWriteSnapshotFailureTextfile_CarriesLastSuccessTimestamp:
-// a run that errors before computing counts (config/storage failure) must
-// not erase the staleness key a clean run before it established.
+// Verify-rollup analogue of the snapshot carry test: a run that errors before computing counts (config/storage failure)
+// must not erase the staleness key established by an earlier clean run.
 func TestWriteVerifyRollupTextfile_FailureCarriesLastSuccess(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "supply_verify_rollup.prom")
@@ -417,10 +408,8 @@ func TestWriteVerifyRollupTextfile_FailureCarriesLastSuccess(t *testing.T) {
 	}
 }
 
-// TestWriteVerifyRollupFailureTextfile_NoPriorFileEmitsNothing mirrors
-// TestWriteSnapshotFailureTextfile_NoPriorFileEmitsNothing: a first-ever
-// run that errors before any success has nothing to carry, so the series
-// stays absent rather than fabricating a timestamp.
+// Mirrors the snapshot no-prior-file test: a first-ever run that errors before any success has nothing to carry, so the
+// series stays absent rather than fabricating a timestamp.
 func TestWriteVerifyRollupFailureTextfile_NoPriorFileEmitsNothing(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "supply_verify_rollup.prom")

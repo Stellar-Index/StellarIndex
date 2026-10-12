@@ -14,10 +14,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// These tests pin the /v1/accounts degraded contract:
-// a wealth snapshot past its refresh TTL is SERVED — 200 +
-// flags.stale + the snapshot's real as_of — never 503'd; only a process
-// that has never computed a ranking at all returns the 503 warming state.
+// Pins the /v1/accounts degraded contract: a wealth snapshot past its refresh TTL is served (200, flags.stale, the
+// snapshot's real as_of), never 503'd; only a process that has never computed a ranking returns the 503 warming state.
 
 // wealthSnapshotReader serves a configurable cached-ranking state; every
 // other read falls through to capReader's harmless zero values.
@@ -148,10 +146,8 @@ func TestAccountsList_USDBasisRendersTheExactSum(t *testing.T) {
 	}
 }
 
-// TestAccountsList_NativeBasis — on the lean networks the cache computes a
-// native-XLM ranking (no USD price map), and the handler must label it: the
-// row carries the XLM quantity in `value` with `usd_value` empty, `ranked_by`
-// is "native_xlm", and `priced_assets` reports 0 (nothing is USD-priced).
+// On lean networks the cache computes a native-XLM ranking (no USD price map) and the handler must label it: value holds
+// the XLM quantity, usd_value is empty, ranked_by is "native_xlm", priced_assets is 0.
 func TestAccountsList_NativeBasis(t *testing.T) {
 	h, rec := wealthTestHandler(&wealthSnapshotReader{
 		capReader: &capReader{probe: &deadlineProbe{}},
@@ -188,10 +184,8 @@ func TestAccountsList_NativeBasis(t *testing.T) {
 	}
 }
 
-// TestAccountsList_NativeBasisIsExactPastFloat53: a
-// native_xlm value above 2^53 stroops (~900.7M XLM — the test-net root and
-// friendbot accounts that top the board) is served to the stroop, not
-// through the float ranking key, which cannot carry the 7th decimal there.
+// A native_xlm value above 2^53 stroops (~900.7M XLM, the test-net root and friendbot accounts topping the board) is
+// served to the stroop, not via the float ranking key, which cannot carry the 7th decimal there.
 func TestAccountsList_NativeBasisIsExactPastFloat53(t *testing.T) {
 	const stroops = 100_000_000_001_234_567 // 10,000,000,000.1234567 XLM
 	h, rec := wealthTestHandler(&wealthSnapshotReader{

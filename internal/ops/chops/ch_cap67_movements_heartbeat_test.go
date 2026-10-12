@@ -7,10 +7,8 @@ import (
 	"testing"
 )
 
-// gaugeValue pulls one metric's sample value out of a textfile body,
-// erroring the test if the series is absent (mirrors
-// internal/ops/opsutil.gaugeValue — kept local since that helper is
-// unexported across the package boundary).
+// gaugeValue pulls one metric's sample from a textfile body, failing the test if the series is absent.
+// Local copy: opsutil.gaugeValue is unexported across the package boundary.
 func gaugeValue(t *testing.T, body, metric string) string {
 	t.Helper()
 	for _, line := range strings.Split(body, "\n") {
@@ -26,11 +24,9 @@ func gaugeValue(t *testing.T, body, metric string) string {
 	return ""
 }
 
-// TestCap67Progress_AccumulatesAcrossWindowsAndTicks pins the cap67-movements progress metric. A
-// wedged -follow daemon holds the watermark (and every downstream /movements read) at a fixed
-// ledger, so it needs a heartbeat to look different from a healthy one. record is called once per
-// derive window and once per -follow tick, so total must be the running SUM across calls, not the
-// last window's count.
+// TestCap67Progress_AccumulatesAcrossWindowsAndTicks pins the cap67-movements progress metric: a wedged -follow daemon
+// holds the watermark fixed, so it needs a heartbeat that differs from a healthy one. record runs per derive window and
+// per tick, so total must be the running SUM, not the last count.
 func TestCap67Progress_AccumulatesAcrossWindowsAndTicks(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ops_job_ch_cap67_movements.prom")
 
@@ -69,10 +65,8 @@ func TestCap67Progress_AccumulatesAcrossWindowsAndTicks(t *testing.T) {
 	}
 }
 
-// TestCap67Progress_InertWithoutHeartbeatPath pins that an empty
-// -heartbeat flag (the default, and every non-r1 environment) makes the
-// heartbeat a safe no-op — no directory created, no panic on record/stop
-// with an unresolved path.
+// TestCap67Progress_InertWithoutHeartbeatPath: an empty -heartbeat flag (the default, and every non-r1 environment)
+// makes the heartbeat a safe no-op, with no directory created and no panic on record/stop with an unresolved path.
 func TestCap67Progress_InertWithoutHeartbeatPath(t *testing.T) {
 	prog := newCap67Progress("")
 	if prog.hb.Enabled() {

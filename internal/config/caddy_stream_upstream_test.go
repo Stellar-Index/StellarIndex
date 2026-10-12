@@ -13,14 +13,9 @@ import (
 	"time"
 )
 
-// ─── The stream proxy and the API upstream's health ───────────────────
-//
-// The /v1/*/stream routes use their own `reverse_proxy @sse` handler (it needs
-// `flush_interval -1`), separate from the catch-all proxy carrying the active /v1/healthz check.
-// Caddy keeps active health state per handler, so a stream proxy without its own check never
-// learns the upstream is down: during a rolling restart ordinary routes fail fast with 503 while
-// new streams still go to the dead listener. These tests pin that every proxy to the API carries
-// the same active health check, in both Caddyfiles.
+// The /v1/*/stream routes use their own `reverse_proxy @sse`, and Caddy keeps active health state per handler. A stream
+// proxy without its own check never learns the upstream is down, so every proxy to the API must carry the same active
+// health check in both Caddyfiles.
 
 // caddyAPIUpstream is the dial address every API proxy in the
 // Caddyfiles points at.
@@ -135,10 +130,9 @@ func TestCaddyStreamRoutesHonourUpstreamHealth(t *testing.T) {
 	}
 }
 
-// caddyRunLocal starts caddy on a rendered copy of the Caddyfile served
-// over plain HTTP on a free loopback port, proxying to upstream, and
-// returns the base URL. HOME and the XDG dirs point into a temp dir so
-// caddy's autosave and storage never touch the real user profile.
+// caddyRunLocal starts caddy on a rendered Caddyfile copy over plain HTTP on a free loopback port, proxying to upstream,
+// and returns the base URL. HOME and the XDG dirs point into a temp dir so caddy's autosave and storage never touch the
+// real user profile.
 func caddyRunLocal(t *testing.T, caddyBin, path, upstream string) string {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

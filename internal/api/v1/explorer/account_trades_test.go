@@ -5,11 +5,9 @@ import (
 	"time"
 )
 
-// TestAccountTradesGate_ShedsRatherThanHoldingThePool pins that the route cannot occupy more than
-// its share of the shared Postgres pool. ListAccountTrades takes ~10s for an account without a
-// full page of recent trades (taker/maker are not compression segmentby keys), and the pool is
-// 25 connections for the whole API, so a trickle the anonymous rate limiter permits could hold all
-// of it. The gate is what bounds it.
+// Pins that the route cannot take more than its share of the shared 25-connection Postgres pool: ListAccountTrades takes
+// ~10s without a full page of recent trades (taker/maker aren't segmentby keys), so an anonymous trickle could hold it
+// all.
 func TestAccountTradesGate_ShedsRatherThanHoldingThePool(t *testing.T) {
 	if cap(accountTradesGate) == 0 {
 		t.Fatal("accountTradesGate is unbuffered — every request would serialise")

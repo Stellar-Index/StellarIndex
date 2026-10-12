@@ -16,10 +16,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// These tests pin GET /v1/network/throughput: the year-window FINAL scan never runs on a request
-// deadline. A warm entry is sliced, a stale one is SERVED (flags.stale, real as_of) while ONE
-// detached refresh runs, a saturated gate degrades to stale rather than erroring, and prewarm
-// warms the exact entry the handler reads.
+// Pins GET /v1/network/throughput: the year-window FINAL scan never runs on a request deadline. Warm entries are sliced,
+// stale ones served (flags.stale, real as_of) during one detached refresh, a saturated gate degrades to stale, and
+// prewarm warms the exact entry the handler reads.
 
 // throughputReader is a capReader whose NetworkThroughput is countable,
 // controllable, and records the window argument each caller passed (the
@@ -185,10 +184,8 @@ func TestNetworkThroughputCached_SingleFlightCollapsesColdCallers(t *testing.T) 
 	}
 }
 
-// TestNetworkThroughputCached_SaturatedGateServesStale pins the
-// backpressure contract: with the shared detached-refresh gate full the
-// refresh is SKIPPED (not queued), a cached entry keeps serving, and only
-// a stone-cold process surfaces the retryable saturation sentinel.
+// Backpressure contract: with the shared detached-refresh gate full the refresh is skipped (not queued), a cached entry
+// keeps serving, and only a stone-cold process surfaces the retryable saturation sentinel.
 func TestNetworkThroughputCached_SaturatedGateServesStale(t *testing.T) {
 	h, reader := newThroughputHandler()
 	gate := h.detachedGate()
@@ -229,10 +226,8 @@ func TestNetworkThroughputCached_SaturatedGateServesStale(t *testing.T) {
 	}
 }
 
-// TestNetworkThroughputCached_SlicesTailOfMaxWindow proves the
-// one-entry-serves-every-window design: an N-day request is the LAST N
-// buckets of the cached max-window series (identical to what a direct
-// N-day query returns), and an over-wide request gets everything cached.
+// One entry serves every window: an N-day request is the last N buckets of the cached max-window series (identical to a
+// direct N-day query), and an over-wide request gets everything cached.
 func TestNetworkThroughputCached_SlicesTailOfMaxWindow(t *testing.T) {
 	h, _ := newThroughputHandler()
 	full := throughputSeries(networkThroughputMaxWindowDays)
@@ -253,10 +248,8 @@ func TestNetworkThroughputCached_SlicesTailOfMaxWindow(t *testing.T) {
 	}
 }
 
-// TestPrewarmNetworkThroughput_WarmsTheEntryTheHandlerReads is the
-// arg-parity guard (feedback_prewarm_handler_drift): the prewarm pass and
-// the request path must warm/read the SAME entry with the SAME window
-// argument, or the prewarm is a phantom that warms a slot nobody hits.
+// Arg-parity guard: the prewarm pass and the request path must warm/read the same entry with the same window argument,
+// or the prewarm is a phantom warming a slot nobody hits.
 func TestPrewarmNetworkThroughput_WarmsTheEntryTheHandlerReads(t *testing.T) {
 	h, reader := newThroughputHandler()
 
@@ -296,10 +289,9 @@ func TestPrewarmNetworkThroughput_WarmsTheEntryTheHandlerReads(t *testing.T) {
 	h.PrewarmNetworkThroughput(cancelled)
 }
 
-// TestNetworkThroughput_PartialIsReadFromTheBucketNotWallClock: `partial` is derived from the
-// query's own max(close_time) and passed through verbatim, never recomputed against the server
-// clock. A bucket whose day rolled over by that clock may still be incomplete (a cache entry past
-// its TTL, a peer region ahead), and a wall-clock recompute would silently clear it.
+// `partial` is derived from the query's own max(close_time) and passed through verbatim, never recomputed against the
+// server clock. A bucket whose day rolled over by that clock may still be incomplete (stale cache entry, peer region
+// ahead); a recompute would clear it.
 func TestNetworkThroughput_PartialIsReadFromTheBucketNotWallClock(t *testing.T) {
 	h, _ := newThroughputHandler()
 	h.ParseWindowDays = func(_ http.ResponseWriter, _ *http.Request, def int) (int, bool) { return def, true }
@@ -334,10 +326,9 @@ func TestNetworkThroughput_PartialIsReadFromTheBucketNotWallClock(t *testing.T) 
 	}
 }
 
-// TestNetworkThroughput_FeePoolAdjustmentOnP24UpgradeDay pins the fee-burn correction at ledger
-// 59,501,299: pubnet's P24 upgrade credited the fee pool with stroops no transaction paid, so that
-// day's fee_pool delta minus fee_pool_adjustment equals the fees actually burned. Another network
-// without the 23-to-24 transition carries no adjustment.
+// Pins the fee-burn correction at ledger 59,501,299: pubnet's P24 upgrade credited the fee pool with stroops no
+// transaction paid, so that day's fee_pool delta minus fee_pool_adjustment is the fees burned. Other networks carry
+// none.
 func TestNetworkThroughput_FeePoolAdjustmentOnP24UpgradeDay(t *testing.T) {
 	h, _ := newThroughputHandler()
 	h.ParseWindowDays = func(_ http.ResponseWriter, _ *http.Request, def int) (int, bool) { return def, true }

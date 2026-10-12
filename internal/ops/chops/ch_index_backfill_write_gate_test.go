@@ -24,10 +24,8 @@ var indexBackfillSubcommands = []string{
 	"ch-instance-backfill",
 }
 
-// TestIndexBackfills_RefuseWithoutAStatedMode: a run naming neither -write
-// nor -dry-run is refused before any ClickHouse contact, so a scripted
-// caller assuming write-by-default fails loudly
-// instead of previewing and exiting 0.
+// TestIndexBackfills_RefuseWithoutAStatedMode: a run naming neither -write nor -dry-run is refused before any ClickHouse
+// contact, so a scripted caller assuming write-by-default fails loudly instead of previewing and exiting 0.
 func TestIndexBackfills_RefuseWithoutAStatedMode(t *testing.T) {
 	for _, verb := range indexBackfillSubcommands {
 		err := Run([]string{verb, "-ch-addr", "127.0.0.1:1", "-from", "2", "-to", "3"})
@@ -37,10 +35,9 @@ func TestIndexBackfills_RefuseWithoutAStatedMode(t *testing.T) {
 	}
 }
 
-// TestIndexBackfills_DryRunWritesNothing is the behavioural half: with the
-// range resolvable (stubbed lake tip), -dry-run returns nil without the fill
-// ever dialling ClickHouse, while -write reaches the fill and fails against
-// an address nothing listens on.
+// TestIndexBackfills_DryRunWritesNothing is the behavioural half: with a resolvable range (stubbed lake tip), -dry-run
+// returns nil without dialling ClickHouse, while -write reaches the fill and fails against an address nothing listens
+// on.
 func TestIndexBackfills_DryRunWritesNothing(t *testing.T) {
 	orig := contiguousLakeTip
 	contiguousLakeTip = func(context.Context, string, uint32) (uint32, error) { return 1_000, nil }
@@ -58,10 +55,8 @@ func TestIndexBackfills_DryRunWritesNothing(t *testing.T) {
 	}
 }
 
-// TestLakeBackfills_BuildTheirFlagSetWithTheWriteGate is the structural guard
-// for the next windowed backfill: any chops file that calls a
-// clickhouse.Backfill* writer must build its FlagSet through the shared
-// fail-closed gate.
+// TestLakeBackfills_BuildTheirFlagSetWithTheWriteGate is the structural guard for the next windowed backfill:
+// any chops file calling a clickhouse.Backfill* writer must build its FlagSet through the shared fail-closed gate.
 func TestLakeBackfills_BuildTheirFlagSetWithTheWriteGate(t *testing.T) {
 	files, err := filepath.Glob("*.go")
 	if err != nil {

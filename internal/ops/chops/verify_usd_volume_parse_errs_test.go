@@ -9,11 +9,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestUsdVolumeTotalViolations_CountsParseErrs pins: a group
-// ClassifyUSDVolumeTier can't parse was printed as "UNCLASSIFIABLE" but
-// never added to the violation count, so a day with nothing but
-// unclassifiable groups exited 0 — a mis-spelled asset id on a landed
-// trade left the judged population silently.
+// A group ClassifyUSDVolumeTier cannot parse must count as a violation: a day of only unclassifiable groups must not
+// exit 0, or a mis-spelled asset id on a landed trade silently leaves the judged population.
 func TestUsdVolumeTotalViolations_CountsParseErrs(t *testing.T) {
 	got := usdVolumeTotalViolations(0, 0, 3)
 	if got != 3 {
@@ -24,10 +21,8 @@ func TestUsdVolumeTotalViolations_CountsParseErrs(t *testing.T) {
 	}
 }
 
-// TestClassifyExactTierGroups_UnclassifiableCountsAsParseErr exercises the
-// classify loop directly: a group whose base asset id ClassifyUSDVolumeTier
-// rejects must be surfaced in parseErrs even though it never reaches the
-// exact-tier judgement (TierEstimated on an error is not .Exact()).
+// A group whose base asset id ClassifyUSDVolumeTier rejects must surface in parseErrs even though it never reaches the
+// exact-tier judgement (TierEstimated on error is not .Exact()).
 func TestClassifyExactTierGroups_UnclassifiableCountsAsParseErr(t *testing.T) {
 	spec, err := timescale.NewUSDVolumeQuoteSpec(nil, nil)
 	if err != nil {

@@ -19,10 +19,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// From P23 on, the cap67 archive carries transfers through its watermark and mint, burn and
-// clawback over its recorded supply range only, the Postgres tail above it `transfer` only, and no
-// epoch carries fees or order-book fills. The coverage note must say so rather than let a partial
-// feed, or a ?kind= filter that silently stops at P23, read as complete.
+// From P23 the cap67 archive carries transfers through its watermark and mint/burn/clawback over its recorded supply
+// range only; the Postgres tail above carries transfer only; no epoch carries fees or order-book fills. The coverage
+// note must say so rather than let a partial feed or a ?kind= filter stopping at P23 read as complete.
 
 // TestAccountMovements_CoverageNoteDisclosesKindGap: an unfiltered feed's
 // note must name the kinds that are absent, at both archive states.
@@ -68,10 +67,8 @@ func TestAccountMovements_TransferKindKeepsArchiveNote(t *testing.T) {
 	}
 }
 
-// TestAccountMovements_SupplyKindNoteNamesArchiveRange: with the supply range
-// recorded from P23, the note names P23..watermark rather than claiming the
-// kind stops at P23 — and with no archive it says no post-P23 row of that
-// kind is served.
+// With the supply range recorded from P23 the note names P23..watermark rather than claiming the kind stops at P23; with
+// no archive it says no post-P23 row of that kind is served.
 func TestAccountMovements_SupplyKindNoteNamesArchiveRange(t *testing.T) {
 	base := timescale.SEP41MovementsFloorLedger
 	wm := base + 1000
@@ -116,10 +113,8 @@ func TestMovementsCoverageNote_SupplyKindsBoundedByWatermark(t *testing.T) {
 	}
 }
 
-// TestAccountMovements_SupplyNoteStopsAtTheRecordedRange: a deployment whose
-// watermark was advanced before the supply kinds joined the derive has them
-// only from the recorded supply floor. Neither note may claim P23 coverage
-// for them, and neither may run past the page's watermark.
+// A deployment whose watermark advanced before the supply kinds joined the derive has them only from the recorded supply
+// floor. Neither note may claim P23 coverage for them, and neither may run past the page's watermark.
 func TestAccountMovements_SupplyNoteStopsAtTheRecordedRange(t *testing.T) {
 	base := timescale.SEP41MovementsFloorLedger
 	wm, supplyFrom := base+1000, base+600
@@ -205,10 +200,8 @@ func TestMovementsCoverage_StructuredKinds(t *testing.T) {
 	}
 }
 
-// TestAccountMovements_StaleWhenArchiveTrailsLake pins this: the feed's
-// all-assets boundary is the cap67 derive watermark, so a derive that
-// stopped (or is parked at a lake hole) while the lake moved on must raise
-// flags.stale — it was hardcoded false.
+// The feed's all-assets boundary is the cap67 derive watermark, so a derive that stopped or is parked at a lake hole
+// while the lake moved on must raise flags.stale (it was hardcoded false).
 func TestAccountMovements_StaleWhenArchiveTrailsLake(t *testing.T) {
 	wm := timescale.SEP41MovementsFloorLedger + 10_000
 	if _, stale := movementsEnvelope(t, wm, wm+10*cap67MovementsStaleLedgers); !stale {
@@ -262,10 +255,8 @@ func TestAccountMovements_MaxUint32PinDoesNotDoubleList(t *testing.T) {
 	}
 }
 
-// TestAccountMovements_PinBelowFloorDoesNotHidePreP23Archive: a pin below
-// the P23 boundary must not lower the CH ceiling beneath the classic
-// archive's range — PG is floored at P23 regardless, so every ledger in
-// (pin, P23) would be served by neither arm.
+// A pin below the P23 boundary must not lower the CH ceiling beneath the classic archive's range: PG is floored at P23
+// regardless, so every ledger in (pin, P23) would be served by neither arm.
 func TestAccountMovements_PinBelowFloorDoesNotHidePreP23Archive(t *testing.T) {
 	base := timescale.SEP41MovementsFloorLedger
 	preP23 := base - 10
@@ -421,10 +412,8 @@ func TestAccountMovements_AssetFilterScopesPostgresTailBeforeLimit(t *testing.T)
 	}
 }
 
-// TestAccountMovements_WatermarkReadError_DoesNotDoubleServe: on a cap67 watermark read error with
-// a POPULATED archive, the CH arm must be clamped to the static P23 boundary so its post-P23
-// cap67_derived rows are not served alongside the Postgres tail's identical rows (wm=0 disabling
-// the trim would emit the same transfer twice).
+// On a cap67 watermark read error with a populated archive, the CH arm must be clamped to the static P23 boundary so its
+// post-P23 cap67_derived rows aren't served alongside the Postgres tail's identical rows (wm=0 would double-emit).
 func TestAccountMovements_WatermarkReadError_DoesNotDoubleServe(t *testing.T) {
 	floor := timescale.SEP41MovementsFloorLedger
 	postP23 := floor + 100 // a real cap67_derived movement above the P23 boundary
@@ -520,10 +509,8 @@ func TestAccountMovements_PaginationPinsWatermark(t *testing.T) {
 	}
 }
 
-// TestAccountMovements_CeilingIsAppliedBeforeTheLimit is the
-// regression: with a cap67 watermark below the account's newest rows, a
-// first page must come back FULL of rows at-or-below the watermark and
-// carry a next_cursor, instead of being emptied by a post-read trim.
+// With a cap67 watermark below the account's newest rows, the first page must come back full of rows at or below the
+// watermark and carry a next_cursor, not be emptied by a post-read trim.
 func TestAccountMovements_CeilingIsAppliedBeforeTheLimit(t *testing.T) {
 	const limit = accountMovementsDefaultLimit // what the probe handler's ParseLimit returns
 	base := timescale.SEP41MovementsFloorLedger
@@ -584,11 +571,9 @@ func TestAccountMovements_CeilingIsAppliedBeforeTheLimit(t *testing.T) {
 	}
 }
 
-// TestAccountMovements_GenesisFloorFailsClosed pins the ceiling's set-signal: a deployment with
-// the movements floor at genesis (testnet/futurenet, InstallMovementsFloor(1)) computes a ceiling
-// of 0 when the cap67 watermark is absent or unreadable, and must then serve NOTHING from the
-// ClickHouse arm because the Postgres tail covers the whole net. A `MaxLedger > 0` sentinel
-// instead of an explicit HasMaxLedger drops the predicate at that ceiling and double-lists.
+// Pins the ceiling's set-signal: with the movements floor at genesis (testnet/futurenet, InstallMovementsFloor(1)) the
+// ceiling is 0 when the watermark is absent or unreadable, and the CH arm must then serve nothing (PG covers the whole
+// net). A MaxLedger > 0 sentinel instead of an explicit HasMaxLedger drops the predicate and double-lists.
 func TestAccountMovements_GenesisFloorFailsClosed(t *testing.T) {
 	timescale.InstallMovementsFloor(1)
 	t.Cleanup(func() { timescale.InstallMovementsFloor(0) })

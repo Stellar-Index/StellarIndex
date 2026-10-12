@@ -290,10 +290,8 @@ func TestAsset_JSON_rejectsNonStringNonObject(t *testing.T) {
 }
 
 func TestAsset_JSON_rejectsNull(t *testing.T) {
-	// JSON null parses the empty string via the `try string first`
-	// branch, which then fails ParseAsset("") → empty-asset error.
-	// Confirm the error path is taken rather than silently producing
-	// a zero-value Asset.
+	// JSON null parses as the empty string via the string-first branch, then ParseAsset("") must fail with an empty-asset
+	// error. Confirms the error path is taken rather than silently yielding a zero-value Asset.
 	var a c.Asset
 	if err := json.Unmarshal([]byte(`null`), &a); err == nil {
 		t.Errorf("expected error for null input, got %+v", a)
@@ -332,10 +330,9 @@ func TestAsset_SQL_valueScan(t *testing.T) {
 		t.Fatalf("scan bytes: got %+v", d)
 	}
 
-	// Scan NULL → error, and the receiver is left untouched. This must not be inverted:
-	// Scan(nil) returning nil would let a NULL column become an Asset with Type=="" that
-	// survives every ==/Equal comparison. Value() refuses to write anything failing Validate,
-	// so a NULL in an asset column is a schema/query defect, not data.
+	// Scan NULL must error and leave the receiver untouched; do not invert. Returning nil would let a NULL column become an
+	// Asset with Type=="" surviving every ==/Equal check. Value() refuses anything failing Validate, so a NULL asset column
+	// is a schema/query defect.
 	e := a
 	if err := e.Scan(nil); err == nil {
 		t.Fatal("Scan(nil) returned nil — a SQL NULL must not silently become a zero Asset")
@@ -422,11 +419,9 @@ func TestAsset_Value_zeroValueRejected(t *testing.T) {
 	}
 }
 
-// Asset.Scan against a NULL source must ERROR and leave the receiver untouched. Returning nil
-// would produce an Asset with Type=="" that reads as valid everywhere except Validate. Value()
-// will not write such an Asset, so a NULL can only be a schema/query defect (a LEFT JOIN that
-// missed); failing closed surfaces it at the read. A genuinely nullable column must be scanned
-// through sql.NullString + ParseAsset.
+// Asset.Scan on a NULL source must error and leave the receiver untouched, surfacing defects such as a missed LEFT JOIN
+// at the read. Returning nil would give a Type=="" Asset that looks valid except to Validate. A nullable column must
+// scan via sql.NullString + ParseAsset.
 func TestAsset_Scan_nullIsAnError(t *testing.T) {
 	a := c.NativeAsset()
 	err := a.Scan(nil)

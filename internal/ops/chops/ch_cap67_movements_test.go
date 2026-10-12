@@ -64,10 +64,8 @@ func cap67TransferEvent(t *testing.T, sep0011 string) events.Event {
 	}
 }
 
-// TestCap67MovementFromEvent_NativeClassic — the founding case:
-// a native-XLM CAP-67 transfer, emitted by the
-// deliberately-unwatched native SAC, must decode into a movement with
-// asset "native" and cap67 provenance.
+// TestCap67MovementFromEvent_NativeClassic: a native-XLM CAP-67 transfer from the deliberately-unwatched native SAC
+// decodes into a movement with asset "native" and cap67 provenance.
 func TestCap67MovementFromEvent_NativeClassic(t *testing.T) {
 	dec := sep41.NewUngatedDecoder()
 	ev := cap67TransferEvent(t, "native")
@@ -128,10 +126,9 @@ func TestCap67AssetName(t *testing.T) {
 	}
 }
 
-// TestCap67AssetName_SpoofedTopicRendersAsEmitter — any contract can emit a
-// 4-topic transfer whose trailing topic names a trusted asset. The label is
-// trusted only when the emitter IS that asset's SAC; otherwise the row is the
-// emitting contract's own token, never the asset it impersonates.
+// TestCap67AssetName_SpoofedTopicRendersAsEmitter: any contract can emit a 4-topic transfer whose last topic names a
+// trusted asset. The label is trusted only when the emitter IS that asset's SAC; otherwise the row is the emitter's own
+// token.
 func TestCap67AssetName_SpoofedTopicRendersAsEmitter(t *testing.T) {
 	canonical.InstallNetworkPassphrase("")
 	for _, tc := range []struct {

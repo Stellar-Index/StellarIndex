@@ -46,10 +46,8 @@ func TestEmitMarkdown_hasGeneratedBanner(t *testing.T) {
 	}
 }
 
-// TestDescribe_durationFieldTypeLabel pins that a time.Duration field
-// must render as "duration" in the generated reference, not the underlying
-// Kind's "int64" (an operator-facing lie about the accepted TOML shape,
-// e.g. "30m").
+// A time.Duration field must render as "duration" in the generated reference, not "int64". The latter misstates the
+// accepted TOML shape (e.g. "30m").
 func TestDescribe_durationFieldTypeLabel(t *testing.T) {
 	fields := cfg.Describe()
 	for _, f := range fields {
@@ -63,10 +61,8 @@ func TestDescribe_durationFieldTypeLabel(t *testing.T) {
 	t.Fatal("storage.background_statement_timeout not found in Describe() output")
 }
 
-// TestDescribe_explicitEmptyDefaultIsNotRequired pins that a field
-// tagged `default:""` documents an intentional empty default, distinct
-// from a field with no `default` tag at all. Both must not be reported as
-// Required — a real config with the field left unset is valid.
+// A field tagged `default:""` documents an intentional empty default, distinct from no tag. Neither is Required: a
+// config leaving it unset is valid.
 func TestDescribe_explicitEmptyDefaultIsNotRequired(t *testing.T) {
 	fields := cfg.Describe()
 	for _, f := range fields {
@@ -99,10 +95,8 @@ func TestDefault_isValidShape(t *testing.T) {
 	}
 }
 
-// TestDefaultPricingGuard_MatchesPricingguardConstants pins the config
-// defaults — Default() always supplies them, so they are the floors every
-// deployment runs — to the pricingguard constants carrying the rationale.
-// Checked on the effective policy so units are covered too.
+// Config defaults, which Default() always supplies and so are the floors every deployment runs, must match the
+// pricingguard constants carrying the rationale. Checked on the effective policy so units are covered too.
 func TestDefaultPricingGuard_MatchesPricingguardConstants(t *testing.T) {
 	pg := cfg.Default().PricingGuard
 	assertDefaultSubstancePolicy(t, "Default()", pg)
@@ -133,12 +127,9 @@ func assertDefaultSubstancePolicy(t *testing.T, label string, pg cfg.PricingGuar
 	}
 }
 
-// TestPricingGuard_RejectsUnsatisfiableOrOverflowingSubstance: a span floor above what the
-// window's closed buckets can span, a bucket floor above the count they can hold, or a window
-// that wraps time.Duration must fail the load. The first two silently withhold every pair, the
-// last silently serves every pair unguarded. Off a minute boundary a 24h window holds 1439
-// closed buckets spanning 1438 minutes, so 1440 buckets or a 1439-minute span clear only on a
-// read landing exactly on the minute.
+// Reject at load: a span floor above what closed buckets can span, a bucket floor above their count, or a wrapping
+// Duration. The first two silently withhold every pair, the last serves every pair unguarded. Off a minute boundary a
+// 24h window holds 1439 closed buckets spanning 1438 minutes.
 func TestPricingGuard_RejectsUnsatisfiableOrOverflowingSubstance(t *testing.T) {
 	reject := map[string]string{
 		"span equals default window":   "substance_min_span_minutes = 1440",

@@ -7,10 +7,8 @@ import (
 	c "github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// TestIsKnownFiat_AllowList exercises the ADR-0010 allow-list. Each
-// row must round-trip — adding a new code is a one-line append in
-// asset_fiat.go's knownFiatCodes map; this test catches typos
-// (lowercase, accidental whitespace, wrong length).
+// Exercises the ADR-0010 fiat allow-list; each row must round-trip. Catches typos (lowercase, stray whitespace, wrong
+// length) in knownFiatCodes in asset_fiat.go.
 func TestIsKnownFiat_AllowList(t *testing.T) {
 	t.Run("known codes pass", func(t *testing.T) {
 		// Sample of the codes we explicitly committed to up front
@@ -61,10 +59,8 @@ func TestNewFiatAsset_HappyPath(t *testing.T) {
 	}
 }
 
-// TestNewFiatAsset_RejectsUnknown — the constructor is the
-// boundary that prevents an operator from configuring an
-// off-allow-list code at startup. Errors MUST wrap
-// ErrInvalidAsset so callers can classify via errors.Is.
+// The constructor is the boundary stopping an operator configuring an off-allow-list code at startup. Errors must wrap
+// ErrInvalidAsset so callers can classify with errors.Is.
 func TestNewFiatAsset_RejectsUnknown(t *testing.T) {
 	_, err := c.NewFiatAsset("XYZ")
 	if err == nil {
@@ -75,10 +71,8 @@ func TestNewFiatAsset_RejectsUnknown(t *testing.T) {
 	}
 }
 
-// TestNewFiatAsset_RejectsCaseSensitive pins the contract: codes
-// must be uppercase. ISO-4217 codes are uppercase; permitting
-// case-insensitive input would mean two different config keys
-// (`fiat:usd` vs `fiat:USD`) silently route to the same asset.
+// Fiat codes must be uppercase (ISO-4217). Case-insensitive input would route `fiat:usd` and `fiat:USD` silently to the
+// same asset.
 func TestNewFiatAsset_RejectsCaseSensitive(t *testing.T) {
 	for _, code := range []string{"usd", "Usd", "USd"} {
 		_, err := c.NewFiatAsset(code)

@@ -11,10 +11,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// The XLM-BASE BOUND closes a class that can ship invisible:
-// estimated-tier rows whose base is XLM have a checkable anchor
-// (Σusd_volume ≈ Σbase/1e7 × XLM/USD), and a poisoned
-// row is 10×–10⁶× outside any honest tolerance.
+// The XLM-base bound catches invisible poisoning: estimated-tier rows with an XLM base have a checkable anchor
+// (Σusd_volume ≈ Σbase/1e7 × XLM/USD), and a poisoned row sits 10x to 10^6x outside any honest tolerance.
 func TestCheckXLMBaseBound(t *testing.T) {
 	spec, err := timescale.NewUSDVolumeQuoteSpec(nil, nil)
 	if err != nil {
@@ -86,10 +84,8 @@ func TestCheckXLMBaseBound(t *testing.T) {
 	})
 }
 
-// TestCheckXLMBaseBound_CEXScale — regression for the bound's first live run:
-// base-leg scale is a CONNECTOR property, and
-// off-chain CEX rows stamp 1e8 (not stroops). A hardcoded 1e7
-// would flag every honest kraken XLM/EUR day at ratio ≈ 0.100.
+// Base-leg scale is a CONNECTOR property: off-chain CEX rows stamp 1e8, not stroops (1e7). A hardcoded 1e7 would flag
+// every honest kraken XLM/EUR day at ratio about 0.100.
 func TestCheckXLMBaseBound_CEXScale(t *testing.T) {
 	spec, err := timescale.NewUSDVolumeQuoteSpec(nil, nil)
 	if err != nil {
@@ -116,10 +112,8 @@ func TestCheckXLMBaseBound_CEXScale(t *testing.T) {
 	}
 }
 
-// TestCheckXLMBaseBound_SubCentDust — after the restamp
-// every remaining violation had stored=0.00 and expected≈0.00, ratios that
-// are sub-cent quantisation rather than valuation error. Those are exempt;
-// a breach with a cent on EITHER side must still count at any group size.
+// Remaining violations with stored=0.00 and expected about 0.00 are sub-cent quantisation, not valuation error, and are
+// exempt; a breach with a cent on EITHER side must still count at any group size.
 func TestCheckXLMBaseBound_SubCentDust(t *testing.T) {
 	spec, err := timescale.NewUSDVolumeQuoteSpec(nil, nil)
 	if err != nil {
@@ -168,11 +162,9 @@ func TestCheckXLMBaseBound_SubCentDust(t *testing.T) {
 	}
 }
 
-// TestCheckXLMQuoteBound is [TestCheckXLMBaseBound]'s mirror:
-// checkXLMBaseBound can never match a group whose XLM leg is the QUOTE
-// side (-tier xlm-quote), so without this bound a 10x-off xlm-quote rewrite
-// would report 0 violations from the "acceptance:" verify-usd-volume run
-// the tool itself prints after every estimated-tier restamp.
+// Mirror of the base bound for groups whose XLM leg is the QUOTE side (-tier xlm-quote), which checkXLMBaseBound can
+// never match; without it a 10x-off xlm-quote rewrite would report 0 violations in the tool's own post-restamp
+// acceptance run.
 func TestCheckXLMQuoteBound(t *testing.T) {
 	spec, err := timescale.NewUSDVolumeQuoteSpec(nil, nil)
 	if err != nil {

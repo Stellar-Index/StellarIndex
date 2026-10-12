@@ -6,15 +6,8 @@ import (
 	"testing"
 )
 
-// TestAssetLookup_UnmarshalJSON_BothBranches decodes real
-// kind:"stellar_asset" and kind:"catalogue" fixtures through
-// AssetLookup and confirms each branch populates the right accessor.
-// This is the plan's option (b) for the contract-test harness: the
-// generic reflection-based TestSDKSchemasMatchSpec check (in
-// spec_contract_test.go) can't walk AssetLookup's hand-written
-// UnmarshalJSON/MarshalJSON, so the "Asset" coveredOperations entry
-// there sets payload:nil and both branches are exercised directly
-// here instead.
+// Decodes real stellar_asset and catalogue fixtures through AssetLookup and checks each branch fills the right accessor.
+// TestSDKSchemasMatchSpec can't walk AssetLookup's hand-written (Un)MarshalJSON, so both branches are exercised here.
 func TestAssetLookup_UnmarshalJSON_BothBranches(t *testing.T) {
 	t.Run("stellar_asset branch", func(t *testing.T) {
 		const body = `{
@@ -97,16 +90,9 @@ func TestAssetLookup_UnmarshalJSON_BothBranches(t *testing.T) {
 		}
 	})
 
-	// This is the SDK bug ADR-0042's AssetLookup union prevents,
-	// pinned as a regression test. Client.Asset() decoding
-	// unconditionally into Envelope[AssetDetail] means a catalogue-slug
-	// response would "succeed" with AssetDetail's required fields
-	// (AssetID, Type, Code, Decimals, Sep1Status) silently left at
-	// their zero value — no error, no signal. The first sub-test
-	// below proves that failure mode is real (plain json.Unmarshal
-	// into AssetDetail "succeeds" on a catalogue payload); the
-	// second proves AssetLookup makes it structurally impossible to
-	// mistake one branch for the other.
+	// Regression for the bug ADR-0042's AssetLookup union prevents: decoding a catalogue-slug response into AssetDetail
+	// "succeeds" with required fields silently zero. Sub-test 1 shows that failure mode; sub-test 2 shows AssetLookup rules
+	// it out.
 	t.Run("silent-zero-fill bug is real for a bare AssetDetail decode", func(t *testing.T) {
 		const catalogueBody = `{
 			"kind": "catalogue",
@@ -122,10 +108,8 @@ func TestAssetLookup_UnmarshalJSON_BothBranches(t *testing.T) {
 		if direct.AssetID != "" || direct.Type != "" || direct.Decimals != 0 || direct.Sep1Status != "" {
 			t.Fatalf("test assumption broke: AssetDetail decoded non-zero required fields from a catalogue payload: %+v", direct)
 		}
-		// direct.err is nil above: encoding/json silently "succeeded"
-		// with a struct that has EVERY required field zero-valued.
-		// That's the bug. AssetLookup must refuse to hand this back
-		// as a StellarAsset().
+		// direct.err is nil: encoding/json "succeeded" with every required field zero-valued. That is the bug; AssetLookup must
+		// refuse to hand this back as a StellarAsset().
 		var lookup AssetLookup
 		if err := json.Unmarshal([]byte(catalogueBody), &lookup); err != nil {
 			t.Fatalf("AssetLookup.UnmarshalJSON: %v", err)
@@ -160,15 +144,9 @@ func TestAssetLookup_UnmarshalJSON_BothBranches(t *testing.T) {
 	})
 }
 
-// TestAssetLookup_SpecSchemaCoverage is belt-and-braces beyond
-// TestAssetLookup_UnmarshalJSON_BothBranches: for each branch,
-// every property the spec's schema documents (Asset / GlobalAssetView)
-// has a matching JSON tag on the Go struct that branch decodes into,
-// and vice versa. Reuses the same doc-loading + schema-resolution
-// helpers as TestSDKSchemasMatchSpec (spec_contract_test.go), which
-// can't run this check itself because AssetLookup isn't a plain
-// struct with static JSON tags (see the payload:nil note on the
-// "Asset" coveredOperations entry).
+// Beyond UnmarshalJSON_BothBranches: per branch, every property the spec schema documents has a matching JSON tag on the
+// Go struct, and vice versa. Needed because TestSDKSchemasMatchSpec can't check AssetLookup (not a plain static-tag
+// struct).
 func TestAssetLookup_SpecSchemaCoverage(t *testing.T) {
 	doc := loadSpec(t)
 	for _, tc := range []struct {

@@ -111,10 +111,8 @@ func snapshotRows() []timescale.AssetRow {
 	}
 }
 
-// TestAssetsListingSnapshotKeyIsStable is the golden-key test ADR-0007
-// asks of every key family: the wire shape is pinned so a refactor
-// cannot silently move the namespace and orphan every snapshot the
-// running fleet wrote.
+// TestAssetsListingSnapshotKeyIsStable is the ADR-0007 golden-key test: the wire shape is pinned so a refactor cannot
+// move the namespace and orphan every snapshot the running fleet wrote.
 func TestAssetsListingSnapshotKeyIsStable(t *testing.T) {
 	got := assetsListingSnapshotRedisKey(51, timescale.AssetsOrderVolume24hUSDDesc).String()
 	fp := assetRowSchemaFingerprint()
@@ -187,10 +185,8 @@ func TestSeedAssetListingsFromSnapshotsRemovesTheColdRead(t *testing.T) {
 	}
 }
 
-// TestSeedAssetListingsColdRedisDegradesToTodaysBehaviour — requirement
-// 3 of the fix: an empty Redis (first deploy, flushed cache) must seed
-// nothing, report it, and leave the reader exactly as it was, still
-// able to serve from upstream.
+// TestSeedAssetListingsColdRedisDegradesToTodaysBehaviour: an empty Redis (first deploy, flushed cache) must seed
+// nothing, report it, and leave the reader serving from upstream as before.
 func TestSeedAssetListingsColdRedisDegradesToTodaysBehaviour(t *testing.T) {
 	snaps, _ := newTestSnapshots(t)
 	up := &snapshotStubReader{}
@@ -251,10 +247,8 @@ func TestSeedAssetListingsNilStoreIsSafe(t *testing.T) {
 	}
 }
 
-// TestSeedAssetListingsRefusesOverAgeSnapshot — the freshness bound.
-// /v1/assets rows carry price_usd, market_cap and the change pills, so
-// past assetsListingSeedMaxAge the right answer is to pay the cold
-// query, not to republish an old valuation under a stale flag.
+// TestSeedAssetListingsRefusesOverAgeSnapshot: /v1/assets rows carry price_usd, market_cap and change pills, so past
+// assetsListingSeedMaxAge the cold query is paid rather than republishing an old valuation under a stale flag.
 func TestSeedAssetListingsRefusesOverAgeSnapshot(t *testing.T) {
 	snaps, _ := newTestSnapshots(t)
 	ctx := context.Background()
@@ -277,10 +271,8 @@ func TestSeedAssetListingsRefusesOverAgeSnapshot(t *testing.T) {
 	}
 }
 
-// TestSnapshotsAreNeverLaunderedFresh pins that the prewarm stamps the observation time from
-// ListAssetsExtAt, not the write time. Otherwise a stale page-set would have its age reset every
-// cycle and assetsListingSeedMaxAge would never fire. A re-persisted stale entry must carry the
-// original time.
+// TestSnapshotsAreNeverLaunderedFresh: the prewarm must stamp the observation time from ListAssetsExtAt, not the write
+// time, or a stale page-set would have its age reset each cycle and assetsListingSeedMaxAge would never fire.
 func TestSnapshotsAreNeverLaunderedFresh(t *testing.T) {
 	snaps, _ := newTestSnapshots(t)
 	ctx := context.Background()
@@ -375,10 +367,8 @@ func TestSnapshotSchemaFingerprintKeysOutIncompatibleRows(t *testing.T) {
 	}
 }
 
-// TestSnapshotRoundTripPreservesNullableColumns — AssetRow is mostly
-// pointer fields (a nil price is NOT a zero price), so the JSON hop has
-// to preserve the null/zero distinction or the seed would publish
-// "$0.00" where the real answer is "no price".
+// AssetRow is mostly pointer fields (a nil price is not a zero price), so the JSON hop must keep null distinct from zero.
+// Otherwise the seed would publish "$0.00" where the real answer is "no price".
 func TestSnapshotRoundTripPreservesNullableColumns(t *testing.T) {
 	snaps, _ := newTestSnapshots(t)
 	ctx := context.Background()

@@ -17,17 +17,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker/guardscan"
 )
 
-// The lake-flows supply cache (internal/api/v1/classic_lake_supply.go) otherwise warms only from
-// requests, so an idle service never converges and listings fall back to the trustline-only sum,
-// which cannot see supply held in claimable balances, LP reserves or SAC contract_data.
-//
-// The fill's behaviour is tested in classic_lake_supply_prewarm_test.go. This package owns two
-// wiring properties:
-//
-//  1. It runs at boot rather than one cadence later (as for
-//     TestPrewarmCaches_FiresBothPassesBeforeTheFirstTick).
-//  2. It asks about the population the listing actually serves; the prewarm and the handler
-//     compute their arguments independently and can drift.
+// The lake-flows supply cache (internal/api/v1/classic_lake_supply.go) otherwise warms only from requests, so listings
+// fall back to the trustline-only sum, blind to claimable balances, LP reserves and SAC contract_data. Pinned here: it
+// runs at boot, and asks about the population the listing serves.
 
 // bulkLakeStub is the token-supply reader with the bulk capability
 // classicLakeSupplyReader type-asserts for. Production:

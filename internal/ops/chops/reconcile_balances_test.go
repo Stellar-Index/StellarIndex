@@ -59,10 +59,9 @@ func TestXLMDecimalToStroops(t *testing.T) {
 	}
 }
 
-// TestXLMDecimalToStroops_NeverRoutesThroughFloat64 pins the exact-integer property that
-// motivates reusing scale.DecimalStringToScaledInt (ADR-0003): a value with more significant
-// digits than float64's 53-bit mantissa holds must still round-trip losslessly. This pins the
-// parser itself, independent of realistic XLM magnitudes.
+// Pins the exact-integer property behind reusing scale.DecimalStringToScaledInt (ADR-0003): a value with more
+// significant digits than float64's 53-bit mantissa must round-trip losslessly. This tests the parser itself,
+// independent of realistic XLM magnitudes.
 func TestXLMDecimalToStroops_NeverRoutesThroughFloat64(t *testing.T) {
 	// 2^53 + 1 = 9007199254740993 is the canonical "smallest integer a
 	// float64 cannot represent exactly" probe value.
@@ -207,10 +206,8 @@ func TestFetchHorizonNativeBalance_429ThenSuccess(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	// fetchHorizonNativeBalance's 429 branch really does sleep for the
-	// backoff duration (time.After, no injectable clock) — accept the
-	// one bounded 1s real sleep here rather than adding test-only clock
-	// plumbing to production code for a single retry test.
+	// fetchHorizonNativeBalance's 429 branch really sleeps for the backoff (time.After, no injectable clock); accept one
+	// bounded 1s sleep rather than add test-only clock plumbing to production code for a single retry test.
 	bal, status, err := fetchHorizonNativeBalance(context.Background(), srv.Client(), srv.URL, "GRATE")
 	if err != nil {
 		t.Fatalf("unexpected error after 429-then-200: %v", err)
@@ -347,10 +344,8 @@ func TestPrintReconcileReport_CountsErrors(t *testing.T) {
 	}
 }
 
-// TestPrintReconcileReport_StaleMergedHeld: a MERGED_OR_ABSENT account where we still hold a
-// positive balance must be counted separately (not folded into the report-only
-// MERGED_OR_ABSENT bucket), and one with a ZERO balance must NOT be counted, since showing
-// nothing for a gone account is the healthy shape.
+// A MERGED_OR_ABSENT account where we still hold a positive balance is counted separately, not folded into the report-
+// only bucket; one with a zero balance is not counted, since showing nothing for a gone account is the healthy shape.
 func TestPrintReconcileReport_StaleMergedHeld(t *testing.T) {
 	results := []reconcileResult{
 		{Account: "G1", Outcome: outcomeMergedOrAbsent, OurStroops: 0},   // healthy: nothing held
@@ -370,10 +365,9 @@ func TestPrintReconcileReport_StaleMergedHeld(t *testing.T) {
 	}
 }
 
-// TestReconcileExitError pins the consolidated exit decision at the
-// command level, including the error-rate branch, and the Horizon-split (truth
-// outages are outcomeTruthUnavailable and NOT in `errored`, so a Horizon rate-limit episode can't fail a healthy
-// -sample gate).
+// Pins the consolidated exit decision at command level, including the error-rate branch and the Horizon split: truth
+// outages are outcomeTruthUnavailable, not in `errored`, so a Horizon rate-limit episode cannot fail a healthy-sample
+// gate.
 func TestReconcileExitError(t *testing.T) {
 	cases := []struct {
 		name                              string

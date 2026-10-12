@@ -24,10 +24,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 )
 
-// ── mock identity-gated decoder ─────────────────────────────────────────────
-// Mirrors the aquarius/phoenix gate without XDR-heavy bodies, driving the real contractid.Registry
-// and gatedPrefilter: a "biz" event counts only from a registered contract, and a factory-only
-// "create" event registers the child named in its Value.
+// Mock identity-gated decoder mirroring the aquarius/phoenix gate: a "biz" event counts only from a registered contract,
+// and a factory-only "create" event registers the child named in its Value.
 
 const (
 	prefFactory = "CFACTORYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
@@ -132,16 +130,13 @@ func mockCreate(ledger uint32, factory, child string, eventIndex int) events.Eve
 	}
 }
 
-// TestGatedPrefilter_identicalCountsSelfSeedPreserved proves restricting the re-derive to a
-// factory-gated source's contract set gives identical per-ledger/kind counts to the whole-lake
-// stream. Non-vacuous: the prefilter excludes a real foreign look-alike row, still counts an
-// in-window child's events (self-seeding), and keeps the factory trust root streaming.
+// Restricting the re-derive to a factory-gated source's contract set gives per-ledger/kind counts identical to the
+// whole-lake stream. Non-vacuous: a foreign look-alike row is excluded, an in-window child still self-seeds, and the
+// factory root keeps streaming.
 func TestGatedPrefilter_identicalCountsSelfSeedPreserved(t *testing.T) {
 	const lo, hi = uint32(100), uint32(200)
-	// Order matters: the factory's create event (index 1, ledger 100) precedes
-	// the in-window child's business event (index 2, ledger 110), so the
-	// UNFILTERED stream self-seeds the child before counting it — the exact
-	// timing the prefilter must not disturb.
+	// Order matters: the factory's create (ledger 100) precedes the child's business event (ledger 110), so the unfiltered
+	// stream self-seeds the child before counting it; the prefilter must not disturb that timing.
 	evs := []events.Event{
 		mockBiz(100, prefSeed, 0),                  // curated seed member → counted
 		mockCreate(100, prefFactory, prefInWin, 1), // factory announces the in-window child
@@ -227,10 +222,8 @@ func TestGatedPrefilter_identicalCountsSelfSeedPreserved(t *testing.T) {
 	}
 }
 
-// TestSorocreditCatalogue_GatedNotRootPinned guards that sorocredit's
-// Matches admits registered Collateral children, so the catalogue must not
-// pin contractIDs to the root (a hard per-event filter in ch-rebuild /
-// ch-reproject and the re-derive prefilter) and must scope by the gated set.
+// sorocredit's Matches admits registered Collateral children, so the catalogue must not pin contractIDs to the root (a
+// hard per-event filter in ch-rebuild/ch-reproject and the re-derive prefilter); it must scope by the gated set.
 func TestSorocreditCatalogue_GatedNotRootPinned(t *testing.T) {
 	var src *reconSource
 	cat := builtCatalogue(t)
@@ -254,11 +247,9 @@ func TestSorocreditCatalogue_GatedNotRootPinned(t *testing.T) {
 	}
 }
 
-// TestGatedContractSet_realDecoders proves the REAL aquarius and phoenix
-// decoders enumerate their gate as factory-trust-root ∪ curated children — the
-// set gatedPrefilter scopes the lake read to. If a decoder's seed shrinks (or
-// the factory constant drifts) the prefilter would silently narrow and
-// undercount, so this pins the exact membership.
+// The real aquarius and phoenix decoders enumerate their gate as factory trust root plus curated children, the set
+// gatedPrefilter scopes to. A shrunken seed or drifted factory constant would silently narrow the prefilter and
+// undercount, so the membership is pinned exactly.
 func TestGatedContractSet_realDecoders(t *testing.T) {
 	aqSet := aquarius.NewDecoder().GatedContractSet()
 	aqHave := map[string]bool{}
@@ -292,11 +283,9 @@ func TestGatedContractSet_realDecoders(t *testing.T) {
 	}
 }
 
-// TestCatalogue_GatedPrefilterOptIn pins the exact opt-in set: aquarius, phoenix, soroswap and
-// sushiswap_v3 opt in; defindex must not (its decode correlates events across contracts in a tx,
-// which a contract-id prefilter would break), nor may a census, oracle or ContractCall source.
-// sushiswap_v3 qualifies because its decode is self-contained and its mint/burn symbols are
-// 33% and 12% of all pubnet contract events.
+// Pins the exact prefilter opt-in set: aquarius, phoenix, soroswap and sushiswap_v3; defindex must not (its decode
+// correlates events across contracts in a tx), nor any census, oracle or ContractCall source. sushiswap_v3 qualifies:
+// self-contained decode, mint/burn are 33%/12% of pubnet events.
 func TestCatalogue_GatedPrefilterOptIn(t *testing.T) {
 	cat, _, err := buildReconciliationCatalogue(config.Config{})
 	if err != nil {
@@ -323,10 +312,9 @@ func TestCatalogue_GatedPrefilterOptIn(t *testing.T) {
 	}
 }
 
-// blend is identity-gated (deploy only from a factory, everything else only
-// from a registered pool), so its prefilter is factories ∪ pools. The
-// catalogue must carry both factories and the deploy topic so gatedPrefilter's
-// walk picks up pools deployed after any static snapshot.
+// blend is identity-gated (deploy only from a factory, everything else only from a registered pool), so its prefilter is
+// factories plus pools. The catalogue must carry both factories and the deploy topic so gatedPrefilter's walk finds
+// pools deployed after any static snapshot.
 func TestCatalogue_BlendReDeriveIsContractScoped(t *testing.T) {
 	cat, _, err := buildReconciliationCatalogue(config.Config{})
 	if err != nil {
@@ -377,10 +365,8 @@ func TestGatedPrefilter_OversizedSetIsUnscoped(t *testing.T) {
 	}
 }
 
-// TestGatedPrefilter_PanicIsBlindNotCrash pins, for the aquarius /
-// phoenix prefilter walk: a creation event whose decoder panics must come
-// back as a blind spot (its child is unregistered on the expected side),
-// while the healthy child is still announced.
+// In the aquarius/phoenix prefilter walk, a creation event whose decoder panics must surface as a blind spot (its child
+// unregistered on the expected side) while the healthy child is still announced.
 func TestGatedPrefilter_PanicIsBlindNotCrash(t *testing.T) {
 	const badLedger = uint32(105)
 	evs := []events.Event{

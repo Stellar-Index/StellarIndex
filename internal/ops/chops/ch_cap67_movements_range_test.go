@@ -5,11 +5,9 @@ import (
 	"time"
 )
 
-// TestResolveStart pins the first-run clamp: a genesis floor of 1 against a lake that begins at
-// ledger 2 (ledger 1 is never exported) must start at 2, because ContiguousWatermark reads a
-// `from` the lake does not hold as a boundary hole and answers from-1 forever, leaving the
-// daemon idle without deriving a row. A resumed run and a pubnet floor above the lake's start
-// are unchanged.
+// TestResolveStart pins the first-run clamp: a genesis floor of 1 against a lake starting at ledger 2 must start at 2.
+// ContiguousWatermark treats a `from` the lake lacks as a boundary hole and answers from-1 forever, idling the daemon;
+// resumed runs and higher floors are unchanged.
 func TestResolveStart(t *testing.T) {
 	for _, tc := range []struct {
 		name               string
@@ -33,10 +31,8 @@ func TestResolveStart(t *testing.T) {
 	}
 }
 
-// TestFollowTick pins the idle backoff: the base tick through
-// cap67IdleBackoffAfter consecutive idle ticks (a live feed idles a few
-// ticks per ledger and must not slow down), doubling past that up to
-// cap67IdleMaxInterval, never below the base an operator asked for.
+// TestFollowTick pins the idle backoff: base tick through cap67IdleBackoffAfter idle ticks (a live feed idles a few
+// ticks per ledger), then doubling up to cap67IdleMaxInterval, never below the operator's base.
 func TestFollowTick(t *testing.T) {
 	const base = time.Second
 	for _, tc := range []struct {

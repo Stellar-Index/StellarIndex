@@ -164,13 +164,9 @@ func (r scriptRun) records() []scriptCall {
 	return out
 }
 
-// sequence renders the calls as a compact ordered trace, e.g.
-// "preflight@61000000 psql write@61000000 record@61000000".
-//
-// The four OPS modes are rendered apart because they are not interchangeable: `preflight@` asks,
-// `write@` re-derives, `record@` files an emptied window with the completeness verdict, and
-// `refresh@` re-materialises the trades continuous aggregates. Collapsing the last two into
-// `write@` would hide whether the script filed anything at all.
+// sequence renders the calls as an ordered trace, e.g. "preflight@61000000 psql write@61000000 record@61000000". The OPS
+// modes stay distinct: preflight asks, write re-derives, record files the emptied window, refresh re-materialises the
+// trades aggregates; merging record into write would hide whether anything was filed.
 func (r scriptRun) sequence() string {
 	var out []string
 	for _, c := range r.calls {
@@ -371,10 +367,9 @@ func TestCHRebuild_PreflightRunsTheNamedSourceGate(t *testing.T) {
 	}
 }
 
-// chRebuild needs Postgres and ClickHouse past the config load, so — like
-// the BackfillSafe legs — the preflight's POSITION is pinned at the source:
-// after the last refusal, before the first lake read. (It is executed for
-// real in test/integration/lake_test.go.)
+// chRebuild needs Postgres and ClickHouse past config load, so, like the BackfillSafe legs, the preflight's position is
+// pinned at the source: after the last refusal and before the first lake read. It is executed for real in
+// test/integration/lake_test.go.
 func TestCHRebuild_PreflightReturnsAfterEveryGuardAndBeforeTheLake(t *testing.T) {
 	t.Parallel()
 	b, err := os.ReadFile("ch_rebuild.go")

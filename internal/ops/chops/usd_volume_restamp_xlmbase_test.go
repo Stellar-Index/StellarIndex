@@ -10,10 +10,8 @@ import (
 	"time"
 )
 
-// TestCheckRestampLiveOverlap is the one-writer contract for a `trades` re-stamp.
-// `usd_volume` has one live writer, the indexer's ingest path at the ledgerstream cursor, and
-// a restamp is only legitimate BEHIND it: overlapping lets one writer's derive_generation
-// silently beat the other's value on a money column.
+// One-writer contract for a `trades` re-stamp: usd_volume's live writer is the indexer at the ledgerstream cursor, so a
+// restamp is legitimate only BEHIND it; overlap lets one derive_generation silently beat the other on a money column.
 func TestCheckRestampLiveOverlap(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -86,10 +84,8 @@ func caseValidateRestampTierFlags(t *testing.T) {
 	}
 }
 
-// TestParseMinRelDelta: the write filter is a fraction, and "no filter"
-// is the default — the anchor's number is a re-derivation of the correct
-// value, so leaving a row 0.5% wrong for tidiness is not the default
-// posture on a money column.
+// The write filter is a fraction and "no filter" is the default: the anchor re-derives the correct value, so leaving a
+// money row 0.5% wrong for tidiness is not the default posture.
 func TestParseMinRelDelta(t *testing.T) {
 	t.Parallel()
 	for _, empty := range []string{"", "  ", "0", "0.0"} {

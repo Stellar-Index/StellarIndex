@@ -14,10 +14,8 @@ type fakeLookup struct {
 	rows map[string]AccountObservationRow
 	err  error
 
-	// watermark is what the account OBSERVER has reached across all
-	// accounts — the freshness anchor. Distinct from any row's
-	// Ledger on purpose: the tests assert the anchor tracks this and NOT
-	// the per-account minimum.
+	// watermark is what the account OBSERVER has reached across all accounts, the freshness anchor; deliberately distinct
+	// from any row's Ledger, since the tests assert the anchor tracks this and NOT the per-account minimum.
 	watermark uint32
 }
 
@@ -55,10 +53,8 @@ func TestLCMReserveBalanceReader_HappyPath(t *testing.T) {
 	}
 }
 
-// TestLCMReserveBalanceReader_MissingAccountErrorsWithSentinel —
-// when any account has no observation, the reader returns
-// ErrNoObservation. The caller's chained-fallback handler keys
-// on errors.Is(err, ErrNoObservation) to drop to the static path.
+// When any account has no observation the reader returns ErrNoObservation; the caller's chained-fallback handler keys on
+// errors.Is(err, ErrNoObservation) to drop to the static path.
 func TestLCMReserveBalanceReader_MissingAccountErrorsWithSentinel(t *testing.T) {
 	r := NewLCMReserveBalanceReader(&fakeLookup{
 		rows: map[string]AccountObservationRow{
@@ -75,10 +71,8 @@ func TestLCMReserveBalanceReader_MissingAccountErrorsWithSentinel(t *testing.T) 
 	}
 }
 
-// TestLCMReserveBalanceReader_RemovalCountsAsZero — a removed
-// account contributes 0 to the total. Consistent with the on-
-// chain post-state (the AccountEntry no longer exists, so its
-// balance is necessarily 0).
+// A removed account contributes 0 to the total, matching on-chain post-state (the AccountEntry no longer exists, so its
+// balance is 0).
 func TestLCMReserveBalanceReader_RemovalCountsAsZero(t *testing.T) {
 	r := NewLCMReserveBalanceReader(&fakeLookup{
 		rows: map[string]AccountObservationRow{
@@ -108,10 +102,9 @@ func TestLCMReserveBalanceReader_StoreError(t *testing.T) {
 	}
 }
 
-// TestLCMReserveBalanceReader_MinReserveAccountLedger_HappyPath pins that the anchor is the
-// account OBSERVER's watermark, not the oldest per-account observation (49,999,500 here).
-// SDF reserve accounts move only every few days-to-weeks, so the per-account minimum goes
-// stale while nothing is wrong, the gate reads a stalled observer, and XLM's supply freezes.
+// The anchor is the account OBSERVER's watermark, not the oldest per-account observation (49,999,500 here): SDF reserve
+// accounts move only every few days to weeks, so the per-account minimum goes stale while nothing is wrong, the gate
+// reads a stalled observer, and XLM supply freezes.
 func TestLCMReserveBalanceReader_MinReserveAccountLedger_HappyPath(t *testing.T) {
 	r := NewLCMReserveBalanceReader(&fakeLookup{
 		rows: map[string]AccountObservationRow{
@@ -134,10 +127,9 @@ func TestLCMReserveBalanceReader_MinReserveAccountLedger_HappyPath(t *testing.T)
 	}
 }
 
-// TestLCMReserveBalanceReader_MinReserveAccountLedger_RemovalCounts — a removed account still
-// COUNTS as observed (an AccountEntry delete is a real observation), so it does not force the
-// gate-permissive bypass. Its ledger does not set the anchor: the observer watermark does,
-// so a long-ago removal cannot drag XLM's freshness backwards.
+// A removed account still COUNTS as observed (an AccountEntry delete is a real observation), so it does not force the
+// gate-permissive bypass, but its ledger does not set the anchor; the observer watermark does, so a long-ago removal
+// cannot drag XLM freshness backwards.
 func TestLCMReserveBalanceReader_MinReserveAccountLedger_RemovalCounts(t *testing.T) {
 	r := NewLCMReserveBalanceReader(&fakeLookup{
 		rows: map[string]AccountObservationRow{

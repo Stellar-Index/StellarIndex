@@ -17,21 +17,15 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// ─── `usd-volume-restamp -tier exact -chunks` — the exact tier's walk ────
-//
-// The driver is pinned tier-agnostically by the xlm-base tests beside this file. What is pinned
-// HERE is that the EXACT tier drives that same walk: it brackets each compressed chunk, applies
-// its identity through the guarded in-chunk apply, scopes every statement to the chunk's slice of
-// the run window, probes a finished chunk read-only and leaves it compressed, and in a dry run
-// counts through the candidate count and decompresses nothing.
+// The exact tier drives the same chunk walk as xlm-base: bracket each compressed chunk, guarded in-chunk apply,
+// statements scoped to the run window. A finished chunk is probed read-only and stays compressed; a dry run counts
+// candidates and decompresses nothing.
 
 const exactTestUSDC = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 
-// fakeExactChunkStore is the exact tier's seam double. It reuses the driver double for the
-// chunk/policy/lock half and models DIRTY rows by timestamp: a count returns those not yet
-// applied and an apply marks them applied, the idempotence of the real scope predicate
-// (`usd_volume IS DISTINCT FROM <identity>`) that makes "a rerun skips the finished chunks"
-// observable without a database.
+// Exact tier's seam double: reuses the driver double for chunk/policy/lock and models dirty rows by timestamp (count
+// returns unapplied, apply marks applied), mirroring the idempotence of `usd_volume IS DISTINCT FROM <identity>` so "a
+// rerun skips finished chunks" is observable without a database.
 type fakeExactChunkStore struct {
 	*fakeChunkStore
 
@@ -318,11 +312,9 @@ func TestExactChunkRestamp_StopsWhenTheChunkIsRecompressedUnderneath(t *testing.
 	wantTeardown(t, store.fakeChunkStore)
 }
 
-// ─── the policy is re-enabled even when the tier's callback fails ────────
-//
-// Whatever the tier does with a decompressed chunk, including a callback that fails, the chunk is
-// re-compressed, the policy re-enabled and the lock released before the tool exits non-zero.
-// This is the driver's contract, so it is pinned on a stub tier: a later tier inherits it.
+// Whatever the tier does with a decompressed chunk, including a failing callback, the chunk is re-compressed, the policy
+// re-enabled and the lock released before the tool exits non-zero. This is the driver's contract, pinned on a stub tier
+// so later tiers inherit it.
 
 // stubChunkTier is a [chunkRestampTier] that reports one dirty chunk and
 // then fails inside it.
@@ -388,10 +380,9 @@ func TestChunkRestamp_ReenablesTheCompressionPolicyWhenTheTierFails(t *testing.T
 
 // ─── -chunks is available to BOTH tiers ──────────────────────────────────
 
-// TestValidateRestampTierFlags_ChunkModeIsAvailableToBothTiers: `-chunks` and the driver's own
-// flags are accepted with `-tier exact`, while every flag that only means something for the
-// anchor re-derive is still refused there, including `-chunk-batch`, because the exact tier's
-// transaction is one `-slice` window and a row batch would be silently ignored.
+// `-chunks` and the driver's flags are accepted with `-tier exact`, while every anchor-re-derive-only flag is still
+// refused there, including `-chunk-batch`: the exact tier's transaction is one `-slice` window, so a row batch would be
+// silently ignored.
 func caseValidateRestampTierFlags_ChunkModeIsAvailableToBothTiers(t *testing.T) {
 	t.Parallel()
 	for _, f := range append([]string{"chunks"}, restampChunkOnlyFlags...) {

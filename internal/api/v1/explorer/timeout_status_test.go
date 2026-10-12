@@ -11,12 +11,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// These tests pin that a lake read exceeding explorerReadTimeout is served as a 503 `...-timeout`
-// problem+json, not an `errors/internal` 500. A 500 says "we broke" when the truth is "this
-// exceeded our time budget", and buries a capacity problem among real bugs for the 5xx SLA probe.
-//
-// 503 (not 504) is the codebase's convention for a server-side read deadline (see
-// writeReadTimeout and v1's handlerTimedOut), and every explorer route declares 503 in OpenAPI.
+// Pins that a lake read exceeding explorerReadTimeout is a 503 ...-timeout problem+json, not an errors/internal 500,
+// which would say "we broke" and bury a capacity problem among real bugs for the 5xx SLA probe. 503 (not 504) is the
+// codebase convention for a server-side read deadline (writeReadTimeout, handlerTimedOut) and is in OpenAPI.
 
 // timeoutReader is a capReader whose lake reads fail the way ClickHouse fails one that outran its
 // context: the error unwraps to context.DeadlineExceeded. Only the methods the tested handlers

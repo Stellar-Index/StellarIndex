@@ -123,10 +123,8 @@ func TestOperationsDirectory_WarmHitDoesNotReadTheLake(t *testing.T) {
 	}
 }
 
-// THE regression: an entry past opsDirTTL must be SERVED — immediately, with
-// flags.stale and its real as_of — while exactly one DETACHED rebuild runs.
-// Otherwise the expired entry reads as a miss and the visitor waits on the lake
-// read on the request deadline.
+// An entry past opsDirTTL must be served immediately with flags.stale and its real as_of while exactly one detached
+// rebuild runs; otherwise it reads as a miss and the visitor waits on the lake read.
 func TestOperationsDirectory_StaleEntryIsServedWhileOneDetachedRefreshRuns(t *testing.T) {
 	h, reader, captured := newOpsDirHandler()
 
@@ -246,10 +244,8 @@ func TestOperationsDirectory_CursorPageBypassesTheCache(t *testing.T) {
 	}
 }
 
-// Two DIFFERENT accepted `?limit=` values on the first page must share
-// ONE warm cache entry, not mint an independent lake read (and cache slot)
-// per limit. If opsDirCache keyed strictly by the requested limit, so
-// a caller sweeping ?limit=50..200 would buy a fresh lake read for every value.
+// Different accepted ?limit= values on the first page must share one warm cache entry, not mint a lake read and cache
+// slot per limit; a caller sweeping ?limit=50..200 would otherwise buy a fresh read for every value.
 func TestOperationsDirectory_DifferentLimitsShareOneCacheEntry(t *testing.T) {
 	h, reader, captured := newOpsDirHandler()
 	limit := 50
@@ -304,24 +300,18 @@ func TestSliceOperationsView_RecomputesCursorFromRetainedRows(t *testing.T) {
 	}
 }
 
-// A never-computed cache (cold path) must single-flight like the stale-entry path. If the cold
-// branch built inline on each request's own context, a burst of concurrent first-page requests
-// (e.g. a caller sweeping ?limit= on a cold process) would each pay a full lake read instead of
-// sharing one.
+// A never-computed cache must single-flight like the stale path: building inline on each request's context would make a
+// burst of concurrent first-page requests each pay a full lake read instead of sharing one.
 func TestOperationsDirectory_ColdCacheSingleFlightsConcurrentFirstPageRequests(t *testing.T) {
-	// Built directly on newProbeHandler (not newOpsDirHandler): its default
-	// WriteJSON/WriteJSONAt only write the status header, with no shared
-	// mutable capture state — required here since requests run genuinely
-	// concurrently and a shared capture struct would race under -race.
+	// Built on newProbeHandler, not newOpsDirHandler: its default WriteJSON/WriteJSONAt only write the status header, with
+	// no shared capture state. Requests run genuinely concurrently, so shared capture state would race under -race.
 	reader := &opsDirReader{capReader: &capReader{probe: &deadlineProbe{}}}
 	reader.seq.Store(63_000_000)
 	h := newProbeHandler(reader, nil)
 	reader.block = make(chan struct{}) // hold the one allowed read open
 
-	// Concurrent first-page requests — the real-world shape is a caller
-	// sweeping `?limit=` before the cache has ever filled; each accepted
-	// value slices the SAME warm entry, so they must also share the
-	// one read that fills it.
+	// Concurrent first-page requests model a caller sweeping ?limit= before the cache ever filled; each limit slices the
+	// same warm entry, so they must share the one read that fills it.
 	const n = 5
 	var wg sync.WaitGroup
 	codes := make([]int, n)

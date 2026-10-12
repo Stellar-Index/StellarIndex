@@ -25,14 +25,9 @@ func testBackfillConfig(seam uint32) config.Config {
 	return cfg
 }
 
-// TestBackfillBucket_NoSeamKeepsTheLiveDefault pins the DELIBERATE limit of the bucket
-// resolution: with no ingestion.live_seam_ledger the live bucket's floor is not knowable from
-// config, and guessing it causes wrong-bucket bugs. Defaulting to the archive would break
-// scripts/ops/ch-live-catchup.sh, which runs with NO -bucket to extend the tip; the archive is
-// an hourly mirror that lags it.
-//
-// The wrong-bucket defect is closed by backfillCoverage (a historic range against the live
-// bucket streams zero ledgers and HARD FAILS naming the bucket), not by changing the default.
+// Without ingestion.live_seam_ledger the live bucket floor is unknowable; defaulting to the lagging archive would break
+// ch-live-catchup.sh (no -bucket). backfillCoverage closes the wrong-bucket defect by hard-failing a historic range on
+// live.
 func TestBackfillBucket_NoSeamKeepsTheLiveDefault(t *testing.T) {
 	cfg := testBackfillConfig(0) // r1: no seam configured
 
@@ -71,10 +66,8 @@ func TestBackfillBucket_ExplicitOverrideAlwaysWins(t *testing.T) {
 	}
 }
 
-// TestBackfillBucket_SeamAware — with ingestion.live_seam_ledger set, the
-// range decides which bucket holds it, and a range that spans the seam is an
-// ERROR rather than a coin-flip: one walk reads one bucket, so either choice
-// silently drops the ledgers on the other side.
+// TestBackfillBucket_SeamAware: with ingestion.live_seam_ledger set, the range picks the bucket; a range spanning the
+// seam is an error. One walk reads one bucket, so either choice would silently drop the ledgers on the other side.
 func TestBackfillBucket_SeamAware(t *testing.T) {
 	const seam = uint32(60_000_000)
 	cfg := testBackfillConfig(seam)
@@ -149,10 +142,8 @@ func TestBackfillCoverage_FullWalkPasses(t *testing.T) {
 	}
 }
 
-// TestCHBackfill_RefusesWithoutAStatedMode pins that ch-backfill does not WRITE by default: a
-// run naming neither -write nor -dry-run refuses before loading config, so a caller assuming
-// write-by-default (ch-live-catchup.sh on a timer) fails loudly instead of previewing and
-// exiting 0.
+// ch-backfill must not write by default: a run naming neither -write nor -dry-run refuses before loading config.
+// Otherwise a write-by-default caller (ch-live-catchup.sh timer) would preview and exit 0 silently.
 func TestCHBackfill_RefusesWithoutAStatedMode(t *testing.T) {
 	cfgPath := filepath.Join(t.TempDir(), "absent.toml")
 	base := []string{"-config", cfgPath, "-from", "2", "-to", "3"}
