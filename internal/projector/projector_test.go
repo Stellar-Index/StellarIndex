@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"path/filepath"
@@ -13,15 +14,14 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/comet"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 	"github.com/Stellar-Index/StellarIndex/internal/worker/guardscan"
-
-	"github.com/Stellar-Index/StellarIndex/internal/canonical"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/comet"
 )
 
 // fakeDecoder is a configurable dispatcher.Decoder for the X9
@@ -469,4 +469,91 @@ func TestProcessEventSafely_ContinuesPastPermanentStopsAtRetryable(t *testing.T)
 	if !errors.Is(sinkErr, deadlock) || !errors.Is(sinkErr, canonical.ErrInvalidTrade) {
 		t.Errorf("sinkErr must unwrap to every fault it carries; got %v", sinkErr)
 	}
+}
+
+// Gives the in-memory store the same compare-and-swap contract as [timescale.Store.AdvanceCursorFrom], including shapes
+// a happy-path fake never produces: a row moved since the read, one that appeared since a not-found read, a non-
+// advancing write. The real statement is proven in test/integration/projector_test.go.
+func (f *fakeStore) AdvanceCursorFrom(_ context.Context, _, _ string, expected timescale.CursorRead, newLast uint32) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.upserts++
+	if !expected.Exists {
+		if f.haveCursor {
+			return false, nil // a row appeared since the read — DO NOTHING
+		}
+		f.haveCursor, f.projectorCursor = true, newLast
+		return true, nil
+	}
+	if newLast <= expected.LastLedger {
+		return false, fmt.Errorf("fake: %d is not an advance over %d", newLast, expected.LastLedger)
+	}
+	if !f.haveCursor || f.projectorCursor != expected.LastLedger {
+		return false, nil // moved (or vanished) since the read
+	}
+	f.projectorCursor = newLast
+	return true, nil
+}
+
+// rewind mirrors [timescale.Store.RewindCursor]: strictly backward, on an
+// existing row only.
+func (f *fakeStore) rewind(t *testing.T, to uint32) {
+	t.Helper()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.haveCursor || f.projectorCursor <= to {
+		t.Fatalf("fake rewind to %d refused: have=%v cursor=%d", to, f.haveCursor, f.projectorCursor)
+	}
+	f.projectorCursor = to
+}
+
+type carriedEvent struct{ ledger uint32 }
+
+func (carriedEvent) EventKind() string     { return "fake.ledger" }
+func (carriedEvent) Source() string        { return "fake" }
+func (e carriedEvent) EventLedger() uint32 { return e.ledger }
+
+func TestOutputLedger(t *testing.T) {
+	cases := []struct {
+		name string
+		out  consumer.Event
+		want uint32
+	}{
+		{"plain output uses the row ledger", fakeEvent{}, 100},
+		{"carried earlier ledger wins", carriedEvent{ledger: 90}, 90},
+		{"zero declared ledger falls back", carriedEvent{}, 100},
+		{"later declared ledger never raises the hold", carriedEvent{ledger: 120}, 100},
+	}
+	for _, c := range cases {
+		if got := outputLedger(c.out, 100); got != c.want {
+			t.Errorf("%s: outputLedger = %d, want %d", c.name, got, c.want)
+		}
+	}
+}
+
+// carryDecoder emits, for the row at carryAt, an output that belongs to the
+// ledger before it (a buffered decoder flushing earlier state); every other
+// row emits its own ledger's output.
+type carryDecoder struct{ carryAt uint32 }
+
+func (*carryDecoder) Name() string              { return "carry" }
+func (*carryDecoder) Matches(events.Event) bool { return true }
+func (d *carryDecoder) Decode(ev events.Event) ([]consumer.Event, error) {
+	if ev.Ledger == d.carryAt {
+		return []consumer.Event{carriedEvent{ledger: ev.Ledger - 2}}, nil
+	}
+	return []consumer.Event{ledgerEvent{ledger: ev.Ledger}}, nil
+}
+
+func carryHarness(t *testing.T, source string) *wedgeHarness {
+	t.Helper()
+	rows := []events.Event{lakeEvent(101, 1), lakeEvent(102, 2), lakeEvent(103, 3)}
+	h := newWedgeHarness(t, source, rows, 105, func(ev consumer.Event) error {
+		if _, ok := ev.(carriedEvent); ok {
+			return errors.New("unclassified store fault")
+		}
+		return nil
+	})
+	h.src.Decoder = &carryDecoder{carryAt: 103}
+	return h
 }
