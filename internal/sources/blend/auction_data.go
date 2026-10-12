@@ -7,26 +7,15 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// AuctionData wire-format keys, from pool/src/auctions/auction.rs::AuctionData. Looked up by name
-// regardless of map order so declaration reorderings are harmless
-// (docs/architecture/ingest-pipeline.md#contract-schema-evolution).
+// AuctionData wire-format keys (pool/src/auctions/auction.rs), looked up by name so map order is irrelevant.
 const (
 	auctionDataKeyBid   = "bid"
 	auctionDataKeyLot   = "lot"
 	auctionDataKeyBlock = "block"
 )
 
-// decodeAuctionData parses the AuctionData ScvMap in new_auction / fill_auction bodies. On the
-// wire (blend-contracts-v2 pool/src/auctions/auction.rs):
-//
-//	ScvMap with three named fields:
-//	  "bid"   → ScvMap{ Address → i128 }   — assets the filler spends
-//	  "block" → u32                         — auction-start block
-//	  "lot"   → ScvMap{ Address → i128 }   — assets the filler receives
-//
-// Asset keys must be Soroban contract addresses: decodeAssetAmountMap routes them through
-// canonical.NewSorobanAsset, which rejects any non-C-strkey (G-addresses included), matching
-// Blend's asset registries (SAC-wrapped classic and Soroban tokens, all contracts).
+// decodeAuctionData parses the AuctionData ScvMap {bid: Map<Address,i128>, block: u32, lot: Map<Address,i128>}. Asset keys must be
+// C-strkey contracts: canonical.NewSorobanAsset rejects G-addresses, matching Blend's asset registries.
 func decodeAuctionData(sv scval.ScVal) (AuctionData, error) {
 	entries, err := scval.AsMap(sv)
 	if err != nil {
@@ -63,10 +52,7 @@ func decodeAuctionData(sv scval.ScVal) (AuctionData, error) {
 	return AuctionData{Bid: bid, Lot: lot, Block: block}, nil
 }
 
-// decodeAssetAmountMap decodes one of the inner Map<Address, i128>
-// values inside AuctionData. Stable order is the on-wire ScMap
-// order — we don't sort because callers (e.g. storage layer) may
-// want to preserve the chain-emitted order for round-trip parity.
+// decodeAssetAmountMap decodes a Map<Address, i128>; keeps on-wire order (no sort) for round-trip parity.
 func decodeAssetAmountMap(sv scval.ScVal, fieldName string) ([]AssetAmount, error) {
 	entries, err := scval.AsMap(sv)
 	if err != nil {
