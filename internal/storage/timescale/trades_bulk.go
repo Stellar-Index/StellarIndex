@@ -543,3 +543,27 @@ func bulkCopyFallsBack(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && (pgErr.Code == "23505" || pgErr.Code == "53400")
 }
+
+// PrepareTradesForArchive returns the rows BulkBackfillTrades would land (storability gate, conflict-key dedupe) with their usd_volume
+// ("" when unvalued), without writing; it feeds the ClickHouse trades_by_account copy so both tiers serve the same values.
+func (s *Store) PrepareTradesForArchive(ctx context.Context, trades []canonical.Trade) ([]canonical.Trade, []string, error) {
+	storable := s.filterStorableTrades(trades)
+	if len(storable) == 0 {
+		return nil, nil, nil
+	}
+	rows := make([]canonical.Trade, len(storable))
+	copy(rows, storable)
+	sortTradesByConflictKey(rows)
+	rows = dedupeSortedTradesByConflictKey(rows)
+	usd, err := s.resolveBulkUSDVolumes(ctx, rows, 0)
+	if err != nil {
+		return nil, nil, err
+	}
+	out := make([]string, len(usd))
+	for i, u := range usd {
+		if u.Valid {
+			out[i] = u.String
+		}
+	}
+	return rows, out, nil
+}

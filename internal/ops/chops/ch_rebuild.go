@@ -352,6 +352,8 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	preflight := fs.Bool("preflight", false, "with -write: run the refusals this exact -write invocation would hit BEFORE it reads the lake — the BackfillSafe gate (both legs), the live-cursor one-writer guard, and the buffered-range ceiling — then print one line naming the sources it would re-derive (`"+chRebuildPreflightPrefix+" [from,to] rederive=a,b,c`) on stdout and exit 0 WITHOUT reading the lake or writing a row (the per-WASM replay gate does read the ClickHouse instance index). A refusal exits non-zero exactly as the real run would. It exists for a caller that must do something destructive before the re-derive (scripts/ops/ch-rebuild-projected.sh DELETEs the window first): ask here, and delete only what this prints. Runtime failures (a lake stream error, a failed write) are by nature not covered.")
 	requireRows := fs.String("require-rows", "", "comma-separated sources that must write at least one row: the run fails when one of them re-derives none. scripts/ops/ch-rebuild-projected.sh passes every source whose window its DELETE found occupied, so an emptied window whose re-derive came back empty (an empty gate registry, a lake gap) exits non-zero and stays dirty instead of being marked done. A source absent here may legitimately be quiet over the range.")
 	recordDirty := fs.Bool("record-dirty-window", false, "record [from,to] as a pending ADR-0033 projection dirty window for every source named in -sources (each must be a reconciliation-catalogue source; the list is REQUIRED), then exit 0 WITHOUT reading ClickHouse or writing a row. The next compute-completeness re-reconciles that range instead of carrying its prior clean projection claim over it, and clears the obligation only with the verdict that discharges it. This is the RECORD, not a re-derive, so it takes neither -write nor -preflight. It exists for the operator (and scripts/ops/ch-rebuild-projected.sh's TELL THE VERDICT line) after a clean-slate DELETE whose re-derive did not complete: the window is then EMPTY and /v1/coverage must stop certifying it complete (F075). An ordinary -write run records its own rewritten window before it writes; this mode is for a window left EMPTIED.")
+	tradesByAccount := fs.Bool("trades-by-account", false, "with -write -sdex: write the decoded trades to ClickHouse stellar.trades_by_account (one row per taker and per distinct maker, same storability gate and usd_volume as Postgres) and record [from,to] in trades_by_account_windows, INSTEAD of writing Postgres. Needs the full trade set, so it refuses -sources, -contracts, -sdex-gaps, -sdex-reconcile, -sep41, -contract-calls and -bulk-trades. Runbook: deploy/clickhouse/trades_by_account.sql.")
+	replaceWindow := fs.Bool("replace", false, "with -trades-by-account: rewrite a range that overlaps recorded windows, deleting those windows and the range's trades_by_account rows first. Every overlapping window must lie inside [from,to]. Without it an overlapping range is refused.")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -363,6 +365,12 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 		return err
 	}
 	if err := checkCHRebuildRecordDirtyFlags(*recordDirty, *preflight, write); err != nil {
+		return err
+	}
+	if err := checkCHRebuildTradesByAccountFlags(*tradesByAccount, chRebuildTradesByAccountConflicts{
+		write: write, sdex: *includeSDEX, sdexGaps: *sdexGaps, sdexReconcile: *sdexReconcile, sep41: *includeSEP41,
+		contractCalls: *contractCalls, bulkTrades: *bulkTrades, recordDirty: *recordDirty, replace: *replaceWindow, sources: *only, contracts: *contractsCSV,
+	}); err != nil {
 		return err
 	}
 	// -contracts scopes both passes to a contract subset; the sep41 pass pushes
@@ -448,6 +456,12 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	// configured, so drop them here: cat carries no sep41 entries until that pass folds in its own
 	// sep41Cat, which keeps the main pass's hasEventSource and -sources filtering honest.
 	cat = dropReconSources(cat, sep41transfers.SourceName, sep41supply.SourceName)
+	// -trades-by-account decodes only the sources tradeOf reads, so every gate below (BackfillSafe, per-WASM lake gate, preseed) sees that set.
+	if *tradesByAccount {
+		if cat, cerr = scopeCatalogueToTradeSources(cat); cerr != nil {
+			return cerr
+		}
+	}
 	// -sep41 opt-in: the sep41 sources stay OUT of the default catalogue
 	// (and out of every counting consumer) until the operator truncate+
 	// re-derive this flag exists for has run — see buildSEP41ReconSources.
@@ -486,7 +500,11 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 		if gerr := checkCHRebuildBackfillSafe(reDerivedSourcesInRun(cat, sep41Cat, passes, enabled)); gerr != nil {
 			return gerr
 		}
+		// -trades-by-account writes no projected Postgres row, so it is no second writer of any domain.
 		projected := projectedSourcesInRun(cfg, cat, sep41Cat, *includeSEP41, enabled)
+		if *tradesByAccount {
+			projected = nil
+		}
 		if gerr := checkCHRebuildLiveOverlap(projected, hi, *allowLiveOverlap, func(source string) (uint32, bool, error) {
 			c, cerr := store.GetCursor(ctx, "projector", source)
 			switch {
@@ -526,6 +544,11 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 		if gerr := gateCHRebuildLake(ctx, cfg, *chAddr, store, reDerivedSourcesInRun(cat, sep41Cat, passes, enabled), lo, hi); gerr != nil {
 			return gerr
 		}
+		if *tradesByAccount {
+			if perr := clickhouse.PrepareTradesByAccountWindow(ctx, *chAddr, lo, hi, *replaceWindow); perr != nil {
+				return fmt.Errorf("ch-rebuild -trades-by-account: %w", perr)
+			}
+		}
 	}
 	gate.Banner()
 	// Factory-anchored sources (ADR-0035): seed each gate registry from the factory's creation
@@ -551,7 +574,8 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	// re-reconcile [lo,hi], as with projector-replay. Record it before the first write and refuse
 	// without it: a run failing partway has touched a subset the record already covers.
 	if write {
-		if rederived := reDerivedSourcesInRun(cat, sep41Cat, passes, enabled); len(rederived) > 0 {
+		// -trades-by-account writes only ClickHouse: it rewrites no served row, so it files no obligation.
+		if rederived := reDerivedSourcesInRun(cat, sep41Cat, passes, enabled); len(rederived) > 0 && !*tradesByAccount {
 			if rerr := recordCHRebuildDirtyWindows(ctx, store, os.Stderr, lo, hi, rederived, timescale.CHRebuildWriteReason); rerr != nil {
 				return fmt.Errorf("%w (refusing to write without it — the completeness verdict would carry a stale claim over the rewritten range)", rerr)
 			}
@@ -798,6 +822,17 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 			fmt.Fprintf(os.Stderr, "ch-rebuild: contract-call %s read done (%d events)\n", src.name, len(buf)-before)
 		}
 		fmt.Fprintf(os.Stderr, "ch-rebuild: contract-call read done in %s\n", time.Since(ccStart).Round(time.Second))
+	}
+
+	if *tradesByAccount {
+		return writeCHRebuildTradesByAccount(ctx, os.Stdout, store.PrepareTradesForArchive,
+			func(ctx context.Context, rows []clickhouse.TradeByAccountRow) (int64, error) {
+				return clickhouse.InsertTradesByAccount(ctx, *chAddr, rows)
+			},
+			func(ctx context.Context, lo, hi uint32, n int64) error {
+				return clickhouse.RecordTradesByAccountWindow(ctx, *chAddr, lo, hi, n, tradeSourcesKey(cat))
+			},
+			buf, lo, hi)
 	}
 
 	// ─── write the buffered events to Postgres ───────────────────────────
