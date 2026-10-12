@@ -1,11 +1,16 @@
 package v1
 
 import (
+	"context"
+	"log/slog"
 	"math/big"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // Unit tests for the four rules deciding whether a premium may be published. Each pins the refusal and asserts no figure
@@ -489,5 +494,175 @@ func TestRWAReference_OneRefusalIsReportedIdentically(t *testing.T) {
 				t.Errorf("a refused row carries a figure: %q", *a.ReferenceValuation.ValueUSD)
 			}
 		})
+	}
+}
+
+// A curated row's reference is a curator's own uploaded price, not a listing platform's
+// aggregate, so its premium refusal must say that rather than the listing-price wording
+// rwaApplyListingReference defaults to. Premium.Status must match Reference.Provenance.
+func TestRWAApplyCuratorReference_PremiumStatusMatchesCuratorProvenance(t *testing.T) {
+	now := time.Now().UTC()
+	supply := "100000000000"
+	a := &RWAAsset{
+		AssetID:           "CURATED-ADDR",
+		CirculatingSupply: &supply,
+		Decimals:          intPtr(7),
+	}
+	entry := timescale.CuratedRWAEntry{
+		Address:  "CURATED-ADDR",
+		Company:  "Example Fund",
+		PriceUSD: "1.02",
+		PricedAt: now.Add(-time.Hour),
+		Source:   "curator upload",
+	}
+
+	rwaApplyCuratorReference(a, entry, now)
+
+	if a.Reference == nil || a.Reference.Provenance != RWAReferenceCuratorPrice {
+		t.Fatalf("reference = %+v, want provenance %q", a.Reference, RWAReferenceCuratorPrice)
+	}
+	if a.Premium.Status != RWAPremiumReferenceNotOracleCurator {
+		t.Errorf("premium.status = %q, want %q (the curator-price refusal, matching reference.provenance)",
+			a.Premium.Status, RWAPremiumReferenceNotOracleCurator)
+	}
+	if a.Premium.Status == RWAPremiumReferenceNotOracle {
+		t.Errorf("premium.status = %q — the listing-price refusal, wrongly claiming this reference is a listing price", a.Premium.Status)
+	}
+}
+
+// The summary's `provenances` enum is what a verified row can carry into the total; curated rows are served apart, so
+// the curator provenance is on the per-row enum only. Both spec enums are pinned to the Go vocabulary.
+func TestRWAReferenceProvenance_SpecEnumsAreTheGoVocabulary(t *testing.T) {
+	summary := make([]string, 0, len(rwaReferenceProvenanceProseOrder))
+	for _, p := range rwaReferenceProvenanceProseOrder {
+		summary = append(summary, p.provenance)
+	}
+	row := append(append([]string{}, summary...), RWAReferenceCuratorPrice)
+
+	doc := loadSpecDoc(t)
+	gotSummary := specEnumAt(t, doc, "components", "schemas", "RWAReferenceSummary", "properties", "provenances", "items")
+	gotRow := specEnumAt(t, doc, "components", "schemas", "RWAReference", "properties", "provenance")
+	sort.Strings(summary)
+	sort.Strings(row)
+	if strings.Join(gotSummary, ",") != strings.Join(summary, ",") {
+		t.Errorf("openapi RWAReferenceSummary.provenances enum = %v, Go vocabulary = %v; edit both and regenerate", gotSummary, summary)
+	}
+	if strings.Join(gotRow, ",") != strings.Join(row, ",") {
+		t.Errorf("openapi RWAReference.provenance enum = %v, Go vocabulary = %v; edit both and regenerate", gotRow, row)
+	}
+}
+
+// panicOnceOracle panics on its first LatestOracleStreams call and
+// answers normally afterward, so a test can drive the exact failure
+// a read that blows up mid-fill.
+type panicOnceOracle struct {
+	calls   int
+	streams []canonical.OracleUpdate
+}
+
+func (o *panicOnceOracle) LatestOracleUpdatesForAsset(context.Context, canonical.Asset, string) ([]canonical.OracleUpdate, error) {
+	return nil, nil
+}
+
+func (o *panicOnceOracle) LatestOracleUpdatesForAssets(context.Context, []canonical.Asset, string) ([]canonical.OracleUpdate, error) {
+	return nil, nil
+}
+
+func (o *panicOnceOracle) LatestOracleStreams(context.Context) ([]canonical.OracleUpdate, error) {
+	o.calls++
+	if o.calls == 1 {
+		panic("boom")
+	}
+	return o.streams, nil
+}
+
+// TestCachedRWAReferences_PanicDoesNotWedgeTheFlight pins that an oracle-read panic must not leave rwaRefFlight latched
+// on a channel nobody closes; the outer recover simulates net/http's per-request recovery.
+func TestCachedRWAReferences_PanicDoesNotWedgeTheFlight(t *testing.T) {
+	oracle := &panicOnceOracle{
+		streams: []canonical.OracleUpdate{
+			refUpdate(t, "redstone", "rwa:USTRY", "fiat:USD", "104000000", 8, time.Now()),
+		},
+	}
+	s := &Server{Options: Options{Oracle: oracle}, logger: slog.Default()}
+
+	func() {
+		defer func() { _ = recover() }()
+		s.cachedRWAReferences(context.Background())
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	got := s.cachedRWAReferences(ctx)
+	if !got.available {
+		t.Fatalf("second call after a panicked read got no reference: the single-flight marker is wedged (GH-587)")
+	}
+}
+
+// rwaSummaryReachableProvenances is every provenance a view.Assets row can carry into RWAReferenceSummary; the curator
+// provenance is absent because curated rows live in CuratedAssets and never enter the verified total.
+var rwaSummaryReachableProvenances = []string{
+	RWAReferenceOracleNAV,
+	RWAReferenceFundNAV,
+	RWAReferenceListingPrice,
+	RWAReferenceProspectusCNAV,
+}
+
+// A prospectus-CNAV row contributes to the reference total, so the
+// summary's basis has to name that claim, not stay silent about it or
+// describe the total by the other kinds only.
+func TestRWASummaryProvenance_NamesProspectusCNAV(t *testing.T) {
+	now := time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC)
+	supply := "566742721191613"
+	a := RWAAsset{
+		AssetID: "gBENJI-GD5J73EKK5IYL5XS3FBTHHX7CZIYRP7QXDL57XFWGC2WVYWT326OBXRP", Code: "gBENJI",
+		Issuer: "GD5J73EKK5IYL5XS3FBTHHX7CZIYRP7QXDL57XFWGC2WVYWT326OBXRP", CirculatingSupply: &supply, Decimals: intPtr(7),
+	}
+	snap := rwaReferences{available: true, byFeed: map[string]rwaReference{}, nonUSD: map[string]string{}}
+	rwaApplyReference(&a, snap, nil, map[string]timescale.ListingEntry{}, now)
+	if a.Reference == nil || a.Reference.Provenance != RWAReferenceProspectusCNAV || a.ReferenceValuation.ValueUSD == nil {
+		t.Fatalf("fixture did not produce a valued CNAV row: ref=%+v val=%+v", a.Reference, a.ReferenceValuation)
+	}
+
+	s := rwaSummariseReference([]RWAAsset{a})
+	if strings.Join(s.Provenances, ",") != RWAReferenceProspectusCNAV {
+		t.Fatalf("provenances = %v, want [%s]", s.Provenances, RWAReferenceProspectusCNAV)
+	}
+	if !strings.Contains(s.Basis, "`provenance: prospectus_constant_nav`") {
+		t.Errorf("CNAV-only basis does not describe the prospectus NAV claim:\n%s", s.Basis)
+	}
+	if strings.Contains(s.Basis, "`provenance: oracle_instrument_nav`") || strings.Contains(s.Basis, "`provenance: listing_platform_price`") {
+		t.Errorf("CNAV-only basis describes a provenance the total does not contain:\n%s", s.Basis)
+	}
+}
+
+// Every reachable provenance has its own prose, and any mixture names
+// each member and says it is a mixture.
+func TestRWASummaryProvenance_ProseDescribesEveryReachableProvenance(t *testing.T) {
+	for _, p := range rwaSummaryReachableProvenances {
+		got := rwaReferenceProvenanceProse([]string{p})
+		if !strings.Contains(got, "`provenance: "+p+"`") {
+			t.Errorf("prose for [%s] does not name it: %q", p, got)
+		}
+		if strings.Contains(got, "MIXES") {
+			t.Errorf("single-provenance prose for [%s] claims a mixture: %q", p, got)
+		}
+	}
+	mixed := rwaReferenceProvenanceProse([]string{RWAReferenceOracleNAV, RWAReferenceProspectusCNAV})
+	for _, p := range []string{RWAReferenceOracleNAV, RWAReferenceProspectusCNAV} {
+		if !strings.Contains(mixed, "`provenance: "+p+"`") {
+			t.Errorf("oracle+CNAV prose omits %s: %q", p, mixed)
+		}
+	}
+	if !strings.HasPrefix(mixed, "The total MIXES TWO KINDS OF CLAIM") {
+		t.Errorf("oracle+CNAV prose does not state the mixture: %q", mixed)
+	}
+	three := rwaReferenceProvenanceProse([]string{RWAReferenceOracleNAV, RWAReferenceListingPrice, RWAReferenceProspectusCNAV})
+	if !strings.HasPrefix(three, "The total MIXES THREE KINDS OF CLAIM") {
+		t.Errorf("three-provenance prose does not state the mixture: %q", three)
+	}
+	all := rwaReferenceProvenanceProse(rwaSummaryReachableProvenances)
+	if !strings.HasPrefix(all, "The total MIXES FOUR KINDS OF CLAIM") {
+		t.Errorf("four-provenance prose does not state the mixture: %q", all)
 	}
 }
