@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -101,7 +102,7 @@ func (r *ResendSender) Send(ctx context.Context, msg Message) error {
 
 	delay := retryBaseDelay
 	for attempt := 1; ; attempt++ {
-		err = r.post(ctx, body)
+		err = r.do(ctx, http.MethodPost, "/emails", body)
 		if err == nil || !errors.Is(err, ErrTransient) || attempt == sendAttempts {
 			return err
 		}
@@ -114,12 +115,31 @@ func (r *ResendSender) Send(ctx context.Context, msg Message) error {
 	}
 }
 
-// post makes one delivery attempt and classifies its outcome.
-func (r *ResendSender) post(ctx context.Context, body []byte) error {
+// DisableTracking turns click and open tracking off on the sending domain. Resend has no per-send
+// tracking field, so the domain setting is the only pin; click tracking rewrites sign-in links.
+func (r *ResendSender) DisableTracking(ctx context.Context, domainID string) error {
+	if !r.MailConfigured() {
+		return ErrNotConfigured
+	}
+	domainID = strings.TrimSpace(domainID)
+	if domainID == "" {
+		return errors.Join(ErrInvalidMessage, errors.New("resend domain id is empty"))
+	}
+	body, err := json.Marshal(struct {
+		ClickTracking bool `json:"click_tracking"`
+		OpenTracking  bool `json:"open_tracking"`
+	}{})
+	if err != nil {
+		return fmt.Errorf("notify: marshal: %w", err)
+	}
+	return r.do(ctx, http.MethodPatch, "/domains/"+url.PathEscape(domainID), body)
+}
+
+// do makes one provider call and classifies its outcome.
+func (r *ResendSender) do(ctx context.Context, method, path string, body []byte) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sendTimeout)
 	defer cancel()
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		r.BaseURL+"/emails", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, method, r.BaseURL+path, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("notify: build request: %w", err)
 	}
