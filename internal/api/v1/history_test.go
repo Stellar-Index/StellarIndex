@@ -83,16 +83,9 @@ type stubHistoryReader struct {
 	err       error
 }
 
-// TradesInRange returns the fixture rows that BELONG to the requested pair,
-// i.e. those whose own Trade.Pair matches it — what a real store does.
-//
-// The filter is load-bearing since the fiat point path was unified the fiat point path onto
-// the series constituent set: `?quote=fiat:USD` now fans out over all ~18
-// entries of usdPeggedConstituents, and a pair-blind stub would hand the
-// same fixture back once per constituent and multiply every volume /
-// trade-count assertion by the fan-out width. Fixtures that leave Pair
-// unset are "unspecified" and match any request, so the pair-agnostic
-// callers (observations, cursor plumbing) are unaffected.
+// TradesInRange returns only fixture rows whose own Trade.Pair matches the request, as a real store does. Load-bearing because
+// `?quote=fiat:USD` fans out over ~18 usdPeggedConstituents; a pair-blind stub would multiply every volume/count by the fan-out.
+// Fixtures with Pair unset match any request.
 func (r *stubHistoryReader) TradesInRange(_ context.Context, pair canonical.Pair, from, to time.Time, limit int) ([]canonical.Trade, error) {
 	r.lastCall.from = from
 	r.lastCall.to = to
@@ -103,10 +96,8 @@ func (r *stubHistoryReader) TradesInRange(_ context.Context, pair canonical.Pair
 	return tradesForPair(r.trades, pair), nil
 }
 
-// tradesForPair is the stub's pair predicate — see
-// [stubHistoryReader.TradesInRange]. Returns the input slice untouched when
-// no row declares a pair, so an all-unset fixture keeps its identity (and
-// nil stays nil).
+// tradesForPair is the stub's pair predicate (see stubHistoryReader.TradesInRange). It returns the input untouched when no row
+// declares a pair, so all-unset fixtures keep identity and nil stays nil.
 func tradesForPair(trades []canonical.Trade, pair canonical.Pair) []canonical.Trade {
 	var zero canonical.Pair
 	matched := make([]canonical.Trade, 0, len(trades))
@@ -204,10 +195,8 @@ func (r *stubHistoryReader) TWAPPointsInRange(_ context.Context, pair canonical.
 	return r.twapPoints, nil
 }
 
-// OHLCSeries stub: when ohlcSeriesFn is non-nil, delegate (lets
-// tests inject per-call behaviour); otherwise return r.ohlcBars.
-// Records interval + from/to/limit on lastCall so tests can
-// assert the handler forwarded the correct args.
+// OHLCSeries stub: delegates to ohlcSeriesFn when set, else returns r.ohlcBars, and records interval/from/to/limit on lastCall so
+// tests can assert the forwarded args.
 func (r *stubHistoryReader) OHLCSeries(ctx context.Context, pair canonical.Pair, interval string, from, to time.Time, limit int) ([]v1.OHLCSeriesBar, error) {
 	r.lastCall.ohlcInterval = interval
 	r.lastCall.from = from
@@ -232,19 +221,15 @@ func (r *stubHistoryReader) OHLCSeries(ctx context.Context, pair canonical.Pair,
 	return r.ohlcBars, nil
 }
 
-// LastInterval / LastFrom / LastTo / LastLimit are public-test
-// accessors for the OHLC-series call-tracking fields. Keep
-// lastCall internal so tests in other files can't accidentally
-// mutate it.
+// LastInterval / LastFrom / LastTo / LastLimit are test accessors for the OHLC call-tracking fields, keeping lastCall internal so
+// other files cannot mutate it.
 func (r *stubHistoryReader) LastInterval() string { return r.lastCall.ohlcInterval }
 func (r *stubHistoryReader) LastFrom() time.Time  { return r.lastCall.from }
 func (r *stubHistoryReader) LastTo() time.Time    { return r.lastCall.to }
 func (r *stubHistoryReader) LastLimit() int       { return r.lastCall.limit }
 
-// LatestTradePerSource stub: returns r.observations (per-source
-// fixture distinct from the full r.trades slice) so observations
-// tests can drive the handler without polluting other history-test
-// fixtures. Honors sourceFilter — restricts to the matching entry.
+// LatestTradePerSource stub: returns r.observations (separate from r.trades so other history fixtures are not polluted) and
+// honors sourceFilter.
 func (r *stubHistoryReader) LatestTradePerSource(_ context.Context, _ canonical.Pair, sourceFilter string) ([]canonical.Trade, error) {
 	r.lpsMu.Lock()
 	r.lastCall.sourceFilter = sourceFilter
@@ -293,12 +278,8 @@ func TestHistory_503WhenReaderNil(t *testing.T) {
 	}
 }
 
-// `asset=` is accepted as an
-// alias for `base=` on endpoints that flow through parseBaseQuote,
-// so clients copying /v1/price URLs into /v1/history (or twap/vwap/
-// ohlc) don't hit a 400 on their first try. Pin both halves of the
-// new contract: alias works for valid input, AND mixing both is a
-// 400 with a self-explanatory message.
+// `asset=` is accepted as an alias for `base=` on parseBaseQuote endpoints so /v1/price URLs work on /v1/history, twap, vwap
+// and ohlc. Pins both halves: the alias works, and mixing both is a 400 with a clear message.
 func TestHistory_AssetParamAcceptedAsBaseAlias(t *testing.T) {
 	srv := v1.New(v1.Options{History: &stubHistoryReader{}})
 	ts := httpTestServer(t, srv)
@@ -387,10 +368,8 @@ func TestHistory_ReturnsTrades(t *testing.T) {
 	}
 }
 
-// TestHistory_RoutedViaFieldPassthrough pins the additive routed_via
-// wire field (migration 0025 Phase B): populated when the trade
-// carries router attribution, and OMITTED (not empty-string) for
-// direct trades so pre-existing consumers see byte-identical rows.
+// TestHistory_RoutedViaFieldPassthrough pins the additive routed_via wire field: populated when the trade has router attribution
+// and OMITTED (not empty-string) for direct trades, so existing consumers see identical rows.
 func TestHistory_RoutedViaFieldPassthrough(t *testing.T) {
 	routed := mkHistTrade(100)
 	routed.RoutedVia = "soroswap-router"
@@ -582,19 +561,9 @@ func TestHistory_EmptyListReturnsEmptyArray(t *testing.T) {
 	}
 }
 
-// TestHistory_NativeReadsCryptoXLMAlias pins the alias fan-in on the raw
-// trade feed. The handler keyed its trades scan on the LITERAL pair, so
-// `?base=native&quote=fiat:USD` served an empty page while the identical
-// window under `?base=crypto:XLM` returned a full one and /v1/vwap, which
-// loops the aliases, reported a live trade population for the pair the
-// same hour. XLM's three canonical spellings are disjoint venue
-// populations (the on-chain decoders stamp `native`, the CEX parsers
-// `crypto:XLM`), and every sibling read path already loops
-// canonical.AssetAliases.
-//
-// The literal form must still be read FIRST — a populated pair must not
-// be overtaken by an alias — and the rows carry the spelling they were
-// stored under, so a client can always see which form answered.
+// TestHistory_NativeReadsCryptoXLMAlias pins alias fan-in on the raw trade feed: `?base=native` must not serve an empty page
+// while `?base=crypto:XLM` is full, since XLM's spellings are disjoint venue populations and sibling paths loop
+// canonical.AssetAliases. The literal form is still read FIRST, and rows keep the spelling they were stored under.
 func TestHistory_NativeReadsCryptoXLMAlias(t *testing.T) {
 	xlm, err := canonical.ParseAsset("crypto:XLM")
 	if err != nil {
@@ -639,20 +608,9 @@ func TestHistory_NativeReadsCryptoXLMAlias(t *testing.T) {
 	}
 }
 
-// TestHistory_PaginationUnionsInterleavedAliasForms pins
-// With two alias forms of the SAME asset both
-// populated and their rows genuinely interleaved in time, a first-hit
-// gate (whichever alias form's page came back non-empty on THAT
-// request) serves the leading form until it drains, then falls through
-// to the sibling form with a cursor already past that sibling's earlier
-// rows — losing them permanently, not just serving them out of order.
-//
-// Six rows: native/usdc at sec 10, 20, 90; crypto:XLM/usdc at sec 30,
-// 40, 50 — interleaved so the native form's LAST row (sec 90) sits after
-// every crypto:XLM row. Draining at limit=1 must still return the full
-// union in strict timestamp order; a first-hit gate would return
-// only the three native rows (10, 20, 90) and silently drop all three
-// crypto:XLM rows once the native form drains past them.
+// TestHistory_PaginationUnionsInterleavedAliasForms: with two populated alias forms interleaved in time, a first-hit gate
+// drains one form then resumes the sibling past its earlier rows, losing them permanently. Six rows (native at sec 10, 20, 90;
+// crypto:XLM at 30, 40, 50); draining at limit=1 must return the full union in timestamp order.
 func TestHistory_PaginationUnionsInterleavedAliasForms(t *testing.T) {
 	t.Parallel()
 	native := mustParseAsset(t, "native")
@@ -689,13 +647,8 @@ func TestHistory_PaginationUnionsInterleavedAliasForms(t *testing.T) {
 
 // ─── /v1/history/since-inception ────────────────────────────────
 
-// TestSpecDeclares404OnScamWithholdingRoutes pins that both
-// /history/since-inception and /chart return a 404 price-withheld when
-// seriesWithheldForScam fires (see handleHistorySinceInception and
-// handleChart), but neither route declared a 404 in the OpenAPI
-// contract — a spec-driven client would treat it as endpoint-not-found
-// and fall back elsewhere, the same harm as on the price
-// stream.
+// TestSpecDeclares404OnScamWithholdingRoutes: /history/since-inception and /chart return 404 price-withheld when
+// seriesWithheldForScam fires, so the spec must declare it or a spec-driven client treats it as endpoint-not-found.
 func TestSpecDeclares404OnScamWithholdingRoutes(t *testing.T) {
 	specPath := filepath.Join(moduleRoot(t), "openapi", "stellar-index.v1.yaml")
 	raw, err := os.ReadFile(specPath)
@@ -721,10 +674,8 @@ func TestSpecDeclares404OnScamWithholdingRoutes(t *testing.T) {
 	}
 }
 
-// TestHistory_BelowCoverageFloorIsFlagged — /v1/history returns raw
-// trades, not buckets, and its empty page carries the identical
-// ambiguity. The annotation rides on the ENVELOPE precisely so this
-// surface, whose `data` is a bare array, can carry it too.
+// TestHistory_BelowCoverageFloorIsFlagged: /v1/history returns raw trades, and its empty page has the same ambiguity as buckets.
+// The annotation rides on the ENVELOPE so this bare-array `data` surface can carry it too.
 func TestHistory_BelowCoverageFloorIsFlagged(t *testing.T) {
 	probe := &coverageFloorProbe{floor: xlmCoverageFloor, found: true}
 	ts := emptyHistoryServer(t, probe)
@@ -744,10 +695,8 @@ func TestHistory_BelowCoverageFloorIsFlagged(t *testing.T) {
 	}
 }
 
-// TestHistory_DrainedCursorPageIsNotProbed — an empty page reached by
-// PAGINATION means "you have all the rows", not "there is nothing
-// here", and the cursor shadows `from` so the window the signal would
-// describe is not the window that was read. Neither probe nor flag.
+// TestHistory_DrainedCursorPageIsNotProbed: an empty page reached by pagination means "all rows served", and the cursor shadows
+// `from`, so the window the signal describes is not the one read. Neither probe nor flag.
 func TestHistory_DrainedCursorPageIsNotProbed(t *testing.T) {
 	probe := &coverageFloorProbe{floor: xlmCoverageFloor, found: true}
 	ts := emptyHistoryServer(t, probe)
@@ -874,10 +823,8 @@ func TestHistory_DecimalsReadFailed_Returns503(t *testing.T) {
 	}
 }
 
-// TestHistory_PerSideDecimals: the additive base_decimals/quote_decimals
-// fields resolve the Soroban token's declared decimals() for the base
-// side (via the TokenDecimals reader) and default 7 for a native/classic
-// quote — resolved ONCE per request and stamped on every row.
+// TestHistory_PerSideDecimals: base_decimals/quote_decimals resolve the Soroban token's declared decimals() for the base side
+// (via TokenDecimals) and default to 7 for a native/classic quote, resolved once per request and stamped on every row.
 func TestHistory_PerSideDecimals(t *testing.T) {
 	// The fixture declares the pair it is requested under: the page read
 	// walks both stored directions, and the stub answers a pair the way
@@ -961,22 +908,9 @@ func TestHistory_ClassicDecimalsNoReaderConsult(t *testing.T) {
 	}
 }
 
-// TestHistory_OffChainSourceDecimals is the regression test for the
-// off-chain decimals divisor.
-//
-// base_decimals/quote_decimals are documented as THE divisor for turning
-// a row's raw amount into whole units, and they were resolved once per
-// page from the ASSET. But the scale an amount was stamped at is a
-// property of the CONNECTOR, not the asset: the CEX parsers stamp 1e8
-// and the FX pollers 1e6, while the asset resolver returns 7 for
-// anything non-Soroban. A page mixes both — /v1/history for a
-// crypto/fiat pair returns sdex rows beside coinbase rows — so a
-// consumer following the documented conversion overstated every CEX
-// trade by exactly 10x. `price` is scale-invariant, so nothing in the
-// response contradicted it.
-//
-// Failure shape: coinbase rows served base_decimals 7
-// against a parser that stamps 8.
+// TestHistory_OffChainSourceDecimals: the amount scale is a property of the CONNECTOR (CEX 1e8, FX 1e6), not the asset (7 for
+// non-Soroban), and a page mixes both. Per-page asset decimals overstated CEX amounts 10x, and scale-invariant `price` hid it.
+// Failure shape: coinbase rows served base_decimals 7 against a parser that stamps 8.
 func TestHistory_OffChainSourceDecimals(t *testing.T) {
 	onChain := mkHistTrade(100) // Source: soroswap
 	cex := mkHistTrade(101)
@@ -1102,10 +1036,8 @@ func TestHistory_OrientationRendering(t *testing.T) {
 	}
 }
 
-// TestHistory_BothDirectionsMergeInKeysetOrder pins the merge on a
-// market the decoder recorded in both directions — the shape /v1/ohlc
-// folds in SQL. Every row appears once, in the endpoint's order, each
-// re-expressed by the orientation it was STORED in.
+// TestHistory_BothDirectionsMergeInKeysetOrder pins the merge for a market recorded in both directions: every row once, in
+// endpoint order, each re-expressed by the orientation it was STORED in.
 func TestHistory_BothDirectionsMergeInKeysetOrder(t *testing.T) {
 	t.Parallel()
 	aqua, usdc := aquaUSDC(t)
@@ -1143,11 +1075,8 @@ func TestHistory_BothDirectionsMergeInKeysetOrder(t *testing.T) {
 	}
 }
 
-// TestHistory_PageBoundaryAcrossDirections is the boundary case: both
-// directions hold rows immediately after every cursor, so each page cut
-// falls between the two streams. The drain must serve every row exactly
-// once, in order, and must not report the window drained while rows
-// remain in the other direction.
+// TestHistory_PageBoundaryAcrossDirections: both directions hold rows right after every cursor, so each page cut falls between
+// the streams. The drain must serve every row once, in order, and not report drained while the other direction has rows.
 func TestHistory_PageBoundaryAcrossDirections(t *testing.T) {
 	t.Parallel()
 	aqua, usdc := aquaUSDC(t)
@@ -1182,10 +1111,8 @@ func TestHistory_PageBoundaryAcrossDirections(t *testing.T) {
 	assertServedExactlyOnce(t, served, rows, sizes)
 }
 
-// TestHistory_PageBoundaryWithinOneLedger tightens the boundary onto a
-// single (ts, ledger): both directions hold rows there, so the cut is
-// decided by tx_hash — the component the merge and the database order
-// identically — rather than by time.
+// TestHistory_PageBoundaryWithinOneLedger: both directions hold rows at a single (ts, ledger), so the cut is decided by tx_hash,
+// the component the merge and the database order identically.
 func TestHistory_PageBoundaryWithinOneLedger(t *testing.T) {
 	t.Parallel()
 	aqua, usdc := aquaUSDC(t)
@@ -1212,16 +1139,9 @@ func TestHistory_PageBoundaryWithinOneLedger(t *testing.T) {
 	}
 }
 
-// TestHistory_PageIsNotCutThroughATieGroup pins the one comparison the
-// merge deliberately refuses to make.
-//
-// Two rows can share (ts, ledger, tx_hash, op_index) and differ only in
-// `source` — the trades primary key allows it — and `source` is the one
-// keyset component whose Go byte order can disagree with the database's
-// collation. Cutting a page between two such rows would mint a cursor
-// the database may order AFTER the row that was dropped, and that row
-// would never be served. So the cut moves off the group, and the page
-// comes back SHORT with a cursor rather than full and lossy.
+// TestHistory_PageIsNotCutThroughATieGroup: rows sharing (ts, ledger, tx_hash, op_index) differing only in `source` must not be
+// split across pages, since Go byte order of `source` can disagree with the DB collation and a dropped row would never be served.
+// The cut moves off the group and the page comes back SHORT with a cursor.
 func TestHistory_PageIsNotCutThroughATieGroup(t *testing.T) {
 	t.Parallel()
 	aqua, usdc := aquaUSDC(t)
@@ -1252,12 +1172,8 @@ func TestHistory_PageIsNotCutThroughATieGroup(t *testing.T) {
 	assertServedExactlyOnce(t, served, rows, sizes)
 }
 
-// TestHistory_OverLimitTieGroupIsCompletedBeforeItIsServed: `limit`
-// validates to [1, 10000], so a caller can ask for limit=1 against a
-// three-source group. The flipped row's source sorts ABOVE the stored row
-// a short read leaves unfetched, so a page that serves the group without
-// completing it mints a cursor past that row. Limit 2 repeats it one size
-// up so limit=1 cannot be read as a boundary artefact.
+// TestHistory_OverLimitTieGroupIsCompletedBeforeItIsServed: limit=1 against a three-source group. The flipped row's source sorts
+// above the unfetched stored row, so serving the group incomplete mints a cursor past it. Limit 2 rules out a boundary artefact.
 func TestHistory_OverLimitTieGroupIsCompletedBeforeItIsServed(t *testing.T) {
 	t.Parallel()
 	aqua, usdc := aquaUSDC(t)
@@ -1293,12 +1209,8 @@ func TestHistory_OverLimitTieGroupIsCompletedBeforeItIsServed(t *testing.T) {
 	}
 }
 
-// TestHistory_TieGroupSweepLosesNothing walks every arrangement of four
-// rows over two tie groups, both orientations, at limits 1..3 — the
-// shapes a hand-built fixture keeps missing. Every row must be served
-// EXACTLY once: losing one is the failure the merge exists to prevent,
-// and repeating one silently inflates any total a client accumulates
-// across pages.
+// TestHistory_TieGroupSweepLosesNothing walks every arrangement of four rows over two tie groups, both orientations, limits 1..3.
+// Every row must be served EXACTLY once; a loss is the failure the merge prevents, and a repeat inflates client totals.
 func TestHistory_TieGroupSweepServesEachRowOnce(t *testing.T) {
 	t.Parallel()
 	aqua, usdc := aquaUSDC(t)
@@ -1332,14 +1244,8 @@ func TestHistory_TieGroupSweepServesEachRowOnce(t *testing.T) {
 	// past it by key, so a client summing volume across pages is never inflated.
 }
 
-// TestHistory_FlippedRowNonstandardDecimals pins the pairing between the
-// flipped trade slice and the request's legs.
-//
-// normalizeTradeRowPrices is handed the trades the page returned — now
-// re-expressed — while `base` and `quote` are the REQUEST's legs. If
-// that pairing were inverted the correction would run 10^-2 instead of
-// 10^+2 and the price would read 0.00025 rather than 2.5, on the one
-// surface whose whole point is the per-trade number.
+// TestHistory_FlippedRowNonstandardDecimals pins the pairing of the flipped trade slice with the request's legs: inverted, the
+// correction would run 10^-2 instead of 10^+2 and price would read 0.00025 rather than 2.5.
 func TestHistory_FlippedRowNonstandardDecimals(t *testing.T) {
 	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 9)
 	flagged := mustParseAsset(t, flaggedAsset)
@@ -1364,17 +1270,8 @@ func TestHistory_FlippedRowNonstandardDecimals(t *testing.T) {
 	}
 }
 
-// TestHistory_PastGroupCursorPointingBeyondTheWindowTerminates drives
-// the case the arithmetic makes possible: a cursor stepped past a
-// complete group that is then asked about a window holding nothing after
-// it. The page must come back empty, carry NO cursor, and stop —
-// re-serving the group, or handing back a cursor to be asked again,
-// would be an endless drain.
-//
-// A client narrowing `to` between pages is what produces it: the first
-// request spans both groups, so the cursor is minted past the first; the
-// second replays that cursor over a window that ends before the second
-// group exists.
+// TestHistory_PastGroupCursorPointingBeyondTheWindowTerminates: a cursor stepped past a complete group, replayed over a window
+// with nothing after it (client narrowed `to`), must return an empty page with NO cursor, or the drain never ends.
 func TestHistory_PastGroupCursorPointingBeyondTheWindowTerminates(t *testing.T) {
 	t.Parallel()
 	aqua, usdc := aquaUSDC(t)
@@ -1425,11 +1322,8 @@ func TestHistory_PastGroupCursorPointingBeyondTheWindowTerminates(t *testing.T) 
 	assertServedExactlyOnce(t, rest, store.rows, sizes)
 }
 
-// TestHistory_PastGroupCursorDeclinesToWrapOpIndex pins the guard. At
-// the maximum op_index the step would wrap to zero — a cursor pointing
-// at the START of the transaction, which re-serves it forever — so the
-// read keeps the last-row cursor instead. That cursor can repeat a row;
-// it cannot loop, and it cannot lose one.
+// TestHistory_PastGroupCursorDeclinesToWrapOpIndex: at max op_index the step would wrap to zero, a cursor to the transaction
+// START that re-serves it forever, so the last-row cursor is kept; it can repeat a row but cannot loop or lose one.
 func TestHistory_PastGroupCursorDeclinesToWrapOpIndex(t *testing.T) {
 	t.Parallel()
 	aqua, usdc := aquaUSDC(t)
@@ -1459,17 +1353,9 @@ func TestHistory_PastGroupCursorDeclinesToWrapOpIndex(t *testing.T) {
 	}
 }
 
-// TestHistory_TieGroupLargerThanAnyPageIsServedWhole is the case a
-// bounded completion budget got wrong.
-//
-// An over-limit tie group is completed by re-reading the truncated
-// direction, and that re-read goes straight to the store's maximum
-// rather than climbing a ladder. A ladder has a top, and a group past
-// the top fell to a branch that cut THROUGH the group and minted a
-// last-row cursor — so the flipped row whose source sorts below every
-// stored source in the group was excluded by the database's own
-// predicate and never served on any page. The branch is gone; this is
-// the fixture that would bring it back.
+// TestHistory_TieGroupLargerThanAnyPageIsServedWhole: an over-limit tie group is completed by re-reading the truncated direction
+// straight to the store maximum, with no ladder. A capped ladder cut through the group and lost a flipped row whose source sorts
+// below every stored source; this fixture guards that.
 func TestHistory_TieGroupLargerThanAnyPageIsServedWhole(t *testing.T) {
 	t.Parallel()
 	aqua, usdc := aquaUSDC(t)

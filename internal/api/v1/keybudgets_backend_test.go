@@ -22,10 +22,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// registerStyleFixture mints the credential pair POST /v1/register leaves behind: a Postgres
-// management row carrying sha256(plaintext) and, through the production mirror seam, the Redis
-// record keyed by the same hash. The plaintext is built from a repeated pattern so it is
-// unmistakably a fixture.
+// registerStyleFixture mints the credential pair POST /v1/register leaves behind: a Postgres management row holding
+// sha256(plaintext) and, via the production mirror seam, the Redis record under the same hash. The plaintext is an obvious
+// fixture.
 func registerStyleFixture(
 	t *testing.T, budgets v1.APIKeyBudgetStores, acct platform.Account,
 ) (plaintext, redisKey string, row platform.APIKey) {
@@ -55,10 +54,8 @@ func registerStyleFixture(
 	return plaintext, cachekeys.APIKey(hex.EncodeToString(sum[:])).String(), row
 }
 
-// TestNewAPIKeyBudgetStores_RedisBackendNeverDeletesTheCredential pins the credential-retention
-// contract at the handler seam. Under the default auth_backend=redis, `apikey:<hash>` IS the
-// credential, so stores carrying a key-cache invalidator whenever Redis is configured would, on
-// an override-only PATCH (a quota RAISE), DELete every /v1/register key the account held.
+// TestNewAPIKeyBudgetStores_RedisBackendNeverDeletesTheCredential: under auth_backend=redis, `apikey:<hash>` IS the credential,
+// so a key-cache invalidator on the stores would DEL every /v1/register key on an override-only PATCH (a quota raise).
 func TestNewAPIKeyBudgetStores_RedisBackendNeverDeletesTheCredential(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})

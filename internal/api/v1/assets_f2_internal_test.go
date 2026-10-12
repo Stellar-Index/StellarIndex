@@ -10,10 +10,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// TestUsdMarketValue covers the F2 market-cap math helper directly
-// (internal access — usdMarketValue is unexported because nothing
-// outside the package needs it). Integration coverage of the helper
-// via /v1/assets/{id} lives in assets_f2_test.go.
+// TestUsdMarketValue covers the F2 market-cap math helper directly (it is unexported); integration coverage via
+// /v1/assets/{id} lives in assets_f2_test.go.
 func TestUsdMarketValue(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -82,10 +80,8 @@ func TestUsdMarketValue_NegativeSupplyRejected(t *testing.T) {
 	}
 }
 
-// TestComputeMarketCapUSD_ZeroSupplyMatchesUsdMarketValue pins that the listing path
-// (computeMarketCapUSD) and the detail path (usdMarketValue) agree a zero circulating supply is
-// a legitimate "0.00", not an omitted field. An exact zero must not be treated like a parse
-// failure.
+// TestComputeMarketCapUSD_ZeroSupplyMatchesUsdMarketValue pins that the listing and detail paths agree a zero circulating
+// supply is a legitimate "0.00", not an omitted field; an exact zero must not be treated as a parse failure.
 func TestComputeMarketCapUSD_ZeroSupplyMatchesUsdMarketValue(t *testing.T) {
 	got := computeMarketCapUSD("0", "0.07", 7)
 	if got != "0.00" {
@@ -102,10 +98,8 @@ func TestComputeMarketCapUSD_NegativeStillRejected(t *testing.T) {
 	}
 }
 
-// TestPctChange covers the trailing-24h percentage helper. The
-// signed-leading-"+" convention is part of the wire contract — a
-// regression here would silently flip the field's interpretation
-// for clients that distinguish "0.00" (no change) from "+0.00".
+// TestPctChange covers the trailing-24h percentage helper. The leading "+" on positive values is wire contract, so clients can
+// tell "0.00" (no change) from "+0.00".
 func TestPctChange(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -150,10 +144,9 @@ func TestPctChange_BadInputs(t *testing.T) {
 	}
 }
 
-// TestApplyF2Fields_SEP41LakeFlowsIncompleteOmitted pins that a Soroban token whose lake-flows
-// net total is negative (incompletely seeded flows) has total_supply/circulating_supply omitted
-// rather than published as an impossible negative (ADR-0003), mirroring SEP41Computer.Compute.
-// fakeTokenSupply (asset_supply_test.go) hand-sets Incomplete as assembleTokenSupply does.
+// TestApplyF2Fields_SEP41LakeFlowsIncompleteOmitted: a Soroban token whose lake-flows net total is negative (incompletely
+// seeded) has total_supply/circulating_supply omitted rather than published negative (ADR-0003), mirroring
+// SEP41Computer.Compute.
 func TestApplyF2Fields_SEP41LakeFlowsIncompleteOmitted(t *testing.T) {
 	asset, err := canonical.NewSorobanAsset(supplyContractID)
 	if err != nil {
@@ -241,10 +234,8 @@ func TestSep1DisplayToRawUnits(t *testing.T) {
 	}
 }
 
-// TestSep1DeclaredMaxResolver — precedence + blocking rules for the
-// serving-path SEP-1 max resolver: max_number beats fixed_number, an
-// explicit is_unlimited=true blocks both, absent declarations return
-// ok=false, and the resolver never errors.
+// TestSep1DeclaredMaxResolver covers precedence for the serving-path SEP-1 max resolver: max_number beats fixed_number, an
+// explicit is_unlimited=true blocks both, absent declarations return ok=false, and it never errors.
 func TestSep1DeclaredMaxResolver(t *testing.T) {
 	strPtr := func(s string) *string { return &s }
 	boolPtr := func(b bool) *bool { return &b }

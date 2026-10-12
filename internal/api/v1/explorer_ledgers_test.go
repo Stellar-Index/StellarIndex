@@ -317,10 +317,8 @@ func (s *stubExplorerReader) AccountsByWealth(_ context.Context, _, _ []string, 
 	return s.wealth, s.err
 }
 
-// AccountsByWealthCached mirrors the uncached stub: warm-and-fresh whenever
-// the stub isn't configured to fail, so existing expectations are
-// unchanged. An error case reports cold, which is how the real cache
-// signals "nothing ever computed".
+// AccountsByWealthCached mirrors the uncached stub: warm and fresh unless configured to fail, in which case it reports cold,
+// as the real cache does for "nothing ever computed".
 func (s *stubExplorerReader) AccountsByWealthCached(_ context.Context, _, _ []string, _ int) (clickhouse.AccountWealthSnapshot, bool) {
 	if s.err != nil {
 		return clickhouse.AccountWealthSnapshot{}, false
@@ -418,10 +416,9 @@ func (s *stubExplorerReader) AccountGraph(_ context.Context, _, relation string,
 	return out, true, nil
 }
 
-// AccountGraphHistory mirrors the real reader: a graph whose creation arm has no covered span
-// has not completed a cycle, and a series over it would falsely claim "this account has never
-// created anything". AccountCohort serves the stub's cohort when a cycle "completed" (cohortOK)
-// and records the relation asked for.
+// AccountGraphHistory mirrors the real reader: a graph whose creation arm has no covered span has not completed a cycle, so a
+// series over it would falsely claim "never created anything". AccountCohort serves the stub's cohort when cohortOK and
+// records the relation asked for.
 func (s *stubExplorerReader) AccountCohort(_ context.Context, _ string, relation string) (clickhouse.AccountCohort, bool, error) {
 	if s.err != nil {
 		return clickhouse.AccountCohort{}, false, s.err
@@ -575,10 +572,8 @@ func TestExplorer_LedgerTransactions(t *testing.T) {
 	}
 }
 
-// TestExplorer_LedgerTransactions_Truncated pins the behaviour: when a
-// ledger's header reports more transactions than the page-size cap
-// returned, the response must say so — the caller would otherwise have no way
-// to distinguish a genuinely short ledger from a silently truncated one.
+// TestExplorer_LedgerTransactions_Truncated: when a ledger's header reports more transactions than the page-size cap returned,
+// the response must say so, so callers can tell a short ledger from a silently truncated one.
 func TestExplorer_LedgerTransactions_Truncated(t *testing.T) {
 	reader := &stubExplorerReader{
 		ledgers: []clickhouse.LedgerHeader{{Seq: 42, TxCount: 5}},
@@ -739,10 +734,8 @@ func TestExplorer_ContractDetail_InvalidID(t *testing.T) {
 	}
 }
 
-// The contract-activity cursor must carry the tx_hash discriminator: the 3-part (ledger,
-// op_index, event_index) tuple is not unique (single-op txs all tie at 0.0), so paging on it
-// permanently skips tied rows. A 4-part cursor round-trips; the 3-part form is rejected as
-// invalid rather than silently mis-paged.
+// The contract-activity cursor must carry the tx_hash discriminator: the 3-part (ledger, op_index, event_index) tuple is not
+// unique (single-op txs tie at 0.0), so paging on it skips tied rows. A 4-part cursor round-trips; the 3-part form is rejected.
 func TestExplorer_ContractDetail_CursorRequiresTxHash(t *testing.T) {
 	const cid = "CAM7DY53G63XA4AJRS24Z6VFYAFSSF76C3RZ45BE5YU3FQS5255OOABP"
 	base := explorerTestServer(t, &stubExplorerReader{})

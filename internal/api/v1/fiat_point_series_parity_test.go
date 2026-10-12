@@ -80,11 +80,9 @@ func (r *fiatConstituentReader) TradesInRange(
 	return r.inWindow(pair, from, to), nil
 }
 
-// OHLCSeries derives each constituent's bar from its own trades as the SQL aggregate does:
-// open/close are the chronological first/last price, high/low the extremes, v_base/v_quote the
-// raw sums, n the count, and Sources the distinct sources (the combine resolves each bar's
-// smallest-unit scale from them). 1h and 1m are modelled; 1m is the grain the point path's
-// held-back gate resolves at.
+// OHLCSeries derives each constituent's bar from its own trades as the SQL aggregate does: open/close are chronological
+// first/last, high/low extremes, v_base/v_quote raw sums, n the count, Sources the distinct sources (for scale resolution).
+// 1h and 1m are modelled; 1m is the grain the point path's held-back gate resolves at.
 func (r *fiatConstituentReader) OHLCSeries(
 	_ context.Context, pair canonical.Pair, interval string, from, to time.Time, _ int,
 ) ([]v1.OHLCSeriesBar, error) {
@@ -273,15 +271,9 @@ func TestFiatVWAPPointMatchesSeries(t *testing.T) {
 	}
 }
 
-// TestFiatSingleBarOHLCMatchesSeriesExtremes pins the same unification for the single-bar
-// /v1/ohlc branch: its high/low and volumes must equal the combined series bar's.
-//
-// outlier_sigma=0 because the single-bar branch defaults to a 4σ MAD filter the CAGG series
-// lacks, a separate divergence from the constituent-set one under test.
-//
-// open/close are not compared: the series' combined open/close are base-volume-weighted across
-// constituents (a CAGG cannot know the cross-constituent order), while the point path's are the
-// true first/last prints.
+// TestFiatSingleBarOHLCMatchesSeriesExtremes pins that the single-bar /v1/ohlc branch's high/low and volumes equal the combined
+// series bar's. outlier_sigma=0 because that branch defaults to a 4σ MAD filter the CAGG series lacks.
+// open/close are not compared: the series' are base-volume-weighted across constituents, the point path's are true first/last.
 func TestFiatSingleBarOHLCMatchesSeriesExtremes(t *testing.T) {
 	srv := newFiatParityServer(t)
 	ts := httpTestServer(t, srv)
@@ -324,11 +316,8 @@ func TestFiatSingleBarOHLCMatchesSeriesExtremes(t *testing.T) {
 	}
 }
 
-// TestFiatTWAPPointUsesAllConstituents covers the third point endpoint, which shares the fetch.
-// The 5/5/50-minute weighting below (0.18, 0.20, 0.19 to windowEnd) is only expressible if all
-// three constituents are present and chronologically ordered.
-//
-//	(0.18·5 + 0.20·5 + 0.19·50) / 60 = 11.4/60 = 0.19
+// TestFiatTWAPPointUsesAllConstituents covers the third point endpoint sharing the fetch. The 5/5/50-minute weighting
+// (0.18, 0.20, 0.19 to windowEnd) needs all three constituents chronologically ordered: (0.18*5 + 0.20*5 + 0.19*50) / 60 = 0.19.
 func TestFiatTWAPPointUsesAllConstituents(t *testing.T) {
 	srv := newFiatParityServer(t)
 	ts := httpTestServer(t, srv)
@@ -383,10 +372,9 @@ func TestFiatPointConstituentReadErrorFailsClosed(t *testing.T) {
 	}
 }
 
-// TestFiatEURPointServesLikeSeries: the point path must gate on `quote.Type == AssetFiat` like
-// the series, not on `quote.Code == "USD"`, or a EUR-quoted asset with real EURC depth gets a
-// series bar but a point 404. It resolves fiat:EUR through the same backers the series
-// combines (aggregate.FiatBackers("EUR") → EURC/EUROC/EUROB).
+// TestFiatEURPointServesLikeSeries: the point path must gate on `quote.Type == AssetFiat` like the series, not on
+// `quote.Code == "USD"`, or a EUR-quoted asset with EURC depth gets a series bar but a point 404.
+// It resolves fiat:EUR via aggregate.FiatBackers("EUR") (EURC/EUROC/EUROB).
 func TestFiatEURPointServesLikeSeries(t *testing.T) {
 	xlmNative, _ := canonical.ParseAsset("native")
 	eurc, err := canonical.ParseAsset("crypto:EURC")

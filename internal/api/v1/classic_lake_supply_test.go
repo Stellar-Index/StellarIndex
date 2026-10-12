@@ -16,11 +16,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
-// What this file guards: stellar.ledger_entries_current populates its `asset` column for
-// entry_type='trustline' ONLY, so the broad classic supply map (a GROUP BY on that column)
-// cannot see supply held in claimable balances, liquidity-pool reserves, or a Stellar Asset
-// Contract's own contract_data balances. The fixtures model that shape: a trustline sum of
-// 100.0000000 units against a true supply of 136.6000000.
+// Guards that stellar.ledger_entries_current fills `asset` for trustlines ONLY, so the broad classic supply map cannot see
+// supply in claimable balances, liquidity-pool reserves or a SAC's contract_data. Fixtures: trustline sum 100.0 against true
+// supply 136.6.
 const (
 	cetesIssuer = "GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC"
 	cetesAsset  = "CETES-" + cetesIssuer
@@ -77,10 +75,9 @@ func (e *trustlineOnlyExplorer) ClassicCirculatingSupply(context.Context) (map[s
 	return e.supply, nil
 }
 
-// lakeSupplyServer wires the two readers onto a Server the way cmd/stellarindex-api/main.go
-// does: the token-supply reader on `tokenSupply` and the trustline sum behind `explorer`.
-// assetsReader stays nil so latestPreciseSupply yields nothing; RWA assets are outside
-// watched_classic_assets, which is why they fall through to these two readers.
+// lakeSupplyServer wires the token-supply reader on `tokenSupply` and the trustline sum behind `explorer` as main.go does.
+// assetsReader stays nil so latestPreciseSupply yields nothing; RWA assets are outside watched_classic_assets and fall to these
+// readers.
 func lakeSupplyServer(t *testing.T, lakeTotal string) (*Server, *lakeSupplyStub) {
 	t.Helper()
 	sac, err := mustSACFor(cetesAsset)
@@ -128,10 +125,8 @@ func cetesRow() []AssetDetail {
 	}}
 }
 
-// TestListingSupplySeesSupplyOutsideTrustlines runs the production listing fill
-// (Server.fillMarketCapsFromSupply, shared by handleAssets and the RWA classic arm) over an
-// asset whose supply is 36.6% invisible to the trustline sum, and asserts the served
-// circulating supply is the whole of it. Reading `broad` alone would under-serve it.
+// TestListingSupplySeesSupplyOutsideTrustlines runs the production listing fill (fillMarketCapsFromSupply) over an asset whose
+// supply is 36.6% invisible to the trustline sum and asserts the served circulating supply is the whole of it.
 func TestListingSupplySeesSupplyOutsideTrustlines(t *testing.T) {
 	s, stub := lakeSupplyServer(t, cetesTrueSupply)
 	rows := cetesRow()
@@ -167,10 +162,8 @@ func TestListingSupplySeesSupplyOutsideTrustlines(t *testing.T) {
 	}
 }
 
-// TestRWAFillMissingSupplySeesSupplyOutsideTrustlines covers the other fill on
-// the measured surface: an RWA row with NO served price never reaches the
-// market-cap fill, and rwaFillMissingSupply attaches the raw supply fact the
-// reference basis values. It must attach the same complete figure.
+// TestRWAFillMissingSupplySeesSupplyOutsideTrustlines: an RWA row with no served price skips the market-cap fill, and
+// rwaFillMissingSupply must attach the same complete supply figure.
 func TestRWAFillMissingSupplySeesSupplyOutsideTrustlines(t *testing.T) {
 	s, _ := lakeSupplyServer(t, cetesTrueSupply)
 	rows := cetesRow()
@@ -186,10 +179,8 @@ func TestRWAFillMissingSupplySeesSupplyOutsideTrustlines(t *testing.T) {
 	}
 }
 
-// TestLakeSupplyNeverFallsBelowTheTrustlineFloor: every trustline balance was minted, so the
-// trustline sum is a PROVABLE LOWER BOUND on issued supply. A lake reading below it means the
-// contract's flows are incompletely seeded, not that the sum is too high, so the served
-// figure must not drop; a partially-seeded supply_flows row must not replace a correct figure.
+// TestLakeSupplyNeverFallsBelowTheTrustlineFloor: the trustline sum is a provable lower bound on issued supply, so a lower lake
+// reading means incompletely seeded flows; the served figure must not drop.
 func TestLakeSupplyNeverFallsBelowTheTrustlineFloor(t *testing.T) {
 	s, _ := lakeSupplyServer(t, "3") // absurdly under-seeded
 	rows := cetesRow()
@@ -235,11 +226,8 @@ func (failingClassicExplorer) ClassicCirculatingSupply(context.Context) (map[str
 	return nil, errors.New("classic supply GROUP BY exceeded its budget")
 }
 
-// TestStaleTrustlineSumCannotOutrankALowerLakeReading: the trustline-sum map is the one
-// supply arm the listing max()es against a live reading, so its age decides the answer. If
-// its refresh fails and the last good map is served forever, a pre-burn sum beats the
-// post-burn lake total and publishes burned supply. Past classicSupplyMaxAge the map is not
-// served, whether the refresh is rate-limited or attempted and failed.
+// TestStaleTrustlineSumCannotOutrankALowerLakeReading: the trustline map is max()ed against live readings, so if a failed
+// refresh served the last map forever, a pre-burn sum would publish burned supply. Past classicSupplyMaxAge it is not served.
 func TestStaleTrustlineSumCannotOutrankALowerLakeReading(t *testing.T) {
 	const postBurnLake = "400000000"
 	for _, tc := range []struct {
@@ -292,10 +280,8 @@ func TestFreshTrustlineSumStillFloorsTheLake(t *testing.T) {
 	}
 }
 
-// TestLakeSupplyRefusesIncompleteFlows — Σ(burn+clawback) > Σmint means the
-// contract's flows are incompletely seeded, NOT that supply is negative. The
-// listing must refuse the reading and keep the trustline sum, mirroring the
-// refusal /v1/assets/{asset_id}/supply and fillContractMarketCaps already make.
+// TestLakeSupplyRefusesIncompleteFlows: Σ(burn+clawback) > Σmint means incompletely seeded flows, not negative supply. The
+// listing must refuse the reading and keep the trustline sum, as /v1/assets/{asset_id}/supply and fillContractMarketCaps do.
 func TestLakeSupplyRefusesIncompleteFlows(t *testing.T) {
 	s, stub := lakeSupplyServer(t, "")
 	sac, err := mustSACFor(cetesAsset)
@@ -316,10 +302,8 @@ func TestLakeSupplyRefusesIncompleteFlows(t *testing.T) {
 	}
 }
 
-// TestClassicLakeSupplyCachesNegativeAnswers — an asset the lake has nothing
-// for must not be re-queried on every request. Without the negative cache the
-// long tail of classic assets would each cost a supply_flows read per listing
-// page, forever.
+// TestClassicLakeSupplyCachesNegativeAnswers: an asset the lake has nothing for must not be re-queried every request, or the
+// long tail of classic assets costs a supply_flows read per listing page forever.
 func TestClassicLakeSupplyCachesNegativeAnswers(t *testing.T) {
 	s, stub := lakeSupplyServer(t, "") // no flows for the SAC
 	rows := cetesRow()
@@ -352,10 +336,8 @@ func TestClassicLakeSupplyCachesNegativeAnswers(t *testing.T) {
 	}
 }
 
-// TestClassicLakeSupplySkipsNativeAndNonClassic — XLM's SAC supply is how much
-// XLM is currently WRAPPED, a different quantity from the ledger header's
-// total_coins, and asset_supply.go excludes it for exactly that reason. Fiat
-// and contract rows have no classic SAC at all. None may reach the lake read.
+// TestClassicLakeSupplySkipsNativeAndNonClassic: XLM's SAC supply is the amount wrapped, not the header total_coins, and
+// asset_supply.go excludes it. Fiat and contract rows have no classic SAC. None may reach the lake read.
 func TestClassicLakeSupplySkipsNativeAndNonClassic(t *testing.T) {
 	for _, assetID := range []string{"native", "XLM", "fiat:USD", "crypto:BTC"} {
 		if got, ok := classicSACContractID(assetID); ok {

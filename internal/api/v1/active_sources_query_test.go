@@ -46,10 +46,8 @@ func TestActiveSourcesIsSubsetOfTotal(t *testing.T) {
 	}
 }
 
-// TestActiveSourcesWindowToleratesSlowSources — a window shorter than a
-// legitimately-enabled source's publication cadence reports it as
-// inactive, which misstates our own ingest. The measured floor is band,
-// which emits nothing on most days by design.
+// TestActiveSourcesWindowToleratesSlowSources: a window shorter than an enabled source's publication cadence would misreport
+// it as inactive. The measured floor is band, which emits nothing on most days by design.
 func TestActiveSourcesWindowToleratesSlowSources(t *testing.T) {
 	if strings.Contains(activeSourcesQuery, "[10m]") {
 		t.Error("activeSourcesQuery is back to a 10-minute window. rozo emitted 2 " +
@@ -64,10 +62,8 @@ func TestActiveSourcesWindowToleratesSlowSources(t *testing.T) {
 	}
 }
 
-// TestActiveSourcesQueriesAreWellFormed catches the shape of a
-// copy-paste slip — an unbalanced count() would fail at query time
-// against Prometheus, where the failure is a silently absent field
-// rather than an error the page shows.
+// TestActiveSourcesQueriesAreWellFormed catches copy-paste slips such as an unbalanced count(), which against Prometheus would
+// surface as a silently absent field rather than a visible error.
 func TestActiveSourcesQueriesAreWellFormed(t *testing.T) {
 	for name, q := range map[string]string{
 		"activeSourcesQuery": activeSourcesQuery,

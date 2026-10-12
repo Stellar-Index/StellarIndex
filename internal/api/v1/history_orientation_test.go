@@ -220,10 +220,8 @@ func orientationQuery(base, quote canonical.Asset, limit int) string {
 	}.Encode()
 }
 
-// drainHistory paginates a request to exhaustion and returns every row
-// in the order it was served, plus the page sizes. It fails the test if
-// the drain does not terminate promptly, which is the shape a merge
-// that mints a cursor it cannot advance past would take.
+// drainHistory paginates to exhaustion and returns every row in served order plus page sizes; it fails if the drain does not
+// terminate promptly, which is how a merge minting an un-advanceable cursor would show.
 func drainHistory(t *testing.T, ts *testServer, query string) (rows []v1.TradeRow, pageSizes []int) {
 	t.Helper()
 	cursor := ""
@@ -262,10 +260,8 @@ func drainHistory(t *testing.T, ts *testServer, query string) (rows []v1.TradeRo
 // `(ts, ledger, tx_hash, op_index, source) >` predicate and they are never served. So the read
 // completes the group first, re-reading the truncated direction with a raised limit.
 
-// servedIdentity is the trades primary key as it appears on the wire —
-// the tuple that names ONE stored row. Source alone is not it: the same
-// connector records many trades, and two of them can share a tx_hash
-// suffix in a fixture while being different rows.
+// servedIdentity is the trades primary key as served on the wire, the tuple naming ONE stored row; source alone is not enough
+// since fixtures can share a tx_hash suffix across distinct rows.
 func servedIdentity(r v1.TradeRow) string {
 	return fmt.Sprintf("%s|%d|%s|%d", r.Source, r.Ledger, r.TxHash, r.OpIndex)
 }

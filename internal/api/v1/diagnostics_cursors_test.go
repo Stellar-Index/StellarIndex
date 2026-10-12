@@ -193,10 +193,8 @@ func TestHandleCursors_LimitBoundsResponse(t *testing.T) {
 	_ = resp.Body.Close()
 }
 
-// The one condition this endpoint exists to surface is stuck ingest, and the abandoned rule
-// must not swallow it. `ledgerstream` and `projector` hold RESUME state something still reads,
-// so an old row there is an incident, not a leftover (the same premise that makes
-// `reap-cursors` refuse to delete them, read off the same list).
+// The abandoned rule must not swallow stuck ingest, the condition this endpoint exists to surface: `ledgerstream` and `projector`
+// hold resume state something still reads, so an old row there is an incident (same list `reap-cursors` refuses to delete).
 func TestHandleCursors_StuckLiveCursorSurvivesTheAbandonedRule(t *testing.T) {
 	srv := v1.New(v1.Options{
 		Cursors: &stubCursorsReader{
@@ -330,10 +328,8 @@ func TestHandleCursors_InvalidMaxAge(t *testing.T) {
 	}
 }
 
-// ?source=<name> isolates one source — the live indexer cursor
-// without the ~50 backfill rows alongside it. The
-// param must not be silently ignored, or an operator
-// asking for ?source=ledgerstream gets everything.
+// ?source=<name> isolates one source (e.g. the live indexer cursor without the ~50 backfill rows); the param must not be
+// silently ignored.
 func TestHandleCursors_SourceFilter(t *testing.T) {
 	srv := v1.New(v1.Options{
 		Cursors: &stubCursorsReader{
@@ -423,10 +419,8 @@ func TestHandleCursors_NoReaderReturns503(t *testing.T) {
 	}
 }
 
-// TestHandleCursors_StatusActive — `?status=active` filters out
-// rows older than 10 minutes (the active/stale boundary). Matches
-// the intent: completed backfill cursors that linger in the
-// table shouldn't dominate the listing.
+// TestHandleCursors_StatusActive: `?status=active` filters out rows older than 10 minutes, so lingering completed backfill
+// cursors do not dominate the listing.
 func TestHandleCursors_StatusActive(t *testing.T) {
 	srv := v1.New(v1.Options{
 		Cursors: &stubCursorsReader{

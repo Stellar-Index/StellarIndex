@@ -132,10 +132,8 @@ func TestAssetList_InvalidLimitRejected(t *testing.T) {
 
 // ─── /v1/assets/{asset_id} (single) ───────────────────────────────
 
-// ctxDeadCountingReader answers GetAsset with a distinct Code each
-// call, independent of the request's context state (mirrors the real
-// AssetReader implementations, which don't observe cancellation
-// themselves).
+// ctxDeadCountingReader answers GetAsset with a distinct Code per call, independent of context state, like the real AssetReader
+// implementations which don't observe cancellation themselves.
 type ctxDeadCountingReader struct {
 	calls int
 }
@@ -203,10 +201,9 @@ func TestAssetMetadata_ReturnsOnlyOverlayFields(t *testing.T) {
 	}
 }
 
-// A storage row without a home_domain is backfilled from the known-issuers
-// map on both /v1/assets/{id} and its /metadata variant, so the two surfaces
-// agree with /v1/issuers. With no metadata resolver wired the status advances
-// to "not_fetched", not "not_applicable" (which would claim no home domain).
+// A storage row without a home_domain is backfilled from the known-issuers map on /v1/assets/{id} and /metadata, agreeing with
+// /v1/issuers. With no metadata resolver wired the status is "not_fetched", not "not_applicable" (which would claim no home
+// domain).
 func TestAsset_BackfillsHomeDomainFromKnownIssuersMap(t *testing.T) {
 	issuer := testUSDCIssuer
 	reader := &stubAssetReader{
@@ -449,10 +446,8 @@ func TestAssetList_FromAssetsReader_FilterPassThrough(t *testing.T) {
 	}
 }
 
-// type=classic and type=any are no-ops on the classic-only listing spine.
-// type=native and type=fiat match nothing there, so they return an empty page
-// without calling the reader. type=soroban is answerable by the spine (traded
-// Soroban contracts) and must reach the store.
+// type=classic and type=any are no-ops on the classic-only spine; type=native and type=fiat return an empty page without calling
+// the reader; type=soroban is answerable by the spine (traded contracts) and must reach the store.
 func TestAssetList_TypeFilter(t *testing.T) {
 	usdc := timescale.AssetRow{AssetID: "USDC-" + testUSDCIssuer, Code: "USDC", Slug: "usdc"}
 	soroban := timescale.AssetRow{
@@ -523,10 +518,8 @@ func TestAssetList_InvalidFilters_400(t *testing.T) {
 	}
 }
 
-// listingStub is a tiny AssetsReader implementation tailored to the
-// listing-endpoint tests. Each method returns the configured value;
-// recording the most-recent ListAssetsExt opts lets tests assert
-// what filter the handler passed through.
+// listingStub is a small AssetsReader for the listing tests; it returns configured values and records the latest ListAssetsExt
+// opts so tests can assert the filter the handler passed through.
 type listingStub struct {
 	rows     []timescale.AssetRow
 	lastOpts timescale.ListAssetsOptions
@@ -612,10 +605,9 @@ func (unmeasuredSubstanceGate) Probe(context.Context, canonical.Asset, canonical
 	return false, false, pricingguard.FloorNone
 }
 
-// TestAssetList_SubstanceUnmeasured_WithholdsPriceAndStampsStale pins the rule on both
-// /v1/assets listing paths: when the substance gate cannot measure a row, the ungated catalogue
-// price must not be published (so it cannot back a market cap) and the page must say it is
-// degraded. The control shows a measured withhold stays unflagged.
+// TestAssetList_SubstanceUnmeasured_WithholdsPriceAndStampsStale: on both listing paths, when the substance gate cannot measure a
+// row the ungated catalogue price must not be published (so it cannot back a market cap) and the page must be flagged degraded.
+// The control shows a measured withhold stays unflagged.
 func TestAssetList_SubstanceUnmeasured_WithholdsPriceAndStampsStale(t *testing.T) {
 	price := "0.42"
 	row := timescale.AssetRow{
@@ -665,10 +657,8 @@ func TestAssetList_SubstanceUnmeasured_WithholdsPriceAndStampsStale(t *testing.T
 	}
 }
 
-// paginatingAssetsReader embeds the full stub and overrides only
-// ListAssetsExt, honouring opts.Limit by returning min(Limit, total)
-// rows so the handler's overfetch-by-one logic is exercised exactly as
-// the real store would drive it.
+// paginatingAssetsReader overrides only ListAssetsExt, honouring opts.Limit with min(Limit, total) rows so the handler's
+// overfetch-by-one logic runs as the real store drives it.
 type paginatingAssetsReader struct {
 	stubAssetsReaderExt
 	total int
@@ -718,10 +708,8 @@ func TestAssetList_AssetsPaginationEmitsCursor(t *testing.T) {
 	}
 }
 
-// TestAssetList_RejectsMalformedCursor guards cursor validation on both the
-// default listing and the unified (asset_class=all) classic phase: without it
-// a malformed cursor falls through to the keyset predicate's degenerate
-// (0, "") case and reads as a quiet end-of-pagination (empty page, 200 OK).
+// TestAssetList_RejectsMalformedCursor: a malformed cursor on the default listing and the unified classic phase must be rejected,
+// else it falls into the keyset predicate's degenerate (0, "") case and reads as a quiet end of pagination (empty 200).
 func TestAssetList_RejectsMalformedCursor(t *testing.T) {
 	ts := httpTestServer(t, v1.New(v1.Options{AssetsReader: &paginatingAssetsReader{total: 1000}}))
 	for _, q := range []string{
@@ -796,12 +784,9 @@ func newAssetsLimitedServer(t *testing.T, anonLimit int, withStore bool) (*testS
 	return startHTTPTest(t, v1.New(opts).Handler()), reader
 }
 
-// TestAssetList_ChargesByThePlanSelected: /v1/assets is one route with several query plans picked
-// by the query string. Charging them all one token would sell the expensive volume-ranked plan
-// and the cache-defeating `q` scan at the cheapest plan's price.
-//
-// Each case is one request into a fresh 100-token window; the assertion is the exact
-// post-charge remainder.
+// TestAssetList_ChargesByThePlanSelected: /v1/assets is one route with several query plans, so charging one token would sell the
+// expensive volume-ranked plan and the cache-defeating `q` scan at the cheapest price. Each case runs in a fresh 100-token window
+// and asserts the exact post-charge remainder.
 func TestAssetList_ChargesByThePlanSelected(t *testing.T) {
 	cases := []struct {
 		name, query   string
@@ -847,10 +832,8 @@ func TestAssetList_ChargesByThePlanSelected(t *testing.T) {
 // order_by" case above pins it at the base token) and answered no-store.
 const assetsProbe = "/v1/assets?order_by=bogus"
 
-// TestAssetList_DeniedPlanDoesNoRead: the surcharge lands before the
-// read. A caller with 2 tokens left cannot buy a 10-token plan, and the
-// store is not touched finding that out. The budget is 13 because the
-// probe that reads the remainder spends one of the 3 the plan leaves.
+// TestAssetList_DeniedPlanDoesNoRead: the surcharge lands before the read, so a caller with 2 tokens cannot buy a 10-token plan
+// and the store is not touched. The budget is 13 because the remainder probe spends one of the 3 the plan leaves.
 func TestAssetList_DeniedPlanDoesNoRead(t *testing.T) {
 	ts, reader := newAssetsLimitedServer(t, 13, true)
 	url := ts.URL + "/v1/assets?order_by=volume_24h_usd_desc&limit=2"
@@ -890,10 +873,8 @@ func TestAssetList_NoStoreNoSurcharge(t *testing.T) {
 	}
 }
 
-// TestAssetList_QueryLengthIsBounded: `q` is carried verbatim into the listing cache key and
-// three LIKE patterns, so it must be bounded. 100 bytes clears the longest value that can match
-// a row (a 69-byte classic asset id); one byte more is a 400 on every path, class-scoped
-// listings included, and reads nothing.
+// TestAssetList_QueryLengthIsBounded: `q` goes verbatim into the cache key and three LIKE patterns, so it is bounded at 100 bytes
+// (above the longest matchable 69-byte classic id); one byte more is a 400 on every path and reads nothing.
 func TestAssetList_QueryLengthIsBounded(t *testing.T) {
 	ts, reader := newAssetsLimitedServer(t, 100, true)
 
@@ -923,15 +904,8 @@ func TestAssetList_QueryLengthIsBounded(t *testing.T) {
 	}
 }
 
-// TestAssetList_BootSeededPageIsLabelledStale is the honesty half of the boot seed.
-//
-// A boot-seeded page-set is real data observed by a previous process, so it is stale by
-// construction. Serving it under `flags.stale: false` with `as_of` stamped to the request time
-// would be a lie, the same one /v1/markets avoids (markets.go: "never now() over rows a failing
-// refresh has let age past the TTL").
-//
-// The assertions are on values: stale must be true, and as_of must equal the seed's real
-// observation time to the second, not merely be non-zero.
+// TestAssetList_BootSeededPageIsLabelledStale: a boot-seeded page-set was observed by a previous process, so it must serve
+// `flags.stale: true` with as_of equal to the seed's real observation time, not the request time (as /v1/markets does).
 func TestAssetList_BootSeededPageIsLabelledStale(t *testing.T) {
 	const ttl = time.Minute
 	reader := v1.NewCachedAssetsReader(&paginatingAssetsReader{total: 1000}, ttl)
@@ -977,10 +951,8 @@ func TestAssetList_BootSeededPageIsLabelledStale(t *testing.T) {
 	}
 }
 
-// TestAssetList_FreshCachedPageIsNotLabelledStale is the other side of
-// the same contract: the honest label must discriminate. A page-set
-// inside the TTL is not stale, and stamping `stale: true` on every
-// cached response would make the flag worthless.
+// TestAssetList_FreshCachedPageIsNotLabelledStale: the stale label must discriminate; a page-set inside the TTL is not stale, and
+// flagging every cached response would make the flag worthless.
 func TestAssetList_FreshCachedPageIsNotLabelledStale(t *testing.T) {
 	reader := v1.NewCachedAssetsReader(&paginatingAssetsReader{total: 1000}, time.Minute)
 	observedAt := time.Now().Add(-2 * time.Second).UTC().Truncate(time.Second)
@@ -1009,10 +981,8 @@ func TestAssetList_FreshCachedPageIsNotLabelledStale(t *testing.T) {
 	}
 }
 
-// TestAssetList_UncachedReaderStillFresh — the degraded path. A wired
-// reader with no cache (every test double in this package, and any
-// deployment with the listing cache off) answers live, so it must not
-// acquire a stale flag or a back-dated as_of from this change.
+// TestAssetList_UncachedReaderStillFresh: a reader with no cache answers live, so it must not acquire a stale flag or a back-
+// dated as_of.
 func TestAssetList_UncachedReaderStillFresh(t *testing.T) {
 	ts := httpTestServer(t, v1.New(v1.Options{AssetsReader: &paginatingAssetsReader{total: 10}}))
 	before := time.Now().UTC().Add(-time.Second)

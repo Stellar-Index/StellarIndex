@@ -234,11 +234,8 @@ func TestHandleProtocolDetail_StaleServeIsNoStore(t *testing.T) {
 	waitProtoDetailIdle(t, srv, key)
 }
 
-// TestHandleSDEXOrderbook_StaleWhenAdvanceStalled: a wedged
-// Advance leaves c.updated frozen (see Advance's early return on a
-// read error) while the book keeps serving. The handler must surface
-// that age as flags.stale rather than the unconditional false a fresh
-// snapshot gets.
+// TestHandleSDEXOrderbook_StaleWhenAdvanceStalled: a wedged Advance leaves c.updated frozen while the book keeps serving; the
+// handler must surface that age as flags.stale instead of the unconditional false a fresh snapshot gets.
 func TestHandleSDEXOrderbook_StaleWhenAdvanceStalled(t *testing.T) {
 	const usdc = "USDC-GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ"
 	reader := &stubOfferBookReader{

@@ -104,11 +104,9 @@ func TestAssetSupply_ContractIDDirect(t *testing.T) {
 	}
 }
 
-// TestAssetSupply_IncompleteFlowsRefused pins the serving guard: a token whose lake-flows net
-// total is negative (incompletely seeded flows, impossible supply) must NEVER serve a negative
-// total_supply. total_supply is a NON-nullable wire string, so the handler REFUSES via the
-// existing 404 "Supply not available" path rather than publishing "-N" (ADR-0003; the table
-// requires total_supply >= 0), mirroring SEP41Computer.Compute.
+// TestAssetSupply_IncompleteFlowsRefused: a token whose lake-flows net total is negative (incompletely seeded flows) must
+// never serve a negative total_supply. It is a non-nullable wire string, so the handler 404s "Supply not available"
+// (ADR-0003), mirroring SEP41Computer.Compute.
 func TestAssetSupply_IncompleteFlowsRefused(t *testing.T) {
 	f := &fakeTokenSupply{supply: clickhouse.TokenSupply{
 		ContractID: supplyContractID,
@@ -160,10 +158,9 @@ func (s *stubWatermark) LakeWatermark(context.Context) (uint32, time.Time, error
 	return s.ledger, s.closedAt, s.err
 }
 
-// TestAssetSupply_WatermarkFreshAndStale pins ADR-0041 Decision 4 on the
-// supply read: `as_of_ledger` carries the lake watermark, and `flags.stale`
-// flips exactly when the watermark's close time trails now beyond
-// lakeStaleThreshold (±30s margins keep the pin robust on slow CI).
+// TestAssetSupply_WatermarkFreshAndStale pins ADR-0041 Decision 4 on the supply read: `as_of_ledger` carries the lake
+// watermark and `flags.stale` flips exactly when its close time trails now beyond lakeStaleThreshold (+-30s margins for slow
+// CI).
 func TestAssetSupply_WatermarkFreshAndStale(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -243,10 +240,9 @@ func TestAssetSupply_ClassicDerivedSAC(t *testing.T) {
 	}
 }
 
-// TestAssetSupply_ClassicSACNetIsLabelledDerived pins that a classic asset's derived-SAC event
-// net never reaches the wire as a bare total_supply: it carries supply_basis=classic_lake_flows
-// so it is not read as issuer-authoritative or confused with a Soroban token's own log. It is
-// not a floor either, so the lower-bound flag stays off.
+// TestAssetSupply_ClassicSACNetIsLabelledDerived: a classic asset's derived-SAC event net never reaches the wire as a bare
+// total_supply; it carries supply_basis=classic_lake_flows so it is not read as issuer-authoritative. It is not a floor
+// either, so the lower-bound flag stays off.
 func TestAssetSupply_ClassicSACNetIsLabelledDerived(t *testing.T) {
 	cases := []struct {
 		assetID   string
@@ -330,10 +326,8 @@ func TestAssetSupply_ClassicViaSACWrapper(t *testing.T) {
 	}
 }
 
-// TestAssetSupply_NativeAliasIsCaseInsensitive pins that every canonical spelling of XLM reaches
-// the ledger-header branch. The check must be case-insensitive like canonical.ParseAsset and the
-// other asset routes: a 404 for /v1/assets/xlm/supply while /v1/assets/XLM/supply returns 200
-// reads as "this asset has no supply data".
+// TestAssetSupply_NativeAliasIsCaseInsensitive: every canonical spelling of XLM must reach the ledger-header branch, matching
+// canonical.ParseAsset. A 404 for /xlm/supply while /XLM/supply returns 200 would read as "no supply data".
 func TestAssetSupply_NativeAliasIsCaseInsensitive(t *testing.T) {
 	// `crypto:xlm` is deliberately absent: canonical.ParseAsset requires an
 	// exact-case code after the `crypto:` prefix, so it is rejected

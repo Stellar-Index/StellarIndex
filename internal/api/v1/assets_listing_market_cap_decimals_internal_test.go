@@ -19,15 +19,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// A listing row's price_usd comes from asset_price_snapshot, whose writer stores the TRUE-scale
-// price for a confirmed non-7-decimals token (timescale's snapshotNormalizedPriceUSDExpr). The
-// market cap multiplies that price by a supply held in the token's SMALLEST unit, so the supply
-// divisor must match the price column's scale: the token's real decimals, not the 7
-// assetDetailFromAssetRow stamps on every row.
-//
-// Against a RAW-ratio price the two errors cancel (supply / 10^7 times a price 10^(7 - decimals)
-// off is right), so a true-scale price with the 7 divisor is wrong by 10^(decimals - 7):
-// 1,000 tokens of a 9-decimals contract at 2.50 USD would publish 250000.00 instead of 2500.00.
+// A listing row's price_usd is true-scale for a confirmed non-7-decimals token, while supply is in smallest units, so the supply
+// divisor must be the token's real decimals, not the 7 assetDetailFromAssetRow stamps. With a true-scale price and divisor 7 the
+// cap is off by 10^(decimals-7) (a 9dp token at 2.50 USD x 1,000 would show 250000.00, not 2500.00).
 func TestFillMarketCapsFromSupply_DividesSupplyByTheConfirmedDecimals(t *testing.T) {
 	const sorobanContract = "CC2RBGYNCFBCVENIDL5BFBWPH4OUZM2UA3OD2K2N54GLMWCC4KWPVAGO"
 	tests := []struct {
@@ -114,12 +108,8 @@ func (capDecimalsTokenSupply) NativeTotalCoins(context.Context) (int64, uint32, 
 	return 0, 0, errors.New("the contract arm must not read the native total")
 }
 
-// The RWA contract arm runs the shared listing fill BEFORE it has read the contract's decimals,
-// then fills its own cap afterwards, and every `continue` in that second fill leaves whatever
-// the first published standing. Reachable case: the supply observer covers the contract but the
-// decimals reader (a separate ClickHouse dial) cannot answer, so the row is marked
-// decimals-unresolved and keeps the first fill's cap. That cap may not be computed with the
-// hardcoded 7.
+// The RWA contract arm runs the shared listing fill before reading the contract's decimals, and any `continue` in its own later
+// fill leaves the first fill's cap standing. When the decimals reader cannot answer, that cap must not use the hardcoded 7.
 func TestRWAContractListingRows_EarlyCapIsNotOnTheHardcodedSevenScale(t *testing.T) {
 	const sorobanContract = "CC2RBGYNCFBCVENIDL5BFBWPH4OUZM2UA3OD2K2N54GLMWCC4KWPVAGO"
 	price, volume := "2.5000000000", "250000.00"
@@ -245,11 +235,9 @@ func TestRWAContractListingRows_DirectoryReadFailureWithholds(t *testing.T) {
 	}
 }
 
-// A contract row's DEX price comes from asset_price_snapshot, normalised through the
-// nonstandard-decimals projection (its confirmed value, else 7). The cap may only divide the
-// supply by the scale that price is on. For a 6-decimal contract with NO projection row the
-// price carries the raw ratio, so dividing by 10^6 would overstate the cap tenfold. The lake's 6
-// still goes on the wire.
+// A contract row's DEX price is normalised through the nonstandard-decimals projection (confirmed value, else 7), so the cap must
+// divide supply by that same scale. For a 6dp contract with no projection row the price is a raw ratio, and dividing by 10^6
+// would overstate the cap tenfold; the lake's 6 still goes on the wire.
 func TestRWAContractListingRows_CapDividesByThePriceScale(t *testing.T) {
 	const sorobanContract = "CC2RBGYNCFBCVENIDL5BFBWPH4OUZM2UA3OD2K2N54GLMWCC4KWPVAGO"
 	const supplyUnits = "1074000000000"

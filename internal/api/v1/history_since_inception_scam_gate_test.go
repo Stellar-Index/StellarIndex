@@ -104,10 +104,8 @@ func TestHistorySinceInception_GateKeysOnBaseNotQuote(t *testing.T) {
 	}
 }
 
-// The RAW trade surface stays visible — the promise scam.go, substance.go
-// and the withheld problem's own escape-hatch guidance all make. If this
-// ever 404s, the gate was pushed down into the shared reader and our own
-// error message became a lie.
+// The RAW trade surface stays visible, as scam.go, substance.go and the withheld problem's guidance promise. A 404 here would
+// mean the gate was pushed into the shared reader.
 func TestHistorySinceInception_RawTradesSurfaceStaysVisible(t *testing.T) {
 	base := chartFlaggedBase(t)
 	gate := &chartScamGate{withheld: map[string]bool{base.String(): true}}
@@ -178,10 +176,8 @@ func TestHistorySinceInception_DeclaresItsOwnHole(t *testing.T) {
 	requireHoleDeclared(t, len(env.Data.Points), env.Data.Discontinuous, env.Data.GapStartsAt, env.Data.GapEndsAt)
 }
 
-// TestHistorySinceInception_ChargesByGranularity: the client's
-// granularity selects how many buckets the unbounded read returns (up to
-// 50,000 at 1m against ~3,650 at the 1d default), so it must select the
-// price too. Each case is one request into a fresh 100-token window.
+// TestHistorySinceInception_ChargesByGranularity: granularity sets how many buckets the unbounded read returns (up to 50,000 at
+// 1m vs ~3,650 at 1d), so it must set the price too. Each case is one request into a fresh 100-token window.
 func TestHistorySinceInception_ChargesByGranularity(t *testing.T) {
 	cases := []struct {
 		name, query   string
@@ -222,10 +218,8 @@ func TestHistorySinceInception_ChargesByGranularity(t *testing.T) {
 	}
 }
 
-// TestHistorySinceInception_DeniedGrainDoesNoRead: the surcharge lands
-// before the read. After a default request (1 token) the 13-token budget
-// has 12 left; a 1m request pays its base token and cannot find the 12
-// more, and the store never sees the 1m read.
+// TestHistorySinceInception_DeniedGrainDoesNoRead: the surcharge is charged before the read. With 12 tokens left, a 1m request
+// cannot pay and the store never sees the read.
 func TestHistorySinceInception_DeniedGrainDoesNoRead(t *testing.T) {
 	ts, reader := newSinceInceptionLimitedServer(t, 13)
 	if resp := mustGet(t, ts.URL+sinceInceptionProbe+"?asset=native"); resp.StatusCode != http.StatusOK {
@@ -309,10 +303,8 @@ func TestHistorySinceInception_HappyPath(t *testing.T) {
 	}
 }
 
-// TestHistorySinceInception_StablecoinFallback: when the literal X/fiat:USD CAGG read is empty
-// (no on-chain trades quote in fiat:USD), the handler retries against each operator-declared
-// classic USD-peg and serves the first non-empty result, so XLM/fiat:USD is not empty while
-// XLM/<USDC-classic> has data.
+// TestHistorySinceInception_StablecoinFallback: when the literal X/fiat:USD CAGG read is empty, retry against each operator-
+// declared classic USD-peg and serve the first non-empty result.
 func TestHistorySinceInception_StablecoinFallback(t *testing.T) {
 	t0 := time.Unix(1_770_000_000, 0).UTC()
 	usdcG := "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
@@ -371,10 +363,8 @@ func TestHistorySinceInception_GranularityForwarded(t *testing.T) {
 	}
 }
 
-// TestHistorySinceInception_RowCapTruncated: since-inception has no window to compare against the
-// 50k-bucket cap up front, so a pair whose grid exceeds it must be flagged AFTER the read; an
-// oldest-first cap-hit is otherwise indistinguishable from a series that legitimately ends at the
-// last returned bucket.
+// TestHistorySinceInception_RowCapTruncated: with no window to compare against the 50k-bucket cap up front, a capped pair must be
+// flagged AFTER the read, since an oldest-first cap-hit otherwise looks like a series that ends naturally.
 func TestHistorySinceInception_RowCapTruncated(t *testing.T) {
 	const historyMaxPoints = 50_000 // internal/api/v1/history.go
 	t0 := time.Unix(1_000_000_000, 0).UTC()
@@ -407,10 +397,8 @@ func TestHistorySinceInception_RowCapTruncated(t *testing.T) {
 	}
 }
 
-// TestHistorySinceInception_NonstandardDecimals_NormalizesPrice pins that
-// /v1/history/since-inception serves the corrected CAGG VWAP, like the
-// /v1/chart series it shares a read chain with: `p` = raw ratio × K
-// (10^(9−7) = 100), `v_usd` untouched.
+// TestHistorySinceInception_NonstandardDecimals_NormalizesPrice: since-inception serves the corrected CAGG VWAP like /v1/chart:
+// `p` = raw ratio x K (10^(9-7) = 100), `v_usd` untouched.
 func TestHistorySinceInception_NonstandardDecimals_NormalizesPrice(t *testing.T) {
 	vusd := "1234.56"
 	reader := &stubHistoryReader{points: []v1.HistoryPoint{{
@@ -435,10 +423,8 @@ func TestHistorySinceInception_NonstandardDecimals_NormalizesPrice(t *testing.T)
 	}
 }
 
-// TestHistorySinceInception_StablecoinFallback_ReachesPegSACTwin: the fallback must cross the
-// aliases on BOTH sides. Proxying the LITERAL base against the CLASSIC peg only never reads the
-// combination Soroban depth is stored under (SAC base quoted in the peg's SAC), even though the
-// literal-spelling walk above already crosses the base aliases.
+// TestHistorySinceInception_StablecoinFallback_ReachesPegSACTwin: the fallback must cross aliases on BOTH sides, or it never
+// reads the SAC-base-quoted-in-peg-SAC combination where Soroban depth is stored.
 func TestHistorySinceInception_StablecoinFallback_ReachesPegSACTwin(t *testing.T) {
 	usdc := installPegAliasRegistry(t)
 	t0 := time.Unix(1_770_000_000, 0).UTC()

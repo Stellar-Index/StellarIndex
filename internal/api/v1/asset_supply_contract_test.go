@@ -79,10 +79,8 @@ func TestResolveSupplyContractID_IgnoresSacWrapperOverride(t *testing.T) {
 	}
 }
 
-// TestSupplyStorageFallbackOmitsConsistencyWithoutSelfChecks pins the field's
-// own contract: `supply_consistent` is absent when the contract published
-// neither a TotalSupply nor a HolderCount to check against. A bare token has
-// nothing to agree with, and a `true` there is a confirmation it never earned.
+// TestSupplyStorageFallbackOmitsConsistencyWithoutSelfChecks: `supply_consistent` is absent when the contract published
+// neither a TotalSupply nor a HolderCount to check against; a `true` there would be a confirmation it never earned.
 func TestSupplyStorageFallbackOmitsConsistencyWithoutSelfChecks(t *testing.T) {
 	cases := []struct {
 		name string
@@ -134,10 +132,8 @@ func TestSupplyStorageFallbackOmitsConsistencyWithoutSelfChecks(t *testing.T) {
 
 func ptrBool(b bool) *bool { return &b }
 
-// TestSupplyStorageFallbackAsOfLedgerIsLakeWatermark pins ADR-0041 Decision 4 on the
-// storage-derived arm: `as_of_ledger` is the lake watermark that `flags.stale` is judged from, not
-// the reader's max(last_modified_ledger), which trails the tip while holders are idle. Mixed
-// sources would pair a fresh-looking stale flag with an old as_of_ledger, or the reverse.
+// TestSupplyStorageFallbackAsOfLedgerIsLakeWatermark pins ADR-0041 Decision 4 on the storage arm: `as_of_ledger` is the lake
+// watermark that `flags.stale` is judged from, not the reader's max(last_modified_ledger), so the two never disagree.
 func TestSupplyStorageFallbackAsOfLedgerIsLakeWatermark(t *testing.T) {
 	const (
 		lastMoved = 64165090 // dealStorageSupply().AsOfLedger

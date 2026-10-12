@@ -40,11 +40,9 @@ func servedInt(t *testing.T, data map[string]any, key string) *big.Int {
 	return &n
 }
 
-// The served fields must make minimum balance and spendable XLM derivable.
-// An account with 3 sponsored subentries, 5 XLM and 1 XLM locked by offers:
-// reserve = (2 + 3 + 0 - 3) × 0.5 XLM = 1 XLM, plus 1 XLM selling
-// liabilities locked = 2 XLM, so 3 XLM spendable. Without the sponsorship
-// counters and liabilities the only derivable figure is (2 + 3) × 0.5 = 2.5.
+// The served fields must make minimum balance and spendable XLM derivable. Example: 3 sponsored subentries, 5 XLM, 1 XLM
+// in selling liabilities gives reserve (2+3+0-3) x 0.5 = 1 XLM, plus 1 locked = 2, so 3 XLM spendable.
+// Without sponsorship counters and liabilities only (2+3) x 0.5 = 2.5 is derivable.
 func TestExplorer_AccountState_ServesReserveInputs(t *testing.T) {
 	data := getAccountStateMap(t, clickhouse.AccountState{
 		Exists: true, Balance: 50_000_000, NumSubEntries: 3,

@@ -2,15 +2,9 @@ package v1
 
 import "testing"
 
-// TestPriceSeriesPublishable_OnePredicateForBothPaths: the listing's sparkline attach and the
-// detail path's series suppression share ONE predicate for "may this payload carry a
-// price-over-time claim?", so they cannot drift (a declared-peg asset must not get a
-// sparkline on /v1/assets yet a full price_history on /v1/assets/{id} drawn from the dust
-// market the substance gate refused).
-//
-// suppressScamIssuerPricing must also null ATH: a directory-flagged issuer must not publish
-// an all-time-high dollar price next to price_usd: null. This table is the contract; the
-// declared-peg case guards the detail path against testing less.
+// TestPriceSeriesPublishable_OnePredicateForBothPaths: the listing sparkline and the detail path's series suppression share
+// one predicate so they cannot drift (a declared-peg asset must not get a sparkline yet a price_history drawn from a refused
+// dust market). suppressScamIssuerPricing must also null ATH for a flagged issuer; this table is the contract.
 func TestPriceSeriesPublishable_OnePredicateForBothPaths(t *testing.T) {
 	usd := "0.65"
 	for _, tc := range []struct {
@@ -77,10 +71,9 @@ func TestWithholdPriceSeries_DeclaredPegDropsHistory(t *testing.T) {
 	}
 }
 
-// A declared-peg asset also publishes no all-time high, DELIBERATELY. GetAssetATH reads the
-// asset's own USD-QUOTED market, which for a declared-peg asset is the dust market the
-// substance gate refused, while the published headline comes from the PEG. An `ath` beside
-// it would state a provenance the price does not have.
+// A declared-peg asset deliberately publishes no all-time high: GetAssetATH reads the asset's own USD-quoted dust market,
+// which the substance gate refused, while the headline comes from the peg, so an `ath` would state a provenance the price
+// lacks.
 func TestWithholdPriceSeries_DeclaredPegDropsATH(t *testing.T) {
 	usd := "0.65"
 	d := &AssetDetail{

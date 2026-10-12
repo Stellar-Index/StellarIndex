@@ -18,10 +18,8 @@ import (
 // errStubSep1Scan stands in for a failing AllSep1Images scan.
 var errStubSep1Scan = errors.New("stub: sep1 scan failed")
 
-// stubSep1ImagesReader implements both Sep1CachedReader (unused here) and
-// the optional AllSep1Images capability cachedSep1Images type-asserts for.
-// calls counts AllSep1Images invocations so the TTL/single-flight cache is
-// verifiable.
+// stubSep1ImagesReader implements Sep1CachedReader (unused here) and the optional AllSep1Images capability; calls counts
+// AllSep1Images invocations so the TTL/single-flight cache is verifiable.
 type stubSep1ImagesReader struct {
 	imgs  []timescale.Sep1Image
 	err   error
@@ -114,10 +112,9 @@ func (plainSep1Cache) GetIssuerSep1Cached(context.Context, string) (*timescale.I
 	return nil, sql.ErrNoRows
 }
 
-// TestProjectCatalogueRows_Sep1ImageOverlay pins that catalogue-sourced listing rows
-// (asset_class=fiat|stablecoin|crypto, /v1/external/assets, and the catalogue phase of
-// asset_class=all) get the same SEP-1 logo overlay as classic_assets-backed rows:
-// projectCatalogueRows must set Image from the SEP-1 cache.
+// TestProjectCatalogueRows_Sep1ImageOverlay: catalogue-sourced listing rows (asset_class=fiat|stablecoin|crypto,
+// /v1/external/assets, catalogue phase of asset_class=all) must get the same SEP-1 logo overlay as classic_assets rows, via
+// projectCatalogueRows.
 func TestProjectCatalogueRows_Sep1ImageOverlay(t *testing.T) {
 	stub := &stubSep1ImagesReader{imgs: []timescale.Sep1Image{
 		{Code: "USDC", Issuer: imgIssuerUSDC, Image: "https://circle.com/usdc.svg"},
@@ -169,10 +166,8 @@ func TestProjectCatalogueRows_Sep1ImageOverlay(t *testing.T) {
 	}
 }
 
-// TestHandleAssetListFromCatalogue_Sep1ImageOverlay is the handler-level regression:
-// /v1/assets?asset_class=stablecoin must serve USDC's real SEP-1 logo end to end, using the
-// embedded verified-currency catalogue (as TestCatalogueStatsUseListingReader does) so a
-// revert to the bare projectCatalogueRows(matched, caps) call is caught.
+// TestHandleAssetListFromCatalogue_Sep1ImageOverlay: handler-level check that /v1/assets?asset_class=stablecoin serves USDC's
+// real SEP-1 logo using the embedded catalogue, so a revert to the bare projectCatalogueRows call is caught.
 func TestHandleAssetListFromCatalogue_Sep1ImageOverlay(t *testing.T) {
 	cat, err := currency.LoadEmbedded()
 	if err != nil {
@@ -213,10 +208,8 @@ func TestHandleAssetListFromCatalogue_Sep1ImageOverlay(t *testing.T) {
 	}
 }
 
-// TestFillImagesFromSep1_CaseTwinsKeepTheirOwnLogo: asset codes are
-// case-sensitive, so an issuer's USDX and usdx are two assets and each
-// keeps the logo its own [[CURRENCIES]] entry declares. A mis-cased row
-// borrows a logo only when exactly one entry could be meant.
+// TestFillImagesFromSep1_CaseTwinsKeepTheirOwnLogo: asset codes are case-sensitive, so USDX and usdx each keep the logo their own
+// [[CURRENCIES]] entry declares; a mis-cased row borrows a logo only when exactly one entry could be meant.
 func TestFillImagesFromSep1_CaseTwinsKeepTheirOwnLogo(t *testing.T) {
 	const upper, lower = "https://x.example/USDX.png", "https://x.example/usdx.png"
 	s := discardServer(&stubSep1ImagesReader{imgs: []timescale.Sep1Image{

@@ -10,10 +10,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// blockingAssetListingReader stands in for the listing directory's
-// storage read: it records the exact context it was handed, so a test
-// can tell whether that context was already canceled when the read
-// observed it.
+// blockingAssetListingReader stands in for the listing directory's storage read and records the exact context it was handed,
+// so a test can tell whether that context was already canceled.
 type blockingAssetListingReader struct {
 	rows        map[string]timescale.ListingEntry
 	sawCanceled bool
@@ -69,10 +67,9 @@ func (hangingAssetListingReader) ListingDirectoryByAddress(ctx context.Context) 
 	return nil, timescale.ListingDirectoryCensus{}, ctx.Err()
 }
 
-// A hung storage read must not hold the cache mutex that every /v1/assets, /v1/assets/{id} and
-// /v1/rwa/assets request queues on: the detached read runs under its own budget and the refresh
-// returns, failed closed, once spent. It must NOT be cached as listing_unavailable for the full
-// 60s TTL just because the caller disconnected.
+// A hung storage read must not hold the cache mutex that /v1/assets, /v1/assets/{id} and /v1/rwa/assets queue on: the detached
+// read runs under its own budget and fails closed once spent. It must not be cached as listing_unavailable for the full 60s
+// TTL just because the caller disconnected.
 func TestAssetListingSnapshot_HungReadReturnsWithinBudget(t *testing.T) {
 	const budget = 50 * time.Millisecond
 	s := assetListingCacheTestServer(hangingAssetListingReader{})

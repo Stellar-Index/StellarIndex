@@ -11,10 +11,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// normalizeCatalogueReadUSD decides from the VALUE whether the SQL rounded before or after
-// the decimals correction: ROUND(x, n)::text has exactly n fraction places, and n >= 10 + k
-// for a 10^k scale-up means the result is the corrected price rounded to 10 places. A shorter
-// string was rounded on the raw scale and keeps the fail-closed precision floor.
+// normalizeCatalogueReadUSD decides from the value whether the SQL rounded before or after the decimals correction: ROUND(x,
+// n)::text has exactly n fraction places, and n >= 10+k for a 10^k scale-up means the corrected price was rounded to 10. A
+// shorter string was rounded on the raw scale and keeps the fail-closed precision floor.
 func TestNormalizeCatalogueReadUSD_RoundingScaleDecidesTheFloor(t *testing.T) {
 	const sorobanContract = "CC2RBGYNCFBCVENIDL5BFBWPH4OUZM2UA3OD2K2N54GLMWCC4KWPVAGO"
 	token, err := canonical.ParseAsset(sorobanContract)

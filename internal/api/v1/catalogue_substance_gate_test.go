@@ -24,10 +24,8 @@ const (
 	gateAQUAAssetID = "AQUA-" + gateAQUAIssuer
 )
 
-// gatedCatalogueAssets serves AQUA's on-chain twin: a listing row with a
-// price, change pills and deep multi-venue volume (so no dust guard is in
-// play), the per-asset row the headline on-chain fallback reads, and an
-// observed supply so the market-cap fill runs.
+// gatedCatalogueAssets serves AQUA's on-chain twin: a priced listing row with change pills and deep multi-venue volume (no dust
+// guard), the per-asset row for the headline fallback, and an observed supply so the market-cap fill runs.
 type gatedCatalogueAssets struct {
 	stubAssetsReaderExt
 }
@@ -123,11 +121,9 @@ func gatedCatalogueRow(t *testing.T, ts *testServer, path string) gatedValuation
 	return gatedValuation{}
 }
 
-// TestCatalogueListingHonoursSubstanceGate pins the catalogue surfaces to the thin-market
-// substance gate the classic listing and CODE-ISSUER detail already apply: a verified
-// Stellar-only entry whose on-chain market fails the floor must not publish its headline price
-// (fillGlobalPriceFromOnChain), nor a market cap or change pills merged from its ungated twin
-// row. The allow arm proves the fixture reaches every one of those fields.
+// TestCatalogueListingHonoursSubstanceGate: a verified Stellar-only entry whose on-chain market fails the floor must not publish
+// its headline price, nor a market cap or change pills merged from its ungated twin. The allow arm proves the fixture reaches
+// every field.
 func TestCatalogueListingHonoursSubstanceGate(t *testing.T) {
 	cat, err := currency.LoadEmbedded()
 	if err != nil {

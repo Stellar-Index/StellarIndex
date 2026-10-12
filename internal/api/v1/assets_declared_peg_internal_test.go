@@ -42,11 +42,9 @@ func pegTestServer(t *testing.T, fx FXHistoryReader) *Server {
 	}
 }
 
-// TestFillDeclaredPegPrices_AfterSubstanceGate is the core contract of the declared-peg fill: an
-// asset whose dust-authored market price the substance gate withholds gets its price filled from
-// the declared fiat peg x the fresh AUD/USD rate, stamped price_basis="declared_peg". The
-// gate-then-fill ORDER matters: the fill only writes nil PriceUSD, so running it before the gate
-// would fill nothing and the gate would strip a pre-existing fill.
+// TestFillDeclaredPegPrices_AfterSubstanceGate is the core declared-peg contract: an asset whose dust market price the gate
+// withholds gets filled from the fiat peg x fresh FX, stamped price_basis="declared_peg". Order matters: the fill only writes
+// nil PriceUSD, so running before the gate would fill nothing and the gate would strip a pre-existing fill.
 func TestFillDeclaredPegPrices_AfterSubstanceGate(t *testing.T) {
 	fx := &stubFXHistory{points: []FXQuotePoint{
 		{Bucket: time.Now().UTC().Add(-24 * time.Hour), RateUSDText: "1.5267", InverseUSDText: "0.655"},
@@ -119,11 +117,9 @@ func TestFillDeclaredPegPrices_NeverOverwritesMarketPrice(t *testing.T) {
 	}
 }
 
-// TestFillDeclaredPegPrices_StaleFXDoesNotFill pins fx staleness: a rate older than
-// declaredPegFXMaxAge must NOT fill; the row degrades to a nil price rather than presenting a
-// stale rate as current. (fiatUSDPriceFor's query window already filters this on the fx_quotes
-// path; the guard also covers the PriceReader fallback tier, whose stale flag the resolver
-// discards.)
+// TestFillDeclaredPegPrices_StaleFXDoesNotFill: a rate older than declaredPegFXMaxAge must not fill; the row degrades to a nil
+// price instead of presenting a stale rate as current. This also covers the PriceReader fallback tier, whose stale flag is
+// discarded.
 func TestFillDeclaredPegPrices_StaleFXDoesNotFill(t *testing.T) {
 	fx := &stubFXHistory{points: []FXQuotePoint{
 		{Bucket: time.Now().UTC().Add(-10 * 24 * time.Hour), RateUSDText: "1.5267", InverseUSDText: "0.655"},
@@ -141,10 +137,8 @@ func TestFillDeclaredPegPrices_StaleFXDoesNotFill(t *testing.T) {
 	}
 }
 
-// TestFillDeclaredPegPrice_DetailPathSingleRow — the asset-detail call
-// site uses the single-row helper with a nil memo; same fill + stamp,
-// and a USD-declared peg resolves by identity (no FX lookup),
-// mirroring fiatMarketCapUSD's special case.
+// TestFillDeclaredPegPrice_DetailPathSingleRow: the detail call site uses the single-row helper with a nil memo, with the same
+// fill and stamp; a USD-declared peg resolves by identity with no FX lookup, as in fiatMarketCapUSD.
 func TestFillDeclaredPegPrice_DetailPathSingleRow(t *testing.T) {
 	fx := &stubFXHistory{points: []FXQuotePoint{
 		{Bucket: time.Now().UTC().Add(-24 * time.Hour), RateUSDText: "1.5267", InverseUSDText: "0.655"},

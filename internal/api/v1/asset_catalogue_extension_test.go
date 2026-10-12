@@ -7,10 +7,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// stubAssetsReaderExt implements v1.AssetsReader for the asset-extension
-// overlay test path. Each method returns the canned value its caller
-// expects; everything else returns sql.ErrNoRows so behaviour
-// degrades cleanly.
+// stubAssetsReaderExt implements v1.AssetsReader for the asset-extension overlay tests; each method returns its canned value
+// and everything else returns sql.ErrNoRows so behaviour degrades cleanly.
 type stubAssetsReaderExt struct {
 	row        timescale.AssetRow
 	rowErr     error

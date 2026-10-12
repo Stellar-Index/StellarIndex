@@ -17,10 +17,8 @@ import (
 // of contract_events per request across 365 accepted window sizes. Both share the explorer pool
 // with no credential required.
 
-// countingExplorerReader wraps the shared stub and counts the two heavy
-// reads (plus the tip read each window floor needs), so these tests can
-// assert how many times a burst actually reaches ClickHouse. Embedding
-// keeps the other ~30 interface methods on the shared stub.
+// countingExplorerReader wraps the shared stub and counts the two heavy reads (plus the tip read each window floor needs),
+// so tests can assert how many times a burst reaches ClickHouse.
 type countingExplorerReader struct {
 	*stubExplorerReader
 
@@ -51,10 +49,8 @@ func (c *countingExplorerReader) counts() (holders, contracts int, since uint32)
 	return c.holderCalls, c.contractCalls, c.lastSince
 }
 
-// TestExplorer_AssetHolders_CachedAcrossRequests is the
-// regression: repeat traffic for the same asset must not re-run the two
-// FINAL scans, and the cached response must be byte-identical to the
-// live one.
+// TestExplorer_AssetHolders_CachedAcrossRequests: repeat traffic for the same asset must not re-run the two FINAL scans, and
+// the cached response must be byte-identical to the live one.
 func TestExplorer_AssetHolders_CachedAcrossRequests(t *testing.T) {
 	reader := &countingExplorerReader{stubExplorerReader: &stubExplorerReader{
 		holders: []clickhouse.AssetHolder{
@@ -92,10 +88,8 @@ func TestExplorer_AssetHolders_CachedAcrossRequests(t *testing.T) {
 	}
 }
 
-// TestExplorer_AssetHolders_LimitIsNotACacheKey pins the slicing
-// contract: one warm entry holds the maximum page and every accepted
-// ?limit= slices from it, so varying the limit cannot multiply the scan
-// count — and each response is still cut to exactly the requested size.
+// TestExplorer_AssetHolders_LimitIsNotACacheKey pins that one warm entry holds the maximum page and every accepted ?limit=
+// slices from it, so varying limit cannot multiply scans, and each response is still cut to the requested size.
 func TestExplorer_AssetHolders_LimitIsNotACacheKey(t *testing.T) {
 	seeded := make([]clickhouse.AssetHolder, 0, 5)
 	for i := range 5 {
@@ -127,10 +121,8 @@ func TestExplorer_AssetHolders_LimitIsNotACacheKey(t *testing.T) {
 	}
 }
 
-// TestExplorer_ContractsDirectory_WindowQuantised is the
-// regression: an arbitrary ?days= is rounded UP onto the supported
-// ladder before it reaches the lake, and the response reports the window
-// actually aggregated rather than the one asked for.
+// TestExplorer_ContractsDirectory_WindowQuantised: an arbitrary ?days= is rounded up onto the supported ladder before reaching
+// the lake, and the response reports the window actually aggregated.
 func TestExplorer_ContractsDirectory_WindowQuantised(t *testing.T) {
 	now := time.Date(2026, 6, 18, 0, 0, 0, 0, time.UTC)
 	const tip = 10_000_000

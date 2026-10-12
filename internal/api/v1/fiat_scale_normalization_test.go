@@ -221,11 +221,8 @@ func TestAliasVWAPMixedScaleNormalized(t *testing.T) {
 	}
 }
 
-// TestVWAPStatesVolumeScale pins that /v1/vwap names the smallest-unit scale of its
-// base_volume/quote_volume: the same 2000 XLM serves as 200000000000 in a mixed window and
-// 20000000000 on-chain only, so a client dividing by one constant would be off tenfold. The
-// outlier case pins that the scale is taken before FilterOutliers, so dropping the only CEX
-// print leaves the surviving on-chain volumes lifted to 8dp.
+// TestVWAPStatesVolumeScale pins that /v1/vwap names the smallest-unit scale of base_volume/quote_volume: 2000 XLM is
+// 200000000000 mixed but 20000000000 on-chain only. The outlier case pins that scale is taken before FilterOutliers.
 func TestVWAPStatesVolumeScale(t *testing.T) {
 	usdc, _ := canonical.ParseAsset("USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
 	usdcCrypto, _ := canonical.ParseAsset("crypto:USDC")
@@ -327,10 +324,8 @@ func TestVWAPStatesVolumeScale(t *testing.T) {
 	}
 }
 
-// TestPriceTipMixedScaleNormalized pins the same fix on /v1/price/tip. tipWindowVWAP merges
-// the XLM alias pairs (on-chain 7dp with CEX 8dp) before aggregate.VWAP, so without the
-// NormalizeAmountScale call the tip is dragged toward the CEX leg (0.1181818181 instead of
-// 0.11 on the fiat-case fixture).
+// TestPriceTipMixedScaleNormalized pins the same fix on /v1/price/tip: tipWindowVWAP merges XLM alias pairs (7dp, 8dp),
+// and without NormalizeAmountScale the tip drifts toward the CEX leg (0.1181818181 instead of 0.11).
 func TestPriceTipMixedScaleNormalized(t *testing.T) {
 	xlmNative, _ := canonical.ParseAsset("native")
 	xlmTicker, _ := canonical.ParseAsset("crypto:XLM")
@@ -498,11 +493,9 @@ func TestFiatSeriesMixedScaleNormalized(t *testing.T) {
 	}
 }
 
-// TestFiatMixedScalePointMatchesSeries pins the point-vs-series invariant under mixed scales.
-// TestFiatVWAPPointMatchesSeries uses only `sdex` trades, so it holds whether or not the series
-// lifts anything. With two scales an un-normalised series answers 0.1181818181 on 110000000000
-// base while the normalising point path answers 0.11 on 200000000000: two surfaces, one
-// question, two populations.
+// TestFiatMixedScalePointMatchesSeries pins point-vs-series parity under mixed scales. The sdex-only parity test holds whether
+// or not the series lifts anything; un-normalised, the series answers 0.1181818181 on 110000000000 base vs the point's 0.11
+// on 200000000000.
 func TestFiatMixedScalePointMatchesSeries(t *testing.T) {
 	ts := httpTestServer(t, mixedScaleFiatServer(t))
 	bar := fetchMixedScaleSeriesBar(t, ts.URL)

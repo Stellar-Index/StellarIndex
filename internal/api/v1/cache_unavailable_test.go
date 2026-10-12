@@ -12,15 +12,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// miscOnfErr models the wire-format MISCONF reply Redis returns when
-// stop-writes-on-bgsave-error is active:
-//
-//	"MISCONF Redis is configured to save RDB snapshots, but it's
-//	 currently unable to persist to disk."
-//
-// go-redis surfaces this as a proto.RedisError (an unexported type implementing redis.Error).
-// The fallback string-prefix branch in IsCacheUnavailable also catches a plain
-// fmt.Errorf("MISCONF ...") so test stubs, which cannot import proto/, drive the same branch.
+// miscOnfErr models the MISCONF reply Redis returns when stop-writes-on-bgsave-error is active ("MISCONF Redis is configured to
+// save RDB snapshots, but it's currently unable to persist to disk."). go-redis surfaces it as an unexported proto.RedisError;
+// IsCacheUnavailable's string-prefix fallback also catches a plain fmt.Errorf("MISCONF ...") so stubs can drive the branch.
 var miscOnfErr = errors.New("MISCONF Redis is configured to save RDB snapshots, but it's currently unable to persist to disk on disk.")
 
 // IsCacheUnavailable sanity check — the helper is unit-tested via the

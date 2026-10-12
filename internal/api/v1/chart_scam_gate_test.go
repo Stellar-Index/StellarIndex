@@ -73,10 +73,8 @@ func TestChartWithholdsScamFlaggedIssuer(t *testing.T) {
 	}
 }
 
-// TestChartWithholdsAcrossEverySpecialisedVariant is the test that
-// matters for the CLASS. handleChart dispatches to market-cap, fiat and
-// TWAP handlers; a gate placed after that dispatch would leak all three
-// while the headline test above still passed.
+// TestChartWithholdsAcrossEverySpecialisedVariant covers the class: handleChart dispatches to market-cap, fiat and TWAP
+// handlers, so a gate placed after the dispatch would leak all three while the headline test still passed.
 func TestChartWithholdsAcrossEverySpecialisedVariant(t *testing.T) {
 	base := chartFlaggedBase(t)
 	usd, err := canonical.NewFiatAsset("USD")
@@ -109,10 +107,8 @@ func TestChartWithholdsAcrossEverySpecialisedVariant(t *testing.T) {
 	}
 }
 
-// TestChartGateKeysOnBaseNotQuote — the gate must key on the BASE alone
-// so it survives the frontend's XLM triangulation. Keying on the pair
-// would let a flagged asset through whenever it appeared against a
-// different quote.
+// TestChartGateKeysOnBaseNotQuote: the gate keys on the base alone so it survives the frontend's XLM triangulation; keying on
+// the pair would let a flagged asset through against a different quote.
 func TestChartGateKeysOnBaseNotQuote(t *testing.T) {
 	base := chartFlaggedBase(t)
 	usdc, err := canonical.ParseAsset(w2t2USDC)

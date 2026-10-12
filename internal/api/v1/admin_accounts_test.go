@@ -67,12 +67,8 @@ func (f *fakePlatformAccountStore) Update(_ context.Context, a platform.Account)
 	return nil
 }
 
-// UpdateAtomic is a sequential (non-locking) stand-in for
-// postgresstore.AccountStore.UpdateAtomic: real concurrent-PATCH
-// serialisation is only provable against Postgres's row lock (see
-// TestAccountStoreUpdateAtomic_SerialisesConcurrentPatches), so these
-// handler-level tests only need the same before/after + error routing
-// the real implementation exposes.
+// UpdateAtomic is a sequential stand-in for postgresstore.AccountStore.UpdateAtomic. Concurrent-PATCH serialisation is only
+// provable against Postgres's row lock, so handler tests need just the same before/after and error routing.
 func (f *fakePlatformAccountStore) UpdateAtomic(
 	ctx context.Context, id uuid.UUID, mutate func(*platform.Account) error,
 ) (before, after platform.Account, err error) {
@@ -465,10 +461,8 @@ func TestAdminAccountOverrides_CloseRevokesSessions(t *testing.T) {
 	})
 }
 
-// TestAdminAccountGet_AppendsReadAudit: the operator
-// account read returns the billing email, so each successful GET lands one
-// durable "admin.account.read" row naming the operator credential and the
-// account it read, and a refused read lands none.
+// TestAdminAccountGet_AppendsReadAudit: the operator account read returns the billing email, so each successful GET lands one
+// "admin.account.read" audit row naming the operator credential and account, and a refused read lands none.
 func TestAdminAccountGet_AppendsReadAudit(t *testing.T) {
 	acct := seededAccount()
 	acct.BillingEmail = "billing@acme.example"
@@ -512,22 +506,9 @@ func TestAdminAccountGet_AppendsReadAudit(t *testing.T) {
 	}
 }
 
-// TestAdminAccountOverrides_TierLoweringClampsKeyBudgets is the
-// proven-red guard for the clamp.
-//
-// The full clamp: lowering the tier also lowers
-// every credential the account can still authenticate with, because
-// the enforced per-minute budget is read straight off the key record
-// (auth/apikey_postgres.go `rateLimit := pgKey.RateLimitPerMin`;
-// auth/apikey_redis.go returns the stored value). PATCH
-// /v1/admin/accounts/{id} — the operator kill-switch / demotion surface —
-// wrote `accounts.tier` and stopped, so an operator demoting an abusive
-// Pro account to Free left every one of its keys serving 10_000/min.
-//
-// Asserted end to end: both key stores lowered to the free ceiling
-// (1000/min under the free-platform model — legacy "pro" canonicalises
-// to partner, 100k ceiling), keys already at or below it untouched,
-// revoked keys untouched, and the audit row carrying the clamp outcome.
+// TestAdminAccountOverrides_TierLoweringClampsKeyBudgets: lowering a tier must also lower every credential the account can
+// still authenticate with, since the enforced budget is read off the key record. Both key stores clamp to the free ceiling;
+// lower or revoked keys are untouched; the audit row records the outcome.
 func TestAdminAccountOverrides_TierLoweringClampsKeyBudgets(t *testing.T) {
 	acctID := uuid.MustParse("22222222-2222-2222-2222-222222222222")
 	acct := platform.Account{
@@ -609,10 +590,8 @@ func TestAdminAccountOverrides_TierLoweringClampsKeyBudgets(t *testing.T) {
 	}
 }
 
-// TestAdminAccountOverrides_TierRaiseDoesNotTouchKeys — the clamp is
-// one-directional on purpose. Budgets are raised at MINT time by the
-// dashboard's clampRateLimitToTier; silently lifting existing keys on a
-// comp would grant throughput the operator never asked for.
+// TestAdminAccountOverrides_TierRaiseDoesNotTouchKeys: the clamp is one-directional on purpose; budgets are raised at mint
+// time, and silently lifting existing keys on a comp would grant throughput nobody asked for.
 func TestAdminAccountOverrides_TierRaiseDoesNotTouchKeys(t *testing.T) {
 	acctID := uuid.MustParse("33333333-3333-3333-3333-333333333333")
 	accounts := newFakePlatformAccountStore(platform.Account{
@@ -640,22 +619,9 @@ func TestAdminAccountOverrides_TierRaiseDoesNotTouchKeys(t *testing.T) {
 	}
 }
 
-// TestAdminAccountOverrides_SuspendEvictsKeyCache is the proven-red guard for
-// the kill-switch class re-opening on auth_backend=postgres.
-//
-// The Postgres validator's cache-HIT path (auth/apikey_postgres.go
-// cacheLookup) checks only the KEY's revoked/expired fields, never the account
-// status, so persisting `accounts.status='suspended'` left every already-cached
-// key authenticating for up to the ~1h read-through TTL. The tier clamp does
-// not help — it early-returns unless the tier ceiling drops, so a pure status
-// flip evicts nothing. handleAdminAccountOverrides now evicts every cached key
-// for an account that transitions active→non-active, reusing the tier-clamp
-// seam (ListForAccount + InvalidateCachedKey), so the next request misses the
-// cache, re-reads Postgres, and is refused by the existing cache-miss
-// `acct.Status != AccountActive` gate.
-//
-// Prove-red: without the eviction wiring, InvalidateCachedKey is never called
-// and both keys stay warm — a suspended account keeps authenticating.
+// TestAdminAccountOverrides_SuspendEvictsKeyCache: the Postgres validator's cache-hit path checks only key fields, not account
+// status, so a suspension must evict the account's cached keys or they keep authenticating until the read-through TTL. The
+// tier clamp does not cover a pure status flip.
 func TestAdminAccountOverrides_SuspendEvictsKeyCache(t *testing.T) {
 	acctID := uuid.MustParse("44444444-4444-4444-4444-444444444444")
 	acct := platform.Account{
@@ -713,12 +679,8 @@ func TestAdminAccountOverrides_SuspendEvictsKeyCache(t *testing.T) {
 	}
 }
 
-// TestAdminAccountOverrides_EnforcementNeutralPatchDoesNotEvictKeyCache pins
-// that the eviction is GATED on an enforcement-relevant change, not fired on
-// every PATCH. A tier RAISE that leaves status active and touches neither
-// override changes nothing the Postgres validator resolves onto a cached key
-// (the resolved Subject's tier comes from the KEY row, and the clamp only fires
-// on a ceiling DROP), so its warm cache entries must be left intact.
+// TestAdminAccountOverrides_EnforcementNeutralPatchDoesNotEvictKeyCache pins that eviction is gated on an enforcement-relevant
+// change: a tier raise with status active and no override change must leave warm cache entries intact.
 func TestAdminAccountOverrides_EnforcementNeutralPatchDoesNotEvictKeyCache(t *testing.T) {
 	acctID := uuid.MustParse("55555555-5555-5555-5555-555555555555")
 	accounts := newFakePlatformAccountStore(platform.Account{
@@ -743,22 +705,9 @@ func TestAdminAccountOverrides_EnforcementNeutralPatchDoesNotEvictKeyCache(t *te
 	}
 }
 
-// TestAdminAccountOverrides_OverrideChangeEvictsKeyCache is the proven-red guard
-// for the rule that an admin override-only PATCH must evict the
-// account's warm key-cache entries so the tightened ceiling is enforced now,
-// not after the Postgres validator's ~1h read-through TTL.
-//
-// The validator RESOLVES a key's effective monthly-quota ceiling and per-minute
-// floor from the account overrides at Lookup time (auth/apikey_postgres.go) and
-// caches the resolved Subject verbatim. The tier-clamp seam (early-returns
-// unless the ceiling drops) and the suspend seam (early-returns unless status
-// leaves active) both skip an override-only change, so without explicit
-// invalidation every warm key keeps authenticating with the OLD unmetered/higher
-// quota until the TTL rolls it off — the just-tightened operator ceiling
-// silently unenforced.
-//
-// Prove-red: without the override eviction wiring, InvalidateCachedKey is never
-// called for a status-unchanged override PATCH and both keys stay warm.
+// TestAdminAccountOverrides_OverrideChangeEvictsKeyCache: the validator resolves quota ceiling and per-minute floor from
+// account overrides at lookup and caches the result. Neither the tier clamp nor the suspend seam fires on an override-only
+// PATCH, so it must evict warm keys explicitly or the tightened ceiling goes unenforced until the TTL.
 func TestAdminAccountOverrides_OverrideChangeEvictsKeyCache(t *testing.T) {
 	acctID := uuid.MustParse("66666666-6666-6666-6666-666666666666")
 	acct := platform.Account{

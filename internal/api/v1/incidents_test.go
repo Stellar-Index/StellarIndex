@@ -67,10 +67,8 @@ func TestHandleIncidentsAtom_LinkTarget(t *testing.T) {
 	}
 }
 
-// TestSummaryFromMarkdown_ExtractsFirstParagraph pins the heuristic
-// the atom feed uses to derive each entry's <summary>. The status
-// page uses the same logic; if these drift the feed and the page
-// would show different summaries.
+// TestSummaryFromMarkdown_ExtractsFirstParagraph pins the heuristic deriving each atom entry's <summary>; the status page shares
+// the logic, so drift would show different summaries.
 func TestSummaryFromMarkdown_ExtractsFirstParagraph(t *testing.T) {
 	body := `# Heading should be skipped
 
@@ -128,10 +126,8 @@ func TestSummaryFromMarkdown_EmptyInput(t *testing.T) {
 	}
 }
 
-// TestHandleIncidents_WireShape — pin the envelope shape the
-// explorer's /incident pages decode. Inject a synthetic incident
-// list onto the Server so the test doesn't depend on what's in
-// the embedded data dir.
+// TestHandleIncidents_WireShape pins the envelope shape the explorer's /incident pages decode, using a synthetic incident list
+// injected on the Server so it does not depend on the embedded data dir.
 func TestHandleIncidents_WireShape(t *testing.T) {
 	s := &Server{
 		incidents: []incidents.Incident{
@@ -184,10 +180,8 @@ func TestHandleIncidents_EmptyList(t *testing.T) {
 	}
 }
 
-// TestHandleIncidentsAtom_ValidXML — the atom feed must round-trip
-// through encoding/xml. Pin core RFC-4287 fields and the per-entry
-// urn:stellarindex:incident:<slug> ID convention so feed-reader
-// dedupe stays stable across crawls.
+// TestHandleIncidentsAtom_ValidXML: the atom feed must round-trip through encoding/xml, with core RFC-4287 fields and the
+// urn:stellarindex:incident:<slug> entry ID convention so feed readers dedupe stably.
 func TestHandleIncidentsAtom_ValidXML(t *testing.T) {
 	resolved := time.Date(2026, 5, 6, 22, 39, 0, 0, time.UTC)
 	s := newTestServerWithLogger()
@@ -239,12 +233,8 @@ func TestHandleIncidentsAtom_ValidXML(t *testing.T) {
 	}
 }
 
-// TestHandleIncidentsAtom_FeedUpdatedIsMostRecentEntry pins the feed-level <updated> to the
-// most recent entry's <updated> (RFC 4287). time.Now() would present a stale feed as freshly
-// updated on every crawl.
-//
-// Entries are deliberately in the past; the feed <updated> must equal the later incident's
-// resolved_at, NOT ~now.
+// TestHandleIncidentsAtom_FeedUpdatedIsMostRecentEntry: the feed-level <updated> must equal the most recent entry's (RFC 4287),
+// here the later incident's resolved_at in the past; time.Now() would make a stale feed look fresh on every crawl.
 func TestHandleIncidentsAtom_FeedUpdatedIsMostRecentEntry(t *testing.T) {
 	// Two incidents. The second is the most recent (resolved later),
 	// so its resolved_at is the feed's <updated>.
@@ -293,10 +283,8 @@ func TestHandleIncidentsAtom_FeedUpdatedIsMostRecentEntry(t *testing.T) {
 	}
 }
 
-// TestHandleIncidentsAtom_EmptyFeedUsesStableSentinel — a feed with
-// zero incidents must emit a STABLE <updated> (the fixed feed-
-// established epoch), NOT time.Now(). Otherwise an empty feed churns
-// its freshness signal on every crawl.
+// TestHandleIncidentsAtom_EmptyFeedUsesStableSentinel: an empty feed must emit a STABLE <updated> (the fixed feed-established
+// epoch), not time.Now(), or its freshness signal churns on every crawl.
 func TestHandleIncidentsAtom_EmptyFeedUsesStableSentinel(t *testing.T) {
 	s := newTestServerWithLogger()
 	s.incidents = nil

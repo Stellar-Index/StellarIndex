@@ -28,11 +28,8 @@ import (
 // base-only question would pass against a base-only call site. What the directory is ASKED
 // proves the quote leg reached the gate at all.
 
-// chartQuoteLegSeries backs BOTH series reads with one real bucket, so an ungated request answers
-// 200 with an actual price rather than 404-ing for lack of data and passing vacuously.
-//
-// `points` feeds the windowed read behind /v1/chart (the bucket sits inside the 24h window);
-// `pointsByPair` feeds the since-inception read.
+// chartQuoteLegSeries backs both series reads with one real bucket, so an ungated request answers 200 with a price rather than
+// 404-ing for lack of data and passing vacuously. `points` feeds the windowed read; `pointsByPair` the since-inception read.
 func chartQuoteLegSeries(t *testing.T, pair canonical.Pair) *stubHistoryReader {
 	t.Helper()
 	pt := v1.HistoryPoint{
@@ -107,10 +104,8 @@ func TestTWAPServesWhenNeitherLegIsFlagged(t *testing.T) {
 	}
 }
 
-// TestChartWithholdsWhenTheQuoteLegIsScamFlagged covers the series
-// surface, where the leak is worse than on a point: an ungated chart hands over the whole
-// trajectory of the flagged market, inverted. The gate must also short-circuit BEFORE the read,
-// so the flagged issuer's series never leaves the store.
+// TestChartWithholdsWhenTheQuoteLegIsScamFlagged covers the series surface, where an ungated leak hands over the flagged
+// market's whole inverted trajectory. The gate must also short-circuit before the read so the series never leaves the store.
 func TestChartWithholdsWhenTheQuoteLegIsScamFlagged(t *testing.T) {
 	flagged, err := canonical.NewClassicAsset("RIO", scamQuoteLegIssuer)
 	if err != nil {

@@ -108,10 +108,8 @@ func decodeProblem(t *testing.T, resp *http.Response) v1.Problem {
 	return p
 }
 
-// GET /v1/protocols/{name}/tvl is the per-pool drill-down behind the `tvl` block on
-// /v1/protocols: every pool and reserve leg the figure was summed from, the served-price
-// identity each leg was valued under, and, for a leg that contributed nothing, the reason it
-// was excluded rather than a silent zero.
+// GET /v1/protocols/{name}/tvl is the per-pool drill-down behind the `tvl` block: every pool and reserve leg, the price
+// identity each leg was valued under, and the exclusion reason for any leg that contributed nothing.
 func TestHandleProtocolTVL_ServesThePoolBreakdown(t *testing.T) {
 	cache := v1.NewDEXTVLCache(v1.DEXTVLSources{
 		AquariusReserves: stubTVLAquariusReader{pools: []timescale.AquariusPoolReserve{{
@@ -238,10 +236,8 @@ func TestHandleProtocolTVL_Refusals(t *testing.T) {
 	}
 }
 
-// A protocol whose reserve read failed this cycle is served with its
-// previous figure AND pools, labelled carried_forward with flags.stale
-// — the headline total refuses that figure, and the drill-down is where
-// to see what was refused.
+// A protocol whose reserve read failed this cycle is served with its previous figure and pools, labelled carried_forward with
+// flags.stale; the headline total refuses that figure and the drill-down shows what was refused.
 func TestHandleProtocolTVL_CarriedForwardIsLabelledStale(t *testing.T) {
 	reader := &countingAquariusReader{pools: []timescale.AquariusPoolReserve{aquariusPool(
 		"CBQDHNBFBZYE4MECPHNQCLM7F5FRZ4R7HZWQZXAK7NZYYUR3ILWSKDMV", 7, 400_000_000)}}
@@ -268,14 +264,8 @@ func TestHandleProtocolTVL_CarriedForwardIsLabelledStale(t *testing.T) {
 	}
 }
 
-// The drill-down reads only the in-process snapshot: no reserve reader and no price tier is
-// touched per request, so its cost is bounded by serialisation alone. That is a claim about
-// what the handler TOUCHES, so it is pinned by counting rather than a clock: over many requests
-// against a snapshot far larger than production's pool count, the reserve read and price
-// lookups stand still and every response carries the same data block byte for byte (only the
-// envelope's as_of moves). Serialisation cost is measured by
-// BenchmarkHandleProtocolTVL_LargeSnapshot; a wall-clock ceiling in the unit suite measures
-// runner load, not the handler.
+// The drill-down reads only the in-process snapshot: no reserve read or price lookup per request. Pinned by counting calls
+// and comparing data blocks byte for byte over many requests, since a wall-clock ceiling would measure runner load.
 func TestHandleProtocolTVL_ServesFromMemory(t *testing.T) {
 	const pools = 5_000
 	reader := &countingAquariusReader{}
@@ -327,9 +317,7 @@ func TestHandleProtocolTVL_ServesFromMemory(t *testing.T) {
 	}
 }
 
-// getProtocolTVL issues one drill-down request and returns the whole
-// body, reading it to completion — an abandoned body leaves the server
-// writing into a socket nobody drains and costs the next request a
+// getProtocolTVL issues one drill-down request and reads the whole body, since an abandoned body costs the next request a
 // fresh connection.
 func getProtocolTVL(t *testing.T, url string) []byte {
 	t.Helper()
@@ -348,10 +336,8 @@ func getProtocolTVL(t *testing.T, url string) []byte {
 	return body
 }
 
-// protocolTVLData returns the `data` object exactly as it was written,
-// so two responses can be compared byte for byte: the envelope around
-// it carries an as_of stamped at write time, which differs per
-// response and says nothing about the snapshot underneath.
+// protocolTVLData returns the `data` object exactly as written so responses compare byte for byte; the envelope's as_of
+// differs per response and says nothing about the snapshot.
 func protocolTVLData(t *testing.T, body []byte) []byte {
 	t.Helper()
 	var env struct {
@@ -377,11 +363,8 @@ func firstDifference(a, b []byte) int {
 	return min(len(a), len(b))
 }
 
-// BenchmarkHandleProtocolTVL_LargeSnapshot is an informal perf guard over the drill-down's only
-// per-request cost, serialising the snapshot. It carries the latency half of the test above: a
-// handler that re-derived or re-read per request moves this number by orders of magnitude,
-// whereas the same number inside the gate would only report runner load. Not gated in CI; run
-// via `go test ./internal/api/v1/ -run xxx -bench HandleProtocolTVL`.
+// BenchmarkHandleProtocolTVL_LargeSnapshot is an informal perf guard on the drill-down's only per-request cost, serialisation;
+// a handler that re-derives per request moves it by orders of magnitude. Not gated in CI.
 func BenchmarkHandleProtocolTVL_LargeSnapshot(b *testing.B) {
 	const pools = 5_000
 	reader := &countingAquariusReader{}

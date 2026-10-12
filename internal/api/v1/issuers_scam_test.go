@@ -5,10 +5,8 @@ package v1
 
 import "testing"
 
-// TestScamIdentitySuppression pins that a flagged, UNVERIFIED
-// issuer's self-declared org identity is the impersonation itself —
-// the counterfeiter that set home_domain=lobstr.co must never render
-// as "LOBSTR — SCAM".
+// TestScamIdentitySuppression: a flagged, UNVERIFIED issuer's self-declared org identity is the impersonation itself, so a
+// counterfeiter with home_domain=lobstr.co must never render as "LOBSTR - SCAM".
 func TestScamIdentitySuppression(t *testing.T) {
 	// The known counterfeiter from the live incident.
 	g := "GBYBVWOOVC4EJVRIF4HMWG5B7POLCS7JRPY5KYR3BCLEK24IJQOGUARD"

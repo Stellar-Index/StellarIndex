@@ -7,16 +7,9 @@ import (
 	"testing"
 )
 
-// A pooled-liquidity protocol may be summed into the headline total, or left out, but never left
-// out SILENTLY.
-//
-// An indexed AMM (sushiswap_v3 was the case) absent from tvl_total.excluded gives a reader adding
-// up the headline no way to learn it is missing, and GET /v1/protocols/{name}/tvl would blame the
-// omission on deployment wiring when the real reason is permanent and methodological:
-// concentrated liquidity has no two-sided reserve to sum.
-//
-// Both halves come from dexTVLScopeExclusions, so one entry fixes both surfaces and this guard
-// makes the next pooled protocol declare itself.
+// A pooled-liquidity protocol may be summed into the headline or left out, but never silently: an indexed AMM missing from
+// tvl_total.excluded leaves readers unable to see it, and the drill-down would wrongly blame deployment wiring.
+// Both surfaces read dexTVLScopeExclusions, so this guard makes the next pooled protocol declare itself.
 func TestDEXTVLScope_PooledProtocolIsDerivedOrExplicitlyExcluded(t *testing.T) {
 	t.Parallel()
 

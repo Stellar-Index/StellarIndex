@@ -71,18 +71,14 @@ type coverageFloorProbe struct {
 	badWindows    int
 }
 
-// probeKey is the double's per-market fixture key: the two legs in the literal spellings the
-// rung holds them under, in stored order. It is literal rather than alias-canonical because
-// which spellings a read reaches is the property under test: a market held only under a
-// declared peg's SAC wrapper must be findable by one read and not another.
+// probeKey is the double's per-market fixture key: both legs in the literal spellings the rung holds them under, in stored
+// order. Literal rather than alias-canonical because which spellings a read reaches is the property under test.
 func probeKey(base, quote canonical.Asset) string {
 	return base.String() + "/" + quote.String()
 }
 
-// probeSpanKeys enumerates every stored market one read would look at, modelling the
-// statement's cross-join: the base leg's alias family crossed with the quote leg's family (or
-// the one given spelling, for the quote-literal read), plus the flipped arm unless the read is
-// bound to one orientation.
+// probeSpanKeys enumerates every stored market one read would look at, modelling the statement's cross-join: the base alias
+// family crossed with the quote family (or the one given spelling), plus the flipped arm unless the read is orientation-bound.
 func probeSpanKeys(pair canonical.Pair, span string) []string {
 	quotes := []canonical.Asset{pair.Quote}
 	if span != "literal_quote" {
@@ -279,19 +275,9 @@ func ohlcCoverageGetPair(t *testing.T, ts *testServer, pairQS, from, to string) 
 	return env
 }
 
-// TestCoverageFloorProbe_IsBoundedAndDaily pins the read the handler issues for a pair served
-// from itself: one probe, on the daily rung, over a window bounded at both ends and strictly
-// increasing.
-//
-// The rung is not the requested interval on purpose. prices_1d has no retention policy, so
-// nothing in it is dropped by age, while the minute rung's bottom edge can move with the clock
-// where its policy is armed. The daily rung is also the coarsest and cheapest to prove empty,
-// so probing at the requested grain would cost more and could describe a rung a retention run
-// had truncated.
-//
-// The fixture is a stablecoin-quoted pair, which the series read serves from the pair itself; a
-// fiat-quoted pair is served from a constituent set and probes each constituent (see
-// TestCoverageFloor_ProbedOncePerConstituentFamily).
+// TestCoverageFloorProbe_IsBoundedAndDaily pins the handler's read for a self-served pair: one probe, on the daily rung, over a
+// window bounded at both ends and strictly increasing. prices_1d has no retention policy and is cheapest to prove empty, so the
+// requested grain is deliberately not used. The fixture is stablecoin-quoted; fiat-quoted pairs probe each constituent.
 func TestCoverageFloorProbe_IsBoundedAndDaily(t *testing.T) {
 	probe := &coverageFloorProbe{floor: xlmCoverageFloor, found: true}
 	ts := ohlcCoverageServer(t, probe)
@@ -319,10 +305,8 @@ func TestCoverageFloorProbe_IsBoundedAndDaily(t *testing.T) {
 	}
 }
 
-// TestCoverageFloor_ProbedOncePerConstituentFamily pins the probe's cost
-// bound: the first empty answer costs one probe per constituent family
-// and repeats under any alias spelling of the base cost nothing, so a
-// caller cannot multiply reads at will.
+// TestCoverageFloor_ProbedOncePerConstituentFamily pins the probe's cost bound: the first empty answer costs one probe per
+// constituent family and repeats under any base alias spelling cost nothing, so callers cannot multiply reads.
 func TestCoverageFloor_ProbedOncePerConstituentFamily(t *testing.T) {
 	window := "&interval=1d&from=2016-01-01T00:00:00Z&to=2016-03-01T00:00:00Z"
 	for _, tc := range []struct {
@@ -366,10 +350,8 @@ func aggregateUSDBackers() []string {
 	return aggregate.FiatBackers("USD")
 }
 
-// TestCoverageFloor_NotProbedWhenTheAnswerIsPopulated — the signal only
-// exists to explain an EMPTY answer, so a populated series must not pay
-// for it. This is the bound on the whole feature's cost: at most one
-// extra read behind a read that already returned nothing.
+// TestCoverageFloor_NotProbedWhenTheAnswerIsPopulated: the signal only explains an empty answer, so a populated series must not
+// pay for it; the feature costs at most one extra read behind a read that already returned nothing.
 func TestCoverageFloor_NotProbedWhenTheAnswerIsPopulated(t *testing.T) {
 	bar := mkSeriesBar(xlmCoverageFloor, "0.16", "0.17", "0.15", "0.165", "1000", "165", 4)
 	probe := &coverageFloorProbe{floor: xlmCoverageFloor, found: true}
@@ -407,10 +389,8 @@ func TestCoverageFloor_UnwiredReaderChangesNothing(t *testing.T) {
 	}
 }
 
-// TestPriceAt_NotFoundCarriesCoverageExtensions — /v1/price/at answers a miss with a 404,
-// which has no envelope to annotate, so the two members ride on the problem body as RFC 9457
-// §3.2 extensions. An instant below the floor is a coverage answer; one inside it is a market
-// answer.
+// TestPriceAt_NotFoundCarriesCoverageExtensions: /v1/price/at answers a miss with a 404 that has no envelope, so the two members
+// ride on the problem body as RFC 9457 extensions. An instant below the floor is a coverage answer; inside it, a market answer.
 func TestPriceAt_NotFoundCarriesCoverageExtensions(t *testing.T) {
 	probe := &coverageFloorProbe{floor: xlmCoverageFloor, found: true}
 	ts := httpTestServer(t, v1.New(v1.Options{
@@ -597,10 +577,8 @@ func TestPriceAt_FiatQuoteFloorIsThePegSet(t *testing.T) {
 // quote-alias fold would name the pool's first bucket as the floor and call the window quiet,
 // hiding the gap.
 
-// installUSDCSACRegistry publishes a registry declaring ONLY the USDC
-// SAC wrapper, so the base under test keeps a single spelling and every
-// second form in play is on the quote leg. Not parallel: the registry
-// is process-global.
+// installUSDCSACRegistry publishes a registry declaring only the USDC SAC wrapper, so the base keeps a single spelling and every
+// second form is on the quote leg. Not parallel: the registry is process-global.
 func installUSDCSACRegistry(t *testing.T) canonical.Asset {
 	t.Helper()
 	reg, err := canonical.NewAliasRegistry(canonical.PubnetPassphrase, map[string]string{
@@ -628,10 +606,9 @@ type fiatSeriesEnvelope struct {
 	} `json:"data"`
 }
 
-// assertBookBar pins that a served bar carries one fixture bar's own count, volumes and
-// prices, with nothing summed in from a second constituent. Prices and quote volume are
-// compared numerically because the combine re-renders them at its own precision; count and
-// base volume are integer strings it reproduces exactly.
+// assertBookBar pins that a served bar carries one fixture bar's own count, volumes and prices, with nothing summed in from a
+// second constituent. Prices and quote volume compare numerically since the combine re-renders them; count and base volume
+// exactly.
 func assertBookBar(t *testing.T, got, want v1.OHLCSeriesBar) {
 	t.Helper()
 	if !got.T.Time().Equal(want.T.Time()) {
@@ -671,11 +648,8 @@ func fiatSeriesGet(t *testing.T, ts *testServer, base string) fiatSeriesEnvelope
 	return env
 }
 
-// assertSACQuotedSeriesReadLast is the series twin of the ordering [assertNoSACQuotedRead] pins
-// on the point side. The fiat combine does read a declared peg's SAC wrapper (where a Soroban
-// pool's USD leg lives), but only after every established spelling of every family, because a
-// held-back bar is admitted only into a bucket none of them answered. Interleaving would let
-// one family's thin pool be consulted before another family's deep book.
+// assertSACQuotedSeriesReadLast is the series twin of [assertNoSACQuotedRead]: the fiat combine reads a declared peg's SAC
+// wrapper only after every established spelling of every family, since held-back bars fill only buckets none of them answered.
 func assertSACQuotedSeriesReadLast(t *testing.T, reads []string) {
 	t.Helper()
 	firstSAC := -1
@@ -730,11 +704,8 @@ func coverageSetDiff(a, b map[string]bool) []string {
 	return out
 }
 
-// TestCoverageFloor_UnfinishedProbeIsNotMemoised — a probe that did not finish established
-// nothing about the pair, and memoising it as failed would silence every request for the pair
-// for the TTL because one client hung up or one probe ceiling ran out. Only a probe the
-// database answered is memoised; an error there is a fact about the read, and re-issuing it on
-// every empty window is the cost the memo exists to bound.
+// TestCoverageFloor_UnfinishedProbeIsNotMemoised: a probe that did not finish (client hang-up, probe ceiling) established
+// nothing, and memoising it as failed would silence the pair for the TTL. Only a probe the database answered is memoised.
 func TestCoverageFloor_UnfinishedProbeIsNotMemoised(t *testing.T) {
 	// A stablecoin-quoted pair: one probe per empty answer.
 	const pairQS = "base=crypto:XLM&quote=" + usdcClassicID

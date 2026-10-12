@@ -65,10 +65,8 @@ var handlerSpecFieldPairs = []struct {
 	{"PriceBatchEnvelope", reflect.TypeOf(Envelope{}), []string{"pagination"}},
 }
 
-// TestHandlerRequiredFieldsAreAlwaysServed is the other direction: a
-// property the spec marks `required` must be a handler field that is never
-// omitted. `omitempty` on it drops a guaranteed field whenever the value is
-// zero, so a schema-validating client rejects a successful response.
+// TestHandlerRequiredFieldsAreAlwaysServed: a spec-`required` property must be a handler field never omitted; `omitempty` would
+// drop it at zero and a schema-validating client rejects the response.
 func TestHandlerRequiredFieldsAreAlwaysServed(t *testing.T) {
 	for _, pair := range handlerSpecFieldPairs {
 		t.Run(pair.schema, func(t *testing.T) {
@@ -185,12 +183,8 @@ func TestHandlerResponseFieldsAreDocumented(t *testing.T) {
 	}
 }
 
-// TestOpenAPIAccountInfoStatusEnumMatchesPlatformAccountStatus is the
-// vocabulary-level counterpart to TestHandlerResponseFieldsAreDocumented: a documented field
-// name can still carry an undocumented VALUE. account.go serves AccountInfo.Status as
-// string(platform.AccountStatus) verbatim, so every platform.AccountStatus constant must be
-// in the spec's AccountInfo.status enum or a schema-validating client rejects the response.
-// The constants are read from source so a new status fails here until the spec names it.
+// TestOpenAPIAccountInfoStatusEnumMatchesPlatformAccountStatus: every platform.AccountStatus constant (read from source) must be
+// in the spec's AccountInfo.status enum, since account.go serves it verbatim and validating clients would reject unknown values.
 func TestOpenAPIAccountInfoStatusEnumMatchesPlatformAccountStatus(t *testing.T) {
 	want := goStringConsts(t, filepath.Join("internal", "platform"), "AccountStatus")
 	if len(want) == 0 {
@@ -289,10 +283,8 @@ func specDig(node any, keys ...string) any {
 	return node
 }
 
-// resolveSpecSchema follows local $refs and merges allOf members, so a
-// property contributed by a referenced or composed schema counts the same
-// as one written inline. The result carries the merged `properties` and
-// `required` alongside the node's other keys.
+// resolveSpecSchema follows local $refs and merges allOf members so referenced or composed properties count like inline ones,
+// returning merged `properties` and `required`.
 func resolveSpecSchema(doc map[string]any, node any, depth int) map[string]any {
 	m, _ := node.(map[string]any)
 	if m == nil || depth > 32 {
@@ -352,10 +344,8 @@ type specWalkOuterExported struct {
 	Own string `json:"own,omitempty"`
 }
 
-// TestStructJSONWalkers_MatchEncodingJSONPromotion pins the walkers to what
-// encoding/json actually serves: an embedded pointer to an exported struct promotes its
-// fields (value-only walkers would hide them from the gate), and an embedded pointer to an
-// unexported type is dropped.
+// TestStructJSONWalkers_MatchEncodingJSONPromotion pins the walkers to encoding/json: embedded pointers to exported structs
+// promote their fields; embedded pointers to unexported types are dropped.
 func TestStructJSONWalkers_MatchEncodingJSONPromotion(t *testing.T) {
 	got := structJSONTags(reflect.TypeOf(specWalkOuterExported{}))
 	if !got["promoted"] || !got["own"] || len(got) != 2 {
@@ -371,10 +361,8 @@ func TestStructJSONWalkers_MatchEncodingJSONPromotion(t *testing.T) {
 	}
 }
 
-// TestSpecSchemaResolver_FollowsRefAllOfAndRoutes: a schema composed with
-// allOf, or reached through a $ref, must resolve to the properties it
-// serves — a flat `.properties` read sees none of them, and a pair that
-// resolves to nothing is a check that cannot fail.
+// TestSpecSchemaResolver_FollowsRefAllOfAndRoutes: allOf and $ref schemas must resolve to the properties they serve; a flat
+// `.properties` read sees none, and a pair resolving to nothing is a check that cannot fail.
 func TestSpecSchemaResolver_FollowsRefAllOfAndRoutes(t *testing.T) {
 	env := specSchemaProps(t, "LakeHealthEnvelope")
 	if !env["data"] || !env["as_of"] {

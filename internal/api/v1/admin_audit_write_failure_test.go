@@ -136,15 +136,9 @@ func TestAdminAuditWriteFailure_StatusNotice(t *testing.T) {
 	}
 }
 
-// TestAdminKeyBudgetClampCounter covers the admin-clamp metric.
-//
-// `clampKeyBudgetsToTier` silently lowers every credential an account can still authenticate
-// with. The clamp is correct, but to the customer an unchanged key just starts 429-ing sooner.
-// Deliberately NOT alerted (downgrades are routine); the rate is visible so support can tie
-// "my key started rate-limiting" to a tier change and a mass-clamp from a bad tier map shows up.
-//
-// Asserts it counts CREDENTIALS, not clamp calls: this demotion lowers one Postgres-backed and
-// one Redis-backed key, so the counter must move by 2.
+// TestAdminKeyBudgetClampCounter covers the admin-clamp metric. The clamp silently lowers every credential an account can
+// authenticate with, so the rate is visible (not alerted) to tie "my key started rate-limiting" to a tier change. It must
+// count credentials, not clamp calls: one Postgres-backed plus one Redis-backed key moves it by 2.
 func TestAdminKeyBudgetClampCounter(t *testing.T) {
 	before := testutil.ToFloat64(obs.AdminKeyBudgetClampsTotal.WithLabelValues("lowered"))
 	failedBefore := testutil.ToFloat64(obs.AdminKeyBudgetClampsTotal.WithLabelValues("failed"))

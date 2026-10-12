@@ -57,10 +57,8 @@ func (f *fakeAnomalyReader) CountFiringFreezes(context.Context) (int64, error) {
 	return f.firing, nil
 }
 
-// TestAnomalies_FiringCountIsNotPageCapped pins that firing_count is a true count, not a
-// LIMIT-capped page (`len(ListFreezeEvents(ctx, true, 500))`), which would
-// report exactly 500 for a freeze storm of ANY size above the cap, saturating
-// precisely when an operator most needs the magnitude.
+// TestAnomalies_FiringCountIsNotPageCapped pins that firing_count is a true count, not a LIMIT-capped page, which would read
+// exactly 500 for any freeze storm above the cap.
 func TestAnomalies_FiringCountIsNotPageCapped(t *testing.T) {
 	const firing = 1337 // well past the 500 page cap
 	s := &Server{

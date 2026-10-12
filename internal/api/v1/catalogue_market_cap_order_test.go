@@ -108,10 +108,9 @@ func rankedPage(t *testing.T, ts *testServer, path string) []rankedRow {
 	return env.Data
 }
 
-// TestCatalogueListingRanksOnTheFilledMarketCap pins the asset_class listing's market-cap
-// order to the caps it publishes. Ranking must not run on caps that are nil for every
-// Stellar-issued row (only fiat rows get a catalogue-level cap) or before the page is sliced
-// and filled, or rows come back in seed order and a large late-seeded asset is unreachable.
+// TestCatalogueListingRanksOnTheFilledMarketCap: the market-cap order must follow the caps actually published. Ranking before the
+// fill (caps are nil for Stellar-issued rows) or before slicing returns seed order and makes a large late-seeded asset
+// unreachable.
 func TestCatalogueListingRanksOnTheFilledMarketCap(t *testing.T) {
 	cat, err := currency.LoadEmbedded()
 	if err != nil {
@@ -166,10 +165,8 @@ func (s *tickingTwinAssets) LatestSupplyObservations(
 	return out, err
 }
 
-// TestCataloguePagesSurviveARerank walks the class listing one row per page
-// with the caps re-ordering after page 1. Every row must be served exactly
-// once: the cursor has to name what was served, not a position in a list
-// that is re-ranked on every request.
+// TestCataloguePagesSurviveARerank: walking the class listing one row per page while caps re-order after page 1 must serve every
+// row exactly once; the cursor must name what was served, not a position in a list re-ranked per request.
 func TestCataloguePagesSurviveARerank(t *testing.T) {
 	cat, err := currency.LoadEmbedded()
 	if err != nil {

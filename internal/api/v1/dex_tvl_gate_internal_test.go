@@ -12,12 +12,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// stubTVLGate withholds exactly the canonical assets it is told to, keyed on Asset.String() so a
-// test can pin which identity the valuer asked about.
-//
-// screens mirrors the production adapter (both guards wired, in that order) unless a test sets
-// it: the Basis sentence is composed from it, so a gate claiming fewer screens must describe
-// fewer.
+// stubTVLGate withholds exactly the canonical assets it is told to, keyed on Asset.String() so tests can pin the identity asked.
+// screens mirrors the production adapter unless set, because the Basis sentence is composed from it.
 type stubTVLGate struct {
 	withhold map[string]bool
 	asked    []string
@@ -36,13 +32,9 @@ func (g *stubTVLGate) Screens() []string {
 	return g.screens
 }
 
-// TestTVLValuer_GateSeesTheCanonicalIdentity pins the SAC-collapse half. A pool leg is a C-strkey,
-// but the scam directory is keyed by the issuer G-address only a classic asset carries, so a
-// configured classic/SAC wrapper must reach the gate as its classic twin. Native's SAC must arrive
-// as `native` for the same reason.
-//
-// Not parallel: the AliasRegistry is process-global (same convention as installFoldRegistry in
-// assets_fold_alias_test.go).
+// TestTVLValuer_GateSeesTheCanonicalIdentity pins the SAC collapse: the scam directory is keyed by classic issuer G-address,
+// so a configured classic/SAC wrapper must reach the gate as its classic twin, and native's SAC as `native`.
+// Not parallel: the AliasRegistry is process-global.
 func TestTVLValuer_GateSeesTheCanonicalIdentity(t *testing.T) {
 	const (
 		scamCode   = "SCAM"
@@ -86,11 +78,8 @@ func TestTVLValuer_GateSeesTheCanonicalIdentity(t *testing.T) {
 	}
 }
 
-// TestTVLValuer_GateBeatsTheDeclaredPeg pins the ordering. The peg shortcut sits between the
-// token-to-asset resolution and the resolver, so a gate consulted after it would leave every
-// operator-declared peg unscreened, and a 1:1-USD declaration is older and broader than a later
-// scam flag on that issuer. Same ordering as the asset detail path: suppressScamIssuerPricing runs
-// after fillDeclaredPegPrice.
+// TestTVLValuer_GateBeatsTheDeclaredPeg pins ordering: the gate must run before the peg shortcut, or declared pegs go
+// unscreened. Matches the asset detail path (suppressScamIssuerPricing after fillDeclaredPegPrice).
 func TestTVLValuer_GateBeatsTheDeclaredPeg(t *testing.T) {
 	const pegged = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
 	gate := &stubTVLGate{withhold: map[string]bool{}}

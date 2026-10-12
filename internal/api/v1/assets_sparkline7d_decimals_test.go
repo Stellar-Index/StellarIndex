@@ -70,10 +70,8 @@ func TestAssetsListing_Sparkline7d_NormalisesNonstandardDecimals(t *testing.T) {
 	}
 }
 
-// An 18-decimals token, factor 10^11. A point rounded on the RAW scale
-// has been crushed (14 USD reads as 0.0000000001) and is withheld as a
-// gap; the same point rounded to 10+11 places is exact and is served.
-// Both keep their bucket.
+// An 18-decimals token, factor 10^11. A point rounded on the raw scale is crushed (14 USD reads as 0.0000000001) and withheld as
+// a gap; rounded to 10+11 places it is exact and served. Both keep their bucket.
 func TestAssetsListing_Sparkline7d_EighteenDecimals_WideRoundingServedNarrowWithheld(t *testing.T) {
 	stub := &sparklineStub{
 		stubAssetsReaderExt: &stubAssetsReaderExt{},
@@ -122,10 +120,8 @@ func TestAssetsListing_Sparkline7d_UnflaggedSeriesIsByteIdentical(t *testing.T) 
 	}
 }
 
-// TestAssetsListing_Sparkline7d_CatalogueRowsKeyOnStellarTwin — the
-// core: a catalogue row's series must be read under its Stellar twin's
-// asset_id (the id its price and its change_7d_pct already come from),
-// never under the catalogue slug the row carries on the wire.
+// TestAssetsListing_Sparkline7d_CatalogueRowsKeyOnStellarTwin: a catalogue row's series must be read under its Stellar twin's
+// asset_id (the id its price and change_7d_pct come from), never the catalogue slug on the wire.
 func TestAssetsListing_Sparkline7d_CatalogueRowsKeyOnStellarTwin(t *testing.T) {
 	stub := &sparklineStub{
 		stubAssetsReaderExt: &stubAssetsReaderExt{},

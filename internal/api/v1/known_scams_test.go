@@ -5,10 +5,8 @@ import (
 	"testing"
 )
 
-// TestScamReason_KnownEntries — every entry in scamIssuers must
-// resolve to a non-empty Reason via scamReason. Catches accidental
-// regressions where someone adds a key without a value (or vice
-// versa) when extending the curated list.
+// TestScamReason_KnownEntries: every scamIssuers entry must resolve to a non-empty Reason via scamReason, catching a key added
+// without a value (or vice versa).
 func TestScamReason_KnownEntries(t *testing.T) {
 	if len(scamIssuers) == 0 {
 		t.Fatal("scamIssuers is empty — bootstrap entry GBYBVW…GUARD missing")
@@ -58,10 +56,8 @@ func TestScamIssuers_GStrkeyShape(t *testing.T) {
 	}
 }
 
-// TestScamIssuers_ReasonsCiteSource — every Reason must mention its
-// curation source. Today the only sourcing path is stellar.expert's
-// directory, so `(stellar.expert)` is required. If we add a second
-// curation source later, broaden this check.
+// TestScamIssuers_ReasonsCiteSource: every Reason must mention its curation source; today only stellar.expert's directory is
+// used, so `(stellar.expert)` is required. Broaden if a second source is added.
 func TestScamIssuers_ReasonsCiteSource(t *testing.T) {
 	for g, entry := range scamIssuers {
 		if !strings.Contains(entry.Reason, "stellar.expert") {

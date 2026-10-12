@@ -7,13 +7,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// The grain a chart is SERVED at has to be one whose grid fits in one response: the reader
-// caps at historyMaxPoints and drops the NEWEST buckets, so an over-fine pair is answered with
-// its oldest slice and the rest of the window silently missing (1y/1m returned 36 of 365 days).
-//
-// This walks the whole timeframe table against the whole served granularity set, asserting the
-// SERVED VALUE for every cell, so a future rung or timeframe that shifts a cell must move a
-// line here and say which.
+// The served grain must be one whose grid fits in one response: the reader caps at historyMaxPoints and drops the NEWEST
+// buckets. Walks the whole timeframe table against the served granularity set, asserting the served value per cell so any shift
+// is explicit.
 func TestChartFitGranularity_EveryTimeframeAndGrain(t *testing.T) {
 	// want[timeframe][requested granularity] = served granularity.
 	// 1y/1m is the one cell that coarsens today: 365 days of minutes
@@ -83,10 +79,8 @@ func TestChartFitGranularity_NeverRefines(t *testing.T) {
 	}
 }
 
-// An unknown grain is handed through untouched so the reader can
-// answer it with ErrUnknownGranularity and the handler can render the
-// 400 that enumerates the served set. Coarsening it would turn a bad
-// request into a 200 over a grain nobody asked for.
+// An unknown grain is passed through untouched so the reader returns ErrUnknownGranularity and the handler renders the 400
+// listing the served set; coarsening it would turn a bad request into a 200 over a grain nobody asked for.
 func TestChartFitGranularity_UnknownGrainUntouched(t *testing.T) {
 	for _, gran := range []string{"2h", "30m", "", "1y"} {
 		if got := chartFitGranularity(chartVWAPGranularityLadder, gran, 365*24*time.Hour); got != gran {

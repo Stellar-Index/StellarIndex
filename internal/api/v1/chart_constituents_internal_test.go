@@ -67,12 +67,9 @@ func pairKeys(pairs []canonical.Pair) []string {
 	return out
 }
 
-// TestChartFiatProxyPairs_ReachIsUnchanged pins the SET: every base alias crossed with
-// [Server.usdPegProxyQuotes] and the fiat's abstract backers, minus the literal pair and any
-// combination whose two sides are one asset.
-//
-// It is built as the reference construction, not a literal list, so adding a peg form or
-// backer moves both sides while dropping one from the walk moves only one.
+// TestChartFiatProxyPairs_ReachIsUnchanged pins the set: every base alias crossed with [Server.usdPegProxyQuotes] and the fiat's
+// abstract backers, minus the literal pair and same-asset combinations. Built as the reference construction so dropping a form
+// fails.
 func TestChartFiatProxyPairs_ReachIsUnchanged(t *testing.T) {
 	s := chartConstServer(t)
 	pair := chartConstNativeUSD(t)
@@ -126,11 +123,8 @@ func TestChartFiatProxyPairs_ReachIsUnchanged(t *testing.T) {
 	}
 }
 
-// TestChartFiatProxyPairs_EveryEstablishedSpellingBeforeAnyHeldBack is the ordering the
-// per-bucket merge depends on. A pool is often orders of magnitude thinner than the book of
-// the same family, so one family's SAC form reached before another's classic form would let a
-// few prints own a bucket the book can answer (aggregation-plan.md, "The fiat quote leg, per
-// bucket").
+// TestChartFiatProxyPairs_EveryEstablishedSpellingBeforeAnyHeldBack pins the order the per-bucket merge depends on: a thin
+// pool's SAC form must not be reached before another family's classic form, or a few prints own a bucket the book can answer.
 func TestChartFiatProxyPairs_EveryEstablishedSpellingBeforeAnyHeldBack(t *testing.T) {
 	s := chartConstServer(t)
 	pair := chartConstNativeUSD(t)
@@ -169,12 +163,9 @@ func TestChartFiatProxyPairs_EveryEstablishedSpellingBeforeAnyHeldBack(t *testin
 	}
 }
 
-// TestChartConstituents_CoverTheOHLCCombine pins that every market the fiat OHLC combine reads
-// is a market the chart's own walk reads: both surfaces answer one question about one pair.
-//
-// The converse is deliberately NOT asserted. The chart reaches further (it derives a series
-// through XLM where nothing observed answers; /v1/ohlc has no derivation route), and requiring
-// equality would make closing that gap look like a regression.
+// TestChartConstituents_CoverTheOHLCCombine pins that every market the fiat OHLC combine reads is also read by the chart's walk.
+// The converse is deliberately not asserted: the chart derives through XLM where /v1/ohlc cannot, and closing that gap is not a
+// regression.
 func TestChartConstituents_CoverTheOHLCCombine(t *testing.T) {
 	s := chartConstServer(t)
 	pair := chartConstNativeUSD(t)

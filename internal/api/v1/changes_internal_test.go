@@ -7,10 +7,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// TestChangeSummaryCoinCandidates pins the slug→canonical expansion the /v1/changes/coin/{id}
-// handler relies on. The worker writes rows under the canonical asset_id form (`native`,
-// `crypto:XLM`, `USDC-GA5Z…`), so the friendly slug "XLM" would 404 against a strict-equality
-// lookup.
+// TestChangeSummaryCoinCandidates pins the slug-to-canonical expansion /v1/changes/coin/{id} relies on: the worker writes under
+// canonical ids (`native`, `crypto:XLM`, `USDC-GA5Z...`), so the slug "XLM" would 404 on a strict-equality lookup.
 func TestChangeSummaryCoinCandidates(t *testing.T) {
 	tests := []struct {
 		name       string

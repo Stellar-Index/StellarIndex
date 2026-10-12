@@ -384,11 +384,8 @@ func (s *spanCostStore) HistoryPointsInRange(
 	return pts, err
 }
 
-// TestChartMarketCap_ValuationGuards pins /v1/chart?price_type=market_cap to
-// the valuation guards populateMarketCap applies on /v1/assets/{id}: a series
-// the detail page would refuse as a headline cap (ticker collision, single
-// venue with sub-floor volume, cap beyond the turnover ceiling) is withheld,
-// and a liquidity refusal says so rather than reading as "no data".
+// TestChartMarketCap_ValuationGuards pins /v1/chart?price_type=market_cap to the guards populateMarketCap applies on
+// /v1/assets/{id}: series the detail page would refuse as a headline cap are withheld, and a liquidity refusal says so.
 func TestChartMarketCap_ValuationGuards(t *testing.T) {
 	d := func(day int) time.Time { return time.Date(2026, 6, day, 0, 0, 0, 0, time.UTC) }
 	cases := []struct {

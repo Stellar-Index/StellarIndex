@@ -78,11 +78,8 @@ func TestHandleCoverageVerdicts_Happy(t *testing.T) {
 	}
 }
 
-// TestHandleCoverageVerdicts_SourceWithoutVerdictCountsInDenominator pins
-// the rule: a source the audit is expected to cover but which has no verdict row
-// (its first audit failed, or the row was cleared) must count in
-// total_sources, so the headline reads 1 of 2, not 1 of 1. A pubnet-only
-// source on a test net stays out of both.
+// TestHandleCoverageVerdicts_SourceWithoutVerdictCountsInDenominator: a source the audit should cover but with no verdict row
+// counts in total_sources, so the headline reads 1 of 2, not 1 of 1. A pubnet-only source on a test net stays out of both.
 func TestHandleCoverageVerdicts_SourceWithoutVerdictCountsInDenominator(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	snaps := []timescale.CompletenessSnapshot{{
@@ -123,13 +120,9 @@ func TestHandleCoverageVerdicts_SourceWithoutVerdictCountsInDenominator(t *testi
 	}
 }
 
-// TestHandleCoverageVerdicts_LakeCompleteDecouplesFromComplete pins
-// the ADR-0033/0034 two-axis verdict wire mapping: a
-// source whose certified ClickHouse archive is genesis-complete but
-// whose served-tier projection reconcile fails (soroswap trades are
-// retention-scoped per ADR-0034) must serve lake_complete=true,
-// complete=false — and lake_complete_sources must tally independently
-// of complete_sources.
+// TestHandleCoverageVerdicts_LakeCompleteDecouplesFromComplete pins the ADR-0033/0034 two-axis wire mapping: a source whose
+// ClickHouse archive is genesis-complete but whose served-tier reconcile fails serves lake_complete=true, complete=false, and
+// lake_complete_sources tallies independently of complete_sources.
 func TestHandleCoverageVerdicts_LakeCompleteDecouplesFromComplete(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	srv := v1.New(v1.Options{
@@ -239,10 +232,8 @@ func TestHandleCoverageVerdicts_PublishesProjectionFloor(t *testing.T) {
 	}
 }
 
-// A verdict with no recorded floor must OMIT the key rather than
-// publish 0. Zero is a legal ledger-shaped value, and "verified from
-// ledger 0" is a stronger claim than "verified from genesis" — exactly
-// the overstatement this field exists to stop. Absent means unknown.
+// A verdict with no recorded floor must omit the key rather than publish 0: "verified from ledger 0" is a stronger claim than
+// "verified from genesis". Absent means unknown.
 func TestHandleCoverageVerdicts_OmitsUnrecordedProjectionFloor(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	srv := v1.New(v1.Options{
@@ -314,10 +305,9 @@ func coverageStaleFlag(t *testing.T, url string) bool {
 	return env.Flags.Stale
 }
 
-// TestHandleCoverageVerdicts_StaleWhenProjectionEvidenceIsOld: a verdict
-// restamped minutes ago by a run that only CARRIED its projection claim is
-// fresh by computed_at and tip, yet the claim's last full reconcile can be
-// weeks old. The evidence time must qualify it; a false claim needs none.
+// TestHandleCoverageVerdicts_StaleWhenProjectionEvidenceIsOld: a verdict restamped minutes ago by a run that only carried its
+// projection claim is fresh by computed_at and tip, yet the claim's last full reconcile can be weeks old; the evidence time
+// qualifies it.
 func TestHandleCoverageVerdicts_StaleWhenProjectionEvidenceIsOld(t *testing.T) {
 	now := time.Now().UTC()
 	serve := func(projectionOK bool, evidencedAt time.Time) string {
@@ -368,26 +358,9 @@ func TestHandleCoverageVerdicts_StaleWhenProjectionEvidenceIsOld(t *testing.T) {
 	}
 }
 
-// TestHandleCoverageVerdicts_StaleWhenVerdictTrailsLiveTip pins the
-// live-tip gate.
-//
-// /v1/coverage is the product's trust surface ("every protocol,
-// verified complete"). Every field on a row — tip_ledger, coverage_pct,
-// the claim booleans — is frozen at the audit's compute time, so a
-// verdict from a DEAD completeness audit keeps reading
-// `complete: true, coverage_pct: 1` ("verified to tip") against a tip
-// that the network left behind hours ago. Nothing in the response said
-// so: flags.stale was hardcoded false.
-//
-// Here the verdict was computed against tip 63_000_000 only minutes ago
-// (so the age signal is clean and cannot be what fires) while the live
-// ledgerstream cursor — the SAME cursor compute-completeness resolves
-// its tip from — sits 40_000 ledgers ahead (~2.3 days of chain, past
-// the 34_560 two-audit-period bound at the daily cadence). The
-// response must carry flags.stale = true.
-//
-// Red against a handler that calls writeJSON(..., Flags{}) →
-// stale = false.
+// TestHandleCoverageVerdicts_StaleWhenVerdictTrailsLiveTip pins the live-tip gate: a verdict from a dead audit keeps reading
+// complete/coverage_pct=1 against a tip the network left behind. Computed minutes ago at tip 63_000_000 with the live cursor
+// 40_000 ledgers ahead (past the 34_560 bound), the response must carry flags.stale=true.
 func TestHandleCoverageVerdicts_StaleWhenVerdictTrailsLiveTip(t *testing.T) {
 	srv := v1.New(v1.Options{
 		CompletenessReader: &stubCompletenessReader{snaps: []timescale.CompletenessSnapshot{{
@@ -410,11 +383,9 @@ func TestHandleCoverageVerdicts_StaleWhenVerdictTrailsLiveTip(t *testing.T) {
 	}
 }
 
-// A frozen ledgerstream cursor agrees with the verdict computed against
-// it, so comparing the two can never fire. The cursor last advanced 72h
-// ago: the network has closed at least 43200 ledgers since (at the 6 s
-// slowest cadence), past the 34560 bound, while the nightly audit keeps
-// computed_at fresh. The response must carry flags.stale = true.
+// A frozen ledgerstream cursor agrees with the verdict computed against it, so comparing the two never fires. The cursor last
+// advanced 72h ago (over 43200 ledgers at the slowest cadence, past the 34560 bound) while the audit keeps computed_at fresh;
+// the response must carry flags.stale=true.
 func TestHandleCoverageVerdicts_StaleWhenCursorFrozenButNetworkAdvances(t *testing.T) {
 	srv := v1.New(v1.Options{
 		CompletenessReader: &stubCompletenessReader{snaps: []timescale.CompletenessSnapshot{{
@@ -435,10 +406,8 @@ func TestHandleCoverageVerdicts_StaleWhenCursorFrozenButNetworkAdvances(t *testi
 	}
 }
 
-// A verdict computed against a tip the live cursor has barely moved
-// past is CURRENT — the flag must not fire. Guards the fix against
-// over-flagging every response (which would make flags.stale useless
-// on this surface and is the trivial way to pass the test above).
+// A verdict computed against a tip the live cursor has barely moved past is current and must not be flagged; guards against
+// over-flagging every response, which would make flags.stale useless here.
 func TestHandleCoverageVerdicts_FreshVerdictNotStale(t *testing.T) {
 	srv := v1.New(v1.Options{
 		CompletenessReader: &stubCompletenessReader{snaps: []timescale.CompletenessSnapshot{{
@@ -461,10 +430,8 @@ func TestHandleCoverageVerdicts_FreshVerdictNotStale(t *testing.T) {
 	}
 }
 
-// A stalled ingest freezes the ledgerstream cursor, and an audit that
-// keeps running stamps each new verdict with that same frozen tip: gap 0,
-// computed_at minutes old. The cursor's own write age is the only signal
-// left that the tip lags the network, so it must carry the flag.
+// A stalled ingest freezes the cursor and a running audit stamps verdicts with that same tip (gap 0, fresh computed_at), so the
+// cursor's own write age is the only remaining signal that the tip lags the network and must carry the flag.
 func TestHandleCoverageVerdicts_StaleWhenIngestStalled(t *testing.T) {
 	snaps := []timescale.CompletenessSnapshot{{
 		Source: "blend", Genesis: 51_499_546, Tip: 63_000_000, Watermark: 63_000_000,
@@ -497,11 +464,8 @@ func TestHandleCoverageVerdicts_StaleWhenIngestStalled(t *testing.T) {
 	}
 }
 
-// With no CursorsReader wired the ledger-gap signal is unavailable, so
-// the verdict's own age has to carry the gate: a verdict computed 30h
-// ago is not a current claim. Red against a handler that ignores verdict age
-// (stale = false) and non-vacuous — the sibling test above shows a
-// 5-minute-old verdict on the same wiring reads false.
+// With no CursorsReader wired the ledger-gap signal is unavailable, so verdict age carries the gate: a verdict computed 30h ago
+// is not current. The sibling test shows a 5-minute-old verdict on the same wiring reads false.
 func TestHandleCoverageVerdicts_StaleWhenVerdictIsOld(t *testing.T) {
 	snaps := []timescale.CompletenessSnapshot{{
 		Source: "blend", Genesis: 51_499_546, Tip: 63_000_000, Watermark: 63_000_000,
@@ -526,12 +490,8 @@ func TestHandleCoverageVerdicts_StaleWhenVerdictIsOld(t *testing.T) {
 	}
 }
 
-// TestHandleCoverageVerdicts_NetworkScoping pins that on a test net the
-// pubnet-anchored protocol sources are reported as NOT APPLICABLE and
-// excluded from every total, instead of counting as incomplete because
-// their pubnet genesis floor (soroswap 50,746,266) sits above the
-// network's tip. Pubnet output is unchanged except for the two new
-// fields.
+// TestHandleCoverageVerdicts_NetworkScoping: on a test net, pubnet-anchored sources are reported NOT APPLICABLE and excluded
+// from every total, rather than counted incomplete because their pubnet genesis floor sits above the network's tip.
 func TestHandleCoverageVerdicts_NetworkScoping(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	snaps := []timescale.CompletenessSnapshot{
@@ -630,13 +590,8 @@ func TestHandleCoverageVerdicts_NetworkScoping(t *testing.T) {
 	})
 }
 
-// TestHandleCoverageVerdicts_StaleGateIgnoresNotApplicableSource pins
-// A pubnet-only row surviving in
-// completeness_snapshots on a testnet deployment (same fixture shape as
-// TestHandleCoverageVerdicts_NetworkScoping, but with a decades-old
-// computed_at — no testnet audit will ever recompute it) must not
-// permanently flag flags.stale=true when every verdict this deployment
-// actually publishes is fresh.
+// TestHandleCoverageVerdicts_StaleGateIgnoresNotApplicableSource: a pubnet-only row left in completeness_snapshots on a testnet
+// (old computed_at, never recomputed) must not flag flags.stale=true when every verdict the deployment publishes is fresh.
 func TestHandleCoverageVerdicts_StaleGateIgnoresNotApplicableSource(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	snaps := []timescale.CompletenessSnapshot{
@@ -667,10 +622,8 @@ func TestHandleCoverageVerdicts_StaleGateIgnoresNotApplicableSource(t *testing.T
 	}
 }
 
-// TestHandleCoverageVerdicts_NamesSourcesTheLatestRunDidNotRefresh pins that
-// a headline summed across verdicts from more than one audit run says so: a
-// run that stops part-way leaves the later sources on the previous run's
-// rows, and those must be named rather than read as the latest run's verdict.
+// TestHandleCoverageVerdicts_NamesSourcesTheLatestRunDidNotRefresh: a headline summed across verdicts from more than one audit
+// run must name the sources a part-way run left on the previous run's rows rather than present them as the latest verdict.
 func TestHandleCoverageVerdicts_NamesSourcesTheLatestRunDidNotRefresh(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	row := func(source string, tip uint32) timescale.CompletenessSnapshot {
@@ -709,10 +662,8 @@ func TestHandleCoverageVerdicts_NamesSourcesTheLatestRunDidNotRefresh(t *testing
 	}
 }
 
-// The category error: the system recognition census is not a source, so
-// it must not sit in sources[] and must not be counted against the
-// public "N of M complete" headline. Two genuinely-complete sources
-// alongside it read 2 of 2, not 2 of 3.
+// The system recognition census is not a source, so it must not sit in sources[] or count against the "N of M complete"
+// headline: two complete sources alongside it read 2 of 2, not 2 of 3.
 func TestHandleCoverageVerdicts_recognitionIsNotASource(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	d := getCoverage(t, []timescale.CompletenessSnapshot{
@@ -743,10 +694,8 @@ func TestHandleCoverageVerdicts_recognitionIsNotASource(t *testing.T) {
 	}
 }
 
-// Removing it from sources[] must make it MORE visible, not less: the
-// axis is published at the top level with its real numbers, its
-// meaning, and its detail. This is the honesty half of the change — if
-// this test is deleted the headline change becomes laundering.
+// Removing the census from sources[] must make it more visible: the axis is published at the top level with its real numbers,
+// meaning and detail. Without this test the headline change would be laundering.
 func TestHandleCoverageVerdicts_recognitionAxisPublishesItsNumbers(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	d := getCoverage(t, []timescale.CompletenessSnapshot{liveRecognitionSnapshot(now)})

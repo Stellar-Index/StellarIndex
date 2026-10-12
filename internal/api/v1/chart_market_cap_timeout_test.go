@@ -14,10 +14,8 @@ import (
 // request context alone.
 var errChartReadBroke = errors.New("prices_1d: broke")
 
-// stallingMarketCapHistory blocks its price-series read until the caller's
-// context is done, then returns that context's error — how a cold
-// prices_1d scan behaves when a deadline beats it. Everything else is the
-// ordinary stub, so only the market-cap price leg stalls.
+// stallingMarketCapHistory blocks its price-series read until the caller's context is done, then returns that error, as a cold
+// prices_1d scan does when a deadline beats it. Everything else is the ordinary stub, so only the market-cap price leg stalls.
 type stallingMarketCapHistory struct{ *stubHistoryReader }
 
 func (stallingMarketCapHistory) HistoryPointsInRange(

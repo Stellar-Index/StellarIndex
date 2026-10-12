@@ -9,10 +9,8 @@ import (
 	"time"
 )
 
-// blockingReadyCheck is a ReadyChecker that ignores ctx and blocks on
-// `release` — the "wedged, misbehaving dependency" shape server.go's
-// ReadyChecker doc warns about. Simulates a check round that runs far
-// longer than any one caller is willing to wait.
+// blockingReadyCheck is a ReadyChecker that ignores ctx and blocks on `release`: the wedged-dependency shape, a check round that
+// outlasts any caller's patience.
 type blockingReadyCheck struct {
 	started chan struct{}
 	release chan struct{}
@@ -27,12 +25,9 @@ func (b *blockingReadyCheck) Ping(context.Context) error {
 func (b *blockingReadyCheck) Name() string   { return "blocking" }
 func (b *blockingReadyCheck) Critical() bool { return false }
 
-// TestHandleReadyz_ConcurrentCallerAbandonsViaContext guards that handleReadyz does not hold
-// readyzMu across the whole check round (computeReadyz). A second caller would otherwise queue
-// on the mutex with no way to honour its own request context, and on this unauthenticated,
-// rate-limit-exempt route every concurrent probe would block for the round's full budget. The
-// round runs detached and waiters select on it alongside their own ctx, so a caller whose
-// context expires gets its handler call back promptly.
+// TestHandleReadyz_ConcurrentCallerAbandonsViaContext: handleReadyz must not hold readyzMu across the whole check round, or each
+// concurrent probe on this unauthenticated, rate-limit-exempt route blocks for the round's full budget. The round runs detached
+// and waiters select on their own ctx, so an expired caller returns promptly.
 func TestHandleReadyz_ConcurrentCallerAbandonsViaContext(t *testing.T) {
 	blocker := &blockingReadyCheck{started: make(chan struct{}), release: make(chan struct{})}
 	srv := New(Options{ReadyChecks: []ReadyChecker{blocker}})

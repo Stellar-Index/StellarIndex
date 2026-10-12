@@ -14,10 +14,8 @@ import (
 
 const pegHandlerTestAUDD = "AUDD-GDC7X2MXTYSAKUUGAIQ7J7RPEIM7GXSAIWFYWWH4GLNFECQVJJLB2EEU"
 
-// pegHandlerTestServer wires the full handleAssetGet chain for the declared-peg detail-path
-// tests: a substance gate with a blanket verdict (price_tip_test.go's stubSubstanceGate), an
-// asset-catalogue overlay row carrying a (dust or real) market price and change pills, a fresh
-// AUD FX point (chart_test.go's stubFXHistoryReader), and AUDD peg-configured.
+// pegHandlerTestServer wires the full handleAssetGet chain for declared-peg detail tests: a blanket-verdict substance gate, a
+// catalogue overlay row with a dust or real market price and change pills, a fresh AUD FX point, and AUDD peg-configured.
 func pegHandlerTestServer(t *testing.T, allow bool, row timescale.AssetRow) *v1.Server {
 	t.Helper()
 	aud, err := canonical.NewFiatAsset("AUD")

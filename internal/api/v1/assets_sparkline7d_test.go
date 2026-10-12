@@ -25,10 +25,9 @@ const (
 	aquaAssetID   = "AQUA-" + otherRealIssuer
 )
 
-// sparklineStub is an AssetsReader that records which asset_ids the sparkline attach asked for
-// and answers like the real batch query: every requested id gets its 7 daily buckets, but only
-// ids with a market get prices (the want x days CROSS JOIN). A stub returning nothing for an
-// unknown id would hide the defect, which on the wire is a well-formed but priceless series.
+// sparklineStub is an AssetsReader that records the asset_ids the sparkline attach asked for and, like the real batch query,
+// gives every requested id 7 daily buckets but prices only ids with a market. A stub returning nothing for an unknown id would
+// hide the well-formed but priceless series.
 type sparklineStub struct {
 	*stubAssetsReaderExt
 	classic []timescale.AssetRow

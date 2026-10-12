@@ -11,14 +11,9 @@ import (
 	"testing"
 )
 
-// TestCataloguePricesArePaidBeforeTheTwinMerge — the ORDER the
-// suppression above depends on, guarded at source like
-// TestDirectoryTagsPrecedeTheListingValuationArm: each function is correct read alone.
-//
-// fillCataloguePricesForPage gives a catalogue row its own price, and mergeTwinStats (inside
-// fillCatalogueStatsForPage) is where the twin's verdict reaches it. Running the price fill
-// AFTER the stats merge would republish the figure the tag just withheld, invisibly to
-// behavioural tests.
+// TestCataloguePricesArePaidBeforeTheTwinMerge: a source-level guard on ORDER. fillCataloguePricesForPage must run before the
+// mergeTwinStats inside fillCatalogueStatsForPage, or the price fill would republish a figure the scam tag just withheld,
+// invisibly to behavioural tests.
 func TestCataloguePricesArePaidBeforeTheTwinMerge(t *testing.T) {
 	checked := 0
 	for _, file := range packageGoFiles(t) {
@@ -53,10 +48,9 @@ const (
 	catalogueStatsFill = "fillCatalogueStatsForPage"
 )
 
-// cataloguePriceFillOrder returns the step of the first price-fill CALL and
-// of the first stats-merge reference; ok is false unless steps reach both.
-// The price fill counts only as a call: a method value taken early and
-// called after the merge (p := s.fill…; s.stats(); p()) still republishes.
+// cataloguePriceFillOrder returns the step of the first price-fill call and of the first stats-merge reference; ok is false
+// unless steps reach both. The fill counts only as a call, since a method value taken early and called after the merge still
+// republishes.
 func cataloguePriceFillOrder(steps []serverStep) (priceAt, statsAt int, ok bool) {
 	names := stepNames(steps, false)
 	if !slices.Contains(names, cataloguePriceFill) || !slices.Contains(names, catalogueStatsFill) {
@@ -91,13 +85,9 @@ func TestCataloguePriceFillOrderCountsCallsOnly(t *testing.T) {
 	}
 }
 
-// TestCatalogueRankFollowsTheFill — the catalogue's market-cap rank is
-// only meaningful over caps that have been written. Stellar-issued rows get theirs from the
-// price fill and the twin merge, so a rank taken before both orders such rows on nil (seed
-// order) and a slice taken before the fill makes a late-seeded large asset unreachable.
-//
-// fillAndRankCatalogueRows is the one place the rank may run, after both fills; each page
-// writer must go through it rather than sorting or filling on its own.
+// TestCatalogueRankFollowsTheFill: the market-cap rank is only meaningful over written caps; ranking before the price fill and
+// twin merge orders Stellar-issued rows on nil, and slicing first makes late-seeded assets unreachable. fillAndRankCatalogueRows
+// is the one place ranking may run, so each page writer must go through it.
 func TestCatalogueRankFollowsTheFill(t *testing.T) {
 	const (
 		chokepoint = "fillAndRankCatalogueRows"

@@ -6,10 +6,8 @@ import (
 	"testing"
 )
 
-// TestIncludeParamSpecCoversHandlerValues pins the spec's `include` query
-// parameter to the values each handler's include switch accepts. The lists
-// mirror handleMarkets and handleSources; a spec-validating client must be
-// able to send every value, alone and combined.
+// TestIncludeParamSpecCoversHandlerValues pins the spec's `include` query parameter to the values the handleMarkets and
+// handleSources switches accept, so a spec-validating client can send every value, alone and combined.
 func TestIncludeParamSpecCoversHandlerValues(t *testing.T) {
 	doc := loadSpecDoc(t)
 	for path, accepted := range map[string][]string{

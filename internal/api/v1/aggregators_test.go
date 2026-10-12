@@ -45,10 +45,8 @@ func TestAggregators_503WhenReaderNil(t *testing.T) {
 	}
 }
 
-// TestAggregators_HappyPath pins the wire shape the explorer
-// /aggregators page reads verbatim, including the null-volume
-// semantics (null = no USD valuation, NOT zero volume) and the
-// zero-stat vault row.
+// TestAggregators_HappyPath pins the wire shape the explorer /aggregators page reads, including null volume (no USD valuation,
+// NOT zero volume) and the zero-stat vault row.
 func TestAggregators_HappyPath(t *testing.T) {
 	vol := "18211.4052710000000000"
 	lastAt := time.Date(2026, 7, 4, 21, 58, 11, 0, time.UTC)
@@ -124,11 +122,8 @@ func TestAggregators_HappyPath(t *testing.T) {
 	}
 }
 
-// TestAggregators_NotesHonestDegrade pins the coverage caveats: a
-// router row carries the shared-bucket note, an auto_discovered router
-// row carries only the unverified note, and a vault row carries none.
-// Every soroswap_router_swaps row now has call_path, so no note may
-// claim pending history or legacy rows inside a 24 h window.
+// TestAggregators_NotesHonestDegrade pins the coverage caveats: a router row carries the shared-bucket note, an
+// auto_discovered router only the unverified note, and a vault none. No note may claim pending history inside a 24 h window.
 func TestAggregators_NotesHonestDegrade(t *testing.T) {
 	reader := &stubAggregatorsReader{
 		rows: []timescale.AggregatorRollupRow{

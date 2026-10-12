@@ -89,10 +89,8 @@ func TestAccountKeysRevoke_CustomerNeedsNoReason(t *testing.T) {
 	}
 }
 
-// TestAccountKeysRevoke_CrossAccountLeavesPostgresRowLive is the
-// self-service form of the same check: a customer's DELETE
-// /v1/account/keys/{kid} with another account's key id in the path
-// must not revoke that account's api_keys row.
+// TestAccountKeysRevoke_CrossAccountLeavesPostgresRowLive: a customer's DELETE /v1/account/keys/{kid} with another account's
+// key id must not revoke that account's api_keys row.
 func TestAccountKeysRevoke_CrossAccountLeavesPostgresRowLive(t *testing.T) {
 	platformKeys, accts := seedOwnedPlatformKey("victim-co", "kid_victim01")
 	attacker := auth.Subject{Identifier: "acct:attacker-co", Tier: auth.TierAPIKey, KeyID: "kid_attacker"}

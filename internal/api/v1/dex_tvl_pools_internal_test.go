@@ -30,10 +30,8 @@ const (
 	tvlTestWithheldToken = tvlTestPhxPool
 )
 
-// tvlBranchSources drives every per-leg branch through soroswap (whose
-// reader carries raw *big.Int legs, so nil and negative reserves are
-// expressible), the aquarius unresolved-position branch, and the
-// phoenix undecodable-pool branch.
+// tvlBranchSources drives every per-leg branch: soroswap (raw *big.Int legs, so nil and negative reserves), the aquarius
+// unresolved-position branch, and the phoenix undecodable-pool branch.
 func tvlBranchSources() (DEXTVLSources, *stubTVLGate) {
 	gate := &stubTVLGate{withhold: map[string]bool{tvlTestWithheldToken: true}}
 	return DEXTVLSources{
@@ -119,10 +117,8 @@ func poolByID(t *testing.T, pools []DEXTVLPoolView, id string) DEXTVLPoolView {
 	return DEXTVLPoolView{}
 }
 
-// TestDEXTVLPools_EveryLegBranchIsLabelled drives each way a leg can be
-// valued or excluded and asserts the wire says which: a valued
-// leg carries asset + basis + usd and no exclusion; an excluded leg
-// carries the reason and NO usd — never a silent "0.00".
+// TestDEXTVLPools_EveryLegBranchIsLabelled asserts each way a leg is valued or excluded is labelled on the wire: a valued
+// leg has asset, basis and usd and no exclusion; an excluded leg has the reason and no usd, never a silent "0.00".
 func TestDEXTVLPools_EveryLegBranchIsLabelled(t *testing.T) {
 	c := refreshedBranchCache(t)
 	ss, ok := c.Protocol("soroswap")
@@ -200,10 +196,8 @@ func TestDEXTVLPools_EveryLegBranchIsLabelled(t *testing.T) {
 	}
 }
 
-// TestDEXTVLPools_ReconcileAtEveryLevel is the per-pool reconciliation test: on every protocol
-// of both fixtures, the sum of the published leg usd strings is the pool's tvl_usd and the sum
-// of the pool tvl_usd strings is the protocol's, byte-for-byte, which is what a consumer of the
-// drill-down actually checks.
+// TestDEXTVLPools_ReconcileAtEveryLevel: on every protocol, the sum of published leg usd strings is the pool's tvl_usd and the
+// sum of pool strings is the protocol's, byte for byte, which is what a drill-down consumer checks.
 func TestDEXTVLPools_ReconcileAtEveryLevel(t *testing.T) {
 	branch, _ := tvlBranchSources()
 	for name, src := range map[string]DEXTVLSources{"shared": tvlTestSources(), "branch": branch} {
@@ -284,11 +278,8 @@ func TestDEXTVLNotDerivedReason(t *testing.T) {
 	}
 }
 
-// TestDEXTVLPools_MoneyRoundsOnceAtTheLeaf pins the reconciliation contract the per-pool
-// drill-down rests on: each valued leg is published to the cent, and every figure above it is
-// the EXACT sum of the published figures beneath. Two legs worth $0.004 each are therefore two
-// "0.00" legs, a "0.00" pool and a "0.00" protocol, not a "0.01" protocol that no set of
-// published pool rows could add up to.
+// TestDEXTVLPools_MoneyRoundsOnceAtTheLeaf pins that each leg is published to the cent and every figure above is the exact sum
+// of the published figures beneath, so two $0.004 legs give a "0.00" protocol, not "0.01".
 func TestDEXTVLPools_MoneyRoundsOnceAtTheLeaf(t *testing.T) {
 	// 80,000 raw XLM-SAC units at the 1e7 anchor scale × $0.5 = $0.004.
 	const subCent = 80_000
@@ -317,10 +308,8 @@ func TestDEXTVLPools_MoneyRoundsOnceAtTheLeaf(t *testing.T) {
 	}
 }
 
-// The concentrated-liquidity refusal must say what it actually is. The
-// generic reason is reserved for a protocol that HAS an absolute reserve
-// source whose readers a deployment did not wire — a config gap an
-// operator can close. SushiSwap V3's is neither config nor temporary.
+// The concentrated-liquidity refusal must say what it is: the generic reason is for a protocol with an absolute reserve source
+// that a deployment did not wire (a closable config gap). SushiSwap V3's is neither config nor temporary.
 func TestDEXTVLNotDerivedReason_ConcentratedLiquidityIsNotBlamedOnWiring(t *testing.T) {
 	t.Parallel()
 

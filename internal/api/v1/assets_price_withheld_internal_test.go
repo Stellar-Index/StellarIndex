@@ -39,11 +39,9 @@ const (
 	withheldTestPegIssuer = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 )
 
-// TestPopulatePriceUSD_WithheldIsNotAbsent pins the /v1/assets/{id} price
-// producer's three outcomes. A withheld direct read must neither fall
-// through to the stablecoin proxy (which re-serves the refused market via
-// a side door, as /v1/price refuses to) nor read as "never traded": the
-// row carries the price-withheld reason instead of a bare null.
+// TestPopulatePriceUSD_WithheldIsNotAbsent pins the price producer's three outcomes: a withheld direct read must neither fall
+// through to the stablecoin proxy (a side door around the refusal) nor read as "never traded"; the row carries the withheld
+// reason.
 func TestPopulatePriceUSD_WithheldIsNotAbsent(t *testing.T) {
 	asset := mustAsset(t, withheldTestAsset)
 	peg := mustAsset(t, withheldTestPegIssuer)

@@ -66,10 +66,8 @@ func TestDEXTVLExclusions_LocationClaimsCiteARegisteredRoute(t *testing.T) {
 	}
 }
 
-// TestDEXTVLExclusions_LendingPointsAtTheServedFigure pins the specific
-// regression: the blend entry must send a reader to the endpoint that
-// really carries a lending tvl_usd, and must not resurrect the
-// bespoke.tvl_usd field that never shipped.
+// TestDEXTVLExclusions_LendingPointsAtTheServedFigure pins that the blend entry points to the endpoint that carries a
+// lending tvl_usd and does not resurrect the bespoke.tvl_usd field that never shipped.
 func TestDEXTVLExclusions_LendingPointsAtTheServedFigure(t *testing.T) {
 	t.Parallel()
 	var blend string
@@ -118,10 +116,8 @@ func TestDEXTVLExclusions_ReasonsAreSettled(t *testing.T) {
 	}
 }
 
-// registeredV1Routes reads the route patterns server.go hands to the mux. Source-level because
-// registerRoutes runs inside a Server whose construction needs live backends; the property is only
-// that a cited path is one this package routes at all. Same posture as the AST wiring guard in
-// cmd/stellarindex-api.
+// registeredV1Routes reads the route patterns server.go hands to the mux, at source level because registerRoutes runs inside
+// a Server needing live backends. It only proves a cited path is routed by this package.
 func registeredV1Routes(t *testing.T) map[string]bool {
 	t.Helper()
 	fset := token.NewFileSet()

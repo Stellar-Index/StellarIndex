@@ -15,10 +15,8 @@ import (
 
 const staleFXAge = 10 * 24 * time.Hour
 
-// TestPriceUSDAnchoredFiatCrossRejectsStaleRate: a wallet must not be shown a BRL balance
-// derived from a forex rate the worker stopped refreshing long ago. tryUSDAnchoredFiatCross
-// must check the age of the s.Currencies.Latest() entry before using c.RateUSD, or a wedged
-// forex worker keeps serving derived local-currency prices off an arbitrarily old rate.
+// TestPriceUSDAnchoredFiatCrossRejectsStaleRate: tryUSDAnchoredFiatCross must check the age of the Currencies.Latest() entry,
+// or a wedged forex worker keeps serving derived local-currency prices off an arbitrarily old rate.
 func TestPriceUSDAnchoredFiatCrossRejectsStaleRate(t *testing.T) {
 	reader := &usdLegReader{usdPriceFor: "native", price: xlmUSDPrice}
 	stale := time.Now().UTC().Add(-staleFXAge)
@@ -41,10 +39,8 @@ func TestPriceUSDAnchoredFiatCrossRejectsStaleRate(t *testing.T) {
 	}
 }
 
-// TestPriceFiatCrossRateRejectsStaleRate applies the same discipline to the fiat-vs-fiat
-// path. tryFiatCrossRate stamps observed_at from the older leg's timestamp, so it must also
-// bound that timestamp; otherwise a currency unrefreshed for weeks is still served as a
-// derived price, merely labelled with its stale observed_at.
+// TestPriceFiatCrossRateRejectsStaleRate: tryFiatCrossRate stamps observed_at from the older leg, so it must bound that age too,
+// or a currency unrefreshed for weeks is still served as a derived price.
 func TestPriceFiatCrossRateRejectsStaleRate(t *testing.T) {
 	reader := &usdLegReader{}
 	stale := time.Now().UTC().Add(-staleFXAge)

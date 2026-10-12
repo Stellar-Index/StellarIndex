@@ -105,10 +105,8 @@ func TestCachedAssetsReader_ListAssetsExtHitMissCounter(t *testing.T) {
 	}
 }
 
-// TestCachedAssetsReader_HistoryBatchHitMissCounter exercises both
-// the 24h and 7d history-batch caches in one go. They share the
-// generic fetchHistoryMap helper; this test catches a regression
-// where one branch (24h vs 7d) silently drops the metric inc.
+// TestCachedAssetsReader_HistoryBatchHitMissCounter exercises both the 24h and 7d history-batch caches, which share
+// fetchHistoryMap, and catches either branch silently dropping the metric increment.
 func TestCachedAssetsReader_HistoryBatchHitMissCounter(t *testing.T) {
 	up := &fakeAssetsUpstream{}
 	c := NewCachedAssetsReader(up, 60*time.Second)
@@ -147,10 +145,8 @@ func TestCachedAssetsReader_HistoryBatchHitMissCounter(t *testing.T) {
 	}
 }
 
-// TestCachedAssetsReader_TTLZeroBypasses pins that ttl=0 disables
-// the cache entirely (every call goes through to upstream + no
-// metric counted, since the pre-cache code path doesn't hit the
-// fetch helper).
+// TestCachedAssetsReader_TTLZeroBypasses pins that ttl=0 disables the cache entirely: every call goes to upstream and no
+// metric is counted.
 func TestCachedAssetsReader_TTLZeroBypasses(t *testing.T) {
 	up := &fakeAssetsUpstream{}
 	c := NewCachedAssetsReader(up, 0)
@@ -220,10 +216,8 @@ func (u *typeEchoUpstream) ListAssetsExt(_ context.Context, opts timescale.ListA
 	return []timescale.AssetRow{{AssetID: "type=" + opts.Type}}, nil
 }
 
-// TestCachedAssetsReader_TypeInCacheKey — Type narrows the listing spine (classic vs traded
-// Soroban-native contracts), so it is a result-changing dimension. Left out of the key,
-// `type=classic` and `type=soroban` share one slot and whichever ran first serves the other
-// its rows.
+// TestCachedAssetsReader_TypeInCacheKey: Type narrows the listing spine, so it is result-changing. Left out of the key,
+// type=classic and type=soroban would share a slot and serve each other's rows.
 func TestCachedAssetsReader_TypeInCacheKey(t *testing.T) {
 	up := &typeEchoUpstream{fakeAssetsUpstream: &fakeAssetsUpstream{}}
 	c := NewCachedAssetsReader(up, 60*time.Second)
@@ -254,10 +248,8 @@ func TestCachedAssetsReader_TypeInCacheKey(t *testing.T) {
 	}
 }
 
-// swrAssetsUpstream is a configurable ListAssetsExt stub for the
-// stale-while-revalidate tests: a per-call counter plus a settable
-// delay / return value / failure. Embeds fakeAssetsUpstream so the
-// other AssetsReader methods are satisfied.
+// swrAssetsUpstream is a configurable ListAssetsExt stub for the stale-while-revalidate tests (call counter, settable delay,
+// return value and failure). It embeds fakeAssetsUpstream for the other AssetsReader methods.
 type swrAssetsUpstream struct {
 	*fakeAssetsUpstream
 	calls atomic.Int64
@@ -314,18 +306,13 @@ func waitFor(d time.Duration, cond func() bool) bool {
 	return cond()
 }
 
-// blockedCallerBailout bounds how long a test waits for a caller that a working cache serves
-// immediately. Only a cache that BLOCKS a request on background work reaches it, and such a
-// cache waits for something the test deliberately holds, so this is a hang guard, not a
-// budget: moving it changes no verdict. It makes a blocked caller fail with a message naming
-// the defect instead of hanging until the package deadline.
+// blockedCallerBailout bounds how long a test waits for a caller a working cache serves immediately. Only a cache that blocks
+// on background work reaches it, so it is a hang guard, not a budget, and names the defect instead of hitting the package
+// deadline.
 const blockedCallerBailout = 5 * time.Second
 
-// upstreamSettleWindow is how long a test watches for an upstream call that must NOT arrive
-// (a refresh cascading into another once it settles, with no request in sight). An absence
-// needs a window to appear in, but this one bounds no correct behaviour: a loaded runner makes
-// it less sensitive, never red, so it cannot fail a healthy cache. It exits as soon as a
-// violation shows up.
+// upstreamSettleWindow is how long a test watches for an upstream call that must NOT arrive. It bounds no correct behaviour,
+// so a loaded runner makes it less sensitive, never red, and it exits early on a violation.
 const upstreamSettleWindow = 100 * time.Millisecond
 
 // expireSWREntries walks every generic swr[T] entry back past any ttl,
@@ -341,20 +328,9 @@ func expireSWREntries(c *CachedAssetsReader) {
 	}
 }
 
-// upstreamHold parks an upstream call INSIDE the stub until the test lets it go. The caches'
-// non-blocking claims are asserted against it instead of racy fixed delays: while a call is
-// held the cache provably has not completed it, so whatever a concurrent caller is served is
-// the value already in the entry. "Served the stale entry" versus "blocked on the refresh
-// and got its result" thus becomes an order of events plus two different values.
-//
-// from is the first call number the hold covers, so a fixture can let the cold fetch run
-// free and park only the refresh behind it. entered closes when the first covered call
-// arrives; completed counts covered calls that ran to completion, and cancelled those cut
-// short by their own context, which shows work wired to a request ctx rather than its own
-// budget.
-//
-// A held call needs no bailout of its own: every test releases the hold in t.Cleanup, and
-// the caches give detached work a bounded budget whose expiry unblocks the stub regardless.
+// upstreamHold parks an upstream call inside the stub until released, so non-blocking claims are asserted by event order and
+// differing values, not racy delays. from is the first covered call number; entered closes on the first covered call;
+// completed and cancelled count finished and ctx-cut calls. Tests release it in t.Cleanup.
 type upstreamHold struct {
 	from      int64
 	entered   chan struct{}
@@ -373,10 +349,8 @@ func newUpstreamHold(from int64) *upstreamHold {
 	}
 }
 
-// park blocks call number n inside the stub until the hold is released, and is a no-op for a
-// nil hold or a call the hold does not cover. It returns ctx.Err() when the call's own
-// context is cancelled first, so upstream work handed a request ctx still aborts rather than
-// hanging.
+// park blocks call number n inside the stub until the hold is released; it is a no-op for a nil hold or an uncovered call. It
+// returns ctx.Err() if the call's own context is cancelled first, so request-bound upstream work still aborts.
 func (h *upstreamHold) park(ctx context.Context, n int64) error {
 	if h == nil || n < h.from {
 		return nil
@@ -409,10 +383,8 @@ func (h *upstreamHold) awaitCall(t *testing.T, what string) {
 	}
 }
 
-// TestCachedAssetsReader_SWRServesStaleAndRefreshes: an expired entry
-// returns the stale value IMMEDIATELY (not blocked on the slow
-// upstream refetch), a single background refresh runs,
-// and afterwards the fresh value is served.
+// TestCachedAssetsReader_SWRServesStaleAndRefreshes: an expired entry returns the stale value immediately, not blocked on the
+// slow upstream, one background refresh runs, and the fresh value is served afterwards.
 func TestCachedAssetsReader_SWRServesStaleAndRefreshes(t *testing.T) {
 	up := &swrAssetsUpstream{fakeAssetsUpstream: &fakeAssetsUpstream{}, val: "v1"}
 	c := NewCachedAssetsReader(up, 25*time.Millisecond)
@@ -444,10 +416,8 @@ func TestCachedAssetsReader_SWRServesStaleAndRefreshes(t *testing.T) {
 	}
 }
 
-// TestCachedAssetsReader_SWRSingleFlight: many concurrent reads of an
-// expired entry all get stale immediately and trigger EXACTLY ONE
-// background refresh (1 cold + 1 refresh = 2 upstream calls), never
-// a stampede, regardless of concurrency.
+// TestCachedAssetsReader_SWRSingleFlight: many concurrent reads of an expired entry all get stale immediately and trigger
+// exactly one background refresh (2 upstream calls total), never a stampede.
 func TestCachedAssetsReader_SWRSingleFlight(t *testing.T) {
 	up := &swrAssetsUpstream{fakeAssetsUpstream: &fakeAssetsUpstream{}, val: "v1"}
 	c := NewCachedAssetsReader(up, 20*time.Millisecond)
@@ -479,10 +449,8 @@ func TestCachedAssetsReader_SWRSingleFlight(t *testing.T) {
 	}
 }
 
-// TestCachedAssetsReader_SWRKeepsStaleOnError: when the background
-// refresh fails, the user keeps getting the stale value (never an
-// error, never a block) and the refresh is retried on the next
-// expired request.
+// TestCachedAssetsReader_SWRKeepsStaleOnError: when the background refresh fails, callers keep getting the stale value (no
+// error, no block) and the refresh is retried on the next expired request.
 func TestCachedAssetsReader_SWRKeepsStaleOnError(t *testing.T) {
 	up := &swrAssetsUpstream{fakeAssetsUpstream: &fakeAssetsUpstream{}, val: "v1"}
 	c := NewCachedAssetsReader(up, 20*time.Millisecond)
@@ -519,10 +487,8 @@ func TestCachedAssetsReader_SWRKeepsStaleOnError(t *testing.T) {
 // upstream, the stampede-on-expiry the rows path avoids. Both caches serve the SAME request
 // (/v1/assets?include=sparkline), so a missing branch brings the latency cliff back.
 
-// GetAssetsPriceHistory24hBatch overrides the embedded fake so the SWR
-// harness's delay / value / failure knobs drive the history path too.
-// One point per asset carrying the configured value in P, which is how
-// the test tells v1 from v2.
+// GetAssetsPriceHistory24hBatch overrides the embedded fake so the SWR harness knobs drive the history path too. It returns
+// one point per asset carrying the configured value in P, which distinguishes v1 from v2.
 func (s *swrAssetsUpstream) GetAssetsPriceHistory24hBatch(ctx context.Context, _ []string) (map[string][]timescale.AssetPricePoint, error) {
 	s.calls.Add(1)
 	s.mu.Lock()
@@ -557,10 +523,8 @@ func swrHistoryGet(t *testing.T, c *CachedAssetsReader) (string, error) {
 	return *pts[0].P, nil
 }
 
-// TestCachedAssetsReader_HistorySWRServesStaleAndRefreshes mirrors
-// TestCachedAssetsReader_SWRServesStaleAndRefreshes for the history
-// batch: an expired entry serves the stale map IMMEDIATELY, one
-// background refresh runs, and the fresh value is served afterwards.
+// TestCachedAssetsReader_HistorySWRServesStaleAndRefreshes mirrors the plain SWR test for the history batch: stale map served
+// immediately, one background refresh, fresh value afterwards.
 func TestCachedAssetsReader_HistorySWRServesStaleAndRefreshes(t *testing.T) {
 	up := &swrAssetsUpstream{fakeAssetsUpstream: &fakeAssetsUpstream{}, val: "v1"}
 	c := NewCachedAssetsReader(up, 25*time.Millisecond)
@@ -658,21 +622,16 @@ func TestCachedAssetsReader_HistorySWRKeepsStaleOnError(t *testing.T) {
 	}
 }
 
-// swrAssetStaleLedger / swrAssetFreshLedger tell the row a cold fetch cached from the row a
-// refresh replaces it with: the stub moves the asset's last-seen ledger forward on every call
-// after the first, so a caller served the stale entry and one that waited for the refresh
-// hold DIFFERENT rows. A stub echoing only the asset id would leave a stopwatch as the only
-// separator.
+// swrAssetStaleLedger / swrAssetFreshLedger distinguish the cold-fetched row from its refresh: the stub advances the asset's
+// last-seen ledger after the first call, so stale-served and refresh-waiting callers hold different rows without relying on
+// timing.
 const (
 	swrAssetStaleLedger = 100
 	swrAssetFreshLedger = 200
 )
 
-// swrAssetByIDUpstream is a race-safe configurable GetAssetByAssetID stub for the generic
-// swr[T] tests: atomic call counter, an optional hold that parks a call until released, and an
-// atomic "fail on call >= 2" toggle (deterministic by call number, so no mid-test field
-// mutation and `go test -race` stays clean under the background refresh). Embeds
-// *fakeAssetsUpstream for the other methods.
+// swrAssetByIDUpstream is a race-safe GetAssetByAssetID stub for the generic swr[T] tests: atomic call counter, optional hold,
+// and a deterministic "fail on call >= 2" toggle so `go test -race` stays clean. It embeds *fakeAssetsUpstream.
 type swrAssetByIDUpstream struct {
 	*fakeAssetsUpstream
 	calls   atomic.Int64
@@ -695,19 +654,9 @@ func (s *swrAssetByIDUpstream) GetAssetByAssetID(ctx context.Context, assetID st
 	return timescale.AssetRow{AssetID: assetID, LastSeenLedger: seen}, nil
 }
 
-// TestCachedAssetsReader_GenericSWRServesStaleSingleFlight pins the
-// generic swr[T] via the cached GetAssetByAssetID: every one of 20 concurrent reads of an
-// expired entry is served THE STALE ROW while EXACTLY ONE single-flighted background refresh
-// runs, and the row that refresh returns replaces it, for /v1/assets/{id}.
-//
-// What a stale read is served is a value, so it is asserted as one rather than by a latency
-// ceiling. The stub moves the row's last-seen ledger forward on the refresh, and the refresh
-// is HELD until every read has returned, so a read that waited for it could only hold the
-// fresh ledger and a read served the entry only the stale one, on any runner at any load.
-//
-// The tail releases the hold and pins the refreshed row, which keeps the assertion above a
-// discrimination rather than a restatement of the fixture: the two ledgers are proved
-// distinguishable in the same run that requires the stale one.
+// TestCachedAssetsReader_GenericSWRServesStaleSingleFlight pins generic swr[T] via GetAssetByAssetID: 20 concurrent reads of
+// an expired entry get the stale row while one background refresh runs and replaces it. The refresh is held until all reads
+// return, so it asserts values, not latency.
 func TestCachedAssetsReader_GenericSWRServesStaleSingleFlight(t *testing.T) {
 	hold := newUpstreamHold(2) // the cold fetch runs free; the refresh is parked
 	t.Cleanup(hold.release)

@@ -14,10 +14,8 @@ import (
 
 const contractIndexTestPool = "CAQUARIUSPOOL000000000000000000000000000000000000000000000"
 
-// rosterStub answers the aquarius roster with one pool and every other
-// source with nothing. It fails a read whenever the ctx it is handed is
-// already dead, and for the first failRounds full walks regardless — the
-// two ways a build comes back incomplete in production.
+// rosterStub answers the aquarius roster with one pool and every other source with nothing. It fails a read when the ctx is
+// already dead, and for the first failRounds full walks regardless: the two ways a build comes back incomplete in production.
 type rosterStub struct {
 	failRounds int32
 	panicFirst bool
@@ -93,10 +91,8 @@ func waitContractIndexIdle(t *testing.T, s *Server) {
 	t.Fatal("contract protocol index build still in flight past twice its own timeout")
 }
 
-// A request whose budget is already spent must not build — and cache —
-// a statics-only map for everyone else: the build it triggers runs on
-// its own deadline, so the map it publishes labels the pool and is
-// complete.
+// A request whose budget is already spent must not build and cache a statics-only map for everyone else: the build runs on its
+// own deadline, so the published map labels the pool and is complete.
 func TestContractProtocolIndex_BuildIsDetachedFromTheRequestDeadline(t *testing.T) {
 	stub := &rosterStub{}
 	s := newContractIndexServer(stub)
@@ -211,11 +207,8 @@ func TestContractProtocolIndex_PrewarmBuildsOnceWhileFresh(t *testing.T) {
 	}
 }
 
-// A cohort request that finds the map due must not wait on the rebuild:
-// against a registry that has stopped answering, an inline build holds
-// the request for the whole build timeout on top of the handler's own
-// read budget. The request serves the map it found and the rebuild runs
-// on its own goroutine.
+// A cohort request that finds the map due must not wait on the rebuild, which against a stalled registry would hold it for the
+// whole build timeout. It serves the map it found and the rebuild runs on its own goroutine.
 func TestContractProtocolIndex_RequestNeverWaitsOnARebuild(t *testing.T) {
 	stub := &rosterStub{block: make(chan struct{})}
 	s := newContractIndexServer(stub)
@@ -261,10 +254,8 @@ func expireContractIndex(s *Server) {
 	s.contractIndex.mu.Unlock()
 }
 
-// A rebuild in which one protocol's roster read fails must not unlabel
-// that protocol's discovered contracts: the complete map before it knew
-// them, and the failed read says nothing about whether they left. The
-// map stays incomplete, so the short retry TTL still applies.
+// A rebuild where one protocol's roster read fails must not unlabel that protocol's discovered contracts, since the failed read
+// says nothing about whether they left. The map stays incomplete, so the short retry TTL still applies.
 func TestContractProtocolIndex_FailedRebuildKeepsTheFailedProtocolsLabels(t *testing.T) {
 	stub := &rosterStub{}
 	s := newContractIndexServer(stub)
