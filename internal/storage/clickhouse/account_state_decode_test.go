@@ -1,6 +1,8 @@
 package clickhouse
 
 import (
+	"encoding/base64"
+	"strings"
 	"testing"
 
 	"github.com/stellar/go-stellar-sdk/xdr"
@@ -94,5 +96,85 @@ func TestTrustlineStateFromEntry_LiabilitiesAndPoolShare(t *testing.T) {
 	pool := trustlineStateFromEntry("pool:7b2c", "", 183_920_000)
 	if !pool.PoolShare || pool.Balance != 183_920_000 {
 		t.Errorf("pool-share trustline = %+v, want PoolShare with its balance kept", pool)
+	}
+}
+
+// TestAccountIsUnspendable: a locked burn account (master weight 0, no signers)
+// is unspendable at ANY threshold — stellar-core only admits the master key as
+// a signer when its weight is nonzero, so no signature set can be produced.
+func TestAccountIsUnspendable(t *testing.T) {
+	cases := []struct {
+		th      xdr.Thresholds
+		signers int
+		want    bool
+		msg     string
+	}{
+		// SetOptions{master_weight:0, low:1, med:1, high:1}: the documented "burn" recipe.
+		{xdr.NewThreshold(0, 1, 1, 1), 0, true, "burn recipe (master=0, thresholds=1/1/1, no signers) must be reported unspendable"},
+		{xdr.NewThreshold(0, 0, 0, 0), 0, true, "master=0, thresholds=0/0/0, no signers must remain flagged unspendable"},
+		{xdr.NewThreshold(0, 1, 1, 1), 1, false, "account with a live signer must not be reported unspendable"},
+		{xdr.NewThreshold(1, 1, 1, 1), 0, false, "account with nonzero master weight must not be reported unspendable"},
+	}
+	for _, tc := range cases {
+		if got := accountIsUnspendable(tc.th, tc.signers); got != tc.want {
+			t.Error(tc.msg)
+		}
+	}
+}
+
+// TestAccountEntryKeyPrefix pins that the PK prefix is a true string prefix of the account's real
+// trustline/offer LedgerKey base64 (stable at the 39-byte boundary) and differs by entry type and account.
+func TestAccountEntryKeyPrefix(t *testing.T) {
+	const g = "GA3GJGKCUKPOPL6NYPMSBK7LMFYNW7SJMAJ7ZGWR3KGSHJWJHQRQZA3L"
+
+	tp, err := accountEntryKeyPrefix(g, xdr.LedgerEntryTypeTrustline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tp) != 52 {
+		t.Fatalf("prefix length = %d chars, want 52 (39 bytes, base64 3-byte-aligned)", len(tp))
+	}
+	// Build a REAL trustline key for this account and assert prefix-ness.
+	var aid xdr.AccountId
+	if err := aid.SetAddress(g); err != nil {
+		t.Fatal(err)
+	}
+	lk := xdr.LedgerKey{
+		Type: xdr.LedgerEntryTypeTrustline,
+		TrustLine: &xdr.LedgerKeyTrustLine{
+			AccountId: aid,
+			Asset:     xdr.TrustLineAsset{Type: xdr.AssetTypeAssetTypeNative},
+		},
+	}
+	full, err := xdr.MarshalBase64(lk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(full, tp) {
+		t.Fatalf("real trustline key %q does not start with prefix %q", full, tp)
+	}
+
+	op, err := accountEntryKeyPrefix(g, xdr.LedgerEntryTypeOffer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if op == tp {
+		t.Fatal("offer and trustline prefixes must differ (discriminant byte)")
+	}
+	// Round-trip sanity: the decoded prefix's first 4 bytes are the type.
+	raw, err := base64.StdEncoding.DecodeString(op)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if raw[3] != byte(xdr.LedgerEntryTypeOffer) {
+		t.Fatalf("prefix discriminant = %d, want %d", raw[3], xdr.LedgerEntryTypeOffer)
+	}
+
+	other, err := accountEntryKeyPrefix("GAFEDMD42RJVK4TWOV7QXFTBPJOU7HIKS4DBNKZYUNFUEK24AW26ZJJ5", xdr.LedgerEntryTypeTrustline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if other == tp {
+		t.Fatal("two different accounts produced the same prefix")
 	}
 }

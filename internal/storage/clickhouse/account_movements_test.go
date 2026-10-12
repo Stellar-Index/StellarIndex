@@ -1,6 +1,7 @@
 package clickhouse
 
 import (
+	"fmt"
 	"math/big"
 	"strings"
 	"testing"
@@ -308,6 +309,108 @@ func TestAccountMovementsQueryDedupKeepsNewestVersion(t *testing.T) {
 		} {
 			if q := accountMovementsQuery(f, hasCursor); !strings.Contains(q, want) {
 				t.Errorf("accountMovementsQuery(%+v, cursor=%v) does not order the dedup by version (want %q):\n%s", f, hasCursor, want, q)
+			}
+		}
+	}
+}
+
+// TestAccountMovementsQuery_LedgerCeiling pins that the /movements merge boundary is a SQL predicate keyed
+// on HasMaxLedger, never MaxLedger != 0: ceiling 0 is reachable (genesis floor, absent watermark) and must
+// serve nothing.
+func TestAccountMovementsQuery_LedgerCeiling(t *testing.T) {
+	const clause = " AND ledger <= ?"
+
+	t.Run("ceiling zero still emits the clause", func(t *testing.T) {
+		q := accountMovementsQuery(AccountMovementFilter{HasMaxLedger: true, MaxLedger: 0}, false)
+		if !strings.Contains(q, clause) {
+			t.Errorf("accountMovementsQuery with a SET ceiling of 0 is missing %q — the CH arm would serve "+
+				"its whole archive at an installed genesis floor (F055):\n%s", clause, q)
+		}
+	})
+
+	t.Run("set ceiling emits the clause", func(t *testing.T) {
+		q := accountMovementsQuery(AccountMovementFilter{HasMaxLedger: true, MaxLedger: 58_000_000}, true)
+		if !strings.Contains(q, clause) {
+			t.Errorf("accountMovementsQuery with a set ceiling is missing %q:\n%s", clause, q)
+		}
+	})
+
+	t.Run("unset ceiling omits the clause", func(t *testing.T) {
+		q := accountMovementsQuery(AccountMovementFilter{}, false)
+		if strings.Contains(q, clause) {
+			t.Errorf("accountMovementsQuery with no ceiling emitted %q — an unbounded read must stay "+
+				"unbounded:\n%s", clause, q)
+		}
+	})
+
+	t.Run("clause order mirrors arg order", func(t *testing.T) {
+		q := accountMovementsQuery(AccountMovementFilter{
+			Kind: "payment", Direction: AccountMovementSent, Asset: "native",
+			HasMaxLedger: true, MaxLedger: 58_000_000,
+		}, true)
+		assetIdx := strings.Index(q, "asset = ?")
+		ledgerIdx := strings.Index(q, clause)
+		curIdx := strings.Index(q, "(ledger, tx_hash, op_index, leg_index) < (?, ?, ?, ?)")
+		if !(assetIdx >= 0 && ledgerIdx > assetIdx && curIdx > ledgerIdx) {
+			t.Errorf("the ledger ceiling must bind between the asset filter and the cursor keyset "+
+				"(ExplorerReader.AccountMovements appends its args in that order):\n%s", q)
+		}
+	})
+
+	t.Run("the ceiling precedes the LIMIT", func(t *testing.T) {
+		q := accountMovementsQuery(AccountMovementFilter{HasMaxLedger: true, MaxLedger: 58_000_000}, false)
+		if strings.Index(q, clause) > strings.Index(q, "LIMIT") {
+			t.Errorf("the ledger ceiling must be a WHERE predicate, applied before the LIMIT (F055):\n%s", q)
+		}
+	})
+}
+
+// TestInsertAccountMovementsOrder_PartialSendLeavesNoGap pins that a partly sent batch is safe for
+// max(ledger) resume: at every cut point each ledger below the highest written is complete. An address-first
+// order fails.
+func TestInsertAccountMovementsOrder_PartialSendLeavesNoGap(t *testing.T) {
+	// A window shaped like a real one: many addresses, each active
+	// across the whole ledger range.
+	const (
+		addresses = 12
+		ledgerLo  = 1000
+		ledgerHi  = 1040
+	)
+	var rows []AccountMovementRow
+	for a := 0; a < addresses; a++ {
+		for l := uint32(ledgerLo); l <= ledgerHi; l++ {
+			rows = append(rows, AccountMovementRow{
+				Address:   fmt.Sprintf("G%02d", a),
+				Ledger:    l,
+				TxHash:    fmt.Sprintf("%02d-%d", a, l),
+				Direction: AccountMovementSent,
+			})
+		}
+	}
+
+	sortAccountMovementRowsForInsert(rows)
+
+	// total[l] is how many rows the window holds for ledger l.
+	total := map[uint32]int{}
+	for _, r := range rows {
+		total[r.Ledger]++
+	}
+
+	// Walk every cut point a failed chunk send could leave behind.
+	written := map[uint32]int{}
+	for cut, r := range rows {
+		written[r.Ledger]++
+		highest := uint32(0)
+		for l := range written {
+			if l > highest {
+				highest = l
+			}
+		}
+		for l := uint32(ledgerLo); l < highest; l++ {
+			if written[l] != total[l] {
+				t.Fatalf("a send that stopped after row %d left ledger %d with %d of %d rows while ledger %d "+
+					"was already written: -resume restarts at %d and never revisits %d — a silent gap (RLT-296)",
+					cut+1, l, written[l], total[l], highest, highest, l)
 			}
 		}
 	}
