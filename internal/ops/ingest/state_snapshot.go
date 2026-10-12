@@ -131,7 +131,6 @@ func parseStateSnapshotFlags(args []string) (stateSnapshotOpts, error) {
 	scope := fs.String("scope", "contracts", "write scope: 'contracts' (G1: code+instances), 'all' (G2/G3: +account/trustline/offer/data/claimable/LP), or 'storage' (contract_data STORAGE + LP — the dormant SAC/Blend/LP current-state fill)")
 	maxModLedger := fs.Uint("max-modified-ledger", 0, "collect only entries last modified BELOW this ledger (0 = all); use ~62000000 to write only the dormant tail the live-capture floor never captured")
 	chAddr := fs.String("ch", "127.0.0.1:9300", "ClickHouse native address for -write (r1 native port is 9300; 9000 is MinIO)")
-	throttleMS := fs.Uint("throttle-ms", 50, "pause between insert chunks (keeps the live CH gentle)")
 	if err := fs.Parse(args); err != nil {
 		return stateSnapshotOpts{}, err
 	}
@@ -144,7 +143,7 @@ func parseStateSnapshotFlags(args []string) (stateSnapshotOpts, error) {
 		checkpoint:   uint32(*checkpoint),   //nolint:gosec // operator-supplied ledger
 		maxModLedger: uint32(*maxModLedger), //nolint:gosec // operator-supplied ledger
 		limit:        *limit, scope: sc,
-		throttle: time.Duration(*throttleMS) * time.Millisecond,
+		throttle: 50 * time.Millisecond,
 		// An explicit -dry-run sizes the write set, which a bare run does not.
 		write: gate.Enabled(), collect: gate.Enabled() || gate.DryRunStated(),
 	}, nil

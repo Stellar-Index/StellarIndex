@@ -59,10 +59,6 @@ func issuerFlagsCmd(args []string) error {
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
 	limit := fs.Int("limit", 5000, "Max issuers per pass this run — bounds the unresolved queue AND the last-known re-check queue independently (<=0 = every candidate)")
-	chainRecheckLimit := fs.Int("chain-recheck-limit", 0,
-		"Max FILLED live-sourced rows re-read against the chain this run (<=0 = every one, the intended setting). "+
-			"A positive value caps the pass, but the queue is ordered by primary key, so a cap means only its head is ever re-read; "+
-			"uncapped, the walk starts at a different batch each day and wraps, so a run cut short by -timeout does not always miss the same tail")
 	batch := fs.Int("batch", 500, "Issuers per ClickHouse query")
 	timeout := fs.Duration("timeout", 30*time.Minute, "Wall-clock timeout for the whole run")
 	gate := opsutil.RegisterWriteGate(fs)
@@ -97,12 +93,11 @@ func issuerFlagsCmd(args []string) error {
 	}
 
 	return runIssuerFlags(ctx, store, reader, issuerFlagsOpts{
-		limit:             *limit,
-		chainRecheckLimit: *chainRecheckLimit,
-		batch:             *batch,
-		day:               int(time.Now().Unix() / 86400),
-		dryRun:            dryRun,
-		out:               os.Stderr,
+		limit:  *limit,
+		batch:  *batch,
+		day:    int(time.Now().Unix() / 86400),
+		dryRun: dryRun,
+		out:    os.Stderr,
 	})
 }
 

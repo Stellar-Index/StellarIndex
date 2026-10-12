@@ -24,8 +24,7 @@ func detectGaps(args []string) error {
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
 	threshold := fs.Uint("threshold", 100, "Ledgers of lag that count as a gap")
 	rpcOverride := fs.String("rpc", "", "stellar-rpc endpoint URL for the network tip (overrides stellar.rpc_endpoints[0])")
-	rpcMaxStaleness := fs.Duration("rpc-max-staleness", 5*time.Minute,
-		"Max age of the RPC tip's own closeTime before the tip is treated as stale (catches a stuck/disconnected RPC node, not normal ~5s ledger-close jitter)")
+	const rpcMaxStaleness = 5 * time.Minute // stuck/disconnected RPC node, not normal ~5s close jitter
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -66,9 +65,9 @@ func detectGaps(args []string) error {
 	if err != nil {
 		return fmt.Errorf("rpc tip closeTime: %w — cannot assert freshness, failing closed", err)
 	}
-	if staleness := time.Since(closeTime); staleness > *rpcMaxStaleness {
-		return fmt.Errorf("rpc tip stale: sequence %d closed %s ago (closeTime %s UTC) — exceeds -rpc-max-staleness %s; the RPC node itself may be stuck or disconnected, which would otherwise make every source cursor read \"ok\" against a frozen tip",
-			tip.Sequence, staleness.Round(time.Second), closeTime.UTC().Format(time.RFC3339), *rpcMaxStaleness)
+	if staleness := time.Since(closeTime); staleness > rpcMaxStaleness {
+		return fmt.Errorf("rpc tip stale: sequence %d closed %s ago (closeTime %s UTC) — exceeds the %s staleness limit; the RPC node itself may be stuck or disconnected, which would otherwise make every source cursor read \"ok\" against a frozen tip",
+			tip.Sequence, staleness.Round(time.Second), closeTime.UTC().Format(time.RFC3339), rpcMaxStaleness)
 	}
 
 	store, err := timescale.Open(ctx, cfg.Storage.PostgresDSN)
