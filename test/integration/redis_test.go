@@ -32,11 +32,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
 )
 
-// startPlainRedis is startRedis without the `--save 1 1` flag that
-// test exists to weaponise: these tests want an ordinary server, and a
-// BGSAVE firing after every write during the concurrency subtest would
-// add timing noise to the one assertion that depends on real
-// contention.
+// startPlainRedis is startRedis without `--save 1 1`: a BGSAVE after every write would add timing noise to the
+// concurrency subtest.
 func startPlainRedis(ctx context.Context, t *testing.T) *redis.Client {
 	t.Helper()
 	rdb, ctr := runRedisContainer(ctx, t)
@@ -47,10 +44,7 @@ func startPlainRedis(ctx context.Context, t *testing.T) *redis.Client {
 	return rdb
 }
 
-// frozenClock pins the window suffix so every observation below is
-// about the KEY's lifetime rather than about the bucket rolling over.
-// A test that let the clock advance would see a fresh key and could
-// not tell "the TTL drained" from "we moved to the next window".
+// frozenClock pins the window suffix so assertions are about the key's lifetime, not the bucket rolling over.
 func frozenClock(at time.Time) func() time.Time {
 	return func() time.Time { return at }
 }
@@ -79,11 +73,8 @@ func TestRatelimit_RealRedis(t *testing.T) {
 	})
 }
 
-// testFixedWindowDrainTTL proves the 2×window drain TTL is a real
-// server-side expiry: with the clock frozen — so the key suffix cannot
-// move — the counter key must vanish on its own and the next Incr must
-// start again at 1. miniredis never expires anything without an
-// explicit FastForward, so this property is asserted nowhere else.
+// Pins that the 2x window drain TTL is a real server-side expiry: with the clock frozen the key must vanish and the next
+// Incr restart at 1. miniredis never expires without FastForward, so nothing else asserts this.
 func testFixedWindowDrainTTL(ctx context.Context, t *testing.T, rdb *redis.Client) {
 	t.Helper()
 	at := time.Unix(1_700_000_000, 0).UTC()
@@ -138,10 +129,8 @@ func testFixedWindowDrainTTL(ctx context.Context, t *testing.T, rdb *redis.Clien
 	}
 }
 
-// testFixedWindowTTLNotReArmed pins the `if current == 1` guard in
-// incrLua. Without it the TTL would be re-armed on every increment and
-// a key under sustained load would never expire — the same unbounded
-// namespace, arrived at from the other direction.
+// Pins the `if current == 1` guard in incrLua: without it the TTL is re-armed on every increment and a key under load
+// never expires.
 func testFixedWindowTTLNotReArmed(ctx context.Context, t *testing.T, rdb *redis.Client) {
 	t.Helper()
 	at := time.Unix(1_700_000_000, 0).UTC()
@@ -158,13 +147,8 @@ func testFixedWindowTTLNotReArmed(ctx context.Context, t *testing.T, rdb *redis.
 		t.Fatalf("pttl: %v", err)
 	}
 
-	// The margin has to dominate round-trip jitter, not merely exceed
-	// it. An earlier revision of this test slept 1.5s and asserted only
-	// `second < first`; under a deliberately broken script (EXPIRE
-	// re-armed every call) it still passed roughly half the time,
-	// because it was really comparing two EVAL+PTTL round-trips a
-	// couple of milliseconds apart. Sleep well past the noise floor and
-	// require the TTL to have DECAYED by most of the elapsed time.
+	// The margin must dominate round-trip jitter: a short sleep with `second < first` passes ~half the time even with EXPIRE
+	// re-armed. Sleep well past the noise floor and require the TTL to have decayed by most of the elapsed time.
 	const (
 		dwell     = 3 * time.Second
 		minDecay  = 2 * time.Second // < dwell, to absorb second-rounding
@@ -202,16 +186,8 @@ func testFixedWindowTTLNotReArmed(ctx context.Context, t *testing.T, rdb *redis.
 	}
 }
 
-// testFixedWindowUnsetKeyRace is the EXPIRE race the Lua fold exists for,
-// observed against a real server: many goroutines over several
-// INDEPENDENT clients (separate connection pools, so the contention is
-// genuinely server-side) hit one missing key inside one window.
-//
-// Real Redis executes each EVAL to completion before the next, so the
-// post-increment counts must be exactly the permutation 1..N — no
-// duplicates, no gaps — and exactly one caller may observe 1. And
-// whichever caller that was, the key must carry a TTL afterwards: a
-// TTL-less counter key is the permanent leak.
+// The EXPIRE race the Lua fold exists for, against a real server: many goroutines over independent clients hit one missing
+// key. Post-increment counts must be exactly 1..N, exactly one caller sees 1, and the key must carry a TTL afterwards.
 func testFixedWindowUnsetKeyRace(ctx context.Context, t *testing.T, rdb *redis.Client) {
 	t.Helper()
 	const (
@@ -279,13 +255,9 @@ func testFixedWindowUnsetKeyRace(ctx context.Context, t *testing.T, rdb *redis.C
 	}
 }
 
-// testBucketSurvivesScriptFlush models a Redis restart / failover: the
-// server's script cache is empty, so the EVALSHA go-redis sends first
-// misses with NOSCRIPT and must be retried as a full EVAL. miniredis
-// cannot produce that miss, so nothing else in the tree covers it —
-// and the production consequence is total: every Take() after a Redis
-// restart would error, fail open for DefaultDwellTime, then fail
-// CLOSED (503) for the whole API.
+// Models a Redis restart/failover: the empty script cache makes the first EVALSHA miss with NOSCRIPT, which must be
+// retried as EVAL. miniredis cannot produce that miss; unretried, every Take() after a restart would error and eventually
+// 503 the API.
 func testBucketSurvivesScriptFlush(ctx context.Context, t *testing.T, rdb *redis.Client) {
 	t.Helper()
 	at := time.Unix(1_700_000_000, 0).UTC()
@@ -318,12 +290,8 @@ func testBucketSurvivesScriptFlush(ctx context.Context, t *testing.T, rdb *redis
 	}
 }
 
-// testBucketDenyReplyShape drives the bucket over its limit against a
-// real server and pins the deny path end to end. The Lua returns
-// `{current, TTL}`; the Go side asserts `[]any{int64, int64}` and
-// derives Allowed from `count`, never from the TTL. Real Redis RESP
-// conversion is the authority for that shape, and the deny arm is the
-// only one that calls TTL at all.
+// Drives the bucket over its limit against a real server and pins the deny path: Lua returns `{current, TTL}`, Allowed
+// derives from count, never TTL. Real RESP conversion is the authority for that shape.
 func testBucketDenyReplyShape(ctx context.Context, t *testing.T, rdb *redis.Client) {
 	t.Helper()
 	// 1700000000 / 60 = 28333333, ×60 = 1699999980, so the anchor sits
@@ -478,15 +446,8 @@ func TestRedisACLTemplate_LoadsIntoRedisServer(t *testing.T) {
 	}
 }
 
-// TestCascadeMISCONF_EndToEnd is the integration twin of
-// internal/api/v1/cache_unavailable_test.go's stub-based tests. It
-// uses a real Redis container in real MISCONF state to drive the
-// 503-on-cache-unavailable mapping end-to-end.
-//
-// Skipped automatically when Docker isn't available — mirrors the
-// existing pattern in test/integration/migrations_test.go.
-//
-// Nominal runtime: ~10s on a warm Docker cache, ~30s on a cold one.
+// Integration twin of the stub-based tests in internal/api/v1/cache_unavailable_test.go: a real Redis in MISCONF state
+// must map to 503. Skipped when Docker is unavailable; ~10s warm, ~30s cold.
 func TestCascadeMISCONF_EndToEnd(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -501,12 +462,8 @@ func TestCascadeMISCONF_EndToEnd(t *testing.T) {
 		t.Fatalf("redis ping: %v", err)
 	}
 
-	// Build a v1.Server wired with our test reader that talks to
-	// the real Redis container. The reader's LatestOracleUpdatesForAsset
-	// does a Redis SET on every call — under MISCONF that SET fails
-	// with the MISCONF prefix, which is exactly the failure shape
-	// the production cascade-affected handlers see in the May-10
-	// SEV-2 (commit a91f901b's rationale).
+	// The reader does a Redis SET on every call; under MISCONF that SET fails with the MISCONF prefix, the shape cascade-
+	// affected handlers see.
 	oracle := &redisOracleReader{rdb: rdb}
 	srv := v1.New(v1.Options{Oracle: oracle})
 	ts := httptest.NewServer(srv.Handler())
@@ -536,10 +493,7 @@ func TestCascadeMISCONF_EndToEnd(t *testing.T) {
 			}
 		}()
 
-		// Wait briefly for the new state to propagate; BGSAVE is
-		// asynchronous, the stop-writes flag flips once the fork
-		// fails. Retry the request a few times rather than sleeping
-		// blindly — typical settle is <1s.
+		// BGSAVE is asynchronous and the stop-writes flag flips once the fork fails: retry the request rather than sleep blindly.
 		var resp *http.Response
 		var err error
 		deadline := time.Now().Add(15 * time.Second)
@@ -608,10 +562,8 @@ func TestCascadeMISCONF_EndToEnd(t *testing.T) {
 	// ─── 4. predicate sanity — go-redis surfaces MISCONF the way
 	//        IsCacheUnavailable expects ───────────────────────────
 	t.Run("go_redis_misconf_classification", func(t *testing.T) {
-		// Repro MISCONF directly via the client — bypass the handler
-		// to verify go-redis's error shape hasn't drifted in a way
-		// the predicate would miss. This is a defence-in-depth check;
-		// if it ever fails, IsCacheUnavailable needs a new branch.
+		// Repro MISCONF directly via the client to check go-redis's error shape hasn't drifted past the predicate;
+		// if this fails, IsCacheUnavailable needs a new branch.
 		probeSet := func() error {
 			return rdb.Set(ctx, "misconf-probe-direct", "v", 0).Err()
 		}
@@ -647,15 +599,8 @@ func TestCascadeMISCONF_EndToEnd(t *testing.T) {
 
 // ─── helpers ──────────────────────────────────────────────────────
 
-// startRedis spins up a single-node Redis container with the same
-// settings the dev compose uses (`stop-writes-on-bgsave-error yes`
-// is on by default in Redis 7) PLUS `--save 1 1` so BGSAVE auto-
-// fires on the first write — that's how forceMISCONF provokes the
-// stop-writes flag without needing CONFIG SET (which Redis 7.4
-// rejects at runtime for the `dir` key as a protected config).
-//
-// Returns a go-redis client + the container handle so the caller
-// can exec docker commands.
+// Single-node Redis with `--save 1 1` so BGSAVE fires on the first write; that is how forceMISCONF provokes stop-writes,
+// since Redis 7.4 rejects CONFIG SET for the protected `dir` key. Returns a go-redis client and the container handle.
 func startRedis(t *testing.T, ctx context.Context) (*redis.Client, testcontainers.Container) {
 	t.Helper()
 	return runRedisContainer(ctx, t, testcontainers.WithCmd("redis-server", "--save", "1", "1"))
@@ -694,29 +639,12 @@ func runRedisContainer(ctx context.Context, t *testing.T, opts ...testcontainers
 	return rdb, ctr
 }
 
-// forceMISCONF puts Redis into the stop-writes state by:
-//  1. chmod 0 /data — strips write permission from the snapshot
-//     dir. CONFIG SET dir is rejected at runtime in Redis 7.4 as
-//     a protected config, so we change the FS underneath instead.
-//  2. SET a probe key — triggers the `--save 1 1` rule (started
-//     with that flag in startRedis), which fires BGSAVE within 1s.
-//  3. Poll INFO persistence until rdb_last_bgsave_status:err.
-//
-// Once BGSAVE has failed once, every subsequent write returns
-// `MISCONF Redis is configured to save RDB snapshots, but it's
-// currently unable to persist to disk` — exactly the May-10 SEV-2
-// surface (and what a91f901b's helper maps to HTTP 503).
-//
-// probeSet is the caller's go-redis-driven write — using the same
-// client that subsequent assertions use ensures we hit the same
-// connection pool and same surface.
+// Puts Redis into stop-writes: chmod 0 /data (CONFIG SET dir is protected in 7.4), SET a probe key to trigger `--save 1
+// 1`, poll INFO until rdb_last_bgsave_status:err. After that every write returns MISCONF. probeSet uses the asserting
+// client's pool.
 func forceMISCONF(ctx context.Context, ctr testcontainers.Container, probeSet func() error) error {
-	// Re-arm the safety net: healMISCONF turns it off on cleanup,
-	// and Redis won't block writes on BGSAVE failure without it. On
-	// the first call this is a no-op (default is "yes" on image
-	// start); on the second call this is what makes the test
-	// re-armable. Authoritative writes-blocked behaviour requires
-	// this flag, NOT just rdb_last_bgsave_status:err.
+	// Re-arm stop-writes-on-bgsave-error (healMISCONF turns it off on cleanup): writes only block with this flag,
+	// not merely rdb_last_bgsave_status:err.
 	if err := execIgnoringBGSAVE(ctx, ctr,
 		[]string{
 			"redis-cli", "CONFIG", "SET",
@@ -734,12 +662,8 @@ func forceMISCONF(ctx context.Context, ctr testcontainers.Container, probeSet fu
 	if err := probeSet(); err != nil && !strings.Contains(err.Error(), "MISCONF") {
 		return fmt.Errorf("probe SET: %w", err)
 	}
-	// Authoritative readiness check: keep probing SET until it
-	// returns MISCONF. rdb_last_bgsave_status:err is a NECESSARY
-	// but not SUFFICIENT condition — Redis only sets the
-	// stop-writes-on-bgsave-error trip-wire on the next write
-	// attempt after the failed BGSAVE. Looping on the SET itself
-	// gives us the end-state guarantee callers actually want.
+	// Authoritative readiness: probe SET until it returns MISCONF. bgsave status:err is necessary but not sufficient;
+	// Redis trips stop-writes on the next write after the failed BGSAVE.
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		err := probeSet()
@@ -785,11 +709,7 @@ func healMISCONF(ctx context.Context, ctr testcontainers.Container) error {
 	return errors.New("BGSAVE did not report ok within 15s")
 }
 
-// execIgnoringBGSAVE is a thin wrapper around ctr.Exec that ignores
-// the "Background saving started" stderr noise from BGSAVE — Redis
-// returns 0 but writes a status line to stdout that confuses our
-// captured-output asserts elsewhere. We only care that the command
-// dispatched.
+// Wraps ctr.Exec ignoring the "Background saving started" output BGSAVE writes, which confuses captured-output asserts.
 func execIgnoringBGSAVE(ctx context.Context, ctr testcontainers.Container, cmd []string) error {
 	code, _, err := ctr.Exec(ctx, cmd)
 	if err != nil {
@@ -829,10 +749,8 @@ func httpGet(t *testing.T, url string) *http.Response {
 	return resp
 }
 
-// isDockerUnavailable mirrors migrations_test.go's behaviour: skip
-// when Docker isn't reachable rather than fail the test. We don't
-// have a single sentinel for this — testcontainers wraps with its
-// own error type — so check both the message and the wrap chain.
+// Skip when Docker isn't reachable rather than fail; testcontainers has no single sentinel, so check the message and the
+// wrap chain.
 func isDockerUnavailable(err error) bool {
 	if err == nil {
 		return false
@@ -852,22 +770,15 @@ func isDockerUnavailable(err error) bool {
 	return false
 }
 
-// ─── redisOracleReader — minimal v1.OracleReader hitting real Redis
-//
-// Every call performs a Redis SET to mirror the cascade-affected
-// handlers' cache-write pattern. Under MISCONF that SET fails with
-// the MISCONF prefix; the handler wraps it (via the existing
-// observability seam) and the v1 layer's IsCacheUnavailable
-// predicate flips the response to 503 + Retry-After.
+// Minimal v1.OracleReader hitting real Redis: every call does a SET like the cascade-affected handlers' cache write;
+// under MISCONF it fails and IsCacheUnavailable flips the response to 503 + Retry-After.
 
 type redisOracleReader struct {
 	rdb *redis.Client
 }
 
-// LatestOracleUpdatesForAsset returns an empty slice on healthy
-// Redis (the asset has no observations seeded — we're only testing
-// the cache-write failure surface, not the data path). Under
-// MISCONF the SET fails and the error propagates to the handler.
+// Returns an empty slice on healthy Redis (no observations seeded; only the cache-write failure is under test).
+// Under MISCONF the SET fails and the error propagates.
 func (r *redisOracleReader) LatestOracleUpdatesForAsset(
 	ctx context.Context, asset canonical.Asset, sourceFilter string,
 ) ([]canonical.OracleUpdate, error) {

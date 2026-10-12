@@ -91,26 +91,9 @@ func TestUsdVolumePricingStats(t *testing.T) {
 	}
 }
 
-// TestUSDVolumeValueReconcile_ExactTierIdentity is the DB-backed half of
-// the value-reconcile identity, run against real TimescaleDB.
-//
-// The standing usd-volume alerts only measure COVERAGE (the share of trades
-// with a non-NULL `usd_volume`). A trade priced with the WRONG number is
-// 100% covered and completely wrong, and every volume surface this system
-// publishes is a sum of that column.
-//
-// This exercises the value check end to end, on rows written by the REAL
-// insert path with the REAL peg configuration installed:
-//
-//  1. the day-scoped SQL aggregation actually groups and sums correctly;
-//  2. the exact-tier identity (usd_volume == pegged_leg / 10^decimals)
-//     holds to the last unit on rows the writer produced;
-//  3. corrupting ONE row by ONE unit at the render scale (1e-8 USD) is
-//     caught — the redness proof for the whole check. The fixture is sized
-//     to a REALISTIC daily volume ($500M) precisely so that error sits
-//     BELOW a float64 ulp at that magnitude (~5.96e-8): a naive float
-//     subtraction reports the day clean, and the test asserts that
-//     directly. That is why the comparison is exact rational arithmetic.
+// DB-backed value reconcile: coverage alerts miss a trade priced with the wrong number, and every volume surface sums
+// usd_volume. On rows from the real insert path with real pegs: the day SQL groups and sums correctly, the exact-tier
+// identity holds, and corrupting one row by 1e-8 USD is caught.
 func TestUSDVolumeValueReconcile_ExactTierIdentity(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -208,11 +191,8 @@ func TestUSDVolumeValueReconcile_ExactTierIdentity(t *testing.T) {
 			delta.FloatString(12), g.SumUSDVolume, g.SumQuoteAmount)
 	}
 
-	// ── the redness fixture: one row, off by one unit ───────────────
-	// A wrong-scale / wrong-leg / stale-peg / superseded-backfill defect
-	// shows up here as a nonzero delta. One unit at the render scale is the
-	// smallest such defect that can exist, so catching it proves the check
-	// has no blind band at the bottom.
+	// Redness fixture, one row off by one unit: one unit at render scale is the smallest possible wrong-scale/leg/peg defect,
+	// so catching it proves the check has no blind band at the bottom.
 	const bump = `
 		UPDATE trades
 		   SET usd_volume = usd_volume + 0.00000001
@@ -235,12 +215,8 @@ func TestUSDVolumeValueReconcile_ExactTierIdentity(t *testing.T) {
 			"verify-usd-volume would report the day as clean")
 	}
 
-	// ── why this is exact rational arithmetic ───────────────────────
-	// The same subtraction in float64, at this (entirely ordinary) daily
-	// volume, loses the corruption completely: 1e-8 is below the float64
-	// ulp near 5e8. Asserting the naive implementation's blindness pins the
-	// design decision — a future "simplify this to float64" would keep every
-	// other assertion above green while silently reopening the blind band.
+	// Why exact rational arithmetic: float64 subtraction at this ordinary daily volume loses the 1e-8 corruption entirely.
+	// Asserting the naive version's blindness stops a future "simplify to float64" from reopening the blind band.
 	storedF, _ := new(big.Rat).SetString(g.SumUSDVolume)
 	quoteF, _ := new(big.Rat).SetString(g.SumQuoteAmount)
 	sf, _ := storedF.Float64()
@@ -254,21 +230,9 @@ func TestUSDVolumeValueReconcile_ExactTierIdentity(t *testing.T) {
 	}
 }
 
-// TestUSDVolumeRestamp_ExactTierRepair is the DB-backed proof for the
-// `usd-volume-restamp` write path, on real TimescaleDB, against rows the
-// REAL insert path wrote with the REAL peg configuration:
-//
-//  1. the SQL identity the tool evaluates (`round(leg / 10^d, 8)`) lands
-//     the SAME value the Go formula [timescale.ExactTierUSDVolume] and
-//     therefore [tradeUSDVolume] produce — no SQL reimplementation drift;
-//  2. DIFFERENTIAL: a correctly-stamped row is untouched — value AND
-//     derive_generation — so a re-run is a no-op (idempotent);
-//  3. the dry-run count is the write's exact preview;
-//  4. a row at a HIGHER generation is never clawed back, and every
-//     rewritten row carries the run's generation;
-//  5. NULL rows are left alone unless FillNull;
-//  6. after the repair the verifier's own acceptance (ExactTierDelta == 0)
-//     holds for the day.
+// DB-backed proof for the `usd-volume-restamp` write path: the SQL identity `round(leg / 10^d, 8)` matches
+// ExactTierUSDVolume (no SQL drift); a correctly stamped row is untouched incl. derive_generation (idempotent); dry-run
+// count previews the write; a higher generation is never clawed back; NULL rows are left unless FillNull.
 func TestUSDVolumeRestamp_ExactTierRepair(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -374,11 +338,8 @@ func TestUSDVolumeRestamp_ExactTierRepair(t *testing.T) {
 		t.Fatalf("dry-run candidates with FillNull = %d, %v; want 2", n, err)
 	}
 
-	// ── GUC hygiene: pin the pool to ONE connection, so the conn
-	// the restamp borrows IS the conn every later statement lands on.
-	// `Conn.Close`/`Tx.Commit` return it to the pool and pgx v5 stdlib
-	// resets nothing on reuse, so a SESSION-level cap lift would still be
-	// in force below.
+	// GUC hygiene: pin the pool to one connection so the conn the restamp borrows is the one later statements use,
+	// since pgx v5 stdlib resets nothing on reuse and a session-level cap lift would still apply.
 	store.DB().SetMaxOpenConns(1)
 	capSetting := func(t *testing.T) string {
 		t.Helper()
@@ -669,13 +630,9 @@ func TestUSDVolumeRestampLog_Migration0175DownRefusesWhileHoldingBeforeImages(t 
 	_, thisFile, _, _ := runtime.Caller(0)
 	migrationsDir := "file://" + filepath.Join(filepath.Dir(thisFile), "..", "..", "migrations")
 
-	// The RAISE EXCEPTION aborts the down's transaction mid-statement and
-	// golang-migrate's postgres driver never issues a ROLLBACK on that
-	// connection, so a later command on the same *Migrate instance (Force,
-	// or another Migrate) fails to take its advisory lock ("database
-	// locked") rather than surfacing the refusal. assertDownRefused in
-	// migrations_test.go hits the same hazard: close the instance that ran
-	// the failing down immediately, then use a fresh one per step.
+	// RAISE EXCEPTION aborts the down mid-statement and golang-migrate never issues ROLLBACK, so a later command on the same
+	// *Migrate fails on the advisory lock. Close the instance that ran the failing down immediately and use a fresh one per
+	// step (as assertDownRefused does).
 	m, err := migrate.New(migrationsDir, dsn)
 	if err != nil {
 		t.Fatalf("migrate.New: %v", err)
@@ -714,33 +671,9 @@ func TestUSDVolumeRestampLog_Migration0175DownRefusesWhileHoldingBeforeImages(t 
 	assertTableAbsent(t, db, ctx, "usd_volume_restamp_log")
 }
 
-// TestXLMBaseRestampChunks_RestampsInsideACompressedChunk is the DB-backed
-// proof for `usd-volume-restamp -tier xlm-base -chunks`, driven through
-// the real subcommand (flags, config, live-tail guard, generation) on real
-// TimescaleDB, against a `trades` chunk that is COMPRESSED the way every
-// chunk older than the 7-day policy is on production:
-//
-//  1. the DRY RUN (the default) prints the chunk plan and leaves the chunk
-//     compressed and every row byte-identical;
-//  2. -write restamps the rows through the same anchor the day walk uses
-//     (10 XLM x $0.50 = $5.00), stamps them with the run's generation, and
-//     leaves the chunk COMPRESSED again afterwards — with the trades
-//     compression policy job (migration 0001) observed PAUSED while the
-//     run is in flight and scheduled again after it;
-//  3. a second -write run changes nothing: the chunk is probed read-only,
-//     reported as skipped, never decompressed, and every row keeps its
-//     value and generation;
-//  4. with the run lock held from another session — the way a live run
-//     holds it — -write refuses to start and touches nothing;
-//  5. with the policy already unscheduled, -write refuses without
-//     -resume-paused-policy and leaves the policy as it found it; with
-//     the flag it restamps and re-enables the policy at exit;
-//  6. with the policy removed, -write refuses to start and touches
-//     nothing; a -generation in the future is refused the same way.
-//
-// The harness runs timescaledb.max_background_workers = 0, so the policy
-// can never fire here; what this pins is that the real alter_job
-// round-trips on the job the tool resolves, in both directions.
+// DB-backed proof for `usd-volume-restamp -tier xlm-base -chunks` through the real subcommand against a COMPRESSED trades
+// chunk: dry run leaves it compressed and byte-identical; -write restamps via the day-walk anchor with the run's
+// generation and recompresses, with the compression policy job paused during and rescheduled after.
 func TestXLMBaseRestampChunks_RestampsInsideACompressedChunk(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -1029,10 +962,8 @@ func TestXLMBaseRestampChunks_RestampsInsideACompressedChunk(t *testing.T) {
 		t.Fatal("the rerun left the compression policy paused")
 	}
 
-	// ── 4. a second attempt beside a live one: the run lock ───────────
-	// run-heavy-job.sh's lock is per job NAME, so the wrapper lets a
-	// second -write start; the session advisory lock does not. Held here
-	// from a second connection, the way a live run holds it.
+	// A second attempt beside a live one: run-heavy-job.sh's lock is per job name so it lets a second -write start,
+	// but the session advisory lock does not; held here from a second connection like a live run.
 	exec(t, `UPDATE trades SET usd_volume = 0.00372265, derive_generation = 0 WHERE source='sdex' AND ledger=$1`, ledger["quote-side wrong"])
 	exec(t, `SELECT compress_chunk(c, true) FROM show_chunks('trades') c`)
 	holder, err := store.DB().Conn(ctx)
@@ -1153,27 +1084,9 @@ func captureStdout(t *testing.T, fn func() error) (string, error) {
 	return buf.String(), ferr
 }
 
-// TestExactTierRestampChunks_RestampsInsideACompressedChunk is the
-// DB-backed proof for `usd-volume-restamp -tier exact -chunks`, driven
-// through the real subcommand (flags, config, live-tail guard,
-// generation) on real TimescaleDB, against a `trades` chunk that is
-// COMPRESSED the way every chunk older than the 7-day policy is on
-// production. It is the exact tier's half of the test above, and it
-// exists because the exact-tier repair population — ~10M rows is 100+ hours at the ~1,574
-// rows/min an in-place UPDATE sustains against compressed chunks.
-//
-//  1. the DRY RUN (the default) prints the chunk plan, counts, and leaves
-//     the chunk compressed and every row byte-identical;
-//  2. -write applies the peg identity (`base_amount / 10^7`, the value
-//     [timescale.ExactTierUSDVolume] renders), stamps the rows with the
-//     run's generation, and leaves the chunk COMPRESSED again;
-//  3. the already-correct row is untouched — value AND generation;
-//  4. NULL rows are filled only because -fill-null was passed;
-//  5. a second -write run changes nothing: the chunk is probed read-only,
-//     reported as skipped, and never decompressed;
-//  6. `-chunk-batch` — the xlm-base tier's row batch — is still refused
-//     with -tier exact, because this walk's transaction is one -slice
-//     window.
+// Exact tier's half of the xlm-base chunk test: `-tier exact -chunks` on a COMPRESSED chunk, needed because in-place
+// UPDATEs on compressed chunks run ~1,574 rows/min. Pins: dry run changes nothing; -write applies base_amount/10^7 with
+// the run's generation and recompresses; correct rows untouched; NULLs filled only with -fill-null.
 func TestExactTierRestampChunks_RestampsInsideACompressedChunk(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -1434,28 +1347,9 @@ func TestExactTierRestampChunks_RestampsInsideACompressedChunk(t *testing.T) {
 	sameSnapshot(t, before, snapshot(t), "refused run (-chunk-batch)")
 }
 
-// ─── the two mirror tiers, against a real COMPRESSED chunk ──────────────
-//
-// These are the DB-backed proofs for `usd-volume-restamp -tier xlm-quote`
-// and `-tier cex-fx`, driven through the real subcommand (flags, config,
-// live-tail guard, generation) on real TimescaleDB, against a `trades`
-// chunk that is COMPRESSED the way every chunk older than the 7-day
-// policy is on production. They are the mirrors of
-// TestXLMBaseRestampChunks_RestampsInsideACompressedChunk, and they exist
-// for the same reason: an in-place UPDATE into a compressed chunk
-// measured ~1,574 rows/min, and these two populations are
-// ~18.0M and ~12.6M rows.
-//
-// Each one pins the same four things:
-//
-//  1. the rows the tier owns are restamped to the value the LIVE insert
-//     path computes, and stamped with the run's generation;
-//  2. the chunk is COMPRESSED again afterwards;
-//  3. a row the anchor / the FX feed cannot price is left EXACTLY as it
-//     was — a stored NULL stays NULL — and is COUNTED in the report,
-//     never guessed at;
-//  4. a token/token spam row is untouched by both tiers, whatever the
-//     window: the substance gate from the tier-3b valuation incident.
+// Mirror tiers `-tier xlm-quote` and `-tier cex-fx` against a COMPRESSED chunk (in-place UPDATEs run ~1,574 rows/min),
+// each pinning: owned rows restamped to the live insert path's value with the run's generation; chunk recompressed;
+// unpriceable rows left exactly as they were (NULL stays NULL) and counted.
 
 // restampRow is one row's money state, for the before/after comparisons.
 type restampRow struct {
@@ -1542,11 +1436,8 @@ func (f *mirrorRestampFixture) chunkCompressed(at time.Time) bool {
 	return compressed
 }
 
-// TestXLMQuoteRestampChunks_RestampsInsideACompressedChunk is the
-// xlm-quote mirror's proof: DEX trades whose QUOTE leg is XLM are valued
-// off that leg (`quote_amount/1e7 x XLM/USD at ts`) through the same
-// anchor the xlm-base tier calls, inside a compressed chunk, which is
-// left compressed.
+// xlm-quote mirror: DEX trades with an XLM quote leg are valued off that leg (`quote_amount/1e7 x XLM/USD at ts`) through
+// the xlm-base anchor, inside a compressed chunk that is left compressed.
 func TestXLMQuoteRestampChunks_RestampsInsideACompressedChunk(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -1738,11 +1629,8 @@ func TestXLMQuoteRestampChunks_RestampsInsideACompressedChunk(t *testing.T) {
 	}
 }
 
-// TestCEXFiatRestampChunks_RestampsInsideACompressedChunk is the cex-fx
-// tier's proof: off-chain CEX trades quoted in a non-USD fiat are valued
-// from `fx_quotes` at or before the trade, inside a compressed chunk,
-// which is left compressed — and a trade whose nearest quote is outside
-// the as-of tolerance is REFUSED rather than extrapolated to.
+// cex-fx tier: off-chain CEX trades quoted in a non-USD fiat are valued from `fx_quotes` at or before the trade inside a
+// compressed chunk, and a trade whose nearest quote is outside the as-of tolerance is refused, not extrapolated.
 func TestCEXFiatRestampChunks_RestampsInsideACompressedChunk(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -1794,15 +1682,9 @@ func TestCEXFiatRestampChunks_RestampsInsideACompressedChunk(t *testing.T) {
 	day := time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC)
 	ts := day.Add(10 * time.Hour)
 
-	// The vendor feed, as the forex worker writes it: rate_usd is
-	// UNITS-OF-TICKER PER 1 USD (migration 0028), so 0.8 EUR per USD is
-	// $1.25 per EUR. Written as SQL rather than through the float64
-	// batch API so the fixture rate is exact.
-	//
-	//   EUR — a bucket at 00:00 on the trades' own day (10 h before them)
-	//   GBP — a bucket NINE DAYS earlier and nothing since: the nearest
-	//         quote at or before the trade is outside the 7-day as-of
-	//         tolerance, which is a refusal, not an extrapolation.
+	// Vendor feed as the forex worker writes it: rate_usd is units-of-ticker per 1 USD (0028), so 0.8 EUR per USD is $1.25 per
+	// EUR; written as SQL so the rate is exact. EUR: a bucket on the trades' day, 10 h before them. GBP: a bucket nine days
+	// earlier only, outside the 7-day as-of tolerance, so refused.
 	f.exec(`INSERT INTO fx_quotes (bucket, ticker, rate_usd, inverse_usd, source) VALUES ($1, 'EUR', 0.8, 1.25, 'massive')`, day)
 	f.exec(`INSERT INTO fx_quotes (bucket, ticker, rate_usd, inverse_usd, source) VALUES ($1, 'GBP', 0.5, 2.0,  'massive')`, day.AddDate(0, 0, -9))
 
@@ -1868,10 +1750,8 @@ func TestCEXFiatRestampChunks_RestampsInsideACompressedChunk(t *testing.T) {
 		"-min-free-bytes", fmt.Sprint(int64(1) << 40),
 	}
 
-	// ── the as-of tolerance is the TOOL's, not just the resolver's ─────
-	// At -fx-max-staleness 1h the EUR bucket (10 h before the trades) is
-	// outside the tolerance, so the run refuses every row rather than
-	// pricing them off it.
+	// The as-of tolerance is the tool's, not just the resolver's: at -fx-max-staleness 1h the EUR bucket (10 h before) is
+	// outside it, so the run refuses every row.
 	narrow := append(append([]string{}, args...), "-fx-max-staleness", "1h")
 	out, err := captureStdout(t, func() error { return chops.Run(narrow) })
 	if err != nil {
@@ -1972,27 +1852,9 @@ func TestCEXFiatRestampChunks_RestampsInsideACompressedChunk(t *testing.T) {
 	}
 }
 
-// TestXLMBaseRestamp_RederivesThroughTheLiveAnchor is the DB-backed proof
-// for `usd-volume-restamp -tier xlm-base` on real TimescaleDB, against rows the REAL insert path wrote with the REAL
-// resolver wiring:
-//
-//  1. the re-derived value is the ANCHOR value — base_amount/1e7 x the
-//     XLM/USD rate the resolver reads out of prices_1m at the row's ts —
-//     and not the quote-side thin-book number the pre-fd1860bd waterfall
-//     stored;
-//  2. DRY RUN WRITES NOTHING: planning the window leaves every row's
-//     value and derive_generation byte-identical;
-//  3. -write writes EXACTLY the rows the dry run reported, and nothing
-//     else in the window moves;
-//  4. a row the anchor cannot price is left alone — a stored NULL stays
-//     NULL rather than inheriting the quote-side estimate, and a stored
-//     (wrong) value is not blanked;
-//  5. the NULL population is opt-in (-fill-null) and counted either way;
-//  6. a row at a HIGHER derive_generation is never clawed back,
-//     and every rewritten row carries the run's generation;
-//  7. idempotent: an immediate re-run plans zero rows;
-//  8. the exact tiers are NOT touched by this tier (a USD-pegged quote
-//     belongs to `-tier exact`), so the two tools cannot undo each other.
+// `usd-volume-restamp -tier xlm-base` against rows from the real insert path: the re-derived value is the anchor
+// (base_amount/1e7 x prices_1m XLM/USD at ts), not the quote-side thin-book number; dry run writes nothing; -write writes
+// exactly the dry run's rows; unpriceable rows are left alone (NULL stays NULL, wrong values not blanked).
 func TestXLMBaseRestamp_RederivesThroughTheLiveAnchor(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -2035,24 +1897,15 @@ func TestXLMBaseRestamp_RederivesThroughTheLiveAnchor(t *testing.T) {
 	day := time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC)
 	anchorTS := day.Add(10 * time.Hour)
 
-	// ── the XLM/USD anchor: 100 XLM for 50 USDC -> vwap 0.5 ──────────
-	// Clears the resolver's $0.01 direct-leg dust floor by a wide margin
-	// (quote notional $50), so it is the rate every XLM-base row below
-	// resolves through.
+	// XLM/USD anchor: 100 XLM for 50 USDC gives vwap 0.5, clearing the resolver's $0.01 direct-leg dust floor, and is the rate
+	// every XLM-base row resolves through.
 	anchor := mkIntegrationTrade("sdex", 1, anchorTS, xlmUSDC, 1_000_000_000, 500_000_000)
 	if err := store.InsertTrade(ctx, anchor); err != nil {
 		t.Fatalf("InsertTrade anchor: %v", err)
 	}
 
-	// ── the THIN TOKEN/USDC BOOK: the defect's other half ───────
-	// A direct `<token>/USDC` market 4h later, when the XLM/USD anchor
-	// above has aged past the resolver's 1h direct-leg freshness. This is
-	// exactly the BUCK shape: the XLM leg cannot be priced,
-	// but the counterparty-authored token book CAN — so the pre-fd1860bd
-	// waterfall valued the trade through it. A restamp that fell through
-	// to the quote side (rather than reporting "the anchor declined")
-	// would re-commit that value at a winning derive_generation, which is
-	// what fixtures 20/21 below prove it does not.
+	// Thin TOKEN/USDC book, the defect's other half: a direct market 4h later, after the XLM/USD anchor aged past the 1h
+	// direct-leg freshness. The old waterfall valued the trade through this counterparty-authored book.
 	tokenUSDC, err := c.NewPair(token, usdc)
 	if err != nil {
 		t.Fatal(err)
@@ -2088,11 +1941,8 @@ func TestXLMBaseRestamp_RederivesThroughTheLiveAnchor(t *testing.T) {
 		{"stored NULL", 11, anchorTS.Add(6 * time.Minute)},
 		{"already correct", 12, anchorTS.Add(7 * time.Minute)},
 		{"higher generation", 13, anchorTS.Add(8 * time.Minute)},
-		// 4h past the anchor bucket: beyond the resolver's 1h direct-leg
-		// freshness, and XLM is the bridge's own base case, so the anchor
-		// declines — while the thin TOKEN/USDC book above is fresh, so
-		// the QUOTE side can still price them. These two rows are the
-		// whole point: the restamp must report them, not value them.
+		// 4h past the anchor bucket (beyond the 1h direct-leg freshness) the anchor declines while the fresh thin book could still
+		// price the quote side; the restamp must report these rows, not value them.
 		{"declined, stored NULL", 20, anchorTS.Add(4 * time.Hour)},
 		{"declined, stored value", 21, anchorTS.Add(4*time.Hour + time.Minute)},
 	}
@@ -2150,11 +2000,8 @@ func TestXLMBaseRestamp_RederivesThroughTheLiveAnchor(t *testing.T) {
 		}
 	}
 
-	// ── the stale state, imposed by hand ──────────────────────
-	// HEAD's insert path already writes the anchor value, so the defect
-	// has to be re-created: row 10 valued quote-side through the token's
-	// own thin book (the BUCK shape), row 11 unpriced, row 21
-	// carrying a wrong value the anchor cannot re-derive.
+	// The stale state is imposed by hand since the insert path now writes the anchor value: row 10 valued quote-side via the
+	// thin book, row 11 unpriced, row 21 carrying a wrong value the anchor cannot re-derive.
 	exec := func(t *testing.T, q string, args ...any) {
 		t.Helper()
 		if _, err := store.DB().ExecContext(ctx, q, args...); err != nil {
@@ -2328,12 +2175,9 @@ func TestXLMBaseRestamp_RederivesThroughTheLiveAnchor(t *testing.T) {
 	}
 }
 
-// TestXLMBaseRestamp_RefusesWithoutResolution is the configuration
-// fail-closed: a re-derive whose resolver was never installed would
-// report every row as "the anchor cannot price this", which is a wiring
-// error wearing a finding's clothes — and, if it ever gained a write
-// path, the A-CRIT-1 shape that overwrites correct values with NULL at a
-// winning generation.
+// Configuration fail-closed: a re-derive with no resolver installed would report every row as "the anchor cannot price
+// this", a wiring error posing as a finding, and with a write path would overwrite correct values with NULL at a winning
+// generation.
 func TestXLMBaseRestamp_RefusesWithoutResolution(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -2359,10 +2203,8 @@ func TestXLMBaseRestamp_RefusesWithoutResolution(t *testing.T) {
 	}
 }
 
-// TestXLMBaseRestamp_SkipsARowMovedAfterThePlan: the apply writes a planned
-// row only while it still holds the amounts, usd_volume and generation the
-// plan derived from. A row another writer moved in between keeps that
-// writer's state, and the shortfall is visible as planned-vs-changed.
+// The apply writes a planned row only while it still holds the planned amounts, usd_volume and generation; a row another
+// writer moved keeps that writer's state, and the shortfall shows as planned-vs-changed.
 func TestXLMBaseRestamp_SkipsARowMovedAfterThePlan(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -2470,11 +2312,9 @@ func TestXLMBaseRestamp_SkipsARowMovedAfterThePlan(t *testing.T) {
 	}
 }
 
-// TestXLMLegVolume_TradeTimeNeverSpot pins the volume readers that must not
-// value an unpriced XLM leg at today's XLM/USD: the per-source breakdowns
-// exclude it and count it, and the MEV scan values it at the anchor of the
-// trade's own minute, or not at all when that anchor is over an hour old.
-// XLM trades at 0.2 (3h ago), 0.4 (30m ago) and 0.5 (5m ago); spot is 0.5.
+// Volume readers must not value an unpriced XLM leg at today's XLM/USD: per-source breakdowns exclude and count it, and
+// the MEV scan values it at the anchor of the trade's own minute, or not at all when that anchor is over an hour old. XLM
+// trades at 0.2 (3h ago), 0.4 (30m ago), 0.5 (5m ago); spot 0.5.
 func TestXLMLegVolume_TradeTimeNeverSpot(t *testing.T) {
 	f := newAnchorFixture(t)
 	const unit = 10_000_000

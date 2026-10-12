@@ -26,15 +26,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestFreezeWindowLadders_Migration0163Down_KeepsTheLiveFreeze EXECUTES the
-// 0163 down beside a compressed chunk and an open freeze that carries
-// per-window ladders, and pins what migrations/README.md promises of it:
-// the per-window ownership is lost, the pair-level summary — and so the
-// freeze itself — is not.
-//
-// The summary is what survives because the writer keeps the 0119 columns as
-// the fail-closed fold of the windows, so after the drop the row still says
-// "escalated, held until the furthest hold" to every pair-level reader.
+// TestFreezeWindowLadders_Migration0163Down_KeepsTheLiveFreeze runs the 0163 down beside a compressed chunk and an open
+// freeze with per-window ladders: per-window ownership is lost (as migrations/README.md promises) but the pair-level
+// summary, the 0119 columns kept as the fail-closed fold of the windows, survives, so the freeze itself does.
 func TestFreezeWindowLadders_Migration0163Down_KeepsTheLiveFreeze(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -109,26 +103,9 @@ func TestFreezeWindowLadders_Migration0163Down_KeepsTheLiveFreeze(t *testing.T) 
 	}
 }
 
-// TestFreezeWindowLadders_Migration0163 pins the parts of the per-window
-// durable ladder only Postgres can answer, against real TimescaleDB:
-//
-//   - migration 0163 applies to a `freeze_events` hypertable that already
-//     holds a COMPRESSED chunk and a live, OPEN freeze written by the
-//     previous binary. A freshly-migrated database has zero chunks, so
-//     simply running the migrations would prove only that the SQL parses;
-//   - that pre-0163 open row — a pair-level ladder, window_ladders NULL —
-//     keeps answering for EVERY window (fail-closed: its owner is
-//     unknowable, and dropping it releases a freeze that is still running),
-//     and the first window-aware write preserves it as the unowned entry
-//     instead of narrowing the pair to one window;
-//   - SaveWindowLadder's read-merge-write executes, round-trips each
-//     window's state through jsonb exactly, and keeps the 0119 columns as
-//     the fail-closed summary;
-//   - SaveLadder's changed UPDATE executes (the `$3::timestamptz` retire
-//     CASE), and a retire clears the per-window entries so a later freeze
-//     on the same still-open row does not inherit them;
-//   - the operator override's durable half (recovered_at) still makes every
-//     read absent, and a write against a closed row is ErrNotFound.
+// TestFreezeWindowLadders_Migration0163 pins what only Postgres answers: - 0163 applies to a freeze_events hypertable
+// already holding a compressed chunk and an open freeze (a fresh DB has zero chunks and would prove only that the SQL
+// parses); - a pre-0163 open row (window_ladders NULL) answers for EVERY window (fail-closed: its owner is unknowable)
 func TestFreezeWindowLadders_Migration0163(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -284,19 +261,14 @@ func TestFreezeWindowLadders_Migration0163(t *testing.T) {
 	}
 }
 
-// windowLadderExportRecipe is the command the header of
-// migrations/0163_freeze_events_window_ladders.down.sql tells an operator
-// to run BEFORE reverting, to keep the per-window ladders the down drops.
-// Held verbatim so the header and this test cannot drift apart silently.
+// windowLadderExportRecipe is the command the header of migrations/0163_freeze_events_window_ladders.down.sql tells an
+// operator to run before reverting. Held verbatim so the header and this test cannot drift apart.
 const windowLadderExportRecipe = `SELECT asset_id, quote_id, frozen_at, hold_until, window_ladders
      FROM freeze_events
     WHERE recovered_at IS NULL;`
 
-// assertWindowLadderExportRecipe runs that recipe against the live schema
-// and asserts it returns what the header promises: the pair's open row,
-// with both windows' ladders in it. A recipe that named a column the
-// migration does not create, or a predicate matching no open row, would
-// print nothing and exit 0 on the day an operator needed it.
+// assertWindowLadderExportRecipe runs the recipe against the live schema and asserts it returns the pair's open row with
+// both windows' ladders; a recipe naming a missing column or matching no open row would print nothing and exit 0.
 func assertWindowLadderExportRecipe(t *testing.T, ctx context.Context, dsn, assetID, quoteID string) {
 	t.Helper()
 	_, thisFile, _, _ := runtime.Caller(0)
@@ -390,15 +362,9 @@ func seedPreWindowOpenFreeze(t *testing.T, ctx context.Context, dsn, assetID, qu
 	}
 }
 
-// ─── window_ladders beside a binary that does not know it exists ───
-//
-// migrations/README.md rule 9 keeps the schema at 0163 across a binary
-// rollback, so the PREVIOUS binary runs against the new column. It neither
-// reads nor writes it: it keeps advancing the four 0119 pair-level columns
-// and leaves window_ladders exactly as the new binary last wrote it. After
-// the roll-forward the map is therefore STALE, and a reader that prefers it
-// resumes every window from where the new binary left off — discarding an
-// escalation the old binary made. That is the under-hold direction.
+// window_ladders beside a binary that does not know it: migrations/README.md rule 9 keeps the schema at 0163 across a
+// rollback, so the previous binary advances only the four 0119 pair-level columns and leaves the map stale. A reader
+// that prefers the stale map discards that binary's escalation, which is the under-hold direction.
 
 // rollbackFixture is a production-wired writer over real TimescaleDB plus a
 // raw handle for playing the previous binary's SQL.
@@ -512,12 +478,9 @@ func TestFreezeWindowLadders_PreviousBinaryEscalationSurvivesRollForward(t *test
 	}
 }
 
-// TestFreezeWindowLadders_StaleMapKeepsItsOwnEscalation is the OTHER stale
-// direction, and the reason a stale map is folded rather than discarded.
-// The new binary recorded the 1h escalation in the map; the rolled-back
-// binary's 5m window then wrote ITS fresh ladder over the pair-level
-// columns (last writer wins — the defect 0163 exists for) with a later
-// hold. The columns are now "ahead" on hold and BEHIND on escalation.
+// TestFreezeWindowLadders_StaleMapKeepsItsOwnEscalation is the other stale direction, and why a stale map is folded, not
+// discarded: the map holds the 1h escalation, then the rolled-back binary's 5m window overwrote the pair-level columns
+// (last writer wins) with a later hold, so the columns are ahead on hold and behind on escalation.
 func TestFreezeWindowLadders_StaleMapKeepsItsOwnEscalation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -547,20 +510,8 @@ func TestFreezeWindowLadders_StaleMapKeepsItsOwnEscalation(t *testing.T) {
 	}
 }
 
-// TestFreezeWindowLadders_SteadyStateNeverReadsAsStale is the guard on the
-// transform itself: on a row only this binary has written, through the
-// production writer and the real driver, the staleness rule must not fire.
-// If it did it would mint an ownerless ladder for EVERY freeze and
-// rehydrate it onto windows that were never frozen — the cross-window
-// contamination this whole unit removes.
-//
-// The columns and the map are NOT stored at the same precision: hold_until
-// is timestamptz (whole microseconds) while the jsonb entry keeps the
-// nanoseconds time.Now gave it, so the holds below carry nanoseconds on
-// purpose. Against this driver the column comes back TRUNCATED, i.e.
-// earlier than its entry, never later; the rule's independence from that
-// is pinned without a database in
-// internal/storage/timescale.TestPairLadderAhead_IgnoresStoragePrecision.
+// TestFreezeWindowLadders_SteadyStateNeverReadsAsStale: on a row only this binary wrote, the staleness rule must not
+// fire, or it would mint an ownerless ladder for every freeze and rehydrate it onto never-frozen windows.
 func TestFreezeWindowLadders_SteadyStateNeverReadsAsStale(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -602,27 +553,8 @@ func TestFreezeWindowLadders_SteadyStateNeverReadsAsStale(t *testing.T) {
 	}
 }
 
-// TestFreezeWindowLadders_EscalationSurvivesSiblingWrite is the DB-backed
-// regression for the pair-keyed durable ladder, driven through the
-// production entry point — freeze.Writer wired to the real
-// timescale.FreezeEventSink — and deliberately through NOTHING that did not
-// exist without the ladder, so it fails against a non-laddered build for the right
-// reason rather than by not compiling.
-//
-// Scenario. One pair, two of its windows frozen independently:
-//
-//   - the 1h window has spent the whole ADR-0019 ladder and ESCALATED. The
-//     ADR holds it "until manual unfreeze"; a P1 has paged a human.
-//   - the 5m window then fires a fresh freeze of its own and, like every
-//     frozen window, mirrors its ladder durably on its tick.
-//
-// Redis is then lost and the aggregator restarts, so the durable record is
-// the only authority left.
-//
-// A record of one ladder per (asset, quote) is the LAST writer's: the 1h
-// window would rehydrate the 5m window's ten-minute,
-// zero-extension ladder — an escalated freeze silently resuming
-// auto-unfreezing — and the 24h window, never frozen, would rehydrate it too.
+// TestFreezeWindowLadders_EscalationSurvivesSiblingWrite: DB-backed regression for the pair-keyed durable ladder, driven
+// through freeze.Writer on the real FreezeEventSink so it fails against a non-laddered build for the right reason.
 func TestFreezeWindowLadders_EscalationSurvivesSiblingWrite(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -774,28 +706,9 @@ func TestFreezeWindowLadders_EscalationSurvivesSiblingWrite(t *testing.T) {
 	}
 }
 
-// TestFreezeLadder_DurableAcrossRedisLoss is the DB-backed half of the
-// migration-0119 fix, run against real TimescaleDB.
-//
-// The unit test in internal/aggregate/freeze pins the Writer's policy
-// against a fake store. This pins the part only Postgres can answer:
-//
-//   - migration 0119 actually applies to a `freeze_events` hypertable with
-//     a COMPRESSED CHUNK in it. That is the risky bit and it is NOT
-//     exercised by simply running the migrations on a fresh database: a
-//     fresh DB has zero chunks, so ADD COLUMN touches nothing and the test
-//     would prove only that the SQL parses. The fixture below therefore
-//     inserts a row into an OLD chunk and calls compress_chunk() BEFORE
-//     migrating, so the ALTER really does run against compressed data. A
-//     failure here is a failed deploy, and the pipeline rolls back the
-//     binary but never the schema;
-//   - SaveLadder's UPDATE lands on the open row and LoadLadder reads back
-//     the EXACT ladder, through real timestamptz round-tripping;
-//   - LoadLadder honours `recovered_at IS NULL`, which is what makes
-//     `stellarindex-ops freeze-unfreeze`'s override still stick;
-//   - a pre-0119 row (NULL hold_until) reports "no durable ladder" rather
-//     than a zero one, so it degrades to marker-only behaviour instead of
-//     restoring a freeze that reads as "fired just now".
+// TestFreezeLadder_DurableAcrossRedisLoss pins what only Postgres answers: 0119 applies to a freeze_events chunk compressed
+// before migrating (a fresh DB has none), SaveLadder/LoadLadder round-trip the exact ladder on the open row, LoadLadder
+// honours recovered_at IS NULL, and a pre-0119 row (NULL hold_until) reads as no durable ladder, not a zero one.
 func TestFreezeLadder_DurableAcrossRedisLoss(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -852,10 +765,8 @@ func TestFreezeLadder_DurableAcrossRedisLoss(t *testing.T) {
 		t.Fatalf("RecordFreeze: %v", err)
 	}
 
-	// A pre-0119 row shape: the ladder columns are still NULL. It must
-	// read as "no durable ladder" rather than a zero one — restoring
-	// {FiredAt: <frozen_at>, ExtensionsUsed: 0, Escalated: false} would
-	// silently reset the 2-hour escalation clock.
+	// A pre-0119 row: the ladder columns are NULL and must read as "no durable ladder"; restoring a zero ladder ({FiredAt:
+	// frozen_at, ExtensionsUsed: 0, Escalated: false}) would silently reset the 2-hour escalation clock.
 	if _, ok, lerr := sink.LoadLadder(ctx, asset, quote); lerr != nil || ok {
 		t.Fatalf("LoadLadder on a NULL-ladder (pre-0119) row = (ok=%v, err=%v), want (false, nil)", ok, lerr)
 	}
@@ -905,12 +816,9 @@ func TestFreezeLadder_DurableAcrossRedisLoss(t *testing.T) {
 		t.Fatalf("freeze_events holds %d row(s) for the pair, want 1", n)
 	}
 
-	// ── Clear's ladder retirement, on real SQL ─────────────────────
-	// freeze.Writer.Clear writes back a zero State on auto-release, which
-	// must NULL hold_until and so make LoadLadder report no ladder even
-	// though the ROW is still open (the recovery worker sweeps every 60s).
-	// Without this the pre-sweep window lets a restarting aggregator
-	// re-freeze a pair whose anomaly had already cleared.
+	// Clear's ladder retirement: freeze.Writer.Clear writes a zero State on auto-release, which must NULL hold_until so
+	// LoadLadder reports no ladder while the row is still open (the recovery worker sweeps every 60s). Otherwise a
+	// restarting aggregator re-freezes a pair whose anomaly already cleared.
 	if err := sink.SaveLadder(ctx, asset, quote, freeze.State{}); err != nil {
 		t.Fatalf("SaveLadder(zero): %v", err)
 	}
@@ -935,10 +843,8 @@ func TestFreezeLadder_DurableAcrossRedisLoss(t *testing.T) {
 		t.Fatalf("SaveLadder(restore): %v", err)
 	}
 
-	// ── the operator override's durable half ───────────────────────
-	// `stellarindex-ops freeze-unfreeze` stamps recovered_at. After that
-	// the ladder must read absent, or a human could not end a freeze that
-	// by construction never ends on its own.
+	// The operator override's durable half: freeze-unfreeze stamps recovered_at, after which the ladder must read absent, or
+	// a human could not end a freeze that by construction never ends on its own.
 	if err := sink.MarkRecovered(ctx, asset, quote, "operator:test"); err != nil {
 		t.Fatalf("MarkRecovered: %v", err)
 	}
@@ -989,13 +895,9 @@ func countOpenFreezeRows(t *testing.T, ctx context.Context, dsn, assetID, quoteI
 	return n
 }
 
-// seedAndCompressFreezeChunk inserts one historical freeze_events row and
-// compresses the chunk that holds it, so migration 0119's ALTER TABLE runs
-// against genuinely compressed data.
-//
-// TimescaleDB's chunk interval for this hypertable is 30 days (migration
-// 0018), so a row dated well in the past lands in its own chunk and cannot
-// collide with the rows the test writes later.
+// seedAndCompressFreezeChunk inserts one historical freeze_events row and compresses its chunk so migration 0119's ALTER
+// TABLE runs against genuinely compressed data. The chunk interval is 30 days (migration 0018), so a well-past row lands
+// in its own chunk and cannot collide with later rows.
 func seedAndCompressFreezeChunk(t *testing.T, ctx context.Context, dsn string) {
 	t.Helper()
 	db, err := sql.Open("pgx", dsn)
@@ -1023,10 +925,8 @@ func seedAndCompressFreezeChunk(t *testing.T, ctx context.Context, dsn string) {
 	}
 }
 
-// assertFreezeChunkStillCompressed proves the precondition held THROUGH the
-// migration: if 0119 had silently decompressed the chunk (or if the seed had
-// not compressed one), the test's headline claim would be false while every
-// other assertion still passed.
+// assertFreezeChunkStillCompressed proves the precondition held through the migration; if 0119 silently decompressed the
+// chunk (or the seed never compressed one), the headline claim would be false while every other assertion passed.
 func assertFreezeChunkStillCompressed(t *testing.T, ctx context.Context, dsn string) {
 	t.Helper()
 	db, err := sql.Open("pgx", dsn)
@@ -1046,10 +946,8 @@ func assertFreezeChunkStillCompressed(t *testing.T, ctx context.Context, dsn str
 	}
 }
 
-// applyMigrationsUpTo runs migrations from the repo tree up to and including
-// `version`. Mirrors applyMigrations (explorer_test.go) but stops short, so a
-// test can act on the schema BEFORE a specific migration lands — here, to
-// create a compressed chunk that 0119's ALTER TABLE then has to survive.
+// applyMigrationsUpTo runs migrations up to and including `version`, like applyMigrations (explorer_test.go) but
+// stopping short so a test can act on the schema before a given migration lands.
 func applyMigrationsUpTo(t *testing.T, dsn string, version uint) {
 	t.Helper()
 	if err := applyMigrationsUpToErr(dsn, version); err != nil {
@@ -1069,18 +967,9 @@ func applyMigrationsUpToErr(dsn string, version uint) error {
 	return m.Migrate(version)
 }
 
-// TestFreezeReleaseWindow_RedisLossKeepsEscalatedSibling is the DB-backed
-// regression for a release that read a LOST marker as "no sibling is
-// frozen": freeze.Writer wired as cmd/stellarindex-aggregator wires it,
-// over the real timescale.FreezeEventSink.
-//
-// One pair, two windows frozen: 1h escalated (ADR-0019 holds it "until
-// manual unfreeze"), 5m about to recover. Redis loses the marker — the one
-// situation the 0163 per-window durable ladders exist for — and the 5m
-// window releases. The release must not fall through to Writer.Clear, whose
-// SaveLadder(State{}) NULLs hold_until AND window_ladders: the row would go
-// from `"3600": {escalated, extensions_used: 4}` to no ladder at all, and
-// the 1h window would rehydrate nothing.
+// TestFreezeReleaseWindow_RedisLossKeepsEscalatedSibling: freeze.Writer wired as cmd/stellarindex-aggregator wires it,
+// over the real FreezeEventSink. One pair with 1h escalated and 5m about to recover; Redis loses the marker and 5m
+// releases.
 func TestFreezeReleaseWindow_RedisLossKeepsEscalatedSibling(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

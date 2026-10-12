@@ -27,11 +27,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestHypertableChunkIntervalFloor executes 0062 + 0171 against real
-// TimescaleDB: after the full migration set no public hypertable may be
-// left with chunks narrower than 7 days (the chunk-count / lock-pressure
-// pathology 0062 names). The textual twin is
-// internal/storage/timescale/chunk_interval_floor_test.go.
+// After the full migration set no public hypertable may have chunks narrower than 7 days (chunk-count / lock pressure).
+// Textual twin: internal/storage/timescale/chunk_interval_floor_test.go.
 func TestHypertableChunkIntervalFloor(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -141,10 +138,9 @@ func mev0185Trade(t *testing.T, n int, taker string, base, quote c.Asset, ts tim
 	}
 }
 
-// mev0185DetectCurrent runs the CURRENT detectors through the real worker
-// into the real store — the writer whose output 0185 must never delete. One
-// ledger yields both kinds: the attacker trades native->USDC at tx 1 and
-// USDC->native at tx 4, around a victim at tx 3 and an oracle update at tx 2.
+// Runs the CURRENT detectors through the real worker into the real store, the writer whose output 0185 must never
+// delete. One ledger yields both kinds: attacker native->USDC at tx 1 and USDC->native at tx 4, around a victim (tx 3)
+// and oracle update (tx 2).
 func mev0185DetectCurrent(t *testing.T, ctx context.Context, store *timescale.Store) {
 	t.Helper()
 	usdc, err := c.NewClassicAsset("USDC", mevIntegrationAccount)
@@ -249,10 +245,8 @@ func mev0185Keys(t *testing.T, ctx context.Context, store *timescale.Store) map[
 	return out
 }
 
-// TestMigration0185_DropsOnlyUnprovenDirectionSandwiches: 0185 deletes the
-// sandwich / oracle_sandwich rows whose own legs do not prove opposite
-// directions, keeps every row the current detectors write, and leaves other
-// kinds alone.
+// 0185 deletes sandwich / oracle_sandwich rows whose own legs do not prove opposite directions, keeps every row the
+// current detectors write, and leaves other kinds alone.
 func TestMigration0185_DropsOnlyUnprovenDirectionSandwiches(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -288,12 +282,9 @@ func TestMigration0185_DropsOnlyUnprovenDirectionSandwiches(t *testing.T) {
 	}
 }
 
-// TestMigration0164_DeletesCompressedRowsAboveDMLDecompressCap applies 0164
-// in r1's shape: cctp_events holds more compressed rows than
-// timescaledb.max_tuples_decompressed_per_dml_transaction allows (148,660
-// against 100,000 on r1). The unqualified DELETE must take the direct
-// compressed-batch delete and succeed; the control shows the same DELETE
-// fails on the cap when that path is off, so the test is not vacuous.
+// Applies 0164 in r1's shape: more compressed rows than max_tuples_decompressed_per_dml_transaction allows. The
+// unqualified DELETE must take the direct compressed-batch path; the control shows it fails on the cap with that path
+// off.
 func TestMigration0164_DeletesCompressedRowsAboveDMLDecompressCap(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -375,14 +366,9 @@ func TestMigration0164_DeletesCompressedRowsAboveDMLDecompressCap(t *testing.T) 
 
 const migration0191File = "0191_trades_drop_amount_checks.down.sql"
 
-// TestMigration0191_DropsTradesAmountChecksOverCompressedChunks runs 0191
-// against the shape production is in: two populated, compressed trades
-// chunks. Up must be catalog-only (every chunk still compressed), remove
-// both of 0001's inline CHECKs and admit a one-side-zero fill into a
-// compressed chunk's range while prices_1m's 0187 filter keeps it out of
-// every price expression. Down must refuse LOUDLY over zero-leg rows and
-// over compressed chunks, and restore both CHECKs by their 0001 names once
-// neither obstacle remains.
+// Runs 0191 on two populated compressed trades chunks. Up is catalog-only (chunks stay compressed), drops both inline
+// CHECKs and admits a one-side-zero fill while prices_1m's 0187 filter keeps it out of every price. Down refuses LOUDLY
+// over zero-leg rows or compressed chunks, and restores both CHECKs by their 0001 names once neither obstacle remains.
 func TestMigration0191_DropsTradesAmountChecksOverCompressedChunks(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -510,10 +496,8 @@ func zeroLegInsert(p ohlcDustPair, ts time.Time, txHash, base, quote string) str
 		txHash, ts.Format(time.RFC3339Nano), p.base, p.quote, base, quote)
 }
 
-// refuse0191Down runs the 191→190 down expecting the DO-block guard to RAISE
-// with the file name and "LOUD", asserts the DDL was rolled back (no CHECK
-// re-added) and that golang-migrate left schema_migrations dirty at 190 —
-// the state an operator sees — then forces it back to a clean 191.
+// Runs 191->190 down expecting the DO-block guard to RAISE with the file name and "LOUD", the DDL rolled back, and
+// golang-migrate left dirty at 190 (what an operator sees); then forces back to a clean 191.
 func refuse0191Down(t *testing.T, ctx context.Context, db *sql.DB, dsn, guard string) {
 	t.Helper()
 	_, thisFile, _, _ := runtime.Caller(0)
@@ -606,10 +590,8 @@ func countZeroLegTrades(t *testing.T, ctx context.Context, db *sql.DB) int {
 	return n
 }
 
-// TestMigration0197_TradesCompressionClearsTheRollWindow pins both halves of
-// the fix: the asset-character roll locks only chunks inside its 14-day
-// window, and trades compress only after that window, so the two never
-// contend for the same chunk.
+// The asset-character roll locks only chunks inside its 14-day window and trades compress only after it, so the two
+// never contend for the same chunk.
 func TestMigration0197_TradesCompressionClearsTheRollWindow(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -685,10 +667,8 @@ func tradesCompressAfter(t *testing.T, ctx context.Context, db *sql.DB) string {
 	return v
 }
 
-// TestMigration0205_TradesCompressionGivesUpOnALockedChunk pins that the
-// trades compression job bounds its wait for a chunk lock: behind a reader
-// it fails within seconds and leaves the chunk uncompressed instead of
-// queueing every later reader of the chunk behind it.
+// The trades compression job bounds its wait for a chunk lock: behind a reader it fails within seconds and leaves the
+// chunk uncompressed instead of queueing later readers behind it.
 func TestMigration0205_TradesCompressionGivesUpOnALockedChunk(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -965,11 +945,8 @@ func overdueTradesChunks(t *testing.T, ctx context.Context, db *sql.DB, query st
 	return n
 }
 
-// TestMigration0206_ClearsOnlyEmptiedSourcesRebuildCheckpoints applies 0206
-// over checkpoints for the sources 0137/0164 emptied and 0203 extended, a neighbour whose
-// name shares a prefix, another projected source and the live projector's own
-// cursors. Only the projected-rebuild rows for comet, cctp, rozo and
-// sushiswap_v3 may go.
+// Applies 0206 over checkpoints for emptied sources, a prefix-sharing neighbour, another projected source and the live
+// projector's cursors. Only projected-rebuild rows for comet, cctp, rozo and sushiswap_v3 may go.
 func TestMigration0206_ClearsOnlyEmptiedSourcesRebuildCheckpoints(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1035,11 +1012,8 @@ func TestMigration0206_ClearsOnlyEmptiedSourcesRebuildCheckpoints(t *testing.T) 
 	}
 }
 
-// TestMigration0209_OraclePublishedPrice pins the migration end to end: the column
-// lands on a hypertable with a compressed chunk, pre-existing rows read as
-// "not recorded", the writer round-trips the on-chain integer bit-for-bit
-// beside an unchanged price, the derive_generation guard governs it like
-// every other column, and the down migration drops it.
+// End to end: the column lands on a hypertable with a compressed chunk, old rows read "not recorded", the writer round-
+// trips the on-chain integer bit-for-bit beside an unchanged price, derive_generation governs it, and down drops it.
 func TestMigration0209_OraclePublishedPrice(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -1333,11 +1307,8 @@ func sortedKeys[V any](m map[string]V) []string {
 	return keys
 }
 
-// TestStoreSchemaMigrationVersion runs the indexer/aggregator readiness
-// reader against a real migrated TimescaleDB: at the migrations
-// head the schema check passes; with the applied head rolled back one
-// version it fails, which is what makes their /readyz — and so the deploy
-// gate — refuse a binary swapped ahead of its migrations.
+// Schema check passes at the migrations head and fails with the head rolled back one version, which is what makes
+// /readyz and the deploy gate refuse a binary swapped ahead of its migrations.
 func TestStoreSchemaMigrationVersion(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

@@ -37,26 +37,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
-// TestChRebuildProjectedScript_DeleteSQLOnRealPostgres executes the SQL
-// that scripts/ops/ch-rebuild-projected.sh ACTUALLY emits — captured by
-// running the shipped script with a recording `psql` — against real
-// TimescaleDB, and checks which rows survive.
-//
-// internal/ops/chops/ch_rebuild_projected_script_*_test.go hold the script
-// to its rules by reading that SQL as text. Text is not proof: only the
-// database says which rows `source = ANY (string_to_array(...))` matches,
-// and whether a failed batch really leaves the earlier tables alone.
-//
-//  1. SRC=soroswap deletes soroswap's in-window trades and NOTHING else:
-//     not another source's trades, not a whole-table source's rows, not
-//     soroswap's own rows outside the window.
-//  2. A batch that fails on a LATER table leaves the EARLIER ones intact.
-//     The statements are replayed the way psql sends them — one at a time,
-//     stopping at the first error, then disconnecting — because a single
-//     multi-statement Exec is implicitly one transaction and would pass
-//     this even without the script's BEGIN/COMMIT.
-//  3. The default SRC deletes every listed source's rows, and still not
-//     sushiswap_v3's or sdex's.
+// Executes the SQL scripts/ops/ch-rebuild-projected.sh actually emits (captured with a recording psql) on real
+// TimescaleDB; text-level tests can't show what `source = ANY (string_to_array(...))` matches. SRC=soroswap deletes only
+// its in-window trades.
 func TestChRebuildProjectedScript_DeleteSQLOnRealPostgres(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("the ops script is bash; r1 and CI are Linux")
@@ -400,24 +383,9 @@ func TestCompletenessProjectionEvidence(t *testing.T) {
 	applyMigrations(t, dsn)
 }
 
-// TestCompletenessTargetFloorMonotonicity exercises the durable projection
-// floor (migration 0116) against a real TimescaleDB.
-//
-// The floor exists because compute-completeness otherwise derives its
-// reconcile floor from MIN(ledger) of the target it is checking, which makes
-// the check blind to the one event it exists to catch: delete the oldest
-// served rows and MIN(ledger) rises with the loss, so the range follows it
-// up, the surviving rows reconcile perfectly, and the verdict reads
-// complete. "Rows were dropped" and "we never projected below there" produce
-// identical output.
-//
-// The single property that makes the remembered floor trustworthy is that it
-// only ever FALLS. If a run starting higher could overwrite it, a partial or
-// deliberately-narrowed run would ratchet the floor up to the post-loss MIN
-// and silently restore the original bug. That is what this test pins —
-// against the real database, because LEAST() semantics and the ON CONFLICT
-// clause are SQL behaviour, not Go behaviour, and a mock would only prove I
-// can write down what I already believe.
+// Durable projection floor (migration 0116): without it compute-completeness derives the floor from MIN(ledger) of the
+// checked target, so deleting the oldest rows raises MIN and the verdict reads complete. The remembered floor must only
+// ever FALL, so a partial or narrowed run cannot ratchet it up.
 func TestCompletenessTargetFloorMonotonicity(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -482,11 +450,8 @@ func TestCompletenessTargetFloorMonotonicity(t *testing.T) {
 		t.Errorf("after a LOWER upsert = %d, want 2", got)
 	}
 
-	// 5. Targets are isolated by filter, not just by table. `trades` holds
-	//    several sources' rows, and their true floors genuinely differ —
-	//    if the filter were dropped from the key, the earliest source
-	//    would drag every other source's floor down with it and mask loss
-	//    in all of them.
+	// 5. Targets are isolated by filter, not just table: `trades` holds several sources whose true floors differ, and a
+	// dropped filter would let the earliest source drag every other floor down and mask loss.
 	const otherFilt = "source = 'sdex'"
 	otherKey := timescale.TargetFloorKey(src, table, otherFilt)
 	if err := store.UpsertCompletenessTargetFloor(ctx, timescale.CompletenessTargetFloor{
@@ -704,10 +669,8 @@ func TestDeriveGenerationGuardProtocol_CorrectiveReDerive(t *testing.T) {
 				"(guard must preserve the correction)", got)
 		}
 
-		// The DO UPDATE upsert rejects an intra-statement duplicate conflict
-		// key ("cannot affect row a second time"), which the old DO NOTHING
-		// tolerated. A batch carrying the SAME PK twice must be deduped
-		// in-writer, not error — and the last copy must win.
+		// The DO UPDATE upsert rejects an intra-statement duplicate conflict key, so a batch carrying the SAME PK twice must be
+		// deduped in-writer, not error, and the last copy must win.
 		store.SetDeriveGeneration(3)
 		dupA := mk(77_000_000)
 		dupB := mk(88_000_000)
@@ -720,27 +683,8 @@ func TestDeriveGenerationGuardProtocol_CorrectiveReDerive(t *testing.T) {
 	})
 }
 
-// TestDeriveGenerationGuard_CorrectiveReDerive is the proven-red test for
-// the money re-derive trap (migration 0109). Without
-// the guard the served-tier writers use `ON CONFLICT (...) DO NOTHING` with
-// the derived value OUTSIDE the conflict key, so a corrected re-derive of
-// a wrong money value silently no-op'd — the ONLY way to fix it was a
-// destructive DELETE + full re-backfill.
-//
-// The fix is a generation-guarded idempotent-corrective upsert. This test
-// exercises the real seam ([Store.SetDeriveGeneration] + the writers) and
-// asserts, for trades (single + batch) and supply:
-//
-//   - a re-derive at a HIGHER generation (N>0) UPDATEs the wrong value in
-//     place — the correction lands. This assertion FAILS on the unfixed
-//     DO-NOTHING writers (they keep the original V1).
-//   - a subsequent LOWER-generation write (a live gen-0 replay carrying a
-//     different value) can NEVER revert the correction — the guard
-//     (`derive_generation <= EXCLUDED.derive_generation`) preserves it.
-//
-// To reproduce the red state: revert only the writers' SQL to
-// `ON CONFLICT ... DO NOTHING` (keep migration 0109 + SetDeriveGeneration)
-// and the "correction lands" assertions go red.
+// Migration 0109 money re-derive trap: DO NOTHING writers with the derived value outside the conflict key silently no-
+// op'd a corrected re-derive. Asserts for trades (single + batch) and supply.
 func TestDeriveGenerationGuard_CorrectiveReDerive(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -769,10 +713,8 @@ func TestDeriveGenerationGuard_CorrectiveReDerive(t *testing.T) {
 	// a new row.
 	ts := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
 
-	// The wrong original value (V1), the corrected value (V2), and a
-	// different value carried by a stale live replay (V3). Binance +
-	// fiat:USD auto-populates usd_volume = quote_amount / 1e8, so the
-	// derived money column tracks the quote correction too.
+	// V1 is the wrong original, V2 the correction, V3 a stale live replay. Binance + fiat:USD auto-populates usd_volume =
+	// quote_amount / 1e8, so the derived column tracks the correction too.
 	const (
 		v1 = 12_000_000 // wrong original       → usd_volume 0.12
 		v2 = 99_000_000 // corrected re-derive   → usd_volume 0.99
@@ -858,11 +800,8 @@ func TestDeriveGenerationGuard_CorrectiveReDerive(t *testing.T) {
 				"(guard must preserve the correction)", q)
 		}
 
-		// The DO UPDATE upsert rejects an intra-statement duplicate
-		// conflict key ("cannot affect row a second time"), which the old
-		// DO NOTHING tolerated. A batch carrying the SAME PK twice (CEX WS
-		// redelivery) must be deduped in-writer, not error — and the last
-		// copy must win.
+		// The DO UPDATE upsert rejects an intra-statement duplicate conflict key, so a batch with the SAME PK twice (CEX WS
+		// redelivery) must be deduped in-writer, not error, and the last copy must win.
 		store.SetDeriveGeneration(3)
 		dupA := mkIntegrationTrade("binance", 8, ts, xlmUSD, 100_000_000, 77_000_000)
 		dupB := mkIntegrationTrade("binance", 8, ts, xlmUSD, 100_000_000, 88_000_000)
@@ -927,10 +866,8 @@ func TestDeriveGenerationGuard_CorrectiveReDerive(t *testing.T) {
 	})
 }
 
-// TestDiscoveryRoundTrip exercises the SEP-41 auto-discovery
-// storage layer end-to-end: RecordDiscovered → IsKnownDiscovered →
-// ListDiscovered, including the ON CONFLICT update path that
-// preserves first_seen_* and bumps event_count.
+// SEP-41 auto-discovery storage end to end: RecordDiscovered, IsKnownDiscovered, ListDiscovered, including the ON
+// CONFLICT path that preserves first_seen_* and bumps event_count.
 func TestDiscoveryRoundTrip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1044,13 +981,8 @@ func TestDiscoveryRoundTrip(t *testing.T) {
 	}
 }
 
-// TestDiscoveryRoundTrip_EventCountDelta is a
-// regression at the storage layer: a Hit with Count set (as
-// AsyncSink.flushPending produces when it flushes an accumulated
-// in-process-dedup delta) must increment event_count by that many,
-// not by a flat 1 — otherwise event_count/last_seen_ledger only ever
-// reflect the first observation per process lifetime, not the true
-// event volume.
+// A Hit with Count set (AsyncSink.flushPending's accumulated delta) must increment event_count by that many, not a flat
+// 1, or event_count/last_seen_ledger reflect only the first observation per process lifetime.
 func TestDiscoveryRoundTrip_EventCountDelta(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1111,14 +1043,9 @@ func TestDiscoveryRoundTrip_EventCountDelta(t *testing.T) {
 	}
 }
 
-// TestCountDistinctLedgersSorobanEventsReadsCensus is the DB-backed
-// proof that the soroban-events density
-// numerator is answered by the ledger_ingest_log census (PK range scan)
-// and NOT by a scan of soroban_events. The fixture leaves soroban_events
-// EMPTY and writes a census with a known number of event-carrying
-// ledgers in the window; a scan of observed rows would count 0, and the
-// census count is the right one. A non-overridden target over the same
-// table proves the generic path is untouched.
+// The soroban-events density numerator comes from the ledger_ingest_log census (PK range scan), not a soroban_events
+// scan. soroban_events is left EMPTY with a known census, so a scan would count 0; a non-overridden target proves the
+// generic path is untouched.
 func TestCountDistinctLedgersSorobanEventsReadsCensus(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1188,26 +1115,9 @@ func TestCountDistinctLedgersSorobanEventsReadsCensus(t *testing.T) {
 	}
 }
 
-// TestFindPerSourceLedgerGapsSeedClosesWindowBoundary is the DB-backed
-// proof that a gap detector cycle only scans
-// [from, tip], so a writer that halts and resumes later can leave its
-// last pre-halt row in one cycle's window and its first post-resume row
-// in the NEXT cycle's window — two disjoint LAG-over-DISTINCT scans,
-// neither of which ever sees both endpoints, so the gap is never
-// reported at all. Seeding the scan with the previous cycle's
-// highest-observed ledger restores the pairing across that boundary.
-//
-// Fixture: a writer active at ledgers 1000-1005, then silent, then
-// active again at 81005-81010 (an 80,000-ledger halt). Cycle A scans
-// [1000, 41000] and only sees the first burst — nothing to pair, no
-// gap, correctly so (nothing is missing INSIDE that window). Cycle B
-// scans [41001, 81010] and only sees the second burst: with no seed,
-// the resumed rows never pair with the pre-halt rows and the 80,000-
-// ledger gap is silently dropped forever, exactly as the
-// blend_positions walkthrough describes. With B seeded from A's
-// highest-observed ledger (1005, persisted as the "last present"
-// cursor), the same window pairs the seed against 81005 and reports
-// the gap.
+// A gap-detector cycle scans only [from, tip], so a writer that halts and resumes can straddle two cycle windows,
+// neither seeing both endpoints, and the gap is never reported. Seeding with the previous cycle's highest-observed
+// ledger restores the pairing. Fixture: active at 1000-1005 and 81005-81010 (80,000-ledger halt)
 func TestFindPerSourceLedgerGapsSeedClosesWindowBoundary(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1295,13 +1205,9 @@ func TestFindPerSourceLedgerGapsSeedClosesWindowBoundary(t *testing.T) {
 	}
 }
 
-// TestFindPerSourceLedgerGapsSorobanEventsCloseTimeBound is the DB-backed
-// proof that soroban_events is partitioned by ledger_close_time,
-// so the gap scan bounds that column by the close times ledger_ingest_log
-// records around [from, to]. The bound must stay correct when the census
-// has holes (the scan runs exactly when coverage may be broken): anchors
-// are the nearest logged ledgers outside the window, and a missing anchor
-// leaves that side open.
+// soroban_events is partitioned by ledger_close_time, so the gap scan bounds that column by close times from
+// ledger_ingest_log around [from, to]. The bound must hold with census holes: anchors are the nearest logged ledgers
+// outside the window, and a missing anchor leaves that side open.
 func TestFindPerSourceLedgerGapsSorobanEventsCloseTimeBound(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1379,10 +1285,8 @@ func TestFindPerSourceLedgerGapsSorobanEventsCloseTimeBound(t *testing.T) {
 	// No logged ledger at or below `from`: lower side unbounded.
 	assertOneGap("no lower anchor", 500, 201006, 1001, 201004)
 
-	// The scan reads only rows inside the enclosing close-time window. A
-	// row at ledger 100000 stamped years before its anchors is outside it;
-	// were it read, it would split the gap into [1001,99999] (below
-	// minGap) and [100001,201004].
+	// The scan reads only rows inside the enclosing close-time window: a row at ledger 100000 stamped years before its
+	// anchors is outside it; if read, it would split the gap into [1001,99999] (below minGap) and [100001,201004].
 	if err := store.InsertSorobanEventsBatch(ctx, []domain.SorobanEventRow{
 		event(100000, time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)),
 	}); err != nil {
@@ -1391,10 +1295,8 @@ func TestFindPerSourceLedgerGapsSorobanEventsCloseTimeBound(t *testing.T) {
 	assertOneGap("close-time bound applied", 1000, 201005, 1001, 201004)
 }
 
-// TestInstanceLock_OneHolderPerDatabase drives the instance lock against
-// real Postgres, two stores standing in for two processes: the second is
-// refused while the first holds it, a different name is independent,
-// and both a release and the holder's session dying (a crash) free it.
+// Two stores stand in for two processes: the second is refused while the first holds the lock, a different name is
+// independent, and both a release and the holder's session dying (a crash) free it.
 func TestInstanceLock_OneHolderPerDatabase(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -1546,10 +1448,8 @@ func ledgerHashFor(seq uint32) []byte {
 	return h
 }
 
-// TestLedgerIngestLog exercises the ADR-0033 Phase 2 substrate
-// queries against real TimescaleDB: upsert (insert + update path),
-// gap detection (interior + leading + trailing boundaries), hash-chain
-// verification (clean + injected break), and extent.
+// ADR-0033 Phase 2 substrate queries on real TimescaleDB: upsert (insert + update), gap detection (interior, leading,
+// trailing), hash-chain verification (clean + injected break), and extent.
 func TestLedgerIngestLog(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1637,10 +1537,8 @@ func TestLedgerIngestLog(t *testing.T) {
 		t.Fatalf("expected exactly one break at 105, got %+v", breaks)
 	}
 
-	// ─── Classic-trade-effect census (SDEX reconciliation, Phase 5).
-	// Inserted rows carry ClassicTradeEffectCount = seq%3; only >0 are
-	// returned. 105's update above left its count at 0 (already absent
-	// since 105%3==0), so it doesn't affect this.
+	// Classic-trade-effect census (SDEX reconciliation): rows carry ClassicTradeEffectCount = seq%3 and only >0 are
+	// returned; 105 is already absent (105%3==0), so its earlier update doesn't affect this.
 	census, err := store.ClassicTradeEffectCountsByLedger(ctx, 100, 115)
 	if err != nil {
 		t.Fatalf("ClassicTradeEffectCountsByLedger: %v", err)
@@ -1710,11 +1608,8 @@ func TestLedgerIngestLog(t *testing.T) {
 			continue
 		}
 		found = true
-		// ProjectionVerifiedFrom (migration 0155) round-trips: the
-		// projection axis's floor is the bottom of the range
-		// ProjectionOK is a claim about, and Genesis (100 here) is the
-		// LAKE axis's floor — reading the second for the first is the
-		// overstatement the column exists to close.
+		// ProjectionVerifiedFrom (migration 0155) round-trips: the projection axis's floor is the bottom of the range
+		// ProjectionOK claims, while Genesis (100 here) is the LAKE axis's floor; reading one for the other overstates coverage.
 		if sn.Watermark != 180 || sn.CoveragePct != 0.80 || sn.ProjectionOK || sn.FirstProblem != 181 || sn.ProjectionVerifiedFrom != 150 {
 			t.Errorf("snapshot = %+v, want Watermark=180 CoveragePct=0.80 ProjectionOK=false FirstProblem=181 ProjectionVerifiedFrom=150", sn)
 		}
@@ -1739,14 +1634,9 @@ func assertGaps(t *testing.T, label string, got, want []timescale.LedgerGap) {
 	}
 }
 
-// TestSinkShutdownDrain_PersistsAllInFlight proves that a shutdown
-// (parent ctx cancelled) with N events already in flight on the sink channel
-// must persist ALL N — none dropped. A persistWorker select without the drain could
-// pick the shutdown arm over draining a buffered event, and the drain-timeout
-// path counted-and-dropped the remainder instead of persisting it.
-//
-// This buffers N distinct trades, cancels the parent ctx, then runs
-// PersistEvents against a REAL store and asserts every trade landed.
+// On shutdown (parent ctx cancelled) with N events in flight on the sink channel, all N must persist, none dropped: a
+// persistWorker select could take the shutdown arm over draining, and the drain timeout dropped the remainder. Buffers N
+// distinct trades, cancels the ctx, runs PersistEvents on a REAL store, asserts every trade landed.
 func TestSinkShutdownDrain_PersistsAllInFlight(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1813,12 +1703,9 @@ func TestSinkShutdownDrain_PersistsAllInFlight(t *testing.T) {
 	}
 }
 
-// TestSourceEntryCounts_RouterBumpFollowsTheLandedInsert is the DB-backed
-// twin of pipeline.TestHandleEvent_EntryCountFollowsTheLandedInsert: the
-// soroswap-router `entries` tally moves only when a row LANDS. A row the
-// store rejects contributes nothing, and a landed row contributes exactly
-// one — the bump must not run ahead of the insert, or a rejected row (or
-// every infra-retry attempt of one event) inflates the tally.
+// DB-backed twin of pipeline.TestHandleEvent_EntryCountFollowsTheLandedInsert: the soroswap-router `entries` tally moves
+// only when a row LANDS (exactly one per landed row, none for a rejected one), so a rejected row or an infra-retry
+// cannot inflate it.
 func TestSourceEntryCounts_RouterBumpFollowsTheLandedInsert(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1885,14 +1772,9 @@ func TestSourceEntryCounts_RouterBumpFollowsTheLandedInsert(t *testing.T) {
 	}
 }
 
-// TestSourceEntryCounts_AtomicIdempotentBump is the correctness core
-// of the always-on entry tally (migration 0035): the writers bump
-// source_entry_counts ATOMICALLY and IDEMPOTENTLY. A backfill
-// re-walk that re-inserts already-stored rows (ON CONFLICT DO
-// NOTHING → 0 rows) must NOT inflate the tally — otherwise every
-// `-resume` / parallel-chunk replay would drift the count upward,
-// re-creating exactly the "legacy data" class of bug this design
-// exists to avoid.
+// Core of the entry tally (migration 0035): writers bump source_entry_counts ATOMICALLY and IDEMPOTENTLY. A backfill re-
+// walk re-inserting stored rows (ON CONFLICT DO NOTHING, 0 rows) must NOT inflate it, or every -resume/parallel replay
+// drifts the count up.
 func TestSourceEntryCounts_AtomicIdempotentBump(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1998,17 +1880,9 @@ func TestSourceEntryCounts_AtomicIdempotentBump(t *testing.T) {
 	}
 }
 
-// TestSourceEntryCounts_LogOnlySourcesReconcile closes the reconcile gap
-// for the "log-only" sinks (soroswap-router, defindex): the sink bumps
-// source_entry_counts by 1 per decoded event (NON-idempotently), so a
-// replay / re-derive that re-drives the sink double-counts them
-// permanently — a KALE-class trap for the `entries` diagnostics column.
-//
-// Both sinks now ALSO persist one idempotent row per event to a countable
-// hypertable (soroswap_router_swaps / defindex_flows). This test proves
-// SeedSourceEntryCounts folds those tables in and SET-resets the two
-// sources authoritatively — so the drift a replay introduces is CORRECTED
-// (the seed recomputes both from their tables, so operators may seed-reset them).
+// Log-only sinks (soroswap-router, defindex) bump source_entry_counts +1 per event non-idempotently, so a replay double-
+// counts permanently. Both also persist an idempotent row per event (soroswap_router_swaps / defindex_flows);
+// SeedSourceEntryCounts must fold those tables in and SET-reset both sources, correcting replay drift.
 func TestSourceEntryCounts_LogOnlySourcesReconcile(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -2124,25 +1998,8 @@ func TestSourceEntryCounts_LogOnlySourcesReconcile(t *testing.T) {
 	}
 }
 
-// TestSourceEntryCounts_GappedNonTradeSinksReconcile extends the
-// log-only reconcile guarantee to EVERY remaining source that bumps
-// source_entry_counts through pipeline/sink.go::bumpEntryCount (a
-// non-idempotent +1 per decoded event): comet liquidity, soroswap
-// skim, phoenix liquidity/stake, blend positions/emissions/admin,
-// blend-backstop, cctp, rozo, sep41_transfers.
-//
-// Each writes one idempotent (ON CONFLICT DO NOTHING) row per event to
-// a countable hypertable, so its COUNT is replay-stable and equals the
-// bump total. This test drives each sink twice over the SAME range —
-// the second pass is a replay: the table INSERT is a no-op but the bump
-// ADDs, double-counting — then proves SeedSourceEntryCounts folds every
-// table in and SET-resets each source back to the honest total.
-//
-// comet / soroswap / phoenix ALSO write a swap to `trades` (bumped
-// idempotently INSIDE InsertTrade, so replay-safe). Their steady-state
-// entries therefore = #swaps + #non-swap-events; the test asserts the
-// seed sums the trades count with the folded non-trade table WITHOUT
-// double-counting (disjoint event sets).
+// Extends the log-only reconcile guarantee to every remaining source bumping via pipeline/sink.go::bumpEntryCount (non-
+// idempotent +1): comet, soroswap skim, phoenix, blend, blend-backstop, cctp, rozo, sep41_transfers.
 func TestSourceEntryCounts_GappedNonTradeSinksReconcile(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -2187,10 +2044,8 @@ func TestSourceEntryCounts_GappedNonTradeSinksReconcile(t *testing.T) {
 		userAddr   = "GA1IF6WRUM4NRJIF7SDBEK4HXQFLA33MB47AR33YHV5EDJKC742OCLEV"
 	)
 
-	// Each closure below inserts a FIXED row — calling it twice is a
-	// replay (same PK → ON CONFLICT DO NOTHING). Non-trade closures also
-	// call bump(...) to mirror the sink's NON-idempotent bumpEntryCount.
-	// The trade closures rely on InsertTrade's idempotent internal bump.
+	// Each closure inserts a FIXED row, so calling it twice is a replay (same PK, DO NOTHING). Non-trade closures also call
+	// bump(...) to mirror the non-idempotent bumpEntryCount; trade closures rely on InsertTrade's idempotent bump.
 
 	insertCometSwap := func() {
 		t.Helper()
@@ -2351,12 +2206,8 @@ func TestSourceEntryCounts_GappedNonTradeSinksReconcile(t *testing.T) {
 		insertSEP41Transfer()
 	}
 
-	// steady = the correct entry total once the fold is in place:
-	//   comet   = 1 swap + 1 liquidity          = 2
-	//   soroswap= 1 swap + 1 skim               = 2
-	//   phoenix = 1 swap + 1 liquidity + 1 stake= 3
-	//   blend   = 1 position + 1 emission + 1 admin = 3
-	//   others  = 1 each
+	// steady = correct entry total once the fold is in place: comet 2 (swap+liquidity), soroswap 2 (swap+skim), phoenix 3
+	// (swap+liquidity+stake), blend 3 (position+emission+admin), others 1 each.
 	steady := map[string]int64{
 		"comet": 2, "soroswap": 2, "phoenix": 3, "blend": 3,
 		"blend_backstop": 1, "cctp": 1, "rozo": 1, "sep41_transfers": 1,
@@ -2370,10 +2221,8 @@ func TestSourceEntryCounts_GappedNonTradeSinksReconcile(t *testing.T) {
 		}
 	}
 
-	// ─── Replay the SAME range: idempotent rows DO NOTHING, but the
-	//     per-event bumpEntryCount still ADDs. Trade swaps are bumped
-	//     inside InsertTrade (HAVING-gated) so they DON'T double; only
-	//     the bumpEntryCount portion drifts.
+	// Replay the SAME range: idempotent rows DO NOTHING but bumpEntryCount still ADDs; trade swaps bump inside InsertTrade
+	// (HAVING-gated) and don't double, so only the bumpEntryCount portion drifts.
 	drive()
 	drifted := map[string]int64{
 		"comet": 3, "soroswap": 3, "phoenix": 5, "blend": 6,
@@ -2396,14 +2245,9 @@ func TestSourceEntryCounts_GappedNonTradeSinksReconcile(t *testing.T) {
 	}
 }
 
-// TestSourceEntryCounts_FXQuotesBumpInlineAndReconcile pins the third
-// inline-bump path BumpSourceEntryCount's contract names: the fx_quotes
-// insert (the `massive` forex worker's only write) must bump the
-// per-source tally exactly once per row that actually lands — not on a
-// same-generation re-run, not on an in-place rate correction — and the
-// seed's fx_quotes fold must reconcile to the same number. Before the
-// bump existed the active fiat-FX feed had NO entries at all until an
-// operator re-seeded, indistinguishable from a dead connector.
+// The fx_quotes insert (the `massive` forex worker's only write) must bump the per-source tally exactly once per row
+// that lands, not on a same-generation re-run or an in-place rate correction, and the seed's fx_quotes fold must
+// reconcile to the same number.
 func TestSourceEntryCounts_FXQuotesBumpInlineAndReconcile(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -2466,14 +2310,9 @@ func TestSourceEntryCounts_FXQuotesBumpInlineAndReconcile(t *testing.T) {
 	}
 }
 
-// TestSourceEntryCounts_UnfoldedSinksReconcile is the reconciliation
-// invariant for the sinks the seed must fold: aquarius (whose
-// non-swap streams were dropped in favour of its trades count),
-// blend_emitter, sorocredit and upshift (absent outright). Each source
-// gets one idempotent row plus a replay over-count via the sink's
-// non-idempotent bumpEntryCount; the seed must SET-reset every one of
-// them to the honest row count instead of overwriting (aquarius) or
-// ignoring (the rest) it.
+// Reconciliation invariant for the sinks the seed must fold: aquarius, blend_emitter, sorocredit and upshift. Each gets
+// one idempotent row plus a replay over-count via bumpEntryCount; the seed must SET-reset every one to the honest row
+// count.
 func TestSourceEntryCounts_UnfoldedSinksReconcile(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

@@ -26,19 +26,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
-// commitSEP41ProjectorCursor commits the sep41_supply projection's cursor
-// through the exact pair of calls internal/projector makes at the end of a
-// cycle — GetCursor → [timescale.CursorRead] → AdvanceCursorFrom, i.e.
-// Projector.commitCursor, whose compare-and-swap replaced UpsertCursor so a
-// `projector-replay` rewind landing mid-cycle is not reverted.
-//
-// The storage layer hard-codes the ("projector", "sep41_supply") pair the
-// rollup fold's settled bound reads (sep41SupplyCursorSource /
-// sep41SupplyCursorSub); restating that pair in a test pins nothing. Driving
-// it through the projector's OWN writer is what ties the fold's bound to the
-// row the projector actually writes — if either side is renamed, or the
-// projector's commit stops landing on that row, the fold falls back to its
-// fail-closed 0 and the assertions below go red.
+// Commits the sep41_supply cursor through the projector's own pair of calls (GetCursor, CursorRead, AdvanceCursorFrom), a
+// CAS so a replay rewind isn't reverted. Restating the ("projector","sep41_supply") pair pins nothing.
 func commitSEP41ProjectorCursor(t *testing.T, ctx context.Context, store *timescale.Store, commitTo uint32) { //nolint:revive // t-first matches the package's other helpers (startTimescale).
 	t.Helper()
 	var read timescale.CursorRead
@@ -60,35 +49,9 @@ func commitSEP41ProjectorCursor(t *testing.T, ctx context.Context, store *timesc
 	}
 }
 
-// TestSEP41SupplyRollup_HoldAndAdvanceInterleavedWithAFold pins the sibling
-// of the settled-bound test, stated from the guard's own claim rather than
-// from the undercount it produces.
-//
-// The claim under test: the fold's `< max(ledger)` guard alone does NOT mean
-// "everything below is settled". The projector does not abort a cycle on a
-// transient sink fault. It appends the row to `held`, logs "holding cursor for
-// retry (NOT advancing past this ledger)" and RETURNS from the per-event
-// closure — the stream callback carries on and the rest of the window's rows
-// are written, durably, above the held one; only the CURSOR is capped, at
-// (lowest held ledger − 1). So max(ledger) runs ahead of settlement by the
-// whole remainder of the window, and a fold bounded by max(ledger) folds
-// straight past the held ledger. When the retry finally writes it, the row is
-// below last_ledger — no later fold looks there (the incremental watermark only
-// scans above it) and the reader's live delta only adds `ledger > last_ledger`
-// — so its amount is permanently absent from served SEP-41 supply.
-//
-// Unlike TestSEP41SupplyRollup_SettledBoundIsTheDurableCursor, which walks the
-// same states sequentially on one connection, this test pins the INTERLEAVE the
-// finding names, on two connections and without a race: the rollup pass is held
-// parked in its row-locking statement (asserted via pg_stat_activity, so the
-// window is provably armed and the test cannot pass vacuously), the
-// hold-and-advance writes land on another connection while it is parked, and
-// only then is it released — so its folding statement's snapshot sees exactly
-// the production state, max(ledger) far above the projector's cursor. It also
-// drives the cursor through the projector's real commit path
-// ([commitSEP41ProjectorCursor]) rather than restating it.
-//
-// The assertion is the money one: served lifetime supply after the retry lands.
+// Pins that the fold's `< max(ledger)` guard alone does not mean settled: on a transient sink fault the projector holds
+// the row, writes the rest of the window, and caps only the cursor, so a fold bounded by max(ledger) skips the held ledger
+// and its amount is permanently absent from served supply. Two connections, no race.
 func TestSEP41SupplyRollup_HoldAndAdvanceInterleavedWithAFold(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -195,18 +158,14 @@ func TestSEP41SupplyRollup_HoldAndAdvanceInterleavedWithAFold(t *testing.T) {
 			return "", false
 		}
 	})
-	// Non-vacuity: the pass must be parked where it takes the rollup row's
-	// lock. If it had already returned, or parked earlier, the folding
-	// statement's snapshot would predate the writes below and the interleave
-	// this test exists for would never have armed.
+	// Non-vacuity: the pass must be parked taking the rollup row's lock; otherwise its snapshot predates the writes and the
+	// interleave never armed.
 	if !strings.Contains(parked, "FOR UPDATE") {
 		t.Fatalf("the rollup pass is parked in %q, not in its row-locking statement — the interleave never armed", parked)
 	}
 
-	// ─── Hold-and-advance, while the pass is parked ───────────────────────
-	// The sink write for lHeld faults transiently, so that row is NOT
-	// written. The projector keeps going: every later ledger in the window is
-	// written and committed, and the cursor stays at lHeld-1.
+	// Hold-and-advance while parked: the sink write for lHeld faults and is not written, later ledgers are written and
+	// committed, and the cursor stays at lHeld-1.
 	for i, ledger := 0, lHeld+1; ledger <= lAfter; i, ledger = i+1, ledger+1 {
 		insert(ledger, timescale.SEP41EventMint, mintAfter, 10+i)
 	}
@@ -227,12 +186,8 @@ func TestSEP41SupplyRollup_HoldAndAdvanceInterleavedWithAFold(t *testing.T) {
 	case <-time.After(60 * time.Second):
 		t.Fatal("rollup pass did not finish after the blocker released")
 	}
-	// max(ledger) now says lAfter; the projector's cursor says only ledgers
-	// ≤ cursorWhileHolding have committed. The fold must believe the cursor.
-	// Errorf, not Fatalf: an over-folded checkpoint is the CAUSE, and the
-	// served undercount below is the consequence the finding is about. Both
-	// must be reported from one run, or a regression reads as a lone
-	// bookkeeping nit rather than as money missing from the served answer.
+	// max(ledger) says lAfter but the cursor says only ledgers <= cursorWhileHolding committed; the fold must believe the
+	// cursor. Errorf, not Fatalf: report the over-folded checkpoint and the served undercount from one run.
 	if adv.ToLedger != lPrior {
 		t.Errorf("advance across the hold ToLedger = %d; want %d — the fold must not pass ledger %d, which the projector is holding for retry (cursor=%d)",
 			adv.ToLedger, lPrior, lHeld, cursorWhileHolding)
@@ -291,12 +246,8 @@ func TestSEP41SupplyRollup_HoldAndAdvanceInterleavedWithAFold(t *testing.T) {
 	check("after the next cadence")
 }
 
-// TestSEP41SupplyRollupReset_ContendedRowFallsBackToZero pins the failure
-// path of the in-place reset: a contract whose re-fold cannot take its row
-// lock within the lock timeout must not keep the fold the caller's rewrite
-// invalidated. It is zeroed instead (the reader's exact full-sum path), the
-// call reports the fallback as an error, and an uncontended contract in the
-// same full reset is still re-folded in place.
+// Failure path of the in-place reset: a contract whose re-fold can't take its row lock in time is zeroed (exact full-sum
+// path) and reported as an error, while an uncontended contract in the same full reset is still re-folded.
 func TestSEP41SupplyRollupReset_ContendedRowFallsBackToZero(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -450,32 +401,9 @@ func waitForSEP41FallbackLockWait(t *testing.T, ctx context.Context, db *sql.DB,
 	t.Fatal("zeroing fallback never waited on the held row within 60s")
 }
 
-// TestSEP41SupplyRollup_ResetSeenButRewriteUnseenIsNotStranded pins the
-// residual half of the reset race that the row lock alone does not
-// close: the fold must not pair a POST-reset boundary with a PRE-rewrite
-// view of sep41_supply_events.
-//
-// `ch-rebuild -sep41 -write` and `projector-replay -source sep41_supply`
-// both rewrite event history BELOW the checkpoint and THEN reset the fold,
-// against a live aggregator. Under READ COMMITTED a statement's snapshot is
-// taken when the statement starts, but a `SELECT … FOR UPDATE` inside it
-// returns the LATEST committed version of the row it locks (it follows the
-// update chain / re-checks after a lock wait). So when the lock is taken
-// inside the folding statement, a pass whose statement began just before the
-// rewrite's last commit reads last_ledger = 0 from the reset — and sums the
-// events as they stood BEFORE the rewrite. It folds "from zero" over the old
-// set and moves last_ledger back above the corrected row, which is then
-// below the checkpoint (no later pass looks there) and below the reader's
-// live delta: a served undercount that nothing repairs, reported as a clean
-// advance. That is the exact outcome the reset exists to prevent.
-//
-// The visibility state is pinned, not raced. The reset is held open on its
-// own connection so the pass is provably parked INSIDE its locking statement
-// (pg_stat_activity), the re-derived row then commits, and only then does
-// the reset commit. From the pass's side this is indistinguishable from the
-// production order (rewrite commits, reset commits, both between the pass's
-// statement start and its lock acquisition): the reset is visible to it and
-// the rewrite is not.
+// Pins the residual reset race the row lock alone doesn't close: the fold must not pair a post-reset boundary with a pre-
+// rewrite view of events. Under READ COMMITTED a SELECT ... FOR UPDATE inside the folding statement sees the latest
+// committed row (last_ledger = 0) but old events, producing an unrepairable undercount.
 func TestSEP41SupplyRollup_ResetSeenButRewriteUnseenIsNotStranded(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -547,11 +475,8 @@ func TestSEP41SupplyRollup_ResetSeenButRewriteUnseenIsNotStranded(t *testing.T) 
 			_ = blockerTx.Rollback()
 		}
 	}()
-	// A LOCKER-ONLY hold on the rollup row. It is the pause instrument, not
-	// part of the scenario: the pass's row-materialising INSERT … ON CONFLICT
-	// DO NOTHING does not wait on a locker-only xmax (it DOES wait on an
-	// in-progress UPDATE), so the pass runs on and parks where it takes the
-	// row lock — which is the statement whose snapshot this test is about.
+	// A locker-only hold is the pause instrument: the pass's INSERT ... ON CONFLICT DO NOTHING doesn't wait on it,
+	// so the pass parks where it takes the row lock, the statement whose snapshot is under test.
 	var one int
 	if err := blockerTx.QueryRowContext(ctx, `
             SELECT 1 FROM sep41_supply_rollup WHERE contract_id = $1 FOR UPDATE
@@ -640,12 +565,8 @@ func TestSEP41SupplyRollup_ResetSeenButRewriteUnseenIsNotStranded(t *testing.T) 
 	check("after the next cadence")
 }
 
-// waitForSEP41PassLockWait blocks until a backend in the test database is
-// waiting on a heavyweight lock — i.e. the rollup pass is parked behind the
-// blocker — and returns the text of the statement it is parked in, so the
-// caller can assert WHERE it parked. finished reports whether the pass already
-// returned; if it did, the interleave never armed and the test must fail, not
-// pass vacuously.
+// Blocks until a backend waits on a heavyweight lock (the pass parked behind the blocker) and returns the statement text.
+// finished means the pass already returned: the interleave never armed and the test must fail, not pass vacuously.
 func waitForSEP41PassLockWait(t *testing.T, ctx context.Context, db *sql.DB, finished func() (string, bool)) string { //nolint:revive // t-first matches the package's other helpers (startTimescale).
 	t.Helper()
 	deadline := time.Now().Add(30 * time.Second)
@@ -746,25 +667,9 @@ func sep41RollupComments(t *testing.T, ctx context.Context, db *sql.DB) (table, 
 	return tc.String, lc.String
 }
 
-// settleSEP41Cursor marks the sep41_supply projection DURABLE through
-// `ledger` by writing the projector's ingestion cursor on the exact
-// (source, sub) pair internal/projector commits to — `"projector"` /
-// `src.Name` — so the pairing the storage layer hard-codes
-// (sep41SupplyCursorSource / sep41SupplyCursorSub) is pinned end-to-end
-// rather than restated.
-//
-// The pair is the production shape; the CALL is not, deliberately. The
-// projector's only cursor write is `AdvanceCursorFrom` — a compare-and-swap
-// against the position the cycle read, so that an
-// in-flight cycle cannot clobber a `projector-replay` rewind. Seeding a
-// starting position has nothing to compare against, so this uses the
-// unconditional `UpsertCursor`. A helper that claimed to seed "through the
-// exact call the projector makes" would send a reader to a call the projector
-// no longer has.
-//
-// AdvanceSEP41SupplyRollup folds no further than this watermark,
-// so a rollup test that wants "everything below the tip has settled"
-// must say so explicitly.
+// Marks the projection durable through `ledger` by writing the projector's cursor on the real ("projector", src.Name)
+// pair. Uses UpsertCursor, not the projector's CAS AdvanceCursorFrom, because seeding a start has nothing to compare
+// against.
 func settleSEP41Cursor(t *testing.T, ctx context.Context, store *timescale.Store, ledger uint32) { //nolint:revive // t-first matches the file's other helpers (startTimescale).
 	t.Helper()
 	if err := store.UpsertCursor(ctx, "projector", sep41supply.SourceName, ledger); err != nil {
@@ -772,32 +677,13 @@ func settleSEP41Cursor(t *testing.T, ctx context.Context, store *timescale.Store
 	}
 }
 
-// sep41SettledTestCursorLedger is far above every ledger the rollup tests
-// use, so seeding it leaves `< max(ledger)` as the binding half of the
-// settled bound and those tests keep pinning the tip-deferral guard,
-// not the durability guard.
+// Far above every ledger the rollup tests use, so `< max(ledger)` stays the binding bound and those tests keep pinning the
+// tip-deferral guard.
 const sep41SettledTestCursorLedger = 200_000_000
 
-// TestSEP41SupplyRollup_SettledBoundIsTheDurableCursor pins that
-// AdvanceSEP41SupplyRollup must not fold past the ledger the
-// projector is still holding for retry, or the retried row lands
-// permanently between the two halves of the served read and the token's
-// supply is silently under-counted.
-//
-// The scenario is the production one. A supply-affecting event at ledger L
-// hits a transient sink fault (deadlock / statement_timeout). The projector
-// does NOT abort the cycle: it writes the rest of the window (L+1 …) and
-// caps its cursor at L-1 so L is re-read next cycle. Meanwhile the 5-minute
-// rollup pass runs. Bounded by max(ledger) alone it folded L+1 … into the
-// checkpoint and pushed last_ledger ABOVE L; when the retry finally wrote
-// L, no later fold could see it (folds look only above last_ledger) and the
-// reader's live delta could not see it either (it adds only
-// `ledger > last_ledger`) — the amount vanished from served supply with the
-// pass reporting a normal advance.
-//
-// Also pins the fail-closed default: with no projector cursor at all there
-// is no evidence of settlement, so the pass folds NOTHING and the reader
-// still answers exactly (from the full-sum path, at a higher query cost).
+// AdvanceSEP41SupplyRollup must not fold past a ledger the projector holds for retry, or the retried row lands between the
+// folded checkpoint and the reader's live delta and supply is silently under-counted. Also pins fail-closed: no cursor
+// folds nothing and the reader stays exact.
 func TestSEP41SupplyRollup_SettledBoundIsTheDurableCursor(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -930,10 +816,8 @@ func TestSEP41SupplyRollup_SettledBoundIsTheDurableCursor(t *testing.T) {
 	}
 }
 
-// sep41StoreAdapter projects *timescale.Store onto supply.SEP41SupplyStore
-// (the supply package defines its own SEP41KindTotals to avoid a cyclic
-// import). Mirrors cmd/stellarindex-aggregator's supplyAggregatorSEP41Store so
-// the integration test exercises the exact production reader → computer path.
+// Projects *timescale.Store onto supply.SEP41SupplyStore (supply defines its own SEP41KindTotals to avoid an import
+// cycle), mirroring supplyAggregatorSEP41Store so the test exercises the production reader-to-computer path.
 type sep41StoreAdapter struct{ s *timescale.Store }
 
 func (a sep41StoreAdapter) SEP41KindTotalsAtOrBefore(ctx context.Context, contractID string, asOfLedger uint32) (supply.SEP41KindTotals, error) {
@@ -960,15 +844,9 @@ func (a sep41StoreAdapter) SEP41GenesisBaselineSeeded(ctx context.Context, contr
 	return a.s.SEP41GenesisBaselineSeeded(ctx, contractID)
 }
 
-// TestSEP41SupplyEventsRoundTrip exercises the
-// InsertSEP41SupplyEvent → SEP41NetMintAtOrBefore →
-// SEP41KindTotalsAtOrBefore paths through real TimescaleDB.
-// Per ADR-0023 + ADR-0011 Algorithm 3, the running net mint
-// (mint - burn - clawback) IS the SEP-41 total supply; if the
-// SQL CASE-WHEN sign-flip or DISTINCT ON / FILTER aggregations
-// regress, total supply silently goes wrong. The decoder unit
-// tests cover defensive guards but can't validate the SQL — this
-// test does.
+// Round-trips the SEP-41 event insert and net-mint/kind-totals reads through real TimescaleDB: net mint (mint - burn -
+// clawback) IS total supply (ADR-0023/0011), and decoder unit tests can't validate the CASE-WHEN sign flip or DISTINCT ON
+// / FILTER aggregations.
 func TestSEP41SupplyEventsRoundTrip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1144,20 +1022,9 @@ func TestSEP41SupplyEvents_LargeI128(t *testing.T) {
 	}
 }
 
-// TestSEP41SupplyRollup_AdvanceDeltaAndFallback exercises the
-// migration-0085 rollup path end-to-end against real TimescaleDB
-// (the 0085 incident). It pins that:
-//
-//   - the reader returns the FULL correct totals via the fallback
-//     full-sum when no checkpoint exists yet;
-//   - AdvanceSEP41SupplyRollup folds only SETTLED ledgers — the current
-//     tip ledger is deferred (the `< max(ledger)` watermark guard) so a
-//     mid-write ledger is never half-folded;
-//   - after an advance the reader returns the SAME totals via
-//     rollup ⊕ live delta as the full sum would (the core correctness
-//     invariant the fast path relies on);
-//   - a historical read below the checkpoint falls back to the full sum;
-//   - re-advancing with nothing newly settled is a monotonic no-op.
+// Rollup path end-to-end: full-sum fallback with no checkpoint; advance folds only settled ledgers (tip deferred); after
+// advance rollup + live delta equals the full sum; a read below the checkpoint falls back to the full sum; re-advancing
+// with nothing settled is a no-op.
 func TestSEP41SupplyRollup_AdvanceDeltaAndFallback(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1260,18 +1127,9 @@ func TestSEP41SupplyRollup_AdvanceDeltaAndFallback(t *testing.T) {
 	}
 }
 
-// TestSEP41GenesisBaseline_LifetimeSupplyEndToEnd proves the migration-0088
-// fix through the REAL store → reader → computer path against TimescaleDB
-// (the 0088 incident):
-//
-//   - A SAC-wrapper with pre-Soroban issuance (seeded genesis mint) + a large
-//     Soroban-era burn computes a POSITIVE LIFETIME total and does NOT trip the
-//     negative-total guard — the failure mode for VELO/AQUA/yXLM/… .
-//   - A Soroban-only token (no pre-genesis flows) is UNCHANGED whether or not a
-//     baseline row exists, and seeding a ZERO baseline does not double-count.
-//   - The baseline is gated on asOfLedger ≥ genesis_baseline_ledger, so a read
-//     below the boundary omits it (aggregator always reads at tip).
-//   - The genesis-seeded flag flips false → true across the seed.
+// Genesis baseline through the real store-reader-computer path: a SAC wrapper with pre-Soroban issuance plus a large burn
+// computes a positive lifetime total; a Soroban-only token is unchanged (a zero baseline doesn't double-count); the
+// baseline applies only at asOfLedger >= genesis_baseline_ledger.
 func TestSEP41GenesisBaseline_LifetimeSupplyEndToEnd(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1426,26 +1284,9 @@ func TestSEP41GenesisBaseline_LifetimeSupplyEndToEnd(t *testing.T) {
 	}
 }
 
-// TestSEP41GenesisBaseline_BoundaryPartitionDisjoint pins the EXACT ledger seam
-// between the two supply slices the migration-0088 reader stitches together: the
-// seeded pre-Soroban genesis baseline (ledger < boundary, from the CH lake) and
-// the Soroban-era totals (ledger >= boundary, from PG). The invariant is that
-// they are a DISJOINT partition — every ledger belongs to exactly one — so
-// folding them cannot double-count.
-//
-// It places a Soroban-era mint at EXACTLY the boundary ledger and asserts:
-//
-//   - a read one ledger BELOW the boundary sees NEITHER slice (genesis gated off
-//     by asOf < genesis_baseline_ledger; the boundary event is above asOf) → 0;
-//   - a read AT the boundary sees the genesis baseline PLUS the boundary event,
-//     each counted exactly once (genesis + soroban), never twice;
-//   - a read at the chain tip is identical.
-//
-// The `< boundary` (genesis) vs `>= boundary` (Soroban observer / the reader's
-// `asOf >= genesis_baseline_ledger` gate) seam is what makes the fold sound; the
-// operator-facing half of the same invariant — refusing a seed boundary above
-// the true Soroban genesis — is enforced by validateGenesisLedgerBoundary in
-// cmd/stellarindex-ops (its own unit test).
+// Pins the exact ledger seam between the seeded genesis baseline (ledger < boundary) and the Soroban-era totals (>=
+// boundary): a disjoint partition. With a mint at the boundary, a read below sees neither slice, a read at the boundary
+// sees genesis plus the mint once each, and the tip read is identical.
 func TestSEP41GenesisBaseline_BoundaryPartitionDisjoint(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1509,23 +1350,9 @@ func TestSEP41GenesisBaseline_BoundaryPartitionDisjoint(t *testing.T) {
 	}
 }
 
-// TestSEP41SupplyRollupFoldReset proves the re-derive
-// footgun fix: ResetSEP41SupplyRollupFold (which `ch-rebuild -sep41 -write`
-// calls automatically) rebuilds the worker-owned fold columns from zero over
-// a re-derived history, in place, WITHOUT wiping the migration-0088 genesis
-// baseline. It exercises both variants the ch-rebuild wiring drives:
-//
-//   - SCOPED reset (-contracts) re-folds ONLY the listed contract's fold row,
-//     leaving other watched contracts' checkpoints intact;
-//   - FULL reset (nil scope) re-folds EVERY contract's fold row (the
-//     whole-table TRUNCATE-equivalent);
-//   - neither leaves a row at last_ledger = 0 (the reader's unbounded
-//     full-sum path) — the row goes straight from the old fold to the new;
-//   - both PRESERVE the seeded genesis columns (genesis_mint_total +
-//     genesis_baseline_ledger), asserted directly against the row;
-//   - and the reset folds a below-checkpoint recovery the incremental worker
-//     would otherwise never see (the served-undercount half of the bug that a
-//     bare re-derive leaves behind), which a later advance keeps.
+// ResetSEP41SupplyRollupFold rebuilds the fold columns from zero in place without wiping the genesis baseline. Scoped
+// reset re-folds only the listed contract, full reset re-folds every contract; neither leaves last_ledger = 0; both
+// preserve genesis_mint_total and genesis_baseline_ledger.
 func TestSEP41SupplyRollupFoldReset(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1708,30 +1535,9 @@ func TestSEP41SupplyRollupFoldReset(t *testing.T) {
 	}
 }
 
-// TestSEP41GenesisBaseline_SeedAfterUnflooredFold proves the
-// double-count defect is gone: seeding the pre-Soroban baseline AFTER the rollup
-// worker has already folded pre-boundary rows must not double-count that band
-// into served lifetime supply.
-//
-// The production ordering that arms it: an operator adds a SAC wrapper to
-// `[supply] watched_sep41_contracts`; the aggregator's rollup worker folds it
-// on the next pass (and immediately on start) with NO baseline seeded, so
-// sep41SorobanFloor is 0 and the fold sweeps the CAP-67-replayed pre-Soroban
-// rows into mint_total and moves last_ledger past them. `stellarindex-ops
-// supply seed-sep41-genesis -write` — the runbook's documented remedy for the
-// `missing_baseline` outcome — then adds the SAME band a second time as the
-// genesis baseline.
-//
-// Three legs, each asserting the exact corrected lifetime total (not merely
-// "non-nil"):
-//
-//   - first seed onto an unfloored fold rebuilds the fold under the new floor
-//     in the same transaction, so the served read stays on the checkpoint fast
-//     path (last_ledger at the settled tip, never 0) and counts each row ONCE;
-//   - a REPEAT seed of the SAME boundary converges on the same fold (the
-//     "idempotent" the runbook promises is preserved, not traded away);
-//   - a CORRECTING seed that MOVES the boundary re-zeroes the fold, so the
-//     re-partitioned genesis/Soroban slices still conserve the same total.
+// Seeding the pre-Soroban baseline after the worker already folded pre-boundary rows must not double-count that band.
+// Legs: first seed rebuilds the fold under the new floor in one transaction (checkpoint fast path, each row once); a
+// repeat seed of the same boundary converges (idempotent).
 func TestSEP41GenesisBaseline_SeedAfterUnflooredFold(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1863,10 +1669,8 @@ func TestSEP41GenesisBaseline_SeedAfterUnflooredFold(t *testing.T) {
 		t.Errorf("lifetime mint after a repeat seed = %d; want %d", got, wantLifetime)
 	}
 
-	// ─── Leg 3: a CORRECTING seed that moves the boundary re-folds ─────────
-	// The operator re-runs with a boundary above the seam, so the CH-side
-	// genesis legitimately grows to pre+seam and the Soroban slice shrinks to
-	// the tip. Conservation must hold: same lifetime total, different split.
+	// Leg 3: a correcting seed moves the boundary above the seam, so CH-side genesis grows and the Soroban slice shrinks;
+	// the lifetime total is conserved, only the split changes.
 	const boundary2 = lSeam + 1
 	seed(preMint+seamMint, boundary2)
 	if r := readFold(); r.mint != "0" || r.lastLedger != 0 {
@@ -1883,12 +1687,8 @@ func TestSEP41GenesisBaseline_SeedAfterUnflooredFold(t *testing.T) {
 	}
 }
 
-// TestSEP41GenesisBaseline_ReseedRepairsFoldPoisonedUnderSameFloor pins the
-// half a floor-move trigger cannot reach: a row that was ALREADY
-// seeded while its fold still held the pre-boundary band (written before the
-// seed touched the fold at all).
-// Re-running the seed with the same boundary is the documented remedy, and it
-// must repair the row even though the floor does not move.
+// Pins what a floor-move trigger can't reach: a row already seeded while its fold still held the pre-boundary band.
+// Re-running the seed with the same boundary is the remedy and must repair the row even though the floor doesn't move.
 func TestSEP41GenesisBaseline_ReseedRepairsFoldPoisonedUnderSameFloor(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1974,11 +1774,9 @@ func TestSEP41GenesisBaseline_ReseedRepairsFoldPoisonedUnderSameFloor(t *testing
 	}
 }
 
-// TestSEP41SupplyRollup_ContendedWritersYield pins the convoy: a fold
-// writer blocked on another writer's row lock must give up after the bounded
-// lock_timeout (SQLSTATE 55P03) rather than wait out a cold full-history fold,
-// because the aggregator advances contracts sequentially and every later
-// contract in the pass would wait behind it.
+// A fold writer blocked on another writer's row lock must give up after the bounded lock_timeout (55P03) instead of
+// waiting out a cold full-history fold, since the aggregator advances contracts sequentially and later contracts would
+// queue behind it.
 func TestSEP41SupplyRollup_ContendedWritersYield(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -2038,27 +1836,9 @@ func TestSEP41SupplyRollup_ContendedWritersYield(t *testing.T) {
 	}
 }
 
-// TestSEP41SupplyRollup_ResetDuringAdvanceIsNotStranded proves the
-// fold-reset race is gone: a fold reset that commits while
-// the aggregator's rollup worker is mid-pass must not be stranded.
-//
-// Both writers of the fold's input boundary run against a LIVE aggregator:
-// `ch-rebuild -sep41 -write` resets the fold after a re-derive, and
-// `supply seed-sep41-genesis -write` resets it whenever the
-// genesis floor moves. When the pass decided its own boundary in a round trip
-// BEFORE the write, a reset landing in that gap was silently undone: the pass
-// added its delta over (stale last_ledger, mx) on top of the freshly-zeroed
-// totals and then pushed last_ledger back up, so every row at-or-below the
-// stale checkpoint was excluded from the fold forever — a served UNDERCOUNT
-// the next pass can never repair, and the exact failure the reset exists to
-// prevent.
-//
-// The interleave is pinned, not raced: a blocker transaction holds the rollup
-// row's write lock with the literal statement ResetSEP41SupplyRollupFold
-// issues, the worker pass is started against it, the test WAITS (via
-// pg_stat_activity) until that pass is genuinely blocked on the lock, and only
-// then does the reset commit. If the pass never blocks the test fails rather
-// than passing vacuously.
+// A fold reset committing while the rollup worker is mid-pass must not be stranded: a pass that decided its boundary
+// before the reset would add its delta over stale (last_ledger, mx) on freshly zeroed totals, a served undercount no later
+// pass repairs. Pinned, not raced.
 func TestSEP41SupplyRollup_ResetDuringAdvanceIsNotStranded(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -2231,21 +2011,9 @@ func lifetimeSEP41Mint(t *testing.T, ctx context.Context, store *timescale.Store
 	return got.Mint.Int64()
 }
 
-// TestSEP41RollupCheckpoints_DerivedReconcile exercises the two storage
-// seams the derived-checkpoint reconcile (`stellarindex-ops supply
-// verify-rollup`) is built on — ListSEP41RollupCheckpoints (the
-// checkpoint side) and SEP41SupplyEventKindResum (the same-source truth
-// side) — against real TimescaleDB, then feeds them through
-// completeness.ReconcileRunningTotals. It pins that:
-//
-//   - a healthy checkpoint (fold == Σ rows it folds, bounded at
-//     last_ledger) reconciles CLEAN, and the re-sum is correctly bounded
-//     at the checkpoint's own last_ledger (NOT the tip — the deferred
-//     tip must not count as drift);
-//   - the KALE 2× double-fold — a fold column
-//     wrongly doubled below the checkpoint — is FLAGGED with Delta =
-//     +truth, the exact signature the row-count reconciles miss;
-//   - the -contracts scope filters ListSEP41RollupCheckpoints.
+// Exercises ListSEP41RollupCheckpoints and SEP41SupplyEventKindResum through ReconcileRunningTotals: a healthy checkpoint
+// reconciles clean, bounded at its own last_ledger (a deferred tip is not drift); a doubled fold column (KALE 2x) is
+// flagged with Delta = +truth; the -contracts scope filters the checkpoint list.
 func TestSEP41RollupCheckpoints_DerivedReconcile(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -2400,21 +2168,9 @@ func TestSEP41SupplyRollup_LargeI128(t *testing.T) {
 	}
 }
 
-// TestMinSEP41ComponentLedgerUsesObserverWatermark is the SEP-41 half of
-// the freshness rule: the anchor must track the supply-event PRODUCER's
-// progress, not one contract's last mint/burn.
-//
-// This bit harder than the classic case. 40 of 48 watched assets are
-// C-address SEP-41 tokens that never touch the classic component tables, so
-// this path froze the MAJORITY of served supply: with the producer watermark
-// at 63,671,020, frozen contracts sat 46k-169k ledgers behind it, and the one
-// asset still publishing had a last event landing exactly ON the
-// watermark.
-//
-// Anchoring on event ledgers would be perverse in a way worth pinning: a
-// contract with NO events would return 0 and skip the gate entirely, so it
-// kept publishing — while a contract that merely went quiet froze. Both cases
-// are asserted below.
+// The freshness anchor must track the supply-event producer's watermark, not one contract's last mint/burn: most watched
+// assets are C-address SEP-41 tokens, so event-ledger anchoring froze most served supply, and a contract with no events
+// returned 0 and skipped the gate. Both the quiet-contract and no-events cases are asserted.
 func TestMinSEP41ComponentLedgerUsesObserverWatermark(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

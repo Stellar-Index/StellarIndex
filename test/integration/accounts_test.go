@@ -259,10 +259,8 @@ func seedErasureAccount(
 	return s
 }
 
-// leakScan counts, per table in public, the rows whose text form contains
-// needle. audit_log.target_id is excluded: it holds the erased account's
-// uuid on the account.erase row and key / passkey ids, which name nothing
-// once the rows they pointed at are gone.
+// leakScan counts rows per public table whose text contains needle. audit_log.target_id is excluded: it only holds ids of
+// rows that no longer exist after erasure.
 func leakScan(t *testing.T, ctx context.Context, db *sql.DB, needles []string) []string {
 	t.Helper()
 	tables := publicTables(t, ctx, db)
@@ -355,11 +353,8 @@ func tableSnapshot(t *testing.T, ctx context.Context, db *sql.DB, accountID uuid
 	return s
 }
 
-// TestAccountErasure pins account erasure end to end against real Postgres and
-// Redis: a whole-database and whole-Redis leak scan after the erasure, a
-// control account left byte-identical, staff audit rows kept, a retry
-// after a mid-transaction failure, and a different person whose address
-// shares the erased local part not inheriting the slug.
+// Pins erasure on real Postgres and Redis: no leak in a whole-DB/Redis scan, control account untouched, staff audit rows
+// kept, retry after a mid-transaction failure, and a same-local-part address not inheriting the slug.
 func TestAccountErasure(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -735,12 +730,8 @@ func TestAccountErasureBoundaries(t *testing.T) {
 	})
 }
 
-// TestAccountMovements_AssetFilterScopesPostgresTail executes the
-// contract-scoped sep41_transfers query against real Postgres and the
-// full /movements stack over HTTP. The account's newest transfers are all
-// another token; its USDC transfers sit below them. ?asset=USDC must fill
-// the page from USDC rows and page through all of them — the filter
-// applied after the LIMIT served an empty page with no cursor.
+// ?asset=USDC must fill the page from USDC rows and page through all of them even when the newest transfers are another
+// token: the filter applies before the LIMIT (applying it after served an empty page with no cursor).
 func TestAccountMovements_AssetFilterScopesPostgresTail(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -890,17 +881,8 @@ func assertMovementLedgers(t *testing.T, label string, v v1.AccountMovementsView
 	}
 }
 
-// TestAccountMovements_LedgerCeilingBoundsTheQuery executes the fixed
-// SQL against a real ClickHouse: the /movements merge ceiling travels in
-// AccountMovementFilter.MaxLedger/HasMaxLedger and is applied as a WHERE
-// predicate, so a bounded read returns a FULL page of servable rows.
-//
-// The un-fixed reader emitted no ledger bound at all and the handler
-// dropped the over-ceiling rows afterwards: with every one of the `limit`
-// newest rows above the ceiling the page collapsed to zero, next_cursor
-// was suppressed, and the account's pre-watermark history was unreachable.
-// Here the same shape must yield `limit` rows, the newest of them exactly
-// at the ceiling.
+// The /movements merge ceiling (MaxLedger/HasMaxLedger) must be a WHERE predicate so a bounded read returns a FULL page;
+// dropping over-ceiling rows after the LIMIT collapsed the page to zero and hid pre-watermark history.
 func TestAccountMovements_LedgerCeilingBoundsTheQuery(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -985,16 +967,8 @@ func TestAccountMovements_LedgerCeilingBoundsTheQuery(t *testing.T) {
 	}
 }
 
-// TestAccountMovements_MergesCHArchiveAndPGTail is the ADR-0048 D5
-// end-to-end proof: real ClickHouse rows in stellar.account_movements
-// (pre-P23 archive) + real Postgres rows in sep41_transfers (post-P23
-// tail), read through the actual production stack
-// (chstore.ExplorerReader + timescale.Store, wired into v1.New
-// exactly like cmd/stellarindex-api/main.go does), come back as ONE
-// merged, correctly-ordered, correctly-paginated feed over real HTTP —
-// catching any regression a stubbed unit test (explorer_movements_test.go)
-// can't: real SQL WHERE-clause correctness on both sides, real
-// ClickHouse tuple-comparison pagination, real Postgres index usage.
+// ADR-0048 D5 end-to-end: ClickHouse archive plus Postgres sep41_transfers tail, via the production stack, must give ONE
+// merged, ordered, correctly paginated feed over HTTP (real WHERE clauses, tuple-comparison pagination, index use).
 func TestAccountMovements_MergesCHArchiveAndPGTail(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1078,10 +1052,8 @@ func TestAccountMovements_MergesCHArchiveAndPGTail(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 
-	// The healthy-path note is ALWAYS
-	// present, stating the feed's post-P23 scope: without the cap67
-	// archive provisioned (this harness has no watermark table), the
-	// watched-token disclosure; with it, the through-ledger statement.
+	// The healthy-path note is always present and states the post-P23 scope: watched-token disclosure without the cap67
+	// archive (no watermark table in this harness), the through-ledger statement with it.
 	if !strings.Contains(body.Data.CoverageNote, "watched") {
 		t.Errorf("coverage_note = %q, want the post-P23 scope statement", body.Data.CoverageNote)
 	}
@@ -1107,11 +1079,8 @@ func TestAccountMovements_MergesCHArchiveAndPGTail(t *testing.T) {
 	}
 }
 
-// TestAccountMovements_DedupServesNewestVersion executes the account
-// movements read against two un-merged versions of one key that differ
-// only in counterparty — the shape an in-place re-derive leaves behind.
-// The newer ingested_at must be served whichever part was written first;
-// a LIMIT 1 BY without the version in its ORDER BY keeps an arbitrary one.
+// Two un-merged versions of one key differing only in counterparty (in-place re-derive) must serve the newer ingested_at
+// whichever part was written first; LIMIT 1 BY without the version in ORDER BY keeps an arbitrary one.
 func TestAccountMovements_DedupServesNewestVersion(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

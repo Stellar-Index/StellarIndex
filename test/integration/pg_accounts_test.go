@@ -30,18 +30,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
-// The churn ceiling on the daily directory sync, end to end against a
-// real Timescale.
-//
-// The upstream is an unpinned branch of a third-party repo and a scam
-// tag withholds the issuer's price. Before the ceiling, ReplaceDirectory
-// refused only an EMPTY snapshot: a hijacked or partial one that kept
-// a single row would prune every other label (un-withholding every
-// scam issuer) or newly flag thousands of issuers (withholding their
-// prices) in one committed transaction with nothing failing. These
-// cases pin that such a snapshot is refused whole, that the refusal is
-// a rollback, that ordinary churn still lands, and that the operator's
-// explicit opt-in still accepts it.
+// Churn ceiling on the daily directory sync, end to end. The upstream is an unpinned third-party branch and a scam tag
+// withholds the issuer's price, so a hijacked or partial snapshot that keeps one row would prune every label (un-
+// withholding scam issuers) or newly flag thousands (withholding prices) in one committed transaction.
 
 // dirChurnEntries renders n distinct upstream rows, the first `flagged`
 // of them carrying a scam-class tag.
@@ -177,10 +168,8 @@ func dirPaddedEntries(prefix string, n, flagged int) []timescale.DirectoryEntry 
 	return out
 }
 
-// A padded scam tag must count as newly flagged (the Go price gate trims
-// it and withholds), and a snapshot that strips the flags in place must
-// be refused like a mass prune: both un-withhold or withhold prices en
-// masse without moving the row count.
+// A padded scam tag must count as newly flagged (the Go price gate trims it and withholds), and a snapshot that strips
+// flags in place must be refused like a mass prune: both change price withholding en masse without moving the row count.
 func TestDirectorySync_ChurnCountsPaddedAndClearedFlags(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -243,23 +232,9 @@ func TestDirectorySync_ChurnCountsPaddedAndClearedFlags(t *testing.T) {
 	}
 }
 
-// The durable operator override for a FALSE-POSITIVE scam flag, end to
-// end against a real Timescale.
-//
-// A scam-class tag in account_directory is not a label: it withholds the
-// issuer's published price and market cap on /v1/price, /v1/vwap,
-// /v1/twap, /v1/chart and /v1/price/tip (pricingguard.ScamGate), demotes
-// its assets below every unflagged one in the /v1/assets ranking, and
-// draws the explorer's flag pill. The tags come from a third-party
-// upstream, so a wrong one has to be correctable — and the correction has
-// to outlive the daily `directory-sync`.
-//
-// It did not. The sync's conflict arm rewrote `source` itself, so an
-// operator-owned row was adopted into the upstream snapshot and
-// overwritten on the next run; the price went dark again within 24
-// hours. These cases pin the property a mock cannot: after a full
-// upstream sync carrying the original `malicious` tag, the override row
-// is still the one the gate reads.
+// Durable operator override of a false-positive scam flag. A scam-class tag in account_directory withholds the issuer's
+// price and market cap on /v1/price, /v1/vwap, /v1/twap, /v1/chart and /v1/price/tip (pricingguard.ScamGate), demotes
+// its assets in /v1/assets ranking and draws the explorer flag pill.
 const (
 	dirUpstreamSource = "stellar-expert"
 	dirOtherUpstream  = "second-upstream"
@@ -459,12 +434,9 @@ func TestDirectoryOperatorOverride_SurvivesUpstreamSync(t *testing.T) {
 	}
 }
 
-// TestDirectoryUpsert_SourcesDoNotStealEachOthersRows pins migration
-// 0136's stated contract — "scoped by `source` so a future second
-// directory source can coexist without the syncs deleting each other's
-// rows" — which the unconditional `source = EXCLUDED.source` arm broke
-// for every address two upstreams both carry. It also pins the
-// no-regression half: a source still updates the rows it DOES own.
+// TestDirectoryUpsert_SourcesDoNotStealEachOthersRows pins migration 0136's contract that rows are scoped by `source` so
+// a second directory source coexists without syncs deleting each other's rows, which an unconditional `source =
+// EXCLUDED.source` arm broke; a source still updates the rows it owns.
 func TestDirectoryUpsert_SourcesDoNotStealEachOthersRows(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -534,11 +506,9 @@ func TestDirectoryUpsert_SourcesDoNotStealEachOthersRows(t *testing.T) {
 	}
 }
 
-// TestDirectoryOverrideReason_Migration0170 executes 0170 up and down:
-// an override row written before the column existed is backfilled with
-// the named placeholder, the CHECK then refuses an override without a
-// reason and an upstream row with one, the store refuses a blank reason
-// before touching the row, and down drops the column.
+// TestDirectoryOverrideReason_Migration0170 executes 0170 up and down: a pre-existing override row is backfilled with
+// the named placeholder, the CHECK refuses an override without a reason and an upstream row with one, the store refuses
+// a blank reason before touching the row, and down drops the column.
 func TestDirectoryOverrideReason_Migration0170(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -606,12 +576,9 @@ func TestDirectoryOverrideReason_Migration0170(t *testing.T) {
 	}
 }
 
-// TestDirectoryOverrideBy_Migration0177 executes 0177 up and down: an
-// override row written before the column existed is backfilled with the
-// named placeholder, the CHECK then refuses an override naming no
-// operator and an upstream row naming one, the store refuses a blank
-// operator before touching the row and records a real one, and down
-// drops the column without touching ownership or the reason.
+// TestDirectoryOverrideBy_Migration0177 executes 0177 up and down: a pre-existing override row is backfilled with the
+// named placeholder, the CHECK refuses an override naming no operator and an upstream row naming one, the store refuses
+// a blank operator and records a real one, and down drops the column without touching ownership or the reason.
 func TestDirectoryOverrideBy_Migration0177(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -689,12 +656,9 @@ func TestDirectoryOverrideBy_Migration0177(t *testing.T) {
 	}
 }
 
-// TestDirectoryOperatorOverride_ListingRankTierAfterSync pins the
-// /v1/assets consumer of the override end to end: the default listing
-// ranks a scam-flagged issuer's asset in tier 2, below every unflagged
-// one; after the override AND a full upstream sync still carrying the
-// flag it ranks on its own merit again; withdrawing the override lets
-// the next sync demote it back.
+// TestDirectoryOperatorOverride_ListingRankTierAfterSync: the /v1/assets listing ranks a scam-flagged issuer's asset in
+// tier 2, below every unflagged one; after the override AND a full sync still carrying the flag it ranks on merit again;
+// withdrawing the override lets the next sync demote it back.
 func TestDirectoryOperatorOverride_ListingRankTierAfterSync(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -832,12 +796,9 @@ func mustScan(t *testing.T, ctx context.Context, db *sql.DB, dst any, q string, 
 	}
 }
 
-// TestAccountObservationSeedProvenanceRoundTrip executes migration 0189's
-// table through the store: unstamped reads ok=false, a complete
-// pass' upsert round-trips every column — including watched_accounts/
-// missing_accounts, stored sorted regardless of input order so a `missing`
-// count is traceable to a specific G-strkey — and a second complete pass
-// overwrites the singleton row rather than adding a second one.
+// TestAccountObservationSeedProvenanceRoundTrip executes migration 0189's table through the store: unstamped reads
+// ok=false, a complete pass round-trips every column (watched_accounts/missing_accounts stored sorted so a `missing`
+// count traces to a specific G-strkey), and a second complete pass overwrites the singleton row.
 func TestAccountObservationSeedProvenanceRoundTrip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -916,10 +877,8 @@ func TestAccountObservationSeedProvenanceRoundTrip(t *testing.T) {
 	}
 }
 
-// TestLatestAccountObservationsAtOrBefore_MatchesSingleRead executes the
-// batch read against real Postgres: per account it must return exactly the
-// row the single-account read returns, and omit accounts with no
-// observation at or before the ledger bound.
+// TestLatestAccountObservationsAtOrBefore_MatchesSingleRead: the batch read returns per account exactly the row the
+// single-account read returns, and omits accounts with no observation at or before the ledger bound.
 func TestLatestAccountObservationsAtOrBefore_MatchesSingleRead(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1047,10 +1006,8 @@ func (c *capturingInserter) InsertSupply(_ context.Context, s supply.Supply) err
 
 func discardLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
-// insertQuietReserveObservations seeds one observation per reserve account at
-// lastChangeLedger and returns the observation timestamp. This models the live
-// r1 state: the reserve accounts' NEWEST rows sit at their last balance change,
-// deep in the past relative to the current tip.
+// insertQuietReserveObservations seeds one observation per reserve account at lastChangeLedger and returns its
+// timestamp, modelling live r1 where reserve accounts' newest rows sit at their last balance change, far behind the tip.
 func insertQuietReserveObservations(t *testing.T, ctx context.Context, store *timescale.Store, lastChangeLedger uint32) {
 	t.Helper()
 	obsAt := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
@@ -1085,19 +1042,9 @@ func newWatermarkRefresher(store *timescale.Store, snapshotLedger uint32, insert
 	)
 }
 
-// TestAccountObserverWatermark_QuietObserverStaysFresh is the money-adjacent
-// regression proof. A HEALTHY account observer
-// that has PROCESSED up to a fresh ledger but whose watched reserve accounts
-// have not CHANGED for far longer than the dormancy horizon must NOT trip the
-// XLM supply freshness gate.
-//
-// A reader that took Store.MaxAccountObservationLedger
-// returned MAX(ledger) FROM account_observations = the last balance-change
-// ledger (50_000_000). The anchor assertion below fails (got 50_000_000, want
-// the 50_030_000 watermark), and — end to end — the refresher rejects the
-// snapshot as stale_component (gap 30_000 > horizon 17_280) instead of
-// accepting it. With the fix the anchor is the fresh watermark and the gate
-// accepts.
+// TestAccountObserverWatermark_QuietObserverStaysFresh (money-adjacent): a healthy observer that processed up to a fresh
+// ledger, whose watched reserve accounts have not changed for longer than the dormancy horizon, must NOT trip the XLM
+// supply freshness gate.
 func TestAccountObserverWatermark_QuietObserverStaysFresh(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1149,11 +1096,9 @@ func TestAccountObserverWatermark_QuietObserverStaysFresh(t *testing.T) {
 	}
 }
 
-// TestAccountObserverWatermark_StalledObserverStillTrips proves dead-observer
-// detection is PRESERVED. When the observer's watermark is FROZEN (it stopped
-// advancing) while the chain tip keeps climbing, the anchor freezes at the
-// watermark and the gate correctly fails closed past the dormancy horizon —
-// it does not republish a frozen supply stamped at the current tip.
+// TestAccountObserverWatermark_StalledObserverStillTrips: dead-observer detection is preserved. With the watermark
+// frozen while the tip climbs, the anchor freezes and the gate fails closed past the dormancy horizon instead of
+// republishing a frozen supply stamped at the current tip.
 func TestAccountObserverWatermark_StalledObserverStillTrips(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1242,10 +1187,9 @@ func TestAccountObserverWatermark_Monotonic(t *testing.T) {
 	}
 }
 
-// TestFreezeEvents_ReleasedBy executes migration 0208 and every write that
-// touches the column: MarkRecovered on a row in a COMPRESSED chunk, on a live
-// row, and the previous binary's UPDATE, which must keep working and leave it
-// NULL (migrations/README.md rule 9).
+// TestFreezeEvents_ReleasedBy executes migration 0208 and every write touching the column: MarkRecovered on a
+// compressed-chunk row and on a live row, and the previous binary's UPDATE, which must keep working and leave it NULL
+// (migrations/README.md rule 9).
 func TestFreezeEvents_ReleasedBy(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1342,10 +1286,8 @@ func TestFreezeEvents_ReleasedBy(t *testing.T) {
 	}
 }
 
-// TestFreezeEventSink_LKGVWAPLandsOnRow exercises the path:
-// `RecordFreeze` writes the frozen_value column with the
-// orchestrator-supplied LKG VWAP rather than the hardcoded 0 the
-// a bare insert would write.
+// TestFreezeEventSink_LKGVWAPLandsOnRow: RecordFreeze writes frozen_value with the orchestrator-supplied LKG VWAP, not a
+// hardcoded 0.
 func TestFreezeEventSink_LKGVWAPLandsOnRow(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1409,10 +1351,9 @@ func TestFreezeEventSink_LKGVWAPLandsOnRow(t *testing.T) {
 	}
 }
 
-// TestFreezeEventSink_FirstTickFreezeHookGetsNoSentinel: a first-tick
-// freeze has no prior bucket, so the NUMERIC NOT NULL column is filled with
-// 0 — but the fan-out hook (the customer webhook's frozen_value) must get
-// the empty value, not the filler it would read as a zero price.
+// TestFreezeEventSink_FirstTickFreezeHookGetsNoSentinel: a first-tick freeze has no prior bucket, so the NUMERIC NOT
+// NULL column is filled with 0, but the fan-out hook (the webhook's frozen_value) must get the empty value, not that
+// filler, which would read as a zero price.
 func TestFreezeEventSink_FirstTickFreezeHookGetsNoSentinel(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1524,12 +1465,9 @@ func TestFreezeEventSink_RecoveryRoundTrip(t *testing.T) {
 	}
 }
 
-// TestFreezeEventSink_IdempotentOpenRow — two RecordFreeze calls
-// for the same (asset, quote) while the first is still firing
-// (recovered_at NULL) MUST NOT insert a second row. The guard
-// does not rely on the (asset, quote, frozen_at) PK with microsecond
-// resolution; the explicit `WHERE NOT EXISTS` clause is what
-// guarantees idempotency.
+// TestFreezeEventSink_IdempotentOpenRow: two RecordFreeze calls for the same (asset, quote) while the first is still
+// firing (recovered_at NULL) must not insert a second row. The explicit `WHERE NOT EXISTS` guarantees this; the
+// microsecond (asset, quote, frozen_at) PK is not relied on.
 func TestFreezeEventSink_IdempotentOpenRow(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1595,13 +1533,9 @@ type auctionLeg struct {
 	ledger     uint32
 }
 
-// TestPositionsFold_BlendAuctionSupersedesLegs pins, through real SQL,
-// that BlendPositionsByUser flags every Blend leg a liquidation fill, a
-// bad-debt auction fill or a bad_debt write-off moved — for the auctioned
-// account AND the filler, after a PARTIAL fill, and still after later
-// activity on the leg — with the exact b/d-token balance counting those
-// moves, while an Interest auction touches nothing; and that
-// DeFiPositionHolders leaves every moved leg out.
+// TestPositionsFold_BlendAuctionSupersedesLegs: BlendPositionsByUser flags every leg a liquidation fill, bad-debt fill
+// or bad_debt write-off moved (auctioned account AND filler, after a partial fill and later activity) with the exact
+// balance counting those moves; an Interest auction touches nothing; DeFiPositionHolders leaves moved legs out.
 func TestPositionsFold_BlendAuctionSupersedesLegs(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1680,10 +1614,8 @@ func sameAuctionLeg(a, b *auctionLeg) bool {
 	return *a == *b
 }
 
-// seedBlendAuctionFixture writes the money-market events, two partial
-// UserLiquidation fills with user activity between them, a BadDebt fill,
-// an Interest fill (which must move no pool position) and a bad_debt
-// write-off.
+// seedBlendAuctionFixture writes the money-market events, two partial UserLiquidation fills with user activity between
+// them, a BadDebt fill, an Interest fill (which must move no position) and a bad_debt write-off.
 func seedBlendAuctionFixture(ctx context.Context, t *testing.T, store *timescale.Store, t0 time.Time) {
 	t.Helper()
 	at := func(ledger uint32) time.Time { return t0.Add(time.Duration(ledger) * time.Second) }
@@ -1743,13 +1675,9 @@ func seedBlendAuctionFixture(ctx context.Context, t *testing.T, store *timescale
 	}
 }
 
-// TestPositionsFold_AllSixProtocols exercises every SQL fold query
-// GET /v1/accounts/{g}/positions reads (internal/storage/timescale/
-// positions.go) through real TimescaleDB — the layer go build/go vet
-// cannot validate (raw SQL strings). One test user, one row of
-// contributing activity per protocol (plus a second, offsetting row
-// where the fold's sign convention needs to be proven, not just its
-// existence), asserting the fold nets match hand-computed expectations.
+// TestPositionsFold_AllSixProtocols runs every SQL fold query behind GET /v1/accounts/{g}/positions on real TimescaleDB
+// (raw SQL that go build/vet cannot validate): one user, one activity row per protocol, plus an offsetting row where the
+// sign convention needs proving, asserting hand-computed fold nets.
 func TestPositionsFold_AllSixProtocols(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -2129,10 +2057,8 @@ func firstVenueDiff(got, want []string) string {
 	return fmt.Sprintf("length: got %d want %d", len(got), len(want))
 }
 
-// assertBlendFlashLoanFolds pins the flash-loan debt leg through real
-// SQL: a flash_loan settled by a repay in the same tx folds to a closed
-// (zero) borrow, and a kept flash_loan is an open borrow — never a
-// negative debt and never a missing leg.
+// assertBlendFlashLoanFolds: a flash_loan settled by a repay in the same tx folds to a closed (zero) borrow and a kept
+// one is an open borrow, never a negative debt or a missing leg.
 func assertBlendFlashLoanFolds(ctx context.Context, t *testing.T, store *timescale.Store, pool string, t0 time.Time) {
 	t.Helper()
 	const (

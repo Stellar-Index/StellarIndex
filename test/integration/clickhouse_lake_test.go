@@ -24,13 +24,9 @@ import (
 	chstore "github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// TestClickHouseLakeRoundTrip is the first end-to-end proof of the Tier-1 lake
-// (ADR-0034) Go write→read path against a real ClickHouse: it writes a ledger,
-// a contract event, and two supply-flow events through the repo's own Sink and
-// reads them back through the repo's own ExplorerReader / SupplyReader /
-// StreamContractEvents — asserting field fidelity, i128 amount fidelity (values
-// that overflow int64, kept as *big.Int / Int128, never truncated — ADR-0003),
-// and ReplacingMergeTree dedup (a duplicate insert collapses on a FINAL read).
+// First end-to-end Tier-1 lake write->read path (ADR-0034): a ledger, contract event and two supply-flow events through
+// the repo's Sink and readers, asserting field fidelity, i128 fidelity (values past int64 stay *big.Int, ADR-0003) and
+// ReplacingMergeTree dedup (a duplicate insert collapses on a FINAL read).
 func TestClickHouseLakeRoundTrip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -97,10 +93,8 @@ func TestClickHouseLakeRoundTrip(t *testing.T) {
 	if err := sink.Flush(ctx); err != nil {
 		t.Fatalf("sink flush: %v", err)
 	}
-	// RMT dedup: re-insert the IDENTICAL extract. Every row's ReplacingMergeTree
-	// ORDER-BY identity is unchanged, so a FINAL read must collapse the
-	// duplicates — the lake's idempotent-re-ingest guarantee (ADR-0034: "NO ON
-	// CONFLICT silent-drop like the Postgres soroban_events bug").
+	// RMT dedup: re-inserting the IDENTICAL extract leaves every ORDER-BY identity unchanged, so a FINAL read must collapse
+	// the duplicates (the idempotent re-ingest guarantee, ADR-0034: no silent ON CONFLICT drop).
 	if err := sink.Add(ctx, withEventTxs(ext)); err != nil {
 		t.Fatalf("sink add (duplicate): %v", err)
 	}
@@ -176,25 +170,9 @@ func TestClickHouseLakeRoundTrip(t *testing.T) {
 	}
 }
 
-// TestClickHouseTxHashIndexProbeFallback exercises ExplorerReader.TransactionByHash's
-// two-mode resolution (perf-todo §4): the hash-ordered stellar.tx_hash_index
-// fast path, and the tx_hash bloom-scan FALLBACK taken when the index EXISTS
-// but is EMPTY — the MV-drop / TRUNCATE pathology, in which the availability
-// probe must treat the index as unavailable rather than let its emptiness
-// mint authoritative 404s for every real hash (a per-hash miss against a
-// NON-EMPTY index stays authoritative; the unit tests in
-// internal/storage/clickhouse/tx_hash_index_test.go pin that arm). To make
-// the branch OBSERVABLE, two transactions share one hash at different ledgers
-// with a controlled ingested_at ordering:
-//   - the index maps hash → ledger A, so the fast path resolves to A;
-//   - a bloom SCAN (no ledger scope, latest-ingested wins) resolves to ledger B.
-//
-// So a returned Seq of A proves the index was used, and B proves the fallback
-// scan was used. Fixtures are seeded via a raw connection to control ingested_at
-// + the index rows precisely; the behaviour under test runs through the real
-// ExplorerReader. (The lake tables are shared per-binary but the integration
-// tests run sequentially and no other test touches tx_hash_index, so the
-// TRUNCATEs here are safe.)
+// ExplorerReader.TransactionByHash's two modes: the tx_hash_index fast path, and the bloom-scan FALLBACK taken when the
+// index EXISTS but is EMPTY (MV-drop / TRUNCATE), which must read as unavailable instead of minting 404s for real hashes
+// (a miss on a NON-EMPTY index stays authoritative). Two txs share one hash at different ledgers:
 func TestClickHouseTxHashIndexProbeFallback(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -310,14 +288,9 @@ func TestClickHouseTxHashIndexProbeFallback(t *testing.T) {
 	}
 }
 
-// TestClickHouseProtocolBreakdownT0XDR exercises the protocol event-breakdown
-// reader's fast path (stellar.contract_events_daily) vs its raw-scan path
-// (stellar.contract_events) around the t0_xdr column. The
-// seeded event is Phoenix-shaped: topic[0] is a non-Symbol String action name
-// ("swap"), so topic_0_sym is EMPTY and the label can only be recovered from
-// the raw topic[0] XDR (t0_xdr) — while topic[1] is a String FIELD name
-// ("sender") that must NOT be mistaken for the action. Both readers must label
-// the event "swap".
+// Protocol event-breakdown fast path (contract_events_daily) vs raw scan around t0_xdr. The Phoenix-shaped event has a
+// non-Symbol String topic[0] ("swap"), so topic_0_sym is EMPTY and the label comes only from t0_xdr; topic[1] ("sender")
+// must not be mistaken for the action. Both readers must label it "swap".
 func TestClickHouseProtocolBreakdownT0XDR(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -407,16 +380,9 @@ func breakdownCount(rows []chstore.ProtocolEventTypeCount, name string) uint64 {
 	return 0
 }
 
-// TestClickHouseAccountMovementsRoundTrip is the ADR-0048 D2 write->read
-// proof for stellar.account_movements: FanOutAccountMovement's direction
-// rules (two-participant sent+received, self, single-participant "acting
-// side") survive a real ClickHouse INSERT/SELECT round trip, a duplicate
-// insert collapses under the table's ReplacingMergeTree engine (observed via
-// VerifyAccountMovementsWindow's uniqExact, which — like the table's own
-// dedup story — doesn't require FINAL to be correct), MaxAccountMovementLedger
-// resolves the right resume point, and FindClaimableBalanceCreates'
-// batched balance_id lookup (the ClickHouse replacement for the retired
-// Postgres fallback) resolves a already-written create.
+// ADR-0048 D2 write->read proof for account_movements: FanOutAccountMovement's direction rules (two-participant
+// sent+received, self, single-participant acting side) survive a real round trip; a duplicate insert collapses (checked
+// via uniqExact, which needs no FINAL); MaxAccountMovementLedger gives the resume point;
 func TestClickHouseAccountMovementsRoundTrip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -572,12 +538,8 @@ func TestClickHouseAccountMovementsRoundTrip(t *testing.T) {
 		t.Fatalf("MinAccountMovementLedger (empty range) found=true, want false")
 	}
 
-	// ── FindClaimableBalanceCreates: the ClickHouse Phase-3 batched fallback
-	// lookup (one query per window rather than a serial per-ref
-	// FindClaimableBalanceCreate; the idx_cb_balance_id skip index makes
-	// per-lookup cost negligible but per-window lookup COUNT still matters) — one query resolving a
-	// found id, a missing id, and (via the empty-input short-circuit) the
-	// no-op case together.
+	// FindClaimableBalanceCreates: the batched fallback lookup (one query per window, not per ref) must resolve a found id, a
+	// missing id and, via the empty-input short-circuit, the no-op case together.
 	foundCB, err := chstore.FindClaimableBalanceCreates(ctx, addr, []string{balanceID, "nonexistent"})
 	if err != nil {
 		t.Fatalf("FindClaimableBalanceCreates: %v", err)
@@ -612,12 +574,8 @@ func TestClickHouseAccountMovementsRoundTrip(t *testing.T) {
 		t.Errorf("verifyCounts[claimable_balance_create] = %d, want 1", verifyCounts["claimable_balance_create"])
 	}
 
-	// ── Re-insert the IDENTICAL batch: ReplacingMergeTree dedup ──
-	// (idempotent re-derivation, ADR-0048 D2's retry-safe write contract).
-	// uniqExact is exact under un-merged duplicate parts (no FINAL needed —
-	// see VerifyAccountMovementsWindow's doc comment), so the distinct
-	// movement counts must be UNCHANGED by the duplicate insert even though
-	// raw row counts may temporarily double until merges settle.
+	// Re-insert the IDENTICAL batch (idempotent re-derivation, ADR-0048 D2's retry-safe write): uniqExact is exact under un-
+	// merged duplicate parts, so distinct movement counts must be UNCHANGED even if raw row counts temporarily double.
 	if _, err := chstore.InsertAccountMovements(ctx, addr, movements); err != nil {
 		t.Fatalf("InsertAccountMovements (duplicate): %v", err)
 	}
@@ -633,16 +591,9 @@ func TestClickHouseAccountMovementsRoundTrip(t *testing.T) {
 	}
 }
 
-// TestClickHouseProtocolDailyActivityDedup is a regression test for the
-// contract_events_daily uniqExact→uniqCombined(17) redesign: the whole
-// point of using a uniq*-family aggregate (rather than
-// a plain SummingMergeTree / countState()) is that a duplicate insert of the
-// SAME natural key (ledger_seq, tx_hash, op_index, event_index) — a
-// live-sink retry or a ch-rebuild re-derive re-inserting a range — does NOT
-// inflate the count. This seeds 3 DISTINCT contract events plus a duplicate
-// re-insert of one of them (identical natural key), then asserts both fast
-// readers report exactly 3, not 4, proving uniqCombinedMerge(17) still
-// dedups on the natural key rather than summing raw rows.
+// contract_events_daily uses a uniq*-family aggregate (uniqCombined(17)) rather than SummingMergeTree/countState() so a
+// duplicate insert of the same natural key (live-sink retry, ch-rebuild re-derive) does not inflate counts: 3 distinct
+// events plus one duplicate must report 3, not 4, on both fast readers.
 func TestClickHouseProtocolDailyActivityDedup(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -739,15 +690,9 @@ func TestClickHouseProtocolDailyActivityDedup(t *testing.T) {
 	}
 }
 
-// TestNetworkThroughput_DedupsReingestedLedger guards that
-// stellar.ledgers is ReplacingMergeTree, and a re-ingested ledger (a ch-backfill
-// re-derive) leaves an un-merged duplicate PART until a background merge. Before
-// the fix NetworkThroughput's count()/sum(*_count) ran WITHOUT FINAL, so during
-// that window the served daily throughput double-counted the ledger and doubled
-// its tx/op/event sums. The fix reads FROM stellar.ledgers FINAL. This inserts a
-// ledger twice (two parts, identical RMT identity) and asserts the served bucket
-// counts it ONCE. Uses a very high, isolated ledger_seq + a unique close date so
-// the windowed aggregate can't be contaminated by other tests' rows.
+// stellar.ledgers is ReplacingMergeTree, so a re-ingested ledger leaves an un-merged duplicate part; NetworkThroughput
+// must read FROM stellar.ledgers FINAL or the daily bucket double-counts it. Uses a very high, isolated ledger_seq and a
+// unique close date so the windowed aggregate is not contaminated by other tests.
 func TestNetworkThroughput_DedupsReingestedLedger(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -808,26 +753,9 @@ func TestNetworkThroughput_DedupsReingestedLedger(t *testing.T) {
 	}
 }
 
-// TestClickHouseContractDirectoryDedupsDuplicateEvents is the dedup proof for
-// the two contract readers the original dedup sweep missed:
-// RecentContracts and ContractInteractions. They appear in neither that
-// sweep's fixed list nor its re-derived-as-correct list — they were simply
-// not visited, while the sibling operations readers were fixed with LIMIT 1 BY.
-//
-// stellar.contract_events is ReplacingMergeTree(ingested_at), and duplicates
-// are not hypothetical: the sink's own Flush contract is that a partially
-// succeeded flush may be RETRIED over the same range, idempotent under RMT. So
-// the table legitimately holds duplicate un-merged parts until a background
-// merge collapses them — and both readers are window-scoped to recent ledgers,
-// which is exactly where un-merged retries concentrate.
-//
-// This seeds the SAME event twice (a re-flush of the same range) and asserts
-// the served counts do not double. It is a real-ClickHouse test rather than a
-// query-shape assertion because the thing under test IS the engine's
-// duplicate-row behaviour, which a stub cannot reproduce.
-//
-// Proven red: with count() restored in place of uniqExact, events comes back 2
-// (want 1) and shared comes back 2 (want 1).
+// RecentContracts and ContractInteractions must dedup duplicate events: contract_events is ReplacingMergeTree(ingested_at)
+// and a retried Flush over the same range legitimately leaves un-merged duplicate parts, concentrated in the recent
+// windows these readers scan. Seeds the SAME event twice (needs a real engine, not a query- shape check); count()
 func TestClickHouseContractDirectoryDedupsDuplicateEvents(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -925,10 +853,8 @@ func TestClickHouseContractDirectoryDedupsDuplicateEvents(t *testing.T) {
 	}
 }
 
-// withEventTxs adds one stellar.transactions row per distinct (ledger, tx)
-// among ext.Events, in first-seen order, as the extractor always writes them:
-// the lake readers resolve each event's apply order from that table and fail
-// a stream whose event has no transaction row.
+// Adds one transactions row per distinct (ledger, tx) among ext.Events in first-seen order, as the extractor always does:
+// lake readers resolve apply order from that table and fail a stream whose event has no transaction row.
 func withEventTxs(ext chstore.LedgerExtract) chstore.LedgerExtract {
 	next := map[uint32]uint32{}
 	type ledgerTx struct {
@@ -950,27 +876,9 @@ func withEventTxs(ext chstore.LedgerExtract) chstore.LedgerExtract {
 	return ext
 }
 
-// TestSetCap67MovementsWatermark_OnlyAdvancesOverAProvenWindow pins the
-// fail-closed half of the cap67 contiguity gate at the WRITE, where the
-// invariant holds for every caller — Cap67Range's clamp only protects the one
-// path that goes through it, and the range it resolves is resolved once per
-// run while the watermark is the permanent record of what has been derived.
-//
-// The watermark is read back as max(thru_ledger) and the derive resumes at
-// watermark+1 with no trailing re-derive, so an advance over an unproven
-// ledger drops that ledger's account movements permanently and invisibly.
-// Both refusals are therefore delay, not failure: the lake heals via
-// ch-live-catchup and the next run re-derives the window.
-//
-// Proven red on the unfixed tree (revert the cap67AdvanceProven call in
-// SetCap67MovementsWatermark): step 2 records base+10 over the hole at base+6
-// and step 4 records base+10 over the never-derived [base+6, base+7].
-//
-// Note: the guard widens
-// SetCap67MovementsWatermark to take the window's lower bound, so this file
-// does not compile against the unfixed signature — the wholesale-revert red
-// proof lives in clickhouse_cap67_to_clamp_test.go, which drives the same
-// defect through the CLI using only unchanged signatures.
+// Fail-closed half of the cap67 contiguity gate at the WRITE, where it holds for every caller (Cap67Range's clamp only
+// guards its own path). The watermark is read back as max(thru_ledger) and the derive resumes at watermark+1 with no re-
+// derive, so an advance over an unproven ledger drops its account movements permanently and invisibly.
 func TestSetCap67MovementsWatermark_OnlyAdvancesOverAProvenWindow(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -1056,10 +964,8 @@ func TestSetCap67MovementsWatermark_OnlyAdvancesOverAProvenWindow(t *testing.T) 
 	}
 }
 
-// TestSetCap67MovementsWatermark_RefusesAnEventShortfall pins the event half
-// of the proof: a window whose ledgers are all present but whose
-// contract_events fall short of Σ soroban_event_count (a dropped or unrestored
-// partition) must not advance, and advances once the events are back.
+// Event half of the proof: a window whose ledgers are all present but whose contract_events fall short of
+// sum(soroban_event_count) (dropped or unrestored partition) must not advance, and advances once the events are back.
 func TestSetCap67MovementsWatermark_RefusesAnEventShortfall(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -1125,11 +1031,8 @@ func TestSetCap67MovementsWatermark_RefusesAnEventShortfall(t *testing.T) {
 	}
 }
 
-// TestCap67SupplyCoverage_GrowsOnlyOverProvenAdjacentWindows pins the
-// supply-kind range the movements note reports against the real table: no
-// rows read as no range (not [0, 0] covering genesis), the first window
-// starts it, adjacent windows extend it, and a window over a lake hole is
-// refused without moving it.
+// The supply-kind range the movements note reports: no rows means no range (not [0, 0] covering genesis), the first window
+// starts it, adjacent windows extend it, and a window over a lake hole is refused without moving it.
 func TestCap67SupplyCoverage_GrowsOnlyOverProvenAdjacentWindows(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -1198,38 +1101,12 @@ func TestCap67SupplyCoverage_GrowsOnlyOverProvenAdjacentWindows(t *testing.T) {
 	}
 }
 
-// This file is the SILENT-DATA-LOSS proof for the cap67 movements watermark,
-// driven through the production entry point (chops.Run — the same dispatch
-// cmd/stellarindex-ops uses) rather than through a helper: the defect lives in
-// how the CLI's own flags reach the range resolver, so a test that called the
-// resolver directly would never see it.
-//
-// The defect, in two shapes of one disease — the watermark advancing to a
-// ledger whose coverage was never proven:
-//
-//  1. `-to N` bypassed the contiguity gate. The ContiguousWatermark clamp sat
-//     INSIDE the `to == 0` branch of Cap67Range, so an operator-supplied upper
-//     bound was trusted verbatim: the derive read straight past a near-tip lake
-//     hole and stamped the watermark above it at every window top.
-//  2. `-from N` above watermark+1 advanced the watermark over ledgers the run
-//     never derived at all.
-//
-// Either way the loss is PERMANENT and invisible: the watermark is read back as
-// max(thru_ledger), the derive resumes at watermark+1 with no trailing
-// re-derive, and the /movements handler floors its Postgres arm at the same
-// watermark — so the skipped ledgers' classic/native movements are served by
-// neither arm, forever. The raw lake heals itself via ch-live-catchup;
-// account_movements never revisits.
+// SILENT-DATA-LOSS proof for the cap67 movements watermark, driven through chops.Run (the cmd/stellarindex-ops dispatch):
+// the defect is in how CLI flags reach the range resolver. `-to N` bypassed the contiguity gate (the clamp sat inside the
+// `to == 0` branch) and `-from N` above watermark+1 advanced over never-derived ledgers. Loss is permanent:
 
-// cap67TruncateWatermark restores the single-row watermark table to its
-// pristine (never-run) state. Called BEFORE and AFTER each test here so these
-// tests are order-independent, and so
-// TestCap67Range_FirstRunClampsToTheLakesFirstLedger's "this is a first run"
-// precondition still holds whichever of us the runner reaches first.
-//
-// It owns its context rather than borrowing the test's: it runs from
-// t.Cleanup, which fires AFTER the test body's `defer cancel()`, so a borrowed
-// context is already cancelled and the restore would silently not happen.
+// Restores the single-row watermark table to its never-run state, before and after each test, so tests are order-
+// independent and TestCap67Range_FirstRunClampsToTheLakesFirstLedger's first-run precondition holds. Uses its own context:
 func cap67TruncateWatermark(t *testing.T) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -1265,26 +1142,17 @@ func cap67SeedLedgers(t *testing.T, ctx context.Context, addr string, seqs []uin
 	}
 }
 
-// TestCap67Movements_ExplicitToIsClampedToTheContiguousTip runs the real
-// subcommand with `-to` pointed ABOVE a lake hole and proves the watermark
-// stops BELOW the hole.
-//
-// Proven red on the unfixed tree: with the ContiguousWatermark clamp back
-// inside Cap67Range's `if last == 0` branch, the run derives [base, base+12]
-// and the watermark reads base+12 — ledger base+6's movements are then gone
-// for good.
+// Runs the real subcommand with `-to` ABOVE a lake hole: the watermark must stop BELOW the hole. Red when the
+// ContiguousWatermark clamp sits inside Cap67Range's `if last == 0` branch (watermark reads base+12 and base+6's movements
+// are lost for good).
 func TestCap67Movements_ExplicitToIsClampedToTheContiguousTip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	addr := clickhouseAddr(t)
 
-	// An isolated ledger range nothing else in the suite writes to, kept
-	// BELOW the two tests that claim the lake's global tip
-	// (TestNetworkThroughput_DedupsReingestedLedger at 200M,
-	// TestSDEXOrderBook_ConvergesAfterLakeHoleIsFilled at 217M) — and with a
-	// close_time below theirs, since NetworkThroughput anchors its day window
-	// to max(close_time) over the whole table. The assertions here need only
-	// a hole above `base`, never the global maximum.
+	// An isolated ledger range kept BELOW the two tests that claim the lake's global tip (200M and 217M) with an earlier
+	// close_time, since NetworkThroughput anchors its day window to max(close_time) over the whole table. Only a hole above
+	// `base` is needed, never the global maximum.
 	const base = uint32(160_500_000)
 
 	cap67TruncateWatermark(t)
@@ -1357,14 +1225,9 @@ func TestCap67Movements_ExplicitToIsClampedToTheContiguousTip(t *testing.T) {
 	}
 }
 
-// TestCap67Movements_RefusesToAdvanceOverUnderivedLedgers is the sibling shape
-// of the same defect: `-from` above watermark+1. The window itself is
-// hole-free, so the contiguity clamp has nothing to say — yet stamping the
-// watermark at that window's top CLAIMS the ledgers between the old watermark
-// and `-from` as derived when the run never read them.
-//
-// Proven red on the unfixed tree: the second run returns nil and the watermark
-// jumps to base+10, silently orphaning [base+4, base+5].
+// Sibling shape: `-from` above watermark+1. The window is hole-free so the contiguity clamp is silent, yet stamping the
+// watermark at its top CLAIMS the ledgers between the old watermark and `-from` as derived. Must be refused (red: second
+// run returns nil, watermark jumps to base+10, orphaning [base+4, base+5]).
 func TestCap67Movements_RefusesToAdvanceOverUnderivedLedgers(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -1441,12 +1304,9 @@ func TestCap67Movements_RefusesToAdvanceOverUnderivedLedgers(t *testing.T) {
 	}
 }
 
-// TestClickHouseFeeBumpRoundTrip drives a fee bump through the real Sink,
-// tier1_schema.sql's tx_hash_index MVs and the ExplorerReader: the inner hash
-// (what the submitter's SDK returned) must resolve to the outer row, the
-// outer layer must survive write→read, the per-op result XDR must be served
-// beside its outer code, and the windowed index backfill must re-index both
-// hashes.
+// A fee bump through the real Sink, tx_hash_index MVs and ExplorerReader: the inner hash (what the submitter's SDK
+// returned) must resolve to the outer row, the outer layer survives write->read, per-op result XDR is served beside its
+// outer code, and the windowed index backfill re-indexes both hashes.
 func TestClickHouseFeeBumpRoundTrip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -1548,10 +1408,8 @@ func TestClickHouseFeeBumpRoundTrip(t *testing.T) {
 	assertResolves("backfill", er2)
 }
 
-// TestEventCensusShortfalls_DroppedEventPartition is the proof on a real
-// ClickHouse: a DROP PARTITION on stellar.contract_events leaves stellar.ledgers
-// contiguous and hash-chained, so SubstrateProblem still reports the range
-// intact — the census is the only reader that sees the events are gone.
+// A DROP PARTITION on contract_events leaves stellar.ledgers contiguous and hash-chained, so SubstrateProblem still
+// reports the range intact; the census is the only reader that sees the events are gone.
 func TestEventCensusShortfalls_DroppedEventPartition(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -1637,11 +1495,8 @@ func TestEventCensusShortfalls_DroppedEventPartition(t *testing.T) {
 	}
 }
 
-// TestVerifyLake_RawCensusCatchesDroppedTablePartition proves verify-lake's
-// raw-table census on a real ClickHouse: a DROP PARTITION on a non-ledger raw
-// table leaves stellar.ledgers contiguous and hash-chained, so SubstrateProblem
-// (the contiguity + hash-chain population) still reports the range clean, and
-// only the census sees the rows are gone.
+// verify-lake's raw-table census: a DROP PARTITION on a non-ledger raw table leaves ledgers contiguous and hash-chained,
+// so SubstrateProblem reports the range clean and only the census sees the rows are gone.
 func TestVerifyLake_RawCensusCatchesDroppedTablePartition(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -1805,10 +1660,8 @@ func contiguityECRow(seq uint32, txHash string) chstore.LedgerEntryChangeRow {
 	}
 }
 
-// TestQueryLedgerRangeCoverage_SeesUnmergedDuplicates pins that Check 1's
-// headline reads count() alongside uniqExact: a re-ingested ledger left
-// un-merged is visible as DuplicateRows, where uniqExact alone reported the
-// range as "every ledger present exactly once".
+// Check 1's headline reads count() alongside uniqExact: a re-ingested un-merged ledger shows as DuplicateRows, where
+// uniqExact alone reported "every ledger present exactly once".
 func TestQueryLedgerRangeCoverage_SeesUnmergedDuplicates(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -1836,10 +1689,8 @@ func TestQueryLedgerRangeCoverage_SeesUnmergedDuplicates(t *testing.T) {
 	}
 }
 
-// TestQueryECWindowCoverage_SeedOnlyLedgerIsAGap pins that a tx-bearing
-// ledger whose only entry-change row is a state-snapshot seed counts as
-// uncovered: the seed proves the entry's state, not that the ledger's tx meta
-// was captured.
+// A tx-bearing ledger whose only entry-change row is a state-snapshot seed counts as uncovered: the seed proves the
+// entry's state, not that the ledger's tx meta was captured.
 func TestQueryECWindowCoverage_SeedOnlyLedgerIsAGap(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -1879,16 +1730,9 @@ func TestQueryECWindowCoverage_SeedOnlyLedgerIsAGap(t *testing.T) {
 	}
 }
 
-// TestVerifyContiguity_AutoECFloorGatesHoleBelowOldConstant is the
-// end-to-end proof. Ledgers [7,300,000, 7,300,009] are tx-bearing with
-// transaction-scoped entry-change rows on all but 7,300,005. That band sits
-// far below the old hardcoded -ec-floor (63,050,000), which routed the hole
-// to the informational arm and exited 0. With the floor derived from the
-// lake's own coverage edge the hole is a hard deficiency (exit 1).
-//
-// Ledgers [7,299,990, 7,299,999] precede the edge with only a snapshot seed
-// row (empty tx_hash) at 7,299,995: the edge must ignore it, so exactly one
-// deficiency is reported, not six.
+// Ledgers [7,300,000, 7,300,009] have entry-change rows on all but 7,300,005, far below the old hardcoded -ec-floor
+// (63,050,000), which routed the hole to the informational arm (exit 0). With the floor derived from the lake's coverage
+// edge it is a hard deficiency (exit 1).
 func TestVerifyContiguity_AutoECFloorGatesHoleBelowOldConstant(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -1934,28 +1778,9 @@ func TestVerifyContiguity_AutoECFloorGatesHoleBelowOldConstant(t *testing.T) {
 	}
 }
 
-// TestContiguousWatermark_HoleAtFrom is the HIGH silent-data-loss proof for the
-// CH-source projector's anti-skip guard (ADR-0034 #10). ContiguousWatermark is
-// the projector's safe upper read bound: it must return from-1 (stall) when the
-// lake has a hole AT the lower boundary `from`, so the projector never scans past
-// the missing ledger and upserts its cursor beyond it — which would permanently
-// drop that ledger's projected sole-writer sep41 mint/burn/transfer rows from the
-// served tier.
-//
-// The bug: the watermark's interior-gap scan (leadInFrame over DISTINCT
-// ledger_seq >= from) is blind to a hole exactly at `from`. When `from` is
-// absent, the smallest present ledger is from+1 and {from+1, from+2, …} is
-// internally contiguous, so the gap scan returns 0 ("no hole") and a naive
-// code returned chMax — advancing the projector RIGHT OVER the missing ledger.
-//
-// This is a real-ClickHouse test (not a query-shape assertion) because the thing
-// under test IS what the SQL actually produces for a missing `from`: the fix adds
-// a min(ledger_seq >= from) column, and the only way to prove the SQL yields
-// min_present == from+1 (not a synthetic firstGap) for a genuine boundary hole is
-// to seed one and read it back through the real engine.
-//
-// Proven red: with the fix reverted (min_present guard removed), the hole-at-from
-// query returns chMax (from+5), not from-1.
+// Anti-skip guard of the CH-source projector (ADR-0034 #10): ContiguousWatermark must return from-1 (stall) when the lake
+// has a hole AT `from`, else the projector's cursor passes the missing ledger and its sep41 rows are dropped permanently.
+// The interior-gap scan is blind to a boundary hole (from+1.. is internally contiguous), so the min(ledger_seq >= from)
 func TestContiguousWatermark_HoleAtFrom(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -2021,17 +1846,9 @@ func TestContiguousWatermark_HoleAtFrom(t *testing.T) {
 	}
 }
 
-// TestCap67Range_StallsAtHole is the money-display correctness proof for the
-// cap67 movements derive: its upper bound MUST clamp to the contiguous
-// watermark, not the raw lake max. The LiveSink drops whole ledgers under
-// pressure, so a near-tip hole can exist; a naive derive read to
-// MaxLedger and advanced its watermark PAST the hole with no trailing
-// re-derive — permanently dropping that ledger's classic/native account
-// movements. This proves Cap67Range now STALLS before an interior hole.
-//
-// Red-proof: revert the ContiguousWatermark call in Cap67Range back to
-// clickhouse.MaxLedger and this fails — `last` jumps to the global max
-// (>= from+10), i.e. the derive would step past the hole at from+6.
+// Money-display correctness for the cap67 derive: its upper bound MUST clamp to the contiguous watermark, not the raw lake
+// max. LiveSink drops whole ledgers under pressure, so a near-tip hole can exist; reading past it with no trailing re-
+// derive permanently drops that ledger's account movements. Red if Cap67Range uses MaxLedger:
 func TestCap67Range_StallsAtHole(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -2085,22 +1902,9 @@ func TestCap67Range_StallsAtHole(t *testing.T) {
 	}
 }
 
-// TestCap67Range_FirstRunClampsToTheLakesFirstLedger is the test nets'
-// empty-archive proof: a FIRST run (no watermark row) floored
-// at genesis against a lake that begins at ledger 2 — every net's lake,
-// ledger 1 is never exported — must derive from 2, not idle forever.
-//
-// Starting at start = floorLedger = 1 and asking ContiguousWatermark
-// for the tip from 1 fails: with min_present = 2 > from that is a boundary hole,
-// so it answers 0, the caller's `last < start` guard reads "nothing to do",
-// and the daemon re-runs that full-lake window-function scan every second
-// without writing a row or a journal line. This is a
-// real-ClickHouse test because the clamp's input IS what the lake reports
-// as its first ledger: seed [2, 6], skip 1, and read the range back through
-// the real watermark + min queries.
-//
-// Proven red: with resolveStart's lakeMin clamp removed, start = 1 and
-// last = 0.
+// Test-net empty-archive proof: a FIRST run floored at genesis against a lake starting at ledger 2 (ledger 1 is never
+// exported) must derive from 2, not idle. From start=1, ContiguousWatermark sees min_present=2 > from as a boundary hole
+// and answers 0, so the daemon re-runs the full-lake scan every second writing nothing.
 func TestCap67Range_FirstRunClampsToTheLakesFirstLedger(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -2122,10 +1926,8 @@ func TestCap67Range_FirstRunClampsToTheLakesFirstLedger(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = sink.Close(ctx) })
 
-	// The lake's own shape: ledgers 2..6 present, genesis (1) absent. The
-	// low range is deliberate — the clamp is against the GLOBAL
-	// min(ledger_seq), so these must be the lowest ledgers the suite seeds
-	// (every other ClickHouse test seeds >= 1,000).
+	// The lake's own shape: ledgers 2..6 present, genesis absent. Deliberately low: the clamp is against the GLOBAL
+	// min(ledger_seq), so these must be the lowest the suite seeds (every other ClickHouse test seeds >= 1,000).
 	for seq := uint32(2); seq <= 6; seq++ {
 		ext := chstore.LedgerExtract{Ledger: chstore.LedgerRow{
 			LedgerSeq: seq, CloseTime: time.Date(2027, 9, 1, 0, 0, 0, 0, time.UTC),
