@@ -5,7 +5,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -17,8 +19,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/rwa"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 	externalchainlink "github.com/Stellar-Index/StellarIndex/internal/sources/external/chainlink"
+	externaltiingo "github.com/Stellar-Index/StellarIndex/internal/sources/external/tiingo"
+	soroswap_router "github.com/Stellar-Index/StellarIndex/internal/sources/soroswap_router"
 )
 
 // Coverage for the indexer's run() wiring helpers. All
@@ -333,4 +338,98 @@ func mustCatalogue(t *testing.T) *currency.Catalogue {
 		t.Fatalf("currency.LoadEmbedded: %v", err)
 	}
 	return c
+}
+
+// TestNewECBPoller_UsesConfiguredInterval is the regression test for `[external.ecb] poll_interval` being validated and
+// then ignored, so the poller always ran at its 6h default.
+func TestNewECBPoller_UsesConfiguredInterval(t *testing.T) {
+	t.Parallel()
+
+	p := newECBPoller(config.ExternalVenueConfig{PollInterval: 30 * time.Minute})
+	if got, want := p.PollInterval(), 30*time.Minute; got != want {
+		t.Errorf("PollInterval() = %v, want %v (config override was not applied)", got, want)
+	}
+}
+
+func TestNewECBPoller_DefaultsWhenUnset(t *testing.T) {
+	t.Parallel()
+
+	p := newECBPoller(config.ExternalVenueConfig{})
+	if got, want := p.PollInterval(), 6*time.Hour; got != want {
+		t.Errorf("PollInterval() = %v, want connector default %v", got, want)
+	}
+}
+
+func TestNewTiingoPoller_TickersFromBindings(t *testing.T) {
+	t.Parallel()
+
+	p, err := newTiingoPoller(config.TiingoVenueConfig{APIKey: "k"})
+	if err != nil {
+		t.Fatalf("newTiingoPoller: %v", err)
+	}
+	if !slices.Equal(p.Tickers, rwa.FundNAVTickers()) {
+		t.Errorf("Tickers = %v, want the fund bindings' %v", p.Tickers, rwa.FundNAVTickers())
+	}
+	if got, want := p.PollInterval(), time.Hour; got != want {
+		t.Errorf("PollInterval() = %v, want connector default %v", got, want)
+	}
+
+	p, err = newTiingoPoller(config.TiingoVenueConfig{APIKey: "k", PollInterval: 2 * time.Hour})
+	if err != nil {
+		t.Fatalf("newTiingoPoller: %v", err)
+	}
+	if got, want := p.PollInterval(), 2*time.Hour; got != want {
+		t.Errorf("PollInterval() = %v, want override %v", got, want)
+	}
+}
+
+func TestNewTiingoPoller_RefusesMissingKey(t *testing.T) {
+	t.Parallel()
+
+	if _, err := newTiingoPoller(config.TiingoVenueConfig{Enabled: true}); !errors.Is(err, externaltiingo.ErrAPIKeyRequired) {
+		t.Errorf("err = %v, want ErrAPIKeyRequired", err)
+	}
+}
+
+// TestRouterEnabled_FoldsWhitespaceAndCase pins that routerEnabled folds enabled_sources with ToLower(TrimSpace) like
+// config validation and the dispatcher; an entry like " Soroswap-Router " must match, or the sweeper silently never
+// starts.
+func TestRouterEnabled_FoldsWhitespaceAndCase(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []string
+		want bool
+	}{
+		{"exact", []string{soroswap_router.SourceName}, true},
+		{"mixed case + padding", []string{"  Soroswap-Router  "}, true},
+		{"absent", []string{"comet"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := routerEnabled(tc.in); got != tc.want {
+				t.Errorf("routerEnabled(%v) = %v, want %v", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestAmmSignerEnabled_FoldsWhitespaceAndCase is the ammSignerEnabled analog: a fold mismatch against
+// timescale.AMMSignerSources silently disables signer attribution for a correctly configured source.
+func TestAmmSignerEnabled_FoldsWhitespaceAndCase(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []string
+		want bool
+	}{
+		{"exact", []string{"comet"}, true},
+		{"mixed case + padding", []string{"  Comet  "}, true},
+		{"absent", []string{"reflector-dex"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ammSignerEnabled(tc.in); got != tc.want {
+				t.Errorf("ammSignerEnabled(%v) = %v, want %v", tc.in, got, tc.want)
+			}
+		})
+	}
 }

@@ -5,10 +5,14 @@ package main
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // TestPrewarmCaches_FiresBothPassesBeforeTheFirstTick pins that both passes run immediately rather
@@ -74,5 +78,97 @@ func TestPrewarmCaches_FiresBothPassesBeforeTheFirstTick(t *testing.T) {
 	case <-done:
 	case <-time.After(20 * time.Second):
 		t.Fatal("prewarmCaches did not return within 20s of context cancellation")
+	}
+}
+
+// /v1/network/stats (CachedNetworkStatsReader) was never threaded into prewarmCaches/prewarmLight, so its slot stayed
+// cold. The first request after each restart paid the full ~485ms p95 aggregate inline.
+
+// recordingNetworkStatsReader records how many times it was called.
+type recordingNetworkStatsReader struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (r *recordingNetworkStatsReader) GetNetworkStats(_ context.Context) (timescale.NetworkStats, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls++
+	return timescale.NetworkStats{}, nil
+}
+
+func (r *recordingNetworkStatsReader) seen() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.calls
+}
+
+// Guard: prewarmLight, which runs on both the startup pass and the ticker, must warm the /v1/network/stats slot.
+// CachedNetworkStatsReader must be passed to it, or this reader is never called.
+func TestPrewarmLightWarmsNetworkStats(t *testing.T) {
+	rec := &recordingNetworkStatsReader{}
+	cached := v1.NewCachedNetworkStatsReader(rec, 30*time.Second)
+
+	markets, _ := newRecordingMarkets()
+	assets := v1.NewCachedAssetsReader(&stubAssetsReader{}, 0)
+	issuers := v1.NewCachedIssuersReader(&stubIssuersReader{}, 0)
+
+	// catalogueLen large enough that catalogueFillPrewarmOptions adds
+	// nothing here — this test is about the network-stats slot, not catalogue fill.
+	prewarmLight(context.Background(), discardLogger(), markets, assets, issuers, nil, nil, cached, noCatalogueFillTestLen)
+
+	if got := rec.seen(); got != 1 {
+		t.Fatalf("network stats prewarm calls = %d, want 1 — the /v1/network/stats "+
+			"SWR slot is never warmed and the first post-restart request pays the "+
+			"full upstream aggregate inline", got)
+	}
+}
+
+// TestPrewarmNetworkStatsNilReaderIsSafe — a deployment with no network
+// stats reader wired must not panic the detached prewarm goroutine.
+func TestPrewarmNetworkStatsNilReaderIsSafe(t *testing.T) {
+	prewarmNetworkStats(context.Background(), discardLogger(), nil)
+}
+
+// Drives the real auth middleware with the exact self-prewarm request (no credential, own User-Agent) and requires the
+// start gate to agree: never start where every warm-up 401s, always start where the request is served.
+func TestSelfPrewarmAdmitted_MatchesAuthMiddleware(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		mode         string
+		wantAdmitted bool
+	}{
+		{"", true},
+		{"none", true},
+		{"apikey_optional", true},
+		{"apikey", false},
+		{"sep10", false},
+		{"api-key", false}, // unknown mode: refuse rather than guess
+	}
+	for _, tc := range cases {
+		t.Run(tc.mode, func(t *testing.T) {
+			t.Parallel()
+			if got := selfPrewarmAdmitted(tc.mode); got != tc.wantAdmitted {
+				t.Fatalf("selfPrewarmAdmitted(%q) = %v, want %v", tc.mode, got, tc.wantAdmitted)
+			}
+			var h http.Handler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			})
+			if mw := buildAuthMiddleware(tc.mode, authValidatorOptions{}, discardLogger()); mw != nil {
+				h = mw(h)
+			}
+			req := httptest.NewRequest(http.MethodGet, "/v1/assets/native", nil)
+			req.Header.Set("User-Agent", "stellarindex-prewarm/1")
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, req)
+			if selfPrewarmAdmitted(tc.mode) && w.Code != http.StatusOK {
+				t.Errorf("mode %q: self-prewarm would start but its request gets %d, "+
+					"so every 60s pass is a no-op", tc.mode, w.Code)
+			}
+			if !tc.wantAdmitted && tc.mode != "api-key" && w.Code != http.StatusUnauthorized {
+				t.Errorf("mode %q: credential-less request got %d, want 401 — the "+
+					"premise for disabling the self-prewarm no longer holds", tc.mode, w.Code)
+			}
+		})
 	}
 }

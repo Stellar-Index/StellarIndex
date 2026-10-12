@@ -9,24 +9,23 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus/testutil"
-
-	"github.com/Stellar-Index/StellarIndex/cmd/stellarindex-api/internal/wiring"
-	"github.com/Stellar-Index/StellarIndex/internal/obs"
-
 	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/redis/go-redis/v9"
 	"github.com/stellar/go-stellar-sdk/keypair"
 
+	"github.com/Stellar-Index/StellarIndex/cmd/stellarindex-api/internal/wiring"
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 	"github.com/Stellar-Index/StellarIndex/internal/auth/sep10"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 	"github.com/Stellar-Index/StellarIndex/internal/usage"
 )
@@ -687,5 +686,180 @@ func TestRecoverBackgroundWorker_CountsThePanic(t *testing.T) {
 
 	if got := testutil.ToFloat64(obs.WorkerPanicsTotal.WithLabelValues(name)) - before; got != 1 {
 		t.Errorf("stellarindex_worker_panics_total{worker=%q} rose by %v, want 1", name, got)
+	}
+}
+
+// TestAssertRedisOrSingleInstance pins the fail-closed startup gate: a Redis-less deployment must not boot
+// unless the operator has explicitly asserted single-instance, because the
+// per-process auth fallbacks are unsafe across multiple instances.
+func TestAssertRedisOrSingleInstance(t *testing.T) {
+	cases := []struct {
+		name           string
+		redisEnabled   bool
+		singleInstance bool
+		wantErr        bool
+	}{
+		{"redis present, multi-instance assumed — OK (fleet-safe backends)", true, false, false},
+		{"redis present, single-instance asserted — OK", true, true, false},
+		{"redis absent, single-instance asserted — OK (per-process is correct)", false, true, false},
+		{"redis absent, NOT asserted — REFUSE (the unsafe case)", false, false, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := assertRedisOrSingleInstance(tc.redisEnabled, tc.singleInstance)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected refuse-to-start error, got nil")
+				}
+				// The message must name the escape hatches so an operator can act.
+				if !strings.Contains(err.Error(), "single_instance") || !strings.Contains(err.Error(), "Redis") {
+					t.Errorf("error must name Redis + single_instance remedies, got: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("expected OK, got error: %v", err)
+			}
+		})
+	}
+}
+
+// warnOpenCORS must treat AllowedOrigins as wildcard-open whenever "*" appears anywhere, matching middleware.CORS's set-
+// membership check. A single-entry check would skip the SECURITY warning for ["*", "https://evil.com"], though CORS()
+// echoes "*" to everyone.
+func TestWarnOpenCORS_WildcardWithExtraEntries(t *testing.T) {
+	warnLogged := func(allowedOrigins []string, authMode string) bool {
+		var buf bytes.Buffer
+		lg := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+		warnOpenCORS(lg, allowedOrigins, authMode)
+		return strings.Contains(buf.String(), "SECURITY")
+	}
+
+	// Exact single-wildcard case: must warn.
+	if !warnLogged([]string{"*"}, "apikey") {
+		t.Error(`warnOpenCORS([]string{"*"}, "apikey"): expected SECURITY warning`)
+	}
+
+	// Wildcard alongside another explicit entry: CORS() still allows
+	// every origin (wildcard := allowed["*"]) so this must ALSO warn.
+	if !warnLogged([]string{"*", "https://evil.com"}, "apikey") {
+		t.Error(`warnOpenCORS([]string{"*", "https://evil.com"}, "apikey"): expected SECURITY warning, wildcard is still in effect`)
+	}
+
+	// No wildcard present at all: must stay quiet.
+	if warnLogged([]string{"https://stellarindex.io"}, "apikey") {
+		t.Error(`warnOpenCORS without "*": must not warn`)
+	}
+}
+
+// The one secret keys both the login-code HMAC and the passkey ceremony
+// cookie, so the unset-env warning must name both casualties: an operator
+// reading only "codes" would not connect it to looping passkey sign-ins.
+func TestBuildDashboardGenerator_UnsetSecretWarningNamesPasskeyCeremonies(t *testing.T) {
+	const env = "STELLARINDEX_TEST_DASHBOARD_CODE_SECRET_UNSET"
+	t.Setenv(env, "")
+	var buf bytes.Buffer
+	g := buildDashboardGenerator(config.DashboardConfig{CodeSecretEnv: env}, slog.New(slog.NewTextHandler(&buf, nil)))
+	if len(g.Secret) != 0 {
+		t.Fatal("no env set, yet the generator carries a secret")
+	}
+	out := buf.String()
+	for _, want := range []string{"sign-in codes", "passkey ceremonies", "more than one API instance"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("unset-secret warning does not mention %q; got %q", want, out)
+		}
+	}
+}
+
+// /v1/status deployment tier and background-service list must come from config, not be hardcoded: a lean test net would
+// otherwise show a PRODUCTION tag and report an aggregator it doesn't run, holding overall at degraded forever.
+func TestStatusIdentity_PlumbedFromConfig(t *testing.T) {
+	tests := []struct {
+		name           string
+		mutate         func(*config.Config)
+		wantRegion     string
+		wantDeployment string
+		wantServices   []string
+	}{
+		{
+			// Pubnet is unchanged — the defaults ARE r1's shape.
+			name:           "pubnet defaults",
+			mutate:         func(*config.Config) {},
+			wantRegion:     "r1",
+			wantDeployment: "production",
+			wantServices:   []string{"indexer", "aggregator"},
+		},
+		{
+			// The lean test net: no aggregator, and not production.
+			name: "lean testnet",
+			mutate: func(c *config.Config) {
+				c.Region.ID = "testnet"
+				c.Region.Deployment = "testnet"
+				c.API.StatusServices = []string{"indexer"}
+			},
+			wantRegion:     "testnet",
+			wantDeployment: "testnet",
+			wantServices:   []string{"indexer"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := config.Default()
+			tc.mutate(&cfg)
+
+			region, deployment, services := statusIdentity(cfg)
+
+			if region != tc.wantRegion {
+				t.Errorf("region = %q, want %q", region, tc.wantRegion)
+			}
+			if deployment != tc.wantDeployment {
+				t.Errorf("deployment = %q, want %q — the tier is an operator "+
+					"fact, not a literal", deployment, tc.wantDeployment)
+			}
+			if !reflect.DeepEqual(services, tc.wantServices) {
+				t.Errorf("services = %v, want %v", services, tc.wantServices)
+			}
+		})
+	}
+}
+
+// TestClickhouseReadyChecks_ConfiguredButUnreachableStillPublishes: the "ClickHouse was
+// already down when the API started" state must still publish the
+// `stellarindex_dependency_up{dependency="clickhouse"}` series; registering the checker only
+// in the success branch of the boot dial would leave it absent. The alert is
+// `stellarindex_dependency_up == 0`, deliberately not absent(), so an absent series means
+// every lake-backed endpoint 503s and nothing pages.
+func TestClickhouseReadyChecks_ConfiguredButUnreachableStillPublishes(t *testing.T) {
+	dialErr := errors.New("dial tcp 127.0.0.1:9000: connect: connection refused")
+	checks := wiring.ClickhouseReadyChecks("localhost:9000", nil, dialErr, clickhouseBootDialBudget)
+	if len(checks) != 1 {
+		t.Fatalf("a configured but unreachable ClickHouse registered %d readiness check(s), want 1 — with none, the gauge is never published and the == 0 alert has nothing to match", len(checks))
+	}
+	c := checks[0]
+	if got := c.Name(); got != "clickhouse" {
+		t.Errorf("checker name = %q, want clickhouse (the dependency label the alert selects on)", got)
+	}
+	if c.Critical() {
+		t.Error("the ClickHouse checker is critical — a lake outage would drain the whole backend, where the rest of the API keeps serving from Postgres")
+	}
+	err := c.Ping(context.Background())
+	if err == nil {
+		t.Fatal("Ping on a ClickHouse that never dialled returned success — the gauge would publish 1 for a dependency that is gone")
+	}
+	if !errors.Is(err, dialErr) {
+		t.Errorf("Ping error does not wrap the boot dial failure: %v", err)
+	}
+	if !strings.Contains(err.Error(), "restart") {
+		t.Errorf("Ping error does not say a restart is required, which is what recovers the ten un-re-dialled lake seams: %v", err)
+	}
+}
+
+// A deployment with no lake configured has no such dependency, and must
+// publish nothing rather than a 0 — a 0 there pages for a component the
+// host does not run.
+func TestClickhouseReadyChecks_UnconfiguredPublishesNothing(t *testing.T) {
+	if got := wiring.ClickhouseReadyChecks("", nil, nil, clickhouseBootDialBudget); len(got) != 0 {
+		t.Fatalf("an unconfigured ClickHouse registered %d readiness check(s), want 0", len(got))
 	}
 }

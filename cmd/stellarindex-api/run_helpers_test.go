@@ -14,10 +14,12 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/Stellar-Index/StellarIndex/cmd/stellarindex-api/internal/wiring"
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/dashboardauth"
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/dashboardkeys"
@@ -25,7 +27,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/dashboardwebhooks"
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/platform"
 	"github.com/Stellar-Index/StellarIndex/internal/platform/postgresstore"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // Coverage for the run() wiring helpers, which run() alone calls. The assertions are structural:
@@ -416,5 +420,145 @@ func TestWireDashboardAuthThrottles_RedisPresentWiresAllThree(t *testing.T) {
 	// emitting them with Redis wired would train operators to ignore them.
 	if records.hasLevelWithText("WARN", "in-process") {
 		t.Errorf("wired against Redis but still warned about the in-process fallback: %v", records.lines())
+	}
+}
+
+func TestRunRefreshLoop_BoundsEachAttemptAndStopsOnCancel(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	const timeout = time.Minute
+	calls := 0
+	refresh := func(c context.Context) error {
+		calls++
+		dl, ok := c.Deadline()
+		if !ok || time.Until(dl) > timeout {
+			t.Errorf("refresh %d: ctx deadline %v (set=%v), want within %v", calls, dl, ok, timeout)
+		}
+		if calls == 3 {
+			cancel()
+			// Let the next tick fire too, so the loop sees ctx.Done and tick.C
+			// ready at once; select picks between them at random.
+			time.Sleep(5 * time.Millisecond)
+		}
+		return errors.New("boom")
+	}
+
+	done := make(chan struct{})
+	go func() {
+		runRefreshLoop(ctx, refresh, time.Millisecond, timeout, logger, "test periodic refresh")
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("runRefreshLoop did not return after ctx was cancelled")
+	}
+	if calls != 3 {
+		t.Fatalf("refresh called %d times, want 3", calls)
+	}
+	if got := strings.Count(buf.String(), "test periodic refresh"); got != 3 {
+		t.Fatalf("logged %d failures, want 3:\n%s", got, buf.String())
+	}
+}
+
+func TestRefreshWithTimeout_SuccessLogsNothing(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	refreshWithTimeout(context.Background(), func(context.Context) error { return nil }, time.Second, logger, "initial refresh")
+	if buf.Len() != 0 {
+		t.Fatalf("successful refresh logged: %s", buf.String())
+	}
+}
+
+const offenderContract = "C_NONSTANDARD_DECIMALS_FIXTURE"
+
+type toggleDecimalsReader struct{ err error }
+
+func (r *toggleDecimalsReader) LoadNonstandardDecimalsAssets(context.Context) ([]timescale.NonstandardDecimalsAsset, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	return []timescale.NonstandardDecimalsAsset{{Asset: offenderContract, Decimals: 6}}, nil
+}
+
+// Q198: the first load must complete before the prime returns, so nothing
+// constructed after it can observe a cold cache.
+func TestPrimeNonstandardDecimalsCache_LoadsBeforeReturning(t *testing.T) {
+	cache := v1.NewNonstandardDecimalsCache(&toggleDecimalsReader{}, nil)
+	check := wiring.PrimeNonstandardDecimalsCache(context.Background(), cache, discardLogger())
+
+	if d, ok := cache.Lookup(offenderContract); !ok || d != 6 {
+		t.Fatalf("Lookup after prime = (%d, %v), want (6, true)", d, ok)
+	}
+	if err := check.Ping(context.Background()); err != nil {
+		t.Fatalf("Ping after successful prime: %v", err)
+	}
+	if !check.Critical() {
+		t.Fatal("nonstandard-decimals readiness must be critical: a cold cache serves wrong prices")
+	}
+}
+
+// Q198: a failed first load keeps the instance out of rotation until a load
+// succeeds; a later failure keeps the last-good snapshot and stays ready.
+func TestNonstandardDecimalsChecker_NotReadyUntilFirstLoad(t *testing.T) {
+	reader := &toggleDecimalsReader{err: errors.New("pg down")}
+	cache := v1.NewNonstandardDecimalsCache(reader, nil)
+	check := wiring.PrimeNonstandardDecimalsCache(context.Background(), cache, discardLogger())
+
+	if err := check.Ping(context.Background()); err == nil {
+		t.Fatal("Ping on a never-loaded cache = nil, want not-ready")
+	}
+
+	reader.err = nil
+	if err := cache.Refresh(context.Background()); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	if err := check.Ping(context.Background()); err != nil {
+		t.Fatalf("Ping after first successful load: %v", err)
+	}
+
+	reader.err = errors.New("pg blip")
+	_ = cache.Refresh(context.Background())
+	if err := check.Ping(context.Background()); err != nil {
+		t.Fatalf("Ping after a later failed refresh: %v (last-good must stay ready)", err)
+	}
+}
+
+// TestSessionPeekerAdapter_ServesEnforcedDefaultKeyLimits pins, on the production adapter behind /v1/account/me: a partner comped to
+// 5,000/min must read 5,000 (what auth enforces on its default-minted
+// keys), and an un-comped partner 1,000 — never the 100,000 tier ceiling.
+func TestSessionPeekerAdapter_ServesEnforcedDefaultKeyLimits(t *testing.T) {
+	cases := []struct {
+		name      string
+		acct      platform.Account
+		wantRate  int
+		wantQuota int64
+	}{
+		{
+			"partner comped to 5000/min",
+			platform.Account{Tier: platform.TierPartner, RateLimitPerMinOverride: 5000, MonthlyRequestQuotaOverride: 200_000},
+			5000, 200_000,
+		},
+		{
+			"partner without overrides",
+			platform.Account{Tier: platform.TierPartner},
+			1000, platform.TierPartner.MaxMonthlyQuota(),
+		},
+	}
+	for _, tc := range cases {
+		ctx := dashboardauth.WithSession(context.Background(), dashboardauth.SessionContext{Account: tc.acct})
+		info, ok := sessionPeekerAdapter{}.SessionFromContext(ctx)
+		if !ok {
+			t.Fatalf("%s: adapter found no session", tc.name)
+		}
+		if info.AccountRateLimitPerMin != tc.wantRate {
+			t.Errorf("%s: AccountRateLimitPerMin = %d, want %d", tc.name, info.AccountRateLimitPerMin, tc.wantRate)
+		}
+		if info.AccountMonthlyRequestQuota != tc.wantQuota {
+			t.Errorf("%s: AccountMonthlyRequestQuota = %d, want %d", tc.name, info.AccountMonthlyRequestQuota, tc.wantQuota)
+		}
 	}
 }
