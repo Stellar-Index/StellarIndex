@@ -10,15 +10,19 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"gopkg.in/yaml.v3"
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/dashboardauth"
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
@@ -784,5 +788,281 @@ func TestHandleDelete_AbsentID404(t *testing.T) {
 	h.HandleDelete(w, req)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404; body=%s", w.Code, w.Body.String())
+	}
+}
+
+// TestSpecEventTypeEnumsMatchPlatform keeps every OpenAPI enum spanning more than one webhook
+// event family (e.g. incident.* and price.*) equal to platform.WebhookEventTypes(). The spec
+// feeds the explorer's generated types and customers, so a type missing there is as
+// unsubscribable as one missing from validateEvents. Single-family enums (a payload's own
+// `event` field) are subsets by design and are not checked.
+func TestSpecEventTypeEnumsMatchPlatform(t *testing.T) {
+	spec, err := os.ReadFile("../../../../openapi/stellar-index.v1.yaml")
+	if err != nil {
+		t.Fatalf("read spec: %v", err)
+	}
+	want := make([]string, 0, len(platform.WebhookEventTypes()))
+	for _, e := range platform.WebhookEventTypes() {
+		want = append(want, string(e))
+	}
+	slices.Sort(want)
+
+	checked := 0
+	for _, enum := range specEnums(strings.Split(string(spec), "\n")) {
+		if !spansEventFamilies(enum.values) {
+			continue
+		}
+		checked++
+		got := slices.Clone(enum.values)
+		slices.Sort(got)
+		if !slices.Equal(got, want) {
+			t.Errorf("openapi line %d: event-type enum %v, want %v", enum.line, got, want)
+		}
+	}
+	if checked == 0 {
+		t.Fatal("found no event-type enum in the spec — the parser is not looking at the right shape")
+	}
+}
+
+type specEnum struct {
+	line   int
+	values []string
+}
+
+// specEnums extracts every `enum:` list, inline (`enum: [a, b]`) or block
+// (`enum:` followed by `- a` lines).
+func specEnums(lines []string) []specEnum {
+	var out []specEnum
+	for i, ln := range lines {
+		idx := strings.Index(ln, "enum:")
+		if idx < 0 {
+			continue
+		}
+		rest := strings.TrimSpace(ln[idx+len("enum:"):])
+		if open := strings.Index(rest, "["); open >= 0 {
+			if end := strings.Index(rest, "]"); end > open {
+				var vals []string
+				for _, v := range strings.Split(rest[open+1:end], ",") {
+					vals = append(vals, strings.Trim(strings.TrimSpace(v), `"'`))
+				}
+				out = append(out, specEnum{line: i + 1, values: vals})
+			}
+			continue
+		}
+		var vals []string
+		for _, next := range lines[i+1:] {
+			item := strings.TrimSpace(next)
+			if !strings.HasPrefix(item, "- ") {
+				break
+			}
+			vals = append(vals, strings.Trim(strings.TrimSpace(item[2:]), `"'`))
+		}
+		out = append(out, specEnum{line: i + 1, values: vals})
+	}
+	return out
+}
+
+// spansEventFamilies reports whether values are webhook event types from
+// at least two families (the part before the dot).
+func spansEventFamilies(values []string) bool {
+	families := map[string]bool{}
+	for _, v := range values {
+		if !platform.IsWebhookEventType(v) {
+			continue
+		}
+		family, _, _ := strings.Cut(v, ".")
+		families[family] = true
+	}
+	return len(families) > 1
+}
+
+func rotateViaMount(t *testing.T, mux *http.ServeMux, sc dashboardauth.SessionContext, id uuid.UUID, idemKey string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := sessionReq(t, http.MethodPost, "/v1/dashboard/webhooks/"+id.String()+"/rotate-secret", nil, sc)
+	req.Host = "api.stellarindex.io"
+	req.Header.Set("X-Forwarded-Proto", "https")
+	req.Header.Set("Origin", "https://api.stellarindex.io")
+	if idemKey != "" {
+		req.Header.Set("Idempotency-Key", idemKey)
+	}
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	return w
+}
+
+// TestMount_RotateSecret_KeepsWebhookAndQueue: rotation replaces the key
+// on the SAME webhook, keeps the old key for the overlap window, and
+// leaves the queued deliveries in place — the delete + recreate it
+// replaces lost all three.
+func TestMount_RotateSecret_KeepsWebhookAndQueue(t *testing.T) {
+	h, store, sc := newTestRig(t)
+	mux := http.NewServeMux()
+	h.Mount(mux, middleware.NewPublicRoutes())
+
+	id := uuid.New()
+	oldKey := []byte("wsec_old")
+	store.webhooks[id] = platform.CustomerWebhook{
+		ID: id, AccountID: sc.Account.ID, SigningKey: oldKey,
+		URL: "https://ok.example", Events: []string{"incident.sev1"}, Enabled: true,
+	}
+	store.deliveries[id] = []platform.WebhookDelivery{{ID: uuid.New(), WebhookID: id, EventType: "incident.sev1"}}
+
+	w := rotateViaMount(t, mux, sc, id, "rotate-1")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var resp rotateSecretResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.WebhookID != id.String() {
+		t.Errorf("webhook_id = %q, want %s", resp.WebhookID, id)
+	}
+	wantExpiry := h.cfg.Now().Add(previousSecretOverlap)
+	if !time.Time(resp.PreviousSecretExpiresAt).Equal(wantExpiry) {
+		t.Errorf("previous_secret_expires_at = %v, want %v", time.Time(resp.PreviousSecretExpiresAt), wantExpiry)
+	}
+
+	got := store.webhooks[id]
+	if string(got.SigningKey) != resp.Secret || resp.Secret == string(oldKey) || len(resp.Secret) < 10 {
+		t.Errorf("stored key %q, returned %q: want the fresh returned key stored", got.SigningKey, resp.Secret)
+	}
+	if string(got.PreviousSigningKey) != string(oldKey) || !got.PreviousSecretExpiresAt.Equal(wantExpiry) {
+		t.Errorf("previous = (%q, %v), want the old key until %v", got.PreviousSigningKey, got.PreviousSecretExpiresAt, wantExpiry)
+	}
+	if len(store.deliveries[id]) != 1 {
+		t.Errorf("queued deliveries = %d after rotate, want the 1 queued before it", len(store.deliveries[id]))
+	}
+
+	// A retried rotate must not rotate again: that would push the key the
+	// receiver still holds out of the overlap.
+	replay := rotateViaMount(t, mux, sc, id, "rotate-1")
+	var again rotateSecretResponse
+	if err := json.Unmarshal(replay.Body.Bytes(), &again); err != nil {
+		t.Fatalf("decode replay: %v", err)
+	}
+	if again.Secret != resp.Secret || string(store.webhooks[id].PreviousSigningKey) != string(oldKey) {
+		t.Error("idempotent replay rotated the key a second time")
+	}
+}
+
+func TestHandleRotateSecret_CrossAccountAndRole(t *testing.T) {
+	h, store, sc := newTestRig(t)
+	stranger := uuid.New()
+	strangerKey := []byte("wsec_stranger")
+	store.webhooks[stranger] = platform.CustomerWebhook{
+		ID: stranger, AccountID: uuid.New(), SigningKey: strangerKey,
+		URL: "https://y.example", Events: []string{"incident.sev1"}, Enabled: true,
+	}
+	req := sessionReq(t, http.MethodPost, "/v1/dashboard/webhooks/"+stranger.String()+"/rotate-secret", nil, sc)
+	req.SetPathValue("id", stranger.String())
+	w := httptest.NewRecorder()
+	h.HandleRotateSecret(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("cross-account rotate: status = %d, want 404", w.Code)
+	}
+	if string(store.webhooks[stranger].SigningKey) != string(strangerKey) {
+		t.Error("cross-account rotate changed the other account's key")
+	}
+
+	viewer := sc
+	viewer.User.Role = platform.RoleViewer
+	req = sessionReq(t, http.MethodPost, "/v1/dashboard/webhooks/"+stranger.String()+"/rotate-secret", nil, viewer)
+	req.SetPathValue("id", stranger.String())
+	w = httptest.NewRecorder()
+	h.HandleRotateSecret(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("viewer rotate: status = %d, want 403", w.Code)
+	}
+}
+
+// TestMount_CreateIdempotencyKey_ReplaysInsteadOfRegistering: a client retrying POST
+// /v1/dashboard/webhooks with the same Idempotency-Key after a timeout gets the ORIGINAL webhook
+// and signing secret replayed, not a second webhook with a secret it never saw. Routed through
+// h.Mount so the wired middleware is exercised.
+func TestMount_CreateIdempotencyKey_ReplaysInsteadOfRegistering(t *testing.T) {
+	h, store, sc := newTestRig(t)
+	mux := http.NewServeMux()
+	h.Mount(mux, middleware.NewPublicRoutes())
+
+	body := createRequest{
+		Name:   "ops-slack",
+		URL:    "https://hooks.slack.example/services/T/B/X",
+		Events: []string{string(platform.WebhookEventIncidentSEV1)},
+	}
+	send := func() createResponse {
+		t.Helper()
+		req := sessionReq(t, http.MethodPost, "/v1/dashboard/webhooks", body, sc)
+		req.Host = "api.stellarindex.io"
+		req.Header.Set("X-Forwarded-Proto", "https")
+		req.Header.Set("Origin", "https://api.stellarindex.io")
+		req.Header.Set("Idempotency-Key", "retry-wh-456")
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+		if w.Code != http.StatusCreated {
+			t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+		}
+		var resp createResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		return resp
+	}
+
+	first, second := send(), send()
+	if second.Webhook.ID != first.Webhook.ID {
+		t.Errorf("replay registered a DIFFERENT webhook: first id = %s, second id = %s",
+			first.Webhook.ID, second.Webhook.ID)
+	}
+	if second.Secret != first.Secret {
+		t.Error("replay returned a different signing secret than the original create")
+	}
+
+	store.mu.Lock()
+	registered := len(store.webhooks)
+	store.mu.Unlock()
+	if registered != 1 {
+		t.Errorf("store registered %d webhooks for two identical Idempotency-Key requests, want 1", registered)
+	}
+}
+
+// TestSpecDeclaresParseAndAuthoriseStatuses keeps the published contract
+// of every /dashboard/webhooks/{id}* operation in step with
+// parseAndAuthorise, which answers 400 for a malformed id and 404 for an
+// absent or cross-account one. DELETE once promised "204 on absent" and
+// declared neither, so a generated client read a retried delete's 404 as
+// an undeclared error.
+func TestSpecDeclaresParseAndAuthoriseStatuses(t *testing.T) {
+	raw, err := os.ReadFile("../../../../openapi/stellar-index.v1.yaml")
+	if err != nil {
+		t.Fatalf("read spec: %v", err)
+	}
+	var spec struct {
+		Paths map[string]map[string]struct {
+			Responses map[string]any `yaml:"responses"`
+		} `yaml:"paths"`
+	}
+	if err := yaml.Unmarshal(raw, &spec); err != nil {
+		t.Fatalf("parse spec: %v", err)
+	}
+	checked := 0
+	for path, ops := range spec.Paths {
+		if !strings.HasPrefix(path, "/dashboard/webhooks/{id}") {
+			continue
+		}
+		for method, op := range ops {
+			if method == "parameters" {
+				continue
+			}
+			checked++
+			for _, status := range []string{"400", "404"} {
+				if _, ok := op.Responses[status]; !ok {
+					t.Errorf("%s %s does not declare %s, which parseAndAuthorise returns", strings.ToUpper(method), path, status)
+				}
+			}
+		}
+	}
+	if checked < 3 {
+		t.Fatalf("checked %d /dashboard/webhooks/{id} operations, want >= 3 (PATCH, DELETE, deliveries)", checked)
 	}
 }
