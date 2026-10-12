@@ -3,6 +3,7 @@ package v1_test
 import (
 	"context"
 	"encoding/base64"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,15 +14,21 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 	"gopkg.in/yaml.v3"
 
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
 )
 
 // stubHistoryReader implements v1.HistoryReader with a static slice.
@@ -1567,5 +1574,185 @@ func TestHistory_NonstandardDecimals_Normalizes(t *testing.T) {
 	body, _ := readAll(resp)
 	if !strings.Contains(body, `"price":"2.5000000000"`) {
 		t.Errorf("body missing normalized price 2.5000000000: %s", body)
+	}
+}
+
+// A point that includes a non-VWAP venue names it on both price-series
+// surfaces; an ordinary VWAP point carries no `sources` at all.
+func TestHistoryPoints_NameDerivedSourcePerPoint(t *testing.T) {
+	t0 := time.Unix(1_770_000_000, 0).UTC()
+	reader := &stubHistoryReader{
+		points: []v1.HistoryPoint{
+			{Bucket: t0, VWAP: "0.0019", Sources: []string{"poloniex_via_btc"}},
+			{Bucket: t0.Add(24 * time.Hour), VWAP: "0.124", Sources: []string{"binance", "kraken"}},
+		},
+	}
+	ts := httpTestServer(t, v1.New(v1.Options{History: reader}))
+
+	for _, path := range []string{
+		"/v1/history/since-inception?asset=native&quote=fiat:USD",
+		"/v1/chart?asset=native&quote=fiat:USD",
+	} {
+		resp := mustGet(t, ts.URL+path)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s: status = %d", path, resp.StatusCode)
+		}
+		var env struct {
+			Data struct {
+				Points []v1.HistoryPointWire `json:"points"`
+			} `json:"data"`
+		}
+		mustDecode(t, resp, &env)
+		pts := env.Data.Points
+		if len(pts) != 2 {
+			t.Fatalf("%s: got %d points, want 2", path, len(pts))
+		}
+		if len(pts[0].Sources) != 1 || pts[0].Sources[0] != "poloniex_via_btc" {
+			t.Errorf("%s: derived point sources = %v, want [poloniex_via_btc]", path, pts[0].Sources)
+		}
+		if pts[1].Sources != nil {
+			t.Errorf("%s: VWAP point sources = %v, want none", path, pts[1].Sources)
+		}
+	}
+}
+
+// grainCountingHistoryReader counts the 1m reads that reach the store,
+// so a test can assert a denial stopped the read.
+type grainCountingHistoryReader struct {
+	stubHistoryReader
+	oneMinuteReads atomic.Int64
+}
+
+func (r *grainCountingHistoryReader) HistoryPoints(ctx context.Context, pair canonical.Pair, granularity string, limit int) ([]v1.HistoryPoint, error) {
+	if granularity == "1m" {
+		r.oneMinuteReads.Add(1)
+	}
+	return r.stubHistoryReader.HistoryPoints(ctx, pair, granularity, limit)
+}
+
+func (r *grainCountingHistoryReader) HistoryPointsInRange(ctx context.Context, pair canonical.Pair, granularity string, from, to time.Time, limit int) ([]v1.HistoryPoint, error) {
+	if granularity == "1m" {
+		r.oneMinuteReads.Add(1)
+	}
+	return r.stubHistoryReader.HistoryPointsInRange(ctx, pair, granularity, from, to, limit)
+}
+
+// sinceInceptionProbe is rejected (missing asset) before any read and
+// answered no-store, so it reports the remainder the request above left.
+const sinceInceptionProbe = "/v1/history/since-inception"
+
+func newSinceInceptionLimitedServer(t *testing.T, anonLimit int) (*testServerImpl, *grainCountingHistoryReader) {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	reader := &grainCountingHistoryReader{}
+	srv := v1.New(v1.Options{
+		History: reader,
+		RateLimit: middleware.RateLimitBySubject(
+			ratelimit.New(rdb, anonLimit, time.Minute, pinnedWindow), nil, middleware.SkipHealthAndMetrics, nil),
+	})
+	return startHTTPTest(t, srv.Handler()), reader
+}
+
+// sourceHistoryReader adds the single-source read to the stub, filtering the
+// fixture the way the SQL does.
+type sourceHistoryReader struct {
+	*stubHistoryReader
+	gotSource string
+}
+
+func (r *sourceHistoryReader) TradesInRangeAfterFromSource(
+	ctx context.Context, pair canonical.Pair, source string,
+	from, to, afterTs time.Time, afterLedger uint32,
+	afterTxHash, afterSource string, afterOpIndex uint32, limit int,
+) ([]canonical.Trade, error) {
+	r.gotSource = source
+	all, err := r.TradesInRangeAfter(ctx, pair, from, to, afterTs, afterLedger,
+		afterTxHash, afterSource, afterOpIndex, limit)
+	var out []canonical.Trade
+	for _, t := range all {
+		if t.Source == source {
+			out = append(out, t)
+		}
+	}
+	return out, err
+}
+
+func historySourceFixture() *sourceHistoryReader {
+	a, b := mkHistTrade(10), mkHistTrade(20)
+	b.Source = "sdex"
+	b.Ledger = 2
+	return &sourceHistoryReader{stubHistoryReader: &stubHistoryReader{trades: []canonical.Trade{a, b}}}
+}
+
+func historyRowSources(t *testing.T, resp *http.Response) []string {
+	t.Helper()
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	var page struct {
+		Data []struct {
+			Source string `json:"source"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &page); err != nil {
+		t.Fatalf("decode: %v: %s", err, body)
+	}
+	var out []string
+	for _, r := range page.Data {
+		out = append(out, r.Source)
+	}
+	return out
+}
+
+func TestHistoryCSV(t *testing.T) {
+	huge := new(big.Int).Lsh(big.NewInt(1), 100) // > 2^53 and > 2^64
+	big1 := mkHistTrade(0)
+	big1.BaseAmount = canonical.NewAmount(huge)
+	big1.QuoteAmount = canonical.NewAmount(new(big.Int).Lsh(huge, 1))
+	trades := []canonical.Trade{big1, mkHistTrade(101)}
+	srv := v1.New(v1.Options{History: &stubHistoryReader{trades: trades}})
+	ts := httpTestServer(t, srv)
+
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/v1/history?base=native&quote=fiat:USD&limit=2", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Accept", "text/csv")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+
+	if resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Type") != "text/csv; charset=utf-8" {
+		t.Fatalf("code=%d content-type=%q, want 200 text/csv", resp.StatusCode, resp.Header.Get("Content-Type"))
+	}
+	if resp.Header.Get("Vary") == "" || resp.Header.Get("Cache-Control") != "private, no-store" {
+		t.Errorf("Vary=%q Cache-Control=%q, want Accept and private, no-store", resp.Header.Get("Vary"), resp.Header.Get("Cache-Control"))
+	}
+	if link := resp.Header.Get("Link"); link == "" {
+		t.Error("full page sent no Link rel=next")
+	}
+	records, err := csv.NewReader(resp.Body).ReadAll()
+	if err != nil {
+		t.Fatalf("body is not CSV: %v", err)
+	}
+	wantHeader := []string{
+		"source", "ledger", "tx_hash", "op_index", "ts", "base_asset", "quote_asset",
+		"base_amount", "quote_amount", "price", "base_decimals", "quote_decimals", "routed_via",
+	}
+	if len(records) != 3 || !reflect.DeepEqual(records[0], wantHeader) {
+		t.Fatalf("records = %q, want header %q + 2 rows", records, wantHeader)
+	}
+	row := map[string]string{}
+	for i, c := range records[0] {
+		row[c] = records[1][i]
+	}
+	if row["base_amount"] != "1267650600228229401496703205376" || row["quote_amount"] != "2535301200456458802993406410752" {
+		t.Errorf("amounts = %q / %q, want the exact 2^100 / 2^101 integer strings", row["base_amount"], row["quote_amount"])
+	}
+	if row["price"] != "2.0000000000" || row["source"] != "soroswap" || row["base_asset"] != "native" {
+		t.Errorf("row = %q, want price 2.0000000000, source soroswap, base native", row)
 	}
 }
