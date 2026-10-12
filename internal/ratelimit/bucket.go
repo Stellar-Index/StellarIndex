@@ -12,27 +12,13 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// DefaultDwellTime is how long Take may fail open on Redis errors before flipping to fail-CLOSED
-// via [ErrThrottleUnavailable]. It rides out a blip but stops a sustained outage becoming an
-// unbounded-volume bypass; it matches [auth.DefaultSignupThrottleDwellTime].
+// DefaultDwellTime is how long Take may fail open on Redis errors before flipping to fail-CLOSED via [ErrThrottleUnavailable], so a blip is ridden out but a sustained outage is not an unbounded-volume bypass; matches [auth.DefaultSignupThrottleDwellTime].
 const DefaultDwellTime = 30 * time.Second
 
-// ErrThrottleUnavailable signals the limiter has failed open on Redis errors for longer than the
-// dwell-time and the caller should fail CLOSED (HTTP 503 + Retry-After). [Bucket.Take] and
-// [Bucket.Charge] return it in place of the wrapped Redis error; errors within the window keep
-// the wrapped error so handlers retain their fail-open branch for blips.
+// ErrThrottleUnavailable signals Redis has failed longer than the dwell-time and the caller should fail CLOSED (503 + Retry-After); [Bucket.Take] and [Bucket.Charge] return it in place of the wrapped error, which within the window keeps the fail-open branch.
 var ErrThrottleUnavailable = errors.New("ratelimit: throttle layer unavailable (sustained backend errors)")
 
-// Bucket is a per-(client × window) counter.
-//
-// Safe for concurrent use. Construct one instance at startup and share it across handlers.
-//
-// # Dwell-time fail-open inversion
-//
-// Take returns a wrapped Redis error while the dwell-time clock is inside its window (callers fall
-// open), then [ErrThrottleUnavailable] once Redis has failed longer than that (callers fail
-// CLOSED). Only sustained recovery resets the clock; a stray success under a flapping Redis does
-// not (see healthySince).
+// Bucket is a per-(client x window) counter, safe for concurrent use (one shared instance); Take returns a wrapped Redis error inside the dwell window (callers fail open), then [ErrThrottleUnavailable] (fail CLOSED), and only sustained recovery resets the clock, not a stray success (see healthySince).
 type Bucket struct {
 	rdb    redis.Cmdable
 	max    int
@@ -69,24 +55,17 @@ type Bucket struct {
 // Option configures a Bucket at construction.
 type Option func(*Bucket)
 
-// WithClock overrides the time source used to derive window buckets.
-// Primarily for tests that use miniredis's FastForward and need the
-// bucket key to advance with it.
+// WithClock overrides the window-bucket time source, for tests using miniredis's FastForward.
 func WithClock(now func() time.Time) Option {
 	return func(b *Bucket) { b.nowFn = now }
 }
 
-// WithKeyPrefix overrides the "rl:" key prefix — useful only when
-// sharing a Redis with another non-stellarindex caller, which we don't.
-// Exposed for completeness + test isolation.
+// WithKeyPrefix overrides the "rl:" key prefix, for test isolation or a Redis shared with a non-stellarindex caller.
 func WithKeyPrefix(prefix string) Option {
 	return func(b *Bucket) { b.keyPrefix = prefix }
 }
 
-// WithDwellTime overrides how long Redis may keep failing before Take stops failing open and
-// returns [ErrThrottleUnavailable]. Operators tune it via api.rate_limit_dwell
-// (config.APIConfig.RateLimitDwell); a negative value disables the inversion, so every Redis
-// error fails open. Default [DefaultDwellTime].
+// WithDwellTime overrides how long Redis may keep failing before Take stops failing open and returns [ErrThrottleUnavailable] (api.rate_limit_dwell); a negative value disables the inversion so every Redis error fails open. Default [DefaultDwellTime].
 func WithDwellTime(d time.Duration) Option {
 	return func(b *Bucket) { b.dwellTime = d }
 }
@@ -110,10 +89,7 @@ type Result struct {
 	Count int
 }
 
-// New constructs a rate-limiter allowing limit requests per fixed window.
-//
-// A nil rdb selects the in-process limiter (see [localStore]): limits are still ENFORCED, just
-// per-process rather than fleet-wide. Panics on a non-positive limit or sub-second window.
+// New constructs a limiter allowing limit requests per fixed window; a nil rdb selects the in-process limiter (see [localStore]), still ENFORCED but per-process, and it panics on a non-positive limit or sub-second window.
 func New(rdb redis.Cmdable, limit int, window time.Duration, opts ...Option) *Bucket {
 	if limit <= 0 {
 		panic("ratelimit: max must be positive")
@@ -143,10 +119,7 @@ func New(rdb redis.Cmdable, limit int, window time.Duration, opts ...Option) *Bu
 	return b
 }
 
-// InProcess reports whether this Bucket is running on the in-process
-// fixed-window fallback (rdb was nil at construction) rather than
-// Redis. Exposed so the binary can log which backend is enforcing the
-// limit at startup.
+// InProcess reports whether the Bucket runs on the in-process fallback (rdb was nil) rather than Redis, so the binary can log the enforcing backend.
 func (b *Bucket) InProcess() bool { return b.local != nil }
 
 // observeRedisFailure stamps the dwell-time clock + reports whether
@@ -189,8 +162,7 @@ func (b *Bucket) observeRedisSuccess() {
 	}
 }
 
-// Max returns the configured per-window limit. Useful for surfacing
-// it in HTTP response headers without threading another value.
+// Max returns the configured per-window limit, for surfacing in response headers.
 func (b *Bucket) Max() int { return b.max }
 
 // Window returns the configured window size.
@@ -220,27 +192,12 @@ return {current, 0}
 // per call would waste a SHA-1 and allocation on every check.
 var luaScript = redis.NewScript(lua)
 
-// Take increments the counter for key in the current window and reports whether the request is
-// allowed, in one Redis round-trip.
-//
-// On error the caller must branch on [ErrThrottleUnavailable]: a wrapped Redis error (inside the
-// dwell-time) fails OPEN, ErrThrottleUnavailable fails CLOSED with 503 + Retry-After. Treating
-// every error as fail-open re-opens the sustained-outage bypass (package doc, "Failure mode").
+// Take increments key's counter in the current window and reports whether the request is allowed, in one Redis round-trip; callers MUST branch on [ErrThrottleUnavailable] (fail CLOSED, 503 + Retry-After) versus a wrapped Redis error (fail OPEN), since treating all errors as fail-open re-opens the sustained-outage bypass.
 func (b *Bucket) Take(ctx context.Context, key string) (Result, error) {
 	return b.Charge(ctx, key, 1, 0)
 }
 
-// Charge spends cost tokens against key's counter for the current window in ONE atomic step and
-// reports whether the request still fits. Price must track the work bought, or a 1000-id batch
-// is a 1000x amplifier; never weight by looping Take, which is not atomic.
-//
-// limit > 0 replaces the bucket's max for this call only (a per-subject ceiling such as an API
-// key's rate_limit_per_min); callers MUST pass a stable limit per key or the shared counter races
-// inconsistent thresholds.
-//
-// Cost is clamped to [1, effective limit]: below 1 charges 1 (a negative INCRBY would REFUND
-// budget); above the limit charges the whole limit (else a big batch could never succeed). A
-// denied charge is still counted; its Retry-After names the window end.
+// Charge spends cost tokens against key in ONE atomic step (never weight by looping Take; price must track work bought); limit > 0 replaces max for this call and MUST be stable per key; cost is clamped to [1, limit] (a negative INCRBY would REFUND); a denied charge is still counted.
 func (b *Bucket) Charge(ctx context.Context, key string, cost, limit int) (Result, error) {
 	effectiveMax := b.max
 	if limit > 0 {

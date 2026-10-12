@@ -6,9 +6,7 @@ import (
 	"sync"
 )
 
-// Recorder persists [Hit] records, idempotent on ContractID: one row per
-// contract, not per event. Callers log and continue on error; the contract
-// reappears on a later event and the write is retried.
+// Recorder persists [Hit] records, idempotent on ContractID (one row per contract, not per event); callers log and continue on error since the contract reappears and the write is retried.
 type Recorder interface {
 	// Record upserts the hit, updating event_count and last-seen.
 	Record(ctx context.Context, hit Hit) error
@@ -18,12 +16,10 @@ type Recorder interface {
 	IsKnown(ctx context.Context, contractID string) (bool, error)
 }
 
-// ErrAlreadyKnown lets a Recorder surface a known contract as an error; the
-// Postgres recorder upserts and never returns it.
+// ErrAlreadyKnown lets a Recorder surface a known contract as an error; the Postgres recorder upserts and never returns it.
 var ErrAlreadyKnown = errors.New("discovery: contract already recorded")
 
-// InMemoryRecorder is a concurrency-safe [Recorder] for tests and the dev
-// binary; it loses everything on restart.
+// InMemoryRecorder is a concurrency-safe [Recorder] for tests and the dev binary; it loses everything on restart.
 type InMemoryRecorder struct {
 	mu    sync.Mutex
 	hits  map[string]Hit
@@ -38,10 +34,7 @@ func NewInMemoryRecorder() *InMemoryRecorder {
 	}
 }
 
-// Record stores or updates the hit. The first observation per
-// contract is preserved verbatim (so first_seen_at / first_seen_event
-// stay stable); subsequent observations only increment the counter.
-// Mirrors what a Postgres ON CONFLICT DO UPDATE counterpart will do.
+// Record stores the hit, preserving the first observation verbatim (first_seen_at / first_seen_event stay stable) and only incrementing the counter afterwards, like a Postgres ON CONFLICT DO UPDATE.
 func (r *InMemoryRecorder) Record(_ context.Context, hit Hit) error {
 	if hit.ContractID == "" {
 		return errors.New("discovery: cannot record hit with empty ContractID")
@@ -67,9 +60,7 @@ func (r *InMemoryRecorder) IsKnown(_ context.Context, contractID string) (bool, 
 	return ok, nil
 }
 
-// Snapshot returns a copy of the recorded hits. Used by tests to
-// assert on-disk state without exposing the internal map. Slice
-// order is unspecified; callers sort if they need determinism.
+// Snapshot returns a copy of the recorded hits in unspecified order; callers sort if they need determinism.
 func (r *InMemoryRecorder) Snapshot() []Hit {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -80,9 +71,7 @@ func (r *InMemoryRecorder) Snapshot() []Hit {
 	return out
 }
 
-// Count returns how many times Record was invoked for contractID
-// (zero for never-seen). Lets tests verify Record is being called
-// per-event rather than once-per-contract.
+// Count returns how many times Record was invoked for contractID (zero if never seen), so tests can verify per-event calls.
 func (r *InMemoryRecorder) Count(contractID string) int {
 	r.mu.Lock()
 	defer r.mu.Unlock()

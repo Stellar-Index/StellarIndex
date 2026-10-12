@@ -9,15 +9,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 )
 
-// BuildRegistry builds one [Source] per name whose [pipeline.SourceSpec] has a Projector; other
-// names (sdex, band, soroswap-router, external CEX/FX) are skipped because the dispatcher writes them.
-//
-// Watched specs (sep41) are added whatever names says: they are not in config.KnownSources, and
-// the dispatcher cedes them to the projector as sole writer, so they must register unprompted.
-// They are skipped only when no SEP-41 contract is watched.
-//
-// It errors when a source needs oracle config that is empty (e.g. `reflector-dex` enabled but
-// `oracle.reflector.dex_contract` is "").
+// BuildRegistry builds one [Source] per name whose [pipeline.SourceSpec] has a Projector (others, written by the dispatcher, are skipped); watched specs (sep41) register unprompted unless no SEP-41 contract is watched, since the dispatcher cedes them as sole writer; errors when a source's oracle config is empty.
 func BuildRegistry(names []string, oracle config.OracleConfig, watchedSEP41 []string, gated map[string][]contractid.Option, soroswapOpts ...soroswap.DecoderOption) (Registry, error) {
 	var sources []Source
 	seen := map[string]bool{}
@@ -46,10 +38,7 @@ func BuildRegistry(names []string, oracle config.OracleConfig, watchedSEP41 []st
 	return Registry{Sources: sources}, nil
 }
 
-// KnownProjectorSources is the set of source names the projector writes:
-// the names BuildRegistry and `stellarindex-ops projector-replay -source`
-// accept. find-data-gaps reads it to tell whether a gap target is
-// projected (AGENTS.md invariant 7).
+// KnownProjectorSources is the set of source names the projector writes, accepted by BuildRegistry and `stellarindex-ops projector-replay -source`; find-data-gaps reads it to tell whether a gap target is projected (AGENTS.md invariant 7).
 var KnownProjectorSources = knownProjectorSources()
 
 func knownProjectorSources() map[string]struct{} {
@@ -97,9 +86,7 @@ func buildSource(name string, oracle config.OracleConfig, watchedSEP41 []string,
 	return src, true, nil
 }
 
-// IsProjectedSource reports whether the projector owns name's writes
-// (AGENTS.md invariant [7]). A build error means the name has a projector
-// spec with incomplete config, which still counts.
+// IsProjectedSource reports whether the projector owns name's writes (AGENTS.md invariant [7]); a build error from incomplete config still counts as projected.
 func IsProjectedSource(name string, oracle config.OracleConfig, watchedSEP41 []string) bool {
 	_, ok, err := buildSource(strings.ToLower(strings.TrimSpace(name)), oracle, watchedSEP41, nil)
 	return ok || err != nil

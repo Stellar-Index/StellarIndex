@@ -19,9 +19,7 @@ import (
 	sdkxdr "github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// Source is one upstream URL from which a missing checkpoint file
-// can be fetched. The full URL we GET is
-// `<URL>/ledger/XX/YY/ZZ/ledger-XXYYZZWW.xdr.gz`.
+// Source is one upstream URL from which a missing checkpoint file is fetched at `<URL>/ledger/XX/YY/ZZ/ledger-XXYYZZWW.xdr.gz`.
 type Source struct {
 	// Name is a stable label used in metrics + logs (e.g. the
 	// archive host name). Stays in lockstep with the
@@ -34,9 +32,7 @@ type Source struct {
 	URL string
 }
 
-// DefaultCrossAnchorSources returns the canonical fallback chain for the
-// cross-anchor archive: SDF's three primary archives, then the tier-1
-// validator archives the captive-core config already trusts.
+// DefaultCrossAnchorSources returns the fallback chain: SDF's three primary archives, then the tier-1 validator archives the captive-core config already trusts.
 func DefaultCrossAnchorSources() []Source {
 	return []Source{
 		{Name: "sdf-core-live-001", URL: "https://history.stellar.org/prd/core-live/core_live_001"},
@@ -51,10 +47,7 @@ func DefaultCrossAnchorSources() []Source {
 	}
 }
 
-// CrossAnchorFiller fetches missing checkpoint files from the multi-source fallback chain and
-// writes them into the local archive in the SDF history-archive layout.
-//
-// Fill spawns Workers goroutines itself; concurrent Fill calls are safe but each gets a full pool.
+// CrossAnchorFiller fetches missing checkpoint files from the multi-source fallback chain into the local archive; Fill spawns Workers goroutines itself, so concurrent Fill calls are safe but each gets a full pool.
 type CrossAnchorFiller struct {
 	archiveRoot  string
 	sources      []Source
@@ -96,9 +89,7 @@ type FillerOptions struct {
 	OwnerGroup string
 }
 
-// NewCrossAnchorFiller constructs a Filler. Returns an error if
-// chown is requested but the user/group lookup fails (operator
-// config issue — fail loud at startup).
+// NewCrossAnchorFiller constructs a Filler; it errors when chown is requested but the user/group lookup fails (operator config issue, fail loud at startup).
 func NewCrossAnchorFiller(opts FillerOptions) (*CrossAnchorFiller, error) {
 	if opts.ArchiveRoot == "" {
 		return nil, errors.New("archivecompleteness: ArchiveRoot is required")
@@ -197,22 +188,13 @@ type FillResult struct {
 	PerSourceFailure map[string]int
 }
 
-// FillFailure describes one missing checkpoint that the filler
-// couldn't recover.
+// FillFailure describes one missing checkpoint the filler could not recover.
 type FillFailure struct {
 	Seq    uint32
 	Reason string
 }
 
-// Fill places each missing checkpoint via the multi-source fallback chain and returns once every
-// entry has succeeded or exhausted the chain.
-//
-// Source order is shuffled per checkpoint to spread burst load instead of hammering source[0].
-// The first source returning 200 with a non-empty, valid gzip body wins and is placed atomically
-// via `<final>.new` then rename; if all fail, a [FillFailure] records the last error.
-//
-// ctx is checked between checkpoints: cancellation keeps already-placed files (the next run skips
-// them) and stops fetching new ones.
+// Fill places each missing checkpoint via the shuffled source chain (first 200 with a valid non-empty gzip body wins, placed atomically via `<final>.new` then rename); ctx cancellation keeps placed files and stops new fetches.
 func (f *CrossAnchorFiller) Fill(ctx context.Context, missing []uint32) FillResult {
 	acc := newFillAccumulator()
 	if len(missing) == 0 {

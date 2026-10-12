@@ -12,10 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// RollupRow is one (day, subject, endpoint) aggregate handed to the
-// Timescale sink. Counts are the CUMULATIVE Redis counters for that
-// day (not deltas) — the sink upserts with GREATEST() so re-sweeps
-// are idempotent and a mid-day Redis flush can never regress a row.
+// RollupRow is one (day, subject, endpoint) aggregate for the Timescale sink; counts are CUMULATIVE, not deltas, so the sink's GREATEST() upsert makes re-sweeps idempotent and a Redis flush cannot regress a row.
 type RollupRow struct {
 	Day          string // YYYY-MM-DD UTC
 	Subject      string // "key:<id>" / "id:<identifier>"
@@ -26,18 +23,12 @@ type RollupRow struct {
 	Throttled    int64  // 429
 }
 
-// RollupSink persists a batch of daily aggregates. Production
-// wiring is *timescale.Store's UpsertUsageDaily via the adapter in
-// cmd/stellarindex-api/main.go; tests use a fake. Implementations
-// MUST be idempotent for identical batches (upsert, not insert).
+// RollupSink persists a batch of daily aggregates; implementations MUST be idempotent for identical batches (upsert, not insert).
 type RollupSink interface {
 	UpsertUsageDaily(ctx context.Context, rows []RollupRow) error
 }
 
-// DefaultRollupInterval is the sweep cadence: five minutes keeps the dashboard's "today" row at
-// most one tick stale while a sweep stays cheap (one SCAN plus one HGETALL per active
-// subject-day, then an upsert of only changed rows). It is also the per-sweep deadline, since a
-// sweep outliving its cadence is already behind.
+// DefaultRollupInterval is the sweep cadence (keeps the dashboard's "today" row at most one tick stale) and also the per-sweep deadline, since a sweep outliving its cadence is already behind.
 const DefaultRollupInterval = 5 * time.Minute
 
 // catchUpDaysPerSweep bounds the backlog days (older than yesterday) one sweep re-folds. Each
@@ -47,14 +38,7 @@ const catchUpDaysPerSweep = 7
 
 const dayLayout = "2006-01-02"
 
-// Rollup is the ticker-driven worker that folds the Redis per-endpoint detail hashes into the
-// `usage_daily` hypertable. It runs inside the API binary, the only writer of the Redis counters
-// and only reader of the rollups.
-//
-// Each sweep covers TODAY + YESTERDAY (UTC) plus every older day in the Redis retention window
-// that no successful sweep has folded since it ended, oldest first, at most
-// [catchUpDaysPerSweep] per sweep. A sink or process outage heals itself while the counters
-// still exist; a fresh process has no record of earlier folds and walks the whole window once.
+// Rollup is the ticker-driven worker folding Redis detail hashes into `usage_daily`; each sweep covers today and yesterday (UTC) plus unfolded older days oldest first, at most [catchUpDaysPerSweep], so outages self-heal while counters exist.
 type Rollup struct {
 	counter  *Counter
 	sink     RollupSink
@@ -77,9 +61,7 @@ type rollupKey struct{ day, subject, endpoint string }
 
 func keyOf(r RollupRow) rollupKey { return rollupKey{r.Day, r.Subject, r.Endpoint} }
 
-// NewRollup constructs the worker. Returns nil when either
-// dependency is missing so callers can gate with a plain nil check
-// (mirrors [New]'s nil-Redis posture).
+// NewRollup constructs the worker, returning nil when either dependency is missing so callers can nil-check (mirrors [New]).
 func NewRollup(counter *Counter, sink RollupSink, interval time.Duration, logger *slog.Logger) *Rollup {
 	if counter == nil || sink == nil {
 		return nil
@@ -100,9 +82,7 @@ func NewRollup(counter *Counter, sink RollupSink, interval time.Duration, logger
 	}
 }
 
-// Run sweeps once immediately, then on every tick until ctx is
-// cancelled. Sweep failures log + count in the metric; the worker
-// never exits on a transient Redis/Postgres error.
+// Run sweeps immediately then on every tick until ctx is cancelled; sweep failures are logged and counted, never exit the worker.
 func (r *Rollup) Run(ctx context.Context) error {
 	if r == nil {
 		return errors.New("usage: nil Rollup")
@@ -126,10 +106,7 @@ func (r *Rollup) Run(ctx context.Context) error {
 	}
 }
 
-// Sweep folds the live days plus the next catch-up batch (see [Rollup]) and upserts rows the
-// sink has not acknowledged at their current value, returning the count. It is bounded to one
-// interval of wall-clock so a stalled Redis or Postgres cannot pin the worker, and runs one at
-// a time. The catch-up cursor advances only on success, so a failed sweep's days stay owed.
+// Sweep folds live days plus the next catch-up batch and upserts rows the sink has not acknowledged at their current value; bounded to one interval, one at a time, and the catch-up cursor advances only on success so failed days stay owed.
 func (r *Rollup) Sweep(ctx context.Context) (int, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -142,9 +119,7 @@ func (r *Rollup) Sweep(ctx context.Context) (int, error) {
 	return n, nil
 }
 
-// SweepDays folds exactly the given UTC days (YYYY-MM-DD) with the same
-// grouping and sink as [Rollup.Sweep], without moving the live catch-up
-// cursor. It is the ops-side recovery path (usage-rollup-backfill).
+// SweepDays folds exactly the given UTC days (YYYY-MM-DD) like [Rollup.Sweep] without moving the live catch-up cursor; the ops recovery path (usage-rollup-backfill).
 func (r *Rollup) SweepDays(ctx context.Context, dates []string) (int, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

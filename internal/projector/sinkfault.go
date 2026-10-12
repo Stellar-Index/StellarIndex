@@ -9,33 +9,13 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// QuarantineAfterCycles is the retry budget for an UNCLASSIFIED sink failure when the cycle proved
-// the sink healthy (another event committed). After this many CONSECUTIVE failing cycles on one
-// row identity the row is quarantined (loud log + counter) and the cursor advances past it.
-//
-// 20 cycles is about 100s at [Interval]: long enough for transient faults (deadlock, serialization,
-// lock_not_available, statement_timeout) to clear, short enough that a poison row is not forever.
+// QuarantineAfterCycles is the retry budget for an UNCLASSIFIED sink failure when the cycle proved the sink healthy: after this many CONSECUTIVE failing cycles (about 100s at [Interval]) the row is quarantined (loud log + counter) and the cursor advances.
 const QuarantineAfterCycles = 20
 
-// QuarantineAfterCyclesNoProgress is the longer retry budget used when the cycle could NOT prove
-// the sink healthy, so "this row is poison" and "the whole sink is broken" look identical. A
-// GLOBAL fault (schema drift, permissions, wedged downstream) must be a visible stall, not shed
-// rows, so the projector holds about 1 hour, past the lag / sink_retry paging alert.
+// QuarantineAfterCyclesNoProgress is the longer budget (about 1 hour, past the lag / sink_retry paging alert) when the cycle could NOT prove the sink healthy, so a GLOBAL fault (schema drift, permissions, wedged downstream) is a visible stall, not shed rows.
 const QuarantineAfterCyclesNoProgress = 720
 
-// PermanentSkipPerCycle is the most rows ONE cycle may shed on a [dispositionSkip] verdict.
-// Class 22/23 errors are not always row-local: a migration adding a NOT NULL or CHECK the live
-// rows violate makes every row "poison" at once, and shedding them all would be silent loss.
-//
-// So the skip arm borrows both halves of the quarantine rail:
-//
-//   - the RATE limit: at most ONE row per cycle, lowest ledger first ([shedCandidate]); every row
-//     not shed HOLDS the cursor like a retryable fault;
-//   - the sink-health PROOF: [permanentSkipCandidate] takes the same `madeProgress` argument as
-//     [quarantineCandidate], so a cycle that committed nothing else first waits out
-//     [QuarantineAfterCyclesNoProgress].
-//
-// A global fault has no such proof: it becomes a visible stall, then bleeds 1 row per [Interval].
+// PermanentSkipPerCycle is the most rows ONE cycle may shed on a [dispositionSkip] verdict (lowest ledger first, the rest HOLD the cursor), and only with sink-health proof as in [quarantineCandidate], because a migration can make every row look poison and shedding them all would be silent loss.
 const PermanentSkipPerCycle = 1
 
 // heldRowLogEvery throttles the per-row "holding cursor" warning to the first failing cycle and
@@ -71,8 +51,7 @@ const (
 	dispositionUnclassified
 )
 
-// String renders the disposition for logs, so a held-row warning distinguishes "database down"
-// from "unknown fault, budget counting down".
+// String renders the disposition for logs, so a held-row warning distinguishes "database down" from "unknown fault, budget counting down".
 func (d sinkDisposition) String() string {
 	switch d {
 	case dispositionSkip:

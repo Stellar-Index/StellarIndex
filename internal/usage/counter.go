@@ -27,8 +27,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// RetentionDays is the TTL of every Redis usage key, and so how far back Read and the rollup can
-// see. 35 covers the 30d billing window plus a 5-day buffer for late writes and region clock skew.
+// RetentionDays is the TTL of every Redis usage key and so how far back Read and the rollup can see; 35 covers the 30d billing window plus 5 days for late writes and clock skew.
 const RetentionDays = 35
 
 // Outcome classes for the per-endpoint detail counters. The middleware maps every status onto
@@ -49,8 +48,7 @@ const (
 	ClassServerError = "5xx"
 )
 
-// Counter atomically increments per-(subject, day) Redis counters and reads them back in
-// date-bucketed order. Safe for concurrent use; one process-level instance.
+// Counter atomically increments per-(subject, day) Redis counters and reads them back date-bucketed; safe for concurrent use, one process-level instance.
 type Counter struct {
 	rdb       redis.Cmdable
 	keyPrefix string
@@ -71,8 +69,7 @@ func WithKeyPrefix(prefix string) Option {
 	return func(c *Counter) { c.keyPrefix = prefix }
 }
 
-// New constructs a usage Counter on the same redis.Cmdable as the rate-limit Bucket; the key
-// prefixes never collide.
+// New constructs a usage Counter on the same redis.Cmdable as the rate-limit Bucket; the key prefixes never collide.
 func New(rdb redis.Cmdable, opts ...Option) *Counter {
 	// A nil rdb returns nil so [middleware.UsageTracker]'s `counter == nil` short-circuit fires
 	// before any Redis op.
@@ -90,15 +87,12 @@ func New(rdb redis.Cmdable, opts ...Option) *Counter {
 	return c
 }
 
-// Increment bumps the counter for (subject, today) by one unit. Usage tracking is best-effort:
-// a failed increment must NEVER block a request, so hot-path callers drop the error and let the
-// metric show Redis misbehaving.
+// Increment bumps (subject, today) by one unit; best-effort, a failed increment must NEVER block a request, so hot-path callers drop the error.
 func (c *Counter) Increment(ctx context.Context, subject string) error {
 	return c.IncrementBy(ctx, subject, 1)
 }
 
-// IncrementBy adds n request units for (subject, today). Units are product cost (one per priced
-// asset on /v1/price/batch), so the monthly quota meters lookups, not HTTP calls. n <= 0 is a no-op.
+// IncrementBy adds n product-cost units for (subject, today), e.g. one per priced asset on /v1/price/batch, so the quota meters lookups not HTTP calls; n <= 0 is a no-op.
 func (c *Counter) IncrementBy(ctx context.Context, subject string, n int64) error {
 	if c == nil || subject == "" || n <= 0 {
 		return nil
@@ -123,15 +117,12 @@ func (c *Counter) detailKey(subject, day string) string {
 	return c.keyPrefix + detailKeyInfix + url.QueryEscape(subject) + ":" + day
 }
 
-// IncrementDetail bumps the per-endpoint outcome counter for (subject, today). endpoint MUST be
-// a bounded-cardinality route pattern (e.g. "/v1/assets/{asset_id}"), never a raw URL path;
-// class is one of the Class* constants. Best-effort like [Counter.Increment].
+// IncrementDetail bumps the per-endpoint outcome counter; endpoint MUST be a bounded-cardinality route pattern, never a raw URL path, and class one of the Class* constants; best-effort like [Counter.Increment].
 func (c *Counter) IncrementDetail(ctx context.Context, subject, endpoint, class string) error {
 	return c.IncrementDetailBy(ctx, subject, endpoint, class, 1)
 }
 
-// IncrementDetailBy adds n units weighted as [Counter.IncrementBy] weights the billable total, so
-// the rollup's billable sum equals the quota counter.
+// IncrementDetailBy adds n units weighted as [Counter.IncrementBy] weights the billable total, so the rollup's billable sum equals the quota counter.
 func (c *Counter) IncrementDetailBy(ctx context.Context, subject, endpoint, class string, n int64) error {
 	if c == nil || subject == "" || endpoint == "" || class == "" || n <= 0 {
 		return nil
@@ -147,8 +138,7 @@ func (c *Counter) IncrementDetailBy(ctx context.Context, subject, endpoint, clas
 	return nil
 }
 
-// DetailRow is one (subject, day, endpoint, class) counter read back from a detail hash; the
-// rollup groups these into [RollupRow]s for the Timescale sink.
+// DetailRow is one (subject, day, endpoint, class) counter read from a detail hash; the rollup groups these into [RollupRow]s for the Timescale sink.
 type DetailRow struct {
 	Date     string // YYYY-MM-DD UTC
 	Subject  string // decoded subject ("id:<ident>" / "key:<id>")
@@ -157,15 +147,7 @@ type DetailRow struct {
 	Count    int64
 }
 
-// ScanDetail walks every per-endpoint detail hash for the given dates (YYYY-MM-DD) and returns
-// the decoded counters in one slice. SCAN-based so it never blocks Redis; the key population is
-// bounded by (#active subjects x len(dates)). Production sweeps should use
-// [Counter.ScanDetailFunc] to avoid buffering a whole day's rows.
-//
-// Keys are de-duplicated per date: SCAN is at-least-once and rehash repeats are routine on this
-// shared Redis. A duplicate DetailRow would be summed by the rollup, and usage_daily's GREATEST()
-// merge would make the inflated count permanent for a closed day. A repeat re-reads the same
-// hash, so keeping the first read is exact.
+// ScanDetail SCANs every detail hash for dates (YYYY-MM-DD) into one slice, de-duplicated per date because SCAN is at-least-once and a duplicate row would be summed and made permanent by usage_daily's GREATEST() merge; production sweeps should use [Counter.ScanDetailFunc].
 func (c *Counter) ScanDetail(ctx context.Context, dates []string) ([]DetailRow, error) {
 	if c == nil {
 		return nil, nil
@@ -181,10 +163,7 @@ func (c *Counter) ScanDetail(ctx context.Context, dates []string) ([]DetailRow, 
 	return out, nil
 }
 
-// ScanDetailFunc walks every per-endpoint detail hash for the given dates and calls fn once per
-// decoded row, deduplicated as in [ScanDetail]. A caller that aggregates as it goes (e.g.
-// [Rollup.Sweep]) holds only the current SCAN page (<=200 keys) and the hash being decoded, not
-// a whole day. fn's error aborts the walk.
+// ScanDetailFunc calls fn once per decoded, deduplicated (as in [ScanDetail]) row without buffering a whole day; fn's error aborts the walk.
 func (c *Counter) ScanDetailFunc(ctx context.Context, dates []string, fn func(DetailRow) error) error {
 	if c == nil {
 		return nil
@@ -283,17 +262,7 @@ type Day struct {
 	Requests int64
 }
 
-// MonthToDate returns the sum of `subject`'s per-day counters from the 1st of the current UTC
-// month through today. [middleware.MonthlyQuota] uses it to enforce monthly ceilings; subject is
-// the owner-account key, so the sum spans every credential the account holds.
-//
-// Each day counts max(Redis, usage_daily) when [WithDurableDays] is set. Day keys carry a TTL on
-// an evicting Redis and a missing key reads as zero, so Redis alone under-bills a month whose
-// cold early days were evicted. Both sources are lower bounds of the true billable count, so
-// their max never over-bills.
-//
-// A read failure on either side returns (0, err); the caller fails open inside its dwell window
-// and closed after it. Returns (0, nil) before any counter has been written this month.
+// MonthToDate sums subject's (owner-account key) per-day counters from the 1st of the UTC month; with [WithDurableDays] each day counts max(Redis, usage_daily), both lower bounds so it never over-bills; a read failure returns (0, err) and the caller fails open in its dwell window, closed after.
 func (c *Counter) MonthToDate(ctx context.Context, subject string) (int64, error) {
 	if c == nil || subject == "" {
 		return 0, nil
@@ -338,8 +307,7 @@ func parseCount(v any) int64 {
 	return n
 }
 
-// Read returns up to `days` daily counts, oldest first, omitting days with no requests. days is
-// clamped to RetentionDays, past which the keys have expired.
+// Read returns up to days daily counts, oldest first, omitting empty days; days is clamped to RetentionDays, past which keys have expired.
 func (c *Counter) Read(ctx context.Context, subject string, days int) ([]Day, error) {
 	if c == nil || subject == "" || days <= 0 {
 		return nil, nil
@@ -378,9 +346,7 @@ func (c *Counter) Read(ctx context.Context, subject string, days int) ([]Day, er
 	return out, nil
 }
 
-// DeleteSubject deletes subject's total and detail keys for every day inside the retention window
-// and returns how many existed. Account erasure calls it; keys are derived, not scanned, so the
-// cost is fixed per subject.
+// DeleteSubject deletes subject's total and detail keys for every day in the retention window and returns how many existed; used for account erasure, keys are derived not scanned.
 func (c *Counter) DeleteSubject(ctx context.Context, subject string) (int64, error) {
 	if c == nil || subject == "" {
 		return 0, nil

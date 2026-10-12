@@ -6,11 +6,7 @@ import (
 	"time"
 )
 
-// Report is the JSON wire shape produced by `check` and consumed by `fix`, which fetches the
-// missing files via the multi-source fallback chain.
-//
-// The Schema field locks the wire shape: new optional fields are fine, but removing or
-// repurposing one bumps Schema and goes through an ADR amendment.
+// Report is the JSON wire shape produced by `check` and consumed by `fix`; the Schema field locks it, so removing or repurposing a field bumps Schema and needs an ADR amendment.
 type Report struct {
 	// Schema is the report's wire-format version, currently "1".
 	Schema string `json:"schema"`
@@ -48,8 +44,7 @@ type CrossAnchorReportSection struct {
 	Truncated    bool     `json:"truncated,omitempty"`
 }
 
-// PrimaryReportSection is the per-archive section for the primary galexie-archive scan. Nothing
-// populates it yet, so [Report.Primary] is always nil.
+// PrimaryReportSection is the per-archive section for the primary galexie-archive scan; nothing populates it yet, so [Report.Primary] is always nil.
 type PrimaryReportSection struct {
 	BucketName   string `json:"bucket_name"`
 	Expected     int    `json:"expected"`
@@ -104,14 +99,7 @@ func (r *Report) AnyMissing() bool {
 	return false
 }
 
-// Vacuous reports whether every POPULATED section scanned ZERO expected checkpoint positions. A
-// range containing no checkpoint yields Expected=0, Found=0, MissingCount=0, which AnyMissing()
-// reads as clean though nothing was verified. Callers must treat a vacuous report as a distinct
-// failure and must NOT stamp a "last success" watermark on it.
-//
-// One section with Expected > 0 makes the report non-vacuous. A report with no populated section
-// is also non-vacuous (no scan ran); Vacuous only catches "we scanned, but there was nothing to
-// scan".
+// Vacuous reports whether every POPULATED section scanned ZERO expected checkpoints, which AnyMissing() reads as clean though nothing was verified; callers must treat it as a distinct failure and NOT stamp a "last success" watermark.
 func (r *Report) Vacuous() bool {
 	populated := false
 	if r.CrossAnchor != nil {

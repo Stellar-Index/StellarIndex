@@ -8,9 +8,7 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-// DailyBillableReader is the durable side of the month-to-date meter:
-// the per-day billable units (ok + 4xx) [Rollup] persisted to
-// `usage_daily`. Production wiring is *timescale.Store.
+// DailyBillableReader is the durable side of the month-to-date meter: per-day billable units (ok + 4xx) that [Rollup] persisted to `usage_daily`.
 type DailyBillableReader interface {
 	// BillableByDay returns subject's billable units per UTC day in
 	// [from, to] (both YYYY-MM-DD, inclusive), keyed by day. Days with
@@ -18,9 +16,7 @@ type DailyBillableReader interface {
 	BillableByDay(ctx context.Context, subject, from, to string) (map[string]int64, error)
 }
 
-// WithDurableDays makes [Counter.MonthToDate] reconcile every day of
-// the month against r, so an evicted or flushed Redis day key cannot
-// read as a quiet day. A nil r leaves the counter Redis-only.
+// WithDurableDays makes [Counter.MonthToDate] reconcile every day against r so an evicted or flushed Redis day key cannot read as a quiet day; a nil r leaves the counter Redis-only.
 func WithDurableDays(r DailyBillableReader) Option {
 	return func(c *Counter) {
 		if r != nil {

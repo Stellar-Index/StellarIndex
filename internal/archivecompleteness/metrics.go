@@ -11,10 +11,7 @@ import (
 	"time"
 )
 
-// MetricsSnapshot is the per-run set of metrics we emit. Field
-// names match the alert rules in
-// `deploy/monitoring/rules/archive-completeness.yml`; renaming any
-// field is a wire break against the alert rule file.
+// MetricsSnapshot is the per-run metric set; field names match `deploy/monitoring/rules/archive-completeness.yml`, so renaming a field is a wire break against the alert rules.
 type MetricsSnapshot struct {
 	// FilesMissing per archive; only `cross-anchor` is populated today.
 	FilesMissing map[string]int
@@ -40,8 +37,7 @@ type MetricsSnapshot struct {
 	RepairFailures map[string]int
 }
 
-// NewMetricsSnapshot returns an initialised snapshot ready to be
-// populated by Run callers.
+// NewMetricsSnapshot returns an initialised snapshot ready for Run callers to populate.
 func NewMetricsSnapshot() *MetricsSnapshot {
 	return &MetricsSnapshot{
 		FilesMissing:   map[string]int{},
@@ -52,14 +48,7 @@ func NewMetricsSnapshot() *MetricsSnapshot {
 	}
 }
 
-// WriteTextfile renders snapshot to w in Prometheus exposition format for node_exporter's textfile
-// collector (ADR-0017 "Prometheus surface"; alerts live in
-// `deploy/monitoring/rules/archive-completeness.yml`).
-//
-// Pure: it renders exactly what the snapshot holds. Carrying the previous run's last-success
-// timestamp and repair totals forward is [WriteTextfileAtomic]'s job, as only it knows the path.
-// A systemd timer writes it to node_exporter's textfile_collector/archive_completeness.prom; the
-// caller writes `<PATH>.tmp` then renames, since the collector treats partial writes as parse errors.
+// WriteTextfile renders snapshot to w in Prometheus exposition format for node_exporter's textfile collector (ADR-0017); pure, so carrying prior-run state forward is [WriteTextfileAtomic]'s job, and the caller must write `<PATH>.tmp` then rename since partial writes are parse errors.
 func WriteTextfile(w io.Writer, snapshot *MetricsSnapshot) error {
 	if snapshot == nil {
 		return nil
@@ -192,15 +181,7 @@ func writeCounter(w io.Writer, name, help, labelKey string, samples map[string]i
 	return nil
 }
 
-// WriteTextfileAtomic writes snapshot to path using the node_exporter textfile-collector protocol:
-// fold the existing file's persistent state into snapshot ([MetricsSnapshot.carryForward]), write
-// `<path>.tmp` with restrictive permissions, then rename (POSIX atomic on one filesystem). The
-// collector skips `.tmp` files, so a partial write never appears in a scrape.
-//
-// The fold exists because the rename REPLACES the file wholesale, so any series this run does not
-// re-emit vanishes (see [writeLastSuccess]). It MUTATES snapshot (last-success timestamp and the
-// two repair counters) so the file holds cumulative host state, not a per-run fragment. A missing
-// or unparseable previous file means "no prior state", a plain counter reset to Prometheus.
+// WriteTextfileAtomic folds the existing file's persistent state into snapshot (MUTATING it: last-success timestamp and both repair counters, since the rename replaces the file and drops un-re-emitted series), then writes `<path>.tmp` and renames; a missing or unparseable prior file means no prior state.
 func WriteTextfileAtomic(path string, snapshot *MetricsSnapshot) error {
 	if snapshot != nil {
 		snapshot.carryForward(readPriorTextfile(path))
@@ -353,10 +334,7 @@ func sortedKeys[V any](m map[string]V) []string {
 	return out
 }
 
-// PopulateFromReport fills snapshot.FilesMissing from a Report's
-// per-archive missing-counts. Convenience for the verify-mode
-// caller; lets the metrics layer stay decoupled from Report's
-// internal field names.
+// PopulateFromReport fills snapshot.FilesMissing from a Report's per-archive missing-counts, keeping the metrics layer decoupled from Report's field names.
 func (s *MetricsSnapshot) PopulateFromReport(r *Report) {
 	if r == nil {
 		return
@@ -373,14 +351,7 @@ func (s *MetricsSnapshot) PopulateFromReport(r *Report) {
 	}
 }
 
-// PopulateFromFillResult merges a FillResult's per-source counts into the snapshot. Every try
-// (success or failure) adds one attempt under the source's REAL name, and every failed try adds
-// one failure under the same name.
-//
-// Failures under a synthetic `multi-source-exhausted` label would leave the attempt and failure
-// label sets disjoint, giving the `sum by (source)(failures) / sum by (source)(attempts)` alert a
-// permanently-zero numerator. These are per-run counts; [WriteTextfileAtomic] adds them to the
-// totals on disk so the series is a real counter.
+// PopulateFromFillResult merges per-source counts: every try adds one attempt and every failed try one failure under the source's REAL name (a synthetic label would leave the failure/attempt alert ratio with a zero numerator); per-run counts that [WriteTextfileAtomic] accumulates on disk.
 func (s *MetricsSnapshot) PopulateFromFillResult(res FillResult) {
 	for source, count := range res.PerSourceAttempt {
 		s.RepairAttempts[source] += count

@@ -5,8 +5,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// Kind names the sniffer that produced a [Hit]. Its values are stored in
-// discovered_assets.discovery_kind, so renaming one is a wire break.
+// Kind names the sniffer that produced a [Hit]; values are stored in discovered_assets.discovery_kind, so renaming one is a wire break.
 type Kind string
 
 const (
@@ -18,9 +17,7 @@ const (
 	KindOracleCall Kind = "oracle_call"
 )
 
-// SEP41EventType identifies which of the four SEP-41 event topics
-// fired. Stable string values appear in the discovered_assets table
-// and metric labels — renaming is a wire break.
+// SEP41EventType identifies which of the four SEP-41 event topics fired; values appear in discovered_assets and metric labels, so renaming is a wire break.
 type SEP41EventType string
 
 const (
@@ -43,8 +40,7 @@ const (
 	EventClawback SEP41EventType = "clawback"
 )
 
-// Hit is one sighting from a sniffer: the C-strkey of the contract, which
-// sniffer, and when.
+// Hit is one sniffer sighting: the contract's C-strkey, which sniffer, and when.
 type Hit struct {
 	ContractID string
 	// Kind is always set by a sniffer; Recorders treat an empty Kind as
@@ -65,9 +61,7 @@ type Hit struct {
 	Count int64
 }
 
-// Sniff reports whether a contract event's topic[0] is one of the four SEP-41
-// symbols. It is pure and does not check arity beyond topic[0]: older SEP-41
-// contracts emit three-topic transfers, and decoders reject bad bodies.
+// Sniff reports whether an event's topic[0] is one of the four SEP-41 symbols; pure, checks no arity beyond topic[0] (older contracts emit three-topic transfers; decoders reject bad bodies).
 func Sniff(ev events.Event) (Hit, bool) {
 	sym, ok := parseTopic0Symbol(ev)
 	if !ok {
@@ -167,9 +161,7 @@ var oracleEventSymbols = map[string]struct{}{
 	"assets":            {},
 }
 
-// SniffOracleEvent reports whether an event's topic[0] is in
-// [oracleEventSymbols], so a new oracle is sighted before any decoder knows it.
-// The set is disjoint from [Sniff]'s.
+// SniffOracleEvent reports whether topic[0] is in [oracleEventSymbols], so a new oracle is sighted before any decoder knows it; disjoint from [Sniff]'s set.
 func SniffOracleEvent(ev events.Event) (Hit, bool) {
 	sym, ok := parseTopic0Symbol(ev)
 	if !ok {
@@ -199,8 +191,7 @@ var oracleCallFunctions = map[string]struct{}{
 	"x_last_price": {},
 }
 
-// OracleCallInput is the call shape [SniffOracleCall] needs, declared here
-// because internal/dispatcher imports this package.
+// OracleCallInput is the call shape [SniffOracleCall] needs, declared here because internal/dispatcher imports this package.
 type OracleCallInput struct {
 	ContractID        string
 	FunctionName      string
@@ -208,9 +199,7 @@ type OracleCallInput struct {
 	ObservedAtRFC3339 string
 }
 
-// SniffOracleCall reports whether an InvokeContract function name is in
-// [oracleCallFunctions], catching oracles that update storage without an event
-// (Band's relay). One map lookup; args are not inspected.
+// SniffOracleCall reports whether an InvokeContract function name is in [oracleCallFunctions], catching oracles that update storage without an event (Band's relay); one map lookup, args not inspected.
 func SniffOracleCall(in OracleCallInput) (Hit, bool) {
 	if in.ContractID == "" || in.FunctionName == "" {
 		return Hit{}, false

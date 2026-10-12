@@ -30,16 +30,13 @@ import (
 // Interval is the catch-up cadence, trading freshness against Postgres scan overhead.
 const Interval = 5 * time.Second
 
-// BatchLimit caps how many ledgers the projector reads per source per cycle; without it a catch-up
-// after a long outage would stream millions of rows in one transaction. It must stay small enough
-// that dense ranges, notably Aquarius reserve updates, finish inside PerSourceTimeout.
+// BatchLimit caps ledgers read per source per cycle so a post-outage catch-up cannot stream millions of rows in one transaction; it must stay small enough that dense ranges (Aquarius reserve updates) finish inside PerSourceTimeout.
 const BatchLimit = 1_000
 
 // reconstructErrLogEvery throttles the per-row malformed-row warning, since a broken shape fails every row.
 const reconstructErrLogEvery = 20
 
-// MinBatchLimit is the floor of the adaptive per-source window (see cycleOneSource), which halves
-// when a cycle exceeds PerSourceTimeout. A fixed window would retry an over-dense range forever.
+// MinBatchLimit is the floor of the adaptive per-source window (see cycleOneSource), which halves when a cycle exceeds PerSourceTimeout; a fixed window would retry an over-dense range forever.
 const MinBatchLimit = 25
 
 // PerSourceTimeout caps one source's per-cycle work so a wedged sink cannot block other sources.
@@ -49,30 +46,16 @@ const PerSourceTimeout = 60 * time.Second
 // committed work is never discarded.
 const cursorCommitTimeout = 10 * time.Second
 
-// WedgeCycles is how many CONSECUTIVE cycles a source must sit at the MinBatchLimit floor, blocked
-// by the cycle deadline, before obs.ProjectorWedged is set. At the floor nothing is left to halve,
-// so the flag means "stuck", not "one slow cycle".
+// WedgeCycles is how many CONSECUTIVE cycles a source must sit at the MinBatchLimit floor, blocked by the cycle deadline, before obs.ProjectorWedged is set, so the flag means "stuck", not one slow cycle.
 const WedgeCycles = 5
 
-// MaxCycleBudgetMultiple caps how far a floor-stalled source's cycle budget escalates
-// (PerSourceTimeout << n, n <= 3). A floor range that cannot finish in that needs an operator.
+// MaxCycleBudgetMultiple caps how far a floor-stalled source's cycle budget escalates (PerSourceTimeout << n, n <= 3); a floor range that cannot finish in that needs an operator.
 const MaxCycleBudgetMultiple = 8
 
-// ReplayWindowRefreshInterval is how often the dirty windows are re-read to republish
-// obs.ProjectorReplayWindowActive; it matches the alert group's evaluation interval so the gauge is
-// never more than one evaluation stale.
+// ReplayWindowRefreshInterval is how often dirty windows are re-read to republish obs.ProjectorReplayWindowActive, matching the alert group's evaluation interval so the gauge is never more than one evaluation stale.
 const ReplayWindowRefreshInterval = 30 * time.Second
 
-// SinkFunc persists one decoded event and returns the insert error, which [classifySinkFault] turns
-// into a cursor decision. Without the error a transient fault in a sole-writer cycle would drop the
-// row for good.
-//
-//   - transient ([dispositionRetry]): hold the cursor; ON CONFLICT makes the retry idempotent.
-//   - permanent data fault ([dispositionSkip]): log, count and skip, since a poison row blocking
-//     forever is the worse outage, but only once another event in the cycle committed and at most
-//     [PermanentSkipPerCycle] per cycle, so a global fault stalls instead of draining the backlog.
-//   - unclassified ([dispositionUnclassified]): retried under a budget, then quarantined; see
-//     [QuarantineAfterCycles].
+// SinkFunc persists one decoded event; [classifySinkFault] turns its error into a cursor decision: transient holds the cursor, permanent data faults skip (at most [PermanentSkipPerCycle], only after another event committed), unclassified retry then quarantine ([QuarantineAfterCycles]).
 type SinkFunc func(ctx context.Context, ev consumer.Event) error
 
 // eventStore is the projector's slice of *timescale.Store, declared consumer-side so the
@@ -94,8 +77,7 @@ type eventStore interface {
 	ProjectionDirtyWindows(ctx context.Context) (map[string]timescale.ProjectionDirtyWindow, error)
 }
 
-// Source describes one protocol's projection target, with its own cursor so one stuck decoder
-// does not block the rest.
+// Source describes one protocol's projection target, with its own cursor so one stuck decoder does not block the rest.
 type Source struct {
 	// Name is the cursor sub_source key and log label, unique within a Registry.
 	Name string
@@ -162,8 +144,7 @@ type Registry struct {
 	Sources []Source
 }
 
-// Projector reads soroban_events and routes decoded events to
-// the sink for each registered source.
+// Projector reads soroban_events and routes decoded events to the sink for each registered source.
 type Projector struct {
 	store    eventStore
 	registry Registry
@@ -244,9 +225,7 @@ func (p *Projector) emitDecoderLossDeltas(src Source) {
 	}
 }
 
-// SetClickHouseSource switches the projector to read forward events from the
-// ClickHouse lake at addr instead of Postgres soroban_events (ADR-0041 feed-switch).
-// Call before Run. Empty addr keeps the legacy soroban_events source.
+// SetClickHouseSource switches the projector to read forward events from the ClickHouse lake at addr instead of Postgres soroban_events (ADR-0041); call before Run, empty addr keeps the legacy source.
 func (p *Projector) SetClickHouseSource(addr string) {
 	if addr == "" {
 		p.lakeEvents = nil
@@ -255,14 +234,10 @@ func (p *Projector) SetClickHouseSource(addr string) {
 	p.lakeEvents = chEventSource{addr: addr}
 }
 
-// SetRawEventBarrier installs the soroban_events completeness barrier
-// resolveTip waits on in soroban_events mode. Call before Run. Without it
-// the soroban_events read trusts the ledgerstream cursor, which is only
-// sound when nothing buffers the raw writes (tests writing rows directly).
+// SetRawEventBarrier installs the soroban_events completeness barrier resolveTip waits on; call before Run. Without it the read trusts the ledgerstream cursor, sound only when nothing buffers raw writes (tests writing rows directly).
 func (p *Projector) SetRawEventBarrier(settled func(context.Context) error) { p.rawSettled = settled }
 
-// New constructs a Projector. Callers must call Run to start
-// the loop.
+// New constructs a Projector; callers must call Run to start the loop.
 func New(store *timescale.Store, registry Registry, sink SinkFunc, logger *slog.Logger) *Projector {
 	if logger == nil {
 		logger = slog.Default()
@@ -488,8 +463,7 @@ func (f *rowSinkFaults) Error() string {
 	return errors.Join(f.Unwrap()...).Error()
 }
 
-// Unwrap exposes every fault of the row (drops in decode order, then the one that stopped it) to
-// errors.Is / errors.As.
+// Unwrap exposes every fault of the row (drops in decode order, then the one that stopped it) to errors.Is / errors.As.
 func (f *rowSinkFaults) Unwrap() []error {
 	all := make([]error, 0, len(f.dropped)+1)
 	all = append(all, f.dropped...)
@@ -594,8 +568,7 @@ type eventSource interface {
 // chEventSource is the [eventSource] over the ClickHouse lake at addr.
 type chEventSource struct{ addr string }
 
-// StreamEvents reads contract_events directly. No FINAL: the forward window is BatchLimit-small and
-// downstream writes are idempotent, so a duplicate is absorbed.
+// StreamEvents reads contract_events directly without FINAL: the forward window is BatchLimit-small and downstream writes are idempotent, so a duplicate is absorbed.
 func (s chEventSource) StreamEvents(ctx context.Context, from, to uint32, contractIDs, topic0Syms, excludeTopic0Syms []string,
 	withStateWriteKeys bool, fn func(events.Event) error,
 ) error {
