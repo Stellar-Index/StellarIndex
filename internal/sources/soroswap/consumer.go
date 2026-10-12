@@ -10,9 +10,7 @@ import (
 
 // ─── Event envelope ─────────────────────────────────────────────
 
-// TradeEvent is the [consumer.Event] shape Soroswap's Decoder
-// emits on a completed swap+sync pair. The indexer's event-sink
-// type-switches on this at its output channel.
+// TradeEvent is the [consumer.Event] Soroswap's Decoder emits on a completed swap+sync pair, type-switched by the sink.
 type TradeEvent struct {
 	Trade canonical.Trade
 }
@@ -26,9 +24,7 @@ func (TradeEvent) Source() string { return SourceName }
 // Compile-time check that TradeEvent satisfies consumer.Event.
 var _ consumer.Event = TradeEvent{}
 
-// SkimEvent is the [consumer.Event] emitted on a pair `skim` event; it mirrors the
-// soroswap_skim_events row, with the optional `to` empty when the WASM omits it. The event sink
-// (internal/pipeline/sink.go) writes it via Store.InsertSoroswapSkimEvent.
+// SkimEvent is the [consumer.Event] emitted on a pair `skim` event (soroswap_skim_events row); the optional `to` is empty when the WASM omits it.
 type SkimEvent struct {
 	ContractID string // pair contract C-strkey
 	Ledger     uint32
@@ -50,11 +46,7 @@ func (SkimEvent) Source() string { return SourceName }
 // Compile-time check that SkimEvent satisfies consumer.Event.
 var _ consumer.Event = SkimEvent{}
 
-// LiquidityEvent is the [consumer.Event] emitted on a pair `deposit` or `withdraw` (LP add or
-// remove); it backs the soroswap_liquidity row. Both share one wire struct. Token0/Token1 come
-// from the factory new_pair registry, not the body, and are empty when the pair is unseeded: the
-// row is still emitted rather than dropped. It does NOT feed the swap+sync buffer; the sink writes
-// it via Store.InsertSoroswapLiquidity.
+// LiquidityEvent is the [consumer.Event] emitted on a pair `deposit` or `withdraw` (soroswap_liquidity row); Token0/Token1 come from the factory new_pair registry, are empty when the pair is unseeded (row still emitted), and it does NOT feed the swap+sync buffer.
 type LiquidityEvent struct {
 	ContractID  string // pair contract C-strkey (emitter)
 	Ledger      uint32

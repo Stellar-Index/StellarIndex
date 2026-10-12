@@ -25,10 +25,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// SourceName is the canonical string stamped on every event this package
-// emits — the trades.source value, the projector cursor sub_source key,
-// the metrics label, and the config.IngestionConfig.EnabledSources entry.
-// Must be stable.
+// SourceName is the stable canonical source string: the trades.source value, projector cursor sub_source key, metrics label and config.IngestionConfig.EnabledSources entry.
 const SourceName = "sushiswap_v3"
 
 // Event names — topic[0] of every SushiSwap V3 pool/factory event is a
@@ -88,31 +85,16 @@ var (
 	ErrUnknownPool = errors.New("sushiswap_v3: swap from a pool with no token mapping")
 )
 
-// MainnetFactory is the SushiSwap V3 pool factory on pubnet, the ADR-0035 trust root. It is
-// verified from the lake, not a third-party listing: it emits the `pool_created` event in the
-// same transaction as, and immediately before, the `init` event of every pool.
-//
-// A protocol may have several factories, so the gate takes a SET; a second would be admitted by
-// extending [MainnetFactories].
+// MainnetFactory is the SushiSwap V3 pool factory on pubnet, the ADR-0035 trust root, verified from the lake (its `pool_created` immediately precedes each pool's `init`); the gate takes a SET, so a second factory extends [MainnetFactories].
 const MainnetFactory = "CD3KRKGDRVWPXVB3VXLUMQKMX6XZ6Q2H334IVZD4XXNAMKSRVQL5GLYF"
 
 // MainnetFactories is the complete verified factory trust-root set.
 var MainnetFactories = []string{MainnetFactory}
 
-// FactoryGenesisLedger is the ledger of the factory's first `pool_created` event: the first
-// ledger this source can have data, and the lower bound for any re-derive or gap scan.
+// FactoryGenesisLedger is the ledger of the factory's first `pool_created`: the first ledger this source can have data and the lower bound for any re-derive or gap scan.
 const FactoryGenesisLedger uint32 = 61_487_379
 
-// PoolMeta is the immutable creation record of one pool, as carried by the
-// factory's `pool_created` event.
-//
-// Token0 / Token1 are the C-strkeys of the pool's token contracts (SACs for classic assets),
-// held as strkeys so this table stays a plain data literal; [PoolTokensFor] converts.
-//
-// FeePips is the swap fee in hundredths of a basis point (500 = 0.05%) and TickSpacing the tick
-// granularity; the deployed tiers are 500/10, 3000/60 and 10000/200. Neither participates in
-// trade derivation, but both are recorded because a V3 pool is identified by (token0, token1,
-// fee): two pools over one pair at different fee tiers are different markets.
+// PoolMeta is the immutable creation record of one pool from the factory's `pool_created`; Token0 / Token1 are C-strkeys ([PoolTokensFor] converts), FeePips is the fee in hundredths of a basis point (500 = 0.05%), and a pool is identified by (token0, token1, fee), so two fee tiers over one pair are different markets.
 type PoolMeta struct {
 	Token0      string
 	Token1      string
@@ -121,15 +103,7 @@ type PoolMeta struct {
 	CreatedAt   uint32
 }
 
-// MainnetPools is the curated pool table: every pool the factory has created, keyed by pool
-// C-strkey, decoded from `pool_created` events. It carries tokens, not just ids, because it is
-// both the ADR-0035 gate seed (via [MainnetGatedSet]) and the money mapping: token0 / token1
-// appear only in the creation event.
-//
-// A pool created after the table was frozen is picked up live from `pool_created` and persisted
-// to protocol_contracts. A process starting after that ledger admits the pool via the warm but
-// has no token mapping until the event is replayed, so its swaps fail closed into a counted gap
-// (ErrUnknownPool) rather than a mis-assetted trade.
+// MainnetPools is the curated pool table keyed by pool C-strkey, carrying tokens because it is both the ADR-0035 gate seed and the money mapping; a pool created after the table was frozen is admitted live but fails closed into a counted gap (ErrUnknownPool) until `pool_created` is replayed, never a mis-assetted trade.
 var MainnetPools = map[string]PoolMeta{
 	"CA5MIPAAG3UULVAHK7U3U6VBBM52YIHMCZOOSHNTPUSLYR7NKNHVD6WK": {
 		Token0:      "CCKCKCPHYVXQD4NECBFJTFSCU2AMSJGCNG4O6K4JVRE2BLPR7WNDBQIQ",
@@ -539,8 +513,7 @@ var MainnetPools = map[string]PoolMeta{
 	},
 }
 
-// MainnetGatedSet returns the curated pool set — the ADR-0035 gate trust
-// root seeded into every Decoder. Sorted for determinism.
+// MainnetGatedSet returns the curated pool set, the ADR-0035 gate trust root seeded into every Decoder, sorted for determinism.
 func MainnetGatedSet() []string {
 	out := make([]string, 0, len(MainnetPools))
 	for id := range MainnetPools {

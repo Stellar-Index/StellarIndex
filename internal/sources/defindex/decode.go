@@ -419,13 +419,7 @@ func decodeVaultAdmin(e *events.Event, kind string) (VaultAdmin, error) {
 	return out, nil
 }
 
-// DecodeRebalanceMethod extracts the `rebalance_method` discriminator Symbol from a
-// ("DeFindexVault","rebalance") event body, returned verbatim as a [RebalanceMethod]. The
-// per-method payload is deliberately not decoded (see [RebalanceMethod]). Returns
-// ErrMalformedPayload if the body is not a Map or the field is absent or not a Symbol.
-//
-// Production Decode() emits no consumer.Event for rebalance until a real sample exists; this
-// is scaffolding for the golden tests and operator tooling.
+// DecodeRebalanceMethod extracts the `rebalance_method` Symbol from a ("DeFindexVault","rebalance") body as a [RebalanceMethod]; per-method payloads are not decoded, it returns ErrMalformedPayload if the body is not a Map or the field is absent or not a Symbol, and Decode() emits nothing for rebalance until a real sample exists.
 func DecodeRebalanceMethod(e *events.Event) (RebalanceMethod, error) {
 	body, err := scval.Parse(e.Value)
 	if err != nil {

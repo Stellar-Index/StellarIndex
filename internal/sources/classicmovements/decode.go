@@ -14,10 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/xdrjson"
 )
 
-// SupportedOpTypes returns the op-only decode scope in stellar.operations.op_type string form,
-// the exact set clickhouse.StreamClassicOps should be called with. Liquidity-pool and CAP-0038
-// trust-flag ops are a separate entry-changes surface (EntryChangeOpTypes). recognition_test.go
-// pins this list.
+// SupportedOpTypes returns the op-only decode scope in stellar.operations.op_type form, the exact set clickhouse.StreamClassicOps should be called with; liquidity-pool and CAP-0038 trust-flag ops are the separate EntryChangeOpTypes surface, and recognition_test.go pins this list.
 func SupportedOpTypes() []string {
 	return []string{
 		xdr.OperationTypeCreateAccount.String(),

@@ -8,18 +8,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 )
 
-// Decoder is the OpDecoder for pre-P23 classic-movement reconstruction. It is NEVER registered
-// with the live dispatcher; only `stellarindex-ops classic-movements-backfill` feeds it.
-//
-// Stateful: a claim or clawback carries only the BalanceId, so the create's Asset/Amount come from
-// the in-run balances index; claims it cannot resolve go to pending for the caller's second-pass
-// ClickHouse lookup (TakePendingClaimableBalances).
-//
-// The index is BOUNDED at maxCBIndexEntries (FIFO): a genesis-to-P23 run would otherwise hold the
-// full CreateClaimableBalance row count (~1.5B). Eviction is safe because a miss falls through to
-// clickhouse.FindClaimableBalanceCreates. Chunk `-from`/`-to` to keep more claims in memory.
-//
-// Not safe for concurrent Decode calls (as dispatcher.Dispatcher).
+// Decoder is the OpDecoder for pre-P23 classic-movement reconstruction, NEVER registered with the live dispatcher (only `stellarindex-ops classic-movements-backfill` feeds it); it is stateful and not safe for concurrent Decode: claims resolve the create's Asset/Amount via a FIFO-bounded (maxCBIndexEntries) in-run balances index, and misses go to pending for the ClickHouse second pass (TakePendingClaimableBalances).
 type Decoder struct {
 	balances map[string]claimableBalanceInfo
 	// balanceOrder is a fixed-size ring buffer of balances' keys in FIFO order. "" marks an unused
@@ -57,16 +46,12 @@ func NewDecoder() *Decoder {
 // Name implements dispatcher.OpDecoder.
 func (*Decoder) Name() string { return SourceName }
 
-// Matches implements dispatcher.OpDecoder. True for exactly this
-// package's op-only in-scope types — see matchesSupportedOp and
-// recognition_test.go.
+// Matches implements dispatcher.OpDecoder: true for exactly this package's op-only in-scope types (see recognition_test.go).
 func (*Decoder) Matches(op xdr.Operation) bool {
 	return matchesSupportedOp(op)
 }
 
-// Decode implements dispatcher.OpDecoder. ctx.TxSource is used directly as FromAddress because the
-// caller already resolved it from stellar.operations' source_account (op override else tx source);
-// ctx.OpSource is not consulted. Each 'claimable_balance_create' is indexed for later correlation.
+// Decode implements dispatcher.OpDecoder; ctx.TxSource is used directly as FromAddress because the caller already resolved it from stellar.operations' source_account, ctx.OpSource is not consulted, and each 'claimable_balance_create' is indexed for later correlation.
 func (d *Decoder) Decode(ctx dispatcher.OpContext) ([]consumer.Event, error) {
 	movements, err := d.decodeOp(ctx.Ledger, ctx.ClosedAt, ctx.TxHash, uint32(ctx.OpIndex), ctx.TxSource, ctx.Op, ctx.OpResult) //nolint:gosec // OpIndex is a non-negative XDR index; widening int->uint32 is safe for real ledger data.
 	if err != nil {
@@ -121,10 +106,7 @@ func (d *Decoder) recordPending(ref PendingClaimableBalanceRef) {
 	d.pending = append(d.pending, ref)
 }
 
-// ResolveBalance re-checks the in-run index so a caller draining pending after a whole window can
-// skip ClickHouse. StreamClassicOps orders by (ledger_seq, tx_hash, op_index), so a claim whose
-// tx_hash sorts before its own create's in the SAME ledger lands in pending; once the window is
-// decoded the index has caught up.
+// ResolveBalance re-checks the in-run index so a caller draining pending after a whole window can skip ClickHouse; a claim whose tx_hash sorts before its create's in the SAME ledger lands in pending until the window is decoded.
 func (d *Decoder) ResolveBalance(balanceIDHex string) (asset string, amount canonical.Amount, createdBy string, found bool) {
 	info, ok := d.lookupClaimableBalance(balanceIDHex)
 	if !ok {
@@ -133,9 +115,7 @@ func (d *Decoder) ResolveBalance(balanceIDHex string) (asset string, amount cano
 	return info.Asset, info.Amount, info.CreatedBy, true
 }
 
-// TakePendingClaimableBalances returns and clears the claims the in-run index could not resolve,
-// for a batched ClickHouse second pass. An entry still unresolved there is a genuine
-// incompleteness signal: count it, log a summary, never guess an amount.
+// TakePendingClaimableBalances returns and clears the claims the in-run index could not resolve, for a batched ClickHouse second pass; an entry still unresolved there is a genuine incompleteness signal: count it, log it, never guess an amount.
 func (d *Decoder) TakePendingClaimableBalances() []PendingClaimableBalanceRef {
 	out := d.pending
 	d.pending = nil

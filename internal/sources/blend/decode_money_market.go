@@ -30,40 +30,13 @@ import (
 
 // ─── Decoded event types ───────────────────────────────────────
 
-// PositionEvent is the decoded shape of every money-market event that changes
-// a (user, asset, pool) position: supply / withdraw / supply_collateral /
-// withdraw_collateral / borrow / repay / flash_loan. EventKind discriminates.
-// TokenAmount + BOrDAmount are i128 *big.Int (ADR-0003).
-//
-// Mirrors [domain.BlendPositionEvent], the persisted shape (storage cannot import this package).
-// It is a named type, not an alias, so it can carry the EventKind()/Source() methods that satisfy
-// consumer.Event; internal/pipeline/sink.go converts via domain.BlendPositionEvent(e).
+// PositionEvent is the decoded shape of every money-market event changing a (user, asset, pool) position; EventKind discriminates, TokenAmount and BOrDAmount are i128 *big.Int (ADR-0003). Named type (not alias) over domain.BlendPositionEvent so it carries the consumer.Event methods.
 type PositionEvent domain.BlendPositionEvent
 
-// EmissionEvent is the decoded shape of the emission / credit-risk events
-// (gulp / claim / reserve_emission_update / gulp_emissions / bad_debt /
-// defaulted_debt). Bodies are heterogeneous, so fields are nullable (zero value = absent for
-// strings, nil for *big.Int); EventKind says which are populated:
-//
-//	gulp:                    Asset, Amount(=token_delta)
-//	claim:                   User(=from), Amount(=amount_claimed),
-//	                         ReserveTokenIDs (from body)
-//	reserve_emission_update: ResTokenID, EmissionsPerSec, Expiration
-//	gulp_emissions:          Amount
-//	bad_debt:                User, Asset, Amount(=d_tokens)
-//	defaulted_debt:          Asset, Amount(=d_tokens_burnt)
-//
-// Mirrors [domain.BlendEmissionEvent]; see [PositionEvent] for why it is a named type.
+// EmissionEvent is the decoded shape of the emission / credit-risk events (gulp, claim, reserve_emission_update, gulp_emissions, bad_debt, defaulted_debt); bodies are heterogeneous, so fields are nullable and EventKind says which are populated. Named type over domain.BlendEmissionEvent.
 type EmissionEvent domain.BlendEmissionEvent
 
-// AdminEvent is the decoded shape of every pool-config / admin / pool-factory
-// lifecycle event: set_admin, update_pool, queue_set_reserve,
-// cancel_set_reserve, set_reserve, set_status, deploy.
-//
-// ContractID is the EMITTING contract: the pool for the six pool events, the pool-factory for
-// `deploy`. ByAdmin is true when set_status carried an admin topic. ReserveConfig is nil unless
-// the kind carries one. Mirrors [domain.BlendAdminEvent]; see [PositionEvent] for why it is a
-// named type.
+// AdminEvent is the decoded shape of every pool-config / admin / factory lifecycle event; ContractID is the EMITTING contract (the pool, or the factory for `deploy`). Named type over domain.BlendAdminEvent.
 type AdminEvent domain.BlendAdminEvent
 
 // ─── classify (extended) ───────────────────────────────────────

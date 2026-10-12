@@ -11,24 +11,17 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 )
 
-// RedisReplayGuard is the production [ReplayGuard]: Challenge reserves each challenge transaction's hash and Verify spends it with an atomic DEL, so a challenge mints at most one JWT.
-// Under allkeys-lru a SETNX spent-marker would fail OPEN (an evicted marker lets a captured XDR re-claim the slot); requiring the reservation to be PRESENT makes eviction refuse the redemption instead.
-// Key `sep10:seen:live:<hex transaction hash>` (the Redis ACL allow-list prefix); the hash is the parsed transaction's (see [challengeTxHash]), never a digest of the XDR string.
+// RedisReplayGuard is the production [ReplayGuard]: Challenge reserves each challenge transaction's hash and Verify spends it with an atomic DEL, so a challenge mints at most one JWT; the reservation must be PRESENT (a SETNX spent-marker would fail OPEN under allkeys-lru eviction), keyed `sep10:seen:live:<hex tx hash>` (the Redis ACL prefix) on the parsed transaction's hash ([challengeTxHash]), never a digest of the XDR string.
 type RedisReplayGuard struct {
 	rdb redis.UniversalClient
 }
 
-// NewRedisReplayGuard constructs a replay guard against the supplied
-// Redis client. Callers typically pass the same client used by the
-// rest of the auth subsystem (`internal/auth/apikey_redis.go`).
+// NewRedisReplayGuard constructs a replay guard against the supplied Redis client, typically the one shared with the auth subsystem.
 func NewRedisReplayGuard(rdb redis.UniversalClient) *RedisReplayGuard {
 	return &RedisReplayGuard{rdb: rdb}
 }
 
-// Reserve records at challenge issuance that txHash is live and
-// redeemable once. A pre-existing reservation (SETNX false) cannot be a
-// collision — every challenge carries a random nonce — so it is not an
-// error. Redis errors propagate so issuance fails closed.
+// Reserve records at challenge issuance that txHash is live and redeemable once; a pre-existing reservation is not an error (every challenge carries a random nonce), but Redis errors propagate so issuance fails closed.
 func (g *RedisReplayGuard) Reserve(ctx context.Context, txHash string, ttl time.Duration) error {
 	key := redisReplayKey(txHash)
 	if _, err := g.rdb.SetNX(ctx, key, "1", ttl).Result(); err != nil {
@@ -60,8 +53,5 @@ func redisReplayKey(txHash string) string {
 // Compile-time interface conformance check.
 var _ ReplayGuard = (*RedisReplayGuard)(nil)
 
-// ErrReplayGuardUnavailable is returned by callers that wrapped a
-// nil ReplayGuard but were configured to require one. Exposed so
-// the binary wiring can fail-loud at startup rather than silently
-// disabling replay defence in production.
+// ErrReplayGuardUnavailable is returned when a nil ReplayGuard was configured where one is required, so wiring can fail loud at startup rather than silently disabling replay defence.
 var ErrReplayGuardUnavailable = errors.New("sep10: ReplayGuard required but not configured")

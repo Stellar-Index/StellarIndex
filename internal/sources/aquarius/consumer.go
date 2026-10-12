@@ -18,8 +18,7 @@ func (TradeEvent) EventKind() string { return "aquarius.trade" }
 // Source implements [consumer.Event].
 func (TradeEvent) Source() string { return SourceName }
 
-// LiquidityAction discriminates the two liquidity-mutating events; values match the
-// aquarius_liquidity.action CHECK constraint.
+// LiquidityAction discriminates the two liquidity-mutating events; values match the aquarius_liquidity.action CHECK constraint.
 type LiquidityAction string
 
 // Liquidity actions: `deposit` grows pool reserves, `withdraw` shrinks them.
@@ -37,13 +36,7 @@ func (a LiquidityAction) IsValid() bool {
 	return false
 }
 
-// ReservesEvent is the [consumer.Event] Aquarius's Decoder emits on a
-// successful `update_reserves` decode. It carries the pool's full post-state reserve vector (one
-// i128 per token, in canonical token order) and is the Aquarius TVL signal; the sink fans it out
-// to one aquarius_reserves row per token position.
-//
-// update_reserves has no token address in its topics, so a reserve is identified only by position
-// in the pool's canonical token order (the order its deposit/withdraw/trade topics list tokens).
+// ReservesEvent is the [consumer.Event] emitted on `update_reserves`: the pool's full post-state reserve vector (one i128 per token, canonical token order), the Aquarius TVL signal; topics carry no token address, so a reserve is identified only by position, and the sink writes one aquarius_reserves row per position.
 type ReservesEvent struct {
 	ContractID string
 	Ledger     uint32
@@ -61,8 +54,7 @@ type ReservesEvent struct {
 	Reserves []canonical.Amount
 }
 
-// EventKind implements [consumer.Event]. reserves_sync lands in its own table, so it carries its
-// own kind; a by-EventKind reconcile can then tell the two apart.
+// EventKind implements [consumer.Event]; reserves_sync lands in its own table, so it has its own kind for by-EventKind reconcile.
 func (e ReservesEvent) EventKind() string {
 	if e.Kind == EventReservesSync {
 		return "aquarius.reserves_sync"
@@ -73,10 +65,7 @@ func (e ReservesEvent) EventKind() string {
 // Source implements [consumer.Event].
 func (ReservesEvent) Source() string { return SourceName }
 
-// LiquidityEvent is the [consumer.Event] Aquarius's Decoder emits on a
-// successful `deposit_liquidity` / `withdraw_liquidity` decode. It carries per-token amounts plus
-// the LP shares minted or burned; the sink fans it out to one aquarius_liquidity row per token
-// position, landing Shares on the token_index = 0 row only.
+// LiquidityEvent is the [consumer.Event] emitted on `deposit_liquidity` / `withdraw_liquidity`, carrying per-token amounts plus LP shares minted or burned; the sink writes one aquarius_liquidity row per token position, Shares on the token_index = 0 row only.
 type LiquidityEvent struct {
 	ContractID string
 	Ledger     uint32
@@ -100,8 +89,7 @@ func (LiquidityEvent) EventKind() string { return "aquarius.liquidity" }
 // Source implements [consumer.Event].
 func (LiquidityEvent) Source() string { return SourceName }
 
-// RewardsAction discriminates the twelve rewards-gauge event kinds; values match the
-// aquarius_rewards_events.event_kind CHECK constraint.
+// RewardsAction discriminates the twelve rewards-gauge event kinds; values match the aquarius_rewards_events.event_kind CHECK constraint.
 type RewardsAction string
 
 // Rewards-gauge event kinds; decode_rewards.go has the per-kind wire shapes.
@@ -120,9 +108,7 @@ const (
 	RewardsConfigRewards       RewardsAction = RewardsAction(EventConfigRewards)
 )
 
-// RewardsEvent is the [consumer.Event] emitted for any of the twelve rewards-gauge kinds.
-// UserAddress / Amount are promoted fields, empty/nil when the kind lacks them; Attributes carries
-// the remainder, with i128/u128/u256 values as decimal strings (ADR-0003: jsonb numbers are lossy).
+// RewardsEvent is the [consumer.Event] for any of the twelve rewards-gauge kinds; UserAddress / Amount are promoted fields (empty/nil when absent), and Attributes carries the rest with i128/u128/u256 values as decimal strings (ADR-0003).
 type RewardsEvent struct {
 	ContractID string
 	Ledger     uint32
@@ -147,8 +133,7 @@ func (RewardsEvent) EventKind() string { return "aquarius.rewards" }
 // Source implements [consumer.Event].
 func (RewardsEvent) Source() string { return SourceName }
 
-// AdminAction discriminates the eight governance/upgrade admin event kinds; values match the
-// aquarius_admin.event_kind CHECK constraint.
+// AdminAction discriminates the eight governance/upgrade admin event kinds; values match the aquarius_admin.event_kind CHECK constraint.
 type AdminAction string
 
 // Governance / upgrade admin event kinds; decode_admin.go has the per-kind wire shapes.
@@ -163,8 +148,7 @@ const (
 	AdminPoolGaugeSwitchToken    AdminAction = AdminAction(EventPoolGaugeSwitchToken)
 )
 
-// AdminEvent is the [consumer.Event] emitted for any of the eight governance/upgrade kinds. Admin /
-// Target are promoted fields, empty when the kind lacks them; Attributes carries the remainder.
+// AdminEvent is the [consumer.Event] for any of the eight governance/upgrade kinds; Admin / Target are promoted fields (empty when absent) and Attributes carries the rest.
 type AdminEvent struct {
 	ContractID string
 	Ledger     uint32
@@ -189,10 +173,7 @@ func (AdminEvent) EventKind() string { return "aquarius.admin" }
 // Source implements [consumer.Event].
 func (AdminEvent) Source() string { return SourceName }
 
-// FeeEvent is a protocol-fee treasury event: set_protocol_fee (per-token old to new fee) or
-// claim_protocol_fee (accrued fee swept to a recipient), discriminated by Kind. The sink lands it
-// in aquarius_protocol_fee. The four Fee* fields are set on set_protocol_fee, Recipient + Amount
-// on claim_protocol_fee.
+// FeeEvent is a protocol-fee treasury event, set_protocol_fee (per-token old to new fee, the four Fee* fields) or claim_protocol_fee (Recipient + Amount), discriminated by Kind and landed in aquarius_protocol_fee.
 type FeeEvent struct {
 	ContractID string
 	Ledger     uint32
@@ -223,9 +204,7 @@ func (FeeEvent) EventKind() string { return "aquarius.fee" }
 // Source implements [consumer.Event].
 func (FeeEvent) Source() string { return SourceName }
 
-// KillEvent is a pool circuit-breaker toggle: one of the eight kill_/unkill_ admin actions. It has
-// no body and a single topic, so (contract, action, event identity) fully identifies it. The sink
-// lands it in aquarius_kill_switches.
+// KillEvent is a pool circuit-breaker toggle (one of the eight kill_/unkill_ admin actions) with no body and a single topic, so (contract, action, event identity) identifies it; landed in aquarius_kill_switches.
 type KillEvent struct {
 	ContractID string
 	Ledger     uint32

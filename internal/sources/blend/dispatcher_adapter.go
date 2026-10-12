@@ -8,27 +8,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// Decoder is the dispatcher-facing view of Blend (ADR-0035 factory-anchored gating). Every business
-// event is emitted by a POOL contract and a factory emits only `deploy`, which announces each new
-// pool, so we anchor on the factory and fan out to the pools it deploys.
-//
-// The registry of factory-deployed pools is the load-bearing state: seeded live (each decoded
-// `deploy` calls reg.Seed), DB-warmed at boot (`protocol_contracts` via contractid.WithSeed), and
-// genesis-seeded by walking factory `deploy` events from the lake (`stellarindex-ops
-// seed-protocol-contracts -source blend`, and the ADR-0033 reconcile pre-seed). See
-// docs/protocols/blend.md.
+// Decoder is the dispatcher-facing Blend view (ADR-0035 factory-anchored gating): pools emit every business event and the factory only `deploy`, so the pool registry (live deploys, DB warm, genesis seed) is the load-bearing state (docs/protocols/blend.md).
 type Decoder struct {
 	reg *contractid.Registry
 }
 
-// NewDecoder constructs a Blend Decoder. Options seed and persist the pool registry
-// (contractid.WithSeed / WithHook); with none, only live `deploy` events populate it, which is
-// right for a from-genesis stream but not an incremental restart (hence the DB warm in production).
-//
-// The surface spans both factory versions: MainnetPoolFactories trusts V1 and V2, and decodeByKind
-// handles the three V1-only kinds (update_emissions / new_liquidation_auction /
-// delete_liquidation_auction) beside the V2 vocabulary. A V3 would need per-WASM-hash dispatch
-// (docs/architecture/ingest-pipeline.md#contract-schema-evolution).
+// NewDecoder constructs a Blend Decoder; options seed and persist the pool registry (contractid.WithSeed / WithHook). It spans factory V1 and V2 (decodeByKind handles the V1-only kinds); a V3 would need per-WASM-hash dispatch.
 func NewDecoder(opts ...contractid.Option) *Decoder {
 	// The factory trust roots are intrinsic and hard-coded, so they are installed first; caller
 	// opts layer discovered children and persistence on top.
@@ -39,22 +24,10 @@ func NewDecoder(opts ...contractid.Option) *Decoder {
 // Name implements [dispatcher.Decoder].
 func (*Decoder) Name() string { return SourceName }
 
-// GatedContractSet returns the decoder's current gate — the pool-factory trust
-// roots ∪ every registered pool: exactly the contracts Matches() can accept,
-// so it is the contract-id prefilter for the -ch completeness re-derive.
+// GatedContractSet returns the current gate (factory trust roots plus every registered pool), exactly what Matches() can accept, as the contract-id prefilter for the -ch completeness re-derive.
 func (d *Decoder) GatedContractSet() []string { return d.reg.GatedSet() }
 
-// Matches implements [dispatcher.Decoder]. Gates on CONTRACT IDENTITY, not topic symbol
-// (ADR-0035): other contracts (SACs, other DeFi) emit `supply`/`claim`/`set_admin` topics too.
-//
-//   - `deploy` matches ONLY from a canonical Pool Factory (MainnetPoolFactories has more than
-//     one). This is the trust root; otherwise a foreign contract could inject a pool into the
-//     registry and launder its events as Blend's.
-//   - every other event matches ONLY from a REGISTERED pool (a factory descendant).
-//
-// An un-seeded real pool has its events dropped, so registry completeness is a hard requirement.
-// It rests on factory `deploy` events being in the lake (ADR-0033 Claim 1) and on
-// MainnetPoolFactories being the complete set; an undocumented factory is the residual risk.
+// Matches implements [dispatcher.Decoder], gating on CONTRACT IDENTITY, not topic (ADR-0035): `deploy` matches only from a canonical MainnetPoolFactories entry (the trust root), every other event only from a REGISTERED pool; an un-seeded real pool has its events dropped.
 func (d *Decoder) Matches(ev events.Event) bool {
 	kind := classifyAny(&ev)
 	if kind == "" {
@@ -66,13 +39,7 @@ func (d *Decoder) Matches(ev events.Event) bool {
 	return d.reg.Has(ev.ContractID)
 }
 
-// Decode implements [dispatcher.Decoder]. Returns one consumer.Event per decode, with the kind
-// preserved in EventKind so the sink can demultiplex: auctions yield New/Fill/DeleteAuctionEvent,
-// the 18 money-market / emission / admin events yield PositionEvent / EmissionEvent / AdminEvent.
-//
-// EventIndex is stamped on position/emission/admin outputs here: without it, same-(asset, user,
-// kind) events in one operation collide on the blend_positions / blend_emissions / blend_admin
-// primary key and all but one are silently dropped. The auction decoders set it themselves.
+// Decode implements [dispatcher.Decoder], returning one consumer.Event per decode with the kind kept in EventKind; EventIndex is stamped here because without it same-(asset, user, kind) events in one operation collide on the primary key and all but one are dropped.
 func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	outs, err := d.decodeByKind(ev)
 	if err != nil {

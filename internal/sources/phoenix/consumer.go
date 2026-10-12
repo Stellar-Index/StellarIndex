@@ -16,9 +16,7 @@ type TradeEvent struct {
 // EventKind implements [consumer.Event].
 func (TradeEvent) EventKind() string { return "phoenix.trade" }
 
-// EventLedger reports the trade's own ledger, the correlation group's first-field ledger. For a
-// sweep rescue this differs from the event that TRIGGERED the eviction, so the completeness
-// re-derive must count the trade here (completeness.eventLedgerCarrier).
+// EventLedger reports the trade's own ledger, the correlation group's first-field ledger; for a sweep rescue this differs from the triggering event's ledger, so the completeness re-derive must count the trade here.
 func (e TradeEvent) EventLedger() uint32 { return e.Trade.Ledger }
 
 // Source implements [consumer.Event].
@@ -27,13 +25,7 @@ func (TradeEvent) Source() string { return SourceName }
 // Compile-time check that TradeEvent satisfies consumer.Event.
 var _ consumer.Event = TradeEvent{}
 
-// LiquidityChange is the projection of one completed provide_liquidity (5-event) or
-// withdraw_liquidity (4-event) reassembly, mirroring the phoenix_liquidity row.
-//
-// Withdraw events carry no token addresses, so TokenA / TokenB stay empty on withdraw rows; join to
-// a recent provide row for the same pool. AmountA / AmountB are the `actual received` deposit
-// (after slippage truncation) on provide. SharesAmount is LP shares burned, withdraw only: provide-side
-// minting appears as a SEP-41 mint on the share-token contract, handled by the sep41_supply observer.
+// LiquidityChange is one completed provide_liquidity (5-event) or withdraw_liquidity (4-event) reassembly (phoenix_liquidity row); withdraw events carry no token addresses so TokenA / TokenB stay empty there, and SharesAmount is LP shares burned (withdraw only).
 type LiquidityChange struct {
 	Action  string
 	Pool    string
@@ -52,8 +44,7 @@ type LiquidityChange struct {
 	SharesAmount canonical.Amount // withdraw-only; zero on provide
 }
 
-// LiquidityEvent is the [consumer.Event] wrapping a LiquidityChange; the sink type-switches on it
-// (internal/pipeline/sink.go).
+// LiquidityEvent is the [consumer.Event] wrapping a LiquidityChange, type-switched by the sink.
 type LiquidityEvent struct {
 	Change LiquidityChange
 }
@@ -70,12 +61,7 @@ func (LiquidityEvent) Source() string { return SourceName }
 // Compile-time check.
 var _ consumer.Event = LiquidityEvent{}
 
-// StakeChange is the projection of one completed bond / unbond (3-event reassembly each),
-// mirroring the phoenix_stake_events row.
-//
-// Each pool has its own stake contract, accepting only that pool's LP-share token. `Contract` is the
-// emitting stake contract, `LPToken` the share token, and `Amount` is positive for both directions
-// (`Action` carries the direction).
+// StakeChange is one completed bond / unbond (3-event reassembly, phoenix_stake_events row); each pool has its own stake contract accepting only its LP-share token, and Amount is positive for both directions (Action carries the direction).
 type StakeChange struct {
 	Action   string
 	Contract string
@@ -116,10 +102,7 @@ var (
 	_ interface{ EventLedger() uint32 } = StakeEvent{}
 )
 
-// InitializeEvent is a pool-deploy token announcement: one of the two ("initialize", "XYK LP
-// token_a"/"token_b") events a pool emits at deploy, each carrying one token contract address.
-// The sink lands it in phoenix_initialize. Self-contained (no correlation buffer): one event, one
-// row.
+// InitializeEvent is a pool-deploy token announcement (one of the two "initialize" token_a / token_b events, each carrying one token address); self-contained, one event, one phoenix_initialize row.
 type InitializeEvent struct {
 	Pool       string // emitting pool contract C-strkey
 	Ledger     uint32
@@ -140,8 +123,7 @@ func (InitializeEvent) Source() string { return SourceName }
 // Compile-time check.
 var _ consumer.Event = InitializeEvent{}
 
-// AdminEvent is a pool admin-rotation step ("XYK Pool: ", <phrase>), a factory config update, or a
-// blend-pool setting change, landed in phoenix_admin_events. Self-contained: one event, one row.
+// AdminEvent is a pool admin-rotation step, factory config update or blend-pool setting change, landed in phoenix_admin_events; self-contained, one event, one row.
 type AdminEvent struct {
 	Pool        string // emitting pool contract C-strkey
 	Ledger      uint32
