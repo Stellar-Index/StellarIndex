@@ -341,7 +341,8 @@ func movementsCoverage(wm uint32, tailNote string, supply supplyRange) []Movemen
 	if supply.from != 0 {
 		supplyKinds.Status = "served"
 		supplyKinds.FromLedger, supplyKinds.ThroughLedger = supply.from, supply.thru
-		if supply.from > floor {
+		// Partial while either end is still being derived: below the range (backfill) or above it up to the watermark (lag).
+		if supply.from > floor || supply.thru < wm {
 			supplyKinds.Status = "partial"
 		}
 	}

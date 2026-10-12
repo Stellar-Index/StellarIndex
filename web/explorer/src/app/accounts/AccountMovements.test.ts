@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest';
 
-import { coverageDetail, formatMovementAmount } from './AccountMovements';
+import {
+  coverageDetail,
+  coverageIncomplete,
+  formatMovementAmount,
+} from './AccountMovements';
 
 describe('formatMovementAmount', () => {
   it('scales an 18-decimal token by its own decimals, not a feed-wide 7', () => {
@@ -29,9 +33,32 @@ describe('coverageDetail', () => {
     );
   });
 
-  it('still reports order-book fills as not served', () => {
+  it('points order-book fills at the Trades panel, not a gap', () => {
     expect(coverageDetail({ kind: 'fill', status: 'not_served' })).toBe(
-      'not served',
+      'shown in Trades',
+    );
+  });
+});
+
+describe('coverageIncomplete', () => {
+  it('warns only for a kind this feed serves that is not complete', () => {
+    expect(coverageIncomplete({ kind: 'transfer', status: 'served' })).toBe(
+      false,
+    );
+    expect(coverageIncomplete({ kind: 'fee', status: 'not_served' })).toBe(
+      false,
+    );
+    expect(coverageIncomplete({ kind: 'fill', status: 'not_served' })).toBe(
+      false,
+    );
+    expect(
+      coverageIncomplete({ kind: 'mint_burn_clawback', status: 'partial' }),
+    ).toBe(true);
+    expect(
+      coverageIncomplete({ kind: 'mint_burn_clawback', status: 'not_served' }),
+    ).toBe(true);
+    expect(coverageIncomplete({ kind: 'transfer', status: 'partial' })).toBe(
+      true,
     );
   });
 });
