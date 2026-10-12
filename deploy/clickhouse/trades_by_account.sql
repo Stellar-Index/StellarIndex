@@ -40,10 +40,15 @@ CREATE TABLE IF NOT EXISTS stellar.trades_by_account_windows
     from_ts     DateTime('UTC'),
     to_ts       DateTime('UTC'),
     rows        UInt64,
+    -- Sorted comma-joined trade sources the window decoded; the API counts only windows matching its current set.
+    sources     String DEFAULT '',
     updated_at  DateTime DEFAULT now()
 )
 ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY (from_ledger, to_ledger);
+
+-- A table created before the sources column: add it. Existing rows read '' and stop counting as coverage until re-run with -replace.
+ALTER TABLE stellar.trades_by_account_windows ADD COLUMN IF NOT EXISTS sources String DEFAULT '' AFTER rows;
 
 -- ── Step 2: backfill through ch-rebuild ─────────────────────────────────────
 -- ***Heavy job, r1 only.*** No ClickHouse trades table exists, so the rows
@@ -51,11 +56,22 @@ ORDER BY (from_ledger, to_ledger);
 -- storability gate and usd_volume waterfall. -trades-by-account writes ONLY
 -- ClickHouse (Postgres is untouched) and needs the full trade set: no
 -- -sources, -contracts, -sdex-gaps or -sdex-reconcile. Windows of <= 2M
--- ledgers (the ch-rebuild buffer ceiling); re-running a window is idempotent.
+-- ledgers (the ch-rebuild buffer ceiling). A window that overlaps a recorded
+-- one is refused; -replace deletes the recorded windows and the rows of
+-- [from,to] first, and needs every overlapping window inside [from,to].
+-- Windows record only over a lake range that is present and hash-linked
+-- (ADR-0033 Claim 1), so stop at the first ledger at or after the Postgres
+-- compression horizon (the archive only has to reach it) and never above the
+-- lake's contiguous watermark:
 --
---   TIP=$(clickhouse-client --port 9300 -q "SELECT max(ledger_seq) FROM stellar.ledgers")
---   for LO in $(seq 2 1000000 $TIP); do
---     HI=$((LO + 999999)); [ $HI -gt $TIP ] && HI=$TIP
+--   HORIZON=$(psql "$PG" -Atc "SELECT max(range_end) FROM timescaledb_information.chunks
+--             WHERE hypertable_name = 'trades' AND is_compressed")
+--   STOP=$(clickhouse-client --port 9300 -q "SELECT min(ledger_seq) FROM stellar.ledgers
+--          WHERE close_time >= parseDateTimeBestEffort('$HORIZON')")
+--   (cap STOP at the substrate watermark of the latest compute-completeness run;
+--    a window over a hole is refused when it tries to record)
+--   for LO in $(seq 2 1000000 $STOP); do
+--     HI=$((LO + 999999)); [ $HI -gt $STOP ] && HI=$STOP
 --     /usr/local/sbin/run-heavy-job.sh "trades-by-account-$LO" \
 --       stellarindex-ops ch-rebuild -config "$SI_CONFIG" \
 --         -from $LO -to $HI -sdex -trades-by-account -write
@@ -64,20 +80,19 @@ ORDER BY (from_ledger, to_ledger);
 -- Each successful window inserts one trades_by_account_windows row. The API
 -- serves archive rows only from the contiguous run of windows that reaches the
 -- Postgres compression horizon, so keep a daily run over [last to_ledger + 1,
--- lake tip] going after the backfill, or the archive falls behind the horizon
+-- next STOP] going after the backfill, or the archive falls behind the horizon
 -- and the endpoint drops back to its horizon floor (lower_bound=true).
 --
 -- ── Step 3: verify ──────────────────────────────────────────────────────────
 --   SELECT from_ledger, to_ledger, rows FROM stellar.trades_by_account_windows FINAL
 --   ORDER BY from_ledger
--- Expect contiguous windows from ledger 2 to the tip; lower_bound turns false
+-- Expect contiguous windows from ledger 2 to STOP; lower_bound turns false
 -- once the run reaches ledger 2.
 --
 -- OPERATOR NOTE: a Postgres trades re-derive (ch-rebuild -write without
 -- -trades-by-account) does not touch this table. Re-run the same windows with
--- -trades-by-account afterwards; a re-derive that changes identity columns
--- needs ALTER TABLE stellar.trades_by_account DROP PARTITION <ledger/1e6>
--- first.
+-- -trades-by-account -replace afterwards (the -replace clear also drops rows
+-- whose identity columns the re-derive changed).
 --
 -- ── ROLLBACK ────────────────────────────────────────────────────────────────
 --   DROP TABLE IF EXISTS stellar.trades_by_account SYNC;

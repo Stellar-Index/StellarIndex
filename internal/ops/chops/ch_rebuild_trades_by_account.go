@@ -13,14 +13,17 @@ import (
 
 // chRebuildTradesByAccountConflicts is the rest of the invocation -trades-by-account is checked against.
 type chRebuildTradesByAccountConflicts struct {
-	write, sdex, sdexGaps, sdexReconcile, sep41, contractCalls, bulkTrades, recordDirty bool
-	sources, contracts                                                                  string
+	write, sdex, sdexGaps, sdexReconcile, sep41, contractCalls, bulkTrades, recordDirty, replace bool
+	sources, contracts                                                                           string
 }
 
 // checkCHRebuildTradesByAccountFlags refuses a -trades-by-account run that would record a window it did not fully decode: a recorded
 // window is the API's proof that every trade in it is present, so any narrowing of the trade set would make the archive silently partial.
 func checkCHRebuildTradesByAccountFlags(on bool, c chRebuildTradesByAccountConflicts) error {
 	if !on {
+		if c.replace {
+			return errors.New("ch-rebuild: -replace applies only to -trades-by-account")
+		}
 		return nil
 	}
 	var errs []error
@@ -53,6 +56,39 @@ func checkCHRebuildTradesByAccountFlags(on bool, c chRebuildTradesByAccountConfl
 	return fmt.Errorf("ch-rebuild -trades-by-account: %w", errors.Join(errs...))
 }
 
+// scopeCatalogueToTradeSources keeps the catalogue entries whose trades tradeOf reads and refuses a catalogue missing one: the window
+// would record a source set the API does not count, after a heavy decode.
+func scopeCatalogueToTradeSources(cat []reconSource) ([]reconSource, error) {
+	want := make(map[string]bool, len(clickhouse.TradesByAccountSources))
+	for _, n := range clickhouse.TradesByAccountSources {
+		want[n] = true
+	}
+	var out []reconSource
+	for _, src := range cat {
+		if want[src.name] {
+			out = append(out, src)
+			delete(want, src.name)
+		}
+	}
+	if len(want) > 0 {
+		missing := make([]string, 0, len(want))
+		for n := range want {
+			missing = append(missing, n)
+		}
+		return nil, fmt.Errorf("ch-rebuild -trades-by-account: catalogue lacks trade source(s) %s", clickhouse.TradesSourcesKey(missing))
+	}
+	return out, nil
+}
+
+// tradeSourcesKey is the source-set key of the catalogue a run decoded, stored on the window it records.
+func tradeSourcesKey(cat []reconSource) string {
+	names := make([]string, len(cat))
+	for i, src := range cat {
+		names[i] = src.name
+	}
+	return clickhouse.TradesSourcesKey(names)
+}
+
 // writeCHRebuildTradesByAccount lands the buffered trades in stellar.trades_by_account and records [lo,hi] only after every row was sent.
 func writeCHRebuildTradesByAccount(
 	ctx context.Context,
@@ -75,7 +111,11 @@ func writeCHRebuildTradesByAccount(
 	}
 	var out []clickhouse.TradeByAccountRow
 	for i, t := range rows {
-		out = append(out, clickhouse.FanOutTradeByAccount(t, usd[i])...)
+		fan, ferr := clickhouse.FanOutTradeByAccount(t, usd[i])
+		if ferr != nil {
+			return fmt.Errorf("ch-rebuild -trades-by-account [%d,%d]: window NOT recorded: %w", lo, hi, ferr)
+		}
+		out = append(out, fan...)
 	}
 	sent, err := insert(ctx, out)
 	if err != nil {

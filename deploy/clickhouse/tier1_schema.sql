@@ -1490,6 +1490,8 @@ CREATE TABLE IF NOT EXISTS stellar.trades_by_account_windows
     from_ts     DateTime('UTC'),
     to_ts       DateTime('UTC'),
     rows        UInt64,
+    -- Sorted comma-joined trade sources the window decoded; the API counts only windows matching its current set.
+    sources     String DEFAULT '',
     updated_at  DateTime DEFAULT now()
 )
 ENGINE = ReplacingMergeTree(updated_at)
