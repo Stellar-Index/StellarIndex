@@ -134,9 +134,7 @@ const (
 	retryAfterDependencyDown = "30"
 )
 
-// ExplorerReader is the seam the explorer endpoints read the certified ClickHouse lake through
-// (the full chain to genesis). *clickhouse.ExplorerReader satisfies it; nil disables the endpoints
-// (503). A few v1 handlers outside this package also read through it; v1 aliases it.
+// ExplorerReader is the seam the explorer endpoints read the certified ClickHouse lake through, satisfied by *clickhouse.ExplorerReader; nil disables the endpoints (503).
 type ExplorerReader interface {
 	RecentLedgers(ctx context.Context, limit int, beforeSeq uint32) ([]clickhouse.LedgerHeader, error)
 	LedgerBySeq(ctx context.Context, seq uint32) (clickhouse.LedgerHeader, bool, error)
@@ -245,17 +243,12 @@ type ExplorerReader interface {
 	ContractActivitySummaryFor(ctx context.Context, contractID string, days int) (clickhouse.ContractActivitySummary, bool, error)
 }
 
-// ContractsReader is the narrow read seam onto the protocol_contracts registry (ADR-0035):
-// contract_id to owning-protocol attribution. v1.ProtocolContractsReader satisfies it structurally.
+// ContractsReader is the narrow read seam onto the protocol_contracts registry (ADR-0035): contract_id to owning protocol.
 type ContractsReader interface {
 	ProtocolContractIndex(ctx context.Context) (map[string]string, error)
 }
 
-// Handler holds every explorer endpoint's dependencies. Package v1 constructs one at startup and
-// registers its exported methods on the mux.
-//
-// Response writing and the cross-cutting reads (LookupUSDPrice, IsKnownSAC, LakeWatermark,
-// ParseWindowDays) are injected function values, since importing package v1 would cycle.
+// Handler holds every explorer endpoint's dependencies; response writing and cross-cutting reads are injected function values, since importing package v1 would cycle.
 type Handler struct {
 	Reader             ExplorerReader
 	Logger             *slog.Logger

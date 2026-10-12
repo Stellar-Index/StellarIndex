@@ -31,10 +31,7 @@ type ContractEventView struct {
 	Data   string   `json:"data,omitempty"`
 }
 
-// ContractDetailView is the wire response for GET /v1/contracts/{contract_id}: the contract id
-// and its most-recent events. NextCursor is the opaque keyset cursor for the next (older) page,
-// the full row identity (ledger, tx_hash, op_index, event_index) so many events in one ledger
-// never lose rows at a page boundary. Set only when a full page returned.
+// ContractDetailView is GET /v1/contracts/{contract_id}: the id and its most recent events; NextCursor is the opaque full-row-identity keyset cursor, set only when a full page returned.
 type ContractDetailView struct {
 	ContractID string `json:"contract_id"`
 	// Protocol names the registry protocol this contract belongs to
@@ -70,8 +67,7 @@ const (
 	ttlStateArchived = "archived"
 )
 
-// ContractTTLV is the wire TTL state of a contract's instance entry. An
-// archived instance cannot be invoked until it is restored.
+// ContractTTLV is the wire TTL state of a contract's instance entry; an archived instance cannot be invoked until restored.
 type ContractTTLV struct {
 	LiveUntil  uint32 `json:"live_until"`
 	State      string `json:"state"`
@@ -92,9 +88,7 @@ type ContractActivityDayV struct {
 	ActiveLedgers uint64 `json:"active_ledgers"`
 }
 
-// ContractDetail serves GET /v1/contracts/{contract_id} — a contract's
-// recent on-chain event activity (uses the contract_id bloom skip-index).
-// SEP-41 transfer detail lives at the sibling /v1/contracts/{id}/transfers.
+// ContractDetail serves GET /v1/contracts/{contract_id}, a contract's recent event activity via the contract_id bloom skip-index; SEP-41 transfers live at /transfers.
 func (h *Handler) ContractDetail(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)

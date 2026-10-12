@@ -11,10 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/xdrjson"
 )
 
-// LedgerView is the wire shape for a ledger header (ADR-0038). Every stroop
-// amount (total_coins, fee_pool, base_fee, base_reserve) is a decimal STRING,
-// never a JSON number (ADR-0003). tx_count/op_count cover the whole tx set,
-// failed txs included; soroban_event_count covers successful txs only.
+// LedgerView is the wire shape for a ledger header (ADR-0038); every stroop amount is a decimal STRING (ADR-0003), tx_count/op_count include failed txs, soroban_event_count successful only.
 type LedgerView struct {
 	Sequence          uint32 `json:"sequence"`
 	CloseTime         string `json:"close_time"`
@@ -47,9 +44,7 @@ func ledgerView(l clickhouse.LedgerHeader) LedgerView {
 	}
 }
 
-// TxSummaryView is the wire shape for a transaction summary (in ledger + tx
-// listings). fee_charged/max_fee are stroops as decimal strings (ADR-0003).
-// Memo is already decoded; memo_type carries the discriminant.
+// TxSummaryView is the wire shape for a transaction summary; fee_charged/max_fee are stroops as decimal strings (ADR-0003), memo is already decoded.
 type TxSummaryView struct {
 	Hash           string `json:"hash"`
 	Ledger         uint32 `json:"ledger"`
@@ -79,8 +74,7 @@ type TxSummaryView struct {
 	FeeBump *FeeBumpView `json:"fee_bump,omitempty"`
 }
 
-// FeeBumpView is a fee bump's outer layer and the inner transaction it wraps.
-// The inner fields are absent when the result carried no inner result pair.
+// FeeBumpView is a fee bump's outer layer and the inner transaction it wraps; inner fields are absent when the result had no inner result pair.
 type FeeBumpView struct {
 	FeeAccount      string `json:"fee_account"`
 	InnerHash       string `json:"inner_hash,omitempty"`
@@ -128,15 +122,13 @@ func txSummaryBase(t clickhouse.TxSummary) TxSummaryView {
 	return v
 }
 
-// LedgersListView is the wire response for GET /v1/ledgers. NextBefore is the
-// keyset cursor for the next (older) page: re-request with ?before=<NextBefore>.
+// LedgersListView is the wire response for GET /v1/ledgers; NextBefore is the keyset cursor for the next (older) page via ?before=.
 type LedgersListView struct {
 	Ledgers    []LedgerView `json:"ledgers"`
 	NextBefore uint32       `json:"next_before,omitempty"`
 }
 
-// LedgersList serves GET /v1/ledgers — recent ledgers, descending, keyset
-// paged via ?before=<seq> & ?limit=.
+// LedgersList serves GET /v1/ledgers, recent ledgers descending, keyset-paged via ?before=<seq> and ?limit=.
 func (h *Handler) LedgersList(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)
@@ -235,10 +227,7 @@ func (h *Handler) LedgerDetail(w http.ResponseWriter, r *http.Request) {
 	h.WriteJSON(w, ledgerView(l), stale)
 }
 
-// LedgerTransactionsView is the wire response for GET /v1/ledgers/{seq}/transactions.
-// Total is the ledger's exact transaction count (from the ledger header);
-// Truncated is true when Total exceeds len(Transactions), so a consumer
-// never has to guess whether the page-size cap cut off real data.
+// LedgerTransactionsView is GET /v1/ledgers/{seq}/transactions; Total is the exact count from the header and Truncated is true when it exceeds len(Transactions).
 type LedgerTransactionsView struct {
 	Ledger       uint32          `json:"ledger"`
 	Transactions []TxSummaryView `json:"transactions"`

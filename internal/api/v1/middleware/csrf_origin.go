@@ -12,19 +12,13 @@ import (
 	"strings"
 )
 
-// OriginPolicy is the operator's configured cross-origin allow-list,
-// published on the request context by [CORS] so downstream guards can
-// reuse it rather than keeping a second, drift-prone copy.
+// OriginPolicy is the operator's cross-origin allow-list, published on the request context by [CORS] so downstream guards reuse it rather than keep a drift-prone copy.
 type OriginPolicy struct {
 	allowed     map[string]bool
 	credentials bool
 }
 
-// AllowsCredentialed reports whether origin is explicitly allow-listed for CREDENTIALED
-// cross-origin access, the only kind that may drive a cookie-authenticated dashboard write.
-//
-// The `*` wildcard deliberately does NOT satisfy this: it means a public read API, not that any
-// site may act for a logged-in customer. [CORS] likewise refuses wildcard plus credentials.
+// AllowsCredentialed reports whether origin is explicitly allow-listed for CREDENTIALED access, the only kind that may drive a cookie-authenticated write; the `*` wildcard deliberately does NOT satisfy it.
 func (p *OriginPolicy) AllowsCredentialed(origin string) bool {
 	if p == nil || origin == "" || !p.credentials {
 		return false
@@ -38,26 +32,13 @@ func withOriginPolicy(ctx context.Context, p *OriginPolicy) context.Context {
 	return context.WithValue(ctx, originPolicyKey{}, p)
 }
 
-// OriginPolicyFrom reads the CORS allow-list off r's context.
-// ok=false when [CORS] middleware wasn't applied at all.
+// OriginPolicyFrom reads the CORS allow-list off ctx; ok=false when [CORS] wasn't applied.
 func OriginPolicyFrom(ctx context.Context) (*OriginPolicy, bool) {
 	p, ok := ctx.Value(originPolicyKey{}).(*OriginPolicy)
 	return p, ok
 }
 
-// RequireSameSiteWrite rejects state-changing requests that did not originate from this
-// deployment's own site or an operator-allow-listed origin (OWASP "Verifying Origin With
-// Standard Headers").
-//
-// `SameSite=Lax` alone is not enough: it is site-level, so it ignores a sibling origin under the
-// same registrable domain (any `*.stellarindex.io` host) and unauthenticated routes that MINT a
-// session (`/v1/auth/login`, `/v1/auth/verify-code`: login CSRF).
-//
-// Policy: safe methods pass. Otherwise `Origin` is used, else the origin derived from `Referer`;
-// `Origin: null` is NOT trusted and falls through to Referer. Neither present: reject
-// (fail-closed), safe because guarded routes are browser-only and cookie-authenticated
-// (programmatic clients use Bearer, where this is not mounted). A same-origin or
-// [OriginPolicy.AllowsCredentialed] origin passes; anything else gets 403 problem+json.
+// RequireSameSiteWrite 403s state-changing requests not from this site or an allow-listed origin (Origin, else Referer; `Origin: null` untrusted; neither present fails closed), since SameSite=Lax alone misses sibling origins and login CSRF.
 func RequireSameSiteWrite(logger *slog.Logger) Middleware {
 	if logger == nil {
 		logger = slog.Default()

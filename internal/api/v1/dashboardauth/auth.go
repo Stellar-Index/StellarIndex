@@ -22,19 +22,16 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// SessionCookieName is the dashboard session cookie. The __Host- prefix makes browsers accept it
-// only as a host-only, Secure, Path=/ cookie (see [credentialCookie]).
+// SessionCookieName is the dashboard session cookie; the __Host- prefix forces browsers to accept it only as host-only, Secure, Path=/.
 const SessionCookieName = "__Host-stellarindex_session"
 
 // MagicLinkPlaintextLen is the random-byte length of magic-link tokens: 256 bits, preimage-safe.
 const MagicLinkPlaintextLen = 32
 
-// SessionTokenLen is the random-byte length of the session token. The DB stores only
-// sha256(token), so read access to the sessions table is not replayable.
+// SessionTokenLen is the random-byte length of the session token; the DB stores only sha256(token), so read access to sessions is not replayable.
 const SessionTokenLen = 32
 
-// HashSessionToken returns sha256 of a session cookie token; sessions are looked up and stored by
-// this hash, never the plaintext (like [HashMagicLinkPlaintext]).
+// HashSessionToken returns sha256 of a session cookie token; sessions are stored and looked up by this hash, never the plaintext.
 func HashSessionToken(token string) []byte {
 	sum := sha256.Sum256([]byte(token))
 	return sum[:]
@@ -118,8 +115,7 @@ type Generator struct {
 	Secret []byte
 }
 
-// NewGenerator returns a production-default Generator. The caller
-// (or Config.validate()) supplies Secret.
+// NewGenerator returns a production-default Generator; the caller (or Config.validate()) supplies Secret.
 func NewGenerator() *Generator {
 	return &Generator{Read: rand.Read}
 }
@@ -129,14 +125,12 @@ func (g *Generator) NewToken() (plaintext string, hash []byte, code string, err 
 	return generateMagicLinkToken(g.Read, g.Secret)
 }
 
-// CodeForHash re-derives the 6-digit code for a stored token hash. verify-code compares it in
-// constant time against the user's code; the code itself is never stored.
+// CodeForHash re-derives the 6-digit code for a stored token hash; verify-code compares it in constant time and the code itself is never stored.
 func (g *Generator) CodeForHash(hash []byte) string {
 	return codeFromHashKeyed(g.Secret, hash)
 }
 
-// NewSessionToken mints (plaintext token, sha256 hash): the plaintext goes in the cookie, the
-// hash on the session row. Like [Generator.NewToken] without the 6-digit code.
+// NewSessionToken mints (plaintext token, sha256 hash): the plaintext goes in the cookie, only the hash on the session row.
 func (g *Generator) NewSessionToken() (token string, hash []byte, err error) {
 	buf := make([]byte, SessionTokenLen)
 	n, err := g.Read(buf)
@@ -150,8 +144,7 @@ func (g *Generator) NewSessionToken() (token string, hash []byte, err error) {
 	return token, HashSessionToken(token), nil
 }
 
-// generateSessionID — 16 bytes of crypto/rand → uuid.UUID.
-// Exported as a Generator method so tests can pin.
+// NewSessionID returns a 16-byte crypto/rand uuid.UUID; a Generator method so tests can pin it.
 func (g *Generator) NewSessionID() (uuid.UUID, error) {
 	var buf [16]byte
 	n, err := g.Read(buf[:])
@@ -175,9 +168,7 @@ func (g *Generator) NewSessionID() (uuid.UUID, error) {
 
 type sessionKey struct{}
 
-// SessionContext carries the dashboard subject derived from a valid session cookie, distinct from
-// the bearer-derived auth.Subject. When a request carries both, handlers prefer the dashboard
-// session for routes like /v1/account/me.
+// SessionContext is the dashboard subject derived from a valid session cookie, distinct from the bearer-derived auth.Subject; handlers prefer it on routes like /v1/account/me.
 type SessionContext struct {
 	Session platform.Session
 	User    platform.User
@@ -189,8 +180,7 @@ func WithSession(ctx context.Context, sc SessionContext) context.Context {
 	return context.WithValue(ctx, sessionKey{}, sc)
 }
 
-// SessionFromContext extracts the SessionContext if present.
-// ok=false when no session was attached (anonymous request).
+// SessionFromContext returns the SessionContext, with ok=false when none was attached (anonymous request).
 func SessionFromContext(ctx context.Context) (SessionContext, bool) {
 	sc, ok := ctx.Value(sessionKey{}).(SessionContext)
 	return sc, ok

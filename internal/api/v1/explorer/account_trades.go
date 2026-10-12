@@ -17,9 +17,7 @@ import (
 // movements.go / positions.go: same package, same Handler, same
 // response-writing seams, same x-stability: experimental posture.
 
-// TradesReader is the narrow Postgres read seam this endpoint needs.
-// *timescale.Store satisfies it. Nil disables the endpoint (503), same
-// degrade pattern as PositionsReader.
+// TradesReader is the narrow Postgres read seam this endpoint needs, satisfied by *timescale.Store; nil disables the endpoint (503).
 type TradesReader interface {
 	ListAccountTrades(ctx context.Context, address string, limit int, cur timescale.AccountTradesCursor) ([]timescale.AccountTradeRow, time.Time, error)
 }
@@ -38,10 +36,7 @@ const accountTradesScopeNote = "On-chain trades where this address is recorded a
 	"(soroswap records the taker for trades from 2026-07-30 onward; earlier soroswap rows carry none). " +
 	"Off-chain CEX/FX trades carry no Stellar account, so they cannot appear here."
 
-// AccountTradeEntry is one row in the wire response. Amounts and usd_volume are decimal strings;
-// usd_volume is absent when unknown, never "0". There is deliberately no price field: `trades`
-// stores none and deriving one needs per-asset decimals, so raw quote/base would be a wrong
-// number with a right-looking name.
+// AccountTradeEntry is one wire row; amounts and usd_volume are decimal strings, usd_volume absent (never "0") when unknown, and there is deliberately no price field.
 type AccountTradeEntry struct {
 	Ts          string `json:"ts"`
 	Source      string `json:"source"`
@@ -67,8 +62,7 @@ type AccountTradeEntry struct {
 	Signer string `json:"signer,omitempty"`
 }
 
-// AccountTradesView is the wire response for GET
-// /v1/accounts/{g_strkey}/trades.
+// AccountTradesView is the wire response for GET /v1/accounts/{g_strkey}/trades.
 type AccountTradesView struct {
 	Account    string              `json:"account"`
 	Trades     []AccountTradeEntry `json:"trades"`
@@ -179,9 +173,7 @@ func (h *Handler) tradesBusy(w http.ResponseWriter, r *http.Request) {
 			"this scan was NOT started on this request — retry in a moment")
 }
 
-// AccountTrades serves GET /v1/accounts/{g_strkey}/trades — the
-// address's historic trades (taker or maker side), newest first,
-// keyset-paged by the opaque (ts, ledger, tx_hash, op_index) cursor.
+// AccountTrades serves GET /v1/accounts/{g_strkey}/trades, the address's trades (taker or maker) newest first, keyset-paged by an opaque (ts, ledger, tx_hash, op_index) cursor.
 func (h *Handler) AccountTrades(w http.ResponseWriter, r *http.Request) {
 	if h.Trades == nil {
 		h.tradesUnavailable(w, r)

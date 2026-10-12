@@ -8,9 +8,7 @@ import (
 	"runtime/debug"
 )
 
-// Recoverer turns a panicking handler into a 500 plus a structured log with the stack trace.
-// The body is a generic RFC 9457 problem+json; the panic value and stack go only to the log,
-// never to the client.
+// Recoverer turns a panicking handler into a 500 with a stack-trace log; the body is generic problem+json and the panic value and stack never reach the client.
 func Recoverer(logger *slog.Logger) Middleware {
 	if logger == nil {
 		logger = slog.Default()

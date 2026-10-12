@@ -41,9 +41,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// PasskeyCeremonyCookieName carries the signed WebAuthn ceremony
-// state between begin and finish. Distinct name from the session +
-// login-intent cookies for the same cross-surface-confusion reason.
+// PasskeyCeremonyCookieName carries the signed WebAuthn ceremony state between begin and finish; named apart from the session and login-intent cookies to avoid cross-surface confusion.
 const PasskeyCeremonyCookieName = "__Host-stellarindex_passkey_ceremony"
 
 // passkeyCeremonyTTL bounds how long a begin's challenge stays
@@ -330,10 +328,7 @@ func passkeyRegistrationOptions(exclusions []protocol.CredentialDescriptor) []we
 	}
 }
 
-// HandlePasskeyBeginRegister returns the credential-creation options
-// for navigator.credentials.create(). Session-gated: adding a
-// passkey is a capability of an authenticated user, mirroring how a
-// password change would demand a live session.
+// HandlePasskeyBeginRegister returns credential-creation options for navigator.credentials.create(); session-gated, since adding a passkey needs an authenticated user.
 func (h *Handlers) HandlePasskeyBeginRegister(w http.ResponseWriter, r *http.Request) {
 	sc, ok := SessionFromContext(r.Context())
 	if !ok {
@@ -410,8 +405,7 @@ type finishRegisterRequest struct {
 	Credential json.RawMessage `json:"credential"`
 }
 
-// HandlePasskeyFinishRegister verifies the attestation response
-// against the ceremony cookie's challenge and stores the credential.
+// HandlePasskeyFinishRegister verifies the attestation against the ceremony cookie's challenge and stores the credential.
 func (h *Handlers) HandlePasskeyFinishRegister(w http.ResponseWriter, r *http.Request) {
 	sc, ok := SessionFromContext(r.Context())
 	if !ok {
@@ -512,10 +506,7 @@ func (h *Handlers) HandlePasskeyFinishRegister(w http.ResponseWriter, r *http.Re
 
 // ─── Login (anonymous) ────────────────────────────────────────────
 
-// HandlePasskeyBeginLogin returns discoverable-assertion options for
-// navigator.credentials.get(). Usernameless: no email is asked for or
-// revealed — the authenticator picks the account, so this endpoint
-// leaks nothing an anonymous caller didn't already have.
+// HandlePasskeyBeginLogin returns discoverable-assertion options; usernameless, so it reveals nothing an anonymous caller lacked.
 func (h *Handlers) HandlePasskeyBeginLogin(w http.ResponseWriter, r *http.Request) {
 	if !h.allowPasskeyBeginLogin(w, r) {
 		return
@@ -575,10 +566,7 @@ func (h *Handlers) allowPasskeyBeginLogin(w http.ResponseWriter, r *http.Request
 	return false
 }
 
-// HandlePasskeyFinishLogin verifies the assertion and mints the same session cookie as the email
-// flows. Every verification failure returns one generic 400 so an anonymous caller cannot probe
-// which credentials exist; an unreachable spent-set is a 500 (an ops condition, not a fact about
-// the caller's credentials).
+// HandlePasskeyFinishLogin verifies the assertion and mints a session cookie; every verification failure is one generic 400 so callers cannot probe which credentials exist.
 func (h *Handlers) HandlePasskeyFinishLogin(w http.ResponseWriter, r *http.Request) {
 	ceremony, err := h.readPasskeyCeremonyCookie(r, "login")
 	if err != nil {
@@ -762,9 +750,7 @@ func (h *Handlers) HandlePasskeyList(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(out)
 }
 
-// HandlePasskeyDelete removes one of the signed-in user's passkeys.
-// Owner-scoped in the store query, so another user's credential ID
-// is indistinguishable from a nonexistent one (404 either way).
+// HandlePasskeyDelete removes one of the signed-in user's passkeys; owner-scoped in the store query, so another user's credential ID is a 404 like a nonexistent one.
 func (h *Handlers) HandlePasskeyDelete(w http.ResponseWriter, r *http.Request) {
 	sc, ok := SessionFromContext(r.Context())
 	if !ok {

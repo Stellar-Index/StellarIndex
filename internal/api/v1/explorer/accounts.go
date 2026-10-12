@@ -8,10 +8,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// AccountTransactionsView is the wire response for
-// GET /v1/accounts/{g_strkey}/transactions. NextCursor is the opaque keyset
-// cursor for the next (older) page — composite (ledger, tx_index) so an account
-// that submits many txs in one ledger never loses rows across a page boundary.
+// AccountTransactionsView is GET /v1/accounts/{g_strkey}/transactions; NextCursor is an opaque composite (ledger, tx_index) keyset so many txs in one ledger never lose rows.
 type AccountTransactionsView struct {
 	Account      string          `json:"account"`
 	Transactions []TxSummaryView `json:"transactions"`
@@ -25,9 +22,7 @@ type AccountTransactionsView struct {
 	AsOfLedger uint32 `json:"as_of_ledger,omitempty"`
 }
 
-// AccountOperationsView is the wire response for
-// GET /v1/accounts/{g_strkey}/operations. NextCursor is the opaque keyset cursor
-// for the next (older) page — composite (ledger, tx_index, op_index).
+// AccountOperationsView is GET /v1/accounts/{g_strkey}/operations; NextCursor is an opaque composite (ledger, tx_index, op_index) keyset cursor.
 type AccountOperationsView struct {
 	Account    string   `json:"account"`
 	Operations []OpView `json:"operations"`
@@ -68,9 +63,7 @@ func (h *Handler) parseAccountStrkey(w http.ResponseWriter, r *http.Request) (st
 	return g, true
 }
 
-// AccountTransactions serves GET /v1/accounts/{g_strkey}/transactions —
-// transactions involving the account (sourced + incoming/participant), newest
-// first (scope: "all", ADR-0038 Phase B).
+// AccountTransactions serves GET /v1/accounts/{g_strkey}/transactions, those sourced by or involving the account, newest first (scope "all", ADR-0038 Phase B).
 func (h *Handler) AccountTransactions(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)
@@ -125,9 +118,7 @@ func (h *Handler) AccountTransactions(w http.ResponseWriter, r *http.Request) {
 	h.WriteJSON(w, out, stale)
 }
 
-// AccountOperations serves GET /v1/accounts/{g_strkey}/operations —
-// operations involving the account (sourced + incoming/participant), decoded,
-// newest first (scope: "all", ADR-0038 Phase B).
+// AccountOperations serves GET /v1/accounts/{g_strkey}/operations, decoded operations sourced by or involving the account, newest first (scope "all", ADR-0038 Phase B).
 func (h *Handler) AccountOperations(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)

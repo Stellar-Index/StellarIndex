@@ -48,14 +48,7 @@ type ContractsDirectoryView struct {
 	Contracts   []ContractDirectoryEntry `json:"contracts"`
 }
 
-// ContractsList serves GET /v1/contracts — the contracts directory:
-// the most active contracts (by emitted-event count) over a recent window,
-// each tagged with its owning protocol where known. `?days=` sets the window
-// (default 30, max 365); `?limit=` the row count (default 100, max 500).
-//
-// `days` is rounded UP onto [contractsWindowLadder] and served from a bounded TTL cache, because
-// the endpoint is unauthenticated and each distinct window is a multi-day GROUP BY over
-// contract_events. `window_days` reports the window actually aggregated.
+// ContractsList serves GET /v1/contracts, the most active contracts by event count; unauthenticated, so `days` rounds UP onto [contractsWindowLadder] and is TTL-cached, `window_days` reports the actual window.
 func (h *Handler) ContractsList(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)
@@ -128,8 +121,7 @@ type ContractEdge struct {
 	Protocol   string `json:"protocol,omitempty"`
 }
 
-// ContractInteractionsView is the wire response for
-// GET /v1/contracts/{contract_id}/interactions.
+// ContractInteractionsView is the wire response for GET /v1/contracts/{contract_id}/interactions.
 type ContractInteractionsView struct {
 	ContractID   string         `json:"contract_id"`
 	WindowDays   int            `json:"window_days"`
@@ -137,9 +129,7 @@ type ContractInteractionsView struct {
 	Interactions []ContractEdge `json:"interactions"`
 }
 
-// ContractInteractions serves GET /v1/contracts/{contract_id}/interactions: other contracts that
-// emitted events in the same transactions (a proxy for cross-contract calls), ranked by shared-tx
-// count and tagged with their owning protocol where known.
+// ContractInteractions serves GET /v1/contracts/{contract_id}/interactions: contracts emitting events in the same transactions (a cross-contract-call proxy), ranked by shared-tx count.
 func (h *Handler) ContractInteractions(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)
@@ -252,16 +242,13 @@ type ContractCodeVersionV struct {
 	WasmHash  string `json:"wasm_hash"`
 }
 
-// ContractCodeHistoryView is the wire response for
-// GET /v1/contracts/{contract_id}/code-history.
+// ContractCodeHistoryView is the wire response for GET /v1/contracts/{contract_id}/code-history.
 type ContractCodeHistoryView struct {
 	ContractID string                 `json:"contract_id"`
 	Versions   []ContractCodeVersionV `json:"versions"`
 }
 
-// ContractCodeHistory serves GET /v1/contracts/{contract_id}/code-history: each distinct WASM
-// executable the instance has pointed at, chronologically, so an in-place upgrade shows as a new
-// version. 200 with empty versions when the contract has no WASM instance write.
+// ContractCodeHistory serves GET /v1/contracts/{contract_id}/code-history: each distinct WASM executable the instance pointed at, chronologically; 200 with empty versions if none.
 func (h *Handler) ContractCodeHistory(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)

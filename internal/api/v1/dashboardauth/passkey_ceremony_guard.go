@@ -17,12 +17,7 @@ import (
 	"time"
 )
 
-// PasskeyCeremonyGuard makes a WebAuthn ceremony challenge usable exactly once.
-//
-//   - Production: Redis SETNX (`auth.NewRedisPasskeyCeremonyGuard`), so the spent-set is shared
-//     across API instances.
-//   - Default: the in-process guard below, installed by [Config.validate] when the field is nil.
-//     Behind more than one instance a replay routed to another instance would not be seen.
+// PasskeyCeremonyGuard makes a WebAuthn ceremony challenge usable exactly once; production uses Redis SETNX, and the in-process default misses replays routed to another instance.
 type PasskeyCeremonyGuard interface {
 	// Consume claims the one-shot slot for a ceremony digest. It returns true for the first
 	// presenter, false for a replay, and an error when the store is unreachable, which callers

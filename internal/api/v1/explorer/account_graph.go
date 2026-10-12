@@ -9,17 +9,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// AccountGraphView is the wire response for GET
-// /v1/accounts/{g_strkey}/graph: one account's creation and sponsorship neighbourhood,
-// traversable in both directions. Every figure is history, and the two relationships differ:
-//
-//   - CREATION is immutable, but an address can be created more than once (created, merged
-//     away, created again), so `created_by` is a list.
-//   - SPONSORSHIP is revocable and this surface cannot see the live set: figures count
-//     arrangements started, not in force. A revocation names its entry inside XDR the rollup does
-//     not decode, so `revocations_issued` is account-level with no per-edge "current" flag.
-//
-// Stroops values are decimal strings; counts are JSON numbers.
+// AccountGraphView is GET /v1/accounts/{g_strkey}/graph, one account's creation and sponsorship neighbourhood; all history, sponsorship counts arrangements started, not in force.
 type AccountGraphView struct {
 	Account string `json:"account"`
 	// Inbound is where this account came from. Bounded by construction:
@@ -57,8 +47,7 @@ type AccountGraphView struct {
 	Note string `json:"note"`
 }
 
-// AccountGraphInboundV is one inbound direction: the capped edge slice
-// plus the exact number of edges that exist.
+// AccountGraphInboundV is one inbound direction: the capped edge slice plus the exact number of edges that exist.
 type AccountGraphInboundV struct {
 	Edges []AccountGraphEdgeV `json:"edges"`
 	Total uint64              `json:"total"`
@@ -67,8 +56,7 @@ type AccountGraphInboundV struct {
 	Truncated bool `json:"truncated"`
 }
 
-// AccountGraphEdgeV is one edge — a counterparty and the weight of the
-// relationship. One row per distinct pair, never per operation.
+// AccountGraphEdgeV is one edge, a counterparty and the relationship's weight, one row per distinct pair, never per operation.
 type AccountGraphEdgeV struct {
 	Account string `json:"account"`
 	// Creations is set on creation edges: how many CreateAccount
@@ -102,8 +90,7 @@ type AccountGraphCreatedSideV struct {
 	LastAt        string `json:"last_at,omitempty"`
 }
 
-// AccountGraphSponsoredSideV summarises every account this one has
-// sponsored. Nothing here is a live-state figure.
+// AccountGraphSponsoredSideV summarises every account this one has sponsored; nothing here is a live-state figure.
 type AccountGraphSponsoredSideV struct {
 	Accounts            uint64 `json:"accounts"`
 	SponsorshipsStarted uint64 `json:"sponsorships_started"`
@@ -118,8 +105,7 @@ type AccountGraphSponsoredSideV struct {
 	LastAt            string `json:"last_at,omitempty"`
 }
 
-// AccountGraphCoverageV is one arm's data-derived span (ADR-0031) and
-// the time the cycle behind it ran.
+// AccountGraphCoverageV is one arm's data-derived span (ADR-0031) and the time the cycle behind it ran.
 type AccountGraphCoverageV struct {
 	FromLedger uint32 `json:"from_ledger"`
 	ThruLedger uint32 `json:"thru_ledger"`
@@ -179,13 +165,7 @@ func (h *Handler) parseGraphCursor(w http.ResponseWriter, r *http.Request) (stri
 	return raw, true
 }
 
-// AccountGraph serves GET /v1/accounts/{g_strkey}/graph: who created and sponsored this account,
-// and whom it created and sponsored.
-//
-// The default response is bounded by construction: inbound edges are capped, outbound is
-// summarised, and the unbounded direction is served only via ?relation= and keyset-paged. The
-// asymmetry follows the data: inbound tops out in single digits, outbound in the hundreds of
-// thousands.
+// AccountGraph serves GET /v1/accounts/{g_strkey}/graph; bounded by construction (inbound capped, outbound summarised, the unbounded direction only via keyset-paged ?relation=).
 func (h *Handler) AccountGraph(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)

@@ -27,8 +27,7 @@ const (
 	AuditActionKeyRevoke           = "key.revoke"
 )
 
-// CredentialEvent is one self-service change to a credential that can
-// authenticate as the account.
+// CredentialEvent is one self-service change to a credential that can authenticate as the account.
 type CredentialEvent struct {
 	Action     string
 	TargetKind string
@@ -36,10 +35,7 @@ type CredentialEvent struct {
 	Metadata   map[string]any
 }
 
-// RecordSessionCredentialEvent appends ev to sink as an action taken by
-// the session's user on their own account. Best-effort: the change has
-// already committed, so a sink failure is logged and counted, never
-// returned. A nil sink records nothing.
+// RecordSessionCredentialEvent appends ev to sink as the session user's own action; best-effort (failure logged and counted, never returned), a nil sink records nothing.
 func RecordSessionCredentialEvent(
 	r *http.Request, sink platform.AuditStore, logger *slog.Logger, now time.Time,
 	sc SessionContext, ev CredentialEvent,

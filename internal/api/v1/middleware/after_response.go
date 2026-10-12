@@ -84,15 +84,7 @@ func (p *afterResponsePoolT) submit(task func()) bool {
 	}
 }
 
-// AfterResponse flushes w so the client is not held up by bookkeeping, then hands fn to the
-// shared bounded pool rather than running it inline; a wedged Redis would otherwise stall a
-// buffered response outside api.request_timeout.
-//
-// fn must not touch w or the request, which may be gone by then. It needs its own bounded
-// context (e.g. WithTimeout on Background), never WithoutCancel(r.Context()).
-//
-// If the pool is saturated fn is dropped without blocking and
-// [obs.AfterResponseTasksDroppedTotal] is incremented, so a lost usage row is operator-visible.
+// AfterResponse flushes w then runs fn on the shared bounded pool; fn must not touch w or the request and needs its own bounded context, and a saturated pool drops it (counted by [obs.AfterResponseTasksDroppedTotal]).
 func AfterResponse(w http.ResponseWriter, fn func()) {
 	submitAfterResponseTask(fn)
 	if f, ok := w.(http.Flusher); ok {
@@ -109,8 +101,7 @@ func submitAfterResponseTask(fn func()) {
 	}
 }
 
-// AfterResponseDrainForTest blocks until all submitted tasks finish or timeout elapses, and
-// reports whether it drained. Tests asserting on post-response effects must wait on it.
+// AfterResponseDrainForTest blocks until submitted tasks finish or timeout elapses and reports whether it drained; tests asserting on post-response effects must wait on it.
 func AfterResponseDrainForTest(timeout time.Duration) bool {
 	done := make(chan struct{})
 	go func() {

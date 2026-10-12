@@ -8,10 +8,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// SearchResultView classifies a free-text explorer query and points at the
-// canonical detail endpoint for it. The UI's single search box (ADR-0038)
-// uses Kind + Href to route. Supported=false marks kinds with no mounted
-// detail endpoint at all (currently only "unknown").
+// SearchResultView classifies a free-text explorer query (ADR-0038) and points at its canonical detail endpoint via Kind + Href; Supported=false marks kinds with no detail endpoint.
 type SearchResultView struct {
 	Query     string `json:"query"`
 	Kind      string `json:"kind"` // transaction|ledger|account|contract|asset|unknown
@@ -21,9 +18,7 @@ type SearchResultView struct {
 	Note      string `json:"note,omitempty"`
 }
 
-// Search serves GET /v1/search?q= — classify a query by strkey/hash/seq
-// shape and return the canonical detail endpoint. Pure classification (no lake
-// read), so it works regardless of the explorer reader's availability.
+// Search serves GET /v1/search?q=, classifying by strkey/hash/seq shape with no lake read, so it works without the explorer reader.
 func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	if q == "" {

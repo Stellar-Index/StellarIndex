@@ -31,22 +31,13 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
 )
 
-// EmailLocker serialises first-login provisioning per email, so two concurrent callbacks cannot both
-// create an Account before the unique-email Users insert picks a winner (orphaning the loser's).
-// Production is Redis SETNX; nil falls back to Suspend-on-conflict.
-//
-// Acquire returns (true, token, ...) when the caller holds the lock and (false, "", ...) when
-// another does (poll GetUserByEmail briefly); an error means not acquired, so proceed unlocked.
-// Release deletes the lock only if it still carries the token, so a holder that overran its TTL
-// cannot delete a successor's lock.
+// EmailLocker serialises first-login provisioning per email so concurrent callbacks cannot both create an Account; Release deletes only if the lock still carries the caller's token.
 type EmailLocker interface {
 	Acquire(ctx context.Context, emailHash string, ttl time.Duration) (bool, string, error)
 	Release(ctx context.Context, emailHash, token string) error
 }
 
-// LoginThrottle, when set, bounds magic-link sends against inbox bombing and sender-reputation
-// burn. The global anonymous rate-limit is sized for browsing, far above any sane email rate,
-// so it cannot do this job. nil disables the check.
+// LoginThrottle bounds magic-link sends against inbox bombing, which the global anonymous rate-limit is too coarse to stop; nil disables the check.
 type LoginThrottle interface {
 	// Allow reports whether a magic-link send for (ip, email) is within quota. On false the handler
 	// MUST skip the email yet still return the generic 200 {status:"sent"}, so no one learns a
@@ -207,10 +198,7 @@ func (c *Config) validate() error {
 // Handlers exposes the auth flow to be mounted in the v1 mux.
 type Handlers struct{ cfg *Config }
 
-// NewHandlers validates cfg IN PLACE and returns Handlers backed by that same pointer.
-//
-// cfg is a pointer because validate() installs defaults (secret, Logger, Now, ceremony guard)
-// that [Middleware] and [RequireSession], built from the caller's Config directly, must also see.
+// NewHandlers validates cfg IN PLACE and returns Handlers backed by that pointer, because validate() installs defaults that [Middleware] and [RequireSession] must also see.
 func NewHandlers(cfg *Config) (*Handlers, error) {
 	if err := cfg.validate(); err != nil {
 		return nil, err
@@ -218,13 +206,7 @@ func NewHandlers(cfg *Config) (*Handlers, error) {
 	return &Handlers{cfg: cfg}, nil
 }
 
-// Mount installs the /v1/auth routes: login, callback, verify-code and logout (?all=true revokes
-// every session of the user), plus the passkey begin/finish login and register, credentials list
-// and delete routes when Config.Passkeys is wired (see passkey.go).
-//
-// Login entry points mount through public (admitted credential-less in every auth_mode);
-// session-gated routes do not. The POSTs sit behind [middleware.RequireSameSiteWrite] against
-// login-CSRF; the GET callback has no usable Origin and is bound by [LoginIntentCookieName].
+// Mount installs the /v1/auth routes; the POSTs sit behind [middleware.RequireSameSiteWrite] against login-CSRF, and the GET callback is bound by [LoginIntentCookieName] instead.
 func (h *Handlers) Mount(mux *http.ServeMux, public *middleware.PublicRoutes) {
 	sameSite := middleware.RequireSameSiteWrite(h.cfg.Logger)
 	public.Handle(mux, "POST /v1/auth/login", sameSite(http.HandlerFunc(h.HandleLogin)))
@@ -319,10 +301,7 @@ func (h *Handlers) refuseLoginWithoutMail(w http.ResponseWriter) bool {
 	return true
 }
 
-// HandleLogin issues a magic-link email. It returns 200 {status:"sent"} whether or not the email
-// matches a user, so attackers cannot enumerate addresses. The one address-independent exception
-// is 503 when the mail transport is unconfigured (see refuseLoginWithoutMail). Signup happens
-// on consumption: the callback creates the account if none exists.
+// HandleLogin issues a magic-link email and returns 200 {status:"sent"} whether or not the email matches a user, so addresses cannot be enumerated (503 only when mail is unconfigured).
 func (h *Handlers) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	// MaxBytesReader, not LimitReader: LimitReader returns (n, nil) at its cap, so an oversize body
 	// would be silently truncated and surface as "malformed JSON".
@@ -481,10 +460,7 @@ func credentialCookie(name, value string) *http.Cookie {
 	}
 }
 
-// HandleCallback consumes a magic-link token, finds-or-creates the user (one account per email)
-// and issues a session cookie. The link must be opened in the requesting browser: the
-// [LoginIntentCookieName] cookie is checked before the token is consumed, so opening it on a
-// second device does not burn it for the device that asked.
+// HandleCallback consumes a magic-link token, finds-or-creates the user and issues a session cookie; the [LoginIntentCookieName] binding is checked before the token is consumed.
 func (h *Handlers) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	// The URL carries the magic-link plaintext, so set this here rather than rely on outer middleware.
 	w.Header().Set("Referrer-Policy", "no-referrer")
@@ -549,19 +525,7 @@ type verifyCodeResponse struct {
 	Status string `json:"status"`
 }
 
-// HandleVerifyCode consumes the 6-digit email code and mints the same session cookie as
-// HandleCallback. It returns JSON, not a 303, because the SPA calls it via credentialed fetch.
-//
-// The code is matched only against the email's newest in-flight token: one comparison per request,
-// so each guess has 1-in-1e6 odds however many sign-in emails an attacker triggered. Every attempt
-// is charged per token and per email (a separate budget when the browser holds this address's
-// [LoginDeviceCookieName] proof) BEFORE it is compared, atomically in the store, so concurrent
-// guesses get no more comparisons than sequential ones. All failures return one generic error.
-//
-// A correct-but-stale code (expired, consumed, burned or superseded) counts as a durable failure
-// while any code is live: telling the owner pasting yesterday's code from an attacker guessing a
-// dead value would leak which. Affordable because the lockout gates this door only and a
-// successful sign-in clears the counter.
+// HandleVerifyCode consumes the 6-digit email code against only the newest in-flight token, charging each attempt (per token and per email) BEFORE comparing; all failures return one generic error.
 func (h *Handlers) HandleVerifyCode(w http.ResponseWriter, r *http.Request) {
 	// MaxBytesReader, not LimitReader — see HandleLogin.
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4<<10))
@@ -816,8 +780,7 @@ func (h *Handlers) revokePresentedSession(r *http.Request) {
 	}
 }
 
-// HandleLogout revokes the current session and clears the cookie; ?all=true revokes every
-// session of its user instead. Idempotent: no session cookie is a 200, not a 401.
+// HandleLogout revokes the current session and clears the cookie (?all=true revokes every session of the user); idempotent, no cookie is a 200.
 func (h *Handlers) HandleLogout(w http.ResponseWriter, r *http.Request) {
 	all := false
 	if v := r.URL.Query().Get("all"); v != "" {

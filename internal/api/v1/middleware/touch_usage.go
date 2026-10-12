@@ -12,14 +12,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 )
 
-// KeyToucher is the storage-side primitive [TouchUsage] drives; narrow so tests can fake it
-// without Postgres.
+// KeyToucher is the storage-side primitive [TouchUsage] drives; narrow so tests can fake it without Postgres.
 type KeyToucher interface {
 	TouchUsage(ctx context.Context, id string, ip net.IP, userAgent string) error
 }
 
-// TouchDebouncer gates [KeyToucher.TouchUsage] so the api_keys hot row does not take one UPDATE
-// per request.
+// TouchDebouncer gates [KeyToucher.TouchUsage] so the api_keys hot row does not take one UPDATE per request.
 type TouchDebouncer interface {
 	// ShouldTouch returns true exactly once per (keyID, TTL) window. A storage error returns
 	// (false, err); callers skip the tick either way because touching is best-effort and must
@@ -27,11 +25,7 @@ type TouchDebouncer interface {
 	ShouldTouch(ctx context.Context, keyID string) (bool, error)
 }
 
-// TouchUsage returns a [Middleware] that records last_used_at/ip/user_agent on the api_keys row
-// for authenticated requests. The touch runs post-response on the shared bounded pool, behind a
-// debounce so only the first call per (key, TTL) window pays the UPDATE. It is best-effort
-// ("last seen" is operator UX, not auth): errors log at debug and drop, and a nil toucher or
-// debouncer disables it. Wire AFTER [Auth] so SubjectFrom resolves.
+// TouchUsage records last_used_at/ip/user_agent on the api_keys row post-response, debounced and best-effort (errors dropped; nil toucher or debouncer disables it); wire AFTER [Auth].
 func TouchUsage(toucher KeyToucher, debouncer TouchDebouncer, logger *slog.Logger) Middleware {
 	if logger == nil {
 		logger = slog.Default()

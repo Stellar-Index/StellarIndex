@@ -151,10 +151,7 @@ func sliceThroughput(rows []clickhouse.ThroughputBucket, windowDays int) []click
 	return rows
 }
 
-// PrewarmNetworkThroughput primes the /v1/network/throughput series so no
-// user meets the cold state. It kicks the same detached single-flight refresh the request path
-// uses, with the same argument, so prewarm and handler can never warm different keys. Returns
-// immediately when already warm; ctx only gates whether the kick happens at shutdown.
+// PrewarmNetworkThroughput primes /v1/network/throughput by kicking the request path's detached single-flight refresh with the same argument, so prewarm and handler never warm different keys.
 func (h *Handler) PrewarmNetworkThroughput(ctx context.Context) {
 	if h.Reader == nil || ctx.Err() != nil {
 		return

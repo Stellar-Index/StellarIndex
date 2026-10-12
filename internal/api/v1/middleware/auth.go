@@ -15,12 +15,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
 )
 
-// AuthMode is the operator-configured authentication policy. Maps
-// 1:1 to [config.APIConfig].AuthMode.
+// AuthMode is the operator-configured authentication policy, mapping 1:1 to [config.APIConfig].AuthMode.
 type AuthMode string
 
-// HeaderAPIKey is the alternative to `Authorization: Bearer` for
-// presenting an API key.
+// HeaderAPIKey is the alternative to `Authorization: Bearer` for presenting an API key.
 const HeaderAPIKey = "X-API-Key"
 
 const (
@@ -43,9 +41,7 @@ const (
 	AuthModeSEP10 AuthMode = "sep10"
 )
 
-// AuthOptions configures the [Auth] middleware. Mode picks which
-// validator runs; the validators themselves are interfaces so the
-// middleware doesn't depend on the storage layer.
+// AuthOptions configures [Auth]; Mode picks which validator runs, and the validators are interfaces so the middleware stays independent of storage.
 type AuthOptions struct {
 	Mode AuthMode
 
@@ -63,25 +59,7 @@ type AuthOptions struct {
 	FailedAuthLimiter *ratelimit.Bucket
 }
 
-// Auth returns a middleware that enforces the configured AuthMode.
-//
-// Stack position. Wire BETWEEN CORS and RateLimit:
-//
-//	stack := []Middleware{
-//	    RequestID, HTTPMetrics, Logger, Recoverer, SecurityHeaders,
-//	    CORS,             // CORS preflight short-circuits before auth
-//	    Auth(opts),       // ← here
-//	    RateLimit(...),   // sees the Subject in context for tier-based limits
-//	}
-//
-// Behaviour by mode:
-//
-//   - none: attach anonymous Subject keyed by remote-IP+UA hash; pass.
-//   - apikey: key from Authorization Bearer or X-API-Key, APIKey.Lookup;
-//     errors map to 401/503.
-//   - sep10: JWT from Authorization Bearer, SEP10.VerifyJWT; same mapping.
-//
-// Errors are bare text/plain 401 / 503; route-specific problem+json is the handler layer's job.
+// Auth enforces the configured AuthMode (none, apikey, sep10); wire BETWEEN CORS and RateLimit, and errors are bare text/plain 401/503, with problem+json left to handlers.
 func Auth(opts AuthOptions) Middleware {
 	mode := opts.Mode
 	if mode == "" {
@@ -135,12 +113,7 @@ func isUnauthenticatedInfraPath(path string) bool {
 	return strings.HasPrefix(path, "/errors/")
 }
 
-// PublicRoutes is the set of route patterns that are unauthenticated by design: credential
-// bootstraps and public status surfaces. Mounting through [PublicRoutes.Handle] exempts a route
-// from [Auth] in the same call, so "mounted public" and "exempt from auth" are one fact.
-//
-// Unlike [isUnauthenticatedInfraPath], a public route is credential-OPTIONAL: a presented key or
-// JWT is still verified (a bad one rejected), so signup can refuse already-authenticated callers.
+// PublicRoutes is the set of routes unauthenticated by design; mounting via [PublicRoutes.Handle] exempts a route from [Auth], but a presented key or JWT is still verified (a bad one rejected).
 type PublicRoutes struct {
 	match    *http.ServeMux
 	patterns []string
@@ -164,9 +137,7 @@ func (p *PublicRoutes) Patterns() []string {
 	return append([]string(nil), p.patterns...)
 }
 
-// Mark returns a middleware that flags a request whose method and path
-// match a public pattern, so [Auth] admits it without a credential. Wire
-// it immediately outside Auth.
+// Mark flags a request matching a public pattern so [Auth] admits it without a credential; wire it immediately outside Auth.
 func (p *PublicRoutes) Mark() Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

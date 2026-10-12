@@ -10,20 +10,13 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// DirectoryReader resolves curated third-party address labels from the
-// `account_directory` table (migration 0136; synced from the
-// MIT-licensed stellar-expert/public-directory by `stellarindex-ops
-// directory-sync`). Production impl is *timescale.Store.
+// DirectoryReader resolves curated third-party address labels from the `account_directory` table (synced by `stellarindex-ops directory-sync`); production impl is *timescale.Store.
 type DirectoryReader interface {
 	DirectoryEntryByAddress(ctx context.Context, address string) (timescale.DirectoryEntry, bool, error)
 	DirectoryEntriesByAddresses(ctx context.Context, addresses []string) (map[string]timescale.DirectoryEntry, error)
 }
 
-// DirectoryInfoV is the wire form of one directory label. These are DISPLAY labels with
-// third-party attribution (`source` names the upstream set), not a verification signal; listing
-// is not endorsement. Tags follow the upstream registry (#exchange, #anchor, #issuer, #wallet,
-// #custodian, #sdf, #memo-required, #malicious, #unsafe, ...); clients should surface
-// `malicious`/`unsafe` prominently.
+// DirectoryInfoV is the wire form of one directory label: a DISPLAY label with third-party `source` attribution, not a verification signal; clients should surface `malicious`/`unsafe` tags prominently.
 type DirectoryInfoV struct {
 	Name   string   `json:"name"`
 	Domain string   `json:"domain,omitempty"`
@@ -63,17 +56,12 @@ func (h *Handler) directoryFor(ctx context.Context, address string) (*DirectoryI
 // keeping the ANY($1) read trivially cheap.
 const directoryBatchMax = 100
 
-// DirectoryLookupView is the wire response for GET /v1/directory:
-// entries keyed by address, PRESENT addresses only — an address absent
-// from the map has no label. `entries` is always an object (never
-// null) so clients can index without a presence check.
+// DirectoryLookupView is GET /v1/directory: entries keyed by address, PRESENT addresses only; `entries` is always an object, never null.
 type DirectoryLookupView struct {
 	Entries map[string]DirectoryInfoV `json:"entries"`
 }
 
-// DirectoryLookup serves GET /v1/directory?addresses=G…,C…,… — batch
-// label resolution so a client can decorate an address list (an
-// operations table's counterparties, a signer list) in one request.
+// DirectoryLookup serves GET /v1/directory?addresses=G...,C...: batch label resolution to decorate an address list in one request.
 func (h *Handler) DirectoryLookup(w http.ResponseWriter, r *http.Request) {
 	if h.Directory == nil {
 		h.unavailable(w, r)

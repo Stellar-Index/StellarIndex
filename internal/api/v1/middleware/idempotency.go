@@ -9,19 +9,13 @@ import (
 	"time"
 )
 
-// IdempotencyKeyHeader is the header a client supplies to make a
-// state-changing POST safe to retry without risking a duplicate
-// mutation (double-submit, client timeout-and-retry). See
-// [Idempotency].
+// IdempotencyKeyHeader is the header a client supplies to make a state-changing POST safe to retry; see [Idempotency].
 const IdempotencyKeyHeader = "Idempotency-Key"
 
-// MaxIdempotencyKeyLen caps the caller-supplied header so a hostile
-// value can't grow the in-memory store unbounded. Mirrors
-// MaxRateLimitKeyLen.
+// MaxIdempotencyKeyLen caps the caller-supplied header so a hostile value can't grow the in-memory store unbounded; mirrors MaxRateLimitKeyLen.
 const MaxIdempotencyKeyLen = 256
 
-// DefaultIdempotencyTTL is how long a captured response stays
-// eligible for replay.
+// DefaultIdempotencyTTL is how long a captured response stays eligible for replay.
 const DefaultIdempotencyTTL = 10 * time.Minute
 
 // idempotencyRecord is a captured response, replayed verbatim on a
@@ -33,11 +27,7 @@ type idempotencyRecord struct {
 	expiresAt time.Time
 }
 
-// IdempotencyStore is a process-local, TTL-bounded cache of recent
-// idempotent responses. Safe for concurrent use.
-//
-// Process-local by design: dedup is lost across restarts and sibling replicas. A retry landing
-// on another replica mints a second resource, never worse than having no idempotency at all.
+// IdempotencyStore is a process-local, TTL-bounded cache of recent idempotent responses, safe for concurrent use; dedup is lost across restarts and replicas.
 type IdempotencyStore struct {
 	mu      sync.Mutex
 	entries map[string]idempotencyRecord
@@ -49,8 +39,7 @@ type IdempotencyStore struct {
 	now      func() time.Time
 }
 
-// NewIdempotencyStore builds a store with the given TTL (falls back
-// to DefaultIdempotencyTTL when ttl <= 0).
+// NewIdempotencyStore builds a store with the given TTL, falling back to DefaultIdempotencyTTL when ttl <= 0.
 func NewIdempotencyStore(ttl time.Duration) *IdempotencyStore {
 	if ttl <= 0 {
 		ttl = DefaultIdempotencyTTL
@@ -148,17 +137,7 @@ func (rec *idempotencyRecorder) Write(b []byte) (int, error) {
 	return rec.ResponseWriter.Write(b)
 }
 
-// Idempotency lets a client safely retry a state-changing POST: a repeat carrying the same
-// Idempotency-Key within store's TTL gets the ORIGINAL response replayed instead of re-running
-// the handler.
-//
-// subjectKeyFn scopes the cache to the caller so two callers picking the same key string never
-// collide; method and path scope it to one route. A nil subjectKeyFn, empty subject, or blank
-// header runs the request normally. A repeat while the first is still running gets a retryable
-// 409.
-//
-// Only 2xx responses are cached, or a client who fixed a validation error (or retried past a
-// transient 5xx) would keep getting the frozen error for the whole TTL.
+// Idempotency replays the ORIGINAL 2xx response for a repeated Idempotency-Key within the store's TTL; scoped per subject, method and path, and only 2xx is cached so fixed errors are not frozen.
 func Idempotency(store *IdempotencyStore, subjectKeyFn func(*http.Request) string) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

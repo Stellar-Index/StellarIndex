@@ -11,14 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// AccountGraphHistoryView is the wire response for GET
-// /v1/accounts/{g_strkey}/graph/history: creation and sponsorship activity over time, the time
-// axis of the snapshot the graph endpoint serves. Everything is history: a sponsorship figure
-// counts arrangements started, never those in force.
-//
-// The two series are kept apart, not summed: they cover different spans (creation reaches
-// genesis, sponsorship only protocol 14's activation) and an account can be busy in one and
-// absent from the other.
+// AccountGraphHistoryView is GET /v1/accounts/{g_strkey}/graph/history; the creation and sponsorship series are kept apart, not summed, as they cover different spans.
 type AccountGraphHistoryView struct {
 	Account string `json:"account"`
 	// Granularity is the bucket width, always "1M". The served tier keeps only two timestamps per
@@ -31,8 +24,7 @@ type AccountGraphHistoryView struct {
 	Note string `json:"note"`
 }
 
-// AccountGraphHistorySeriesV is one relation's series and the totals that
-// qualify it.
+// AccountGraphHistorySeriesV is one relation's series and the totals that qualify it.
 type AccountGraphHistorySeriesV struct {
 	// Points holds only the months that carry something; a quiet month emits no point and
 	// nothing is carried forward. Read an absent month against `coverage`: inside the covered span
@@ -51,8 +43,7 @@ type AccountGraphHistorySeriesV struct {
 	Coverage AccountGraphCoverageV `json:"coverage"`
 }
 
-// AccountGraphHistoryTotalsV is the whole-history denominator. Every
-// figure spans the account's entire history, not the returned points.
+// AccountGraphHistoryTotalsV is the whole-history denominator; every figure spans the account's entire history, not the returned points.
 type AccountGraphHistoryTotalsV struct {
 	// Accounts is distinct counterparties ever created or sponsored, and
 	// equals the sum of the points' new_accounts exactly.
@@ -80,8 +71,7 @@ type AccountGraphHistoryPointV struct {
 	Events uint64 `json:"events"`
 }
 
-// AccountGraphHistoryUnplacedV is one reason events could not be given a
-// month, with the exact number it accounts for.
+// AccountGraphHistoryUnplacedV is one reason events could not be given a month, with the exact number it accounts for.
 type AccountGraphHistoryUnplacedV struct {
 	Reason string `json:"reason"`
 	Events uint64 `json:"events"`
@@ -108,12 +98,7 @@ const accountGraphHistoryNote = "History, not live state: creations are immutabl
 	"totals.accounts; events is a lower bound whenever lower_bound is true, with the shortfall " +
 	"counted exactly in totals.events_unplaced and named in unplaced[]."
 
-// AccountGraphHistory serves GET /v1/accounts/{g_strkey}/graph/history.
-//
-// Bounded by construction: both arms are primary-key range reads over the account's own edges and
-// the response is one point per active month, so neither query nor payload grows with the tables.
-// There is deliberately no ?granularity= or window parameter (see
-// AccountGraphHistoryView.Granularity).
+// AccountGraphHistory serves GET /v1/accounts/{g_strkey}/graph/history; bounded by construction (primary-key range reads, one point per active month) so it takes no granularity or window.
 func (h *Handler) AccountGraphHistory(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)

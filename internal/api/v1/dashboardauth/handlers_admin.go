@@ -70,10 +70,7 @@ type adminLookupRequest struct {
 	Slug  string `json:"slug,omitempty"`
 }
 
-// HandleAdminLookup serves POST /v1/account/admin/lookup, the staff customer look-up by email or
-// account slug. Staff-only: besides RequireSession it gates on the session user's IsStaff flag, so
-// a non-staff customer gets 403, never another customer's data. It is read-only; POST only keeps
-// the term out of the URL (see [adminLookupRequest]).
+// HandleAdminLookup serves POST /v1/account/admin/lookup, a read-only staff customer look-up that gates on the session user's IsStaff, so non-staff get 403, never another customer's data.
 func (h *Handlers) HandleAdminLookup(w http.ResponseWriter, r *http.Request) {
 	sc, ok := SessionFromContext(r.Context())
 	if !ok {

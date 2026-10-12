@@ -5,17 +5,7 @@ import (
 	"time"
 )
 
-// SessionHintCookieName is a JS-readable presence flag shadowing [SessionCookieName], written and
-// cleared in lockstep with it.
-//
-// The explorer is a separate origin and the session cookie is HttpOnly (it is the bearer
-// credential), so without this flag the explorer must probe `GET /v1/account/me` and eat a 401 on
-// every anonymous page load. It skips the probe when the flag is absent.
-//
-// It is a HINT, never an authorization signal:
-//   - It carries no identity (the value is "1"), so forging it buys at most one 401.
-//   - Nothing server-side reads it; routes resolve [SessionCookieName] against the sessions table.
-//   - It can outlive the real session; the probe then 401s and the client drops the stale hint.
+// SessionHintCookieName is a JS-readable presence flag shadowing [SessionCookieName]; a HINT only, never an authorization signal (no identity, nothing server-side reads it).
 const SessionHintCookieName = "stellarindex_session_present"
 
 // sessionHintValue is the entire contents of the hint cookie. A

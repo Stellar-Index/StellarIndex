@@ -10,10 +10,7 @@ import (
 	"strings"
 )
 
-// CSVPage is one page of a list endpoint rendered as text/csv. The JSON
-// envelope's fields outside the rows travel as response headers: the next
-// page as a Link rel="next", true flags (by their JSON names) in
-// X-StellarIndex-Flags, and any other field in headers.
+// CSVPage is one page of a list endpoint as text/csv; envelope fields outside the rows travel as headers (Link rel="next", true flags in X-StellarIndex-Flags).
 type CSVPage struct {
 	Columns    []string
 	Rows       [][]string
@@ -22,9 +19,7 @@ type CSVPage struct {
 	Headers    map[string]string
 }
 
-// NegotiateCSV reports whether the request asked for text/csv, and marks
-// the response as varying on Accept either way so no cache serves one
-// representation to a client that asked for the other.
+// NegotiateCSV reports whether the request asked for text/csv and always marks the response Vary: Accept so no cache serves the wrong representation.
 func NegotiateCSV(w http.ResponseWriter, r *http.Request) bool {
 	w.Header().Add("Vary", "Accept")
 	return prefersCSV(r.Header.Get("Accept"))
@@ -60,10 +55,7 @@ func prefersCSV(accept string) bool {
 	return csvQ > 0 && (csvQ > jsonQ || (csvQ == jsonQ && jsonRank < 3))
 }
 
-// WriteCSVPage writes p with a header row. Every cell passes through
-// csvSafeCell, so no caller can emit a spreadsheet formula. The export is
-// never stored in a shared cache: the URL is the JSON one, and a CDN that
-// ignores Vary would otherwise hand it to JSON clients.
+// WriteCSVPage writes p with a header row; every cell passes csvSafeCell (no spreadsheet formulas) and the export is never stored in a shared cache since its URL is the JSON one.
 func WriteCSVPage(w http.ResponseWriter, r *http.Request, p CSVPage) error {
 	h := w.Header()
 	h.Set("Content-Type", "text/csv; charset=utf-8")

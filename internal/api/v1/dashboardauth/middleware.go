@@ -38,12 +38,7 @@ func parseIP(s string) net.IP {
 	return net.ParseIP(s)
 }
 
-// Middleware resolves a valid session cookie and plants a SessionContext for SessionFromContext.
-// Anonymous requests (no, invalid, revoked or expired cookie) pass through untouched; gating is
-// RequireSession's job.
-//
-// TouchSession writes are debounced per minute so a single busy tab does not cause hot-row
-// contention on its session.
+// Middleware resolves a valid session cookie into a SessionContext; anonymous requests (no, invalid, revoked or expired cookie) pass through untouched, gating is RequireSession's job.
 func Middleware(cfg *Config) func(http.Handler) http.Handler {
 	// The Config may never have run validate(); a nil Now or Logger would panic every authenticated
 	// request, so default them here.
@@ -68,9 +63,7 @@ func Middleware(cfg *Config) func(http.Handler) http.Handler {
 	}
 }
 
-// RequireSession returns middleware that 401s requests
-// without a valid session. Wire it inside Middleware(...) for
-// dashboard routes that require login.
+// RequireSession returns middleware that 401s requests without a valid session; wire it inside Middleware(...).
 func RequireSession() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -207,8 +200,7 @@ func (t *touchTracker) sweepLocked(now time.Time) {
 	}
 }
 
-// SessionAccountSubject scopes an Idempotency-Key to the caller's account so two customers with the
-// same key never share a cache entry. Empty without a session, which Idempotency treats as "don't dedupe".
+// SessionAccountSubject scopes an Idempotency-Key to the caller's account so two customers never share a cache entry; empty without a session, meaning "don't dedupe".
 func SessionAccountSubject(r *http.Request) string {
 	sc, ok := SessionFromContext(r.Context())
 	if !ok {

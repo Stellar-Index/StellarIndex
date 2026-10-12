@@ -8,9 +8,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// SlowRequestThreshold is the latency at or above which a request also logs its query shape and
-// a `slow=true` marker. It equals the published p99 target and must stay rare (~0.2% of
-// requests) so it does not recreate the journal pressure the 429 skip avoids.
+// SlowRequestThreshold is the latency at or above which a request also logs its query shape and `slow=true`; it equals the published p99 target and must stay rare (~0.2% of requests).
 const SlowRequestThreshold = 500 * time.Millisecond
 
 // maxLoggedPathLen and maxLoggedUserAgentLen bound two caller-controlled fields per log line;
@@ -21,20 +19,7 @@ const (
 	maxLoggedUserAgentLen = 256
 )
 
-// Logger emits one structured log entry per request:
-//   - 5xx -> ERROR
-//   - 4xx (except 429) -> WARN
-//   - 429 -> skipped (see below)
-//   - a SUCCESSFUL request from first-party synthetic traffic -> DEBUG
-//   - everything else -> INFO
-//
-// remote_ip is [RemoteIP]: the rightmost X-Forwarded-For hop outside the trusted-proxy CIDRs,
-// never the first hop, which the caller writes.
-//
-// 429 is skipped because one misconfigured client can flood journald; the
-// `stellarindex_http_requests_total{status="429"}` counter keeps visibility. Only SUCCESSFUL
-// synthetic requests ([obs.IsSyntheticRequest], same judgement as the SLO) are demoted. Query
-// parameters and bodies are never logged: they may carry API keys or PII.
+// Logger emits one structured entry per request (5xx ERROR, 4xx WARN, 429 skipped, successful synthetic DEBUG); remote_ip is [RemoteIP], never the caller-written first X-Forwarded-For hop, and query parameters and bodies are never logged.
 func Logger(logger *slog.Logger) Middleware {
 	if logger == nil {
 		logger = slog.Default()
@@ -121,14 +106,12 @@ func (r *statusRecorder) Write(b []byte) (int, error) {
 	return n, err
 }
 
-// Unwrap lets http.NewResponseController reach SetWriteDeadline / Flush / Hijack; without it SSE
-// handlers could not clear the global WriteTimeout and would get http.ErrNotSupported.
+// Unwrap lets http.NewResponseController reach SetWriteDeadline, Flush and Hijack; without it SSE handlers cannot clear the global WriteTimeout.
 func (r *statusRecorder) Unwrap() http.ResponseWriter {
 	return r.ResponseWriter
 }
 
-// Flush preserves http.Flusher for SSE endpoints — without this,
-// wrapping breaks chunked streaming.
+// Flush preserves http.Flusher for SSE endpoints; without it, wrapping breaks chunked streaming.
 func (r *statusRecorder) Flush() {
 	if f, ok := r.ResponseWriter.(http.Flusher); ok {
 		f.Flush()

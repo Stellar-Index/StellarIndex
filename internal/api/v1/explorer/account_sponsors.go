@@ -6,16 +6,7 @@ import (
 	"time"
 )
 
-// AccountSponsorsView is the wire response for GET /v1/accounts/sponsors, the sponsor league
-// table of accounts that paid base reserves for other accounts' ledger entries.
-//
-// EVERY FIGURE HERE IS HISTORY, derived by replaying sponsorship operations. A sponsorship also
-// lapses when the entry is deleted or the sponsored account merges, and neither emits a
-// sponsorship operation, so a "currently sponsoring" number would overstate. Live state needs the
-// sponsoringID inside each ledger entry, which this API does not serve.
-//
-// It is the counterpart of GET /v1/accounts/creators; do not sum the two boards: creation is
-// immutable and one-off, sponsorship is revocable and repeatable.
+// AccountSponsorsView is GET /v1/accounts/sponsors, the sponsor league table; EVERY FIGURE IS HISTORY (sponsorships lapse silently), so never present it as currently sponsoring or sum it with creators.
 type AccountSponsorsView struct {
 	Sponsors []AccountSponsorV `json:"sponsors"`
 	Totals   struct {
@@ -63,9 +54,7 @@ const (
 	sponsorsMaxLimit     = 500
 )
 
-// AccountSponsors serves GET /v1/accounts/sponsors from the
-// ch-sponsors-rollup cycle's precomputed tables — a keyed board read
-// plus nine metric rows.
+// AccountSponsors serves GET /v1/accounts/sponsors from the ch-sponsors-rollup cycle's precomputed tables.
 func (h *Handler) AccountSponsors(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)

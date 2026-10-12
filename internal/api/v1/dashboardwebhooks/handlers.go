@@ -69,8 +69,7 @@ func (c *Config) validate() error {
 // Handlers exposes the routes to be mounted in the v1 mux.
 type Handlers struct{ cfg *Config }
 
-// NewHandlers validates the config and returns a mount-ready
-// Handlers.
+// NewHandlers validates the config and returns a mount-ready Handlers.
 func NewHandlers(cfg Config) (*Handlers, error) {
 	if err := cfg.validate(); err != nil {
 		return nil, err
@@ -78,12 +77,7 @@ func NewHandlers(cfg Config) (*Handlers, error) {
 	return &Handlers{cfg: &cfg}, nil
 }
 
-// Mount installs the dashboard webhook-management routes.
-//
-// Every route is wrapped in [dashboardauth.RequireSession], so anonymous requests are refused
-// first. Every mutation is also wrapped in [middleware.RequireSameSiteWrite] because these
-// routes authenticate with the session COOKIE: a cross-site page could otherwise register an
-// endpoint that exfiltrates the victim's webhook payloads. Reads stay unwrapped.
+// Mount installs the webhook routes behind [dashboardauth.RequireSession], with mutations also behind [middleware.RequireSameSiteWrite] so a cross-site page cannot register an exfiltrating endpoint.
 func (h *Handlers) Mount(mux *http.ServeMux, _ *middleware.PublicRoutes) {
 	session := dashboardauth.RequireSession()
 	sameSite := middleware.RequireSameSiteWrite(h.cfg.Logger)
@@ -153,8 +147,7 @@ type listResponse struct {
 	Webhooks []webhookDTO `json:"webhooks"`
 }
 
-// HandleList returns every webhook for the session's account,
-// newest first.
+// HandleList returns every webhook for the session's account, newest first.
 func (h *Handlers) HandleList(w http.ResponseWriter, r *http.Request) {
 	sc, ok := dashboardauth.SessionFromContext(r.Context())
 	if !ok {
@@ -277,8 +270,7 @@ type updateRequest struct {
 	Enabled *bool    `json:"enabled,omitempty"`
 }
 
-// HandleUpdate patches mutable fields. SigningKey + AccountID are
-// immutable here; HandleRotateSecret replaces the key.
+// HandleUpdate patches mutable fields; SigningKey and AccountID are immutable here (HandleRotateSecret replaces the key).
 func (h *Handlers) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 	sc, ok := dashboardauth.SessionFromContext(r.Context())
 	if !ok {
@@ -357,9 +349,7 @@ func (h *Handlers) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, toDTO(updated))
 }
 
-// HandleDelete removes the webhook + cascades to deliveries. An absent
-// or cross-account id is 404 (the same shape, so presence never leaks);
-// a retried delete therefore reads 404 as "already gone".
+// HandleDelete removes the webhook and cascades to deliveries; an absent or cross-account id is the same 404, so presence never leaks.
 func (h *Handlers) HandleDelete(w http.ResponseWriter, r *http.Request) {
 	sc, ok := dashboardauth.SessionFromContext(r.Context())
 	if !ok {
@@ -396,10 +386,7 @@ type rotateSecretResponse struct {
 	PreviousSecretExpiresAt wiretime.Time `json:"previous_secret_expires_at"`
 }
 
-// HandleRotateSecret replaces the signing key in place, keeping the webhook's id, queued
-// deliveries and log; the old key keeps signing for previousSecretOverlap. It sits behind the
-// Idempotency-Key middleware because a retried rotate would push the receiver's key out of the
-// overlap.
+// HandleRotateSecret replaces the signing key in place (old key keeps signing for previousSecretOverlap); behind Idempotency-Key because a retried rotate would push the receiver's key out of the overlap.
 func (h *Handlers) HandleRotateSecret(w http.ResponseWriter, r *http.Request) {
 	sc, ok := dashboardauth.SessionFromContext(r.Context())
 	if !ok {

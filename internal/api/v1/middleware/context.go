@@ -15,14 +15,12 @@ const (
 	ctxKeyRemoteIP  ctxKey = "remote_ip"
 )
 
-// RequestIDFrom reads the request ID from r's context, or "" if
-// RequestID middleware wasn't applied.
+// RequestIDFrom reads the request ID from r's context, or "" if RequestID middleware wasn't applied.
 func RequestIDFrom(r *http.Request) string {
 	return stringFromCtx(r.Context(), ctxKeyRequestID)
 }
 
-// RemoteIPFrom reads the resolved remote IP (X-Forwarded-For or
-// r.RemoteAddr), or "" if Logger middleware wasn't applied.
+// RemoteIPFrom reads the resolved remote IP from r's context, or "" if Logger middleware wasn't applied.
 func RemoteIPFrom(r *http.Request) string {
 	return stringFromCtx(r.Context(), ctxKeyRemoteIP)
 }
