@@ -1,17 +1,10 @@
 import type { Metadata } from 'next';
 import './globals.css';
 
-// The status page MOVED onto the main site at https://stellarindex.io/status
-// (one site, unified nav). This project (Cloudflare Pages
-// `stellarindex-status`, still bound to status.stellarindex.io) is now
-// REDIRECT-ONLY: public/_redirects 301s every path to the new location.
-// This minimal layout + page is only the build artifact the redirect
-// rides on; it's shadowed by the edge redirect and rarely rendered.
+// Standalone on its own hosting so it stays up when the API and explorer do not.
 export const metadata: Metadata = {
-  title: 'Status moved — stellarindex.io/status',
-  description: 'The Stellar Index status page now lives at stellarindex.io/status.',
-  robots: { index: false, follow: true },
-  alternates: { canonical: 'https://stellarindex.io/status' },
+  title: 'Stellar Index status',
+  description: 'Incident notices for the Stellar Index API and explorer.',
 };
 
 export default function RootLayout({

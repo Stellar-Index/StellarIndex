@@ -69,7 +69,7 @@ severity: P2
 #    is scoped to the explorer's Pages project.
 curl -sI https://stellarindex.io/
 curl -sI https://api.stellarindex.io/v1/healthz
-curl -sI https://status.stellarindex.io/   # redirect-only stub, same account
+curl -sI https://status.stellarindex.io/   # standalone incident page, same account
 
 # 2. Full outage vs edge-function failure: root is a static asset,
 #    long-tail entity routes go through a Pages Function.

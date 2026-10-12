@@ -197,7 +197,7 @@ Symptoms: `stellarindex.io/status` shows components down when production is
 fine, or vice versa. Lowest stakes: the page is a derived view and carries no
 production traffic. It is part of the explorer static export
 (`web/explorer/src/app/status/`, Cloudflare Pages, deployed on push to
-`main`); `web/status/` is now only a redirect stub.
+`main`); `web/status/` is the standalone incident page at status.stellarindex.io.
 
 1. **Edit + push** (preferred). Edit the incident corpus
    `internal/incidents/data/<YYYY-MM-DD>-<slug>.md`, the single source of

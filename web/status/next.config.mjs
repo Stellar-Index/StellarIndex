@@ -1,15 +1,18 @@
+import path from 'node:path';
+
+// The repo root, so the build can read the explorer's incident loader and internal/incidents/data.
+const root = path.resolve(import.meta.dirname, '..', '..');
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-
-  // React Compiler (babel-plugin-react-compiler 1.0, stable) — auto-memoizes
-  // components at build time. Enabled now that the react-hooks/* rules are
-  // enforced clean; the compiler bails out on anything it can't prove safe.
   reactCompiler: true,
   output: 'export',
   trailingSlash: true,
   images: { unoptimized: true },
   productionBrowserSourceMaps: true,
+  turbopack: { root },
+  outputFileTracingRoot: root,
 };
 
 export default nextConfig;
