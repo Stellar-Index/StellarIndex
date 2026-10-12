@@ -46,9 +46,7 @@ const rwaContractValuationBudget = 8 * time.Second
 
 // ─── storage seams ──────────────────────────────────────────────────
 
-// RWADirectoryContractReader is the seam the contract arm draws its candidate population through.
-// Optional: without it the classic arm serves alone and the funnel says so, since reporting zero
-// contracts would assert something nobody looked at.
+// RWADirectoryContractReader is the optional seam for the contract arm's candidate population; without it the funnel says the arm is unmeasured rather than reporting zero contracts.
 type RWADirectoryContractReader interface {
 	DirectoryRecognisedContracts(ctx context.Context, issuingTags []string) (
 		[]timescale.DirectoryEntry, timescale.DirectoryRWACensus, error)
@@ -56,16 +54,12 @@ type RWADirectoryContractReader interface {
 		[]timescale.DirectoryEntry, error)
 }
 
-// ContractCatalogueReader reads catalogue rows for an explicit contract set, without the volume
-// gate the listing spine applies.
+// ContractCatalogueReader reads catalogue rows for an explicit contract set, without the volume gate the listing spine applies.
 type ContractCatalogueReader interface {
 	ContractCatalogueRows(ctx context.Context, contractIDs []string) (map[string]timescale.AssetRow, error)
 }
 
-// TokenSymbolReader resolves a token contract's on-chain SEP-41 symbol.
-//
-// Read ONLY after an independent party has named the contract: the value is contract-authored and
-// answers which instrument, never whether.
+// TokenSymbolReader resolves a token contract's on-chain SEP-41 symbol; read ONLY after an independent party named the contract, since the value is contract-authored and says which instrument, never whether.
 type TokenSymbolReader interface {
 	TokenSymbol(ctx context.Context, contractID string) (string, bool, error)
 }

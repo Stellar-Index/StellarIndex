@@ -12,10 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// TLSCertProbeInterval is the cadence at which [RunTLSCertProbe]
-// re-probes a host's leaf cert. The expiry alert fires at 14 days remaining, so
-// a 6 h cadence re-confirms the timestamp 56 times first and a single failed
-// probe never starves the gauge.
+// TLSCertProbeInterval is how often [RunTLSCertProbe] re-probes a host's leaf cert; 6 h re-confirms the expiry 56 times before the 14-day alert.
 const TLSCertProbeInterval = 6 * time.Hour
 
 // tlsCertProbeTimeout caps each probe. Handshakes against Caddy typically take
@@ -23,19 +20,7 @@ const TLSCertProbeInterval = 6 * time.Hour
 // through a deeper outage.
 const tlsCertProbeTimeout = 10 * time.Second
 
-// RunTLSCertProbe blocks until ctx is cancelled, periodically
-// probing the configured hostnames via TLS handshake and emitting
-// the leaf cert's NotAfter as a Prometheus gauge.
-//
-// Caddy auto-renews Let's Encrypt 30 days before expiry; a failed renewal (DNS,
-// rate limit, ACME quota) is otherwise silent until the cert expires. The
-// `stellarindex_tls_cert_not_after_unix` gauge lets an alert catch a stuck
-// renewal against `time()`.
-//
-// The gauge is NOT cleared on probe failure: the last-known value stays, and
-// the paired `stellarindex_tls_cert_probe_total{outcome}` counter detects a
-// sustained probe error. The first probe runs immediately so a fresh process
-// has a gauge before the first interval.
+// RunTLSCertProbe blocks until ctx is cancelled, probing hosts by TLS handshake and emitting the leaf NotAfter gauge, which is NOT cleared on probe failure (the probe_total counter catches sustained errors); first probe runs immediately.
 func RunTLSCertProbe(ctx context.Context, hosts []string, logger *slog.Logger) error {
 	if len(hosts) == 0 {
 		return nil

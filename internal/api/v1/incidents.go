@@ -11,8 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/incidents"
 )
 
-// IncidentsList is the wire shape returned by /v1/incidents.
-// `incidents` is sorted started_at desc by the loader.
+// IncidentsList is the /v1/incidents shape; `incidents` is sorted started_at desc by the loader.
 type IncidentsList struct {
 	Incidents []incidents.Incident `json:"incidents"`
 	Count     int                  `json:"count"`

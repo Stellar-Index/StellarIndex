@@ -11,8 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/xdrjson"
 )
 
-// OracleReader is the storage-side interface for /v1/oracle/latest
-// lookups.
+// OracleReader is the storage-side interface for /v1/oracle/latest lookups.
 type OracleReader interface {
 	// LatestOracleUpdatesForAsset returns the most-recent observation per source for asset;
 	// sourceFilter="" returns every source. Empty slice + nil error means "no observations".
@@ -146,10 +145,7 @@ func (s *Server) buildVerifiedSACs() map[string]canonical.Asset {
 	return set
 }
 
-// OracleReading is the wire shape for /v1/oracle/latest entries.
-//
-// Price is a decimal string scaled by Decimals; the raw integer and scale are reported too so
-// clients can verify the rendering.
+// OracleReading is a /v1/oracle/latest entry; Price is a decimal string scaled by Decimals, with the raw integer and scale also reported.
 type OracleReading struct {
 	Source     string   `json:"source"`
 	ContractID string   `json:"contract_id,omitempty"`

@@ -48,9 +48,7 @@ func newPoolTokensCache(upstream ProtocolPoolTokensReader) *poolTokensCache {
 	}
 }
 
-// PoolTokens serves a fresh entry from memory, otherwise joins one
-// detached fill per source. A failed fill falls back to the last-good map,
-// which can only lack pools and reserves first observed since it was built.
+// PoolTokens serves a fresh entry from memory or joins one detached fill per source; a failed fill falls back to the last-good map.
 func (c *poolTokensCache) PoolTokens(ctx context.Context, source string) (map[string][]string, error) {
 	c.mu.Lock()
 	prev, have := c.entries[source]

@@ -8,23 +8,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// VolumeCharacterReader reads the pre-computed per-asset trailing-window
-// account-structure signals + derived volume_character (design §2) from the
-// asset_volume_character rollup (migration 0149) — a keyed-on-PK lookup,
-// folded to the asset's canonical form. Production impl is *timescale.Store.
-//
-// It REPLACES the pre-rollup per-request trades roll, which tripped a 4s
-// timeout on busy assets, returning null: the rollup
-// worker moved that compute off the request path. A nil reader, a
-// fiat/native-only asset, a rollup miss (found=false), or a lookup error
-// all leave the fields omitted and never fail the asset response.
+// VolumeCharacterReader reads the precomputed per-asset volume_character rollup by primary key; a nil reader, miss or error omits the fields and never fails the asset response.
 type VolumeCharacterReader interface {
 	AssetVolumeCharacterRollup(ctx context.Context, assetID string) (timescale.AssetVolumeCharacter, bool, error)
 }
 
-// AssetVolumeCharacterSignals is the wire form of the §2 signals. Shares
-// are fractions in [0,1] (4 dp). volume_usd is the priced window volume
-// the shares are computed against, as a decimal string.
+// AssetVolumeCharacterSignals is the wire form of the account-structure signals: shares are fractions in [0,1], volume_usd a decimal string.
 type AssetVolumeCharacterSignals struct {
 	WindowDays             int     `json:"window_days"`
 	VolumeUSD              string  `json:"volume_usd"`

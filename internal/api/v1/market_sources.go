@@ -22,19 +22,13 @@ func parseFloatOr0(s string) float64 {
 	return f
 }
 
-// MarketSourceReader is the seam the /v1/markets/sources handler reads through; timescale.Store
-// satisfies it. Each asset argument is the full set of canonical FORMS to match (expanded via
-// assetAliases), so XLM's `native` (SDEX) and `crypto:XLM` (CEX) legs aggregate into one
-// per-source breakdown instead of undercounting whichever form the query named.
+// MarketSourceReader is the seam for /v1/markets/sources; each asset argument is the full alias-expanded set of canonical forms so XLM's native and crypto:XLM legs aggregate together.
 type MarketSourceReader interface {
 	PairSourceStats(ctx context.Context, base, quote []string) ([]timescale.SourceStats, error)
 	AssetSourceStats(ctx context.Context, asset []string) ([]timescale.SourceStats, error)
 }
 
-// SourceVolume is one source's trailing-24h contribution to a market (or asset). VolumeUSD24h
-// is the sum of trade-time usd_volume as a decimal string (ADR-0003), omitted when no trade
-// was priced. VolumeLowerBound is true when unpriced trades were excluded. SharePct is the
-// source's share of total priced USD volume (0 when the total is unknown).
+// SourceVolume is one source's trailing-24h market contribution; VolumeUSD24h is a decimal string omitted when unpriced, with VolumeLowerBound true when unpriced trades were excluded.
 type SourceVolume struct {
 	Source           string  `json:"source"`
 	VolumeUSD24h     *string `json:"volume_24h_usd,omitempty"`
@@ -43,8 +37,7 @@ type SourceVolume struct {
 	SharePct         float64 `json:"share_pct"`
 }
 
-// MarketSourcesResp is the wire shape for /v1/markets/sources. Exactly
-// one of {base+quote} or {asset} is echoed back depending on the query.
+// MarketSourcesResp is the /v1/markets/sources shape; exactly one of {base+quote} or {asset} is echoed back.
 type MarketSourcesResp struct {
 	Base       string         `json:"base,omitempty"`
 	Quote      string         `json:"quote,omitempty"`

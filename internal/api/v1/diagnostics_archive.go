@@ -8,13 +8,7 @@ import (
 	"os"
 )
 
-// ArchiveReportView is the wire shape of GET /v1/diagnostics/archive, the latest archive
-// completeness report. It mirrors internal/archivecompleteness.Report but is declared locally
-// so the JSON tags stay the contract and an internal-only field cannot leak onto the wire.
-//
-// The API is a pure read-through of the file the daily verify timer writes (no re-scan, no
-// freshness synthesis): `scanned_at` is the daemon's own timestamp, so a stale value is itself
-// the signal that the timer stopped firing.
+// ArchiveReportView is the GET /v1/diagnostics/archive shape, a pure read-through of the daily verify file; a stale `scanned_at` means the timer stopped.
 type ArchiveReportView struct {
 	// Schema is the daemon's report wire-format version ("1").
 	Schema string `json:"schema"`
@@ -58,8 +52,7 @@ type ArchivePrimaryView struct {
 	MissingRanges []ArchiveGapRangeView `json:"missing_ranges,omitempty"`
 }
 
-// ArchiveGapRangeView is one contiguous missing-ledger range,
-// inclusive on both ends.
+// ArchiveGapRangeView is one contiguous missing-ledger range, inclusive on both ends.
 type ArchiveGapRangeView struct {
 	Start uint32 `json:"start"`
 	End   uint32 `json:"end"`

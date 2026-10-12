@@ -20,10 +20,7 @@ import (
 
 // ─── storage seam ───────────────────────────────────────────────────
 
-// RWAListingDirectoryReader is the seam the second C2 arm reads its corroborating source
-// through; *timescale.Store satisfies it. It is optional: without it the arm reports itself
-// unmeasured, not a population of zero, because a zero would assert that no independent listing
-// names any of these addresses.
+// RWAListingDirectoryReader is the optional seam for the listing arm (*timescale.Store satisfies it); without it the arm reports itself unmeasured, not a population of zero.
 type RWAListingDirectoryReader interface {
 	ListingDirectoryContracts(ctx context.Context) (
 		[]timescale.ListingEntry, timescale.ListingDirectoryCensus, error)

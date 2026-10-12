@@ -338,14 +338,7 @@ func (s *Server) endClassicLakeSupplyFlight(done chan struct{}) {
 	close(done)
 }
 
-// PrewarmClassicLakeSupply fills the lake-flows supply cache out of band, so published supply does
-// not depend on how recently somebody looked; otherwise entries expire at [classicLakeSupplyTTL]
-// and the listing falls back to the trustline sum. It runs in the API process because
-// s.lakeSupply is per-process memory.
-//
-// Coverage is the pages `opts` names plus the /v1/rwa/assets membership ("every classic asset"
-// would be 450k+ SAC lookups); RWA members are chosen by attestation, not rank, so listing pages
-// leave them cold. Best-effort: any missing reader or error leaves the cache as it was.
+// PrewarmClassicLakeSupply fills the lake-flows supply cache out of band in the API process (per-process memory) for the named pages plus /v1/rwa/assets members; best-effort.
 func (s *Server) PrewarmClassicLakeSupply(ctx context.Context, opts []timescale.ListAssetsOptions) {
 	if s.TokenSupply == nil || s.AssetsReader == nil {
 		return

@@ -34,9 +34,7 @@ const soroswapFeeBps = 30
 // trade pays the fee), so the smallest tier sits above soroswapFeeBps.
 var poolDepthSlippagesBps = []int64{50, 100, 200}
 
-// PoolReservesRow is the wire shape for one AMM pool contract's
-// current reserve state. All token quantities are base-unit decimal
-// strings (ADR-0003 — reserves are i128; never floats).
+// PoolReservesRow is one AMM pool contract's current reserve state; token quantities are base-unit decimal strings (ADR-0003), never floats.
 type PoolReservesRow struct {
 	Pool   string `json:"pool"`   // pool (pair) contract C-strkey
 	Source string `json:"source"` // venue; "soroswap" is the only venue served today
@@ -70,18 +68,14 @@ type PoolReserveToken struct {
 	Reserve  string `json:"reserve"` // base units, i128 decimal string
 }
 
-// PoolDepthLevel is the depth estimate at one slippage tier: the
-// largest input trade (per direction) whose AVERAGE execution price
-// stays within slippage_pct of the mid price, under the
-// constant-product model with the pool fee applied on input.
+// PoolDepthLevel is the depth estimate at one slippage tier: the largest input trade per direction whose average execution price stays within slippage_pct of mid, constant-product with fee on input.
 type PoolDepthLevel struct {
 	SlippagePct string        `json:"slippage_pct"`
 	Token0In    PoolDepthSide `json:"token0_in"` // selling token0 for token1
 	Token1In    PoolDepthSide `json:"token1_in"` // selling token1 for token0
 }
 
-// PoolDepthSide is one direction's depth at a tier. Base-unit decimal
-// strings of the respective tokens.
+// PoolDepthSide is one direction's depth at a tier, as base-unit decimal strings of the respective tokens.
 type PoolDepthSide struct {
 	MaxInput string `json:"max_input"`
 	Output   string `json:"output"`

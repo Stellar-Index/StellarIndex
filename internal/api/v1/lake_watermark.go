@@ -9,9 +9,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// LakeWatermarkReader reports the highest ledger the ClickHouse lake has captured and its close
-// time (ADR-0041 Decision 4), so lake-derived responses can tell the client how fresh they are.
-// Nil means responses omit `as_of_ledger` and never flip `flags.stale` from the watermark.
+// LakeWatermarkReader reports the highest captured lake ledger and its close time (ADR-0041); nil omits `as_of_ledger` and never flips `flags.stale`.
 type LakeWatermarkReader interface {
 	LakeWatermark(ctx context.Context) (ledger uint32, closedAt time.Time, err error)
 }

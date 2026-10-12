@@ -23,9 +23,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// AuditSink is the narrow subset of [platform.AuditStore] the admin
-// handlers need. Appends are best-effort: a failure is logged and never blocks the admin action,
-// which is always also structured-logged so an unwired sink still leaves a greppable trail.
+// AuditSink is the narrow [platform.AuditStore] subset admin handlers need; appends are best-effort and never block the admin action.
 type AuditSink interface {
 	Append(ctx context.Context, e platform.AuditEntry) error
 }

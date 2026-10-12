@@ -10,12 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// CachedAssetsReader wraps a [AssetsReader] with a small per-key TTL
-// cache for the methods that back high-traffic listing endpoints —
-// ListAssetsExt and the batched price-history calls used by
-// /v1/assets?limit=200&include=sparkline, which every explorer page load fires and whose SQL
-// takes ~1.1s. Other AssetsReader methods pass through unchanged (keyed too narrowly to
-// benefit). Concurrent callers during a refetch share one upstream call (single-flight).
+// CachedAssetsReader wraps [AssetsReader] with a per-key TTL cache and single-flight for the slow listing and price-history calls; other methods pass through.
 type CachedAssetsReader struct {
 	// logger sinks a panic recovered in a detached refresh goroutine. It is the process
 	// default because the reader wrappers are built before the API Server exists; the
@@ -83,12 +78,7 @@ type assetsCacheEntry struct {
 	err error
 }
 
-// NewCachedAssetsReader wraps `upstream` with a TTL cache. ttl=0
-// disables the cache (every call passes through).
-//
-// The production TTL is 2 minutes, set at the single call site in cmd/stellarindex-api/main.go:
-// listings are activity-ranked aggregates that do not move materially in that window. Change
-// the call site and this line together.
+// NewCachedAssetsReader wraps upstream with a TTL cache (ttl=0 disables); the 2-minute production TTL is set in cmd/stellarindex-api/main.go.
 func NewCachedAssetsReader(upstream AssetsReader, ttl time.Duration) *CachedAssetsReader {
 	return &CachedAssetsReader{
 		logger:     slog.Default(),
@@ -99,12 +89,7 @@ func NewCachedAssetsReader(upstream AssetsReader, ttl time.Duration) *CachedAsse
 	}
 }
 
-// LatestSupplyObservations passes through to the upstream's supply reader (the /v1/assets
-// market_cap enrichment). It is not part of AssetsReader; it is exposed so the handler's
-// type-assert resolves through this wrapper instead of skipping enrichment.
-//
-// It is deliberately uncached: the lookup is one indexed row per watched asset, and a cache
-// would age the observation by its own TTL behind the caller's freshness bound.
+// LatestSupplyObservations passes through uncached to the upstream supply reader so the handler's type-assert resolves through this wrapper.
 func (c *CachedAssetsReader) LatestSupplyObservations(
 	ctx context.Context, maxAge time.Duration,
 ) (map[string]timescale.SupplyObservation, error) {
@@ -132,10 +117,7 @@ func (c *CachedAssetsReader) ListAssetsExt(ctx context.Context, opts timescale.L
 	})
 }
 
-// GetAssetsPriceHistory24hBatch — cached on the asset-id set.
-// [cacheKey.strSet] order-normalises the ids so two callers passing
-// the same set in a different order share one slot (the result is a
-// map keyed by asset_id — order-independent).
+// GetAssetsPriceHistory24hBatch is cached on the order-normalised asset-id set, so the same set in any order shares one slot.
 func (c *CachedAssetsReader) GetAssetsPriceHistory24hBatch(ctx context.Context, assetIDs []string) (map[string][]timescale.AssetPricePoint, error) {
 	if c.ttl <= 0 {
 		return c.upstream.GetAssetsPriceHistory24hBatch(ctx, assetIDs)
@@ -146,8 +128,7 @@ func (c *CachedAssetsReader) GetAssetsPriceHistory24hBatch(ctx context.Context, 
 	})
 }
 
-// GetAssetsPriceHistory7dBatch — cached. Same order-normalised keying
-// as the 24h batch.
+// GetAssetsPriceHistory7dBatch is cached with the same order-normalised keying as the 24h batch.
 func (c *CachedAssetsReader) GetAssetsPriceHistory7dBatch(ctx context.Context, assetIDs []string) (map[string][]timescale.AssetPricePoint, error) {
 	if c.ttl <= 0 {
 		return c.upstream.GetAssetsPriceHistory7dBatch(ctx, assetIDs)
@@ -158,8 +139,7 @@ func (c *CachedAssetsReader) GetAssetsPriceHistory7dBatch(ctx context.Context, a
 	})
 }
 
-// GetAssetsATHBatch passes through uncached: no handler serves it on a
-// hot path, so a cache would add a fetcher type for no measured win.
+// GetAssetsATHBatch passes through uncached: no hot-path handler serves it.
 func (c *CachedAssetsReader) GetAssetsATHBatch(ctx context.Context, assetIDs []string) (map[string]timescale.AssetATH, error) {
 	return c.upstream.GetAssetsATHBatch(ctx, assetIDs)
 }

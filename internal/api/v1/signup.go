@@ -20,13 +20,7 @@ func (s *Server) handleSignupRetired(w http.ResponseWriter, r *http.Request) {
 		"POST /v1/signup and /v1/signup/verify have been retired; use POST /v1/register to obtain an API key")
 }
 
-// SignupIPThrottle is the v1 boundary for the per-IP signup rate limit. Production wires a
-// Redis-backed token bucket with a tight cap (default 5/hour); nil disables the check, leaving
-// only the global middleware.
-//
-// It is a separate seam because the global anonymous bucket (60/min per IP) would allow 3,600
-// keys/hour per IP; tightening here closes the bulk-mint vector without affecting other
-// anonymous traffic.
+// SignupIPThrottle is the optional per-IP signup rate limit (Redis token bucket, default 5/hour), separate because the global anonymous bucket would allow 3,600 keys/hour per IP; nil disables it.
 type SignupIPThrottle interface {
 	// CheckIP returns nil when the IP is below its signup quota, or [auth.ErrSignupRateLimited]
 	// when exhausted. Other errors (typically Redis unavailable) propagate to the caller.

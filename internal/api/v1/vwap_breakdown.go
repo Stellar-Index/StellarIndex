@@ -13,12 +13,7 @@ import (
 // vwapBreakdownSource is the only accepted ?breakdown= value.
 const vwapBreakdownSource = "source"
 
-// VWAPSourceBreakdown is one venue's contribution to one bucket of a /v1/vwap window, in the
-// same units as the response's base_volume / quote_volume, so a bucket's sources sum to it.
-//
-// Weight is the source's post-filter quote volume over the bucket's, as a decimal string floored
-// to 10 places (weights sum to 1 only to that precision). Price is null when the outlier filter
-// left the source no trades in the bucket.
+// VWAPSourceBreakdown is one venue's contribution to one /v1/vwap bucket in the response's volume units; Weight is a decimal string floored to 10 places, and Price is null when the outlier filter left no trades.
 type VWAPSourceBreakdown struct {
 	Source           string  `json:"source"`
 	Price            *string `json:"price"`
@@ -29,8 +24,7 @@ type VWAPSourceBreakdown struct {
 	OutliersExcluded int     `json:"outliers_excluded"`
 }
 
-// VWAPBreakdownBucket is one time bucket; only buckets holding a fetched trade appear.
-// Start/End are UTC-aligned bounds, not clamped to the window.
+// VWAPBreakdownBucket is one time bucket holding a fetched trade, with UTC-aligned Start/End not clamped to the window.
 type VWAPBreakdownBucket struct {
 	Start       WireTime              `json:"start"`
 	End         WireTime              `json:"end"`
@@ -39,9 +33,7 @@ type VWAPBreakdownBucket struct {
 	Sources     []VWAPSourceBreakdown `json:"sources"`
 }
 
-// VWAPBreakdown is the opt-in ?breakdown=source block. Truncated mirrors the response's
-// `truncated`: the fetch cap was hit, so only the newest trades are covered and the breakdown is
-// a lower bound. Interval is null when no ?interval= was given (one bucket spans the window).
+// VWAPBreakdown is the opt-in ?breakdown=source block; Truncated mirrors the response, making the breakdown a lower bound, and Interval is null when no ?interval= was given.
 type VWAPBreakdown struct {
 	Interval  *string               `json:"interval"`
 	Truncated bool                  `json:"truncated"`

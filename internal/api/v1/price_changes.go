@@ -12,10 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// PriceChangeHorizon is one trailing-window delta on GET /v1/price/changes. Pointer fields are
-// nil when the horizon is unavailable (no bucket that far back, or a withheld reference); the
-// miss is per-horizon, never an error for the whole call. ReferenceAt + Resolution disclose
-// which closed bucket the comparison used.
+// PriceChangeHorizon is one trailing-window delta on /v1/price/changes; nil pointer fields mean that horizon is unavailable, never a whole-call error.
 type PriceChangeHorizon struct {
 	// ChangePct is the signed percentage move of the current price vs
 	// the reference price, two fractional digits with an explicit
@@ -43,9 +40,7 @@ type PriceChangeHorizon struct {
 	ThinMarket bool `json:"thin_market,omitempty"`
 }
 
-// PriceChanges is the GET /v1/price/changes payload: the current closed price plus signed change
-// over 1h / 24h / 7d / 30d. Each horizon compares the current closed VWAP with the closed VWAP
-// at-or-before now-horizon, both read through the same point-in-time reader /v1/price/at uses.
+// PriceChanges is the GET /v1/price/changes payload: the current closed price plus signed change over 1h/24h/7d/30d via the same reader as /v1/price/at.
 type PriceChanges struct {
 	AssetID          string `json:"asset_id"`
 	Quote            string `json:"quote"`

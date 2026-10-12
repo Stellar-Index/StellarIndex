@@ -60,9 +60,7 @@ const rwaReferenceRefreshTimeout = 30 * time.Second
 
 // ─── wire shape ─────────────────────────────────────────────────────
 
-// RWAReference is an independent oracle's valuation of the instrument an admitted token anchors
-// to. It is not this platform's price and not derived from any Stellar market; both figures are
-// served so readers see them independently, not just their ratio.
+// RWAReference is an independent oracle's valuation of the instrument a token anchors to, not this platform's price; both figures are served so readers see them independently.
 type RWAReference struct {
 	// PriceUSD is the oracle's value verbatim at the feed's own decimal scale (a decimal string).
 	// Not re-rounded: the scale states the oracle's precision.
@@ -109,11 +107,7 @@ const (
 	RWAReferenceFundNAV = "fund_nav"
 )
 
-// RWAReferenceValuation is the token's circulating supply valued at the REFERENCE price, not at
-// anything the market was observed paying.
-//
-// It is never folded into `valuation.market_cap_usd`: that one is liquidity-gated and backed by a
-// settled trade; this figure is a claim no gate can measure and may not be called a market cap.
+// RWAReferenceValuation is circulating supply valued at the REFERENCE price, never folded into `valuation.market_cap_usd` and not to be called a market cap.
 type RWAReferenceValuation struct {
 	// Status is the single authority on why there is no figure. Where a rule refuses the reference
 	// itself it carries the SAME string as `premium.status`, assigned together.
@@ -136,8 +130,7 @@ const (
 	RWAReferenceValuationNoSupply = "supply_unavailable"
 )
 
-// RWAPremium is the token's market price measured against the oracle's valuation of the
-// instrument, or the reason there is no such figure.
+// RWAPremium is the token's market price measured against the oracle's valuation of the instrument, or the reason there is no such figure.
 type RWAPremium struct {
 	Status string `json:"status"`
 	// Pct is (market − reference) / reference × 100 as a decimal string. Present only when Status

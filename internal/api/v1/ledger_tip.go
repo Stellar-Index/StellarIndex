@@ -8,15 +8,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// LedgerTipView is the wire shape of /v1/ledger/tip and the data
-// field of each /v1/ledger/stream event: the highest ledger the indexer has committed.
-//
-// LatestLedger comes from the `ledgerstream` row of `ingestion_cursors`, upserted once per
-// ledger. It is fresher than /v1/diagnostics/ingestion's `latest_ledger`, which derives from
-// prices_1m and only advances on ledgers that produced a trade row.
-//
-// IngestedAt is the cursor's last_updated; LagSeconds is its wall-clock age, the same lag
-// definition /v1/diagnostics/ingestion reports.
+// LedgerTipView is the /v1/ledger/tip shape and /v1/ledger/stream event data: the highest committed ledger from the `ledgerstream` cursor, fresher than diagnostics' prices_1m-derived latest_ledger.
 type LedgerTipView struct {
 	LatestLedger uint32   `json:"latest_ledger"`
 	IngestedAt   WireTime `json:"ingested_at"`

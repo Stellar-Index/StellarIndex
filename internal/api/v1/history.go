@@ -22,8 +22,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// HistoryReader is the storage-side interface for /v1/history
-// lookups.
+// HistoryReader is the storage-side interface for /v1/history lookups.
 type HistoryReader interface {
 	// TradesInRange returns trades for pair closing in [from, to), ts ASC, for the aggregation
 	// endpoints (/v1/vwap, /v1/twap, /v1/ohlc) that consume the whole window.
@@ -85,8 +84,7 @@ type HistoryReader interface {
 	LatestTradePerSource(ctx context.Context, pair canonical.Pair, sourceFilter string) ([]canonical.Trade, error)
 }
 
-// HistoryPoint is one (timestamp, price, optional usd-volume) CAGG row from
-// [HistoryReader.HistoryPoints]; the handler marshals it to the OpenAPI `{t, p, v_usd?}` shape.
+// HistoryPoint is one (timestamp, price, optional usd-volume) CAGG row that the handler marshals to the OpenAPI `{t, p, v_usd?}` shape.
 type HistoryPoint struct {
 	Bucket    time.Time
 	VWAP      string   // NUMERIC text — pass-through, no float round-trip
@@ -97,8 +95,7 @@ type HistoryPoint struct {
 // ErrUnknownGranularity is returned for a granularity outside the canonical set; the handler maps it to 400.
 var ErrUnknownGranularity = fmt.Errorf("unknown granularity")
 
-// TradeRow is the wire shape for /v1/history entries. Amounts ship as decimal strings (ADR-0003).
-// Price is computed at response time, never stored, and is null (but present) when a leg is zero.
+// TradeRow is the /v1/history entry shape; amounts are decimal strings (ADR-0003) and Price is computed at response time, null when a leg is zero.
 type TradeRow struct {
 	Source      string   `json:"source"`
 	Ledger      uint32   `json:"ledger"`
@@ -122,8 +119,7 @@ type TradeRow struct {
 	RoutedVia string `json:"routed_via,omitempty"`
 }
 
-// SourceHistoryReader is the optional single-source [HistoryReader.TradesInRangeAfter]; without it
-// `?source=` cannot be served.
+// SourceHistoryReader is the optional single-source [HistoryReader.TradesInRangeAfter]; without it `?source=` cannot be served.
 type SourceHistoryReader interface {
 	TradesInRangeAfterFromSource(
 		ctx context.Context,
@@ -504,8 +500,7 @@ func parseBaseQuote(w http.ResponseWriter, r *http.Request) (canonical.Asset, ca
 
 // ─── /v1/history/since-inception ────────────────────────────────
 
-// HistorySeries is the wire shape for /v1/history/since-inception.
-// Mirrors the OpenAPI HistoryEnvelope.data shape exactly.
+// HistorySeries is the /v1/history/since-inception shape, mirroring the OpenAPI HistoryEnvelope.data.
 type HistorySeries struct {
 	AssetID       string             `json:"asset_id"`
 	Quote         string             `json:"quote"`
@@ -533,8 +528,7 @@ func (h *HistorySeries) markDiscontinuity() {
 	h.Discontinuous, h.GapStartsAt, h.GapEndsAt = c.Discontinuous, c.GapStartsAt, c.GapEndsAt
 }
 
-// HistoryPointWire marshals as the OpenAPI HistoryPoint ({t, p, v_usd?}), kept distinct from the
-// reader-side [HistoryPoint] so wire-shape assumptions do not leak into adapters.
+// HistoryPointWire marshals as the OpenAPI HistoryPoint, kept distinct from [HistoryPoint] so wire-shape assumptions do not leak into adapters.
 type HistoryPointWire struct {
 	T    WireTime `json:"t"`
 	P    string   `json:"p"`

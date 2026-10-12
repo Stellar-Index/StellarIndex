@@ -8,10 +8,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TransitivePricer supplies a one-hop USD price for assets the catalogue cannot price
-// directly. Optional: nil leaves every asset unpriced. Production wiring is timescale.Store
-// (see [timescale.Store.TransitiveUSDPriceCandidates] for why the hop is returned too).
-// Candidates arrive best-first; an empty slice means no route.
+// TransitivePricer supplies a one-hop USD price (candidates best-first, empty means no route) for assets the catalogue cannot price directly; nil leaves them unpriced.
 type TransitivePricer interface {
 	TransitiveUSDPriceCandidates(ctx context.Context, assetID string) ([]timescale.TransitivePrice, error)
 }

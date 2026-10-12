@@ -140,8 +140,7 @@ type RWAHistoryGroup struct {
 	Points  []RWAHistoryPoint `json:"points"`
 }
 
-// RWAHistoryExcluded is one reason a set member is absent from the
-// series, with how many members it accounts for.
+// RWAHistoryExcluded is one reason a set member is absent from the series, with how many members it accounts for.
 type RWAHistoryExcluded struct {
 	Reason string `json:"reason"`
 	Assets int    `json:"assets"`
@@ -197,10 +196,7 @@ const rwaHistoryBasisUnavailable = "No series is published: membership could not
 
 // ─── readers ────────────────────────────────────────────────────────
 
-// RWAOracleHistoryReader reads daily oracle observation buckets for the price leg of GET
-// /v1/rwa/history. It is declared apart from [OracleReader], where a history method would be a
-// nil-returning stub in nearly every implementation. Nil disables the endpoint (503): a series
-// with the price leg missing is not a shorter series, it is no series.
+// RWAOracleHistoryReader reads daily oracle buckets for the price leg of GET /v1/rwa/history; nil disables the endpoint (503) because a series missing its price leg is no series.
 type RWAOracleHistoryReader interface {
 	DailyOraclePrices(ctx context.Context, assets []canonical.Asset, quote canonical.Asset, from, to time.Time) ([]timescale.OracleDayPoint, error)
 }

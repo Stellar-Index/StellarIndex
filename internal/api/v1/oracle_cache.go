@@ -13,14 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// CachedOracleReader wraps an [OracleReader] with a per-process TTL cache and single-flight
-// refetch on LatestOracleUpdatesForAssets. The cache only absorbs bursts on one key set; the SQL
-// must still meet the 200 ms SLO on a miss, since the endpoint takes any asset.
-//
-// The 3 s TTL is well below the freshest oracle's publish cadence (Redstone ~10 s, Reflector
-// ~30 s, Band ~60 s), so callers never see older data than they would uncached. The single-flight
-// shape (delete-on-error, waiter err pointer) mirrors CachedIssuersReader/CachedMarketsReader.
-// LatestOracleUpdatesForAsset delegates to the multi-key variant to share one key space.
+// CachedOracleReader adds a per-process TTL cache and single-flight to LatestOracleUpdatesForAssets; the 3s TTL is below every oracle's publish cadence and the SQL must still meet its SLO on a miss.
 type CachedOracleReader struct {
 	upstream OracleReader
 	ttl      time.Duration
@@ -81,9 +74,7 @@ func (c *CachedOracleReader) evictIfFullLocked(op string) {
 	}
 }
 
-// NewCachedOracleReader wraps `upstream` with a TTL cache. ttl=0
-// disables caching (every call passes through). 3 s is the
-// production default — well below every oracle's publish cadence.
+// NewCachedOracleReader wraps upstream with a TTL cache (ttl=0 disables); 3s is the production default.
 func NewCachedOracleReader(upstream OracleReader, ttl time.Duration) *CachedOracleReader {
 	return &CachedOracleReader{
 		upstream: upstream,
@@ -92,15 +83,12 @@ func NewCachedOracleReader(upstream OracleReader, ttl time.Duration) *CachedOrac
 	}
 }
 
-// LatestOracleUpdatesForAsset delegates to the multi-key variant so
-// the cache is keyed consistently regardless of which entry point
-// the caller used.
+// LatestOracleUpdatesForAsset delegates to the multi-key variant so the cache is keyed consistently.
 func (c *CachedOracleReader) LatestOracleUpdatesForAsset(ctx context.Context, asset canonical.Asset, sourceFilter string) ([]canonical.OracleUpdate, error) {
 	return c.LatestOracleUpdatesForAssets(ctx, []canonical.Asset{asset}, sourceFilter)
 }
 
-// LatestOracleUpdatesForAssets is cached. The key is the sorted asset strings joined by `|`, then
-// `|` + sourceFilter, so the same set in a different order shares one slot.
+// LatestOracleUpdatesForAssets is cached under the sorted asset strings plus sourceFilter, so the same set in any order shares one slot.
 func (c *CachedOracleReader) LatestOracleUpdatesForAssets(ctx context.Context, assets []canonical.Asset, sourceFilter string) ([]canonical.OracleUpdate, error) {
 	rows, _, err := c.LatestOracleUpdatesForAssetsAt(ctx, assets, sourceFilter)
 	return rows, err
@@ -112,8 +100,7 @@ type oracleUpdatesAtReader interface {
 	LatestOracleUpdatesForAssetsAt(ctx context.Context, assets []canonical.Asset, sourceFilter string) ([]canonical.OracleUpdate, time.Time, error)
 }
 
-// LatestOracleUpdatesForAssetsAt is LatestOracleUpdatesForAssets plus when
-// the served rows were computed; zero on an uncached (ttl<=0) read.
+// LatestOracleUpdatesForAssetsAt is LatestOracleUpdatesForAssets plus when the rows were computed; zero on an uncached read.
 func (c *CachedOracleReader) LatestOracleUpdatesForAssetsAt(ctx context.Context, assets []canonical.Asset, sourceFilter string) ([]canonical.OracleUpdate, time.Time, error) {
 	if c.ttl <= 0 {
 		rows, err := c.upstream.LatestOracleUpdatesForAssets(ctx, assets, sourceFilter)
@@ -139,16 +126,13 @@ func (c *CachedOracleReader) LatestOracleUpdatesForAssetsAt(ctx context.Context,
 	})
 }
 
-// LatestOracleStreams is cached like its siblings. /v1/oracle/streams is fetched by both
-// /oracles and the home page, and uncached each hit re-runs the oracle_updates scan (~0.45 s
-// warm). It has no per-request dimensions, so it occupies one cache slot.
+// LatestOracleStreams is cached in one slot because /oracles and the home page both fetch it and the oracle_updates scan is slow.
 func (c *CachedOracleReader) LatestOracleStreams(ctx context.Context) ([]canonical.OracleUpdate, error) {
 	rows, _, err := c.LatestOracleStreamsAt(ctx)
 	return rows, err
 }
 
-// LatestOracleStreamsAt is LatestOracleStreams plus the served entry's
-// fill time.
+// LatestOracleStreamsAt is LatestOracleStreams plus the served entry's fill time.
 func (c *CachedOracleReader) LatestOracleStreamsAt(ctx context.Context) ([]canonical.OracleUpdate, time.Time, error) {
 	// A single key under the same 3 s TTL + single-flight the other reads
 	// already use: one scan per TTL window, concurrent callers coalesce,

@@ -639,16 +639,14 @@ func (r *tipProducerRegistry) mintedFor(caller string) int {
 	return r.minted[caller]
 }
 
-// SetMaxTipProducers overrides the shared-tip-producer ceiling. Pass a
-// negative value to disable it. Call once at startup.
+// SetMaxTipProducers overrides the shared-tip-producer ceiling (negative disables it); call once at startup.
 func (s *Server) SetMaxTipProducers(n int) {
 	s.tipProducers.mu.Lock()
 	defer s.tipProducers.mu.Unlock()
 	s.tipProducers.maxProducers = n
 }
 
-// SetMaxTipProducersPerCaller overrides the per-caller producer quota.
-// Pass a negative value to disable it. Call once at startup.
+// SetMaxTipProducersPerCaller overrides the per-caller producer quota (negative disables it); call once at startup.
 func (s *Server) SetMaxTipProducersPerCaller(n int) {
 	s.tipProducers.mu.Lock()
 	defer s.tipProducers.mu.Unlock()

@@ -15,19 +15,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// ChangeSummaryReader is the seam the change-summary handler reads
-// through. timescale.Store satisfies it via GetChangeSummary; tests
-// substitute a fake.
+// ChangeSummaryReader is the seam the change-summary handler reads through; timescale.Store satisfies it.
 type ChangeSummaryReader interface {
 	GetChangeSummary(ctx context.Context, entityType, entityID string) (timescale.ChangeSummaryRow, error)
 }
 
-// ChangeSummaryResponse is the wire shape of GET /v1/changes/{entity_type}/{id}, mirroring the
-// change_summary_5m hypertable (null pointers, RFC 3339 timestamps, entity key echoed).
-//
-// The *_value fields are MONEY and cross the wire as JSON STRINGS carrying the exact stored
-// decimal, with no float64 round-trip. The *_delta_pct fields are display-grade percentages and
-// stay JSON numbers; streak_days stays an int.
+// ChangeSummaryResponse is the GET /v1/changes/{entity_type}/{id} shape; *_value fields are money as exact decimal strings, *_delta_pct are display-grade numbers.
 type ChangeSummaryResponse struct {
 	EntityType   string `json:"entity_type"`
 	EntityID     string `json:"entity_id"`

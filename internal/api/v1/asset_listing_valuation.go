@@ -24,8 +24,7 @@ import (
 
 // ─── wire shape ─────────────────────────────────────────────────────
 
-// AssetListingReference is an independent listing platform's own USD price for the exact Stellar
-// address this asset lives at. It is not this index's price; the asset's `price_usd` sits beside it.
+// AssetListingReference is a listing platform's own USD price for this Stellar address, not this index's price.
 type AssetListingReference struct {
 	// PriceUSD is the platform's USD price, verbatim as the decimal string it published (ADR-0003),
 	// never re-rounded or parsed through a float.
@@ -55,10 +54,7 @@ type AssetListingReference struct {
 	Provenance string `json:"provenance"`
 }
 
-// AssetListingValuation is the asset's circulating supply valued at the listing platform's price.
-// It is NOT a market capitalisation: `market_cap_usd` passed the substance, dust-liquidity and
-// scam-issuer gates on observed trades, while this is a second opinion that is never summed
-// into one total without the total saying so.
+// AssetListingValuation values circulating supply at the listing platform's price; it is NOT market cap and is never summed into a total without saying so.
 type AssetListingValuation struct {
 	// Status is the single authority on why there is or is not a figure.
 	Status string `json:"status"`
@@ -128,9 +124,7 @@ const (
 
 // ─── storage seam ───────────────────────────────────────────────────
 
-// AssetListingDirectoryReader is the seam for reading the independent listing directory;
-// *timescale.Store satisfies it. It differs from [RWAListingDirectoryReader]'s method, which serves
-// contract rows only. Optional: without it [ListingValuationUnavailable] says nobody looked.
+// AssetListingDirectoryReader is the seam for the independent listing directory (contract rows differ from [RWAListingDirectoryReader]); optional.
 type AssetListingDirectoryReader interface {
 	ListingDirectoryByAddress(ctx context.Context) (
 		map[string]timescale.ListingEntry, timescale.ListingDirectoryCensus, error)

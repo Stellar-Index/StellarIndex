@@ -29,11 +29,7 @@ func listAssetsCacheKey(opts timescale.ListAssetsOptions) string {
 		str(opts.Cursor).str(opts.Q).order(int(opts.Order)).build()
 }
 
-// SeedListing installs a previously-observed page-set for `opts`, stamped with its real
-// observation time, and reports whether it was installed. It refuses (cold-fill stays) when the
-// cache is disabled, `rows` is empty (never publish an empty listing), `observedAt` is zero or
-// future (it would read fresh forever), or an entry exists (never clobber a live fill or waiters).
-// Callers apply their own maximum age (assetsListingSeedMaxAge).
+// SeedListing installs a previously observed page-set stamped with its real observation time and reports whether it did; it refuses empty, zero or future-dated rows and never clobbers a live entry.
 func (c *CachedAssetsReader) SeedListing(
 	opts timescale.ListAssetsOptions, rows []timescale.AssetRow, observedAt time.Time,
 ) bool {
@@ -55,9 +51,7 @@ func (c *CachedAssetsReader) SeedListing(
 	return true
 }
 
-// ListAssetsExtAt is [CachedAssetsReader.ListAssetsExt] plus the row-set's observation time and
-// staleness, so /v1/assets stamps an honest `as_of` and `flags.stale` over expired or boot-seeded
-// rows. observedAt is zero (caller stamps as_of=now, not stale) when the cache is disabled.
+// ListAssetsExtAt is [CachedAssetsReader.ListAssetsExt] plus observation time and staleness so /v1/assets stamps an honest as_of; observedAt is zero when the cache is disabled.
 func (c *CachedAssetsReader) ListAssetsExtAt(
 	ctx context.Context, opts timescale.ListAssetsOptions,
 ) ([]timescale.AssetRow, time.Time, bool, error) {

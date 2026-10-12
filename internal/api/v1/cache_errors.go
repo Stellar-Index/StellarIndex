@@ -10,14 +10,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// IsCacheUnavailable reports whether err is a Redis transport or MISCONF failure that should surface
-// as 503 + Retry-After rather than 500. With stop-writes-on-bgsave-error active, every cache write
-// returns MISCONF.
-//
-// It returns false for application sentinels (ErrPriceNotFound), plain context cancellation or
-// deadline errors (handlers have their own 503, handlerTimedOut), and other Redis reply errors such
-// as WRONGTYPE, which are programming errors that must stay on the 500 path so an alert fires.
-// Deliberately narrow: add a branch only when an outage shape gets a runbook entry.
+// IsCacheUnavailable reports whether err is a Redis transport or MISCONF failure that should surface as 503 + Retry-After; deliberately narrow, application and WRONGTYPE errors stay 500.
 func IsCacheUnavailable(err error) bool {
 	if err == nil {
 		return false

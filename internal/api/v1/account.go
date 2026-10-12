@@ -19,10 +19,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// AccountStore is the v1 boundary against [auth.APIKeyStore].
-// Two consumers today: [Server.handleAccountKeysCreate] (POST)
-// and [Server.handleAccountKeysList] (GET). Production wiring is
-// [auth.RedisAPIKeyStore] which provides both methods.
+// AccountStore is the v1 boundary against [auth.APIKeyStore], used by the account key create and list handlers.
 type AccountStore interface {
 	Create(ctx context.Context, req auth.CreateAPIKeyRequest) (auth.APIKeyRecord, string, error)
 	// CreateCapped is Create with the identifier's active-key ceiling
@@ -33,13 +30,7 @@ type AccountStore interface {
 	RevokeKeyByID(ctx context.Context, identifier, keyID string) error
 }
 
-// Account is the wire shape for /v1/account/me responses. Mirrors the OpenAPI Account schema; the
-// field set is the public-safe projection of [auth.APIKeyRecord].
-//
-// The shape is a union: API-key callers populate the top-level key_* / tier / rate_limit_per_min /
-// created_at fields and leave `user` + `account` null; magic-link session callers populate the
-// nested `user` + `account` objects and leave the API-key fields empty. Both shapes coexist, so
-// clients detect the mode by which is populated.
+// Account is the wire shape for /v1/account/me: a union where API-key callers fill the key_* fields and magic-link callers fill nested `user` + `account`.
 type Account struct {
 	KeyID           string       `json:"key_id,omitempty"`
 	Label           string       `json:"label,omitempty"`
@@ -62,11 +53,7 @@ type AccountUser struct {
 	LastLoginAt     *WireTime `json:"last_login_at,omitempty"`
 }
 
-// AccountInfo is the magic-link-session caller's parent account.
-//
-// RateLimitPerMin / MonthlyRequestQuota are what auth enforces on a key minted at the dashboard
-// defaults, account override included ([platform.Account.EffectiveRateLimitPerMin]), not the tier
-// ceiling. Limits are per key, so an explicitly budgeted key can differ.
+// AccountInfo is the magic-link caller's parent account; rate-limit and quota are per-key defaults with account override, not the tier ceiling.
 type AccountInfo struct {
 	ID                  string `json:"id"`
 	Name                string `json:"name,omitempty"`
@@ -77,10 +64,7 @@ type AccountInfo struct {
 	MonthlyRequestQuota int64  `json:"monthly_request_quota,omitempty"`
 }
 
-// SessionInfo is the wire-shape projection of a magic-link
-// session. Defined in v1 so this package doesn't import
-// dashboardauth directly; the binary's wiring (main.go) converts
-// dashboardauth's SessionContext into this shape.
+// SessionInfo is the wire projection of a magic-link session, defined here so v1 does not import dashboardauth.
 type SessionInfo struct {
 	UserID          string
 	Email           string
@@ -101,27 +85,12 @@ type SessionInfo struct {
 	AccountMonthlyRequestQuota int64
 }
 
-// SessionPeeker reads the magic-link session bound to the request
-// context. Implementations come from the dashboardauth bundle via
-// main.go's wiring; v1 holds the interface so the dependency
-// flows the right way.
+// SessionPeeker reads the magic-link session bound to the request context; main.go wires it from dashboardauth.
 type SessionPeeker interface {
 	SessionFromContext(ctx context.Context) (SessionInfo, bool)
 }
 
-// UsageRow is the wire shape for /v1/account/usage entries.
-//
-// With the `usage_daily` rollups wired, the list carries one row per (day, endpoint family) with
-// Endpoint set to the route pattern (e.g. "/v1/assets/{asset_id}"). errors = 4xx (excluding 429)
-// + 5xx, throttled = 429 rejections, and `requests` = every non-429 outcome, 5xx included.
-//
-// On the fallback path (rollup reader unwired or not yet swept) rows degrade to one row per day
-// with Endpoint empty and errors/throttled zero. The legacy store only holds the billable total,
-// so there `requests` excludes 5xx as well.
-//
-// `billable` is the one column with the same meaning on both paths: the request units the monthly
-// quota counts (ok + 4xx; never 429 or platform-caused 5xx, though not a timed-out read; see
-// middleware.billableClass). Sum it by `date` to reconcile against a quota 429's `month_to_date`.
+// UsageRow is one /v1/account/usage entry; `billable` (ok + 4xx, never 429) is the quota-counted column and means the same on both rollup and fallback paths.
 type UsageRow struct {
 	Date      string `json:"date"`               // YYYY-MM-DD
 	Endpoint  string `json:"endpoint,omitempty"` // route pattern; empty on the legacy fallback
@@ -131,33 +100,23 @@ type UsageRow struct {
 	Throttled int    `json:"throttled"`
 }
 
-// UsageReader is the storage seam for /v1/account/usage. The
-// internal/usage package's *Counter implements via its Read method;
-// main.go's adapter bridges so this package stays free of the
-// usage package import.
+// UsageReader is the storage seam for /v1/account/usage, bridged in main.go so v1 stays free of the usage import.
 type UsageReader interface {
 	Read(ctx context.Context, subject string, days int) ([]UsageDay, error)
 }
 
-// UsageDay mirrors usage.Day on the v1 boundary. Date is
-// YYYY-MM-DD UTC; Requests is the day's BILLABLE request-unit total
-// (the MonthlyQuota counter — 429 and 5xx never reach it).
+// UsageDay mirrors usage.Day: Date is YYYY-MM-DD UTC and Requests is the day's billable total (429 and 5xx never reach it).
 type UsageDay struct {
 	Date     string
 	Requests int64
 }
 
-// UsageRollupReader is the storage seam for the per-endpoint `usage_daily` rollups; main.go's
-// adapter bridges *timescale.Store.ReadUsageDaily so this package stays free of the storage
-// import.
+// UsageRollupReader is the storage seam for the per-endpoint `usage_daily` rollups, bridged in main.go.
 type UsageRollupReader interface {
 	ReadRollup(ctx context.Context, subject string, days int) ([]UsageEndpointDay, error)
 }
 
-// UsageEndpointDay is one (day, endpoint) aggregate on the v1
-// boundary. Requests counts all non-429 outcomes, 5xx included;
-// Billable is ok + 4xx — what the monthly quota counts; Errors is
-// 4xx (excl. 429) + 5xx; Throttled is 429s.
+// UsageEndpointDay is one (day, endpoint) aggregate: Requests = non-429, Billable = ok + 4xx, Errors = 4xx (excl. 429) + 5xx, Throttled = 429s.
 type UsageEndpointDay struct {
 	Date      string // YYYY-MM-DD UTC
 	Endpoint  string // route pattern
@@ -167,9 +126,7 @@ type UsageEndpointDay struct {
 	Throttled int64
 }
 
-// KeyCreated is the wire shape for /v1/account/keys (POST) replies.
-// The plaintext appears here exactly once — clients that drop the
-// response can never recover it.
+// KeyCreated is the /v1/account/keys POST reply; the plaintext key appears exactly once and cannot be recovered.
 type KeyCreated struct {
 	KeyID     string   `json:"key_id"`
 	Plaintext string   `json:"plaintext"`

@@ -13,8 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// AnomalyReader backs /v1/anomalies — the durable freeze-event mirror
-// (ADR-0019). timescale.Store implements it.
+// AnomalyReader backs /v1/anomalies, the durable freeze-event mirror (ADR-0019).
 type AnomalyReader interface {
 	ListFreezeEvents(ctx context.Context, firingOnly bool, limit int) ([]timescale.FreezeEventRow, error)
 	FreezeReasonCounts(ctx context.Context, sinceDays int) ([]timescale.FreezeReasonCount, error)
@@ -26,9 +25,7 @@ type AnomalyReader interface {
 	CountFiringFreezes(ctx context.Context) (int64, error)
 }
 
-// DivergenceReader backs /v1/divergence + /v1/divergence/series —
-// the per-reference divergence-observation history. timescale.Store
-// implements it.
+// DivergenceReader backs /v1/divergence and its series, the per-reference divergence history.
 type DivergenceReader interface {
 	ListDivergenceLatest(ctx context.Context, sinceDays int, firingOnly bool, limit int) ([]timescale.DivergenceRow, error)
 	ListDivergenceSeries(ctx context.Context, assetID, quoteID string, sinceDays int) ([]timescale.DivergenceSeriesPoint, error)
@@ -36,10 +33,7 @@ type DivergenceReader interface {
 
 // ── /v1/anomalies ────────────────────────────────────────────────
 
-// AnomaliesView is the wire response for GET /v1/anomalies.
-//
-// FiringCount is an exact COUNT(*) over currently-firing freezes, not a page length, which would
-// saturate at the page limit during a large freeze storm.
+// AnomaliesView is the GET /v1/anomalies response; FiringCount is an exact COUNT(*) of firing freezes, not a page length.
 type AnomaliesView struct {
 	FiringCount int64             `json:"firing_count"`
 	ReasonTally []ReasonCountV    `json:"reason_tally"`
@@ -63,12 +57,7 @@ type DailyReasonCountV struct {
 	Count  int64  `json:"count"`
 }
 
-// FreezeEventView mirrors a freeze_events row. recovered_at is null
-// while the freeze is currently firing. frozen_value is a decimal
-// string (ADR-0003).
-// Escalated and HoldUntil are the ADR-0019 lifecycle fields: they tell a short uncorroborated hold
-// apart from a freeze that climbed the extension ladder and stays firing until manual unfreeze.
-// Both are nil on older rows or once the freeze has cleared.
+// FreezeEventView mirrors a freeze_events row: recovered_at is null while firing, frozen_value is a decimal string, Escalated/HoldUntil are ADR-0019 lifecycle fields.
 type FreezeEventView struct {
 	AssetID           string          `json:"asset_id"`
 	QuoteID           string          `json:"quote_id"`
@@ -223,10 +212,7 @@ type DivergenceView struct {
 	Pairs []DivergencePairV `json:"pairs"`
 }
 
-// DivergencePairV is one market's latest comparison against every
-// external reference. References are served only grouped beside our
-// price, never as a per-provider row on their own. Prices + deltas are
-// decimal strings.
+// DivergencePairV is one market's latest comparison against every external reference, served only grouped beside our price; prices and deltas are decimal strings.
 type DivergencePairV struct {
 	AssetID string `json:"asset_id"`
 	QuoteID string `json:"quote_id"`
@@ -376,8 +362,7 @@ func (s *Server) storedMarketGate(surface string) func(ctx context.Context, asse
 
 // ── /v1/divergence/series ────────────────────────────────────────
 
-// DivergenceSeriesView is the wire response for GET
-// /v1/divergence/series — one pair's Δ% history against every reference.
+// DivergenceSeriesView is the GET /v1/divergence/series response: one pair's delta history against every reference.
 type DivergenceSeriesView struct {
 	AssetID string `json:"asset_id"`
 	QuoteID string `json:"quote_id"`
@@ -395,8 +380,7 @@ type DivergenceSeriesView struct {
 	Points       []DivergenceSeriesPointV `json:"points"`
 }
 
-// DivergenceSeriesPointV is one bucket: our price beside each
-// reference's comparison. Prices + deltas are decimal strings (ADR-0003).
+// DivergenceSeriesPointV is one bucket of our price beside each reference's comparison; prices and deltas are decimal strings.
 type DivergenceSeriesPointV struct {
 	T string `json:"t"`
 	// OurPrice is from the bucket's newest observation across references.

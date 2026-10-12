@@ -13,15 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// BackupsDiagnostics is the wire shape of GET /v1/diagnostics/backups: backup and DR-evidence
-// freshness for the region, judged against the SLO thresholds echoed in `slo`.
-//
-// Prometheus (via the same [PrometheusStatusBackend] as /v1/status) is the source of truth; the API
-// never shells out to pgbackrest. The drill's last_success is stamped only on a clean run, so
-// `node_textfile_mtime_seconds` is the only "it ran at all" signal.
-//
-// Every timestamp / age is a pointer: nil means "no data" and the verdict is "unknown", never a
-// fresh zero. No secrets, paths or hostnames.
+// BackupsDiagnostics is the GET /v1/diagnostics/backups shape: backup and DR freshness judged against the echoed SLO; nil timestamps mean "unknown", never a fresh zero.
 type BackupsDiagnostics struct {
 	// SourceStatus is the tri-state trust signal (as StatusResponse.IncidentsStatus): "ok" when
 	// every Prometheus query succeeded; "degraded" when some failed, leaving their items nil /
@@ -85,8 +77,7 @@ type BackupRepo struct {
 	Retention *string `json:"retention"`
 }
 
-// BackupRestoreDrill is the monthly pgBackRest restore-drill evidence
-// (ADR-0043 §3), from restore-drill.sh's textfile.
+// BackupRestoreDrill is the monthly pgBackRest restore-drill evidence (ADR-0043 section 3) from restore-drill.sh's textfile.
 type BackupRestoreDrill struct {
 	// LastRunTS is when the drill last wrote its textfile at all —
 	// node_exporter's mtime of restore_drill.prom. Nil = never ran on
@@ -108,9 +99,7 @@ type BackupRestoreDrill struct {
 	DurationSeconds  *float64  `json:"duration_s"`
 }
 
-// BackupClickHouse is the lake-protection section (ADR-0043 §2.1: the
-// lake has no DATA backup by design — the schema+state snapshot is
-// its only copy).
+// BackupClickHouse is the lake-protection section (ADR-0043 section 2.1): the lake has no DATA backup by design, only the schema+state snapshot.
 type BackupClickHouse struct {
 	// SchemaSnapshotLastTS is the last clean schema+state capture
 	// (`stellarindex_ch_schema_snapshot_last_success_unix`).
@@ -127,8 +116,7 @@ type BackupClickHouse struct {
 	ReplicaLagSeconds *float64 `json:"replica_lag_s"`
 }
 
-// BackupFreshness holds one verdict per monitored item plus the
-// roll-up. Field names are the panel's row keys.
+// BackupFreshness holds one verdict per monitored item plus the roll-up; field names are the panel's row keys.
 type BackupFreshness struct {
 	Full     FreshnessVerdict `json:"full"`
 	Diff     FreshnessVerdict `json:"diff"`
@@ -213,9 +201,7 @@ type backupMetricsSource interface {
 	queryVector(ctx context.Context, expr string) ([]promSample, error)
 }
 
-// BackupMetricsSource is the exported alias of the seam, so a test in
-// another package (or a future non-Prometheus backend) can supply one
-// via Options.BackupMetrics.
+// BackupMetricsSource is the exported alias of the seam so other packages can supply one via Options.BackupMetrics.
 type BackupMetricsSource = backupMetricsSource
 
 // freshnessVerdict judges an age against an SLO. A nil age is "unknown", never a fresh zero, and
