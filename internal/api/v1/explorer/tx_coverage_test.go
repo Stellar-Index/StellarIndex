@@ -12,8 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/stellar/go-stellar-sdk/xdr"
+
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
 // txCoverageReader is an ExplorerReader whose TransactionByHash succeeds and whose per-op result-code and contract-event

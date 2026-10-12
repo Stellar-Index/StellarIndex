@@ -6,8 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/stellar/go-stellar-sdk/xdr"
+
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
 func TestParseSnapScope(t *testing.T) {

@@ -9,9 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/Stellar-Index/StellarIndex/internal/canonical/discovery"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
-	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 // fakeRecorder counts Record + IsKnown calls and lets tests inject
