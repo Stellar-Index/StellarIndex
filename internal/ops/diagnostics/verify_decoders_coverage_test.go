@@ -4,6 +4,10 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/comet"
 )
 
 // TestVerifyWalkCoverage guards delivered-equals-requested for verify-decoders: REQUESTED is -to minus -from plus one, DELIVERED is totalLedgers.
@@ -75,5 +79,23 @@ func TestVerifyDecoders_ResolvesBucketAndGatesCoverage(t *testing.T) {
 	if !strings.Contains(body, "if err := verifyWalkCoverage(uint32(*from), uint32(*to), totalLedgers, streamBucket); err != nil {") {
 		t.Error("verifyDecoders never gates on coverage — a short walk exits 0 with every " +
 			"decoder reported silent")
+	}
+}
+
+// TestBuildVerifyDispatcher_unionsProtocolContractsSeed pins that a pool admitted only via protocol_contracts is visible to verify-decoders with -seed-protocol-contracts, mirroring production's GatedRegistryOptions gate; otherwise a live decoder is falsely diagnosed as dead.
+func TestBuildVerifyDispatcher_unionsProtocolContractsSeed(t *testing.T) {
+	const laterPool = "CBQ7Y7VDT6IHOWL7X5JQE5U3JFHFQD5H6QNRPY3EM52ELHKGXAA6UWSN" // not in comet.MainnetGatedSet()
+	ev := events.Event{ContractID: laterPool, Topic: []string{comet.TopicSymbolPool, comet.TopicSymbolSwap}}
+
+	disp, _, _ := buildVerifyDispatcher(config.OracleConfig{}, nil)
+	if name, ok := disp.Recognize(ev); ok {
+		t.Fatalf("pool %s must not match on the curated set alone, matched %q", laterPool, name)
+	}
+
+	seeded, _, _ := buildVerifyDispatcher(config.OracleConfig{}, map[string][]string{
+		comet.SourceName: {laterPool},
+	})
+	if name, ok := seeded.Recognize(ev); !ok || name != comet.SourceName {
+		t.Fatalf("pool %s must match comet once seeded from protocol_contracts, got name=%q ok=%v", laterPool, name, ok)
 	}
 }
