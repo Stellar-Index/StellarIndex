@@ -11,9 +11,9 @@ The live page is `https://stellarindex.io/status`: an explorer route,
 (`StatusPageClient.tsx` + `incident/[slug]`), published with the rest of
 `stellarindex.io` (Cloudflare git integration on push to `main`;
 `.github/workflows/explorer-deploy.yml` is the `workflow_dispatch` fallback).
-`web/status/` ([README](../../web/status/README.md)) is a redirect-only stub
-(`public/_redirects` 301s `status.stellarindex.io/*` to `stellarindex.io/status/*`)
-kept so the subdomain and its `stellarindex-status` Pages project keep resolving.
+`web/status/` ([README](../../web/status/README.md)) is the standalone incident
+page at `status.stellarindex.io` (Pages project `stellarindex-status`), built from
+`internal/incidents/data` so it stays up when the API and explorer do not.
 The Upptime and cstate predecessors (`deploy/status-page/cstate/`) no longer exist.
 
 ## Architecture (current)
