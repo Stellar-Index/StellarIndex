@@ -250,8 +250,11 @@ groups:
       # checks header hashes, so an upstream re-export that changes a
       # ledger we already hold is invisible to both. The weekly
       # galexie-mirror-verify run compares every object's ETag and size
-      # with upstream. `ticket`: the served data is unchanged until a
-      # human decides whether to re-mirror and replay.
+      # with upstream. `equivalent` objects (bytes differ, decoded ledgers
+      # equal after dropping core_metrics timings and change-group order)
+      # are not divergence and stay out of the sum. `ticket`: the served
+      # data is unchanged until a human decides whether to re-mirror and
+      # replay.
       - alert: stellarindex_galexie_archive_upstream_divergence
         expr: |
           sum(galexie_archive_upstream_objects{result=~"upstream-rewritten|local-differs|local-only"}) > 0

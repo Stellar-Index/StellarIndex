@@ -4886,11 +4886,13 @@ on by `deploy/monitoring/rules/galexie-archive.yml`; runbook
 
 Gauge, label `result`. Objects in partitions present on both sides, by
 outcome of comparing ETag and size with the same key upstream:
-`matched`, `upstream-rewritten` (differs, upstream newer than our copy),
+`matched`, `equivalent` (bytes differ, decoded ledgers equal once
+`core_metrics` timings and change-group order are normalised; not
+divergence), `upstream-rewritten` (differs, upstream newer than our copy),
 `local-differs` (differs, our copy newer), `local-only` (absent
 upstream), `unverifiable` (multipart ETag on one side, sizes equal),
 `missing-local` (upstream object not yet mirrored; the fill's concern).
-The first three after `matched` are divergence.
+`upstream-rewritten`, `local-differs` and `local-only` are divergence.
 
 ### `galexie_archive_upstream_partitions_compared`
 

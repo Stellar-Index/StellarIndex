@@ -565,8 +565,8 @@ tests:
   # ══ stellarindex_galexie_archive_upstream_divergence ══════════════
   #
   # One rewritten upstream object and one locally altered object sum to
-  # 2; matched and informational results (missing-local, unverifiable)
-  # never count.
+  # 2; matched, equivalent and informational results (missing-local,
+  # unverifiable) never count.
   - interval: 1m
     name: a differing mirrored object tickets
     input_series:
@@ -580,6 +580,8 @@ tests:
         values: '0x30'
       - series: 'galexie_archive_upstream_objects{job="node_exporter",instance="r1:9100",result="missing-local"}'
         values: '7x30'
+      - series: 'galexie_archive_upstream_objects{job="node_exporter",instance="r1:9100",result="equivalent"}'
+        values: '295305x30'
     alert_rule_test:
       - eval_time: 20m
         alertname: stellarindex_galexie_archive_upstream_divergence
@@ -602,7 +604,7 @@ tests:
                 (`journalctl -u galexie-mirror-verify.service | grep MISMATCH`).
 
   - interval: 1m
-    name: a mirror that matches upstream raises nothing
+    name: a mirror that matches upstream or is decode-equivalent raises nothing
     input_series:
       - series: 'galexie_archive_upstream_objects{job="node_exporter",instance="r1:9100",result="matched"}'
         values: '1000x30'
@@ -614,6 +616,8 @@ tests:
         values: '0x30'
       - series: 'galexie_archive_upstream_objects{job="node_exporter",instance="r1:9100",result="unverifiable"}'
         values: '3x30'
+      - series: 'galexie_archive_upstream_objects{job="node_exporter",instance="r1:9100",result="equivalent"}'
+        values: '295305x30'
       - series: 'galexie_archive_upstream_last_success_unix{job="node_exporter",instance="r1:9100"}'
         values: '0x30'
     alert_rule_test:

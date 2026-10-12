@@ -1,6 +1,7 @@
 package archive
 
 import (
+	"bytes"
 	"context"
 	"flag"
 	"fmt"
@@ -14,7 +15,9 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/stellar/go-stellar-sdk/support/compressxdr"
 	"github.com/stellar/go-stellar-sdk/support/datastore"
+	"github.com/stellar/go-stellar-sdk/xdr"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
@@ -24,13 +27,27 @@ import (
 
 // galexie-mirror-verify compares every object of the local Galexie mirror with the upstream public dataset (storage.s3_cold_* tier) by ETag and size, partition by partition.
 // galexie-archive-fill copies only absent objects and verify-archive checks header hashes, so an upstream re-export is invisible to both; single-part ETags are body MD5s, so equal ETags mean equal bytes.
-// Last-Modified classifies a mismatch (upstream newer than our mirror time = re-exported). Read-only; exits non-zero on a listing error, mismatch, or object upstream no longer lists.
+// A mismatch is fetched from both sides and decoded: batches equal after normaliseLedgerBatch are `equivalent` (another core run's
+// export of the same ledgers); the rest are classified by Last-Modified (upstream newer than our mirror time = re-exported).
+// Read-only; exits non-zero on a listing or fetch error, a real mismatch, or an object upstream no longer lists.
 
 const (
 	mirrorCauseUpstreamRewritten = "upstream-rewritten"
 	mirrorCauseLocalDiffers      = "local-differs"
 	mirrorCauseLocalOnly         = "local-only"
+	mirrorResultEquivalent       = "equivalent"
+
+	// mirrorDecodeParallel bounds the per-partition fetch+decode of mismatched objects (two ~1 MiB GETs each).
+	mirrorDecodeParallel = 8
+	// mirrorMaxObjectBytes caps one compressed object read; a ledger batch is a few MiB at most.
+	mirrorMaxObjectBytes = 256 << 20
 )
+
+// mirrorAPI is the slice of *s3.Client the comparison needs: listing, plus fetching a mismatched object to decode it.
+type mirrorAPI interface {
+	s3PrefixLister
+	GetObject(ctx context.Context, params *s3.GetObjectInput, optFns ...func(*s3.Options)) (*s3.GetObjectOutput, error)
+}
 
 type mirrorVerifyOpts struct {
 	cfgPath   string
@@ -52,7 +69,7 @@ type mirrorObject struct {
 // mirrorStore is one side of the comparison: a bucket plus the key
 // prefix its partitions sit under.
 type mirrorStore struct {
-	api    s3PrefixLister
+	api    mirrorAPI
 	bucket string
 	prefix string
 }
@@ -74,8 +91,10 @@ type mirrorVerifyResult struct {
 	partitionsUpstreamOnly int
 	objectsCompared        int
 	objectsMatched         int
-	unverifiable           int
-	findings               []mirrorFinding
+	// equivalent objects differ in bytes but decode to the same ledgers after normaliseLedgerBatch.
+	equivalent   int
+	unverifiable int
+	findings     []mirrorFinding
 	// missing are upstream objects a compared partition lacks locally:
 	// the fill's job, so they never fail the run.
 	missing []mirrorFinding
@@ -214,6 +233,7 @@ func verifyGalexieMirror(ctx context.Context, local, upstream mirrorStore, opts 
 func (r *mirrorVerifyResult) merge(o mirrorVerifyResult) {
 	r.objectsCompared += o.objectsCompared
 	r.objectsMatched += o.objectsMatched
+	r.equivalent += o.equivalent
 	r.unverifiable += o.unverifiable
 	r.missing = append(r.missing, o.missing...)
 	r.findings = append(r.findings, o.findings...)
@@ -243,6 +263,7 @@ func compareMirrorPartition(ctx context.Context, local, upstream mirrorStore, pa
 	if err != nil {
 		return res, fmt.Errorf("upstream: %w", err)
 	}
+	var differing []mirrorFinding
 	for key, lo := range localObjs {
 		uo, ok := upstreamObjs[key]
 		if !ok {
@@ -256,8 +277,11 @@ func compareMirrorPartition(ctx context.Context, local, upstream mirrorStore, pa
 		case "unverifiable":
 			res.unverifiable++
 		default:
-			res.findings = append(res.findings, mirrorFinding{partition: part, key: key, cause: cause, local: lo, upstream: uo})
+			differing = append(differing, mirrorFinding{partition: part, key: key, cause: cause, local: lo, upstream: uo})
 		}
+	}
+	if err := classifyDiffering(ctx, local, upstream, differing, &res); err != nil {
+		return res, err
 	}
 	for key, uo := range upstreamObjs {
 		if _, ok := localObjs[key]; !ok {
@@ -281,6 +305,187 @@ func compareMirrorObject(local, upstream mirrorObject) string {
 		return mirrorCauseUpstreamRewritten
 	}
 	return mirrorCauseLocalDiffers
+}
+
+// classifyDiffering decodes each byte-differing pair: equivalent ones are counted, the rest become findings.
+func classifyDiffering(ctx context.Context, local, upstream mirrorStore, differing []mirrorFinding, res *mirrorVerifyResult) error {
+	var mu sync.Mutex
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(mirrorDecodeParallel)
+	for _, f := range differing {
+		g.Go(func() error {
+			eq, err := mirrorObjectsEquivalent(gctx, local, upstream, f.key)
+			if err != nil {
+				return err
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if eq {
+				res.equivalent++
+			} else {
+				res.findings = append(res.findings, f)
+			}
+			return nil
+		})
+	}
+	return g.Wait()
+}
+
+// mirrorObjectsEquivalent fetches key from both stores. A fetch error fails the run; an object that does not decode is not
+// equivalent, so it stays a finding.
+func mirrorObjectsEquivalent(ctx context.Context, local, upstream mirrorStore, key string) (bool, error) {
+	lb, err := fetchMirrorObject(ctx, local, key)
+	if err != nil {
+		return false, fmt.Errorf("local: %w", err)
+	}
+	ub, err := fetchMirrorObject(ctx, upstream, key)
+	if err != nil {
+		return false, fmt.Errorf("upstream: %w", err)
+	}
+	ln, lerr := normalisedBatchBytes(lb)
+	un, uerr := normalisedBatchBytes(ub)
+	return lerr == nil && uerr == nil && bytes.Equal(ln, un), nil
+}
+
+func fetchMirrorObject(ctx context.Context, s mirrorStore, key string) ([]byte, error) {
+	full := key
+	if s.prefix != "" {
+		full = strings.TrimSuffix(s.prefix, "/") + "/" + key
+	}
+	out, err := s.api.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(full)})
+	if err != nil {
+		return nil, fmt.Errorf("get %s/%s: %w", s.bucket, full, err)
+	}
+	defer func() { _ = out.Body.Close() }()
+	b, err := io.ReadAll(io.LimitReader(out.Body, mirrorMaxObjectBytes))
+	if err != nil {
+		return nil, fmt.Errorf("read %s/%s: %w", s.bucket, full, err)
+	}
+	return b, nil
+}
+
+// normalisedBatchBytes zstd-decodes one Galexie object and returns its LedgerCloseMetaBatch re-marshalled after normalisation.
+func normalisedBatchBytes(compressed []byte) ([]byte, error) {
+	var batch xdr.LedgerCloseMetaBatch
+	if _, err := compressxdr.NewXDRDecoder(compressxdr.DefaultCompressor, &batch).ReadFrom(bytes.NewReader(compressed)); err != nil {
+		return nil, err
+	}
+	if err := normaliseLedgerBatch(&batch); err != nil {
+		return nil, err
+	}
+	return batch.MarshalBinary()
+}
+
+// normaliseLedgerBatch removes what differs between two stellar-core runs over the same ledgers: core_metrics invoke_time_nsecs
+// diagnostic events (wall-clock timings) and the order of each operation's ledger-entry-change groups, which core does not fix.
+// Everything else, other diagnostic events included, is left to the byte comparison.
+func normaliseLedgerBatch(b *xdr.LedgerCloseMetaBatch) error {
+	for i := range b.LedgerCloseMetas {
+		lcm := &b.LedgerCloseMetas[i]
+		var metas []*xdr.TransactionMeta
+		switch {
+		case lcm.V0 != nil:
+			for j := range lcm.V0.TxProcessing {
+				metas = append(metas, &lcm.V0.TxProcessing[j].TxApplyProcessing)
+			}
+		case lcm.V1 != nil:
+			for j := range lcm.V1.TxProcessing {
+				metas = append(metas, &lcm.V1.TxProcessing[j].TxApplyProcessing)
+			}
+		case lcm.V2 != nil:
+			for j := range lcm.V2.TxProcessing {
+				metas = append(metas, &lcm.V2.TxProcessing[j].TxApplyProcessing)
+			}
+		}
+		for _, m := range metas {
+			if err := normaliseTxMeta(m); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func normaliseTxMeta(m *xdr.TransactionMeta) error {
+	var ops []xdr.OperationMeta
+	switch {
+	case m.Operations != nil:
+		ops = *m.Operations
+	case m.V1 != nil:
+		ops = m.V1.Operations
+	case m.V2 != nil:
+		ops = m.V2.Operations
+	case m.V3 != nil:
+		ops = m.V3.Operations
+		if m.V3.SorobanMeta != nil {
+			m.V3.SorobanMeta.DiagnosticEvents = dropTimingEvents(m.V3.SorobanMeta.DiagnosticEvents)
+		}
+	case m.V4 != nil:
+		for k := range m.V4.Operations {
+			if err := sortChangeGroups(m.V4.Operations[k].Changes); err != nil {
+				return err
+			}
+		}
+		m.V4.DiagnosticEvents = dropTimingEvents(m.V4.DiagnosticEvents)
+	}
+	for k := range ops {
+		if err := sortChangeGroups(ops[k].Changes); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// dropTimingEvents removes the host's core_metrics invoke_time_nsecs events, whose value is a per-run wall-clock measurement.
+func dropTimingEvents(evs []xdr.DiagnosticEvent) []xdr.DiagnosticEvent {
+	out := evs[:0]
+	for _, ev := range evs {
+		if !isInvokeTimeEvent(ev) {
+			out = append(out, ev)
+		}
+	}
+	return out
+}
+
+func isInvokeTimeEvent(ev xdr.DiagnosticEvent) bool {
+	e := ev.Event
+	if e.Type != xdr.ContractEventTypeDiagnostic || e.ContractId != nil || e.Body.V0 == nil {
+		return false
+	}
+	t := e.Body.V0.Topics
+	return len(t) == 2 && t[0].Sym != nil && *t[0].Sym == "core_metrics" && t[1].Sym != nil && *t[1].Sym == "invoke_time_nsecs"
+}
+
+// sortChangeGroups orders one operation's changes canonically in place. A STATE entry and the change after it (its UPDATED or
+// REMOVED) are one group and stay adjacent; groups sort by their XDR bytes.
+func sortChangeGroups(c xdr.LedgerEntryChanges) error {
+	type group struct {
+		raw     []byte
+		changes []xdr.LedgerEntryChange
+	}
+	groups := make([]group, 0, len(c))
+	for i := 0; i < len(c); i++ {
+		n := 1
+		if c[i].Type == xdr.LedgerEntryChangeTypeLedgerEntryState && i+1 < len(c) {
+			n = 2
+		}
+		var raw []byte
+		for _, ch := range c[i : i+n] {
+			b, err := ch.MarshalBinary()
+			if err != nil {
+				return err
+			}
+			raw = append(raw, b...)
+		}
+		groups = append(groups, group{raw: raw, changes: slices.Clone(c[i : i+n])})
+		i += n - 1
+	}
+	slices.SortFunc(groups, func(a, b group) int { return bytes.Compare(a.raw, b.raw) })
+	i := 0
+	for _, g := range groups {
+		i += copy(c[i:], g.changes)
+	}
+	return nil
 }
 
 // listMirrorObjects pages through one partition, keyed by the path
@@ -349,9 +554,9 @@ func reportMirrorVerify(w io.Writer, res mirrorVerifyResult, maxReport int) {
 			strings.TrimSuffix(f.partition, "/"), mirrorLedgerLabel(f.key), f.upstream.etag, f.upstream.size,
 			mirrorTime(f.upstream.modified), f.key)
 	}
-	_, _ = fmt.Fprintf(w, "galexie-mirror-verify: partitions_compared=%d partitions_local_only=%d partitions_upstream_only=%d objects_compared=%d matched=%d upstream_rewritten=%d local_differs=%d local_only=%d unverifiable=%d missing_local=%d\n",
+	_, _ = fmt.Fprintf(w, "galexie-mirror-verify: partitions_compared=%d partitions_local_only=%d partitions_upstream_only=%d objects_compared=%d matched=%d equivalent=%d upstream_rewritten=%d local_differs=%d local_only=%d unverifiable=%d missing_local=%d\n",
 		res.partitionsCompared, res.partitionsLocalOnly, res.partitionsUpstreamOnly,
-		res.objectsCompared, res.objectsMatched,
+		res.objectsCompared, res.objectsMatched, res.equivalent,
 		res.count(mirrorCauseUpstreamRewritten), res.count(mirrorCauseLocalDiffers), res.count(mirrorCauseLocalOnly),
 		res.unverifiable, len(res.missing))
 }
@@ -380,6 +585,7 @@ func writeMirrorVerifyTextfile(path string, res mirrorVerifyResult, now time.Tim
 		n      int
 	}{
 		{"matched", res.objectsMatched},
+		{mirrorResultEquivalent, res.equivalent},
 		{mirrorCauseUpstreamRewritten, res.count(mirrorCauseUpstreamRewritten)},
 		{mirrorCauseLocalDiffers, res.count(mirrorCauseLocalDiffers)},
 		{mirrorCauseLocalOnly, res.count(mirrorCauseLocalOnly)},

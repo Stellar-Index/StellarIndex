@@ -796,7 +796,7 @@ If the fill itself fails, follow `/var/log/galexie-mirror.log`. Common causes: b
 ## stellarindex_galexie_archive_upstream_divergence
 
 - Trips: `sum(galexie_archive_upstream_objects{result=~"upstream-rewritten|local-differs|local-only"}) > 0`, `for: 15m`, `severity: ticket`.
-- Means: the last `stellarindex-ops galexie-mirror-verify` run (weekly `galexie-mirror-verify.timer`, Sunday 03:41 UTC, under the heavy-job lock; installed only where `storage.s3_cold_bucket_archive` is configured) found mirrored objects that differ from the same key upstream, or that upstream no longer lists. The fill copies only absent objects and `verify-archive` checks header hashes, so neither sees an upstream re-export; this compares ETag and size (Last-Modified only classifies). Anything decoded from a differing ledger may differ from a fresh mirror.
+- Means: the last `stellarindex-ops galexie-mirror-verify` run (weekly `galexie-mirror-verify.timer`, Sunday 03:41 UTC, under the heavy-job lock; installed only where `storage.s3_cold_bucket_archive` is configured) found mirrored objects that differ from the same key upstream, or that upstream no longer lists. The fill copies only absent objects and `verify-archive` checks header hashes, so neither sees an upstream re-export; this compares ETag and size, then fetches and decodes each differing pair (Last-Modified only classifies). Anything decoded from a differing ledger may differ from a fresh mirror.
 - Diagnose (MTTR 30 min to classify; re-mirror plus lake rebuild can take hours):
 
   ```bash
@@ -805,12 +805,14 @@ If the fill itself fails, follow `/var/log/galexie-mirror.log`. Common causes: b
   cat /var/lib/node_exporter/textfile_collector/galexie_archive_upstream.prom
   ```
 
+  A pair whose decoded `LedgerCloseMetaBatch` is equal after dropping `core_metrics` `invoke_time_nsecs` diagnostic events (per-run wall-clock timings) and canonically ordering each operation's ledger-entry-change groups is counted as `equivalent`: another core run's export of the same ledgers. It prints no line and never fires the alert. Every MISMATCH line below is a pair that still differs after that, or does not decode.
+
   Each journal line: `MISMATCH partition=<p> ledger=<n> cause=<c> local_etag=… upstream_etag=… local_size=… upstream_size=… local_modified=… upstream_modified=… key=…`. Causes:
   - `upstream-rewritten`: upstream's copy is newer (re-exported after we mirrored); ours is stale.
-  - `local-differs`: our copy is newer than upstream's and still differs; something rewrote our object (re-mirror from another source, manual copy, write fault). Treat ours as suspect.
+  - `local-differs`: our copy is newer than upstream's and still differs; the decoded ledgers really differ (or one side does not decode), so something rewrote our object (re-mirror from another source, manual copy, write fault). Treat ours as suspect.
   - `local-only`: upstream no longer lists a key we hold in a partition both sides have; usually an upstream deletion, confirm before acting.
 
-  `missing-local` and `unverifiable` (multipart ETag, equal size) are informational and never fire the alert. Each missing-local object prints as `MISSING partition=<p> ledger=<n> upstream_etag=… upstream_size=… upstream_modified=… key=…`, so a gap can be located and handed to the fill.
+  `equivalent`, `missing-local` and `unverifiable` (multipart ETag, equal size) are informational and never fire the alert. Each missing-local object prints as `MISSING partition=<p> ledger=<n> upstream_etag=… upstream_size=… upstream_modified=… key=…`, so a gap can be located and handed to the fill.
 - Fix: re-run one range by hand (read-only):
 
   ```bash

@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -14,7 +16,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/stellar/go-stellar-sdk/support/compressxdr"
 	"github.com/stellar/go-stellar-sdk/support/datastore"
+	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
 // fakeBucket answers ListObjectsV2 with S3's prefix, delimiter and
@@ -23,6 +27,25 @@ type fakeBucket struct {
 	objects map[string]mirrorObject
 	pageCap int
 	failOn  string
+	bodies  map[string][]byte
+	getErr  error
+}
+
+// GetObject serves bodies[key]; an object with no body serves its ETag, which does not decode.
+func (f *fakeBucket) GetObject(_ context.Context, in *s3.GetObjectInput, _ ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
+	key := aws.ToString(in.Key)
+	if f.getErr != nil {
+		return nil, f.getErr
+	}
+	o, ok := f.objects[key]
+	if !ok {
+		return nil, errors.New("NoSuchKey")
+	}
+	body, ok := f.bodies[key]
+	if !ok {
+		body = []byte(o.etag)
+	}
+	return &s3.GetObjectOutput{Body: io.NopCloser(bytes.NewReader(body))}, nil
 }
 
 func (f *fakeBucket) ListObjectsV2(_ context.Context, in *s3.ListObjectsV2Input, _ ...func(*s3.Options)) (*s3.ListObjectsV2Output, error) {
@@ -264,7 +287,7 @@ func TestReportMirrorVerify_CapsLinesNotCounts(t *testing.T) {
 
 func TestWriteMirrorVerifyTextfile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "galexie_archive_upstream.prom")
-	res := mirrorVerifyResult{partitionsCompared: 3, objectsMatched: 7, findings: []mirrorFinding{{cause: mirrorCauseUpstreamRewritten}}}
+	res := mirrorVerifyResult{partitionsCompared: 3, objectsMatched: 7, equivalent: 4, findings: []mirrorFinding{{cause: mirrorCauseUpstreamRewritten}}}
 	if err := writeMirrorVerifyTextfile(path, res, time.Unix(1700000000, 0)); err != nil {
 		t.Fatal(err)
 	}
@@ -274,6 +297,7 @@ func TestWriteMirrorVerifyTextfile(t *testing.T) {
 	}
 	for _, want := range []string{
 		`galexie_archive_upstream_objects{result="matched"} 7`,
+		`galexie_archive_upstream_objects{result="equivalent"} 4`,
 		`galexie_archive_upstream_objects{result="upstream-rewritten"} 1`,
 		`galexie_archive_upstream_objects{result="local-differs"} 0`,
 		"galexie_archive_upstream_partitions_compared 3",
@@ -310,5 +334,122 @@ func TestParseMirrorVerifyFlags(t *testing.T) {
 				t.Fatalf("defaults: %+v, %v", opts, err)
 			}
 		})
+	}
+}
+
+func ttlEntry(key byte, live uint32) *xdr.LedgerEntry {
+	return &xdr.LedgerEntry{Data: xdr.LedgerEntryData{Type: xdr.LedgerEntryTypeTtl, Ttl: &xdr.TtlEntry{KeyHash: xdr.Hash{key}, LiveUntilLedgerSeq: xdr.Uint32(live)}}}
+}
+
+func diagEvent(topic0, topic1 string, v uint64) xdr.DiagnosticEvent {
+	sym := func(s string) xdr.ScVal {
+		y := xdr.ScSymbol(s)
+		return xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &y}
+	}
+	u := xdr.Uint64(v)
+	return xdr.DiagnosticEvent{InSuccessfulContractCall: true, Event: xdr.ContractEvent{
+		Type: xdr.ContractEventTypeDiagnostic,
+		Body: xdr.ContractEventBody{V0: &xdr.ContractEventV0{Topics: []xdr.ScVal{sym(topic0), sym(topic1)}, Data: xdr.ScVal{Type: xdr.ScValTypeScvU64, U64: &u}}},
+	}}
+}
+
+// testBatch is one ledger with one tx whose operation updates entry 1 and creates entry 2. reorder puts the CREATED group
+// first, as another core run may; timing is the core_metrics invoke_time_nsecs value.
+func testBatch(reorder bool, timing uint64) xdr.LedgerCloseMetaBatch {
+	pair := []xdr.LedgerEntryChange{
+		{Type: xdr.LedgerEntryChangeTypeLedgerEntryState, State: ttlEntry(1, 100)},
+		{Type: xdr.LedgerEntryChangeTypeLedgerEntryUpdated, Updated: ttlEntry(1, 200)},
+	}
+	created := xdr.LedgerEntryChange{Type: xdr.LedgerEntryChangeTypeLedgerEntryCreated, Created: ttlEntry(2, 300)}
+	changes := append(slices.Clone(pair), created)
+	if reorder {
+		changes = append([]xdr.LedgerEntryChange{created}, pair...)
+	}
+	return xdr.LedgerCloseMetaBatch{StartSequence: 7, EndSequence: 7, LedgerCloseMetas: []xdr.LedgerCloseMeta{{V: 2, V2: &xdr.LedgerCloseMetaV2{
+		TxSet: xdr.GeneralizedTransactionSet{V: 1, V1TxSet: &xdr.TransactionSetV1{}},
+		TxProcessing: []xdr.TransactionResultMetaV1{{
+			Result: xdr.TransactionResultPair{Result: xdr.TransactionResult{FeeCharged: 100, Result: xdr.TransactionResultResult{Code: xdr.TransactionResultCodeTxBadSeq}}},
+			TxApplyProcessing: xdr.TransactionMeta{V: 4, V4: &xdr.TransactionMetaV4{
+				Operations:       []xdr.OperationMetaV2{{Changes: changes}},
+				DiagnosticEvents: []xdr.DiagnosticEvent{diagEvent("core_metrics", "cpu_insn", 5000), diagEvent("core_metrics", "invoke_time_nsecs", timing)},
+			}},
+		}},
+	}}}}
+}
+
+func encodeBatch(t *testing.T, b xdr.LedgerCloseMetaBatch) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	if _, err := compressxdr.NewXDREncoder(compressxdr.DefaultCompressor, b).WriteTo(&buf); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func TestNormaliseLedgerBatch(t *testing.T) {
+	failedResult := testBatch(true, 456)
+	failedResult.LedgerCloseMetas[0].V2.TxProcessing[0].Result.Result.FeeCharged = 101
+	otherDiag := testBatch(true, 456)
+	otherDiag.LedgerCloseMetas[0].V2.TxProcessing[0].TxApplyProcessing.V4.DiagnosticEvents[0] = diagEvent("core_metrics", "cpu_insn", 5001)
+	logDiag := testBatch(true, 456)
+	logDiag.LedgerCloseMetas[0].V2.TxProcessing[0].TxApplyProcessing.V4.DiagnosticEvents[1] = diagEvent("log", "invoke_time_nsecs", 456)
+	for _, tc := range []struct {
+		name  string
+		other xdr.LedgerCloseMetaBatch
+		equal bool
+	}{
+		{"timing and change-group order differ", testBatch(true, 456), true},
+		{"tx result differs", failedResult, false},
+		{"another core_metrics event differs", otherDiag, false},
+		{"invoke_time_nsecs topic under another first topic", logDiag, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			base, err := normalisedBatchBytes(encodeBatch(t, testBatch(false, 123)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := normalisedBatchBytes(encodeBatch(t, tc.other))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if bytes.Equal(base, got) != tc.equal {
+				t.Fatalf("equal after normalisation = %v, want %v", !tc.equal, tc.equal)
+			}
+		})
+	}
+}
+
+func TestSortChangeGroups_KeepsStateWithItsUpdate(t *testing.T) {
+	c := testBatch(true, 0).LedgerCloseMetas[0].V2.TxProcessing[0].TxApplyProcessing.V4.Operations[0].Changes
+	if err := sortChangeGroups(c); err != nil {
+		t.Fatal(err)
+	}
+	for i, ch := range c {
+		if ch.Type == xdr.LedgerEntryChangeTypeLedgerEntryState && (i+1 == len(c) || c[i+1].Type != xdr.LedgerEntryChangeTypeLedgerEntryUpdated) {
+			t.Fatalf("STATE at %d separated from its UPDATED: %v", i, c)
+		}
+	}
+}
+
+func TestGalexieMirrorVerify_DecodeEquivalentObjectNotAFinding(t *testing.T) {
+	local, upstream := mirrorPair(62296695, 62296696, 62296697)
+	lkey := mirrorTestSchema.GetObjectKeyFromSequenceNumber(62296695)
+	ukey := upstreamTestPrefix + lkey
+	upstream.objects[ukey] = mirrorObject{etag: strings.Repeat("cd", 16), size: 230000, modified: exportedAt}
+	local.bodies = map[string][]byte{lkey: encodeBatch(t, testBatch(false, 123))}
+	upstream.bodies = map[string][]byte{ukey: encodeBatch(t, testBatch(true, 456))}
+	// 62296696 differs in bytes that do not decode: it stays a finding.
+	upstream.objects[upstreamTestPrefix+mirrorTestSchema.GetObjectKeyFromSequenceNumber(62296696)] = mirrorObject{etag: strings.Repeat("ef", 16), size: 1, modified: exportedAt}
+
+	res, out := runMirrorVerify(t, local, upstream, mirrorVerifyOpts{})
+
+	if res.equivalent != 1 || len(res.findings) != 1 || res.findings[0].key == lkey || !strings.Contains(out, "equivalent=1 ") {
+		t.Fatalf("equivalent=%d findings=%v:\n%s", res.equivalent, res.findings, out)
+	}
+
+	upstream.getErr = errors.New("connection reset")
+	l, u := stores(local, upstream)
+	if _, err := verifyGalexieMirror(context.Background(), l, u, mirrorVerifyOpts{parallel: 1}); err == nil {
+		t.Fatal("a failed fetch must fail the run, not read as a difference")
 	}
 }
