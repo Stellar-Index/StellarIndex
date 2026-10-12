@@ -203,3 +203,43 @@ func TestStreamer_Start_unknownPairRejected(t *testing.T) {
 		t.Errorf("error %q should cite the offending asset", err.Error())
 	}
 }
+
+// TestNewStreamer_DefaultInitialBackoffIs5s: the 5 s default avoids hammering Binance in an outage; without run()'s
+// healthy-connection reset, backoff would sit at MaxBackoff (60 s).
+func TestNewStreamer_DefaultInitialBackoffIs5s(t *testing.T) {
+	s := NewStreamer(nil)
+	if got, want := s.InitialBackoff, 5*time.Second; got != want {
+		t.Errorf("InitialBackoff = %v, want %v (F-0029)", got, want)
+	}
+	if got, want := s.MaxBackoff, 60*time.Second; got != want {
+		t.Errorf("MaxBackoff = %v, want %v", got, want)
+	}
+}
+
+// restBase resolves the backfill REST URL, swapping a ws:// or wss:// Endpoint for the REST base so HTTP is never sent to the
+// websocket listener.
+
+func TestRestBase_emptyEndpointFallsBackToREST(t *testing.T) {
+	s := &Streamer{}
+	if got := s.restBase(); got != RESTEndpoint {
+		t.Errorf("restBase() = %q, want %q", got, RESTEndpoint)
+	}
+}
+
+func TestRestBase_wsEndpointFallsBackToREST(t *testing.T) {
+	for _, prefix := range []string{"ws://example.com", "wss://example.com"} {
+		s := &Streamer{Endpoint: prefix}
+		if got := s.restBase(); got != RESTEndpoint {
+			t.Errorf("restBase(%q) = %q, want %q", prefix, got, RESTEndpoint)
+		}
+	}
+}
+
+func TestRestBase_httpEndpointPassesThrough(t *testing.T) {
+	// Tests override Endpoint with an http:// value to redirect at
+	// an httptest.Server — the function must NOT swallow it.
+	s := &Streamer{Endpoint: "http://127.0.0.1:9999"}
+	if got := s.restBase(); got != "http://127.0.0.1:9999" {
+		t.Errorf("restBase() = %q, want passthrough", got)
+	}
+}
