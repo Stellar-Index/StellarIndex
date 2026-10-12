@@ -2,15 +2,7 @@ package dispatcher
 
 import "github.com/Stellar-Index/StellarIndex/internal/events"
 
-// Recognize reports whether any registered event decoder claims this event, returning its name.
-// It runs the same Matches() predicates as the live dispatch walk, with no decode and no side
-// effects (eventsSeen / unmatchedHits untouched). It is the oracle for ADR-0033 Claim 2a: a
-// (contract_id, topic) shape in soroban_events that returns false is an on-chain event the system
-// would silently drop. ContractCallDecoders are excluded; they emit no Soroban events.
-//
-// Matches() proves only the topic shape is owned. Calling Decode here would corrupt the
-// correlation state (Soroswap swap+sync, Phoenix 8-field) of the live decoder instances, so a
-// matched decoder may implement [Validator] for a side-effect-free check; stateful decoders don't.
+// Recognize reports whether any registered event decoder claims ev and returns its name; it runs only Matches (no Decode, no side effects) so live correlation state is never corrupted, and a false result means an on-chain event the system would silently drop (ADR-0033 Claim 2a).
 func (d *Dispatcher) Recognize(ev events.Event) (name string, ok bool) {
 	// Matches runs on adversary-influenced ledger data and can panic like Decode, and Recognize's
 	// callers do not recover, so one malformed row would take down the whole verification run.
@@ -41,10 +33,7 @@ func (d *Dispatcher) Recognize(ev events.Event) (name string, ok bool) {
 	return "", false
 }
 
-// Validator is an optional [Decoder] interface letting Recognize verify that a matched sample
-// would actually decode. Validate must be side-effect-free and independent of cross-event
-// correlation state; decoders with such state (Soroswap, Phoenix) must not implement it, since
-// Recognize runs against the live decoder instances.
+// Validator is an optional [Decoder] interface letting Recognize verify a matched sample would decode; Validate MUST be side-effect-free and independent of cross-event state, so stateful decoders must not implement it.
 type Validator interface {
 	Validate(ev events.Event) error
 }

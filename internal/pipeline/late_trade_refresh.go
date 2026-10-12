@@ -40,8 +40,7 @@ type lateTradeCAGGStore interface {
 	timescale.CAGGStepRefresher
 }
 
-// LateTradeRefresher refreshes the trades continuous aggregates over trades landed older than a view's refresh policy reaches back (e.g. after an outage), which no policy would ever revisit.
-// Late windows are recorded durably before the write and widened in memory after it, refreshed once per debounce interval and per view schedule; failures are retried with backoff and never block ingest.
+// LateTradeRefresher refreshes trades continuous aggregates over late-landed trades older than a view's refresh policy reaches; late windows are recorded durably before the write, retried with backoff on failure and never block ingest.
 type LateTradeRefresher struct {
 	store      lateTradeCAGGStore
 	logger     *slog.Logger
@@ -145,9 +144,7 @@ func (r *LateTradeRefresher) ObserveEvent(ev consumer.Event) {
 	}
 }
 
-// ObservingSink wraps a projector sink so a late trade's window is
-// recorded before the sink runs and every event it handles without error
-// is observed. Nil-safe: a nil r returns sink unchanged.
+// ObservingSink wraps a projector sink so a late trade's window is recorded before the sink runs and every event handled without error is observed; nil-safe, a nil r returns sink unchanged.
 func (r *LateTradeRefresher) ObservingSink(sink func(context.Context, consumer.Event) error) func(context.Context, consumer.Event) error {
 	if r == nil {
 		return sink
@@ -169,8 +166,7 @@ func (r *LateTradeRefresher) ObservingSink(sink func(context.Context, consumer.E
 	}
 }
 
-// Prime loads the refresh policies so writes before the first flush are
-// judged late against them rather than against nothing. Nil-safe.
+// Prime loads the refresh policies so writes before the first flush are judged late against them; nil-safe.
 func (r *LateTradeRefresher) Prime(ctx context.Context) error {
 	if r == nil {
 		return nil
@@ -326,8 +322,7 @@ func (r *LateTradeRefresher) signal() {
 	}
 }
 
-// Run refreshes pending windows until ctx is done. What is still pending
-// then is FlushOnShutdown's.
+// Run refreshes pending windows until ctx is done; whatever is still pending is FlushOnShutdown's.
 func (r *LateTradeRefresher) Run(ctx context.Context) {
 	r.signal() // refresh what a previous process recorded
 	wait := r.debounce
@@ -378,10 +373,7 @@ func (r *LateTradeRefresher) Run(ctx context.Context) {
 	}
 }
 
-// FlushOnShutdown refreshes everything still pending, ignoring the per-view
-// rate limit, under ctx. Call it once the trade writers have stopped and
-// Run's context is done. A failure or timeout logs at ERROR each window
-// left; the next process refreshes it from its durable row. Nil-safe.
+// FlushOnShutdown refreshes everything still pending under ctx, ignoring the per-view rate limit; call it once the trade writers have stopped and Run's context is done. Failures log at ERROR and the next process refreshes from the durable row; nil-safe.
 func (r *LateTradeRefresher) FlushOnShutdown(ctx context.Context) {
 	if r == nil {
 		return

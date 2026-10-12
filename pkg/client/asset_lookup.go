@@ -5,37 +5,17 @@ import (
 	"fmt"
 )
 
-// AssetLookup is the /v1/assets/{asset_id} dual-shape response
-// (ADR-0042). [Client.Asset] returns one of these instead of
-// a bare [AssetDetail] because the endpoint serves two different
-// wire shapes depending on whether the caller passed a canonical
-// Stellar asset_id or a verified-currency catalogue slug — see the
-// server-side dispatch note on GET /v1/assets/{asset_id} in
-// openapi/stellar-index.v1.yaml.
-//
-// Decoding unconditionally into [AssetDetail] is wrong: encoding/json silently drops unrecognised
-// keys and leaves untouched struct fields at their zero value, so a
-// catalogue-slug request (server shape: [GlobalAssetView]) decoded
-// "successfully" into an [AssetDetail] with every required field
-// (AssetID, Type, Code, Decimals, Sep1Status) zero-valued. Callers
-// MUST check [AssetLookup.Kind] (or use the StellarAsset/Catalogue
-// accessors, which return ok=false instead of a lie) rather than
-// assume the payload shape.
+// AssetLookup is the dual-shape /v1/assets/{asset_id} response (ADR-0042); callers MUST check [AssetLookup.Kind] (or the StellarAsset/Catalogue accessors, which return ok=false) because decoding a catalogue slug into [AssetDetail] would yield zero-valued required fields.
 type AssetLookup struct {
 	kind      string
 	stellar   *AssetDetail
 	catalogue *GlobalAssetView
 }
 
-// Kind reports the wire-shape discriminator the server sent:
-// "stellar_asset" or "catalogue". Empty on a zero-value AssetLookup
-// (e.g. one that was never unmarshalled).
+// Kind reports the server's wire-shape discriminator, "stellar_asset" or "catalogue"; empty on a zero-value AssetLookup.
 func (a AssetLookup) Kind() string { return a.kind }
 
-// StellarAsset returns the per-Stellar-asset detail view and
-// ok=true when Kind() == "stellar_asset". Returns a zero
-// [AssetDetail] and ok=false for the catalogue branch — never a
-// silently-zero-valued struct passed off as real data.
+// StellarAsset returns the per-Stellar-asset detail and ok=true when Kind() == "stellar_asset"; otherwise a zero [AssetDetail] and ok=false.
 func (a AssetLookup) StellarAsset() (AssetDetail, bool) {
 	if a.stellar == nil {
 		return AssetDetail{}, false
@@ -43,9 +23,7 @@ func (a AssetLookup) StellarAsset() (AssetDetail, bool) {
 	return *a.stellar, true
 }
 
-// Catalogue returns the verified-currency global view and ok=true
-// when Kind() == "catalogue". Returns a zero [GlobalAssetView] and
-// ok=false for the stellar_asset branch.
+// Catalogue returns the verified-currency global view and ok=true when Kind() == "catalogue"; otherwise a zero [GlobalAssetView] and ok=false.
 func (a AssetLookup) Catalogue() (GlobalAssetView, bool) {
 	if a.catalogue == nil {
 		return GlobalAssetView{}, false
@@ -53,12 +31,7 @@ func (a AssetLookup) Catalogue() (GlobalAssetView, bool) {
 	return *a.catalogue, true
 }
 
-// UnmarshalJSON implements [json.Unmarshaler]. It peeks the `kind`
-// field before deciding which struct to populate — mirroring the
-// server-side dispatch pattern internal/api/v1's tryServeGlobalAsset
-// uses (mux-dispatch-before-parse), but client-side via JSON rather
-// than a URL path. An unrecognised or missing `kind` is a hard error,
-// not a silent zero-fill: this is the whole point of the type.
+// UnmarshalJSON implements [json.Unmarshaler] by peeking the `kind` field; an unrecognised or missing `kind` is a hard error, never a silent zero-fill.
 func (a *AssetLookup) UnmarshalJSON(data []byte) error {
 	var peek struct {
 		Kind string `json:"kind"`
@@ -86,9 +59,7 @@ func (a *AssetLookup) UnmarshalJSON(data []byte) error {
 	}
 }
 
-// MarshalJSON implements [json.Marshaler], so an [AssetLookup] a
-// caller received can be re-encoded (logging, caching, test
-// fixtures) without unwrapping it by hand first.
+// MarshalJSON implements [json.Marshaler], so a received [AssetLookup] can be re-encoded without unwrapping it.
 func (a AssetLookup) MarshalJSON() ([]byte, error) {
 	switch a.kind {
 	case "stellar_asset":

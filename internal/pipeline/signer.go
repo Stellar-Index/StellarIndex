@@ -21,14 +21,12 @@ const (
 	signerSweepMaxLedgerSpan = 120 // ~10 min of pubnet ledgers
 )
 
-// SignerLakeReader reads tx source accounts from the lake for a ledger range.
-// *clickhouse.ExplorerReader satisfies it via TxSignersForLedgerRange.
+// SignerLakeReader reads tx source accounts from the lake for a ledger range; *clickhouse.ExplorerReader satisfies it.
 type SignerLakeReader interface {
 	TxSignersForLedgerRange(ctx context.Context, minLedger, maxLedger uint32) ([]clickhouse.TxSigner, error)
 }
 
-// SignerRangeTagger is the Postgres seam the sweeper reads + writes through.
-// *timescale.Store satisfies it.
+// SignerRangeTagger is the Postgres seam the sweeper reads and writes through; *timescale.Store satisfies it.
 type SignerRangeTagger interface {
 	UntaggedAMMSignerLedgerRange(ctx context.Context, from, to time.Time) (minLedger, maxLedger uint32, ok bool, err error)
 	TagTradesSigner(ctx context.Context, from, to time.Time, tags []timescale.SignerTag) (int64, error)

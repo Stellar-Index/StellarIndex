@@ -70,9 +70,7 @@ func AccountObserverWatchSet(sup config.SupplyConfig, meta config.MetadataConfig
 	return out
 }
 
-// RegisterSupplyEntryDecoders attaches the opt-in LCM supply observers (an empty watched set leaves one unregistered) and returns their names.
-// Accounts use AccountObserverWatchSet (readers query by account id, so issuers do not leak into the reserve sum); persistence is the sink.go type-switch;
-// call RegisterSupplyEventDecoders too for the sep41_supply event observer.
+// RegisterSupplyEntryDecoders attaches the opt-in LCM supply observers (an empty watched set leaves one unregistered) and returns their names; accounts use AccountObserverWatchSet so issuers do not leak into the reserve sum.
 func RegisterSupplyEntryDecoders(disp *dispatcher.Dispatcher, sup config.SupplyConfig, meta config.MetadataConfig) ([]string, error) {
 	var registered []string
 	if watched := AccountObserverWatchSet(sup, meta); len(watched) > 0 {
@@ -116,10 +114,7 @@ func RegisterSupplyEntryDecoders(disp *dispatcher.Dispatcher, sup config.SupplyC
 	return registered, nil
 }
 
-// RegisterSupplyEventDecoders adds the dispatcher's copy of every
-// [SourceSpec.Watched] source (sep41_supply, then sep41_transfers; their
-// topic[0] sets are disjoint) built from supply.watched_sep41_contracts.
-// An empty watched set registers nothing. Returns the registered names.
+// RegisterSupplyEventDecoders adds the dispatcher's copy of every [SourceSpec.Watched] source built from supply.watched_sep41_contracts and returns the registered names; an empty watched set registers nothing.
 func RegisterSupplyEventDecoders(disp *dispatcher.Dispatcher, sup config.SupplyConfig) ([]string, error) {
 	var registered []string
 	a := BuildArgs{WatchedSEP41: sup.WatchedSEP41Contracts}

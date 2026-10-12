@@ -5,9 +5,7 @@ import (
 	"time"
 )
 
-// Envelope is the shape of every 2xx JSON response from the server.
-// Mirrors `internal/api/v1.Envelope` but parameterised on the data
-// type for type safety in client code.
+// Envelope is the shape of every 2xx JSON response, parameterised on the data type.
 type Envelope[T any] struct {
 	Data T         `json:"data"`
 	AsOf time.Time `json:"as_of"`
@@ -56,10 +54,7 @@ func (e *Envelope[T]) validateEnvelope() error {
 	return nil
 }
 
-// Flags are the advisory quality markers per the server's
-// envelope.go. New flags may be added in minor server releases —
-// the JSON decoder ignores unknown fields, so adding a flag is
-// non-breaking for SDK consumers.
+// Flags are the advisory quality markers of the response envelope; unknown flags are ignored by the decoder, so new ones are non-breaking.
 type Flags struct {
 	Stale             bool `json:"stale"`
 	ReducedRedundancy bool `json:"reduced_redundancy"`
@@ -129,8 +124,7 @@ type Flags struct {
 	FiltersIgnored []string `json:"filters_ignored,omitempty"`
 }
 
-// Pagination is present on list-returning endpoints when there are
-// more results than the requested limit.
+// Pagination is present on list endpoints when more results than the limit exist, and nil on the terminal page.
 type Pagination struct {
 	Next string `json:"next,omitempty"`
 }
@@ -189,8 +183,7 @@ type USDLeg struct {
 	Sources    []string  `json:"sources"`
 }
 
-// ConfidenceFactors is the per-factor decomposition of a
-// [PriceSnapshot]'s Confidence score (ADR-0019).
+// ConfidenceFactors is the per-factor decomposition of a [PriceSnapshot]'s Confidence score (ADR-0019).
 type ConfidenceFactors struct {
 	ZScore          float64 `json:"z_score"`
 	SourceCount     float64 `json:"source_count"`
@@ -225,10 +218,7 @@ type ConfidenceFactors struct {
 	BootstrapCapped bool    `json:"bootstrap_capped"`
 }
 
-// PriceChangeHorizon is one trailing-window delta on
-// [Client.PriceChanges]. Every pointer field is nil (and Available
-// is false) when the pair has no closed bucket that far back — a
-// per-horizon miss, never a whole-call error.
+// PriceChangeHorizon is one trailing-window delta on [Client.PriceChanges]; every pointer field is nil and Available false when no closed bucket reaches that far back (a per-horizon miss, not an error).
 type PriceChangeHorizon struct {
 	// ChangePct is the signed percentage move of the current price vs
 	// ReferencePrice, 2dp with an explicit "+" on gains. Nil when
@@ -253,9 +243,7 @@ type PriceChangeHorizon struct {
 	ThinMarket bool `json:"thin_market,omitempty"`
 }
 
-// PriceChanges is the data shape returned by [Client.PriceChanges]:
-// the current closed price plus a signed change over 1h / 24h / 7d /
-// 30d in one call.
+// PriceChanges is the data shape of [Client.PriceChanges]: the current closed price plus signed 1h/24h/7d/30d change.
 type PriceChanges struct {
 	AssetID          string    `json:"asset_id"`
 	Quote            string    `json:"quote"`
@@ -274,15 +262,7 @@ type PriceChanges struct {
 	Substance *SubstanceEvidence `json:"substance,omitempty"`
 }
 
-// HistorySeries is the data shape returned by
-// [Client.HistorySinceInception].
-//
-// Discontinuous reports that Points skips at least one whole bucket at
-// Granularity, with GapStartsAt + GapEndsAt bounding the widest such
-// gap. Points is a dense array, so without it a hole in the middle of a
-// series renders as a straight line between the buckets either side —
-// see [ChartSeries], which carries the same three fields for the same
-// reason and computes them the same way.
+// HistorySeries is the data shape of [Client.HistorySinceInception]; Discontinuous reports that Points skips at least one whole bucket, with GapStartsAt + GapEndsAt bounding the widest gap, as in [ChartSeries].
 type HistorySeries struct {
 	AssetID string `json:"asset_id"`
 	Quote   string `json:"quote"`
@@ -314,8 +294,7 @@ type HistoryPoint struct {
 	Sources []string `json:"sources,omitempty"`
 }
 
-// AssetDetail is the data shape returned by [Client.Assets] (listing)
-// and, as one branch of [AssetLookup], by [Client.Asset] (detail).
+// AssetDetail is the data shape of [Client.Assets] (listing) and, as one branch of [AssetLookup], of [Client.Asset].
 type AssetDetail struct {
 	// Kind vs Type: Kind says which WIRE SHAPE this is — always
 	// "stellar_asset" on this struct, the discriminator [AssetLookup]
@@ -624,9 +603,7 @@ type AssetDetail struct {
 	VolumeCharacterSignals *AssetVolumeCharacterSignals `json:"volume_character_signals,omitempty"`
 }
 
-// AssetVolumeCharacterSignals are the underlying account-structure signals
-// AssetDetail.VolumeCharacter is derived from. Shares are fractions in
-// [0,1]. Mirrors the server-side response shape (design §2).
+// AssetVolumeCharacterSignals are the account-structure signals AssetDetail.VolumeCharacter is derived from; shares are fractions in [0,1].
 type AssetVolumeCharacterSignals struct {
 	WindowDays             int     `json:"window_days"`
 	VolumeUSD              string  `json:"volume_usd"`
@@ -639,9 +616,7 @@ type AssetVolumeCharacterSignals struct {
 	IsMarketStyled         bool    `json:"is_market_styled"`
 }
 
-// UnverifiedWarning is the warning body attached to AssetDetail
-// when an asset code-collides with a verified Stellar currency
-// but the issuer doesn't match.
+// UnverifiedWarning is attached to AssetDetail when an asset code-collides with a verified currency but the issuer does not match.
 type UnverifiedWarning struct {
 	// VerifiedSlug is the canonical slug the consumer can redirect to.
 	VerifiedSlug string `json:"verified_slug"`
@@ -657,9 +632,7 @@ type UnverifiedWarning struct {
 	Note string `json:"note"`
 }
 
-// FiatCodeAnchor is the neutral note attached to AssetDetail when the
-// asset's code names a catalogue fiat denomination with no Stellar
-// issuance of its own. Never an impersonation verdict.
+// FiatCodeAnchor is the neutral note attached to AssetDetail when the code names a catalogue fiat denomination with no Stellar issuance; never an impersonation verdict.
 type FiatCodeAnchor struct {
 	// Ticker is the ISO-4217 code the asset denominates in.
 	Ticker string `json:"ticker"`
@@ -670,13 +643,7 @@ type FiatCodeAnchor struct {
 	Note string `json:"note"`
 }
 
-// TradeRow is the data shape returned by [Client.History] — one
-// raw trade row from the trades hypertable. All numeric amounts
-// are decimal strings (ADR-0003); `Price` is the pre-computed
-// quote/base ratio at 10 fractional digits for consumer
-// convenience (the storage layer never persists a derived price,
-// so the server computes it at response time). Price is nil when one
-// leg is zero (an SDEX rounding fill): such a trade has no price.
+// TradeRow is one raw trade row of [Client.History]; amounts are decimal strings (ADR-0003), and Price (quote/base at 10 fractional digits, computed at response time) is nil when one leg is zero.
 type TradeRow struct {
 	Source      string    `json:"source"`
 	Ledger      uint32    `json:"ledger"`
@@ -717,23 +684,7 @@ type TradeRow struct {
 	RoutedVia string `json:"routed_via,omitempty"`
 }
 
-// AggregatorRow is the data shape returned by [Client.Aggregators]
-// — one routers-registry entry (a per-tx router like the Soroswap
-// router, an aggregator contract OBSERVED WRAPPING it, or an
-// aggregator vault like DeFindex) with its routed-via attribution
-// rollup over the trailing 24 hours.
-//
-// RoutedVolume24hUSD is a decimal string (ADR-0003); nil when none
-// of the window's routed trades carried a USD valuation — distinct
-// from a zero-trade router, which reports RoutedTrades24h == 0.
-// Vault-kind entries always report zero routed trades: per-tx
-// routed_via tagging applies to Kind == "router" only.
-//
-// A router call observed as a sub-invocation is attributed to its
-// outermost wrapping contract when that contract is itself a
-// registered "router"-kind entry (falling back to the plain router
-// otherwise) — see Notes for the honest-degrade caveats this implies
-// per row, present for kind == "router" rows only.
+// AggregatorRow is one routers-registry entry of [Client.Aggregators] with its trailing-24h routed-via rollup; RoutedVolume24hUSD is a decimal string (ADR-0003), nil when no routed trade carried a USD valuation, and vault-kind entries always report zero routed trades.
 type AggregatorRow struct {
 	ContractID     string `json:"contract_id"`
 	Name           string `json:"name"`
@@ -750,22 +701,7 @@ type AggregatorRow struct {
 	Notes []string `json:"notes,omitempty"`
 }
 
-// OHLCBar is the data shape returned by [Client.OHLC] — a single
-// open/high/low/close bar over the requested window. All price
-// fields are decimal strings (ADR-0003); volumes are smallest-unit
-// integers as strings.
-//
-// The volume smallest unit is NOT a fixed stroop: it is the
-// per-SOURCE scale of the venues that traded in the window — 7
-// decimals on-chain, 8 on a CEX, 6 on the FX feeds. Render asset
-// units as BaseVolume / 10^BaseVolumeDecimals; a hardcoded 1e7
-// overstates every CEX-fed pair tenfold.
-//
-// `Truncated` is true when the window's trade count hit the
-// server's per-request cap. The server keeps the NEWEST N trades and
-// drops the OLDEST, so Close is exact but Open / High / Low may be
-// incomplete for the full window. Treat truncated bars as a hint to
-// narrow the range.
+// OHLCBar is a single OHLC bar of [Client.OHLC]; prices are decimal strings (ADR-0003) and volumes smallest-unit strings at a per-SOURCE scale (7 decimals on-chain, 8 CEX, 6 FX), so render as BaseVolume / 10^BaseVolumeDecimals; when Truncated the NEWEST trades are kept, so Close is exact but Open/High/Low may be incomplete.
 type OHLCBar struct {
 	From        time.Time `json:"from"`
 	To          time.Time `json:"to"`
@@ -790,8 +726,7 @@ type OHLCBar struct {
 	Clamped bool `json:"clamped"`
 }
 
-// OHLCSeriesResponse is the data shape returned by [Client.OHLCSeries]:
-// up to `limit` closed bars of width Interval over [From, To).
+// OHLCSeriesResponse is the data shape of [Client.OHLCSeries]: up to `limit` closed bars of width Interval over [From, To).
 type OHLCSeriesResponse struct {
 	Base      string          `json:"base"`
 	Quote     string          `json:"quote"`
@@ -801,10 +736,7 @@ type OHLCSeriesResponse struct {
 	Intervals []OHLCSeriesBar `json:"intervals"`
 }
 
-// OHLCSeriesBar is one bar of an [OHLCSeriesResponse]. Prices are
-// decimal strings, volumes integer smallest-unit strings;
-// VBaseDecimals / VQuoteDecimals are the volume scales (nil when a
-// contributing source is unrecognised).
+// OHLCSeriesBar is one bar of an [OHLCSeriesResponse]; prices are decimal strings, volumes integer smallest-unit strings, and VBaseDecimals / VQuoteDecimals are the volume scales (nil when a contributing source is unrecognised).
 type OHLCSeriesBar struct {
 	T              time.Time `json:"t"`
 	O              string    `json:"o"`
@@ -822,25 +754,7 @@ type OHLCSeriesBar struct {
 	Sources []string `json:"sources,omitempty"`
 }
 
-// Source is the data shape returned by [Client.Sources] — one
-// row from the operator's source registry (the catalogue of
-// venues + oracles + aggregators the deployment can ingest from).
-//
-// Class is one of: `exchange` / `aggregator` / `oracle` /
-// `authority_sanity` / `lending` / `router` / `bridge`. Per the v1
-// aggregator policy, only
-// `exchange` contributes to VWAP — the others are reported
-// alongside but excluded (mixing them double-counts upstream
-// markets or imposes their methodology on our output).
-//
-// Subclass refines `class=exchange` into `dex` / `cex` / `fx`.
-// Empty for non-exchange classes.
-//
-// BackfillSafe gates `stellarindex-ops backfill` per AGENTS.md
-// "Soroban DeFi contracts upgrade in place". On-chain Soroban
-// sources start `false` and only flip `true` after a per-WASM-
-// hash audit (`docs/operations/wasm-audits/`). Off-chain CEX/FX
-// sources are always `true`.
+// Source is one row of the source registry from [Client.Sources]; only class `exchange` contributes to VWAP, and BackfillSafe is false for on-chain Soroban sources until a per-WASM-hash audit flips it (CEX/FX are always true).
 type Source struct {
 	Name              string `json:"name"`
 	Class             string `json:"class"`
@@ -870,9 +784,7 @@ type Source struct {
 	VolumeHistory7d  []VolumeBucket `json:"volume_history_7d,omitempty"`
 }
 
-// VolumeBucket is one hourly USD-volume datapoint in a source or
-// market sparkline series. VolumeUSD is a decimal string per
-// ADR-0003.
+// VolumeBucket is one hourly USD-volume datapoint in a source or market sparkline; VolumeUSD is a decimal string per ADR-0003.
 type VolumeBucket struct {
 	Hour      time.Time `json:"hour"`
 	VolumeUSD string    `json:"volume_usd"`
@@ -881,15 +793,13 @@ type VolumeBucket struct {
 	TradeCount int64 `json:"trade_count"`
 }
 
-// MarketVolumeBucket is one hourly USD-volume datapoint on a market
-// sparkline. Unlike a source's [VolumeBucket] it carries no trade count.
+// MarketVolumeBucket is one hourly USD-volume datapoint on a market sparkline; unlike [VolumeBucket] it carries no trade count.
 type MarketVolumeBucket struct {
 	Hour      time.Time `json:"hour"`
 	VolumeUSD string    `json:"volume_usd"`
 }
 
-// MethodologySource is one venue on [Methodology]: the static registry
-// subset of [Source], without the live stats that only /v1/sources serves.
+// MethodologySource is one venue on [Methodology]: the static registry subset of [Source], without live stats.
 type MethodologySource struct {
 	Name              string `json:"name"`
 	Class             string `json:"class"`
@@ -902,15 +812,7 @@ type MethodologySource struct {
 	OnChain           bool   `json:"on_chain"`
 }
 
-// Methodology is the data shape returned by [Client.Methodology].
-// Machine-readable summary of the active aggregation policy:
-// VWAP method, outlier filters, stablecoin → fiat-USD proxy
-// allow-list, source classes, registered venues, ADR refs.
-//
-// Designed for transparency consumers (compliance, auditors,
-// integrators verifying "open methodology" claims) who
-// want to verify what the deployment is doing without parsing
-// the explorer's HTML or chasing ADR cross-refs.
+// Methodology is the data shape of [Client.Methodology]: a machine-readable summary of the active aggregation policy for transparency consumers.
 type Methodology struct {
 	Version       string                   `json:"version"`
 	Aggregation   MethodologyAggregation   `json:"aggregation"`
@@ -940,12 +842,7 @@ type MethodologyStablecoinPeg struct {
 	PegsTo  string `json:"pegs_to"`
 }
 
-// MethodologySourceClass describes one registry class. The served
-// list is the complete glossary for the Class field on every
-// [MethodologySource] — the price-bearing classes (exchange,
-// aggregator, oracle, authority_sanity) and the ones indexed for
-// flow and state (lending, router, bridge) alike. Only exchange
-// carries ContributesToVWAP.
+// MethodologySourceClass describes one registry class; the served list is the complete glossary for every [MethodologySource] Class, and only exchange carries ContributesToVWAP.
 type MethodologySourceClass struct {
 	Name              string `json:"name"`
 	ContributesToVWAP bool   `json:"contributes_to_vwap"`
@@ -959,19 +856,7 @@ type MethodologyReference struct {
 	URL   string `json:"url"`
 }
 
-// Market is the data shape returned by [Client.Markets] and
-// [Client.Pair] — one (base, quote) pair the deployment has
-// observed at least one trade for, with a 24h activity summary.
-//
-// LastTradeAt is the most-recent prices_1m bucket-start that
-// observed a trade in this pair (minute precision) when the pair
-// traded in the trailing 24h, falling back to BucketCloseAt for
-// pairs idle >24h but active in the 14d recency window. Use this
-// field for staleness computations.
-//
-// BucketCloseAt is the start-of-day UTC of the prices_1d bucket
-// the pair was last active in. Aligns to UTC midnight by
-// construction; do NOT use for staleness; it is not `last_trade_at`.
+// Market is one (base, quote) pair from [Client.Markets] / [Client.Pair] with a 24h activity summary; use LastTradeAt (minute precision, falls back to BucketCloseAt for pairs idle >24h) for staleness, NOT BucketCloseAt, which is start-of-day UTC.
 type Market struct {
 	Base          string    `json:"base"`
 	Quote         string    `json:"quote"`
@@ -997,9 +882,7 @@ type Market struct {
 	FirstTradeAt *time.Time `json:"first_trade_at,omitempty"`
 }
 
-// AssetSupplyFlows is the data payload of [Client.AssetSupplyFlows].
-// HistoryIncomplete is true when the running net dips below zero, so
-// Days must not be cumulated into a supply level.
+// AssetSupplyFlows is the data payload of [Client.AssetSupplyFlows]; HistoryIncomplete is true when the running net dips below zero, so Days must not be cumulated into a supply level.
 type AssetSupplyFlows struct {
 	AssetID           string               `json:"asset_id"`
 	ContractID        string               `json:"contract_id"`
@@ -1008,8 +891,7 @@ type AssetSupplyFlows struct {
 	AsOfLedger        *int64               `json:"as_of_ledger,omitempty"`
 }
 
-// AssetSupplyFlowDay is one UTC day of supply flows. Mint/Burn/Clawback
-// are base-unit decimal strings; Net = mint - burn - clawback (signed).
+// AssetSupplyFlowDay is one UTC day of supply flows; Mint/Burn/Clawback are base-unit decimal strings and Net = mint - burn - clawback (signed).
 type AssetSupplyFlowDay struct {
 	Day      string `json:"day"`
 	Mint     string `json:"mint"`
@@ -1019,13 +901,7 @@ type AssetSupplyFlowDay struct {
 	Flows    int64  `json:"flows"`
 }
 
-// AssetMetadata is the data shape returned by [Client.AssetMetadata]
-// (the SEP-1 overlay endpoint, /v1/assets/{id}/metadata). Mirrors
-// the AssetMetadata schema in openapi/stellar-index.v1.yaml.
-//
-// All overlay fields populate only when Sep1Status == "verified".
-// Other states ("not_applicable" / "not_fetched" / "unreachable" /
-// "no_match") leave the overlay fields nil.
+// AssetMetadata is the data shape of [Client.AssetMetadata] (the SEP-1 overlay); overlay fields populate only when Sep1Status == "verified" and are nil otherwise.
 type AssetMetadata struct {
 	AssetID    string  `json:"asset_id"`
 	HomeDomain *string `json:"home_domain,omitempty"`
@@ -1074,15 +950,7 @@ type Account struct {
 	AccountInfo *AccountOrg  `json:"account,omitempty"`
 }
 
-// UsageRow is one entry in the array returned by [Client.Usage] —
-// one (date, endpoint family) aggregate. Endpoint is the route
-// PATTERN requests matched (e.g. "/v1/assets/{asset_id}"); it is
-// empty on the server's legacy fallback shape (one row per day).
-// Requests counts non-429 traffic (5xx included, except on the legacy
-// shape); Billable is what the monthly quota counts (ok + 4xx) and
-// means the same on both shapes; Errors is 4xx (excl. 429) + 5xx;
-// Throttled is 429 rate-limit rejections (never counted against
-// monthly quota).
+// UsageRow is one (date, endpoint family) aggregate from [Client.Usage]; Endpoint is the route pattern (empty on the legacy per-day shape), Billable (ok + 4xx) is what the monthly quota counts, and Throttled (429) is never counted against it.
 type UsageRow struct {
 	Date      string `json:"date"`
 	Endpoint  string `json:"endpoint,omitempty"`
@@ -1092,9 +960,7 @@ type UsageRow struct {
 	Throttled int    `json:"throttled"`
 }
 
-// KeyCreated is the data shape returned by [Client.CreateKey].
-// The Plaintext field is the only place the new key's secret bytes
-// appear; the server returns it once and never again.
+// KeyCreated is the data shape of [Client.CreateKey]; Plaintext is the only place the secret appears, returned once and never again.
 type KeyCreated struct {
 	KeyID     string `json:"key_id"`
 	Plaintext string `json:"plaintext"`
@@ -1113,12 +979,7 @@ type KeyCreated struct {
 // retired (no production consumers). Use the AssetDetail surface
 // from `/v1/assets` instead.
 
-// IssuerListEntry is the data shape returned by [Client.Issuers] —
-// one row in the issuer directory ranked by total observation
-// count across the issuer's classic assets.
-//
-// HomeDomain is empty until the SEP-1 fetcher worker resolves
-// `stellar.toml` for the issuer's account.
+// IssuerListEntry is one issuer-directory row from [Client.Issuers], ranked by total observation count; HomeDomain is empty until SEP-1 resolves `stellar.toml`.
 type IssuerListEntry struct {
 	GStrkey    string `json:"g_strkey"`
 	HomeDomain string `json:"home_domain,omitempty"`
@@ -1135,9 +996,7 @@ type IssuerListEntry struct {
 	ScamReason string `json:"scam_reason,omitempty"`
 }
 
-// IssuedAsset is one entry in [Issuer.Assets] — a classic asset
-// minted by the parent issuer. Mirrors the embedded shape on the
-// issuer-detail wire envelope.
+// IssuedAsset is one entry in [Issuer.Assets]: a classic asset minted by the parent issuer.
 type IssuedAsset struct {
 	AssetID          string `json:"asset_id"`
 	Code             string `json:"code"`
@@ -1147,10 +1006,7 @@ type IssuedAsset struct {
 	ObservationCount int64  `json:"observation_count"`
 }
 
-// Issuer is the data shape returned by [Client.Issuer]
-// (`/v1/issuers/{g_strkey}`). Auth flags + SEP-1 fields populate
-// as the SEP-1 fetcher worker resolves them; pre-resolution they
-// stay nil.
+// Issuer is the data shape of [Client.Issuer]; auth flags and SEP-1 fields stay nil until the SEP-1 fetcher resolves them.
 type Issuer struct {
 	GStrkey    string `json:"g_strkey"`
 	HomeDomain string `json:"home_domain,omitempty"`
@@ -1192,17 +1048,7 @@ type Issuer struct {
 	CoverageNote string `json:"coverage_note,omitempty"`
 }
 
-// Cursor is one entry in the array returned by [Client.Cursors] —
-// the per-source ingest progress marker exposed at
-// `/v1/diagnostics/cursors`. `LagSeconds` is computed server-side
-// (now − last_updated) so callers don't need a clock-sync
-// agreement with the API.
-//
-// State is the server's lifecycle verdict — "live" (written in the
-// last 10 minutes), "stale" (behind but inside the 7-day abandoned
-// boundary) or "abandoned" (a record of finished or dead one-shot
-// work). Abandoned rows are omitted unless the request asks for them,
-// so a default listing carries no "abandoned" states.
+// Cursor is one per-source ingest progress marker from [Client.Cursors]; LagSeconds is computed server-side, and State is "live", "stale" or "abandoned" (abandoned rows are omitted unless requested).
 type Cursor struct {
 	Source      string `json:"source"`
 	SubSource   string `json:"sub_source,omitempty"`
@@ -1212,9 +1058,7 @@ type Cursor struct {
 	State       string `json:"state"`
 }
 
-// Status is the data shape returned by [Client.Status]. Mirrors
-// the wire shape of /v1/status — a customer-facing system-health
-// rollup.
+// Status is the data shape of [Client.Status], the customer-facing system-health rollup of /v1/status.
 type Status struct {
 	Overall   string          `json:"overall"`
 	Region    StatusRegion    `json:"region"`
@@ -1242,18 +1086,14 @@ type StatusRegion struct {
 	Deployment string `json:"deployment"`
 }
 
-// StatusService is one entry in [Status.Services] — a per-binary
-// heartbeat. Status is "ok" when the last scrape was within 60 s,
-// "down" when stale, "unknown" when no Prometheus backend is wired.
+// StatusService is a per-binary heartbeat in [Status.Services]: "ok" if the last scrape was within 60 s, "down" when stale, "unknown" with no Prometheus backend.
 type StatusService struct {
 	Name     string    `json:"name"`
 	Status   string    `json:"status"`
 	LastSeen time.Time `json:"last_seen,omitempty"`
 }
 
-// StatusLatency reports API histogram-derived percentiles over
-// the last [WindowSecs] seconds. Zero values mean no Prometheus
-// backend is wired or no samples in the window.
+// StatusLatency reports histogram-derived API percentiles over the last [WindowSecs] seconds; zero means no backend or no samples.
 type StatusLatency struct {
 	P50Ms      float64 `json:"p50_ms"`
 	P95Ms      float64 `json:"p95_ms"`
@@ -1267,17 +1107,14 @@ type StatusLatency struct {
 	P99TargetMs float64 `json:"p99_target_ms"`
 }
 
-// StatusFreshness summarises the ingest layer. A nil count was not
-// measured (its query failed); a served 0 is a non-nil 0.
+// StatusFreshness summarises the ingest layer; a nil count was not measured (its query failed), while a served 0 is a non-nil 0.
 type StatusFreshness struct {
 	LastAggregatorTick time.Time `json:"last_aggregator_tick,omitempty"`
 	ActiveSources      *int      `json:"active_sources,omitempty"`
 	TotalSources       *int      `json:"total_sources,omitempty"`
 }
 
-// StatusIncidents counts currently-firing alerts grouped by
-// severity. Zero values indicate no Alertmanager backend wired or
-// no alerts firing.
+// StatusIncidents counts currently-firing alerts by severity; zero means no Alertmanager backend or no alerts.
 type StatusIncidents struct {
 	ActiveCount        int              `json:"active_count"`
 	PageCount          int              `json:"page_count"`
@@ -1286,19 +1123,14 @@ type StatusIncidents struct {
 	Active             []ActiveIncident `json:"active,omitempty"`
 }
 
-// ActiveIncident is one entry in [StatusIncidents.Active] — the
-// customer-facing summary of a currently-firing alert. RunbookURL
-// links to the public GitHub markdown when the alert rule has it
-// set; other internal labels (component, instance) are
-// intentionally excluded so the surface stays anonymous-friendly.
+// ActiveIncident is the customer-facing summary of one currently-firing alert in [StatusIncidents.Active]; internal labels are deliberately excluded.
 type ActiveIncident struct {
 	Name       string `json:"name"`
 	Severity   string `json:"severity"`
 	RunbookURL string `json:"runbook_url,omitempty"`
 }
 
-// Health is the data shape returned by [Client.Healthz] and
-// [Client.Readyz].
+// Health is the data shape of [Client.Healthz] and [Client.Readyz].
 type Health struct {
 	Status string `json:"status"`
 	Uptime string `json:"uptime"`
@@ -1318,8 +1150,7 @@ type HealthCheck struct {
 	Error string `json:"error,omitempty"`
 }
 
-// Version is the data shape returned by [Client.Version] — build
-// metadata for the API binary.
+// Version is the data shape of [Client.Version]: build metadata for the API binary.
 type Version struct {
 	Version   string `json:"version"`
 	BuildDate string `json:"build_date"`
@@ -1328,19 +1159,7 @@ type Version struct {
 	GoVersion string `json:"go_version"`
 }
 
-// ChartSeries is the data shape returned by [Client.Chart]. The
-// per-point time series uses the same shape as
-// [HistoryPoint] (`t` / `p` / `v_usd`) but the envelope-level
-// metadata differs (Timeframe + bound Granularity).
-//
-// Truncated reports whether the requested timeframe extends before the
-// earliest available data on this deployment (e.g. `Timeframe: "1y"` when only
-// 7 days are retained). When true, DataStartsAt + RequestedFrom are populated.
-// `Timeframe: "all"` always reports Truncated=false.
-//
-// Discontinuous reports a hole in the MIDDLE of the series, which the dense
-// Points array would render as a straight line. When true, GapStartsAt +
-// GapEndsAt bound the widest such gap. Nothing else on the wire declares it.
+// ChartSeries is the data shape of [Client.Chart], with points shaped like [HistoryPoint]; Truncated reports the timeframe predates the earliest data (DataStartsAt + RequestedFrom set), and Discontinuous reports a mid-series hole bounded by GapStartsAt + GapEndsAt.
 type ChartSeries struct {
 	AssetID string `json:"asset_id"`
 	Quote   string `json:"quote"`
@@ -1370,11 +1189,7 @@ type ChartSeries struct {
 	DataEndsAt      *time.Time `json:"data_ends_at,omitempty"`
 }
 
-// ChangeSummary is the data shape returned by [Client.ChangeSummary]
-// — per-entity multi-window delta rollup. The *_value fields are money
-// (a price / market-cap snapshot) and are JSON STRINGS end to end,
-// matching every other money field the API serves; the
-// *_delta_pct fields are percentages and stay numbers.
+// ChangeSummary is the data shape of [Client.ChangeSummary], a per-entity multi-window delta rollup; *_value fields are money and JSON STRINGS, while *_delta_pct fields are percentages and stay numbers.
 type ChangeSummary struct {
 	EntityType   string `json:"entity_type"`
 	EntityID     string `json:"entity_id"`
@@ -1400,12 +1215,7 @@ type ChangeSummary struct {
 	Acceleration    string `json:"acceleration,omitempty"`
 }
 
-// NetworkStats is the data shape returned by [Client.NetworkStats] —
-// the home-page aggregate snapshot the explorer renders in its
-// network strip. One round trip replaces fan-out across coins +
-// markets + sources + diagnostics. Volume24hUSD is a *string per
-// ADR-0003 (raw cents can exceed int64); nil when the rolling 24h
-// window has no USD-equivalent trades.
+// NetworkStats is the data shape of [Client.NetworkStats], the home-page aggregate snapshot; Volume24hUSD is a *string per ADR-0003, nil when the 24h window has no USD-equivalent trades.
 type NetworkStats struct {
 	Volume24hUSD    *string `json:"volume_24h_usd,omitempty"`
 	MarketsCount24h int64   `json:"markets_count_24h"`
@@ -1415,12 +1225,7 @@ type NetworkStats struct {
 	TotalSources    int     `json:"total_sources"`
 }
 
-// Incident is one customer-facing incident post returned by
-// [Client.Incidents]. Mirrors the wire shape served at
-// `/v1/incidents`; the SDK can't import the internal incidents
-// package directly. Severity is "SEV-1" / "SEV-2" / "SEV-3" /
-// "SEV-4"; Status is "investigating" / "identified" / "monitoring"
-// / "resolved". BodyMarkdown is the full Markdown post body.
+// Incident is one customer-facing incident post from [Client.Incidents]; Severity is SEV-1..SEV-4, Status is investigating/identified/monitoring/resolved, and BodyMarkdown is the full post.
 type Incident struct {
 	Slug               string     `json:"slug"`
 	Title              string     `json:"title"`
@@ -1433,8 +1238,7 @@ type Incident struct {
 	BodyMarkdown       string     `json:"body_markdown"`
 }
 
-// IncidentsList wraps the [Client.Incidents] response. Sorted
-// most-recent-first (started_at desc) by the API.
+// IncidentsList wraps the [Client.Incidents] response, sorted started_at descending.
 type IncidentsList struct {
 	Incidents []Incident `json:"incidents"`
 	Count     int        `json:"count"`
@@ -1444,12 +1248,7 @@ type IncidentsList struct {
 // removed — `/v1/currencies` HTTP surface retired (no production
 // consumers). Use AssetDetail from `/v1/assets` instead.
 
-// LendingPool is one row from [Client.LendingPools] — a Blend pool
-// contract observed in the trailing 7d auction stream. Auction +
-// user counts are derived from the trades hypertable; per-pool
-// TVL / utilisation / supply+borrow APYs land via additional
-// fields once the pool-storage reader worker ships, so this
-// shape is designed to grow rather than version-bump.
+// LendingPool is one Blend pool from [Client.LendingPools] observed in the trailing 7d auction stream; the shape is designed to grow with new fields.
 type LendingPool struct {
 	Protocol       string    `json:"protocol"`
 	Pool           string    `json:"pool"`
@@ -1468,20 +1267,7 @@ type LendingPool struct {
 	Utilization30dPct *float64 `json:"utilization_30d_pct,omitempty"`
 }
 
-// VWAPResult is the data shape returned by [Client.VWAP] —
-// volume-weighted average price over the requested [from, to)
-// window. Mirrors `internal/api/v1.VWAPResult`.
-//
-// Truncated is true when the window had MORE than the server's
-// max-trades cap (10000 today) — the server drops the OLDEST trades,
-// so Price reflects only the newest 10000 and is NOT the true window
-// VWAP. Clients should narrow the window and retry. For fixed
-// cross-region-consistent VWAPs use [Client.Price] (closed-bucket
-// per ADR-0015) instead.
-//
-// Volumes are smallest-unit integers at the per-SOURCE scale of the
-// window's venues; render asset units as BaseVolume /
-// 10^BaseVolumeDecimals, never a hardcoded 1e7.
+// VWAPResult is the data shape of [Client.VWAP]; Truncated means the window exceeded the server's 10000-trade cap, the OLDEST trades were dropped and Price is NOT the true window VWAP, and volumes are smallest-unit integers at a per-SOURCE scale (divide by 10^BaseVolumeDecimals).
 type VWAPResult struct {
 	From        time.Time `json:"from"`
 	To          time.Time `json:"to"`
@@ -1530,11 +1316,7 @@ type VWAPSourceBreakdown struct {
 	OutliersExcluded int     `json:"outliers_excluded"`
 }
 
-// TWAPResult is the data shape returned by [Client.TWAP] —
-// time-weighted average price over the requested [from, to)
-// window. Mirrors `internal/api/v1.TWAPResult`. TradeCount counts the
-// trades that carried weight; OutliersFiltered counts the trades the
-// server's default outlier filter removed.
+// TWAPResult is the data shape of [Client.TWAP]; TradeCount counts trades that carried weight and OutliersFiltered those the default outlier filter removed.
 type TWAPResult struct {
 	From             time.Time `json:"from"`
 	To               time.Time `json:"to"`
@@ -1548,13 +1330,7 @@ type TWAPResult struct {
 	Substance *SubstanceEvidence `json:"substance,omitempty"`
 }
 
-// Pool is one row from [Client.Pools] — a single (source, base,
-// quote) tuple from the DEX/AMM listing. Distinct from [Market]
-// (which collapses across sources): the same physical pair traded
-// on two DEXes returns ONE Market row but TWO Pool rows.
-//
-// LastPrice is per-source so two venues trading the same pair
-// surface independent prices.
+// Pool is one (source, base, quote) row from [Client.Pools], unlike [Market] which collapses across sources; LastPrice is per-source.
 type Pool struct {
 	Source        string    `json:"source"`
 	Base          string    `json:"base"`
@@ -1567,10 +1343,7 @@ type Pool struct {
 	LastPrice        *string `json:"last_price,omitempty"`
 }
 
-// GlobalAssetView is one branch of [AssetLookup], the wire shape
-// [Client.Asset] resolves to when called with a verified-currency
-// slug ("usdc", "eurc", "aqua"). Distinct from [AssetDetail] which
-// is the per-Stellar-asset view returned for canonical asset_ids.
+// GlobalAssetView is the [AssetLookup] branch [Client.Asset] returns for a verified-currency slug, distinct from the per-asset [AssetDetail].
 type GlobalAssetView struct {
 	// Kind is the wire-shape discriminator for the /v1/assets/{asset_id}
 	// oneOf (ADR-0042). Always "catalogue" on this struct.
@@ -1608,8 +1381,7 @@ type GlobalAssetView struct {
 	MarketCapLowLiquidity bool `json:"market_cap_low_liquidity,omitempty"`
 }
 
-// AssetGlobalMarket is a vetted same-asset token's global-market USD
-// price and the signed percentage its Stellar price diverges from it.
+// AssetGlobalMarket is a vetted same-asset token's global-market USD price and the signed percentage its Stellar price diverges from it.
 type AssetGlobalMarket struct {
 	Asset                string    `json:"asset"`
 	PriceUSD             string    `json:"price_usd"`
@@ -1622,9 +1394,7 @@ type AssetGlobalMarket struct {
 	IssuerSignals []string `json:"issuer_signals,omitempty"`
 }
 
-// AssetIssuerBehaviour is what a classic asset's issuer can do to holders
-// (live account flags) and has done to supply. Totals are integer strings
-// in the asset's smallest unit.
+// AssetIssuerBehaviour is what a classic asset's issuer can do to holders (live account flags) and has done to supply; totals are integer strings in the asset's smallest unit.
 type AssetIssuerBehaviour struct {
 	AuthRequired        *bool   `json:"auth_required,omitempty"`
 	AuthRevocable       *bool   `json:"auth_revocable,omitempty"`
@@ -1637,17 +1407,7 @@ type AssetIssuerBehaviour struct {
 	SupplyFlowCount     *uint64 `json:"supply_flow_count,omitempty"`
 }
 
-// AssetListingReference is an independent listing platform's own USD
-// price for the EXACT Stellar address this asset lives at. It is NOT
-// this index's price for the asset and is derived from no Stellar
-// market: PriceUSD sits beside it unchanged when there is one.
-//
-// Present only on a verified-catalogue asset whose market cap this index
-// declines to publish, and only when the cached listing directory names
-// either the classic `CODE-GISSUER` id or the Stellar Asset Contract
-// address derived from that (code, issuer) and the network passphrase.
-// No code is ever matched — PYUSD, USDT, USDC and XLM are each worn by
-// impersonators on this network.
+// AssetListingReference is a listing platform's own USD price for the EXACT Stellar address of this asset, NOT this index's price, matched by classic id or derived SAC address and never by code alone.
 type AssetListingReference struct {
 	PriceUSD  string `json:"price_usd"`
 	Source    string `json:"source"`
@@ -1668,12 +1428,7 @@ type AssetListingReference struct {
 	Provenance string `json:"provenance"`
 }
 
-// AssetListingValuation is the asset's circulating supply valued at the
-// listing platform's price — and NOT a market capitalisation. MarketCap
-// is a price somebody was observed paying past the substance,
-// dust-liquidity and scam gates; this is supply times a figure a third
-// party published about venues this index does not observe. Never sum
-// the two without saying the total mixes two bases.
+// AssetListingValuation is circulating supply valued at a third party's listing price, NOT a market cap; never sum it with MarketCap without saying the total mixes two bases.
 type AssetListingValuation struct {
 	// Status is the single authority on why there is or is not a figure.
 	// "listing_unavailable" means nobody looked; "not_listed" means the
@@ -1691,9 +1446,7 @@ type AssetListingValuation struct {
 	SupplyBasis string `json:"supply_basis,omitempty"`
 }
 
-// AssetTrust is the output-only trust score on [AssetDetail]. A factor
-// with no evidence is "unknown" with nil Points and is excluded from
-// Score; Score is nil when no factor has evidence.
+// AssetTrust is the output-only trust score on [AssetDetail]; a factor with no evidence is "unknown" with nil Points and is excluded from Score, which is nil when no factor has evidence.
 type AssetTrust struct {
 	FormulaVersion int           `json:"formula_version"`
 	Score          *int          `json:"score"`
@@ -1712,11 +1465,7 @@ type TrustFactor struct {
 	Observed string `json:"observed"`
 }
 
-// VerifiedCurrencyListItem is one row in the response to
-// `GET /v1/assets/verified` (no Client method yet) — a directory
-// entry from the verified-currency catalogue. Identity-only;
-// pricing requires a per-row fetch via [Client.Asset] with the
-// `Slug` value.
+// VerifiedCurrencyListItem is one identity-only row of `GET /v1/assets/verified` (no Client method yet); pricing needs [Client.Asset] with its Slug.
 type VerifiedCurrencyListItem struct {
 	Ticker string `json:"ticker"`
 	Slug   string `json:"slug"`
@@ -1738,8 +1487,7 @@ type VerifiedCurrencyListItem struct {
 	MarketCapUSD string `json:"market_cap_usd,omitempty"`
 }
 
-// PricePoint is one sparkline sample in [AssetDetail]'s
-// price_history_24h / price_history_7d arrays.
+// PricePoint is one sparkline sample in [AssetDetail]'s price_history_24h / price_history_7d arrays.
 type PricePoint struct {
 	T time.Time `json:"t"`
 	P *string   `json:"p,omitempty"`
@@ -1759,8 +1507,7 @@ type AssetTopMarket struct {
 	TradeCount24h int     `json:"trade_count_24h"`
 }
 
-// AccountUser is the magic-link session caller's user info on
-// [Account].User.
+// AccountUser is the magic-link session caller's user info on [Account].User.
 type AccountUser struct {
 	ID              string     `json:"id"`
 	Email           string     `json:"email"`
@@ -1771,8 +1518,7 @@ type AccountUser struct {
 	LastLoginAt     *time.Time `json:"last_login_at,omitempty"`
 }
 
-// AccountOrg is the session caller's parent account on
-// [Account].AccountInfo.
+// AccountOrg is the session caller's parent account on [Account].AccountInfo.
 type AccountOrg struct {
 	ID     string `json:"id"`
 	Name   string `json:"name,omitempty"`
@@ -1787,13 +1533,7 @@ type AccountOrg struct {
 
 // ─── RWA value over time (/v1/rwa/history) ──────────────────────────
 
-// RWAHistoryView is the /v1/rwa/history payload: the RWA set valued
-// daily on the reference basis, plus the account of which members the
-// series could not value.
-//
-// Assets and Issuers size the WHOLE set; Members is how many of those
-// contribute to the series. Every point's AssetsUnvalued is counted
-// against Assets, so a point states its coverage of the sector.
+// RWAHistoryView is the /v1/rwa/history payload: the RWA set valued daily on the reference basis; Assets sizes the WHOLE set, Members is the subset in the series, and each point's AssetsUnvalued is counted against Assets.
 type RWAHistoryView struct {
 	Basis       string `json:"basis"`
 	Granularity string `json:"granularity"`
@@ -1829,9 +1569,7 @@ type RWAHistoryPoint struct {
 	LowerBound bool `json:"lower_bound"`
 }
 
-// RWAHistoryGroup is one decomposition of the total series. Feed and
-// Source are populated only on an asset group; an issuer group may span
-// several of each.
+// RWAHistoryGroup is one decomposition of the total series; Feed and Source are set only on an asset group, as an issuer group may span several.
 type RWAHistoryGroup struct {
 	Key     string            `json:"key"`
 	Label   string            `json:"label,omitempty"`
@@ -1843,9 +1581,7 @@ type RWAHistoryGroup struct {
 	Points  []RWAHistoryPoint `json:"points"`
 }
 
-// RWAHistoryExcluded is one reason a set member is absent from a
-// series, with how many members it accounts for. Shared by
-// /v1/rwa/history and /v1/rwa/premium.
+// RWAHistoryExcluded is one reason a set member is absent from a series, with how many members it accounts for; shared by /v1/rwa/history and /v1/rwa/premium.
 type RWAHistoryExcluded struct {
 	Reason string `json:"reason"`
 	Assets int    `json:"assets"`
@@ -1854,18 +1590,7 @@ type RWAHistoryExcluded struct {
 
 // ─── RWA premium to NAV over time (/v1/rwa/premium) ─────────────────
 
-// RWAPremiumHistoryView is the /v1/rwa/premium payload: each comparable
-// token's own observed dollar price measured daily against what an
-// independent oracle published for the instrument it anchors to.
-//
-// NEITHER LEG IS EVER CARRIED. Both are sampled observations — a day
-// with no trade is a day nobody transacted, and a day the oracle was
-// silent is a day nobody stated a value — so a point exists only where
-// both were observed on the SAME day. Every other day is absent.
-//
-// There is no total series: a premium is a percentage of a different
-// denominator for every member, so the set has no sum. Read Coverage
-// for the per-day account of how much of the set could be compared.
+// RWAPremiumHistoryView is the /v1/rwa/premium payload: neither leg is ever carried forward, so a point exists only on a day both price and oracle value were observed, and there is no total series (read Coverage).
 type RWAPremiumHistoryView struct {
 	Basis       string `json:"basis"`
 	Granularity string `json:"granularity"`
@@ -1911,9 +1636,7 @@ type RWAPremiumSeries struct {
 	ReferenceOnlyDays int `json:"reference_only_days,omitempty"`
 }
 
-// RWAPremiumHistoryPoint is one day of one member's premium. Both
-// prices travel beside the ratio: a reader who sees only the quotient
-// cannot tell which side moved.
+// RWAPremiumHistoryPoint is one day of one member's premium; both prices travel beside the ratio so a reader can tell which side moved.
 type RWAPremiumHistoryPoint struct {
 	T time.Time `json:"t"`
 	// PremiumPct is (market − reference) / reference × 100 as a SIGNED
@@ -1927,8 +1650,7 @@ type RWAPremiumHistoryPoint struct {
 	Trades    int64  `json:"trades"`
 }
 
-// RWAPremiumCoveragePoint is one day's account of how much of the whole
-// set could be compared. AssetsMeasured + AssetsUnmeasured is Assets.
+// RWAPremiumCoveragePoint is one day's account of how much of the set could be compared; AssetsMeasured + AssetsUnmeasured is Assets.
 type RWAPremiumCoveragePoint struct {
 	T                time.Time `json:"t"`
 	AssetsMeasured   int       `json:"assets_measured"`
@@ -1937,13 +1659,7 @@ type RWAPremiumCoveragePoint struct {
 
 // ─── Tokenized real-world assets (/v1/rwa/assets) ───────────────────
 
-// RWAAssetsView is the /v1/rwa/assets payload: the tokenized
-// real-world-asset set, its aggregates, and the rule that produced it.
-//
-// Membership is decided from identity and attestation only, so no
-// valuation moves an asset in or out. Every money field is a decimal
-// string (ADR-0003) and is ABSENT rather than zero when withheld or
-// unavailable — read Valuation.Status before reading a number.
+// RWAAssetsView is the /v1/rwa/assets payload; membership is decided from identity and attestation only, and every money field is a decimal string (ADR-0003) that is ABSENT, not zero, when withheld (read Valuation.Status first).
 type RWAAssetsView struct {
 	Definition RWADefinition `json:"definition"`
 	Summary    RWASummary    `json:"summary"`
@@ -1985,8 +1701,7 @@ type RWAAssetsView struct {
 	Curated *RWACuratedSummary `json:"curated,omitempty"`
 }
 
-// RWACurator names the third party whose word placed a curated row on
-// the list, and whether the same token is also in the verified set.
+// RWACurator names the third party whose word placed a curated row on the list, and whether the same token is also in the verified set.
 type RWACurator struct {
 	Curator      string `json:"curator"`
 	Company      string `json:"company,omitempty"`
@@ -1994,13 +1709,7 @@ type RWACurator struct {
 	AlsoVerified bool   `json:"also_verified"`
 }
 
-// RWACuratedCensus counts the curator's cached list as this index holds
-// it: entries recognised, entries carrying a price, entries whose price
-// is past the freshness bound, and when the curator last stamped it.
-//
-// Entries = Contracts + Classic. Only contract rows are served, so
-// Classic counts the part of the curator's list left out; Priced counts
-// contract rows and PricedClassic classic rows.
+// RWACuratedCensus counts the curator's cached list: recognised, priced and stale-priced entries plus its last stamp; Entries = Contracts + Classic and only contract rows are served.
 type RWACuratedCensus struct {
 	Entries       int        `json:"entries"`
 	Contracts     int        `json:"contracts"`
@@ -2011,32 +1720,19 @@ type RWACuratedCensus struct {
 	ObservedAt    *time.Time `json:"observed_at,omitempty"`
 }
 
-// RWACuratedPublishedSplit is one line of the curator's own subclass
-// split for the published month, in the curator's vocabulary.
+// RWACuratedPublishedSplit is one line of the curator's own subclass split for the published month, in the curator's vocabulary.
 type RWACuratedPublishedSplit struct {
 	Subclass string `json:"subclass"`
 	ValueUSD string `json:"value_usd"`
 }
 
-// RWACuratedPublishedPoint is one month of the curator's published
-// total series; MonthEnd is the month's last day, YYYY-MM-DD.
+// RWACuratedPublishedPoint is one month of the curator's published total series; MonthEnd is YYYY-MM-DD.
 type RWACuratedPublishedPoint struct {
 	MonthEnd string `json:"month_end"`
 	ValueUSD string `json:"value_usd"`
 }
 
-// RWACuratedPublished is what the curator publishes about its own list:
-// the latest monthly RWA market-cap total its public queries computed
-// (TotalUSD, for the month ending AsOf, last run at ExecutedAt), that
-// month's split by the curator's subclass labels, the full monthly
-// series, and the queries it was read from. GapVsVerifiedUSD is
-// TotalUSD minus the verified reference total, signed, and is nil when
-// the verified set publishes no reference total. The curator's
-// arithmetic over inputs this index cannot read; nothing in it is
-// verified here. Stale is true when ExecutedAt is more than 48h old;
-// past 7 days the server omits the block entirely. The split is a
-// separate query execution: BySubclassExecutedAt is its own run time,
-// and a split older than 7 days is withheld (empty, nil timestamp).
+// RWACuratedPublished is the curator's own unverified monthly total and split; Stale is true past 48h, the server omits the block past 7 days, and GapVsVerifiedUSD is nil when no verified reference total exists.
 type RWACuratedPublished struct {
 	TotalUSD             string                     `json:"total_usd"`
 	AsOf                 string                     `json:"as_of"`
@@ -2049,17 +1745,7 @@ type RWACuratedPublished struct {
 	GapVsVerifiedUSD     *string                    `json:"gap_vs_verified_usd,omitempty"`
 }
 
-// RWACuratedSummary is the curated arm's headline. Status is "served"
-// (the curator's per-asset rows are in CuratedAssets),
-// "published_totals" (no per-asset row is readable — the curator's list
-// is private — and Published carries what it publishes), "unavailable"
-// (a curator is wired but nothing of its is inside its recognition
-// bound, OR the curated snapshot answered but the contract-catalogue
-// read behind the per-asset rows did not), or "unwired". The three
-// value figures are decimal strings in
-// USD; AdditionalValueUSD counts only rows NOT in the verified set, so
-// CombinedValueUSD = VerifiedValueUSD + AdditionalValueUSD without
-// double counting a token both sides recognise.
+// RWACuratedSummary is the curated arm's headline; Status is "served", "published_totals", "unavailable" or "unwired", and AdditionalValueUSD counts only rows NOT in the verified set so CombinedValueUSD never double counts.
 type RWACuratedSummary struct {
 	Curator            string               `json:"curator"`
 	Status             string               `json:"status"`
@@ -2074,8 +1760,7 @@ type RWACuratedSummary struct {
 	Basis              string               `json:"basis"`
 }
 
-// RWAUnreachedEntity is one recognised issuing entity the index holds
-// no token for. The labels are the curated third party's own.
+// RWAUnreachedEntity is one recognised issuing entity the index holds no token for; the labels are the curated third party's own.
 type RWAUnreachedEntity struct {
 	Address string   `json:"address"`
 	Name    string   `json:"name,omitempty"`
@@ -2083,15 +1768,7 @@ type RWAUnreachedEntity struct {
 	Tags    []string `json:"tags,omitempty"`
 }
 
-// RWAFunnel is the complete narrowing behind the served set, from every
-// issuer account that could carry a SEP-1 attestation down to the rows
-// in Assets.
-//
-// A small served set and a pipeline discarding candidates in silence
-// look identical from outside; this is how a consumer tells them apart
-// without a database. Each stage's Dropped counts account exactly for
-// the difference to the next stage of the same Unit, and Balanced says
-// whether that reconciliation held.
+// RWAFunnel is the full narrowing from issuer accounts to the served set; each stage's Dropped counts reconcile exactly to the next stage of the same Unit, and Balanced says whether that held.
 type RWAFunnel struct {
 	Stages   []RWAFunnelStage `json:"stages"`
 	Balanced bool             `json:"balanced"`
@@ -2105,43 +1782,14 @@ type RWAFunnel struct {
 	ListingDirectory *RWAListingDirectory `json:"listing_directory,omitempty"`
 }
 
-// RWAMembershipSet dates the set a /v1/rwa/assets response describes.
-//
-// BuiltAt is when the rebuild that produced the set FINISHED — not when
-// the response was rendered. The envelope's AsOf is the response's own
-// instant and moves between requests; reading it as the set's build
-// time says the set is refreshing continuously when it is not.
-//
-// The cache deliberately serves a lapsed set while a detached rebuild
-// runs behind it, so Stale alone is expected and transient:
-//
-//	Stale false                        inside its lifetime
-//	Stale true, RebuildFailedAt nil    lapsed, a rebuild is coming
-//	Stale true, RebuildFailedAt set    lapsed, and the last attempt to
-//	                                   replace it FAILED — act on this
+// RWAMembershipSet dates the served set: BuiltAt is when the rebuild FINISHED (not the envelope's AsOf), Stale alone is transient, and Stale with RebuildFailedAt set means the last rebuild FAILED.
 type RWAMembershipSet struct {
 	BuiltAt         time.Time  `json:"built_at"`
 	Stale           bool       `json:"stale"`
 	RebuildFailedAt *time.Time `json:"rebuild_failed_at,omitempty"`
 }
 
-// RWAListingDirectory is what the independent listing directory held at
-// the moment the served set was built, published so a closed "listing"
-// arm can be told apart from a stopped sync without a database:
-//
-// Entries counts the FRESH rows only (Entries = Contracts + Classic),
-// with Stale beside them and never inside them, so the two zero cases
-// are told apart by Stale:
-//
-//	Entries == 0 && Stale == 0     never synced: the table is empty
-//	Entries == 0 && Stale > 0      every row aged out: the sync stopped
-//	Entries > 0 && Contracts == 0  healthy, but it names no Stellar
-//	                               contract address — nothing to consult
-//	Entries > 0 && Contracts > 0   healthy and populated
-//
-// Compare ObservedAt against the sync's own clock: a sync completing after it
-// means the set in hand predates those rows; the next rebuild carries them.
-// ObservedAt is when THIS INDEX read the directory, not when it was synced.
+// RWAListingDirectory is what the listing directory held when the set was built; Entries counts FRESH rows only, so Entries == 0 with Stale > 0 means the sync stopped, and ObservedAt is when this index read it.
 type RWAListingDirectory struct {
 	ObservedAt time.Time `json:"observed_at"`
 	Entries    int       `json:"entries"`
@@ -2149,15 +1797,7 @@ type RWAListingDirectory struct {
 	Stale      int       `json:"stale"`
 }
 
-// RWAFunnelStage is one population on the way to the served set. Unit
-// changes down the funnel (issuer accounts, then the SEP-1
-// declarations they publish, then assets), so two counts are
-// comparable only when their Units match.
-//
-// Arm is "classic" (the SEP-1 attestation walk) or "contract" (the
-// curated directory walk). The two arms narrow different populations
-// from different roots and meet only at the served set, so the
-// arithmetic reconciles WITHIN an arm and never across the boundary.
+// RWAFunnelStage is one population on the way to the served set; counts compare only when Units match, and Arm ("classic" or "contract") reconciles within an arm, never across.
 type RWAFunnelStage struct {
 	Arm     string          `json:"arm"`
 	Stage   string          `json:"stage"`
@@ -2166,20 +1806,14 @@ type RWAFunnelStage struct {
 	Dropped []RWAFunnelDrop `json:"dropped,omitempty"`
 }
 
-// RWAFunnelDrop is one counted reason a population shrank. Actor names
-// who can move the number: "operator", "issuer", or "definition" for a
-// drop that is the membership rule working as intended.
+// RWAFunnelDrop is one counted reason a population shrank; Actor is "operator", "issuer", or "definition" for the membership rule working as intended.
 type RWAFunnelDrop struct {
 	Reason string `json:"reason"`
 	Count  int    `json:"count"`
 	Actor  string `json:"actor"`
 }
 
-// RWADefinition is the membership rule as applied to the response.
-//
-// Two arms, because an asset qualifies under one or the other and never
-// both: Requirements for a classic (code, issuer) asset,
-// ContractRequirements for a contract-issued token.
+// RWADefinition is the membership rule applied: Requirements for a classic (code, issuer) asset, ContractRequirements for a contract-issued token, never both.
 type RWADefinition struct {
 	Requirements         []string `json:"requirements"`
 	ContractRequirements []string `json:"contract_requirements"`
@@ -2206,24 +1840,21 @@ type RWADefinition struct {
 	DocumentationURL         string                       `json:"documentation_url"`
 }
 
-// RWABoundInstrument binds one exact classic (code, issuer) pair to
-// the oracle feed its reference is read from.
+// RWABoundInstrument binds one exact classic (code, issuer) pair to the oracle feed its reference is read from.
 type RWABoundInstrument struct {
 	Code   string `json:"code"`
 	Issuer string `json:"issuer"`
 	Feed   string `json:"feed"`
 }
 
-// RWABoundContractInstrument binds one exact contract address to the
-// real-world instrument it holds and that instrument's class.
+// RWABoundContractInstrument binds one exact contract address to the real-world instrument it holds and that instrument's class.
 type RWABoundContractInstrument struct {
 	ContractID string `json:"contract_id"`
 	Instrument string `json:"instrument"`
 	Class      string `json:"class"`
 }
 
-// RWASummary aggregates the served set. MarketCapUSD is nil when no
-// asset in the set publishes one — never "0.00".
+// RWASummary aggregates the served set; MarketCapUSD is nil when no asset publishes one, never "0.00".
 type RWASummary struct {
 	Assets                  int     `json:"assets"`
 	Issuers                 int     `json:"issuers"`
@@ -2250,13 +1881,7 @@ type RWASummary struct {
 	Truncated bool         `json:"truncated,omitempty"`
 }
 
-// RWAReferenceSummary aggregates the reference-priced basis: supply
-// times what an oracle says the underlying instrument is worth.
-//
-// Not a market capitalisation. Nobody was observed paying it, and the
-// substance, dust-liquidity and scam-issuer gates behind MarketCapUSD
-// cannot corroborate it — there is no market in it for them to measure.
-// ValueUSD is nil when no member is reference-valued, never "0.00".
+// RWAReferenceSummary aggregates the reference-priced basis (supply times an oracle value), NOT a market cap; ValueUSD is nil when no member is reference-valued, never "0.00".
 type RWAReferenceSummary struct {
 	ValueUSD       *string `json:"value_usd,omitempty"`
 	AssetsValued   int     `json:"assets_valued"`
@@ -2271,16 +1896,14 @@ type RWAReferenceSummary struct {
 	Basis       string   `json:"basis"`
 }
 
-// RWABothBases totals the members carrying a market cap AND a reference
-// valuation — the only subset on which the two bases compare.
+// RWABothBases totals the members carrying a market cap AND a reference valuation, the only subset on which the two bases compare.
 type RWABothBases struct {
 	Assets            int     `json:"assets"`
 	MarketCapUSD      *string `json:"market_cap_usd,omitempty"`
 	ReferenceValueUSD *string `json:"reference_value_usd,omitempty"`
 }
 
-// RWAValuation carries a row valuation or the reason there is none.
-// The money fields are populated only when Status is "published".
+// RWAValuation carries a row valuation or the reason there is none; money fields are populated only when Status is "published".
 type RWAValuation struct {
 	Status   string  `json:"status"`
 	PriceUSD *string `json:"price_usd,omitempty"`
@@ -2290,28 +1913,13 @@ type RWAValuation struct {
 	MarketCapUSD *string `json:"market_cap_usd,omitempty"`
 }
 
-// RWAReferenceValuation is the row's circulating supply valued at the
-// REFERENCE price — an oracle's published value for the real-world
-// instrument — rather than at anything the market was observed paying.
-//
-// The deliberate opposite of RWAValuation.MarketCapUSD, and never
-// folded into it. A market cap is an observation that survived three
-// gates; this is a claim about the value of the backing. ValueUSD is
-// populated if and only if Status is "published", and a published
-// figure always has an RWAAsset.Reference beside it naming the feed,
-// the denominator and the vintage it came from.
-//
-// Where a rule refuses the REFERENCE itself, Status carries the same
-// string as RWAPremium.Status on that row.
+// RWAReferenceValuation is supply valued at the oracle REFERENCE price, never folded into MarketCapUSD; ValueUSD is set if and only if Status is "published", beside an RWAAsset.Reference naming its provenance.
 type RWAReferenceValuation struct {
 	Status   string  `json:"status"`
 	ValueUSD *string `json:"value_usd,omitempty"`
 }
 
-// RWAReference is an independent oracle's valuation of the real-world
-// instrument an admitted token declares it anchors to — NOT this
-// platform's price for the token, and not derived from any Stellar
-// market. It is the provenance behind RWAReferenceValuation.
+// RWAReference is an independent oracle's valuation of the instrument a token anchors to, NOT this platform's price for the token; it is the provenance behind RWAReferenceValuation.
 type RWAReference struct {
 	// PriceUSD is the oracle's published value, verbatim at the feed's
 	// own decimal scale.
@@ -2343,18 +1951,13 @@ type RWAReference struct {
 	NAVDisagreement bool `json:"nav_disagreement,omitempty"`
 }
 
-// RWAPremium is the token's market price measured against the oracle's
-// valuation of the instrument, or the reason there is no such figure.
-// Pct is nil whenever Status is not "published" — never zero-filled,
-// because par is a finding and an absent comparison is not that
-// finding.
+// RWAPremium is the token's market price against the oracle's instrument valuation, or the reason there is none; Pct is nil unless Status is "published", never zero-filled.
 type RWAPremium struct {
 	Status string  `json:"status"`
 	Pct    *string `json:"pct,omitempty"`
 }
 
-// RWAISINCollision reports one ISIN declared in anchor_asset by several
-// issuer accounts. A declared ISIN is a claim, not proof of holding it.
+// RWAISINCollision reports one ISIN declared in anchor_asset by several issuer accounts; a declared ISIN is a claim, not proof of holding it.
 type RWAISINCollision struct {
 	// ISIN is the declared identifier in canonical upper-case form.
 	ISIN string `json:"isin"`
@@ -2363,8 +1966,7 @@ type RWAISINCollision struct {
 	DeclaredByIssuers int `json:"declared_by_issuers"`
 }
 
-// RWAAsset is one member of the set, with the evidence that admitted
-// it. Identity is (Code, Issuer); Code alone identifies nothing.
+// RWAAsset is one member of the set with the evidence that admitted it; identity is (Code, Issuer), as Code alone identifies nothing.
 type RWAAsset struct {
 	AssetID string `json:"asset_id"`
 	// Code and Issuer are the classic identity. BOTH are empty on a
@@ -2440,8 +2042,7 @@ type RWAGroupTotal struct {
 	Note string `json:"note,omitempty"`
 }
 
-// RWAIssuerTotal is one row of the per-issuer breakdown, keyed on the
-// G-address rather than on a company name.
+// RWAIssuerTotal is one row of the per-issuer breakdown, keyed on the G-address rather than a company name.
 type RWAIssuerTotal struct {
 	Issuer                  string  `json:"issuer"`
 	Name                    string  `json:"name,omitempty"`
@@ -2453,8 +2054,7 @@ type RWAIssuerTotal struct {
 	AssetsReferenceUnvalued int     `json:"assets_reference_unvalued"`
 }
 
-// RWARefusal counts the candidates one membership requirement turned
-// away.
+// RWARefusal counts the candidates one membership requirement turned away.
 type RWARefusal struct {
 	Reason string `json:"reason"`
 	Assets int    `json:"assets"`

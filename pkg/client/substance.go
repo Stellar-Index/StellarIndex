@@ -2,8 +2,7 @@ package client
 
 import "time"
 
-// SubstanceEvidence is the trailing substance measurement behind a
-// thin-market verdict. Volumes are decimal strings.
+// SubstanceEvidence is the trailing substance measurement behind a thin-market verdict; volumes are decimal strings.
 type SubstanceEvidence struct {
 	Base          string         `json:"base"`
 	Quote         string         `json:"quote"`

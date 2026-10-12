@@ -18,8 +18,7 @@ const liveTailRetryWait = 500 * time.Millisecond
 // The SDK's RetryLimit=5 with 500ms RetryWait alone tolerates only 2.5s, so a MinIO restart would park the indexer in `failed`; 5m covers one. See ledgerstream.Config.LiveRetryBudget.
 const liveTailRetryBudget = 5 * time.Minute
 
-// LedgerstreamConfig builds a ledgerstream.Config for one galexie bucket: S3BucketArchive for history, S3BucketLive for the live tail.
-// Only S3/MinIO is wired. With cold tiering enabled (ADR-0027), the archive bucket alone also gets a ColdDataStore; the live bucket never does.
+// LedgerstreamConfig builds a ledgerstream.Config for one galexie bucket (archive for history, live for the tail); only S3/MinIO is wired, and with cold tiering (ADR-0027) only the archive bucket gets a ColdDataStore.
 func LedgerstreamConfig(cfg config.Config, bucket string) ledgerstream.Config {
 	out := ledgerstream.Config{
 		DataStore: datastore.DataStoreConfig{

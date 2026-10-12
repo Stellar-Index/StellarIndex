@@ -9,16 +9,13 @@ import (
 	"time"
 )
 
-// PriceQuery selects the asset / quote pair for a [Client.Price]
-// call. Asset is required; Quote defaults to "fiat:USD" server-side
-// when empty.
+// PriceQuery selects the asset / quote pair for [Client.Price]; Asset is required and Quote defaults to "fiat:USD" server-side when empty.
 type PriceQuery struct {
 	Asset string
 	Quote string // optional; server defaults to fiat:USD
 }
 
-// Price fetches the current closed-bucket VWAP for asset/quote.
-// Cross-region consistent per ADR-0015.
+// Price fetches the current closed-bucket VWAP for asset/quote, cross-region consistent per ADR-0015.
 func (c *Client) Price(ctx context.Context, q PriceQuery) (*Envelope[PriceSnapshot], error) {
 	if q.Asset == "" {
 		return nil, &APIError{Status: 400, Title: "asset required"}
@@ -35,19 +32,14 @@ func (c *Client) Price(ctx context.Context, q PriceQuery) (*Envelope[PriceSnapsh
 	return &env, nil
 }
 
-// PriceAtQuery parameterises Client.PriceAt. TS is required and
-// must be a past instant.
+// PriceAtQuery parameterises Client.PriceAt; TS is required and must be a past instant.
 type PriceAtQuery struct {
 	Asset string
 	Quote string    // optional; server defaults to fiat:USD
 	TS    time.Time // required; historical instant
 }
 
-// PriceAt fetches the point-in-time price: the closed 1-minute VWAP
-// bucket at-or-before TS (cost-basis / PnL / tax lookups). The
-// response's ObservedAt is the BUCKET's close time — read it to see
-// how far the nearest observation was; a nearest bucket more than
-// 24h before TS is a 404 rather than a fabricated continuity.
+// PriceAt fetches the closed 1-minute VWAP bucket at-or-before TS; ObservedAt is the BUCKET's close time, and a nearest bucket more than 24h before TS is a 404 rather than a fabricated continuity.
 func (c *Client) PriceAt(ctx context.Context, q PriceAtQuery) (*Envelope[PriceSnapshot], error) {
 	if q.Asset == "" {
 		return nil, &APIError{Status: 400, Title: "asset required"}
@@ -68,18 +60,13 @@ func (c *Client) PriceAt(ctx context.Context, q PriceAtQuery) (*Envelope[PriceSn
 	return &env, nil
 }
 
-// PriceChangesQuery parameterises [Client.PriceChanges]. Asset is
-// required; Quote defaults to fiat:USD server-side.
+// PriceChangesQuery parameterises [Client.PriceChanges]; Asset is required and Quote defaults to fiat:USD server-side.
 type PriceChangesQuery struct {
 	Asset string
 	Quote string // optional; server defaults to fiat:USD
 }
 
-// PriceChanges fetches the current closed price plus the signed change
-// over 1h / 24h / 7d / 30d in one call — the wallet/portfolio delta
-// strip. A horizon with no data that far back comes back with
-// Available=false and nil fields (never an error); a 404 only when the
-// pair has no current price to anchor on.
+// PriceChanges fetches the current closed price plus signed change over 1h/24h/7d/30d; a horizon with no data returns Available=false with nil fields (never an error), and a 404 means the pair has no current price.
 func (c *Client) PriceChanges(ctx context.Context, q PriceChangesQuery) (*Envelope[PriceChanges], error) {
 	if q.Asset == "" {
 		return nil, &APIError{Status: 400, Title: "asset required"}
@@ -96,35 +83,14 @@ func (c *Client) PriceChanges(ctx context.Context, q PriceChangesQuery) (*Envelo
 	return &env, nil
 }
 
-// PriceTipQuery is the input for [Client.PriceTip]. Asset is
-// required; Quote defaults to "fiat:USD" server-side. WindowSeconds
-// is the rolling-window size; it defaults to 5 when zero, and a
-// value outside [1, 60] is REJECTED with a 400 — not silently
-// reduced to 60. This SDK forwards whatever you set verbatim.
+// PriceTipQuery is the input for [Client.PriceTip]; Asset is required, Quote defaults to "fiat:USD", and WindowSeconds defaults to 5 when zero while a value outside [1, 60] is REJECTED with a 400 (the SDK forwards it verbatim).
 type PriceTipQuery struct {
 	Asset         string
 	Quote         string // optional; server defaults to fiat:USD
 	WindowSeconds int    // optional; default 5; outside [1, 60] → 400
 }
 
-// PriceTip fetches the live rolling-window price (ADR-0018). Callers
-// distinguish two in-contract branches via `PriceSnapshot.PriceType`:
-//
-//   - "vwap" with `WindowSeconds=N`: at least one trade in the last N seconds.
-//     When the requested window is empty and shorter than 30s, the server retries
-//     once at 30s, so the returned `WindowSeconds` can exceed the requested one;
-//     read it from the response.
-//   - "last_trade": the window was empty; the most recent observation as-is.
-//     Read `ObservedAt` to decide if it is fresh enough.
-//
-// Unlike `/v1/price` (closed-bucket, ADR-0015), the tip surface has no
-// cross-region consistency contract: clients in different regions may see
-// different VWAPs. Use Price for "every consumer sees the same number"; use
-// PriceTip for "freshest possible signal."
-//
-// `flags.stale` is ALWAYS false here (ADR-0018) and `flags.frozen` stays unset
-// (a closed-bucket concept). `flags.divergence_warning` and `flags.single_source`
-// apply.
+// PriceTip fetches the live rolling-window price (ADR-0018), either "vwap" (WindowSeconds may exceed the request when a short empty window is retried at 30s) or "last_trade" (check ObservedAt); it has no cross-region consistency, and flags.stale is always false.
 func (c *Client) PriceTip(ctx context.Context, q PriceTipQuery) (*Envelope[PriceSnapshot], error) {
 	if q.Asset == "" {
 		return nil, &APIError{Status: 400, Title: "asset required"}
@@ -144,42 +110,13 @@ func (c *Client) PriceTip(ctx context.Context, q PriceTipQuery) (*Envelope[Price
 	return &env, nil
 }
 
-// PriceBatchQuery is the input for [Client.PriceBatch]. AssetIDs
-// is required and non-empty; Quote defaults to "fiat:USD"
-// server-side when empty.
-//
-// Server-side limits:
-//   - 1..100 ids → routed via GET (`?asset_ids=…`).
-//   - 101..1000 ids → routed via POST with a JSON body.
-//   - >1000 ids → server returns 400; the SDK splits into ≤ 1000
-//     chunks would belong on the caller, not here, because the
-//     batch envelope's `flags.stale` semantic is OR-over-the-batch
-//     and silently chunking would mask staleness in unrelated
-//     subsets.
-//
-// Batch is the recommended path for portfolio + multi-asset views.
+// PriceBatchQuery is the input for [Client.PriceBatch]; AssetIDs is required and non-empty (1..100 via GET, 101..1000 via POST, >1000 is a 400 and the caller must chunk), and Quote defaults to "fiat:USD".
 type PriceBatchQuery struct {
 	AssetIDs []string
 	Quote    string // optional; server defaults to fiat:USD
 }
 
-// PriceBatch fetches the current closed-bucket VWAP for many
-// assets in a single round-trip. Cross-region consistent per
-// ADR-0015 — every returned snapshot is from the same closed
-// bucket window the single-asset `/v1/price` would have served.
-//
-// Routing:
-//   - len(AssetIDs) ≤ 100 → GET /v1/price/batch?asset_ids=...
-//   - len(AssetIDs) > 100 → POST /v1/price/batch with JSON body
-//
-// An id is omitted from `Data` for one of two reasons, and the
-// envelope says which: ids whose price the server WITHHOLDS (thin
-// market, flagged issuer) are listed in [Envelope.Withheld]; an id in
-// neither Data nor Withheld has no price data. Never treat every
-// omission as "no data".
-//
-// `flags.stale` on the envelope is the OR over per-row staleness:
-// any stale row sets the envelope flag.
+// PriceBatch fetches the current closed-bucket VWAP for many assets in one round-trip (ADR-0015); an id absent from Data is either listed in [Envelope.Withheld] (price withheld) or has no data, and flags.stale is the OR over rows.
 func (c *Client) PriceBatch(ctx context.Context, q PriceBatchQuery) (*Envelope[[]PriceSnapshot], error) {
 	if len(q.AssetIDs) == 0 {
 		return nil, &APIError{Status: 400, Title: "asset_ids required"}
@@ -230,8 +167,7 @@ const (
 	priceBatchPOSTMax = 1000
 )
 
-// HistoryQuery selects the range for a [Client.HistorySinceInception]
-// call. Asset is required.
+// HistoryQuery selects the range for [Client.HistorySinceInception]; Asset is required.
 type HistoryQuery struct {
 	Asset string
 	Quote string // optional
@@ -246,10 +182,7 @@ type HistoryQuery struct {
 	Granularity string
 }
 
-// HistorySinceInception fetches the full historical series for an
-// asset/quote at the chosen granularity. CAGG-served per commit 2ecc50fbd.
-// Long-running for fine-grained granularities; pass a context with
-// an appropriate deadline.
+// HistorySinceInception fetches the full historical series for an asset/quote at the chosen granularity; long-running at fine granularities, so pass a context with an appropriate deadline.
 func (c *Client) HistorySinceInception(ctx context.Context, q HistoryQuery) (*Envelope[HistorySeries], error) {
 	if q.Asset == "" {
 		return nil, &APIError{Status: 400, Title: "asset required"}
@@ -269,18 +202,7 @@ func (c *Client) HistorySinceInception(ctx context.Context, q HistoryQuery) (*En
 	return &env, nil
 }
 
-// HistoryRangeQuery is the input for [Client.History]. Both Base
-// and Quote are required. From + To are optional (server defaults
-// to `now-1h .. now`); Limit defaults to 1000, and a value outside
-// [1, 10000] is REJECTED with a 400 rather than reduced to the
-// maximum. Cursor paginates — [Pagination] is a pointer, nil on the
-// terminal page, so check `prev.Pagination != nil` before reading
-// `prev.Pagination.Next` to walk forward.
-//
-// Note: distinct from [HistoryQuery] (which targets the
-// since-inception bucketed series). This surface returns RAW
-// trades within a window — useful for trade-level audits,
-// regulatory exports, custom aggregations.
+// HistoryRangeQuery is the input for [Client.History]; Base and Quote are required, From/To default server-side to `now-1h .. now`, Limit defaults to 1000 and a value outside [1, 10000] is REJECTED with a 400, and Cursor paginates.
 type HistoryRangeQuery struct {
 	Base   string
 	Quote  string
@@ -290,23 +212,7 @@ type HistoryRangeQuery struct {
 	Cursor string    // optional; opaque from prior response's Pagination.Next (Pagination is nil on the terminal page)
 }
 
-// History fetches raw trades for [Base, Quote] within the
-// [From, To) window. Distinct from
-// [Client.HistorySinceInception] which returns bucketed VWAP/TWAP
-// points; this surface returns the underlying trades themselves
-// — same data the aggregator consumes.
-//
-// Use cases: trade-level audits, regulatory exports, custom
-// aggregations the server doesn't pre-compute. Pagination via
-// `Cursor` (opaque base64); the walker collects pages by checking
-// `prev.Pagination != nil` and re-issuing with
-// `Cursor: prev.Pagination.Next` until Pagination comes back nil —
-// NOT until Next is empty, which never happens: the terminal page
-// omits Pagination entirely rather than sending an empty Next.
-//
-// `flags.stale` doesn't apply here (this surface returns raw
-// stored trades, not a VWAP). Other envelope flags propagate
-// per-trade where meaningful.
+// History fetches raw trades for [Base, Quote] in the [From, To) window; walk pages while `prev.Pagination != nil` with `Cursor: prev.Pagination.Next` (the terminal page omits Pagination entirely), and flags.stale does not apply.
 func (c *Client) History(ctx context.Context, q HistoryRangeQuery) (*Envelope[[]TradeRow], error) {
 	if q.Base == "" {
 		return nil, &APIError{Status: 400, Title: "base required"}
@@ -336,12 +242,7 @@ func (c *Client) History(ctx context.Context, q HistoryRangeQuery) (*Envelope[[]
 	return &env, nil
 }
 
-// OHLCQuery is the input for [Client.OHLC]. Both Base and Quote
-// are required (unlike [PriceQuery], which defaults Quote to
-// fiat:USD — the OHLC endpoint accepts no implicit USD because
-// candlestick charts pin a specific pair). From + To are
-// optional; defaults match the server's `now-1h .. now` with the
-// closed-bucket clamp applied to a defaulted To per ADR-0015.
+// OHLCQuery is the input for [Client.OHLC]; Base and Quote are required (no implicit USD quote), From/To are optional and a defaulted To is clamped to a closed-bucket boundary per ADR-0015.
 type OHLCQuery struct {
 	Base  string
 	Quote string
@@ -353,22 +254,7 @@ type OHLCQuery struct {
 	OutlierSigma *float64
 }
 
-// OHLC fetches a single open/high/low/close bar over the [From, To) window; it
-// backs candlestick UIs.
-//
-// Window semantics:
-//   - Both From + To zero: server defaults to now-1h .. now, clamped to a
-//     closed-bucket boundary (every region answers the same window, ADR-0015).
-//   - From zero, To set: To-1h .. To, no clamp.
-//   - From set, To zero: From .. now (clamped).
-//   - Both set: [From, To) verbatim.
-//
-// Returns ErrNoTrades / 404 (translated to APIError 404) when no trades fell in
-// the window.
-//
-// Truncation: when the window holds more trades than the server's cap (10000
-// today), the response's `Truncated` flag is true and High / Low may not be the
-// actual extremes. Narrow the range to reach an untruncated bar.
+// OHLC fetches one open/high/low/close bar over [From, To); if the window holds more trades than the server cap, `Truncated` is true and High/Low may not be the true extremes, and an empty window is an APIError 404 (ErrNoTrades).
 func (c *Client) OHLC(ctx context.Context, q OHLCQuery) (*Envelope[OHLCBar], error) {
 	if q.Base == "" {
 		return nil, &APIError{Status: 400, Title: "base required"}
@@ -395,8 +281,7 @@ func (c *Client) OHLC(ctx context.Context, q OHLCQuery) (*Envelope[OHLCBar], err
 	return &env, nil
 }
 
-// OHLCSeriesQuery is the input for [Client.OHLCSeries]. Base, Quote
-// and Interval are required; From, To and Limit are optional.
+// OHLCSeriesQuery is the input for [Client.OHLCSeries]; Base, Quote and Interval are required, From, To and Limit optional.
 type OHLCSeriesQuery struct {
 	Base  string
 	Quote string
@@ -408,9 +293,7 @@ type OHLCSeriesQuery struct {
 	Limit    int       // 0 → server default (100); max 1000
 }
 
-// OHLCSeries fetches a multi-bar candlestick series — /v1/ohlc with
-// `interval` set, whose body is an [OHLCSeriesResponse] rather than
-// the single [OHLCBar] that [Client.OHLC] decodes.
+// OHLCSeries fetches a multi-bar candlestick series (/v1/ohlc with `interval`), decoded as an [OHLCSeriesResponse] rather than the single [OHLCBar] of [Client.OHLC].
 func (c *Client) OHLCSeries(ctx context.Context, q OHLCSeriesQuery) (*Envelope[OHLCSeriesResponse], error) {
 	if q.Base == "" {
 		return nil, &APIError{Status: 400, Title: "base required"}
@@ -441,11 +324,7 @@ func (c *Client) OHLCSeries(ctx context.Context, q OHLCSeriesQuery) (*Envelope[O
 	return &env, nil
 }
 
-// AssetsOptions paginates through the asset catalogue. Empty
-// Cursor starts from the beginning; pass the previous response's
-// Pagination.Next to walk forward — but check `prev.Pagination != nil`
-// first, since Pagination is nil (not an empty-Next struct) on the
-// terminal page.
+// AssetsOptions paginates the asset catalogue; empty Cursor starts at the beginning, and Pagination is nil on the terminal page, so check `prev.Pagination != nil` before reading Next.
 type AssetsOptions struct {
 	Cursor string
 	Limit  int // 0 → server default (typically 100)
@@ -467,18 +346,7 @@ func (c *Client) Assets(ctx context.Context, opts AssetsOptions) (*Envelope[[]As
 	return &env, nil
 }
 
-// Asset fetches the /v1/assets/{asset_id} dual-shape response
-// (ADR-0042). assetID accepts either a canonical Stellar
-// asset_id (native, CODE-G…, C… contract, fiat:CODE) OR a
-// verified-currency catalogue slug (usdc, eurc, aqua, …) — the two
-// forms route to different wire shapes server-side, and the server
-// dispatches slugs to the catalogue view.
-//
-// The returned [AssetLookup] carries whichever shape the server
-// sent; branch on [AssetLookup.Kind] or call StellarAsset() /
-// Catalogue() directly rather than assuming which one you'll get —
-// see [AssetLookup]'s doc comment for why always decoding into
-// [AssetDetail] would silently break catalogue-slug callers.
+// Asset fetches the dual-shape /v1/assets/{asset_id} response (ADR-0042) for a canonical asset_id or a catalogue slug; branch on [AssetLookup.Kind] rather than assuming the shape.
 func (c *Client) Asset(ctx context.Context, assetID string) (*Envelope[AssetLookup], error) {
 	if assetID == "" {
 		return nil, &APIError{Status: 400, Title: "asset_id required"}
@@ -490,8 +358,7 @@ func (c *Client) Asset(ctx context.Context, assetID string) (*Envelope[AssetLook
 	return &env, nil
 }
 
-// AssetMetadata fetches the SEP-1 overlay (home-domain / stellar.toml
-// resolution) for an asset.
+// AssetMetadata fetches the SEP-1 overlay (home-domain / stellar.toml resolution) for an asset.
 func (c *Client) AssetMetadata(ctx context.Context, assetID string) (*Envelope[AssetMetadata], error) {
 	if assetID == "" {
 		return nil, &APIError{Status: 400, Title: "asset_id required"}
@@ -503,9 +370,7 @@ func (c *Client) AssetMetadata(ctx context.Context, assetID string) (*Envelope[A
 	return &env, nil
 }
 
-// AssetSupplyFlows fetches the daily mint / burn / clawback series for
-// one token (GET /v1/assets/{asset_id}/supply/flows). Amounts are
-// base-unit decimal strings (ADR-0003).
+// AssetSupplyFlows fetches the daily mint / burn / clawback series for one token; amounts are base-unit decimal strings (ADR-0003).
 func (c *Client) AssetSupplyFlows(ctx context.Context, assetID string) (*Envelope[AssetSupplyFlows], error) {
 	if assetID == "" {
 		return nil, &APIError{Status: 400, Title: "asset_id required"}
@@ -517,30 +382,13 @@ func (c *Client) AssetSupplyFlows(ctx context.Context, assetID string) (*Envelop
 	return &out, nil
 }
 
-// SourcesOptions filters [Client.Sources]. Class is one of the
-// canonical class strings ("exchange" / "aggregator" / "oracle" /
-// "authority_sanity" / "lending" / "router" / "bridge"); empty
-// returns the full registry.
-//
-// Include opts into the extra columns [Source] documents as
-// request-gated: "stats" populates TradeCount24h/VolumeUSD24h/
-// MarketsCount24h; "sparkline"/"sparkline7d" additionally populate
-// VolumeHistory24h/VolumeHistory7d (server: internal/api/v1/sources.go
-// "sparkline implies stats"). Comma-joined into the `include` query
-// param; empty stays the all-static registry projection.
+// SourcesOptions filters [Client.Sources]; Class is a canonical class string (empty returns the full registry), and Include opts into request-gated columns ("stats", "sparkline", "sparkline7d"), comma-joined into `include`.
 type SourcesOptions struct {
 	Class   string   // optional; empty = all classes
 	Include []string // optional; e.g. []string{"stats"}
 }
 
-// Sources lists the source registry — venues + oracles +
-// aggregators the deployment can ingest from. Read-only and
-// catalogue-shaped (no pagination needed; ~25 entries today).
-//
-// Operators use the registry to drive admin tooling
-// (`stellarindex-ops verify-decoders`, the source-class lint in
-// CI). Customers use it to render "where do these prices come
-// from?" UIs.
+// Sources lists the read-only source registry (venues, oracles, aggregators); catalogue-shaped, no pagination.
 func (c *Client) Sources(ctx context.Context, opts SourcesOptions) (*Envelope[[]Source], error) {
 	v := url.Values{}
 	if opts.Class != "" {
@@ -556,12 +404,7 @@ func (c *Client) Sources(ctx context.Context, opts SourcesOptions) (*Envelope[[]
 	return &env, nil
 }
 
-// Aggregators lists the router / aggregator-vault registry with
-// each entry's routed-via attribution over the trailing 24 hours —
-// how many trades (and how much USD volume) reached the underlying
-// venues via that router. Catalogue-shaped (a handful of entries;
-// no pagination). The rollup is a rolling observation recomputed
-// server-side, not a closed-bucket series.
+// Aggregators lists the router / aggregator-vault registry with each entry's trailing-24h routed-via trade count and USD volume; catalogue-shaped, no pagination, a rolling observation rather than a closed-bucket series.
 func (c *Client) Aggregators(ctx context.Context) (*Envelope[[]AggregatorRow], error) {
 	var env Envelope[[]AggregatorRow]
 	if err := c.doJSON(ctx, http.MethodGet, "/v1/aggregators", nil, nil, &env); err != nil {
@@ -570,15 +413,7 @@ func (c *Client) Aggregators(ctx context.Context) (*Envelope[[]AggregatorRow], e
 	return &env, nil
 }
 
-// Methodology returns a machine-readable summary of the active
-// aggregation policy: VWAP method, per-endpoint outlier filters,
-// stablecoin → fiat-USD proxy allow-list, source classes,
-// registered venues, and ADR refs. Same data the explorer
-// /methodology page renders, in a parseable form.
-//
-// No options — the response is a static projection of compile-
-// time constants + the in-memory source registry + operator
-// config. Sub-millisecond on the server.
+// Methodology returns a machine-readable summary of the active aggregation policy (VWAP method, outlier filters, stablecoin proxy list, source classes, venues, ADR refs); it takes no options.
 func (c *Client) Methodology(ctx context.Context) (*Envelope[Methodology], error) {
 	var env Envelope[Methodology]
 	if err := c.doJSON(ctx, http.MethodGet, "/v1/methodology", nil, nil, &env); err != nil {
@@ -601,8 +436,7 @@ const (
 	MarketsOrderByVolume24hUSDDesc MarketsOrderBy = "volume_24h_usd_desc"
 )
 
-// MarketsOptions paginates through the active-pair catalogue.
-// Same Cursor + Limit semantics as [AssetsOptions].
+// MarketsOptions paginates the active-pair catalogue with the same Cursor + Limit semantics as [AssetsOptions].
 type MarketsOptions struct {
 	Cursor string
 	Limit  int // 0 → server default (typically 100); max 500
@@ -640,10 +474,7 @@ type MarketsOptions struct {
 	Asset string
 }
 
-// Markets lists the (base, quote) pairs the deployment has
-// observed at least one trade for, paginated. Each Market entry
-// includes a 24h activity summary (last-trade timestamp + 24h
-// trade count + 24h USD volume).
+// Markets lists the paginated (base, quote) pairs with at least one observed trade, each with a 24h activity summary (last trade, trade count, USD volume).
 func (c *Client) Markets(ctx context.Context, opts MarketsOptions) (*Envelope[[]Market], error) {
 	v := url.Values{}
 	if opts.Cursor != "" {
@@ -671,13 +502,7 @@ func (c *Client) Markets(ctx context.Context, opts MarketsOptions) (*Envelope[[]
 	return &env, nil
 }
 
-// Pair returns the activity summary for one specific pair. Both
-// `base` and `quote` are required. The response shape is a
-// 0-or-1-element `[]Market` array — empty when the pair has no
-// observed trades, single-element when it does. Pinning a 0-or-1
-// shape (rather than 404 on empty) lets callers distinguish "no
-// such pair" from "malformed request" without branching on
-// status code.
+// Pair returns the activity summary for one pair (base and quote required) as a 0-or-1-element `[]Market`, empty rather than 404 when the pair has no observed trades.
 func (c *Client) Pair(ctx context.Context, base, quote string) (*Envelope[[]Market], error) {
 	if base == "" {
 		return nil, &APIError{Status: 400, Title: "base required"}
@@ -695,8 +520,7 @@ func (c *Client) Pair(ctx context.Context, base, quote string) (*Envelope[[]Mark
 	return &env, nil
 }
 
-// Me returns the authenticated caller's account info. Requires an
-// API key on the client (anonymous calls receive 401).
+// Me returns the authenticated caller's account info; requires an API key (anonymous calls receive 401).
 func (c *Client) Me(ctx context.Context) (*Envelope[Account], error) {
 	var env Envelope[Account]
 	if err := c.doJSON(ctx, http.MethodGet, "/v1/account/me", nil, nil, &env); err != nil {
@@ -705,14 +529,7 @@ func (c *Client) Me(ctx context.Context) (*Envelope[Account], error) {
 	return &env, nil
 }
 
-// Usage returns the authenticated caller's usage rollup for the
-// trailing 30 days: one row per (date, endpoint family) with
-// requests / errors / throttled filled from the server-side
-// `usage_daily` rollups. Sum Requests grouped by Date for daily
-// totals. On deployments where the rollup pipeline hasn't produced
-// rows yet, the server degrades to legacy per-day rows (Endpoint
-// empty, errors/throttled zero); without any usage backend it
-// returns an empty array.
+// Usage returns the caller's trailing-30-day usage, one row per (date, endpoint family); where the rollup is missing the server degrades to per-day rows with empty Endpoint, and without a usage backend returns an empty array.
 func (c *Client) Usage(ctx context.Context) (*Envelope[[]UsageRow], error) {
 	var env Envelope[[]UsageRow]
 	if err := c.doJSON(ctx, http.MethodGet, "/v1/account/usage", nil, nil, &env); err != nil {
@@ -721,21 +538,7 @@ func (c *Client) Usage(ctx context.Context) (*Envelope[[]UsageRow], error) {
 	return &env, nil
 }
 
-// CreateKeyRequest is the body for [Client.CreateKey]. Scopes is
-// optional: empty mints a full-access key; non-empty confines the
-// key to the listed route families ("read", "account", "dashboard",
-// "admin" — unknown values 400). Scopes only narrow; they never
-// grant anything the caller's tier wouldn't already reach.
-//
-// IdempotencyKey is sent as the `Idempotency-Key` header, not in the
-// body. Generate one value per logical mint and reuse it when retrying
-// a call whose outcome you never saw (a timeout): the server replays
-// the original key instead of minting a second live credential, and
-// answers 409 (retryable) while the original is still running.
-//
-// Reason is sent as the `X-Reason` header. The server requires it from
-// an OPERATOR-tier caller (400 without it; captured into the key.mint
-// audit row, as [Client.AdminCreateKey]) and ignores it otherwise.
+// CreateKeyRequest is the body for [Client.CreateKey]; empty Scopes mints a full-access key, non-empty Scopes only narrow (unknown values 400), IdempotencyKey is sent as `Idempotency-Key` (reuse it when retrying an unseen outcome; 409 while the original runs), and Reason is sent as `X-Reason` (required, else 400, from an OPERATOR-tier caller).
 type CreateKeyRequest struct {
 	Label          string   `json:"label"`
 	Scopes         []string `json:"scopes,omitempty"`
@@ -743,10 +546,7 @@ type CreateKeyRequest struct {
 	Reason         string   `json:"-"`
 }
 
-// CreateKey issues a new API key. The new key inherits the
-// authenticated caller's identifier + tier; the plaintext secret
-// appears in the response exactly once and is unrecoverable
-// thereafter.
+// CreateKey issues a new API key inheriting the caller's identifier and tier; the plaintext secret appears in the response exactly once and is unrecoverable.
 func (c *Client) CreateKey(ctx context.Context, req CreateKeyRequest) (*Envelope[KeyCreated], error) {
 	if req.Label == "" {
 		return nil, &APIError{Status: 400, Title: "label required"}
@@ -771,15 +571,7 @@ func (req CreateKeyRequest) headers() map[string]string {
 	return h
 }
 
-// AdminCreateKeyRequest is the body for [Client.AdminCreateKey].
-// Identifier + Label + Reason are required. Tier is "apikey"
-// (default) or "operator". RateLimitPerMin zero inherits the
-// deployment default. Scopes as in [CreateKeyRequest]. Account must
-// equal <slug> when Identifier is "acct:<slug>" and be empty otherwise.
-//
-// Reason is sent as the `X-Reason` header, not in the JSON body —
-// the server captures it into the audit log for every admin write
-// and 400s the request without it.
+// AdminCreateKeyRequest is the body for [Client.AdminCreateKey]; Identifier, Label and Reason are required (Reason is sent as the `X-Reason` header, 400 without it), Tier is "apikey" (default) or "operator", and Account must equal <slug> for Identifier "acct:<slug>" and be empty otherwise.
 type AdminCreateKeyRequest struct {
 	Identifier      string   `json:"identifier"`
 	Account         string   `json:"account,omitempty"`
@@ -790,11 +582,7 @@ type AdminCreateKeyRequest struct {
 	Reason          string   `json:"-"`
 }
 
-// AdminCreateKey mints an API key for ANOTHER identifier — the
-// operator path (staff tooling), not customer self-service.
-// Requires an operator-tier credential; other tiers receive 403.
-// Every successful mint is audit-logged server-side. The plaintext
-// appears in the response exactly once.
+// AdminCreateKey mints an API key for ANOTHER identifier; requires an operator-tier credential (else 403), is audit-logged, and returns the plaintext exactly once.
 func (c *Client) AdminCreateKey(ctx context.Context, req AdminCreateKeyRequest) (*Envelope[KeyCreated], error) {
 	if req.Identifier == "" {
 		return nil, &APIError{Status: 400, Title: "identifier required"}
@@ -813,20 +601,7 @@ func (c *Client) AdminCreateKey(ctx context.Context, req AdminCreateKeyRequest) 
 	return &env, nil
 }
 
-// RevokeKey deletes the API key identified by keyID. The deletion
-// is permanent; the key cannot be reactivated. Returns nil on
-// success (204), including when keyID is unknown, already revoked
-// or owned by another account (the server does not reveal which),
-// or an *APIError when the server rejects the request — 400
-// (operator caller without a reason), 401 (no credentials), 409
-// (keyID names the credential the request itself authenticated
-// with — revoke a different key first), 500 (store failure), or 503
-// (account store not configured).
-//
-// keyID is the public ID returned in [KeyCreated.KeyID] / on each
-// row of [Client.Keys] — NOT the plaintext secret. Passing the
-// secret is a silent no-op (204, nil error) because the server does
-// not reveal whether a keyID exists, so callers must pass the KeyID.
+// RevokeKey permanently deletes the API key keyID (the public KeyID, NOT the secret) and returns nil on 204 even when keyID is unknown, already revoked or foreign; passing the secret is a silent no-op, and revoking the request's own credential is a 409 *APIError.
 func (c *Client) RevokeKey(ctx context.Context, keyID string) error {
 	if keyID == "" {
 		return &APIError{Status: 400, Title: "keyID required"}
@@ -839,17 +614,12 @@ func (c *Client) RevokeKey(ctx context.Context, keyID string) error {
 	return c.doJSON(ctx, http.MethodDelete, "/v1/account/keys/"+url.PathEscape(keyID), nil, nil, nil)
 }
 
-// IssuersOptions paginates the issuer directory. `Limit` defaults
-// to 100; a value outside [1, 500] is REJECTED with a 400 rather
-// than reduced to the maximum.
+// IssuersOptions paginates the issuer directory; Limit defaults to 100 and a value outside [1, 500] is REJECTED with a 400.
 type IssuersOptions struct {
 	Limit int
 }
 
-// Issuers lists every G-account that has minted at least one
-// classic asset, ranked by total observation count across the
-// issuer's assets. `home_domain` populates as the SEP-1 fetcher
-// worker resolves it.
+// Issuers lists every G-account that has minted at least one classic asset, ranked by total observation count; `home_domain` populates as SEP-1 resolves.
 func (c *Client) Issuers(ctx context.Context, opts IssuersOptions) (*Envelope[[]IssuerListEntry], error) {
 	v := url.Values{}
 	if opts.Limit > 0 {
@@ -862,10 +632,7 @@ func (c *Client) Issuers(ctx context.Context, opts IssuersOptions) (*Envelope[[]
 	return &env, nil
 }
 
-// Issuer returns the per-issuer detail (auth flags, SEP-1
-// metadata, embedded assets list). Returns 404 (translated to
-// [APIError]) when the G-strkey hasn't been observed as an
-// issuer.
+// Issuer returns the per-issuer detail (auth flags, SEP-1 metadata, assets); a G-strkey never observed as an issuer is a 404 [APIError].
 func (c *Client) Issuer(ctx context.Context, gStrkey string) (*Envelope[Issuer], error) {
 	if gStrkey == "" {
 		return nil, &APIError{Status: 400, Title: "g_strkey required"}
@@ -878,16 +645,7 @@ func (c *Client) Issuer(ctx context.Context, gStrkey string) (*Envelope[Issuer],
 	return &env, nil
 }
 
-// Cursors returns the per-source ingest cursor table from
-// `/v1/diagnostics/cursors`. Operator-facing diagnostic — the
-// (source, sub_source) tuples the dispatcher persists, with
-// `lag_seconds` precomputed server-side so callers don't need a
-// clock-sync agreement.
-//
-// The endpoint serves the live + stale rows: cursors left behind by
-// finished or abandoned one-shot jobs (Cursor.State "abandoned") are
-// omitted unless `?include_abandoned=true` is requested, which this
-// method does not do. It also pages at 500 rows.
+// Cursors returns the per-source ingest cursor table (operator diagnostic) with server-computed `lag_seconds`; abandoned cursors are omitted (this method never requests them) and it pages at 500 rows.
 func (c *Client) Cursors(ctx context.Context) (*Envelope[[]Cursor], error) {
 	var env Envelope[[]Cursor]
 	if err := c.doJSON(ctx, http.MethodGet, "/v1/diagnostics/cursors", nil, nil, &env); err != nil {
@@ -896,13 +654,7 @@ func (c *Client) Cursors(ctx context.Context) (*Envelope[[]Cursor], error) {
 	return &env, nil
 }
 
-// Keys lists every API key whose identifier matches the
-// authenticated caller's. Sorted by CreatedAt ascending — the
-// caller's original signup key first, rotated keys later.
-//
-// Anonymous calls receive 401. The plaintext is NEVER returned —
-// it's only available at create time, by design. To rotate, call
-// [Client.CreateKey] for a new key and revoke the old one out-of-band.
+// Keys lists the caller's API keys by CreatedAt ascending; anonymous calls get 401 and the plaintext is NEVER returned (rotate via [Client.CreateKey] then revoke).
 func (c *Client) Keys(ctx context.Context) (*Envelope[[]Account], error) {
 	var env Envelope[[]Account]
 	if err := c.doJSON(ctx, http.MethodGet, "/v1/account/keys", nil, nil, &env); err != nil {
@@ -911,16 +663,7 @@ func (c *Client) Keys(ctx context.Context) (*Envelope[[]Account], error) {
 	return &env, nil
 }
 
-// Status returns the comprehensive customer-facing health rollup
-// from `/v1/status` — per-service heartbeats, p50/p95/p99 latency,
-// ingest freshness, and Alertmanager incident counts. Anonymous-
-// friendly. Always returns 200; degraded state is reported via the
-// body's [Status.Overall] field rather than an HTTP error so
-// monitoring dashboards can poll a single endpoint.
-//
-// Deployments without a Prometheus backend wired return only the
-// in-process surface (region label + uptime); [Envelope.Flags.Stale]
-// is true in that case.
+// Status returns the customer-facing health rollup from `/v1/status`; it always returns 200 (degraded state is in [Status.Overall]), and without a Prometheus backend only the in-process surface is returned with [Envelope.Flags.Stale] true.
 func (c *Client) Status(ctx context.Context) (*Envelope[Status], error) {
 	var env Envelope[Status]
 	if err := c.doJSON(ctx, http.MethodGet, "/v1/status", nil, nil, &env); err != nil {
@@ -929,10 +672,7 @@ func (c *Client) Status(ctx context.Context) (*Envelope[Status], error) {
 	return &env, nil
 }
 
-// Healthz is the shallow liveness probe — returns 200 as long as
-// the API process is up. Doesn't touch dependencies. Use for
-// load-balancer health checks; use [Client.Readyz] when you need
-// to verify the dependency stack is responsive.
+// Healthz is the shallow liveness probe (200 while the API process is up, no dependency checks); use [Client.Readyz] to verify dependencies.
 func (c *Client) Healthz(ctx context.Context) (*Envelope[Health], error) {
 	var env Envelope[Health]
 	if err := c.doJSON(ctx, http.MethodGet, "/v1/healthz", nil, nil, &env); err != nil {
@@ -941,11 +681,7 @@ func (c *Client) Healthz(ctx context.Context) (*Envelope[Health], error) {
 	return &env, nil
 }
 
-// Readyz is the deep readiness probe. Returns 200 only if every
-// registered dependency check (Postgres, Redis, etc.) is responsive
-// within a 2 s server-side budget. Returns 503 + the same envelope
-// shape with [Envelope.Flags.Stale] = true otherwise; the wrapped
-// error in that case is an [APIError] with Status=503.
+// Readyz is the deep readiness probe: 200 only if every dependency check responds within a 2 s server budget, otherwise an [APIError] with Status=503 and [Envelope.Flags.Stale] true.
 func (c *Client) Readyz(ctx context.Context) (*Envelope[Health], error) {
 	var env Envelope[Health]
 	if err := c.doJSON(ctx, http.MethodGet, "/v1/readyz", nil, nil, &env); err != nil {
@@ -954,10 +690,7 @@ func (c *Client) Readyz(ctx context.Context) (*Envelope[Health], error) {
 	return &env, nil
 }
 
-// Version reports the build metadata of the API binary serving
-// the request — git SHA, build date, Go runtime version. Useful
-// for fleet-wide "what's running" checks over the API rather than
-// SSH-ing into every host.
+// Version reports the build metadata (git SHA, build date, Go version) of the API binary serving the request.
 func (c *Client) Version(ctx context.Context) (*Envelope[Version], error) {
 	var env Envelope[Version]
 	if err := c.doJSON(ctx, http.MethodGet, "/v1/version", nil, nil, &env); err != nil {
@@ -966,8 +699,7 @@ func (c *Client) Version(ctx context.Context) (*Envelope[Version], error) {
 	return &env, nil
 }
 
-// ChartQuery selects the asset / quote and the binned chart
-// timeframe + granularity. Asset is required.
+// ChartQuery selects the asset / quote and the chart timeframe + granularity; Asset is required.
 type ChartQuery struct {
 	Asset string
 	Quote string // optional; defaults to fiat:USD server-side
@@ -985,11 +717,7 @@ type ChartQuery struct {
 	Granularity string
 }
 
-// Chart returns the binned price + USD-volume series for a chart
-// rendering. Distinct from [Client.HistorySinceInception] (which
-// returns the FULL series at one granularity) — Chart trims to a
-// caller-chosen window and resolves a server-default granularity per
-// timeframe (24h → 15m bins, 1w → 1h, 1mo → 4h, 1y → 1d, all → 1d).
+// Chart returns the binned price + USD-volume series trimmed to a caller-chosen window, with a server-default granularity per timeframe (24h 15m, 1w 1h, 1mo 4h, 1y 1d, all 1d).
 func (c *Client) Chart(ctx context.Context, q ChartQuery) (*Envelope[ChartSeries], error) {
 	if q.Asset == "" {
 		return nil, &APIError{Status: 400, Title: "asset required"}
@@ -1012,14 +740,7 @@ func (c *Client) Chart(ctx context.Context, q ChartQuery) (*Envelope[ChartSeries
 	return &env, nil
 }
 
-// NetworkStats fetches the home-page aggregate snapshot the
-// explorer renders in its network strip — 24h USD volume, active
-// markets count, indexed-assets count, latest live ledger, source
-// counts. Single round trip backed by GET /v1/network/stats.
-//
-// The Volume24hUSD field is *string per ADR-0003 (raw cents can
-// exceed int64); nil when no USD-equivalent trades landed in the
-// rolling 24h window.
+// NetworkStats fetches the home-page aggregate snapshot (24h USD volume, active markets, indexed assets, latest ledger, source counts); Volume24hUSD is a *string per ADR-0003, nil when no USD-equivalent trades landed in 24h.
 func (c *Client) NetworkStats(ctx context.Context) (*Envelope[NetworkStats], error) {
 	var env Envelope[NetworkStats]
 	if err := c.doJSON(ctx, http.MethodGet, "/v1/network/stats", nil, nil, &env); err != nil {
@@ -1028,11 +749,7 @@ func (c *Client) NetworkStats(ctx context.Context) (*Envelope[NetworkStats], err
 	return &env, nil
 }
 
-// ObservationsQuery selects the input for [Client.Observations].
-// Asset is required; Quote defaults to fiat:USD; optional Source
-// restricts to a single on-chain source or CEX venue (a data vendor 400s
-// `off-chain-source-filter`); Aggregate="latest" collapses the
-// per-source array to a 0/1-element slice of the most-recent.
+// ObservationsQuery is the input for [Client.Observations]; Asset is required, Quote defaults to fiat:USD, Source restricts to one on-chain source or CEX venue (a data vendor 400s), and Aggregate="latest" collapses to the most recent.
 type ObservationsQuery struct {
 	Asset     string
 	Quote     string // optional
@@ -1040,11 +757,7 @@ type ObservationsQuery struct {
 	Aggregate string // optional; "latest" supported
 }
 
-// Observations returns the rawest per-source trade view per
-// ADR-0018 — one row per source that has recorded a trade on
-// (asset, quote). Empty array (NOT 404) when the pair has no
-// observations. flags.stale is always false on this surface (no
-// aggregation contract to fall short of).
+// Observations returns one raw row per source that recorded a trade on (asset, quote) per ADR-0018; empty array (NOT 404) when none, and flags.stale is always false.
 func (c *Client) Observations(ctx context.Context, q ObservationsQuery) (*Envelope[[]TradeRow], error) {
 	if q.Asset == "" {
 		return nil, &APIError{Status: 400, Title: "asset required"}
@@ -1067,33 +780,13 @@ func (c *Client) Observations(ctx context.Context, q ObservationsQuery) (*Envelo
 	return &env, nil
 }
 
-// ChangeSummaryQuery selects the entity (entity_type + id) for
-// a [Client.ChangeSummary] call. Both fields are required.
-//
-// EntityType is "coin" (one asset's price deltas, keyed on the base
-// asset of an aggregator-configured pair) or "pair" (one trading
-// pair's, keyed on "base/quote"). Those are the two families the
-// change-summary worker computes; anything else is a 400.
-//
-// EntityID is the raw id — pass "crypto:XLM/fiat:USD" for a pair,
-// not a pre-escaped form. ChangeSummary percent-encodes it into a
-// single path segment, so the embedded "/" reaches the server as
-// part of the id rather than as path structure.
+// ChangeSummaryQuery selects the entity for [Client.ChangeSummary]; both fields are required, EntityType is "coin" or "pair" (anything else is a 400), and EntityID is the raw id (e.g. "crypto:XLM/fiat:USD"), percent-encoded into one path segment.
 type ChangeSummaryQuery struct {
 	EntityType string
 	EntityID   string
 }
 
-// ChangeSummary returns the per-entity 1h/24h/7d/30d delta
-// rollup, plus ATH/ATL + streak/acceleration markers. The
-// change-summary worker writes one row per (entity_type, entity_id)
-// every 5 min. For coin entities the API expands friendly slugs
-// (XLM, USDC) into canonical asset_id forms server-side (see
-// internal/api/v1/changes.go), so passing the slug works.
-//
-// The rollup covers the pairs the deployment's aggregator prices,
-// not every indexed asset: an asset with no published VWAP has no
-// row and returns 404. Use Assets for the full indexed universe.
+// ChangeSummary returns the per-entity 1h/24h/7d/30d delta rollup plus ATH/ATL and streak markers (refreshed every 5 min); an entity with no published VWAP has no row and returns 404.
 func (c *Client) ChangeSummary(ctx context.Context, q ChangeSummaryQuery) (*Envelope[ChangeSummary], error) {
 	if q.EntityType == "" {
 		return nil, &APIError{Status: 400, Title: "entity_type required"}
@@ -1109,15 +802,7 @@ func (c *Client) ChangeSummary(ctx context.Context, q ChangeSummaryQuery) (*Enve
 	return &env, nil
 }
 
-// Incidents fetches every customer-facing incident post the API
-// binary has embedded — backed by GET /v1/incidents. Results are
-// sorted started_at descending (most recent first). Severity is
-// the SEV-N tier; Status reports lifecycle. BodyMarkdown carries
-// the full incident write-up.
-//
-// The corpus ships with the binary (per-deploy), so two regions
-// running different builds may return different lists — clients
-// that need cross-region consistency should diff by Slug.
+// Incidents fetches the customer-facing incident posts embedded in the API binary, newest started_at first; the corpus is per-deploy, so regions on different builds may differ (diff by Slug).
 func (c *Client) Incidents(ctx context.Context) (*Envelope[IncidentsList], error) {
 	var env Envelope[IncidentsList]
 	if err := c.doJSON(ctx, http.MethodGet, "/v1/incidents", nil, nil, &env); err != nil {
@@ -1126,22 +811,7 @@ func (c *Client) Incidents(ctx context.Context) (*Envelope[IncidentsList], error
 	return &env, nil
 }
 
-// SACWrappers returns the SAC (Stellar Asset Contract) wrapper
-// registry — a map from Soroban contract address to the
-// "<CODE>:<G_STRKEY>" form of the underlying classic asset. Used
-// to resolve `transfer` events on SAC contracts back to the
-// classic asset they wrap.
-//
-// Returned as a plain map; iterate the map keys for contract
-// addresses or look up a specific contract directly.
-// RWAAssets returns the tokenized real-world-asset set, its aggregates
-// and the membership rule that produced it (GET /v1/rwa/assets).
-//
-// Read Valuation.Status before any money field: only "published"
-// carries a number, and a withheld or unavailable valuation is absent
-// rather than zero. Summary.MarketCapUSD is likewise nil when nothing
-// in the set publishes one, and Summary.LowerBound reports whether the
-// total is less than the value of the set.
+// RWAAssets returns the tokenized real-world-asset set, its aggregates and membership rule (GET /v1/rwa/assets); read Valuation.Status before any money field, as only "published" carries a number and withheld values are absent, not zero.
 func (c *Client) RWAAssets(ctx context.Context) (*Envelope[RWAAssetsView], error) {
 	var env Envelope[RWAAssetsView]
 	if err := c.doJSON(ctx, http.MethodGet, "/v1/rwa/assets", nil, nil, &env); err != nil {
@@ -1150,32 +820,13 @@ func (c *Client) RWAAssets(ctx context.Context) (*Envelope[RWAAssetsView], error
 	return &env, nil
 }
 
-// RWAHistoryOptions windows and decomposes the RWA value series.
-//
-// Timeframe defaults to "1y" and must be one of 1w / 1mo / 1y / all —
-// the series is daily, so the sub-daily tokens /v1/chart accepts are
-// REJECTED with a 400 rather than answered with a two-point series.
-// GroupBy defaults to "none"; "asset" and "issuer" fill Groups.
+// RWAHistoryOptions windows and decomposes the RWA value series; Timeframe defaults to "1y" and must be 1w/1mo/1y/all (sub-daily tokens get a 400), and GroupBy defaults to "none" ("asset" and "issuer" fill Groups).
 type RWAHistoryOptions struct {
 	Timeframe string
 	GroupBy   string
 }
 
-// RWAHistory returns the tokenized real-world-asset set valued daily on
-// the reference basis (GET /v1/rwa/history) — the time-series form of
-// RWAAssets' Summary.ReferenceValuation.
-//
-// It is NOT a market capitalisation over time. Most of the set is held
-// rather than traded; these values are what independent oracles say the
-// underlying instruments are worth, times the tokens in circulation.
-//
-// Read the per-point counts before reading the line. A day on which no
-// member could be valued is ABSENT from Points rather than plotted as
-// zero, and a day on which only some members could be valued carries
-// LowerBound with the split in AssetsValued / AssetsUnvalued — so a fall
-// in ValueUSD between two adjacent points may be a fall in coverage
-// rather than in value. Excluded accounts for the members the series
-// leaves out entirely.
+// RWAHistory returns the RWA set valued daily on the reference basis (GET /v1/rwa/history), NOT a market capitalisation; a day with no valuable member is ABSENT, and a partial day carries LowerBound with AssetsValued / AssetsUnvalued.
 func (c *Client) RWAHistory(ctx context.Context, opts RWAHistoryOptions) (*Envelope[RWAHistoryView], error) {
 	v := url.Values{}
 	if opts.Timeframe != "" {
@@ -1191,29 +842,12 @@ func (c *Client) RWAHistory(ctx context.Context, opts RWAHistoryOptions) (*Envel
 	return &env, nil
 }
 
-// RWAPremiumHistoryOptions configures [Client.RWAPremiumHistory].
-// Timeframe is one of "1w", "1mo", "1y", "all" (default "1y").
+// RWAPremiumHistoryOptions configures [Client.RWAPremiumHistory]; Timeframe is one of "1w", "1mo", "1y", "all" (default "1y").
 type RWAPremiumHistoryOptions struct {
 	Timeframe string
 }
 
-// RWAPremiumHistory returns each comparable RWA token's premium or
-// discount to its instrument's published net asset value, daily
-// (GET /v1/rwa/premium) — the time-series form of RWAAssets' per-row
-// Premium.Pct.
-//
-// Read the gaps before reading the line. A premium is a ratio of two
-// SAMPLED observations, so neither leg is ever carried across a day it
-// was not observed on: a day missing either side is ABSENT from Points
-// rather than flat. A day whose market did not clear the thin-market
-// floor is counted in MarketWithheldDays instead of published, so an
-// absent point is not evidence that nothing traded.
-//
-// Coverage is small by construction. Only curated (code, issuer) → feed
-// bindings may value an instrument (Bound is the ceiling), and of those
-// only the tokens that actually trade against a dollar can carry a
-// premium — most of this set is bought and held. Excluded names every
-// member left out and why.
+// RWAPremiumHistory returns each comparable RWA token's daily premium or discount to published NAV (GET /v1/rwa/premium); a day missing either sampled leg is ABSENT rather than carried, and thin-market days are counted in MarketWithheldDays.
 func (c *Client) RWAPremiumHistory(ctx context.Context, opts RWAPremiumHistoryOptions) (*Envelope[RWAPremiumHistoryView], error) {
 	v := url.Values{}
 	if opts.Timeframe != "" {
@@ -1234,15 +868,7 @@ func (c *Client) SACWrappers(ctx context.Context) (*Envelope[map[string]string],
 	return &env, nil
 }
 
-// LendingPools fetches every Blend pool contract observed in the
-// trailing 7d auction stream — backed by GET /v1/lending/pools.
-// Sorted by total auction count desc.
-//
-// Today's wire shape is auction-derived: per-pool TVL, utilisation,
-// and supply/borrow APYs land via additional fields once the
-// pool-storage reader worker ships, so callers should be defensive
-// about new fields appearing in subsequent server releases (the
-// SDK's JSON decode ignores unknown fields, so this is non-breaking).
+// LendingPools fetches every Blend pool observed in the trailing 7d auction stream (GET /v1/lending/pools), sorted by auction count descending; the SDK ignores unknown fields, so new server fields are non-breaking.
 func (c *Client) LendingPools(ctx context.Context) (*Envelope[[]LendingPool], error) {
 	var env Envelope[[]LendingPool]
 	if err := c.doJSON(ctx, http.MethodGet, "/v1/lending/pools", nil, nil, &env); err != nil {
@@ -1251,13 +877,7 @@ func (c *Client) LendingPools(ctx context.Context) (*Envelope[[]LendingPool], er
 	return &env, nil
 }
 
-// AggregateQuery is the input for [Client.VWAP] and [Client.TWAP].
-// Base + Quote are required; From + To default to a 1-hour window
-// ending at the previous closed-bucket boundary per ADR-0015.
-//
-// OutlierSigma is forwarded to VWAP only, where zero or unset disables
-// the sigma filter. TWAP does not forward it and is served at the
-// server's default sigma.
+// AggregateQuery is the input for [Client.VWAP] and [Client.TWAP]; Base and Quote are required, From/To default to a 1-hour window ending at the previous closed-bucket boundary (ADR-0015), and OutlierSigma is forwarded to VWAP only (zero disables the filter).
 type AggregateQuery struct {
 	Base         string
 	Quote        string
@@ -1266,18 +886,7 @@ type AggregateQuery struct {
 	OutlierSigma float64
 }
 
-// VWAP fetches the volume-weighted average price for (base, quote)
-// over the requested [from, to) window. Backs GET /v1/vwap.
-//
-// Distinct from [Client.Price] (which serves the closed-bucket
-// VWAP from the prices_1m CAGG with cross-region consistency per
-// ADR-0015). VWAP scans raw trades for the requested window — use
-// it for arbitrary ranges; use [Client.Price] for the canonical
-// "current price" closed-bucket value.
-//
-// If the response carries Truncated=true, the requested window had
-// more trades than the server's per-request cap (10000); narrow
-// the window and retry.
+// VWAP fetches the volume-weighted average price over [from, to) from raw trades (GET /v1/vwap), unlike the closed-bucket [Client.Price]; Truncated=true means the window exceeded the server's 10000-trade cap, so narrow it.
 func (c *Client) VWAP(ctx context.Context, q AggregateQuery) (*Envelope[VWAPResult], error) {
 	if q.Base == "" {
 		return nil, &APIError{Status: 400, Title: "base required"}
@@ -1304,16 +913,7 @@ func (c *Client) VWAP(ctx context.Context, q AggregateQuery) (*Envelope[VWAPResu
 	return &env, nil
 }
 
-// TWAP fetches the time-weighted average price for (base, quote)
-// over the requested [from, to) window. Backs GET /v1/twap.
-//
-// TWAP weights each instant's price (the Σquote/Σbase of the trades
-// sharing a timestamp) by the duration until the next instant, or
-// windowEnd for the last — see `internal/aggregate/twap.go`. The
-// server filters outliers at its default sigma first;
-// AggregateQuery.OutlierSigma is not forwarded on this surface (kept
-// on the shared shape so the same query value can be passed to both
-// VWAP and TWAP).
+// TWAP fetches the time-weighted average price over [from, to) (GET /v1/twap); the server filters outliers at its default sigma first, and AggregateQuery.OutlierSigma is not forwarded.
 func (c *Client) TWAP(ctx context.Context, q AggregateQuery) (*Envelope[TWAPResult], error) {
 	if q.Base == "" {
 		return nil, &APIError{Status: 400, Title: "base required"}
@@ -1337,11 +937,7 @@ func (c *Client) TWAP(ctx context.Context, q AggregateQuery) (*Envelope[TWAPResu
 	return &env, nil
 }
 
-// PoolsQuery is the input for [Client.Pools]. All fields optional;
-// Source narrows to one DEX (soroswap, phoenix, aquarius, sdex,
-// comet); Base + Quote together pin a single pair; Asset matches
-// rows where the asset appears on either side (mutually exclusive
-// with Base/Quote). Cursor + Limit drive pagination.
+// PoolsQuery is the input for [Client.Pools]; all fields are optional: Source narrows to one DEX, Base + Quote pin a pair, Asset matches either side (mutually exclusive with Base/Quote), Cursor + Limit paginate.
 type PoolsQuery struct {
 	Source string
 	Base   string
@@ -1353,18 +949,7 @@ type PoolsQuery struct {
 	OrderBy string
 }
 
-// Pools returns DEX/AMM liquidity pools — one row per
-// (source, base, quote) where source is a DEX. Backs GET /v1/pools.
-//
-// Distinct from [Client.Markets] (which collapses across sources):
-// the same physical pair traded on two DEXes returns ONE Market
-// row but TWO Pool rows. Use Pools when you need per-venue
-// breakdown; use Markets when you want the unified pair view.
-//
-// Pagination follows the cursor protocol — check `env.Pagination != nil`
-// (it is a pointer, nil on the terminal page) before passing back
-// `env.Pagination.Next` from a prior response as PoolsQuery.Cursor to
-// fetch the next page; a nil Pagination signals no more results.
+// Pools returns DEX/AMM liquidity pools, one row per (source, base, quote) (GET /v1/pools), unlike [Client.Markets] which collapses across sources; Pagination is nil on the terminal page.
 func (c *Client) Pools(ctx context.Context, q PoolsQuery) (*Envelope[[]Pool], error) {
 	v := url.Values{}
 	if q.Source != "" {
