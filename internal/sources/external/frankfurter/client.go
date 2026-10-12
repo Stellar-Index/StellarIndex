@@ -21,9 +21,7 @@ import (
 // Base is the Frankfurter API root.
 const Base = "https://api.frankfurter.dev/v1"
 
-// fetchTimeout caps a single upstream call. The range endpoint
-// occasionally responds in 3-5s for multi-decade requests; 30s is
-// generous and well under the operator's patience threshold.
+// fetchTimeout caps a single upstream call; the range endpoint can take 3-5s for multi-decade requests.
 const fetchTimeout = 30 * time.Second
 
 // Client is a thin HTTP wrapper. No auth required.

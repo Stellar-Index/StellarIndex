@@ -77,10 +77,8 @@ func (p *Poller) PollInterval() time.Duration {
 	return p.Interval
 }
 
-// priceMultiFullResponse is the RAW asset→currency→quote shape.
-// On error CryptoCompare returns a DIFFERENT top-level shape
-// ({"Response":"Error","Message":"..."}) — we probe for that before
-// attempting the price-map decode.
+// priceMultiFullResponse is the RAW asset->currency->quote shape. Errors come back as a different top-level shape
+// ({"Response":"Error","Message":"..."}), so probe for that before the price-map decode.
 type priceMultiFullResponse struct {
 	Raw map[string]map[string]rawQuote `json:"RAW"`
 }

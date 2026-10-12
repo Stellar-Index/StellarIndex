@@ -127,9 +127,8 @@ func (s *Streamer) Start(ctx context.Context, pairs []canonical.Pair) (<-chan ca
 	return out, nil
 }
 
-// classifyDisconnect handles Bitstamp's venue-specific
-// ErrRequestedReconnect label — a benign server-initiated reconnect — then
-// delegates the wire-level cases to wsclient.ClassifyDisconnect.
+// classifyDisconnect labels Bitstamp's benign server-initiated ErrRequestedReconnect, delegating wire-level cases to
+// wsclient.ClassifyDisconnect.
 func classifyDisconnect(err error) string {
 	if errors.Is(err, ErrRequestedReconnect) {
 		return "server_requested"
@@ -137,9 +136,8 @@ func classifyDisconnect(err error) string {
 	return wsclient.ClassifyDisconnect(err)
 }
 
-// unknownAckSymbol stands in for a subscription ack with no
-// attributable channel (e.g. a malformed-string bts:error carrying no
-// channel echo) so the venue cannot mint arbitrary metric labels.
+// unknownAckSymbol stands in for an ack with no attributable channel (e.g. a bts:error with no channel echo), so the venue cannot mint
+// arbitrary metric labels.
 const unknownAckSymbol = "unknown"
 
 // handleFrame decodes one frame. A dust trade is a real trade below the
@@ -163,10 +161,8 @@ func handleFrame(data []byte, pairMap map[string]canonical.Pair, logger *slog.Lo
 	return []canonical.Trade{trade}, nil
 }
 
-// recordSubscriptionAck flags a rejected symbol rather than dropping
-// the connection: Bitstamp answers per channel, so the other
-// already-subscribed pairs on this socket stay live and a reconnect
-// would only interrupt them.
+// recordSubscriptionAck flags a rejected symbol instead of dropping the connection: Bitstamp answers per channel, so a reconnect would
+// only interrupt the other already-subscribed pairs.
 func recordSubscriptionAck(logger *slog.Logger, ack *subscriptionAck) {
 	symbol := strings.TrimPrefix(ack.Channel, ChannelPrefix)
 	if symbol == "" {

@@ -16,9 +16,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// reap-cursors deletes ingestion_cursors rows left by finished or abandoned one-shot jobs.
-// Preview by default (-write via [opsutil.WriteGate]); -older-than has a floor of [reapMinAge];
-// [timescale.LiveCursorSources] namespaces are never reaped, since deleting a live cursor loses the resume point.
+// reap-cursors deletes ingestion_cursors rows left by finished or abandoned one-shot jobs. Preview by default (-write via
+// [opsutil.WriteGate]); [timescale.LiveCursorSources] namespaces are never reaped, since deleting loses the resume point.
 func reapCursors(args []string) error {
 	opts, err := parseReapCursorsFlags(args)
 	if err != nil {
@@ -69,9 +68,7 @@ func reapCursors(args []string) error {
 // would sweep rows that are merely between writes.
 const reapMinAge = 24 * time.Hour
 
-// reapDefaultAge matches the API's abandoned boundary
-// (v1.cursorAbandonedAge), so `?status=abandoned` and a default
-// `reap-cursors` preview describe the same set of rows.
+// reapDefaultAge matches the API's abandoned boundary (v1.cursorAbandonedAge), so `?status=abandoned` and the default preview agree.
 const reapDefaultAge = 7 * 24 * time.Hour
 
 type reapCursorsOpts struct {
@@ -85,9 +82,7 @@ type reapCursorsOpts struct {
 // listing the preview prints.
 type reapPlan struct {
 	candidates []timescale.Cursor
-	// protected counts rows old enough to reap that were spared
-	// because their source is a live cursor namespace — surfaced so a
-	// stuck live cursor is reported rather than silently skipped.
+	// protected counts old-enough rows spared because their source is a live cursor namespace, so a stuck live cursor is reported.
 	protected []timescale.Cursor
 	bySource  map[string]int
 }
@@ -128,10 +123,8 @@ func parseReapCursorsFlags(args []string) (reapCursorsOpts, error) {
 	return opts, nil
 }
 
-// planReapCursors splits a cursor listing into the rows a reap would
-// delete and the old-enough rows it refuses to touch. Pure so the
-// selection rules are testable without a database, and so the preview
-// and the DELETE are driven by one definition of "reapable".
+// planReapCursors splits a listing into rows a reap would delete and old-enough rows it refuses to touch. Pure, so preview and DELETE
+// share one definition of "reapable".
 func planReapCursors(rows []timescale.Cursor, cutoff time.Time, source string) reapPlan {
 	plan := reapPlan{bySource: map[string]int{}}
 	for _, c := range rows {
@@ -161,9 +154,7 @@ func isReapProtected(source string) bool {
 	return timescale.IsLiveCursorSource(source)
 }
 
-// reapSampleRows caps the per-run row sample in the preview. The
-// counts are exact; the sample is there so an operator can recognise
-// what the rows ARE before deleting thousands of them.
+// reapSampleRows caps the preview row sample; counts are exact, the sample lets an operator recognise rows before deleting thousands.
 const reapSampleRows = 10
 
 func printReapPlan(w io.Writer, plan reapPlan, cutoff time.Time, opts reapCursorsOpts) {

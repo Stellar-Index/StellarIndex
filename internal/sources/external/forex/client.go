@@ -33,9 +33,7 @@ import (
 // MassiveBase is the Massive REST API root.
 const MassiveBase = "https://api.massive.com"
 
-// fetchTimeout caps a single upstream call. Massive's edge typically
-// responds in 100–300 ms; 10 s is generous and keeps a hung TCP
-// from stalling the worker indefinitely.
+// fetchTimeout caps a single upstream call so a hung TCP connection cannot stall the worker.
 const fetchTimeout = 10 * time.Second
 
 // Client wraps the Massive REST endpoints in use, authenticated by an operator-supplied bearer token.
@@ -94,9 +92,7 @@ func (c *Client) HistoricalUSDRates(ctx context.Context, date string) (map[strin
 	return rates, pub, nil
 }
 
-// usdRatesAtDate hits the grouped-daily endpoint for the given UTC
-// date and returns a lower-case-ticker → close-price map, filtered
-// to USD-base pairs.
+// usdRatesAtDate hits the grouped-daily endpoint for a UTC date and returns lower-case-ticker -> close, filtered to USD-base pairs.
 func (c *Client) usdRatesAtDate(ctx context.Context, date string) (map[string]float64, error) {
 	url := fmt.Sprintf("%s/v2/aggs/grouped/locale/global/market/fx/%s", c.base, date)
 	body, err := c.get(ctx, url)
@@ -290,8 +286,7 @@ func IsRateLimited(err error) bool {
 	return errors.As(err, &se) && se.Code == http.StatusTooManyRequests
 }
 
-// sameHost reports whether next shares scheme and host with base, so
-// [CurrencyNames] can refuse to follow a paginated next_url off the
+// sameHost reports whether next shares scheme and host with base, so CurrencyNames never follows a paginated next_url off the
 // configured Massive host (which would send our bearer token there).
 func sameHost(base, next string) bool {
 	b, err := neturl.Parse(base)

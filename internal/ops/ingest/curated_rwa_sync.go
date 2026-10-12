@@ -32,9 +32,7 @@ const (
 	curatedRWADuneBaseURL  = "https://api.dune.com"
 	curatedRWAFetchTimeout = 90 * time.Second
 	curatedRWAPageSize     = 1000
-	// curatedRWAMaxRows bounds one query's result. The monthly total is
-	// under twenty rows and the split a few hundred; a result past this
-	// is not one of those queries.
+	// curatedRWAMaxRows bounds one query's result: the monthly total is under twenty rows and the split a few hundred.
 	curatedRWAMaxRows = 5000
 	// curatedRWAMaxPlainDigits bounds plain rendering of an exponent-form literal; larger is refused.
 	curatedRWAMaxPlainDigits = 40
@@ -43,12 +41,10 @@ const (
 // The dashboard's PUBLIC queries, by id and title as the curator names
 // them. A read of either needs any Dune API key and no execution.
 const (
-	// curatedRWAQueryMonthlyTotal — "RWAs on Stellar: RWA Mcap by Month":
-	// rows {month_end, total_rwa_market_cap_usd}, one per month. Its
-	// latest row is the dashboard's headline figure.
+	// curatedRWAQueryMonthlyTotal is "RWAs on Stellar: RWA Mcap by Month": rows {month_end, total_rwa_market_cap_usd}, one per month; its
+	// latest row is the dashboard headline.
 	curatedRWAQueryMonthlyTotal int64 = 6961845
-	// curatedRWAQueryMonthlyBySubclass — "RWAs on Stellar: Mcap by Month
-	// by Asset Subclass": rows {month_end, asset_subclass,
+	// curatedRWAQueryMonthlyBySubclass is "RWAs on Stellar: Mcap by Month by Asset Subclass": rows {month_end, asset_subclass,
 	// market_cap_usd}, one per month and subclass.
 	curatedRWAQueryMonthlyBySubclass int64 = 6961847
 )
@@ -184,10 +180,8 @@ func (c *curatedRWAClient) get(ctx context.Context, path string) ([]byte, error)
 	return b, nil
 }
 
-// duneQueryResultsPage is one page of GET /api/v1/query/{id}/results.
-// The envelope carries more members than these (submission times,
-// execution ids); they are ignored. Rows are kept raw here and decoded
-// STRICTLY per query below.
+// duneQueryResultsPage is one page of GET /api/v1/query/{id}/results; extra envelope members are ignored and rows stay raw until
+// decoded STRICTLY per query.
 type duneQueryResultsPage struct {
 	State            string    `json:"state"`
 	ExecutionEndedAt time.Time `json:"execution_ended_at"`
@@ -209,10 +203,8 @@ type duneQueryResult struct {
 	Datapoints int
 }
 
-// fetch reads both public results and turns them into the rows one
-// sync writes. Either result failing to read, parsing to nothing, or
-// parsing to less than the whole of itself fails the run: a half-read
-// pair would be written as a whole.
+// fetch reads both public results into the rows one sync writes. Any unreadable, empty or partially parsed result fails the run, since
+// a half-read pair would be written as a whole.
 func (c *curatedRWAClient) fetch(ctx context.Context) ([]timescale.CuratedRWAPublishedRow, curatedRWACounts, error) {
 	var counts curatedRWACounts
 
@@ -263,10 +255,8 @@ func curatedRWAWholeResult(queryID int64, read, malformed int) error {
 		queryID, malformed, read)
 }
 
-// readQueryResult pages one query's latest result until the row count
-// the curator declared is in hand. A result that ends early, exceeds the
-// bound, or is not a completed execution is an error, never a partial
-// series.
+// readQueryResult pages one query's latest result until the curator's declared row count is in hand; an early end, an exceeded bound or
+// a non-completed execution is an error, never a partial series.
 func (c *curatedRWAClient) readQueryResult(ctx context.Context, queryID int64) (duneQueryResult, error) {
 	var out duneQueryResult
 	declared := -1
@@ -303,9 +293,7 @@ func (c *curatedRWAClient) readQueryResult(ctx context.Context, queryID int64) (
 	}
 }
 
-// readQueryPage fetches and decodes one page of a query's latest result,
-// refusing a page whose execution is anything but completed: the curator's
-// own failed run is not a result this index will read.
+// readQueryPage fetches and decodes one result page, refusing any execution but completed: the curator's failed run is not a result.
 func (c *curatedRWAClient) readQueryPage(ctx context.Context, queryID int64, offset int) (duneQueryResultsPage, error) {
 	var page duneQueryResultsPage
 	b, err := c.get(ctx, fmt.Sprintf("/api/v1/query/%d/results?limit=%d&offset=%d", queryID, curatedRWAPageSize, offset))
@@ -397,9 +385,7 @@ func parseCuratedRWAMonthlyBySubclass(res duneQueryResult, counts *curatedRWACou
 	return out
 }
 
-// curatedRWAMonthEnd accepts the month bucket as the curator prints it —
-// a date, or a timestamp at midnight — and pins it to that day at
-// midnight UTC.
+// curatedRWAMonthEnd accepts the month bucket as a date or a midnight timestamp and pins it to that day at midnight UTC.
 func curatedRWAMonthEnd(s string) (time.Time, bool) {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -471,9 +457,8 @@ func splitCuratedRWADecimal(s string) (sign, intPart, fracPart string, exp int, 
 	return sign, intPart, fracPart, exp, true
 }
 
-// plainCuratedRWADecimal renders a split literal with its exponent
-// applied, padding with zeros and rounding nothing. A rendering wider
-// than the bound is refused rather than allocated.
+// plainCuratedRWADecimal renders a split literal with its exponent applied, zero-padding and rounding nothing; a rendering wider than
+// the bound is refused rather than allocated.
 func plainCuratedRWADecimal(sign, intPart, fracPart string, exp int) (string, bool) {
 	digits := intPart + fracPart
 	point := len(intPart) + exp // how many of them fall before the point
@@ -528,9 +513,8 @@ func stampCuratedRWATextfile(path string, c curatedRWACounts, written, refused b
 	}
 }
 
-// writeCuratedRWATextfile records the run for node_exporter. Written
-// whole to a sibling temp file and renamed, so the collector never reads
-// a half-written exposition; every family shares the file's fate.
+// writeCuratedRWATextfile records the run for node_exporter, written whole to a sibling temp file and renamed so the collector never
+// reads a half-written exposition.
 func writeCuratedRWATextfile(path string, c curatedRWACounts, written, refused bool) error {
 	var b strings.Builder
 	lbl := fmt.Sprintf(`{curator=%q}`, curatedRWACuratorDune)
@@ -555,9 +539,7 @@ func writeCuratedRWATextfile(path string, c curatedRWACounts, written, refused b
 	return writeTextfileAtomic(path, b.String())
 }
 
-// writeTextfileAtomic writes a node_exporter exposition to a sibling
-// temp file and renames it over path, so the collector never reads a
-// half-written file.
+// writeTextfileAtomic writes a node_exporter exposition to a sibling temp file and renames it over path, so no half-written read.
 func writeTextfileAtomic(path, body string) error {
 	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp.*")
 	if err != nil {

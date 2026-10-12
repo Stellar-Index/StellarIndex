@@ -15,9 +15,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// findDataGapsDefaultMinGapSize (1000 ledgers, ~1.5 h) filters legitimate no-event stretches; a longer
-// gap implies an ingest failure. find-data-gaps scans soroban_events directly because the cursor-derived
-// density can read 100% while data is missing; its output feeds a targeted backfill.
+// findDataGapsDefaultMinGapSize (1000 ledgers, ~1.5 h) filters legitimate no-event stretches. find-data-gaps scans soroban_events
+// directly because cursor-derived density can read 100% while data is missing.
 const findDataGapsDefaultMinGapSize = int64(1000)
 
 type findDataGapsReport struct {
@@ -165,9 +164,7 @@ func writeFindDataGapsJSON(w io.Writer, m findDataGapsMultiReport) error {
 	return enc.Encode(m)
 }
 
-// writeFindDataGapsMultiText emits one report block per target.
-// Reports with zero gaps are still printed so the operator can
-// confirm every target was scanned.
+// writeFindDataGapsMultiText emits one block per target, including zero-gap ones, so the operator can confirm every target was scanned.
 func writeFindDataGapsMultiText(w io.Writer, m findDataGapsMultiReport) {
 	// fmt.Fprint{,f,ln} errors on operator output are not actionable —
 	// a broken-pipe on operator-CLI output is the operator's terminal,

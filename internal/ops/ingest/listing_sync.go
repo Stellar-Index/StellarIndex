@@ -53,10 +53,8 @@ const (
 	listingFetchTimeout = 60 * time.Second
 )
 
-// listingAddressForm is which of the two Stellar address shapes a row
-// carries. The two are disjoint and together exhaustive — the same split
-// migration 0160's CHECK makes, and the one the storage census's
-// arithmetic relies on.
+// listingAddressForm is which of the two Stellar address shapes a row carries; disjoint and exhaustive, matching migration 0160's
+// CHECK.
 type listingAddressForm int
 
 const (
@@ -72,10 +70,8 @@ var (
 	listingClassicRe  = regexp.MustCompile(`^[A-Za-z0-9]{1,12}-G[A-Z2-7]{55}$`)
 )
 
-// listingCatalogueRow is the subset of one `/coins/list?include_platform=true`
-// element this sync reads. `platforms` maps a chain key to the address
-// the coin has on that chain; a chain the coin is not on is either
-// absent or carries an empty string.
+// listingCatalogueRow is the subset of one `/coins/list?include_platform=true` element this sync reads; `platforms` maps chain key to
+// address, and an absent chain is missing or an empty string.
 type listingCatalogueRow struct {
 	ID        string            `json:"id"`
 	Symbol    string            `json:"symbol"`
@@ -97,9 +93,7 @@ type listingPrice struct {
 	At  time.Time
 }
 
-// listingCounts is what one pass saw, reported in the run summary so an
-// operator reading the journal can tell a shrinking upstream from a
-// parser that stopped recognising it.
+// listingCounts is what one pass saw, so the journal can tell a shrinking upstream from a parser that stopped recognising it.
 type listingCounts struct {
 	// Scanned is every element in the upstream catalogue.
 	Scanned int
@@ -341,10 +335,8 @@ func listingIDsOf(entries []timescale.ListingEntry) []string {
 	return ids
 }
 
-// fetchListingPrices pulls the published USD price for exactly the given
-// coin ids, in chunks of listingMarketsBatch, and returns the merged
-// map plus the number of upstream records rejected for want of a usable
-// publication time.
+// fetchListingPrices pulls the published USD price for exactly the given coin ids in chunks of listingMarketsBatch and returns the
+// merged map plus the count of records rejected for lack of a usable publication time.
 func (c *listingClient) fetchListingPrices(
 	ctx context.Context, ids []string,
 ) (map[string]listingPrice, int, error) {
@@ -376,9 +368,8 @@ func (c *listingClient) fetchListingPrices(
 	return out, rejected, nil
 }
 
-// parseMarkets streams a markets response into id to price.
-// A coin is ABSENT when it has no price or no parseable last_updated (or one beyond [timescale.ListingPriceMaxFutureSkew]); a fabricated priced_at would defeat the storage layer's 24-hour bound.
-// The rejected count is returned so the caller can put it in the run summary.
+// parseMarkets streams a markets response into id -> price. A coin is ABSENT with no price or no parseable last_updated (or one beyond
+// [timescale.ListingPriceMaxFutureSkew]): a fabricated priced_at would defeat the storage layer's 24-hour bound.
 func parseMarkets(r io.Reader, now time.Time) (map[string]listingPrice, int, error) {
 	ceiling := now.Add(timescale.ListingPriceMaxFutureSkew)
 	out := map[string]listingPrice{}
@@ -419,10 +410,8 @@ func parseMarkets(r io.Reader, now time.Time) (map[string]listingPrice, int, err
 	return out, rejected, nil
 }
 
-// applyListingPrices fills in the price columns of the entries that have
-// one, and returns how many did. Entries with no upstream price are left
-// exactly as they were: an empty price string and a zero time, which is
-// what the storage layer stores as NULL/NULL.
+// applyListingPrices fills price columns for entries that have one and returns how many did; the rest keep an empty price string and
+// zero time, which storage stores as NULL/NULL.
 func applyListingPrices(entries []timescale.ListingEntry, prices map[string]listingPrice) int {
 	priced := 0
 	for i := range entries {

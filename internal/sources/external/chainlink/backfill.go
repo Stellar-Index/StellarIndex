@@ -105,9 +105,8 @@ func (p *Poller) Backfill(ctx context.Context, pairs []canonical.Pair, opts Back
 	return firstErr
 }
 
-// backfillFeed walks one feed's log range chunk-by-chunk. Returns
-// the first non-recoverable error (provider down, ctx cancelled);
-// per-chunk decode errors are logged + skipped via emitChunkLogs.
+// backfillFeed walks one feed's log range chunk by chunk; returns the first non-recoverable error (provider down, ctx cancelled), while
+// per-chunk decode errors are logged and skipped via emitChunkLogs.
 func (p *Poller) backfillFeed(
 	ctx context.Context,
 	pair canonical.Pair,
@@ -167,10 +166,8 @@ func (p *Poller) backfillFeed(
 	return nil
 }
 
-// emitChunkLogs decodes one chunk's logs into OracleUpdates and
-// fans them through `out`. Returns the count emitted + the first
-// fatal error (ctx cancelled). Per-entry decode/project failures
-// are logged + skipped; only context cancellation halts the chunk.
+// emitChunkLogs decodes one chunk's logs into OracleUpdates and sends them to `out`, returning the count and the first fatal error (ctx
+// cancelled); per-entry decode/project failures are logged and skipped.
 func (p *Poller) emitChunkLogs(
 	ctx context.Context,
 	pair canonical.Pair,

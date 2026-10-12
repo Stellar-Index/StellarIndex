@@ -15,10 +15,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// tagTxIndex is the historical/recovery half of trades.tx_index: the live sweeper covers only a trailing
-// 30-min window, so older rows are tagged here via pipeline.TagTxIndexWindow, windowed by ts (the
-// partition key). No checkpoint: tagging is first-wins. -write refuses a range touching a compressed
-// trades chunk (the UPDATE decompresses it in-transaction and bloats WAL). Fail-closed via opsutil.WriteGate.
+// tagTxIndex is the historical half of trades.tx_index (the live sweeper covers a trailing 30-min window), via
+// pipeline.TagTxIndexWindow windowed by ts (the partition key). No checkpoint: tagging is first-wins. -write refuses a range touching a
+// compressed trades chunk (the UPDATE decompresses it in-transaction and bloats WAL). Fail-closed via opsutil.WriteGate.
 func tagTxIndex(args []string) error {
 	fs, gate := opsutil.NewMutatingFlagSet("tag-tx-index")
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
@@ -84,10 +83,8 @@ type txIndexTagStore interface {
 	TradesChunksInRange(ctx context.Context, from, to time.Time) ([]timescale.TradeChunk, error)
 }
 
-// runTagTxIndex walks [from, to) window by window. Under -write the chunk
-// guard runs over the whole range first, so a refused run writes nothing,
-// and again ahead of each window, because the compression policy can
-// compress a chunk while a long run is still walking towards it.
+// runTagTxIndex walks [from, to) window by window. Under -write the chunk guard runs over the whole range first (a refused run writes
+// nothing) and again before each window, because the compression policy can compress a chunk mid-run.
 func runTagTxIndex(ctx context.Context, lake pipeline.TxIndexLakeReader, store txIndexTagStore,
 	write bool, from, to time.Time, window time.Duration,
 ) (int64, error) {
@@ -118,9 +115,8 @@ func runTagTxIndex(ctx context.Context, lake pipeline.TxIndexLakeReader, store t
 	return total, nil
 }
 
-// refuseCompressedTradesChunks lists the trades chunks intersecting
-// [from, to) and, under -write, refuses if any is compressed; is_compressed
-// is also true for a partially compressed chunk. The preview only warns.
+// refuseCompressedTradesChunks lists trades chunks intersecting [from, to) and, under -write, refuses if any is compressed (also true
+// when partially); the preview only warns.
 func refuseCompressedTradesChunks(ctx context.Context, store txIndexTagStore, write bool, from, to time.Time) error {
 	chunks, err := store.TradesChunksInRange(ctx, from, to)
 	if err != nil {
@@ -164,9 +160,7 @@ func parseTxIndexRange(fromStr, toStr string) (from, to time.Time, err error) {
 	return from.UTC(), to.UTC(), nil
 }
 
-// tagTxIndexWindow walks one window. In the fail-closed preview the tag step
-// only counts the resolved txs, so the trades table is never written; the
-// untagged-row reads still run.
+// tagTxIndexWindow walks one window. In the preview the tag step only counts resolved txs, so trades is never written.
 func tagTxIndexWindow(ctx context.Context, lake pipeline.TxIndexLakeReader, store pipeline.TxIndexTradeTagger,
 	write bool, from, to time.Time,
 ) (int64, error) {

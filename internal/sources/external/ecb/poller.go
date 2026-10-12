@@ -75,10 +75,7 @@ func (p *Poller) PollInterval() time.Duration {
 	return p.Interval
 }
 
-// gesmesEnvelope matches the ECB's XML shape. The `gesmes` and
-// default namespaces come through as prefixed element names; we
-// only inspect the Cube hierarchy so the namespace attributes
-// themselves don't need unmarshaling.
+// gesmesEnvelope matches the ECB's XML shape; only the Cube hierarchy is inspected, so the namespace attributes need no unmarshaling.
 type gesmesEnvelope struct {
 	XMLName xml.Name  `xml:"Envelope"`
 	Cube    outerCube `xml:"Cube"`
@@ -194,9 +191,8 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 	return nil, updates, nil
 }
 
-// syntheticTxHash derives a stable 64-char hex from (currency, ts) via the shared
-// scale.SyntheticTxHash form; only the ECB- seed prefix is venue-local. Same-day reruns collide on
-// (currency, unix_day), so the idempotent insert dedupes repeat polls of one day's fix.
+// syntheticTxHash derives a stable 64-char hex from (currency, ts) via scale.SyntheticTxHash; only the ECB- seed prefix is venue-local.
+// Same-day reruns collide on (currency, unix_day), so the idempotent insert dedupes repeat polls of one day's fix.
 func syntheticTxHash(currency, base string, ts int64) string {
 	return scale.SyntheticTxHash(fmt.Sprintf(
 		"ECB-%s-%s-%020d", strings.ToUpper(currency), strings.ToUpper(base), ts))

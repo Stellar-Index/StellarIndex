@@ -63,9 +63,8 @@ func GateFixings(series []FXBar, isCandidate func(FXBar) bool) (accepted, refuse
 	return accepted, refused
 }
 
-// fixingReference is the median close of the ≤[fixingReferenceBars] bars
-// before series[i] that start within [FixingReferenceWindow] of it; nil when
-// there are none.
+// fixingReference is the median close of the up-to-[fixingReferenceBars] bars before series[i] that start within
+// [FixingReferenceWindow] of it; nil when there are none.
 func fixingReference(series []FXBar, closes []*big.Rat, i int) *big.Rat {
 	floor := series[i].BarStart.Add(-FixingReferenceWindow)
 	ref := make([]*big.Rat, 0, fixingReferenceBars)
@@ -123,9 +122,8 @@ func massiveTickers(raw *Snapshot, source string) []string {
 	return out
 }
 
-// guardedDailyRates indexes the served snapshot's guarded rates by ticker and
-// UTC day: the current rate on its publication day, the admitted history on
-// theirs. An accepted bar is compared with the rate for its own day.
+// guardedDailyRates indexes the served snapshot's guarded rates by ticker and UTC day (current rate on its publication day, admitted
+// history on theirs); an accepted bar is compared with the rate for its own day.
 func guardedDailyRates(snap *Snapshot) map[string]map[time.Time]*big.Rat {
 	out := map[string]map[time.Time]*big.Rat{}
 	if snap == nil {
@@ -164,10 +162,9 @@ func RateFromFloat(f float64) *big.Rat {
 	return r
 }
 
-// appendFixings offers the last [fixingLiveWindow] of closed hourly bars for each ticker,
-// comparing accepted bars with served's guarded rates. It runs after the cache install, so the
-// served snapshot never waits on it. A ticker's failure is counted and the cycle continues; a 429
-// or a dead context ends it.
+// appendFixings offers the last [fixingLiveWindow] of closed hourly bars per ticker, compared with served's guarded rates. It runs
+// after the cache install so serving never waits on it; a ticker failure is counted and the cycle continues, a 429 or dead context ends
+// it.
 func (w *Worker) appendFixings(ctx context.Context, tickers []string, served *Snapshot) {
 	if w.fixingWriter == nil {
 		return
@@ -197,9 +194,8 @@ func (w *Worker) appendFixings(ctx context.Context, tickers []string, served *Sn
 	}
 }
 
-// liveFixingCandidates gates series and keeps the bars a live cycle may
-// insert: started within [fixingLiveWindow] and closed [FixingSettle] ago.
-// Everything earlier in series is reference only.
+// liveFixingCandidates gates series and keeps the bars a live cycle may insert: started within [fixingLiveWindow] and closed
+// [FixingSettle] ago. Earlier bars are reference only.
 func liveFixingCandidates(series []FXBar, now time.Time) (accepted, refused []FXBar) {
 	floor := now.Add(-fixingLiveWindow)
 	settled := now.Add(-FixingSettle)

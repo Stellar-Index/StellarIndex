@@ -38,9 +38,7 @@ const SorobanEventsPseudoSource = "soroban-events"
 // cursor on the shared `ledgerstream` row (the indexer would resume from a historical ledger) and refuses sources that are not BackfillSafe
 // (contracts upgrade in place). Idempotency is the storage layer's: trades dedupes on (source, ledger, tx_hash, op_index, ts).
 
-// backfillOpts holds the parsed + validated CLI inputs. Pulled out
-// of the entry point so flag-parsing + validation are unit-testable
-// without executing the pipeline.
+// backfillOpts holds parsed + validated CLI inputs, separate from the entry point so flag validation is unit-testable.
 type backfillOpts struct {
 	cfgPath  string
 	from     uint32
@@ -77,10 +75,8 @@ func (g *replayGateOnce) check(gate func() error) error {
 	return g.err
 }
 
-// chunkRange is one sub-range of a parallel backfill: [from, to]
-// inclusive. Workers process distinct chunkRanges concurrently;
-// each writes its own cursor row keyed on the chunk-specific
-// (from, to) so resume-on-restart works per-chunk.
+// chunkRange is one inclusive [from, to] sub-range of a parallel backfill; each chunk's cursor row is keyed on its own (from, to) so
+// resume works per chunk.
 type chunkRange struct {
 	from uint32
 	to   uint32
@@ -111,10 +107,8 @@ func planBackfillChunks(from, to uint32, n int) []chunkRange {
 	return out
 }
 
-// backfillCursorSource is the value stamped on every backfill
-// cursor row in the ingestion_cursors table. Distinct from the
-// indexer's "ledgerstream" so a backfill crash + restart does NOT
-// pollute the indexer's resume position.
+// backfillCursorSource stamps backfill cursor rows in ingestion_cursors; distinct from the indexer's "ledgerstream" so a backfill crash
+// does not pollute the indexer's resume position.
 const backfillCursorSource = "backfill"
 
 // backfillCursorSub keys the cursor on (from, to, sorted sources) so concurrent or overlapping runs never share a cursor row.
@@ -229,9 +223,8 @@ func runChunkGuarded(logger *slog.Logger, name string, i int, c chunkRange, errC
 	}
 }
 
-// runChunksGuarded runs every chunk concurrently, each under
-// runChunkGuarded, and joins their errors. It is the one fan-out for
-// backfill and resume-stalled, so neither can spawn an unguarded chunk.
+// runChunksGuarded runs every chunk concurrently under runChunkGuarded and joins their errors; the one fan-out for backfill and
+// resume-stalled, so neither can spawn an unguarded chunk.
 func runChunksGuarded(logger *slog.Logger, name string, chunks []chunkRange, run func(*slog.Logger, chunkRange) error) error {
 	var wg sync.WaitGroup
 	errCh := make(chan error, len(chunks))
@@ -320,7 +313,7 @@ func buildChunkDispatcher(
 	return disp, rawSink, nil
 }
 
-// runBackfillChunk processes one chunk end to end; its cursor sub_source uses chunk.from/to, never the overall range, so chunks never share a cursor row.
+// runBackfillChunk processes one chunk end to end; its cursor sub_source uses chunk.from/to, never the overall range.
 //
 //nolint:gocognit,funlen // chunk lifecycle is linear setup → stream → teardown; splitting reduces readability of dependency-construction order.
 func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpts, cfg config.Config, store *timescale.Store, chunk chunkRange) error { //nolint:gocyclo // one cohesive backfill orchestration: chunk stream -> async drain -> post-drain durable cursor; splitting scatters the watermark narrative
@@ -480,10 +473,8 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 	return nil
 }
 
-// backfillChunkCoverage turns a chunk walk that did not cover its range into a hard error naming the bucket.
-// Fail closed: ledgerstream tolerates a missing object anywhere in the chunk (TolerateTrailingMissing is measured against the chunk's own `to`) and
-// stops short without error, so walked == 0 alone fails open and leaves a hole whose only evidence is a success. The archive mirrors live hourly, so a
-// `-to` near the tip also comes up short; a `-resume` re-run is cheap (writes are idempotent). startFrom is the post-resume start, so earlier-banked ledgers are not re-charged.
+// backfillChunkCoverage fails a chunk walk that did not cover its range, naming the bucket. Fail closed: ledgerstream tolerates a
+// missing object (TolerateTrailingMissing) and stops short without error, so walked == 0 alone leaves a hole; startFrom is post-resume.
 func backfillChunkCoverage(chunk chunkRange, startFrom uint32, walked uint64, bucket string) error {
 	if startFrom > chunk.to {
 		return nil // nothing was requested of this run
@@ -560,10 +551,8 @@ func capCheckpointAtLoss(lastFullyEnqueued, startFrom uint32, loss pipeline.Shut
 		loss.Rows, loss.MinLedger, loss.LedgerUnknown, rawMin, capAt)
 }
 
-// backfillChunkInterrupted fails a chunk whose walk was stopped by
-// SIGINT/SIGTERM (ctxErr != nil). An interrupted chunk has not had its
-// CAGGs refreshed and usually has not walked its range, so returning nil
-// would let `backfill` log "backfill complete" and exit 0 on a partial range.
+// backfillChunkInterrupted fails a chunk stopped by SIGINT/SIGTERM: it has not refreshed CAGGs or walked its range, so returning nil
+// would let `backfill` exit 0 on a partial range.
 func backfillChunkInterrupted(ctxErr error, chunk chunkRange, lastFullyEnqueued uint32) error {
 	if ctxErr == nil {
 		return nil
@@ -575,9 +564,8 @@ func backfillChunkInterrupted(ctxErr error, chunk chunkRange, lastFullyEnqueued 
 	)
 }
 
-// interruptedCheckpoint caps an interrupted chunk's checkpoint below
-// chunk.to: a cursor at chunk.to makes -resume short-circuit the chunk as
-// complete, skipping the CAGG refresh the interruption prevented.
+// interruptedCheckpoint caps the checkpoint below chunk.to: a cursor at chunk.to makes -resume treat the chunk as complete and skip the
+// CAGG refresh the interruption prevented.
 func interruptedCheckpoint(chunk chunkRange, lastFullyEnqueued uint32) uint32 {
 	if lastFullyEnqueued >= chunk.to && chunk.to > 0 {
 		return chunk.to - 1
@@ -607,14 +595,12 @@ type caggRefresher interface {
 	timescale.CAGGStepRefresher
 }
 
-// caggRefreshMu serialises CAGG refreshes across `-parallel` workers in this process. TimescaleDB rejects the loser of two concurrent
-// refreshes of the same aggregate with 55P03, and the bounded retry is not enough for prices_1m; the lock is broader than the race on purpose.
-// Decode + insert stay parallel outside it. Consider a per-view lock if the refresh tail ever dominates.
+// caggRefreshMu serialises CAGG refreshes across `-parallel` workers: TimescaleDB rejects the loser of concurrent refreshes of one
+// aggregate with 55P03, and the bounded retry is not enough for prices_1m. Decode + insert stay parallel outside it.
 var caggRefreshMu sync.Mutex
 
-// refreshCAGGsForChunk refreshes every aggregate rooted on a table the chunk wrote in [timescale.PlanCAGGRefresh] order. Idempotent.
-// Every independent view is attempted after one fails, but any failure returns an error so the cursor does not advance; views built on prices_1m
-// are skipped when its refresh failed, since recomputing from stale minute rows would overwrite good history.
+// refreshCAGGsForChunk refreshes every aggregate rooted on a table the chunk wrote, in [timescale.PlanCAGGRefresh] order. Any failure
+// errors so the cursor stays put; prices_1m dependents are skipped when it failed (stale minute rows would overwrite history).
 func refreshCAGGsForChunk(ctx context.Context, logger *slog.Logger, store caggRefresher, chunk chunkRange) error {
 	plan, err := chunkCAGGRefreshPlan(ctx, logger, store, chunk)
 	if err != nil || len(plan) == 0 {
@@ -691,10 +677,8 @@ func chunkCAGGRefreshPlan(ctx context.Context, logger *slog.Logger, store caggRe
 	return plan, nil
 }
 
-// logCAGGRefreshFailure logs one failed view. A per-CALL bound firing
-// names the view, the window and the bound, because an unbounded refresh
-// would hold every `-parallel` worker behind caggRefreshMu until SIGINT.
-// It is still fatal to the chunk.
+// logCAGGRefreshFailure logs one failed view; a per-CALL bound firing names view, window and bound, since an unbounded refresh would
+// hold every `-parallel` worker behind caggRefreshMu. Still fatal to the chunk.
 func logCAGGRefreshFailure(logger *slog.Logger, view string, err error) {
 	var tErr *timescale.CAGGRefreshTimeoutError
 	if errors.As(err, &tErr) {
@@ -709,10 +693,8 @@ func logCAGGRefreshFailure(logger *slog.Logger, view string, err error) {
 	logger.Error("CAGG refresh failed", "view", view, "err", err)
 }
 
-// validateBackfillRangeFlags checks the flags that need no config load:
-// the config path is present, the range is non-empty and does not default
-// to genesis, and -parallel is sane. Split out of parseBackfillFlags purely
-// so that function stays under the funlen ceiling.
+// validateBackfillRangeFlags checks the flags that need no config load: config path, non-empty range not defaulting to genesis, sane
+// -parallel.
 func validateBackfillRangeFlags(cfgPath string, from, to uint, parallel int) error {
 	if cfgPath == "" {
 		return errors.New("-config required")
@@ -840,9 +822,7 @@ func hasSorobanEventsPseudo(sources []string) bool {
 	return false
 }
 
-// filterOutSorobanEventsPseudo returns `sources` with any
-// `soroban-events` entry removed. Used to feed the remaining
-// real-source list to BuildDispatcher / BackfillSafe checks.
+// filterOutSorobanEventsPseudo returns `sources` without the `soroban-events` pseudo-source.
 func filterOutSorobanEventsPseudo(sources []string) []string {
 	out := make([]string, 0, len(sources))
 	for _, s := range sources {
@@ -881,9 +861,8 @@ func recordBackfillDirtyWindows(ctx context.Context, rec dirtyWindowRecorder, cf
 	return nil
 }
 
-// recordRawBackfillProjectorWindows covers a soroban-events backfill landing raw rows for a projected source: the projector never reads behind its cursor,
-// so those rows stay unprojected until a projector-replay rewinds it. The backfill must not project them itself (invariant [7]); it records a dirty window
-// over the FULL [from,to] (the cursor is read once, before the run), which only a completeness verdict clears.
+// recordRawBackfillProjectorWindows covers a soroban-events backfill landing raw rows for a projected source: the projector never reads
+// behind its cursor, so a dirty window over the FULL [from,to] stays until a completeness verdict clears it.
 func recordRawBackfillProjectorWindows(ctx context.Context, logger *slog.Logger, store dirtyWindowRecorder, cfg config.Config, opts backfillOpts) error {
 	if opts.dryRun || cfg.Storage.ClickHouseProjectorSource || !hasSorobanEventsPseudo(opts.sources) {
 		return nil
@@ -912,10 +891,8 @@ func recordRawBackfillProjectorWindows(ctx context.Context, logger *slog.Logger,
 	return nil
 }
 
-// checkBackfillSourcePolicy is the single source-admission rule for every
-// path that replays ledgers through runBackfillChunk: no projector-owned
-// source (invariant [7]) and no source without a current WASM-audit
-// attestation (BackfillSafe).
+// checkBackfillSourcePolicy is the one admission rule for every path through runBackfillChunk: no projector-owned source (invariant
+// [7]) and none without a current WASM-audit attestation (BackfillSafe).
 func checkBackfillSourcePolicy(sources []string, cfg config.Config, fromLedger, toLedger uint32) error {
 	if err := checkBackfillNotProjected(sources, cfg); err != nil {
 		return err
@@ -979,9 +956,8 @@ func checkBackfillNotProjected(sources []string, cfg config.Config) error {
 		projected, rest)
 }
 
-// unsafeBackfillSources filters `sources` to those whose registry
-// entry has BackfillSafe=false. The intent is to fail fast on a list
-// the operator can paste into a wasm-history audit ticket.
+// unsafeBackfillSources filters `sources` to those with BackfillSafe=false, to fail fast on a list pasteable into a wasm-history audit
+// ticket.
 func unsafeBackfillSources(sources []string) []string {
 	var out []string
 	for _, s := range sources {
@@ -1003,9 +979,7 @@ var knownSupplyObserverNames = map[string]struct{}{
 	"liquidity_pools":    {},
 }
 
-// isKnownSupplyObserverName reports whether `name` matches one of
-// the known supply observers. Used by the backfill flag-parser to
-// emit a tailored error rather than the generic BackfillSafe one.
+// isKnownSupplyObserverName reports whether `name` is a known supply observer, for a tailored flag-parser error.
 func isKnownSupplyObserverName(name string) bool {
 	_, ok := knownSupplyObserverNames[name]
 	return ok

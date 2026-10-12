@@ -17,9 +17,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/wasmaudit"
 )
 
-// replayGenerationNote is printed on every rewind and dry-run: the live
-// projector writes at derive_generation 0, and the writers' ON CONFLICT
-// guard refuses to overwrite a row a re-derive stamped higher.
+// replayGenerationNote is printed on every rewind and dry-run: the live projector writes at derive_generation 0 and the writers' ON
+// CONFLICT guard refuses to overwrite a row a re-derive stamped higher.
 const replayGenerationNote = "note: the projector re-writes at derive_generation 0 — rows in this range that a re-derive " +
 	"(projected-rebuild, ch-rebuild) already stamped with a higher generation keep their stored values; " +
 	"to correct those, re-derive the range with projected-rebuild -write instead.\n"
@@ -27,8 +26,9 @@ const replayGenerationNote = "note: the projector re-writes at derive_generation
 const replayNotReachedMsg = "projector cursor for source=%q is at ledger %d, which has not yet passed requested ledger %d — " +
 	"nothing to rewind; the live projector's forward pass will project it (%d ledgers still ahead of the cursor).\n"
 
-// projectorReplay rewinds the projector's per-source cursor so it re-projects a range from soroban_events (replaces *-backfill, ADR-0032; gen-0 rows only).
-// It then STAYS to re-materialize the price CAGGs, whose refresh policy only rolls forward, and fails loudly if it cannot; -refresh-caggs=false opts out.
+// projectorReplay rewinds the projector's per-source cursor to re-project a range from soroban_events (replaces *-backfill, ADR-0032;
+// gen-0 rows only), then STAYS to re-materialize the price CAGGs (refresh policy only rolls forward) and fails loudly if it cannot;
+// -refresh-caggs=false opts out.
 // See docs/operations/runbooks/projector.md#stellarindex_projector_replay_stalled.
 func projectorReplay(w io.Writer, args []string) error {
 	fs := flag.NewFlagSet("projector-replay", flag.ContinueOnError)
@@ -152,9 +152,8 @@ type replayRewinder interface {
 	RewindCursor(ctx context.Context, source, sub string, lastLedger uint32) (uint32, error)
 }
 
-// rewindRecordingDirtyWindow records the dirty window [target, readLedger], rewinds the cursor to
-// target-1 and returns the ledger it held. Record-then-rewind is fail-closed: a crash between leaves a
-// spurious window, never a rewind with no record; the window forces compute-completeness to re-reconcile.
+// rewindRecordingDirtyWindow records the dirty window [target, readLedger], rewinds the cursor to target-1 and returns the ledger it
+// held. Record-then-rewind is fail-closed: a crash between leaves a spurious window, never a rewind with no record.
 func rewindRecordingDirtyWindow(ctx context.Context, w io.Writer, store replayRewinder, source string, target, readLedger uint32) (uint32, error) {
 	if err := store.RecordProjectionDirtyWindow(ctx, timescale.ProjectionDirtyWindow{
 		Source: source,
@@ -195,9 +194,8 @@ func rewindRecordingDirtyWindow(ctx context.Context, w io.Writer, store replayRe
 	return rewoundFrom, nil
 }
 
-// projectorRefreshOnly is the -refresh-only recovery path: re-materialize the price CAGGs over an explicit
-// [from,to] WITHOUT touching the cursor (re-running -from after a timeout would rewind and re-walk
-// everything). It skips checkReplayBackfillSafe and the rewind, and fails closed if the cursor has not reached to.
+// projectorRefreshOnly is the -refresh-only path: re-materialize CAGGs over [from,to] WITHOUT touching the cursor (-from would rewind
+// and re-walk everything); skips checkReplayBackfillSafe and the rewind, and fails closed if the cursor is short of to.
 func projectorRefreshOnly(w io.Writer, cfgPath, source string, from, to uint32, gate *opsutil.WriteGate) error {
 	if to == 0 || to < from {
 		return errors.New("-refresh-only requires -refresh-to >= -from")
@@ -238,10 +236,8 @@ func projectorRefreshOnly(w io.Writer, cfgPath, source string, from, to uint32, 
 	return nil
 }
 
-// checkReplayBackfillSafe refuses a replay of a source whose decoder is not audited against every WASM
-// generation over its history: a rewind feeds the CURRENT decoder every old event, the same hazard
-// checkBackfillSources guards. No override flag; the way through is the audit plus the registry flip.
-// Unknown names are refused via [external.ReplayBackfillSafe] with the naming hint.
+// checkReplayBackfillSafe refuses a replay of a source whose decoder is not audited against every WASM generation in its history, as a
+// rewind feeds the CURRENT decoder every old event. No override flag; unknown names are refused via [external.ReplayBackfillSafe].
 func checkReplayBackfillSafe(source string, from uint32) error {
 	if external.ReplayBackfillSafe(source) {
 		return nil
@@ -258,17 +254,13 @@ func checkReplayBackfillSafe(source string, from uint32) error {
 		source, from, from)
 }
 
-// sep41RollupResetter is the slice of the store
-// resetSEP41RollupAfterReplay needs — one call, so a test can drive it
-// without a real Postgres connection.
+// sep41RollupResetter is the one-call slice of the store resetSEP41RollupAfterReplay needs, so a test can drive it without Postgres.
 type sep41RollupResetter interface {
 	ResetSEP41SupplyRollupFold(ctx context.Context, contractIDs []string) (int64, error)
 }
 
-// resetSEP41RollupAfterReplay resets the sep41_supply_rollup fold checkpoint when a replay re-walks
-// sep41_supply: the fold only advances past last_ledger, so re-driven or corrected rows at or below the
-// rewound cursor would otherwise stay beneath it and served supply stays wrong. The reset is FULL
-// (nil contractIDs) and always safe; it returns reset=false for any other source.
+// resetSEP41RollupAfterReplay resets the sep41_supply_rollup fold checkpoint when a replay re-walks sep41_supply: the fold only
+// advances past last_ledger, so corrected rows below the rewound cursor would leave supply wrong. FULL reset; false otherwise.
 func resetSEP41RollupAfterReplay(ctx context.Context, store sep41RollupResetter, source string) (reset bool, n int64, err error) {
 	if source != sep41supply.SourceName {
 		return false, 0, nil
@@ -293,10 +285,7 @@ func reportSEP41RollupReset(ctx context.Context, w io.Writer, store sep41RollupR
 	return nil
 }
 
-// printSEP41ReplayDryRunNote prints the dry-run line for the SEP-41 rollup
-// reset a real run of `-source sep41_supply` would perform. Split out of
-// projectorReplay's dry-run block for the same cognitive-complexity reason
-// as reportSEP41RollupReset.
+// printSEP41ReplayDryRunNote prints the dry-run line for the SEP-41 rollup reset a real `-source sep41_supply` run would perform.
 func printSEP41ReplayDryRunNote(w io.Writer, source string) {
 	if source != sep41supply.SourceName {
 		return
@@ -320,9 +309,8 @@ type replayFinisher interface {
 	caggRefresher
 }
 
-// rematerializeReplayedRange is projectorReplay's post-rewind tail: wait for the projector to re-walk
-// replayed, then re-materialize the price CAGGs. The AST guard in projector_replay_refresh_test.go pins
-// both hops. Both opt-outs return nil (the rewind is already durable) and log what the operator owes.
+// rematerializeReplayedRange is projectorReplay's post-rewind tail: wait for the projector to re-walk, then re-materialize CAGGs
+// (projector_replay_refresh_test.go pins both hops). Opt-outs return nil since the rewind is durable.
 func rematerializeReplayedRange(w io.Writer, logger *slog.Logger, store replayFinisher, source string, replayed chunkRange, opts replayFollowUp) error {
 	switch {
 	case !opts.refreshCAGGs:
@@ -371,9 +359,8 @@ type projectorCursorReader interface {
 	GetCursor(ctx context.Context, source, sub string) (timescale.Cursor, error)
 }
 
-// awaitProjectorCursor blocks until the cursor re-walks to target. Returning early would refresh CAGGs
-// over unwritten rows and report a green run with the old answer; on timeout it fails naming what is
-// left, since the rewind is already durable.
+// awaitProjectorCursor blocks until the cursor re-walks to target: returning early would refresh CAGGs over unwritten rows and report
+// green with the old answer. On timeout it fails naming what is left; the rewind is already durable.
 func awaitProjectorCursor(ctx context.Context, logger *slog.Logger, r projectorCursorReader, source string, target uint32, budget, poll time.Duration) error {
 	deadline := time.Now().Add(budget)
 	for {

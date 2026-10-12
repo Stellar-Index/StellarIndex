@@ -64,10 +64,8 @@ func (p ECBProvider) LatestUSDRates(ctx context.Context) (map[string]float64, ti
 	return out, publishedAt, nil
 }
 
-// publishedDecimal recovers ECB's published decimal exactly: rates carry at most six significant
-// digits, which a float64's shortest representation round-trips, so the rebase divides published
-// values rather than binary approximations. ok is false for a missing, non-positive or non-finite
-// rate (ECB's parser admits "NaN" and "Inf").
+// publishedDecimal recovers ECB's published decimal exactly: rates carry at most six significant digits, which float64's shortest form
+// round-trips. ok is false for a missing, non-positive or non-finite rate (ECB's parser admits "NaN" and "Inf").
 func publishedDecimal(f float64) (*big.Rat, bool) {
 	if !isFiniteFloat(f) || f <= 0 {
 		return nil, false

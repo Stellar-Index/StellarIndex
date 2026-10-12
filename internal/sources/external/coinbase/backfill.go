@@ -25,9 +25,7 @@ const RESTEndpoint = "https://api.exchange.coinbase.com"
 // Docs: https://docs.cloud.coinbase.com/exchange/reference/exchangerestapi_getproductcandles
 const candlesPathTemplate = "/products/%s/candles"
 
-// coinbaseMaxResponse is Coinbase's per-request cap — **300
-// candles**, tightest of the four CEXes. We paginate aggressively
-// to cover longer ranges.
+// coinbaseMaxResponse is Coinbase's per-request cap of 300 candles, the tightest of the four CEXes, so long ranges paginate.
 const coinbaseMaxResponse = 300
 
 // candlesRequestInterval paces the pagination loop under Coinbase's
@@ -123,9 +121,8 @@ func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to t
 	return out, nil
 }
 
-// resolveBackfillProduct maps pair to its configured Coinbase product (the inverse of PairMap) and
-// refuses up front if the product cannot be represented in a backfill tx hash; the per-candle skip
-// would otherwise turn it into a silently empty backfill.
+// resolveBackfillProduct maps pair to its configured Coinbase product (inverse of PairMap) and refuses up front if the product cannot
+// be represented in a backfill tx hash; the per-candle skip would otherwise yield a silently empty backfill.
 func (s *Streamer) resolveBackfillProduct(pair canonical.Pair, granSec int) (string, error) {
 	inverse := make(map[string]string, len(s.PairMap))
 	for sym, p := range s.PairMap {
@@ -141,10 +138,8 @@ func (s *Streamer) resolveBackfillProduct(pair canonical.Pair, granSec int) (str
 	return product, nil
 }
 
-// coinbaseCandlesToTrades converts one page of candles into trades. Coinbase returns candles
-// newest first, so the slice is walked backwards to emit chronologically. A zero-volume or dust
-// candle is skipped; any other candle that cannot be converted fails the page, so a malformed row
-// never shrinks the range silently. A candle not closed by min(to, now) is dropped; see
+// coinbaseCandlesToTrades converts one page of candles, walked backwards because Coinbase returns newest first. Zero-volume or dust
+// candles are skipped; any other unconvertible candle fails the page. A candle not closed by min(to, now) is dropped; see
 // scale.CandleClosed.
 func coinbaseCandlesToTrades(candles []coinbaseCandle, product string, pair canonical.Pair, granSec int, to, now time.Time) ([]canonical.Trade, error) {
 	out := make([]canonical.Trade, 0, len(candles))
@@ -168,10 +163,8 @@ func coinbaseCandlesToTrades(candles []coinbaseCandle, product string, pair cano
 	return out, nil
 }
 
-// advanceCoinbaseCursor computes the next window's startSec: one granularity past the newest
-// candle (candles[0].time_sec + granularity). done=true tells the caller to stop paginating
-// because the newest candle had no parseable open time, or the cursor failed to advance (a
-// repeating page would otherwise loop forever).
+// advanceCoinbaseCursor computes the next window's startSec, one granularity past candles[0].time_sec. done=true stops pagination when
+// the newest candle has no parseable open time or the cursor failed to advance (a repeating page would loop forever).
 func advanceCoinbaseCursor(candles []coinbaseCandle, startSec int64, granSec int) (next int64, done bool) {
 	newestOpen, ok := candles[0].openTimeSec()
 	if !ok {
@@ -191,10 +184,8 @@ func (s *Streamer) restBase() string {
 	return s.Endpoint
 }
 
-// coinbaseCandle is the positional-array form Coinbase returns,
-// decoded with UseNumber so each slot keeps its exact wire digits.
-// Layout: [time_sec, low, high, open, close, volume]. NOT the
-// standard OHLC order — callers must address by index with care.
+// coinbaseCandle is the positional array Coinbase returns, decoded with UseNumber to keep exact wire digits. Layout [time_sec, low,
+// high, open, close, volume] is NOT standard OHLC order: address by index with care.
 type coinbaseCandle []any
 
 func (c coinbaseCandle) openTimeSec() (int64, bool) { return c.intAt(0) }
@@ -235,9 +226,8 @@ const maxCandleExponent = 40
 // errZeroVolume marks an empty candle, the one expected skip.
 var errZeroVolume = errors.New("zero volume")
 
-// candleNumberToScaled parses a JSON number, exponent form included,
-// exactly and truncates it to externalAmountDecimals, as
-// scale.DecimalStringToScaledInt does for plain decimals.
+// candleNumberToScaled parses a JSON number (exponent form included) exactly and truncates it to externalAmountDecimals, like
+// scale.DecimalStringToScaledInt.
 func candleNumberToScaled(s string) (*big.Int, error) {
 	if i := strings.IndexAny(s, "eE"); i >= 0 {
 		exp, err := strconv.Atoi(s[i+1:])
@@ -324,10 +314,8 @@ func fetchCoinbaseCandles(ctx context.Context, endpoint string, q url.Values) ([
 	return out, nil
 }
 
-// coinbaseCandleToTrade synthesises a canonical.Trade. Coinbase publishes no VWAP or quote volume,
-// so the trade is priced at the close (the Backfiller "close when VWAP unavailable" contract):
-// base volume is exact, while quote = close x volume is an estimate whose true value lies anywhere
-// in [low x volume, high x volume].
+// coinbaseCandleToTrade synthesises a Trade priced at the close (Coinbase publishes no VWAP or quote volume): base volume is exact,
+// quote = close x volume is an estimate within [low x volume, high x volume].
 func coinbaseCandleToTrade(c coinbaseCandle, product string, pair canonical.Pair, granSec int) (canonical.Trade, error) {
 	openSec, ok := c.openTimeSec()
 	if !ok {
@@ -386,10 +374,8 @@ func backfillTxHash(product string, closeSec int64, granSec int) (string, error)
 	return scale.CandleTxHash(normalised, closeSec, time.Duration(granSec)*time.Second)
 }
 
-// granularityToSeconds maps time.Duration → Coinbase's supported
-// granularity values (seconds): 60, 300, 900, 3600, 21600, 86400.
-// Narrower set than Binance/Kraken/Bitstamp — Coinbase only
-// supports these six.
+// granularityToSeconds maps time.Duration to Coinbase's supported granularities in seconds: 60, 300, 900, 3600, 21600, 86400 (a
+// narrower set than other CEXes).
 func granularityToSeconds(d time.Duration) (int, error) {
 	switch d {
 	case 1 * time.Minute:

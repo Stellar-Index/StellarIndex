@@ -38,9 +38,8 @@ const (
 
 var errDirectoryTarballTooLarge = errors.New("directory-sync: tarball reached the size bound")
 
-// boundedReader is io.LimitReader with the bound made fatal: a plain LimitReader returns clean EOF
-// at the bound, which on a tar block boundary looks like a valid but partial archive that
-// ReplaceDirectory would prune the table down to.
+// boundedReader is io.LimitReader with the bound made fatal: a plain LimitReader returns clean EOF at the bound, which on a tar block
+// boundary looks like a valid but partial archive that ReplaceDirectory would prune the table down to.
 type boundedReader struct {
 	r    io.Reader
 	left int64
@@ -58,9 +57,7 @@ func (b *boundedReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// directoryAddressRe matches the strkey forms the table's CHECK
-// accepts. Entries outside it (malformed upstream rows) are skipped
-// and counted rather than failing the whole chunk's INSERT.
+// directoryAddressRe matches the strkey forms the table's CHECK accepts; malformed upstream rows are skipped and counted.
 var directoryAddressRe = regexp.MustCompile(`^[GC][A-Z2-7]{55}$`)
 
 type directoryFileEntry struct {
@@ -150,9 +147,7 @@ func directorySync(args []string) error {
 	return nil
 }
 
-// directoryFetchTimeout bounds the directory tarball download. Generous
-// because the tarball is a few MB over the public internet, but finite:
-// an unbounded fetch is a hang, not a slow success.
+// directoryFetchTimeout bounds the tarball download (a few MB over the public internet): an unbounded fetch is a hang.
 const directoryFetchTimeout = 2 * time.Minute
 
 // fetchDirectoryTarball downloads the repo tarball and parses every
@@ -211,10 +206,8 @@ func parsePinnedDirectoryTarball(body io.Reader, maxBytes int64, wantSHA256 stri
 	return entries, skipped, nil
 }
 
-// parseDirectoryTarball walks a gzip tarball of the repo, bounding
-// both the compressed and decompressed streams at maxBytes, and
-// verifies the gzip trailer before returning: a truncated, corrupt or
-// oversized snapshot is an error, never a shorter entry set.
+// parseDirectoryTarball walks a gzip tarball, bounding compressed and decompressed streams at maxBytes and verifying the gzip trailer:
+// a truncated, corrupt or oversized snapshot is an error, never a shorter entry set.
 func parseDirectoryTarball(body io.Reader, maxBytes int64) (entries []timescale.DirectoryEntry, skipped int, err error) {
 	gz, err := gzip.NewReader(&boundedReader{r: body, left: maxBytes})
 	if err != nil {
@@ -285,9 +278,8 @@ func stampDirectorySyncTextfile(path string, res timescale.DirectorySyncResult) 
 	}
 }
 
-// renderDirectorySyncTextfile renders stellarindex_directory_sync_rows_changed.
-// An un-flag re-publishes a withheld price, so it is exported for
-// alerting rather than left in journald.
+// renderDirectorySyncTextfile renders stellarindex_directory_sync_rows_changed. An un-flag re-publishes a withheld price, so it is
+// exported for alerting rather than left in journald.
 func renderDirectorySyncTextfile(source string, res timescale.DirectorySyncResult) string {
 	var b strings.Builder
 	b.WriteString("# HELP stellarindex_directory_sync_rows_changed Rows the most recent committed directory-sync changed, by kind: pruned, newly_flagged (scam-class tag added: price withheld) and unflagged (scam-class tag cleared or row pruned: price no longer withheld).\n# TYPE stellarindex_directory_sync_rows_changed gauge\n")
@@ -300,9 +292,7 @@ func renderDirectorySyncTextfile(source string, res timescale.DirectorySyncResul
 	return b.String()
 }
 
-// parseDirectoryFile decodes one accounts/<ADDRESS>.json blob,
-// returning ok=false for malformed JSON, a bad address, or an empty
-// name (a nameless label is useless downstream).
+// parseDirectoryFile decodes one accounts/<ADDRESS>.json blob; ok=false for malformed JSON, a bad address or an empty name.
 func parseDirectoryFile(r io.Reader) (timescale.DirectoryEntry, bool) {
 	var f directoryFileEntry
 	if err := json.NewDecoder(r).Decode(&f); err != nil {

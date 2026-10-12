@@ -26,14 +26,12 @@ import (
 // configured value and no successful read is refused (ErrDecimalsUnresolved), never projected at a
 // guessed scale. Backfill goes through the same resolver.
 const (
-	// decimalsRefreshInterval is how long a verified decimals() read stays trusted. Decimals are
-	// effectively immutable; the refresh bounds how long a proxy re-pointed at a
+	// decimalsRefreshInterval is how long a verified decimals() read stays trusted; it bounds how long a proxy re-pointed at a
 	// differently-scaled aggregator can mis-scale.
 	decimalsRefreshInterval = 24 * time.Hour
 
-	// decimalsRetryInterval bounds how often a feed whose decimals()
-	// call failed, or whose value disagrees with config, is re-read —
-	// one WARN/ERROR per feed per interval rather than one per tick.
+	// decimalsRetryInterval bounds how often a feed whose decimals() call failed or disagrees with config is re-read: one WARN/ERROR per
+	// feed per interval.
 	decimalsRetryInterval = 5 * time.Minute
 )
 
@@ -59,9 +57,8 @@ type feedDecimalsState struct {
 	lastErr   error     // most recent decimals() failure, for the refusal message
 }
 
-// decimalsCache holds feedDecimalsState per feed address (lowercase),
-// mirroring roundCache's keying. Goroutine-safe: PollOnce resolves
-// feeds concurrently.
+// decimalsCache holds feedDecimalsState per lowercase feed address (like roundCache); goroutine-safe because PollOnce resolves feeds
+// concurrently.
 type decimalsCache struct {
 	mu    sync.Mutex
 	feeds map[string]*feedDecimalsState
@@ -71,9 +68,8 @@ func newDecimalsCache() *decimalsCache {
 	return &decimalsCache{feeds: make(map[string]*feedDecimalsState)}
 }
 
-// resolveDecimals returns the decimals to stamp on `pair`'s rows, or
-// an error when the feed must be refused this tick. The RPC read runs
-// outside the cache lock so a slow endpoint does not block siblings.
+// resolveDecimals returns the decimals to stamp on `pair`'s rows, or an error when the feed must be refused this tick; the RPC read
+// runs outside the cache lock so a slow endpoint does not block siblings.
 func (p *Poller) resolveDecimals(ctx context.Context, pair canonical.Pair, spec FeedSpec) (uint8, error) {
 	logger := p.Logger
 	if logger == nil {
@@ -140,9 +136,8 @@ func (p *Poller) resolveDecimals(ctx context.Context, pair canonical.Pair, spec 
 	return decimalsVerdict(pair, spec, st)
 }
 
-// decimalsVerdict turns the per-feed state into a scale or a refusal.
-// Caller holds the cache lock. The mismatch is judged against THIS
-// call's spec: st is shared by every pair mapped to the feed address.
+// decimalsVerdict turns per-feed state into a scale or a refusal (caller holds the cache lock). The mismatch is judged against THIS
+// call's spec, since st is shared by every pair mapped to the feed address.
 func decimalsVerdict(pair canonical.Pair, spec FeedSpec, st *feedDecimalsState) (uint8, error) {
 	switch {
 	case st.hasChain && spec.Decimals != 0 && spec.Decimals != st.onChain:
@@ -172,9 +167,8 @@ func (p *Poller) fetchDecimals(ctx context.Context, spec FeedSpec) (uint8, error
 	return decodeDecimals(rawHex)
 }
 
-// decodeDecimals parses the 32-byte `decimals()` eth_call result (uint8, left-padded to one word).
-// Anything but exactly one word fails loudly, and 0 is rejected: no Chainlink price feed has 0
-// decimals, so it indicates a broken contract rather than a scale.
+// decodeDecimals parses the 32-byte `decimals()` eth_call result (uint8, left-padded). Anything but exactly one word fails loudly, and
+// 0 is rejected: no price feed has 0 decimals, so it indicates a broken contract.
 func decodeDecimals(rawHex string) (uint8, error) {
 	b, err := hexBytes(rawHex)
 	if err != nil {

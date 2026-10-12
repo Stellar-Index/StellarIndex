@@ -13,9 +13,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// tagRoutedVia is the historical half of router attribution: it walks soroswap_router_swaps in windows and back-tags the same-(ledger, tx_hash) soroswap trades via timescale.TagTradesRoutedVia, the live sweeper's primitive, so the two cannot drift.
-// A sub_invocation row gets its outermost wrapping contract's registry name when registered, else routed_via='soroswap-router'.
-// SQL-only; each window is one UPDATE bounded by the router-swap close-time span (compressed chunks decompress segments, hence windows). Idempotent and resumable via ingestion_cursors (source='tag-routed-via'); -resume defaults true. Fail-closed (opsutil.WriteGate): dry run unless -write.
+// tagRoutedVia back-tags same-(ledger, tx_hash) soroswap trades from soroswap_router_swaps in windows via timescale.TagTradesRoutedVia,
+// the live sweeper's primitive. SQL-only, one UPDATE per window (compressed chunks decompress segments); idempotent, resumable via
+// ingestion_cursors (source='tag-routed-via'). Fail-closed (opsutil.WriteGate): dry run unless -write.
 func tagRoutedVia(args []string) error { //nolint:funlen,gocognit,gocyclo // linear windowed pass: flags → bounds → per-window UPDATE + checkpoint
 	fs, gate := opsutil.NewMutatingFlagSet("tag-routed-via")
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")

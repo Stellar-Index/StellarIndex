@@ -25,9 +25,7 @@ const RESTEndpoint = "https://www.bitstamp.net"
 // substituted with the lowercase concat symbol ("xlmusd").
 const ohlcPathTemplate = "/api/v2/ohlc/%s/"
 
-// bitstampMaxLimit is the per-request candle cap. Higher values
-// silently clamp to this; explicit limit=1000 + pagination via
-// `start` is the reliable path.
+// bitstampMaxLimit is the per-request candle cap; higher values clamp silently, so request limit=1000 and paginate via `start`.
 const bitstampMaxLimit = 1000
 
 // Backfill implements external.Backfiller, returning trades synthesised from Bitstamp OHLC
@@ -59,9 +57,8 @@ func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to t
 	return backfillOHLC(ctx, endpoint, symbol, pair, from.Unix(), to.Unix(), stepSec, time.Now())
 }
 
-// backfillOHLC walks [startSec, endSec) one page at a time. Only `start`
-// is sent: Bitstamp honours `end` over `start` when both are present,
-// so a pinned `end` would return the same last page on every request.
+// backfillOHLC walks [startSec, endSec) one page at a time. Only `start` is sent: Bitstamp honours `end` over `start` when both are
+// present, so a pinned `end` would return the same last page every request.
 func backfillOHLC(ctx context.Context, endpoint, symbol string, pair canonical.Pair, startSec, endSec int64, stepSec int, now time.Time) ([]canonical.Trade, error) {
 	step := int64(stepSec)
 	var out []canonical.Trade
@@ -91,10 +88,8 @@ func backfillOHLC(ctx context.Context, endpoint, symbol string, pair canonical.P
 	return out, nil
 }
 
-// appendPageTrades converts the page's in-range candles and returns the
-// last candle's open time. A candle before the requested start means the
-// venue ignored the cursor; that fails loudly rather than truncating. A
-// candle not closed by min(to, now) is dropped; see scale.CandleClosed.
+// appendPageTrades converts the page's in-range candles and returns the last candle's open time. A candle before the requested start
+// means the venue ignored the cursor and fails loudly. A candle not closed by min(to, now) is dropped; see scale.CandleClosed.
 func appendPageTrades(out *[]canonical.Trade, candles []bitstampCandle, symbol string, pair canonical.Pair, startSec int64, stepSec int, to, now time.Time) (int64, error) {
 	var lastTs int64
 	for _, c := range candles {
@@ -130,9 +125,8 @@ func (s *Streamer) restBase() string {
 	return s.Endpoint
 }
 
-// bitstampCandle matches Bitstamp's OHLC response entry. All
-// numeric fields arrive as strings (matches the WS precision
-// policy). Timestamp is UNIX seconds as a string.
+// bitstampCandle matches Bitstamp's OHLC entry: numeric fields are strings (WS precision policy); Timestamp is UNIX seconds as a
+// string.
 type bitstampCandle struct {
 	Timestamp string `json:"timestamp"`
 	Open      string `json:"open"`
@@ -181,11 +175,8 @@ func fetchBitstampOHLC(ctx context.Context, endpoint string, q url.Values) ([]bi
 // errZeroVolume marks an empty candle, an expected skip.
 var errZeroVolume = errors.New("zero volume")
 
-// bitstampCandleToTrade synthesises a canonical.Trade from one candle. Bitstamp publishes no VWAP
-// or quote volume, so the trade is priced at the close (the Backfiller "close when VWAP
-// unavailable" contract): base volume is exact, while quote = close x volume is an estimate that
-// truly lies anywhere in [low x volume, high x volume]. poloniex_via_btc depends on the price
-// being the close.
+// bitstampCandleToTrade synthesises a Trade priced at the close (Bitstamp publishes no VWAP or quote volume): base volume is exact,
+// quote = close x volume is an estimate within [low x volume, high x volume]. poloniex_via_btc depends on the price being the close.
 func bitstampCandleToTrade(c bitstampCandle, symbol string, pair canonical.Pair, stepSec int) (canonical.Trade, error) {
 	openSec, err := strconv.ParseInt(c.Timestamp, 10, 64)
 	if err != nil {
@@ -236,9 +227,8 @@ func backfillTxHash(symbol string, closeSec int64, stepSec int) (string, error) 
 	return scale.CandleTxHash(strings.ToUpper(symbol), closeSec, time.Duration(stepSec)*time.Second)
 }
 
-// granularityToSeconds maps Durations to Bitstamp's step values
-// (seconds). Supported: 60, 180, 300, 900, 1800, 3600, 7200,
-// 14400, 21600, 43200, 86400, 259200.
+// granularityToSeconds maps Durations to Bitstamp's step values in seconds: 60, 180, 300, 900, 1800, 3600, 7200, 14400, 21600, 43200,
+// 86400, 259200.
 func granularityToSeconds(d time.Duration) (int, error) {
 	switch d {
 	case 1 * time.Minute:

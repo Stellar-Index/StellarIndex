@@ -66,13 +66,9 @@ func (c *Cache) Set(s *Snapshot) {
 // its row carries no upstream information.
 const anchorTicker = "USD"
 
-// buildSnapshot merges a raw rates map and names map into the public Currency slice, sorted by
-// ticker for deterministic output. USD itself is excluded (rate 1.0 is implied), as is any code
-// without a name. A nil `history` installs cleanly with an empty History7d map.
-//
-// The join is CASE-INSENSITIVE on the currency code: the primary client lower-cases both maps
-// while the ECB standby and re-keyed reused names are UPPER. An exact-case lookup would match
-// nothing on exactly the degraded refreshes and collapse the snapshot to the synthetic USD row.
+// buildSnapshot merges a rates map and a names map into the public Currency slice, sorted by ticker. USD (rate 1.0 implied) and any
+// code without a name are excluded. The join is CASE-INSENSITIVE: the primary client lower-cases both maps, the ECB standby is UPPER,
+// and an exact-case join would collapse a degraded refresh to the synthetic USD row.
 func buildSnapshot(rates map[string]float64, names map[string]string, publishedAt, fetchedAt time.Time, history map[string][]HistoryPoint, circulation map[string]CirculationEntry) *Snapshot {
 	rates, names = lowerKeyed(rates), lowerKeyed(names)
 	out := make([]Currency, 0, len(rates)+1)
@@ -120,10 +116,8 @@ func buildSnapshot(rates map[string]float64, names map[string]string, publishedA
 	}
 }
 
-// lowerKeyed returns m re-keyed by lower-case currency code — the one
-// canonical form every rates/names join in this package uses. When two
-// keys differ only by case the one that sorts first wins ("EUR" before
-// "eur"), so the result never depends on map iteration order.
+// lowerKeyed re-keys m by lower-case currency code, the one form every rates/names join here uses. Keys differing only by case resolve
+// to the one that sorts first, so the result never depends on map iteration order.
 func lowerKeyed[V any](m map[string]V) map[string]V {
 	keys := make([]string, 0, len(m))
 	for k := range m {
@@ -148,9 +142,7 @@ func isFiniteFloat(f float64) bool {
 	return !math.IsNaN(f) && !math.IsInf(f, 0)
 }
 
-// toTitle returns "United States Dollar" from "united states dollar".
-// Upstream names are typically already title-cased but normalising
-// keeps the output deterministic across snapshots.
+// toTitle title-cases an upstream currency name so output is deterministic across snapshots.
 func toTitle(s string) string {
 	parts := strings.Fields(s)
 	for i, p := range parts {

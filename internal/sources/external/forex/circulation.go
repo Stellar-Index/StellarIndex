@@ -9,8 +9,8 @@ import (
 	"time"
 )
 
-// circulationCSV is the curated monetary-base table joined onto /v1/currencies, refreshed
-// quarterly with one row per central-bank publication; its header comments document the method.
+// circulationCSV is the curated monetary-base table joined onto /v1/currencies, refreshed quarterly with one row per central-bank
+// publication.
 //
 //go:embed circulation_data.csv
 var circulationCSV string
@@ -22,10 +22,8 @@ type CirculationEntry struct {
 	Source              string    // Series identifier — opaque to callers, useful for audit
 }
 
-// loadCirculationTable parses the embedded CSV at startup.
-// Returns a lower-case-ticker → entry map. Malformed lines are
-// skipped with a warning baked into the returned error string;
-// callers (Worker) log it and proceed with whatever parsed cleanly.
+// loadCirculationTable parses the embedded CSV into a lower-case-ticker map. Malformed lines are skipped and named in the returned
+// error, which callers log before proceeding with what parsed.
 func loadCirculationTable() (map[string]CirculationEntry, error) {
 	out := map[string]CirculationEntry{}
 	if circulationCSV == "" {

@@ -13,9 +13,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// tagSigner is the historical/recovery half of AMM signer attribution (mirror of tag-routed-via): the live sweeper covers only a trailing 30-min window, and a re-derive preserves a NULL signer rather than re-tagging.
-// It walks a range in windows, reads tx source accounts from stellar.transactions and back-tags trades.signer via the same first-wins timescale.TagTradesSigner as the live sweeper. Idempotent and resumable via ingestion_cursors (source='tag-signer', sub_source='<from>-<to>'); -resume only resumes the same -from/-to.
-// Fail-closed (opsutil.WriteGate): the default run is a DRY RUN writing neither tags nor checkpoint; -write applies.
+// tagSigner is the historical/recovery half of AMM signer attribution: the live sweeper covers a trailing 30-min window and a re-derive
+// preserves a NULL signer. It back-tags trades.signer from stellar.transactions via first-wins timescale.TagTradesSigner; resumable via
+// ingestion_cursors (source='tag-signer'), -resume only for the same -from/-to. Fail-closed (opsutil.WriteGate): dry run unless -write.
 func tagSigner(args []string) error { //nolint:funlen,gocognit,gocyclo // linear windowed pass: flags → bounds → per-window read+tag + checkpoint (mirrors tagRoutedVia)
 	fs, gate := opsutil.NewMutatingFlagSet("tag-signer")
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
@@ -142,9 +142,8 @@ type rangeCursorReader interface {
 	GetCursor(ctx context.Context, source, sub string) (timescale.Cursor, error)
 }
 
-// resumeRangeStart returns the first ledger a windowed [from, to] pass
-// processes and the checkpoint key it must write. The key carries the range,
-// so a completed later repair can never skip an earlier one.
+// resumeRangeStart returns the first ledger a windowed [from, to] pass processes and its checkpoint key; the key carries the range so a
+// later repair never skips an earlier one.
 func resumeRangeStart(ctx context.Context, store rangeCursorReader, src string, from, to uint32, resume bool) (uint32, string) {
 	sub := opsutil.RangeCursorKey(from, to)
 	if !resume {
@@ -162,9 +161,7 @@ func resumeRangeStart(ctx context.Context, store rangeCursorReader, src string, 
 	return from, sub
 }
 
-// writeModeVerb renders a count's verb for the run's mode, so a preview's
-// numbers can never be read as applied ones. Shared by the ingest
-// subcommands the fail-closed gate covers.
+// writeModeVerb renders a count's verb for the run's mode, so a preview's numbers are never read as applied ones.
 func writeModeVerb(write bool, applied, preview string) string {
 	if write {
 		return applied

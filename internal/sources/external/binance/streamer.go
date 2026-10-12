@@ -118,9 +118,8 @@ func handleFrame(data []byte, pairMap map[string]canonical.Pair) ([]canonical.Tr
 	return []canonical.Trade{trade}, nil
 }
 
-// symbolsFor resolves canonical.Pair → Binance symbol by inverting
-// s.PairMap. Unknown pairs are rejected — we never subscribe to
-// a symbol we can't decode on the way back.
+// symbolsFor resolves canonical.Pair -> Binance symbol by inverting s.PairMap; unknown pairs are rejected, as we never subscribe to a
+// symbol we cannot decode.
 func (s *Streamer) symbolsFor(pairs []canonical.Pair) ([]string, error) {
 	// Build inverse map once; O(pairs × map) is fine for small N.
 	inverse := make(map[string]string, len(s.PairMap))
@@ -138,10 +137,8 @@ func (s *Streamer) symbolsFor(pairs []canonical.Pair) ([]string, error) {
 	return out, nil
 }
 
-// buildStreamURL turns Binance symbols into the combined-stream URL, lowercased per Binance
-// convention (the wire-side Symbol arrives uppercase):
-//
-//	wss://stream.binance.com:9443/stream?streams=xlmusdt@aggTrade/btcusdt@aggTrade
+// buildStreamURL turns Binance symbols into the combined-stream URL, lowercased per Binance convention (wire-side Symbol arrives
+// uppercase): wss://stream.binance.com:9443/stream?streams=xlmusdt@aggTrade/btcusdt@aggTrade
 func (s *Streamer) buildStreamURL(symbols []string) (string, error) {
 	if s.Endpoint == "" {
 		s.Endpoint = WSEndpoint

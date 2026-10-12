@@ -126,9 +126,8 @@ var (
 	ErrCarriedForwardRound = errors.New("chainlink: answer carried forward from an earlier round")
 )
 
-// roundCache is the per-feed dedup memory: last roundId emitted per lowercased feed address.
-// Correctness across restarts rests on the oracle_updates PK: a re-emitted round hits ON CONFLICT,
-// so the cache only saves the round-trip.
+// roundCache is the per-feed dedup memory: last roundId emitted per lowercase feed address. Restart correctness rests on the
+// oracle_updates PK (a re-emitted round hits ON CONFLICT); the cache only saves the round-trip.
 type roundCache struct {
 	mu   sync.Mutex
 	last map[string]*big.Int // feed address (lowercase) → last roundId emitted
@@ -138,13 +137,9 @@ func newRoundCache() *roundCache {
 	return &roundCache{last: make(map[string]*big.Int)}
 }
 
-// shouldEmit reports whether this (feed, roundId) is strictly greater than the last seen, and if
-// so records it. The production poll path splits wouldEmit and commitEmit so a failure between
-// check and round build cannot strand the round.
-//
-// roundID is the FULL uint80 proxy round id. Comparing the wide value keeps emission alive across a
-// proxy phase upgrade (aggregatorRoundId resets to ~1 but phaseId increments); a low-64-bit key
-// would wedge the feed until restart. A nil roundID is zero.
+// shouldEmit reports whether (feed, roundId) is strictly greater than the last seen, recording it if so (production polling splits
+// wouldEmit/commitEmit so a failure cannot strand a round). roundID is the FULL uint80 proxy round id: the wide value keeps emission
+// alive across a proxy phase upgrade (aggregatorRoundId resets, phaseId increments); a nil roundID is zero.
 func (c *roundCache) shouldEmit(feedAddr string, roundID *big.Int) bool {
 	if !c.wouldEmit(feedAddr, roundID) {
 		return false

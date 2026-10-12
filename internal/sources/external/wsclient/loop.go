@@ -181,8 +181,7 @@ func (l *Loop) Run(ctx context.Context, out chan<- canonical.Trade) {
 	}
 }
 
-// runOnce runs one connect-and-read cycle: nil on clean close, an error on
-// disconnect so Run backs off.
+// runOnce runs one connect-and-read cycle: nil on clean close, an error on disconnect so Run backs off.
 //
 //nolint:gocognit // dial + subscribe + read-loop with per-venue hooks; linear despite the branch count
 func (l *Loop) runOnce(ctx context.Context, out chan<- canonical.Trade) error {
@@ -241,10 +240,8 @@ func (l *Loop) runOnce(ctx context.Context, out chan<- canonical.Trade) error {
 	}
 }
 
-// dial performs one upgrade dial under a per-attempt deadline so a venue
-// that stalls anywhere in the handshake surfaces as a "dial" disconnect.
-// The deadline covers only the handshake: the returned conn is not tied to
-// dialCtx, so the read loop keeps running on the caller's ctx.
+// dial performs one upgrade dial under a per-attempt deadline so a stalled handshake surfaces as a "dial" disconnect. The returned conn
+// is not tied to dialCtx, so the read loop keeps running on the caller's ctx.
 func (l *Loop) dial(ctx context.Context) (*websocket.Conn, error) {
 	timeout := l.DialTimeout
 	if timeout <= 0 {
@@ -269,9 +266,8 @@ func (l *Loop) dial(ctx context.Context) (*websocket.Conn, error) {
 	return conn, nil
 }
 
-// pingWatchdog pings every PingInterval and cancels connCtx with
-// [ErrStreamStalled] when a pong misses PingTimeout. It must run beside the read
-// loop, which dispatches pongs; it returns once connCtx is done.
+// pingWatchdog pings every PingInterval and cancels connCtx with [ErrStreamStalled] when a pong misses PingTimeout. It must run beside
+// the read loop, which dispatches pongs.
 func (l *Loop) pingWatchdog(connCtx context.Context, conn *websocket.Conn, fail context.CancelCauseFunc) {
 	interval := l.PingInterval
 	if interval <= 0 {

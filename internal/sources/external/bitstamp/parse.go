@@ -23,9 +23,8 @@ type eventEnvelope struct {
 	Data    json.RawMessage `json:"data"`
 }
 
-// tradePayload matches Bitstamp's live_trades_* data shape (https://www.bitstamp.net/websocket/v2/).
-// Price and amount are read from the *_str variants, which are authoritative and precision-safe,
-// unlike the float64 siblings. Microtimestamp arrives as a string-form microsecond count.
+// tradePayload matches Bitstamp's live_trades_* shape (https://www.bitstamp.net/websocket/v2/). Price and amount are read from the
+// authoritative, precision-safe *_str variants, not float64; Microtimestamp is a string microsecond count.
 type tradePayload struct {
 	ID             int64  `json:"id"`
 	Timestamp      string `json:"timestamp"`      // unix seconds, string
@@ -45,9 +44,8 @@ type errPayload struct {
 	Message string `json:"message"`
 }
 
-// subscriptionAck signals a subscription confirm/reject back to the streamer. It is an error only
-// as a signalling channel (like ErrRequestedReconnect); an accepted ack is not a failure. It carries
-// the venue's channel name and message for the per-symbol rejection metric and log line.
+// subscriptionAck signals a subscription confirm/reject to the streamer, an error only as a signalling channel (like
+// ErrRequestedReconnect). It carries the venue's channel name and message for the per-symbol rejection metric and log.
 type subscriptionAck struct {
 	Channel  string
 	Message  string
@@ -68,9 +66,8 @@ func (a *subscriptionAck) Unwrap() error {
 	return ErrSubscriptionRejected
 }
 
-// parseFrame dispatches on the envelope's `event` field. Trade frames yield one canonical.Trade;
-// subscription confirms/rejects signal a *subscriptionAck and reconnect requests signal
-// ErrRequestedReconnect, which the streamer detects by inspecting the error chain.
+// parseFrame dispatches on the envelope's `event`: trade frames yield a Trade; subscription confirms/rejects signal a *subscriptionAck
+// and reconnect requests ErrRequestedReconnect, which the streamer detects via the error chain.
 func parseFrame(raw []byte, pairMap map[string]canonical.Pair) (canonical.Trade, bool, error) {
 	var env eventEnvelope
 	if err := json.Unmarshal(raw, &env); err != nil {
@@ -160,9 +157,8 @@ func parseTrade(env eventEnvelope, pairMap map[string]canonical.Pair) (canonical
 	}, nil
 }
 
-// parseMicrotimestamp prefers the microsecond-precision field but
-// falls back to the seconds timestamp if micro is missing — rare in
-// practice but defensive against vendor frame variation.
+// parseMicrotimestamp prefers the microsecond field and falls back to the seconds timestamp if micro is missing (vendor frame
+// variation).
 func parseMicrotimestamp(micro, secs string) (time.Time, error) {
 	if micro != "" {
 		us, err := strconv.ParseInt(micro, 10, 64)

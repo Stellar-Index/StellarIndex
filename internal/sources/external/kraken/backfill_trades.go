@@ -140,9 +140,7 @@ func fetchKrakenTrades(ctx context.Context, endpoint string, q url.Values) ([]kr
 	return parseTradesResult(body.Result)
 }
 
-// parseTradesResult decodes one /Trades page's result map into fills
-// plus the `last` pagination cursor. Split out of fetchKrakenTrades so
-// the HTTP transport and the per-pair row decoding aren't one function.
+// parseTradesResult decodes one /Trades page's result map into fills plus the `last` pagination cursor.
 func parseTradesResult(result map[string]json.RawMessage) ([]krakenFill, string, error) {
 	var last string
 	var fills []krakenFill
@@ -190,10 +188,8 @@ func decodeKrakenFillRows(raw json.RawMessage) ([]krakenFill, error) {
 	return fills, nil
 }
 
-// decodeKrakenFill converts one positional row
-// [price, volume, time, side, kind, misc, id], decoded with UseNumber,
-// into a krakenFill. A fill without a trade_id is refused: it has no
-// identity that can match its live row.
+// decodeKrakenFill converts one positional row [price, volume, time, side, kind, misc, id], decoded with UseNumber. A fill without a
+// trade_id is refused: it has no identity that can match its live row.
 func decodeKrakenFill(r []any) (krakenFill, error) {
 	f := krakenFill{}
 	if s, ok := r[0].(string); ok {
@@ -241,10 +237,8 @@ func fillsToTrades(fills []krakenFill, symbol string, pair canonical.Pair, to ti
 	return out, false
 }
 
-// krakenFillToTrade converts one raw fill to a canonical.Trade under
-// the live streamer's identity (ledger 0 = off-chain; tx_hash from
-// formatTxHash(symbol, trade_id)), so a backfilled fill and its streamed
-// row collapse onto one trades PK instead of double-counting.
+// krakenFillToTrade converts a fill under the live streamer's identity (ledger 0, tx_hash from formatTxHash(symbol, trade_id)), so a
+// backfilled fill and its streamed row collapse onto one trades PK instead of double-counting.
 func krakenFillToTrade(f krakenFill, symbol string, pair canonical.Pair) (canonical.Trade, error) {
 	txHash, err := formatTxHash(symbol, f.id)
 	if err != nil {

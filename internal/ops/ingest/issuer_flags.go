@@ -31,10 +31,8 @@ type issuerFlagsReader interface {
 	RemovedAccountsLastKnownAuthFlags(ctx context.Context, gStrkeys []string) (map[string]clickhouse.AccountAuthFlags, error)
 }
 
-// issuerFlagsCounts is one run's accounting. Every candidate the drain is
-// handed lands in exactly one of resolvedLive / resolvedLastKnown / absent,
-// so `resolved* + absent == candidates` is checkable by the operator rather
-// than inferred from silence.
+// issuerFlagsCounts is one run's accounting: every candidate lands in exactly one of resolvedLive / resolvedLastKnown / absent, so
+// `resolved* + absent == candidates` is checkable.
 type issuerFlagsCounts struct {
 	candidates        int // rows the primary queue offered
 	resolvedLive      int // a live AccountEntry in the lake
@@ -54,9 +52,8 @@ type issuerFlagsCounts struct {
 	chainMerged     int // of the agreed+corrected, rows answered by the last-known reader
 }
 
-// issuerFlagsCmd persists issuer AccountEntry auth flags into `issuers` as a durable fallback for read-time enrichment.
-// Merged issuers are stored as `last_known_before_removal` with no home_domain (it can no longer be checked against SEP-1) and re-checked in a second pass.
-// A third pass re-offers filled live rows and writes only rows that differ, so a lapsed home_domain cannot be inherited by whoever registers it next.
+// issuerFlagsCmd persists issuer AccountEntry auth flags into `issuers` as a durable fallback for read-time enrichment. Merged issuers
+// store `last_known_before_removal` with no home_domain and are re-checked; a third pass writes only differing live rows.
 func issuerFlagsCmd(args []string) error {
 	fs := flag.NewFlagSet("issuer-flags", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
@@ -120,9 +117,7 @@ type issuerFlagsOpts struct {
 	out    io.Writer
 }
 
-// runIssuerFlags is the drain proper, split from the flag/config wiring so
-// the resolve → fall back → persist → re-check loop is testable against
-// stub seams.
+// runIssuerFlags is the resolve -> fall back -> persist -> re-check drain, split from flag wiring so it is testable with stubs.
 func runIssuerFlags(ctx context.Context, store issuerFlagsStore, reader issuerFlagsReader, o issuerFlagsOpts) error {
 	var c issuerFlagsCounts
 

@@ -132,9 +132,8 @@ func loadIssuerGStrkeys(ctx context.Context, store *timescale.Store) ([]string, 
 	return ids, rows.Err()
 }
 
-// updateIssuerHomeDomains writes each issuer's on-chain home_domain and returns how many rows changed.
-// It overwrites non-empty values (see [timescale.Store.SyncIssuerHomeDomain]), and an empty domain clears the row so a lapsed name leaves the SEP-1 fetch queue.
-// A single row's failure does not abort the batch; the returned error counts failures.
+// updateIssuerHomeDomains writes each issuer's on-chain home_domain and returns rows changed; an empty domain clears the row so a
+// lapsed name leaves the SEP-1 fetch queue. One row's failure does not abort the batch; the returned error counts failures.
 func updateIssuerHomeDomains(ctx context.Context, store homeDomainWriter, domains map[string]string) (int, error) {
 	n, failed := 0, 0
 	var lastErr error

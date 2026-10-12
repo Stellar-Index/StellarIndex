@@ -23,24 +23,19 @@ import (
 
 // ─── sizing constants ───────────────────────────────────────────────────
 
-// assetRegistryPageDefault is how many distinct assets one ClickHouse page returns.
-// LIMIT cannot stop the aggregation early, so each page re-scans the trustline
-// range; 25,000 (~21 pages) keeps repeat scans cheap yet lands within the 30-minute progress alert.
+// assetRegistryPageDefault is distinct assets per ClickHouse page. LIMIT cannot stop the aggregation early, so each page re-scans the
+// range; 25,000 (~21 pages) keeps scans cheap yet inside the 30-minute progress alert.
 const assetRegistryPageDefault = 25000
 
-// assetRegistryBatchDefault is how many observations are handed to the
-// store per call. The store re-batches internally against the Postgres
-// bind-parameter ceiling; this bound is about how much work one
-// cancellation point covers.
+// assetRegistryBatchDefault is observations per store call; the store re-batches against the Postgres bind-parameter ceiling, so this
+// only sets how much work one cancellation point covers.
 const assetRegistryBatchDefault = 2000
 
 // assetRegistryBytesPerAsset is the pre-flight's deliberately generous (~3x) per-asset disk
 // estimate (heap tuple, six indexes, WAL); it exists to refuse a run that would fill the volume.
 const assetRegistryBytesPerAsset = 800
 
-// assetRegistryLogEvery throttles the stderr progress line to one per this
-// many assets, so an unattended run leaves a readable journal rather than
-// half a million lines.
+// assetRegistryLogEvery throttles the stderr progress line so an unattended run leaves a readable journal.
 const assetRegistryLogEvery = 25000
 
 // ─── seams ──────────────────────────────────────────────────────────────
@@ -52,10 +47,8 @@ type assetRegistryScanner interface {
 	CountTrustlineAssets(ctx context.Context) (int64, error)
 }
 
-// assetRegistryStore is the served-tier seam — timescale.Store satisfies
-// it. Note what is NOT here: no INSERT, no UPDATE, no table name. This job
-// is a feeder, and `classic_assets` / `issuers` keep the one writer they
-// have always had (internal/storage/timescale/asset_registry.go).
+// assetRegistryStore is the served-tier seam. Deliberately no INSERT/UPDATE: `classic_assets` / `issuers` keep their one writer
+// (internal/storage/timescale/asset_registry.go).
 type assetRegistryStore interface {
 	RegisterClassicAssetsHeld(ctx context.Context, obs []timescale.ClassicAssetHolding) (int64, int64, error)
 	ClassicAssetRegistryStats(ctx context.Context) (timescale.ClassicAssetRegistryStats, error)
@@ -63,9 +56,8 @@ type assetRegistryStore interface {
 
 // ─── counters ───────────────────────────────────────────────────────────
 
-// assetRegistryCounts is one run's accounting. Every asset the lake offered
-// lands in exactly one of registered / skippedNonClassic / skippedUnparsed,
-// so an operator can check the arithmetic instead of trusting the summary.
+// assetRegistryCounts is one run's accounting; every asset lands in exactly one of registered / skippedNonClassic / skippedUnparsed so
+// the arithmetic is checkable.
 type assetRegistryCounts struct {
 	scanned            int64 // rows the lake returned
 	registered         int64 // observations handed to the writer
@@ -80,10 +72,8 @@ type assetRegistryCounts struct {
 
 // ─── entry point ────────────────────────────────────────────────────────
 
-// assetRegistryBackfill populates classic_assets (and issuers) from trustline holdings in the lake.
-// Held-but-never-traded assets never reach the registry via InsertTrade, so this closes the gap
-// (lake is source of truth, ADR-0034). Keyset-paginated; early stops print a RESUME line with
-// -resume-from, and writes are idempotent and monotone so a restart from zero converges.
+// assetRegistryBackfill populates classic_assets (and issuers) from lake trustline holdings, covering held-but-never-traded assets.
+// Keyset-paginated; early stops print a RESUME line for -resume-from; writes are idempotent and monotone.
 func assetRegistryBackfill(args []string) error {
 	fs := flag.NewFlagSet("asset-registry-backfill", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
@@ -165,9 +155,7 @@ type assetRegistryOpts struct {
 	volumePath func(ctx context.Context, relation string) (string, error)
 }
 
-// runAssetRegistryBackfill is the walk proper, split from the flag/config
-// wiring so the page -> parse -> write -> report loop is testable against
-// stub seams.
+// runAssetRegistryBackfill is the page -> parse -> write -> report loop, split from flag wiring so it is testable with stubs.
 func runAssetRegistryBackfill(
 	ctx context.Context,
 	store assetRegistryStore,
@@ -287,10 +275,8 @@ func assetRegistryPageSize(o assetRegistryOpts, scanned int64) int {
 // signal; [assetRegistryWalk] turns it back into the non-error early stop.
 var errAssetRegistryWriteStoppedByContext = errors.New("asset-registry-backfill: context ended during write")
 
-// assetRegistryWritePage hands one lake page to the registry writer in -batch slices.
-// Asset strings are PARSED, never split (identity is (code, issuer)); unparseable or non-credit
-// assets are counted and dropped. c.cursor advances only past assets whose batch succeeded
-// (resume is strictly-after), or to the page end once done; running ahead would skip assets.
+// assetRegistryWritePage hands one lake page to the writer in -batch slices. Assets are PARSED, never split (identity is (code,
+// issuer)). c.cursor advances only past succeeded batches (resume is strictly-after); running ahead would skip assets.
 func assetRegistryWritePage(
 	ctx context.Context,
 	store assetRegistryStore,
@@ -361,9 +347,8 @@ func assetRegistryWritePage(
 
 // ─── pre-flight ─────────────────────────────────────────────────────────
 
-// assetRegistryPreflight refuses a write run that could fill the Postgres data volume.
-// Free space comes from -min-free-bytes (trusted as stated) else statfs on the classic_assets
-// directory; neither available is a warning, since the worst case here is a failed INSERT.
+// assetRegistryPreflight refuses a write run that could fill the Postgres volume. Free space is -min-free-bytes (trusted) else statfs;
+// neither available only warns, since the worst case is a failed INSERT.
 func assetRegistryPreflight(ctx context.Context, o assetRegistryOpts, scanner assetRegistryScanner, before timescale.ClassicAssetRegistryStats) error {
 	if o.dryRun {
 		return nil
@@ -453,9 +438,7 @@ func describeRegistryStats(s timescale.ClassicAssetRegistryStats) string {
 		s.Total, s.WithTrade, s.WithHolding, s.HoldingOnly, s.TradeOnly)
 }
 
-// describeRunCounts renders the run's own accounting. scanned must equal
-// registered + skipped_non_classic + skipped_unparsed; an operator who
-// checks that arithmetic is checking the walk, not trusting it.
+// describeRunCounts renders the run's accounting; scanned must equal registered + skipped_non_classic + skipped_unparsed.
 func describeRunCounts(c assetRegistryCounts, dryRun bool) string {
 	return fmt.Sprintf(
 		"scanned=%d registered=%d skipped_non_classic=%d skipped_unparsed=%d asset_rows_considered=%d issuer_rows_new=%d pages=%d dry_run=%v",

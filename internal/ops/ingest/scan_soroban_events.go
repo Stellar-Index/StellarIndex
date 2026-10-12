@@ -20,9 +20,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// scanSorobanEvents dumps every Soroban contract event in a bounded galexie range as one JSON object per line
-// (optionally filtered by topic[0] and/or contract), to discover real addresses and schemas before
-// writing a decoder. No DB writes; reuses the dispatcher's LCM extraction rather than reparsing SCVal.
+// scanSorobanEvents dumps every Soroban contract event in a bounded galexie range as JSON lines (optionally filtered by topic[0] and/or
+// contract), to discover addresses and schemas before writing a decoder. No DB writes; reuses the dispatcher's LCM extraction.
 func scanSorobanEvents(args []string) error { //nolint:funlen,gocognit,gocyclo // linear diagnostic; splitting reduces readability
 	fs := flag.NewFlagSet("scan-soroban-events", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
@@ -97,9 +96,8 @@ func scanSorobanEvents(args []string) error { //nolint:funlen,gocognit,gocyclo /
 	return nil
 }
 
-// scanCollector is the catch-all dispatcher.Decoder backing
-// scan-soroban-events. It emits no consumer.Event; Decode renders
-// the event and Matches applies the optional topic0/contract filter.
+// scanCollector is the catch-all dispatcher.Decoder behind scan-soroban-events: Decode renders the event, Matches applies the filter;
+// no consumer.Event.
 type scanCollector struct {
 	topic0   string // "" = any
 	contract string // "" = any
@@ -256,9 +254,8 @@ func renderSCVal(sv sdkxdr.ScVal, depth int) any { //nolint:gocyclo,gocognit,fun
 	}
 }
 
-// rangeWalkCoverage fails a bounded walk whose delivered count is not exactly
-// the ledgers [from, to] holds. TolerateTrailingMissing ends a walk at a missing object
-// with a nil error, so the delivered count is the only sign the range was cut short.
+// rangeWalkCoverage fails a bounded walk whose delivered count is not exactly the ledgers [from, to] holds; TolerateTrailingMissing
+// ends a walk at a missing object with nil error, so the count is the only sign the range was cut short.
 func rangeWalkCoverage(from, to uint32, walked int, bucket string) error {
 	requested := uint64(to) - uint64(from) + 1
 	switch {
