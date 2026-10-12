@@ -7,6 +7,11 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"reflect"
+	"regexp"
+	"sort"
 	"strings"
 	"testing"
 
@@ -622,7 +627,7 @@ func TestHandleIssuer_NoLiveEntryNeverClaimsProvenance(t *testing.T) {
 
 // The PERSISTED half of auth-flag provenance on /v1/issuers/{g_strkey}.
 //
-// issuers_provenance_test.go pins what the read path concludes from a live AccountEntry; these
+// the provenance tests below pin what the read path concludes from a live AccountEntry; these
 // pin what it does with what the drain already wrote, carried by handleIssuer from IssuerRow.
 
 // A real r1 residue issuer: merged away at ledger 54,564,588, its pre-image
@@ -632,3 +637,75 @@ const mergedIssuerG = "GA2PQOJ26IP24ECRXEZ4BE6BEIB4HNDWSA2E6JVPFIP6KO6BKOEAZ6XW"
 func u32(v uint32) *uint32 { return &v }
 
 func boolPtr(v bool) *bool { return &v }
+
+// Auth-flag provenance on /v1/issuers/{g_strkey}.
+//
+// Issuers that merged their account away still have auth flags recoverable from the last state
+// before removal, but that is a HISTORICAL RECORD, not the current authorisation policy: the wire
+// has to say which it is, and the read path must never let a historical reading freeze in place.
+
+const provenanceIssuer = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+
+// TestIssuerAuthFlagsSourceIsLockstepped: `auth_flags_source` has copies in the Go constants, the OpenAPI enum and the Postgres
+// CHECK in migration 0153. A member added to one compiles but makes the DB reject writes or clients unable to express it.
+func TestIssuerAuthFlagsSourceIsLockstepped(t *testing.T) {
+	want := []string{
+		string(clickhouse.AuthFlagsSourceLastKnownBeforeRemoval),
+		string(clickhouse.AuthFlagsSourceLive),
+	}
+	sort.Strings(want)
+
+	root := moduleRoot(t)
+
+	spec, err := os.ReadFile(filepath.Join(root, "openapi", "stellar-index.v1.yaml")) //nolint:gosec // repo-relative path resolved above
+	if err != nil {
+		t.Fatalf("read spec: %v", err)
+	}
+	specEnum := regexp.MustCompile(`auth_flags_source:\n\s+type: string\n\s+enum: \[([^\]]+)\]`).FindSubmatch(spec)
+	if specEnum == nil {
+		t.Fatal("openapi/stellar-index.v1.yaml declares no auth_flags_source enum — the served field is undocumented")
+	}
+	if got := splitCommaSorted(string(specEnum[1])); !reflect.DeepEqual(got, want) {
+		t.Errorf("OpenAPI enum = %v, want %v", got, want)
+	}
+
+	mig, err := os.ReadFile(filepath.Join(root, "migrations", "0153_issuers_auth_flags_provenance.up.sql")) //nolint:gosec // repo-relative path resolved above
+	if err != nil {
+		t.Fatalf("read migration 0153: %v", err)
+	}
+	migEnum := regexp.MustCompile(`auth_flags_source IN \(([^)]+)\)`).FindSubmatch(mig)
+	if migEnum == nil {
+		t.Fatal("migration 0153 declares no auth_flags_source CHECK — an unlabelled value could be persisted")
+	}
+	if got := splitCommaSorted(strings.ReplaceAll(string(migEnum[1]), "'", "")); !reflect.DeepEqual(got, want) {
+		t.Errorf("migration 0153 CHECK = %v, want %v", got, want)
+	}
+}
+
+// moduleRoot walks up from the test's working directory to the module root.
+func moduleRoot(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 8 {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		dir = filepath.Dir(dir)
+	}
+	t.Fatal("could not locate the module root from cwd")
+	return ""
+}
+
+func splitCommaSorted(s string) []string {
+	out := []string{}
+	for _, p := range strings.Split(s, ",") {
+		if v := strings.TrimSpace(p); v != "" {
+			out = append(out, v)
+		}
+	}
+	sort.Strings(out)
+	return out
+}

@@ -6,9 +6,14 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // fakeStatusBackend is a hand-rolled StatusBackend that lets tests
@@ -887,4 +892,204 @@ func statusByName(st StatusResponse) map[string]string {
 		got[s.Name] = s.Status
 	}
 	return got
+}
+
+// `api.status_services` is validated case-insensitively, so statusServicesOr must lower-case as well as trim: the
+// heartbeat map is keyed by lower-case Prometheus `job` labels minus the `stellarindex-` prefix. Otherwise
+// `["Indexer", "Aggregator"]` passes validation but reports both "unknown" and `overall` stays degraded.
+
+// TestStatusServicesOrNormalisesCase pins the boundary transform. It
+// must match the one config validation applies, or a value can pass
+// validation and still match nothing.
+func TestStatusServicesOrNormalisesCase(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		in   []string
+		want []string
+	}{
+		{"capitalised", []string{"Indexer", "Aggregator"}, []string{"indexer", "aggregator"}},
+		{"upper", []string{"INDEXER"}, []string{"indexer"}},
+		{"mixed with padding", []string{"  Indexer  "}, []string{"indexer"}},
+		{"already canonical", []string{"indexer"}, []string{"indexer"}},
+		{"blank entries dropped", []string{"Indexer", "   ", ""}, []string{"indexer"}},
+		{"empty falls back to the default pair", nil, defaultStatusServices},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := statusServicesOr(tc.in)
+			if len(got) != len(tc.want) {
+				t.Fatalf("statusServicesOr(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Errorf("statusServicesOr(%q)[%d] = %q, want %q",
+						tc.in, i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+// TestCapitalisedStatusServiceResolvesItsHeartbeat is the end-to-end statement: a capitalised declaration must
+// grade against the lower-cased heartbeat key Prometheus publishes, not sit at "unknown".
+func TestCapitalisedStatusServiceResolvesItsHeartbeat(t *testing.T) {
+	t.Parallel()
+	// The shape PrometheusStatusBackend.Heartbeats returns: job labels
+	// with the `stellarindex-` prefix stripped — always lower-case.
+	hb := map[string]time.Time{
+		"indexer":    time.Now().UTC(),
+		"aggregator": time.Now().UTC(),
+	}
+
+	svcs := heartbeatServices(statusServicesOr([]string{"Indexer", "Aggregator"}), hb)
+	if len(svcs) != 2 {
+		t.Fatalf("got %d services, want 2", len(svcs))
+	}
+	for _, svc := range svcs {
+		if svc.Status != "ok" {
+			t.Errorf("service %q graded %q, want \"ok\" — a capitalised "+
+				"status_services entry passed config validation and then "+
+				"matched no heartbeat, pinning overall at degraded forever "+
+				"(RD-05)", svc.Name, svc.Status)
+		}
+		if svc.LastSeen.IsZero() {
+			t.Errorf("service %q has no last_seen; the heartbeat was not found", svc.Name)
+		}
+	}
+}
+
+// TestStatusServiceStaleHeartbeatStillGradesDown guards the blast
+// radius: normalising the NAME must not disturb the freshness grading
+// the list exists to drive.
+func TestStatusServiceStaleHeartbeatStillGradesDown(t *testing.T) {
+	t.Parallel()
+	hb := map[string]time.Time{
+		"indexer": time.Now().UTC().Add(-2 * statusHeartbeatStaleAfter),
+	}
+	svcs := heartbeatServices(statusServicesOr([]string{"Indexer"}), hb)
+	if len(svcs) != 1 {
+		t.Fatalf("got %d services, want 1", len(svcs))
+	}
+	if svcs[0].Status != "down" {
+		t.Errorf("stale heartbeat graded %q, want \"down\"", svcs[0].Status)
+	}
+}
+
+// The queries behind /v1/status `freshness.active_sources` and `freshness.total_sources` are
+// evaluated by Prometheus, so no Go test can run them. This pins that the promtool fixture
+// that does (deploy/monitoring/rule-tests/status-source-counts_test.yml) runs THESE
+// expressions and models its case: a source hosted by the API binary (`massive`, the fiat-FX
+// worker) publishing its own stellarindex_source_enabled series. Without that gauge the feed
+// is invisible to both counts. The fixture proves both counts rise by one once the series
+// exists; this test keeps it honest about which queries and that it still shows the delta.
+
+const statusSourceCountsFixture = "deploy/monitoring/rule-tests/status-source-counts_test.yml"
+
+// statusSourceCountsDoc is the slice of the promtool unit-test schema
+// this guard reads. Field names follow promtool's.
+type statusSourceCountsDoc struct {
+	Tests []struct {
+		Name        string `yaml:"name"`
+		InputSeries []struct {
+			Series string `yaml:"series"`
+		} `yaml:"input_series"`
+		PromQLExprTest []struct {
+			Expr       string `yaml:"expr"`
+			ExpSamples []struct {
+				Value float64 `yaml:"value"`
+			} `yaml:"exp_samples"`
+		} `yaml:"promql_expr_test"`
+	} `yaml:"tests"`
+}
+
+// normalizePromQL collapses whitespace so the YAML block scalar and the
+// Go raw string compare on their tokens, which is all Prometheus sees.
+func normalizePromQL(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
+// massiveEnabledSeriesRE matches a fixture series line for the gauge
+// the API binary now publishes for massive, in either label order.
+var massiveEnabledSeriesRE = regexp.MustCompile(
+	`^stellarindex_source_enabled\{(?:[^}]*,)?job="stellarindex_api"(?:,[^}]*)?\}$`)
+
+func TestStatusSourceCountQueries_MatchPromtoolFixture(t *testing.T) {
+	path := filepath.Join(repoRootForClaims(t), statusSourceCountsFixture)
+	raw, err := os.ReadFile(path) //nolint:gosec // repo-relative, test-only
+	if err != nil {
+		t.Fatalf("read %s: %v", statusSourceCountsFixture, err)
+	}
+	var doc statusSourceCountsDoc
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("parse %s: %v", statusSourceCountsFixture, err)
+	}
+	if len(doc.Tests) < 2 {
+		t.Fatalf("%s has %d cases, want at least the before/after pair", statusSourceCountsFixture, len(doc.Tests))
+	}
+
+	wantActive := normalizePromQL(activeSourcesQuery)
+	wantTotal := normalizePromQL(totalSourcesQuery)
+
+	// Per case: the expected count for each query, and whether the
+	// fixture publishes massive's enabled series from the API job.
+	type outcome struct {
+		total, active float64
+		massiveGauge  bool
+	}
+	var before, after *outcome
+	for _, tc := range doc.Tests {
+		o := outcome{total: -1, active: -1}
+		for _, s := range tc.InputSeries {
+			if massiveEnabledSeriesRE.MatchString(s.Series) && strings.Contains(s.Series, `source="massive"`) {
+				o.massiveGauge = true
+			}
+		}
+		for _, e := range tc.PromQLExprTest {
+			if len(e.ExpSamples) != 1 {
+				t.Fatalf("case %q: expression has %d expected samples, want exactly one scalar count", tc.Name, len(e.ExpSamples))
+			}
+			switch got := normalizePromQL(e.Expr); got {
+			case wantTotal:
+				o.total = e.ExpSamples[0].Value
+			case wantActive:
+				o.active = e.ExpSamples[0].Value
+			default:
+				t.Errorf("case %q evaluates an expression that is neither totalSourcesQuery nor "+
+					"activeSourcesQuery — the fixture has drifted from status.go and no longer "+
+					"proves anything about the served counts:\n%s", tc.Name, e.Expr)
+			}
+		}
+		if o.total < 0 || o.active < 0 {
+			t.Fatalf("case %q must evaluate BOTH status queries (total=%v active=%v)", tc.Name, o.total, o.active)
+		}
+		if o.active > o.total {
+			t.Errorf("case %q expects active %v > total %v — the numerator is a strict subset of "+
+				"the denominator by construction", tc.Name, o.active, o.total)
+		}
+		if o.massiveGauge {
+			after = &o
+		} else {
+			before = &o
+		}
+	}
+
+	// Fixture: one host without the API-published gauge, one with; the gauge is worth exactly one on each count, since
+	// the feed is on and emitting and so lands in the numerator as well as the denominator.
+	if before == nil {
+		t.Fatalf("%s has no case without stellarindex_source_enabled{job=\"stellarindex_api\",source=\"massive\"} — "+
+			"the pre-fix shape is what the delta is measured against", statusSourceCountsFixture)
+	}
+	if after == nil {
+		t.Fatalf("%s has no case publishing stellarindex_source_enabled{job=\"stellarindex_api\",source=\"massive\"} — "+
+			"the fixture no longer models the API-hosted source it exists for", statusSourceCountsFixture)
+	}
+	if d := after.total - before.total; d != 1 {
+		t.Errorf("total_sources moves by %v when the API publishes massive's enabled series, want exactly 1 "+
+			"(before=%v after=%v)", d, before.total, after.total)
+	}
+	if d := after.active - before.active; d != 1 {
+		t.Errorf("active_sources moves by %v when the API publishes massive's enabled series, want exactly 1 "+
+			"(before=%v after=%v) — an emitting, switched-on source must count on both sides", d, before.active, after.active)
+	}
 }
