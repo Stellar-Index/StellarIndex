@@ -12,22 +12,9 @@ import (
 	"time"
 )
 
-// Behavioural companions to TestCAGGPairReadsFoldBothDirections, for the three readers that must
-// fold both pair directions.
-//
-// The class guard pins the QUERY SHAPE, because the canned driver replays rows regardless of the
-// SQL and so cannot prove the flipped rows were fetched. These tests pin the other half: once
-// fetched, the two directions are FOLDED (exact volume-weighted union) rather than one leg being
-// served as the bucket.
-//
-// Every case reuses combineFixture's economics, where the answers are far apart:
-//
-//	stored (XLM,USDC) unflipped: vwap 0.5, volume 100
-//	stored (USDC,XLM) flipped  : vwap 5,   volume 10
-//	union                      : 60 USDC / 150 XLM = 0.4 exactly
-//
-// So "0.5" in a result means the flipped leg was dropped, "5" means it
-// was served uninverted, and "0.4" means the fold ran.
+// Behavioural companions to TestCAGGPairReadsFoldBothDirections: once both directions are fetched, they must
+// be folded into an exact volume-weighted union. With combineFixture, 0.5 means the flipped leg was dropped,
+// 5 means it was served uninverted, and 0.4 means the fold ran.
 
 // dirRows renders combineFixture as CAGG rows for one bucket, in the
 // column order scanCombinedVwap1mRows scans.
@@ -83,10 +70,9 @@ func TestRecentClosedVWAP1mForPair_FoldsBothDirections(t *testing.T) {
 	}
 }
 
-// TestRecentClosedVWAP1mForPair_FlippedOnlyBucketIsServed is the headline failure: a market that
-// traded ONLY in the stored (quote, base) orientation. Otherwise /v1/oracle/prices returns 200
-// with an empty array for an asset /v1/oracle/lastprice prices fine, so two endpoints on the same
-// SEP-40 surface disagree about whether the asset has any history.
+// TestRecentClosedVWAP1mForPair_FlippedOnlyBucketIsServed: a market that traded ONLY in the stored
+// (quote, base) orientation must still be served, or /v1/oracle/prices returns an empty array for an asset
+// /v1/oracle/lastprice prices fine, and two endpoints on one SEP-40 surface disagree.
 func TestRecentClosedVWAP1mForPair_FlippedOnlyBucketIsServed(t *testing.T) {
 	pair := testXLMUSDCPair(t)
 	b := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
@@ -144,10 +130,9 @@ func TestClosedVWAP1mAtOrBefore_FoldsBothDirections(t *testing.T) {
 	}
 }
 
-// TestClosedVWAP1mAtOrBefore_TrimsTheOlderBucket — the query caps at
-// LIMIT 2 because a bucket holds at most two rows. When the newest
-// qualifying bucket has only ONE row, the second row belongs to an
-// OLDER bucket and must not leak into the anchor.
+// TestClosedVWAP1mAtOrBefore_TrimsTheOlderBucket: the query caps at LIMIT 2 as a bucket holds at most two
+// rows; when the newest qualifying bucket has one, the second row is from an older bucket and must not leak
+// into the anchor.
 func TestClosedVWAP1mAtOrBefore_TrimsTheOlderBucket(t *testing.T) {
 	pair := testXLMUSDCPair(t)
 	newest := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)

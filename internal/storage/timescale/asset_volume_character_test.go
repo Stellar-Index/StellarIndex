@@ -84,10 +84,8 @@ func TestDeriveVolumeCharacter_Census(t *testing.T) {
 			want: VolumeCharacterConcentrated,
 		},
 		{
-			// An issuer redeeming on a MARKET surface with a single
-			// counterparty is still wash per the design discriminator
-			// (issuer-side alone isn't the excuse — market-styled + single
-			// pair is the tell).
+			// An issuer redeeming on a MARKET surface with a single counterparty is still wash: issuer-side alone is no
+			// excuse, market-styled plus single pair is the tell.
 			name: "issuer_side_but_market_styled_is_wash",
 			in: AssetVolumeCharacter{
 				VolumeUSD: "100000", IsMarketStyled: true,
@@ -179,10 +177,9 @@ func TestVolumeCharacterWindow(t *testing.T) {
 	}
 }
 
-// TestVolumeCharacterSQL_PoolMakerIsNotAnAccount: a classic liquidity-pool fill stores the hex
-// pool id in trades.maker. Both the per-asset query and the rollup must project maker through an
-// account discriminator that keeps a G-strkey and drops the pool id, and key a pool fill on its
-// lone taker, or the pool counts as a distinct market maker and round-trips split per pool.
+// TestVolumeCharacterSQL_PoolMakerIsNotAnAccount: a classic pool fill stores the pool id in trades.maker.
+// The queries must drop it via an account discriminator and key pool fills on the taker, so a pool is not
+// counted as a distinct market maker.
 func TestVolumeCharacterSQL_PoolMakerIsNotAnAccount(t *testing.T) {
 	var raw [32]byte
 	for i := range raw {

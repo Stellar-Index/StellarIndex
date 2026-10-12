@@ -8,11 +8,9 @@ import (
 	"testing"
 )
 
-// TestSEP41SupplyRollupMigrationsNeverPrescribeDestructiveReset pins the
-// migrations' own guidance to the non-destructive reset. Migration
-// 0085's header told operators a below-checkpoint re-derive "requires a
-// `TRUNCATE sep41_supply_rollup`", which also wipes migration 0088's seeded
-// genesis baseline and silently under-reports supply.
+// TestSEP41SupplyRollupMigrationsNeverPrescribeDestructiveReset pins that migrations never tell operators to
+// `TRUNCATE sep41_supply_rollup`, which also wipes migration 0088's seeded genesis baseline and under-reports
+// supply.
 func TestSEP41SupplyRollupMigrationsNeverPrescribeDestructiveReset(t *testing.T) {
 	paths, err := filepath.Glob("../../../migrations/*.sql")
 	if err != nil || len(paths) == 0 {

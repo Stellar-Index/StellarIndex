@@ -192,10 +192,9 @@ func TestContractStorageSupplyReaderDecodesDeferredBalances(t *testing.T) {
 	}
 }
 
-// The lake never records an eviction, so a balance whose TTL lapsed still reads
-// as current state. A lapsed TEMPORARY balance was deleted by the network and
-// must leave the sum; a lapsed PERSISTENT one was archived — still owned and
-// restorable — so it stays in the sum and is disclosed as archived.
+// The lake never records an eviction, so a lapsed-TTL balance still reads as current. A lapsed TEMPORARY
+// balance was deleted and must leave the sum; a lapsed PERSISTENT one is archived, still owned, and stays in,
+// disclosed.
 func TestContractStorageSupplyJudgesBalancesAgainstTheirTTL(t *testing.T) {
 	const tip = 64_000_000
 	folded := foldFixture(t, caocxwnxContractID, caocxwnxStorageTSV)

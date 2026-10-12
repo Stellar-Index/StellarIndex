@@ -6,14 +6,9 @@ import (
 	"testing"
 )
 
-// TestNoFragileIntervalConcat guards the pgx int→text encode trap: writing an interval bound
-// as `($N || ' days')::interval` makes Postgres infer $N as text (OID 25), but Go callers pass
-// an int and pgx v5 has no int→text encode plan, so the query fails before executing and the
-// endpoint 500s on every request.
-//
-// The fix is make_interval(days => $N) / make_interval(secs => $N), which types $N as an
-// integer/double. This cheap source scan forbids the concat form anywhere in the package; the
-// canned-driver tests cannot exercise this end-to-end.
+// TestNoFragileIntervalConcat guards the pgx trap where `($N || ' days')::interval` makes Postgres infer $N
+// as text, but pgx v5 cannot encode an int as text, so the endpoint 500s on every request. Use
+// make_interval(days => $N) or make_interval(secs => $N).
 func TestNoFragileIntervalConcat(t *testing.T) {
 	entries, err := os.ReadDir(".")
 	if err != nil {

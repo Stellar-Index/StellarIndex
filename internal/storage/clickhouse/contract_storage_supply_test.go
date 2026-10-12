@@ -91,11 +91,9 @@ func TestContractStorageSupplyReproducesVerifiedTotal(t *testing.T) {
 	}
 }
 
-// TestContractStorageSupplyIgnoresLookalikeKeys: `BalanceCheckpoints(Address)` holds a VECTOR of
-// past balances and `Eligible(Address)` holds a bool, and both are keyed by a two-element vector
-// shaped like the real key. A matcher comparing the symbol by PREFIX sweeps BalanceCheckpoints
-// in; one checking only "two elements, second is an Address" sweeps Eligible in. Either mistake
-// corrupts the figure rather than failing loudly.
+// TestContractStorageSupplyIgnoresLookalikeKeys: BalanceCheckpoints(Address) holds a vector and
+// Eligible(Address) a bool, both under a two-element key shaped like the real one. Matching the symbol by
+// prefix, or only the key shape, corrupts the figure silently.
 func TestContractStorageSupplyIgnoresLookalikeKeys(t *testing.T) {
 	var checkpoints, eligible, balances int
 	for _, line := range strings.Split(strings.TrimSpace(caocxwnxStorageTSV), "\n") {
@@ -141,11 +139,9 @@ func TestContractStorageSupplyIgnoresLookalikeKeys(t *testing.T) {
 	}
 }
 
-// TestContractStorageSupplyRefusesStellarAssetContract pins the refusal that keeps a large
-// understatement off the wire. A SAC's storage holds only the slice of a classic asset wrapped
-// into Soroban (KALE's storage sum was roughly 7x below its event-derived supply). The sum
-// looks plausible on its own, so the refusal is structural, keyed on the instance executable,
-// not a plausibility check on the number.
+// TestContractStorageSupplyRefusesStellarAssetContract pins a structural refusal: a SAC's storage holds only
+// the wrapped slice of a classic asset, so its sum understates supply. It is keyed on the executable, not
+// plausibility.
 func TestContractStorageSupplyRefusesStellarAssetContract(t *testing.T) {
 	got := foldFixture(t, kaleSACContractID, kaleSACStorageTSV)
 	if !got.isSAC {
@@ -158,10 +154,8 @@ func TestContractStorageSupplyRefusesStellarAssetContract(t *testing.T) {
 	}
 }
 
-// TestContractStorageSupplyRefusesBalancesWithNoInstance pins that the SAC check must be RUN,
-// not merely not fire. The instance entry is the only evidence separating a Wasm token from a
-// SAC; without it the two are indistinguishable and a plausible reading understates a classic
-// asset by whatever never entered Soroban.
+// TestContractStorageSupplyRefusesBalancesWithNoInstance pins that the SAC check must RUN: the instance
+// entry alone separates a Wasm token from a SAC, so without it a classic asset is understated.
 func TestContractStorageSupplyRefusesBalancesWithNoInstance(t *testing.T) {
 	var withoutInstance []string
 	for _, line := range strings.Split(strings.TrimSpace(caocxwnxStorageTSV), "\n") {
@@ -260,11 +254,9 @@ func TestContractStorageSupplySelfConsistentCatchesMissingHolder(t *testing.T) {
 	}
 }
 
-// TestContractDataKeyPrefixAndMarkersMatchRealKeys guards the SQL's magic numbers: the reader's
-// server-side filter is a 52-character primary-key prefix and two fixed base64 windows at a fixed
-// offset, which neither the type system nor a decoder test exercises. A wrong offset matches
-// nothing and the sum comes back 0, indistinguishable from a fully-burned token. So the
-// constants are checked against real keys and the SDK's own marshalling.
+// TestContractDataKeyPrefixAndMarkersMatchRealKeys guards the SQL's magic numbers (52-char key prefix, two
+// base64 windows at fixed offsets). A wrong offset matches nothing and reads as a fully-burned token, 0. So
+// they are checked against real keys and the SDK's own marshalling.
 func TestContractDataKeyPrefixAndMarkersMatchRealKeys(t *testing.T) {
 	prefix, err := contractDataKeyPrefix(caocxwnxContractID)
 	if err != nil {
@@ -389,10 +381,9 @@ func TestDecimalsFromInstanceReadsConfigSpelling(t *testing.T) {
 	})
 }
 
-// TestDecimalsFromInstanceSkipsMapWithoutScaleField pins that a METADATA or
-// Config map carrying no scale field is not a declaration: a token-sdk token
-// that also keeps an admin `Config` struct still has its METADATA.decimal read,
-// while a present-but-invalid field still refuses the instance.
+// TestDecimalsFromInstanceSkipsMapWithoutScaleField pins that a METADATA or Config map with no scale field
+// is not a declaration (an admin `Config` struct beside METADATA.decimal is fine), while an invalid field
+// refuses the instance.
 func TestDecimalsFromInstanceSkipsMapWithoutScaleField(t *testing.T) {
 	scaleMap := func(mapName, fieldName string, scale uint32) xdr.ScMapEntry {
 		inner := xdr.ScMap{

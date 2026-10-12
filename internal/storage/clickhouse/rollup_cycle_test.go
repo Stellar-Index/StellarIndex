@@ -48,10 +48,9 @@ func archivesRead(sql string) []string {
 	return reads
 }
 
-// ledgerClampRe matches an explicit ledger-boundary predicate (`ledger < N`, `m.ledger >= N`,
-// `ledger_seq >= N`), the form an arm uses to claim one side of a protocol boundary. The
-// window predicate (`BETWEEN ? AND ?`) and the partition expression deliberately do not
-// match: this is about which HALF of the ledger axis a statement owns.
+// ledgerClampRe matches an explicit ledger-boundary predicate (`ledger < N`, `m.ledger >= N`, `ledger_seq >=
+// N`), the form an arm uses to own one half of the ledger axis; `BETWEEN ? AND ?` and partition expressions
+// do not match.
 var ledgerClampRe = regexp.MustCompile(`(?:\w+\.)?ledger(?:_seq)?\s*(<|>=)\s*(\d+)`)
 
 // ledgerClamp is one parsed boundary predicate.
@@ -74,14 +73,9 @@ func ledgerClamps(t *testing.T, sql string) []ledgerClamp {
 	return out
 }
 
-// TestRollupCyclesWalkEveryArchiveScan guards against a statement whose cost is a function
-// of the whole archive rather than of one partition: it exhausts the query memory budget and
-// the board's endpoint serves 503.
-//
-// Any statement touching a lake archive must be a WALKED step, with a window predicate FOR
-// EACH archive it reads. A per-statement count would miss this: a join condition prunes
-// neither side's partitions, so a two-source arm that bounds only one of them re-introduces
-// the unbounded cost on the other while still looking walked.
+// TestRollupCyclesWalkEveryArchiveScan: a statement whose cost scales with the whole archive exhausts the
+// query memory budget and the board serves 503. Any statement touching a lake archive must be a WALKED step
+// with a window predicate for EACH archive it reads, since a join condition prunes neither side's partitions.
 func TestRollupCyclesWalkEveryArchiveScan(t *testing.T) {
 	for name, steps := range rollupCycles() {
 		t.Run(name, func(t *testing.T) {
@@ -114,15 +108,9 @@ func TestRollupCyclesWalkEveryArchiveScan(t *testing.T) {
 	}
 }
 
-// TestRollupCyclesReadEachArchiveOncePerWindow: for any given window, one arm reads the
-// archive, not two.
-//
-// A second reader of the same archive is admitted only when it cannot overlap the first:
-// each carries an explicit ledger clamp, all clamps name the SAME boundary, and exactly one
-// takes the side below it. The arms then partition the ledger axis: their union is every
-// ledger (nothing silently stops at the boundary) and their intersection is empty (no
-// creation is counted twice, which would inflate the board). A window wholly on the far side
-// of the clamp also prunes to no parts at all.
+// TestRollupCyclesReadEachArchiveOncePerWindow: a second reader of the same archive is allowed only if every
+// arm has an explicit clamp on the same boundary and exactly one takes the side below it, so the arms
+// partition the ledger axis (nothing lost, no creation counted twice).
 func TestRollupCyclesReadEachArchiveOncePerWindow(t *testing.T) {
 	for name, steps := range rollupCycles() {
 		t.Run(name, func(t *testing.T) {
@@ -173,11 +161,9 @@ func TestRollupCyclesReadEachArchiveOncePerWindow(t *testing.T) {
 	}
 }
 
-// TestRollupCyclesDeclareTheirWindowBinds pins rollupStep.windowBinds against the
-// placeholders actually in the template. The walk binds one (lo, hi) pair per declared bind,
-// so a template that grows a second source without declaring it fails at run time with a
-// bind-count error, and one that declares more pairs than it carries would bind a window
-// into another placeholder.
+// TestRollupCyclesDeclareTheirWindowBinds pins rollupStep.windowBinds against the template's placeholders.
+// The walk binds one (lo, hi) pair per declared bind, so an undeclared source fails with a bind-count error
+// and an over-declared one binds a window into another placeholder.
 func TestRollupCyclesDeclareTheirWindowBinds(t *testing.T) {
 	for name, steps := range rollupCycles() {
 		t.Run(name, func(t *testing.T) {
@@ -211,24 +197,9 @@ func TestRollupCyclesDeclareTheirWindowBinds(t *testing.T) {
 	}
 }
 
-// TestRollupCyclesGateOperationsOnTransactionSuccess guards against counting operations that
-// never took effect.
-//
-// stellar.operations has NO success gate: the lake stores what the ledger contained, so
-// extractOps retains the operations of failed transactions by design. A league table built
-// straight off it credits accounts for rolled-back work (a double-digit share of
-// sponsorship operations, enough to more than double a served revocation count).
-//
-// Any statement reading stellar.operations must establish application one of two ways: pair
-// the operation with an applied effect a failed transaction cannot produce, or join its
-// transaction and read the success flag. A bare read fails here rather than on a served board.
-//
-// Scope: the guard walks rollupCycles() only. Other readers of stellar.operations
-// (explorer_reader.go, sdex_op_reader.go which gates itself via a successful-tx IN-set,
-// contract_call_op_reader.go, classic_movement_reader.go, participant_backfill.go) are
-// outside it and ungated. They serve per-entity detail or feed a decoder, where an
-// unfiltered read is plausibly correct (/v1/accounts/{g}/operations stamps
-// transaction_successful per row), but that question has not been asked of them.
+// TestRollupCyclesGateOperationsOnTransactionSuccess: stellar.operations keeps failed txs' ops, so every
+// rollup statement reading it must pair the op with an applied effect or join the tx success flag.
+// Scope is rollupCycles() only; other readers of the table are ungated and unexamined.
 func TestRollupCyclesGateOperationsOnTransactionSuccess(t *testing.T) {
 	for name, steps := range rollupCycles() {
 		t.Run(name, func(t *testing.T) {
@@ -263,11 +234,9 @@ func TestRollupCyclesGateOperationsOnTransactionSuccess(t *testing.T) {
 	}
 }
 
-// TestRollupCyclesStageBeforeTheyExchange: the walk must finish before anything is written
-// to a staging arm, and the EXCHANGE must be last. That ordering is the atomic-swap
-// guarantee: a cycle interrupted mid-walk must leave the previous board live, because the
-// endpoint refuses a board without its span and a half-written one would be served as
-// authoritative.
+// TestRollupCyclesStageBeforeTheyExchange: the walk finishes before any staging write and the EXCHANGE is
+// last, so a cycle interrupted mid-walk leaves the previous board live; the endpoint refuses a board without
+// its span.
 func TestRollupCyclesStageBeforeTheyExchange(t *testing.T) {
 	for name, steps := range rollupCycles() {
 		t.Run(name, func(t *testing.T) {
@@ -309,13 +278,8 @@ func TestRollupCyclesStageBeforeTheyExchange(t *testing.T) {
 	}
 }
 
-// TestRollupCyclesSwapEveryStagingArmTheyFill guards a SILENT no-op: a cycle that fills a
-// staging table and forgets to name it in its EXCHANGE. Nothing fails; the staging arm holds
-// correct rows nobody reads and the LIVE table stays frozen at its last swap while its
-// siblings advance, which looks like a stale rollup and is hard to trace.
-//
-// A cycle fills several staging arms (a board, a stats table and the two sort orders of its
-// graph edges), so the pairing is too large to check by reading.
+// TestRollupCyclesSwapEveryStagingArmTheyFill guards a silent no-op: a cycle that fills a staging table but
+// omits it from its EXCHANGE leaves the live table frozen while its siblings advance.
 func TestRollupCyclesSwapEveryStagingArmTheyFill(t *testing.T) {
 	staging := regexp.MustCompile(`stellar\.[a-z0-9_]+_staging`)
 	for name, steps := range rollupCycles() {
@@ -331,10 +295,8 @@ func TestRollupCyclesSwapEveryStagingArmTheyFill(t *testing.T) {
 				if !strings.HasPrefix(strings.TrimSpace(step.sql), "INSERT INTO") {
 					continue
 				}
-				// Only the INSERT TARGET counts as filled. A staging arm a
-				// step merely READS — the reverse-ordered edge arm is
-				// filled FROM its sibling — is that sibling's obligation,
-				// and is caught on the sibling's own step.
+				// Only the INSERT target counts as filled. An arm a step merely reads (the reverse-ordered edge arm is filled
+				// from its sibling) is the sibling's obligation and is caught on the sibling's own step.
 				head := strings.SplitN(step.sql, "\n", 2)[0]
 				for _, m := range staging.FindAllString(head, -1) {
 					filled[m] = true
@@ -359,10 +321,8 @@ func TestRollupCyclesSwapEveryStagingArmTheyFill(t *testing.T) {
 	}
 }
 
-// TestRollupCyclesBudgetIsNotRaised: the fix for a step that outgrew its
-// memory budget is to make the step smaller, never to make the budget
-// bigger. A ceiling above the ops-batch class buys one more cycle and
-// then fails on a larger archive, so a raise fails here instead.
+// TestRollupCyclesBudgetIsNotRaised pins that an over-budget step is fixed by shrinking the step, never by
+// raising the budget: a ceiling above the ops-batch class only delays failure on a larger archive.
 func TestRollupCyclesBudgetIsNotRaised(t *testing.T) {
 	for name, steps := range rollupCycles() {
 		t.Run(name, func(t *testing.T) {
@@ -398,15 +358,9 @@ func (r *recordingExecer) Exec(_ context.Context, query string, args ...any) err
 	return nil
 }
 
-// TestRunRollupStepsWalksEveryWindowOnce drives the cycle runner over a realistic tip and
-// pins what it issues: EVERY walked step once per 1M-ledger window, over contiguous windows
-// that cover ledger 1 through the tip with no gap and no overlap, and every other step
-// exactly once with no bounds. An unwalked cycle issues the archive statement ONCE with no
-// bounds, the shape that exhausts the memory budget.
-//
-// Tiling is checked per step: a second arm that walked a shorter range, or bound only one
-// of its two sources to the window, would leave ledgers out of the board while the first
-// arm's tiling still looked complete.
+// TestRunRollupStepsWalksEveryWindowOnce: every walked step runs once per 1M-ledger window, over contiguous
+// windows covering ledger 1 to the tip, and every other step runs once unbounded. Tiling is checked per step,
+// so an arm that walks a shorter range or bounds only one source cannot hide behind another arm.
 func TestRunRollupStepsWalksEveryWindowOnce(t *testing.T) {
 	// r1's lake tip; account_movements holds 65 partitions.
 	const tip = 64_303_935
@@ -512,10 +466,9 @@ func walkedStepFor(steps []rollupStep, sql string) (rollupStep, bool) {
 	return rollupStep{}, false
 }
 
-// TestRunRollupStepsRefusesAnEmptyLake: a zero tip yields no windows, so a cycle that
-// proceeded would EXCHANGE empty staging arms over a populated board, turning a transient
-// zero read into an outage until the next cycle. The board and its span swap together, so
-// keeping the previous pair serves older data with its own honest span.
+// TestRunRollupStepsRefusesAnEmptyLake: a zero tip yields no windows, and proceeding would EXCHANGE empty
+// staging arms over a populated board. Keeping the previous board and span pair serves older data with its
+// own honest span.
 func TestRunRollupStepsRefusesAnEmptyLake(t *testing.T) {
 	for name, steps := range rollupCycles() {
 		t.Run(name, func(t *testing.T) {

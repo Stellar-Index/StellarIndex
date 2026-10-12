@@ -23,10 +23,8 @@ func classicSupplyConn(t *testing.T, rows [][]any) (*ExplorerReader, *stubConn) 
 	return &ExplorerReader{conn: conn}, conn
 }
 
-// TestClassicCirculatingSupply_PreservesAboveInt64Totals is the ADR-0003 assertion for this
-// reader: the per-asset trustline total is summed as Int128 and stringified because it can
-// exceed int64, so the Go side must carry it as a STRING end to end. The fixture is 2^70
-// stroops, so any int64 hop truncates it visibly.
+// TestClassicCirculatingSupply_PreservesAboveInt64Totals pins ADR-0003 for this reader: the Int128
+// per-asset total must stay a STRING end to end. The 2^70 stroops fixture shows any int64 hop.
 func TestClassicCirculatingSupply_PreservesAboveInt64Totals(t *testing.T) {
 	huge := new(big.Int).Lsh(big.NewInt(1), 70).String() // 1180591620717411303424
 	if len(huge) <= len("9223372036854775807") {
@@ -50,10 +48,8 @@ func TestClassicCirculatingSupply_PreservesAboveInt64Totals(t *testing.T) {
 	}
 }
 
-// TestClassicCirculatingSupply_OmitsUnusableRows: the reader drops rows whose asset or total is
-// empty, and an exact "0". A classic asset whose trustlines net to zero has NO circulating
-// supply to report; publishing "0" would feed a zero market cap into /v1/assets instead of
-// leaving the field absent (the caller's documented degrade path).
+// TestClassicCirculatingSupply_OmitsUnusableRows: rows with an empty asset or total, or an exact "0", are
+// dropped; publishing "0" would feed a zero market cap into /v1/assets instead of leaving the field absent.
 func TestClassicCirculatingSupply_OmitsUnusableRows(t *testing.T) {
 	r, _ := classicSupplyConn(t, [][]any{
 		{"GOOD-" + testIssuer, "500"},
@@ -88,16 +84,8 @@ func TestClassicCirculatingSupply_OmitsUnusableRows(t *testing.T) {
 	}
 }
 
-// TestClassicCirculatingSupply_QueryShape pins the population the total is summed over. Each
-// predicate is a correctness predicate, not a convenience filter:
-//
-//   - entry_type = 'trustline': circulating supply is the amount held by non-issuer accounts,
-//     which is the trustline set; account entries would fold XLM balances into every asset.
-//   - change_type != 'removed': a deleted trustline holds nothing; counting it resurrects the
-//     balance it had when closed.
-//   - balance > 0: a zero/negative row contributes nothing and only costs scan.
-//   - GROUP BY asset: the per-asset key; losing it collapses every asset into one total.
-//   - toInt128 + toString: the ADR-0003 no-truncation contract, in the SQL.
+// TestClassicCirculatingSupply_QueryShape pins the summed population: trustline entries only, non-removed,
+// balance > 0, grouped per asset, with toInt128 + toString for ADR-0003 no-truncation.
 func TestClassicCirculatingSupply_QueryShape(t *testing.T) {
 	r, conn := classicSupplyConn(t, nil)
 	if _, err := r.ClassicCirculatingSupply(t.Context()); err != nil {
@@ -130,10 +118,8 @@ func TestClassicCirculatingSupply_QueryShape(t *testing.T) {
 	}
 }
 
-// TestClassicCirculatingSupply_QueryErrorPropagates — the caller
-// (Server.refreshClassicSupply) keeps serving its last-good map ONLY because
-// this returns an error; a nil-error empty map would be stored as the new
-// truth and blank every classic market cap.
+// TestClassicCirculatingSupply_QueryErrorPropagates: refreshClassicSupply keeps its last-good map only
+// because this errors; a nil-error empty map would be stored as truth and blank every classic market cap.
 func TestClassicCirculatingSupply_QueryErrorPropagates(t *testing.T) {
 	boom := errors.New("memory limit exceeded")
 	r := &ExplorerReader{conn: &stubConn{respond: func(string) (driver.Rows, error) { return nil, boom }}}
@@ -150,10 +136,8 @@ func TestClassicCirculatingSupply_QueryErrorPropagates(t *testing.T) {
 	}
 }
 
-// TestClassicCirculatingSupply_TruncatedStreamIsAnError — a scan that dies
-// part-way (this one legitimately reaches ~1.7 GB, see the deliverable) would
-// otherwise hand back a PARTIAL map that the caller stores as complete,
-// zeroing the market cap of every asset the scan never reached.
+// TestClassicCirculatingSupply_TruncatedStreamIsAnError pins that a scan dying part-way returns an error, not
+// a partial map the caller would store as complete, zeroing the market cap of every unreached asset.
 func TestClassicCirculatingSupply_TruncatedStreamIsAnError(t *testing.T) {
 	truncated := errors.New("connection reset mid-scan")
 	r := &ExplorerReader{conn: &stubConn{respond: func(string) (driver.Rows, error) {

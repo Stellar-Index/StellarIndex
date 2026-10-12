@@ -132,12 +132,9 @@ func mkInstanceEntryKeys(t *testing.T, decls map[string]uint32) string {
 	return b64
 }
 
-// TestDecimalsFromInstanceEntry_ReadsBothSpellings pins a money bug. The soroban-token-sdk names
-// the METADATA field `decimal`, but many SEP-41 tokens spell it `decimals`. Reading one spelling
-// returns "no usable metadata", and every caller's documented response is to keep a hardcoded 7.
-//
-// On the RWA surface that default IS the published figure: a token declaring 5 decimals, read at
-// 7, publishes one HUNDREDTH of its capitalisation.
+// TestDecimalsFromInstanceEntry_ReadsBothSpellings pins a money bug: the token SDK names the field `decimal`
+// but many SEP-41 tokens spell it `decimals`; missing one makes callers keep a hardcoded 7, and a 5-decimals
+// RWA token then publishes one hundredth of its capitalisation.
 func TestDecimalsFromInstanceEntry_ReadsBothSpellings(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -157,10 +154,8 @@ func TestDecimalsFromInstanceEntry_ReadsBothSpellings(t *testing.T) {
 		{"zero is a scale", map[string]uint32{"decimals": 0}, 0, true},
 		// Both, agreeing: one declaration, said twice.
 		{"both agreeing", map[string]uint32{"decimal": 6, "decimals": 6}, 6, true},
-		// Both, DISAGREEING: the contract has not told us its scale.
-		// Refused rather than resolved by preference — picking one of
-		// two contradictory self-declarations would be this layer
-		// inventing an exponent for a money figure.
+		// Both, DISAGREEING: the contract has not told us its scale. Refused rather than resolved by preference,
+		// since picking one of two contradictory declarations would invent an exponent for a money figure.
 		{"both disagreeing", map[string]uint32{"decimal": 7, "decimals": 5}, 0, false},
 		// Present but out of bounds under either spelling: the contract
 		// answered and the answer was not a scale, so the other key is
@@ -180,10 +175,8 @@ func TestDecimalsFromInstanceEntry_ReadsBothSpellings(t *testing.T) {
 	}
 }
 
-// TestDecimalsFromInstanceEntry_NoScaleIsNotZero keeps the two distinct
-// answers distinct. A METADATA map with no scale under either spelling is
-// UNKNOWN, and a caller told 0 would divide by 10^0 and publish the raw
-// smallest-unit count as a token amount.
+// TestDecimalsFromInstanceEntry_NoScaleIsNotZero keeps unknown distinct from 0: a METADATA map with no scale
+// is unknown, and a caller told 0 would divide by 10^0 and publish raw smallest-unit counts as token amounts.
 func TestDecimalsFromInstanceEntry_NoScaleIsNotZero(t *testing.T) {
 	if got, ok := decimalsFromInstanceEntry(mkInstanceEntryKeys(t, map[string]uint32{})); ok {
 		t.Errorf("a METADATA map declaring no scale answered %d", got)

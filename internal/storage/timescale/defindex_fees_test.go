@@ -6,11 +6,9 @@ import (
 	"time"
 )
 
-// The defensive pre-DB guards must reject an incomplete dfees row
-// BEFORE touching the pool (a zero-value Store has a nil db, so any
-// case that slips past a guard panics — making these non-vacuous).
-// The happy-path insert/upsert is integration-tested against real
-// Postgres (test/integration), like the sibling protocol inserts.
+// The defensive pre-DB guards must reject an incomplete dfees row before touching the pool (a zero-value
+// Store has a nil db, so a case slipping past a guard panics). Happy-path insert and upsert are integration-
+// tested in test/integration.
 func TestInsertDefindexFee_guards(t *testing.T) {
 	valid := DefindexFee{
 		Ledger:          60_903_337,

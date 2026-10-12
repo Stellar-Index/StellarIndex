@@ -6,10 +6,9 @@ import (
 	"time"
 )
 
-// TestWealthCacheServesAnyLimitFromOneEntry pins that the cache stores ONE ranking that every
-// request size slices from, not a per-limit entry: with per-limit keys prewarm warms only
-// limit=100, every other limit misses and kicks its own slow scan. A single put() (as prewarm
-// does) must satisfy gets at every limit.
+// TestWealthCacheServesAnyLimitFromOneEntry pins that the cache stores one ranking every request size slices
+// from. Per-limit keys would let prewarm warm only limit=100 while every other limit misses and kicks its
+// own slow scan.
 func TestWealthCacheServesAnyLimitFromOneEntry(t *testing.T) {
 	t.Parallel()
 	c := newAccountsWealthCache()
@@ -45,10 +44,8 @@ func TestWealthCacheServesAnyLimitFromOneEntry(t *testing.T) {
 	}
 }
 
-// TestWealthCacheStaleServing — an EXPIRED entry is still returned, with
-// its real timestamp, so callers can serve degraded-but-honest instead of
-// 503. Staleness is the caller's judgment via the
-// returned cachedAt; the cache itself never withholds a filled entry.
+// TestWealthCacheStaleServing pins that an EXPIRED entry is still returned with its real timestamp, so
+// callers can serve degraded-but-honest instead of 503; the cache never withholds a filled entry.
 func TestWealthCacheStaleServing(t *testing.T) {
 	t.Parallel()
 	c := newAccountsWealthCache()

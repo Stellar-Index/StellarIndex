@@ -10,10 +10,9 @@ import (
 	"testing"
 )
 
-// safetyClaimRe matches a down-migration header asserting the drop is safe
-// to run as-is. Such a claim is only true when nothing live still names the
-// dropped relation: a query against a missing table or column is a 42P01 /
-// 42703 error, never an empty result or a fallback.
+// safetyClaimRe matches a down-migration header claiming the drop is safe as-is. That holds only when
+// nothing live names the dropped relation: a query on a missing table or column is a 42P01 / 42703 error,
+// not an empty result.
 var safetyClaimRe = regexp.MustCompile(`(?i)correctness[- ]safe`)
 
 var (

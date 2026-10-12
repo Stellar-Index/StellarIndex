@@ -36,10 +36,9 @@ func (b *stubBatch) Send() error {
 	return b.sendErr
 }
 
-// batchConn is a write-capable connection double: it records every PrepareBatch statement and
-// hands back a stubBatch per call, so a test can count FLUSHES (one batch per flush) as well as
-// rows. It composes with stubConn for the read half, since backfillParticipantWindow takes its
-// read and write connections separately.
+// batchConn is a write-capable connection double recording every PrepareBatch statement and returning a
+// stubBatch per call, so tests count flushes as well as rows. It composes with stubConn for the separate
+// read connection.
 type batchConn struct {
 	driver.Conn
 	statements []string
@@ -86,14 +85,9 @@ func participantRows(n int) []OperationParticipantRow {
 
 // ── participantWriter ───────────────────────────────────────────────────────
 
-// TestParticipantWriter_FlushesOnBothPaths is the writer-flush contract, with two halves that
-// fail independently:
-//
-//   - the FULL-BATCH path: crossing participantInsertBatch sends mid-stream, so a dense window
-//     never materialises in the heap;
-//   - the END-OF-STREAM path: whatever is left in the buffer when the window ends is sent too.
-//     A writer that only flushed on the threshold would drop the final partial batch of EVERY
-//     window while the job reported the full would-write count.
+// TestParticipantWriter_FlushesOnBothPaths: crossing participantInsertBatch must flush mid-stream, and the
+// leftover buffer must flush at end of stream. A threshold-only writer drops every window's final partial
+// batch while the job reports the full count.
 func TestParticipantWriter_FlushesOnBothPaths(t *testing.T) {
 	ctx := t.Context()
 	conn := &batchConn{}
@@ -144,10 +138,8 @@ func TestParticipantWriter_FlushesOnBothPaths(t *testing.T) {
 	}
 }
 
-// TestParticipantWriter_FlushIsIdempotentAndSkipsEmpty — the window loop calls
-// flush unconditionally at end of stream, including for an EMPTY window (a
-// sparse ledger range with no participants). Preparing and sending an empty
-// batch there is a pointless round trip against a table this job hammers.
+// TestParticipantWriter_FlushIsIdempotentAndSkipsEmpty pins that flush on an empty window (a sparse ledger
+// range) sends no batch, avoiding a pointless round trip against a table this job hammers.
 func TestParticipantWriter_FlushIsIdempotentAndSkipsEmpty(t *testing.T) {
 	ctx := t.Context()
 	conn := &batchConn{}
@@ -306,10 +298,8 @@ func TestBackfillParticipantWindow_ScansDecodesAndWrites(t *testing.T) {
 	}
 }
 
-// TestBackfillParticipantWindow_BindsTheWindowInOrder pins the read query's
-// predicate and its arguments together. A `>= ? AND <= ?` whose args arrive
-// (hi, lo) reads an EMPTY window and the job reports a clean zero-participant
-// pass over a range it never looked at.
+// TestBackfillParticipantWindow_BindsTheWindowInOrder pins the read predicate together with its arguments: a
+// `>= ? AND <= ?` fed (hi, lo) reads an EMPTY window and reports a clean zero-participant pass.
 func TestBackfillParticipantWindow_BindsTheWindowInOrder(t *testing.T) {
 	read := &stubConn{respond: func(string) (driver.Rows, error) { return &stubRows{}, nil }}
 	if _, err := backfillParticipantWindow(t.Context(), read, nil, 60_000_000, 60_249_999, true); err != nil {
@@ -343,10 +333,8 @@ func TestBackfillParticipantWindow_BindsTheWindowInOrder(t *testing.T) {
 	}
 }
 
-// TestBackfillParticipantWindow_SoftSkipsUndecodableBodies — one malformed
-// body must not lose the rest of the window (a lake body decoded once at
-// ingest, so a failure here is vanishingly rare but must be survivable). It is
-// COUNTED, so the operator sees it rather than it vanishing.
+// TestBackfillParticipantWindow_SoftSkipsUndecodableBodies: one malformed body must not lose the rest of the
+// window, and it is counted so the operator sees it.
 func TestBackfillParticipantWindow_SoftSkipsUndecodableBodies(t *testing.T) {
 	body := paymentToDest(t)
 	read := &stubConn{respond: func(string) (driver.Rows, error) {
@@ -425,10 +413,9 @@ func TestBackfillParticipantWindow_QueryFailurePropagates(t *testing.T) {
 	}
 }
 
-// TestScanOpParticipants_SoftSkipSentinel pins the signal
-// backfillParticipantWindow branches on. A decode failure must be
-// errors.Is-matchable as errOpBodyDecode; anything else is fatal. Losing the
-// sentinel turns every malformed body into an aborted window.
+// TestScanOpParticipants_SoftSkipSentinel pins the signal backfillParticipantWindow branches on: a decode
+// failure must be errors.Is-matchable as errOpBodyDecode and anything else fatal. Losing it aborts the
+// window on every malformed body.
 func TestScanOpParticipants_SoftSkipSentinel(t *testing.T) {
 	bad := &stubRows{data: [][]any{opRow(9, "zz", 0, 0, testSource, "not-xdr")}}
 	if !bad.Next() {

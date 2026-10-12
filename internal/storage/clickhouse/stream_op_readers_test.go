@@ -10,21 +10,14 @@ import (
 )
 
 // The lake-read streaming adapters (StreamSDEXOps, StreamClassicOps, StreamContractCallOps,
-// StreamMintBurnFlows) each dial their own ClickHouse connection via openRead, so the stubConn
-// harness cannot drive them end to end. They are covered in two halves, as BackfillTxHashIndex is:
-//
-//   - the SQL text, asserted against the package-level query builder;
-//   - the decode + fan-out loop, driven against a stub driver.Rows.
-//
-// Unproven here: that ClickHouse answers these queries with the claimed shape; only a real
-// server can show that.
+// StreamMintBurnFlows) dial their own connection via openRead, so they are tested in two halves: SQL text
+// against the query builder, and the decode and fan-out loop against a stub driver.Rows.
 
 // ── fixtures ────────────────────────────────────────────────────────────────
 
-// opResultB64 marshals an OperationResult to the base64 the lake stores in
-// stellar.operation_results.result_xdr. OpBadAuth needs no inner union arm,
-// which keeps the fixture about the STREAMING contract rather than about any
-// one operation's result shape.
+// opResultB64 marshals an OperationResult to the base64 stored in stellar.operation_results.result_xdr.
+// OpBadAuth needs no inner union arm, keeping the fixture about the streaming contract rather than one
+// operation's result shape.
 func opResultB64(t *testing.T, code xdr.OperationResultCode) string {
 	t.Helper()
 	b64, err := xdr.MarshalBase64(xdr.OperationResult{Code: code})
@@ -67,10 +60,9 @@ func nonUTC(t *testing.T) time.Time {
 
 // ── SQL shape ───────────────────────────────────────────────────────────────
 
-// requireSuccessfulTxRestriction pins the correctness predicate shared by the three op-stream
-// queries: a failed transaction's op results still carry success codes and claim atoms for ops
-// that ran before the failing one, but those effects were rolled back. Losing this clause
-// over-counts phantom fills and movements in every re-derive.
+// requireSuccessfulTxRestriction pins the correctness predicate shared by the three op-stream queries: a
+// failed tx's op results still carry success codes and claim atoms for ops that were rolled back, and
+// losing this clause over-counts phantom fills and movements in every re-derive.
 func requireSuccessfulTxRestriction(t *testing.T, name, q string) {
 	t.Helper()
 	if !strings.Contains(q, "successful = 1") {
@@ -78,21 +70,9 @@ func requireSuccessfulTxRestriction(t *testing.T, name, q string) {
 	}
 }
 
-// requireSuccessfulTxJoinBeforeOuterWindow pins the SQL shape all three op-stream queries share,
-// for two independent reasons.
-//
-// (1) The successful-tx set must be a grace_hash INNER JOIN over a derived table, never
-// `tx_hash IN (SELECT ...)`: IN materialises the whole window's tx-hash set
-// (CreatingSetsTransform) before the join and blows the query memory budget on dense windows.
-//
-// (2) That join must be spelled BEFORE the outer ledger WHERE. Hoisting the outer window into a
-// derived table stops ClickHouse propagating the ledger window through
-// o.ledger_seq = r.ledger_seq, so stellar.operation_results (full chain history of wide
-// result_xdr) loses primary-key pruning and full-scans. The live proof is
-// TestStreamOpsQueriesPruneOperationResults (test/integration); this is its cheap text guard.
-//
-// Returns the byte offsets of the derived table's window clause and of the
-// outer window clause, in that order, so a caller can pin its bind order.
+// requireSuccessfulTxJoinBeforeOuterWindow pins the op-stream SQL: the successful-tx set is a grace_hash
+// INNER JOIN, not `IN (SELECT ...)` (memory blowup), spelled before the outer ledger WHERE (PK pruning).
+// Returns the byte offsets of the derived and outer window clauses, in that order.
 func requireSuccessfulTxJoinBeforeOuterWindow(t *testing.T, name, q string) (sub, outer int) {
 	t.Helper()
 	if strings.Contains(q, "tx_hash IN (") {
@@ -121,10 +101,9 @@ func TestSDEXOpsQuery_Shape(t *testing.T) {
 
 	requireSuccessfulTxRestriction(t, "sdexOpsQuery", q)
 	requireSuccessfulTxJoinBeforeOuterWindow(t, "sdexOpsQuery", q)
-	// The derived table must DEDUPE. This reader takes no FINAL, so
-	// stellar.transactions can hand back the same tx_hash from two un-merged
-	// parts; IN had set semantics, a join does not, and a duplicate build-side
-	// row fans one op out into two rows. GROUP BY tx_hash restores it.
+	// The derived table must DEDUPE: this reader takes no FINAL, so un-merged parts of stellar.transactions
+	// can repeat a tx_hash, and a join (unlike IN) would fan one op out into two rows. GROUP BY tx_hash
+	// restores set semantics.
 	if !strings.Contains(q, "GROUP BY tx_hash") {
 		t.Errorf("sdexOpsQuery's successful-tx derived table does not dedupe (GROUP BY tx_hash) — "+
 			"an un-merged duplicate transactions part would fan each op row out:\n%s", q)
@@ -166,11 +145,9 @@ func TestSDEXOpsQuery_Shape(t *testing.T) {
 	}
 }
 
-// TestSDEXOpsQuery_BindOrderMatchesClauseOrder is the args-drift assertion. StreamSDEXOps binds
-// (from, to, from, to) and the query spells the successful-tx derived table first, so the first
-// pair is the derived table's window and the second the outer scan's. Moving a clause without
-// its arguments is a silent wrong-window read, invisible while both pairs carry the same values.
-// requireSuccessfulTxJoinBeforeOuterWindow owns the ordering assertion.
+// TestSDEXOpsQuery_BindOrderMatchesClauseOrder: StreamSDEXOps binds (from, to, from, to) and the
+// successful-tx derived table comes first, so the first pair is its window. Moving a clause without its args
+// is a silent wrong-window read; requireSuccessfulTxJoinBeforeOuterWindow owns the ordering assertion.
 func TestSDEXOpsQuery_BindOrderMatchesClauseOrder(t *testing.T) {
 	q := sdexOpsQuery()
 
@@ -225,10 +202,8 @@ func TestClassicOpsQuery_Shape(t *testing.T) {
 	}
 }
 
-// TestStreamClassicOps_RejectsEmptyOpTypes — an empty op-type list would
-// render `IN ()`, a ClickHouse syntax error, after a connection had already
-// been dialled. The guard fires FIRST, so no connection is opened; the
-// unroutable address proves it.
+// TestStreamClassicOps_RejectsEmptyOpTypes pins that an empty op-type list, which would render the syntax
+// error `IN ()`, is rejected before any connection is dialled; the unroutable address proves it.
 func TestStreamClassicOps_RejectsEmptyOpTypes(t *testing.T) {
 	err := StreamClassicOps(t.Context(), "127.0.0.1:1", 1, 2, nil, func(ClassicOp) error { return nil })
 	if err == nil {
@@ -239,10 +214,8 @@ func TestStreamClassicOps_RejectsEmptyOpTypes(t *testing.T) {
 	}
 }
 
-// TestClassicOpTypeInList_RendersQuotedCSV pins the IN-list rendering both
-// op-stream readers depend on. The contract is compile-time constants only —
-// there is no escaping here, deliberately (see the doc comment), so the shape
-// must stay exactly `'a','b'`.
+// TestClassicOpTypeInList_RendersQuotedCSV pins the IN-list rendering the op-stream readers use. Inputs are
+// compile-time constants with deliberately no escaping, so the shape must stay exactly `'a','b'`.
 func TestClassicOpTypeInList_RendersQuotedCSV(t *testing.T) {
 	if got, want := classicOpTypeInList([]string{"A", "B", "C"}), "'A','B','C'"; got != want {
 		t.Errorf("classicOpTypeInList = %q, want %q", got, want)
@@ -256,10 +229,8 @@ func TestClassicOpTypeInList_RendersQuotedCSV(t *testing.T) {
 	}
 }
 
-// TestContractCallOpsQuery_Shape pins StreamContractCallOps' SQL, including
-// the bind order — which is the REVERSE nesting of the other two op streams
-// (the joined successful-tx derived table is written first), and is bound
-// (from, to, from, to, contractHex) accordingly.
+// TestContractCallOpsQuery_Shape pins StreamContractCallOps' SQL and bind order, which reverses the other
+// two op streams' nesting (the successful-tx derived table comes first): (from, to, from, to, contractHex).
 func TestContractCallOpsQuery_Shape(t *testing.T) {
 	q := contractCallOpsQuery
 
@@ -311,10 +282,9 @@ func TestContractCallOpsQuery_Shape(t *testing.T) {
 	}
 }
 
-// TestMintBurnFlowsQuery_FinalToggle pins the one thing useFinal may change. FINAL is a far
-// costlier read that buys ReplacingMergeTree dedup; the variants must not differ in predicate or
-// projection, or "with FINAL" and "without FINAL" answer different questions rather than the same
-// question at two accuracies.
+// TestMintBurnFlowsQuery_FinalToggle pins the one thing useFinal may change. FINAL is a costlier read that
+// buys ReplacingMergeTree dedup; the variants must not differ in predicate or projection, or they answer
+// different questions.
 func TestMintBurnFlowsQuery_FinalToggle(t *testing.T) {
 	plain := mintBurnFlowsQuery(false)
 	final := mintBurnFlowsQuery(true)
@@ -459,10 +429,9 @@ func TestStreamSDEXOpRows_ConsumerErrorStopsStreamVerbatim(t *testing.T) {
 	}
 }
 
-// TestStreamSDEXOpRows_TruncatedStreamIsAnError — rows.Err() reports a stream
-// that ended early (dropped connection, server-side memory limit). Returning
-// nil there hands a caller a SILENTLY PARTIAL window, which for a re-derive is
-// an under-count that looks exactly like a genuinely sparse range.
+// TestStreamSDEXOpRows_TruncatedStreamIsAnError: rows.Err() reports an early-ended stream (dropped
+// connection, server memory limit). Returning nil would hand back a SILENTLY PARTIAL window, an under-count
+// indistinguishable from a sparse range.
 func TestStreamSDEXOpRows_TruncatedStreamIsAnError(t *testing.T) {
 	truncated := errors.New("connection reset mid-stream")
 	rows := &stubRows{
@@ -479,10 +448,9 @@ func TestStreamSDEXOpRows_TruncatedStreamIsAnError(t *testing.T) {
 	}
 }
 
-// TestStreamSDEXOpRows_UndecodableBodyIsFatalAndLocatable: unlike the participant backfill (which
-// soft-skips and counts a bad body), the SDEX re-derive treats an undecodable op as fatal, since
-// a silently omitted trade defeats a reconcile whose purpose is to count. The error must name the
-// row.
+// TestStreamSDEXOpRows_UndecodableBodyIsFatalAndLocatable: unlike the participant backfill, the SDEX
+// re-derive treats an undecodable op as fatal, since a silently omitted trade defeats a count reconcile; the
+// error names the row.
 func TestStreamSDEXOpRows_UndecodableBodyIsFatalAndLocatable(t *testing.T) {
 	rows := &stubRows{data: [][]any{
 		sdexRow(6100, nonUTC(t), "deadbeef", 3, testSource, "!!!not-base64!!!", opResultB64(t, xdr.OperationResultCodeOpBadAuth)),
@@ -628,10 +596,9 @@ func TestStreamContractCallOpRows_EmptyAndErrorPaths(t *testing.T) {
 	}
 }
 
-// TestStreamMintBurnFlowRows_CarriesRawDataXDR: the supply reader deliberately does not decode
-// the amount. It hands over the raw base64 scval, since the i128 must not be truncated (ADR-0003)
-// and some SEP-41 variants ship a MAP rather than a bare i128. Pins that the blob crosses the
-// seam byte-for-byte.
+// TestStreamMintBurnFlowRows_CarriesRawDataXDR: the supply reader does not decode the amount; it passes
+// the raw base64 scval through byte-for-byte, since the i128 must not be truncated (ADR-0003) and some
+// SEP-41 variants ship a MAP rather than a bare i128.
 func TestStreamMintBurnFlowRows_CarriesRawDataXDR(t *testing.T) {
 	at := nonUTC(t)
 	// An i128 far beyond int64 — 2^100. If anything on this path ever parsed

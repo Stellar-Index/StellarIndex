@@ -28,13 +28,9 @@ func validBlendPositionEvent() domain.BlendPositionEvent {
 	}
 }
 
-// TestInsertBlendPositionEvent_RejectsBadAmount: token_amount / b_or_d_amount need a
-// SQL-boundary magnitude validator, otherwise a nil amount is silently coerced to "0"
-// (bigIntToNumericString) and a negative one written verbatim. The guard must reject both
-// BEFORE touching the DB.
-//
-// s.db is nil here, so reaching ExecContext panics; returning from the guard first proves the
-// ordering.
+// TestInsertBlendPositionEvent_RejectsBadAmount: token_amount and b_or_d_amount need a SQL-boundary
+// validator, else a nil amount is coerced to "0" and a negative one written verbatim. The guard must reject
+// both before touching the DB; s.db is nil, so reaching ExecContext would panic.
 func TestInsertBlendPositionEvent_RejectsBadAmount(t *testing.T) {
 	s := &Store{}
 	ctx := context.Background()

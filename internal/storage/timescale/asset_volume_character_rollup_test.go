@@ -82,10 +82,8 @@ func TestBuildAliasMapValues_XLMBaseline(t *testing.T) {
 	}
 }
 
-// TestAdjustedVolumeExpr_Wired proves the §4-B concentration-adjusted sort
-// key is the SAME expression in all three places that must agree: the
-// listing SELECT (as sort_vol_usd), assetsOrderBy, and
-// assetsCursorPredicate — a drift would break keyset pagination.
+// TestAdjustedVolumeExpr_Wired: the concentration-adjusted sort key must be the SAME expression in the
+// listing SELECT (sort_vol_usd), assetsOrderBy and assetsCursorPredicate, or keyset pagination breaks.
 func TestAdjustedVolumeExpr_Wired(t *testing.T) {
 	if !strings.Contains(listAssetsBaseSelect, adjustedVolume24hExpr) {
 		t.Error("listAssetsBaseSelect does not embed adjustedVolume24hExpr as sort_vol_usd")
@@ -155,12 +153,9 @@ func TestRefreshAssetVolumeCharacter_zeroRowPassKeepsLastGood(t *testing.T) {
 	}
 }
 
-// TestRollAssetVolumeCharacter_RestoresCapturedStatementTimeout pins that the pinned connection's
-// PRIOR statement_timeout (an [OpenBackground] connector's session backstop) is captured before
-// the assetVolumeCharacterRollTimeout override and restored via set_config with the captured
-// value, not a bare RESET, before the connection returns to the pool. Otherwise a later query on
-// that pooled connection would inherit the 45min bound (or the server default) instead of the
-// operator's backstop.
+// TestRollAssetVolumeCharacter_RestoresCapturedStatementTimeout pins that the pinned connection's prior
+// statement_timeout is captured before the override and restored via set_config (not a bare RESET) before
+// returning to the pool, so later queries inherit the operator's backstop rather than the 45min bound.
 func TestRollAssetVolumeCharacter_RestoresCapturedStatementTimeout(t *testing.T) {
 	t.Parallel()
 
@@ -200,10 +195,9 @@ func TestRollAssetVolumeCharacter_RestoresCapturedStatementTimeout(t *testing.T)
 	}
 }
 
-// TestRollAssetVolumeCharacter_FailedRestoreFailsTheCall proves a restore
-// that fails is never silently swallowed while the connection is handed
-// back to the pool: the pooled connection must never carry this call's
-// statement_timeout override forward, so a failed restore fails the call.
+// TestRollAssetVolumeCharacter_FailedRestoreFailsTheCall proves a failed restore is never swallowed while
+// the connection returns to the pool: a pooled connection must not carry this call's statement_timeout
+// override forward.
 func TestRollAssetVolumeCharacter_FailedRestoreFailsTheCall(t *testing.T) {
 	t.Parallel()
 
@@ -230,10 +224,8 @@ func TestRollAssetVolumeCharacter_FailedRestoreFailsTheCall(t *testing.T) {
 	}
 }
 
-// TestAssetVolumeCharacterRollup_VolumeUSDExact: volume_usd is a NUMERIC
-// money sum and must reach the caller as its own decimal text. A double
-// hop cannot hold 90071992547409.93 (above 2^53 cents) and serves the
-// wrong cents (ADR-0003).
+// TestAssetVolumeCharacterRollup_VolumeUSDExact: volume_usd is a NUMERIC money sum and must reach the caller
+// as exact decimal text; a double hop cannot hold 90071992547409.93 and serves wrong cents (ADR-0003).
 func TestAssetVolumeCharacterRollup_VolumeUSDExact(t *testing.T) {
 	t.Parallel()
 

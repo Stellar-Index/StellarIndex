@@ -72,17 +72,14 @@ func TestHistoryGranularityBucketDuration(t *testing.T) {
 	}
 }
 
-// TestClosedVWAPAtOrBeforeQueryShape guards the sargability and both-directions invariants of the
-// point-in-time query without a database: the non-sargable `bucket + INTERVAL <= …` form or a
-// dropped stored direction would silently degrade the endpoint.
-// nonSargableClosedGuard matches the `bucket + INTERVAL '…' <= now()` spelling of the
-// closed-bucket guard. Arithmetic on the column defeats the (…, bucket DESC) index.
+// TestClosedVWAPAtOrBeforeQueryShape guards, without a database, that the point-in-time query stays sargable
+// and reads both stored directions. nonSargableClosedGuard matches `bucket + INTERVAL '...' <= now()`, which
+// defeats the bucket index.
 var nonSargableClosedGuard = regexp.MustCompile(`(?i)\+\s*INTERVAL\s*'[^']*'\s*<=?\s*now\(\)`)
 
-// TestClosedBucketGuardSpelling scans every non-test source in the package,
-// inline `const q` SQL included, so the guard has one spelling
-// (`bucket <= now() - INTERVAL '…'`) everywhere, not only in the hoisted
-// templates the shape tests below assert on.
+// TestClosedBucketGuardSpelling scans every non-test source in the package, inline `const q` SQL included,
+// so the guard has one spelling (`bucket <= now() - INTERVAL '...'`) everywhere, not only in the hoisted
+// templates.
 func TestClosedBucketGuardSpelling(t *testing.T) {
 	entries, err := os.ReadDir(".")
 	if err != nil {
@@ -111,12 +108,9 @@ func TestClosedBucketGuardSpelling(t *testing.T) {
 	}
 }
 
-// assertLiteralCount fails t unless literal appears in q exactly want times, catching a slot
-// dropped from one UNION branch while the others still carry it (a plain strings.Contains
-// stays green).
-//
-// want MUST be hardcoded, never derived from strings.Count(tmpl, placeholder) on the template
-// being rendered: deleting a "%[1]s" shrinks both counts in lockstep, so they would always agree.
+// assertLiteralCount fails t unless literal appears in q exactly want times, catching a slot dropped from
+// one UNION branch while others keep it. want MUST be hardcoded, not derived from strings.Count on the
+// template: deleting a "%[1]s" shrinks both counts in lockstep.
 func assertLiteralCount(t *testing.T, q, literal string, want int) {
 	t.Helper()
 	got := strings.Count(q, literal)
@@ -147,10 +141,9 @@ func TestClosedVWAPAtOrBeforeQueryShape(t *testing.T) {
 		!strings.Contains(q, "base_asset = $2 AND quote_asset = $1") {
 		t.Error("query does not combine both stored directions of the pair")
 	}
-	// The query hands each direction's raw (base_asset, vwap,
-	// volume_priced) to Go: the direction fold is [combineDirVWAP]'s exact
-	// volume-weighted union, not SQL. volume_priced is vwap's own
-	// denominator; `volume` also counts zero-leg trades.
+	// The query hands each direction's raw (base_asset, vwap, volume_priced) to Go, where [combineDirVWAP] does
+	// the exact volume-weighted union. volume_priced is vwap's own denominator; `volume` also counts zero-leg
+	// trades.
 	if !strings.Contains(q, "COALESCE(volume_priced, 0)::text AS volume_priced") {
 		t.Error("query does not select each direction's volume (needed for the volume-weighted union)")
 	}
@@ -165,11 +158,9 @@ func TestClosedVWAPAtOrBeforeQueryShape(t *testing.T) {
 	}
 }
 
-// TestRecentClosedVWAP1mExistsQueryShape guards the recent-existence gate that
-// LatestClosedVWAP1mForPair runs before its value walk. The gate keeps an EMPTY pair
-// (native/fiat:USD, read as an alias on every XLM query) off the full ~400-day walk, so it MUST
-// stay sargable, literal-cutoff-bounded, both-directions and LIMIT 1, or the cold-start timeout
-// returns.
+// TestRecentClosedVWAP1mExistsQueryShape guards the recent-existence gate before LatestClosedVWAP1mForPair's
+// walk. It keeps an empty pair off the ~400-day walk, so it must stay sargable, literal-cutoff-bounded, both-
+// directions and LIMIT 1.
 func TestRecentClosedVWAP1mExistsQueryShape(t *testing.T) {
 	lower := "AND bucket >= TIMESTAMPTZ '2026-06-01 00:00:00+00'\n"
 	q := fmt.Sprintf(recentClosedVWAP1mExistsTemplate, lower)
@@ -183,10 +174,8 @@ func TestRecentClosedVWAP1mExistsQueryShape(t *testing.T) {
 	if strings.Contains(q, "bucket + INTERVAL") {
 		t.Error("gate uses non-sargable `bucket + INTERVAL` form (function on indexed column)")
 	}
-	// Literal lower bound → PLAN-time chunk pruning: the whole point of the
-	// gate is that a truly-empty pair proves emptiness over recent chunks
-	// only, not the value walk's ~400-day span. Both UNION ALL branches
-	// (one per stored direction) must carry it independently.
+	// A literal lower bound gives PLAN-time chunk pruning, so an empty pair proves emptiness over recent chunks
+	// only, not the ~400-day value walk. Both UNION ALL branches (one per stored direction) must carry it.
 	assertLiteralCount(t, q, "bucket >= TIMESTAMPTZ '2026-06-01 00:00:00+00'", 2)
 	// Both stored directions — else a flipped-only live pair (USDC/XLM with
 	// no XLM/USDC rows) would be wrongly gated to ErrNoRows.
@@ -206,11 +195,9 @@ func TestRecentClosedVWAP1mExistsQueryShape(t *testing.T) {
 	}
 }
 
-// TestRecentClosedVWAP1mCombinedQueryShape guards the trailing-baseline query behind the
-// /v1/price serving-sanity guard. It MUST stay sargable (closed-bucket guard as a constant on the
-// RHS), literal-cutoff-bounded (plan-time chunk pruning) and both-directions (a flipped-only pair
-// still contributes), and it MUST hand raw per-direction rows to the same Go combine the served
-// candidate uses, or the baseline drifts off the served value and false-positives.
+// TestRecentClosedVWAP1mCombinedQueryShape guards the /v1/price sanity-guard baseline query: it must stay
+// sargable, literal-cutoff-bounded and both-directions, and feed raw per-direction rows to the same Go
+// combine as the served candidate, or the baseline drifts and false-positives.
 func TestRecentClosedVWAP1mCombinedQueryShape(t *testing.T) {
 	lower := "AND bucket >= TIMESTAMPTZ '2026-06-01 00:00:00+00'\n"
 	q := fmt.Sprintf(recentClosedVWAP1mCombinedTemplate, lower)
@@ -238,10 +225,9 @@ func TestRecentClosedVWAP1mCombinedQueryShape(t *testing.T) {
 	if !strings.Contains(q, "SELECT bucket, base_asset, vwap::text") {
 		t.Error("combined query does not return the raw per-direction rows the Go combine needs")
 	}
-	// The SQL must NOT fold the directions itself. Inverting the
-	// flipped leg (`1.0 / vwap`, rounding it before it is weighted) and
-	// weighting by trade COUNT is not a VWAP, and would diverge from the
-	// served candidate on every two-sided market.
+	// The SQL must not fold the directions itself. Inverting the flipped leg (`1.0 / vwap`) before weighting,
+	// and weighting by trade count, is not a VWAP and would diverge from the served candidate on every two-sided
+	// market.
 	if strings.Contains(q, "1.0 / NULLIF(vwap, 0)") {
 		t.Error("combined query still inverts the flipped leg in SQL; the exact combine belongs to combineDirVWAP")
 	}
@@ -254,10 +240,9 @@ func TestRecentClosedVWAP1mCombinedQueryShape(t *testing.T) {
 	}
 }
 
-// TestLatestClosedVWAP1mQueryShape guards latestClosedVWAP1mTemplate, the value-walk query of
-// LatestClosedVWAP1mForPair. Its four %[1]s slots (both UNION ALL branches of the `latest`
-// max(bucket) CTE and of the `r` point-read CTE) each carry the literal lower bound
-// independently; a slot dropped from any one still renders valid SQL.
+// TestLatestClosedVWAP1mQueryShape guards latestClosedVWAP1mTemplate: its four %[1]s slots (both UNION ALL
+// branches of the `latest` and `r` CTEs) each carry the literal lower bound independently, and a slot
+// dropped from any one still renders valid SQL.
 func TestLatestClosedVWAP1mQueryShape(t *testing.T) {
 	lower := "AND bucket >= TIMESTAMPTZ '2026-06-01 00:00:00+00'\n"
 	q := fmt.Sprintf(latestClosedVWAP1mTemplate, lower)
@@ -289,11 +274,9 @@ func TestLatestClosedVWAP1mQueryShape(t *testing.T) {
 	assertLiteralCount(t, q, "bucket >= TIMESTAMPTZ '2026-06-01 00:00:00+00'", 4)
 }
 
-// TestRecentClosedVWAP1mForPairQueryShape extends the sargability guard to the SEP-40 prices()
-// passthrough read. A `bucket + INTERVAL '1 minute' <= now()` form is a function on the indexed
-// column, so the planner can neither use the bucket index nor prune chunks at plan time.
-// The query must stay a package-level template: the guards assert over those, and an inline
-// `const q` is invisible to them.
+// TestRecentClosedVWAP1mForPairQueryShape extends the sargability guard to the SEP-40 prices() read: a
+// `bucket + INTERVAL '1 minute' <= now()` form is a function on the indexed column, defeating the index and
+// chunk pruning. It must stay a package-level template, since the guards cannot see an inline `const q`.
 func TestRecentClosedVWAP1mForPairQueryShape(t *testing.T) {
 	q := recentClosedVWAP1mForPairQuery
 
@@ -316,11 +299,9 @@ func TestRecentClosedVWAP1mForPairQueryShape(t *testing.T) {
 	}
 }
 
-// TestDailyMarketDaysQueryShape extends the sargability guard to DailyMarketDays' daily rollup
-// read. A `bucket + INTERVAL '1 hour' <= now()` form is a function on the indexed column, so the
-// planner can neither use the bucket index nor prune chunks ahead of the day/hour GROUP BY scan.
-// The query must stay the package-level [dailyMarketDaysQuery]; an inline `const q` is invisible
-// to these guards.
+// TestDailyMarketDaysQueryShape extends the sargability guard to DailyMarketDays: `bucket + INTERVAL <=
+// now()` defeats the bucket index and chunk pruning. The query must stay the package-level
+// [dailyMarketDaysQuery].
 func TestDailyMarketDaysQueryShape(t *testing.T) {
 	q := dailyMarketDaysQuery
 
@@ -334,10 +315,9 @@ func TestDailyMarketDaysQueryShape(t *testing.T) {
 	}
 }
 
-// TestDailyMarketDaysQueryReadsWholeLastDay pins the upper bound to the END of the `to` day.
-// prices_1h holds hour buckets, so `bucket <= $4` with `to` at a day start would read the last
-// day from its 00:00 hour alone and never clear the two-hour floor. The bound stays on the
-// parameter, so it stays sargable.
+// TestDailyMarketDaysQueryReadsWholeLastDay pins the upper bound to the end of the `to` day: prices_1h holds
+// hour buckets, so `bucket <= $4` at a day start would read only the 00:00 hour and never clear the two-hour
+// floor. The bound stays sargable.
 func TestDailyMarketDaysQueryReadsWholeLastDay(t *testing.T) {
 	q := dailyMarketDaysQuery
 

@@ -25,10 +25,9 @@ func testQuoteSpec(t *testing.T) *USDVolumeQuoteSpec {
 	return spec
 }
 
-// TestClassifyUSDVolumeTier pins that the tier a check attributes to a
-// (source, base, quote) group is the tier the INSERT path would actually
-// take — including the order of the two pegged-leg probes, since tier 2b is
-// only reachable once the quote leg has declined.
+// TestClassifyUSDVolumeTier pins that the tier a check attributes to a (source, base, quote) group is the
+// tier the INSERT path would take, including the order of the two pegged-leg probes (tier 2b needs the
+// quote leg to decline).
 func TestClassifyUSDVolumeTier(t *testing.T) {
 	spec := testQuoteSpec(t)
 	const usdc = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
@@ -40,10 +39,8 @@ func TestClassifyUSDVolumeTier(t *testing.T) {
 		wantTier     USDVolumeTier
 		wantDecimals int
 	}{
-		// Off-chain: fiat:USD quote → tier 1, at the SOURCE's registered
-		// scale — 8 for CEXes, 6 for the FX pollers (the checker
-		// must divide by the same per-source scale the stamper uses, or
-		// it certifies a 100× error as correct).
+		// Off-chain: fiat:USD quote is tier 1 at the source's registered scale (8 for CEXes, 6 for FX pollers); the
+		// checker must divide by the stamper's per-source scale, or it certifies a 100x error as correct.
 		{"cex USD quote", "binance", "crypto:XLM", "fiat:USD", TierQuotePegged, 8},
 		{"fx USD quote", "exchangeratesapi", "fiat:EUR", "fiat:USD", TierQuotePegged, 6},
 		{"fx USD base", "exchangeratesapi", "fiat:USD", "fiat:JPY", TierBasePegged, 6},
@@ -90,10 +87,8 @@ func TestClassifyUSDVolumeTier_UnparseableAssetReported(t *testing.T) {
 	}
 }
 
-// TestUSDVolumeTier_Exact — only the pegged tiers carry an identity that can
-// be judged without a calibrated tolerance. If this ever reports true for
-// the estimated tier, the command would start failing on legitimate FX
-// error.
+// TestUSDVolumeTier_Exact pins that only pegged tiers carry an identity judgeable without a calibrated
+// tolerance; true for the estimated tier would make the command fail on legitimate FX error.
 func TestUSDVolumeTier_Exact(t *testing.T) {
 	for tier, want := range map[USDVolumeTier]bool{
 		TierQuotePegged: true,
@@ -107,12 +102,9 @@ func TestUSDVolumeTier_Exact(t *testing.T) {
 	}
 }
 
-// TestExactTierDelta_HoldsAndCatchesOneUnit is the core of the exact-tier identity.
-//
-// For an exact tier the stored column must satisfy usd_volume == pegged_leg / 10^decimals with NO
-// tolerance: it is a decimal rescaling of a number already on the row, not a price lookup. Both
-// directions are pinned: a correct group nets to exactly zero, and a group off by ONE unit at the
-// rendering scale (1e-8 USD) is caught rather than lost in float slop.
+// TestExactTierDelta_HoldsAndCatchesOneUnit: for an exact tier, usd_volume == pegged_leg / 10^decimals with
+// NO tolerance, being a decimal rescaling of a number on the row. A correct group nets to exactly zero, and a
+// group off by ONE unit at the rendering scale (1e-8 USD) is caught rather than lost in float slop.
 func TestExactTierDelta_HoldsAndCatchesOneUnit(t *testing.T) {
 	// 3 on-chain trades, 7-decimal pegged quote leg. Σquote = 4,500,000,000
 	// stroops → $450 exactly.
@@ -153,10 +145,8 @@ func TestExactTierDelta_HoldsAndCatchesOneUnit(t *testing.T) {
 	}
 }
 
-// TestExactTierDelta_BasePeggedUsesTheBaseLeg — tier 2b rescales the BASE
-// amount. Reading the quote leg here would make every USDC/XLM-oriented
-// market look catastrophically wrong (and, worse, could make a genuinely
-// wrong one look right).
+// TestExactTierDelta_BasePeggedUsesTheBaseLeg: tier 2b rescales the base amount. Reading the quote leg would
+// make every USDC/XLM-oriented market look badly wrong and could make a genuinely wrong one look right.
 func TestExactTierDelta_BasePeggedUsesTheBaseLeg(t *testing.T) {
 	g := TradeValuationGroup{
 		PricedRows:     2,
@@ -173,10 +163,9 @@ func TestExactTierDelta_BasePeggedUsesTheBaseLeg(t *testing.T) {
 	}
 }
 
-// TestExactTierDelta_RefusesInexactTiers — the estimated tiers have no
-// reproducible identity, so there is nothing to subtract. Returning a
-// plausible-looking zero here would silently "verify" the half of the column
-// this check deliberately does not judge.
+// TestExactTierDelta_RefusesInexactTiers: estimated tiers have no reproducible identity, so there is nothing
+// to subtract. A plausible zero would silently "verify" the half of the column this check deliberately does
+// not judge.
 func TestExactTierDelta_RefusesInexactTiers(t *testing.T) {
 	g := TradeValuationGroup{SumUSDVolume: "1", SumBaseAmount: "1", SumQuoteAmount: "1"}
 	for _, tier := range []USDVolumeTier{TierEstimated, TierUnvaluable} {
@@ -186,10 +175,8 @@ func TestExactTierDelta_RefusesInexactTiers(t *testing.T) {
 	}
 }
 
-// TestUSDVolumeRoundingSlack — the slack is DERIVED arithmetic (the worst case of a known rounding
-// rule), never a calibrated threshold. At the decimal scales the peg spec produces (7 on-chain,
-// 8 off-chain) the render is lossless, so the slack is exactly ZERO and the identity is checkable
-// with no tolerance.
+// TestUSDVolumeRoundingSlack: the slack is DERIVED from a known rounding rule, never a calibrated threshold.
+// At the peg spec's scales (7 on-chain, 8 off-chain) the render is lossless, so slack is exactly ZERO.
 func TestUSDVolumeRoundingSlack(t *testing.T) {
 	for _, decimals := range []int{0, 7, 8} {
 		if s := USDVolumeRoundingSlack(decimals, 1_000_000); s.Sign() != 0 {

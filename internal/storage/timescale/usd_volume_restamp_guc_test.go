@@ -23,19 +23,9 @@ const (
 	gucConnDMLRows = 7
 )
 
-// TestRestampExactTierUSDVolume_DecompressionCapNeverEscapesTheTransaction
-// pins the GUC hygiene of [Store.RestampExactTierUSDVolume].
-//
-// The hazard is pooling, not SQL: database/sql's Conn.Close returns the connection to the pool
-// and pgx v5's stdlib adapter resets nothing on reuse. A session-level
-// `SET timescaledb.max_tuples_decompressed_per_dml_transaction = 0` would ride that pooled
-// connection and silently uncap every later DML on it, whereas `SET LOCAL` inside the write
-// transaction is unwound at COMMIT/ROLLBACK.
-//
-// [gucConn] models transaction-local vs session GUC scoping and pgx's no-op session reset, so
-// pool reuse is observable without a database. The test asserts both halves: the cap is lifted
-// for the restamp's own UPDATE (dropping the SET would abort a real day's DML), and no later
-// statement sees anything but the default.
+// TestRestampExactTierUSDVolume_DecompressionCapNeverEscapesTheTransaction: the cap must be `SET LOCAL`,
+// because a session SET would ride the pooled connection and uncap later DML. The test asserts the cap is
+// lifted for the restamp's UPDATE and no later statement sees anything but the default.
 func TestRestampExactTierUSDVolume_DecompressionCapNeverEscapesTheTransaction(t *testing.T) {
 	ctx := context.Background()
 	conn := newGUCConn()
@@ -100,12 +90,8 @@ func TestRestampExactTierUSDVolume_DecompressionCapNeverEscapesTheTransaction(t 
 	}
 }
 
-// -----------------------------------------------------------------
-// GUC-scoping driver fake: models SET vs SET LOCAL scoping (LOCAL is unwound by COMMIT/ROLLBACK,
-// a plain SET outlives the transaction) and pgx v5 stdlib's no-op ResetSession. Unlike the
-// canned driver in vwap_direction_combine_test.go it is stateful, because the defect is
-// invisible in the SQL text and only shows up on connection reuse.
-// -----------------------------------------------------------------
+// GUC-scoping driver fake: models SET vs SET LOCAL scoping and pgx's no-op ResetSession. It is stateful
+// because the defect only shows on connection reuse, not in the SQL text.
 
 type gucDML struct {
 	stmt string

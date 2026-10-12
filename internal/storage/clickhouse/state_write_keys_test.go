@@ -101,11 +101,9 @@ func TestChangedWriteKeysForContract(t *testing.T) {
 	}
 }
 
-// A corrupt entry_xdr on a row that SHARES its key with parseable rows must exclude the KEY,
-// not just drop the ROW. Otherwise the corrupt pre-image (`state`) row is skipped, the
-// identical-value rewrite looks like a no-pre-image write, and the key is promoted to "changed":
-// a lost pre-image could turn an adapter-REJECTED feed into an "accepted" one. This is the
-// "parse failure excludes the key" rule the dispatcher twin enforces via its bad-set.
+// A corrupt entry_xdr on a row sharing its key with parseable rows must exclude the whole key, not just the
+// row. Otherwise the lost pre-image makes an identical rewrite look like a change, and a rejected feed could
+// be accepted. This matches the dispatcher twin's bad-set rule.
 func TestChangedWriteKeysForContract_CorruptPreImageExcludesSharedKey(t *testing.T) {
 	cidA := xdr.ContractId{0xAA, 0x01}
 	strA, err := strkey.Encode(strkey.VersionByteContract, cidA[:])
@@ -131,10 +129,8 @@ func TestChangedWriteKeysForContract_CorruptPreImageExcludesSharedKey(t *testing
 	}
 }
 
-// opChangeAccumulator must keep the LATEST-ingested row per
-// (op, change_index) — ReplacingMergeTree(ingested_at) semantics — not
-// the first-read one, regardless of the order duplicate un-merged parts
-// stream back in.
+// opChangeAccumulator must keep the LATEST-ingested row per (op, change_index), per ReplacingMergeTree
+// semantics, not the first-read one, whatever order unmerged duplicate parts stream back in.
 func TestOpChangeAccumulator_KeepsLatestVersionPerChangeIndex(t *testing.T) {
 	ref := opRef{Ledger: 62056824, TxHash: "40758bde", OpIndex: 0}
 	t0 := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)

@@ -41,13 +41,9 @@ func trustlineEntry(t *testing.T, holder, code, issuer string, lastModified uint
 	}
 }
 
-// TestSnapshotEntryRow_ChangeIndexIsPerKeyUniqueWithinALedger: the table is a ReplacingMergeTree
-// ORDER BY (ledger_seq, tx_hash, op_index, change_index) and snapshot rows all share tx_hash=""
-// and op_index=-1. With a constant ChangeIndex every snapshot entry in a ledger collapses to ONE
-// arbitrary survivor at merge time, destroying account-state, trustline, supply and wasm reads.
-//
-// crc32(key_xdr) restores per-key uniqueness AND keeps a re-run idempotent (the same key
-// re-derives the same index, so it replaces rather than duplicates). This test pins both halves.
+// TestSnapshotEntryRow_ChangeIndexIsPerKeyUniqueWithinALedger: snapshot rows share tx_hash and op_index, so
+// ChangeIndex must be per-key unique (crc32(key_xdr)) or the ReplacingMergeTree collapses them. It must also
+// be idempotent on re-run.
 func TestSnapshotEntryRow_ChangeIndexIsPerKeyUniqueWithinALedger(t *testing.T) {
 	at := time.Unix(1_700_000_000, 0).UTC()
 	const ledger = 60_000_000
@@ -92,14 +88,9 @@ func TestSnapshotEntryRow_ChangeIndexIsPerKeyUniqueWithinALedger(t *testing.T) {
 	}
 }
 
-// TestSnapshotEntryRow_StampsTheTopOfSpaceIntraLedgerSentinel: a snapshot row is the
-// authoritative FINAL state of its entry as of LastModifiedLedgerSeq, so it must sit at the END
-// of that ledger's intra-ledger order. ledger_entries_current resolves versions by
-// (ledger_seq, intra_ledger_seq); a lower stamp can be overwritten by a live change in the same
-// ledger, silently reinstating a MID-ledger balance as current state.
-//
-// A re-snapshot stamps the SAME sentinel, which keeps it corrective (equal version, later part
-// wins) rather than inert.
+// TestSnapshotEntryRow_StampsTheTopOfSpaceIntraLedgerSentinel: a snapshot is the FINAL state at its ledger,
+// so it must sit at the END of the intra-ledger order, or a live change in that ledger overwrites it in
+// ledger_entries_current. A re-snapshot stamps the same sentinel, staying corrective (later part wins).
 func TestSnapshotEntryRow_StampsTheTopOfSpaceIntraLedgerSentinel(t *testing.T) {
 	row, ok := SnapshotEntryRow(accountEntry(t, testSource, 42, 7), time.Unix(0, 0).UTC())
 	if !ok {
@@ -186,10 +177,9 @@ func TestSnapshotEntryRow_PopulatesTheQueryableColumns(t *testing.T) {
 	}
 }
 
-// TestResolveChangeIndexCollisions_ReassignsCollidingRows: crc32(key) is only 32 bits, so two
-// DIFFERENT keys sharing a ledger_seq/tx_hash/op_index group can collide on ChangeIndex. Without
-// a resolution pass the collision reaches ClickHouse and one row silently REPLACES the other at
-// merge time.
+// TestResolveChangeIndexCollisions_ReassignsCollidingRows: crc32(key) is 32 bits, so different keys in one
+// ledger_seq/tx_hash/op_index group can collide on ChangeIndex; unresolved, one row silently replaces the
+// other.
 func TestResolveChangeIndexCollisions_ReassignsCollidingRows(t *testing.T) {
 	rows := []LedgerEntryChangeRow{
 		{LedgerSeq: 60_000_000, ChangeIndex: 42, KeyXDR: "keyA"},
@@ -219,10 +209,9 @@ func TestResolveChangeIndexCollisions_ReassignsCollidingRows(t *testing.T) {
 	}
 }
 
-// TestResolveChangeIndexCollisions_DeterministicRegardlessOfInputOrder pins the idempotency half:
-// a resumed backfill re-derives the SAME rows, possibly in a different order. Resolution must
-// depend only on the SET of colliding keys, never arrival order, or a resumed run assigns a key a
-// different index than its first pass and duplicates instead of replacing.
+// TestResolveChangeIndexCollisions_DeterministicRegardlessOfInputOrder pins idempotency: a resumed
+// backfill re-derives the same rows in any order, so resolution must depend only on the SET of colliding
+// keys, or a resume assigns different indexes and duplicates instead of replacing.
 func TestResolveChangeIndexCollisions_DeterministicRegardlessOfInputOrder(t *testing.T) {
 	base := []LedgerEntryChangeRow{
 		{LedgerSeq: 70_000_000, ChangeIndex: 7, KeyXDR: "AAA"},
@@ -253,14 +242,9 @@ func TestResolveChangeIndexCollisions_DeterministicRegardlessOfInputOrder(t *tes
 	}
 }
 
-// TestSnapshotEntryRow_RefusesAnEntryWithNoDerivableKey: ok=false means "skip this one entry",
-// never "abort the backfill". The reachable case is a LedgerEntryType this build's SDK does not
-// know (a future protocol ahead of the pinned go-stellar-sdk), for which
-// xdr.LedgerEntryData.LedgerKey returns "unknown ledger entry type N".
-//
-// A zero row with ok=true would insert a KEYLESS row into ledger_entry_changes, invisible to
-// every key_xdr lookup but counted as written, so the snapshot would claim full coverage of
-// entries it silently dropped.
+// TestSnapshotEntryRow_RefusesAnEntryWithNoDerivableKey: ok=false means skip this entry, never abort the
+// backfill (e.g. a LedgerEntryType the pinned SDK lacks). A keyless row with ok=true would be counted as
+// written yet be invisible to key_xdr lookups.
 func TestSnapshotEntryRow_RefusesAnEntryWithNoDerivableKey(t *testing.T) {
 	unknown := &xdr.LedgerEntry{
 		LastModifiedLedgerSeq: 1,

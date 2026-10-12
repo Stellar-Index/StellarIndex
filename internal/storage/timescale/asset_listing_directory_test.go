@@ -73,10 +73,9 @@ func TestBuildListingUpsert_PlaceholderLayout(t *testing.T) {
 	if !strings.Contains(q, "ON CONFLICT (address) DO UPDATE") {
 		t.Error("statement lost its upsert arm")
 	}
-	// synced_at is now() per row — transaction-stable, which is what the
-	// prune's "same source, older synced_at" depends on. A per-row
-	// clock_timestamp() or a Go-side time would leave some rows of one
-	// sync prunable by that same sync.
+	// synced_at must be now() per row (transaction-stable), which the prune's "same source, older synced_at"
+	// relies on; clock_timestamp() or a Go-side time would leave some rows of one sync prunable by that same
+	// sync.
 	if strings.Contains(q, "clock_timestamp()") {
 		t.Error("synced_at must be transaction-stable now(), never clock_timestamp()")
 	}
@@ -226,11 +225,8 @@ func TestReplaceListingDirectory_RefusesEmptySet(t *testing.T) {
 	}
 }
 
-// TestListingDirectory_BothBoundsAreEnforcedInSQL pins the fail-closed
-// half of the cache's contract, and the separation of the two clocks.
-//
-// It asserts the rendered predicates, not just the constants: a constant nothing splices in
-// bounds nothing (as in TestAssetPriceSnapshot_StalenessBoundIsEnforcedInSQL).
+// TestListingDirectory_BothBoundsAreEnforcedInSQL pins the cache's fail-closed half and the separation of the
+// two clocks. It asserts the rendered predicates, since a constant nothing splices in bounds nothing.
 func TestListingDirectory_BothBoundsAreEnforcedInSQL(t *testing.T) {
 	t.Parallel()
 
@@ -308,10 +304,9 @@ func TestListingPriceFresh_HasAFutureCeiling(t *testing.T) {
 	}
 }
 
-// TestListingBounds_AreParseableIntervalsAndCorrectlyOrdered: the two constants are spliced into
-// SQL as literal intervals, so a typo is a runtime syntax error rather than a compile failure.
-// Recognition (an identity mapping) must be the wider bound and price the tighter; a wider price
-// bound would be unreachable.
+// TestListingBounds_AreParseableIntervalsAndCorrectlyOrdered: the constants are spliced into SQL as literal
+// intervals, so a typo is a runtime error. Recognition must be the wider bound and price the tighter; a
+// wider price bound is unreachable.
 func TestListingBounds_AreParseableIntervalsAndCorrectlyOrdered(t *testing.T) {
 	t.Parallel()
 
@@ -344,14 +339,8 @@ func TestListingBounds_AreParseableIntervalsAndCorrectlyOrdered(t *testing.T) {
 	}
 }
 
-// TestListingAddressFormsSQL_AreExhaustiveAndNotPrefixTests is the
-// misclassification guard.
-//
-// `LIKE 'C%'` is not a contract test: a classic asset CODE may itself begin with C, and the
-// census would still balance while filing it under the wrong arm.
-//
-// The predicates are Postgres POSIX regexes; Go RE2 agrees with Postgres on these (anchors,
-// character classes, bounded repetition only), so compiling the same literal tests what ships.
+// TestListingAddressFormsSQL_AreExhaustiveAndNotPrefixTests is the misclassification guard: `LIKE 'C%'` is
+// not a contract test, since classic codes can start with C. Go RE2 agrees with Postgres on these regexes.
 func TestListingAddressFormsSQL_AreExhaustiveAndNotPrefixTests(t *testing.T) {
 	t.Parallel()
 
@@ -421,10 +410,8 @@ func TestListingDirectoryCensus_Check(t *testing.T) {
 	if got := (ListingDirectoryCensus{Entries: 50, Contracts: 17, Classic: 33, PricedClassic: 34}).Check(); got == "" {
 		t.Error("PricedClassic exceeding Classic must be reported — a priced classic row is a classic row")
 	}
-	// The two priced counts are over DISJOINT halves of the population,
-	// so both may be at their own ceiling at once and the census still
-	// balances. A Check that summed them against Entries would reject
-	// the fully-priced table, which is a legitimate state.
+	// The two priced counts cover DISJOINT halves of the population, so both can be at their ceiling and the
+	// census still balances; a Check summing them against Entries would reject a legitimate fully-priced table.
 	full := ListingDirectoryCensus{Entries: 50, Contracts: 17, Classic: 33, Priced: 17, PricedClassic: 33}
 	if got := full.Check(); got != "" {
 		t.Errorf("a fully-priced census reported %q, want \"\"", got)
@@ -460,10 +447,9 @@ func TestListingDirectoryByAddressSQL_ServesBothForms(t *testing.T) {
 	}
 }
 
-// boundIsNonNull reports whether a bound argument will reach Postgres as
-// a value rather than as NULL. It reads through [driver.Valuer] so the
-// assertion is about what the DRIVER will send, not about which concrete
-// null wrapper the writer happened to choose.
+// boundIsNonNull reports whether a bound argument reaches Postgres as a value rather than NULL. It reads
+// through [driver.Valuer], so the assertion covers what the driver sends, not which null wrapper the writer
+// chose.
 func boundIsNonNull(t *testing.T, arg any) bool {
 	t.Helper()
 	v, ok := arg.(driver.Valuer)

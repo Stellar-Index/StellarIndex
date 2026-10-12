@@ -13,60 +13,32 @@ import (
 	"testing"
 )
 
-// A retention policy is the one migration shape that DELETES data on a schedule, forever,
-// without anybody typing a command, and migrations auto-deploy. This file is the tree's
-// ledger of which relations carry one, so widening the set is a red build rather than a
-// quiet drop.
-//
-// Migration 0031 removed the old retention on `trades` and the price aggregates, and its
-// `down` is a deliberate no-op because re-arming retention on `trades` is the recurring
-// data-loss drift. 0156 adds exactly ONE policy back (`prices_1m`, 90 days), and that rests
-// entirely on `trades` staying permanent, so these must hold together:
-//
-//   - `trades` has NO retention policy. Otherwise the dropped minute buckets stop being
-//     recomputable and 0156's justification is void.
-//   - `prices_1m` is the ONLY price aggregate with one. Every coarser rung is small next to
-//     1m and is what a long-window request is actually served from.
-//
-// The ledger is TEXTUAL: it replays `add_retention_policy` / `remove_retention_policy` over
-// the up-migrations in numeric order. That approximates in one safe direction only: dropping
-// a continuous aggregate also drops its policies (0115 / 0147 recreate all seven price
-// views), so the real database can hold FEWER policies than the ledger counts, never more.
-//
-// That claim covers migrations only. A Go pruner deletes on a schedule without any policy,
-// so those are ledgered separately by TestGoAgePruners_AreExactlyTheDeclaredSet at the end
-// of this file.
+// This file ledgers which relations carry a retention policy, so widening the set is a red build, not a quiet
+// drop. `trades` must have none, and `prices_1m` is the only price aggregate with one. The textual ledger can
+// overcount, never undercount; Go pruners are ledgered by TestGoAgePruners_AreExactlyTheDeclaredSet.
 
 var (
-	// addRetentionCallRe / removeRetentionCallRe match one call to each function and capture
-	// its whole argument list, so the relation is pulled from the ARGUMENTS rather than
-	// assumed to be the first quoted string (0156 mixes a positional relation with named
-	// `drop_after` / `if_not_exists`, and a call may name `relation =>`). Comment lines are
-	// dropped first ([stripSQLComments]) so prose that discusses `add_retention_policy`
-	// without calling it never registers as a call.
+	// addRetentionCallRe / removeRetentionCallRe match one call each and capture the whole argument list, so the
+	// relation is taken from the ARGUMENTS (0156 mixes positional and named args, and a call may use `relation
+	// =>`). Comment lines are dropped first ([stripSQLComments]) so prose mentioning a call never registers.
 	addRetentionCallRe    = regexp.MustCompile(`add_retention_policy\s*\(([^)]*)\)`)
 	removeRetentionCallRe = regexp.MustCompile(`remove_retention_policy\s*\(([^)]*)\)`)
-	// namedRelationArgRe / positionalRelationArgRe pull the relation out of one call's
-	// argument list: named `relation => '<name>'` first (order-independent), else the first
-	// positional quoted argument. The class includes `.` so a schema-qualified relation
-	// (`'public.trades'`) is captured whole; [normalizeRelationName] strips the schema
-	// before it becomes a ledger key.
+	// namedRelationArgRe / positionalRelationArgRe extract the relation from a call's args: the named
+	// `relation => '<name>'` form first, else the first quoted positional. The class includes `.` so a
+	// schema-qualified name is captured whole for normalizeRelationName.
 	namedRelationArgRe      = regexp.MustCompile(`relation\s*=>\s*'([a-zA-Z0-9_.]+)'`)
 	positionalRelationArgRe = regexp.MustCompile(`^\s*'([a-zA-Z0-9_.]+)'`)
 	// A leading `--` marker, removed so a command written inside a
 	// header comment reads as the command it is.
 	commentMarkerRe = regexp.MustCompile(`(?m)^\s*--\s?`)
-	// The start of a refresh CALL: the name followed by a quoted
-	// relation. Deliberately not a bare name match — the header also
-	// cites the function's SQL signature in prose, which is not a
-	// command and must not be held to the command's rules.
+	// The start of a refresh CALL: the name followed by a quoted relation. Not a bare name match, because the
+	// header also cites the function's SQL signature in prose, which is not a command.
 	refreshCallStartRe = regexp.MustCompile(`refresh_continuous_aggregate\s*\(\s*'`)
 )
 
 // relationFromRetentionArgs extracts the target relation from one add_retention_policy /
-// remove_retention_policy argument list, however spelled. ok=false means neither shape
-// matched; callers must fail loudly, since a call the ledger cannot parse would otherwise
-// read as a call never made.
+// remove_retention_policy argument list, however spelled. ok=false means no shape matched; callers must fail
+// loudly, as an unparsed call reads as never made.
 func relationFromRetentionArgs(args string) (string, bool) {
 	if m := namedRelationArgRe.FindStringSubmatch(args); m != nil {
 		return normalizeRelationName(m[1]), true
@@ -87,10 +59,9 @@ func normalizeRelationName(raw string) string {
 	return raw
 }
 
-// retentionRelationsFromCalls finds every call `callRe` matches in `sql` and returns the
-// relation each one names. A matched call whose relation cannot be extracted fails the test
-// naming `file`: an unparseable spelling must not silently vanish from the ledger (a
-// `relation => 'trades'` policy would go unnoticed).
+// retentionRelationsFromCalls returns the relation named by each call callRe matches in sql. A matched call
+// whose relation cannot be extracted fails the test naming file, so an unparseable spelling cannot vanish
+// from the ledger.
 func retentionRelationsFromCalls(t *testing.T, callRe *regexp.Regexp, sql, file string) []string {
 	t.Helper()
 	var relations []string
@@ -185,10 +156,8 @@ func TestRetentionPolicies_AreExactlyTheDeclaredSet(t *testing.T) {
 	}
 }
 
-// 0156's argument is that a dropped minute bucket is recomputable
-// because raw `trades` is kept forever. If `trades` ever regains a
-// retention policy that argument is void and 0156 must be removed —
-// this pins the pairing so the two can never drift apart silently.
+// Migration 0156 argues a dropped minute bucket is recomputable because raw `trades` is kept forever. If
+// `trades` regains a retention policy that argument is void and 0156 must go; this pins the pairing.
 func TestRetentionPolicies_TradesStaysPermanentWhilePrices1mIsBounded(t *testing.T) {
 	held := retentionLedger(t)
 	if mig, ok := held["trades"]; ok {
@@ -240,10 +209,8 @@ func TestPrices1mRetention_HorizonIsNinetyDaysAndNamesOneRelation(t *testing.T) 
 		t.Errorf("0156 no longer states `INTERVAL '90 days'` — the horizon moved without this "+
 			"assertion moving with it:\n%s", sql)
 	}
-	// The policy must ship DISABLED, and the migration must ASSERT that
-	// rather than assume it. A deferred first run is not a substitute:
-	// a fuse only helps if somebody is watching, and the disable is
-	// the thing that makes arming a deliberate act.
+	// The policy must ship DISABLED and the migration must assert that rather than assume it: a deferred first
+	// run is no substitute, and the disable is what makes arming a deliberate act.
 	if !strings.Contains(sql, "scheduled => false") {
 		t.Error("0156 no longer disables the policy it creates — an auto-deployed migration " +
 			"would arm a destructive daily job with no operator decision")
@@ -287,12 +254,9 @@ func TestPrices1mRetention_RebuildsReattachTheSamePolicy(t *testing.T) {
 	}
 }
 
-// Recovery of a dropped range needs `force => true`: a retention drop writes no
-// materialization-invalidation entry, so a plain refresh_continuous_aggregate over that window
-// collects nothing, reports "already up-to-date" and writes zero rows (see
-// collect_and_delete_cagg_invalidations_in_window in TimescaleDB's invalidation.c). An
-// operator copying the plain form would conclude the history was unrecoverable, so both files
-// have to carry the forced form.
+// Recovering a dropped range needs `force => true`: a retention drop writes no invalidation entry, so a
+// plain refresh_continuous_aggregate collects nothing and reports "already up-to-date". An operator copying
+// the plain form would conclude history was unrecoverable, so both files must carry the forced form.
 func TestPrices1mRetention_DocumentsTheForcedRefreshRecovery(t *testing.T) {
 	for _, name := range []string{
 		"0156_prices_1m_retention.up.sql",
@@ -308,10 +272,8 @@ func TestPrices1mRetention_DocumentsTheForcedRefreshRecovery(t *testing.T) {
 		}
 		recipes := 0
 		for _, call := range calls {
-			// A call the header marks DO NOT RUN is a warning, not a
-			// recipe — it is quoted precisely so an operator recognises
-			// the destructive form, and adding `force` to it would make
-			// the warning name something nobody would ever type.
+			// A call the header marks DO NOT RUN is a warning, not a recipe: it is quoted so an operator recognises the
+			// destructive form, and adding `force` would make the warning name something nobody would type.
 			if strings.Contains(call, doNotRunMarker) {
 				continue
 			}
@@ -336,10 +298,9 @@ func TestPrices1mRetention_DocumentsTheForcedRefreshRecovery(t *testing.T) {
 // a forbidden form is neither held to a recipe's rules nor counted as one.
 const doNotRunMarker = "DO NOT RUN"
 
-// refreshCallsIn returns each `refresh_continuous_aggregate(...)` call in `sql`, from the
-// function name to the closing `)`. Asserting per CALL rather than per FILE is load-bearing:
-// the file also has prose ABOUT `force => true`, so a file-wide substring check goes green on
-// a recovery command that omits it.
+// refreshCallsIn returns each `refresh_continuous_aggregate(...)` call in `sql`, from name to closing `)`.
+// Asserting per call, not per file, is load-bearing: the file's prose about `force => true` would pass a
+// file-wide substring check on a recovery command that omits it.
 func refreshCallsIn(sql string) []string {
 	var out []string
 	// A CALL is the name followed by a quoted relation; a prose
@@ -364,19 +325,9 @@ func refreshCallsIn(sql string) []string {
 // migration's own disable step and its assertion all share one.
 var jobsViewPredicateRe = regexp.MustCompile(`hypertable_name\s*=\s*([^\n]+)`)
 
-// Every command that selects the retention job must match on the CAGG's USER VIEW name,
-// `prices_1m`.
-//
-// `timescaledb_information.jobs` renders `hypertable_name` as
-// `COALESCE(ca.user_view_name, ht.table_name)`, joined on `ca.mat_hypertable_id =
-// j.hypertable_id`, and the retention API stores the MATERIALIZATION hypertable id. For a
-// continuous aggregate the view therefore reports `prices_1m` and NEVER
-// `_materialized_hypertable_<id>`, so a predicate on `materialization_hypertable_name`
-// selects nothing.
-//
-// That is catastrophic because `alter_job` over an empty row set is NOT an error: it prints
-// nothing and exits 0, so a disarm that matched nothing reads like one that worked while the
-// policy keeps dropping chunks daily.
+// Every command selecting the retention job must match the CAGG's USER VIEW name `prices_1m`, since the jobs
+// view never reports the materialization name. A wrong predicate makes `alter_job` match nothing and exit 0
+// silently.
 func TestPrices1mRetention_JobPredicatesMatchTheViewName(t *testing.T) {
 	for _, name := range []string{
 		"0156_prices_1m_retention.up.sql",
@@ -401,10 +352,9 @@ func TestPrices1mRetention_JobPredicatesMatchTheViewName(t *testing.T) {
 	}
 }
 
-// Every command that touches the job must be followed by a SELECT that
-// shows the outcome, because a zero-row `alter_job` is silent success.
-// The up-migration additionally has to ASSERT it (RAISE EXCEPTION),
-// since nobody reads a migration's output on an auto-deploy.
+// Every command touching the job must be followed by a SELECT showing the outcome, since a zero-row
+// `alter_job` is silent success; the up-migration must also ASSERT it (RAISE EXCEPTION), as nobody reads a
+// migration's output on auto-deploy.
 func TestPrices1mRetention_ArmAndDisarmCarryAVerificationSelect(t *testing.T) {
 	text := readRepoFile(t, "migrations/0156_prices_1m_retention.up.sql")
 	// The header states the arm and the disarm; each is followed by a
@@ -422,18 +372,9 @@ func TestPrices1mRetention_ArmAndDisarmCarryAVerificationSelect(t *testing.T) {
 	}
 }
 
-// A drop invalidates the TWAP views, and the repo's own documented TWAP
-// refresh then deletes their history.
-//
-// prices_1m's materialization hypertable is also the raw hypertable of both TWAP views.
-// `ts_chunk_do_drop_chunks` invalidates the raw hypertable's dependent aggregates for every
-// chunk it drops, so one armed run writes an invalidation entry per dropped chunk against
-// both TWAP views. Those entries are dormant under the daily policies, and NOT dormant under
-// `refresh_continuous_aggregate('twap_1h', NULL, now())` (documented in migrations 0081, 0126
-// and 0147), which would process them against an emptied prices_1m.
-//
-// The migration has to point the operator at the windowed form. This asserts it says so,
-// because "re-materialise twap afterwards" points at the destructive one.
+// A retention drop invalidates the TWAP views, and a plain `refresh_continuous_aggregate('twap_1h', NULL,
+// now())` would then process those entries against an emptied prices_1m and delete history. The migration
+// must say to use the windowed form.
 func TestPrices1mRetention_WarnsThatATWAPRefreshMustBeWindowed(t *testing.T) {
 	for _, name := range []string{
 		"0156_prices_1m_retention.up.sql",
@@ -454,10 +395,9 @@ func TestPrices1mRetention_WarnsThatATWAPRefreshMustBeWindowed(t *testing.T) {
 	}
 }
 
-// The up-migration must not claim the 0115 / 0147 distinction is that `trades` is permanent:
-// 0031 removed that retention before either landed, so it was permanent for both. The real
-// distinction is that those were one-off drops and this policy drops daily forever, which is
-// why every recovery here starts with a disarm.
+// The up-migration must not claim the 0115 / 0147 distinction is that `trades` is permanent: it was permanent
+// for both. The real distinction is that those were one-off drops while this policy drops daily forever, so
+// every recovery starts with a disarm.
 func TestPrices1mRetention_DoesNotClaimTheFalse0115Distinction(t *testing.T) {
 	text := readRepoFile(t, "migrations/0156_prices_1m_retention.up.sql")
 	for _, banned := range []string{
@@ -475,10 +415,9 @@ func TestPrices1mRetention_DoesNotClaimTheFalse0115Distinction(t *testing.T) {
 	}
 }
 
-// The ledger must see a retention policy on `trades` however the call spells the relation
-// (named, schema-qualified, or both), because
-// [TestRetentionPolicies_TradesStaysPermanentWhilePrices1mIsBounded] only catches a re-armed
-// `trades` policy if the ledger extracted it.
+// The ledger must see a retention policy on `trades` however the call spells the relation (named, schema-
+// qualified, or both), or [TestRetentionPolicies_TradesStaysPermanentWhilePrices1mIsBounded] cannot catch a
+// re-armed `trades` policy.
 func TestRelationFromRetentionArgs_CatchesEveryTradesSpelling(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -501,10 +440,9 @@ func TestRelationFromRetentionArgs_CatchesEveryTradesSpelling(t *testing.T) {
 	}
 }
 
-// migrations/README.md rule 4 is the instruction a new CAGG author
-// reads. It must defer to the declared set above rather than restate a
-// retention posture of its own: the rule once mandated a retention
-// policy on every new CAGG, which is the 0031 data-loss drift.
+// migrations/README.md rule 4 is what a new CAGG author reads. It must defer to the declared set above
+// rather than restate a retention posture, since it once mandated a policy on every new CAGG, the 0031
+// data-loss drift.
 func TestRetentionPolicies_ReadmeRule4DefersToTheDeclaredSet(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join(findRepoRoot(t), "migrations", "README.md"))
 	if err != nil {
@@ -534,10 +472,9 @@ func TestRetentionPolicies_ReadmeRule4DefersToTheDeclaredSet(t *testing.T) {
 	}
 }
 
-// ageDeleteRe / ageCutoffRe find a Go-side pruner: one SQL string literal
-// that deletes from a relation AND compares a timestamp column against a
-// cutoff. A Go pruner deletes data on a schedule exactly as
-// add_retention_policy does, so it is ledgered the same way.
+// ageDeleteRe / ageCutoffRe find a Go-side pruner: one SQL string literal that deletes from a relation AND
+// compares a timestamp column to a cutoff. It deletes on a schedule like add_retention_policy, so it is
+// ledgered too.
 var (
 	ageDeleteRe = regexp.MustCompile(`(?is)\bDELETE\s+FROM\s+([a-z_][a-z0-9_]*)`)
 	ageCutoffRe = regexp.MustCompile(`(?i)\b[a-z_]*(_at|ts|bucket|last_updated)\s*<\s*(\$[0-9]+|now\(\))`)
@@ -589,10 +526,9 @@ func collectAgeDeletes(path, root string, found map[string]string) error {
 	return nil
 }
 
-// Every relation a Go pruner deletes from by age is named here with the reason it is safe, as
-// a migration-side policy must be. mev_events is deliberately absent: it is served history
-// the detectors cannot re-derive (they scan a 30-minute trailing window), and the served tier
-// keeps what it indexes.
+// Every relation a Go pruner deletes from by age is named here with why it is safe, as a migration-side
+// policy must be. mev_events is deliberately absent: it is served history the detectors cannot re-derive
+// (30-minute window).
 func TestGoAgePruners_AreExactlyTheDeclaredSet(t *testing.T) {
 	const (
 		snapshot = "rolling snapshot recomputed every refresh; the delete drops superseded rows"

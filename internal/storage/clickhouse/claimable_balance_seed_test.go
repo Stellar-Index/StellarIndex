@@ -137,10 +137,9 @@ func newCBReducer(t *testing.T, assets map[string]struct{}) *claimableSeedReduce
 
 // ─── asset-key derivation ───────────────────────────────────────────────
 
-// TestClaimableSeedAssetKey pins the CODE:ISSUER derivation against the shapes
-// the live observer accepts and declines. Getting the code padding wrong here
-// would seed rows under an asset_key the served reader never queries — a
-// silent no-op that still reports "seeded N balances".
+// TestClaimableSeedAssetKey pins the CODE:ISSUER derivation against the shapes the live observer accepts and
+// declines; wrong code padding would seed rows under an asset_key the reader never queries, yet still report
+// "seeded N".
 func TestClaimableSeedAssetKey(t *testing.T) {
 	nonEd := cbAsset4(t, "AQUA")
 	nonEd.AlphaNum4.Issuer = xdr.AccountId{Type: xdr.PublicKeyType(99)}
@@ -172,10 +171,9 @@ func TestClaimableSeedAssetKey(t *testing.T) {
 	}
 }
 
-// TestClaimableSeedMatchesLiveObserver is the parity check the design rests on: a seeded row must
-// be INDISTINGUISHABLE from one the live LedgerEntryChange observer writes, or the served
-// `DISTINCT ON (claimable_id)` sum double-counts or drops the overlap. It runs the same entry
-// through both paths and compares the identity fields: claimable_id, asset_key, balance.
+// TestClaimableSeedMatchesLiveObserver pins that a seeded row is indistinguishable from one the live observer
+// writes (claimable_id, asset_key, balance), or the served DISTINCT ON sum double-counts or drops the
+// overlap.
 func TestClaimableSeedMatchesLiveObserver(t *testing.T) {
 	obs, err := claimable.NewObserver([]string{cbAssetKey})
 	if err != nil {
@@ -258,10 +256,9 @@ func TestClaimableSeedDecodesAmount(t *testing.T) {
 	}
 }
 
-// TestClaimableSeedSkipsNative: native XLM claimable balances belong to Algorithm 1, whose reader
-// never consumes claimable_observations, and the live observer declines them
-// (ErrUnsupportedClaimableAsset). They are also the bulk of the network's claimable balances, so
-// retaining them would blow the reducer's memory bound.
+// TestClaimableSeedSkipsNative: native XLM claimable balances belong to Algorithm 1 and the live observer
+// declines them (ErrUnsupportedClaimableAsset); they are the bulk, so retaining them would blow the memory
+// bound.
 func TestClaimableSeedSkipsNative(t *testing.T) {
 	id := cbID(0x22)
 	r := newCBReducer(t, nil)
@@ -349,11 +346,9 @@ func TestClaimableSeedReducer_LatestLedgerWins(t *testing.T) {
 	}
 }
 
-// TestClaimableSeedReducer_SameLedgerRemovalWins is the within-ledger tie-break case. Creating and
-// CLAIMING a balance in one ledger is ordinary (one transaction can do both); getting the
-// tie-break backwards seeds a claimed balance and inflates classic supply.
-//
-// The removal is offered FIRST so a naive "last offer wins" fold fails.
+// TestClaimableSeedReducer_SameLedgerRemovalWins pins the within-ledger tie-break: a balance created and
+// claimed in one ledger must not be seeded, or classic supply inflates. The removal is offered first so a
+// "last offer wins" fold fails.
 func TestClaimableSeedReducer_SameLedgerRemovalWins(t *testing.T) {
 	id := cbID(0x51)
 	ct := time.Date(2022, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -393,10 +388,9 @@ func TestClaimableSeedReducer_SameLedgerRemovalWinsOnChangeIndex(t *testing.T) {
 	}
 }
 
-// TestClaimableSeedReducer_RecreateAfterRemovalWins: a removal in an EARLIER window must not
-// suppress a later live change for the same key. Ids are not expected to recur, but the
-// reduction must not DEPEND on that; treating removal as terminal turns latest-wins into
-// first-wins.
+// TestClaimableSeedReducer_RecreateAfterRemovalWins: a removal in an earlier window must not suppress a
+// later live change for the same key. Ids are not expected to recur, but the reduction must not depend on
+// it; removal is not terminal.
 func TestClaimableSeedReducer_RecreateAfterRemovalWins(t *testing.T) {
 	id := cbID(0x53)
 	r := newCBReducer(t, nil)
@@ -417,10 +411,8 @@ func TestClaimableSeedReducer_RecreateAfterRemovalWins(t *testing.T) {
 	}
 }
 
-// TestClaimableSeedReducer_RepeatedOfferIsIdempotent — a bisected retry
-// re-reads a window whose stream already delivered part of its output, so the
-// same rows are offered twice and superseded rows can arrive after their
-// successor. The reduction must be a pure maximum.
+// TestClaimableSeedReducer_RepeatedOfferIsIdempotent: a bisected retry offers the same rows twice and
+// superseded rows may arrive after their successor, so the reduction must be a pure maximum.
 func TestClaimableSeedReducer_RepeatedOfferIsIdempotent(t *testing.T) {
 	id := cbID(0x61)
 	ct := time.Date(2023, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -447,10 +439,9 @@ func TestClaimableSeedReducer_RepeatedOfferIsIdempotent(t *testing.T) {
 	}
 }
 
-// TestClaimableSeedReducer_RemovalPrunesLiveSet is the memory bound. Unlike the SAC seed, this
-// reduction has no curated watched set and sees every claimable balance on the network, most
-// long since claimed. A removal must DROP the live record, not merely mark it, so the resident
-// set tracks balances live at the walk position, the seed's own output cardinality.
+// TestClaimableSeedReducer_RemovalPrunesLiveSet is the memory bound: the reduction sees every claimable
+// balance on the network, so a removal must drop the live record, keeping the resident set at the walk
+// position's size.
 func TestClaimableSeedReducer_RemovalPrunesLiveSet(t *testing.T) {
 	id := cbID(0x71)
 	r := newCBReducer(t, nil)
@@ -472,10 +463,9 @@ func TestClaimableSeedReducer_RemovalPrunesLiveSet(t *testing.T) {
 	}
 }
 
-// TestClaimableSeedReducer_StartWindowCompactsTombstones is the second half of the memory bound.
-// A tombstone only rejects a change EARLIER than it; once the walk has passed its ledger no
-// future offer can be earlier, so it is dead weight. Without compaction the tombstone set grows
-// with every claim in chain history.
+// TestClaimableSeedReducer_StartWindowCompactsTombstones is the second half of the memory bound: a
+// tombstone only rejects earlier changes, so once the walk passes its ledger it is dead weight and must be
+// compacted away.
 func TestClaimableSeedReducer_StartWindowCompactsTombstones(t *testing.T) {
 	oldID, recentID := cbID(0x81), cbID(0x82)
 	r := newCBReducer(t, nil)
@@ -524,10 +514,8 @@ func TestClaimableSeedReducer_StartWindowRejectsBacktracking(t *testing.T) {
 
 // ─── error contract ─────────────────────────────────────────────────────
 
-// TestClaimableSeedReducer_CorruptKey preserves the SAC seed's error contract:
-// a corrupt key on a LIVE change is lake corruption worth failing the seed
-// for, while a corrupt key on a REMOVED change identifies no balance and held
-// nothing.
+// TestClaimableSeedReducer_CorruptKey pins the SAC seed's error contract: a corrupt key on a LIVE change is
+// lake corruption and fails the seed; on a REMOVED change it identifies no balance and held nothing.
 func TestClaimableSeedReducer_CorruptKey(t *testing.T) {
 	t.Run("live change errors", func(t *testing.T) {
 		r := newCBReducer(t, nil)
@@ -546,10 +534,8 @@ func TestClaimableSeedReducer_CorruptKey(t *testing.T) {
 	})
 }
 
-// TestClaimableSeedReducer_CorruptEntryDeferredToEmit — corrupt XDR on a
-// SUPERSEDED change is not the seed's problem; on the SURVIVING change it is a
-// hard error. Dropping the latter silently would report "this balance holds
-// nothing", which is the exact under-count this seed exists to fix.
+// TestClaimableSeedReducer_CorruptEntryDeferredToEmit pins that corrupt XDR on a superseded change is ignored
+// but a hard error on the surviving one, since dropping it would report "holds nothing", an under-count.
 func TestClaimableSeedReducer_CorruptEntryDeferredToEmit(t *testing.T) {
 	t.Run("superseded corruption is tolerated", func(t *testing.T) {
 		id := cbID(0x91)
@@ -590,10 +576,8 @@ func TestClaimableSeedReducer_CorruptEntryDeferredToEmit(t *testing.T) {
 
 // ─── emit ───────────────────────────────────────────────────────────────
 
-// TestClaimableSeedReducer_EmitIsSortedAndOncePerKey — one callback per
-// surviving balance, in ascending claimable-id order, so a run's output (and
-// any log tail of it) is reproducible even though the reduction happens in a
-// Go map.
+// TestClaimableSeedReducer_EmitIsSortedAndOncePerKey: one callback per surviving balance in ascending
+// claimable-id order, so output is reproducible despite the reduction happening in a Go map.
 func TestClaimableSeedReducer_EmitIsSortedAndOncePerKey(t *testing.T) {
 	r := newCBReducer(t, nil)
 	tags := []byte{0xE1, 0x02, 0x7F, 0xB0}
@@ -647,10 +631,9 @@ func TestClaimableIDFromKeyXDR(t *testing.T) {
 	}
 }
 
-// TestClaimableSeedWindowConstants pins the window-adaptation policy. Dense airdrop-era ranges
-// mint millions of distinct claimable balances in a few thousand ledgers, so the bisection floor
-// must be low enough to stay under the ClickHouse memory ceiling in the densest range, and the
-// walk must recover its width afterwards instead of crawling the remaining ledgers at the floor.
+// TestClaimableSeedWindowConstants pins the window policy: the bisection floor must be low enough to stay
+// under the ClickHouse memory ceiling in dense airdrop-era ranges, and the walk must recover its width
+// instead of crawling at the floor.
 func TestClaimableSeedWindowConstants(t *testing.T) {
 	if claimableSeedMinLedgerWindow >= 15_625 {
 		t.Fatalf("bisection floor %d is at or above the width that demonstrably OOM'd on r1 (15,625) — a dense range would surface an error instead of narrowing",
@@ -677,10 +660,9 @@ func TestClaimableSeedWindowConstants(t *testing.T) {
 	}
 }
 
-// TestClaimableSeedWindowPolicy exercises the narrow/widen state machine
-// directly: it must reach the floor from the initial width, must not narrow
-// below it, and must recover toward the initial width after sustained success
-// so one dense range cannot pin the rest of the walk at the floor.
+// TestClaimableSeedWindowPolicy exercises the narrow/widen state machine: it reaches the floor from the
+// initial width, never narrows below it, and recovers toward the initial width after sustained success so
+// one dense range cannot pin the walk.
 func TestClaimableSeedWindowPolicy(t *testing.T) {
 	w := newAdaptiveLedgerWindow(claimableSeedLedgerWindow, claimableSeedMinLedgerWindow, claimableSeedWidenAfter)
 	if w.width != claimableSeedLedgerWindow {
@@ -719,10 +701,9 @@ func TestClaimableSeedWindowPolicy(t *testing.T) {
 	}
 }
 
-// TestClaimableSeedReducer_RetractsServedClaim pins retraction: a balance the served tier holds
-// as live and a later window claims comes out as a tombstone at the claim (served asset, zero
-// balance, the claim's ledger and close time) and survives tombstone compaction. A claimed
-// balance the served tier does not hold emits nothing; a still-live served balance emits its seed.
+// TestClaimableSeedReducer_RetractsServedClaim pins that a served-live balance claimed in a later window
+// becomes a tombstone at the claim (served asset, zero balance, claim ledger and close time) that survives
+// compaction; an unserved claimed balance emits nothing and a still-live one emits its seed.
 func TestClaimableSeedReducer_RetractsServedClaim(t *testing.T) {
 	claimedID, strangerID, liveID := cbID(0x91), cbID(0x92), cbID(0x93)
 	claimedAt := time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC)

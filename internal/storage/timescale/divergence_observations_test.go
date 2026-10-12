@@ -7,19 +7,9 @@ import (
 	"testing"
 )
 
-// TestListDivergenceLatest_DaysFilterUsesMakeInterval guards a pgx encode trap. A window
-// written as
-//
-//	observed_at > now() - ($1 || ' days')::interval
-//
-// makes Postgres infer $1 as TEXT, but sinceDays is a Go int and pgx v5 has no int->text
-// encode plan ("cannot find encode plan"), so every request failed before executing. The
-// window must be make_interval(days => $1), which types $1 as an integer, and the emitted SQL
-// must NOT reconstruct the text-concatenation form.
-//
-// Caveat: the canned driver captures query text but does not encode args through pgx, so it
-// cannot reproduce the failure itself; the real encode-path proof is the integration/live
-// endpoint. This is the cheap structural guard against reintroducing `$N || ' days'`.
+// TestListDivergenceLatest_DaysFilterUsesMakeInterval: the window must be make_interval(days => $1), because
+// `($1 || ' days')::interval` types $1 as text and pgx cannot encode a Go int to it. The canned driver
+// does not encode args, so this only guards the SQL text against that form.
 func TestListDivergenceLatest_DaysFilterUsesMakeInterval(t *testing.T) {
 	// 9-column empty result matching the SELECT; 0 rows so Scan never runs.
 	script := []scriptedResult{{

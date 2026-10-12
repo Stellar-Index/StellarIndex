@@ -9,15 +9,9 @@ import (
 	"time"
 )
 
-// The windowed topic-sample query MUST always carry the trailing-window floor ($3), independent
-// of whether the ledger_ingest_log range-covered fast path applies. An unbounded DISTINCT ON
-// scan of the full-history soroban_events table runs for hours (see gap_window_test.go), and an
-// edit could otherwise drop that bound while keeping the optional [$4,$5] chunk-pruning bound.
-//
-// TestPairTimeoutSkip_LogsOnItsOwnDeadlineExpiry pins that a PHASE 3 per-pair fetch hitting ITS
-// OWN oneSorobanTopicSampleTimeout degrades to "unsampled" so the recognition scan does not
-// abort, and that the skip is logged. Silent drops would hide the dormant shape the
-// recognition audit exists to catch.
+// The windowed topic-sample query must always carry the trailing-window floor ($3), whether or not the
+// range-covered fast path applies; an unbounded DISTINCT ON over soroban_events runs for hours.
+// TestPairTimeoutSkip_LogsOnItsOwnDeadlineExpiry: a per-pair fetch timeout degrades to unsampled, logged.
 func TestPairTimeoutSkip_LogsOnItsOwnDeadlineExpiry(t *testing.T) {
 	var buf bytes.Buffer
 	prev := slog.Default()
@@ -80,10 +74,8 @@ func TestDistinctSorobanTopicSamplesWindowedQuery_CarriesTheBound(t *testing.T) 
 	}
 }
 
-// TestDistinctTopicSampleWindow_IsBounded guards against the constant
-// silently growing back toward "full history" — e.g. someone bumping
-// it to cover a specific incident instead of using the Phase-2/3
-// fallback path that already exists for shapes outside the window.
+// TestDistinctTopicSampleWindow_IsBounded guards against the constant growing back toward full history, e.g.
+// a bump for one incident instead of using the existing Phase-2/3 fallback for shapes outside the window.
 func TestDistinctTopicSampleWindow_IsBounded(t *testing.T) {
 	t.Parallel()
 	if distinctTopicSampleWindow <= 0 {
@@ -94,10 +86,9 @@ func TestDistinctTopicSampleWindow_IsBounded(t *testing.T) {
 	}
 }
 
-// TestOneSorobanTopicSampleQuery_IsIndexBacked pins the PHASE 3 per-pair fallback shape:
-// equality on (contract_id, topic_0_sym), the columns of soroban_events_contract_topic_idx,
-// plus LIMIT 1 with no ORDER BY so Postgres stops at the first matching index entry instead of
-// sorting the pair's full row set.
+// TestOneSorobanTopicSampleQuery_IsIndexBacked pins the per-pair fallback shape: equality on (contract_id,
+// topic_0_sym) matching soroban_events_contract_topic_idx, plus LIMIT 1 with no ORDER BY so Postgres stops at
+// the first index entry instead of sorting the pair's full row set.
 func TestOneSorobanTopicSampleQuery_IsIndexBacked(t *testing.T) {
 	t.Parallel()
 	q := oneSorobanTopicSampleQuery
@@ -112,10 +103,9 @@ func TestOneSorobanTopicSampleQuery_IsIndexBacked(t *testing.T) {
 	}
 }
 
-// TestDistinctSorobanContractTopicPairsQuery_IsIndexOnly pins the PHASE 2 discovery query: it
-// must filter topic_0_sym IS NOT NULL to match soroban_events_contract_topic_idx's partial-index
-// predicate exactly. Any other predicate forces a full index scan or heap access instead of an
-// index-only scan, back to O(rows) cost.
+// TestDistinctSorobanContractTopicPairsQuery_IsIndexOnly pins the phase 2 discovery query to filter
+// topic_0_sym IS NOT NULL, matching soroban_events_contract_topic_idx's partial-index predicate; any other
+// predicate loses the index-only scan.
 func TestDistinctSorobanContractTopicPairsQuery_IsIndexOnly(t *testing.T) {
 	t.Parallel()
 	q := distinctSorobanContractTopicPairsQuery

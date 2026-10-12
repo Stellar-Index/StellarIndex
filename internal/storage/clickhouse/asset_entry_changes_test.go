@@ -89,10 +89,9 @@ func aecKeyLess(a, b assetEntryChangeKey) bool {
 	return a.role < b.role
 }
 
-// TestAssetEntryChanges_FlooredExactFallbackMatchesUnbounded pages a
-// duplicate-heavy asset (every key re-derived often enough that no window
-// proves a page) across dense and sparse stretches, and checks every page
-// equals the unbounded LIMIT 1 BY answer while each exact read carries a floor.
+// TestAssetEntryChanges_FlooredExactFallbackMatchesUnbounded pages a duplicate-heavy asset across dense and
+// sparse stretches and checks every page equals the unbounded LIMIT 1 BY answer, each exact read carrying a
+// floor.
 func TestAssetEntryChanges_FlooredExactFallbackMatchesUnbounded(t *testing.T) {
 	const (
 		limit     = 4

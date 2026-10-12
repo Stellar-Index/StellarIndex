@@ -8,15 +8,9 @@ import (
 	"testing"
 )
 
-// TestInsertAccountMovementsOrder_PartialSendLeavesNoGap pins that what a PARTIALLY sent
-// batch leaves behind is sound for the max(ledger) resume every caller checkpoints on.
-//
-// InsertAccountMovements splits a batch into accountMovementsInsertChunk INSERTs and returns
-// on the first chunk error, leaving earlier chunks durably written (ClickHouse has no
-// transaction across them). For every cut point, every ledger strictly below the highest
-// written ledger must be COMPLETE, so restarting at max(ledger) re-processes one ledger and
-// skips nothing. An address-first order fails this: chunk 0 spans the window's whole ledger
-// range, so max(ledger) is already at the top while later addresses hold nothing.
+// TestInsertAccountMovementsOrder_PartialSendLeavesNoGap pins that a partly sent batch is safe for
+// max(ledger) resume: at every cut point each ledger below the highest written is complete. An address-first
+// order fails.
 func TestInsertAccountMovementsOrder_PartialSendLeavesNoGap(t *testing.T) {
 	// A window shaped like a real one: many addresses, each active
 	// across the whole ledger range.

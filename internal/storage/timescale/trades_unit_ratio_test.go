@@ -60,10 +60,9 @@ func TestIsDexUnitRatioTrade(t *testing.T) {
 	}
 }
 
-// TestRecordDexTradeUnitRatio_MetricIncrements exercises the production call site against the
-// real obs.DexTradeUnitRatioTotal counter without a database (the decision and metric bump
-// never touch *sql.DB). Each case uses a distinct fake source label so counter state from
-// other cases cannot pollute the assertions.
+// TestRecordDexTradeUnitRatio_MetricIncrements exercises the production call site against the real
+// obs.DexTradeUnitRatioTotal counter without a database. Each case uses a distinct fake source label so
+// counter state cannot leak between cases.
 func TestRecordDexTradeUnitRatio_MetricIncrements(t *testing.T) {
 	tests := []struct {
 		name        string

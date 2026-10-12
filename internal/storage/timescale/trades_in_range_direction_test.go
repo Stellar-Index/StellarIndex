@@ -14,33 +14,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// [Store.TradesInRange] is the read behind the aggregates (/v1/vwap, /v1/twap, single-bar
-// /v1/ohlc, /v1/price/tip, the aggregator orchestrator). A mean or extreme folded the wrong
-// way yields a plausible number rather than an empty one.
-//
-// The rule is a per-row leg swap. Every aggregate is defined on the two integer leg amounts,
-// never on a stored price (restated here because this package must not import
-// internal/aggregate):
-//
-//   - aggregate.VWAP        Σ(QuoteAmount) / Σ(BaseAmount)
-//   - aggregate.ComputeOHLC per row, price = QuoteAmount/BaseAmount as
-//     an exact big.Rat; High = max, Low = min, Open/Close by slice order
-//   - aggregate.TWAP        Σ(price·Δt) / Σ(Δt), Δt from Timestamp
-//
-// Swapping a flipped row's legs inverts the price exactly and also re-weights the mean: the
-// weight is the row's base leg, which in the REQUESTED orientation is its stored QUOTE amount.
-// A fold that skips the re-weighting reports a wrong high, which the fixture below exposes.
+// Store.TradesInRange backs the aggregates; a wrongly folded mean yields a plausible number, not empty.
+// Each flipped row has its legs swapped, which inverts the price and re-weights by the stored QUOTE amount.
+// A fold that skips the re-weighting reports a wrong high, which the fixture exposes.
 
-// The market: AQUA priced in USDC. Four prints at four prices, two recorded each way round.
-// Every base leg is 100 AQUA so the requested-orientation weights are uniform.
-//
-//	stored AQUA/USDC  100 AQUA / 20 USDC   → 0.20
-//	stored AQUA/USDC  100 AQUA / 18 USDC   → 0.18
-//	stored USDC/AQUA   25 USDC / 100 AQUA  → 0.25  ← the market's HIGH
-//	stored USDC/AQUA   10 USDC / 100 AQUA  → 0.10  ← the market's LOW
-//
-// Read whole: Σbase = 400 AQUA, Σquote = 73 USDC, VWAP = 0.1825,
-// high 0.25, low 0.10, n = 4.
+// Market: AQUA priced in USDC, four prints of 100 AQUA, two stored each way round (0.20, 0.18, 0.25, 0.10).
+// Read whole: VWAP 0.1825, high 0.25, low 0.10, n = 4.
 const (
 	aggAQUA100 = "1000000000" // 100 AQUA, 7dp
 	aggUSDC20  = "200000000"  // 20 USDC
@@ -117,10 +96,9 @@ func aggRat(t *testing.T, s string) *big.Rat {
 	return r
 }
 
-// TestTradesInRange_AggregateOverBothStoredDirections checks the VWAP, OHLC and TWAP shapes
-// together. An unfolded read drops half the prints and returns a well-formed but incomplete
-// bar. A merely RELABELLED fold (flipped rows appended with stored legs untouched) reads the
-// stored price in the wrong orientation. Both failures are silent.
+// TestTradesInRange_AggregateOverBothStoredDirections checks the VWAP, OHLC and TWAP shapes together. An
+// unfolded read drops half the prints, and a merely relabelled fold reads the stored price in the wrong
+// orientation; both fail silently.
 func TestTradesInRange_AggregateOverBothStoredDirections(t *testing.T) {
 	pair := dirAQUAUSDCPair(t)
 
@@ -175,10 +153,9 @@ func TestTradesInRange_AggregateOverBothStoredDirections(t *testing.T) {
 			vwap.FloatString(10), want.FloatString(10))
 	}
 
-	// (3) The extremes. Both the high and the low of this window are set
-	// by a print stored the other way round — the shape that makes a
-	// naive fold worse than no fold, because max() and min() over
-	// un-re-expressed rows return a number rather than nothing.
+	// (3) The extremes. Both high and low of this window are set by a print stored the other way round, the
+	// shape that makes a naive fold worse than none: max()/min() over un-re-expressed rows return a wrong number
+	// rather than nothing.
 	high, low := aggExtremes(t, got)
 	if want := aggRat(t, "0.25"); high.Cmp(want) != 0 {
 		t.Errorf("high = %s, want exactly %s.\n"+
@@ -203,10 +180,8 @@ func TestTradesInRange_AggregateOverBothStoredDirections(t *testing.T) {
 			low.FloatString(10), vwap.FloatString(10), high.FloatString(10))
 	}
 
-	// (5) Chronological order survives the union. aggregate.TWAP and
-	// aggregate.ComputeOHLC take their time weights and their
-	// open/close from slice position and deliberately do not sort, so
-	// an unordered merge silently changes both.
+	// (5) Chronological order survives the union: aggregate.TWAP and aggregate.ComputeOHLC take time weights and
+	// open/close from slice position and do not sort, so an unordered merge silently changes both.
 	for i := 1; i < len(got); i++ {
 		if got[i].Timestamp.Before(got[i-1].Timestamp) {
 			t.Fatalf("row %d (%s) precedes row %d (%s) — TradesInRange promises "+
@@ -216,11 +191,9 @@ func TestTradesInRange_AggregateOverBothStoredDirections(t *testing.T) {
 	}
 }
 
-// TestTradesInRange_FoldedMeanIsReciprocalConsistent separates a re-weighted fold from a
-// re-priced one without fixture numbers. Once legs are swapped, Σq/Σb in one orientation and
-// Σb/Σq in the other are exact reciprocals. A fold that inverts each row's price but keeps
-// its weight computes Σ(b²/q)/Σb, a weighted mean of reciprocals, so it fails on any window
-// with more than one price.
+// TestTradesInRange_FoldedMeanIsReciprocalConsistent: after the leg swap, the two orientations' means are
+// exact reciprocals. A fold that inverts prices but keeps the old weights computes a weighted mean of
+// reciprocals and fails on any window with more than one price.
 func TestTradesInRange_FoldedMeanIsReciprocalConsistent(t *testing.T) {
 	pair := dirAQUAUSDCPair(t)
 	flipped := pair.Flip()
@@ -269,10 +242,9 @@ func TestTradesInRange_FoldedMeanIsReciprocalConsistent(t *testing.T) {
 	}
 }
 
-// TestTradesInRange_LeavesTheRequestedOrientationUntouched is the other
-// half of a destructive transform: a window in which nothing is flipped
-// must come back byte-for-byte as it always did, or the fold is a
-// regression on every market that only ever traded one way.
+// TestTradesInRange_LeavesTheRequestedOrientationUntouched is the other half of a destructive transform: a
+// window with nothing flipped must come back byte-for-byte unchanged, or the fold regresses every one-way
+// market.
 func TestTradesInRange_LeavesTheRequestedOrientationUntouched(t *testing.T) {
 	pair := dirAQUAUSDCPair(t)
 	ts := aggWindow.from

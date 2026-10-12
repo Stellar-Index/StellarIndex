@@ -33,10 +33,9 @@ func TestBuildWasmDisassembly_BestEffort(t *testing.T) {
 	}
 }
 
-// TestBuildWasmDisassembly_CacheHitSkipsToolRun proves the fork/exec cost is paid once per
-// wasm hash, not once per request: a seeded cache entry is served verbatim, WITHOUT running
-// wasm2wat/wasm-decompile again. The seeded text ("SEEDED …") can never come from a real tool
-// run, so the assertion holds whether or not wabt is installed.
+// TestBuildWasmDisassembly_CacheHitSkipsToolRun pins that a cached entry is served verbatim without re-
+// running wasm2wat/wasm-decompile, so the fork/exec cost is paid once per wasm hash; the seeded text proves
+// it.
 func TestBuildWasmDisassembly_CacheHitSkipsToolRun(t *testing.T) {
 	r := &ExplorerReader{disasmCache: newWasmDisasmCache()}
 	const hash = "cachehit-hash"

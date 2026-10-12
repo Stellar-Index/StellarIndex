@@ -10,11 +10,9 @@ import (
 	"time"
 )
 
-// Both OHLC readers take each bar's quote leg (and a flipped row's base
-// leg) from the stored volume_quote (migration 0187). Rebuilding it as
-// vwap·volume counts a zero-quote trade's base at the bucket price and
-// drops a zero-base trade's quote; test/integration's
-// TestOHLCVolumeLegsReadVolumeQuote executes it on such a bucket.
+// Both OHLC readers take each bar's quote leg (and a flipped row's base leg) from the stored volume_quote.
+// Rebuilding it as vwap*volume counts a zero-quote trade's base at the bucket price and drops a zero-base
+// trade's quote; test/integration's TestOHLCVolumeLegsReadVolumeQuote executes it on such a bucket.
 func TestOHLCVolumeLegsReadVolumeQuote(t *testing.T) {
 	pair := ohlcSourcesPair(t)
 	bucket := time.Date(2026, 9, 5, 0, 0, 0, 0, time.UTC)

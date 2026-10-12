@@ -8,13 +8,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// Both /v1/pools orderings must read the SAME canonical CTE.
-//
-// A pair-ordered tail selecting `FROM pools` (the pre-collapse CTE) while the volume-desc tail
-// selects `FROM canon` would make the orderings disagree about what a pool is: `?order_by=pair`
-// would return both orientations of every two-sided market as separate rows, each carrying only
-// its own direction's vol_24h_usd and count_24h, with last_price un-inverted on the flipped
-// side. Both variants cache under distinct keys, so the disagreement would be durable.
+// Both /v1/pools orderings must read the same canonical CTE; otherwise `order_by=pair` returns both
+// orientations of a market as separate rows with partial volumes, and the disagreement is cached.
 func TestBuildPoolsQuery_BothOrderingsSelectFromCanon(t *testing.T) {
 	t.Parallel()
 
@@ -27,10 +22,8 @@ func TestBuildPoolsQuery_BothOrderingsSelectFromCanon(t *testing.T) {
 			t.Parallel()
 			q, _ := buildPoolsQuery(since, PoolsFilter{}, "", 100, order)
 
-			// The final SELECT — everything after the last CTE — must
-			// read `canon`. Checking the suffix rather than the whole
-			// string, since `canon` itself legitimately selects FROM
-			// pools.
+			// The final SELECT (after the last CTE) must read `canon`. Check the suffix, not the whole string, since
+			// `canon` itself legitimately selects FROM pools.
 			tail := q[strings.LastIndex(q, "SELECT source, base_asset"):]
 			if !strings.Contains(tail, "FROM canon") {
 				t.Errorf("%s ordering does not select FROM canon — it returns both "+
@@ -43,10 +36,9 @@ func TestBuildPoolsQuery_BothOrderingsSelectFromCanon(t *testing.T) {
 	}
 }
 
-// /v1/pools filters run on the raw pools_per_source_1h rows, which hold both stored orientations
-// of a market and every alias spelling of an asset. A scalar `p.base_asset = $5` bind keeps one
-// direction and one spelling: the pair page would drop the reversed half of SDEX volume, and
-// ?asset=native would never see a SAC-keyed Soroban pool.
+// /v1/pools filters run on raw pools_per_source_1h rows, which hold both orientations and every alias
+// spelling. A scalar `p.base_asset = $5` keeps one of each: the pair page would drop reversed SDEX volume and
+// ?asset=native would miss SAC-keyed pools.
 func TestBuildPoolsQuery_FiltersBindAliasSets(t *testing.T) {
 	t.Parallel()
 	since := time.Date(2026, 9, 24, 0, 0, 0, 0, time.UTC)

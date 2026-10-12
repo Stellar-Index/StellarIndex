@@ -8,10 +8,8 @@ import (
 	"testing"
 )
 
-// The history reads must be PRIMARY-KEY range reads off the outbound orderings, like the
-// graph's outbound arms. The reverse orderings (account_creator_edges_by_created /
-// account_sponsor_edges_by_sponsored) return the same rows, so no payload test sees the
-// mistake; it silently turns a per-account read into a full table scan on a served route.
+// History reads must be primary-key range reads off the outbound orderings; the reverse orderings return the
+// same rows, so no payload test sees the mistake, yet it turns a per-account read into a full scan.
 func TestAccountGraphHistoryReadsTheOutboundOrderings(t *testing.T) {
 	for _, tc := range []struct {
 		name, query, wantTable, wantKey, forbidTable string
@@ -59,10 +57,8 @@ func TestAccountGraphHistoryReadsTheOutboundOrderings(t *testing.T) {
 	}
 }
 
-// Both statements must be account-scoped. An unkeyed arm would scan
-// 21 million creation edges or 4 million sponsorship edges per request,
-// which is the standing no-unbounded-scan rule and the exact shape that
-// stalled /v1/assets.
+// Both statements must be account-scoped: an unkeyed arm would scan 21M creation or 4M sponsorship edges
+// per request, the unbounded-scan shape that stalled /v1/assets.
 func TestAccountGraphHistoryReadsAreAccountKeyed(t *testing.T) {
 	for name, q := range map[string]string{
 		"periods": accountGraphHistoryPeriodsQuery,
@@ -98,10 +94,8 @@ func TestAccountGraphHistoryNeverReadsAWorkingTable(t *testing.T) {
 	}
 }
 
-// The unplaced count is a subtraction on a UInt64 column. Doing it
-// without the Int64 cast makes `creations - 2` WRAP for a single-event
-// edge; the surrounding guard discards the wrapped value today, but the
-// arithmetic must not be able to produce one in the first place.
+// The unplaced count subtracts on a UInt64 column; without the Int64 cast `creations - 2` wraps for a
+// single-event edge. The guard discards the wrapped value, but the arithmetic must not produce one.
 func TestAccountGraphHistoryUnplacedSubtractsInSignedArithmetic(t *testing.T) {
 	q := accountGraphHistoryTotalsQuery
 	for _, want := range []string{

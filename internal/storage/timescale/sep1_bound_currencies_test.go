@@ -5,10 +5,9 @@ import (
 	"testing"
 )
 
-// The provenance rule, without a database. A stellar.toml describes only
-// the issuer that served it: an entry naming someone else is dropped,
-// which is what stops any account from publishing a real-world claim
-// under another issuer's identity.
+// The provenance rule, without a database: a stellar.toml describes only the issuer that served it, so an
+// entry naming someone else is dropped, stopping any account from publishing a claim under another issuer's
+// identity.
 func TestBoundSep1CurrenciesFromPayload_DropsEntriesNamingAnotherIssuer(t *testing.T) {
 	const (
 		serving = "GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC"
@@ -41,10 +40,8 @@ func TestBoundSep1CurrenciesFromPayload_DropsEntriesNamingAnotherIssuer(t *testi
 		t.Errorf("declaration not carried verbatim: %+v", e)
 	}
 
-	// Each of the three dropped entries lands in its OWN bucket. Before
-	// the census they shared one fate — a bare `continue` — so a payload
-	// of four entries and a payload of four thousand looked identical
-	// from outside.
+	// Each of the three dropped entries lands in its OWN bucket, so payloads of four and four thousand entries
+	// are distinguishable from outside.
 	want := Sep1BoundCensus{
 		IssuersDeclaring: 1, Entries: 4,
 		EntriesMissingCode: 1, EntriesMissingIssuer: 1, EntriesNamingAnotherIssuer: 1,
@@ -55,10 +52,8 @@ func TestBoundSep1CurrenciesFromPayload_DropsEntriesNamingAnotherIssuer(t *testi
 	}
 }
 
-// A filter narrows the result and REPORTS what it dropped, so a caller
-// can state the population it narrowed from. A filtered read that
-// reported nothing would be indistinguishable from an unfiltered one
-// that found little.
+// A filter narrows the result and reports what it dropped, so a caller can state the population it narrowed
+// from; a filtered read reporting nothing would look the same as an unfiltered one that found little.
 func TestBoundSep1CurrenciesFromPayload_CountsWhatTheFilterDropped(t *testing.T) {
 	const serving = "GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC"
 	payload := `{"Currencies":[
@@ -97,10 +92,9 @@ func TestBoundSep1CurrenciesFromPayload_CorruptPayloadIsCountedNotSwallowed(t *t
 	}
 }
 
-// A payload that decodes but declares no [[CURRENCIES]] is a different
-// finding from one that would not decode, and both are different from
-// an issuer whose toml was never fetched. Each gets its own bucket
-// because each has a different owner and a different fix.
+// A payload that decodes but declares no [[CURRENCIES]], one that fails to decode, and an issuer whose toml
+// was never fetched are three different findings with different owners and fixes, so each gets its own
+// bucket.
 func TestBoundSep1CurrenciesFromPayload_DeclaringNothingIsItsOwnBucket(t *testing.T) {
 	got, census := boundSep1CurrenciesFromPayload("G1", "example.com", `{"OrgName":"Example"}`, nil)
 	if len(got) != 0 {
@@ -111,12 +105,9 @@ func TestBoundSep1CurrenciesFromPayload_DeclaringNothingIsItsOwnBucket(t *testin
 	}
 }
 
-// The binding rule compares ACCOUNTS, not the bytes a toml carried. Surrounding space and the
-// case of an issuer's own strkey do not change which account it is (base32, so spellings that
-// differ only in case decode to the same 32 bytes).
-//
-// This is canonicalisation, never relaxation: a DIFFERENT account is still refused, and the
-// entry is carried under the canonical database spelling rather than the toml's.
+// The binding rule compares ACCOUNTS, not the bytes a toml carried: surrounding space and the case of an
+// issuer's strkey do not change which account it is. This is canonicalisation, not relaxation: a DIFFERENT
+// account is still refused, and the entry is carried under the canonical database spelling.
 func TestBoundSep1CurrenciesFromPayload_BindsOnTheAccountNotTheSpelling(t *testing.T) {
 	const (
 		serving = "GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC"
@@ -192,11 +183,9 @@ func TestSep1BoundCensus_ArithmeticCloses(t *testing.T) {
 	}
 }
 
-// The domain-bearing population splits into issuers holding a payload, issuers a fetch reached
-// that hold none, and, as a REMAINDER, those nothing has tried yet. The first two come from
-// different queries and can contradict each other, and the publishing surface clamps the split
-// to keep its arithmetic printable. Check stops that clamp turning an impossible census into a
-// sound-looking one.
+// The domain-bearing population splits into issuers holding a payload, issuers a fetch reached that hold
+// none, and an untried remainder. The first two come from different queries and can contradict; Check stops
+// the publishing surface's clamp turning an impossible census into a sound-looking one.
 func TestSep1BoundCensus_FetchSplitCannotExceedThePopulation(t *testing.T) {
 	base := Sep1BoundCensus{
 		IssuersWithHomeDomain:        10,
@@ -217,10 +206,9 @@ func TestSep1BoundCensus_FetchSplitCannotExceedThePopulation(t *testing.T) {
 	}
 }
 
-// A payload older than the attestation bound binds nothing. The refresh
-// keeps a dark domain's last payload and stamps sep1_resolved_at on every
-// failed attempt, so without this a domain that stopped serving its
-// stellar.toml months ago still admitted and recognised its accounts.
+// A payload older than the attestation bound binds nothing. The refresh keeps a dark domain's last payload
+// and stamps sep1_resolved_at on every failed attempt, so without this a domain that stopped serving its
+// stellar.toml still admitted its accounts.
 func TestBoundSep1CurrenciesFromRow_StalePayloadBindsNothing(t *testing.T) {
 	const serving = "GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC"
 	payload := sql.NullString{Valid: true, String: `{"OrgName":"Etherfuse","Currencies":[

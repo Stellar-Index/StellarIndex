@@ -13,10 +13,8 @@ import (
 // SEP41NetMintAtOrBefore SQL needs a real DB and lives in
 // test/integration/ per the established convention.
 
-// TestInsertSEP41SupplyEvent_RejectsInvalidRows. Amounts are
-// non-negative by convention (event_kind carries direction), so a negative
-// amount is upstream confusion the observer missed. "transfer" is a valid
-// SEP-41 event but not supply-affecting.
+// TestInsertSEP41SupplyEvent_RejectsInvalidRows: amounts are non-negative (event_kind carries direction),
+// so a negative one is upstream confusion; "transfer" is a valid SEP-41 event but not supply-affecting.
 func TestInsertSEP41SupplyEvent_RejectsInvalidRows(t *testing.T) {
 	hash := strings.Repeat("a", 64)
 	cases := []struct {
@@ -56,10 +54,9 @@ func TestSEP41EventKind_IsValid(t *testing.T) {
 	}
 }
 
-// TestSEP41SupplyEventWriters_ShareRowContract runs the same invalid second row through both
-// multi-row writers: each must refuse it before touching the database, as InsertSEP41SupplyEvent
-// does, or one negative row fails CHECK (amount >= 0) and aborts the whole statement. The zero
-// Store has no *sql.DB, so a row that slips past validation panics and is reported as reaching it.
+// TestSEP41SupplyEventWriters_ShareRowContract: both multi-row writers must refuse an invalid row before
+// touching the database, since one negative row fails CHECK (amount >= 0) and aborts the whole statement.
+// The zero Store has no *sql.DB, so a row that slips through panics.
 func TestSEP41SupplyEventWriters_ShareRowContract(t *testing.T) {
 	good := SEP41SupplyEvent{
 		ContractID: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",

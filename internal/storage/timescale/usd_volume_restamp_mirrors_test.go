@@ -14,11 +14,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// ─── the two mirror tiers' decision rules ───────────────────────────────
-//
-// The scan is pinned by the integration tests (real hypertable, real compressed chunk). Pinned
-// HERE is what each tier decides about a scanned row: which rows it owns, what it computes, and
-// which rows it refuses to price at all.
+// The two mirror tiers' decision rules: the scan is pinned by the integration tests, so these pin what each
+// tier decides about a scanned row: which rows it owns, what it computes, and which it refuses to price.
 
 // mirrorScan builds a scanned row in the shape the shared SELECT
 // produces, for whichever source the tier under test scans.
@@ -112,10 +109,9 @@ func TestXLMQuoteRestampDecide_ValuesTheXLMLegAndIsLockstepWithTheInsertPath(t *
 	}
 }
 
-// TestXLMQuoteRestampDecide_DeclinedRowsAreReportedNotGuessed: a row the
-// anchor cannot price keeps exactly what it holds. A stored NULL stays
-// NULL (coverage the tier cannot recover, counted); a stored value is
-// never blanked and never replaced by a quote-side estimate.
+// TestXLMQuoteRestampDecide_DeclinedRowsAreReportedNotGuessed: a row the anchor cannot price keeps what it
+// holds. A stored NULL stays NULL (counted as unrecoverable coverage); a stored value is never blanked or
+// replaced by a quote-side estimate.
 func TestXLMQuoteRestampDecide_DeclinedRowsAreReportedNotGuessed(t *testing.T) {
 	t.Parallel()
 	// A resolver with no XLM/USD rate: the anchor declines every row.
@@ -147,9 +143,8 @@ func TestXLMQuoteRestampDecide_DeclinedRowsAreReportedNotGuessed(t *testing.T) {
 	}
 }
 
-// TestCEXFiatRestampDecide_ValuesTheFiatQuoteAtTheSourceScale: a binance
-// BTC/EUR trade is worth quote_amount/1e8 x EUR/USD — the CEX amount
-// scale, not the on-chain 1e7 — and the number is the insert
+// TestCEXFiatRestampDecide_ValuesTheFiatQuoteAtTheSourceScale: a binance BTC/EUR trade is worth
+// quote_amount/1e8 x EUR/USD (the CEX amount scale, not the on-chain 1e7), and the number is the insert
 // path's own.
 func TestCEXFiatRestampDecide_ValuesTheFiatQuoteAtTheSourceScale(t *testing.T) {
 	t.Parallel()
@@ -284,9 +279,8 @@ func TestRestampDecide_ResolverErrorAbortsNotDeclines(t *testing.T) {
 	}
 }
 
-// TestRestampTierGates_KeepTheTiersDisjoint: every row belongs to exactly
-// ONE tier. Two tiers claiming a row would each stamp it at their own
-// generation, and the generation guard would make the run ORDER decide the
+// TestRestampTierGates_KeepTheTiersDisjoint: every row belongs to exactly one tier. Two tiers claiming a row
+// would each stamp it at their own generation, and the generation guard would make run order decide the
 // value.
 func TestRestampTierGates_KeepTheTiersDisjoint(t *testing.T) {
 	t.Parallel()
@@ -366,10 +360,9 @@ func TestRestampTierGates_KeepTheTiersDisjoint(t *testing.T) {
 	}
 }
 
-// TestRestampScanSelect_BoundsTheTiersOwnLeg: the only thing that varies
-// between the three scans is the column, and every value is a
-// placeholder. A statement that lost the generation guard or the window
-// would widen a money-column write set silently.
+// TestRestampScanSelect_BoundsTheTiersOwnLeg: the three scans differ only by column and every value is a
+// placeholder, so a statement losing the generation guard or window would silently widen a money-column
+// write.
 func TestRestampScanSelect_BoundsTheTiersOwnLeg(t *testing.T) {
 	t.Parallel()
 	base, quote := restampScanSelect(restampLegBase), restampScanSelect(restampLegQuote)
@@ -393,10 +386,9 @@ func TestRestampScanSelect_BoundsTheTiersOwnLeg(t *testing.T) {
 	}
 }
 
-// TestCEXFiatQuoteAssets_IsTheNonUSDFiatAllowList: the cex-fx scan is
-// bounded by a closed allow-list of fiat asset ids. USD is NOT on it (a
-// USD quote is tier 1, exact), and the list is derived from ADR-0010
-// rather than from a literal that would go stale.
+// TestCEXFiatQuoteAssets_IsTheNonUSDFiatAllowList: the cex-fx scan is bounded by a closed allow-list of fiat
+// asset ids. USD is not on it (a USD quote is tier 1, exact), and the list derives from ADR-0010, not a
+// stale literal.
 func TestCEXFiatQuoteAssets_IsTheNonUSDFiatAllowList(t *testing.T) {
 	t.Parallel()
 	assets := cexFiatQuoteAssets()
@@ -421,10 +413,9 @@ func TestCEXFiatQuoteAssets_IsTheNonUSDFiatAllowList(t *testing.T) {
 	}
 }
 
-// TestPlanCEXFiatUSDVolumeRestamp_RefusesAWiderToleranceThanTheLivePath:
-// the as-of tolerance may be narrowed, never widened. A quote the live
-// insert path would decline as stale must never be the source of a
-// backfilled value — that is the property the whole re-derive rests on.
+// TestPlanCEXFiatUSDVolumeRestamp_RefusesAWiderToleranceThanTheLivePath: the as-of tolerance may be
+// narrowed, never widened, so a quote the live insert path would decline as stale never sources a
+// backfilled value.
 func TestPlanCEXFiatUSDVolumeRestamp_RefusesAWiderToleranceThanTheLivePath(t *testing.T) {
 	t.Parallel()
 	s := &Store{}

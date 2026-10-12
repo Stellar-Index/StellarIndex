@@ -7,13 +7,9 @@ const (
 	sep1ImgAttacker = "GAS4V4XZ3JHFTGKHCTMTWIIVFHGLBUMSQMGZM4RIWYPQHNXBAOGZBKHR"
 )
 
-// A SEP-1 payload may only declare images for the issuer that served it. The global image map
-// is keyed on (code, issuer) taken from the TOML, so without this rule any account could
-// publish a [[CURRENCIES]] entry for USDC with Circle's issuer and an attacker image URL, and
-// take over the logo served on /v1/assets and the explorer homepage. Nothing upstream filters
-// on org_verified and projectCatalogueRows assigns the result unconditionally, so this
-// per-row check on the projected scan (see [allSep1ImagesQuery]) is the only guard.
-// TestAllSep1ImagesProjection in test/integration re-runs this hijack through the real SQL.
+// A SEP-1 payload may only declare images for the issuer that served it; otherwise any account could publish
+// a [[CURRENCIES]] entry with another issuer and hijack the logo on /v1/assets. This per-row check is the
+// only guard; TestAllSep1ImagesProjection in test/integration re-runs the hijack through real SQL.
 func TestSep1ImageFrom_OnlyTheServingIssuerMayDeclareImages(t *testing.T) {
 	t.Parallel()
 

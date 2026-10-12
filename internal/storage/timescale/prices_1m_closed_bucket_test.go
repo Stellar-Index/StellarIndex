@@ -11,10 +11,8 @@ import (
 	"testing"
 )
 
-// openBucketCeiling matches a `bucket < now()` upper bound. A bucket's
-// START is compared, so the in-progress bucket (start in (now-1min, now])
-// passes it; the closed-bucket form (ADR-0015) is
-// `bucket <= now() - INTERVAL '<bucket width>'`.
+// openBucketCeiling matches a `bucket < now()` upper bound. A bucket's start is compared, so the in-progress
+// bucket passes it; the closed-bucket form (ADR-0015) is `bucket <= now() - INTERVAL '<bucket width>'`.
 var openBucketCeiling = regexp.MustCompile(`(?i)\bbucket\s*<\s*now\(\)`)
 
 // TestNoOpenBucketCeilingInReaders fails on any non-test source in this

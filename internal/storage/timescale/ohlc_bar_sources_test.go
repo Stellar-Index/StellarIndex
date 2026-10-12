@@ -13,13 +13,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// A bar's BaseVolume/QuoteVolume are sums of smallest-unit amounts, and the smallest unit is a
-// per-SOURCE scale (on-chain DEX legs 7 decimals, CEX 8, FX pollers 6). Any caller summing bars
-// from different markets must know those units or it adds incommensurable integers.
-//
-// internal/api/v1's fiat combine is that caller (it merges sdex 7dp and binance 8dp markets
-// into the same buckets) and cannot correct for scale without per-bar attribution. The CAGG
-// stores `array_agg(DISTINCT source) AS sources`; these tests pin the column through to OHLCBar.
+// A bar's BaseVolume/QuoteVolume sum smallest-unit amounts whose scale is per source (on-chain DEX 7
+// decimals, CEX 8, FX 6), so a caller combining markets, like the v1 fiat combine, needs per-bar attribution
+// to avoid adding incommensurable integers. These tests pin the CAGG's `sources` column through to OHLCBar.
 
 func ohlcSourcesPair(t *testing.T) canonical.Pair {
 	t.Helper()
@@ -65,10 +61,8 @@ func TestOHLCBarCarriesContributingSources(t *testing.T) {
 			},
 		},
 		{
-			// The 5m/30m/2h/4h/12h/3d/2w intervals route here, and the
-			// fiat combine reaches every one of them. A bar that arrives
-			// unattributed from this reader would be silently exempt from
-			// the scale lift, which is a half-fix.
+			// The 5m/30m/2h/4h/12h/3d/2w intervals route here and the fiat combine reaches all of them; a bar arriving
+			// unattributed from this reader would escape the scale lift, a half-fix.
 			name: "OHLCSeriesReBucketed",
 			run: func(s *Store) ([]OHLCBar, error) {
 				return s.OHLCSeriesReBucketed(context.Background(), ohlcSourcesPair(t),
@@ -110,11 +104,9 @@ func TestOHLCBarCarriesContributingSources(t *testing.T) {
 	}
 }
 
-// TestOHLCBarSourcesSpanBothStoredDirections is the query-shape half. The scripted driver replays
-// its script regardless of the SQL, so only reading the statement proves the column was asked for
-// and that both stored directions of the market feed it. A read unioning only the requested
-// direction would resolve a market's scale from half its venues, and the decoder puts the SDEX
-// half on whichever side it chooses.
+// TestOHLCBarSourcesSpanBothStoredDirections is the query-shape half. The scripted driver replays its script
+// regardless of SQL, so only reading the statement proves both stored directions feed the column; one
+// direction would resolve a market's scale from half its venues.
 func TestOHLCBarSourcesSpanBothStoredDirections(t *testing.T) {
 	bucket := time.Date(2026, 9, 5, 2, 0, 0, 0, time.UTC)
 

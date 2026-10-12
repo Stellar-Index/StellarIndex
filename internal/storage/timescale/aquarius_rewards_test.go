@@ -6,11 +6,8 @@ import (
 	"testing"
 )
 
-// TestAquariusRewardsKind_ParityWithMigrationCheck pins the Go-side
-// IsValid() set to migration 0099's event_kind CHECK constraint.
-//
-// The two sets must not drift: a kind in the CHECK and emitted by the decoder but missing
-// from IsValid() is rejected client-side ("invalid Kind"), silently dropping its events.
+// TestAquariusRewardsKind_ParityWithMigrationCheck pins IsValid() to migration 0099's event_kind CHECK set.
+// A kind in the CHECK but missing from IsValid() is rejected client-side and its events silently dropped.
 func TestAquariusRewardsKind_ParityWithMigrationCheck(t *testing.T) {
 	raw, err := os.ReadFile("../../../migrations/0099_create_aquarius_rewards_events.up.sql")
 	if err != nil {

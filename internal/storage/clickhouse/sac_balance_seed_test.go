@@ -122,10 +122,8 @@ func mustEntryXDR(t *testing.T, contract xdr.ScAddress, key, val xdr.ScVal, last
 	return b64
 }
 
-// TestSACBalanceSeedFromRow_I128Val — the common shape: a watched SAC
-// wrapper's Balance(Address) entry with a bare i128 value decodes to the
-// right (holder, amount, ledger). Uses a value > 2^63 to prove the i128
-// hi bits survive (ADR-0003 — never truncated to int64).
+// TestSACBalanceSeedFromRow_I128Val: a watched SAC wrapper's Balance(Address) entry with a bare i128 value
+// decodes to the right (holder, amount, ledger); a value above 2^63 proves the hi bits survive (ADR-0003).
 func TestSACBalanceSeedFromRow_I128Val(t *testing.T) {
 	contract := mustContractScAddr(t, seedSAC)
 	key := seedBalanceKey(t, seedHolder)
@@ -221,10 +219,9 @@ func TestSACBalanceSeedFromRow_WrongContractSkipped(t *testing.T) {
 	}
 }
 
-// TestSACBalanceSeedFromRow_RemovedEmitsTombstone — a removed current-state
-// row (holder's balance entry deleted) is emitted as a retraction
-// (IsRemoval=true, Balance=0), not silently skipped: skipping it would leave
-// any prior served-tier observation for that holder stale forever.
+// TestSACBalanceSeedFromRow_RemovedEmitsTombstone: a removed current-state row is emitted as a retraction
+// (IsRemoval=true, Balance=0), not skipped, which would leave a prior served-tier observation stale
+// forever.
 func TestSACBalanceSeedFromRow_RemovedEmitsTombstone(t *testing.T) {
 	contract := mustContractScAddr(t, seedSAC)
 	key := seedBalanceKey(t, seedHolder)
@@ -265,10 +262,9 @@ func TestSACBalanceSeedFromRow_RemovedUnwatchedSkipped(t *testing.T) {
 	}
 }
 
-// TestSACBalanceSeedFromRow_CorruptEntryErrors — a watched Balance key
-// whose entry_xdr is corrupt is a HARD error (the caller is about to
-// persist into the served tier; silently dropping it would masquerade as
-// "holder holds nothing" — the exact under-count this seed fixes).
+// TestSACBalanceSeedFromRow_CorruptEntryErrors: a watched Balance key with a corrupt entry_xdr is a hard
+// error, since silently dropping it would read as "holder holds nothing", the exact under-count this seed
+// fixes.
 func TestSACBalanceSeedFromRow_CorruptEntryErrors(t *testing.T) {
 	contract := mustContractScAddr(t, seedSAC)
 	key := seedBalanceKey(t, seedHolder)
@@ -279,13 +275,9 @@ func TestSACBalanceSeedFromRow_CorruptEntryErrors(t *testing.T) {
 	}
 }
 
-// ─── full-history windowed reduction ───────────────
-//
-// StreamSACBalanceSeedsFullHistory bounds the ClickHouse GROUP BY to one ledger window at a time
-// and finishes the latest-write-wins reduction in Go. These exercise that Go half: it must
-// reproduce, ACROSS windows, the ordering the server-side argMax applies WITHIN one, in
-// particular the within-ledger tie-break that stops a deleted balance being resurrected into
-// the supply seed.
+// Full-history windowed reduction: the GROUP BY runs one ledger window at a time and latest-write-wins
+// finishes in Go. These tests pin that Go half reproducing the server-side argMax ordering across windows,
+// including the within-ledger tie-break that stops a deleted balance being resurrected into the supply seed.
 
 func seedOrd(ledger, intra uint32, tx string, op int32, changeIdx uint32) lakeEntryChangeOrder {
 	return lakeEntryChangeOrder{ledgerSeq: ledger, intraLedgerSeq: intra, txHash: tx, opIndex: op, changeIndex: changeIdx}
@@ -315,10 +307,8 @@ func collectSeeds(t *testing.T, r *sacSeedReducer) []SACBalanceSeed {
 	return got
 }
 
-// TestSACSeedOrderAfter compares the SAME five-element identity tuple the
-// server-side argMax orders on, element by element. If Go and ClickHouse
-// disagree on ANY element, a cross-window winner differs from a within-window
-// one and the reduction is silently wrong.
+// TestSACSeedOrderAfter compares the same five-element identity tuple the server-side argMax orders on; any
+// Go/ClickHouse disagreement makes a cross-window winner differ from a within-window one.
 func TestSACSeedOrderAfter(t *testing.T) {
 	base := seedOrd(50_000_000, 7, "bb", 2, 3)
 	cases := []struct {
@@ -396,11 +386,9 @@ func TestSACSeedReducer_LatestLedgerWins(t *testing.T) {
 	}
 }
 
-// TestSACSeedReducer_SameLedgerRemovalWins is the within-ledger tie-break on the Go side: one
-// key changed TWICE in ONE ledger, live at the lower intra_ledger_seq and removed at the higher.
-// The removal is the latest state, so the seed must be a retraction (IsRemoval=true,
-// Balance=0), never the stale live balance, which would resurrect a deleted balance into the
-// SAC supply seed.
+// TestSACSeedReducer_SameLedgerRemovalWins: a key live at the lower intra_ledger_seq and removed at the
+// higher must seed as a retraction (IsRemoval=true, Balance=0), never the stale live balance, which would
+// resurrect a deleted SAC balance.
 func TestSACSeedReducer_SameLedgerRemovalWins(t *testing.T) {
 	keyXDR := seedKeyFor(t)
 	ct := time.Date(2022, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -470,10 +458,9 @@ func TestSACSeedReducer_RecreateAfterRemovalWins(t *testing.T) {
 	}
 }
 
-// TestSACSeedReducer_RepeatedOfferIsIdempotent — a bisected retry re-reads a
-// window whose stream already delivered part of its output, so the same rows
-// are offered twice (and superseded rows can arrive after their successor).
-// The reduction must be a pure maximum.
+// TestSACSeedReducer_RepeatedOfferIsIdempotent: a bisected retry re-reads a window whose stream already
+// delivered part of its output, so rows are offered twice and superseded rows can arrive after their
+// successor. The reduction must be a pure maximum.
 func TestSACSeedReducer_RepeatedOfferIsIdempotent(t *testing.T) {
 	keyXDR := seedKeyFor(t)
 	ct := time.Date(2023, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -498,10 +485,9 @@ func TestSACSeedReducer_RepeatedOfferIsIdempotent(t *testing.T) {
 	}
 }
 
-// TestSACSeedReducer_DropsKeysTheBytePrefilterLetsThrough — the SQL prefilter is a raw-byte
-// multiSearchAny, so it admits ANY contract_data key that merely mentions a watched contract
-// (allowances, another contract's storage). Those must be rejected on sight, never retained:
-// the reducer's memory bound is the point of the windowed design.
+// TestSACSeedReducer_DropsKeysTheBytePrefilterLetsThrough: the SQL prefilter is a raw-byte multiSearchAny
+// that admits any contract_data key merely mentioning a watched contract. Those must be rejected on sight,
+// never retained, since the reducer's memory bound is the point of the windowed design.
 func TestSACSeedReducer_DropsKeysTheBytePrefilterLetsThrough(t *testing.T) {
 	watchedContract := mustContractScAddr(t, seedSAC)
 	allowanceSym := xdr.ScSymbol("Allowance")
@@ -530,10 +516,8 @@ func TestSACSeedReducer_DropsKeysTheBytePrefilterLetsThrough(t *testing.T) {
 	}
 }
 
-// TestSACSeedReducer_CorruptKey preserves the pre-windowing error contract: a
-// corrupt key on a LIVE change is lake corruption worth failing the seed for,
-// while a corrupt key on a REMOVED change identifies no holder and held
-// nothing — the reader returns on change_type before decoding it at all.
+// TestSACSeedReducer_CorruptKey: a corrupt key on a LIVE change is lake corruption and fails the seed; on a
+// REMOVED change it identifies no holder, so the reader returns on change_type before decoding it.
 func TestSACSeedReducer_CorruptKey(t *testing.T) {
 	t.Run("live change errors", func(t *testing.T) {
 		r := newSACSeedReducer(seedWatched())
@@ -653,10 +637,9 @@ func TestIsMemoryLimitExceeded(t *testing.T) {
 	}
 }
 
-// TestSACArchivalLedgers_MissingTTLRowFailsClosed pins the TTL-coverage gate:
-// a watched Balance key with no stellar.ttl_live_until row (an unbackfilled
-// projection) must fail the seed, not be kept as live — keeping it re-seeds the
-// archived balance the filter exists to retract.
+// TestSACArchivalLedgers_MissingTTLRowFailsClosed pins the TTL-coverage gate: a watched Balance key with
+// no stellar.ttl_live_until row (unbackfilled projection) must fail the seed, not be kept live and re-seed
+// archived balances.
 func TestSACArchivalLedgers_MissingTTLRowFailsClosed(t *testing.T) {
 	lastWrite := map[string]uint32{"live": 100, "archived": 100, "uncovered": 100}
 	liveUntil := map[string]uint32{"live": 500, "archived": 200}

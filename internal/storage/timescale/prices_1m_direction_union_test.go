@@ -11,31 +11,9 @@ import (
 	"testing"
 )
 
-// The both-directions readers of prices_1m must express the two stored market orientations as a
-// UNION ALL of two single-direction branches, never as one `(A AND B) OR (B AND A)`
-// disjunction.
-//
-// Measured with prices_1m at 34 chunks, reading the empty pair native/fiat:USD:
-//
-//	OR form        10682.994 ms
-//	UNION ALL form     3.610 ms
-//
-// A populated pair is unaffected (0.852 ms vs 1.279 ms), which hides the problem: every pair
-// spot-checked by hand has rows.
-//
-// prices_1m carries `prices_1m_pair_bucket_idx` on (base_asset, quote_asset, bucket DESC), an
-// exact cover for ONE direction. Postgres cannot drive a single index scan from an OR of two
-// different (base, quote) equality pairs, so with `ORDER BY bucket DESC LIMIT n` it switches to
-// the plain `bucket DESC` index and applies the pair test as a post-index FILTER. An empty pair
-// can then only be proven by walking every chunk, because the LIMIT never fills. Splitting the
-// directions lets each branch use the pair index, where an empty pair is an immediate miss.
-//
-// Folding in the second orientation was a genuine correctness fix (a bucket holding only the
-// flipped leg went missing) and must stay; only its shape was wrong. This shape guard pins both
-// properties so neither is traded for the other.
-//
-// It guards the template text rather than a plan so it needs no database and runs in the unit
-// suite, where a planner regression would otherwise only surface as production latency.
+// Both-directions prices_1m readers must use UNION ALL of single-direction branches, never an OR of two
+// pairs. An OR defeats the pair index, so an empty pair walks every chunk (10683 ms vs 3.6 ms measured).
+// Guards the template text, so it needs no database; the flipped-leg fold must stay.
 
 // bothDirectionUnionQueries are the prices_1m readers that fold the two
 // stored orientations and are driven by ORDER BY bucket DESC + LIMIT —
@@ -71,13 +49,9 @@ func TestBothDirectionReadersUseUnionNotOr(t *testing.T) {
 			if !strings.Contains(q, "base_asset = $2 AND quote_asset = $1") {
 				t.Errorf("%s lost the flipped direction (wave-D UNAUTH-DOS-9)", name)
 			}
-			// Each branch must carry its own ORDER BY + LIMIT, or the branches materialise in
-			// full before the outer sort and the walk comes back.
-			// The outer sort needs a tiebreaker: `bucket DESC` alone is not a total order once
-			// a bucket holds both directions, and the branches interleave differently than the
-			// OR plan did. [combineDirVWAP] is commutative so the served number is unaffected,
-			// but ADR-0015's byte-identical cross-region property should not rest on that;
-			// `base_asset` makes the order total.
+			// Each branch needs its own ORDER BY + LIMIT, or the branches materialise fully before the outer sort.
+			// The outer sort needs a tiebreaker (`base_asset`) so the order is total and cross-region output is
+			// byte-identical (ADR-0015), rather than relying on combineDirVWAP being commutative.
 			if !strings.Contains(q, "ORDER BY bucket DESC, base_asset") {
 				t.Errorf("%s outer sort lacks the base_asset tiebreaker — with both "+
 					"directions in one bucket the row order would be planner-defined, "+
@@ -94,41 +68,21 @@ func TestBothDirectionReadersUseUnionNotOr(t *testing.T) {
 	}
 }
 
-// ── Package scan ────────────────────────────────────────────────────
-//
-// bothDirectionUnionQueries above is a hand-maintained list, and a guard whose coverage is a
-// list only guards what someone remembered to type: readers with the forbidden shape
-// (HistoryPoints, HistoryPointsInRange, TWAPPointsInRange, OHLCSeries, OHLCSeriesReBucketed)
-// shipped green because they were never added to it.
-//
-// So the invariant below is not given subjects: it scans aggregates.go (the pair-bound CAGG
-// reads), recovers each declaration's SQL from its string literals, and picks subjects by
-// shape. A new reader added to that file is covered the moment it is written.
-//
-// Subject rule: a query that folds both stored orientations (`base_asset = $1 AND quote_asset =
-// $2` together with the flipped spelling) and emits bucket-ordered output. That pairing is the
-// pathological plan: ordered by bucket, the planner abandons prices_*_pair_bucket_idx and
-// applies the pair test as a post-index FILTER, so proving an empty pair empty walks every
-// chunk (10682.994 ms vs 3.610 ms above).
-//
-// Unordered reads (point reads, the LIMIT 1 existence gate, the substance sums) are not
-// subjects of this test's ordering checks; the OR fold itself is banned for every read in every
-// file by TestPairReadsNeverFoldDirectionsWithOr.
+// Package scan: instead of a hand-maintained list, scan aggregates.go and pick subjects by shape, so a
+// new reader is covered when written. A subject folds both orientations and emits bucket-ordered output;
+// that plan skips prices_*_pair_bucket_idx and filters post-index. The OR fold is banned elsewhere.
 
 // bucketOrderedRe matches an ORDER BY on a bucket column (`bucket`,
 // `n.bucket`, `out_bucket`).
 var bucketOrderedRe = regexp.MustCompile(`ORDER BY\s+[a-z_.]*bucket`)
 
-// nonSargableBucketRe matches the forbidden closed-bucket spelling: an INTERVAL added to the
-// indexed bucket column (or an expression over it) on the left of the comparison, which the
-// planner cannot use for index access or chunk pruning. The sargable form puts the interval on
-// the right: `bucket <= now() - INTERVAL '…'`.
+// nonSargableBucketRe matches the forbidden closed-bucket spelling, an INTERVAL added to the indexed bucket
+// column on the left of the comparison, which blocks index access and chunk pruning. The sargable form is
+// `bucket <= now() - INTERVAL '...'`.
 var nonSargableBucketRe = regexp.MustCompile(`bucket[^<>=\n]*\+\s*INTERVAL\s*'[^']*'\s*<`)
 
-// declSQL returns the SQL text of every top-level declaration in `file`, keyed by declaration
-// name. The text concatenates all its string literals, so a query assembled from fragments (a
-// Sprintf template plus optional clauses) is scanned as one statement rather than slipping
-// through as innocent pieces.
+// declSQL returns the SQL text of each top-level declaration in file, keyed by name, concatenating all its
+// string literals so a query assembled from fragments is scanned as one statement.
 func declSQL(t *testing.T, file string) map[string]string {
 	t.Helper()
 	fset := token.NewFileSet()
@@ -186,10 +140,8 @@ func declName(d ast.Decl) string {
 	return "?"
 }
 
-// pairDeclFiles lists every non-test .go file in the package, the same set
-// TestPairReadsNeverFoldDirectionsWithOr and TestBatchPairReadsFoldBothDirections scan. A scan
-// hardcoded to one file goes silently blind the moment a both-directions reader lands
-// elsewhere.
+// pairDeclFiles lists every non-test .go file in the package, the set the pair-direction guard tests scan; a
+// scan hardcoded to one file goes blind once a both-directions reader lands elsewhere.
 func pairDeclFiles(t *testing.T) []string {
 	t.Helper()
 	files, err := filepath.Glob("*.go")
@@ -205,11 +157,9 @@ func pairDeclFiles(t *testing.T) []string {
 	return out
 }
 
-// TestCAGGSeriesReadsFoldDirectionsWithUnion is the list-free half of
-// TestBothDirectionReadersUseUnionNotOr: every bucket-ordered both-directions read in the
-// package must split the orientations into two index-drivable UNION ALL branches. Subjects are
-// selected by shape (a pair-bound predicate in both operand orders), not one fixed spelling, so
-// swapping operands or breaking the OR across lines cannot hide a reader.
+// TestCAGGSeriesReadsFoldDirectionsWithUnion is the list-free half of TestBothDirectionReadersUseUnionNotOr:
+// every bucket-ordered both-directions read must split orientations into two index-drivable UNION ALL
+// branches. Subjects are chosen by shape, so swapped operands or a multi-line OR cannot hide one.
 func TestCAGGSeriesReadsFoldDirectionsWithUnion(t *testing.T) {
 	subjects := 0
 	for _, file := range pairDeclFiles(t) {

@@ -9,11 +9,8 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// accountActivityLake models one ClickHouse under one long-lived reader for
-// stellar.account_activity: a watermark table that starts with rows and can be TRUNCATEd under the
-// running process, the "empties mid-process" shape the probe lease covers for tx_hash_index, here
-// through accountActivityAvailable / accountActivityWatermark. Query-shape classifiers are shared
-// with explorer_reader_watermark_test.go.
+// accountActivityLake models one ClickHouse under one long-lived reader: a stellar.account_activity
+// watermark table that starts with rows and can be TRUNCATEd mid-process, as the probe lease covers.
 type accountActivityLake struct {
 	rows bool
 }
@@ -35,11 +32,8 @@ func (l *accountActivityLake) respond(q string) (driver.Rows, error) {
 	}
 }
 
-// TestAccountActivityWatermark_PositiveLeaseRenewsAfterTruncate pins the lease at its second
-// site, accountActivityAvailable: the requireRows lease is the shared primitive every requireRows
-// probe uses, not a special case for tx_hash_index. Without it a positive verdict would never be
-// re-confirmed, including after stellar.account_activity is TRUNCATEd under the running reader.
-// The lease requires one renewal probe once it expires.
+// TestAccountActivityWatermark_PositiveLeaseRenewsAfterTruncate pins the requireRows lease at
+// accountActivityAvailable: an expired positive verdict must be re-probed once, even after a TRUNCATE.
 func TestAccountActivityWatermark_PositiveLeaseRenewsAfterTruncate(t *testing.T) {
 	lake := &accountActivityLake{rows: true}
 	conn := &stubConn{respond: lake.respond}

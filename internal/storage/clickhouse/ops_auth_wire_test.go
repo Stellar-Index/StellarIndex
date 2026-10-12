@@ -14,15 +14,9 @@ import (
 	"time"
 )
 
-// Every ops-side opener in this package must put the ops-batch identity ON THE WIRE when
-// STELLARINDEX_CLICKHOUSE_OPS_USER/_PASSWORD are set, and the `default` user when they are not
-// (running as `default` starves the aggregator's supply refresher; ops must use the
-// low-priority `ops_batch` user).
-//
-// TestOpsAuthFrom pins the resolution rules; this pins that the openers USE them. A fake
-// listener decodes the native-protocol client hello, which carries database/username/password
-// in the clear, so the assertion is what clickhouse-server would see, not a mock's record.
-// The listener closes after the hello, so Ping fails and only the captured identity matters.
+// Every ops-side opener must send the ops-batch identity on the wire when STELLARINDEX_CLICKHOUSE_OPS_USER
+// and _PASSWORD are set, else `default`, which starves the aggregator's supply refresher. A fake listener
+// decodes the native client hello, so the assertion is what clickhouse-server would see.
 func TestOpsOpenersAuthenticateFromEnv(t *testing.T) {
 	openers := []struct {
 		name string
@@ -157,18 +151,15 @@ func requireHelloIdentity(t *testing.T, name string, open func(ctx context.Conte
 	}
 }
 
-// clientHello is the identity triple from the ClickHouse native-protocol
-// client hello (clickhouse-go v2 conn_handshake.go: ClientHello byte,
-// client name, version major/minor, protocol revision, then database,
-// username, password — strings are uvarint-length-prefixed).
+// clientHello is the identity triple from the ClickHouse native-protocol client hello (clickhouse-go v2
+// conn_handshake.go): database, username, password, as uvarint-length-prefixed strings.
 type clientHello struct {
 	Database, Username, Password string
 }
 
-// listenForClientHello starts a loopback listener that decodes the client
-// hello of every connection it receives, delivers it on the returned
-// channel and then closes the socket. Buffered so a driver that redials
-// after the EOF cannot block the accept loop.
+// listenForClientHello starts a loopback listener that decodes each connection's client hello, delivers it
+// on the returned channel and closes the socket. Buffered so a driver redialling after the EOF cannot block
+// the accept loop.
 func listenForClientHello(t *testing.T) (addr string, hellos <-chan clientHello) {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

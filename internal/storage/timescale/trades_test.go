@@ -9,14 +9,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// TestSortTradesByConflictKey_FullKeyOrder guards the CEX batch-insert deadlock: concurrent
-// BatchInsertTrades callers with overlapping trades PK rows must take Postgres row locks in the
-// SAME order, or they AB/BA deadlock (40P01). That needs the FULL conflict key
-// (source, ledger, tx_hash, op_index, ts), not a prefix.
-//
-// The batch ties on the first four columns (the shape of off-chain CEX/FX rows, which share
-// ledger=0) and differs only on ts; shuffled many times, the sorted order must be identical,
-// so ts is a real tiebreaker and not sort.Slice's unspecified order for ties.
+// TestSortTradesByConflictKey_FullKeyOrder: concurrent batch inserts must lock rows in the same order or
+// deadlock (40P01), which needs the full (source, ledger, tx_hash, op_index, ts) key. Shuffled CEX rows
+// tying on four columns must sort identically, so ts is a real tiebreaker.
 func TestSortTradesByConflictKey_FullKeyOrder(t *testing.T) {
 	base := time.Date(2026, 7, 8, 18, 12, 0, 0, time.UTC)
 	mk := func(source string, ledger uint32, txHash string, opIndex uint32, tsOffsetSeconds int) canonical.Trade {
@@ -29,10 +24,8 @@ func TestSortTradesByConflictKey_FullKeyOrder(t *testing.T) {
 		}
 	}
 
-	// Rows that tie on (source, ledger, tx_hash, op_index) — the
-	// CEX-shaped collision — but differ on ts. Includes multiple
-	// distinct sources/tx_hash values too, so the test also exercises
-	// the pre-existing prefix ordering.
+	// Rows that tie on (source, ledger, tx_hash, op_index), the CEX-shaped collision, but differ on ts. Includes
+	// several sources and tx_hash values so the test also exercises the prefix ordering.
 	want := []canonical.Trade{
 		mk("kraken", 0, "aaaa", 0, 0),
 		mk("kraken", 0, "aaaa", 0, 1),

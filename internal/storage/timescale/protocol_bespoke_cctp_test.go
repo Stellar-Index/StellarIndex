@@ -13,10 +13,9 @@ import (
 var cctpBothMintTypesRe = regexp.MustCompile(
 	`event_type\s+IN\s*\(\s*'mint_and_(?:withdraw','mint_and_forward|forward','mint_and_withdraw)'\s*\)`)
 
-// TestCCTPInboundSumsExcludeForwardRestatement pins file-doc rule 2: a mint_and_forward event
-// restates its sibling mint_and_withdraw at the LOCAL 7-decimal SAC scale (exactly 10x), so
-// summing amount across both event types counts one transfer 11x over. cctp_events has no
-// scale/discriminator column to catch this in the schema, so the invariant is enforced here.
+// TestCCTPInboundSumsExcludeForwardRestatement pins file-doc rule 2: mint_and_forward restates
+// mint_and_withdraw at the local 7-decimal SAC scale (10x), so summing both counts one transfer 11x.
+// cctp_events has no scale column to catch this.
 func TestCCTPInboundSumsExcludeForwardRestatement(t *testing.T) {
 	src, err := os.ReadFile("protocol_bespoke_cctp.go")
 	if err != nil {

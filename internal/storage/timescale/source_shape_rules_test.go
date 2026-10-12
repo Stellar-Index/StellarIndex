@@ -38,13 +38,9 @@ var (
 	issuersWriteRE     = regexp.MustCompile(`(?i)\b(UPDATE|INTO)\s+issuers\b`)
 )
 
-// rulePairBoundPrices1mReadsAreClosed (ADR-0015) requires a pair-bound read of prices_1m to
-// admit only CLOSED buckets. The in-progress minute is still filling, so a read that admits it
-// serves a value no other region or later read will reproduce, and /v1/changes would ratchet
-// it into the stored ath/atl for good.
-//
-// Subjects are derived from the source (every string literal reading prices_1m with a
-// base_asset/quote_asset filter), so a new reader is covered when it lands.
+// rulePairBoundPrices1mReadsAreClosed (ADR-0015) requires pair-bound prices_1m reads to admit only closed
+// buckets; the in-progress minute would be ratcheted into the stored ath/atl by /v1/changes. Subjects are
+// derived from the source, so new readers are covered.
 func rulePairBoundPrices1mReadsAreClosed(t *testing.T) {
 	t.Parallel()
 

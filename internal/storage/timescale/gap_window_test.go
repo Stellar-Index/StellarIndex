@@ -11,13 +11,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// TestPerSourceLedgerGapsQuerySeedsAcrossWindowBoundary pins the query
-// SHAPE half of the gap-seed fix (the DB-backed behaviour is proven
-// in test/integration/pg_ops_pipeline_test.go): the seed placeholder
-// ($4) must be UNION-ALLed into the scanned ledger set, guarded so a
-// non-positive or in-window seed is a no-op, for every registered
-// target — this is the mechanism that lets a gap spanning two scan
-// cycles still pair inside the LATER cycle's window.
+// TestPerSourceLedgerGapsQuerySeedsAcrossWindowBoundary pins the query shape of the gap-seed fix: the $4 seed
+// is UNION-ALLed into the scanned set and is a no-op when non-positive or in-window, for every target.
 func TestPerSourceLedgerGapsQuerySeedsAcrossWindowBoundary(t *testing.T) {
 	t.Parallel()
 	for _, target := range DefaultGapDetectorTargets {
@@ -31,10 +26,9 @@ func TestPerSourceLedgerGapsQuerySeedsAcrossWindowBoundary(t *testing.T) {
 	}
 }
 
-// TestCloseTimeBoundPredicate pins the scan shape: soroban_events
-// is partitioned by ledger_close_time, so its gap scan must carry a
-// close-time predicate or it excludes no chunk; each known bound becomes
-// its own placeholder after the four fixed ones, an unknown side stays open.
+// TestCloseTimeBoundPredicate pins the scan shape: soroban_events is partitioned by ledger_close_time, so its
+// gap scan needs a close-time predicate to exclude chunks; each known bound gets its own placeholder after
+// the four fixed ones, and an unknown side stays open.
 func TestCloseTimeBoundPredicate(t *testing.T) {
 	t.Parallel()
 	lo := sql.NullTime{Time: time.Date(2026, 10, 4, 16, 27, 57, 0, time.UTC), Valid: true}
@@ -74,15 +68,9 @@ func TestCloseTimeBoundPredicate(t *testing.T) {
 	}
 }
 
-// TestMaxLedgerInWindowSkipsCensusOverrideTargets pins that
-// [Store.MaxLedgerInWindow] — the query that persists the next cycle's
-// seed — refuses any target carrying a DistinctLedgerCountSQL override
-// (soroban-events) before ever touching the database. That override
-// exists because the generic scan is a full-table-cost query on an
-// unindexed column; silently running MaxLedgerInWindow's generic
-// MAX(ledger) query for that target would pay the identical cost under
-// a different name. The early return happens before any DB access, so
-// a nil *Store proves the short-circuit without a live connection.
+// TestMaxLedgerInWindowSkipsCensusOverrideTargets pins that [Store.MaxLedgerInWindow] refuses a target with
+// a DistinctLedgerCountSQL override (soroban-events) before any DB access, as the generic scan is a
+// full-table-cost query on an unindexed column; a nil *Store proves the short-circuit.
 func TestMaxLedgerInWindowSkipsCensusOverrideTargets(t *testing.T) {
 	t.Parallel()
 	var store *Store
@@ -104,11 +92,9 @@ func TestMaxLedgerInWindowSkipsCensusOverrideTargets(t *testing.T) {
 	}
 }
 
-// TestComputeGapScanWindow pins the trailing-window arithmetic that
-// replaced the [genesis, tip] full-history scan (an IO-
-// saturation incident). The detector must scan only a bounded trailing
-// window each cycle; deep history is the ADR-0033 completeness
-// verdict's domain.
+// TestComputeGapScanWindow pins the trailing-window arithmetic: the detector scans only a bounded trailing
+// window per cycle (a [genesis, tip] scan saturated IO); deep history belongs to the ADR-0033 completeness
+// verdict.
 func TestComputeGapScanWindow(t *testing.T) {
 	t.Parallel()
 	// Realistic pubnet-scale genesis + tip so the SafetyLookback /
@@ -165,10 +151,9 @@ func TestComputeGapScanWindow(t *testing.T) {
 	}
 }
 
-// TestComputeGapScanWindowBoundsScanCost is the incident regression:
-// no matter how stale the high-water, a single cycle never scans more
-// than FirstScanCap ledgers back from tip — the property that stops
-// the two ~13-min full-history LAG scans that saturated IO.
+// TestComputeGapScanWindowBoundsScanCost is the incident regression: however stale the high-water, one cycle
+// never scans more than FirstScanCap ledgers back from tip, which stops the ~13-min full-history LAG scans
+// that saturated IO.
 func TestComputeGapScanWindowBoundsScanCost(t *testing.T) {
 	t.Parallel()
 	const (
@@ -185,13 +170,9 @@ func TestComputeGapScanWindowBoundsScanCost(t *testing.T) {
 	}
 }
 
-// TestGapScanWindowCoverageMathCoherent proves the coverage-percent
-// math stays coherent under windowing: a gap detected INSIDE the
-// trailing window still drives gap_free down (so it persists + alerts
-// as before), and density is honest because expected is the window
-// size (tip - from + 1), not tip - genesis + 1. Mismatching numerator
-// (window distinct) against a whole-history denominator would collapse
-// density toward zero — exactly the trap the incident fix must avoid.
+// TestGapScanWindowCoverageMathCoherent pins that coverage math stays coherent under windowing: a gap in the
+// window still lowers gap_free, and density uses the window size (tip - from + 1) as its denominator, since a
+// whole-history denominator would collapse density toward zero.
 func TestGapScanWindowCoverageMathCoherent(t *testing.T) {
 	t.Parallel()
 	const (
@@ -239,11 +220,8 @@ func TestMarkGapDetectorScanSuccessAdvancesLivenessGauge(t *testing.T) {
 	// detector targets and from parallel tests sharing the global registry.
 	target := GapDetectorTarget{Source: "test-liveness-src", Table: "test_liveness_tbl"}
 
-	// The ok counter is process-global and no scan resets it, so its
-	// ABSOLUTE value counts how many times this binary has run this
-	// test, not what one scan did: under `go test -count=2` the second
-	// iteration reads 2 with the success path behaving perfectly. What
-	// the success path owes is one increment, so the delta is measured.
+	// The ok counter is process-global and never reset, so its absolute value counts runs of this test (it reads
+	// 2 under `go test -count=2`). The success path owes one increment, so measure the delta.
 	okBefore := testutil.ToFloat64(obs.IngestGapDetectorRunsTotal.WithLabelValues(target.Source, target.Table, "ok"))
 
 	now := time.Unix(1_700_000_000, 0)

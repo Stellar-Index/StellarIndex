@@ -5,15 +5,9 @@ import (
 	"testing"
 )
 
-// TestTrustlineAssetsPageQuery_PoolExclusionIsExact is the fast default-suite
-// guard for the pool-share exclusion (the executing proof against real ClickHouse is
-// test/integration/clickhouse_entries_test.go).
-//
-// The naive predicate `NOT startsWith(asset, 'pool')` matches any credit
-// asset string that merely starts with the substring "pool" (e.g.
-// "poolX-GISSUER...", a valid case-sensitive Stellar asset code), silently
-// dropping it from the registry walk alongside the two real pool-share
-// spellings TrustLineAssetID emits.
+// TestTrustlineAssetsPageQuery_PoolExclusionIsExact is the fast guard for the pool-share exclusion; the
+// executing proof is test/integration/clickhouse_entries_test.go. `NOT startsWith(asset, 'pool')` would drop
+// valid credit assets like "poolX-GISSUER...", so only the two real pool-share spellings may be excluded.
 func TestTrustlineAssetsPageQuery_PoolExclusionIsExact(t *testing.T) {
 	t.Parallel()
 

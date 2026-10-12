@@ -6,15 +6,9 @@ import (
 	c "github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// TestReDeriveNullVolumeGuard_ACRIT1 locks in the fail-closed guard: a re-derive entry point that
-// stamps a positive derive_generation but never calls InstallUSDVolumeResolution would compute
-// usd_volume=NULL and, because the high generation wins the ON CONFLICT guard, silently and
-// unrecoverably overwrite correct stored values (a live gen-0 replay can never beat it).
-//
-// The guard is deliberately PRECISE: it must fire only on the destructive combination (about to
-// write NULL, resolution never wired), not on every re-derive write. Tier-1 CEX-USD trades price
-// correctly from quote decimals with no resolver, and an over-broad guard breaks the
-// generation-guard integration test, hence the "computed != nil passes" case below.
+// TestReDeriveNullVolumeGuard_ACRIT1 locks in the fail-closed guard: a re-derive with a positive generation
+// but no InstallUSDVolumeResolution must refuse, or it overwrites stored usd_volume with NULL unrecoverably.
+// The guard is precise: it must not fire when a resolver is wired or Tier-1 CEX-USD trades need none.
 func TestReDeriveNullVolumeGuard_ACRIT1(t *testing.T) {
 	priced := "12.34000000"
 	tr := c.Trade{Source: "binance", Ledger: 7}

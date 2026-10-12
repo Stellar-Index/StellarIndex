@@ -62,10 +62,9 @@ func TestIsOneSideZeroFill(t *testing.T) {
 	}
 }
 
-// TestFilterStorableTrades proves the batch pre-filter that keeps one bad row from sinking the
-// all-or-nothing INSERT. Valid rows pass in order; a one-side-zero fill is admitted (stored
-// unpriceable) and counted on TradesZeroLegAdmittedTotal, not SourceInsertErrorsTotal; any
-// other Validate failure is dropped and counted loudly, as the single-row InsertTrade does.
+// TestFilterStorableTrades: valid rows pass in order, a one-side-zero fill is admitted and counted on
+// TradesZeroLegAdmittedTotal, and any other Validate failure is dropped and counted in
+// SourceInsertErrorsTotal, so one bad row cannot sink the batch INSERT.
 func TestFilterStorableTrades(t *testing.T) {
 	pair := osztPair(t)
 	ts := time.Now().UTC().Add(-time.Hour)

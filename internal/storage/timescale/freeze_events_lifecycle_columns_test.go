@@ -7,11 +7,9 @@ import (
 	"time"
 )
 
-// TestListFreezeEvents_SurfacesLifecycleColumns pins that
-// ListFreezeEvents selects, beyond the recover/detail columns,
-// migration 0119's hold_until/extensions_used/escalated/
-// corroborated — the only fields that distinguish a 10-minute hold
-// from a freeze that has climbed the extension ladder to ESCALATED.
+// TestListFreezeEvents_SurfacesLifecycleColumns pins that ListFreezeEvents selects migration 0119's
+// hold_until, extensions_used, escalated and corroborated, the only fields separating a 10-minute hold from
+// an ESCALATED freeze.
 func TestListFreezeEvents_SurfacesLifecycleColumns(t *testing.T) {
 	holdUntil := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
 	store, conn := newScriptedStore(t, scriptedResult{

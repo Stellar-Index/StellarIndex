@@ -5,11 +5,8 @@ import (
 	"testing"
 )
 
-// TestListAssets_readsAssetVolumeRollup asserts the listing's
-// per_asset_24h_vol CTE reads the asset_volume_24h rollup and does not
-// inline the trailing-24h SUM(volume_usd), which the aggregator worker
-// computes. If this regresses (someone
-// re-inlines the per-asset SUM) the ~4.8s cold /v1/assets scan returns.
+// TestListAssets_readsAssetVolumeRollup asserts the per_asset_24h_vol CTE reads the asset_volume_24h rollup
+// rather than inlining the trailing-24h SUM(volume_usd), which would bring back the ~4.8s cold scan.
 func TestListAssets_readsAssetVolumeRollup(t *testing.T) {
 	if !strings.Contains(listAssetsBaseSelect, "FROM asset_volume_24h") {
 		t.Errorf("per_asset_24h_vol CTE must read FROM asset_volume_24h")
@@ -21,11 +18,9 @@ func TestListAssets_readsAssetVolumeRollup(t *testing.T) {
 	}
 }
 
-// TestListAssetsBaseSelectSQL_rendersForBothOrders guards the one
-// remaining render-time substitution: every ordering must produce a
-// query that reads the volume rollup and carries no leftover marker.
-// (The only marker is /*RANK_TIER*/, whose absence
-// listAssetsBaseSelectSQL panics on rather than shipping a syntax error.)
+// TestListAssetsBaseSelectSQL_rendersForBothOrders guards the one render-time substitution: every ordering
+// must read the volume rollup and leave no /*RANK_TIER*/ marker (listAssetsBaseSelectSQL panics if it is
+// absent).
 func TestListAssetsBaseSelectSQL_rendersForBothOrders(t *testing.T) {
 	for _, order := range []AssetsOrder{AssetsOrderVolume24hUSDDesc, AssetsOrderObservationCountDesc} {
 		sql := listAssetsBaseSelectSQL(order)
@@ -59,10 +54,9 @@ func TestRefreshAssetVolumeUpsert_shape(t *testing.T) {
 	}
 }
 
-// TestAssetVolumeUnpricedTrades_shape pins the lower-bound plumbing: the
-// refresh counts usd_volume IS NULL trades onto existing volume rows only
-// (LEFT JOIN from vol, so it never admits a contract to the Soroban spine),
-// on a bare ts window, and the listing emits the flag from that count.
+// TestAssetVolumeUnpricedTrades_shape pins the lower-bound plumbing: the refresh counts usd_volume IS NULL
+// trades onto existing volume rows only (LEFT JOIN from vol, never admitting a contract to the Soroban
+// spine) on a bare ts window, and the listing emits the flag from that count.
 func TestAssetVolumeUnpricedTrades_shape(t *testing.T) {
 	for _, want := range []string{
 		"(asset_id, vol_usd, unpriced_trades, computed_at)",
@@ -85,11 +79,9 @@ func TestAssetVolumeUnpricedTrades_shape(t *testing.T) {
 	}
 }
 
-// TestRefreshAssetVolumeUpsert_sargable asserts the window predicate is
-// a bare `bucket >= … AND bucket <= now() - 1 minute` comparison — no function
-// wrapped around the indexed `bucket` column (the class of bug the
-// price-latency-sargable incident fixed). A function on bucket would
-// defeat chunk pruning and re-introduce the full-history scan.
+// TestRefreshAssetVolumeUpsert_sargable asserts the window predicate is a bare `bucket >= ... AND bucket <=
+// now() - 1 minute` comparison; a function wrapped around the indexed bucket column would defeat chunk
+// pruning.
 func TestRefreshAssetVolumeUpsert_sargable(t *testing.T) {
 	if !strings.Contains(refreshAssetVolumeUpsert, "bucket >= now() - INTERVAL '24 hours'") {
 		t.Errorf("upsert must use a bare `bucket >= now() - INTERVAL` floor:\n%s", refreshAssetVolumeUpsert)
