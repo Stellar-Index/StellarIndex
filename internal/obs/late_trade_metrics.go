@@ -10,9 +10,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-// LateTradeCAGGRefreshTotal counts the indexer's refreshes of the trades
-// continuous aggregates over trades written older than a view's refresh
-// policy reaches back (pipeline.LateTradeRefresher). Pre-seeded.
+// LateTradeCAGGRefreshTotal counts the indexer's refreshes of trades continuous aggregates for late-written trades (pipeline.LateTradeRefresher); pre-seeded.
 var LateTradeCAGGRefreshTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_late_trade_cagg_refresh_total",
@@ -25,8 +23,7 @@ var LateTradeCAGGRefreshTotal = prometheus.NewCounterVec(
 // window fell due; 0 = none.
 var lateTradeOverdueSince atomic.Int64
 
-// SetLateTradeCAGGRefreshOverdueSince publishes when the oldest unrefreshed
-// late-trade window fell due; the zero time clears it.
+// SetLateTradeCAGGRefreshOverdueSince publishes when the oldest unrefreshed late-trade window fell due; the zero time clears it.
 func SetLateTradeCAGGRefreshOverdueSince(t time.Time) {
 	if t.IsZero() {
 		lateTradeOverdueSince.Store(0)

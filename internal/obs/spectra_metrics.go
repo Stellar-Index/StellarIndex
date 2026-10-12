@@ -5,8 +5,7 @@ package obs
 
 import "github.com/prometheus/client_golang/prometheus"
 
-// SpectraUnlistedInfrastructureTotal counts Spectra registry *_change events
-// naming infrastructure outside the audited set; `kind` is the change class.
+// SpectraUnlistedInfrastructureTotal counts Spectra registry *_change events naming infrastructure outside the audited set; `kind` is the change class.
 var SpectraUnlistedInfrastructureTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_spectra_unlisted_infrastructure_total",

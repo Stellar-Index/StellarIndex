@@ -14,10 +14,7 @@ type routeCapture struct{ route string }
 
 type routeCaptureKey struct{}
 
-// HTTPMetrics emits http_requests_total and http_request_duration_seconds labelled by
-// method, route pattern (never the raw URL, for cardinality; "unmatched" on 404) and status.
-// r.Pattern is lost once any middleware calls WithContext, so a *routeCapture planted in
-// the context lets the innermost [CaptureRoute] hand the pattern back out.
+// HTTPMetrics emits http_requests_total and http_request_duration_seconds by method, route pattern (never raw URL) and status; pair with [CaptureRoute].
 func HTTPMetrics(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -69,8 +66,7 @@ func isStreamingRoute(route string) bool {
 	return strings.HasSuffix(route, "/stream")
 }
 
-// IsSyntheticUA is a NAME check on the client-controlled User-Agent, never a trust check;
-// gate on [IsSyntheticRequest].
+// IsSyntheticUA is a NAME check on the client-controlled User-Agent, never a trust check; gate on [IsSyntheticRequest].
 func IsSyntheticUA(ua string) bool {
 	if ua == "" {
 		return false
@@ -89,10 +85,7 @@ var syntheticUAPrefixes = []string{
 	"stellarindex-prewarm/",
 }
 
-// IsSyntheticRequest is the trust boundary for skipping SLO metrics and demoting logs
-// (middleware.Logger must agree). A spoofable UA counts only on loopback with no
-// X-Forwarded-For: haproxy appends that header to every proxied request, and the three
-// first-party callers hit the loopback listener directly.
+// IsSyntheticRequest is the trust boundary for skipping SLO metrics and demoting logs: a spoofable UA counts only on loopback with no X-Forwarded-For.
 func IsSyntheticRequest(r *http.Request) bool {
 	if !IsSyntheticUA(r.UserAgent()) {
 		return false
@@ -114,8 +107,7 @@ func isLoopbackRemoteAddr(remoteAddr string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-// CaptureRoute must be the INNERMOST middleware so r.Pattern is set. Deferred so a panic
-// recovered further out still labels its 500 with the route.
+// CaptureRoute must be the INNERMOST middleware so r.Pattern is set; deferred so a recovered panic still labels its 500 with the route.
 func CaptureRoute(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rc, ok := r.Context().Value(routeCaptureKey{}).(*routeCapture)
@@ -126,8 +118,7 @@ func CaptureRoute(next http.Handler) http.Handler {
 	})
 }
 
-// RouteFromContext returns the route [CaptureRoute] captured, or "". Middleware between
-// HTTPMetrics and CaptureRoute needs it because its own request copy never sees Pattern.
+// RouteFromContext returns the route [CaptureRoute] captured, or "".
 func RouteFromContext(ctx context.Context) string {
 	rc, ok := ctx.Value(routeCaptureKey{}).(*routeCapture)
 	if !ok {
