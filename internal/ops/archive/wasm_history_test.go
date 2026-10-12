@@ -2,6 +2,9 @@ package archive
 
 import (
 	"os"
+	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 
 	sdkxdr "github.com/stellar/go-stellar-sdk/xdr"
@@ -665,5 +668,233 @@ not valid json at all
 	_, _, _, err := readTransitionJSONL(path, transitions)
 	if err == nil {
 		t.Fatalf("readTransitionJSONL = <nil> error, want an error — a mid-file malformed line is not crash residue")
+	}
+}
+
+// TestWasmWalkCoverage pins the coverage rule: DELIVERED (totalScanned) must equal REQUESTED (-to minus -from plus one); an unbounded walk (-to 0) is exempt.
+// The output feeds docs/operations/wasm-audits/* and BackfillSafe determinations, so a short walk must not exit 0.
+func TestWasmWalkCoverage(t *testing.T) {
+	t.Parallel()
+
+	const (
+		from   = uint32(51_000_000)
+		to     = uint32(51_599_999) // 600,000 ledgers requested
+		bucket = "galexie-live"
+	)
+
+	if err := wasmWalkCoverage(from, to, 600_000, bucket); err != nil {
+		t.Errorf("complete walk = %v, want nil", err)
+	}
+	if err := wasmWalkCoverage(from, 0, 12, bucket); err != nil {
+		t.Errorf("unbounded walk (-to 0) = %v, want nil — there is no requested count to assert", err)
+	}
+	if err := wasmWalkCoverage(from, from, 1, bucket); err != nil {
+		t.Errorf("single-ledger complete walk = %v, want nil", err)
+	}
+
+	// The issue's own worked example: a lost partition in chunk 7 stops
+	// the walk at 51,352,110 and TolerateTrailingMissing returns nil.
+	short := wasmWalkCoverage(from, to, 352_111, bucket)
+	if short == nil {
+		t.Fatal("a 352,111-of-600,000 walk = nil; the audit covers less than the range named " +
+			"and a WASM upgrade in the unread tail is simply absent from the published epochs")
+	}
+	for _, want := range []string{"352111", "600000", "galexie-live", "galexie-archive"} {
+		if !strings.Contains(short.Error(), want) {
+			t.Errorf("short-walk error %q does not mention %q", short.Error(), want)
+		}
+	}
+
+	none := wasmWalkCoverage(from, to, 0, bucket)
+	if none == nil {
+		t.Fatal("a zero-ledger walk = nil; every watched contract is then reported as having " +
+			"no transitions, which reads as a clean audit")
+	}
+	if !strings.Contains(none.Error(), "scanned 0 ledgers") {
+		t.Errorf("zero-walk error = %q, want its own diagnosis", none.Error())
+	}
+}
+
+// TestWasmHistory_GatesCoverageAfterEmittingJSON pins the call site at the source (wasmHistory needs a config and S3-backed galexie).
+// The JSON is written first (a partial audit is still worth having) and the coverage error comes after, so the operator gets both the artifact and a non-zero exit.
+func TestWasmHistory_GatesCoverageAfterEmittingJSON(t *testing.T) {
+	t.Parallel()
+	b, err := os.ReadFile("wasm_history.go")
+	if err != nil {
+		t.Fatalf("read wasm_history.go: %v", err)
+	}
+	src := string(b)
+	start := strings.Index(src, "\nfunc wasmHistory(")
+	if start < 0 {
+		t.Fatal("wasmHistory not found — this test is asserting nothing")
+	}
+	body := src[start+1:]
+	if end := strings.Index(body, "\nfunc "); end > 0 {
+		body = body[:end]
+	}
+
+	encode := strings.Index(body, "enc.Encode(out)")
+	coverage := strings.Index(body, "return wasmWalkCoverage(uint32(*from), resolvedTo, totalScanned, bucketName)")
+	switch {
+	case encode < 0:
+		t.Fatal("JSON encode anchor not found — this test is asserting nothing")
+	case coverage < 0:
+		t.Fatal("wasmHistory never gates on coverage — a short walk publishes a WASM-epoch " +
+			"audit and exits 0 (RLT-282)")
+	case coverage < encode:
+		t.Error("the coverage guard runs BEFORE the JSON is written — a partial audit is worth " +
+			"having, so emit it and then fail")
+	}
+}
+
+// TestRunOneWasmHistoryWorker_UpperEndComesFromTheWalk: upperEnd must be assigned from the ledger the walk callback receives, never seeded from the requested bound.
+// The executing proof is an integration-tagged test; this one runs in the default suite.
+func TestRunOneWasmHistoryWorker_UpperEndComesFromTheWalk(t *testing.T) {
+	t.Parallel()
+	b, err := os.ReadFile("wasm_history.go")
+	if err != nil {
+		t.Fatalf("read wasm_history.go: %v", err)
+	}
+	src := string(b)
+	start := strings.Index(src, "\nfunc runOneWasmHistoryWorker(")
+	if start < 0 {
+		t.Fatal("runOneWasmHistoryWorker not found — this test is asserting nothing")
+	}
+	body := src[start+1:]
+	if end := strings.Index(body, "\nfunc "); end > 0 {
+		body = body[:end]
+	}
+
+	if strings.Contains(body, "result.upperEnd = b.To") {
+		t.Error("upperEnd is seeded from the REQUESTED chunk bound before the walk; " +
+			"mergeWasmHistories closes every open WASM range at it, so a short walk publishes " +
+			"a range the worker never opened (RLT-282)")
+	}
+	if !strings.Contains(body, "result.upperEnd = seq") {
+		t.Error("upperEnd is never assigned from the ledger the walk callback received — it is " +
+			"documented as the last ledger the worker actually saw")
+	}
+}
+
+// TestMaybeWriteWasmCode_AcceptsAllEntryBearingChangeTypes: Created, Updated, Restored and State changes with ContractCode bytes are captured.
+func TestMaybeWriteWasmCode_AcceptsAllEntryBearingChangeTypes(t *testing.T) {
+	tmp := t.TempDir()
+
+	var hash sdkxdr.Hash
+	for i := range hash {
+		hash[i] = byte(i + 1)
+	}
+	hashHex := "01020304050607080910111213141516171819202122232425262728293031" +
+		"32"
+	wantHashes := map[sdkxdr.Hash]struct{}{hash: {}}
+	wantHexes := map[sdkxdr.Hash]string{hash: hashHex}
+
+	mkChange := func(t sdkxdr.LedgerEntryChangeType, code []byte) sdkxdr.LedgerEntryChange {
+		entry := &sdkxdr.LedgerEntry{
+			Data: sdkxdr.LedgerEntryData{
+				Type: sdkxdr.LedgerEntryTypeContractCode,
+				ContractCode: &sdkxdr.ContractCodeEntry{
+					Hash: hash,
+					Code: code,
+				},
+			},
+		}
+		change := sdkxdr.LedgerEntryChange{Type: t}
+		switch t {
+		case sdkxdr.LedgerEntryChangeTypeLedgerEntryCreated:
+			change.Created = entry
+		case sdkxdr.LedgerEntryChangeTypeLedgerEntryUpdated:
+			change.Updated = entry
+		case sdkxdr.LedgerEntryChangeTypeLedgerEntryState:
+			change.State = entry
+		case sdkxdr.LedgerEntryChangeTypeLedgerEntryRestored:
+			change.Restored = entry
+		}
+		return change
+	}
+
+	for _, tc := range []struct {
+		name string
+		typ  sdkxdr.LedgerEntryChangeType
+	}{
+		{"Created", sdkxdr.LedgerEntryChangeTypeLedgerEntryCreated},
+		{"Updated", sdkxdr.LedgerEntryChangeTypeLedgerEntryUpdated},
+		{"State", sdkxdr.LedgerEntryChangeTypeLedgerEntryState},
+		{"Restored", sdkxdr.LedgerEntryChangeTypeLedgerEntryRestored},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			outDir := filepath.Join(tmp, tc.name)
+			if err := os.MkdirAll(outDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			var mu sync.Mutex
+			found := map[sdkxdr.Hash]string{}
+			body := []byte{0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0xde, 0xad}
+			change := mkChange(tc.typ, body)
+			maybeWriteWasmCode(&change, wantHashes, outDir, wantHexes, &mu, found)
+
+			if _, ok := found[hash]; !ok {
+				t.Fatalf("change type %s: hash not found in result map", tc.name)
+			}
+			path := filepath.Join(outDir, hashHex+".wasm")
+			got, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read output: %v", err)
+			}
+			if string(got) != string(body) {
+				t.Errorf("body mismatch")
+			}
+		})
+	}
+}
+
+// TestMaybeWriteWasmCode_IgnoresRemoved: REMOVED changes carry a LedgerKey, not a LedgerEntry, so there are no bytes to extract.
+func TestMaybeWriteWasmCode_IgnoresRemoved(t *testing.T) {
+	tmp := t.TempDir()
+	var hash sdkxdr.Hash
+	hashHex := "0102"
+	wantHashes := map[sdkxdr.Hash]struct{}{hash: {}}
+	wantHexes := map[sdkxdr.Hash]string{hash: hashHex}
+	change := sdkxdr.LedgerEntryChange{
+		Type: sdkxdr.LedgerEntryChangeTypeLedgerEntryRemoved,
+	}
+	var mu sync.Mutex
+	found := map[sdkxdr.Hash]string{}
+	maybeWriteWasmCode(&change, wantHashes, tmp, wantHexes, &mu, found)
+	if len(found) != 0 {
+		t.Fatalf("expected no-op on Removed; got %d entries", len(found))
+	}
+}
+
+// TestMaybeWriteWasmCode_FailedWriteDoesNotMarkFound: found is the completion receipt, so a failed write must leave the hash absent.
+func TestMaybeWriteWasmCode_FailedWriteDoesNotMarkFound(t *testing.T) {
+	tmp := t.TempDir()
+	// output-dir itself does not exist, so os.WriteFile's open fails —
+	// a stand-in for "full volume" / "root-owned directory" without
+	// needing real disk-quota or permission setup.
+	outDir := filepath.Join(tmp, "does-not-exist")
+
+	var hash sdkxdr.Hash
+	hash[0] = 0x42
+	hashHex := "42"
+	wantHashes := map[sdkxdr.Hash]struct{}{hash: {}}
+	wantHexes := map[sdkxdr.Hash]string{hash: hashHex}
+	entry := &sdkxdr.LedgerEntry{
+		Data: sdkxdr.LedgerEntryData{
+			Type:         sdkxdr.LedgerEntryTypeContractCode,
+			ContractCode: &sdkxdr.ContractCodeEntry{Hash: hash, Code: []byte{0x00, 0x61, 0x73, 0x6d}},
+		},
+	}
+	change := sdkxdr.LedgerEntryChange{Type: sdkxdr.LedgerEntryChangeTypeLedgerEntryCreated, Created: entry}
+
+	var mu sync.Mutex
+	found := map[sdkxdr.Hash]string{}
+	maybeWriteWasmCode(&change, wantHashes, outDir, wantHexes, &mu, found)
+
+	if _, ok := found[hash]; ok {
+		t.Fatalf("found[hash] set after a failed write — a write failure must not be reported as wrote")
+	}
+	if _, err := os.Stat(filepath.Join(outDir, hashHex+".wasm")); err == nil {
+		t.Fatalf("expected no file on disk after a failed write")
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path"
 	"slices"
 	"strconv"
 	"strings"
@@ -621,6 +622,217 @@ func TestComparePartitions_OldestFirstUnparsedLast(t *testing.T) {
 	for i, w := range want {
 		if parts[i].prefix != w {
 			t.Fatalf("order[%d] = %q, want %q (full order: %v)", i, parts[i].prefix, w, parts)
+		}
+	}
+}
+
+// trimUnitFiles are the unit definitions that run trim-galexie-archive on a
+// timer: the ansible template is what r1 runs, the deploy/ copy is the
+// operator-facing reference, so both must parse.
+var trimUnitFiles = []string{
+	"configs/ansible/roles/archival-node/templates/systemd/galexie-archive-trim.service.j2",
+	"deploy/systemd/galexie-archive-trim.service",
+}
+
+// TestTrimUnits_ExecStartParses runs each scheduled unit's argv through the subcommand's own FlagSet, since an undefined flag exits 1 and a monthly timer reports only "failed". The unit must also be a real run: without -commit it deletes nothing, and it must keep upstream verification on.
+func TestTrimUnits_ExecStartParses(t *testing.T) {
+	t.Parallel()
+	for _, rel := range trimUnitFiles {
+		t.Run(rel, func(t *testing.T) {
+			t.Parallel()
+			argv := unitExecStartArgv(readRepoFile(t, rel))
+			i := slices.Index(argv, "trim-galexie-archive")
+			if i < 0 {
+				t.Fatalf("%s: ExecStart never invokes trim-galexie-archive (argv=%v)", rel, argv)
+			}
+			args := slices.Clone(argv[i+1:])
+			for j, a := range args {
+				// Stands in for the cutoff compute-trim-cutoff.sh writes.
+				args[j] = strings.ReplaceAll(a, "${TRIM_CUTOFF}", "50000000")
+			}
+			opts, err := parseTrimFlags(args)
+			if err != nil {
+				t.Fatalf("%s: trim-galexie-archive rejects the unit's argv %v: %v", rel, args, err)
+			}
+			if opts.olderThan != 50000000 {
+				t.Errorf("%s: -older-than-ledger did not carry ${TRIM_CUTOFF}: got %d", rel, opts.olderThan)
+			}
+			if !opts.commit {
+				t.Errorf("%s: unit omits -commit, so every fire is a dry-run that deletes nothing", rel)
+			}
+			if !opts.verifyUpstream {
+				t.Errorf("%s: unit disables upstream verification on a scheduled destructive run", rel)
+			}
+		})
+	}
+}
+
+// TestTrimUnits_UsesDeleteCapableIdentity pins that the trim unit loads a delete-capable credential file (stellarindex-archive-trimmer) AFTER stellarindex-ops, because the read-only reader identity cannot s3:DeleteObject and every delete would AccessDenied silently. Later EnvironmentFile wins in systemd, so this checks position as well as presence.
+func TestTrimUnits_UsesDeleteCapableIdentity(t *testing.T) {
+	t.Parallel()
+	for _, rel := range trimUnitFiles {
+		t.Run(rel, func(t *testing.T) {
+			t.Parallel()
+			lines := environmentFileLines(readRepoFile(t, rel))
+			opsIdx := slices.Index(lines, "-/etc/default/stellarindex-ops")
+			if opsIdx < 0 {
+				t.Fatalf("%s: no EnvironmentFile for /etc/default/stellarindex-ops (lines=%v)", rel, lines)
+			}
+			trimIdx := slices.Index(lines, "-/etc/default/galexie-archive-trim")
+			if trimIdx < 0 {
+				t.Fatalf("%s: no EnvironmentFile for the delete-capable stellarindex-archive-trimmer identity "+
+					"(/etc/default/galexie-archive-trim) — every DeleteObject in trim_galexie_archive.go runs as "+
+					"stellarindex-reader (read-only) and returns AccessDenied", rel)
+			}
+			if trimIdx < opsIdx {
+				t.Errorf("%s: /etc/default/galexie-archive-trim (index %d) loads BEFORE "+
+					"/etc/default/stellarindex-ops (index %d) — systemd's LATER EnvironmentFile wins, so the "+
+					"read-only stellarindex-reader creds would still shadow the trimmer identity", rel, trimIdx, opsIdx)
+			}
+		})
+	}
+}
+
+// environmentFileLines extracts the value of every EnvironmentFile=
+// directive, in file order, skipping comment lines.
+func environmentFileLines(body string) []string {
+	var out []string
+	for _, line := range strings.Split(body, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if v, ok := strings.CutPrefix(trimmed, "EnvironmentFile="); ok {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// unitExecStartArgv splices a unit's ExecStart= directive, including its
+// backslash continuation lines, into one argv. Comment lines are skipped so
+// a flag merely discussed in the header does not count.
+func unitExecStartArgv(body string) []string {
+	var argv []string
+	continued := false
+	for _, line := range strings.Split(body, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		switch {
+		case continued:
+		case strings.HasPrefix(trimmed, "ExecStart="):
+			trimmed = strings.TrimPrefix(trimmed, "ExecStart=")
+		default:
+			continue
+		}
+		continued = strings.HasSuffix(trimmed, "\\")
+		argv = append(argv, strings.Fields(strings.TrimSuffix(trimmed, "\\"))...)
+	}
+	return argv
+}
+
+// fakeHotBucket models S3/MinIO delete semantics: DeleteObject succeeds
+// whether or not the key exists. swallow simulates a backend that answers
+// success and deletes nothing.
+type fakeHotBucket struct {
+	objects map[string]bool
+	swallow bool
+}
+
+func (b *fakeHotBucket) DeleteObject(_ context.Context, in *s3.DeleteObjectInput, _ ...func(*s3.Options)) (*s3.DeleteObjectOutput, error) {
+	if !b.swallow {
+		delete(b.objects, aws.ToString(in.Key))
+	}
+	return &s3.DeleteObjectOutput{}, nil
+}
+
+// fakeHotView resolves a datastore-relative path the way the SDK's S3
+// datastore does (path.Join(prefix, p)), i.e. the key space the trim's
+// candidates were listed from.
+type fakeHotView struct {
+	bucket *fakeHotBucket
+	prefix string
+}
+
+func (v fakeHotView) Exists(_ context.Context, p string) (bool, error) {
+	return v.bucket.objects[path.Join(v.prefix, p)], nil
+}
+
+var trimDeleteCandidates = []string{
+	"FFFFFFFD--2-63999/FFFFFFFD--2.xdr.zst",
+	"FFFFFFFD--2-63999/FFFFFFFC--3.xdr.zst",
+}
+
+func newPrefixedHotBucket(t *testing.T, bucketPath string) (*fakeHotBucket, string, string) {
+	t.Helper()
+	bucket, prefix, err := splitBucketPath(bucketPath)
+	if err != nil {
+		t.Fatalf("splitBucketPath(%q): %v", bucketPath, err)
+	}
+	b := &fakeHotBucket{objects: map[string]bool{}}
+	for _, p := range trimDeleteCandidates {
+		b.objects[path.Join(prefix, p)] = true
+	}
+	return b, bucket, prefix
+}
+
+// TestDeleteTrimCandidates_DeletesTheListedObject: the delete key must be the one the listing used; a hand-built key with a doubled slash named no object, S3 answered success, and the disk never moved.
+func TestDeleteTrimCandidates_DeletesTheListedObject(t *testing.T) {
+	t.Parallel()
+	for _, bucketPath := range []string{"galexie-archive", "galexie-archive/archive", "galexie-archive/archive/"} {
+		t.Run(bucketPath, func(t *testing.T) {
+			t.Parallel()
+			b, bucket, prefix := newPrefixedHotBucket(t, bucketPath)
+			deleted, errs, err := deleteTrimCandidates(context.Background(), discardLogger(), b, fakeHotView{b, prefix}, bucket, prefix, trimDeleteCandidates)
+			if err != nil || errs != 0 {
+				t.Fatalf("deleteTrimCandidates: deleted=%d errs=%d err=%v", deleted, errs, err)
+			}
+			if len(b.objects) != 0 {
+				t.Fatalf("objects still present after a reported deletion: %v", b.objects)
+			}
+			if deleted != len(trimDeleteCandidates) {
+				t.Fatalf("deleted = %d, want %d", deleted, len(trimDeleteCandidates))
+			}
+		})
+	}
+}
+
+// TestDeleteTrimCandidates_UnverifiedDeleteFails: a DeleteObject that succeeds while the object still resolves is not a deletion and must fail the run.
+func TestDeleteTrimCandidates_UnverifiedDeleteFails(t *testing.T) {
+	t.Parallel()
+	b, bucket, prefix := newPrefixedHotBucket(t, "galexie-archive/archive")
+	b.swallow = true
+	deleted, _, err := deleteTrimCandidates(context.Background(), discardLogger(), b, fakeHotView{b, prefix}, bucket, prefix, trimDeleteCandidates)
+	if err == nil || !strings.Contains(err.Error(), "still resolves") {
+		t.Fatalf("err = %v, want the unverified delete to abort the run", err)
+	}
+	if deleted != 0 {
+		t.Fatalf("deleted = %d, want 0: no object was actually removed", deleted)
+	}
+}
+
+// TestCheckTrimCutoff: --older-than-ledger must be bounded against the tip, or a huge value would trim the hot tier to the live seam.
+func TestCheckTrimCutoff(t *testing.T) {
+	t.Parallel()
+	const tip = 62_000_000
+	for _, tc := range []struct {
+		name      string
+		olderThan uint32
+		tip       uint32
+		wantOK    bool
+	}{
+		{"max uint32", 4294967295, tip, false},
+		{"at the tip", tip, tip, false},
+		{"one ledger inside the window", tip - trimMinHotWindowLedgers + 1, tip, false},
+		{"at the window edge", tip - trimMinHotWindowLedgers, tip, true},
+		{"90-day scheduled cutoff", tip - 90*17_280, tip, true},
+		{"archive younger than the window", 2, trimMinHotWindowLedgers - 1, false},
+	} {
+		err := checkTrimCutoff(tc.olderThan, tc.tip)
+		if (err == nil) != tc.wantOK {
+			t.Errorf("%s: checkTrimCutoff(%d, %d) = %v, want ok=%v", tc.name, tc.olderThan, tc.tip, err, tc.wantOK)
 		}
 	}
 }
