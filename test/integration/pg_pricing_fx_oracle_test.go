@@ -292,10 +292,8 @@ func TestFXFixings(t *testing.T) {
 	})
 }
 
-// TestFXQuoteAtOrBefore proves the X2.5 forex-snap storage primitive
-// returns the most recent FX-source observation at-or-before a cutoff.
-// Drives the across-region determinism story: every region serving the
-// same closed bucket queries the same hypertable and gets the same row.
+// X2.5 forex-snap primitive returns the most recent FX-source observation at-or-before a cutoff, so every region serving
+// the same closed bucket reads the same hypertable and gets the same row.
 func TestFXQuoteAtOrBefore(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -322,11 +320,8 @@ func TestFXQuoteAtOrBefore(t *testing.T) {
 	// Anchor in the past — deterministic windows regardless of clock.
 	t0 := time.Now().UTC().Add(-3 * time.Hour).Truncate(time.Second)
 
-	// Both legs of an FX quote share one scale, so quote/base is the
-	// price ratio with no scale adjustment.
-	// 0.92 EUR per USD:    base=1e8,    quote=92_000_000
-	// 0.93 EUR per USD:    base=1e8,    quote=93_000_000
-	// 0.94 EUR per USD:    base=1e8,    quote=94_000_000
+	// Both legs of an FX quote share one scale, so quote/base is the price ratio with no scale adjustment (0.92 / 0.93 /
+	// 0.94 EUR per USD as base=1e8, quote=92_000_000 / 93_000_000 / 94_000_000).
 	trades := []c.Trade{
 		mkIntegrationTrade("exchangeratesapi", 1, t0, pair, 100_000_000, 92_000_000),
 		mkIntegrationTrade("exchangeratesapi", 2, t0.Add(15*time.Minute), pair, 100_000_000, 93_000_000),
@@ -420,23 +415,15 @@ func TestFXQuoteAtOrBefore(t *testing.T) {
 		}
 	})
 
-	// NOTE: every subtest above exercises the LEGACY trades fallback —
-	// fx_quotes is empty in this test's database, so the fx_quotes-first
-	// read misses and the connector-path trades rows win.
-	// That IS the compatibility contract: a re-enabled exchangeratesapi
-	// connector keeps working when the massive feed has no rows. The
-	// fx_quotes-first behaviour is proven in
-	// TestFXQuoteAtOrBeforeFXQuotesFirst below.
+	// Every subtest above exercises the LEGACY trades fallback: fx_quotes is empty here, so the fx_quotes-first read misses.
+	// That is the compatibility contract (a re-enabled exchangeratesapi connector works when massive has no rows);
+	// fx_quotes-first is proven in TestFXQuoteAtOrBeforeFXQuotesFirst below.
 
 	t.Run("FXSources is deterministic and lex-ordered", func(t *testing.T) {
 		got := external.FXSources()
-		// massive (the forex worker's fx_quotes feed) was bridged into the
-		// registry as a SubclassFX source. The exact list is the
-		// contract: the registry carries one identity per FX upstream; a
-		// second entry for the same upstream with IncludeInVWAP:true would
-		// double-count its rates. ecb is the forex worker's standby, a
-		// separate upstream with IncludeInVWAP:false: its fx_quotes rows
-		// must pass the FX-snap class check but never enter VWAP.
+		// The registry carries one identity per FX upstream, so the exact list is the contract; a second entry for the same
+		// upstream with IncludeInVWAP:true would double-count its rates. ecb is the forex worker's standby
+		// (IncludeInVWAP:false): its fx_quotes rows pass the FX-snap class check but never enter VWAP.
 		want := []string{"ecb", "exchangeratesapi", "massive"}
 		if len(got) != len(want) {
 			t.Fatalf("FXSources len=%d, want %d (%v)", len(got), len(want), got)
@@ -449,12 +436,9 @@ func TestFXQuoteAtOrBefore(t *testing.T) {
 	})
 }
 
-// TestFXQuoteAtOrBeforeFXQuotesFirst proves the unified FX read path:
-// when the active feed (`massive` → fx_quotes) has a row
-// in the lookback, it wins over connector-path trades rows; when its
-// newest row is older than the lookback, the snap falls back to the
-// legacy trades path; and the fx_quotes rate converts to an EXACT
-// *big.Rat (NUMERIC text → Rat, never a float — ADR-0003).
+// Unified FX read path: an active-feed (`massive` -> fx_quotes) row in the lookback beats connector-path trades rows; if
+// its newest row is older than the lookback the snap falls back to trades; the fx_quotes rate converts to an EXACT
+// *big.Rat (NUMERIC text, never float; ADR-0003).
 func TestFXQuoteAtOrBeforeFXQuotesFirst(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -490,15 +474,9 @@ func TestFXQuoteAtOrBeforeFXQuotesFirst(t *testing.T) {
 	}
 
 	t.Run("fx_quotes row wins over the trades row, exact scale", func(t *testing.T) {
-		// Active-feed row: rate_usd(EUR) = 0.92, i.e. EUR PER USD — the raw
-		// close of Massive's C:USDEUR ticker (units-of-quote per unit-of-base;
-		// standard forex convention), which is exactly what forex/client.go
-		// stores ("usd→eur ≈ 0.92 means 1 USD buys 0.92 EUR"). NOT 1.085
-		// (that is USD-per-EUR = C:EURUSD, the inverse — an earlier fixture used
-		// it and, paired with the then-inverted fxSnapFromRows division, the two
-		// errors cancelled to a plausible result and masked errors). float64
-		// 0.92 round-trips through the pgx driver as the shortest decimal "0.92",
-		// stored exactly in NUMERIC.
+		// Active-feed row: rate_usd(EUR) = 0.92, EUR PER USD, the raw close of Massive's C:USDEUR (quote per base), as
+		// forex/client.go stores it. NOT 1.085 (USD per EUR, the inverse): a wrong-way fixture can cancel against an inverted
+		// division and mask errors.
 		if err := store.InsertFXQuoteBatch(ctx, []timescale.FXQuote{{
 			Bucket: day, Ticker: "EUR", RateUSD: 0.92, InverseUSD: 1.0 / 0.92, Source: "massive",
 		}}); err != nil {
@@ -515,11 +493,8 @@ func TestFXQuoteAtOrBeforeFXQuotesFirst(t *testing.T) {
 		if !obs.Equal(day) {
 			t.Errorf("observedAt = %v, want the fx_quotes bucket %v", obs, day)
 		}
-		// USD/EUR = EUR per USD = quote-per-base = rate_usd(EUR)/rate_usd(USD)
-		// = 0.92/1 = 0.92 = 23/25, the SAME quote-per-base orientation the
-		// trades fallback returns (subtest below: quote_amount/base_amount).
-		// (Base/quote inverted would serve 1/0.92 = 1.085, the wrong-way-up fiat
-		// price for a real 0.92 feed.)
+		// USD/EUR = quote-per-base = rate_usd(EUR)/rate_usd(USD) = 0.92 = 23/25, the same orientation as the trades fallback
+		// (quote_amount/base_amount); inverted would serve 1.085, the wrong-way-up fiat price.
 		want := new(big.Rat).SetFrac(big.NewInt(23), big.NewInt(25))
 		if price.Cmp(want) != 0 {
 			t.Errorf("price = %s, want exactly %s", price.RatString(), want.RatString())
@@ -527,12 +502,9 @@ func TestFXQuoteAtOrBeforeFXQuotesFirst(t *testing.T) {
 	})
 
 	t.Run("stale fx_quotes row falls back to the trades path", func(t *testing.T) {
-		// A cutoff 10 days in the past puts the (today-bucketed)
-		// fx_quotes row in the future relative to the query, and the
-		// row planted below IS at-or-before the cutoff but 8 days old —
-		// outside the 7-day snap lookback. Neither may serve: the
-		// legacy trades read must. Anchor a dedicated trades row inside
-		// the window.
+		// A cutoff 10 days back puts the (today-bucketed) fx_quotes row in the future, and the planted row is at-or-before the
+		// cutoff but 8 days old, outside the 7-day lookback. Neither may serve: the legacy trades read must, via a dedicated
+		// trades row inside the window.
 		staleCutoff := cutoff.Add(-10 * 24 * time.Hour)
 		if err := store.InsertFXQuoteBatch(ctx, []timescale.FXQuote{{
 			Bucket: staleCutoff.Truncate(24 * time.Hour).Add(-8 * 24 * time.Hour),
@@ -571,31 +543,9 @@ func TestFXQuoteAtOrBeforeFXQuotesFirst(t *testing.T) {
 	})
 }
 
-// TestFXQuotesGenerationGuard_OperatorCorrectionIsDurable is the
-// proven-red test for migration 0141. fx_quotes.rate_usd is
-// the denominator of every fiat-quoted usd_volume, so its upsert needs the
-// same generation guard as every other derived money-value writer: an
-// unguarded `ON CONFLICT (ticker,bucket) DO UPDATE` is pure arrival-order
-// last-writer-wins, so an operator correction written by fx-history-backfill
-// (source='frankfurter-historical', gen>0) over a key the live worker owns
-// (source='massive', gen 0) would be silently reverted by the next daily worker
-// refresh.
-//
-// The fix threads derive_generation through InsertFXQuoteBatch and guards
-// the upsert with `fx_quotes.derive_generation <= EXCLUDED.derive_generation`.
-// This test exercises the real seam ([Store.SetDeriveGeneration] +
-// InsertFXQuoteBatch, exactly what the worker and the tool call) and
-// asserts:
-//
-//   - the operator correction (gen T>0) LANDS over the live gen-0 row (the
-//     conflict guard permits 0 <= T), AND
-//   - a subsequent live gen-0 worker refresh carrying the stale rate can
-//     NEVER revert it (T <= 0 is false) — the correction is durable.
-//
-// To reproduce the red state: revert only the InsertFXQuoteBatch upsert to
-// the unguarded `DO UPDATE SET ... source = EXCLUDED.source` (keep migration
-// 0141) and the "correction survives" assertion goes red — the gen-0 replay
-// overwrites the corrected rate.
+// fx_quotes.rate_usd is the denominator of every fiat-quoted usd_volume, so its upsert needs the generation guard
+// (migration 0141): unguarded ON CONFLICT DO UPDATE is arrival-order last-writer-wins, so a fx-history-backfill
+// correction (gen>0) over a live-worker key (gen 0) would be reverted by the next refresh.
 func TestFXQuotesGenerationGuard_OperatorCorrectionIsDurable(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -668,12 +618,8 @@ func TestFXQuotesGenerationGuard_OperatorCorrectionIsDurable(t *testing.T) {
 	}
 }
 
-// TestFXQuotes_InverseUSDIsTheExactNumericReciprocal pins ADR-0003 on
-// the fx_quotes reciprocal: inverse_usd must equal 1 / rate_usd computed
-// in NUMERIC, not the worker's float64 quotient. A rate of 3 makes the
-// two visibly diverge — the float64 reciprocal is 0.3333333333333333
-// (16 digits, then rounded), the NUMERIC one carries the division's own
-// precision — so any float-derived value fails the equality.
+// inverse_usd must equal 1 / rate_usd computed in NUMERIC (ADR-0003), not the worker's float64 quotient. A rate of 3
+// makes them visibly diverge (float64 0.3333333333333333 vs NUMERIC's own precision), so any float-derived value fails.
 func TestFXQuotes_InverseUSDIsTheExactNumericReciprocal(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -774,11 +720,9 @@ func TestLatestFXQuotes_NewestRowPerTickerInWindow(t *testing.T) {
 	}
 }
 
-// TestListingDirectory_FuturePricedAtIsNotFresh executes the listing
-// directory's price-freshness predicate on real Postgres. A `priced_at`
-// in the future sits above the 24-hour floor for as long as it stays
-// ahead of now(), so without the ceiling a frozen price stamped 2099 is
-// served as fresh — by both readers and counted by the census.
+// The listing directory's freshness predicate on real Postgres: a `priced_at` in the future stays above the 24h floor
+// while ahead of now(), so without a ceiling a frozen price stamped 2099 is served as fresh by both readers and counted
+// by the census.
 func TestListingDirectory_FuturePricedAtIsNotFresh(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -846,12 +790,9 @@ func TestListingDirectory_FuturePricedAtIsNotFresh(t *testing.T) {
 	}
 }
 
-// TestOracleUpdate_ReDeriveThatMovesIdentityDoesNotDuplicate reproduces
-// the duplicate-row bug: oracle_updates' primary key carries ts, and the reflector
-// op_index formula changed (eventFanoutStride), so a replay over pre-change
-// history writes a second row for the same observation instead of
-// correcting the first. The assertions state the CORRECT outcome (one row
-// per observation); they fail on the current schema and writer.
+// oracle_updates' PK carries ts and the reflector op_index formula changed (eventFanoutStride), so a replay over old
+// history wrote a second row per observation instead of correcting the first. Assertions state the CORRECT outcome: one
+// row per observation.
 func TestOracleUpdate_ReDeriveThatMovesIdentityDoesNotDuplicate(t *testing.T) {
 	t.Skip("GH-1328 open: the supersede design (identity lookup without a ts predicate " +
 		"across an unretained hypertable) is unresolved; remove this skip to reproduce")
@@ -918,12 +859,9 @@ const oracleLatestReferenceSQL = `
 	 WHERE asset = ANY($1) AND ($2 = '' OR source = $2)
 	 ORDER BY source, quote, ts DESC, ledger DESC`
 
-// TestLatestOracleUpdatesForAssets_NoFullSort pins the /v1/oracle/latest
-// read to a plan that does not sort every matching row. The DISTINCT ON
-// form sorted all of an asset's history (318,908 rows, a 63 MB external
-// merge, 541 ms warm on r1) to emit 7; the served shape
-// aggregates max(ts) per (source, asset, quote) — answered from the
-// compressed batches' metadata — and fetches one row per stream.
+// Pins the /v1/oracle/latest read to a plan that does not sort every matching row: the DISTINCT ON form sorted an
+// asset's whole history to emit 7 rows; the served shape aggregates max(ts) per (source, asset, quote) from compressed
+// batch metadata and fetches one row per stream.
 func TestLatestOracleUpdatesForAssets_NoFullSort(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -995,10 +933,8 @@ func TestLatestOracleUpdatesForAssets_NoFullSort(t *testing.T) {
 	}
 }
 
-// seedOracleLatestFixture writes 3 sources x 3 assets x 2 quotes at 30-min
-// cadence over 120 days (~100k rows across several chunks), plus a stream
-// that stopped 100 days ago and a cross-alias (ts) tie, then compresses
-// every chunk older than a week as the r1 policy does.
+// Writes 3 sources x 3 assets x 2 quotes at 30-min cadence over 120 days (~100k rows, several chunks), a stream stopped
+// 100 days ago and a cross-alias (ts) tie, then compresses chunks older than a week as the r1 policy does.
 func seedOracleLatestFixture(t *testing.T, ctx context.Context, db *sql.DB) {
 	t.Helper()
 	now := time.Now().UTC().Truncate(time.Hour)
@@ -1152,15 +1088,9 @@ func explainOracleLatest(t *testing.T, ctx context.Context, db *sql.DB, stmt str
 	return out
 }
 
-// TestStorage_LatestOracleUpdatesForAssets_KeepsBothLiveQuotes (Q095).
-//
-// Redstone publishes EUROC as two independent live feeds from the same
-// source: EUROC/EUR and EUROC/USD. A
-// `DISTINCT ON (source)` in LatestOracleUpdatesForAssets would collapse both
-// into one row — whichever quote had the higher (ts, ledger) silently
-// winning. This proves both survive, and that
-// `?quote=`-shaped filtering (done by the caller) can recover exactly
-// one.
+// Redstone publishes EUROC as two live feeds from one source (EUROC/EUR, EUROC/USD). A DISTINCT ON (source) would
+// collapse them, the higher (ts, ledger) silently winning. Both must survive, and the caller's `?quote=` filter can
+// recover exactly one.
 func TestStorage_LatestOracleUpdatesForAssets_KeepsBothLiveQuotes(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1234,14 +1164,9 @@ func TestStorage_LatestOracleUpdatesForAssets_KeepsBothLiveQuotes(t *testing.T) 
 	}
 }
 
-// TestStorage_OracleRawRowsConsumers is the consumer half of the oracle
-// capture-totality design against real Timescale: with a mapped row and
-// raw rows in the same window, (1) the MEV scan — the only unkeyed
-// consumer, feeding the liquidation_cascade correlator — returns the
-// mapped row only; (2) the source bespoke page counts the raw feeds
-// (totality) and surfaces them as the "Unmapped feeds" KPI; (3) the
-// unfiltered streams read still lists the raw row (the API boundary,
-// not storage, applies include_unmapped).
+// Consumer half of oracle capture-totality, with a mapped row and raw rows in one window: (1) the MEV scan, the only
+// unkeyed consumer (liquidation_cascade correlator), returns the mapped row only; (2) the source page counts raw feeds
+// and shows them as the "Unmapped feeds" KPI.
 func TestStorage_OracleRawRowsConsumers(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1323,15 +1248,8 @@ func TestStorage_OracleRawRowsConsumers(t *testing.T) {
 	}
 }
 
-// TestStorage_OracleRawRowsReadBack is the reader half of the oracle
-// capture-totality design (PR-1). Every oracle_updates reader
-// re-parses the asset column with canonical.ParseAsset; on origin/main
-// `raw:NOTACOIN` fell into the classic `<code>:<issuer>` split and the
-// keyed readers returned an error (a 500 at the API), while
-// LatestOracleStreams silently dropped the row. With the
-// canonical.AssetOracleRaw variant the row round-trips through
-// InsertOracleUpdate → SQL → ParseAsset on every reader, and stays
-// invisible to readers keyed on a MAPPED asset (safe by keying).
+// Reader half of oracle capture-totality: every oracle_updates reader re-parses the asset with canonical.ParseAsset, and
+// `raw:NOTACOIN` used to hit the `<code>:<issuer>` split (keyed readers errored, LatestOracleStreams dropped the row).
 func TestStorage_OracleRawRowsReadBack(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1463,11 +1381,9 @@ func TestStorage_OracleRawRowsReadBack(t *testing.T) {
 	}
 }
 
-// TestSweepOracleRederive pins the sweep's invariant on compressed chunks:
-// it deletes an older-generation row only when a row at the run's own
-// generation shares its identity with another ts, so it never deletes the
-// only row of an identity nor a row whose identity has no run-generation
-// twin. The decrement keeps source_entry_counts equal to the row count.
+// Sweep invariant on compressed chunks: delete an older-generation row only when a run-generation row shares its
+// identity at another ts, so the only row of an identity, or one with no run-generation twin, is never deleted. The
+// decrement keeps source_entry_counts equal to the row count.
 func TestSweepOracleRederive(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1672,13 +1588,9 @@ func assertKeys[K comparable](t *testing.T, got, want []K) {
 const oracleUpdatesComment0003 = `Every observed oracle publication, one row per (source, ledger, tx_hash, op_index). ` +
 	`Hypertable partitioned on ts. See ADR-0006.`
 
-// TestOracleUpdatesPKComment pins the catalog comment on oracle_updates
-// after migration 0176 up and down. 0003's comment claimed "one row
-// per (source, ledger, tx_hash, op_index)" — the PRIMARY KEY also carries
-// `ts`, so a decoder-ts-derivation fix that replays affected ledgers adds a
-// second row for the same publication instead of replacing the first. The
-// comment lives in pg_description, so only a real database can say what an
-// operator reads through `\d+`.
+// Pins the oracle_updates catalog comment after migration 0176 up and down: the PRIMARY KEY also carries `ts`, so a ts-
+// derivation fix replaying ledgers adds a second row rather than replacing the first. The comment lives in
+// pg_description, so only a real database shows what an operator reads through `\d+`.
 func TestOracleUpdatesPKComment(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1782,17 +1694,9 @@ func soroswapRouterRow(t *testing.T, ctx context.Context, db *sql.DB) (name, not
 	return name, n.String
 }
 
-// TestVWAPUSDFXResolver_SubstanceGate executes the valuation substance
-// gate against real TimescaleDB, with the exact tiers installed so peg
-// markets carry the volume_usd production gives them.
-//
-//   - USDX: the wash-ring shape. 0.1 USDX <-> 0.1 USDC round trips every
-//     20 min ($4.80/day) set a $1 rate, and a two-trade USDX/XLM book
-//     sets the same $1 through the bridge. Without the gate the resolver
-//     prices USDX at $1; with it, neither market clears the floor.
-//   - DEEP: 30 half-hourly $108.50 trades against USDC — clears the floor.
-//   - OLD: the same market 30 days ago and nothing since — it values a
-//     trade at its own time, held to the hour-grain floor.
+// Valuation substance gate on real TimescaleDB with the exact tiers installed so peg markets carry production
+// volume_usd. USDX (wash ring: 0.1 USDX<->USDC round trips every 20 min, plus a two-trade USDX/XLM book) must not set a
+// $1 rate; DEEP (30 half-hourly $108.50 trades vs USDC) clears the floor.
 func TestVWAPUSDFXResolver_SubstanceGate(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1906,10 +1810,8 @@ func TestVWAPUSDFXResolver_SubstanceGate(t *testing.T) {
 	}
 }
 
-// TestVWAPUSDFXResolver_QueriesPrices1m exercises the
-// production path against a real postgres: seed an EURC/USDC
-// trade, refresh prices_1m, then call USDPriceAt(EURC, now+1m) and
-// verify the resolver picks up the VWAP through the USDC peg.
+// Production path on real postgres: seed an EURC/USDC trade, refresh prices_1m, then USDPriceAt(EURC, now+1m) must pick
+// up the VWAP through the USDC peg.
 func TestVWAPUSDFXResolver_QueriesPrices1m(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1976,25 +1878,9 @@ func TestVWAPUSDFXResolver_QueriesPrices1m(t *testing.T) {
 	}
 }
 
-// TestVWAPUSDFXResolver_DustBucketDoesNotOutrankRealBucket is the
-// Postgres-semantics proof for the tier-3a dust floor (MNY-22, re-fixed
-// after the circular first attempt was reverted at 7b69cd33).
-//
-// queryDB takes the FRESHEST qualifying bucket, so a single sub-cent
-// fill landing in a newer minute than the real market sets the USD
-// valuation rate for every trade quoted in that asset for the whole
-// freshness window. Seeded here at production shape: a real 108.50-USDC
-// bucket, then five minutes later a 2-stroop/40000-stroop crumb whose
-// "price" is 20000 USDC per EURC — an artifact of dividing two tiny
-// integers, worth $0.004.
-//
-// Without the floor this returns "20000". With it the crumb is excluded and the
-// real bucket's 1.085 is served.
-//
-// The dust bucket is deliberately made of trades that DO carry
-// usd_volume semantics identical to the real one (both are NULL here —
-// see [TestVWAPUSDFXResolver_BootstrapsWithoutUSDVolume]), so this also
-// demonstrates the floor discriminates without a USD-valued column.
+// Tier-3a dust floor, Postgres semantics: queryDB takes the FRESHEST qualifying bucket, so a sub-cent fill in a newer
+// minute would set the USD rate for the whole freshness window. A real 108.50-USDC bucket, then a 2/40000-stroop crumb
+// whose "price" is 20000 USDC per EURC (dividing two tiny integers, worth $0.004)
 func TestVWAPUSDFXResolver_DustBucketDoesNotOutrankRealBucket(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -2080,18 +1966,9 @@ func TestVWAPUSDFXResolver_DustBucketDoesNotOutrankRealBucket(t *testing.T) {
 	}
 }
 
-// TestVWAPUSDFXResolver_BootstrapsWithoutUSDVolume pins the
-// non-circularity of the tier-3a dust floor, and is the regression
-// guard against re-introducing the `volume_usd` form reverted at
-// 7b69cd33.
-//
-// `trades.usd_volume` is written by the USD-resolution step, and tier
-// 3a IS that step for a pair quoted in a peg — so a floor keyed on
-// `prices_1m.volume_usd` can never be cleared by a pair the resolver
-// has not already priced. The assertion below is deliberately
-// two-sided: the seeded bucket carries volume_usd = 0 (no resolver
-// installed on this store, so every trade inserted NULL and the CAGG
-// coalesced it), AND the resolver still returns the rate.
+// Pins the non-circularity of the tier-3a dust floor: trades.usd_volume is written by the USD-resolution step that tier
+// 3a IS, so a floor keyed on prices_1m.volume_usd could never be cleared by a not-yet-priced pair. Two-sided: the bucket
+// carries volume_usd = 0 (no resolver installed, NULL coalesced by the CAGG) AND the resolver still returns the rate.
 func TestVWAPUSDFXResolver_BootstrapsWithoutUSDVolume(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -2327,21 +2204,9 @@ func ratEq(t *testing.T, got, want string) bool {
 	return ok1 && ok2 && g.Cmp(w) == 0
 }
 
-// TestXLMUSDAnchor_AliasDirectionPrecedenceAndTimeOfTrade seeds XLM/USD as a
-// timeline of single-form windows and prices one XLM-quoted asset in each,
-// on the rollup (grid anchor) and the detail query (lateral anchor):
-//
-//	N-12m   native form, both directions: 0.40 ($300) + 1/2 ($100) -> 0.425
-//	N-2m    SAC dust 0.90 ($0.50), newer than the native minute -> ignored
-//	N-3h10m crypto:XLM/fiat:USD only (CEX)                   0.30
-//	N-6h5m  (USDC-SAC, XLM-SAC) only, the inverted direction 0.20
-//	N-10h1m native 0.99 — 61 min before S's trade            -> S unpriced
-//	N-12h59 native 0.25 — 59 min before T's trade            -> T priced
-//	N-7d2h30m native 0.40, seeding the 7d grid edge for E's change.
-//
-// Every asset trades at 2 XLM (R at 4, E at 1), so price = 2 × anchor at
-// its own minute. On main, Q, R and T are unpriced (no native/USDC row),
-// native reads 0.40, and P reads 0.80.
+// Seeds XLM/USD as a timeline of single-form windows and prices one XLM-quoted asset in each, on the rollup (grid
+// anchor) and detail (lateral anchor) queries: N-12m native both directions 0.425; N-2m newer SAC dust ignored; N-3h10m
+// crypto:XLM only 0.30; N-6h5m inverted SAC pair 0.20; N-10h1m native 0.99 is 61 min before S's trade so S is unpriced.
 func TestXLMUSDAnchor_AliasDirectionPrecedenceAndTimeOfTrade(t *testing.T) {
 	f := newAnchorFixture(t)
 	const unit, cexUnit = 10_000_000, 100_000_000
@@ -2441,10 +2306,8 @@ func TestXLMUSDAnchor_AliasDirectionPrecedenceAndTimeOfTrade(t *testing.T) {
 	}
 }
 
-// TestXLMUSDAnchor_NoFreshAnchorUnpricesOnlyTheXLMArm: with XLM/USD last
-// printed 2 h ago, native and an XLM-quoted asset are unpriced while a
-// direct-USD asset keeps its price (so the zero-row prune guard is not what
-// saves it). On main all three priced, the XLM ones at the 2-hour-old rate.
+// With XLM/USD last printed 2h ago, native and an XLM-quoted asset are unpriced while a direct-USD asset keeps its price
+// (so the zero-row prune guard is not what saves it).
 func TestXLMUSDAnchor_NoFreshAnchorUnpricesOnlyTheXLMArm(t *testing.T) {
 	f := newAnchorFixture(t)
 	const unit = 10_000_000

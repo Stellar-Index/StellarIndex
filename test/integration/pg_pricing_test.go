@@ -32,20 +32,9 @@ const (
 	armSameMinuteTieContract = "CAB6MICC2WKRT372U3FRPKGGVB5R3FDJSMWSLPF2UJNJPYMBZ76RQVYE"
 )
 
-// seedArmRecencyFixture writes one market shape per way the headline
-// USD price could pick an older or one-sided observation over a newer
-// or two-sided one. XLM/USDC is a constant 0.40; every token has 7
-// decimals, so each stored vwap is the price itself.
-//
-//	staleDirect   USDC print 5 days ago at $0.10; XLM market now at
-//	              0.175 XLM = $0.07                        -> 0.07
-//	flippedUSDC   (token, USDC-SAC) 6 days ago at $1.00; USDC-SAC -> token
-//	              buys now at $2.00, stored (USDC-SAC, token) -> 2.00
-//	twoSided      one minute, both directions against USDC: 100 tokens
-//	              sold for 100 USDC and 100 bought for 300 -> 400/200 = 2.00
-//	flippedXLM    (token, XLM-SAC) 6 days ago at 1 XLM; XLM-SAC -> token
-//	              buys now at 2 XLM, and 24 h ago at 1 XLM  -> 0.80, +100 %
-//	sameMinuteTie USDC $1.00 and XLM $1.20 in the same minute -> 1.00
+// One market shape per way the headline USD price could pick an older or one-sided observation over a newer or two-sided
+// one. XLM/USDC is a constant 0.40 and every token has 7 decimals. staleDirect: USDC print 5d ago $0.10 vs XLM market
+// now $0.07 -> 0.07; flippedUSDC: stored (USDC-SAC, token) buys now at 2.00 beat 6d-old 1.00; twoSided.
 func seedArmRecencyFixture(t *testing.T, ctx context.Context, store *timescale.Store) {
 	t.Helper()
 
@@ -137,13 +126,8 @@ func seedArmRecencyFixture(t *testing.T, ctx context.Context, store *timescale.S
 	}
 }
 
-// TestAssetPrice_NewestObservationAcrossArmsAndDirections pins the
-// headline USD price on BOTH surfaces that derive it — the listing
-// rollup (asset_price_snapshot) and the detail row (GetAssetBySlug). The price
-// must come from the NEWEST observation across arms and directions: the
-// direct-USD arm must not win merely because it has ANY row in 7 days, and a
-// fresher flipped direction must beat the stored base-side one, including for
-// flippedXLM's change_24h_pct.
+// The headline USD price on BOTH surfaces that derive it (listing rollup asset_price_snapshot, detail row
+// GetAssetBySlug) must come from the NEWEST observation across arms and directions.
 func TestAssetPrice_NewestObservationAcrossArmsAndDirections(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -220,16 +204,9 @@ func TestAssetPrice_NewestObservationAcrossArmsAndDirections(t *testing.T) {
 	})
 }
 
-// Public Soroban contract ids used as fixtures. Four tokens, one per
-// decimals scale the correction has to get right:
-//
-//	decimalsNineContract     9 dp  — the scale of the token confirmed on
-//	                                 mainnet; factor 10^2
-//	decimalsEighteenContract 18 dp — factor 10^11, where rounding the RAW
-//	                                 ratio first destroys the value
-//	decimalsFiveContract     5 dp  — scales DOWN (factor 10^-2); the RWA
-//	                                 population holds 5-decimals funds
-//	decimalsSevenContract    7 dp  — never flagged; must not move at all
+// Public Soroban contract ids as fixtures, one per decimals scale the correction must get right: 9 dp (factor 10^2), 18
+// dp (10^11, where rounding the RAW ratio first destroys the value), 5 dp (scales DOWN, 10^-2; RWA funds use 5), 7 dp
+// (never flagged, must not move).
 const (
 	decimalsNineContract     = "CC2RBGYNCFBCVENIDL5BFBWPH4OUZM2UA3OD2K2N54GLMWCC4KWPVAGO"
 	decimalsEighteenContract = "CAUP7NFABXE5TJRL3FKTPMWRLC7IAXYDCTHQRFSCLR5TMGKHOOQO772J"
@@ -237,23 +214,9 @@ const (
 	decimalsSevenContract    = "CBIJBDNZNF4X35BJ4FFZWCDBSCKOP5NB4PLG4SNENRMLAPYG4P5FM6VN"
 )
 
-// seedDecimalsFixture fills a migrated store with one market per
-// fixture token, each through a DIFFERENT arm of the catalogue's price
-// chain, so a factor that is right for one arm and wrong for another
-// cannot pass:
-//
-//	nine      direct, USDC-quoted            true price  2.50 USD
-//	eighteen  XLM-SAC-quoted, base side      true price 14.00 USD
-//	five      XLM-SAC-quoted, INVERTED       true price  2.00 USD
-//	seven     direct, USDC-quoted (control)  true price  0.65 USD
-//
-// XLM/USDC is a constant 0.40. Every amount is a smallest-unit integer
-// at the token's REAL scale, which is what makes the stored prices_1m
-// ratio raw: nine trades 1000 tokens (1e12 units at 9 dp) for 2500 USDC
-// (2.5e10 units at 7 dp), so its vwap is 0.025 — a hundredth of 2.50.
-//
-// The three non-7 tokens are confirmed in nonstandard_decimals_assets
-// before the rollups run; the refresh itself is left to the caller.
+// One market per fixture token, each through a DIFFERENT arm of the catalogue's price chain, so a factor right for one
+// arm and wrong for another cannot pass: nine direct USDC-quoted 2.50; eighteen XLM-SAC-quoted base side 14.00; five
+// XLM-SAC-quoted INVERTED 2.00; seven control 0.65. XLM/USDC is a constant 0.40.
 func seedDecimalsFixture(t *testing.T, ctx context.Context, store *timescale.Store) {
 	t.Helper()
 
@@ -320,10 +283,8 @@ func seedDecimalsFixture(t *testing.T, ctx context.Context, store *timescale.Sto
 		// seven: 100 tokens for 65 USDC. Raw vwap 0.65 IS the price.
 		add("soroswap", ts, pair(seven, usdc), 1_000_000_000, 650_000_000)
 	}
-	// nine an hour ago at HALF the price, inside the change_1h window
-	// (55–65 min). Both legs of the change are raw, so the scale cancels
-	// and the percentage must read +100.00 whether or not the price
-	// itself is corrected.
+	// nine an hour ago at HALF the price, inside the change_1h window (55-65 min): both legs are raw so the scale cancels
+	// and the percentage must read +100.00 whether or not the price itself is corrected.
 	add("soroswap", now.Add(-60*time.Minute), pair(nine, usdc), 1_000_000_000_000, 12_500_000_000)
 
 	// The Soroban-venue legs carry no insert-time usd_volume; the listing
@@ -346,14 +307,9 @@ func seedDecimalsFixture(t *testing.T, ctx context.Context, store *timescale.Sto
 	}
 }
 
-// TestAssetPriceSnapshot_NormalisesNonstandardDecimals is the
-// regression for the /v1/assets LISTING price. asset_price_snapshot's
-// writer stored the RAW prices_1m ratio, so every reader of the rollup
-// — the listing spine and ContractCatalogueRows, the latter feeding the
-// RWA contract listing's market cap — published a price off by
-// 10^(7 - decimals) for a confirmed non-7-decimals token. Before the
-// a raw-ratio writer the three flagged rows below read 0.0250000000, 0.0000000001 and
-// 200.0000000000.
+// The /v1/assets LISTING price: asset_price_snapshot's writer stored the RAW prices_1m ratio, so every rollup reader
+// (listing spine and ContractCatalogueRows, which feeds the RWA market cap) was off by 10^(7 - decimals) for a confirmed
+// non-7-decimals token. The raw-ratio writer made the flagged rows read 0.0250000000, 0.0000000001 and 200.0000000000.
 func TestAssetPriceSnapshot_NormalisesNonstandardDecimals(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -440,10 +396,9 @@ func TestAssetPriceSnapshot_NormalisesNonstandardDecimals(t *testing.T) {
 		}
 	})
 
-	// The reason the WRITER may normalise here when /v1/changes may not:
-	// this rollup keeps no extreme across passes. Withdraw a confirmation
-	// and the very next pass stores the raw ratio again; restore it and
-	// the corrected price is back. Nothing from the other scale survives.
+	// The WRITER may normalise here when /v1/changes may not because this rollup keeps no extreme across passes: withdraw a
+	// confirmation and the next pass stores the raw ratio again; restore it and the corrected price is back. Nothing from
+	// the other scale survives.
 	t.Run("no residue across a flag change", func(t *testing.T) {
 		stored := func() string {
 			t.Helper()
@@ -476,19 +431,9 @@ func TestAssetPriceSnapshot_NormalisesNonstandardDecimals(t *testing.T) {
 	})
 }
 
-// TestAssetCatalogue_RoundsAfterDecimalsCorrection is the regression
-// for the catalogue reads that stay RAW and are corrected by the API: the
-// per-asset row's price_usd and the four price-history series. They
-// rounded the raw ratio to 10 places BEFORE the correction could run, so
-// an 18-decimals token worth 14 USD (raw 1.4e-10) came back as
-// 0.0000000001 — exactly 10 USD once scaled — and the API could only
-// withhold it.
-//
-// The read now rounds a confirmed token's raw ratio to 10 + k places for
-// a 10^k correction, which is the corrected price rounded to 10 places.
-// The strings asserted here are the ones the API's unit tests feed
-// normalizeCatalogueReadUSD ("0.000000000140000000000" -> 14.0000000000),
-// so the two halves are pinned to each other by value.
+// Catalogue reads that stay RAW and are corrected by the API (per-asset price_usd, four price-history series) rounded
+// the raw ratio to 10 places BEFORE the correction, so an 18-decimals token worth 14 USD (raw 1.4e-10) came back as
+// 0.0000000001, exactly 10 USD once scaled.
 func TestAssetCatalogue_RoundsAfterDecimalsCorrection(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -590,20 +535,9 @@ func TestAssetCatalogue_RoundsAfterDecimalsCorrection(t *testing.T) {
 	})
 }
 
-// TestAssetPriceUSDCQuotedOnly proves the stablecoin-proxy + SAC-alias
-// bridges in every asset_catalogue price path, via three synthetic
-// assets that each have EXACTLY ONE kind of market:
-//
-//   - ZAUD: quoted only in classic USDC (GA5Z…)  → direct USD price
-//   - ZUSC: quoted only in the USDC SAC (CCW67T…) → direct USD price
-//   - ZSAC: quoted only in the XLM SAC (CAS3J7…)  → vwap × xlm_usd
-//
-// None has a fiat:USD or plain-'native' pair, so without the XLM bridge every
-// one of them prices NULL: the direct_usd* CTEs accept only
-// quote_asset = 'fiat:USD' and the asset_vs_xlm* CTEs only 'native'.
-// Regression guard: priceless /v1/assets rows (AUDD with $344k 24h volume,
-// EURC, the *allow variants, and the Soroban-venue majority quoted in SAC
-// ids).
+// Stablecoin-proxy + SAC-alias bridges in every asset_catalogue price path, via three synthetic assets each with EXACTLY
+// ONE kind of market: ZAUD quoted only in classic USDC and ZUSC only in the USDC SAC (both direct USD), ZSAC only in the
+// XLM SAC (vwap x xlm_usd).
 func TestAssetPriceUSDCQuotedOnly(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -617,10 +551,8 @@ func TestAssetPriceUSDCQuotedOnly(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
-	// Circle's canonical USDC issuer + the two well-known SAC
-	// contract ids — must match the literals in asset_catalogue.go's
-	// stablecoin-proxy / XLM-leg IN lists (XLM SAC =
-	// canonical.XLMSacContractID).
+	// Circle's canonical USDC issuer and the two well-known SAC contract ids must match the literals in asset_catalogue.go's
+	// stablecoin-proxy / XLM-leg IN lists (XLM SAC = canonical.XLMSacContractID).
 	const (
 		usdcIssuer = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 		usdcSAC    = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
@@ -676,11 +608,9 @@ func TestAssetPriceUSDCQuotedOnly(t *testing.T) {
 		{assetID: zsacID, code: "ZSAC", issuer: zsacIssuer, slug: "ZSAC", obs: 1_000},
 	})
 
-	// Two trades per pair, 20 min apart, all inside every query's
-	// "now" window. The freshest bucket must win each direct pick.
-	// XLM/USDC (classic) at a constant 0.40 seeds the xlm_usd CTEs so
-	// the ZSAC triangulation has a USD leg — NO plain-'native' and NO
-	// fiat:USD rows exist for any of the three assets under test.
+	// Two trades per pair, 20 min apart, inside every query's "now" window; the freshest bucket must win each direct pick.
+	// XLM/USDC (classic) at a constant 0.40 seeds the xlm_usd CTEs so ZSAC triangulation has a USD leg; no plain-'native' or
+	// fiat:USD rows exist.
 	now := time.Now().UTC().Truncate(time.Minute)
 	early, late := now.Add(-30*time.Minute), now.Add(-10*time.Minute)
 	trades := []canonical.Trade{
@@ -713,20 +643,15 @@ func TestAssetPriceUSDCQuotedOnly(t *testing.T) {
 		`CALL refresh_continuous_aggregate('prices_1m', NULL, NULL)`); err != nil {
 		t.Fatalf("refresh prices_1m: %v", err)
 	}
-	// The LISTING's price column now comes from asset_price_snapshot
-	// (migration 0154) rather than from twelve per-request
-	// prices_1m CTEs, so refreshing the cagg alone leaves the listing
-	// arm of this test unpriced. The single-asset arm still reads
-	// prices_1m live and is unaffected — which is exactly the split
-	// this refresh keeps honest.
+	// The LISTING price comes from asset_price_snapshot (migration 0154), not per-request prices_1m CTEs, so refreshing the
+	// cagg alone leaves the listing arm unpriced; the single-asset arm still reads prices_1m live, and this refresh keeps
+	// that split honest.
 	if err := store.RefreshAssetListingRollups(ctx); err != nil {
 		t.Fatalf("RefreshAssetListingRollups: %v", err)
 	}
 
-	// Expected price_usd per asset: {latest, earlier} — trades may
-	// straddle an hour/day boundary depending on when the test runs,
-	// so series checks accept either seeded print but require the
-	// LATEST non-null point to be the fresh one.
+	// Expected price_usd per asset is {latest, earlier}: trades may straddle an hour/day boundary depending on when the test
+	// runs, so series checks accept either seeded print but require the LATEST non-null point to be the fresh one.
 	cases := []struct {
 		name, assetID, slug, wantLatest, wantEarly string
 	}{
@@ -838,17 +763,9 @@ func TestAssetPriceUSDCQuotedOnly(t *testing.T) {
 	})
 }
 
-// TestTimedVWAPsForPair1m_NotionalFloor pins that the anomaly baseline's
-// series carries each minute's USD notional across both stored directions,
-// and that the refresher's USD-volume bars over it on real Postgres keep
-// penny-authored minutes from buying baseline points. All amounts 1e7.
-//
-//	m0  one $20 fill                                   → $20
-//	m1  one $0.001 dust fill                           → $0.001
-//	m2  one unpriced fill (usd_volume NULL)            → nil
-//	m3  $0.001 dust beside a $20 fill                  → $20.001
-//	m4  $0.001 dust stored; $20 fill stored flipped    → $20.001
-//	m5..m64  sixty $0.01 self-trade minutes            → $0.01 each
+// The anomaly baseline's series carries each minute's USD notional across both stored directions, and the refresher's
+// USD-volume bars over it keep penny-authored minutes from buying baseline points. Amounts 1e7: m0 one $20 fill -> $20;
+// m1 $0.001 dust -> $0.001; m2 unpriced (usd_volume NULL) -> nil; m3 dust beside $20 -> $20.001.
 func TestTimedVWAPsForPair1m_NotionalFloor(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -934,12 +851,9 @@ func TestTimedVWAPsForPair1m_NotionalFloor(t *testing.T) {
 		}
 	}
 
-	// The production refresher, floor as wired on defaults, over the same
-	// rows: THIN's three real minutes are three points (N=2) and its sixty
-	// pennies ($0.60) never make a point; a pair of nothing but pennies has
-	// too little flow for bars and keeps main's per-minute stats (59 returns,
-	// under the density clamp); the all-unpriced pair keeps one under
-	// ok_unvalued.
+	// Production refresher with the floor as wired on defaults: THIN's three real minutes are three points (N=2) and its
+	// sixty pennies ($0.60) never make a point; a pennies-only pair has too little flow for bars and keeps per-minute stats
+	// (59 returns, under the density clamp); the all-unpriced pair keeps one under ok_unvalued.
 	sink := &captureBaselineSink{}
 	r := baseline.NewRefresher(store, sink, baseline.DefaultWindow, nil).
 		WithMinuteNotionalFloor(baseline.MinuteNotionalFloor(10_000, 24*time.Hour))
@@ -971,18 +885,9 @@ func (s *captureBaselineSink) UpsertBaseline(_ context.Context, _ canonical.Pair
 	return nil
 }
 
-// TestBaselineStorageRoundTrip exercises UpsertBaseline → LatestBaseline
-// against a real TimescaleDB with the volatility_baseline_1m migration
-// applied (including 0008's multi-window columns). Confirms:
-//
-//   - Empty-table read returns ErrBaselineNotFound
-//   - Upsert + LatestBaseline round-trips a full multi-window struct
-//   - Partial baselines (Day1/Day7 nil) round-trip with the
-//     nullable columns
-//   - Re-upsert overwrites (current-state semantics)
-//   - Pre-flight checks (Day30 nil, N < MinSamples, window-validity)
-//     reject before touching the DB
-//   - Distinct pairs are isolated
+// UpsertBaseline -> LatestBaseline on real TimescaleDB with volatility_baseline_1m (incl. 0008's multi-window columns):
+// an empty table returns ErrBaselineNotFound; a full multi-window struct round-trips, as do partial baselines (Day1/Day7
+// nil); re-upsert overwrites.
 func TestBaselineStorageRoundTrip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1119,13 +1024,9 @@ func TestBaselineStorageRoundTrip(t *testing.T) {
 	}
 }
 
-// TestClosedVWAP1mAtOrBefore_ExecutesAgainstTimescale runs the statement
-// behind /v1/assets/{id}'s change_24h_pct against the real schema. The
-// scripted-driver tests pin its shape but never parse it; a parameter
-// bound untyped beside `- INTERVAL '1 minute'` is resolved by Postgres
-// as an interval, and the statement then fails with 42883 on every
-// call while the caller turns the error into an absent field. An empty
-// table must therefore yield sql.ErrNoRows — not a planning error.
+// Runs the statement behind /v1/assets/{id}'s change_24h_pct against the real schema; scripted-driver tests never parse
+// it. A parameter bound untyped beside `- INTERVAL '1 minute'` resolves as an interval and fails with 42883 on every
+// call while the caller hides the error as an absent field.
 func TestClosedVWAP1mAtOrBefore_ExecutesAgainstTimescale(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -1147,16 +1048,9 @@ func TestClosedVWAP1mAtOrBefore_ExecutesAgainstTimescale(t *testing.T) {
 	}
 }
 
-// TestTimedVWAPs1mForChangeSummary_ExcludesTheOpenBucket runs the
-// /v1/changes source read against the real prices_1m CAGG.
-// The worker passes its wall clock as `to`, and `bucket < to` admitted the
-// minute that clock sits inside: a fat-finger print there became
-// current_value and, through the upsert's GREATEST/LEAST, the stored
-// ath/atl for good.
-//
-// Deterministic on purpose: both buckets are minutes in the past and `to`
-// is placed 30 s into the later one, so the later bucket is "in progress"
-// relative to the caller without racing the real clock's minute edge.
+// The /v1/changes source read on the real prices_1m CAGG must exclude the open bucket: the worker passes its wall clock
+// as `to`, and `bucket < to` admitted the minute that clock sits in, so a fat-finger print there became current_value
+// and, via GREATEST/LEAST, the stored ath/atl. Deterministic.
 func TestTimedVWAPs1mForChangeSummary_ExcludesTheOpenBucket(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -1277,11 +1171,8 @@ func TestDeleteChangeSummary_ClearsRatchetedExtremes(t *testing.T) {
 	}
 }
 
-// TestClosedVWAP1mCombinedBefore_AnchorsAtTheInstant executes the
-// point-in-time guard's baseline read against the real schema: it must
-// return the buckets immediately BEFORE the anchor (never the anchor's own
-// bucket, never newer ones), newest-first, with a flipped-only bucket
-// combined into the requested orientation.
+// The point-in-time guard's baseline read must return the buckets immediately BEFORE the anchor (never its own bucket or
+// newer ones), newest-first, with a flipped-only bucket combined into the requested orientation.
 func TestClosedVWAP1mCombinedBefore_AnchorsAtTheInstant(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1345,23 +1236,9 @@ func TestClosedVWAP1mCombinedBefore_AnchorsAtTheInstant(t *testing.T) {
 	}
 }
 
-// TestLatestClosedVWAP1m_RecentExistenceGate exercises the recent-existence
-// gate for the empty-alias latency case. The
-// /v1/price handler reads native/fiat:USD as an alias on every XLM query,
-// and that synthetic pair has ZERO rows; without the gate, each such read
-// ran a max() over ~400 days of prices_1m chunks to conclude "no rows"
-// (minutes cold), timing out before the fast crypto:XLM/fiat:USD alias was
-// tried. The gate makes the empty/quiet case an O(recent-chunks) probe
-// that returns sql.ErrNoRows, while a live pair still returns its latest
-// closed bucket combining BOTH stored directions.
-//
-// Three cases, one fixture:
-//   - empty pair (native/fiat:USD, no rows) → sql.ErrNoRows,
-//   - quiet pair whose only bucket predates the gate window → sql.ErrNoRows
-//     (proving the GATE, not just "no rows", bounds the horizon: the
-//     ~400-day value walk WOULD have found this bucket),
-//   - live pair with a recent flipped-only latest bucket → the combined,
-//     inverted VWAP (both directions), NOT a miss.
+// Recent-existence gate for the empty-alias latency case: /v1/price reads native/fiat:USD as an alias on every XLM query
+// and that synthetic pair has ZERO rows; without the gate each read ran max() over ~400 days of prices_1m chunks
+// (minutes cold) and timed out before the fast crypto:XLM alias was tried.
 func TestLatestClosedVWAP1m_RecentExistenceGate(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1393,11 +1270,9 @@ func TestLatestClosedVWAP1m_RecentExistenceGate(t *testing.T) {
 	xlmAQUA, _ := canonical.NewPair(canonical.NativeAsset(), aqua)
 	xlmUSD, _ := canonical.NewPair(canonical.NativeAsset(), fiatUSD) // never traded — the incident pair
 
-	// Live pair: two recent closed buckets ~2h back. The LATEST bucket
-	// stores ONLY the flipped direction (2.0 XLM/USDC = 0.5 USDC/XLM once
-	// inverted), so a one-direction read would either miss it or return the
-	// older direct bucket — the combine + inversion is what makes the
-	// answer correct.
+	// Live pair: two recent closed buckets ~2h back; the LATEST stores ONLY the flipped direction (2.0 XLM/USDC = 0.5
+	// USDC/XLM inverted), so a one-direction read would miss it or return the older direct bucket; combine + inversion makes
+	// the answer correct.
 	recent := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Minute)
 	// Quiet pair: a single closed bucket 30 days back — inside the ~400-day
 	// value window but OUTSIDE the 14-day gate window.
@@ -1423,10 +1298,8 @@ func TestLatestClosedVWAP1m_RecentExistenceGate(t *testing.T) {
 		t.Errorf("empty pair native/fiat:USD: err = %v, want sql.ErrNoRows", err)
 	}
 
-	// ── quiet pair (bucket older than the gate window) → ErrNoRows ─────
-	// This is the load-bearing gate assertion: the bucket exists 30d back,
-	// so the ~400-day value walk WOULD return it; the gate is what makes
-	// the read fall through to the handler's last-trade fallback instead.
+	// Quiet pair (bucket older than the gate window) -> ErrNoRows. Load-bearing: the bucket exists 30d back so the ~400-day
+	// walk WOULD return it; the gate makes the read fall through to the handler's last-trade fallback.
 	if _, err := store.LatestClosedVWAP1mForPair(ctx, xlmAQUA); !errors.Is(err, sql.ErrNoRows) {
 		t.Errorf("quiet pair native/AQUA (bucket 30d old, gate window 14d): err = %v, want sql.ErrNoRows", err)
 	}
@@ -1446,19 +1319,9 @@ func TestLatestClosedVWAP1m_RecentExistenceGate(t *testing.T) {
 	}
 }
 
-// TestStoreMonthlyUSDVWAPs_FoldsAliasSpellingsPerMonth executes the
-// cohort pages' "USD then" price read against real TimescaleDB: trades in
-// two months, XLM spelled BOTH ways ('native' and 'crypto:XLM') against
-// two USD proxies (USDC and fiat:USD), a second classic asset, an
-// XLM-quoted (non-USD) market that must not count, and a month before
-// the range that must not be read.
-//
-// The served row per (asset, month) is Σ quote / Σ base over EVERY
-// folded row in WHOLE units — the union market's VWAP — so May's XLM
-// price is (10 + 60 + 25) / (100 + 300 + 100) = 0.19, not the mean of
-// 0.1, 0.2 and 0.25 (0.1833…), not either spelling's own figure, and not
-// the 0.2098 that weighting by raw stored volume gives: the crypto:XLM
-// trades are stored at the CEX feeds' 10^8, the native one in stroops.
+// The cohort pages' "USD then" read on real TimescaleDB: trades in two months, XLM spelled both ways against two USD
+// proxies (USDC and fiat:USD), a second classic asset, an XLM-quoted market that must not count, and a month before the
+// range that must not be read.
 func TestStoreMonthlyUSDVWAPs_FoldsAliasSpellingsPerMonth(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1580,30 +1443,9 @@ func TestStoreMonthlyUSDVWAPs_FoldsAliasSpellingsPerMonth(t *testing.T) {
 	}
 }
 
-// TestObservationIntraLedgerSeqGuard is the proven-red test for the
-// 8-worker last-writer-wins bug (migration 0111): the
-// PersistEvents workers (PersistWorkers=8) do NOT preserve order, and the
-// `*_observations` writers upsert with pure last-writer-wins. So when a
-// single (contract/holder, asset, ledger) changes MULTIPLE times within one
-// ledger, whichever worker commits LAST wins — which is NOT necessarily the
-// FINAL intra-ledger state. A stale intra-ledger balance could be persisted
-// as the observation for that ledger → a wrong classic-supply component (the
-// served supply the operator keeps re-backfilling).
-//
-// The fix stamps each observation with its within-ledger position
-// (intra_ledger_seq) and guards the upsert
-// (intra_ledger_seq <= EXCLUDED.intra_ledger_seq) so an EARLIER intra-ledger
-// change delivered LATE by an out-of-order worker can never overwrite the
-// FINAL change.
-//
-// Proven-red evidence, all on ONE live container:
-//   - "unguarded_last_writer_wins_reproduces_bug" runs the EXACT unguarded SQL
-//     (a plain ON CONFLICT DO UPDATE with no seq guard) and shows the STALE
-//     (earlier) value wins when it commits last — the bug, reproduced.
-//   - "guarded_writer_keeps_final" runs the REAL fixed writer with the SAME
-//     out-of-order sequence and shows the FINAL value wins. This assertion
-//     FAILS on an unguarded writer (no column / no guard → the stale late
-//     write wins), so it is red-on-unfixed and green-after-fix.
+// 8-worker last-writer-wins bug (migration 0111): PersistEvents workers do NOT preserve order and `*_observations`
+// writers upsert last-writer-wins, so when one (contract/holder, asset, ledger) changes several times in a ledger, the
+// LAST commit wins, not necessarily the FINAL intra-ledger state, persisting a wrong classic-supply component.
 func TestObservationIntraLedgerSeqGuard(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1617,10 +1459,8 @@ func TestObservationIntraLedgerSeqGuard(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
-	// One fixed instant so both writes share the (…, ledger, observed_at)
-	// primary key — a conflict on the SAME row, exactly as the live path
-	// produces for two changes to one entry in one ledger (observed_at is the
-	// ledger close time, identical for every change in the ledger).
+	// One fixed instant so both writes share the (..., ledger, observed_at) primary key and conflict on the SAME row, as the
+	// live path does (observed_at is the ledger close time, identical for every change in the ledger).
 	observedAt := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
 	const (
 		assetKey   = "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
@@ -1656,20 +1496,16 @@ func TestObservationIntraLedgerSeqGuard(t *testing.T) {
 		}
 	}
 
-	// ── The unguarded behaviour, reproduced live ────────────────────────────
-	// Raw unguarded last-writer-wins (the writer without the seq guard), writing the
-	// FINAL change first and the EARLIER change last (an out-of-order worker):
-	// the stale earlier value overwrites the final. This is the bug.
+	// Unguarded behaviour reproduced: raw last-writer-wins writing the FINAL change first and the EARLIER last (an out-of-
+	// order worker) lets the stale earlier value overwrite the final. This is the bug.
 	t.Run("unguarded_last_writer_wins_reproduces_bug", func(t *testing.T) {
 		const (
 			contractID = "CBUNGUARDEDSACWRAPPERCONTRACTID000000000000000000000000"
 			holder     = "GHOLDERUNGUARDEDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 		)
 		unguardedUpsert := func(bal int64, seq uint32) {
-			// Byte-for-byte the pre-0111 writer: value columns overwritten on
-			// conflict with NO intra_ledger_seq guard. (We still populate the
-			// column so the row is valid post-migration; the point is the
-			// MISSING WHERE clause.)
+			// The pre-0111 writer: value columns overwritten on conflict with NO intra_ledger_seq guard. The column is still
+			// populated so the row is valid post-migration; the point is the MISSING WHERE clause.
 			const q = `
                 INSERT INTO sac_balance_observations (
                     contract_id, asset_key, holder, ledger, observed_at,
@@ -1700,10 +1536,8 @@ func TestObservationIntraLedgerSeqGuard(t *testing.T) {
 			"(final was %d) — the bug the guard fixes", finalValue)
 	})
 
-	// ── The fix ───────────────────────────────────────────────────────────
-	// The REAL guarded writer, SAME out-of-order sequence: FINAL first, then
-	// the EARLIER change last. The guard rejects the late earlier write, so
-	// the FINAL value survives. Red-on-unfixed (no column/guard → stale wins).
+	// The REAL guarded writer with the SAME out-of-order sequence (FINAL first, EARLIER last): the guard rejects the late
+	// earlier write, so the FINAL value survives. Red on an unfixed writer.
 	t.Run("guarded_writer_keeps_final_when_earlier_change_commits_last", func(t *testing.T) {
 		const (
 			contractID = "CBGUARDEDSACWRAPPERCONTRACTID000000000000000000000000000"
@@ -1733,10 +1567,8 @@ func TestObservationIntraLedgerSeqGuard(t *testing.T) {
 		}
 	})
 
-	// The ops seed sentinel (SeedIntraLedgerSeq = MaxUint32) is the top of the
-	// intra-ledger order: a live per-ledger change (a much smaller position)
-	// can never overwrite a seed, and a re-seed (equal sentinel) stays
-	// corrective. This is what keeps the seed authoritative AND correctable.
+	// The ops seed sentinel (SeedIntraLedgerSeq = MaxUint32) tops the intra-ledger order: a live change can never overwrite
+	// a seed and a re-seed (equal sentinel) stays corrective, keeping the seed authoritative AND correctable.
 	t.Run("seed_sentinel_wins_over_live_and_reseed_is_corrective", func(t *testing.T) {
 		const (
 			contractID = "CBSEEDSACWRAPPERCONTRACTID0000000000000000000000000000000"
@@ -1755,22 +1587,9 @@ func TestObservationIntraLedgerSeqGuard(t *testing.T) {
 		}
 	})
 
-	// ── Walk-version renumbering boundary ────────────────────────────────
-	//
-	// intra_ledger_seq is PERSISTED and compared ACROSS BINARY VERSIONS by
-	// this guard, but it is only meaningful within one walk version
-	// (dispatcher.EntryWalkVersion). Walk version 2 renumbered every ledger:
-	// the v1 per-tx walk gave an account's ledger-final balance a HIGH
-	// position (a fee-phase change that sorted last — the corruption); the v2
-	// ledger-wide walk correctly places that same final balance LOWER.
-	//
-	// When both rows carry the SAME walk_version (a renumbering shipped
-	// without bumping EntryWalkVersion), replaying the changes under the new
-	// binary is SILENTLY DISCARDED by `legacy_seq <= corrected_seq` = false,
-	// and re-running never helps because the walk is deterministic. This
-	// subtest pins BOTH halves: the trap, and the repair path migration 0120
-	// names (reconstruct-final-then-seed at SeedIntraLedgerSeq). A bumped
-	// version is covered by the walk_version subtests below.
+	// Walk-version renumbering boundary: intra_ledger_seq is PERSISTED and compared ACROSS binary versions but only
+	// meaningful within one walk version (dispatcher.EntryWalkVersion). Walk v2 renumbered every ledger: v1 gave a ledger-
+	// final balance a HIGH position (a fee-phase change sorting last), v2 places it LOWER.
 	t.Run("walk_version_renumbering_strands_replay_but_seed_repairs", func(t *testing.T) {
 		const (
 			contractID = "CBRENUMBERSACWRAPPERCONTRACTID00000000000000000000000000"
@@ -1796,10 +1615,8 @@ func TestObservationIntraLedgerSeqGuard(t *testing.T) {
 				"change the outcome (the walk is deterministic)", bal)
 		}
 
-		// THE REPAIR PATH (migration 0120): reconstruct the FINAL per-(key,
-		// ledger) state from the repaired lake and write ONE row at the
-		// sentinel. `<=` always admits MaxUint32, so the correction lands
-		// regardless of what the legacy row carries.
+		// Repair path (migration 0120): reconstruct the FINAL per-(key, ledger) state from the repaired lake and write ONE row
+		// at the sentinel; `<=` always admits MaxUint32, so the correction lands regardless of the legacy row.
 		writeSAC(t, contractID, holder, correct, timescale.SeedIntraLedgerSeq)
 		if bal, seq := readSAC(t, contractID, holder); bal != "250" || seq != int64(timescale.SeedIntraLedgerSeq) {
 			t.Fatalf("reconstruct-final-then-seed: balance = %s (seq %d), want the CORRECTED "+
@@ -1813,10 +1630,9 @@ func TestObservationIntraLedgerSeqGuard(t *testing.T) {
 		}
 	})
 
-	// walk_version (migration 0199) scopes the comparison: a row numbered by
-	// an older walk — or by a binary that did not record one (0) — is replaced
-	// by the current writer's correction even at a lower position, and the
-	// within-walk guard still holds afterwards.
+	// walk_version (migration 0199) scopes the comparison: a row numbered by an older walk, or by a binary that recorded
+	// none (0), is replaced by the current writer's correction even at a lower position, and the within-walk guard still
+	// holds afterwards.
 	t.Run("older_walk_version_row_yields_to_current_walk_correction", func(t *testing.T) {
 		const (
 			holder    = "GHOLDERWALKVERSIONAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
@@ -1867,10 +1683,8 @@ func TestObservationIntraLedgerSeqGuard(t *testing.T) {
 		}
 	})
 
-	// The other four writers carry their own copy of the guard. Each seeds a
-	// row the way the previous binary writes it (no walk_version → 0) at a
-	// higher position, then the real writer's lower-position correction must
-	// replace it.
+	// The other four writers carry their own copy of the guard: each seeds a row as the previous binary writes it
+	// (walk_version 0) at a higher position, and the real writer's lower-position correction must replace it.
 	t.Run("every_writer_replaces_an_unrecorded_walk_row", func(t *testing.T) {
 		const legacyID = "GWALKVERSIONLEGACYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 		for _, tc := range []struct {
@@ -2042,22 +1856,9 @@ func TestObservationIntraLedgerSeqGuard(t *testing.T) {
 	})
 }
 
-// Dust trades set OHLC chart extremes
-// (docs/operations/finding-dust-trades-set-chart-extremes.md).
-//
-// Without a size filter on the prices_* continuous aggregates' OHLC extremes,
-// one economically-meaningless fill sets high/low for the whole bucket.
-// Example: the served XLM/USD low was 0.1333333333 — the inverse of a SINGLE
-// `USDC-GA5Z…/native` print of 2 stroops for 15 stroops (usd_volume
-// $0.00000027, price 7.5), while the real market low that hour was 0.1822.
-//
-// Migration 0115 adds a notional floor ($0.01 of usd_volume) to the extremes
-// inside the CAGGs — it must be there, not in the serve layer, because the
-// CAGG stores only the already-collapsed extremes.
-//
-// These tests seed the EXACT production shape (a 2↔15-stroop crumb inside an
-// otherwise healthy bucket, stored in the REVERSE direction so the serve layer
-// inverts it) and assert the corrected numbers, on a real TimescaleDB.
+// Dust trades must not set OHLC chart extremes. Without a size filter in the prices_* CAGG extremes one meaningless fill
+// sets the bucket's high/low (served XLM/USD low 0.1333333333 was the inverse of a SINGLE 2-for-15-stroop print worth
+// $0.00000027, real low 0.1822).
 
 // ohlcDustPair identifies one seeded scenario pair.
 type ohlcDustPair struct {
@@ -2080,17 +1881,9 @@ const (
 	unpricedAsset = "NUSD-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 )
 
-// TestOHLCDustFloor_CAGGExtremes proves migration 0115's notional floor on all
-// seven price CAGGs, across the four cases the fix has to get right:
-//
-//	A. mixed bucket   — dust must NOT set high/low/open/close; the normal
-//	                    trades must; volume + trade_count keep ALL trades.
-//	B. all-dust       — a bucket with only dust must still report an extreme
-//	                    (the COALESCE fallback), never NULL.
-//	C. legit whale    — a large trade far from VWAP is a REAL market event and
-//	                    must be KEPT (we filter on SIZE, never on price
-//	                    distance — see the finding's operator DECISION).
-//	D. NULL usd_volume — an unpriced pair keeps today's unfiltered behaviour.
+// Migration 0115's notional floor on all seven price CAGGs: A. mixed bucket, dust must NOT set high/low/open/close but
+// normal trades must, and volume + trade_count keep ALL trades; B. all-dust bucket still reports an extreme (COALESCE
+// fallback), never NULL; C. legit whale far from VWAP is KEPT (filter on SIZE, never price distance); D.
 func TestOHLCDustFloor_CAGGExtremes(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -2109,10 +1902,8 @@ func TestOHLCDustFloor_CAGGExtremes(t *testing.T) {
 	// grain buckets the same instant.
 	t0 := time.Now().UTC().Add(-3 * time.Hour).Truncate(time.Hour)
 
-	// ── A. the production shape ────────────────────────────────────────
-	// Stored REVERSE (base=USDC, quote=native), exactly as the SDEX decoder
-	// recorded the offending trade: price = XLM per USDC ≈ 5.4875, which the
-	// serve layer inverts to XLM/USD ≈ 0.1822.
+	// A. production shape: stored REVERSE (base=USDC, quote=native) as the SDEX decoder recorded the offending trade; price
+	// = XLM per USDC ~5.4875, which the serve layer inverts to XLM/USD ~0.1822.
 	mixed := ohlcDustPair{base: usdcIssuer, quote: "native"}
 	seed(t, db, ctx, mixed, []seedTrade{
 		// The crumb: 2 stroops for 15 stroops → price 7.5, $0.00000027.
@@ -2183,34 +1974,25 @@ func TestOHLCDustFloor_CAGGExtremes(t *testing.T) {
 
 		t.Run("whale/"+grain, func(t *testing.T) {
 			got := readCAGG(t, db, ctx, grain, whale, t0)
-			// A $100k fill at 8.0 (≈1.46× VWAP) is a real market event and
-			// MUST show. This is what the removed 2×-VWAP serve-layer band
-			// could have clipped, and what a "drop prices far from VWAP"
-			// filter would wrongly suppress.
+			// A $100k fill at 8.0 (~1.46x VWAP) is a real market event and MUST show; a 2x-VWAP band or "drop prices far from VWAP"
+			// filter would clip it.
 			assertNumeric(t, "high_price", got.high, "8.0")
 			assertNumeric(t, "low_price", got.low, "2.0")
 		})
 
 		t.Run("unpriced/"+grain, func(t *testing.T) {
 			got := readCAGG(t, db, ctx, grain, unpriced, t0)
-			// usd_volume IS NULL never satisfies `>= 0.01`, so an entirely
-			// unpriced bucket falls through the COALESCE to the unfiltered
-			// extreme — today's behaviour, deliberately unchanged (finding
-			// open question 2: unpriced pairs keep current behaviour).
+			// usd_volume IS NULL never satisfies `>= 0.01`, so a wholly unpriced bucket falls through the COALESCE to the unfiltered
+			// extreme, deliberately unchanged: unpriced pairs keep current behaviour.
 			assertNumeric(t, "high_price", got.high, "7.5")
 			assertNumeric(t, "low_price", got.low, "5.4875")
 		})
 	}
 }
 
-// TestOHLCDustFloor_ServedSeriesReproducesTheWick is the end-to-end
-// reproduction of the reported symptom through the real serve query
-// (Store.OHLCSeries — the non-fiat `?interval=` path): the crumb is stored in
-// the REVERSE direction, so `1/high_price` becomes the served LOW.
-//
-// Without the floor this bar serves low = 0.1333333333 (1/7.5) and high = 1000
-// (1/0.001); with it, the real market range, low 0.1822 / high 0.1845 —
-// matching the CEX range (0.1822–0.1836) measured for the same bar.
+// End-to-end through the real serve query (Store.OHLCSeries, the non-fiat `?interval=` path): the crumb is stored in the
+// REVERSE direction, so `1/high_price` becomes the served LOW. Without the floor the bar serves low 0.1333333333 / high
+// 1000; with it, the real range 0.1822 / 0.1845, matching the CEX range (0.1822-0.1836) for the same bar.
 func TestOHLCDustFloor_ServedSeriesReproducesTheWick(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -2392,11 +2174,8 @@ func absFloat(f float64) float64 {
 	return f
 }
 
-// timescaleBucketOrigin is time_bucket's default origin: Monday
-// 2000-01-03 00:00 UTC. Every fixed-width bucket Timescale produces
-// is origin + k×width, which is why 1w and 2w buckets start on
-// Mondays and 3d buckets sit on a 3-day grid anchored there rather
-// than at any particular month.
+// time_bucket's default origin is Monday 2000-01-03 00:00 UTC; every fixed-width bucket is origin + k*width, so 1w and
+// 2w buckets start on Mondays and 3d buckets sit on a 3-day grid anchored there, not at a month.
 var timescaleBucketOrigin = time.Date(2000, 1, 3, 0, 0, 0, 0, time.UTC)
 
 // timeBucket mirrors Postgres time_bucket(width, ts) for the fixed
@@ -2429,16 +2208,9 @@ func foldWidth(t *testing.T, lit string) time.Duration {
 	return time.Duration(n) * u
 }
 
-// TestOHLCFoldIntervals_ExecuteAgainstTheirSourceView runs every folded
-// /v1/ohlc route ([timescale.OHLCRoutes]) through OHLCSeriesReBucketed
-// against a real TimescaleDB and checks the fold's arithmetic and
-// alignment against trades placed by hand. 2h, 12h, 3d and 2w never
-// had no coverage before this test: their literals
-// were routed but not allow-listed, so the store refused them before
-// composing SQL and the API answered 500. A fold
-// literal that Postgres would not accept, or a bucket that does not
-// land where the API promises (`t` aligned to UTC interval
-// boundaries, weeks on Monday), fails here rather than at the edge.
+// Every folded /v1/ohlc route ([timescale.OHLCRoutes]) through OHLCSeriesReBucketed on real TimescaleDB, checking the
+// fold's arithmetic and alignment against hand-placed trades. 2h, 12h, 3d and 2w were routed but not allow-listed, so
+// the store refused them and the API answered 500.
 func TestOHLCFoldIntervals_ExecuteAgainstTheirSourceView(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -2458,10 +2230,8 @@ func TestOHLCFoldIntervals_ExecuteAgainstTheirSourceView(t *testing.T) {
 	}
 	pair, _ := canonical.NewPair(canonical.NativeAsset(), usdc)
 
-	// The window is one 2-week bucket, anchored on a 2w boundary at
-	// least six weeks back so the widest fold's bucket is closed under
-	// the ADR-0015 guard (bucket + width <= now()). Every narrower
-	// fold's grid nests inside it.
+	// The window is one 2-week bucket anchored on a 2w boundary at least six weeks back, so the widest fold's bucket is
+	// closed under the ADR-0015 guard (bucket + width <= now()); every narrower fold's grid nests inside it.
 	const window = 14 * 24 * time.Hour
 	t0 := timeBucket(window, time.Now().UTC().Add(-6*7*24*time.Hour))
 	if t0.Weekday() != time.Monday {
@@ -2515,10 +2285,8 @@ func TestOHLCFoldIntervals_ExecuteAgainstTheirSourceView(t *testing.T) {
 				t.Fatalf("OHLCSeriesReBucketed(%s, %q): %v", route.Source, route.Fold, err)
 			}
 
-			// Expectation: group the seeds by the fold's bucket, in
-			// time order, and roll each group up the way the query
-			// documents (open = first, close = last, high/low = extremes,
-			// volumes = sums, n = count).
+			// Expectation: group the seeds by the fold's bucket in time order and roll up as the query documents (open = first,
+			// close = last, high/low = extremes, volumes = sums, n = count).
 			type expect struct {
 				open, high, low, close float64
 				quote, n               int64
@@ -2579,13 +2347,9 @@ func TestOHLCFoldIntervals_ExecuteAgainstTheirSourceView(t *testing.T) {
 	t.Logf("executed %d of %d folded routes against TimescaleDB", executed, executed)
 }
 
-// TestOHLCRebuiltVolumeIsTheIntegerSum executes both OHLC readers over a
-// bucket whose volume legs have to be rebuilt from vwap·volume in both
-// stored directions, with a vwap (1/3) that NUMERIC division cannot
-// represent exactly. PostgreSQL stores 1e6/3e6 as 0.33333333333333333333,
-// so the bare product serves 999999.99999999999999000000 where the trades
-// sum to exactly 1000000. Volumes are integer smallest-unit sums; the
-// served value must be the integer.
+// Both OHLC readers over a bucket whose volume legs are rebuilt from vwap*volume in both directions, with a vwap (1/3)
+// NUMERIC division cannot represent: the bare product serves 999999.99999999999999000000 where trades sum to exactly
+// 1000000. Volumes are integer smallest-unit sums, so the served value must be the integer.
 func TestOHLCRebuiltVolumeIsTheIntegerSum(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -2650,15 +2414,8 @@ func TestOHLCRebuiltVolumeIsTheIntegerSum(t *testing.T) {
 	}
 }
 
-// TestOHLCSeries_LimitKeepsNewestBucketsInWideWindow pins that an
-// explicit window wider than `limit` intervals must serve the NEWEST
-// `limit` buckets, not the oldest. The previous query ended `ORDER BY
-// bucket ASC` and then applied `LIMIT`, so a wide window silently
-// returned a stale slice starting at `from` and never reaching `to` —
-// exactly backwards from what a chart client sizing `limit` down for a
-// wide window expects. Runs against a real TimescaleDB because the
-// defect is in the SQL's ORDER BY/LIMIT interaction, not reproducible
-// against a scripted driver that ignores the query text.
+// An explicit window wider than `limit` intervals must serve the NEWEST `limit` buckets, not the oldest: ORDER BY bucket
+// ASC then LIMIT returned a stale slice starting at `from`, backwards for a chart client sizing `limit` down.
 func TestOHLCSeries_LimitKeepsNewestBucketsInWideWindow(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -2681,11 +2438,9 @@ func TestOHLCSeries_LimitKeepsNewestBucketsInWideWindow(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Five distinct, closed 1-minute buckets, each with exactly one
-	// trade so open == high == low == close == that bucket's price —
-	// the buckets are trivially distinguishable by value. t0 sits 20
-	// minutes back so every bucket in [t0, t0+5m) is closed under the
-	// ADR-0015 `bucket + interval <= now()` guard.
+	// Five distinct closed 1-minute buckets with one trade each (open == high == low == close), trivially distinguishable by
+	// value. t0 is 20 minutes back so every bucket in [t0, t0+5m) is closed under the ADR-0015 `bucket + interval <= now()`
+	// guard.
 	t0 := time.Now().UTC().Add(-20 * time.Minute).Truncate(time.Minute)
 	const nBuckets = 5
 	for i := 0; i < nBuckets; i++ {
@@ -2732,11 +2487,8 @@ func TestOHLCSeries_LimitKeepsNewestBucketsInWideWindow(t *testing.T) {
 	}
 }
 
-// TestOHLCSeriesReBucketed_LimitKeepsNewestOutBucketsInWideWindow is
-// the folded-interval sibling of
-// TestOHLCSeries_LimitKeepsNewestBucketsInWideWindow: OHLCSeriesReBucketed
-// carries the identical ORDER BY/LIMIT defect, one layer up —
-// re-bucketing prices_1h into 4-hour out-buckets.
+// Folded-interval sibling of TestOHLCSeries_LimitKeepsNewestBucketsInWideWindow: OHLCSeriesReBucketed carried the same
+// ORDER BY/LIMIT defect, re-bucketing prices_1h into 4-hour out-buckets.
 func TestOHLCSeriesReBucketed_LimitKeepsNewestOutBucketsInWideWindow(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -2806,14 +2558,9 @@ func TestOHLCSeriesReBucketed_LimitKeepsNewestOutBucketsInWideWindow(t *testing.
 	}
 }
 
-// Migration 0166 (migrations/0166_twap_notional_floor.up.sql) puts 0115's
-// $0.01 notional floor on the TWAP chain. TWAP is equal-weight twice over —
-// per trade in prices_1m, per minute in twap_1h / twap_1d — so before 0166 a
-// 2-stroop crumb at an absurd price counted as much as a $1,000 fill, and a
-// minute holding only that crumb counted as much as a minute of real trading.
-//
-// Every scenario stores a real fill at 5 and dust at 500 (or 0.5), so the
-// unfloored answers (252.5, 502.5) cannot be mistaken for the floored 5.
+// Migration 0166 puts 0115's $0.01 notional floor on the TWAP chain. TWAP is equal-weight twice over (per trade in
+// prices_1m, per minute in twap_1h / twap_1d), so a 2-stroop crumb at an absurd price counted as much as a $1,000 fill,
+// and a crumb-only minute as much as a real one.
 
 const (
 	twapFloorIssuer = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"

@@ -26,10 +26,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/signupreaper"
 )
 
-// TestPlatformPostgresStores exercises the AccountStore +
-// UserStore + TokenStore implementations against the schema
-// from migration 0027. One container per test (no shared
-// fixture) per the existing storage-test convention.
+// AccountStore + UserStore + TokenStore against the schema from migration 0027. One container per test, per the storage-
+// test convention.
 func TestPlatformPostgresStores(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -83,12 +81,8 @@ func TestPlatformPostgresStores(t *testing.T) {
 			t.Errorf("slug lookup got different account")
 		}
 
-		// Update tier; verify.
-		// Legacy tier in → CANONICAL tier out:
-		// the store persists a CHECK-legal legacy string
-		// and canonicalises on read, so writing the deprecated `pro`
-		// must round-trip as `partner`. Asserting `pro` back would pin
-		// the pre-pivot behaviour.
+		// Legacy tier in, CANONICAL tier out: the store accepts a CHECK-legal legacy string and canonicalises on read, so
+		// writing the deprecated `pro` must round-trip as `partner`.
 		acme.Tier = platform.TierPro
 		if err := accounts.Update(ctx, acme); err != nil {
 			t.Fatalf("update: %v", err)
@@ -247,13 +241,8 @@ func TestPlatformPostgresStores(t *testing.T) {
 		}
 	})
 
-	// Account/CountAccounts+CountAPIKeys pins Q181: the signup-reaper
-	// publishes obs.AccountRows / obs.APIKeyRows from these two counts
-	// because POST /v1/register mints a permanent accounts row + a
-	// permanent api_keys row on every accepted call and the reaper never
-	// deletes a successful registration's rows. Delta-based (this test
-	// shares the database with the others in this file, which insert
-	// their own account/key rows) so it is order-independent.
+	// CountAccounts+CountAPIKeys feed the signup-reaper's obs.AccountRows/APIKeyRows: POST /v1/register mints permanent rows
+	// the reaper never deletes. Delta-based, since other tests in this file share the database.
 	t.Run("Account/CountAccounts+CountAPIKeys", func(t *testing.T) {
 		keys := postgresstore.NewAPIKeyStore(store)
 
@@ -410,10 +399,8 @@ func TestPlatformPostgresStores(t *testing.T) {
 			t.Errorf("GetSessionByTokenHash returned session %v, want %v", byHash.ID, sess.ID)
 		}
 
-		// A read of the sessions table yields the PK + the hash, neither
-		// of which is a presentable credential: hashing the primary key
-		// string (what an attacker with a table dump would try) resolves
-		// nothing, and a random other hash resolves nothing.
+		// The sessions table yields only the PK and hash, neither a presentable credential: hashing the PK string (what a table-
+		// dump attacker would try) or any random hash resolves nothing.
 		pkAsCookieHash := sha256.Sum256([]byte(sess.ID.String()))
 		if _, err := users.GetSessionByTokenHash(ctx, pkAsCookieHash[:]); !errors.Is(err, platform.ErrNotFound) {
 			t.Errorf("session PK (hashed) resolved as a token — raw-id replay path is live: err=%v", err)
@@ -439,12 +426,8 @@ func TestPlatformPostgresStores(t *testing.T) {
 			t.Errorf("UserAgent = %q", gotSess.UserAgent)
 		}
 
-		// RNC36: a nil ip (clientIP couldn't resolve one — RemoteAddr
-		// without a splittable port) must leave ip_last_seen UNCHANGED,
-		// never overwrite it with the "0.0.0.0" sentinel (which would clobber the
-		// real IP recorded
-		// above); UA still updates because TouchSession's other columns
-		// are unconditional.
+		// A nil ip (RemoteAddr without a splittable port) must leave ip_last_seen unchanged, never overwrite it with a "0.0.0.0"
+		// sentinel; UA still updates because TouchSession's other columns are unconditional.
 		if err := users.TouchSession(ctx, sess.ID, nil, "curl/9-no-ip"); err != nil {
 			t.Fatalf("touch with nil ip: %v", err)
 		}
@@ -621,14 +604,8 @@ func TestPlatformPostgresStores(t *testing.T) {
 		}
 	})
 
-	// ListInvitesForAccount must filter on the injected
-	// [postgresstore.TokenStore.WithClock] like every other expiry check in the
-	// file, not on SQL `now()` (the Postgres server's clock) — otherwise WithClock
-	// has NO effect on this method. Asserts the corrected value: a
-	// TokenStore whose injected clock has advanced past an invite's
-	// expiry excludes it from the pending list, while the SAME invite
-	// still appears through a real-clock store (real time hasn't
-	// actually passed).
+	// ListInvitesForAccount must filter on the injected TokenStore.WithClock, not SQL now(): a store whose clock is past an
+	// invite's expiry excludes it, while a real-clock store on the same invite still lists it.
 	t.Run("Invite/ListRespectsInjectedClock", func(t *testing.T) {
 		acct, err := accounts.Create(ctx, platform.Account{
 			Name: "Clocked Co", Slug: "clocked-" + strings.ToLower(uuid.New().String()[:8]),
@@ -670,11 +647,8 @@ func TestPlatformPostgresStores(t *testing.T) {
 			t.Fatal("real-clock store: expected the not-yet-expired invite to be pending")
 		}
 
-		// Clock-shifted store (same underlying Postgres connection):
-		// injected "now" is 2h past creation, i.e. 1h past the
-		// invite's expiry. If WithClock actually governs this query,
-		// the invite must be excluded even though the DB's own
-		// now() hasn't moved.
+		// Clock-shifted store on the same connection: injected now is 1h past the invite's expiry, so the invite must be
+		// excluded even though the DB's own now() has not moved.
 		futureClock := func() time.Time { return time.Now().Add(2 * time.Hour) }
 		clockedTokens := postgresstore.NewTokenStore(store).WithClock(futureClock)
 		clockedPending, err := clockedTokens.ListInvitesForAccount(ctx, acct.ID)
@@ -715,11 +689,8 @@ func TestPlatformPostgresStores(t *testing.T) {
 			Name:            "primary",
 			Description:     "production traffic",
 			KeyHash:         hash[:],
-			// `sip_` — the namespace every minter actually emits
-			// (auth/store.go, dashboardkeys/handlers.go). The pre-rebrand `rek_`
-			// namespace would match migration 0027's stale CHECK instead of production
-			// reality, masking that every real key mint failed a check_violation until
-			// migration 0133.
+			// `sip_` is the namespace every minter emits (auth/store.go, dashboardkeys/handlers.go); the old `rek_` would match
+			// migration 0027's stale CHECK and mask failing real key mints.
 			KeyPrefix:              "sip_4f9c1d8b",
 			Tier:                   platform.APIKeyTierAPIKey,
 			RateLimitPerMin:        1000,
@@ -1015,10 +986,8 @@ func TestPlatformPostgresStores(t *testing.T) {
 		}
 	})
 
-	// Per-account webhook quota must hold under concurrent CreateWebhook calls.
-	// An unlocked count-CTE would allow two snapshot-readers at n=cap-1
-	// to both insert. The advisory-lock-wrapped transaction
-	// serialises them — verify here.
+	// The per-account webhook quota must hold under concurrent CreateWebhook calls: an unlocked count-CTE would let two
+	// snapshot readers at cap-1 both insert; the advisory-lock transaction serialises them.
 	t.Run("WebhookStore/Concurrent_QuotaCap_Holds", func(t *testing.T) {
 		webhooks := postgresstore.NewWebhookStore(store)
 		acct, err := accounts.Create(ctx, platform.Account{
@@ -1087,9 +1056,7 @@ func TestPlatformPostgresStores(t *testing.T) {
 		}
 	})
 
-	// Same shape for the API key
-	// quota. Concurrent Create calls at the cap boundary must end
-	// at exactly the cap, with the losers receiving
+	// Same for the API key quota: concurrent Create calls at the cap boundary end at exactly the cap, losers get
 	// ErrAPIKeyQuotaExceeded.
 	t.Run("APIKeyStore/Concurrent_QuotaCap_Holds", func(t *testing.T) {
 		keys := postgresstore.NewAPIKeyStore(store)
@@ -1118,17 +1085,9 @@ func TestPlatformPostgresStores(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				<-start
-				// Both `id` and `key_prefix` have schema CHECK constraints that
-				// the fixture must satisfy:
-				//
-				//   - `api_keys_id_check       (id ~ '^kid_[a-f0-9]{12,}$')`
-				//   - `api_keys_key_prefix_check (key_prefix ~ '^rek_[a-f0-9]{8}$')`
-				//
-				// `uuid.New().String()` includes hyphens, which trips the prefix regex.
-				// Build hex-only values that match what the production
-				// `generateKeyID` / `generatePlaintext` emit
-				// (`sip_` namespace), so the test reaches the
-				// actual advisory-lock assertions.
+				// Fixture ids must satisfy the schema CHECKs (id ~ '^kid_[a-f0-9]{12,}$', key_prefix ~ '^rek_[a-f0-9]{8}$');
+				// uuid.New().String() has hyphens and trips the prefix regex, so build hex-only values matching the production
+				// generators (`sip_` namespace) so the test reaches the advisory-lock assertions.
 				hexA := strings.ReplaceAll(uuid.New().String(), "-", "")
 				hexB := strings.ReplaceAll(uuid.New().String(), "-", "")
 				plaintext := "sip_" + hexA[:8]
@@ -1344,10 +1303,8 @@ func TestPlatformPostgresStores(t *testing.T) {
 		}
 	})
 
-	// Passkey persistence — webauthn_credentials (migration 0140).
-	// Auth-grade store: sign-count round-trips feed clone detection,
-	// credential-ID uniqueness is spec-required, and delete is
-	// owner-scoped (no cross-user probe oracle).
+	// Passkey persistence (webauthn_credentials, migration 0140): sign-count round-trips feed clone detection, credential-ID
+	// uniqueness is spec-required, and delete is owner-scoped (no cross-user probe oracle).
 	t.Run("WebAuthnStore/CRUD+signcount", func(t *testing.T) {
 		passkeys := postgresstore.NewWebAuthnCredentialStore(store)
 
@@ -1423,10 +1380,8 @@ func TestPlatformPostgresStores(t *testing.T) {
 			t.Errorf("expected ErrNotFound for absent credential id, got %v", err)
 		}
 
-		// 3. A second credential in the production handler's minimal
-		// shape: empty (non-nil) transports, nil AAGUID. The empty
-		// text[] must come back as a non-nil empty slice, the NULL
-		// aaguid as an empty AAGUID.
+		// Credential in the handler's minimal shape (empty non-nil transports, nil AAGUID): the empty text[] must come back as a
+		// non-nil empty slice and the NULL aaguid as an empty AAGUID.
 		cred2ID := []byte("cred-" + uuid.New().String())
 		second, err := passkeys.CreateWebAuthnCredential(ctx, platform.WebAuthnCredential{
 			UserID:       alice.ID,
@@ -1879,10 +1834,8 @@ func TestPlatformPostgresStores(t *testing.T) {
 		}
 	})
 
-	// Same shape as WebhookStore/APIKeyStore Concurrent_QuotaCap_Holds:
-	// the advisory-lock + CTE-gated INSERT must hold the per-account
-	// cap under concurrent creates, with losers getting
-	// ErrPriceAlertQuotaExceeded.
+	// As in the webhook/API-key quota tests: the advisory lock + CTE-gated INSERT must hold the per-account cap under
+	// concurrent creates, losers getting ErrPriceAlertQuotaExceeded.
 	t.Run("PriceAlertStore/Concurrent_QuotaCap_Holds", func(t *testing.T) {
 		alerts := postgresstore.NewPriceAlertStore(store)
 		acct, err := accounts.Create(ctx, platform.Account{
@@ -1947,22 +1900,9 @@ func TestPlatformPostgresStores(t *testing.T) {
 		}
 	})
 
-	// On real Postgres: the once-per-cooldown-window guarantee is
-	// the conditional UPDATE, not the evaluator's in-memory coolingDown
-	// check — that check reads the snapshot ListEnabledPriceAlerts took at
-	// the top of the sweep, so every concurrent evaluator passes it.
-	//
-	// Modelled exactly as production would race: N goroutines (stand-ins
-	// for a second aggregator / an R2-R3 standby / an overlapping deploy)
-	// claim the SAME crossing on the SAME alert at the same instant, all
-	// passing the same stale gate. Exactly one may win, because each
-	// customer webhook the loser would fan out to is a duplicate
-	// notification on a delivery id the customer cannot dedup.
-	//
-	// This has to be a DB test: the property is Postgres' row-lock
-	// serialisation of concurrent UPDATEs (the loser re-evaluates the
-	// predicate against the winner's committed row under READ COMMITTED),
-	// which no fake reproduces.
+	// The once-per-cooldown guarantee is the conditional UPDATE, not the evaluator's in-memory coolingDown check (it reads a
+	// stale snapshot every concurrent evaluator passes). N goroutines claim the SAME crossing at once; exactly one may win,
+	// since each loser would send a duplicate webhook the customer cannot dedup.
 	t.Run("PriceAlertStore/Concurrent_FireClaim_ExactlyOneWinner", func(t *testing.T) {
 		alerts := postgresstore.NewPriceAlertStore(store)
 		acct, err := accounts.Create(ctx, platform.Account{
@@ -2084,10 +2024,8 @@ func containsInviteHash(invites []platform.Invite, hash []byte) bool {
 	return false
 }
 
-// Q146 — the store half of the sessions and webhook_deliveries
-// retention sweeps. Both predicates must be right in both directions:
-// every terminal row past the cutoff goes, and no live row (an active
-// session, a delivery still queued or parked) goes at any age.
+// Store half of the sessions and webhook_deliveries retention sweeps: every terminal row past the cutoff goes, and no
+// live row (active session, queued or parked delivery) goes at any age.
 func TestPlatformRetentionReaper(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -2265,10 +2203,8 @@ func assertReaped(t *testing.T, ctx context.Context, db *sql.DB, existsQ string,
 
 func intPtr(n int) *int { return &n }
 
-// TestSessionByTokenHash_RejectsExpired pins that the authentication-path
-// lookup itself refuses an expired-but-unrevoked session. Expired rows persist
-// until the reaper's grace window passes, so leaving expiry to one caller-side
-// `if` made every other consumer of this lookup an authentication bypass.
+// The authentication-path lookup itself must refuse an expired-but-unrevoked session; expired rows persist until the
+// reaper's grace window, so leaving expiry to a caller-side check made every other consumer a bypass.
 func TestSessionByTokenHash_RejectsExpired(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -2319,10 +2255,8 @@ func TestSessionByTokenHash_RejectsExpired(t *testing.T) {
 	}
 }
 
-// TestRevokeOtherUserSessions_KeepsOnlyTheNamedSession pins the store half of
-// "adding a passkey ends every other session": the kept session and other
-// users' sessions stay live, every other session of the user is revoked.
-// It then exercises CapUserSessions on the same fixture.
+// Store half of "adding a passkey ends every other session": the kept session and other users' sessions stay live, all
+// other sessions of the user are revoked. Then exercises CapUserSessions on the same fixture.
 func TestRevokeOtherUserSessions_KeepsOnlyTheNamedSession(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

@@ -25,12 +25,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/test/harness"
 )
 
-// TestGetSourceStatsFoldsFlippedOrientation pins that a source
-// that printed the same market in both stored orientations (native/USDC
-// and USDC/native) must be counted as ONE market, not two. Before the
-// fix, GetSourceStats grouped its per_pair CTE on the raw (base_asset,
-// quote_asset) columns with no canonical-orientation fold, so
-// MarketsCount24h double-counted a flipped pair.
+// TestGetSourceStatsFoldsFlippedOrientation: a source printing the same market in both stored orientations (native/USDC
+// and USDC/native) counts as one market in MarketsCount24h, so per_pair must fold to canonical orientation.
 func TestGetSourceStatsFoldsFlippedOrientation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -74,10 +70,8 @@ func TestGetSourceStatsFoldsFlippedOrientation(t *testing.T) {
 	}
 }
 
-// TestGetNetworkStatsFoldsFlippedOrientation pins the same defect
-// in GetNetworkStats's MarketsCount24h: the DISTINCT over
-// prices_1m must fold a market's two stored orientations before
-// counting.
+// TestGetNetworkStatsFoldsFlippedOrientation: the same fold for GetNetworkStats's MarketsCount24h; the DISTINCT over
+// prices_1m must fold a market's two stored orientations before counting.
 func TestGetNetworkStatsFoldsFlippedOrientation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -113,11 +107,9 @@ func TestGetNetworkStatsFoldsFlippedOrientation(t *testing.T) {
 	}
 }
 
-// TestGetNetworkStatsLatestLedgerReadsOnlyLiveCursors pins that the
-// home page's latest_ledger must be the live tip, not the highest
-// ledger any one-shot job's shard cursor ever reached. Each job writes
-// its own namespace ("census-backfill", "projected-rebuild", …), and a
-// denylist of the literal "backfill" counted every one of them as live.
+// TestGetNetworkStatsLatestLedgerReadsOnlyLiveCursors: the home page's latest_ledger is the live tip, not the highest
+// ledger any one-shot job's shard cursor reached. Each job writes its own namespace ("census-backfill", "projected-
+// rebuild", ...), so a literal "backfill" denylist wrongly counts them as live.
 func TestGetNetworkStatsLatestLedgerReadsOnlyLiveCursors(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -157,12 +149,9 @@ func TestGetNetworkStatsLatestLedgerReadsOnlyLiveCursors(t *testing.T) {
 	}
 }
 
-// TestUsageDailyBatchUpsertSpansChunks drives the chunked multi-row
-// upsert against real Postgres: a batch larger than two chunks, with a
-// duplicate key inside it, lands every row exactly once with the
-// per-column maximum — the GREATEST contract the single-row statement
-// gave, now over a statement Postgres would reject if the duplicate
-// reached it unfolded.
+// TestUsageDailyBatchUpsertSpansChunks: a batch larger than two chunks with a duplicate key inside it lands every row
+// exactly once with the per-column maximum (GREATEST); Postgres would reject the statement if the duplicate reached it
+// unfolded.
 func TestUsageDailyBatchUpsertSpansChunks(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -229,10 +218,8 @@ func TestUsageDailyBatchUpsertSpansChunks(t *testing.T) {
 	}
 }
 
-// TestUsageDailyBillableByDay drives the SQL the month-to-date meter
-// reconciles evicted Redis day keys against: per-day billable
-// units are ok + 4xx summed over endpoints, never 5xx or 429, for one
-// subject, inside an inclusive [from, to] window.
+// TestUsageDailyBillableByDay: the SQL the month-to-date meter reconciles evicted Redis day keys against. Billable units
+// per day are ok + 4xx summed over endpoints, never 5xx or 429, for one subject, in an inclusive [from, to] window.
 func TestUsageDailyBillableByDay(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -320,24 +307,9 @@ func usageDailyRetention(t *testing.T, ctx context.Context, db *sql.DB) (jobs in
 	return jobs, dropAfter, scheduled
 }
 
-// TestUsageDailyRollupReSweepIdempotent pins the billing-adjacent
-// invariant behind GET /v1/account/usage: the 5-minute usage-rollup
-// worker (internal/usage.Rollup.Sweep) hands the sink the FULL
-// CUMULATIVE per-(day, subject, endpoint) counters on EVERY sweep — it
-// deliberately never resets or checkpoints the Redis source. That is
-// only safe because timescale.Store.UpsertUsageDaily merges with
-// GREATEST(existing, incoming), NOT additively. If that merge were ever
-// flipped to `col = usage_daily.col + EXCLUDED.col`, every 5-minute
-// sweep would RE-ADD the cumulative value and usage_daily would report
-// k*N requests for N real requests — a permanent, non-self-correcting
-// over-count on the surface a metered plan bills against.
-//
-// The unit suite (internal/usage/rollup_test.go) only proves the sweep
-// hands the same cumulative batch on replay, then delegates: "idempotence
-// is then the sink's GREATEST()-merge contract." Nothing exercised that
-// contract against real Postgres until this test — so a regression that
-// broke it would ship green. This drives the REAL SQL and asserts N, not
-// kN. Flip either GREATEST to `+` in usage_daily.go and this goes red.
+// TestUsageDailyRollupReSweepIdempotent: the usage-rollup worker hands the sink the full cumulative per-(day, subject,
+// endpoint) counters on every sweep and never resets Redis, which is only safe because UpsertUsageDaily merges with
+// GREATEST(existing, incoming), not additively.
 func TestUsageDailyRollupReSweepIdempotent(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -350,10 +322,8 @@ func TestUsageDailyRollupReSweepIdempotent(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
-	// day is now-relative: ReadUsageDaily reads a trailing now-anchored
-	// window, so a hardcoded date is a calendar time-bomb — the original
-	// window, so a hardcoded date ages out of the window and the test starts
-	// failing untouched.
+	// day is now-relative because ReadUsageDaily reads a trailing now-anchored window; a hardcoded date would age out of the
+	// window and fail the test untouched.
 	day := time.Now().UTC().AddDate(0, 0, -1).Format("2006-01-02")
 	const subj = "key:kid_bill_1"
 
@@ -401,12 +371,9 @@ func TestUsageDailyRollupReSweepIdempotent(t *testing.T) {
 	}
 }
 
-// TestUsageDailyRollupWithinDayGrowth pins the other half of the
-// GREATEST contract: WITHIN a day the Redis counters only grow, so each
-// sweep's cumulative value is >= the last. GREATEST must keep the LATEST
-// (largest) value, never the sum of the partial snapshots. A sweep at
-// t=5m sees 50 ok; a sweep at t=10m sees the full 100 ok. The persisted
-// row must read 100 — additive would read 150.
+// TestUsageDailyRollupWithinDayGrowth: within a day the Redis counters only grow, so GREATEST must keep the latest
+// (largest) cumulative value, never the sum of partial snapshots. A sweep at t=5m sees 50 ok and at t=10m 100 ok; the
+// row must read 100, not 150.
 func TestUsageDailyRollupWithinDayGrowth(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -469,10 +436,8 @@ func gAccountFromSeed(t *testing.T, seed byte) string {
 	return s
 }
 
-// TestStoreRoundTrip exercises the trade / oracle / cursor paths
-// through a real TimescaleDB with our migrations applied. This is
-// the first end-to-end "write → read" proof of the Go storage
-// layer.
+// TestStoreRoundTrip: write-then-read through the trade, oracle and cursor paths on a real TimescaleDB with our
+// migrations applied.
 func TestStoreRoundTrip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -551,11 +516,8 @@ func TestStoreRoundTrip(t *testing.T) {
 		Price:      c.NewAmount(price),
 		Decimals:   14,
 		Confidence: 0.95,
-		// OracleUpdate.Validate requires a checksum-valid Observer strkey.
-		// Hand-crafted "GRELAYER_FAKE" is 13 chars (expected 56),
-		// so it was rejected after canonical tightened validation.
-		// Generate a checksum-valid G-address from a deterministic
-		// seed instead.
+		// OracleUpdate.Validate requires a checksum-valid Observer strkey ("GRELAYER_FAKE" is 13 chars, not 56), so generate a
+		// valid G-address from a deterministic seed.
 		Observer: gAccountFromSeed(t, 0xAA),
 	}
 	if err := store.InsertOracleUpdate(ctx, up); err != nil {
@@ -616,10 +578,8 @@ func TestStoreRoundTrip(t *testing.T) {
 		t.Errorf("root cursor wrong after sub insert: got %d", cur.LastLedger)
 	}
 
-	// ─── ListCursors ────────────────────────────────────────────
-	// After the upserts above we have 2 cursors: soroswap/"" and
-	// soroswap/"pair:CAB...". ListCursors returns both, sorted by
-	// (source, sub_source).
+	// ListCursors: the upserts above leave 2 cursors, soroswap/"" and soroswap/"pair:CAB...", returned sorted by (source,
+	// sub_source).
 	all, err := store.ListCursors(ctx)
 	if err != nil {
 		t.Fatalf("ListCursors: %v", err)
@@ -640,12 +600,9 @@ func TestStoreRoundTrip(t *testing.T) {
 		}
 	}
 
-	// ─── Cursor monotonic-advance guard ─────────────────────────
-	// DB-level refusal to regress last_ledger (ON CONFLICT DO UPDATE
-	// ... WHERE EXCLUDED.last_ledger > ingestion_cursors.last_ledger).
-	// Defense in depth: the orchestrator's Go-level advance-only rule
-	// can't be the only line of defense for a misconfigured two-
-	// indexer race.
+	// Cursor monotonic-advance guard: the DB refuses to regress last_ledger (ON CONFLICT DO UPDATE ... WHERE
+	// EXCLUDED.last_ledger > ingestion_cursors.last_ledger), so the Go-level advance-only rule is not the only defence
+	// against a two-indexer race.
 	if err := store.UpsertCursor(ctx, "soroswap", "", 10_000); err != nil {
 		t.Fatalf("UpsertCursor (regression attempt): %v", err)
 	}
@@ -671,11 +628,8 @@ func TestStoreRoundTrip(t *testing.T) {
 		t.Errorf("advance after regression-attempt lost: got %d", cur.LastLedger)
 	}
 
-	// ─── first_ledger semantics (migration 0046) ────────────────
-	// The cursor we created above started at last_ledger=52_430_001;
-	// migration 0046 should have captured that as first_ledger on
-	// the INSERT branch of UpsertCursor and preserved it across
-	// every subsequent advance.
+	// first_ledger semantics (migration 0046): the cursor created above started at last_ledger=52_430_001, so UpsertCursor's
+	// INSERT branch must capture that as first_ledger and keep it across every later advance.
 	if cur.FirstLedger != 52_430_001 {
 		t.Errorf("FirstLedger not captured on insert / drifted across updates: got %d, want 52430001",
 			cur.FirstLedger)
@@ -712,12 +666,9 @@ func TestStoreRoundTrip(t *testing.T) {
 	}
 }
 
-// TestCursorFirstLedgerBackfillMigration verifies migration 0046's
-// backfill — for every existing backfill cursor at the time the
-// migration ran, first_ledger should equal the `from` integer parsed
-// out of sub_source. The rows are seeded at schema version 45 and the
-// real 0046 up file is then applied, so the test cannot drift from
-// the migration's SQL.
+// TestCursorFirstLedgerBackfillMigration: for every existing backfill cursor, first_ledger equals the `from` integer
+// parsed from sub_source. Rows are seeded at schema version 45 and the real 0046 up file applied, so the test cannot
+// drift from the migration SQL.
 func TestCursorFirstLedgerBackfillMigration(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -790,10 +741,8 @@ func TestCursorFirstLedgerBackfillMigration(t *testing.T) {
 	}
 }
 
-// TestCursorFirstLedgerMigrationReversible verifies migration 0046
-// can be rolled back without data loss on the rest of the table —
-// dropping the column doesn't disturb existing (source, sub_source,
-// last_ledger) rows.
+// TestCursorFirstLedgerMigrationReversible: rolling back 0046 drops the column without disturbing existing (source,
+// sub_source, last_ledger) rows.
 func TestCursorFirstLedgerMigrationReversible(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -850,13 +799,9 @@ func TestCursorFirstLedgerMigrationReversible(t *testing.T) {
 	}
 }
 
-// TestInsertTrade_MultiOpSameTxBothLand covers the most common
-// real-world pattern that would have caught the Aquarius fanout
-// bug: a single Soroban tx with multiple operations, each emitting
-// its own trade. The trades share (source, ledger, tx_hash, ts)
-// but differ on OpIndex — both MUST persist. Before the fanout
-// fix, op=0,i=1,j=0 and op=1,i=0,j=0 collided on OpIndex=256 and
-// ON CONFLICT DO NOTHING silently dropped the second.
+// TestInsertTrade_MultiOpSameTxBothLand: one Soroban tx with several operations, each emitting its own trade. Trades
+// share (source, ledger, tx_hash, ts) but differ on OpIndex, so both must persist; op=0,i=1,j=0 and op=1,i=0,j=0 once
+// collided on OpIndex=256 and ON CONFLICT DO NOTHING dropped the second.
 func TestInsertTrade_MultiOpSameTxBothLand(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -902,11 +847,9 @@ func TestInsertTrade_MultiOpSameTxBothLand(t *testing.T) {
 	}
 }
 
-// startTimescale gives this package's ~40 call sites the shared
-// Timescale bootstrap. Every container start in the repo goes through
-// harness.StartTimescale so the image pin, the container flags and the
-// readiness gate cannot drift apart. Each call starts its OWN
-// container — no shared fixture. Returns the connection DSN.
+// startTimescale gives this package's ~40 call sites the shared bootstrap. Every container start goes through
+// harness.StartTimescale so the image pin, container flags and readiness gate cannot drift. Each call starts its own
+// container and returns the DSN.
 func startTimescale(t *testing.T, ctx context.Context) string {
 	t.Helper()
 	return harness.StartTimescale(t, ctx)
@@ -924,16 +867,9 @@ func applyMigrations(t *testing.T, dsn string) {
 	if err := m.Up(); err != nil {
 		t.Fatalf("migrate up: %v", err)
 	}
-	// Quiesce the CAGG refresh policies HERE, for every test container,
-	// not per-test: 12 of the 13 files that `CALL
-	// refresh_continuous_aggregate(...)` never called
-	// quiesceCAGGRefreshPolicies and raced the policy job TimescaleDB
-	// fires shortly after add_continuous_aggregate_policy — the 55P03
-	// "concurrent refresh" flake that failed TestAPI_EndToEnd +
-	// TestVWAPUSDFXResolver_BootstrapsWithoutUSDVolume in CI
-	// (migration 0147 lengthened the chain enough to shift the timing
-	// into collision). Integration tests materialize every view by
-	// hand; a scheduled background refresh adds nothing they assert.
+	// Quiesce the CAGG refresh policies here for every test container: tests refresh views by hand with `CALL
+	// refresh_continuous_aggregate(...)` and otherwise race the policy job TimescaleDB fires after
+	// add_continuous_aggregate_policy (55P03 "concurrent refresh" flake).
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatalf("open for policy quiesce: %v", err)
@@ -942,16 +878,9 @@ func applyMigrations(t *testing.T, dsn string) {
 	quiesceCAGGRefreshPolicies(t, context.Background(), db)
 }
 
-// quiesceCAGGRefreshPolicies unschedules every continuous-aggregate
-// refresh-policy background job. A test that drives refreshes explicitly
-// via `CALL refresh_continuous_aggregate(...)` otherwise races the policy
-// job TimescaleDB fires shortly after `add_continuous_aggregate_policy`,
-// and the two overlapping refreshes of one CAGG are rejected with 55P03
-// ("could not refresh continuous aggregate ... due to a concurrent
-// refresh"). Disabling the policy changes nothing the tests assert — they
-// materialize every view by hand — it just makes that manual refresh
-// deterministic. (Reproducible pre-existing flake: `go test -count=2 -run
-// TestTWAPPointsInRange_TimeWeighted`.)
+// quiesceCAGGRefreshPolicies unschedules every continuous-aggregate refresh-policy job. Tests that refresh explicitly
+// otherwise race the policy job, and overlapping refreshes of one CAGG fail with 55P03 "concurrent refresh". It changes
+// nothing the tests assert (views are materialized by hand); it only makes the manual refresh deterministic.
 func quiesceCAGGRefreshPolicies(t *testing.T, ctx context.Context, db *sql.DB) {
 	t.Helper()
 	if _, err := db.ExecContext(ctx, `
@@ -962,14 +891,9 @@ func quiesceCAGGRefreshPolicies(t *testing.T, ctx context.Context, db *sql.DB) {
 	}
 }
 
-// TestTWAPPointsInRange_TimeWeighted proves the twap_1h CAGG (migration
-// 0081) + TWAPPointsInRange read is TIME-weighted at 1-minute
-// resolution, NOT trade-count-weighted. Two minutes in one hour:
-//   - minute A: 3 trades at price 1.0
-//   - minute B: 1 trade  at price 3.0
-//
-// A trade-count mean would be (3·1 + 1·3)/4 = 1.5. A time-weighted mean
-// (each minute equal weight) is (1.0 + 3.0)/2 = 2.0. We assert 2.0.
+// TestTWAPPointsInRange_TimeWeighted: the twap_1h CAGG read is time-weighted at 1-minute resolution, not trade-count
+// weighted. Minute A has 3 trades at 1.0 and minute B 1 trade at 3.0: a trade-count mean is 1.5, the time-weighted mean
+// is (1.0 + 3.0)/2 = 2.0, which we assert.
 func TestTWAPPointsInRange_TimeWeighted(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1076,23 +1000,8 @@ func TestTWAPPointsInRange_TimeWeighted(t *testing.T) {
 	}
 }
 
-// TestTWAPSampleCount_CoverageWeighted proves migration 0126's
-// `sample_count` column materializes in the twap_1h CAGG AND that
-// TWAPPointsInRange folds the two stored market directions by minute
-// COVERAGE, not trade count. This is the on-Postgres
-// twin of the cannedConn unit test.
-//
-// One hour of a two-sided XLM/USDC market:
-//
-//   - direction A (XLM/USDC @ 0.5): 5 distinct minutes, 1 trade each
-//     → minute coverage 5, trade_count 5, oriented price 0.5
-//
-//   - direction B (USDC/XLM @ 5.0): 1 minute, 20 trades
-//     → minute coverage 1, trade_count 20, oriented price 1/5 = 0.2
-//
-//     coverage-weighted (CORRECT): (0.5·5 + 0.2·1)/(5+1) = 2.7/6 = 0.45
-//     trade-count-weighted (bug):  (0.5·5 + 0.2·20)/(5+20) = 6.5/25 = 0.26
-//     equal-weighted (regression): (0.5 + 0.2)/2 = 0.35
+// TestTWAPSampleCount_CoverageWeighted: migration 0126's sample_count materializes in twap_1h and TWAPPointsInRange
+// folds the two stored directions by minute coverage, not trade count.
 func TestTWAPSampleCount_CoverageWeighted(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

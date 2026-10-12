@@ -46,17 +46,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestCCTPRozoEventIndex_SameTypeEventsInOneOpDoNotCollapse is the
-// proof. Migrations 0038 / 0039 keyed cctp_events / rozo_events on
-// (contract_id, ledger, tx_hash, op_index, event_type, ts) — no intra-op
-// discriminator. A single operation that emits TWO events of the SAME type
-// (observed on mainnet, e.g. two `attester_enabled` in one MessageTransmitter
-// tx) produced two rows that shared every PK column, so the second collapsed
-// onto the first under ON CONFLICT — silently dropping it.
-//
-// Migration 0112 adds event_index to the key. This test inserts two
-// same-type events that differ ONLY in event_index and asserts BOTH land.
-// If the key omitted event_index, COUNT would be 1 (collapsed); it must be 2.
+// TestCCTPRozoEventIndex_SameTypeEventsInOneOpDoNotCollapse: one op can emit two same-type events (e.g. two
+// `attester_enabled`); without event_index in the key (migration 0112) the second collapses on ON CONFLICT. Two events
+// differing only in event_index must both land.
 func TestCCTPRozoEventIndex_SameTypeEventsInOneOpDoNotCollapse(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -150,22 +142,9 @@ func countRows(t *testing.T, store *timescale.Store, q string, args ...any) int 
 	return n
 }
 
-// TestCCTPReplayDoubleCount_DisarmedByMigration0164 is the proof.
-//
-// Migration 0112 added event_index to cctp_events' PK and backfilled
-// existing rows to event_index=0 on the premise that a prescribed
-// re-ingest needs no DELETE. That premise is false: dispatcher_adapter.go
-// stamps EventIndex from the event's TRUE intra-op position (cctp's own
-// decoder doc: a deposit_for_burn op typically also emits message_sent in
-// the SAME op), so a legacy row stored at event_index=0 pre-0112 and a
-// projector-replay row computed at its true nonzero index are two DIFFERENT
-// PKs for the SAME real-world event — a double-count, not a recovery.
-//
-// This test reproduces that shape directly against migration 0112 (up to
-// 0163, before the disarm): a legacy event_index=0 row plus a "replay" row
-// for the same op at its true nonzero index leaves TWO rows for what
-// should be one event. It then applies migration 0164 and asserts the
-// disarm clears the duplicated legacy state.
+// TestCCTPReplayDoubleCount_DisarmedByMigration0164: a legacy event_index=0 row and a projector-replay row at the true
+// nonzero index are two PKs for one event (a double count). Reproduces on 0112..0163, then applies 0164 and asserts the
+// legacy duplicates are cleared.
 func TestCCTPReplayDoubleCount_DisarmedByMigration0164(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -240,30 +219,9 @@ func applyMigrationTo164(t *testing.T, dsn string) {
 	}
 }
 
-// TestDecoderOutputFitsStorageSchema builds one canonical.Trade
-// per Soroban source with the exact field shape the source's real
-// decoder emits (strkey-valid assets, i128-scale amounts, realistic
-// timestamps), inserts through the real InsertTrade /
-// InsertOracleUpdate paths, then queries the row back. Plus one
-// Reflector OracleUpdate.
-//
-// This proves that canonical.Trade / canonical.OracleUpdate
-// produced by the decoders actually satisfy the trades /
-// oracle_updates hypertable schema — something pure unit tests
-// (without a live DB) can't check. Schema-level concerns the
-// unit tests miss:
-//
-//   - NUMERIC bounds for 128-bit amounts.
-//   - NOT NULL columns that weren't populated.
-//   - Primary-key uniqueness + ON CONFLICT DO NOTHING semantics.
-//   - UTC / timezone coercion on Timestamp round-trip.
-//   - TEXT-column length limits for long strkeys.
-//
-// Decoder correctness is still tested at the unit level in each
-// source's real_fixture_test.go against real mainnet captures —
-// this file is deliberately about the schema bridge.
-//
-// One container serves all subtests to keep boot cost amortized.
+// TestDecoderOutputFitsStorageSchema: one canonical.Trade per Soroban source (plus a Reflector OracleUpdate) in the
+// decoder's real shape, inserted and read back. Catches what unit tests cannot: NUMERIC bounds for 128-bit amounts, unset
+// NOT NULLs, PK/ON CONFLICT, UTC coercion, TEXT length for long strkeys.
 func TestDecoderOutputFitsStorageSchema(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -559,32 +517,8 @@ func nowUTC(t *testing.T) time.Time {
 	return time.Now().UTC().Truncate(time.Second)
 }
 
-// TestExternalFleet_EndToEnd is the Phase-2-ingestion closing-
-// ceremony test: proves every external-source class (Streamer,
-// Poller, aggregator, authority_sanity) is wired end-to-end
-// through external.Run → shared consumer.Event channel →
-// Timescale inserts → query round-trip.
-//
-// Five venues covered, one per representative class:
-//
-//  1. Binance (Streamer, exchange class) — WS aggTrade frames
-//     against a scripted httptest WS server.
-//  2. Bitstamp (Streamer, exchange class) — proves multi-streamer
-//     fan-out; different wire format (live_trades_* channels).
-//  3. ExchangeRatesApi (Poller, exchange class, FX) — inverts
-//     base→target rates; emits OracleUpdates not Trades.
-//  4. CoinGecko (Poller, aggregator class) — divergence-only;
-//     emitted OracleUpdates land in oracle_updates with
-//     source=coingecko (VWAP exclusion happens at aggregator
-//     query time, not at insert).
-//  5. ECB (Poller, authority_sanity class) — daily XML; inverts
-//     EUR-base to asset-in-EUR form.
-//
-// The test does NOT exercise Kraken / Coinbase / CoinMarketCap /
-// CryptoCompare since they share shape with one
-// of the five and would just add runtime without proving
-// additional coverage. Their unit tests at the package level
-// already pin correctness.
+// TestExternalFleet_EndToEnd: each external class (Streamer, Poller, aggregator, authority_sanity) runs through
+// external.Run -> consumer.Event channel -> Timescale -> query. Covered.
 func TestExternalFleet_EndToEnd(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -674,13 +608,8 @@ func TestExternalFleet_EndToEnd(t *testing.T) {
 		t.Fatalf("external.Run: %v", err)
 	}
 
-	// Persist goroutine — the same shape as cmd/stellarindex-indexer's
-	// persistEvents but without panic recovery / obs metrics.
-	// persistCtx is DECOUPLED from the fleet ctx: `cancel()` below stops the
-	// streamers/pollers, but the consumer keeps draining events already
-	// buffered on the channel AFTER the cancel — inserting those with the
-	// cancelled fleet ctx flaked as "InsertOracleUpdate: context canceled".
-	// Same reasoning the post-drain assertions already use a fresh assertCtx.
+	// Persist goroutine, like the indexer's persistEvents minus recovery/metrics. persistCtx is decoupled from the fleet ctx:
+	// the consumer keeps draining buffered events after cancel(), and a cancelled ctx flaked InsertOracleUpdate.
 	persistCtx, persistCancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer persistCancel()
 	persistDone := make(chan struct{})
@@ -690,10 +619,8 @@ func TestExternalFleet_EndToEnd(t *testing.T) {
 		for e := range events {
 			switch ev := e.(type) {
 			case external.TradeEvent:
-				// FAIL on insert error: the CEX/FX fleet
-				// is exercised end-to-end only here, so a swallowed insert (e.g.
-				// a NUMERIC-scale/schema drift) would otherwise pass silently.
-				// t.Errorf (not Fatal) is goroutine-safe.
+				// Fail on insert error: this is the only end-to-end CEX/FX coverage, so a swallowed insert (NUMERIC-scale/schema drift)
+				// would pass silently. t.Errorf, not Fatal, is goroutine-safe.
 				if err := store.InsertTrade(persistCtx, ev.Trade); err != nil {
 					t.Errorf("InsertTrade: %v", err)
 					continue
@@ -902,24 +829,9 @@ func newECBMockREST(t *testing.T) *httptest.Server {
 	}))
 }
 
-// TestRozoMemoBytes_HostileMemoLandsInPostgres is the proof against a
-// REAL Postgres, through the production path end to end:
-//
-//	events.Event -> rozo.Decoder.Decode -> pipeline.HandleEvent
-//	             -> persistRozoEvent -> Store.InsertRozoEvent -> rozo_events
-//
-// A Rozo v1 memo is an ScString — the payer picks its BYTES, for one
-// stroop. rozo_events.memo is `text`, and Postgres refuses a NUL or an
-// invalid UTF-8 sequence there with SQLSTATE 22021. The projector classes
-// that as a permanent data error and skips the event for good, so before
-// the fix every case below marked hostile failed HandleEvent and left no
-// row: an attacker-chosen, un-closable hole in the bridge history.
-//
-// Asserted per memo: the insert succeeds; exactly one row lands; the stored
-// text is the exact deterministic scval.ToText value; the on-chain bytes
-// are recoverable both in Go (scval.FromText) and in SQL (the documented
-// decode(substr(memo, 3), 'hex') recipe); and a replay of the same event
-// rewrites the same single row. Ordinary memos must be stored verbatim.
+// TestRozoMemoBytes_HostileMemoLandsInPostgres: real Postgres, production path (Decode -> HandleEvent -> persistRozoEvent
+// -> InsertRozoEvent). A payer-chosen memo can hold NUL or invalid UTF-8, which text refuses (22021); the projector then
+// skips the event permanently. Per memo.
 func TestRozoMemoBytes_HostileMemoLandsInPostgres(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1035,29 +947,9 @@ func rozoPaymentEventWithMemo(t *testing.T, ledger uint32, txHash, memo string) 
 	}
 }
 
-// TestCopyMergeSEP41_GenerationGuard is the proven-red DB-backed test that
-// the BULK COPY+merge writers used by ch_rebuild (CopyMergeSEP41SupplyEvents /
-// CopyMergeSEP41Transfers) carry the SAME generation-guarded corrective-upsert
-// semantics as their per-row siblings, not generation-0 `ON CONFLICT DO NOTHING`.
-//
-// A naive bulk path (a) omits derive_generation from the COPY column list, so
-// every bulk row takes the column DEFAULT 0, and (b) merges DO NOTHING, so a
-// corrected re-derive of a wrong money value silently no-ops against an
-// existing PK. With that shape:
-//   - "corrective re-derive lands" goes RED (DO NOTHING keeps the wrong V1).
-//   - "gen-0 replay cannot revert" would trivially pass on DO NOTHING but is
-//     kept as the companion assertion that pins the guard direction once the
-//     merge is DO UPDATE.
-//
-// TV-3 is the same defect observed from ch_rebuild: with the primary bulk
-// path at DO NOTHING and the per-row fallback at gen-guarded DO UPDATE, a
-// COPY batch error silently flipped additive-recovery into an overwrite.
-// Unifying the bulk path on the guarded DO UPDATE makes the two paths
-// semantically identical, which this test's use of the real bulk writer pins.
-//
-// To reproduce red: revert copyMergeUpsertSQL (sep41_copy.go) to
-// `... ON CONFLICT ... DO NOTHING` (keep migration 0110 + SetDeriveGeneration)
-// and the "corrective re-derive lands" assertion goes red.
+// TestCopyMergeSEP41_GenerationGuard: the bulk COPY+merge writers (ch_rebuild) must carry the same generation-guarded
+// corrective upsert as the per-row writers. A DO NOTHING merge with default generation 0 keeps a wrong money value on re-
+// derive and flips additive recovery into overwrite. To see red.
 func TestCopyMergeSEP41_GenerationGuard(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1199,11 +1091,9 @@ func TestCopyMergeSEP41_GenerationGuard(t *testing.T) {
 	})
 }
 
-// TestMigration0174_NoOpLeavesCompressedChunksCompressed pins the
-// neutralisation of 0174: over two populated compressed chunks it
-// decompresses nothing and adds no constraint, leaves the version clean at
-// 174, and its down succeeds both on that no-op state and on the
-// pre-neutralisation state, where the old body had added sep41_transfers_amount_check.
+// TestMigration0174_NoOpLeavesCompressedChunksCompressed: over two compressed chunks 0174 decompresses nothing, adds no
+// constraint, leaves version 174, and its down works on that state and on the old state that had
+// sep41_transfers_amount_check.
 func TestMigration0174_NoOpLeavesCompressedChunksCompressed(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1248,10 +1138,7 @@ func TestMigration0174_NoOpLeavesCompressedChunksCompressed(t *testing.T) {
 	applyMigrationsUpTo(t, dsn, 174)
 	requireSEP41AmountCheck(t, ctx, db, true, "v0.92.0 state after the 0174 no-op")
 
-	// Recompress before the down: the ADD CONSTRAINT above ran against
-	// decompressed chunks, and left uncompressed. The v0.92.0-state down
-	// (DROP CONSTRAINT on a CHECK that actually exists) is only exercised
-	// against production's shape if it runs against compressed chunks too.
+	// Recompress before the down so the DROP CONSTRAINT runs against compressed chunks, as in production.
 	seedCompressedSEP41TransferChunk(t, ctx, db)
 	requireCompressedSEP41TransferChunks(t, ctx, db, 2, "recompressed before the v0.92.0-state down")
 
@@ -1339,12 +1226,8 @@ func requireCompressedSEP41TransferChunks(t *testing.T, ctx context.Context, db 
 	}
 }
 
-// TestSorobanEventsBatchInsert exercises the
-// InsertSorobanEventsBatch → CountSorobanEventsInRange paths against
-// real TimescaleDB. ADR-0029. Inserts 100 synthetic rows across the
-// full topic+body+op_args shape coverage and asserts they all land.
-// Also verifies idempotency (re-inserting the same batch is a no-op
-// via ON CONFLICT DO NOTHING).
+// TestSorobanEventsBatchInsert: InsertSorobanEventsBatch -> CountSorobanEventsInRange (ADR-0029): 100 rows across
+// topic/body/op_args shapes all land; re-inserting the batch is a no-op (ON CONFLICT DO NOTHING).
 func TestSorobanEventsBatchInsert(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1398,13 +1281,8 @@ func TestSorobanEventsBatchInsert(t *testing.T) {
 	}
 }
 
-// TestSorobanEventsBatchInsert_PreservesFiveOrMoreTopics is the
-// DB-round-trip guard: a row carrying MORE than four topics must
-// persist through InsertSorobanEventsBatch → topics_xdr (migration
-// 0114) → StreamSorobanEvents with EVERY topic byte-for-byte intact,
-// in order. A schema of four fixed topic_0..3 columns only would leave topics 5+
-// nowhere to land; the topics_xdr bytea[] column keeps them
-// all.
+// TestSorobanEventsBatchInsert_PreservesFiveOrMoreTopics: a row with more than four topics must persist via topics_xdr
+// (bytea[]) and stream back with every topic intact and in order; fixed topic_0..3 columns would lose topics 5+.
 func TestSorobanEventsBatchInsert_PreservesFiveOrMoreTopics(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

@@ -97,10 +97,8 @@ func TestCAGGHistoryDetector(t *testing.T) {
 	})
 
 	t.Run("a view whose armed retention explains its floor is not flagged", func(t *testing.T) {
-		// An ARMED retention policy makes a short history correct, and
-		// the detector has to know the difference between "trimmed by
-		// policy" and "never re-materialized". Migration 0156 ships one
-		// of these disabled on prices_1m; an operator may arm it.
+		// An ARMED retention policy makes short history correct; the detector must tell "trimmed by policy" from "never re-
+		// materialized". Migration 0156 ships one disabled on prices_1m.
 		if _, err := db.ExecContext(ctx,
 			`SELECT add_retention_policy('prices_15m', drop_after => INTERVAL '2 days', if_not_exists => true)`,
 		); err != nil {
@@ -153,11 +151,8 @@ func TestCAGGHistoryDetector(t *testing.T) {
 	})
 }
 
-// runFreshnessCAGGDetector executes every emptied-CAGG detector block
-// in the shipped watchdog and returns view → value. Reading the SQL out
-// of the script rather than restating it here is the point: a detector
-// that is correct in a test file and absent from the script protects
-// nobody.
+// runFreshnessCAGGDetector runs every emptied-CAGG detector block from the shipped watchdog and returns view -> value.
+// Reading the script's SQL, not restating it, is the point: a detector absent from the script protects nobody.
 func runFreshnessCAGGDetector(t *testing.T, ctx context.Context, db *sql.DB) map[string]string {
 	t.Helper()
 	out := map[string]string{}
@@ -242,17 +237,12 @@ func seedDetectorTrade(t *testing.T, ctx context.Context, db *sql.DB, nonce int,
 	}
 }
 
-// wantRealtimeCAGGs is the exact set of views the migrations leave
-// real-time (0069), sorted. Each must also be allowed by
-// timescale.RealTimeCAGGAllowed, the list the runtime readiness check uses.
-// 0187 recreates pools_per_source_1h (real-time since 0076) materialized-only;
-// the operator restores its real-time tail once it has been refreshed.
+// wantRealtimeCAGGs: the exact sorted set of views the migrations leave real-time (0069), each also allowed by
+// timescale.RealTimeCAGGAllowed. 0187 made pools_per_source_1h materialized-only; the operator restores its real-time tail
+// after a refresh.
 var wantRealtimeCAGGs = []string{"source_volume_1h"}
 
-// pinnedCAGGs are the served price / TWAP / oracle / supply / DEX-volume
-// views whose unguarded readers (the catalogue snapshot, /v1/markets, the
-// DEX pages, FX resolution, RWA daily history) depend on the view exposing
-// CLOSED buckets only. Listed so the test fails if one is renamed away.
+// pinnedCAGGs: served views whose unguarded readers depend on CLOSED buckets only. Listed so a rename fails the test.
 var pinnedCAGGs = []string{
 	"prices_1m", "prices_15m", "prices_1h", "prices_4h",
 	"prices_1d", "prices_1w", "prices_1mo",
@@ -262,12 +252,9 @@ var pinnedCAGGs = []string{
 	"supply_1d", "dex_volume_by_pair_1d",
 }
 
-// TestCAGGMaterializedOnlyPinned pins ADR-0015's closed-bucket invariant at
-// the schema: every served CAGG outside realtimeCAGGs is materialized_only,
-// whatever the TimescaleDB default was when it was created and whatever an
-// earlier flip left behind. Before 0172 the property held only because the
-// current image defaults it on and 0115/0126/0147 carried the prior value
-// forward, so a view that was ever real-time stayed real-time.
+// TestCAGGMaterializedOnlyPinned pins ADR-0015's closed-bucket invariant at the schema: every served CAGG outside
+// realtimeCAGGs is materialized_only, whatever the default was at creation or an earlier flip left (a once-real-time view
+// stayed real-time before 0172).
 func TestCAGGMaterializedOnlyPinned(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -322,10 +309,8 @@ func TestCAGGMaterializedOnlyPinned(t *testing.T) {
 	assertClosedBucketReadiness(t, ctx, dsn, db)
 }
 
-// assertZeroLegOnlyCountsInPrices inserts a zero-quote fill through the
-// migrated schema (no CHECK left to reject it) beside a real one: until a
-// refresh neither reaches materialized-only prices_1m, and after it the
-// zero-leg row adds to trade_count but never to a price.
+// assertZeroLegOnlyCountsInPrices: a zero-quote fill stored beside a real one reaches materialized-only prices_1m only
+// after a refresh, where it adds to trade_count but never to a price.
 func assertZeroLegOnlyCountsInPrices(t *testing.T, ctx context.Context, db *sql.DB) {
 	t.Helper()
 	t0 := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Minute)
@@ -358,12 +343,9 @@ func assertZeroLegOnlyCountsInPrices(t *testing.T, ctx context.Context, db *sql.
 	}
 }
 
-// assertClosedBucketReadiness drives the runtime chokepoint against the
-// migrated schema: clean, it is ready; after an out-of-band flip of a price
-// and an oracle view (the 0069/0076 answer to "the current bucket is
-// invisible"), Store.OpenBucketCAGGs names exactly those views and the
-// critical /readyz checker fails, while the allowlisted real-time volume
-// counters stay unreported.
+// assertClosedBucketReadiness: clean schema is ready; after an out-of-band flip of a price and an oracle view,
+// Store.OpenBucketCAGGs names exactly those views and the critical /readyz checker fails, while allowlisted real-time
+// volume counters stay unreported.
 func assertClosedBucketReadiness(t *testing.T, ctx context.Context, dsn string, db *sql.DB) {
 	t.Helper()
 	store, err := timescale.Open(ctx, dsn)
@@ -431,10 +413,8 @@ func caggMaterializedOnly(t *testing.T, ctx context.Context, db *sql.DB) map[str
 	return out
 }
 
-// TestOracleCAGGsMatchCatalog is TestTradesCAGGsMatchCatalog for the
-// oracle_updates root: every aggregate built (at any depth) on
-// oracle_updates is in timescale.OracleCAGGs, which backfill refreshes
-// after each chunk, and nothing else is.
+// TestOracleCAGGsMatchCatalog: every aggregate built at any depth on oracle_updates is in timescale.OracleCAGGs (refreshed
+// after each backfill chunk), and nothing else is.
 func TestOracleCAGGsMatchCatalog(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -474,11 +454,9 @@ func TestOracleCAGGsMatchCatalog(t *testing.T) {
 	}
 }
 
-// TestOracleCAGGsRefreshOverABackfilledRange is the oracle half of
-// this on a real TimescaleDB: oracle rows written for a historical
-// ledger range are invisible to oracle_prices_1d (created WITH NO DATA,
-// policy reach 7 days) until refreshed, and the store now finds that
-// range's time span and accepts every oracle_prices_* view.
+// TestOracleCAGGsRefreshOverABackfilledRange: oracle rows for a historical range are invisible to oracle_prices_1d (WITH
+// NO DATA, 7-day policy reach) until refreshed; the store finds the range's time span and accepts every oracle_prices_*
+// view.
 func TestOracleCAGGsRefreshOverABackfilledRange(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -595,11 +573,9 @@ func TestCAGGBucketsMatchCatalog(t *testing.T) {
 	}
 }
 
-// TestRunCAGGRefreshStepPiecesMatchOneCall runs the cut refresh of every
-// trades aggregate against TimescaleDB, then one forced CALL over the same
-// window, and requires the same materialised rows: no bucket is lost at a
-// cut. Trades sit one second either side of every cut, so a cut off the
-// view's real grid would split a populated bucket.
+// TestRunCAGGRefreshStepPiecesMatchOneCall: the cut refresh of every trades aggregate yields the same rows as one forced
+// CALL over the window. Trades one second either side of each cut catch a cut off the view's grid splitting a populated
+// bucket.
 func TestRunCAGGRefreshStepPiecesMatchOneCall(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -684,19 +660,9 @@ func TestRunCAGGRefreshStepPiecesMatchOneCall(t *testing.T) {
 	}
 }
 
-// TestRefreshContinuousAggregate_PerCallBound proves, on a
-// real TimescaleDB: a refresh_continuous_aggregate CALL made through
-// the store runs under a per-CALL statement_timeout, and when that
-// bound fires the caller gets a typed error naming the view and the
-// window, the BACKEND (not the client socket) cancelled the refresh,
-// and the pooled connection it ran on is returned healthy with its
-// previous statement_timeout restored.
-//
-// The pool is pinned to ONE connection for the whole test so every
-// statement after the timed-out CALL demonstrably rides the same
-// connection the CALL was cancelled on — the "does not poison the
-// pool" claim is about that connection, and a fresh dial would prove
-// nothing.
+// TestRefreshContinuousAggregate_PerCallBound: a refresh CALL runs under a per-CALL statement_timeout; on expiry the
+// caller gets a typed error naming view and window, the BACKEND cancelled it, and the pooled connection returns healthy
+// with its timeout restored.
 func TestRefreshContinuousAggregate_PerCallBound(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -776,16 +742,9 @@ func TestRefreshContinuousAggregate_PerCallBound(t *testing.T) {
 		t.Errorf("typed error = {View:%s From:%s To:%s Timeout:%s}, want {prices_1m %s %s 1ms}",
 			tErr.View, tErr.From, tErr.To, tErr.Timeout, fromB, toB)
 	}
-	// A PgError carrying the statement_timeout message on the chain
-	// proves the SERVER cancelled the statement — the refresh lock is
-	// released and the connection is intact. A Go-side deadline
-	// (context.DeadlineExceeded) would mean the socket was closed under
-	// a still-running backend. The code is asserted as observed: the
-	// procedure re-throws the cancellation as XX000 (internal_error),
-	// not 57014 — the first run of this test against
-	// timescale/timescaledb:2.26.4-pg15 is how that was learned, and a
-	// Timescale release that starts surfacing 57014 should fail here so
-	// the classifier's comment is corrected with it.
+	// A PgError with the statement_timeout message proves the SERVER cancelled (lock released, connection intact); a Go-side
+	// deadline would mean the socket closed under a live backend. Code asserted as observed: XX000, not 57014 (timescaledb
+	// 2.26.4-pg15); a release surfacing 57014 should fail here.
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) || !strings.Contains(pgErr.Message, "canceling statement due to statement timeout") {
 		t.Fatalf("timeout must be the backend's statement_timeout cancellation; got %v", err)
@@ -819,11 +778,9 @@ func TestRefreshContinuousAggregate_PerCallBound(t *testing.T) {
 	}
 }
 
-// Migration 0187 (migrations/0187_price_caggs_priceable_filter.up.sql)
-// restricts every price expression in the trades-derived CAGGs to rows with
-// both legs > 0 and adds volume_quote / volume_priced. `trades` still
-// CHECKs both legs > 0, so the test drops those CHECKs to store the
-// zero-leg rows a later migration will admit.
+// Migration 0187 limits every CAGG price expression to rows with both legs > 0 and adds volume_quote / volume_priced.
+// `trades` still CHECKs both legs > 0, so the test drops those CHECKs to store the zero-leg rows a later migration will
+// admit.
 
 const priceableIssuer = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 
@@ -1089,10 +1046,8 @@ func assertPriceableSchema(t *testing.T, ctx context.Context, db *sql.DB, up boo
 	}
 }
 
-// TestPriceCAGGsAreMaterializedOnly pins the setting most prices_1m readers
-// rely on to exclude the in-progress bucket: with real-time aggregation off,
-// that bucket is never materialized. Enabling it (as 0069/0076 did for
-// sibling CAGGs) must be a deliberate change that audits every reader.
+// TestPriceCAGGsAreMaterializedOnly: with real-time aggregation off the in-progress bucket is never materialized, which
+// most prices_1m readers rely on. Enabling it (as 0069/0076 did for siblings) must be deliberate and audit every reader.
 func TestPriceCAGGsAreMaterializedOnly(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1134,10 +1089,8 @@ func TestPriceCAGGsAreMaterializedOnly(t *testing.T) {
 	}
 }
 
-// TestTrailing24hVolume_ExcludesInProgressMinute enables real-time
-// aggregation on prices_1m so the current minute is visible, then asserts
-// the trailing-24h volume readers sum only CLOSED buckets (ADR-0015).
-// A `bucket < now()` ceiling admits the current minute and fails this.
+// TestTrailing24hVolume_ExcludesInProgressMinute: with real-time aggregation on prices_1m, trailing-24h volume readers
+// must sum only CLOSED buckets (ADR-0015); a `bucket < now()` ceiling admits the current minute and fails.
 func TestTrailing24hVolume_ExcludesInProgressMinute(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1231,11 +1184,9 @@ func closedAndLiveVolume(t *testing.T, ctx context.Context, store *timescale.Sto
 	return closedOnly, all
 }
 
-// TestPrices1mStartOffsetWidened executes migration 0165 up and down.
-// prices_1m's refresh lookback must exceed the ch-live-catchup period
-// (deploy/systemd/ch-live-catchup.timer, 10 minutes): trades drained after a
-// lake-hole stall carry ledger-close timestamps up to that old, and a
-// shorter lookback never re-aggregates their buckets.
+// TestPrices1mStartOffsetWidened (migration 0165 up/down): prices_1m's refresh lookback must exceed the 10-minute ch-live-
+// catchup period, since trades drained after a lake-hole stall carry close timestamps that old and a shorter lookback
+// never re-aggregates them.
 func TestPrices1mStartOffsetWidened(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1297,11 +1248,8 @@ func prices1mStartOffset(t *testing.T, ctx context.Context, db *sql.DB) time.Dur
 	return time.Duration(seconds) * time.Second
 }
 
-// TestProtocolEventRollup_RoundTrip proves the protocol-event rollup end-to-end:
-// RefreshProtocolEventCounts folds the trailing-24h census into
-// protocol_events_24h, CountRecentEventsBySource reads it back, only
-// recent trades count, the refresh is idempotent, and a source that
-// ages out of the 24h window is pruned on the next pass.
+// TestProtocolEventRollup_RoundTrip: RefreshProtocolEventCounts folds the trailing-24h census into protocol_events_24h;
+// only recent trades count, refresh is idempotent, and a source aged out of the window is pruned next pass.
 func TestProtocolEventRollup_RoundTrip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1391,12 +1339,8 @@ func TestProtocolEventRollup_RoundTrip(t *testing.T) {
 	}
 }
 
-// TestRollupRefresh_ZeroRowPassKeepsLastGood runs the three rollup refreshes
-// against a database whose upstream (prices_1m, trades) is EMPTY — the
-// state a CAGG rebuilt WITH NO DATA or a stalled refresh policy leaves. The
-// pass must keep every last-good row still inside its rollup's validity
-// bound and drop only the rows past it, instead of deleting the whole
-// served table on its now()-stamped prune.
+// TestRollupRefresh_ZeroRowPassKeepsLastGood: with EMPTY upstream (CAGG rebuilt WITH NO DATA or stalled policy), the three
+// rollup refreshes keep last-good rows inside the validity bound and drop only older ones, not the whole served table.
 func TestRollupRefresh_ZeroRowPassKeepsLastGood(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1494,11 +1438,9 @@ func rollupAssetIDs(ctx context.Context, t *testing.T, db *sql.DB, q string) []s
 	return out
 }
 
-// TestSoleWriterCAGGCoverage_MigratedSchema executes the sole-writer
-// gate's query against the fully migrated schema: every continuous
-// aggregate is listed with the offset its latest migration set and the
-// raw table it reads, and the Phase-4 flip is refused on exactly the
-// views whose lookback is shorter than the projector's stall bound.
+// TestSoleWriterCAGGCoverage_MigratedSchema: the sole-writer gate's query on the migrated schema lists each CAGG with its
+// latest offset and raw table, and refuses the Phase-4 flip on exactly the views whose lookback is shorter than the
+// projector's stall bound.
 func TestSoleWriterCAGGCoverage_MigratedSchema(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1556,12 +1498,9 @@ func TestSoleWriterCAGGCoverage_MigratedSchema(t *testing.T) {
 	}
 }
 
-// TestTradesCAGGRefresh_NonForcedRebuildsOnlyInvalidatedBuckets pins
-// `trades-cagg-refresh -force=false` and `-size` on real TimescaleDB: a
-// trade written late into an already-materialised bucket is sized from the
-// invalidation log, then the non-forced run re-materialises that bucket —
-// through prices_1m into twap_1d — and leaves every other bucket's rows
-// untouched (same xmin), which a forced run would rewrite.
+// TestTradesCAGGRefresh_NonForcedRebuildsOnlyInvalidatedBuckets: with `-force=false` and `-size`, a late trade in a
+// materialised bucket is sized from the invalidation log and re-materialised (through prices_1m into twap_1d); other
+// buckets keep their xmin (a forced run rewrites them).
 func TestTradesCAGGRefresh_NonForcedRebuildsOnlyInvalidatedBuckets(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1670,12 +1609,9 @@ func TestTradesCAGGRefresh_NonForcedRebuildsOnlyInvalidatedBuckets(t *testing.T)
 	}
 }
 
-// TestTradesCAGGRefresh_NonForcedRefusesBelowDroppedPrices1m pins the
-// drop-then-disarm case: prices_1m's retention dropped its old minute rows
-// and is disarmed again, so the armed check passes, yet a non-forced run
-// over that history would recompute twap_1d from the one minute a late
-// trade re-materialises. It must refuse, and -size must keep that range
-// out of its catch-up line.
+// TestTradesCAGGRefresh_NonForcedRefusesBelowDroppedPrices1m: prices_1m retention dropped old minutes and is disarmed
+// again, so the armed check passes, but a non-forced run would recompute twap_1d from one minute. It must refuse, and
+// -size must exclude that range.
 func TestTradesCAGGRefresh_NonForcedRefusesBelowDroppedPrices1m(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1745,11 +1681,9 @@ func TestTradesCAGGRefresh_NonForcedRefusesBelowDroppedPrices1m(t *testing.T) {
 	}
 }
 
-// TestTradesCAGGRefresh_NonForcedRefusesGapAbovePrices1mFloor pins a
-// dropped stretch of prices_1m that sits ABOVE its earliest bucket, once a
-// forced run over older history moved that bucket down: the floor no longer
-// covers it, so the non-forced run must prove prices_1m against trades over
-// the twap buckets it recomputes, and -size must not suggest a catch-up there.
+// TestTradesCAGGRefresh_NonForcedRefusesGapAbovePrices1mFloor: a dropped prices_1m stretch above its earliest bucket
+// (after a forced run moved the floor down) is not covered by the floor; the non-forced run must prove prices_1m against
+// trades there, and -size must not suggest it.
 func TestTradesCAGGRefresh_NonForcedRefusesGapAbovePrices1mFloor(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1898,19 +1832,9 @@ func tradesCAGGRefreshCmd(cfgPath string, args []string) []string {
 	return append(cmd, "-write")
 }
 
-// TestTradesCAGGRefresh_RematerialisesARewrittenLedgerRange is the
-// executing proof for `trades-cagg-refresh`, the step
-// scripts/ops/ch-rebuild-projected.sh now runs after each window whose
-// trades it rewrote. On real TimescaleDB it pins that:
-//
-//  1. a rewrite of historical trades is NOT visible through prices_1d
-//     until something refreshes it (the defect, as a control);
-//  2. the command refreshes the aggregates over the ledger range's time
-//     span, INCLUDING the day buckets the range's first and last rows sit
-//     in — Timescale refreshes only buckets wholly inside the window, so
-//     an unpadded [min(ts), max(ts)] would leave both edges stale;
-//  3. the monthly rung and the prices_1m-derived twap_1d follow;
-//  4. a range with no trades is refused, not silently skipped.
+// TestTradesCAGGRefresh_RematerialisesARewrittenLedgerRange: (1) a rewrite of historical trades is not visible via
+// prices_1d until refreshed; (2) the command refreshes the range's span including the first/last day buckets (Timescale
+// refreshes only buckets wholly inside the window); (3) the monthly rung and prices_1m-derived twap_1d follow.
 func TestTradesCAGGRefresh_RematerialisesARewrittenLedgerRange(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1992,13 +1916,9 @@ func TestTradesCAGGRefresh_RematerialisesARewrittenLedgerRange(t *testing.T) {
 	}
 }
 
-// TestTradesCAGGRefresh_RebuildsDroppedMinuteRowsBeforeTheTwaps pins the
-// migration-0156 hazard on real TimescaleDB: prices_1m's retention drops
-// minute chunks without an invalidation, and twap_1d is materialised from
-// prices_1m. The refresh must force-rebuild prices_1m over every day
-// twap_1d re-materialises, or twap_1d is recomputed from the missing
-// minute rows and loses them. While the policy is armed, the twaps are
-// refused.
+// TestTradesCAGGRefresh_RebuildsDroppedMinuteRowsBeforeTheTwaps (migration 0156): prices_1m retention drops minute chunks
+// without invalidation and twap_1d derives from prices_1m, so the refresh must force-rebuild prices_1m over every re-
+// materialised day first; while the policy is armed, the twaps are refused.
 func TestTradesCAGGRefresh_RebuildsDroppedMinuteRowsBeforeTheTwaps(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -2065,11 +1985,8 @@ func TestTradesCAGGRefresh_RebuildsDroppedMinuteRowsBeforeTheTwaps(t *testing.T)
 	}
 }
 
-// TestTradesPrices1mDrift_FindsWhatTheAggregateStillHolds is the executing
-// proof for the check trades-cagg-refresh ends on: on real
-// TimescaleDB, prices_1m and `trades` agree exactly once refreshed, and a
-// row rewritten, added or deleted behind the aggregate's back is reported
-// with both sides, exact, for its pair only.
+// TestTradesPrices1mDrift_FindsWhatTheAggregateStillHolds: prices_1m and `trades` agree once refreshed, and a row
+// rewritten, added or deleted behind the aggregate is reported with both exact sides for its pair only.
 func TestTradesPrices1mDrift_FindsWhatTheAggregateStillHolds(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -2177,13 +2094,9 @@ func caggVolume(t *testing.T, ctx context.Context, db *sql.DB, view string, buck
 	return v.String
 }
 
-// TestTradesCAGGsMatchCatalog holds timescale.TradesCAGGs in lockstep
-// with the migrated schema: every continuous aggregate whose ROOT
-// hypertable is `trades` (hierarchical ones resolved through their
-// parent) must be in the list, and nothing else may be. A migration
-// that adds a trades-rooted aggregate without listing it leaves a
-// served surface the restamp follow-up and the refresh allow-list
-// cannot reach; a stale name in the list would fail at refresh time.
+// TestTradesCAGGsMatchCatalog keeps timescale.TradesCAGGs in lockstep with the schema: every CAGG rooted (through parents)
+// on `trades` must be listed and nothing else; an unlisted one is unreachable by restamp follow-up and refresh allow-list,
+// a stale name fails at refresh.
 func TestTradesCAGGsMatchCatalog(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

@@ -15,11 +15,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestAquariusReservesRoundTrip exercises InsertAquariusReserves
-// through real TimescaleDB — the migration-0089 aquarius_reserves
-// schema. Validates the per-token fan-out (N rows from one event, keyed
-// by token_index), NUMERIC i128 preservation, the reserve >= 0 CHECK
-// (a zero reserve is legal), and ON CONFLICT idempotency.
+// TestAquariusReservesRoundTrip: per-token fan-out keyed by token_index, NUMERIC i128, reserve >= 0 CHECK (zero legal),
+// ON CONFLICT idempotency.
 func TestAquariusReservesRoundTrip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -81,11 +78,8 @@ func TestAquariusReservesRoundTrip(t *testing.T) {
 	}
 }
 
-// TestAquariusLiquidityRoundTrip exercises InsertAquariusLiquidity —
-// the migration-0089 aquarius_liquidity schema. Validates the per-token
-// fan-out, the deposit/withdraw action CHECK, that `shares` lands on
-// token_index = 0 only (NULL elsewhere, so SUM(shares) is honest), and
-// i128 preservation.
+// TestAquariusLiquidityRoundTrip: per-token fan-out, deposit/withdraw CHECK, `shares` only on token_index 0
+// (NULL elsewhere so SUM(shares) is honest), i128 preserved.
 func TestAquariusLiquidityRoundTrip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -182,12 +176,8 @@ func TestAquariusLiquidityRoundTrip(t *testing.T) {
 	}
 }
 
-// TestLatestAquariusReserves exercises the READ side of the Aquarius
-// TVL/depth signal (LatestAquariusReserves): empty-safe (nil, nil) on an
-// empty table, latest-snapshot-per-pool selection (an older snapshot is
-// shadowed by a newer one), per-token fan-out preserved, i128 NUMERIC
-// round-trip, a drained (zero) leg surviving, and positional token-address
-// resolution from aquarius_liquidity.
+// TestLatestAquariusReserves: empty-safe (nil, nil); latest snapshot per pool wins; per-token fan-out, i128 and a zero leg
+// survive; token addresses resolved positionally from aquarius_liquidity.
 func TestLatestAquariusReserves(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -213,10 +203,8 @@ func TestLatestAquariusReserves(t *testing.T) {
 		tokenA = "CAUIKL3IYGMERDRUN6YSCLWVAKIFG5Q4YJHUKM4S4NJZQIA3BAS6OJPK"
 		tokenB = "CD25MNVTZDL4Y3XBCPCJXGXATV5WUHHOWMYFF4YBEGU5FCPGMYTVG5JY"
 	)
-	// Relative to now, not a fixed calendar date: LatestAquariusReserves
-	// filters on `ledger_close_time > now() - windowDays`, so a hardcoded
-	// date eventually ages out of the 90-day window and the test starts
-	// failing on its own regardless of what changed in the code.
+	// Relative to now: the reader filters on `ledger_close_time > now() - windowDays`, so a fixed date would age out of the
+	// window.
 	base := time.Now().UTC().Add(-2 * time.Hour)
 	huge, _ := new(big.Int).SetString("98765432109876543210987654321", 10)
 
@@ -305,12 +293,8 @@ func TestLatestAquariusReserves(t *testing.T) {
 	}
 }
 
-// TestBespokeAquariusReservesSurfaced proves the captured-but-not-surfaced
-// gap is closed: the Aquarius bespoke DEX block gains the reserve-derived
-// TVL/depth KPI + pool-depth table once reserves exist, and stays empty-safe
-// (nil block, not an error) when neither trades nor reserves are captured —
-// so the panel renders cleanly on an r1 that has not yet captured a reserve
-// snapshot. No frontend change is needed; the block renders generically.
+// TestBespokeAquariusReservesSurfaced: the bespoke block gains reserve TVL/depth KPI + pool-depth table once reserves
+// exist, and is a nil block (not an error) when neither trades nor reserves are captured.
 func TestBespokeAquariusReservesSurfaced(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -397,12 +381,8 @@ const (
 	aquariusRwUsdcSAC = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
 )
 
-// TestAquariusRewardsLifetimeByKind exercises the LIFETIME per-kind
-// rewards-gauge reader (AquariusRewardsLifetimeByKind, the v0.12 gap
-// closed by migration 0099): every one of the twelve kinds comes back in
-// migration-0099 census order, kinds with no captured rows still appear
-// with Events=0 (never a missing row). It carries no amount — see
-// TestAquariusRewardsClaimWindow for the per-token amount readback.
+// TestAquariusRewardsLifetimeByKind: all twelve kinds return in census order; kinds with no rows still appear with
+// Events=0. Carries no amount; see TestAquariusRewardsClaimWindow.
 func TestAquariusRewardsLifetimeByKind(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -485,12 +465,8 @@ func TestAquariusRewardsLifetimeByKind(t *testing.T) {
 	}
 }
 
-// TestAquariusRewardsClaimWindow exercises the windowed claim_reward
-// drill-down (AquariusRewardsClaimWindow): empty-safe on no claims, a
-// claim outside the window is excluded (sargable ledger_close_time bound),
-// distinct claimants dedupes a repeat claimant, volume is summed PER reward
-// token (never across tokens), busiest token first, and i128 amounts
-// survive the NUMERIC round trip.
+// TestAquariusRewardsClaimWindow: empty-safe; out-of-window claim excluded; distinct claimants dedupe repeats;
+// volume summed PER reward token, busiest first; i128 survives NUMERIC.
 func TestAquariusRewardsClaimWindow(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -553,11 +529,8 @@ func TestAquariusRewardsClaimWindow(t *testing.T) {
 	}
 }
 
-// TestBespokeAquariusRewardVolumeNotSummedAcrossTokens pins that the
-// Aquarius bespoke block never publishes a 30d reward volume that adds base
-// units of different reward tokens: with claims paid in two tokens there is
-// no scalar "Reward volume (30d)" KPI, and the per-token table carries each
-// token's own sum.
+// TestBespokeAquariusRewardVolumeNotSummedAcrossTokens: claims in two tokens publish no scalar 30d reward-volume KPI;
+// the per-token table carries each token's own sum.
 func TestBespokeAquariusRewardVolumeNotSummedAcrossTokens(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -628,10 +601,7 @@ func aquariusClaim(ledger uint32, at time.Time, txSeed string, n int, user, rewa
 	}
 }
 
-// TestLatestAquariusAdminEvents exercises the governance-events reader
-// (LatestAquariusAdminEvents): empty-safe, newest-first ordering
-// (unwindowed, per the reader's doc — unlike the windowed bespoke augments),
-// and kind/admin/target/ledger fields round-trip.
+// TestLatestAquariusAdminEvents: empty-safe, newest-first (unwindowed), kind/admin/target/ledger round-trip.
 func TestLatestAquariusAdminEvents(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -714,14 +684,8 @@ func TestLatestAquariusAdminEvents(t *testing.T) {
 	}
 }
 
-// TestBespokeAquariusRewardsSurfaced proves the v0.12 "backfilled but
-// served nowhere" gap (7.3M+ rows across aquarius_rewards_events +
-// aquarius_admin) is closed: the Aquarius bespoke DEX block gains the
-// rewards + governance KPIs/tables/series once either table carries data,
-// stays empty-safe (nil block) when nothing has been captured, and the new
-// KPIs sit ALONGSIDE (not replacing) the existing reserve-depth block from
-// aquariusReserveBlocks. No frontend change is needed — BespokeSection
-// renders KPIs/series/tables generically.
+// TestBespokeAquariusRewardsSurfaced: the bespoke block gains rewards + governance KPIs/tables/series once either table
+// has data, nil block when empty, and the KPIs sit alongside (not replacing) the reserve-depth block.
 func TestBespokeAquariusRewardsSurfaced(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -839,12 +803,8 @@ func TestBespokeAquariusRewardsSurfaced(t *testing.T) {
 // AquariusRewardsEvent.Amount *canonical.Amount optional field.
 func amtPtr(a canonical.Amount) *canonical.Amount { return &a }
 
-// TestCometLiquidityRoundTrip exercises the
-// InsertCometLiquidity path through real TimescaleDB. Validates
-// the migration-0042 schema (PK shape, NUMERIC i128 preservation,
-// per-kind/direction CHECK constraints, withdraw-only
-// pool_amount_in) by writing one row per kind and reading them
-// back.
+// TestCometLiquidityRoundTrip: migration-0042 schema (PK shape, NUMERIC i128, per-kind/direction CHECKs, withdraw-only
+// pool_amount_in), one row per kind written and read back.
 func TestCometLiquidityRoundTrip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1016,11 +976,7 @@ func TestCometLiquidityRoundTrip(t *testing.T) {
 	}
 }
 
-// TestCometLiquidity_LargeI128 verifies the NUMERIC column preserves
-// 128-bit values — per ADR-0003 a Soroban i128 must never be silently
-// truncated. A multi-billion-share LP join is the realistic worst
-// case (single XLM unit at the contract's own precision can already
-// exceed int64).
+// TestCometLiquidity_LargeI128: NUMERIC keeps 128-bit values (ADR-0003); a multi-billion-share LP join can exceed int64.
 func TestCometLiquidity_LargeI128(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1078,12 +1034,8 @@ const (
 	dexLPToken       = "CAFJZQWSED6YAWZU3GWRTOCNPPCGBN32L7QV43XX5LZLFTK6JLN34DLN"
 )
 
-// TestLatestCometLiquidityFlowsAndBespoke exercises the Comet liquidity-depth
-// READ side (LatestCometLiquidityFlows) + the bespokeDEX comet augment.
-// Proves empty-safe, net-flow (added − removed) with i128/NUMERIC
-// preservation, and — critically — that the surfaced depth carries the
-// contract-identity caveat (Comet is gated on contract identity; rows
-// captured before the gate predate it and were not re-verified).
+// TestLatestCometLiquidityFlowsAndBespoke: empty-safe; net flow (added - removed) with i128 preserved; surfaced depth
+// carries the contract-identity caveat (rows captured before the gate were not re-verified).
 func TestLatestCometLiquidityFlowsAndBespoke(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1161,11 +1113,8 @@ func TestLatestCometLiquidityFlowsAndBespoke(t *testing.T) {
 	}
 }
 
-// TestLatestPhoenixLiquidityFlowsAndBespoke exercises the Phoenix
-// liquidity-depth + LP-staking READ sides (LatestPhoenixLiquidityFlows +
-// PhoenixStakeWindowStats) and the bespokeDEX phoenix augment. Proves
-// empty-safe, two-token net flow with positional token resolution from the
-// most recent provide, i128/NUMERIC preservation, and the staking KPI.
+// TestLatestPhoenixLiquidityFlowsAndBespoke: empty-safe; two-token net flow with token resolved positionally from the
+// latest provide; i128 preserved; staking KPI.
 func TestLatestPhoenixLiquidityFlowsAndBespoke(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1279,10 +1228,8 @@ func TestLatestPhoenixLiquidityFlowsAndBespoke(t *testing.T) {
 	}
 }
 
-// TestSoroswapSkimAndBespoke exercises the Soroswap skim READ side
-// (SoroswapSkimWindowStats) + the bespokeDEX soroswap augment. Proves
-// empty-safe, i128/NUMERIC preservation of the summed excess amounts, and
-// that a skim-only source (no trades in the window) still surfaces a block.
+// TestSoroswapSkimAndBespoke: empty-safe; summed excess amounts keep i128; a skim-only source (no trades) still surfaces a
+// block.
 func TestSoroswapSkimAndBespoke(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1354,10 +1301,8 @@ func TestSoroswapSkimAndBespoke(t *testing.T) {
 	}
 }
 
-// TestSoroswapSkimBespokeNeverSumsAcrossPairs pins that the served Soroswap
-// block keeps skim amounts per pair. token0 of one pair and token0 of another
-// are different tokens with different decimals; adding their base units into
-// one "Skimmed token0" figure publishes a quantity of no currency at all.
+// TestSoroswapSkimBespokeNeverSumsAcrossPairs: skim amounts stay per pair; token0 of different pairs are different tokens,
+// so summing their base units yields a quantity of no currency.
 func TestSoroswapSkimBespokeNeverSumsAcrossPairs(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1469,14 +1414,8 @@ func anyNote(blk *timescale.BespokeBlock, sub string) bool {
 	return false
 }
 
-// TestPhoenixLiquidityRoundTrip exercises InsertPhoenixLiquidityChange
-// across both provide_liquidity (token addresses populated, shares
-// NULL) and withdraw_liquidity (token addresses NULL, shares
-// populated) shapes through real TimescaleDB. Validates the
-// migration 0044 PK, the per-column NULL-on-mismatch behaviour, the
-// idempotent ON CONFLICT DO NOTHING semantics, and that a large
-// i128 amount round-trips through NUMERIC without precision loss
-// (ADR-0003).
+// TestPhoenixLiquidityRoundTrip: provide (token addresses set, shares NULL) and withdraw (addresses NULL, shares set)
+// shapes, migration-0044 PK, idempotent ON CONFLICT DO NOTHING, large i128 round-trips NUMERIC (ADR-0003).
 func TestPhoenixLiquidityRoundTrip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1623,10 +1562,8 @@ func TestPhoenixLiquidityRoundTrip(t *testing.T) {
 	}
 }
 
-// TestPhoenixStakeEventsRoundTrip exercises InsertPhoenixStakeEvent
-// across bond + unbond with a shared user/contract/lp_token. The
-// action column discriminator distinguishes the two directions; the
-// PK keeps a same-(ledger, tx, op) bond+unbond pair from colliding.
+// TestPhoenixStakeEventsRoundTrip: bond + unbond share user/contract/lp_token; the action column and PK keep a
+// same-(ledger, tx, op) pair apart.
 func TestPhoenixStakeEventsRoundTrip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1742,10 +1679,8 @@ func TestPhoenixStakeEventsRoundTrip(t *testing.T) {
 	}
 }
 
-// TestPhoenixLifecycleAndConfigEventsRoundTrip lands every action
-// migration 0195 admits: a create_distribution_flow row with no user, the
-// migration_* rows with no token, and the factory / blend-pool admin rows,
-// with the i128 minimum-trading value round-tripping through NUMERIC.
+// TestPhoenixLifecycleAndConfigEventsRoundTrip: every action migration 0195 admits (no-user, no-token, admin rows),
+// with the i128 minimum-trading value round-tripping NUMERIC.
 func TestPhoenixLifecycleAndConfigEventsRoundTrip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1864,10 +1799,8 @@ func TestPhoenixLifecycleAndConfigEventsRoundTrip(t *testing.T) {
 	}
 }
 
-// TestSoroswapPairs_UpsertLoadRoundTrip exercises UpsertSoroswapPair and
-// LoadSoroswapPairRegistry against real TimescaleDB (migration 0016):
-// empty table loads as a non-nil empty slice, rows round-trip, and a
-// re-upsert on the same pair_strkey replaces the token mapping in place.
+// TestSoroswapPairs_UpsertLoadRoundTrip: empty table loads as a non-nil empty slice, rows round-trip,
+// re-upsert on the same pair_strkey replaces the token mapping.
 func TestSoroswapPairs_UpsertLoadRoundTrip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1926,10 +1859,8 @@ func TestSoroswapPairs_UpsertLoadRoundTrip(t *testing.T) {
 	}
 }
 
-// TestSoroswapPairs_InsertIfAbsentNeverOverwrites pins the seed path's
-// write: a pair the indexer already registered from an on-chain new_pair
-// event keeps its mapping when the stellar-rpc seed reports different
-// tokens, and an unregistered pair is inserted.
+// TestSoroswapPairs_InsertIfAbsentNeverOverwrites: a pair registered from an on-chain new_pair keeps its mapping when the
+// RPC seed reports different tokens; an unregistered pair is inserted.
 func TestSoroswapPairs_InsertIfAbsentNeverOverwrites(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1984,15 +1915,8 @@ func TestSoroswapPairs_InsertIfAbsentNeverOverwrites(t *testing.T) {
 	}
 }
 
-// TestSoroswapSkimEvent_Insert exercises the InsertSoroswapSkimEvent
-// path against real TimescaleDB. Migration 0042. Inserts the two
-// shapes the decoder emits in production:
-//
-//  1. Initial shape: amounts present, `to_address` NULL.
-//  2. Future-upgrade shape: amounts present, `to_address` populated.
-//
-// Asserts ON CONFLICT DO NOTHING idempotency (replay-safety) and
-// that the NUMERIC columns round-trip an above-int64 i128 (ADR-0003).
+// TestSoroswapSkimEvent_Insert: both decoder shapes (`to_address` NULL, and populated), ON CONFLICT DO NOTHING replay-
+// safety, above-int64 i128 round-trips NUMERIC (ADR-0003).
 func TestSoroswapSkimEvent_Insert(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -2093,10 +2017,7 @@ func TestSoroswapSkimEvent_Insert(t *testing.T) {
 	}
 }
 
-// TestSoroswapSkimEvent_RejectsBadInputs verifies the defensive
-// pre-flight checks before InsertSoroswapSkimEvent ever hits the DB.
-// These are caller bugs, not chain truths — the decoder never emits
-// the rejected shapes.
+// TestSoroswapSkimEvent_RejectsBadInputs: caller-bug shapes the decoder never emits are rejected before the DB.
 func TestSoroswapSkimEvent_RejectsBadInputs(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -2142,13 +2063,9 @@ func TestSoroswapSkimEvent_RejectsBadInputs(t *testing.T) {
 	}
 }
 
-// mustContractStrkey mirrors the soroswap unit-test helper:
-// builds a valid C-strkey from a single-byte seed for deterministic
-// fixtures.
-// TestSpectraEvents_Storage executes migration 0210 and the spectra store
-// through real TimescaleDB: NUMERIC round-trip, idempotent re-insert,
-// the market row merged from three discovery events in any order, the
-// generation guard on both tables, and the CHECKs behind the Go validator.
+// mustContractStrkey builds a valid C-strkey from a one-byte seed for deterministic fixtures. TestSpectraEvents_Storage:
+// migration 0210 + spectra store: NUMERIC round-trip, idempotent re-insert, market row merged from three discovery events
+// in any order, generation guard on both tables, CHECKs behind the Go validator.
 func TestSpectraEvents_Storage(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -2435,10 +2352,8 @@ func TestSushiswapV3Pools_UpsertLoadRoundTrip(t *testing.T) {
 	}
 }
 
-// TestSushiswapV3PositionEvents_RoundTrip executes the 0203 schema through
-// real TimescaleDB: one row per action, a collect with NULL liquidity, the
-// CHECK that refuses a mint without liquidity, u128 amounts above 2^64
-// surviving NUMERIC, and the idempotent re-insert.
+// TestSushiswapV3PositionEvents_RoundTrip: 0203 schema: one row per action, collect with NULL liquidity, CHECK refusing a
+// mint without liquidity, u128 above 2^64 survives NUMERIC, idempotent re-insert.
 func TestSushiswapV3PositionEvents_RoundTrip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

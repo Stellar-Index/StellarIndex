@@ -25,15 +25,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestMigrationsRoundTrip spins up a throwaway TimescaleDB,
-// runs every migration up, asserts the expected hypertable +
-// continuous-aggregate shape exists, then rolls them all back and
-// asserts a clean slate. This ties together ADR-0006 (storage
-// choice) + the SQL files + the migrate binary's underlying library
-// + the compose-stack's TimescaleDB image choice.
-//
-// Runs under `-tags=integration` only. Nominal runtime: ~30s on a
-// warm Docker cache, ~2min on a cold one (TimescaleDB image pull).
+// TestMigrationsRoundTrip: on a throwaway TimescaleDB, run every migration up, assert the expected hypertable and
+// continuous-aggregate shape, then roll all back and assert a clean slate. Integration tag only; ~30s warm, ~2min on a
+// cold image pull.
 func TestMigrationsRoundTrip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -69,11 +63,8 @@ func TestMigrationsRoundTrip(t *testing.T) {
 	if err := migrator.Up(); err != nil {
 		t.Fatalf("migrate up: %v", err)
 	}
-	// This test drives its own migrator (not applyMigrations), so it
-	// quiesces the freshly-created CAGG refresh policies itself before
-	// the manual refresh below — same 55P03 race as everywhere else.
-	// alter_job(scheduled=>false) keeps the job ROW, so the has-a-
-	// refresh-policy assertions below still hold.
+	// This test drives its own migrator, so it quiesces the new CAGG refresh policies itself before the manual refresh (the
+	// 55P03 race). alter_job(scheduled=>false) keeps the job row, so the has-a-refresh-policy assertions still hold.
 	quiesceCAGGRefreshPolicies(t, ctx, db)
 
 	// Verify trades hypertable exists.
@@ -125,20 +116,9 @@ func TestMigrationsRoundTrip(t *testing.T) {
 	}
 	assertPrices1mHasRow(t, db, ctx)
 
-	// ─── CHECK constraints round-trip ──────────────────────────
-	// Verify the invariants baked into migration 0001 / 0003 are
-	// enforced. If someone accidentally drops a CHECK in a future
-	// migration, this test fails loudly. The canonical.Validate
-	// functions are a first line of defense — the DB CHECKs are
-	// the last. Both matter.
-	//
-	// trades.base_amount / quote_amount are the exception: 0191 drops
-	// 0001's `> 0` CHECKs so a one-side-zero SDEX fill can be stored.
-	// At full-up the row invariant (>= 0, not both zero) is Go-only —
-	// canonical.Trade.Validate on every writer — and there is no DB
-	// CHECK rejecting a negative leg. Asserting absence here keeps a
-	// future migration from quietly re-adding a CHECK the writers and
-	// the 0187 priceable filter no longer expect.
+	// CHECK constraints round-trip: the invariants from migrations 0001/0003 must stay enforced, so a CHECK dropped by a
+	// later migration fails loudly (the DB CHECKs are the last line behind canonical.Validate). trades.base_amount /
+	// quote_amount are the exception: 0191 dropped the `> 0` CHECKs so a one-side-zero SDEX fill can be stored.
 	assertTradesAmountChecksAbsent(t, db, ctx)
 	assertInsertAccepted(t, db, ctx, "zero base_amount (one-side-zero fill)", `
         INSERT INTO trades
@@ -150,11 +130,9 @@ func TestMigrationsRoundTrip(t *testing.T) {
             (source, ledger, tx_hash, op_index, ts,
              base_asset, quote_asset, base_amount, quote_amount)
         VALUES ('t', 1, 'ac', 0, now(), 'native', 'native', 1, 0)`)
-	// ledger=0 is ACCEPTED as of migration 0004 — off-chain
-	// sources (Binance / Kraken / Bitstamp / Coinbase / FX pollers
-	// / aggregators) deliberately stamp 0 and use (source, tx_hash,
-	// op_index) for uniqueness. Matches oracle_updates which has
-	// always allowed ledger >= 0.
+	// ledger=0 is accepted (migration 0004): off-chain sources (Binance, Kraken, Bitstamp, Coinbase, FX pollers,
+	// aggregators) stamp 0 and use (source, tx_hash, op_index) for uniqueness, matching oracle_updates which allows ledger
+	// >= 0.
 	assertInsertAccepted(t, db, ctx, "zero ledger allowed for off-chain", `
         INSERT INTO trades
             (source, ledger, tx_hash, op_index, ts,
@@ -181,15 +159,9 @@ func TestMigrationsRoundTrip(t *testing.T) {
              asset, quote, price, decimals)
         VALUES ('o', 1, 'aa', 0, now(), 'native', 'native', -1, 14)`)
 
-	// ─── Compression attached; retention deliberately ABSENT ───
-	// Migrations add compression (ADR-0006). Retention was REMOVED for
-	// raw trades (migration 0031) and oracle_updates (0040): ADR-0034
-	// invariant 8 keeps the certified raw history forever, so a
-	// drop_after retention policy on these tables is DRIFT (a rogue 90d
-	// policy was once removed as drift). Assert compression is present and
-	// retention is absent.
-	// trades compresses through 0205's custom job, which the jobs view
-	// attaches to no hypertable; the built-in policy it replaced is gone.
+	// Compression attached, retention deliberately absent: raw trades (0031) and oracle_updates (0040) keep certified raw
+	// history forever (ADR-0034 invariant 8), so a drop_after policy is drift. trades compresses through 0205's custom job,
+	// which the jobs view attaches to no hypertable; the built-in policy it replaced is gone.
 	var tradesCompressionJobs int
 	if err := db.QueryRowContext(ctx, `
         SELECT count(*) FROM timescaledb_information.jobs
@@ -218,23 +190,14 @@ func TestMigrationsRoundTrip(t *testing.T) {
 	}
 	assertPolicyAttached(t, db, ctx, "soroban_events", "policy_compression")
 
-	// 0105 created the classic_movements hypertable; 0113 drops it
-	// (superseded by ADR-0048 D2, the archive
-	// moved to ClickHouse-native stellar.account_movements and this
-	// Postgres table had no live writer/reader). After the FULL up
-	// stack, therefore, it must NOT exist — this asserts the cleanup
-	// migration actually removed it (and guards against a future
-	// re-add without a matching drop).
+	// 0113 drops the classic_movements hypertable 0105 created (the archive moved to ClickHouse stellar.account_movements
+	// per ADR-0048 D2). After the full up stack it must not exist, which also guards against a re-add without a matching
+	// drop.
 	assertTableAbsent(t, db, ctx, "classic_movements")
 
-	// 0142 — the six protocol tables 0127-0132 typed derive_generation
-	// as int4 while every other derived-value table (0109/0110 core +
-	// protocol, 0141 fx_quotes) uses bigint. The
-	// column carries time.Now().Unix(), so an int4 column overflows on
-	// 2038-01-19 and rejects EVERY projector write to these tables.
-	// Migration 0142 widens all six to bigint; assert the applied type
-	// so a future re-add of one of these tables (or a reverted 0142)
-	// can't silently reintroduce the 2038 cliff.
+	// 0142 widened the six protocol tables' derive_generation from int4 to bigint: it carries time.Now().Unix(), so int4
+	// overflows on 2038-01-19 and rejects every projector write. Assert the applied type so a reverted 0142 or a re-added
+	// table cannot reintroduce the cliff.
 	for _, table := range []string{
 		"soroswap_liquidity",
 		"aquarius_reserves_sync",
@@ -291,13 +254,8 @@ func TestMigrationsRoundTrip(t *testing.T) {
 		t.Fatalf("migrate down: %v", err)
 	}
 
-	// After a full rollback, none of our tables / CAGGs should remain.
-	// Symmetric with the up-path assertions: every object the
-	// migrations created must be gone. If a future migration's down
-	// script forgets to drop one CAGG, retention+compression policies
-	// on the survivor will keep firing against a non-existent trades
-	// hypertable, flooding logs with errors — we'd rather the test
-	// fail loudly.
+	// After a full rollback none of our tables or CAGGs may remain. A down that forgets one CAGG leaves its retention and
+	// compression policies firing against a non-existent trades hypertable and flooding logs, so fail loudly.
 	assertTableAbsent(t, db, ctx, "trades")
 	assertTableAbsent(t, db, ctx, "ingestion_cursors")
 	assertTableAbsent(t, db, ctx, "oracle_updates")
@@ -315,10 +273,8 @@ func TestMigrationsRoundTrip(t *testing.T) {
 	}
 }
 
-// TestMEVKindDownsRefuseWithData pins that the 0074 and 0067 downs,
-// which narrow mev_events_kind_check, refuse while a row of the kind
-// they remove exists, and leave that row in place — instead of
-// deleting every detected oracle_sandwich / arbitrage event silently.
+// TestMEVKindDownsRefuseWithData: the 0074 and 0067 downs, which narrow mev_events_kind_check, refuse while a row of the
+// removed kind exists and leave it in place, rather than silently deleting detected oracle_sandwich / arbitrage events.
 func TestMEVKindDownsRefuseWithData(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -352,10 +308,8 @@ func insertMEVEvent(t *testing.T, ctx context.Context, db *sql.DB, kind string) 
 	}
 }
 
-// assertDownRefused migrates from `from` down to `to`, requires the
-// failure to come from the named down file, and requires the row of
-// `kind` to have survived. It then forces the version back to `from`
-// so the schema_migrations row is clean for the next step.
+// assertDownRefused migrates from `from` down to `to`, requires the failure to come from the named down file and the row
+// of `kind` to survive, then forces the version back to `from` so schema_migrations is clean for the next step.
 func assertDownRefused(t *testing.T, ctx context.Context, db *sql.DB, dsn string, from, to uint, file, kind string) {
 	t.Helper()
 	_, thisFile, _, _ := runtime.Caller(0)
@@ -386,11 +340,9 @@ func assertDownRefused(t *testing.T, ctx context.Context, db *sql.DB, dsn string
 	}
 }
 
-// TestEventIndexDownsRefuseWithDuplicates pins that every down which
-// narrows a primary key (0053-0060, 0112) refuses while two rows differ
-// only in the column its up added, instead of failing mid-down on ADD
-// PRIMARY KEY or collapsing them. One container walks the versions in
-// ascending order; each case cleans its rows before the next up.
+// TestEventIndexDownsRefuseWithDuplicates: every down that narrows a primary key (0053-0060, 0112) refuses while two
+// rows differ only in the column its up added, rather than failing mid-down or collapsing them. One container walks
+// versions in ascending order; each case cleans its rows before the next up.
 func TestEventIndexDownsRefuseWithDuplicates(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -551,14 +503,9 @@ func TestMigration0112DownOnCompressedChunks(t *testing.T) {
 	}
 }
 
-// TestMigration0004DownRestoresCompression pins that 0004's down
-// disabled compression on `trades` and named the compression policy
-// (0001) as the recovery — but that policy only SCHEDULES a job against
-// a table with timescaledb.compress enabled, and it can never recompress
-// a table 0004's own down just disabled it on. Migrates up through 0004,
-// then rolls back exactly that one migration and asserts compression is
-// still enabled, i.e. the down's terminal state matches 0001's, not a
-// permanently decompressed table.
+// TestMigration0004DownRestoresCompression: 0004's down disabled compression on `trades` and pointed at 0001's policy as
+// the recovery, but that policy only schedules a job on a compress-enabled table and cannot recompress one. After
+// rolling back only 0004, compression must still be enabled, matching 0001's terminal state.
 func TestMigration0004DownRestoresCompression(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -637,10 +584,8 @@ func assertTableAbsent(t *testing.T, db *sql.DB, ctx context.Context, name strin
 	}
 }
 
-// assertColumnType checks that a column's SQL data type matches want
-// (information_schema.columns.data_type — e.g. "bigint", "integer").
-// Used to guard the derive_generation int4->bigint parity (0142): a
-// column silently left as int4 overflows time.Now().Unix() in 2038.
+// assertColumnType checks a column's information_schema data_type (e.g. "bigint"). Guards the derive_generation
+// int4->bigint parity (0142): an int4 column overflows time.Now().Unix() in 2038.
 func assertColumnType(t *testing.T, db *sql.DB, ctx context.Context, table, column, want string) {
 	t.Helper()
 	var got string
@@ -674,12 +619,9 @@ func assertHypertableExists(t *testing.T, db *sql.DB, ctx context.Context, name 
 	}
 }
 
-// assertCompressionEnabled checks timescaledb_information.hypertables'
-// compression_enabled column — the reloption an `ALTER TABLE ... SET
-// (timescaledb.compress = …)` flips, distinct from whether a
-// policy_compression JOB is scheduled (assertPolicyAttached): the job
-// can be attached and still fail on every run against a hypertable
-// this is false on.
+// assertCompressionEnabled checks hypertables.compression_enabled, the reloption `ALTER TABLE ... SET
+// (timescaledb.compress = ...)` flips. It is distinct from a scheduled policy_compression job (assertPolicyAttached),
+// which can be attached and still fail every run on a hypertable where this is false.
 func assertCompressionEnabled(t *testing.T, db *sql.DB, ctx context.Context, hypertable string, want bool) {
 	t.Helper()
 	var got bool
@@ -786,11 +728,8 @@ func insertSampleTrade(t *testing.T, db *sql.DB, ctx context.Context) {
 	}
 }
 
-// assertPolicyAttached checks that a TimescaleDB background job
-// with the given proc_name is registered against the hypertable.
-// Covers `add_compression_policy` and `add_retention_policy` calls
-// in the migrations — each creates a row in
-// timescaledb_information.jobs keyed on (proc_name, hypertable).
+// assertPolicyAttached checks that a background job with the given proc_name is registered against the hypertable,
+// covering the migrations' add_compression_policy / add_retention_policy calls (rows in timescaledb_information.jobs).
 func assertPolicyAttached(t *testing.T, db *sql.DB, ctx context.Context, hypertable, procName string) {
 	t.Helper()
 	var count int
@@ -807,11 +746,8 @@ func assertPolicyAttached(t *testing.T, db *sql.DB, ctx context.Context, hyperta
 	}
 }
 
-// assertPolicyAbsent is the inverse of assertPolicyAttached: it fails if
-// the named policy IS attached. Used for retention policies that the
-// migration chain deliberately removed (trades/oracle_updates per
-// migrations 0031/0040 + ADR-0034 invariant 8: raw history is kept
-// forever; a re-appeared drop_after policy is drift).
+// assertPolicyAbsent fails if the named policy IS attached. Used for retention policies the chain deliberately removed
+// (trades/oracle_updates, 0031/0040, ADR-0034 invariant 8); a reappearing drop_after policy is drift.
 func assertPolicyAbsent(t *testing.T, db *sql.DB, ctx context.Context, hypertable, procName string) {
 	t.Helper()
 	var count int
@@ -845,10 +781,8 @@ func assertTradesAmountChecksAbsent(t *testing.T, db *sql.DB, ctx context.Contex
 	}
 }
 
-// assertInsertRejected runs `stmt` and expects Postgres to refuse
-// it with a CHECK-constraint violation (SQLSTATE 23514). Passing
-// statements are a test failure — they mean a constraint was
-// silently dropped or weakened.
+// assertInsertRejected expects Postgres to refuse `stmt` with a CHECK violation (SQLSTATE 23514); a passing statement
+// means a constraint was silently dropped or weakened.
 func assertInsertRejected(t *testing.T, db *sql.DB, ctx context.Context, name, stmt string) {
 	t.Helper()
 	_, err := db.ExecContext(ctx, stmt)
@@ -866,11 +800,8 @@ func assertInsertRejected(t *testing.T, db *sql.DB, ctx context.Context, name, s
 	}
 }
 
-// assertInsertAccepted is the complement to assertInsertRejected —
-// verifies a statement is accepted. Used for invariants that were
-// tightened in one migration and relaxed in a later one, like the
-// trades.ledger CHECK (0001 required >0; 0004 relaxed to >=0 so
-// off-chain sources could emit).
+// assertInsertAccepted is the complement, for invariants tightened in one migration and relaxed in a later one, like the
+// trades.ledger CHECK (0001 required >0; 0004 relaxed to >=0 for off-chain sources).
 func assertInsertAccepted(t *testing.T, db *sql.DB, ctx context.Context, name, stmt string) {
 	t.Helper()
 	if _, err := db.ExecContext(ctx, stmt); err != nil {
@@ -889,12 +820,9 @@ func assertPrices1mHasRow(t *testing.T, db *sql.DB, ctx context.Context) {
 	}
 }
 
-// TestCAGGRefreshPolicyAssertionSQL executes config-assertions.sh's
-// caggs_have_refresh_policy query, read byte-for-byte from the script,
-// against a fully migrated TimescaleDB: every CAGG the migrations create
-// must be matched to its refresh job (0 uncovered), and dropping one
-// policy must be counted (1 uncovered). The timescale-jobs probe keys on
-// the job, so this query is the only thing that sees the dropped policy.
+// TestCAGGRefreshPolicyAssertionSQL executes config-assertions.sh's caggs_have_refresh_policy query, read byte-for-byte
+// from the script, on a fully migrated TimescaleDB: every CAGG is matched to its refresh job (0 uncovered) and dropping
+// one policy is counted (1 uncovered).
 func TestCAGGRefreshPolicyAssertionSQL(t *testing.T) {
 	query := configAssertionSQL(t, "CAGGS_WITHOUT_REFRESH_POLICY_SQL", "continuous_aggregates")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -945,11 +873,9 @@ func TestCAGGRefreshPolicyAssertionSQL(t *testing.T) {
 	}
 }
 
-// TestTradesCompressionScheduledAssertionSQL executes config-assertions.sh's
-// trades_compression_policy_scheduled query against a migrated TimescaleDB:
-// a scheduled policy passes, a paused one fails, and a paused one passes
-// again only while a session holds the restamp run's advisory lock — the
-// lock a killed run's connection drops.
+// TestTradesCompressionScheduledAssertionSQL executes config-assertions.sh's trades_compression_policy_scheduled query:
+// a scheduled policy passes, a paused one fails, and a paused one passes only while a session holds the restamp run's
+// advisory lock (the lock a killed run's connection drops).
 func TestTradesCompressionScheduledAssertionSQL(t *testing.T) {
 	query := configAssertionSQL(t, "TRADES_COMPRESSION_SCHEDULED_SQL", "hashtext('"+timescale.USDVolumeRestampLockName+"')")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -1026,10 +952,9 @@ func configAssertionSQL(t *testing.T, name, marker string) string {
 	return query
 }
 
-// compressedDownCase describes one down migration over a hypertable that
-// holds compressed chunks. Rows are inserted and compressed right after the
-// table's creating migration (stageA) and again just before the migration
-// under test (stageB); `reject` must be refused by the restored schema.
+// compressedDownCase describes one down migration over a hypertable holding compressed chunks. Rows are inserted and
+// compressed right after the creating migration (stageA) and just before the one under test (stageB); `reject` must be
+// refused by the restored schema.
 type compressedDownCase struct {
 	version uint
 	table   string
@@ -1097,10 +1022,8 @@ func tryInsertGenericRow(ctx context.Context, db *sql.DB, table string, seq int,
 	return err
 }
 
-// compressAllChunks compresses every chunk of table and requires at least
-// min. It counts from compress_chunk itself: reading
-// timescaledb_information.chunks before a DDL hides the TimescaleDB crash
-// these tests exist to catch.
+// compressAllChunks compresses every chunk of table and requires at least min. It counts from compress_chunk itself
+// because reading timescaledb_information.chunks before a DDL hides the TimescaleDB crash these tests exist to catch.
 func compressAllChunks(t *testing.T, ctx context.Context, db *sql.DB, table string, min int) {
 	t.Helper()
 	var n int
@@ -1125,17 +1048,9 @@ func assertColumnNullable(t *testing.T, ctx context.Context, db *sql.DB, table, 
 	}
 }
 
-// TestDownsOnCompressedChunks pins that a down on a hypertable with
-// compressed chunks restores the schema without losing or changing rows;
-// any error, including a Timescale internal one, fails the case.
-//
-// Most CHECK columns here are segmentby; only freeze_events.reason and
-// defindex_flows.direction are compressed columns. No case seeds a row that
-// the restored CHECK would refuse, so a refusal is never a pass.
-//
-// The compressed-chunk state is never read from
-// timescaledb_information.chunks before a DDL: that read masks the crash
-// TestCompressedAlterControl0174 proves this harness can see.
+// TestDownsOnCompressedChunks: a down on a hypertable with compressed chunks restores the schema without losing or
+// changing rows; any error, including a Timescale internal one, fails the case. Only freeze_events.reason and
+// defindex_flows.direction are compressed columns (the other CHECK columns are segmentby).
 func TestDownsOnCompressedChunks(t *testing.T) {
 	const tsA, tsA2, tsB, tsC, tsD = "2020-01-01T00:00:00Z", "2020-01-01T01:00:00Z", "2026-01-01T00:00:00Z", "2027-06-01T00:00:00Z", "2028-01-01T00:00:00Z"
 	enum := func(col, v string) map[string]string { return map[string]string{col: "'" + v + "'"} }
@@ -1330,10 +1245,9 @@ func rowsDigest(t *testing.T, ctx context.Context, db *sql.DB, table string, col
 	return d
 }
 
-// TestCompressedAlterControl0174 is the positive control for the instrument
-// above: the original body of 0174, a bare ADD CONSTRAINT over compressed
-// sep41_transfers chunks, crashes TimescaleDB (SQLSTATE 57P03, "in recovery
-// mode"). If this ALTER succeeds the harness cannot see that failure.
+// TestCompressedAlterControl0174 is the positive control for the harness: 0174's original bare ADD CONSTRAINT over
+// compressed sep41_transfers chunks crashes TimescaleDB (SQLSTATE 57P03). If this ALTER succeeds, the harness cannot see
+// that failure.
 func TestCompressedAlterControl0174(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
@@ -1364,11 +1278,9 @@ func TestCompressedAlterControl0174(t *testing.T) {
 	t.Logf("control ALTER failed as required: %v", err)
 }
 
-// TestMigration0196_AddsNullableTxIndexOverCompressedChunks runs 0196 against
-// two populated, compressed trades chunks: the ADD COLUMN must be
-// catalog-only, nullable integer, NULL on every existing row, invisible to an
-// INSERT that does not name it, and taggable inside a compressed chunk
-// without tripping the per-DML decompression cap.
+// TestMigration0196_AddsNullableTxIndexOverCompressedChunks: over two populated compressed trades chunks, ADD COLUMN
+// must be catalog-only, a nullable integer, NULL on every existing row, invisible to an INSERT that omits it, and
+// taggable inside a compressed chunk without tripping the per-DML decompression cap.
 func TestMigration0196_AddsNullableTxIndexOverCompressedChunks(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -1441,10 +1353,9 @@ func TestMigration0196_AddsNullableTxIndexOverCompressedChunks(t *testing.T) {
 	}
 }
 
-// TestTagTradesTxIndex_FillsOnChainRowsFirstWins drives the production walk
-// (pipeline.TagTxIndexWindow → timescale.Store) against real SQL. The two
-// same-ledger SDEX txs are applied in the REVERSE of their tx_hash order, so
-// ORDER BY ledger, tx_index must disagree with the tx_hash tie key.
+// TestTagTradesTxIndex_FillsOnChainRowsFirstWins drives the production walk (pipeline.TagTxIndexWindow to
+// timescale.Store). The two same-ledger SDEX txs are applied in the reverse of tx_hash order, so ORDER BY ledger,
+// tx_index must disagree with the tx_hash tie key.
 func TestTagTradesTxIndex_FillsOnChainRowsFirstWins(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()

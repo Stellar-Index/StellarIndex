@@ -32,19 +32,9 @@ import (
 
 const zeroLegIssuer = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 
-// TestPriceReadersOnZeroLegBuckets runs every prices_* reader that combines
-// vwap with a volume over buckets holding zero-leg trades (migration 0187).
-// vwap covers only trades with both legs > 0, so a price must be weighted by
-// volume_priced and a quote volume read from volume_quote; `vwap * volume`
-// counts a zero-quote trade's base at the bucket price and drops a zero-base
-// trade's quote.
-//
-// ZLEG/USDC, all amounts in 1e7 units:
-//
-//	H1 (t0+10s)  ZLEG/USDC 10/20 · 30/0     USDC/ZLEG 40/10 · 0/5
-//	H2 (t0+1h)   ZLEG/USDC 10/40 · 5/0      ZLEG/USDC-SAC 20/20
-//
-// H1's priceable union is 20 ZLEG for 60 USDC = 3 (2.4 weighted by volume).
+// Every prices_* reader combining vwap with a volume, over buckets with zero-leg trades (migration 0187). vwap covers
+// only trades with both legs > 0, so price must be weighted by volume_priced and quote volume read from volume_quote;
+// `vwap * volume` counts a zero-quote trade's base at the bucket price and drops a zero-base trade's quote.
 func TestPriceReadersOnZeroLegBuckets(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -284,14 +274,9 @@ func scalarInt(t *testing.T, ctx context.Context, db *sql.DB, q string) int {
 	return n
 }
 
-// TestPriceSourceContributions_Migration0207 pins the release-N+2 step
-// against real TimescaleDB, with the legacy chunks COMPRESSED:
-//
-//   - NULL-window rows are removed (whole legacy chunks dropped, the chunk
-//     straddling the cut-over row-deleted) and every windowed row survives;
-//   - window_seconds is NOT NULL and CHECK (> 0), the 0026 key is gone, so
-//     a 5m row on a 1h row's bucket is accepted;
-//   - down restores the nullable column and the 0026 key.
+// Release-N+2 step on real TimescaleDB with legacy chunks COMPRESSED: NULL-window rows are removed (whole legacy chunks
+// dropped, the straddling chunk row-deleted) and every windowed row survives; window_seconds is NOT NULL with CHECK (>
+// 0) and the 0026 key is gone, so a 5m row on a 1h row's bucket is accepted.
 func TestPriceSourceContributions_Migration0207(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -390,11 +375,8 @@ func TestPriceSourceContributions_Migration0207_RefusesActiveLegacyWriter(t *tes
 	}
 }
 
-// TestInsertPriceSourceContributions_BatchIsAtomic pins that one
-// bucket's contribution rows commit together or not at all. The rows'
-// weights only mean anything as a set (they sum to 1); a per-row
-// autocommit left the prefix before a failing row persisted, so a
-// reader would see a bucket whose weights sum to less than 1.
+// One bucket's contribution rows commit together or not at all: weights only mean anything as a set (sum to 1), and per-
+// row autocommit left a prefix persisted before a failing row, so a reader would see weights summing to less than 1.
 func TestInsertPriceSourceContributions_BatchIsAtomic(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -458,23 +440,9 @@ func TestInsertPriceSourceContributions_BatchIsAtomic(t *testing.T) {
 	}
 }
 
-// TestPriceSourceContributions_Migration0169 pins the window behaviour against real
-// TimescaleDB:
-//
-//   - 0169 applies to a price_source_contributions hypertable that already
-//     holds a COMPRESSED chunk written by the previous binary, and that
-//     legacy row keeps window_seconds NULL (its window is unrecoverable);
-//   - one tick's 5m, 1h and 24h breakdowns of a pair are three rows, each
-//     carrying its own window, and "latest bucket per window" returns each
-//     window's own weights — before 0169 the rows had no window and that
-//     read returned whichever window ran last;
-//   - while 0026's key survives, a second window on an occupied bucket is
-//     REFUSED instead of silently overwriting the other window's row;
-//   - the previous binary's exact INSERT … ON CONFLICT still executes
-//     (migrations/README.md rule 9);
-//   - a row with no window is refused and nothing is written;
-//   - the retention policy exists and is NOT scheduled;
-//   - 0169's down drops the column and the policy and keeps the rows.
+// Window behaviour of migration 0169 on real TimescaleDB: it applies over a hypertable holding a COMPRESSED legacy chunk
+// (that row keeps window_seconds NULL, unrecoverable); one tick's 5m/1h/24h breakdowns are three rows each with its own
+// window and "latest bucket per window" returns each window's own weights.
 func TestPriceSourceContributions_Migration0169(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -691,36 +659,9 @@ func assertDownDropsWindowAndPolicy(t *testing.T, ctx context.Context, db *sql.D
 	}
 }
 
-// TestPricelessCoverage_AMMConcentration executes the priceless-popular
-// tripwire's candidate SQL (timescale.Store.PopularPricelessCandidates)
-// and its classifier against a real TimescaleDB, on the four counterparty
-// populations the trades hypertable actually holds.
-//
-// The concentration NUMERATOR must not require `maker IS NOT NULL
-// AND taker IS NOT NULL` while the vol7d DENOMINATOR takes every row, or the
-// two are measured over DIFFERENT populations. Only the SDEX decoder
-// records both sides; every Soroban AMM (aquarius, soroswap, phoenix,
-// comet, sushiswap_v3) leaves the resting side to the pool and records a
-// taker only — on r1, 100% of the 27.8k 24h rows of all five AMM sources
-// have maker NULL. The share of an AMM-only asset would then be 0 BY
-// CONSTRUCTION, the wash exclusion could never fire for it, and a farm
-// painting volume on an AMM would self-select straight into the coverage
-// alert the tripwire exists to keep honest. Two such assets were live on r1,
-// above the $10k popularity floor with 0.95 / 0.9999 of their volume
-// swapped by ONE account, both reporting a 0 concentration share.
-//
-// The four fixtures are one population each, and each pins the CORRECTED
-// share, not merely "non-zero":
-//
-//	AMM wash   aquarius, maker NULL: 19/20 of $20k one taker  → 0.95, excluded
-//	AMM broad  aquarius, maker NULL: five takers, 4/20 each   → 0.20, fires
-//	SDEX pair  sdex, both sides: two pairs, 10/20 each        → 0.50, fires
-//	CEX feed   binance, neither side recorded                 → 0.00, fires
-//
-// The SDEX and CEX rows are the no-regression half: the order book's
-// pair keying is unchanged by the fix, and volume from a venue that
-// records no account at all must still PAGE (it cannot be measured, and
-// the tripwire fails loud, never quiet) instead of being suppressed.
+// Priceless-popular tripwire candidate SQL (Store.PopularPricelessCandidates) and classifier on the four counterparty
+// populations in trades. The concentration NUMERATOR must not require maker AND taker non-NULL while the vol7d
+// DENOMINATOR takes every row.
 func TestPricelessCoverage_AMMConcentration(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -813,14 +754,8 @@ func TestPricelessCoverage_AMMConcentration(t *testing.T) {
 		add("binance", cexFeed, "", "")
 	}
 
-	// The quote leg is not a USD peg, so insert-time usd_volume is NULL.
-	// Stamp a flat $2,000 per fill: every asset then holds $40,000 of 7d
-	// and 24h volume. The popularity floor is measured on
-	// MARKET-CHARACTER volume (raw minus the top counterparty pair's own
-	// volume — see popularPriceless), so sdex_pair's legitimate 50%-share
-	// two-market-maker book must clear the floor even AFTER half its
-	// volume is subtracted; $1,000/fill left it sitting exactly on the
-	// floor post-discount, which is what motivated the bump.
+	// The quote leg is not a USD peg, so insert-time usd_volume is NULL; stamp a flat $2,000 per fill ($40,000 of 7d and 24h
+	// volume per asset).
 	if _, err := store.DB().ExecContext(ctx, `UPDATE trades SET usd_volume = 2000`); err != nil {
 		t.Fatalf("stamp usd_volume: %v", err)
 	}
@@ -903,19 +838,9 @@ func TestPricelessCoverage_AMMConcentration(t *testing.T) {
 	}
 }
 
-// TestPricelessCoverage_PricedDirectAppliesSubstanceFloors is a
-// regression guard: priced_direct must not count an asset as priced on a
-// SINGLE unqualified prices_1m row, while its sibling one_hop CTE applies
-// three substance floors (vol_usd >= 1000, buckets >= 20, span_s >=
-// 21600) and says in its own comment that they are "NOT decoration". The
-// two arms of "is this asset priced?" must agree.
-//
-// THIN: one $50 trade against a USD proxy — a single bucket, single
-// minute of span, well under every floor. Must NOT be priced.
-//
-// SUBSTANTIAL: 21 trades against the same proxy, 20 minutes apart,
-// spanning ~6h40m and summing to $2,100 — clears all three floors. Must
-// be priced, proving the added floors do not regress a real market.
+// priced_direct must not count an asset as priced on a SINGLE unqualified prices_1m row while the sibling one_hop CTE
+// applies three substance floors (vol_usd >= 1000, buckets >= 20, span_s >= 21600); the two arms must agree. THIN: one
+// $50 trade, one bucket, under every floor, must NOT be priced. SUBSTANTIAL.
 func TestPricelessCoverage_PricedDirectAppliesSubstanceFloors(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1066,11 +991,9 @@ func TestPricelessCoverage_QuoteLegOnlyAsset(t *testing.T) {
 	}
 }
 
-// TestPricelessCoverage_ServedSnapshotCountsAsPriced: an asset with priced
-// 7d volume but no proxy market above the substance floors is a candidate
-// until the listing serves it a price. A fresh asset_price_snapshot row
-// takes it out of the candidate set and makes AssetIsPriced true; a row
-// past the listing's staleness bound does neither.
+// An asset with priced 7d volume but no proxy market above the substance floors is a candidate until the listing serves
+// it a price: a fresh asset_price_snapshot row removes it from the candidate set and makes AssetIsPriced true; a row
+// past the staleness bound does neither.
 func TestPricelessCoverage_ServedSnapshotCountsAsPriced(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1151,20 +1074,9 @@ func TestPricelessCoverage_ServedSnapshotCountsAsPriced(t *testing.T) {
 	check("fresh snapshot row", true)
 }
 
-// TestRoutedViaTaggingAndRollup covers migration 0025 Phase B
-// end-to-end against a real TimescaleDB:
-//
-//  1. TagTradesRoutedVia joins soroswap_router_swaps → trades on
-//     (ledger, tx_hash), scoped to source='soroswap' — a same-tx
-//     trade from another protocol is never tagged.
-//  2. First-wins: an existing routed_via (from a different router)
-//     is never overwritten.
-//  3. Idempotence: re-running the same window tags zero rows.
-//  4. AggregatorRollup math: per-router trade counts honour the
-//     `since` bound, LastRoutedAt = max(ts), volume is NULL (not
-//     zero) when no routed trade carries usd_volume, and the
-//     registry seeds (0032/0033) surface with the 0072-aligned
-//     'soroswap-router' name.
+// Migration 0025 Phase B end to end: (1) TagTradesRoutedVia joins soroswap_router_swaps to trades on (ledger, tx_hash),
+// scoped to source='soroswap' so a same-tx trade of another protocol is never tagged; (2) first-wins, an existing
+// routed_via is never overwritten; (3) re-running a window tags zero rows.
 func TestRoutedViaTaggingAndRollup(t *testing.T) { //nolint:gocognit // linear scenario walk
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1354,14 +1266,9 @@ func keyOf(ledger, op uint32) string {
 	return fmt.Sprintf("%d/%d", ledger, op)
 }
 
-// TestRoutedViaCallPathAttribution covers the migration 0101/0103
-// follow-on (ROADMAP #11 + #29): a router swap recorded as a
-// sub_invocation is attributed to its OUTERMOST wrapping contract
-// when that contract is a registered 'router'-kind entry, and falls
-// back to the plain router name otherwise (unregistered wrapper, or
-// a direct top_level call). Three same-shape router swaps, one per
-// case, driven through the exact production primitive
-// (TagTradesRoutedVia) both live paths call.
+// A router swap recorded as a sub_invocation is attributed to its OUTERMOST wrapping contract when that is a registered
+// 'router'-kind entry, else to the plain router name (unregistered wrapper, or a direct top_level call). Three same-
+// shape swaps, one per case, through TagTradesRoutedVia, the primitive both live paths call.
 func TestRoutedViaCallPathAttribution(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1492,11 +1399,9 @@ func TestRoutedViaCallPathAttribution(t *testing.T) {
 	}
 }
 
-// TestSubstanceGate_AliasUnionCountsSharedMinutesOnce executes the
-// substance gate's alias union on real prices_1m rows. XLM's SDEX leg
-// (native) and CEX leg (crypto:XLM) trading in the SAME ten minutes are
-// ten distinct minutes of market; counting each spelling's minutes and
-// adding them read twenty and cleared the default 20-minute floor.
+// The substance gate's alias union on real prices_1m rows: XLM's SDEX leg (native) and CEX leg (crypto:XLM) trading in
+// the SAME ten minutes are ten distinct minutes of market; adding each spelling's minutes read twenty and cleared the
+// default 20-minute floor.
 func TestSubstanceGate_AliasUnionCountsSharedMinutesOnce(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1578,20 +1483,9 @@ func TestSubstanceGate_AliasUnionCountsSharedMinutesOnce(t *testing.T) {
 	}
 }
 
-// TestSubstanceGate_TellsAnUnvaluableMarketFromAThinOne executes both
-// substance reads against real TimescaleDB and runs the gate over them
-// . prices_1m stores sum(coalesce(usd_volume, 0)), so a market
-// the insert-time waterfall could not value reads as $0 — the same
-// number as a market that was valued and found empty. The reads now
-// return how many active buckets carried a dollar value, and the gate
-// names the two failures apart.
-//
-//   - UNVA/PAIR — 30 minutes of trades over 9h40m with usd_volume NULL
-//     (the SEP-41/SEP-41 shape): clears buckets and span, $0 volume.
-//   - THIN/native — the same activity, every trade valued at $1: a
-//     genuinely thin $30 market.
-//
-// Both stay withheld; only the reason differs.
+// prices_1m stores sum(coalesce(usd_volume, 0)), so a market the insert-time waterfall could not value reads $0, the
+// same as a valued-and-empty one. The reads return how many active buckets carried a dollar value so the gate names the
+// two failures apart. UNVA/PAIR.
 func TestSubstanceGate_TellsAnUnvaluableMarketFromAThinOne(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1694,23 +1588,9 @@ func TestSubstanceGate_TellsAnUnvaluableMarketFromAThinOne(t *testing.T) {
 	}
 }
 
-// TestTransitiveUSDPriceCandidates_RankedHops pins that the resolver
-// returns EVERY priced hop, ranked by near-leg (asset<->hop) USD volume,
-// rather than only the deepest one. The API gates each candidate and
-// falls through to the next, which is only possible if the second-best
-// hop reaches it.
-//
-// Fixture (closed buckets inside the trailing 24h):
-//
-//	XLM/USDC   vwap 0.40, before every hop leg → xlm_usd = 0.40 at each leg's minute
-//	HOPA/XLM   vwap 2                 → HOPA = 0.80 USD
-//	HOPB/XLM   vwap 0.5               → HOPB = 0.20 USD
-//	TGT/HOPA   vwap 1,  $100 volume   → TGT  = 0.80 USD via HOPA
-//	HOPB/TGT   vwap 0.25, $1000 volume (inverted) → TGT = 0.80 USD via HOPB
-//	TGT/NOPX   NOPX has no USD route  → not a candidate
-//
-// HOPB outranks HOPA on volume though it sorts after it by id, so the
-// order proves the volume ranking rather than the tie-break.
+// The resolver returns EVERY priced hop ranked by near-leg (asset<->hop) USD volume, not just the deepest, because the
+// API gates each candidate and falls through to the next. Closed buckets in the trailing 24h: XLM/USDC 0.40; HOPA =
+// 0.80, HOPB = 0.20 USD via XLM; TGT = 0.80 via HOPA ($100) and via HOPB ($1000, inverted)
 func TestTransitiveUSDPriceCandidates_RankedHops(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1808,19 +1688,9 @@ func TestTransitiveUSDPriceCandidates_RankedHops(t *testing.T) {
 	}
 }
 
-// TestTransitiveUSDPriceCandidates_LatestBucketAcrossDirections pins that
-// both the asset->hop leg and the hop's XLM price take the LATEST bucket
-// across the two stored directions, the as-is direction winning a tie. A
-// preferred direction that went quiet 20h ago must not outrank the other
-// direction's fresh bucket.
-//
-// Fixture (xlm_usd = 0.40 from -30m, before every hop's XLM leg):
-//
-//	HOPA/XLM 2 (-20m)                       → HOPA = 0.80 USD
-//	T1/HOPA 1 (-20h), HOPA/T1 0.5 (-2m)     → T1 = 2 HOPA   = 1.60
-//	T3/HOPA 1, HOPA/T3 0.5 (both -15m)      → T3 = 1 HOPA   = 0.80
-//	HOPC/XLM 2 (-20h), XLM/HOPC 0.25 (-5m)  → HOPC = 4 XLM  = 1.60; T2/HOPC 1 → 1.60
-//	HOPD/XLM 2, XLM/HOPD 0.25 (both -15m)   → HOPD = 2 XLM  = 0.80; T4/HOPD 1 → 0.80
+// Both the asset->hop leg and the hop's XLM price take the LATEST bucket across the two stored directions, the as-is
+// direction winning a tie; a preferred direction quiet for 20h must not outrank the other direction's fresh bucket.
+// xlm_usd = 0.40 from -30m: T1 (HOPA/T1 fresh at -2m) = 1.60; T3 (both -15m) = 0.80.
 func TestTransitiveUSDPriceCandidates_LatestBucketAcrossDirections(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

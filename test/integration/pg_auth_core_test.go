@@ -29,18 +29,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// PATCH /v1/admin/accounts/{id} must not do Get -> mutate in memory ->
-// Update with no lock and no version
-// check. Update rewrites every mutable column (not a diff), so two
-// concurrent PATCHes on the SAME account race: whichever commits
-// second silently discards the first's change. Status is the operator
-// kill switch — a lost SUSPEND under this race is a live
-// hole.
-//
-// This proves AccountStore.UpdateAtomic serialises the race: one
-// PATCH raises the rate-limit override, a concurrent one suspends the
-// account, and BOTH must land — a lost update (Get+Update)
-// would show one field reverted to its pre-race value.
+// Concurrent PATCHes on one account must both land: UpdateAtomic serialises the race. A lost update (Get+Update) would
+// revert one field; a lost SUSPEND is a live hole. One PATCH raises the rate-limit override, the other suspends.
 func TestAccountStoreUpdateAtomic_SerialisesConcurrentPatches(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -144,18 +134,8 @@ func TestAccountStoreUpdateAtomic_NotFound(t *testing.T) {
 	}
 }
 
-// TestAPI_RegistryAndCursors covers the HTTP surfaces of the
-// registry/diagnostics endpoints:
-//
-//	GET /v1/coins
-//	GET /v1/coins?issuer=G…
-//	GET /v1/issuers
-//	GET /v1/issuers/{g_strkey}
-//	GET /v1/diagnostics/cursors
-//
-// timescale.Store satisfies all four reader interfaces directly,
-// so no adapter glue is needed — wire the store straight through
-// v1.Options.
+// HTTP surfaces of the registry/diagnostics endpoints: /v1/coins, /v1/issuers, /v1/diagnostics/cursors. timescale.Store
+// satisfies the reader interfaces directly, so it is wired straight through v1.Options.
 func TestAPI_RegistryAndCursors(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -278,11 +258,7 @@ func TestAPI_RegistryAndCursors(t *testing.T) {
 		if env.Data[1].SubSource != "factory" {
 			t.Errorf("soroswap sub_source = %q, want factory", env.Data[1].SubSource)
 		}
-		// lag_seconds is computed Go-side as now - last_updated; the
-		// rows were just inserted so lag should be small and
-		// non-negative. (Bound the upper end loosely to avoid CI
-		// flakes; the contract is "non-negative and finite", not an
-		// exact value.)
+		// lag_seconds is computed Go-side as now - last_updated; contract is non-negative and finite, upper bound kept loose.
 		for _, c := range env.Data {
 			if c.LagSeconds < 0 {
 				t.Errorf("%s/%s lag_seconds = %d, want non-negative",
@@ -301,10 +277,8 @@ type appendOnlyFixture struct {
 	userID   uuid.UUID
 }
 
-// TestAuditLogAppendOnly pins migration 0179: the app role
-// cannot rewrite, detach, delete or truncate the audit trail, while the
-// ON DELETE SET NULL foreign keys still let the signup reaper delete an
-// account (and a user be deleted) without losing its audit rows.
+// Pins migration 0179: the app role cannot rewrite, detach, delete or truncate the audit trail, while ON DELETE SET NULL
+// FKs still let the signup reaper delete an account (or a user) without losing its audit rows.
 func TestAuditLogAppendOnly(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -439,12 +413,8 @@ func requireAuditRow(t *testing.T, ctx context.Context, db *sql.DB, id uuid.UUID
 	}
 }
 
-// TestAuditStore exercises the postgresstore.AuditStore against the
-// audit_log table from migration 0027. The audit trail is the
-// append-only record of every privileged action (key.mint,
-// plan.upgrade, session.revoke, staff tier changes) and was
-// completely untested at every layer. One container per test,
-// matching the storage-test convention.
+// AuditStore against the audit_log table (migration 0027), the append-only record of privileged actions. One container
+// per test, per the storage-test convention.
 func TestAuditStore(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -677,11 +647,8 @@ func jsonEqual(t *testing.T, a, b []byte) bool {
 	return reflect.DeepEqual(av, bv)
 }
 
-// The verify-code handler compares a submitted code only against the
-// one token ReserveLoginCode hands it, and only after
-// RegisterFailedLoginCode has admitted the attempt. Both caps therefore
-// hold under a concurrent burst only if those two statements serialise
-// in Postgres — which is what this pins, with real row locks.
+// The verify-code handler compares a code only against the token ReserveLoginCode returns, after RegisterFailedLoginCode
+// admitted the attempt. Both caps hold under a concurrent burst only if those statements serialise via real row locks.
 func TestLoginCodeReservation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -839,10 +806,8 @@ func TestLoginCodeReservation(t *testing.T) {
 		}
 	})
 
-	// Several live tokens per address is the normal case (a user who asks
-	// twice). Only the newest is ever a code candidate: one guess compared
-	// against N codes would have N-in-1e6 odds while the per-email budget
-	// counts it once. Once the newest is capped, no older token steps in.
+	// Only the newest of several live tokens is a code candidate: one guess against N codes would have N-in-1e6 odds while
+	// the per-email budget counts it once. Once the newest is capped, no older token steps in.
 	t.Run("ConcurrentBurstOverSeveralTokensChargesOnlyTheNewest", func(t *testing.T) {
 		const email = "reserve-multi@example.com"
 		hashes := mint(t, email, 3, platform.TokenPurposeLogin, time.Hour)
@@ -909,24 +874,9 @@ func TestLoginCodeReservation(t *testing.T) {
 	})
 }
 
-// The store half of the `magic_link_tokens`
-// retention sweep.
-//
-// `magic_link_tokens` is durable plaintext PII (email + requested_ip)
-// and its key is ATTACKER-CHOSEN: POST /v1/auth/login is
-// unauthenticated and inserts a permanent row for any well-formed
-// address, and a link nobody clicks is never consumed. The sibling
-// `login_code_lockouts` already had a reaper; this table did not, so
-// the table grew monotonically on a disk-fixed host.
-//
-// This proves the two things only a real database can — and the
-// predicate has to be right in both directions:
-//
-//  1. every EXPIRED row past the retention window is reaped, consumed
-//     or not (both are unredeemable);
-//  2. a LIVE (unexpired) row is NEVER reaped, at any age of created_at,
-//     and the sweep does not widen into the neighbouring
-//     login_code_lockouts table.
+// Store half of the magic_link_tokens retention sweep. The table holds plaintext PII keyed by attacker-chosen input, so
+// the predicate must be right both ways: every EXPIRED row past retention is reaped (consumed or not); a LIVE row never
+// is, at any created_at, and the sweep does not widen into login_code_lockouts.
 func TestMagicLinkTokenReaper(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1071,10 +1021,8 @@ func TestMagicLinkTokenReaper(t *testing.T) {
 	})
 }
 
-// TestPriceAlertsCooldownFloorBackfill pins migration 0181 : a
-// stored cooldown below platform.MinAlertCooldownSeconds is raised to it
-// (and its updated_at stamped), so a pre-existing 0 no longer re-fires
-// every tick; values at or above the floor are untouched.
+// Pins migration 0181: a stored cooldown below platform.MinAlertCooldownSeconds is raised to it (updated_at stamped);
+// values at or above the floor are untouched.
 func TestPriceAlertsCooldownFloorBackfill(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1122,11 +1070,9 @@ func TestPriceAlertsCooldownFloorBackfill(t *testing.T) {
 	}
 }
 
-// TestPriceAlertsDisarmed executes migration 0198 up and down and the SQL
-// that makes an alert fire once per crossing: the claim disarms
-// and refuses a disarmed row, the re-arm is a compare-and-swap on
-// last_fired_at, an edit to the rule or a re-enable re-arms it, and a claim
-// made against a snapshot the owner has since edited or disabled is refused.
+// Executes migration 0198 up and down plus the fire-once-per-crossing SQL: the claim disarms and refuses a disarmed row,
+// re-arm is a CAS on last_fired_at, an edit or re-enable re-arms, and a claim on a stale edited/disabled snapshot is
+// refused.
 func TestPriceAlertsDisarmed(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1299,10 +1245,8 @@ func TestPriceAlertsDisarmed(t *testing.T) {
 	applyMigrations(t, dsn)
 }
 
-// TestPriceAlertRearmAfterFailedFanOut drives the evaluator against the real
-// store with a nanosecond clock: the claim and the re-arm CAS both bind the
-// worker's untruncated now, and timestamptz keeps microseconds, so the CAS
-// matches only if both writes reduce the instant identically.
+// Evaluator against the real store with a nanosecond clock: claim and re-arm CAS both bind the untruncated now, and
+// timestamptz keeps microseconds, so the CAS matches only if both writes reduce the instant identically.
 func TestPriceAlertRearmAfterFailedFanOut(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1399,13 +1343,9 @@ func (s staticVWAP) LatestVWAP(context.Context, canonical.Asset, canonical.Asset
 	return s.price, s.bucketClose(), true, nil
 }
 
-// TestStorePoolsPinSessionTimeZoneUTC opens every Store constructor against
-// a database whose default TimeZone follows a DST-observing host, with the
-// DSN asking for yet another zone, and requires each pooled session to be
-// UTC. The closed-bucket guards spell `bucket <= now() - INTERVAL '<grain>'`;
-// in a non-UTC session '1 day' and '1 month' are calendar-local, so across a
-// DST transition the guard disagrees with the UTC time_bucket grid by an hour
-// and a daily bucket is served (or withheld) at the wrong instant.
+// Every Store constructor must yield UTC sessions even when the DB default and the DSN name other zones. Closed-bucket
+// guards use INTERVAL '1 day'/'1 month', which are calendar-local in non-UTC sessions, so across DST a bucket is served
+// or withheld at the wrong instant.
 func TestStorePoolsPinSessionTimeZoneUTC(t *testing.T) {
 	ctx := context.Background()
 	dsn := startTimescale(t, ctx)
@@ -1537,11 +1477,8 @@ func TestCreateUserHonoursCallerID(t *testing.T) {
 	}
 }
 
-// The stored WebAuthn signature counter is the only clone-detection
-// signal, so it is a high-water mark: two overlapping login ceremonies
-// both verify against the same stored value and may commit in either
-// order. A late-committing lower count must not lower it, while
-// last_used_at still records the latest write.
+// The WebAuthn sign counter is the only clone-detection signal, so it is a high-water mark: a late-committing lower
+// count from an overlapping ceremony must not lower it, while last_used_at still records the latest write.
 func TestWebAuthnSignCountNeverDecreases(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

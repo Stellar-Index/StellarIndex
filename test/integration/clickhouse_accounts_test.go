@@ -26,34 +26,17 @@ import (
 	chstore "github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// TestClickHouseAccountActivityBackfillVerifySeesGapInLaterWindow executes
-// the SQL of deploy/clickhouse/account_activity.sql's operator runbook — the
-// Step-2 backfill INSERTs and the Step-3 verify, extracted from the file, not
-// copied — against a live ClickHouse.
-//
-// stellar.account_activity feeds a HARD `ledger_seq <= watermark` bound on
-// the account-history readers, so a Step-2 backfill that skipped a window
-// silently hides history. Step 3 is the only thing standing between a
-// partial backfill and the reader deploy, and both of its earlier shapes
-// were blind to a gap outside the first window: sampling recently active
-// accounts tests what the live MVs cover anyway, and sampling the accounts
-// with the OLDEST last activity tests only window 1.
-//
-// Fixture (the one the blind shapes return 0 on): window 1 backfilled, a
-// LATER window skipped, an account active in both — in the later window
-// only as a NON-SOURCE participant, the role a narrowed check would miss.
-// The verify must count it (> 0) and must return 0 once the skipped window
-// is re-run.
+// Runs the operator runbook SQL of deploy/clickhouse/account_activity.sql (Step-2 backfill, Step-3 verify) on ClickHouse.
+// A skipped backfill window silently hides history behind the readers' hard watermark bound, and earlier verify shapes
+// were blind to a later-window gap: an account active in both windows (later only as NON-SOURCE participant)
 func TestClickHouseAccountActivityBackfillVerifySeesGapInLaterWindow(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	conn := dialClickHouse(t, ctx, "stellar")
 	rb := loadAccountActivityRunbook(t)
 
-	// Two adjacent windows of the runbook's own grid (2 + k*2M), far from
-	// any ledger another integration test seeds. Rows go straight into the
-	// three source tables — no stellar.ledgers row, so no other test's
-	// "tip" anchor moves.
+	// Two adjacent windows of the runbook's own grid, far from other tests' ledgers. Rows go straight into the three source
+	// tables with no stellar.ledgers row, so no other test's tip anchor moves.
 	const (
 		win1 = uint32(120_000_002)
 		win2 = uint32(122_000_002)
@@ -273,12 +256,8 @@ func f112Watermark(t *testing.T, ctx context.Context, conn driver.Conn, account 
 	return wm
 }
 
-// TestAccountBoardKeyedReadsPruneOnTheSkipIndex: the creator and sponsor
-// boards are ORDER BY rank for their top-N page, so the ?account= read
-// (WHERE creator|sponsor = ?) has no primary-key help. Both halves of each
-// EXCHANGE pair must carry the bloom_filter skip index, and on a multi-granule
-// board the planner must actually drop granules with it rather than reading
-// the whole table to return at most one row.
+// Creator and sponsor boards are ORDER BY rank, so ?account= reads get no primary-key help: both EXCHANGE halves must
+// carry the bloom_filter skip index, and on a multi-granule board it must actually drop granules.
 func TestAccountBoardKeyedReadsPruneOnTheSkipIndex(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -326,10 +305,8 @@ func TestAccountBoardKeyedReadsPruneOnTheSkipIndex(t *testing.T) {
 	}
 }
 
-// TestAccountBoardIndexUpgradeAppliesToALegacyBoard executes the operator
-// files' own ALTER statements against boards shaped like an existing host's
-// (created before the index, so IF NOT EXISTS left them unindexed) and
-// requires the index to land on both halves of the EXCHANGE pair, twice over.
+// The operator files' ALTERs on a pre-index board must land the index on both EXCHANGE halves, and be idempotent when run
+// twice.
 func TestAccountBoardIndexUpgradeAppliesToALegacyBoard(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -392,32 +369,9 @@ func skipIndexCount(t *testing.T, ctx context.Context, conn driver.Conn, table, 
 	return n
 }
 
-// TestClickHouseAccountActivityWatermarkBoundedOps is the live-ClickHouse
-// proof for the activity-watermark bound on AccountOperations.
-//
-// Scenario (the measured live pathology): a long-idle account whose rows all
-// sit far below the tip — without the bound, the reader's reverse primary-key
-// resolves walk granules from the tip back to the account's last activity
-// (seconds live for a 46d-idle account). The fix bounds each arm with
-// `ledger_seq <= max(account_activity.last_ledger)`.
-//
-// What this test proves, in order of importance:
-//
-//  1. DATA-HIDING invariant: the bounded read returns EXACTLY the rows the
-//     account has — including an op where the account is only a NON-SOURCE
-//     participant at a ledger ABOVE its last SOURCED activity (the
-//     Soroban/SAC "token movement postdates the classic account's own
-//     activity" shape). A watermark tracking only source_account would bound
-//     below that row and silently hide it. Red-proof: force the reader's
-//     bound to min(last_ledger) instead of max(...) and this test fails on
-//     the missing participant row.
-//  2. The watermark itself is the max over ALL roles (participant ledger,
-//     not the higher of the sourced ledgers).
-//  3. The bound actually prunes: EXPLAIN ESTIMATE over the reverse
-//     primary-key scan shape with the bound reads strictly fewer
-//     stellar.operations rows than without it (the decoy tip partition is
-//     pruned) — see the inline note on why the scan shape, not the IN-arm,
-//     is what demonstrates the mechanism.
+// Activity-watermark bound on AccountOperations. Must not hide data: the bounded read returns EXACTLY the account's rows,
+// incl. a NON-SOURCE participant op above its last sourced activity (the watermark is max over ALL roles, not min), and it
+// must prune (EXPLAIN ESTIMATE of the reverse primary-key scan reads fewer operations rows with the bound).
 func TestClickHouseAccountActivityWatermarkBoundedOps(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -432,18 +386,9 @@ func TestClickHouseAccountActivityWatermarkBoundedOps(t *testing.T) {
 		participant = uint32(6_310_007)  // idle is a NON-SOURCE participant here (postdates sourced)
 		tip         = uint32(82_310_001) // decoy activity in a far-higher partition (the "tip")
 	)
-	// Shared-ClickHouse isolation: these ledgers land in the same
-	// stellar.ledgers as every other integration test, and
-	// TestNetworkThroughput_DedupsReingestedLedger anchors its window on the
-	// GLOBAL max(close_time) (reserving a 2027 close_time as the tip). The
-	// decoy `tip` seq is ~82M, so a per-second offset would put its
-	// close_time in ~2028 and steal that global tip — pushing the throughput
-	// test's ledger out of its 1-day window. Scale the offset to
-	// MILLISECONDS so even the far-higher decoy partition stays inside
-	// 2026/05/01 (max ~+21h) and never becomes the global close_time tip.
-	// close_time granularity is irrelevant to THIS test — every assertion
-	// keys on ledger_seq (the watermark is max(last_ledger); the bounded
-	// read orders by ledger_seq), so same-second sourced rows are fine.
+	// Shared-ClickHouse isolation: the decoy `tip` seq is ~82M, so a per-second offset would steal the GLOBAL max(close_time)
+	// tip that TestNetworkThroughput_DedupsReingestedLedger reserves in 2027. Offset in MILLISECONDS to stay inside
+	// 2026/05/01; assertions key on ledger_seq, so same-second rows are fine.
 	closeAt := func(seq uint32) time.Time {
 		return time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC).Add(time.Duration(seq-sourcedLo) * time.Millisecond)
 	}
@@ -511,10 +456,8 @@ func TestClickHouseAccountActivityWatermarkBoundedOps(t *testing.T) {
 			wm, participant, sourcedLo+2)
 	}
 
-	// (1) Bounded read loses nothing: newest-first, participant row first,
-	// then the three sourced rows. The reader takes the bounded path here
-	// (the watermark row exists — asserted above), so equality against the
-	// seeded ground truth IS bounded-vs-unbounded equality.
+	// (1) Bounded read loses nothing: newest-first, participant row first, then the three sourced rows; equality with the
+	// seeded truth IS bounded-vs-unbounded equality since the watermark row exists.
 	er, err := chstore.NewExplorerReader(ctx, addr)
 	if err != nil {
 		t.Fatalf("new explorer reader: %v", err)
@@ -552,16 +495,9 @@ func TestClickHouseAccountActivityWatermarkBoundedOps(t *testing.T) {
 			len(page2), page2, sourcedLo+2)
 	}
 
-	// (3) The bound prunes: EXPLAIN ESTIMATE of the reverse primary-key
-	// scan must read strictly fewer stellar.operations rows WITH the bound
-	// (the decoy tip partition — intDiv 82 vs the bound's 6 — cannot be
-	// pruned without it). The scan SHAPE, not the full IN-arm: on a toy
-	// dataset ClickHouse's set-based index analysis resolves the IN
-	// subquery to exact granules either way, which is precisely the
-	// heuristic that does NOT save the 10.6B-row live table (multi-second tip
-	// walk) — the watermark's value is DETERMINISTIC partition +
-	// primary-key range pruning, independent of set-analysis heuristics
-	// and their size caps, and that is the mechanism asserted here.
+	// (3) The bound prunes: EXPLAIN ESTIMATE of the reverse primary-key scan must read strictly fewer operations rows with it.
+	// The scan shape is asserted, not the IN-arm: on a toy dataset set-based index analysis resolves the IN to exact granules
+	// either way, which does not save the live table; the value is partition + primary-key range pruning.
 	armSQL := func(bound string) string {
 		where := ""
 		if bound != "" {
@@ -600,15 +536,9 @@ func TestClickHouseAccountActivityWatermarkBoundedOps(t *testing.T) {
 	}
 }
 
-// TestClickHouseAccountHistoryServesNewestUnmergedVersion is the
-// regression: stellar.transactions and stellar.operations are
-// ReplacingMergeTree(ingested_at), so a re-derive leaves the stale and the
-// corrected row in separate parts until a background merge. The account
-// listings' `LIMIT 1 BY` collapses the pair to ONE row but picks it by part
-// order, not by version; only FINAL applies the engine's rule (highest
-// ingested_at, and on a same-second tie the last insert), which is what
-// /v1/tx/{hash} already serves. The three keys cover both part orders and the
-// same-second tie, so no fixed part-order tie-break can pass them all.
+// operations/transactions are ReplacingMergeTree(ingested_at), so a re-derive leaves stale and corrected rows in separate
+// parts. `LIMIT 1 BY` picks by part order; only FINAL applies the engine's rule (highest ingested_at, last insert on a
+// same-second tie), as /v1/tx/{hash} serves. Keys cover both part orders and the tie.
 func TestClickHouseAccountHistoryServesNewestUnmergedVersion(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -757,17 +687,8 @@ func TestClickHouseAccountHistoryServesNewestUnmergedVersion(t *testing.T) {
 	}
 }
 
-// TestSponsorsRollup_DistinctSponsoredTotalIsGlobal is the proof,
-// run through the real cycle on a real ClickHouse. The board's
-// distinct_sponsored_total must count each sponsored account once
-// across the WHOLE board, not once per sponsor that touched it.
-//
-// Fixture: two different sponsors, each begin-then-end sponsoring the
-// SAME account in its own transaction. Per-sponsor distinct_sponsored
-// is 1 for each sponsor (correct: each sponsor covered one account),
-// so summing it across sponsors gives 2 — the bug this guards against. The account
-// is in fact sponsored by two sponsors, so the true distinct count
-// over the whole board is 1.
+// distinct_sponsored_total must count each sponsored account once across the WHOLE board, not once per sponsor. Two
+// sponsors of the SAME account give per-sponsor distinct_sponsored 1 each (summing to the buggy 2); the true count is 1.
 func TestSponsorsRollup_DistinctSponsoredTotalIsGlobal(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -876,12 +797,8 @@ func assertCycleTime(t *testing.T, got, board time.Time) {
 	}
 }
 
-// legacyAccountOperationsSQL is the AccountOperations page query as it stood
-// before the primary-key-pruning rewrite (accountOperationsQuery(hasCursor,
-// hasBound=true) with opCols expanded), frozen here as the differential
-// oracle: the rewrite must serve byte-identical pages — same rows, order,
-// cursor semantics and source/participant dedupe — while no longer reading
-// one stellar.operations granule per key the account ever touched.
+// legacyAccountOperationsSQL is the pre-rewrite AccountOperations page query, frozen as a differential oracle: the pruning
+// rewrite must serve identical pages without reading one operations granule per key the account ever touched.
 func legacyAccountOperationsSQL(hasCursor bool) string {
 	cursorClause := ""
 	if hasCursor {
@@ -935,60 +852,9 @@ func legacyAccountTransactionsSQL(hasCursor bool) string {
 		SETTINGS max_threads = 4, max_memory_usage = 8589934592, max_bytes_before_external_group_by = 4000000000, max_bytes_before_external_sort = 4000000000`
 }
 
-// TestClickHouseAccountOperationsPageBoundedByPageSize is the live-ClickHouse
-// proof for the AccountOperations rewrite (explorer `AccountOperations
-// deadline exceeded` 503s for an account with 11,925 sourced + 26,064
-// participant ops).
-//
-// Pathology: the arms resolved their keys OVER stellar.operations with
-// `pk IN (SELECT pk FROM ops_by_source WHERE source_account = ?)`.
-// ClickHouse's set-based index analysis prunes that to exact granules — one
-// granule PER KEY IN THE SET, before the LIMIT — so a page cost the account's
-// whole history in granules (live query_log: 164–238 M rows, ~8 s, page of
-// 50). The fix pages ops_by_source / operation_participants directly
-// (primary-key-prefix range reads) and hydrates ≤ 3×limit keys.
-//
-// Fixture: 2 M ledgers × one tx × one op, in ONE ingest so they land in the
-// same part and each 8192-row granule is distinct. The hot account:
-//   - sources every 10,000th op AND its tx (200 keys, one per granule);
-//   - is a non-source participant on a different 200 ops (offset 5,000),
-//     whose tx is sourced by the filler account;
-//   - sources a further 200 TXs (offset 2,500) whose only op is sourced by
-//     the filler account and has hot as a participant — the tx appears in
-//     BOTH transaction arms (legitimate per accountTransactionsQuery's
-//     "DISTINCT dedups the rare tx that is both sourced and participated"),
-//     while on the OPERATIONS side it is participant-only, honouring the
-//     op-level XOR invariant accountOperationsQuery relies on (participants
-//     exclude the op's own source; that listing's merge would serve a
-//     SHORT page if the invariant were violated — see the "no cross-arm
-//     dedupe needed" note there). On the TRANSACTIONS side this overlap
-//     was the bug: the key was emitted by both arms and ate two of
-//     the merge's LIMIT slots.
-//
-// A re-ingested duplicate part covers the ReplacingMergeTree dedupe on
-// both listings. The test then:
-//
-//  1. DIFFERENTIAL: walks the ENTIRE history of BOTH listings (page size
-//     7, ~58 / ~86 pages) through the reader and through the frozen
-//     legacy SQL with the same args, plus a cursor set MID-page. The
-//     OPERATIONS walk asserts every page identical — rows, order, cursor
-//     continuation, dedupe. The TRANSACTIONS walk asserts the same
-//     SEQUENCE of rows in the same order, but not the same page
-//     boundaries: the reader dedupes the two overlapping arms
-//     at the keyset merge, so its pages are full where the frozen
-//     legacy shape still hands back a SHORT one (the walk requires the
-//     legacy side to still produce one, else the reader-side fullness
-//     assertion would be vacuous). Also pins the absolute expectations
-//     (600 distinct ops / 600 distinct txs, strictly descending, no key
-//     served twice, and no non-final short page on EITHER listing from
-//     the reader — the handler withholds next_cursor on a short page, so
-//     one truncates the client's history walk).
-//  2. READ-ROWS: one page of 50 via each path, `system.query_log`
-//     read_rows. The legacy shape reads ≥ one granule per key (≥ 200
-//     granules ≈ 1.6 M rows here; 38 k granules live); the new shape reads
-//     ≤ 3×limit granules. Red-proof: with the legacy query text in the reader
-//     the reader's read_rows equal the legacy figure and the 4× bound
-//     fails.
+// AccountOperations rewrite proof (explorer 503s for an account with 11,925 sourced + 26,064 participant ops). The old `pk
+// IN (SELECT ...)` arms cost one granule PER KEY before the LIMIT; the fix pages ops_by_source/operation_participants
+// directly. Differential walk vs frozen legacy SQL (transactions:
 func TestClickHouseAccountOperationsPageBoundedByPageSize(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1135,12 +1001,8 @@ func TestClickHouseAccountOperationsPageBoundedByPageSize(t *testing.T) {
 	older := func(k, prev key) bool {
 		return k[0] < prev[0] || (k[0] == prev[0] && (k[1] < prev[1] || (k[1] == prev[1] && k[2] < prev[2])))
 	}
-	// walk pages `name` through reader vs legacy until the reader serves
-	// an empty page, asserting page-for-page equality; returns the
-	// distinct keys served. Every page is `pageSize` long but the last:
-	// a non-final short page is exactly what makes a client stop early
-	// (the handler withholds next_cursor on it — see the transactions
-	// walk below).
+	// walk pages `name` through reader and legacy until the reader serves an empty page, asserting page-for-page equality and
+	// returning the distinct keys. All pages are `pageSize` long but the last: a non-final short page makes a client stop.
 	walk := func(name string, page func(cur chstore.ExplorerCursor) (got, want []key)) map[key]bool {
 		t.Helper()
 		var (
@@ -1212,17 +1074,9 @@ func TestClickHouseAccountOperationsPageBoundedByPageSize(t *testing.T) {
 		t.Fatalf("operations: %d distinct ops, want %d (sourced %d + participant %d + participant-on-hot-sourced-tx %d)",
 			len(opsSeen), want, n/stride, n/stride, n/stride)
 	}
-	// The tx listing's two arms legitimately overlap (the txOff txs, sourced
-	// by hot AND carrying it as a non-source participant). Without dedupe an
-	// overlap key occupied TWO of the keyset merge's LIMIT slots — the merge
-	// took its LIMIT before anything deduped — so the page came back SHORT
-	// while older history remained, and the handler emits next_cursor only on
-	// a FULL page (internal/api/v1/explorer/accounts.go): a client walking
-	// the history stopped there, silently truncated. The reader now dedupes
-	// at the merge; the frozen legacy shape still serves those short pages,
-	// so the differential here is over the WHOLE walk (same rows, same order,
-	// none gained, lost, reordered or repeated) rather than page-for-page,
-	// and the reader's pages must additionally be full except the last.
+	// The tx listing's arms legitimately overlap. Without dedupe an overlap key took TWO merge LIMIT slots, the page came back
+	// SHORT, and the handler (next_cursor only on a FULL page) truncated the client's walk. The reader now dedupes at the
+	// merge, so compare the whole walk (no row gained, lost, reordered or repeated)
 	txWalk := func(name string, page func(cur chstore.ExplorerCursor) []chstore.TxSummary) (rows []chstore.TxSummary, nonFinalShort int) {
 		t.Helper()
 		var (
@@ -1351,13 +1205,9 @@ func TestClickHouseAccountOperationsPageBoundedByPageSize(t *testing.T) {
 	}
 }
 
-// TestClickHouseAccountHistoryHidesFailedParticipantTxs: a failed classic tx
-// still writes stellar.operation_participants rows, so anyone could plant a
-// row in any account's public history for the price of a fee. The account
-// listings must drop participant-only rows of failed transactions while
-// keeping the account's own failed transactions (it sourced them) and every
-// successful one. The 20 failed spam txs sit NEWEST so the participant arm
-// has to page past them, and the limit-1 walk crosses several windows.
+// A failed classic tx still writes operation_participants rows, so anyone could plant a row in any account's history for a
+// fee. Listings must drop participant-only rows of failed txs but keep the account's own failed txs and all successes; the
+// 20 failed spam txs sit NEWEST so the participant arm must page past them.
 func TestClickHouseAccountHistoryHidesFailedParticipantTxs(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -1528,13 +1378,9 @@ func insertParticipantFixture(t *testing.T, ctx context.Context, participant str
 	}
 }
 
-// TestClickHouseAccountHistoryParticipantBulkFailedTxs runs the participant
-// arm's multi-chunk visibility SQL and its query budget on real ClickHouse:
-// 1,500 participant txs (every third successful) put more than one
-// visibility chunk in a window, and the 9,000-tx failed run below them is
-// longer than one request's budget, so pages end short at a scan frontier.
-// Walking every page the way the handler does must yield exactly the
-// successful txs, newest first, none skipped or repeated.
+// Participant arm's multi-chunk visibility SQL and query budget: 1,500 participant txs span several visibility chunks and
+// the 9,000-tx failed run exceeds one request's budget, ending pages short at a scan frontier. Walking pages as the
+// handler does must yield exactly the successful txs, newest first, none skipped or repeated.
 func TestClickHouseAccountHistoryParticipantBulkFailedTxs(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -1649,11 +1495,8 @@ func assertSeqs(t *testing.T, what string, got, want []uint32) {
 	}
 }
 
-// TestClickHouseAccountsByWealthNativeExact executes accountsByWealthQuery on
-// the native_xlm basis over two accounts whose balances (2^62+1 and 2^62
-// stroops) are indistinguishable as float64. The reader must return each
-// balance exactly in NativeStroops and rank the larger one first — the
-// native_stroops tiebreak, since the float ranking key ties.
+// accountsByWealthQuery (native_xlm basis) with balances 2^62+1 and 2^62 stroops, indistinguishable as float64:
+// NativeStroops must be exact and the larger first via the native_stroops tiebreak, since the float ranking key ties.
 func TestClickHouseAccountsByWealthNativeExact(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1714,10 +1557,8 @@ func TestClickHouseAccountsByWealthNativeExact(t *testing.T) {
 	}
 }
 
-// TestClickHouseAccountsByWealthUSDExact executes accountsByWealthQuery on the
-// usd basis: 10 XLM at 0.1 plus 3 TOK at 0.333333333333333333 is exactly
-// 1.999999999999999999 dollars. A float64 sum returns 2 (or 1.9999999999999998),
-// a rounded number the endpoint would serve as an exact decimal string.
+// accountsByWealthQuery (usd basis): 10 XLM at 0.1 plus 3 TOK at 0.333333333333333333 is exactly 1.999999999999999999; a
+// float64 sum returns 2 or 1.9999999999999998, which the endpoint would serve as an exact decimal string.
 func TestClickHouseAccountsByWealthUSDExact(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1769,27 +1610,12 @@ func TestClickHouseAccountsByWealthUSDExact(t *testing.T) {
 	t.Fatalf("ranking returned %d rows without the seeded holder", len(rows))
 }
 
-// These tests are the sibling proof of the intra-ledger tie-break: three current-
-// state readers that fold ledger_entry_changes / ledger_entries_current to the
-// latest entry per key with a SINGLE-COLUMN ledger_seq tie-break, which resolves
-// same-ledger multi-change keys to an ARBITRARY row (a stale mid-ledger value,
-// or a resurrected removal). The fix tie-breaks on the composite intra-ledger
-// order — (ledger_seq, intra_ledger_seq) over the base table, or the equivalent
-// materialized `version` over ledger_entries_current — so the LAST change in a
-// ledger deterministically wins, exactly as ledger_entries_current FINAL does.
-//
-// Every test seeds two changes to ONE key in the SAME ledger, in the adversarial
-// physical order an argMax over ledger_seq alone mis-resolves, and asserts the reader returns
-// the LAST change. They go RED against a plain argMax reader and GREEN with
-// the composite order.
+// Same-ledger tie-break: readers folding to the latest entry per key with a single-column ledger_seq tie-break pick an
+// ARBITRARY row (stale value or resurrected removal); they must order by (ledger_seq, intra_ledger_seq) or the
+// materialized `version` so the LAST change wins.
 
-// TestQueryAccountBalance_SameLedgerLastChangeWins proves
-// account_balance_reader.go's argMax(balance, (ledger_seq, intra_ledger_seq)).
-// The two 'account' changes share a ledger; the stale one (intra 8) sorts FIRST
-// in the base table's ORDER BY (ledger_seq, tx_hash, op_index, change_index), so
-// a plain argMax(balance, ledger_seq) — which keeps the first row on a
-// version tie — returns the stale balance. The composite order keeps the later
-// change (intra 9).
+// argMax(balance, (ledger_seq, intra_ledger_seq)): the stale change (intra 8) sorts FIRST in the base table's ORDER BY, so
+// argMax over ledger_seq alone, which keeps the first row on a tie, returns it; the later change (intra 9) must win.
 func TestQueryAccountBalance_SameLedgerLastChangeWins(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -1840,35 +1666,17 @@ func TestQueryAccountBalance_SameLedgerLastChangeWins(t *testing.T) {
 	}
 }
 
-// TestBlendPoolReserves_SameLedgerLastChangeWins proves
-// blend_pool_state_reader.go on both axes of the fix:
-//
-//   - reserveVal (asset seeded update→update in one ledger): a plain
-//     argMax(entry_xdr, ledger_seq) keeps the first-sorted row (op 0, the stale
-//     b_rate); the composite order keeps the final b_rate.
-//   - reserveGone (asset seeded update→remove in one ledger): a
-//     non-empty-entry_xdr WHERE filter excluded the removal from the argMax, so
-//     an earlier same-ledger update resurrected the key; the fix lets the
-//     removal participate and drops it via HAVING on the winning change_type.
-//
-// The reader gets both properties from ledger_entries_current rather
-// than folding them itself — FINAL over ReplacingMergeTree(version), where
-// version = (ledger_seq << 32) | intra_ledger_seq, and a non-empty `entry_xdr` on the
-// row FINAL kept. The assertions are unchanged BECAUSE the semantics are: this
-// test is what proves the new path did not quietly relax either one.
+// Both axes of the fix: update-then-update in one ledger must serve the final b_rate, and update-then-remove must drop the
+// key (the removal participates and is dropped via HAVING on the winning change_type, instead of the earlier update being
+// resurrected). The reader gets both from ledger_entries_current FINAL;
 func TestBlendPoolReserves_SameLedgerLastChangeWins(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	addr := clickhouseAddr(t)
 
-	// A very high ledger, so the fixture sits at the lake's tip whichever
-	// tests seeded before it. It must NOT outlive this test: the lake is one
-	// process-shared container, and max(ledger_seq) over this table is the
-	// upper bound of every whole-lake walker (the claimable-balance and SAC
-	// full-history seeds step it in 250k-ledger windows). Left in place, a row
-	// here turns each of their walks into ~16,000 empty windows — 53-58 s a
-	// walk unloaded, past the 5-minute test deadline on a loaded machine
-	// purgeLakeFixtureLedgers removes it again, synchronously.
+	// A very high ledger so the fixture sits at the lake's tip, but it must NOT outlive the test: max(ledger_seq) bounds every
+	// whole-lake walker, so a surviving row costs each walk ~16,000 empty windows and breaches the 5-minute deadline under
+	// load. purgeLakeFixtureLedgers removes it synchronously.
 	const ledger = uint32(4_000_000_000)
 	purgeLakeFixtureLedgers(t, addr, ledger, ledger)
 	closeTime := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -1950,28 +1758,9 @@ func TestBlendPoolReserves_SameLedgerLastChangeWins(t *testing.T) {
 // `PARTITION BY intDiv(ledger_seq, 1000000)` (deploy/clickhouse/tier1_schema.sql).
 const lakeFixturePartitionLedgers = uint32(1_000_000)
 
-// purgeLakeFixtureLedgers registers a t.Cleanup that deletes every
-// stellar.ledger_entry_changes row in [from, to] once the calling test has
-// finished, and fails that test if any survive.
-//
-// It exists for fixtures seeded far ABOVE any realistic chain tip. The suite's
-// isolation convention is "unique keys per test, every read filters by them"
-// (clickhouse_harness_test.go), and that holds for keyed readers — but the
-// table's max(ledger_seq) is global state no key can scope. Every whole-lake
-// walker steps from min to max in fixed-width windows, so one abandoned
-// 4,000,000,000-ledger row costs each later walk ~16,000 round-trips in the
-// same process. The range must be the caller's OWN: ledger ranges are
-// per-test here, which is what makes a range delete safe.
-//
-// The delete is a mutation scoped IN PARTITION, so it rewrites only the
-// fixture's own parts rather than every part of a table the whole suite writes
-// to, and mutations_sync = 2 makes it synchronous — when Cleanup returns the
-// rows are gone, not scheduled to go. It runs on a fresh context: the test's
-// own is already cancelled by its deferred cancel() when Cleanup fires.
-//
-// Only the append-log is purged. The rows these fixtures projected into
-// ledger_entries_current / the TTL projection stay; those tables are read by
-// key and feed no walk bound.
+// Registers a t.Cleanup deleting every ledger_entry_changes row in [from, to] and failing the test if any survive. For
+// fixtures far above any chain tip: the table's max(ledger_seq) is global state that unique keys cannot scope, and walkers
+// step min to max. The range must be the caller's OWN;
 func purgeLakeFixtureLedgers(t *testing.T, addr string, from, to uint32) {
 	t.Helper()
 	t.Cleanup(func() {
@@ -2006,12 +1795,8 @@ func purgeLakeFixtureLedgers(t *testing.T, addr string, from, to uint32) {
 	})
 }
 
-// TestNativeLiquidityPoolsRanked_SameLedgerLastChangeWins proves
-// liquidity_pool_state_reader.go's argMax(entry_xdr, version) over
-// ledger_entries_current. Two same-ledger changes to one pool key differ only in
-// intra_ledger_seq (and thus the materialized `version`); a plain
-// argMax(entry_xdr, ledger_seq) ties on ledger_seq and can serve the stale
-// reserves, while the `version` tie-break keeps the final change.
+// argMax(entry_xdr, version) over ledger_entries_current: two same-ledger changes to one pool key differ only in
+// intra_ledger_seq (hence `version`); a plain argMax over ledger_seq ties and can serve stale reserves.
 func TestNativeLiquidityPoolsRanked_SameLedgerLastChangeWins(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -2033,14 +1818,9 @@ func TestNativeLiquidityPoolsRanked_SameLedgerLastChangeWins(t *testing.T) {
 		t.Fatalf("encode pool strkey: %v", err)
 	}
 
-	// Two separate inserts → two un-merged ledger_entries_current parts, each
-	// with one row for the key (optimize_on_insert would collapse duplicates
-	// within a single block, so the reader-level tie must be exercised across
-	// parts). Both rows share ledger_seq, so a plain argMax(entry_xdr,
-	// ledger_seq) ties; on the pinned ClickHouse image the tie resolves to the
-	// LAST-created part, so seeding FINAL first and STALE last makes a plain
-	// query serve the stale reserves — while argMax(entry_xdr, version) keeps the
-	// higher-version final row regardless of part order.
+	// Two separate inserts make two un-merged parts (optimize_on_insert would collapse duplicates within one block). A
+	// ledger_seq tie resolves to the LAST-created part on the pinned image, so seeding FINAL first and STALE last makes a
+	// plain query serve stale reserves, while argMax by `version` keeps the higher-version row regardless of part order.
 	final := []chstore.LedgerEntryChangeRow{{
 		LedgerSeq: ledger, CloseTime: closeTime, TxHash: "lpfinal", OpIndex: 1, ChangeIndex: 0,
 		IntraLedgerSeq: 4, ChangeType: "updated", EntryType: "liquidity_pool", KeyXDR: key,

@@ -24,12 +24,8 @@ const (
 	blendEmUser  = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 )
 
-// TestBlendEmissionWindowStatsAndBespoke exercises the Blend emission /
-// credit-risk READ side (BlendEmissionWindowStats) + its surfacing on the
-// blend lending bespoke block. Proves empty-safe, i128/NUMERIC preservation
-// of claimed-emission volume (never int64), the bad_debt+defaulted_debt
-// credit-risk tally, and that the emission KPIs appear alongside (not
-// replacing) the existing Blend position/auction/backstop KPIs.
+// TestBlendEmissionWindowStatsAndBespoke: empty-safe; claimed-emission volume keeps i128 (never int64);
+// bad_debt+defaulted_debt tally; emission KPIs appear alongside the existing position/auction/backstop KPIs.
 func TestBlendEmissionWindowStatsAndBespoke(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -104,12 +100,8 @@ func TestBlendEmissionWindowStatsAndBespoke(t *testing.T) {
 	}
 }
 
-// TestListBlendPools_NeverSumsAcrossReserveAssets executes the
-// /v1/lending/pools listing SQL against real TimescaleDB. A pool whose
-// 30d flows are 1e13 XLM stroops supplied and 1e12 USDC units borrowed
-// must NOT report net_supplied=1e13 / net_borrowed=1e12 (a "10%
-// utilisation" that depends only on which tokens moved): its sums are
-// NULL. A single-asset pool keeps its signed within-asset net flow.
+// TestListBlendPools_NeverSumsAcrossReserveAssets: a pool with flows in different assets (1e13 XLM stroops supplied, 1e12
+// USDC borrowed) reports NULL net sums, not a fake utilisation; a single-asset pool keeps its signed net flow.
 func TestListBlendPools_NeverSumsAcrossReserveAssets(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -182,10 +174,8 @@ func TestListBlendPools_NeverSumsAcrossReserveAssets(t *testing.T) {
 	}
 }
 
-// TestBlendPoolVersion_FromDeployingFactory executes the lineage lookup
-// the reserves endpoint keys its rate scale on: a pool registered under
-// the V1 factory is PoolV1, under the V2 factory PoolV2, and one the
-// registry does not hold — or holds under another factory — is unknown.
+// TestBlendPoolVersion_FromDeployingFactory: pool under the V1 factory is PoolV1, under V2 is PoolV2;
+// unregistered or other-factory pools are unknown.
 func TestBlendPoolVersion_FromDeployingFactory(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -236,16 +226,9 @@ func TestBlendPoolVersion_FromDeployingFactory(t *testing.T) {
 	}
 }
 
-// TestBlendPositionsRoundTrip exercises the InsertBlendPositionEvent
-// path through real TimescaleDB. Verifies:
-//
-//   - All seven money-market event kinds insert successfully.
-//   - The i128 amounts round-trip through the NUMERIC column at
-//     full precision (per ADR-0003).
-//   - PK is idempotent — re-running over the same range is a no-op.
-//   - flash_loan correctly persists the counterparty contract.
-//   - Invalid Kind / empty Pool / empty TxHash are rejected before
-//     touching the DB.
+// TestBlendPositionsRoundTrip: all seven money-market kinds insert; i128 keeps full NUMERIC precision (ADR-0003); PK
+// idempotent on re-run; flash_loan persists the counterparty; invalid Kind / empty Pool / empty TxHash rejected before the
+// DB.
 func TestBlendPositionsRoundTrip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -392,11 +375,8 @@ func TestBlendPositionsLargeI128(t *testing.T) {
 	}
 }
 
-// TestBlendEmissionsRoundTrip exercises every emission /
-// credit-risk event kind through InsertBlendEmissionEvent.
-// Validates the per-kind attribute jsonb (claim.reserve_token_ids,
-// reserve_emission_update.eps/expiration/res_token_id) lands
-// correctly.
+// TestBlendEmissionsRoundTrip: every emission / credit-risk kind through InsertBlendEmissionEvent, including the per-kind
+// attribute jsonb (claim.reserve_token_ids, reserve_emission_update eps/expiration/res_token_id).
 func TestBlendEmissionsRoundTrip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -490,10 +470,8 @@ func TestBlendEmissionsRoundTrip(t *testing.T) {
 	}
 }
 
-// TestBlendAdminRoundTrip exercises every admin / pool-config /
-// pool-factory lifecycle event kind, including the dual-arity
-// set_status (admin / non-admin) and queue_set_reserve's
-// embedded ReserveConfig.
+// TestBlendAdminRoundTrip: every admin / pool-config / pool-factory kind, including dual-arity set_status
+// and queue_set_reserve's embedded ReserveConfig.
 func TestBlendAdminRoundTrip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -623,15 +601,8 @@ func TestBlendAdminRoundTrip(t *testing.T) {
 	}
 }
 
-// TestBlendReserveConfigs_AppliedCancelledPending pins the
-// queue/apply/cancel lifecycle BlendReserveConfigs must resolve:
-// a queue_set_reserve alone is a proposal, not
-// the live rate model. Four reserves exercise the four outcomes:
-//   - applied:   queue then set_reserve -> the queued config, live.
-//   - cancelled: queue then cancel_set_reserve -> no config at all.
-//   - pending:   queue only, still inside the timelock -> no config.
-//   - requeued:  an applied config followed by a second, still-
-//     pending queue -> the FIRST (applied) config, not the second.
+// TestBlendReserveConfigs_AppliedCancelledPending: a queue_set_reserve alone is a proposal, not the live rate model.
+// applied -> queued config; cancelled -> none; pending (in timelock) -> none; requeued -> the first applied config.
 func TestBlendReserveConfigs_AppliedCancelledPending(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -737,14 +708,8 @@ func hexNibble(n int) byte {
 	return tab[n&0xF]
 }
 
-// contains reports whether sub appears in s, IGNORING ASCII spaces in s.
-// The blend attributes are read via `attributes::text` (a postgres jsonb
-// column), which pretty-prints with a space after every ':' and ',' — but
-// the expected substrings here are compact (`"eps":1000000`). The stored
-// values carry no internal spaces, so stripping spaces from the haystack
-// makes these checks robust to jsonb's text formatting (and its
-// non-deterministic key order, since each `"key":value` pair is matched
-// independently). Kept import-free to keep the test file's imports narrow.
+// contains reports whether sub is in s, ignoring ASCII spaces in s: jsonb `attributes::text` pretty-prints spaces
+// and reorders keys, while the expected substrings are compact. Import-free to keep imports narrow.
 func contains(s, sub string) bool {
 	b := make([]byte, 0, len(s))
 	for i := 0; i < len(s); i++ {
@@ -768,10 +733,8 @@ const (
 	dxAdminNew      = "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H"
 )
 
-// TestDefindexAdminEventsInsert executes InsertDefindexAdminEvent against
-// migration 0192: every kind's shape lands, a replay is idempotent, the
-// i128 amount survives above 2^63, and the per-kind CHECKs reject a row
-// carrying the wrong columns.
+// TestDefindexAdminEventsInsert (migration 0192): every kind's shape lands, replay idempotent, i128 survives above 2^63,
+// per-kind CHECKs reject a row with the wrong columns.
 func TestDefindexAdminEventsInsert(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -854,16 +817,9 @@ const (
 	credOtherDebtAsset = "CA526Y2NQWGWVVQ7RFFPGAZMU66PSYJ3UC2MTVAV4ZU7OM5BOPHDXUSG"
 )
 
-// TestCreditWindowAnalyticsAndBespoke exercises the READ side of the
-// sorocredit TVL/analytics surface (CreditWindowAnalytics) + the bespoke
-// block (bespokeCredit) end-to-end through real TimescaleDB.
-//
-// Proves: empty-safe (nil reader + nil block on empty tables — the r1 state
-// until the sorocredit projector-replay runs), i128/NUMERIC preservation of
-// statement + settlement volumes (never int64), the window-scoped
-// open-position proxy (an opened-and-withdrawn position is not counted
-// open), the SCHEDULED-settlement labelling (NOT distress), and that the
-// KPIs + recent-settlements table surface once data exists.
+// TestCreditWindowAnalyticsAndBespoke: empty-safe (nil reader + nil block); i128 statement/settlement volumes (never
+// int64); window-scoped open-position proxy (opened-and-withdrawn is not open); settlements labelled SCHEDULED, not
+// distress.
 func TestCreditWindowAnalyticsAndBespoke(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1038,13 +994,8 @@ func assertKPI(t *testing.T, kpis map[string]string, label, want string) {
 	}
 }
 
-// TestUpshiftVaultShareSupplies_DeployedTiebreakWithinLedger pins that
-// when a single ledger carries two
-// deployed_assets_changed events for the same vault (a rebalance that
-// spans multiple ops/events in one transaction), the DISTINCT ON must
-// resolve deterministically to the highest (op_index, event_index) —
-// the last-emitted new_amount — never to whichever row the physical
-// scan happens to return first.
+// TestUpshiftVaultShareSupplies_DeployedTiebreakWithinLedger: two deployed_assets_changed events for one vault in one
+// ledger must resolve (DISTINCT ON) to the highest (op_index, event_index), not whichever row the scan returns first.
 func TestUpshiftVaultShareSupplies_DeployedTiebreakWithinLedger(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1061,12 +1012,8 @@ func TestUpshiftVaultShareSupplies_DeployedTiebreakWithinLedger(t *testing.T) {
 	vault := mustContractStrkey(t, 0xE0)
 	closeTime := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
-	// One ledger, one tx, two deployed_assets_changed events from the
-	// same rebalance: op_index/event_index 3 fires first with
-	// new_amount=1000, then op_index/event_index 7 supersedes it with
-	// new_amount=0. Everything else ties (same contract, ledger,
-	// ledger_close_time), so only the op/event tiebreak can resolve
-	// which row is "latest".
+	// One ledger/tx, two events: (3) new_amount=1000 then (7) new_amount=0. Everything else ties, so only the op/event
+	// tiebreak picks the latest.
 	events := []timescale.UpshiftVaultEvent{
 		{
 			ContractID: vault, Ledger: 100, LedgerCloseTime: closeTime,

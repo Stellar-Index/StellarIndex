@@ -237,11 +237,9 @@ func seedSupplyRow(t *testing.T, ctx context.Context, db *sql.DB, assetKey strin
 	}
 }
 
-// TestDivergenceGroupedReads executes the pair-grouped board and the
-// per-reference series SQL: the board's limit counts pairs (a pair is never
-// cut between its references) and orders pairs by their widest gap;
-// firing-only keeps a pair with any firing reference, with all of its
-// references; the series returns one cell per (bucket, reference).
+// Pair-grouped board and per-reference series SQL: the limit counts pairs (never cutting a pair), pairs order by widest
+// gap, firing-only keeps a pair with any firing reference along with all its references, series returns one cell per
+// (bucket, reference).
 func TestDivergenceGroupedReads(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -318,11 +316,9 @@ func TestDivergenceGroupedReads(t *testing.T) {
 	}
 }
 
-// TestMigration0186_DivergenceRefObservedAt runs 0186 against a compressed
-// divergence_observations chunk holding a row the previous binary wrote, then
-// round-trips the reference time through the sink and the /v1/divergence
-// reader: the new row returns exactly what was recorded, the old row
-// and a record with no reference time return nil, and down drops the column.
+// Runs 0186 on a compressed chunk holding a row the previous binary wrote, then round-trips the reference time via the
+// sink and /v1/divergence reader: new row returns what was recorded, old row and no-reference record return nil, down
+// drops the column.
 func TestMigration0186_DivergenceRefObservedAt(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -428,10 +424,8 @@ const divergenceStatusComment0019 = `Whether |delta_pct| exceeded the per-(refer
 	`threshold at observation time. Distinct from the persistent ` +
 	`flag returned by the API (which is "any reference firing").`
 
-// TestDivergenceObservationsStatusComment pins the catalog comment on
-// divergence_observations.status after migration 0173 up and down. The
-// comment lives in pg_description, so only a real database can say what an
-// operator reads through `\d+`.
+// Pins the catalog comment on divergence_observations.status after 0173 up and down; it lives in pg_description, so only
+// a real database shows what an operator reads through `\d+`.
 func TestDivergenceObservationsStatusComment(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -511,10 +505,8 @@ func openMEVStore(t *testing.T, ctx context.Context) *timescale.Store {
 	return store
 }
 
-// TestStorage_MEVTradeScanKeepsNewest: with more on-chain trades in the
-// window than the cap, the MEV trade scan returns the NEWEST `limit`
-// rows, ascending. An oldest-first LIMIT returned the same stale head
-// every tick and never reached a burst's tail.
+// With more on-chain trades in the window than the cap, the MEV trade scan returns the NEWEST `limit` rows, ascending;
+// an oldest-first LIMIT returned the same stale head every tick.
 func TestStorage_MEVTradeScanKeepsNewest(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -551,10 +543,8 @@ func TestStorage_MEVTradeScanKeepsNewest(t *testing.T) {
 	}
 }
 
-// TestStorage_MEVFillScanCarriesPositionAssets: the cascade correlator
-// keys its oracle evidence on the filled position's own reserves, which
-// the scan reads out of the fill's bid + lot jsonb as a distinct, sorted
-// asset list (a fill with no bid/lot yields an empty list).
+// The cascade correlator keys oracle evidence on the filled position's own reserves, which the scan reads from the
+// fill's bid + lot jsonb as a distinct, sorted asset list (empty when the fill has no bid/lot).
 func TestStorage_MEVFillScanCarriesPositionAssets(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -613,10 +603,8 @@ func TestStorage_MEVFillScanCarriesPositionAssets(t *testing.T) {
 	}
 }
 
-// TestStorage_MEVEventAssetColumns: a pair-scoped event lands its primary
-// asset/quote in mev_events.asset_id / quote_id (the per-asset history
-// index's key), a cross-asset event stores NULL there, and profit_usd
-// stays NULL for both — no detector estimates attacker profit.
+// A pair-scoped event lands its asset/quote in mev_events.asset_id/quote_id (the per-asset history index key), a cross-
+// asset event stores NULL there, and profit_usd stays NULL for both (no detector estimates profit).
 func TestStorage_MEVEventAssetColumns(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -668,18 +656,9 @@ func TestStorage_MEVEventAssetColumns(t *testing.T) {
 	}
 }
 
-// The reaper sweeps over `magic_link_tokens`,
-// `login_code_lockouts` and `accounts` must not issue a single unbounded
-// DELETE with no LIMIT. Every one of those tables is grown by an
-// unauthenticated or attacker-influenced write path, so a sweep landing
-// on a large backlog held row locks and WAL for as long as the DELETE
-// ran, on the shared connection pool the request path uses.
-//
-// This proves the bound is real: with the batch size overridden small,
-// a single Sweep call over a backlog LARGER than one call's cap
-// (batchSize * sweepMaxBatchesPerCall) deletes only up to the cap and
-// leaves the remainder for the next call — the unbounded
-// DELETE would have removed everything in the first call.
+// Reaper sweeps over magic_link_tokens, login_code_lockouts and accounts must never issue one unbounded DELETE: those
+// tables grow from attacker-influenced writes and a big backlog would hold locks and WAL on the shared pool. With a
+// small batch size, one Sweep over a backlog larger than batchSize*sweepMaxBatchesPerCall deletes only up to the cap.
 func TestSweepExpiredMagicLinkTokens_BoundedPerCall(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -756,12 +735,8 @@ func TestSweepExpiredMagicLinkTokens_BoundedPerCall(t *testing.T) {
 	}
 }
 
-// SweepEndedSessions shares deleteInBatches with the
-// sweeps above, but nothing proved its own call site actually threads
-// the per-call cap: a bug pinning it to defaultSweepBatchRows instead of
-// r.sweepBatchRows would still pass the table-driven correctness test in
-// platform_retention_reaper_test.go, since that test never seeds past
-// one batch.
+// SweepEndedSessions shares deleteInBatches, but nothing proved it threads the per-call cap: pinning
+// defaultSweepBatchRows instead of r.sweepBatchRows would pass the table-driven test, which never seeds past one batch.
 func TestSweepEndedSessions_BoundedPerCall(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -835,10 +810,8 @@ func TestSweepEndedSessions_BoundedPerCall(t *testing.T) {
 	}
 }
 
-// SweepLoginCodeLockouts reports whether it stopped
-// at the per-call cap. The reaper re-sweeps promptly on that signal
-// instead of waiting a full Interval, so the signal must be true exactly
-// when every batch came back full, and false once the backlog is gone.
+// SweepLoginCodeLockouts reports whether it stopped at the per-call cap, so the reaper re-sweeps promptly: the signal
+// must be true exactly when every batch came back full, false once the backlog is gone.
 func TestSweepLoginCodeLockouts_ReportsCapHit(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

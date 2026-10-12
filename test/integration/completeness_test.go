@@ -22,16 +22,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// The completeness verdict write and the replay-rewind dirty-window delete
-// must not be two independent statements: the write has to report that the
-// never-regress guard rejected it, or a run with a -to below the stored tip
-// deletes the window on the strength of a verdict that was never stored.
-//
-// These tests drive [timescale.Store.PublishCompletenessVerdict] on real
-// TimescaleDB. RED on the unfixed behaviour: make the publish "upsert,
-// ignore rows-affected, then clear" (what compute-completeness did with
-// UpsertCompletenessSnapshot + ClearProjectionDirtyWindow) and both tests
-// fail on "the dirty window was deleted".
+// The completeness verdict write and the replay-rewind dirty-window delete must not be two independent statements: the
+// write must report that the never-regress guard rejected it, or a run with -to below the stored tip deletes the window
+// on a verdict that was never stored.
 
 const verdictPublishSource = "cctp"
 
@@ -104,12 +97,9 @@ func storedVerdictTip(t *testing.T, ctx context.Context, store *timescale.Store)
 	return 0
 }
 
-// TestPublishCompletenessVerdict_RejectedVerdictKeepsDirtyWindow is the
-// finding's own scenario, with its own numbers: stored tip 63.5M, a window
-// [62.0M, 62.5M], and an operator re-verify run at -to 63.0M that reconciles
-// the window clean. The guard rejects the verdict; the window must survive.
-// The destructive branch is then proven WITH its trigger: a run at/above the
-// stored tip is applied and clears the window.
+// TestPublishCompletenessVerdict_RejectedVerdictKeepsDirtyWindow: stored tip 63.5M, window [62.0M, 62.5M], and a re-
+// verify at -to 63.0M that reconciles the window clean. The guard rejects the verdict and the window must survive; a run
+// at or above the stored tip is applied and clears it.
 func TestPublishCompletenessVerdict_RejectedVerdictKeepsDirtyWindow(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -179,14 +169,9 @@ func TestPublishCompletenessVerdict_RejectedVerdictKeepsDirtyWindow(t *testing.T
 	}
 }
 
-// TestPublishCompletenessVerdict_RacingAdvanceRejectsAndKeepsWindow
-// interleaves two writers on two connections. When the publish STARTS, its
-// tip (63.0M) is above the committed stored tip (62.9M), so a check made
-// before the write would say "this will apply". A concurrent run holds the
-// verdict row with an uncommitted advance to 63.5M; the publish parks on
-// that row lock, the advance commits, and READ COMMITTED re-evaluates the
-// guard against 63.5M — rejected. Only rows-affected inside the same
-// transaction can see that, which is the fix's whole claim.
+// TestPublishCompletenessVerdict_RacingAdvanceRejectsAndKeepsWindow: two writers on two connections. The publish starts
+// with tip 63.0M above the committed 62.9M, then parks on the verdict row lock while a concurrent run commits 63.5M, and
+// READ COMMITTED re-evaluates the guard and rejects. Only rows-affected inside the same transaction can see that.
 func TestPublishCompletenessVerdict_RacingAdvanceRejectsAndKeepsWindow(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -257,14 +242,9 @@ func TestPublishCompletenessVerdict_RacingAdvanceRejectsAndKeepsWindow(t *testin
 	}
 }
 
-// TestUpsertCompletenessSnapshot_ProblemArmNeverLowersTip pins that
-// the guard's second arm ("OR EXCLUDED.first_problem_ledger > 0")
-// exists so a newly-discovered problem is always recorded even when it
-// can't advance the tip — but the UPDATE SET applied tip_ledger =
-// EXCLUDED.tip_ledger unconditionally, so a regressive-tip run that found a
-// problem also silently lowered the stored (monotonic, network-head) tip.
-// RED on the unfixed query: after a problem-arm write with a lower tip, the
-// stored tip_ledger drops to the regressive run's tip instead of holding.
+// TestUpsertCompletenessSnapshot_ProblemArmNeverLowersTip: the guard's second arm (first_problem_ledger > 0) records a
+// newly found problem even when it cannot advance the tip, but must not also lower the stored monotonic tip_ledger to
+// the regressive run's tip.
 func TestUpsertCompletenessSnapshot_ProblemArmNeverLowersTip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -276,10 +256,8 @@ func TestUpsertCompletenessSnapshot_ProblemArmNeverLowersTip(t *testing.T) {
 		t.Fatalf("seed stored verdict: %v", err)
 	}
 
-	// A regressive-window run (smaller tip) that ALSO found a problem: the
-	// second arm applies the write so the problem is recorded, but
-	// tip_ledger must not regress below the stored, more-advanced
-	// tip.
+	// A lower-tip run that also found a problem: the problem arm applies the write so the problem is recorded, but
+	// tip_ledger must not regress below the stored tip.
 	problem := verdictSnap(63_000_000)
 	problem.Complete = false
 	problem.FirstProblem = 63_100_000
@@ -327,13 +305,9 @@ func storedVerdict(t *testing.T, ctx context.Context, store *timescale.Store) ti
 	return timescale.CompletenessSnapshot{}
 }
 
-// The ClickHouse projection reconcile is an aggregate, so a
-// failed reconcile (nonzero delta, blind spots, floor loss) leaves
-// first_problem_ledger at 0. A lower-tip run whose reconcile FOUND a
-// mismatch therefore missed the guard's problem arm and was dropped,
-// leaving the stored complete=true standing over a projection the run had
-// just proven wrong. RED on the unfixed guard (problem arm keyed on
-// first_problem_ledger alone): Applied=false and complete stays true.
+// The ClickHouse projection reconcile is an aggregate, so a failed reconcile (nonzero delta, blind spots, floor loss)
+// leaves first_problem_ledger at 0. A lower-tip run that found a mismatch must still pass the guard's problem arm, or
+// the stored complete=true stands over a projection just proven wrong.
 func TestPublishCompletenessVerdict_LowerTipReconcileFailureIsRecorded(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -369,11 +343,9 @@ func TestPublishCompletenessVerdict_LowerTipReconcileFailureIsRecorded(t *testin
 	}
 }
 
-// The problem arm must admit only a FOUND failure. A lower-tip run whose
-// projection was not evaluated (e.g. `-pass -to` below the stored
-// watermark: complete=false, projection_ok=false, projection_verified_from
-// 0, no problem ledger) proved nothing and must not replace the stored
-// clean verdict.
+// The problem arm admits only a FOUND failure. A lower-tip run whose projection was not evaluated (e.g. `-pass -to`
+// below the stored watermark: projection_ok=false, projection_verified_from 0, no problem ledger) proved nothing and
+// must not replace the stored clean verdict.
 func TestPublishCompletenessVerdict_LowerTipNotEvaluatedIsRejected(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -438,17 +410,8 @@ func waitForVerdictLockWait(t *testing.T, ctx context.Context, db *sql.DB, finis
 	return ""
 }
 
-// TestComputeCompleteness_OneSourceErrorDoesNotWithholdTheRest drives the real
-// compute-completeness subcommand on real TimescaleDB.
-//
-// soroswap is the FIRST catalogue source. A trigger makes its verdict write
-// fail, standing in for any per-source error (an RPC seed gap, a lake
-// deadline, a served-floor read). The loop must not return at that first
-// error, or no later source gets a verdict and /v1/coverage keeps serving every
-// source's prior verdict while the run looks like one failed source. Every
-// other source is evaluated and published, soroswap publishes nothing,
-// and the run still fails. -skip-recognition only because an empty lake is
-// (rightly) refused as a vacuous recognition scan before the loop is reached.
+// TestComputeCompleteness_OneSourceErrorDoesNotWithholdTheRest: soroswap is the first catalogue source and a trigger
+// makes its verdict write fail.
 func TestComputeCompleteness_OneSourceErrorDoesNotWithholdTheRest(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -524,10 +487,8 @@ func mevSupersedeState(t *testing.T, ctx context.Context, store *timescale.Store
 	return legs, accounts, detectedAt
 }
 
-// TestStorage_MEVEventEvidenceSupersedes: a re-scan whose legs
-// contain the stored legs replaces the stored evidence (a later scan found
-// another victim), a re-scan that saw fewer legs never overwrites, and
-// neither counts as a new event or moves the first detection's time.
+// TestStorage_MEVEventEvidenceSupersedes: a re-scan whose legs contain the stored legs replaces the stored evidence, a
+// re-scan that saw fewer legs never overwrites, and neither counts as a new event or moves the first detection's time.
 func TestStorage_MEVEventEvidenceSupersedes(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -573,11 +534,9 @@ func TestStorage_MEVEventEvidenceSupersedes(t *testing.T) {
 	}
 }
 
-// TestOracleUpdates_ReingestIsIdempotent pins why ts in oracle_updates'
-// primary key is safe on re-ingest: ts is a pure function of the event
-// payload and the ledger header close time, never the wall clock, so a
-// live pass and a replay of the same mainnet event produce the same key
-// and the second pass lands no new row and no new entry tally.
+// TestOracleUpdates_ReingestIsIdempotent: ts in oracle_updates' primary key is safe on re-ingest because it derives from
+// the event payload and ledger close time, never the wall clock, so a live pass and a replay produce the same key and no
+// new row or entry tally.
 func TestOracleUpdates_ReingestIsIdempotent(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

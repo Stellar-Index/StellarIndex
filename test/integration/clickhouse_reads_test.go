@@ -42,18 +42,9 @@ import (
 	chstore "github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// TestClickHouseContractEventsRMTDedup is the live-ClickHouse proof that
-// ContractEventsRecent (Go-side adjacent-row dedup — a SQL LIMIT 1 BY disables
-// reverse read-in-order and costs 100× on busy contracts) and EventsByTx (FINAL) must serve each contract
-// event EXACTLY ONCE even while
-// stellar.contract_events — a ReplacingMergeTree — holds an un-merged duplicate
-// part (the legitimate post-heal / ch-rebuild / partial-flush-retry state).
-//
-// Determinism: the two same-key inserts create two parts, and a background merge
-// would collapse them on its own (making a non-deduping reader accidentally pass).
-// SYSTEM STOP MERGES pins the table in its un-merged state for the duration, so
-// the dedup MUST come from the query — reverting the fix makes both readers
-// return 4 rows (2 events x 2 parts) instead of 2.
+// ContractEventsRecent (Go-side adjacent-row dedup; SQL LIMIT 1 BY disables reverse read-in-order and costs 100x on busy
+// contracts) and EventsByTx (FINAL) must serve each event EXACTLY ONCE while the ReplacingMergeTree holds an un-merged
+// duplicate part. SYSTEM STOP MERGES pins the parts so dedup must come from the query:
 func TestClickHouseContractEventsRMTDedup(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -157,18 +148,9 @@ func TestClickHouseContractEventsRMTDedup(t *testing.T) {
 	}
 }
 
-// TestRunCensusDay_PrunesByCloseTimeAndSwapsPartition runs the census rollup
-// against a real server on the certified Tier-1 schema and proves the two
-// things its unit tests cannot:
-//
-//  1. the day window WHERE close_time >= d AND close_time < d+1 is served by
-//     a minmax skip index (idx_ce_close_time) that DROPS granules outside
-//     the day — contract_events is partitioned and sorted by ledger_seq, so
-//     before the index existed the 30-minute rollup read every granule of
-//     the table per run;
-//  2. RunCensusDay's private-staging CREATE / INSERT / REPLACE PARTITION /
-//     DROP sequence executes and lands exact per-contract counts for the
-//     day and nothing from the neighbouring day.
+// Census rollup on the Tier-1 schema proves what unit tests cannot: (1) the day window `close_time >= d AND < d+1` is
+// served by the minmax skip index idx_ce_close_time, dropping granules outside the day (contract_events is partitioned and
+// sorted by ledger_seq, so the 30-minute rollup used to read every granule); (2)
 func TestRunCensusDay_PrunesByCloseTimeAndSwapsPartition(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -453,12 +435,9 @@ func TestRunCensusDay_RefusesShrink(t *testing.T) {
 	}
 }
 
-// The instance backfill reads ledger_entry_changes, a
-// ReplacingMergeTree(ingested_at), and a corrected re-ingest leaves the stale
-// part beside the fix until a merge. Without FINAL both rows ride one INSERT
-// into contract_instance_changes, tie on its DEFAULT now() version, and the
-// stale wasm_hash can be the one code-history serves. The stale part is
-// written LAST so an unmerged read hands it to the target last.
+// The instance backfill reads ledger_entry_changes, a ReplacingMergeTree(ingested_at), where a corrected re-ingest leaves
+// the stale part beside the fix. Without FINAL both rows ride one INSERT, tie on its DEFAULT now() version, and the stale
+// wasm_hash can win. The stale part is written LAST so an unmerged read hands it to the target last.
 func TestContractInstanceBackfill_ReadsCorrectedSourceRowOnly(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -527,16 +506,9 @@ func TestContractInstanceBackfill_ReadsCorrectedSourceRowOnly(t *testing.T) {
 	}
 }
 
-// contract_instance_changes keyed (contract_hash, ledger_seq,
-// change_index), and change_index restarts per TRANSACTION. Two transactions
-// writing one contract's instance in the same ledger — both at change_index 0
-// — collapsed to one row on merge, so a same-ledger upgrade vanished from the
-// code history and the survivor was the last INSERTED, not the ledger-final
-// write. This drives the shipped DDL (tier1 + the r1 migration's v2), its MV,
-// the backfill INSERT and both indexed reader queries on a real ClickHouse.
-//
-// Red against the old key: after OPTIMIZE … FINAL only one ledger-L row
-// survives, so the count assertions fail and the history loses a version.
+// contract_instance_changes is keyed (contract_hash, ledger_seq, change_index) and change_index restarts per TRANSACTION,
+// so two txs writing one contract's instance in a ledger (both at index 0) collapsed to one row on merge, dropping a same-
+// ledger upgrade and keeping the last INSERTED rather than ledger-final write.
 
 const (
 	t356Ledger0 = uint32(72_356_001) // deploy: executable h0
@@ -881,10 +853,8 @@ func instanceFixture(t *testing.T, tag string) (contractStrkey, instanceKeyXDR s
 	return contractStrkey, instanceKeyXDR
 }
 
-// TestContractInstanceState_TTLRowAndAbsence runs the explorer's instance read
-// against a real ClickHouse: a TTL row for the instance key yields Known plus
-// the newest live_until (so an archived instance is judged archived), and a
-// contract with no lake evidence at all yields Known=false without error.
+// Explorer instance read on real ClickHouse: a TTL row yields Known plus the newest live_until (so an archived instance
+// reads archived), and a contract with no lake evidence yields Known=false without error.
 func TestContractInstanceState_TTLRowAndAbsence(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -928,31 +898,9 @@ func TestContractInstanceState_TTLRowAndAbsence(t *testing.T) {
 	}
 }
 
-// TestClickHouseStringTopicPrefilterAdmitsPhoenixPool is the live-ClickHouse
-// proof for the lake half of the string-topic prefilter.
-//
-// StreamContractEventsFiltered's topic[0] prefilter must not be
-// `topic_0_sym IN (…)` alone: extract.go fills that column from
-// `Topics[0].GetSym()` — Symbol ONLY — so it is EMPTY for every event whose
-// topic[0] is an ScvString. Phoenix's factory publishes
-// ("create","liquidity_pool") as two Strings, so every consumer that asks the
-// lake for creationSym "create" (seed-protocol-contracts, and the -ch
-// re-derive's gatedPrefilter walk) matched ZERO rows over a lake that holds
-// those events from ledger 51,572,026 — the walk looked clean and admitted
-// nothing.
-//
-// The row inserted below is the REAL r1 capture, byte-for-byte: contract id,
-// both topic blobs, the body and the empty topic_0_sym are copied from
-// test/fixtures/phoenix/factory-create/
-// factory_2026-07-02_ledgers_63293663-63293708.jsonl (ledger 63,293,708, the
-// factory's create of CBENABXP…). Only the ledger/tx coordinates are moved
-// into this test's private range.
-//
-// The assertion runs the whole loop the defect broke — lake row → SQL
-// prefilter → streamed event → decoder → identity gate — and ends on the one
-// observation that cannot be faked: the registry's live-upsert hook receiving
-// the announced pool. Reverting topic0Predicate to `topic_0_sym IN (…)` makes
-// the stream return 1 row instead of 2 and seeds nothing.
+// The lake half of the string-topic prefilter: topic[0] filtering must not be `topic_0_sym IN (...)` alone, since
+// extract.go fills it from Symbol ONLY and it is EMPTY for ScvString topics. Phoenix's factory publishes
+// ("create","liquidity_pool")
 func TestClickHouseStringTopicPrefilterAdmitsPhoenixPool(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -1110,12 +1058,9 @@ func (a opKey) less(b opKey) bool {
 	return a.O < b.O
 }
 
-// TestOperationsTypeFilter_PagesSparseTypeWithoutGapOrDup walks
-// /v1/operations?type= through the real handler and reader over a sparse
-// type: matches sit on and beside the 5,000-ledger scan floors, several share
-// a ledger and a transaction, one is an un-merged duplicate part, and payments
-// are interleaved as non-matches. Every limit must return each match exactly
-// once, newest first, with every cursor strictly below the last.
+// Walks /v1/operations?type= through the real handler and reader over a sparse type: matches sit on and beside the
+// 5,000-ledger scan floors, share ledgers and txs, one is an un-merged duplicate, payments interleave. Each limit must
+// return every match exactly once, newest first, each cursor strictly below the last.
 func TestOperationsTypeFilter_PagesSparseTypeWithoutGapOrDup(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -1303,16 +1248,9 @@ func parseOpCursor(t *testing.T, s string) opKey {
 	return opKey{n[0], n[1], n[2]}
 }
 
-// TestExplorerScanQueries_ExecuteAgainstServer proves, against a REAL
-// ClickHouse server, that every scan-shaped explorer query (extracted to
-// builders + pinned with
-// `SETTINGS max_threads/max_memory_usage`) still parses and executes — the
-// unit tests pin the SQL text; this pins that the text is valid ClickHouse
-// (a misplaced SETTINGS clause or a drifted placeholder count fails HERE,
-// not in production). Result contents are asserted only where a seeded row
-// exercises a code path that would otherwise short-circuit before its
-// query (AccountState's trustline/offer reads run only for an EXISTING
-// account).
+// Every scan-shaped explorer query (builders with `SETTINGS max_threads/max_memory_usage`) must parse and execute on a
+// real server: unit tests pin the SQL text, this pins it is valid ClickHouse (misplaced SETTINGS or a drifted placeholder
+// count fail here).
 func TestExplorerScanQueries_ExecuteAgainstServer(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -1353,11 +1291,8 @@ func TestExplorerScanQueries_ExecuteAgainstServer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal account entry: %v", err)
 	}
-	// The trustline + offer rows carry GENUINE LedgerKey XDR: the reader's
-	// trustline/offer scans are PK-prefix range reads (`key_xdr LIKE
-	// '<52-char real-XDR prefix>%'`, accountEntryKeyPrefix), so a synthetic
-	// placeholder key can never match and would silently skip the very path
-	// under test.
+	// Trustline and offer rows carry GENUINE LedgerKey XDR: the scans are PK-prefix range reads (`key_xdr LIKE '<52-char XDR
+	// prefix>%'`), so a synthetic key never matches and would silently skip the path under test.
 	var issuerSeed [32]byte
 	issuerSeed[0] = 0xE6
 	issuer, err := strkey.Encode(strkey.VersionByteAccountID, issuerSeed[:])
@@ -1574,17 +1509,9 @@ func TestExplorerScanQueries_ExecuteAgainstServer(t *testing.T) {
 	}
 }
 
-// TestContractCodeHistory_ServesTheSeededTimeline asserts ContractCodeHistory's
-// returned VALUES on a real server, down both of its paths: first served by
-// the keyed contract_instance_changes index (populated by the shipped MV),
-// then — with this contract's index rows deleted while the table stays
-// non-empty — as an unproven per-contract miss: the index's
-// emptiness for this contract is not proof it never upgraded, so the reader
-// falls back to the changes-log scan, which still holds the instance writes
-// and returns the same real timeline. The seeded timeline carries an
-// instance-storage rewrite that keeps the executable (must collapse onto the
-// FIRST ledger that installed it) and is inserted out of order (the read
-// must sort by ledger).
+// ContractCodeHistory's VALUES down both paths: served from the keyed contract_instance_changes index (filled by the
+// shipped MV), then, with this contract's index rows deleted while the table stays non-empty, an unproven per-contract
+// miss that falls back to the changes-log scan for the same timeline.
 func TestContractCodeHistory_ServesTheSeededTimeline(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -1639,11 +1566,8 @@ func TestContractCodeHistory_ServesTheSeededTimeline(t *testing.T) {
 	}
 	assertCodeHistory(t, ctx, addr, contract, "index-served", want)
 
-	// Index miss for this contract on a non-empty (so "available") index is
-	// NOT authoritative: instanceChangesIndexAvailable only proves the table
-	// isn't globally empty, not that this contract's backfill has landed, so
-	// the reader must fall back to the ~30 s key_xdr scan of the changes log
-	// and return its real (non-empty) answer.
+	// An index miss for this contract on a non-empty index is NOT authoritative: instanceChangesIndexAvailable only proves the
+	// table isn't globally empty, not that this contract's backfill landed, so fall back to the ~30 s key_xdr scan.
 	syncCtx := clickhouse.Context(ctx, clickhouse.WithSettings(clickhouse.Settings{"mutations_sync": "2"}))
 	if err := conn.Exec(syncCtx,
 		`ALTER TABLE stellar.contract_instance_changes DELETE WHERE contract_hash = ?`, cidHex); err != nil {
@@ -1658,10 +1582,8 @@ func TestContractCodeHistory_ServesTheSeededTimeline(t *testing.T) {
 	assertCodeHistory(t, ctx, addr, contract, "index miss falls back to legacy scan", want)
 }
 
-// TestContractCodeHistory_KeepsOldExecutableBeyondRawWriteCap seeds more raw
-// instance writes than contractCodeHistoryMaxRows, all after the contract's
-// first executable (and a return to it): a raw-row cap would drop the oldest
-// executable; collapsing before the cap must keep the whole A->B->A timeline.
+// Seeds more raw instance writes than contractCodeHistoryMaxRows after the first executable (and a return to it): a raw-
+// row cap would drop the oldest executable, so collapse before the cap and keep the whole A->B->A timeline.
 func TestContractCodeHistory_KeepsOldExecutableBeyondRawWriteCap(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -1738,25 +1660,9 @@ func assertCodeHistory(t *testing.T, ctx context.Context, addr, contract, leg st
 	}
 }
 
-// This file is the live-ClickHouse cost proof for the op-stream lake readers
-// (StreamSDEXOps, StreamClassicOps). It pins TWO properties that a text grep
-// for "CreatingSet" or "Join" cannot tell apart, because three different query
-// shapes satisfy one each:
-//
-//	IN-subquery   (the defect): operation_results IS pruned, but the
-//	              window's whole successful-tx set is materialised first —
-//	              CreatingSetsTransform, a 10 GiB memory blowout.
-//	derived-outer (the rejected first fix): no set-build, but the outer ledger
-//	              window is hoisted into a derived table, so ClickHouse cannot
-//	              propagate it through o.ledger_seq = r.ledger_seq and
-//	              stellar.operation_results full-scans as grace_hash's spilled
-//	              build side. One unbounded read traded for another.
-//	shipped       (contractCallOpsQuery's shape): the successful-tx join spelled
-//	              BEFORE the outer WHERE — no set-build AND pruned.
-//
-// Both rejected shapes are frozen below as oracles and both are asserted to
-// still exhibit their pathology against this fixture, so neither assertion can
-// pass vacuously.
+// Cost proof for the op-stream readers (StreamSDEXOps, StreamClassicOps) pinning TWO properties a text grep cannot
+// separate: IN-subquery (defect) prunes results but materialises the whole window's tx set (10 GiB CreatingSet); derived-
+// outer (rejected fix) hoists the window so operation_results full-scans; shipped (contractCallOpsQuery shape)
 
 const (
 	// A ledger range of this test's own (partitions 30..31), clear of every
@@ -1771,10 +1677,8 @@ const (
 	// Every opsPruneFailMod'th tx is a FAILED tx: the successful-tx filter has
 	// to actually exclude rows, or the differential proves nothing.
 	opsPruneFailMod = 7
-	// A re-ingested duplicate PART of stellar.transactions covering the read
-	// window. These readers take no FINAL, so it puts the same tx_hash on the
-	// join's build side twice — what `GROUP BY tx_hash` in the derived table
-	// exists to absorb.
+	// A re-ingested duplicate PART of stellar.transactions over the read window. These readers take no FINAL, so it puts the
+	// same tx_hash on the join's build side twice, which `GROUP BY tx_hash` in the derived table absorbs.
 	opsPruneDupRows = 5_000
 
 	opsPruneSDEXType    = "OperationTypeManageSellOffer"
@@ -1783,10 +1687,8 @@ const (
 
 // ── the shapes this test exists to rule out ─────────────────────────────────
 
-// inSubqueryOpsSQL is the IN-subquery successful-tx filter that sdexOpsQuery
-// and classicOpsQuery must not use: its CreatingSet step materialises the
-// whole window's tx-hash set before the join runs. The sibling
-// contractCallOpsQuery is likewise off this shape.
+// The IN-subquery successful-tx filter that sdexOpsQuery and classicOpsQuery must not use (its CreatingSet step
+// materialises the window's tx-hash set before the join); contractCallOpsQuery likewise avoids it.
 func inSubqueryOpsSQL(opTypes string, from, to uint32) string {
 	return fmt.Sprintf(`
 		SELECT o.ledger_seq, o.close_time, o.tx_hash, o.op_index, o.source_account,
@@ -1859,11 +1761,8 @@ type opsPruneFixture struct {
 	wantClassic int // payment-typed ops in the window whose tx succeeded
 }
 
-// seedOpsPruneFixture writes opsPruneRows ledgers of one op / one result / one
-// tx each, alternating a trade op type and a classic one, with every
-// opsPruneFailMod'th tx failed, plus a duplicate transactions part over the
-// read window. Merges on stellar.transactions are stopped for the duration so
-// that duplicate part is still there when the queries run.
+// Writes opsPruneRows ledgers of one op/result/tx each, alternating trade and classic op types, every opsPruneFailMod'th
+// tx failed, plus a duplicate transactions part over the read window. Merges on transactions are stopped so it survives.
 func seedOpsPruneFixture(t *testing.T, ctx context.Context, raw driver.Conn) opsPruneFixture {
 	t.Helper()
 	const sourceAccount = "GTEST_OPSPRUNE_SOURCE_AAAAAAAAAAAAAAAAAAAAAAAAAAAA"
@@ -2011,15 +1910,9 @@ func planHasStep(plan []string, step string) bool {
 	return false
 }
 
-// granulesFor reads the LAST `Granules: read/total` of the ReadFromMergeTree
-// node for `table` — the count after the final index step (Min-Max, then
-// Partition, then PrimaryKey, then any skip index), i.e. what the query
-// actually reads. ok is false when the node carries no index analysis at all,
-// which is itself the unpruned verdict.
-//
-// The node's `Indexes:` block sits at the SAME indentation as the
-// ReadFromMergeTree line, with its sections nested under it; the subtree walk
-// has to allow that one sibling or it stops before reading anything.
+// Reads the LAST `Granules: read/total` of the table's ReadFromMergeTree node, i.e. the count after the final index step,
+// so what the query really reads; ok=false (no index analysis) is itself the unpruned verdict. The `Indexes:` block sits
+// at the same indentation as the node line, so the subtree walk must allow that one sibling.
 func granulesFor(plan []string, table string) (read, total int, ok bool) {
 	node := -1
 	for i, l := range plan {
@@ -2190,12 +2083,9 @@ func TestStreamOpsQueriesPruneOperationResults(t *testing.T) {
 	assertOpStreamBounded(t, ctx, raw, f, "classic", classicSQL, classicRead, classicKeys, f.wantClassic)
 }
 
-// assertOpStreamBounded pins, for one shipped op-stream statement: no
-// successful-tx set-build, primary-key pruning retained on
-// stellar.operation_results (the rejected remediation), the exact rows the
-// IN-subquery shape served (no over- or under-count from the join), and a
-// read_rows bound. Each assertion is paired with a non-vacuity guard against
-// the frozen oracle that is supposed to violate it.
+// For one shipped op-stream statement: no successful-tx set-build, primary-key pruning retained on operation_results,
+// exact rows as the IN-subquery shape (no join over/under-count), and a read_rows bound; each is paired with a non-
+// vacuity guard against the frozen oracle meant to violate it.
 func assertOpStreamBounded(t *testing.T, ctx context.Context, raw driver.Conn, f opsPruneFixture,
 	name, shippedSQL string, shippedRead uint64, got []opsPruneKey, want int,
 ) {
@@ -2395,11 +2285,8 @@ func writeFixtureFile(t *testing.T, path string, body []byte) {
 	}
 }
 
-// TestVerifyNetworkState_CAP76AmendmentFailsOnAmendedKeys replays the
-// CAP-0076 case end to end: the lake holds archived entries as last seen in
-// ledger meta, the history archive's hot-archive bucket holds two of them
-// amended. The verb must exit with exactly the two mismatches; an archive
-// matching the lake must pass.
+// CAP-0076 end to end: the lake holds archived entries as last seen in meta, the history archive's hot-archive bucket
+// holds two amended. The verb must exit with exactly those two mismatches; an archive matching the lake passes.
 func TestVerifyNetworkState_CAP76AmendmentFailsOnAmendedKeys(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -2506,10 +2393,8 @@ func lumenSACBalance(sac xdr.ContractId, holder byte, amount int64) xdr.LedgerEn
 	}}
 }
 
-// TestNetworkStateReader_LumenConservationAtCommittedTip proves the lumen
-// tally against real ClickHouse: it sums every native holding domain as of
-// the newest stellar.ledgers row and rolls back changes the sink wrote for a
-// ledger whose header is not yet committed.
+// The lumen tally against real ClickHouse sums every native holding domain as of the newest stellar.ledgers row and rolls
+// back changes the sink wrote for a ledger whose header is not yet committed.
 func TestNetworkStateReader_LumenConservationAtCommittedTip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -2606,10 +2491,8 @@ func evictionRow(t *testing.T, seq, intra uint32, e xdr.LedgerEntry) chstore.Led
 	return row
 }
 
-// TestNetworkStateReader_LumenConservationEvictionPastTip: a native SAC
-// allowance evicted in a ledger whose header is not yet committed holds no
-// lumens and must not abort the tally; an evicted balance with no pre-image
-// still fails loud, since its lumens would otherwise vanish from the sum.
+// A native SAC allowance evicted in a ledger whose header is uncommitted holds no lumens and must not abort the tally; an
+// evicted balance with no pre-image still fails loud, since its lumens would otherwise vanish from the sum.
 func TestNetworkStateReader_LumenConservationEvictionPastTip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
