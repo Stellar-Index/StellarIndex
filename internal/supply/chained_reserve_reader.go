@@ -7,8 +7,7 @@ import (
 	"math/big"
 )
 
-// ReserveSource names which reader actually produced a reserve-balance
-// total, so the published snapshot can say where its number came from.
+// ReserveSource names which reader produced a reserve-balance total, so the snapshot can say where its number came from.
 type ReserveSource string
 
 const (
@@ -18,15 +17,12 @@ const (
 	ReserveSourceStatic ReserveSource = "static"
 )
 
-// ReserveBalanceSourcedReader extends [ReserveBalanceReader] to report which source answered, so
-// [XLMComputer] can label a static-map answer [BasisXLMSDFReserveExclusionStatic]; others are treated as live.
+// ReserveBalanceSourcedReader extends [ReserveBalanceReader] to report which source answered, so [XLMComputer] can label a static answer [BasisXLMSDFReserveExclusionStatic]; others are treated as live.
 type ReserveBalanceSourcedReader interface {
 	ReserveBalanceTotalSourced(ctx context.Context, accounts []string, ledger uint32) (*big.Int, ReserveSource, error)
 }
 
-// ChainedReserveBalanceReader tries live first and falls back to static for the WHOLE call on
-// [ErrNoObservation] (ADR-0021: never mixed within one sum). Other errors are returned. Shared by
-// the refresher and the `supply snapshot` CLI so both label the static arm.
+// ChainedReserveBalanceReader tries live first and falls back to static for the WHOLE call on [ErrNoObservation] (ADR-0021: never mixed within one sum); other errors are returned.
 type ChainedReserveBalanceReader struct {
 	live   ReserveBalanceReader
 	static ReserveBalanceReader
@@ -62,9 +58,7 @@ func (c *ChainedReserveBalanceReader) ReserveBalanceTotalSourced(ctx context.Con
 	return out, ReserveSourceStatic, nil
 }
 
-// MinReserveAccountLedger forwards the freshness probe to the live
-// reader. The [XLMComputer] only asks when the balance came from the
-// live arm; a live [ErrNoObservation] is the gate-permissive 0.
+// MinReserveAccountLedger forwards the freshness probe to the live reader; a live [ErrNoObservation] yields the gate-permissive 0.
 func (c *ChainedReserveBalanceReader) MinReserveAccountLedger(ctx context.Context, accounts []string, ledger uint32) (uint32, error) {
 	fr, ok := c.live.(ReserveBalanceFreshnessReader)
 	if !ok {

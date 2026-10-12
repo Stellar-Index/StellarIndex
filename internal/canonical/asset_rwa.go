@@ -34,21 +34,13 @@ var knownRWACodes = map[string]struct{}{
 	"XAU": {}, // spot gold, troy ounce (Reflector FX slot)
 }
 
-// IsKnownRWA reports whether code is in the ADR-0028 allow-list; the RedStone decoder gates
-// feed-registry entries on it, so an unknown code is a decoder bug, not silent coercion.
-//
-// Match is EXACT on purpose: a near-miss there is a bug. A caller matching an on-chain asset
-// code (case chosen by its issuer) against these tickers wants [KnownRWACodes] and its own
-// comparison.
+// IsKnownRWA reports whether code is in the ADR-0028 allow-list; the match is EXACT on purpose (use [KnownRWACodes] to compare on-chain codes under your own folding).
 func IsKnownRWA(code string) bool {
 	_, ok := knownRWACodes[code]
 	return ok
 }
 
-// KnownRWACodes returns the ADR-0028 allow-list in a stable order.
-// Exported for callers that must compare an on-chain asset code
-// against the list under their own folding rule — [IsKnownRWA] stays
-// exact for the decoder.
+// KnownRWACodes returns the ADR-0028 allow-list in a stable order, for callers folding on-chain codes themselves.
 func KnownRWACodes() []string {
 	out := make([]string, 0, len(knownRWACodes))
 	for c := range knownRWACodes {
@@ -58,8 +50,7 @@ func KnownRWACodes() []string {
 	return out
 }
 
-// NewRWAAsset constructs a tokenized-real-world-asset reference.
-// Returns ErrInvalidAsset if the code isn't allow-listed.
+// NewRWAAsset constructs a tokenized-real-world-asset reference, returning ErrInvalidAsset if the code isn't allow-listed.
 func NewRWAAsset(code string) (Asset, error) {
 	if !IsKnownRWA(code) {
 		return Asset{}, errorf(ErrInvalidAsset, "unknown rwa code %q (see ADR-0028)", code)

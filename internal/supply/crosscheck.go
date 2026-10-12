@@ -6,14 +6,10 @@ import (
 	"math/big"
 )
 
-// CrossCheckTolerance is the maximum classic-vs-SAC total_supply difference in stroops (ADR-0011:
-// alert beyond 1 stroop), the boundary of honest NUMERIC truncation / i128 rounding. It pages only
-// for a fully-SAC-represented asset (see the CAVEAT on [CrossCheck]); both shapes use this tolerance.
+// CrossCheckTolerance is the maximum classic-vs-SAC total_supply difference in stroops (ADR-0011: alert beyond 1 stroop), paging only for a fully-SAC-represented asset (see [CrossCheck]).
 var CrossCheckTolerance = big.NewInt(1)
 
-// WrapClass classifies which invariant a [CrossCheckPair] must satisfy. A 1-stroop equality of
-// Algorithm 2 vs 3 totals holds only for an asset 100% SAC-represented; one that merely HAS a SAC
-// wrapper (AQUA: Alg-2 ~86.4B, Alg-3 ~0) legitimately diverges, so equality would page falsely.
+// WrapClass classifies which invariant a [CrossCheckPair] must satisfy: strict equality holds only for an asset 100% SAC-represented, while one that merely HAS a SAC wrapper legitimately diverges.
 type WrapClass string
 
 const (
@@ -37,9 +33,7 @@ func normalizeWrapClass(c WrapClass) WrapClass {
 	return WrapClassPartial
 }
 
-// CrossCheckResult is the comparison output; the caller emits metric and alert from WithinTolerance.
-// DivergenceStroops is non-negative: |classic - sac| for [WrapClassFull]; for [WrapClassPartial]
-// EscrowExcessStroops (leg 2), or 0 when !SubsetBoundChecked. OverMintStroops never feeds it.
+// CrossCheckResult is the comparison output the caller alerts on via WithinTolerance; DivergenceStroops is non-negative, and OverMintStroops never feeds it.
 type CrossCheckResult struct {
 	ClassicKey        string
 	SACKey            string
@@ -73,12 +67,10 @@ type CrossCheckResult struct {
 	EscrowExcessStroops *big.Int
 }
 
-// ErrCrossCheckNilSupply is returned by [CrossCheck] when either TotalSupply is nil, a caller bug
-// since the Computers always populate it on success.
+// ErrCrossCheckNilSupply is returned by [CrossCheck] when either TotalSupply is nil, a caller bug.
 var ErrCrossCheckNilSupply = errors.New("supply: cross-check requires non-nil TotalSupply on both inputs")
 
-// ErrCrossCheckMisaligned is returned by [CrossCheckForClass] when the snapshots are more than
-// [CrossCheckLedgerTolerance] ledgers apart; totals of different ages make both invariants unsound.
+// ErrCrossCheckMisaligned is returned by [CrossCheckForClass] when the snapshots are more than [CrossCheckLedgerTolerance] ledgers apart, since totals of different ages make both invariants unsound.
 var ErrCrossCheckMisaligned = errors.New("supply: cross-check snapshots describe different ledgers")
 
 // checkLedgerAlignment refuses a pair further apart than [CrossCheckLedgerTolerance]. A zero
@@ -94,9 +86,7 @@ func checkLedgerAlignment(classic, sac Supply) error {
 	return nil
 }
 
-// CrossCheck compares Alg 2 and Alg 3 under STRICT total-vs-total equality ([WrapClassFull]),
-// correct only for a fully-SAC-represented asset. CAVEAT: an asset that merely HAS a SAC wrapper
-// diverges by ~its whole supply (AQUA) and would page falsely; config-driven callers use [CrossCheckForClass].
+// CrossCheck compares Alg 2 and Alg 3 under strict total-vs-total equality ([WrapClassFull]); CAVEAT: an asset that merely has a SAC wrapper diverges by its whole supply, so config-driven callers use [CrossCheckForClass].
 func CrossCheck(classic, sac Supply) (CrossCheckResult, error) {
 	if classic.TotalSupply == nil || sac.TotalSupply == nil {
 		return CrossCheckResult{}, ErrCrossCheckNilSupply
@@ -118,9 +108,7 @@ func CrossCheck(classic, sac Supply) (CrossCheckResult, error) {
 	}, nil
 }
 
-// CrossCheckSubsetBound compares Alg 2 and 3 under [WrapClassPartial]. Leg 1 (OverMintStroops) is
-// DIAGNOSTIC ONLY; leg 2 (classic.SACWrappedStroops <= sac.TotalSupply) sets DivergenceStroops, 0 when
-// !SubsetBoundChecked, so callers MUST read it. NOT a full reconciliation: UNDER-counted SACWrapped passes.
+// CrossCheckSubsetBound compares Alg 2 and 3 under [WrapClassPartial]: leg 2 (classic.SACWrappedStroops <= sac.TotalSupply) sets DivergenceStroops (0 when !SubsetBoundChecked), leg 1 is diagnostic only, and under-counted SACWrapped passes.
 func CrossCheckSubsetBound(classic, sac Supply) (CrossCheckResult, error) {
 	if classic.TotalSupply == nil || sac.TotalSupply == nil {
 		return CrossCheckResult{}, ErrCrossCheckNilSupply
@@ -166,9 +154,7 @@ func excessOver(have, bound *big.Int) *big.Int {
 	return excess
 }
 
-// CrossCheckForClass dispatches to [CrossCheck] or [CrossCheckSubsetBound] by class (zero or
-// unknown normalizes to [WrapClassPartial]) after refusing a misaligned pair with
-// [ErrCrossCheckMisaligned], so refresher and `supply audit -cross-check` share one alignment guard.
+// CrossCheckForClass dispatches to [CrossCheck] or [CrossCheckSubsetBound] by class (zero or unknown is [WrapClassPartial]) after refusing a misaligned pair with [ErrCrossCheckMisaligned].
 func CrossCheckForClass(classic, sac Supply, class WrapClass) (CrossCheckResult, error) {
 	if err := checkLedgerAlignment(classic, sac); err != nil {
 		return CrossCheckResult{}, err

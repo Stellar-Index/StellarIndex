@@ -8,13 +8,7 @@ import (
 	"math/big"
 )
 
-// Amount is a precision-safe wrapper over *big.Int for every token quantity, reserve, price
-// numerator and supply value.
-//
-// Values keep full 128-bit (or wider) precision from Soroban event to API response; never int64 or
-// float64. The zero value is a valid zero Amount. Callers MUST NOT mutate the underlying *big.Int.
-// The JSON wire form is always a decimal string (see [Amount.MarshalJSON]). [FromString] caps input
-// at [MaxAmountStringLen] digits so an untrusted decimal string cannot force a huge allocation.
+// Amount is a precision-safe *big.Int wrapper for every token quantity, reserve, price and supply: full 128-bit+ precision, never int64/float64, decimal string in JSON, zero value is zero, callers must not mutate it.
 type Amount struct {
 	// value is never nil after a successful construction. Helpers
 	// below guard against nil by constructing on demand.
@@ -27,12 +21,10 @@ type Amount struct {
 	noCompare [0]func() //nolint:unused // the field exists to make Amount non-comparable, not to be read
 }
 
-// Equal reports whether two Amounts hold the same numeric value. The type does not distinguish
-// absent from zero; callers that need that use *Amount.
+// Equal reports whether two Amounts hold the same numeric value.
 func (a Amount) Equal(b Amount) bool { return a.Cmp(b) == 0 }
 
-// NewAmount wraps a *big.Int. Soroban decoders should prefer [FromInt128Parts] / [FromUInt128Parts],
-// which handle the hi/lo split and sign correctly.
+// NewAmount wraps a *big.Int; Soroban decoders should prefer [FromInt128Parts] / [FromUInt128Parts].
 func NewAmount(v *big.Int) Amount {
 	if v == nil {
 		return Amount{value: new(big.Int)}
@@ -41,11 +33,7 @@ func NewAmount(v *big.Int) Amount {
 	return Amount{value: new(big.Int).Set(v)}
 }
 
-// FromInt128Parts reconstructs a signed 128-bit integer from its Soroban-XDR hi (signed) and
-// lo (unsigned) words.
-//
-// This is the reference path for any i128 from a Soroban event or contract read; the regression
-// fixtures in amount_test.go guard it.
+// FromInt128Parts reconstructs a signed 128-bit integer from its Soroban-XDR hi (signed) and lo (unsigned) words; the reference path for any i128.
 func FromInt128Parts(hi int64, lo uint64) Amount {
 	// big.Int arithmetic rather than bit-shifting keeps two's-complement sign propagation correct.
 	h := big.NewInt(hi)
@@ -54,8 +42,7 @@ func FromInt128Parts(hi int64, lo uint64) Amount {
 	return Amount{value: new(big.Int).Add(h, l)}
 }
 
-// FromUInt128Parts reconstructs an unsigned 128-bit integer from
-// its Soroban-XDR hi/lo representation. Both words are unsigned.
+// FromUInt128Parts reconstructs an unsigned 128-bit integer from its Soroban-XDR hi/lo words.
 func FromUInt128Parts(hi, lo uint64) Amount {
 	h := new(big.Int).SetUint64(hi)
 	h.Lsh(h, 64)
@@ -63,9 +50,7 @@ func FromUInt128Parts(hi, lo uint64) Amount {
 	return Amount{value: new(big.Int).Add(h, l)}
 }
 
-// FromUInt256Parts reconstructs an unsigned 256-bit integer from its Soroban-XDR 4×uint64 form,
-// big-endian (hiHi top, loLo bottom). Redstone's U256 PriceData.price needs it; other sources
-// stop at i128/u128.
+// FromUInt256Parts reconstructs an unsigned 256-bit integer from its Soroban-XDR 4xuint64 form, big-endian (hiHi top, loLo bottom).
 func FromUInt256Parts(hiHi, hiLo, loHi, loLo uint64) Amount {
 	r := new(big.Int).SetUint64(hiHi)
 	r.Lsh(r, 64)
@@ -77,13 +62,10 @@ func FromUInt256Parts(hiHi, hiLo, loHi, loLo uint64) Amount {
 	return Amount{value: r}
 }
 
-// MaxAmountStringLen caps the digits accepted by [FromString], [Amount.UnmarshalJSON] and
-// [Amount.Scan]. 512 is far past any i128 (~39 digits) but stops a multi-megabyte string driving
-// big.Int allocation.
+// MaxAmountStringLen caps the digits accepted by [FromString], [Amount.UnmarshalJSON] and [Amount.Scan] (far past any i128) so an untrusted string cannot force a huge allocation.
 const MaxAmountStringLen = 512
 
-// FromString parses a decimal string (no scientific notation or separators). An empty string is a
-// zero Amount; inputs over [MaxAmountStringLen] digits are rejected as a DoS guard.
+// FromString parses a decimal string (no scientific notation); empty is zero, over [MaxAmountStringLen] digits is rejected.
 func FromString(s string) (Amount, error) {
 	if s == "" {
 		return Amount{value: new(big.Int)}, nil
@@ -99,8 +81,7 @@ func FromString(s string) (Amount, error) {
 	return Amount{value: v}, nil
 }
 
-// BigInt returns a copy of the underlying *big.Int. Safe for
-// caller mutation.
+// BigInt returns a copy of the underlying *big.Int, safe to mutate.
 func (a Amount) BigInt() *big.Int {
 	if a.value == nil {
 		return new(big.Int)
@@ -129,26 +110,19 @@ func (a Amount) Sign() int {
 	return a.value.Sign()
 }
 
-// Cmp compares a and b, returning -1 if a<b, 0 if equal, +1 if
-// a>b. Matches (*big.Int).Cmp semantics.
+// Cmp compares a and b with (*big.Int).Cmp semantics.
 func (a Amount) Cmp(b Amount) int {
 	return a.BigInt().Cmp(b.BigInt())
 }
 
 // ─── JSON ─────────────────────────────────────────────────────────
 
-// MarshalJSON serialises as a JSON string, never a number: clients parse JSON numbers as IEEE 754
-// doubles and would silently lose precision above 2^53.
+// MarshalJSON serialises as a JSON string, never a number: clients parse JSON numbers as IEEE 754 doubles and lose precision above 2^53.
 func (a Amount) MarshalJSON() ([]byte, error) {
 	return json.Marshal(a.String())
 }
 
-// UnmarshalJSON accepts either a JSON string or a JSON number (for
-// small amounts emitted by lax producers). String form is preferred.
-//
-// JSON `null` is an ERROR, not a zero Amount: without the guard it would fall through to
-// FromString("") and silently become the money value 0 (the failure [Asset.Scan] also closes).
-// A field that may be absent must be typed *Amount.
+// UnmarshalJSON accepts a JSON string (preferred) or number; `null` is an ERROR, not zero, so an absent field must be typed *Amount.
 func (a *Amount) UnmarshalJSON(b []byte) error {
 	if string(bytes.TrimSpace(b)) == "null" {
 		return fmt.Errorf("canonical: cannot unmarshal JSON null into an Amount "+
@@ -184,11 +158,7 @@ func (a Amount) Value() (driver.Value, error) {
 	return a.String(), nil
 }
 
-// Scan implements sql.Scanner. Accepts the string form Postgres
-// NUMERIC returns, or []byte equivalent.
-//
-// SQL NULL is an ERROR, not a zero Amount: a LEFT JOIN miss or un-COALESCEd SUM would otherwise
-// read as the money value 0. Scan a nullable NUMERIC through sql.NullString and [FromString].
+// Scan implements sql.Scanner for a Postgres NUMERIC string or []byte; SQL NULL is an ERROR, not zero (scan nullable columns via sql.NullString and [FromString]).
 func (a *Amount) Scan(src any) error {
 	if src == nil {
 		return fmt.Errorf("canonical: cannot scan SQL NULL into an Amount "+

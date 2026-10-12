@@ -5,10 +5,7 @@ import (
 	"strings"
 )
 
-// StablecoinCodes are the asset CODES treated as fiat-pegged stablecoins for pair ORIENTATION
-// (which side is the quote). It mirrors the keys of the aggregator's stablecoinFiatProxy
-// (internal/aggregate/stablecoin.go, the pricing-policy source of truth); the copy lives here so
-// storage can orient pairs without an import cycle. A test pins the two in sync.
+// StablecoinCodes are the asset CODES treated as fiat-pegged stablecoins for pair ORIENTATION, mirroring the aggregator's stablecoinFiatProxy keys (a test pins them in sync).
 var StablecoinCodes = map[string]bool{
 	"USDT": true, "USDC": true, "DAI": true, "PYUSD": true, "USDP": true,
 	"EURC": true, "EUROC": true, "EUROB": true, "MXNe": true,
@@ -69,9 +66,7 @@ func isStablecoinSACForm(assetID string) bool {
 	return head.Type == AssetClassic && StablecoinCodes[head.Code]
 }
 
-// StablecoinSACForms returns, sorted, every SAC form in the active alias
-// registry that [quoteRank] ranks as a stablecoin — the SQL mirror's
-// rank-3 C-address list.
+// StablecoinSACForms returns, sorted, every SAC form in the active alias registry that [quoteRank] ranks as a stablecoin.
 func StablecoinSACForms() []string {
 	var out []string
 	for form := range activeAliasRegistry().families {
@@ -83,13 +78,7 @@ func StablecoinSACForms() []string {
 	return out
 }
 
-// Orient returns the canonical (base, quote) of the market formed by asset_ids a and b, and
-// whether the INPUT order (a=base, b=quote) is flipped relative to it. Either input order yields
-// the same result; `flipped` tells a caller holding a row stored as a/b to invert its price
-// (canonical = 1 / stored) and swap its per-leg amounts before combining directions.
-//
-// The quote is the higher-quoteRank asset; ties go to the lexicographically greater asset_id,
-// purely for determinism.
+// Orient returns the canonical (base, quote) of the market formed by asset_ids a and b, and whether the input order is flipped (invert the stored price and swap per-leg amounts).
 func Orient(a, b string) (base, quote string, flipped bool) {
 	ra, rb := quoteRank(a), quoteRank(b)
 	bIsQuote := rb > ra || (rb == ra && b > a)
@@ -99,10 +88,7 @@ func Orient(a, b string) (base, quote string, flipped bool) {
 	return b, a, true // canonical is b/a; the input a/b is flipped
 }
 
-// Canonical returns p re-oriented to its canonical (base, quote) form,
-// and whether p was flipped to get there (so the caller can invert a
-// derived price). XLM/USDC and USDC/XLM both return the same canonical
-// pair.
+// Canonical returns p re-oriented to its canonical (base, quote) form and whether it was flipped (so the caller can invert a derived price).
 func (p Pair) Canonical() (Pair, bool) {
 	_, _, flipped := Orient(p.Base.String(), p.Quote.String())
 	if !flipped {

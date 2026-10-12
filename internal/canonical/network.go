@@ -16,12 +16,7 @@ import (
 // value is published once rather than threaded through every SacContractID caller.
 var installedPassphrase atomic.Pointer[string]
 
-// InstallNetworkPassphrase publishes p as the process-wide passphrase [Asset.SacContractID]
-// derives against. Call it ONCE at start-up from cfg.Stellar.Passphrase(), before serving;
-// until then pubnet is used, so pubnet behaviour is invariant.
-//
-// An empty p RESETS to pubnet (also the test t.Cleanup path), so a mis-wired config never
-// derives SAC addresses against "".
+// InstallNetworkPassphrase publishes p as the process-wide passphrase [Asset.SacContractID] derives against; call ONCE at start-up, pubnet until then, and an empty p resets to pubnet.
 func InstallNetworkPassphrase(p string) {
 	if p == "" {
 		installedPassphrase.Store(nil)
@@ -44,9 +39,7 @@ func InstallNetworkPassphrase(p string) {
 // passphrase so hot paths (orientation, MEV grouping) do not rehash per call.
 var installedNativeSAC atomic.Pointer[string]
 
-// NativeSACContractID returns the native-XLM Stellar Asset Contract
-// address on the installed network, or [XLMSacContractID] when none
-// is installed, so an uninstalled binary behaves exactly as pubnet did.
+// NativeSACContractID returns the native-XLM SAC address on the installed network, or [XLMSacContractID] when none is installed.
 func NativeSACContractID() string {
 	if s := installedNativeSAC.Load(); s != nil {
 		return *s
@@ -54,9 +47,7 @@ func NativeSACContractID() string {
 	return XLMSacContractID
 }
 
-// InstallNetwork publishes the alias registry and the network passphrase
-// process-wide. Call once at start-up after config load: without it, SAC
-// derivation and the XLM alias family fall back to pubnet on a test net.
+// InstallNetwork publishes the alias registry and network passphrase process-wide; call once after config load, else SAC derivation and the XLM alias family fall back to pubnet.
 func InstallNetwork(passphrase string, sacWrappers map[string]string) error {
 	reg, err := NewAliasRegistry(passphrase, sacWrappers)
 	if err != nil {
@@ -67,9 +58,7 @@ func InstallNetwork(passphrase string, sacWrappers map[string]string) error {
 	return nil
 }
 
-// NetworkPassphrase returns the installed network passphrase, or
-// [PubnetPassphrase] when none is installed. It is the network-aware
-// replacement for reading PubnetPassphrase directly in SAC derivation.
+// NetworkPassphrase returns the installed network passphrase, or [PubnetPassphrase] when none is installed.
 func NetworkPassphrase() string {
 	if p := installedPassphrase.Load(); p != nil {
 		return *p

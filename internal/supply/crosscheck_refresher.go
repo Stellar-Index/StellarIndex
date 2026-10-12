@@ -9,21 +9,15 @@ import (
 	"sort"
 )
 
-// SnapshotReader fetches the latest snapshot for an asset_key (production: timescale.Store.LatestSupply).
-// Implementations MUST return an error satisfying errors.Is(err, ErrNoSnapshot) when none exists,
-// so bootstrap isn't reported as a read failure.
+// SnapshotReader fetches the latest snapshot for an asset_key; implementations MUST return an error satisfying errors.Is(err, ErrNoSnapshot) when none exists.
 type SnapshotReader interface {
 	LatestSupply(ctx context.Context, assetKey string) (Supply, error)
 }
 
-// ErrNoSnapshot is what a [SnapshotReader] returns when the asset has no asset_supply_history rows;
-// wrap it with %w. The supplyStorageReader adapter in cmd/stellarindex-aggregator maps
-// timescale.ErrNotFound to it, since supply doesn't import timescale.
+// ErrNoSnapshot is what a [SnapshotReader] returns (wrapped with %w) when the asset has no asset_supply_history rows.
 var ErrNoSnapshot = errors.New("supply: no snapshot for asset_key")
 
-// CrossCheckPair binds a classic asset's [AssetKey] ("CODE:ISSUER") to its SAC-wrapper contract
-// id (bare C-strkey). Both must be in the watched-set so their refreshers produce the snapshots
-// this refresher reads back.
+// CrossCheckPair binds a classic asset's [AssetKey] ("CODE:ISSUER") to its SAC-wrapper contract id (bare C-strkey); both must be in the watched-set.
 type CrossCheckPair struct {
 	ClassicKey string
 	SACKey     string
@@ -33,8 +27,7 @@ type CrossCheckPair struct {
 	WrapClass WrapClass
 }
 
-// CrossCheckOutcomeKind is the per-pair outcome of one tick. The strings are stable: they are the
-// `outcome` label of `stellarindex_supply_cross_check_total`.
+// CrossCheckOutcomeKind is the per-pair outcome of one tick; the strings are stable, being the `outcome` metric label.
 type CrossCheckOutcomeKind string
 
 const (
@@ -66,9 +59,7 @@ const (
 	CrossCheckOutcomeUnchecked CrossCheckOutcomeKind = "unchecked"
 )
 
-// CrossCheckLedgerTolerance is the largest |classic.LedgerSequence - sac.LedgerSequence| at which two
-// independently-read LATEST snapshots still describe the same moment. 1000 ledgers (~1.4h) exceeds the
-// 5m refresh cadence; it bounds alignment, not component age.
+// CrossCheckLedgerTolerance is the largest ledger gap (1000, ~1.4h) at which two independently-read LATEST snapshots still describe the same moment; it bounds alignment, not component age.
 const CrossCheckLedgerTolerance uint32 = 1000
 
 // ledgerGap returns |a − b| without the uint32 underflow of a bare subtraction.
@@ -79,8 +70,7 @@ func ledgerGap(a, b uint32) uint32 {
 	return b - a
 }
 
-// CrossCheckOutcome is the per-pair result of one tick. One is emitted per configured pair
-// regardless of outcome, keeping counter cardinality bounded by the pair count.
+// CrossCheckOutcome is the per-pair result of one tick, emitted per configured pair so counter cardinality stays bounded.
 type CrossCheckOutcome struct {
 	Pair   CrossCheckPair
 	Kind   CrossCheckOutcomeKind
@@ -88,8 +78,7 @@ type CrossCheckOutcome struct {
 	Err    error            // populated on Missing / ReadError / Misaligned
 }
 
-// CrossCheckEmitter is the metric-emission seam, keeping the refresher Prometheus-agnostic; the
-// production impl (obs.SupplyCrossCheck*) is wired in cmd/stellarindex-aggregator/main.go.
+// CrossCheckEmitter is the metric-emission seam that keeps the refresher Prometheus-agnostic.
 type CrossCheckEmitter interface {
 	// Divergence sets the per-asset gauge to the stroop divergence, labelled by WrapClass. Called
 	// only on Within / Over; the value is non-negative. The label is observational only: alerts
@@ -107,9 +96,7 @@ type CrossCheckEmitter interface {
 	Outcome(kind CrossCheckOutcomeKind, wrapClass WrapClass)
 }
 
-// CrossCheckRefresher runs one cross-check cycle per [Tick]: it loads the latest snapshot for each
-// side of every pair, runs [CrossCheck], and emits the result. It is policy-free: pairs come from
-// the aggregator (`[supply].sac_wrappers` intersect watched-sets), tolerance is [CrossCheckTolerance].
+// CrossCheckRefresher runs one cross-check cycle per [Tick]: loads both sides' latest snapshots per pair, runs [CrossCheck] and emits the result; policy-free.
 type CrossCheckRefresher struct {
 	pairs   []CrossCheckPair
 	reader  SnapshotReader
@@ -117,9 +104,7 @@ type CrossCheckRefresher struct {
 	logger  *slog.Logger
 }
 
-// NewCrossCheckRefresher constructs the refresher. Empty pairs is valid (Tick is a no-op).
-// Duplicate pairs are an error to surface config bugs; input is sorted so emission order is
-// stable across restarts.
+// NewCrossCheckRefresher constructs the refresher; empty pairs is valid (Tick is a no-op), duplicate pairs are an error, and input is sorted for stable emission order.
 func NewCrossCheckRefresher(pairs []CrossCheckPair, reader SnapshotReader, emitter CrossCheckEmitter, logger *slog.Logger) (*CrossCheckRefresher, error) {
 	if reader == nil {
 		return nil, errors.New("supply: cross-check refresher needs a SnapshotReader")
@@ -154,8 +139,7 @@ func NewCrossCheckRefresher(pairs []CrossCheckPair, reader SnapshotReader, emitt
 	}, nil
 }
 
-// Tick runs one cycle across every pair. Per-pair errors are logged and surfaced in the outcome
-// slice (length = len(pairs)) so one storage hiccup doesn't drop the other pairs' checks.
+// Tick runs one cycle across every pair; per-pair errors are logged and surfaced in the outcome slice (length = len(pairs)) so one failure doesn't drop the others.
 func (r *CrossCheckRefresher) Tick(ctx context.Context) []CrossCheckOutcome {
 	if len(r.pairs) == 0 {
 		return nil
