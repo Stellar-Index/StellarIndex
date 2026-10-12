@@ -120,10 +120,8 @@ func (r *AccountStore) Create(ctx context.Context, a platform.Account) (platform
 	return out, nil
 }
 
-// slugLockSQL serialises Create against EraseAccount on one slug. Without
-// it a Create whose INSERT started before the erasure committed waits on
-// the old row's unique-index entry, then inserts once the row is deleted,
-// never having seen the tombstone.
+// slugLockSQL serialises Create against EraseAccount on one slug; without it a Create started before the erasure commits waits on the old
+// row's unique index, then inserts without seeing the tombstone.
 const slugLockSQL = `SELECT pg_advisory_xact_lock(hashtextextended('slug:' || $1::text, 0))`
 
 // Get returns the account by ID; ErrNotFound if absent.

@@ -96,17 +96,9 @@ func CensusLedger(lcm xdr.LedgerCloseMeta, passphrase string) (Census, error) { 
 	return c, nil
 }
 
-// captureEligible reports whether a contract event is one the raw-event sink would land in
-// soroban_events.
-//
-// It runs the actual conversion the live path runs ([contractEventToEventsEvent]) rather than
-// re-stating its gate, so the two agree by construction (as claimAtomCount does via
-// sdexclaim.IsRealTrade). Re-stating only the cheap half of the gate would skip the ScVal
-// MarshalBinary round-trip and contract-id strkey encode: an event failing either is dropped by the
-// sink but counted by the census, showing a phantom projector shortfall.
-//
-// sorobanevents.Capture's tx-hash-hex and ledger-close-time parses are deliberately not modelled;
-// they are per-transaction, so they cannot make one event of a tx diverge from another.
+// captureEligible reports whether the raw-event sink would land a contract event in soroban_events. It runs the live conversion
+// ([contractEventToEventsEvent]), not a re-stated gate, so an event the sink drops (ScVal marshal or strkey failure) is not counted as a
+// phantom projector shortfall.
 func captureEligible(ce xdr.ContractEvent) bool {
 	ev := contractEventToEventsEvent(ce, 0, "", 0, 0, "", nil)
 	if ev == nil {
@@ -117,12 +109,8 @@ func captureEligible(ce xdr.ContractEvent) bool {
 	return len(ev.Topic) > 0
 }
 
-// claimAtomCount returns the number of ClaimAtoms an operation produced that will become trade
-// rows. Atom selection mirrors internal/sources/sdex.extractClaimAtoms (same op types and success
-// gating); the per-atom "is this a real trade" test is [sdexclaim.IsRealTrade], the predicate
-// sdex.decodeClaimAtom enforces, so the census equals the decoder's output by construction. It does
-// not equal the trade-row count; see [Census]. It returns a count, not a slice, to avoid allocation
-// in the hot per-ledger walk.
+// claimAtomCount counts the ClaimAtoms an operation produced that become trade rows. Selection mirrors sdex.extractClaimAtoms and the
+// real-trade test is [sdexclaim.IsRealTrade], so the census equals the decoder's output (not the trade-row count; see [Census]).
 func claimAtomCount(op xdr.Operation, result xdr.OperationResult) int { //nolint:gocognit // switch over 5 trade op types, with a dual result-arm fallback for passive offers; linear and clearer unsplit.
 	if result.Code != xdr.OperationResultCodeOpInner {
 		return 0

@@ -6,10 +6,8 @@ import (
 	"time"
 )
 
-// deleteInBatches runs a retention DELETE shaped
-// `DELETE ... WHERE pk IN (SELECT pk ... WHERE <cutoff $1> LIMIT $2)`
-// until a batch comes back short or sweepMaxBatchesPerCall is reached,
-// under the same per-statement bound as the token-table sweeps.
+// deleteInBatches runs `DELETE ... WHERE pk IN (SELECT pk ... WHERE <cutoff $1> LIMIT $2)` until a batch comes back short or
+// sweepMaxBatchesPerCall is reached, under the token sweeps' per-statement bound.
 func (s *Store) deleteInBatches(ctx context.Context, op, q string, olderThan time.Time, batchRows int) (int64, error) {
 	var total int64
 	for i := 0; i < sweepMaxBatchesPerCall; i++ {

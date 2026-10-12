@@ -94,10 +94,8 @@ func storedFrom(c Candidate) (StoredEvent, error) {
 	}, nil
 }
 
-// detailWithAssets marshals a kind's detail and adds the candidate's
-// `assets` / `sources` when the kind's own payload does not carry them,
-// so no kind's detail loses the per-asset evidence only arbDetail used
-// to keep. A detail that is not a JSON object is an error.
+// detailWithAssets marshals a kind's detail and adds the candidate's `assets` / `sources` when the payload lacks them, so no kind loses
+// per-asset evidence. A detail that is not a JSON object is an error.
 func detailWithAssets(detail any, c Candidate) ([]byte, error) {
 	dj, err := json.Marshal(detail)
 	if err != nil {
@@ -297,10 +295,8 @@ func (w *Worker) scanOracles(ctx context.Context, since time.Time) []OracleRef {
 	return oracles
 }
 
-// orderedCandidates runs the tx_index-dependent detectors (sandwich +
-// oracle_sandwich) when a lake order resolver is wired. The resolver
-// lookup is prefiltered to hashes that could matter
-// (OrderingTxHashes), so the lake round-trip stays bounded.
+// orderedCandidates runs the tx_index-dependent detectors (sandwich + oracle_sandwich) when a lake order resolver is wired; lookups are
+// prefiltered to OrderingTxHashes so the lake round-trip stays bounded.
 func (w *Worker) orderedCandidates(ctx context.Context, trades []canonical.Trade, usd []string, oracles []OracleRef) []Candidate {
 	orderPtr := w.order.Load()
 	if orderPtr == nil {

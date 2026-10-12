@@ -20,10 +20,8 @@ const (
 	// chainlinkDecimalsRefreshInterval is how long a verified decimals() read is trusted; daily suffices, and re-reading catches a proxy re-pointed at a differently-scaled aggregator.
 	chainlinkDecimalsRefreshInterval = 24 * time.Hour
 
-	// chainlinkDecimalsRetryInterval bounds how often a feed whose
-	// decimals() call failed, or whose value disagrees with config, is
-	// re-read — one WARN/ERROR per feed per interval rather than one per
-	// LookupQuote.
+	// chainlinkDecimalsRetryInterval bounds how often a feed whose decimals() call failed, or disagrees with config, is re-read: one
+	// WARN/ERROR per feed per interval, not per LookupQuote.
 	chainlinkDecimalsRetryInterval = 5 * time.Minute
 
 	// chainlinkDecimalsSelector = keccak256("decimals()")[:4].
@@ -44,10 +42,8 @@ type chainlinkDecimalsState struct {
 	lastErr   error     // most recent decimals() failure, for the refusal message
 }
 
-// resolveDecimals returns the decimals to scale `pair`'s feed by, or
-// an ErrPriceUnavailable-wrapped error when the feed must be refused.
-// Safe for concurrent callers (Reference contract); the RPC read runs
-// outside the lock so a slow endpoint does not block sibling feeds.
+// resolveDecimals returns the decimals to scale `pair`'s feed by, or an ErrPriceUnavailable-wrapped error when the feed must be refused.
+// Safe for concurrent callers; the RPC read runs outside the lock so a slow endpoint does not block sibling feeds.
 func (r *ChainlinkReference) resolveDecimals(ctx context.Context, pair canonical.Pair, spec chainlinkFeedSpec) (int, error) {
 	now := r.now()
 	key := strings.ToLower(spec.Address)

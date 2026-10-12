@@ -347,10 +347,8 @@ func buildVerifyDispatcher(oracle config.OracleConfig, protocolContractSeeds map
 	return disp, soroswapDec, registered
 }
 
-// summariseEvent renders one consumer.Event as a one-line human
-// summary for the verify-decoders table. We don't need the full
-// canonical.Trade / OracleUpdate — just enough to confirm the
-// decoder produced structurally-valid output.
+// summariseEvent renders one consumer.Event as a one-line summary for the verify-decoders table: enough to confirm structurally-valid
+// decoder output, not the full canonical.Trade / OracleUpdate.
 func summariseEvent(ev consumer.Event, ledger uint32) string {
 	switch e := any(ev).(type) {
 	case soroswap.TradeEvent:

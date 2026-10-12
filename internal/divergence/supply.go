@@ -455,10 +455,8 @@ func (r *StellarDashboardReference) LookupCirculatingSupply(ctx context.Context,
 	return circulating, nil
 }
 
-// getLumens issues the single GET against BaseURL + "/lumens" and
-// returns the raw body, mapping HTTP 429 / non-200 to
-// [ErrSupplyUnavailable] so an outage degrades to no_reference rather
-// than a hard error.
+// getLumens issues the single GET against BaseURL + "/lumens" and returns the raw body, mapping HTTP 429 / non-200 to
+// [ErrSupplyUnavailable] so an outage degrades to no_reference rather than a hard error.
 func (r *StellarDashboardReference) getLumens(ctx context.Context) ([]byte, error) {
 	endpoint := r.baseURL + "/lumens"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
@@ -647,10 +645,8 @@ func (c *CoinGeckoSupplyReference) LookupCirculatingSupply(ctx context.Context, 
 	return parsed.MarketData.CirculatingSupply, nil
 }
 
-// parseUpstreamTime parses an RFC 3339 upstream timestamp (the shape
-// both `/lumens`.updatedAt and `/coins/{id}`.market_data.last_updated
-// use), returning the zero time on empty/unparseable input, which
-// [supplyStaleness] rejects as unverifiable.
+// parseUpstreamTime parses an RFC 3339 upstream timestamp (as `/lumens`.updatedAt and `/coins/{id}`.market_data.last_updated use),
+// returning the zero time on empty or unparseable input, which [supplyStaleness] rejects as unverifiable.
 func parseUpstreamTime(s string) time.Time {
 	if s == "" {
 		return time.Time{}

@@ -170,10 +170,9 @@ func resolveFeedEntry(feedID string) (feedEntry, error) {
 	return entry, nil
 }
 
-// noteUnrepresentableFeed records a feed_id that is off-registry AND refused by the raw validator.
-// The slot is a HOLE, so it has its own counter (SourceUnknownSymbolsTotal means "recorded as raw");
-// the fix is a feeds.go entry plus a replay. feed_id is untrusted bytes, logged as a slog ATTRIBUTE so
-// both obs.NewLogger handlers escape it (no log injection).
+// noteUnrepresentableFeed records a feed_id that is off-registry AND refused by the raw validator. The slot is a HOLE with its own
+// counter (SourceUnknownSymbolsTotal means "recorded as raw"); the fix is a feeds.go entry plus a replay. feed_id is untrusted bytes,
+// logged as a slog ATTRIBUTE so both handlers escape it.
 func noteUnrepresentableFeed(e *events.Event, slot int, feedID string, err error) {
 	obs.SourceUnrepresentableSymbolsTotal.WithLabelValues(SourceName).Inc()
 	slog.Warn("redstone: dropping slot with unrepresentable feed_id",
@@ -220,12 +219,9 @@ type priceDataDecoded struct {
 	WriteTimestamp   uint64
 }
 
-// sdkDecodeBody decodes the WritePrices event body:
-//
-//	Map { "updater": Address, "updated_feeds": Vec<PriceData> }
-//
-// The adapter emits it as ScVal::Bytes wrapping the XDR (`to_xdr().to_val()`), unwrapped once; a bare
-// Map also decodes. updater is returned for the body↔args cross-check, "" when absent.
+// sdkDecodeBody decodes the WritePrices body `Map { "updater": Address, "updated_feeds": Vec<PriceData> }`, emitted by the adapter as
+// ScVal::Bytes wrapping the XDR (unwrapped once; a bare Map also decodes). updater is returned for the body-args cross-check, "" when
+// absent.
 func sdkDecodeBody(valueB64 string) ([]priceDataDecoded, string, error) {
 	body, err := scval.Parse(valueB64)
 	if err != nil {
@@ -307,10 +303,9 @@ func decodePriceData(sv scval.ScVal) (priceDataDecoded, error) {
 	}, nil
 }
 
-// feedIDsFromOpArgs parses write_prices(updater: Address, feed_ids: Vec<String>, payload: Bytes)
-// args (adapter/lib.rs:78), requiring arity >= 3. The function name is not plumbed; the [WriteFnName]
-// four-layer binding substitutes: the OpArgs provenance gate, this signature check, the updater
-// cross-check and state-write corroboration.
+// feedIDsFromOpArgs parses write_prices(updater: Address, feed_ids: Vec<String>, payload: Bytes) args (adapter/lib.rs:78), requiring
+// arity >= 3. The function name is not plumbed; the [WriteFnName] four-layer binding substitutes (OpArgs provenance gate, this signature
+// check, updater cross-check, state-write corroboration).
 func feedIDsFromOpArgs(opArgs []string) (feedIDs []string, updater string, err error) {
 	// Args are plumbed only for a direct top-level call into this event's own contract (provenance
 	// gate: internal/dispatcher/dispatcher.go and internal/storage/clickhouse/extract.go). A WASM emitting
@@ -379,18 +374,9 @@ func sdkDecodeAddress(sv scval.ScVal) (string, error) {
 	return scval.AsAddressStrkey(sv)
 }
 
-// resolveFeedAttribution maps updated_feeds entries to feed ids. Equal arity zips positionally;
-// a LONGER updated_feeds is malformed. A SHORTER (freshness-filtered) one resolves in order:
-//
-//  1. EXACT — the op's value-changing contract-data writes (events.Event.StateWriteKeys): rejected
-//     feeds are rewritten byte-identical, so changed keys ∩ feed_ids, in feed_ids order, IS the
-//     accepted subset. This resolves value collisions the median rule cannot (ledger 62056824).
-//  2. FALLBACK — payload-median alignment (payload.go) when keys are absent or their arity disagrees;
-//     anything non-unique, or naming a feed the writes show unchanged, refuses the event.
-//
-// Equal arity is CORROBORATED when keys are plumbed: every accepted feed's entry changes, so the
-// written set must equal feed_ids. A mismatch falls back to payload alignment and, failing that, is
-// ErrStateWriteFeedMismatch, never a guess. Without keys the zip stands: absence is "unknown".
+// resolveFeedAttribution maps updated_feeds entries to feed ids: equal arity zips positionally (corroborated against the op's
+// StateWriteKeys when plumbed), LONGER is malformed, SHORTER resolves from changed keys, else payload-median alignment (payload.go);
+// anything non-unique refuses the event (ErrStateWriteFeedMismatch), never a guess.
 func resolveFeedAttribution(prices []priceDataDecoded, feedIDs []string, e *events.Event) ([]string, error) {
 	if len(feedIDs) == len(prices) {
 		if len(e.StateWriteKeys) > 0 {

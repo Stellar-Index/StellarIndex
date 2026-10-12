@@ -248,10 +248,8 @@ func fillOpFields(b xdr.OperationBody, f map[string]any) { //nolint:gocyclo,funl
 	}
 }
 
-// fillSetOptionsFields decodes a set_options body. Every field is optional —
-// an account only sets what it's changing — so each is emitted only when
-// present; a bare re-signing set_options with everything nil legitimately
-// decodes to nothing and falls back to raw_xdr like any other empty body.
+// fillSetOptionsFields decodes a set_options body. Every field is optional, so each is emitted only when present; a bare re-signing
+// set_options decodes to nothing and falls back to raw_xdr.
 func fillSetOptionsFields(op xdr.SetOptionsOp, f map[string]any) {
 	if op.InflationDest != nil {
 		f["inflation_dest"] = op.InflationDest.Address()
@@ -378,10 +376,8 @@ func fillLedgerKeyFields(lk xdr.LedgerKey, f map[string]any) {
 	}
 }
 
-// ledgerEntryTypeName maps the three Soroban-only ledger-entry types a
-// revoke_sponsorship can target to the explorer's snake_case vocabulary —
-// same discipline as opTypeName: controlled, not derived from the SDK's
-// CamelCase enum string.
+// ledgerEntryTypeName maps the three Soroban-only ledger-entry types a revoke_sponsorship can target to the explorer's snake_case
+// vocabulary, controlled like opTypeName rather than derived from the SDK's enum string.
 func ledgerEntryTypeName(t xdr.LedgerEntryType) string {
 	switch t {
 	case xdr.LedgerEntryTypeContractData:
@@ -397,10 +393,8 @@ func ledgerEntryTypeName(t xdr.LedgerEntryType) string {
 	}
 }
 
-// fillInvokeHostFunction decodes a Soroban host-function op: the kind, and for
-// InvokeContract the target contract, function name and full argument list. `args` render through
-// scval.Display so i128 amounts stay decimal strings (ADR-0003) and addresses render as strkeys;
-// `args_xdr` carries each arg exactly (see renderArgs). `arg_count` is kept for wire back-compat.
+// fillInvokeHostFunction decodes a Soroban host-function op: kind and, for InvokeContract, contract, function and full args. `args`
+// render via scval.Display so i128 amounts stay decimal strings (ADR-0003); `args_xdr` carries each arg exactly (see renderArgs).
 func fillInvokeHostFunction(op xdr.InvokeHostFunctionOp, f map[string]any) {
 	switch op.HostFunction.Type {
 	case xdr.HostFunctionTypeHostFunctionTypeInvokeContract:
@@ -461,10 +455,8 @@ func authInvocationTree(auth []xdr.SorobanAuthorizationEntry) []AuthInvocation {
 	return out
 }
 
-// authCredentialsFields renders the SorobanCredentials for one auth entry's
-// root. source_account carries nothing further (the op's own source signed
-// it); the address variants (including the V2 and delegated forms) carry the
-// authorizing address, its nonce, and its signature-expiration ledger.
+// authCredentialsFields renders one auth entry root's SorobanCredentials: source_account carries nothing further (the op's source signed
+// it); address variants carry the authorizing address, nonce and signature-expiration ledger.
 func authCredentialsFields(c xdr.SorobanCredentials) *AuthCredentials {
 	switch c.Type {
 	case xdr.SorobanCredentialsTypeSorobanCredentialsSourceAccount:

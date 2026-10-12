@@ -84,10 +84,8 @@ func keepByIndex(trades []canonical.Trade, idx []int) []canonical.Trade {
 	return out
 }
 
-// priceRat projects a trade's price (quote-per-base) to an exact
-// *big.Rat. Reports ok=false for zero-base or zero-quote trades (no
-// defined price) so they are dropped before the statistics rather than
-// dragged in as a spurious price.
+// priceRat projects a trade's price (quote-per-base) to an exact *big.Rat; ok=false for zero-base or zero-quote trades so they are
+// dropped before the statistics rather than dragged in as a spurious price.
 func priceRat(t *canonical.Trade) (*big.Rat, bool) {
 	b := t.BaseAmount.BigInt()
 	if b.Sign() <= 0 {

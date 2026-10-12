@@ -19,10 +19,8 @@ const metricLastSuccessTimestamp = "stellarindex_supply_snapshot_last_success_ti
 
 const helpLastSuccessTimestamp = "Unix timestamp of the most recent successful snapshot."
 
-// metricVerifyRollupLastSuccessTimestamp is the staleness key for
-// `supply verify-rollup` runs — same carry-forward contract as
-// [metricLastSuccessTimestamp], on its own textfile so a stalled
-// verify-rollup timer doesn't get confused with a stalled snapshot one.
+// metricVerifyRollupLastSuccessTimestamp is the staleness key for `supply verify-rollup` runs, with the same carry-forward contract as
+// [metricLastSuccessTimestamp] on its own textfile, so a stalled verify-rollup timer isn't confused with a stalled snapshot one.
 const metricVerifyRollupLastSuccessTimestamp = "stellarindex_supply_verify_rollup_last_success_timestamp"
 
 const helpVerifyRollupLastSuccessTimestamp = "Unix timestamp of the most recent verify-rollup run with 0 drift and 0 missing checkpoints."
@@ -233,10 +231,8 @@ func writeVerifyRollupFailureMetrics(w io.Writer, durationSec float64) error {
 	return err
 }
 
-// stroopsToXLM divides a stroops *big.Int by 10^7 and returns the
-// XLM value as float64. Loses sub-stroop precision but the textfile
-// is monitoring data, not the source of truth (asset_supply_history
-// retains full NUMERIC precision).
+// stroopsToXLM divides a stroops *big.Int by 10^7 into a float64 XLM value; sub-stroop precision is lost, acceptable for monitoring
+// (asset_supply_history keeps full NUMERIC).
 func stroopsToXLM(stroops *big.Int) float64 {
 	if stroops == nil {
 		return 0
@@ -246,9 +242,8 @@ func stroopsToXLM(stroops *big.Int) float64 {
 	return f
 }
 
-// writeAtomicCarryingLastSuccess writes `body` via [writeAtomic], appending the existing
-// last_success_timestamp samples when `body` emits none: a rewrite dropping the family leaves the
-// staleness alerts evaluating `time() - <missing>` (no-data, never fires). An unreadable prior
+// writeAtomicCarryingLastSuccess writes `body` via [writeAtomic], appending the existing last_success_timestamp samples when `body` emits
+// none: a rewrite dropping the family leaves the staleness alerts on `time() - <missing>` (no-data, never fires). An unreadable prior
 // file is NOT overwritten: erasing the staleness key is worse than missing one unit_failed scrape.
 func writeAtomicCarryingLastSuccess(path, metricName, help string, body func(io.Writer) error) error {
 	carried, err := readLastSuccessSamples(path, metricName)
@@ -280,10 +275,8 @@ func writeAtomicCarryingLastSuccess(path, metricName, help string, body func(io.
 	})
 }
 
-// readLastSuccessSamples returns metricName's sample lines from an
-// existing textfile. A missing file yields no samples and no error (first
-// run — `_never_initialized` covers that state); any other read error is
-// returned so the caller leaves the file alone.
+// readLastSuccessSamples returns metricName's sample lines from an existing textfile. A missing file yields no samples and no error
+// (first run; `_never_initialized` covers it); any other read error is returned so the caller leaves the file alone.
 func readLastSuccessSamples(path, metricName string) ([]string, error) {
 	body, err := os.ReadFile(path) //nolint:gosec // same operator-supplied path this package writes
 	if err != nil {

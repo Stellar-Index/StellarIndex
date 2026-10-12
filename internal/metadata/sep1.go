@@ -186,17 +186,9 @@ const maxBodyBytes = 100 << 10
 // ErrTOMLTooDeep is returned when nesting exceeds [maxTOMLNestingDepth]; checked BEFORE the decoder because [maxBodyBytes] bounds input, not the superlinear decode work (16 KB of nested tables allocate 1.81 GiB against MemoryMax=2G), and an over-deep document fails like any unparseable one.
 var ErrTOMLTooDeep = errors.New("sep1: TOML nests tables deeper than the parse budget allows")
 
-// Nesting bounds enforced by [checkTOMLNesting].
-//
-// maxTOMLNestingDepth is the real limit, from a scan that knows where strings and comments are;
-// 32 is far past SEP-1's deepest construct (two levels). It also holds a dotted key path
-// (`a.b.c = 1`, `[a.b.c]`) to the same depth, since each segment makes a table at quadratic cost.
-//
-// maxRawTOMLNestingDepth is a context-free backstop for a string-aware scan that loses track of a
-// string. It is not a guarantee (a closing bracket in data lowers the count); the guarantee is
-// the string-aware scans ending strings where the decoder's lexer does
-// (TestSkipTOMLStringMatchesDecoder). It also refuses 256 unclosed brackets or dots inside one
-// string, accepted because resetting at string edges would blind it to its purpose.
+// Nesting bounds enforced by [checkTOMLNesting]. maxTOMLNestingDepth is the real limit (from a string- and comment-aware scan; 32 is far
+// past SEP-1's two levels) and also bounds dotted key paths. maxRawTOMLNestingDepth is a context-free backstop, not a guarantee
+// (TestSkipTOMLStringMatchesDecoder pins the guarantee); it also refuses 256 unclosed brackets or dots inside one string.
 const (
 	maxTOMLNestingDepth    = 32
 	maxRawTOMLNestingDepth = 256
@@ -227,13 +219,8 @@ func stripTOMLBOM(body []byte) []byte {
 	return body
 }
 
-// rawKeyPathDepth over-estimates the longest key path in body, in segments, without knowing where
-// strings or comments are: every dot counts. It sums the current table header, the dots before
-// each unclosed bracket on the line, and every dot so far on the line, bounding a path the
-// string-aware [tomlKeyPathDepth] cannot see.
-//
-// A line starting with `[` replaces the header when no bracket is open and can only raise it
-// when one is (that bracket may be data). Like [rawBracketDepth] it is a backstop, not the bound.
+// rawKeyPathDepth over-estimates the longest key path in body, in segments, without knowing where strings or comments are (every dot
+// counts), bounding a path the string-aware [tomlKeyPathDepth] cannot see. Like [rawBracketDepth] it is a backstop, not the bound.
 func rawKeyPathDepth(body []byte) int {
 	var owners []int
 	inside, header, line, run, deepest := 0, 0, 0, 0, 0
@@ -282,12 +269,9 @@ func rawKeyPathDepth(body []byte) int {
 	return deepest
 }
 
-// tomlKeyPathDepth returns the longest key path, in segments, the decoder would build: the
-// header's segments, those of each enclosing inline table's owning key, plus the key's own.
-// Strings and comments are skipped as in [tomlNestingDepth].
-//
-// A dot counts only while every byte since the last separator could belong to a key; any other
-// byte ends the run, which keeps floats and dates in values out of the count.
+// tomlKeyPathDepth returns the longest key path, in segments, the decoder would build, skipping strings and comments as
+// [tomlNestingDepth] does. A dot counts only while every byte since the last separator could belong to a key, which keeps floats and
+// dates in values out of the count.
 func tomlKeyPathDepth(body []byte) int {
 	s := keyPathScan{lineStart: true}
 	for i := 0; i < len(body); {
@@ -442,10 +426,9 @@ func skipTOMLComment(body []byte, i int) int {
 	return len(body)
 }
 
-// skipTOMLString returns the index just past the string literal opening at body[i], a quote byte.
-// It handles all four TOML string forms; backslash escapes apply to basic strings only. An
-// unterminated string ends the scan at the newline (single-line) or EOF (multi-line), matching
-// the lexer's state, since the decoder rejects the document anyway.
+// skipTOMLString returns the index just past the string literal opening at body[i], handling all four TOML string forms (escapes apply to
+// basic strings only). An unterminated string ends the scan at the newline (single-line) or EOF (multi-line), matching the lexer, since
+// the decoder rejects the document anyway.
 func skipTOMLString(body []byte, i int) int {
 	quote := body[i]
 	width := 1
@@ -486,10 +469,8 @@ func closesTOMLString(body []byte, j int, quote byte, width int) bool {
 	return j+2 < len(body) && body[j+1] == quote && body[j+2] == quote
 }
 
-// endOfTOMLStringClose returns the index just past the closing delimiter found at body[j]. A
-// multi-line string may end with up to two content quotes before its closing three
-// (`"""x"""""` is `x""`). After an escaped backslash the lexer takes three, as its six-quote
-// check exempts a run preceded by `\` without asking if that `\` was escaped (toml v1.6.0).
+// endOfTOMLStringClose returns the index just past the closing delimiter at body[j]. A multi-line string may end with up to two content
+// quotes before its closing three (`"""x"""""` is `x""`); after an escaped backslash the lexer takes three (toml v1.6.0).
 func endOfTOMLStringClose(body []byte, j int, quote byte, width int, afterBackslash bool) int {
 	maxExtra := 2
 	if afterBackslash {
@@ -502,19 +483,17 @@ func endOfTOMLStringClose(body []byte, j int, quote byte, width int, afterBacksl
 	return end
 }
 
-// Per-field length caps. One field can still be ~100 KiB under the body cap and values are served
-// verbatim (/v1/issuers, the explorer), so each copied string is capped at parse time. Short
-// fields get maxShortFieldRunes, free text maxLongFieldRunes, cut in RUNES on a rune boundary
-// ([truncateRunes]).
+// Per-field length caps: one field can be ~100 KiB under the body cap and values are served verbatim (/v1/issuers, the explorer), so each
+// copied string is capped at parse time, in RUNES on a rune boundary ([truncateRunes]): maxShortFieldRunes for short fields,
+// maxLongFieldRunes for free text.
 const (
 	maxShortFieldRunes = 256
 	maxLongFieldRunes  = 4096
 )
 
-// maxDocumentationFields and maxCurrencies bound FIELD/ENTRY COUNT, not bytes: the byte caps above
-// do not stop many short DOCUMENTATION keys or CURRENCIES entries from growing the struct, and
-// every one is served verbatim. SEP-1 declares under a dozen documentation fields; real anchors
-// list at most a few hundred currencies.
+// maxDocumentationFields and maxCurrencies bound FIELD/ENTRY COUNT, not bytes: the byte caps do not stop many short keys or entries from
+// growing the struct, and each is served verbatim. SEP-1 declares under a dozen documentation fields; real anchors list at most a few
+// hundred currencies.
 const (
 	maxDocumentationFields = 64
 	maxCurrencies          = 1000
@@ -809,18 +788,14 @@ func (d *ssrfDialer) DialContext(ctx context.Context, network, address string) (
 	return nettools.DialFirstReachable(ctx, d.inner, network, ips, port)
 }
 
-// isBlocked reports whether ip is in a range we refuse to dial.
-//
-// standardTLSPort is the only port a production SEP-1 fetch will dial. A home_domain with another
-// port is rejected up front and ssrfDialer refuses it on every hop, so neither such a domain nor
-// a redirect to one lets the sep1-refresh cron open a blind TLS+GET to any port on a public
-// host. Tests pass allowAnyPort=true so httptest servers (ephemeral ports) still resolve.
+// standardTLSPort is the only port a production SEP-1 fetch dials: another port in a home_domain is rejected up front and by ssrfDialer
+// on every hop, so neither it nor a redirect can open a blind TLS+GET to any port on a public host. Tests pass allowAnyPort=true for
+// httptest's ephemeral ports.
 const standardTLSPort = "443"
 
-// isValidDomainOrHostPort reports whether s is a valid DNS name with an optional :port, keeping
-// query strings, fragments and whitespace out of the request URL. In production a port is
-// accepted only if it is exactly 443; allowAnyPort is the httptest escape hatch. IPv4 literals
-// pass (httptest); IPv6 bracket form does not.
+// isValidDomainOrHostPort reports whether s is a valid DNS name with an optional :port, keeping query strings, fragments and whitespace
+// out of the request URL. Production accepts only port 443; allowAnyPort is the httptest escape hatch. IPv4 literals pass; IPv6 bracket
+// form does not.
 func isValidDomainOrHostPort(s string, allowAnyPort bool) bool { //nolint:gocognit,gocyclo // dispatch-heavy; splitting would reduce linearity
 	// Split off optional :port.
 	host, port, hasPort := strings.Cut(s, ":")
@@ -889,19 +864,9 @@ func (d *ssrfDialer) isBlocked(ip net.IP) bool {
 
 // ─── partial parse ──────────────────────────────────────────────────
 
-// recoverSEP1Sections reads a document that does not parse whole, one top-level
-// table at a time, and returns what it could read plus the tables it could not.
-//
-// A syntax error in one table is no evidence about the others, and discarding the whole document
-// would turn an issuer's typo into our silence about assets that exist.
-//
-// This is not a lenient parser: nothing is repaired or guessed. Each kept section goes through
-// the same strict toml.Unmarshal and a failing one is dropped and named, so the result is only
-// ever a subset of what valid TOML would produce.
-//
-// Splitting on table-start lines is sound only if such a line cannot be data. A bare [[NAME]] at
-// column zero can be text inside a triple-quoted literal, so a document containing either
-// multi-line delimiter is refused outright.
+// recoverSEP1Sections reads a document that does not parse whole, one top-level table at a time, returning what it read plus the tables
+// it could not. Not a lenient parser: each kept section goes through the same strict toml.Unmarshal, so the result is only a subset of
+// valid TOML. A document with a multi-line delimiter is refused outright, since a table-start line could be string data.
 func recoverSEP1Sections(body []byte) (map[string]any, []SkippedSection, error) {
 	text := string(body)
 	if strings.Contains(text, `"""`) || strings.Contains(text, `'''`) {
@@ -973,10 +938,9 @@ func parseTOMLSection(chunk string) (map[string]any, error) {
 	return part, nil
 }
 
-// isTOMLTableHeader reports whether a line begins a top-level table or array-of-tables.
-// Deliberately strict (column zero, bare or quoted name, only whitespace or a comment after the
-// bracket): a refused line joins the section above, which can only drop a section, never invent
-// a declaration.
+// isTOMLTableHeader reports whether a line begins a top-level table or array-of-tables. Deliberately strict (column zero, bare or quoted
+// name, only whitespace or a comment after the bracket): a refused line joins the section above, which can only drop a section, never
+// invent a declaration.
 func isTOMLTableHeader(line string) bool {
 	if len(line) == 0 || line[0] != '[' {
 		return false
@@ -1022,12 +986,9 @@ func tomlTrailerOK(s string) bool {
 	return s == "" || strings.HasPrefix(s, "#")
 }
 
-// mergeTOMLSection folds one independently-parsed section into the
-// accumulating document.
-//
-// Arrays of tables APPEND, as each [[CURRENCIES]] block arrives as its own section. Everything
-// else keeps the FIRST occurrence: a duplicate key is an error in strict TOML, so letting a later
-// section overwrite would produce a document strict TOML never would. First-wins stays a subset.
+// mergeTOMLSection folds one independently-parsed section into the accumulating document. Arrays of tables APPEND; everything else keeps
+// the FIRST occurrence, since a duplicate key is a strict-TOML error and a later overwrite would build a document strict TOML never
+// would.
 func mergeTOMLSection(dst, src map[string]any) {
 	for k, v := range src {
 		prev, exists := dst[k]

@@ -167,10 +167,8 @@ func lookupLeg(ctx context.Context, ref Reference, pair canonical.Pair, observed
 	return q, nil
 }
 
-// legFailures preserves Compare's unsupported-vs-degraded distinction for
-// an exhausted leg: if ANY candidate failed transiently the leg is
-// "unavailable" (a reading should have existed); only when every
-// candidate reports unsupported is the leg unsupported for the pair.
+// legFailures preserves Compare's unsupported-vs-degraded distinction for an exhausted leg: any transient candidate failure makes the leg
+// "unavailable"; it is unsupported only when every candidate reports unsupported.
 type legFailures struct {
 	sawTransient bool
 	lastErr      error

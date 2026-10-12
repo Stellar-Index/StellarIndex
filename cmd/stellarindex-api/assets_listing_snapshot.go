@@ -33,10 +33,8 @@ type assetsListingSnapshotKey string
 // String returns the wire-format key.
 func (k assetsListingSnapshotKey) String() string { return string(k) }
 
-// assetsListingSnapshotRedisKey returns the snapshot key for one warmed listing variant. The
-// schema fingerprint is in the key, so a binary with a different [timescale.AssetRow] shape
-// finds nothing rather than decoding added fields as zero values; old keys expire on
-// [assetsListingSnapshotTTL].
+// assetsListingSnapshotRedisKey returns the snapshot key for one warmed listing variant. The schema fingerprint is in the key so a
+// different [timescale.AssetRow] shape finds nothing instead of decoding added fields as zeros.
 func assetsListingSnapshotRedisKey(limit int, order timescale.AssetsOrder) assetsListingSnapshotKey {
 	return assetsListingSnapshotKey(fmt.Sprintf("assets:listing-snapshot:%s:%d:%d",
 		assetRowSchemaFingerprint(), int(order), limit))
@@ -55,10 +53,8 @@ const assetsListingSeedMaxAge = 10 * time.Minute
 // must not delay the listener; the fallback is only the cold path.
 const assetsListingSnapshotBudget = 2 * time.Second
 
-// assetsListingSnapshot is the persisted page-set.
-//
-// ObservedAt is when the rows were read from upstream, never when they were written here. A
-// stale entry is re-persisted with the same ObservedAt, so only a real refresh resets its age.
+// assetsListingSnapshot is the persisted page-set. ObservedAt is when the rows were read upstream, never when written; a stale entry
+// keeps it so only a real refresh resets its age.
 type assetsListingSnapshot struct {
 	ObservedAt time.Time            `json:"observed_at"`
 	Rows       []timescale.AssetRow `json:"rows"`
@@ -126,14 +122,8 @@ func (s *assetsListingSnapshots) load(
 	return snap, true
 }
 
-// seedAssetListingsFromSnapshots primes the in-process listing cache from the previous process's
-// snapshots and reports how many requested variants were seeded.
-//
-// Call it before the listener starts; a seed that races the listener loses. It is bounded by
-// [assetsListingSnapshotBudget] so it can be synchronous, and seeds exactly
-// [assetListingPrewarmOptions] through the handler's own key derivation. Zero seeded from a
-// non-empty request set is a real signal (cold Redis, schema change, broken path), so the caller
-// logs (seeded, requested).
+// seedAssetListingsFromSnapshots primes the listing cache from the previous process's snapshots and returns the seeded count. Call it
+// before the listener starts (a racing seed loses); zero seeded from a non-empty request set is a real signal.
 func seedAssetListingsFromSnapshots(
 	ctx context.Context, logger *slog.Logger, reader *v1.CachedAssetsReader, snaps *assetsListingSnapshots,
 ) (seeded, requested int) {
@@ -163,12 +153,8 @@ func seedAssetListingsFromSnapshots(
 	return seeded, len(opts)
 }
 
-// assetRowSchemaFingerprint is a stable digest of [timescale.AssetRow]'s
-// exported shape (field names + types, in declaration order).
-//
-// JSON is forgiving: a field added to AssetRow would deserialise to its zero value and be
-// served as data. Keying on the shape sends a different AssetRow to a different key and the
-// cold fill. Computed once; it is invariant for a build.
+// assetRowSchemaFingerprint digests [timescale.AssetRow]'s exported shape: JSON would serve an added field as a zero value, so a changed
+// shape must key a different entry. Computed once per build.
 var assetRowSchemaFingerprint = func() func() string {
 	t := reflect.TypeOf(timescale.AssetRow{})
 	h := sha256.New()

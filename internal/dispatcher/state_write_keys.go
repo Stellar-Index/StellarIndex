@@ -31,10 +31,8 @@ type contractDataWrite struct {
 	KeyB64     string // base64-encoded XDR LedgerKey
 }
 
-// opContractDataWriteKeys returns the contract-data entries whose value
-// operation opIdx of tx CHANGED (see the file comment for the exact
-// rule), in first-write meta order, one entry per key. Nil when the meta
-// version is unknown or the op changed nothing.
+// opContractDataWriteKeys returns the contract-data entries whose value op opIdx of tx CHANGED (see the file comment), in first-write
+// meta order, one per key; nil when the meta version is unknown or nothing changed.
 func opContractDataWriteKeys(tx ingest.LedgerTransaction, opIdx int) []contractDataWrite {
 	changes := opChangeSet(tx, opIdx)
 	if len(changes) == 0 {
@@ -153,10 +151,9 @@ func (ks *keyChangeState) valueChanged() bool {
 	return true
 }
 
-// contractDataWriteOf projects one contract-data LedgerEntry to its (owner, key) identity plus its
-// marshalled Val bytes. ok=false for non-contract-data and account-owned entries. A nil val with
-// ok=true is a marshal failure; the caller excludes that key rather than guessing, as the lake
-// extractor does.
+// contractDataWriteOf projects a contract-data LedgerEntry to its (owner, key) identity plus marshalled Val bytes; ok=false for
+// non-contract-data and account-owned entries. A nil val with ok=true is a marshal failure the caller excludes rather than guess, as the
+// lake extractor does.
 func contractDataWriteOf(entry xdr.LedgerEntry) (w contractDataWrite, val []byte, ok bool) {
 	if entry.Data.Type != xdr.LedgerEntryTypeContractData {
 		return contractDataWrite{}, nil, false
@@ -185,10 +182,8 @@ func contractDataWriteOf(entry xdr.LedgerEntry) (w contractDataWrite, val []byte
 	return w, valBytes, true
 }
 
-// stateWriteKeysFor filters an operation's value-changing contract-data
-// writes down to the keys owned by contractID — the per-event slice that
-// becomes events.Event.StateWriteKeys. Nil when nothing matches, so
-// events of contracts that changed nothing carry no allocation.
+// stateWriteKeysFor filters an op's value-changing writes to keys owned by contractID (the per-event StateWriteKeys); nil when nothing
+// matches so unchanged contracts carry no allocation.
 func stateWriteKeysFor(writes []contractDataWrite, contractID string) []string {
 	var out []string
 	for _, w := range writes {

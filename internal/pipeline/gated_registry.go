@@ -144,10 +144,7 @@ func GatedFactories(source string) []string { return gatedSources[source].Factor
 // CuratedFactoryID is the provenance on protocol_contracts rows from a source's in-code curated set, written only via SeedCuratedContracts.
 const CuratedFactoryID = "curated"
 
-// curatedReconcileTimeout caps the warm-time curated reconcile. It writes
-// at most len(CuratedSet) single-row upserts (today: 1-2 per source, ~100
-// for defindex, and only for rows the table lacks) and must never be able
-// to hold up indexer boot.
+// curatedReconcileTimeout caps the warm-time curated reconcile (a few single-row upserts); it must never hold up indexer boot.
 const curatedReconcileTimeout = 10 * time.Second
 
 // protocolContractStore is the protocol_contracts seam the gated-registry warm needs (read to warm, write to record a child), faked in unit tests.
@@ -301,10 +298,8 @@ type spectraMarketStore interface {
 	SpectraMarkets(ctx context.Context) ([]timescale.SpectraMarket, error)
 }
 
-// spectraMarketOptions restores each recorded market's PT and YT roles so a
-// market found after the hand-kept list survives a restart: a bare
-// protocol_contracts row carries no role and fails closed. The sink writes
-// the table, so no attribute hook is installed.
+// spectraMarketOptions restores each recorded market's PT and YT roles after a restart; a bare protocol_contracts row carries no role and
+// fails closed.
 func spectraMarketOptions(ctx context.Context, store protocolContractStore, logger *slog.Logger) ([]contractid.Option, error) {
 	ms, ok := store.(spectraMarketStore)
 	if !ok {

@@ -10,11 +10,8 @@ import (
 	"time"
 )
 
-// The lake seams are captured by value when the handlers are built, so a dial that gives up
-// leaves them nil until restart. The window runs before the listener is up, so it must stay well
-// inside the deploy health probe's first attempt (health_grace_seconds);
-// After=clickhouse-server.service covers a co-located reboot race beyond it. Both readers dial
-// concurrently, so the listener waits at most clickhouseBootDialBudget in total.
+// The lake seams are captured by value, so a dial that gives up leaves them nil until restart. The window runs before the listener is up
+// and must stay inside the first deploy health probe (health_grace_seconds); both readers dial concurrently.
 var (
 	clickhouseBootDialBudget     = 7 * time.Second
 	clickhouseBootDialBackoffMin = time.Second
@@ -89,9 +86,7 @@ func dialClickHouseAtBoot[T io.Closer](ctx context.Context, logger *slog.Logger,
 	}
 }
 
-// dialAttempt returns by deadline even when dial does not: clickhouse-go
-// bounds the TCP connect and the handshake by the reader's DialTimeout each,
-// not ctx, and an Options.DialContext would cover only the connect. An
+// dialAttempt returns by deadline even when dial does not: clickhouse-go bounds connect and handshake by DialTimeout each, not ctx. An
 // abandoned dial finishes in the background and a late success is closed.
 func dialAttempt[T io.Closer](ctx context.Context, logger *slog.Logger, deadline time.Time, dial func(context.Context) (T, error)) (T, error) {
 	attemptCtx, cancel := context.WithDeadline(ctx, deadline)

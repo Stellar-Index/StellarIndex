@@ -173,10 +173,8 @@ func hubbleCountVerdict(logger *slog.Logger, from, to uint32, ours, theirs map[u
 	return fmt.Errorf("hubble-check FAIL — %d ledger(s) disagree on SDEX trade count", len(diffs))
 }
 
-// requireComparedLedgers returns how many distinct ledgers either side
-// returned, and fails when that is zero: an empty diff over an empty read
-// says nothing about the range (past the tip, never ingested, or no BigQuery
-// access all look like this).
+// requireComparedLedgers returns how many distinct ledgers either side returned and fails on zero: an empty diff over an empty read says
+// nothing (past the tip, never ingested, or no BigQuery access all look like this).
 func requireComparedLedgers[V any](ours, theirs map[uint32]V, from, to uint32) (int, error) {
 	seen := make(map[uint32]struct{}, len(ours)+len(theirs))
 	for k := range ours {
@@ -220,10 +218,8 @@ func (b hubbleBQ) query(sql string) *bigquery.Query {
 	return q
 }
 
-// fetchOurSDEXCounts returns map[ledger]→trade count for our SDEX
-// rows in [from, to]. Ledgers with zero rows on our side simply
-// don't appear in the map (sparse representation — diffLedgerCounts
-// treats absence as zero, same as Hubble).
+// fetchOurSDEXCounts returns map[ledger] to trade count for our SDEX rows in [from, to]; ledgers with zero rows are absent (sparse;
+// diffLedgerCounts treats absence as zero, same as Hubble).
 func fetchOurSDEXCounts(ctx context.Context, store *timescale.Store, from, to uint32) (map[uint32]int, error) {
 	const q = `
 		SELECT ledger, COUNT(*)
@@ -250,10 +246,8 @@ func fetchOurSDEXCounts(ctx context.Context, store *timescale.Store, from, to ui
 	return out, rows.Err()
 }
 
-// fetchHubbleCounts queries Hubble for per-ledger SDEX trade counts.
-// Trade type 1 (orderbook) and trade type 2 (classic liquidity-pool)
-// are both included — our SDEX decoder handles both ClaimAtom kinds
-// and stamps both as source='sdex'.
+// fetchHubbleCounts queries Hubble for per-ledger SDEX trade counts, including trade type 1 (orderbook) and 2 (classic liquidity-pool),
+// as our decoder stamps both source='sdex'.
 func fetchHubbleCounts(ctx context.Context, bq hubbleBQ, from, to uint32) (map[uint32]int, error) {
 	q := bq.query("SELECT history_operation_id >> 32 AS ledger_sequence, COUNT(*) AS n " +
 		"FROM `crypto-stellar.crypto_stellar.history_trades` " +
@@ -352,10 +346,8 @@ const hubbleStroopsPerUnit = 10_000_000
 
 const hubbleStroopsPerUnitLiteral = "10000000"
 
-// ledgerStats is the per-ledger numeric record compared by the
-// -with-amounts path. Counts are int (matches the count-only path);
-// sum_sell + sum_buy are big.Int because Postgres + BigQuery NUMERIC
-// can exceed int64 in pathological ranges.
+// ledgerStats is the per-ledger record the -with-amounts path compares. Counts are int; sum_sell and sum_buy are big.Int because Postgres
+// and BigQuery NUMERIC can exceed int64.
 type ledgerStats struct {
 	Count   int
 	SumSell *big.Int // ↔ Hubble selling_amount sum  ↔ our base_amount sum
@@ -418,10 +410,8 @@ func hubbleStatVerdict(
 	return fmt.Errorf("hubble-check FAIL — %d ledger(s) disagree on count or amount sums", len(diffs))
 }
 
-// fetchOurSDEXStats is the -with-amounts counterpart of
-// fetchOurSDEXCounts. Per-ledger (count, sum(base_amount),
-// sum(quote_amount)). NUMERIC sums round-tripped via TEXT to keep
-// big.Int precision.
+// fetchOurSDEXStats is the -with-amounts counterpart of fetchOurSDEXCounts: per-ledger (count, sum(base_amount), sum(quote_amount)),
+// NUMERIC sums round-tripped via TEXT to keep big.Int precision.
 func fetchOurSDEXStats(ctx context.Context, store *timescale.Store, from, to uint32) (map[uint32]ledgerStats, error) {
 	const q = `
 		SELECT ledger, COUNT(*),
@@ -609,10 +599,8 @@ func fetchHubbleStats(ctx context.Context, bq hubbleBQ, from, to uint32) (map[ui
 	return out, nil
 }
 
-// diffLedgerStats compares per-ledger stats and returns ledgers where
-// count, sum_sell, or sum_buy diverges past the tolerance. Sparse-map
-// semantics (missing key = zero stats) match diffLedgerCounts so the
-// "missing on one side" case is reported the same way.
+// diffLedgerStats returns ledgers where count, sum_sell or sum_buy diverges past the tolerance. Sparse-map semantics (missing key = zero
+// stats) match diffLedgerCounts, so "missing on one side" reports the same way.
 func diffLedgerStats(ours, theirs map[uint32]ledgerStats, toleranceBps int) []ledgerStatDiff {
 	seen := make(map[uint32]struct{}, len(ours)+len(theirs))
 	for k := range ours {
@@ -656,10 +644,8 @@ func diffLedgerStats(ours, theirs map[uint32]ledgerStats, toleranceBps int) []le
 	return out
 }
 
-// sumsWithinTolerance reports whether |a-b| <= toleranceBps/10000
-// of max(|a|,|b|). Zero tolerance = strict equality. Useful only as
-// a future-proofing knob; integer-stroop sums on both sides should
-// match exactly when the underlying trades match.
+// sumsWithinTolerance reports whether |a-b| <= toleranceBps/10000 of max(|a|,|b|); zero tolerance is strict equality. Integer-stroop sums
+// should match exactly when the trades match, so this is a future-proofing knob.
 func sumsWithinTolerance(a, b *big.Int, toleranceBps int) bool {
 	if a.Cmp(b) == 0 {
 		return true
@@ -705,10 +691,8 @@ func reportLedgerStatDiffs(diffs []ledgerStatDiff, maxDiffs int) {
 	}
 }
 
-// reportLedgerDiffs writes a human-readable diff report to stderr.
-// Capped at maxDiffs so a 100k-ledger divergence doesn't flood the
-// terminal — the summary line names the cap so operators know to
-// re-run with -max-mismatches=N for a wider report.
+// reportLedgerDiffs writes a diff report to stderr, capped at maxDiffs so a huge divergence doesn't flood the terminal; the summary names
+// the cap so operators re-run with -max-mismatches=N for more.
 func reportLedgerDiffs(diffs []ledgerDiff, maxDiffs int) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	limit := maxDiffs

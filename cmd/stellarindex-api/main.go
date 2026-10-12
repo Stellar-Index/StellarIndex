@@ -75,12 +75,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/version"
 )
 
-// recoverBackgroundWorker turns a panic in a detached background worker into a logged error.
-//
-// A panic in any goroutine kills the process, so an off-path worker must not take down in-flight
-// requests. The worker is not restarted: a stale cache beats a crash loop for a read API. It is
-// not applied to the http.Server goroutine, whose death should end the process. [worker.Report]
-// bumps the panic counter before logging so alerting sees it.
+// recoverBackgroundWorker logs a panic in a detached worker instead of killing the process; the worker is not restarted (a stale cache
+// beats a crash loop). Not for the http.Server goroutine, whose death should end the process.
 func recoverBackgroundWorker(logger *slog.Logger, worker string) {
 	// recover() only works one frame deep, so this cannot delegate to worker.Recover.
 	if r := recover(); r != nil {
@@ -1620,12 +1616,8 @@ func (t *inProcessSignupIPThrottle) CheckIP(ctx context.Context, ip string) erro
 	return nil
 }
 
-// wireDashboardAuthThrottles sets the email locker, login throttle and passkey replay guard from
-// Redis availability. The SETNX email locker stops two callbacks creating duplicate speculative
-// accounts (without Redis, Suspend-on-conflict recovery applies). The login throttle caps sends
-// per IP and per email so login cannot email-bomb an inbox; without Redis it uses in-process
-// buckets, never no limit. The passkey spent-set must be shared or a replay on another instance
-// is missed; without Redis dashboardauth's in-process guard applies.
+// wireDashboardAuthThrottles sets the email locker, login throttle and passkey replay guard from Redis availability. Without Redis: no
+// SETNX locker (Suspend-on-conflict recovery), in-process login buckets (never no limit), in-process passkey guard.
 func wireDashboardAuthThrottles(authCfg *dashboardauth.Config, rdb redis.UniversalClient, logger *slog.Logger) {
 	if rdb != nil {
 		authCfg.EmailLocker = auth.NewRedisSignupEmailLocker(rdb)
@@ -1771,10 +1763,8 @@ func buildDashboardBundle(cfg config.DashboardConfig, db *sql.DB, rdb redis.Univ
 	}, nil
 }
 
-// resolveSEP10Validator builds the SEP-10 validator and applies the auth_mode fallback policy.
-// Unconfigured SEP-10 wires the Noop so the binary still boots. Configured SEP-10 fails closed
-// without Redis (no replay guard) or without the account lake (no signer and threshold check):
-// auth_mode=sep10 aborts startup, other modes degrade to the Noop.
+// resolveSEP10Validator applies the auth_mode fallback: unconfigured SEP-10 wires the Noop; configured SEP-10 fails closed without Redis
+// (no replay guard) or the account lake (no signer check), so auth_mode=sep10 aborts startup and other modes degrade to the Noop.
 func resolveSEP10Validator(
 	cfg config.SEP10Config,
 	authMode string,
@@ -1844,10 +1834,8 @@ func buildSEP10Validator(cfg config.SEP10Config, passphrase string, rdb redis.Un
 	return v, nil
 }
 
-// lakeAccountSigners serves SEP-10's signer lookup from the lake's
-// current account state. It is bound once the explorer reader has
-// dialled; until then (or if the dial failed) every lookup errors, so
-// verification fails closed.
+// lakeAccountSigners serves SEP-10 signer lookup from the lake's current account state; until bound (or if the dial failed) every lookup
+// errors, so verification fails closed.
 type lakeAccountSigners struct {
 	er atomic.Pointer[clickhouse.ExplorerReader]
 }
@@ -2032,12 +2020,9 @@ var usdQuoteAsset = func() canonical.Asset {
 	return a
 }()
 
-// storeChange24hReader serves the latest closed prices_1m bucket at or before now-24h for the
-// asset/USD pair; sql.ErrNoRows becomes v1.ErrChange24hUnavailable, a null rather than a failure.
-// pegs is the operator-declared USD-pegged set: nothing on-chain quotes in fiat:USD, so on a
-// literal miss the reader tries asset/<peg>, else change_24h_pct would be null for every on-chain
-// asset. decimals normalises the bucket to the current price's scale
-// (see normalizeChange24hAnchor).
+// storeChange24hReader serves the latest closed prices_1m bucket at or before now-24h; sql.ErrNoRows becomes v1.ErrChange24hUnavailable.
+// On a literal miss it tries asset/<peg> from the operator-declared USD-pegged set (nothing on-chain quotes fiat:USD); decimals
+// normalises the anchor (see normalizeChange24hAnchor).
 type storeChange24hReader struct {
 	s        *timescale.Store
 	pegs     []canonical.Asset
@@ -2122,10 +2107,8 @@ type subscriberRunner interface {
 	Channel() string
 }
 
-// runSubscriberSupervised restarts sub.Run with exponential backoff, since one Redis pubsub
-// hiccup would otherwise silence the closed-bucket feed for the process lifetime. A panic
-// unwinds past the loop, so the guard sits here: the subscriber stops and SSE falls back to
-// heartbeats rather than the API process dying.
+// runSubscriberSupervised restarts sub.Run with exponential backoff so one pubsub hiccup cannot silence the closed-bucket feed. A panic
+// unwinds past the loop, so the guard sits here: SSE falls back to heartbeats.
 func runSubscriberSupervised(ctx context.Context, sub subscriberRunner, logger *slog.Logger) {
 	defer recoverBackgroundWorker(logger, "stream-subscriber")
 	runSubscriberSupervisedWithBackoff(ctx, sub, logger, subscriberRestartMinBackoff, subscriberRestartMaxBackoff)
@@ -2233,10 +2216,8 @@ func warnCollapsedStreamCap(logger *slog.Logger, listenAddr string, maxStreamsPe
 		"docs", "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/pre-launch-hardening.md")
 }
 
-// warnCollapsedAnonThrottle warns when the anonymous throttle cannot tell clients apart behind a
-// proxy: with trusted_proxy_cidrs empty every anonymous request shares one bucket, an availability
-// self-DoS. It fires only when the anonymous tier is reachable and capped, and also for loopback
-// binds, since a proxy on the same host is the usual shape. Only trusted_proxy_cidrs silences it.
+// warnCollapsedAnonThrottle warns when the anonymous throttle cannot tell clients apart behind a proxy (empty trusted_proxy_cidrs shares
+// one bucket, an availability self-DoS); only trusted_proxy_cidrs silences it.
 func warnCollapsedAnonThrottle(logger *slog.Logger, authMode string, anonRateLimitPerMin int, trustedProxyCIDRs []string) {
 	if anonRateLimitPerMin <= 0 || len(trustedProxyCIDRs) > 0 {
 		return
@@ -2265,10 +2246,8 @@ func authModeAdmitsAnonymous(mode string) bool {
 	}
 }
 
-// parseFiatPeggedClassics resolves the pricing_guard.fiat_pegged_classic_assets map (classic
-// asset key to ISO-4217 ticker) into the asset_id to fiat Asset map the declared-peg fill reads.
-// Validate already rejects malformed entries, so skipping here is a backstop. Keys are
-// re-canonicalised so lookup never depends on the operator's spelling.
+// parseFiatPeggedClassics resolves fiat_pegged_classic_assets into the asset_id to fiat Asset map; Validate already rejects malformed
+// entries, so skipping is a backstop. Keys are re-canonicalised so lookup never depends on operator spelling.
 func parseFiatPeggedClassics(raw map[string]string, logger *slog.Logger) map[string]canonical.Asset {
 	if len(raw) == 0 {
 		return nil
@@ -2550,10 +2529,8 @@ func prewarmLight(
 	prewarmNetworkStats(mkCtx, logger, networkStats)
 }
 
-// marketsPrewarmLimits are the ?limit= values warmed for /v1/markets in both orders: 5 (audit
-// script), 25 (HomeTopMarkets), 100 (OpenAPI default, MarketsTable) and 200 (currencies
-// listing). limit=3 stays unwarmed on purpose, since real traffic keeps that slot warm and a
-// cold fill is too cheap to justify a permanent background query.
+// marketsPrewarmLimits are the ?limit= values warmed for /v1/markets in both orders; limit=3 stays unwarmed because real traffic keeps
+// that slot warm.
 var marketsPrewarmLimits = []int{5, 25, 100, 200}
 
 // poolsPrewarmLimits are the ?limit= values warmed for /v1/pools, separate from the markets set
@@ -2581,11 +2558,8 @@ func prewarmPools(ctx context.Context, logger *slog.Logger, markets *v1.CachedMa
 // is not a dimension, since it reads its own warm slots and leaves this cache key unchanged.
 var assetListingPrewarmLimits = []int{1, 5, 10, 50, 100, 500}
 
-// prewarmAssetListings warms the /v1/assets listing keys. The handler overfetches by one for
-// cursor pagination, so ?limit=50 looks up the key for 51; this takes user-facing limits and
-// applies the +1 once. Both orders are warmed with every other option zero (first-page requests),
-// and each variant is persisted to Redis (snaps, nil-safe) via ListAssetsExtAt so the next process
-// seeds from rows that keep their real observation time.
+// prewarmAssetListings warms the /v1/assets listing keys. The handler overfetches by one, so ?limit=50 looks up key 51; this takes
+// user-facing limits and adds the +1 once. Variants persist to Redis (snaps, nil-safe) via ListAssetsExtAt.
 func prewarmAssetListings(
 	ctx context.Context, logger *slog.Logger, assetsReader *v1.CachedAssetsReader,
 	snaps *assetsListingSnapshots, catalogueLen int,
@@ -2654,17 +2628,13 @@ func assetListingPrewarmOptions() []timescale.ListAssetsOptions {
 	return out
 }
 
-// classicLakeSupplySweepGap is the pause between lake-supply sweeps. A sweep with nothing expired
-// does no ClickHouse work, so the gap is sized against the 30-minute cache TTL: the population
-// expires in one pass, and the gap is the window in which a caller can still see the
-// trustline-only supply figure.
+// classicLakeSupplySweepGap is the pause between lake-supply sweeps, sized against the 30-minute cache TTL; it bounds how long a caller
+// can still see the trustline-only supply figure.
 const classicLakeSupplySweepGap = time.Minute
 
-// prewarmClassicLakeSupply keeps the per-asset lake supply cache warm for the assets /v1/assets
-// serves. Cold, /v1/assets and /v1/rwa/assets fall back to the trustline-only sum, which misses
-// supply in claimable balances, LP reserves and SAC contract_data. It takes the listing options,
-// not an asset list, so the warmed set matches prewarmAssetListings. It sweeps then sleeps, since
-// overlapping cold passes would double ClickHouse load.
+// prewarmClassicLakeSupply keeps the per-asset lake supply cache warm; cold, routes fall back to a trustline-only sum that misses
+// claimable, LP and SAC supply. It takes listing options so the warmed set matches prewarmAssetListings, and sweeps then sleeps to avoid
+// overlapping ClickHouse load.
 func prewarmClassicLakeSupply(ctx context.Context, srv *v1.Server) {
 	if srv == nil {
 		return
@@ -2706,10 +2676,8 @@ func prewarmNetworkStats(ctx context.Context, logger *slog.Logger, networkStats 
 	}
 }
 
-// prewarmAssetDetail warms every SWR key the /v1/assets/{id} handler fans out to for one asset
-// (asset_catalogue_extension.go). Each call uses the exact method and arguments the handler uses,
-// so keys match byte-for-byte; the limit 5 for GetAssetTopMarkets must track the handler's
-// literal. A missed warm cold-fills on the request path, so errors log at Debug.
+// prewarmAssetDetail warms every SWR key /v1/assets/{id} fans out to with the handler's exact arguments (limit 5 for GetAssetTopMarkets
+// must track its literal); misses cold-fill on the request path, so errors log at Debug.
 func prewarmAssetDetail(ctx context.Context, logger *slog.Logger, assetsReader *v1.CachedAssetsReader, assetID string) {
 	// No bail on the first failure: each reader has its own slot.
 	prewarmAssetCall(ctx, logger, "GetAssetByAssetID", assetID, func() (any, error) {
@@ -2743,10 +2711,8 @@ func prewarmAssetCall(ctx context.Context, logger *slog.Logger, name, assetID st
 	_ = ctx // each fn already captures the context; arg kept for symmetry / future timeout pattern.
 }
 
-// selfPrewarmAdmitted reports whether authMode lets the self-prewarm's
-// credential-less GET /v1/assets/{id} through Auth. Under apikey and sep10
-// every such request 401s and spends the loopback failed-auth budget, so
-// the loop must not start. Unknown modes are refused (fail closed).
+// selfPrewarmAdmitted reports whether authMode lets the credential-less self-prewarm through Auth; under apikey and sep10 it would 401
+// and burn the loopback failed-auth budget. Unknown modes are refused.
 func selfPrewarmAdmitted(authMode string) bool {
 	switch authMode {
 	case "", "none", "apikey_optional":
@@ -2755,10 +2721,8 @@ func selfPrewarmAdmitted(authMode string) bool {
 	return false
 }
 
-// selfPrewarmAssetEndpoints GETs /v1/assets/<id> every 60 s for native and every verified currency
-// against our own listener. Going through the real handler warms every cache it touches with
-// byte-identical arguments, including readers prewarmCaches does not enumerate. The initial 3 s
-// sleep lets the listener bind and the first prewarm cycle settle.
+// selfPrewarmAssetEndpoints GETs /v1/assets/<id> every 60 s for native and each verified currency against our own listener, warming every
+// cache the real handler touches with byte-identical arguments.
 func selfPrewarmAssetEndpoints(ctx context.Context, logger *slog.Logger, listenAddr string, verifiedAssetIDs []string) {
 	// Guarded here because it runs on a detached goroutine and exercises more code than any other
 	// warmer.
@@ -2824,11 +2788,9 @@ func selfPrewarmAssetEndpoints(ctx context.Context, logger *slog.Logger, listenA
 	}
 }
 
-// storePriceAtReader serves /v1/price/at and the /v1/price/changes horizons via
-// ClosedVWAPAtOrBefore, translating sql.ErrNoRows to the sentinel so the handler can 404 or null
-// a horizon. It reads the same prices_1m buckets as wiring.StorePriceReader, so it carries the
-// same withholding gates at this seam; otherwise these routes would republish prices /v1/price
-// refuses. The thin-market check is asked about ts, not now: the served bucket is at or before ts.
+// storePriceAtReader serves /v1/price/at and /v1/price/changes via ClosedVWAPAtOrBefore (ErrNoRows to the sentinel). It carries the same
+// withholding gates as wiring.StorePriceReader or these routes would republish prices /v1/price refuses; thin-market is asked at ts, not
+// now.
 type storePriceAtReader struct {
 	s         *timescale.Store
 	substance *pricingguard.SubstanceGate // nil → no thin-market gate

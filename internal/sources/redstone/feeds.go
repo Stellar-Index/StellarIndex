@@ -35,12 +35,9 @@ var (
 // upshift's constant so the price and the decoded activity cannot drift onto different asset ids.
 const earnUSDCVaultContract = upshift.MainnetVaultEarnUSDC
 
-// feedRegistry maps each EXACT on-chain feed_id() to its canonical (base, quote) — the 32 RedStone
-// Stellar mainnet feeds (TestFeedRegistry_CountMatchesItsDocComment). No two feed_ids share a pair
-// (TestFeedRegistry_UniquePairs): one batch would interleave two quantities into one series.
-//
-// The key is the write_prices feed_id, not the display name, and the quote is per-feed, so a ticker
-// allow-list like canonical.IsKnownCrypto would drop 5 feeds.
+// feedRegistry maps each EXACT on-chain feed_id() to its canonical (base, quote): the 32 RedStone Stellar mainnet feeds, no two sharing a
+// pair (one batch would interleave two quantities into one series). The quote is per-feed, so a ticker allow-list like
+// canonical.IsKnownCrypto would drop 5 feeds.
 var feedRegistry = map[string]feedEntry{
 	// Crypto / stablecoin feeds.
 	"BTC":       {Base: mustCrypto("BTC"), Quote: quoteUSD},

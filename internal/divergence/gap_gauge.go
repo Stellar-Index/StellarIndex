@@ -14,10 +14,8 @@ const (
 	gapCritFraction = 0.10
 )
 
-// gapTracker keeps each pair's latest per-reference |ours−ref|/ref and
-// publishes the bounded Prometheus view of it: the worst gap per reference and
-// how many pairs sit over 5 % / 10 %. Per-pair values stay in Redis and
-// Postgres; only these aggregates reach the registry.
+// gapTracker keeps each pair's latest per-reference |ours-ref|/ref and publishes only bounded aggregates (worst gap per reference, pairs
+// over 5 % / 10 %); per-pair values stay in Redis and Postgres.
 type gapTracker struct {
 	mu     sync.Mutex
 	ttl    time.Duration

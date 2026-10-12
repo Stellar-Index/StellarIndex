@@ -19,12 +19,9 @@ type Decoder struct {
 	pending     []PendingClaimableBalanceRef
 }
 
-// maxCBIndexEntries bounds the in-run claimable-balance-create index. At ~400 bytes per entry,
-// 8,000,000 entries is ~3 GB, sized against a heavy job's MemoryMax=20G ceiling.
-//
-// It must be large because the claimable-balance spam era creates 2-3 million balances per
-// 10k-ledger window; a smaller cap evicts a window's own creates before second-pass resolution and
-// floods the slow ClickHouse fallback. A var so tests can shrink it to exercise eviction.
+// maxCBIndexEntries bounds the in-run claimable-balance-create index (~400 B per entry, so 8M is ~3 GB against a heavy job's
+// MemoryMax=20G). It must be large: the spam era creates 2-3M balances per 10k-ledger window, and a smaller cap evicts a window's own
+// creates and floods the slow ClickHouse fallback. A var so tests can shrink it.
 var maxCBIndexEntries = 8_000_000
 
 // claimableBalanceInfo is what a 'claimable_balance_create' movement
@@ -67,12 +64,9 @@ func (d *Decoder) Decode(ctx dispatcher.OpContext) ([]consumer.Event, error) {
 	return out, nil
 }
 
-// indexClaimableBalanceCreate records a create in the in-run index. A missing balance_id is a
-// decoder bug, not chain data, so it is skipped rather than panicking: a later claim lands in
-// pending, which is slower but never wrong.
-//
-// A new balance_id takes one ring slot, evicting the oldest key once the ring has wrapped. One
-// already present (a retried window) is updated in place and keeps its FIFO position.
+// indexClaimableBalanceCreate records a create in the in-run index. A missing balance_id is a decoder bug, skipped rather than panicking
+// (a later claim lands in pending: slower, never wrong). A new id takes one ring slot, evicting the oldest once wrapped; a present one
+// (retried window) updates in place.
 func (d *Decoder) indexClaimableBalanceCreate(m Movement) {
 	id, ok := m.Attributes["balance_id"].(string)
 	if !ok || id == "" {

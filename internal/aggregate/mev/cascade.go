@@ -27,10 +27,8 @@ const (
 	cascadeWindowStr     = "12"
 )
 
-// cascadeFillRef is one fill's evidence entry in the detail payload.
-// Liquidated is the owner of the position being auctioned — the subject
-// of the liquidation, named under that role so it is never read as an
-// actor.
+// cascadeFillRef is one fill's evidence entry in the detail payload. Liquidated is the owner of the auctioned position, the liquidation's
+// subject, named so it is never read as an actor.
 type cascadeFillRef struct {
 	Pool        string   `json:"pool"`
 	Liquidated  string   `json:"liquidated"`

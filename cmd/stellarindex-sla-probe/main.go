@@ -40,11 +40,9 @@ const (
 	defaultFreshTarget   = 30 * time.Second
 	defaultAvailabilityT = 99.9 // percent
 
-	// defaultClosedBucketFreshTarget is the freshness bound for /v1/price, which serves the
-	// most recent CLOSED bucket (ADR-0015), so its observed_at is structurally 30–150 s old:
-	// 60 s bucket + 30 s CAGG end_offset + up to 30 s schedule interval + refresh runtime. The
-	// 30 s promise is measured on /v1/price/tip; this bound catches the closed-bucket pipeline
-	// falling behind its design (aggregator down, CAGG refresh stuck, insert backpressure).
+	// defaultClosedBucketFreshTarget bounds /v1/price freshness: it serves the latest CLOSED bucket (ADR-0015), so observed_at is
+	// structurally 30-150 s old (60 s bucket + 30 s CAGG offset + schedule + refresh). The 30 s promise is measured on /v1/price/tip; this
+	// catches the closed-bucket pipeline falling behind.
 	defaultClosedBucketFreshTarget = 150 * time.Second
 
 	// maxRequestTimeout caps one request. It must sit well inside the run
@@ -52,17 +50,13 @@ const (
 	// as a failure, within the run it started in.
 	maxRequestTimeout = 10 * time.Second
 
-	// defaultMaxRPS paces the whole run so it stays under the API's
-	// per-key rate limit: 100 rps x 30 s = 3,000 requests, half of a
-	// 6,000/min limit, leaving room for the smoke runner sharing it. An
-	// unpaced run on a fast API issues 8,000+ and the 429s read as an outage.
+	// defaultMaxRPS paces the run under the API's per-key limit: 100 rps x 30 s = 3,000 requests, half of a 6,000/min limit, leaving room
+	// for the smoke runner. An unpaced run issues 8,000+ and the 429s read as an outage.
 	defaultMaxRPS = 100.0
 )
 
-// endpoint captures one API surface to probe. Path is the URL
-// suffix appended to -base-url; the runner GETs it with the
-// fixed query params (if any) and counts the HTTP status code
-// against the SLA's success classes (2xx).
+// endpoint is one API surface to probe: Path is appended to -base-url, GET with the fixed query params (if any), and the status counted
+// against the SLA's 2xx success class.
 type endpoint struct {
 	Name string
 	// Pair disambiguates Name across -pair flags (empty for static endpoints, "asset/quote"
@@ -106,13 +100,9 @@ func staticEndpoints() []endpoint {
 	}
 }
 
-// pairEndpoints expands one (asset, quote) pair into the per-pair endpoints we measure:
-// /v1/price, /v1/price/tip and /v1/oracle/latest are the load-bearing customer surfaces;
-// /v1/markets is a representative listing surface.
-//
-// The 30 s freshness SLA is measured on /price/tip. /price carries its own structural bound
-// (`closedBucketFresh`) because the closed-bucket contract makes its observed_at 30–150 s old
-// by design; holding it to 30 s would be permanently red with no regression signal.
+// pairEndpoints expands one (asset, quote) pair into the measured endpoints (/v1/price, /v1/price/tip, /v1/oracle/latest, /v1/markets).
+// The 30 s freshness SLA is measured on /price/tip; /price carries its own bound (`closedBucketFresh`) since its closed-bucket
+// observed_at is 30-150 s old by design.
 func pairEndpoints(asset, quote string, closedBucketFresh time.Duration) []endpoint {
 	q := func(extra map[string]string) map[string]string {
 		out := map[string]string{"asset": asset, "quote": quote}
@@ -258,10 +248,8 @@ type slaTargets struct {
 	AvailabilityPct float64 `json:"availability_pct"`
 }
 
-// validateConcurrency rejects a -concurrency value that would break
-// collectSamples: 0 spawns no workers (wg.Wait returns instantly with
-// no samples, so every endpoint reads as failed) and a negative value
-// panics on wg.Add's negative counter check.
+// validateConcurrency rejects a -concurrency that breaks collectSamples: 0 spawns no workers (every endpoint reads as failed) and a
+// negative value panics on wg.Add.
 func validateConcurrency(c int) error {
 	if c <= 0 {
 		return fmt.Errorf("-concurrency must be >= 1, got %d", c)
@@ -381,13 +369,9 @@ func main() {
 	}
 }
 
-// probeSample is one observation: latency, success, optional observed_at parsed from the body,
-// and the instant the response was received.
-//
-// Freshness is measured against receivedAt. Aggregation runs once after the whole run, so
-// time.Since(observedAt) there would charge each sample the time until the end of the run,
-// biasing the median by D/2 and the oldest sample by D for a run of length D, and paging on a
-// healthy tip.
+// probeSample is one observation: latency, success, optional observed_at parsed from the body, and the receipt instant. Freshness is
+// measured against receivedAt: aggregation runs after the whole run, so time.Since(observedAt) there would bias the median by D/2 and
+// page on a healthy tip.
 type probeSample struct {
 	latency time.Duration
 	ok      bool
@@ -400,10 +384,8 @@ type probeSample struct {
 	fallback bool
 }
 
-// runProbe drives `concurrency` workers against `endpoints` for `duration`, then aggregates
-// per-endpoint stats into a pass/fail report. A non-empty apiKey is sent as a Bearer token;
-// without one the probe hits the anonymous-tier rate limit and fails for non-SLA reasons.
-// maxRPS > 0 caps the request rate across all workers; 0 leaves them unpaced.
+// runProbe drives `concurrency` workers against `endpoints` for `duration`, then aggregates per-endpoint stats into a pass/fail report. A
+// non-empty apiKey is sent as a Bearer token (anonymous tier fails for non-SLA reasons); maxRPS > 0 caps the rate across all workers.
 func runProbe(baseURL, apiKey string, endpoints []endpoint, duration time.Duration, concurrency int, maxRPS float64, sla slaTargets) report {
 	started := time.Now().UTC()
 	ctx, cancel := context.WithTimeout(context.Background(), duration)
@@ -430,14 +412,9 @@ func runProbe(baseURL, apiKey string, endpoints []endpoint, duration time.Durati
 	return rep
 }
 
-// collectSamples spawns `concurrency` workers that round-robin across `endpoints` until ctx
-// expires, returning a per-endpoint sample slice.
-//
-// ctx's deadline stops workers STARTING requests; it never cancels one in flight. Each request
-// runs to completion or its own reqTimeout and is counted either way, so a request the API
-// accepted and never answered cannot vanish and make a hung run read 100 %. A non-nil limiter
-// gates every request start; its Wait fails once the next token would land past ctx's deadline,
-// which ends the worker like ctx.Done does.
+// collectSamples spawns `concurrency` workers that round-robin across `endpoints` until ctx expires. ctx's deadline stops workers
+// STARTING requests, never one in flight: each runs to completion or reqTimeout and is counted, so a hung run cannot read 100 %. A
+// non-nil limiter gates every start and ends the worker when its Wait fails past the deadline.
 func collectSamples(ctx context.Context, baseURL, apiKey string, endpoints []endpoint, concurrency int, limiter *rate.Limiter, reqTimeout time.Duration) map[string][]probeSample {
 	var mu sync.Mutex
 	samples := make(map[string][]probeSample)
@@ -572,10 +549,8 @@ func computeVerdict(rep *report, sla slaTargets) {
 	}
 }
 
-// statsLabel is st's identity for human-readable output: the endpoint
-// name alone when it has no pair, "name[pair]" when it does — needed
-// so two pairs' otherwise-identical "price-tip" rows read as distinct
-// lines instead of two unlabelled duplicates.
+// statsLabel is st's identity for output: the endpoint name, or "name[pair]" with a pair, so two pairs' "price-tip" rows read as distinct
+// lines.
 func statsLabel(st stats) string {
 	if st.Pair == "" {
 		return st.Endpoint
@@ -651,10 +626,8 @@ func transportFailure(err error) string {
 	return "conn"
 }
 
-// hit issues one GET to `<baseURL><path>?<query>` and returns the
-// wall-clock latency, the failure cause ("" on a 2xx meeting ep's body
-// contract), and the parsed observed_at timestamp from the response body
-// when present. apiKey, when non-empty, is sent as `Authorization: Bearer <key>`.
+// hit issues one GET to `<baseURL><path>?<query>` and returns the latency, the failure cause ("" on a 2xx meeting ep's body contract) and
+// the parsed observed_at when present. A non-empty apiKey is sent as a Bearer token.
 func hit(ctx context.Context, c *http.Client, baseURL, apiKey string, ep endpoint) (time.Duration, string, time.Time, bool) {
 	u := baseURL + ep.Path
 	if len(ep.Query) > 0 {
