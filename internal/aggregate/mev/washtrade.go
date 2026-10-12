@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/domain"
 )
 
 // KindWashTrade is the mev_events.kind for wash-trading candidates.
@@ -53,11 +54,12 @@ type washDetail struct {
 	Legs               []washLeg `json:"legs"`
 	NotionalUSD        string    `json:"notional_usd,omitempty"`
 	NotionalLowerBound bool      `json:"notional_usd_lower_bound,omitempty"`
+	NotionalEstimated  bool      `json:"notional_usd_estimated,omitempty"`
 	Note               string    `json:"note"`
 }
 
 // DetectWashTrades finds self_trade (maker == taker; one per (tx, account)) and round_trip (two accounts filling each other both ways, 2+ fills per direction, per roundTripBucket); both fire only where maker is an account (accountMaker), excluding Soroban AMM rows and SDEX pool fills.
-func DetectWashTrades(trades []canonical.Trade, usdVolume []string) []Candidate {
+func DetectWashTrades(trades []canonical.Trade, usdVolume []domain.MEVLegUSD) []Candidate {
 	out := detectSelfTrades(trades, usdVolume)
 	out = append(out, detectRoundTrips(trades, usdVolume)...)
 	return out
@@ -70,7 +72,7 @@ func accountMaker(t canonical.Trade) bool {
 	return canonical.IsAccountID(t.Maker)
 }
 
-func detectSelfTrades(trades []canonical.Trade, usdVolume []string) []Candidate {
+func detectSelfTrades(trades []canonical.Trade, usdVolume []domain.MEVLegUSD) []Candidate {
 	groups := map[string][]int{}
 	order := []string{}
 	for i, t := range trades {
@@ -88,7 +90,7 @@ func detectSelfTrades(trades []canonical.Trade, usdVolume []string) []Candidate 
 	for _, key := range order {
 		idxs := groups[key]
 		t0 := trades[idxs[0]]
-		notional, lowerBound := sumUSD(usdVolume, idxs)
+		notional, lowerBound, estimated := sumUSD(usdVolume, idxs)
 		assetID, quoteID := pairIDs(t0)
 		out = append(out, Candidate{
 			Kind:               KindWashTrade,
@@ -103,6 +105,7 @@ func detectSelfTrades(trades []canonical.Trade, usdVolume []string) []Candidate 
 			Sources:            distinctSources(trades, idxs),
 			NotionalUSD:        notional,
 			NotionalLowerBound: lowerBound,
+			NotionalEstimated:  estimated,
 			// Default dedup (kind:tx:actor) is exactly the self-trade
 			// identity — no explicit Dedup needed.
 			Detail: washDetail{
@@ -112,6 +115,7 @@ func detectSelfTrades(trades []canonical.Trade, usdVolume []string) []Candidate 
 				Legs:               washLegs(trades, idxs),
 				NotionalUSD:        notional,
 				NotionalLowerBound: lowerBound,
+				NotionalEstimated:  estimated,
 				Note:               washSelfNote,
 			},
 		})
@@ -119,7 +123,7 @@ func detectSelfTrades(trades []canonical.Trade, usdVolume []string) []Candidate 
 	return out
 }
 
-func detectRoundTrips(trades []canonical.Trade, usdVolume []string) []Candidate {
+func detectRoundTrips(trades []canonical.Trade, usdVolume []domain.MEVLegUSD) []Candidate {
 	groups := map[string][]int{}
 	order := []string{}
 	for i, t := range trades {
@@ -150,7 +154,7 @@ func detectRoundTrips(trades []canonical.Trade, usdVolume []string) []Candidate 
 
 // buildRoundTripCandidate tests one (bucket, pair, account-pair) group
 // for the ≥2-fills-each-direction shape.
-func buildRoundTripCandidate(trades []canonical.Trade, usdVolume []string, key string, idxs []int) (Candidate, bool) {
+func buildRoundTripCandidate(trades []canonical.Trade, usdVolume []domain.MEVLegUSD, key string, idxs []int) (Candidate, bool) {
 	// Direction = who took. The bucket holds exactly two accounts.
 	perTaker := map[string]int{}
 	for _, i := range idxs {
@@ -178,7 +182,7 @@ func buildRoundTripCandidate(trades []canonical.Trade, usdVolume []string, key s
 
 	t0 := trades[idxs[0]]
 	accounts := sortedKeys(map[string]struct{}{t0.Maker: {}, t0.Taker: {}})
-	notional, lowerBound := sumUSD(usdVolume, idxs)
+	notional, lowerBound, estimated := sumUSD(usdVolume, idxs)
 	assetID, quoteID := pairIDs(t0)
 	c := Candidate{
 		AssetID:          assetID,
@@ -197,6 +201,7 @@ func buildRoundTripCandidate(trades []canonical.Trade, usdVolume []string, key s
 		Sources:            distinctSources(trades, idxs),
 		NotionalUSD:        notional,
 		NotionalLowerBound: lowerBound,
+		NotionalEstimated:  estimated,
 		// The bucket key (bucket + pair + account pair) IS the identity:
 		// a sliding scan window re-detects the same bucket without
 		// duplicating it.
@@ -208,6 +213,7 @@ func buildRoundTripCandidate(trades []canonical.Trade, usdVolume []string, key s
 			Legs:               washLegs(trades, idxs),
 			NotionalUSD:        notional,
 			NotionalLowerBound: lowerBound,
+			NotionalEstimated:  estimated,
 			Note:               washRoundTripNote,
 		},
 	}

@@ -8,15 +8,16 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/domain"
 )
 
 type fakeScanner struct {
 	trades []canonical.Trade
-	usd    []string
+	usd    []domain.MEVLegUSD
 	err    error
 }
 
-func (f *fakeScanner) TradesForArbScan(_ context.Context, _ time.Time, _ int) ([]canonical.Trade, []string, error) {
+func (f *fakeScanner) TradesForArbScan(_ context.Context, _ time.Time, _ int) ([]canonical.Trade, []domain.MEVLegUSD, error) {
 	return f.trades, f.usd, f.err
 }
 
@@ -50,7 +51,7 @@ func arbTrades(t *testing.T) []canonical.Trade {
 
 // TestWorker_RunOnce_DetectsThenDedups: RunOnce persists once and a re-run over the same window inserts nothing.
 func TestWorker_RunOnce_DetectsThenDedups(t *testing.T) {
-	scanner := &fakeScanner{trades: arbTrades(t), usd: []string{"5.00", "5.00"}}
+	scanner := &fakeScanner{trades: arbTrades(t), usd: usdLegs("5.00", "5.00")}
 	sink := &fakeSink{}
 	w := NewWorker(scanner, sink, WorkerConfig{})
 
@@ -178,7 +179,7 @@ func TestWorker_RunOnce_TruncatedScanReportedAndOldestLedgerDropped(t *testing.T
 	now := time.Date(2026, 6, 18, 12, 0, 0, 0, time.UTC)
 
 	o := &truncObserver{}
-	w := NewWorker(&fakeScanner{trades: trades, usd: []string{"1", "1", "1"}}, &fakeSink{},
+	w := NewWorker(&fakeScanner{trades: trades, usd: usdLegs("1", "1", "1")}, &fakeSink{},
 		WorkerConfig{ScanLimit: len(trades), Observer: o})
 	detected, _, err := w.RunOnce(context.Background(), now)
 	if err != nil {
@@ -193,7 +194,7 @@ func TestWorker_RunOnce_TruncatedScanReportedAndOldestLedgerDropped(t *testing.T
 
 	// Below the cap: nothing reported, the cycle is detected.
 	o2 := &truncObserver{}
-	w2 := NewWorker(&fakeScanner{trades: trades, usd: []string{"1", "1", "1"}}, &fakeSink{},
+	w2 := NewWorker(&fakeScanner{trades: trades, usd: usdLegs("1", "1", "1")}, &fakeSink{},
 		WorkerConfig{ScanLimit: len(trades) + 1, Observer: o2})
 	detected, _, err = w2.RunOnce(context.Background(), now)
 	if err != nil {

@@ -20,6 +20,7 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/jackc/pgx/v5/stdlib"
 
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate/anomaly"
 	c "github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/chops"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -2405,12 +2406,42 @@ func TestXLMLegVolume_TradeTimeNeverSpot(t *testing.T) {
 	}
 	got := map[uint32]string{}
 	for i, tr := range trades {
-		got[tr.Ledger] = usd[i]
+		got[tr.Ledger] = usd[i].Value
+		if wantEst := f.usd[int(tr.Ledger)] == "" && usd[i].Value != ""; usd[i].Estimated != wantEst {
+			t.Errorf("ledger %d estimated=%v with notional %q, want %v: exactly the anchor-valued legs are estimated", tr.Ledger, usd[i].Estimated, usd[i].Value, wantEst)
+		}
 	}
 	if v, ok := got[fresh]; !ok || !ratEq(t, v, "4") {
 		t.Errorf("fresh XLM leg notional = %q (present=%v), want 4: 10 XLM at its own minute's 0.4, not spot 0.5", v, ok)
 	}
 	if v, ok := got[stale]; !ok || v != "" {
 		t.Errorf("stale XLM leg notional = %q (present=%v), want \"\": its newest anchor is 70 min before the trade", v, ok)
+	}
+
+	// A recorded XLM/USD freeze (ADR-0019) spanning the fresh trade's anchor minute leaves that leg unpriced: a frozen
+	// rate never anchors a notional, and the next-newest anchor (3 h) is past xlmUSDAnchorMaxAge. Stored usd_volume
+	// legs do not move.
+	xlmCrypto, _ := c.NewCryptoAsset("XLM")
+	usdFiat, _ := c.NewFiatAsset("USD")
+	if err := timescale.NewFreezeEventSink(f.store).RecordFreeze(f.ctx, xlmCrypto, usdFiat, "0.4", anomaly.Decision{
+		Action: anomaly.ActionFreeze, Class: anomaly.ClassStablecoin, Reason: "test",
+	}); err != nil {
+		t.Fatalf("RecordFreeze: %v", err)
+	}
+	if _, err := db.ExecContext(f.ctx, `UPDATE freeze_events SET frozen_at = $1::timestamptz, recovered_at = $2::timestamptz
+		WHERE asset_id = $3 AND quote_id = $4`, f.now.Add(-35*time.Minute), f.now.Add(-28*time.Minute), xlmCrypto.String(), usdFiat.String()); err != nil {
+		t.Fatalf("backdate freeze: %v", err)
+	}
+	trades, usd, err = f.store.TradesForArbScan(f.ctx, f.now.Add(-4*time.Hour), 0)
+	if err != nil {
+		t.Fatalf("TradesForArbScan under freeze: %v", err)
+	}
+	for i, tr := range trades {
+		switch {
+		case tr.Ledger == fresh && (usd[i].Value != "" || usd[i].Estimated):
+			t.Errorf("fresh XLM leg under a freeze = %+v, want unpriced: its anchor minute is frozen", usd[i])
+		case f.usd[int(tr.Ledger)] != "" && usd[i].Value != got[tr.Ledger]:
+			t.Errorf("ledger %d stored notional changed under the freeze: %q -> %q", tr.Ledger, got[tr.Ledger], usd[i].Value)
+		}
 	}
 }
