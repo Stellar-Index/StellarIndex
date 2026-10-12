@@ -51,6 +51,7 @@ func TestTradesForArbScan_ValuesAndParallelUSDSlice(t *testing.T) {
 				"", "GTAKER", "", true,
 			},
 			{
+				// usd_volume NULL, anchor-valued: the scan marks the leg estimated.
 				"sdex", int64(58_000_001), mevTxHashA, int64(3), ts,
 				"native", mevUSDC, "1000000000", "1250000",
 				"GMAKER", "GTAKER", "12.50", true,

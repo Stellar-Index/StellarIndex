@@ -32,7 +32,7 @@ type oracleSandwichDetail struct {
 	Legs               []OrderedLeg `json:"legs"` // nearest before + after trades
 	NotionalUSD        string       `json:"notional_usd,omitempty"`
 	NotionalLowerBound bool         `json:"notional_usd_lower_bound,omitempty"`
-	NotionalEstimated  bool         `json:"notional_usd_estimated,omitempty"`
+	NotionalEstimated  bool         `json:"notional_usd_estimated"`
 	Note               string       `json:"note"`
 }
 
