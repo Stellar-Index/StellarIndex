@@ -6,10 +6,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 )
 
-// Event is the [consumer.Event] the CCTP Decoder emits, one per decoded contract event, in the
-// cctp_events row shape. Amount / Fee / Token are decimal-or-strkey strings, and an empty value
-// means the event type carries no such field (the sink writes SQL NULL); CounterpartyDomain is a
-// *uint32 for the same reason. The sink type-switches on this in internal/pipeline/sink.go.
+// Event is the [consumer.Event] the CCTP Decoder emits, one per decoded contract event, in cctp_events row shape; an empty Amount/Fee/Token means the event has no such field (sink writes NULL).
 type Event struct {
 	ContractID string
 	Ledger     uint32

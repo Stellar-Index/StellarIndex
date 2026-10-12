@@ -15,8 +15,6 @@ import (
 )
 
 // StoreMarketsReader adapts *timescale.Store to v1.MarketsReader.
-// Translates timescale.Market (typed Pair) to v1.Market (string
-// wire shape) so the API layer owns its own schema.
 type StoreMarketsReader struct{ S *timescale.Store }
 
 func (r StoreMarketsReader) DistinctPairsExt(ctx context.Context, cursor string, limit int, order timescale.MarketsOrder) ([]v1.Market, string, error) {
@@ -133,9 +131,7 @@ type CachedMarketsReader struct {
 	Log   *slog.Logger
 }
 
-// FirstTradeBatch delegates uncached: inception timestamps are
-// immutable once set, the call is already gated behind an opt-in
-// include param, and the underlying MIN is index-assisted.
+// FirstTradeBatch delegates uncached: inception timestamps are immutable once set, the call is already gated behind an opt-in include param, and the underlying MIN is index-assisted.
 func (r CachedMarketsReader) FirstTradeBatch(ctx context.Context, pairs [][2]string) (map[string]time.Time, error) {
 	return r.Inner.FirstTradeBatch(ctx, pairs)
 }
@@ -144,10 +140,7 @@ func (r CachedMarketsReader) PairMarket(ctx context.Context, base, quote canonic
 	return r.Inner.PairMarket(ctx, base, quote)
 }
 
-// GetPairsVolumeHistory24hBatch — pass-through. The query runs at
-// page granularity (max 500 pairs) and the result depends on the
-// 24h time window; not worth caching since invalidation tracks
-// every minute boundary.
+// GetPairsVolumeHistory24hBatch is an uncached pass-through.
 func (r CachedMarketsReader) GetPairsVolumeHistory24hBatch(ctx context.Context, pairs [][2]string) (map[string][]timescale.PairVolumePoint, error) {
 	return r.Inner.GetPairsVolumeHistory24hBatch(ctx, pairs)
 }

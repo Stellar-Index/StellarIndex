@@ -10,8 +10,6 @@ import (
 )
 
 // StoreHistoryReader adapts *timescale.Store to v1.HistoryReader.
-// Pure passthrough: the store already returns []canonical.Trade
-// ordered by ts ASC, which is exactly what the handler expects.
 type StoreHistoryReader struct{ S *timescale.Store }
 
 func (r StoreHistoryReader) TradesInRange(ctx context.Context, pair canonical.Pair, from, to time.Time, limit int) ([]canonical.Trade, error) {
@@ -26,16 +24,12 @@ func (r StoreHistoryReader) TradesInRangeAfterFromSource(ctx context.Context, pa
 	return r.S.TradesInRangeAfterFromSource(ctx, pair, source, from, to, afterTs, afterLedger, afterTxHash, afterSource, afterOpIndex, limit)
 }
 
-// LatestTradePerSource adapts [timescale.Store.LatestTradePerSource]
-// to the v1.HistoryReader interface. Pure passthrough: the store
-// already does the DISTINCT ON (source) work in SQL.
+// LatestTradePerSource adapts [timescale.Store.LatestTradePerSource] to the v1.HistoryReader interface.
 func (r StoreHistoryReader) LatestTradePerSource(ctx context.Context, pair canonical.Pair, sourceFilter string) ([]canonical.Trade, error) {
 	return r.S.LatestTradePerSource(ctx, pair, sourceFilter)
 }
 
-// HistoryPoints adapts [timescale.Store.HistoryPoints] to v1.HistoryReader, converting the storage
-// granularity enum and HistoryPoint to the v1 wire types. Unknown granularities propagate as
-// v1.ErrUnknownGranularity (the handler returns 400).
+// HistoryPoints adapts [timescale.Store.HistoryPoints] to v1.HistoryReader, converting the storage granularity enum and HistoryPoint to the v1 wire types.
 func (r StoreHistoryReader) HistoryPoints(ctx context.Context, pair canonical.Pair, granularity string, limit int) ([]v1.HistoryPoint, error) {
 	g := timescale.HistoryGranularity(granularity)
 	if err := g.Validate(); err != nil {
@@ -48,10 +42,7 @@ func (r StoreHistoryReader) HistoryPoints(ctx context.Context, pair canonical.Pa
 	return convertHistoryPoints(rows), nil
 }
 
-// HistoryPointsInRange adapts [timescale.Store.HistoryPointsInRange]
-// to the v1.HistoryReader interface. Same translation rules as
-// [StoreHistoryReader.HistoryPoints]; passes the from/to window
-// through to the storage layer.
+// HistoryPointsInRange adapts [timescale.Store.HistoryPointsInRange] to the v1.HistoryReader interface.
 func (r StoreHistoryReader) HistoryPointsInRange(ctx context.Context, pair canonical.Pair, granularity string, from, to time.Time, limit int) ([]v1.HistoryPoint, error) {
 	g := timescale.HistoryGranularity(granularity)
 	if err := g.Validate(); err != nil {
@@ -64,11 +55,7 @@ func (r StoreHistoryReader) HistoryPointsInRange(ctx context.Context, pair canon
 	return convertHistoryPoints(rows), nil
 }
 
-// StoreCoverageFloorReader adapts *timescale.Store to v1.CoverageFloorReader. It is separate from
-// [StoreHistoryReader] on purpose: the serving reader sits behind a 2-minute SWR cache keyed per
-// method, while the floor has its own TTL memo in the handler keyed by the pair's alias-canonical
-// identity, so layering them would cache one answer twice under different keys. An unknown
-// granularity surfaces as the store's validation error, which the handler renders as "no signal".
+// StoreCoverageFloorReader adapts *timescale.Store to v1.CoverageFloorReader.
 type StoreCoverageFloorReader struct{ S *timescale.Store }
 
 func (r StoreCoverageFloorReader) EarliestBucket(ctx context.Context, pair canonical.Pair, granularity string, from, to time.Time) (time.Time, bool, error) {
@@ -83,10 +70,7 @@ func (r StoreCoverageFloorReader) EarliestBucketLiteralQuote(ctx context.Context
 	return r.S.EarliestBucketLiteralQuote(ctx, pair, timescale.HistoryGranularity(granularity), from, to)
 }
 
-// TWAPPointsInRange adapts [timescale.Store.TWAPPointsInRange] to the
-// v1.HistoryReader interface. Only 1h / 1d have a TWAP CAGG
-// (migration 0081); any other granularity propagates as
-// v1.ErrUnknownGranularity (handler turns into 400).
+// TWAPPointsInRange adapts [timescale.Store.TWAPPointsInRange] to the v1.HistoryReader interface; only 1h / 1d have a TWAP CAGG, other granularities propagate as v1.ErrUnknownGranularity.
 func (r StoreHistoryReader) TWAPPointsInRange(ctx context.Context, pair canonical.Pair, granularity string, from, to time.Time, limit int) ([]v1.HistoryPoint, error) {
 	g := timescale.HistoryGranularity(granularity)
 	if !timescale.TWAPGranularitySupported(g) {
@@ -99,11 +83,7 @@ func (r StoreHistoryReader) TWAPPointsInRange(ctx context.Context, pair canonica
 	return convertHistoryPoints(rows), nil
 }
 
-// OHLCSeries adapts [timescale.Store.OHLCSeries] / [timescale.Store.OHLCSeriesReBucketed] to
-// v1.HistoryReader. The interval → view decision is [timescale.OHLCRoutes]: a native row reads
-// its own CAGG, a folded row re-buckets a finer one (e.g. 5m/30m from prices_1m, 3d from
-// prices_1d). Nothing is decided here, so the reader cannot route an interval the store's fold
-// allow-list has not declared. Unknown intervals propagate as v1.ErrUnknownGranularity.
+// OHLCSeries adapts [timescale.Store.OHLCSeries] / [timescale.Store.OHLCSeriesReBucketed] to v1.HistoryReader; interval routing is decided by [timescale.OHLCRoutes], not here, and unknown intervals propagate as v1.ErrUnknownGranularity.
 func (r StoreHistoryReader) OHLCSeries(ctx context.Context, pair canonical.Pair, interval string, from, to time.Time, limit int) ([]v1.OHLCSeriesBar, error) {
 	route, ok := timescale.OHLCRouteFor(interval)
 	if !ok {

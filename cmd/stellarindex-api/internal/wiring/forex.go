@@ -11,8 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// ForexAdapter bridges forex.Cache to v1.CurrenciesReader. It lives here because v1 cannot import
-// internal/sources/external/forex without inverting the dependency direction.
+// ForexAdapter bridges forex.Cache to v1.CurrenciesReader; it lives here because v1 cannot import the forex package without inverting the dependency direction.
 type ForexAdapter struct{ cache *forex.Cache }
 
 func NewForexAdapter(c *forex.Cache) *ForexAdapter { return &ForexAdapter{cache: c} }
@@ -39,9 +38,7 @@ func (a *ForexAdapter) Latest() *v1.CurrenciesSnapshot {
 	}
 }
 
-// ForexQuoteWriter adapts (*timescale.Store) to forex.FXQuoteWriter and
-// forex.FXQuoteReader (the worker can't import timescale without inverting
-// the dependency direction). Translates the per-package FXQuote shape.
+// ForexQuoteWriter adapts (*timescale.Store) to forex.FXQuoteWriter and forex.FXQuoteReader (the worker can't import timescale without inverting the dependency direction).
 type ForexQuoteWriter struct{ Store *timescale.Store }
 
 func (w *ForexQuoteWriter) InsertFXQuoteBatch(ctx context.Context, quotes []forex.FXQuote) error {
@@ -60,8 +57,7 @@ func (w *ForexQuoteWriter) InsertFXQuoteBatch(ctx context.Context, quotes []fore
 	return w.Store.InsertFXQuoteBatch(ctx, out)
 }
 
-// InsertFXFixingBatch adapts the store's fx_fixings append to
-// forex.FXFixingWriter; the close stays the vendor's decimal text.
+// InsertFXFixingBatch adapts the store's fx_fixings append to forex.FXFixingWriter; the close stays the vendor's decimal text.
 func (w *ForexQuoteWriter) InsertFXFixingBatch(ctx context.Context, bars []forex.FXBar) error {
 	out := make([]timescale.FXFixing, len(bars))
 	for i, b := range bars {
@@ -74,8 +70,7 @@ func (w *ForexQuoteWriter) InsertFXFixingBatch(ctx context.Context, bars []forex
 	return err
 }
 
-// LatestFXQuotes adapts the store's NUMERIC-text read to forex.FXQuoteReader;
-// the float parse is at the forex cache boundary, which is float end to end.
+// LatestFXQuotes adapts the store's NUMERIC-text read to forex.FXQuoteReader; the float parse is at the forex cache boundary, which is float end to end.
 func (w *ForexQuoteWriter) LatestFXQuotes(ctx context.Context, since time.Time) ([]forex.FXQuote, error) {
 	rows, err := w.Store.LatestFXQuotes(ctx, since)
 	if err != nil {
