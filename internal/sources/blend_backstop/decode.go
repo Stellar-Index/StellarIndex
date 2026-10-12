@@ -239,13 +239,9 @@ func decodeQueueWithdrawal(e *events.Event) (decoded, error) {
 	return decoded{Pool: pool, UserAddress: user, Amount: shares.String(), Attributes: attrs}, nil
 }
 
-// decodeWithdraw: topics=[sym, pool, user];
-// data=Vec[i128 shares_burned, i128 tokens_out], the OPPOSITE element order from deposit's
-// (tokens_in, shares_minted) in blend-contracts-v2 backstop/src/events.rs.
-//
-// Amount is normalized to the TOKEN quantity (tokens_out) so it means the same as deposit's
-// Amount (tokens_in), which the "Backstop volume (token-units)" KPI sums; Amount2 carries the
-// shares burned. Promoting vec[0] positionally would put shares in Amount.
+// decodeWithdraw: topics=[sym, pool, user]; data=Vec[i128 shares_burned, i128 tokens_out], the OPPOSITE order from deposit's
+// (tokens_in, shares_minted). Amount is the TOKEN quantity (tokens_out) so it matches deposit's Amount, which the backstop volume KPI
+// sums; Amount2 carries shares burned.
 func decodeWithdraw(e *events.Event) (decoded, error) {
 	if len(e.Topic) < 3 {
 		return decoded{}, fmt.Errorf("%w: withdraw needs 3 topics, got %d", ErrMalformedTopic, len(e.Topic))
@@ -274,13 +270,8 @@ func decodeDistribute(e *events.Event) (decoded, error) {
 	return decoded{Amount: amount, Attributes: map[string]any{}}, nil
 }
 
-// decodeGulpEmissions handles BOTH backstop versions, which differ in topic arity and body shape
-// (the lake has every V1 row with one topic and a bare i128, every V2 row with two topics and a
-// 2-element Vec):
-//
-//   - V1: topics=[sym]; data=i128 (a single pull amount). No pool topic, so Pool stays "".
-//   - V2: topics=[sym, pool_address]; data=Vec[i128 new_backstop_emissions, i128
-//     new_pool_emissions]. topic[1] is the POOL address, so it lands in the Pool column.
+// decodeGulpEmissions handles BOTH backstop versions: V1 topics=[sym], data=i128 (no pool topic, Pool stays ""); V2
+// topics=[sym, pool_address], data=Vec[i128 new_backstop_emissions, i128 new_pool_emissions], with topic[1] landing in Pool.
 func decodeGulpEmissions(e *events.Event) (decoded, error) {
 	if len(e.Topic) < 2 {
 		// V1 shape: no pool topic, bare-i128 body.
@@ -354,10 +345,8 @@ func decodeDraw(e *events.Event) (decoded, error) {
 	return decoded{Pool: pool, Amount: amount.String(), Attributes: attrs}, nil
 }
 
-// decodeRwZoneAdd: topics=[sym]; data=Vec[Address to_add, Option<Address> to_remove]. to_add is
-// promoted to Pool (required); to_remove goes in attributes ONLY when present, since real rows
-// carry `void`, so the common case emits no key rather than an empty placeholder. vec[1] is
-// never a u32 reward-zone index.
+// decodeRwZoneAdd: topics=[sym]; data=Vec[Address to_add, Option<Address> to_remove]. to_add is promoted to Pool (required);
+// to_remove goes in attributes ONLY when present (real rows carry `void`). vec[1] is never a u32 reward-zone index.
 func decodeRwZoneAdd(e *events.Event) (decoded, error) {
 	body, err := scval.Parse(e.Value)
 	if err != nil {
@@ -382,10 +371,8 @@ func decodeRwZoneAdd(e *events.Event) (decoded, error) {
 	return decoded{Pool: pool, Attributes: attrs}, nil
 }
 
-// decodeRwZone is the V1 spelling of the reward-zone-update event: topics=[sym];
-// data=Vec[Address to_add, Address to_remove]. Unlike V2, the second element is NOT
-// Option-wrapped. to_add is promoted to Pool; to_remove goes in attributes and, not being a
-// promoted column, degrades on a shape mismatch rather than erroring the row.
+// decodeRwZone is the V1 reward-zone-update event: topics=[sym]; data=Vec[Address to_add, Address to_remove]; unlike V2 the second
+// element is NOT Option-wrapped. to_remove is not a promoted column, so a shape mismatch degrades rather than erroring the row.
 func decodeRwZone(e *events.Event) (decoded, error) {
 	body, err := scval.Parse(e.Value)
 	if err != nil {
@@ -408,15 +395,9 @@ func decodeRwZone(e *events.Event) (decoded, error) {
 	return decoded{Pool: pool, Attributes: attrs}, nil
 }
 
-// decodeRwZoneRemove: topics=[sym]; data=Address (the pool removed from the
-// reward zone, promoted to Pool).
-//
-// SOURCE NOTE: the Rust doc comment in blend-contracts-v2 claims the pool is a second topic, but
-// the actual publish() call uses a one-element topic tuple with the pool as bare DATA. We trust
-// the code, which is what serializes on-chain.
-//
-// This event has never fired on mainnet, so the decoder is SYNTHETIC-FROM-SOURCE, unverified
-// against real bytes (see TestDecodeRwZoneRemove_SyntheticFromSource).
+// decodeRwZoneRemove: topics=[sym]; data=Address (the pool removed, promoted to Pool). The Rust doc claims the pool is a second
+// topic, but publish() uses a one-element topic tuple with the pool as DATA; we trust the code. Never fired on mainnet, so
+// SYNTHETIC-FROM-SOURCE (TestDecodeRwZoneRemove_SyntheticFromSource).
 func decodeRwZoneRemove(e *events.Event) (decoded, error) {
 	body, err := scval.Parse(e.Value)
 	if err != nil {

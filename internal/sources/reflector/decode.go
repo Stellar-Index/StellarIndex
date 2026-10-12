@@ -37,10 +37,9 @@ func classify(e *events.Event) bool {
 		e.Topic[1] == TopicSymbolUpdate
 }
 
-// decodeUpdate converts one REFLECTOR.update event into one canonical.OracleUpdate per (asset,
-// price) slot, each with an OpIndex from its vector position. decimals is the contract's price scale.
-// observer is empty in production: no NewDecoder call passes WithDecoderObserver, and events.Event
-// carries no tx-source account to supply the relayer.
+// decodeUpdate converts one REFLECTOR.update event into one canonical.OracleUpdate per (asset, price) slot, each with an OpIndex
+// from its vector position. decimals is the contract's price scale. observer is empty in production (no WithDecoderObserver caller,
+// and events.Event carries no tx-source account).
 func decodeUpdate(e *events.Event, variant Variant, decimals uint8, observer string, closedAt time.Time) ([]canonical.OracleUpdate, error) {
 	if !classify(e) {
 		return nil, ErrNotReflectorEvent
@@ -113,10 +112,8 @@ func decodeUpdate(e *events.Event, variant Variant, decimals uint8, observer str
 	return out, nil
 }
 
-// checkFanoutBounds validates the three inputs to the synthetic OpIndex
-// packing (OperationIndex*eventFanoutStride+EventIndex)*opIndexFanoutStride+i
-// so it cannot wrap uint32 onto another event's block; redstone's twin
-// applies the same three bounds.
+// checkFanoutBounds validates the three inputs to the synthetic OpIndex packing
+// (OperationIndex*eventFanoutStride+EventIndex)*opIndexFanoutStride+i so it cannot wrap uint32 onto another event's block.
 func checkFanoutBounds(e *events.Event, priceCount int) error {
 	if priceCount > opIndexFanoutStride {
 		return fmt.Errorf("%w: got %d prices", ErrPriceVectorOverflow, priceCount)
@@ -186,15 +183,10 @@ var (
 	decodeUpdateTimestamp = sdkDecodeUpdateTimestamp
 )
 
-// sdkDecodeUpdateBody decodes Event.Value (base64 SCVal) of Reflector's UpdateEvent
-// (reflector-contract/oracle/src/events.rs:4-10, soroban-sdk 25.3.0). #[contractevent] wraps the
-// non-topic field in a Map even when it is alone (pinned by test/fixtures/reflector/v6-*/):
-//
-//	Map { "update_data": Vec<(Val, i128)> }
-//
-// The field is looked up by name to survive benign additions across upgrades. Val is an ScAddress
-// (a Soroban asset) or an ScSymbol, mapped via canonical.MapOracleSymbol or recorded as `raw:<symbol>`.
-// Per ADR-0013 this is the only decoder path; tests override the package-level var.
+// sdkDecodeUpdateBody decodes Event.Value (base64 SCVal) of Reflector's UpdateEvent: #[contractevent] wraps the lone non-topic field
+// in a Map { "update_data": Vec<(Val, i128)> } (pinned by test/fixtures/reflector/v6-*/), looked up by name to survive upgrades. Val
+// is an ScAddress (Soroban asset) or ScSymbol, mapped via canonical.MapOracleSymbol or recorded as `raw:<symbol>`. Per ADR-0013 this
+// is the only decoder path; tests override the package-level var.
 func sdkDecodeUpdateBody(valueB64 string) ([]PriceEntry, error) {
 	body, err := scval.Parse(valueB64)
 	if err != nil {

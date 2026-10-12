@@ -37,11 +37,8 @@ var (
 	decodePoolCreated = sdkDecodePoolCreated
 )
 
-// sdkDecodeSwapFields decodes a pool `swap` body. Every field is pulled by name from the
-// top-level Map, never by position: the pools have been through two WASM upgrades and a
-// positional decode would break silently when one moves a field
-// (docs/architecture/ingest-pipeline.md#contract-schema-evolution). Both versions emit the same
-// seven names, so one decoder covers the whole history.
+// sdkDecodeSwapFields decodes a pool `swap` body. Fields are pulled by name from the top-level Map, never by position: the pools
+// have had two WASM upgrades and both emit the same seven names (docs/architecture/ingest-pipeline.md#contract-schema-evolution).
 func sdkDecodeSwapFields(valueB64 string) (SwapFields, error) {
 	body, err := scval.Parse(valueB64)
 	if err != nil {
@@ -103,10 +100,8 @@ func sdkDecodeSwapFields(valueB64 string) (SwapFields, error) {
 	return out, nil
 }
 
-// sdkDecodePoolCreated decodes a factory `pool_created` body. Same
-// decode-by-name path as the swap body. The `sender` field is present on
-// the wire but not surfaced: on every event in history it is the factory
-// itself, so it names no counterparty.
+// sdkDecodePoolCreated decodes a factory `pool_created` body by name, like the swap body. `sender` is on the wire but not
+// surfaced: in all history it is the factory itself, so it names no counterparty.
 func sdkDecodePoolCreated(valueB64 string) (PoolCreatedFields, error) {
 	body, err := scval.Parse(valueB64)
 	if err != nil {
@@ -184,10 +179,8 @@ type PositionFields struct {
 
 var decodePositionFields = sdkDecodePositionFields
 
-// sdkDecodePositionFields decodes a mint / burn / collect body by field name. owner, both ticks
-// and both token amounts are required (a missing one is ErrMalformedPayload, never a zero-filled
-// row); `amount` is required for mint / burn only; `sender` (mint) and `recipient` (collect) are
-// read when present.
+// sdkDecodePositionFields decodes a mint / burn / collect body by field name. owner, both ticks and both token amounts are required
+// (missing is ErrMalformedPayload, never a zero-filled row); `amount` for mint / burn only; `sender` and `recipient` when present.
 func sdkDecodePositionFields(kind, valueB64 string) (PositionFields, error) {
 	body, err := scval.Parse(valueB64)
 	if err != nil {
@@ -270,21 +263,11 @@ func negate(a canonical.Amount) canonical.Amount {
 	return canonical.NewAmount(new(big.Int).Neg(a.BigInt()))
 }
 
-// decodeSwap turns one decoded swap body into a canonical.Trade.
-//
-// Direction comes from the two signed pool deltas and nothing else:
-//
-//	amount0 > 0 && amount1 < 0 → the trader SOLD token0 and BOUGHT token1
-//	amount1 > 0 && amount0 < 0 → the trader SOLD token1 and BOUGHT token0
-//
-// so the base leg is the positive (pool-received) delta and the quote leg is the magnitude of
-// the negative (pool-paid) delta: the base=sold / quote=bought orientation every AMM source
-// records and canonical.Trade.PriceRatio assumes. Amounts stay exact i128 magnitudes in each
-// token's smallest unit; no decimals or price are applied here.
-//
-// Any other sign combination, including a zero on either side, is refused as
-// [ErrNonDirectionalSwap]: a swap that took one unit in and paid nothing out has no price, and
-// reporting it would feed a fabricated ratio into VWAP and OHLC.
+// decodeSwap turns one decoded swap body into a canonical.Trade. Direction comes from the two signed pool deltas alone:
+// amount0 > 0 && amount1 < 0 means the trader SOLD token0 and BOUGHT token1 (and the mirror). The base leg is the positive
+// (pool-received) delta, the quote the magnitude of the negative one: the base=sold / quote=bought orientation canonical.Trade.PriceRatio
+// assumes. Amounts stay exact i128 in smallest units. Any other sign combination, including a zero, is [ErrNonDirectionalSwap]:
+// it has no price and would feed a fabricated ratio into VWAP and OHLC.
 func decodeSwap(
 	fields SwapFields,
 	ledger uint32,

@@ -158,10 +158,9 @@ func (r *Refresher) RefreshPair(ctx context.Context, pair canonical.Pair) (Refre
 	return okOutcome, nil
 }
 
-// volumeBars accumulates consecutive priced minutes into USD-volume bars of at least the minute
-// floor, each priced at its USD-weighted mean VWAP, so every point (and unit of Day30.N density) costs
-// real flow and dust cannot set the median/MAD. Unpriced minutes and a trailing remainder are dropped;
-// valued is false when no minute was USD-valued.
+// volumeBars accumulates consecutive priced minutes into USD-volume bars of at least the minute floor, each priced at its
+// USD-weighted mean VWAP, so every point (and unit of Day30.N density) costs real flow and dust cannot set the median/MAD.
+// Unpriced minutes and a trailing remainder are dropped; valued is false when no minute was USD-valued.
 func (r *Refresher) volumeBars(timed []TimedVWAP) (bars []TimedVWAP, valued bool) {
 	bars = make([]TimedVWAP, 0, len(timed))
 	usd, px := new(big.Rat), new(big.Rat)

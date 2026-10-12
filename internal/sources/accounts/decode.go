@@ -46,10 +46,8 @@ func accountIDFromChange(change xdr.LedgerEntryChange) (string, error) {
 	return "", fmt.Errorf("%w: unknown change type %d", ErrNotAccountEntry, change.Type)
 }
 
-// extractObservation builds an [Observation] from a change on a watched AccountEntry.
-// Removed changes yield IsRemoval=true with zeroed balance/home_domain, meaning the account no
-// longer exists at that ledger. The caller filters by watched set; a mismatch errors rather
-// than being silently coerced.
+// extractObservation builds an [Observation] from a change on a watched AccountEntry. Removed changes yield IsRemoval=true with
+// zeroed balance/home_domain. The caller filters by watched set; a mismatch errors rather than being coerced.
 func extractObservation(change xdr.LedgerEntryChange) (Observation, error) {
 	switch change.Type {
 	case xdr.LedgerEntryChangeTypeLedgerEntryCreated:
@@ -96,10 +94,8 @@ func obsFromAccountEntry(entry *xdr.AccountEntry, removal bool) (Observation, er
 	}, nil
 }
 
-// strkeyFromAccountID encodes an xdr.AccountId to its G-strkey
-// representation. Fails when the account is not Ed25519 (we don't
-// observe muxed accounts at the AccountEntry level — the entry's
-// AccountId is always an Ed25519 PK).
+// strkeyFromAccountID encodes an xdr.AccountId to its G-strkey. Fails when the account is not Ed25519 (the entry's AccountId is
+// always an Ed25519 PK; muxed accounts are not observed at this level).
 func strkeyFromAccountID(aid xdr.AccountId) (string, error) {
 	pk, ok := aid.GetEd25519()
 	if !ok {

@@ -8,14 +8,9 @@ import (
 
 // Decoder implements dispatcher.Decoder for vault wrappers (`("DeFindexVault","deposit"|"withdraw")`, end-user attribution) and Blend strategies (`("BlendStrategy",...)`, vault-to-strategy movement); both are gated on CONTRACT IDENTITY (ADR-0035/0040), since any pubnet contract can emit these topic strings.
 type Decoder struct {
-	// reg gates Matches() on contract identity: MainnetFactories gate factory events; vaults and
-	// strategies come from the curated seed plus the protocol_contracts operator warm.
-	//
-	// There is deliberately NO live fan-out from factory `create` bodies: the factory is
-	// permissionless, so the addresses a body names are attacker-controlled and seeding them would
-	// let anyone register arbitrary contracts and contaminate flow/TVL. Unseeded vaults and
-	// strategies fail-close into an ADR-0033 recognition gap until an operator verifies provenance
-	// (docs/protocols/defindex.md).
+	// reg gates Matches() on contract identity: MainnetFactories gate factory events; vaults and strategies come from the curated seed
+	// plus the protocol_contracts operator warm. There is NO live fan-out from factory `create` bodies: the factory is permissionless,
+	// so named addresses are attacker-controlled; unseeded vaults and strategies fail closed into an ADR-0033 recognition gap.
 	reg *contractid.Registry
 }
 

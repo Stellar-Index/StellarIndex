@@ -42,12 +42,9 @@ const (
 	StatusResolved      Status = "resolved"
 )
 
-// valid reports whether s is one of the three published severities.
-//
-// The OpenAPI contract declares `severity` as a required enum [SEV-1, SEV-2, SEV-3]. Casting the
-// raw YAML string would let a typo (`sev-1`) reach typed clients, and downstream severity mappings
-// fall through to `maintenance`, which the status page renders green, so an ongoing SEV-1 could
-// look routine. Validating here fails the post loudly instead.
+// valid reports whether s is one of the three published severities. The OpenAPI contract declares `severity` as a required enum
+// [SEV-1, SEV-2, SEV-3]; an unvalidated typo would fall through downstream mappings to `maintenance` (rendered green), so an ongoing
+// SEV-1 could look routine. Fail the post loudly instead.
 func (s Severity) valid() bool {
 	switch s {
 	case SeverityMajor, SeverityMinor, SeverityInformative:
@@ -56,10 +53,8 @@ func (s Severity) valid() bool {
 	return false
 }
 
-// valid reports whether s is one of the four published statuses. Same
-// rationale as [Severity.valid] — and note the explorer's build-time
-// loader defaults a MISSING status to "resolved", so an unvalidated
-// blank would print "Resolved" during a live outage.
+// valid reports whether s is one of the four published statuses. Same rationale as [Severity.valid]: the explorer's build-time
+// loader defaults a MISSING status to "resolved", so a blank would print "Resolved" during a live outage.
 func (s Status) valid() bool {
 	switch s {
 	case StatusInvestigating, StatusIdentified, StatusMonitoring, StatusResolved:
@@ -81,10 +76,8 @@ type Incident struct {
 	BodyMarkdown       string     `json:"body_markdown"`
 }
 
-// rawFrontmatter is the YAML shape we parse out of each file's
-// `---`-delimited header. Strings everywhere; conversion to
-// typed fields happens after parse so a bad date doesn't fail
-// the YAML pass.
+// rawFrontmatter is the YAML shape parsed from each file's `---` header. Strings everywhere; conversion to typed fields happens
+// after parse so a bad date does not fail the YAML pass.
 type rawFrontmatter struct {
 	Title              string   `yaml:"title"`
 	Severity           string   `yaml:"severity"`
@@ -143,10 +136,8 @@ func parseFile(name string) (Incident, error) {
 	return parseSource(name, string(raw))
 }
 
-// parseSource parses one post's raw bytes. Split out of [parseFile] so
-// the frontmatter rules — especially the enum and timestamp validation
-// below, which decide whether a post is published at all — are testable
-// without writing into the embedded corpus.
+// parseSource parses one post's raw bytes. Split out of [parseFile] so the frontmatter rules (enum and timestamp validation, which
+// decide whether a post is published at all) are testable without the embedded corpus.
 func parseSource(name, raw string) (Incident, error) {
 	frontYAML, body, err := splitFrontmatter(raw)
 	if err != nil {
@@ -215,10 +206,8 @@ func parseSource(name, raw string) (Incident, error) {
 	}, nil
 }
 
-// splitFrontmatter splits a markdown file with YAML frontmatter
-// delimited by `---` lines. Returns (frontYAML, body, err).
-// File MUST start with `---` on its own line; otherwise we treat
-// it as bodyless garbage and return an error.
+// splitFrontmatter splits a markdown file with YAML frontmatter delimited by `---` lines, returning (frontYAML, body, err). The file
+// MUST start with `---` on its own line; otherwise it is an error.
 func splitFrontmatter(src string) (string, string, error) {
 	scanner := bufio.NewScanner(strings.NewReader(src))
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
@@ -257,10 +246,8 @@ func splitFrontmatter(src string) (string, string, error) {
 	return front.String(), body.String(), nil
 }
 
-// parseTimestamp accepts RFC 3339 first, then falls back to a
-// date-only YYYY-MM-DD (treated as midnight UTC). The fallback
-// argument lets the parser pick up `date:` from frontmatter when
-// `started_at:` is missing — older posts may only have one.
+// parseTimestamp accepts RFC 3339, then a date-only YYYY-MM-DD (midnight UTC). The fallback argument lets the parser use `date:`
+// when `started_at:` is missing.
 func parseTimestamp(primary, fallback string) (time.Time, error) {
 	tries := []string{primary, fallback}
 	for _, s := range tries {

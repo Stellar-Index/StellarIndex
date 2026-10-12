@@ -32,12 +32,9 @@ func NewFixedWindowCounter(rdb redis.Cmdable, window time.Duration, nowFn func()
 	return &FixedWindowCounter{rdb: rdb, window: window, nowFn: nowFn}
 }
 
-// incrLua is the atomic increment: INCR, plus the drain EXPIRE on the call that created the key.
-// KEYS[1] is the window-bucketed key, ARGV[1] the TTL in seconds (2x window); it returns the count.
-//
-// A client-side INCR-then-EXPIRE pair is non-atomic: a dropped connection, MISCONF or OOM
-// between the calls leaves a TTL-less key that is never revisited (the suffix moves with the
-// clock), growing the namespace without bound. Inside EVAL, Redis runs both commands or neither.
+// incrLua is the atomic increment: INCR, plus the drain EXPIRE on the call that created the key. KEYS[1] is the window-bucketed
+// key, ARGV[1] the TTL in seconds (2x window). A client-side INCR-then-EXPIRE is non-atomic: a failure between the calls leaves a
+// TTL-less key that is never revisited, growing the namespace without bound.
 const incrLua = `
 local current = redis.call('INCR', KEYS[1])
 if current == 1 then

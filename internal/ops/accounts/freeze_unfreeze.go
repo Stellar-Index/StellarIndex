@@ -124,10 +124,8 @@ func newFreezeWriterForOps(rdb freeze.RedisCache, ladder freeze.LadderStore) (*f
 	)
 }
 
-// openFreezeLister / freezeRecoverer are the two store behaviours this
-// command needs, declared as interfaces so the flow is unit-testable
-// without Postgres — the same seam pattern internal/aggregate/freeze uses
-// for its own Recovery worker.
+// openFreezeLister / freezeRecoverer are the two store behaviours this command needs, declared as interfaces so the flow is
+// unit-testable without Postgres (the seam internal/aggregate/freeze uses for its Recovery worker).
 type openFreezeLister interface {
 	ListOpen(ctx context.Context) ([]freeze.OpenFreezePair, error)
 }
@@ -141,10 +139,8 @@ type freezeStateReader interface {
 	LoadState(ctx context.Context, asset, quote canonical.Asset) (freeze.State, bool, error)
 }
 
-// markerPresenceReader reports whether the pair's REDIS marker specifically
-// is alive — as opposed to [freezeStateReader.LoadState], which since
-// migration 0119 answers the broader "is this pair frozen by EITHER
-// authority". freeze.Looker satisfies it.
+// markerPresenceReader reports whether the pair's REDIS marker specifically is alive, unlike [freezeStateReader.LoadState], which
+// answers "frozen by EITHER authority" (migration 0119). freeze.Looker satisfies it.
 type markerPresenceReader interface {
 	FrozenForPair(ctx context.Context, asset, quote canonical.Asset) (bool, error)
 }

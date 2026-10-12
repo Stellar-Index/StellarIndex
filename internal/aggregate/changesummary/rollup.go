@@ -274,10 +274,8 @@ func computeSummary(ent Entity, series []TimedValue, now time.Time) Row {
 	return row
 }
 
-// extremeBand bounds how far a point may sit from the series median and
-// still count toward ATH/ATL. The sink ratchets those with GREATEST/LEAST,
-// so a single wild 1m bucket would otherwise pin the published extreme
-// permanently.
+// extremeBand bounds how far a point may sit from the series median and still count toward ATH/ATL. The sink ratchets those with
+// GREATEST/LEAST, so one wild 1m bucket would pin the extreme permanently.
 const extremeBand = 1000
 
 // minPointsForBand is the fewest positive points at which a median says
@@ -412,10 +410,8 @@ func directionOf(diff float64) string {
 	}
 }
 
-// computeStreak walks the daily-summarised series back-to-front
-// looking for the longest run of consecutive same-direction moves
-// ending at the latest day. Per-day granularity dodges intraday
-// noise that would yield ~0 streaks at minute level.
+// computeStreak walks the daily-summarised series back-to-front for the longest run of same-direction moves ending at the latest
+// day. Per-day granularity avoids intraday noise that yields ~0 streaks at minute level.
 func computeStreak(series []TimedValue) (string, *int) {
 	days := dailyize(series)
 	if len(days) < 2 {

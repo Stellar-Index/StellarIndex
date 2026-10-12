@@ -10,10 +10,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// opIndexFanoutStride is the synthetic OpIndex spacing per Band
-// call, analogous to the Reflector / Redstone strides. Band's
-// symbol_rates vector in practice is small (one batch per relayer
-// submission), well under 1024.
+// opIndexFanoutStride is the synthetic OpIndex spacing per Band call, like the Reflector / Redstone strides. A symbol_rates vector
+// is small in practice (one relayer batch), well under 1024.
 const opIndexFanoutStride = 1024
 
 // bandMaxFutureResolveTime mirrors the contract's relay() window (resolve_time < ledger
@@ -26,13 +24,9 @@ const bandMaxFutureResolveTime = time.Hour
 // resolve_time that legitimately equals the ledger close.
 const safeUnixEpochFloorSeconds = 1_000_000_000
 
-// decodeRelayArgs converts one relay/force_relay call into one canonical.OracleUpdate per
-// symbol_rates pair. fnName selects the shape:
-//
-//   - relay:       args = [from, symbol_rates, resolve_time, request_id]
-//   - force_relay: args = [symbol_rates, resolve_time, request_id]
-//
-// Updates share (ledger, tx_hash) and get distinct OpIndex values from the vector position.
+// decodeRelayArgs converts one relay/force_relay call into one canonical.OracleUpdate per symbol_rates pair. fnName selects the
+// shape: relay args = [from, symbol_rates, resolve_time, request_id]; force_relay drops `from`. Updates share (ledger, tx_hash) and
+// get distinct OpIndex values from the vector position.
 func decodeRelayArgs( //nolint:gocognit,gocyclo,funlen // dispatch-heavy; splitting would reduce linearity
 	fnName string,
 	args []string,
@@ -215,10 +209,8 @@ func bandRelayWouldNoOp(resolveSeconds uint64, closedAt time.Time) bool {
 	return resolveSeconds >= uint64(ceil)
 }
 
-// pickObserver returns the best-effort attribution strkey for a
-// force_relay call (which has no `from` arg). Op source wins if
-// the op carries its own source account; otherwise the tx source.
-// Empty string is acceptable — OracleUpdate.Observer is optional.
+// pickObserver returns the best-effort attribution strkey for a force_relay call (no `from` arg): the op source if it has one,
+// else the tx source. Empty is acceptable (OracleUpdate.Observer is optional).
 func pickObserver(opSource, txSource string) string {
 	if opSource != "" {
 		return opSource

@@ -7,16 +7,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// sanityCheck validates that a getEvents response is internally consistent:
-//
-//   - OldestLedger <= LatestLedger, else the node served an inconsistent view.
-//   - Every event's Ledger lies within [OldestLedger, LatestLedger], else it is from another shard
-//     or stale past retention and is not trusted.
-//   - Events are in ascending Ledger order, because source buffers (Soroswap swap+sync, Phoenix
-//     8-field) assume in-order delivery and an out-of-order page could correlate the wrong events.
-//
-// A violation returns an error naming the offending event; the call site retries with backoff
-// rather than ingesting garbage.
+// sanityCheck validates that a getEvents response is internally consistent: OldestLedger <= LatestLedger; every event's Ledger lies
+// within that range; events are in ascending Ledger order, since source buffers (Soroswap swap+sync, Phoenix 8-field) assume
+// in-order delivery. A violation returns an error naming the event; the call site retries with backoff.
 func (r *EventsResponse) sanityCheck() error {
 	if r.OldestLedger > 0 && r.LatestLedger > 0 && r.OldestLedger > r.LatestLedger {
 		return fmt.Errorf("stellarrpc: response has OldestLedger %d > LatestLedger %d",

@@ -42,19 +42,12 @@ func main() {
 	os.Exit(realMain())
 }
 
-// subcommands maps each subcommand name to its handler: a package Run, or a
-// leaf closure here wrapped in [leaf].
+// subcommands maps each subcommand name to its handler: a package Run (receives the full argv from the subcommand name; several
+// keys can share one Run) or a leaf closure wrapped in [leaf].
 //
-// A package Run receives the full argv starting at the subcommand name (args[0] is the map key);
-// each internal/ops/* Run switches on args[0], so several keys can share one Run.
-//
-// A leaf handler receives only its own flags because [leaf] strips the verb: Go's flag package
-// stops at the first non-flag argument, so a verb-prefixed argv parses nothing and leaves every
-// flag zero. Unit tests call handlers with flags-only argv, so only
-// TestSubcommandDispatch_LeafHandlersSeeTheirFlags covers the dispatcher path.
-//
-// Handlers return an error to exit 1; realMain prints the "name: err" prefix. Return
-// opsutil.ErrExitSilently to suppress it after printing a specific message.
+// A leaf handler gets only its own flags because [leaf] strips the verb: Go's flag package stops at the first non-flag argument, so
+// a verb-prefixed argv leaves every flag zero. Only TestSubcommandDispatch_LeafHandlersSeeTheirFlags covers the dispatcher path.
+// A returned error exits 1 with a "name: err" prefix; opsutil.ErrExitSilently suppresses it.
 var subcommands = map[string]func(args []string) error{
 	"docs-config":           leaf(func([]string) error { return config.EmitMarkdown(os.Stdout) }),
 	"mint-key":              leaf(keys.Mint),
@@ -149,10 +142,8 @@ var subcommands = map[string]func(args []string) error{
 	"wasm-drift":                 chops.Run,
 }
 
-// leaf adapts a flags-only handler to the dispatch table's full-argv
-// calling convention by stripping the verb. See the [subcommands] doc for
-// why this exists: without it a leaf's fs.Parse stops on the verb and no
-// flag is ever read.
+// leaf adapts a flags-only handler to the dispatch table's full-argv convention by stripping the verb (see [subcommands]);
+// otherwise a leaf's fs.Parse stops on the verb and no flag is read.
 func leaf(fn func(args []string) error) func(args []string) error {
 	return func(args []string) error {
 		if len(args) == 0 {
@@ -199,10 +190,8 @@ func realMain() int {
 	return dispatchExitCode(args[0], run(args), os.Stderr)
 }
 
-// dispatchExitCode turns a subcommand handler's returned error into the
-// process exit code, writing the "<subcommand>: <err>" prefix line to stderr where warranted.
-// It is split from realMain so the error classification is testable without os.Args or the
-// fd-2 filter.
+// dispatchExitCode turns a handler's returned error into the process exit code, writing the "<subcommand>: <err>" prefix to stderr
+// where warranted. Split from realMain so the classification is testable without os.Args or the fd-2 filter.
 func dispatchExitCode(name string, err error, stderr io.Writer) int {
 	if err == nil {
 		return 0
@@ -226,12 +215,9 @@ func dispatchExitCode(name string, err error, stderr io.Writer) int {
 	return 1
 }
 
-// installNetworkFromArgs installs the configured network (passphrase and
-// alias registry) once, before any subcommand runs, from the -config flag
-// every config-reading subcommand shares. A subcommand without -config, or
-// one whose config does not load, is left on the pubnet default; the
-// subcommand reports its own config error. A config that loads but whose
-// network cannot be installed fails closed (non-zero), like the indexer.
+// installNetworkFromArgs installs the configured network (passphrase and alias registry) once, before any subcommand, from the shared
+// -config flag. No -config, or a config that does not load, leaves the pubnet default (the subcommand reports its own error); a
+// config that loads but whose network cannot be installed fails closed, like the indexer.
 func installNetworkFromArgs(args []string, stderr io.Writer) int {
 	path := configPathFromArgs(args)
 	if path == "" {
@@ -248,10 +234,8 @@ func installNetworkFromArgs(args []string, stderr io.Writer) int {
 	return 0
 }
 
-// configPathFromArgs returns the -config/--config value with flag-package
-// semantics: last occurrence wins, scanning stops at the first positional.
-// The token after a bare flag is taken as its value (the flag set is not known
-// here), so `-source x -config y` still finds the config.
+// configPathFromArgs returns the -config/--config value with flag-package semantics: last occurrence wins, scanning stops at the
+// first positional. The token after a bare flag is taken as its value (the flag set is unknown here).
 func configPathFromArgs(args []string) string {
 	path := ""
 	for i := 0; i < len(args); i++ {

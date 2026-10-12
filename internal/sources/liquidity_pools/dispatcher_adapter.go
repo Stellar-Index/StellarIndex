@@ -24,16 +24,9 @@ type Observer struct {
 	// uncontended; it makes a concurrent caller miss a pairing rather than race.
 	mu sync.Mutex
 
-	// preImage maps pool_id hex → the watched asset_keys of that pool,
-	// recorded from a body-carrying change seen earlier in THIS ledger's entry-change walk.
-	//
-	// A Removed change's LedgerKey carries only the LiquidityPoolId, not the asset pair.
-	// stellar-core emits the full pre-image as a LEDGER_ENTRY_STATE change immediately before the
-	// REMOVED for the same entry (the SDK's change reader relies on the same adjacency), so the
-	// pair is known by then.
-	//
-	// Scoped to one ledger: reset when a change from a different ledger arrives, which bounds the
-	// map.
+	// preImage maps pool_id hex to the pool's watched asset_keys, from a body-carrying change earlier in THIS ledger's walk. A Removed
+	// change's LedgerKey has only the LiquidityPoolId; stellar-core emits the full pre-image as a STATE change just before the REMOVED.
+	// Scoped to one ledger: reset when a change from a different ledger arrives, which bounds the map.
 	preImage       map[string][]string
 	preImageLedger uint32
 }
@@ -193,10 +186,9 @@ func (o *Observer) rememberPreImage(ledger uint32, poolID string, sides []string
 	o.preImage[poolID] = sides
 }
 
-// lookupPreImage returns the watched asset_keys recorded for poolID earlier in THIS ledger's
-// walk. A memo from a previous ledger never answers: the pre-image STATE shares a change list
-// with its REMOVED, so a cross-ledger hit means the meta broke that invariant, and skipping beats
-// attributing a removal from stale state.
+// lookupPreImage returns the watched asset_keys recorded for poolID earlier in THIS ledger's walk. A memo from a previous ledger
+// never answers: the pre-image STATE shares a change list with its REMOVED, so a cross-ledger hit means the meta broke that
+// invariant, and skipping beats attributing a removal from stale state.
 func (o *Observer) lookupPreImage(ledger uint32, poolID string) ([]string, bool) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -207,10 +199,8 @@ func (o *Observer) lookupPreImage(ledger uint32, poolID string) ([]string, bool)
 	return sides, ok
 }
 
-// hasPreImage is the Match-time pre-filter: does the memo know this
-// pool at all? Matches gets no [dispatcher.LedgerEntryChangeContext],
-// so the ledger-scoped check is Decode's job — per the decoder contract,
-// Matches is the cheap filter and Decode is authoritative.
+// hasPreImage is the Match-time pre-filter: does the memo know this pool at all? Matches gets no [dispatcher.LedgerEntryChangeContext],
+// so the ledger-scoped check is Decode's job (Matches is the cheap filter, Decode is authoritative).
 func (o *Observer) hasPreImage(poolID string) bool {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -238,10 +228,8 @@ func lpFromChange(change xdr.LedgerEntryChange) (*xdr.LiquidityPoolEntry, bool) 
 	return entry.Data.LiquidityPool, entry.Data.LiquidityPool != nil
 }
 
-// removedPoolID pulls the pool_id hex off a Removed change's
-// LedgerKey. Returns ok=false when the change is not an LP removal
-// (or the key is malformed). The asset pair is NOT recoverable here,
-// which is why the observer pairs this with the pre-image memo.
+// removedPoolID pulls the pool_id hex off a Removed change's LedgerKey; ok=false when it is not an LP removal or is malformed. The
+// asset pair is NOT recoverable here, hence the pre-image memo.
 func removedPoolID(change xdr.LedgerEntryChange) (string, bool) {
 	key := change.Removed
 	if key == nil || key.Type != xdr.LedgerEntryTypeLiquidityPool || key.LiquidityPool == nil {

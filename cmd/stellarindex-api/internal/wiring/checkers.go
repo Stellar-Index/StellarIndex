@@ -64,10 +64,9 @@ func PrimeNonstandardDecimalsCache(ctx context.Context, c *v1.NonstandardDecimal
 	return nonstandardDecimalsChecker{c: c}
 }
 
-// nonstandardDecimalsChecker reports not-ready until the nonstandard-decimals
-// cache has loaded once. Critical: before that load every confirmed
-// non-7-decimal asset resolves to 7dp, so its prices serve off by a power of
-// ten. A later refresh failure keeps the last-good snapshot and stays ready.
+// nonstandardDecimalsChecker reports not-ready until the nonstandard-decimals cache has loaded once. Critical: before that, every
+// confirmed non-7-decimal asset resolves to 7dp and its prices serve off by a power of ten.
+// A later refresh failure keeps the last-good snapshot.
 type nonstandardDecimalsChecker struct{ c *v1.NonstandardDecimalsCache }
 
 func (nonstandardDecimalsChecker) Name() string   { return "nonstandard_decimals" }

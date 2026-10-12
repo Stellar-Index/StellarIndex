@@ -22,19 +22,13 @@ func assetCode(assetID string) string {
 	return strings.TrimPrefix(code, "crypto:")
 }
 
-// quoteRank scores how quote-like an asset is: fiat (4) > stablecoin (3) > XLM (2) > any other
-// token (1). So XLM/USDC orients base=XLM, quote=USDC, while XLM/AQUA orients base=AQUA,
-// quote=XLM.
+// quoteRank scores how quote-like an asset is: fiat (4) > stablecoin (3) > XLM (2) > any other token (1). So XLM/USDC orients
+// base=XLM, quote=USDC, while XLM/AQUA orients base=AQUA, quote=XLM.
 //
-// ISSUER-AGNOSTIC BY DESIGN. Rank 3 keys on the bare CODE, so ANY classic token calling itself
-// "USDC", scams included, ranks as a stablecoin. That is safe ONLY because ranking decides
-// orientation and never asserts the asset is worth a dollar. Every downstream substitution of a
-// stablecoin for its fiat peg re-checks issuer identity (aggregate.FiatProxy refuses every
-// classic asset, pinned by TestFiatProxy_NonCryptoAssetsReturnFalse); any new path mapping a
-// rank-3 asset to a fiat value MUST do its own issuer check.
-//
-// A SAC declared in `[supply].sac_wrappers` ranks as the classic asset it wraps; an undeclared
-// C-address cannot be inverted and ranks 1.
+// ISSUER-AGNOSTIC BY DESIGN: rank 3 keys on the bare CODE, so any classic token calling itself "USDC", scams included, ranks as a
+// stablecoin. Safe ONLY because ranking decides orientation and never asserts a dollar value; any path mapping a rank-3 asset to a
+// fiat value MUST do its own issuer check (aggregate.FiatProxy refuses classic assets). A SAC declared in `[supply].sac_wrappers`
+// ranks as the classic asset it wraps; an undeclared C-address ranks 1.
 func quoteRank(assetID string) int {
 	if strings.HasPrefix(assetID, "fiat:") {
 		return 4
