@@ -25,13 +25,9 @@ type RawPair struct {
 func (r RawPair) Complete() bool { return r.Swap != nil && r.Sync != nil }
 
 // groupKey is the (ledger, tx_hash, op_index, pair_contract) tuple that correlates swap + sync.
-//
-// The pair contract must be in the key: a router multi-hop swaps through SEVERAL pools in ONE
-// operation, and nothing guarantees each pool emits swap-then-sync contiguously. With (ledger,
-// tx, op) alone, pool B's swap would overwrite pool A's slot and A's sync would complete a trade
-// with B's amounts under A's token0/token1, silently wrong. Matches gates both kinds to the same
-// pair contract, so this never splits a real pair. Two swaps through the SAME pair in one op share
-// a key; buffer.absorb rotates on an occupied slot so neither is overwritten.
+// The pair contract must be in the key: a router multi-hop swaps through SEVERAL pools in ONE op, with no guarantee of
+// contiguous swap-then-sync per pool; without it pool B's swap would overwrite A's slot and A's sync would complete a
+// trade with B's amounts. Two swaps through the SAME pair in one op share a key; buffer.absorb rotates on an occupied slot.
 type groupKey struct {
 	Ledger  uint32
 	TxHash  string
@@ -43,9 +39,8 @@ func keyOf(e *events.Event) groupKey {
 	return groupKey{Ledger: e.Ledger, TxHash: e.TxHash, OpIndex: uint32(e.OperationIndex), Pair: e.ContractID}
 }
 
-// classify decides what kind of Soroswap event this is. Topics are 2-tuples: topic[0] is
-// String("SoroswapPair" | "SoroswapFactory") and topic[1] is the event Symbol, both compared as
-// byte-equal base64 against constants computed at package init.
+// classify decides the Soroswap event kind. topic[0] is String("SoroswapPair" | "SoroswapFactory"), topic[1] the event
+// Symbol, both compared as byte-equal base64 against constants computed at package init.
 func classify(e *events.Event) string {
 	if len(e.Topic) < 2 {
 		return ""
@@ -80,17 +75,10 @@ func classify(e *events.Event) string {
 	return ""
 }
 
-// decodeSwap turns a swap+sync RawPair into a canonical.Trade.
-//
-// Contract reference (pair/src/event.rs):
-//
-//	SwapEvent  { to: Address, amount_0_in: i128, amount_1_in: i128,
-//	             amount_0_out: i128, amount_1_out: i128 }
-//	SyncEvent  { new_reserve_0: i128, new_reserve_1: i128 }
-//
-// Both are ScvMap with Symbol keys, so the amount fields are pulled by name (decode-by-name rule,
-// ingest-pipeline.md#contract-schema-evolution) and direction comes from which side has a positive
-// `in` with a matching positive `out`. Token identities come from the registry of new_pair events.
+// decodeSwap turns a swap+sync RawPair into a canonical.Trade. SwapEvent {to, amount_{0,1}_{in,out}: i128} and SyncEvent
+// {new_reserve_{0,1}: i128} are ScvMaps with Symbol keys, so amounts are pulled by name (decode-by-name rule,
+// ingest-pipeline.md#contract-schema-evolution); direction is the side with a positive `in` and matching positive `out`.
+// Token identities come from the registry of new_pair events.
 func decodeSwap(r RawPair, tok0, tok1 canonical.Asset) (canonical.Trade, error) {
 	if !r.Complete() {
 		return canonical.Trade{}, ErrSwapWithoutSync
@@ -98,9 +86,8 @@ func decodeSwap(r RawPair, tok0, tok1 canonical.Asset) (canonical.Trade, error) 
 	return decodeSwapLeg(r, tok0, tok1)
 }
 
-// decodeSwapLeg decodes the trade from r.Swap alone; the sync body only carries post-state
-// reserves. The buffer yields a swap-only group when a second swap through the same pair in one
-// op rotates it out (buffer.absorb).
+// decodeSwapLeg decodes the trade from r.Swap alone; sync only carries post-state reserves. The buffer yields a swap-only
+// group when a second swap through the same pair in one op rotates it out (buffer.absorb).
 func decodeSwapLeg(r RawPair, tok0, tok1 canonical.Asset) (canonical.Trade, error) {
 	if r.Swap == nil {
 		return canonical.Trade{}, fmt.Errorf("%w: swap nil", ErrMalformedPayload)
@@ -174,9 +161,7 @@ func decodeSwapLeg(r RawPair, tok0, tok1 canonical.Asset) (canonical.Trade, erro
 	}, nil
 }
 
-// decodeSwapTaker pulls SwapEvent.to as a strkey. Empty on any failure —
-// Taker is optional on canonical.Trade and an unreadable recipient must
-// not drop the trade itself.
+// decodeSwapTaker pulls SwapEvent.to as a strkey; empty on any failure, since Taker is optional and must not drop the trade.
 func decodeSwapTaker(valueB64 string) string {
 	sv, err := scval.Parse(valueB64)
 	if err != nil {
@@ -401,10 +386,8 @@ func sdkDecodeSkim(valueB64 string) (SkimFields, error) {
 	return SkimFields{Amount0: amt0, Amount1: amt1, To: to}, nil
 }
 
-// skimAmountField looks up an i128 amount field by its primary name
-// and, if absent, falls back to an alias (the Uniswap-v2 derivative
-// naming). Either resolves to an i128 amount or returns an error
-// when both names are missing or the value isn't an i128.
+// skimAmountField looks up an i128 amount by its primary name, falling back to an alias (Uniswap-v2 derivative naming);
+// errors when both are missing or the value isn't an i128.
 func skimAmountField(entries []scval.ScMapEntry, primary, alias string) (canonical.Amount, error) {
 	sv, ok := scval.MapField(entries, primary)
 	if !ok {

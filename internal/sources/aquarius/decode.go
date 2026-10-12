@@ -9,16 +9,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// aquariusTopicArity is the topic-count on every Aquarius trade
-// event: [Symbol("trade"), Address(token_in), Address(token_out),
-// Address(user)].
+// aquariusTopicArity is the trade event topic count: [Symbol("trade"), Address(token_in), Address(token_out), Address(user)].
 const aquariusTopicArity = 4
 
-// kindByTopicSymbol maps the pre-encoded topic[0] SCVal::Symbol blob of every recognized Aquarius
-// event to its event-kind name. Every topic a pool emits must appear here
-// (TestClassify_completenessVsUpstream enumerates the closed set). The router's own `swap` /
-// `deposit` / `withdraw` do not match: a documented known gap, pinned by
-// TestRouterCensusTopics_matchedOrKnownGap.
+// kindByTopicSymbol maps each recognized Aquarius topic[0] Symbol blob to its event kind; it is a closed set
+// (TestClassify_completenessVsUpstream). Router `swap`/`deposit`/`withdraw` are a known gap (TestRouterCensusTopics_matchedOrKnownGap).
 var kindByTopicSymbol = map[string]string{
 	TopicSymbolTrade:                      EventTrade,
 	TopicSymbolDepositLiquidity:           EventDepositLiquidity,
@@ -57,9 +52,7 @@ var kindByTopicSymbol = map[string]string{
 	TopicSymbolPoolGaugeSwitchToken:       EventPoolGaugeSwitchToken,
 }
 
-// classify picks the event kind from topic[0]. Returns "" for
-// non-Aquarius events so the caller skips cheaply. See
-// kindByTopicSymbol for the closed-set enumeration contract.
+// classify picks the event kind from topic[0]; "" for non-Aquarius events. Closed set: see kindByTopicSymbol.
 func classify(e *events.Event) string {
 	if len(e.Topic) == 0 {
 		return ""
@@ -67,10 +60,8 @@ func classify(e *events.Event) string {
 	return kindByTopicSymbol[e.Topic[0]]
 }
 
-// decodeTrade decodes an Aquarius `trade` event into a single canonical.Trade. It needs NO
-// pool-info cache: token identities are carried in the topics ("trade", token_in, token_out,
-// user). The body is a tuple-shaped ScvVec [sold_amount, bought_amount, fee] of i128 (not a Map,
-// which soroban-sdk uses only for named-field structs).
+// decodeTrade needs NO pool-info cache: token identities ride in the topics. Body is a tuple ScvVec
+// [sold_amount, bought_amount, fee] of i128, not a Map.
 func decodeTrade(e *events.Event, closedAt time.Time) (canonical.Trade, error) {
 	if len(e.Topic) != aquariusTopicArity {
 		return canonical.Trade{}, fmt.Errorf("%w: expected %d topics, got %d",
@@ -133,10 +124,8 @@ func decodeTrade(e *events.Event, closedAt time.Time) (canonical.Trade, error) {
 	}, nil
 }
 
-// decodeReserves decodes an Aquarius `update_reserves` or `reserves_sync` event, which share a
-// `Vec<i128>` body. `kind` (the classify() result) is carried onto the ReservesEvent so the sink
-// routes it to the right table. topic[0] is the only topic; the body is the pool's POST-STATE
-// reserves in canonical token order, variable-length (2 for volatile, N for stableswap).
+// decodeReserves handles `update_reserves` and `reserves_sync` (shared Vec<i128> body); `kind` routes it to the right table.
+// Body is the pool's POST-STATE reserves in canonical token order, length 2 (volatile) or N (stableswap).
 func decodeReserves(e *events.Event, closedAt time.Time, kind string) (ReservesEvent, error) {
 	reserves, err := decodeAmountVec(e.Value)
 	if err != nil {
@@ -162,16 +151,8 @@ func decodeReserves(e *events.Event, closedAt time.Time, kind string) (ReservesE
 	}, nil
 }
 
-// decodeLiquidity decodes an Aquarius `deposit_liquidity` / `withdraw_liquidity` event into a
-// LiquidityEvent. Wire shape (both events share it):
-//
-//	topics: [Symbol(action), Address(token_0), …, Address(token_{n-1})]
-//	body:   Vec<i128> of length n+1 = [amount_0, …, amount_{n-1}, share_amount]
-//
-// n = len(topics) - 1 is the pool's token count (2 volatile, 3-4 stableswap); the trailing
-// element is the LP-share amount minted (deposit) or burned (withdraw). Decoding by the
-// (topic-count, body-length) relationship, not a fixed 2-token layout, keeps N-token stableswap
-// events from being dropped.
+// decodeLiquidity decodes deposit_liquidity / withdraw_liquidity. topics: [Symbol(action), Address(token_0..n-1)];
+// body: Vec<i128> [amount_0..n-1, share_amount] (shares minted/burned). Decode by topic-count vs body-length so N-token stableswap is kept.
 func decodeLiquidity(e *events.Event, action LiquidityAction, closedAt time.Time) (LiquidityEvent, error) {
 	if len(e.Topic) < 2 {
 		return LiquidityEvent{}, fmt.Errorf("%w: %s needs >=2 topics (symbol + >=1 token), got %d",
@@ -238,10 +219,8 @@ var (
 	decodeAmountVec    = sdkDecodeAmountVec
 )
 
-// sdkDecodeAmountVec unpacks a variable-length Vec of i128 (the update_reserves vector and the
-// deposit/withdraw [amounts..., shares] vector), one element per pool token (+1 for shares).
-// Every element MUST be an i128 (ADR-0003); a non-i128 element is a schema violation rejected
-// rather than truncated.
+// sdkDecodeAmountVec unpacks a Vec of i128 (reserves, or [amounts..., shares]). A non-i128 element is
+// rejected rather than truncated (ADR-0003).
 func sdkDecodeAmountVec(valueB64 string) ([]canonical.Amount, error) {
 	body, err := scval.Parse(valueB64)
 	if err != nil {
@@ -288,10 +267,7 @@ func sdkDecodeTradeAmounts(valueB64 string) (tradeAmounts, error) {
 	return tradeAmounts{SoldAmount: sold, BoughtAmount: bought, Fee: fee}, nil
 }
 
-// sdkDecodeAssetTopic converts a topic-slot Address into a
-// canonical.Asset. Aquarius only lists Soroban tokens (SAC-wrapped
-// or contract-deployed), never symbolic/fiat references, so the
-// conversion is unconditional Soroban.
+// sdkDecodeAssetTopic converts a topic Address into a Soroban canonical.Asset; Aquarius lists only Soroban tokens, never fiat.
 func sdkDecodeAssetTopic(topicB64 string) (canonical.Asset, error) {
 	sv, err := scval.Parse(topicB64)
 	if err != nil {
@@ -304,9 +280,7 @@ func sdkDecodeAssetTopic(topicB64 string) (canonical.Asset, error) {
 	return canonical.NewSorobanAsset(addr)
 }
 
-// sdkDecodeAddressTopic decodes a topic-slot Address into its
-// strkey form. Used for the trader slot — may be a G-strkey (user
-// account) or C-strkey (router/contract).
+// sdkDecodeAddressTopic decodes a topic Address to a strkey; the trader slot may be a G (account) or C (router/contract) address.
 func sdkDecodeAddressTopic(topicB64 string) (string, error) {
 	sv, err := scval.Parse(topicB64)
 	if err != nil {
@@ -315,9 +289,8 @@ func sdkDecodeAddressTopic(topicB64 string) (string, error) {
 	return scval.AsAddressStrkey(sv)
 }
 
-// decodeAnnouncedPool extracts the pool address a ROUTER `add_pool` event announces (the
-// ADR-0035/0040 fan-out seam). Router pool-scoped events carry body `Vec[Address(pool), …]`; the
-// address must be a contract (C-strkey), anything else is malformed.
+// decodeAnnouncedPool extracts the pool a ROUTER `add_pool` event announces (ADR-0035/0040 fan-out seam):
+// body Vec[Address(pool), ...], and the pool must be a C-strkey.
 func decodeAnnouncedPool(e *events.Event) (string, error) {
 	body, err := scval.Parse(e.Value)
 	if err != nil {
@@ -340,14 +313,8 @@ func decodeAnnouncedPool(e *events.Event) (string, error) {
 	return pool, nil
 }
 
-// decodeFee decodes an Aquarius `set_protocol_fee` or `claim_protocol_fee` treasury event into a
-// FeeEvent. `kind` (the classify() result) selects the decode:
-//
-//	set_protocol_fee   - two real body shapes, both handled by decodeSetProtocolFee:
-//	                     Map[ fee_protocol{0,1}_{new,old}: u32 ] and Vec[ u32 ]
-//	claim_protocol_fee - Vec[ recipient: Address, amount: i128 ]
-//
-// The Map is decoded by field name (schema-evolution safe); the Vecs are positional.
+// decodeFee decodes `set_protocol_fee` (Map[fee_protocol{0,1}_{new,old}: u32] or Vec[u32], see decodeSetProtocolFee) and
+// `claim_protocol_fee` (Vec[recipient: Address, amount: i128]). The Map is read by field name; the Vecs are positional.
 func decodeFee(e *events.Event, closedAt time.Time, kind string) (FeeEvent, error) {
 	fe := FeeEvent{
 		ContractID: e.ContractID,
@@ -377,19 +344,9 @@ func decodeFee(e *events.Event, closedAt time.Time, kind string) (FeeEvent, erro
 	return fe, nil
 }
 
-// decodeSetProtocolFee fills the set_protocol_fee fields from EITHER real body shape
-// (branch on the parsed SCVal kind):
-//
-//	Map[ fee_protocol{0,1}_{new,old}: u32 ]
-//	    per-token old->new transition, decoded by field name. Only non-registered contracts
-//	    emit it, so identity gating never reaches it in production; kept because the decode
-//	    is lossless.
-//
-//	Vec[ u32 ]
-//	    a SINGLE pool-wide NEW fraction, the shape EVERY REGISTERED pool emits. It maps to
-//	    BOTH sides (Fee0New == Fee1New). There is NO old value, so HasOldFee stays false and
-//	    the sink lands fee_protocol*_old NULL rather than a fabricated 0. The raw u32 is
-//	    stored verbatim; its denominator is a downstream interpretation.
+// decodeSetProtocolFee branches on the SCVal kind. Map: per-token old->new, by field name (only non-registered contracts emit it).
+// Vec[u32]: one pool-wide NEW fraction (every registered pool) maps to both sides with no old value, so HasOldFee stays false
+// and the sink lands fee_protocol*_old NULL, not 0. The raw u32 is stored verbatim.
 func decodeSetProtocolFee(sv scval.ScVal, fe *FeeEvent) error {
 	// Map form — the per-token old→new transition.
 	if entries, err := scval.AsMap(sv); err == nil {
@@ -433,10 +390,8 @@ func decodeSetProtocolFee(sv scval.ScVal, fe *FeeEvent) error {
 	return nil
 }
 
-// decodeClaimFee fills the claim_protocol_fee fields: recipient + amount from the body Vec, and
-// the claimed token from topic[1] (an ScvAddress). The token is NOT in the body and cannot be
-// recovered by joining a trade (same-tx claims can differ only in token), and per-pool sums
-// without the token would mix token scales.
+// decodeClaimFee reads recipient + amount from the body Vec and the claimed token from topic[1]; the token is NOT in the body
+// and cannot be recovered by joining a trade, and per-pool sums without it would mix token scales.
 func decodeClaimFee(e *events.Event, sv scval.ScVal, fe *FeeEvent) error {
 	vec, err := scval.AsVec(sv)
 	if err != nil {

@@ -7,10 +7,7 @@ import (
 // Auction events emitted by the Blend Decoder. These are NOT canonical.Trade rows (Blend has no
 // spot prices); the sink routes them to the per-protocol auctions table, not trades.
 
-// NewAuctionEventKind / FillAuctionEventKind / DeleteAuctionEventKind
-// are stable strings used by the sink's type-switch + by metrics
-// labels. They follow the `<source>.<event>` convention used by
-// every other source package.
+// Event kind strings used by the sink type-switch and metric labels, in the `<source>.<event>` convention.
 const (
 	NewAuctionEventKind    = "blend.new_auction"
 	FillAuctionEventKind   = "blend.fill_auction"

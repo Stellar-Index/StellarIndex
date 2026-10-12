@@ -8,19 +8,15 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// V1 pool WASM (baf978f10efdbcd85747868bef8832845ea6809f7643b67a4ac0cd669327fc2c,
-// the four V1-factory pools, never upgraded) emits three auction-family events in a different
-// shape from V2, verified against every such lake event; samples in
-// test/fixtures/blend/v1-pool-auctions/.
+// V1 pool WASM (baf978f10efdbcd85747868bef8832845ea6809f7643b67a4ac0cd669327fc2c, four V1-factory pools, never upgraded) emits
+// auction events shaped differently from V2 (samples: test/fixtures/blend/v1-pool-auctions/):
 //
 //	new_auction:  [Symbol, u32(auction_type)]            body AuctionData Map{bid, block, lot}
 //	fill_auction: [Symbol, Address(user), u32(type)]     body (filler: Address, fill_percent: i128)
 //	bad_debt:     [Symbol, Address(user)]                body (asset: Address, d_tokens: i128)
 //
-// V1 emits new_auction only for BadDebt and Interest auctions (user liquidations use
-// new_liquidation_auction) and keys them on the pool's backstop, so the auctioned "user" is the V1
-// backstop, named in topic[1] of every such fill_auction. V1 has no partial backstop auctions: the
-// bid is the backstop's whole liability, so percent is 100, as V2 emits for these auction types.
+// V1 emits new_auction only for BadDebt and Interest auctions, keyed on the pool's backstop (the "user" in fill_auction topic[1]).
+// No partial backstop auctions: the bid is the whole liability, so percent is 100, as V2 emits for these types.
 const (
 	v1NewAuctionTopicArity = 2
 	v1BadDebtTopicArity    = 2

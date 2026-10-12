@@ -26,14 +26,12 @@ type Decoder struct {
 	// pairTokens maps pair-contract C-strkey to (token0, token1); seeded at startup via SeedPair.
 	pairTokens map[string]PairTokens
 
-	// onNewPair, when non-nil, runs for every factory new_pair event after the registry is updated,
-	// so the mapping can be persisted. It runs with mu NOT held but on the caller's goroutine, so
-	// keep it short.
+	// onNewPair, when non-nil, runs for every factory new_pair event after the registry update, to persist the mapping.
+	// Runs with mu NOT held but on the caller's goroutine, so keep it short.
 	onNewPair func(pairStrkey, token0Strkey, token1Strkey string)
 
-	// evictedOrphans counts swap-without-sync evictions ONLY, the real loss class. evictedBareSync
-	// counts sync-without-swap evictions, which deposit/withdraw/skim produce on every call; the
-	// split keeps a real lost swap visible.
+	// evictedOrphans counts swap-without-sync evictions ONLY (the real loss class); evictedBareSync counts sync-without-swap,
+	// which deposit/withdraw/skim produce on every call.
 	evictedOrphans     int
 	evictedBareSync    int
 	skippedUnknownPair int
@@ -81,9 +79,8 @@ func (d *Decoder) SeedPair(pair string, token0, token1 canonical.Asset) {
 	}
 }
 
-// storePairTokens records the mapping under the write lock and returns the hook for the caller to
-// fire OUTSIDE it, since the hook does IO. The unlock is deferred because the map write can panic
-// (nil registry map), as in [Decoder.absorbEvent].
+// storePairTokens records the mapping under the write lock and returns the hook for the caller to fire OUTSIDE it (the hook
+// does IO). Unlock is deferred because the map write can panic (nil registry map), as in [Decoder.absorbEvent].
 func (d *Decoder) storePairTokens(pair string, token0, token1 canonical.Asset) func(string, string, string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -178,12 +175,8 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	return d.emitCompleted(completed)
 }
 
-// absorbEvent feeds one swap/sync into the correlation buffer and returns the pairs that just
-// completed.
-//
-// It unlocks via defer because the dispatcher RECOVERS a decoder panic and carries on. An Unlock
-// skipped by a panic would leave d.mu held, the next Matches would block, and dispatch would
-// deadlock while the unit still looks healthy, which is worse than a crash-loop.
+// absorbEvent feeds one swap/sync into the correlation buffer and returns the pairs that just completed. It unlocks via defer
+// because the dispatcher RECOVERS decoder panics; a skipped Unlock would leave d.mu held and deadlock dispatch silently.
 func (d *Decoder) absorbEvent(ev *events.Event, kind string, closedAt time.Time) []RawPair {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -224,9 +217,8 @@ func (d *Decoder) GatedContractSet() []string {
 	return out
 }
 
-// emitLiquidity decodes a pair deposit/withdraw event into a LiquidityEvent; token identities come
-// from the new_pair registry because the body carries only amounts. An UNSEEDED pair never reaches
-// here: it fails CLOSED into an ADR-0033 recognition gap instead of a NULL-token row.
+// emitLiquidity decodes a pair deposit/withdraw into a LiquidityEvent; token identities come from the new_pair registry
+// (the body has only amounts). An UNSEEDED pair fails CLOSED into an ADR-0033 recognition gap, never a NULL-token row.
 func (d *Decoder) emitLiquidity(ev events.Event, kind string) ([]consumer.Event, error) {
 	closedAt, err := ev.EventClosedAt()
 	if err != nil {

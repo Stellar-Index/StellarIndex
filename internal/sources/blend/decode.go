@@ -10,11 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// Auction-event topic arity is 3 across all three auction events:
-//
-//	topic[0] = Symbol("new_auction" | "fill_auction" | "delete_auction")
-//	topic[1] = u32(auction_type)
-//	topic[2] = Address(user)
+// Arity of all three auction events: [Symbol(new_auction|fill_auction|delete_auction), u32(auction_type), Address(user)].
 const auctionTopicArity = 3
 
 // classify picks the event kind from topic[0], returning "" for non-Blend events so the dispatcher
@@ -111,15 +107,7 @@ type DeleteAuctionEvent struct {
 	Timestamp  time.Time
 }
 
-// decodeNewAuction parses a `new_auction` event.
-//
-// Topics (3):
-//
-//	topic[0] = Symbol("new_auction")
-//	topic[1] = u32(auction_type)
-//	topic[2] = Address(user)
-//
-// Body: 2-tuple of (percent: u32, auction_data: AuctionData).
+// decodeNewAuction parses `new_auction`: topics [Symbol, u32(auction_type), Address(user)], body (percent: u32, AuctionData).
 func decodeNewAuction(e *events.Event, closedAt time.Time) (NewAuctionEvent, error) {
 	if len(e.Topic) != auctionTopicArity {
 		return NewAuctionEvent{}, fmt.Errorf("%w: new_auction expected %d topics, got %d",
@@ -165,10 +153,7 @@ func decodeNewAuction(e *events.Event, closedAt time.Time) (NewAuctionEvent, err
 	}, nil
 }
 
-// decodeFillAuction parses a `fill_auction` event.
-//
-// Body: 3-tuple of (filler: Address, fill_percent: i128,
-// filled_auction_data: AuctionData).
+// decodeFillAuction parses `fill_auction`: body (filler: Address, fill_percent: i128, filled_auction_data: AuctionData).
 func decodeFillAuction(e *events.Event, closedAt time.Time) (FillAuctionEvent, error) {
 	if len(e.Topic) != auctionTopicArity {
 		return FillAuctionEvent{}, fmt.Errorf("%w: fill_auction expected %d topics, got %d",
@@ -265,9 +250,7 @@ func decodeAuctionType(topicB64 string) (uint32, error) {
 	}
 }
 
-// decodeAddressTopic decodes a topic-slot Address (G-strkey for
-// accounts, C-strkey for contracts) as a string. Used for both
-// the filler / user fields.
+// decodeAddressTopic decodes a topic-slot Address (G or C strkey) for the filler / user fields.
 func decodeAddressTopic(topicB64 string) (string, error) {
 	sv, err := scval.Parse(topicB64)
 	if err != nil {

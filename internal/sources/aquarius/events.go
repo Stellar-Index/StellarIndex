@@ -111,9 +111,8 @@ func (p PoolType) String() string {
 	}
 }
 
-// Pre-encoded base64 SCVal::Symbol blobs (scval.MustEncodeSymbol) used for byte-equality
-// classification and the server-side EventFilter.Topics subscription. Each maps from a distinct
-// Event* constant, so a duplicate blob would mean a duplicated source string.
+// Pre-encoded base64 SCVal::Symbol blobs for byte-equality classification and the EventFilter.Topics subscription;
+// each derives from a distinct Event* constant.
 var (
 	TopicSymbolTrade             = scval.MustEncodeSymbol(EventTrade)
 	TopicSymbolDepositLiquidity  = scval.MustEncodeSymbol(EventDepositLiquidity)

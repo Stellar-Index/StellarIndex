@@ -148,12 +148,9 @@ func (d *Decoder) decodeAction(a action, ev *events.Event, fieldTopic string, cl
 	return nil, nil
 }
 
-// seedAnnouncedPool admits the pool a factory ("create","liquidity_pool") event announces into the
-// identity gate and fires the live-upsert hook so the mapping survives a restart. It emits no
-// consumer.Event: the announcement only moves the gate.
-//
-// Matches() already established ev.ContractID is a factory trust root, so the announced address
-// is a genuine pool; ev.ContractID is recorded as its provenance.
+// seedAnnouncedPool admits the pool a factory ("create","liquidity_pool") event announces into the identity gate and fires the
+// live-upsert hook so the mapping survives a restart. Emits no consumer.Event. Matches() already proved ev.ContractID is a factory
+// trust root, so the announced address is a genuine pool; ev.ContractID is recorded as provenance.
 func (d *Decoder) seedAnnouncedPool(ev *events.Event) error {
 	pool, err := decodeAnnouncedPool(ev)
 	if err != nil {
@@ -163,24 +160,19 @@ func (d *Decoder) seedAnnouncedPool(ev *events.Event) error {
 	return nil
 }
 
-// decodeSwapMapEvent handles the NEWER single-event Map-body swap
-// schema (Q5). One event carries the whole trade, so — unlike the
-// 8-event String path — there is no correlation buffer: decode and
-// emit immediately. Assumes d.mu is held by Decode.
+// decodeSwapMapEvent handles the newer single-event Map-body swap schema (Q5): one event is the whole trade, so decode and emit
+// immediately with no correlation buffer. Assumes d.mu is held by Decode.
 func (d *Decoder) decodeSwapMapEvent(ev *events.Event, closedAt time.Time) ([]consumer.Event, error) {
 	return tradeOrNoOp(decodeSwapMap(ev, closedAt))
 }
 
-// isNotATrade reports a swap that decoded fully but maps to zero rows (a zero leg or a self-pair).
-// Returning it as an error would count it undecodable and fail the source's ADR-0033 verdict
-// closed forever; indeterminate parse failures keep the error path.
+// isNotATrade reports a swap that decoded fully but maps to zero rows (zero leg or self-pair). Returned as an error it would count
+// undecodable and fail the source's ADR-0033 verdict closed forever; indeterminate parse failures keep the error path.
 func isNotATrade(err error) bool {
 	return errors.Is(err, ErrZeroAmountSwap) || errors.Is(err, canonical.ErrPairMismatch)
 }
 
-// tradeOrNoOp turns a decodeSwap / decodeSwapMap result into Decode's
-// return shape: one TradeEvent, a recognised no-op (nil, nil), or the
-// decode error.
+// tradeOrNoOp turns a decodeSwap / decodeSwapMap result into Decode's return shape: one TradeEvent, a recognised no-op, or the error.
 func tradeOrNoOp(trade canonical.Trade, err error) ([]consumer.Event, error) {
 	if err != nil {
 		if isNotATrade(err) {
@@ -213,11 +205,9 @@ func (d *Decoder) decodeSwapEvent(ev *events.Event, fieldTopic string, closedAt 
 	return out, nil
 }
 
-// rescueEvicted decodes the swap groups the buffer aged or rotated out. A group whose
-// decode-consumed slots are all present is a pre-upgrade 7-event swap (that era never sends
-// ActualReceived / SpreadAmount / ReferralFee) or the first of two same-pool swaps in one op, not
-// an orphan. Only under-filled or undecodable groups count as orphans; a recognised no-op is
-// neither a trade nor an orphan.
+// rescueEvicted decodes the swap groups the buffer aged or rotated out. A group whose decode-consumed slots are all present is a
+// pre-upgrade 7-event swap (no ActualReceived / SpreadAmount / ReferralFee) or the first of two same-pool swaps in one op, not an
+// orphan. Only under-filled or undecodable groups count as orphans; a recognised no-op is neither trade nor orphan.
 func (d *Decoder) rescueEvicted(evicted []RawSwap) []consumer.Event {
 	var out []consumer.Event
 	for i := range evicted {
@@ -337,10 +327,8 @@ func (d *Decoder) EvictedOrphans() int {
 	return d.evictedOrphans
 }
 
-// decodeInitializeEvent decodes a pool-deploy `initialize` event into an
-// InitializeEvent. The token slot ('a'/'b') comes from topic[1]; the
-// announced token contract address is the event body (a single
-// Address). Self-contained — one event → one row, no correlation buffer.
+// decodeInitializeEvent decodes a pool-deploy `initialize` event into an InitializeEvent: the token slot ('a'/'b') comes from
+// topic[1], the body is the announced token's single Address. One event, one row, no correlation buffer.
 func decodeInitializeEvent(ev *events.Event, fieldTopic string, closedAt time.Time) ([]consumer.Event, error) {
 	var slot string
 	switch fieldTopic {
@@ -377,10 +365,8 @@ func decodeInitializeEvent(ev *events.Event, fieldTopic string, closedAt time.Ti
 	}}, nil
 }
 
-// decodeAdminEvent decodes a pool admin-rotation event into an AdminEvent. The action slug comes
-// from topic[1]; the admin address is the body when it carries one. Defensive: no mainnet sample
-// confirms the body shape, so a non-Address or absent body yields an empty Admin rather than an
-// error, since the action and identity are still worth recording.
+// decodeAdminEvent decodes a pool admin-rotation event: the action slug comes from topic[1], the admin from the body when present.
+// No mainnet sample confirms the body shape, so a non-Address or absent body yields an empty Admin, not an error.
 func decodeAdminEvent(ev *events.Event, fieldTopic string, closedAt time.Time) ([]consumer.Event, error) {
 	slug, ok := adminActionByTopic[fieldTopic]
 	if !ok {

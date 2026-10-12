@@ -71,9 +71,8 @@ func newAdminEvent(ev *events.Event, closedAt time.Time, slug string) AdminEvent
 	}
 }
 
-// decodeFactoryConfigEvent records the factory's ("Factory","Updated
-// Config") event. The new config is not on the wire; a non-Void body is a
-// shape change to audit, so it errors instead of being dropped.
+// decodeFactoryConfigEvent records the factory's ("Factory","Updated Config") event. The new config is not on the wire; a non-Void
+// body is a shape change to audit, so it errors instead of being dropped.
 func decodeFactoryConfigEvent(ev *events.Event, closedAt time.Time) ([]consumer.Event, error) {
 	sv, err := scval.Parse(ev.Value)
 	if err != nil {

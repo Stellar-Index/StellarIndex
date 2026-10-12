@@ -90,10 +90,8 @@ type PoolConfig struct {
 	MaxPositions  uint32
 }
 
-// reserveConfigMetadata is the JSON shape of a queue_set_reserve
-// event's ReserveConfig, persisted to blend_admin.attributes ('metadata'). The rate-model params
-// come from here because the live ResConfig storage entry is often uncaptured (written once at
-// reserve init), while the queue_set_reserve EVENT carries the same config.
+// reserveConfigMetadata is the JSON shape of a queue_set_reserve ReserveConfig, persisted to blend_admin.attributes ('metadata');
+// the event is the source because the live ResConfig storage entry is often uncaptured.
 type reserveConfigMetadata struct {
 	Index      uint32  `json:"index"`
 	Decimals   uint32  `json:"decimals"`

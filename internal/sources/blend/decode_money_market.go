@@ -39,10 +39,7 @@ type EmissionEvent domain.BlendEmissionEvent
 // AdminEvent is the decoded shape of every pool-config / admin / factory lifecycle event; ContractID is the EMITTING contract (the pool, or the factory for `deploy`). Named type over domain.BlendAdminEvent.
 type AdminEvent domain.BlendAdminEvent
 
-// ─── classify (extended) ───────────────────────────────────────
-//
-// classify() in decode.go covers only the three auction topics; classifyAny maps every topic the
-// package declares to its Event* name and is what the dispatcher adapter (Matches/Decode) uses.
+// classifyAny maps every topic the package declares to its Event* name; the dispatcher adapter uses it (classify covers only auctions).
 func classifyAny(e *events.Event) string { //nolint:gocyclo,cyclop // one case per Blend topic; flattening makes the dispatch table easier to audit against pool/src/events.rs + pool-factory/src/events.rs.
 	if len(e.Topic) == 0 {
 		return ""
@@ -183,10 +180,7 @@ func decodePositionEvent(e *events.Event, kind string, closedAt time.Time) (Posi
 
 // ─── Emission-event decoder ────────────────────────────────────
 
-// decodeGulp parses a `gulp` event.
-//
-//	topics: [Symbol("gulp"), Address(asset)]
-//	body:   i128(token_delta)
+// decodeGulp parses `gulp`: topics [Symbol, Address(asset)], body i128(token_delta).
 func decodeGulp(e *events.Event, closedAt time.Time) (EmissionEvent, error) {
 	if len(e.Topic) != 2 {
 		return EmissionEvent{}, fmt.Errorf("%w: gulp expected 2 topics, got %d",
@@ -216,10 +210,7 @@ func decodeGulp(e *events.Event, closedAt time.Time) (EmissionEvent, error) {
 	}, nil
 }
 
-// decodeClaim parses a `claim` event.
-//
-//	topics: [Symbol("claim"), Address(from)]
-//	body:   (reserve_token_ids: Vec<u32>, amount_claimed: i128)
+// decodeClaim parses `claim`: topics [Symbol, Address(from)], body (reserve_token_ids: Vec<u32>, amount_claimed: i128).
 func decodeClaim(e *events.Event, closedAt time.Time) (EmissionEvent, error) {
 	if len(e.Topic) != 2 {
 		return EmissionEvent{}, fmt.Errorf("%w: claim expected 2 topics, got %d",
@@ -266,10 +257,7 @@ func decodeClaim(e *events.Event, closedAt time.Time) (EmissionEvent, error) {
 	}, nil
 }
 
-// decodeReserveEmissionUpdate parses a `reserve_emission_update` event.
-//
-//	topics: [Symbol("reserve_emission_update")]
-//	body:   (res_token_id: u32, eps: u64, expiration: u64)
+// decodeReserveEmissionUpdate parses `reserve_emission_update`: topics [Symbol], body (res_token_id: u32, eps: u64, expiration: u64).
 func decodeReserveEmissionUpdate(e *events.Event, closedAt time.Time) (EmissionEvent, error) {
 	if len(e.Topic) != 1 {
 		return EmissionEvent{}, fmt.Errorf("%w: reserve_emission_update expected 1 topic, got %d",
@@ -308,10 +296,7 @@ func decodeReserveEmissionUpdate(e *events.Event, closedAt time.Time) (EmissionE
 	}, nil
 }
 
-// decodeGulpEmissions parses a `gulp_emissions` event.
-//
-//	topics: [Symbol("gulp_emissions")]
-//	body:   i128(emissions)
+// decodeGulpEmissions parses `gulp_emissions`: topics [Symbol], body i128(emissions).
 func decodeGulpEmissions(e *events.Event, closedAt time.Time) (EmissionEvent, error) {
 	if len(e.Topic) != 1 {
 		return EmissionEvent{}, fmt.Errorf("%w: gulp_emissions expected 1 topic, got %d",
@@ -336,10 +321,7 @@ func decodeGulpEmissions(e *events.Event, closedAt time.Time) (EmissionEvent, er
 	}, nil
 }
 
-// decodeBadDebt parses a `bad_debt` event.
-//
-//	topics: [Symbol("bad_debt"), Address(user), Address(asset)]
-//	body:   i128(d_tokens)
+// decodeBadDebt parses `bad_debt`: topics [Symbol, Address(user), Address(asset)], body i128(d_tokens).
 func decodeBadDebt(e *events.Event, closedAt time.Time) (EmissionEvent, error) {
 	if len(e.Topic) != 3 {
 		return EmissionEvent{}, fmt.Errorf("%w: bad_debt expected 3 topics, got %d",
@@ -374,10 +356,7 @@ func decodeBadDebt(e *events.Event, closedAt time.Time) (EmissionEvent, error) {
 	}, nil
 }
 
-// decodeDefaultedDebt parses a `defaulted_debt` event.
-//
-//	topics: [Symbol("defaulted_debt"), Address(asset)]
-//	body:   i128(d_tokens_burnt)
+// decodeDefaultedDebt parses `defaulted_debt`: topics [Symbol, Address(asset)], body i128(d_tokens_burnt).
 func decodeDefaultedDebt(e *events.Event, closedAt time.Time) (EmissionEvent, error) {
 	if len(e.Topic) != 2 {
 		return EmissionEvent{}, fmt.Errorf("%w: defaulted_debt expected 2 topics, got %d",
@@ -409,10 +388,7 @@ func decodeDefaultedDebt(e *events.Event, closedAt time.Time) (EmissionEvent, er
 
 // ─── Admin-event decoders ──────────────────────────────────────
 
-// decodeSetAdmin parses a `set_admin` event.
-//
-//	topics: [Symbol("set_admin"), Address(admin)]
-//	body:   Address(new_admin)
+// decodeSetAdmin parses `set_admin`: topics [Symbol, Address(admin)], body Address(new_admin).
 func decodeSetAdmin(e *events.Event, closedAt time.Time) (AdminEvent, error) {
 	if len(e.Topic) != 2 {
 		return AdminEvent{}, fmt.Errorf("%w: set_admin expected 2 topics, got %d",
@@ -442,10 +418,8 @@ func decodeSetAdmin(e *events.Event, closedAt time.Time) (AdminEvent, error) {
 	}, nil
 }
 
-// decodeUpdatePool parses an `update_pool` event.
-//
-//	topics: [Symbol("update_pool"), Address(admin)]
-//	body:   (backstop_take_rate: u32, max_positions: u32, min_collateral: i128)
+// decodeUpdatePool parses `update_pool`: topics [Symbol, Address(admin)],
+// body (backstop_take_rate: u32, max_positions: u32, min_collateral: i128).
 func decodeUpdatePool(e *events.Event, closedAt time.Time) (AdminEvent, error) {
 	if len(e.Topic) != 2 {
 		return AdminEvent{}, fmt.Errorf("%w: update_pool expected 2 topics, got %d",
@@ -489,14 +463,8 @@ func decodeUpdatePool(e *events.Event, closedAt time.Time) (AdminEvent, error) {
 	}, nil
 }
 
-// decodeQueueSetReserve parses a `queue_set_reserve` event.
-//
-//	topics: [Symbol("queue_set_reserve"), Address(admin)]
-//	body:   (asset: Address, metadata: ReserveConfig)
-//
-// ReserveConfig is the #[contracttype] struct from pool/src/storage.rs, serialised as an ScvMap
-// with name-sorted keys. The full struct is decoded into AdminEvent.ReserveConfig so storage can
-// marshal it to jsonb attributes losslessly.
+// decodeQueueSetReserve parses `queue_set_reserve`: topics [Symbol, Address(admin)], body (asset: Address, metadata: ReserveConfig).
+// The full name-sorted ScvMap ReserveConfig goes into AdminEvent.ReserveConfig so storage can marshal it to jsonb losslessly.
 func decodeQueueSetReserve(e *events.Event, closedAt time.Time) (AdminEvent, error) {
 	if len(e.Topic) != 2 {
 		return AdminEvent{}, fmt.Errorf("%w: queue_set_reserve expected 2 topics, got %d",
@@ -536,10 +504,7 @@ func decodeQueueSetReserve(e *events.Event, closedAt time.Time) (AdminEvent, err
 	}, nil
 }
 
-// decodeCancelSetReserve parses a `cancel_set_reserve` event.
-//
-//	topics: [Symbol("cancel_set_reserve"), Address(admin)]
-//	body:   Address(asset)
+// decodeCancelSetReserve parses `cancel_set_reserve`: topics [Symbol, Address(admin)], body Address(asset).
 func decodeCancelSetReserve(e *events.Event, closedAt time.Time) (AdminEvent, error) {
 	if len(e.Topic) != 2 {
 		return AdminEvent{}, fmt.Errorf("%w: cancel_set_reserve expected 2 topics, got %d",
@@ -569,10 +534,7 @@ func decodeCancelSetReserve(e *events.Event, closedAt time.Time) (AdminEvent, er
 	}, nil
 }
 
-// decodeSetReserve parses a `set_reserve` event.
-//
-//	topics: [Symbol("set_reserve")]
-//	body:   (asset: Address, index: u32)
+// decodeSetReserve parses `set_reserve`: topics [Symbol], body (asset: Address, index: u32).
 func decodeSetReserve(e *events.Event, closedAt time.Time) (AdminEvent, error) {
 	if len(e.Topic) != 1 {
 		return AdminEvent{}, fmt.Errorf("%w: set_reserve expected 1 topic, got %d",
@@ -606,11 +568,7 @@ func decodeSetReserve(e *events.Event, closedAt time.Time) (AdminEvent, error) {
 	}, nil
 }
 
-// decodeSetStatus parses a `set_status` event. Two variants:
-//
-//	non-admin: topics [Symbol("set_status")]                 body u32(new_status)
-//	admin:     topics [Symbol("set_status"), Address(admin)] body u32(pool_status)
-//
+// decodeSetStatus parses `set_status`: body u32, topics [Symbol] (non-admin) or [Symbol, Address(admin)] (admin).
 // Both arities are accepted; the ByAdmin flag distinguishes them.
 func decodeSetStatus(e *events.Event, closedAt time.Time) (AdminEvent, error) {
 	if len(e.Topic) != 1 && len(e.Topic) != 2 {
@@ -645,10 +603,7 @@ func decodeSetStatus(e *events.Event, closedAt time.Time) (AdminEvent, error) {
 	return out, nil
 }
 
-// decodeDeploy parses a `deploy` event from the pool-factory.
-//
-//	topics: [Symbol("deploy")]
-//	body:   Address(pool_address)
+// decodeDeploy parses the pool-factory `deploy`: topics [Symbol], body Address(pool_address).
 func decodeDeploy(e *events.Event, closedAt time.Time) (AdminEvent, error) {
 	if len(e.Topic) != 1 {
 		return AdminEvent{}, fmt.Errorf("%w: deploy expected 1 topic, got %d",
@@ -688,10 +643,7 @@ func decodeDeploy(e *events.Event, closedAt time.Time) (AdminEvent, error) {
 // put unverified provenance in a verified-data table. bid/lot/block ride in blend_admin's jsonb
 // attributes instead.
 
-// decodeUpdateEmissions parses a V1 `update_emissions` event.
-//
-//	topics: [Symbol("update_emissions")]
-//	body:   i128 (bare, a pool-wide emissions total)
+// decodeUpdateEmissions parses V1 `update_emissions`: topics [Symbol], body bare i128 (pool-wide emissions total).
 func decodeUpdateEmissions(e *events.Event, closedAt time.Time) (EmissionEvent, error) {
 	if len(e.Topic) != 1 {
 		return EmissionEvent{}, fmt.Errorf("%w: update_emissions expected 1 topic, got %d",
@@ -716,12 +668,8 @@ func decodeUpdateEmissions(e *events.Event, closedAt time.Time) (EmissionEvent, 
 	}, nil
 }
 
-// decodeNewLiquidationAuctionV1 parses a V1 `new_liquidation_auction`
-// event.
-//
-//	topics: [Symbol("new_liquidation_auction"), Address(user)]
-//	body:   AuctionData Map{bid, lot, block}, the shape decodeAuctionData parses for V2, but with
-//	        no auction_type topic and no percent field.
+// decodeNewLiquidationAuctionV1 parses V1 `new_liquidation_auction`: topics [Symbol, Address(user)], body AuctionData Map{bid, lot, block}
+// as in V2 but with no auction_type topic and no percent field.
 func decodeNewLiquidationAuctionV1(e *events.Event, closedAt time.Time) (AdminEvent, error) {
 	if len(e.Topic) != 2 {
 		return AdminEvent{}, fmt.Errorf("%w: new_liquidation_auction expected 2 topics, got %d",
@@ -753,12 +701,8 @@ func decodeNewLiquidationAuctionV1(e *events.Event, closedAt time.Time) (AdminEv
 	}, nil
 }
 
-// decodeDeleteLiquidationAuctionV1 parses a V1
-// `delete_liquidation_auction` event. The body is ScvVoid; like V2's delete_auction only the
-// topic-derived fields matter, so it is not parsed.
-//
-//	topics: [Symbol("delete_liquidation_auction"), Address(user)]
-//	body:   ScvVoid
+// decodeDeleteLiquidationAuctionV1 parses V1 `delete_liquidation_auction`: topics [Symbol, Address(user)], body ScvVoid (not parsed;
+// only topic-derived fields matter, as with V2 delete_auction).
 func decodeDeleteLiquidationAuctionV1(e *events.Event, closedAt time.Time) (AdminEvent, error) {
 	if len(e.Topic) != 2 {
 		return AdminEvent{}, fmt.Errorf("%w: delete_liquidation_auction expected 2 topics, got %d",
@@ -779,9 +723,7 @@ func decodeDeleteLiquidationAuctionV1(e *events.Event, closedAt time.Time) (Admi
 	}, nil
 }
 
-// toDomainAssetAmounts converts []AssetAmount (from the shared V1/V2 decodeAuctionData) into the
-// primitive-only []BlendAssetAmount that BlendAdminEvent carries, since domain cannot import this
-// package.
+// toDomainAssetAmounts converts to primitive-only domain types, since domain cannot import this package.
 func toDomainAssetAmounts(in []AssetAmount) []domain.BlendAssetAmount {
 	if len(in) == 0 {
 		return nil
@@ -795,10 +737,8 @@ func toDomainAssetAmounts(in []AssetAmount) []domain.BlendAssetAmount {
 
 // ─── ReserveConfig decoder helper ──────────────────────────────
 
-// reserveConfigKeys mirrors pool/src/storage.rs::ReserveConfig, decoded by name so field
-// reordering is harmless. i128 becomes a decimal string (full precision, ADR-0003), u32 becomes
-// uint64 (jsonb-safe). V2Only marks fields the V2 pool added; a V1 ReserveConfig has the other
-// eleven.
+// reserveConfigKeys mirrors pool/src/storage.rs::ReserveConfig, decoded by name. i128 becomes a decimal string (full precision),
+// u32 becomes uint64 (jsonb-safe). V2Only marks fields V2 added; a V1 ReserveConfig has the other eleven.
 var reserveConfigKeys = []struct {
 	Name   string
 	Type   string // "u32" | "i128" | "bool"
@@ -819,9 +759,8 @@ var reserveConfigKeys = []struct {
 	{reserveConfigEnabled, "bool", true},
 }
 
-// decodeReserveConfig decodes an ScvMap ReserveConfig into a key-value map. A missing field that
-// both pool generations carry is an error, so an upgrade dropping one fails loud instead of
-// writing partial data. A missing V2-only field is omitted and named in missing so V1 events land.
+// decodeReserveConfig decodes an ScvMap ReserveConfig. A missing field both pool generations carry is an error (fail loud on upgrade);
+// a missing V2-only field is omitted and named in missing so V1 events land.
 func decodeReserveConfig(sv scval.ScVal) (out map[string]any, missing []string, err error) {
 	entries, err := scval.AsMap(sv)
 	if err != nil {

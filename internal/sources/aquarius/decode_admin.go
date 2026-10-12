@@ -24,9 +24,7 @@ import (
 // decode_admin_test.go decodes bytes from both registered and flagged contracts, because decode
 // correctness and gate membership are independent concerns.
 
-// decodeAdminEvent dispatches on the already-classified event kind
-// and returns the decoded AdminEvent. Called from Decode() after
-// Matches() has gated on contract identity.
+// decodeAdminEvent dispatches on the classified kind; Decode() calls it after Matches() has gated on contract identity.
 func decodeAdminEvent(e *events.Event, kind string, closedAt time.Time) (AdminEvent, error) {
 	switch kind {
 	case EventApplyUpgrade:
@@ -63,16 +61,9 @@ func adminEnvelope(e *events.Event, kind AdminAction, closedAt time.Time) AdminE
 	}
 }
 
-// decodeUpgradeHashBody is shared by apply_upgrade / commit_upgrade.
-//
-//	topics: [Symbol(kind)]  (topic_count=1)
-//	body:   Vec[Bytes]  (length >= 1, each a 32-byte Wasm hash)
-//
-// Arity varies by emitter: the router emits a SINGLE hash, registered POOLS emit 2 (apply) or 2-3
-// (commit), so pinning `len(elts) != 1` would reject every pool body. Decode BY ARITY: element[0]
-// is the PRIMARY (new/applied/proposed) hash, which the caller lands in Target, with trailing
-// staged hashes carried in Attributes. Returns every hash in wire order; an empty body fails
-// closed.
+// decodeUpgradeHashBody is shared by apply/commit_upgrade: topics [Symbol(kind)], body Vec[Bytes] of 32-byte Wasm hashes.
+// Arity varies (router 1 hash, pools 2 or 2-3), so decode by arity: element[0] is the primary hash (Target), the rest go to
+// Attributes. Returns hashes in wire order; an empty body fails closed.
 func decodeUpgradeHashBody(e *events.Event, kindName string) ([]string, error) {
 	body, err := scval.Parse(e.Value)
 	if err != nil {
@@ -96,9 +87,8 @@ func decodeUpgradeHashBody(e *events.Event, kindName string) ([]string, error) {
 	return hashes, nil
 }
 
-// setUpgradeHashes lands element[0] in Target and each trailing staged hash in
-// Attributes["wasm_hash_N"] (1-indexed), like the addr_3 pattern in decodeSetPrivilegedAddrs. A
-// single-hash (router) body lands ONLY Target.
+// setUpgradeHashes lands element[0] in Target and trailing hashes in Attributes["wasm_hash_N"] (1-indexed).
+// A router body lands ONLY Target.
 func setUpgradeHashes(av *AdminEvent, hashes []string) {
 	av.Target = hashes[0]
 	for i, h := range hashes[1:] {
@@ -106,9 +96,7 @@ func setUpgradeHashes(av *AdminEvent, hashes []string) {
 	}
 }
 
-// decodeApplyUpgrade decodes `apply_upgrade` — see decodeUpgradeHashBody.
-// Target is the newly-applied Wasm hash (hex); pool bodies carry a
-// second staged hash in Attributes["wasm_hash_1"].
+// decodeApplyUpgrade decodes `apply_upgrade` (see decodeUpgradeHashBody); Target is the newly-applied Wasm hash (hex).
 func decodeApplyUpgrade(e *events.Event, closedAt time.Time) (AdminEvent, error) {
 	hashes, err := decodeUpgradeHashBody(e, EventApplyUpgrade)
 	if err != nil {
@@ -119,9 +107,8 @@ func decodeApplyUpgrade(e *events.Event, closedAt time.Time) (AdminEvent, error)
 	return av, nil
 }
 
-// decodeCommitUpgrade decodes `commit_upgrade` (see decodeUpgradeHashBody). It fires BEFORE the
-// matching apply_upgrade (two-phase upgrade). Target is the proposed Wasm hash (hex); pool bodies
-// carry further staged hashes in Attributes["wasm_hash_1"] / ["wasm_hash_2"].
+// decodeCommitUpgrade decodes `commit_upgrade` (see decodeUpgradeHashBody); fires BEFORE apply_upgrade (two-phase).
+// Target is the proposed Wasm hash (hex).
 func decodeCommitUpgrade(e *events.Event, closedAt time.Time) (AdminEvent, error) {
 	hashes, err := decodeUpgradeHashBody(e, EventCommitUpgrade)
 	if err != nil {
@@ -132,16 +119,9 @@ func decodeCommitUpgrade(e *events.Event, closedAt time.Time) (AdminEvent, error
 	return av, nil
 }
 
-// decodeSetPrivilegedAddrs decodes `set_privileged_addrs` in BOTH wire generations (contracts
-// upgrade in place and the body grew an element across a WASM upgrade, so backfill sees both):
-//
-//	topics: [Symbol("set_privileged_addrs")]  (topic_count=1)
-//	body v1: Vec[Address, Address, Address, Vec[Address]]           (length 4)
-//	body v2: Vec[Address, Address, Address, Vec[Address], Address]  (length 5)
-//
-// v2 adds ONE trailing plain Address after ledger 57,697,794; pinning arity==4 leaves those events
-// undecodable. Semantics are BEST-EFFORT (a multi-role privileged-address set); the v2 trailing
-// address lands in Attributes["addr_3"]. Any other arity fails closed.
+// decodeSetPrivilegedAddrs decodes `set_privileged_addrs`; topic [Symbol(kind)], body Vec[Address, Address, Address, Vec[Address]]
+// (v1, len 4) or v1 + a trailing Address (v2, len 5, after ledger 57,697,794). Contracts upgrade in place so backfill sees both: do not pin
+// arity 4. v2's extra address lands in Attributes["addr_3"]; other arities fail closed. Semantics are BEST-EFFORT.
 func decodeSetPrivilegedAddrs(e *events.Event, closedAt time.Time) (AdminEvent, error) {
 	body, err := scval.Parse(e.Value)
 	if err != nil {
@@ -190,14 +170,8 @@ func decodeSetPrivilegedAddrs(e *events.Event, closedAt time.Time) (AdminEvent, 
 	return av, nil
 }
 
-// decodeTransferOwnershipBody is shared by apply_transfer_ownership /
-// commit_transfer_ownership: both carry the identical wire shape.
-//
-//	topics: [Symbol(kind), Symbol(role)]  (topic_count=2)
-//	body:   Vec[Address]  (length 1: the new address for that role)
-//
-// topic[1] is a Symbol naming the role being transferred (observed "EmergencyAdmin"; a role-name
-// enum, not a G/C address), so more than one role kind may exist.
+// decodeTransferOwnershipBody is shared by apply/commit_transfer_ownership: topics [Symbol(kind), Symbol(role)], body Vec[Address]
+// (len 1, the new holder). topic[1] is a role-name Symbol (observed "EmergencyAdmin"), not an address; other roles may exist.
 func decodeTransferOwnershipBody(e *events.Event, kindName string) (role, newAddr string, err error) {
 	if len(e.Topic) != 2 {
 		return "", "", fmt.Errorf("%w: %s expected 2 topics, got %d", ErrMalformedPayload, kindName, len(e.Topic))
@@ -228,9 +202,7 @@ func decodeTransferOwnershipBody(e *events.Event, kindName string) (role, newAdd
 	return role, newAddr, nil
 }
 
-// decodeApplyTransferOwnership decodes `apply_transfer_ownership` —
-// see decodeTransferOwnershipBody. Target is the newly-applied
-// role-holder address.
+// decodeApplyTransferOwnership decodes `apply_transfer_ownership` (see decodeTransferOwnershipBody); Target is the new role-holder.
 func decodeApplyTransferOwnership(e *events.Event, closedAt time.Time) (AdminEvent, error) {
 	role, newAddr, err := decodeTransferOwnershipBody(e, EventApplyTransferOwnership)
 	if err != nil {
@@ -242,9 +214,7 @@ func decodeApplyTransferOwnership(e *events.Event, closedAt time.Time) (AdminEve
 	return av, nil
 }
 
-// decodeCommitTransferOwnership decodes `commit_transfer_ownership` —
-// see decodeTransferOwnershipBody. Fires BEFORE the matching
-// apply_transfer_ownership (staged/two-phase transfer).
+// decodeCommitTransferOwnership decodes `commit_transfer_ownership` (see decodeTransferOwnershipBody); fires BEFORE the apply.
 func decodeCommitTransferOwnership(e *events.Event, closedAt time.Time) (AdminEvent, error) {
 	role, newAddr, err := decodeTransferOwnershipBody(e, EventCommitTransferOwnership)
 	if err != nil {
@@ -256,10 +226,7 @@ func decodeCommitTransferOwnership(e *events.Event, closedAt time.Time) (AdminEv
 	return av, nil
 }
 
-// decodeEnableEmergencyMode decodes `enable_emergency_mode`, a bare marker with no payload.
-//
-//	topics: [Symbol("enable_emergency_mode")]  (topic_count=1)
-//	body:   Void
+// decodeEnableEmergencyMode decodes `enable_emergency_mode`: topics [Symbol(kind)], body Void.
 func decodeEnableEmergencyMode(e *events.Event, closedAt time.Time) (AdminEvent, error) {
 	if err := requireVoidBody(e, EventEnableEmergencyMode); err != nil {
 		return AdminEvent{}, err
@@ -276,13 +243,8 @@ func decodeDisableEmergencyMode(e *events.Event, closedAt time.Time) (AdminEvent
 	return adminEnvelope(e, AdminDisableEmergencyMode, closedAt), nil
 }
 
-// decodePoolGaugeSwitchToken decodes `pool_gauge_switch_token`.
-//
-//	topics: [Symbol("pool_gauge_switch_token"), Address(new_reward_token)]  (topic_count=2)
-//	body:   Vec[Bool]  (length 1)
-//
-// Router-scoped only; every observed body value is `true`. Target is the pool's new gauge
-// reward-token address.
+// decodePoolGaugeSwitchToken decodes `pool_gauge_switch_token` (router-scoped): topics [Symbol(kind), Address(new_reward_token)],
+// body Vec[Bool] (len 1, always true). Target is the new gauge reward token.
 func decodePoolGaugeSwitchToken(e *events.Event, closedAt time.Time) (AdminEvent, error) {
 	if len(e.Topic) != 2 {
 		return AdminEvent{}, fmt.Errorf("%w: pool_gauge_switch_token expected 2 topics, got %d", ErrMalformedPayload, len(e.Topic))
