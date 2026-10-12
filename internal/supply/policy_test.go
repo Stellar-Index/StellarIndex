@@ -49,10 +49,8 @@ func TestPolicy_MaxSupplyOverride_Present(t *testing.T) {
 	}
 }
 
-// TestPolicy_MaxSupplyOverride_AbsentOrEmpty — both "key missing"
-// and "key present with empty value" fall through with ok=false; the
-// empty-string sentinel is documented as "fall through to next
-// source" in the Policy struct doc.
+// Both "key missing" and "key present with empty value" fall through with ok=false; the empty string is the documented
+// "fall through to next source" sentinel in the Policy struct.
 func TestPolicy_MaxSupplyOverride_AbsentOrEmpty(t *testing.T) {
 	p := supply.Policy{
 		MaxSupplyOverrides: map[string]string{"USDC:GA1": ""},
@@ -94,10 +92,8 @@ func TestPolicy_Validate_Clean(t *testing.T) {
 	}
 }
 
-// TestPolicy_Validate_RejectsEmptyEntries — empty strings in the
-// account / contract lists are typos in YAML; loud rejection at
-// startup is better than producing a "balance for empty account ID"
-// downstream.
+// Empty strings in the account / contract lists are YAML typos; reject loudly at startup rather than produce a "balance
+// for empty account ID" downstream.
 func TestPolicy_Validate_RejectsEmptyEntries(t *testing.T) {
 	p := supply.Policy{
 		SDFReserveAccounts: []string{"GA...", ""},
@@ -166,10 +162,8 @@ func TestPolicyValidate_rejectsNegativeOverrideAndDuplicates(t *testing.T) {
 	})
 }
 
-// TestPolicyValidate_rejectsNonStrkeyEntries — a reserve or locked-set
-// entry that is not a CRC-valid strkey of the right version matches no
-// on-chain holder, so its balance silently contributes 0 to the
-// exclusion and circulating supply is overstated with a clean boot.
+// A reserve or locked-set entry that is not a CRC-valid strkey of the right version matches no on-chain holder, so it
+// silently contributes 0 to the exclusion and overstates circulating supply with a clean boot.
 func TestPolicyValidate_rejectsNonStrkeyEntries(t *testing.T) {
 	const (
 		reserveAccount = "GDUY7J7A33TQWOSOQGDO776GGLM3UQERL4J3SPT56F6YS4ID7MLDERI4"
@@ -243,10 +237,8 @@ func TestPolicyValidate_rejectsNonStrkeyEntries(t *testing.T) {
 	}
 }
 
-// A Policy key the computers' exact AssetKey lookup can never hit —
-// the dash spelling, native XLM (Algorithm 1 reads neither map) or an
-// unparseable key — must fail Validate instead of silently leaving the
-// issuer-only / SEP-1 default in force.
+// A Policy key the computers' exact AssetKey lookup can never hit (dash spelling, native XLM which Algorithm 1 reads in
+// neither map, or unparseable) must fail Validate rather than silently leave the issuer-only / SEP-1 default in force.
 func TestPolicyValidate_RejectsUnmatchableKeys(t *testing.T) {
 	const (
 		aquaColon = "AQUA:GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA"

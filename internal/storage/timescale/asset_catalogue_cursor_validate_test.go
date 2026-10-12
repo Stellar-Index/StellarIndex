@@ -5,10 +5,8 @@ import (
 	"testing"
 )
 
-// ValidateAssetsCursor pins the per-shape rejection. Garbage that
-// matched a loose parser (returns 0, "") would fall through
-// silently and produce an empty page that looked like end-of-
-// pagination — see the package comment on parseAssetCursor.
+// ValidateAssetsCursor pins per-shape rejection: garbage that a loose parser read as (0, "") would fall
+// through silently into an empty page that looks like end-of-pagination (see parseAssetCursor).
 
 func TestValidateAssetsCursor_emptyAlwaysOK(t *testing.T) {
 	for _, order := range []AssetsOrder{

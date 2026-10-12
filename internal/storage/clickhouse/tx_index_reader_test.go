@@ -23,11 +23,9 @@ func hashes(n int) []string {
 	return out
 }
 
-// TestTxIndexes_ChunksAtTheBoundaryWithoutLosingHashes is the chunk-arithmetic contract.
-// txIndexChunk bounds each IN-list so every chunk is a set of primary-key point lookups; an
-// off-by-one over-run panics while an under-run silently drops the tail, which for the MEV
-// sandwich detector means quietly missing detections. The interesting sizes are one below,
-// exactly at, and one above the chunk boundary.
+// TestTxIndexes_ChunksAtTheBoundaryWithoutLosingHashes: txIndexChunk bounds each IN-list to primary-key point
+// lookups; an off-by-one under-run silently drops the tail (missed MEV sandwich detections). Sizes tested are
+// one below, at, and one above the boundary.
 func TestTxIndexes_ChunksAtTheBoundaryWithoutLosingHashes(t *testing.T) {
 	for _, n := range []int{0, 1, txIndexChunk - 1, txIndexChunk, txIndexChunk + 1, 2*txIndexChunk + 3} {
 		t.Run(fmt.Sprintf("n=%d", n), func(t *testing.T) {
@@ -83,10 +81,9 @@ func TestTxIndexes_ChunksAtTheBoundaryWithoutLosingHashes(t *testing.T) {
 	}
 }
 
-// TestTxIndexes_MissingHashesAreAbsentNotZero — the tx_hash_index backfill is windowed, so a
-// hash not yet indexed legitimately returns no row. It must be ABSENT from the map: a
-// zero-valued entry would tell the MEV detector the transaction was FIRST in its ledger, a
-// specific and wrong claim rather than a missing one.
+// TestTxIndexes_MissingHashesAreAbsentNotZero: the tx_hash_index backfill is windowed, so an unindexed hash
+// returns no row and must be absent from the map; a zero entry would tell the MEV detector the tx was first
+// in its ledger.
 func TestTxIndexes_MissingHashesAreAbsentNotZero(t *testing.T) {
 	conn := &stubConn{respond: func(string) (driver.Rows, error) {
 		// Only "aa" is indexed.
@@ -110,10 +107,9 @@ func TestTxIndexes_MissingHashesAreAbsentNotZero(t *testing.T) {
 	}
 }
 
-// TestTxIndexes_QueryShape pins the dedup and the key shape. max() collapses
-// ReplacingMergeTree duplicates that have not merged (tx_index is identical
-// across duplicates of one hash), and tx_hash is the table's primary key, so
-// the IN-list is a set of point lookups rather than a scan.
+// TestTxIndexes_QueryShape pins the dedup and key shape. max() collapses unmerged ReplacingMergeTree
+// duplicates (tx_index is identical across duplicates of one hash), and tx_hash is the primary key, so the
+// IN-list is point lookups, not a scan.
 func TestTxIndexes_QueryShape(t *testing.T) {
 	conn := &stubConn{respond: func(string) (driver.Rows, error) { return &stubRows{}, nil }}
 	r := &TxIndexReader{conn: conn}
@@ -169,10 +165,9 @@ func TestTxIndexes_TruncatedStreamIsAnError(t *testing.T) {
 	}
 }
 
-// TestTxIndexes_ChunkFailureIncrementsSkippedMetric is the visibility half of the
-// ChunkFailureAbortsWithoutAPartialMap contract: an aborted lookup is otherwise silent past one
-// best-effort log line. obs.MEVLakeOrderLookupSkippedTotal must move so a sustained
-// MEMORY_LIMIT_EXCEEDED rate on stellar.tx_hash_index shows up on an alert, not just in logs.
+// TestTxIndexes_ChunkFailureIncrementsSkippedMetric is the visibility half of the abort contract: an aborted
+// lookup is otherwise silent past one log line, so obs.MEVLakeOrderLookupSkippedTotal must move to alert on
+// sustained MEMORY_LIMIT_EXCEEDED against stellar.tx_hash_index.
 func TestTxIndexes_ChunkFailureIncrementsSkippedMetric(t *testing.T) {
 	before := testutil.ToFloat64(obs.MEVLakeOrderLookupSkippedTotal)
 
@@ -191,10 +186,8 @@ func TestTxIndexes_ChunkFailureIncrementsSkippedMetric(t *testing.T) {
 	}
 }
 
-// TestTxIndexes_ContextCanceledDoesNotCountAsASkip — a query failing
-// because the caller's context was canceled (worker shutdown, tick
-// deadline) is not the MEMORY_LIMIT skip this metric tracks; counting it
-// would make the metric fire on every ordinary shutdown.
+// TestTxIndexes_ContextCanceledDoesNotCountAsASkip: a query failing on the caller's canceled context is not
+// the MEMORY_LIMIT skip this metric tracks; counting it would fire the metric on every ordinary shutdown.
 func TestTxIndexes_ContextCanceledDoesNotCountAsASkip(t *testing.T) {
 	before := testutil.ToFloat64(obs.MEVLakeOrderLookupSkippedTotal)
 

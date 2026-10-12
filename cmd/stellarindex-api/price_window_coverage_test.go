@@ -21,11 +21,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// TestPriceServesCachedWindowCoverage: /v1/price serving the aggregator's
-// rolling-window cache (here a frozen pair's held 24h value) states the
-// coverage the aggregator wrote beside the value: truncated plus
-// covered_from for a capped read, truncated=false for a complete one,
-// and neither field when no coverage was written (unknown).
+// TestPriceServesCachedWindowCoverage: /v1/price serving the aggregator's rolling-window cache (here a frozen pair's
+// held 24h value) states the coverage written beside it: truncated plus covered_from for a capped read, truncated=false
+// for a complete one, neither when unknown.
 func TestPriceServesCachedWindowCoverage(t *testing.T) {
 	const held = "0.251100000000"
 	const window = 24 * time.Hour

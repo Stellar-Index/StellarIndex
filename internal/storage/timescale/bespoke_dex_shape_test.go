@@ -16,10 +16,9 @@ func assertDEXNumericSafe(t *testing.T, name, q string) {
 	assertNoFloatSQL(t, name, q)
 }
 
-// assertWindowBounded guards against unbounded trades/CAGG walks: every
-// windowed DEX query binds the $2::interval window on its time column,
-// rolling at 24h or day-aligned beyond (TestDexWindowsShareCompleteDayBounds
-// pins which).
+// assertWindowBounded guards against unbounded trades/CAGG walks: every windowed DEX query binds the
+// $2::interval window on its time column, rolling at 24h or day-aligned beyond (see
+// TestDexWindowsShareCompleteDayBounds).
 func assertWindowBounded(t *testing.T, name, q string) {
 	t.Helper()
 	if !strings.Contains(q, dexRollingLowerSQL) && !strings.Contains(q, dexDayLowerSQL) {
@@ -33,10 +32,9 @@ const (
 	dexDayUpperSQL     = "< date_trunc('day', now())"
 )
 
-// TestDexWindowsShareCompleteDayBounds pins one window per DEX block. The daily CAGG labels a
-// day by its 00:00 start and never materializes today, so a rolling `bucket > now() - '7 days'`
-// cut sums 6 days under a "(7d)" label. Beyond 24h every builder, CAGG and raw alike, must
-// bound on the N complete UTC days before today, and each window bind must carry both bounds.
+// TestDexWindowsShareCompleteDayBounds pins one window per DEX block: the daily CAGG never materializes
+// today, so a rolling `bucket > now() - '7 days'` sums 6 days under a "(7d)" label. Beyond 24h every builder
+// must bound on the N complete UTC days before today, and each window bind must carry both bounds.
 func TestDexWindowsShareCompleteDayBounds(t *testing.T) {
 	builders := map[string]func(int) string{
 		"dexActivitySeriesQuery": dexActivitySeriesQuery,
@@ -78,10 +76,8 @@ func TestDexVolumeHintNamesCompleteDays(t *testing.T) {
 	}
 }
 
-// TestDexRawWindowOK guards the SDEX raw-scan gate: raw-trades-derived
-// surfaces (traders, avg size, largest trades) are served for SDEX only at
-// the 24h/7d windows (5M rows/week measured 1.4s; ~15–20s extrapolated at
-// 90d), and always for the AMM sources (≤1M rows at 90d).
+// TestDexRawWindowOK guards the SDEX raw-scan gate: raw-trades surfaces are served for SDEX only at 24h/7d
+// (5M rows/week took 1.4s; 90d would take ~15-20s), and always for AMM sources (at most 1M rows at 90d).
 func TestDexRawWindowOK(t *testing.T) {
 	for _, c := range []struct {
 		source string
@@ -103,10 +99,9 @@ func TestDexRawWindowOK(t *testing.T) {
 	}
 }
 
-// TestDexActivitySeriesQueryShape — the 24h window MUST come from the
-// hourly source_volume_1h rollup with hour-carrying timestamps (a daily
-// bucket collapses 24h into one partial point); longer windows come from
-// the daily pair CAGG.
+// TestDexActivitySeriesQueryShape: the 24h window MUST come from the hourly source_volume_1h rollup with
+// hour-carrying timestamps (a daily bucket collapses it to one point); longer windows use the daily pair
+// CAGG.
 func TestDexActivitySeriesQueryShape(t *testing.T) {
 	hourly := dexActivitySeriesQuery(1)
 	if !strings.Contains(hourly, "source_volume_1h") {
@@ -133,10 +128,8 @@ func TestDexActivitySeriesQueryShape(t *testing.T) {
 	}
 }
 
-// TestDexWindowKPIQueryShape — the >1d KPI counts pairs via a hash-agg
-// GROUP BY subquery, NOT count(DISTINCT (base,quote)): the row-comparison
-// sort of the latter measured 6.0s on sdex 90d vs 0.67s for the GROUP BY
-// shape (r1).
+// TestDexWindowKPIQueryShape: the >1d KPI counts pairs via a hash-agg GROUP BY subquery, not count(DISTINCT
+// (base,quote)), whose row-comparison sort measured 6.0s against 0.67s on sdex 90d.
 func TestDexWindowKPIQueryShape(t *testing.T) {
 	q := dexWindowKPIQuery(90)
 	if strings.Contains(q, "count(DISTINCT (base_asset, quote_asset))") {
@@ -157,10 +150,9 @@ func TestDexWindowKPIQueryShape(t *testing.T) {
 	assertWindowBounded(t, "24h KPI", h)
 }
 
-// TestDexRawKPIQueryShape — avg trade size is exact NUMERIC division of
-// the usd_volume sum by the PRICED trade count: NULL-usd trades are
-// excluded from both sides (count(usd_volume) skips NULLs; sum ignores
-// them), and NULLIF guards the zero-priced window.
+// TestDexRawKPIQueryShape: avg trade size is exact NUMERIC division of the usd_volume sum by the priced
+// trade count. NULL-usd trades are excluded from both sides (count(usd_volume) and sum skip NULLs), and
+// NULLIF guards a zero-priced window.
 func TestDexRawKPIQueryShape(t *testing.T) {
 	q := dexRawKPIQuery(90)
 	if !strings.Contains(q, "sum(usd_volume) / NULLIF(count(usd_volume),0)") {
@@ -222,10 +214,8 @@ func TestDexPairBreakdownQueryShape(t *testing.T) {
 	}
 }
 
-// TestDexTopPairsSeriesQueryShape — top-5 cap; the >1d form joins the
-// CAGG directly against the top-5 CTE (re-aggregating the CAGG through a
-// grouped CTE measured 19.8s on sdex 90d vs 0.87s direct; CAGG rows are
-// already unique per (source, pair, bucket) — materialized_only=true).
+// TestDexTopPairsSeriesQueryShape: top-5 cap; the >1d form joins the CAGG directly against the top-5 CTE
+// (re-aggregating through a grouped CTE measured 19.8s vs 0.87s on sdex 90d; CAGG rows are already unique).
 func TestDexTopPairsSeriesQueryShape(t *testing.T) {
 	daily := dexTopPairsSeriesQuery(90)
 	if !strings.Contains(daily, "LIMIT 5") {
@@ -264,10 +254,9 @@ func TestDexLargestTradesQueryShape(t *testing.T) {
 	assertDEXNumericSafe(t, "largest trades", q)
 }
 
-// TestDexSinceTotalsQueryShape — deliberately unwindowed over the
-// materialized-only CAGG, and it must surface the floor date so the KPI
-// label can be "since <date>", never "all-time" (the rollup floor is
-// later than the start of raw sdex history).
+// TestDexSinceTotalsQueryShape: deliberately unwindowed over the materialized-only CAGG, and it must surface
+// the floor date so the KPI label reads "since <date>", never "all-time" (the rollup floor postdates raw
+// sdex history).
 func TestDexSinceTotalsQueryShape(t *testing.T) {
 	q := dexSinceTotalsQuery()
 	if strings.Contains(q, "$2") || sqlContainsFold(q, "interval") {
@@ -282,10 +271,8 @@ func TestDexSinceTotalsQueryShape(t *testing.T) {
 	assertDEXNumericSafe(t, "since totals", q)
 }
 
-// TestDexAssetLabels — honest labelling: native + verified SACs resolve to
-// tickers (XLM SAC + USDC SAC verified against their live r1 pair usage),
-// unverified contracts truncate rather than guess, classic ids show their
-// code.
+// TestDexAssetLabels pins honest labelling: native and verified SACs resolve to tickers, unverified
+// contracts truncate rather than guess, and classic ids show their code.
 func TestDexAssetLabels(t *testing.T) {
 	for asset, want := range map[string]string{
 		"native": "XLM",

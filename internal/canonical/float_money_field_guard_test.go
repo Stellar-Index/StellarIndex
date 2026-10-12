@@ -55,10 +55,8 @@ func floatMoneyMarkerLines(fset *token.FileSet, f *ast.File) map[int]bool {
 	return out
 }
 
-// unwrapOneLevel strips a single pointer, map (by value type) or
-// slice/array (by element type) layer off t. ok is false once t is
-// none of those, so the caller's loop terminates on the innermost
-// type instead of spinning.
+// Strips one pointer, map (value type) or slice/array (element type) layer off t. ok is false once t is none of those,
+// so the caller's loop ends on the innermost type.
 func unwrapOneLevel(t types.Type) (elem types.Type, ok bool) {
 	switch u := t.Underlying().(type) {
 	case *types.Pointer:
@@ -74,11 +72,8 @@ func unwrapOneLevel(t types.Type) (elem types.Type, ok bool) {
 	}
 }
 
-// checkFloatMoneyField returns a violation message when v is a
-// float32/float64 struct field named like a money quantity, else "".
-// The declared type is unwrapped through pointers, maps (by value type) and slices/arrays (by
-// element type) before the float check, so map[string]float64 and []float64 are caught like a
-// bare float64.
+// Returns a violation when v is a float32/float64 struct field named like a money quantity, else "". The type is
+// unwrapped through pointers, maps and slices first, so map[string]float64 and []float64 are caught like a bare float64.
 func checkFloatMoneyField(v *types.Var) string {
 	if !v.IsField() || !floatMoneyNameRe.MatchString(v.Name()) {
 		return ""

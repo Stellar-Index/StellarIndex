@@ -15,18 +15,13 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// ─── `-tier xlm-quote` / `-tier cex-fx` — the two mirror tiers' walks ────
-//
-// The driver is pinned tier-agnostically by the xlm-base tests beside this file, and the
-// per-row decisions in the storage package. Pinned HERE: the two mirror tiers drive that SAME
-// walk (bracketing each compressed chunk, writing only through the guarded in-chunk apply,
-// carrying the run's generation), and each names ITSELF in the header, summary and RESUME
-// line so an operator cannot mistake one tier's report for another's.
+// The driver is pinned by the xlm-base tests and per-row decisions in the storage package; here the xlm-quote and cex-fx
+// tiers drive the same walk (bracketed chunks, writes only through the guarded in-chunk apply, run generation carried)
+// and each names itself in header, summary and RESUME line.
 
-// fakeMirrorChunkStore is the mirror tiers' seam double. It reuses the driver double for the
-// chunk/policy/lock half and answers the shared row-list plan/apply pair; dirty-row bookkeeping
-// (a row is planned until an apply takes it) makes "a rerun skips finished chunks" observable
-// without a database.
+// Mirror tiers' seam double: reuses the driver double for chunk/policy/lock and answers the shared row-list plan/apply
+// pair; dirty-row bookkeeping (planned until an apply takes it) makes "a rerun skips finished chunks" observable without
+// a database.
 type fakeMirrorChunkStore struct {
 	*fakeChunkStore
 	// staleness records what tolerance the cex-fx planner was handed.
@@ -54,10 +49,8 @@ func (f *fakeMirrorChunkStore) ApplyUSDVolumeRestampPlanInChunk(ctx context.Cont
 	return f.ApplyXLMBaseUSDVolumeRestampInChunk(ctx, c, plan, generation, batch)
 }
 
-// assertBracketedChunkWalk checks the property both mirror tiers inherit
-// from the driver: every chunk bracketed once, in range order, with every
-// write inside its own bracket and routed through the guarded in-chunk
-// apply at the chunk batch.
+// Checks the property both mirror tiers inherit from the driver: every chunk bracketed once in range order, with every
+// write inside its own bracket and routed through the guarded in-chunk apply at the chunk batch.
 func assertBracketedChunkWalk(t *testing.T, store *fakeChunkStore) {
 	t.Helper()
 	var brackets []string
@@ -175,10 +168,8 @@ func TestCEXFiatChunkRestamp_BracketsEachChunkAndCarriesTheAsOfTolerance(t *test
 	}
 }
 
-// TestMirrorChunkRestamp_ResumeLineNamesTheTierAndItsFlags: a stopped run
-// prints the command that continues IT — the same tier, the same
-// generation, the same population flags. A RESUME line that named the
-// wrong tier would send the operator to restamp a different 18M rows.
+// A stopped run prints the command that continues IT: same tier, same generation, same population flags. A RESUME line
+// naming the wrong tier would send the operator to restamp a different 18M rows.
 func TestMirrorChunkRestamp_ResumeLineNamesTheTierAndItsFlags(t *testing.T) {
 	chunks, from, to := threeChunks()
 	opts, copts, out := chunkTestOptions(true)
@@ -223,9 +214,8 @@ func TestMirrorChunkRestamp_ResumeLineNamesTheTierAndItsFlags(t *testing.T) {
 	}
 }
 
-// TestValidateRestampTierFlags_MirrorTiers is the flag contract for the mirror tiers: they take
-// the estimated tiers' flags, `-tier exact` still refuses them, `-fx-max-staleness` belongs to
-// cex-fx ALONE, and an unknown tier names every accepted spelling. A flag silently ignored on a
+// Flag contract for the mirror tiers: they take the estimated tiers' flags, `-tier exact` still refuses them, `-fx-max-
+// staleness` belongs to cex-fx alone, and an unknown tier names every accepted spelling. A flag silently ignored on a
 // money-column writer is the failure this closes.
 func caseValidateRestampTierFlags_MirrorTiers(t *testing.T) {
 	t.Parallel()
@@ -260,10 +250,8 @@ func caseValidateRestampTierFlags_MirrorTiers(t *testing.T) {
 	}
 }
 
-// TestValidateRestampFXStaleness: the as-of tolerance may be narrowed,
-// never widened — a quote the live insert path declines as stale must
-// never become a backfilled value — and never zeroed, which would refuse
-// every row while reporting them as unpriceable.
+// The as-of tolerance may be narrowed, never widened (a quote the live insert path declines as stale must never become a
+// backfilled value), and never zeroed, which would refuse every row while reporting them unpriceable.
 func TestValidateRestampFXStaleness(t *testing.T) {
 	t.Parallel()
 	for _, ok := range []time.Duration{time.Hour, 24 * time.Hour, timescale.CEXFiatMaxQuoteStaleness} {
@@ -278,11 +266,9 @@ func TestValidateRestampFXStaleness(t *testing.T) {
 	}
 }
 
-// TestPrintReport_NamesTheRunningTierNotTheXLMBaseOne pins the tier name. printReport
-// (usd_volume_restamp_xlmbase.go) is the shared report chokepoint EVERY estimated tier's walk
-// finishes through. Its scanLabel/declineLabel lines are templated on the running tier; the
-// header line must not hard-code "tier xlm-base", or an xlm-quote or cex-fx banner would show
-// the wrong tier name.
+// printReport (usd_volume_restamp_xlmbase.go) is the shared report chokepoint every estimated tier finishes through; its
+// scan/decline labels are templated on the running tier, so the header must not hard-code "tier xlm-base" or an xlm-
+// quote/cex-fx banner shows the wrong tier.
 func TestPrintReport_NamesTheRunningTierNotTheXLMBaseOne(t *testing.T) {
 	store := newFakeMirrorChunkStore(nil)
 	run := newEstimatedRestampRun(xlmBaseRestampOptions{Slice: time.Hour, Batch: 1}, xlmQuoteTierProfile(store))

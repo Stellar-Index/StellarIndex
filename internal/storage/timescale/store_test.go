@@ -26,10 +26,8 @@ func TestConfigurePool_AppliesAllFourSettings(t *testing.T) {
 		t.Errorf("MaxOpenConnections = %d, want %d", got, want)
 	}
 
-	// MaxIdleConns / ConnMaxLifetime / ConnMaxIdleTime aren't
-	// surfaced through Stats — assert the exported constants
-	// remain sane instead (drift-guard) and that configurePool
-	// doesn't panic.
+	// MaxIdleConns / ConnMaxLifetime / ConnMaxIdleTime are not surfaced through Stats, so assert the exported
+	// constants stay sane (drift guard) and that configurePool does not panic.
 	if PoolMaxIdleConns <= 0 || PoolMaxIdleConns > PoolMaxOpenConns {
 		t.Errorf("PoolMaxIdleConns = %d, want 0 < n ≤ %d", PoolMaxIdleConns, PoolMaxOpenConns)
 	}
@@ -41,10 +39,8 @@ func TestConfigurePool_AppliesAllFourSettings(t *testing.T) {
 	}
 }
 
-// TestStorePingContext_NilSafe — the resilience-ping goroutine in
-// cmd/stellarindex-indexer/main.go probes via [Store.PingContext];
-// a nil receiver during shutdown teardown MUST not panic. Returning
-// nil is the documented behaviour.
+// TestStorePingContext_NilSafe pins that Store.PingContext on a nil receiver, as during shutdown teardown,
+// returns nil without panicking.
 func TestStorePingContext_NilSafe(t *testing.T) {
 	var s *Store
 	if err := s.PingContext(context.Background()); err != nil {

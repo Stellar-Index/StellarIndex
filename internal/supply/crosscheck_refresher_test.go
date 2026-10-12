@@ -206,10 +206,8 @@ func TestCrossCheckRefresher_PartialWrapClassicExceedsSacIsBenign(t *testing.T) 
 	}
 }
 
-// TestCrossCheckRefresher_PartialWrapOverMintIsDiagnostic — the genuine
-// violation direction for a partial-wrap pair: SAC total exceeding
-// classic total is impossible under correct accounting and MUST still
-// fire an Over outcome (a genuine escrow != minted violation).
+// For a partial-wrap pair, SAC total exceeding classic total is impossible under correct accounting and MUST still fire
+// an Over outcome (escrow != minted).
 func TestCrossCheckRefresher_PartialWrapOverMintIsDiagnostic(t *testing.T) {
 	t.Parallel()
 	reader := &fakeSnapshotReader{supplies: map[string]supply.Supply{
@@ -240,10 +238,8 @@ func TestCrossCheckRefresher_PartialWrapOverMintIsDiagnostic(t *testing.T) {
 	}
 }
 
-// A partial-wrap pair whose classic snapshot carries no escrow
-// (SACWrappedStroops nil — any asset with no sac_balance_observations
-// row) evaluated no paging leg. It must report unchecked and clear the
-// gauge, never publish "within" with a divergence of 0.
+// A partial-wrap pair whose classic snapshot has no escrow (SACWrappedStroops nil, no sac_balance_observations row)
+// evaluated no paging leg; it must report unchecked and clear the gauge, never publish "within" with divergence 0.
 func TestCrossCheckRefresher_PartialWrapWithoutEscrowIsUnchecked(t *testing.T) {
 	t.Parallel()
 	reader := &fakeSnapshotReader{supplies: map[string]supply.Supply{
@@ -270,11 +266,8 @@ func TestCrossCheckRefresher_PartialWrapWithoutEscrowIsUnchecked(t *testing.T) {
 	}
 }
 
-// TestCrossCheckRefresher_MisalignedLedgersNeitherPassesNorPages is the misaligned-ledger guard.
-// Each side's snapshot is the LATEST for its asset_key from its own refresher, so nothing makes
-// them contemporaneous. A SAC snapshot far ahead of a stalled classic snapshot would make the
-// subset bound report an over-mint that never happened. It must instead report `misaligned`:
-// no verdict, no gauge.
+// Each side's snapshot is the LATEST from its own refresher, so they need not be contemporaneous; a SAC snapshot far
+// ahead of a stalled classic one would fake an over-mint. The refresher must report `misaligned`: no verdict, no gauge.
 func TestCrossCheckRefresher_MisalignedLedgersNeitherPassesNorPages(t *testing.T) {
 	t.Parallel()
 	reader := &fakeSnapshotReader{supplies: map[string]supply.Supply{
@@ -305,10 +298,8 @@ func TestCrossCheckRefresher_MisalignedLedgersNeitherPassesNorPages(t *testing.T
 	}
 }
 
-// TestCrossCheckRefresher_AlignedLedgersStillCompare — the alignment
-// gate must not swallow the real check: a gap inside
-// [supply.CrossCheckLedgerTolerance] still produces a verdict, and a
-// genuine over-mint at aligned ledgers still pages.
+// The alignment gate must not swallow the real check: a gap inside supply.CrossCheckLedgerTolerance still yields a
+// verdict, and a genuine over-mint at aligned ledgers still pages.
 func TestCrossCheckRefresher_AlignedLedgersStillCompare(t *testing.T) {
 	t.Parallel()
 	reader := &fakeSnapshotReader{supplies: map[string]supply.Supply{
@@ -331,10 +322,8 @@ func TestCrossCheckRefresher_AlignedLedgersStillCompare(t *testing.T) {
 	}
 }
 
-// TestCrossCheckRefresher_FullWrapStillAlertsOnMismatch — an operator-
-// attested [supply.WrapClassFull] pair keeps the ORIGINAL ADR-0011
-// equality semantics: classic exceeding sac by more than tolerance
-// still fires, so fully-wrapped tokens still alert.
+// An operator-attested supply.WrapClassFull pair keeps the original ADR-0011 equality semantics: classic exceeding sac
+// by more than tolerance still fires.
 func TestCrossCheckRefresher_FullWrapStillAlertsOnMismatch(t *testing.T) {
 	t.Parallel()
 	reader := &fakeSnapshotReader{supplies: map[string]supply.Supply{
@@ -498,10 +487,9 @@ func TestCrossCheckRefresher_PerPairIsolation(t *testing.T) {
 	}
 }
 
-// TestCrossCheckRefresher_NonEvaluableOutcomeClearsGauge — a pair whose last tick agreed must not
-// keep serving that agreement once it stops being evaluable: Prometheus re-exports a GaugeVec
-// series on every scrape, so a stalled classic refresher would otherwise read as a healthy 0
-// forever while the divergence alert stays silent.
+// A pair that stops being evaluable must stop serving its last agreement: Prometheus re-exports a GaugeVec series on
+// every scrape, so a stalled classic refresher would otherwise read as a healthy 0 forever while the divergence alert
+// stays silent.
 func TestCrossCheckRefresher_NonEvaluableOutcomeClearsGauge(t *testing.T) {
 	t.Parallel()
 	const classicKey, sacKey = "USDC:G...", "CCONTRACT"

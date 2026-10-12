@@ -98,10 +98,9 @@ func TestOfferVersion_MatchesTableDefinition(t *testing.T) {
 	}
 }
 
-// TestOfferBookTip pins the order book's hole-safe read bound: the
-// cursor holds just below a missing ledger, resumes through it once it is
-// filled, and a read with no cursor to continue from starts at the lake's
-// first ledger instead of reporting a boundary hole forever.
+// TestOfferBookTip pins the order book's hole-safe read bound: the cursor holds below a missing ledger,
+// resumes once it is filled, and with no cursor starts at the lake's first ledger rather than reporting a
+// boundary hole forever.
 func TestOfferBookTip(t *testing.T) {
 	const cursor = uint32(63_400_000)
 	cases := []struct {

@@ -9,10 +9,8 @@ import (
 	"testing"
 )
 
-// The scale is read on two axes — which instance map (tokenMetadataMapKeys)
-// and which field name inside it (tokenDecimalsKeys). Both methodology
-// pages that explain the exponent must name every spelling on both axes,
-// or a reader re-deriving a figure from one page misses half the reader.
+// The decimals scale is read on two axes, the instance map (tokenMetadataMapKeys) and the field name
+// (tokenDecimalsKeys). Both methodology pages explaining the exponent must name every spelling on both.
 func TestDecimalsDocsNameBothSpellingAxes(t *testing.T) {
 	pages := []struct{ path, heading string }{
 		{"../../../docs/methodology/contract-storage-supply.md", "## 6. Decimals are read, never assumed"},

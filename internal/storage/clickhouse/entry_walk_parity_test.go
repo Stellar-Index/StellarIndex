@@ -13,14 +13,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// This file guards the parity of two walkers: the live dispatcher walker and the lake walker
-// are independent implementations of ONE contract ("the lake's rows match what the live
-// LedgerEntryChangeDecoder hook sees"). Comment-coupling between them is not enforcement, so
-// this test is.
-//
-// It lives in package clickhouse_test (external) so it can import internal/dispatcher without
-// a cycle, driving both walkers through their EXPORTED entry points, dispatcher.ProcessLedger
-// and clickhouse.ExtractLedger, which are what the indexer and the lake writer call.
+// This guards parity of the live dispatcher walker and the lake walker, which implement one contract
+// independently. It is an external package so it can import internal/dispatcher, and drives both via
+// ProcessLedger and ExtractLedger.
 
 const parityPassphrase = network.TestNetworkPassphrase
 
@@ -64,10 +59,9 @@ func toChanges(balances []int64) xdr.LedgerEntryChanges {
 	return out
 }
 
-// buildParityLedger assembles a protocol-23 LedgerCloseMetaV2 (V2 is required:
-// PostTxApplyFeeChanges is only populated from lcmV2.TxProcessing[i].
-// PostTxApplyFeeProcessing) whose transactions write the given per-phase
-// balances.
+// buildParityLedger assembles a protocol-23 LedgerCloseMetaV2 whose transactions write the given per-phase
+// balances; V2 is required because PostTxApplyFeeChanges is only populated from
+// TxProcessing[i].PostTxApplyFeeProcessing.
 func buildParityLedger(t *testing.T, seq uint32, txs []parityTx) xdr.LedgerCloseMeta {
 	t.Helper()
 
@@ -200,16 +194,9 @@ func (s *spyDecoder) Decode(ctx dispatcher.LedgerEntryChangeContext) ([]consumer
 	return nil, nil
 }
 
-// TestEntryWalkParity_DispatcherAndLakeAgree drives ONE synthetic multi-phase ledger through
-// both walkers and asserts they emit an IDENTICAL (entry, seq) sequence.
-//
-// The fixture exercises each known divergence:
-//
-//   - tx2 is FAILED with a committed fee debit; skipping the whole tx before its entry-change
-//     walk while the lake walks it makes the two disagree by exactly the failed-tx fee set;
-//   - tx1 has an apply-phase change and a later tx's fee change competing for the same key;
-//     fees are charged for every tx before any apply, so the fee must not rank last;
-//   - both txs carry PostTxApplyFeeChanges, the P23 Soroban refund phase.
+// TestEntryWalkParity_DispatcherAndLakeAgree: one multi-phase ledger through both walkers must yield an
+// identical (entry, seq) sequence. The fixture covers a failed tx's fee debit, fee changes ranking before
+// apply changes for the same key, and the P23 PostTxApplyFeeChanges phase.
 func TestEntryWalkParity_DispatcherAndLakeAgree(t *testing.T) {
 	lcm := buildParityLedger(t, 4711, []parityTx{
 		{seed: 0x71, success: true, fee: []int64{990}, apply: []int64{500}, postApplyFee: []int64{540}},
@@ -337,11 +324,9 @@ func (s *evictionSpy) Decode(ctx dispatcher.LedgerEntryChangeContext) ([]consume
 	return nil, nil
 }
 
-// TestEntryWalkParity_EvictedKeysAreRecordedByBothWalkers: an entry whose TTL lapses is
-// reported only in the LCM's evicted-keys list, never in tx meta. The lake must record a
-// deleted (temporary) entry as a `removed` row at the eviction ledger, at the same position the
-// live dispatcher walks it, or ledger_entries_current keeps its last write as live. A
-// persistent entry or contract code is archived, not deleted, so no row is written.
+// TestEntryWalkParity_EvictedKeysAreRecordedByBothWalkers: an entry evicted on TTL lapse appears only in the
+// LCM evicted-keys list. A deleted (temporary) entry needs a `removed` row at the eviction ledger, as the
+// live dispatcher writes it; persistent entries and contract code are archived, so no row.
 func TestEntryWalkParity_EvictedKeysAreRecordedByBothWalkers(t *testing.T) {
 	const ledger = 4713
 	lcm := buildParityLedger(t, ledger, []parityTx{
@@ -439,11 +424,9 @@ func TestEntryWalkParity_EvictedKeysAreRecordedByBothWalkers(t *testing.T) {
 	}
 }
 
-// TestEntryWalkParity_UnencodableChangeKeepsItsPosition: the dispatcher gives every walked
-// change a position whether or not any decoder can use it, so a change the lake cannot encode
-// must still consume its position (in the tx phases and the eviction phase), or every later
-// lake row shifts down by one. Type 99 is not a LedgerEntryType and XDR decoding rejects it,
-// so only a hand-built ledger can carry it.
+// TestEntryWalkParity_UnencodableChangeKeepsItsPosition: a change the lake cannot encode must still consume
+// its position (tx phases and eviction phase), or every later row shifts. Type 99 fails XDR decode, so only
+// a hand-built ledger can carry it.
 func TestEntryWalkParity_UnencodableChangeKeepsItsPosition(t *testing.T) {
 	const ledger = 4714
 	lcm := buildParityLedger(t, ledger, []parityTx{

@@ -10,10 +10,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// fakeLossyDecoder implements dispatcher.Decoder plus the two duck-typed
-// loss-counter methods (EvictedOrphans / UnknownContractDrops) soroswap's
-// real decoder exposes — mimicking the shape emitDecoderLossDeltas reads,
-// without pulling in the real soroswap package.
+// fakeLossyDecoder implements dispatcher.Decoder plus the duck-typed EvictedOrphans / UnknownContractDrops counters
+// soroswap's real decoder exposes, mimicking the shape emitDecoderLossDeltas reads without importing the real soroswap
+// package.
 type fakeLossyDecoder struct {
 	orphans, drops int
 }
@@ -26,10 +25,9 @@ func (*fakeLossyDecoder) Decode(events.Event) ([]consumer.Event, error) {
 func (f *fakeLossyDecoder) EvictedOrphans() int       { return f.orphans }
 func (f *fakeLossyDecoder) UnknownContractDrops() int { return f.drops }
 
-// TestEmitDecoderLossDeltas pins that the projector builds its OWN decoder instance per
-// source (separate from the live indexer's dispatcher), so it must read that instance's
-// EvictedOrphans / UnknownContractDrops counters. The metric must move by the decoder's OWN
-// accumulated count, or the projector's half of the loss signal is unobservable.
+// TestEmitDecoderLossDeltas: the projector builds its own decoder instance per source, separate from the live indexer's
+// dispatcher, so it must read that instance's EvictedOrphans / UnknownContractDrops; the metric moves by its own
+// accumulated count or the projector's loss signal is unobservable.
 func TestEmitDecoderLossDeltas(t *testing.T) {
 	dec := &fakeLossyDecoder{}
 	src := Source{Name: "q037-fake-source", Decoder: dec}

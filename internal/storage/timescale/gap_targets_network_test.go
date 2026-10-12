@@ -9,11 +9,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sourcenet"
 )
 
-// TestGapDetectorTargetsResolveToKnownSources is the drift guard that makes the network filter
-// safe to trust. [sourcenet.Applicable] answers false for ANY name it does not classify, so a
-// target with an unknown SourceNetKey would be silently dropped from every non-pubnet scan,
-// losing its coverage signal. Every target must resolve to a name sourcenet knows: its own
-// (cctp, sdex, soroswap…) or an explicit CanonicalSource ("aquarius-liquidity" → "aquarius").
+// TestGapDetectorTargetsResolveToKnownSources: sourcenet.Applicable is false for unclassified names, so an
+// unknown SourceNetKey is silently dropped from non-pubnet scans. Every target must resolve to a
+// sourcenet name directly or via an explicit CanonicalSource.
 func TestGapDetectorTargetsResolveToKnownSources(t *testing.T) {
 	t.Parallel()
 
@@ -28,10 +26,9 @@ func TestGapDetectorTargetsResolveToKnownSources(t *testing.T) {
 	}
 }
 
-// TestApplicableGapDetectorTargets_ScopesToTheNetwork pins the filter itself. Each target's
-// Genesis is a PUBNET contract-deploy ledger, so scanning a pubnet-only target on a test net
-// whose tip is lower yields an inverted window and FindPerSourceLedgerGaps fails with
-// `invalid range` on every cadence.
+// TestApplicableGapDetectorTargets_ScopesToTheNetwork pins the filter: each target's Genesis is a PUBNET
+// deploy ledger, so a pubnet-only target on a lower-tip test net yields an inverted window and
+// FindPerSourceLedgerGaps fails with `invalid range` every cadence.
 func TestApplicableGapDetectorTargets_ScopesToTheNetwork(t *testing.T) {
 	t.Parallel()
 

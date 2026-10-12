@@ -11,15 +11,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// These tests pin that the public /v1/accounts/{g}/movements feed never renders a SAC/asset label
-// taken from the attacker-influenceable CAP-67 sep0011 event topic as a trusted identity.
-// sep41_transfers are ingested from ANY token contract, so a hostile non-SAC token can emit a
-// transfer whose topic claims a trusted asset (e.g. Circle USDC) and impersonate it.
-//
-// resolveSEP41MovementAsset therefore cross-checks like wasm_view.go's sacAssetViaEvents: re-derive
-// the SAC address from the claimed (code, issuer) and trust the label only when it equals the
-// on-chain contract_id. The spoof case attaches the claim to an unrelated contract id; the legit
-// case to the genuine derived SAC address.
+// Pins that the movements feed never trusts a SAC/asset label from the attacker-influenceable CAP-67 sep0011 topic as
+// trusted identity: sep41_transfers come from ANY token contract, so a hostile one can claim USDC.
+// resolveSEP41MovementAsset re-derives the SAC from (code, issuer) and trusts it only if it equals contract_id.
 
 // sacSpoofReader drives the trusted-instance path (SACClassicAssetName) and the
 // attacker-influenceable event path (SACAssetFromEvents) independently. SACAssetFromEvents returns
@@ -94,9 +88,7 @@ func TestResolveSEP41MovementAsset_LegitimateSACRendersTrusted(t *testing.T) {
 	}
 }
 
-// TestMapSEP41RowsToMovements_SpoofedAssetNotRenderedOnWire proves the
-// property end-to-end at the render seam: the mapped movement row's
-// Asset field (what the wire response carries) does NOT present the
+// End-to-end at the render seam: the mapped movement row's Asset field (what the wire carries) does not present the
 // spoofed trusted identity.
 func TestMapSEP41RowsToMovements_SpoofedAssetNotRenderedOnWire(t *testing.T) {
 	reader := &sacSpoofReader{

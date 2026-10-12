@@ -14,10 +14,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestBuildDEXTVLValueGate_ScreensNameOnlyTheWiredGuards pins that /v1/protocols' `basis` string,
-// a public claim about which trust screens ran on each TVL reserve leg, names only the guards
-// actually wired. buildSubstanceGate returns nil for disable_substance_gate = true and
-// NewScamGate returns nil for a nil directory reader, so all four combinations are real.
+// TestBuildDEXTVLValueGate_ScreensNameOnlyTheWiredGuards: /v1/protocols' `basis` string publicly claims which trust
+// screens ran on each TVL reserve leg, so it must name only wired guards; buildSubstanceGate and NewScamGate can each
+// return nil, giving four combinations.
 func TestBuildDEXTVLValueGate_ScreensNameOnlyTheWiredGuards(t *testing.T) {
 	substance := pricingguard.NewSubstanceGate(nil, pricingguard.SubstanceGateOptions{})
 	scam := pricingguard.NewScamGate(stubScamDirectory{}, pricingguard.ScamGateOptions{})

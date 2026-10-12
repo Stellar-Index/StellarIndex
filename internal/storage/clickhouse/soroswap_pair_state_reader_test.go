@@ -9,10 +9,9 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// TestSoroswapQueryShapesHaveGuardRailSettings pins the SQL to the bounded-lake-read conventions:
-// current-state table with FINAL dedup, keyed probe, empty-entry filter, and the guard-rail
-// SETTINGS the sibling readers pin (cometPoolStateQuery / phoenixPoolStateQuery), so an
-// unbounded FINAL scan fails loudly instead of fanning out on the shared host.
+// TestSoroswapQueryShapesHaveGuardRailSettings pins the bounded-lake-read conventions: current-state table
+// with FINAL dedup, keyed probe, empty-entry filter and the guard-rail SETTINGS the sibling readers pin,
+// so an unbounded FINAL scan fails loudly instead of fanning out on the shared host.
 func TestSoroswapQueryShapesHaveGuardRailSettings(t *testing.T) {
 	for name, q := range map[string]string{
 		"soroswapPairStateQuery": soroswapPairStateQuery,
@@ -33,10 +32,9 @@ func TestSoroswapQueryShapesHaveGuardRailSettings(t *testing.T) {
 	}
 }
 
-// mkSoroswapPairEntry builds a base64 instance LedgerEntry matching the
-// empirically-verified Soroswap pair layout: u32-keyed Token0/Token1
-// addresses + Reserve0/Reserve1 i128s. Keys listed in `omit` are left
-// out of the storage map.
+// mkSoroswapPairEntry builds a base64 instance LedgerEntry in the verified Soroswap pair layout (u32-keyed
+// Token0/Token1 addresses and Reserve0/Reserve1 i128s); keys listed in `omit` are left out of the storage
+// map.
 func mkSoroswapPairEntry(t *testing.T, tok0, tok1 xdr.ContractId, r0, r1 xdr.Int128Parts, omit ...uint32) string {
 	t.Helper()
 	omitted := map[uint32]bool{}

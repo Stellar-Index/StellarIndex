@@ -12,11 +12,9 @@ import (
 
 // ─── The exact-tier restamp formula ───────────────────────────────
 
-// TestExactTierUSDVolume_TracksTheWaterfall pins the restamp's formula to the INSERT path
-// byte-for-byte: for every exact-tier shape, [ExactTierUSDVolume] writes what [tradeUSDVolume]
-// writes for the same row (same leg, scale and FloatString(8) render). A drift means the
-// restamp "repairs" rows to a value the writer would never produce, and verify-usd-volume
-// would then flag them.
+// TestExactTierUSDVolume_TracksTheWaterfall pins that [ExactTierUSDVolume] writes exactly what
+// [tradeUSDVolume] writes for every exact-tier shape, or the restamp repairs rows to values verify-usd-volume
+// would flag.
 func TestExactTierUSDVolume_TracksTheWaterfall(t *testing.T) {
 	spec := testQuoteSpec(t)
 	usdcAsset, err := canonical.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
@@ -94,10 +92,9 @@ func TestExactTierUSDVolume_TracksTheWaterfall(t *testing.T) {
 	}
 }
 
-// TestExactTierUSDVolume_DeclinesWhatTheWaterfallDeclines: the waterfall
-// returns nil (usd_volume NULL) for a non-positive quote before probing any
-// tier, and tier 2b declines a non-positive base. The restamp must decline
-// the same rows — "repairing" them to a number would be a new defect.
+// TestExactTierUSDVolume_DeclinesWhatTheWaterfallDeclines: the waterfall returns nil (usd_volume NULL) for a
+// non-positive quote before probing any tier, and tier 2b declines a non-positive base. The restamp must
+// decline the same rows; "repairing" them to a number would be a new defect.
 func TestExactTierUSDVolume_DeclinesWhatTheWaterfallDeclines(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -121,10 +118,9 @@ func TestExactTierUSDVolume_DeclinesWhatTheWaterfallDeclines(t *testing.T) {
 	}
 }
 
-// TestUSDVolumeRestampDecision is the DIFFERENTIAL: a correctly-stamped row
-// is reported UNCHANGED (whatever NUMERIC render Postgres chose), a wrong
-// row is reported changed with the identity as the target, and a NULL row
-// changes only when the operator opted into filling coverage.
+// TestUSDVolumeRestampDecision is the differential: a correctly-stamped row is reported unchanged (whatever
+// NUMERIC render Postgres chose), a wrong row changed with its identity as target, and a NULL row only if
+// the operator opted into filling coverage.
 func TestUSDVolumeRestampDecision(t *testing.T) {
 	str := func(s string) *string { return &s }
 	cases := []struct {
@@ -166,10 +162,9 @@ func TestUSDVolumeRestampDecision(t *testing.T) {
 	}
 }
 
-// TestExactTierRestampScope_MirrorsTheDecision pins the SQL scope to the Go decision: the
-// predicate must (1) carry the generation guard, (2) skip rows already satisfying the identity
-// via IS DISTINCT FROM, (3) exclude NULLs unless FillNull, (4) bind the Go-decided leg and
-// 10^decimals per group rather than deciding either in SQL, and (5) refuse non-exact groups.
+// TestExactTierRestampScope_MirrorsTheDecision: the SQL scope must carry the generation guard, skip rows via
+// IS DISTINCT FROM, exclude NULLs unless FillNull, bind the Go-decided leg and 10^decimals per group,
+// and refuse non-exact groups.
 func TestExactTierRestampScope_MirrorsTheDecision(t *testing.T) {
 	from := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
 	groups := []USDVolumeRestampGroup{

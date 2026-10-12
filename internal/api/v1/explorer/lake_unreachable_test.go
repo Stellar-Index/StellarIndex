@@ -27,17 +27,13 @@ func dialRefused() error {
 	}
 }
 
-// TestRetryableColdMiss_LakeUnreachable pins that a transport-layer failure below the query
-// layer (dial refused, socket reset, broken pipe, resolution failure) is a dependency outage, not
-// a bug here, and classifies retryable. Every case has Timeout()==false, so an arm matching only
-// ne.Timeout() would miss them all.
+// Pins that transport failures below the query layer (dial refused, socket reset, broken pipe, resolution failure) are
+// dependency outages and classify retryable. All have Timeout()==false, so matching only ne.Timeout() misses them.
 func TestRetryableColdMiss_LakeUnreachable(t *testing.T) {
 	ctx := context.Background()
 
-	// Sanity: the fixture really is the non-timeout shape the finding
-	// describes. If a future Go release made a refused dial report
-	// Timeout()==true, a timeout-only classifier would cover it and this
-	// test would be vacuous — so assert the premise explicitly.
+	// Sanity: the fixture really is the non-timeout shape. If a refused dial ever reported Timeout()==true, a timeout-only
+	// classifier would cover it and this test would be vacuous, so assert the premise.
 	var ne net.Error
 	if errors.As(dialRefused(), &ne) && ne.Timeout() {
 		t.Fatal("premise broken: a refused dial now reports Timeout()==true, so this test no longer exercises the F4 gap")
@@ -69,10 +65,8 @@ func TestRetryableColdMiss_LakeUnreachable(t *testing.T) {
 	}
 }
 
-// TestAccountState_LakeUnreachableMapsTo503 is the wire-level half of the above: with ClickHouse
-// hard-down, GET /v1/accounts/{g} answers 503 with Retry-After and a detail saying the dependency
-// is unreachable, not a 500 and not the read-budget "timed out" prose (a refused dial returns in
-// microseconds, so blaming a slow query would misdirect an operator).
+// Wire-level half: with ClickHouse hard-down, GET /v1/accounts/{g} answers 503 with Retry-After and a detail saying the
+// dependency is unreachable, not a 500 or "timed out" prose (a refused dial returns in microseconds).
 func TestAccountState_LakeUnreachableMapsTo503(t *testing.T) {
 	var rec problemRecord
 	reader := &saturationReader{
@@ -110,10 +104,9 @@ func TestAccountState_LakeUnreachableMapsTo503(t *testing.T) {
 	}
 }
 
-// TestAccountState_GateSaturationMapsTo503: a saturated detached-refresh gate returns
-// clickhouse.ErrRefreshSaturated, transient backpressure that GET /v1/accounts/{g} must surface
-// as a retryable 503, not a 500. A genuine internal error still maps to 500 so alerts and the
-// 5xx SLA probe stay meaningful.
+// A saturated detached-refresh gate returns clickhouse.ErrRefreshSaturated, transient backpressure that must surface as
+// a retryable 503, not a 500. A genuine internal error still maps to 500 so alerts and the 5xx SLA probe stay
+// meaningful.
 func TestAccountState_GateSaturationMapsTo503(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -180,10 +173,8 @@ func TestAccountState_GateSaturationMapsTo503(t *testing.T) {
 	}
 }
 
-// Regression: /accounts/{g}/activity served "detached refresh
-// capacity saturated" as a 500 Internal error (its handler tested only
-// readTimedOut), and /operations did the same with driver-level conn
-// i/o timeouts. Every capacity-class error must classify retryable.
+// Regression: capacity-class errors ("detached refresh capacity saturated", driver conn i/o timeouts) were served as 500
+// on /accounts/{g}/activity and /operations. Every capacity-class error must classify retryable.
 func TestRetryableColdMiss_CapacityClasses(t *testing.T) {
 	ctx := context.Background()
 	for name, err := range map[string]error{

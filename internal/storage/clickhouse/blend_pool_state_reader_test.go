@@ -14,38 +14,24 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 )
 
-// The Blend reserve reader matches lake rows by their `key_xdr` VERBATIM, so a wrong key does
-// not error, it matches nothing and the pool reports "no reserves captured". These fixtures
-// are therefore not invented: a live mainnet Blend pool and the mainnet USDC SAC, with both
-// derived keys confirmed present in the lake before being pinned. A regression in the
-// derivation then fails with a value provably not what the chain stores, not a
-// self-consistent nonsense both sides agree on.
-//
-// The measurement behind the reader's design: ONE reserve's key matches tens of thousands of
-// rows in the raw ledger_entry_changes window a fold would scan, but exactly one row in the
-// ledger_entries_current projection it reads. The instance key resolving there proves
-// contract_data is projected into it.
+// The Blend reserve reader matches lake rows by `key_xdr` verbatim, so a wrong key silently matches nothing.
+// Fixtures are a live mainnet pool and USDC SAC with keys confirmed in the lake, not invented values. One
+// reserve key matches one ledger_entries_current row but tens of thousands of raw changes.
 const (
 	blendTestPool     = "CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD"
 	blendTestAssetSAC = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75" // USDC SAC
 
 	// PoolDataKey::ResData(USDC) under blendTestPool, persistent durability.
 	blendTestResDataKey = "AAAABgAAAAESnMjMYzbx/bvcwPOYNDTDzbhf2eqFaXo3gtMY2HSlgAAAABAAAAABAAAAAgAAAA8AAAAHUmVzRGF0YQAAAAASAAAAAa3vzlmu5Slo92Bh1JTCUlt1ZZ+kKWpl9JnvKeVkd+SWAAAAAQ=="
-	// The pool's own contract-instance entry, persistent then temporary.
-	//
-	// These two are base64 Soroban LedgerKeys: PUBLIC on-chain addresses, not credentials.
-	// They differ only in the final durability byte and trip gitleaks' generic-api-key rule
-	// (high-entropy base64 assigned to a name ending in "Key"). The per-line annotation is
-	// deliberate; do not shorten or mangle the fixtures, since a wrong storage key silently
-	// matches nothing, which is the failure these goldens exist to catch.
+	// The pool's contract-instance entry, persistent then temporary. These are public on-chain Soroban
+	// LedgerKeys, not credentials, differing only in the durability byte; keep them intact, as a wrong storage
+	// key silently matches nothing.
 	blendTestInstanceKeyPersistent = "AAAABgAAAAESnMjMYzbx/bvcwPOYNDTDzbhf2eqFaXo3gtMY2HSlgAAAABQAAAAB" // gitleaks:allow
 	blendTestInstanceKeyTemporary  = "AAAABgAAAAESnMjMYzbx/bvcwPOYNDTDzbhf2eqFaXo3gtMY2HSlgAAAABQAAAAA" // gitleaks:allow
 )
 
-// resDataEntryFixture builds a minimal, genuinely-decodable Blend ResData
-// contract_data LedgerEntry (the ScMap blend.DecodeReserveData expects), so a
-// test can distinguish "row decoded" from "row skipped" rather than asserting
-// over two indistinguishable failures.
+// resDataEntryFixture builds a minimal, genuinely decodable Blend ResData contract_data LedgerEntry, so a
+// test can tell "row decoded" from "row skipped" instead of asserting over two indistinguishable failures.
 func resDataEntryFixture(t *testing.T) string {
 	t.Helper()
 	i128 := func(v uint64) xdr.ScVal {
@@ -96,10 +82,9 @@ func mustContractID(t *testing.T, c string) xdr.ContractId {
 	return id
 }
 
-// TestPoolDataKeyXDR_MatchesTheOnChainKey pins the storage-key encoding for a Blend
-// `PoolDataKey::ResData(asset)` entry: a `#[contracttype]` enum variant encodes as
-// Vec[Symbol(variant), Address(asset)] under the POOL contract at PERSISTENT durability. Any
-// of those four choices wrong is silent: the key never matches a lake row.
+// TestPoolDataKeyXDR_MatchesTheOnChainKey pins the Blend `PoolDataKey::ResData(asset)` encoding:
+// Vec[Symbol(variant), Address(asset)] under the POOL contract, PERSISTENT. Any error silently misses lake
+// rows.
 func TestPoolDataKeyXDR_MatchesTheOnChainKey(t *testing.T) {
 	got, err := poolDataKeyXDR(mustContractID(t, blendTestPool), "ResData", mustContractID(t, blendTestAssetSAC))
 	if err != nil {
@@ -148,10 +133,8 @@ func TestPoolDataKeyXDR_MatchesTheOnChainKey(t *testing.T) {
 	}
 }
 
-// TestBlendReserveKeys_CoversInstanceAndEveryResolvableAsset pins the key set and its reverse
-// index: the instance key carries the backstop rate, the per-asset ResData key the reserve
-// state. An asset whose strkey does not decode is SKIPPED, so one bad asset cannot blank the
-// other reserves.
+// TestBlendReserveKeys_CoversInstanceAndEveryResolvableAsset pins the key set and its reverse index. An
+// asset whose strkey does not decode is skipped, so one bad asset cannot blank the other reserves.
 func TestBlendReserveKeys_CoversInstanceAndEveryResolvableAsset(t *testing.T) {
 	assets := []string{
 		blendTestAssetSAC,
@@ -182,10 +165,8 @@ func TestBlendReserveKeys_CoversInstanceAndEveryResolvableAsset(t *testing.T) {
 	}
 }
 
-// TestBlendReserveKeys_EmptyAssetListStillProbesTheInstance — the caller
-// short-circuits on an EMPTY key list, so this documents that an empty asset
-// list is not the empty key list: the instance key is still built. (The pool
-// read then returns no reserves because none were asked for.)
+// TestBlendReserveKeys_EmptyAssetListStillProbesTheInstance: an empty asset list is not an empty key list,
+// since the instance key is still built (the caller short-circuits only on an empty key list).
 func TestBlendReserveKeys_EmptyAssetListStillProbesTheInstance(t *testing.T) {
 	keys, _ := blendReserveKeys(mustContractID(t, blendTestPool), nil)
 	if len(keys) != 2 {
@@ -207,10 +188,9 @@ func TestBlendPoolReserves_RejectsANonContractPool(t *testing.T) {
 	}
 }
 
-// TestBlendPoolReserves_QueryShape pins the version-resolution and pruning decisions documented
-// on the reader (silent-wrong-answer territory, not errors) plus the requirement that the read
-// is a PK-prefix probe on the current-state projection, not a windowed scan of
-// stellar.ledger_entry_changes.
+// TestBlendPoolReserves_QueryShape pins the reader's version-resolution and pruning (silent-wrong-answer
+// territory) and that the read is a PK-prefix probe on the current-state projection, not a windowed
+// ledger_entry_changes scan.
 func TestBlendPoolReserves_QueryShape(t *testing.T) {
 	conn := &stubConn{respond: func(string) (driver.Rows, error) { return &stubRows{}, nil }}
 	r := &ExplorerReader{conn: conn}
@@ -236,11 +216,8 @@ func TestBlendPoolReserves_QueryShape(t *testing.T) {
 			t.Errorf("reserve lookup reintroduced the windowed fold (%q) — FINAL over the projection already resolves versions:\n%s", banned, q)
 		}
 	}
-	// Version resolution is the projection's: ledger_entries_current is
-	// ReplacingMergeTree(version) with version = (ledger_seq << 32) | intra_ledger_seq, so
-	// FINAL keeps the LAST change in a ledger. What MUST be asserted is that the removed-key
-	// filter cannot run before that collapse: moving `entry_xdr != ''` into PREWHERE would
-	// drop the winning removal and RESURRECT a key deleted later in the same ledger.
+	// Version resolution follows the projection: FINAL keeps the last change in a ledger. The removed-key filter
+	// must not run before that collapse, or moving `entry_xdr != ''` into PREWHERE resurrects a deleted key.
 	if !strings.Contains(q, "optimize_move_to_prewhere_if_final = 0") {
 		t.Errorf("reserve lookup does not pin optimize_move_to_prewhere_if_final=0; a removed reserve could resurrect:\n%s", q)
 	}
@@ -270,10 +247,8 @@ func TestBlendPoolReserves_QueryShape(t *testing.T) {
 	}
 }
 
-// TestScanBlendReserveParts_IgnoresUnrequestedKeys — the reverse index is the
-// only thing tying a returned row to an asset. A row whose key is not in the
-// index (an impossible answer, or a future column change) must be dropped, not
-// attributed to the empty-string asset.
+// TestScanBlendReserveParts_IgnoresUnrequestedKeys: the reverse index alone ties a row to an asset, so a row
+// whose key is not in it must be dropped, not attributed to the empty-string asset.
 func TestScanBlendReserveParts_IgnoresUnrequestedKeys(t *testing.T) {
 	refByKey := map[string]keyRef{blendTestResDataKey: {asset: blendTestAssetSAC, kind: "ResData"}}
 	rows := &stubRows{data: [][]any{
@@ -297,10 +272,9 @@ func TestScanBlendReserveParts_IgnoresUnrequestedKeys(t *testing.T) {
 	}
 }
 
-// TestScanBlendReserveParts_MatchedTracksOnlyReportedEntries: `matched` is the TTL filter's
-// input set, so it must list exactly the keys this read will REPORT (decoded ResData rows plus
-// the instance row). A key with no usable row, or an undecodable ResData row, is already
-// absent and not in it.
+// TestScanBlendReserveParts_MatchedTracksOnlyReportedEntries: `matched` feeds the TTL filter, so it must
+// list exactly the keys this read reports (decoded ResData rows plus the instance row), never keys with no
+// usable or undecodable row.
 func TestScanBlendReserveParts_MatchedTracksOnlyReportedEntries(t *testing.T) {
 	const otherAsset = "CB7777777777777777777777777777777777777777777777777777777"
 	refByKey := map[string]keyRef{
@@ -340,10 +314,9 @@ func TestScanBlendReserveParts_UndecodableEntryIsSkippedNotFatal(t *testing.T) {
 	}
 }
 
-// TestScanBlendReserveParts_TruncatedStreamIsAnError — unlike a single bad
-// row, a truncated stream means reserves may be missing for reasons that have
-// nothing to do with capture. Reporting them as "absent" would present a
-// partially-read pool as a fully-read one with fewer reserves.
+// TestScanBlendReserveParts_TruncatedStreamIsAnError: unlike a single bad row, a truncated stream may be
+// missing reserves for reasons unrelated to capture. Reporting them absent would present a partially read
+// pool as fully read.
 func TestScanBlendReserveParts_TruncatedStreamIsAnError(t *testing.T) {
 	truncated := errors.New("stream truncated")
 	rows := &stubRows{streamErr: truncated}
@@ -383,10 +356,8 @@ func fixedTTLCache(verdicts map[string]TTLLiveness) *ttlLivenessCache {
 	return c
 }
 
-// TestDropArchivedBlendReserves_DropsOnlyPositivelyArchived: the fail-open contract. A reserve
-// is removed ONLY on a positively-resolved lapsed TTL; TTLUnknown (no TTL row, unreadable wire
-// shape) KEEPS it, since under-reporting live liquidity is the same class of error as the
-// phantom liquidity this filter removes.
+// TestDropArchivedBlendReserves_DropsOnlyPositivelyArchived pins fail-open: a reserve is dropped only
+// on a positively lapsed TTL; TTLUnknown keeps it, as under-reporting liquidity is as wrong as phantom.
 func TestDropArchivedBlendReserves_DropsOnlyPositivelyArchived(t *testing.T) {
 	data, refs, matched := blendDropFixture()
 	cache := fixedTTLCache(map[string]TTLLiveness{

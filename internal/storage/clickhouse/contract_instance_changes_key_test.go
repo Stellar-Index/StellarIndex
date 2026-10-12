@@ -11,10 +11,9 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// createStmt returns the whitespace-collapsed CREATE statement for name in
-// ddl, inline `--` comments stripped, or "" when absent. name must be
-// followed by a non-identifier byte, so contract_instance_changes does not
-// match contract_instance_changes_mv.
+// createStmt returns the whitespace-collapsed CREATE statement for name in ddl, `--` comments stripped, or
+// "". name must be followed by a non-identifier byte, so contract_instance_changes skips
+// contract_instance_changes_mv.
 func createStmt(ddl, kind, name string) string {
 	head := "CREATE " + kind + " IF NOT EXISTS " + name
 	for from := 0; ; {
@@ -42,11 +41,9 @@ func createStmt(ddl, kind, name string) string {
 	}
 }
 
-// TestContractInstanceChanges_KeyIsTransactionScoped: change_index restarts at 0 on every
-// TRANSACTION, so under ORDER BY (contract_hash, ledger_seq, change_index) two transactions
-// writing one contract's instance in a ledger share a key and the ReplacingMergeTree keeps
-// one. tx_hash makes the key the change's identity; intra_ledger_seq must be projected for
-// the read order. Both the operator mirror and the fresh-host tier1 copy are checked.
+// TestContractInstanceChanges_KeyIsTransactionScoped: change_index restarts per transaction, so tx_hash must
+// be in the key or two same-ledger writes collapse; intra_ledger_seq must be projected. Checks both DDL
+// copies.
 func TestContractInstanceChanges_KeyIsTransactionScoped(t *testing.T) {
 	for _, file := range []string{"contract_instance_changes.sql", "tier1_schema.sql"} {
 		ddl := stripSQLComments(readDeployDDL(t, file))
@@ -73,10 +70,8 @@ func TestContractInstanceChanges_KeyIsTransactionScoped(t *testing.T) {
 	}
 }
 
-// TestContractInstanceChangesTxKeyMigration_MirrorsCanonicalDDL: the r1
-// migration builds v2 with the canonical DDL under the cut-over names. A v2
-// that drifted from it would be renamed onto the canonical name and serve a
-// shape no fresh host has.
+// TestContractInstanceChangesTxKeyMigration_MirrorsCanonicalDDL pins that the migration's v2 table matches
+// the canonical DDL, or the renamed table would serve a shape no fresh host has.
 func TestContractInstanceChangesTxKeyMigration_MirrorsCanonicalDDL(t *testing.T) {
 	canon := stripSQLComments(readDeployDDL(t, "contract_instance_changes.sql"))
 	mig := readDeployDDL(t, "contract_instance_changes_tx_key.sql")

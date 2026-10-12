@@ -6,11 +6,9 @@ import (
 	"testing"
 )
 
-// TestCountDistinctLedgersQueryRoutesOnlySorobanEventsToCensus is the differential guard: the
-// soroban-events density numerator comes from the ledger_ingest_log census (PK range scan)
-// instead of a full scan of the index-less soroban_events hypertable, while EVERY other
-// registered target keeps the generic COUNT(DISTINCT <ledger>) over its own table, filter
-// included, byte-for-byte.
+// TestCountDistinctLedgersQueryRoutesOnlySorobanEventsToCensus: only the soroban-events density numerator
+// uses the ledger_ingest_log census (PK range scan) instead of scanning the index-less hypertable; every
+// other target keeps the generic COUNT(DISTINCT <ledger>) over its own table, filter included, byte-for-byte.
 func TestCountDistinctLedgersQueryRoutesOnlySorobanEventsToCensus(t *testing.T) {
 	t.Parallel()
 

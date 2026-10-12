@@ -8,11 +8,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// TestRefreshGate_ClassFairness pins the per-class cap (second half of
-// the fairness work): one client-keyed class saturating its
-// quarter-of-global cap must NOT stop other classes from acquiring, the
-// reserved slot stays out of client-keyed reach, and the global bound
-// must still hold across classes.
+// TestRefreshGate_ClassFairness: one client-keyed class saturating its quarter-of-global cap must not stop
+// other classes acquiring, the reserved slot stays out of client-keyed reach, and the global bound holds
+// across classes.
 func TestRefreshGate_ClassFairness(t *testing.T) {
 	g := NewRefreshGate(8) // client-keyed class cap = 2; client-keyed classes share 7
 
@@ -81,10 +79,9 @@ var contractPagePanels = []string{
 	"contract_detail_act", "contract_detail_pos",
 }
 
-// TestRefreshGate_SecondColdPageUsesFreeSlots: with one cold page holding a
-// slot in each of its five panel classes, a second cold page's fan-out
-// must still land in the free client-keyed slots, not be refused because
-// its classes are already active.
+// TestRefreshGate_SecondColdPageUsesFreeSlots: with one cold page holding a slot in each of its five panel
+// classes, a second cold page's fan-out must land in the free client-keyed slots, not be refused for
+// active classes.
 func TestRefreshGate_SecondColdPageUsesFreeSlots(t *testing.T) {
 	g := NewRefreshGate(DefaultDetachedRefreshLimit)
 	for _, c := range contractPagePanels {
@@ -104,10 +101,9 @@ func TestRefreshGate_SecondColdPageUsesFreeSlots(t *testing.T) {
 	}
 }
 
-// TestRefreshGate_ClientClassesCannotTakeReserve fills the gate with every
-// client-keyed class in adversarial order — one class to its cap first,
-// then one slot in each of the others — and requires each server-keyed
-// prewarm class to still acquire.
+// TestRefreshGate_ClientClassesCannotTakeReserve fills the gate with every client-keyed class in adversarial
+// order (one class to its cap, then one slot in each other) and requires each server-keyed prewarm class to
+// still acquire.
 func TestRefreshGate_ClientClassesCannotTakeReserve(t *testing.T) {
 	for _, prewarm := range []string{"network_throughput", "contracts_dir", "ops_directory"} {
 		g := NewRefreshGate(DefaultDetachedRefreshLimit)

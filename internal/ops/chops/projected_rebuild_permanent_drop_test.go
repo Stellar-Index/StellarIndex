@@ -18,10 +18,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 )
 
-// writeOptsFor returns -write options over a decoder that emits outs for every row. Store is nil
-// on purpose: the poison trade is rejected by Trade.Validate before the store is touched, and
-// the non-trade output's nil-store panic is recovered by pipeline.HandleEvent into the generic,
-// unclassified error a real failed insert surfaces as.
+// writeOptsFor returns -write options over a decoder emitting outs for every row. Store is nil on purpose: the poison
+// trade is rejected by Trade.Validate before the store is touched, and the non-trade output's nil-store panic is
+// recovered by pipeline.HandleEvent into a generic unclassified error.
 func writeOptsFor(outs ...consumer.Event) ProjectedRebuildOptions {
 	return ProjectedRebuildOptions{
 		Write:  true,
@@ -38,14 +37,9 @@ func poisonSoroswapTrade() consumer.Event {
 	return soroswap.TradeEvent{Trade: canonical.Trade{Source: "soroswap", Ledger: 77, TxHash: "deadbeef"}}
 }
 
-// TestApplyProjectedEvent_PermanentlyDroppedTradeDoesNotHoldTheWindow pins the projected-rebuild
-// half of the permanent-drop rule. HandleEvent REPORTS a permanently dropped trade; counting
-// every non-nil return as a window-holding insert error would leave a deterministically poison
-// trade's window un-checkpointed on EVERY resumed run, under a "re-run to retry it" log line that
-// can never succeed.
-//
-// The drop is counted on its own and contributes NOTHING to the window-holding count, so the
-// window checkpoints and the loss is still visible.
+// HandleEvent reports a permanently dropped trade; counting it as a window-holding insert error would leave a
+// deterministically poison trade's window un-checkpointed on every resume. The drop is counted separately, adds nothing
+// to the holding count, so the window checkpoints and the loss stays visible.
 func TestApplyProjectedEvent_PermanentlyDroppedTradeDoesNotHoldTheWindow(t *testing.T) {
 	counters := newProjectedRebuildCounters()
 	emitted, insertErrs := applyProjectedEvent(context.Background(),
@@ -62,10 +56,8 @@ func TestApplyProjectedEvent_PermanentlyDroppedTradeDoesNotHoldTheWindow(t *test
 	}
 }
 
-// TestApplyProjectedEvent_OtherFailuresStillHoldTheWindow is the guard on the
-// other side: the permanent-drop rule is untouched. A failure that is NOT a permanent trade
-// drop still counts toward holding the window, a poison trade beside it does
-// not mask it, and every output of the row is still offered to the sink.
+// Guard for the other side of the permanent-drop rule: a failure that is NOT a permanent trade drop still holds the
+// window. A poison trade beside it does not mask it, and every output of the row is still offered to the sink.
 func TestApplyProjectedEvent_OtherFailuresStillHoldTheWindow(t *testing.T) {
 	counters := newProjectedRebuildCounters()
 	emitted, insertErrs := applyProjectedEvent(context.Background(),
@@ -83,10 +75,8 @@ func TestApplyProjectedEvent_OtherFailuresStillHoldTheWindow(t *testing.T) {
 	}
 }
 
-// TestProjectedRebuildLossLines_NeverTellsTheOperatorToReRunAPermanentDrop —
-// the two loss classes need OPPOSITE operator actions, so the summary must not
-// blur them: a held window says re-run; a permanent drop must say a re-run
-// cannot land it.
+// The two loss classes need opposite operator actions, so the summary must not blur them: a held window says re-run; a
+// permanent drop must say a re-run cannot land it.
 func TestProjectedRebuildLossLines_NeverTellsTheOperatorToReRunAPermanentDrop(t *testing.T) {
 	if got := projectedRebuildLossLines(ProjectedRebuildResult{}); len(got) != 0 {
 		t.Errorf("clean run printed loss lines: %q", got)

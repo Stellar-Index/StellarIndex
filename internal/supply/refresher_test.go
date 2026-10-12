@@ -132,9 +132,7 @@ func TestRefresher_StaleComponentBelowThresholdAccepted(t *testing.T) {
 	}
 }
 
-// TestRefresher_StaleComponentZeroDisablesGate pins the
-// legacy-compat branch: when the computer doesn't populate
-// MinComponentLedger (legacy / non-storage-backed paths) the
+// Legacy-compat branch: when the computer does not populate MinComponentLedger (legacy / non-storage-backed paths) the
 // gate is skipped and snapshots insert as before.
 func TestRefresher_StaleComponentZeroDisablesGate(t *testing.T) {
 	inserter := &stubInserter{}
@@ -161,10 +159,8 @@ func TestRefresher_StaleComponentZeroDisablesGate(t *testing.T) {
 	}
 }
 
-// TestRefresher_StrictFreshness_RejectsZeroAnchor pins the strict-mode gate: a snapshot with
-// `MinComponentLedger == 0` (no freshness anchor) is rejected with
-// `OutcomeKindMissingFreshness` under `WithStrictFreshnessRequired(true)`, and the inserter is
-// NOT called.
+// Strict mode: a snapshot with MinComponentLedger == 0 (no freshness anchor) is rejected with
+// OutcomeKindMissingFreshness under WithStrictFreshnessRequired(true), and the inserter is NOT called.
 func TestRefresher_StrictFreshness_RejectsZeroAnchor(t *testing.T) {
 	inserter := &stubInserter{}
 	r := NewRefresher(
@@ -190,10 +186,8 @@ func TestRefresher_StrictFreshness_RejectsZeroAnchor(t *testing.T) {
 	}
 }
 
-// TestRefresher_StrictFreshness_AcceptsAnchored — the strict-
-// mode gate ONLY rejects zero-anchor snapshots; a snapshot
-// with a real `MinComponentLedger` (and within the
-// stale-component window) still inserts cleanly.
+// Strict mode rejects only zero-anchor snapshots; one with a real MinComponentLedger within the stale-component window
+// still inserts.
 func TestRefresher_StrictFreshness_AcceptsAnchored(t *testing.T) {
 	inserter := &stubInserter{}
 	r := NewRefresher(
@@ -280,11 +274,9 @@ func (m *mutableLedgers) LatestKnownLedger(_ context.Context) (uint32, time.Time
 	return m.ledger, m.observedAt, nil
 }
 
-// TestRefresher_DormantAssetNotPermanentlyRejected pins that a DORMANT asset (MinComponentLedger
-// frozen for lack of balance changes) whose chain-tip gap grows past the threshold is NOT
-// permanently rejected. The FIRST tick crossing the threshold is rejected once (cold start:
-// dormant cannot yet be told from a freshly stalled producer); every later tick with the SAME
-// MinComponentLedger is accepted as OutcomeKindDormant, so the supply row never freezes silently.
+// A DORMANT asset (MinComponentLedger frozen for lack of balance changes) whose tip gap passes the threshold is not
+// permanently rejected: the first crossing tick is rejected once (cold start), later ticks with the SAME ledger are
+// OutcomeKindDormant, so supply never freezes silently.
 func TestRefresher_DormantAssetNotPermanentlyRejected(t *testing.T) {
 	const minComp = 50_000_000
 	ledgers := &mutableLedgers{
@@ -337,10 +329,9 @@ func TestRefresher_DormantAssetNotPermanentlyRejected(t *testing.T) {
 	}
 }
 
-// TestRefresher_AdvancingLaggingWatermarkRejected pins the changed-watermark branch: when
-// MinComponentLedger is still CHANGING tick-over-tick but past the threshold (an observer far
-// behind, or one that regressed), the gate rejects. A producer dying with a frozen watermark
-// does not reach it; see TestRefresher_DormantAfterHealthyWindow.
+// When MinComponentLedger is still CHANGING tick-over-tick but past the threshold (observer far behind, or regressed),
+// the gate rejects. A producer dying with a frozen watermark does not reach it; see
+// TestRefresher_DormantAfterHealthyWindow.
 func TestRefresher_AdvancingLaggingWatermarkRejected(t *testing.T) {
 	ledgers := &mutableLedgers{
 		ledger:     50_002_000,
@@ -354,10 +345,8 @@ func TestRefresher_AdvancingLaggingWatermarkRejected(t *testing.T) {
 		t.Fatalf("tick1 kind=%s want %s", out.Kind, OutcomeKindStaleComponent)
 	}
 
-	// Second tick: MinComponentLedger advanced (producer is
-	// moving) but is STILL past the threshold. Changed value →
-	// not dormant → still reject. Swap the computer for one with
-	// a newer-but-still-lagging component ledger.
+	// Second tick: MinComponentLedger advanced (producer moving) but is STILL past the threshold; a changed value is not
+	// dormant, so reject. Swap in a computer with a newer-but-still-lagging component ledger.
 	r.computer = dynComputer{assetKey: "XLM", minComponentLedger: 50_000_500}
 	ledgers.ledger = 50_002_500 // gap 2000, still > 1000
 	if out := r.Tick(context.Background()); out.Kind != OutcomeKindStaleComponent {
@@ -368,13 +357,9 @@ func TestRefresher_AdvancingLaggingWatermarkRejected(t *testing.T) {
 	}
 }
 
-// TestRefresher_DormantAfterHealthyWindow pins the realistic timeline: an asset fresh for a
-// while that THEN goes dormant is accepted as dormant on the very first tick the gap crosses
-// the threshold, because the in-threshold ticks already recorded the unchanged
-// MinComponentLedger, so the cross is "unchanged, dormant", NOT a first-observation cold start.
-//
-// A producer that dies after a healthy window emits the same input, so only the dormancy horizon
-// stops it: once the frozen gap crosses it the same input must reach stale_component.
+// An asset fresh for a while that THEN goes dormant is accepted as dormant on the first tick the gap crosses the
+// threshold, since in-threshold ticks already recorded the ledger (not a cold start). A producer dying after a healthy
+// window looks the same; only the dormancy horizon stops it, reaching stale_component.
 func TestRefresher_DormantAfterHealthyWindow(t *testing.T) {
 	const minComp = 50_000_000
 	ledgers := &mutableLedgers{
@@ -393,10 +378,8 @@ func TestRefresher_DormantAfterHealthyWindow(t *testing.T) {
 	if out := r.Tick(context.Background()); out.Kind != OutcomeKindOK {
 		t.Fatalf("tick1 kind=%s want ok (within threshold)", out.Kind)
 	}
-	// Tick 2: asset went quiet; tip advanced past threshold but
-	// MinComponentLedger is unchanged from the fresh tick → must
-	// be recognised as dormant immediately (NO cold-start reject),
-	// because the healthy tick already recorded the value.
+	// Tick 2: the asset went quiet and the tip passed the threshold, but MinComponentLedger is unchanged from the fresh tick.
+	// It must be recognised as dormant immediately (no cold-start reject), since the healthy tick already recorded the value.
 	ledgers.ledger = minComp + 1500
 	if out := r.Tick(context.Background()); out.Kind != OutcomeKindDormant {
 		t.Fatalf("tick2 kind=%s want %s (dormant after a healthy window must not cold-start reject)", out.Kind, OutcomeKindDormant)
@@ -498,10 +481,8 @@ func TestRefresher_WriteError(t *testing.T) {
 	}
 }
 
-// TestRefresher_PerAssetStaleComponentOverride pins per-asset override behaviour: a
-// low-activity asset passes the gate at a more permissive threshold while the global default
-// still rejects high-activity assets at the same component lag. A lag past the global
-// threshold is accepted by a larger per-asset override without loosening the gate for XLM.
+// A low-activity asset passes at a more permissive per-asset threshold while the global default still rejects others at
+// the same lag, so the override does not loosen the gate for XLM.
 func TestRefresher_PerAssetStaleComponentOverride(t *testing.T) {
 	inserter := &stubInserter{}
 	r := NewRefresher(
@@ -528,10 +509,8 @@ func TestRefresher_PerAssetStaleComponentOverride(t *testing.T) {
 	}
 }
 
-// TestRefresher_PerAssetStaleComponentDoesNotLoosenOthers pins the
-// inverse invariant: the per-asset override for PHO must NOT
-// relax the gate for a different asset (XLM here) which still
-// uses the global threshold.
+// Inverse invariant: the per-asset override for PHO must not relax the gate for another asset (XLM here).
+// XLM still uses the global threshold.
 func TestRefresher_PerAssetStaleComponentDoesNotLoosenOthers(t *testing.T) {
 	inserter := &stubInserter{}
 	r := NewRefresher(
@@ -574,15 +553,9 @@ func (r *recordingInserter) InsertSupply(_ context.Context, snap Supply) error {
 	return nil
 }
 
-// TestRefresher_StalledObserverNotReStampedForeverAsDormant: the dormancy carve-out accepts a
-// snapshot whenever MinComponentLedger is UNCHANGED tick-over-tick, but a STALLED observer (dead,
-// no longer writing) produces exactly that signal forever. Unbounded, the gate would re-stamp a
-// frozen circulating supply at the advancing chain tip and report the benign `dormant` outcome
-// the supply-refresh alert excludes: a stale money figure served as fresh, with nothing paging.
-//
-// The dormancy benefit of the doubt is therefore BOUNDED: within the horizon a quiet asset is
-// accepted, but once the anchor has been frozen longer, "the last observation IS the current
-// supply" is indefensible and the gate fails closed with the alertable stale_component outcome.
+// The dormancy carve-out accepts an UNCHANGED MinComponentLedger, but a dead observer emits exactly that forever;
+// unbounded, the gate would re-stamp a frozen supply at the advancing tip as benign `dormant` with nothing paging. So
+// dormancy is BOUNDED: past the horizon the gate fails closed with stale_component.
 func TestRefresher_StalledObserverNotReStampedForeverAsDormant(t *testing.T) {
 	const minComp = 50_000_000
 	ledgers := &mutableLedgers{
@@ -597,10 +570,8 @@ func TestRefresher_StalledObserverNotReStampedForeverAsDormant(t *testing.T) {
 		inserter,
 		discardLogger(),
 		WithStaleComponentLedgers(1000),
-		// Dormancy horizon left at DefaultMaxDormantComponentLedgers
-		// (17 280 ledgers ≈ 24 h at 5 s close cadence) on purpose, so
-		// this test pins the SHIPPED default posture, not a
-		// test-only tuning.
+		// Horizon is deliberately left at DefaultMaxDormantComponentLedgers (17 280 ledgers, about 24 h at 5 s close), so the
+		// test pins the shipped default posture, not a test-only tuning.
 	)
 
 	// Tick 1 — cold start, already lagging: rejected (unchanged
@@ -781,10 +752,8 @@ func TestRefresher_WriteBandIgnoresFailedWrite(t *testing.T) {
 	}
 }
 
-// liveArmDown is a live reserve reader whose balance read falls through
-// (one reserve account unobserved) while its observer watermark is
-// healthy — the shape in which the static map must not be published
-// under the live basis with a fresh-looking anchor.
+// A live reserve reader whose balance read falls through (one reserve account unobserved) while its observer watermark
+// is healthy: the static map must not be published under the live basis with a fresh-looking anchor.
 type liveArmDown struct{ watermark uint32 }
 
 func (l liveArmDown) ReserveBalanceTotal(_ context.Context, _ []string, _ uint32) (*big.Int, error) {

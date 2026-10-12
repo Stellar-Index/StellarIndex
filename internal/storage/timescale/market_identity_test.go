@@ -7,19 +7,16 @@ import (
 	"testing"
 )
 
-// rawPairCountRE matches a distinct-market count keyed on the raw stored
-// (base_asset, quote_asset) columns. prices_1m and trades keep each
-// market in the venue's observed direction, so such a count counts a
-// two-sided market twice.
+// rawPairCountRE matches a distinct-market count keyed on raw (base_asset, quote_asset) columns. prices_1m
+// and trades store each market in the venue's observed direction, so such a count counts a two-sided market
+// twice.
 var rawPairCountRE = regexp.MustCompile(
 	`(?i)(count\s*\(\s*distinct\s*\(\s*base_asset\s*,\s*quote_asset\s*\)` +
 		`|select\s+distinct\s+base_asset\s*,\s*quote_asset\b)`)
 
-// TestNoRawOrientationMarketCount is the class guard for "a market
-// counted once per stored orientation": no non-test file in this
-// package may count distinct markets on the raw columns. Count on
-// marketKeySQL or canonOrientSQL instead. Go and SQL comment lines are
-// skipped so a comment may still name the old shape.
+// TestNoRawOrientationMarketCount guards against counting a market once per stored orientation: no non-test
+// file may count distinct markets on the raw columns; use marketKeySQL or canonOrientSQL. Comment lines are
+// skipped.
 func TestNoRawOrientationMarketCount(t *testing.T) {
 	entries, err := os.ReadDir(".")
 	if err != nil {

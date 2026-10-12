@@ -34,10 +34,9 @@ func TestPrewarmCaches_FiresBothPassesBeforeTheFirstTick(t *testing.T) {
 		prewarmCaches(ctx, discardLogger(), stats, markets, assets, issuers, nil, nil, nil, noCatalogueFillTestLen)
 	}()
 
-	// Both passes must complete well inside the shorter (60s) cadence,
-	// which is what "immediately on startup" means. Every reader here is
-	// in-memory, so the deadline is generous relative to the work and far
-	// below the tick: a pass that waited for its first ticker fails here.
+	// Both passes must finish well inside the shorter (60s) cadence, which is what "immediately on startup" means. Readers
+	// are in-memory, so the deadline is generous for the work yet far below the tick: a pass waiting for its first ticker
+	// fails.
 	deadline := time.After(20 * time.Second)
 	for {
 		if statsLog.has("GetSourceStats()") && len(marketsLog.signatures()) > 0 {
@@ -54,10 +53,8 @@ func TestPrewarmCaches_FiresBothPassesBeforeTheFirstTick(t *testing.T) {
 		}
 	}
 
-	// The heavy pass warms all three source-stats slots. 7d was missing
-	// from this loop while its cache slot already existed, so the
-	// un-warmed 7d read was paid on the request path instead: measured
-	// 8.54s live, against 1.09s for the same call without sparkline7d.
+	// The heavy pass warms all three source-stats slots. 7d was missing though its cache slot existed, so the cold 7d read
+	// hit the request path: 8.54s measured live against 1.09s for the same call without sparkline7d.
 	for _, want := range []string{
 		"GetSourceStats()",
 		"GetSourceVolumeHistory24h()",

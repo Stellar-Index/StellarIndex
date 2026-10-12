@@ -15,9 +15,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/domain"
 )
 
-// End-to-end coverage for every internal/storage/timescale/mev.go store method over the scripted
-// driver: the SQL each issues, the arguments it binds and the values it returns. The worker's own
-// tests drive a fakeScanner, so placeholder order, on-chain predicates and row mapping are only
+// End-to-end coverage of every mev.go store method over the scripted driver: the SQL, bound arguments and
+// returned values. The worker's tests use a fakeScanner, so placeholder order, predicates and row mapping are
 // pinned here.
 
 const (
@@ -32,10 +31,9 @@ const (
 
 // ─── TradesForArbScan ─────────────────────────────────────────────────
 
-// TestTradesForArbScan_ValuesAndParallelUSDSlice drives the arbitrage detector's per-tick read.
-// The returned slices are positionally paired (trades[i]'s USD notional is usd[i]) and the second
-// fixture row is a token/token leg with no USD basis, so appending only priced legs would shift
-// every later notional onto the wrong trade.
+// TestTradesForArbScan_ValuesAndParallelUSDSlice: the returned slices are positionally paired (trades[i] with
+// usd[i]), and the second fixture row is a token/token leg with no USD basis, so appending only priced legs
+// would shift every later notional onto the wrong trade.
 func TestTradesForArbScan_ValuesAndParallelUSDSlice(t *testing.T) {
 	ts := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	store, conn := newScriptedStore(t, scriptedResult{
@@ -123,15 +121,9 @@ func TestTradesForArbScan_ExplicitLimitIsBound(t *testing.T) {
 	}
 }
 
-// TestTradesForArbScanQueryShape pins the predicates that make this scan
-// a MEV input rather than a trade dump:
-//
-//	ledger > 0 + taker present — off-chain CEX/FX prints carry neither, and an "atomic
-//	  arbitrage" assembled across exchange prints would be a fabricated public accusation;
-//	the (ledger, tx_hash, op_index) ordering, NEWEST first — the cap must keep the newest rows
-//	  (the store reverses them back to ascending); an ascending LIMIT drops the burst tail;
-//	the XLM-leg USD fallback — SDEX arb legs quote XLM/token with a NULL usd_volume, so without
-//	  it real cycles report "$0" notionals; it reads the XLM/USD anchor at the trade's minute.
+// TestTradesForArbScanQueryShape: the scan needs ledger > 0 with a taker (off-chain prints would fabricate
+// arbitrage), newest-first ordering so the cap keeps the newest rows, and the XLM-leg USD fallback so
+// SDEX arb legs with NULL usd_volume do not report $0.
 func TestTradesForArbScanQueryShape(t *testing.T) {
 	store, conn := newScriptedStore(t, scriptedResult{cols: []string{
 		"source", "ledger", "tx_hash", "op_index", "ts",
@@ -230,14 +222,9 @@ func TestOracleUpdatesForMEVScan_ValuesAndArgs(t *testing.T) {
 	}
 }
 
-// TestOracleUpdatesForMEVScan_ExcludesRawRowsFromTheIssuedSQL asserts the
-// predicates on the statement the store actually issues, not on the const it is built from, so
-// a refactor that stops using the const cannot drop the guard unnoticed.
-//
-// This scan feeds the oracle-correlated MEV detectors. `raw:<symbol>` rows are unmapped oracle
-// symbols recorded verbatim for capture totality (canonical.AssetOracleRaw): orientation-unknown
-// reference data that must never become interpretation input, since /v1/mev publicly names
-// accounts on that evidence.
+// TestOracleUpdatesForMEVScan_ExcludesRawRowsFromTheIssuedSQL asserts the predicates on the issued
+// statement, not the const. `raw:<symbol>` rows are orientation-unknown reference data and must never feed
+// MEV detectors, since /v1/mev publicly names accounts.
 func TestOracleUpdatesForMEVScan_ExcludesRawRowsFromTheIssuedSQL(t *testing.T) {
 	store, conn := newScriptedStore(t, scriptedResult{
 		cols: []string{"source", "contract_id", "ledger", "tx_hash", "op_index", "asset", "quote", "ts"},
@@ -263,10 +250,9 @@ func TestOracleUpdatesForMEVScan_ExcludesRawRowsFromTheIssuedSQL(t *testing.T) {
 
 // ─── BlendFillsForMEVScan ─────────────────────────────────────────────
 
-// TestBlendFillsForMEVScan_ValuesArgsAndLiquidationOnlyFilter: the cascade detector accuses
-// accounts of clustered liquidations, so the filter is load-bearing: only `fill` events, and only
-// the liquidation auction types (0 = UserLiquidation, 1 = BadDebt). Type 2 is a routine Interest
-// auction and would manufacture cascades.
+// TestBlendFillsForMEVScan_ValuesArgsAndLiquidationOnlyFilter: the cascade detector accuses accounts of
+// clustered liquidations, so only `fill` events of liquidation types (0 UserLiquidation, 1 BadDebt) pass;
+// type 2 is a routine Interest auction and would manufacture cascades.
 func TestBlendFillsForMEVScan_ValuesArgsAndLiquidationOnlyFilter(t *testing.T) {
 	ts := time.Date(2026, 8, 29, 8, 15, 0, 0, time.UTC)
 	store, conn := newScriptedStore(t, scriptedResult{
@@ -327,10 +313,9 @@ func TestInsertMEVEvent_RejectsEmptyTxHashes(t *testing.T) {
 	}
 }
 
-// TestInsertMEVEvent_ArgsAndIdempotency: the detector re-scans an
-// overlapping window every tick, so the write must be idempotent on
-// dedup_key and must report whether the row was NEW — the worker's
-// "flagged N events" counter and its logging both hang off that bool.
+// TestInsertMEVEvent_ArgsAndIdempotency: the detector rescans an overlapping window every tick, so the write
+// is idempotent on dedup_key and reports whether the row was new; the worker's counter and logging use that
+// bool.
 func TestInsertMEVEvent_ArgsAndIdempotency(t *testing.T) {
 	ts := time.Date(2026, 8, 29, 7, 0, 0, 0, time.UTC)
 	ev := domain.MEVStoredEvent{
@@ -417,10 +402,9 @@ func TestInsertMEVEvent_ArgsAndIdempotency(t *testing.T) {
 	}
 }
 
-// TestInsertMEVEvent_CrossAssetKindStoresNullAsset: a cross-asset kind
-// (arbitrage, cascade) carries AssetID/QuoteID == "" (see
-// domain.MEVStoredEvent). asset_id / quote_id must bind SQL NULL, not
-// the empty string, so the partial per-asset index skips the row.
+// TestInsertMEVEvent_CrossAssetKindStoresNullAsset: cross-asset kinds (arbitrage, cascade) have empty
+// AssetID/QuoteID (see domain.MEVStoredEvent), which must bind SQL NULL, not "", so the partial per-asset
+// index skips the row.
 func TestInsertMEVEvent_CrossAssetKindStoresNullAsset(t *testing.T) {
 	ev := domain.MEVStoredEvent{
 		Kind:             "arbitrage",
@@ -444,10 +428,9 @@ func TestInsertMEVEvent_CrossAssetKindStoresNullAsset(t *testing.T) {
 
 // ─── ListMEVEvents ────────────────────────────────────────────────────
 
-// TestListMEVEvents_KindFilterPlaceholderOrder. With a kind filter the
-// statement binds ($1 = kind, $2 = limit); without one it binds ($1 =
-// limit). Getting that pairing wrong is a runtime "invalid input syntax
-// for integer" on the public feed, and no test would have seen it.
+// TestListMEVEvents_KindFilterPlaceholderOrder: with a kind filter the statement binds ($1 = kind, $2 =
+// limit), without one ($1 = limit). A wrong pairing is a runtime "invalid input syntax for integer" on the
+// public feed.
 func TestListMEVEvents_KindFilterPlaceholderOrder(t *testing.T) {
 	cols := []string{
 		"event_id", "detected_at", "detected_at_ledger", "kind",
@@ -527,10 +510,9 @@ func TestListMEVEvents_LimitNormalisation(t *testing.T) {
 	}
 }
 
-// TestListMEVEvents_RowMapping covers the wire shape of /v1/mev: text[] columns decode through
-// internal/pgarray (a plain *[]string scan is a runtime error under pgx), an empty array stays a
-// non-nil slice so the JSON is `[]` not `null`, and a NULL profit_usd arrives as "" so the
-// handler emits JSON null.
+// TestListMEVEvents_RowMapping covers the /v1/mev wire shape: text[] columns decode via internal/pgarray, an
+// empty array stays a non-nil slice so JSON is `[]` not `null`, and a NULL profit_usd arrives as "" so the
+// handler emits null.
 func TestListMEVEvents_RowMapping(t *testing.T) {
 	detected := time.Date(2026, 8, 29, 6, 0, 0, 0, time.UTC)
 	store, _ := newScriptedStore(t, scriptedResult{

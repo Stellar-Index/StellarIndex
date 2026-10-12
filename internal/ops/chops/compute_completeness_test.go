@@ -417,10 +417,8 @@ func fakeSubstrateLake(haveMin uint32, calls *[]struct{ from, to uint32 }, inter
 	}
 }
 
-// A scan at the run's global floor returns only the lowest problem (a hole or
-// a head truncation below the source's genesis), which reads as clean for a
-// high-genesis source and masks its own hole. Scoping to the source's genesis
-// must find it.
+// A scan at the run's global floor returns only the lowest problem (a hole or head truncation below the source's genesis),
+// which reads clean for a high-genesis source and masks its own hole. Scoping to the source's genesis must find it.
 func TestSubstrateForGenesis_ScopedScanFindsTheSourcesOwnHole(t *testing.T) {
 	const tip, floor = uint32(70_000_000), uint32(2)
 	cases := []struct {
@@ -1009,10 +1007,9 @@ func TestSubstrateFloorLoss(t *testing.T) {
 	}
 }
 
-// passProjectionVerdict composes the -pass driver's pure decisions for one
-// single-target source, in the driver's order and with its own functions:
-// projectionFloor → targetScope → strictPerLedgerDelta → projectionClaim.
-// `expected` stands in for the CH re-derive and `actual` for the served counts.
+// passProjectionVerdict composes the -pass driver's pure decisions for one single-target source, in driver order:
+// projectionFloor, targetScope, strictPerLedgerDelta, projectionClaim. `expected` stands in for the CH re-derive and
+// `actual` for served counts.
 func passProjectionVerdict(genesis, hi uint32, expected, actual map[uint32]int, priorWatermark uint32, prior priorProjection) (bool, uint32, string) {
 	servedMin, haveServedRows := hi, false
 	for ledger := range actual {

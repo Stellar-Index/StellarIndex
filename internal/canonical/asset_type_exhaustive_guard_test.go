@@ -3,29 +3,9 @@
 
 package canonical
 
-// This file is the exhaustive-switch guard named in ADR-0010's Invariant
-// (docs/adr/0010-off-chain-fiat-representation.md).
-//
-// golangci-lint's `exhaustive` linter runs repo-wide with `default-signifies-exhaustive: true`.
-// Strict mode (`false`) would flood findings on enums this repo does not own (reflect.Kind
-// walkers, etc.), and the linter cannot scope strictness to one named type. So this narrow guard
-// exists instead:
-//
-//   - It walks the repo with go/types (loadRepoPackages/repoRoot, shared with
-//     TestI128TruncationGuard) and looks only at switches whose tag type is canonical.AssetType,
-//     so it runs at full strictness with no noise.
-//   - It catches what `default-signifies-exhaustive: true` cannot: a `default:` that is empty or
-//     a bare `fallthrough`/`break`. golangci counts the mere presence of a default as exhaustive,
-//     but a silently empty default on an unhandled variant is no safer than none.
-//
-// The declared-variant set is discovered from the canonical package's go/types Scope (every
-// package-level const of type AssetType), never hardcoded, so a new AssetType variant cannot
-// escape the guard by being missing from a list here.
-//
-// Escape hatch: the same `//exhaustive:ignore` marker the linter honors, on the line directly
-// above the switch (see internal/storage/timescale/usd_volume_quote_spec.go, an
-// intentionally-partial switch with prose naming which variants fall through and why). A switch
-// already justified to the linter needs no second justification here.
+// Exhaustive-switch guard (ADR-0010): golangci `exhaustive` counts any `default:` as exhaustive and cannot be strict per
+// type. This go/types walk checks canonical.AssetType switches, rejecting an empty default or bare fallthrough/break.
+// Variants come from the package Scope, not a list; escape with `//exhaustive:ignore`.
 import (
 	"fmt"
 	"go/ast"
@@ -44,10 +24,8 @@ import (
 // one escape hatch.
 const assetTypeIgnoreMarker = "exhaustive:ignore"
 
-// discoverAssetTypeVariants returns the wire-string value of every
-// package-level `const` of type canonical.AssetType, found by
-// scanning the loaded canonical package's own types.Scope. Dynamic
-// on purpose — see the file doc comment.
+// Returns the wire-string of every package-level const of type canonical.AssetType, found by scanning the canonical
+// package's types.Scope. Dynamic on purpose; see the file doc comment.
 func discoverAssetTypeVariants(t *testing.T, pkgs []*packages.Package) map[string]bool {
 	t.Helper()
 	variants := map[string]bool{}
@@ -117,10 +95,8 @@ func assetTypeIgnoreLines(fset *token.FileSet, f *ast.File) map[int]bool {
 	return out
 }
 
-// checkAssetTypeSwitch inspects one switch statement already known
-// to be tagged on canonical.AssetType. Returns a violation message,
-// or "" if the switch either has a default clause with a real body
-// or explicitly covers every declared variant.
+// Inspects one switch already known to be tagged on canonical.AssetType.
+// Returns a violation message, or "" if it has a default clause with a real body or covers every declared variant.
 func checkAssetTypeSwitch(info *types.Info, sw *ast.SwitchStmt, variants map[string]bool) string {
 	covered := map[string]bool{}
 	hasDefault := false

@@ -244,10 +244,8 @@ func TestAccountMovements_UnprovenWindowFallsBackToExactQuery(t *testing.T) {
 	}
 }
 
-// TestAccountTransactions_PageIsShortOnlyAtEndOfHistory: with cross-arm
-// overlap present, a page must still carry `limit` rows whenever `limit`
-// distinct txs remain — the premise of the handler's "emit next_cursor iff
-// len(rows) == limit" rule.
+// TestAccountTransactions_PageIsShortOnlyAtEndOfHistory: despite cross-arm overlap, a page must carry `limit`
+// rows whenever `limit` distinct txs remain, the premise of "emit next_cursor iff len(rows) == limit".
 func TestAccountTransactions_PageIsShortOnlyAtEndOfHistory(t *testing.T) {
 	const limit = 5
 	k := txKeyRow

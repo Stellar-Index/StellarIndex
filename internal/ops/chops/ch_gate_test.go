@@ -104,11 +104,9 @@ func gateLCM(envs []xdr.TransactionEnvelope, procs []xdr.TransactionResultMeta) 
 	}
 }
 
-// TestGateLedger_UnreadableTxIsCountedAndFlagged pins that the gate's tx/op
-// census comes from the LCM, not from the extract it checks. ExtractLedger
-// skips a tx the reader cannot decode and so never counts it; a census taken
-// from extract's own TxCount/OpCount agreed with that drop and the gate
-// certified a ledger missing a transaction and its operations.
+// TestGateLedger_UnreadableTxIsCountedAndFlagged: the gate's tx/op census must come from the LCM, not the extract it
+// checks. ExtractLedger skips an undecodable tx, so a census from its own TxCount/OpCount agreed with the drop and
+// certified a ledger missing a tx.
 func TestGateLedger_UnreadableTxIsCountedAndFlagged(t *testing.T) {
 	okEnv, okProc := gateTx(t, 0x11, 1, false)
 	badEnv, badProc := gateTx(t, 0x22, 2, true)

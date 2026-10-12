@@ -5,20 +5,9 @@ import (
 	"testing"
 )
 
-// TestProxyQuoteLists_Lockstep pins the four places that decide "what is a USD/XLM proxy" to ONE
-// set, and pins the XLM leg to being read in BOTH stored directions everywhere the catalogue
-// prices it: the 8 headline-price CTEs AND the 4 price-history series CTEs.
-//
-// The lists live in the coverage tripwire (coverageQuoteProxies), the transitive resolver
-// (usdProxyQuotes + xlmQuotes), and the two catalogue derivations' literal IN-lists
-// (assetPriceCTEs + getAssetBySlugSQL). An asset "priced" by one and "priceless" by another makes
-// the popular-priceless alert fire forever on an asset the catalogue could price, or serves no
-// price for an asset the volume path values.
-//
-// The LISTING entry is assetPriceCTEs, not listAssetsBaseSelect: the derivation lives in the
-// asset_price_snapshot refresh, not the per-request SELECT.
-// TestListAssetsBaseSelect_NoPerRequestPriceScan pins that the listing SELECT does not grow a
-// second, drifting copy.
+// TestProxyQuoteLists_Lockstep pins the four places that define a USD/XLM proxy to one set, and the XLM leg
+// to being read in both stored directions in the headline-price and price-history CTEs. Drift makes the
+// popular-priceless alert fire forever or serves no price where volume is valued.
 func TestProxyQuoteLists_Lockstep(t *testing.T) {
 	t.Parallel()
 
@@ -86,10 +75,8 @@ func TestProxyQuoteLists_Lockstep(t *testing.T) {
 			t.Errorf("%s SQL: inverted XLM arms (base_asset IN xlm AND quote_asset = ANY($1)) = %d, want 1 — "+
 				"a market stored as (XLM-SAC, asset) yields an empty sparkline without it", name, got)
 		}
-		// Base-side preferred per bucket: the inverted flag must be the
-		// FIRST key of the per-bucket pick after any partition columns,
-		// i.e. ahead of bucket DESC — otherwise a fresher inverted row
-		// would silently replace a base-side point (byte-identity).
+		// Base-side preferred per bucket: the inverted flag must be the FIRST key of the per-bucket pick after any
+		// partition columns, ahead of bucket DESC, or a fresher inverted row would replace a base-side point.
 		if !strings.Contains(sql, "inverted, prio, bucket DESC") && !strings.Contains(sql, "inverted, bucket DESC") {
 			t.Errorf("%s SQL: per-bucket pick does not order inverted ahead of bucket DESC", name)
 		}

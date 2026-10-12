@@ -435,10 +435,9 @@ func TestRestampTradesChunk_RecompressesWhenWorkPanics(t *testing.T) {
 	}
 }
 
-// Ahead of every batch is_compressed is read; once true the loop stops with
-// ErrTradesChunkRecompressed, earlier rows committed and the next UPDATE (which
-// would decompress the chunk wholesale) never issued. Each batch also sets the
-// lifted decompression cap and a forced custom plan so its ts bound prunes to one chunk.
+// Before every batch is_compressed is read; once true the loop stops with ErrTradesChunkRecompressed,
+// earlier rows committed and no further UPDATE issued (it would decompress the chunk wholesale). Each batch
+// also sets the lifted decompression cap and a forced custom plan so its ts bound prunes to one chunk.
 func TestApplyXLMBaseUSDVolumeRestampInChunk_GuardsEveryBatch(t *testing.T) {
 	t.Parallel()
 	isCompressed := isCompressedResult

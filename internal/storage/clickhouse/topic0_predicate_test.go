@@ -12,13 +12,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// TestTopic0Predicate_MatchesBothTopicEncodings is the fast guard for the lake half of the
-// string-topic prefilter (the executing proof against a real ClickHouse is
-// test/integration/clickhouse_reads_test.go).
-//
-// extract.go fills topic_0_sym from Topics[0].GetSym() only, so the column is EMPTY for an
-// ScvString topic[0]. A prefilter of `topic_0_sym IN (…)` alone matches zero rows for
-// phoenix's ("create","liquidity_pool") announcement, so creationSym consumers admit nothing.
+// TestTopic0Predicate_MatchesBothTopicEncodings guards the lake string-topic prefilter. topic_0_sym is empty
+// for an ScvString topic[0], so `topic_0_sym IN (...)` alone would match nothing for phoenix's create
+// announcement.
 func TestTopic0Predicate_MatchesBothTopicEncodings(t *testing.T) {
 	t.Parallel()
 	pred := topic0Predicate([]string{"create"})
@@ -53,10 +49,9 @@ func TestTopic0Predicate_MatchesBothTopicEncodings(t *testing.T) {
 // scan or single out the String case, so they cannot hide a String-topic row.
 var rawTopic0SymInclude = regexp.MustCompile(`topic_0_sym\s+(?i:in)\s*\(|topic_0_sym\s*=\s*('[^']|\?|\$|%)`)
 
-// TestTopic0SymIncludePredicates_OnlyReviewedSites keeps a new lake query from
-// filtering on topic_0_sym alone, which silently drops every String-topic event
-// (phoenix, soroswap, defindex topic[0]). Route through topic0Predicate, or add
-// the site here with why a Symbol-only match is complete for it.
+// TestTopic0SymIncludePredicates_OnlyReviewedSites: filtering on topic_0_sym alone silently drops
+// String-topic events (phoenix, soroswap, defindex). Route through topic0Predicate, or add the site here with
+// why Symbol-only is complete.
 func TestTopic0SymIncludePredicates_OnlyReviewedSites(t *testing.T) {
 	t.Parallel()
 	allowed := map[string]int{

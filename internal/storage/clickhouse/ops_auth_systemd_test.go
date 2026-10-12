@@ -14,24 +14,9 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2"
 )
 
-// The ops-batch identity must not reach a live daemon ──────
-//
-// [opsAuth] takes the low-priority `ops_batch` identity from the PROCESS ENVIRONMENT, and
-// docs/operations/clickhouse-ops-batch-profile.md prescribes writing the pair into
-// /etc/default/stellarindex-ops. The deploy/systemd reference units share that file with the
-// daemons, so a self-hoster following the doc must not demote the LIVE ledger sink
-// (NewLiveSink -> Open) or the aggregator's supply readers (NewExplorerReader) to the batch
-// tier, the inverse of what the profile exists to prevent.
-//
-// The units strip the pair with `UnsetEnvironment=`, which systemd applies AFTER every
-// Environment=/EnvironmentFile= (systemd.exec(5)). This test pins the GUARANTEE rather than
-// the directive: it resolves each unit's environment, feeds it to [chAuthFrom], and asserts
-// live_daemon for the live daemons and `ops_batch` for the batch one-shots sharing the file
-// (so an over-broad strip cannot quietly re-break the batch tier).
-//
-// Deliberately NOT credited as a strip: `Environment=VAR=` neutralising, because
-// EnvironmentFile= overrides Environment= and that idiom is version-dependent;
-// UnsetEnvironment= is the only directive specified to run last.
+// The ops-batch identity must not reach a live daemon: units share /etc/default/stellarindex-ops, so each
+// unit must strip the pair with UnsetEnvironment=, which systemd applies last. The test resolves each unit's
+// environment and asserts live_daemon for daemons and ops_batch for batch one-shots.
 
 // systemdUnitDirs are the two surfaces that define how a stellarindex
 // binary is started: the self-host reference units and the units the
@@ -41,10 +26,9 @@ var systemdUnitDirs = []struct{ dir, suffix string }{
 	{"configs/ansible/roles/archival-node/templates/systemd", ".service.j2"},
 }
 
-// nonServingCmds are the cmd/ binaries that are NOT long-running serving
-// daemons and SHOULD authenticate as ops_batch when offered it: the admin CLI, the migrator,
-// the SLA prober. Every other cmd/stellarindex-* is a live daemon; an unclassified new one
-// fails the test on purpose.
+// nonServingCmds are the cmd/ binaries that are not long-running daemons and should authenticate as
+// ops_batch (admin CLI, migrator, SLA prober). Every other cmd/stellarindex-* is a live daemon; an
+// unclassified new one fails the test on purpose.
 var nonServingCmds = map[string]bool{
 	"stellarindex-ops":       true, // the batch CLI — the profile's whole point
 	"stellarindex-migrate":   true, // one-shot, opens Postgres only
@@ -158,10 +142,9 @@ const (
 	armBatch = "batch"
 )
 
-// identityViolation classifies u (armLive, armBatch, or "" when the unit
-// never reaches a ClickHouse-opening stellarindex binary) and describes
-// why auth is the wrong identity for that arm, or returns "" when right.
-// liveWant is the live-daemon identity the unit's environment configures.
+// identityViolation classifies u (armLive, armBatch, or "" if it never opens ClickHouse via a stellarindex
+// binary) and describes why auth is the wrong identity for that arm, or returns "" when right. liveWant is
+// the unit's live identity.
 func identityViolation(u systemdUnit, auth, liveWant clickhouse.Auth, serving map[string]bool, scripts map[string]opsScript) (arm, violation string) {
 	batchWant := clickhouse.Auth{Database: "stellar", Username: opsEnvPair[OpsUserEnv], Password: opsEnvPair[OpsPasswordEnv]}
 	switch {
@@ -175,10 +158,8 @@ func identityViolation(u systemdUnit, auth, liveWant clickhouse.Auth, serving ma
 		}
 		return armLive, violation
 	case u.runsAnyOf(opsBinary) || u.reachesOpsViaScript(scripts):
-		// Running the ops CLI, directly or through a shipped script, IS
-		// the batch tier: it MUST resolve to ops_batch whether or not it
-		// sources the file (batch units that sourced nothing
-		// ran at CH `default`/serving priority and matched no arm here).
+		// Running the ops CLI, directly or via a shipped script, IS the batch tier: it must resolve to ops_batch
+		// whether or not it sources the file, else batch units ran at serving priority and matched no arm.
 		if auth != batchWant {
 			violation = fmt.Sprintf("%s runs stellarindex-ops (directly or via a shipped script) but would authenticate as %+v, want %+v.\n"+
 				"  Fix: launch it through %s (imports only the pair), or add `EnvironmentFile=-/etc/default/%s` to the unit's [Service] section.",
@@ -206,10 +187,9 @@ func requireExamined(t *testing.T, kind string, examined, want []string) {
 	}
 }
 
-// heavyJobWrapper is /usr/local/sbin/run-heavy-job.sh, rendered by
-// 14-stellarindex-services.yml. It imports ONLY the ops-batch pair from the ops env file when
-// the caller has not set it; the rest (MinIO reader keys, DSN) deliberately stays out
-// (scripts/ci/run-heavy-job-test.sh pins the behaviour).
+// heavyJobWrapper is /usr/local/sbin/run-heavy-job.sh, rendered by 14-stellarindex-services.yml. It imports
+// only the ops-batch pair from the ops env file when unset; MinIO reader keys and DSN stay out
+// (run-heavy-job-test.sh).
 const heavyJobWrapper = "run-heavy-job.sh"
 
 // requireHeavyJobWrapperImportsPair grounds resolveEnv's wrapper model in
@@ -292,10 +272,9 @@ func (u systemdUnit) reachesOpsViaScript(scripts map[string]opsScript) bool {
 	return false
 }
 
-// resolveEnv models the environment the unit's ClickHouse-opening child
-// process sees, for the ops-batch and live-daemon pairs only: EnvironmentFile= entries
-// contribute `contents` (ops file) or `live`, UnsetEnvironment= applies after them
-// (systemd.exec(5)), and then run-heavy-job.sh imports the ops pair when unset.
+// resolveEnv models the environment the unit's ClickHouse-opening child sees, for the ops-batch and live-
+// daemon pairs: EnvironmentFile= contributes `contents` or `live`, UnsetEnvironment= applies after, then
+// run-heavy-job.sh imports the ops pair when unset.
 func (u systemdUnit) resolveEnv(contents, live map[string]string, scripts map[string]opsScript) map[string]string {
 	env := map[string]string{}
 	for _, f := range u.envFile {

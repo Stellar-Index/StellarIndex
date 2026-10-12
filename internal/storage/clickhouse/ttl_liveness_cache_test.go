@@ -12,10 +12,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// These tests pin the stale-while-revalidate contract of the archived-pair verdict cache: the
-// ttl-prefix classification scan must never run per request. A filled snapshot serves instantly
-// (missing keys fail open as TTLUnknown), a stale or incomplete one kicks exactly one detached
-// recompute, and a cold cache waits for that compute bounded only by the caller's deadline.
+// These tests pin the stale-while-revalidate contract of the archived-pair verdict cache: the classification
+// scan never runs per request. A filled snapshot serves instantly (missing keys fail open as TTLUnknown), a
+// stale one starts one detached recompute, and a cold cache waits for it.
 
 func TestTTLLivenessCache_ColdFillsAndServes(t *testing.T) {
 	var calls atomic.Int32
@@ -77,10 +76,9 @@ func TestTTLLivenessCache_MissingKeyFailsOpenAndRefreshes(t *testing.T) {
 	}
 }
 
-// A refresh kicked by a SUBSET caller (?pool= resolves one pair) must not evict the rest of the
-// snapshot: store() replaces the whole map, so without a union a single-pair refresh would wipe
-// every other verdict and the archived-pair filter would fall open (TTLUnknown→keep), serving
-// dead pools as live liquidity.
+// A refresh kicked by a subset caller (?pool= resolves one pair) must not evict the rest of the snapshot.
+// store() replaces the whole map, so without a union the archived-pair filter would fall open (TTLUnknown to
+// keep) and serve dead pools as live.
 func TestTTLLivenessCache_SubsetRefreshDoesNotEvictOtherKeys(t *testing.T) {
 	c := newTTLLivenessCache(func(_ context.Context, keys []string) (map[string]TTLLiveness, error) {
 		out := make(map[string]TTLLiveness, len(keys))

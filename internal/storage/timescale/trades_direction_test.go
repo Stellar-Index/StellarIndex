@@ -25,10 +25,8 @@ const (
 	dirTxA = "a100000000000000000000000000000000000000000000000000000000000000"
 	dirTxB = "b200000000000000000000000000000000000000000000000000000000000000"
 
-	// One trade of the market, in smallest units: 100 AQUA for 20 USDC.
-	// Stored AQUA/USDC that is price 0.2 USDC per AQUA; stored the other
-	// way round it is 5 AQUA per USDC. Far apart, so a dropped or
-	// uninverted leg is unmistakable.
+	// One trade of the market in smallest units: 100 AQUA for 20 USDC, i.e. 0.2 USDC per AQUA stored
+	// AQUA/USDC, or 5 AQUA per USDC the other way. Far apart, so a dropped or uninverted leg is unmistakable.
 	dirAQUAAmount = "1000000000"
 	dirUSDCAmount = "200000000"
 )
@@ -87,10 +85,9 @@ func requestedStoredRow(source string, ledger int64, txHash string, ts time.Time
 		dirAQUA, dirUSDC, dirAQUAAmount, dirUSDCAmount)
 }
 
-// wantAQUAUSDCTrade asserts a returned trade is the fixture trade
-// expressed as AQUA/USDC — the legs the caller asked for, the amounts
-// attached to the right legs, and a price that is the EXACT reciprocal
-// of the stored one rather than a rounded division of it.
+// wantAQUAUSDCTrade asserts a returned trade is the fixture expressed as AQUA/USDC: the requested legs,
+// amounts on the right legs, and a price that is the exact reciprocal of the stored one, not a rounded
+// division.
 func wantAQUAUSDCTrade(t *testing.T, got canonical.Trade, who string) {
 	t.Helper()
 	if got.Pair.Base.String() != dirAQUA || got.Pair.Quote.String() != dirUSDC {
@@ -153,10 +150,8 @@ func TestLatestTradePerSource_ServesAMarketRecordedTheOtherWayRound(t *testing.T
 	}
 }
 
-// TestLatestTradePerSource_LeavesTheRequestedOrientationUntouched is the
-// other half of the destructive-transform pair: the re-expression must
-// fire ONLY on a flipped row. A row already stored the way it was asked
-// for comes back byte-identical.
+// TestLatestTradePerSource_LeavesTheRequestedOrientationUntouched pins that re-expression fires only on a
+// flipped row; a row already stored in the requested orientation comes back byte-identical.
 func TestLatestTradePerSource_LeavesTheRequestedOrientationUntouched(t *testing.T) {
 	pair := dirAQUAUSDCPair(t)
 	ts := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
@@ -180,10 +175,9 @@ func TestLatestTradePerSource_LeavesTheRequestedOrientationUntouched(t *testing.
 	}
 }
 
-// TestLatestTradePerSource_OneRowPerSourceAcrossDirections covers one source with a trade in each
-// stored direction. "Latest per source" is one row, the later trade, and the answer must not
-// depend on which union arm the database returns first, since that order flips with the
-// requested orientation. Each case is driven twice, with the rows in both orders.
+// TestLatestTradePerSource_OneRowPerSourceAcrossDirections: a source with a trade in each stored direction
+// yields one row, the later trade, regardless of which union arm returns first. Each case runs with rows in
+// both orders.
 func TestLatestTradePerSource_OneRowPerSourceAcrossDirections(t *testing.T) {
 	pair := dirAQUAUSDCPair(t)
 	ts := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
@@ -258,10 +252,9 @@ func TestLatestTradePerSource_OneRowPerSourceAcrossDirections(t *testing.T) {
 	}
 }
 
-// TestLatestTradesForPair_ServesAMarketRecordedTheOtherWayRound is the /v1/price last-trade arm.
-// Its snapshot echoes the row's own legs and derives price from its own amounts, so a flipped row
-// served unre-expressed would report `asset_id: USDC, quote: AQUA` at 5 for a request asking what
-// one AQUA is worth in USDC.
+// TestLatestTradesForPair_ServesAMarketRecordedTheOtherWayRound is the /v1/price last-trade arm: its
+// snapshot echoes the row's own legs and derives price from its amounts, so a flipped row served unre-
+// expressed would answer a different question.
 func TestLatestTradesForPair_ServesAMarketRecordedTheOtherWayRound(t *testing.T) {
 	pair := dirAQUAUSDCPair(t)
 	ts := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
@@ -313,11 +306,9 @@ func TestLatestTradesForPair_ClampsLimit(t *testing.T) {
 	}
 }
 
-// TestRawTradeReadsSpanBothStoredDirections is the query-shape half: these reads span exactly
-// what /v1/history's page read spans, so the surfaces agree on whether a market exists. The
-// scripted driver replays rows whatever the SQL says, so no behavioural test above proves the
-// flipped rows were fetched; this reads each issued statement and requires both arms, as
-// TestCAGGPairReadsFoldBothDirections does for the CAGG readers.
+// TestRawTradeReadsSpanBothStoredDirections: these reads must span the same directions as /v1/history's page
+// read, so surfaces agree on whether a market exists. The scripted driver replays rows regardless, so this
+// requires both arms in each issued statement.
 func TestRawTradeReadsSpanBothStoredDirections(t *testing.T) {
 	pair := dirAQUAUSDCPair(t)
 
@@ -380,10 +371,8 @@ Query:
 	}
 }
 
-// TestLatestTradePerSource_SourceFilterAppliesToBothDirections: the
-// filter is applied in SQL, so it has to be applied on each arm. A
-// filter on one arm only would serve a single-source request the whole
-// market from the other direction.
+// TestLatestTradePerSource_SourceFilterAppliesToBothDirections: the filter is applied in SQL on each arm;
+// a one-arm filter would serve a single-source request the whole market from the other direction.
 func TestLatestTradePerSource_SourceFilterAppliesToBothDirections(t *testing.T) {
 	pair := dirAQUAUSDCPair(t)
 
@@ -422,18 +411,13 @@ func latestUnboundedPair(t *testing.T) canonical.Pair {
 	return pair
 }
 
-// tsLowerBound matches a lower bound on `ts` in any spelling a recency window could arrive in
-// (`ts >= $4`, `ts > now() - …`, `ts BETWEEN …`). An upper bound (`ts <= $3`, as
-// [Store.FXQuoteAtOrBefore] binds) is deliberately not matched: it caps how new a row may be and
-// cannot hide an old one. No trailing \b after the operator: `>=` ends in a non-word character,
-// so `>=\b` never matches.
+// tsLowerBound matches a lower bound on `ts` in any recency-window spelling (`ts >= $4`, `ts > now() - ...`,
+// `ts BETWEEN ...`). Upper bounds (`ts <= $3`) are deliberately unmatched: they cannot hide an old row. No
+// trailing \b after the operator, as `>=\b` never matches.
 var tsLowerBound = regexp.MustCompile(`(?i)\bts\s*(?:>=|>|between\b)`)
 
-// TestLatestTradeReadsTakeNoRecencyBound is the guard. Both channels a bound could arrive on are
-// checked, since the repo idiom forbids one: floors are bound Go-side as a `time.Time` so the
-// planner can prune chunks at plan time, and TestHasAsset_ProbeWindowIsTheListingWindow forbids
-// the `now() - INTERVAL` form. A window here is a bound time.Time or a now() in the SQL; both are
-// refused.
+// TestLatestTradeReadsTakeNoRecencyBound: latest-trade reads must carry no window, either as a bound
+// time.Time or as a now() in the SQL; both channels are refused.
 func TestLatestTradeReadsTakeNoRecencyBound(t *testing.T) {
 	t.Parallel()
 
@@ -518,10 +502,9 @@ and say why here. Do not delete it.`
 	}
 }
 
-// TestLatestTradePerSource_AnswersAMarketQuietForYears is the behavioural companion to the
-// guard above. It cannot see a window in the SQL (the scripted driver replays its row regardless),
-// but pins the contract the guard protects: a trade from years before any plausible window is
-// returned at its real timestamp, not dropped or re-stamped.
+// TestLatestTradePerSource_AnswersAMarketQuietForYears is the behavioural companion to the guard above. The
+// scripted driver replays its row whatever the SQL window, so this pins only that a years-old trade is
+// returned at its real timestamp.
 func TestLatestTradePerSource_AnswersAMarketQuietForYears(t *testing.T) {
 	t.Parallel()
 

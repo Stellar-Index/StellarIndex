@@ -26,10 +26,9 @@ import (
 // It also pins the panic as VISIBLE: stellarindex_worker_panics_total is the only signal that
 // a background worker died, so a recover that does not move it is a silent dead worker.
 
-// The account-state and wealth refreshers already release their flight from a defer, so
-// these two pin the guard itself and that the release still happens once the panic is
-// contained. The panic source is real: ExplorerReader.conn is nil on a zero-value reader, so
-// the scan's first r.conn.Query dereferences a nil interface.
+// The account-state and wealth refreshers already release their flight from a defer; these two pin the guard
+// itself and that the release still happens once the panic is contained (a zero-value ExplorerReader has a
+// nil conn).
 func TestAccountStateRefresh_PanicReleasesFlightAndSurvives(t *testing.T) {
 	const workerName = "explorer-account-state-refresh"
 	before := testutil.ToFloat64(obs.WorkerPanicsTotal.WithLabelValues(workerName))

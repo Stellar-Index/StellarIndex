@@ -13,15 +13,8 @@ import (
 	"time"
 )
 
-// TestListAssetsBaseSelect_NoPerRequestPriceScan guards against a per-request price scan, and must
-// never be relaxed.
-//
-// Deriving the /v1/assets price per request would materialise twelve `DISTINCT ON … FROM
-// prices_1m` CTEs for every catalogue asset on every uncached variant, whatever page was asked
-// for (seconds per call and hundreds of thousands of buffer hits). The derivation lives in
-// refreshAssetPriceSnapshotUpsert and the listing reads a PK-keyed rollup. Re-inlining any
-// prices_1m read would bring the cost back invisibly, because the SWR cache hides it until a
-// variant misses. So the listing SELECT reads NO time-series relation at all.
+// TestListAssetsBaseSelect_NoPerRequestPriceScan: the /v1/assets listing must read NO time-series relation.
+// Prices come from the PK-keyed rollup, since inlining prices_1m reads is hidden by the cache until a miss.
 func TestListAssetsBaseSelect_NoPerRequestPriceScan(t *testing.T) {
 	t.Parallel()
 
@@ -73,12 +66,9 @@ func TestListAssetsBaseSelect_NoPerRequestPriceScan(t *testing.T) {
 	}
 }
 
-// TestPriceArms_UnionBothDirectionsAndPickByRecency pins the two rules the headline price depends
-// on, in the rollup AND the detail query. Every per-asset arm reads BOTH stored directions of its
-// markets and prefers neither: (USDC, asset) is the same market as (asset, USDC), written by a
-// source that records swap direction. The arm is chosen by observation recency, not a fixed
-// direct-then-XLM order, which let a days-old USD print outrank a live XLM market. The executing
-// proof is test/integration/pg_pricing_test.go.
+// TestPriceArms_UnionBothDirectionsAndPickByRecency: each per-asset arm reads both stored directions of its
+// markets and is chosen by observation recency, not a fixed direct-then-XLM order, in the rollup and
+// detail queries. The executing proof is test/integration/pg_pricing_test.go.
 func TestPriceArms_UnionBothDirectionsAndPickByRecency(t *testing.T) {
 	t.Parallel()
 	usdList := strings.Join(strings.Fields(usdProxyQuotes), " ")
@@ -119,12 +109,9 @@ func TestPriceArms_UnionBothDirectionsAndPickByRecency(t *testing.T) {
 	}
 }
 
-// TestAssetPriceSnapshot_StalenessBoundIsEnforcedInSQL pins the fail-closed half of the staleness
-// contract. The listing now depends on the aggregator being alive, and the quiet failure must NOT
-// exist: a wedged aggregator while /v1/assets serves stale prices as current. The join carries a
-// floor on computed_at; past it the join MISSES and the row renders with no price (visible), while
-// the aggregator's heartbeat pages. It asserts the rendered predicate, since a constant nothing
-// splices in bounds nothing.
+// TestAssetPriceSnapshot_StalenessBoundIsEnforcedInSQL pins fail-closed staleness: the join floors
+// computed_at, so a wedged aggregator makes the row render with no price rather than serve stale prices as
+// current. It asserts the rendered predicate, since a constant nothing splices in bounds nothing.
 func TestAssetPriceSnapshot_StalenessBoundIsEnforcedInSQL(t *testing.T) {
 	t.Parallel()
 
@@ -147,10 +134,8 @@ func TestAssetPriceSnapshot_StalenessBoundIsEnforcedInSQL(t *testing.T) {
 		}
 	}
 
-	// The bound has to be a real, parseable Postgres interval and has to
-	// stay a multiple of the refresh cadence — wide enough that a
-	// restart or a slow pass never blanks the flagship page, narrow
-	// enough that a price cannot drift materially first.
+	// The bound must be a parseable Postgres interval and a multiple of the refresh cadence: wide enough that a
+	// restart or slow pass never blanks the flagship page, narrow enough that a price cannot drift materially.
 	m := regexp.MustCompile(`^(\d+) (minutes|hours)$`).FindStringSubmatch(assetPriceSnapshotMaxAge)
 	if m == nil {
 		t.Fatalf("assetPriceSnapshotMaxAge = %q, want `<n> minutes` or `<n> hours`", assetPriceSnapshotMaxAge)
@@ -252,11 +237,9 @@ func TestRollupPrunes_sargable(t *testing.T) {
 	}
 }
 
-// TestRefreshAssetListingRollups_oneTransaction pins the refresh path: both rollups, four
-// statements, one transaction, ordered so no window has this pass's volume with last pass's price.
-// The scripted driver records every statement, so it also proves the aggregator's existing seam
-// (RefreshAssetVolume24h) drives the price refresh with no changes under internal/aggregate or
-// cmd/.
+// TestRefreshAssetListingRollups_oneTransaction pins the refresh path: both rollups, four statements, one
+// transaction, ordered so no window has this pass's volume with last pass's price, driven through the
+// existing RefreshAssetVolume24h seam.
 func TestRefreshAssetListingRollups_oneTransaction(t *testing.T) {
 	t.Parallel()
 
@@ -393,10 +376,8 @@ func TestRollupExpiryPrunes_boundedByValidityWindow(t *testing.T) {
 	}
 }
 
-// sqlWithoutComments strips `-- …` line comments so an assertion about
-// what a query READS cannot be satisfied — or defeated — by what its
-// prose SAYS. Both consts here are heavily commented, and both comment
-// on the very table names under test.
+// sqlWithoutComments strips `-- ...` line comments so an assertion about what a query reads cannot be
+// satisfied or defeated by what its prose says; both consts here comment on the very table names under test.
 func sqlWithoutComments(sql string) string {
 	var b strings.Builder
 	for _, line := range strings.Split(sql, "\n") {
@@ -409,10 +390,9 @@ func sqlWithoutComments(sql string) string {
 	return b.String()
 }
 
-// TestAssetPriceSnapshot_DecimalsNormalisedOnceAtTheWriter pins that the nonstandard-decimals
-// correction for the listing price lives in the rollup's writer exactly once, never on the read
-// side. A reader scaling aps.price_usd again would publish a price off by the factor squared. The
-// executing proof is test/integration/pg_pricing_test.go.
+// TestAssetPriceSnapshot_DecimalsNormalisedOnceAtTheWriter pins that the nonstandard-decimals correction
+// lives only in the rollup writer; a reader scaling aps.price_usd again would be off by the factor squared.
+// The executing proof is test/integration/pg_pricing_test.go.
 func TestAssetPriceSnapshot_DecimalsNormalisedOnceAtTheWriter(t *testing.T) {
 	t.Parallel()
 
@@ -441,11 +421,8 @@ func TestAssetPriceSnapshot_DecimalsNormalisedOnceAtTheWriter(t *testing.T) {
 	}
 }
 
-// TestCatalogueReads_RoundAfterTheDecimalsCorrection pins the OTHER half of the split: the
-// per-asset row and the four price-history reads stay RAW (the API owns the multiply) but must not
-// round a confirmed token's raw ratio on the flat 10-place scale, which for an 18-decimals token
-// turns 14 USD into exactly 10. The executing proof is
-// TestAssetCatalogue_RoundsAfterDecimalsCorrection.
+// TestCatalogueReads_RoundAfterTheDecimalsCorrection: the per-asset row and price-history reads stay RAW
+// but must not round a confirmed token's ratio on a flat 10-place scale (14 USD became exactly 10).
 func TestCatalogueReads_RoundAfterTheDecimalsCorrection(t *testing.T) {
 	t.Parallel()
 

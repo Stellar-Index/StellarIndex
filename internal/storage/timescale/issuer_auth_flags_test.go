@@ -18,14 +18,9 @@ import (
 // sits beside a high-entropy literal, which gitleaks' generic-api-key rule keys on.
 const mergedIssuer = "GA2PQOJ26IP24ECRXEZ4BE6BEIB4HNDWSA2E6JVPFIP6KO6BKOEAZ6XW"
 
-// TestIssuerAuthFlagsValidate_RefusesADeadAccountsDomain matters most. A merged account's
-// home_domain is a self-declared identity claim that can no longer be checked against SEP-1's
-// bidirectional [[CURRENCIES]] back-reference, so persisting one creates an impersonation
-// surface on accounts nobody can verify on-chain any more. Nearly all recovered pre-images
-// still carry one.
-//
-// The lake reader blanks it (primary defence); this is the second, at the durable-storage
-// boundary, so a caller assembling rows by hand cannot let it in.
+// TestIssuerAuthFlagsValidate_RefusesADeadAccountsDomain: a merged account's home_domain cannot be checked
+// against SEP-1 any more, so persisting it creates an impersonation surface. The lake reader blanks it;
+// this is the second guard at the storage boundary.
 func TestIssuerAuthFlagsValidate_RefusesADeadAccountsDomain(t *testing.T) {
 	asOf := uint32(54564588)
 	f := IssuerAuthFlags{
@@ -43,10 +38,8 @@ func TestIssuerAuthFlagsValidate_RefusesADeadAccountsDomain(t *testing.T) {
 	}
 }
 
-// TestIssuerAuthFlagsValidate_RefusesAHistoricalReadingWithNoAsOf — "these
-// flags are old" is only actionable with "as of when". Mirrors migration
-// 0153's second CHECK so the failure names the invariant instead of arriving
-// as a constraint violation from Postgres.
+// TestIssuerAuthFlagsValidate_RefusesAHistoricalReadingWithNoAsOf: "these flags are old" is only actionable
+// with "as of when". Mirrors migration 0153's second CHECK so the failure names the invariant.
 func TestIssuerAuthFlagsValidate_RefusesAHistoricalReadingWithNoAsOf(t *testing.T) {
 	f := IssuerAuthFlags{GStrkey: "GA2P", Source: AuthFlagsSourceLastKnownBeforeRemoval}
 	if err := f.validate(); err == nil {
@@ -68,10 +61,8 @@ func TestIssuerAuthFlagsValidate_RefusesAnUnknownSource(t *testing.T) {
 	}
 }
 
-// TestIssuerAuthFlagsValidate_RefusesAnAsOfWithNoSource — the two provenance
-// columns move together or not at all, and PersistIssuerAuthFlags writes
-// NEITHER when Source is empty. Silently ignoring an as-of ledger supplied
-// without one would leave the caller believing it had been recorded.
+// TestIssuerAuthFlagsValidate_RefusesAnAsOfWithNoSource: the two provenance columns move together, and
+// PersistIssuerAuthFlags writes neither when Source is empty; an ignored as-of ledger would look recorded.
 func TestIssuerAuthFlagsValidate_RefusesAnAsOfWithNoSource(t *testing.T) {
 	asOf := uint32(64228661)
 	f := IssuerAuthFlags{GStrkey: "GA2P", AsOfLedger: &asOf}
@@ -100,11 +91,9 @@ func TestIssuerAuthFlagsValidate_AcceptsTheThreeLegitimateShapes(t *testing.T) {
 	}
 }
 
-// TestIssuerAuthFlagsSourceMirrorsTheMigrationCheck — auth_flags_source is an enumerated set
-// whose copies are never colocated: these constants, the clickhouse.AuthFlagsSource constants,
-// the OpenAPI enum, and the migration CHECK. A member added to one compiles green while the
-// database rejects every insert. The API package pins the other three against each other; this
-// pins the served-tier store's copy, which cannot import the lake reader.
+// TestIssuerAuthFlagsSourceMirrorsTheMigrationCheck: auth_flags_source has copies that are never colocated,
+// so a member missing from one compiles but fails inserts. This pins the store's copy against the migration
+// CHECK.
 func TestIssuerAuthFlagsSourceMirrorsTheMigrationCheck(t *testing.T) {
 	want := []string{AuthFlagsSourceLastKnownBeforeRemoval, AuthFlagsSourceLive}
 	sort.Strings(want)

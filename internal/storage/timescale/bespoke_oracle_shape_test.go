@@ -20,10 +20,8 @@ func assertOracleWindowBounded(t *testing.T, name, q string) {
 	}
 }
 
-// assertOracleCountsAndTimestampsOnly guards the page's honesty contract:
-// the new oracle analytics are update COUNTS + TIMESTAMPS only — no price
-// column touched, no averaging (aggregated pricing is the aggregator's
-// domain and oracle observations never feed VWAP).
+// assertOracleCountsAndTimestampsOnly guards the page's honesty contract: oracle analytics are update COUNTS
+// and TIMESTAMPS only, with no price column touched or averaged, since oracle observations never feed VWAP.
 func assertOracleCountsAndTimestampsOnly(t *testing.T, name, q string) {
 	t.Helper()
 	if strings.Contains(q, "price") {
@@ -81,10 +79,9 @@ func TestOraclePerFeedSeriesQueryShape(t *testing.T) {
 	}
 }
 
-// TestOracleMedianIntervalQueryShape guards the batch-honesty rule: the
-// median publish interval is measured between DISTINCT publication
-// timestamps (row-to-row gaps within one batch push are zero and would
-// report a dishonest 0s cadence), NULL-safe, and window-bounded.
+// TestOracleMedianIntervalQueryShape guards batch honesty: the median publish interval is measured between
+// DISTINCT publication timestamps (gaps within one batch are zero and would report a 0s cadence), NULL-safe,
+// bounded.
 func TestOracleMedianIntervalQueryShape(t *testing.T) {
 	q := oracleMedianIntervalQuery()
 	if !strings.Contains(q, "SELECT DISTINCT ts") {
@@ -100,11 +97,9 @@ func TestOracleMedianIntervalQueryShape(t *testing.T) {
 	assertOracleCountsAndTimestampsOnly(t, "median interval", q)
 }
 
-// TestOracleKPIQueriesShape guards the KPI splits: the window query is
-// bounded and carries the freshest-update age (now minus max ts, truncated
-// to seconds — rendered honestly, never a fabricated freshness); the
-// all-time query is deliberately unbounded (retained history) and touches
-// counts + first-seen date only.
+// TestOracleKPIQueriesShape guards the KPI splits: the window query is bounded and carries freshest-update
+// age (now minus max ts, truncated to seconds, never fabricated); the all-time query is deliberately
+// unbounded (counts and first-seen date only).
 func TestOracleKPIQueriesShape(t *testing.T) {
 	w := oracleWindowKPIQuery()
 	if !strings.Contains(w, "ts > now() - $3::interval") || !strings.Contains(w, "source = $1") {
@@ -166,11 +161,9 @@ func TestOracleLatestPricesQueryShape(t *testing.T) {
 	}
 }
 
-// TestFoldBreakdownRows guards the top-N + Others fold used by the count-
-// weighted donuts: short lists pass through, the tail folds into one
-// "Others" row whose Value/Count are the tail's summed COUNTS (the helper
-// is count-only by contract — token amounts across feeds/vaults are
-// different units and must never be summed).
+// TestFoldBreakdownRows guards the top-N + Others fold for count-weighted donuts: the tail folds into one
+// "Others" row whose Value/Count are summed counts; the helper is count-only since token amounts across feeds
+// are different units.
 func TestFoldBreakdownRows(t *testing.T) {
 	short := []BespokeBreakdownRow{{Label: "a", Value: "3", Count: 3}, {Label: "b", Value: "1", Count: 1}}
 	if got := foldBreakdownRows(short, 10); len(got) != 2 {

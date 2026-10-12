@@ -13,11 +13,8 @@ func TestHashChainWindowResult_Checked(t *testing.T) {
 	}{
 		{"typical-window", 1_000_000, 999_999},
 		{"single-ledger", 1, 0},
-		// Present==0: an entirely-missing window (a contiguity gap spanning
-		// the whole bucket). Present-1 would otherwise be the b>a case that
-		// wraps a uint64 subtraction to ~1.8e19 — the regression class
-		// verify-contiguity's review caught (ECWindowCoverage.Missing()).
-		// Checked() MUST saturate to 0 here instead.
+		// Present==0 is a wholly missing window, where Present-1 would wrap a uint64 subtraction to ~1.8e19.
+		// Checked() MUST saturate to 0 here.
 		{"empty-window", 0, 0},
 	}
 	for _, tc := range cases {

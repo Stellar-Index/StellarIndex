@@ -8,14 +8,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// The ?asset= filter on /v1/markets must match EVERY alias form the requested asset's trades
-// are keyed under: XLM lives under `native`, `crypto:XLM` and its SAC C-address depending on the
-// venue, so a scalar `= $5` would omit the crypto:XLM-keyed CEX markets from ?asset=native. $5
-// must bind the full alias text[] with ANY-membership on each leg.
-//
-// bindArrayValue renders the $5 arg the builder bound. Under the pgx stdlib driver a Go
-// []string binds directly as a text[]; a scalar builder binds a bare string, which fails the
-// assertion cleanly.
+// The ?asset= filter on /v1/markets must match every alias form the asset is keyed under, so $5 must bind the
+// full alias text[] with ANY-membership on each leg. bindArrayValue renders the bound arg; a scalar fails it.
 func bindArrayValue(t *testing.T, arg any) string {
 	t.Helper()
 	forms, ok := arg.([]string)

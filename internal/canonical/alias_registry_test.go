@@ -124,10 +124,8 @@ func TestAliasRegistry_XLMBaselineUnclobbered(t *testing.T) {
 	}
 }
 
-// TestNewAliasRegistry_FailsClosedOnMalformed pins the fail-closed
-// contract: a malformed contract id or asset key is an error, never a
-// silently dropped wrapper (a dropped wrapper is invisible under-counted
-// volume — the exact defect the registry removes).
+// Fail-closed contract: a malformed contract id or asset key is an error, never a silently dropped wrapper. A dropped
+// wrapper is invisibly under-counted volume, the defect the registry removes.
 func TestNewAliasRegistry_FailsClosedOnMalformed(t *testing.T) {
 	if _, err := NewAliasRegistry(PubnetPassphrase, map[string]string{"not-a-contract-id": "USDC:" + usdcIssuer}); err == nil {
 		t.Error("NewAliasRegistry accepted a malformed contract id, want error")
@@ -180,10 +178,9 @@ func TestNewAliasRegistry_RejectsDuplicateClassic(t *testing.T) {
 	}
 }
 
-// TestNewAliasRegistry_AcceptsConfiguredWrappers: the archival-node template's
-// [supply.sac_wrappers], rendered per network, must build a registry on that network's passphrase
-// so the deployed config boots everywhere. Pubnet loads every pair; a test net must render none of
-// the pubnet contract ids, which cannot derive there.
+// The archival-node template's [supply.sac_wrappers], rendered per network, must build a registry on that network's
+// passphrase so the config boots everywhere. Pubnet loads every pair; a test net must render none of the pubnet contract
+// ids, which cannot derive there.
 func TestNewAliasRegistry_AcceptsConfiguredWrappers(t *testing.T) {
 	for _, tc := range []struct {
 		network, passphrase string
@@ -235,10 +232,9 @@ func TestNewAliasRegistry_AcceptsConfiguredWrappers(t *testing.T) {
 	}
 }
 
-// templateSACWrappers evaluates the template's [supply.sac_wrappers] table for one stellar_network,
-// returning the rendered pairs and the table's entry count regardless of guard. Only the
-// `{% if stellar_network == "..." %}` / `{% endif %}` guard is understood; any other jinja tag
-// fails the test rather than being evaluated wrongly.
+// Evaluates the template's [supply.sac_wrappers] for one stellar_network, returning rendered pairs and the entry count
+// regardless of guard. Only the `{% if stellar_network == "..." %}` / `{% endif %}` guard is understood; any other jinja
+// tag fails the test.
 func templateSACWrappers(t *testing.T, network string) (map[string]string, int) {
 	t.Helper()
 	const tmpl = "../../configs/ansible/roles/archival-node/templates/stellarindex.toml.j2"

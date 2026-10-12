@@ -32,10 +32,9 @@ func (f *fixedSubstance) PairMarketSubstanceAt(
 	return f.sub, nil
 }
 
-// TestValuationSubstanceOK_MatchesThePublishedPriceGate pins the resolver's
-// mirrored floor to pricingguard's default point-in-time gate: at each
-// grain, a measurement exactly at the floor and one unit short on each leg
-// gets the same verdict and the same grain from both.
+// TestValuationSubstanceOK_MatchesThePublishedPriceGate pins the resolver's mirrored floor to pricingguard's
+// default gate: at each grain, a value at the floor and one unit short on each leg get the same verdict from
+// both.
 func TestValuationSubstanceOK_MatchesThePublishedPriceGate(t *testing.T) {
 	sub := func(vol string, buckets, span int64) timescale.MarketSubstance {
 		return timescale.MarketSubstance{VolumeUSD: vol, Buckets: buckets, SpanSeconds: span, ValuedBuckets: buckets}

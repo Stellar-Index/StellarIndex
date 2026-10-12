@@ -84,10 +84,8 @@ func TestLookupTriangulatedVWAP_ValueAndProvenanceAreOneSnapshot(t *testing.T) {
 	}
 }
 
-// TestLookupTriangulatedVWAP_UnstampedValueIsAMiss: a value with no
-// readable observed-at stamp has an unknowable age — a freeze keeps a
-// value alive for its whole hold — so it is not served at all rather
-// than stamped with the read time.
+// A value with no readable observed-at stamp has unknowable age (a freeze keeps it alive for its whole hold), so it is a
+// miss rather than being stamped with the read time.
 func TestLookupTriangulatedVWAP_UnstampedValueIsAMiss(t *testing.T) {
 	ctx := context.Background()
 	xlm := canonical.NativeAsset()

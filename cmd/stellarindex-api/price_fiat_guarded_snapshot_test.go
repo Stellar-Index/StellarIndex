@@ -114,10 +114,9 @@ func getBody(t *testing.T, url string) (int, string) {
 	return resp.StatusCode, string(b)
 }
 
-// TestPriceFiatCrossNeverServesABandRefusedRate pins, end to end through the real forex.Worker,
-// forex.Cache, newForexAdapter and the /v1/price/tip handler, that a rate the band refuses is
-// never served. After a healthy UZS = 11,800 the live bar turns to 1820 while dated bars say
-// about 11,790; the tip must not convert at the raw 1820 snapshot (XLM/UZS 0.25 x 1820 = 455).
+// TestPriceFiatCrossNeverServesABandRefusedRate pins, end to end through forex.Worker, forex.Cache, newForexAdapter and
+// /v1/price/tip, that a band-refused rate is never served: after a healthy UZS = 11,800 the live bar turns to 1820 while
+// dated bars say ~11,790, and the tip must not convert at the raw 1820 snapshot (XLM/UZS 0.25 x 1820 = 455).
 func TestPriceFiatCrossNeverServesABandRefusedRate(t *testing.T) {
 	up := &fxUpstream{
 		current: map[string]float64{"UZS": 11800, "EUR": 0.92},
@@ -154,10 +153,8 @@ func TestPriceFiatCrossNeverServesABandRefusedRate(t *testing.T) {
 		t.Fatalf("healthy: status %d, want XLM/UZS = 0.25 x 11800 = 2950. Body: %s", status, body)
 	}
 
-	// The live bar breaks. Wait for four MORE live-rate fetches: the
-	// worker's loop is sequential, so by then at least three complete
-	// refreshes have scored 1820 — the deviation refusal AND the vetoed
-	// confirm that follows it.
+	// The live bar breaks. Wait for four MORE live-rate fetches: the worker loop is sequential, so at least three complete
+	// refreshes have scored 1820, covering the deviation refusal and the vetoed confirm that follows it.
 	flippedAt := up.set(map[string]float64{"UZS": 1820, "EUR": 0.92})
 	waitFor(t, "three refreshes of the broken bar", func() bool { return up.hits() >= flippedAt+4 })
 

@@ -179,10 +179,8 @@ func TestValidate_RPCEndpointErrorsOmitURL(t *testing.T) {
 	}
 }
 
-// TestDefault_BackgroundStatementTimeoutIsGenerousBackstop pins that the indexer/aggregator
-// pools ship with a non-zero, generous SQL-side statement_timeout. Zero leaves them unbounded;
-// a tight value clips legitimate heavy work. It must also comfortably exceed the request-path
-// serving bound, so a stuck background query is unambiguous.
+// Indexer/aggregator pools must ship a non-zero, generous SQL statement_timeout: zero is unbounded, a tight value clips
+// heavy work. It must also exceed the request-path serving bound so a stuck background query is unambiguous.
 func TestDefault_BackgroundStatementTimeoutIsGenerousBackstop(t *testing.T) {
 	got := config.Default().Storage.BackgroundStatementTimeout
 	if got != 30*time.Minute {
@@ -276,10 +274,8 @@ func TestValidate_RejectsBadFields(t *testing.T) {
 			"serving_statement_timeout",
 		},
 
-		// request_timeout must EXCEED the longest per-handler budget. At or below it the
-		// blanket deadline fires on every slow read and the per-handler `…-timeout` 503
-		// branches are unreachable. The compile-time guard in internal/api/v1 cannot see
-		// this because it only checks against the 15s default.
+		// request_timeout must EXCEED the longest per-handler budget, else the blanket deadline fires first and per-handler 503
+		// branches are unreachable. The compile-time guard in internal/api/v1 cannot see this: it checks only the 15s default.
 		"request timeout equals the longest handler budget": {
 			func(c *config.Config) { c.API.RequestTimeout = config.APIMaxHandlerBudget },
 			"request_timeout",
@@ -306,10 +302,8 @@ func TestValidate_RejectsBadFields(t *testing.T) {
 			"storage.clickhouse_serving_password looks like",
 		},
 		"s3 access key env holds a literal secret value": {
-			// A realistic AWS SECRET key shape (lowercase + digits + '/')
-			// — definitively not an UPPER_SNAKE_CASE env-var name, unlike
-			// an access-key-ID-shaped string which happens to also look
-			// like a valid identifier.
+			// A realistic AWS SECRET key shape (lowercase, digits, '/') is definitively not an UPPER_SNAKE_CASE env-var name. An
+			// access-key-ID-shaped string can also look like a valid identifier.
 			func(c *config.Config) { c.Storage.S3AccessKeyEnv = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYzEXAMPLE" },
 			"s3_access_key_env",
 		},
@@ -375,10 +369,9 @@ func TestValidate_RejectsBadFields(t *testing.T) {
 			"divergence.chainlink.feeds",
 		},
 
-		// ADR-0027 cold tier: the *_key_env pair is all-or-nothing because empty is
-		// meaningful (anonymous reads on the public aws-public-blockchain bucket). A half
-		// pair would make pipeline.NewColdDataStore guess, and guessing anonymous against a
-		// private bucket is a silent downgrade.
+		// ADR-0027 cold tier: the *_key_env pair is all-or-nothing because empty means anonymous reads on the public aws-public-
+		// blockchain bucket. A half pair would make NewColdDataStore guess, and guessing anonymous against a private bucket is a
+		// silent downgrade.
 		"cold access key env without secret": {
 			func(c *config.Config) { c.Storage.S3ColdAccessKeyEnv = "STELLARINDEX_S3_COLD_ACCESS_KEY" },
 			"s3_cold_access_key_env",
@@ -402,10 +395,8 @@ func TestValidate_RejectsBadFields(t *testing.T) {
 			"s3_cold_secret_key_env",
 		},
 
-		// The bucket field is the sole ColdTieringEnabled gate, so
-		// a bucket set without its region/endpoint would reach
-		// pipeline.NewColdDataStore with a zero-value Region — SigV4
-		// cannot sign against that. Reject at load time.
+		// The bucket is the sole ColdTieringEnabled gate, so a bucket without region/endpoint would reach NewColdDataStore with
+		// a zero Region. SigV4 cannot sign against that; reject at load.
 		"cold bucket set without region": {
 			func(c *config.Config) {
 				c.Storage.S3ColdBucketArchive = "aws-public-blockchain/v1.1/stellar/ledgers/pubnet"
@@ -483,10 +474,8 @@ func TestValidate_RejectsBadFields(t *testing.T) {
 	}
 }
 
-// TestValidate_RejectsWithoutSentinel covers checks whose errors do not wrap
-// ErrInvalidConfig (HashDBConfig, SupplyConfig and MetadataConfig validate
-// in the older style), so asserting the sentinel would test something they
-// never satisfy.
+// Covers checks whose errors do not wrap ErrInvalidConfig (HashDBConfig, SupplyConfig, MetadataConfig use the older
+// style). Asserting the sentinel would test something they never satisfy.
 func TestValidate_RejectsWithoutSentinel(t *testing.T) {
 	// A flipped character keeps the prefix, length and alphabet but breaks the
 	// CRC: the account matches nothing on-chain and would contribute 0 to
@@ -610,11 +599,9 @@ func TestValidate_OracleStalenessOverrideAccepted(t *testing.T) {
 	}
 }
 
-// TestValidate_RejectsBadOracleStalenessOverride covers every way a per-asset budget can be
-// written down and silently do nothing: a source nothing emits, an asset spelled differently
-// from the metric's label, a budget that would ticket on every evaluation, an unexplained
-// claim, or two rows fighting over one pair. None raises a runtime error, so each must fail
-// at startup.
+// Every way a per-asset budget can be written and silently do nothing must fail at startup: a source nothing emits, an
+// asset spelled differently from the metric label, a budget that would ticket on every evaluation, an unexplained claim,
+// or two rows fighting over one pair.
 func TestValidate_RejectsBadOracleStalenessOverride(t *testing.T) {
 	base := config.OracleStalenessOverrideConfig{
 		Source:        "reflector-cex",
@@ -716,10 +703,8 @@ func TestValidate_RejectsBadOracleStalenessOverride(t *testing.T) {
 	}
 }
 
-// [api] status_services declares the background services a deployment runs, and /v1/status
-// rolls up exactly those. A lean `["indexer"]` list must validate, but a typo'd name must be
-// rejected at boot: Prometheus never publishes a heartbeat for it, so it would hold `overall`
-// at "degraded" forever.
+// [api] status_services lists the background services /v1/status rolls up; a lean ["indexer"] list must validate. A
+// typo'd name must fail at boot: no heartbeat is ever published for it, holding `overall` at "degraded" forever.
 func TestValidate_StatusServices(t *testing.T) {
 	t.Run("lean test-net shape validates", func(t *testing.T) {
 		c := config.Default()
@@ -749,18 +734,9 @@ func TestValidate_StatusServices(t *testing.T) {
 	})
 }
 
-// A config-validation failure is fatal at boot, so its message reaches stderr, journald and
-// Loki, readable by anyone with Grafana access. A validation branch that formats the offending
-// value into its message therefore leaks a credential whenever the value can be one, and the
-// branches below fire on exactly the paste-the-secret-where-the-name-goes mistake.
-//
-// Each case is a real operator misconfiguration:
-//
-//   - a managed-Redis URI (rediss://default:<password>@host:port) pasted into redis_addr or a
-//     sentinel entry. net.SplitHostPort rejects it with an *net.AddrError that embeds the
-//     whole address, so a `: %w` wrap re-leaks it even when the %q is redacted.
-//   - a real DSN with an inline password under a scheme we don't accept.
-//   - an S3 secret key pasted where the env-var NAME belongs.
+// A fatal validation message reaches stderr, journald and Loki, so it must never format a possible credential into
+// itself. Cases: a managed-Redis URI with password in redis_addr (its AddrError embeds it, so `: %w` re-leaks), a DSN
+// with an inline password under a bad scheme, an S3 secret key where the env-var NAME belongs.
 func TestValidate_FatalErrorsDoNotEchoCredentials(t *testing.T) {
 	const secret = "hunter2-NOT-IN-THE-BOOT-LOG"
 
@@ -814,10 +790,8 @@ func TestValidate_FatalErrorsDoNotEchoCredentials(t *testing.T) {
 	}
 }
 
-// TestValidate_RedactedErrorsStillIdentifyTheSetting is the other half
-// of the contract: withholding the value must not cost the operator the
-// ability to tell WHICH setting is wrong (and, for the all-or-nothing
-// cold-tier pair, which half of it they left out).
+// Withholding a value from the error must not stop the operator telling which setting is wrong.
+// For the all-or-nothing cold-tier pair, it must also say which half they left out.
 func TestValidate_RedactedErrorsStillIdentifyTheSetting(t *testing.T) {
 	cases := map[string]struct {
 		mutate func(*config.Config)
@@ -872,10 +846,9 @@ func TestValidate_RedactedErrorsStillIdentifyTheSetting(t *testing.T) {
 	}
 }
 
-// TestValidate_EnvVarNameSwapStillEchoesTheName pins the deliberate exception to the no-echo
-// rule, so a tightening pass does not redact a message whose whole diagnostic is the value.
-// The redis_password / clickhouse_serving_password branches fire only when the value matches
-// `^STELLARINDEX_[A-Z0-9_]+$`, so it is provably an env-var name and not the password.
+// Pins the deliberate exception to the no-echo rule so a tightening pass does not redact a message whose whole
+// diagnostic is the value. The redis_password / clickhouse_serving_password branches fire only on
+// `^STELLARINDEX_[A-Z0-9_]+$`, provably an env-var name, not the password.
 func TestValidate_EnvVarNameSwapStillEchoesTheName(t *testing.T) {
 	for field, mutate := range map[string]func(*config.Config){
 		"storage.redis_password": func(c *config.Config) {

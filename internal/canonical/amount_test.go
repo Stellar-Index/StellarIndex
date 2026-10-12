@@ -9,12 +9,9 @@ import (
 	"testing"
 )
 
-// TestAmount_FromInt128Parts_KALIENIncident is the canonical regression test for ADR-0003
-// (i128 no-truncation invariant).
-//
-// The KALIEN balance, 40,000,005,972,900,000,000 (hi=2, lo=3106517825480896768), is well above
-// the i64 max of ~9.22e18. A low-word-only decoder shows 310,651,782,548.0896768, wrong by
-// orders of magnitude. This asserts the correct 128-bit reconstruction.
+// Canonical regression test for ADR-0003 (i128 no-truncation): KALIEN balance 40,000,005,972,900,000,000 (hi=2,
+// lo=3106517825480896768). It exceeds i64 max (~9.22e18); a low-word-only decoder shows 310,651,782,548.0896768. Asserts
+// the correct 128-bit reconstruction.
 func TestAmount_FromInt128Parts_KALIENIncident(t *testing.T) {
 	t.Parallel()
 
@@ -162,10 +159,8 @@ func TestAmount_JSONRoundTrip(t *testing.T) {
 	}
 }
 
-// TestAmount_UnmarshalJSONNumber accepts the lax JSON-number form
-// (for compatibility with producers that don't follow our string
-// convention yet) and still round-trips correctly for integer
-// values that fit in JSON's lossless integer range.
+// The lax JSON-number form is still accepted, for producers not yet using our string convention. It must round-trip
+// integers within JSON's lossless integer range (2^53).
 func TestAmount_UnmarshalJSONNumber(t *testing.T) {
 	t.Parallel()
 
@@ -215,10 +210,8 @@ func TestAmount_UnmarshalJSONRejectsOversize(t *testing.T) {
 	}
 }
 
-// TestAmount_UnmarshalJSONRejectsNull guards against encoding/json leaving
-// a non-pointer string target unmodified on `null`, which without an
-// explicit guard silently becomes FromString("") == zero — an
-// absent money value read back as the real value 0.
+// encoding/json leaves a non-pointer string target unmodified on `null`, which would silently become FromString("") ==
+// zero. An absent money value must not read back as the real value 0, so null needs an explicit guard.
 func TestAmount_UnmarshalJSONRejectsNull(t *testing.T) {
 	t.Parallel()
 	// Seed with a nonzero value so a silent no-op would be visible too,
@@ -234,10 +227,8 @@ func TestAmount_UnmarshalJSONRejectsNull(t *testing.T) {
 	}
 }
 
-// JSON permits insignificant whitespace around a value, and
-// json.Unmarshal into a string leaves it untouched on a padded null
-// just as on a bare one — so the null guard must not depend on the
-// exact byte spelling.
+// JSON permits whitespace around a value, and a padded null leaves a string target untouched just like a bare one. The
+// null guard must not depend on the exact byte spelling.
 func TestAmount_UnmarshalJSONRejectsWhitespacePaddedNull(t *testing.T) {
 	t.Parallel()
 	for _, in := range []string{" null", "null\n", "\t null \r\n"} {

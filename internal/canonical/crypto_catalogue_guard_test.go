@@ -11,10 +11,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
 )
 
-// cryptoTickersAbsentFromCatalogue lists every allow-listed crypto
-// ticker that deliberately has no verified-catalogue entry, with why.
-// A ticker that is a SPELLING of a catalogue ticker does not belong
-// here: it belongs in an alias family (see eurcAliasFamily).
+// Lists every allow-listed crypto ticker deliberately absent from the verified catalogue, with why. A mere SPELLING of a
+// catalogue ticker belongs in an alias family (see eurcAliasFamily) instead.
 var cryptoTickersAbsentFromCatalogue = map[string]string{
 	"ATOM":  "Reflector CEX reference ticker; no Stellar issuance and no reference_only entry",
 	"BCH":   "Reflector CEX reference ticker; no Stellar issuance and no reference_only entry",
@@ -41,11 +39,8 @@ var cryptoTickersAbsentFromCatalogue = map[string]string{
 	"savUSD_FUNDAMENTAL":          "RedStone NAV feed, not an asset",
 }
 
-// TestKnownCryptoCodes_CatalogueOrDeliberatelyAbsent is the
-// catalogue guard: every allow-listed crypto ticker is in the verified catalogue,
-// or folds through an alias family onto a ticker that is, or is listed
-// as deliberately absent with a reason. A renamed ticker added to the
-// allow-list without an alias (EUROC before eurcAliasFamily) fails here.
+// Every allow-listed crypto ticker must be in the verified catalogue, fold via an alias family onto one that is, or be
+// listed absent with a reason. A renamed ticker added without an alias (EUROC before eurcAliasFamily) fails here.
 func TestKnownCryptoCodes_CatalogueOrDeliberatelyAbsent(t *testing.T) {
 	cat, err := currency.LoadEmbedded()
 	if err != nil {

@@ -137,10 +137,8 @@ func TestStorageClassicSupplyReader_HappyPath(t *testing.T) {
 	}
 }
 
-// TestStorageClassicSupplyReader_SACObservedFalsePropagates:
-// a zero SAC sum with no backing observation (SumSACBalancesAtOrBefore's
-// COALESCE-to-zero) must come through as SACObserved=false, not get
-// conflated with a genuine zero reading.
+// A zero SAC sum with no backing observation (SumSACBalancesAtOrBefore's COALESCE-to-zero) must arrive as
+// SACObserved=false, not conflated with a genuine zero reading.
 func TestStorageClassicSupplyReader_SACObservedFalsePropagates(t *testing.T) {
 	store := &fakeClassicStore{
 		trustlineSum: big.NewInt(1000),
@@ -160,11 +158,8 @@ func TestStorageClassicSupplyReader_SACObservedFalsePropagates(t *testing.T) {
 	}
 }
 
-// TestStorageClassicSupplyReader_MinLedgerPropagates pins the
-// success path: a non-zero MinClassicComponentLedger from storage must
-// reach ClassicSupplyComponents.MinComponentLedger unchanged. Every other
-// test in this file leaves minLedger at its zero value (gate-skip), so
-// none of them can catch a reader that drops the field on the floor.
+// A non-zero MinClassicComponentLedger from storage must reach ClassicSupplyComponents.MinComponentLedger unchanged;
+// other tests leave minLedger at zero (gate-skip), so none would catch a reader that drops the field.
 func TestStorageClassicSupplyReader_MinLedgerPropagates(t *testing.T) {
 	store := &fakeClassicStore{
 		trustlineSum: big.NewInt(1000),
@@ -202,11 +197,8 @@ func TestStorageClassicSupplyReader_PropagatesSumError(t *testing.T) {
 	}
 }
 
-// TestStorageClassicSupplyReader_MinLedgerErrorWarnsAndStaysPermissive
-// pins that a MinClassicComponentLedger query error is
-// fail-permissive (MinComponentLedger=0, snapshot still returned) but
-// not silent — the reader emits a WARN so the operator
-// sees the stale-component gate drop to permissive.
+// A MinClassicComponentLedger query error is fail-permissive (MinComponentLedger=0, snapshot still returned) but not
+// silent: the reader emits a WARN so the operator sees the stale-component gate drop to permissive.
 func TestStorageClassicSupplyReader_MinLedgerErrorWarnsAndStaysPermissive(t *testing.T) {
 	store := &fakeClassicStore{
 		trustlineSum:     big.NewInt(1000),

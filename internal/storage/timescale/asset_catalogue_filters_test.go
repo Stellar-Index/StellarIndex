@@ -7,19 +7,11 @@ import (
 	"testing"
 )
 
-// The price CTEs live in refreshAssetPriceSnapshotUpsert and the listing LEFT JOINs the rollup,
-// so a filtered listing is narrowed by the outer WHERE on `ca` alone over a keyed-on-PK price
-// lookup, with no per-request prices_1m scan. What is pinned here is the ARGUMENT-BINDING
-// contract of buildAssetsQuery: which filter takes which positional placeholder, and that a
-// filter never silently drops.
-//
-// TestListAssetsBaseSelect_NoPerRequestPriceScan (asset_price_snapshot_test.go) guards that the
-// per-request price CTEs never come back.
+// buildAssetsQuery's argument-binding contract: each filter takes its own positional placeholder and none is
+// silently dropped. Per-request price CTEs are guarded by TestListAssetsBaseSelect_NoPerRequestPriceScan.
 
-// mustBuildAssetsQuery composes a listing query for a filter set the
-// spine can express. Every case below passes such a set, so an error is
-// the test's own bug and not a result worth asserting on — the
-// rejection path has its own test.
+// mustBuildAssetsQuery builds a listing query for a filter set the spine can express, so an error is the
+// test's own bug; the rejection path has its own test.
 func mustBuildAssetsQuery(
 	t *testing.T, limit int, issuer, code, cursor, q, typ string, order AssetsOrder,
 ) (string, []any) {
@@ -31,10 +23,9 @@ func mustBuildAssetsQuery(
 	return sql, args
 }
 
-// TestBuildAssetsQuery_FilterBinding pins, per filter set, which outer
-// predicates survive and which positional placeholder each value takes.
-// The type filter carries no placeholder (a closed enum, never
-// interpolated), so it must not shift the numbered ones.
+// TestBuildAssetsQuery_FilterBinding pins, per filter set, which outer predicates survive and which
+// placeholder each value takes. The type filter is a closed enum with no placeholder, so it must not shift
+// the numbered ones.
 func TestBuildAssetsQuery_FilterBinding(t *testing.T) {
 	t.Parallel()
 	issuer := "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
@@ -138,10 +129,9 @@ func TestBuildAssetsQuery_QFilterEscapesLikeMetacharacters(t *testing.T) {
 	}
 }
 
-// TestBuildAssetsQuery_QFilterMatchesSorobanContractID: a Soroban-native row has NULL
-// code/slug/issuer (see the discovered-contract arm of listAssetsBaseSelect), so the q
-// predicate's slug leg must fall back to ca.asset_id, as the base SELECT's own "slug" column does
-// (COALESCE(ca.slug, ca.code, ca.asset_id)), or type=soroban&q=<contract id> never matches.
+// TestBuildAssetsQuery_QFilterMatchesSorobanContractID: a Soroban-native row has NULL code/slug/issuer, so
+// the q predicate's slug leg must fall back to ca.asset_id like the base SELECT's slug COALESCE, or
+// type=soroban&q=<contract id> never matches.
 func TestBuildAssetsQuery_QFilterMatchesSorobanContractID(t *testing.T) {
 	t.Parallel()
 	sql, _ := mustBuildAssetsQuery(t, 50, "", "", "", "CAUP7", "soroban", AssetsOrderObservationCountDesc)
@@ -153,10 +143,9 @@ func TestBuildAssetsQuery_QFilterMatchesSorobanContractID(t *testing.T) {
 	}
 }
 
-// TestBuildAssetsQuery_UnknownTypeIsRefused: an unrecognised non-empty `type` must NOT compose
-// away into the unfiltered page. The listing answers every request with a plausible 200, so a
-// silently-dropped filter is served as data the caller believes is narrowed; refusing is the
-// only outcome the caller can tell apart.
+// TestBuildAssetsQuery_UnknownTypeIsRefused: an unrecognised non-empty `type` must not compose away into the
+// unfiltered page. The listing answers with a plausible 200, so a silently dropped filter reads as narrowed
+// data; refusal is the only outcome the caller can tell apart.
 func TestBuildAssetsQuery_UnknownTypeIsRefused(t *testing.T) {
 	t.Parallel()
 	for _, typ := range []string{"bogus", "native", "fiat", "CLASSIC", " classic"} {

@@ -56,11 +56,8 @@ func TestEncodeBlendAssetAmounts_RoundTrip(t *testing.T) {
 }
 
 func TestEncodeBlendAssetAmounts_EmptyReturnsNil(t *testing.T) {
-	// Empty slice → SQL NULL on insert. encodeBlendAssetAmounts
-	// returns (nil, nil) for empty input rather than empty JSON
-	// array, so the column ends up NULL not '[]'. Important for
-	// delete-event rows where the column should genuinely be
-	// absent.
+	// An empty slice encodes to SQL NULL: encodeBlendAssetAmounts returns (nil, nil) for empty input rather than
+	// a '[]' JSON array, so delete-event rows have a genuinely absent column.
 	encoded, err := encodeBlendAssetAmounts(nil)
 	if err != nil {
 		t.Fatalf("encode nil: %v", err)

@@ -23,18 +23,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestPriceServingSeamsAreGated fails when any reader seam calling a closed-VWAP store read does
-// not route through wiring.PriceWithheld(), so a withheld price cannot leak via a second path
-// such as /v1/price/at. It derives the seam set from the source so a new ungated reader fails.
-// It scans main.go and internal/wiring only; the handler package is covered by
-// [TestV1VWAPCacheSeamsAreGated].
+// TestPriceServingSeamsAreGated fails when a reader seam calling a closed-VWAP store read skips wiring.PriceWithheld(),
+// so a withheld price cannot leak via e.g. /v1/price/at. The seam set is derived from source; scans main.go and
+// internal/wiring (handlers: [TestV1VWAPCacheSeamsAreGated]).
 func TestPriceServingSeamsAreGated(t *testing.T) {
 	fset := token.NewFileSet()
 
-	// Methods that legitimately read a closed bucket WITHOUT consulting
-	// the chokepoint, each with the reason it is safe, keyed "dir:Type.Method".
-	// An exemption is a deliberate, reviewed decision — not a way to
-	// silence this test.
+	// Methods that legitimately read a closed bucket without consulting the chokepoint, keyed "dir:Type.Method", each with
+	// the reason it is safe. An exemption is a deliberate, reviewed decision, not a way to silence this test.
 	exempt := map[string]string{
 		wiringDir + ":StorePriceReader.RecentClosedVWAP1mExists": "existence probe: returns a bool, never a price or a bucket value",
 		".:storeChange24hReader.USDPrice24hAgo": "gated upstream — populateChange24h early-returns unless the GATED " +
@@ -448,10 +444,9 @@ func exprString(sel *ast.SelectorExpr) string {
 	return sel.Sel.Name
 }
 
-// flaggingScamDirectory flags exactly the listed G-addresses and records
-// which address each lookup asked about — the SAC spelling carries no
-// G-address of its own, so what the directory is ASKED is the proof that
-// the wrapper was resolved to its classic issuance.
+// flaggingScamDirectory flags exactly the listed G-addresses and records which address each lookup asked about; the SAC
+// spelling has no G-address of its own, so what the directory is ASKED proves the wrapper was resolved to its classic
+// issuance.
 type flaggingScamDirectory struct {
 	flagged map[string]bool
 	asked   []string
@@ -465,10 +460,8 @@ func (d *flaggingScamDirectory) DirectoryEntryByAddress(_ context.Context, addre
 	return timescale.DirectoryEntry{}, false, nil
 }
 
-// TestPriceWithheldChokepointResolvesSACSpelling pins that a SAC wrapper and its classic issuance
-// reach the same scam verdict. The directory is keyed by the classic issuer G-address, so the
-// chokepoint resolves the raw base to its canonical form first. Not parallel: the alias registry
-// is process-global.
+// Pins that a SAC wrapper and its classic issuance reach the same scam verdict: the directory is keyed by the issuer
+// G-address, so the chokepoint resolves the raw base to canonical form first. Not parallel: alias registry is global.
 func TestPriceWithheldChokepointResolvesSACSpelling(t *testing.T) {
 	const (
 		code   = "RIO"
@@ -526,13 +519,9 @@ const v1PackageDir = "../../internal/api/v1"
 // are derived from the source, so a method added later is covered at once.
 const v1LookerInterface = "TriangulatedPriceLooker"
 
-// TestV1VWAPCacheSeamsAreGated covers internal/api/v1, where a handler answering from the VWAP
-// cache passes through no reader gate and must ask for itself. Every cache read needs a withholding
-// consultation positioned before it. An HTTP handler consults it itself, with no credit from its
-// callers; a helper may inherit it transitively or from a caller that discards the price. This is
-// a structural reachability check, not proof the verdict was about this pair; the fallback chain
-// is pinned behaviourally by TestPriceFallbackWithholdsScamFlaggedBase and
-// TestCachedVWAPSurfacesWithholdScamFlaggedMarket.
+// Every VWAP-cache read in internal/api/v1 needs a withholding consultation before it, as the cache passes no reader
+// gate. Handlers consult it themselves; helpers may inherit it. Structural check only; the fallback chain is pinned by
+// TestPriceFallbackWithholdsScamFlaggedBase and TestCachedVWAPSurfacesWithholdScamFlaggedMarket.
 func TestV1VWAPCacheSeamsAreGated(t *testing.T) {
 	sc := loadV1Scan(t)
 	seams := sc.cacheSeams()

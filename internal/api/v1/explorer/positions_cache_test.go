@@ -140,10 +140,8 @@ func TestAccountPositions_StaleEntryIsServedNotRecomputedInline(t *testing.T) {
 	}
 }
 
-// The "pos:" key class must carry its OWN, shorter freshness window: a DeFi
-// positions list is a statement about right now, and inheriting the 5-minute
-// contract-detail TTL would tell a user who just deposited that they had not,
-// for five minutes.
+// The "pos:" key class needs its own shorter freshness window: a DeFi positions list describes right now.
+// Inheriting the 5-minute contract-detail TTL would tell a user who just deposited that they had not.
 func TestDetailTTLForKey_PositionsClassIsShorterThanContractDetail(t *testing.T) {
 	if got := detailTTLForKey(positionsCacheKey + validTestAccount); got != accountPositionsTTL {
 		t.Errorf("detailTTLForKey(%q…) = %v, want %v", positionsCacheKey, got, accountPositionsTTL)
@@ -174,10 +172,8 @@ func TestAccountPositions_HasItsOwnRefreshClass(t *testing.T) {
 	}
 }
 
-// TestAccountPositions_FoldsRunConcurrently pins the
-// sub-second fix: the six protocol folds are independent reads and
-// must run CONCURRENTLY (endpoint latency = max, not sum). Serial execution would show max
-// in-flight of 1 and take 6x the delay.
+// The six protocol folds are independent reads and must run concurrently (latency = max, not sum); serial execution
+// would show max in-flight of 1 and take 6x the delay.
 func TestAccountPositions_FoldsRunConcurrently(t *testing.T) {
 	const delay = 60 * time.Millisecond
 	reader := &slowPositionsReader{delay: delay}
@@ -197,10 +193,8 @@ func TestAccountPositions_FoldsRunConcurrently(t *testing.T) {
 	}
 }
 
-// TestAccountPositions_CoverageOrderIsDeterministic pins that
-// parallelising did not make the degraded-protocol list order
-// (rendered into the wire coverage_note) depend on goroutine
-// scheduling: it must stay in the fixed fold order, run after run.
+// Parallelising must not make the degraded-protocol list order (rendered into the wire coverage_note) depend on
+// goroutine scheduling: it stays in the fixed fold order, run after run.
 func TestAccountPositions_CoverageOrderIsDeterministic(t *testing.T) {
 	var first string
 	for i := 0; i < 20; i++ {

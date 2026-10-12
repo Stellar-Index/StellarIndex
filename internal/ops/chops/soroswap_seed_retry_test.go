@@ -14,10 +14,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 )
 
-// Through the production entry point both commands call: failing closed on a seed error
-// (soroswap_seed_failclosed_test.go) makes the nightly only as reliable as ~640 sequential
-// calls to a public RPC. The retry is pinned in internal/sources/soroswap; this proves it is
-// REACHED from seedSoroswapForRecon, with the client and timeouts that function builds, and
+// Fail-closed seeding makes the nightly only as reliable as ~640 sequential public-RPC calls. The retry is pinned in
+// internal/sources/soroswap; this proves seedSoroswapForRecon reaches it with the client and timeouts it builds, and
 // that the helper's notices name no command.
 
 // captureStderr runs fn with os.Stderr redirected and returns what it wrote.

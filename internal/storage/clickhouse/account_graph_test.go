@@ -8,10 +8,8 @@ import (
 	"testing"
 )
 
-// The graph exists in two sort orders so that each direction is a primary-key range read.
-// Reading a direction off the WRONG ordering is silent: the query returns the right rows, so no
-// payload test sees it, but it becomes a full table scan on a served route (a skip-index scan
-// is far slower than the PK-prefixed read, which stellar.ops_by_source exists to avoid).
+// The graph has two sort orders so each direction is a primary-key range read. A read off the wrong ordering
+// returns correct rows but becomes a full scan on a served route, so only a query-text check catches it.
 func TestAccountGraphReadsEachDirectionOffItsOwnOrdering(t *testing.T) {
 	for _, tc := range []struct {
 		name, query, wantTable, wantKey, forbidTable string
@@ -102,10 +100,8 @@ func TestAccountGraphNeverReadsAWorkingTable(t *testing.T) {
 	}
 }
 
-// Every graph read must be keyed by the account. An unkeyed one is a scan
-// of the whole edge table on an unauthenticated route — the coverage
-// query is the single deliberate exception, and it reads a metric-keyed
-// table of nine rows.
+// Every graph read must be keyed by the account, since an unkeyed one scans the whole edge table on a public
+// route. The coverage query is the one exception: it reads a nine-row metric-keyed table.
 func TestAccountGraphReadsAreAccountKeyed(t *testing.T) {
 	for name, q := range map[string]string{
 		"inbound":       accountGraphInboundQuery,

@@ -26,10 +26,9 @@ func newFakeClock() *fakeClock {
 	return &fakeClock{t: time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)}
 }
 
-// liveTxLake models ONE ClickHouse under ONE long-lived reader: a base stellar.transactions
-// table that always holds the transaction, and a stellar.tx_hash_index the test flips between
-// populated, emptied (TRUNCATE / MV drop) and dropped (the DROP half of DROP+recreate).
-// probeErr, when set, is what the availability probe alone returns.
+// liveTxLake models one ClickHouse under one long-lived reader: a base stellar.transactions that always holds
+// the transaction, and a stellar.tx_hash_index flipped between populated, emptied and dropped. probeErr is
+// what the availability probe alone returns.
 type liveTxLake struct {
 	indexRows   bool
 	indexExists bool
@@ -69,12 +68,9 @@ func (l *liveTxLake) respond(q string) (driver.Rows, error) {
 	}
 }
 
-// TestTransactionByHash_IndexEmptiedUnderLiveReaderStopsBeingAuthoritative
-// pins the lease. A positive probeSchema verdict latched for the process lifetime would leave
-// a running API holding present=true after an operator TRUNCATEs (or DROP+recreates)
-// stellar.tx_hash_index, so every miss is served as an AUTHORITATIVE 404 for a transaction
-// that exists. The verdict is a lease: the SAME reader must stop treating misses as
-// authoritative once it runs out, with no restart.
+// TestTransactionByHash_IndexEmptiedUnderLiveReaderStopsBeingAuthoritative: the probeSchema verdict is a
+// lease, not a process-lifetime latch, so after tx_hash_index is truncated the same reader stops serving
+// misses as authoritative 404s once the lease expires, with no restart.
 func TestTransactionByHash_IndexEmptiedUnderLiveReaderStopsBeingAuthoritative(t *testing.T) {
 	lake := &liveTxLake{indexExists: true, indexRows: true}
 	conn := &stubConn{respond: lake.respond}
@@ -128,10 +124,8 @@ func TestTransactionByHash_IndexEmptiedUnderLiveReaderStopsBeingAuthoritative(t 
 	}
 }
 
-// TestProbeSchema_PositiveLeaseIsNotAPerRequestProbe is the cost half of
-// the lease: it must not put a probe on every request. Inside one lease
-// window any number of reads share ONE probe; each further window costs
-// exactly one more.
+// TestProbeSchema_PositiveLeaseIsNotAPerRequestProbe pins the lease's cost half: reads inside one lease
+// window share one probe, and each further window costs exactly one more.
 func TestProbeSchema_PositiveLeaseIsNotAPerRequestProbe(t *testing.T) {
 	conn := &probeConn{}
 	clk := newFakeClock()
@@ -180,10 +174,9 @@ func TestProbeSchema_UnleasedPositiveVerdictStaysLatched(t *testing.T) {
 	}
 }
 
-// TestProbeSchema_UnansweredRenewalIsBoundedStale — a renewal probe that
-// gets NO answer (cancelled request, store shedding load) must not instantly push every
-// reader onto the scan/503 arm, nor re-create the latch: the last verdict is honoured only
-// up to schemaProbeStaleLeases lease lengths from the last observed row.
+// TestProbeSchema_UnansweredRenewalIsBoundedStale: a renewal probe that gets no answer (cancelled, store
+// shedding load) must neither push every reader onto the scan/503 arm nor re-create the latch. The last
+// verdict is honoured only up to schemaProbeStaleLeases lease lengths from the last observed row.
 func TestProbeSchema_UnansweredRenewalIsBoundedStale(t *testing.T) {
 	lake := &liveTxLake{indexExists: true, indexRows: true}
 	conn := &stubConn{respond: lake.respond}
@@ -222,10 +215,9 @@ func TestProbeSchema_UnansweredRenewalIsBoundedStale(t *testing.T) {
 	}
 }
 
-// TestProbeSchema_RenewalInDropRecreateGapDoesNotLatchAbsent — the lease
-// re-probe can land between the DROP and the CREATE of the recreate idiom. UNKNOWN_TABLE
-// there is NOT a deployment shape: latching it would pin the bloom scan on every hash lookup.
-// A process that has seen the object keeps re-probing instead.
+// TestProbeSchema_RenewalInDropRecreateGapDoesNotLatchAbsent: a lease re-probe can land between DROP and
+// CREATE of the recreate idiom. UNKNOWN_TABLE there is not a deployment shape; latching it would pin the
+// bloom scan on every hash lookup, so a process that has seen the object keeps re-probing.
 func TestProbeSchema_RenewalInDropRecreateGapDoesNotLatchAbsent(t *testing.T) {
 	lake := &liveTxLake{indexExists: true, indexRows: true}
 	conn := &stubConn{respond: lake.respond}
@@ -357,11 +349,9 @@ func TestProbeSchema_DefinitiveAnswersAreCached(t *testing.T) {
 	})
 }
 
-// TestProbeSchema_NonAnswerDoesNotLatch pins that a probe error which is not
-// a schema verdict is retried. A plain sync.Once would latch the FIRST outcome (transport
-// reset, expired deadline, or a RESOURCE *clickhouse.Exception raised for overload) as false;
-// for lecVersionProbe that means ledger_seq as the RMT version key forever, serving non-final
-// intra-ledger balances with no error, metric or self-heal.
+// TestProbeSchema_NonAnswerDoesNotLatch: a probe error that is not a schema verdict (transport reset,
+// deadline, overload exception) must be retried; a plain sync.Once would latch false and, for
+// lecVersionProbe, silently serve non-final intra-ledger balances forever.
 func TestProbeSchema_NonAnswerDoesNotLatch(t *testing.T) {
 	lecVersioned := func(r *ExplorerReader) bool { return r.ledgerEntriesVersioned(context.Background()) }
 	txIndex := func(r *ExplorerReader) bool { return r.txHashIndexAvailable(context.Background()) }

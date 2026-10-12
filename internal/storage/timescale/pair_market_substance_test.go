@@ -16,20 +16,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// [Store.PairMarketSubstance] is the SQL half of the serving-side thin-market gate:
-// internal/pricingguard.SubstanceGate feeds its three numbers straight into SubstanceOK, and a
-// false pass publishes an aggregated price for a market with no substance behind it. The
-// interface fake in internal/pricingguard never sees the SQL, so these tests catch two
-// mutations:
-//
-//   - dropping `AND bucket <= now() - INTERVAL '1 minute'` lets the IN-PROGRESS bucket into
-//     the measurement, so trades ADR-0015 says are not servable yet can open the gate.
-//   - dropping one of the two direction arms measures half the market, so a genuinely
-//     two-sided pair is withheld or a one-sided pair reads as dead.
-//
-// The query is built inline with fmt.Sprintf, so the package-level template guards in
-// closed_vwap_at_test.go cannot see it. The scripted driver can: it records the SQL text
-// the store issued along with the bound args.
+// [Store.PairMarketSubstance] is the SQL half of the thin-market gate. These tests catch two mutations:
+// dropping the closed-bucket bound (an in-progress bucket opens the gate) and dropping a direction arm (half
+// the market). The query is built inline, so the scripted driver records the SQL and args.
 
 // testXLMUSDCLegs is the spelling sets the substance gate asks about for
 // XLM/USDC: every alias of each leg.
@@ -87,10 +76,9 @@ SQL:
 	}
 }
 
-// TestPairMarketSubstance_ReadsBothStoredDirections pins both arms of the orientation filter.
-// The CAGGs hold a market as both (A,B) and (B,A) rows (see
-// TestCAGGPairReadsFoldBothDirections); substance is a COUNT and a SUM so no Go-side fold is
-// needed, but a one-armed measurement understates every two-sided market.
+// TestPairMarketSubstance_ReadsBothStoredDirections pins both arms of the orientation filter: the CAGGs hold
+// a market as (A,B) and (B,A), and substance is a COUNT and SUM, so a one-armed read understates two-sided
+// markets.
 func TestPairMarketSubstance_ReadsBothStoredDirections(t *testing.T) {
 	stmt, _ := substanceQuery(t, time.Hour, []driver.Value{"0", int64(0), int64(0), int64(0)})
 
@@ -123,10 +111,9 @@ SQL:
 	}
 }
 
-// TestPairMarketSubstance_BindsPairAndLiteralLowerBound pins the split
-// the #nosec note on the method depends on: the spelling sets BIND as
-// $1/$2, and the only interpolated value is the trailing-window lower
-// bound, rendered as a literal timestamptz for plan-time chunk pruning.
+// TestPairMarketSubstance_BindsPairAndLiteralLowerBound pins the split the method's #nosec note depends on:
+// the pair binds as $1/$2 and the only interpolated value is the window lower bound, a literal for chunk
+// pruning.
 func TestPairMarketSubstance_BindsPairAndLiteralLowerBound(t *testing.T) {
 	pair := testXLMUSDCPair(t)
 	bases, quotes := testXLMUSDCLegs(t)
@@ -171,10 +158,9 @@ SQL:
 	}
 }
 
-// TestPairMarketSubstance_GroupsByBucket pins the DISTINCT-bucket semantics: Buckets counts
-// closed MINUTES with a trade, not CAGG rows. Counting rows would let a two-sided minute (one
-// row per direction) report 2, so a one-minute burst on a dust market would clear a
-// MinBuckets=2 floor alone.
+// TestPairMarketSubstance_GroupsByBucket pins DISTINCT-bucket semantics: Buckets counts closed MINUTES
+// with a trade, not CAGG rows, else a two-sided minute reports 2 and a one-minute dust burst alone clears
+// a MinBuckets=2 floor.
 func TestPairMarketSubstance_GroupsByBucket(t *testing.T) {
 	stmt, _ := substanceQuery(t, time.Hour, []driver.Value{"0", int64(0), int64(0), int64(0)})
 
@@ -214,10 +200,9 @@ func TestPairMarketSubstance_VolumeIsAnExactDecimalString(t *testing.T) {
 	}
 }
 
-// TestPairMarketSubstance_CountsUSDValuedBuckets pins the fourth column:
-// the per-bucket valued count the gate uses to tell an unvaluable market
-// from a thin one. It must be computed over the bucket-grouped USD sum,
-// not over raw rows.
+// TestPairMarketSubstance_CountsUSDValuedBuckets pins the fourth column, the per-bucket valued count the gate
+// uses to tell an unvaluable market from a thin one; it must be computed over the bucket-grouped USD sum, not
+// raw rows.
 func TestPairMarketSubstance_CountsUSDValuedBuckets(t *testing.T) {
 	stmt, _ := substanceQuery(t, time.Hour, []driver.Value{"0", int64(0), int64(0), int64(0)})
 	if !strings.Contains(stmt.sql, "count(*) FILTER (WHERE bucket_usd > 0)") {
@@ -225,10 +210,8 @@ func TestPairMarketSubstance_CountsUSDValuedBuckets(t *testing.T) {
 	}
 }
 
-// TestPairMarketSubstance_EmptyPairIsZeroNotError — absence of market is
-// a measurement. The gate must be able to tell "no substance" from "the
-// measurement failed"; collapsing them would make a DB blip look like a
-// thin market (or, worse, the reverse if the caller defaulted open).
+// TestPairMarketSubstance_EmptyPairIsZeroNotError pins that an empty pair yields zero, not an error, so the
+// gate can tell "no substance" from "measurement failed" and a DB blip does not look like a thin market.
 func TestPairMarketSubstance_EmptyPairIsZeroNotError(t *testing.T) {
 	_, sub := substanceQuery(t, time.Hour, []driver.Value{"0", int64(0), int64(0), int64(0)})
 
@@ -237,10 +220,8 @@ func TestPairMarketSubstance_EmptyPairIsZeroNotError(t *testing.T) {
 	}
 }
 
-// TestPairMarketSubstance_NonPositiveWindowErrorsBeforeQuerying — a zero
-// window would render `bucket >= now()` and measure nothing, which reads
-// as a thin market for every pair. It must be rejected, and rejected
-// without issuing SQL.
+// TestPairMarketSubstance_NonPositiveWindowErrorsBeforeQuerying: a zero window would render `bucket >= now()`
+// and read as a thin market for every pair, so it must be rejected without issuing SQL.
 func TestPairMarketSubstance_NonPositiveWindowErrorsBeforeQuerying(t *testing.T) {
 	for _, w := range []time.Duration{0, -time.Minute} {
 		store, conn := newScriptedStore(t)

@@ -133,10 +133,8 @@ func TestStorageSEP41SupplyReader_MinLedgerPropagates(t *testing.T) {
 	}
 }
 
-// TestStorageSEP41SupplyReader_GenesisSeededPropagates — the reader threads
-// the store's genesis-baseline-seeded flag onto the components so the computer
-// can route a negative total to `missing_baseline` vs `compute_error`
-// (migration 0088).
+// The reader threads the store's genesis-baseline-seeded flag onto the components so the computer can route a negative
+// total to `missing_baseline` rather than `compute_error`.
 func TestStorageSEP41SupplyReader_GenesisSeededPropagates(t *testing.T) {
 	asset := mustSorobanAsset(t, tContract)
 	for _, seeded := range []bool{false, true} {

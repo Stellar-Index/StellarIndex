@@ -8,11 +8,9 @@ import (
 	"testing"
 )
 
-// TestSampleAccountIDsQuery_SeededChangeLogFrame pins the -sample frame's two
-// properties: it is drawn from the change log reconcile-balances proves, not
-// the ledger_entries_current projection, and its order takes the seed, so
-// different seeds draw different cohorts. The executing proof is
-// test/integration/clickhouse_rollups_test.go.
+// TestSampleAccountIDsQuery_SeededChangeLogFrame pins that the -sample frame is drawn from the change log
+// reconcile-balances proves (not ledger_entries_current) and that the seed orders it, so seeds give
+// different cohorts.
 func TestSampleAccountIDsQuery_SeededChangeLogFrame(t *testing.T) {
 	q := strings.Join(strings.Fields(sampleAccountIDsQuery), " ")
 	if !strings.Contains(q, "FROM stellar.ledger_entry_changes ") {

@@ -15,13 +15,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/upshift"
 )
 
-// Third leg: projected-rebuild runs the live projector's CURRENT decoder over a historical lake
-// range with a winning derive_generation (the bulk path for rewinds over ~1M ledgers), so it must
-// ask the BackfillSafe gate its two siblings ask.
-//
-// These tests drive the real subcommand entry point. The config path does not exist, so a run
-// that gets PAST the gate fails at the config load; which error comes back is exactly "did the
-// gate fire".
+// Third leg: projected-rebuild runs the live projector's CURRENT decoder over a historical range (bulk path for rewinds
+// over ~1M ledgers), so it must ask the BackfillSafe gate its siblings ask. The config path is absent, so failing at
+// config load (not at the gate) means the gate passed.
 func projectedRebuildArgs(t *testing.T, source string, extra ...string) []string {
 	t.Helper()
 	missing := filepath.Join(t.TempDir(), "absent.toml")
@@ -65,10 +61,8 @@ func TestProjectedRebuild_RefusesUnknownSourceName(t *testing.T) {
 	}
 }
 
-// The destructive branch has a twin: the gate must NOT strand the
-// sanctioned rebuilds. Every name here has to get past it and then fail
-// on the absent config, proving the run continued. blend_backstop and
-// the sep41 pair deliberately have no external.Registry row.
+// The destructive branch has a twin: the gate must not strand sanctioned rebuilds. Every name here must get past it and
+// fail on the absent config. blend_backstop and the sep41 pair deliberately have no external.Registry row.
 func TestProjectedRebuild_AuditedAndRegistrylessSourcesPassTheGate(t *testing.T) {
 	t.Parallel()
 	for _, source := range []string{

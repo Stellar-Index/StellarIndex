@@ -7,19 +7,9 @@ import (
 	"testing"
 )
 
-// oracle_updates can hold rows whose `asset` is not an asset: an oracle symbol with no
-// canonical mapping is recorded verbatim as `raw:<symbol>`. Those rows are RECORD-layer only;
-// nothing that interprets a price may treat one as an asset.
-//
-// A read is safe by one of two mechanisms, a property of the QUERY:
-//
-//   - It keys by canonical asset (`asset = $n`, `asset = ANY($n)`), so a raw row cannot come
-//     back unless asked for; callers build keys from canonical.Pair legs, which Pair.Validate
-//     refuses to construct from a raw asset.
-//   - Or it scans, and a filter in the query or an explicit contract above it handles raw rows.
-//
-// Scanning reads look ordinary, so this guard makes each one declare itself with a written
-// reason. Every existing scan is already correct; the guard keeps that property pinned.
+// oracle_updates may hold `raw:<symbol>` rows, which are record-layer only and never an asset.
+// A read is safe if it keys by canonical asset, or scans with a filter or contract that handles raw rows.
+// Each scan must declare a written reason here.
 
 // scanningOracleReads are the reads that do NOT key by canonical asset, each with the reason
 // it is safe. A new scanning read without an entry fails the test.

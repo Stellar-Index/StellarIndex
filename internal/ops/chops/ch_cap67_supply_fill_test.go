@@ -9,10 +9,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// A deployment whose watermark was advanced transfer-only must have mint,
-// burn and clawback derived back down to the floor — and above the range
-// first, where a supply extension failed — streaming only the supply topics,
-// with the range recorded window by window.
+// A deployment whose watermark advanced transfer-only must have mint, burn and clawback derived back down to the floor,
+// and above the range first where a supply extension failed, streaming only supply topics and recording the range window
+// by window.
 func TestCap67SupplyFill_DrainsToTheFloor(t *testing.T) {
 	cov := clickhouse.Cap67Coverage{Thru: 1000, SupplyFrom: 900, SupplyThru: 950}
 	var windows [][2]uint32

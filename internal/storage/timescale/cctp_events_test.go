@@ -6,10 +6,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/cctp"
 )
 
-// TestCCTPEventType_MatchesSourceEventNames cross-checks this enum's IsValid against the
-// decoder's Event* constants in internal/sources/cctp. Importing the real constants makes a
-// source-side rename fail to compile, and a set-membership diff catches an event added or
-// removed on one side only.
+// TestCCTPEventType_MatchesSourceEventNames cross-checks IsValid against the Event* constants in
+// internal/sources/cctp: a rename fails to compile, and a set diff catches an event added or removed on one
+// side.
 func TestCCTPEventType_MatchesSourceEventNames(t *testing.T) {
 	t.Parallel()
 	fromSource := []string{

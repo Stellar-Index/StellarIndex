@@ -49,20 +49,16 @@ func TestShouldSkipAssetRegistryUpsert(t *testing.T) {
 	}
 }
 
-// TestAssetRegistryDedupeTTL_FrozenValue — pin the TTL so a
-// future operator can't quietly tighten it past the acceptable
-// window (60s gives roughly minute-level "last
-// seen" freshness in the dashboard).
+// TestAssetRegistryDedupeTTL_FrozenValue pins the TTL so it cannot be quietly tightened past the
+// acceptable window (60s gives roughly minute-level "last seen" freshness in the dashboard).
 func TestAssetRegistryDedupeTTL_FrozenValue(t *testing.T) {
 	if assetRegistryDedupeTTL != 60*time.Second {
 		t.Errorf("assetRegistryDedupeTTL = %v, want 60s (operator-visible)", assetRegistryDedupeTTL)
 	}
 }
 
-// recordingDriver is a minimal database/sql driver that records
-// every ExecContext statement and returns success. It stands in
-// for one Postgres database so the registry hook's real code path
-// can be exercised per-Store without a container.
+// recordingDriver is a minimal database/sql driver that records every ExecContext statement and returns
+// success, standing in for one Postgres database so the registry hook runs per-Store without a container.
 type recordingDriver struct{ execs []string }
 
 func (d *recordingDriver) Connect(context.Context) (driver.Conn, error) { return d, nil }
@@ -87,10 +83,8 @@ func (d *recordingDriver) classicAssetUpserts() int {
 	return n
 }
 
-// TestAssetRegistryDedupe_IsolatedPerStore pins that the dedupe cache is scoped to one Store
-// (one database). asset_id is only unique within a database, so a shared cache would let a
-// second Store skip a classic_assets upsert its database never received. Drives the real
-// registerClassicAssetSeen path on two Stores: each database must get its own upsert.
+// TestAssetRegistryDedupe_IsolatedPerStore pins that the dedupe cache is per Store: asset_id is unique only
+// within a database, so a shared cache would skip a classic_assets upsert the second database never received.
 func TestAssetRegistryDedupe_IsolatedPerStore(t *testing.T) {
 	usdc, err := canonical.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
 	if err != nil {

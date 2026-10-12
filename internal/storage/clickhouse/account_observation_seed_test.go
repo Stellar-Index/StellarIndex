@@ -39,10 +39,8 @@ func mustAccountEntryXDR(t *testing.T, account string, balance int64, seqNum int
 	return out
 }
 
-// TestAccountSeedFromRow_Decodes — the seed decode path used by
-// `stellarindex-ops supply seed-observations` (ADR-0021 dormant-
-// account bootstrap) must carry balance / home_domain / flags /
-// seq_num faithfully from the stored AccountEntry XDR.
+// TestAccountSeedFromRow_Decodes pins that the seed-observations decode path (ADR-0021) carries balance,
+// home_domain, flags and seq_num faithfully from the stored AccountEntry XDR.
 func TestAccountSeedFromRow_Decodes(t *testing.T) {
 	closeTime := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
 	entry := mustAccountEntryXDR(t, seedTestAccount, 5_000_000_000, 42, 0x1, "stellar.org")

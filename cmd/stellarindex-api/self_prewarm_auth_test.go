@@ -6,11 +6,8 @@ import (
 	"testing"
 )
 
-// TestSelfPrewarmAdmitted_MatchesAuthMiddleware drives the real auth
-// middleware with the exact request the self-prewarm sends (no credential,
-// its own User-Agent) and requires the start gate to agree with it: the loop
-// must never start in a mode where every warm-up 401s, and must still start
-// where the request is served.
+// Drives the real auth middleware with the exact self-prewarm request (no credential, own User-Agent) and requires the
+// start gate to agree: never start where every warm-up 401s, always start where the request is served.
 func TestSelfPrewarmAdmitted_MatchesAuthMiddleware(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

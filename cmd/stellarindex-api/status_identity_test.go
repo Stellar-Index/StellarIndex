@@ -7,11 +7,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 )
 
-// /v1/status's deployment TIER and background-service list must not be hardcoded at the
-// v1.Options construction site (`RegionDeployment: "production"`, a literal
-// {"indexer","aggregator"} in the handler): a lean test net would then show a PRODUCTION tag in
-// the explorer and report an aggregator it deliberately does not run, holding `overall` at
-// "degraded" forever. Both are operator facts, so both must come from config.
+// /v1/status deployment tier and background-service list must come from config, not be hardcoded: a lean test net would
+// otherwise show a PRODUCTION tag and report an aggregator it doesn't run, holding overall at degraded forever.
 func TestStatusIdentity_PlumbedFromConfig(t *testing.T) {
 	tests := []struct {
 		name           string

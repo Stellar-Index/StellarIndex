@@ -31,10 +31,8 @@ func TestOracleSourceNames_AreKnownSources(t *testing.T) {
 	}
 }
 
-// TestValidateStalenessOverrides_AcceptsPolledOracleSource pins that an
-// override can reach an externally-polled source: before chainlink was
-// in OracleSourceNames the validator refused it, so no operator could
-// tune a Chainlink feed's budget at all.
+// An override must be able to reach an externally-polled oracle source such as chainlink. Without it in
+// OracleSourceNames the validator refused it, so no Chainlink feed budget could be tuned.
 func TestValidateStalenessOverrides_AcceptsPolledOracleSource(t *testing.T) {
 	c := config.Default()
 	c.Oracle.StalenessOverrides = []config.OracleStalenessOverrideConfig{{
@@ -48,18 +46,9 @@ func TestValidateStalenessOverrides_AcceptsPolledOracleSource(t *testing.T) {
 	}
 }
 
-// TestAnsibleOracleStalenessOverrides_ValidAndComplete is the codified-config gate for the one
-// shipped override.
-//
-// The override lives in the ansible template (TOML behind jinja control lines) and nothing else
-// parses it before a deploy, so a mis-spelled asset label ("DAI" for "crypto:DAI") or a dropped
-// `reason` would make the indexer refuse to start (config.Validate rejects both) at the worst
-// moment. This extracts the stanza the r1 render produces (aggregator on) and loads it the same
-// way.
-//
-// It also pins the seeded row: reflector-cex / crypto:DAI at 32400s (9h), sized from measured
-// gaps to 7h against the 50-minute source default. Changing it is a deliberate edit here too,
-// with the new observation written into `reason`.
+// Codified-config gate for the shipped staleness override in the ansible template, which nothing else parses before
+// deploy. A misspelled asset label ("DAI" vs "crypto:DAI") or dropped `reason` would stop the indexer starting. Pins
+// reflector-cex / crypto:DAI at 32400s (9h), sized from measured gaps; change it deliberately.
 func TestAnsibleOracleStalenessOverrides_ValidAndComplete(t *testing.T) {
 	wd, err := os.Getwd()
 	if err != nil {

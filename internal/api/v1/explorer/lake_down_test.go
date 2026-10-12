@@ -16,10 +16,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// The ClickHouse-down failure mode, pinned at the handler seam: the chaos
-// suite's docker-compose dev stack carries no ClickHouse, so this is where a
-// lake outage is exercised. Every lake-backed route must fail loudly with a
-// 5xx problem, never answer 200 with an empty page.
+// ClickHouse-down failure mode at the handler seam (the chaos suite's dev stack has no ClickHouse): every lake-backed
+// route must fail loudly with a 5xx problem, never answer 200 with an empty page.
 
 var errLakeDown = errors.New("dial tcp 127.0.0.1:9300: connect: connection refused")
 
@@ -358,10 +356,8 @@ func (downReader) ContractTypes(context.Context, []string) (map[string]bool, err
 	return nil, errLakeDown
 }
 
-// TestExplorerReads_BoundedByReadTimeout is the regression guard: for every
-// lake-backed handler, assert the reader is invoked with a context whose
-// deadline is set and sits within (0, explorerReadTimeout]. Against the un-fixed
-// code (raw r.Context(), no deadline) hasDL is false and the test fails.
+// Regression guard: every lake-backed handler must call the reader with a context whose deadline is set and within (0,
+// explorerReadTimeout]; a raw r.Context() has no deadline and fails this.
 func TestExplorerReads_BoundedByReadTimeout(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -411,11 +407,8 @@ func TestExplorerReads_BoundedByReadTimeout(t *testing.T) {
 				t.Fatalf("%s: reader received a context with NO deadline — the read is unbounded "+
 					"(C3-1 pool-exhaustion DoS regression)", tc.name)
 			}
-			// Pin the budget to the route's read ceiling: present, positive, never larger, and close
-			// to it (distinguishing it from any looser middleware deadline). Reads are
-			// request-scoped at explorerReadTimeout except AssetHolders, whose cold scan runs
-			// DETACHED on assetHoldersRefreshTimeout (stale-while-revalidate): still bounded and
-			// cancellation-observing.
+			// Pin the budget to the route's read ceiling: present, positive, never larger, and close to it (not a looser middleware
+			// deadline). AssetHolders is the exception: its cold scan runs detached on assetHoldersRefreshTimeout (SWR).
 			wantBudget := explorerReadTimeout
 			switch tc.name {
 			case "AssetHolders":
@@ -431,10 +424,8 @@ func TestExplorerReads_BoundedByReadTimeout(t *testing.T) {
 				// budget — still bounded, just not request-scoped.
 				wantBudget = contractDetailRefreshTimeout
 			case "NetworkThroughput":
-				// Snapshot-served: the year-window
-				// scan runs DETACHED on its own refresh budget so it
-				// survives the request that kicked it — still bounded,
-				// just not request-scoped.
+				// Snapshot-served: the year-window scan runs detached on its own refresh budget so it survives the triggering request;
+				// still bounded, just not request-scoped.
 				wantBudget = networkThroughputRefreshTimeout
 			case "AccountPositions":
 				// SWR'd on the shared contract-detail cache: the six-fold fan-out runs DETACHED on
@@ -480,10 +471,8 @@ func TestExplorerReads_ReturnWhenReadExceedsBudget(t *testing.T) {
 	}
 }
 
-// TestExplorerReads_DeadlineMapsTo503 is the regression guard. For every
-// lake-backed explorer handler, a read that returns context.DeadlineExceeded
-// must produce 503 + a `…-timeout` problem type. Against the un-fixed code every
-// case yields 500 `errors/internal`.
+// Regression guard: for every lake-backed explorer handler, a read returning context.DeadlineExceeded must produce 503
+// plus a ...-timeout problem type, not a 500 errors/internal.
 func TestExplorerReads_DeadlineMapsTo503(t *testing.T) {
 	cases := []struct {
 		name     string

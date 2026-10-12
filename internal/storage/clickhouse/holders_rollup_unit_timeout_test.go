@@ -19,11 +19,9 @@ var (
 	systemdSpanTokenRe = regexp.MustCompile(`^(\d+)(h|min|s)$`)
 )
 
-// TestHoldersRollupUnitTimeoutCoversStatementCeilings pins that systemd
-// cannot kill a holders-rollup cycle ClickHouse would still let finish: the
-// unit's TimeoutStartSec must be at least the serial sum of every statement's
-// max_execution_time. Otherwise a slow-but-legal cycle is SIGTERMed before
-// its EXCHANGE on every run and the board never refreshes.
+// TestHoldersRollupUnitTimeoutCoversStatementCeilings pins that the unit's TimeoutStartSec is at least the
+// serial sum of every statement's max_execution_time, so systemd cannot SIGTERM a legal cycle before its
+// EXCHANGE.
 func TestHoldersRollupUnitTimeoutCoversStatementCeilings(t *testing.T) {
 	var ceiling time.Duration
 	for i, stmt := range holdersRollupStatements(time.Now()) {

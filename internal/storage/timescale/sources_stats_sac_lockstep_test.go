@@ -10,10 +10,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// TestSourceStatsQueries_SACLiteralMatchesCanonical: the per-source
-// breakdowns reach every XLM form, the SAC included, through the bound
-// `= ANY($n)` form set built from [canonical.AssetAliases], never a
-// hard-coded literal.
+// TestSourceStatsQueries_SACLiteralMatchesCanonical: per-source breakdowns reach every XLM form, the SAC
+// included, through the bound `= ANY($n)` set built from [canonical.AssetAliases], never a hard-coded
+// literal.
 func TestSourceStatsQueries_SACLiteralMatchesCanonical(t *testing.T) {
 	for name, q := range map[string]string{
 		"pairSourceStatsQuery":  pairSourceStatsQuery,

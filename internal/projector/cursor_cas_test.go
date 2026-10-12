@@ -8,11 +8,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// AdvanceCursorFrom gives the in-memory store the same compare-and-swap contract as
-// [timescale.Store.AdvanceCursorFrom], including the shapes a happy-path fake never produces: a
-// row that moved since the read, a row that appeared since a not-found read, and a non-advancing
-// write. The real statement is proven in test/integration/projector_test.go; this only needs to
-// be faithful enough that the projector's use of it is what is under test.
+// Gives the in-memory store the same compare-and-swap contract as [timescale.Store.AdvanceCursorFrom], including shapes
+// a happy-path fake never produces: a row moved since the read, one that appeared since a not-found read, a non-
+// advancing write. The real statement is proven in test/integration/projector_test.go.
 func (f *fakeStore) AdvanceCursorFrom(_ context.Context, _, _ string, expected timescale.CursorRead, newLast uint32) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

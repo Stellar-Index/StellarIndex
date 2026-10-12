@@ -8,10 +8,8 @@ import (
 	"testing"
 )
 
-// TestReconciliationIsVacuous pins that verify-reconciliation must not report "OK — expected=0
-// actual=0" and exit 0 for a target with no data on either side. That is indistinguishable from a
-// source redeployed behind a new contract id whose config was never updated (the projector writes
-// nothing and the re-derive expects nothing). verify-recognition already refuses this shape.
+// verify-reconciliation must not report OK with expected=0 actual=0 for a target with no data on either side. That looks
+// identical to a source redeployed behind a new contract id with stale config; verify-recognition already refuses it.
 func TestReconciliationIsVacuous(t *testing.T) {
 	cases := []struct {
 		name               string

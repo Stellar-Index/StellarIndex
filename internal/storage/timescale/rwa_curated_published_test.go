@@ -109,11 +109,8 @@ func TestCuratedRWAPublished_BoundIsEnforcedInSQL(t *testing.T) {
 	if !strings.Contains(curatedRWAPublishedSplitSQL, "month_end = $2::date") {
 		t.Error("the split must be bound to one month with an explicit date cast")
 	}
-	// The select list casts value_usd to text under the SAME output name,
-	// and Postgres resolves an unqualified ORDER BY against output names
-	// first: an unqualified `ORDER BY value_usd DESC` sorts the split as
-	// text ("904795860.00" above "3100000000.00"). The integration test
-	// caught it; this pins the qualified form.
+	// The select list casts value_usd to text under the same output name, and Postgres resolves an unqualified
+	// ORDER BY against output names first, sorting the split as text. This pins the qualified form.
 	if !strings.Contains(curatedRWAPublishedSplitSQL, "ORDER BY curated_rwa_published_series.value_usd DESC") {
 		t.Error("the split's ORDER BY must name the TABLE column, or it sorts the text-cast output column")
 	}

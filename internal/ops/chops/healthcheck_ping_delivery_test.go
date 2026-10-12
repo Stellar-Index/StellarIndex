@@ -18,12 +18,9 @@ import (
 	"testing"
 )
 
-// A Healthchecks.io ping that never leaves the host and a service that is genuinely down look the
-// same at the other end: silence, then a "down" email. The wrapper must therefore record a dropped
-// ping instead of discarding curl's output, so "was the service actually down?" stays answerable.
-//
-// These tests drive the real wrapper scripts against a failing ping endpoint and assert the
-// failure is recorded in both places an operator can still read an hour later.
+// A Healthchecks.io ping that never leaves the host looks like a down service at the other end: silence, then a "down"
+// email. The wrapper must record a dropped ping rather than discard curl's output; these tests assert it is recorded in
+// both places an operator can read later.
 
 // startPingServer serves the metrics endpoint heartbeat.sh probes and a
 // ping endpoint whose status the test controls.
@@ -106,10 +103,8 @@ func TestUndeliveredPingIsRecorded(t *testing.T) {
 		t.Errorf("last_success_unix = %v, want 0 — no ping has ever been accepted", got)
 	}
 
-	// The counter has to survive the process that wrote it. These are
-	// oneshot units: without reading the previous value back out of the
-	// textfile, every run would publish 1 and `increase()` would see
-	// nothing but resets.
+	// The counter must survive the process that wrote it: these are oneshot units, so without reading the previous value
+	// back from the textfile every run would publish 1 and increase() would see only resets.
 	stderr = runHeartbeat(t, port, dir, "http://127.0.0.1:"+strconv.Itoa(port)+"/ping")
 	if got := readPingMetric(t, dir, "indexer", "stellarindex_healthcheck_ping_failures_total"); got != 2 {
 		t.Errorf("failures_total = %v after two undelivered pings, want 2 — the counter restarted; stderr:\n%s", got, stderr)
@@ -128,10 +123,8 @@ func TestUndeliveredPingIsRecorded(t *testing.T) {
 	}
 }
 
-// TestFailedProbeDoesNotPingSuccess guards the invariant the whole
-// arrangement rests on: when the probe finds the service down, the
-// script must not report success to Healthchecks.io. Reporting success
-// there would keep the check green through an outage.
+// When the probe finds the service down, the script must not report success to Healthchecks.io; doing so would keep the
+// check green through an outage.
 func TestFailedProbeDoesNotPingSuccess(t *testing.T) {
 	var status atomic.Int32
 	status.Store(http.StatusOK)

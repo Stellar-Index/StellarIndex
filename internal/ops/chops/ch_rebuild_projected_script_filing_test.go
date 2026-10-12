@@ -3,22 +3,17 @@
 
 package chops
 
-// The last leg. scripts/ops/ch-rebuild-projected.sh must itself file the ADR-0033 dirty window
-// whenever it leaves a window EMPTY. Otherwise the obligation lives only in an operator reading
-// the log, and /v1/coverage keeps certifying a range with no rows complete=true.
-//
-// These execute the shipped script (harness in ch_rebuild_projected_script_test.go) and pin the
-// filing: every state that empties a window FILES one projection dirty window for exactly the
-// deleted sources, a state that empties nothing files none, and a failed filing is loud.
+// ch-rebuild-projected.sh must itself file the ADR-0033 dirty window whenever it leaves a window empty, or /v1/coverage
+// keeps certifying a range with no rows complete=true. Every emptying state files one window for exactly the deleted
+// sources; a state that empties nothing files none; a failed filing is loud.
 
 import (
 	"testing"
 )
 
-// assertFiledWindow checks the one -record-dirty-window invocation the
-// script made names the emptied range and exactly the deleted sources. A
-// record for the wrong window files the wrong obligation, and one carrying
-// -write is refused by the binary (checkCHRebuildRecordDirtyFlags).
+// assertFiledWindow checks the one -record-dirty-window invocation names the emptied range and exactly the deleted
+// sources. A wrong window files the wrong obligation, and one carrying -write is refused by the binary
+// (checkCHRebuildRecordDirtyFlags).
 func assertFiledWindow(t *testing.T, run scriptRun, lo, hi, sources string) {
 	t.Helper()
 	recs := run.records()

@@ -14,10 +14,9 @@ func isOpsBySourceProbe(q string) bool {
 	return strings.Contains(q, "stellar.ops_by_source") && !strings.Contains(q, "WHERE")
 }
 
-// withOpsBySourceRows answers the ops_by_source availability probe with one
-// row (a provisioned, populated projection) and hands every other query to
-// next. Tests of the account-history SQL shape use it so they exercise the
-// history queries rather than the refusal.
+// withOpsBySourceRows answers the ops_by_source availability probe with one row (a provisioned, populated
+// projection) and hands every other query to next, so account-history SQL-shape tests exercise the history
+// queries, not the refusal.
 func withOpsBySourceRows(next func(string) (driver.Rows, error)) func(string) (driver.Rows, error) {
 	return func(q string) (driver.Rows, error) {
 		if isOpsBySourceProbe(q) {
@@ -52,11 +51,9 @@ func accountHistoryErrs(ctx context.Context, r *ExplorerReader) map[string]error
 	}
 }
 
-// TestAccountHistory_RefusesEmptyOpsBySource pins: an existing-but-EMPTY
-// stellar.ops_by_source must not be treated as provisioned. The readers
-// serve an empty sourced arm as "this account sourced nothing", so an unfed
-// projection would answer every account's own history as empty (or
-// participant-only) with no error, instead of the fail-loud refusal.
+// TestAccountHistory_RefusesEmptyOpsBySource pins that an existing-but-EMPTY stellar.ops_by_source is not
+// provisioned: readers treat an empty sourced arm as "sourced nothing", so an unfed projection would
+// silently answer empty histories instead of refusing loudly.
 func TestAccountHistory_RefusesEmptyOpsBySource(t *testing.T) {
 	lake := &opsBySourceLake{rows: false}
 	conn := &stubConn{respond: lake.respond}
@@ -72,10 +69,9 @@ func TestAccountHistory_RefusesEmptyOpsBySource(t *testing.T) {
 	}
 }
 
-// TestAccountHistory_OpsBySourceTruncatedUnderReader: a populated projection
-// serves; once it is emptied under the running process the next caller past
-// the lease refuses; once it is repopulated the refusal lifts without a
-// restart (an empty verdict is never latched).
+// TestAccountHistory_OpsBySourceTruncatedUnderReader: a populated projection serves; once emptied under the
+// running process the next caller past the lease refuses; once repopulated the refusal lifts without a
+// restart.
 func TestAccountHistory_OpsBySourceTruncatedUnderReader(t *testing.T) {
 	lake := &opsBySourceLake{rows: true}
 	conn := &stubConn{respond: lake.respond}

@@ -13,16 +13,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// [Store.HasAsset] is the 404 gate on GET /v1/assets/{id}. Its non-classic arm must not be an
-// UNBOUNDED existence scan of the `trades` hypertable:
-//
-//	SELECT EXISTS (SELECT 1 FROM trades
-//	                WHERE base_asset = $1 OR quote_asset = $1 LIMIT 1)
-//
-// Over compressed historical chunks that shape blows the 15 s request budget while the classic
-// arm answers in milliseconds. A seeded-row test cannot see this, since a defective query also
-// returns true for a seeded row; the defect is in the STATEMENT SHAPE, so these tests pin it
-// with the scripted driver that records the SQL and bound args.
+// [Store.HasAsset]'s non-classic arm must not be an unbounded existence scan of `trades` (it blows the 15 s
+// budget on compressed chunks). A seeded-row test cannot see that, so the scripted driver pins the SQL and
+// args.
 
 // hasAssetStmt runs HasAsset against one canned boolean and returns the
 // single statement the store issued plus the answer it decoded.
@@ -39,11 +32,9 @@ func hasAssetStmt(t *testing.T, a canonical.Asset, exists bool) (recordedStmt, b
 	return conn.only(t), got
 }
 
-// unwindowedTradesReads returns the `FROM trades` reads in q with no `ts >=` bound in their own
-// subquery, i.e. the reads the planner cannot prune chunks for.
-//
-// Scoping to the subquery is deliberate: a statement bounding ONE trades read but leaving a
-// sibling unbounded still walks every chunk, which a whole-statement check would call clean.
+// unwindowedTradesReads returns the `FROM trades` reads in q with no `ts >=` bound in their own subquery,
+// which the planner cannot prune. Scoping per subquery matters: one bounded read must not excuse an unbounded
+// sibling.
 func unwindowedTradesReads(q string) []string {
 	var out []string
 	rest := q
@@ -78,10 +69,8 @@ func subqueryBody(s string) string {
 	return s
 }
 
-// TestHasAsset_NativeIssuesNoUnboundedTradesScan is the regression this
-// fix exists for: every `trades` read on the native path must carry the
-// `ts >=` bound that lets the planner prune to the window's chunks. RED
-// against an unbounded query, whose single read has no bound at all.
+// TestHasAsset_ProbeIssuesNoUnboundedTradesScan: every `trades` read on the native path must carry the `ts
+// >=` bound that lets the planner prune to the window's chunks.
 func TestHasAsset_ProbeIssuesNoUnboundedTradesScan(t *testing.T) {
 	stmt, has := hasAssetStmt(t, probeAsset(t), true)
 
@@ -105,10 +94,9 @@ full SQL:
 	}
 }
 
-// TestHasAsset_NativeWindowIsTheListingWindow pins the bound VALUE, not merely its presence: the
-// floor is now - MarketsRecencyWindow in UTC, the window Store.DistinctAssets uses, so the detail
-// route cannot 404 an asset the listing shows. Computing it Go-side (not `now() - INTERVAL`)
-// makes it a constant the planner can prune chunks with at plan time.
+// TestHasAsset_NativeWindowIsTheListingWindow pins the bound value: the floor is now - MarketsRecencyWindow
+// in UTC, the window Store.DistinctAssets uses, so the detail route cannot 404 a listed asset. It is
+// computed Go-side so the planner can prune chunks.
 func TestHasAsset_ProbeWindowIsTheListingWindow(t *testing.T) {
 	before := time.Now().UTC()
 	stmt, _ := hasAssetStmt(t, probeAsset(t), true)
@@ -240,12 +228,9 @@ func TestHasAsset_NonClassicAlwaysProbesItsOwnSpelling(t *testing.T) {
 	}
 }
 
-// TestHasAsset_AbsentNonClassicAnswersWithoutFallback pins that a MISS is conclusive: a bounded
-// probe that falls back to the unbounded scan on a miss would keep the timeout for every asset
-// the index lacks, which is what a scraper hits. One statement, one answer.
-//
-// It also passes against an unbounded single-statement implementation: it is a forward guard
-// against that ladder, not proof of the fix, which the three tests above provide.
+// TestHasAsset_AbsentNonClassicAnswersWithoutFallback: a miss is conclusive, since falling back to the
+// unbounded scan would keep the timeout for every asset the index lacks. It is a forward guard; the
+// tests above prove the fix.
 func TestHasAsset_AbsentNonClassicAnswersWithoutFallback(t *testing.T) {
 	eur, err := canonical.NewFiatAsset("EUR")
 	if err != nil {
@@ -300,11 +285,9 @@ SQL:
 	}
 }
 
-// TestHasAsset_NativeNeedsNoTradeEvidence pins that XLM resolves on a network with no XLM trades.
-// The non-classic probe bounds existence on MarketsRecencyWindow, right for assets DISCOVERED by
-// trading, but XLM exists from genesis on every network; routed through the probe it would 404 on
-// a quiet network and 200 on a busy one. A seeded trade cannot see this, so the test asserts the
-// store issues NO statement at all.
+// TestHasAsset_NativeNeedsNoTradeEvidence pins that XLM resolves on a network with no XLM trades. The
+// non-classic probe bounds existence on MarketsRecencyWindow, but XLM exists from genesis; probing would 404
+// on a quiet network. A seeded trade cannot show this, so the test asserts the store issues NO statement.
 func TestHasAsset_NativeNeedsNoTradeEvidence(t *testing.T) {
 	t.Parallel()
 

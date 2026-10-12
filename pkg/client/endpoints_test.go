@@ -259,10 +259,8 @@ func TestPriceTip_HappyPath(t *testing.T) {
 	}
 }
 
-// TestPriceTip_LastTradeBranch — empty-window branch returns
-// last_trade with no window_seconds. Pinned because customers
-// distinguishing the two branches via PriceType is the surface's
-// main contract.
+// The empty-window branch returns last_trade with no window_seconds; consumers tell the two branches apart via
+// PriceType.
 func TestPriceTip_LastTradeBranch(t *testing.T) {
 	_, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -286,10 +284,8 @@ func TestPriceTip_LastTradeBranch(t *testing.T) {
 	}
 }
 
-// TestPriceTip_OmitsZeroWindowSeconds — the SDK MUST NOT send
-// `window_seconds=0` (the server treats 0 as "use default"; sending
-// it explicitly is wasted bandwidth). Pinned because a regression
-// that always sends the field would change the URL signature.
+// The SDK must not send `window_seconds=0`: the server treats 0 as "use default", so sending it is wasted bandwidth.
+// Pinned because always sending the field would change the URL signature.
 func TestPriceTip_OmitsZeroWindowSeconds(t *testing.T) {
 	_, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Has("window_seconds") {
@@ -303,10 +299,7 @@ func TestPriceTip_OmitsZeroWindowSeconds(t *testing.T) {
 	}
 }
 
-// TestPriceBatch_GETUnder100 — a 3-asset batch routes via GET
-// with the canonical comma-separated `asset_ids` param. Pinned
-// because the GET-vs-POST routing is the SDK's main value-add
-// over a hand-rolled curl.
+// A 3-asset batch routes via GET with the comma-separated `asset_ids` param; GET-vs-POST routing is the SDK's value-add.
 func TestPriceBatch_GETUnder100(t *testing.T) {
 	_, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -349,9 +342,7 @@ func TestPriceBatch_GETUnder100(t *testing.T) {
 	}
 }
 
-// TestPriceBatch_POSTOver100 — a 150-asset batch routes via POST
-// with a JSON body (the GET form would blow past most reverse
-// proxies' 8 KiB header limit). Pinned because the threshold
+// A 150-asset batch routes via POST with a JSON body (GET would exceed typical 8 KiB proxy header limits). The threshold
 // crossing is the SDK's job, not the caller's.
 func TestPriceBatch_POSTOver100(t *testing.T) {
 	ids := make([]string, 150)
@@ -391,10 +382,7 @@ func TestPriceBatch_POSTOver100(t *testing.T) {
 	}
 }
 
-// TestOHLC_HappyPath — happy-path round-trip pinning required
-// query params + decode of OHLCBar shape with all four price
-// fields + the truncated flag.
-// fields + the truncated flag.
+// Happy-path round trip: required query params, and OHLCBar decode with all four price fields plus the truncated flag.
 func TestOHLC_HappyPath(t *testing.T) {
 	from := time.Date(2026, 4, 28, 9, 0, 0, 0, time.UTC)
 	to := time.Date(2026, 4, 28, 10, 0, 0, 0, time.UTC)
@@ -457,10 +445,8 @@ func TestOHLC_HappyPath(t *testing.T) {
 	}
 }
 
-// TestOHLC_OmitsZeroTimes — zero From/To means "use server
-// defaults"; SDK MUST NOT send `from=` / `to=` empty (RFC3339
-// of a zero time renders "0001-01-01T00:00:00Z" which the
-// server would accept as a real 1AD timestamp).
+// Zero From/To means server defaults; the SDK must not send empty `from=`/`to=`, since a zero time renders
+// "0001-01-01T00:00:00Z", which the server would accept as a real timestamp.
 func TestOHLC_OmitsZeroTimes(t *testing.T) {
 	_, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
@@ -480,10 +466,8 @@ func TestOHLC_OmitsZeroTimes(t *testing.T) {
 	}
 }
 
-// TestOHLC_TruncatedDecodes — when a window holds more trades
-// than the server's cap, `truncated: true` is on the wire and
-// the SDK round-trips it. Pinned because consumers building
-// chart UIs need this signal to decide whether to narrow.
+// When a window exceeds the server's trade cap, `truncated: true` is on the wire and round-trips; chart UIs need it to
+// decide whether to narrow.
 func TestOHLC_TruncatedDecodes(t *testing.T) {
 	_, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -501,11 +485,8 @@ func TestOHLC_TruncatedDecodes(t *testing.T) {
 	}
 }
 
-// TestUsage_EmptyArrayDecodes — the placeholder usage endpoint
-// returns an empty array today; client should decode that without
-// panicking on a nil slice.
-// TestHistory_HappyPath — round-trip pinning required params,
-// optional from/to, decode of TradeRow.
+// The placeholder usage endpoint returns an empty array today; the client must decode it without panicking on a nil
+// slice.
 func TestHistory_HappyPath(t *testing.T) {
 	from := time.Date(2026, 4, 28, 9, 0, 0, 0, time.UTC)
 	to := time.Date(2026, 4, 28, 10, 0, 0, 0, time.UTC)
@@ -599,10 +580,8 @@ func TestHistory_PaginationCarriesCursor(t *testing.T) {
 		if q.Get("cursor") != "page-2" {
 			t.Errorf("cursor = %q, want page-2", q.Get("cursor"))
 		}
-		// from/to should NOT be sent when cursor is set —
-		// well, actually the SDK should still forward them if the
-		// caller set them; the server uses cursor as the lower
-		// bound override. Don't assert absence.
+		// The SDK still forwards from/to when cursor is set (the server uses cursor as lower-bound override), so don't assert
+		// their absence.
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"data": [], "as_of":"2026-04-28T10:00:00Z","flags":{}}`))
 	})
@@ -613,10 +592,7 @@ func TestHistory_PaginationCarriesCursor(t *testing.T) {
 	}
 }
 
-// TestHistory_OmitsZeroOptional — zero From/To/Limit/Cursor
-// don't render on the URL. Pinned because a leaky zero would
-// either send "0001-01-01T00:00:00Z" or `limit=0` (which the
-// server treats as invalid).
+// Zero From/To/Limit/Cursor must not render on the URL: a leak would send "0001-01-01T00:00:00Z" or `limit=0` (invalid).
 func TestHistory_OmitsZeroOptional(t *testing.T) {
 	_, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
@@ -749,10 +725,8 @@ func TestPair_HappyPath(t *testing.T) {
 	}
 }
 
-// TestPair_EmptyArrayOnUnknownPair — server's 0-or-1 array shape
-// returns an empty array for unknown pairs, not a 404. Pinned
-// because the SDK's behaviour MUST mirror that — branching on
-// status code would defeat the design.
+// The server returns an empty array, not a 404, for an unknown pair; the SDK must mirror that and not branch on status
+// code.
 func TestPair_EmptyArrayOnUnknownPair(t *testing.T) {
 	_, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -778,10 +752,8 @@ func TestUsage_EmptyArrayDecodes(t *testing.T) {
 	}
 }
 
-// TestCoins_IssuerFilter — deleted along with the SDK Coins method.
-// /v1/coins HTTP surface retired (no production consumers); the
-// equivalent path is /v1/assets?issuer= via raw HTTP (the SDK
-// doesn't yet wrap that — see Assets follow-up).
+// TestCoins_IssuerFilter was removed with the SDK Coins method; the /v1/coins surface is retired (use /v1/assets?issuer=
+// via raw HTTP).
 
 // TestIssuers_Limit — issuer directory respects Limit and unwraps
 // the {data:[…]} envelope correctly.
@@ -805,10 +777,8 @@ func TestIssuers_Limit(t *testing.T) {
 	}
 }
 
-// TestIssuer_PathEscapes — G-strkeys are 56 chars of base32 so
-// PathEscape isn't strictly load-bearing today, but the test
-// pins the escape path so a future identifier scheme that uses
-// special characters doesn't silently break.
+// G-strkeys are 56 base32 chars so PathEscape isn't load-bearing today; the test pins it for future identifiers with
+// special characters.
 func TestIssuer_PathEscapes(t *testing.T) {
 	const g = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 	_, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
@@ -1011,10 +981,8 @@ func TestChangeSummary_HappyPath(t *testing.T) {
 	}
 }
 
-// TestIncidents_HappyPath — pins the path, the IncidentsList
-// nesting (data.incidents + data.count), severity / status
-// strings as opaque tags, and the *time.Time ResolvedAt with
-// the omitempty branch.
+// Pins the path, the IncidentsList nesting (data.incidents + data.count), severity/status as opaque strings, and the
+// *time.Time ResolvedAt omitempty branch.
 func TestIncidents_HappyPath(t *testing.T) {
 	c := newJSONServer(t, "/v1/incidents", `{
 			"data": {
@@ -1074,10 +1042,8 @@ func TestIncidents_HappyPath(t *testing.T) {
 	}
 }
 
-// TestIncidents_EmptyList — fresh deploy with no embedded posts
-// returns count=0 and an empty (or nil) Incidents slice without
-// error. JSON omits the `incidents` key entirely; both shapes
-// must round-trip cleanly.
+// With no embedded posts the server returns count=0 and omits the `incidents` key; a nil or empty slice must round-trip
+// without error.
 func TestIncidents_EmptyList(t *testing.T) {
 	_, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -1147,10 +1113,8 @@ func TestNetworkStats_HappyPath(t *testing.T) {
 	}
 }
 
-// TestNetworkStats_NullVolume — when prod has no USD-equivalent
-// trades in the rolling window, Volume24hUSD is omitted from the
-// JSON. Round-trip leaves the *string at nil; client code can
-// distinguish "no data" from "0".
+// With no USD-equivalent trades in the window Volume24hUSD is omitted; the *string stays nil so "no data" differs from
+// "0".
 func TestNetworkStats_NullVolume(t *testing.T) {
 	_, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -1229,11 +1193,8 @@ func TestLendingPools_EmptyArray(t *testing.T) {
 	}
 }
 
-// TestVWAP_HappyPath — happy path round-trip + query-param shape.
-// Pins:
-//   - GET /v1/vwap with base + quote + sigma forwarded
-//   - From + To formatted as RFC3339 UTC
-//   - VWAPResult fields decoded correctly (string price, int counts)
+// Happy path: GET /v1/vwap forwards base, quote and sigma; From/To are RFC3339 UTC; VWAPResult decodes (string price,
+// integer counts).
 func TestVWAP_HappyPath(t *testing.T) {
 	_, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/vwap" {
@@ -1387,11 +1348,8 @@ func TestPools_NoFilters(t *testing.T) {
 	}
 }
 
-// TestEnvelope_PaginationPointerRoundTrip pins that the
-// Envelope.Pagination field is a pointer matching the server's *Pagination, so
-// a response WITHOUT pagination decodes to nil and re-encodes WITHOUT a
-// "pagination" key (a value type would make omitempty a no-op → emit
-// "pagination":{}).
+// Envelope.Pagination is a pointer matching the server's *Pagination: a response without it decodes to nil and re-
+// encodes without a "pagination" key (a value type would make omitempty a no-op and emit "pagination":{}).
 func TestEnvelope_PaginationPointerRoundTrip(t *testing.T) {
 	// Absent pagination → nil → re-marshal omits the key.
 	var noPage client.Envelope[[]string]
@@ -1583,10 +1541,8 @@ func TestAPIError_DecodesWithheldReason(t *testing.T) {
 	}
 }
 
-// TestSources_IncludeSendsCommaJoinedParam. [Source] documents
-// TradeCount24h/VolumeUSD24h/MarketsCount24h/VolumeHistory24h as
-// populated only when the request used `?include=stats` (etc), but
-// without an Include option the SDK could never request those fields.
+// [Source] stats fields are populated only with `?include=stats`, so the SDK needs an Include option sending a comma-
+// joined param.
 func TestSources_IncludeSendsCommaJoinedParam(t *testing.T) {
 	_, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if got := r.URL.Query().Get("include"); got != "stats,sparkline" {
@@ -1603,11 +1559,8 @@ func TestSources_IncludeSendsCommaJoinedParam(t *testing.T) {
 	}
 }
 
-// TestMarkets_IncludeSourceAssetQueryParams. MarketsOptions
-// must have a field for the spec's `include` (sparkline/inception),
-// `source`, or `asset` query parameters despite [Market] documenting
-// include-gated fields and the OpenAPI spec documenting `source` +
-// `asset` filters on GET /v1/markets.
+// MarketsOptions needs fields for the spec's `include` (sparkline/inception), `source` and `asset` query params on GET
+// /v1/markets.
 func TestMarkets_IncludeSourceAssetQueryParams(t *testing.T) {
 	_, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()

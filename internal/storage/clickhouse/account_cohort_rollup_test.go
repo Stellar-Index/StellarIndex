@@ -30,10 +30,8 @@ func TestCohortRollupRebuildsAndSwapsEveryServedTable(t *testing.T) {
 				truncated = true
 			}
 		}
-		// The cohortLoadedTables' staging twins are truncated by their
-		// loaders (loadDeFiPositionHolders, loadAssetMonthUSDPrices) before
-		// the statements run, because those snapshots are batch-inserted
-		// from Go rather than filled by SQL.
+		// The staging twins of cohortLoadedTables are truncated by their loaders before the statements run,
+		// because those snapshots are batch-inserted from Go rather than filled by SQL.
 		if !truncated && !cohortLoadedTables[table] {
 			t.Errorf("%s is never truncated before the cycle fills it", staging)
 		}
@@ -138,10 +136,8 @@ func TestCohortRollupMembershipFloorsCreatorsOnce(t *testing.T) {
 	}
 }
 
-// The positions join reads the snapshot's STAGING table — the one
-// RunCohortRollup fills this cycle — never the live one from the last
-// cycle, which would pair this cycle's membership with last cycle's
-// positions.
+// The positions join reads this cycle's STAGING table, not the live one from the last cycle, which would
+// pair this cycle's membership with last cycle's positions.
 func TestCohortRollupPositionsJoinReadsThisCyclesSnapshot(t *testing.T) {
 	seen := false
 	for _, step := range cohortRollupStatements {
@@ -239,10 +235,8 @@ func (r *cohortFlowsFakeRows) Scan(dest ...any) error {
 func (r *cohortFlowsFakeRows) Err() error   { return nil }
 func (r *cohortFlowsFakeRows) Close() error { return nil }
 
-// cohortFlowsFakeConn fails the FIRST Query (the priced, joined SQL)
-// with the ClickHouse "table does not exist" answer, and succeeds the
-// second (the fallback SQL) — modelling a deployment where
-// asset_month_usd_prices has not been applied.
+// cohortFlowsFakeConn fails the first Query (priced, joined SQL) with ClickHouse "table does not exist"
+// and succeeds the second (fallback SQL), modelling a deployment without asset_month_usd_prices.
 type cohortFlowsFakeConn struct {
 	driver.Conn
 	calls []string
@@ -259,11 +253,8 @@ func (c *cohortFlowsFakeConn) Query(_ context.Context, query string, _ ...any) (
 	return &cohortFlowsFakeRows{}, nil
 }
 
-// A missing asset_month_usd_prices table (the cohort
-// outage) must degrade the flows read — serve flows with no then-price —
-// not fail the whole /graph/cohort route. Otherwise readCohortFlows
-// would return the UNKNOWN_TABLE error straight through and AccountCohort
-// would propagate it as a 500.
+// A missing asset_month_usd_prices table must degrade the cohort flows read (flows with no then-price), not
+// fail /graph/cohort with the UNKNOWN_TABLE error as a 500.
 func TestCohortFlowsDegradeWhenPricesTableAbsent(t *testing.T) {
 	conn := &cohortFlowsFakeConn{}
 	r := &ExplorerReader{conn: conn}

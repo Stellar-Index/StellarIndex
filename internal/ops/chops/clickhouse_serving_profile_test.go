@@ -57,10 +57,8 @@ func readRepoFile(t *testing.T, rel string) string {
 
 const servingProfileTask = "configs/ansible/roles/archival-node/tasks/20-clickhouse-serving-profile.yml"
 
-// TestServingProfileReadonlyAllowsQuerySettings is the assertion that
-// matters: the profile must NOT be readonly=1 while the serving readers
-// send per-query settings, and readonly=2 is the value that permits
-// exactly that and nothing more.
+// TestServingProfileReadonlyAllowsQuerySettings is the assertion that matters: the profile must NOT be readonly=1 while
+// serving readers send per-query settings; readonly=2 permits exactly that and nothing more.
 func TestServingProfileReadonlyAllowsQuerySettings(t *testing.T) {
 	task := readRepoFile(t, servingProfileTask)
 

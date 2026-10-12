@@ -9,16 +9,12 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// Query-shape regressions for two ReplacingMergeTree over-count / mis-cap defects. Live proof
-// against real un-merged parts lives in test/integration (tagged integration); the stubConn
-// harness cannot model RMT merge semantics, so these assert the emitted SQL carries the
-// dedup / distinct-cap construct, the same idiom the ContractEventsRecent dedup tests use.
+// Query-shape regressions for two ReplacingMergeTree over-count and mis-cap defects. The stubConn harness
+// cannot model merge semantics, so these assert the emitted SQL carries the dedup or distinct-cap construct;
+// live proof is in test/integration.
 
-// TestContractActivitySummaryFor_DedupsRMTCount: ContractActivitySummaryFor reads
-// stellar.contract_active_ledgers (an RMT); a bare count() lets overlapping-backfill duplicate
-// parts inflate ActiveLedgersTotal and the daily bars up to ~2x until a merge. Both the total
-// and the per-day aggregate must count DISTINCT ledger_seq (uniqExact), matching the sibling
-// reader contractActiveLedgers' SELECT DISTINCT on this table.
+// TestContractActivitySummaryFor_DedupsRMTCount: the total and per-day counts must use DISTINCT ledger_seq
+// (uniqExact), since a bare count() over the ReplacingMergeTree inflates with unmerged duplicate parts.
 func TestContractActivitySummaryFor_DedupsRMTCount(t *testing.T) {
 	conn := &stubConn{}
 	conn.respond = func(q string) (driver.Rows, error) {

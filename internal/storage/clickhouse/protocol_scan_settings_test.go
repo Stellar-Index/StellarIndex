@@ -5,13 +5,9 @@ import (
 	"testing"
 )
 
-// These tests pin the two clauses that make the RAW protocol-analytics reads survivable, in the
-// same convention as explorer_scan_settings_test.go: losing either is silent in review and in
-// unit tests, and expensive only in production.
-//
-// Cold, over a 90-day window on a busy contract, each read scans about a billion rows (the
-// breakdown reads about 373 GiB), against a connection that pins max_execution_time = 30. The
-// breakdown cannot complete, and all three run CONCURRENTLY per page build.
+// Pins the two clauses that make the RAW protocol-analytics reads survivable (losing either is silent in
+// review and unit tests): cold over 90 days on a busy contract each read scans ~1B rows (breakdown ~373
+// GiB) against max_execution_time = 30, and all three run concurrently per page build.
 
 // protocolRawScanQueries is every raw (non-pre-aggregated) protocol-analytics
 // query, by the name of the reader that issues it.
@@ -44,13 +40,8 @@ func TestProtocolRawScanQueries_CarryRowCeiling(t *testing.T) {
 	}
 }
 
-// TestProtocolRawScanQueries_KeepFinal — asserts FINAL is PRESENT.
-//
-// Deliberately the opposite of what a "FINAL is slow" reading suggests.
-// stellar.contract_events is ReplacingMergeTree(ingested_at) and its unmerged duplicates are
-// large (tens of percent over a 90-day window). Dropping FINAL would overstate every protocol's
-// headline event count, and on a BUSY contract it buys nothing anyway: the bloom prunes little
-// there, so FINAL's PrimaryKeyExpand re-expands no extra granules.
+// TestProtocolRawScanQueries_KeepFinal asserts FINAL is PRESENT: contract_events has large unmerged
+// duplicates, so dropping FINAL overstates event counts and saves nothing on a busy contract.
 func TestProtocolRawScanQueries_KeepFinal(t *testing.T) {
 	for name, q := range protocolRawScanQueries() {
 		if !strings.Contains(q, "stellar.contract_events FINAL") {
@@ -61,10 +52,9 @@ func TestProtocolRawScanQueries_KeepFinal(t *testing.T) {
 	}
 }
 
-// TestProtocolEventBreakdownQuery_WindowIsOptionalAndBound — the windowed arm
-// must carry the ledger bound (it is what prunes partitions to the 90-day
-// working set), and the all-time arm must NOT, since it binds no such arg.
-// Getting this backwards is an argument/placeholder mismatch, not a slow query.
+// TestProtocolEventBreakdownQuery_WindowIsOptionalAndBound pins that the windowed arm carries the ledger
+// bound (pruning to the 90-day working set) and the all-time arm does not, else args and placeholders
+// mismatch.
 func TestProtocolEventBreakdownQuery_WindowIsOptionalAndBound(t *testing.T) {
 	if got := protocolEventBreakdownQuery(true); !strings.Contains(got, "ledger_seq >= ?") {
 		t.Errorf("windowed breakdown lost its ledger bound — it would scan the whole "+
@@ -75,10 +65,8 @@ func TestProtocolEventBreakdownQuery_WindowIsOptionalAndBound(t *testing.T) {
 	}
 }
 
-// TestProtocolContractActivityQuery_ExcludesPartialDay — the per-contract
-// roster reader must share the complete-days-only bound its siblings (protocolEventBreakdownQuery,
-// protocolDailyActivityQuery) carry. Without it, the roster count includes the still-accumulating
-// current day and wobbles on every re-read, the same phantom-cliff those siblings avoid.
+// TestProtocolContractActivityQuery_ExcludesPartialDay: the roster reader must share the complete-days-only
+// bound of its sibling queries, or the still-accumulating current day makes the count wobble on every read.
 func TestProtocolContractActivityQuery_ExcludesPartialDay(t *testing.T) {
 	if !strings.Contains(protocolContractActivityQuery, "close_time < toStartOfDay(now())") {
 		t.Errorf("protocolContractActivityQuery lost its complete-days-only bound — "+
@@ -88,12 +76,9 @@ func TestProtocolContractActivityQuery_ExcludesPartialDay(t *testing.T) {
 	}
 }
 
-// TestProtocolRawScanQueries_NoExplorerScanSettings — a guard against the
-// plausible-but-measured-wrong "fix".
-//
-// Adding explorerScanSettings (max_threads = 4) to the breakdown measured nearly 2x SLOWER for
-// identical I/O. The byte fan-out that clause exists for is a ledger_entries_current part-layout
-// effect and does not apply to this shape.
+// TestProtocolRawScanQueries_NoExplorerScanSettings guards against a measured-wrong fix: adding
+// explorerScanSettings (max_threads = 4) ran nearly 2x slower for identical I/O, as its byte fan-out is a
+// ledger_entries_current part-layout effect.
 func TestProtocolRawScanQueries_NoExplorerScanSettings(t *testing.T) {
 	for name, q := range protocolRawScanQueries() {
 		if strings.Contains(q, "max_threads = 4") {
