@@ -7,14 +7,7 @@ import (
 	"time"
 )
 
-// ProjectionDirtyWindow is one source's pending re-reconcile obligation: the ledger window a
-// `stellarindex-ops projector-replay` rewound over that no completeness run has re-verified yet.
-//
-// The daily compute-completeness driver reconciles each source only from its prior watermark to
-// tip and CARRIES the prior clean projection claim for the older prefix (projectionClaim rule 3).
-// That carry is sound only while the served tier below the watermark is immutable, and a rewind
-// rewrites exactly that region; without a durable record the rewritten range stays certified by
-// a claim the replay just invalidated.
+// ProjectionDirtyWindow is one source's pending re-reconcile obligation: the ledger window a `projector-replay` rewound that no completeness run has re-verified yet.
 type ProjectionDirtyWindow struct {
 	Source string
 	// From is the rewind target (inclusive), the first ledger whose served rows were re-written.
@@ -55,8 +48,7 @@ const (
 	reasonBackfillWritePrefix    = "backfill -write "
 )
 
-// ProjectorReplayReason is the Reason `projector-replay` stamps on its window: fromCursor (the
-// pre-rewind position) becomes the window's To, toTarget its From.
+// ProjectorReplayReason is the Reason `projector-replay` stamps on its window: fromCursor (the pre-rewind position) becomes the window's To, toTarget its From.
 func ProjectorReplayReason(fromCursor, toTarget uint32) string {
 	return fmt.Sprintf("%s%d -> %d", reasonProjectorReplayPrefix, fromCursor, toTarget)
 }
@@ -66,10 +58,7 @@ func ProjectedRebuildReason(from, to uint32) string {
 	return fmt.Sprintf("%s[%d,%d]", reasonProjectedRebuildPrefix, from, to)
 }
 
-// CHRebuildEmptiedReason is the Reason `ch-rebuild -record-dirty-window` stamps on a window that
-// scripts/ops/ch-rebuild-projected.sh DELETEd and could not yet re-derive. Distinct from
-// ProjectedRebuildReason because the served tier is EMPTY over [from,to], not merely rewritten:
-// until a verdict re-reconciles it, /v1/coverage would carry its prior clean claim over a hole.
+// CHRebuildEmptiedReason is the Reason `ch-rebuild -record-dirty-window` stamps on a window it DELETEd and could not yet re-derive; distinct from ProjectedRebuildReason because the served tier is EMPTY over [from,to].
 func CHRebuildEmptiedReason(from, to uint32) string {
 	return fmt.Sprintf("%s[%d,%d]", reasonCHRebuildEmptiedPrefix, from, to)
 }
@@ -84,21 +73,12 @@ func BackfillWriteReason(from, to uint32) string {
 	return fmt.Sprintf("%s[%d,%d]", reasonBackfillWritePrefix, from, to)
 }
 
-// IsProjectorReplay reports whether this window was recorded by `projector-replay`, the only
-// writer that rewinds the live projector cursor and so the only one whose window can EXPLAIN lag.
-//
-// A `projected-rebuild` window must never raise stellarindex_projector_replay_window_active: its
-// range routinely covers the live cursor and would suppress the lag ticket while the source is
-// HELD, the very state the ticket exists to catch. Unknown/empty reasons answer false, since the
-// flag only SUPPRESSES an alert.
+// IsProjectorReplay reports whether the window was recorded by `projector-replay`, the only writer that rewinds the live projector cursor; a `projected-rebuild` window must never raise stellarindex_projector_replay_window_active.
 func (w ProjectionDirtyWindow) IsProjectorReplay() bool {
 	return strings.HasPrefix(w.Reason, reasonProjectorReplayPrefix)
 }
 
-// RecordProjectionDirtyWindow records (or widens) a source's dirty window. projector-replay calls
-// it BEFORE rewinding: a crash between the two leaves a spurious window one clean verify clears,
-// the opposite order a rewind with no record. The conflict arm WIDENS (LEAST(from),
-// GREATEST(to)): a second replay can only grow a pending obligation, never shrink it.
+// RecordProjectionDirtyWindow records or widens (LEAST(from), GREATEST(to)) a source's dirty window; projector-replay calls it BEFORE rewinding, as a crash in that order leaves only a spurious window.
 func (s *Store) RecordProjectionDirtyWindow(ctx context.Context, w ProjectionDirtyWindow) error {
 	const q = `
         INSERT INTO projection_dirty_windows (source, from_ledger, to_ledger, reason)
@@ -116,10 +96,7 @@ func (s *Store) RecordProjectionDirtyWindow(ctx context.Context, w ProjectionDir
 	return nil
 }
 
-// ProjectionDirtyWindows returns every pending dirty window, keyed by
-// source; an absent source has no pending obligation. Callers must FAIL CLOSED on error (as with
-// CompletenessTargetFloors): a run blind to pending windows would carry projection claims over
-// ranges a replay has rewritten.
+// ProjectionDirtyWindows returns every pending dirty window keyed by source (absent means none); callers must FAIL CLOSED on error, as a run blind to pending windows would carry claims over rewritten ranges.
 func (s *Store) ProjectionDirtyWindows(ctx context.Context) (map[string]ProjectionDirtyWindow, error) {
 	const q = `
         SELECT source, from_ledger, to_ledger, reason, updated_at

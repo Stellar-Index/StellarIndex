@@ -12,9 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/pgarray"
 )
 
-// TopicSample is one representative soroban_events row for a distinct (contract_id, topic_0_sym)
-// shape, with the count and ledger span of events sharing it. The Row carries full topic XDRs and
-// body so it can be Reconstruct()ed and fed to a decoder's Matches() (ADR-0033 Claim 2a).
+// TopicSample is one representative soroban_events row for a distinct (contract_id, topic_0_sym) shape, with the count and ledger span of events sharing it.
 type TopicSample struct {
 	Row       domain.SorobanEventRow
 	Count     int64
@@ -29,21 +27,7 @@ type TopicSample struct {
 // shapes active only before the window are found by [Store.distinctSorobanContractTopicPairs].
 const distinctTopicSampleWindow = 30 * 24 * time.Hour
 
-// DistinctSorobanTopicSamples returns one representative row per distinct (contract_id,
-// topic_0_sym) in soroban_events over [from, to], with per-shape count and ledger span. It is the
-// input to the recognition audit.
-//
-// Cost is bounded independently of table size: a chunk-pruned trailing-window scan finds almost
-// every shape, and a narrow index-only fallback recovers older ones without reading the wide
-// XDR/body columns across history.
-//
-// NOT a complete audit; "no gaps found" is not "complete":
-//
-//   - Shapes whose topic[0] is not a Symbol/String are recovered ONLY inside
-//     [distinctTopicSampleWindow]: the fallback's partial index excludes NULL topic_0_sym.
-//   - The window bound is a cost ceiling, not a claim about history.
-//
-// The authoritative check is the ClickHouse path (computeRecognitionGapsCH).
+// DistinctSorobanTopicSamples returns one representative row per distinct (contract_id, topic_0_sym) in soroban_events over [from, to] with per-shape count and ledger span, the input to the recognition audit.
 func (s *Store) DistinctSorobanTopicSamples(ctx context.Context, from, to uint32) ([]TopicSample, error) {
 	return s.distinctSorobanTopicSamplesAt(ctx, from, to, time.Now())
 }

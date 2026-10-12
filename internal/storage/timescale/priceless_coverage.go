@@ -10,9 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// AssetCoverageSignals is the per-asset signal set the priceless-popular tripwire
-// (internal/pricelesscoverage) classifies. Volumes are USD-denominated (trades.usd_volume, non-null
-// rows only); the struct carries measured signals only, never the thresholds.
+// AssetCoverageSignals is the per-asset signal set the priceless-popular tripwire classifies; volumes are USD (trades.usd_volume, non-null rows only) and only measured signals, never thresholds.
 type AssetCoverageSignals struct {
 	// AssetID is the trades base or quote asset (canonical asset_id) the signals
 	// are grouped on — the directory row this coverage gap would page for.
@@ -183,10 +181,7 @@ top_pair AS (
  WHERE p.asset_id IS NULL
 `
 
-// PopularPricelessCandidates returns the coverage-signal set for every
-// priceless trades asset (either leg) with priced 7d volume — the input the
-// priceless-popular tripwire classifies. Priced assets are excluded in
-// SQL (they are not coverage gaps); everything else the classifier judges.
+// PopularPricelessCandidates returns the coverage-signal set for every priceless trades asset (either leg) with priced 7d volume, the tripwire's input; priced assets are excluded in SQL.
 func (s *Store) PopularPricelessCandidates(ctx context.Context) ([]AssetCoverageSignals, error) {
 	rows, err := s.db.QueryContext(ctx, popularPricelessCandidatesSQL, canonical.NativeSACContractID())
 	if err != nil {
@@ -322,10 +317,7 @@ WITH ` + pricelessPricedCTEs + `
 SELECT EXISTS (SELECT 1 FROM priced WHERE asset_id = $2)
 `
 
-// AssetIsPriced reports whether assetID is in the set the priceless-popular
-// tripwire treats as priced — the same CTEs, the same substance floors —
-// so the sweep can ask about an ALIAS of a candidate (a SAC contract id
-// resolved to its classic asset) without a second definition of "priced".
+// AssetIsPriced reports whether assetID is in the set the tripwire treats as priced (same CTEs and substance floors), so the sweep can ask about an alias without a second definition of "priced".
 func (s *Store) AssetIsPriced(ctx context.Context, assetID string) (bool, error) {
 	var priced bool
 	if err := s.db.QueryRowContext(ctx, assetIsPricedSQL, canonical.NativeSACContractID(), assetID).Scan(&priced); err != nil {

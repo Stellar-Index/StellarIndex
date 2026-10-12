@@ -8,8 +8,7 @@ import (
 	"time"
 )
 
-// LedgerIngestRow is one row of the ledger_ingest_log
-// substrate-continuity record (migration 0051, ADR-0033 Phase 1/2).
+// LedgerIngestRow is one row of the ledger_ingest_log substrate-continuity record.
 type LedgerIngestRow struct {
 	LedgerSeq               uint32
 	LedgerCloseTime         time.Time
@@ -19,8 +18,7 @@ type LedgerIngestRow struct {
 	ClassicTradeEffectCount int
 }
 
-// ChainBreak is a ledger whose prev_ledger_hash does not match the
-// previous ledger's ledger_hash — a substrate corruption signal.
+// ChainBreak is a ledger whose prev_ledger_hash does not match the previous ledger's ledger_hash — a substrate corruption signal.
 type ChainBreak struct {
 	LedgerSeq    uint32
 	WantPrevHash string // hex of ledger[seq-1].ledger_hash
@@ -28,7 +26,6 @@ type ChainBreak struct {
 }
 
 // UpsertLedgerIngestLog writes or refreshes the substrate record for one fully-processed ledger.
-// ON CONFLICT DO UPDATE so a re-census overwrites stale counts instead of silently dropping them.
 func (s *Store) UpsertLedgerIngestLog(ctx context.Context, row LedgerIngestRow) error {
 	if len(row.LedgerHash) != 32 {
 		return fmt.Errorf("timescale: UpsertLedgerIngestLog: ledger_hash len %d, want 32 (ledger %d)", len(row.LedgerHash), row.LedgerSeq)
@@ -57,10 +54,7 @@ func (s *Store) UpsertLedgerIngestLog(ctx context.Context, row LedgerIngestRow) 
 	return nil
 }
 
-// FindLedgerIngestGaps returns every contiguous run of missing ledger sequences in [from, to]
-// inclusive, covering interior gaps (LAG window) and leading/trailing ones when the present range
-// is narrower than [from, to]. Cheap: it scans the ledger_seq btree of a one-row-per-ledger
-// table, not trades, so it needs no statement_timeout.
+// FindLedgerIngestGaps returns every contiguous run of missing ledger sequences in [from, to] inclusive, interior and edge gaps alike, by scanning the ledger_seq btree of a one-row-per-ledger table.
 func (s *Store) FindLedgerIngestGaps(ctx context.Context, from, to uint32) ([]LedgerGap, error) {
 	if to < from {
 		return nil, errors.New("timescale: FindLedgerIngestGaps: to < from")
@@ -129,10 +123,7 @@ func newLedgerGap(start, end int64) LedgerGap {
 	return LedgerGap{Start: start, End: end, Size: end - start + 1}
 }
 
-// VerifyLedgerHashChain returns every ledger in (from, to] whose prev_ledger_hash differs from the
-// previous ledger's ledger_hash; empty means the chain is unbroken (the cryptographic half of
-// Claim 1). Only adjacent pairs both present are checked; missing ledgers are
-// FindLedgerIngestGaps's job.
+// VerifyLedgerHashChain returns every ledger in (from, to] whose prev_ledger_hash differs from the previous ledger's ledger_hash; empty means unbroken, and only adjacent present pairs are checked.
 func (s *Store) VerifyLedgerHashChain(ctx context.Context, from, to uint32) ([]ChainBreak, error) {
 	if to < from {
 		return nil, errors.New("timescale: VerifyLedgerHashChain: to < from")
@@ -168,11 +159,7 @@ func (s *Store) VerifyLedgerHashChain(ctx context.Context, from, to uint32) ([]C
 	return breaks, nil
 }
 
-// ClassicTradeEffectCountsByLedger returns the LCM-derived classic-trade-effect count per ledger
-// in [from, to], the expected side of SDEX reconciliation (ADR-0033 Claim 2b). SDEX has no
-// soroban_events to re-derive from, so this census (one ClaimAtom = one trade) is the
-// decoder-independent oracle. Zero-count ledgers are omitted (ReconcileCounts treats absent as 0).
-// Callers must check continuity with FindLedgerIngestGaps first, since it reads ledger_ingest_log.
+// ClassicTradeEffectCountsByLedger returns the LCM-derived classic-trade-effect count per ledger in [from, to] (one ClaimAtom = one trade), the decoder-independent expected side of SDEX reconciliation.
 func (s *Store) ClassicTradeEffectCountsByLedger(ctx context.Context, from, to uint32) (map[uint32]int, error) {
 	if to < from {
 		return nil, fmt.Errorf("timescale: ClassicTradeEffectCountsByLedger: to (%d) < from (%d)", to, from)
@@ -200,14 +187,7 @@ func (s *Store) ClassicTradeEffectCountsByLedger(ctx context.Context, from, to u
 	return out, nil
 }
 
-// SorobanEventsTimeBound returns the [lo, hi] ledger_close_time span of ledgers [from, to] from
-// ledger_ingest_log, plus whether the log fully covers the range. soroban_events is partitioned by
-// ledger_close_time, so `WHERE ledger BETWEEN` alone scans every chunk; adding
-// `AND ledger_close_time BETWEEN lo AND hi` restores chunk pruning.
-//
-// fullyCovered is a correctness guard: a row's ledger_close_time equals its ledger's close time
-// exactly, so [lo, hi] bounds every row in range only when no ledgers are missing. Callers must
-// apply the bound only when fullyCovered is true, else fall back to the unpruned scan.
+// SorobanEventsTimeBound returns the [lo, hi] ledger_close_time span of ledgers [from, to] plus whether the log fully covers them, so soroban_events queries can add a ledger_close_time bound that prunes its time-partitioned chunks.
 func (s *Store) SorobanEventsTimeBound(ctx context.Context, from, to uint32) (lo, hi time.Time, fullyCovered bool, err error) {
 	if to < from {
 		return time.Time{}, time.Time{}, false, fmt.Errorf("timescale: SorobanEventsTimeBound: to (%d) < from (%d)", to, from)
@@ -239,9 +219,7 @@ const enclosingCloseTimeQuery = `
 	       (SELECT ledger_close_time FROM ledger_ingest_log
 	         WHERE ledger_seq >= $2 ORDER BY ledger_seq ASC LIMIT 1)`
 
-// LedgerIngestExtent returns the min and max ledger_seq present in the
-// table (ok=false when the table is empty). Used to bound watermark
-// computation without scanning trades.
+// LedgerIngestExtent returns the min and max ledger_seq present in the table (ok=false when the table is empty).
 func (s *Store) LedgerIngestExtent(ctx context.Context) (minSeq, maxSeq uint32, ok bool, err error) {
 	var lo, hi sql.NullInt64
 	const q = `SELECT MIN(ledger_seq), MAX(ledger_seq) FROM ledger_ingest_log`

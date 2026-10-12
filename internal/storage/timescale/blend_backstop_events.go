@@ -8,10 +8,7 @@ import (
 	"time"
 )
 
-// BlendBackstopEventType discriminates the ten Blend Backstop event
-// variants. String values match the blend_backstop_events.event_kind
-// CHECK constraint (migration 0063) and internal/sources/blend_backstop's
-// event-name constants.
+// BlendBackstopEventType discriminates the ten Blend Backstop event variants.
 type BlendBackstopEventType string
 
 const (
@@ -32,8 +29,7 @@ const (
 	BackstopRwZoneRemove BlendBackstopEventType = "rw_zone_remove"
 )
 
-// IsValid reports whether t is one of the twelve known backstop
-// events (migration 0095 widened this from ten).
+// IsValid reports whether t is one of the twelve known backstop events (migration 0095 widened this from ten).
 func (t BlendBackstopEventType) IsValid() bool {
 	switch t {
 	case BackstopDeposit, BackstopClaim, BackstopDonate,
@@ -45,11 +41,7 @@ func (t BlendBackstopEventType) IsValid() bool {
 	return false
 }
 
-// BlendBackstopEvent is one blend_backstop_events row: a Blend Backstop contract event.
-//
-// Pool and UserAddress are strkeys; "" means the event type carries no such field and writes SQL
-// NULL. Amount and Amount2 are decimal i128 strings (never int64), "" also NULL. Attributes holds
-// the event-type-specific remainder as jsonb.
+// BlendBackstopEvent is one blend_backstop_events row; "" for Pool/UserAddress writes SQL NULL, Amount/Amount2 are decimal i128 strings (never int64) and Attributes holds the event-specific remainder as jsonb.
 type BlendBackstopEvent struct {
 	ContractID  string
 	Ledger      uint32
@@ -65,15 +57,7 @@ type BlendBackstopEvent struct {
 	Attributes  map[string]any
 }
 
-// InsertBlendBackstopEvent appends one backstop event row, idempotent on the PK
-// (ledger_close_time, ledger, tx_hash, op_index, event_index). ON CONFLICT DO UPDATE is guarded by
-// `derive_generation <= EXCLUDED.derive_generation`: a replay at an equal-or-higher generation
-// OVERWRITES the stored value columns, a lower one is refused. It is idempotent in row count, NOT
-// inert in value: the corrective upsert exists to repair wrong rows, so a replay with different
-// inputs rewrites them.
-//
-// It rejects empty ContractID/TxHash and an invalid EventType before touching the DB. Amounts pass
-// straight to NUMERIC as decimal strings, so a malformed value surfaces as a DB error.
+// InsertBlendBackstopEvent appends one backstop event, idempotent on the PK; the upsert is guarded by `derive_generation <= EXCLUDED.derive_generation`, so an equal-or-higher replay overwrites and a lower one is refused.
 func (s *Store) InsertBlendBackstopEvent(ctx context.Context, e BlendBackstopEvent) error {
 	if e.ContractID == "" {
 		return errors.New("timescale: InsertBlendBackstopEvent: ContractID is empty")

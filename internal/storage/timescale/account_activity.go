@@ -50,10 +50,7 @@ const defiActionCountsQuery = `
 	  FROM aquarius_rewards_events WHERE user_address = $1 GROUP BY event_kind
 	ORDER BY protocol, n DESC`
 
-// DefiActionCountsByUser returns the address's per-(protocol, action)
-// DeFi event counts across every served-tier table that genuinely
-// carries a per-account column (see the file header for the honest
-// omission list). Rows with zero counts are never returned.
+// DefiActionCountsByUser returns the address's per-(protocol, action) DeFi event counts from served-tier tables with a per-account column; zero-count rows are omitted.
 func (s *Store) DefiActionCountsByUser(ctx context.Context, address string) ([]DefiActionCount, error) {
 	rows, err := s.db.QueryContext(ctx, defiActionCountsQuery, address)
 	if err != nil {
@@ -75,8 +72,7 @@ func (s *Store) DefiActionCountsByUser(ctx context.Context, address string) ([]D
 	return out, nil
 }
 
-// BridgeActivity is an address's bridge-transfer counts across the two
-// integrated bridge protocols.
+// BridgeActivity is an address's bridge-transfer counts across the two integrated bridge protocols.
 type BridgeActivity struct {
 	// Rozo v1 Payment (rozo_events): payments the address sent
 	// (from_addr) vs received (destination).
@@ -109,9 +105,7 @@ const bridgeActivityQuery = `
 	  (SELECT count(*) FROM cctp_events
 	    WHERE event_type = 'mint_and_withdraw' AND attributes->>'mint_recipient' = $1)`
 
-// BridgeActivityByAddress returns the address's bridge-transfer counts
-// (see BridgeActivity / bridgeActivityQuery for the exact matching
-// semantics and their limits).
+// BridgeActivityByAddress returns the address's bridge-transfer counts; see bridgeActivityQuery for the matching semantics and limits.
 func (s *Store) BridgeActivityByAddress(ctx context.Context, address string) (BridgeActivity, error) {
 	var b BridgeActivity
 	if err := s.db.QueryRowContext(ctx, bridgeActivityQuery, address).

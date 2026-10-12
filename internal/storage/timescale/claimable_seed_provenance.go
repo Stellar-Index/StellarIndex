@@ -8,8 +8,7 @@ import (
 	"time"
 )
 
-// ClaimableSeedProvenance is one complete `supply seed-claimable-balances`
-// pass's audit record for a single classic asset (migration 0184).
+// ClaimableSeedProvenance is one complete `supply seed-claimable-balances` pass's audit record for a single classic asset (migration 0184).
 type ClaimableSeedProvenance struct {
 	AssetKey            string
 	ClaimablesSeeded    int
@@ -20,9 +19,7 @@ type ClaimableSeedProvenance struct {
 	SeededAt            time.Time
 }
 
-// UpsertClaimableSeedProvenance records (or overwrites) the most recent
-// complete seed pass for an asset. A row without lake verification is refused:
-// it would claim a history seed the walk never proved.
+// UpsertClaimableSeedProvenance records the latest complete seed pass for an asset; a row without lake verification is refused.
 func (s *Store) UpsertClaimableSeedProvenance(ctx context.Context, p ClaimableSeedProvenance) error {
 	if p.AssetKey == "" {
 		return errors.New("timescale: UpsertClaimableSeedProvenance: empty AssetKey")
@@ -60,8 +57,7 @@ func (s *Store) UpsertClaimableSeedProvenance(ctx context.Context, p ClaimableSe
 	return nil
 }
 
-// ClaimableSeedProvenanceFor returns the asset's provenance row; ok=false when
-// no complete pass has stamped it.
+// ClaimableSeedProvenanceFor returns the asset's provenance row; ok=false when no complete pass has stamped it.
 func (s *Store) ClaimableSeedProvenanceFor(ctx context.Context, assetKey string) (ClaimableSeedProvenance, bool, error) {
 	const q = `
         SELECT asset_key, claimables_seeded, claimables_retracted,

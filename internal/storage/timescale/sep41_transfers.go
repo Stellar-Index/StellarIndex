@@ -11,9 +11,7 @@ import (
 	"time"
 )
 
-// SEP41TransferKind discriminates the four audit-trail variants
-// the sep41_transfers hypertable owns. mint/burn/clawback are NOT
-// here — they belong to sep41_supply_events (Algorithm 3).
+// SEP41TransferKind discriminates the audit-trail variants sep41_transfers owns; mint/burn/clawback belong to sep41_supply_events, not here.
 type SEP41TransferKind string
 
 const (
@@ -31,8 +29,7 @@ func (k SEP41TransferKind) IsValid() bool {
 	return false
 }
 
-// SEP41TransferRow mirrors migration 0047's column set. Nil/zero
-// values flow to SQL NULL where non-applicable for the kind.
+// SEP41TransferRow mirrors migration 0047's column set.
 type SEP41TransferRow struct {
 	ContractID      string
 	Ledger          uint32
@@ -48,10 +45,7 @@ type SEP41TransferRow struct {
 	Authorized      *bool
 }
 
-// InsertSEP41TransferBatch persists rows via a single multi-row
-// INSERT. On the full PK the ON CONFLICT arm is DO UPDATE guarded by
-// derive_generation (migration 0110): a higher-or-equal-generation
-// replay corrects the row in place; a stale lower one is a no-op.
+// InsertSEP41TransferBatch persists rows via one multi-row INSERT whose ON CONFLICT is a derive_generation-guarded upsert: an equal-or-higher-generation replay corrects the row, a stale one is a no-op.
 func (s *Store) InsertSEP41TransferBatch(ctx context.Context, rows []SEP41TransferRow) error {
 	if len(rows) == 0 {
 		return nil
@@ -233,27 +227,10 @@ var sep41TransferLookbackLadder = []time.Duration{
 	7 * 24 * time.Hour,
 }
 
-// SEP41TransferLadderBudget bounds the WHOLE lookback ladder so it can never spend the caller's
-// budget on the way to the fallback that has the rows. A rung still running when it expires is
-// abandoned, no wider rung is tried (a wider window is a superset of the one that failed to
-// finish), and the full-history read goes out on the caller's OWN remaining budget.
-//
-// Sized against the handler's 8s deadline (sep41TransfersReadTimeout in
-// internal/api/v1/sep41_transfers.go; a test there pins this at no more than half of it): 3s lets
-// the 1h and 24h rungs finish even on the pathological walk, cuts the 7d rung before it runs past
-// 9s, and leaves the fallback 5s, well above a low-volume contract's measured 1.3s.
+// SEP41TransferLadderBudget bounds the WHOLE lookback ladder so it can never spend the caller's budget on the way to the fallback that has the rows.
 const SEP41TransferLadderBudget = 3 * time.Second
 
-// ListSEP41Transfers returns the most-recent N rows for a contract, optionally filtered by
-// from_addr / to_addr, for GET /v1/contracts/{id}/transfers.
-//
-// A contract whose page no [sep41TransferLookbackLadder] rung fills falls through to an unbounded
-// read: cheap for a low-volume contract, but a large history with fewer than `limit` rows in the
-// widest rung still takes the per-chunk sort that times out, so it runs on the caller's remaining
-// time (at least 5s of the 8s handler deadline).
-//
-// The real fix is a (contract_id, ledger_close_time DESC) index plus an ORDER BY compressed chunks
-// can serve (op_index is not in compress_orderby): heavy DDL needing its own migration.
+// ListSEP41Transfers returns the most-recent N rows for a contract, optionally filtered by from_addr / to_addr; a page no lookback rung fills falls through to an unbounded read.
 func (s *Store) ListSEP41Transfers(ctx context.Context, contractID, fromAddr, toAddr string, limit int) ([]SEP41TransferRow, error) {
 	return s.listSEP41TransfersAt(ctx, contractID, fromAddr, toAddr, limit, time.Now(), SEP41TransferLadderBudget)
 }
@@ -415,20 +392,10 @@ func (s *Store) listSEP41TransfersSince(ctx context.Context, contractID, fromAdd
 	return out, rows.Err()
 }
 
-// SEP41MovementsFloorLedger is ADR-0048 D5's non-overlap boundary for the
-// /v1/accounts/{g}/movements merge: ClickHouse's stellar.account_movements (the pre-P23 archive)
-// is hard-clamped BELOW this ledger by its only writer (`stellarindex-ops
-// classic-movements-backfill`), and ListSEP41TransfersByAddress floors its query at-or-above it,
-// so the two stores' contributions can never overlap.
-//
-// Same VALUE as internal/sources/classicmovements.P23StartLedger, not the same CONSTANT:
-// internal/storage sits below internal/sources (lint-imports.sh forbids the edge, tests included).
-// TestP23BoundaryConstantsAgree in internal/api/v1/explorer/movements_test.go keeps them in step.
+// SEP41MovementsFloorLedger is the non-overlap boundary for the /v1/accounts/{g}/movements merge: ClickHouse's pre-P23 account_movements is clamped below this ledger by its only writer.
 const SEP41MovementsFloorLedger uint32 = 58_762_517
 
-// SEP41TransferCursor is the keyset position for ListSEP41TransfersByAddress pagination
-// (ADR-0048 D5), descending (ledger, tx_hash, op_index, event_index). The zero value (Ledger==0)
-// means the first page, the same sentinel as clickhouse.ExplorerCursor.
+// SEP41TransferCursor is the descending keyset position (ledger, tx_hash, op_index, event_index) for ListSEP41TransfersByAddress; the zero value (Ledger==0) means the first page.
 type SEP41TransferCursor struct {
 	Ledger     uint32
 	TxHash     string
@@ -436,8 +403,7 @@ type SEP41TransferCursor struct {
 	EventIndex uint32
 }
 
-// IsSet reports whether the cursor points past the newest row (a
-// continuation page, not the first).
+// IsSet reports whether the cursor points past the newest row (a continuation page, not the first).
 func (c SEP41TransferCursor) IsSet() bool { return c.Ledger > 0 }
 
 // cursorIndex16 narrows a client-supplied cursor index to the smallint

@@ -7,15 +7,11 @@ import (
 	"time"
 )
 
-// ErrContributionWindowRequired is returned when a contribution row
-// carries no aggregation window: without it the 5m/1h/24h breakdowns of
-// one pair are indistinguishable (migration 0169).
+// ErrContributionWindowRequired is returned when a contribution row has no aggregation window, without which the 5m/1h/24h breakdowns of a pair are indistinguishable.
 var ErrContributionWindowRequired = errors.New(
 	"timescale: price source contribution needs a positive whole-second Window")
 
-// PriceSourceContribution is one row's worth of per-source weight
-// for a single (asset, quote, window, bucket). Window is required.
-// Weight and VolumeUSD are decimal strings bound straight to NUMERIC.
+// PriceSourceContribution is one per-source weight for a single (asset, quote, window, bucket); Window is required and Weight/VolumeUSD are decimal strings bound to NUMERIC.
 type PriceSourceContribution struct {
 	AssetID    string
 	QuoteID    string
@@ -27,18 +23,7 @@ type PriceSourceContribution struct {
 	TradeCount int
 }
 
-// InsertPriceSourceContributions writes a batch of per-source contribution rows. The table is
-// append-per-tick: bucket is the orchestrator's ComputedAt (time.Now() at flush), not a truncated
-// window boundary, so each recompute of the same (asset, quote, window) inserts a fresh row and the
-// ON CONFLICT arm is effectively unreachable. Readers take the latest bucket per
-// (asset_id, quote_id, window_seconds).
-//
-// So the unguarded volume_usd never overwrites a prior value but also never corrects one, which is
-// why this table is outside the generation-guarded upsert family.
-//
-// Every row is validated before any is written: a row without a positive whole-second Window
-// fails the whole batch with [ErrContributionWindowRequired] rather than landing unattributed.
-// Volume is optional; some on-chain pairs have no USD-volume computation and the donut degrades.
+// InsertPriceSourceContributions writes a batch of per-source contribution rows; the table is append-per-tick (bucket is ComputedAt at flush, not a truncated boundary), so each recompute inserts a fresh row.
 func (s *Store) InsertPriceSourceContributions(ctx context.Context, rows []PriceSourceContribution) error {
 	if len(rows) == 0 {
 		return nil

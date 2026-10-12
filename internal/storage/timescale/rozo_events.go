@@ -9,8 +9,6 @@ import (
 )
 
 // RozoEventType discriminates the two Rozo v1 Payment event variants.
-// String values match the rozo_events.event_type CHECK constraint
-// (migration 0039) and internal/sources/rozo's event-name constants.
 type RozoEventType string
 
 const (
@@ -27,11 +25,7 @@ func (t RozoEventType) IsValid() bool {
 	return false
 }
 
-// RozoEvent is one rozo_events row: a Rozo v1 intent-bridge contract event.
-//
-// Amount and Destination are on both event types; From and Memo are payment-only and Token is
-// flush-only. Those are *string so nil writes SQL NULL ("not applicable"), distinct from an empty
-// string (an empty payment memo is a real value and round-trips as such).
+// RozoEvent is one rozo_events row; Amount and Destination are on both event types, From/Memo payment-only and Token flush-only, and nil *string writes SQL NULL ("not applicable") as distinct from "".
 type RozoEvent struct {
 	ContractID string
 	Ledger     uint32
@@ -53,12 +47,7 @@ type RozoEvent struct {
 	Token *string // flush-only
 }
 
-// InsertRozoEvent appends one Rozo event row, idempotent on the table PK. ON CONFLICT DO UPDATE
-// guarded by derive_generation corrects the row on a higher-or-equal-generation replay and
-// no-ops a stale one.
-//
-// It rejects empty ContractID/TxHash/Destination, an invalid EventType and an empty Amount (NOT
-// NULL) before touching the DB.
+// InsertRozoEvent appends one Rozo event row, idempotent on the PK with a derive_generation-guarded upsert that corrects on an equal-or-higher replay and no-ops a stale one.
 func (s *Store) InsertRozoEvent(ctx context.Context, e RozoEvent) error {
 	if e.ContractID == "" {
 		return errors.New("timescale: InsertRozoEvent: ContractID is empty")

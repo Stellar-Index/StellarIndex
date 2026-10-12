@@ -11,9 +11,7 @@ import (
 	"time"
 )
 
-// CAGGInvalidationBacklog is what a non-forced refresh of one continuous
-// aggregate still has to re-materialise, read from Timescale's
-// invalidation logs.
+// CAGGInvalidationBacklog is what a non-forced refresh of one continuous aggregate still has to re-materialise, read from Timescale's invalidation logs.
 type CAGGInvalidationBacklog struct {
 	View string
 	// Ranges are the view's bounded materialization-log entries, already
@@ -39,10 +37,7 @@ type CAGGInvalidationBacklog struct {
 	AboveFrom, AboveTo time.Time
 }
 
-// CAGGInvalidationBacklogs reads the pending invalidation ranges of each
-// of views, in that order, split at cutoff. It reads TimescaleDB's internal catalog
-// (_timescaledb_catalog, checked against 2.26.4), so it is a sizing aid,
-// not a contract: a view missing from the catalog is an error.
+// CAGGInvalidationBacklogs reads each view's pending invalidation ranges split at cutoff from TimescaleDB's internal catalog (_timescaledb_catalog), a sizing aid not a contract; a view missing from the catalog is an error.
 func (s *Store) CAGGInvalidationBacklogs(ctx context.Context, views []string, cutoff time.Time) ([]CAGGInvalidationBacklog, error) {
 	// The log stores Timescale's internal time (Unix µs); int64 min/max
 	// are its -infinity/+infinity sentinels.
@@ -107,10 +102,7 @@ func (s *Store) CAGGInvalidationBacklogs(ctx context.Context, views []string, cu
 	return out, nil
 }
 
-// CAGGInvalidatedRanges returns the half-open ranges of view's pending invalidation entries, from
-// its own log and its source hypertable's, clipped to [from, to) (open-ended entries too) and
-// sorted by start. Ranges may overlap. Like [Store.CAGGInvalidationBacklogs] it reads
-// TimescaleDB's internal catalog.
+// CAGGInvalidatedRanges returns the half-open ranges of view's pending invalidations (its own log and its source hypertable's) clipped to [from, to) and sorted by start; ranges may overlap and the internal catalog is read.
 func (s *Store) CAGGInvalidatedRanges(ctx context.Context, view string, from, to time.Time) ([][2]time.Time, error) {
 	var matID, rawID int64
 	err := s.db.QueryRowContext(ctx, `SELECT mat_hypertable_id, raw_hypertable_id FROM _timescaledb_catalog.continuous_agg
@@ -152,10 +144,7 @@ func (s *Store) CAGGInvalidatedRanges(ctx context.Context, view string, from, to
 	return out, nil
 }
 
-// TradeLedgersInTimeRange returns the ledgers of the first trade at or
-// after from and the last at or before to, the inverse of
-// [Store.LedgerRangeToTimeRange]. Each is one index probe on trades.ts.
-// [ErrNotFound] when no trade lies in [from, to].
+// TradeLedgersInTimeRange returns the ledgers of the first trade at or after from and the last at or before to, the inverse of [Store.LedgerRangeToTimeRange].
 func (s *Store) TradeLedgersInTimeRange(ctx context.Context, from, to time.Time) (uint32, uint32, error) {
 	const q = `
 		SELECT (SELECT ledger FROM trades WHERE ts >= $1::timestamptz AND ts <= $2::timestamptz ORDER BY ts ASC LIMIT 1),

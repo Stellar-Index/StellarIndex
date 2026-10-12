@@ -14,19 +14,10 @@ import "sync/atomic"
 // in scope, so it is published once instead of threaded through every signature.
 var installedMovementsFloor atomic.Uint32
 
-// InstallMovementsFloor publishes floor as the process-wide P23 / CAP-67 movements boundary that
-// [MovementsFloor] and every /movements read path resolve to. Call it once at start-up, after
-// config load and before serving, from cfg.Stellar.MovementsFloorLedger. Pubnet installs the const
-// value; testnet/futurenet install 1 (genesis), since a reset test net is entirely post-P23 and
-// the pubnet boundary would floor the tail above every ledger it has, emptying the feed.
-//
-// floor==0 means not installed, so a mis-wired empty config never zeroes the boundary.
+// InstallMovementsFloor publishes floor as the process-wide movements boundary [MovementsFloor] resolves to; call once at start-up after config load, and floor==0 means not installed so a mis-wired config never zeroes the boundary.
 func InstallMovementsFloor(floor uint32) { installedMovementsFloor.Store(floor) }
 
-// MovementsFloor returns the installed boundary, or the pubnet default
-// [SEP41MovementsFloorLedger] when none is installed (unit tests, leaf
-// callers that never install). It is the network-aware replacement for
-// reading SEP41MovementsFloorLedger directly on the /movements read path.
+// MovementsFloor returns the installed boundary, or the pubnet default [SEP41MovementsFloorLedger] when none is installed; use it instead of the const on /movements read paths.
 func MovementsFloor() uint32 {
 	if f := installedMovementsFloor.Load(); f != 0 {
 		return f

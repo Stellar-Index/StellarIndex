@@ -11,15 +11,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// SourceAmountDecimals reports the decimal scale a trade source stamps its
-// amounts at (the source registry's AmountScaleDecimals). Storage takes it
-// from the caller rather than importing the registry.
+// SourceAmountDecimals reports the decimal scale a trade source stamps its amounts at (the source registry's AmountScaleDecimals).
 type SourceAmountDecimals func(source string) int
 
-// MonthlyUSDVWAP is one canonical asset's volume-weighted USD price for
-// one calendar month (UTC), from this index's own USD-quoted markets —
-// "what it was worth then", as opposed to the live rate every other
-// cohort figure is valued at.
+// MonthlyUSDVWAP is one canonical asset's volume-weighted USD price for one UTC calendar month from this index's own USD-quoted markets ("what it was worth then", not the live rate).
 type MonthlyUSDVWAP struct {
 	// Asset is the canonical id every alias form of the month's markets
 	// folded onto: 'native' for XLM in all three spellings, the classic
@@ -50,15 +45,7 @@ SELECT bucket, base_asset, vwap::text, volume_priced::text, COALESCE(volume_usd,
    AND volume_priced > 0
  ORDER BY bucket, base_asset`
 
-// MonthlyUSDVWAPs folds prices_1mo's USD-quoted rows into ONE row per (canonical asset, month),
-// volume-weighted across every alias spelling of the base and every USD proxy it was quoted in.
-// XLM traded as 'native' against USDC and as 'crypto:XLM' against fiat:USD yields one 'native' row
-// priced at sum(quote) / sum(base), each row's volume in whole units so a spelling stored at 10^8
-// does not outweigh one at 10^7. Arithmetic is exact (big.Rat); only final rendering rounds.
-//
-// XLM's row rides along under 'native' so an asset quoted only in XLM can be priced through it.
-// Rows ascend by (month, asset). An empty result means no USD-quoted market, not an error.
-// sourceDecimals scales off-chain spellings; nil fails any off-chain row rather than guess a unit.
+// MonthlyUSDVWAPs folds prices_1mo's USD-quoted rows into one row per (canonical asset, month), volume-weighted across every alias spelling of the base and every USD proxy quoted.
 func (s *Store) MonthlyUSDVWAPs(ctx context.Context, from, to time.Time, sourceDecimals SourceAmountDecimals) ([]MonthlyUSDVWAP, error) {
 	rows, err := s.db.QueryContext(ctx, monthlyUSDVWAPsSQL, from.UTC(), to.UTC())
 	if err != nil {

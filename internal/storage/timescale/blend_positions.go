@@ -10,19 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/domain"
 )
 
-// InsertBlendPositionEvent appends one money-market position-change event (supply / withdraw /
-// supply_collateral / withdraw_collateral / borrow / repay / flash_loan) to blend_positions.
-// Idempotent on the (pool, ledger, tx_hash, op_index, event_kind, event_index,
-// ledger_close_time) PK via a generation-guarded corrective upsert: a re-derive lands only when
-// its derive_generation is >= the stored one, so a stale replay cannot revert a correction.
-//
-// i128 amounts are written as decimal strings to the NUMERIC column, keeping full precision
-// through *big.Int -> decimal text -> NUMERIC.
-//
-// It rejects empty Pool / TxHash, an invalid Kind, and a nil or negative amount before touching
-// the DB, like the sibling money-market writers. The producer errors rather than emit a nil
-// amount, but without this guard a defaulted or fuzzed struct could land a bad row through the
-// nil-to-"0" coercion.
+// InsertBlendPositionEvent appends one money-market position-change event to blend_positions, idempotent on its PK via a generation-guarded corrective upsert.
 func (s *Store) InsertBlendPositionEvent(ctx context.Context, e domain.BlendPositionEvent) error {
 	if e.Pool == "" {
 		return errors.New("timescale: InsertBlendPositionEvent: Pool is empty")

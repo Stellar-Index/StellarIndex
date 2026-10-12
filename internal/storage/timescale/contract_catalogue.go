@@ -5,22 +5,7 @@ import (
 	"fmt"
 )
 
-// ContractCatalogueRows reads catalogue rows for an explicit set of contract addresses, keyed by
-// contract id.
-//
-// The listing spine cannot be reused: its `catalogue_assets` CTE and `GetAssetBySlug` gate the
-// discovered-contract arm on a row in asset_volume_24h. A tokenized treasury or money-market fund
-// is held, not traded, and can carry a nine-figure supply while absent from every 24h volume
-// rollup, so that gate would silently drop a contract the membership decision admitted. The set
-// here is bounded by membership, so there is no pagination or ranking.
-//
-// The price side is deliberately the same rollup under the same floor as the listing
-// (asset_price_snapshot with `computed_at > now() - assetPriceSnapshotMaxAge`), so a wedged
-// aggregator makes the join miss rather than serve an indefinitely old price. market_cap_usd and
-// circulating_supply are NULL here; the API layer fills them.
-//
-// Contracts never observed are missing from the map; the caller reports that as a drop, not an
-// error.
+// ContractCatalogueRows reads catalogue rows for an explicit set of contract addresses, keyed by contract id, because the listing spine gates discovered contracts on asset_volume_24h, which held (non-traded) funds lack.
 func (s *Store) ContractCatalogueRows(ctx context.Context, contractIDs []string) (map[string]AssetRow, error) {
 	if len(contractIDs) == 0 {
 		return map[string]AssetRow{}, nil

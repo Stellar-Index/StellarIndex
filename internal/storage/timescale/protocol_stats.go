@@ -115,13 +115,7 @@ const countRecentEventsQuery = `
 // small PK-keyed table, so no per-request census.
 const readProtocolEventsRollup = `SELECT source, events_24h FROM protocol_events_24h`
 
-// CountRecentEventsBySource returns the trailing-24h decoded-event
-// count per logical source name from the protocol_events_24h rollup. Multi-table sources are
-// already summed by the worker, and off-chain trade sources appear as extra keys that
-// protocol-scoped callers ignore.
-//
-// The expensive UNION ALL census runs only in the worker. An empty rollup (worker not yet run)
-// gives an empty map, so every protocol reads 0 rather than failing.
+// CountRecentEventsBySource returns the trailing-24h decoded-event count per logical source from the protocol_events_24h rollup, with multi-table sources pre-summed and off-chain trade sources as extra keys.
 func (s *Store) CountRecentEventsBySource(ctx context.Context) (map[string]int64, error) {
 	rows, err := s.db.QueryContext(ctx, readProtocolEventsRollup)
 	if err != nil {
@@ -163,12 +157,7 @@ ON CONFLICT (source) DO UPDATE
 // survive, while untouched rows keep an older computed_at and are dropped.
 const refreshProtocolEventsPrune = `DELETE FROM protocol_events_24h WHERE computed_at < now()`
 
-// RefreshProtocolEventCounts recomputes the protocol_events_24h rollup
-// from the live 24h census and atomically replaces its contents, so the /v1/protocols read
-// path never runs the multi-table census per request.
-//
-// Upsert + prune share one transaction and take row-level locks only; no ACCESS EXCLUSIVE
-// lock, so concurrent CountRecentEventsBySource reads are never stalled.
+// RefreshProtocolEventCounts recomputes the protocol_events_24h rollup from the live 24h census and atomically replaces it, so /v1/protocols never runs the multi-table census per request; upsert and prune take row locks only.
 func (s *Store) RefreshProtocolEventCounts(ctx context.Context) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

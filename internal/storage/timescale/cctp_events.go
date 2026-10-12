@@ -9,11 +9,7 @@ import (
 	"time"
 )
 
-// CCTPEventType discriminates the 26 Circle CCTP v2 event variants. Values match the
-// cctp_events.event_type CHECK constraint and internal/sources/cctp's event-name constants.
-// A new event must be added in all three gates (the decoder's Classify, this enum's IsValid, the
-// SQL CHECK). This one is easy to miss: InsertCCTPEvent rejects on IsValid before the SQL CHECK
-// runs, so a mismatch silently drops every event of the new type even though decode works.
+// CCTPEventType discriminates the 26 CCTP v2 event variants; a new event must be added in the decoder's Classify, this enum's IsValid and the SQL CHECK, or InsertCCTPEvent rejects it.
 type CCTPEventType string
 
 const (
@@ -65,10 +61,6 @@ func (t CCTPEventType) IsValid() bool {
 }
 
 // CCTPEvent is one cctp_events row: a single observed Circle CCTP v2 contract event on Stellar.
-//
-// Amount / Fee / Token are decimal-or-strkey strings; the empty string means the event type
-// carries no such field and writes SQL NULL. CounterpartyDomain is a *uint32 for the same reason.
-// Attributes holds the event-type-specific remainder as jsonb.
 type CCTPEvent struct {
 	ContractID string
 	Ledger     uint32
@@ -87,13 +79,7 @@ type CCTPEvent struct {
 	Attributes         map[string]any
 }
 
-// InsertCCTPEvent appends one CCTP event row. Idempotent in row count on the table PK, but not
-// inert in value: the upsert is guarded by `derive_generation <= EXCLUDED.derive_generation`, so a
-// replay at an equal-or-higher generation overwrites stored values (letting a re-derive repair a
-// wrong row) and a lower one is refused.
-//
-// Rejects empty ContractID/TxHash and an invalid EventType up front. Amount / Fee go to the NUMERIC
-// columns as decimal strings, so a malformed value surfaces as a DB error instead of being coerced.
+// InsertCCTPEvent appends one CCTP event row, guarded by `derive_generation <= EXCLUDED.derive_generation` so an equal-or-higher replay overwrites values and a lower one is refused.
 func (s *Store) InsertCCTPEvent(ctx context.Context, e CCTPEvent) error {
 	if e.ContractID == "" {
 		return errors.New("timescale: InsertCCTPEvent: ContractID is empty")

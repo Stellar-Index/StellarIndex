@@ -16,9 +16,7 @@ var realTimeCAGGs = map[string]bool{
 // RealTimeCAGGAllowed reports whether view may run with real-time aggregation.
 func RealTimeCAGGAllowed(view string) bool { return realTimeCAGGs[view] }
 
-// OpenBucketCAGGs returns, sorted, every public continuous aggregate that
-// serves its in-progress bucket (materialized_only = false) and is not in
-// the real-time allowlist. Empty means the closed-bucket invariant holds.
+// OpenBucketCAGGs returns, sorted, every public continuous aggregate serving its in-progress bucket (materialized_only = false) outside the real-time allowlist; empty means the closed-bucket invariant holds.
 func (s *Store) OpenBucketCAGGs(ctx context.Context) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT view_name

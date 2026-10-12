@@ -7,8 +7,7 @@ import (
 	"time"
 )
 
-// OracleRederiveSweep scopes [Store.SweepOracleRederive] to one source's
-// re-derived on-chain ledger range.
+// OracleRederiveSweep scopes [Store.SweepOracleRederive] to one source's re-derived on-chain ledger range.
 type OracleRederiveSweep struct {
 	Source   string
 	From, To uint32
@@ -60,12 +59,7 @@ type oracleSweepCandidate struct {
 	ts, twinTS      time.Time
 }
 
-// SweepOracleRederive deletes the oracle_updates rows a ts-changing re-derive left behind: an
-// on-chain row in [From, To] at a generation below Generation whose identity (source, ledger,
-// tx_hash, op_index, plus asset and quote when AssetScoped) has a row at Generation with another
-// ts. The newest row of an identity and any row without a Generation twin are never deleted;
-// every DELETE re-checks its twin by exact primary key and is bounded by ledger and ts, and the
-// source_entry_counts tally is decremented in the same transaction.
+// SweepOracleRederive deletes oracle_updates rows a ts-changing re-derive left behind (a row below Generation whose identity has a Generation twin with another ts); each DELETE re-checks its twin by exact PK and decrements source_entry_counts in the same transaction.
 func (s *Store) SweepOracleRederive(ctx context.Context, sw OracleRederiveSweep) (OracleRederiveSweepResult, error) {
 	var res OracleRederiveSweepResult
 	if sw.Source == "" || sw.From == 0 || sw.To < sw.From {

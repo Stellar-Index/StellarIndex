@@ -6,15 +6,7 @@ import (
 	"time"
 )
 
-// NonstandardDecimalsAsset is one confirmed non-7-decimal Soroban asset row from
-// `nonstandard_decimals_assets`, the control table behind the dex-nonstandard-decimals serving
-// guard. The aggregator's decimals-guard sweep writes it; the API's NonstandardDecimalsCache
-// reads it to NORMALIZE served prices for pairs touching Asset, because prices_1m stores raw
-// quote/base ratios and a non-7 leg needs an exact 10^(baseDecimals-quoteDecimals) correction
-// (aggregate.AdjustPrice). See docs/operations/runbooks/dex.md.
-//
-// This is about per-unit PRICE, which needs real decimals. It is deliberately NOT consulted for
-// usd_volume, where the token's scale cancels (see timescale.baseAnchorEligible).
+// NonstandardDecimalsAsset is one confirmed non-7-decimal Soroban asset row behind the serving guard; prices_1m stores raw ratios, so pairs touching it need an exact 10^(baseDecimals-quoteDecimals) correction (not applied to usd_volume).
 type NonstandardDecimalsAsset struct {
 	// Asset is the token's C-strkey contract id.
 	Asset string
@@ -28,10 +20,7 @@ type NonstandardDecimalsAsset struct {
 	ConfirmedAt time.Time
 }
 
-// UpsertNonstandardDecimalsAsset records (or refreshes) a CONFIRMED non-7 decimals() declaration
-// for asset. Idempotent: re-confirmation refreshes source/confirmed_at, and DO UPDATE also keeps
-// `decimals` honest if a later sweep sees a corrected lake read. This is the WRITE half of the
-// serving guard: the aggregator confirms, the API enforces.
+// UpsertNonstandardDecimalsAsset records (or refreshes) a CONFIRMED non-7 decimals() declaration for asset.
 func (s *Store) UpsertNonstandardDecimalsAsset(ctx context.Context, asset string, decimals uint32, source string) error {
 	const q = `
 INSERT INTO nonstandard_decimals_assets (asset, decimals, source, confirmed_at)
@@ -46,9 +35,7 @@ ON CONFLICT (asset) DO UPDATE SET
 	return nil
 }
 
-// LoadNonstandardDecimalsAssets returns every confirmed non-7-decimal asset row. The API cache
-// reads it on a ~60s background refresh; the table is tiny, so the unfiltered read is cheap and
-// there is no per-request query on this path.
+// LoadNonstandardDecimalsAssets returns every confirmed non-7-decimal asset row.
 func (s *Store) LoadNonstandardDecimalsAssets(ctx context.Context) ([]NonstandardDecimalsAsset, error) {
 	const q = `SELECT asset, decimals, source, confirmed_at FROM nonstandard_decimals_assets`
 
@@ -72,15 +59,7 @@ func (s *Store) LoadNonstandardDecimalsAssets(ctx context.Context) ([]Nonstandar
 	return out, nil
 }
 
-// DeleteNonstandardDecimalsAsset removes asset's confirmed-offender row. Deleting an absent row
-// is not an error, since the guard's reconcile may race a manual operator clean-up.
-//
-// The one caller is the decimals-guard lockstep reconcile (Guard.Reconcile): the table projects
-// the lake's on-chain decimals() for the non-7 subset, and its CHECK (decimals <> 7) means a
-// token the lake now confirms as 7 dp cannot be corrected in place, so the row must be dropped.
-// It is never called for a token the lake cannot resolve (found=false or a read error): that is
-// not evidence the row is wrong, and an operator hand-seeded row for an uncaptured instance must
-// survive a lake that cannot see it.
+// DeleteNonstandardDecimalsAsset removes asset's confirmed-offender row (absent is not an error); only for a token the lake now confirms as 7 dp, never when the lake cannot resolve it, so hand-seeded rows survive.
 func (s *Store) DeleteNonstandardDecimalsAsset(ctx context.Context, asset string) error {
 	const q = `DELETE FROM nonstandard_decimals_assets WHERE asset = $1`
 	if _, err := s.db.ExecContext(ctx, q, asset); err != nil {

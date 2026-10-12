@@ -339,12 +339,7 @@ func execRowCount(ctx context.Context, tx *sql.Tx, q string, args ...any) (int64
 	return res.RowsAffected()
 }
 
-// RefreshAssetListingRollups recomputes BOTH rollups the /v1/assets listing LEFT JOINs,
-// asset_volume_24h and asset_price_snapshot, and atomically replaces their contents.
-//
-// One transaction, on purpose: a listing row's volume and price must come from the same pass.
-// Upsert + prune take row-level locks only, never the ACCESS EXCLUSIVE that would stall reads.
-// Runs every assetvolrollup.DefaultInterval via [Store.RefreshAssetVolume24h].
+// RefreshAssetListingRollups recomputes and atomically replaces both listing rollups (asset_volume_24h, asset_price_snapshot) in one transaction so a row's volume and price share a pass; upsert and prune take row locks only.
 func (s *Store) RefreshAssetListingRollups(ctx context.Context) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

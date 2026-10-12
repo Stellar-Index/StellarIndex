@@ -46,14 +46,7 @@ type ListingEntry struct {
 	Source string
 }
 
-// ListingDirectoryCensus is the storage layer's account of its own numbers: how large the cached
-// set was and which bound removed the rest. As with [DirectoryRWACensus], survivors alone hide the
-// population size, and an invisible fail-closed bound looks like a quiet upstream.
-//
-// The arithmetic closes, and [ListingDirectoryCensus.Check] proves it:
-//
-//	Entries = Contracts + Classic   (the table CHECK makes the two forms exhaustive)
-//	Priced <= Contracts
+// ListingDirectoryCensus is the storage layer's account of its own numbers: how large the cached set was and which bound removed the rest.
 type ListingDirectoryCensus struct {
 	// Entries counts fresh rows of every address form, before the contract/classic split.
 	Entries int
@@ -73,8 +66,7 @@ type ListingDirectoryCensus struct {
 	PricedClassic int
 }
 
-// Check returns the reason the census does not balance, or "" when it does. It is exported so a
-// surface can declare its accounting UNBALANCED rather than serve figures nobody can reconcile.
+// Check returns the reason the census does not balance, or "" when it does.
 func (c ListingDirectoryCensus) Check() string {
 	if got := c.Contracts + c.Classic; got != c.Entries {
 		return fmt.Sprintf("address forms sum to %d, not Entries %d", got, c.Entries)
@@ -105,8 +97,6 @@ const listingRecognitionMaxAge = "48 hours"
 const listingPriceMaxAge = "24 hours"
 
 // ListingPriceMaxFutureSkew is how far AHEAD of our clock a `priced_at` may sit and still count.
-// Without a ceiling a future timestamp voids the 24-hour floor. [listingPriceMaxFutureSkew] is
-// its SQL spelling.
 const ListingPriceMaxFutureSkew = 5 * time.Minute
 
 const listingPriceMaxFutureSkew = "5 minutes"
@@ -138,11 +128,7 @@ const listingPriceFreshSQL = `price_usd IS NOT NULL
 // under Postgres's 65535 bind-param cap. Chunking exists because a third party sets the row count.
 const listingUpsertChunk = 500
 
-// ReplaceListingDirectory upserts the full entry set for one source and prunes that source's rows
-// the upstream no longer carries.
-//
-// One transaction, as in [ReplaceDirectory]: now() is transaction-stable, so every row shares a
-// `synced_at` and the prune is exactly "same source, older synced_at". A failure rolls back whole.
+// ReplaceListingDirectory upserts the full entry set for one source and prunes that source's rows the upstream no longer carries.
 func (s *Store) ReplaceListingDirectory(
 	ctx context.Context, entries []ListingEntry, source string,
 ) (upserted, pruned int64, err error) {
@@ -295,17 +281,7 @@ const listingDirectoryCensusSQL = `
 		                     AND ` + listingPriceFreshSQL + `)              AS priced_classic
 		  FROM asset_listing_directory`
 
-// ListingDirectoryContracts returns the recognised CONTRACT rows of the cached listing directory
-// plus the census of the whole cache.
-//
-//   - Only rows inside [listingRecognitionMaxAge]; the bound is in the SQL.
-//   - Only C-strkey addresses; classic rows are counted ([ListingDirectoryCensus.Classic]) to show
-//     how much of the cache this read is NOT looking at.
-//   - PriceUSD / PricedAt are filled only inside [listingPriceMaxAge]; past it the entry stays
-//     recognised with an empty price and zero time.
-//
-// There is no scan cap: the set is a few dozen assets, and Contracts is what len(entries) is
-// compared against.
+// ListingDirectoryContracts returns the recognised CONTRACT (C-strkey) rows of the listing directory cache within [listingRecognitionMaxAge], plus the census of the whole cache; classic rows are only counted.
 func (s *Store) ListingDirectoryContracts(
 	ctx context.Context,
 ) ([]ListingEntry, ListingDirectoryCensus, error) {
@@ -369,13 +345,7 @@ const listingDirectoryByAddressSQL = `
 		 WHERE ` + listingRecognisedSQL + `
 		 ORDER BY address`
 
-// ListingDirectoryByAddress returns every recognised row of the cached listing directory keyed by
-// its exact Stellar address, plus the census of the whole cache.
-//
-// The map key is the ADDRESS AS PUBLISHED, with no code, symbol or case folding: impersonating
-// issuers wear PYUSD, USDT, USDC and even XLM, so a lookup by code would hand a real instrument's
-// price to whoever minted the ticker. A strkey, or a code bound to its issuer, cannot collide.
-// Bounds and scan-cap behaviour match [ListingDirectoryContracts].
+// ListingDirectoryByAddress returns every recognised row of the cached listing directory keyed by its exact Stellar address, plus the census of the whole cache.
 func (s *Store) ListingDirectoryByAddress(
 	ctx context.Context,
 ) (map[string]ListingEntry, ListingDirectoryCensus, error) {

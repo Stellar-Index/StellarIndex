@@ -22,11 +22,7 @@ import (
 //
 // Estimated tiers are out of scope: their value is not reproducible from the row alone.
 
-// ExactTierUSDVolume renders the pegged leg divided by 10^decimals exactly as [tradeUSDVolume]
-// does (`big.Rat.FloatString(8)`), so a restamped value is byte-identical to the insert path's.
-//
-// ok=false when the waterfall would NOT value the row (non-exact tier, unparseable amount,
-// non-positive quote or pegged leg). Callers must leave such rows untouched.
+// ExactTierUSDVolume renders the pegged leg divided by 10^decimals exactly as tradeUSDVolume does (big.Rat.FloatString(8)) so a restamped value is byte-identical to the insert path's; ok=false when the waterfall would not value the row.
 func ExactTierUSDVolume(tier USDVolumeTier, decimals int, baseAmount, quoteAmount string) (string, bool) {
 	if !tier.Exact() {
 		return "", false
@@ -46,10 +42,7 @@ func ExactTierUSDVolume(tier USDVolumeTier, decimals int, baseAmount, quoteAmoun
 	return new(big.Rat).SetFrac(leg, scaleDenominator(decimals)).FloatString(usdVolumeRenderDecimals), true
 }
 
-// USDVolumeRestampDecision returns the value the identity says a row should carry and whether
-// writing it would CHANGE the row (stored nil = SQL NULL, a change only when fillNull is set).
-// Comparison is by NUMERIC value, not string: "1.5" and "1.50000000" are both fine. ok=false
-// mirrors [ExactTierUSDVolume]: leave the row alone.
+// USDVolumeRestampDecision returns the value the identity says a row should carry and whether writing it would change the row (stored nil is SQL NULL, a change only when fillNull is set); compared by NUMERIC value, not string.
 func USDVolumeRestampDecision(stored *string, tier USDVolumeTier, decimals int, baseAmount, quoteAmount string, fillNull bool) (want string, changed, ok bool) {
 	want, ok = ExactTierUSDVolume(tier, decimals, baseAmount, quoteAmount)
 	if !ok {
@@ -67,8 +60,7 @@ func USDVolumeRestampDecision(stored *string, tier USDVolumeTier, decimals int, 
 	return want, storedRat.Cmp(wantRat) != 0, true
 }
 
-// USDVolumeRestampGroup is one (source, base, quote) group built from [ClassifyUSDVolumeTier];
-// Tier must be exact.
+// USDVolumeRestampGroup is one (source, base, quote) group built from [ClassifyUSDVolumeTier]; Tier must be exact.
 type USDVolumeRestampGroup struct {
 	Source     string
 	BaseAsset  string
@@ -138,8 +130,7 @@ func exactTierRestampScope(p USDVolumeRestampParams) (groupRel, where, identity 
 	return groupRel, where, identity, args, nil
 }
 
-// CountUSDVolumeRestampCandidates is the dry run: it counts the rows [Store.RestampExactTierUSDVolume]
-// would rewrite, using the same scope predicate.
+// CountUSDVolumeRestampCandidates is the dry run: it counts the rows [Store.RestampExactTierUSDVolume] would rewrite, using the same scope predicate.
 func (s *Store) CountUSDVolumeRestampCandidates(ctx context.Context, p USDVolumeRestampParams) (int64, error) {
 	groupRel, where, _, args, err := exactTierRestampScope(p)
 	if err != nil {
@@ -153,8 +144,7 @@ func (s *Store) CountUSDVolumeRestampCandidates(ctx context.Context, p USDVolume
 	return n, nil
 }
 
-// RestampExactTierUSDVolume applies the identity to every candidate row in the caller-sliced
-// window and returns the rows rewritten; rows already satisfying it are untouched.
+// RestampExactTierUSDVolume applies the identity to every candidate row in the caller-sliced window and returns the rows rewritten; rows already satisfying it are untouched.
 func (s *Store) RestampExactTierUSDVolume(ctx context.Context, p USDVolumeRestampParams) (int64, error) {
 	groupRel, where, identity, args, err := exactTierRestampScope(p)
 	if err != nil {

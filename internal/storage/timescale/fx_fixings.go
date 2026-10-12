@@ -10,8 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// FXFixing is one fx_fixings row (migration 0193): a vendor-time FX bar,
-// units of Ticker per 1 USD. RateUSD is exact NUMERIC text on write and read.
+// FXFixing is one fx_fixings row (migration 0193): a vendor-time FX bar, units of Ticker per 1 USD. RateUSD is exact NUMERIC text on write and read.
 type FXFixing struct {
 	Ticker     string
 	Grain      string // FXGrainHour or FXGrainDay
@@ -28,10 +27,7 @@ const (
 	FXGrainDay  = "1d"
 )
 
-// FXFixingLag separates a closed bucket end E from the newest bar it may
-// bind: bar T is first seen closed at T+δ (δ ≤ 1h + settle), and one missed
-// hourly tick still writes it well before T+3h, so every region holds the
-// bar before any bucket that binds it is served.
+// FXFixingLag separates a closed bucket end E from the newest bar it may bind, so every region holds a bar before any bucket that binds it is served (bar T is seen closed at T+delta, delta <= 1h + settle).
 const FXFixingLag = 3 * time.Hour
 
 // fxFixingWriteTimeout caps one batch transaction. The API cache's delta load
@@ -45,17 +41,13 @@ const (
 	FXResolutionDaily  = "daily"
 )
 
-// FXFixingBinding is what one ticker binds to at a bucket end: an fx_fixings
-// row, or on the daily arm (no fixings) an fx_quotes day as a daily bar.
+// FXFixingBinding is what one ticker binds to at a bucket end: an fx_fixings row, or on the daily arm (no fixings) an fx_quotes day as a daily bar.
 type FXFixingBinding struct {
 	FXFixing
 	Resolution string // FXResolutionHourly or FXResolutionDaily
 }
 
-// InsertFXFixingBatch appends rows at the store's derive generation and
-// reports how many were new. Rows already present at that generation are
-// left untouched: the table is never updated in place, so re-running a
-// generation-0 write cannot revert a higher-generation correction.
+// InsertFXFixingBatch appends rows at the store's derive generation and reports how many were new; existing rows at that generation are untouched so a generation-0 re-run cannot revert a higher-generation correction.
 func (s *Store) InsertFXFixingBatch(ctx context.Context, rows []FXFixing) (int64, error) {
 	if len(rows) == 0 {
 		return 0, nil
@@ -118,11 +110,7 @@ const fxFixingAtOrBeforeSelect = `
 	 ORDER BY ticker, bar_end DESC, grain DESC, generation DESC
 `
 
-// FXFixingAtOrBefore binds each ticker's FX leg for a closed bucket ending at e: the fixing with
-// the greatest bar_end <= e - [FXFixingLag] within maxAge. A ticker whose fixings start after
-// e - lag (or has none) binds its fx_quotes day instead, one day earlier, as a daily bar. A ticker
-// absent from the result is a miss (a gap inside the fixings era, or no daily row either). The
-// answer depends only on e and the stored series.
+// FXFixingAtOrBefore binds each ticker's FX leg for a closed bucket ending at e: the fixing with the greatest bar_end <= e - [FXFixingLag] within maxAge, else the fx_quotes day one day earlier.
 func (s *Store) FXFixingAtOrBefore(ctx context.Context, tickers []string, e time.Time, maxAge time.Duration) (map[string]FXFixingBinding, error) {
 	out := make(map[string]FXFixingBinding, len(tickers))
 	if len(tickers) == 0 {
@@ -268,10 +256,7 @@ func (s *Store) fxFixingFirstBarEnds(ctx context.Context, tickers []string) (map
 	return out, nil
 }
 
-// LoadFXFixingWindow reads, in one snapshot, every row whose bar_end is at or
-// after L − horizon and, when ingestedAfter is non-zero, that was ingested
-// after it. L is the snapshot's statement time and is returned with the rows:
-// a cache holding them answers exactly what [FXFixingAtOrBefore] answered at L.
+// LoadFXFixingWindow reads, in one snapshot, every row whose bar_end is at or after L − horizon and, when ingestedAfter is non-zero, that was ingested after it.
 func (s *Store) LoadFXFixingWindow(ctx context.Context, horizon time.Duration, ingestedAfter time.Time) ([]FXFixing, time.Time, error) {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
@@ -315,9 +300,7 @@ func (s *Store) LoadFXFixingWindow(ctx context.Context, horizon time.Duration, i
 	return out, loadedAt.UTC(), nil
 }
 
-// FXFixingIngestSlack is how far before a previous load L a delta load must
-// re-read ingested_at: a row committed after L was stamped at most one write
-// transaction earlier.
+// FXFixingIngestSlack is how far before a previous load L a delta load must re-read ingested_at, since a row committed after L was stamped at most one write transaction earlier.
 const FXFixingIngestSlack = fxFixingWriteTimeout
 
 func fxResolution(grain string) string {

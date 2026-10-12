@@ -14,10 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/domain"
 )
 
-// HistoryPoint is a single bucket's worth of aggregated price +
-// volume, returned by [Store.HistoryPoints]. Wire shape mirrors the
-// API's `{t, p, v_usd}` triple — the API binary's adapter is a
-// pure passthrough.
+// HistoryPoint is a single bucket's worth of aggregated price + volume, returned by [Store.HistoryPoints].
 type HistoryPoint struct {
 	Bucket    time.Time
 	VWAP      string   // NUMERIC text from Postgres
@@ -26,8 +23,6 @@ type HistoryPoint struct {
 }
 
 // HistoryGranularity is the CAGG selector for [Store.HistoryPoints].
-// Stable string values matching the API's `granularity` query
-// parameter and the migration's table names (prices_<granularity>).
 type HistoryGranularity string
 
 const (
@@ -40,14 +35,7 @@ const (
 	Granularity1mo HistoryGranularity = "1mo"
 )
 
-// AllHistoryGranularities is the one declaration of the served set, finest first.
-// [HistoryGranularity.Validate], its rejection message ([HistoryGranularityList]) and the API's
-// 400 bodies read it, so the accepted set and the enumeration shown to callers cannot drift.
-//
-// A new rung must also be materialised by the backfill
-// (TestCAGGsLiveForeverCoversEveryServedGranularity fails until [CAGGsLiveForever] gains the
-// prices_<g> view), since continuous-aggregate policies only roll forward and backfilled ranges
-// would keep a permanent hole at the new resolution.
+// AllHistoryGranularities is the single declaration of the served set, finest first; Validate, its error text and the API's 400 bodies read it, and a new rung must also be backfilled.
 var AllHistoryGranularities = []HistoryGranularity{
 	Granularity1m, Granularity15m, Granularity1h, Granularity4h,
 	Granularity1d, Granularity1w, Granularity1mo,
@@ -59,8 +47,7 @@ var AllHistoryGranularities = []HistoryGranularity{
 // of punctuation and report it as a missing granularity.
 const historyGranularitySep = ", "
 
-// HistoryGranularityList renders [AllHistoryGranularities] as the enumeration that Validate's
-// error and the API's 400 bodies carry, so a new granularity reaches every message automatically.
+// HistoryGranularityList renders [AllHistoryGranularities] for Validate's error and the API's 400 bodies so new granularities reach every message.
 func HistoryGranularityList() string {
 	parts := make([]string, len(AllHistoryGranularities))
 	for i, g := range AllHistoryGranularities {
@@ -69,9 +56,7 @@ func HistoryGranularityList() string {
 	return strings.Join(parts, historyGranularitySep)
 }
 
-// Validate reports whether g is one of the supported granularities
-// ([AllHistoryGranularities]). Caller surfaces unknown granularities
-// as 400.
+// Validate reports whether g is one of the supported granularities ([AllHistoryGranularities]).
 func (g HistoryGranularity) Validate() error {
 	for _, known := range AllHistoryGranularities {
 		if g == known {
@@ -104,10 +89,7 @@ func (g HistoryGranularity) closedBucketInterval() string {
 	return ""
 }
 
-// BucketDuration is the wall-clock width of one bucket: the value price surfaces stamp into
-// `window_seconds`, and what [Store.ClosedVWAPAtOrBefore] adds to a bucket START to get its close
-// instant. 1mo is a nominal 30 days (the CAGG is calendar-exact), close enough for staleness math
-// and the resolution ladder. Zero for an unknown granularity.
+// BucketDuration is the wall-clock width of one bucket (what price surfaces stamp into `window_seconds`); 1mo is a nominal 30 days and an unknown granularity is zero.
 func (g HistoryGranularity) BucketDuration() time.Duration {
 	switch g {
 	case Granularity1m:
@@ -128,8 +110,7 @@ func (g HistoryGranularity) BucketDuration() time.Duration {
 	return 0
 }
 
-// Seconds is [BucketDuration] in whole seconds — the integer a price
-// snapshot carries in `window_seconds`.
+// Seconds is [BucketDuration] in whole seconds — the integer a price snapshot carries in `window_seconds`.
 func (g HistoryGranularity) Seconds() int {
 	return int(g.BucketDuration() / time.Second)
 }
@@ -323,13 +304,7 @@ func bucketRowCap(limit int) int {
 	return 2*limit + 1
 }
 
-// HistoryPoints returns every closed bucket for the pair from the CAGG matching `granularity`,
-// ordered ASC, for /v1/history/since-inception. The in-progress bucket is excluded by a sargable
-// `bucket <= now() - <granularity>` guard. `limit` clamps the bucket count; 0 returns all.
-//
-// Both stored directions are folded into the requested ($1, $2) orientation by [combineDirVWAP];
-// one orientation alone drops trades recorded the other way round (and empties a flipped-only
-// pair).
+// HistoryPoints returns every closed bucket for the pair from the matching CAGG, ASC, folding both stored directions into the requested orientation via [combineDirVWAP]; `limit` 0 returns all.
 func (s *Store) HistoryPoints(ctx context.Context, p canonical.Pair, granularity HistoryGranularity, limit int) ([]HistoryPoint, error) {
 	if err := granularity.Validate(); err != nil {
 		return nil, err
@@ -505,11 +480,7 @@ func decimalScale(s string) int {
 	return 0
 }
 
-// HistoryPointsInRange is [HistoryPoints] with an explicit [from, to) bound on the bucket column,
-// for /v1/chart's rolling window; the same closed-bucket guard applies. A zero `from` or `to`
-// disables that bound and `limit` 0 returns all buckets. Both stored directions are combined into
-// the requested orientation; see [Store.HistoryPoints] for why a one-direction read silently
-// drops liquidity. Returns an empty slice + nil error when the window has no closed buckets.
+// HistoryPointsInRange is [HistoryPoints] bounded to [from, to) on the bucket column for /v1/chart; a zero bound is disabled and both stored directions are combined.
 func (s *Store) HistoryPointsInRange(
 	ctx context.Context,
 	p canonical.Pair,
@@ -577,26 +548,13 @@ var twapGranularities = map[HistoryGranularity]struct{}{
 	Granularity1d: {},
 }
 
-// TWAPGranularitySupported reports whether granularity has a TWAP CAGG
-// (twap_1h / twap_1d). Callers snap an arbitrary requested granularity
-// onto one of these before calling [Store.TWAPPointsInRange].
+// TWAPGranularitySupported reports whether granularity has a TWAP CAGG (twap_1h / twap_1d).
 func TWAPGranularitySupported(g HistoryGranularity) bool {
 	_, ok := twapGranularities[g]
 	return ok
 }
 
-// TWAPPointsInRange returns closed time-weighted-average buckets for the pair from the
-// twap_<granularity> CAGG, ordered ASC: the TWAP sibling of [Store.HistoryPointsInRange] (same
-// [from, to) semantics, closed-bucket guard and `[]HistoryPoint` shape, the VWAP field carrying
-// the TWAP value). Only 1h and 1d have a TWAP CAGG; anything else errors, surfaced as a 400.
-//
-// The SDEX decoder records XLM/USDC and USDC/XLM as separate rows, so both directions are combined
-// into the requested ($1, $2) orientation by [combineDirTWAP], weighted by minute coverage
-// (`sample_count`), not trade count. See canonical.Orient.
-//
-// Rows are selected raw and folded per bucket by [scanTWAPPoints], so `limit` is a bucket limit
-// ([bucketRowCap] fetches 2n+1 rows for n buckets). The closed-bucket guard is sargable, so range
-// bounds plus this predicate prune chunks at plan time.
+// TWAPPointsInRange returns closed TWAP buckets from the twap_<granularity> CAGG, the TWAP sibling of [Store.HistoryPointsInRange]; only 1h and 1d exist and anything else errors.
 func (s *Store) TWAPPointsInRange(
 	ctx context.Context,
 	p canonical.Pair,
@@ -717,8 +675,7 @@ func scanTWAPPoints(rows *sql.Rows, base string, limit int, what string) ([]Hist
 	return out, nil
 }
 
-// Vwap1mRow is one row from the prices_1m continuous aggregate (see
-// migrations/0002_create_price_aggregates.up.sql). Bucket is the START of the 1-minute window.
+// Vwap1mRow is one row from the prices_1m continuous aggregate (see migrations/0002_create_price_aggregates.up.sql).
 type Vwap1mRow struct {
 	Bucket     time.Time
 	BaseAsset  string
@@ -765,10 +722,7 @@ const recentClosedVWAP1mForPairQuery = `
          LIMIT $3
     `
 
-// RecentClosedVWAP1mForPair returns up to `limit` most-recent closed 1-minute buckets for the
-// pair, newest first, each combined across both stored directions ([combineDirVWAP]) so every row
-// is the price of Base in Quote. Returns an empty slice + nil error when nothing is in scope; the
-// SEP-40 endpoint separates "no observations" from "asset unknown" itself. The caller clamps `limit`.
+// RecentClosedVWAP1mForPair returns up to `limit` newest closed 1-minute buckets, each combined across both stored directions as the price of Base in Quote; empty with nil error when nothing is in scope.
 func (s *Store) RecentClosedVWAP1mForPair(ctx context.Context, p canonical.Pair, limit int) ([]Vwap1mRow, error) {
 	rows, err := s.db.QueryContext(ctx, recentClosedVWAP1mForPairQuery,
 		p.Base.String(), p.Quote.String(), bucketRowCap(limit),
@@ -813,16 +767,7 @@ const recentClosedVWAP1mCombinedTemplate = `
          LIMIT $3
     `
 
-// RecentClosedVWAP1mCombined returns up to `limit` most-recent closed 1-minute buckets for the
-// pair, newest-first, each combined across both stored directions with [combineDirVWAP].
-//
-// It is the trailing-baseline source for the /v1/price serving-sanity guard
-// (aggregate.GuardServedVWAP). The baseline must use the same combine as the served candidate, or
-// the two disagree on every two-sided market and the guard false-positives.
-//
-// It runs only after [LatestClosedVWAP1mForPair] confirmed the pair is populated, so it never pays
-// the empty-pair cold walk; it still carries the literal `bucket >=` lower bound for plan-time
-// chunk pruning. Returns an empty slice + nil error when nothing is in scope.
+// RecentClosedVWAP1mCombined returns up to `limit` newest closed 1-minute buckets combined across both directions, the baseline for the /v1/price serving-sanity guard, which must use the same combine as the served candidate.
 func (s *Store) RecentClosedVWAP1mCombined(ctx context.Context, p canonical.Pair, limit int) ([]Vwap1mRow, error) {
 	if limit <= 0 {
 		return nil, nil
@@ -868,13 +813,7 @@ const closedVWAP1mCombinedBeforeTemplate = `
          LIMIT $3
     `
 
-// ClosedVWAP1mCombinedBefore is [RecentClosedVWAP1mCombined] anchored at `before`: up to `limit`
-// closed prices_1m buckets whose START is strictly older than `before`, newest-first.
-//
-// It is the trailing baseline for a historical candidate (the point-in-time serving guard): the
-// now-anchored read returns only the newest buckets, none preceding an older candidate, so the
-// guard would pass it unjudged. The lower bound is [latestVWAPWindow] behind `before`. Returns an
-// empty slice + nil error when no closed bucket precedes `before`.
+// ClosedVWAP1mCombinedBefore is [RecentClosedVWAP1mCombined] anchored at `before`: closed prices_1m buckets whose START is strictly older, newest first, as the point-in-time guard baseline.
 func (s *Store) ClosedVWAP1mCombinedBefore(ctx context.Context, p canonical.Pair, before time.Time, limit int) ([]Vwap1mRow, error) {
 	if limit <= 0 {
 		return nil, nil
@@ -990,11 +929,7 @@ const closedVWAP1mAtOrBeforeQuery = `
          LIMIT 2
     `
 
-// ClosedVWAP1mAtOrBefore returns the most-recent CLOSED 1-minute bucket for the pair whose end
-// (`bucket + 1 minute`) is at or before t, COMBINED across both stored directions. It anchors
-// change_24h_pct's 24-hours-ago price. Returns [sql.ErrNoRows] when no such bucket exists (pair
-// first traded < 24h ago, or retention elided the row) and when the VWAP will not parse as a
-// positive rational, so an unusable anchor reads as absent rather than flowing into a percentage.
+// ClosedVWAP1mAtOrBefore returns the newest CLOSED 1-minute bucket ending at or before t, combined across both directions; [sql.ErrNoRows] when none exists or the VWAP will not parse as positive.
 func (s *Store) ClosedVWAP1mAtOrBefore(ctx context.Context, p canonical.Pair, t time.Time) (Vwap1mRow, error) {
 	rows, err := s.db.QueryContext(ctx, closedVWAP1mAtOrBeforeQuery,
 		p.Base.String(), p.Quote.String(), t,
@@ -1014,21 +949,14 @@ func (s *Store) ClosedVWAP1mAtOrBefore(ctx context.Context, p canonical.Pair, t 
 	return out[0], nil
 }
 
-// VWAPAtRow is the result of [Store.ClosedVWAPAtOrBefore]: the VWAP of one closed bucket
-// at-or-before a historical instant, plus which CAGG resolution served it. VWAP is a NUMERIC
-// decimal string (no float round-trip). Bucket is the window START; the END is
-// `Bucket + Resolution.BucketDuration()`.
+// VWAPAtRow is the result of [Store.ClosedVWAPAtOrBefore]: one closed bucket's VWAP (NUMERIC decimal string, no float) and the CAGG resolution that served it; Bucket is the window START.
 type VWAPAtRow struct {
 	VWAP       string
 	Bucket     time.Time
 	Resolution HistoryGranularity
 }
 
-// PriceAtMinuteRungMaxAge is how far behind now a point-in-time lookup may be and still be
-// answered from a raw prices_1m bucket, the first boundary of [priceAtResolutionLadder]. Exported
-// because the thin-market gate (pricingguard.SubstanceGate.AllowedAt) holds a minute-served
-// instant to the minute floor and an hour/day-served one to the hour floor, so the two boundaries
-// must be one number.
+// PriceAtMinuteRungMaxAge is how far behind now a point-in-time lookup may be and still be served from raw prices_1m; exported because the thin-market gate (pricingguard.SubstanceGate.AllowedAt) keys its floors on the same boundary.
 const PriceAtMinuteRungMaxAge = 48 * time.Hour
 
 // priceAtResolutionLadder returns the CAGG resolutions to probe for a point-in-time lookup `age`
@@ -1047,17 +975,7 @@ func priceAtResolutionLadder(age time.Duration) []HistoryGranularity {
 	}
 }
 
-// ClosedVWAPAtOrBefore returns the closed VWAP bucket at-or-before `ts` from the FINEST CAGG
-// resolution whose nearest bucket closes within `maxStaleness` of ts: the point-in-time engine
-// behind /v1/price/at and /v1/price/changes.
-//
-// It walks [priceAtResolutionLadder] finest-first and accepts the first rung whose nearest closed
-// bucket closes (bucket + resolution) within maxStaleness. A dead-market gap in prices_1m falls
-// through to a coarser bar rather than fabricating continuity, and the accepted rung is reported
-// in Resolution so callers label `window_seconds` honestly. Both directions are combined.
-//
-// Returns [sql.ErrNoRows] when no rung has an in-window bucket (pair younger than ts, ts predates
-// history, or the nearest observation is staler than maxStaleness on every rung).
+// ClosedVWAPAtOrBefore returns the closed VWAP bucket at or before `ts` from the finest CAGG resolution whose nearest bucket closes within `maxStaleness`, walking [priceAtResolutionLadder] for /v1/price/at and /changes.
 func (s *Store) ClosedVWAPAtOrBefore(ctx context.Context, p canonical.Pair, ts time.Time, maxStaleness time.Duration) (VWAPAtRow, error) {
 	age := time.Since(ts)
 	if age < 0 {
@@ -1171,12 +1089,7 @@ func (s *Store) closedVWAPAtOrBeforeRes(
 	return bucket, vwap, true, nil
 }
 
-// LatestClosedVWAP1mForPair returns the most-recent CLOSED 1-minute prices_1m bucket for the
-// pair. The in-progress bucket is excluded explicitly even though the CAGG refresh policy already
-// drops it.
-//
-// Returns [sql.ErrNoRows] when the pair has no closed bucket yet; callers translate that to the
-// price-not-found problem or fall back to the latest-trade path.
+// LatestClosedVWAP1mForPair returns the newest CLOSED 1-minute prices_1m bucket for the pair, excluding the in-progress one; [sql.ErrNoRows] when none exists yet.
 func (s *Store) LatestClosedVWAP1mForPair(ctx context.Context, p canonical.Pair) (Vwap1mRow, error) {
 	// Combine both stored directions: the SDEX decoder records XLM/USDC and USDC/XLM, so one
 	// direction halves the liquidity.
@@ -1261,13 +1174,7 @@ func (s *Store) recentClosedVWAP1mExists(ctx context.Context, p canonical.Pair, 
 	return true, nil
 }
 
-// RecentClosedVWAP1mExists reports whether the pair has a CLOSED 1-minute VWAP bucket (either
-// direction) within [latestVWAPGateWindow]: the gate [LatestClosedVWAP1mForPair] runs, exported for
-// the /v1/price stablecoin-proxy fallback.
-//
-// On a VWAP miss `LatestPrice(asset, <peg>)` falls to [Store.LatestTradesForPair], an unbounded
-// last-trade scan; for an empty proxy pair (a Soroban token that trades only vs XLM) that is a
-// cold full-history walk per peg. Gating each peg on this bounded probe skips empty pairs first.
+// RecentClosedVWAP1mExists reports whether the pair has a closed 1-minute VWAP bucket (either direction) within [latestVWAPGateWindow], so the stablecoin-proxy fallback avoids an unbounded last-trade scan on empty pairs.
 func (s *Store) RecentClosedVWAP1mExists(ctx context.Context, p canonical.Pair) (bool, error) {
 	since := time.Now().UTC().Add(-latestVWAPGateWindow)
 	return s.recentClosedVWAP1mExists(ctx, p, since)
@@ -1337,10 +1244,7 @@ func (s *Store) latestClosedVWAP1m(ctx context.Context, p canonical.Pair, since 
 	return out[0], nil
 }
 
-// TimedVWAPsForPair1m returns (vwap, bucket_end) pairs from prices_1m for the half-open window
-// [from, to), oldest first, for the multi-window baseline refresher, which needs the timestamp to
-// apply [baseline.SplitByLookback]. The bucket end is the stored start + 1 minute. Returns an
-// empty slice + nil error when the window has no closed buckets.
+// TimedVWAPsForPair1m returns (vwap, bucket_end) pairs from prices_1m over the half-open window [from, to), oldest first, for the baseline refresher; bucket end is stored start + 1 minute.
 func (s *Store) TimedVWAPsForPair1m(ctx context.Context, p canonical.Pair, from, to time.Time) ([]domain.BaselineTimedVWAP, error) {
 	if !to.After(from) {
 		return nil, fmt.Errorf("timescale: TimedVWAPsForPair1m: to %v <= from %v", to, from)
@@ -1414,13 +1318,7 @@ func (s *Store) TimedVWAPsForPair1m(ctx context.Context, p canonical.Pair, from,
 	return out, nil
 }
 
-// VWAPsForPair1m returns oldest-first VWAP values from prices_1m for [from, to), without
-// timestamps. The baseline refresher reads [Store.TimedVWAPsForPair1m] instead, since empty
-// minutes have no row and returns across a gap need each bucket's end. Returns an empty slice +
-// nil error when the window has no closed buckets.
-//
-// VWAP goes through a float8 cast: the baseline math is float64 anyway, and the precision loss on
-// one bucket's VWAP is immaterial to statistics over hundreds of buckets.
+// VWAPsForPair1m returns oldest-first VWAP values from prices_1m for [from, to), without timestamps.
 func (s *Store) VWAPsForPair1m(ctx context.Context, p canonical.Pair, from, to time.Time) ([]float64, error) {
 	if !to.After(from) {
 		return nil, fmt.Errorf("timescale: VWAPsForPair1m: to %v <= from %v", to, from)
@@ -1527,14 +1425,7 @@ func (a *stringArray) Scan(src any) error {
 	return nil
 }
 
-// Volume24hUSDForAsset returns the trailing 24h USD trade volume for an asset across every pair
-// it is in (as base OR quote), read from the prices_1m CAGG rather than the trades hypertable.
-// The string carries the NUMERIC sum exactly; "0" means existed with no trades, distinct from null
-// ("not tracked"). assetKey is the canonical asset string as stored in base_asset / quote_asset.
-//
-// The CAGG sums `coalesce(usd_volume, 0)`, the trade-time valuation stamped at insert. A trade it
-// could not value adds 0, so lowerBound reports whether any alias form's asset_volume_24h row
-// counted such a trade.
+// Volume24hUSDForAsset returns the trailing 24h USD volume for an asset (base OR quote) from the prices_1m CAGG as an exact NUMERIC string; "0" means no trades, distinct from null (not tracked).
 func (s *Store) Volume24hUSDForAsset(ctx context.Context, assetKey string) (usd string, lowerBound bool, err error) {
 	// Sum across ALL canonical forms (XLM's native / crypto:XLM / SAC, plus any classic-SAC
 	// wrapper), not the caller's one spelling; a single form silently omits the CEX and Soroban legs.
@@ -1551,9 +1442,7 @@ func (s *Store) Volume24hUSDForAsset(ctx context.Context, assetKey string) (usd 
 	return usd, lowerBound, nil
 }
 
-// OHLCBar is one OHLC + volume + trade-count bucket from [Store.OHLCSeries] /
-// [Store.OHLCSeriesReBucketed]. Bucket is the window START. Prices are NUMERIC decimal strings
-// (no float round-trip) and volumes are integer-string smallest-unit sums.
+// OHLCBar is one OHLC + volume + trade-count bucket; Bucket is the window START, prices are NUMERIC decimal strings (never float) and volumes are integer-string base-unit sums.
 type OHLCBar struct {
 	Bucket      time.Time
 	Open        string
@@ -1574,18 +1463,7 @@ type OHLCBar struct {
 	Sources []string
 }
 
-// OHLCSeries returns oldest-first OHLC bars from the CAGG matching `granularity` for [from, to),
-// for /v1/ohlc's multi-bar mode. Native bucket size IS the interval, so rows map 1:1 to bars;
-// other intervals route through [Store.OHLCSeriesReBucketed]. The in-progress bucket is excluded
-// by the sargable `bucket <= now() - <interval>` guard. `limit` clamps row count (0 = unbounded).
-//
-// A capped read orders DESC and takes the LIMIT so the cap keeps the newest buckets, then reverses
-// (mirrors [Store.TradesInRange]); `ORDER BY bucket ASC LIMIT` would keep the oldest and never
-// reach `to` for a wide window.
-//
-// Σ(quote) (and a flipped row's base leg) is the stored `volume_quote`, exact at any size and
-// counting zero-leg trades like `volume`; `vwap * volume` would price a zero-quote trade's base at
-// the bucket price and drop a zero-base trade's quote.
+// OHLCSeries returns oldest-first OHLC bars for [from, to) from the CAGG matching `granularity` (closed buckets only; `limit` 0 = unbounded); other intervals route through [Store.OHLCSeriesReBucketed].
 func (s *Store) OHLCSeries(
 	ctx context.Context,
 	p canonical.Pair,
@@ -1772,16 +1650,7 @@ func ohlcReBucketedQuery(table, outInterval string) string {
 	`, table, outInterval)
 }
 
-// OHLCSeriesReBucketed is [Store.OHLCSeries] re-bucketed into a coarser `outInterval` via
-// `time_bucket`, for intervals with no native CAGG (the folded rows of [OHLCRoutes]). Open/close
-// are the first/last input bar's (ordered by bucket); high/low are max/min; volumes and
-// trade_count sum.
-//
-// `outInterval` must be an integer multiple of the source CAGG's native bucket size
-// (TestOHLCRoutesFoldIsAMultipleOfItsSource pins every pairing). time_bucket snaps to the first
-// Monday of 2000 UTC, so 2w lands on the Mondays prices_1w starts on. `outInterval` is composed
-// into the SQL only after the [OHLCRoutes] allow-list check. The closed-bucket guard and
-// DESC-then-reverse `limit` are [Store.OHLCSeries]'s.
+// OHLCSeriesReBucketed re-buckets [Store.OHLCSeries] into a coarser `outInterval` via `time_bucket` (open/close first/last, high/low max/min, volumes sum); `outInterval` must be an integer multiple of the source bucket.
 func (s *Store) OHLCSeriesReBucketed(
 	ctx context.Context,
 	p canonical.Pair,
@@ -1856,17 +1725,7 @@ func (s *Store) OHLCSeriesReBucketed(
 	return out, nil
 }
 
-// MarketSubstance summarises a pair's trailing closed-bucket activity across both stored
-// directions on prices_1m, feeding the thin-market gate (pricingguard.SubstanceGate).
-//
-// VolumeUSD is the exact NUMERIC sum of volume_usd as a decimal string (the floor comparison is
-// exact-rational). Buckets counts distinct closed 1-minute buckets with a trade and SpanSeconds is
-// max(bucket)-min(bucket): the persistence signal, since a burst of N trades in one minute gives
-// Buckets=1 / SpanSeconds=0, separating dust from continuous trading.
-//
-// Rows whose usd_volume could not be valued contribute 0, so an unvaluable market fails a positive
-// floor BY CONSTRUCTION (fail-closed). ValuedBuckets lets the gate tell that failure from a valued
-// thin market.
+// MarketSubstance summarises a pair's trailing closed-bucket activity on prices_1m for the thin-market gate; VolumeUSD is an exact NUMERIC decimal string and Buckets counts distinct traded minutes.
 type MarketSubstance struct {
 	VolumeUSD     string
 	Buckets       int64
@@ -1890,14 +1749,7 @@ func substanceLegs(method string, bases, quotes []canonical.Asset) (baseKeys, qu
 	return keys(bases), keys(quotes), nil
 }
 
-// PairMarketSubstance measures [MarketSubstance] over the trailing `window` (closed buckets only)
-// for the one market formed by every spelling in `bases` against every spelling in `quotes`, the
-// alias union the substance gate holds to its floor. A minute active under two spellings is one
-// bucket, so the union is taken over bucket timestamps, never by adding per-spelling counts. Like
-// the other prices_1m readers, the lower bound is a literal timestamptz for plan-time chunk
-// pruning and the closed-bucket predicate is the sargable `bucket <= now() - 1min`.
-//
-// An empty market returns {VolumeUSD: "0"} with a nil error: absence of market is a measurement.
+// PairMarketSubstance measures [MarketSubstance] over the trailing `window` for every spelling in `bases` against every in `quotes`; the alias union is taken over bucket timestamps, never by adding per-spelling counts.
 func (s *Store) PairMarketSubstance(ctx context.Context, bases, quotes []canonical.Asset, window time.Duration) (MarketSubstance, error) {
 	if window <= 0 {
 		return MarketSubstance{}, fmt.Errorf("timescale: PairMarketSubstance: non-positive window %v", window)
@@ -1942,19 +1794,7 @@ func (s *Store) PairMarketSubstance(ctx context.Context, bases, quotes []canonic
 	return sub, nil
 }
 
-// PairMarketSubstanceAt measures [MarketSubstance] over the `window` ENDING AT `asOf`, the
-// point-in-time twin of [Store.PairMarketSubstance]: a pair thick today may have been
-// attacker-seeded dust at `ts`.
-//
-// `g` is the grain the legs are counted at; only two are accepted:
-//   - [Granularity1m]: the live gate's grain. Its reach back is a deployment setting (see
-//     [Store.DailyMarketDays], "Why prices_1h"), so use it only for instants retention still holds.
-//   - [Granularity1h]: indefinite by design, the grain a historical instant is held to.
-//
-// The window is the buckets closed at asOf: `bucket <= asOf - g` (sargable) and
-// `bucket >= asOf - window`, both literal timestamptz for plan-time chunk pruning. The `now()`
-// guard stays so an asOf at or past the present never admits the in-progress bucket. An empty
-// window returns {VolumeUSD: "0"} with a nil error.
+// PairMarketSubstanceAt is the point-in-time twin of [Store.PairMarketSubstance], measured over the `window` ENDING AT `asOf` at grain `g` (only [Granularity1m] and the daily grain are accepted).
 func (s *Store) PairMarketSubstanceAt(
 	ctx context.Context, bases, quotes []canonical.Asset, asOf time.Time, window time.Duration, g HistoryGranularity,
 ) (MarketSubstance, error) {

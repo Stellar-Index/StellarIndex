@@ -23,9 +23,7 @@ import (
 // projector is the sole writer; row types live here, not in the source package, so storage
 // keeps its no-upward-import boundary.
 
-// CreditPosition is one credit_positions row — a position opened by a
-// NewCollateralContract event. CollateralContract is the per-user
-// Collateral-<uuid> child contract this event deploys.
+// CreditPosition is one credit_positions row — a position opened by a NewCollateralContract event.
 type CreditPosition struct {
 	CollateralContract string
 	PositionUUID       string
@@ -38,8 +36,7 @@ type CreditPosition struct {
 	EventIndex         int
 }
 
-// CreditStatement is one credit_statements row — a periodic per-position
-// statement (StatementPublished). Amount is a decimal i128 string.
+// CreditStatement is one credit_statements row — a periodic per-position statement (StatementPublished).
 type CreditStatement struct {
 	StatementUUID      string
 	PositionUUID       string
@@ -53,9 +50,7 @@ type CreditStatement struct {
 	EventIndex         int
 }
 
-// CreditSettlement is one credit_settlements row: a SCHEDULED settlement decoded from the
-// on-wire "Liquidation" event, NOT a distressed liquidation. DebtAsset / SettledAmount are the
-// primary (USDC) leg; empty means SQL NULL. Attributes holds the full event body.
+// CreditSettlement is one credit_settlements row: a SCHEDULED settlement decoded from the on-wire "Liquidation" event, NOT a distressed liquidation.
 type CreditSettlement struct {
 	CollateralContract string
 	PositionUUID       string
@@ -71,8 +66,7 @@ type CreditSettlement struct {
 	EventIndex         int
 }
 
-// CreditEvent is one credit_events row — a Withdrawal or config event,
-// discriminated by EventType. Promoted columns vary by type ("" → NULL).
+// CreditEvent is one credit_events row — a Withdrawal or config event, discriminated by EventType.
 type CreditEvent struct {
 	EventType          string
 	CollateralContract string // "" → NULL
@@ -184,9 +178,7 @@ func (s *Store) InsertCreditStatement(ctx context.Context, e CreditStatement) er
 	return nil
 }
 
-// InsertCreditSettlement appends one SCHEDULED-SETTLEMENT row (decoded
-// from the on-wire "Liquidation" event — recurring keeper settlement, NOT
-// a distressed liquidation). Idempotent on the PK.
+// InsertCreditSettlement appends one scheduled-settlement row decoded from the on-wire "Liquidation" event (recurring keeper settlement, not a distressed liquidation); idempotent on the PK.
 func (s *Store) InsertCreditSettlement(ctx context.Context, e CreditSettlement) error {
 	if e.CollateralContract == "" {
 		return errors.New("timescale: InsertCreditSettlement: CollateralContract is empty")
@@ -232,9 +224,7 @@ func (s *Store) InsertCreditSettlement(ctx context.Context, e CreditSettlement) 
 	return nil
 }
 
-// InsertCreditEvent appends one Withdrawal / config event row into the
-// catch-all credit_events table, discriminated by EventType. Idempotent
-// on the PK.
+// InsertCreditEvent appends one Withdrawal / config event row into the catch-all credit_events table, discriminated by EventType.
 func (s *Store) InsertCreditEvent(ctx context.Context, e CreditEvent) error {
 	if e.EventType == "" {
 		return errors.New("timescale: InsertCreditEvent: EventType is empty")
@@ -278,12 +268,7 @@ func (s *Store) InsertCreditEvent(ctx context.Context, e CreditEvent) error {
 	return nil
 }
 
-// CreditAnalyticsSummary is the windowed sorocredit activity summary behind the
-// /v1/protocols/sorocredit block. Volumes are i128/NUMERIC (canonical.Amount, never int64);
-// counts are exact row / distinct-key tallies.
-//
-// SettlementVolume sums SCHEDULED settlements (a recurring keeper settlement, NOT distress) and
-// must NEVER be surfaced as a liquidation / risk signal.
+// CreditAnalyticsSummary is the windowed sorocredit activity summary behind /v1/protocols/sorocredit; volumes are canonical.Amount (i128/NUMERIC, never int64), counts exact.
 type CreditAnalyticsSummary struct {
 	// PositionsOpened is the count of NewCollateralContract events in the
 	// window (one child Collateral-<uuid> contract per opened position).
@@ -320,8 +305,7 @@ type CreditAnalyticsSummary struct {
 	LatestActivity time.Time
 }
 
-// HasActivity reports whether any credit_* table had a row in the window —
-// the gate the bespoke block uses to omit an all-empty panel.
+// HasActivity reports whether any credit_* table had a row in the window — the gate the bespoke block uses to omit an all-empty panel.
 func (a *CreditAnalyticsSummary) HasActivity() bool {
 	return a != nil && (a.PositionsOpened > 0 || a.Statements > 0 ||
 		a.Settlements > 0 || a.Withdrawals > 0)
@@ -346,12 +330,7 @@ const creditSettlementsAnalyticsQuery = `
 		       max(ledger_close_time)
 		  FROM credit_settlements WHERE ledger_close_time > now() - $1::interval`
 
-// CreditWindowAnalytics reads the windowed sorocredit activity summary
-// (positions / statements / SCHEDULED settlements / withdrawals) from the four credit_*
-// hypertables. Volumes stay i128/NUMERIC as canonical.Amount, never int64.
-//
-// Empty-safe: returns (nil, nil) when no credit_* row exists in the window so the block omits
-// the panel. windowDays <= 0 is treated as 90.
+// CreditWindowAnalytics reads the windowed sorocredit summary from the four credit_* hypertables with volumes as canonical.Amount, never int64; returns (nil, nil) when no credit data exists.
 func (s *Store) CreditWindowAnalytics(ctx context.Context, windowDays int) (*CreditAnalyticsSummary, error) {
 	if windowDays <= 0 {
 		windowDays = 90

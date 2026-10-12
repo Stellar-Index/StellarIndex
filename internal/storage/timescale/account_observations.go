@@ -12,14 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/domain"
 )
 
-// InsertAccountObservation appends one [domain.AccountObservation] to `account_observations`.
-// Storage takes the domain type so it need not import the accounts package.
-//
-// Last-writer-wins on conflict: an account touched several times in one ledger writes successive
-// rows for the same (account_id, ledger), and the AccountEntry post-state is monotonic within a
-// ledger, so the latest write is final. observed_at is the ledger close time and stays the same.
-//
-// A zero-value AccountID and nil Balance are rejected up front rather than as a NOT NULL violation.
+// InsertAccountObservation appends one [domain.AccountObservation]; last-writer-wins per (account_id, ledger) because the post-state is monotonic within a ledger.
 func (s *Store) InsertAccountObservation(ctx context.Context, o domain.AccountObservation) error {
 	if o.AccountID == "" {
 		return errors.New("timescale: InsertAccountObservation: AccountID is empty")
@@ -79,9 +72,7 @@ func (s *Store) InsertAccountObservation(ctx context.Context, o domain.AccountOb
 	return nil
 }
 
-// AccountObservation is the read-side row shape: the fields of [accounts.Observation] with
-// sql-friendly types for NULL-able columns (HomeDomain is *string). It is separate from that
-// dispatcher wire type so the two can evolve independently.
+// AccountObservation is the read-side row shape: the fields of [accounts.Observation] with sql-friendly types for NULL-able columns (HomeDomain is *string).
 type AccountObservation struct {
 	AccountID  string
 	Ledger     uint32
@@ -93,13 +84,7 @@ type AccountObservation struct {
 	IsRemoval  bool
 }
 
-// LatestAccountObservationAtOrBefore returns the most-recent observation for accountID with
-// ledger ≤ asOf, or [ErrNotFound] when the account has none in scope (the caller then falls back
-// to operator-static config).
-//
-// `account_observations.ledger` is int4, so a uint32 above MaxInt32 fails with out-of-range
-// (22003). Callers wanting "no upper bound" pass `math.MaxInt32`, not `^uint32(0)`; high values
-// are capped here too so a caller bug cannot flood resolver errors.
+// LatestAccountObservationAtOrBefore returns the newest observation with ledger <= asOf or [ErrNotFound]; the ledger column is int4, so a uint32 above MaxInt32 fails with 22003.
 func (s *Store) LatestAccountObservationAtOrBefore(ctx context.Context, accountID string, asOfLedger uint32) (AccountObservation, error) {
 	const maxInt32 = uint32(math.MaxInt32)
 	if asOfLedger > maxInt32 {
@@ -124,9 +109,7 @@ func (s *Store) LatestAccountObservationAtOrBefore(ctx context.Context, accountI
 	return row, nil
 }
 
-// LatestAccountObservationsAtOrBefore is the batch form of
-// [Store.LatestAccountObservationAtOrBefore]: one round trip for many
-// accounts. An account with no observation in scope is absent from the map.
+// LatestAccountObservationsAtOrBefore is the batch form of [Store.LatestAccountObservationAtOrBefore]: one round trip for many accounts.
 func (s *Store) LatestAccountObservationsAtOrBefore(ctx context.Context, accountIDs []string, asOfLedger uint32) (map[string]AccountObservation, error) {
 	out := make(map[string]AccountObservation, len(accountIDs))
 	if len(accountIDs) == 0 {
@@ -203,13 +186,7 @@ func scanAccountObservation(sc interface{ Scan(dest ...any) error }) (AccountObs
 	return row, nil
 }
 
-// UpsertAccountObserverWatermark advances the observer's TRUE processed-ledger watermark. The
-// live indexer calls it every ledger, REGARDLESS of whether a watched balance changed, so the
-// watermark tracks liveness rather than the last write.
-//
-// Singleton row (id=1). The WHERE guard makes a lower-or-equal value a silent no-op, so an
-// out-of-order or replayed caller can never regress the anchor (mirrors [Store.UpsertCursor]).
-// processed_ledger is bigint, so no int4 cap applies.
+// UpsertAccountObserverWatermark advances the observer's processed-ledger watermark every ledger regardless of balance changes; the WHERE guard makes a lower-or-equal value a silent no-op.
 func (s *Store) UpsertAccountObserverWatermark(ctx context.Context, processedLedger uint32) error {
 	const q = `
         INSERT INTO account_observer_watermark (id, processed_ledger, updated_at)
@@ -225,15 +202,7 @@ func (s *Store) UpsertAccountObserverWatermark(ctx context.Context, processedLed
 	return nil
 }
 
-// MaxAccountObservationLedger returns how far the ACCOUNT OBSERVER has PROCESSED at-or-before
-// asOfLedger (account_observer_watermark). Zero when none is recorded, which the refresher's
-// freshness gate treats as a permissive bypass.
-//
-// It reads the watermark, not MAX(ledger) FROM account_observations: that table only gets a row
-// when a watched balance CHANGES, so MAX(ledger) goes stale in a quiet period (false-rejecting the
-// XLM freshness gate). The watermark advances every ledger (see
-// [Store.UpsertAccountObserverWatermark]), so only a dead observer freezes it, and the gate then
-// fails closed past the horizon.
+// MaxAccountObservationLedger returns how far the observer has PROCESSED at or before asOfLedger, from the watermark and not MAX(ledger), which only moves when a balance changes; zero means none recorded.
 func (s *Store) MaxAccountObservationLedger(ctx context.Context, asOfLedger uint32) (uint32, error) {
 	const maxInt32 = uint32(math.MaxInt32)
 	if asOfLedger > maxInt32 {

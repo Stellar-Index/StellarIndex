@@ -14,11 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 )
 
-// SeedIntraLedgerSeq is the intra_ledger_seq an ops seed writer stamps on every row. It is
-// math.MaxUint32 because a seed row is the authoritative FINAL state for its ledger (from the
-// ClickHouse lake, ADR-0034), so it must sit at the END of the intra-ledger order: a live change
-// can never overwrite it, while a re-seed (equal sentinel) stays corrective under the `<=` guard.
-// The live dispatcher counter cannot reach this value, so there is no live/seed ambiguity.
+// SeedIntraLedgerSeq is the intra_ledger_seq a seed writer stamps (math.MaxUint32) so the seed row, the authoritative final state for its ledger, sorts last: a live change never overwrites it and a re-seed does.
 const SeedIntraLedgerSeq = uint32(math.MaxUint32)
 
 // observationWalkVersion is stamped as walk_version on every observation row
@@ -27,8 +23,7 @@ const SeedIntraLedgerSeq = uint32(math.MaxUint32)
 // re-derive under a newer walk replace an older one's row.
 const observationWalkVersion = int64(dispatcher.EntryWalkVersion)
 
-// TrustlineObservation is the wire shape for a single
-// trustline-delta row. Mirrors trustline_observations columns.
+// TrustlineObservation is the wire shape for a single trustline-delta row.
 type TrustlineObservation struct {
 	AccountID  string
 	AssetKey   string
@@ -43,9 +38,7 @@ type TrustlineObservation struct {
 	IntraLedgerSeq uint32
 }
 
-// InsertTrustlineObservation appends one [TrustlineObservation], last-writer-wins on conflict,
-// like [Store.InsertAccountObservation]: the post-state is monotonic within a ledger, so the
-// latest write is the final state. Rejects empty AccountID / AssetKey / nil Balance before the DB.
+// InsertTrustlineObservation appends one [TrustlineObservation], last-writer-wins on conflict as in [Store.InsertAccountObservation]; rejects empty AccountID/AssetKey or nil Balance.
 func (s *Store) InsertTrustlineObservation(ctx context.Context, o TrustlineObservation) error {
 	if o.AccountID == "" {
 		return errors.New("timescale: InsertTrustlineObservation: AccountID is empty")
@@ -84,11 +77,7 @@ func (s *Store) InsertTrustlineObservation(ctx context.Context, o TrustlineObser
 	return nil
 }
 
-// SumTrustlineBalancesAtOrBefore returns the sum of trustline_balance for `assetKey` across every
-// observed account at-or-before `asOfLedger`. The row picked per (account, asset) is the
-// most-recent; is_removal=true rows contribute 0. The result is a non-nil *big.Int (zero when the
-// asset has no observations).
-// unbounded-latest-ok: a holder whose last row predates any floor still holds that balance at asOfLedger.
+// SumTrustlineBalancesAtOrBefore returns the sum of trustline_balance for `assetKey` over the latest row per account at or before `asOfLedger` (removals contribute 0), as a non-nil *big.Int; unbounded-latest-ok: a holder whose last row predates any floor still holds that balance at asOfLedger.
 func (s *Store) SumTrustlineBalancesAtOrBefore(ctx context.Context, assetKey string, asOfLedger uint32) (*big.Int, error) {
 	const q = `
         SELECT COALESCE(sum(balance_stroops), 0)::text
@@ -119,8 +108,7 @@ type ClaimableObservation struct {
 	IntraLedgerSeq uint32
 }
 
-// InsertClaimableObservation — same shape as
-// InsertTrustlineObservation, keyed on claimable_id.
+// InsertClaimableObservation — same shape as InsertTrustlineObservation, keyed on claimable_id.
 func (s *Store) InsertClaimableObservation(ctx context.Context, o ClaimableObservation) error {
 	if o.ClaimableID == "" {
 		return errors.New("timescale: InsertClaimableObservation: ClaimableID is empty")
@@ -163,16 +151,7 @@ const claimableObservationUpsert = ` ON CONFLICT (claimable_id, ledger, observed
         WHERE (claimable_observations.walk_version, claimable_observations.intra_ledger_seq)
            <= (EXCLUDED.walk_version, EXCLUDED.intra_ledger_seq)`
 
-// InsertClaimableObservationBatch persists rows via one multi-row INSERT with the same
-// intra_ledger_seq-guarded upsert as [Store.InsertClaimableObservation], so it is idempotent and an
-// earlier intra-ledger change can never overwrite a later one.
-//
-// It exists for `supply seed-claimable-balances`, which can emit one row per live claimable balance
-// on the network; at one round-trip per row that seed is round-trip-bound for hours.
-//
-// Postgres rejects an ON CONFLICT DO UPDATE statement that presents the same conflict key twice
-// ("cannot affect row a second time"), so intra-batch duplicates are collapsed last-wins first, as
-// InsertSEP41TransferBatch does.
+// InsertClaimableObservationBatch persists rows in one multi-row INSERT with the same intra_ledger_seq-guarded upsert as [Store.InsertClaimableObservation], so an earlier intra-ledger change never overwrites a later one.
 func (s *Store) InsertClaimableObservationBatch(ctx context.Context, rows []ClaimableObservation) error {
 	if len(rows) == 0 {
 		return nil
@@ -258,17 +237,13 @@ func dedupeClaimableObservations(rows []ClaimableObservation) []ClaimableObserva
 // overwrite when `(walk_version, intra_ledger_seq) <= EXCLUDED`); the read path must match. The
 // seed sentinel wins at equal ledger because it is the ledger's final state.
 
-// LiveClaimable is a claimable balance's latest served observation when that
-// observation is live.
+// LiveClaimable is a claimable balance's latest served observation when that observation is live.
 type LiveClaimable struct {
 	AssetKey string
 	Ledger   uint32
 }
 
-// LiveClaimableObservations returns, by claimable_id, every claimable balance whose latest served
-// observation is live, picked as SumClaimableBalancesAtOrBefore picks at the tip. `supply
-// seed-claimable-balances` retracts each one the lake shows removed.
-// unbounded-latest-ok: a balance created before any floor and never claimed is still live.
+// LiveClaimableObservations returns by claimable_id every claimable balance whose latest served observation is live, picked as SumClaimableBalancesAtOrBefore picks at the tip; unbounded-latest-ok: a balance created before any floor and never claimed is still live.
 func (s *Store) LiveClaimableObservations(ctx context.Context) (map[string]LiveClaimable, error) {
 	const q = `
         SELECT claimable_id, asset_key, ledger
@@ -307,9 +282,7 @@ func (s *Store) LiveClaimableObservations(ctx context.Context) (map[string]LiveC
 	return out, nil
 }
 
-// SumClaimableBalancesAtOrBefore — same shape as
-// SumTrustlineBalancesAtOrBefore, keyed on claimable_id.
-// unbounded-latest-ok: a balance created before any floor and never claimed is still live.
+// SumClaimableBalancesAtOrBefore is SumTrustlineBalancesAtOrBefore keyed on claimable_id; unbounded-latest-ok: a balance created before any floor and never claimed is still live.
 func (s *Store) SumClaimableBalancesAtOrBefore(ctx context.Context, assetKey string, asOfLedger uint32) (*big.Int, error) {
 	const q = `
         SELECT COALESCE(sum(balance_stroops), 0)::text
@@ -341,8 +314,6 @@ type LPReserveObservation struct {
 }
 
 // InsertLPReserveObservation — keyed on (pool_id, asset_key).
-// One change to a pool produces TWO row writes (one per asset
-// side); the LP-reserve observer (liquidity_pools) emits both.
 func (s *Store) InsertLPReserveObservation(ctx context.Context, o LPReserveObservation) error {
 	if o.PoolID == "" {
 		return errors.New("timescale: InsertLPReserveObservation: PoolID is empty")
@@ -379,9 +350,7 @@ func (s *Store) InsertLPReserveObservation(ctx context.Context, o LPReserveObser
 	return nil
 }
 
-// SumLPReservesAtOrBefore — most-recent (pool_id, asset_key)
-// observation, summed across pools.
-// unbounded-latest-ok: a pool whose last row predates any floor still holds those reserves.
+// SumLPReservesAtOrBefore sums the latest (pool_id, asset_key) observation across pools; unbounded-latest-ok: a pool whose last row predates any floor still holds those reserves.
 func (s *Store) SumLPReservesAtOrBefore(ctx context.Context, assetKey string, asOfLedger uint32) (*big.Int, error) {
 	const q = `
         SELECT COALESCE(sum(balance_stroops), 0)::text
@@ -414,8 +383,6 @@ type SACBalanceObservation struct {
 }
 
 // InsertSACBalanceObservation — keyed on (contract_id, holder).
-// Asset_key is the operator-supplied SAC → asset mapping
-// stamped at decode time.
 func (s *Store) InsertSACBalanceObservation(ctx context.Context, o SACBalanceObservation) error {
 	if o.ContractID == "" {
 		return errors.New("timescale: InsertSACBalanceObservation: ContractID is empty")
@@ -458,9 +425,7 @@ func (s *Store) InsertSACBalanceObservation(ctx context.Context, o SACBalanceObs
 	return nil
 }
 
-// SumSACBalancesAtOrBefore sums the most-recent (contract_id, holder) observation across holders,
-// keyed by asset_key so the reader gets the SAC component of a watched classic asset directly.
-// unbounded-latest-ok: a holder whose last row predates any floor still holds that balance at asOfLedger.
+// SumSACBalancesAtOrBefore sums the latest (contract_id, holder) observation across holders, keyed by asset_key so the reader gets a watched classic asset's SAC component; unbounded-latest-ok: a holder whose last row predates any floor still holds that balance at asOfLedger.
 func (s *Store) SumSACBalancesAtOrBefore(ctx context.Context, assetKey string, asOfLedger uint32) (*big.Int, error) {
 	const q = `
         SELECT COALESCE(sum(balance_stroops), 0)::text
@@ -477,10 +442,7 @@ func (s *Store) SumSACBalancesAtOrBefore(ctx context.Context, assetKey string, a
 	return scanSum(ctx, s.db, q, assetKey, int(asOfLedger))
 }
 
-// SACBalanceObservationsExist reports whether any sac_balance_observations row exists for the
-// asset at-or-before the ledger, regardless of is_removal. SumSACBalancesAtOrBefore's
-// COALESCE(sum(...), 0) cannot tell "summed to zero from real rows" from "no rows", and the
-// escrow-bound gate in CrossCheckSubsetBound needs that distinction.
+// SACBalanceObservationsExist reports whether any sac_balance_observations row exists for the asset at-or-before the ledger, regardless of is_removal.
 func (s *Store) SACBalanceObservationsExist(ctx context.Context, assetKey string, asOfLedger uint32) (bool, error) {
 	const q = `
         SELECT EXISTS (
@@ -497,10 +459,7 @@ func (s *Store) SACBalanceObservationsExist(ctx context.Context, assetKey string
 	return exists, nil
 }
 
-// TrustlineBalanceForAccountAtOrBefore returns the most-recent trustline balance for the
-// (account, asset) pair at-or-before the ledger, or non-nil zero when there is no observation in
-// scope or the latest is a removal. The classic-supply reader uses it for IssuerBalance and
-// LockedAccountBalances.
+// TrustlineBalanceForAccountAtOrBefore returns the latest trustline balance for (account, asset) at or before the ledger, or non-nil zero when none is in scope or the latest is a removal.
 func (s *Store) TrustlineBalanceForAccountAtOrBefore(ctx context.Context, accountID, assetKey string, asOfLedger uint32) (*big.Int, error) {
 	const q = `
         SELECT balance_stroops::text, is_removal
@@ -514,10 +473,7 @@ func (s *Store) TrustlineBalanceForAccountAtOrBefore(ctx context.Context, accoun
 	return scanLatestBalance(ctx, s.db, q, accountID, assetKey, int(asOfLedger))
 }
 
-// SACBalanceForContractAtOrBefore returns the most-recent SAC balance for the (holder, asset) pair
-// at-or-before the ledger, zero on no observation or removal, like
-// TrustlineBalanceForAccountAtOrBefore. The classic-supply reader uses it for
-// LockedContractBalances.
+// SACBalanceForContractAtOrBefore returns the latest SAC balance for (holder, asset) at or before the ledger, zero on no observation or removal, like TrustlineBalanceForAccountAtOrBefore.
 func (s *Store) SACBalanceForContractAtOrBefore(ctx context.Context, contractHolder, assetKey string, asOfLedger uint32) (*big.Int, error) {
 	const q = `
         SELECT balance_stroops::text, is_removal
@@ -571,20 +527,7 @@ func scanSum(ctx context.Context, db *sql.DB, q string, args ...any) (*big.Int, 
 	return v, nil
 }
 
-// MinClassicComponentLedger returns how far the slowest of the four classic-supply component
-// OBSERVERS has progressed at-or-before `asOfLedger`; the supply Refresher uses it to detect
-// snapshots whose components lag the snapshot ledger.
-//
-// Each component contributes its observer WATERMARK, MAX(ledger) across ALL assets in its table,
-// and the result is the MIN of the four. The watermark is deliberately global, NOT per-asset:
-// observers write a row only when a balance CHANGES, so a per-asset MAX(ledger) measures activity,
-// not freshness (a quiet asset is not stale). A dead observer stops advancing every asset's
-// watermark, which is still caught.
-//
-// An entirely empty component contributes no signal (NULLIF, excluded from the MIN). An asset with
-// NO observations in ANY component is uninstrumented and returns 0, so the caller skips the
-// freshness gate (zero means no signal on Supply.MinComponentLedger); otherwise global watermarks
-// would give it a healthy-looking anchor and let a zero-valued supply publish.
+// MinClassicComponentLedger returns how far the slowest of the four classic-supply component observers has progressed at or before `asOfLedger` (each contributes its watermark), so the supply Refresher can detect lagging snapshots.
 func (s *Store) MinClassicComponentLedger(ctx context.Context, assetKey string, asOfLedger uint32) (uint32, error) {
 	// Cheap per-asset half: is this asset instrumented at all? Postgres
 	// short-circuits the OR chain, so a normal asset stops at the first

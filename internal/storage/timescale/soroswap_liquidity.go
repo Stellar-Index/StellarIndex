@@ -8,12 +8,7 @@ import (
 	"time"
 )
 
-// SoroswapLiquidityEvent is one soroswap_liquidity row: a single Soroswap pair `deposit` or
-// `withdraw` (LP add / remove) event.
-//
-// Amounts are decimal-string i128 values (ADR-0003), stored verbatim into NUMERIC columns.
-// Token0 / Token1 are the pair's canonical asset_ids from the factory registry; an empty string
-// becomes SQL NULL (pair unseeded at decode time, resolvable later via soroswap_pairs).
+// SoroswapLiquidityEvent is one soroswap_liquidity row (a pair deposit or withdraw); amounts are decimal-string i128 stored verbatim into NUMERIC (ADR-0003).
 type SoroswapLiquidityEvent struct {
 	Pair            string
 	Ledger          uint32
@@ -32,13 +27,7 @@ type SoroswapLiquidityEvent struct {
 	NewReserve1     string // decimal i128
 }
 
-// InsertSoroswapLiquidity appends one Soroswap liquidity event row, idempotent on the table PK.
-// It uses the generation-guarded upsert (migration 0110 pattern): a corrected re-derive lands when
-// its generation is >= the stored one, and a live gen-0 replay never reverts it.
-//
-// Rejects empty Pair / TxHash / Provider / Action, the five amount strings, and a zero
-// LedgerCloseTime (the partition column; a zero value routes to a chunk Timescale will not open).
-// The amount columns are NOT NULL, so an empty string is a caller bug, not a missing field.
+// InsertSoroswapLiquidity appends one Soroswap liquidity row, idempotent on the PK via a generation-guarded upsert: a corrected re-derive lands at >= the stored generation and a live gen-0 replay never reverts it.
 func (s *Store) InsertSoroswapLiquidity(ctx context.Context, e SoroswapLiquidityEvent) error {
 	if e.Pair == "" {
 		return errors.New("timescale: InsertSoroswapLiquidity: Pair is empty")

@@ -10,16 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical/discovery"
 )
 
-// RecordDiscovered persists a [discovery.Hit] to `discovered_assets`, idempotent on contract_id via
-// ON CONFLICT: the first observation preserves first_seen_*, later ones update last_seen_* and add
-// hit.Count (1 when unset) to event_count, since AsyncSink flushes deduped deltas carrying the true
-// observation count.
-//
-// discovery_kind records which sniffer produced the hit ([discovery.KindSEP41] /
-// [discovery.KindOracleEvent] / [discovery.KindOracleCall]); an empty Kind means KindSEP41.
-// first_seen_event stores hit.Symbol, falling back to hit.EventType when Symbol is empty.
-//
-// Implements [discovery.Recorder].
+// RecordDiscovered persists a [discovery.Hit] to `discovered_assets`, idempotent on contract_id: the first observation keeps first_seen_*, later ones update last_seen_* and add hit.Count (1 when unset) to event_count.
 func (s *Store) RecordDiscovered(ctx context.Context, hit discovery.Hit) error {
 	if hit.ContractID == "" {
 		return errors.New("timescale: RecordDiscovered: empty ContractID")
@@ -67,12 +58,7 @@ func (s *Store) RecordDiscovered(ctx context.Context, hit discovery.Hit) error {
 	return nil
 }
 
-// IsKnownDiscovered reports whether contractID has been recorded.
-// Implements [discovery.Recorder].
-//
-// Returns (false, nil) for never-seen contracts; that is the normal state for a new contract's first
-// event, not an error. Storage errors propagate, and the caller may log and continue since the
-// contract will reappear on its next event.
+// IsKnownDiscovered reports whether contractID has been recorded ([discovery.Recorder]); (false, nil) for a never-seen contract is normal, and storage errors propagate.
 func (s *Store) IsKnownDiscovered(ctx context.Context, contractID string) (bool, error) {
 	if contractID == "" {
 		return false, nil
@@ -89,9 +75,7 @@ func (s *Store) IsKnownDiscovered(ctx context.Context, contractID string) (bool,
 	return true, nil
 }
 
-// DiscoveredAsset is the read shape returned by [ListDiscovered].
-// Mirrors the table schema 1:1; the Hit shape from the discovery
-// package is write-only-side and lacks the running counters.
+// DiscoveredAsset is the read shape returned by [ListDiscovered], mirroring the table 1:1 including the running counters the write-side Hit lacks.
 type DiscoveredAsset struct {
 	ContractID      string
 	FirstSeenAt     time.Time
@@ -108,9 +92,7 @@ type DiscoveredAsset struct {
 	EventCount     int64
 }
 
-// ListDiscovered returns `discovered_assets` rows ordered by first_seen_at DESC, for
-// `stellarindex-ops discovery list` and integration tests. limit 0 means no limit; an empty table
-// yields an empty slice, not nil.
+// ListDiscovered returns `discovered_assets` rows by first_seen_at DESC for `stellarindex-ops discovery list`; limit 0 means no limit and an empty table yields an empty slice, not nil.
 func (s *Store) ListDiscovered(ctx context.Context, limit int) ([]DiscoveredAsset, error) {
 	q := `
 		SELECT contract_id, first_seen_at, first_seen_ledger, first_seen_event,

@@ -6,8 +6,7 @@ import (
 	"fmt"
 )
 
-// SushiswapV3Pool is one sushiswap_v3_pools row. Token fields are C-strkeys;
-// canonical.Asset reconstruction stays with the caller.
+// SushiswapV3Pool is one sushiswap_v3_pools row.
 type SushiswapV3Pool struct {
 	PoolID         string
 	FactoryID      string
@@ -19,7 +18,6 @@ type SushiswapV3Pool struct {
 }
 
 // UpsertSushiswapV3Pool records (or refreshes) a pool created by the factory.
-// Idempotent on pool_id: the decoder calls it on every observed pool_created.
 func (s *Store) UpsertSushiswapV3Pool(ctx context.Context, p SushiswapV3Pool) error {
 	if p.PoolID == "" || p.FactoryID == "" || p.Token0 == "" || p.Token1 == "" {
 		return errors.New("timescale: UpsertSushiswapV3Pool: empty pool, factory or token")
@@ -44,8 +42,7 @@ func (s *Store) UpsertSushiswapV3Pool(ctx context.Context, p SushiswapV3Pool) er
 	return nil
 }
 
-// LoadSushiswapV3Pools returns every persisted pool, used at boot to seed the
-// decoder's token map.
+// LoadSushiswapV3Pools returns every persisted pool, used at boot to seed the decoder's token map.
 func (s *Store) LoadSushiswapV3Pools(ctx context.Context) ([]SushiswapV3Pool, error) {
 	const q = `
 		SELECT pool_id, factory_id, token0, token1, fee_pips, tick_spacing, creation_ledger

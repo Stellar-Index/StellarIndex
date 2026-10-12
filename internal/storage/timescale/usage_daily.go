@@ -19,18 +19,7 @@ const usageDailyUpsertChunk = 500
 // usageDailyColumns is the bind-parameter width of one usage_daily row.
 const usageDailyColumns = 7
 
-// UpsertUsageDaily merges per-(day, subject, endpoint) usage aggregates into the `usage_daily`
-// hypertable. It satisfies [usage.RollupSink]; the rollup worker calls it every sweep with
-// cumulative per-day counters.
-//
-// The merge is GREATEST(), not overwrite: Redis counters only grow within a day, so re-sweeping is
-// a no-op and a mid-day Redis flush (counter reset lower) can never regress a persisted row.
-//
-// Rows go as multi-row INSERTs of at most usageDailyUpsertChunk rows, one autocommitted statement
-// per chunk, bounding round trips and transaction size by the chunk. A mid-batch failure leaves
-// earlier chunks committed; each row is an independently valid cumulative value and the next sweep
-// re-sends the rest, so a partial batch is incomplete, never wrong. The batch is validated whole
-// before the first statement.
+// UpsertUsageDaily merges per-(day, subject, endpoint) usage aggregates into usage_daily for usage.RollupSink; the merge is GREATEST(), not overwrite, because the Redis counters only grow within a day.
 func (s *Store) UpsertUsageDaily(ctx context.Context, rows []usage.RollupRow) error {
 	rows, err := foldUsageDailyRows(rows)
 	if err != nil {
@@ -114,10 +103,7 @@ func (s *Store) upsertUsageDailyChunk(ctx context.Context, rows []usage.RollupRo
 	return nil
 }
 
-// UsageDailyRow is one persisted (day, subject, endpoint) aggregate
-// read back from `usage_daily`. Counts mirror the table columns —
-// the API layer derives requests = OK + ClientErrors + ServerErrors,
-// billable = OK + ClientErrors and errors = ClientErrors + ServerErrors.
+// UsageDailyRow is one persisted (day, subject, endpoint) aggregate read back from `usage_daily`.
 type UsageDailyRow struct {
 	Day          string // YYYY-MM-DD UTC
 	Subject      string
@@ -128,10 +114,7 @@ type UsageDailyRow struct {
 	Throttled    int64
 }
 
-// ReadUsageDaily returns the subject's per-endpoint rollups for the
-// trailing `days` window (inclusive of today), oldest day first,
-// endpoints alphabetical within a day. Backs /v1/account/usage via
-// the main.go adapter onto the v1.UsageRollupReader seam.
+// ReadUsageDaily returns the subject's per-endpoint rollups for the trailing `days` window (inclusive of today), oldest day first, backing /v1/account/usage.
 func (s *Store) ReadUsageDaily(ctx context.Context, subject string, days int) ([]UsageDailyRow, error) {
 	if subject == "" || days <= 0 {
 		return nil, nil
@@ -170,10 +153,7 @@ func (s *Store) ReadUsageDaily(ctx context.Context, subject string, days int) ([
 	return out, nil
 }
 
-// BillableByDay implements usage.DailyBillableReader: the subject's
-// billable units (ok + 4xx, the quota-counted classes) per UTC day in
-// [from, to] (YYYY-MM-DD, inclusive). It is the durable side the
-// month-to-date meter reconciles evicted Redis day keys against.
+// BillableByDay implements usage.DailyBillableReader: the subject's billable units (ok + 4xx, the quota-counted classes) per UTC day in [from, to], the durable side the month-to-date meter reconciles against.
 func (s *Store) BillableByDay(ctx context.Context, subject, from, to string) (map[string]int64, error) {
 	const q = `
         SELECT day, SUM(ok_count + client_error_count)::bigint

@@ -31,8 +31,7 @@ const (
 	instanceLockPing   = `SELECT 1`
 )
 
-// ErrInstanceLockHeld means another session holds the instance lock:
-// another process of the same kind is running against this database.
+// ErrInstanceLockHeld means another session holds the instance lock: another process of the same kind is running against this database.
 var ErrInstanceLockHeld = errors.New("timescale: instance lock is held by another session")
 
 // InstanceLock is a held instance lock. See [Store.HoldInstanceLock].
@@ -50,10 +49,7 @@ type InstanceLock struct {
 	watchDone chan struct{}
 }
 
-// HoldInstanceLock takes the named instance lock without waiting (a held lock is
-// [ErrInstanceLockHeld]) and re-verifies it every [InstanceLockVerifyInterval] until ctx ends or
-// [InstanceLock.Release]. If the session dies the lock is retaken on a new one; if another
-// session got there first, onLost is called once and [InstanceLock.Lost] reports it.
+// HoldInstanceLock takes the named instance lock without waiting ([ErrInstanceLockHeld] if held) and re-verifies it every [InstanceLockVerifyInterval], retaking it on a new session if the old dies and calling onLost if another session wins.
 func (s *Store) HoldInstanceLock(ctx context.Context, name string, onLost func(), logger *slog.Logger) (*InstanceLock, error) {
 	l := &InstanceLock{db: s.db, name: name, onLost: onLost, logger: logger}
 	conn, err := l.take(ctx)
@@ -146,8 +142,7 @@ func (l *InstanceLock) watch(ctx context.Context, every time.Duration) {
 	}
 }
 
-// Lost returns the error that ended the hold when another session took
-// the lock, else nil. Nil-safe: a dry-run holds no lock.
+// Lost returns the error that ended the hold when another session took the lock, else nil; nil-safe because a dry-run holds no lock.
 func (l *InstanceLock) Lost() error {
 	if l == nil {
 		return nil
@@ -158,7 +153,6 @@ func (l *InstanceLock) Lost() error {
 }
 
 // Release stops verification, unlocks and closes the holding session.
-// Nil-safe.
 func (l *InstanceLock) Release(ctx context.Context) error {
 	if l == nil {
 		return nil

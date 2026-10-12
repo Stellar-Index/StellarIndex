@@ -7,10 +7,7 @@ import (
 	"time"
 )
 
-// DefindexFee is one defindex_fees row: a single per-asset entry of a DeFindex vault `dfees`
-// protocol-fee distribution. One on-chain event fans out to one row per distributed_fees Vec
-// entry; FeeIndex is the position in that Vec and a PK component. Token is the fee token
-// contract C-strkey, PER-ASSET not per-recipient. Amount is a decimal-string i128.
+// DefindexFee is one defindex_fees row, a per-asset entry of a vault `dfees` distribution; FeeIndex is the position in distributed_fees and a PK component, and Token is the fee token C-strkey.
 type DefindexFee struct {
 	Ledger          uint32
 	LedgerCloseTime time.Time
@@ -23,13 +20,7 @@ type DefindexFee struct {
 	Amount          string // decimal i128 per ADR-0003
 }
 
-// InsertDefindexFee lands one dfees distribution entry, idempotent on
-// the (ledger_close_time, contract_id, ledger, tx_hash, op_index, event_index, fee_index) PK
-// with a generation-guarded corrective upsert: a corrected re-derive of token/amount lands in
-// place when its generation is >= the stored one, and a live gen-0 replay cannot revert it.
-//
-// Defensive: rejects an empty TxHash / ContractID / Token / Amount and a zero LedgerCloseTime
-// before touching the DB.
+// InsertDefindexFee lands one dfees entry, idempotent on its PK with a generation-guarded corrective upsert (>= stored lands, lower is refused).
 func (s *Store) InsertDefindexFee(ctx context.Context, e DefindexFee) error {
 	if e.TxHash == "" {
 		return errors.New("timescale: InsertDefindexFee: TxHash is empty")
