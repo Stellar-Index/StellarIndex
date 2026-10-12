@@ -20919,6 +20919,20 @@ components:
                 below the substance floor, served because the request opted
                 in with `include_thin=true`. Input order; absent otherwise.
                 No `change_24h_pct` is derived for these rows.
+            stale:
+              type: array
+              items: { type: string }
+              description: |
+                Requested ids in `data` whose row is stale; `flags.stale`
+                is their OR. Input order; absent when no row is stale.
+            triangulated:
+              type: array
+              items: { type: string }
+              description: |
+                Requested ids in `data` whose price was derived through
+                another market (stablecoin proxy, cross-rate);
+                `flags.triangulated` is their OR. Input order; absent when
+                no row is triangulated.
           required: [data]
 
     SubstanceEvidence:

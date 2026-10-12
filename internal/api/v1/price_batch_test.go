@@ -225,11 +225,15 @@ func TestPriceBatch_StablecoinFallback(t *testing.T) {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
 	var env struct {
-		Data []v1.PriceSnapshot `json:"data"`
+		Data         []v1.PriceSnapshot `json:"data"`
+		Triangulated []string           `json:"triangulated"`
 	}
 	mustDecode(t, resp, &env)
 	if len(env.Data) != 1 {
 		t.Fatalf("got %d entries, want 1 (stablecoin proxy should populate)", len(env.Data))
+	}
+	if len(env.Triangulated) != 1 || env.Triangulated[0] != usdt.String() {
+		t.Errorf("triangulated = %v, want [%s]", env.Triangulated, usdt.String())
 	}
 	if env.Data[0].Price != "1.001" {
 		t.Errorf("data[0].price = %q, want 1.001", env.Data[0].Price)
@@ -286,10 +290,16 @@ func TestPriceBatch_StaleFlagOR(t *testing.T) {
 	}
 	var env struct {
 		Flags v1.Flags `json:"flags"`
+		Stale []string `json:"stale"`
 	}
 	mustDecode(t, resp, &env)
 	if !env.Flags.Stale {
 		t.Errorf("expected envelope.flags.stale=true (any item stale)")
+	}
+	// The OR alone cannot say WHICH row is stale; `stale` names it so a
+	// multi-id caller does not mark the fresh row stale.
+	if len(env.Stale) != 1 || env.Stale[0] != "fiat:EUR" {
+		t.Errorf("stale = %v, want [fiat:EUR]", env.Stale)
 	}
 }
 

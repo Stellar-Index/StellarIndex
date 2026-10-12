@@ -72,6 +72,11 @@
 import { API_BASE_URL } from '@/api/client';
 import { CURRENT_NETWORK_ID } from './networks';
 import type { components } from '@/api/types';
+import {
+  isPriceableAssetId,
+  PRICE_BATCH_GET_MAX_IDS,
+  type PriceBatchRow,
+} from './price-batch';
 
 // The envelope's `flags`/`as_of` siblings (see EnvelopeMeta in the
 // generated spec) are dropped by buildFetchData — only `data` survives its
@@ -82,6 +87,9 @@ export type BuildFetchEnvelope<T> = {
   data: T | null;
   flags?: components['schemas']['Flags'];
   as_of?: string;
+  /** /v1/price/batch only: the rows behind flags.stale / flags.triangulated. */
+  stale?: string[];
+  triangulated?: string[];
 };
 
 /** True when the build host has no real API (CI placeholder URL). */
@@ -339,12 +347,16 @@ async function fetchWithRetry<T>(
       }
       // A 200 with a non-JSON or non-envelope body is an error payload,
       // not data — let it throw into the retry loop.
-      const env = (await res.json()) as {
+      const env = (await res.json()) as Omit<BuildFetchEnvelope<T>, 'data'> & {
         data?: T;
-        flags?: components['schemas']['Flags'];
-        as_of?: string;
       };
-      return { data: env.data ?? null, flags: env.flags, as_of: env.as_of };
+      return {
+        data: env.data ?? null,
+        flags: env.flags,
+        as_of: env.as_of,
+        stale: env.stale,
+        triangulated: env.triangulated,
+      };
     } catch (err) {
       lastErr = err;
       if (attempt < maxAttempts) await sleep(500 * attempt);
@@ -400,4 +412,91 @@ export function requireRows<T>(rows: T[] | null, what: string): T[] {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** One /v1/price/batch row plus its per-row flags; `undefined` flags = the envelope could not say. */
+export interface BuildPriceHit {
+  row: PriceBatchRow;
+  stale: boolean | undefined;
+  triangulated: boolean | undefined;
+}
+
+const priceBatchMemo = new Map<string, Promise<Map<string, BuildPriceHit | null>>>();
+
+/**
+ * buildFetchPriceBatch prices many ids against one quote through
+ * /v1/price/batch, so a build costs one request per 100 ids instead of one
+ * /v1/price per page. Result: id → hit, or null when the API answered "no
+ * price" (absent or withheld). An id missing from the map went unanswered
+ * (CI stub, failed chunk) — the caller falls back to a single-pair fetch.
+ * Chunks go one at a time: each already fans out server-side.
+ */
+export function buildFetchPriceBatch(
+  ids: readonly string[],
+  quote: string,
+): Promise<Map<string, BuildPriceHit | null>> {
+  const wanted = [...new Set(ids)]
+    .filter((id) => isPriceableAssetId(id) && id !== quote)
+    .sort();
+  const key = `${quote}|${wanted.join(',')}`;
+  const hit = priceBatchMemo.get(key);
+  if (hit) return hit;
+  const p = (async () => {
+    const out = new Map<string, BuildPriceHit | null>();
+    for (let i = 0; i < wanted.length; i += PRICE_BATCH_GET_MAX_IDS) {
+      const chunk = wanted.slice(i, i + PRICE_BATCH_GET_MAX_IDS);
+      const env = await buildFetchEnvelope<PriceBatchRow[]>(
+        `/v1/price/batch?asset_ids=${encodeURIComponent(chunk.join(','))}&quote=${encodeURIComponent(quote)}`,
+        { softFail: true, timeoutMs: 15_000, attempts: 2 },
+      );
+      if (!env.data) continue;
+      // Older APIs send only the OR-ed flag: a set flag without the id list
+      // cannot be pinned to a row, so those rows' flags stay unknown.
+      const flag = (set: boolean | undefined, list: string[] | undefined) =>
+        list ? (id: string) => list.includes(id) : set ? () => undefined : () => false;
+      const isStale = flag(env.flags?.stale, env.stale);
+      const isTri = flag(env.flags?.triangulated, env.triangulated);
+      for (const id of chunk) out.set(id, null);
+      for (const row of env.data) {
+        out.set(row.asset_id, {
+          row,
+          stale: isStale(row.asset_id),
+          triangulated: isTri(row.asset_id),
+        });
+      }
+    }
+    return out;
+  })();
+  priceBatchMemo.set(key, p);
+  return p;
+}
+
+// Price and the server's 24h change both come off a /v1/price/batch row
+// (change_24h_pct exists only there). Rows are batched per quote over the
+// whole build listing, so 500 pair pages cost a handful of requests; a pair
+// outside the listing, or in a failed chunk, falls back to a one-id batch.
+export async function buildFetchPairPrice(
+  base: string,
+  quote: string,
+): Promise<PriceBatchRow | null> {
+  let markets: { base: string; quote: string }[] | null = null;
+  try {
+    markets = await buildFetchData<{ base: string; quote: string }[]>(
+      '/v1/markets?limit=500&order_by=volume_24h_usd_desc',
+    );
+  } catch {
+    // The listing is fail-hard in markets/[pair]'s generateStaticParams; here it only
+    // narrows the price fetch, so fall through to the one-id batch.
+  }
+  const bases = (markets ?? []).filter((m) => m.quote === quote).map((m) => m.base);
+  if (bases.includes(base)) {
+    const prices = await buildFetchPriceBatch(bases, quote);
+    const hit = prices.get(base);
+    if (hit !== undefined) return hit?.row ?? null;
+  }
+  const rows = await buildFetchData<PriceBatchRow[]>(
+    `/v1/price/batch?asset_ids=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}`,
+    { softFail: true, timeoutMs: 6_000, attempts: 2 },
+  );
+  return rows?.[0] ?? null;
 }

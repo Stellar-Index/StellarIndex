@@ -7,7 +7,12 @@ vi.mock('@/lib/buildFetch', async () => {
     await vi.importActual<typeof import('@/lib/buildFetch')>(
       '@/lib/buildFetch',
     );
-  return { ...actual, buildFetchData: vi.fn(), failBuild: vi.fn() };
+  return {
+    ...actual,
+    buildFetchData: vi.fn(),
+    buildFetchPairPrice: vi.fn(),
+    failBuild: vi.fn(),
+  };
 });
 
 // Client subcomponents unrelated to the 24h badge — stub them so this
@@ -16,7 +21,7 @@ vi.mock('./OrderBookPanel', () => ({ OrderBookPanel: () => <div /> }));
 vi.mock('./PairChart', () => ({ PairChart: () => <div /> }));
 vi.mock('./SourceBreakdown', () => ({ SourceBreakdown: () => <div /> }));
 
-import { buildFetchData } from '@/lib/buildFetch';
+import { buildFetchData, buildFetchPairPrice } from '@/lib/buildFetch';
 import PairPage from './page';
 
 const BASE = 'crypto:XLM';
@@ -50,45 +55,29 @@ describe('markets/[pair]/page 24h change badge (CA2-A35-correct-5)', () => {
     vi.unstubAllGlobals();
   });
 
-  it('bakes the badge from /v1/price/batch, not the single-row /v1/price response', async () => {
-    vi.mocked(buildFetchData).mockImplementation(async (path: string) => {
-      if (path.startsWith('/v1/price/batch')) {
-        return [{ asset_id: BASE, change_24h_pct: '+3.62' }] as never;
-      }
-      if (path.startsWith('/v1/price')) {
-        // Single-row /v1/price never carries change_24h_pct per the
-        // documented contract — this must NOT be where the badge comes
-        // from.
-        return {
-          asset_id: BASE,
-          quote: QUOTE,
-          price: '0.204',
-          price_type: 'vwap',
-          observed_at: '2026-07-03T22:36:00Z',
-        } as never;
-      }
-      return null;
-    });
+  it('bakes the badge from the /v1/price/batch row', async () => {
+    vi.mocked(buildFetchData).mockResolvedValue(null as never);
+    vi.mocked(buildFetchPairPrice).mockResolvedValue({
+      asset_id: BASE,
+      price: '0.204',
+      price_type: 'vwap',
+      observed_at: '2026-07-03T22:36:00Z',
+      change_24h_pct: '+3.62',
+    } as never);
 
     await renderPair();
 
     expect(screen.getByText('+3.62%')).toBeInTheDocument();
   });
 
-  it('renders no badge when the batch lookup has no comparison bucket', async () => {
-    vi.mocked(buildFetchData).mockImplementation(async (path: string) => {
-      if (path.startsWith('/v1/price/batch')) return [] as never;
-      if (path.startsWith('/v1/price')) {
-        return {
-          asset_id: BASE,
-          quote: QUOTE,
-          price: '0.204',
-          price_type: 'vwap',
-          observed_at: '2026-07-03T22:36:00Z',
-        } as never;
-      }
-      return null;
-    });
+  it('renders no badge when the batch row has no comparison bucket', async () => {
+    vi.mocked(buildFetchData).mockResolvedValue(null as never);
+    vi.mocked(buildFetchPairPrice).mockResolvedValue({
+      asset_id: BASE,
+      price: '0.204',
+      price_type: 'vwap',
+      observed_at: '2026-07-03T22:36:00Z',
+    } as never);
 
     await renderPair();
 
