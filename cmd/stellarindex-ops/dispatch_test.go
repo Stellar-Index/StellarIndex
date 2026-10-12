@@ -5,18 +5,9 @@ import (
 	"testing"
 )
 
-// TestSubcommandDispatch_LeafHandlersSeeTheirFlags guards against leaf subcommands being
-// UNINVOKABLE.
-//
-// The dispatch table hands a handler the FULL argv (args[0] == the verb). Go's flag package
-// stops parsing at the first non-flag argument, so a leaf doing fs.Parse(args) on that argv
-// parses NOTHING and every flag keeps its zero value, answering "-config is required". Unit
-// tests that call handlers DIRECTLY with flags-only argv never exercise the dispatcher's
-// convention.
-//
-// This test goes through `subcommands`, as main() does. It asserts the error is NOT the
-// no-flags-parsed symptom: each handler's next gate differs, but every one reports
-// "-config is required" if and only if the flags were dropped.
+// TestSubcommandDispatch_LeafHandlersSeeTheirFlags guards against uninvokable leaf subcommands. The table passes the full argv
+// (args[0] == verb) and flag stops at the first non-flag, so fs.Parse(args) parses nothing and reports "-config is required".
+// It goes through `subcommands` as main() does, and asserts that symptom is absent.
 func TestSubcommandDispatch_LeafHandlersSeeTheirFlags(t *testing.T) {
 	cases := []struct {
 		verb string

@@ -86,10 +86,8 @@ func TestSciDecimalStringToScaledInt_MatchesFloatRounding(t *testing.T) {
 	}
 }
 
-// TestSciDecimalStringToScaledInt_RoundsNotTruncates pins the exact
-// truncation regression: 5.55555555e-7 truncated at decimals+2-then-8
-// gives 55, one-signed below the true value; correct
-// rounding at exactly 8 decimals gives 56.
+// TestSciDecimalStringToScaledInt_RoundsNotTruncates pins rounding at exactly 8 decimals: 5.55555555e-7 must give 56, not the
+// 55 that truncating at decimals+2 gave.
 func TestSciDecimalStringToScaledInt_RoundsNotTruncates(t *testing.T) {
 	got, err := SciDecimalStringToScaledInt("5.55555555e-7", 8)
 	if err != nil {
@@ -188,13 +186,9 @@ func TestInvertScaled(t *testing.T) {
 	}
 }
 
-// TestInvertScaledRoundsHalfUp pins that the inverse is rounded half-up, not truncated toward
-// zero.
-//
-// Though the error is ≤1 ulp, truncation bias is one-signed: every inverted rate on every poll
-// (ECB, exchangeratesapi, Chainlink) lands at or below the true value and never above it, so it
-// does not average out like symmetric rounding error. The cases make truncation and half-up give
-// provably different answers, in exact integer arithmetic with no float anywhere.
+// TestInvertScaledRoundsHalfUp pins half-up rounding of the inverse: truncation is one-signed, so every inverted rate (ECB,
+// exchangeratesapi, Chainlink) would land at or below truth. The cases make truncation and half-up differ, in exact integer
+// arithmetic with no float.
 func TestInvertScaledRoundsHalfUp(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -226,11 +220,8 @@ func TestInvertScaledRoundsHalfUp(t *testing.T) {
 	}
 }
 
-// TestInvertScaledMatchesRedstoneReciprocal guards the two implementations of "reciprocal at
-// the same fixed-point scale" against drifting apart (redstone.reciprocalAtScale rounds
-// half-up). The formula is re-derived here rather than imported so this stays a real
-// cross-check, not a tautology; importing redstone from scale would also invert the dependency
-// direction.
+// TestInvertScaledMatchesRedstoneReciprocal guards against drift from redstone.reciprocalAtScale (half-up); the formula is re-
+// derived here, not imported, to stay a real cross-check and keep scale free of a redstone dependency.
 func TestInvertScaledMatchesRedstoneReciprocal(t *testing.T) {
 	redstoneFormula := func(v *big.Int, decimals int) *big.Int {
 		scale := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil)

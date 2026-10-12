@@ -16,10 +16,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// Reference arithmetic for the fuzz properties below. It is written
-// independently of interest.go (different rounding idiom: (n+d-1)/d
-// rather than QuoRem+carry) so a rounding-direction regression in the
-// production helpers cannot also hide in the oracle.
+// Reference arithmetic for the fuzz properties, written independently of interest.go with a different rounding idiom
+// ((n+d-1)/d), so a rounding-direction regression in the production helpers cannot also hide in the oracle.
 
 func i128FromParts(hi int64, lo uint64) *big.Int {
 	n := new(big.Int).Lsh(big.NewInt(hi), 64)
@@ -115,10 +113,8 @@ func FuzzFixedPointRounding(f *testing.F) {
 	})
 }
 
-// FuzzReserveMetrics checks supplied/borrowed/utilization/borrow-rate/
-// supply-rate against the contract-transcribed oracle, plus two
-// oracle-free properties: the borrow rate is monotone non-decreasing in
-// utilization, and matches its closed form at the curve's kinks.
+// FuzzReserveMetrics checks supplied/borrowed/utilization/borrow-rate/supply-rate against the contract-transcribed oracle,
+// plus oracle-free properties: borrow rate is monotone non-decreasing in utilization and matches its closed form at the kinks.
 func FuzzReserveMetrics(f *testing.F) {
 	// Reference config from interest.rs, non-exact rounding everywhere.
 	f.Add(uint64(2_000_000_0000001), uint64(1_000_000_0000003), uint64(1_000_000_000_007), uint64(1_000_000_000_011),
@@ -259,11 +255,9 @@ func equalReserveConfig(a, b ReserveConfig) bool {
 	return a == b
 }
 
-// FuzzReserveConfigRoundTrip closes the writer-to-reader loop the APY path depends on: a
-// queue_set_reserve ReserveConfig decoded by the EVENT decoder, persisted as
-// blend_admin.attributes->'metadata' JSON and re-read by ParseReserveConfigMetadata must equal the
-// STORAGE decoder's view of the same ScVal: every field, the i128 supply cap untruncated, in any
-// map key order.
+// FuzzReserveConfigRoundTrip pins the writer-to-reader loop the APY path depends on: a queue_set_reserve config decoded by the
+// event decoder, persisted as blend_admin metadata JSON and re-read by ParseReserveConfigMetadata equals the storage decoder's
+// view, including the untruncated i128 supply cap, in any map key order.
 func FuzzReserveConfigRoundTrip(f *testing.F) {
 	f.Add(uint32(3), uint32(7), uint32(8_500_000), uint32(9_000_000), uint32(8_000_000), uint32(9_500_000),
 		uint32(100_000), uint32(500_000), uint32(1_000_000), uint32(2_000_000), uint32(50_000),

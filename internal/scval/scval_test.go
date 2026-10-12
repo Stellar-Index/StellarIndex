@@ -56,10 +56,8 @@ func TestEncodeSymbol_rejectsInvalid(t *testing.T) {
 	}
 }
 
-// Golden regression — the exact base64 bytes for Symbol("REFLECTOR")
-// and Symbol("update") recorded once so an SDK upgrade that shifts
-// the wire encoding surfaces as a test failure here before it ships.
-// Re-generate via: `go test ./internal/scval/ -run TestGolden -v`.
+// Golden regression: the exact base64 for Symbol("REFLECTOR") and Symbol("update"), so an SDK upgrade that shifts the wire
+// encoding fails here. Regenerate via `go test ./internal/scval/ -run TestGolden -v`.
 func TestGolden_symbolBytes(t *testing.T) {
 	cases := []struct {
 		sym  string
@@ -175,10 +173,8 @@ func TestAsAddressStrkey_contract(t *testing.T) {
 	}
 }
 
-// TestAsAddressStrkey_muxed pins the CAP-67 / P23 muxed-account
-// strkey encoding. SEP-41 transfers with a destination Muxed
-// Account hit this path; an unaware decoder trips
-// "unknown ScAddress type 2" and dropped the row.
+// TestAsAddressStrkey_muxed pins the CAP-67 / P23 muxed-account strkey encoding: a SEP-41 transfer to a muxed destination used to
+// trip "unknown ScAddress type 2" and drop the row.
 func TestAsAddressStrkey_muxed(t *testing.T) {
 	var ed xdr.Uint256
 	m := xdr.MuxedEd25519Account{Id: xdr.Uint64(0x80), Ed25519: ed}

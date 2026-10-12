@@ -157,10 +157,8 @@ func (b *lockedBuffer) String() string {
 	return b.buf.String()
 }
 
-// TestStreamer_SurfacesRejectionAndSkips is the end-to-end
-// guard: a rejected subscription and an unparsable trade entry each
-// leave a metric and a log line instead of vanishing on a healthy
-// socket.
+// TestStreamer_SurfacesRejectionAndSkips: a rejected subscription and an unparsable trade entry each leave a metric and a log
+// line.
 func TestStreamer_SurfacesRejectionAndSkips(t *testing.T) {
 	frames := []string{
 		`{"error":"Currency pair not supported XLM/GBP","method":"subscribe","success":false,"symbol":"XLM/GBP"}`,

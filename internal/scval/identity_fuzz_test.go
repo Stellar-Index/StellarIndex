@@ -75,11 +75,9 @@ func FuzzEncodeSymbol(f *testing.F) {
 	})
 }
 
-// FuzzAddressStrkey builds each ScAddress variant from fuzzed key bytes and
-// checks the strkey decodes back to exactly those bytes under exactly that
-// variant's version byte — so a holder/contract id is never re-keyed onto a
-// different identity. ContractIDFromScAddress must accept the contract arm
-// only, and HolderFromBalanceKey must agree with AsAddressStrkey.
+// FuzzAddressStrkey builds each ScAddress variant from fuzzed key bytes and checks the strkey decodes back to exactly those bytes
+// under that variant's version byte, so a holder/contract id is never re-keyed; ContractIDFromScAddress accepts only the contract
+// arm.
 func FuzzAddressStrkey(f *testing.F) {
 	f.Add(uint8(0), []byte{}, uint64(0))
 	f.Add(uint8(1), []byte{0xff, 0x01}, uint64(1))

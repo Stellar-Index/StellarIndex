@@ -60,10 +60,7 @@ func TestRoundTrip(t *testing.T) {
 	}
 }
 
-// TestVerify_OK is the steady-state case: re-reading the same bytes
-// later (e.g. periodic verifier) hashes to the same value, Verify
-// returns nil. This is the *most-common* code path in production —
-// drift is rare; agreement is the norm.
+// TestVerify_OK is the steady-state path: re-reading the same bytes hashes to the same value and Verify returns nil.
 func TestVerify_OK(t *testing.T) {
 	db, err := Create(mkPath(t), 0)
 	if err != nil {
@@ -83,11 +80,8 @@ func TestVerify_OK(t *testing.T) {
 	}
 }
 
-// TestVerify_DriftDetected is the alert path: same ledger seq, but
-// the bytes have changed. Verify must return ErrDrift so the caller
-// can escalate. This is the exact scenario the package exists to
-// catch — AWS public bucket retroactively rewrote an already-fetched
-// ledger, or local corruption silently flipped bits.
+// TestVerify_DriftDetected is the alert path: same ledger seq with changed bytes (upstream rewrite or local corruption) must
+// return ErrDrift.
 func TestVerify_DriftDetected(t *testing.T) {
 	db, err := Create(mkPath(t), 0)
 	if err != nil {
@@ -112,10 +106,8 @@ func TestVerify_DriftDetected(t *testing.T) {
 	}
 }
 
-// TestGet_Missing covers the cold-cache path: a Verify against a
-// ledger that has never been recorded must return ErrMissing — NOT
-// ErrDrift. The caller uses ErrMissing as the signal "record this
-// hash for next time" rather than "the world is on fire".
+// TestGet_Missing covers the cold-cache path: Verify on a never-recorded ledger returns ErrMissing, not ErrDrift, signalling
+// "record this hash" rather than an alert.
 func TestGet_Missing(t *testing.T) {
 	db, err := Create(mkPath(t), 100)
 	if err != nil {
@@ -136,10 +128,8 @@ func TestGet_Missing(t *testing.T) {
 	}
 }
 
-// TestGet_Sparse covers the post-skip case: appending at seq=200
-// when start=100 leaves slots 100..199 unwritten. Reads in the gap
-// must return ErrMissing (the all-zeros sentinel). Reads at 200
-// return the real hash.
+// TestGet_Sparse covers the post-skip case: appending at seq=200 with start=100 leaves 100..199 unwritten (all-zeros sentinel),
+// so gap reads return ErrMissing and 200 returns the real hash.
 func TestGet_Sparse(t *testing.T) {
 	db, err := Create(mkPath(t), 100)
 	if err != nil {
@@ -220,10 +210,7 @@ func TestOpen_BadVersion(t *testing.T) {
 	}
 }
 
-// TestCreate_ExclusiveFails locks down the fail-on-exists semantics
-// of Create — operators must not silently truncate an existing
-// hashdb just because they re-ran a populate command. They have to
-// delete the file deliberately first.
+// TestCreate_ExclusiveFails locks fail-on-exists: re-running a populate command must not silently truncate an existing hashdb.
 func TestCreate_ExclusiveFails(t *testing.T) {
 	path := mkPath(t)
 	db, err := Create(path, 0)

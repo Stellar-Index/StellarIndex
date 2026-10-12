@@ -26,10 +26,8 @@ func TestEventClosedAt_RFC3339Parsing(t *testing.T) {
 	}
 }
 
-// TestEventClosedAt_EmptyStringErrors — an event with no
-// LedgerClosedAt MUST surface an error rather than the zero time.
-// Per the docstring: the zero time would break VWAP windows + time-
-// ordered queries downstream.
+// TestEventClosedAt_EmptyStringErrors: an event with no LedgerClosedAt must return an error, not the zero time, which would break
+// VWAP windows and time-ordered queries downstream.
 func TestEventClosedAt_EmptyStringErrors(t *testing.T) {
 	ev := events.Event{ID: "0002-002", LedgerClosedAt: ""}
 	_, err := ev.EventClosedAt()
@@ -57,11 +55,8 @@ func TestEventClosedAt_BadFormatErrors(t *testing.T) {
 	}
 }
 
-// TestEvent_JSONRoundTrip — the JSON tags are the wire contract
-// for stellar-rpc fixture replays. Verify a typical event marshals
-// and unmarshals losslessly, especially the omitempty on OpArgs
-// (events from RPC don't carry op args; events from the dispatcher
-// do).
+// TestEvent_JSONRoundTrip: the JSON tags are the wire contract for stellar-rpc fixture replays, so a typical event must round-
+// trip losslessly, especially omitempty on OpArgs (RPC events carry none; dispatcher events do).
 func TestEvent_JSONRoundTrip(t *testing.T) {
 	original := events.Event{
 		Type:                     "contract",

@@ -9,10 +9,8 @@ import (
 )
 
 func TestFilterOutliers_DropsFatTail(t *testing.T) {
-	// σ-thresholds have a known weakness: a single huge outlier
-	// inflates σ enough that it can't remove itself. Use enough
-	// baseline samples (20) so the mean isn't dragged too far by
-	// the outlier.
+	// A sigma threshold has a known weakness: one huge outlier inflates sigma so it cannot remove itself, so use enough baseline
+	// samples (20) that the outlier does not drag the mean too far.
 	baseline := []int64{
 		100, 101, 99, 100, 102, 98, 101, 100, 99, 100,
 		101, 100, 99, 101, 100, 102, 99, 100, 101, 100,

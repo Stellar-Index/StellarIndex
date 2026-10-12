@@ -157,10 +157,8 @@ func TestDirectorySync_WiresAJobHeartbeat(t *testing.T) {
 		_, _ = w.Write(tarball)
 	}))
 	defer srv.Close()
-	// fetchDirectoryTarball builds its own *http.Client but leaves
-	// Transport nil, which falls back to http.DefaultTransport — swap in
-	// the test server's (trusting its self-signed cert) for the
-	// duration of this test.
+	// fetchDirectoryTarball builds its own *http.Client with a nil Transport, i.e. http.DefaultTransport; swap in the test
+	// server's (trusting its self-signed cert) for this test.
 	origTransport := http.DefaultTransport
 	http.DefaultTransport = srv.Client().Transport
 	defer func() { http.DefaultTransport = origTransport }()

@@ -7,13 +7,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 )
 
-// TestVWAPTTL_BoundedBySilenceGrace contract: a published VWAP may not outlive its publisher by
-// more than the silence grace.
-//
-// The aggregator re-writes EVERY configured (pair, window) on every tick, so the window is an
-// aggregation span, not a freshness claim. A TTL keyed to the window would let `vwap:<pair>:86400`
-// survive 24 h after the aggregator stopped, and /v1/price?window=86400 would serve it with
-// `observed_at` stamped at request time and no stale flag: a day-old price asserted as current.
+// TestVWAPTTL_BoundedBySilenceGrace: a published VWAP may not outlive its publisher by more than the silence grace. The
+// aggregator rewrites every (pair, window) each tick, so the window is a span, not freshness; a window-keyed TTL would let
+// `vwap:<pair>:86400` serve a day-old price as current (observed_at stamped at request time, no stale flag).
 func TestVWAPTTL_BoundedBySilenceGrace(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -37,10 +33,8 @@ func TestVWAPTTL_BoundedBySilenceGrace(t *testing.T) {
 		})
 	}
 
-	// The grace itself is load-bearing: 10 missed ticks at the 30 s
-	// default cadence, the same number FreezeTTL uses for the same
-	// reason, and comfortably above the 120 s staleness the serving
-	// path already alarms on.
+	// The grace is load-bearing: 10 missed ticks at the 30 s default cadence (the same as FreezeTTL), comfortably above the 120 s
+	// staleness the serving path already alarms on.
 	if cachekeys.VWAPMaxAge != 5*time.Minute {
 		t.Errorf("VWAPMaxAge = %v, want 5m (10 missed ticks at the 30s default cadence)",
 			cachekeys.VWAPMaxAge)

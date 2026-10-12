@@ -272,10 +272,8 @@ func invokeSwapHF(t *testing.T) xdr.HostFunction {
 	return hf
 }
 
-// TestDecodeOperationBody_InvokeHostFunction_AuthTree pins the 5.1 enhancement:
-// the nested AUTHORIZATION tree (op.Auth → RootInvocation → SubInvocations) is
-// surfaced under Fields["authorizations"] so the /tx view can render the
-// contract-call structure.
+// TestDecodeOperationBody_InvokeHostFunction_AuthTree pins that the nested authorization tree (op.Auth, RootInvocation,
+// SubInvocations) is surfaced under Fields["authorizations"] so the /tx view can render the contract-call structure.
 func TestDecodeOperationBody_InvokeHostFunction_AuthTree(t *testing.T) {
 	root := authNode(0xB0, "transfer", authNode(0xC0, "approve"))
 	b64 := mustBody(t, xdr.OperationTypeInvokeHostFunction, xdr.InvokeHostFunctionOp{
@@ -317,10 +315,8 @@ func TestDecodeOperationBody_InvokeHostFunction_NoAuthNoTree(t *testing.T) {
 	}
 }
 
-// TestDecodeOperationBody_InvokeHostFunction_AuthCredentials:
-// the SorobanCredentials that authorized an auth entry's root — the address
-// that actually signed a relayed invoke — must be surfaced, since the op's
-// own source_account (the relayer) is not it.
+// TestDecodeOperationBody_InvokeHostFunction_AuthCredentials: the SorobanCredentials that authorized an auth entry's root (the
+// actual signer of a relayed invoke) must be surfaced, since the op's source_account is the relayer.
 func TestDecodeOperationBody_InvokeHostFunction_AuthCredentials(t *testing.T) {
 	root := authNode(0xB0, "transfer")
 	authAddr := xdr.MustAddress(gAddr2)
@@ -387,10 +383,8 @@ func TestDecodeOperationBody_InvokeHostFunction_SourceAccountCredentials(t *test
 	}
 }
 
-// TestDecodeOperationBody_ManageData_NonUTF8Name: a manage_data
-// name is opaque XDR bytes (String64), not guaranteed UTF-8. name_base64 must
-// carry the exact original bytes even when name itself, once JSON-marshaled,
-// would show U+FFFD replacement characters.
+// TestDecodeOperationBody_ManageData_NonUTF8Name: a manage_data name is opaque XDR bytes (String64), not guaranteed UTF-8, so
+// name_base64 must carry the exact original bytes even when the JSON-marshaled name would show U+FFFD.
 func TestDecodeOperationBody_ManageData_NonUTF8Name(t *testing.T) {
 	raw := []byte{'k', 0x01, 0xff, 0xfe}
 	b64 := mustBody(t, xdr.OperationTypeManageData, xdr.ManageDataOp{
@@ -589,10 +583,8 @@ func TestDecodeOperationBody_LiquidityPoolDepositWithdraw(t *testing.T) {
 	}
 }
 
-// operationBodyFixture returns a representative base64 body for every
-// xdr.OperationType this SDK knows, so TestDecodeOperationBody_FieldsExhaustive
-// can drive DecodeOperationBody across all of them. ok=false means this test
-// has no fixture for typ yet (kept separate from a decode failure).
+// operationBodyFixture returns a representative base64 body for every xdr.OperationType the SDK knows, driving
+// TestDecodeOperationBody_FieldsExhaustive. ok=false means no fixture for typ yet (distinct from a decode failure).
 func operationBodyFixture(t *testing.T, typ xdr.OperationType) (string, bool) {
 	t.Helper()
 	credit := xdr.MustNewCreditAsset("USDC", gAddr2)
@@ -683,10 +675,9 @@ func operationBodyFixture(t *testing.T, typ xdr.OperationType) (string, bool) {
 	return "", false
 }
 
-// TestDecodeOperationBody_FieldsExhaustive: every operation type the SDK knows must decode to
-// Fields or be on the genuinely-empty allowlist (inflation, end_sponsoring_future_reserves),
-// never silently fall back to raw_xdr. It ranges the SDK's own enum values, not a fixed count,
-// so a new protocol op type goes RED until fillOpFields and operationBodyFixture handle it.
+// TestDecodeOperationBody_FieldsExhaustive: every SDK operation type must decode to Fields or be on the empty allowlist
+// (inflation, end_sponsoring_future_reserves), never fall back to raw_xdr. It ranges the SDK enum, so a new op type fails until
+// fillOpFields and operationBodyFixture handle it.
 func TestDecodeOperationBody_FieldsExhaustive(t *testing.T) {
 	genuinelyEmpty := map[xdr.OperationType]bool{
 		xdr.OperationTypeInflation:                   true,

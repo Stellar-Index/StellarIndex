@@ -7,12 +7,8 @@ import (
 	"testing"
 )
 
-// TestLoad_RealCorpus exercises the actual embedded markdown files (_template.md is skipped).
-// Load is content-shape agnostic, so a new entry should still pass.
-//
-// Load() silently drops a post that fails to parse (deliberate: one bad post shouldn't break
-// the feed) and only logs a warning. A `len(got) != 0` check can't tell "every post parsed"
-// from "all but one", so cross-check against the real file count on disk.
+// TestLoad_RealCorpus exercises the embedded markdown files (_template.md skipped). Load silently drops a post that fails to
+// parse, so a `len(got) != 0` check cannot tell all-parsed from all-but-one; cross-check against the real file count on disk.
 func TestLoad_RealCorpus(t *testing.T) {
 	got, err := Load(nil)
 	if err != nil {
@@ -53,10 +49,8 @@ func TestLoad_RealCorpus(t *testing.T) {
 	}
 }
 
-// TestLoad_NoSilentDrops guards the failure mode Load accepts by design: a post failing
-// frontmatter validation is logged and skipped rather than panicking. Nothing else catches the
-// count going quietly wrong (a malformed post vanishes from /v1/incidents and the status page
-// with only a log line), so this compares Load's count against every non-template *.md embedded.
+// TestLoad_NoSilentDrops guards Load's by-design failure mode: a post failing frontmatter validation is logged and skipped,
+// vanishing from /v1/incidents and the status page. Compare Load's count against every non-template *.md embedded.
 func TestLoad_NoSilentDrops(t *testing.T) {
 	entries, err := fs.ReadDir(contentFS, "data")
 	if err != nil {
@@ -169,10 +163,8 @@ func TestParseTimestamp_NoneParseable(t *testing.T) {
 	}
 }
 
-// An out-of-enum severity or status must fail the post loudly. The OpenAPI contract declares
-// both as required enums, and downstream severity mapping falls through to "maintenance"
-// (GREEN on the status page), so a slip like `sev-1` would publish an ongoing SEV-1 as routine
-// maintenance and break typed clients.
+// An out-of-enum severity or status must fail the post loudly: the OpenAPI contract requires both enums and severity mapping
+// falls through to "maintenance" (GREEN), so a slip like `sev-1` would publish an ongoing SEV-1 as routine maintenance.
 func TestParseFile_RejectsOutOfEnumSeverityAndStatus(t *testing.T) {
 	t.Parallel()
 
@@ -207,10 +199,8 @@ body
 	}
 }
 
-// TestParseSource_RejectsUnknownFrontmatterField guards that a
-// misspelled frontmatter key (e.g. "sevority" for "severity") must fail
-// the post loudly instead of silently parsing with severity/status left
-// at their zero value and the post publishing with missing data.
+// TestParseSource_RejectsUnknownFrontmatterField guards that a misspelled frontmatter key (e.g. "sevority") fails the post
+// loudly instead of parsing with severity/status at zero value and publishing with missing data.
 func TestParseSource_RejectsUnknownFrontmatterField(t *testing.T) {
 	t.Parallel()
 
@@ -258,10 +248,8 @@ func TestLoad_RedisDiskFullPostmortem_NoDanglingPRRefs(t *testing.T) {
 	}
 }
 
-// TestLoad_CredentialPIIExposureIncidentRecord: the log-store
-// credential/PII exposure needs a customer-facing incident record. This asserts the record exists,
-// parses, and its status is "resolved" (not silently dropped as
-// malformed, and not stuck at "investigating" forever).
+// TestLoad_CredentialPIIExposureIncidentRecord asserts the customer-facing record for the log-store credential/PII exposure
+// exists, parses, and is "resolved" (neither dropped as malformed nor stuck at "investigating").
 func TestLoad_CredentialPIIExposureIncidentRecord(t *testing.T) {
 	got, err := Load(nil)
 	if err != nil {

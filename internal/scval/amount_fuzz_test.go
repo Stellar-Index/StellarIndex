@@ -74,10 +74,8 @@ func wireRoundTrip(t *testing.T, sv xdr.ScVal) xdr.ScVal {
 	return got
 }
 
-// FuzzAmountFromI128 pins every i128 read path — the typed accessor, both
-// SEP-41 balance/transfer body shapes (bare i128 and the CAP-67 map carrying
-// `amount` + `to_muxed_id`), and the explorer renderer — to the same
-// big.Int reference, across the full signed 128-bit range.
+// FuzzAmountFromI128 pins every i128 read path (typed accessor, both SEP-41 body shapes: bare i128 and the CAP-67 map with
+// `amount` + `to_muxed_id`, and the explorer renderer) to one big.Int reference across the full signed 128-bit range.
 func FuzzAmountFromI128(f *testing.F) {
 	f.Add(int64(0), uint64(0))
 	f.Add(int64(0), uint64(330000000))           // bare i128 burn fixture (display_fuzz_test seed)

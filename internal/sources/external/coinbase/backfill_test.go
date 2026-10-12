@@ -35,10 +35,8 @@ func synthesiseCoinbaseCandles(count int, startSec, granSec int64) []coinbaseCan
 	return out
 }
 
-// newTestCoinbaseREST serves the fixture on the first call then
-// empty arrays on subsequent calls — matches the real venue's
-// "no more data past the newest emitted candle" behaviour when
-// our paginator advances its `start` parameter.
+// newTestCoinbaseREST serves the fixture on the first call then empty arrays, as the real venue does once the paginator's
+// `start` passes the newest candle.
 func newTestCoinbaseREST(t *testing.T, product string, candles []coinbaseCandle) *httptest.Server {
 	t.Helper()
 	expectedPath := "/products/" + product + "/candles"
@@ -190,10 +188,8 @@ func TestCoinbaseGranularity(t *testing.T) {
 	}
 }
 
-// TestCoinbaseCandleToTrade_LHOC_Ordering guards against the
-// positional-field-order trap: Coinbase returns LHOC (low/high/open/
-// close) while every other CEX uses OHLC. A parser assuming the
-// wrong order would use LOW price as close — lower than reality.
+// TestCoinbaseCandleToTrade_LHOC_Ordering guards the field-order trap: Coinbase returns low/high/open/close (LHOC) while other
+// CEXes use OHLC, so a parser assuming OHLC would take the low as the close.
 func TestCoinbaseCandleToTrade_LHOC_Ordering(t *testing.T) {
 	// Synthesise a candle with a clear low vs close gap so mis-
 	// ordering surfaces as a price divergence. Close = 100, Low = 50.
@@ -459,11 +455,8 @@ func TestCoinbaseBackfill_PacesRequests(t *testing.T) {
 	}
 }
 
-// coinbaseCandleToTrade has three early-exit error branches the
-// existing backfill_test.go's happy-path TestCoinbaseCandleToTrade_LHOC_Ordering
-// doesn't reach. They guard against malformed upstream rows
-// landing in the trades hypertable as zero-volume or zero-price
-// observations.
+// coinbaseCandleToTrade has three early-exit error branches that the happy-path LHOC test misses; they keep malformed upstream
+// rows from landing in trades as zero-volume or zero-price observations.
 
 func makePair(t *testing.T) canonical.Pair {
 	t.Helper()

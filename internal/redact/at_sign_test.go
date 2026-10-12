@@ -10,10 +10,9 @@ import (
 // the credential got out.
 const tailStem = "PLACEHOLDER-TAIL-NOT-REAL"
 
-// hostileCarriers are credentials a naive pattern stops short on: one that ends the password at
-// the FIRST `@` leaks everything after an embedded one, and one that will not cross a space or a
-// quote prints such a password whole. They match the text a Go caller sees: net/url's *url.Error
-// renders the URL with %q, so the quoted forms matter and an embedded `"` is backslash-escaped.
+// hostileCarriers are credentials naive patterns stop short on: ending the password at the FIRST `@` leaks the rest, and not
+// crossing a space or quote prints it whole. They match what a Go caller sees: net/url's *url.Error renders the URL with %q, so
+// quoted forms matter and an embedded `"` is backslash-escaped.
 var hostileCarriers = map[string]string{
 	"embedded @":               "postgres://u:" + sentinel + "@" + tailStem + "@db.example.invalid/db",
 	"embedded @, quoted":       `parse "postgres://u:` + sentinel + `%ZZ@` + tailStem + `@db.example.invalid/db": invalid URL escape "%ZZ"`,
@@ -49,10 +48,8 @@ func TestCredentialsCutsTheWholePasswordNotItsFirstSegment(t *testing.T) {
 	}
 }
 
-// Two connection strings in one QUOTED message must each keep their own
-// host. A span that runs to the last `@` inside the quotes would be the
-// lazy way to cover an embedded `@`, and it would swallow the first host
-// and everything between the two.
+// Two connection strings in one QUOTED message must each keep their own host; a span running to the last `@` inside the quotes
+// would swallow the first host and everything between.
 func TestCredentialsKeepsEachQuotedURLSeparate(t *testing.T) {
 	in := `copy "postgres://a:` + sentinel + `@one.invalid/db" to "postgres://b:` + tailStem + `@two.invalid/db"`
 	want := `copy "postgres://a:<redacted>@one.invalid/db" to "postgres://b:<redacted>@two.invalid/db"`

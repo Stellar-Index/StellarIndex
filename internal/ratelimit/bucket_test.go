@@ -187,21 +187,16 @@ func TestBucket_RetryAfterIsWindowRemaining(t *testing.T) {
 	if r.Allowed {
 		t.Fatal("second should be denied")
 	}
-	// RetryAfter is "seconds until caller can succeed" = remaining
-	// in the current fixed window, not Redis's drain TTL. Window
-	// is 60s, so RetryAfter must be in [1, 60] — never exceed the
-	// window size (old bug: it was Redis's 2×window drain TTL).
+	// RetryAfter is the time remaining in the current fixed window, not Redis's 2x-window drain TTL, so with a 60s window it must
+	// be in [1, 60].
 	if r.RetryAfter < time.Second || r.RetryAfter > time.Minute {
 		t.Errorf("retry_after = %v (want [1s, 60s] = remaining-in-window)", r.RetryAfter)
 	}
 }
 
 func TestBucket_DenyHoldsWhenTTLReportsNegative(t *testing.T) {
-	// The Lua clamps a negative TTL to 0 on the deny path (bucket.go's `if ttl < 0 then ttl = 0`),
-	// so Go MUST NOT read "retryTTL == 0" as "allowed"; `count > max` is the authoritative signal.
-	//
-	// Reproduce it by stripping the TTL via miniredis's Persist, simulating a key that survives
-	// past its EXPIRE (e.g. lazy eviction ordering).
+	// The Lua clamps a negative TTL to 0 on the deny path, so Go must not read "retryTTL == 0" as allowed; `count > max` is
+	// authoritative. Reproduce by stripping the TTL via miniredis's Persist (a key surviving past its EXPIRE).
 	rdb, mr := newRedis(t)
 	fakeNow := time.Unix(1_750_000_000, 0)
 	b := ratelimit.New(rdb, 1, time.Minute,
@@ -375,14 +370,9 @@ func TestBucket_DwellTime_FailsClosedAfterWindow(t *testing.T) {
 	}
 }
 
-// TestBucket_DwellTime_FlapVsSustainedRecovery pins the recovery semantic: a SINGLE Redis success
-// must NOT reset the fail-closed dwell clock (a flapping Redis still trips fail-closed after
-// dwellTime); only a SUSTAINED healthy streak (dwellTime of unbroken successes) clears it and
-// restores fail-open. If one success wiped the clock, a flapping Redis would keep this throttle,
-// and the auth brute-force and signup throttles sharing the Bucket type, fail-open indefinitely
-// while Redis was effectively down.
-//
-// A faultInjector wrapping redis.Cmdable + a fake clock drive the sequences deterministically.
+// TestBucket_DwellTime_FlapVsSustainedRecovery pins that a SINGLE Redis success must not reset the fail-closed dwell clock;
+// only a sustained healthy streak (dwellTime of unbroken successes) does. Otherwise a flapping Redis would keep this throttle,
+// and the auth brute-force and signup throttles sharing Bucket, fail-open.
 func TestBucket_DwellTime_FlapVsSustainedRecovery(t *testing.T) {
 	rdb, _ := newRedis(t)
 	fi := &faultInjector{Cmdable: rdb}
@@ -413,10 +403,8 @@ func TestBucket_DwellTime_FlapVsSustainedRecovery(t *testing.T) {
 		t.Fatalf("flap: a stray success must not reset the dwell clock — want fail-CLOSED (ErrThrottleUnavailable), got %v", err)
 	}
 
-	// SUSTAINED RECOVERY: heal Redis and keep succeeding for > dwellTime. The
-	// first success starts the healthy streak; after dwellTime of unbroken
-	// successes the clock clears, so a later failure opens a fresh window and
-	// fails OPEN (wrapped err), not 503.
+	// SUSTAINED RECOVERY: after Redis heals and succeeds for > dwellTime the clock clears, so a later failure opens a fresh window
+	// and fails OPEN (wrapped err), not 503.
 	fi.fail = false
 	_ = take()                              // healthySince starts here
 	fakeNow = fakeNow.Add(31 * time.Second) // sustained healthy streak > dwellTime
@@ -542,11 +530,8 @@ func TestBucket_DwellTime_DeadlineCtxArms(t *testing.T) {
 	}
 }
 
-// faultInjector wraps a redis.Cmdable. When fail is true every Eval call (what the Lua script
-// driver invokes) returns redis.ErrClosed; otherwise calls pass through.
-//
-// Bucket.Take only uses EvalSha + Eval (script.Run), so overriding those two drives errors
-// deterministically without closing the underlying connection.
+// faultInjector wraps a redis.Cmdable and makes every Eval return redis.ErrClosed while fail is true; Bucket.Take only uses
+// EvalSha + Eval, so overriding those two drives errors deterministically without closing the connection.
 type faultInjector struct {
 	redis.Cmdable
 	fail bool
@@ -639,10 +624,8 @@ func TestBucket_DwellTime_DefaultIs30s(t *testing.T) {
 }
 
 func TestBucket_WithKeyPrefixOverridesDefault(t *testing.T) {
-	// Default prefix is "rl:". Override via WithKeyPrefix and verify
-	// the new prefix shows up on the actual Redis key — observable
-	// via miniredis's key listing. This is the only way to confirm
-	// the option threaded through to the codepath that builds keys.
+	// Default prefix is "rl:"; override via WithKeyPrefix and verify the new prefix appears on the real Redis key via miniredis,
+	// confirming the option reaches key building.
 	rdb, mr := newRedis(t)
 	b := ratelimit.New(rdb, 5, time.Minute, ratelimit.WithKeyPrefix("custom:"))
 	ctx := context.Background()
@@ -727,13 +710,9 @@ func TestBucket_Charge_ExactFitIsAllowed(t *testing.T) {
 	})
 }
 
-// TestBucket_Charge_ClampsCost pins both ends of the normalisation.
-//
-// Above the limit: a request priced over the ceiling is charged the whole ceiling, not refused
-// forever; it is servable into an untouched window and leaves nothing behind it.
-//
-// Below one: zero and negative costs spend a token. A negative INCRBY would hand budget BACK,
-// which a limiter must never do on caller-computed input.
+// TestBucket_Charge_ClampsCost pins both ends: a cost above the ceiling is charged the whole ceiling (servable into an
+// untouched window, not refused forever), and zero or negative costs spend a token, since a negative INCRBY would hand budget
+// back.
 func TestBucket_Charge_ClampsCost(t *testing.T) {
 	chargeBackends(t, func(t *testing.T, rdb redis.Cmdable) {
 		ctx := context.Background()
@@ -776,10 +755,8 @@ func TestBucket_Charge_ClampsCost(t *testing.T) {
 	})
 }
 
-// TestBucket_Charge_FirstWriteArmsExpiry guards the script's
-// expire-on-create branch. It must not key on `current == 1`; a key
-// first written by a cost-N charge lands on N, so an unported check
-// would leave it with no TTL and the counter would never drain.
+// TestBucket_Charge_FirstWriteArmsExpiry guards the script's expire-on-create branch: it must not key on `current == 1`, since
+// a first cost-N charge lands on N and would leave the key with no TTL, so the counter never drains.
 func TestBucket_Charge_FirstWriteArmsExpiry(t *testing.T) {
 	rdb, mr := newRedis(t)
 	b := ratelimit.New(rdb, 100, time.Minute, ratelimit.WithKeyPrefix("ttl:"))

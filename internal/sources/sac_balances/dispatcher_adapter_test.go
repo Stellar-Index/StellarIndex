@@ -227,12 +227,9 @@ func TestObserver_DecodeRemoved(t *testing.T) {
 	}
 }
 
-// TestObserver_CanonicalizesDashFormAssetKey: an operator may configure a SAC wrapper's asset_key
-// in the CODE-ISSUER (dash) wire form that [supply].watched_classic_assets uses, which the
-// trustline / claimable / LP observers canonicalize to CODE:ISSUER (colon) via
-// supply.CanonicalizeWatchedClassic. A verbatim copy would never join the classic asset's
-// colon-form supply in derivation and the asset would be UNDER-reported, so the observer must
-// emit the colon form its siblings produce.
+// TestObserver_CanonicalizesDashFormAssetKey: an asset_key in CODE-ISSUER (dash) form must be emitted as the CODE:ISSUER colon
+// form the sibling observers produce (supply.CanonicalizeWatchedClassic); a verbatim copy would never join the classic supply
+// and under-report.
 func TestObserver_CanonicalizesDashFormAssetKey(t *testing.T) {
 	const (
 		usdcDash  = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
@@ -261,10 +258,8 @@ func TestObserver_CanonicalizesDashFormAssetKey(t *testing.T) {
 	}
 }
 
-// TestObserver_PureSEP41ContractIDPassesThrough guards the fix's
-// contract_id → contract_id branch: a pure SEP-41 wrapper maps a bare
-// C-strkey (not a classic CODE-ISSUER asset) and must pass through the
-// canonicalizer unchanged, not be rejected as a non-classic asset.
+// TestObserver_PureSEP41ContractIDPassesThrough guards the contract_id branch: a pure SEP-41 wrapper's bare C-strkey
+// passes through the canonicalizer unchanged, not rejected as a non-classic asset.
 func TestObserver_PureSEP41ContractIDPassesThrough(t *testing.T) {
 	o, err := NewObserver(map[string]string{cSAC: cSAC})
 	if err != nil {
@@ -373,13 +368,8 @@ func TestObserver_DecodeRejectsForeignBalanceShapes(t *testing.T) {
 	}
 }
 
-// TestObserver_EvictedBalanceIsObservedAsRemoval pins the eviction half of the Soroban
-// state-archival lifecycle end to end through the real dispatcher.
-//
-// A SAC balance whose TTL lapses is archived at ledger close. No transaction touches it, so it is
-// in no transaction meta, and without removal handling the holder's last write would stand as their
-// balance forever and the served SAC supply component would stay above the truth. The observer must
-// see it as a removal, the same absorbing "no longer live state" a deleted entry produces.
+// TestObserver_EvictedBalanceIsObservedAsRemoval pins, through the real dispatcher, that a SAC balance archived by TTL lapse
+// (in no transaction meta) is seen as a removal; otherwise the last write stands forever and served SAC supply stays above truth.
 func TestObserver_EvictedBalanceIsObservedAsRemoval(t *testing.T) {
 	const assetKey = "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 	o, err := NewObserver(map[string]string{cSAC: assetKey})
@@ -419,10 +409,8 @@ func TestObserver_EvictedBalanceIsObservedAsRemoval(t *testing.T) {
 	}
 }
 
-// TestObserver_UnwatchedEvictionIsIgnored keeps the eviction phase from
-// widening the observer's surface: the dispatcher hands it every key the
-// ledger archived, and a contract outside the operator's SAC wrapper map
-// must still produce nothing.
+// TestObserver_UnwatchedEvictionIsIgnored keeps eviction handling from widening the observer's surface: archived keys of a
+// contract outside the SAC wrapper map must produce nothing.
 func TestObserver_UnwatchedEvictionIsIgnored(t *testing.T) {
 	o, err := NewObserver(map[string]string{cSAC: "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"})
 	if err != nil {
@@ -442,10 +430,8 @@ func TestObserver_UnwatchedEvictionIsIgnored(t *testing.T) {
 	}
 }
 
-// TestObserver_RestoreAfterEvictionReturnsTheBalance pins the round trip:
-// archival is reversible, so the Restored change must put the balance back
-// rather than leaving the holder zeroed. Without this the eviction fix
-// would trade a permanent over-count for a permanent under-count.
+// TestObserver_RestoreAfterEvictionReturnsTheBalance pins the round trip: archival is reversible, so a Restored change must
+// put the balance back, else the eviction fix trades a permanent over-count for an under-count.
 func TestObserver_RestoreAfterEvictionReturnsTheBalance(t *testing.T) {
 	const assetKey = "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 	o, err := NewObserver(map[string]string{cSAC: assetKey})

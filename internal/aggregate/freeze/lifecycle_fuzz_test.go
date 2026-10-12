@@ -23,10 +23,8 @@ func fuzzPolicy(hold, uncorrHold, ext, grace uint8, maxExt, buckets uint8, confM
 	}
 }
 
-// unfreezeHealthy is the ADR-0019 auto-unfreeze condition for one bucket, stated
-// independently of the implementation: scored, not firing, a lens agrees
-// with the candidate, confidence strictly above the floor and z strictly
-// below the ceiling.
+// unfreezeHealthy states the ADR-0019 auto-unfreeze condition independently of the implementation: scored, not firing,
+// a lens agrees with the candidate, confidence strictly above the floor and z strictly below the ceiling.
 func unfreezeHealthy(p freeze.Policy, sig freeze.Signal) bool {
 	return sig.Scored && !sig.Fires && sig.ReleaseCorroborated &&
 		sig.Confidence > p.UnfreezeConfidenceMin && sig.ZScore < p.UnfreezeZScoreMax

@@ -227,12 +227,9 @@ func TestRun_RejectsNonPositivePollInterval(t *testing.T) {
 	}
 }
 
-// TestRun_LatePollerConfigErrorDoesNotDeadlock: if runPoller goroutines are bound to the raw
-// parent ctx, teardown() (triggered when a LATER poller in the same Run call fails config
-// validation) only cancels the derived streamerCtx. An earlier poller bound to the raw ctx never
-// sees that cancellation, so teardown's wg.Wait(), and thus Run(), hangs whenever the caller's
-// own ctx isn't independently cancelled (the normal startup-config-error case, matched here by
-// context.Background()).
+// TestRun_LatePollerConfigErrorDoesNotDeadlock: pollers bound to the raw parent ctx never see teardown()'s cancellation of
+// streamerCtx when a LATER poller fails config validation, so wg.Wait() and Run() would hang unless the caller's ctx is
+// cancelled.
 func TestRun_LatePollerConfigErrorDoesNotDeadlock(t *testing.T) {
 	good := &mockPoller{
 		name:     "good-poller",
@@ -323,13 +320,9 @@ func TestRun_DeclaresFiniteOracleBudgetForEveryPoller(t *testing.T) {
 	}
 }
 
-// A flat 100_000-unit streamer dust guard at the external 10^8 scale is 0.001 of WHATEVER the
-// quote asset is. On XLM/BTC (configured by binance and bitstamp) 0.001 BTC is ~$100, so every
-// print under roughly a thousand XLM would be dropped, and the size-biased drop skews the
-// surviving volume and VWAP toward large trades.
-//
-// These tests pin the floor as $0.001 of notional expressed in the quote asset's own units, so
-// the same $0.001 applies on XLM/BTC as on XLM/USDT.
+// A flat 100_000-unit streamer dust guard at 10^8 scale is 0.001 of whatever the quote asset is (0.001 BTC is ~$100 on
+// XLM/BTC), dropping prints and skewing volume/VWAP toward large trades. These tests pin the floor as $0.001 of notional in
+// the quote asset's units.
 
 // dustPair builds an XLM/<quote> pair for the dust tests.
 func dustPair(t *testing.T, quote canonical.Asset) canonical.Pair {
@@ -363,10 +356,8 @@ func fiatAsset(t *testing.T, code string) canonical.Asset {
 	return a
 }
 
-// TestMinStreamQuoteUnits_IsUSDDenominated asserts the CORRECTED
-// floor value per quote asset, not merely that one exists.
-//
-//	units = $0.001 / usd_per_whole_unit × 10^8
+// TestMinStreamQuoteUnits_IsUSDDenominated asserts the floor value per quote asset, not merely that one exists:
+// units = $0.001 / usd_per_whole_unit x 10^8.
 func TestMinStreamQuoteUnits_IsUSDDenominated(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -588,11 +579,8 @@ func (panicPoller) PollOnce(context.Context, []canonical.Pair) ([]canonical.Trad
 	panic("simulated poller fault in PollOnce")
 }
 
-// TestRun_RecoversPanickingPoller: a panic in a poller's tick (the per-connector goroutine Run
-// fans out) is CONTAINED. The immediate first doPoll panics; the guard recovers it, the
-// goroutine unwinds and Run's wait() returns instead of the panic crashing the ingest process.
-// Without the `defer worker.Recover(...)` the panic is unrecovered in a DETACHED goroutine and
-// takes the entire test binary down.
+// TestRun_RecoversPanickingPoller: a panic in a poller tick is contained; the guard recovers it and Run's wait() returns.
+// Without `defer worker.Recover(...)` the panic in a detached goroutine takes down the whole process.
 func TestRun_RecoversPanickingPoller(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -616,10 +604,8 @@ func TestRun_RecoversPanickingPoller(t *testing.T) {
 	}
 }
 
-// errPoller is a Poller that returns an error from PollOnce. Used
-// to verify runPoller's transient-error path: the loop must log +
-// continue rather than abort, since poll-based sources hit
-// rate-limits and network blips routinely.
+// errPoller is a Poller whose PollOnce returns an error, to verify runPoller logs and continues rather than aborting,
+// since poll-based sources routinely hit rate limits and network blips.
 type errPoller struct {
 	name     string
 	interval time.Duration
@@ -671,10 +657,8 @@ func TestRun_PollerEmitsTrades(t *testing.T) {
 	wait()
 }
 
-// runPoller's PollOnce-returns-error path must log + continue rather
-// than abort the goroutine — transient errors are the norm for
-// REST/HTTP pollers. Verify the function still survives long enough
-// to retry on the next tick (calls ≥ 2).
+// runPoller logs and continues when PollOnce errors, since transient errors are normal for REST pollers; it must retry on the
+// next tick (calls >= 2).
 
 func TestRun_PollerContinuesAfterError(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)

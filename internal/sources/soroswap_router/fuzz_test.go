@@ -64,11 +64,9 @@ func realRouterArgs(f *testing.F) [][]string {
 	return out
 }
 
-// FuzzDecodeRouterArgs builds well-formed router calls from fuzzed parts, decodes them through
-// Decoder.Decode (the dispatcher's entry point) and checks every emitted field: amounts exact
-// to 128 bits and routed by function (exact-in: args[0] is in; exact-out: args[0] is out),
-// path and recipient strkeys verbatim, the deadline only where it fits int64 seconds, and call
-// depth from the call path.
+// FuzzDecodeRouterArgs decodes fuzzed well-formed router calls via Decoder.Decode and checks: amounts exact to 128 bits and
+// routed by function (exact-in: args[0] is in; exact-out: args[0] is out), strkeys verbatim, deadline only if it fits int64,
+// depth from path.
 func FuzzDecodeRouterArgs(f *testing.F) {
 	for _, a := range realRouterArgs(f) {
 		var s0, s1 sdkxdr.ScVal

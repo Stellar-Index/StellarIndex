@@ -10,12 +10,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// Golden fixtures below are VERBATIM real mainnet events pulled from the ClickHouse raw lake
-// (ADR-0034) for a full topic census: every topic_0_sym the three CCTP contracts have emitted.
-// The census was reconciled against a plain count() over the same contract set and checked for
-// the empty-topic_0_sym trap (every CCTP topic is a Symbol). This file covers the 16 topics
-// left undecoded by governance_test.go; each carries its real ledger + tx_hash. See
-// docs/protocols/cctp.md for the per-topic ledger range.
+// Golden fixtures below are verbatim mainnet events from the ClickHouse raw lake (ADR-0034), covering every topic_0_sym the
+// three CCTP contracts emitted; this file covers the 16 topics not decoded in governance_test.go, each with its real ledger
+// and tx_hash (see docs/protocols/cctp.md).
 
 // ─── admin_change_started ──────────────────────────────────────────
 
@@ -160,10 +157,8 @@ func TestDecodeDenylisted_RealMainnetFixture(t *testing.T) {
 	}
 }
 
-// TestDecodeUnDenylisted_RealMainnetFixture — ledger 62226574, tx
-// b71dfa79ba940eb5679115002ff906522db2f4bf60220ed05bad7bc0d782762c,
-// TokenMessengerMinter — the SAME account as [TestDecodeDenylisted_RealMainnetFixture],
-// a denylist/un-denylist pair.
+// TestDecodeUnDenylisted_RealMainnetFixture uses ledger 62226574 on TokenMessengerMinter, the same account as
+// TestDecodeDenylisted_RealMainnetFixture (a denylist/un-denylist pair).
 func TestDecodeUnDenylisted_RealMainnetFixture(t *testing.T) {
 	t.Parallel()
 	ev := &events.Event{
@@ -195,10 +190,8 @@ func TestDecodeUnDenylisted_RealMainnetFixture(t *testing.T) {
 
 // ─── denylister_changed ────────────────────────────────────────────
 
-// TestDecodeDenylisterChanged_BootstrapVoidOld — ledger 62146653, tx
-// f73bb9d181e8a85d46eb0263c3dfc7399a5b1d0cc40c1284dda4c333693b18e9,
-// TokenMessengerMinter. old_denylister is Void on the ONLY observed
-// instance (bootstrap).
+// TestDecodeDenylisterChanged_BootstrapVoidOld uses ledger 62146653 on TokenMessengerMinter; old_denylister is Void on the
+// only observed instance (bootstrap).
 func TestDecodeDenylisterChanged_BootstrapVoidOld(t *testing.T) {
 	t.Parallel()
 	ev := &events.Event{
@@ -330,10 +323,8 @@ func TestDecodeMinFeeControllerSet_RealMainnetFixture(t *testing.T) {
 
 // ─── pauser_changed / rescuer_changed ──────────────────────────────
 
-// TestDecodePauserChanged_RealMainnetFixture — ledger 62146641, tx
-// 5b53d56d4950a854bd39e3bc806478fd2aafffa5bcbfb86c19ca51eef8b90b7a,
-// MessageTransmitter. NOTE the body field is `new_address`, not
-// `new_pauser` — confirmed against the real event.
+// TestDecodePauserChanged_RealMainnetFixture uses ledger 62146641 on MessageTransmitter. The body field is `new_address`, not
+// `new_pauser`, per the real event.
 func TestDecodePauserChanged_RealMainnetFixture(t *testing.T) {
 	t.Parallel()
 	ev := &events.Event{
@@ -456,10 +447,8 @@ func TestDecodeSignatureThresholdUpdated_RealMainnetFixture(t *testing.T) {
 
 // ─── set_burn_limit_per_message ────────────────────────────────────
 
-// TestDecodeSetBurnLimitPerMessage_RealMainnetFixture — ledger
-// 62146712, tx 3548733cb4f3e4272ee96a4d54b656eb4f38e86b9148bf496850a932bed574a9,
-// TokenMessengerMinter. token is the same Stellar USDC SAC as
-// TestDecodeTokenPairLinked_RealMainnetFixture's local_token.
+// TestDecodeSetBurnLimitPerMessage_RealMainnetFixture uses ledger 62146712 on TokenMessengerMinter; token is the Stellar USDC
+// SAC also used as local_token in the TokenPairLinked fixture.
 func TestDecodeSetBurnLimitPerMessage_RealMainnetFixture(t *testing.T) {
 	t.Parallel()
 	ev := &events.Event{

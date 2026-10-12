@@ -2,11 +2,8 @@ package binance
 
 import "testing"
 
-// restBase resolves the REST URL the backfill path uses.
-// Streamers default to a ws:// or wss:// Endpoint for live
-// streaming; restBase swaps to the REST base in that case so a
-// caller doesn't accidentally send HTTP traffic at the websocket
-// listener. Tests pin all three branches.
+// restBase resolves the backfill REST URL, swapping a ws:// or wss:// Endpoint for the REST base so HTTP is never sent to the
+// websocket listener.
 
 func TestRestBase_emptyEndpointFallsBackToREST(t *testing.T) {
 	s := &Streamer{}

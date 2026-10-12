@@ -20,10 +20,8 @@ func TestEndpoint_returnsConstructedURL(t *testing.T) {
 	}
 }
 
-// withCountingHTTPClient returns an *http.Client whose RoundTripper
-// increments a counter every time it's used. Lets us prove
-// WithHTTPClient actually swaps the transport — observable via the
-// counter, since we can't peek at the unexported `http` field.
+// countingTransport is a RoundTripper that counts uses, proving WithHTTPClient swaps the transport (the unexported `http` field
+// cannot be inspected).
 type countingTransport struct {
 	used    int
 	wrapped http.RoundTripper

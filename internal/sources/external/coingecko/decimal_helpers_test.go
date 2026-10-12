@@ -6,10 +6,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external/scale"
 )
 
-// decimalStringToScaledInt mirrors the helper in exchangeratesapi /
-// CMC / exchangeratesapi. CoinGecko prices come back as JSON
-// numbers and we marshal them to decimal strings; this helper is
-// the precision-preserving converter to scaled integers.
+// decimalStringToScaledInt converts decimal strings to scaled integers without float rounding; mirrors the exchangeratesapi/CMC
+// helper.
 
 func TestDecimalStringToScaledInt_edges(t *testing.T) {
 	cases := []struct {

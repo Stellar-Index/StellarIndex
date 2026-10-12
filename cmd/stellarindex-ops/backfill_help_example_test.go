@@ -12,10 +12,8 @@ import (
 
 var backfillExampleSourceRe = regexp.MustCompile(`stellarindex-ops backfill \\[^$]*?-source ([a-z0-9_,-]+)`)
 
-// TestBackfillHelpExampleIsAdmissible pins that the `backfill` example in
-// --help names only sources backfill accepts: not projector-owned
-// (invariant [7]) and BackfillSafe. An example the command refuses teaches
-// the operator the wrong tool.
+// TestBackfillHelpExampleIsAdmissible pins that the --help `backfill` example names only sources backfill accepts:
+// not projector-owned (invariant [7]) and BackfillSafe.
 func TestBackfillHelpExampleIsAdmissible(t *testing.T) {
 	m := backfillExampleSourceRe.FindStringSubmatch(usageBody)
 	if m == nil {

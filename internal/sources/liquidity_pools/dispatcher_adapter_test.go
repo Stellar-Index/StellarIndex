@@ -152,11 +152,9 @@ func TestObserver_NeitherSideWatchedSkips(t *testing.T) {
 	}
 }
 
-// TestObserver_SkipsRemoved — a Removed-variant change whose
-// pre-image was never observed doesn't have the entry body, so we
-// can't determine watched-set membership. Same handling as
-// claimable_balances. (Removals that DO have a same-ledger pre-image
-// are emitted — see removal_supply_test.go.)
+// TestObserver_SkipsRemoved pins that a Removed change with no observed pre-image is skipped, since without the entry body
+// watched-set membership is unknown (same as claimable_balances). Removals with a same-ledger pre-image are emitted; see
+// removal_supply_test.go.
 func TestObserver_SkipsRemoved(t *testing.T) {
 	o, _ := NewObserver([]string{"USDC:" + gIssuerA})
 	var pid xdr.PoolId

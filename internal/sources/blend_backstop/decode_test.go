@@ -209,10 +209,8 @@ func TestGolden_RoundTripViaDecodeOne(t *testing.T) {
 // rw_zone and rw_zone_add arity differs by version), so they are built inline with the same
 // base64-capture convention as goldenEvent.
 
-// TestGolden_GulpEmissions_V1 pins bug #1 against real lake bytes
-// (ledger 51524667): V1 has NO pool topic (topic_count=1) and a bare
-// i128 body — not the V2 2-element Vec. A hard
-// `len(e.Topic) < 2` check in decodeGulpEmissions would error EVERY one of the 209 real V1 rows.
+// TestGolden_GulpEmissions_V1 pins real V1 bytes (ledger 51524667): no pool topic (topic_count=1) and a bare i128 body, not V2's
+// 2-element Vec. A hard `len(e.Topic) < 2` check would error all 209 real V1 rows.
 func TestGolden_GulpEmissions_V1(t *testing.T) {
 	t.Parallel()
 	ev := &events.Event{
@@ -240,10 +238,8 @@ func TestGolden_GulpEmissions_V1(t *testing.T) {
 	}
 }
 
-// TestGolden_GulpEmissions_V2 pins bug #5 against real lake bytes
-// (ledger 56661032): topic[1] is the POOL address (matches the same
-// pool topic every other event promotes), not a "token" — it belongs
-// in the Pool column, not a mislabeled attribute.
+// TestGolden_GulpEmissions_V2 pins real bytes (ledger 56661032): topic[1] is the POOL address, as in every other event,
+// so it belongs in the Pool column, not a mislabeled "token" attribute.
 func TestGolden_GulpEmissions_V2(t *testing.T) {
 	t.Parallel()
 	ev := &events.Event{
@@ -277,10 +273,8 @@ func TestGolden_GulpEmissions_V2(t *testing.T) {
 	}
 }
 
-// TestGolden_RwZone_V1 pins the V1 reward-zone topic against real lake bytes (ledger
-// 51499926): it is literally `rw_zone`, not `rw_zone_add`; a Classify()
-// that missed it would silently drop this real event (one of 5 total)
-// end-to-end.
+// TestGolden_RwZone_V1 pins real bytes (ledger 51499926): the V1 reward-zone topic is literally `rw_zone`, not `rw_zone_add`;
+// a Classify() that missed it would silently drop the event.
 func TestGolden_RwZone_V1(t *testing.T) {
 	t.Parallel()
 	ev := &events.Event{
@@ -318,10 +312,8 @@ func TestBackstopGenesisPrecedesV1Events(t *testing.T) {
 	}
 }
 
-// TestGolden_RwZoneAdd_V2 pins bug #3 against real lake bytes (ledger
-// 56660710): the body's second element is Option<Address>, not a u32
-// reward-zone index. All 5 real V2 rows carry `void` there, so the
-// common case emits no `to_remove` attribute key at all.
+// TestGolden_RwZoneAdd_V2 pins real bytes (ledger 56660710): the body's second element is Option<Address>, not a u32 index;
+// all 5 real rows carry void there, so no `to_remove` attribute key is emitted.
 func TestGolden_RwZoneAdd_V2(t *testing.T) {
 	t.Parallel()
 	ev := &events.Event{
@@ -349,11 +341,9 @@ func TestGolden_RwZoneAdd_V2(t *testing.T) {
 	}
 }
 
-// TestDecodeRwZoneRemove_SyntheticFromSource covers bug #4. rw_zone_remove has ZERO lake
-// occurrences, so this is SYNTHETIC-FROM-SOURCE, not a real-lake pin: the shape (topics=[sym];
-// data=bare Address) comes from blend-contracts-v2 backstop/src/events.rs's actual `publish()`
-// call, which disagrees with that function's own doc comment (see decodeRwZoneRemove's doc).
-// Unverified against real bytes.
+// TestDecodeRwZoneRemove_SyntheticFromSource: rw_zone_remove has zero lake occurrences, so this shape (topics=[sym], bare
+// Address data) is taken from blend-contracts-v2 events.rs publish(), which disagrees with its doc comment; unverified against
+// real bytes.
 func TestDecodeRwZoneRemove_SyntheticFromSource(t *testing.T) {
 	t.Parallel()
 	pool := contractStrkey(t, 0xBB)
@@ -635,10 +625,8 @@ func TestDecodeDequeueWithdrawal_Synthetic(t *testing.T) {
 	}
 }
 
-// TestDecodeRwZoneAdd_Synthetic covers the to_remove=Some(Address)
-// branch — every real lake row observed to_remove=void (see
-// TestGolden_RwZoneAdd_V2), so this hand-built case is the only
-// coverage for the "actually removing a pool" path.
+// TestDecodeRwZoneAdd_Synthetic covers the to_remove=Some(Address) branch; every real lake row has void,
+// so this hand-built case is the only coverage of actually removing a pool.
 func TestDecodeRwZoneAdd_Synthetic(t *testing.T) {
 	t.Parallel()
 	pool := contractStrkey(t, 0x88)
@@ -749,10 +737,8 @@ func TestDecode_MalformedBody(t *testing.T) {
 	}
 }
 
-// TestDecode_OverlongVecBodyRejected: every Vec-bodied backstop event
-// is a fixed 2-tuple on the wire. A third element means a different
-// WASM (or a foreign shape), and positionally promoting the first two
-// would record an amount whose meaning nobody audited — reject it.
+// TestDecode_OverlongVecBodyRejected: every Vec-bodied backstop event is a fixed 2-tuple; a third element means a different WASM
+// or foreign shape, and promoting the first two positionally would record an unaudited amount, so reject it.
 func TestDecode_OverlongVecBodyRejected(t *testing.T) {
 	t.Parallel()
 	pool := b64SV(t, contractAddrSV(t, contractStrkey(t, 0x11)))

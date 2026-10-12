@@ -9,11 +9,8 @@ import (
 // reading a failure cannot mistake it for a real credential.
 const sentinel = "PLACEHOLDER-NOT-A-REAL-SECRET"
 
-// carriers are the spellings a Postgres/Redis credential actually
-// arrives in. Every one is a real form: the URL DSN our config accepts,
-// the libpq keyword/value form database/sql also takes, the query
-// parameter libpq honours, the managed-Redis URI every hosted vendor
-// issues, and the same URL after fmt has quoted it into an error.
+// carriers are the real spellings a Postgres/Redis credential arrives in: URL DSN, libpq keyword/value, query parameter,
+// managed-Redis URI, and the same URL after fmt quoted it.
 var carriers = map[string]string{
 	"postgres URL":          "postgres://stellarindex:" + sentinel + "@db.example.invalid:5432/stellarindex?sslmode=disable",
 	"postgresql URL":        "postgresql://u:" + sentinel + "@db.example.invalid/stellarindex",
@@ -25,10 +22,8 @@ var carriers = map[string]string{
 	"quoted keyword value":  "host=db.example.invalid password='" + sentinel + " with a space' sslmode=require",
 }
 
-// A credential that survives either renderer reaches stderr, journald
-// and Loki, where it is readable for the whole retention window by
-// anyone with Grafana access. This is the property that matters, so it
-// is asserted over every spelling rather than one.
+// A credential surviving either renderer reaches stderr, journald and Loki for the whole retention window, so this asserts the
+// property over every spelling.
 func TestNeitherRendererEmitsTheSecret(t *testing.T) {
 	for name, in := range carriers {
 		t.Run(name, func(t *testing.T) {
@@ -42,11 +37,8 @@ func TestNeitherRendererEmitsTheSecret(t *testing.T) {
 	}
 }
 
-// The other half of the contract. A redactor that eats the message is
-// not safe, it is just useless: the operator reading a failed migration
-// needs the host it dialled and the reason it failed, and if those are
-// gone the next person removes the redaction to get their diagnostic
-// back.
+// The other half of the contract: a redactor that eats the message is useless; the operator needs the dialled host and the
+// failure reason, or the next person removes the redaction to get them back.
 func TestCredentialsKeepsTheDiagnostic(t *testing.T) {
 	cases := []struct {
 		name string
@@ -118,10 +110,8 @@ func TestCredentialsIsIdempotent(t *testing.T) {
 	}
 }
 
-// ConnString is the renderer for values WE format, where the whole
-// string is suspect. It keeps only the scheme — which is the operator's
-// mistake in the branch that calls it — and says so when there is not
-// even a scheme, rather than passing the value through.
+// ConnString renders values WE format, where the whole string is suspect: it keeps only the scheme and says so when there is
+// none, never passing the value through.
 func TestConnString(t *testing.T) {
 	for in, want := range map[string]string{
 		"postgres://u:" + sentinel + "@h/db":       "postgres://<redacted>",

@@ -4,11 +4,8 @@ import (
 	"testing"
 )
 
-// krakenCandle is a positional []any. intAt at position i must:
-//   - return ok=false when i is out of range
-//   - parse a float64 (Kraken sometimes serialises timestamps that way)
-//   - parse a string-of-digits (the more common form)
-//   - return ok=false for any other type, so a bool/object is never coerced into 0
+// intAt on a positional krakenCandle returns ok=false when out of range or for non-numeric types, and parses float64 or digit
+// strings.
 
 func TestKrakenCandle_intAt_outOfRange(t *testing.T) {
 	c := krakenCandle{float64(1_745_000_000)}
@@ -40,9 +37,7 @@ func TestKrakenCandle_intAt_stringNumeric(t *testing.T) {
 }
 
 func TestKrakenCandle_intAt_stringNonNumericRejected(t *testing.T) {
-	// A string that won't ParseInt (e.g. floating-point text) must
-	// return ok=false rather than swallowing the error and yielding
-	// 0 — downstream code uses ok to decide whether the row is
+	// A string that fails ParseInt must return ok=false rather than 0, since downstream uses ok to decide whether the row is
 	// trustworthy.
 	c := krakenCandle{"not-a-number"}
 	if _, ok := c.intAt(0); ok {

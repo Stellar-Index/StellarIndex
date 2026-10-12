@@ -93,11 +93,9 @@ func fuzzCBRemoved(id []byte) xdr.LedgerEntryChange {
 	}
 }
 
-// FuzzObserverLifecycle drives one claimable balance through a body change and the claim after it,
-// over arbitrary asset shapes, amounts and watch sets. It asserts: Matches iff a watched credit
-// asset; the Balance carries the exact int64 Amount as *big.Int (ADR-0003) with the change's id,
-// ledger, time and position; STATE emits nothing; the claim zeroes the same asset; and a claim
-// whose pre-image is from another ledger errors rather than being skipped.
+// FuzzObserverLifecycle drives one claimable balance through a body change then a claim: Matches iff a watched credit asset;
+// the exact int64 Amount as *big.Int (ADR-0003) with the change's id, ledger, time and position; STATE emits nothing; the
+// claim zeroes the same asset; a claim with a pre-image from another ledger errors rather than skips.
 func FuzzObserverLifecycle(f *testing.F) {
 	iss := []byte{1, 2, 3}
 	f.Add(uint8(0), []byte{0xaa}, false, []byte("USDC"), iss, int64(10_000_000), true, uint32(100), uint32(3))
@@ -211,10 +209,8 @@ func FuzzObserverLifecycle(f *testing.F) {
 	})
 }
 
-// FuzzObserverDecodeXDR feeds arbitrary XDR LedgerEntryChanges to a
-// fresh observer: Matches must never panic, a removal never matches an
-// empty memo, and a matched body change decodes to exactly one
-// observation carrying the entry's exact Amount.
+// FuzzObserverDecodeXDR feeds arbitrary XDR to a fresh observer: Matches never panics, a removal never matches an empty memo,
+// and a matched body change decodes to one observation with the exact Amount.
 func FuzzObserverDecodeXDR(f *testing.F) {
 	iss := []byte{1, 2, 3}
 	for i, ct := range bodyChangeTypes {

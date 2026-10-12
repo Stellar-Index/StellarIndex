@@ -177,10 +177,8 @@ func fuzzEntry(i int, ticker, code string, class, kind uint8, refOnly bool) rawC
 	return rc
 }
 
-// FuzzCatalogueIndex drives the indexer with structured two-entry
-// catalogues covering every class × issuance shape, including the
-// collisions the loader must reject, and checks the lookup invariants on
-// every catalogue it accepts.
+// FuzzCatalogueIndex drives the indexer with structured two-entry catalogues across every class and issuance shape, including
+// collisions the loader must reject, and checks the lookup invariants on every catalogue it accepts.
 func FuzzCatalogueIndex(f *testing.F) {
 	f.Add("USDC", "USDC", uint8(2), uint8(1), false, "USD", "", uint8(3), uint8(0), false)
 	f.Add("XLM", "", uint8(0), uint8(2), false, "XLM", "XLM", uint8(0), uint8(1), false)

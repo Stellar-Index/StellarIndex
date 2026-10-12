@@ -49,10 +49,8 @@ func TestCidrArrayValue(t *testing.T) {
 	}
 }
 
-// TestParseCIDRArray — decodes the textual cidr[] Postgres ships
-// back. Malformed entries are SKIPPED (not fatal) per the doc, so
-// one bad row can't nuke the whole allowlist read. Empty input →
-// nil. Also proves a Value()→parse round-trip preserves the set.
+// TestParseCIDRArray pins that malformed cidr[] entries are skipped (not fatal), empty input gives nil, and Value()-to-parse
+// round-trips the set.
 func TestParseCIDRArray(t *testing.T) {
 	if got := parseCIDRArray(nil); got != nil {
 		t.Errorf("parseCIDRArray(nil) = %v, want nil", got)

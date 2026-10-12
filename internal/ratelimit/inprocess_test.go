@@ -12,10 +12,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
 )
 
-// TestInProcess_LimitsWhenRedisNil is the nil-Redis regression: a
-// Bucket built with a nil Redis client must STILL enforce the limit
-// (omitting the limiter entirely would leave the API
-// uncapped). The Nth+1 request inside the window is rejected.
+// TestInProcess_LimitsWhenRedisNil: a Bucket with a nil Redis client must still enforce the limit (omitting it would leave the
+// API uncapped); request N+1 in the window is rejected.
 func TestInProcess_LimitsWhenRedisNil(t *testing.T) {
 	b := ratelimit.New(nil, 3, time.Minute)
 	if !b.InProcess() {
@@ -99,13 +97,9 @@ func TestInProcess_WindowRollover(t *testing.T) {
 	}
 }
 
-// TestInProcess_FloodBeyondKeyCap_SharesFailClosedBucket drives the exported API at the real cap.
-//
-// A distinct-key flood (>100k unique keys in one window) against the Redis-less fallback limiter
-// must not let the attacker choose the limiter's memory footprint or drag an O(n) scan under the
-// shared mutex on each insert. The map must stop growing at `localStoreMaxKeys` and fold
-// everything beyond it into ONE shared, fail-CLOSED bucket: the first overflow key consumes the
-// shared budget, the next is denied. The `strconv` keys mirror the anon-IP keys the fallback sees.
+// TestInProcess_FloodBeyondKeyCap_SharesFailClosedBucket: a >100k distinct-key flood against the Redis-less fallback must not
+// let the attacker choose memory use or force an O(n) scan per insert. The map stops at `localStoreMaxKeys` and overflow folds
+// into ONE shared fail-CLOSED bucket (first overflow key consumes the budget, the next is denied).
 func TestInProcess_FloodBeyondKeyCap_SharesFailClosedBucket(t *testing.T) {
 	fakeNow := time.Unix(1_700_000_000, 0)
 	b := ratelimit.New(nil, 1, time.Minute,

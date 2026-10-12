@@ -15,11 +15,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
-// newTestWSServer spins up an httptest server that accepts a single
-// WebSocket connection, writes a fixed set of aggTrade frames, then
-// holds the connection open until ctx cancellation. Exposed so tests
-// can assert on the Streamer's end-to-end behaviour without hitting
-// real Binance infra.
+// newTestWSServer accepts one WebSocket connection, writes the given aggTrade frames, then holds it open until ctx cancellation.
 func newTestWSServer(t *testing.T, frames []string) *httptest.Server {
 	t.Helper()
 
@@ -43,10 +39,7 @@ func newTestWSServer(t *testing.T, frames []string) *httptest.Server {
 				return
 			}
 		}
-		// Keep the connection open until the client cancels. The
-		// real Binance holds connections open for days; we mimic
-		// that so the test's Start goroutine is naturally driven
-		// by ctx cancellation, not by server-side EOF.
+		// Hold the connection open until the client cancels, as real Binance does, so Start is driven by ctx and not server EOF.
 		<-r.Context().Done()
 	}))
 }
@@ -153,11 +146,8 @@ func TestStreamer_BuildStreamURL(t *testing.T) {
 	}
 }
 
-// Trivial accessor tests for the external.Connector / Streamer
-// surface. These look pointless in isolation but the values feed
-// per-source metric labels and the aggregator's source-class
-// filter; a future rename that broke them would mislabel every
-// Binance trade in production.
+// Accessor tests: these values feed per-source metric labels and the source-class filter, so a rename would mislabel every
+// Binance trade.
 
 func TestStreamer_Name(t *testing.T) {
 	s := NewStreamer(map[string]canonical.Pair{})
@@ -173,10 +163,8 @@ func TestStreamer_Class(t *testing.T) {
 	}
 }
 
-// Streamer.Start has two pre-network reject paths: empty pairs
-// slice (Binance requires explicit subscription, no auto-enum) and
-// a pair not in the PairMap. Pin both — silent fallthrough would
-// dial Binance with no subscription frame.
+// Start has two pre-network reject paths, empty pairs and a pair not in PairMap; silent fallthrough would dial Binance with no
+// subscription.
 
 func TestStreamer_Start_emptyPairsRejected(t *testing.T) {
 	pm, err := DefaultPairs()

@@ -87,10 +87,8 @@ func TestFixedWindowCounter_RedisErrorPropagates(t *testing.T) {
 	}
 }
 
-// dropExpireHook fails every standalone EXPIRE the client issues and
-// passes everything else through, modelling a connection reset / MISCONF / OOM between the
-// INCR and the follow-up EXPIRE. It cannot intercept an EXPIRE issued from INSIDE a Lua
-// script, which is the point: there is no standalone EXPIRE to drop.
+// dropExpireHook fails every standalone EXPIRE and passes the rest through, modelling a reset/MISCONF/OOM between INCR and
+// EXPIRE; it cannot intercept an EXPIRE inside a Lua script, which is the point.
 type dropExpireHook struct{ dropped int }
 
 func (h *dropExpireHook) DialHook(next redis.DialHook) redis.DialHook { return next }
@@ -111,15 +109,9 @@ func (h *dropExpireHook) ProcessPipelineHook(next redis.ProcessPipelineHook) red
 	return next
 }
 
-// TestFixedWindowCounter_TTLSurvivesDroppedExpire is the
-// regression.
-//
-// The failure it encodes: INCR followed by a separate, best-effort EXPIRE whose error was
-// discarded. If that one command drops, the counter key has NO TTL and nothing revisits it
-// (the next window uses a different key suffix), so each dropped EXPIRE leaks a permanent key
-// into the throttle namespace, unbounded over time.
-//
-// INCR and EXPIRE must be one Lua EVAL: Redis runs both or neither.
+// TestFixedWindowCounter_TTLSurvivesDroppedExpire: a separate best-effort EXPIRE after INCR, if dropped, leaves a key with no
+// TTL that nothing revisits, leaking permanent keys into the throttle namespace. INCR and EXPIRE must be one Lua EVAL so Redis
+// runs both or neither.
 func TestFixedWindowCounter_TTLSurvivesDroppedExpire(t *testing.T) {
 	rdb, mr := newRedis(t)
 	hook := &dropExpireHook{}

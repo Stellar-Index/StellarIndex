@@ -5,11 +5,8 @@ import (
 	"testing"
 )
 
-// TestCuratedRWASyncHelpMatchesHandler pins curated-rwa-sync's --help entry to what the handler
-// does. It must not name rwa_curated_directory or a per-token USD price: the handler
-// (internal/ops/ingest/curated_rwa_sync.go) writes curated_rwa_published_series via
-// ReplaceCuratedRWAPublished (a monthly market-cap total and subclass split), and
-// curatedRWAWholeResult refuses the WHOLE run on any malformed row rather than skipping it.
+// TestCuratedRWASyncHelpMatchesHandler pins the --help entry to the handler: it writes curated_rwa_published_series
+// (monthly market-cap total, subclass split), not rwa_curated_directory or per-token USD, and refuses the WHOLE run on a bad row.
 func TestCuratedRWASyncHelpMatchesHandler(t *testing.T) {
 	i := strings.Index(usageBody, "  curated-rwa-sync ")
 	if i < 0 {

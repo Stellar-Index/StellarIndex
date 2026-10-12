@@ -15,10 +15,8 @@ import (
 var migrateChangedWhenRE = regexp.MustCompile(
 	`changed_when:\s*"'([^']+)' in \(?migrate_result\.stdout`)
 
-// TestAnsibleMigrateChangedWhenMatchesCmdUp: every Ansible task that runs
-// `stellarindex-migrate up` reports changed from cmdUp's stdout, so its
-// marker must appear in the applied line and not in the no-change line.
-// A marker the binary never prints makes the task lie on every run.
+// TestAnsibleMigrateChangedWhenMatchesCmdUp: each Ansible task running `stellarindex-migrate up` derives changed from cmdUp's
+// stdout, so its marker must be in the applied line and absent from the no-change line.
 func TestAnsibleMigrateChangedWhenMatchesCmdUp(t *testing.T) {
 	applied := fmt.Sprintf(upAppliedFormat, 142, false)
 	root := filepath.Join("..", "..", "configs", "ansible")

@@ -68,10 +68,8 @@ func returnsCallTo(stmt ast.Stmt, callee string) bool {
 	return ok && id.Name == callee
 }
 
-// ruleHubbleQueriesCarryByteCap pins the chokepoint: the only BigQuery
-// Query(...) call in this package's non-test code is inside hubbleBQ.query,
-// which stamps MaxBytesBilled. A direct client.Query elsewhere would run
-// uncapped against a multi-TB public table.
+// ruleHubbleQueriesCarryByteCap pins the chokepoint: the only BigQuery Query(...) call in non-test code is inside
+// hubbleBQ.query, which stamps MaxBytesBilled; a direct client.Query would run uncapped against a multi-TB public table.
 func ruleHubbleQueriesCarryByteCap(t *testing.T) {
 	files, err := filepath.Glob("*.go")
 	if err != nil {

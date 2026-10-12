@@ -15,10 +15,8 @@ import (
 // aggregate. Without a removal observation on ClaimClaimableBalance the created amount stays
 // in Σ claimable forever and total/circulating supply (and market cap / FDV) only grow.
 
-// makeCBChangeOfType builds a claimable-balance change of the given
-// variant. Body-carrying variants (Created/Updated/State/Restored)
-// carry the full entry; Removed carries only the LedgerKey — which is
-// precisely why the observer needs the paired State pre-image.
+// makeCBChangeOfType builds a claimable-balance change of the given variant; Removed carries only the LedgerKey, which is why
+// the observer needs the paired State pre-image.
 func makeCBChangeOfType(t *testing.T, ct xdr.LedgerEntryChangeType, balanceIDByte byte, code, issuer string, amount int64) xdr.LedgerEntryChange {
 	t.Helper()
 	body := makeCBChange(t, balanceIDByte, code, issuer, amount) // Created variant
@@ -121,10 +119,8 @@ func servedClaimableAggregate(obs []Observation, assetKey string) *big.Int {
 	return total
 }
 
-// TestServedAggregate_ReturnsToZeroAfterClaim is the money
-// regression: create a claimable balance, then claim it, and the
-// served Σ claimable must return to its pre-create value (zero) rather
-// than keep counting the claimed amount.
+// TestServedAggregate_ReturnsToZeroAfterClaim is the money regression: after create then claim, served Σ claimable returns to
+// its pre-create value (zero) instead of still counting the claimed amount.
 func TestServedAggregate_ReturnsToZeroAfterClaim(t *testing.T) {
 	const assetKey = "USDC:" + gIssuer
 	const amount = int64(1_000_000)
@@ -162,10 +158,8 @@ func TestServedAggregate_ReturnsToZeroAfterClaim(t *testing.T) {
 	}
 }
 
-// TestRemovalObservationShape pins the row the writer persists for a
-// claim: the asset resolved from the pre-image, a zeroed balance and
-// is_removal=true — the combination SumClaimableBalancesAtOrBefore
-// excludes.
+// TestRemovalObservationShape pins the claim row: asset resolved from the pre-image, zero balance and is_removal=true, which
+// SumClaimableBalancesAtOrBefore excludes.
 func TestRemovalObservationShape(t *testing.T) {
 	const assetKey = "USDC:" + gIssuer
 
@@ -202,10 +196,8 @@ func TestRemovalObservationShape(t *testing.T) {
 	}
 }
 
-// TestServedAggregate_SameLedgerCreateThenClaim — a balance created
-// and claimed inside one ledger nets to zero, and the removal carries
-// the higher intra-ledger position so the writer's last-writer-wins
-// upsert keeps the removal.
+// TestServedAggregate_SameLedgerCreateThenClaim pins that a balance created and claimed in one ledger nets to zero, because
+// the removal's higher intra-ledger position wins the last-writer-wins upsert.
 func TestServedAggregate_SameLedgerCreateThenClaim(t *testing.T) {
 	const assetKey = "USDC:" + gIssuer
 
@@ -282,10 +274,8 @@ func TestPreImageMemoIsLedgerScoped(t *testing.T) {
 	routeLedger(t, disp, 600, &seq,
 		makeCBChangeOfType(t, xdr.LedgerEntryChangeTypeLedgerEntryCreated, 0x22, "USDC", gIssuer, 10),
 	)
-	// The removal must emit nothing AND must not do so silently. Matches consults hasPreImage,
-	// which does not apply lookupPreImage's ledger guard, so this shape reaches Decode
-	// unattributable; a dropped removal over-reports supply forever, so it must not return
-	// (nil, nil).
+	// The removal must emit nothing and not silently: Matches skips lookupPreImage's ledger guard, so this unattributable shape
+	// reaches Decode; a dropped removal over-reports supply forever, so it must not return (nil, nil).
 	evs, err := disp.RouteEntryChange(dispatcher.LedgerEntryChangeContext{
 		Ledger:         601,
 		ClosedAt:       time.Unix(1_770_000_601, 0).UTC(),

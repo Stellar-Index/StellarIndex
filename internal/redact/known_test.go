@@ -82,10 +82,9 @@ func TestKnownCutsThePasswordHoweverItIsRepeated(t *testing.T) {
 	}
 }
 
-// The destructive branch, with its trigger. The everyday development DSN uses one word for the
-// user, the password and the database, so a scrubber that cut the bare password would rewrite
-// every message naming the database. It cuts only inside the `:password@` span or directly after
-// the text it was held behind; text that merely contains the word must come back byte-identical.
+// The destructive branch: the everyday development DSN uses one word for user, password and database, so a scrubber cutting the
+// bare password would rewrite every message naming the database. It cuts only inside the `:password@` span or right after the
+// text it was held behind; text that merely contains the word must come back byte-identical.
 func TestKnownDoesNotMangleTextThatMerelyContainsThePassword(t *testing.T) {
 	dsn := "postgres://app:app@localhost:5432/app?sslmode=disable"
 	for _, in := range []string{
@@ -141,13 +140,9 @@ func TestKnownIgnoresValuesWithNoPasswordSpan(t *testing.T) {
 	}
 }
 
-// ParseFailure runs the real parser over each hostile DSN and renders what it returned. The leak
-// is the reason's quoted fragment: `invalid port ":<password up to the slash>" after host`.
-//
-// A string that does not parse has no structure, so nothing of it is rendered: not the fragment,
-// the host or the scheme. Keeping the host by heuristic always met a malformed shape the
-// heuristic misread and printed part of the secret. The kind of failure and the source of the
-// value (the caller's to add) are the diagnostic.
+// ParseFailure runs the real parser over hostile DSNs; the leak is the reason's quoted fragment (`invalid port ":<password>"
+// after host`). An unparseable string has no structure, so nothing of it is rendered (no fragment, host or scheme), since
+// heuristics kept misreading shapes and printing secret parts.
 func TestParseFailureRepeatsNothingOfTheUnparseableString(t *testing.T) {
 	failed := 0
 	for name, pw := range hostilePasswords {
@@ -180,10 +175,8 @@ func TestParseFailureRepeatsNothingOfTheUnparseableString(t *testing.T) {
 	}
 }
 
-// A string that does parse but is refused further down (the driver's own parser, say) is
-// rendered from the parse tree, so the operator still gets user, host, database and options.
-// Every part comes from the parser, and the refusing error's own text, which embeds the whole
-// DSN, is classified and discarded rather than passed through.
+// A string that parses but is refused further down (e.g. the driver's parser) is rendered from the parse tree (user, host,
+// database, options), while the refusing error's own text, which embeds the whole DSN, is classified and discarded.
 func TestParseFailureRendersAParseableStringStructurally(t *testing.T) {
 	for name, tc := range map[string]struct{ in, want string }{
 		"userinfo password": {
@@ -246,10 +239,8 @@ func TestKnownCutsAQueryPasswordByValue(t *testing.T) {
 	}
 }
 
-// The migration tool holds two connection strings that normally share an anchor (the
-// environment's DSN and the one in argv, both `postgres://stellarindex:`). Cutting one held value
-// at a time removes only the prefix the two passwords share, leaving the second nothing to
-// match, so its tail prints wherever the text gives a pattern no boundary.
+// Two held connection strings usually share an anchor (env DSN and argv DSN, both `postgres://stellarindex:`); cutting one at a
+// time removes only the shared prefix, leaving the second nothing to match so its tail prints. Both must be cut.
 func TestKnownHoldsSeveralStringsBehindOneAnchor(t *testing.T) {
 	const shared = "SHARED-PREFIX-"
 	for name, tc := range map[string]struct{ other, echoed, keep string }{
@@ -289,10 +280,8 @@ func TestKnownHoldsSeveralStringsBehindOneAnchor(t *testing.T) {
 	}
 }
 
-// The keyword/value spelling, by value. libpq lets an unquoted value
-// escape a space and a quoted one escape a quote; once %q has doubled
-// the backslash, the free-text pattern reads the escape as a literal
-// backslash followed by the end of the value.
+// The keyword/value spelling, by value: libpq lets an unquoted value escape a space and a quoted one escape a quote; after %q
+// doubles the backslash, the free-text pattern would read the escape as a literal backslash ending the value.
 func TestKnownCutsAKeywordPasswordByValue(t *testing.T) {
 	for name, value := range map[string]string{
 		"escaped space":         sentinel + `\ ` + tailStem + " sslmode=require",
@@ -342,10 +331,9 @@ func TestKnownCutsAPasswordWithNoAtSignAfterIt(t *testing.T) {
 	}
 }
 
-// A query password holding an unescaped `@`. Nothing in a malformed DSN tells the `@` that ends
-// a userinfo from one inside a secret, so the userinfo reading runs to the last `@` and swallows
-// the `password=` anchor of the query reading, ending the cut at `HEAD` and printing `@TAIL`.
-// Both readings are held, and a cut may not stop inside a second secret whose anchor it consumed.
+// A query password holding an unescaped `@`: the userinfo reading runs to the last `@` and swallows the query reading's
+// `password=` anchor, ending the cut at `HEAD` and printing `@TAIL`. Both readings are held, and a cut may not stop inside a
+// second secret whose anchor it consumed.
 func TestKnownCutsAQueryPasswordThatHoldsAnAtSign(t *testing.T) {
 	for name, dsn := range map[string]string{
 		"host and port before the query": "postgres://db.example.invalid:5432/app?password=" + sentinel + "@" + tailStem + "&sslmode=disable",
@@ -373,10 +361,8 @@ func TestKnownCutsAQueryPasswordThatHoldsAnAtSign(t *testing.T) {
 	}
 }
 
-// A password that opens with the marker itself. cutHeld skips any
-// position already reading `<redacted>`, for idempotence; that skip must
-// not read the start of this secret as a cut that had already happened
-// and print the rest of it.
+// A password that opens with the marker itself: cutHeld skips positions already reading `<redacted>` for idempotence, and that
+// skip must not treat the start of this secret as an earlier cut and print the rest.
 func TestKnownCutsAPasswordThatStartsWithTheMarker(t *testing.T) {
 	pw := "<redacted>" + sentinel + tailStem
 	for name, dsn := range map[string]string{

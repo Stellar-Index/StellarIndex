@@ -99,12 +99,9 @@ func fuzzLPRemoved(pool []byte) xdr.LedgerEntryChange {
 	}
 }
 
-// FuzzObserverLifecycle drives one pool through a body change and the removal that follows it,
-// over arbitrary asset shapes, reserves and watch sets. It asserts the served-supply contract:
-// Matches iff a credit side is watched; one observation per watched side carrying that side's
-// exact reserve as *big.Int (ADR-0003) and the change's position; nothing from a STATE
-// pre-image; the removal zeroes exactly the sides the pre-image named; and a removal whose
-// pre-image is from another ledger is an error, never a silent skip.
+// FuzzObserverLifecycle drives one pool through a body change then removal, asserting the served-supply contract: Matches iff
+// a credit side is watched; one observation per watched side with the exact *big.Int reserve (ADR-0003); nothing from a STATE
+// pre-image; removal zeroes exactly the pre-image's sides; a removal with a pre-image from another ledger errors, never skips.
 func FuzzObserverLifecycle(f *testing.F) {
 	iss := []byte{1, 2, 3}
 	f.Add(uint8(1), []byte{0xaa}, false, []byte("USDC"), iss, true, []byte(nil), []byte(nil), int64(10_000_000), int64(5), true, false, uint32(100), uint32(3))
@@ -254,10 +251,8 @@ func FuzzObserverLifecycle(f *testing.F) {
 	})
 }
 
-// FuzzObserverDecodeXDR feeds arbitrary XDR LedgerEntryChanges to a
-// fresh observer: Matches must never panic, a removal can never match
-// an empty memo, and any matched body change decodes to observations
-// whose balances are exactly the reserve of the side they name.
+// FuzzObserverDecodeXDR feeds arbitrary XDR to a fresh observer: Matches never panics, a removal never matches an empty memo,
+// and matched body changes decode to the exact reserve of the side they name.
 func FuzzObserverDecodeXDR(f *testing.F) {
 	iss := []byte{1, 2, 3}
 	usdc := fuzzLPAsset(false, []byte("USDC"), iss)

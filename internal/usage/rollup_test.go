@@ -112,10 +112,8 @@ func TestScanDetail_OtherDatesExcluded(t *testing.T) {
 	}
 }
 
-// TestRollupSweep_GroupsAndUpserts — one sweep folds today's +
-// yesterday's per-class counters into per-(day, subject, endpoint)
-// rows, and repeating the sweep hands the sink the SAME cumulative
-// batch (idempotence is then the sink's GREATEST()-merge contract).
+// TestRollupSweep_GroupsAndUpserts: one sweep folds today's and yesterday's per-class counters into per-(day, subject,
+// endpoint) rows, and a repeat sweep hands the sink the SAME cumulative batch (idempotence is the sink's GREATEST() merge).
 func TestRollupSweep_GroupsAndUpserts(t *testing.T) {
 	_, rdb := newRedis(t)
 	clock := time.Date(2026, 7, 2, 22, 0, 0, 0, time.UTC)
@@ -303,10 +301,9 @@ func TestNewRollup_NilDeps(t *testing.T) {
 	}
 }
 
-// dupScanRedis wraps a real client and makes SCAN return every key TWICE, the documented Redis
-// behaviour when the keyspace rehashes mid-cursor. miniredis never does this, which is how the
-// defect hides: a duplicate re-reads the same hash, groupDetails would SUM both, and
-// usage_daily's GREATEST() merge would freeze the inflated count into a CLOSED day.
+// dupScanRedis makes SCAN return every key twice, as Redis may when the keyspace rehashes mid-cursor (miniredis never does). A
+// duplicate would be summed by groupDetails and usage_daily's GREATEST() merge would freeze the inflated count into a closed
+// day.
 type dupScanRedis struct {
 	redis.Cmdable
 }
@@ -379,10 +376,8 @@ func TestScanDetailFunc_StreamsOneRowAtATime(t *testing.T) {
 	}
 }
 
-// TestScanDetailFunc_MatchesScanDetail — the streaming and batch
-// forms must decode the identical set of rows; ScanDetail is now a
-// thin wrapper over ScanDetailFunc and must not drop or reorder-merge
-// anything relative to the field-by-field cross-check.
+// TestScanDetailFunc_MatchesScanDetail: the streaming and batch forms must decode the identical set of rows, with ScanDetail
+// dropping or merging nothing.
 func TestScanDetailFunc_MatchesScanDetail(t *testing.T) {
 	_, rdb := newRedis(t)
 	clock := time.Date(2026, 7, 3, 10, 0, 0, 0, time.UTC)
@@ -495,10 +490,8 @@ func TestRollupSweep_CatchesUpDaysAnOutageSkipped(t *testing.T) {
 	}
 }
 
-// TestRollupSweep_FreshWorkerWalksRetentionWindow — a restarted API has
-// no record of what was folded before it, so it re-folds every retained
-// day, a bounded batch per sweep, without holding back the live days and
-// without scanning past the Redis retention window.
+// TestRollupSweep_FreshWorkerWalksRetentionWindow: a restarted API re-folds every retained day, a bounded batch per sweep,
+// without holding back live days or scanning past the Redis retention window.
 func TestRollupSweep_FreshWorkerWalksRetentionWindow(t *testing.T) {
 	_, rdb := newRedis(t)
 	today := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)

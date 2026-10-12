@@ -6,11 +6,8 @@ import (
 	sdkxdr "github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// Two identical router calls authorized side by side in ONE auth entry are two
-// executions (each consumes its own node), so both must survive the served
-// PK's ON CONFLICT; the same call repeated in a SECOND entry is a co-signing
-// duplicate and must still collapse. Both shapes are built from the real
-// aggregator-wrapped fixture so the production extraction path is exercised.
+// Two identical router calls authorized side by side in ONE auth entry are two executions and both must survive the served PK;
+// the same call repeated in a SECOND entry is a co-signing duplicate and must still collapse.
 
 // findRouterNode returns the parent of the first router node under root
 // (nil when root itself is the router) and the router's index in it.

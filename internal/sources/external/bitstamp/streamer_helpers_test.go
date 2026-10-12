@@ -6,10 +6,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// symbolsFor inverts the operator-supplied PairMap so the streamer
-// can render a list of canonical pairs as the Bitstamp wire symbols
-// it must subscribe to. A pair missing from the map is fatal — we
-// don't want to silently subscribe to nothing and starve a market.
+// symbolsFor inverts PairMap into the Bitstamp wire symbols to subscribe to; a pair missing from the map is fatal, not skipped.
 
 func TestSymbolsFor_happyPath(t *testing.T) {
 	pm, err := DefaultPairs()
@@ -36,10 +33,7 @@ func TestSymbolsFor_happyPath(t *testing.T) {
 }
 
 func TestSymbolsFor_unknownPairRejected(t *testing.T) {
-	// A pair with no matching PairMap entry must surface as an
-	// error, not a silent omission — the operator's intent is to
-	// see ticks for that pair, and skipping it would create a
-	// confusing "venue went quiet" appearance downstream.
+	// A pair with no PairMap entry must error, not be silently omitted, or the venue would look quiet downstream.
 	pm, err := DefaultPairs()
 	if err != nil {
 		t.Fatalf("DefaultPairs: %v", err)

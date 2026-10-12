@@ -10,24 +10,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// FuzzDisplayB64 fuzzes the one accessor in this package reached with an attacker-chosen ScVal and
-// no schema expectation. Every other scval accessor is called by a decoder that knows the shape it
-// wants and errors on a mismatch. [scval.DisplayB64] renders whatever base64 a contract emitted for
-// the explorer's event views, so its contract is a set of totality properties: it must not panic,
-// must degrade rather than error, and must stay bounded.
-//
-// Both defects it has had were of that class:
-//
-//   - the zero-value ScVal reports Type==Bool with a nil B pointer, so MustB dereferenced nil and
-//     panicked; reachable because MapField returns xdr.ScVal{} on a miss and the miss path logged
-//     the value;
-//   - truncateDisplay sliced bytes, so a multi-byte rune straddling the cut produced invalid UTF-8.
-//
-// A fuzz target exercises every arm of the type switch, including arms a hand-written fixture
-// never reaches, against bodies no watched contract would emit.
-//
-// Runs as a plain seed-corpus test under `go test`; the generative run is
-// `go test -run=^$ -fuzz=FuzzDisplayB64 -fuzztime=20s ./internal/scval/`.
+// FuzzDisplayB64 fuzzes the scval accessor reached with an attacker-chosen ScVal and no schema expectation; [scval.DisplayB64]
+// must be total: no panic, degrade rather than error, stay bounded. Past defects: zero-value ScVal (Type==Bool, nil B) nil-
+// deref'd in MustB; truncateDisplay cut a multi-byte rune. Fuzz run: `go test -run=^$ -fuzz=FuzzDisplayB64 ./internal/scval/`.
 func FuzzDisplayB64(f *testing.F) {
 	// Seeds: real on-wire blobs from this repo's fixtures, plus the
 	// shapes the known defects lived in.
@@ -77,29 +62,22 @@ func FuzzDisplayB64(f *testing.F) {
 			}
 		}
 
-		// Property 3 — determinism. The renderer walks maps in stored
-		// order (ScMap is a slice, not a Go map), so the same body must
-		// render identically every time; a range over a Go map anywhere
-		// in the walk would make explorer rows flicker between requests.
+		// Property 3, determinism: the renderer walks maps in stored order (ScMap is a slice), so the same body renders identically every
+		// time; ranging a Go map would make explorer rows flicker.
 		if again := scval.DisplayB64(b64); again != got {
 			t.Fatalf("DisplayB64 is not deterministic:\n first: %q\nsecond: %q", got, again)
 		}
 
-		// Property 4 — bounded output, which is what displayMaxDepth and truncateDisplay exist for.
-		// Every terminal is itself bounded (Symbol ≤ 32 by the XDR decoder, String truncated at 120,
-		// i256/u256 ≤ 78 digits, strkey ≤ 69) and a container truncates its joined children, so no
-		// body may render past this ceiling. An unbounded render amplifies response size: one event
-		// field, arbitrarily many bytes.
+		// Property 4, bounded output (what displayMaxDepth and truncateDisplay exist for): every terminal is bounded and containers
+		// truncate their joined children, so no body may render past this ceiling; unbounded output would amplify response size.
 		const maxRendered = 256
 		if len(got) > maxRendered {
 			t.Fatalf("rendered %d bytes (> %d) — the display bound is not holding:\n%q",
 				len(got), maxRendered, got)
 		}
 
-		// Property 5 — the truncation marker is the only ellipsis the renderer emits, and it always
-		// terminates the fragment it truncated. A "…" in the middle of a container's children means
-		// a child was dropped rather than the join being cut, making a truncated render
-		// indistinguishable from a complete one.
+		// Property 5: the truncation marker is the only ellipsis the renderer emits and it always terminates the truncated fragment; a
+		// mid-string "…" would make a truncated render indistinguishable from a complete one.
 		if i := strings.Index(got, "…"); i >= 0 && i != len(got)-len("…") {
 			rest := got[i+len("…"):]
 			if strings.Trim(rest, "]}") != "" {

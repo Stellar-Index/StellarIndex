@@ -22,10 +22,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// fakeReader returns canned snapshots keyed by pair string. The
-// returned snapshot is mutable between ticks via SetSnapshot —
-// tests advance the clock-equivalent (ObservedAt) to drive the
-// publisher's bucket-change detection.
+// fakeReader returns canned snapshots keyed by pair string; SetSnapshot mutates them between ticks (advancing ObservedAt) to
+// drive bucket-change detection.
 type fakeReader struct {
 	mu        sync.Mutex
 	snapshots map[string]v1.PriceSnapshot
@@ -65,11 +63,8 @@ func mustParse(t *testing.T, s string) canonical.Asset {
 	return a
 }
 
-// TestPublisher_PublishesOnNewBucket — the publisher polls,
-// detects a fresh ObservedAt, and fans out a single event per
-// bucket close. Pinned to catch a regression that re-publishes the
-// same bucket on every tick (every-tick republish would burn
-// subscriber budgets in seconds).
+// TestPublisher_PublishesOnNewBucket: the publisher polls, detects a fresh ObservedAt and fans out one event per bucket close,
+// guarding against republishing the same bucket every tick, which would burn subscriber budgets.
 func TestPublisher_PublishesOnNewBucket(t *testing.T) {
 	hub := streaming.NewHub(0)
 	reader := &fakeReader{}
@@ -159,11 +154,8 @@ func TestPublisher_PublishesOnNewBucket(t *testing.T) {
 	<-done
 }
 
-// TestPublisher_TwoSubscribersIdenticalPayload — the byte-identical
-// fanout property is the whole point of the Hub-driven surface.
-// If two clients on the same topic see different bytes, the
-// cross-region consistency contract /v1/price/stream is meant to
-// inherit from /v1/price (ADR-0015) is broken.
+// TestPublisher_TwoSubscribersIdenticalPayload pins byte-identical fanout: two clients on a topic must see the same bytes, or
+// the cross-region consistency /v1/price/stream inherits from /v1/price (ADR-0015) breaks.
 func TestPublisher_TwoSubscribersIdenticalPayload(t *testing.T) {
 	hub := streaming.NewHub(0)
 	reader := &fakeReader{}
@@ -213,10 +205,8 @@ func TestPublisher_TwoSubscribersIdenticalPayload(t *testing.T) {
 	}
 }
 
-// TestPublisher_ErrPriceNotFoundIsSilent — pairs without a
-// closed bucket (fresh deploy, asset below operator coverage)
-// emit no events. The publisher MUST NOT log a stack of errors
-// for pairs that legitimately have no data yet.
+// TestPublisher_ErrPriceNotFoundIsSilent: pairs with no closed bucket (fresh deploy, uncovered asset) emit no events and must
+// not log errors.
 func TestPublisher_ErrPriceNotFoundIsSilent(t *testing.T) {
 	hub := streaming.NewHub(0)
 	reader := &fakeReader{} // no snapshots → ErrPriceNotFound
@@ -243,11 +233,8 @@ func TestPublisher_ErrPriceNotFoundIsSilent(t *testing.T) {
 	}
 }
 
-// TestPublisher_ReaderErrorContinues — a non-NotFound reader
-// error (postgres unreachable) should not take the publisher
-// down. The next tick after the error clears must publish
-// normally. Mirrors the divergence-refresh / volume-reader
-// best-effort posture.
+// TestPublisher_ReaderErrorContinues: a non-NotFound reader error (e.g. postgres unreachable) must not stop the publisher; the
+// next tick after recovery publishes normally.
 func TestPublisher_ReaderErrorContinues(t *testing.T) {
 	hub := streaming.NewHub(0)
 	reader := &fakeReader{err: errors.New("postgres unreachable")}
@@ -287,10 +274,8 @@ func TestPublisher_ReaderErrorContinues(t *testing.T) {
 	}
 }
 
-// TestPublisher_NoPairsBlocksUntilCancel — empty Pairs must not
-// busy-spin or panic; Run blocks on ctx and returns ctx.Err() on
-// cancel. Regression against an earlier draft that returned
-// immediately on len(pairs)==0.
+// TestPublisher_NoPairsBlocksUntilCancel: empty Pairs must not busy-spin or panic; Run blocks on ctx and returns ctx.Err() on
+// cancel.
 func TestPublisher_NoPairsBlocksUntilCancel(t *testing.T) {
 	hub := streaming.NewHub(0)
 	reader := &fakeReader{}
@@ -327,10 +312,9 @@ func (panicReader) LatestPrice(context.Context, canonical.Asset, canonical.Asset
 	panic("simulated reader fault in tickOnce")
 }
 
-// TestPublisher_Run_RecoversPanickingPollLoop proves a panic in one pair's poll goroutine is
-// contained: the binary's outer recover cannot catch panics in goroutines Run spawns. Without the
-// per-pair worker.Recover the panic takes the test binary down. The recover's Error log is
-// asserted in internal/worker's helper test; asserting it here would race Run's wg.Wait.
+// TestPublisher_Run_RecoversPanickingPollLoop proves a panic in one pair's poll goroutine is contained by the per-pair
+// worker.Recover, since the binary's outer recover cannot catch goroutines Run spawns; the Error log is asserted in
+// internal/worker, as here it would race wg.Wait.
 func TestPublisher_Run_RecoversPanickingPollLoop(t *testing.T) {
 	hub := streaming.NewHub(0)
 	asset := mustParse(t, "native")
@@ -352,10 +336,8 @@ func TestPublisher_Run_RecoversPanickingPollLoop(t *testing.T) {
 	}
 }
 
-// stallReader blocks past its pollCtx deadline on every call, so the
-// error tickOnce sees is pollCtx's own DeadlineExceeded rather than a
-// signal that the parent ctx (and therefore the publisher) is
-// shutting down.
+// stallReader blocks past its pollCtx deadline on every call, so tickOnce sees pollCtx's own DeadlineExceeded rather than a
+// parent-ctx shutdown.
 type stallReader struct{}
 
 func (stallReader) LatestPrice(ctx context.Context, _, _ canonical.Asset) (v1.PriceSnapshot, []string, bool, error) {
@@ -409,10 +391,9 @@ func TestPublisher_PollTimeoutIsNotShutdown(t *testing.T) {
 	}
 }
 
-// TestPublisher_NormalizesNonstandardDecimals proves the producer applies the same
-// nonstandard-decimals correction as /v1/price: reader.LatestPrice returns the RAW ratio, which
-// would otherwise reach the wire wrong by 10^11. Golden shape mirrors
-// TestPriceTip_NonstandardDecimals_Normalizes (18dp base vs 7dp quote, ohlcPriceDigits=10).
+// TestPublisher_NormalizesNonstandardDecimals proves the producer applies /v1/price's nonstandard-decimals correction:
+// LatestPrice returns the raw ratio, which would otherwise be wrong on the wire by 10^11. Mirrors
+// TestPriceTip_NonstandardDecimals_Normalizes (18dp base, 7dp quote, ohlcPriceDigits=10).
 func TestPublisher_NormalizesNonstandardDecimals(t *testing.T) {
 	sorobanContract := "CC2RBGYNCFBCVENIDL5BFBWPH4OUZM2UA3OD2K2N54GLMWCC4KWPVAGO" // gitleaks:allow — public Stellar contract id, not a secret
 	decimals := v1.NewNonstandardDecimalsCache(&fakeDecimalsReader{
@@ -482,10 +463,9 @@ func (r *fakeDecimalsReader) LoadNonstandardDecimalsAssets(context.Context) ([]t
 	return r.rows, nil
 }
 
-// TestPublisher_FrozenPairPublishesTheFreezeNotTheRefusedBucket: under an ADR-0019 freeze the raw
-// prices_1m bucket is the value the freeze refused; publishing it as a price_update would look
-// identical to a healthy pair. The marker of ANY alias governs (the reader does not say which
-// alias its bucket came from), so a freeze on crypto:XLM covers native.
+// TestPublisher_FrozenPairPublishesTheFreezeNotTheRefusedBucket: under an ADR-0019 freeze the raw prices_1m bucket is the
+// refused value, so the freeze is published instead. The marker of any alias governs (the reader does not say which alias it
+// read), so a crypto:XLM freeze covers native.
 func TestPublisher_FrozenPairPublishesTheFreezeNotTheRefusedBucket(t *testing.T) {
 	ev := firstEvent(t, fakeFreeze{frozen: map[string]bool{"crypto:XLM/fiat:USD": true}}, true)
 	if ev.Type != "price_frozen" {
@@ -590,10 +570,8 @@ func decodeStreamed(t *testing.T, ev streaming.Event) streamedPrice {
 	return p
 }
 
-// TestPublisher_WithheldPairPublishesTheWithholding — a pair that becomes
-// withheld while subscribers are attached must say so on the wire once,
-// not fall silent like a pair with no trades, and its bucket must be
-// republished when it is served again.
+// TestPublisher_WithheldPairPublishesTheWithholding: a pair that becomes withheld must say so on the wire once, not fall
+// silent like a no-trades pair, and its bucket must be republished when served again.
 func TestPublisher_WithheldPairPublishesTheWithholding(t *testing.T) {
 	hub := streaming.NewHub(0)
 	reader := &fakeReader{}

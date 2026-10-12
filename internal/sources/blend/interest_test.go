@@ -17,10 +17,8 @@ func interestRefConfig() ReserveConfig {
 	}
 }
 
-// BorrowRate must reproduce cur_ir from interest.rs::calc_accrual for
-// each of its three utilization regimes (hand-derived from the contract
-// formula; the under/over-target vectors also reconcile with the
-// accrual assertions in interest.rs's own tests).
+// BorrowRate must reproduce cur_ir from interest.rs::calc_accrual in each of its three utilization regimes
+// (hand-derived from the contract formula).
 func TestBorrowRate_Vectors(t *testing.T) {
 	cfg := interestRefConfig()
 	irMod := big.NewInt(1_0000000) // 1.0
@@ -43,11 +41,8 @@ func TestBorrowRate_Vectors(t *testing.T) {
 	}
 }
 
-// BorrowRate must not panic on a degenerate zero-target config. The
-// contract guarantees Util>0 on-chain, but a corrupt/zero metadata row
-// would divide by zero (fixedDivCeil → ceilDiv → QuoRem by 0) in the
-// under-target branch, panicking the request goroutine unless guarded. With util==0 and
-// no utilization the scalar is 0, so the rate is the base rate × irMod.
+// BorrowRate must not panic on a zero-target config: a corrupt metadata row would divide by zero in the under-target
+// branch (ceilDiv QuoRem by 0). With util==0 the scalar is 0, so the rate is the base rate x irMod.
 func TestBorrowRate_ZeroTargetNoPanic(t *testing.T) {
 	cfg := interestRefConfig()
 	cfg.Util = 0 // degenerate target utilization

@@ -70,10 +70,8 @@ func TestToText_MatrixAndRoundTrip(t *testing.T) {
 	}
 }
 
-// TestToText_Injective is the property the prefix rule exists for: two
-// different byte strings never share a stored value. The pair below
-// collides under any scheme that passes clean values through and
-// encodes dirty ones without also encoding prefix-bearing clean ones.
+// TestToText_Injective: two different byte strings never share a stored value. The pair below collides under any scheme that
+// passes clean values through and encodes dirty ones without also encoding prefix-bearing clean ones.
 func TestToText_Injective(t *testing.T) {
 	t.Parallel()
 	seen := make(map[string]string, len(textCases))

@@ -5,11 +5,9 @@ import (
 	"testing"
 )
 
-// TestEncodeDecodeArgs_RoundTrip covers the op-args plumbing the soroban_events landing zone
-// and projector-replay depend on: InvokeContract args are stored as a marshalled ScVal::Vec
-// and rebuilt into the per-arg base64 blobs events.Event.OpArgs expects. A regression would
-// silently corrupt the args Band / Redstone decode feed IDs and values from. XDR marshalling
-// is canonical, so the round-trip must be byte-for-byte exact.
+// TestEncodeDecodeArgs_RoundTrip covers the op-args plumbing soroban_events and projector-replay depend on: InvokeContract args
+// stored as a ScVal::Vec must rebuild into the per-arg base64 blobs events.Event.OpArgs expects, byte-for-byte (XDR is
+// canonical).
 func TestEncodeDecodeArgs_RoundTrip(t *testing.T) {
 	args := []string{
 		MustEncodeSymbol("relay"),
@@ -39,10 +37,8 @@ func TestEncodeDecodeArgs_RoundTrip(t *testing.T) {
 	}
 }
 
-// TestEncodeDecodeArgs_Empty — empty in, empty out on BOTH sides.
-// EncodeArgsAsScVec(nil) must return (nil, nil) so the sink stores
-// SQL NULL, and DecodeScVecToArgs(nil) must return (nil, nil) so a
-// NULL op_args column reconstructs to "no args", never an error.
+// TestEncodeDecodeArgs_Empty: EncodeArgsAsScVec(nil) returns (nil, nil) so the sink stores SQL NULL, and DecodeScVecToArgs(nil)
+// returns (nil, nil) so a NULL op_args column means "no args", never an error.
 func TestEncodeDecodeArgs_Empty(t *testing.T) {
 	for _, in := range [][]string{nil, {}} {
 		b, err := EncodeArgsAsScVec(in)

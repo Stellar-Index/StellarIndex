@@ -41,10 +41,8 @@ func paymentEvent(t *testing.T, contractID string) events.Event {
 	}
 }
 
-// paymentEventLongTopic is paymentEvent but with the LIVE long-form
-// topic[0] ScSymbol "payment_event" that the deployed mainnet contract
-// actually emits (the short-form symbol_short!("payment") never fired
-// live — a rozo_events=0 bug). Same body shape.
+// paymentEventLongTopic is paymentEvent with the live long-form topic[0] ScSymbol "payment_event" that the deployed contract
+// emits; the body shape is the same.
 func paymentEventLongTopic(t *testing.T, contractID string) events.Event {
 	t.Helper()
 	ev := paymentEvent(t, contractID)
@@ -278,10 +276,8 @@ func TestDecoder_Decode_MemoIsBytesNotText(t *testing.T) {
 	}
 }
 
-// TestDecoder_Decode_EveryPersistedStringIsTextSafe covers the class
-// rather than the one field the finding named: with the most hostile
-// memo, EVERY string a payment or flush row binds to a text column must
-// be acceptable to Postgres.
+// TestDecoder_Decode_EveryPersistedStringIsTextSafe: with the most hostile memo, every string a payment or flush row binds to
+// a text column must be acceptable to Postgres.
 func TestDecoder_Decode_EveryPersistedStringIsTextSafe(t *testing.T) {
 	t.Parallel()
 	check := func(t *testing.T, ev Event) {

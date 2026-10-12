@@ -15,10 +15,8 @@ import (
 
 // ─── Fixture helpers ─────────────────────────────────────────────
 
-// contractStrkeyFromSeed produces a valid C-strkey from a 32-byte
-// seed so a synthetic "foreign contract" fixture passes strkey
-// checksum without depending on a real mainnet address. Same pattern
-// as internal/sources/comet/decode_test.go.
+// contractStrkeyFromSeed builds a valid C-strkey from a 32-byte seed so a synthetic foreign-contract fixture passes the
+// strkey checksum without a real mainnet address.
 func contractStrkeyFromSeed(t *testing.T, tag byte) string {
 	t.Helper()
 	seed := make([]byte, 32)
@@ -217,10 +215,8 @@ func TestDecoder_Decode_SwapRealFixture(t *testing.T) {
 	}
 	assertSwapConfigFields(t, sc)
 
-	// The one observed swap executed exactly what the one observed
-	// q_swap queued — same target/timelock. Pin this cross-fixture
-	// invariant so a future decode-path regression that scrambles
-	// field order is caught here, not just per-kind.
+	// The one observed swap executed exactly what the one observed q_swap queued (same target/timelock); pinning this
+	// cross-fixture invariant catches a decode regression that scrambles field order.
 	if sc.NewBackstop != swapConfigNewBackstop || sc.NewBackstopToken != swapConfigNewBackstopToken || sc.UnlockTime != swapConfigUnlockTime {
 		t.Fatalf("swap fields diverge from the q_swap fixture: %+v", sc)
 	}
@@ -352,11 +348,9 @@ func TestDecoder_Decode_FailsClosedOnMissingClosedAt(t *testing.T) {
 
 // ─── Gate (ADR-0035/0040) ──────────────────────────────────────────
 
-// TestDecoder_GateRejectsForeignContract pins the invariant this package exists to enforce:
-// `distribute` collides with blend_backstop's own `distribute` topic (see events.go), so a
-// well-shaped event from a contract that is not the curated Emitter must not be attributed to
-// blend_emitter, while the same event from the genuine Emitter must be. Decode stays
-// shape-only; the gate lives in Matches, which the dispatcher consults first.
+// TestDecoder_GateRejectsForeignContract: `distribute` collides with blend_backstop's topic, so a well-shaped event from a
+// contract other than the curated Emitter must not match, while the genuine Emitter's must. Decode is shape-only; the gate
+// lives in Matches.
 func TestDecoder_GateRejectsForeignContract(t *testing.T) {
 	d := NewDecoder() // production gate: in-code curated set only
 	foreign := events.Event{

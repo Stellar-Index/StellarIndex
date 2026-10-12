@@ -9,15 +9,9 @@ import (
 	"time"
 )
 
-// TestLocalStore_SweepsAtMostOncePerWindow pins that invariant.
-//
-// The attack it encodes: a distinct-key flood holds the fallback limiter above its key cap
-// inside one window, exactly when the limiter matters most. A size-triggered branch that
-// re-ran a full O(n) scan under the global mutex on EVERY subsequent take would scan in vain
-// (every surviving entry names the current window), so each request would walk every other
-// client's counter and the limiter would become the cheapest way to stall the process.
-//
-// A window's scan must happen once. The counter asserts the exact number, not "few".
+// TestLocalStore_SweepsAtMostOncePerWindow: a distinct-key flood keeps the fallback limiter above its key cap within one
+// window, and re-running a full O(n) scan under the global mutex on every take would scan in vain and let the limiter stall the
+// process. A window's scan happens once; the counter asserts the exact number.
 func TestLocalStore_SweepsAtMostOncePerWindow(t *testing.T) {
 	const windowDur = time.Minute
 	now := time.Unix(1_700_000_000, 0)
@@ -48,11 +42,9 @@ func TestLocalStore_SweepsAtMostOncePerWindow(t *testing.T) {
 	}
 }
 
-// TestLocalStore_OverflowIsBoundedAndFailsClosed pins the memory
-// bound at the unit level: past the cap the map does not grow, and the overflow population
-// shares one fail-CLOSED budget rather than each flood key minting a private one. Its
-// exported-API twin (TestInProcess_FloodBeyondKeyCap_SharesFailClosedBucket) drives the
-// real 100k cap.
+// TestLocalStore_OverflowIsBoundedAndFailsClosed pins the memory bound: past the cap the map stops growing and overflow keys
+// share one fail-CLOSED budget. Its exported-API twin (TestInProcess_FloodBeyondKeyCap_SharesFailClosedBucket) drives the real
+// 100k cap.
 func TestLocalStore_OverflowIsBoundedAndFailsClosed(t *testing.T) {
 	const windowDur = time.Minute
 	now := time.Unix(1_700_000_000, 0)
@@ -88,10 +80,8 @@ func TestLocalStore_OverflowIsBoundedAndFailsClosed(t *testing.T) {
 	}
 }
 
-// TestLocalStore_OneIPv6AllocationCannotFillTheKeyCap: anonymous IPv6 keys
-// are /64 prefixes, so one /48 holder can mint 65,536 distinct keys. It must
-// not be able to fill the cap and fold every new client into the shared
-// overflow bucket.
+// TestLocalStore_OneIPv6AllocationCannotFillTheKeyCap: anonymous IPv6 keys are /64 prefixes, so one /48 holder can mint 65,536
+// keys; it must not be able to fill the cap and fold every new client into the shared overflow bucket.
 func TestLocalStore_OneIPv6AllocationCannotFillTheKeyCap(t *testing.T) {
 	const windowDur = time.Minute
 	now := time.Unix(1_700_000_000, 0)

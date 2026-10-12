@@ -60,10 +60,8 @@ func TestMultiBaseline_AllValid(t *testing.T) {
 	}
 }
 
-// TestMultiBaseline_PartialBootstrap — when only one window has
-// enough samples (typical newly-listed asset that's been live for
-// 2 days), HasAnyValid is true and MaxZScore considers only the
-// valid window.
+// TestMultiBaseline_PartialBootstrap: when only one window has enough samples (a newly listed asset), HasAnyValid is true
+// and MaxZScore considers only that valid window.
 func TestMultiBaseline_PartialBootstrap(t *testing.T) {
 	d1 := vwapSeries(1.0, stableJitter(20, 0.001)) // valid
 	d7 := []float64{1.0}                           // bootstrap (n<2)
@@ -172,10 +170,8 @@ func TestMultiBaseline_FrogBoilingDefense(t *testing.T) {
 	}
 }
 
-// TestMultiBaseline_SuddenSpikeFiresFromShortWindow — the converse
-// of frog-boiling: a single big spike on an otherwise-quiet asset
-// fires from the 1d window because the 30d window's MAD averaged
-// the spike out across 43k samples.
+// TestMultiBaseline_SuddenSpikeFiresFromShortWindow: a single big spike on a quiet asset fires from the 1d window,
+// because the 30d window's MAD averaged it out across ~43k samples.
 func TestMultiBaseline_SuddenSpikeFiresFromShortWindow(t *testing.T) {
 	d1 := vwapSeries(1.0, stableJitter(20, 0.0001))
 	d7 := vwapSeries(1.0, stableJitter(100, 0.0001))
@@ -183,10 +179,7 @@ func TestMultiBaseline_SuddenSpikeFiresFromShortWindow(t *testing.T) {
 
 	mb := baseline.NewMultiBaseline(minutely(d1...), minutely(d7...), minutely(d30...))
 
-	// Sudden 5% spike. All three windows have ~bp MAD, so all flag
-	// it — but the longest window's MAD is presumably the smallest
-	// (more samples to refine the median). MaxZScore selects whichever
-	// window gives the highest z.
+	// Sudden 5% spike: all three windows flag it; MaxZScore picks the window with the highest z (likely the longest, smallest MAD).
 	maxZ, _, valid := mb.MaxZScore(bucketReturn(0.05))
 	if !valid {
 		t.Fatal("MaxZScore valid=false")
@@ -219,10 +212,8 @@ func TestMaxZScore_ThinWindowDoesNotOutvoteWellSampledOne(t *testing.T) {
 	}
 }
 
-// TestMaxZScore_AllWindowsThinFallsBackToLargestSample — when no window
-// clears MinZScoreSamples the pair is still scored, from the window with
-// the most samples, so a young pair keeps its confidence and freeze
-// eligibility rather than dropping to valid=false.
+// TestMaxZScore_AllWindowsThinFallsBackToLargestSample: when no window clears MinZScoreSamples, the pair is still scored
+// from the window with the most samples, so a young pair keeps its confidence and freeze eligibility.
 func TestMaxZScore_AllWindowsThinFallsBackToLargestSample(t *testing.T) {
 	thin := baseline.MinZScoreSamples - 1
 	mb := baseline.MultiBaseline{
@@ -316,10 +307,8 @@ func TestMaxZScore_NaNObservationFiresFreeze(t *testing.T) {
 	}
 }
 
-// TestMaxZScore_PosInfObservationFiresFreeze — same as NaN but
-// for +Inf. Reachable in production via big.Rat.Float64()
-// overflow on a pathologically-large price; the freeze MUST
-// fire.
+// TestMaxZScore_PosInfObservationFiresFreeze: like NaN, +Inf (reachable via big.Rat.Float64() overflow on a huge price)
+// must fire the freeze.
 func TestMaxZScore_PosInfObservationFiresFreeze(t *testing.T) {
 	d1Returns := []float64{0.001, -0.001, 0.002, -0.002, 0.001}
 	mb := baseline.NewMultiBaseline(minutely(d1Returns...), minutely(d1Returns...), minutely(d1Returns...))

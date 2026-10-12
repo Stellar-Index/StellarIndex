@@ -205,11 +205,8 @@ func TestRun_ReturnsOnContextCancel(t *testing.T) {
 	}
 }
 
-// TestSweep_PublishesRowCountGauges pins Q181: a successful registration
-// via POST /v1/register is never reaped (only signup-race orphans are),
-// so obs.AccountRows / obs.APIKeyRows are the only per-deployment signal
-// of that table's growth. A sweep must publish the store's current
-// counts verbatim, not just the deleted-orphan count.
+// TestSweep_PublishesRowCountGauges: registrations via POST /v1/register are never reaped, so obs.AccountRows / obs.APIKeyRows
+// are the only growth signal; a sweep must publish the store's current counts verbatim, not just the deleted-orphan count.
 func TestSweep_PublishesRowCountGauges(t *testing.T) {
 	store := &fakeOrphanStore{accountRows: 4217, apiKeyRows: 4310}
 	r := signupreaper.New(store, signupreaper.Options{Logger: silent()})
@@ -237,11 +234,9 @@ func TestSweep_PublishesRowCountGauges(t *testing.T) {
 	}
 }
 
-// TestSweep_MarksLiveness: every COMPLETED sweep — including a
-// failed one — stamps the liveness gauge, and construction publishes the
-// configured interval the stalled alert scales its threshold by. A dead
-// reaper is otherwise invisible: its rows gauge just freezes at a
-// healthy-looking number.
+// TestSweep_MarksLiveness: every completed sweep, failed ones included, stamps the liveness gauge, and construction publishes
+// the interval the stalled alert scales by; otherwise a dead reaper is invisible because its rows gauge freezes at a healthy-
+// looking number.
 func TestSweep_MarksLiveness(t *testing.T) {
 	g := obs.AuthReaperLastSweepUnix.WithLabelValues(obs.AuthReaperSignup)
 	start := float64(time.Now().Unix())

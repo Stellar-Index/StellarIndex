@@ -67,10 +67,8 @@ func TestClassifier_OperatorOverride(t *testing.T) {
 	}
 }
 
-// TestNewChecker_RejectsMissingDefault — Checker construction must
-// require ClassDefault. Operator config that omits it would cause
-// every unclassified asset to use… nothing, which would silently
-// disable anomaly protection.
+// TestNewChecker_RejectsMissingDefault: construction must require ClassDefault, or unclassified assets would silently
+// get no anomaly protection.
 func TestNewChecker_RejectsMissingDefault(t *testing.T) {
 	thresholds := map[anomaly.AssetClass]anomaly.Thresholds{
 		anomaly.ClassStablecoin: {WarnPct: 1, FreezePct: 3},
@@ -299,10 +297,8 @@ func TestEvaluate_DownwardMovementSameAsUpward(t *testing.T) {
 	}
 }
 
-// TestEvaluate_ZeroPrevVWAPHandled — defensive against the
-// theoretical case of a zero prior VWAP. Caller shouldn't pass this
-// (CAGGs don't materialise empty buckets) but if they do, treat as
-// extreme deviation rather than panic-on-divide-by-zero.
+// TestEvaluate_ZeroPrevVWAPHandled: a zero prior VWAP is not expected (CAGGs skip empty buckets) but must count as
+// extreme deviation rather than panic on divide-by-zero.
 func TestEvaluate_ZeroPrevVWAPHandled(t *testing.T) {
 	chk := mustNewChecker(t, mustNewClassifier(t, nil))
 	d := chk.Evaluate(anomaly.Observation{

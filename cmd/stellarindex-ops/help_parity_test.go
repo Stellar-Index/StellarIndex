@@ -16,10 +16,8 @@ func TestUsageBody(t *testing.T) {
 		hasOwnEntry := func(name string) bool {
 			prefix := "  " + name
 			for _, ln := range lines {
-				// Own entry: exactly two leading spaces, then the name, then a
-				// token boundary. A three-plus-space continuation/example line
-				// fails the exact "  " prefix, and a longer command that merely
-				// starts with this name fails the boundary check.
+				// Own entry: exactly two leading spaces, then the name, then a token boundary; continuation lines and longer commands sharing
+				// the prefix must not match.
 				if !strings.HasPrefix(ln, prefix) {
 					continue
 				}

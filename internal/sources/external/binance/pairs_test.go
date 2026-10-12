@@ -8,10 +8,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// TestDefaultPairs_GoldenSet pins the YAML-embedded pair table to the exact map of canonical
-// pairs, built through the canonical constructors, so any drift (symbol added or dropped, class
-// flipped such as fiat EUR vs crypto EUR, base/quote swap) fails loudly. Editing pairs.yaml means
-// updating this table in the same commit.
+// TestDefaultPairs_GoldenSet pins the embedded pair table to the exact canonical pairs so any drift (added/dropped symbol, fiat
+// vs crypto EUR, base/quote swap) fails loudly; update this table with pairs.yaml.
 func TestDefaultPairs_GoldenSet(t *testing.T) {
 	crypto := func(code string) canonical.Asset {
 		a, err := canonical.NewCryptoAsset(code)

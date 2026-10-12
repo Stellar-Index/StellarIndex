@@ -11,15 +11,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 )
 
-// This file pins a supply-drift regression: reserves of a pool whose last liquidity is
-// withdrawn (entry deleted) must stop counting toward the served supply aggregate. If the
-// observer emitted nothing for the deletion, the last-seen reserves would stay in Σ lp_reserve
-// forever and supply (and market cap / FDV downstream) would only ever grow.
+// This file pins a supply-drift regression: reserves of a pool whose last liquidity is withdrawn must stop counting toward
+// served supply; otherwise Σ lp_reserve, supply and market cap/FDV downstream would only ever grow.
 
-// makeLPChangeOfType builds a liquidity-pool change of the given
-// variant. Body-carrying variants carry the full entry; Removed carries
-// only the LedgerKey — which is precisely why the observer needs the
-// paired State pre-image.
+// makeLPChangeOfType builds a liquidity-pool change of the given variant; Removed carries only the LedgerKey, which is why the
+// observer needs the paired State pre-image.
 func makeLPChangeOfType(t *testing.T, ct xdr.LedgerEntryChangeType, poolByte byte, assetA, assetB xdr.Asset, reserveA, reserveB int64) xdr.LedgerEntryChange {
 	t.Helper()
 	body := makeLPChange(t, poolByte, assetA, assetB, reserveA, reserveB) // Updated variant
@@ -48,10 +44,8 @@ func makeLPChangeOfType(t *testing.T, ct xdr.LedgerEntryChangeType, poolByte byt
 	return xdr.LedgerEntryChange{}
 }
 
-// routeLedger walks one ledger's entry-changes through the dispatcher
-// exactly as [dispatcher.Dispatcher.ProcessLedger] does (in order, with a monotonic
-// IntraLedgerSeq) and returns the Observations emitted. Going through the dispatcher rather
-// than Decode directly exercises Matches too.
+// routeLedger walks one ledger's entry-changes through the dispatcher as ProcessLedger does (in order, monotonic
+// IntraLedgerSeq) and returns the Observations, so Matches is exercised too.
 func routeLedger(t *testing.T, disp *dispatcher.Dispatcher, ledger uint32, seq *uint32, changes ...xdr.LedgerEntryChange) []Observation {
 	t.Helper()
 	var out []Observation
@@ -315,10 +309,9 @@ func TestPreImageMemoIsLedgerScoped(t *testing.T) {
 	routeLedger(t, disp, 600, &seq,
 		makeLPChangeOfType(t, xdr.LedgerEntryChangeTypeLedgerEntryCreated, 7, usdc, euro, 10, 20),
 	)
-	// The removal must emit nothing AND must not do so silently. Matches consults hasPreImage,
-	// which skips lookupPreImage's ledger guard, so this shape reaches Decode unattributable;
-	// a dropped removal over-reports supply forever (it is absorbing, not a delta), so Decode
-	// must not return (nil, nil).
+	// The removal must emit nothing and not silently: Matches skips lookupPreImage's ledger guard, so this unattributable shape
+	// reaches Decode; a dropped removal over-reports supply forever (absorbing, not a delta), so Decode must not return (nil,
+	// nil).
 	evs, err := disp.RouteEntryChange(dispatcher.LedgerEntryChangeContext{
 		Ledger:         601,
 		ClosedAt:       time.Unix(1_770_000_601, 0).UTC(),

@@ -17,14 +17,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
-// If an upstream 429 only returned an error, the fixed-cadence poll ticker would re-fire and
-// hit the venue again. These tests pin the behaviour:
-//   - 429 arms a cooldown using Retry-After (or exponential backoff).
-//   - Subsequent PollOnce calls during cooldown skip the HTTP request
-//     entirely and return (nil, nil, nil) — distinct from an error.
-//   - A successful response resets the backoff.
-//   - 403 is treated the same as 429 (CoinGecko's post-2024 demo-key-
-//     required path returns 403, not 429).
+// A 429 must arm a cooldown (Retry-After or exponential backoff) so the fixed-cadence ticker does not re-hit the venue; PollOnce
+// during cooldown returns (nil, nil, nil) without HTTP, success resets backoff, and 403 (demo-key path) is treated like 429.
 
 func newCountingServer(t *testing.T, handler http.HandlerFunc) (*httptest.Server, *atomic.Int64) {
 	t.Helper()
@@ -263,14 +257,8 @@ func TestPollOnce_ProAPIKeyWinsOverDemo(t *testing.T) {
 	}
 }
 
-// TestPollOnce_429_LowRetryAfter_StillGrowsBackoff — a Retry-After
-// branch that takes the hint at face value (clamped to MinBackoff) bypasses the doubling.
-// CoinGecko's free tier returns Retry-After below MinBackoff, so the cooldown would sit at
-// exactly MinBackoff, equal to the runner's PollInterval, and every recovery attempt would
-// draw another 429 forever.
-//
-// applyBackoff treats Retry-After as a FLOOR, not a ceiling: consecutive 429s grow the
-// cooldown exponentially regardless of what the venue claims.
+// TestPollOnce_429_LowRetryAfter_StillGrowsBackoff: Retry-After is a floor, not a ceiling; taking a low hint at face value would
+// pin the cooldown at MinBackoff (= PollInterval) and draw 429s forever, so consecutive 429s must still grow it exponentially.
 func TestPollOnce_429_LowRetryAfter_StillGrowsBackoff(t *testing.T) {
 	srv, _ := newCountingServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		// Simulate CoinGecko free tier: Retry-After consistently
@@ -314,10 +302,8 @@ func TestPollOnce_429_LowRetryAfter_StillGrowsBackoff(t *testing.T) {
 	}
 }
 
-// TestPollOnce_429_HighRetryAfter_HonouredAsFloor — when the
-// venue asks for an unusually long Retry-After (longer than our
-// growth trajectory), we honour it. The fix raised the floor; it
-// did not lower the ceiling.
+// TestPollOnce_429_HighRetryAfter_HonouredAsFloor: a Retry-After longer than the growth trajectory is honoured; the floor rose,
+// the ceiling did not drop.
 func TestPollOnce_429_HighRetryAfter_HonouredAsFloor(t *testing.T) {
 	srv, _ := newCountingServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Retry-After", "300") // 5 min — well above first doubled value (60 s)
@@ -489,10 +475,7 @@ func TestPollOnce_MalformedJSON(t *testing.T) {
 }
 
 func TestPollOnce_TickerToIDOverride(t *testing.T) {
-	// With a custom TickerToID, the poller queries only the tickers
-	// the operator passed in — even if the package default would
-	// have resolved more. Catalogue-driven wiring
-	// relies on this to scope the poll set to the verified seed.
+	// A custom TickerToID scopes the poll to exactly the operator's tickers, even if the package default would resolve more.
 	srv := newTestServer(t, `{
       "stellar":  {"usd": 0.17, "last_updated_at": 1710000000},
       "bitcoin":  {"usd": 50000.0, "last_updated_at": 1710000000}
@@ -523,10 +506,8 @@ func TestPollOnce_TickerToIDOverride(t *testing.T) {
 	}
 }
 
-// TestPollOnce_StampsUpstreamLastUpdated pins that each row carries its
-// id's upstream last_updated_at, not our poll time. A CoinGecko cache
-// frozen for hours must reach the aggregator tier with its real age so
-// the tier's freshness filter (10 min default) rejects it.
+// TestPollOnce_StampsUpstreamLastUpdated: each row carries its id's upstream last_updated_at, not poll time, so a frozen
+// CoinGecko cache is rejected by the tier's 10 min freshness filter.
 func TestPollOnce_StampsUpstreamLastUpdated(t *testing.T) {
 	frozen := time.Now().Add(-3 * time.Hour).Truncate(time.Second).UTC()
 	fresh := time.Now().Add(-20 * time.Second).Truncate(time.Second).UTC()

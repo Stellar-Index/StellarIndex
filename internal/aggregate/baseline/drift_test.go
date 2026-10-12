@@ -8,10 +8,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/baseline"
 )
 
-// freezeThreshold mirrors orchestrator.DefaultPhase2ZScoreMinFreeze
-// (ADR-0019 §"Freeze policy"). Duplicated as a literal rather than
-// imported because internal/aggregate/orchestrator imports this
-// package — the dependency may not run the other way.
+// freezeThreshold mirrors orchestrator.DefaultPhase2ZScoreMinFreeze (ADR-0019). It is a literal because the orchestrator
+// imports this package, so the dependency cannot run the other way.
 const freezeThreshold = 5.0
 
 // bucketsPerDay — 1m buckets in 24h, the cadence the baselines are
@@ -294,10 +292,8 @@ func TestDriftZScore_SpikeCannotFakeDrift(t *testing.T) {
 	}
 }
 
-// TestDriftZScore_SmallSampleGate — a window with fewer than
-// MinDriftSamples returns valid=false. At n=2 the measured null
-// false-positive rate of driftZ>=5 is ~12%, so a sparse window must
-// not be allowed to vote at all.
+// TestDriftZScore_SmallSampleGate: a window with fewer than MinDriftSamples returns valid=false, since at n=2 the null
+// false-positive rate of driftZ>=5 is ~12% and a sparse window must not vote.
 func TestDriftZScore_SmallSampleGate(t *testing.T) {
 	// Every return identical and nonzero: the maximally drift-looking
 	// input. Below the floor it must still refuse to report.
@@ -378,10 +374,8 @@ func TestDriftZScore_MostlyUnchangedIlliquidPrice(t *testing.T) {
 	}
 }
 
-// TestMaxDriftZScore_BootstrapAndAttribution — window bookkeeping:
-// nothing valid reports valid=false (callers must not read 0 as
-// "no drift"), and a partially-bootstrapped multi-baseline
-// attributes to the window that actually produced the max.
+// TestMaxDriftZScore_BootstrapAndAttribution: with nothing valid it reports valid=false (callers must not read 0 as no drift),
+// and a partially bootstrapped multi-baseline attributes the max to the window that produced it.
 func TestMaxDriftZScore_BootstrapAndAttribution(t *testing.T) {
 	if _, _, ok := (baseline.MultiBaseline{}).MaxDriftZScore(); ok {
 		t.Error("empty MultiBaseline reported valid=true")

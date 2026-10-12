@@ -5,11 +5,8 @@ import (
 	"testing"
 )
 
-// coinbaseCandle is "[time, low, high, open, close, volume]" per
-// the Coinbase /products/<id>/candles JSON shape. The accessors
-// intAt / closeStr / volumeStr handle the type-uncertainty
-// quirks of upstream sometimes serialising numbers as strings vs
-// JSON numbers.
+// coinbaseCandle is [time, low, high, open, close, volume] per the /products/<id>/candles shape; intAt, closeStr and volumeStr
+// tolerate numbers serialised as strings or JSON numbers.
 
 func TestCoinbaseCandle_intAt(t *testing.T) {
 	cases := []struct {

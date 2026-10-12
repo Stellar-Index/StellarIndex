@@ -43,10 +43,8 @@ func headlineReader(store headlineVWAPStore) GlobalPriceReader {
 	return GlobalPriceReader{S: store, PKPairFor: canonical.NewPair}
 }
 
-// The GlobalAssetView headline has no stale flag, so a bucket the guard
-// could not validate must not be served as the vwap_native headline:
-// the reader reports no data and the headline falls through to its other
-// tiers, as the point-in-time guard does for the same reason.
+// The headline has no stale flag, so a bucket the guard could not validate must not be served as vwap_native: the reader
+// reports no data and the headline falls through to other tiers, as the point-in-time guard does.
 func TestGlobalPriceReader_UnvalidatedBucketIsNoHeadline(t *testing.T) {
 	base, quote := canonical.NativeAsset(), mustFiatUSD(t)
 	reader := headlineReader(headlineVWAPStore{latest: headlineRow(0, "100.0")})
@@ -67,10 +65,8 @@ func headlineTrailing() []timescale.Vwap1mRow {
 	return trailing
 }
 
-// The headline has no marker for a guard-held bucket either, so an outlier
-// the guard replaces with last-known-good must not be served as vwap_native
-// with a frozen price_as_of: the reader reports no data and the headline
-// falls through to its other tiers.
+// The headline has no guard-held marker either, so an outlier the guard replaced with last-known-good must not be served as
+// vwap_native with a frozen price_as_of: the reader reports no data and the headline falls through to its other tiers.
 func TestGlobalPriceReader_OutlierIsNoHeadline(t *testing.T) {
 	base, quote := canonical.NativeAsset(), mustFiatUSD(t)
 	reader := headlineReader(headlineVWAPStore{latest: headlineRow(0, "100.0"), trailing: headlineTrailing()})

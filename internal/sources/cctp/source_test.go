@@ -10,10 +10,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// TestDecodeMintAndForward_RealMainnetFixture — golden test from the
-// actual lake event that surfaced the unpinned-topic gap (ledger 63098002 class):
-// single Symbol topic, body map {amount i128, forward_recipient
-// Address, token Address}.
+// TestDecodeMintAndForward_RealMainnetFixture is a golden from the lake event (ledger 63098002 class) that exposed the
+// unpinned-topic gap: one Symbol topic, body map {amount i128, forward_recipient Address, token Address}.
 func TestDecodeMintAndForward_RealMainnetFixture(t *testing.T) {
 	ev := events.Event{
 		ContractID:     "CBZL2IH7F6BIDAA3WBNXYKIXSATJGMSW7K5P5MJ6STX5RXN47TZJDF5T",

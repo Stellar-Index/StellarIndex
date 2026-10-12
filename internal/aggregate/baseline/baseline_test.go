@@ -103,10 +103,8 @@ func TestFromReturns_StoresN(t *testing.T) {
 	}
 }
 
-// TestZScore_KnownInputs — round-trip the canonical example from
-// ADR-0019: a return of 0.10 (10%) on a baseline with median=0,
-// MAD≈0.0148 (a stablecoin-class baseline) should fire well above
-// z=5.
+// TestZScore_KnownInputs round-trips the ADR-0019 example: a 0.10 return on a baseline with median=0 and MAD~0.0148
+// (stablecoin-class) must fire well above z=5.
 func TestZScore_KnownInputs(t *testing.T) {
 	// Synthesise a stablecoin-class baseline: 11 returns clustered
 	// tightly around zero. MAD will end up ~0.0148.

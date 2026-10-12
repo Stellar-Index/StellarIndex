@@ -73,10 +73,7 @@ func TestParseAggTradeFrame_HappyPath(t *testing.T) {
 	if trade.BaseAmount.BigInt().Cmp(want) != 0 {
 		t.Errorf("BaseAmount = %s want %s", trade.BaseAmount, want)
 	}
-	// Quote = base × price = 15234000000 × 17582000 / 10^8
-	// 15234 × 17582 = 267,844,188 → × 10^9 / 10^8 = 2,678,441,880.
-	// Verify the numeric relationship holds: VWAP = quote / base
-	//   = 2678441880 / 15234000000 = 0.17582 ✓ (0.17582 × 152.34 = 26.7844188)
+	// Quote = 15234000000 × 17582000 / 10^8 = 2_678_441_880, so VWAP = quote / base = 0.17582.
 	wantQuote := big.NewInt(2678441880)
 	if trade.QuoteAmount.BigInt().Cmp(wantQuote) != 0 {
 		t.Errorf("QuoteAmount = %s want %s", trade.QuoteAmount, wantQuote)
@@ -120,10 +117,8 @@ func TestParseAggTradeFrame_BrokenJSON(t *testing.T) {
 }
 
 func TestParseAggTradeFrame_ZeroTradeTimeRejected(t *testing.T) {
-	// A frame missing "T" (or carrying it as literal 0) must not
-	// silently decode to the Unix epoch: time.UnixMilli(0) is a
-	// valid non-zero time.Time, so canonical.Trade.Validate's
-	// IsZero() check can never catch it downstream.
+	// A frame missing T (or with 0) must not decode to the Unix epoch: time.UnixMilli(0) is non-zero, so Trade.Validate's IsZero
+	// check cannot catch it.
 	raw := []byte(`{"stream":"xlmusdt@aggTrade","data":{"e":"aggTrade","s":"XLMUSDT","a":1,"p":"0.1","q":"1","T":0,"m":false}}`)
 	_, err := parseAggTradeFrame(raw, buildPairMap(t))
 	if !errors.Is(err, ErrMalformedFrame) {

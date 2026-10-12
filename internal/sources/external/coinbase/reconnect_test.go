@@ -6,10 +6,8 @@ import (
 	"time"
 )
 
-// Coinbase shares the same healthy-connection backoff concern as
-// Binance/Bitstamp. NewStreamer's
-// default backoff is 5 s. This test pins the defaults so a drive-by
-// edit can't silently regress them.
+// TestNewStreamer_DefaultInitialBackoffIs5s pins NewStreamer's 5 s default backoff, shared with Binance/Bitstamp, against
+// drive-by edits.
 func TestNewStreamer_DefaultInitialBackoffIs5s(t *testing.T) {
 	s := NewStreamer(nil)
 	if got, want := s.InitialBackoff, 5*time.Second; got != want {
@@ -20,10 +18,8 @@ func TestNewStreamer_DefaultInitialBackoffIs5s(t *testing.T) {
 	}
 }
 
-// TestClassifyDisconnect_BoundedReasonLabels — keeps the disconnect
-// metric's label cardinality bounded. Coinbase adds the
-// subscription_rejected reason on top of the shared set so a config-
-// reject loop is distinguishable from transient wire drops.
+// TestClassifyDisconnect_BoundedReasonLabels keeps disconnect metric label cardinality bounded; Coinbase adds
+// subscription_rejected so a config-reject loop is distinguishable from wire drops.
 func TestClassifyDisconnect_BoundedReasonLabels(t *testing.T) {
 	cases := []struct {
 		name string

@@ -93,10 +93,8 @@ func TestDecodeOwnershipTransferCompleted_RealMainnetFixture(t *testing.T) {
 
 // ─── admin_changed ────────────────────────────────────────────────
 
-// TestDecodeAdminChanged_BootstrapVoidOldAdmin — ledger 62146641, tx
-// 5b53d56d4950a854bd39e3bc806478fd2aafffa5bcbfb86c19ca51eef8b90b7a,
-// MessageTransmitter. old_admin is ScvVoid on the real bootstrap event, the type trap this
-// decoder guards against (type-test before MustI128).
+// TestDecodeAdminChanged_BootstrapVoidOldAdmin uses ledger 62146641 on MessageTransmitter; old_admin is ScvVoid on the real
+// bootstrap event, the type trap to guard (type-test before MustI128).
 func TestDecodeAdminChanged_BootstrapVoidOldAdmin(t *testing.T) {
 	t.Parallel()
 	ev := &events.Event{
@@ -122,10 +120,8 @@ func TestDecodeAdminChanged_BootstrapVoidOldAdmin(t *testing.T) {
 	}
 }
 
-// TestDecodeAdminChanged_RealTransferPopulatedOldAdmin — ledger
-// 62146653, tx f73bb9d181e8a85d46eb0263c3dfc7399a5b1d0cc40c1284dda4c333693b18e9,
-// TokenMessengerMinter — the later real reassignment where old_admin
-// IS populated (contrast with the bootstrap fixture above).
+// TestDecodeAdminChanged_RealTransferPopulatedOldAdmin uses ledger 62146653 on TokenMessengerMinter, the later reassignment
+// where old_admin is populated (contrast with the bootstrap fixture).
 func TestDecodeAdminChanged_RealTransferPopulatedOldAdmin(t *testing.T) {
 	t.Parallel()
 	ev := &events.Event{
@@ -191,10 +187,8 @@ func TestDecodeRemoteTokenMessengerAdded_RealMainnetFixture(t *testing.T) {
 
 // ─── token_pair_linked ────────────────────────────────────────────
 
-// TestDecodeTokenPairLinked_RealMainnetFixture — ledger 62146739, tx
-// 88908290a164b45bc8abc6503fca9e4ef56359db22791345987f9b6703633f12,
-// TokenMessengerMinter. remote_token decodes to Ethereum USDC
-// (0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48).
+// TestDecodeTokenPairLinked_RealMainnetFixture uses ledger 62146739 on TokenMessengerMinter; remote_token decodes to Ethereum
+// USDC (0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48).
 func TestDecodeTokenPairLinked_RealMainnetFixture(t *testing.T) {
 	t.Parallel()
 	ev := &events.Event{

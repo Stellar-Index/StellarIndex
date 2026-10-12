@@ -72,10 +72,8 @@ func backstopCases() []backstopCase {
 	}
 }
 
-// FuzzBackstopAmounts routes every amount-bearing backstop shape
-// through the dispatcher entry point and requires the promoted Amount /
-// Amount2 to be the exact decimal of the wire i128 (ADR-0003: no
-// int64/float truncation, sign preserved) in the documented slot.
+// FuzzBackstopAmounts routes every amount-bearing shape through the dispatcher entry and requires Amount / Amount2 to be the
+// exact decimal of the wire i128 (ADR-0003: no int64/float truncation, sign preserved) in the documented slot.
 func FuzzBackstopAmounts(f *testing.F) {
 	f.Add(uint8(0), int64(0), uint64(179_414_602), int64(0), uint64(130_950_149))
 	f.Add(uint8(1), int64(0), uint64(13_000_000), int64(0), uint64(13_030_672))
@@ -119,10 +117,8 @@ func FuzzBackstopAmounts(f *testing.F) {
 	})
 }
 
-// FuzzBackstopDecodeArbitrary feeds arbitrary topic counts and body
-// bytes for every backstop kind. The decoder must never panic (a short
-// topic slice must be an error, not an index-out-of-range), and any
-// promoted amount it does emit must be a canonical base-10 integer.
+// FuzzBackstopDecodeArbitrary feeds arbitrary topic counts and bodies for every kind: the decoder must never panic
+// (short topics are an error, not an index panic) and any promoted amount must be a canonical base-10 integer.
 func FuzzBackstopDecodeArbitrary(f *testing.F) {
 	pair, _ := vecSV(i128SV(big.NewInt(5)), i128SV(big.NewInt(6))).MarshalBinary()
 	bare, _ := i128SV(big.NewInt(7)).MarshalBinary()

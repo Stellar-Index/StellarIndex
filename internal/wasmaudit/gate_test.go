@@ -332,11 +332,8 @@ func TestGate_SorocreditChildThatEmitsIsChecked(t *testing.T) {
 	}
 }
 
-// TestGate_SorocreditChildEmittingBeforeItsAnnouncementIsChecked: the lake
-// streams a ledger by (tx_hash, op_index, event_index), not apply order, so
-// a child's first event can arrive before the root's announcement of it in
-// the same ledger. Backfill applies in order and admits that event, so the
-// gate must check the child's WASM whatever order the walk sees them in.
+// TestGate_SorocreditChildEmittingBeforeItsAnnouncementIsChecked: the lake streams by (tx_hash, op_index, event_index), not apply
+// order, so a child's event can precede its root's announcement; the gate must check the child's WASM in either order.
 func TestGate_SorocreditChildEmittingBeforeItsAnnouncementIsChecked(t *testing.T) {
 	m := mustLoad(t)
 	ctx := context.Background()

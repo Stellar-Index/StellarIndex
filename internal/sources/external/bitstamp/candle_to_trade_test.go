@@ -7,10 +7,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// bitstampCandleToTrade has four error branches before its happy
-// path: bad timestamp, bad volume, zero volume, bad close. The
-// existing TestBitstampBackfill_HappyPath only exercises the
-// success path through Backfill.
+// bitstampCandleToTrade has four error branches (bad timestamp, bad volume, zero volume, bad close) that
+// TestBitstampBackfill_HappyPath does not reach.
 
 func makePair(t *testing.T) canonical.Pair {
 	t.Helper()

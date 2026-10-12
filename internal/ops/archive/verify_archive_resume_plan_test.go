@@ -55,10 +55,8 @@ func TestPlanResumedWalk_AllDoneRewalksRatherThanCertifying(t *testing.T) {
 		st = markChunkDone(st, "checkpoint", i, hashByte(byte(i+1)), now)
 	}
 
-	// Precondition: this is genuinely the all-Done state, i.e. the
-	// input on which a caller trusting the nil verdict returns a
-	// zero-ledger success. Without this the test could pass vacuously on a state
-	// that never reached the defective branch.
+	// Precondition: this is genuinely the all-Done state, the input on which a caller trusting the nil verdict returns a
+	// zero-ledger success; without it the test could pass vacuously.
 	if keep, _, reason := resumeChunks(st, "checkpoint", 2, 3000, 3, chunks); keep != nil {
 		t.Fatalf("precondition: want the all-Done verdict from resumeChunks, got %d chunk(s) (%s)", len(keep), reason)
 	}
@@ -132,10 +130,8 @@ func TestFullPlanStitchInput_ChainBreakBesideSkippedChunkIsCaught(t *testing.T) 
 	st := startTierProgress(VerifyArchiveState{}, "chain", 2, 3000, 3, chunks, now)
 	st = markChunkDoneStitch(st, "chain", 0, chunk0, now, false)
 
-	// This run: chunk 1 starts at ledger 1001 whose PreviousLedgerHash
-	// is 0xbb — it does NOT chain onto chunk 0's 0xaa. Chunks 1→2
-	// chain cleanly, so nothing inside this run's own results is
-	// wrong.
+	// Chunk 1 starts at ledger 1001 whose PreviousLedgerHash is 0xbb, so it does not chain onto chunk 0's 0xaa,
+	// while chunks 1 to 2 chain cleanly: nothing inside this run's own results is wrong.
 	chunk1 := walkedChunk(1, chunks[1], hashByte(0xbb), hashByte(0xcc))
 	chunk2 := walkedChunk(2, chunks[2], hashByte(0xcc), hashByte(0xdd))
 	live := []chunkResult{chunk1, chunk2}

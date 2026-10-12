@@ -15,14 +15,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// `magic_link_tokens` retention. The table is durable plaintext PII (email + requested_ip)
-// with an attacker-chosen key: POST /v1/auth/login is unauthenticated and inserts a row for
-// any well-formed address, and an unclicked link is never consumed. Without this reaper the
-// table grows without bound at the anonymous rate limit, on a disk-fixed host.
-//
-// These tests pin the worker's contract. The DELETE predicate itself, including that a LIVE
-// (unexpired) token is never reaped, is proven against real Postgres in
-// test/integration/pg_auth_core_test.go.
+// `magic_link_tokens` retention: the table holds durable plaintext PII (email + requested_ip) and unauthenticated POST
+// /v1/auth/login inserts a row for any well-formed address, so without this reaper it grows unbounded. These tests pin the
+// worker's contract; the DELETE predicate (live tokens never reaped) is proven in test/integration/pg_auth_core_test.go.
 
 type sweepCall struct{ olderThan time.Time }
 
@@ -81,10 +76,8 @@ func sweepErrors(t *testing.T) float64 {
 		obs.MagicLinkTokenErrorsTotal.WithLabelValues(obs.MagicLinkTokenOpSweep))
 }
 
-// TestSweep_DeletesAndPublishesRowCount — the happy path: the reaper
-// asks for rows expired before `now - retention` and publishes the
-// surviving row count on the gauge that makes growth visible before a
-// disk alert.
+// TestSweep_DeletesAndPublishesRowCount: the reaper deletes rows expired before `now - retention` and publishes the surviving
+// row count on the gauge that shows growth before a disk alert.
 func TestSweep_DeletesAndPublishesRowCount(t *testing.T) {
 	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
 	store := &fakeMagicLinkStore{deleted: 9, rows: 21}
@@ -206,10 +199,8 @@ func TestRun_SweepsImmediately(t *testing.T) {
 	}
 }
 
-// TestNew_DefaultsAreProduction — a zero Options must not yield a zero
-// interval (a hot loop) or a zero retention (deleting rows that only
-// just expired, before a slow user's stale-link error can distinguish
-// expired from absent).
+// TestNew_DefaultsAreProduction: a zero Options must not yield a zero interval (hot loop) or zero retention (deleting just-
+// expired rows before a slow user's stale-link error can tell expired from absent).
 func TestNew_DefaultsAreProduction(t *testing.T) {
 	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
 	store := &fakeMagicLinkStore{}

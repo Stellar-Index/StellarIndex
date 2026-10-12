@@ -2,29 +2,9 @@ package currency
 
 import "testing"
 
-// A SEP anchor's fiat-coded token must not be reported as an
-// impersonation.
-//
-// # The failure this guards
-//
-// The catalogue's sovereign-currency entries carry `networks: []`: they are units of account,
-// not issued tokens. With no Stellar issuance they skipped indexStellarEntries' issuance loop,
-// so indexTickerOnlyEntry filed each ticker into byStellarCode (the impersonation index), and
-// StellarCollision reported a collision for EVERY classic asset coded USD, EUR, GBP, JPY, ...
-// whoever issued it.
-//
-// That is right for USDT, XRP or BTC, which name a specific token issued elsewhere. A fiat ticker
-// names a DENOMINATION nobody issues, and `USD` is how SEP-1 tells an anchor to code a
-// dollar-denominated deposit (`anchor_asset_type = "fiat"`), so an anchor issuing `USD-G...` is
-// denominating in dollars, not impersonating them. The false flag withheld market cap and the
-// listing valuation and attached a "NO verified issuance on Stellar" warning.
-//
-// # The contract this pins
-//
-// A fiat TICKER in the reference catalogue is a DENOMINATION, not a Stellar asset identity.
-// ClassFiat entries with no Stellar issuance are filed into byFiatCode, so StellarCollision
-// stays silent for them. The code stays answerable through FiatDenomination, and a fiat entry
-// that gains a verified Stellar issuance collides like any other verified code.
+// TestFiatCodedAnchorIsNotAnImpersonator: a catalogue fiat ticker (USD, EUR, ...) is a denomination nobody issues, and SEP-1
+// anchors code dollar deposits as `USD`, so that is not impersonation. Fiat entries with no Stellar issuance go to byFiatCode
+// (answerable via FiatDenomination); one gaining a verified Stellar issuance collides normally.
 func TestFiatCodedAnchorIsNotAnImpersonator(t *testing.T) {
 	cat, err := LoadEmbedded()
 	if err != nil {
@@ -68,10 +48,8 @@ func TestFiatCodedAnchorIsNotAnImpersonator(t *testing.T) {
 		})
 	}
 
-	// The control. The carve-out is by CLASS, so the reference-only
-	// tickers the impersonation index exists for must still report —
-	// otherwise this change would read as a pass while having disarmed
-	// the whole check.
+	// The control: the carve-out is by class, so reference-only tickers (USDT, XRP, BTC) must still report an impersonator, else the
+	// whole check would be disarmed.
 	for _, ticker := range []string{"USDT", "XRP", "BTC"} {
 		t.Run("control/"+ticker, func(t *testing.T) {
 			if _, ok := cat.LookupByTicker(ticker); !ok {

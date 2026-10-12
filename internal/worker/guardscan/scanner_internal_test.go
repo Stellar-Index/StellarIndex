@@ -7,10 +7,8 @@ import (
 	"testing"
 )
 
-// A Scanner reused across files must parse each package it resolves into
-// once. Re-indexing the scanned file's own package per file made the
-// repo-wide guard walks quadratic and pushed their packages past the CI
-// test timeout under -race.
+// A Scanner reused across files must parse each package it resolves into once; re-indexing per file made the repo-wide
+// guard walks quadratic and pushed them past the CI test timeout under -race.
 func TestScanner_IndexesEachPackageOnce(t *testing.T) {
 	dir := filepath.Join("testdata", "shared")
 	if err := os.MkdirAll(dir, 0o750); err != nil {

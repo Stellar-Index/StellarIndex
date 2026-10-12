@@ -317,10 +317,8 @@ func TestNonEnvelopeHTTP4xxSurfaces(t *testing.T) {
 }
 
 func TestResponseSizeCap(t *testing.T) {
-	// Upstream returns a body larger than MaxResponseBytes. The client
-	// must refuse with a clear error rather than swallow the whole
-	// thing into memory. We write just over the cap — enough to
-	// trigger the check, small enough to keep the test cheap.
+	// Upstream returns a body over MaxResponseBytes; the client must refuse with a clear error rather than buffer it. A just-over-cap
+	// body triggers the check cheaply.
 	const overcap = rpc.MaxResponseBytes + 1024
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -494,10 +492,8 @@ func TestGetEventsRejectsOutOfOrder(t *testing.T) {
 }
 
 func TestGetEventsRejectsZeroLedger(t *testing.T) {
-	// Stellar genesis is ledger 1 — Ledger=0 on an event means the
-	// JSON was malformed or the field was absent from the payload.
-	// Accepting it would let group-keys collide on (0, tx, opIdx)
-	// in the phoenix/soroswap fanout buffers.
+	// Genesis is ledger 1, so Ledger=0 means malformed JSON or a missing field; accepting it would collide group-keys on
+	// (0, tx, opIdx) in the phoenix/soroswap fanout buffers.
 	s := mockRPC(t, map[string]any{
 		"getEvents": map[string]any{
 			"events": []map[string]any{
@@ -546,10 +542,8 @@ func rawResponder(status int, body string) *httptest.Server {
 	}))
 }
 
-// Every response with a status >= 400 must come back as an *HTTPStatusError carrying that
-// status, whatever the body was: an EMPTY body must not surface as a decode error, nor an
-// error ENVELOPE as the bare *JSONRPCError, or a caller could not tell a 429 from a
-// malformed request.
+// Every status >= 400 must come back as *HTTPStatusError carrying that status, whatever the body: an empty body must not become
+// a decode error, nor an error envelope a bare *JSONRPCError, or callers could not tell a 429 from a malformed request.
 func TestHTTPStatusSurvivesEveryBodyShape(t *testing.T) {
 	const envelope32005 = `{"jsonrpc":"2.0","id":1,"error":{"code":-32005,"message":"rate limit exceeded"}}`
 	cases := []struct {
@@ -602,10 +596,8 @@ func TestHTTPStatusSurvivesEveryBodyShape(t *testing.T) {
 	}
 }
 
-// Below 400 the contract is unchanged for an error envelope — the bare
-// *JSONRPCError, no status wrapper — and an undecodable body is a
-// *ResponseDecodeError, distinct from a result that decoded as an
-// envelope but does not fit the target type.
+// Below 400 an error envelope stays a bare *JSONRPCError (no status wrapper), and an undecodable body is a *ResponseDecodeError,
+// distinct from a result that decoded but does not fit the target type.
 func TestErrorTypesBelowHTTP400(t *testing.T) {
 	t.Run("error envelope is the bare JSONRPCError", func(t *testing.T) {
 		s := rawResponder(http.StatusOK, `{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"invalid params"}}`)

@@ -200,10 +200,8 @@ func (r *refusalProbe) assertSurfaced(t *testing.T, wantAttrs ...string) {
 	}
 }
 
-// TestPollOnce_SymbolMode_MultipleCoins_Refuses: Symbol mode
-// carries no id/rank/is_active discriminator, so when CMC returns more
-// than one coin under a ticker the poller cannot tell which is ours.
-// It must refuse the ticker, not take coins[0].
+// TestPollOnce_SymbolMode_MultipleCoins_Refuses: symbol mode has no id/rank/is_active discriminator, so when CMC returns several
+// coins for a ticker the poller must refuse it, not take coins[0].
 func TestPollOnce_SymbolMode_MultipleCoins_Refuses(t *testing.T) {
 	srv := newTestServer(t, `{
       "status": {"error_code": 0, "error_message": null},
@@ -231,10 +229,8 @@ func TestPollOnce_SymbolMode_MultipleCoins_Refuses(t *testing.T) {
 	probe.assertSurfaced(t, "ticker=XLM", "coins=2")
 }
 
-// TestPollOnce_IDMode_MismatchedID_Skips: In id mode the
-// coin's own `id` field must agree with the numeric id requested
-// under that response key; a mismatch is a payload integrity fault
-// and must not be silently trusted.
+// TestPollOnce_IDMode_MismatchedID_Skips: in id mode the coin's own id must match the requested numeric id; a mismatch is a
+// payload fault.
 func TestPollOnce_IDMode_MismatchedID_Skips(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -326,10 +322,8 @@ func TestPollOnce_IDModeUsesNumericIDs(t *testing.T) {
 			return
 		}
 		capturedQuery = r.URL.RawQuery
-		// CMC's /v2 quotes/latest returns a top-level key keyed
-		// by the numeric ID (as a string) when queried by id.
-		// The poller must thread the response back to the
-		// canonical asset by ID, not by ticker.
+		// CMC keys quotes/latest by the numeric id as a string; the poller must map the response to the canonical asset by id, not
+		// ticker.
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = fmt.Fprint(w, `{
             "status": {"error_code": 0, "error_message": null},
@@ -505,10 +499,8 @@ func TestPollOnce_KeyDoesNotFollowAnOffOriginRedirect(t *testing.T) {
 	trap.AssertKeyStayedOnOrigin(t)
 }
 
-// Name + Class are the metadata the aggregator's external.Registry
-// reads to decide whether a poller's trades count toward VWAP.
-// CMC must report ClassAggregator (NOT ClassExchange) — getting this
-// wrong would let CMC's index price double-count upstream venues.
+// CMC must report ClassAggregator, not ClassExchange, or the registry would let its index price double-count upstream venues in
+// VWAP.
 
 func TestPoller_NameAndClass(t *testing.T) {
 	p, err := NewPoller("test-key")

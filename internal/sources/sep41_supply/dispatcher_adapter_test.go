@@ -114,10 +114,8 @@ func stringScVal(s string) xdr.ScVal {
 	return xdr.ScVal{Type: xdr.ScValTypeScvString, Str: &str}
 }
 
-// mintEventCAP67 builds the REAL post-P23 (CAP-67 / Whisk) mint shape:
-// ["mint", to(Addr), sep0011_asset(String)], with `to` at topic[1] and the asset String at
-// topic[2]. It is the dominant mainnet shape and DISTINCT from the legacy mintEvent helper,
-// which prefixes the admin (`to` at topic[2]).
+// mintEventCAP67 builds the real post-P23 (CAP-67) mint shape ["mint", to(Addr), sep0011_asset(String)] with `to` at topic[1];
+// it is the dominant mainnet shape, distinct from the legacy admin-prefixed mintEvent.
 func mintEventCAP67(t *testing.T, contract string, amount int64) events.Event {
 	t.Helper()
 	ev := mintEvent(t, contract, amount)
@@ -275,10 +273,8 @@ func TestDecoder_DecodeClawbackCounterpartyAtTopic2(t *testing.T) {
 	}
 }
 
-// TestDecoder_DecodeShortBurnTopic — older SEP-41 spec variants
-// might emit shorter topic vectors. The decoder surfaces
-// ErrShortTopic so the caller can drop the event rather than
-// write garbage.
+// TestDecoder_DecodeShortBurnTopic pins that a short topic vector yields ErrShortTopic so the caller drops the event rather
+// than writing garbage.
 func TestDecoder_DecodeShortBurnTopic(t *testing.T) {
 	d, _ := NewDecoder([]string{cWatched})
 	ev := burnEvent(t, cWatched, 1)
@@ -315,12 +311,9 @@ func TestDecoder_DecodeNegativeAmount(t *testing.T) {
 	}
 }
 
-// TestDecoder_CounterpartyAcrossShapes pins the shape-aware counterparty decode across EVERY
-// mainnet-observed topic shape. The counterparty position is NOT fixed by topic count: the
-// legacy SAC form prefixes `admin` (counterparty at topic[2]), while the CAP-67 / Whisk form puts
-// it at topic[1] and the sep0011_asset STRING at topic[2]. The discriminator is the TYPE of
-// topic[2] (Address means legacy). A fixture appending sep0011 to the legacy admin-prefixed form
-// is a shape mainnet never emits and would pass while real CAP-67 mints and clawbacks drop.
+// TestDecoder_CounterpartyAcrossShapes pins the shape-aware counterparty decode: legacy SAC form prefixes `admin`
+// (counterparty at topic[2]), CAP-67 puts it at topic[1] with the sep0011 String at topic[2]; the discriminator is the TYPE of
+// topic[2] (Address means legacy). A fixture mixing the two shapes would pass while real mints drop.
 func TestDecoder_CounterpartyAcrossShapes(t *testing.T) {
 	d, _ := NewDecoder([]string{cWatched})
 
@@ -384,10 +377,8 @@ func TestDecoder_HasI128SafeAmount(t *testing.T) {
 	}
 }
 
-// TestDecoder_PopulatesEventIndex pins that EventIndex must be
-// carried onto the row so multiple supply events emitted by one op
-// (mint-to-many, or a burn + clawback in one call) don't collapse on
-// the sep41_supply_events PK (migration 0057) via ON CONFLICT.
+// TestDecoder_PopulatesEventIndex pins that EventIndex is carried onto the row so several supply events from one op do not
+// collapse on the sep41_supply_events PK via ON CONFLICT.
 func TestDecoder_PopulatesEventIndex(t *testing.T) {
 	d, _ := NewDecoder([]string{cWatched})
 	ev := mintEvent(t, cWatched, 1_000_000)
@@ -418,10 +409,9 @@ func encodeMapNoAmount(t *testing.T) string {
 	return encodeScVal(t, xdr.ScVal{Type: xdr.ScValTypeScvMap, Map: &mp})
 }
 
-// Real mainnet event blobs from stellar.contract_events. Contract CBH4M45T…OCKF is a watched
-// SEP-41 token whose mints all carry the CAP-67 MAP body { amount: i128, to_muxed_id: String },
-// which an i128-only decodeAmount rejects with ErrAmountNotI128, dropping the whole row. These
-// are the base64 SCVal blobs (topics + body) verbatim.
+// Real mainnet blobs from stellar.contract_events for a watched SEP-41 token whose mints carry the CAP-67 map body { amount:
+// i128, to_muxed_id: String }; an i128-only decodeAmount rejects them with ErrAmountNotI128 and drops the row. These are the
+// verbatim base64 SCVal blobs (topics + body).
 const (
 	// mint @ ledger 59977903 — a mint a decoder must not drop.
 	// topics: ["mint", to=GDZS…U44, "ETH:GBFX…SOCC"]
@@ -533,10 +523,8 @@ func TestDecodeAmount_MapMissingAmountField(t *testing.T) {
 	}
 }
 
-// TestDecodeAmount_MapAmountWrongTypeIsNotI128: a CAP-67 map whose
-// `amount` is present but not an i128 (u128, u64) must be refused as
-// ErrAmountNotI128 — the sentinel callers match on — not re-read under
-// another width.
+// TestDecodeAmount_MapAmountWrongTypeIsNotI128 pins that a CAP-67 map whose `amount` is present but not an i128 (u128, u64) is
+// refused as ErrAmountNotI128, not re-read under another width.
 func TestDecodeAmount_MapAmountWrongTypeIsNotI128(t *testing.T) {
 	u64v := xdr.Uint64(5)
 	for name, amt := range map[string]xdr.ScVal{

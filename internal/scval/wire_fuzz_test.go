@@ -14,10 +14,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// TestParseBytes_rejectsTrailingBytes pins that the raw-bytes decoders reject
-// bytes left over after one ScVal, exactly as Parse does. Accepting them lets
-// a price body (redstone's Bytes-wrapped XDR) or a stored op-args column carry
-// arbitrary unvalidated trailing data and still decode as a valid value.
+// TestParseBytes_rejectsTrailingBytes pins that the raw-bytes decoders reject bytes left after one ScVal, as Parse does;
+// otherwise a price body (redstone's Bytes-wrapped XDR) or stored op-args column could carry unvalidated trailing data.
 func TestParseBytes_rejectsTrailingBytes(t *testing.T) {
 	sym, err := base64.StdEncoding.DecodeString(scval.MustEncodeSymbol("mint"))
 	if err != nil {
@@ -45,10 +43,8 @@ func TestParseBytes_rejectsTrailingBytes(t *testing.T) {
 	}
 }
 
-// TestParse_rejectsTrailingBytesInFinalQuantum pins that the base64 entry
-// points reject one or two trailing bytes that complete the final base64
-// quantum — xdr.SafeUnmarshalBase64's consumed-length check counts base64
-// characters, so it misses them (found by FuzzParseBytesTwin).
+// TestParse_rejectsTrailingBytesInFinalQuantum pins that the base64 entry points reject one or two trailing bytes completing the
+// final quantum, which xdr.SafeUnmarshalBase64's consumed-length check misses because it counts base64 characters.
 func TestParse_rejectsTrailingBytesInFinalQuantum(t *testing.T) {
 	for _, tc := range []struct {
 		b64   string
@@ -103,11 +99,9 @@ func TestParse_rejectsTrailingBytesInFinalQuantum(t *testing.T) {
 	}
 }
 
-// FuzzSEP41BalanceAmountWire feeds arbitrary wire bytes to the balance/
-// transfer-body decoder. Oracle: the documented contract — a bare i128, or a
-// map whose FIRST Symbol-keyed `amount` entry is an i128; everything else is
-// ErrUnknownBalanceValShape. Also checks the decoded body re-encodes to the
-// exact input bytes, so no two distinct wire bodies decode to one amount.
+// FuzzSEP41BalanceAmountWire feeds arbitrary wire bytes to the balance/transfer-body decoder. Oracle: a bare i128, or a map whose
+// first Symbol-keyed `amount` is an i128; anything else is ErrUnknownBalanceValShape. Decoded bodies must re-encode to the input
+// bytes.
 func FuzzSEP41BalanceAmountWire(f *testing.F) {
 	for _, b64 := range []string{
 		"AAAACgAAAAAAAAAAAAAAABOrZoA=",

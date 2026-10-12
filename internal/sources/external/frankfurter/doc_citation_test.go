@@ -8,16 +8,12 @@ import (
 	"testing"
 )
 
-// danglingBacklog47Ref is a citation client.go's package doc must not carry: "BACKLOG #47"
-// resolves to an unrelated PR, not the FX-into-external fold it was cited for (CHANGELOG.md
-// records the fold under ROADMAP #47). Built from parts so this guard's own source doesn't
-// trip the check it performs.
+// danglingBacklog47Ref is a citation client.go's package doc must not carry: BACKLOG #47 resolves to an unrelated PR. Built from
+// parts so this guard's own source does not trip it.
 var danglingBacklog47Ref = "BACKLOG #" + "47"
 
-// TestFrankfurterDocHasNoDanglingBacklogReference guards that the
-// FX-into-external fold citation in client.go's package doc must point at
-// the roadmap item that actually documents the fold, not a stale/wrong
-// backlog number that now resolves to unrelated content.
+// TestFrankfurterDocHasNoDanglingBacklogReference guards that client.go's FX-fold citation points at the roadmap item that
+// documents it.
 func TestFrankfurterDocHasNoDanglingBacklogReference(t *testing.T) {
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {

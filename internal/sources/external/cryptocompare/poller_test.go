@@ -74,10 +74,7 @@ func TestPollOnce_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PollOnce: %v", err)
 	}
-	// XLM×2 + BTC×1 (no BTC/EUR pair asked for).
-	// Actually our pair list has XLM/USD, XLM/EUR, BTC/USD.
-	// Venue returns XLM/{USD,EUR} + BTC/{USD,EUR}.
-	// We emit only configured combos → 3 updates.
+	// Pairs asked: XLM/USD, XLM/EUR, BTC/USD. The venue also returns BTC/EUR, but only configured combos are emitted, so 3 updates.
 	if len(updates) != 3 {
 		t.Fatalf("expected 3 updates, got %d", len(updates))
 	}
@@ -212,11 +209,8 @@ func TestPollOnce_KeyDoesNotFollowAnOffOriginRedirect(t *testing.T) {
 	trap.AssertKeyStayedOnOrigin(t)
 }
 
-// CryptoCompare is an aggregator (composite index across upstream
-// venues), NOT an exchange. Class must be ClassAggregator so the
-// aggregator's VWAP filter excludes it — including a composite
-// index against retail liquidity would double-count the same
-// upstream trades.
+// CryptoCompare is an aggregator, not an exchange: ClassAggregator keeps it out of the VWAP filter so upstream trades are not
+// double-counted.
 
 func TestPoller_NameAndClass(t *testing.T) {
 	p, err := NewPoller("key")
@@ -231,10 +225,8 @@ func TestPoller_NameAndClass(t *testing.T) {
 	}
 }
 
-// decimalStringToScaledInt mirrors the helper in exchangeratesapi /
-// CMC / coingecko. Pin edges so a refactor that breaks
-// negative-handling, fractional truncation, or scientific-notation
-// rejection gets caught.
+// decimalStringToScaledInt mirrors the exchangeratesapi/CMC/coingecko helper; edges pin negatives, fractional truncation and
+// scientific-notation rejection.
 
 func TestDecimalStringToScaledInt_edges(t *testing.T) {
 	cases := []struct {

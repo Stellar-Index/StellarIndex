@@ -13,15 +13,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// The API classifies customer traffic by User-Agent prefix: obs.IsSyntheticUA keeps
-// first-party probes out of the availability ratio, the latency histogram and the access log's
-// INFO stream, and `stellarindex-probe/` is the prefix it reserves for operator probes. A
-// probe sending Go's default `Go-http-client/1.1` would be counted as customer traffic and
-// dominate the availability denominator, and could clear the burn alerts' synthetic-traffic
-// floor.
-//
-// This test asserts the two ends agree, against the real request the probe builds rather than
-// a copy of the header string.
+// obs.IsSyntheticUA classifies traffic by the reserved `stellarindex-probe/` prefix; Go's default UA would count as customer
+// traffic and dominate the availability denominator. This asserts the probe's real request matches that prefix, not a copy of
+// the header string.
 func TestProbeIdentifiesItselfAsSynthetic(t *testing.T) {
 	var got string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

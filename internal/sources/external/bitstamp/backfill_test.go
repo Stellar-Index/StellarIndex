@@ -168,10 +168,8 @@ func TestBitstampGranularity(t *testing.T) {
 	}
 }
 
-// newVendorFaithfulOHLC emulates Bitstamp's documented OHLC paging:
-// when both `start` and `end` are sent, `end` wins and the `limit`
-// candles at or before it are returned; with `start` alone, the
-// `limit` candles from `start` onward are returned.
+// newVendorFaithfulOHLC emulates Bitstamp's OHLC paging: with both `start` and `end`, `end` wins and the `limit` candles at or
+// before it return; with `start` alone, `limit` candles from `start` onward.
 func newVendorFaithfulOHLC(t *testing.T, series []bitstampCandle) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

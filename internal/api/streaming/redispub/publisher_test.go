@@ -100,10 +100,8 @@ func TestPublishClosedBucket_StampsProducerID(t *testing.T) {
 	}
 }
 
-// TestPublishClosedBucket_RoundTrip — the canonical happy path:
-// the orchestrator hands a (pair, window, value, observed_at) to
-// the publisher, the publisher PUBLISHes a JSON-encoded
-// ClosedBucketEvent on the configured channel.
+// TestPublishClosedBucket_RoundTrip is the happy path: the publisher PUBLISHes a JSON-encoded ClosedBucketEvent for (pair,
+// window, value, observed_at) on the configured channel.
 func TestPublishClosedBucket_RoundTrip(t *testing.T) {
 	pair := nativeUSD(t)
 	cache := &fakeRedis{}

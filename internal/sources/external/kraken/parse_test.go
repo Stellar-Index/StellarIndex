@@ -202,10 +202,8 @@ func TestSkipReasons_MatchObsEnum(t *testing.T) {
 }
 
 func TestParseFrame_UnknownSymbolSkipped(t *testing.T) {
-	// A trade on MATIC/USD (in the ADR-0014 allow-list, but not in
-	// DefaultPairs — see binance/streamer_test.go for rationale)
-	// mixed with one on XLM/USD: unknown entry is dropped, known
-	// one lands.
+	// A MATIC/USD trade (allow-listed but not in DefaultPairs) mixed with an XLM/USD one: the unknown entry is dropped, the known one
+	// lands.
 	raw := []byte(`{
       "channel": "trade",
       "type": "update",
@@ -251,11 +249,8 @@ func TestBuildTrade_UnknownSymbol(t *testing.T) {
 	}
 }
 
-// TestBuildTrade_DustReturnsTypedSentinel pins the dust-trade handling shared with the other
-// CEX venues. 1e-8 XLM at $0.16 floor-divides to a zero quote amount at 10^8 integer scale,
-// which the canonical validator rejects ("quote_amount must be positive, got 0") and the
-// indexer would log as an ERROR per frame. ErrDustTrade lets the streamer's error-skip
-// branch absorb it silently.
+// TestBuildTrade_DustReturnsTypedSentinel: 1e-8 XLM at $0.16 floor-divides to a zero quote at 10^8 scale, which the validator
+// rejects; ErrDustTrade lets the streamer skip it silently instead of logging an ERROR per frame.
 func TestBuildTrade_DustReturnsTypedSentinel(t *testing.T) {
 	_, err := buildTrade(tradePayload{
 		Symbol:    "XLM/USD",
@@ -270,10 +265,8 @@ func TestBuildTrade_DustReturnsTypedSentinel(t *testing.T) {
 }
 
 func TestDecimalStringToScaledInt_KrakenPrecision(t *testing.T) {
-	// Kraken publishes at most 8 decimal places for prices, often
-	// fewer. Verify the scaling matches what Binance produces for
-	// equivalent numbers — aggregator sums across sources should
-	// be integer-safe.
+	// Kraken publishes at most 8 decimal places; scaling must match Binance's for equivalent numbers so aggregator sums stay
+	// integer-safe.
 	cases := []struct {
 		in   string
 		want *big.Int

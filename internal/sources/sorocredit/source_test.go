@@ -281,10 +281,9 @@ func TestGolden_ConfigEvents(t *testing.T) {
 	}
 }
 
-// TestGolden_BodyCapturedVerbatim pins the "captured verbatim" promise of decodeSettlement,
-// decodeSupportedAssetAdded and decodeConfigBody: Attributes["body"] must equal the raw base64 XDR
-// payload byte-for-byte. scval.Display is lossy by design (truncation, depth cap), so routing the
-// audit-trail capture through it would silently break the promise.
+// TestGolden_BodyCapturedVerbatim pins that Attributes["body"] equals the raw base64 XDR payload byte-for-byte for
+// decodeSettlement, decodeSupportedAssetAdded and decodeConfigBody; scval.Display is lossy (truncation, depth cap), so it must
+// not feed the audit trail.
 func TestGolden_BodyCapturedVerbatim(t *testing.T) {
 	t.Parallel()
 	for _, name := range []string{
@@ -394,10 +393,8 @@ func TestEventSymbols_MatchesClassify(t *testing.T) {
 
 // ─── gating (ADR-0035) ───────────────────────────────────────────────
 
-// TestMatches_TrustRootAcceptedLookAlikeRejected is the gate test: every
-// tracked symbol from the trust-root main contract matches; the SAME
-// symbol from a foreign contract (the two real look-alike emitters) does
-// NOT — identity gating, not topic matching.
+// TestMatches_TrustRootAcceptedLookAlikeRejected is the identity-gate test: tracked symbols from the trust-root contract
+// match, while the same symbol from a foreign look-alike emitter does not.
 func TestMatches_TrustRootAcceptedLookAlikeRejected(t *testing.T) {
 	t.Parallel()
 	d := NewDecoder()
@@ -425,10 +422,8 @@ func TestMatches_UnknownSymbolRejected(t *testing.T) {
 	}
 }
 
-// TestChildgate_SeedThenAccept exercises the forward-compat childgate:
-// decoding a NewCollateralContract seeds the announced child, after which
-// a (hypothetical) business event emitted BY that child is accepted —
-// while NewCollateralContract itself stays trust-root-only.
+// TestChildgate_SeedThenAccept: decoding NewCollateralContract seeds the announced child, after which a business event emitted
+// by that child is accepted, while NewCollateralContract itself stays trust-root-only.
 func TestChildgate_SeedThenAccept(t *testing.T) {
 	t.Parallel()
 	d := NewDecoder()
@@ -509,10 +504,9 @@ func TestDecode_LargeI128_NoTruncation(t *testing.T) {
 
 // ─── Q074: NUL/invalid-UTF8 UUID and u64 epoch overflow ──────────────
 
-// TestDecode_StatementPublished_NULUUIDSurvivesAsHexText: a statement_uuid/position_uuid is
-// caller-chosen bytes bound to a `text NOT NULL` column, and Postgres refuses NUL or invalid UTF-8
-// (SQLSTATE 22021), losing the row for good. It must come back as scval.ToText's lossless hex
-// form, never the raw NUL-bearing string.
+// TestDecode_StatementPublished_NULUUIDSurvivesAsHexText: a caller-chosen uuid bound to a text NOT NULL column with NUL or
+// invalid UTF-8 is refused by Postgres (22021), so it must come back as scval.ToText's lossless hex form, never the raw
+// string.
 func TestDecode_StatementPublished_NULUUIDSurvivesAsHexText(t *testing.T) {
 	t.Parallel()
 	rawUUID := "bad\x00uuid-not-utf8-\xff"
@@ -663,10 +657,9 @@ func b64Symbol(t *testing.T, s string) string {
 	return b64(t, symbolSV(s))
 }
 
-// TestDecode_Settlement_MalformedAmountCountsDegrade: a Liquidation body whose amounts leg
-// (data[2]) isn't a non-empty Vec[i128] must still decode (nil error, row kept; see package doc)
-// but increment obs.SourceAmountDegradedTotal{source="sorocredit", field="settled_amount"}, so the
-// resulting NULL settled_amount is not invisible.
+// TestDecode_Settlement_MalformedAmountCountsDegrade: a Liquidation body whose data[2] is not a non-empty Vec[i128] still
+// decodes (row kept) but increments obs.SourceAmountDegradedTotal{source="sorocredit", field="settled_amount"}, so the NULL
+// settled_amount is visible.
 func TestDecode_Settlement_MalformedAmountCountsDegrade(t *testing.T) {
 	before := testutil.ToFloat64(obs.SourceAmountDegradedTotal.WithLabelValues(SourceName, "settled_amount"))
 
@@ -725,9 +718,7 @@ func settlementEvent(t *testing.T, assets, amounts xdr.ScVal, trailing int) even
 	}
 }
 
-// TestDecode_Settlement_BodyMustBeAuditedSevenVec pins the audited
-// Liquidation body arity (wasm-audits/sorocredit.md: Vec[7]). Any other
-// length is an unaudited shape whose positional promotion is untrusted,
+// TestDecode_Settlement_BodyMustBeAuditedSevenVec pins the audited Liquidation arity (Vec[7]); any other length is unaudited,
 // so it must fail as ErrMalformedPayload rather than promote data[0..2].
 func TestDecode_Settlement_BodyMustBeAuditedSevenVec(t *testing.T) {
 	t.Parallel()
@@ -752,10 +743,8 @@ func TestDecode_Settlement_BodyMustBeAuditedSevenVec(t *testing.T) {
 	}
 }
 
-// TestDecode_Settlement_NonParallelLegsNotPromoted: debt_assets and
-// amounts pair by index, so when their lengths differ amounts[0] is not
-// provably assets[0]'s amount. Neither may be promoted; the degrade is
-// noted in attributes and counted.
+// TestDecode_Settlement_NonParallelLegsNotPromoted: debt_assets and amounts pair by index, so when lengths differ amounts[0]
+// is not provably assets[0]'s amount. Neither is promoted; the degrade is noted in attributes and counted.
 func TestDecode_Settlement_NonParallelLegsNotPromoted(t *testing.T) {
 	before := testutil.ToFloat64(obs.SourceAmountDegradedTotal.WithLabelValues(SourceName, "settled_amount"))
 	assets := vecSV(contractAddrSV(t, contractStrkey(t, 0x02)), contractAddrSV(t, contractStrkey(t, 0x04)))

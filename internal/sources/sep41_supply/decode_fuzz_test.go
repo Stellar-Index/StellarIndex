@@ -57,10 +57,8 @@ func FuzzSEP41Amount(f *testing.F) {
 		bareAmt, bareErr := decodeAmount(&events.Event{Value: bare})
 		mapAmt, mapErr := decodeAmount(&events.Event{Value: mapped})
 
-		// Property 1 — the two SHAPES are one VALUE. Whichever way the
-		// token chose to wrap the amount, the supply row must be
-		// identical; a shape-dependent answer is how mint_total went to
-		// zero while burns kept landing.
+		// Property 1: the two on-wire shapes are one value; the supply row must be identical either way, since a shape-dependent
+		// answer is how mint_total went to zero.
 		if (bareErr == nil) != (mapErr == nil) {
 			t.Fatalf("shapes disagree on acceptance for hi=%d lo=%d: bare err=%v, CAP-67 map err=%v",
 				hi, lo, bareErr, mapErr)
@@ -80,10 +78,8 @@ func FuzzSEP41Amount(f *testing.F) {
 			t.Fatalf("non-negative amount %s (hi=%d lo=%d) was refused: %v", want, hi, lo, bareErr)
 		}
 
-		// Property 3 — ADR-0003. The decoded amount is the EXACT i128,
-		// not its low limb. int64(parts.Lo) agrees with this for every
-		// amount below 2^63 and for nothing above it, which is exactly
-		// why the assertion has to run over the whole domain.
+		// Property 3 (ADR-0003): the decoded amount is the exact i128, not its low limb; int64(parts.Lo) agrees only below 2^63, so
+		// the assertion must run over the whole domain.
 		if bareAmt.Cmp(want) != 0 {
 			t.Fatalf("bare i128 decoded to %s, want %s (hi=%d lo=%d) — the i128 "+
 				"was truncated, and this value lands in a NUMERIC supply column",

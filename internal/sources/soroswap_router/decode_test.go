@@ -11,10 +11,8 @@ import (
 	sdkxdr "github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// TestDecodeRouterArgs_swapExactTokensForTokens covers the
-// happy-path decoding of the most-common router entry point.
-// Verifies argument positions, i128 amount preservation (no
-// truncation per ADR-0003), and the address-strkey round-trip.
+// TestDecodeRouterArgs_swapExactTokensForTokens covers the common entry point: argument positions, i128 amount
+// preservation without truncation (ADR-0003), and the address-strkey round-trip.
 func TestDecodeRouterArgs_swapExactTokensForTokens(t *testing.T) {
 	t.Parallel()
 	// One USDC → XLM → BTC three-hop swap. Path is 3 contract
@@ -77,10 +75,8 @@ func TestDecodeRouterArgs_swapExactTokensForTokens(t *testing.T) {
 	}
 }
 
-// TestDecodeRouterArgs_swapTokensForExactTokens covers the
-// inverse function — args[0] is exact-out, args[1] is in-max.
-// Confirms the (a0, a1) → (AmountIn, AmountOut) inversion in
-// the per-function branch.
+// TestDecodeRouterArgs_swapTokensForExactTokens covers the inverse: args[0] is exact-out, args[1] is in-max,
+// so the per-function branch inverts (a0, a1) to (AmountIn, AmountOut).
 func TestDecodeRouterArgs_swapTokensForExactTokens(t *testing.T) {
 	t.Parallel()
 	a := makeContractAddress(t, byte(0x10))
@@ -95,10 +91,8 @@ func TestDecodeRouterArgs_swapTokensForExactTokens(t *testing.T) {
 		mustB64(t, u64SCVal(1735689600)),
 	}
 
-	// Sub-invocation: an aggregator wrapping the router one level deep, covering the
-	// CallDepth/CallKind derivation for the non-top-level case (real_bytes_test.go has the
-	// real-bytes equivalent). decodeRouterArgs only cares about CallPath's length, not caller
-	// identities, so a synthetic placeholder strkey is fine.
+	// Sub-invocation: an aggregator wrapping the router one level deep covers the CallDepth/CallKind derivation for non-top-level
+	// calls. decodeRouterArgs only uses CallPath's length, so a synthetic placeholder strkey is fine.
 	const aggregatorStrkey = "CAGGREGATORPLACEHOLDER0000000000000000000000000000000000000"
 	swap, err := decodeRouterArgs(
 		FnSwapTokensForExactTokens, args,
@@ -206,10 +200,8 @@ func TestDecodeRouterArgs_pathTooShort(t *testing.T) {
 	}
 }
 
-// TestDecodeRouterArgs_zeroDeadlineYieldsZeroTime confirms a
-// deadline of 0 (a "no deadline" sentinel) leaves DeadlineTs as the
-// zero time.Time so the sink's IsZero() guard NULLs the column,
-// rather than stamping the 1970-01-01 epoch.
+// TestDecodeRouterArgs_zeroDeadlineYieldsZeroTime: a deadline of 0 ("no deadline" sentinel) leaves DeadlineTs zero,
+// so the sink's IsZero() guard NULLs the column instead of stamping the 1970 epoch.
 func TestDecodeRouterArgs_zeroDeadlineYieldsZeroTime(t *testing.T) {
 	t.Parallel()
 	a := makeContractAddress(t, byte(0x30))
@@ -237,10 +229,8 @@ func TestDecodeRouterArgs_zeroDeadlineYieldsZeroTime(t *testing.T) {
 	}
 }
 
-// TestDecodeRouterArgs_overflowDeadlineYieldsZeroTime covers deadline overflow. A deadline near
-// math.MaxUint64 (a common "unlimited" sentinel) wraps NEGATIVE under a bare int64(deadline)
-// cast, landing near the 1970 epoch: a plausible, postgres-representable time that silently
-// corrupts the stored deadline instead of being treated as absent.
+// TestDecodeRouterArgs_overflowDeadlineYieldsZeroTime: a deadline near math.MaxUint64 ("unlimited" sentinel) wraps negative under
+// a bare int64 cast and would store a plausible 1970 time, so it must be treated as absent.
 func TestDecodeRouterArgs_overflowDeadlineYieldsZeroTime(t *testing.T) {
 	t.Parallel()
 	a := makeContractAddress(t, byte(0x40))

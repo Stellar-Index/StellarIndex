@@ -8,10 +8,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// TestSentinelErrors_AreDistinct pins that callers can
-// errors.Is each sentinel without false positives. This is the
-// contract the rest of the codebase relies on for routing
-// errors back to HTTP statuses.
+// TestSentinelErrors_AreDistinct pins that callers can errors.Is each sentinel without false positives, which HTTP status
+// routing relies on.
 func TestSentinelErrors_AreDistinct(t *testing.T) {
 	all := []error{
 		platform.ErrNotFound,

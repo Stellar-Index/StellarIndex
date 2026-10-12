@@ -52,10 +52,8 @@ func TestSessionsTableComment_DoesNotClaimUnimplementedAlert(t *testing.T) {
 	if pos == -1 {
 		t.Fatal("migration 0027 no longer declares sessions_user_active_idx")
 	}
-	// The sessions table's header comment block precedes its CREATE TABLE,
-	// which precedes this index. Look at the comment block immediately
-	// above the CREATE TABLE, not the whole file, so a false claim
-	// elsewhere in the file can't hide behind this check.
+	// Check only the comment block immediately above the CREATE TABLE, not the whole file, so a false claim elsewhere cannot hide
+	// behind this check.
 	createPos := strings.Index(text, "CREATE TABLE sessions")
 	if createPos == -1 || createPos > pos {
 		t.Fatal("migration 0027 sessions table structure not found where expected")

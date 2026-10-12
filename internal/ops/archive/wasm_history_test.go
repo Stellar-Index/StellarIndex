@@ -287,10 +287,8 @@ func makeRemovedChange(t *testing.T, contract sdkxdr.Hash, key sdkxdr.ScVal) sdk
 	}
 }
 
-// makeStorageChange builds a synthetic LedgerEntryChange for a
-// non-Instance ContractData entry (typical "custom storage"
-// shape) that recordStorageChange should pick up when the
-// contract is in the watch list.
+// makeStorageChange builds a synthetic LedgerEntryChange for a non-Instance ContractData entry (custom storage)
+// that recordStorageChange should pick up when the contract is in the watch list.
 func makeStorageChange(t *testing.T, contract sdkxdr.Hash, keySymbol string) sdkxdr.LedgerEntryChange {
 	t.Helper()
 	contractID := sdkxdr.ContractId(contract)
@@ -509,10 +507,8 @@ func TestBuildRangesFromTransitions(t *testing.T) {
 	})
 
 	t.Run("collapses adjacent same-hash transitions across worker boundary", func(t *testing.T) {
-		// Worker 0 sees hash a at ledger 100; worker 1 starts fresh
-		// and re-observes hash a at its lower bound 600 (its first
-		// observation). The merge tool must collapse — no real
-		// transition happened between the workers.
+		// Worker 0 sees hash a at ledger 100; worker 1 re-observes hash a at its lower bound 600.
+		// The merge must collapse them: no real transition happened between workers.
 		trs := []transitionRecord{
 			{Contract: "C...", WasmHash: "a", AtLedger: 100},
 			{Contract: "C...", WasmHash: "a", AtLedger: 600}, // worker boundary

@@ -82,10 +82,8 @@ func assertAccountScoped(t *testing.T, e recordedExec, want uuid.UUID) {
 	}
 }
 
-// Invariant: a key's editable fields and revocation are writable only by a
-// caller acting for the key's owning account; the account is a SQL
-// predicate, so a caller that skips its own ownership check still cannot
-// reach another account's key.
+// TestAPIKeyStore_UpdateAndRevokeAreAccountScoped pins that a key's edit and revoke are writable only for its owning account,
+// enforced as a SQL predicate so a caller that skips its own ownership check still cannot reach another account's key.
 func TestAPIKeyStore_UpdateAndRevokeAreAccountScoped(t *testing.T) {
 	ctx := context.Background()
 	owner := uuid.New()

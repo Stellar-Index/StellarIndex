@@ -76,10 +76,9 @@ func emitterEvent(t *testing.T, topic0 string, body xdr.ScVal) events.Event {
 	}
 }
 
-// FuzzDecodeDrop: every recipient's amount survives at full i128 width,
-// in wire order; a zero or negative amount anywhere rejects the whole
-// event (ErrNonPositiveAmount); an inner element that is not exactly a
-// (recipient, amount) pair is malformed rather than truncated.
+// FuzzDecodeDrop: each recipient's amount survives at full i128 width in wire order; a zero or negative amount rejects the
+// whole event (ErrNonPositiveAmount); an inner element that is not exactly a (recipient, amount) pair is malformed, not
+// truncated.
 func FuzzDecodeDrop(f *testing.F) {
 	f.Add([]byte{}, uint8(1), false) // a zero amount
 	pos := make([]byte, 48)

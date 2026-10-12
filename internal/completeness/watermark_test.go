@@ -76,10 +76,8 @@ func TestComputeWatermark(t *testing.T) {
 	}
 }
 
-// Stellar ledgers start at 1, so FirstProblem == 0 is the "no problem"
-// sentinel every consumer reads (CompletenessSnapshot.IsFoundProblem). A zero
-// genesis must still publish a located, non-zero FirstProblem and must not
-// count the nonexistent ledger 0 as verified coverage.
+// Stellar ledgers start at 1, so FirstProblem == 0 is the "no problem" sentinel (CompletenessSnapshot.IsFoundProblem); a zero
+// genesis must still publish a non-zero FirstProblem and not count ledger 0 as verified coverage.
 func TestComputeWatermarkZeroGenesisKeepsSentinelSound(t *testing.T) {
 	tests := []struct {
 		name         string
