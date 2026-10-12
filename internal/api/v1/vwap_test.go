@@ -3,6 +3,7 @@ package v1_test
 import (
 	"context"
 	"errors"
+	"io"
 	"math/big"
 	"net/http"
 	"strings"
@@ -487,5 +488,403 @@ func TestVWAPTWAPFlagThinMarketWithEvidence(t *testing.T) {
 		if strings.Contains(string(body), "thin_market") || strings.Contains(string(body), "substance") {
 			t.Errorf("%s cleared pair carries a thin marker: %s", endpoint, body)
 		}
+	}
+}
+
+const vwapBDBase = "/v1/vwap?base=native&quote=fiat:USD"
+
+func bdTrade(source string, ts time.Time, base, quote int64) canonical.Trade {
+	t := mkVWAPTrade(base, quote)
+	t.Source = source
+	t.Timestamp = ts
+	return t
+}
+
+func bdGet(t *testing.T, reader *stubHistoryReader, url string) v1.VWAPResult {
+	t.Helper()
+	ts := httpTestServer(t, v1.New(v1.Options{History: reader}))
+	resp := mustGet(t, ts.URL+url)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", resp.StatusCode, url)
+	}
+	var env struct {
+		Data v1.VWAPResult `json:"data"`
+	}
+	mustDecode(t, resp, &env)
+	return env.Data
+}
+
+func ratOf(t *testing.T, s string) *big.Rat {
+	t.Helper()
+	r, ok := new(big.Rat).SetString(s)
+	if !ok {
+		t.Fatalf("not a decimal: %q", s)
+	}
+	return r
+}
+
+func TestVWAPBreakdown_AbsentWithoutParam(t *testing.T) {
+	reader := &stubHistoryReader{trades: []canonical.Trade{mkVWAPTrade(20, 40), mkVWAPTrade(100, 300)}}
+	ts := httpTestServer(t, v1.New(v1.Options{History: reader}))
+	resp := mustGet(t, ts.URL+vwapBDBase)
+	body, _ := readAll(resp)
+	if strings.Contains(body, "breakdown") {
+		t.Errorf("response without ?breakdown= must not mention breakdown: %s", body)
+	}
+}
+
+func TestVWAPBreakdown_SourcesSumToBucketAndWeightsToOne(t *testing.T) {
+	t0 := time.Unix(1_772_000_000, 0).UTC()
+	reader := &stubHistoryReader{trades: []canonical.Trade{
+		bdTrade("soroswap", t0, 10, 30),
+		bdTrade("soroswap", t0.Add(time.Second), 20, 50),
+		bdTrade("sdex", t0.Add(2*time.Second), 5, 20),
+	}}
+	res := bdGet(t, reader, vwapBDBase+"&breakdown=source")
+	bd := res.Breakdown
+	if bd == nil || len(bd.Buckets) != 1 || bd.Interval != nil || bd.Truncated {
+		t.Fatalf("breakdown = %+v, want one bucket, null interval, not truncated", bd)
+	}
+	b := bd.Buckets[0]
+	if b.QuoteVolume != res.QuoteVolume || b.TradeCount != res.TradeCount {
+		t.Errorf("bucket (%s,%d) != headline (%s,%d)", b.QuoteVolume, b.TradeCount, res.QuoteVolume, res.TradeCount)
+	}
+	sumQ, sumW := new(big.Int), new(big.Rat)
+	for _, s := range b.Sources {
+		q, _ := new(big.Int).SetString(s.QuoteVolume, 10)
+		sumQ.Add(sumQ, q)
+		sumW.Add(sumW, ratOf(t, s.Weight))
+	}
+	if sumQ.String() != res.QuoteVolume {
+		t.Errorf("Σ source quote = %s, want %s", sumQ, res.QuoteVolume)
+	}
+	if d := new(big.Rat).Sub(big.NewRat(1, 1), sumW); d.Sign() < 0 || d.Cmp(big.NewRat(1, 1_000_000_000)) > 0 {
+		t.Errorf("Σ weights = %s, want 1 within 1e-9", sumW.FloatString(12))
+	}
+	top := b.Sources[0]
+	if top.Source != "soroswap" || top.QuoteVolume != "80" || top.BaseVolume != "30" || top.TradeCount != 2 ||
+		top.Weight != "0.8000000000" || top.OutliersExcluded != 0 || top.Price == nil || *top.Price != "2.6666666666" {
+		t.Errorf("soroswap = %+v", top)
+	}
+}
+
+func TestVWAPBreakdown_IntervalBuckets(t *testing.T) {
+	t0 := time.Date(2026, 3, 1, 10, 30, 0, 0, time.UTC)
+	reader := &stubHistoryReader{trades: []canonical.Trade{
+		bdTrade("soroswap", t0, 1, 2),
+		bdTrade("sdex", t0.Add(time.Hour), 1, 4),
+	}}
+	bd := bdGet(t, reader, vwapBDBase+"&breakdown=source&interval=1h").Breakdown
+	if bd.Interval == nil || *bd.Interval != "1h" || len(bd.Buckets) != 2 {
+		t.Fatalf("breakdown = %+v, want 2 buckets at 1h", bd)
+	}
+	if got := time.Time(bd.Buckets[0].Start); !got.Equal(time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)) {
+		t.Errorf("first bucket start = %v", got)
+	}
+	if bd.Buckets[0].Sources[0].Source != "soroswap" || bd.Buckets[1].Sources[0].Source != "sdex" {
+		t.Errorf("buckets not in ascending time order: %+v", bd.Buckets)
+	}
+}
+
+func TestVWAPBreakdown_MixedDecimalsWeightsNormalised(t *testing.T) {
+	usdc, err := canonical.ParseAsset(w2t2USDC)
+	if err != nil {
+		t.Fatal(err)
+	}
+	xlm, _ := canonical.ParseAsset("native")
+	pair, _ := canonical.NewPair(xlm, usdc)
+	// Same real value: 100 at 7 decimals == 1000 at 8 decimals.
+	on := bdTrade("soroswap", time.Unix(1_772_000_000, 0).UTC(), 10, 100)
+	cex := bdTrade("binance", time.Unix(1_772_000_001, 0).UTC(), 100, 1000)
+	on.Pair, cex.Pair = pair, pair
+	res := bdGet(t, &stubHistoryReader{trades: []canonical.Trade{on, cex}},
+		"/v1/vwap?base=native&quote="+w2t2USDC+"&breakdown=source")
+	for _, s := range res.Breakdown.Buckets[0].Sources {
+		if ratOf(t, s.Weight).Cmp(big.NewRat(1, 2)) != 0 {
+			t.Errorf("%s weight = %s, want 0.5 after scale normalisation", s.Source, s.Weight)
+		}
+		// Lifted to the window's 8dp scale, the units of the headline sums.
+		if s.QuoteVolume != "1000" {
+			t.Errorf("%s quote_volume = %s, want 1000 at 8dp", s.Source, s.QuoteVolume)
+		}
+	}
+	if res.QuoteVolume != "2000" {
+		t.Errorf("quote_volume = %s, want 2000 (the sources sum to it)", res.QuoteVolume)
+	}
+}
+
+func TestVWAPBreakdown_OutlierExclusionsPerSource(t *testing.T) {
+	t0 := time.Unix(1_772_000_000, 0).UTC()
+	baseline := []int64{100, 101, 99, 100, 102, 98, 101, 100, 99, 100, 101, 100, 99, 101, 100, 102, 99, 100, 101, 100}
+	var trades []canonical.Trade
+	for i, p := range baseline {
+		trades = append(trades, bdTrade("sdex", t0.Add(time.Duration(i)*time.Second), 1, p))
+	}
+	trades = append(trades, bdTrade("soroswap", t0.Add(time.Minute), 1, 10_000))
+
+	res := bdGet(t, &stubHistoryReader{trades: trades}, vwapBDBase+"&breakdown=source&outlier_sigma=3")
+	if res.OutliersFiltered != 1 {
+		t.Fatalf("OutliersFiltered = %d, want 1", res.OutliersFiltered)
+	}
+	got := map[string]v1.VWAPSourceBreakdown{}
+	for _, s := range res.Breakdown.Buckets[0].Sources {
+		got[s.Source] = s
+	}
+	if s := got["sdex"]; s.OutliersExcluded != 0 || s.TradeCount != 20 {
+		t.Errorf("sdex = %+v, want 0 excluded / 20 trades", s)
+	}
+	s := got["soroswap"]
+	if s.OutliersExcluded != 1 || s.TradeCount != 0 || s.Price != nil || s.Weight != "0" || s.QuoteVolume != "0" {
+		t.Errorf("soroswap = %+v, want fully excluded, null price, weight 0", s)
+	}
+
+	// Without sigma nothing is excluded.
+	res = bdGet(t, &stubHistoryReader{trades: trades}, vwapBDBase+"&breakdown=source")
+	for _, s := range res.Breakdown.Buckets[0].Sources {
+		if s.OutliersExcluded != 0 {
+			t.Errorf("%s excluded %d with sigma 0", s.Source, s.OutliersExcluded)
+		}
+	}
+}
+
+func TestVWAPBreakdown_TruncatedFlag(t *testing.T) {
+	t0 := time.Unix(1_772_000_000, 0).UTC()
+	trades := make([]canonical.Trade, 10000)
+	for i := range trades {
+		trades[i] = bdTrade("sdex", t0, 1, 2)
+	}
+	res := bdGet(t, &stubHistoryReader{trades: trades}, vwapBDBase+"&breakdown=source")
+	if !res.Truncated || !res.Breakdown.Truncated {
+		t.Errorf("truncated = %v / breakdown %v, want both true at the fetch cap", res.Truncated, res.Breakdown.Truncated)
+	}
+	res = bdGet(t, &stubHistoryReader{trades: trades[:9999]}, vwapBDBase+"&breakdown=source")
+	if res.Breakdown.Truncated {
+		t.Error("breakdown.truncated true below the cap")
+	}
+}
+
+func TestVWAPBreakdown_ParamValidation400(t *testing.T) {
+	ts := httpTestServer(t, v1.New(v1.Options{History: &stubHistoryReader{trades: []canonical.Trade{mkVWAPTrade(1, 2)}}}))
+	for _, q := range []string{
+		"&breakdown=venue",
+		"&breakdown=source&interval=7m",
+		"&interval=1h",
+	} {
+		resp := mustGet(t, ts.URL+vwapBDBase+q)
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("%s: status = %d, want 400", q, resp.StatusCode)
+		}
+	}
+}
+
+func TestVWAPBreakdown_MixedDecimalsRankedByWeight(t *testing.T) {
+	usdc, err := canonical.ParseAsset(w2t2USDC)
+	if err != nil {
+		t.Fatal(err)
+	}
+	xlm, _ := canonical.ParseAsset("native")
+	pair, _ := canonical.NewPair(xlm, usdc)
+	// 300 at 7 decimals outweighs 1000 at 8 decimals (== 100 at 7), so a
+	// raw-volume sort would put binance first.
+	on := bdTrade("soroswap", time.Unix(1_772_000_000, 0).UTC(), 30, 300)
+	cex := bdTrade("binance", time.Unix(1_772_000_001, 0).UTC(), 100, 1000)
+	on.Pair, cex.Pair = pair, pair
+	res := bdGet(t, &stubHistoryReader{trades: []canonical.Trade{on, cex}},
+		"/v1/vwap?base=native&quote="+w2t2USDC+"&breakdown=source")
+	if got := res.Breakdown.Buckets[0].Sources[0].Source; got != "soroswap" {
+		t.Errorf("top source = %s, want soroswap (weight 0.75)", got)
+	}
+}
+
+// /v1/vwap and /v1/twap must withhold a scam-flagged issuer's aggregated price like the other price surfaces. They compute from
+// raw trades via their own fetch, bypassing the price-reader gate, so without their own gate /v1/price 404s price-withheld
+// while they return 200 with a price.
+
+// scamGateFor withholds exactly the listed bases and records the surface
+// label each call was made with, so a test can assert the gate was
+// consulted with the right identity — not merely that a 404 appeared.
+type scamGateFor struct {
+	withheld map[string]bool
+	surfaces []string
+}
+
+func (g *scamGateFor) Withheld(_ context.Context, base canonical.Asset, surface string) bool {
+	g.surfaces = append(g.surfaces, surface)
+	return g.withheld[base.String()]
+}
+
+// scamTestTrade builds one trade for the pair so the ungated path would
+// otherwise serve a real 200 with a price — without it the endpoints
+// would 404 for lack of data and the test would pass vacuously.
+func scamTestTrade(t *testing.T, base, quote canonical.Asset) canonical.Trade {
+	t.Helper()
+	pair, err := canonical.NewPair(base, quote)
+	if err != nil {
+		t.Fatalf("NewPair: %v", err)
+	}
+	return canonical.Trade{
+		Source: "sdex", Ledger: 1,
+		TxHash:      "0000000000000000000000000000000000000000000000000000000000000002",
+		Timestamp:   time.Now().UTC().Add(-time.Hour),
+		Pair:        pair,
+		BaseAmount:  canonical.NewAmount(big.NewInt(1_000_000)),
+		QuoteAmount: canonical.NewAmount(big.NewInt(160_000)),
+	}
+}
+
+// flaggedIssuerAsset is a classic asset whose issuer stands in for a
+// directory-scam-flagged one. The gate stub keys on the asset id, so the
+// specific strkey only has to parse.
+const flaggedIssuerAsset = "RIO-GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ"
+
+func TestVWAPWithholdsScamFlaggedIssuer(t *testing.T) {
+	base, err := canonical.ParseAsset(flaggedIssuerAsset)
+	if err != nil {
+		t.Fatalf("parse base: %v", err)
+	}
+	native, _ := canonical.ParseAsset("native")
+
+	reader := &pairAwareHistoryReader{
+		tradesByPair: map[string][]canonical.Trade{
+			base.String() + "/native": {scamTestTrade(t, base, native)},
+		},
+	}
+	gate := &scamGateFor{withheld: map[string]bool{base.String(): true}}
+	srv := v1.New(v1.Options{History: reader, Scam: gate})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/vwap?base="+base.String()+"&quote=native")
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("/v1/vwap status = %d, want 404 — a scam-flagged issuer's "+
+			"aggregated price must be withheld here exactly as it is on "+
+			"/v1/price and /v1/price/tip (MSP-02). Body: %s", resp.StatusCode, body)
+	}
+	if !strings.Contains(string(body), "errors/price-withheld") {
+		t.Errorf("/v1/vwap body missing the price-withheld problem type: %s", body)
+	}
+	if len(gate.surfaces) == 0 || gate.surfaces[0] != "vwap" {
+		t.Errorf("gate surfaces = %v, want the first to be \"vwap\" — the surface "+
+			"label is how an operator attributes a withholding decision", gate.surfaces)
+	}
+}
+
+func TestTWAPWithholdsScamFlaggedIssuer(t *testing.T) {
+	base, err := canonical.ParseAsset(flaggedIssuerAsset)
+	if err != nil {
+		t.Fatalf("parse base: %v", err)
+	}
+	native, _ := canonical.ParseAsset("native")
+
+	reader := &pairAwareHistoryReader{
+		tradesByPair: map[string][]canonical.Trade{
+			base.String() + "/native": {scamTestTrade(t, base, native)},
+		},
+	}
+	gate := &scamGateFor{withheld: map[string]bool{base.String(): true}}
+	srv := v1.New(v1.Options{History: reader, Scam: gate})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/twap?base="+base.String()+"&quote=native")
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("/v1/twap status = %d, want 404 (MSP-02). Body: %s", resp.StatusCode, body)
+	}
+	if !strings.Contains(string(body), "errors/price-withheld") {
+		t.Errorf("/v1/twap body missing the price-withheld problem type: %s", body)
+	}
+	if len(gate.surfaces) == 0 || gate.surfaces[0] != "twap" {
+		t.Errorf("gate surfaces = %v, want the first to be \"twap\"", gate.surfaces)
+	}
+}
+
+// TestVWAPTWAPGateKeysOnBaseNotQuote: the gate keys on the base alone so it survives the frontend's XLM
+// triangulation; keying on the pair would let /v1/vwap?base=<flagged>&quote=native through whenever the flagged
+// asset appeared on the other side of a different quote.
+func TestVWAPTWAPGateKeysOnBaseNotQuote(t *testing.T) {
+	base, err := canonical.ParseAsset(flaggedIssuerAsset)
+	if err != nil {
+		t.Fatalf("parse base: %v", err)
+	}
+	usdc, err := canonical.ParseAsset(w2t2USDC)
+	if err != nil {
+		t.Fatalf("parse usdc: %v", err)
+	}
+
+	reader := &pairAwareHistoryReader{
+		tradesByPair: map[string][]canonical.Trade{
+			base.String() + "/" + usdc.String(): {scamTestTrade(t, base, usdc)},
+		},
+	}
+	gate := &scamGateFor{withheld: map[string]bool{base.String(): true}}
+	srv := v1.New(v1.Options{History: reader, Scam: gate})
+	ts := httpTestServer(t, srv)
+
+	for _, path := range []string{"/v1/vwap", "/v1/twap"} {
+		resp := mustGet(t, ts.URL+path+"?base="+base.String()+"&quote="+usdc.String())
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("%s with a different quote returned %d, want 404 — the gate "+
+				"keys on the BASE so it covers every quote", path, resp.StatusCode)
+		}
+		_ = resp.Body.Close()
+	}
+}
+
+// TestVWAPTWAPServeUnflaggedIssuer is the blast-radius guard. The gate
+// must withhold ONLY flagged bases; if it 404s an ordinary pair the fix
+// has broken two public endpoints for everyone.
+func TestVWAPTWAPServeUnflaggedIssuer(t *testing.T) {
+	usdc, err := canonical.ParseAsset(w2t2USDC)
+	if err != nil {
+		t.Fatalf("parse usdc: %v", err)
+	}
+	native, _ := canonical.ParseAsset("native")
+
+	reader := &pairAwareHistoryReader{
+		tradesByPair: map[string][]canonical.Trade{
+			"native/" + usdc.String(): {scamTestTrade(t, native, usdc)},
+		},
+	}
+	// Gate is wired but flags nothing.
+	gate := &scamGateFor{withheld: map[string]bool{}}
+	srv := v1.New(v1.Options{History: reader, Scam: gate})
+	ts := httpTestServer(t, srv)
+
+	for _, path := range []string{"/v1/vwap", "/v1/twap"} {
+		resp := mustGet(t, ts.URL+path+"?base=native&quote="+usdc.String())
+		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("%s for an UNFLAGGED pair returned %d, want 200 — the scam gate "+
+				"must not withhold ordinary markets. Body: %s", path, resp.StatusCode, body)
+		}
+	}
+}
+
+// TestVWAPTWAPNilGateServes — a deployment with no gate wired must keep
+// serving. Every other gate in this package is nil-safe and these two
+// call sites must not be the exception.
+func TestVWAPTWAPNilGateServes(t *testing.T) {
+	usdc, err := canonical.ParseAsset(w2t2USDC)
+	if err != nil {
+		t.Fatalf("parse usdc: %v", err)
+	}
+	native, _ := canonical.ParseAsset("native")
+
+	reader := &pairAwareHistoryReader{
+		tradesByPair: map[string][]canonical.Trade{
+			"native/" + usdc.String(): {scamTestTrade(t, native, usdc)},
+		},
+	}
+	srv := v1.New(v1.Options{History: reader}) // no Scam gate
+	ts := httpTestServer(t, srv)
+
+	for _, path := range []string{"/v1/vwap", "/v1/twap"} {
+		resp := mustGet(t, ts.URL+path+"?base=native&quote="+usdc.String())
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("%s with a nil scam gate returned %d, want 200", path, resp.StatusCode)
+		}
+		_ = resp.Body.Close()
 	}
 }
