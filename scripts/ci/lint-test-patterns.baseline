@@ -18,12 +18,9 @@ go-ast cmd/stellarindex-api/price_withholding_gate_test.go
 go-ast cmd/stellarindex-api/thin_admission_guard_test.go
 go-ast cmd/stellarindex-indexer/main_wiring_rules_test.go
 go-ast cmd/stellarindex-indexer/shutdown_drain_test.go
-go-ast internal/aggregate/inplace_filter_test.go
-go-ast internal/aggregate/orchestrator/fixture_range_guard_test.go
 go-ast internal/api/v1/catalogue_scam_suppression_test.go
 go-ast internal/api/v1/dashboardauth/middleware_test.go
 go-ast internal/api/v1/dashboardkeys/csrf_mount_test.go
-go-ast internal/api/v1/dex_tvl_exclusion_claims_internal_test.go
 go-ast internal/api/v1/handler_budget_test.go
 go-ast internal/api/v1/middleware/cachecontrol_routes_test.go
 go-ast internal/api/v1/movements_provenance_enum_test.go

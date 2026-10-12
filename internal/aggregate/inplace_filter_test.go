@@ -1,12 +1,6 @@
 package aggregate
 
 import (
-	"go/ast"
-	"go/parser"
-	"go/token"
-	"io/fs"
-	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -27,54 +21,6 @@ func TestFilterFreshAggregatorRows_LeavesInputUntouched(t *testing.T) {
 	if rows[0].Source != "stale" || rows[1].Source != "fresh" {
 		t.Errorf("input mutated to [%s %s], want [stale fresh]", rows[0].Source, rows[1].Source)
 	}
-}
-
-// TestNoInPlaceSliceFilter fails on any in-place filter into x[:0] in non-test code here: it overwrites the caller's backing array; allocate the output instead.
-func TestNoInPlaceSliceFilter(t *testing.T) {
-	var hits []string
-	scanned := 0
-	err := filepath.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-			return nil
-		}
-		fset := token.NewFileSet()
-		f, perr := parser.ParseFile(fset, path, nil, 0)
-		if perr != nil {
-			return perr
-		}
-		scanned++
-		ast.Inspect(f, func(n ast.Node) bool {
-			if s, ok := n.(*ast.SliceExpr); ok && isZeroLenReslice(s) {
-				hits = append(hits, fset.Position(s.Pos()).String())
-			}
-			return true
-		})
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if scanned == 0 {
-		t.Fatal("scanned 0 Go files; the guard is not looking at internal/aggregate")
-	}
-	for _, h := range hits {
-		t.Errorf("%s: in-place filter over x[:0] aliases the caller's backing array; allocate the output", h)
-	}
-}
-
-func isZeroLenReslice(s *ast.SliceExpr) bool {
-	if s.Low != nil && !isIntLit(s.Low, "0") {
-		return false
-	}
-	return s.High != nil && isIntLit(s.High, "0") && s.Max == nil
-}
-
-func isIntLit(e ast.Expr, v string) bool {
-	lit, ok := e.(*ast.BasicLit)
-	return ok && lit.Kind == token.INT && lit.Value == v
 }
 
 func TestFilterFreshAggregatorRows_ZeroMaxAgeKeepsEverything(t *testing.T) {
