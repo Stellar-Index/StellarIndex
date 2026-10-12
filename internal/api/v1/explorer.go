@@ -95,6 +95,7 @@ func explorerHandlerFor(s *Server, opts Options, logger *slog.Logger) *explorerp
 		SEP41Movements:     opts.SEP41Movements,
 		Positions:          opts.Positions,
 		Trades:             opts.AccountTrades,
+		TradesArchive:      tradesArchiveOf(opts.Explorer),
 		Activity:           opts.AccountActivity,
 		PoolTokens:         s.protocolPoolTokens,
 		Directory:          opts.Directory,
@@ -154,4 +155,12 @@ func (s *Server) PrewarmNetworkThroughput(ctx context.Context) {
 		return
 	}
 	s.explorerHandler.PrewarmNetworkThroughput(ctx)
+}
+
+// tradesArchiveOf returns the ClickHouse reader's trades_by_account seam when it has one; test doubles without it keep the horizon floor.
+func tradesArchiveOf(r ExplorerReader) explorerpkg.TradesArchiveReader {
+	if a, ok := r.(explorerpkg.TradesArchiveReader); ok {
+		return a
+	}
+	return nil
 }

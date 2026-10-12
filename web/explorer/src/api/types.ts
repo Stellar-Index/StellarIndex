@@ -6748,6 +6748,12 @@ export interface components {
              *     empty page means "no attributed trades", not "never traded".
              */
             note: string;
+            /**
+             * @description True when the listing stops at a floor above genesis: older
+             *     trades exist but are not served yet, and `note` names the
+             *     floor date. False only when the history is served in full.
+             */
+            lower_bound: boolean;
         };
         /**
          * @description One edge of the account graph — a counterparty plus the weight of

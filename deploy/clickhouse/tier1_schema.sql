@@ -1455,3 +1455,42 @@ CREATE TABLE IF NOT EXISTS stellar.entry_history_watermark
 )
 ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY name;
+
+-- ── trades_by_account — PG trades re-keyed account-first (ADR-0048 serve-by-query-shape) ──
+-- One row per (account, trade): the taker, plus the maker when it is a different account.
+-- Populated by `ch-rebuild -write -sdex -trades-by-account` (no CH trades table to hang an MV on);
+-- each completed window lands in trades_by_account_windows, which is the coverage evidence
+-- GET /v1/accounts/{g}/trades reads before serving below the PG compression horizon.
+CREATE TABLE IF NOT EXISTS stellar.trades_by_account
+(
+    account      String,
+    ts           DateTime64(3, 'UTC'),
+    ledger       UInt32,
+    tx_hash      String,
+    op_index     UInt32,
+    source       LowCardinality(String),
+    role         LowCardinality(String),
+    counterparty String DEFAULT '',
+    base_asset   String,
+    quote_asset  String,
+    base_amount  Int128,
+    quote_amount Int128,
+    usd_volume   String DEFAULT '',
+    routed_via   String DEFAULT '',
+    ingested_at  DateTime DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(ingested_at)
+PARTITION BY intDiv(ledger, 1000000)
+ORDER BY (account, ts, ledger, tx_hash, op_index, source);
+
+CREATE TABLE IF NOT EXISTS stellar.trades_by_account_windows
+(
+    from_ledger UInt32,
+    to_ledger   UInt32,
+    from_ts     DateTime('UTC'),
+    to_ts       DateTime('UTC'),
+    rows        UInt64,
+    updated_at  DateTime DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY (from_ledger, to_ledger);

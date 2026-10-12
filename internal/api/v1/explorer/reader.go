@@ -262,6 +262,10 @@ type Handler struct {
 	// hypertable (taker/maker attribution). Nil 503s the endpoint.
 	Trades TradesReader
 
+	// TradesArchive, when non-nil, serves GET /v1/accounts/{g}/trades below the Postgres compression horizon from
+	// stellar.trades_by_account. Nil keeps the horizon floor (lower_bound=true).
+	TradesArchive TradesArchiveReader
+
 	// PoolTokens, when non-nil, best-effort resolves a pool-based protocol's venue to an asset-pair
 	// label on the positions endpoint. Nil or a read error omits venue_label, never fails the request.
 	PoolTokens PoolTokensReader

@@ -2,6 +2,7 @@ package explorer
 
 import (
 	"context"
+	"math/big"
 	"net/http"
 	"strconv"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -21,6 +23,16 @@ import (
 type TradesReader interface {
 	ListAccountTrades(ctx context.Context, address string, limit int, cur timescale.AccountTradesCursor) ([]timescale.AccountTradeRow, time.Time, error)
 }
+
+// TradesArchiveReader is the ClickHouse stellar.trades_by_account seam that serves below the Postgres compression horizon, satisfied by
+// *clickhouse.ExplorerReader; nil keeps the horizon floor.
+type TradesArchiveReader interface {
+	TradesByAccountCoverage(ctx context.Context) ([]clickhouse.TradesByAccountRun, error)
+	ListArchivedAccountTrades(ctx context.Context, account string, limit int, floor, below time.Time, cur clickhouse.TradesByAccountCursor) ([]clickhouse.TradeByAccountRow, error)
+}
+
+// tradesArchiveGenesisLedger is the first ledger; an archive run starting there makes the history complete.
+const tradesArchiveGenesisLedger = 2
 
 // accountTradesDefaultLimit / accountTradesMaxLimit — the pagination
 // contract (mirrors the sibling explorer listings).
@@ -69,6 +81,8 @@ type AccountTradesView struct {
 	Trades     []AccountTradeEntry `json:"trades"`
 	NextCursor string              `json:"next_cursor,omitempty"`
 	Note       string              `json:"note"`
+	// LowerBound is true while the list stops at a floor above genesis (the note names the date): older trades exist but are not served.
+	LowerBound bool `json:"lower_bound"`
 }
 
 // accountTradesGate caps concurrent ListAccountTrades reads at four of the 25-connection pool so other Postgres endpoints are not starved;
@@ -229,17 +243,18 @@ func (h *Handler) AccountTrades(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	rows, floor, lowerBound, degraded := h.fillFromTradesArchive(ctx, g, rows, limit, cur, horizon)
 	note := accountTradesScopeNote
-	if !horizon.IsZero() && horizon.Year() > 1971 {
-		// Compression-horizon floor: trades older than the oldest uncompressed chunk are not
-		// searchable per account, so say so rather than serve a silently partial "all time" list.
-		note += " Showing trades since " + horizon.UTC().Format("2006-01-02") +
+	if lowerBound {
+		// Never a silently partial "all time" list: name the floor below which trades are not served yet.
+		note += " Showing trades since " + floor.UTC().Format("2006-01-02") +
 			"; older trade history is not yet searchable per-account and is being rebuilt."
 	}
 	out := AccountTradesView{
-		Account: g,
-		Trades:  make([]AccountTradeEntry, len(rows)),
-		Note:    note,
+		Account:    g,
+		Trades:     make([]AccountTradeEntry, len(rows)),
+		Note:       note,
+		LowerBound: lowerBound,
 	}
 	dctx, dcancel := context.WithTimeout(ctx, movementDecimalsBudget)
 	defer dcancel()
@@ -252,7 +267,7 @@ func (h *Handler) AccountTrades(w http.ResponseWriter, r *http.Request) {
 	if len(rows) == limit {
 		out.NextCursor = encodeAccountTradesCursor(rows[len(rows)-1])
 	}
-	h.WriteJSON(w, out, false)
+	h.writeJSONAt(w, out, false, degraded, time.Time{})
 }
 
 // accountTradeEntryView renders one reader row as its wire shape.
@@ -273,4 +288,52 @@ func accountTradeEntryView(t timescale.AccountTradeRow) AccountTradeEntry {
 		RoutedVia:    t.RoutedVia,
 		Signer:       t.Signer,
 	}
+}
+
+// fillFromTradesArchive tops up a short Postgres page (ts >= horizon) from the ClickHouse archive (ts < horizon), but only from the
+// recorded run that reaches the horizon, so the merged list has no hole. It returns the served floor and whether it is above genesis.
+func (h *Handler) fillFromTradesArchive(ctx context.Context, account string, rows []timescale.AccountTradeRow, limit int,
+	cur timescale.AccountTradesCursor, horizon time.Time,
+) (out []timescale.AccountTradeRow, floor time.Time, lowerBound, degraded bool) {
+	if horizon.IsZero() || horizon.Year() <= 1971 {
+		return rows, horizon, false, false // no compressed chunk: Postgres served everything
+	}
+	if h.TradesArchive == nil {
+		return rows, horizon, true, false
+	}
+	runs, err := h.TradesArchive.TradesByAccountCoverage(ctx)
+	if err != nil {
+		h.Logger.Warn("explorer AccountTrades archive coverage failed; serving the horizon floor", "err", err)
+		return rows, horizon, true, true
+	}
+	run, ok := clickhouse.CoveringTradesByAccountRun(runs, horizon)
+	if !ok {
+		return rows, horizon, true, false
+	}
+	lowerBound = run.FromLedger > tradesArchiveGenesisLedger
+	if len(rows) >= limit {
+		return rows, run.FromTs, lowerBound, false
+	}
+	archived, err := h.TradesArchive.ListArchivedAccountTrades(ctx, account, limit-len(rows), run.FromTs, horizon,
+		clickhouse.TradesByAccountCursor{Ts: cur.Ts, Ledger: cur.Ledger, TxHash: cur.TxHash, OpIndex: cur.OpIndex})
+	if err != nil {
+		h.Logger.Warn("explorer AccountTrades archive read failed; serving the horizon floor", "err", err, "account", account)
+		return rows, horizon, true, true
+	}
+	for _, a := range archived {
+		rows = append(rows, timescale.AccountTradeRow{
+			Source: a.Source, Ledger: a.Ledger, TxHash: a.TxHash, OpIndex: a.OpIndex, Ts: a.Ts,
+			BaseAsset: a.BaseAsset, QuoteAsset: a.QuoteAsset,
+			BaseAmount: nonNilAmount(a.BaseAmount), QuoteAmount: nonNilAmount(a.QuoteAmount),
+			USDVolume: a.USDVolume, Role: a.Role, Counterparty: a.Counterparty, RoutedVia: a.RoutedVia,
+		})
+	}
+	return rows, run.FromTs, lowerBound, false
+}
+
+func nonNilAmount(v *big.Int) string {
+	if v == nil {
+		return "0"
+	}
+	return v.String()
 }

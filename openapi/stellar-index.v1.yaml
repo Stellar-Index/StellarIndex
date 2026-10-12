@@ -15171,7 +15171,13 @@ components:
             an account (sdex/aquarius/phoenix/comet via taker/maker) and
             which structurally cannot (soroswap, off-chain CEX/FX) — an
             empty page means "no attributed trades", not "never traded".
-      required: [account, trades, note]
+        lower_bound:
+          type: boolean
+          description: |
+            True when the listing stops at a floor above genesis: older
+            trades exist but are not served yet, and `note` names the
+            floor date. False only when the history is served in full.
+      required: [account, trades, note, lower_bound]
     AccountGraphEdge:
       type: object
       description: |
