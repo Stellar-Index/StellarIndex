@@ -12,10 +12,8 @@ import (
 // hashDBWindowRecent is the stellarindex_hashdb_verify_runs_total "window" label value.
 const hashDBWindowRecent = "recent"
 
-// hashDBVerifySweep runs one verify pass and records its outcome.
-// Split out of startHashDBVerifier so the ticker-plumbing and the
-// actual-work are independently readable (matches the
-// RunRoutedViaTagger / sweep() split in internal/pipeline/routedvia.go).
+// hashDBVerifySweep runs one verify pass and records its outcome, split from startHashDBVerifier so ticker plumbing and work read
+// independently.
 func hashDBVerifySweep(
 	ctx context.Context,
 	logger *slog.Logger,

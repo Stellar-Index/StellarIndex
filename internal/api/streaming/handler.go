@@ -13,10 +13,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// streamWriteDeadline bounds a single SSE write, rolled forward before every write. It only fails a
-// write that BLOCKS (wedged socket, full send buffer); a client that stops reading but keeps the
-// socket open is bounded by [DefaultMaxStreamLifetime]. Must exceed the heartbeat interval so a
-// slow-but-alive client is not killed.
+// streamWriteDeadline bounds a single SSE write, rolled forward before every write; it fails only a write that BLOCKS (a client that stops
+// reading is bounded by
+// [DefaultMaxStreamLifetime]). Must exceed the heartbeat interval so a slow-but-alive client is not killed.
 const streamWriteDeadline = 25 * time.Second
 
 // DefaultMaxStreamLifetime is how long one SSE connection is served before the server ends it and the client reconnects; it bounds a TCP-alive client that never reads, with up to 10% jitter per stream to avoid reconnect stampedes.
@@ -45,10 +44,9 @@ func TryAcquireStreamSlot(w http.ResponseWriter, r *http.Request) (release func(
 	return admitStream(w, r)
 }
 
-// admitStream reserves one connection slot against the global and per-IP caps, writing the 503
-// itself when either refuses. It runs BEFORE [Hub.Subscribe] (whose topic key is client-supplied
-// on /v1/price/stream) so the caps bound Hub memory, not just sockets: a refused connection must
-// never mint a topic. The returned release is idempotent.
+// admitStream reserves one slot against the global and per-IP caps, writing the 503 itself on refusal. It runs BEFORE [Hub.Subscribe]
+// (client-supplied topic key)
+// so the caps bound Hub memory, not just sockets: a refused connection must never mint a topic. The returned release is idempotent.
 func admitStream(w http.ResponseWriter, r *http.Request) (release func(), ok bool) {
 	releaseGlobal, ok := acquireGlobalStreamSlot()
 	if !ok {
@@ -239,9 +237,8 @@ func writeStream(w http.ResponseWriter, r *http.Request, ch <-chan Event, opts S
 	}
 }
 
-// setSSEHeaders writes the WHATWG SSE headers before WriteHeader. Cache-Control is a fallback only:
-// the v1 CacheControl middleware already set the per-route policy, and overwriting it would turn
-// no-store into a storable response and drop `private`.
+// setSSEHeaders writes the WHATWG SSE headers before WriteHeader. Cache-Control is a fallback only: overwriting the CacheControl
+// middleware's policy would turn no-store into storable.
 func setSSEHeaders(h http.Header) {
 	h.Set("Content-Type", "text/event-stream")
 	if h.Get("Cache-Control") == "" {
@@ -251,9 +248,8 @@ func setSSEHeaders(h http.Header) {
 	h.Set("X-Accel-Buffering", "no")
 }
 
-// endStreamForRevocation ends a stream whose credential, key policy or quota no longer admits it.
-// The reconnect gets the 401/403/429 from the middleware, which a conforming EventSource treats as
-// a stop.
+// endStreamForRevocation ends a stream whose credential, key policy or quota no longer admits it; the reconnect gets the 401/403/429 from
+// the middleware, which EventSource treats as a stop.
 func endStreamForRevocation(w http.ResponseWriter, flusher http.Flusher, setWriteDeadline func()) {
 	setWriteDeadline()
 	if _, err := fmt.Fprint(w, ":revoked\n\n"); err != nil {
@@ -273,10 +269,9 @@ func streamLifetime(maxLifetime time.Duration) time.Duration {
 	return maxLifetime
 }
 
-// endStreamByServer ends a stream the SERVER is closing (drain or lifetime expiry) with a final
-// comment frame, so the chunked body terminates cleanly instead of the proxy logging a truncated
-// response; a comment leaves the event vocabulary in the OpenAPI spec unchanged. The short
-// [drainWriteDeadline] stops a stalled client holding the drain. A failed write is ignored.
+// endStreamByServer ends a server-closed stream (drain or lifetime expiry) with a final comment frame, so the chunked body terminates
+// cleanly and the OpenAPI event vocabulary is unchanged.
+// The short [drainWriteDeadline] stops a stalled client holding the drain; a failed write is ignored.
 func endStreamByServer(w http.ResponseWriter, flusher http.Flusher, rc *http.ResponseController, frame string) {
 	_ = rc.SetWriteDeadline(time.Now().Add(drainWriteDeadline))
 	if _, err := fmt.Fprint(w, frame); err != nil {

@@ -16,10 +16,8 @@ const (
 	genesisAutoSeedTimeout = 15 * time.Minute
 )
 
-// newGenesisAutoSeeder is the in-process equivalent of
-// `stellarindex-ops supply seed-sep41-genesis -write` for one contract. It
-// dials the lake per attempt (seeding is rare) so construction never touches
-// the network.
+// newGenesisAutoSeeder is the in-process equivalent of `stellarindex-ops supply seed-sep41-genesis -write` for one contract;
+// it dials the lake per attempt (seeding is rare) so construction never touches the network.
 func newGenesisAutoSeeder(cfg config.Config, store *timescale.Store) supply.GenesisSeeder {
 	boundary := cfg.Stellar.SorobanGenesisLedger
 	if boundary == 0 {

@@ -240,9 +240,9 @@ func wasmHistory(args []string) error { //nolint:funlen,gocognit,gocyclo // line
 	return wasmWalkCoverage(uint32(*from), resolvedTo, totalScanned, bucketName)
 }
 
-// wasmWalkCoverage turns a walk that did not cover its whole range into a hard error naming the bucket (unbounded -to is exempt).
-// TolerateTrailingMissing makes a missing partition near -to look like a clean walk; per-contract ranges close at the last observed ledger,
-// and this makes the shortfall itself unmissable.
+// wasmWalkCoverage turns a walk that did not cover its whole range into a hard error naming the bucket (unbounded -to is exempt):
+// TolerateTrailingMissing makes a missing partition near -to look
+// like a clean walk, and per-contract ranges close at the last observed ledger, so the shortfall must be unmissable.
 func wasmWalkCoverage(from, to uint32, scanned uint64, bucket string) error {
 	if to == 0 {
 		return nil
@@ -265,9 +265,8 @@ func wasmWalkCoverage(from, to uint32, scanned uint64, bucket string) error {
 		scanned, requested, from, to, bucket)
 }
 
-// writeStorageRotationsOutput merges per-worker storage-change
-// slices in worker order (which is ledger order across the
-// chunk-partitioned range) and writes them to path as a JSON array.
+// writeStorageRotationsOutput merges per-worker storage-change slices in worker order (ledger order across the chunk-partitioned range)
+// and writes them to path as a JSON array.
 func writeStorageRotationsOutput(
 	path string,
 	watch map[sdkxdr.Hash]string,
@@ -302,10 +301,8 @@ func writeStorageRotationsOutput(
 	return nil
 }
 
-// writeCodeUploadsOutput merges per-worker code-upload slices in
-// worker order (= ledger order) and writes to path as a JSON array.
-// Deduplicates by (ledger, hash) since the same upload can land in
-// adjacent worker chunks.
+// writeCodeUploadsOutput merges per-worker code-upload slices in worker order (= ledger order) and writes a JSON array, deduplicating by
+// (ledger, hash) since one upload can land in adjacent worker chunks.
 func writeCodeUploadsOutput(path string, workers []workerResult) error {
 	var all []codeUpload
 	for _, w := range workers {
@@ -343,9 +340,9 @@ func writeCodeUploadsOutput(path string, workers []workerResult) error {
 	return nil
 }
 
-// wasmHistoryMergeJSONL rebuilds the canonical JSON from per-worker JSONL logs (-checkpoint-dir, -to closing the last open range, -output),
-// recovering a walk that died before its final write. Mirrors [mergeWasmHistories]. Empty-history contracts are not emitted;
-// only transitions seen before the crash are recovered.
+// wasmHistoryMergeJSONL rebuilds the canonical JSON from per-worker JSONL logs (-checkpoint-dir, -to closing the last open range,
+// -output), recovering a walk that died before its final write.
+// Mirrors [mergeWasmHistories]; empty-history contracts are not emitted and only transitions seen before the crash are recovered.
 func wasmHistoryMergeJSONL(args []string) error {
 	fs := flag.NewFlagSet("wasm-history-merge-jsonl", flag.ContinueOnError)
 	checkpointDir := fs.String("checkpoint-dir", "",
@@ -417,9 +414,9 @@ func wasmHistoryMergeJSONL(args []string) error {
 	return nil
 }
 
-// readAllTransitionJSONL reads every path into transitions and returns the ledger that closes each contract's last open range:
-// the requested `to`, pulled down to the least-far extent any worker file proves (watermark or highest transition),
-// so a crashed worker's last range is not published out to an unverified -to.
+// readAllTransitionJSONL reads every path into transitions and returns the ledger closing each contract's last open range: the requested
+// `to`, pulled down to the least-far extent any worker file proves
+// (watermark or highest transition), so a crashed worker's last range is not published out to an unverified -to.
 func readAllTransitionJSONL(paths []string, to uint32, transitions map[string][]transitionRecord) (uint32, error) {
 	totalLines := 0
 	closeAt := to
@@ -451,7 +448,7 @@ func readAllTransitionJSONL(paths []string, to uint32, transitions map[string][]
 }
 
 // readTransitionJSONL appends a file's transition records per contract and returns the decoded count. A malformed LAST line is tolerated
-// (a crash can leave a half-written final line; the log is truncated on open so only the last can be damaged);
+// (a crash can half-write it; the log is truncated on open);
 // a malformed line elsewhere is corruption and a hard error, since skipping it would silently drop later transitions.
 func readTransitionJSONL(path string, transitions map[string][]transitionRecord) (count int, extent uint32, hasExtent bool, err error) {
 	// gosec G304: path comes from -checkpoint-dir glob expansion; the
@@ -534,18 +531,14 @@ func buildRangesFromTransitions(trs []transitionRecord, to uint32) []wasmRange {
 	return out
 }
 
-// workerResult is what each parallel worker produces: a state map
-// covering its bounded range, plus the actual upper bound it reached
-// (used by merge to know where this worker's open ranges should close).
+// workerResult is what each parallel worker produces: a state map covering its bounded range plus the upper bound it reached (merge closes
+// this worker's open ranges there).
 type workerResult struct {
 	state map[sdkxdr.Hash]*wasmContractState
-	// storageChanges is populated only when -track-storage-rotations
-	// is set. Keyed by watched contract hash; per-contract slice is
-	// in ledger order within the worker's chunk.
+	// storageChanges is populated only with -track-storage-rotations; keyed by watched contract hash, each slice in ledger order within the
+	// worker's chunk.
 	storageChanges map[sdkxdr.Hash][]storageChange
-	// codeUploads is populated only when -track-code-uploads is set.
-	// Global per-worker (not per-contract); merged across workers in
-	// ledger order.
+	// codeUploads is populated only with -track-code-uploads; global per worker (not per contract), merged across workers in ledger order.
 	codeUploads []codeUpload
 	scanned     uint64
 	upperEnd    uint32 // last ledger the worker actually saw (inclusive)
@@ -603,10 +596,8 @@ func runWasmHistoryWorkers( //nolint:funlen // worker scaffolding; long function
 	return results, totalScanned.load(), nil
 }
 
-// runOneWasmHistoryWorker is the per-goroutine body of
-// runWasmHistoryWorkers. Extracted so the parent function's
-// cognitive complexity stays manageable. Owns one worker chunk's
-// scan + optional checkpoint-log lifecycle.
+// runOneWasmHistoryWorker is the per-goroutine body of runWasmHistoryWorkers (split for cognitive complexity); owns one chunk's scan plus
+// optional checkpoint-log lifecycle.
 func runOneWasmHistoryWorker( //nolint:funlen,gocognit // worker hot path; refactor would obscure ledger-stream lifecycle
 	ctx context.Context,
 	lsCfg ledgerstream.Config,
@@ -692,9 +683,10 @@ func runOneWasmHistoryWorker( //nolint:funlen,gocognit // worker hot path; refac
 	}
 }
 
-// mergeWasmHistories combines per-worker state into one per-contract timeline. Workers scan disjoint ordered chunks, so each worker's ranges become
-// point transitions concatenated in worker order, as a serial walk would produce; buildRangesFromTransitions collapses unchanged hashes at boundaries.
-// The final range closes at the LAST worker's upperEnd (last ledger observed), not -to.
+// mergeWasmHistories combines per-worker state into one per-contract timeline. Workers scan disjoint ordered chunks, so their ranges
+// become point transitions concatenated in worker order;
+// buildRangesFromTransitions collapses unchanged hashes at boundaries, and the final range closes at the LAST worker's upperEnd (last
+// ledger observed), not -to.
 func mergeWasmHistories(
 	workers []workerResult,
 	watch map[sdkxdr.Hash]string,
@@ -952,9 +944,8 @@ func scanLCMForCodeUploads(
 	return uploads, nil
 }
 
-// maybeAppendCodeUpload checks one LedgerEntryChange for a
-// ContractCode Created/Restored event and appends to uploads if
-// it's a match. Skips other change types and other entry types.
+// maybeAppendCodeUpload appends to uploads when one LedgerEntryChange is a ContractCode Created/Restored event; other change and entry
+// types are skipped.
 func maybeAppendCodeUpload(
 	change *sdkxdr.LedgerEntryChange,
 	uploads []codeUpload,
@@ -1063,9 +1054,8 @@ func scanLedgerEntryChange(
 	recordWasmTransition(state, contractHash, hashHex, seq, tlog)
 }
 
-// instanceRemovedMarker closes a watched contract's hash range when its
-// instance entry is deleted, so the timeline does not claim the last WASM
-// stayed live; a later Created/Restored reopens a range.
+// instanceRemovedMarker closes a watched contract's hash range when its instance entry is deleted, so the timeline does not claim the last
+// WASM stayed live; a later Created/Restored reopens a range.
 const instanceRemovedMarker = "removed"
 
 // recordInstanceRemoval records a watched contract's instance-entry deletion.

@@ -9,9 +9,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// decimalsCacheRefreshInterval mirrors internal/api/v1.NonstandardDecimalsRefreshInterval
-// (not imported: the aggregator binary must not depend on api/v1). The two caches are
-// independent in-process mirrors of the same tiny `nonstandard_decimals_assets` table.
+// decimalsCacheRefreshInterval mirrors api/v1.NonstandardDecimalsRefreshInterval (not imported: the aggregator must not depend on api/v1).
 const decimalsCacheRefreshInterval = 60 * time.Second
 
 // decimalsAssetReader is the storage seam this cache consults. Satisfied
@@ -20,18 +18,10 @@ type decimalsAssetReader interface {
 	LoadNonstandardDecimalsAssets(ctx context.Context) ([]timescale.NonstandardDecimalsAsset, error)
 }
 
-// decimalsCache is the aggregator-binary mirror of
-// internal/api/v1.NonstandardDecimalsCache: a periodically refreshed snapshot of
-// `nonstandard_decimals_assets`, wired into orchestrator.Config.DecimalsLookup so the published
-// VWAP is decimals-normalized for any confirmed non-7-decimals leg
-// (docs/operations/runbooks/dex.md).
-//
-// It is a standalone type because the orchestrator's seams are storage-agnostic interfaces and
-// this binary owns the DB-aware wiring that satisfies aggregate.DecimalsLookup structurally.
-//
-// Fail-open by construction, like the API-side cache: a read error or unrefreshed cache reports
-// "nothing flagged", so a Postgres blip delays normalization for a brand-new offender rather
-// than blocking VWAP publication.
+// decimalsCache mirrors api/v1.NonstandardDecimalsCache for orchestrator.Config.DecimalsLookup (decimals-normalized VWAP for non-7dp
+// legs).
+// Fail-open: a read error or unrefreshed cache reports "nothing flagged", so a Postgres blip delays normalization instead of blocking
+// VWAP.
 type decimalsCache struct {
 	mu     sync.RWMutex
 	assets map[string]int
@@ -73,9 +63,8 @@ func (c *decimalsCache) Lookup(assetID string) (decimals int, found bool) {
 	return d, ok
 }
 
-// run refreshes on decimalsCacheRefreshInterval until ctx is cancelled.
-// Errors are logged (inside Refresh) and swallowed — a transient DB blip
-// must not exit the aggregator process.
+// run refreshes on decimalsCacheRefreshInterval until ctx is cancelled; errors are logged in Refresh and swallowed so a DB blip can't exit
+// the process.
 func (c *decimalsCache) run(ctx context.Context) {
 	ticker := time.NewTicker(decimalsCacheRefreshInterval)
 	defer ticker.Stop()

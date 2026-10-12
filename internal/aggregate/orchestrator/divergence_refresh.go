@@ -12,9 +12,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// refreshDivergenceAll asks the [DivergenceRefresher] to update each configured pair's `div:<base>/<quote>` cache entry, using the shortest-window VWAP this Tick wrote (or the pinned last-known-good for a frozen pair; see [Orchestrator.refreshPairDivergence]).
-// Best-effort: errors are counted in obs.DivergenceRefreshTotal{outcome} and logged; the cache TTL is the safety net.
-// Outcomes: no_vwap (cache miss, skip), parse_error (writer regression), refresh_error (entry NOT updated, old TTL keeps counting down).
+// refreshDivergenceAll asks the [DivergenceRefresher] to update each pair's `div:<base>/<quote>` entry from the shortest-window VWAP this
+// Tick wrote (or the pinned last-known-good for a frozen pair).
+// Best-effort: errors are counted in obs.DivergenceRefreshTotal{outcome} and logged; outcomes no_vwap, parse_error, refresh_error (entry
+// NOT updated; old TTL keeps counting down).
 func (o *Orchestrator) refreshDivergenceAll(ctx context.Context, now time.Time) {
 	// Divergence is a SECONDARY best-effort guard; a panic in it must never take the PRIMARY VWAP refresh down. Compare recovers per-reference panics; this covers the outer per-pair loop.
 	defer func() {

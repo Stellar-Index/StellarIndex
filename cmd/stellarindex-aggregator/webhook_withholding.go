@@ -27,10 +27,9 @@ type webhookPublisher interface {
 	PublishOnce(ctx context.Context, eventType platform.WebhookEventType, eventKey string, payload []byte) (customerwebhook.PublishResult, error)
 }
 
-// anomalyFreezeHook fans an `anomaly.freeze` out to subscribed customers.
-// frozen_value is the pair's aggregated price, so a market /v1/price
-// withholds is not delivered: the freeze itself stays durable in
-// freeze_events, only the customer copy carrying the price is skipped.
+// anomalyFreezeHook fans `anomaly.freeze` out to customers; frozen_value is the aggregated price, so a market /v1/price withholds is not
+// delivered
+// (the freeze stays durable in freeze_events; only the customer copy carrying the price is skipped).
 func anomalyFreezeHook(logger *slog.Logger, pub webhookPublisher, gates pricingguard.Gate) timescale.FreezeHook {
 	return func(ctx context.Context, asset, quote canonical.Asset, frozenValue string, decision anomaly.Decision) {
 		if gates.PriceWithheld(ctx, asset, quote, freezeWebhookGateSurface) {
@@ -62,10 +61,9 @@ func anomalyFreezeHook(logger *slog.Logger, pub webhookPublisher, gates pricingg
 	}
 }
 
-// divergenceFiringHook fans a `divergence.firing` out to subscribed
-// customers. our_price is the pair's aggregated price, so a market
-// /v1/price withholds is not delivered, for the same reason as
-// [anomalyFreezeHook].
+// divergenceFiringHook fans `divergence.firing` out to customers; our_price is the aggregated price, so a withheld market is not
+// delivered,
+// as in anomalyFreezeHook.
 func divergenceFiringHook(logger *slog.Logger, pub webhookPublisher, gates pricingguard.Gate) divergence.WarningHook {
 	return func(ctx context.Context, pair canonical.Pair, cached divergence.CachedResult) error {
 		if gates.PriceWithheld(ctx, pair.Base, pair.Quote, divergenceWebhookGateSurface) {

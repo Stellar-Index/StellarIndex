@@ -116,10 +116,8 @@ func rehydrateExitError(totalPaths, missing, errs int) error {
 	return nil
 }
 
-// loadAndVerifyRehydrateSchemas loads hot's schema (used to build
-// every object key rehydratePaths generates) and cold's, and
-// hard-fails on any shape mismatch rather than silently letting
-// hot-shaped keys 404 against a differently-partitioned cold tier.
+// loadAndVerifyRehydrateSchemas loads hot's schema (it builds every key rehydratePaths generates) and cold's, hard-failing on any shape
+// mismatch rather than letting hot-shaped keys 404 on a differently-partitioned cold tier.
 func loadAndVerifyRehydrateSchemas(ctx context.Context, hot, cold datastore.DataStore, storage config.StorageConfig) (datastore.DataStoreSchema, error) {
 	hotSchema, err := datastore.LoadSchema(ctx, hot, datastore.DataStoreConfig{
 		Type: "S3",
@@ -161,9 +159,7 @@ type rehydrateStore interface {
 	PutFileIfNotExists(ctx context.Context, path string, in io.WriterTo, metaData map[string]string) (bool, error)
 }
 
-// rehydrateOutcome buckets a single file's processing result — kept
-// as a small enum so rehydrateFiles' loop body is a flat switch
-// instead of a chain of if/continue (cognitive-complexity budget).
+// rehydrateOutcome buckets one file's result as a small enum so rehydrateFiles' loop body is a flat switch (cognitive-complexity budget).
 type rehydrateOutcome int
 
 const (
@@ -259,9 +255,8 @@ func copyColdToHot(ctx context.Context, logger *slog.Logger, hot, cold rehydrate
 	return rehydrateSkipped
 }
 
-// rehydratePaths enumerates the schema-aligned file paths covering
-// [from, to]. Each file holds LedgersPerFile ledgers; we step by
-// that amount to visit each path once. Paths are sorted ascending.
+// rehydratePaths enumerates the schema-aligned file paths covering [from, to], stepping by LedgersPerFile to visit each once; sorted
+// ascending.
 func rehydratePaths(schema datastore.DataStoreSchema, from, to uint32) []string {
 	if schema.LedgersPerFile == 0 {
 		// Defensive: LoadSchema should populate this. Falling back to
@@ -318,10 +313,8 @@ func parseRehydrateFlags(args []string) (rehydrateOpts, error) {
 	return opts, nil
 }
 
-// byteWriterTo adapts a []byte to the io.WriterTo interface required
-// by datastore.DataStore.PutFile. The SDK's S3 backend buffers the
-// full body anyway; passing a WriterTo is the interface shape, not
-// a streaming-vs-buffered choice.
+// byteWriterTo adapts a []byte to the io.WriterTo datastore.DataStore.PutFile requires; the SDK's S3 backend buffers the full body anyway,
+// so this is interface shape, not streaming.
 type byteWriterTo []byte
 
 func (b byteWriterTo) WriteTo(w io.Writer) (int64, error) {

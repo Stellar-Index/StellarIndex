@@ -47,9 +47,8 @@ type topicMark struct {
 	producer   string
 }
 
-// forwardedPruneAt is the topic count at which marks older than
-// observedAtMaxAge are swept; validateEvent rejects anything that old,
-// so a swept mark can no longer admit a duplicate.
+// forwardedPruneAt is the topic count at which marks older than observedAtMaxAge are swept; validateEvent rejects anything that old, so a
+// swept mark can't admit a duplicate.
 const forwardedPruneAt = 4096
 
 // duplicateProducerLogEvery rate-limits the two-producers warning: with
@@ -82,11 +81,10 @@ func NewSubscriber(cache RedisSubscriber, channel string, hub Hub, logger *slog.
 	}, nil
 }
 
-// claim reports whether ev is the first event for its bucket on topic, recording it if so. A repeat
-// of the newest bucket (second aggregator, restart overlap) or an older one (delayed or replayed)
-// is refused, so each topic carries one in-order frame per bucket. Kind is deliberately not in the
-// key: keying on it would let a delayed frame for an older bucket follow a newer one of the other
-// kind.
+// claim reports whether ev is the first event for its bucket on topic, recording it. A repeat of the newest bucket (second aggregator,
+// restart overlap) or an older one (delayed or replayed) is refused,
+// so each topic carries one in-order frame per bucket. Kind is deliberately not in the key: it would let a delayed older-bucket frame
+// follow a newer one of the other kind.
 func (s *Subscriber) claim(topic string, ev *ClosedBucketEvent, now time.Time) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -128,39 +126,33 @@ var subscribeOutcomes = []string{
 	outcomeDuplicate, outcomeDroppedSlowConsumer,
 }
 
-// subscribeChannelSize and subscribeChannelSendTimeout are passed to
-// PubSub.Channel explicitly instead of taking go-redis's defaults (100
-// messages / 1 minute), so the buffer this Subscriber runs on is a
-// documented choice, not an implicit library default.
+// subscribeChannelSize and subscribeChannelSendTimeout are passed to PubSub.Channel explicitly so the buffer is a documented choice, not
+// go-redis's implicit default (100 messages / 1 minute).
 const (
 	subscribeChannelSize        = 100
 	subscribeChannelSendTimeout = time.Minute
 )
 
-// channelFullLogFormat is the format string go-redis v9.22.0's PubSub.Channel logs when
-// WithChannelSendTimeout elapses and it drops a message. go-redis has no other hook, so
-// [installChannelDropCounter] matches on it to count the drop. A version bump that changes the
-// wording only loses the count (fails safe), never produces a false positive.
+// channelFullLogFormat is the format string go-redis v9.22.0's PubSub.Channel logs when WithChannelSendTimeout drops a message;
+// [installChannelDropCounter] matches on it
+// (its only hook). A version bump that rewords it only loses the count (fails safe), never a false positive.
 const channelFullLogFormat = "redis: %v channel is full for %s (message is dropped)"
 
-// channelDropCounterOnce guards [installChannelDropCounter]: go-redis's
-// logger is a single package-global var, and this Subscriber is one per
-// binary (see [NewSubscriber]), so installing it more than once would
-// just replace an identical wrapper.
+// channelDropCounterOnce guards [installChannelDropCounter]: go-redis's logger is a package-global var and the Subscriber is one per
+// binary, so reinstalling would just replace an identical wrapper.
 var channelDropCounterOnce sync.Once
 
-// installChannelDropCounter installs a go-redis logger that counts [obs.APIStreamSubscribeTotal]'s
-// dropped_slow_consumer outcome on each PubSub.Channel drop, then forwards the line unchanged.
-// Process-wide, which is safe only while this package is the sole PubSub.Channel caller.
+// installChannelDropCounter installs a go-redis logger that counts [obs.APIStreamSubscribeTotal]'s dropped_slow_consumer on each
+// PubSub.Channel drop, then forwards the line unchanged.
+// Process-wide, safe only while this package is the sole PubSub.Channel caller.
 func installChannelDropCounter() {
 	channelDropCounterOnce.Do(func() {
 		redis.SetLogger(channelDropCountingLogger{})
 	})
 }
 
-// channelDropCountingLogger implements go-redis's internal.Logging
-// interface structurally (Printf(ctx, format, args...)) without
-// importing its internal package.
+// channelDropCountingLogger implements go-redis's internal.Logging structurally (Printf(ctx, format, args...)) without importing its
+// internal package.
 type channelDropCountingLogger struct{}
 
 func (channelDropCountingLogger) Printf(_ context.Context, format string, v ...interface{}) {
@@ -170,9 +162,8 @@ func (channelDropCountingLogger) Printf(_ context.Context, format string, v ...i
 	slog.Default().Warn(fmt.Sprintf(format, v...))
 }
 
-// Sentinels validateEvent wraps so handleMessage can label the drop by
-// cause: a clock-skewed API host rejects EVERY event as future-dated,
-// and must not read as a wire-format bug.
+// Sentinels validateEvent wraps so handleMessage can label the drop by cause: a clock-skewed API host rejects EVERY event as future-dated,
+// which must not read as a wire-format bug.
 var (
 	errObservedAtFuture = errors.New("observed_at is in the future")
 	errObservedAtStale  = errors.New("observed_at is too old")
@@ -223,15 +214,11 @@ func (s *Subscriber) Run(ctx context.Context) error {
 	}
 }
 
-// handleMessage decodes and validates one wire payload, then republishes the canonical
-// re-marshalled event on the Hub. Decode failures log and count but never propagate: one bad
-// message must not stop the next.
-//
-// Redis has no AUTH (network isolation is the primary control), so a host-adjacent process could
-// PUBLISH a forged event. We therefore (1) bound every field, dropping a non-numeric, non-positive
-// or absurd VWAP, an out-of-range window, or a missing/future/stale timestamp, and (2) fan out a
-// re-marshal of the validated struct, not the raw bytes, so injected JSON fields cannot reach
-// clients. A bucket already fanned out on its topic is dropped (see [Subscriber.claim]).
+// handleMessage decodes and validates one wire payload, then republishes the canonical re-marshalled event on the Hub; decode failures log
+// and count, never propagate.
+// Redis has no AUTH, so a host-adjacent process could PUBLISH a forged event: we bound every field (non-numeric, non-positive or absurd
+// VWAP, out-of-range window, missing/future/stale timestamp) and fan out a re-marshal of the validated struct, not the raw bytes. A bucket
+// already fanned out is dropped (see [Subscriber.claim]).
 func (s *Subscriber) handleMessage(payload []byte) {
 	var ev ClosedBucketEvent
 	if err := json.Unmarshal(payload, &ev); err != nil {
@@ -264,13 +251,10 @@ func (s *Subscriber) handleMessage(payload []byte) {
 	obs.APIStreamSubscribeTotal.WithLabelValues(outcomeOK).Inc()
 }
 
-// sseFrame renders a validated event as its /v1/price/stream frame: a price_update, or a
-// price_frozen in the shape the 60-second series uses. Building from the validated struct drops
-// any injected fields.
-//
-// as_of is ObservedAt, the end of the closed 1-minute bucket the window was decided at, over
-// [ObservedAt-window, ObservedAt). Deriving it from the event, not the local clock, keeps every
-// subscriber's payload byte-identical (ADR-0015).
+// sseFrame renders a validated event as its /v1/price/stream frame (price_update, or price_frozen in the 60-second series' shape);
+// building from the validated struct drops injected fields.
+// as_of is ObservedAt, the end of the closed 1-minute bucket over [ObservedAt-window, ObservedAt); deriving it from the event, not the
+// local clock, keeps every subscriber's payload byte-identical.
 func sseFrame(ev *ClosedBucketEvent) (eventType string, data []byte, err error) {
 	if ev.Kind == KindFrozen {
 		data, err = json.Marshal(frozenBucketEnvelope{
@@ -302,10 +286,9 @@ func sseFrame(ev *ClosedBucketEvent) (eventType string, data []byte, err error) 
 	return "price_update", data, err
 }
 
-// closedBucketEnvelope is the SSE wire shape for /v1/price/stream, field-compatible with the
-// /v1/price envelope. No `flags` object is emitted: the aggregator event carries no stale/frozen
-// verdicts, and fabricating `stale: false` would turn missing data into a false claim. Clients
-// treat absent flags as "not evaluated".
+// closedBucketEnvelope is the /v1/price/stream wire shape, field-compatible with the /v1/price envelope. No `flags` object: the event
+// carries no stale/frozen verdicts and
+// fabricating `stale: false` would turn missing data into a false claim; clients treat absent flags as "not evaluated".
 type closedBucketEnvelope struct {
 	Data closedBucketWireData `json:"data"`
 	AsOf wiretime.Time        `json:"as_of"`
@@ -322,9 +305,8 @@ type closedBucketWireData struct {
 	CoveredFrom   *wiretime.Time `json:"covered_from,omitempty"`
 }
 
-// frozenBucketEnvelope is the price_frozen frame. The aggregator is the
-// freeze's author, so frozen is a checked verdict; stale is not evaluated
-// on this path and is absent.
+// frozenBucketEnvelope is the price_frozen frame: the aggregator authored the freeze, so frozen is a checked verdict; stale is not
+// evaluated here and is absent.
 type frozenBucketEnvelope struct {
 	Data  frozenBucketWireData `json:"data"`
 	AsOf  wiretime.Time        `json:"as_of"`
@@ -345,32 +327,26 @@ type frozenFlags struct {
 }
 
 const (
-	// maxWindowSeconds bounds ClosedBucketEvent.WindowSeconds. Operators may override the
-	// aggregator windows and the API cannot see that config, so it bounds by sanity (positive,
-	// under a year) rather than an allowlist that would drop a reconfigured window.
+	// maxWindowSeconds bounds ClosedBucketEvent.WindowSeconds by sanity (positive, under a year), not an allowlist, since operators may
+	// override the aggregator windows unseen by the API.
 	maxWindowSeconds = int64(366 * 24 * 60 * 60)
 
-	// observedAtFutureSkew is how far ahead of local time a bucket-end
-	// timestamp may sit before we treat it as forged — absorbs clock
-	// skew between the aggregator and API hosts.
+	// observedAtFutureSkew is how far ahead of local time a bucket-end timestamp may sit before it is treated as forged; absorbs
+	// aggregator/API clock skew.
 	observedAtFutureSkew = 5 * time.Minute
 
-	// observedAtMaxAge bounds how stale a closed-bucket event may be. ObservedAt is the window's
-	// END, so even the 24h window lands within a minute of real time; a day of slack absorbs
-	// delivery lag without admitting an ancient replayed price.
+	// observedAtMaxAge bounds how stale a closed-bucket event may be: ObservedAt is the window's END, so even 24h lands within a minute of
+	// real time; a day of slack absorbs lag without admitting an ancient replayed price.
 	observedAtMaxAge = 24 * time.Hour
 )
 
-// maxValueDecimal is the exclusive upper bound on a published VWAP: 10^18 is far beyond any real
-// quote-per-base price yet rejects overflow-style garbage. It is defense-in-depth; network
-// isolation is the primary control against a plausible-but-forged price.
+// maxValueDecimal is the exclusive upper bound on a published VWAP: 10^18 is far beyond any real price yet rejects overflow-style garbage
+// (defense in depth; network isolation is the primary control).
 var maxValueDecimal = new(big.Rat).SetInt(
 	new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil),
 )
 
-// validateEvent rejects any decoded ClosedBucketEvent that a trusted
-// aggregator would never have produced. Returns nil when the event is
-// safe to fan out.
+// validateEvent rejects any decoded ClosedBucketEvent a trusted aggregator would never have produced; nil means safe to fan out.
 func validateEvent(ev *ClosedBucketEvent, now time.Time) error {
 	if ev.Asset == "" || ev.Quote == "" {
 		return errors.New("empty asset or quote")
@@ -442,10 +418,9 @@ func validateCoverage(ev *ClosedBucketEvent) error {
 	return nil
 }
 
-// validateCanonicalAsset rejects a leg that is not an asset id in its
-// canonical spelling. Asset and Quote are echoed to clients as asset_id /
-// quote and form the Hub topic key, so anything canonical.Asset.String()
-// could not have produced is forged.
+// validateCanonicalAsset rejects a leg that is not an asset id in canonical spelling: Asset and Quote are echoed to clients and form the
+// Hub topic key,
+// so anything canonical.Asset.String() could not have produced is forged.
 func validateCanonicalAsset(field, raw string) error {
 	a, err := canonical.ParseAsset(raw)
 	if err != nil {
@@ -457,16 +432,13 @@ func validateCanonicalAsset(field, raw string) error {
 	return nil
 }
 
-// canonicalValueDecimal is the exact shape the aggregator's formatRatFixed emits: an optional
-// leading '-', digits, and an optional '.' plus digits. Allowlisting it is needed because
-// big.Rat.SetString also accepts fractions, scientific notation, a leading '+', and hex, binary,
-// octal and underscore-separated forms, none of which the aggregator produces.
+// canonicalValueDecimal is the exact shape the aggregator's formatRatFixed emits (optional '-', digits, optional '.' plus digits).
+// Allowlisting is needed because big.Rat.SetString
+// also accepts fractions, exponents, '+', hex, binary, octal and underscores.
 var canonicalValueDecimal = regexp.MustCompile(`^-?[0-9]+(\.[0-9]+)?$`)
 
-// parseValueDecimal validates that s is a canonical, strictly-positive,
-// in-range fixed-point decimal — the shape the aggregator's
-// formatRatFixed emits — and returns it as an exact big.Rat (ADR-0003:
-// no float64 ever touches a price value).
+// parseValueDecimal validates s as a canonical, strictly-positive, in-range fixed-point decimal (formatRatFixed's shape) and returns an
+// exact big.Rat: no float64 ever touches a price.
 func parseValueDecimal(s string) (*big.Rat, error) {
 	if s == "" {
 		return nil, errors.New("empty value_decimal")
@@ -487,9 +459,9 @@ func parseValueDecimal(s string) (*big.Rat, error) {
 	return v, nil
 }
 
-// topicForPair returns the Hub topic key for an (asset, quote, window) triple, mirroring
-// `internal/api/v1.PriceStreamTopic` (a sentinel test keeps them in sync). The window is in the
-// key so per-window publishes land on separate topics instead of interleaving on one.
+// topicForPair returns the Hub topic key for an (asset, quote, window) triple, mirroring `internal/api/v1.PriceStreamTopic` (a sentinel
+// test keeps them in sync);
+// the window is in the key so per-window publishes don't interleave on one topic.
 func topicForPair(asset, quote string, windowSeconds int64) string {
 	return "closed:" + asset + "/" + quote + "/" + strconv.FormatInt(windowSeconds, 10)
 }

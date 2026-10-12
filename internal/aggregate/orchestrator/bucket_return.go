@@ -9,9 +9,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// marginalBuckets is what one (pair, window) decision scores: each non-empty closed minute since the previous decision's newest, measured against the previous NON-EMPTY minute.
-// Both freeze phases score minute-on-minute returns, never the rolling window's tick-to-tick delta, which overlap damps (ADR-0019). Phase 2 scales by minutes between; Phase 1 uses the raw move.
-// Scoring every minute since the last decision keeps a batched move measured against the pre-batch level.
+// marginalBuckets is what one (pair, window) decision scores: each non-empty closed minute since the previous decision's newest, against
+// the previous NON-EMPTY minute.
+// Both freeze phases score minute-on-minute returns, never the rolling window's tick-to-tick delta (overlap damps it); Phase 2 scales by
+// minutes between, Phase 1 uses the raw move.
 type marginalBuckets struct {
 	pred    *minuteVWAP  // the minute before minutes[0]; nil when none is known
 	minutes []minuteVWAP // oldest first; empty only when no minute can be priced
@@ -30,10 +31,9 @@ type priceStep struct {
 	elapsed    time.Duration
 }
 
-// scoreMinutes prices the minutes this decision scores from the window's own
-// (already filtered) trades through the served VWAP path, and records the
-// newest as the next decision's starting minute. Unpriceable minutes are
-// skipped, so the newest PRICEABLE minute is always scored.
+// scoreMinutes prices the scored minutes from the window's filtered trades via the served VWAP path and records the newest as the next
+// starting minute.
+// Unpriceable minutes are skipped, so the newest PRICEABLE minute is always scored.
 func (o *Orchestrator) scoreMinutes(trades []canonical.Trade, pair canonical.Pair, stateKey string, rolling *big.Rat) marginalBuckets {
 	byMinute := make(map[int64][]canonical.Trade)
 	for _, tr := range trades {
@@ -87,10 +87,9 @@ func (o *Orchestrator) bucketVWAP(trades []canonical.Trade, pair canonical.Pair)
 	return v
 }
 
-// steps returns every scored move. The first minute is measured against
-// fallback — the last published VWAP — only when no earlier minute is known;
-// when no minute could be priced the rolling move against fallback stands in.
-// A fallback comparison has no known minute, so its elapsed is 0.
+// steps returns every scored move. The first minute is measured against fallback (the last published VWAP) only when no earlier minute is
+// known;
+// a fallback comparison has elapsed 0, and with no priceable minute the rolling move against fallback stands in.
 func (mb marginalBuckets) steps(fallback *big.Rat) []priceStep {
 	if len(mb.minutes) == 0 {
 		return []priceStep{{prev: fallback, curr: mb.rolling}}
@@ -111,9 +110,8 @@ func (mb marginalBuckets) steps(fallback *big.Rat) []priceStep {
 	return out
 }
 
-// worstStep is Phase 1's observation: the largest absolute move among
-// steps(fallback), by the evaluator's own |curr-prev|/|prev| measure. With no
-// comparable step it is the newest, whose nil prev reads as "no prior bucket".
+// worstStep is Phase 1's observation: the largest |curr-prev|/|prev| among steps(fallback); with none comparable it is the newest, whose
+// nil prev reads as "no prior bucket".
 func (mb marginalBuckets) worstStep(fallback *big.Rat) priceStep {
 	steps := mb.steps(fallback)
 	worst := steps[len(steps)-1]
@@ -138,9 +136,8 @@ func (mb marginalBuckets) worstStep(fallback *big.Rat) priceStep {
 	return worst
 }
 
-// returns is Phase 2's observation set: every comparable step as a bucket
-// return, scaled by its elapsed minutes exactly as the baseline's training
-// returns are. Empty when nothing is comparable.
+// returns is Phase 2's observation set: every comparable step as a bucket return scaled by its elapsed minutes, exactly as the baseline's
+// training returns are.
 func (mb marginalBuckets) returns(fallback *big.Rat) []baseline.BucketReturn {
 	var out []baseline.BucketReturn
 	for _, s := range mb.steps(fallback) {
