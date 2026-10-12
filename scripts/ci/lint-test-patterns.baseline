@@ -42,7 +42,6 @@ go-ast internal/canonical/float_money_field_guard_test.go
 go-ast internal/canonical/i128_truncation_guard_test.go
 go-ast internal/canonical/wire_money_guard_test.go
 go-ast internal/dispatcher/claimatom_lockstep_test.go
-go-ast internal/dispatcher/entry_walk_version_stamped_test.go
 go-ast internal/divergence/worker_test.go
 go-ast internal/httpx/keyed_client_guard_test.go
 go-ast internal/metadata/cache_test.go
