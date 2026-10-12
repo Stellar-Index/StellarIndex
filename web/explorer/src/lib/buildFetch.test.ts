@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   buildFetchData,
+  MAX_IN_FLIGHT,
   MAX_UNAVAILABLE_WAITS,
   throttleDelayMs,
 } from './buildFetch';
@@ -131,12 +132,38 @@ describe('non-authoritative 4xx (e.g. 403) handling', () => {
   it('throws for a fail-hard (non-softFail) caller, carrying the problem title', async () => {
     vi.stubGlobal(
       'fetch',
-      vi
-        .fn()
-        .mockResolvedValue(fakeResponse(403, { title: 'blocked by WAF' })),
+      vi.fn().mockResolvedValue(fakeResponse(403, { title: 'blocked by WAF' })),
     );
     await expect(
       buildFetchData('/v1/entity/ca2-a35-hardfail', { attempts: 1 }),
     ).rejects.toThrow(/blocked by WAF/);
+  });
+});
+
+describe('in-flight cap', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('never has more than MAX_IN_FLIGHT requests outstanding', async () => {
+    let current = 0;
+    let peak = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        current++;
+        peak = Math.max(peak, current);
+        await new Promise((r) => setTimeout(r, 5));
+        current--;
+        return fakeResponse(200, { data: 1 });
+      }),
+    );
+    const results = await Promise.all(
+      Array.from({ length: MAX_IN_FLIGHT * 5 }, (_, i) =>
+        buildFetchData<number>(`/v1/cap-test/${i}`),
+      ),
+    );
+    expect(results.every((r) => r === 1)).toBe(true);
+    expect(peak).toBe(MAX_IN_FLIGHT);
   });
 });
