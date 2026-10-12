@@ -1,10 +1,12 @@
 package archive
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,6 +17,10 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
 // TestCheckpointAnchorDecision_AllMissedFailsRegardlessOfFlag: an all-missed range errors even without -fail-on-missed.
@@ -407,5 +413,189 @@ func TestVerifyArchive_PeersTier_HonoursFromLastVerified(t *testing.T) {
 				"(raw -from=%d/checkpoint 63 would have been sampled instead of the "+
 				"incremental watermark)", seq, 2)
 		}
+	}
+}
+
+type fakeSampleLister map[string]string // key -> etag
+
+func (f fakeSampleLister) ListObjectsV2(_ context.Context, in *s3.ListObjectsV2Input, _ ...func(*s3.Options)) (*s3.ListObjectsV2Output, error) {
+	out := &s3.ListObjectsV2Output{}
+	for k, etag := range f {
+		if strings.HasPrefix(k, aws.ToString(in.Prefix)) {
+			out.Contents = append(out.Contents, s3types.Object{Key: aws.String(k), ETag: aws.String(`"` + etag + `"`), Size: aws.Int64(10)})
+		}
+	}
+	return out, nil
+}
+
+func TestVerifySDFSample(t *testing.T) {
+	t.Parallel()
+	k := func(seq uint32) string { return sdfSampleSchema.GetObjectKeyFromSequenceNumber(seq) }
+	local := mirrorStore{api: fakeSampleLister{k(10): "aa", k(11): "bb", k(12): "cc"}}
+	upstream := mirrorStore{api: fakeSampleLister{k(10): "aa", k(11): "XX", k(12): "cc", k(13): "dd"}}
+	// 10 matches, 11 differs, 13 is missing locally, 14 is absent upstream.
+	res, err := verifySDFSample(context.Background(), local, upstream, []uint32{10, 11, 13, 14})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.sampled != 3 || res.matched != 1 || res.missingUpstream != 1 || len(res.findings) != 2 {
+		t.Fatalf("unexpected result: %+v", res)
+	}
+	causes := res.findings[0].cause + "," + res.findings[1].cause
+	if causes != mirrorCauseLocalDiffers+",missing-local" {
+		t.Fatalf("causes = %s", causes)
+	}
+}
+
+func TestPickSampleLedgers(t *testing.T) {
+	t.Parallel()
+	rng := rand.New(rand.NewPCG(1, 2))
+	got := pickSampleLedgers(100, 200, 20, rng)
+	if len(got) != 20 {
+		t.Fatalf("len = %d", len(got))
+	}
+	for i, l := range got {
+		if l < 100 || l > 200 || (i > 0 && l <= got[i-1]) {
+			t.Fatalf("bad sample %v", got)
+		}
+	}
+	if all := pickSampleLedgers(5, 7, 10, rng); len(all) != 3 {
+		t.Fatalf("small range = %v", all)
+	}
+}
+
+// tierDCheckpointJSON renders a history-XXXXXXXX.json whose single
+// bucket hash is curr.
+func tierDCheckpointJSON(seq uint32, curr string) string {
+	return fmt.Sprintf(`{"currentLedger":%d,"currentBuckets":[{"curr":%q,"snap":"00","next":{"state":0}}]}`, seq, curr)
+}
+
+// newTierDPeer serves every history/…/history-<hex>.json with bucket
+// hash curr, like a canonical tier-1 archive.
+func newTierDPeer(t *testing.T, curr string) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		name := filepath.Base(r.URL.Path)
+		hexSeq, ok := strings.CutPrefix(strings.TrimSuffix(name, ".json"), "history-")
+		seq, err := strconv.ParseUint(hexSeq, 16, 32)
+		if !ok || err != nil {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = fmt.Fprint(w, tierDCheckpointJSON(uint32(seq), curr))
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
+// writeSelfCheckpoint writes <root>/history/XX/YY/ZZ/history-<hex>.json.
+func writeSelfCheckpoint(t *testing.T, root string, seq uint32, curr string) {
+	t.Helper()
+	writeSelfCheckpointJSON(t, root, seq, tierDCheckpointJSON(seq, curr))
+}
+
+func writeSelfCheckpointJSON(t *testing.T, root string, seq uint32, body string) {
+	t.Helper()
+	hexSeq := fmt.Sprintf("%08x", seq)
+	dir := filepath.Join(root, "history", hexSeq[0:2], hexSeq[2:4], hexSeq[4:6])
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", dir, err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "history-"+hexSeq+".json"), []byte(body), 0o600); err != nil {
+		t.Fatalf("write self checkpoint: %v", err)
+	}
+}
+
+// TestVerifyArchivePeers_SelfIsAParticipant: Tier D compares OUR archive with the peers' consensus, so agreeing peers must not pass a run whose local bytes diverge or are absent (range [64,191] samples 127 and 191).
+func TestVerifyArchivePeers_SelfIsAParticipant(t *testing.T) {
+	t.Parallel()
+	peers := strings.Join([]string{newTierDPeer(t, "aa"), newTierDPeer(t, "aa"), newTierDPeer(t, "aa")}, ",")
+
+	cases := []struct {
+		name         string
+		setup        func(t *testing.T, root string)
+		failOnMissed bool
+		wantErr      string // empty → run must pass
+	}{
+		{
+			name: "self matches consensus",
+			setup: func(t *testing.T, root string) {
+				writeSelfCheckpoint(t, root, 127, "aa")
+				writeSelfCheckpoint(t, root, 191, "aa")
+			},
+			failOnMissed: true,
+		},
+		{
+			name: "self diverges while peers agree",
+			setup: func(t *testing.T, root string) {
+				writeSelfCheckpoint(t, root, 127, "aa")
+				writeSelfCheckpoint(t, root, 191, "bb")
+			},
+			failOnMissed: true,
+			wantErr:      "diverges from peer consensus at 1 checkpoint",
+		},
+		{
+			name:         "self absent entirely",
+			setup:        func(*testing.T, string) {},
+			failOnMissed: false,
+			wantErr:      "matched no consensus-verified checkpoint",
+		},
+		{
+			name: "self checkpoint above mirror high-water is fill lag",
+			setup: func(t *testing.T, root string) {
+				writeMirrorCheckpoint(t, root, 127)
+				writeSelfCheckpoint(t, root, 127, "aa")
+			},
+			failOnMissed: true,
+		},
+		{
+			name: "self checkpoint missing inside mirror coverage",
+			setup: func(t *testing.T, root string) {
+				writeMirrorCheckpoint(t, root, 127)
+				writeMirrorCheckpoint(t, root, 191)
+				writeSelfCheckpoint(t, root, 191, "aa")
+			},
+			failOnMissed: true,
+			wantErr:      "missing from our archive",
+		},
+		{
+			name: "self checkpoint missing inside mirror coverage tolerated without -fail-on-missed",
+			setup: func(t *testing.T, root string) {
+				writeMirrorCheckpoint(t, root, 127)
+				writeMirrorCheckpoint(t, root, 191)
+				writeSelfCheckpoint(t, root, 191, "aa")
+			},
+			failOnMissed: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			tc.setup(t, root)
+			err := verifyArchivePeers(64, 191, peers, 2, root, tc.failOnMissed)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("verifyArchivePeers: %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("verifyArchivePeers err = %v, want one containing %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestVerifyArchivePeers_RejectsNonHTTPPeer: a file:// peer is refused up front, not skipped after failing every fetch.
+func TestVerifyArchivePeers_RejectsNonHTTPPeer(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	writeSelfCheckpoint(t, root, 127, "aa")
+	writeSelfCheckpoint(t, root, 191, "aa")
+	peers := strings.Join([]string{newTierDPeer(t, "aa"), newTierDPeer(t, "aa"), "file:///srv/history-archive"}, ",")
+	err := verifyArchivePeers(64, 191, peers, 2, root, true)
+	if err == nil || !strings.Contains(err.Error(), "not an http(s) archive URL") {
+		t.Fatalf("verifyArchivePeers err = %v, want a rejection of the file:// peer", err)
 	}
 }

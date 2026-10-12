@@ -5,18 +5,27 @@ package chops
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/projector"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/rozo"
+	sep41supply "github.com/Stellar-Index/StellarIndex/internal/sources/sep41_supply"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 )
 
 // ─── buildWindowPlan: gap-free, overlap-free, exact coverage ──────────────
@@ -492,5 +501,233 @@ func TestCapProjectedRebuildWorkers_StaysInsideQueryBudget(t *testing.T) {
 	}
 	if got := capProjectedRebuildWorkers(2); got != 2 {
 		t.Errorf("a request inside the budget must pass through, got %d", got)
+	}
+}
+
+// TestFinishProjectedRebuild_HeldWindowReachesTheHeartbeat pins that a run
+// which lost rows is visible to stellarindex_ops_job_run_failed, not only
+// to a caller that reads the exit code.
+func TestFinishProjectedRebuild_HeldWindowReachesTheHeartbeat(t *testing.T) {
+	cases := []struct {
+		name        string
+		result      ProjectedRebuildResult
+		runErr      error
+		interrupted bool
+		wantErr     error
+		wantExitOK  string
+	}{
+		{name: "held window", result: ProjectedRebuildResult{WindowsHeld: 1, InsertErrors: 3}, wantErr: errProjectedRebuildIncomplete, wantExitOK: "0"},
+		{name: "permanent drop", result: ProjectedRebuildResult{PermanentDrops: 2}, wantErr: errProjectedRebuildIncomplete, wantExitOK: "0"},
+		{name: "interrupted", runErr: context.Canceled, interrupted: true, wantExitOK: "0"},
+		{name: "clean", wantExitOK: "1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "hb.prom")
+			hb := opsutil.NewJobHeartbeat("projected-rebuild-blend", path, nil)
+			hb.Start()
+			err := finishProjectedRebuild(hb, tc.result, tc.runErr, tc.interrupted)
+			if tc.wantErr == nil && err != nil {
+				t.Fatalf("want exit 0, got %v", err)
+			}
+			if tc.wantErr != nil && !errors.Is(err, tc.wantErr) {
+				t.Fatalf("want %v, got %v", tc.wantErr, err)
+			}
+			body, rerr := os.ReadFile(path)
+			if rerr != nil {
+				t.Fatal(rerr)
+			}
+			want := `stellarindex_ops_job_last_exit_ok{ops_job="projected-rebuild-blend"} ` + tc.wantExitOK
+			if !strings.Contains(string(body), want) {
+				t.Fatalf("heartbeat missing %q:\n%s", want, body)
+			}
+		})
+	}
+}
+
+// TestProjectedRebuildProgressLoop_FeedsTheHeartbeat pins that a heartbeat
+// run publishes covered ledgers, so stellarindex_ops_job_no_progress does not
+// ticket a healthy rebuild whose progress_total would otherwise sit at 0.
+func TestProjectedRebuildProgressLoop_FeedsTheHeartbeat(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hb.prom")
+	hb := opsutil.NewJobHeartbeat("projected-rebuild-blend", path, nil)
+	hb.Start()
+	counters := newProjectedRebuildCounters()
+	counters.completedLedgers.Store(50000)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Millisecond)
+	defer cancel()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	runProjectedRebuildProgressLoop(ctx, logger, "blend", 5*time.Millisecond, time.Now(), 1, 50000, counters, hb)
+	hb.Stop(true)
+
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `stellarindex_ops_job_progress_total{ops_job="projected-rebuild-blend"} 50000`
+	if !strings.Contains(string(body), want) {
+		t.Fatalf("heartbeat missing %q:\n%s", want, body)
+	}
+}
+
+// writeOptsFor returns -write options over a decoder emitting outs for every row. Store is nil on purpose: the poison
+// trade is rejected by Trade.Validate before the store is touched, and the non-trade output's nil-store panic is
+// recovered by pipeline.HandleEvent into a generic unclassified error.
+func writeOptsFor(outs ...consumer.Event) ProjectedRebuildOptions {
+	return ProjectedRebuildOptions{
+		Write:  true,
+		Source: projector.Source{Name: "soroswap", Decoder: &fakeDecoder{matches: true, decodeOuts: outs}},
+	}
+}
+
+func quietLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
+
+// poisonSoroswapTrade is a trade the store can never hold (the zero-value
+// canonical.Trade fails Validate), so pipeline.HandleEvent — the production
+// sink this tool writes through — returns a *pipeline.TradeDroppedError.
+func poisonSoroswapTrade() consumer.Event {
+	return soroswap.TradeEvent{Trade: canonical.Trade{Source: "soroswap", Ledger: 77, TxHash: "deadbeef"}}
+}
+
+// HandleEvent reports a permanently dropped trade; counting it as a window-holding insert error would leave a
+// deterministically poison trade's window un-checkpointed on every resume. The drop is counted separately, adds nothing
+// to the holding count, so the window checkpoints and the loss stays visible.
+func TestApplyProjectedEvent_PermanentlyDroppedTradeDoesNotHoldTheWindow(t *testing.T) {
+	counters := newProjectedRebuildCounters()
+	emitted, insertErrs := applyProjectedEvent(context.Background(),
+		writeOptsFor(poisonSoroswapTrade()), quietLogger(), counters, events.Event{Ledger: 77})
+
+	if emitted != 1 {
+		t.Errorf("emitted = %d, want 1", emitted)
+	}
+	if insertErrs != 0 {
+		t.Errorf("window-holding insert errors = %d, want 0 — a deterministic store rejection must not hold the window: no re-run can land it, so every resumed run would redo this window forever", insertErrs)
+	}
+	if got := counters.permanentDrops.Load(); got != 1 {
+		t.Errorf("permanentDrops = %d, want 1 — the drop must be counted, not vanish", got)
+	}
+}
+
+// Guard for the other side of the permanent-drop rule: a failure that is NOT a permanent trade drop still holds the
+// window. A poison trade beside it does not mask it, and every output of the row is still offered to the sink.
+func TestApplyProjectedEvent_OtherFailuresStillHoldTheWindow(t *testing.T) {
+	counters := newProjectedRebuildCounters()
+	emitted, insertErrs := applyProjectedEvent(context.Background(),
+		writeOptsFor(poisonSoroswapTrade(), rozo.Event{}, poisonSoroswapTrade()),
+		quietLogger(), counters, events.Event{Ledger: 77})
+
+	if emitted != 3 {
+		t.Errorf("emitted = %d, want 3 — every output of the row is offered to the sink", emitted)
+	}
+	if insertErrs != 1 {
+		t.Errorf("window-holding insert errors = %d, want 1 (the failed non-trade insert, and only it)", insertErrs)
+	}
+	if got := counters.permanentDrops.Load(); got != 2 {
+		t.Errorf("permanentDrops = %d, want 2 — one per dropped trade", got)
+	}
+}
+
+// The two loss classes need opposite operator actions, so the summary must not blur them: a held window says re-run; a
+// permanent drop must say a re-run cannot land it.
+func TestProjectedRebuildLossLines_NeverTellsTheOperatorToReRunAPermanentDrop(t *testing.T) {
+	if got := projectedRebuildLossLines(ProjectedRebuildResult{}); len(got) != 0 {
+		t.Errorf("clean run printed loss lines: %q", got)
+	}
+
+	drops := strings.Join(projectedRebuildLossLines(ProjectedRebuildResult{PermanentDrops: 3}), "\n")
+	for _, want := range []string{"3 trade(s) PERMANENTLY rejected", "ARE checkpointed", "re-run CANNOT land them", "-resume=false"} {
+		if !strings.Contains(drops, want) {
+			t.Errorf("permanent-drop report is missing %q:\n%s", want, drops)
+		}
+	}
+	if strings.Contains(drops, "NOT checkpointed") || strings.Contains(drops, "RE-RUN the same command") {
+		t.Errorf("permanent-drop report must not claim a held window or prescribe a plain re-run:\n%s", drops)
+	}
+
+	held := strings.Join(projectedRebuildLossLines(ProjectedRebuildResult{WindowsHeld: 2, InsertErrors: 5}), "\n")
+	for _, want := range []string{"2 window(s) NOT checkpointed", "5 insert(s) failed", "RE-RUN the same command"} {
+		if !strings.Contains(held, want) {
+			t.Errorf("held-window report is missing %q:\n%s", want, held)
+		}
+	}
+	if strings.Contains(held, "PERMANENTLY rejected") {
+		t.Errorf("held-window report must not mention permanent drops when there are none:\n%s", held)
+	}
+}
+
+type fakeSEP41RollupResetter struct {
+	calls     int
+	contracts [][]string
+	ctxErr    error
+	err       error
+}
+
+func (f *fakeSEP41RollupResetter) ResetSEP41SupplyRollupFold(ctx context.Context, contractIDs []string) (int64, error) {
+	f.calls++
+	f.contracts = append(f.contracts, contractIDs)
+	f.ctxErr = ctx.Err()
+	return 3, f.err
+}
+
+func TestResetSEP41RollupAfterRebuild_FullResetOnSEP41SupplyWrite(t *testing.T) {
+	f := &fakeSEP41RollupResetter{}
+	var out bytes.Buffer
+	if err := resetSEP41RollupAfterRebuild(context.Background(), &out, f, sep41supply.SourceName, true); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	if f.calls != 1 {
+		t.Fatalf("ResetSEP41SupplyRollupFold called %d times, want 1", f.calls)
+	}
+	if f.contracts[0] != nil {
+		t.Errorf("contract scope = %v, want nil (FULL reset)", f.contracts[0])
+	}
+	if !strings.Contains(out.String(), "reset 3 sep41_supply_rollup fold row(s)") {
+		t.Errorf("output %q does not report the reset row count", out.String())
+	}
+}
+
+// An interrupted run's ctx is already cancelled, but the windows it wrote
+// still sit below the checkpoint, so the reset must not inherit the cancel.
+func TestResetSEP41RollupAfterRebuild_RunsOnCancelledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	f := &fakeSEP41RollupResetter{}
+	if err := resetSEP41RollupAfterRebuild(ctx, &bytes.Buffer{}, f, sep41supply.SourceName, true); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	if f.calls != 1 || f.ctxErr != nil {
+		t.Fatalf("calls=%d ctxErr=%v, want 1 call on a live context", f.calls, f.ctxErr)
+	}
+}
+
+func TestResetSEP41RollupAfterRebuild_NoResetForDryRunOrOtherSources(t *testing.T) {
+	for _, tc := range []struct {
+		source string
+		write  bool
+	}{
+		{sep41supply.SourceName, false},
+		{"aquarius", true},
+		{"sep41_transfers", true},
+	} {
+		f := &fakeSEP41RollupResetter{}
+		var out bytes.Buffer
+		if err := resetSEP41RollupAfterRebuild(context.Background(), &out, f, tc.source, tc.write); err != nil {
+			t.Fatalf("%s write=%v: %v", tc.source, tc.write, err)
+		}
+		if f.calls != 0 {
+			t.Errorf("%s write=%v: ResetSEP41SupplyRollupFold called %d times, want 0", tc.source, tc.write, f.calls)
+		}
+		if wantNote := tc.source == sep41supply.SourceName; strings.Contains(out.String(), "would then ResetSEP41SupplyRollupFold") != wantNote {
+			t.Errorf("%s write=%v: dry-run note present=%v, want %v (output %q)", tc.source, tc.write, !wantNote, wantNote, out.String())
+		}
+	}
+}
+
+func TestResetSEP41RollupAfterRebuild_PropagatesError(t *testing.T) {
+	boom := errors.New("boom")
+	f := &fakeSEP41RollupResetter{err: boom}
+	if err := resetSEP41RollupAfterRebuild(context.Background(), &bytes.Buffer{}, f, sep41supply.SourceName, true); !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want it to wrap the resetter's error", err)
 	}
 }
