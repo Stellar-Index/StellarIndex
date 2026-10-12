@@ -4,6 +4,7 @@
 package chops
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -12,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/events"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	blend_backstop "github.com/Stellar-Index/StellarIndex/internal/sources/blend_backstop"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/defindex"
@@ -706,5 +708,74 @@ func TestBuildReconciliationCatalogue_ReflectorDecimals(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func loadReflectorEvent(t *testing.T, path string) events.Event {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	var fx struct {
+		ContractID     string   `json:"contract_id"`
+		Ledger         uint32   `json:"ledger"`
+		TxHash         string   `json:"tx_hash"`
+		LedgerClosedAt string   `json:"ledger_closed_at"`
+		Topics         []string `json:"topics"`
+		Value          string   `json:"value"`
+	}
+	if err := json.Unmarshal(raw, &fx); err != nil {
+		t.Fatalf("unmarshal fixture: %v", err)
+	}
+	return events.Event{
+		ContractID:     fx.ContractID,
+		Ledger:         fx.Ledger,
+		TxHash:         fx.TxHash,
+		LedgerClosedAt: fx.LedgerClosedAt,
+		Topic:          fx.Topics,
+		Value:          fx.Value,
+		Type:           "contract",
+	}
+}
+
+// verify-reconciliation must not report OK with expected=0 actual=0 for a target with no data on either side. That looks
+// identical to a source redeployed behind a new contract id with stale config; verify-recognition already refuses it.
+func TestReconciliationIsVacuous(t *testing.T) {
+	cases := []struct {
+		name               string
+		expTotal, actTotal int
+		want               bool
+	}{
+		{"both empty is vacuous", 0, 0, true},
+		{"genuinely reconciled is not vacuous", 5, 5, false},
+		{"expected only is a real mismatch, not vacuous", 5, 0, false},
+		{"actual only is a real mismatch, not vacuous", 0, 5, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := reconciliationIsVacuous(tc.expTotal, tc.actTotal); got != tc.want {
+				t.Errorf("reconciliationIsVacuous(%d, %d) = %v, want %v", tc.expTotal, tc.actTotal, got, tc.want)
+			}
+		})
+	}
+}
+
+// Both verify commands read the ClickHouse lake, never Postgres
+// soroban_events, so they keep working once that table is retired.
+func TestVerifyCommandsReadTheLake(t *testing.T) {
+	for file, banned := range map[string][]string{
+		"verify_reconciliation.go": {"ReDeriveOutputCountsByKind(", "StreamSorobanEvents("},
+		"verify_recognition.go":    {"DistinctSorobanTopicSamples(", "StreamSorobanEvents("},
+	} {
+		src := mustRead(t, file)
+		for _, b := range banned {
+			if strings.Contains(src, b) {
+				t.Errorf("%s calls %s — a Postgres soroban_events read", file, b)
+			}
+		}
+	}
+	if !strings.Contains(mustRead(t, "verify_recognition.go"), "computeRecognitionGapsCH(") {
+		t.Error("verify_recognition.go no longer runs the lake recognition census")
 	}
 }
