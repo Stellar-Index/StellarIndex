@@ -46,11 +46,9 @@ func planRestampLogFixture() *XLMBaseRestampPlan {
 	}}}
 }
 
-// TestUSDVolumeRestamp_LogsBeforeImageInTheSameTransaction pins that every
-// in-place trades.usd_volume rewrite — the exact tier and the plan-based
-// tiers — first copies the rows' prior usd_volume/derive_generation into
-// usd_volume_restamp_log, from the same FROM/WHERE as the UPDATE, inside
-// one REPEATABLE READ transaction, so a bad run is reversible.
+// TestUSDVolumeRestamp_LogsBeforeImageInTheSameTransaction pins that every in-place trades.usd_volume rewrite
+// first copies the rows' prior usd_volume/derive_generation into usd_volume_restamp_log, from the same
+// FROM/WHERE as the UPDATE, inside one REPEATABLE READ transaction, so a bad run is reversible.
 func TestUSDVolumeRestamp_LogsBeforeImageInTheSameTransaction(t *testing.T) {
 	ctx := context.Background()
 	cases := map[string]func(*Store) (int64, error){

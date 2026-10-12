@@ -57,10 +57,8 @@ func TestECWindowCoverage_Missing(t *testing.T) {
 	}{
 		{"fully-covered", 900, 900, 0},
 		{"deficit", 900, 850, 50},
-		// Unreachable through QueryECWindowCoverage (the
-		// covered side is a SUBSET of the tx-bearing side), but the guard
-		// must still SATURATE to 0 rather than wrap uint64 to ~1.8e19 if a
-		// caller hands over unrelated cardinalities.
+		// Unreachable through QueryECWindowCoverage (covered is a subset of tx-bearing), but the guard must still
+		// saturate to 0 rather than wrap uint64 to ~1.8e19 on unrelated cardinalities.
 		{"covered-exceeds-tx-bearing", 900, 903, 0},
 		{"both-zero", 0, 0, 0},
 	}
@@ -74,21 +72,9 @@ func TestECWindowCoverage_Missing(t *testing.T) {
 	}
 }
 
-// TestECWindowCoverageQuery_AntiJoin pins that the Check-2 coverage count is evaluated PER
-// TX-BEARING LEDGER, not as a standalone cardinality of stellar.ledger_entry_changes.
-//
-// A naive form runs two independent scans and subtracts them:
-//
-//	SELECT uniqExact(ledger_seq) FROM stellar.ledgers            WHERE … AND tx_count > 0
-//	SELECT uniqExact(ledger_seq) FROM stellar.ledger_entry_changes WHERE …
-//
-// Entry-change rows exist for tx_count == 0 ledgers (protocol upgrades, config/base-reserve
-// changes), which inflate the second count while never appearing in the first. They cancel
-// genuinely-uncovered tx-bearing ledgers one-for-one, so Check 2 (the hard gate above
-// -ec-floor) reports zero deficiency on a real gap.
-//
-// The structural property asserted: the coverage count is a uniqExactIf over stellar.ledgers'
-// tx-bearing rows, with ledger_entry_changes appearing ONLY inside the membership subquery.
+// TestECWindowCoverageQuery_AntiJoin: the Check-2 coverage count must be per tx-bearing ledger, since
+// entry changes at tx_count == 0 ledgers would otherwise cancel real gaps. It asserts a uniqExactIf over
+// stellar.ledgers with ledger_entry_changes only inside the membership subquery.
 func TestECWindowCoverageQuery_AntiJoin(t *testing.T) {
 	q := ecWindowCoverageQuery()
 

@@ -19,11 +19,9 @@ func batchOutcomeReturning() scriptedResult {
 	}
 }
 
-// A re-derive's batch upsert into compressed chunks decompresses whole
-// segments per conflict and trips the server's per-transaction cap (SQLSTATE
-// 53400). The statement must therefore run inside ONE transaction that lifts
-// the cap with SET LOCAL first — scoped to that transaction, never the pooled
-// connection — and commit once.
+// A re-derive's batch upsert into compressed chunks decompresses whole segments per conflict and trips the
+// per-transaction cap (SQLSTATE 53400). The statement must run in one transaction that lifts the cap with
+// SET LOCAL first, scoped to that transaction and never the pooled connection, and commit once.
 func TestScanBatchTradeOutcome_LiftsTheDecompressionCapInItsOwnTransaction(t *testing.T) {
 	t.Parallel()
 	store, conn := newScriptedStore(t, scriptedResult{}, batchOutcomeReturning())

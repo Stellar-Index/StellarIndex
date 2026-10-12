@@ -8,15 +8,8 @@ import (
 	"testing"
 )
 
-// TestGapDetectorTargetsCoverAllPerSourceHypertables guards ADR-0030's per-source coverage
-// invariant: every per-source hypertable in a migration MUST appear in
-// [DefaultGapDetectorTargets] in the same PR, or a new source's table lands with no
-// data-derived coverage signal.
-//
-// It walks migrations/*.up.sql for `CREATE TABLE <name>` statements matching the per-source
-// naming conventions and asserts each is registered (or listed in [excludedFromGapDetector]
-// with a documented reason). On failure it prints the missing table and the shortest plausible
-// registration to paste into per_source_gaps.go.
+// TestGapDetectorTargetsCoverAllPerSourceHypertables guards ADR-0030: every per-source hypertable created in
+// a migration must be in [DefaultGapDetectorTargets] or [excludedFromGapDetector] with a reason.
 func TestGapDetectorTargetsCoverAllPerSourceHypertables(t *testing.T) {
 	t.Parallel()
 
@@ -83,22 +76,15 @@ var excludedFromGapDetector = map[string]string{
 	"freeze_events":     "system-state table, not per-source ingest. Populated on demand by /v1/admin/freeze handler; no continuous-coverage invariant.",
 	"mev_events":        "MEV detection sidecar — populated only when an op's effects suggest sandwich/frontrun. Sparse-by-design, not a coverage signal.",
 	"api_usage_events":  "HTTP-request usage logging for the platform API, not Stellar-network ingest. No coverage invariant.",
-	// classic_movements (ADR-0047) does not match perSourcePattern's suffix list, so the regex
-	// walk does not require this entry; it documents why a real per-source hypertable is not
-	// a live target. It has NO live writer (ADR-0047 D2: historical-only, written by the
-	// bounded `classic-movements-backfill` below the P23 ledger boundary), so a "coverage vs
-	// current tip" gauge would be meaningless. Coverage follows ADR-0047 D4: a static
-	// recognition test (internal/sources/classicmovements/recognition_test.go) plus, from
-	// Phase 4, an ADR-0033-style projection reconcile against ledger_entry_changes.
+	// classic_movements (ADR-0047) has no live writer (historical-only backfill below the P23 boundary), so it
+	// is not a live coverage target and the suffix-list walk does not require this entry. Coverage follows
+	// ADR-0047 D4 via a static recognition test and, later, a projection reconcile.
 	"classic_movements": "historical-only, no live writer (ADR-0047 D2) — see the comment above this map entry.",
 }
 
-// The five LedgerEntryChange supply observers' tables only get a row when a WATCHED entry
-// changes, so a ledger with no row is normal, not a loss, and a LAG-over-DISTINCT gap scan
-// would alert on that quiet. Only the account observer has a true processed watermark
-// (account_observer_watermark); MAX(ledger) of the other four goes stale on a healthy
-// observer, so they cannot tell dead from quiet. That liveness gap is open. The ADR-0033
-// re-derive covers soroban_events only.
+// The five LedgerEntryChange supply observers only write when a watched entry changes, so a missing ledger is
+// normal and a gap scan would false-alarm. Only the account observer has a true watermark; the liveness gap
+// is open.
 const (
 	accountObserverReason = "watched-set-sparse LedgerEntryChange observer table: absent ledgers are quiet, not lost, so a ledger-gap target would false-alert. Liveness is account_observer_watermark; there is no ADR-0033 reconcile axis for LedgerEntry sources."
 	noWatermarkReason     = "watched-set-sparse LedgerEntryChange observer table: absent ledgers are quiet, not lost, so a ledger-gap target would false-alert. OPEN GAP: no processed watermark exists, so a dead observer is indistinguishable from a quiet one; there is no ADR-0033 reconcile axis for LedgerEntry sources."
@@ -116,10 +102,9 @@ var excludedObservationTables = map[string]string{
 	"divergence_observations":  "cross-source price divergence log keyed by pair and time, not a per-ledger ingest stream.",
 }
 
-// TestObservationTablesHaveExplicitGapDetectorDecision fails when a
-// `*_observations` migration table is neither a gap-detector target nor in
-// [excludedObservationTables], and when an exclusion outlives its table or
-// contradicts a registered target.
+// TestObservationTablesHaveExplicitGapDetectorDecision fails when a `*_observations` table is neither a gap-
+// detector target nor in [excludedObservationTables], or when an exclusion outlives its table or contradicts
+// a target.
 func TestObservationTablesHaveExplicitGapDetectorDecision(t *testing.T) {
 	t.Parallel()
 
@@ -175,10 +160,8 @@ func TestObservationTablesHaveExplicitGapDetectorDecision(t *testing.T) {
 	}
 }
 
-// inferSourceName guesses the canonical source-label slug for a
-// table by stripping the table-suffix and replacing underscores
-// with hyphens. Used in the lint failure message to suggest a
-// reasonable Source value; the engineer should still verify.
+// inferSourceName guesses the canonical source-label slug for a table by stripping the table suffix and
+// replacing underscores with hyphens, to suggest a Source value in the lint failure message.
 func inferSourceName(table string) string {
 	base := table
 	for _, suffix := range []string{
@@ -197,10 +180,8 @@ func inferSourceName(table string) string {
 	return strings.ReplaceAll(base, "_", "-")
 }
 
-// findRepoRoot walks up from the test working directory until it
-// finds a `go.mod` — the package's CWD during `go test` is the
-// package dir, not the repo root, so the migrations/ glob needs
-// help.
+// findRepoRoot walks up from the test working directory to the first `go.mod`, since go test runs in the
+// package dir, not the repo root, and the migrations/ glob needs the root.
 func findRepoRoot(t *testing.T) string {
 	t.Helper()
 	cwd, err := os.Getwd()

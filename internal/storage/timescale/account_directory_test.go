@@ -50,10 +50,9 @@ func TestBuildDirectoryUpsert_PlaceholderLayout(t *testing.T) {
 	}
 }
 
-// TestDedupDirectoryEntriesByAddress: two upstream files declaring the same address would put the
-// same conflict key twice into one multi-row upsert, which Postgres rejects ("ON CONFLICT DO
-// UPDATE command cannot affect row a second time"), aborting the sync. ReplaceDirectory must
-// collapse duplicate addresses (last wins) before chunking.
+// TestDedupDirectoryEntriesByAddress: two upstream files declaring one address would put the same conflict
+// key twice in a multi-row upsert, which Postgres rejects; ReplaceDirectory must dedupe addresses (last
+// wins) first.
 func TestDedupDirectoryEntriesByAddress(t *testing.T) {
 	in := []DirectoryEntry{
 		{Address: "GA", Name: "first-A", Source: "stellar-expert"},
@@ -93,10 +92,9 @@ func TestDedupDirectoryEntriesByAddress(t *testing.T) {
 	}
 }
 
-// TestReplaceDirectory_RefusesEmptySet — an empty snapshot means the
-// fetch broke; syncing it would prune the whole source. Must error
-// before touching the DB (s.db is nil here — a DB call would panic,
-// so reaching the guard proves order).
+// TestReplaceDirectory_RefusesEmptySet: an empty snapshot means the fetch broke, and syncing it would
+// prune the whole source, so it must error before touching the DB (s.db is nil, so reaching a DB call
+// would panic).
 func TestReplaceDirectory_RefusesEmptySet(t *testing.T) {
 	s := &Store{}
 	if _, _, err := s.ReplaceDirectory(context.Background(), "stellar-expert", nil); err == nil {
@@ -107,10 +105,9 @@ func TestReplaceDirectory_RefusesEmptySet(t *testing.T) {
 	}
 }
 
-// TestDirectoryTagsWithoutScamFlags pins the correction a false-positive
-// override writes: every scam-class spelling the gate would count goes,
-// and every other tag stays — `issuer` above all, since it is what admits
-// the address to the RWA recognition funnel.
+// TestDirectoryTagsWithoutScamFlags pins the correction a false-positive override writes: every scam-class
+// spelling goes and every other tag stays, above all `issuer`, which admits the address to the RWA
+// recognition funnel.
 func TestDirectoryTagsWithoutScamFlags(t *testing.T) {
 	got := DirectoryTagsWithoutScamFlags([]string{"issuer", "UNSAFE", "memo-required", " Malicious ", "anchor", "phishing"})
 	want := []string{"issuer", "memo-required", "anchor"}
@@ -127,10 +124,9 @@ func TestDirectoryTagsWithoutScamFlags(t *testing.T) {
 	}
 }
 
-// TestBuildDirectoryUpsert_BindsCanonicalTags: the SQL scam predicates
-// fold case but do not trim, so a padded upstream tag must be stored
-// canonical or the churn guard, the rank tier and the explorer miss a
-// flag the trimming Go price gate still acts on.
+// TestBuildDirectoryUpsert_BindsCanonicalTags pins that padded upstream tags are stored canonical: the SQL
+// scam predicates fold case but do not trim, so a padded tag would miss a flag the Go price gate still acts
+// on.
 func TestBuildDirectoryUpsert_BindsCanonicalTags(t *testing.T) {
 	chunk := directoryEntriesN(1)
 	chunk[0].Tags = []string{"scam ", " Exchange", "", "exchange", "\tPHISHING\n", "  "}
@@ -274,31 +270,25 @@ func TestReplaceDirectoryWithin_RefusesBeforeTheDB(t *testing.T) {
 	}
 }
 
-// TestBuildDirectoryUpsert_ConflictArmIsOwnershipScoped: the conflict arm must update only rows
-// the syncing source already OWNS. The table is scoped by `source` so directory sources can
-// coexist without deleting each other's rows, and an unconditional `source = EXCLUDED.source`
-// would make every sync steal shared addresses. It would also leave no durable operator override
-// for a false-positive scam flag: a hand-held correction would be adopted into the upstream
-// snapshot and overwritten by the next run while the issuer's price stays withheld.
+// TestBuildDirectoryUpsert_ConflictArmIsOwnershipScoped: the conflict arm must update only rows the syncing
+// source already OWNS. An unconditional `source = EXCLUDED.source` would steal shared addresses and overwrite
+// a hand-held correction of a false-positive scam flag on the next sync.
 func TestBuildDirectoryUpsert_ConflictArmIsOwnershipScoped(t *testing.T) {
 	q, _ := buildDirectoryUpsert(directoryEntriesN(2), "stellar-expert")
 
 	if !strings.Contains(q, "WHERE account_directory.source = EXCLUDED.source") {
 		t.Errorf("conflict arm is not ownership-scoped — a sync would overwrite rows another source owns:\n%s", q)
 	}
-	// `source` must never appear in the SET list: the WHERE already pins
-	// it equal, and rewriting it is exactly how a row changed hands.
-	// EXCLUDED.source may therefore be referenced exactly once, by the
-	// guard.
+	// `source` must never appear in the SET list: the WHERE already pins it equal, and rewriting it is how a row
+	// changed hands. EXCLUDED.source may therefore be referenced exactly once, by the guard.
 	if got := strings.Count(q, "EXCLUDED.source"); got != 1 {
 		t.Errorf("EXCLUDED.source referenced %d times, want 1 (the ownership guard only):\n%s", got, q)
 	}
 }
 
-// TestReplaceDirectory_RefusesReservedOverrideSource: a sync running as the operator source would
-// adopt every override into its snapshot, then prune those it omits, deleting the corrections the
-// source exists to protect. It must refuse before touching the DB (s.db is nil here, so a DB call
-// would panic and reaching the guard proves the order).
+// TestReplaceDirectory_RefusesReservedOverrideSource: a sync as the operator source would adopt then prune
+// the corrections that source protects, so it must refuse before touching the DB. s.db is nil, so reaching
+// the DB would panic.
 func TestReplaceDirectory_RefusesReservedOverrideSource(t *testing.T) {
 	s := &Store{}
 	_, _, err := s.ReplaceDirectory(context.Background(), DirectoryOperatorOverrideSource, directoryEntriesN(1))

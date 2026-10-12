@@ -62,11 +62,9 @@ func TestTokenSupplyForContracts_SumsPerContract(t *testing.T) {
 	}
 }
 
-// TestTokenSupplyForContracts_MissingContractIsAbsentNotZero is the
-// distinction the caller's fallback logic rests on. A contract the lake has no
-// flows for must be ABSENT from the map, never present with a zero total: zero
-// is the claim "this token is fully burned", and publishing it for a token the
-// lake simply hasn't seen would understate it to nothing.
+// TestTokenSupplyForContracts_MissingContractIsAbsentNotZero pins that a contract with no flows is absent
+// from the map, never zero: zero claims the token is fully burned and would understate an unseen token to
+// nothing.
 func TestTokenSupplyForContracts_MissingContractIsAbsentNotZero(t *testing.T) {
 	r, _ := bulkSupplyConn(t, [][]any{
 		{"CAAA", "1000", "0", "0", uint64(1)},
@@ -117,10 +115,8 @@ func TestTokenSupplyForContracts_PreservesAboveInt64Totals(t *testing.T) {
 	}
 }
 
-// TestTokenSupplyForContracts_EmptyInputIssuesNoQuery — an empty candidate set
-// must not reach ClickHouse at all. `WHERE contract_id IN ()` is both a
-// syntax error and a pointless round trip on a hot path that will often have
-// nothing to ask about.
+// TestTokenSupplyForContracts_EmptyInputIssuesNoQuery: an empty candidate set must not reach ClickHouse,
+// since `WHERE contract_id IN ()` is a syntax error and a wasted round trip on a hot path.
 func TestTokenSupplyForContracts_EmptyInputIssuesNoQuery(t *testing.T) {
 	conn := &stubConn{respond: func(q string) (driver.Rows, error) {
 		t.Fatalf("empty input must issue no query; got: %s", q)
@@ -149,10 +145,9 @@ func TestTokenSupplyForContracts_QueryErrorPropagates(t *testing.T) {
 	}
 }
 
-// TestTokenSupplyForContracts_QueryShape pins the population the totals are
-// summed over. FINAL is load-bearing (the ReplacingMergeTree double-counts
-// re-ingested events without it), the IN-list is what keeps the scan to the
-// requested contracts' primary-key ranges, and Int256 accumulation is ADR-0003.
+// TestTokenSupplyForContracts_QueryShape pins the summed population: FINAL is load-bearing
+// (ReplacingMergeTree double-counts re-ingested events), the IN-list keeps the scan to the contracts' key
+// ranges, and Int256 accumulation is ADR-0003.
 func TestTokenSupplyForContracts_QueryShape(t *testing.T) {
 	r, conn := bulkSupplyConn(t, nil)
 	if _, err := r.TokenSupplyForContracts(t.Context(), []string{"CAAA"}); err != nil {

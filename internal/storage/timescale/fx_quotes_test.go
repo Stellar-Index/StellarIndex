@@ -27,22 +27,8 @@ func mkFiatPair(t *testing.T, base, quote string) canonical.Pair {
 	return p
 }
 
-// TestFXSnapFromRows_RateUSDOrientation pins the orientation of rate_usd, which the whole
-// fiat-quoted read path hinges on: rate_usd(T) is UNITS-OF-T-PER-1-USD (usd→eur ≈ 0.92 means
-// 1 USD buys 0.92 EUR), NOT "USD per 1 T".
-//
-// fxSnapFromRows must return quote-units-per-base-unit (Q per B), the same orientation as the
-// trades fallback (quote_amount/base_amount):
-//
-//	price(B/Q) = (Q per USD) / (B per USD) = rate_usd(Q) / rate_usd(B)
-//
-// With rate_usd(EUR) = 0.8 (1 USD = 0.8 EUR):
-//
-//	price(USD/EUR) = EUR per USD = 0.8/1 = 4/5
-//	price(EUR/USD) = USD per EUR = 1/0.8 = 5/4
-//
-// Returning rate_usd(B)/rate_usd(Q) inverts every leg; for JPY (rate_usd about 150) that is a
-// ~150^2 error on every served XLM/JPY-style pair.
+// TestFXSnapFromRows_RateUSDOrientation pins that rate_usd(T) is units of T per 1 USD, so fxSnapFromRows must
+// return rate_usd(Q) / rate_usd(B) (Q per B). The inverse would be wrong by roughly rate_usd squared.
 func TestFXSnapFromRows_RateUSDOrientation(t *testing.T) {
 	bucket := time.Date(2026, 7, 3, 0, 0, 0, 0, time.UTC)
 	rows := map[string]fxSnapRow{
@@ -129,12 +115,9 @@ func TestFXSnapTickers(t *testing.T) {
 	}
 }
 
-// TestFXSnapFromRows_DirectAndInverse covers the two USD-anchored orientations with EXACT
-// rational arithmetic (no float on the money path: an exact Rat inverse, not a float
-// reciprocal). rate_usd(EUR)=1.085 means 1.085 EUR per USD, so:
-//
-//	price(USD/EUR) = EUR per USD = rate_usd(EUR)         = 1.085 = 217/200
-//	price(EUR/USD) = USD per EUR = 1/rate_usd(EUR)       = 200/217
+// TestFXSnapFromRows_DirectAndInverse covers both USD-anchored orientations with EXACT rational arithmetic
+// (a Rat inverse, no float on the money path). rate_usd(EUR)=1.085 means 1.085 EUR per USD, so
+// price(USD/EUR) = 217/200 and price(EUR/USD) = 200/217.
 func TestFXSnapFromRows_DirectAndInverse(t *testing.T) {
 	bucket := time.Date(2026, 7, 3, 0, 0, 0, 0, time.UTC)
 	rows := map[string]fxSnapRow{
@@ -170,10 +153,9 @@ func TestFXSnapFromRows_DirectAndInverse(t *testing.T) {
 	})
 }
 
-// TestFXSnapFromRows_Cross: a non-USD cross chains through the USD anchor, exactly:
-// price(EUR/GBP) = GBP per EUR = rate_usd(GBP)/rate_usd(EUR). observedAt is the OLDER of the
-// two buckets (the staler input governs freshness); the source label is the sorted "+"-join
-// of distinct providers.
+// TestFXSnapFromRows_Cross: a non-USD cross chains through the USD anchor, price(EUR/GBP) =
+// rate_usd(GBP)/rate_usd(EUR). observedAt is the older of the two buckets (the staler input governs
+// freshness); source is the sorted "+"-join.
 func TestFXSnapFromRows_Cross(t *testing.T) {
 	newer := time.Date(2026, 7, 3, 0, 0, 0, 0, time.UTC)
 	older := newer.Add(-24 * time.Hour)
@@ -198,10 +180,9 @@ func TestFXSnapFromRows_Cross(t *testing.T) {
 	}
 }
 
-// TestFXSnapFromRows_MissRoutesToFallback — a needed ticker with no
-// row must return ErrNoFXQuote (the sentinel FXQuoteAtOrBefore uses to
-// fire the legacy trades fallback), for both the missing-row and the
-// not-an-fx-pair shapes.
+// TestFXSnapFromRows_MissRoutesToFallback: a needed ticker with no row must return ErrNoFXQuote (which
+// makes FXQuoteAtOrBefore use the legacy trades fallback), for both the missing-row and not-an-fx-pair
+// shapes.
 func TestFXSnapFromRows_MissRoutesToFallback(t *testing.T) {
 	t.Run("needed ticker absent", func(t *testing.T) {
 		_, _, _, err := fxSnapFromRows(mkFiatPair(t, "USD", "MXN"), map[string]fxSnapRow{})

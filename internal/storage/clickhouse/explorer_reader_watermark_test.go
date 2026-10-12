@@ -9,14 +9,9 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// Tests for the per-account activity watermark bound: AccountOperations' key arms read
-// `ORDER BY pk DESC LIMIT n`, which streams granules backwards from the TIP until the account's
-// rows turn up (slow for a long-idle account). With a watermark row in stellar.account_activity
-// the reader bounds EACH arm's resolve with `ledger_seq <= watermark`, so the reverse read starts
-// at the account's real last activity. These pin the emitted SQL and bind order (stubConn from
-// tx_hash_index_test.go; same convention as explorer_reader_union_bounds_test.go); the
-// live-ClickHouse proof (bounded rows == unbounded rows, incl. a participant row ABOVE the sourced
-// watermark) is test/integration/clickhouse_accounts_test.go.
+// Tests for the per-account activity watermark bound: each AccountOperations key arm bounds its resolve with
+// `ledger_seq <= watermark` so the reverse read starts at the account's last activity. They pin SQL and bind
+// order; test/integration/clickhouse_accounts_test.go proves it against live ClickHouse.
 
 // Query-shape classifiers for the watermark reads.
 func isAccountActivityProbe(q string) bool {
@@ -101,10 +96,9 @@ func TestAccountOperations_WatermarkPreservesCursorArgOrder(t *testing.T) {
 	assertArgs(t, q, got, []any{"GTEST", watermark, cur.Ledger, cur.Ledger, cur.A, cur.B, limit})
 }
 
-// TestAccountOperations_NoWatermarkFallsBackUnbounded pins the degrade
-// direction: no watermark row (max() over zero rows scans as 0) → no bound on
-// any key read. A missing watermark may only cost performance; a fabricated
-// bound of 0 would hide the account's whole history.
+// TestAccountOperations_NoWatermarkFallsBackUnbounded pins the degrade direction: no watermark row means no
+// bound. A missing watermark may only cost performance; a fabricated bound of 0 would hide the account's
+// whole history.
 func TestAccountOperations_NoWatermarkFallsBackUnbounded(t *testing.T) {
 	const limit = 37
 	conn := watermarkStubConn(0, &stubRows{})
@@ -131,10 +125,9 @@ func assertArgs(t *testing.T, q string, got, want []any) {
 	}
 }
 
-// stellar.operations is ReplacingMergeTree, so an account listing collapses un-merged duplicate
-// parts on the narrow primary key, never with a DISTINCT over opCols, which carries the large
-// body_xdr. The exact sourced arm uses LIMIT 1 BY; the windowed reads collapse adjacent keys in
-// Go; body_xdr is read exactly once, by the FINAL hydration (see opColsLight).
+// stellar.operations is ReplacingMergeTree, so account listings collapse duplicates on the narrow primary
+// key, never a DISTINCT over opCols (large body_xdr). body_xdr is read once, by the FINAL hydration (see
+// opColsLight).
 func TestAccountOperations_DedupsOnThePrimaryKey(t *testing.T) {
 	const limit = 3
 	filled := make([][]any, windowRows(limit, windowFactorKeys))

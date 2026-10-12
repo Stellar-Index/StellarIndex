@@ -8,11 +8,9 @@ import (
 	"testing"
 )
 
-// TestChangeWindowsMatchDocumentedTolerance pins that every
-// change lookback reads within AssetRow's documented tolerance of its
-// target (1h ±5 min, 24h ±30 min, 7d ±2 h). The lower bounds were
-// 90 min / 26 h / 7 d 12 h, so a thin token's 88-minute move served as
-// change_1h_pct.
+// TestChangeWindowsMatchDocumentedTolerance pins that every change lookback reads within AssetRow's
+// documented tolerance of its target (1h +-5 min, 24h +-30 min, 7d +-2 h). Looser lower bounds let a thin
+// token's 88-minute move serve as change_1h_pct.
 func TestChangeWindowsMatchDocumentedTolerance(t *testing.T) {
 	want := map[string]string{
 		"priceWindow1h":  `bucket BETWEEN now() - INTERVAL '65 minutes' AND now() - INTERVAL '55 minutes'`,
@@ -77,10 +75,8 @@ var untiedBucketPickRE = regexp.MustCompile(`ORDER BY (?:p\.)?bucket DESC(?:[ \t
 // asset: USD's (literal or usdProxyQuotes) or XLM's (xlmQuotesBound*).
 var multiFormQuoteRE = regexp.MustCompile(`'fiat:USD'|\busdProxyQuotes\b|\bxlmQuotesBound\w*`)
 
-// TestUSDQuotePicksAreTieBroken pins tie-breaking for the price readers:
-// USDC and fiat:USD (or two XLM or peg forms) can print in the same
-// minute, so every newest-bucket pick across forms needs a stable
-// second key. last(vwap, bucket) has none.
+// TestUSDQuotePicksAreTieBroken pins tie-breaking for the price readers: USDC and fiat:USD (or two XLM or peg
+// forms) can print in the same minute, so every newest-bucket pick across forms needs a stable second key.
 func TestUSDQuotePicksAreTieBroken(t *testing.T) {
 	if !strings.Contains(getNativeAssetSQL, xlmUSDNativeCTEs("$1::text")) {
 		t.Error("getNativeAssetSQL must reuse xlmUSDNativeCTEs rather than carry its own XLM/USD picks")

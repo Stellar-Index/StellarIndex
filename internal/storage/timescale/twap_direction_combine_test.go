@@ -12,29 +12,9 @@ import (
 	"time"
 )
 
-// Regression suite for the served-TWAP direction combine.
-//
-// SDEX stores the same market in BOTH orientations, so TWAPPointsInRange folds the two stored
-// directions into the one the caller asked for. A trade-count-weighted mean would be wrong:
-// the twap_1h / twap_1d CAGGs define twap = avg(prices_1m.twap), equal per elapsed minute and
-// deliberately NOT per trade. The only correct merge weight is each direction's minute
-// COVERAGE (prices_1m minute-buckets contributed, the `sample_count` column), not trade count.
-//
-// The fixture is one bucket of a two-sided XLM/USDC market whose three candidate answers are
-// far apart, so only the coverage-weighted one passes:
-//
-//	direction A (flipped USDC/XLM): stored twap 2 → oriented 0.5,
-//	    minute coverage 50, trade count 500
-//	direction B (XLM/USDC):         stored twap 0.6 → oriented 0.6,
-//	    minute coverage  5, trade count 5000
-//
-//	coverage-weighted (CORRECT): (0.5·50 + 0.6·5)/(50+5) = 28/55 = 0.50909…
-//	trade-count-weighted (WRONG): (0.5·500 + 0.6·5000)/5500 = 0.59090…
-//	equal-weighted (also wrong): (0.5+0.6)/2 = 0.55
-//
-// Coverage differs from both by ~16% / ~8%, so a regression is loud, not a rounding wobble.
-// The flipped side stores exactly 2 (reciprocal 0.5 is exact), so the combine is exact rational
-// arithmetic (ADR-0003) with no `1.0/twap` rounding.
+// Regression suite for the served-TWAP direction combine: directions merge weighted by minute coverage
+// (`sample_count`), not trade count, since twap is avg(prices_1m.twap) per minute. The fixture's
+// coverage-weighted (28/55), count-weighted and equal-weighted answers differ widely.
 
 var (
 	// twapCoverageWeighted is the correct answer, 28/55.
@@ -53,10 +33,9 @@ var twapCombineFixture = []dirTWAP{
 	{twapText: "0.6", sampleCount: 5, flipped: false},
 }
 
-// ratNear reports whether the decimal text `got` parses to within `tol` of
-// `want`. The combined value renders at the package's relative precision
-// (combinedVWAPSigDigits), so an exact-string compare would be fragile;
-// this pins the value while tolerating the final rendering digit.
+// ratNear reports whether the decimal text `got` parses to within `tol` of `want`. The combined value
+// renders at combinedVWAPSigDigits, so an exact-string compare is fragile; this tolerates only the final
+// rendering digit.
 func ratNear(t *testing.T, got string, want *big.Rat, tol *big.Rat) bool {
 	t.Helper()
 	r, ok := new(big.Rat).SetString(got)
@@ -105,10 +84,9 @@ func TestCombineDirTWAP_RowOrderIndependent(t *testing.T) {
 	}
 }
 
-// TestCombineDirTWAP_SingleDirectionIsVerbatim — a bucket that traded only
-// in the requested orientation IS its stored TWAP, and the Postgres NUMERIC
-// text must pass through untouched so the served bytes don't shift for the
-// common one-sided pair.
+// TestCombineDirTWAP_SingleDirectionIsVerbatim: a bucket that traded only in the requested orientation is
+// its stored TWAP, and the Postgres NUMERIC text must pass through untouched so served bytes do not shift
+// for the common one-sided pair.
 func TestCombineDirTWAP_SingleDirectionIsVerbatim(t *testing.T) {
 	const stored = "0.1234567890123456789012345678901"
 	got, ok := combineDirTWAP([]dirTWAP{{twapText: stored, sampleCount: 42, flipped: false}})
@@ -169,10 +147,9 @@ func TestCombineDirTWAP_NoUsableRows(t *testing.T) {
 	}
 }
 
-// TestTWAPPointsInRange_CoverageWeightedUnion drives the real Store method end-to-end over the
-// canned driver (query text, scan, fold) and asserts the served VALUE, so a regression anywhere
-// on the path fails, not just in combineDirTWAP. The trade counts (500 vs 5000) would give
-// 0.59090 under a trade-count SQL; the read must serve 0.50909 and never touch trade_count.
+// TestTWAPPointsInRange_CoverageWeightedUnion drives the real Store method over the canned driver (query,
+// scan, fold) and asserts the served VALUE, so a regression anywhere on the path fails. Trade counts (500 vs
+// 5000) would give 0.59090; the read must serve 0.50909 and never touch trade_count.
 func TestTWAPPointsInRange_CoverageWeightedUnion(t *testing.T) {
 	pair := testXLMUSDCPair(t)
 	bucket := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
@@ -256,10 +233,9 @@ func TestTWAPPointsInRange_FlippedOnlyBucketIsServed(t *testing.T) {
 	}
 }
 
-// The TWAP chain floors at $0.01 of notional with a COALESCE fallback, so a dust-only direction
-// keeps an unfloored twap. When the other direction cleared the floor that fallback row must not
-// enter the merge: a dust-only flipped minute at 0.001 (oriented 1000) would otherwise pull a
-// clean 5 up to (5·1 + 1000·1)/2 = 502.5.
+// The TWAP chain floors at $0.01 notional with a COALESCE fallback, so a dust-only direction keeps an
+// unfloored twap. When the other direction cleared the floor it must not enter the merge: a dust-only
+// flipped minute (oriented 1000) would pull a clean 5 up to 502.5.
 func TestCombineDirTWAP_DropsFallbackDirectionWhenAnotherClearedTheFloor(t *testing.T) {
 	got, ok := combineDirTWAP([]dirTWAP{
 		{twapText: "5", sampleCount: 1, notionalCount: 1, flipped: false},

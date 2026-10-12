@@ -48,11 +48,8 @@ func TestDefindexSeriesQueryShapes(t *testing.T) {
 	}
 }
 
-// TestDefindexStrategyVolumeSeriesExcludesHarvest guards: the
-// strategy volume series must filter by direction, like its sibling KPI
-// (window KPIs, L65-66) and per-strategy table (L164-172) queries, and
-// must exclude 'harvest' — strategy yield, not capital deposited or
-// withdrawn — from the capital-volume figure.
+// TestDefindexStrategyVolumeSeriesExcludesHarvest pins that the strategy volume series filters by direction
+// like its sibling queries and excludes 'harvest' (yield, not capital moved) from the capital-volume figure.
 func TestDefindexStrategyVolumeSeriesExcludesHarvest(t *testing.T) {
 	q := defindexStrategyVolumeSeriesQuery(90)
 	if !strings.Contains(q, "SELECT direction,") {
@@ -63,10 +60,8 @@ func TestDefindexStrategyVolumeSeriesExcludesHarvest(t *testing.T) {
 	}
 }
 
-// TestDefindexKPIQueriesShape guards the KPI splits: the window query is
-// bounded, keeps the capital-volume figures on the strategy layer (where
-// the scalar amount truthfully lives) and the who/when counts on the vault
-// layer; the all-time query is deliberately unbounded and counts only.
+// TestDefindexKPIQueriesShape: the window query is bounded, keeps capital-volume figures on the strategy
+// layer and who/when counts on the vault layer; the all-time query is deliberately unbounded and counts only.
 func TestDefindexKPIQueriesShape(t *testing.T) {
 	w := defindexWindowKPIQuery()
 	assertYieldWindowBounded(t, "window KPIs", w)
@@ -92,9 +87,8 @@ func TestDefindexKPIQueriesShape(t *testing.T) {
 	}
 }
 
-// TestDefindexVaultBreakdownShape guards the flows-by-vault donut: vault-
-// layer COUNTS only (never token amounts — different vaults hold different
-// assets), count-descending, labelled via the curated router name when
+// TestDefindexVaultBreakdownShape guards the flows-by-vault donut: vault-layer counts only (never token
+// amounts, as vaults hold different assets), count-descending, labelled by the curated router name when
 // seeded.
 func TestDefindexVaultBreakdownShape(t *testing.T) {
 	q := defindexVaultBreakdownQuery()
@@ -113,11 +107,9 @@ func TestDefindexVaultBreakdownShape(t *testing.T) {
 	}
 }
 
-// TestDefindexVaultFlowsTableShape guards the mixed-asset-sum ban on the
-// per-vault table: counts always; deposited/withdrawn amounts come from
-// the single-entry amounts_vec and appear ONLY when every one of the
-// vault's window flows carries a single-asset vector — anything else must
-// render '—' rather than a fabricated cross-asset sum.
+// TestDefindexVaultFlowsTableShape guards the mixed-asset-sum ban on the per-vault table: counts always;
+// deposited/withdrawn amounts come from the single-entry amounts_vec and appear only when every window flow
+// is single-asset, else render '—', never a fabricated cross-asset sum.
 func TestDefindexVaultFlowsTableShape(t *testing.T) {
 	q := defindexVaultFlowsTableQuery()
 	assertYieldWindowBounded(t, "vault flows table", q)

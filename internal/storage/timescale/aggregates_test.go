@@ -22,10 +22,8 @@ func TestTWAPGranularitySupported(t *testing.T) {
 	}
 }
 
-// TestStringArray_Scan covers the Postgres TEXT[] decoder used to
-// scan the prices_1m `sources` column. Postgres serialises arrays
-// in the text protocol as `{a,b,c}`; we don't pull pgx's full array
-// decoder for this one column.
+// TestStringArray_Scan covers the Postgres TEXT[] decoder for the prices_1m `sources` column, which arrives
+// in the text protocol as `{a,b,c}`; pgx's full array decoder is not pulled in for this one column.
 func TestStringArray_Scan(t *testing.T) {
 	cases := []struct {
 		name string
@@ -52,10 +50,8 @@ func TestStringArray_Scan(t *testing.T) {
 	}
 }
 
-// TestStringArray_Scan_Errors covers the malformed-input + bad-type
-// guards. We want a clear error rather than silent corruption when
-// the database driver ever sends us a shape we don't expect (e.g.
-// after a Postgres-side schema change).
+// TestStringArray_Scan_Errors covers the malformed-input and bad-type guards: a clear error, not silent
+// corruption, if the database driver ever sends an unexpected shape.
 func TestStringArray_Scan_Errors(t *testing.T) {
 	cases := []struct {
 		name string
@@ -117,10 +113,9 @@ func TestNormalizeVwapSources_ShortSlicesUntouched(t *testing.T) {
 	}
 }
 
-// TestLatestVWAPGateInsidePrices1mRetention pins the invariant migration 0156's safety argument
-// rests on: the 400-day latestVWAPWindow is only a plan-time pruning bound, and the served value
-// comes from the existence gate, which must stay inside prices_1m's 90-day retention or an armed
-// policy could empty the gate's window.
+// TestLatestVWAPGateInsidePrices1mRetention pins what migration 0156's safety argument rests on: the 400-day
+// latestVWAPWindow is only a plan-time pruning bound, and the existence gate must stay inside prices_1m's
+// 90-day retention or an armed policy could empty the gate's window.
 func TestLatestVWAPGateInsidePrices1mRetention(t *testing.T) {
 	const prices1mRetention = 90 * 24 * time.Hour
 	if latestVWAPGateWindow >= prices1mRetention {

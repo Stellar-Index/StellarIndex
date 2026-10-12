@@ -73,10 +73,8 @@ func statsConn(t *testing.T, metrics, wealth, trust, held [][]any) (*ExplorerRea
 	return &ExplorerReader{conn: conn}, conn
 }
 
-// TestAccountsStats_AssemblesTheFullSnapshot pins the metric-name → field mapping, which is the
-// whole of readStatsMetrics' correctness. The rollup delivers name/value PAIRS, so a renamed or
-// mistyped key does not fail: it leaves the field at zero and the hub publishes "0 accounts" or a
-// zero median as a measured fact.
+// TestAccountsStats_AssemblesTheFullSnapshot pins the metric-name to field mapping: a renamed key leaves the
+// field at zero, and the hub would publish "0 accounts" as a measured fact.
 func TestAccountsStats_AssemblesTheFullSnapshot(t *testing.T) {
 	older := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
 	newer := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
@@ -152,10 +150,9 @@ func TestAccountsStats_AssemblesTheFullSnapshot(t *testing.T) {
 	}
 }
 
-// TestAccountsStats_UnprovisionedRollupIsNotAnError — ok=false is the
-// "warming" signal the handler turns into a 503. Returning a zero-valued
-// snapshot with ok=true instead would publish "0 accounts on the Stellar
-// network" as a measured fact.
+// TestAccountsStats_UnprovisionedRollupIsNotAnError: ok=false is the "warming" signal the handler turns
+// into a 503; a zero snapshot with ok=true would publish "0 accounts on the Stellar network" as a measured
+// fact.
 func TestAccountsStats_UnprovisionedRollupIsNotAnError(t *testing.T) {
 	// An EMPTY probe result: the table exists but the rollup has never run.
 	conn := &stubConn{respond: func(q string) (driver.Rows, error) {
@@ -219,10 +216,9 @@ func TestAccountsStats_ReadFailurePropagates(t *testing.T) {
 	}
 }
 
-// TestAccountsStats_TopHeldBoardIsRankedAndBounded pins the two properties of
-// the most-held board that are not visible from its result: it is ordered by
-// holders DESC (an unordered read returns an arbitrary twelve assets) and it
-// binds topHeldAssetsLimit rather than reading the whole counts table.
+// TestAccountsStats_TopHeldBoardIsRankedAndBounded pins that the most-held board is ordered by holders DESC
+// (unordered returns arbitrary assets) and binds topHeldAssetsLimit instead of reading the whole counts
+// table.
 func TestAccountsStats_TopHeldBoardIsRankedAndBounded(t *testing.T) {
 	r, conn := statsConn(t, nil, nil, nil, nil)
 	if _, _, err := r.AccountsStats(t.Context()); err != nil {
@@ -281,10 +277,8 @@ func TestAccountsStats_HistogramsAreOrderedByBucket(t *testing.T) {
 	}
 }
 
-// TestAccountsStats_ProbeGatesEveryRead — the probe exists so a deployment
-// without the rollup tables does not issue four failing reads per request.
-// Exactly six queries: the probe, one read per table, and the post-read
-// cycle-marker re-check — no retry on a consistent read.
+// TestAccountsStats_ProbeGatesEveryRead pins that the probe stops a deployment without the rollup tables from
+// issuing failing reads. A consistent read takes exactly six queries: probe, one per table, marker re-check.
 func TestAccountsStats_ProbeGatesEveryRead(t *testing.T) {
 	r, conn := statsConn(t, nil, nil, nil, nil)
 	if _, _, err := r.AccountsStats(t.Context()); err != nil {
@@ -299,10 +293,9 @@ func TestAccountsStats_ProbeGatesEveryRead(t *testing.T) {
 	}
 }
 
-// TestAccountsStats_RetriesOnceWhenACycleSwapsMidRead pins that a swap landing between the first
-// read and the post-read marker check is not served as a blended snapshot. The stub moves the
-// marker forward exactly once (what one EXCHANGE mid-read produces), so AccountsStats must retry
-// and serve the second, self-consistent values (TotalAccounts=2, not the first read's 1).
+// TestAccountsStats_RetriesOnceWhenACycleSwapsMidRead: a swap between the read and the post-read marker check
+// must not be served blended; AccountsStats retries and serves the second, consistent values
+// (TotalAccounts=2).
 func TestAccountsStats_RetriesOnceWhenACycleSwapsMidRead(t *testing.T) {
 	cycle1 := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
 	cycle2 := cycle1.Add(30 * time.Minute)
@@ -323,10 +316,8 @@ func TestAccountsStats_RetriesOnceWhenACycleSwapsMidRead(t *testing.T) {
 			}
 			return &stubRows{data: [][]any{{"total_accounts", int64(2), cycle2}}}, nil
 		case isStatsCycleMarker(q):
-			// The marker always reports the CURRENT live cycle: cycle2 by
-			// the time the first read's marker check fires, so read #1
-			// mismatches (cycle1 vs cycle2) and read #2 matches (cycle2 vs
-			// cycle2).
+			// The marker always reports the live cycle (cycle2), so the first read's check mismatches cycle1 and the
+			// second matches.
 			return &stubRows{data: [][]any{{cycle2}}}, nil
 		case isWealthHistogram(q), isTrustlineHistogram(q), isTopHeldAssets(q):
 			return &stubRows{}, nil

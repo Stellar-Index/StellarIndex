@@ -13,10 +13,9 @@ type fakeLedgerProvider struct{ ledger uint32 }
 
 func (f fakeLedgerProvider) LatestLedger() uint32 { return f.ledger }
 
-// TestRecordFreeze_StampsLedgerFromProvider pins that frozen_at_ledger
-// reflects a wired LedgerProvider, not the 0 sentinel. Without
-// WithFreezeLedgerProvider no caller can set
-// FreezeEventSink.getLedger, so every production insert would stamp 0.
+// TestRecordFreeze_StampsLedgerFromProvider pins that frozen_at_ledger reflects a wired LedgerProvider, not
+// the 0 sentinel; without WithFreezeLedgerProvider no caller can set getLedger, so every production insert
+// would stamp 0.
 func TestRecordFreeze_StampsLedgerFromProvider(t *testing.T) {
 	// Statement 0: advisory lock exec. Statement 1: the INSERT.
 	store, conn := newScriptedStore(t,

@@ -5,11 +5,9 @@ import (
 	"testing"
 )
 
-// The contract arm's directory scan.
-//
-// Two properties are testable without a database: the census must refuse to balance when its
-// buckets do not add up, and the count query must use the SAME predicate as the row query,
-// else a member could go quietly missing while the funnel reported it as admitted.
+// The contract arm's directory scan. Two properties are testable without a database: the census must refuse
+// to balance when its buckets do not add up, and the count query must use the same predicate as the row
+// query, else a member could go missing while the funnel reports it admitted.
 
 // TestDirectoryRWACensus_BalancesOnlyWhenItAddsUp is the accounting
 // property. Check must return a reason for each way the buckets can fail to reconcile, else
@@ -40,12 +38,8 @@ func TestDirectoryRWACensus_BalancesOnlyWhenItAddsUp(t *testing.T) {
 	}
 }
 
-// TestDirectoryContractPredicate_IsOneSpelling pins that the census
-// count and the row read cannot disagree about who qualified.
-//
-// They run the same predicate text by construction. Splitting it into two hand-written
-// clauses would let count and rows drift apart silently (the funnel says N recognised, the
-// set carries M) with nothing to reconcile the difference.
+// TestDirectoryContractPredicate_IsOneSpelling pins that the census count and the row read run the same
+// predicate text, so they cannot drift apart silently (funnel says N recognised, set carries M).
 func TestDirectoryContractPredicate_IsOneSpelling(t *testing.T) {
 	if !strings.Contains(directoryContractRecognisedSQL, directoryIsContractSQL) {
 		t.Error("the recognised-contract predicate does not restrict to contract addresses")

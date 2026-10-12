@@ -5,17 +5,9 @@ import (
 	"testing"
 )
 
-// A deep operations cursor must not scan O(table).
-//
-// ClickHouse's KeyCondition does not decompose a multi-column tuple comparison like
-// `(ledger_seq, tx_index, op_index) < (?, ?, ?)`, so the predicate would be applied AFTER the
-// scan. The `ledger_seq >= lower` bound would then be the only index-usable term, and it
-// bounds the read from BELOW, so a deep cursor reads from the lower bound up to the tip.
-//
-// `?cursor=` is publicly mintable dotted decimal on an unauthenticated route, so that is a
-// cheap way to make the origin read hundreds of gigabytes. These tests pin the rewritten
-// SQL shape so the tuple-only form cannot come back, following the package's SQL-text
-// convention (explorer_scan_settings_test.go).
+// A deep operations cursor must not scan O(table): ClickHouse cannot index a tuple comparison, so only
+// `ledger_seq >= lower` prunes and a publicly mintable `?cursor=` reads up to the tip. These tests pin the
+// rewritten SQL shape so the tuple-only form cannot return.
 
 // tupleOnlyCursor is the un-prunable form. It must not appear in any
 // RecentOperations arm.
@@ -38,10 +30,8 @@ func TestRecentOperationsCursor_PredicateIsPrimaryIndexPrunable(t *testing.T) {
 		if !strings.Contains(q, "ledger_seq = ? AND (tx_index, op_index) < (?, ?)") {
 			t.Errorf("cursor arm (bounded=%v) lost the same-ledger tie-break; paging across a ledger boundary would skip rows:\n%s", bounded, q)
 		}
-		// Parenthesisation is load-bearing, not cosmetic: AND binds tighter
-		// than OR, so an unparenthesised predicate would let `AND ledger_seq
-		// >= ?` (and the LIMIT-BY/settings tail) attach to the equality arm
-		// alone and return every operation below the cursor.
+		// Parenthesisation is load-bearing: AND binds tighter than OR, so without it `AND ledger_seq >= ?` and the
+		// LIMIT-BY tail attach to the equality arm alone and return every operation below the cursor.
 		if !strings.Contains(q, recentOperationsCursorPredicate) ||
 			!strings.HasPrefix(recentOperationsCursorPredicate, "(") ||
 			!strings.HasSuffix(recentOperationsCursorPredicate, ")") {
@@ -55,10 +45,9 @@ func TestRecentOperationsCursor_PredicateIsPrimaryIndexPrunable(t *testing.T) {
 	}
 }
 
-// The row budget is the backstop for shapes the rewrite alone cannot bound (the unbounded
-// fallback at a near-tip cursor still selects [genesis, cursor]). It belongs on the CURSOR
-// arms only: the unbounded FIRST-PAGE fallback legitimately announces a huge row count, would
-// be refused by this ceiling, and carries no caller-controlled input.
+// The row budget backstops shapes the rewrite cannot bound (the unbounded near-tip fallback). It belongs
+// on the CURSOR arms only: the unbounded first-page fallback announces a huge row count and takes no
+// caller input.
 func TestRecentOperationsCursor_CarriesARowBudgetTheFirstPageDoesNot(t *testing.T) {
 	for _, bounded := range []bool{true, false} {
 		q := recentOperationsQuery(true, bounded)
@@ -77,13 +66,9 @@ func TestRecentOperationsCursor_CarriesARowBudgetTheFirstPageDoesNot(t *testing.
 	}
 }
 
-// TestRecentOperationsCursor_RewriteIsExactlyEquivalent evaluates BOTH predicate forms over an
-// exhaustive little ledger to pin the identity
-//
-//	(L,T,O) < (l,t,o)  ⟺  L < l ∨ (L = l ∧ (T,O) < (t,o))
-//
-// A future "simplification" that drops the equality arm (or writes `<=` on the leading term)
-// still compiles and prunes, but silently skips or repeats rows at every ledger boundary.
+// TestRecentOperationsCursor_RewriteIsExactlyEquivalent evaluates both predicate forms over an exhaustive
+// ledger to pin (L,T,O) < (l,t,o) <=> L < l or (L = l and (T,O) < (t,o)); dropping the equality arm skips or
+// repeats boundary rows.
 func TestRecentOperationsCursor_RewriteIsExactlyEquivalent(t *testing.T) {
 	type key struct{ L, T, O uint32 }
 	// A miniature operations table: ledger 10 has a single operation,

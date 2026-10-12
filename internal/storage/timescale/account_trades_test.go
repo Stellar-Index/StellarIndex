@@ -9,10 +9,9 @@ import (
 	"time"
 )
 
-// TestAccountTradesQuery_Shape pins the two-arm UNION discipline of the per-address trades read:
-// each arm keys one indexed account column (taker / maker), carries its OWN ORDER BY + LIMIT so
-// it walks its partial index in output order and stops after one page, and the maker arm
-// excludes taker-duplicated rows so a self-crossed trade appears once.
+// TestAccountTradesQuery_Shape pins the two-arm UNION discipline: each arm keys one indexed account column
+// (taker / maker) with its OWN ORDER BY + LIMIT so it stops after one page, and the maker arm excludes
+// taker-duplicated rows.
 func TestAccountTradesQuery_Shape(t *testing.T) {
 	for _, hasCursor := range []bool{false, true} {
 		q := accountTradesQuery(hasCursor)
@@ -72,19 +71,9 @@ func TestClampAccountTradesLimit(t *testing.T) {
 	}
 }
 
-// TestAccountTradesQuery_OuterColumnsExistInSubquery: the outer SELECT projects from the UNION
-// subquery by NAME, so every name it lists must be an output column of both arms. Plain columns
-// and `x::text` (a cast preserves the name) satisfy that, but
-//
-//	COALESCE(usd_volume::text, '')
-//
-// does not: PostgreSQL names the output column `coalesce`, so `usd_volume` resolves against
-// nothing and the statement fails at PLAN time with 42703 for every account.
-// TestAccountTradesQuery_Shape cannot see this because it asserts substrings of the query STRING,
-// not the relationship between the two column lists.
-//
-// This test compares the lists structurally, so it fails for ANY expression added to the inner
-// list without an alias.
+// TestAccountTradesQuery_OuterColumnsExistInSubquery: the outer SELECT names UNION subquery columns, so each
+// must be an output column of both arms. An unaliased COALESCE over usd_volume is
+// named `coalesce` and fails at plan time (42703); this compares the column lists structurally.
 func TestAccountTradesQuery_OuterColumnsExistInSubquery(t *testing.T) {
 	produced := make(map[string]bool)
 	for _, col := range strings.Split(accountTradesInnerCols, ",") {
@@ -133,11 +122,9 @@ func resetTradesHorizonCache(t *testing.T) {
 	})
 }
 
-// TestTradesUncompressedHorizon_QueryShape: the floor must come from max(range_end) over
-// COMPRESSED chunks, never min(range_start) over uncompressed ones. Uncompressed chunks are NOT
-// a time prefix (a stuck compression job or late backfill leaves an old straggler while newer
-// chunks are compressed), so min(range_start) would drag the floor back over compressed data.
-// Sourcing from compressed chunks only keeps any straggler out of the floor, however old.
+// TestTradesUncompressedHorizon_QueryShape pins that the floor is max(range_end) over compressed chunks,
+// never min(range_start) over uncompressed ones, since a straggler chunk would drag the floor back over
+// compressed data.
 func TestTradesUncompressedHorizon_QueryShape(t *testing.T) {
 	resetTradesHorizonCache(t)
 	newestCompressedEnd := time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC)
@@ -183,10 +170,9 @@ func TestTradesUncompressedHorizon_StrandedChunkDoesNotWidenFloor(t *testing.T) 
 	}
 }
 
-// TestTradesUncompressedHorizon_FailsClosedOnLookupError: a catalog lookup error must degrade to
-// a short, recent floor, NOT epoch/zero. Epoch means "no floor" and sends the read into the
-// unindexed full-history scan (timeout/503); a short recent floor instead surfaces through the
-// same "showing trades since <date>" / trades_total_since coverage note a legitimate horizon does.
+// TestTradesUncompressedHorizon_FailsClosedOnLookupError: a catalog lookup error must degrade to a short,
+// recent floor, not epoch (which means "no floor" and triggers the unindexed full-history scan), so the
+// trades_total_since coverage note surfaces as for a legitimate horizon.
 func TestTradesUncompressedHorizon_FailsClosedOnLookupError(t *testing.T) {
 	resetTradesHorizonCache(t)
 	store, _ := newScriptedStore(t, scriptedResult{err: errors.New("catalog unavailable")})

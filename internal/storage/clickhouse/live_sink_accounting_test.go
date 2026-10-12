@@ -90,10 +90,9 @@ func TestLiveSink_PushLedgerDropLogsLedger(t *testing.T) {
 	}
 }
 
-// TestLiveSink_StopBoundedByStopTimeout pins that Stop is bounded. An unbounded Stop would run the final
-// flush and then Close (which flushes again), each on a fresh WriteTimeout,
-// after any flush already in flight: up to 3 × WriteTimeout (90s in
-// production) against a wedged ClickHouse, past systemd's stop timeout.
+// TestLiveSink_StopBoundedByStopTimeout pins that Stop is bounded. Unbounded, the final flush, Close and any
+// in-flight flush could take up to 3 x WriteTimeout (90s) on a wedged ClickHouse, past systemd's stop
+// timeout.
 func TestLiveSink_StopBoundedByStopTimeout(t *testing.T) {
 	l := newLiveSink(&Sink{conn: stalledConn{}, flushEvery: 1000},
 		slog.New(slog.DiscardHandler), LiveSinkOptions{

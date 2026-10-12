@@ -26,10 +26,9 @@ func cap67AdvanceConn(wm uint32, ledgers, expected, present uint64) *stubConn {
 	}}
 }
 
-// TestCap67AdvanceProven_RefusesAnEventShortfall: a window whose ledgers are
-// all present but whose contract_events fall short of Σ soroban_event_count
-// (a dropped or unrestored partition) must not advance — the derive read it
-// as a stretch with no movements, and the watermark never revisits it.
+// TestCap67AdvanceProven_RefusesAnEventShortfall: a window whose contract_events fall short of the summed
+// soroban_event_count must not advance, since the watermark never revisits it and the derive saw no
+// movements.
 func TestCap67AdvanceProven_RefusesAnEventShortfall(t *testing.T) {
 	const from, thru = uint32(101), uint32(110)
 	conn := cap67AdvanceConn(100, 10, 42, 0)

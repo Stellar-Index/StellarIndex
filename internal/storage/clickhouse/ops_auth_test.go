@@ -10,11 +10,9 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2"
 )
 
-// The ops-batch identity resolves from the environment and ONLY from
-// the environment (ch-rebuild as CH `default` starved
-// the aggregator's supply refresher; the fix is that ops jobs
-// authenticate as the low-priority `ops_batch` user when
-// /etc/default/stellarindex-ops carries the pair).
+// The ops-batch identity resolves from the environment and only from it: ops jobs authenticate as the
+// low-priority `ops_batch` user when /etc/default/stellarindex-ops carries the pair, so they cannot starve
+// the aggregator.
 func TestOpsAuthFrom(t *testing.T) {
 	env := func(m map[string]string) func(string) string {
 		return func(k string) string { return m[k] }

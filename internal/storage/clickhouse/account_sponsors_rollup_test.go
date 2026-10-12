@@ -8,13 +8,9 @@ import (
 	"testing"
 )
 
-// TestSponsorsRollupReadsNoOperationBody is the cost guard behind this rollup's shape.
-//
-// The sponsored account is not read from a Begin operation's body_xdr: it is stellar.operations'
-// wide column and ClickHouse reads it a granule at a time, roughly 5x the bytes scanned. The
-// sponsored identity comes from the End operation's source_account, which the XDR guarantees is
-// the sponsored account. An edit that reaches for body_xdr would silently multiply the cycle's
-// cost, so it fails here.
+// TestSponsorsRollupReadsNoOperationBody is the cost guard: the sponsored account comes from the End
+// operation's source_account, never a Begin operation's body_xdr (a wide column, ~5x the bytes scanned), so
+// reaching for it fails.
 func TestSponsorsRollupReadsNoOperationBody(t *testing.T) {
 	for i, step := range sponsorsRollupStatements {
 		if strings.Contains(step.sql, "body_xdr") {
@@ -70,27 +66,9 @@ func TestSponsorsRollupScansOperationsOnce(t *testing.T) {
 	}
 }
 
-// TestSponsorsRollupCountsOnlyAppliedOperations guards against a served league table that counts
-// sponsorship arrangements which never took effect.
-//
-// stellar.operations carries no success flag: the lake stores what the ledger CONTAINED, so the
-// operations of failed transactions are kept by design (about 10% of sponsorship operations).
-// Ungated, the board overstated started sponsorships and revocations and mis-ranked accounts.
-//
-// The sibling cycle gates on an APPLIED EFFECT (a CAP-67 transfer movement, which a failed
-// transaction cannot produce). That route does not exist here: under CAP-33 the
-// is-sponsoring-future-reserves-for relationship lives only for the transaction and is written to
-// no ledger entry, so the transaction's own success flag is the only evidence of application.
-//
-// Three properties make that gate sound; dropping any one puts wrong numbers on a served board
-// rather than an error in a log:
-//
-//   - the join key is the FULL transaction identity, which is also stellar.transactions' whole
-//     ORDER BY key. A looser key would gate an operation on another transaction's outcome.
-//   - the flag is resolved with argMax over the version column, not read off whichever duplicate
-//     row the scan reached first (ReplacingMergeTree duplicates are common).
-//   - the build side is PINNED. Transactions outnumber sponsorship operations by roughly 460 to 1,
-//     so a planner estimate that swapped sides would build a hash table over half a billion rows.
+// TestSponsorsRollupCountsOnlyAppliedOperations: failed txs' sponsorship ops must not count. CAP-33 leaves no
+// ledger-entry evidence, so the gate is the tx success flag joined on the full tx identity, resolved with
+// argMax over the version column, with the transactions build side pinned.
 func TestSponsorsRollupCountsOnlyAppliedOperations(t *testing.T) {
 	stmt := sponsorsOperationsStatement(t)
 
@@ -119,10 +97,8 @@ func TestSponsorsRollupCountsOnlyAppliedOperations(t *testing.T) {
 		t.Error("the build side must be pinned to the window's sponsorship operations; " +
 			"unpinned, a planner estimate can build the hash table over the transactions")
 	}
-	// The projection's own columns still come from the operation. The
-	// transaction contributes the verdict and nothing else — taking a
-	// sponsor identity from it would attribute every arrangement in a
-	// transaction to that transaction's fee payer.
+	// The projection's own columns come from the operation; the transaction supplies only the verdict, because a
+	// sponsor identity taken from it would attribute every arrangement to the transaction's fee payer.
 	for _, col := range []string{"t.source_account", "t.fee_charged", "t.memo"} {
 		if strings.Contains(stmt, col) {
 			t.Errorf("the transactions side selects %q; it may contribute the success verdict "+

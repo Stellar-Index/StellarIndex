@@ -23,10 +23,9 @@ func healthySnapshotCounts() map[string]uint64 {
 	}
 }
 
-// TestRunHoldersRollupSnapshotsTheDayAfterTheSwap pins the snapshot's place
-// in the cycle: every asset_stats_daily statement runs after the board swap,
-// so a host where the snapshot fails still publishes boards, and the day is
-// swapped in whole as the cycle's last statement.
+// TestRunHoldersRollupSnapshotsTheDayAfterTheSwap pins that every asset_stats_daily statement runs after the
+// board swap, so a failing snapshot still publishes boards, and the day is swapped in whole as the last
+// statement.
 func TestRunHoldersRollupSnapshotsTheDayAfterTheSwap(t *testing.T) {
 	conn := &shrinkGuardConn{counts: healthySnapshotCounts()}
 	if err := runHoldersRollupSteps(context.Background(), conn, func(string, ...any) {}); err != nil {
@@ -80,10 +79,9 @@ func TestRunHoldersRollupRefusesAShrunkenSnapshot(t *testing.T) {
 	}
 }
 
-// TestAssetStatsSnapshotSharesTheCycleDayAndStamp: both fill arms and the
-// partition swap name the cycle's UTC day, and the rows carry the board's
-// cycle stamp — a cycle started late in a zone behind UTC must not land on
-// the previous day.
+// TestAssetStatsSnapshotSharesTheCycleDayAndStamp: both fill arms and the partition swap name the cycle's
+// UTC day, and rows carry the board's cycle stamp, so a cycle started late in a zone behind UTC cannot land
+// on the previous day.
 func TestAssetStatsSnapshotSharesTheCycleDayAndStamp(t *testing.T) {
 	cycleAt := time.Date(2026, 9, 21, 23, 30, 0, 0, time.FixedZone("UTC-5", -5*3600))
 	stamp := "toDateTime('2026-09-22 04:30:00', 'UTC')"

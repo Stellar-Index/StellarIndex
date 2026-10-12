@@ -8,21 +8,9 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// TestAccountListings_ArmsPageAccountKeyedTables pins the account listing arms against the
-// wide-table pathology:
-//
-//	SELECT pk FROM stellar.operations
-//	 WHERE pk IN (SELECT pk FROM stellar.ops_by_source WHERE source_account = ?)
-//	 ORDER BY pk DESC LIMIT n
-//
-// ClickHouse prunes that to one granule per key in the set before the LIMIT applies, so a page
-// costs the account's whole history (hundreds of millions of rows), not the page size.
-//
-// The arms must instead page the ACCOUNT-KEYED tables directly: ops_by_source and
-// operation_participants are ORDER BY (account, ledger_seq, tx_index, op_index), so
-// `account = ?` + cursor + bound + `ORDER BY … DESC LIMIT n` is a primary-key-prefix range read.
-// The wide table is touched only with literal key lists (hydration, participant visibility);
-// a wide-table query with `IN (SELECT` is the pathology.
+// TestAccountListings_ArmsPageAccountKeyedTables: arms must page ops_by_source and operation_participants
+// by primary-key prefix (`account = ?` + cursor + bound), never `pk IN (SELECT ...)` on the wide table,
+// which costs the account's whole history per page. The wide table gets literal key lists only.
 func TestAccountListings_ArmsPageAccountKeyedTables(t *testing.T) {
 	cur := ExplorerCursor{Ledger: 63_000_000, A: 4, B: 2}
 	for name, tc := range map[string]struct {

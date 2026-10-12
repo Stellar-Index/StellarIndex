@@ -8,25 +8,20 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// ─── real lake fixtures ───────────────────────────────────────────
-//
-// Both entries were read off the lake with bounded single-ledger SELECTs. They are the two
+// Real lake fixtures: both entries were read off the lake with bounded single-ledger SELECTs and are the two
 // shapes the residue actually contains.
 
-// residueGStrkey / residueEntryXDR — GB6DFVQB… (qstocks.org), merged away at ledger 62,822,338.
-// Its AccountEntry carries flags = 10 (AUTH_REVOCABLE | AUTH_CLAWBACK) and home_domain
-// "qstocks.org". This is the modern shape: intra_ledger_seq is populated (pre-image at 2076, the
-// `removed` row at 2077).
+// residueGStrkey / residueEntryXDR: GB6DFVQB... (qstocks.org), merged away at ledger 62,822,338, flags =
+// 10 (AUTH_REVOCABLE | AUTH_CLAWBACK), home_domain "qstocks.org". Modern shape: intra_ledger_seq
+// populated.
 const (
 	residueGStrkey   = "GB6DFVQBQZX2Q747AQFAPYJ7NQI2H5WTF77AYN3PPZTTLGSO7FDETQQQ"
 	residueRemovedAt = uint32(62822338)
 	residueEntryXDR  = "A76XwgAAAAAAAAAAfDLWAYZvqH+fBAoH4T9sEaP20y/+DDdvfmc1mk75RkkAAAAAAS5tGQNQoIwAAAAWAAAAAAAAAAAAAAAKAAAAC3FzdG9ja3Mub3JnAAEAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAAwAAAAADvpfCAAAAAGoche8AAAAA"
 )
 
-// legacyGStrkey / legacyEntryXDR — GA52ZQ7K…, merged away at ledger 38,137,083. This is the
-// LEGACY shape: every row of that ledger has intra_ledger_seq = 0, so the argMax tiebreak must
-// fall through to change_index (pre-image 45, `removed` row 46). flags = 1 (AUTH_REQUIRED), no
-// home_domain.
+// legacyGStrkey / legacyEntryXDR: GA52ZQ7K..., merged away at ledger 38,137,083. Legacy shape: every row has
+// intra_ledger_seq = 0, so the argMax tiebreak falls through to change_index. flags = 1, no home_domain.
 const (
 	legacyGStrkey   = "GA52ZQ7KV66MA3WATU4QD3CIZXZOI3RAOQF3Y7IADNHR6LSGFY7TUX55"
 	legacyRemovedAt = uint32(38137083)
@@ -62,13 +57,9 @@ func isPreImageRead(q string) bool {
 	return strings.Contains(q, "stellar.ledger_entry_changes")
 }
 
-// TestRemovedAccountsLastKnownAuthFlags_ResolvesPreImageWithoutTheDeadDomain is the core case: a
-// merged issuer's auth flags ARE knowable from the `state` pre-image the merge left in its own
-// removal ledger, and must come back labelled as historical with the dead account's
-// self-declared home_domain DROPPED.
-//
-// The expected values come from the fixture's real mask, 10: AUTH_REVOCABLE | AUTH_CLAWBACK, and
-// NOT required/immutable.
+// TestRemovedAccountsLastKnownAuthFlags_ResolvesPreImageWithoutTheDeadDomain pins that a merged issuer's
+// flags come from the removal-ledger pre-image, labelled historical, with the dead home_domain dropped (mask
+// 10).
 func TestRemovedAccountsLastKnownAuthFlags_ResolvesPreImageWithoutTheDeadDomain(t *testing.T) {
 	key := mustAccountLedgerKey(t, residueGStrkey)
 	conn := &stubConn{respond: func(q string) (driver.Rows, error) {
@@ -109,10 +100,9 @@ func TestRemovedAccountsLastKnownAuthFlags_ResolvesPreImageWithoutTheDeadDomain(
 	}
 }
 
-// TestRemovedAccountsLastKnownAuthFlags_LegacyLedgerResolvesByChangeIndex
-// covers the pre-ADR-0038 half of the corpus, where intra_ledger_seq is 0 on
-// every row and change_index is the only usable tiebreak. Decoding the real
-// legacy pre-image must yield AUTH_REQUIRED alone (mask 1) and no domain.
+// TestRemovedAccountsLastKnownAuthFlags_LegacyLedgerResolvesByChangeIndex: on legacy rows intra_ledger_seq is
+// 0, so change_index is the only tiebreak; the real pre-image must decode to AUTH_REQUIRED alone (mask 1), no
+// domain.
 func TestRemovedAccountsLastKnownAuthFlags_LegacyLedgerResolvesByChangeIndex(t *testing.T) {
 	key := mustAccountLedgerKey(t, legacyGStrkey)
 	conn := &stubConn{respond: func(q string) (driver.Rows, error) {
@@ -147,12 +137,9 @@ func TestRemovedAccountsLastKnownAuthFlags_LegacyLedgerResolvesByChangeIndex(t *
 	}
 }
 
-// TestRemovedAccountsLastKnownAuthFlags_PreImageReadIsLedgerScoped pins two structural rules:
-//
-//  1. the pre-image read is SCOPED to the removal ledger (partition-pruned), not an unscoped
-//     `key_xdr IN (…)` scan leaning on idx_lec_key_xdr's bloom over a multi-TiB table; and
-//  2. the argMax tiebreak is the FULL (ledger_seq, intra_ledger_seq, change_index) key, since
-//     change_index restarts per transaction and is only monotonic within one tx.
+// TestRemovedAccountsLastKnownAuthFlags_PreImageReadIsLedgerScoped pins two rules: the pre-image read is
+// scoped to the removal ledger (partition-pruned), not an unscoped key_xdr bloom scan; and the argMax
+// tiebreak is the full (ledger_seq, intra_ledger_seq, change_index) key, as change_index restarts per tx.
 func TestRemovedAccountsLastKnownAuthFlags_PreImageReadIsLedgerScoped(t *testing.T) {
 	key := mustAccountLedgerKey(t, residueGStrkey)
 	conn := &stubConn{respond: func(q string) (driver.Rows, error) {
@@ -199,10 +186,9 @@ func TestRemovedAccountsLastKnownAuthFlags_PreImageReadIsLedgerScoped(t *testing
 	}
 }
 
-// TestRemovedAccountsLastKnownAuthFlags_RefusesAPreImageFromAnotherLedger: the ledger IN-list is
-// batched across the caller's whole slice, so a key merely ACTIVE in some OTHER issuer's removal
-// ledger could contribute its state here. A row whose as_of is not the key's own removal ledger
-// is refused, not mis-attributed.
+// TestRemovedAccountsLastKnownAuthFlags_RefusesAPreImageFromAnotherLedger: ledger IN-lists are batched
+// across the slice, so a key active in another issuer's removal ledger could leak its state here. A row
+// whose as_of is not the key's own removal ledger is refused, not mis-attributed.
 func TestRemovedAccountsLastKnownAuthFlags_RefusesAPreImageFromAnotherLedger(t *testing.T) {
 	key := mustAccountLedgerKey(t, residueGStrkey)
 	conn := &stubConn{respond: func(q string) (driver.Rows, error) {
@@ -250,10 +236,8 @@ func TestRemovedAccountsLastKnownAuthFlags_LiveAccountStaysUnresolved(t *testing
 	}
 }
 
-// TestBulkAccountAuthFlags_StampsLiveProvenance: the live path must label its own answers too,
-// or "unlabelled" would mean both "read from a live entry" and "provenance unknown" and the
-// persisted column could never be trusted. home_domain IS carried on the live path (the account
-// exists and can still be SEP-1 checked).
+// TestBulkAccountAuthFlags_StampsLiveProvenance: the live path must label its own answers, or
+// "unlabelled" would mean both "live entry" and "unknown" and the persisted column is untrustworthy.
 func TestBulkAccountAuthFlags_StampsLiveProvenance(t *testing.T) {
 	key := mustAccountLedgerKey(t, liveGStrkey)
 	const liveAt = uint32(64100000)

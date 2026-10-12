@@ -416,10 +416,9 @@ func TestBaseAnchorEligible(t *testing.T) {
 	}
 }
 
-// The VWAP-anchored tiers are decimals-independent: prices_1m stores vwap as a RAW ratio X/A, so
-// usd = (X/1e7) x usdPerXLM and the token's scale cancels. One economic trade priced through
-// 6, 7, 9 and 18 decimal tokens must give an identical usd_volume, which guards against
-// replacing the 1e7 divisor with a per-token decimals lookup.
+// The VWAP-anchored tiers are decimals-independent: prices_1m stores vwap as a RAW ratio X/A, so usd =
+// (X/1e7) x usdPerXLM and the token scale cancels. One trade through 6, 7, 9 and 18 decimal tokens must give
+// an identical usd_volume, guarding against swapping the 1e7 divisor for a per-token decimals lookup.
 func TestUSDVolumeIsIndependentOfTokenDecimals(t *testing.T) {
 	t.Parallel()
 	spec := circleSpec(t, nil)
@@ -498,10 +497,9 @@ func TestTradeUSDVolumeViaFX_LegCrossCheck(t *testing.T) {
 	}
 }
 
-// With the base leg unresolvable the cross-check cannot fire, so an inflated
-// bridge rate on the quote token could stamp an arbitrary usd_volume. The
-// single-leg print is bounded at singleLegMaxUSDVolume; a plausible print
-// below the ceiling is still valued.
+// With the base leg unresolvable the cross-check cannot fire, so an inflated bridge rate on the quote
+// token could stamp an arbitrary usd_volume. The single-leg print is bounded at singleLegMaxUSDVolume;
+// plausible prints below it are still valued.
 func TestTradeUSDVolumeViaFX_SingleLegBaseUnresolvableBound(t *testing.T) {
 	base := mustAsset(t, sep41AID) // fresh token, never priced
 	quote := mustAsset(t, usdcSACID)
@@ -569,10 +567,9 @@ func boundQuoteSpec(t *testing.T) *USDVolumeQuoteSpec {
 	return spec
 }
 
-// TestTradeUSDVolume_BaseAnchorRefusesAnUncrossCheckablePrintAboveTheCeiling
-// is the attack: 20,000 TOKEN_A (2e11 stroops) x a planted $50,000 rate
-// is $1,000,000,000 resting on one attacker-authored leg. It must be
-// refused (usd_volume NULL), exactly as the quote side refuses it.
+// TestTradeUSDVolume_BaseAnchorRefusesAnUncrossCheckablePrintAboveTheCeiling is the attack: 20,000 TOKEN_A x
+// a planted $50,000 rate is $1,000,000,000 resting on one attacker-authored leg, and must be refused
+// (usd_volume NULL) as the quote side does.
 func TestTradeUSDVolume_BaseAnchorRefusesAnUncrossCheckablePrintAboveTheCeiling(t *testing.T) {
 	t.Parallel()
 	tokenA := boundTokenA(t)
@@ -626,11 +623,9 @@ func TestTradeUSDVolume_BaseAnchorRefusesJustAboveTheCeiling(t *testing.T) {
 	}
 }
 
-// TestTradeUSDVolume_XLMAnchorIsExemptFromTheBound covers the one anchor that must NOT be
-// bounded. XLM's rate is a direct XLM/USD market nobody can author and base_amount is XLM that
-// actually moved, so the value is exact. A ceiling would NULL a real trade and a cross-check
-// would let a planted token rate drag an exact value DOWN; see
-// [tradeUSDVolumeViaXLMQuoteAnchorFor]. 1e9 XLM x $0.50 = $500M.
+// TestTradeUSDVolume_XLMAnchorIsExemptFromTheBound covers the one anchor that must not be bounded: XLM's rate
+// is a direct XLM/USD market nobody can author, so the value is exact, and a ceiling would NULL a real trade.
+// 1e9 XLM x $0.50 = $500M.
 func TestTradeUSDVolume_XLMAnchorIsExemptFromTheBound(t *testing.T) {
 	t.Parallel()
 	stroops, ok := new(big.Int).SetString("10000000000000000", 10) // 1e9 XLM

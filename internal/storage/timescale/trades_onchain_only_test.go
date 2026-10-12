@@ -10,10 +10,8 @@ import (
 	"time"
 )
 
-// TestRawTradeReads_ExcludeOffChainSources pins the on-chain-only rule
-// of /v1/history and /v1/observations at the query: the exclusion list
-// is bound into the statement itself, so a keyset page is filled from
-// on-chain rows rather than thinned after the fetch.
+// TestRawTradeReads_ExcludeOffChainSources pins the on-chain-only rule of /v1/history and /v1/observations in
+// the query itself, so a keyset page is filled from on-chain rows rather than thinned after the fetch.
 func TestRawTradeReads_ExcludeOffChainSources(t *testing.T) {
 	pair := dirAQUAUSDCPair(t)
 	now := time.Now()

@@ -11,12 +11,9 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// TestSinkBufferCapBoundedDrop verifies the bounded drop: once the
-// in-memory buffer reaches maxBufferLedgers (only reached while flushes fail), Add DROPS the
-// incoming extract with ErrBufferFull instead of growing the buffer unbounded.
-//
-// Purely in-memory: cap < flushEvery here, so Add returns before any auto-flush and no
-// ClickHouse connection is needed.
+// TestSinkBufferCapBoundedDrop verifies that once the buffer reaches maxBufferLedgers (only while flushes
+// fail), Add drops the incoming extract with ErrBufferFull instead of growing unbounded. In-memory: cap <
+// flushEvery, so no flush.
 func TestSinkBufferCapBoundedDrop(t *testing.T) {
 	s := &Sink{flushEvery: 1_000_000} // never auto-flush during the test
 	s.SetMaxBufferLedgers(3)
@@ -48,10 +45,8 @@ func TestSinkBufferCapBoundedDrop(t *testing.T) {
 	}
 }
 
-// TestSinkBufferCapUnboundedByDefault verifies the cap is opt-in: a Sink with no
-// SetMaxBufferLedgers (the backfill default) never returns ErrBufferFull, because
-// backfill callers retry the SAME range on flush failure rather than streaming
-// new ledgers on top.
+// TestSinkBufferCapUnboundedByDefault pins that the cap is opt-in: without SetMaxBufferLedgers (the backfill
+// default) a Sink never returns ErrBufferFull, since backfill retries the same range on flush failure.
 func TestSinkBufferCapUnboundedByDefault(t *testing.T) {
 	s := &Sink{flushEvery: 1_000_000}
 	ctx := context.Background()
@@ -65,10 +60,8 @@ func TestSinkBufferCapUnboundedByDefault(t *testing.T) {
 	}
 }
 
-// fakeOrderConn records which stellar.* table each PrepareBatch call targets,
-// in call order. It embeds driver.Conn so any method Flush doesn't exercise
-// panics loudly instead of silently satisfying the interface with a zero
-// value (see the Conn doc comment on hand-implementing it).
+// fakeOrderConn records which stellar.* table each PrepareBatch call targets, in order. It embeds driver.Conn
+// so any method Flush doesn't exercise panics instead of silently returning a zero value.
 type fakeOrderConn struct {
 	driver.Conn
 	tables  []string
@@ -144,10 +137,9 @@ func fullSink(t *testing.T, conn driver.Conn) *Sink {
 	return s
 }
 
-// TestSinkFlushOrderLedgersLast pins the invariant declared in the
-// "ORDERING IS LOAD-BEARING" comment on Flush: stellar.ledgers must be the LAST table
-// flushed, after every table ContiguousWatermark depends on, so a present ledgers row is a
-// valid per-ledger commit marker. It observes the REAL PrepareBatch call order.
+// TestSinkFlushOrderLedgersLast pins the "ORDERING IS LOAD-BEARING" invariant on Flush: stellar.ledgers is
+// flushed last, after every table ContiguousWatermark depends on, so a present ledgers row is a valid commit
+// marker. It observes real PrepareBatch order.
 func TestSinkFlushOrderLedgersLast(t *testing.T) {
 	conn := &fakeOrderConn{}
 	s := fullSink(t, conn)
@@ -170,11 +162,9 @@ func TestSinkFlushOrderLedgersLast(t *testing.T) {
 	}
 }
 
-// TestSinkFlushPartialFailureWritesNoCommitMarker pins the other half of the
-// commit-marker invariant: when any other table's batch fails, Flush must stop before
-// stellar.ledgers, return the error and keep every buffer for the retry. Ordering alone
-// is not enough: a Flush that carried on would write ledgers last and ContiguousWatermark
-// would read a ledger whose events never landed as complete.
+// TestSinkFlushPartialFailureWritesNoCommitMarker: when any other table's batch fails, Flush must stop
+// before stellar.ledgers, return the error and keep every buffer for retry. Ordering alone is not enough: a
+// Flush that carried on would let ContiguousWatermark read a ledger whose events never landed as complete.
 func TestSinkFlushPartialFailureWritesNoCommitMarker(t *testing.T) {
 	baseline := &fakeOrderConn{}
 	if err := fullSink(t, baseline).Flush(context.Background()); err != nil {

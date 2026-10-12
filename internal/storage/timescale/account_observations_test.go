@@ -9,11 +9,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/domain"
 )
 
-// TestInsertAccountObservation_RejectsEmptyAccountID — the
-// observer always populates AccountID. A zero-value AccountID is a
-// caller bug; surface it loudly rather than letting the DB reject
-// it (or worse, succeed with an empty string PK that no reader
-// query will find).
+// TestInsertAccountObservation_RejectsEmptyAccountID: a zero-value AccountID is a caller bug; fail loudly
+// rather than let the DB reject it or store an empty-string PK that no reader query will find.
 func TestInsertAccountObservation_RejectsEmptyAccountID(t *testing.T) {
 	// nil *sql.DB — the validation guard fires before any DB call.
 	s := &Store{}

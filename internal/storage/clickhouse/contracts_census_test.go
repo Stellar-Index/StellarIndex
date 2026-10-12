@@ -12,10 +12,8 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// TestRecentContracts_CensusPath pins the census-first directory read:
-// with the day-keyed table usable and covering
-// the window floor, the reader must sum day rows and NEVER touch
-// contract_events (the 40s scan class).
+// TestRecentContracts_CensusPath: with the day-keyed census usable and covering the window floor, the reader
+// must sum day rows and NEVER touch contract_events (the 40s scan class).
 func TestRecentContracts_CensusPath(t *testing.T) {
 	base := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
 	conn := &stubConn{}
@@ -52,10 +50,8 @@ func TestRecentContracts_CensusPath(t *testing.T) {
 	}
 }
 
-// TestRecentContracts_CensusCoverageGapFallsBack: a window floor older
-// than the census's earliest day must fall back to the exact scan —
-// an in-progress backfill must never serve a silently-truncated
-// ranking (the verification-blind-spots class).
+// TestRecentContracts_CensusCoverageGapFallsBack: a window floor older than the census's earliest day must
+// fall back to the exact scan, so an in-progress backfill never serves a silently truncated ranking.
 func TestRecentContracts_CensusCoverageGapFallsBack(t *testing.T) {
 	base := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
 	sawLegacy := false
@@ -85,11 +81,9 @@ func TestRecentContracts_CensusCoverageGapFallsBack(t *testing.T) {
 	}
 }
 
-// TestRecentContracts_StaleCensusHeadFallsBack pins the stale-head fallback: the census reaches
-// back to the floor (min(day) passes) but its HEAD is frozen because the census-rollup timer
-// stalled. Checking min(day) alone would serve a ranking missing the last N days, stamped current.
-// The reader must detect the stale head (max(day) older than censusHeadMaxLag vs the server's
-// today()) and fall through to the always-fresh exact scan.
+// TestRecentContracts_StaleCensusHeadFallsBack: a census whose head is frozen must not be served as current
+// just because min(day) passes. When max(day) lags censusHeadMaxLag behind today(), the reader falls back to
+// the exact scan.
 func TestRecentContracts_StaleCensusHeadFallsBack(t *testing.T) {
 	base := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
 	today := base.Add(30 * 24 * time.Hour) // "now" is 30 days past the floor day
@@ -121,10 +115,8 @@ func TestRecentContracts_StaleCensusHeadFallsBack(t *testing.T) {
 	}
 }
 
-// TestRecentContracts_FreshHeadYesterdayServesCensus guards the lower
-// bound of the freshness gate: right after UTC rollover, before the day's
-// first rollup, the freshest census row is legitimately yesterday's. That
-// one-day slack must NOT trip the gate — the census path must still serve.
+// TestRecentContracts_FreshHeadYesterdayServesCensus guards the freshness gate's lower bound: after UTC
+// rollover the freshest census row is legitimately yesterday's, and that slack must not trip the gate.
 func TestRecentContracts_FreshHeadYesterdayServesCensus(t *testing.T) {
 	base := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
 	today := base.Add(30 * 24 * time.Hour)
@@ -219,13 +211,9 @@ func (e *execRecorder) stagingTables() map[string]bool {
 	return out
 }
 
-// TestRunCensusDay_PrivateStagingPerRun is the private-staging regression: the census-rollup timer
-// and a manual `ch-census-rollup -backfill` are separate processes that both drive RunCensusDay
-// against the current UTC day. With one shared staging table, an interleaving (timer REPLACE
-// landing after the backfill's staging clear but before its INSERT) swaps an EMPTY staging
-// partition into the live table and serves zero census rows for `today`. Every run therefore uses
-// its OWN private staging table. This test drives two runs concurrently and asserts they never
-// touch the same table and neither uses a SHARED name.
+// TestRunCensusDay_PrivateStagingPerRun: the timer and a manual backfill both drive RunCensusDay on the
+// current UTC day; a shared staging table could swap an empty partition into the live table and serve zero
+// census rows. Two concurrent runs must never touch the same table, nor a shared name.
 func TestRunCensusDay_PrivateStagingPerRun(t *testing.T) {
 	day := time.Date(2026, 8, 15, 0, 0, 0, 0, time.UTC)
 
@@ -267,10 +255,8 @@ func TestRunCensusDay_PrivateStagingPerRun(t *testing.T) {
 		}
 	}
 
-	// Sanity: each run's staging table is also the one it CREATEs, INSERTs
-	// into, REPLACEs FROM, and DROPs — i.e. the whole critical section is
-	// scoped to the private table, so the live REPLACE never reads a
-	// partition another run is mid-writing.
+	// Sanity: each run CREATEs, INSERTs, REPLACEs FROM and DROPs its own staging table, so the live REPLACE
+	// never reads a partition another run is mid-writing.
 	for i, rec := range recs {
 		var sawCreate, sawReplace, sawDrop bool
 		var staging string

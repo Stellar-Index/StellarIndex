@@ -9,11 +9,9 @@ import "testing"
 // -allow-live-overlap sits wholly above it). These tests pin the format so the
 // classification cannot drift out from under that reader.
 
-// TestProjectionDirtyWindowReasonIsStableAcrossReleases pins the strings byte-for-byte
-// against what shipped binaries have written. Rows from an older binary survive in the
-// table until compute-completeness re-verifies the range, so a wording change would
-// mis-classify live rows: a rebuild row read as a replay suppresses a lag ticket with no
-// operator rewind on record.
+// TestProjectionDirtyWindowReasonIsStableAcrossReleases pins the strings byte-for-byte against what shipped
+// binaries wrote. Older rows survive until compute-completeness re-verifies, so a wording change would
+// misclassify them: a rebuild row read as a replay suppresses a lag ticket with no operator rewind.
 func TestProjectionDirtyWindowReasonIsStableAcrossReleases(t *testing.T) {
 	// A real reflector-fx replay reason, verbatim.
 	if got, want := ProjectorReplayReason(64_177_283, 61_602_787),

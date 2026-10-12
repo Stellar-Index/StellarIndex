@@ -34,10 +34,9 @@ func TestFirstContractEventLedgerQuery_SharesStreamFilter(t *testing.T) {
 	}
 }
 
-// TestContractEventsFilteredQuery_OpArgsTrim pins the OOM fix's
-// column trim: the WIDE op_args_xdr column is read only when the consuming
-// decoder actually uses events.Event.OpArgs (redstone). The sep41 reconcile —
-// millions of CAP-67 firehose rows — must never pull it.
+// TestContractEventsFilteredQuery_OpArgsTrim pins the OOM fix: the WIDE op_args_xdr column is read only
+// when the decoder uses events.Event.OpArgs (redstone); the sep41 reconcile over CAP-67 firehose rows must
+// never pull it.
 func TestContractEventsFilteredQuery_OpArgsTrim(t *testing.T) {
 	without := contractEventsFilteredQuery(nil, nil, nil, false, false)
 	if strings.Contains(without, "op_args_xdr") {
@@ -55,10 +54,9 @@ func TestContractEventsFilteredQuery_OpArgsTrim(t *testing.T) {
 	}
 }
 
-// TestContractEventsFilteredQuery_BoundedSettings pins the per-query memory
-// bounds (the connection-level class alone did not stop the server-wide
-// OvercommitTracker kills): low max_threads + tracked ceiling + external
-// spill must ride ON the query text.
+// TestContractEventsFilteredQuery_BoundedSettings pins the per-query memory bounds (low max_threads, tracked
+// ceiling, external spill) on the query text, since the connection-level class alone did not stop
+// OvercommitTracker kills.
 func TestContractEventsFilteredQuery_BoundedSettings(t *testing.T) {
 	q := contractEventsFilteredQuery(nil, nil, nil, true, false)
 	for _, s := range []string{
@@ -157,11 +155,8 @@ func TestForEachLedgerWindow(t *testing.T) {
 	}
 }
 
-// TestContractEventsFilteredQuery_ContractIDsEscaped pins:
-// contractIDs is a caller-supplied slice (a decoder's live-grown
-// GatedContractSet(), not a compile-time constant) — an unescaped quote in
-// one element must not be inlined raw into the query text (it would close
-// the string literal early and let the remainder run as SQL).
+// TestContractEventsFilteredQuery_ContractIDsEscaped pins that contractIDs, a caller-supplied slice, is
+// escaped: an unescaped quote must not close the string literal early and let the rest run as SQL.
 func TestContractEventsFilteredQuery_ContractIDsEscaped(t *testing.T) {
 	q := contractEventsFilteredQuery([]string{`CAAA' OR '1'='1`}, nil, nil, false, false)
 	if strings.Contains(q, `contract_id IN ('CAAA' OR '1'='1')`) {

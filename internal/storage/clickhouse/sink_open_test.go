@@ -16,10 +16,8 @@ import (
 	chblock "github.com/ClickHouse/clickhouse-go/v2/lib/proto"
 )
 
-// fakeCHServer answers the three queries openSink issues (the HTTP-protocol
-// hello, Ping's SELECT 1, and the schema check) with Native-format blocks
-// encoded by the driver's own encoder, so the test exercises the real
-// clickhouse-go decode and Scan path rather than a hand-rolled driver.Conn.
+// fakeCHServer answers the three queries openSink issues (HTTP hello, Ping's SELECT 1, schema check) with
+// Native-format blocks from the driver's own encoder, so the test exercises the real clickhouse-go decode.
 type fakeCHServer struct {
 	tables []string // rows returned for the stellar database's system.tables
 	// noColumns holds "table.column" entries withheld from system.columns.

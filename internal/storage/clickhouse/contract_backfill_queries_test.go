@@ -9,10 +9,9 @@ import (
 	"testing"
 )
 
-// BackfillContractActiveLedgers and BackfillContractInstanceChanges dial their own connection
-// via openRead, so like BackfillTxHashIndex they cannot be driven by the stubConn harness. Their
-// per-window INSERT…SELECT is package-level (a const or pure builder) so its text stays
-// testable; the walk that drives it is covered in ledger_window_test.go.
+// BackfillContractActiveLedgers and BackfillContractInstanceChanges dial their own connection via openRead,
+// so the stubConn harness cannot drive them; their per-window INSERT...SELECT is package-level so its text
+// stays testable.
 
 // readDeployDDL returns one deploy/clickhouse artifact as text.
 func readDeployDDL(t *testing.T, name string) string {
@@ -44,16 +43,9 @@ func stripSQLComments(ddl string) string {
 	return b.String()
 }
 
-// TestContractActiveLedgersBackfillQuery_Shape pins the two things this
-// INSERT…SELECT gets wrong most easily.
-//
-// GROUP BY, not DISTINCT: they compute the same set, but DISTINCT cannot use external
-// aggregation so it CANNOT spill, and a dense 5M-ledger window's distinct set exceeds the memory
-// limit (Code 241). GROUP BY plus max_bytes_before_external_group_by spills to disk and the
-// window merely gets slower.
-//
-// The window predicate bounds each iteration's work; losing it turns a resumable job into one
-// unbounded scan of contract_events.
+// TestContractActiveLedgersBackfillQuery_Shape: the INSERT...SELECT must use GROUP BY, not DISTINCT, which
+// cannot spill and exceeds the memory limit on dense windows. It must keep the window predicate, or the
+// resumable job becomes one unbounded scan.
 func TestContractActiveLedgersBackfillQuery_Shape(t *testing.T) {
 	q := contractActiveLedgersBackfillQuery
 
@@ -92,12 +84,9 @@ func TestContractActiveLedgersBackfillQuery_Shape(t *testing.T) {
 	}
 }
 
-// TestContractInstanceBackfillQuery_MatchesTheMaterializedView is the lockstep assertion: the
-// backfill and contract_instance_changes_mv must extract the SAME fixed offsets from the SAME
-// wire layout because they fill ONE table (the MV live-forward, the backfill behind it). A
-// drifted offset does not fail; it writes wrong contract or wasm hashes into the code-history
-// timeline, stamped as complete. Every expression below is byte-offset-bearing, so an
-// off-by-one is silent corruption rather than an error.
+// TestContractInstanceBackfillQuery_MatchesTheMaterializedView pins lockstep: the backfill and
+// contract_instance_changes_mv fill ONE table, so they must extract the SAME byte offsets. A drift
+// silently writes wrong contract or wasm hashes into the code-history timeline, stamped complete.
 func TestContractInstanceBackfillQuery_MatchesTheMaterializedView(t *testing.T) {
 	q := contractInstanceBackfillQuery(ContractInstanceChangesTable)
 	mv := stripSQLComments(readDeployDDL(t, "contract_instance_changes.sql"))
@@ -126,10 +115,9 @@ func TestContractInstanceBackfillQuery_MatchesTheMaterializedView(t *testing.T) 
 		}
 	}
 
-	// tryBase64Decode, never the throwing form: inside the MV a decode throw
-	// fails the whole source INSERT into ledger_entry_changes, i.e. blocks
-	// ingest. The backfill mirrors it so the two agree on malformed rows
-	// (skip) rather than one skipping and the other aborting the window.
+	// tryBase64Decode, never the throwing form: a decode throw inside the MV fails the whole source INSERT and
+	// blocks ingest. The backfill mirrors it so both skip malformed rows rather than one skipping and one
+	// aborting.
 	for name, sql := range map[string]string{"backfill": q, "materialized view": mv} {
 		for _, line := range strings.Split(sql, "\n") {
 			if strings.Contains(line, "base64Decode(") && !strings.Contains(line, "tryBase64Decode(") {

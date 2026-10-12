@@ -33,13 +33,9 @@ func TestCountRecentEventsQuery_labelsEveryLeg(t *testing.T) {
 	}
 }
 
-// The census's two leg shapes. A leg either labels its rows with a literal source name
-// (`SELECT 'blend', count(*) FROM blend_positions`) or groups by a `source` column on a table
-// holding several sources' rows (`SELECT source, count(*) FROM trades … GROUP BY source`).
-//
-// The guards below parse countRecentEventsQuery rather than restating its legs: a hand-written
-// list of expected arms only asserts what its author already remembered, which is how a source
-// can ship hypertables with a permanent events_24h of 0.
+// The census has two leg shapes: a literal source-name label, or a GROUP BY on a `source` column.
+// Guards parse countRecentEventsQuery instead of a hand-written arm list, which only asserts what its
+// author remembered and lets a source ship with a permanent events_24h of 0.
 var (
 	censusLabelledLeg = regexp.MustCompile(`SELECT\s+'([a-z0-9_-]+)',\s*count\(\*\)\s+FROM\s+([a-z][a-z0-9_]*)`)
 	censusGroupedLeg  = regexp.MustCompile(`SELECT\s+source,\s*count\(\*\)(?:\s+AS\s+n)?\s+FROM\s+([a-z][a-z0-9_]*)`)
@@ -54,16 +50,9 @@ var excludedFromEventCensus = map[string]string{
 	"soroban_events":  "the ADR-0029 landing zone — the raw superset every decoded source is projected FROM. Counting it as a protocol would double-count every other leg.",
 }
 
-// TestCountRecentEventsQuery_countsEveryIngestedSource is the per-source coverage guard for the
-// trailing-24h census behind /v1/protocols' events_24h.
-//
-// [DefaultGapDetectorTargets] is the registry every per-source hypertable must join, so it is the
-// authoritative answer to "which sources does this deployment write rows for". A source that
-// writes rows but has no census leg reports events_24h: 0 forever, next to a lake-derived
-// activity series showing thousands of events a day in the same response.
-//
-// Table-driven off that registry, so adding a hypertable without its census arm fails this test
-// instead of shipping a self-contradicting payload.
+// TestCountRecentEventsQuery_countsEveryIngestedSource guards that every source in
+// [DefaultGapDetectorTargets] has a census leg, or /v1/protocols reports events_24h: 0 for a source that
+// writes rows.
 func TestCountRecentEventsQuery_countsEveryIngestedSource(t *testing.T) {
 	t.Parallel()
 
@@ -117,11 +106,9 @@ func TestExcludedFromEventCensus_hasNoStaleEntries(t *testing.T) {
 	}
 }
 
-// censusCoveredSources derives the set of logical source names countRecentEventsQuery can emit a
-// row for. Labelled legs contribute their literal. A GROUP BY source leg contributes whichever
-// sources land in that table, which [DefaultGapDetectorTargets] records since a source scanned
-// through a shared table registers a target on it (sdex/aquarius/soroswap/phoenix/comet on
-// `trades`, the five oracle feeds on `oracle_updates`).
+// censusCoveredSources derives the logical sources countRecentEventsQuery can emit rows for: labelled legs
+// give their literal, and a GROUP BY source leg gives the sources [DefaultGapDetectorTargets] registers on
+// that shared table.
 func censusCoveredSources() map[string]bool {
 	covered := make(map[string]bool, 32)
 	for _, m := range censusLabelledLeg.FindAllStringSubmatch(countRecentEventsQuery, -1) {
@@ -190,10 +177,9 @@ func TestRefreshProtocolEventsUpsert_shape(t *testing.T) {
 	}
 }
 
-// TestCountRecentEventsQuery_aquariusCoversNonTradeTables asserts the
-// census sums aquarius's non-trade hypertables into the 'aquarius'
-// source, not just its trades leg — otherwise events_24h undercounts
-// every rewards/admin/reserves-sync/governance action Aquarius emits.
+// TestCountRecentEventsQuery_aquariusCoversNonTradeTables asserts the census sums aquarius's non-trade
+// hypertables into the 'aquarius' source, else events_24h undercounts every
+// rewards/admin/reserves-sync/governance action.
 func TestCountRecentEventsQuery_aquariusCoversNonTradeTables(t *testing.T) {
 	for _, table := range []string{
 		"aquarius_liquidity",

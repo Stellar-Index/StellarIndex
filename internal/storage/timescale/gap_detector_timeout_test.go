@@ -5,10 +5,9 @@ import (
 	"time"
 )
 
-// TestGapDetectorStatementTimeoutWithinGoBudget pins that the PG-side statement_timeout the
-// gap detector SETs on its scan queries is at or below the Go per-target context timeout.
-// Otherwise Go abandons an over-budget query while PG keeps running it, and each cycle or
-// restart stacks another orphan hypertable scan, starving the serving path.
+// TestGapDetectorStatementTimeoutWithinGoBudget: the PG statement_timeout set on gap-detector scans must not
+// exceed the Go per-target timeout, or Go abandons a query PG keeps running and orphan scans stack up each
+// cycle.
 func TestGapDetectorStatementTimeoutWithinGoBudget(t *testing.T) {
 	t.Parallel()
 

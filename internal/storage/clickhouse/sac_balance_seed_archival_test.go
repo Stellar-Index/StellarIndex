@@ -81,9 +81,8 @@ func collectLive(t *testing.T, conn driver.Conn, seeds []SACBalanceSeed) ([]SACB
 	return got, err
 }
 
-// An archived current-state entry is retracted AT ITS ARCHIVAL LEDGER
-// (live_until+1, with that ledger's close time), never at its last write: the
-// seed's top-of-ledger intra seq would otherwise overwrite the genuine
+// An archived current-state entry is retracted AT ITS ARCHIVAL LEDGER (live_until+1, that ledger's close
+// time), never at its last write: the seed's top-of-ledger intra seq would overwrite the genuine
 // observation there and zero the holder across [last write, archival).
 func TestEmitLiveSeeds_ArchivedTombstoneAtArchivalLedger(t *testing.T) {
 	archived := liveSeed(t, seedHolder, 100_000_000, archLastWrite)

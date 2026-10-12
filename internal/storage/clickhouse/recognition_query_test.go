@@ -8,11 +8,9 @@ import (
 	"testing"
 )
 
-// TestDistinctShapesWindowQuery_NoWideColumns pins the structural half of the recognition OOM
-// fix: the distinct-shape scan reads ONLY the narrow identity columns. argMax(topics_xdr) or
-// argMax(data_xdr) exemplar state (a wide string pair per distinct key) scales the footprint
-// with the distinct-shape population until it dies at any memory cap. topics_xdr is read only
-// for the non-Symbol topic[0] key, and is empty for every Symbol shape.
+// TestDistinctShapesWindowQuery_NoWideColumns: the distinct-shape scan must read only narrow identity
+// columns, because argMax exemplar state over topics_xdr/data_xdr scales with distinct shapes and OOMs.
+// topics_xdr is read only for non-Symbol topic[0] keys.
 func TestDistinctShapesWindowQuery_NoWideColumns(t *testing.T) {
 	q := distinctShapesWindowQuery(ClassicTokenTopic0Syms)
 	for _, forbidden := range []string{"data_xdr", "op_args_xdr", "argMax"} {
@@ -57,10 +55,9 @@ func TestDistinctShapesWindowQuery_BoundedSettings(t *testing.T) {
 	}
 }
 
-// TestDistinctShapesWatchedQuery_IncludesTopicsAndContracts pins the watched-SEP41 scoped
-// census: unlike the global scan's NOT IN exclusion, this query INCLUDEs the given topic[0]
-// set and restricts to the given contract set, so a watched source's classic-token event
-// kinds can be audited without re-scanning the firehose for every contract in the lake.
+// TestDistinctShapesWatchedQuery_IncludesTopicsAndContracts pins the watched-SEP41 scoped census: unlike the
+// global NOT IN scan, it INCLUDEs the given topic[0] set and restricts to the given contracts, so it avoids
+// re-scanning the firehose.
 func TestDistinctShapesWatchedQuery_IncludesTopicsAndContracts(t *testing.T) {
 	q := distinctShapesWatchedQuery(FirehoseExcludeSyms, []string{"CAAA", "CBBB"})
 	for _, required := range []string{

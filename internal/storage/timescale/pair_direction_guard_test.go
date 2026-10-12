@@ -13,22 +13,9 @@ import (
 	"testing"
 )
 
-// The CAGGs hold the same market in BOTH stored orientations.
-//
-// sdex/decode.go sets base = soldAsset, quote = boughtAsset, and canonical.Trade deliberately
-// does not normalise direction. trades.go writes one unmirrored row per trade, so a market that
-// trades both ways lands in prices_* as both (A,B) and (B,A) rows, and, as [dirVWAP]'s doc says,
-// "every serving read has to fold the two together itself".
-//
-// A read that binds a pair with `base_asset = $1 AND quote_asset = $2` and nothing else sees a
-// partial market, silently: nothing in the response looks malformed, there is just less of it.
-//
-// A test pinning one function's query cannot see the next reader, so this test is written
-// against the class: it parses every string literal in the package and fails on any pair-bound
-// per-direction read that filters one orientation, whether or not anyone wrote a test for it.
-//
-// It covers `trades` as well as the CAGGs, since the raw hypertable is where the two spellings
-// originate and aggregate readers over it (Store.TradesInRange) repeated the bug.
+// The CAGGs hold the same market in BOTH stored orientations, so a read binding one `base_asset = $1 AND
+// quote_asset = $2` pair silently sees a partial market. This test parses every string literal in the package
+// and fails any single-orientation pair read, including `trades` readers.
 
 // pairBoundFilter matches a specific-pair filter: `base_asset = $N AND
 // quote_asset = $M`, tolerant of whitespace and newlines between the
@@ -36,27 +23,14 @@ import (
 var pairBoundFilter = regexp.MustCompile(
 	`base_asset\s*=\s*\$(\d+)\s+AND\s+quote_asset\s*=\s*\$(\d+)`)
 
-// directionedTable matches the tables that store per-direction rows. prices_1m is where the
-// bug lived; the coarser CAGGs have identical orientation semantics, and `trades` is the
-// hypertable they are built from, with the same two spellings one layer down.
-//
-// Covering `trades` requires the aggregate reads to fold both directions first: the check goes
-// red on any deliberately single-orientation read, and greening one would need an exempt entry
-// asserting a known-blind read is correct, which [directionExempt] refuses.
+// directionedTable matches tables storing per-direction rows: prices_1m, the coarser CAGGs, and `trades`.
+// Covering `trades` forces aggregate reads to fold both directions; a single-orientation read goes red
+// and cannot be greened by an exempt entry, which directionExempt refuses.
 var directionedTable = regexp.MustCompile(`FROM\s+(prices_(1m|15m|1h|4h|1d|1w)|trades)\b`)
 
-// directionExempt lists literals that bind a pair against a per-direction table yet
-// legitimately read ONE orientation, keyed by a distinctive substring of the literal.
-//
-// Add an entry only with the reason a single orientation is correct for that read, never to
-// quiet the test. A read that serves a price, volume or change to a caller is not exempt; fold
-// the directions with [combineDirVWAP] on the CAGG side or [orientTradeTo] on the raw side.
-//
-// The one entry is not "this read is blind": a keyset cursor resumes a page inside ONE ordering
-// and a two-armed union cannot carry it, so the directions must be merged and resumed together
-// or a tie group is cut through. /v1/history merges them in its caller
-// ([tradesInRangeAfterBothDirections] in internal/api/v1), and this read stays honest about
-// serving one arm of that merge.
+// directionExempt lists literals that bind a pair yet legitimately read ONE orientation; add one only with
+// the reason a single orientation is correct. Served prices must fold both directions. The one entry is a
+// keyset cursor, which cannot resume across a union; its caller merges the arms.
 var directionExempt = map[string]string{
 	"(ts, ledger, tx_hash, op_index, source) > ($5, $6, $7, $8, $9)": "folded by its CALLER, not blind: " +
 		"/v1/history reads this primitive once per direction and merges the two " +
@@ -117,10 +91,8 @@ func TestCAGGPairReadsFoldBothDirections(t *testing.T) {
 		})
 	}
 
-	// A guard is worth only what it checks. If the scan finds nothing,
-	// the queries moved (to a builder, another package, a generator) and
-	// this test is silently vacuous — which is precisely how the class
-	// survived two prior remediations.
+	// A guard is worth only what it checks: if the scan finds nothing, the queries moved and this test is
+	// silently vacuous.
 	if len(subjects) == 0 {
 		t.Fatal("no pair-bound per-direction reads found — this guard has gone " +
 			"vacuous (queries moved or the literal shape changed); " +
@@ -199,12 +171,8 @@ func indent(s string) string {
 var pairKeySetFilter = regexp.MustCompile(
 	`\(\s*(?:\w+\.)?base_asset\s*\|\|\s*'\|'\s*\|\|\s*(?:\w+\.)?quote_asset\s*\)\s*=\s*ANY`)
 
-// TestBatchPairReadsFoldBothDirections is the set-keyed twin of
-// TestCAGGPairReadsFoldBothDirections, which sees only `$N`-bound pairs. Selecting prices_1m
-// rows by `(base_asset || '|' || quote_asset) = ANY($1)` with canonical keys matches nothing
-// for a market stored the other way round (zero sparkline bars beside a non-zero
-// volume_24h_usd), so each requested pair must match in both orientations (a join per
-// direction, UNION ALL'd).
+// TestBatchPairReadsFoldBothDirections is the set-keyed twin of TestCAGGPairReadsFoldBothDirections: an `=
+// ANY($1)` pair-key match misses the reverse orientation, so each pair must match both ways via UNION ALL.
 func TestBatchPairReadsFoldBothDirections(t *testing.T) {
 	t.Parallel()
 
@@ -235,12 +203,9 @@ var orientationDisjunction = regexp.MustCompile(
 	`(?i)\bOR\s*\(\s*(?:\w+\.)?(?:base_asset\s*=\s*\S+\s+AND\s+(?:\w+\.)?quote_asset|` +
 		`quote_asset\s*=\s*\S+\s+AND\s+(?:\w+\.)?base_asset)\s*=`)
 
-// TestPairReadsNeverFoldDirectionsWithOr is the package-wide, list-free half of
-// TestBothDirectionReadersUseUnionNotOr: every declaration in every non-test file, inline
-// Sprintf builders included. The composite pair indexes cover ONE (base, quote) equality, so a
-// disjunction of two is answered by a BitmapOr at best or by a bucket-index walk that filters
-// the pair afterwards (10683 ms vs 3.6 ms for an empty pair). Fold the directions as two
-// single-direction UNION ALL arms instead.
+// TestPairReadsNeverFoldDirectionsWithOr is the package-wide half of TestBothDirectionReadersUseUnionNotOr.
+// Composite pair indexes cover one (base, quote) equality, so an OR of two scans slowly (10683 ms vs 3.6
+// ms); fold directions as two single-direction UNION ALL arms.
 func TestPairReadsNeverFoldDirectionsWithOr(t *testing.T) {
 	t.Parallel()
 

@@ -141,10 +141,9 @@ func TestBoundedConnector_PositiveTimeoutSetsBackstop(t *testing.T) {
 	}
 }
 
-// TestSessionConnConfig_PinsUTC: whatever zone the DSN or PGTZ names, in
-// whatever key spelling, every pool's startup packet carries exactly one
-// timezone and it is UTC — the precondition for the closed-bucket guards'
-// `now() - INTERVAL '1 day'` to match the UTC bucket grid across DST.
+// TestSessionConnConfig_PinsUTC: whatever zone the DSN or PGTZ names, in any key spelling, every pool's
+// startup packet carries exactly one timezone, UTC, so closed-bucket `now() - INTERVAL '1 day'` guards
+// match the UTC grid across DST.
 func TestSessionConnConfig_PinsUTC(t *testing.T) {
 	t.Setenv("PGTZ", "Australia/Sydney")
 	cfg, err := sessionConnConfig("postgres://u@127.0.0.1:5432/db?sslmode=disable&TimeZone=Europe/London")
@@ -177,11 +176,9 @@ func TestBoundedConnector_NonPositiveTimeoutIsUnbounded(t *testing.T) {
 	}
 }
 
-// TestStatementTimeoutConnector_ForceCustomPlans pins that the SERVING pool's connections also
-// set plan_cache_mode = force_custom_plan: generic-plan builds over the ~870-chunk trades
-// hypertable cost ~206 ms and are rebuilt on every plancache invalidation, on the request path.
-// Both SETs must run before the conn is handed out; a failure on the second must fail closed
-// like the first.
+// TestStatementTimeoutConnector_ForceCustomPlans pins that serving-pool connections set plan_cache_mode =
+// force_custom_plan (generic plans on the huge trades hypertable are slow), and that either SET failing fails
+// closed.
 func TestStatementTimeoutConnector_ForceCustomPlans(t *testing.T) {
 	fc := &fakeConn{}
 	c := &statementTimeoutConnector{

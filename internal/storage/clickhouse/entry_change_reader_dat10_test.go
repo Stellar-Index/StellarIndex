@@ -5,13 +5,9 @@ import (
 	"testing"
 )
 
-// Tests for ClickHouse ReplacingMergeTree reads: a read with neither FINAL nor a dedup
-// over-counts un-merged duplicate rows.
-//
-// StreamEntryChanges and CountOpScopedEntryChanges dial a real ClickHouse connection via openRead
-// (no injectable r.conn), so the stubConn harness cannot drive them end-to-end. Their queries are
-// package-level consts so the SQL text stays deterministically testable (the same pattern as
-// account_movements.go's cbLookupCreatesQuery).
+// Tests for ReplacingMergeTree reads: a read with neither FINAL nor a dedup over-counts un-merged duplicates.
+// StreamEntryChanges and CountOpScopedEntryChanges dial a real connection via openRead, so stubConn cannot
+// drive them; their queries are package-level consts so the SQL text is testable.
 
 func TestStreamEntryChangesQuery_UsesFinal(t *testing.T) {
 	if !strings.Contains(streamEntryChangesQuery, "stellar.ledger_entry_changes FINAL") {

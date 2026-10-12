@@ -13,17 +13,9 @@ import (
 	"time"
 )
 
-// ─── the bounded exclusive-lock wait (lock convoy) ─────────────────
-//
-// A decompress_chunk that cannot get its AccessExclusiveLock (another read holds
-// AccessShareLock on `trades`) QUEUES, and PostgreSQL queues every later request for that
-// object behind a PENDING exclusive one. Scrapes, the restamp's own UPDATEs and the size
-// watcher then pile up behind it; the exporter being among them makes alerting cascade-blind.
-//
-// These pin the properties the fix rests on: every request is bounded, a refusal is RETRIED
-// rather than surrendered to (a re-compress that gave up leaves a huge chunk decompressed),
-// an error that is NOT a lock refusal is never retried, and the budget is charged for
-// waiting, never for work.
+// Bounded exclusive-lock wait (lock convoy): a decompress_chunk waiting on AccessExclusiveLock queues all
+// later requests behind it. These pin that every request is bounded, lock refusals are retried, other errors
+// never are, and the budget is charged for waiting, not work.
 
 // lockTimeoutErr is a driver error shaped like pgx's *pgconn.PgError:
 // [isLockNotAvailable] matches on SQLSTATE via errors.As, never on the
@@ -79,10 +71,9 @@ func countStatements(stmts []string, substr string) int {
 	return n
 }
 
-// TestDecompressTradesChunk_BoundsThePendingLockRequest: the statement that can convoy the
-// database must never be issued with an unbounded lock wait. The bound is the PRODUCTION one
-// and transaction-LOCAL; a session-level `SET` would ride the pooled connection into every
-// later statement on it.
+// TestDecompressTradesChunk_BoundsThePendingLockRequest: the statement that can convoy the database must
+// never run with an unbounded lock wait. The bound is the PRODUCTION one and transaction-LOCAL; a session
+// `SET` would ride the pooled connection into later statements.
 func TestDecompressTradesChunk_BoundsThePendingLockRequest(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -144,10 +135,8 @@ func TestDecompressTradesChunk_BoundsThePendingLockRequest(t *testing.T) {
 	}
 }
 
-// TestExecUnderBoundedLockWait_RetriesARefusedLock: a refusal is not a
-// failure. The whole point of withdrawing after 5 s is to come back — a
-// re-compress that gave up on the first 55P03 would leave the 160 GB
-// chunk decompressed, which is strictly worse than the convoy.
+// TestExecUnderBoundedLockWait_RetriesARefusedLock: a refusal is not a failure; the point of withdrawing
+// after 5 s is to come back, since giving up on the first 55P03 would leave the 160 GB chunk decompressed.
 func TestExecUnderBoundedLockWait_RetriesARefusedLock(t *testing.T) {
 	t.Parallel()
 	var script []scriptedResult
@@ -175,10 +164,8 @@ func TestExecUnderBoundedLockWait_RetriesARefusedLock(t *testing.T) {
 	}
 }
 
-// TestExecUnderBoundedLockWait_GivesUpNamingTheConvoy: the budget is
-// finite, and exhausting it produces an error an operator can act on —
-// naming the lock, the effort spent and the runbook — rather than a bare
-// 55P03 that reads like a Postgres hiccup.
+// TestExecUnderBoundedLockWait_GivesUpNamingTheConvoy: the budget is finite, and exhausting it yields an
+// error naming the lock, effort spent and runbook, not a bare 55P03 that reads like a Postgres hiccup.
 func TestExecUnderBoundedLockWait_GivesUpNamingTheConvoy(t *testing.T) {
 	t.Parallel()
 	var script []scriptedResult
@@ -205,10 +192,9 @@ func TestExecUnderBoundedLockWait_GivesUpNamingTheConvoy(t *testing.T) {
 	}
 }
 
-// TestExecUnderBoundedLockWait_DoesNotRetryOtherErrors: the retry is for
-// lock CONTENTION and nothing else. Retrying an out-of-disk compress for
-// 90 minutes would bury the real failure and burn the budget that exists
-// to get the chunk closed.
+// TestExecUnderBoundedLockWait_DoesNotRetryOtherErrors: the retry is for lock contention only. Retrying an
+// out-of-disk compress for 90 minutes would bury the real failure and burn the budget meant to close the
+// chunk.
 func TestExecUnderBoundedLockWait_DoesNotRetryOtherErrors(t *testing.T) {
 	t.Parallel()
 	boom := errors.New("compress_chunk: could not extend file: No space left on device")
@@ -224,10 +210,9 @@ func TestExecUnderBoundedLockWait_DoesNotRetryOtherErrors(t *testing.T) {
 	}
 }
 
-// TestExecUnderBoundedLockWait_StopsOnCancellation: the decompress runs on the caller's
-// context, so a SIGTERM under run-heavy-job.sh must end the retry loop rather than hold the
-// process open through its stop grace. (The re-compress runs on a context detached from that
-// cancellation, [Store.recompressTradesChunk], so the chunk stays closable.)
+// TestExecUnderBoundedLockWait_StopsOnCancellation pins that the decompress retry loop ends on cancellation,
+// so a SIGTERM under run-heavy-job.sh does not hold the process open; the re-compress uses a detached
+// context.
 func TestExecUnderBoundedLockWait_StopsOnCancellation(t *testing.T) {
 	t.Parallel()
 	var script []scriptedResult
@@ -255,16 +240,9 @@ func TestExecUnderBoundedLockWait_StopsOnCancellation(t *testing.T) {
 	}
 }
 
-// TestTradesChunkLockPolicies_CompressIsTheOneThatMayNotGiveUp pins the asymmetry the design
-// rests on, which a future "make these consistent" edit would quietly destroy:
-//
-//   - a decompress that never runs changed NOTHING (the chunk is still compressed and a rerun
-//     resumes at it), so its budget is the smaller one;
-//   - a compress that never runs leaves a huge chunk open with the compression policy paused,
-//     the exact state this tool exists to avoid. Its budget is much larger.
-//
-// The per-attempt wait is the same for both and stays well under the 30 s
-// postgres_exporter scrape timeout, which keeps alerting alive while either statement asks.
+// TestTradesChunkLockPolicies_CompressIsTheOneThatMayNotGiveUp: a failed decompress changes nothing, so its
+// budget is smaller; a failed compress leaves a huge chunk open with compression paused, so its budget is
+// larger. Per-attempt wait stays under the 30 s postgres_exporter scrape timeout.
 func TestTradesChunkLockPolicies_CompressIsTheOneThatMayNotGiveUp(t *testing.T) {
 	t.Parallel()
 	const exporterScrapeTimeout = 30 * time.Second
@@ -288,10 +266,9 @@ func TestTradesChunkLockPolicies_CompressIsTheOneThatMayNotGiveUp(t *testing.T) 
 	}
 }
 
-// TestExecUnderBoundedLockWait_ChargesWaitingNotWorking: the budget is for WAITING. An attempt
-// that worked most of the budget and was refused at its end-stage lock must not leave the
-// cheap acquire retries with no budget, as a wall-clock deadline set before attempt 1 would
-// for a long decompress.
+// TestExecUnderBoundedLockWait_ChargesWaitingNotWorking: the budget is for waiting. An attempt that spent
+// most of it working and was refused at its end-stage lock must not leave the cheap acquire retries without
+// budget, as a wall-clock deadline would.
 func TestExecUnderBoundedLockWait_ChargesWaitingNotWorking(t *testing.T) {
 	t.Parallel()
 	// Virtual time: the work and the drains advance a fake clock instead of
@@ -322,10 +299,9 @@ func TestExecUnderBoundedLockWait_ChargesWaitingNotWorking(t *testing.T) {
 	}
 }
 
-// TestExecUnderBoundedLockWait_LateRefusalThatDoesNotFitGivesUpAtOnce: a
-// refusal inside the statement threw its work away, and repeating that
-// work is only started when it fits what is left of the budget. The error
-// reports the real elapsed time and the work lost, not the budget.
+// TestExecUnderBoundedLockWait_LateRefusalThatDoesNotFitGivesUpAtOnce: a refusal inside the statement
+// discards its work, and repeating it starts only if it fits the remaining budget. The error reports the
+// real elapsed time and work lost, not the budget.
 func TestExecUnderBoundedLockWait_LateRefusalThatDoesNotFitGivesUpAtOnce(t *testing.T) {
 	t.Parallel()
 	script := workThenRefused(80 * time.Millisecond)
@@ -379,10 +355,9 @@ func TestExecUnderBoundedLockWait_NoRepeatedWorkOnceTheCallerHasGone(t *testing.
 	})
 }
 
-// TestExecUnderBoundedLockWait_WaitsOutALongHolderBeforeWorking: a transaction holding a lock
-// on the chunk for longer than [longLockHolderAge] would block the end-stage request and throw
-// the work away, so no attempt starts until it is gone. That wait is charged to the budget,
-// with the holder named when the budget runs out.
+// TestExecUnderBoundedLockWait_WaitsOutALongHolderBeforeWorking: a transaction holding a chunk lock longer
+// than [longLockHolderAge] would block the end-stage request and waste the work, so no attempt starts until
+// it is gone. The wait is charged to the budget, and the holder is named when the budget runs out.
 func TestExecUnderBoundedLockWait_WaitsOutALongHolderBeforeWorking(t *testing.T) {
 	t.Parallel()
 	p := lockWaitPolicy{wait: 5 * time.Millisecond, drain: 5 * time.Millisecond, budget: time.Minute}

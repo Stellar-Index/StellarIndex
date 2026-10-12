@@ -14,10 +14,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// The two pure pieces of the bulk backfill writer are the bounding box the emptiness proof is
-// built from and the partition split that makes parallel COPY safe. Both are load-bearing for
-// correctness: a box that misses a row's PK space lets a COPY hit a conflict it was told could
-// not exist, and overlapping partitions let two writers present the same key.
+// The bulk backfill writer's two pure pieces are the bounding box behind the emptiness proof and the
+// partition split for parallel COPY. A box missing a row's PK space allows an unexpected conflict;
+// overlapping partitions let two writers present one key.
 
 func bulkTestTrade(source string, ledger uint32, ts time.Time) canonical.Trade {
 	return canonical.Trade{
@@ -129,10 +128,9 @@ func TestBulkPartitions_SmallBuffersStaySingleStream(t *testing.T) {
 	}
 }
 
-// TestTradeBulkColumns_MatchTheRowWriters pins the COPY column list against
-// the INSERT statements. If someone adds a column to InsertTrade /
-// BatchInsertTrades and not here, the bulk path silently writes a DEFAULT for
-// it — which for a derived column is a wrong value, not a missing one.
+// TestTradeBulkColumns_MatchTheRowWriters pins the COPY column list against the INSERT statements; a column
+// added to InsertTrade/BatchInsertTrades but not here makes the bulk path write a DEFAULT, wrong for derived
+// columns.
 func TestTradeBulkColumns_MatchTheRowWriters(t *testing.T) {
 	want := []string{
 		"source", "ledger", "tx_hash", "op_index", "ts",
@@ -217,10 +215,9 @@ func TestBulkTradeValues_NullUSDVolume(t *testing.T) {
 	}
 }
 
-// TestBulkCopyFallsBack pins which COPY errors replay the buffer through the
-// idempotent upsert instead of failing the batch: a unique violation (the range
-// stopped being empty) and 53400 (TimescaleDB's tuple-decompression cap, hit
-// when the PK check decompresses an overlapping compressed segment).
+// TestBulkCopyFallsBack pins which COPY errors replay the buffer through the idempotent upsert instead of
+// failing the batch: a unique violation, and 53400 (TimescaleDB's tuple-decompression cap hit by the PK
+// check on compressed segments).
 func TestBulkCopyFallsBack(t *testing.T) {
 	cases := []struct {
 		name string

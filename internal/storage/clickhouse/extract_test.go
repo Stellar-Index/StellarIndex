@@ -7,17 +7,13 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// claimAtomCount must mirror dispatcher.census + sdex.decode exactly, because
-// classic_trade_effect_count is gated against the census oracle. A wrong union-arm accessor
-// (GetManageSellOfferResult instead of GetCreatePassiveSellOfferResult) silently undercounts
-// and slips past the gate on ledgers with no crossing CreatePassiveSellOffer, so this table
-// covers every claim-bearing op variant.
+// claimAtomCount must mirror dispatcher.census and sdex.decode exactly, as classic_trade_effect_count is
+// gated against the census oracle. A wrong union-arm accessor silently undercounts, so this table covers
+// every claim-bearing op variant.
 
-// claimNative / claimUSDC are the two DISTINCT legs every fixture claim carries. Zero-valued
-// AssetSold/AssetBought are native on BOTH legs, a native/native self-cross that stellar-core
-// never emits and internal/sources/sdex drops (canonical.NewPair rejects base == quote).
-// sdexclaim.RealTradeCount applies the decoder's full rule set, so a fixture claim has to be
-// shaped like a real one.
+// claimNative / claimUSDC are the two distinct legs every fixture claim carries. Zero-valued legs are native
+// on both sides, a self-cross stellar-core never emits and sdex drops, so fixture claims must be shaped like
+// real ones.
 var (
 	claimNative = xdr.Asset{Type: xdr.AssetTypeAssetTypeNative}
 	claimUSDC   = xdr.Asset{
@@ -118,10 +114,8 @@ func TestClaimAtomCount_perOpVariant(t *testing.T) {
 			want: 4,
 		},
 		{
-			// REAL on-chain encoding: stellar-core emits passive-offer results
-			// under the MANAGE_SELL_OFFER arm. GetCreatePassiveSellOfferResult
-			// returns ok=false here; the fallback must still count the claims.
-			// Confirmed vs Hubble at ledger 62701151 (these were dropped).
+			// REAL on-chain encoding: stellar-core emits passive-offer results under the MANAGE_SELL_OFFER arm, so
+			// GetCreatePassiveSellOfferResult returns ok=false here and the fallback must still count the claims.
 			name: "CreatePassiveSellOffer (manage-sell arm — real)",
 			op:   xdr.Operation{Body: xdr.OperationBody{Type: xdr.OperationTypeCreatePassiveSellOffer}},
 			result: xdr.OperationResult{
@@ -201,16 +195,8 @@ func TestClaimAtomCount_perOpVariant(t *testing.T) {
 	}
 }
 
-// TestLedgerHeaderCounts_FailedTxBasisMismatch: extractOps counts a FAILED transaction's
-// operations into ext.Ledger.OpCount (and TxCount, at the call site in extract.go), while
-// extractEvents excludes a failed transaction from ext.Ledger.SorobanEventCount. The three
-// counts LedgerView exposes (tx_count, op_count, soroban_event_count) therefore run on two
-// bases with no field distinguishing them.
-//
-// This documents the DEFECT as it stands: it passes today and should start failing (and be
-// deleted) once tx_count/op_count are gated on `successful` to match soroban_event_count, or a
-// successful_tx_count/applied_op_count pair is added. The fix needs a new stellar.ledgers
-// column (deploy/clickhouse DDL) and touches sink.go and explorer_reader.go.
+// TestLedgerHeaderCounts_FailedTxBasisMismatch documents a defect: tx_count and op_count include failed
+// transactions but soroban_event_count does not. Delete this test once the bases are aligned or split.
 func TestLedgerHeaderCounts_FailedTxBasisMismatch(t *testing.T) {
 	ev := gateContractEvent(t)
 	tx := gateTx(t, ev, false) // failed transaction
@@ -233,10 +219,8 @@ func TestLedgerHeaderCounts_FailedTxBasisMismatch(t *testing.T) {
 	}
 }
 
-// TestExtractLedger_UnreadableTxCountsTowardTxCount: a tx the
-// reader cannot resolve is skipped, but stored tx_count must still include
-// it so gate.go's stored-vs-rows comparison fails instead of agreeing on
-// fewer transactions.
+// TestExtractLedger_UnreadableTxCountsTowardTxCount: an unresolvable tx is skipped but still counted in
+// tx_count, so gate.go's stored-vs-rows comparison fails instead of agreeing on fewer transactions.
 func TestExtractLedger_UnreadableTxCountsTowardTxCount(t *testing.T) {
 	lcm := xdr.LedgerCloseMeta{
 		V: 0,

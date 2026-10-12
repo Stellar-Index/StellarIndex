@@ -8,11 +8,9 @@ import (
 	"testing"
 )
 
-// castOfSum matches a widening cast applied to an aggregate's RESULT.
-// ClickHouse's sum() over an Int64 column returns Int64 and wraps on
-// overflow, so a cast outside the aggregate widens an already-wrapped
-// total; the cast has to go on the argument, as asset_supply_reader.go's
-// sum(toInt128(balance)) does.
+// castOfSum matches a widening cast applied to an aggregate's result. sum() over Int64 wraps on overflow, so
+// the cast must wrap the argument (as asset_supply_reader.go's sum(toInt128(balance)) does), not the
+// already-wrapped total.
 var castOfSum = regexp.MustCompile(`to(U)?Int(128|256)\(\s*sum(If)?\(`)
 
 // TestNoWideningCastAppliedToASumResult scans every lake query in the

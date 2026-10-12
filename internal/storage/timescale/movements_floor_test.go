@@ -9,11 +9,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestMovementsFloor covers the install contract. A test net installs
-// genesis (=1) so the /movements tail never floors above every ledger it
-// has. 0 means "not installed" and falls back to the pubnet const, so a
-// mis-wired empty config can never collapse the floor to 0 (the PG tail
-// would double-count with the CH archive below the boundary).
+// TestMovementsFloor covers the install contract: a test net installs genesis (=1) so the /movements tail
+// never floors above every ledger it has; 0 means "not installed" and falls back to the pubnet const, so an
+// empty config cannot collapse the floor to 0 and double-count with the CH archive.
 func TestMovementsFloor(t *testing.T) {
 	cases := []struct {
 		name    string

@@ -8,10 +8,8 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// TestAccountEntryKeyPrefix pins the PK-prefix construction: the prefix
-// must be a true string prefix of the account's real trustline/offer
-// LedgerKey base64 (prefix-stability at the 39-byte / 52-char boundary),
-// and must differ between entry types and between accounts.
+// TestAccountEntryKeyPrefix pins that the PK prefix is a true string prefix of the account's real
+// trustline/offer LedgerKey base64 (stable at the 39-byte boundary) and differs by entry type and account.
 func TestAccountEntryKeyPrefix(t *testing.T) {
 	const g = "GA3GJGKCUKPOPL6NYPMSBK7LMFYNW7SJMAJ7ZGWR3KGSHJWJHQRQZA3L"
 

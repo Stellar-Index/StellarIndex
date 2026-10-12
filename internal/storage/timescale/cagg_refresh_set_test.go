@@ -14,30 +14,13 @@ import (
 	"time"
 )
 
-// ─── The backfill refresh set must cover every SERVED rung ───────────
-//
-// [CAGGsLiveForever] is the prices_* subset of [TradesCAGGs], the list the backfill tool refreshes
-// after each chunk. A granularity the API serves but the list omits is a permanent hole at that
-// resolution in every backfilled range: continuous-aggregate policies only roll forward, so
-// nothing else materialises a historical bucket and no read can reach the rows.
-//
-// This file keeps the set from falling behind the enum, derived rather than transcribed:
-//
-//  1. [AllHistoryGranularities] is the only declaration of the served set. [HistoryGranularity.
-//     Validate] ranges over it and the 400 bodies render it through [HistoryGranularityList], so
-//     nothing is accepted or advertised that is not in the slice.
-//  2. TestDeclaredGranularityConstsAreAllServed reads the package's own source for
-//     HistoryGranularity constants, so a const left out of the slice is caught.
-//  3. TestCAGGsLiveForeverCoversEveryServedGranularity ranges over the same slice, so the refresh
-//     set has to grow with it.
-//
-// A new granularity cannot reach the API without joining the refresh set. Nothing here reads
-// prose, so rewording a message breaks nothing.
+// The backfill refresh set must cover every SERVED rung: a granularity missing from [CAGGsLiveForever] leaves
+// a permanent hole in backfilled ranges. The tests derive the served set from [AllHistoryGranularities] and
+// source consts, so a new granularity cannot reach the API without joining the refresh set.
 
-// TestDeclaredGranularityConstsAreAllServed requires every package-level
-// `const … HistoryGranularity = "…"` found in this package's syntax to appear in
-// [AllHistoryGranularities]. A constant that skips the slice is rejected by Validate, so a caller
-// gets a 400 for a granularity the code declares.
+// TestDeclaredGranularityConstsAreAllServed requires every package-level `const ... HistoryGranularity` to
+// appear in [AllHistoryGranularities]; one that skips the slice fails Validate, so callers get a 400 for a
+// declared granularity.
 func TestDeclaredGranularityConstsAreAllServed(t *testing.T) {
 	t.Parallel()
 	declared := declaredGranularityConsts(t)
@@ -67,11 +50,9 @@ func TestDeclaredGranularityConstsAreAllServed(t *testing.T) {
 	}
 }
 
-// declaredGranularityConsts parses this package's non-test sources and returns {const name: wire
-// value} for every package-level HistoryGranularity constant. It is syntactic so it needs no build
-// of the repo. A grouped `const (…)` block carries the type forward as the language does (see
-// [collectGranularityConsts]), so a rung without a repeated type is found and an unrelated
-// constant in the group is not mistaken for one.
+// declaredGranularityConsts parses this package's non-test sources and returns {const name: wire value} for
+// every package-level HistoryGranularity constant, syntactically. A grouped const block carries the type
+// forward as the language does.
 func declaredGranularityConsts(t *testing.T) map[string]string {
 	t.Helper()
 	entries, err := os.ReadDir(".")
@@ -94,16 +75,9 @@ func declaredGranularityConsts(t *testing.T) map[string]string {
 	return out
 }
 
-// collectGranularityConsts walks one file's declarations, adding every
-// package-level HistoryGranularity string constant to out.
-//
-// The carrying rule is the language's. Within a parenthesized const declaration only a spec that
-// omits its expression list inherits anything: the preceding non-empty list TOGETHER WITH its
-// type. A spec with its own value inherits nothing; it is typed by its own `Type` or untyped.
-//
-// Both halves matter. Carrying a type onto a spec with its own value makes an ordinary constant in
-// the group read as a granularity, a confident wrong failure. Carrying the type WITHOUT the
-// expression list finds the type but no value, so the rung silently falls out.
+// collectGranularityConsts adds every package-level HistoryGranularity string const in a file to out. It
+// follows Go's implicit repetition: a spec with no expression list inherits the previous list and its type; a
+// spec with its own value inherits nothing.
 func collectGranularityConsts(file *ast.File, out map[string]string) {
 	for _, decl := range file.Decls {
 		gen, ok := decl.(*ast.GenDecl)
@@ -153,13 +127,9 @@ func collectGranularityConsts(file *ast.File, out map[string]string) {
 	}
 }
 
-// TestCollectGranularityConstsFollowsTheLanguagesTypeCarrying pins [collectGranularityConsts]
-// against synthetic source, since the package layout is what it must survive changes to.
-//
-// The middle case is the one that bit: an untyped constant in the same `const (…)` group as the
-// granularities was read as a granularity. Go carries a type only into a spec that omits its
-// expression list, so a spec with its own value starts fresh. The first case pins that carrying
-// still works, so the fix cannot be "stop carrying" and lose a rung written without its type.
+// TestCollectGranularityConstsFollowsTheLanguagesTypeCarrying pins [collectGranularityConsts] on synthetic
+// source. Go carries a type only into a spec that omits its expression list, so an untyped constant with its
+// own value in the same group must not read as a granularity; the first case ensures carrying still works.
 func TestCollectGranularityConstsFollowsTheLanguagesTypeCarrying(t *testing.T) {
 	t.Parallel()
 	const src = `package timescale
@@ -258,10 +228,9 @@ func TestCAGGsLiveForeverCoversEveryServedGranularity(t *testing.T) {
 	}
 }
 
-// TestCAGGsLiveForeverRefreshesPrices1mFirst pins the one ordering convention. No member reads
-// prices_1m today (the others read `trades` directly), so it is defensive: prices_1m is the only
-// view another aggregate is built on, so a future rung that reads it finds it current. Same order
-// and reason as chops.xlmBaseRestampCAGGs.
+// TestCAGGsLiveForeverRefreshesPrices1mFirst pins the ordering convention. No member reads prices_1m today,
+// so it is defensive: it is the only view another aggregate builds on, so a future rung reading it finds it
+// current (as chops.xlmBaseRestampCAGGs).
 func TestCAGGsLiveForeverRefreshesPrices1mFirst(t *testing.T) {
 	t.Parallel()
 	if len(CAGGsLiveForever) == 0 {
@@ -292,10 +261,9 @@ func TestCAGGsLiveForeverMinWindowsClearTimescaleMinimum(t *testing.T) {
 	}
 }
 
-// TestPadRefreshWindowCoversTheChunkAtEveryRung proves the added fine
-// rungs are refreshed over the SAME range as the coarse ones rather
-// than a narrower one: for a chunk shorter than any minimum, every
-// entry's padded window must still contain the chunk end to end.
+// TestPadRefreshWindowCoversTheChunkAtEveryRung proves the fine rungs are refreshed over the same range as
+// the coarse ones: for a chunk shorter than any minimum, every entry's padded window must still contain the
+// chunk end to end.
 func TestPadRefreshWindowCoversTheChunkAtEveryRung(t *testing.T) {
 	t.Parallel()
 	from := time.Date(2024, 3, 12, 9, 0, 0, 0, time.UTC)

@@ -8,17 +8,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker/guardscan"
 )
 
-// clickhouseGoroutineFloor is a "did this test find anything?" floor, not
-// an exact count: account_state_cache.go's refresh, ttl_liveness_cache.go's
-// refresh and accounts_wealth_cache.go's refresh existed when this guard
+// clickhouseGoroutineFloor is a "did this test find anything?" floor, not an exact count: the
+// account_state_cache, ttl_liveness_cache and accounts_wealth_cache refresh goroutines existed when the guard
 // was written.
 const clickhouseGoroutineFloor = 3
 
-// TestClickhouseGoroutinesRecover requires every `go` statement in a non-test file of this
-// package to defer worker.Recover or worker.Report. main.go-scoped guards cannot see these:
-// they start from ExplorerReader's cache-refresh paths. The refreshed account is
-// attacker-chosen (a fabricated G-address hits refreshAccountState), so a panic is reachable
-// with arbitrary input.
+// TestClickhouseGoroutinesRecover requires every `go` statement in a non-test file here to defer
+// worker.Recover or worker.Report, since cache-refresh paths take attacker-chosen accounts and a panic is
+// reachable.
 func TestClickhouseGoroutinesRecover(t *testing.T) {
 	files, err := filepath.Glob("*.go")
 	if err != nil {

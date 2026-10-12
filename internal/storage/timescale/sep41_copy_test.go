@@ -9,13 +9,8 @@ import (
 	"time"
 )
 
-// TestCopyMergeUpsertSQL_GenerationGuarded: the bulk COPY+merge path used by ch_rebuild must
-// carry the SAME generation-guarded corrective-upsert semantics as the per-row writers
-// (InsertSEP41TransferBatch / InsertSEP41SupplyEvent), not `ON CONFLICT DO NOTHING`.
-// Otherwise a re-derive's corrected value would default to generation 0 and never land on an
-// existing PK, and the rebuild would diverge depending on whether COPY happened to error
-// (the per-row fallback does overwrite). derive_generation must be present and the merge
-// must be the guarded DO UPDATE.
+// TestCopyMergeUpsertSQL_GenerationGuarded: the bulk COPY+merge path must use the same guarded DO UPDATE as
+// the per-row writers and carry derive_generation, or a re-derive never lands on an existing PK.
 func TestCopyMergeUpsertSQL_GenerationGuarded(t *testing.T) {
 	// Mirror the real call for sep41_supply_events.
 	const (
@@ -59,10 +54,9 @@ func TestCopyMergeUpsertSQL_GenerationGuarded(t *testing.T) {
 	}
 }
 
-// TestCopyMergeSEP41Transfers_RejectsRowsThePerRowPathRejects pins that the ch-rebuild COPY
-// path refuses a negative or missing transfer/approve Amount before any database access, as
-// InsertSEP41TransferBatch does. The zero Store has no *sql.DB, so a row that slips past
-// validation fails in copyMerge instead of with the validation error.
+// TestCopyMergeSEP41Transfers_RejectsRowsThePerRowPathRejects pins that the ch-rebuild COPY path refuses a
+// negative or missing transfer/approve Amount before any DB access, as InsertSEP41TransferBatch does; the
+// zero Store has no *sql.DB, so a row slipping past validation would fail in copyMerge instead.
 func TestCopyMergeSEP41Transfers_RejectsRowsThePerRowPathRejects(t *testing.T) {
 	authorized := true
 	base := SEP41TransferRow{

@@ -5,18 +5,9 @@ import (
 	"testing"
 )
 
-// TestLatestLedgerAtOrBeforeQuery_CarriesLowerBound pins the predicate that
-// makes the supply snapshot's lake-tip lookup a bounded read.
-//
-// stellar.ledgers is PARTITION BY intDiv(ledger_seq, 1000000) ORDER BY ledger_seq, so
-// `ledger_seq <= X` prunes NO partition below X and the descending LIMIT 1 does not rescue it
-// under FINAL. The aggregator issues this once per watched asset per tick, so the unbounded
-// shape reads the whole table repeatedly from a client that is not on the serving profile.
-//
-// The window is [maxSeq-LatestLedgerLookbackLedgers, maxSeq] and nothing wider, because a row
-// older than that is refused by both callers
-// (cmd/stellarindex-aggregator/main.go::maxSupplyLakeClampLedgers,
-// internal/ops/supply/supply.go::maxAutoSnapshotClampLedgers, which ARE this constant).
+// TestLatestLedgerAtOrBeforeQuery_CarriesLowerBound pins the lower bound that keeps the lake-tip lookup
+// bounded: `ledger_seq <= X` alone prunes no partition. The window is LatestLedgerLookbackLedgers, matching
+// the callers' clamps.
 func TestLatestLedgerAtOrBeforeQuery_CarriesLowerBound(t *testing.T) {
 	q := latestLedgerAtOrBeforeQuery
 	if !strings.Contains(q, "ledger_seq BETWEEN ? AND ?") {
@@ -36,10 +27,8 @@ func TestLatestLedgerAtOrBeforeQuery_CarriesLowerBound(t *testing.T) {
 	}
 }
 
-// TestLatestLedgerLookbackFloor pins the bound to the clamp constant itself, so widening the scan
-// without widening what callers accept (or the reverse) fails here. It also pins the underflow:
-// maxSeq below the lookback reads from 0 rather than wrapping uint32, which would return no row
-// on a young network and fail every snapshot closed.
+// TestLatestLedgerLookbackFloor pins the scan bound to the clamp constant, so widening one without the other
+// fails. It also pins the underflow: maxSeq below the lookback reads from 0 instead of wrapping uint32.
 func TestLatestLedgerLookbackFloor(t *testing.T) {
 	for _, tc := range []struct {
 		name   string

@@ -15,13 +15,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 )
 
-// End-to-end coverage for every blend_auctions.go STORE method over the
-// scripted driver. blend_auctions_test.go covers the two JSON helpers;
-// the seven methods that actually talk to Postgres — the three auction
-// writers behind the pipeline sink and the four readers behind
-// /v1/lending — had none, so the generation guard, the i128
-// precision of the bid/lot amounts and the read-side null handling were
-// all unpinned.
+// End-to-end coverage for every blend_auctions.go STORE method over the scripted driver: the three auction
+// writers behind the pipeline sink and the four /v1/lending readers, pinning the generation guard, i128
+// bid/lot precision and read-side null handling.
 
 const (
 	blendPool     = "CBP7NO6F7FRDHSOFQBT2L2UWYIZ2PUYYAK7SDECESAQXWCJHDIVDGY6L"
@@ -48,10 +44,9 @@ func blendBidLot(t *testing.T) []blend.AssetAmount {
 	}
 }
 
-// assertGenerationGuardedUpsert pins the generation-guard (migration 0110) shape
-// shared by all three writers: a corrected re-derive lands in place, and
-// a live gen-0 replay can never revert it. The pre-0110 `DO NOTHING` is
-// the re-derive trap this replaced, so its return is a failure.
+// assertGenerationGuardedUpsert pins the generation-guard (migration 0110) shape shared by all three
+// writers: a corrected re-derive lands in place and a live gen-0 replay can never revert it. `DO NOTHING` is
+// the trap.
 func assertGenerationGuardedUpsert(t *testing.T, sql, eventKind string) {
 	t.Helper()
 	if strings.Contains(sql, "DO NOTHING") {
@@ -148,10 +143,9 @@ func TestInsertBlendNewAuction_EmptyBidLotBindNULL(t *testing.T) {
 
 // ─── InsertBlendFillAuction ───────────────────────────────────────────
 
-// TestInsertBlendFillAuction_I128FillPercentIsText. fill_percent is an
-// i128 and the column is NUMERIC: it crosses as its decimal STRING with
-// an explicit ::numeric cast, never through a Go numeric type that would
-// round it.
+// TestInsertBlendFillAuction_I128FillPercentIsText: fill_percent is an i128 into a NUMERIC column, so it
+// crosses as its decimal STRING with an explicit ::numeric cast, never through a Go numeric type that
+// would round it.
 func TestInsertBlendFillAuction_I128FillPercentIsText(t *testing.T) {
 	ts := time.Date(2026, 8, 29, 10, 5, 0, 0, time.UTC)
 	store, conn := newScriptedStore(t, scriptedResult{rowsAffected: 1})
@@ -364,11 +358,9 @@ func TestBlendReserveConfigs_ParsesAndSkipsUnparseable(t *testing.T) {
 		"DISTINCT ON (asset)",
 		"event_kind = 'queue_set_reserve'",
 		"ORDER BY asset, ledger_close_time DESC",
-		// A queue_set_reserve alone is a proposal —
-		// only one immediately followed (same asset) by set_reserve
-		// is applied. A cancel_set_reserve, a superseding queue, or
-		// nothing yet must all be excluded (see the executing
-		// coverage in test/integration/pg_sources_lending_test.go).
+		// A queue_set_reserve alone is a proposal; only one immediately followed (same asset) by set_reserve is
+		// applied. A cancel_set_reserve, a superseding queue, or nothing yet must be excluded (executed in
+		// pg_sources_lending_test.go).
 		"LEAD(event_kind)",
 		"next_kind = 'set_reserve'",
 	} {
@@ -380,10 +372,9 @@ func TestBlendReserveConfigs_ParsesAndSkipsUnparseable(t *testing.T) {
 
 // ─── ListBlendPools ───────────────────────────────────────────────────
 
-// TestListBlendPools_ValuesAndWindows covers /v1/lending/pools' listing
-// row. The net-flow figures are 30-day event DELTAS in token base units,
-// not TVL, and the sign convention (supply/withdraw, borrow/repay) is
-// the substance of the number, so both directions are pinned.
+// TestListBlendPools_ValuesAndWindows covers the /v1/lending/pools row. Net-flow figures are 30-day event
+// deltas in token base units, not TVL, and the sign convention is the substance, so both directions are
+// pinned.
 func TestListBlendPools_ValuesAndWindows(t *testing.T) {
 	last := time.Date(2026, 8, 29, 10, 30, 0, 0, time.UTC)
 	store, conn := newScriptedStore(t, scriptedResult{

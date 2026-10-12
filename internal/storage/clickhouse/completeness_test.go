@@ -20,11 +20,9 @@ func (r substrateProblemFakeRow) Scan(dest ...any) error {
 }
 func (r substrateProblemFakeRow) ScanStruct(any) error { return nil }
 
-// substrateProblemFakeConn simulates a lake whose head is truncated at haveMin
-// (everything below is absent) and whose present portion has exactly the
-// ledgers listed in missing removed — enough to answer SubstrateProblem's
-// three queries (endpoint presence, gap, hash-chain) truthfully without a
-// live ClickHouse.
+// substrateProblemFakeConn simulates a lake truncated below haveMin with the ledgers in missing removed,
+// answering SubstrateProblem's three queries (endpoint presence, gap, hash-chain) truthfully without a live
+// ClickHouse.
 type substrateProblemFakeConn struct {
 	driver.Conn
 	to      uint32
@@ -73,14 +71,9 @@ func (c substrateProblemFakeConn) QueryRow(_ context.Context, query string, args
 	}
 }
 
-// TestSubstrateProblem_WalksInteriorDespiteHeadTruncation pins the interior walk:
-// substrateHeadProblem must not short-circuit SubstrateProblem before the
-// contiguity/hash-chain walks run, or a head-truncated lake with a REAL
-// interior gap would report only the (harmless, expected) head problem and never
-// find the gap. Fixture: ledgers [2,1000), head truncated at 500 (haveMin),
-// plus an interior gap at 700 within the present portion. Short-circuiting would
-// return the head problem (499) without ever inspecting 700; it must instead
-// walk [500,1000] and surface the interior gap at 700.
+// TestSubstrateProblem_WalksInteriorDespiteHeadTruncation pins that the expected head-truncation problem does
+// not short-circuit the contiguity walks. With ledgers [2,1000), head cut at 500 and a gap at 700, the walk
+// of [500,1000] must still surface the gap at 700.
 func TestSubstrateProblem_WalksInteriorDespiteHeadTruncation(t *testing.T) {
 	const from, to = uint32(2), uint32(1000)
 	conn := substrateProblemFakeConn{to: to, haveMin: 500, missing: map[uint64]bool{700: true}}
@@ -100,15 +93,9 @@ func TestSubstrateProblem_WalksInteriorDespiteHeadTruncation(t *testing.T) {
 	}
 }
 
-// TestSubstrateQueryLo pins FINDING 2: the per-window substrate query must start
-// one ledger BELOW the window so the seam hash-link is checked — including at
-// the LOWER boundary `from`, the carried/fresh -from junction. The old guard
-// only decremented when the window started ABOVE `from` (inter-window seams), so
-// the FIRST window's query lo stayed at `from`; chainQ's `WHERE ledger_seq > qlo`
-// then never evaluated prev_hash(from) == ledger_hash(from-1), and a hash-chain
-// break exactly at the scanFrom seam was invisible even to the window abutting
-// it. The fix decrements to from-1, guarded at the chain genesis (ledger 1 has
-// no predecessor to link) so it never underflows.
+// TestSubstrateQueryLo: the per-window substrate query must start one ledger BELOW the window, including at
+// `from`, so the seam hash-link prev_hash(from) == ledger_hash(from-1) is checked. It is guarded at genesis
+// (ledger 1 has no predecessor) so it never underflows.
 func TestSubstrateQueryLo(t *testing.T) {
 	const window = uint64(substrateWindow)
 	cases := []struct {
@@ -148,15 +135,9 @@ func TestSubstrateQueryLo(t *testing.T) {
 	}
 }
 
-// TestWatermark pins the pure interpretation of the ContiguousWatermark query,
-// including the lower-boundary blind spot (a hole AT `from`). CRITICAL: the
-// minPresent column is what the SQL actually produces — min(ledger_seq >= from) —
-// so the inputs below are the ones the query can really return. The old table had
-// a "gap right at from" row that fed gap=100 (firstGap==from); that is an input
-// the SQL CANNOT produce for a missing `from` (a missing `from` leaves the set
-// {from+1,…} internally contiguous → firstGap==0, minPresent==from+1), so it
-// masked the silent-data-loss bug. Those masking synthetic-gap cases are replaced
-// with the real hole-at-from shape below.
+// TestWatermark pins the pure interpretation of the ContiguousWatermark query, including a hole at `from`.
+// Inputs are shapes the SQL can really return (min(ledger_seq >= from)): a missing `from` yields firstGap==0
+// and minPresent==from+1, not a synthetic gap at `from`, which would mask the silent-data-loss bug.
 func TestWatermark(t *testing.T) {
 	tests := []struct {
 		name                         string
@@ -170,17 +151,12 @@ func TestWatermark(t *testing.T) {
 		{"complete to tip, no gap", 100, 200, 0, 100, 200}, // firstGap==0 → chMax
 		// `from` present, interior hole at 150: minPresent==from, firstGap==150.
 		{"interior gap above from", 100, 200, 150, 100, 149}, // hole at 150 → 149
-		// THE FIX — hole exactly at `from` (100 absent, 101..200 present). The SQL
-		// yields firstGap==0 (the present set {101,…,200} is internally contiguous)
-		// and minPresent==101 (the smallest ledger >= from). Without the guard, the two-arg
-		// watermark would ignore minPresent and return chMax (200), so the projector
-		// would scan past the missing ledger 100 and drop its sep41 rows. The
-		// minPresent>from guard stalls at from-1 (99).
+		// Hole exactly at `from` (100 absent, 101..200 present): the SQL gives firstGap==0 and minPresent==101.
+		// Without the minPresent>from guard the watermark would return chMax (200) and the projector would skip
+		// ledger 100, dropping its sep41 rows. The guard stalls at from-1 (99).
 		{"HOLE AT from itself → stall at from-1", 100, 200, 0, 101, 99},
-		// Hole at `from` AND an interior gap co-exist above it (100 absent;
-		// 101..149 present; 150 absent; 151..200 present). firstGap==150,
-		// minPresent==101. The boundary hole must win — from-1 (99) is the tighter
-		// bound — so the projector stalls at the earliest defect, not at 149.
+		// A hole at `from` and an interior gap coexist (100 and 150 absent): firstGap=150, minPresent=101.
+		// The boundary hole wins with from-1 (99), so the projector stalls at the earliest defect, not at 149.
 		{"hole at from wins over a later interior gap", 100, 200, 150, 101, 99},
 		// `from` present, first ledger present then hole at 101: minPresent==from.
 		{"gap one past from", 100, 200, 101, 100, 100}, // first ledger present, hole next
@@ -199,15 +175,9 @@ func TestWatermark(t *testing.T) {
 	}
 }
 
-// TestSubstrateCountIntact pins that SubstrateProblem's endpoint
-// guard only tested `present > 0`, so a hole covering BOTH overlap ledgers of
-// a window seam (e.g. from=2, substrateWindow=5_000_000, ledgers 5_000_001
-// and 5_000_002 missing) sits outside every window's local gap/chain scan —
-// window 1 ends its present set at 5_000_000 (no interior gap), window 2's
-// first present row is 5_000_003 with an empty prior_hash (filtered out of
-// chainQ) — and both endpoint guards pass (haveMin=from, haveMax=to). The
-// fix compares the exact uniqExact `present` count (already computed) against
-// the full range size instead of merely testing it is nonzero.
+// TestSubstrateCountIntact pins that SubstrateProblem compares the exact uniqExact `present` count with the
+// range size: a hole covering both overlap ledgers of a window seam escapes every local gap/chain scan, and
+// an endpoint guard that only tests `present > 0` passes it.
 func TestSubstrateCountIntact(t *testing.T) {
 	const from, to = uint32(2), uint32(10_000_002)
 	full := uint64(to) - uint64(from) + 1
@@ -229,11 +199,8 @@ func TestSubstrateCountIntact(t *testing.T) {
 	}
 }
 
-// TestSubstrateHeadProblem pins the F1 consumer fail-open fix: the coverage
-// verdict must return a problem ledger that keeps the per-source consumer's
-// `problem < genesis ⟹ source-OK` test correct. Empty ⟹ tip (so every source
-// fails), missing-head ⟹ haveMin-1 (so only sources whose data starts in the
-// absent head fail), covered ⟹ no problem.
+// TestSubstrateHeadProblem pins that the coverage verdict returns a problem ledger keeping the per-source
+// `problem < genesis => source-OK` test correct: empty => tip, missing head => haveMin-1, covered => none.
 func TestSubstrateHeadProblem(t *testing.T) {
 	const from, to = uint32(2), uint32(63_000_000)
 	cases := []struct {
@@ -257,10 +224,8 @@ func TestSubstrateHeadProblem(t *testing.T) {
 			}
 		})
 	}
-	// The regression itself: an EMPTY lake must NOT green a high-genesis source.
-	// Returning `from` (2) would be wrong: `2 < 50_746_266` is true = greened.
-	// The problem ledger must be ≥ any source genesis so `problem < genesis` is
-	// false for all (soroswap genesis = 50_746_266).
+	// Regression: an EMPTY lake must not green a high-genesis source. The problem ledger must be >= any source
+	// genesis (soroswap = 50_746_266), else `problem < genesis` holds and the source is greened.
 	if p, has, _ := substrateHeadProblem(from, to, false, 0); !has || p < 50_746_266 {
 		t.Fatalf("empty-lake problem ledger = %d (has=%v); must be ≥ any source genesis so none green (soroswap=50746266)", p, has)
 	}

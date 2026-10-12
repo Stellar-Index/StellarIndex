@@ -51,10 +51,9 @@ func xlmAnchorAt(r USDVolumeFXResolver) func(canonical.Trade) *string {
 
 func strptr(s string) *string { return &s }
 
-// TestXLMBaseRestampDecide_ProducesTheAnchorValueForTheIncidentRow: an sdex native/BUCK trade
-// with base 4.9999996 XLM at XLM/USD 0.14488 was stored with the quote-side thin-book value.
-// The assertion is the CORRECTED NUMBER, not "non-nil": 4.9999996 x 0.14488 rendered exactly
-// as [tradeUSDVolume] renders it.
+// TestXLMBaseRestampDecide_ProducesTheAnchorValueForTheIncidentRow: an sdex native/BUCK trade (base 4.9999996
+// XLM at XLM/USD 0.14488) was stored with the quote-side thin-book value. Asserts the corrected number,
+// rendered as [tradeUSDVolume] does.
 func TestXLMBaseRestampDecide_ProducesTheAnchorValueForTheIncidentRow(t *testing.T) {
 	t.Parallel()
 	resolver := stubFXResolver{prices: map[string]string{
@@ -129,10 +128,9 @@ func TestXLMBaseRestampDecide_IsLockstepWithTheInsertPath(t *testing.T) {
 	}
 }
 
-// TestXLMBaseRestampDecide_AnchorDeclinedIsNeverGuessedAt is rule 2+3 of the file header: a
-// row the anchor cannot price keeps whatever it holds. A stored NULL stays NULL (not filled
-// with the quote-side estimate the live waterfall falls through to) and a stored value is
-// not blanked.
+// TestXLMBaseRestampDecide_AnchorDeclinedIsNeverGuessedAt pins rules 2+3 of the file header: a row the anchor
+// cannot price keeps its value; a stored NULL stays NULL (not the quote-side estimate) and a value is not
+// blanked.
 func TestXLMBaseRestampDecide_AnchorDeclinedIsNeverGuessedAt(t *testing.T) {
 	t.Parallel()
 	// No XLM/USD rate at all: the anchor declines. The token DOES have a
@@ -179,10 +177,8 @@ func TestXLMBaseRestampDecide_AnchorDeclinedIsNeverGuessedAt(t *testing.T) {
 	}
 }
 
-// TestXLMBaseRestampDecide_NullFillIsOptIn: the NULL population (~31% of
-// the measured days) is a COVERAGE change, so it is only written under
-// -fill-null — but it is COUNTED either way, so a dry run always shows
-// the operator what the flag would buy.
+// TestXLMBaseRestampDecide_NullFillIsOptIn: the NULL population (~31% of measured days) is a COVERAGE change,
+// so it is written only under -fill-null, but counted either way so a dry run shows what the flag would buy.
 func TestXLMBaseRestampDecide_NullFillIsOptIn(t *testing.T) {
 	t.Parallel()
 	resolver := stubFXResolver{prices: map[string]string{
@@ -229,10 +225,9 @@ func TestXLMBaseRestampDecide_ExcludesTheExactTiers(t *testing.T) {
 	}
 }
 
-// TestXLMBaseRestampDecide_RefusesANonXLMBase: the 1e7 divisor in the
-// anchor belongs to the ANCHOR asset. A widened scan that let a non-XLM
-// base through would silently mis-scale it, so the Go gate re-asserts
-// the tier definition and fails closed.
+// TestXLMBaseRestampDecide_RefusesANonXLMBase: the anchor's 1e7 divisor belongs to the anchor asset, so a
+// widened scan admitting a non-XLM base would mis-scale it; the Go gate re-asserts the tier definition and
+// fails closed.
 func TestXLMBaseRestampDecide_RefusesANonXLMBase(t *testing.T) {
 	t.Parallel()
 	resolver := stubFXResolver{prices: map[string]string{
@@ -253,10 +248,9 @@ func TestXLMBaseRestampDecide_RefusesANonXLMBase(t *testing.T) {
 	}
 }
 
-// TestXLMBaseRestampDecide_IdempotentAndNumericComparison: a row already
-// holding the anchor's value is untouched even when Postgres rendered it
-// at a different NUMERIC scale — otherwise a re-run would rewrite the
-// whole span and bump every derive_generation for nothing.
+// TestXLMBaseRestampDecide_IdempotentAndNumericComparison: a row already holding the anchor's value is
+// untouched even when Postgres renders it at a different NUMERIC scale; otherwise a re-run rewrites the
+// whole span and bumps every derive_generation.
 func TestXLMBaseRestampDecide_IdempotentAndNumericComparison(t *testing.T) {
 	t.Parallel()
 	resolver := stubFXResolver{prices: map[string]string{
@@ -324,10 +318,9 @@ func TestXLMBaseRestampDecide_RefusesUnparseableAmounts(t *testing.T) {
 	}
 }
 
-// TestXLMBaseRestampStats_ResidualIsZeroWhenEveryRowIsFiled: the report
-// prints a residual so a row scanned and filed NOWHERE is visible rather
-// than quietly shrinking a population. Drive every disposition through
-// Record and require the residual to close.
+// TestXLMBaseRestampStats_ResidualIsZeroWhenEveryRowIsFiled: the report prints a residual so a row scanned
+// and filed NOWHERE is visible, not a quietly shrinking population. Drive every disposition through Record
+// and require the residual to close.
 func TestXLMBaseRestampStats_ResidualIsZeroWhenEveryRowIsFiled(t *testing.T) {
 	t.Parallel()
 	plan := &XLMBaseRestampPlan{Stats: NewXLMBaseRestampStats()}

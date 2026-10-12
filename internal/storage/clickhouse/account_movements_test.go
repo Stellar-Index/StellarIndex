@@ -264,11 +264,8 @@ func TestChunkStrings(t *testing.T) {
 	})
 }
 
-// TestSortAccountMovementRowsForInsert pins the batch order the chunked
-// send relies on: LEDGER first, then address and the rest of the table's
-// ORDER BY columns. The previous address-first order made a partially
-// sent batch an address prefix spanning the window's whole ledger range,
-// which the max(ledger) resume then skipped over.
+// TestSortAccountMovementRowsForInsert pins ledger-first batch order (then the table's ORDER BY
+// columns): address-first made a partially sent batch span the window, which max(ledger) resume skipped.
 func TestSortAccountMovementRowsForInsert(t *testing.T) {
 	rows := []AccountMovementRow{
 		{Address: "GB", Ledger: 2, TxHash: "z"},
@@ -300,10 +297,8 @@ func TestSortAccountMovementRowsForInsert(t *testing.T) {
 	}
 }
 
-// TestAccountMovementsQueryDedupKeepsNewestVersion pins that the read-time
-// LIMIT 1 BY keeps the newest ingested_at per key for every query shape:
-// without the version in the ORDER BY, which un-merged duplicate survives
-// is unspecified, and a re-derived row can lose to the stale one.
+// TestAccountMovementsQueryDedupKeepsNewestVersion pins that LIMIT 1 BY keeps the newest ingested_at per key
+// in every query shape; without the version in ORDER BY the surviving duplicate is unspecified.
 func TestAccountMovementsQueryDedupKeepsNewestVersion(t *testing.T) {
 	const want = "leg_index DESC, ingested_at DESC LIMIT 1 BY ledger, tx_hash, op_index, leg_index"
 	for _, hasCursor := range []bool{false, true} {

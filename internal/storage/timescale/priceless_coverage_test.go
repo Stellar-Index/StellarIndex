@@ -8,10 +8,9 @@ import (
 	"testing"
 )
 
-// TestPricelessPriced_IncludesServedSnapshot pins the served-price arm into
-// the tripwire's priced set, in both the sweep and the single-asset probe,
-// with the listing's own staleness bound: an asset /v1/assets serves a
-// price for must never page as priceless.
+// TestPricelessPricedIncludesServedSnapshot pins the served-price arm into the tripwire's priced set, in
+// both the sweep and the single-asset probe, with the listing's staleness bound: an asset /v1/assets prices
+// must never page as priceless.
 func TestPricelessPriced_IncludesServedSnapshot(t *testing.T) {
 	t.Parallel()
 

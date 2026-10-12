@@ -7,10 +7,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/freeze"
 )
 
-// ─── openLadderRow.entries beside a stale window_ladders map ───
-//
-// No database: entries() is the pure rule that decides what a row MEANS. The real-Postgres
-// half is test/integration/freeze_test.go.
+// openLadderRow.entries beside a stale window_ladders map. No database: entries() is the pure rule deciding
+// what a row MEANS; the real-Postgres half is test/integration/freeze_test.go.
 
 func TestOpenLadderRowEntries_StaleMapFailsClosed(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Microsecond)
@@ -81,11 +79,9 @@ func TestOpenLadderRowEntries_StaleMapFailsClosed(t *testing.T) {
 	}
 }
 
-// TestPairLadderAhead_IgnoresStoragePrecision: hold_until is timestamptz (whole microseconds)
-// while a window_ladders entry keeps nanoseconds, so the two are never bit-equal. The rule
-// must not depend on the driver truncating: a driver that ROUNDED would read every freeze as
-// stale and rehydrate an ownerless ladder onto windows that were never frozen.
-// A real disagreement is minutes, not nanoseconds.
+// TestPairLadderAhead_IgnoresStoragePrecision: hold_until is timestamptz (microseconds) while a
+// window_ladders entry keeps nanoseconds, so they are never bit-equal. The rule must not depend on driver
+// truncation, or a rounding driver would read every freeze as stale. Real disagreement is minutes.
 func TestPairLadderAhead_IgnoresStoragePrecision(t *testing.T) {
 	entry := time.Date(2026, 9, 18, 12, 25, 0, 1600, time.UTC) // …00.0000016
 	summary := freeze.State{FiredAt: entry.Add(-time.Hour), HoldUntil: entry, ExtensionsUsed: 2}

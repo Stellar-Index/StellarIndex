@@ -11,20 +11,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Regression tests for stellar.account_activity's "exact upper bound by construction" invariant
-// (deploy/clickhouse/account_activity.sql). It only holds once the Step-2 windowed backfill has
-// covered every account, and the bound is a HARD `ledger_seq <=` on the account-history readers,
-// so a partial backfill silently hides history.
-//
-// The tests run the runbook's OWN text, extracted verbatim from the SQL file's comments, through
-// the SHIPPED /usr/local/sbin/run-heavy-job.sh, extracted from the ansible task that installs it
-// (the technique of scripts/ci/run-heavy-job-test.sh). A pass-through stand-in cannot see the
-// wrapper's lock branch: when the per-job lock is held every caller is refused with exit 75 (a
-// manual run prints "refusing to start", a systemd-launched one "skipping this fire").
-//
-// Every way the runbook can end WITHOUT covering (Step 2) or checking (Step 3) every window must
-// end non-zero and without its success line. Whether the Step-3 SQL sees a gap in a later window
-// needs a real ClickHouse: test/integration/clickhouse_accounts_test.go.
+// Regression tests for account_activity's exact-upper-bound invariant, which needs the Step-2 backfill to
+// cover every account. They run the runbook's own text through the shipped run-heavy-job.sh: every way it
+// can end without covering or checking all windows must exit non-zero with no success line.
 
 // runbookCodeLineRE matches a runbook code line: `--` followed by at least
 // three spaces (the file's indent convention for embedded bash/SQL; prose
@@ -105,10 +94,9 @@ func shippedHeavyJobWrapper(t *testing.T) string {
 	return ""
 }
 
-// Stubs for the binaries the wrapper and the runbook call. flock counts calls per lock fd (its
-// last argument: 9 is the per-job lock, 8 the host-wide lock) and fails the one AA_FLOCK_FAIL_ON
-// names as "<fd>:<nth call on it>", so each lock-held branch is hit on purpose. id answers
-// AA_UID so both wrapper branches run anywhere; systemd-run drops its options and execs.
+// Stubs for the binaries the wrapper and runbook call. flock counts calls per lock fd (9 per-job, 8
+// host-wide) and fails the one AA_FLOCK_FAIL_ON names as "<fd>:<nth>"; id answers AA_UID; systemd-run drops
+// its options.
 const (
 	stubFlock = `#!/bin/bash
 fd="${!#}"
@@ -160,10 +148,8 @@ type runbookResult struct {
 	queries []string
 }
 
-// runRunbook executes one runbook section through the shipped wrapper with
-// the stubs above. nested reproduces a paste into a nested shell: an outer
-// bash reads `bash` and then the block from the same stdin, so whatever the
-// inner shell does not consume is run by the outer one.
+// runRunbook runs one runbook section through the shipped wrapper with the stubs above. nested simulates
+// pasting into a nested shell, where the outer bash runs whatever the inner one leaves unread.
 func runRunbook(t *testing.T, section string, nested bool, env ...string) runbookResult {
 	t.Helper()
 	if _, err := exec.LookPath("bash"); err != nil {
@@ -406,10 +392,8 @@ func TestAccountActivityRunbook_Step3FailsClosed(t *testing.T) {
 	}
 }
 
-// TestAccountActivityRunbook_Step3IsBounded: the verify is a heavy op on the
-// serving host. Every read of a lake source table must be scoped by ledger
-// (partition pruning) and the statement capped — never again an unbounded
-// GROUP BY over stellar.transactions.
+// TestAccountActivityRunbook_Step3IsBounded: the verify runs on the serving host, so every lake read must be
+// ledger-scoped (partition pruning) and the statement capped, never an unbounded GROUP BY over transactions.
 func TestAccountActivityRunbook_Step3IsBounded(t *testing.T) {
 	section := extractRunbookSection(t, accountActivitySQLPath(t), "Step 3: verify", "Expect PASSED")
 	arms := strings.Split(section, "FROM stellar.")[1:]

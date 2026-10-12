@@ -168,10 +168,8 @@ func TestOperationParticipantRows_ByOpType(t *testing.T) {
 	}
 }
 
-// TestOperationParticipantRows_SkipsSource proves the op's own source account is
-// never emitted — the reader covers it via operations.source_account, and a
-// duplicate would double-count the op for its source (the AccountOperations
-// UNION relies on the sourced-XOR-participant invariant).
+// TestOperationParticipantRows_SkipsSource proves the op's own source account is never emitted: the reader
+// covers it via operations.source_account, and a duplicate would double-count (sourced-XOR-participant).
 func TestOperationParticipantRows_SkipsSource(t *testing.T) {
 	// A self-payment: source pays itself. The destination equals the source.
 	body := opBody(t, xdr.OperationTypePayment, xdr.PaymentOp{

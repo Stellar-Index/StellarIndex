@@ -5,10 +5,9 @@ import (
 	"testing"
 )
 
-// TestSeedSourceEntryCountsFoldsEveryPerSourceHypertable keeps SeedSourceEntryCounts in lockstep
-// with the per-source hypertables the gap detector registers. The sink bumps a source's `entries`
-// tally per decoded event and the seed SET-resets it from the countable tables, so a table the
-// seed does not fold is a tally every re-seed silently truncates.
+// TestSeedSourceEntryCountsFoldsEveryPerSourceHypertable keeps SeedSourceEntryCounts in lockstep with the
+// per-source hypertables the gap detector registers: the seed SET-resets the sink's `entries` tally from the
+// countable tables, so an unfolded table is a tally every re-seed silently truncates.
 func TestSeedSourceEntryCountsFoldsEveryPerSourceHypertable(t *testing.T) {
 	// Watched by the gap detector but never bumped: no seed fold is owed.
 	notBumped := map[string]string{
