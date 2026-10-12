@@ -5,17 +5,16 @@ import (
 	"time"
 )
 
-// SessionHintCookieName is a JS-readable presence flag shadowing [SessionCookieName]; a HINT only, never an authorization signal (no identity, nothing server-side reads it).
+// SessionHintCookieName is a JS-readable presence flag shadowing [SessionCookieName]; a HINT only, never an authorization signal (no
+// identity, nothing server-side reads it).
 const SessionHintCookieName = "stellarindex_session_present"
 
 // sessionHintValue is the entire contents of the hint cookie. A
 // constant, so no per-user information can reach it by accident.
 const sessionHintValue = "1"
 
-// setSessionHintCookie writes the presence flag alongside a freshly
-// minted session cookie, with the same lifetime. Unlike the host-only
-// session cookie it may carry [Config.SessionHintDomain] so the
-// explorer's origin can read it.
+// setSessionHintCookie writes the presence flag beside a fresh session cookie, same lifetime. Unlike the host-only session cookie
+// it may carry [Config.SessionHintDomain] so the explorer's origin can read it.
 func (h *Handlers) setSessionHintCookie(w http.ResponseWriter, expires time.Time) {
 	http.SetCookie(w, &http.Cookie{ //nolint:gosec // G124: JS-readable by design (constant flag, no bearer power); SameSite=Lax; Secure follows cookie_secure
 		Name:    SessionHintCookieName,

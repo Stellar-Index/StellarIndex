@@ -12,7 +12,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// AssetMovementEntry is one movement in GET /v1/assets/{asset_id}/movements; Amount is a decimal string (ADR-0003), an absent from/to is a side the decoder does not attribute.
+// AssetMovementEntry is one movement in GET /v1/assets/{asset_id}/movements; Amount is a decimal string (ADR-0003), an absent from/to is
+// a side the decoder does not attribute.
 type AssetMovementEntry struct {
 	Ledger          uint32         `json:"ledger"`
 	LedgerCloseTime string         `json:"ledger_close_time"`
@@ -42,7 +43,8 @@ type AssetMovementsView struct {
 	CoverageNote string `json:"coverage_note"`
 }
 
-// AssetMovements serves GET /v1/assets/{asset_id}/movements newest first from stellar.movements_by_asset, ceilinged at the cap67 watermark so only fully derived ledgers appear.
+// AssetMovements serves GET /v1/assets/{asset_id}/movements newest first from stellar.movements_by_asset, ceilinged at the cap67
+// watermark so only fully derived ledgers appear.
 func (h *Handler) AssetMovements(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)
@@ -157,10 +159,8 @@ func (h *Handler) writeAssetMovementsCSV(w http.ResponseWriter, r *http.Request,
 	}
 }
 
-// assetMovementsID folds the path asset to the one id the movement tables
-// store for it: XLM's alias forms to "native", and a SAC address to the
-// classic asset it wraps (cross-checked, so a token claiming a trusted name
-// stays its own contract id). Off-chain ids have no movements: 400.
+// assetMovementsID folds the path asset to the id the movement tables store: XLM aliases to "native", a SAC to the classic asset it wraps
+// (cross-checked, so a token claiming a trusted name stays its own contract id). Off-chain ids have no movements: 400.
 func (h *Handler) assetMovementsID(ctx context.Context, w http.ResponseWriter, r *http.Request) (asset string, lookupFailed, ok bool) {
 	raw := r.PathValue("asset_id")
 	parsed, err := canonical.ParseAsset(raw)

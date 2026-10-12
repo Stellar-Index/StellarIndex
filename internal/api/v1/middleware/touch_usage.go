@@ -25,7 +25,8 @@ type TouchDebouncer interface {
 	ShouldTouch(ctx context.Context, keyID string) (bool, error)
 }
 
-// TouchUsage records last_used_at/ip/user_agent on the api_keys row post-response, debounced and best-effort (errors dropped; nil toucher or debouncer disables it); wire AFTER [Auth].
+// TouchUsage records last_used_at/ip/user_agent on the api_keys row post-response, debounced and best-effort (errors dropped; nil
+// toucher or debouncer disables it); wire AFTER [Auth].
 func TouchUsage(toucher KeyToucher, debouncer TouchDebouncer, logger *slog.Logger) Middleware {
 	if logger == nil {
 		logger = slog.Default()
@@ -47,9 +48,8 @@ func TouchUsage(toucher KeyToucher, debouncer TouchDebouncer, logger *slog.Logge
 	}
 }
 
-// touchUsageRecord is [TouchUsage]'s post-dispatch bookkeeping, split out so it runs on panic
-// too. Normally [AfterResponse] flushes w and runs the touch off-goroutine; on a panic the work
-// is still enqueued but w is left unflushed so the outer Recoverer can write its 500.
+// touchUsageRecord is [TouchUsage]'s post-dispatch bookkeeping, split out so it runs on panic too. Normally [AfterResponse] flushes w
+// and touches off-goroutine; on a panic the work is enqueued but w stays unflushed so the outer Recoverer can write its 500.
 func touchUsageRecord(w http.ResponseWriter, toucher KeyToucher, debouncer TouchDebouncer, logger *slog.Logger, r *http.Request, panicked bool) {
 	if toucher == nil || debouncer == nil {
 		return

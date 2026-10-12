@@ -27,18 +27,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// explorerReadTimeout is the per-request ceiling on every handler's ClickHouse lake reads. The
-// explorer pool has 8 connections and the server WriteTimeout does not cancel an in-flight query,
-// so a few slow unauthenticated requests would hold them all. It fires before the 15s
-// request-timeout middleware.
+// explorerReadTimeout is the per-request ceiling on every handler's ClickHouse lake reads: the pool has 8 connections and WriteTimeout
+// does not cancel an in-flight query. It fires before the 15s request-timeout middleware.
 const explorerReadTimeout = 8 * time.Second
 
-// readTimedOut reports whether a handler-scoped read context hit its deadline. Pass the PER-CALL
-// ctx, not r.Context(): the driver often returns its own cancellation error that does not unwrap
-// to context.DeadlineExceeded, so the context itself is the reliable signal.
-//
-// Mirrors v1's handlerTimedOut (envelope.go), which this package cannot import (cycle). Keep the
-// two in sync, including recording a true verdict for usage metering, which makes the read billable.
+// readTimedOut reports whether a handler-scoped read ctx hit its deadline. Pass the PER-CALL ctx, not r.Context(): the driver may return
+// an error not unwrapping to DeadlineExceeded. Keep in sync with v1's handlerTimedOut (import cycle), incl. the usage-metering verdict.
 func readTimedOut(callCtx context.Context, err error) bool {
 	timedOut := errors.Is(err, context.DeadlineExceeded) ||
 		callCtx.Err() == context.DeadlineExceeded
@@ -48,10 +42,8 @@ func readTimedOut(callCtx context.Context, err error) bool {
 	return timedOut
 }
 
-// retryableColdMiss reports whether a cold-path SWR-cache error is the capacity class mapped to
-// the retryable 503: the deadline expired waiting for the detached compute, or the shared refresh
-// gate was saturated. Both saturation sentinels are matched (this package's errRefreshSaturated
-// and the clickhouse layer's, which it cannot share because that layer must return its own).
+// retryableColdMiss reports whether a cold-path SWR error is the capacity class mapped to the retryable 503: deadline expired, or the
+// refresh gate saturated (both this package's sentinel and the clickhouse layer's).
 func retryableColdMiss(callCtx context.Context, err error) bool {
 	if readTimedOut(callCtx, err) ||
 		errors.Is(err, errRefreshSaturated) ||
@@ -67,12 +59,8 @@ func retryableColdMiss(callCtx context.Context, err error) bool {
 	return lakeUnreachable(err)
 }
 
-// lakeUnreachable reports whether err is a transport-layer failure below the query layer
-// (refused, reset, DNS), which means "dependency down, retry", not a bug in this process.
-// Timeout-only matching is not enough: a hard-down lake answers instantly with a non-timeout
-// *net.OpError, which would otherwise read as a 500 in the 5xx SLA probe. Keep in step with
-// IsCacheUnavailable and transientStorageErr; *net.DNSError arrives bare, and the errno arms catch
-// a driver that re-wrapped only the syscall error.
+// lakeUnreachable reports whether err is a transport failure below the query layer (refused, reset, DNS): "dependency down, retry".
+// A hard-down lake gives a non-timeout *net.OpError that would read as a 500 in the 5xx SLA probe. Keep in step with IsCacheUnavailable.
 func lakeUnreachable(err error) bool {
 	var opErr *net.OpError
 	if errors.As(err, &opErr) {
@@ -87,10 +75,8 @@ func lakeUnreachable(err error) bool {
 		errors.Is(err, syscall.EPIPE)
 }
 
-// writeReadTimeout writes the 503 problem+json, with an endpoint-specific `...-timeout` type URL,
-// for a lake read that blew explorerReadTimeout. A 500 would make a capacity problem look like a
-// bug. 503, not 504: the API uses 503 for a server-side read deadline and every explorer route
-// declares it in the OpenAPI spec.
+// writeReadTimeout writes the 503 problem+json, with an endpoint-specific `...-timeout` type URL, for a read that blew explorerReadTimeout.
+// 503 not 504 (the API's server-side read deadline code); a 500 would make a capacity problem look like a bug.
 func (h *Handler) writeReadTimeout(w http.ResponseWriter, r *http.Request, typeURL, title string) {
 	// Also reached by a driver i/o timeout, which readTimedOut does not see.
 	middleware.MarkReadDeadline(r.Context())
@@ -99,9 +85,8 @@ func (h *Handler) writeReadTimeout(w http.ResponseWriter, r *http.Request, typeU
 			" explorer read budget; retry shortly")
 }
 
-// writeRetryable is writeReadTimeout with an honest split by cause. A saturation reject is not a
-// timeout (the query never ran), and labeling it one sends investigations down the wrong path.
-// Same 503 + type URL either way; only the detail says which condition occurred.
+// writeRetryable is writeReadTimeout with an honest split by cause: a saturation reject is not a timeout (the query never ran).
+// Same 503 + type URL either way; only the detail differs.
 func (h *Handler) writeRetryable(w http.ResponseWriter, r *http.Request, err error, typeURL, title string) {
 	if errors.Is(err, errRefreshSaturated) || errors.Is(err, clickhouse.ErrRefreshSaturated) {
 		w.Header().Set("Retry-After", retryAfterBusy)
@@ -126,15 +111,15 @@ func (h *Handler) writeRetryable(w http.ResponseWriter, r *http.Request, err err
 	h.writeReadTimeout(w, r, typeURL, title)
 }
 
-// Retry-After hints on the retryable 503s; without one clients retry immediately, a retry storm
-// against a saturated gate or downed dependency. Mirrors package v1: 30s for an outage (a Redis/CH
-// fail-over window), a few seconds for in-process busy-ness.
+// Retry-After hints on the retryable 503s; without one clients retry at once, a storm against a saturated gate or downed dependency.
+// Mirrors package v1: 30s for an outage (a Redis/CH fail-over window), a few seconds for in-process busy-ness.
 const (
 	retryAfterBusy           = "5"
 	retryAfterDependencyDown = "30"
 )
 
-// ExplorerReader is the seam the explorer endpoints read the certified ClickHouse lake through, satisfied by *clickhouse.ExplorerReader; nil disables the endpoints (503).
+// ExplorerReader is the seam the explorer endpoints read the certified ClickHouse lake through, satisfied by *clickhouse.ExplorerReader;
+// nil disables the endpoints (503).
 type ExplorerReader interface {
 	RecentLedgers(ctx context.Context, limit int, beforeSeq uint32) ([]clickhouse.LedgerHeader, error)
 	LedgerBySeq(ctx context.Context, seq uint32) (clickhouse.LedgerHeader, bool, error)
@@ -248,7 +233,8 @@ type ContractsReader interface {
 	ProtocolContractIndex(ctx context.Context) (map[string]string, error)
 }
 
-// Handler holds every explorer endpoint's dependencies; response writing and cross-cutting reads are injected function values, since importing package v1 would cycle.
+// Handler holds every explorer endpoint's dependencies; response writing and cross-cutting reads are injected function values, since
+// importing package v1 would cycle.
 type Handler struct {
 	Reader             ExplorerReader
 	Logger             *slog.Logger
@@ -316,9 +302,8 @@ type Handler struct {
 	// it scans a huge table, so the directory's few-second cadence would blow the read deadline.
 	opTypeStats opTypeStatsCache
 
-	// assetHolders and contractsDir are bounded-TTL, single-flighted caches in front of two
-	// unauthenticated reads whose cost scales with the lake (FINAL scans; a multi-day GROUP BY).
-	// See hot_reads.go.
+	// assetHolders and contractsDir are bounded-TTL, single-flighted caches in front of two unauthenticated reads whose cost scales with
+	// the lake (FINAL scans; a multi-day GROUP BY). See hot_reads.go.
 	assetHolders assetHoldersCache
 	contractsDir contractsDirCache
 	// contractStats is the single-entry snapshot behind GET /v1/contracts/stats.
@@ -339,16 +324,14 @@ type Handler struct {
 	// contracts directory, interactions and detail routes. Zero value ready.
 	attribution contractAttributionCache
 
-	// refreshGate bounds DETACHED cache refreshes globally across keys AND cache kinds: per-key
-	// single-flight alone leaves the key space attacker-chosen on these unauthenticated routes.
-	// Resolved lazily by detachedGate(), shared with the lake reader's account-state gate.
+	// refreshGate bounds DETACHED cache refreshes globally across keys AND cache kinds: per-key single-flight alone leaves the key space
+	// attacker-chosen on unauthenticated routes. Resolved lazily by detachedGate(), shared with the lake reader's account-state gate.
 	refreshGateOnce sync.Once
 	refreshGate     *clickhouse.RefreshGate
 }
 
-// detachedGate returns the shared bound for detached refreshes: the lake reader's own gate when it
-// exposes one (one global bound across all explorer refreshes), else a handler-local gate with the
-// same limit (test stubs).
+// detachedGate returns the shared bound for detached refreshes: the lake reader's own gate when it exposes one, else a handler-local gate
+// with the same limit (test stubs).
 func (h *Handler) detachedGate() *clickhouse.RefreshGate {
 	h.refreshGateOnce.Do(func() {
 		if p, ok := h.Reader.(interface {
@@ -363,9 +346,8 @@ func (h *Handler) detachedGate() *clickhouse.RefreshGate {
 	return h.refreshGate
 }
 
-// writeJSONAt writes data with an explicit envelope as_of when the seam is
-// wired, degrading to the plain WriteJSON (as_of = now) when not — test
-// handlers that only wire WriteJSON keep working unchanged.
+// writeJSONAt writes data with an explicit envelope as_of when the seam is wired, else plain WriteJSON (as_of = now), so test handlers that
+// only wire WriteJSON keep working.
 func (h *Handler) writeJSONAt(w http.ResponseWriter, data any, stale, degraded bool, asOf time.Time) {
 	if h.WriteJSONAt != nil && (!asOf.IsZero() || degraded) {
 		h.WriteJSONAt(w, data, stale, degraded, asOf)
@@ -392,9 +374,8 @@ func (h *Handler) unavailable(w http.ResponseWriter, r *http.Request) {
 		"This deployment hasn't wired the ClickHouse explorer reader (ADR-0038).")
 }
 
-// parseUint32Query parses an optional uint32 query param (e.g. ?before=).
-// Returns 0 when absent. ok=false (after writing a problem+json) on a
-// malformed value.
+// parseUint32Query parses an optional uint32 query param (e.g. ?before=): 0 when absent; ok=false (after a problem+json) on a malformed
+// value.
 func (h *Handler) parseUint32Query(w http.ResponseWriter, r *http.Request, name string) (uint32, bool) {
 	raw := r.URL.Query().Get(name)
 	if raw == "" {
@@ -410,9 +391,8 @@ func (h *Handler) parseUint32Query(w http.ResponseWriter, r *http.Request, name 
 	return uint32(n), true
 }
 
-// encodeCursor renders a keyset position as an opaque dotted-decimal ?cursor= ("63000000.4.7").
-// The component count matches the listing's ORDER BY arity (2 account txs; 3 account ops and
-// contract events).
+// encodeCursor renders a keyset position as an opaque dotted-decimal ?cursor= ("63000000.4.7"); the component count matches the listing's
+// ORDER BY arity (2 account txs; 3 account ops and contract events).
 func encodeCursor(parts ...uint32) string {
 	ss := make([]string, len(parts))
 	for i, p := range parts {
@@ -421,9 +401,8 @@ func encodeCursor(parts ...uint32) string {
 	return strings.Join(ss, ".")
 }
 
-// parseExplorerCursor decodes the optional ?cursor= into an ExplorerCursor with exactly `parts`
-// components; absent is the zero cursor (first page). ok=false (after a problem+json) on a
-// malformed value or a zero ledger, since a real cursor always points past an actual row.
+// parseExplorerCursor decodes the optional ?cursor= into an ExplorerCursor with exactly `parts` components; absent is the zero cursor.
+// ok=false (after a problem+json) on a malformed value or zero ledger, since a real cursor points past an actual row.
 func (h *Handler) parseExplorerCursor(w http.ResponseWriter, r *http.Request, parts int) (clickhouse.ExplorerCursor, bool) {
 	raw := r.URL.Query().Get("cursor")
 	if raw == "" {

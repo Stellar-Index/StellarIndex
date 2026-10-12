@@ -15,12 +15,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// SEP41MovementsReader is the Postgres read seam for the sep41_transfers recent-tail half of the ADR-0048 D5 merge; nil serves the ClickHouse archive alone with a coverage_note.
+// SEP41MovementsReader is the Postgres read seam for the sep41_transfers recent-tail half of the ADR-0048 D5 merge; nil serves the
+// ClickHouse archive alone with a coverage_note.
 type SEP41MovementsReader interface {
 	ListSEP41TransfersByAddress(ctx context.Context, address string, limit int, cur timescale.SEP41TransferCursor, direction, contractID string, floorLedger uint32) ([]timescale.SEP41TransferRow, error)
 }
 
-// AccountMovementEntry is one row of GET /v1/accounts/{g_strkey}/movements (ADR-0048 D5); Amount is a string (ADR-0003), Decimals omitted when unresolved so clients never guess an exponent.
+// AccountMovementEntry is one row of GET /v1/accounts/{g_strkey}/movements (ADR-0048 D5); Amount is a string (ADR-0003), Decimals
+// omitted when unresolved so clients never guess an exponent.
 type AccountMovementEntry struct {
 	Ledger          uint32         `json:"ledger"`
 	LedgerCloseTime string         `json:"ledger_close_time"`
@@ -50,7 +52,8 @@ type AccountMovementsView struct {
 	Coverage []MovementKindCoverage `json:"coverage"`
 }
 
-// MovementKindCoverage states what the feed serves for one kind family: Status "served", "partial" or "not_served", with inclusive ledger bounds omitted when not served.
+// MovementKindCoverage states what the feed serves for one kind family: Status "served", "partial" or "not_served", with inclusive
+// ledger bounds omitted when not served.
 type MovementKindCoverage struct {
 	Kind          string `json:"kind"`
 	Status        string `json:"status"`
@@ -65,10 +68,8 @@ const (
 	accountMovementsMaxLimit     = 200
 )
 
-// parseMovementFilter reads the optional ?kind= / ?direction= / ?asset= params. An invalid
-// direction writes a problem+json and returns ok=false. An unrecognized kind is not an error, it
-// just matches nothing. asset is canonicalised when it parses as an asset id and passed through
-// verbatim otherwise, because the movements asset domain is wider than ParseAsset's.
+// parseMovementFilter reads optional ?kind= / ?direction= / ?asset=. An invalid direction is a problem+json (ok=false); an unknown kind
+// matches nothing. asset is canonicalised if it parses as an asset id, else passed verbatim.
 func (h *Handler) parseMovementFilter(w http.ResponseWriter, r *http.Request) (clickhouse.AccountMovementFilter, bool) {
 	f := clickhouse.AccountMovementFilter{
 		Kind:  r.URL.Query().Get("kind"),
@@ -88,10 +89,8 @@ func (h *Handler) parseMovementFilter(w http.ResponseWriter, r *http.Request) (c
 	return f, true
 }
 
-// normalizeMovementAssetFilter folds ?asset= to the canonical spelling the stores hold ("native" /
-// "CODE-ISSUER"). The SQL filter is exact-match, so "XLM", "crypto:XLM" or "USDC:G..." would
-// otherwise serve an authoritative-looking empty feed. Non-asset values (pool:<hex> legs, raw C...
-// contract ids) pass through verbatim and must not 400.
+// normalizeMovementAssetFilter folds ?asset= to the stores' spelling ("native" / "CODE-ISSUER"); the filter is exact-match, so "XLM"
+// would serve an authoritative-looking empty feed. Non-asset values (pool:<hex> legs, raw C... ids) pass through verbatim.
 func normalizeMovementAssetFilter(raw string) string {
 	if raw == "" {
 		return ""
@@ -106,9 +105,8 @@ func normalizeMovementAssetFilter(raw string) string {
 	return parsed.String()
 }
 
-// movementCursorParts is the (ledger, tx_hash, op_index, leg_index) tuple the opaque `?cursor=`
-// encodes. It means the same on both sides of the merge: leg_index on the CH side maps 1:1 to
-// event_index on the PG side.
+// movementCursorParts is the (ledger, tx_hash, op_index, leg_index) tuple the opaque `?cursor=` encodes; leg_index on the CH side maps
+// 1:1 to event_index on PG.
 type movementCursorParts struct {
 	Ledger   uint32
 	TxHash   string
@@ -126,9 +124,8 @@ func encodeMovementCursor(r clickhouse.AccountMovementRow, pinnedWatermark uint3
 	return fmt.Sprintf("%d.%s.%d.%d.%d", r.Ledger, r.TxHash, r.OpIndex, r.LegIndex, pinnedWatermark)
 }
 
-// parseMovementCursor decodes the dotted `?cursor=` (tx_hash is fixed 64-char hex, so it never
-// contains '.'). An optional 5th segment is the pinned cap67 watermark. A malformed value writes
-// a problem+json and returns ok=false.
+// parseMovementCursor decodes the dotted `?cursor=` (tx_hash is fixed 64-char hex, so never contains '.'). An optional 5th segment is
+// the pinned cap67 watermark. Malformed values write a problem+json and return ok=false.
 func (h *Handler) parseMovementCursor(w http.ResponseWriter, r *http.Request) (movementCursorParts, bool) {
 	raw := r.URL.Query().Get("cursor")
 	if raw == "" {
@@ -172,7 +169,8 @@ func (h *Handler) parseMovementCursor(w http.ResponseWriter, r *http.Request) (m
 	return out, true
 }
 
-// AccountMovements serves GET /v1/accounts/{g_strkey}/movements (ADR-0048 D5), merging ClickHouse below movementsSplit's pgFloor with Postgres sep41_transfers at or above it; CoverageNote flags an empty CH table.
+// AccountMovements serves GET /v1/accounts/{g_strkey}/movements (ADR-0048 D5), merging ClickHouse below movementsSplit's pgFloor with
+// Postgres sep41_transfers at or above it; CoverageNote flags an empty CH table.
 func (h *Handler) AccountMovements(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)
@@ -250,18 +248,8 @@ func (h *Handler) AccountMovements(w http.ResponseWriter, r *http.Request) {
 	h.writeJSONAt(w, out, h.movementsStale(ctx, wm), wmFailed, time.Time{})
 }
 
-// movementsWatermark resolves the cap67 watermark that splits a page between the ClickHouse
-// archive and the Postgres tail. One value drives both the CH ceiling and the PG floor, so the
-// arms stay gap-free and double-count-free while the derive is mid-catch-up.
-//
-// A paginated scroll reuses the value page 1 pinned into next_cursor. The pin is client-supplied,
-// so it is re-validated against the live value: a pin above it would ceiling CH at ledgers not yet
-// derived and floor PG above them, dropping that range from both arms. A lower pin is only more
-// conservative.
-//
-// A read error fails closed to wm=0: the static P23 boundary keeps the arms disjoint, the coverage
-// note discloses the reduced scope, and no pin is trusted. failed reports the error; the caller
-// serves a degraded 200.
+// movementsWatermark resolves the cap67 watermark splitting a page between the CH archive and the PG tail, so arms stay gap- and double-
+// count-free. A client pin is re-validated; a read error fails closed to wm=0 (static P23 boundary) and failed is reported.
 func (h *Handler) movementsWatermark(ctx context.Context, w http.ResponseWriter, r *http.Request, cur movementCursorParts) (wm uint32, failed, ok bool) {
 	liveWM, err := h.Reader.Cap67MovementsWatermark(ctx)
 	if err != nil {
@@ -280,9 +268,8 @@ func (h *Handler) movementsWatermark(ctx context.Context, w http.ResponseWriter,
 	return postP23Boundary(cur.PinnedWatermark), false, true
 }
 
-// postP23Boundary folds a watermark below the P23 floor to 0: it covers no
-// post-P23 ledger, so the feed's scope (and coverage note) is the no-archive
-// one rather than "all assets through" a pre-P23 ledger.
+// postP23Boundary folds a watermark below the P23 floor to 0: it covers no post-P23 ledger, so the feed gets the no-archive scope and
+// coverage note.
 func postP23Boundary(wm uint32) uint32 {
 	if wm < timescale.MovementsFloor() {
 		return 0
@@ -290,14 +277,8 @@ func postP23Boundary(wm uint32) uint32 {
 	return wm
 }
 
-// movementsSplit maps the watermark to the CH arm's inclusive ledger ceiling and the PG tail's
-// inclusive floor, with pgFloor == chCeiling+1 so no ledger falls between the arms.
-//
-// The ceiling is never below the static P23 boundary: the classic archive owns everything under
-// it and the tail never reads beneath it, so a lower watermark would hide pre-P23 history from
-// both arms. With wm == 0 the ceiling is that boundary, so cap67_derived rows do not double-list
-// with the tail; it is a SQL predicate, not a post-read trim. Ceiling 0 is reachable and serves
-// nothing, hence HasMaxLedger rather than a MaxLedger>0 sentinel.
+// movementsSplit maps the watermark to the CH arm's inclusive ledger ceiling and the PG tail's floor (pgFloor == chCeiling+1, no gap).
+// The ceiling is never below the static P23 boundary, else pre-P23 history hides from both arms; ceiling 0 is reachable (HasMaxLedger).
 func movementsSplit(wm uint32) (chCeiling, pgFloor uint32) {
 	chCeiling = timescale.MovementsFloor() - 1
 	if wm > chCeiling {
@@ -306,15 +287,12 @@ func movementsSplit(wm uint32) (chCeiling, pgFloor uint32) {
 	return chCeiling, chCeiling + 1
 }
 
-// cap67MovementsStaleLedgers is how far the lake tip may run past the all-assets archive boundary
-// before the feed is flagged stale: ~300 s of ~5 s ledgers, matching lakeStaleThreshold. The
-// derive tracks the tip every 1-30 s, so a larger lag means it stopped or hit a lake hole.
+// cap67MovementsStaleLedgers is how far the lake tip may run past the archive boundary before the feed is stale: ~300 s of ~5 s ledgers,
+// matching lakeStaleThreshold. The derive tracks the tip every 1-30 s, so more lag means it stopped or hit a lake hole.
 const cap67MovementsStaleLedgers uint32 = 60
 
-// movementsStale is the feed's flags.stale: the lake is stale, or the archive boundary `wm`
-// trails the lake tip by more than [cap67MovementsStaleLedgers]. wm == 0 (no archive) is not
-// stale because the coverage note already scopes it. An unwired or unreadable lake watermark
-// degrades to not-stale, as on every lake surface.
+// movementsStale is the feed's flags.stale: the lake is stale, or `wm` trails the lake tip by more than [cap67MovementsStaleLedgers].
+// wm == 0 (no archive) is not stale (the coverage note scopes it), and an unreadable lake watermark degrades to not-stale.
 func (h *Handler) movementsStale(ctx context.Context, wm uint32) bool {
 	if h.LakeWatermark == nil {
 		return false
@@ -326,10 +304,8 @@ func (h *Handler) movementsStale(ctx context.Context, wm uint32) bool {
 	return lakeStale || (wm > 0 && tip > wm && tip-wm > cap67MovementsStaleLedgers)
 }
 
-// fetchSEP41MovementsTail reads and maps the Postgres recent-tail half of the merge. A non-empty
-// coverageNote (no reader, or read failed) degrades rather than fails the request: the ClickHouse
-// archive is still a valid if recency-incomplete answer. Kind filters that cannot match a PG-tail
-// row (all are movement_kind="transfer") skip the round-trip.
+// fetchSEP41MovementsTail reads the Postgres recent-tail half of the merge. A non-empty coverageNote (no reader, read failed) degrades
+// rather than fails the request; kind filters that cannot match a PG-tail row (all are "transfer") skip the round-trip.
 func (h *Handler) fetchSEP41MovementsTail(ctx context.Context, address string, limit int, cur movementCursorParts, filter clickhouse.AccountMovementFilter, floorLedger uint32) ([]clickhouse.AccountMovementRow, string) {
 	if h.SEP41Movements == nil {
 		return nil, fmt.Sprintf("this deployment has not wired the recent Postgres tail reader; showing only the movement archive, which ends before ledger %d", floorLedger)
@@ -347,24 +323,14 @@ func (h *Handler) fetchSEP41MovementsTail(ctx context.Context, address string, l
 	return h.mapSEP41RowsToMovements(ctx, address, rows, filter.Asset), ""
 }
 
-// movementsCoverageNote is the feed's honest-scope statement, chosen by the cap67 watermark.
-// tailNote (a tail availability failure) takes priority: data is missing beyond the structural
-// scope.
-//
-// wm == 0: the cap67-derived archive is not provisioned, so post-P23 coverage is the
-// watched-token Postgres tail only and classic XLM payment history after the boundary is absent;
-// saying so keeps a busy XLM account's feed from masquerading as complete.
-//
-// wm > 0: all assets are served through the watermark; only the sliver above it is
-// watched-tokens-only. The watermark is a progress marker, not a verdict, so the note must not
-// call it complete. Every variant ends with movementsKindGapNote, which scopes kinds too.
+// movementsCoverageNote is the feed's honest-scope statement by cap67 watermark; tailNote (a tail failure) wins. wm == 0: only the
+// watched-token PG tail covers post-P23. wm > 0: all assets through the watermark, a progress marker not a verdict, so never "complete".
 func movementsCoverageNote(wm uint32, tailNote string, supply supplyRange) string {
 	return movementsArchiveNote(wm, tailNote) + "; " + movementsKindGapNote(supply)
 }
 
-// movementsCoverage is the structured form of movementsCoverageNote. Fees
-// and order-book fills are never served on this feed, so they are always
-// reported not_served rather than omitted.
+// movementsCoverage is the structured form of movementsCoverageNote; fees and order-book fills are never served, so always reported
+// not_served.
 func movementsCoverage(wm uint32, tailNote string, supply supplyRange) []MovementKindCoverage {
 	floor := timescale.MovementsFloor()
 	transfer := MovementKindCoverage{Kind: "transfer", Status: "served", FromLedger: floor, ThroughLedger: wm}
@@ -391,10 +357,8 @@ func movementsCoverage(wm uint32, tailNote string, supply supplyRange) []Movemen
 // over; from 0 means none.
 type supplyRange struct{ from, thru uint32 }
 
-// movementsSupplyRange reads the range the derive recorded as covered with the supply kinds,
-// clamped to this page's (possibly pinned) watermark. Earlier-derived ledgers are outside it until
-// backfilled, so the note states the recorded range, never P23..watermark. A read error reads as
-// none: the note must not over-claim.
+// movementsSupplyRange reads the range the derive recorded as covered with the supply kinds, clamped to this page's watermark; the note
+// states the recorded range, never P23..watermark. A read error reads as none: the note must not over-claim.
 func (h *Handler) movementsSupplyRange(ctx context.Context, wm uint32) supplyRange {
 	if wm == 0 {
 		return supplyRange{}
@@ -411,10 +375,8 @@ func (h *Handler) movementsSupplyRange(ctx context.Context, wm uint32) supplyRan
 	return supplyRange{from: from, thru: thru}
 }
 
-// movementsKindGapNote names what each arm serves by kind. The cap67 archive
-// carries mint, burn and clawback over the supply range only; elsewhere from
-// P23 on, and in the Postgres tail, it is `transfer` alone; classicmovements
-// has no fee or order-book-fill kind at any epoch.
+// movementsKindGapNote names what each arm serves by kind: the cap67 archive carries mint, burn and clawback over the supply range only,
+// elsewhere from P23 on (and in the PG tail) `transfer` alone; classicmovements has no fee or order-book-fill kind at any epoch.
 func movementsKindGapNote(supply supplyRange) string {
 	const noFees = ", and order-book fills are not served at any ledger; fees are not movements (ADR-0047 D3) " +
 		"and are shown per transaction as fee_charged"
@@ -434,10 +396,8 @@ func movementsKindGapNote(supply supplyRange) string {
 		"transfer movements only", from, supply.thru) + noFees
 }
 
-// movementsKindNote replaces the archive note under a ?kind= filter other
-// than transfer, naming the ledgers that kind can match: the CAP-67 supply
-// kinds only the supply range (clawback the pre-P23 classic archive too),
-// every other kind only before P23.
+// movementsKindNote replaces the archive note under a ?kind= other than transfer, naming the ledgers it can match: the CAP-67 supply
+// kinds only the supply range (clawback also pre-P23 classic), every other kind only before P23.
 func movementsKindNote(kind string, supply supplyRange) string {
 	floor := timescale.MovementsFloor()
 	switch kind {
@@ -480,15 +440,8 @@ func movementsArchiveNote(wm uint32, tailNote string) string {
 		"the archive follows the tip (near real-time)", wm)
 }
 
-// mapSEP41RowsToMovements converts sep41_transfers 'transfer' rows into clickhouse.AccountMovementRow
-// (direction/counterparty against `address`, as clickhouse.FanOutAccountMovement does) so the
-// merge works on one type.
-//
-// `asset` must read the same canonical form the CH rows use, but the table stores the raw
-// contract_id. Each DISTINCT contract_id in the page (cost bounded by page size) resolves through
-// SACClassicAssetName then SACAssetFromEvents, else stays the raw id (Soroban-native token).
-// Re-checking the resolved name against a non-empty assetFilter drops a raw C... filter naming a
-// SAC, whose rows render as the classic asset and so match nothing.
+// mapSEP41RowsToMovements converts sep41_transfers 'transfer' rows to clickhouse.AccountMovementRow. Each DISTINCT contract_id resolves
+// to the CH canonical asset form; a non-empty assetFilter is re-checked, so a raw C... filter naming a SAC matches nothing.
 func (h *Handler) mapSEP41RowsToMovements(ctx context.Context, address string, rows []timescale.SEP41TransferRow, assetFilter string) []clickhouse.AccountMovementRow {
 	if len(rows) == 0 {
 		return nil
@@ -540,23 +493,15 @@ func (h *Handler) mapSEP41RowsToMovements(ctx context.Context, address string, r
 	return out
 }
 
-// resolveSEP41MovementAsset resolves a SEP-41 token contract_id to its display form: the wrapped
-// classic asset's name for a SAC (SACClassicAssetName, then an event-topic fallback for a SAC
-// whose wrap is not yet in ledger_entries_current), else the raw contract_id.
-//
-// The event-topic hint is attacker-influenceable and MUST be cross-checked: sep41_transfers
-// ingests ANY token contract, so a hostile token can emit a sep0011 topic claiming a trusted
-// asset (e.g. Circle USDC). sacAssetViaEvents re-derives the SAC address from the claimed asset
-// and trusts the label only when it equals contractID; otherwise the raw contract_id is shown.
-// A proven SAC is memoised across requests.
+// resolveSEP41MovementAsset resolves a SEP-41 contract_id to its display form: a SAC's wrapped asset name, else the raw id. The event-topic
+// fallback is attacker-influenceable (a hostile token can claim USDC): trusted only when the re-derived SAC address equals contractID.
 func (h *Handler) resolveSEP41MovementAsset(ctx context.Context, contractID string) string {
 	name, _ := h.resolveSEP41MovementAssetChecked(ctx, contractID)
 	return name
 }
 
-// resolveSEP41MovementAssetChecked also reports lookupFailed: the SAC
-// metadata read errored and no event-topic proof recovered, so the returned
-// contract id may be a SAC we could not fold, not a proven non-SAC.
+// resolveSEP41MovementAssetChecked also reports lookupFailed: the SAC metadata read errored and no event-topic proof recovered, so the
+// returned contract id may be a SAC we could not fold, not a proven non-SAC.
 func (h *Handler) resolveSEP41MovementAssetChecked(ctx context.Context, contractID string) (name string, lookupFailed bool) {
 	if name, ok := h.sacNames.get(contractID); ok {
 		return name, false
@@ -586,10 +531,8 @@ func (h *Handler) resolveSEP41AssetUncached(ctx context.Context, contractID stri
 // of distinct SACs costs lake reads (as with no memo), never memory.
 const sacNameMemoMax = 4096
 
-// sacNameMemo remembers contracts proven to be a SAC. A SAC's address is
-// derived from the asset it wraps and its executable cannot be upgraded,
-// so a hit never goes stale; a miss is not kept, since the lake may yet
-// capture the instance. Zero value ready to use.
+// sacNameMemo remembers contracts proven to be a SAC. A SAC's address derives from the asset it wraps and its executable cannot be
+// upgraded, so a hit never goes stale; a miss is not kept, since the lake may yet capture the instance. Zero value ready to use.
 type sacNameMemo struct {
 	mu    sync.Mutex
 	names map[string]string
@@ -611,11 +554,8 @@ func (m *sacNameMemo) put(contractID, name string) {
 	m.names[contractID] = name
 }
 
-// sep41AssetScope maps a normalized ?asset= value to the one sep41_transfers contract_id whose
-// rows can render as it, so the Postgres arm filters before its LIMIT. A native/classic asset's
-// only SEP-41 contract is its SAC, derived from the asset itself (the trust anchor
-// sacAssetViaEvents also uses); label is what those rows render as. Any other value can only equal
-// a raw contract_id, with label "". An empty filter returns "", "".
+// sep41AssetScope maps a normalized ?asset= to the one sep41_transfers contract_id whose rows can render as it, so the PG arm filters
+// before its LIMIT. A native/classic asset's only SEP-41 contract is its derived SAC; any other value can only equal a raw id.
 func sep41AssetScope(assetFilter string) (contractID, label string) {
 	if assetFilter == "" {
 		return "", ""
@@ -631,9 +571,8 @@ func sep41AssetScope(assetFilter string) (contractID, label string) {
 	return sac, parsed.String()
 }
 
-// canonicalizeSACName folds a SAC instance-METADATA asset name
-// ("native" / "CODE:ISSUER") to the canonical asset_id spelling
-// ("native" / "CODE-ISSUER"). Unparseable input returns unchanged.
+// canonicalizeSACName folds a SAC instance-metadata asset name ("native" / "CODE:ISSUER") to the asset_id spelling ("native" / "CODE-
+// ISSUER"). Unparseable input returns unchanged.
 func canonicalizeSACName(name string) string {
 	if name == "native" {
 		return canonical.NativeAsset().String()
@@ -649,10 +588,8 @@ func canonicalizeSACName(name string) string {
 	return asset.String()
 }
 
-// assertMovementsNonOverlap checks ADR-0048 D5's non-overlap rule at the merge boundary pgFloor:
-// CH serves strictly below it, PG at or above. Without a watermark pgFloor is
-// timescale.MovementsFloor(), pinned to the P23 ledger by TestP23BoundaryConstantsAgree. A
-// violation means a floor or ceiling regressed; it is logged rather than panicking a read path.
+// assertMovementsNonOverlap checks ADR-0048 D5's non-overlap rule at pgFloor: CH serves strictly below it, PG at or above. Without a
+// watermark pgFloor is timescale.MovementsFloor() (TestP23BoundaryConstantsAgree). A violation is logged, not a panic.
 func (h *Handler) assertMovementsNonOverlap(chRows, pgRows []clickhouse.AccountMovementRow, pgFloor uint32) {
 	for _, row := range chRows {
 		if row.Ledger >= pgFloor {
@@ -668,10 +605,8 @@ func (h *Handler) assertMovementsNonOverlap(chRows, pgRows []clickhouse.AccountM
 	}
 }
 
-// mergeAccountMovementRows merges two DESCENDING-sorted (ledger, tx_hash, op_index, leg_index)
-// row sets (CH archive page and mapped Postgres tail page) into one descending result truncated
-// to limit. It is a real two-pointer merge, not a concatenation, so it stays correct even if the
-// inputs' ledger ranges ever overlap.
+// mergeAccountMovementRows is a two-pointer merge (not a concatenation) of two DESCENDING-sorted (ledger, tx_hash, op_index, leg_index)
+// row sets, truncated to limit, so it stays correct even if the inputs' ledger ranges ever overlap.
 func mergeAccountMovementRows(a, b []clickhouse.AccountMovementRow, limit int) []clickhouse.AccountMovementRow {
 	if limit <= 0 {
 		return nil
@@ -720,9 +655,8 @@ const classicAmountDecimals = 7
 // page of many distinct Soroban tokens cannot stretch the request.
 const movementDecimalsBudget = 2 * time.Second
 
-// accountMovementEntries renders the merged page, resolving each distinct
-// asset's decimals once (the feed spans every token contract since
-// ADR-0048, so the scale is per asset, never a feed-wide 7).
+// accountMovementEntries renders the merged page, resolving each distinct asset's decimals once: the feed spans every token contract
+// (ADR-0048), so the scale is per asset, never a feed-wide 7.
 func (h *Handler) accountMovementEntries(ctx context.Context, merged []clickhouse.AccountMovementRow) []AccountMovementEntry {
 	dctx, cancel := context.WithTimeout(ctx, movementDecimalsBudget)
 	defer cancel()
@@ -748,9 +682,8 @@ func (h *Handler) assetScales(ctx context.Context) func(asset string) *int {
 	}
 }
 
-// movementAssetDecimals returns a movement asset's smallest-unit scale, or
-// nil when it is unknown: an unrecognised asset spelling, no decimals seam,
-// or a failed contract read.
+// movementAssetDecimals returns a movement asset's smallest-unit scale, or nil when unknown (unrecognised spelling, no decimals seam,
+// failed read).
 func (h *Handler) movementAssetDecimals(ctx context.Context, asset string) *int {
 	if strings.HasPrefix(asset, "pool:") {
 		d := classicAmountDecimals

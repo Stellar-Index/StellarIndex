@@ -6,10 +6,12 @@ import (
 	"net/http"
 )
 
-// HeaderRequestID is the canonical header name; client-supplied values are accepted so traces correlate across services, else a fresh one is minted.
+// HeaderRequestID is the canonical header name; client-supplied values are accepted so traces correlate across services, else a fresh
+// one is minted.
 const HeaderRequestID = "X-Request-ID"
 
-// RequestID ensures every request has an X-Request-ID; an incoming one is kept only if trace-safe (alphanum, `-`, `_`, `.`, up to 128 bytes), else a random 16-byte hex ID replaces it.
+// RequestID ensures every request has an X-Request-ID; an incoming one is kept only if trace-safe (alphanum, `-`, `_`, `.`, up to 128
+// bytes), else a random 16-byte hex ID replaces it.
 func RequestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.Header.Get(HeaderRequestID)
@@ -27,9 +29,8 @@ func RequestID(next http.Handler) http.Handler {
 	})
 }
 
-// isSafeRequestID accepts non-empty strings up to 128 bytes of alphanum, `-`, `_` and `.`.
-// Anything else (CR/LF, spaces, quotes, unicode) is rejected so headers stay valid and logs
-// are free of injection.
+// isSafeRequestID accepts non-empty strings up to 128 bytes of alphanum, `-`, `_` and `.`; anything else (CR/LF, spaces,
+// quotes, unicode) is rejected so headers stay valid and logs injection-free.
 func isSafeRequestID(s string) bool {
 	if s == "" || len(s) > 128 {
 		return false
@@ -49,9 +50,7 @@ func isSafeRequestID(s string) bool {
 	return true
 }
 
-// generateRequestID produces a 32-char hex identifier from 16 bytes
-// of crypto/rand. Panics only if the OS entropy source fails —
-// same bar as any crypto code.
+// generateRequestID produces a 32-char hex ID from 16 crypto/rand bytes; panics only if the OS entropy source fails.
 func generateRequestID() string {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {

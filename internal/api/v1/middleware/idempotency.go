@@ -12,7 +12,8 @@ import (
 // IdempotencyKeyHeader is the header a client supplies to make a state-changing POST safe to retry; see [Idempotency].
 const IdempotencyKeyHeader = "Idempotency-Key"
 
-// MaxIdempotencyKeyLen caps the caller-supplied header so a hostile value can't grow the in-memory store unbounded; mirrors MaxRateLimitKeyLen.
+// MaxIdempotencyKeyLen caps the caller-supplied header so a hostile value can't grow the in-memory store unbounded; mirrors
+// MaxRateLimitKeyLen.
 const MaxIdempotencyKeyLen = 256
 
 // DefaultIdempotencyTTL is how long a captured response stays eligible for replay.
@@ -27,13 +28,13 @@ type idempotencyRecord struct {
 	expiresAt time.Time
 }
 
-// IdempotencyStore is a process-local, TTL-bounded cache of recent idempotent responses, safe for concurrent use; dedup is lost across restarts and replicas.
+// IdempotencyStore is a process-local, TTL-bounded cache of recent idempotent responses, safe for concurrent use; dedup is lost across
+// restarts and replicas.
 type IdempotencyStore struct {
 	mu      sync.Mutex
 	entries map[string]idempotencyRecord
-	// inFlight holds keys whose first request is still running. A
-	// timed-out client's retry typically lands while the original is
-	// still committing; without this both run and mint twice.
+	// inFlight holds keys whose first request is still running: a timed-out client's retry lands while the original commits,
+	// and without this both run and mint twice.
 	inFlight map[string]struct{}
 	ttl      time.Duration
 	now      func() time.Time
@@ -61,9 +62,8 @@ const (
 	claimInFlight                         // the first request is still running: 409
 )
 
-// begin atomically resolves key to a replay, an in-flight conflict, or
-// a fresh claim. A proceed verdict marks key in flight; the caller must
-// call finish exactly once.
+// begin atomically resolves key to a replay, an in-flight conflict or a fresh claim. A proceed verdict marks key in flight;
+// the caller must call finish exactly once.
 func (s *IdempotencyStore) begin(key string) (idempotencyRecord, idempotencyClaim) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -87,12 +87,8 @@ func (s *IdempotencyStore) finish(key string) {
 	delete(s.inFlight, key)
 }
 
-// put stores a captured response unless a still-live entry already occupies key. First writer
-// wins, so near-simultaneous duplicates converge on the FIRST response.
-//
-// Every call also sweeps expired entries: a key used exactly once is never replayed, so
-// begin()'s eviction never reaches it, and the map would otherwise grow for the process
-// lifetime. This bounds it to about one TTL of traffic with no extra goroutine.
+// put stores a captured response unless a live entry holds key (first writer wins, so duplicates converge on the FIRST response).
+// Every call also sweeps expired entries: begin() never reaches a key used once, so this bounds the map to ~one TTL of traffic.
 func (s *IdempotencyStore) put(key string, status int, header http.Header, body []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -137,7 +133,8 @@ func (rec *idempotencyRecorder) Write(b []byte) (int, error) {
 	return rec.ResponseWriter.Write(b)
 }
 
-// Idempotency replays the ORIGINAL 2xx response for a repeated Idempotency-Key within the store's TTL; scoped per subject, method and path, and only 2xx is cached so fixed errors are not frozen.
+// Idempotency replays the ORIGINAL 2xx response for a repeated Idempotency-Key within the store's TTL; scoped per subject, method and
+// path, and only 2xx is cached so fixed errors are not frozen.
 func Idempotency(store *IdempotencyStore, subjectKeyFn func(*http.Request) string) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

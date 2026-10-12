@@ -28,7 +28,8 @@ const SessionCookieName = "__Host-stellarindex_session"
 // MagicLinkPlaintextLen is the random-byte length of magic-link tokens: 256 bits, preimage-safe.
 const MagicLinkPlaintextLen = 32
 
-// SessionTokenLen is the random-byte length of the session token; the DB stores only sha256(token), so read access to sessions is not replayable.
+// SessionTokenLen is the random-byte length of the session token; the DB stores only sha256(token), so read access to sessions is not
+// replayable.
 const SessionTokenLen = 32
 
 // HashSessionToken returns sha256 of a session cookie token; sessions are stored and looked up by this hash, never the plaintext.
@@ -37,9 +38,8 @@ func HashSessionToken(token string) []byte {
 	return sum[:]
 }
 
-// generateMagicLinkToken returns (plaintext, sha256-hash, code): the plaintext goes in the email
-// link, the hash is stored in magic_link_tokens, and the paste-friendly 6-digit code is derived
-// under secret (see [Generator.CodeForHash]). read is the entropy source; tests inject one.
+// generateMagicLinkToken returns (plaintext, sha256-hash, code): the hash is what is stored, and the
+// 6-digit code is derived under secret (see [Generator.CodeForHash]). read is injectable for tests.
 func generateMagicLinkToken(read func([]byte) (int, error), secret []byte) (plaintext string, hash []byte, code string, err error) {
 	buf := make([]byte, MagicLinkPlaintextLen)
 	n, err := read(buf)
@@ -59,17 +59,8 @@ func generateMagicLinkToken(read func([]byte) (int, error), secret []byte) (plai
 // loginCodeDomain domain-separates the code HMAC from other uses of the server secret.
 const loginCodeDomain = "stellarindex/login-code/v1|"
 
-// codeFromHashKeyed derives the 6-digit email code from a stored token hash
-// UNDER A SERVER-SIDE SECRET.
-//
-// Keyed because an unkeyed code would be a public function of magic_link_tokens.token_hash:
-// anyone who could read that table (stolen backup, SQL injection, operator) could compute every
-// in-flight code and mint a session via POST /v1/auth/verify-code without email access.
-//
-// The code is HMAC-SHA256(secret, domain || token_hash) reduced to 6 digits. The secret lives in
-// config/env, never Postgres, so a database read alone yields nothing and the online-guessing
-// bounds (per-token attempt cap, per-email lockout) are the only attack surface. The uint32 %
-// 10^6 reduction has negligible modulo bias (0.02%).
+// codeFromHashKeyed derives the 6-digit email code as HMAC-SHA256(secret, domain || token_hash). Keyed so a read of magic_link_tokens
+// alone cannot compute in-flight codes and mint sessions; the secret lives in config/env, never Postgres.
 func codeFromHashKeyed(secret, hash []byte) string {
 	if len(hash) < 4 {
 		// A malformed hash must not yield a guessable constant-derived code.
@@ -125,7 +116,8 @@ func (g *Generator) NewToken() (plaintext string, hash []byte, code string, err 
 	return generateMagicLinkToken(g.Read, g.Secret)
 }
 
-// CodeForHash re-derives the 6-digit code for a stored token hash; verify-code compares it in constant time and the code itself is never stored.
+// CodeForHash re-derives the 6-digit code for a stored token hash; verify-code compares it in constant time and the code itself is never
+// stored.
 func (g *Generator) CodeForHash(hash []byte) string {
 	return codeFromHashKeyed(g.Secret, hash)
 }
@@ -168,7 +160,8 @@ func (g *Generator) NewSessionID() (uuid.UUID, error) {
 
 type sessionKey struct{}
 
-// SessionContext is the dashboard subject derived from a valid session cookie, distinct from the bearer-derived auth.Subject; handlers prefer it on routes like /v1/account/me.
+// SessionContext is the dashboard subject derived from a valid session cookie, distinct from the bearer-derived auth.Subject; handlers
+// prefer it on routes like /v1/account/me.
 type SessionContext struct {
 	Session platform.Session
 	User    platform.User

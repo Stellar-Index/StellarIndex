@@ -15,11 +15,8 @@ import (
 //   - Any other parameter contributes `name=<set>`; the name distinguishes the shape (a cursor
 //     page is a different plan) and the value never appears.
 
-// shapeSafeParams are query parameters whose VALUES may be logged.
-//
-// A parameter belongs here only if its value is a fixed enumeration or bounded number AND changes
-// the query plan. Free-text, identifying and credential-bearing parameters are redacted by
-// omission.
+// shapeSafeParams are query parameters whose VALUES may be logged: only fixed enumerations or bounded numbers that change the query plan.
+// Free-text, identifying and credential-bearing parameters are redacted by omission.
 var shapeSafeParams = map[string]struct{}{
 	"limit":            {},
 	"order_by":         {},
@@ -65,7 +62,8 @@ func boundedLogField(s string, maxLen int) string {
 	return s
 }
 
-// QueryShape renders a request's query string as a deterministic, non-identifying shape (sorted, capped by maxShapeParts), or "" when there is none.
+// QueryShape renders a request's query string as a deterministic, non-identifying shape (sorted, capped by maxShapeParts), or "" when
+// there is none.
 func QueryShape(u *url.URL) string {
 	if u == nil || u.RawQuery == "" {
 		return ""

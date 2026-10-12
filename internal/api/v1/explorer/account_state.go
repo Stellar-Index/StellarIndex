@@ -15,7 +15,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// AccountsListView is GET /v1/accounts; `ranked_by` says whether ranking is total USD value or native XLM balance (lean networks with no price map).
+// AccountsListView is GET /v1/accounts; `ranked_by` says whether ranking is total USD value or native XLM balance (lean networks with no
+// price map).
 type AccountsListView struct {
 	PricedAssets int `json:"priced_assets"`
 	// RankedBy is the wealth basis: "usd" (holdings valued in USD) or
@@ -113,14 +114,8 @@ func (h *Handler) AccountsList(w http.ResponseWriter, r *http.Request) {
 	h.writeJSONAt(w, out, stale || snapshotStale, snapshotStale, snap.AsOf)
 }
 
-// usdPriceMap builds parallel (asset, price) arrays for wealth ranking: native XLM (key "native")
-// plus every browseable verified-currency asset with a USD price. Prices resolve through
-// LookupUSDPrice, so stablecoins pick up the fiat-proxy fallback (~$1) rather than dropping out
-// for want of a direct fiat:USD market.
-// usdPriceMapTTL caches that set. usdPriceMap makes SEQUENTIAL LookupUSDPrice calls (~8s), so the
-// TTL is deliberately above the 5-minute PrewarmAccountsWealth cadence: the entry is refreshed
-// before it expires and requests never pay the walk. 10 minutes stale is fine for a ranking
-// cached for 15.
+// usdPriceMapTTL caches usdPriceMap's SEQUENTIAL LookupUSDPrice walk (~8s: native XLM plus verified USD-priced assets, stablecoins via
+// fiat-proxy ~$1). Above the 5-minute PrewarmAccountsWealth cadence so entries refresh before expiry and requests never pay the walk.
 const usdPriceMapTTL = 10 * time.Minute
 
 // usdPriceMapEmptyTTL is shorter so a pricing outage clears quickly, yet
@@ -202,10 +197,8 @@ func (h *Handler) usdPriceMap(ctx context.Context) (assets, prices []string) {
 	}
 }
 
-// wealthRankingInputs returns the (asset, price) arrays to rank wealth by: the USD price map, or
-// the native-XLM fallback (key "native" priced at 1) when pricing is disabled or no aggregator
-// runs. The request path and the prewarmer both call it so the cache has one consistent basis
-// (wealthBasis derives it from these inputs).
+// wealthRankingInputs returns the (asset, price) arrays to rank wealth by: the USD price map, or native-XLM priced at 1 when pricing is
+// disabled. The request path and the prewarmer both call it so the cache has one basis (wealthBasis derives from these).
 func (h *Handler) wealthRankingInputs(ctx context.Context) (assets, prices []string) {
 	if h.PricingEnabled {
 		if a, p := h.usdPriceMap(ctx); len(a) > 0 {
@@ -234,9 +227,8 @@ func (h *Handler) usdPriceMapUncached(ctx context.Context) (assets, prices []str
 	return assets, prices
 }
 
-// priceableAssetIDs is the de-duplicated set of canonical asset ids priced for wealth ranking:
-// native XLM plus every browseable verified currency's asset (the catalogue can list one asset
-// under several currency entries, so dedup by id).
+// priceableAssetIDs is the de-duplicated set of asset ids priced for wealth ranking: native XLM plus every browseable verified currency
+// (the catalogue can list one asset under several currencies, hence dedup by id).
 func (h *Handler) priceableAssetIDs() []string {
 	keys := []string{"native"}
 	seen := map[string]struct{}{"native": {}}
@@ -261,7 +253,8 @@ func (h *Handler) priceableAssetIDs() []string {
 	return keys
 }
 
-// AccountStateView is GET /v1/accounts/{g_strkey}; balances are strings (ADR-0003) since stroop amounts past 2^53 lose precision as JSON numbers.
+// AccountStateView is GET /v1/accounts/{g_strkey}; balances are strings (ADR-0003) since stroop amounts past 2^53 lose precision as JSON
+// numbers.
 type AccountStateView struct {
 	AccountID string `json:"account_id"`
 	Exists    bool   `json:"exists"`
@@ -342,7 +335,8 @@ type OfferV struct {
 	PriceD  int32  `json:"price_d"`
 }
 
-// AccountState serves GET /v1/accounts/{g_strkey} from the lake; an account with no live AccountEntry gets `exists:false` (200, not 404), distinguishing "not captured" from a malformed request.
+// AccountState serves GET /v1/accounts/{g_strkey} from the lake; an account with no live AccountEntry gets `exists:false` (200, not
+// 404), distinguishing "not captured" from a malformed request.
 func (h *Handler) AccountState(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)
@@ -450,15 +444,8 @@ type AssetHolderV struct {
 	Balance   string `json:"balance"`
 }
 
-// isNativeHoldersAsset reports whether a requested asset form serves the native-XLM holders
-// board. Native has no trustlines (every account holds XLM in its AccountEntry), so the board
-// comes from the account-balance ranking under the single key "native", and the non-SAC members
-// of XLM's alias family (`native`, `crypto:XLM`, "XLM") fold into it: one cache entry, one
-// detached flight, one reader arm.
-//
-// The third member, the SAC wrapper C-address, is deliberately NOT folded in: it names the
-// wrapper's own Soroban `Balance(addr)` domain, a different holder set from classic AccountEntry
-// balances, and must not be mislabelled as the account board.
+// isNativeHoldersAsset reports whether an asset form serves the native-XLM holders board: `native`, `crypto:XLM` and "XLM" fold in;
+// the SAC C-address does NOT, because its Soroban `Balance(addr)` holder set differs from classic balances.
 func isNativeHoldersAsset(a canonical.Asset) bool {
 	if a.Type == canonical.AssetSoroban {
 		return false
@@ -471,7 +458,8 @@ func isNativeHoldersAsset(a canonical.Asset) bool {
 	return false
 }
 
-// AssetHolders serves GET /v1/assets/{asset_id}/holders: top holders by balance plus total count; native XLM reads the AccountEntry ranking, as a trustline read would give holder_count 0.
+// AssetHolders serves GET /v1/assets/{asset_id}/holders: top holders by balance plus total count; native XLM reads the AccountEntry
+// ranking, as a trustline read would give holder_count 0.
 func (h *Handler) AssetHolders(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)
@@ -571,7 +559,8 @@ func (h *Handler) writeAssetHoldersCSV(w http.ResponseWriter, r *http.Request, v
 	}
 }
 
-// PrewarmAccountsWealth primes the wealth-ranking cache (one ranking of top accountsWealthMaxLimit sliced per request, so limit is not a cache key) to avoid a ~23 s cold FINAL scan.
+// PrewarmAccountsWealth primes the wealth-ranking cache (one ranking of top accountsWealthMaxLimit sliced per request, so limit is not a
+// cache key) to avoid a ~23 s cold FINAL scan.
 func (h *Handler) PrewarmAccountsWealth(ctx context.Context) {
 	if h.Reader == nil {
 		return

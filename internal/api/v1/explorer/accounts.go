@@ -8,7 +8,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// AccountTransactionsView is GET /v1/accounts/{g_strkey}/transactions; NextCursor is an opaque composite (ledger, tx_index) keyset so many txs in one ledger never lose rows.
+// AccountTransactionsView is GET /v1/accounts/{g_strkey}/transactions; NextCursor is an opaque composite (ledger, tx_index) keyset so
+// many txs in one ledger never lose rows.
 type AccountTransactionsView struct {
 	Account      string          `json:"account"`
 	Transactions []TxSummaryView `json:"transactions"`
@@ -22,7 +23,8 @@ type AccountTransactionsView struct {
 	AsOfLedger uint32 `json:"as_of_ledger,omitempty"`
 }
 
-// AccountOperationsView is GET /v1/accounts/{g_strkey}/operations; NextCursor is an opaque composite (ledger, tx_index, op_index) keyset cursor.
+// AccountOperationsView is GET /v1/accounts/{g_strkey}/operations; NextCursor is an opaque composite (ledger, tx_index, op_index) keyset
+// cursor.
 type AccountOperationsView struct {
 	Account    string   `json:"account"`
 	Operations []OpView `json:"operations"`
@@ -37,16 +39,12 @@ type AccountOperationsView struct {
 	AsOfLedger uint32 `json:"as_of_ledger,omitempty"`
 }
 
-// accountScopeAll = sourced + incoming/participant activity (ADR-0038 Phase B;
-// the participant index is wired). Incoming coverage tracks participant-index
-// capture + backfill.
+// accountScopeAll = sourced + incoming/participant activity (ADR-0038 Phase B); incoming coverage tracks participant-index capture and
+// backfill.
 const accountScopeAll = "all"
 
-// parseAccountStrkey validates the {g_strkey} path segment, accepting a G-strkey or a muxed
-// M-strkey. A muxed address is resolved to its underlying G before the lake read, because ledger
-// state and account_movements' `address`/`counterparty` are keyed on G-strkey equality (see
-// baseAccountAddress in internal/sources/classicmovements/decode.go); otherwise muxed-attributed
-// rows are unreachable. ok=false (after a problem+json) on an invalid strkey.
+// parseAccountStrkey validates the {g_strkey} segment (G or muxed M); M resolves to its G first, since lake keys are on G equality
+// (baseAccountAddress in internal/sources/classicmovements/decode.go). ok=false after a problem+json.
 func (h *Handler) parseAccountStrkey(w http.ResponseWriter, r *http.Request) (string, bool) {
 	g := r.PathValue("g_strkey")
 	if canonical.IsMuxedAccount(g) {
@@ -63,7 +61,8 @@ func (h *Handler) parseAccountStrkey(w http.ResponseWriter, r *http.Request) (st
 	return g, true
 }
 
-// AccountTransactions serves GET /v1/accounts/{g_strkey}/transactions, those sourced by or involving the account, newest first (scope "all", ADR-0038 Phase B).
+// AccountTransactions serves GET /v1/accounts/{g_strkey}/transactions, those sourced by or involving the account, newest first (scope
+// "all", ADR-0038 Phase B).
 func (h *Handler) AccountTransactions(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)
@@ -118,7 +117,8 @@ func (h *Handler) AccountTransactions(w http.ResponseWriter, r *http.Request) {
 	h.WriteJSON(w, out, stale)
 }
 
-// AccountOperations serves GET /v1/accounts/{g_strkey}/operations, decoded operations sourced by or involving the account, newest first (scope "all", ADR-0038 Phase B).
+// AccountOperations serves GET /v1/accounts/{g_strkey}/operations, decoded operations sourced by or involving the account, newest first
+// (scope "all", ADR-0038 Phase B).
 func (h *Handler) AccountOperations(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)

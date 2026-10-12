@@ -55,10 +55,8 @@ type Config struct {
 	// disable key creation.
 	KeyQuotas map[platform.Tier]int
 
-	// idempotency backs the optional Idempotency-Key header on
-	// HandleCreate: a client that retries a mint after a timeout gets
-	// the original response replayed instead of minting a second key.
-	// Lazily initialized by validate().
+	// idempotency backs the optional Idempotency-Key header on HandleCreate: a retried mint after a timeout replays the original response
+	// instead of minting a second key. Lazily initialized by validate().
 	idempotency *middleware.IdempotencyStore
 }
 
@@ -67,7 +65,8 @@ type CacheInvalidator interface {
 	InvalidateCachedKey(ctx context.Context, hexHash string) error
 }
 
-// KeyMirror writes a dashboard-minted credential into the redis validator's store and removes it again; implemented by [auth.RedisAPIKeyStore].
+// KeyMirror writes a dashboard-minted credential into the redis validator's store and removes it again; implemented by
+// [auth.RedisAPIKeyStore].
 type KeyMirror interface {
 	CreateWithSecret(ctx context.Context, k auth.MirroredKey) error
 	RevokeKeyByID(ctx context.Context, identifier, keyID string) error
@@ -100,7 +99,8 @@ func NewHandlers(cfg Config) (*Handlers, error) {
 	return &Handlers{cfg: &cfg}, nil
 }
 
-// Mount installs the dashboard key routes behind [dashboardauth.RequireSession], with mutations also behind [middleware.RequireSameSiteWrite] since session-cookie auth is otherwise cross-site forgeable.
+// Mount installs the dashboard key routes behind [dashboardauth.RequireSession], with mutations also behind
+// [middleware.RequireSameSiteWrite] since session-cookie auth is otherwise cross-site forgeable.
 func (h *Handlers) Mount(mux *http.ServeMux, _ *middleware.PublicRoutes) {
 	session := dashboardauth.RequireSession()
 	sameSite := middleware.RequireSameSiteWrite(h.cfg.Logger)
@@ -110,10 +110,8 @@ func (h *Handlers) Mount(mux *http.ServeMux, _ *middleware.PublicRoutes) {
 	mux.Handle("DELETE /v1/dashboard/keys/{id}", session(sameSite(http.HandlerFunc(h.HandleRevoke))))
 }
 
-// keyDTO is the wire shape the dashboard reads. The plaintext is
-// only ever set on the Create response — never returned by
-// subsequent reads. KeyHash is omitted entirely so the API can't
-// be mis-used to seed an offline brute-force.
+// keyDTO is the wire shape the dashboard reads. The plaintext is set only on the Create response; KeyHash is omitted entirely
+// so the API cannot seed an offline brute-force.
 type keyDTO struct {
 	ID              string `json:"id"`
 	Name            string `json:"name"`
@@ -328,10 +326,8 @@ func (h *Handlers) HandleCreate(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// persistKey writes rec to the validator mirror first and its Postgres
-// management row second, rolling the mirror back when the row fails, so
-// the plaintext handed back authenticates and no credential outlives its
-// management record (the order register.go uses).
+// persistKey writes rec to the validator mirror first and its Postgres row second, rolling the mirror back if the row fails,
+// so no credential outlives its management record (the order register.go uses).
 func (h *Handlers) persistKey(ctx context.Context, acct platform.Account, rec platform.APIKey, plaintext string, maxKeys int) (platform.APIKey, int, string) {
 	mirrored, err := h.mirrorKey(ctx, acct, rec, plaintext)
 	if err != nil {
@@ -374,9 +370,8 @@ func (h *Handlers) mirrorKey(ctx context.Context, acct platform.Account, rec pla
 	return true, nil
 }
 
-// rollbackMirror removes a mirrored credential whose management row
-// failed. Detached from ctx: a dead request context is the usual reason
-// the row failed, and would fail the rollback too.
+// rollbackMirror removes a mirrored credential whose management row failed. Detached from ctx: a dead request context
+// is the usual reason the row failed and would fail the rollback too.
 func (h *Handlers) rollbackMirror(ctx context.Context, acct platform.Account, keyID string) {
 	rbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
@@ -473,8 +468,7 @@ func (h *Handlers) HandleRevoke(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// recordKeyAudit appends the key.mint / key.revoke row for a dashboard
-// session's change to one of its account's keys. key is the stored row:
+// recordKeyAudit appends the key.mint / key.revoke row for a dashboard session's key change. key is the stored row:
 // the created key for a mint, the pre-revoke row for a revoke.
 func (h *Handlers) recordKeyAudit(r *http.Request, sc dashboardauth.SessionContext, action string, key platform.APIKey) {
 	meta := map[string]any{
@@ -499,9 +493,7 @@ func (h *Handlers) recordKeyAudit(r *http.Request, sc dashboardauth.SessionConte
 	})
 }
 
-// parseCreateRequest reads + validates the body. Returns the
-// parsed request, an HTTP status, and a problem detail. Empty
-// problem means "validation passed".
+// parseCreateRequest reads and validates the body. Returns the request, an HTTP status and a problem detail (empty = valid).
 func parseCreateRequest(r *http.Request) (createRequest, int, string) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, 16<<10))
 	if err != nil {
@@ -551,9 +543,8 @@ func parseCreateRequest(r *http.Request) (createRequest, int, string) {
 	return req, 0, ""
 }
 
-// normaliseScopes validates the optional scope list against the
-// platform vocabulary and drops duplicates. Empty input passes
-// through as nil (full-access posture).
+// normaliseScopes validates the optional scope list against the platform vocabulary and drops duplicates.
+// Empty input passes through as nil (full-access posture).
 func normaliseScopes(raw []string) ([]string, string) {
 	if len(raw) == 0 {
 		return nil, ""
@@ -574,9 +565,8 @@ func normaliseScopes(raw []string) ([]string, string) {
 	return out, ""
 }
 
-// clampRateLimitToTier returns the lower of requested and the tier ceiling
-// ([platform.Tier.MaxRateLimitPerMin]), silently downgrading rather than rejecting. Operator
-// keys are minted through stellarindex-ops and are not subject to this clamp.
+// clampRateLimitToTier returns the lower of requested and the tier ceiling ([platform.Tier.MaxRateLimitPerMin]), downgrading silently.
+// Operator keys are minted through stellarindex-ops and are not clamped.
 func clampRateLimitToTier(requested int, tier platform.Tier) int {
 	ceiling := tier.MaxRateLimitPerMin()
 	if requested > ceiling {
@@ -585,9 +575,8 @@ func clampRateLimitToTier(requested int, tier platform.Tier) int {
 	return requested
 }
 
-// validateCIDROrIP accepts a bare IP or a CIDR prefix whose host bits
-// are zero, matching what the `cidr` column type will store. Returns a
-// problem detail, or "" when the entry is acceptable.
+// validateCIDROrIP accepts a bare IP or a CIDR prefix with zero host bits, matching what the `cidr` column stores.
+// Returns a problem detail, or "" when acceptable.
 func validateCIDROrIP(entry string) string {
 	entry = strings.TrimSpace(entry)
 	if entry == "" {
@@ -609,18 +598,8 @@ func validateCIDROrIP(entry string) string {
 	return ""
 }
 
-// clampMonthlyQuotaToAccount returns the lower of `requested` and the
-// account's monthly-quota ceiling, preserving the "0 = inherit /
-// unlimited" sentinel.
-//
-//   - requested <= 0 WITH an account override: pass through; 0 is the "inherit the override"
-//     sentinel the auth cascade keys on (internal/auth/apikey_postgres.go).
-//   - requested <= 0 with NO override: fall back to the tier ceiling, because passing 0 through
-//     would leave the key with no monthly cap.
-//   - requested > 0: min(requested, ceiling), where the ceiling is
-//     [platform.Account.MonthlyRequestQuotaOverride] when > 0, else [platform.Tier.MaxMonthlyQuota].
-//
-// The account-level cap is a HARD ceiling the customer can only lower.
+// clampMonthlyQuotaToAccount returns min(requested, account ceiling), preserving the "0 = inherit" sentinel the auth cascade keys on
+// (internal/auth/apikey_postgres.go). With no override a non-positive request falls to the tier ceiling; the account cap is a HARD ceiling.
 func clampMonthlyQuotaToAccount(requested int64, acct platform.Account) int64 {
 	if requested <= 0 && acct.MonthlyRequestQuotaOverride > 0 {
 		// Inherit the operator's explicit override at auth time.
@@ -641,9 +620,8 @@ func clampMonthlyQuotaToAccount(requested int64, acct platform.Account) int64 {
 	return requested
 }
 
-// maxKeysFor resolves the active-key ceiling for an account tier:
-// the Config.KeyQuotas override when present and positive, else the
-// [platform.Tier.MaxActiveKeys] default ladder.
+// maxKeysFor resolves the active-key ceiling for a tier: a positive Config.KeyQuotas override, else the [platform.Tier.MaxActiveKeys]
+// ladder.
 func (h *Handlers) maxKeysFor(tier platform.Tier) int {
 	if v, ok := h.cfg.KeyQuotas[tier]; ok && v > 0 {
 		return v
@@ -651,9 +629,7 @@ func (h *Handlers) maxKeysFor(tier platform.Tier) int {
 	return tier.MaxActiveKeys()
 }
 
-// checkQuota counts active keys for the account against the
-// tier-resolved ceiling; returns (status, problem) on failure,
-// (0, "") on pass.
+// checkQuota counts active keys against the tier-resolved ceiling; returns (status, problem) on failure, (0, "") on pass.
 func (h *Handlers) checkQuota(r *http.Request, accountID uuid.UUID, maxKeys int) (int, string) {
 	active, err := h.cfg.Keys.CountActiveForAccount(r.Context(), accountID)
 	if err != nil {
@@ -666,17 +642,13 @@ func (h *Handlers) checkQuota(r *http.Request, accountID uuid.UUID, maxKeys int)
 	return 0, ""
 }
 
-// keyQuotaProblem is the 409 detail for a create over the key cap. The cap
-// counts every unrevoked key, expired ones included (the capped INSERT and
-// CountActiveForAccount both test revoked_at alone), so the message says so
-// rather than calling expired keys "active".
+// keyQuotaProblem is the 409 detail for a create over the key cap. The cap counts every unrevoked key, expired included
+// (revoked_at alone is tested), so the message avoids calling them "active".
 func keyQuotaProblem(held, maxKeys int) string {
 	return fmt.Sprintf("account already has %d unrevoked keys (max %d) — expired keys hold their slot until revoked; revoke one first", held, maxKeys)
 }
 
-// canManageKeys gates create/revoke on role. Owner + admin can
-// always; member can manage their own keys (Phase 1: every
-// member can mint). Billing and viewer can't.
+// canManageKeys gates create/revoke on role: owner and admin always, member (Phase 1: every member can mint); billing and viewer cannot.
 func canManageKeys(role platform.Role) bool {
 	switch role {
 	case platform.RoleOwner, platform.RoleAdmin, platform.RoleMember:
@@ -686,9 +658,7 @@ func canManageKeys(role platform.Role) bool {
 	}
 }
 
-// canManageAnyKey reports whether role may act on every key in the
-// account rather than only the ones it created itself. Owner and admin
-// administer the whole account; member is scoped to its own keys.
+// canManageAnyKey reports whether role may act on every key in the account, not only its own: owner and admin yes, member no.
 func canManageAnyKey(role platform.Role) bool {
 	switch role {
 	case platform.RoleOwner, platform.RoleAdmin:
@@ -698,9 +668,8 @@ func canManageAnyKey(role platform.Role) bool {
 	}
 }
 
-// generatePlaintext mints a new `sip_<64hex>` plaintext (Stellar Index
-// Prefix) using crypto/rand. 32 bytes = 256 bits = preimage-safe. The prefix
-// is display/identification only — auth hashes the full plaintext.
+// generatePlaintext mints a `sip_<64hex>` plaintext from crypto/rand (32 bytes = 256 bits, preimage-safe).
+// The prefix is for identification only; auth hashes the full plaintext.
 func generatePlaintext() (string, error) {
 	var buf [32]byte
 	if _, err := rand.Read(buf[:]); err != nil {
@@ -709,9 +678,8 @@ func generatePlaintext() (string, error) {
 	return "sip_" + hex.EncodeToString(buf[:]), nil
 }
 
-// generateKeyID returns `kid_<24hex>` — the schema's regex
-// requires `kid_[a-f0-9]{12,}`; we mint 12 bytes (24 hex) which
-// is collision-resistant up to ~2^48 keys per account.
+// generateKeyID returns `kid_<24hex>`; the schema regex requires `kid_[a-f0-9]{12,}`. 12 bytes is collision-resistant to ~2^48 keys per
+// account.
 func generateKeyID() (string, error) {
 	var buf [12]byte
 	if _, err := rand.Read(buf[:]); err != nil {
@@ -720,9 +688,7 @@ func generateKeyID() (string, error) {
 	return "kid_" + hex.EncodeToString(buf[:]), nil
 }
 
-// parsePrefixes converts CIDR strings to a slice of netip.Prefix.
-// A bare IP is auto-promoted to /32 (v4) or /128 (v6) so dashboard
-// callers don't have to know the CIDR conventions.
+// parsePrefixes converts CIDR strings to netip.Prefix; a bare IP is promoted to /32 (v4) or /128 (v6).
 func parsePrefixes(raws []string) ([]netip.Prefix, error) {
 	out := make([]netip.Prefix, 0, len(raws))
 	for _, raw := range raws {
@@ -760,14 +726,11 @@ func unmapPrefix(p netip.Prefix) netip.Prefix {
 	return netip.PrefixFrom(p.Addr().Unmap(), p.Bits()-96)
 }
 
-// writeProblem delegates to the shared httpx helper with the
-// dashboard surface's type URL so the error shape stays consistent
-// across the dashboard packages.
+// writeProblem delegates to the shared httpx helper with the dashboard type URL so the error shape stays consistent across dashboard
+// packages.
 func writeProblem(w http.ResponseWriter, status int, detail, instance string) {
 	httpx.WriteProblem(w, "https://api.stellarindex.io/errors/dashboard", status, detail, instance)
 }
 
-// Compile-time assertion: dashboardauth.SessionContext.User.ID
-// is uuid.UUID. The package binds to that shape; this guard
-// catches a refactor that changes it.
+// Compile-time guard: dashboardauth.SessionContext.User.ID must stay uuid.UUID, which this package binds to.
 var _ = func() uuid.UUID { return dashboardauth.SessionContext{}.User.ID }

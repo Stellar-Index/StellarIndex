@@ -29,9 +29,8 @@ type AccountExporter interface {
 }
 
 const (
-	// accountReauthWindow is how recently the session must have been
-	// minted for an erasure or export: a session stolen days ago must not
-	// be enough to destroy or download an account.
+	// accountReauthWindow is how recently the session must have been minted for an erasure or export:
+	// a session stolen days ago must not be enough to destroy or download an account.
 	accountReauthWindow = 10 * time.Minute
 	// accountActionWindow, maxAccountErasures and maxAccountExports bound
 	// attempts per user per instance.
@@ -51,7 +50,8 @@ type accountErasureRequest struct {
 	Confirm string `json:"confirm"`
 }
 
-// HandleAccountDelete serves DELETE /v1/dashboard/account: erases the account and all its members; owner only, on a session within accountReauthWindow, slug typed back.
+// HandleAccountDelete serves DELETE /v1/dashboard/account: erases the account and all its members; owner only, on a session within
+// accountReauthWindow, slug typed back.
 func (h *Handlers) HandleAccountDelete(w http.ResponseWriter, r *http.Request) {
 	sc, ok := h.accountActionGate(w, r, accountRoute, "erase", maxAccountErasures)
 	if !ok {
@@ -84,7 +84,8 @@ func (h *Handlers) HandleAccountDelete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// HandleAccountExport serves GET /v1/dashboard/account/export: the account's data as one JSON attachment; owner only, on a session within accountReauthWindow.
+// HandleAccountExport serves GET /v1/dashboard/account/export: the account's data as one JSON attachment; owner only, on a session
+// within accountReauthWindow.
 func (h *Handlers) HandleAccountExport(w http.ResponseWriter, r *http.Request) {
 	sc, ok := h.accountActionGate(w, r, accountExportRoute, "export", maxAccountExports)
 	if !ok {

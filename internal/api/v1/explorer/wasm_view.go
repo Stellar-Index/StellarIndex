@@ -17,7 +17,8 @@ type WasmExportView struct {
 	Results []string `json:"results"`
 }
 
-// ContractWasmView is GET /v1/contracts/{id}/wasm: wasm hash and size, the always-present export table, and best-effort WAT/decompile (empty without wabt); source_note explains provenance.
+// ContractWasmView is GET /v1/contracts/{id}/wasm: wasm hash and size, the always-present export table, and best-effort WAT/decompile
+// (empty without wabt); source_note explains provenance.
 type ContractWasmView struct {
 	ContractID string           `json:"contract_id"`
 	WasmHash   string           `json:"wasm_hash"`
@@ -31,7 +32,8 @@ type ContractWasmView struct {
 	TTL *ContractTTLV `json:"ttl,omitempty"`
 }
 
-// ContractWasm serves GET /v1/contracts/{contract_id}/wasm read on demand from the lake (cache via wasmCacheControl); 404 when clickhouse.ErrContractWasmUnresolved.
+// ContractWasm serves GET /v1/contracts/{contract_id}/wasm read on demand from the lake (cache via wasmCacheControl); 404 when
+// clickhouse.ErrContractWasmUnresolved.
 func (h *Handler) ContractWasm(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)
@@ -140,9 +142,8 @@ func contractWasmView(info clickhouse.ContractWasmInfo) ContractWasmView {
 	}
 }
 
-// setWasmLiveness attaches the instance TTL and, for an archived instance,
-// says so in source_note — the resolved wasm is its last executable, not
-// something that can be invoked now.
+// setWasmLiveness attaches the instance TTL and, for an archived instance, says so in source_note: the resolved wasm is its last
+// executable, not something that can be invoked now.
 func (h *Handler) setWasmLiveness(ctx context.Context, cid string, view *ContractWasmView) {
 	st, ok := h.contractInstanceState(ctx, cid)
 	if !ok {
@@ -156,10 +157,8 @@ func (h *Handler) setWasmLiveness(ctx context.Context, cid string, view *Contrac
 	}
 }
 
-// wasmCacheControl bounds the wasm view's cache lifetime. Wasm for a hash is immutable, but this
-// URL is keyed on contract_id, and an in-place upgrade changes the bytes it serves, so long-lived
-// caching would show pre-upgrade bytecode. It uses the standard catalogue band until the route is
-// content-addressed; a ttl verdict (archival/restore) takes the tighter band regardless.
+// wasmCacheControl bounds the wasm view's cache lifetime: wasm for a hash is immutable, but this URL is keyed on contract_id and an in-
+// place upgrade changes the bytes, so it uses the standard catalogue band; a ttl verdict (archival/restore) takes the tighter band.
 func wasmCacheControl(view ContractWasmView) string {
 	if view.TTL != nil {
 		return "public, max-age=300"
@@ -176,10 +175,8 @@ func nonNilStrings(s []string) []string {
 	return s
 }
 
-// sacAssetViaEvents resolves an uncaptured-instance contract to the
-// classic asset whose SAC it is, using the event-topic hint + the
-// deterministic-derivation cross-check (never trust the topic alone).
-// Returns the asset in canonical CODE-GISSUER (or "native") form.
+// sacAssetViaEvents resolves an uncaptured-instance contract to the classic asset whose SAC it is, via the event-topic hint plus the
+// deterministic-derivation cross-check (never trust the topic alone). Returns canonical CODE-GISSUER (or "native").
 func (h *Handler) sacAssetViaEvents(ctx context.Context, contractID string) (string, bool) {
 	name, found, err := h.Reader.SACAssetFromEvents(ctx, contractID)
 	if err != nil || !found {

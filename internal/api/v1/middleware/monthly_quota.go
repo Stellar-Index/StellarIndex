@@ -16,18 +16,21 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// MonthToDateReader is the storage-side primitive [MonthlyQuota] uses (production: `*usage.Counter.MonthToDate`), a narrow interface so tests can fake it.
+// MonthToDateReader is the storage-side primitive [MonthlyQuota] uses (production: `*usage.Counter.MonthToDate`), a narrow interface so
+// tests can fake it.
 type MonthToDateReader interface {
 	MonthToDate(ctx context.Context, subject string) (int64, error)
 }
 
-// DefaultMonthlyQuotaDwellTime is how long [MonthlyQuota] may fail OPEN on month-to-date read errors before flipping to fail-CLOSED (429 + Retry-After); tune via api.monthly_quota_dwell.
+// DefaultMonthlyQuotaDwellTime is how long [MonthlyQuota] may fail OPEN on month-to-date read errors before flipping to fail-CLOSED (429
+// + Retry-After); tune via api.monthly_quota_dwell.
 const DefaultMonthlyQuotaDwellTime = 30 * time.Second
 
 // MonthlyQuotaOption tunes the [MonthlyQuota] middleware; variadic so the two-argument call site stays source-compatible.
 type MonthlyQuotaOption func(*monthlyQuotaGate)
 
-// WithMonthlyQuotaClock overrides the dwell-time clock so tests can drive transitions without time.Sleep; nil is ignored (keeps [time.Now]).
+// WithMonthlyQuotaClock overrides the dwell-time clock so tests can drive transitions without time.Sleep; nil is ignored (keeps
+// [time.Now]).
 func WithMonthlyQuotaClock(now func() time.Time) MonthlyQuotaOption {
 	return func(g *monthlyQuotaGate) {
 		if now != nil {
@@ -36,32 +39,30 @@ func WithMonthlyQuotaClock(now func() time.Time) MonthlyQuotaOption {
 	}
 }
 
-// WithMonthlyQuotaDwellTime overrides the fail-open dwell window; a negative value disables the inversion, reopening a billing-overage vector (a capped key bills unmetered through a counter outage).
+// WithMonthlyQuotaDwellTime overrides the fail-open dwell window; a negative value disables the inversion, reopening a billing-overage
+// vector (a capped key bills unmetered through a counter outage).
 func WithMonthlyQuotaDwellTime(d time.Duration) MonthlyQuotaOption {
 	return func(g *monthlyQuotaGate) { g.dwellTime = d }
 }
 
-// monthlyQuotaGate holds the dwell-time fail-open to fail-closed state shared across every
-// request through one [MonthlyQuota] instance. The read errors are Redis transport failures, not
-// per-key, so a single process-wide clock is the right granularity.
+// monthlyQuotaGate holds the dwell-time fail-open to fail-closed state shared across requests through one [MonthlyQuota].
+// Read errors are Redis transport failures, not per-key, so one process-wide clock is the right granularity.
 type monthlyQuotaGate struct {
 	dwellTime time.Duration
 	nowFn     func() time.Time
 
 	mu              sync.Mutex
 	redisErrorSince time.Time
-	// healthySince starts the CURRENT unbroken run of counter successes; any failure resets it.
-	// redisErrorSince clears only once this streak lasts dwellTime, so one stray success under a
-	// flapping counter cannot reopen the unmetered window.
+	// healthySince starts the CURRENT unbroken run of counter successes; any failure resets it. redisErrorSince clears only once the
+	// streak lasts dwellTime, so one stray success under a flapping counter cannot reopen the unmetered window.
 	healthySince time.Time
 	// lastFailure lets a success after a failure-free dwellTime clear the clock, so a long-ago
 	// outage cannot make the next blip fail closed.
 	lastFailure time.Time
 }
 
-// observeReadFailure stamps the dwell-time clock and reports whether the window has elapsed:
-// true means fail CLOSED (429), false means fail OPEN. Any failure breaks the recovery streak,
-// and a negative dwellTime always returns false.
+// observeReadFailure stamps the dwell-time clock and reports whether the window elapsed: true = fail CLOSED (429), false = fail OPEN.
+// Any failure breaks the recovery streak; a negative dwellTime always returns false.
 func (g *monthlyQuotaGate) observeReadFailure() bool {
 	if g.dwellTime < 0 {
 		return false
@@ -96,7 +97,8 @@ func (g *monthlyQuotaGate) observeReadSuccess() {
 	}
 }
 
-// MonthlyQuota enforces `Subject.MonthlyQuota` against the ACCOUNT-wide month-to-date count of BILLABLE traffic (429 at the cap), failing OPEN inside the dwell window and CLOSED past it.
+// MonthlyQuota enforces `Subject.MonthlyQuota` against the ACCOUNT-wide month-to-date count of BILLABLE traffic (429 at the cap),
+// failing OPEN inside the dwell window and CLOSED past it.
 func MonthlyQuota(reader MonthToDateReader, logger *slog.Logger, opts ...MonthlyQuotaOption) Middleware {
 	if logger == nil {
 		logger = slog.Default()
@@ -156,9 +158,8 @@ func MonthlyQuota(reader MonthToDateReader, logger *slog.Logger, opts ...Monthly
 	}
 }
 
-// retryAfterForDwell derives the fail-closed Retry-After (seconds) from the dwell window,
-// floored at 1s. It is only reached with a positive dwellTime, since a negative one disables
-// the inversion.
+// retryAfterForDwell derives the fail-closed Retry-After (seconds) from the dwell window, floored at 1s.
+// Only reached with a positive dwellTime; a negative one disables the inversion.
 func retryAfterForDwell(d time.Duration) int {
 	secs := int(d.Seconds())
 	if secs < 1 {
@@ -167,9 +168,8 @@ func retryAfterForDwell(d time.Duration) int {
 	return secs
 }
 
-// retryAfterForMonthBoundary derives the Retry-After (seconds) for a monthly-quota-exceeded 429:
-// the gap to the 1st of the next UTC month, when [usage.Counter.MonthToDate] rolls over. It is
-// floored at 1s so a request landing on the boundary still gets a positive value.
+// retryAfterForMonthBoundary derives the monthly-quota 429's Retry-After (seconds): the gap to the 1st of the next UTC month
+// ([usage.Counter.MonthToDate] rolls over), floored at 1s so a request on the boundary still gets a positive value.
 func retryAfterForMonthBoundary(now time.Time) int {
 	now = now.UTC()
 	year, month, _ := now.Date()
@@ -181,9 +181,8 @@ func retryAfterForMonthBoundary(now time.Time) int {
 	return secs
 }
 
-// writeMonthlyQuotaDenied emits a Problem+JSON 429 carrying the cap and observed counter, distinct
-// from the rate-limit 429 so dashboards can split the two. `month_to_date` is the ACCOUNT's count,
-// so rotating the key does not clear it. json.Marshal escapes the caller-controlled r.URL.Path.
+// writeMonthlyQuotaDenied emits a Problem+JSON 429 with the cap and counter, distinct from the rate-limit 429. `month_to_date` is the
+// ACCOUNT's count, so rotating the key does not clear it. json.Marshal escapes the caller-controlled r.URL.Path.
 func writeMonthlyQuotaDenied(w http.ResponseWriter, r *http.Request, quota, used int64, retryAfter int) {
 	payload := map[string]any{
 		"type":          "https://api.stellarindex.io/errors/monthly-quota-exceeded",
@@ -214,9 +213,8 @@ func writeMonthlyQuotaDenied(w http.ResponseWriter, r *http.Request, quota, used
 	_, _ = w.Write(body)
 }
 
-// writeMonthlyQuotaUnavailable is the fail-CLOSED response for a counter unreadable past the dwell
-// window. It has a DISTINCT error type/title because it must not claim the quota was exceeded, and
-// omits `month_to_date` since there is no honest value. Retry-After is set BEFORE WriteHeader.
+// writeMonthlyQuotaUnavailable is the fail-CLOSED response for a counter unreadable past the dwell window. A DISTINCT type/title (it
+// must not claim the quota was exceeded); omits `month_to_date`. Retry-After is set BEFORE WriteHeader.
 func writeMonthlyQuotaUnavailable(w http.ResponseWriter, r *http.Request, quota int64, retryAfter int) {
 	payload := map[string]any{
 		"type":          "https://api.stellarindex.io/errors/monthly-quota-unavailable",

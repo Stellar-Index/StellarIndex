@@ -53,16 +53,16 @@ type BridgeTransfersView struct {
 	Note                 string `json:"note"`
 }
 
-// bridgeMatchingNote documents exactly how bridge rows attribute to an
-// address — always present on the segment so the counts can't be read
-// as more complete than they are.
+// bridgeMatchingNote documents how bridge rows attribute to an address; always on the segment so counts are not read as more complete
+// than they are.
 const bridgeMatchingNote = "rozo matches payment from_addr (outbound) / destination (inbound). " +
 	"cctp matches deposit_for_burn depositor (outbound) and the Stellar-side mint_and_withdraw " +
 	"mint recipient (inbound) — an inbound mint delivered via a forwarder contract attributes to " +
 	"that contract, not the end user, and an outbound burn's destination-chain recipient is not a " +
 	"Stellar account so it is never matched."
 
-// AccountActivityView is GET /v1/accounts/{g_strkey}/activity; segments that could not be read are ABSENT (nil), never zero-filled, and coverage_note names them.
+// AccountActivityView is GET /v1/accounts/{g_strkey}/activity; segments that could not be read are ABSENT (nil), never zero-filled, and
+// coverage_note names them.
 type AccountActivityView struct {
 	Account     string            `json:"account"`
 	OpsByType   []OpTypeCountView `json:"ops_by_type,omitempty"`
@@ -79,9 +79,7 @@ type AccountActivityView struct {
 	CoverageNote string `json:"coverage_note,omitempty"`
 }
 
-// activityUnavailable writes the 503 for this endpoint — it needs the
-// Postgres activity reader AND the ClickHouse lake reader; a deployment
-// with neither has nothing to serve.
+// activityUnavailable writes the 503 for this endpoint, which needs both the Postgres activity reader AND the ClickHouse lake reader.
 func (h *Handler) activityUnavailable(w http.ResponseWriter, r *http.Request) {
 	h.WriteProblem(w, r,
 		"https://api.stellarindex.io/errors/explorer-unavailable",
@@ -89,12 +87,12 @@ func (h *Handler) activityUnavailable(w http.ResponseWriter, r *http.Request) {
 		"This deployment hasn't wired the account-activity readers.")
 }
 
-// errActivityAllSegmentsFailed marks a compute where NOTHING could be
-// read — the only case worth failing (and thereby preserving a previous
-// cached payload) rather than caching an all-absent shell for the TTL.
+// errActivityAllSegmentsFailed marks a compute where NOTHING could be read: the only case worth failing (preserving a previous cached
+// payload) rather than caching an all-absent shell for the TTL.
 var errActivityAllSegmentsFailed = errors.New("account activity: every segment read failed")
 
-// AccountActivity serves GET /v1/accounts/{g_strkey}/activity with the SWR contract of ContractDetail: stale payloads serve with flags.stale=true while a detached single-flight recompute runs.
+// AccountActivity serves GET /v1/accounts/{g_strkey}/activity with the SWR contract of ContractDetail: stale payloads serve with
+// flags.stale=true while a detached single-flight recompute runs.
 func (h *Handler) AccountActivity(w http.ResponseWriter, r *http.Request) {
 	if h.Activity == nil && h.Reader == nil {
 		h.activityUnavailable(w, r)
@@ -136,10 +134,8 @@ func (h *Handler) AccountActivity(w http.ResponseWriter, r *http.Request) {
 	h.writeJSONAt(w, out, degraded, degraded || out.CoverageNote != "", asOf)
 }
 
-// computeAccountActivity runs the four segment reads. Each segment degrades independently
-// (absent and named in coverage_note, so a partial answer is never mistaken for "this address did
-// nothing"); only all segments failing returns an error, so a single-store outage neither poisons
-// the cache with an empty shell nor discards the other stores' real answers.
+// computeAccountActivity runs the four segment reads. Each degrades independently (absent and named in coverage_note, never mistaken for
+// "did nothing"); only all failing returns an error, so one store's outage neither poisons the cache nor discards the others' answers.
 func (h *Handler) computeAccountActivity(ctx context.Context, g string) (AccountActivityView, error) {
 	out := AccountActivityView{Account: g}
 

@@ -12,23 +12,18 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// afterResponseWorkers / afterResponseQueueSize size the pool for usage metering and last-seen
-// touches. Sustained saturation is a signal in itself ([obs.AfterResponseTasksDroppedTotal]),
-// not something to size around.
+// afterResponseWorkers / afterResponseQueueSize size the pool for usage metering and last-seen touches. Sustained saturation is
+// a signal in itself ([obs.AfterResponseTasksDroppedTotal]), not something to size around.
 const (
 	afterResponseWorkers   = 64
 	afterResponseQueueSize = 4096
 )
 
-// afterResponsePool is the process-wide shared pool. One pool, not one
-// per middleware, so TouchUsage and UsageTracker share a single bound on
-// how much post-response work can be in flight at once.
+// afterResponsePool is the process-wide pool: one, so TouchUsage and UsageTracker share a single bound on in-flight post-response work.
 var afterResponsePool = newAfterResponsePool(afterResponseWorkers, afterResponseQueueSize)
 
-// afterResponsePoolT is a bounded fan-out of fire-and-forget tasks onto a
-// fixed set of long-lived goroutines. wg tracks tasks that have been
-// accepted (queued or running) but not yet finished, so tests can drain
-// it deterministically instead of racing the async completion.
+// afterResponsePoolT fans fire-and-forget tasks onto fixed long-lived goroutines. wg tracks accepted-but-unfinished tasks
+// so tests can drain it deterministically.
 type afterResponsePoolT struct {
 	tasks   chan func()
 	wg      sync.WaitGroup
@@ -84,7 +79,8 @@ func (p *afterResponsePoolT) submit(task func()) bool {
 	}
 }
 
-// AfterResponse flushes w then runs fn on the shared bounded pool; fn must not touch w or the request and needs its own bounded context, and a saturated pool drops it (counted by [obs.AfterResponseTasksDroppedTotal]).
+// AfterResponse flushes w then runs fn on the shared bounded pool; fn must not touch w or the request and needs its own bounded context,
+// and a saturated pool drops it (counted by [obs.AfterResponseTasksDroppedTotal]).
 func AfterResponse(w http.ResponseWriter, fn func()) {
 	submitAfterResponseTask(fn)
 	if f, ok := w.(http.Flusher); ok {
@@ -92,16 +88,16 @@ func AfterResponse(w http.ResponseWriter, fn func()) {
 	}
 }
 
-// submitAfterResponseTask hands fn to the shared pool without flushing. Callers whose response is
-// not yet complete (a panicking handler) use it directly: a premature Flush would lock in 200
-// before the outer Recoverer writes its 500.
+// submitAfterResponseTask hands fn to the shared pool without flushing, for callers whose response is incomplete (a panicking handler):
+// a premature Flush would lock in 200 before the outer Recoverer writes its 500.
 func submitAfterResponseTask(fn func()) {
 	if !afterResponsePool.submit(fn) {
 		obs.AfterResponseTasksDroppedTotal.Inc()
 	}
 }
 
-// AfterResponseDrainForTest blocks until submitted tasks finish or timeout elapses and reports whether it drained; tests asserting on post-response effects must wait on it.
+// AfterResponseDrainForTest blocks until submitted tasks finish or timeout elapses and reports whether it drained; tests asserting on
+// post-response effects must wait on it.
 func AfterResponseDrainForTest(timeout time.Duration) bool {
 	done := make(chan struct{})
 	go func() {

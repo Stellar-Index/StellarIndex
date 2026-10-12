@@ -9,7 +9,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// AccountGraphView is GET /v1/accounts/{g_strkey}/graph, one account's creation and sponsorship neighbourhood; all history, sponsorship counts arrangements started, not in force.
+// AccountGraphView is GET /v1/accounts/{g_strkey}/graph, one account's creation and sponsorship neighbourhood; all history, sponsorship
+// counts arrangements started, not in force.
 type AccountGraphView struct {
 	Account string `json:"account"`
 	// Inbound is where this account came from. Bounded by construction:
@@ -122,9 +123,7 @@ const (
 	graphMaxLimit = 500
 )
 
-// accountGraphNote is served on every response. The endpoint's whole
-// risk is being read as live state, so the disclaimer is part of the
-// payload rather than only of the documentation.
+// accountGraphNote is served on every response: the endpoint's risk is being read as live state, so the disclaimer is in the payload.
 const accountGraphNote = "History, not live state. Creation edges are immutable. " +
 	"Sponsorship edges count arrangements STARTED and are never a count of " +
 	"sponsorships in force: a revocation names its target inside XDR this " +
@@ -132,10 +131,8 @@ const accountGraphNote = "History, not live state. Creation edges are immutable.
 	"that cannot be attributed to an edge, and an arrangement also ends " +
 	"silently when the sponsored entry is deleted or the account merges away."
 
-// parseGraphRelation reads the optional ?relation= selector. Empty means
-// "no outbound page", which is the bounded default: the caller has to
-// name the direction whose edge list can run to hundreds of thousands of
-// rows.
+// parseGraphRelation reads the optional ?relation= selector. Empty means "no outbound page", the bounded default: the caller must
+// name the direction, whose edge list can run to hundreds of thousands of rows.
 func (h *Handler) parseGraphRelation(w http.ResponseWriter, r *http.Request) (string, bool) {
 	rel := r.URL.Query().Get("relation")
 	switch rel {
@@ -148,9 +145,8 @@ func (h *Handler) parseGraphRelation(w http.ResponseWriter, r *http.Request) (st
 	return "", false
 }
 
-// parseGraphCursor reads the opaque ?cursor=, which is the last served counterparty's account id
-// (the second ORDER BY column of both edge tables). It is validated as a G-strkey so a mangled
-// value gets a 400 instead of a silently shifted page.
+// parseGraphCursor reads the opaque ?cursor=, the last served counterparty's account id (second ORDER BY column of both edge tables).
+// Validated as a G-strkey so a mangled value gets a 400 instead of a silently shifted page.
 func (h *Handler) parseGraphCursor(w http.ResponseWriter, r *http.Request) (string, bool) {
 	raw := r.URL.Query().Get("cursor")
 	if raw == "" {
@@ -165,7 +161,8 @@ func (h *Handler) parseGraphCursor(w http.ResponseWriter, r *http.Request) (stri
 	return raw, true
 }
 
-// AccountGraph serves GET /v1/accounts/{g_strkey}/graph; bounded by construction (inbound capped, outbound summarised, the unbounded direction only via keyset-paged ?relation=).
+// AccountGraph serves GET /v1/accounts/{g_strkey}/graph; bounded by construction (inbound capped, outbound summarised, the unbounded
+// direction only via keyset-paged ?relation=).
 func (h *Handler) AccountGraph(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)
@@ -218,9 +215,8 @@ func (h *Handler) AccountGraph(w http.ResponseWriter, r *http.Request) {
 	h.WriteJSON(w, accountGraphView(g, relation, limit, graph), stale)
 }
 
-// accountGraphView renders the reader snapshot onto the wire contract.
-// Split out so the shaping — which is where the honesty rules live — is
-// testable without an HTTP round-trip.
+// accountGraphView renders the reader snapshot onto the wire contract; split out so the shaping, where the honesty rules live,
+// is testable without an HTTP round-trip.
 func accountGraphView(account, relation string, limit int, g clickhouse.AccountGraph) AccountGraphView {
 	out := AccountGraphView{Account: account, Note: accountGraphNote}
 

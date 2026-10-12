@@ -48,7 +48,8 @@ type ContractsDirectoryView struct {
 	Contracts   []ContractDirectoryEntry `json:"contracts"`
 }
 
-// ContractsList serves GET /v1/contracts, the most active contracts by event count; unauthenticated, so `days` rounds UP onto [contractsWindowLadder] and is TTL-cached, `window_days` reports the actual window.
+// ContractsList serves GET /v1/contracts, the most active contracts by event count; unauthenticated, so `days` rounds UP onto
+// [contractsWindowLadder] and is TTL-cached, `window_days` reports the actual window.
 func (h *Handler) ContractsList(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)
@@ -129,7 +130,8 @@ type ContractInteractionsView struct {
 	Interactions []ContractEdge `json:"interactions"`
 }
 
-// ContractInteractions serves GET /v1/contracts/{contract_id}/interactions: contracts emitting events in the same transactions (a cross-contract-call proxy), ranked by shared-tx count.
+// ContractInteractions serves GET /v1/contracts/{contract_id}/interactions: contracts emitting events in the same transactions (a cross-
+// contract-call proxy), ranked by shared-tx count.
 func (h *Handler) ContractInteractions(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)
@@ -248,7 +250,8 @@ type ContractCodeHistoryView struct {
 	Versions   []ContractCodeVersionV `json:"versions"`
 }
 
-// ContractCodeHistory serves GET /v1/contracts/{contract_id}/code-history: each distinct WASM executable the instance pointed at, chronologically; 200 with empty versions if none.
+// ContractCodeHistory serves GET /v1/contracts/{contract_id}/code-history: each distinct WASM executable the instance pointed at,
+// chronologically; 200 with empty versions if none.
 func (h *Handler) ContractCodeHistory(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)
@@ -301,16 +304,8 @@ func (h *Handler) ContractCodeHistory(w http.ResponseWriter, r *http.Request) {
 	h.writeJSONAt(w, out, degraded, degraded, asOf)
 }
 
-// windowFloorLedger returns the ledger sequence closest to `days` days
-// before the tip's close_time, or 0 when the tip is unknown or the window reaches past genesis. A
-// FAILED tip read is returned as an error, never folded into the 0 floor: 0 means "scan from
-// genesis", so substituting it would turn a transient ClickHouse error into an unbounded
-// genesis-wide GROUP BY. Callers must refuse the window on error.
-//
-// The boundary is the tip's close_time, not a ledger-count multiple of the nominal cadence:
-// pubnet's observed cadence overshoots a ledger-count window by ~13-15% (so NetworkThroughput
-// uses a count only as a partition-pruning hint). The floor is the lowest captured ledger closed
-// at or after the boundary, found by a close_time binary search a lake gap cannot mislead.
+// windowFloorLedger returns the ledger closest to `days` before the tip's close_time, or 0 if unknown or past genesis.
+// A FAILED tip read is an error, never the 0 floor (that would become a genesis-wide GROUP BY).
 func (h *Handler) windowFloorLedger(ctx context.Context, days int) (uint32, error) {
 	tip, err := h.Reader.RecentLedgers(ctx, 1, 0)
 	if err != nil {
@@ -324,9 +319,8 @@ func (h *Handler) windowFloorLedger(ctx context.Context, days int) (uint32, erro
 	return FirstCapturedClosedAfter(ctx, h.Reader, tip[0].Seq, boundary.Add(-time.Second))
 }
 
-// contractAttributionTTL bounds how stale the contract → protocol map may be.
-// The registry changes only on operator seed runs, while the full-table read
-// would otherwise run on every request to three unauthenticated routes.
+// contractAttributionTTL bounds how stale the contract -> protocol map may be: the registry changes only on operator seed runs,
+// while the full-table read would otherwise run per request on three unauthenticated routes.
 const contractAttributionTTL = time.Minute
 
 // contractAttributionReadTimeout bounds the shared refill. It runs detached
@@ -347,8 +341,7 @@ func (c *contractAttributionCache) get() (idx map[string]string, fresh bool) {
 	return c.idx, c.idx != nil && time.Since(c.loadedAt) < contractAttributionTTL
 }
 
-// contractAttribution returns the contract_id → protocol map (best-effort —
-// a registry read failure serves the last good map, or no attribution,
+// contractAttribution returns the contract_id -> protocol map (best-effort: a registry read failure serves the last good map or none,
 // never a request error). The returned map is shared: callers must not mutate it.
 func (h *Handler) contractAttribution(ctx context.Context) map[string]string {
 	if h.ProtocolContracts == nil {

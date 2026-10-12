@@ -15,22 +15,20 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// postResponseWriteTimeout bounds the bookkeeping writes that run on the [AfterResponse] pool.
-// They use a fresh context.Background(), never the request's: they must survive a client abort
-// or an exhausted RequestTimeout, yet a wedged store must not pin a pool worker forever.
+// postResponseWriteTimeout bounds bookkeeping writes on the [AfterResponse] pool. They use a fresh context.Background() so they survive
+// a client abort or exhausted RequestTimeout, yet a wedged store cannot pin a pool worker.
 const postResponseWriteTimeout = 5 * time.Second
 
-// streamMeterInterval is how often [meterOpenStream] re-bills a still-open SSE connection, so a
-// long stream does not buy unbounded duration for one quota unit (per-minute, like the rate-limit
-// bucket). It is an atomic.Int64 (nanoseconds) because ticker goroutines read it while
-// [SetStreamMeterIntervalForTest] may rewrite it from a still-running test.
+// streamMeterInterval is how often [meterOpenStream] re-bills an open SSE connection, so a long stream does not buy unbounded duration
+// for one quota unit. An atomic.Int64 (ns) because ticker goroutines read it while [SetStreamMeterIntervalForTest] may rewrite it.
 var streamMeterInterval atomic.Int64
 
 func init() {
 	streamMeterInterval.Store(int64(time.Minute))
 }
 
-// UsageTracker records per-request daily counters under the subject's OWNER ACCOUNT ([UsageKeyForSubject]); only BILLABLE traffic counts (429s and 5xx excluded) and anonymous requests are skipped; wire AFTER auth and OUTSIDE rate-limit.
+// UsageTracker records per-request daily counters under the subject's OWNER ACCOUNT ([UsageKeyForSubject]); only BILLABLE traffic counts
+// (429s and 5xx excluded) and anonymous requests are skipped; wire AFTER auth and OUTSIDE rate-limit.
 func UsageTracker(counter *usage.Counter, logger *slog.Logger) Middleware {
 	if logger == nil {
 		logger = slog.Default()
@@ -94,10 +92,8 @@ func UsageTracker(counter *usage.Counter, logger *slog.Logger) Middleware {
 	}
 }
 
-// usageTrackerRecord is [UsageTracker]'s post-dispatch bookkeeping, split out so it still runs
-// when the handler panics. Normally the writes go through [AfterResponse], which flushes rec
-// first. On a panic rec is not complete (the outer Recoverer still writes its 500), so the
-// writes are enqueued directly without flushing.
+// usageTrackerRecord is [UsageTracker]'s post-dispatch bookkeeping, split out so it runs on handler panic. On a panic rec is incomplete
+// (the outer Recoverer writes its 500), so writes are enqueued without the [AfterResponse] flush.
 func usageTrackerRecord(counter *usage.Counter, logger *slog.Logger, reqCtx context.Context, inner *http.Request, rec *statusRecorder, units *usageUnits, deadlineFired *atomic.Bool, panicked bool) {
 	subject, ok := auth.SubjectFrom(reqCtx)
 	if !ok {
@@ -163,9 +159,8 @@ func (o *usageRecordOnce) fired() bool {
 	return o.done.Load()
 }
 
-// streamOpenMeter records an SSE request's usage when the handler commits its headers, not when
-// the stream closes: a stream can outlive its day, and one ended by a kill or deploy never
-// reaches the close-time record. The status is known at commit, so a 429/5xx stream stays unbilled.
+// streamOpenMeter records an SSE request's usage when the handler commits its headers, not at close: a stream can outlive its day, and a
+// killed one never reaches close-time. Status is known at commit, so a 429/5xx stream stays unbilled.
 type streamOpenMeter struct {
 	*statusRecorder
 	once *usageRecordOnce
@@ -203,7 +198,8 @@ func (u *usageUnits) get() int64 {
 	return u.n
 }
 
-// ChargeUsage prices the in-flight request at units request units IN TOTAL for the monthly meter, only ever raising it; separate from [ChargeRateLimit] since units are the plan's product unit.
+// ChargeUsage prices the in-flight request at units request units IN TOTAL for the monthly meter, only ever raising it; separate from
+// [ChargeRateLimit] since units are the plan's product unit.
 func ChargeUsage(r *http.Request, units int) {
 	u, ok := r.Context().Value(usageUnitsKey{}).(*usageUnits)
 	if !ok || u == nil {
@@ -216,18 +212,8 @@ func ChargeUsage(r *http.Request, units int) {
 	}
 }
 
-// meterOpenStream re-bills a live SSE connection every [streamMeterInterval] while it stays
-// open.
-//
-// Ticks before [streamOpenMeter]'s header commit are skipped, not deferred. They are gated on
-// once.fired(): an SSE response cannot change status after the first write/flush, so a tick
-// seeing fired()==true reads rec.status/units without racing the handler goroutine that owns rec.
-// family and id are resolved before dispatch because the mux later mutates inner.Pattern.
-//
-// It reuses [outcomeClass]/[billableClass], so a platform 5xx never eats quota, and a billable
-// tick is refused at the same used >= quota ceiling [MonthlyQuota] applies at open (endStream,
-// then stop). Writes run inline since this goroutine is dedicated to one connection. Closing
-// exited on the way out (even on panic) lets the caller wait until rec/once/units are untouched.
+// meterOpenStream re-bills a live SSE connection every [streamMeterInterval]. Ticks before [streamOpenMeter]'s header commit are skipped
+// (gated on once.fired(), so rec is read without racing the handler); a billable tick over the [MonthlyQuota] ceiling ends the stream.
 func meterOpenStream(counter *usage.Counter, logger *slog.Logger, id, family string, quota int64, endStream context.CancelFunc, rec *statusRecorder, once *usageRecordOnce, units *usageUnits, deadlineFired *atomic.Bool, done <-chan struct{}, exited chan<- struct{}) {
 	defer worker.Recover(logger, "api-usage-stream-meter")
 	defer close(exited)
@@ -316,7 +302,8 @@ func SetStreamTickHookForTest(fn func()) (restore func()) {
 	return func() { streamTickHook.Store(nil) }
 }
 
-// UsageKeyForSubject is the counter key: the OWNER-ACCOUNT Identifier, else KeyID, else "" (anonymous); keyed on the account so minting or rotating keys cannot reset quota, and exported so readers share the writer's key.
+// UsageKeyForSubject is the counter key: the OWNER-ACCOUNT Identifier, else KeyID, else "" (anonymous); keyed on the account so minting
+// or rotating keys cannot reset quota, and exported so readers share the writer's key.
 func UsageKeyForSubject(s auth.Subject) string {
 	if s.Tier == auth.TierAnonymous || s.Tier == "" {
 		return ""
@@ -333,7 +320,8 @@ func UsageKeyForSubject(s auth.Subject) string {
 // resolvedRouteKey is the context key for [ResolveRoute]'s pre-dispatch pattern match.
 type resolvedRouteKey struct{}
 
-// ResolveRoute stashes the mux-matched route pattern; wire it OUTSIDE every pre-dispatch gate, or gate-rejected requests bucket under "unmatched" and hide the throttle pattern.
+// ResolveRoute stashes the mux-matched route pattern; wire it OUTSIDE every pre-dispatch gate, or gate-rejected requests bucket under
+// "unmatched" and hide the throttle pattern.
 func ResolveRoute(mux muxMatcher) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -370,15 +358,8 @@ func endpointFamily(r *http.Request) string {
 	return "unmatched"
 }
 
-// billableClass reports whether an outcome class increments the LEGACY per-day total that
-// [MonthlyQuota] enforces against.
-//
-// Only outcomes the CALLER caused are billable: a 429 or fast-failing 5xx is our fault, and
-// charging it would let a rate-limit storm or outage eat the customer's paid plan.
-//
-// The exception is a 5xx on which a read deadline fired ([MarkReadDeadline]): that read held a
-// pool connection for its whole budget, usually due to the request's own size, and leaving it
-// unbilled would make the most expensive request shape free. The DETAIL family counts every class.
+// billableClass reports whether an outcome class increments the LEGACY per-day total [MonthlyQuota] enforces. Only CALLER-caused outcomes
+// bill, except a 5xx where a read deadline fired ([MarkReadDeadline]): it held a pool connection, so free would be exploitable.
 func billableClass(class string, readDeadlineFired bool) bool {
 	switch class {
 	case usage.ClassThrottled:
@@ -392,7 +373,8 @@ func billableClass(class string, readDeadlineFired bool) bool {
 
 type readDeadlineKey struct{}
 
-// MarkReadDeadline records that a server-side read deadline fired for ctx's request, making a 5xx billable (see [billableClass]); a no-op outside [UsageTracker].
+// MarkReadDeadline records that a server-side read deadline fired for ctx's request, making a 5xx billable (see [billableClass]); a no-
+// op outside [UsageTracker].
 func MarkReadDeadline(ctx context.Context) {
 	if fired, ok := ctx.Value(readDeadlineKey{}).(*atomic.Bool); ok {
 		fired.Store(true)

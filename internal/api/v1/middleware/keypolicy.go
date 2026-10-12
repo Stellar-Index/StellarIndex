@@ -14,7 +14,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 )
 
-// KeyPolicy enforces per-key IP allowlist, Referer allowlist, scopes and permissions AFTER [Auth] and before [RateLimit]; anonymous subjects bypass, every other tier (operator included) is bound by its own gates.
+// KeyPolicy enforces per-key IP allowlist, Referer allowlist, scopes and permissions AFTER [Auth] and before [RateLimit]; anonymous
+// subjects bypass, every other tier (operator included) is bound by its own gates.
 func KeyPolicy() Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -32,10 +33,8 @@ func KeyPolicy() Middleware {
 	}
 }
 
-// checkKeyPolicy runs the per-key gates in order (IP, Referer, scopes, permissions) and returns
-// the reason slug and error of the first failure ("" and nil when all pass). Operator-tier
-// subjects get no early return: a key narrowed at mint must stay bound by its scopes and
-// permissions, or the narrowing would be silently bypassed.
+// checkKeyPolicy runs the per-key gates in order (IP, Referer, scopes, permissions) and returns the first failure's slug and error.
+// Operator-tier subjects get no early return: a key narrowed at mint must stay bound by its scopes and permissions.
 func checkKeyPolicy(r *http.Request, subject auth.Subject) (string, error) {
 	if err := checkIPAllowlist(r, subject.IPAllowlist); err != nil {
 		return "ip-not-allowed", err
@@ -93,9 +92,8 @@ func checkRefererAllowlist(r *http.Request, allow []string) error {
 	return fmt.Errorf("referer host %q not in this key's allowlist", host)
 }
 
-// checkScopes enforces the coarse route-family scopes; an empty list passes (scopes are opt-in at
-// mint). It runs before permissions so scopes bound the family and permissions bound endpoints
-// inside it.
+// checkScopes enforces the coarse route-family scopes; an empty list passes (opt-in at mint). It runs before permissions,
+// so scopes bound the family and permissions bound endpoints inside it.
 func checkScopes(r *http.Request, subject auth.Subject) error {
 	if len(subject.Scopes) == 0 {
 		return nil
@@ -108,7 +106,8 @@ func checkScopes(r *http.Request, subject auth.Subject) error {
 		strings.Join(subject.Scopes, ", "), need, r.Method, r.URL.Path)
 }
 
-// ClampMintScopes is the scope half of [auth.ClampToMinter] as a problem string for handlers; not the enforcement point, RedisAPIKeyStore.Create re-applies the clamp for any MintedBy request.
+// ClampMintScopes is the scope half of [auth.ClampToMinter] as a problem string for handlers; not the enforcement point,
+// RedisAPIKeyStore.Create re-applies the clamp for any MintedBy request.
 func ClampMintScopes(caller auth.Subject, requested []string) ([]string, string) {
 	scopes, err := auth.ClampToMinter(caller, requested, 0)
 	if err != nil {
@@ -150,9 +149,8 @@ func permissionMatches(r *http.Request, entries []auth.SubjectPermissionEntry) b
 	return false
 }
 
-// prefixMatchesPathSegment reports whether path is prefix or lies under it as a path segment:
-// "/v1/admin" matches "/v1/admin/keys" but not "/v1/administer", so a permission entry cannot
-// leak onto a sibling route that merely shares a string prefix.
+// prefixMatchesPathSegment reports whether path is prefix or lies under it as a path segment ("/v1/admin" matches "/v1/admin/keys",
+// not "/v1/administer"), so a permission entry cannot leak onto a sibling route sharing a string prefix.
 func prefixMatchesPathSegment(path, prefix string) bool {
 	if !strings.HasPrefix(path, prefix) {
 		return false
@@ -163,10 +161,8 @@ func prefixMatchesPathSegment(path, prefix string) bool {
 	return len(path) == len(prefix) || path[len(prefix)] == '/'
 }
 
-// writeKeyPolicyDenied emits an RFC 9457 problem+json 403 with a
-// reason-specific `type` URI so dashboard clients can render
-// "your IP isn't in this key's allowlist" vs "you can't call this
-// endpoint with this key" without parsing the detail string.
+// writeKeyPolicyDenied emits an RFC 9457 problem+json 403 with a reason-specific `type` URI, so dashboard clients can tell an IP-allowlist
+// denial from a permission denial without parsing the detail string.
 func writeKeyPolicyDenied(w http.ResponseWriter, r *http.Request, slug, detail string) {
 	w.Header().Set("Content-Type", "application/problem+json")
 	// Override the route directive CacheControl pre-set — a 403 on a

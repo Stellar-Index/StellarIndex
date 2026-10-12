@@ -56,21 +56,15 @@ type AdminLookupResponse struct {
 	Users   []AdminUserView  `json:"users"`
 }
 
-// adminLookupRequest is the staff look-up query. It travels in the request
-// BODY, never the query string.
-//
-// A customer's email in a URL is copied into access logs, proxy logs, browser history and Referer
-// headers. Edge redaction only covers our own log, so the address must not travel in the URL at
-// all; a POST body is recorded by none of those.
-//
-// The handler therefore never falls back to r.URL.Query(): a tolerated query parameter would be an
-// un-redacted channel that re-opens the leak.
+// adminLookupRequest is the staff look-up query. It travels in the BODY, never the query string: an email in a URL leaks into
+// access logs, proxy logs and Referer headers, so the handler must never fall back to r.URL.Query().
 type adminLookupRequest struct {
 	Email string `json:"email,omitempty"`
 	Slug  string `json:"slug,omitempty"`
 }
 
-// HandleAdminLookup serves POST /v1/account/admin/lookup, a read-only staff customer look-up that gates on the session user's IsStaff, so non-staff get 403, never another customer's data.
+// HandleAdminLookup serves POST /v1/account/admin/lookup, a read-only staff customer look-up that gates on the session user's IsStaff,
+// so non-staff get 403, never another customer's data.
 func (h *Handlers) HandleAdminLookup(w http.ResponseWriter, r *http.Request) {
 	sc, ok := SessionFromContext(r.Context())
 	if !ok {
@@ -129,10 +123,8 @@ func (h *Handlers) HandleAdminLookup(w http.ResponseWriter, r *http.Request) {
 // errLookupNoQuery signals neither email nor slug was supplied.
 var errLookupNoQuery = errors.New("dashboardauth: admin lookup needs email or slug")
 
-// lookupQueryKind names the dimension the staff member searched on, so
-// the audit row records HOW a customer was found (an email probe and a
-// slug probe are different investigative acts) without copying the
-// probed address into a second store.
+// lookupQueryKind names the dimension searched on, so the audit row records HOW a customer was found
+// without copying the probed address into a second store.
 func lookupQueryKind(email string) string {
 	if email != "" {
 		return "email"
@@ -140,12 +132,8 @@ func lookupQueryKind(email string) string {
 	return "slug"
 }
 
-// recordAdminLookupAudit persists the "staff.customer.lookup" row for a staff read of another
-// customer's PII as a durable [platform.AuditEntry], like every sibling admin surface. A log line
-// is not an audit trail: it is rotated, not queryable per account, and absent from the audit view.
-//
-// Best-effort: the read has already happened, so a sink failure logs at WARN and increments the
-// write-failure counter under its own `surface` label instead of failing the request.
+// recordAdminLookupAudit persists the "staff.customer.lookup" row for a staff read of a customer's PII as a [platform.AuditEntry].
+// Best-effort: the read already happened, so a sink failure logs at WARN and bumps the counter's own `surface` label.
 func (h *Handlers) recordAdminLookupAudit(
 	r *http.Request, sc SessionContext, acct platform.Account, queryKind string, usersReturned int,
 ) {
@@ -191,14 +179,12 @@ func (h *Handlers) recordAdminLookupAudit(
 	}
 }
 
-// auditSurfaceStaffLookup is this surface's label value on
-// [obs.AdminAuditWriteFailuresTotal]. Kept as a named constant so the
+// auditSurfaceStaffLookup is this surface's label on [obs.AdminAuditWriteFailuresTotal]; a named constant so the
 // increment site and the zero-seed in internal/obs cannot drift.
 const auditSurfaceStaffLookup = "staff_customer_lookup"
 
-// resolveLookupAccount resolves the target account by email (via its user) or
-// by slug. Returns errLookupNoQuery when neither is set, platform.ErrNotFound
-// when nothing matches.
+// resolveLookupAccount resolves the target account by email (via its user) or slug. Returns errLookupNoQuery when neither
+// is set, platform.ErrNotFound when nothing matches.
 func (h *Handlers) resolveLookupAccount(r *http.Request, email, slug string) (platform.Account, error) {
 	switch {
 	case email != "":

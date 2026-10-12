@@ -6,7 +6,8 @@ import (
 	"time"
 )
 
-// RequestTimeout bounds every non-streaming request's context to d as a backstop for handlers lacking their own DB timeout, since WriteTimeout does not cancel queries; d <= 0 disables it and SSE routes are exempt.
+// RequestTimeout bounds every non-streaming request's context to d as a backstop for handlers lacking their own DB timeout, since
+// WriteTimeout does not cancel queries; d <= 0 disables it and SSE routes are exempt.
 func RequestTimeout(d time.Duration) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -25,9 +26,8 @@ func RequestTimeout(d time.Duration) Middleware {
 	}
 }
 
-// streamingPaths is the exact set of SSE routes, not a `/stream` suffix test, which a caller
-// could forge through any trailing-wildcard route. A new SSE route must be added here;
-// TestRequestTimeout_StreamExemptionCannotBeForged fails until it is.
+// streamingPaths is the exact set of SSE routes, not a `/stream` suffix test a caller could forge via a wildcard route.
+// A new SSE route must be added here; TestRequestTimeout_StreamExemptionCannotBeForged fails until it is.
 var streamingPaths = map[string]bool{
 	"/v1/ledger/stream":       true,
 	"/v1/price/stream":        true,

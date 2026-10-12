@@ -5,9 +5,7 @@ import (
 	"net/http"
 )
 
-// ctxKey is the concrete type for this package's context keys.
-// Keeping it unexported prevents cross-package collisions (two
-// packages writing the same string key would otherwise clobber).
+// ctxKey is the unexported type for this package's context keys, so another package's same-string key cannot collide.
 type ctxKey string
 
 const (

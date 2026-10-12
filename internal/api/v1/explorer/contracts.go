@@ -31,7 +31,8 @@ type ContractEventView struct {
 	Data   string   `json:"data,omitempty"`
 }
 
-// ContractDetailView is GET /v1/contracts/{contract_id}: the id and its most recent events; NextCursor is the opaque full-row-identity keyset cursor, set only when a full page returned.
+// ContractDetailView is GET /v1/contracts/{contract_id}: the id and its most recent events; NextCursor is the opaque full-row-identity
+// keyset cursor, set only when a full page returned.
 type ContractDetailView struct {
 	ContractID string `json:"contract_id"`
 	// Protocol names the registry protocol this contract belongs to
@@ -88,7 +89,8 @@ type ContractActivityDayV struct {
 	ActiveLedgers uint64 `json:"active_ledgers"`
 }
 
-// ContractDetail serves GET /v1/contracts/{contract_id}, a contract's recent event activity via the contract_id bloom skip-index; SEP-41 transfers live at /transfers.
+// ContractDetail serves GET /v1/contracts/{contract_id}, a contract's recent event activity via the contract_id bloom skip-index; SEP-41
+// transfers live at /transfers.
 func (h *Handler) ContractDetail(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)
@@ -179,10 +181,8 @@ type contractSidecars struct {
 	instOK    bool
 }
 
-// readContractSidecars runs the four independent reads concurrently, so a
-// cold page costs the slowest read rather than their sum. Each goroutine
-// writes only its own fields; all share ctx, so the request deadline and
-// cancellation bound every one of them.
+// readContractSidecars runs the four independent reads concurrently so a cold page costs the slowest, not the sum.
+// Each goroutine writes only its own fields; all share ctx, so the request deadline bounds every one.
 func (h *Handler) readContractSidecars(ctx context.Context, cid string) contractSidecars {
 	var s contractSidecars
 	var wg sync.WaitGroup
@@ -214,10 +214,8 @@ type cachedActivitySummary struct {
 	ok bool
 }
 
-// contractActivityCard is the 30-day liveness card, nil when the activity
-// index is unprovisioned, errors, or holds nothing for the contract. It goes
-// through the SWR cache: the lifetime uniqExact over a busy contract's
-// active ledgers (the XLM SAC: 45M rows) costs seconds.
+// contractActivityCard is the 30-day liveness card, nil when the activity index is unprovisioned, errors or is empty for the contract.
+// Goes through the SWR cache: the lifetime uniqExact over a busy contract's active ledgers (the XLM SAC: 45M rows) costs seconds.
 func (h *Handler) contractActivityCard(ctx context.Context, cid string) *ContractActivityV {
 	v, _, _, err := h.contractDetailCached(ctx, "act:"+cid, func(rctx context.Context) (any, error) {
 		s, ok, err := h.Reader.ContractActivitySummaryFor(rctx, cid, 30)
@@ -245,9 +243,8 @@ func (h *Handler) contractActivityCard(ctx context.Context, cid string) *Contrac
 	return av
 }
 
-// setContractLiveness fills Exists and TTL. Exists is claimed false only on
-// a successful instance read that found nothing and no other lake evidence.
-// st/ok are the instance read's result; it reports ok back.
+// setContractLiveness fills Exists and TTL. Exists is claimed false only on a successful instance read that found nothing and no other
+// lake evidence. st/ok are the instance read's result; it reports ok back.
 func (h *Handler) setContractLiveness(ctx context.Context, out *ContractDetailView, st clickhouse.ContractInstanceState, ok bool) bool {
 	if ok {
 		out.TTL = h.contractTTL(ctx, st.LiveUntil)
@@ -279,9 +276,8 @@ func (h *Handler) contractInstanceState(ctx context.Context, cid string) (clickh
 	return st, ok
 }
 
-// contractTTL judges the instance's live_until against the lake watermark —
-// the same ledger every lake-backed view is stamped with. Nil when there is
-// no TTL row or no watermark to judge it against.
+// contractTTL judges the instance's live_until against the lake watermark, the ledger every lake-backed view is stamped with.
+// Nil when there is no TTL row or no watermark.
 func (h *Handler) contractTTL(ctx context.Context, liveUntil uint32) *ContractTTLV {
 	if liveUntil == 0 || h.LakeWatermark == nil {
 		return nil
@@ -302,10 +298,8 @@ func (h *Handler) contractTTL(ctx context.Context, liveUntil uint32) *ContractTT
 	return &ContractTTLV{LiveUntil: liveUntil, State: state, AsOfLedger: tip}
 }
 
-// parseContractEventsCursor decodes the opaque `?cursor=` for the contract activity feed:
-// dotted-decimal with tx_hash second ("63000000.<64-hex>.0.2"), mirroring parseMovementCursor.
-// The tx_hash segment is required because (ledger, op_index, event_index) is not unique
-// (single-op txs all tie at 0.0) and paging on it skips tied rows. 3-part cursors are rejected.
+// parseContractEventsCursor decodes the opaque `?cursor=` ("63000000.<64-hex>.0.2"), like parseMovementCursor. tx_hash is required
+// because (ledger, op_index, event_index) is not unique (single-op txs tie at 0.0); 3-part cursors are rejected.
 func (h *Handler) parseContractEventsCursor(w http.ResponseWriter, r *http.Request) (clickhouse.ContractEventsCursor, bool) {
 	raw := r.URL.Query().Get("cursor")
 	if raw == "" {
@@ -359,9 +353,8 @@ func contractEventView(e clickhouse.ContractActivityRow) ContractEventView {
 	}
 }
 
-// contractEventsFirstPageCached serves the contract's first activity page
-// through the shared contract-detail SWR cache, computing at the max page
-// size and slicing to the request's limit (see ContractDetail).
+// contractEventsFirstPageCached serves the contract's first activity page through the contract-detail SWR cache,
+// computed at the max page size and sliced to the request's limit (see ContractDetail).
 func (h *Handler) contractEventsFirstPageCached(ctx context.Context, cid string, limit int) ([]clickhouse.ContractActivityRow, time.Time, bool, error) {
 	v, asOf, degraded, err := h.contractDetailCached(ctx, "ev:"+cid, func(rctx context.Context) (any, error) {
 		full, cerr := h.Reader.ContractEventsRecent(rctx, cid, 500, clickhouse.ContractEventsCursor{})

@@ -12,13 +12,15 @@ import (
 	"strings"
 )
 
-// OriginPolicy is the operator's cross-origin allow-list, published on the request context by [CORS] so downstream guards reuse it rather than keep a drift-prone copy.
+// OriginPolicy is the operator's cross-origin allow-list, published on the request context by [CORS] so downstream guards reuse it
+// rather than keep a drift-prone copy.
 type OriginPolicy struct {
 	allowed     map[string]bool
 	credentials bool
 }
 
-// AllowsCredentialed reports whether origin is explicitly allow-listed for CREDENTIALED access, the only kind that may drive a cookie-authenticated write; the `*` wildcard deliberately does NOT satisfy it.
+// AllowsCredentialed reports whether origin is explicitly allow-listed for CREDENTIALED access, the only kind that may drive a cookie-
+// authenticated write; the `*` wildcard deliberately does NOT satisfy it.
 func (p *OriginPolicy) AllowsCredentialed(origin string) bool {
 	if p == nil || origin == "" || !p.credentials {
 		return false
@@ -38,7 +40,8 @@ func OriginPolicyFrom(ctx context.Context) (*OriginPolicy, bool) {
 	return p, ok
 }
 
-// RequireSameSiteWrite 403s state-changing requests not from this site or an allow-listed origin (Origin, else Referer; `Origin: null` untrusted; neither present fails closed), since SameSite=Lax alone misses sibling origins and login CSRF.
+// RequireSameSiteWrite 403s state-changing requests not from this site or an allow-listed origin (Origin, else Referer; `Origin: null`
+// untrusted; neither present fails closed), since SameSite=Lax alone misses sibling origins and login CSRF.
 func RequireSameSiteWrite(logger *slog.Logger) Middleware {
 	if logger == nil {
 		logger = slog.Default()
@@ -63,9 +66,8 @@ func RequireSameSiteWrite(logger *slog.Logger) Middleware {
 	}
 }
 
-// writeOriginOf resolves the origin a state-changing request came
-// from and classifies it. An empty reason means "allowed"; a
-// non-empty reason is the deny label used for logging.
+// writeOriginOf resolves the origin of a state-changing request and classifies it; an empty reason means allowed, else the deny label
+// for logs.
 func writeOriginOf(r *http.Request) (origin, reason string) {
 	origin = r.Header.Get("Origin")
 	// "null" is what a sandboxed iframe / opaque origin sends. It is
@@ -88,11 +90,8 @@ func writeOriginOf(r *http.Request) (origin, reason string) {
 	}
 }
 
-// requestOrigin reconstructs this deployment's own origin (scheme + host) as a browser would.
-//
-// `X-Forwarded-Proto` is honoured because TLS terminates at Caddy, so r.TLS is nil for genuine
-// https. Spoofing it gains nothing: a browser sets `Origin` itself, and a client able to forge
-// both headers needs no CSRF to use the victim's cookie.
+// requestOrigin reconstructs this deployment's own origin as a browser would. `X-Forwarded-Proto` is honoured because TLS terminates at
+// Caddy; spoofing it gains nothing, since a browser sets `Origin` itself and a client forging both needs no CSRF.
 func requestOrigin(r *http.Request) string {
 	scheme := "http"
 	switch {
@@ -135,10 +134,8 @@ func isSafeMethod(method string) bool {
 	}
 }
 
-// writeCrossSiteDenied emits the RFC 9457 problem+json 403. The
-// detail deliberately names the control so a dashboard developer
-// hitting it from an un-allow-listed dev origin gets a pointer
-// rather than a mystery 403.
+// writeCrossSiteDenied emits the RFC 9457 problem+json 403. The detail names the control so a developer on an un-allow-listed
+// dev origin gets a pointer, not a mystery 403.
 func writeCrossSiteDenied(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/problem+json")
 	// Never shared-cacheable: the verdict is per-request-header, the

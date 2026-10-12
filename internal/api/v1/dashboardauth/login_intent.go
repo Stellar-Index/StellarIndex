@@ -12,7 +12,8 @@ import (
 	"time"
 )
 
-// LoginIntentCookieName binds a magic link to the browser that asked for it (login-CSRF defence): the callback refuses unless the token's MAC verifies against this cookie's per-browser id.
+// LoginIntentCookieName binds a magic link to the browser that asked for it (login-CSRF defence): the callback refuses unless the
+// token's MAC verifies against this cookie's per-browser id.
 const LoginIntentCookieName = "__Host-stellarindex_login_intent"
 
 // loginIntentBrowserLen is the hex length of a browser id and of a full magic-link plaintext.
@@ -67,11 +68,8 @@ func (g *Generator) newBoundToken(browser string) (plaintext string, hash []byte
 	return plaintext, hash, g.CodeForHash(hash), nil
 }
 
-// setLoginIntentCookie stamps this browser's login-intent id and returns it: the id the request
-// already carries, else a fresh random one. It depends only on the request's own cookie, so a
-// throttled login and a real send leave identical state (enumeration resistance) and any number
-// of links requested from one browser stay redeemable there. TTL mirrors MagicLinkTTL, refreshed
-// per request.
+// setLoginIntentCookie stamps and returns this browser's login-intent id (the request's own, else fresh). It depends only on the request's
+// cookie, so a throttled login and a real send leave identical state (enumeration resistance). TTL mirrors MagicLinkTTL.
 func (h *Handlers) setLoginIntentCookie(w http.ResponseWriter, r *http.Request) string {
 	var browser string
 	if c, err := r.Cookie(LoginIntentCookieName); err == nil && isLoginIntentHex(c.Value) {
@@ -95,7 +93,8 @@ func (h *Handlers) clearLoginIntentCookie(w http.ResponseWriter) {
 	http.SetCookie(w, c)
 }
 
-// LoginDeviceCookieName marks a browser that has completed a sign-in for one address, granting its own send and verify-code budgets; it authenticates nothing and is Path-scoped to /v1/auth.
+// LoginDeviceCookieName marks a browser that has completed a sign-in for one address, granting its own send and verify-code budgets; it
+// authenticates nothing and is Path-scoped to /v1/auth.
 const LoginDeviceCookieName = "stellarindex_login_device"
 
 // loginDeviceTTL is the longest cookie lifetime browsers honour (400 days); each sign-in re-issues it.
@@ -146,9 +145,8 @@ func (h *Handlers) hasLoginDeviceProof(r *http.Request, email string) bool {
 	return hmac.Equal([]byte(mac), []byte(loginDeviceMAC(h.cfg.Generator.Secret, email, expires)))
 }
 
-// hasLoginIntent reports whether this browser asked for the magic link whose plaintext is given.
-// The tag compare is constant-time: the tag is half the emailed plaintext, so a timing oracle
-// would leak progress on the token itself.
+// hasLoginIntent reports whether this browser asked for the magic link with this plaintext. The tag compare is constant-time:
+// the tag is half the emailed plaintext, so a timing oracle would leak token progress.
 func (h *Handlers) hasLoginIntent(r *http.Request, plaintext string) bool {
 	c, err := r.Cookie(LoginIntentCookieName)
 	if err != nil || !isLoginIntentHex(c.Value) || !isLoginIntentHex(plaintext) {
