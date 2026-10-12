@@ -1,6 +1,7 @@
 package aquarius
 
 import (
+	"encoding/base64"
 	"errors"
 	"go/ast"
 	"go/parser"
@@ -13,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
@@ -307,5 +310,176 @@ func TestDecodeTrade_negativeAmountStillMalformed(t *testing.T) {
 	}
 	if errors.Is(err, ErrZeroAmountTrade) {
 		t.Fatalf("negative amount must not be the zero-amount no-op: %v", err)
+	}
+}
+
+func i128Val(n *big.Int) xdr.ScVal {
+	hi, lo := splitBigInt128(n)
+	p := xdr.Int128Parts{Hi: xdr.Int64(hi), Lo: xdr.Uint64(lo)}
+	return xdr.ScVal{Type: xdr.ScValTypeScvI128, I128: &p}
+}
+
+func contractAddrVal(t *testing.T, c string) xdr.ScVal {
+	t.Helper()
+	sv := decodeB64ScVal(t, encodeContractAddrFromStrkey(t, c))
+	return sv
+}
+
+func marshalB64(t *testing.T, sv xdr.ScVal) string {
+	t.Helper()
+	b, err := sv.MarshalBinary()
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return base64.StdEncoding.EncodeToString(b)
+}
+
+func vecVal(elts ...xdr.ScVal) xdr.ScVal {
+	vec := xdr.ScVec(elts)
+	pvec := &vec
+	return xdr.ScVal{Type: xdr.ScValTypeScvVec, Vec: &pvec}
+}
+
+// claimAmountEvents builds the three Aquarius claim events whose i128 amount lands in a CHECK (amount >= 0) column.
+func claimAmountEvents(t *testing.T, amount *big.Int) map[string]events.Event {
+	t.Helper()
+	token := makeContractStrkey(t, 0x11)
+	user := makeAccountStrkey(t, 0x22)
+	return map[string]events.Event{
+		EventClaimReward: {
+			Topic: []string{TopicSymbolClaimReward, encodeContractAddrFromStrkey(t, token), encodeAccountAddrFromStrkey(t, user)},
+			Value: marshalB64(t, vecVal(i128Val(amount))),
+		},
+		EventGaugeClaim: {
+			Topic: []string{TopicSymbolGaugeClaim, encodeAccountAddrFromStrkey(t, user)},
+			Value: marshalB64(t, i128Val(amount)),
+		},
+		EventClaimProtocolFee: {
+			Topic: []string{TopicSymbolClaimProtocolFee, encodeContractAddrFromStrkey(t, token)},
+			Value: marshalB64(t, vecVal(contractAddrVal(t, makeContractStrkey(t, 0x33)), i128Val(amount))),
+		},
+	}
+}
+
+// decodeClaimAmount runs the production decode arm for kind and returns
+// the decoded amount as a decimal string.
+func decodeClaimAmount(t *testing.T, kind string, e events.Event) (string, error) {
+	t.Helper()
+	if got := classify(&e); got != kind {
+		t.Fatalf("classify = %q, want %q", got, kind)
+	}
+	if kind == EventClaimProtocolFee {
+		fe, err := decodeFee(&e, closedAtTest, kind)
+		if err != nil {
+			return "", err
+		}
+		return fe.Amount.String(), nil
+	}
+	rv, err := decodeRewardsEvent(&e, kind, closedAtTest)
+	if err != nil {
+		return "", err
+	}
+	if rv.Amount == nil {
+		t.Fatalf("%s: Amount nil on a successful decode", kind)
+	}
+	return rv.Amount.String(), nil
+}
+
+// A negative i128 claim is a schema violation: the promoted Amount is
+// documented always-non-negative and the served column CHECKs >= 0, so a
+// decode that accepts it hands the sink a row it can only drop.
+func TestClaimAmounts_negativeRejectedAtDecode(t *testing.T) {
+	for _, amt := range []*big.Int{
+		big.NewInt(-1),
+		mustBig(t, "-170141183460469231731687303715884105728"), // i128 min
+	} {
+		for kind, e := range claimAmountEvents(t, amt) {
+			got, err := decodeClaimAmount(t, kind, e)
+			if !errors.Is(err, ErrMalformedPayload) {
+				t.Errorf("%s amount=%s: got (%q, %v), want ErrMalformedPayload", kind, amt, got, err)
+			}
+		}
+	}
+}
+
+// Zero and the i128 max both satisfy the CHECK and must decode exactly.
+func TestClaimAmounts_nonNegativeDecodeExactly(t *testing.T) {
+	for _, amt := range []*big.Int{
+		big.NewInt(0),
+		mustBig(t, "170141183460469231731687303715884105727"), // i128 max
+	} {
+		for kind, e := range claimAmountEvents(t, amt) {
+			got, err := decodeClaimAmount(t, kind, e)
+			if err != nil {
+				t.Fatalf("%s amount=%s: %v", kind, amt, err)
+			}
+			if got != amt.String() {
+				t.Errorf("%s: amount = %s, want %s", kind, got, amt)
+			}
+		}
+	}
+}
+
+// Real lake bytes (ledger 53,626,410): a trade from a registered pool with body (sold=2, bought=0, fee=0), a dust
+// swap. It must decode as a recognised no-op (nil rows, nil error): an error blinds the projection reconcile, and a
+// zero side breaks price derivation.
+const (
+	zeroAmountTradeContract = "CCY2PXGMKNQHO7WNYXEWX76L2C5BH3JUW3RCATGUYKY7QQTRILBZIFWV"
+	zeroAmountTradeValue    = "AAAAEAAAAAEAAAADAAAACgAAAAAAAAAAAAAAAAAAAAIAAAAKAAAAAAAAAAAAAAAAAAAAAAAAAAoAAAAAAAAAAAAAAAAAAAAA"
+)
+
+var zeroAmountTradeTopics = []string{
+	"AAAADwAAAAV0cmFkZQAAAA==",
+	"AAAAEgAAAAEohS9owZhIjjRvsSEu1QKQU3Ycwk9FM5LjU5ggGwgl5w==",
+	"AAAAEgAAAAEltPzYWa7C+mNIQ4xImzw8EMmLbSG+T9PLMMtolT75dw==",
+	"AAAAEgAAAAAAAAAA06CkWF2KJY6l5M8FwHOcDBTyiduhNO0HT1eyazNchIM=",
+}
+
+func zeroAmountTradeEvent() events.Event {
+	return events.Event{
+		Type:           "contract",
+		Ledger:         53626410,
+		LedgerClosedAt: "2024-09-23T11:34:58Z",
+		ContractID:     zeroAmountTradeContract,
+		TxHash:         "3870e2fc05a8a37f7ec7b01faaf222f91a353e8ca5273afe03c86b56963ba760",
+		OperationIndex: 0,
+		EventIndex:     2,
+		Topic:          zeroAmountTradeTopics,
+		Value:          zeroAmountTradeValue,
+	}
+}
+
+func TestDecoderDecode_zeroAmountTradeIsNoOp(t *testing.T) {
+	dec := NewDecoder()
+	ev := zeroAmountTradeEvent()
+	if !dec.Matches(ev) {
+		t.Fatal("gated decoder must match the registered pool's trade event")
+	}
+	outs, err := dec.Decode(ev)
+	if err != nil {
+		t.Fatalf("Decode = %v, want recognized no-op (nil error)", err)
+	}
+	if len(outs) != 0 {
+		t.Fatalf("Decode emitted %d events, want 0 (zero-amount trade projects nothing)", len(outs))
+	}
+}
+
+// A self-pair trade (token_sold == token_bought) maps to zero rows (canonical.ErrPairMismatch), a recognised no-op as
+// in comet; as an error it would count as undecodable-but-matched and fail the source's verdict closed.
+func TestDecoderDecode_selfPairTradeIsNoOp(t *testing.T) {
+	dec := NewDecoder()
+	ev := zeroAmountTradeEvent()
+	ev.Topic = append([]string(nil), zeroAmountTradeTopics...)
+	ev.Topic[2] = ev.Topic[1]
+	ev.Value = encodeTradeBody(t, big.NewInt(2), big.NewInt(1), big.NewInt(0))
+	if !dec.Matches(ev) {
+		t.Fatal("gated decoder must match the registered pool's trade event")
+	}
+	outs, err := dec.Decode(ev)
+	if err != nil {
+		t.Fatalf("Decode = %v, want recognized no-op (nil error)", err)
+	}
+	if len(outs) != 0 {
+		t.Fatalf("Decode emitted %d events, want 0 (self-pair trade projects nothing)", len(outs))
 	}
 }
