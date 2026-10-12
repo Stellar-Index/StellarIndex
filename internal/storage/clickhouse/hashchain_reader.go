@@ -8,20 +8,14 @@ import (
 	"fmt"
 )
 
-// HashChainWindowResult is one window's in-window hash-chain result: within [From,To], how many
-// present ledgers have a prev_hash that differs from the immediately-preceding PRESENT ledger's
-// ledger_hash. It backs the in-window check of verify-hashchain, the "hash-chained" half of
-// ADR-0034's provable-100% claim.
+// HashChainWindowResult is one window's in-window hash-chain result: how many present ledgers in [From,To] have a prev_hash differing from the preceding PRESENT ledger's ledger_hash (ADR-0034).
 type HashChainWindowResult struct {
 	From, To uint32
 	Present  uint64 // present ledgers in [From,To] (post-FINAL dedup)
 	Broken   uint64 // of those, how many have prev_hash != want_prev
 }
 
-// Checked is the count of in-window links actually evaluated: Present-1. The first present
-// ledger has no in-window predecessor (lagInFrame yields "" and the query filters it out); its
-// link is checked at the previous window's seam by QueryHashChainBoundary. It saturates at 0 for
-// an entirely-missing window so a displayed count never wraps.
+// Checked is the count of in-window links evaluated, Present-1 (the first ledger's link is checked at the seam by QueryHashChainBoundary), saturating at 0 for an empty window.
 func (w HashChainWindowResult) Checked() uint64 {
 	if w.Present == 0 {
 		return 0
@@ -45,10 +39,7 @@ const hashChainWindowLinksQuery = `
 	)
 	` + boundedScanSettings
 
-// QueryHashChainWindowLinks runs the in-window headline over [from,to], one query per stride-wide
-// window so peak query cost never exceeds one lake partition. Windowing is unconditional because
-// the caller needs window-sized buckets to run QueryHashChainBoundary at each seam. Per-ledger
-// detail comes from QueryBrokenHashLinks, only for windows with Broken>0.
+// QueryHashChainWindowLinks runs the in-window headline over [from,to], one query per stride-wide window (bounded to one lake partition, and needed to run QueryHashChainBoundary at each seam).
 func QueryHashChainWindowLinks(ctx context.Context, addr string, from, to, stride uint32) ([]HashChainWindowResult, error) {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -71,13 +62,7 @@ func QueryHashChainWindowLinks(ctx context.Context, addr string, from, to, strid
 	return out, nil
 }
 
-// HashChainBoundaryResult is one window seam's result: does ledger Seq's prev_hash equal ledger
-// PredecessorSeq's (Seq-1's) ledger_hash? lagInFrame never sees across a window edge, so the seam
-// link needs this separate 2-row point lookup.
-//
-// SeqPresent / PredecessorPresent separate a substrate gap at the seam (counted as a broken link;
-// verify-contiguity reports gaps precisely) from a hash mismatch with both present (true
-// corruption). Linked is true only when both are present AND the hashes agree.
+// HashChainBoundaryResult is one window seam's result (does Seq's prev_hash equal Seq-1's ledger_hash); SeqPresent/PredecessorPresent separate a substrate gap (counted as broken) from a true hash mismatch, and Linked needs both present and equal.
 type HashChainBoundaryResult struct {
 	Seq, PredecessorSeq            uint32
 	SeqPresent, PredecessorPresent bool
@@ -89,11 +74,7 @@ type HashChainBoundaryResult struct {
 // later pass re-checks a boundary result.
 const hashChainBoundaryQuery = `SELECT ledger_seq, ledger_hash, prev_hash FROM stellar.ledgers FINAL WHERE ledger_seq IN (?, ?)`
 
-// QueryHashChainBoundary is the point lookup for one window seam: IN (seq-1, seq) reads at most
-// two rows regardless of lake size, so one per window is cheap.
-//
-// seq==0 returns a zero-value result without querying: no predecessor exists, and it avoids a
-// uint32 underflow of seq-1.
+// QueryHashChainBoundary is the point lookup for one window seam, reading at most two rows; seq==0 returns a zero-value result without querying (no predecessor, avoids uint32 underflow).
 func QueryHashChainBoundary(ctx context.Context, addr string, seq uint32) (HashChainBoundaryResult, error) {
 	res := HashChainBoundaryResult{Seq: seq}
 	if seq == 0 {
@@ -137,8 +118,7 @@ func QueryHashChainBoundary(ctx context.Context, addr string, seq uint32) (HashC
 	return res, nil
 }
 
-// BrokenHashLink is one individual broken in-window link, as located by
-// QueryBrokenHashLinks.
+// BrokenHashLink is one individual broken in-window link, as located by QueryBrokenHashLinks.
 type BrokenHashLink struct {
 	LedgerSeq uint32
 	PrevHash  string
@@ -161,9 +141,7 @@ const brokenHashLinksQuery = `
 	ORDER BY ledger_seq
 	` + boundedScanSettings
 
-// QueryBrokenHashLinks lists every broken in-window link within [from,to]. Callers MUST bound
-// [from,to] to a single window already flagged Broken>0, so cost follows the window width, not the
-// break count.
+// QueryBrokenHashLinks lists every broken in-window link in [from,to]; callers MUST bound the range to one window already flagged Broken>0.
 func QueryBrokenHashLinks(ctx context.Context, addr string, from, to uint32) ([]BrokenHashLink, error) {
 	if to < from {
 		return nil, nil

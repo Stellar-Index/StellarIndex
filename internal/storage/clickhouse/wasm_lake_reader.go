@@ -13,26 +13,20 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// ErrContractWasmUnresolved: the contract's INSTANCE entry or its contract_code entry is not in the
-// lake. A clean 404, not an error. contract_code is fully captured, so a code-hop miss means the
-// hash is genuinely absent; the instance hop is the one that still misses.
+// ErrContractWasmUnresolved means the contract's INSTANCE or contract_code entry is not in the lake: a clean 404, not an error (the instance hop is the one that still misses).
 var ErrContractWasmUnresolved = errors.New("clickhouse: contract wasm not resolvable from lake")
 
-// ErrContractIsSAC: the instance is captured but its executable is a Stellar Asset Contract, which
-// has no WASM, ever. Distinct from ErrContractWasmUnresolved so callers can say "SAC" rather than
-// "not captured".
+// ErrContractIsSAC means the instance is captured but its executable is a Stellar Asset Contract, which has no WASM, ever.
 var ErrContractIsSAC = errors.New("clickhouse: contract is a stellar asset contract (no wasm)")
 
-// WasmExport is one exported function of a Soroban contract. Types are the low-level wasm ABI; the
-// NAMES are the contract's real API surface.
+// WasmExport is one exported function of a Soroban contract; types are the low-level wasm ABI, the names are the contract's real API surface.
 type WasmExport struct {
 	Name    string   // exported symbol
 	Params  []string // wasm value types: "i32"|"i64"|"f32"|"f64"
 	Results []string // wasm value types
 }
 
-// ContractWasmInfo is the assembled per-contract wasm view. Wat/Decompiled are empty when wabt is
-// not on PATH; hash, size and exports are always populated.
+// ContractWasmInfo is the assembled per-contract wasm view; Wat/Decompiled are empty when wabt is not on PATH, hash, size and exports are always populated.
 type ContractWasmInfo struct {
 	ContractID string
 	WasmHash   string // hex sha256 of the wasm module
@@ -43,10 +37,7 @@ type ContractWasmInfo struct {
 	ToolNote   string // human note on which optional stages ran / why they didn't
 }
 
-// ContractWasm resolves a contract id to its wasm over ledger_entry_changes (ADR-0034): contract id
-// -> wasm hash (INSTANCE entry), then hash -> bytes (contract_code entry). Exports are parsed
-// natively; WAT and decompile are best-effort. Returns ErrContractWasmUnresolved when either hop
-// misses.
+// ContractWasm resolves a contract id to its wasm over ledger_entry_changes (instance entry to hash, hash to bytes); returns ErrContractWasmUnresolved when either hop misses, WAT and decompile are best-effort.
 func (r *ExplorerReader) ContractWasm(ctx context.Context, contractID string) (ContractWasmInfo, error) {
 	wasmHash, err := r.resolveContractWasmHash(ctx, contractID)
 	if err != nil {
@@ -61,9 +52,7 @@ func (r *ExplorerReader) ContractWasm(ctx context.Context, contractID string) (C
 	return info, nil
 }
 
-// ContractWasmHash is ContractWasm's first hop alone: the contract's CURRENT
-// wasm hash as lower hex, without reading or disassembling the module.
-// Returns ErrContractIsSAC / ErrContractWasmUnresolved exactly as ContractWasm.
+// ContractWasmHash is ContractWasm's first hop alone: the contract's CURRENT wasm hash as lower hex, with the same ErrContractIsSAC / ErrContractWasmUnresolved errors.
 func (r *ExplorerReader) ContractWasmHash(ctx context.Context, contractID string) (string, error) {
 	h, err := r.resolveContractWasmHash(ctx, contractID)
 	if err != nil {
@@ -222,8 +211,7 @@ func (r *ExplorerReader) contractWasmHashLegacy(ctx context.Context, cid xdr.Has
 	return xdr.Hash{}, false, rows.Err()
 }
 
-// ContractInstanceState is the lake's evidence about a contract's instance
-// ledger entry.
+// ContractInstanceState is the lake's evidence about a contract's instance ledger entry.
 type ContractInstanceState struct {
 	// Known: positive lake evidence the instance entry exists or existed (a TTL row or a resolvable
 	// executable). False means "not in the captured window", not "never deployed".
@@ -233,9 +221,7 @@ type ContractInstanceState struct {
 	LiveUntil uint32
 }
 
-// ContractInstanceState resolves the contract's instance-entry evidence: a
-// primary-key read on stellar.ttl_live_until for the instance key, falling
-// back to the executable resolution only when no TTL row proves existence.
+// ContractInstanceState resolves instance-entry evidence via a primary-key read on stellar.ttl_live_until, falling back to executable resolution only when no TTL row proves existence.
 func (r *ExplorerReader) ContractInstanceState(ctx context.Context, contractID string) (ContractInstanceState, error) {
 	dec, err := strkey.Decode(strkey.VersionByteContract, contractID)
 	if err != nil {
@@ -269,8 +255,7 @@ func (r *ExplorerReader) ContractInstanceState(ctx context.Context, contractID s
 	return ContractInstanceState{Known: ok}, nil
 }
 
-// ContractCodeVersion is one entry in a contract's code-upgrade timeline: the
-// ledger at which the contract's instance began pointing at WasmHash.
+// ContractCodeVersion is one entry in a contract's code-upgrade timeline: the ledger at which the instance began pointing at WasmHash.
 type ContractCodeVersion struct {
 	Ledger    uint32
 	CloseTime time.Time
@@ -294,9 +279,7 @@ const contractCodeHistoryQuery = `SELECT ledger_seq, close_time, entry_xdr FROM 
 			LIMIT ?
 		) ORDER BY ledger_seq ASC, intra_ledger_seq ASC, change_index ASC, ingested_at ASC` + explorerScanSettings
 
-// ContractCodeHistory returns the contract's WASM-hash timeline (ADR-0038 Phase C): each distinct
-// executable in order, so an `update_contract` upgrade shows as a new version. Empty (not an error)
-// when there is no wasm instance write: never deployed, a SAC, or not a contract.
+// ContractCodeHistory returns the contract's WASM-hash timeline (each distinct executable in order, so upgrades show as new versions); empty, not an error, when never deployed, a SAC, or not a contract.
 func (r *ExplorerReader) ContractCodeHistory(ctx context.Context, contractID string) ([]ContractCodeVersion, error) {
 	dec, err := strkey.Decode(strkey.VersionByteContract, contractID)
 	if err != nil {
@@ -327,19 +310,13 @@ func (r *ExplorerReader) ContractCodeHistory(ctx context.Context, contractID str
 	return r.contractCodeHistoryLegacy(ctx, cidHash)
 }
 
-// ErrInstanceHistoryIncomplete: contract_instance_changes carries no
-// genesis-complete watermark, so no timeline read from it can prove which
-// WASM ran at a historical ledger.
+// ErrInstanceHistoryIncomplete means contract_instance_changes has no genesis-complete watermark, so no timeline from it can prove which WASM ran at a historical ledger.
 var ErrInstanceHistoryIncomplete = errors.New("clickhouse: contract_instance_changes genesis watermark missing: run stellarindex-ops ch-instance-backfill to completion")
 
-// ErrCodeHistoryTruncated: the timeline hit contractCodeHistoryMaxRows,
-// which drops the OLDEST versions.
+// ErrCodeHistoryTruncated means the timeline hit contractCodeHistoryMaxRows, which drops the OLDEST versions.
 var ErrCodeHistoryTruncated = errors.New("clickhouse: contract code history truncated at the row cap (oldest versions dropped)")
 
-// ReplayCodeHistory is ContractCodeHistory for the replay WASM gate: it reads only the
-// genesis-complete instance index and never answers an unproven timeline. Errors:
-// ErrInstanceHistoryIncomplete (no watermark), ErrContractIsSAC, ErrContractWasmUnresolved (no
-// rows), ErrCodeHistoryTruncated.
+// ReplayCodeHistory is ContractCodeHistory for the replay WASM gate: it reads only the genesis-complete instance index and never answers an unproven timeline (ErrInstanceHistoryIncomplete, ErrCodeHistoryTruncated).
 func (r *ExplorerReader) ReplayCodeHistory(ctx context.Context, contractID string) ([]ContractCodeVersion, error) {
 	dec, err := strkey.Decode(strkey.VersionByteContract, contractID)
 	if err != nil {
@@ -657,10 +634,7 @@ func (r *ExplorerReader) wasmCodeByHash(ctx context.Context, hash xdr.Hash) ([]b
 	return nil, false, rows.Err()
 }
 
-// SACClassicAssetName resolves a contract to the classic asset its SAC wraps ("native" or
-// "CODE:GISSUER"). found=false when no instance is in the lake or the executable is not
-// StellarAsset: only core mints that executable, so it is the trust anchor, unlike a WASM
-// contract's METADATA name.
+// SACClassicAssetName resolves a contract to the classic asset its SAC wraps ("native" or "CODE:GISSUER"); found=false unless the executable is StellarAsset, which only core mints, so it is the trust anchor.
 func (r *ExplorerReader) SACClassicAssetName(ctx context.Context, contractID string) (string, bool, error) {
 	raw, err := strkey.Decode(strkey.VersionByteContract, contractID)
 	if err != nil {
@@ -725,10 +699,7 @@ func sacNameFromInstanceEntry(b64 string) (string, bool) {
 	return "", false
 }
 
-// SACAssetFromEvents infers the classic asset from the trailing sep0011_asset String topic of
-// CAP-67 events; the last-resort path for SACs whose instance was never captured. The caller MUST
-// re-derive the SAC address from the returned asset: the topic is attacker-influenceable on non-SAC
-// contracts.
+// SACAssetFromEvents infers the classic asset from the trailing sep0011_asset topic of CAP-67 events, the last resort for SACs with no captured instance; the caller MUST re-derive the SAC address from the asset (the topic is attacker-influenceable).
 func (r *ExplorerReader) SACAssetFromEvents(ctx context.Context, contractID string) (string, bool, error) {
 	// Bound the scan by the contract's active ledgers: `contract_id = ? ORDER BY ledger_seq DESC
 	// LIMIT 1` on a quiet contract walks the whole key range backwards, and this sits on the /wasm

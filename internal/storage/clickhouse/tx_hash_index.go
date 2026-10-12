@@ -19,10 +19,7 @@ const txHashIndexBackfillQuery = `INSERT INTO stellar.tx_hash_index (tx_hash, le
 	ARRAY JOIN arrayFilter(x -> x != '', [tx_hash, inner_tx_hash]) AS h
 	WHERE ledger_seq >= ? AND ledger_seq <= ?`
 
-// BackfillTxHashIndex fills stellar.tx_hash_index from stellar.transactions in inclusive [from, to]
-// windows of `window` ledgers, one server-side INSERT...SELECT each, so an interrupt loses at most
-// one window and a re-run is idempotent (ReplacingMergeTree keyed on tx_hash). The materialized
-// view covers new ingest; this fills the history behind it. logf gets one line per window.
+// BackfillTxHashIndex fills stellar.tx_hash_index from stellar.transactions in inclusive windows via server-side INSERT...SELECT; an interrupt loses at most one window and a re-run is idempotent.
 func BackfillTxHashIndex(ctx context.Context, addr string, from, to, window uint32, logf func(format string, args ...any)) error {
 	if from == 0 || to < from || window == 0 {
 		return fmt.Errorf("clickhouse: tx-hash-index backfill: need 0 < from <= to and window > 0 (got from=%d to=%d window=%d)", from, to, window)
@@ -39,10 +36,7 @@ func BackfillTxHashIndex(ctx context.Context, addr string, from, to, window uint
 		}, logf)
 }
 
-// MarkTxHashIndexCovered records that stellar.tx_hash_index holds every
-// transaction in [from, to] so the reader may treat an index miss as
-// authoritative. Call it only after a genesis→tip BackfillTxHashIndex run
-// succeeded.
+// MarkTxHashIndexCovered records that tx_hash_index holds every transaction in [from, to] so an index miss is authoritative; call only after a genesis-to-tip BackfillTxHashIndex succeeded.
 func MarkTxHashIndexCovered(ctx context.Context, addr string, from, to uint32) error {
 	conn, err := openRead(ctx, addr)
 	if err != nil {

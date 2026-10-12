@@ -31,9 +31,7 @@ func tradeOpTypeInList() string {
 	return strings.Join(quoted, ",")
 }
 
-// SDEXOp is one trade-eligible operation reconstructed from the lake: op body, result and ledger
-// context, enough to feed the SDEX OpDecoder. Source is the op's own source account if set, else
-// the tx source; the decoder uses it as the trade Taker.
+// SDEXOp is one trade-eligible operation from the lake (op body, result, ledger context) for the SDEX OpDecoder; Source is the op source if set, else the tx source (the trade Taker).
 type SDEXOp struct {
 	Ledger   uint32
 	ClosedAt time.Time
@@ -44,18 +42,7 @@ type SDEXOp struct {
 	OpResult xdr.OperationResult
 }
 
-// StreamSDEXOps is the op-based input adapter (ADR-0034): SDEX trades are op-derived, NOT
-// event-derived. It joins stellar.operations to stellar.operation_results for [from,to],
-// trade-bearing op types and SUCCESSFUL transactions only, rebuilds op.Body and the
-// OperationResult from the retained XDR, and calls fn in order.
-// Failed transactions are excluded: their op results can still carry claim atoms for ops that ran
-// before the failing op, but those trades were rolled back.
-//
-// NO FINAL, deliberately: FINAL on a ReplacingMergeTree merges across ALL overlapping parts of
-// each touched PARTITION (~1M ledgers of wide body_xdr rows) even for a 100k-ledger WHERE window,
-// which repeatedly blew the query-memory ceiling. Duplicate rows from un-merged parts are
-// HARMLESS: the census consumer PK-dedups via its `seen` map and ch-rebuild's InsertTrade is
-// ON CONFLICT DO NOTHING. Callers re-deriving history should still window [from,to].
+// StreamSDEXOps streams trade-bearing ops of SUCCESSFUL transactions for [from,to] in order (op-derived trades, ADR-0034); deliberately NO FINAL (it blows the memory ceiling), duplicates are harmless to PK-deduping consumers, so window [from,to].
 func StreamSDEXOps(ctx context.Context, addr string, from, to uint32, fn func(SDEXOp) error) error {
 	conn, err := openRead(ctx, addr)
 	if err != nil {

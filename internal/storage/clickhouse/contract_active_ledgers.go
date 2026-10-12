@@ -19,10 +19,7 @@ const contractActiveLedgersBackfillQuery = `
 	SETTINGS max_threads = 4, max_memory_usage = 8589934592,
 	         max_bytes_before_external_group_by = 4000000000, max_execution_time = 1800`
 
-// BackfillContractActiveLedgers fills stellar.contract_active_ledgers (the per-(contract, ledger)
-// index behind ContractEventsRecent's quiet-contract bound) in windowed, resumable
-// INSERT...SELECT chunks. Same operator contract as BackfillTxHashIndex: serialize on r1, run
-// under run-heavy-job.sh, resume with the printed -from.
+// BackfillContractActiveLedgers fills stellar.contract_active_ledgers in windowed, resumable INSERT...SELECT chunks; serialize on r1, run under run-heavy-job.sh, resume with the printed -from.
 func BackfillContractActiveLedgers(ctx context.Context, addr string, from, to, window uint32, logf func(format string, args ...any)) error {
 	if from == 0 || to < from || window == 0 {
 		return fmt.Errorf("clickhouse: contract-ledgers backfill: need 0 < from <= to and window > 0 (got from=%d to=%d window=%d)", from, to, window)

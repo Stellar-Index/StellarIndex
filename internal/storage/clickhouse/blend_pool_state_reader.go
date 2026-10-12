@@ -10,10 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 )
 
-// BlendReserveState is one reserve's decoded current state and derived metrics (ADR-0039).
-// ResConfig may be uncaptured, so Metrics.HasAPR reports it and Decimals falls back to 7.
-// When DecimalsFound is false that exponent is a placeholder: never publish a decimalised money
-// figure from it (see [ContractStorageSupply.DecimalsFound]).
+// BlendReserveState is one reserve's decoded current state and derived metrics (ADR-0039); when DecimalsFound is false the exponent is a placeholder and must never feed a published money figure.
 type BlendReserveState struct {
 	Pool          string
 	Asset         string // reserve underlying token (C-strkey)
@@ -39,11 +36,7 @@ const blendReserveStateQuery = `SELECT key_xdr, entry_xdr
 	WHERE entry_type = 'contract_data' AND key_xdr IN (?) AND entry_xdr != ''
 	SETTINGS max_threads = 4, max_memory_usage = 8000000000, optimize_move_to_prewhere_if_final = 0`
 
-// BlendPoolReserves reads the CURRENT reserve state for a pool (ADR-0039): ResData per asset
-// plus the instance entry (backstop rate) in one batched query. The rate-model config comes
-// from the caller (blend_admin queue_set_reserve events); without it APY is omitted. version
-// fixes the ResData rate scale; unknown is an error. ABSENCE (no ResData, a final removal, or a
-// TTL-archived entry) means "unavailable", never zero.
+// BlendPoolReserves reads a pool's CURRENT reserve state (ADR-0039) in one batched query; absence (no ResData, final removal, TTL-archived) means "unavailable", never zero.
 func (r *ExplorerReader) BlendPoolReserves(ctx context.Context, pool string, version blend.PoolVersion, assets []string, configs map[string]blend.ReserveConfig) ([]BlendReserveState, error) {
 	poolID, err := contractIDFromStrkey(pool)
 	if err != nil {

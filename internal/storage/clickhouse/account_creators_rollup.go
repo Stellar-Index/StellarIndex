@@ -10,8 +10,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// AccountCreatorRow is one league-table row. AccountsCreated, FundedStroops and the ledger bounds
-// are immutable history; LiveAccounts/LiveStroops are point-in-time as of the computing cycle.
+// AccountCreatorRow is one league-table row; AccountsCreated, FundedStroops and ledger bounds are immutable history, LiveAccounts/LiveStroops are as of the computing cycle.
 type AccountCreatorRow struct {
 	Rank            uint32
 	Creator         string
@@ -26,9 +25,7 @@ type AccountCreatorRow struct {
 	LastCreatedAt  time.Time
 }
 
-// AccountCreators is one cycle's snapshot: a board slice, the totals and the span aggregated.
-// FromLedger/ThruLedger are DATA-DERIVED (ADR-0031): min/max over the creation rows read, never
-// genesis by assumption.
+// AccountCreators is one cycle's snapshot: a board slice, the totals and the span; FromLedger/ThruLedger are data-derived (ADR-0031), never genesis by assumption.
 type AccountCreators struct {
 	Board             []AccountCreatorRow
 	CreatorsTotal     int64
@@ -44,13 +41,7 @@ type AccountCreators struct {
 // opCreateAccount is the op_type as stellar.operations records it (xdr.OperationType.String()).
 const opCreateAccount = "OperationTypeCreateAccount"
 
-// P23BoundaryLedger is the first Protocol 23 ledger, where the lake's record of account creation
-// changes representation. Below it a CreateAccount is a `create_account` movement (ADR-0047 D2);
-// at or above it, a CAP-67 `transfer` movement flagged by an OperationTypeCreateAccount row in
-// stellar.operations. Reading only the classic arm under-ranks creators.
-// Same VALUE as classicmovements.P23StartLedger and timescale.SEP41MovementsFloorLedger, but not
-// the same constant, since internal/storage sits below internal/sources (lint-imports.sh
-// L/storage-below-compute); TestP23BoundaryConstantsAgree keeps all three equal.
+// P23BoundaryLedger is the first Protocol 23 ledger, where account creation changes representation; same value as classicmovements.P23StartLedger (TestP23BoundaryConstantsAgree keeps them equal).
 const P23BoundaryLedger uint32 = 58_762_517
 
 // creatorsBoardSettings is the board join's settings. query_plan_join_swap_table = 0 PINS the
@@ -271,16 +262,12 @@ func creatorsGraphSteps() []rollupStep {
 	}
 }
 
-// RunCreatorsRollup executes one full recompute + atomic exchange; boundary is the network's P23
-// boundary (see creatorsRollupStatements).
+// RunCreatorsRollup executes one full recompute plus atomic exchange; boundary is the network's P23 boundary.
 func RunCreatorsRollup(ctx context.Context, addr string, boundary uint32, logf func(format string, args ...any)) error {
 	return runRollupCycle(ctx, addr, "creators rollup", creatorsRollupStatements(boundary), logf)
 }
 
-// AccountCreators reads the rollup snapshot: top `limit` board rows plus totals and span. ok=false
-// (not an error) when the rollup is unprovisioned or has no completed cycle, so the handler 503s
-// rather than serves zeros. A non-empty `account` narrows Board to that creator's row (rank is
-// whole-aggregation); `limit` is then ignored and totals stay whole-aggregation.
+// AccountCreators reads the rollup snapshot (top `limit` rows, totals, span); ok=false (not an error) when unprovisioned, so the handler 503s rather than serving zeros.
 func (r *ExplorerReader) AccountCreators(ctx context.Context, limit int, account string) (AccountCreators, bool, error) {
 	if !r.probeSchema(ctx, &r.accountCreatorsProbe,
 		`SELECT rank FROM stellar.account_creators_rollup LIMIT 1`, true) {

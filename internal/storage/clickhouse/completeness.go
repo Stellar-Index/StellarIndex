@@ -10,8 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// ReconcileEventStreamer adapts the contract_events read path to completeness.EventStreamer, so
-// reconciliation reads the certified lake, not the serving DB.
+// ReconcileEventStreamer adapts the contract_events read path to completeness.EventStreamer, so reconciliation reads the certified lake, not the serving DB.
 type ReconcileEventStreamer struct {
 	Addr string
 	// NeedOpArgs includes the wide op_args_xdr column; leave false unless the decoder reads OpArgs
@@ -31,10 +30,7 @@ type ReconcileEventStreamer struct {
 // growth adds windows, not per-query memory.
 const reconcileStreamWindow = 250_000
 
-// StreamContractEvents streams events for [from,to] narrowed by the source's prefilter, one window
-// at a time. NO FINAL (a full-range merge-on-read is too heavy): unmerged ReplacingMergeTree
-// duplicates share a window ordered by (ledger, tx_hash, op_index, event_index), so they stay
-// ADJACENT and the reconcile dedups by identity in O(1) memory (ReDeriveOutputCountsByKindFromEvents).
+// StreamContractEvents streams events for [from,to] narrowed by the source's prefilter, with NO FINAL: unmerged duplicates stay adjacent and the reconcile dedups by identity.
 func (s ReconcileEventStreamer) StreamContractEvents(ctx context.Context, from, to uint32, contractIDs, topic0Syms []string, fn func(events.Event) error) error {
 	where := s.filterWhere(contractIDs, topic0Syms)
 	return forEachLedgerWindow(from, to, reconcileStreamWindow, func(lo, hi uint32) error {
@@ -49,12 +45,7 @@ func (s ReconcileEventStreamer) filterWhere(contractIDs, topic0Syms []string) st
 	return contractEventsFilterWhere(contractIDs, topic0Syms, nil)
 }
 
-// ContiguousWatermark returns the highest ledger L such that stellar.ledgers holds every ledger in
-// [from, L] with no hole: the projector's safe upper read bound (ADR-0041). The live dual-sink can
-// drop whole ledgers while the projector advances its cursor, so clamping to this watermark
-// stalls at the hole until catch-up heals it. Keyed off ledgers because Sink.Flush writes it LAST.
-// Returns from-1 when CH has not reached `from` or `from` itself is a hole; callers treat
-// tip <= from as idle.
+// ContiguousWatermark returns the highest L such that stellar.ledgers holds every ledger in [from, L] (the projector's safe read bound, ADR-0041), or from-1 when CH has not reached `from` or `from` is a hole.
 func ContiguousWatermark(ctx context.Context, addr string, from uint32) (uint32, error) {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -128,8 +119,7 @@ func NewWatermarkReader(ctx context.Context, addr string) (*WatermarkReader, err
 	return &WatermarkReader{conn: conn}, nil
 }
 
-// ContiguousWatermark is [ContiguousWatermark] on the reader's connection, scanning and
-// returning no higher than `to`.
+// ContiguousWatermark is [ContiguousWatermark] on the reader's connection, returning no higher than `to`.
 func (w *WatermarkReader) ContiguousWatermark(ctx context.Context, from, to uint32) (uint32, error) {
 	return contiguousWatermarkUpTo(ctx, w.conn, from, to)
 }
@@ -142,9 +132,7 @@ func (w *WatermarkReader) LakeMinLedger(ctx context.Context) (uint32, error) {
 // Close releases the reader's connection.
 func (w *WatermarkReader) Close() error { return w.conn.Close() }
 
-// LakeMinLedger returns the lowest ledger_seq in stellar.ledgers (0 when empty): the edge
-// ContiguousWatermark cannot see past. Every lake begins at ledger 2, so a derive resuming from
-// genesis must clamp up to this or the watermark reports a boundary hole forever.
+// LakeMinLedger returns the lowest ledger_seq in stellar.ledgers (0 when empty), the edge ContiguousWatermark cannot see past; a derive resuming from genesis must clamp up to it.
 func LakeMinLedger(ctx context.Context, addr string) (uint32, error) {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -186,11 +174,7 @@ func substrateQueryLo(wlo, from uint64) uint64 {
 	}
 }
 
-// SubstrateProblem returns the earliest ledger in [from,to] where the lake substrate fails
-// (ADR-0033 Claim 1): a missing ledger or a hash-chain break (prev_hash != prior ledger_hash).
-// (0, false) means continuous and hash-linked. Both checks run over a per-ledger dedup
-// (argMax by ingested_at) so duplicate parts cannot create false breaks, and windows overlap by
-// one ledger so a boundary break is not missed.
+// SubstrateProblem returns the earliest ledger in [from,to] with a missing ledger or hash-chain break (ADR-0033 Claim 1); (0, false) means continuous and hash-linked.
 func SubstrateProblem(ctx context.Context, addr string, from, to uint32) (problem uint32, hasProblem bool, detail string, err error) {
 	conn, oerr := openRead(ctx, addr)
 	if oerr != nil {
@@ -369,8 +353,7 @@ func watermark(from, chMax, firstGap, minPresent uint32) uint32 {
 // contract_events (tier1_schema.sql).
 const eventCensusPartitionWidth = 1_000_000
 
-// EventCensusShortfall is one contract_events partition holding fewer rows than stellar.ledgers
-// says its ledgers emitted.
+// EventCensusShortfall is one contract_events partition holding fewer rows than stellar.ledgers says its ledgers emitted.
 type EventCensusShortfall struct {
 	// Partition is intDiv(ledger_seq, 1_000_000).
 	Partition uint32
@@ -382,14 +365,7 @@ type EventCensusShortfall struct {
 	Present  uint64
 }
 
-// EventCensusShortfalls cross-checks contract_events against ledgers per partition touched by
-// [from, to]. SubstrateProblem proves only stellar.ledgers, and "ledgers is written LAST" holds
-// for ingest alone: a DROP/REPLACE PARTITION or a restore that brings ledgers back first
-// (docs/operations/clickhouse-destructive-ddl.md) leaves ledgers intact over an empty event table.
-// soroban_event_count rises exactly when a contract_events row is appended, so fewer rows means
-// lost events. Present counts active parts; unmerged duplicates only raise it, so there is no
-// false shortfall (a loss masked by as many duplicates goes undetected). Expected is read BEFORE
-// present, since the sink flushes contract_events before ledgers.
+// EventCensusShortfalls cross-checks contract_events against ledgers per partition in [from, to], catching a DROP/REPLACE PARTITION or restore that leaves ledgers intact over missing events; unmerged duplicates can mask a loss.
 func EventCensusShortfalls(ctx context.Context, addr string, from, to uint32) ([]EventCensusShortfall, error) {
 	if from > to {
 		return nil, nil

@@ -7,26 +7,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// ErrRefreshSaturated is returned to a cold-path waiter when the detached-refresh gate was
-// saturated and the refresh was skipped, not queued. It is transient backpressure: handlers
-// must answer retryable (503), not 500. It is distinct from errAccountStateRefreshFailed (the
-// scan ran and errored), which stays on the 500 path so an alert fires.
+// ErrRefreshSaturated is returned to a cold-path waiter when the detached-refresh gate skipped (not queued) the refresh: transient backpressure, handlers must answer retryable 503, not 500.
 var ErrRefreshSaturated = errors.New("clickhouse: detached refresh capacity saturated; retry shortly")
 
-// RefreshGate is a small non-blocking semaphore bounding how many DETACHED cache refreshes may run
-// concurrently against the explorer's lake pool.
-//
-// The stale-while-revalidate caches single-flight PER KEY, but the key space is attacker-chosen
-// on unauthenticated routes: fabricated shape-valid addresses would each launch a detached
-// multi-minute lake scan with no bound across keys.
-//
-// The gate SKIPS on saturation rather than queueing: the caller serves what is cached, or misses
-// honestly and the next request retries. Queueing would only move the unbounded backlog into the
-// gate. A nil *RefreshGate admits everything (test stubs).
-//
-// PER-CLASS FAIRNESS: a global bound alone lets one key class starve the rest. TryAcquireClass
-// caps each client-keyed class at a quarter of the global limit and keeps one slot no
-// client-keyed class may take, so server-keyed prewarm refreshes always have room.
+// RefreshGate is a non-blocking semaphore bounding concurrent DETACHED cache refreshes against the lake pool (the key space is attacker-chosen on unauthenticated routes); it skips on saturation, per-class capped via TryAcquireClass, and a nil gate admits everything.
 type RefreshGate struct {
 	sem chan struct{}
 
@@ -46,20 +30,15 @@ var serverKeyedClasses = map[string]bool{
 	"protocol_bespoke":   true,
 }
 
-// DefaultDetachedRefreshLimit is the production bound on concurrently
-// running detached refreshes: half the 16-connection explorer pool, so inline request-path
-// reads keep headroom. Sized against a PAGE, not a request: a cold contract page fans out to
-// five reads, so a smaller bound would refuse some of its own panels.
+// DefaultDetachedRefreshLimit is the production bound on concurrent detached refreshes: half the 16-connection explorer pool, sized against a PAGE (a cold contract page fans out to five reads).
 const DefaultDetachedRefreshLimit = 8
 
-// NewRefreshGate returns a gate admitting at most limit concurrent
-// holders.
+// NewRefreshGate returns a gate admitting at most limit concurrent holders.
 func NewRefreshGate(limit int) *RefreshGate {
 	return &RefreshGate{sem: make(chan struct{}, limit)}
 }
 
-// TryAcquire claims a slot without blocking; false means saturated (the
-// caller must skip its refresh, not queue).
+// TryAcquire claims a slot without blocking; false means saturated and the caller must skip its refresh, not queue.
 func (g *RefreshGate) TryAcquire() bool {
 	if g == nil {
 		return true
@@ -81,10 +60,7 @@ func (g *RefreshGate) Release() {
 	<-g.sem
 }
 
-// TryAcquireClass claims a slot for a named refresh class without blocking. A client-keyed class
-// may hold a quarter of the global limit (all client-keyed classes together, all but one slot); a
-// server-keyed class may hold half. False means skip the refresh, as TryAcquire. Refusals are
-// counted on obs.ExplorerRefreshGateSaturatedTotal, since the caller only sees a 503.
+// TryAcquireClass claims a slot for a named refresh class without blocking (client-keyed classes capped at a quarter of the limit, server-keyed at half); false means skip, and refusals are counted on obs.ExplorerRefreshGateSaturatedTotal.
 func (g *RefreshGate) TryAcquireClass(class string) bool {
 	if g == nil {
 		return true
@@ -137,10 +113,7 @@ func (g *RefreshGate) ReleaseClass(class string) {
 	}
 }
 
-// DetachedRefreshGate exposes the reader's gate so the API-layer explorer
-// caches (internal/api/v1/explorer) share ONE global bound with the
-// reader's own account-state refreshes — four independent gates of 4
-// would multiply back into pool exhaustion.
+// DetachedRefreshGate exposes the reader's gate so the API-layer explorer caches share ONE global bound with the reader's own refreshes.
 func (r *ExplorerReader) DetachedRefreshGate() *RefreshGate {
 	return r.refreshGate
 }

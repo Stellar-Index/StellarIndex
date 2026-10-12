@@ -14,8 +14,7 @@ import (
 // writes two projections, account_entry_changes keyed by account and asset_entry_changes keyed
 // by asset. The raw table is ORDER BY ledger, so neither read shape can use it directly.
 
-// EntryHistorySourceRow is one stellar.ledger_entry_changes row as the
-// entry-history derive reads it.
+// EntryHistorySourceRow is one stellar.ledger_entry_changes row as the entry-history derive reads it.
 type EntryHistorySourceRow struct {
 	Ledger         uint32
 	CloseTime      time.Time
@@ -29,10 +28,7 @@ type EntryHistorySourceRow struct {
 	EntryXDR       string
 }
 
-// EntryChangeRef is the change a history row records: its position in the
-// lake (the source row's primary key plus the canonical in-ledger order), what
-// happened, which decoded fields differ from the pre-image, and the decoded
-// entry as JSON. Fields carries the pre-image for a removal.
+// EntryChangeRef is the change a history row records: its lake position, what happened, the differing decoded fields and the decoded entry as JSON; Fields carries the pre-image for a removal.
 type EntryChangeRef struct {
 	Ledger         uint32
 	CloseTime      time.Time
@@ -46,9 +42,7 @@ type EntryChangeRef struct {
 	Fields         string
 }
 
-// AccountEntryChange is one account_entry_changes row: the change as seen by one account in one
-// role (owner / sponsor / claimant). Asset and Balance are set for account and trustline owners
-// and claimable-balance claimants; Balance is post-change (0 once the entry is removed).
+// AccountEntryChange is one account_entry_changes row: the change as seen by one account in one role (owner/sponsor/claimant); Balance is post-change (0 once removed).
 type AccountEntryChange struct {
 	EntryChangeRef
 	Account string
@@ -57,10 +51,7 @@ type AccountEntryChange struct {
 	Balance *big.Int
 }
 
-// AssetEntryChange is one stellar.asset_entry_changes row: the change as seen
-// by one asset in one role (holder / selling / buying / claimable / reserve_a /
-// reserve_b / pool). Account is the entry's holder, seller or sponsor, empty
-// for a liquidity pool.
+// AssetEntryChange is one stellar.asset_entry_changes row: the change as seen by one asset in one role; Account is the holder, seller or sponsor, empty for a liquidity pool.
 type AssetEntryChange struct {
 	EntryChangeRef
 	Asset   string
@@ -82,8 +73,7 @@ const entryHistorySourceQuery = `
 	ORDER BY ledger_seq, tx_hash, op_index, change_index
 `
 
-// StreamEntryHistorySource calls fn for every classic entry change in
-// [from, to], in (ledger_seq, tx_hash, op_index, change_index) order.
+// StreamEntryHistorySource calls fn for every classic entry change in [from, to], in (ledger_seq, tx_hash, op_index, change_index) order.
 func StreamEntryHistorySource(ctx context.Context, addr string, from, to uint32, fn func(EntryHistorySourceRow) error) error {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -113,9 +103,7 @@ func StreamEntryHistorySource(ctx context.Context, addr string, from, to uint32,
 // entryHistoryInsertChunk bounds one native INSERT batch.
 const entryHistoryInsertChunk = 20_000
 
-// InsertEntryHistory writes one batch of both projections. Retry-safe: both
-// tables are ReplacingMergeTrees keyed on the source row's identity plus the
-// account/asset and role, so a re-sent batch collapses on merge.
+// InsertEntryHistory writes one batch of both projections; retry-safe since both ReplacingMergeTree tables collapse a re-sent batch on merge.
 func InsertEntryHistory(ctx context.Context, addr string, accounts []AccountEntryChange, assets []AssetEntryChange) (int64, error) {
 	if len(accounts) == 0 && len(assets) == 0 {
 		return 0, nil
@@ -190,18 +178,13 @@ func nonNilAmount(a *big.Int) *big.Int {
 	return a
 }
 
-// ErrEntryHistoryHole reports a refused watermark advance over a window the
-// lake does not hold in full: delay, not failure — the next run re-derives it.
+// ErrEntryHistoryHole reports a refused watermark advance over a window the lake does not hold in full; a delay, not a failure.
 var ErrEntryHistoryHole = errors.New("clickhouse: entry-history window is not contiguous in the lake")
 
-// ErrEntryHistorySkippedPrefix reports a refused advance whose window starts
-// above watermark+1, which would claim never-derived ledgers as done.
+// ErrEntryHistorySkippedPrefix reports a refused advance whose window starts above watermark+1, which would claim never-derived ledgers as done.
 var ErrEntryHistorySkippedPrefix = errors.New("clickhouse: entry-history window skips ledgers below it")
 
-// ErrEntryHistoryEntryChangeShortfall reports a refused advance over a window
-// in which the derive read transaction-scoped entry changes for fewer ledgers
-// than stellar.ledgers declares tx-bearing: it would record the rest as having
-// no history.
+// ErrEntryHistoryEntryChangeShortfall reports a refused advance where entry changes were read for fewer ledgers than stellar.ledgers declares tx-bearing.
 var ErrEntryHistoryEntryChangeShortfall = errors.New("clickhouse: entry-history window lacks ledger_entry_changes coverage")
 
 // entryHistoryWindowCovered compares the tx-bearing ledgers the derive READ
@@ -222,8 +205,7 @@ func entryHistoryWindowCovered(ctx context.Context, conn driver.Conn, from, thru
 	return nil
 }
 
-// EntryHistoryWatermark returns the highest ledger ch-entry-history has
-// derived through (0 = never run, or the watermark table is not provisioned).
+// EntryHistoryWatermark returns the highest ledger ch-entry-history has derived through (0 = never run, or watermark table not provisioned).
 func EntryHistoryWatermark(ctx context.Context, addr string) (uint32, error) {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -246,11 +228,7 @@ func entryHistoryWatermarkOn(ctx context.Context, conn driver.Conn) (uint32, err
 	return wm, nil
 }
 
-// SetEntryHistoryWatermark records completion through `thru` for the derive window [from, thru],
-// only when the window continues the derived prefix, the lake holds every ledger in it and the
-// derive read entry changes for readTxLedgers distinct ledgers covering every tx-bearing one:
-// the derive resumes at watermark+1, so an unproven advance would lose those ledgers' history
-// for good. A window at or below the watermark is an idempotent re-derive and records nothing.
+// SetEntryHistoryWatermark records completion through `thru` only for a proven, contiguous window (an unproven advance would lose history for good); a window at or below the watermark records nothing.
 func SetEntryHistoryWatermark(ctx context.Context, addr string, from, thru uint32, readTxLedgers uint64) error {
 	if from == 0 || thru < from {
 		return fmt.Errorf("clickhouse: entry-history watermark window [%d,%d] is not a ledger range (genesis is ledger 1)", from, thru)

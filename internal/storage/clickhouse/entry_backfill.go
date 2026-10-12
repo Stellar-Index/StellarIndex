@@ -20,11 +20,7 @@ import (
 // const so the lake layer does not depend on the served-tier package.
 const seedIntraLedgerSeq = uint32(0xFFFFFFFF) // math.MaxUint32
 
-// SnapshotEntryRow builds a ledger_entry_changes row from a live snapshot entry (Post-only),
-// populating owner/asset/balance with the SAME helpers the indexer uses, so account-state,
-// asset-holder and supply reads treat backfilled rows identically. Keyed on the entry's real
-// LedgerKey + LastModifiedLedgerSeq so key_xdr lookups match and newest-wins ordering holds.
-// ok=false on a marshal error (skip the one entry, never abort the backfill).
+// SnapshotEntryRow builds a ledger_entry_changes row from a live snapshot entry using the indexer's own helpers; ok=false on a marshal error (skip the entry, never abort the backfill).
 func SnapshotEntryRow(post *xdr.LedgerEntry, closeTime time.Time) (LedgerEntryChangeRow, bool) {
 	key, err := post.LedgerKey()
 	if err != nil {
@@ -73,15 +69,7 @@ func isSnapshotSeedRow(txHash string, opIndex int32, changeType string) bool {
 // fixed-memory chunks rather than one giant batch.
 const entryBackfillChunk = 20_000
 
-// InsertEntryChanges batch-inserts rows directly into stellar.ledger_entry_changes, bypassing the
-// Sink's per-ledger commit-marker flow: it writes NO stellar.ledgers row, so it never advances
-// the completeness watermark, which is correct for snapshot entries. Idempotent under the
-// ReplacingMergeTree. Returns the number written. throttle pauses between chunks; keep it
-// non-zero for large backfills so the insert and the ledger_entries_current MV don't spike the
-// live serving CH.
-//
-// Resolves ChangeIndex collisions across the whole batch first (resolveChangeIndexCollisions),
-// since SnapshotEntryRow's crc32(key) base is only collision-free in the common case.
+// InsertEntryChanges batch-inserts rows into ledger_entry_changes bypassing the Sink commit marker (writes no stellar.ledgers row, so never advances the watermark); idempotent, returns rows written, keep throttle non-zero for large backfills.
 func InsertEntryChanges(ctx context.Context, addr string, rows []LedgerEntryChangeRow, throttle time.Duration) (int, error) {
 	if len(rows) == 0 {
 		return 0, nil

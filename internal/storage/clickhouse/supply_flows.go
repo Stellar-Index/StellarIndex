@@ -29,8 +29,7 @@ const supplyFlowsDDL = `
 	PARTITION BY intDiv(ledger_seq, 1000000)
 	ORDER BY (contract_id, ledger_seq, tx_hash, op_index, event_index)`
 
-// EnsureSupplyFlowsTable creates stellar.supply_flows if absent (idempotent), so the
-// write path never races a missing table.
+// EnsureSupplyFlowsTable creates stellar.supply_flows if absent (idempotent), so the write path never races a missing table.
 func EnsureSupplyFlowsTable(ctx context.Context, addr string) error {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -43,8 +42,7 @@ func EnsureSupplyFlowsTable(ctx context.Context, addr string) error {
 	return nil
 }
 
-// WriteSupplyFlows batch-inserts rows for the one-time history seed; the live path
-// writes via Sink.Flush. Idempotent under ReplacingMergeTree (event identity).
+// WriteSupplyFlows batch-inserts rows for the one-time history seed (the live path writes via Sink.Flush); idempotent under ReplacingMergeTree on event identity.
 func WriteSupplyFlows(ctx context.Context, addr string, rows []SupplyFlowRow) error {
 	if len(rows) == 0 {
 		return nil
@@ -76,10 +74,7 @@ func WriteSupplyFlows(ctx context.Context, addr string, rows []SupplyFlowRow) er
 	return nil
 }
 
-// SorobanGenesisLedger is the protocol-20 activation ledger on pubnet. The Postgres
-// SEP-41 supply observer only covers [SorobanGenesisLedger, tip]; a classic asset's
-// SAC-wrapper mint history below it comes from the lake's post-P23 (CAP-67) replay and
-// is summed as the pre-genesis opening balance (TokenSupplyBelowLedger).
+// SorobanGenesisLedger is the protocol-20 activation ledger on pubnet; supply below it comes from the lake's post-P23 CAP-67 replay (TokenSupplyBelowLedger) as the opening balance.
 const SorobanGenesisLedger uint32 = 50457424
 
 // TokenSupply is one token's supply, summed live from supply_flows.
@@ -157,21 +152,17 @@ func assembleTokenSupply(contractID, mintS, burnS, clawbackS string, flows uint6
 	}
 }
 
-// SupplyReader is a persistent ClickHouse connection serving per-token supply on the
-// API hot path; construct once, reuse, Close at shutdown.
+// SupplyReader is a persistent ClickHouse connection serving per-token supply on the API hot path; construct once, reuse, Close at shutdown.
 type SupplyReader struct {
 	conn driver.Conn
 }
 
-// NewSupplyReader dials ClickHouse with a request-sized pool and pings it, using the
-// environment's identity ([chAuth]).
+// NewSupplyReader dials ClickHouse with a request-sized pool and pings it, using the environment's identity (chAuth).
 func NewSupplyReader(ctx context.Context, addr string) (*SupplyReader, error) {
 	return NewSupplyReaderAuth(ctx, addr, "", "")
 }
 
-// NewSupplyReaderAuth is [NewSupplyReader] with an explicit CH username/password
-// (ADR-0048 D4 serving isolation; see NewExplorerReaderAuth). Both empty resolves the
-// environment's identity.
+// NewSupplyReaderAuth is NewSupplyReader with an explicit CH username/password (ADR-0048 D4 serving isolation); both empty resolves the environment's identity.
 func NewSupplyReaderAuth(ctx context.Context, addr, username, password string) (*SupplyReader, error) {
 	auth, err := authOrEnv(username, password)
 	if err != nil {
@@ -218,12 +209,7 @@ const supplySumByContractsQuery = `
 	WHERE contract_id IN (?)
 	GROUP BY contract_id`
 
-// TokenSupplyForContracts sums [SupplyReader.TokenSupply] for many contracts in one
-// read, keyed by contract id.
-//
-// A contract with NO flows is OMITTED, not returned as a zero [TokenSupply]: a caller treating a
-// missing key as zero would publish a fully-burned supply for every token the lake has not seen.
-// Incomplete carries through per contract; callers keep refusing those.
+// TokenSupplyForContracts sums TokenSupply for many contracts in one read, keyed by contract id; a contract with NO flows is OMITTED, never zero (zero would publish a fully-burned supply), and Incomplete carries through.
 func (r *SupplyReader) TokenSupplyForContracts(ctx context.Context, contractIDs []string) (map[string]TokenSupply, error) {
 	if len(contractIDs) == 0 {
 		return map[string]TokenSupply{}, nil
@@ -248,16 +234,12 @@ func (r *SupplyReader) TokenSupplyForContracts(ctx context.Context, contractIDs 
 	return out, nil
 }
 
-// TokenSupplyBelowLedger returns a contract's supply over ledger_seq <
-// ledgerExclusive. The SEP-41 genesis-baseline seed calls it with
-// [SorobanGenesisLedger]. Pre-Soroban rows are REPLAY-DERIVED (a post-P23 core
-// synthesized CAP-67 events for classic history; core-version-dependent, ADR-0033).
+// TokenSupplyBelowLedger returns a contract's supply over ledger_seq < ledgerExclusive; pre-Soroban rows are REPLAY-DERIVED (core-version-dependent, ADR-0033).
 func (r *SupplyReader) TokenSupplyBelowLedger(ctx context.Context, contractID string, ledgerExclusive uint32) (TokenSupply, error) {
 	return querySupplyBelowLedger(ctx, r.conn, contractID, ledgerExclusive)
 }
 
-// NativeTotalCoins returns XLM's total supply (stroops) and its ledger from the
-// latest ledger header's total_coins; XLM has no supply_flows (no SAC mint/burn).
+// NativeTotalCoins returns XLM's total supply (stroops) and its ledger from the latest header's total_coins; XLM has no supply_flows.
 func (r *SupplyReader) NativeTotalCoins(ctx context.Context) (totalCoins int64, ledger uint32, err error) {
 	const q = `SELECT total_coins, ledger_seq FROM stellar.ledgers ORDER BY ledger_seq DESC LIMIT 1`
 	if err := r.conn.QueryRow(ctx, q).Scan(&totalCoins, &ledger); err != nil {
@@ -282,10 +264,7 @@ func mustBig(s string) *big.Int {
 	return n
 }
 
-// SupplyFlowDay is one contract's NET supply change over one UTC day. It is a DELTA,
-// never a level: the level is the running total of every delta from the first flow
-// ([SupplyReader.DailySupplyFlowsForContracts]); a level built from a windowed slice
-// of an append-only log would be the window's turnover.
+// SupplyFlowDay is one contract's NET supply change over one UTC day: a DELTA, never a level (a level is the running total from the first flow).
 type SupplyFlowDay struct {
 	ContractID string
 	// Day is the UTC midnight the flows were bucketed into.
@@ -322,15 +301,7 @@ const supplyFlowsDailyByContractsQuery = `
 	GROUP BY contract_id, day
 	ORDER BY contract_id ASC, day ASC`
 
-// DailySupplyFlowsForContracts returns every day on which any named contract had a
-// supply flow, with that day's net change, ascending by (contract, day).
-//
-// The WHOLE history, never a window: a supply LEVEL is the running total of every flow, so
-// callers cumulate from the first flow and window the CUMULATED series; cumulating from zero
-// inside a window would publish its turnover as supply. A day with no row means supply did not
-// change (not licence to carry a PRICE forward across an oracle's silence).
-// A contract with no flows is ABSENT, not zero ([SupplyReader.TokenSupplyForContracts]). Callers
-// must refuse a series with a NEGATIVE running total ([TokenSupply.Incomplete]), never clamp it.
+// DailySupplyFlowsForContracts returns every day with a supply flow per contract, ascending, over the WHOLE history (callers cumulate then window); a contract with no flows is ABSENT, and a NEGATIVE running total must be refused, never clamped.
 func (r *SupplyReader) DailySupplyFlowsForContracts(ctx context.Context, contractIDs []string) ([]SupplyFlowDay, error) {
 	if len(contractIDs) == 0 {
 		return nil, nil

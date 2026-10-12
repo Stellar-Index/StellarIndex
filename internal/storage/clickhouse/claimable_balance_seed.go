@@ -17,11 +17,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// ClaimableBalanceSeed is one currently-live ClaimableBalanceEntry rebuilt from the lake's
-// append-log, shaped for seeding claimable_observations. Without it, balances created before the
-// live observer started are invisible to the classic-supply sum. A later claim writes
-// is_removal=true at a HIGHER ledger, which the served reader's DISTINCT ON ... ORDER BY ledger
-// DESC picks, so the live observer supersedes the seed.
+// ClaimableBalanceSeed is one currently-live ClaimableBalanceEntry rebuilt from the append-log to seed claimable_observations; a later claim writes is_removal=true at a higher ledger and supersedes it.
 type ClaimableBalanceSeed struct {
 	// ClaimableID is the V0 hash hex, byte-identical to the live observer's claimableIDHex, so
 	// seeded and live rows for one balance collide on the natural key instead of double-counting.
@@ -64,16 +60,7 @@ const (
 	claimableSeedWidenAfter = 4
 )
 
-// StreamClaimableBalanceSeeds reduces the append-log to the LATEST change per claimable balance and
-// calls fn for each still-live one in scope.
-// `assets` scopes to supply.AssetKey strings; nil or empty means EVERY classic credit asset, since
-// a partial default would under-report the rest.
-// Reads ledger_entry_changes, NOT ledger_entries_current: that projection only holds rows inserted
-// after its view was created, so it misses older unclaimed balances.
-// Emits nothing until the last window; silence is not a hang. Under walk.VerifyLake the range is
-// proven intact first (a hole hiding a claim would resurrect the claimed balance).
-// `served` maps hex claimable id to asset_key for balances the served tier holds live; each whose
-// latest lake change is a removal is emitted as a tombstone. Nil retracts nothing.
+// StreamClaimableBalanceSeeds streams the LATEST change per still-live claimable balance (nil `assets` = every classic credit asset), reading ledger_entry_changes not ledger_entries_current, which misses older unclaimed balances.
 func StreamClaimableBalanceSeeds(ctx context.Context, addr string, assets map[string]struct{}, served map[string]string, walk SeedWalk, fn func(ClaimableBalanceSeed) error) (SeedEvidence, error) {
 	red := newClaimableSeedReducer(assets)
 	if err := red.retractServed(served); err != nil {

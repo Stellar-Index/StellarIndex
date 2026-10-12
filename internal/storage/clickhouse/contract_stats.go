@@ -41,8 +41,7 @@ const contractDeploymentsQuery = `SELECT toStartOfMonth(f) AS m,
 
 const contractActive90dQuery = `SELECT toInt64(uniqExact(contract_id)) FROM stellar.contracts_census_daily WHERE day >= today() - 90`
 
-// ContractStats reads the deployment histogram, the 90-day active count and the
-// instance table's genesis watermark.
+// ContractStats reads the deployment histogram, the 90-day active count and the instance table's genesis watermark.
 func (r *ExplorerReader) ContractStats(ctx context.Context) (ContractStats, error) {
 	var out ContractStats
 	rows, err := r.conn.Query(ctx, contractDeploymentsQuery)
@@ -83,8 +82,7 @@ const contractTypesQuery = `SELECT contract_hash, argMax(is_sac, ledger_seq) AS 
 
 const contractTypesMax = 500
 
-// ContractTypes maps C... contract ids to whether the contract is a SAC. Ids with no
-// instance row, or not valid contract strkeys, are absent from the result.
+// ContractTypes maps C... contract ids to whether the contract is a SAC; ids with no instance row or invalid strkeys are absent.
 func (r *ExplorerReader) ContractTypes(ctx context.Context, contractIDs []string) (map[string]bool, error) {
 	if len(contractIDs) == 0 {
 		return map[string]bool{}, nil

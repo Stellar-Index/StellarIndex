@@ -6,10 +6,7 @@ import (
 	"time"
 )
 
-// AccountsStats is the network-wide account analytics snapshot for the
-// /accounts hub, read from the
-// ch-holders-rollup cycle's exchange-swapped tables. Stroops values are
-// int64 here and serialized as STRINGS at the API layer (ADR-0003).
+// AccountsStats is the network-wide account analytics snapshot for the /accounts hub; stroops are int64 here and serialized as STRINGS at the API layer (ADR-0003).
 type AccountsStats struct {
 	TotalAccounts            int64
 	TotalTrustlines          int64
@@ -26,8 +23,7 @@ type AccountsStats struct {
 	ComputedAt               time.Time
 }
 
-// WealthBucket is one log10 balance bucket: Bucket -1 = "< 1 XLM",
-// 0 = 1–10 XLM, … 10 = ">= 10B XLM".
+// WealthBucket is one log10 balance bucket: Bucket -1 = "< 1 XLM", 0 = 1-10 XLM, ... 10 = ">= 10B XLM".
 type WealthBucket struct {
 	Bucket     int8
 	Accounts   uint64
@@ -49,13 +45,7 @@ type HeldAsset struct {
 // topHeldAssetsLimit bounds the most-held board.
 const topHeldAssetsLimit = 12
 
-// AccountsStats reads the rollup snapshot. ok=false (not an error) when the rollup is not
-// populated, so the handler serves the warming state rather than zeros as facts.
-//
-// The rollup tables are swapped as one group (holdersRollupStatements) but read in separate round
-// trips, so a swap could blend two cycles. readStatsMetrics re-reads the accounts_stats
-// computed_at stamp after the last query to detect that; a mismatch retries the whole read once,
-// enough at a 30-minute cadence.
+// AccountsStats reads the rollup snapshot; ok=false (not an error) when not populated, and a swap-torn read across cycles is detected via computed_at and retried once.
 func (r *ExplorerReader) AccountsStats(ctx context.Context) (AccountsStats, bool, error) {
 	if !r.probeSchema(ctx, &r.accountsStatsProbe,
 		`SELECT value FROM stellar.accounts_stats LIMIT 1`, true) {

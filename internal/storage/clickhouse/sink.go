@@ -93,8 +93,7 @@ type OperationResultRow struct {
 	ResultXDR  string
 }
 
-// OperationParticipantRow mirrors stellar.operation_participants: one row per
-// (non-source account, operation) (ADR-0038).
+// OperationParticipantRow mirrors stellar.operation_participants: one row per (non-source account, operation) (ADR-0038).
 type OperationParticipantRow struct {
 	Account   string
 	LedgerSeq uint32
@@ -151,10 +150,7 @@ type LedgerEntryChangeRow struct {
 	IntraLedgerSeq uint32
 }
 
-// SupplyFlowRow mirrors stellar.supply_flows: one decoded mint/burn/clawback event.
-// The i128 magnitude is decoded at ingest as a *big.Int (ADR-0003), so per-token
-// supply is a pure SQL sum. The event identity is the ORDER BY key, so re-inserts
-// are idempotent.
+// SupplyFlowRow mirrors stellar.supply_flows: one mint/burn/clawback event with its i128 magnitude as *big.Int (ADR-0003); the event identity is the ORDER BY key, so re-inserts are idempotent.
 type SupplyFlowRow struct {
 	ContractID string
 	LedgerSeq  uint32
@@ -202,15 +198,10 @@ type LedgerExtract struct {
 	EntryChangesUnencodable int
 }
 
-// ErrBufferFull is returned by [Sink.Add] when the buffer is at maxBufferLedgers and
-// flushes keep failing (sustained ClickHouse outage). The extract is DROPPED to cap
-// heap; callers count it as a bounded drop, not an error, and the ch-live-catchup
-// gap scan heals it.
+// ErrBufferFull is returned by Sink.Add when the buffer is full and flushes keep failing; the extract is DROPPED (a bounded drop, not an error) and the ch-live-catchup gap scan heals it.
 var ErrBufferFull = errors.New("clickhouse: sink buffer full — extract dropped (bounded-drop, heals via ch-live-catchup)")
 
-// Sink buffers extracts and flushes them to ClickHouse in batches. Not safe
-// for concurrent use by multiple goroutines — give each backfill worker its
-// own Sink (ClickHouse handles concurrent connections well).
+// Sink buffers extracts and flushes them to ClickHouse in batches; NOT safe for concurrent use, so give each backfill worker its own Sink.
 type Sink struct {
 	conn             driver.Conn
 	flushEvery       int
@@ -229,16 +220,13 @@ type Sink struct {
 	supplyFlows  []SupplyFlowRow
 }
 
-// SetMaxBufferLedgers caps buffered ledgers before [Add] drops with [ErrBufferFull].
-// 0 (default) is unbounded, right for backfill Sinks whose caller retries the same
-// range; the LiveSink sets a cap because live ingest never stops feeding it.
+// SetMaxBufferLedgers caps buffered ledgers before Add drops with ErrBufferFull; 0 (default) is unbounded, right for backfill Sinks that retry the same range.
 func (s *Sink) SetMaxBufferLedgers(n int) { s.maxBufferLedgers = n }
 
 // BufferedLedgers reports how many ledgers are currently buffered (unflushed).
 func (s *Sink) BufferedLedgers() int { return len(s.ledgers) }
 
-// Open dials ClickHouse at addr, pings, and fails if any table or column Flush
-// writes to is missing. flushEvery is the ledger count that triggers a Flush.
+// Open dials ClickHouse at addr, pings, and fails if any table or column Flush writes to is missing; flushEvery is the ledger count that triggers a Flush.
 func Open(ctx context.Context, addr string, flushEvery int) (*Sink, error) {
 	if flushEvery <= 0 {
 		flushEvery = 2000
@@ -356,10 +344,7 @@ func stellarNames(ctx context.Context, conn driver.Conn, query string) (map[stri
 	return have, nil
 }
 
-// Add buffers one ledger's extract and flushes at the ledger threshold; any error other than
-// [ErrBufferFull] comes from that inline flush (e stays buffered). If a finite cap is set and the
-// buffer is AT it, the NEWEST extract is dropped and the ch-live-catchup gap scan refills it:
-// bounded heap beats unbounded growth on the shared host.
+// Add buffers one ledger's extract and flushes at the ledger threshold; at a finite cap it drops the NEWEST extract with ErrBufferFull (the ch-live-catchup gap scan refills it), any other error comes from the inline flush.
 func (s *Sink) Add(ctx context.Context, e LedgerExtract) error {
 	if s.maxBufferLedgers > 0 && len(s.ledgers) >= s.maxBufferLedgers {
 		return ErrBufferFull
@@ -378,10 +363,7 @@ func (s *Sink) Add(ctx context.Context, e LedgerExtract) error {
 	return nil
 }
 
-// Flush sends one native batch per table, then clears the buffers. A partial failure keeps them so
-// the caller retries the range (idempotent under ReplacingMergeTree). ORDERING IS LOAD-BEARING:
-// stellar.ledgers is flushed LAST as the per-ledger commit marker (the INSERTs are not
-// transactional), so the projector's ContiguousWatermark never passes a half-written ledger.
+// Flush sends one native batch per table and clears buffers (a partial failure keeps them for an idempotent retry); ORDERING IS LOAD-BEARING: stellar.ledgers goes LAST as the per-ledger commit marker.
 func (s *Sink) Flush(ctx context.Context) error {
 	n := len(s.ledgers)
 	if n == 0 {

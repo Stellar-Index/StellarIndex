@@ -6,10 +6,7 @@ import (
 	"time"
 )
 
-// TxSigner is one (ledger, tx_hash) -> transaction source account, read from
-// stellar.transactions for the signer back-tagger (lake events carry no source
-// account; see timescale.TagTradesSigner). CloseTime lets the tagger bound its
-// UPDATE by the trades time partition so it chunk-prunes.
+// TxSigner is one (ledger, tx_hash) to transaction source account row for the signer back-tagger; CloseTime bounds its UPDATE by the trades time partition.
 type TxSigner struct {
 	Ledger    uint32
 	TxHash    string
@@ -17,10 +14,7 @@ type TxSigner struct {
 	CloseTime time.Time
 }
 
-// TxSignersForLedgerRange returns (ledger, tx_hash, source_account) for every
-// transaction in the INCLUSIVE range [minLedger, maxLedger] with a non-empty
-// source account. Keyed on the primary key (ledger_seq), so not a full scan;
-// the caller derives the range from the AMM trades still needing a signer.
+// TxSignersForLedgerRange returns (ledger, tx_hash, source_account) for every transaction in the INCLUSIVE range with a non-empty source account, keyed on the primary key (not a full scan).
 func (r *ExplorerReader) TxSignersForLedgerRange(ctx context.Context, minLedger, maxLedger uint32) ([]TxSigner, error) {
 	if maxLedger < minLedger {
 		return nil, nil

@@ -23,8 +23,7 @@ type censusExecConn interface {
 	QueryRow(ctx context.Context, query string, args ...any) driver.Row
 }
 
-// ErrCensusShrink marks a recompute that produced fewer rows or events than
-// the live partition holds; the partition is left untouched.
+// ErrCensusShrink marks a recompute that produced fewer rows or events than the live partition holds; the partition is left untouched.
 var ErrCensusShrink = errors.New("census day recompute is smaller than the live partition")
 
 // censusDayInsert computes one day's census into the given PRIVATE staging table. A day is not
@@ -59,8 +58,7 @@ func privateStagingTable() (string, error) {
 	return "contracts_census_daily_staging_" + hex.EncodeToString(b[:]), nil
 }
 
-// CensusMaxDay returns the newest day present in the census table and
-// whether the table has any rows at all.
+// CensusMaxDay returns the newest day present in the census table and whether the table has any rows at all.
 func CensusMaxDay(ctx context.Context, addr string) (time.Time, bool, error) {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -83,10 +81,7 @@ func CensusMaxDay(ctx context.Context, addr string) (time.Time, bool, error) {
 	return maxDay, n > 0, rows.Err()
 }
 
-// ContiguousThroughDay returns the UTC day holding the highest ledger the lake has with no hole
-// from the start of fromDay: the last day a census recompute may read (only up to its hole, so
-// it stays the resume point). ok is false when fromDay's first ledger is missing or the lake has
-// not reached fromDay.
+// ContiguousThroughDay returns the UTC day of the highest hole-free ledger from the start of fromDay, the last day a census recompute may read; ok=false when fromDay's first ledger is missing.
 func ContiguousThroughDay(ctx context.Context, addr string, fromDay time.Time) (time.Time, bool, error) {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -122,11 +117,7 @@ func ContiguousThroughDay(ctx context.Context, addr string, fromDay time.Time) (
 	return closeTime.UTC().Truncate(24 * time.Hour), true, nil
 }
 
-// RunCensusDay recomputes exactly one UTC day of the census and swaps it in atomically.
-// Idempotent, and safe concurrently on the same day: each run uses its OWN private staging table.
-//
-// A recompute smaller than the live partition is refused with ErrCensusShrink unless shrinkOK:
-// the lake only grows for a past day, so a shrink means it lost data under the read.
+// RunCensusDay recomputes exactly one UTC day and swaps it in atomically (idempotent, private staging table); a recompute smaller than the live partition is refused with ErrCensusShrink unless shrinkOK.
 func RunCensusDay(ctx context.Context, addr string, day time.Time, shrinkOK bool, logf func(format string, args ...any)) error {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -203,8 +194,7 @@ func runCensusDayConn(ctx context.Context, conn censusExecConn, day time.Time, s
 	return nil
 }
 
-// EarliestEventDay returns the UTC day of the first contract event in
-// the lake — the backfill floor.
+// EarliestEventDay returns the UTC day of the first contract event in the lake, the backfill floor.
 func EarliestEventDay(ctx context.Context, addr string) (time.Time, error) {
 	conn, err := openRead(ctx, addr)
 	if err != nil {

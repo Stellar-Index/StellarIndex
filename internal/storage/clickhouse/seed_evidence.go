@@ -8,8 +8,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// SeedWalk configures a full-history seed walk over stellar.ledger_entry_changes
-// ([StreamSACBalanceSeedsFullHistory], [StreamClaimableBalanceSeeds]).
+// SeedWalk configures a full-history seed walk over stellar.ledger_entry_changes (StreamSACBalanceSeedsFullHistory, StreamClaimableBalanceSeeds).
 type SeedWalk struct {
 	// VerifyLake refuses the walk unless stellar.ledgers is contiguous and
 	// hash-linked over every ledger it reduces ([SubstrateProblem]). A lake hole
@@ -37,8 +36,7 @@ func (w SeedWalk) progressScan(scan func(from, to uint32) error) func(from, to u
 	}
 }
 
-// SeedEvidence is what a full-history seed walk established, as opposed to
-// what its caller asked for. Provenance is built from this, never from flags.
+// SeedEvidence is what a full-history seed walk established, as opposed to what its caller asked for; provenance is built from this, never from flags.
 type SeedEvidence struct {
 	// FromLedger and ToLedger bound the ledgers the walk reduced; ToLedger is
 	// also the ledger liveness was judged at.
@@ -48,8 +46,7 @@ type SeedEvidence struct {
 	LakeVerifiedThrough uint32
 }
 
-// ErrSeedLakeIncomplete is returned, before any seed is emitted, when a
-// VerifyLake walk finds the lake missing or mis-linking a ledger in its range.
+// ErrSeedLakeIncomplete is returned, before any seed is emitted, when a VerifyLake walk finds the lake missing or mis-linking a ledger in its range.
 var ErrSeedLakeIncomplete = errors.New("clickhouse: seed walk: lake is not intact over the range it would reduce")
 
 // substrateCheck is [SubstrateProblem] bound to one address.

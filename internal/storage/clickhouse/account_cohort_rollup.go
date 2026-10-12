@@ -15,9 +15,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// AccountCohortMinCreated is the creator-side coverage floor: a creator with fewer accounts
-// is not rolled up (every sponsor is); the per-account pages serve that better and the API
-// says "not covered" rather than "holds nothing".
+// AccountCohortMinCreated is the creator-side coverage floor: a creator with fewer accounts is not rolled up (every sponsor is).
 const AccountCohortMinCreated = 10
 
 // Cohort relations, the `rel` column's vocabulary and the API's
@@ -209,8 +207,7 @@ var cohortRollupStatements = []rollupStep{
 	{sql: cohortExchangeSQL()},
 }
 
-// CohortAllAssets is the flows row standing for every asset: movements and distinct active
-// members, amounts zero (not summable across units).
+// CohortAllAssets is the flows row standing for every asset: movements and distinct active members, amounts zero (not summable across units).
 const CohortAllAssets = "*"
 
 func itoa(n int) string { return strconv.Itoa(n) }
@@ -230,9 +227,7 @@ func cohortExchangeSQL() string {
 	return out
 }
 
-// RunCohortRollup runs one cycle: loads the DeFi position snapshot and monthly USD prices
-// into ClickHouse, then the statements above. Empty holders or prices swap in empty, which is
-// the truth on a network with none.
+// RunCohortRollup runs one cycle: loads the DeFi position snapshot and monthly USD prices, then the rollup statements; empty holders or prices swap in empty.
 func RunCohortRollup(ctx context.Context, addr string, holders []timescale.DeFiPositionHolder, prices []timescale.MonthlyUSDVWAP, logf func(format string, args ...any)) error {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -363,8 +358,7 @@ type AccountCohortHolding struct {
 	Balance *big.Int // stroops
 }
 
-// AccountCohortFlow is one month of movement in one asset. Asset
-// CohortAllAssets is the month's all-assets row (amounts zero).
+// AccountCohortFlow is one month of movement in one asset; Asset CohortAllAssets is the month's all-assets row (amounts zero).
 type AccountCohortFlow struct {
 	Month          time.Time
 	Asset          string
@@ -377,8 +371,7 @@ type AccountCohortFlow struct {
 	PriceUSDThen *string
 }
 
-// AccountCohortContract is one C… counterparty the cohort moved value
-// through.
+// AccountCohortContract is one C-address counterparty the cohort moved value through.
 type AccountCohortContract struct {
 	ContractID     string
 	Movements      uint64
@@ -397,9 +390,7 @@ type AccountCohortPosition struct {
 	Amount       *big.Int // exact sum in the fold's own unit
 }
 
-// Read caps: an exchange's sponsored set touches thousands of assets; the caps keep one read
-// one screen without hiding that a cap applied (Truncated* on the view).
-// CohortHoldingsLimit is exported so the API can say a cap applied.
+// CohortHoldingsLimit caps the holdings read and is exported so the API can say a cap applied (Truncated* on the view).
 const CohortHoldingsLimit = 400
 
 // CohortFlowAssetsLimit is exported so the API can say a cap applied.
@@ -410,8 +401,7 @@ const (
 	cohortPositionsLimit = 120
 )
 
-// AccountCohort reads one root's cohort. ok=false (not an error): no cycle has completed yet;
-// a completed cycle not covering the root gives ok=true, Covered=false.
+// AccountCohort reads one root's cohort; ok=false (not an error) when no cycle has completed, ok=true with Covered=false when the cycle does not cover the root.
 func (r *ExplorerReader) AccountCohort(ctx context.Context, account, relation string) (AccountCohort, bool, error) {
 	out := AccountCohort{Relation: relation, Root: account}
 	var computed time.Time
