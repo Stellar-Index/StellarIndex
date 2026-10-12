@@ -12,19 +12,7 @@ import (
 	"time"
 )
 
-// LoginIntentCookieName is the short-lived cookie binding a magic link to the browser that asked
-// for it.
-//
-// Login CSRF defence: GET /v1/auth/callback mints a session from a query-string token and the
-// session cookie is SameSite=Lax, so without the binding an attacker could mail a victim a link
-// for the attacker's OWN account and the victim's later actions would land in it. Single use and
-// the TTL do not prevent this.
-//
-// POST /v1/auth/login stamps this cookie with a random per-browser id and mints a token whose
-// second half is a MAC of its first half and that id ([Generator.newBoundToken]); the callback
-// refuses unless the MAC verifies against the presenting browser's id. The attacker cannot plant
-// a cookie on the API host (__Host- prefix) nor compute a tag without the server secret.
-// Distinct from [SessionCookieName] so one credential cannot be read as the other.
+// LoginIntentCookieName binds a magic link to the browser that asked for it (login-CSRF defence): the callback refuses unless the token's MAC verifies against this cookie's per-browser id.
 const LoginIntentCookieName = "__Host-stellarindex_login_intent"
 
 // loginIntentBrowserLen is the hex length of a browser id and of a full magic-link plaintext.
@@ -107,11 +95,7 @@ func (h *Handlers) clearLoginIntentCookie(w http.ResponseWriter) {
 	http.SetCookie(w, c)
 }
 
-// LoginDeviceCookieName marks a browser that has completed a sign-in for one address. From it,
-// POST /v1/auth/login still gets a link when the per-address send cap is full
-// ([Handlers.admitSignedInBrowser]) and POST /v1/auth/verify-code charges its own code budget
-// ([Handlers.HandleVerifyCode]), because anyone who knows the address can fill the shared ones.
-// It authenticates nothing and is scoped by Path to the /v1/auth routes.
+// LoginDeviceCookieName marks a browser that has completed a sign-in for one address, granting its own send and verify-code budgets; it authenticates nothing and is Path-scoped to /v1/auth.
 const LoginDeviceCookieName = "stellarindex_login_device"
 
 // loginDeviceTTL is the longest cookie lifetime browsers honour (400 days); each sign-in re-issues it.

@@ -10,19 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// AccountCreatorsView is the wire response for GET /v1/accounts/creators
-// — the account-creator league table: which accounts brought the
-// most other accounts into existence, and what the created set holds
-// now.
-//
-// Stroops-denominated values are decimal STRINGS (ADR-0003); counts are
-// JSON numbers (all far below 2^53).
-//
-// Creation and sponsorship are NOT merged here. This surface is the CREATOR relationship only
-// (funder to created account, from the immutable CreateAccount operation). Sponsorship (who pays
-// an entry's base reserve) is a different question over a different source, served by
-// /v1/accounts/sponsors and /v1/accounts/{g_strkey}/graph?relation=sponsored; nothing here is a
-// sponsorship figure.
+// AccountCreatorsView is GET /v1/accounts/creators, the account-creator league table; stroops are decimal STRINGS and it is the CREATOR relationship only, never a sponsorship figure.
 type AccountCreatorsView struct {
 	Creators []AccountCreatorV `json:"creators"`
 	Totals   struct {
@@ -109,9 +97,7 @@ func (h *Handler) parseBoardAccount(w http.ResponseWriter, r *http.Request) (str
 	return raw, true
 }
 
-// AccountCreators serves GET /v1/accounts/creators from the
-// ch-creators-rollup cycle's precomputed tables — a keyed board read
-// plus seven metric rows.
+// AccountCreators serves GET /v1/accounts/creators from the ch-creators-rollup cycle's precomputed tables.
 func (h *Handler) AccountCreators(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)

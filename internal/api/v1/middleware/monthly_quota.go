@@ -16,30 +16,18 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// MonthToDateReader is the storage-side primitive the
-// [MonthlyQuota] middleware uses. Production implementation:
-// `*usage.Counter.MonthToDate`. Declared as a narrow interface
-// so tests can substitute fakes without standing up Redis.
+// MonthToDateReader is the storage-side primitive [MonthlyQuota] uses (production: `*usage.Counter.MonthToDate`), a narrow interface so tests can fake it.
 type MonthToDateReader interface {
 	MonthToDate(ctx context.Context, subject string) (int64, error)
 }
 
-// DefaultMonthlyQuotaDwellTime is how long [MonthlyQuota] may keep failing OPEN on month-to-date
-// read errors before it flips to fail-CLOSED (429 + Retry-After).
-//
-// 30s matches [ratelimit.DefaultDwellTime] and [auth.DefaultSignupThrottleDwellTime]: long enough
-// that a Redis blip does not 429 paying customers, short enough that a sustained outage is not an
-// unmetered window for a key at its cap. Tune via api.monthly_quota_dwell.
+// DefaultMonthlyQuotaDwellTime is how long [MonthlyQuota] may fail OPEN on month-to-date read errors before flipping to fail-CLOSED (429 + Retry-After); tune via api.monthly_quota_dwell.
 const DefaultMonthlyQuotaDwellTime = 30 * time.Second
 
-// MonthlyQuotaOption tunes the [MonthlyQuota] middleware. Variadic so
-// the two-argument production call site stays source-compatible.
+// MonthlyQuotaOption tunes the [MonthlyQuota] middleware; variadic so the two-argument call site stays source-compatible.
 type MonthlyQuotaOption func(*monthlyQuotaGate)
 
-// WithMonthlyQuotaClock overrides the dwell-time clock source. Tests
-// inject a synthetic clock to drive dwell transitions deterministically
-// without time.Sleep; nil is ignored (keeps [time.Now]). Mirrors
-// [ratelimit.WithClock].
+// WithMonthlyQuotaClock overrides the dwell-time clock so tests can drive transitions without time.Sleep; nil is ignored (keeps [time.Now]).
 func WithMonthlyQuotaClock(now func() time.Time) MonthlyQuotaOption {
 	return func(g *monthlyQuotaGate) {
 		if now != nil {
@@ -48,9 +36,7 @@ func WithMonthlyQuotaClock(now func() time.Time) MonthlyQuotaOption {
 	}
 }
 
-// WithMonthlyQuotaDwellTime overrides the fail-open dwell window ([DefaultMonthlyQuotaDwellTime]).
-// A negative value disables the inversion (fail-open-always), which reopens a billing-overage
-// vector: a key at its cap bills unmetered for the whole counter outage.
+// WithMonthlyQuotaDwellTime overrides the fail-open dwell window; a negative value disables the inversion, reopening a billing-overage vector (a capped key bills unmetered through a counter outage).
 func WithMonthlyQuotaDwellTime(d time.Duration) MonthlyQuotaOption {
 	return func(g *monthlyQuotaGate) { g.dwellTime = d }
 }
@@ -110,19 +96,7 @@ func (g *monthlyQuotaGate) observeReadSuccess() {
 	}
 }
 
-// MonthlyQuota returns a [Middleware] enforcing `Subject.MonthlyQuota` against the caller's
-// ACCOUNT-wide month-to-date count.
-//
-//   - `MonthlyQuota <= 0` or a nil reader (Redis-less): pass through.
-//   - Else read the counter under [UsageKeyForSubject], the key `UsageTracker` writes (the OWNER
-//     ACCOUNT, so re-minting a key never resets it). count >= quota: 429 + Problem-JSON. Only
-//     BILLABLE traffic counts ([billableClass]), so our throttle and outages never use the cap.
-//   - Read error inside the dwell window: fail OPEN ([obs.MonthlyQuotaFailOpenTotal]); the cap is
-//     billing fairness, not security.
-//   - Read error past the dwell window: 429 + Retry-After, fail CLOSED
-//     ([obs.MonthlyQuotaFailClosedTotal]); otherwise a capped key is unmetered through the outage.
-//
-// The dwell machine ([DefaultMonthlyQuotaDwellTime]) mirrors [ratelimit.Bucket].
+// MonthlyQuota enforces `Subject.MonthlyQuota` against the ACCOUNT-wide month-to-date count of BILLABLE traffic (429 at the cap), failing OPEN inside the dwell window and CLOSED past it.
 func MonthlyQuota(reader MonthToDateReader, logger *slog.Logger, opts ...MonthlyQuotaOption) Middleware {
 	if logger == nil {
 		logger = slog.Default()

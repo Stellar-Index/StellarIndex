@@ -13,16 +13,7 @@ import (
 // larger body streams through without a validator.
 const etagMaxBody = 8 << 20
 
-// ETag sets a strong ETag over the exact bytes of a 200 GET/HEAD response
-// and answers a matching If-None-Match with 304 Not Modified (RFC 9110
-// §8.8.3, §13.1.2). It buffers the body to hash it, so anything that must
-// not be buffered passes through untouched and untagged: a non-200 status,
-// a text/event-stream or a handler that flushes, a Cache-Control: no-store
-// response, a handler-set ETag, and a body over etagMaxBody.
-//
-// It must sit inside every middleware that flushes after the handler
-// returns ([AfterResponse]); an outer flush would arrive after the body is
-// already written, but an inner one would spill the buffer untagged.
+// ETag sets a strong ETag over a 200 GET/HEAD body and answers a matching If-None-Match with 304; unbufferable responses (SSE, flushes, no-store, handler ETag, over etagMaxBody) pass untagged, and it must sit inside every middleware that flushes after the handler ([AfterResponse]).
 func ETag(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {

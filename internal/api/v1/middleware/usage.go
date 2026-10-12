@@ -30,21 +30,7 @@ func init() {
 	streamMeterInterval.Store(int64(time.Minute))
 }
 
-// UsageTracker records per-request daily counters keyed on the authenticated subject's OWNER
-// ACCOUNT (see [UsageKeyForSubject]); anonymous requests have no account to bill and are skipped.
-//
-// Two counter families per request, each advanced by its unit count (1 unless the handler raised
-// it via [ChargeUsage]):
-//   - The LEGACY per-day total (usage:<sub>:<day>) feeds [MonthlyQuota] and the
-//     /v1/account/usage fallback. Only BILLABLE traffic increments it: 429s and 5xx are
-//     excluded so rate-limit rejections and our own outages never burn paid quota.
-//   - The per-endpoint DETAIL hash (usage:ep:<sub>:<day>) has one field per (mux route
-//     PATTERN, so bounded cardinality; outcome class), folded by the rollup worker into
-//     `usage_daily`.
-//
-// An SSE request ([isStreamingPath]) is recorded at header commit ([streamOpenMeter]) and
-// re-billed every [streamMeterInterval] ([meterOpenStream]); others once, after the handler
-// returns. Failures are logged and dropped. Wire AFTER auth and OUTSIDE rate-limit.
+// UsageTracker records per-request daily counters under the subject's OWNER ACCOUNT ([UsageKeyForSubject]); only BILLABLE traffic counts (429s and 5xx excluded) and anonymous requests are skipped; wire AFTER auth and OUTSIDE rate-limit.
 func UsageTracker(counter *usage.Counter, logger *slog.Logger) Middleware {
 	if logger == nil {
 		logger = slog.Default()
@@ -217,16 +203,7 @@ func (u *usageUnits) get() int64 {
 	return u.n
 }
 
-// ChargeUsage prices the in-flight request at units request units IN TOTAL for the monthly meter
-// ([MonthlyQuota] and the detail counters). It can raise a price, never lower it.
-//
-// Separate from [ChargeRateLimit]: rate-limit tokens are a capacity weight, while request units
-// are the PRODUCT unit a plan sells, so a 1000-id POST /v1/price/batch costs what 1000 GET
-// /v1/price calls do.
-//
-// The quota gate runs before dispatch and cannot know the cost, so a caller one unit under its
-// cap can finish one batch over it; the overshoot is bounded by that request and the next is
-// refused.
+// ChargeUsage prices the in-flight request at units request units IN TOTAL for the monthly meter, only ever raising it; separate from [ChargeRateLimit] since units are the plan's product unit.
 func ChargeUsage(r *http.Request, units int) {
 	u, ok := r.Context().Value(usageUnitsKey{}).(*usageUnits)
 	if !ok || u == nil {
@@ -339,21 +316,7 @@ func SetStreamTickHookForTest(fn func()) (restore func()) {
 	return func() { streamTickHook.Store(nil) }
 }
 
-// UsageKeyForSubject picks the stable identifier we count under, in order:
-//  1. Identifier: the OWNER-ACCOUNT reference ([auth.AccountIdentifier], `acct:<slug>` for API
-//     keys; the client account id for SEP-10).
-//  2. KeyID: for credentials with no owner reference (legacy Redis records).
-//  3. "": anonymous; skip.
-//
-// Why the ACCOUNT, not the credential: the counter feeds [MonthlyQuota] and the per-minute bucket
-// ([authenticatedRateLimitKey]), each a PLAN budget a customer may only LOWER. Keying on KeyID
-// would let them raise it by minting N keys or rotating (fresh KeyID, zero month-to-date).
-//
-// A per-credential Subject.MonthlyQuota still sets the ceiling, so lowering ONE key's quota cuts
-// it off at that many ACCOUNT-wide requests: stricter, deliberately (fails closed).
-//
-// Exported so every reader ([MonthlyQuota], /v1/account/usage) shares one implementation: a
-// drifted copy would key off something the writer never wrote and meter NOTHING.
+// UsageKeyForSubject is the counter key: the OWNER-ACCOUNT Identifier, else KeyID, else "" (anonymous); keyed on the account so minting or rotating keys cannot reset quota, and exported so readers share the writer's key.
 func UsageKeyForSubject(s auth.Subject) string {
 	if s.Tier == auth.TierAnonymous || s.Tier == "" {
 		return ""
@@ -370,10 +333,7 @@ func UsageKeyForSubject(s auth.Subject) string {
 // resolvedRouteKey is the context key for [ResolveRoute]'s pre-dispatch pattern match.
 type resolvedRouteKey struct{}
 
-// ResolveRoute stashes the mux-matched route pattern via a read-only mux.Handler lookup. Wire it
-// OUTSIDE every pre-dispatch gate: a request a gate rejects never reaches the mux, so
-// [obs.CaptureRoute] never runs and it would bucket under "unmatched", hiding the per-endpoint
-// throttle pattern. CaptureRoute stays authoritative once the mux dispatches.
+// ResolveRoute stashes the mux-matched route pattern; wire it OUTSIDE every pre-dispatch gate, or gate-rejected requests bucket under "unmatched" and hide the throttle pattern.
 func ResolveRoute(mux muxMatcher) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -432,8 +392,7 @@ func billableClass(class string, readDeadlineFired bool) bool {
 
 type readDeadlineKey struct{}
 
-// MarkReadDeadline records that a server-side read deadline fired for ctx's request, making a 5xx
-// billable (see [billableClass]). A no-op outside [UsageTracker]; safe for concurrent use.
+// MarkReadDeadline records that a server-side read deadline fired for ctx's request, making a 5xx billable (see [billableClass]); a no-op outside [UsageTracker].
 func MarkReadDeadline(ctx context.Context) {
 	if fired, ok := ctx.Value(readDeadlineKey{}).(*atomic.Bool); ok {
 		fired.Store(true)

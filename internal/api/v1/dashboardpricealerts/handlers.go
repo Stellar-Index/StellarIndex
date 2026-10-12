@@ -70,11 +70,7 @@ func NewHandlers(cfg Config) (*Handlers, error) {
 	return &Handlers{cfg: &cfg}, nil
 }
 
-// Mount installs the dashboard price-alert-management routes.
-//
-// Every route is wrapped in [dashboardauth.RequireSession]. Every mutation is also wrapped in
-// [middleware.RequireSameSiteWrite]: these routes authenticate with the session COOKIE, so a
-// cross-site page could otherwise drive them for a logged-in customer. Reads stay unwrapped.
+// Mount installs the price-alert routes behind [dashboardauth.RequireSession], with mutations also behind [middleware.RequireSameSiteWrite] since session-cookie auth is otherwise cross-site forgeable.
 func (h *Handlers) Mount(mux *http.ServeMux, _ *middleware.PublicRoutes) {
 	session := dashboardauth.RequireSession()
 	sameSite := middleware.RequireSameSiteWrite(h.cfg.Logger)
@@ -146,8 +142,7 @@ func (h *Handlers) HandleList(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
-// DefaultCooldownSeconds is applied when a create request OMITS
-// cooldown_seconds: the floor, [platform.MinAlertCooldownSeconds].
+// DefaultCooldownSeconds is applied when a create request omits cooldown_seconds: the floor, [platform.MinAlertCooldownSeconds].
 const DefaultCooldownSeconds = platform.MinAlertCooldownSeconds
 
 type createRequest struct {
@@ -280,8 +275,7 @@ func (h *Handlers) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, toDTO(updated))
 }
 
-// HandleDelete removes the alert. An absent or cross-account id is 404
-// via parseAndAuthorise (the same shape, so presence never leaks).
+// HandleDelete removes the alert; an absent or cross-account id is the same 404 via parseAndAuthorise, so presence never leaks.
 func (h *Handlers) HandleDelete(w http.ResponseWriter, r *http.Request) {
 	sc, ok := dashboardauth.SessionFromContext(r.Context())
 	if !ok {

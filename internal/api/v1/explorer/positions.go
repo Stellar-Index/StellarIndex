@@ -19,9 +19,7 @@ import (
 // evidence); this file only maps fold rows onto the shared wire shape, resolves display labels
 // best-effort, and applies include_closed. It never computes a position amount itself.
 
-// PositionsReader is the narrow Postgres read seam this endpoint needs
-// — the six per-protocol fold queries. *timescale.Store satisfies it.
-// Nil disables the endpoint (503), same degrade pattern as Reader.
+// PositionsReader is the narrow Postgres read seam (the six per-protocol fold queries), satisfied by *timescale.Store; nil disables the endpoint (503).
 type PositionsReader interface {
 	BlendPositionsByUser(ctx context.Context, address string) ([]timescale.BlendPositionFold, error)
 	BlendBackstopSharesByUser(ctx context.Context, address string) ([]timescale.BlendBackstopFold, error)
@@ -31,9 +29,7 @@ type PositionsReader interface {
 	AquariusGaugeByUser(ctx context.Context, address string) ([]timescale.AquariusGaugeFold, error)
 }
 
-// PoolTokensReader mirrors package v1's ProtocolPoolTokensReader structurally; a copy lives here
-// because v1 imports explorer, so the reverse import would cycle. A nil reader degrades every
-// venue_label to absent and never fails the endpoint.
+// PoolTokensReader mirrors v1's ProtocolPoolTokensReader (a copy, since v1 imports explorer); nil degrades venue_label to absent and never fails the endpoint.
 type PoolTokensReader interface {
 	PoolTokens(ctx context.Context, source string) (map[string][]string, error)
 }
@@ -85,15 +81,13 @@ const positionsHonestNote = "Amounts are on-chain quantities only — no USD or 
 	"carries no net (superseded_by_auction); see each position's amount_semantics for exactly what the " +
 	"number represents, and basis for whether it was derived here or read from the protocol's own published state."
 
-// PositionLastActivity is the (ledger, time) pair for the most recent
-// event this fold's evidence a position is unchanged since.
+// PositionLastActivity is the (ledger, time) of the most recent event this fold's evidence shows a position unchanged since.
 type PositionLastActivity struct {
 	Ledger uint32 `json:"ledger"`
 	Time   string `json:"time"`
 }
 
-// PositionEntry is one row in the wire response for GET
-// /v1/accounts/{g_strkey}/positions.
+// PositionEntry is one row in the wire response for GET /v1/accounts/{g_strkey}/positions.
 type PositionEntry struct {
 	Protocol        string   `json:"protocol"`
 	PositionKind    string   `json:"position_kind"`
@@ -113,8 +107,7 @@ type PositionEntry struct {
 	closed bool
 }
 
-// AccountPositionsView is the wire response for GET
-// /v1/accounts/{g_strkey}/positions.
+// AccountPositionsView is the wire response for GET /v1/accounts/{g_strkey}/positions.
 type AccountPositionsView struct {
 	Account       string          `json:"account"`
 	Positions     []PositionEntry `json:"positions"`
@@ -240,11 +233,7 @@ type accountPositionsSnapshot struct {
 	labelsUnresolved bool
 }
 
-// AccountPositions serves GET /v1/accounts/{g_strkey}/positions. Net-zero / closed positions are
-// excluded unless ?include_closed=true. It is SWR-cached so visitors do not each pay the six-fold
-// fan-out, under the same contract as AccountActivity: a fresh entry as-is, an expired one served
-// with flags.stale + its real as_of while one detached rebuild runs, and only a never-computed
-// account waits.
+// AccountPositions serves GET /v1/accounts/{g_strkey}/positions, excluding closed positions unless ?include_closed=true; SWR-cached under the same contract as AccountActivity.
 func (h *Handler) AccountPositions(w http.ResponseWriter, r *http.Request) {
 	if h.Positions == nil {
 		h.positionsUnavailable(w, r)

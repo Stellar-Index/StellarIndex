@@ -405,10 +405,7 @@ func (h *Handler) recentContractsCached(ctx context.Context, window, limit int) 
 	}
 }
 
-// PrewarmContractsDirectory primes the directory's DEFAULT ladder rung (30d, what the explorer UI
-// requests) so no user meets the cold state. The API's 5-minute prewarm loop matches
-// contractsDirTTL, keeping the rung fresh. It kicks the request path's detached refresh and
-// returns at once; ctx only gates whether the kick happens at shutdown.
+// PrewarmContractsDirectory primes the directory's DEFAULT ladder rung (30d); the 5-minute prewarm loop matches contractsDirTTL and it only kicks the detached refresh, ctx gating the kick at shutdown.
 func (h *Handler) PrewarmContractsDirectory(ctx context.Context) {
 	if h.Reader == nil || ctx.Err() != nil {
 		return

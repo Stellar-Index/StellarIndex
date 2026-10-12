@@ -12,10 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// AccountCohortView is GET /v1/accounts/{g}/graph/cohort: what the
-// accounts this address created or sponsored went on to hold and do.
-// Every figure is the cohort rollup's last cycle (Cycle dates it), read
-// from the cohort's own ledger footprint — never from the root's.
+// AccountCohortView is GET /v1/accounts/{g}/graph/cohort: what the accounts this address created or sponsored went on to hold and do, from the cohort rollup's last cycle.
 type AccountCohortView struct {
 	Account  string `json:"account"`
 	Relation string `json:"relation"`
@@ -36,8 +33,7 @@ type AccountCohortView struct {
 	Note              string                   `json:"note"`
 }
 
-// AccountCohortSizeV counts the cohort and how much of it is alive and
-// recently active.
+// AccountCohortSizeV counts the cohort and how much of it is alive and recently active.
 type AccountCohortSizeV struct {
 	Accounts     uint64 `json:"accounts"`
 	LiveAccounts uint64 `json:"live_accounts"`
@@ -59,13 +55,7 @@ type AccountCohortHoldingV struct {
 	ValueUSD *string `json:"value_usd,omitempty"`
 }
 
-// AccountCohortValuationV totals the priced holdings at the live price.
-// Pricing is bounded: only the PriceCap largest holdings by balance (and the flow assets) are
-// looked up, so a cohort with hundreds of assets does not spend the request budget on price reads.
-// UnpricedOverCap is the subset of UnpricedHoldings never looked up because it fell outside the
-// cap; the rest had no live price. Degraded is true when an in-cap lookup was abandoned because
-// the context expired mid-walk, not because the asset has no price, so the priced/unpriced counts
-// are then a partial read.
+// AccountCohortValuationV totals priced holdings at the live price; only the PriceCap largest are looked up, and Degraded means an in-cap lookup was abandoned so the counts are partial.
 type AccountCohortValuationV struct {
 	TotalUSD         *string `json:"total_usd,omitempty"`
 	PricedHoldings   int     `json:"priced_holdings"`
@@ -87,9 +77,7 @@ type AccountCohortFlowsV struct {
 	Points          []AccountCohortFlowPointV `json:"points"`
 }
 
-// AccountCohortFlowPointV is one month. Its USD figures value ONE basket (the by_asset rows priced
-// both today and then) on each basis, summed exactly and rounded once, so switching basis changes
-// only the price, never the asset set. They are absent, never zero, when the basket is empty.
+// AccountCohortFlowPointV is one month; its USD figures value ONE basket on each basis, absent (never zero) when the basket is empty.
 type AccountCohortFlowPointV struct {
 	Period         string                    `json:"period"`
 	PeriodStart    string                    `json:"period_start"`
@@ -103,11 +91,7 @@ type AccountCohortFlowPointV struct {
 	ByAsset        []AccountCohortAssetFlowV `json:"by_asset"`
 }
 
-// AccountCohortAssetFlowV is one asset's month. Inflow and Outflow are decimal strings in whole
-// units when Scaled (classic assets, 7 places) and the contract's own smallest unit otherwise.
-// The USD figures are AT TODAY'S PRICE, absent where nothing prices the asset. The *Then figures
-// value the same quantity at PriceUSDThen, that month's volume-weighted USD price on this index's
-// own markets, and are absent where no USD-quoted market priced the asset that month.
+// AccountCohortAssetFlowV is one asset's month; Inflow/Outflow are decimal strings (whole units when Scaled), USD figures are at today's price and *Then at PriceUSDThen, absent where unpriced.
 type AccountCohortAssetFlowV struct {
 	Asset          string  `json:"asset"`
 	Inflow         string  `json:"inflow"`
@@ -120,9 +104,7 @@ type AccountCohortAssetFlowV struct {
 	PriceUSDThen   *string `json:"price_usd_then,omitempty"`
 }
 
-// AccountCohortContractV is one C... contract the cohort moved value through. Protocol is set when
-// the protocol roster claims it; Label when the lake can name it instead (a SAC's classic code or
-// a SEP-41 symbol), so a token reads as "token USDC" rather than a bare address.
+// AccountCohortContractV is one C... contract the cohort moved value through; Protocol is set when the roster claims it, Label when the lake can name it.
 type AccountCohortContractV struct {
 	ContractID     string `json:"contract_id"`
 	Protocol       string `json:"protocol,omitempty"`
@@ -133,8 +115,7 @@ type AccountCohortContractV struct {
 	LastAt         string `json:"last_at"`
 }
 
-// AccountCohortPositionV is the cohort's aggregate in one DeFi venue.
-// Amount is the exact sum across holders, in the fold's own unit.
+// AccountCohortPositionV is the cohort's aggregate in one DeFi venue; Amount is the exact sum across holders in the fold's own unit.
 type AccountCohortPositionV struct {
 	Protocol     string `json:"protocol"`
 	PositionKind string `json:"position_kind"`

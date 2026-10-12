@@ -12,9 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// AssetEntryChangeEntry is one change in GET /v1/assets/{asset_id}/entry-changes.
-// Amount is the entry's post-change balance for this asset as a decimal string
-// of stroops (ADR-0003); it is absent for roles that hold no balance of it.
+// AssetEntryChangeEntry is one change in GET /v1/assets/{asset_id}/entry-changes; Amount is a decimal string of stroops (ADR-0003), absent for roles holding no balance.
 type AssetEntryChangeEntry struct {
 	Ledger          uint32          `json:"ledger"`
 	LedgerCloseTime string          `json:"ledger_close_time"`
@@ -42,10 +40,7 @@ type AssetEntryChangesView struct {
 	CoverageNote string `json:"coverage_note"`
 }
 
-// AssetEntryChanges serves GET /v1/assets/{asset_id}/entry-changes: every
-// trustline, offer and claimable-balance change that touches one asset,
-// newest first, from stellar.asset_entry_changes, ceilinged at the
-// ch-entry-history watermark so a page never shows a half-derived ledger.
+// AssetEntryChanges serves GET /v1/assets/{asset_id}/entry-changes newest first from stellar.asset_entry_changes, ceilinged at the ch-entry-history watermark so no half-derived ledger shows.
 func (h *Handler) AssetEntryChanges(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)

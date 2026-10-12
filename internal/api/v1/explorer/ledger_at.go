@@ -17,8 +17,7 @@ import (
 // tip's close, or with the answer inside or just before a lake gap.
 var errLedgerAtNotFound = errors.New("no ledger resolvable at ts")
 
-// LedgerAt serves GET /v1/ledgers/at?ts= — the highest-sequence ledger whose
-// close_time is at or before ts, in the /v1/ledgers/{seq} shape.
+// LedgerAt serves GET /v1/ledgers/at?ts=, the highest-sequence ledger whose close_time is at or before ts, in the /v1/ledgers/{seq} shape.
 func (h *Handler) LedgerAt(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)
@@ -102,10 +101,7 @@ type LedgerPager interface {
 	RecentLedgers(ctx context.Context, limit int, beforeSeq uint32) ([]clickhouse.LedgerHeader, error)
 }
 
-// FirstCapturedClosedAfter binary-searches for the lowest captured ledger
-// whose close_time is after ts; tipSeq must be captured and close after ts.
-// Each probe reads the newest captured ledger at or below mid (a sort-key
-// range read), so a lake gap far from the answer cannot mislead the search.
+// FirstCapturedClosedAfter binary-searches for the lowest captured ledger closed after ts (tipSeq must qualify); each probe reads the newest captured ledger at or below mid, so lake gaps cannot mislead it.
 func FirstCapturedClosedAfter(ctx context.Context, r LedgerPager, tipSeq uint32, ts time.Time) (uint32, error) {
 	lo, hi := uint32(0), tipSeq
 	for lo < hi {

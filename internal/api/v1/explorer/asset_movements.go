@@ -12,9 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// AssetMovementEntry is one movement in GET /v1/assets/{asset_id}/movements.
-// Amount is a decimal string (ADR-0003); an absent from/to is a side the
-// decoder does not attribute.
+// AssetMovementEntry is one movement in GET /v1/assets/{asset_id}/movements; Amount is a decimal string (ADR-0003), an absent from/to is a side the decoder does not attribute.
 type AssetMovementEntry struct {
 	Ledger          uint32         `json:"ledger"`
 	LedgerCloseTime string         `json:"ledger_close_time"`
@@ -44,11 +42,7 @@ type AssetMovementsView struct {
 	CoverageNote string `json:"coverage_note"`
 }
 
-// AssetMovements serves GET /v1/assets/{asset_id}/movements: every movement
-// of one asset, newest first, from stellar.movements_by_asset (account_movements
-// re-keyed asset-first). One ClickHouse arm, ceilinged at the cap67 watermark
-// like the account feed's archive arm, so the ledgers it covers are the ones
-// the archive has finished deriving.
+// AssetMovements serves GET /v1/assets/{asset_id}/movements newest first from stellar.movements_by_asset, ceilinged at the cap67 watermark so only fully derived ledgers appear.
 func (h *Handler) AssetMovements(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)

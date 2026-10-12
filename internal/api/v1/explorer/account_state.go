@@ -15,9 +15,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// AccountsListView is the wire response for GET /v1/accounts. Ranking is by total USD value on
-// priced networks and by native XLM balance on lean ones with no price map; `ranked_by` says
-// which so clients label the numbers correctly.
+// AccountsListView is GET /v1/accounts; `ranked_by` says whether ranking is total USD value or native XLM balance (lean networks with no price map).
 type AccountsListView struct {
 	PricedAssets int `json:"priced_assets"`
 	// RankedBy is the wealth basis: "usd" (holdings valued in USD) or
@@ -54,9 +52,7 @@ type AccountWealthRow struct {
 	Locked bool `json:"locked,omitempty"`
 }
 
-// AccountsList serves GET /v1/accounts, ranked by total USD wealth: native XLM plus every
-// trustline asset with a verified USD price from the verified-currency catalogue. Coverage tracks
-// the entry-change capture and backfill.
+// AccountsList serves GET /v1/accounts, ranked by total USD wealth over native XLM plus trustline assets with a verified USD price.
 func (h *Handler) AccountsList(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)
@@ -265,9 +261,7 @@ func (h *Handler) priceableAssetIDs() []string {
 	return keys
 }
 
-// AccountStateView is the wire response for GET /v1/accounts/{g_strkey}.
-// Balances are strings (ADR-0003 — stroop amounts past 2^53 lose precision as
-// JSON numbers).
+// AccountStateView is GET /v1/accounts/{g_strkey}; balances are strings (ADR-0003) since stroop amounts past 2^53 lose precision as JSON numbers.
 type AccountStateView struct {
 	AccountID string `json:"account_id"`
 	Exists    bool   `json:"exists"`
@@ -348,10 +342,7 @@ type OfferV struct {
 	PriceD  int32  `json:"price_d"`
 }
 
-// AccountState serves GET /v1/accounts/{g_strkey}, the account's current state reconstructed from
-// the lake, with live trustlines and offers. An account with no live AccountEntry in the captured
-// window gets `exists:false` (200, not 404), so clients can tell "no such account / not yet
-// captured" from a malformed request.
+// AccountState serves GET /v1/accounts/{g_strkey} from the lake; an account with no live AccountEntry gets `exists:false` (200, not 404), distinguishing "not captured" from a malformed request.
 func (h *Handler) AccountState(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)
@@ -480,10 +471,7 @@ func isNativeHoldersAsset(a canonical.Asset) bool {
 	return false
 }
 
-// AssetHolders serves GET /v1/assets/{asset_id}/holders: top holders by current balance plus the
-// total holder count, lake-backed. Issued assets read trustline balances; native XLM (and its
-// alias) reads the AccountEntry ranking with holder_count = funded accounts, since a trustline
-// read would serve holder_count 0 for it by construction. `asset` echoes the canonical board key.
+// AssetHolders serves GET /v1/assets/{asset_id}/holders: top holders by balance plus total count; native XLM reads the AccountEntry ranking, as a trustline read would give holder_count 0.
 func (h *Handler) AssetHolders(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)
@@ -583,12 +571,7 @@ func (h *Handler) writeAssetHoldersCSV(w http.ResponseWriter, r *http.Request, v
 	}
 }
 
-// PrewarmAccountsWealth primes the wealth-ranking cache so no user meets the cold state.
-//
-// The ranking is a FINAL scan over tens of millions of rows (~23 s), too slow for a request
-// deadline. On a miss the cached reader starts the detached refresh and returns at once, so a
-// timer call is cheap. The cache holds ONE ranking (top accountsWealthMaxLimit) that every request
-// size slices; limit is not a cache key.
+// PrewarmAccountsWealth primes the wealth-ranking cache (one ranking of top accountsWealthMaxLimit sliced per request, so limit is not a cache key) to avoid a ~23 s cold FINAL scan.
 func (h *Handler) PrewarmAccountsWealth(ctx context.Context) {
 	if h.Reader == nil {
 		return

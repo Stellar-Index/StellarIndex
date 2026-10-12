@@ -24,9 +24,7 @@ type TxEventView struct {
 	Topic0     string `json:"topic_0,omitempty"`
 }
 
-// TxDetailView is the wire response for GET /v1/tx/{hash}: the transaction
-// summary, its decoded operations (each with its result code), and the contract
-// events it emitted.
+// TxDetailView is the wire response for GET /v1/tx/{hash}: the summary, decoded operations with result codes, and emitted contract events.
 type TxDetailView struct {
 	TxSummaryView
 	Operations []OpView      `json:"operations"`
@@ -37,9 +35,7 @@ type TxDetailView struct {
 	CoverageNote string `json:"coverage_note,omitempty"`
 }
 
-// TxDetail serves GET /v1/tx/{hash}. The hash lookup uses the tx_hash
-// skip-index on stellar.transactions; once the ledger is known, operations /
-// results / events are ledger-scoped (partition-pruned, fast).
+// TxDetail serves GET /v1/tx/{hash} via the tx_hash skip-index; once the ledger is known, operations, results and events are ledger-scoped (partition-pruned).
 func (h *Handler) TxDetail(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)

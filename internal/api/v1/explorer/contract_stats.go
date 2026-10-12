@@ -129,9 +129,7 @@ func (h *Handler) PrewarmContractStats(ctx context.Context) {
 	h.refreshContractStats() //nolint:contextcheck // intentional detach — prewarm kicks the same background compute
 }
 
-// ContractStats serves GET /v1/contracts/stats: deployments per month, totals, and the
-// 90-day active count. Snapshot-served; a stale entry is returned degraded while a
-// detached refresh runs.
+// ContractStats serves GET /v1/contracts/stats (monthly deployments, totals, 90-day active count); snapshot-served, a stale entry returns degraded while a detached refresh runs.
 func (h *Handler) ContractStats(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)

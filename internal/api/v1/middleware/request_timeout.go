@@ -6,13 +6,7 @@ import (
 	"time"
 )
 
-// RequestTimeout bounds every non-streaming request's context to d, as a backstop for handlers
-// that forget their own DB/ClickHouse timeout. The server WriteTimeout does not cancel an
-// in-flight query, so a few slow unauthenticated requests could otherwise pin the small
-// ClickHouse pools indefinitely. Per-handler timeouts (8s) layer under this and fire first.
-//
-// d SHOULD exceed the per-read timeouts and stay below the http.Server WriteTimeout; d <= 0
-// disables it. SSE routes (streamingPaths) are exempt because a deadline would sever the stream.
+// RequestTimeout bounds every non-streaming request's context to d as a backstop for handlers lacking their own DB timeout, since WriteTimeout does not cancel queries; d <= 0 disables it and SSE routes are exempt.
 func RequestTimeout(d time.Duration) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

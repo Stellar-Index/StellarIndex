@@ -15,16 +15,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// SEP41MovementsReader is the Postgres read seam for the sep41_transfers recent-tail half of the
-// ADR-0048 D5 merge. Nil disables that half; the ClickHouse archive is then served alone with a
-// coverage_note.
+// SEP41MovementsReader is the Postgres read seam for the sep41_transfers recent-tail half of the ADR-0048 D5 merge; nil serves the ClickHouse archive alone with a coverage_note.
 type SEP41MovementsReader interface {
 	ListSEP41TransfersByAddress(ctx context.Context, address string, limit int, cur timescale.SEP41TransferCursor, direction, contractID string, floorLedger uint32) ([]timescale.SEP41TransferRow, error)
 }
 
-// AccountMovementEntry is one row of GET /v1/accounts/{g_strkey}/movements (ADR-0048 D5). Amount
-// is a string (ADR-0003: i128 exceeds double precision above 2^53). Decimals is omitted when
-// unresolved so a client never divides by a guessed exponent.
+// AccountMovementEntry is one row of GET /v1/accounts/{g_strkey}/movements (ADR-0048 D5); Amount is a string (ADR-0003), Decimals omitted when unresolved so clients never guess an exponent.
 type AccountMovementEntry struct {
 	Ledger          uint32         `json:"ledger"`
 	LedgerCloseTime string         `json:"ledger_close_time"`
@@ -41,8 +37,7 @@ type AccountMovementEntry struct {
 	Attributes      map[string]any `json:"attributes,omitempty"`
 }
 
-// AccountMovementsView is the wire response for GET
-// /v1/accounts/{g_strkey}/movements.
+// AccountMovementsView is the wire response for GET /v1/accounts/{g_strkey}/movements.
 type AccountMovementsView struct {
 	Account    string                 `json:"account"`
 	Movements  []AccountMovementEntry `json:"movements"`
@@ -55,10 +50,7 @@ type AccountMovementsView struct {
 	Coverage []MovementKindCoverage `json:"coverage"`
 }
 
-// MovementKindCoverage states what the feed serves for one kind family.
-// Status is "served", "partial" (served over part of the range, or the
-// archive absent) or "not_served"; the ledger bounds are inclusive and
-// omitted when the kind is not served.
+// MovementKindCoverage states what the feed serves for one kind family: Status "served", "partial" or "not_served", with inclusive ledger bounds omitted when not served.
 type MovementKindCoverage struct {
 	Kind          string `json:"kind"`
 	Status        string `json:"status"`
@@ -180,17 +172,7 @@ func (h *Handler) parseMovementCursor(w http.ResponseWriter, r *http.Request) (m
 	return out, true
 }
 
-// AccountMovements serves GET /v1/accounts/{g_strkey}/movements (ADR-0048 D5): the account
-// activity feed, newest first, keyset-paged by the opaque (ledger, tx_hash, op_index, leg_index)
-// cursor, with optional ?kind=/?direction=/?asset= filters.
-//
-// Merge seam: ClickHouse stellar.account_movements covers every ledger BELOW movementsSplit's
-// pgFloor; Postgres sep41_transfers 'transfer' rows cover every ledger AT OR ABOVE it. The ranges
-// cannot overlap by construction; assertMovementsNonOverlap checks it per request and the
-// two-pointer merge stays correct if a regression breaks that.
-//
-// The CH table is empty until an operator runs classic-movements-backfill; CoverageNote says so
-// rather than presenting the Postgres tail as a complete feed.
+// AccountMovements serves GET /v1/accounts/{g_strkey}/movements (ADR-0048 D5), merging ClickHouse below movementsSplit's pgFloor with Postgres sep41_transfers at or above it; CoverageNote flags an empty CH table.
 func (h *Handler) AccountMovements(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)

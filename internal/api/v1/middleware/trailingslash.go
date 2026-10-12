@@ -5,13 +5,7 @@ import (
 	"strings"
 )
 
-// TrailingSlashRedirect 308-redirects a non-root request whose path ends in `/` to the same path
-// without it (query preserved), because v1 routes are registered without the slash and the mux
-// would 404. 308 keeps the method and body. The root and any exact-match index route (`/{$}`)
-// are exempt; see muxMatcher.
-//
-// Sits OUTSIDE the mux so the redirect precedes its 404, INSIDE Logger so the redirect is
-// logged, and OUTSIDE CaptureRoute so no route pattern is recorded for it.
+// TrailingSlashRedirect 308-redirects a non-root path ending in `/` to the slashless path (query preserved); sits OUTSIDE the mux and CaptureRoute, INSIDE Logger.
 func TrailingSlashRedirect(mux muxMatcher) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

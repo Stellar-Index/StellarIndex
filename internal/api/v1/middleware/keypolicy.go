@@ -14,26 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 )
 
-// KeyPolicy returns a Middleware enforcing the per-key policy fields the
-// dashboard exposes: IP allowlist, Referer allowlist, scopes and
-// per-endpoint permissions. Runs AFTER [Auth] and before [RateLimit] so
-// policy-rejected requests never spend a token. A 403 names the control
-// that rejected (ip / referer / permission).
-//
-//   - IPAllowlist empty: skip. Else the resolved client IP ([RemoteIP],
-//     honouring trusted-proxy CIDRs) must fall in a prefix.
-//   - RefererAllowlist empty: skip. Else the Referer host must be
-//     present and exactly match one entry (case-insensitive).
-//   - Scopes empty: skip (full access). Else the path's route family
-//     (auth.RequiredScope) must be in the key's scopes.
-//   - AllowAllPermissions=true: passes unless a deny entry matches.
-//     False: an allow entry must match and no deny entry.
-//
-// Anonymous subjects bypass every check. Every other tier, INCLUDING
-// operator, is subject to its OWN gates: a default operator key passes
-// freely, one narrowed at mint is confined. Admin-endpoint ACCESS is gated
-// on Tier==Operator in the handlers, not on scope, so narrowing a staff key
-// bounds its data reach without locking it out of admin.
+// KeyPolicy enforces per-key IP allowlist, Referer allowlist, scopes and permissions AFTER [Auth] and before [RateLimit]; anonymous subjects bypass, every other tier (operator included) is bound by its own gates.
 func KeyPolicy() Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -127,10 +108,7 @@ func checkScopes(r *http.Request, subject auth.Subject) error {
 		strings.Join(subject.Scopes, ", "), need, r.Method, r.URL.Path)
 }
 
-// ClampMintScopes is the scope half of [auth.ClampToMinter], which holds
-// the rules, as a problem string for an HTTP handler to render. It is
-// not the enforcement point: RedisAPIKeyStore.Create re-applies the
-// clamp for any request carrying MintedBy.
+// ClampMintScopes is the scope half of [auth.ClampToMinter] as a problem string for handlers; not the enforcement point, RedisAPIKeyStore.Create re-applies the clamp for any MintedBy request.
 func ClampMintScopes(caller auth.Subject, requested []string) ([]string, string) {
 	scopes, err := auth.ClampToMinter(caller, requested, 0)
 	if err != nil {

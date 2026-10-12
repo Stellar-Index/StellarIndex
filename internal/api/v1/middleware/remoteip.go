@@ -15,9 +15,7 @@ var trustedProxyConfig struct {
 	prefixes []netip.Prefix
 }
 
-// SetTrustedProxyCIDRs replaces the allow-list used to decide whether
-// X-Forwarded-For should influence client identity. Empty means "trust
-// no proxies" and therefore ignore XFF entirely.
+// SetTrustedProxyCIDRs replaces the allow-list deciding whether X-Forwarded-For influences client identity; empty trusts no proxies and ignores XFF entirely.
 func SetTrustedProxyCIDRs(cidrs []string) error {
 	parsed := make([]netip.Prefix, 0, len(cidrs))
 	for _, raw := range cidrs {
@@ -64,16 +62,12 @@ func remoteIPPrefixFor(r *http.Request) string {
 	return ratelimit.ThrottleIPKey(remoteIPFor(r))
 }
 
-// RemoteIP returns the caller IP, honouring the trusted-proxy CIDRs from [SetTrustedProxyCIDRs]:
-// behind a trusted proxy it is the closest untrusted hop in X-Forwarded-For, otherwise the
-// direct peer. Exported for handlers that derive a per-IP throttle key outside the chain (the
-// signup cap). Returns "" when no IP resolves; that case is left to the caller's policy.
+// RemoteIP returns the caller IP: behind a trusted proxy ([SetTrustedProxyCIDRs]) the closest untrusted X-Forwarded-For hop, else the direct peer; "" when none resolves.
 func RemoteIP(r *http.Request) string {
 	return remoteIPFor(r)
 }
 
-// RemoteIPThrottleKey is the exported form of [remoteIPPrefixFor]: the
-// /64-masked throttle identity for handler-level per-IP caps.
+// RemoteIPThrottleKey is the exported form of [remoteIPPrefixFor]: the /64-masked throttle identity for handler-level per-IP caps.
 func RemoteIPThrottleKey(r *http.Request) string {
 	return remoteIPPrefixFor(r)
 }

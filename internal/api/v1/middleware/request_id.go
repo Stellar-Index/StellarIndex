@@ -6,15 +6,10 @@ import (
 	"net/http"
 )
 
-// HeaderRequestID is the canonical header name. We accept client-
-// supplied values (so traces can correlate across services) and
-// mint a fresh one otherwise.
+// HeaderRequestID is the canonical header name; client-supplied values are accepted so traces correlate across services, else a fresh one is minted.
 const HeaderRequestID = "X-Request-ID"
 
-// RequestID ensures every request has an X-Request-ID, set on the response header and in the
-// request context ([RequestIDFrom]). An incoming ID made only of trace-safe characters
-// (alphanum, `-`, `_`, `.`) is kept, truncated to 128 bytes; otherwise a random 16-byte hex ID
-// is generated. Not a UUIDv7, whose timestamp can leak clock skew.
+// RequestID ensures every request has an X-Request-ID; an incoming one is kept only if trace-safe (alphanum, `-`, `_`, `.`, up to 128 bytes), else a random 16-byte hex ID replaces it.
 func RequestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.Header.Get(HeaderRequestID)

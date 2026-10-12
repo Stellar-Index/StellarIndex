@@ -105,8 +105,7 @@ func (c *opTypeStatsCache) put(stats []OpTypeStatV) {
 	c.stats, c.at = stats, time.Now()
 }
 
-// OpView is the wire shape for a decoded operation. Fields is the decoded body; for not-yet-decoded
-// types it is empty and RawXDR carries the original base64.
+// OpView is the wire shape for a decoded operation; Fields is the decoded body, empty for undecoded types where RawXDR carries the original base64.
 type OpView struct {
 	Ledger        uint32         `json:"ledger"`
 	CloseTime     string         `json:"close_time"`
@@ -273,9 +272,7 @@ func (h *Handler) resolveOpTypeStats() (stats []OpTypeStatV, fresh bool) {
 	return cached, false   // stale (or nil on a cold process — panel appears next request)
 }
 
-// PrewarmOpTypeStats primes the op-type breakdown so a cold process never serves /v1/operations
-// without the panel. The API's prewarm loop calls it at opTypeStatsTTL cadence; it kicks the same
-// detached single-flight refresh as the request path, and a still-fresh panel is a no-op.
+// PrewarmOpTypeStats primes the op-type breakdown at opTypeStatsTTL cadence via the request path's detached single-flight refresh; a fresh panel is a no-op.
 func (h *Handler) PrewarmOpTypeStats(ctx context.Context) {
 	if h.Reader == nil || ctx.Err() != nil {
 		return
@@ -323,9 +320,7 @@ func (h *Handler) refreshOpTypeStats() {
 	}()
 }
 
-// OperationsView is the wire response for GET /v1/operations and GET /v1/ledgers/{seq}/operations.
-// The per-ledger form sets Ledger with no cursor/stats; the directory form has Ledger 0,
-// NextCursor and OpTypeStats.
+// OperationsView is the wire response for GET /v1/operations and /v1/ledgers/{seq}/operations; the per-ledger form sets Ledger, the directory form NextCursor and OpTypeStats.
 type OperationsView struct {
 	Ledger      uint32        `json:"ledger"`
 	Operations  []OpView      `json:"operations"`
@@ -350,8 +345,7 @@ type OpTypeStatV struct {
 	Count int64  `json:"count"`
 }
 
-// Operations serves GET /v1/operations: the network-wide recent-operations directory, newest
-// first, keyset-paged via ?cursor= (composite ledger.tx_index.op_index), plus op_type_stats.
+// Operations serves GET /v1/operations: network-wide recent operations newest first, keyset-paged via ?cursor= (ledger.tx_index.op_index), plus op_type_stats.
 func (h *Handler) Operations(w http.ResponseWriter, r *http.Request) {
 	// A ledger-scoped read has its own route and consistency contract
 	// (ADR-0018); serving it here as a directory page would answer the wrong question.
@@ -440,8 +434,7 @@ func (h *Handler) ledgerOperations(w http.ResponseWriter, r *http.Request, seq u
 // this repo, so it is a placeholder rather than a tuned value.
 const operationsResponseByteBudget = 8 << 20 // 8 MiB
 
-// NetworkThroughputView is the wire response for GET
-// /v1/network/throughput — a daily time-series of network counts.
+// NetworkThroughputView is the wire response for GET /v1/network/throughput, a daily time-series of network counts.
 type NetworkThroughputView struct {
 	WindowDays int                 `json:"window_days"`
 	Buckets    []ThroughputBucketV `json:"buckets"`
@@ -491,13 +484,7 @@ func feePoolAdjustment(day string, prevProtocol, protocol uint32) string {
 	return ""
 }
 
-// NetworkThroughput serves GET /v1/network/throughput: daily ledger / transaction / operation /
-// Soroban-event counts over the trailing `?window_days=` (default 30, max 365), ascending.
-//
-// Snapshot-served: the year-window FINAL scan runs DETACHED and prewarmed, and this handler only
-// slices the warm entry (fresh, or STALE with flags.stale + its real as_of). Only a
-// never-computed process can time out, and its detached scan keeps running so the retry lands
-// warm. See network_throughput_cache.go.
+// NetworkThroughput serves GET /v1/network/throughput (daily counts over ?window_days=, default 30, max 365); snapshot-served from the prewarmed detached scan (see network_throughput_cache.go).
 func (h *Handler) NetworkThroughput(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)

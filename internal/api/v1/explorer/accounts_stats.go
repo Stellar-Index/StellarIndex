@@ -7,10 +7,7 @@ import (
 	"time"
 )
 
-// AccountsStatsView is the wire response for GET /v1/accounts/stats —
-// the /accounts hub's analytics strip.
-// Stroops-denominated values are STRINGS (ADR-0003); counts are JSON
-// numbers (all far below 2^53).
+// AccountsStatsView is GET /v1/accounts/stats, the /accounts hub's analytics strip; stroop values are STRINGS (ADR-0003), counts JSON numbers.
 type AccountsStatsView struct {
 	Totals struct {
 		Accounts                 int64  `json:"accounts"`
@@ -61,8 +58,7 @@ type HeldAssetV struct {
 // ClickHouse's ORDER BY on the band STRING are both wrong orders).
 var trustlineBucketOrder = []string{"0", "1", "2-5", "6-10", "11-50", "50+"}
 
-// AccountsStats serves GET /v1/accounts/stats from the ch-holders-rollup
-// cycle's precomputed tables — keyed reads, sub-second by construction.
+// AccountsStats serves GET /v1/accounts/stats from the ch-holders-rollup cycle's precomputed tables (keyed reads).
 func (h *Handler) AccountsStats(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)

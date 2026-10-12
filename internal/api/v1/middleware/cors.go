@@ -8,8 +8,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// CORSOptions configures [CORS]. Pass a zero-valued struct for the
-// conservative default (no origins allowed — same-origin only).
+// CORSOptions configures [CORS]; the zero value is the conservative default (no origins allowed, same-origin only).
 type CORSOptions struct {
 	// AllowedOrigins is the exact-match allow-list of `Origin:` values. `*` allows any origin
 	// but browsers reject it with credentials, so the constructor panics on `*` plus
@@ -44,8 +43,7 @@ type CORSOptions struct {
 	MaxAge int
 }
 
-// DefaultCORSAllowedHeaders are the request headers the OpenAPI spec or auth middleware tell a
-// caller to send; cors_test.go diffs it against the spec.
+// DefaultCORSAllowedHeaders are the request headers the OpenAPI spec or auth middleware tell a caller to send; cors_test.go diffs it against the spec.
 var DefaultCORSAllowedHeaders = []string{
 	"Content-Type",
 	"Authorization",
@@ -56,8 +54,7 @@ var DefaultCORSAllowedHeaders = []string{
 	"Last-Event-ID",
 }
 
-// DefaultCORSExposedHeaders are the response headers a client must act on (429 back-off, quota,
-// request id). Without Access-Control-Expose-Headers a browser hides them from cross-origin scripts.
+// DefaultCORSExposedHeaders are the response headers a client must act on (429 back-off, quota, request id); without Access-Control-Expose-Headers browsers hide them.
 var DefaultCORSExposedHeaders = []string{
 	"Retry-After",
 	"X-RateLimit-Limit",
@@ -80,14 +77,7 @@ var DefaultCORSExposedHeaders = []string{
 	"X-StellarIndex-As-Of-Ledger",
 }
 
-// CORS returns middleware that applies W3C CORS headers based on opts. Deliberately
-// conservative: origins match exactly or by wildcard, with no pattern matching or per-route
-// origins.
-//
-//   - A preflight (OPTIONS with an Origin) gets the preflight headers and a 204 without
-//     calling next.
-//   - Other requests get Allow-Origin and Expose-Headers iff the Origin is allowed, then next.
-//   - With "*" the wildcard is echoed rather than reflecting the specific origin.
+// CORS applies W3C CORS headers from opts; origins match exactly or by wildcard, preflights get a 204 without calling next, and "*" is echoed rather than reflecting the origin.
 func CORS(opts CORSOptions) Middleware { //nolint:gocognit // origin allow-list + preflight branch + Vary handling are all part of one cohesive CORS contract; splitting would scatter the policy
 	allowed := buildOriginSet(opts.AllowedOrigins)
 	wildcard := allowed["*"]

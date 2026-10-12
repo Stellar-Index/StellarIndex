@@ -6,21 +6,12 @@ import (
 	"strings"
 )
 
-// CacheControl sets Cache-Control per the route's policy (ADR-0018 surface model).
-// Operator and tip routes are never shared-cached, and scam-gated price reads get a
-// 5 s `s-maxage` so a shared entry cannot outlive a scam-withhold flip by more than a probe tick.
-//
-// A handler may override the directive by setting the header before writing. Every
-// problem+json writer MUST set `Cache-Control: no-store`; otherwise an error inherits the
-// route's public directive and the CDN caches the failure against the success key.
-//
-// Behaves like cdn_enabled=true; use [CacheControlWithCDN] to drop `s-maxage`.
+// CacheControl sets Cache-Control per route policy (ADR-0018); operator and tip routes are never shared-cached, and every problem+json writer MUST set `no-store` or the CDN caches the failure.
 func CacheControl(next http.Handler) http.Handler {
 	return CacheControlWithCDN(true)(next)
 }
 
-// CacheControlWithCDN returns the cache-control middleware; when cdnEnabled is false only
-// `max-age` is emitted on cacheable routes. Private directives are unaffected.
+// CacheControlWithCDN returns the cache-control middleware; with cdnEnabled false only `max-age` is emitted on cacheable routes.
 func CacheControlWithCDN(cdnEnabled bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -65,8 +56,7 @@ func (s *perCallerHeaderStripper) commit() {
 	}
 }
 
-// WriteHeader commits on the final status; a 1xx interim response does
-// not fix the final header set.
+// WriteHeader commits on the final status; a 1xx interim response does not fix the final header set.
 func (s *perCallerHeaderStripper) WriteHeader(status int) {
 	if status >= http.StatusOK {
 		s.commit()
@@ -79,8 +69,7 @@ func (s *perCallerHeaderStripper) Write(p []byte) (int, error) {
 	return s.ResponseWriter.Write(p)
 }
 
-// Flush preserves http.Flusher for SSE handlers; a Flush before any
-// WriteHeader commits an implicit 200.
+// Flush preserves http.Flusher for SSE handlers; a Flush before any WriteHeader commits an implicit 200.
 func (s *perCallerHeaderStripper) Flush() {
 	s.commit()
 	if f, ok := s.ResponseWriter.(http.Flusher); ok {
@@ -155,11 +144,7 @@ func ledgerPolicy(path string, cdnEnabled bool) (string, bool) {
 	return "", false
 }
 
-// SLOPriceRoutes are the closed-bucket price surfaces, which get a very short shared cache. A
-// shared TTL of d adds d to the age of `observed_at`, makes `as_of` lie by up to d, and extends by
-// d the window serving a pre-freeze price with `frozen=false`, breaking the 150 s SLA probe bound;
-// s-maxage 5 s stays inside it where 60 would not. TestPolicyForPath_PriceSharedTTLIsBoundedByTheProbe
-// iterates this list.
+// SLOPriceRoutes are the closed-bucket price surfaces with a very short shared cache; a shared TTL of d skews as_of by up to d, so s-maxage must stay inside the 150 s SLA probe bound (TestPolicyForPath_PriceSharedTTLIsBoundedByTheProbe).
 var SLOPriceRoutes = []string{
 	"/v1/price",
 	"/v1/price/batch",

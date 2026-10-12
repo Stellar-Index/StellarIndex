@@ -38,18 +38,10 @@ func throttleContext(r *http.Request) (context.Context, context.CancelFunc) {
 	return context.WithDeadline(context.WithoutCancel(r.Context()), deadline)
 }
 
-// MaxRateLimitKeyLen caps the KeyFn output so a hostile header (multi-KB X-Forwarded-For)
-// cannot bloat the Redis key space or the allocation inside Bucket.Take.
+// MaxRateLimitKeyLen caps the KeyFn output so a hostile header (multi-KB X-Forwarded-For) cannot bloat the Redis key space or Bucket.Take allocation.
 const MaxRateLimitKeyLen = 256
 
-// RateLimit returns middleware enforcing bucket on every request whose keyFn yields a non-empty
-// key, setting X-RateLimit-Limit/Remaining and, on 429, Retry-After plus a problem+json body.
-//
-// Redis failures follow the bucket's dwell-time policy: inside [ratelimit.DefaultDwellTime] fail
-// OPEN; [ratelimit.ErrThrottleUnavailable] past it fails CLOSED with 503. Do not collapse the two.
-//
-// keyFn defaults to per-IP and "" means not limited; skip bypasses infra endpoints. Oversize keys
-// are truncated to [MaxRateLimitKeyLen] and still bucketed.
+// RateLimit enforces bucket per keyFn key (429 with Retry-After); Redis failures fail OPEN inside [ratelimit.DefaultDwellTime] and CLOSED with 503 past it, and the two must not be collapsed.
 func RateLimit(bucket *ratelimit.Bucket, keyFn func(*http.Request) string, skip func(*http.Request) bool, logger *slog.Logger) Middleware {
 	if logger == nil {
 		logger = slog.Default()
@@ -151,17 +143,7 @@ func (c *rateLimitCharge) spend(w http.ResponseWriter, r *http.Request, tokens i
 	return true
 }
 
-// ChargeRateLimit re-prices the in-flight request at cost tokens IN TOTAL and charges the
-// difference over what it has paid. False means it already wrote the 429 or 503; the handler must
-// return without writing.
-//
-// The middleware charges one token before dispatch because that is all it can know. Where the
-// client chooses the work (a 1000-id POST /v1/price/batch) the handler calls this AFTER validating
-// and BEFORE the work; the middleware cannot, as pricing the POST means buffering up to 1 MiB for
-// an unadmitted caller.
-//
-// The total is capped at the subject's ceiling so an over-ceiling request spends the whole window
-// instead of being refused every window. A cost at or below what was paid charges nothing (no refund).
+// ChargeRateLimit re-prices the in-flight request at cost tokens IN TOTAL (capped at the subject's ceiling, no refund); false means it already wrote the 429/503 and the handler must return without writing.
 func ChargeRateLimit(w http.ResponseWriter, r *http.Request, cost int) bool {
 	c, ok := r.Context().Value(rateLimitChargeKey{}).(*rateLimitCharge)
 	if !ok || c == nil {
@@ -192,10 +174,7 @@ func nextWindowResetUnix(window time.Duration) int64 {
 	return ((now / windowSecs) + 1) * windowSecs
 }
 
-// RateLimitBySubject enforces separate anonymous and authenticated buckets. Authenticated callers
-// key on the owner account ([authenticatedRateLimitKey]); anonymous ones on the per-IP bucket.
-// A Subject.RateLimitPerMin > 0 replaces authBucket's max as the ceiling for THIS request while
-// the counter stays the account's. Nil buckets disable limiting for that class.
+// RateLimitBySubject enforces separate anonymous (per-IP) and authenticated (owner-account) buckets; Subject.RateLimitPerMin > 0 replaces the ceiling for THIS request, and nil buckets disable that class.
 func RateLimitBySubject(anonBucket, authBucket *ratelimit.Bucket, skip func(*http.Request) bool, logger *slog.Logger) Middleware {
 	if logger == nil {
 		logger = slog.Default()
@@ -250,8 +229,7 @@ func bucketKeyAndOverrideForRequest(r *http.Request, anonBucket, authBucket *rat
 	return anonBucket, anonymousRateLimitKey(r), 0
 }
 
-// RateLimitCallerKey is the caller identity the rate limiter charges:
-// the owner account for an authenticated subject, else the throttle IP.
+// RateLimitCallerKey is the identity the rate limiter charges: the owner account for an authenticated subject, else the throttle IP.
 func RateLimitCallerKey(r *http.Request) string {
 	if subject, ok := auth.SubjectFrom(r.Context()); ok && subject.Identifier != "" &&
 		subject.Tier != auth.TierAnonymous && subject.Tier != "" {
@@ -278,10 +256,7 @@ func authenticatedRateLimitKey(subject auth.Subject) string {
 	return "auth:" + UsageKeyForSubject(subject)
 }
 
-// SkipHealthAndMetrics is a Skip predicate that exempts liveness probes and prometheus scrapes.
-// Keep in lockstep with isUnauthenticatedInfraPath (auth.go): a probe the LB sends
-// unauthenticated must not spend the anonymous per-IP bucket, or a monitor behind a shared NAT
-// flaps the region on 429.
+// SkipHealthAndMetrics is a Skip predicate exempting liveness probes and prometheus scrapes; keep in lockstep with isUnauthenticatedInfraPath (auth.go) or a monitor behind a shared NAT flaps on 429.
 func SkipHealthAndMetrics(r *http.Request) bool {
 	switch r.URL.Path {
 	case "/v1/healthz", "/v1/readyz", "/v1/livez/lake", "/v1/version", "/metrics", "/robots.txt", "/":

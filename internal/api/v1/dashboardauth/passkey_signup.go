@@ -41,8 +41,7 @@ const (
 	passkeySignupDisplayName = "Passkey account"
 )
 
-// HandlePasskeyBeginSignup returns creation options for a brand-new,
-// email-less user. The ceremony cookie carries the user ID chosen here.
+// HandlePasskeyBeginSignup returns creation options for a brand-new, email-less user; the ceremony cookie carries the user ID chosen here.
 func (h *Handlers) HandlePasskeyBeginSignup(w http.ResponseWriter, r *http.Request) {
 	if !h.allowPasskeySignup(w, r) {
 		return
@@ -94,9 +93,7 @@ func (h *Handlers) allowPasskeySignup(w http.ResponseWriter, r *http.Request) bo
 	return false
 }
 
-// HandlePasskeyFinishSignup verifies the attestation, then creates the
-// account, owner user and credential and mints a session. Every
-// verification failure returns one generic 400.
+// HandlePasskeyFinishSignup verifies the attestation, creates the account, owner user and credential and mints a session; every verification failure is one generic 400.
 func (h *Handlers) HandlePasskeyFinishSignup(w http.ResponseWriter, r *http.Request) {
 	fail := func() {
 		writeProblem(w, http.StatusBadRequest, "passkey sign-up failed — start again", r.URL.Path)

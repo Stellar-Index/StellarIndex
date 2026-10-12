@@ -30,9 +30,7 @@ import (
 // The active-key ceiling is tier-aware: platform.Tier.MaxActiveKeys is the default ladder,
 // overridable per tier via Config.KeyQuotas.
 
-// Config wires the handlers' dependencies. Constructed once in
-// cmd/stellarindex-api/main.go alongside the dashboardauth
-// handlers.
+// Config wires the handlers' dependencies, constructed once in cmd/stellarindex-api/main.go.
 type Config struct {
 	// Keys is the Postgres-backed APIKeyStore — the new source
 	// of truth for the dashboard's key management surface.
@@ -64,16 +62,12 @@ type Config struct {
 	idempotency *middleware.IdempotencyStore
 }
 
-// CacheInvalidator is the subset of
-// auth.PostgresAPIKeyValidator the dashboard needs for cache
-// eviction on revoke.
+// CacheInvalidator is the subset of auth.PostgresAPIKeyValidator the dashboard needs to evict cached keys on revoke.
 type CacheInvalidator interface {
 	InvalidateCachedKey(ctx context.Context, hexHash string) error
 }
 
-// KeyMirror writes a dashboard-minted credential into the redis
-// validator's store and removes it again. Implemented by
-// [auth.RedisAPIKeyStore].
+// KeyMirror writes a dashboard-minted credential into the redis validator's store and removes it again; implemented by [auth.RedisAPIKeyStore].
 type KeyMirror interface {
 	CreateWithSecret(ctx context.Context, k auth.MirroredKey) error
 	RevokeKeyByID(ctx context.Context, identifier, keyID string) error
@@ -98,8 +92,7 @@ func (c *Config) validate() error {
 // Handlers exposes the routes to be mounted in the v1 mux.
 type Handlers struct{ cfg *Config }
 
-// NewHandlers validates the config and returns a mount-ready
-// Handlers.
+// NewHandlers validates the config and returns a mount-ready Handlers.
 func NewHandlers(cfg Config) (*Handlers, error) {
 	if err := cfg.validate(); err != nil {
 		return nil, err
@@ -107,16 +100,7 @@ func NewHandlers(cfg Config) (*Handlers, error) {
 	return &Handlers{cfg: &cfg}, nil
 }
 
-// Mount installs the dashboard key-management routes:
-//
-//	GET    /v1/dashboard/keys           — list account's keys
-//	POST   /v1/dashboard/keys           — mint a new key
-//	DELETE /v1/dashboard/keys/{id}      — revoke
-//
-// Every route is wrapped in [dashboardauth.RequireSession], so anonymous requests are refused
-// first. Every mutation is also wrapped in [middleware.RequireSameSiteWrite]: these routes
-// authenticate with the session COOKIE, so a cross-site page could otherwise mint or revoke a
-// logged-in customer's API keys. Reads stay unwrapped.
+// Mount installs the dashboard key routes behind [dashboardauth.RequireSession], with mutations also behind [middleware.RequireSameSiteWrite] since session-cookie auth is otherwise cross-site forgeable.
 func (h *Handlers) Mount(mux *http.ServeMux, _ *middleware.PublicRoutes) {
 	session := dashboardauth.RequireSession()
 	sameSite := middleware.RequireSameSiteWrite(h.cfg.Logger)
@@ -198,8 +182,7 @@ type listResponse struct {
 	MaxActiveKeys int `json:"max_active_keys"`
 }
 
-// HandleList returns every active key plus the most recently created
-// revoked keys for the session's account, ordered oldest-first.
+// HandleList returns the account's active keys plus the most recently created revoked ones, oldest-first.
 func (h *Handlers) HandleList(w http.ResponseWriter, r *http.Request) {
 	sc, ok := dashboardauth.SessionFromContext(r.Context())
 	if !ok {
@@ -244,8 +227,7 @@ type createResponse struct {
 	Key       keyDTO `json:"key"`
 }
 
-// HandleCreate mints a new key. The plaintext is returned only
-// in this response — subsequent reads only see the prefix.
+// HandleCreate mints a new key; the plaintext is returned only in this response, later reads see just the prefix.
 func (h *Handlers) HandleCreate(w http.ResponseWriter, r *http.Request) {
 	sc, ok := dashboardauth.SessionFromContext(r.Context())
 	if !ok {
@@ -417,8 +399,7 @@ func (h *Handlers) revokeMirror(ctx context.Context, acct platform.Account, keyI
 	return err
 }
 
-// HandleRevoke soft-deletes a key. Idempotent — revoking an
-// already-revoked key returns 204.
+// HandleRevoke soft-deletes a key; idempotent, revoking an already-revoked key returns 204.
 func (h *Handlers) HandleRevoke(w http.ResponseWriter, r *http.Request) {
 	sc, ok := dashboardauth.SessionFromContext(r.Context())
 	if !ok {

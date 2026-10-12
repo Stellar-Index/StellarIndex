@@ -11,15 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 )
 
-// RequireEmailVerified 403s a `/v1/signup`-issued key whose `EmailVerifiedAt` is still zero, so
-// an unverified email string cannot yield a usable key without proof of ownership; the key
-// works once `/v1/signup/verify` flips the flag.
-//
-// Anonymous subjects and keys whose `Identifier` lacks the `signup-` prefix (operator-minted,
-// dashboard-minted `acct:<slug>`) pass, because they never used the email-link flow.
-//
-// Mounted only when `cfg.API.SignupRequireEmailVerification` is true. Wire AFTER `Auth` and
-// `KeyPolicy` and BEFORE `RateLimit`, so a rejected request does not also spend a rate-limit token.
+// RequireEmailVerified 403s a `/v1/signup` key whose `EmailVerifiedAt` is zero so an unproven email yields no usable key; wire AFTER `Auth` and `KeyPolicy` and BEFORE `RateLimit`.
 func RequireEmailVerified() Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

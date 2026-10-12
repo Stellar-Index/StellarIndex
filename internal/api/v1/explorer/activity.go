@@ -24,8 +24,7 @@ import (
 // obs.ObserveExplorerSWRRefresh("contract_detail", ...) label: it is a bounded enum, so do not
 // mint one per key kind.
 
-// ActivityReader is the narrow Postgres read seam this endpoint needs.
-// *timescale.Store satisfies it. Nil disables the endpoint (503).
+// ActivityReader is the narrow Postgres read seam this endpoint needs, satisfied by *timescale.Store; nil disables the endpoint (503).
 type ActivityReader interface {
 	CountAccountTrades(ctx context.Context, address string) (int64, time.Time, error)
 	DefiActionCountsByUser(ctx context.Context, address string) ([]timescale.DefiActionCount, error)
@@ -63,9 +62,7 @@ const bridgeMatchingNote = "rozo matches payment from_addr (outbound) / destinat
 	"that contract, not the end user, and an outbound burn's destination-chain recipient is not a " +
 	"Stellar account so it is never matched."
 
-// AccountActivityView is the wire response for GET
-// /v1/accounts/{g_strkey}/activity. Segments that could not be read are
-// ABSENT (nil), never zero-filled — coverage_note names them.
+// AccountActivityView is GET /v1/accounts/{g_strkey}/activity; segments that could not be read are ABSENT (nil), never zero-filled, and coverage_note names them.
 type AccountActivityView struct {
 	Account     string            `json:"account"`
 	OpsByType   []OpTypeCountView `json:"ops_by_type,omitempty"`
@@ -97,12 +94,7 @@ func (h *Handler) activityUnavailable(w http.ResponseWriter, r *http.Request) {
 // cached payload) rather than caching an all-absent shell for the TTL.
 var errActivityAllSegmentsFailed = errors.New("account activity: every segment read failed")
 
-// AccountActivity serves GET /v1/accounts/{g_strkey}/activity.
-//
-// SWR contract, same as ContractDetail: a fresh payload serves as-is; an expired one serves
-// immediately with flags.stale=true and its real as_of while a detached single-flight recompute
-// runs; a never-computed account waits for that compute up to the request deadline only (a heavy
-// account 503s the first request and the retry lands warm).
+// AccountActivity serves GET /v1/accounts/{g_strkey}/activity with the SWR contract of ContractDetail: stale payloads serve with flags.stale=true while a detached single-flight recompute runs.
 func (h *Handler) AccountActivity(w http.ResponseWriter, r *http.Request) {
 	if h.Activity == nil && h.Reader == nil {
 		h.activityUnavailable(w, r)

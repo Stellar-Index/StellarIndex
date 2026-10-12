@@ -23,8 +23,7 @@ type AccountEraser interface {
 	Erase(ctx context.Context, id uuid.UUID, actor platform.ActorKind) (accounterasure.Report, error)
 }
 
-// AccountExporter builds an account's data export; *accounterasure.Exporter
-// satisfies it.
+// AccountExporter builds an account's data export; *accounterasure.Exporter satisfies it.
 type AccountExporter interface {
 	Export(ctx context.Context, accountID, requester uuid.UUID, now time.Time) (platform.AccountExport, error)
 }
@@ -52,9 +51,7 @@ type accountErasureRequest struct {
 	Confirm string `json:"confirm"`
 }
 
-// HandleAccountDelete serves DELETE /v1/dashboard/account: erase the
-// session's account and every member of it. Owner only, on a
-// session minted within accountReauthWindow, with the slug typed back.
+// HandleAccountDelete serves DELETE /v1/dashboard/account: erases the account and all its members; owner only, on a session within accountReauthWindow, slug typed back.
 func (h *Handlers) HandleAccountDelete(w http.ResponseWriter, r *http.Request) {
 	sc, ok := h.accountActionGate(w, r, accountRoute, "erase", maxAccountErasures)
 	if !ok {
@@ -87,9 +84,7 @@ func (h *Handlers) HandleAccountDelete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// HandleAccountExport serves GET /v1/dashboard/account/export: the
-// session account's data as one JSON attachment. Owner only, on a session
-// minted within accountReauthWindow.
+// HandleAccountExport serves GET /v1/dashboard/account/export: the account's data as one JSON attachment; owner only, on a session within accountReauthWindow.
 func (h *Handlers) HandleAccountExport(w http.ResponseWriter, r *http.Request) {
 	sc, ok := h.accountActionGate(w, r, accountExportRoute, "export", maxAccountExports)
 	if !ok {

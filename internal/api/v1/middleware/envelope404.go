@@ -5,13 +5,7 @@ import (
 	"net/http"
 )
 
-// Envelope404 converts the ServeMux's default text/plain 404 and 405 responses into RFC 9457
-// problem+json, matching the rest of the v1 error surface.
-//
-// v1 handlers always set Content-Type explicitly, so a "text/plain; charset=utf-8" response can
-// only come from the mux's default error path. That is detected at WriteHeader time, replaced
-// with the envelope, and the trailing default body is suppressed. Only the WriteHeader decision
-// is intercepted; Write passes straight through, so SSE and large responses are untouched.
+// Envelope404 converts the ServeMux's default text/plain 404 and 405 into RFC 9457 problem+json, intercepting only the WriteHeader decision so SSE and large responses are untouched.
 func Envelope404(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rec := &envelope404Recorder{ResponseWriter: w, r: r}
@@ -27,8 +21,7 @@ type envelope404Recorder struct {
 	overridden bool
 }
 
-// WriteHeader inspects (status, Content-Type) and overrides when
-// the combination matches Go's default 404 / 405 handlers.
+// WriteHeader inspects (status, Content-Type) and overrides when it matches Go's default 404 / 405 handlers.
 func (e *envelope404Recorder) WriteHeader(status int) {
 	if !e.overridden && shouldOverride(status, e.Header().Get("Content-Type")) {
 		e.overridden = true
@@ -46,8 +39,7 @@ func (e *envelope404Recorder) WriteHeader(status int) {
 	e.ResponseWriter.WriteHeader(status)
 }
 
-// Write swallows the default-handler body when we've already written
-// our problem+json envelope; otherwise it passes through.
+// Write swallows the default-handler body once our problem+json envelope is written, else passes through.
 func (e *envelope404Recorder) Write(p []byte) (int, error) {
 	if e.overridden {
 		return len(p), nil
@@ -55,17 +47,14 @@ func (e *envelope404Recorder) Write(p []byte) (int, error) {
 	return e.ResponseWriter.Write(p)
 }
 
-// Flush preserves http.Flusher for SSE handlers — without this,
-// wrapping breaks chunked streaming.
+// Flush preserves http.Flusher for SSE handlers; without it, wrapping breaks chunked streaming.
 func (e *envelope404Recorder) Flush() {
 	if f, ok := e.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
 }
 
-// Unwrap exposes the underlying ResponseWriter so
-// http.NewResponseController can reach SetWriteDeadline / Hijack
-// on it. See statusRecorder.Unwrap for the full rationale.
+// Unwrap exposes the underlying ResponseWriter so http.NewResponseController can reach SetWriteDeadline and Hijack; see statusRecorder.Unwrap.
 func (e *envelope404Recorder) Unwrap() http.ResponseWriter {
 	return e.ResponseWriter
 }

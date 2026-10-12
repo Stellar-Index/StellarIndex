@@ -65,12 +65,7 @@ func boundedLogField(s string, maxLen int) string {
 	return s
 }
 
-// QueryShape renders a request's query string as a diagnosable,
-// non-identifying shape. Returns "" when there is no query string, so
-// the caller can omit the field entirely rather than log an empty one.
-//
-// Deterministic: parameters are sorted so operators can group by shape, and the maxShapeParts cap
-// applies after sorting so a truncated shape is always the same prefix.
+// QueryShape renders a request's query string as a deterministic, non-identifying shape (sorted, capped by maxShapeParts), or "" when there is none.
 func QueryShape(u *url.URL) string {
 	if u == nil || u.RawQuery == "" {
 		return ""

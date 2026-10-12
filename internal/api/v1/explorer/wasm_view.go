@@ -10,21 +10,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// WasmExportView is one exported contract function on the wire: its name and
-// the wasm-ABI param/result value types. For a Soroban contract the names are
-// the contract's public entry points (e.g. "swap", "deposit"); the types are
-// the low-level wasm ABI (i64-tagged host values), not the Rust signature.
+// WasmExportView is one exported contract function: its name and the low-level wasm-ABI param/result types, not the Rust signature.
 type WasmExportView struct {
 	Name    string   `json:"name"`
 	Params  []string `json:"params"`
 	Results []string `json:"results"`
 }
 
-// ContractWasmView is the wire response for GET /v1/contracts/{id}/wasm: the resolved wasm hash
-// and size, the exported function table (always present, parsed natively), and best-effort WAT
-// and decompile pseudocode (empty without the wabt toolchain). source_note explains provenance
-// and any degraded stages. size_bytes is small, so it stays a JSON number; there are no i128
-// fields.
+// ContractWasmView is GET /v1/contracts/{id}/wasm: wasm hash and size, the always-present export table, and best-effort WAT/decompile (empty without wabt); source_note explains provenance.
 type ContractWasmView struct {
 	ContractID string           `json:"contract_id"`
 	WasmHash   string           `json:"wasm_hash"`
@@ -38,12 +31,7 @@ type ContractWasmView struct {
 	TTL *ContractTTLV `json:"ttl,omitempty"`
 }
 
-// ContractWasm serves GET /v1/contracts/{contract_id}/wasm: metadata, the exported function
-// table, and WAT plus decompiled pseudocode when wabt is present, read on demand from the lake.
-// Cache lifetime is set by wasmCacheControl.
-//
-// 404 when the wasm is not resolvable from the captured ledger_entry_changes window (the instance
-// or code entry was not captured; see clickhouse.ErrContractWasmUnresolved).
+// ContractWasm serves GET /v1/contracts/{contract_id}/wasm read on demand from the lake (cache via wasmCacheControl); 404 when clickhouse.ErrContractWasmUnresolved.
 func (h *Handler) ContractWasm(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)
