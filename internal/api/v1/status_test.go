@@ -1093,3 +1093,21 @@ func TestStatusSourceCountQueries_MatchPromtoolFixture(t *testing.T) {
 			"(before=%v after=%v) — an emitting, switched-on source must count on both sides", d, before.active, after.active)
 	}
 }
+
+// repoRootForClaims walks up from the package directory to the checkout
+// root, so the test works under `go test ./...` from anywhere.
+func repoRootForClaims(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 8; i++ {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		dir = filepath.Dir(dir)
+	}
+	t.Fatal("could not locate the repo root (go.mod) from cwd")
+	return ""
+}
