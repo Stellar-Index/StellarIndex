@@ -7,6 +7,7 @@ import "testing"
 func TestRegistry_Credit(t *testing.T) {
 	want := map[string]string{
 		"coingecko":        "CoinGecko",
+		"coingecko_daily":  "CoinGecko",
 		"coinmarketcap":    "CoinMarketCap",
 		"cryptocompare":    "CCData (CryptoCompare)",
 		"ecb":              "European Central Bank euro foreign exchange reference rates",

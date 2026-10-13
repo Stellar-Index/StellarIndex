@@ -84,6 +84,9 @@ var Registry = map[string]Metadata{
 	"coingecko":     {Class: ClassAggregator, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, Credit: "CoinGecko", BackfillAvailable: true, Backfill: BackfillNoWASM, OracleResolution: 5 * time.Minute},
 	"coinmarketcap": {Class: ClassAggregator, DefaultWeight: 100, IncludeInVWAP: false, Paid: true, Credit: "CoinMarketCap", BackfillAvailable: true, Backfill: BackfillNoWASM, OracleResolution: time.Minute},
 	"cryptocompare": {Class: ClassAggregator, DefaultWeight: 100, IncludeInVWAP: false, Paid: true, Credit: "CCData (CryptoCompare)", BackfillAvailable: true, Backfill: BackfillNoWASM, OracleResolution: time.Minute},
+	// Vendor daily closes replayed from an owner-exported file for the span before any USD venue
+	// listed XLM: history only, credited, weightless, never a fill and never VWAP.
+	"coingecko_daily": {Class: ClassAggregator, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, Credit: "CoinGecko", BackfillAvailable: true, Backfill: BackfillNoWASM},
 
 	// ─── Sovereign daily anchors (sanity check only) ─────────────
 	// ECB publishes once per TARGET business day (24 h resolution). SubclassFX because the ECB

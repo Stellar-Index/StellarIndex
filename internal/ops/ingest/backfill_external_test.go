@@ -13,7 +13,9 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 	externalkraken "github.com/Stellar-Index/StellarIndex/internal/sources/external/kraken"
+	externalvendorcsv "github.com/Stellar-Index/StellarIndex/internal/sources/external/vendorcsv"
 )
 
 // fakeTradeInserter is a DB-free tradeInserter that fails on the listed TxHash keys (or every insert once infra=true,
@@ -344,6 +346,158 @@ type fakeForeignProbe struct {
 func (f *fakeForeignProbe) TradesInWindowOutside(_ context.Context, _ string, _ canonical.Pair, _, to time.Time, keep []canonical.Trade) (int64, time.Time, error) {
 	f.to, f.keep = to, keep
 	return f.n, f.first, f.err
+}
+
+type fakeSourceProbe struct {
+	sources  []string
+	err      error
+	from, to time.Time
+	asked    []string
+}
+
+func (f *fakeSourceProbe) TradeSourcesInWindow(_ context.Context, _ canonical.Pair, from, to time.Time, sources []string) ([]string, error) {
+	f.from, f.to, f.asked = from, to, sources
+	return f.sources, f.err
+}
+
+// TestRefuseMixedBuckets: a vendor series never shares a pair window with a VWAP-eligible series, whichever one is being written.
+func TestRefuseMixedBuckets(t *testing.T) {
+	xlm, _ := canonical.NewCryptoAsset("XLM")
+	usd, _ := canonical.NewFiatAsset("USD")
+	pair, err := canonical.NewPair(xlm, usd)
+	if err != nil {
+		t.Fatalf("NewPair: %v", err)
+	}
+	from := time.Date(2014, 8, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2017, 1, 18, 0, 0, 0, 0, time.UTC)
+	ctx := context.Background()
+	cases := []struct {
+		name   string
+		run    string
+		stored []string
+		want   string // substring of the refusal; "" means allowed
+	}{
+		{"vendor into empty window", externalvendorcsv.SourceName, nil, ""},
+		{"vendor re-run over itself", externalvendorcsv.SourceName, []string{externalvendorcsv.SourceName}, ""},
+		{"vendor beside poloniex (both non-VWAP)", externalvendorcsv.SourceName, []string{"poloniex_via_btc"}, ""},
+		{"vendor into kraken rows", externalvendorcsv.SourceName, []string{"kraken"}, "already has kraken rows"},
+		{"kraken into vendor rows", "kraken", []string{"coingecko_daily"}, "already has coingecko_daily rows"},
+		{"kraken over kraken", "kraken", []string{"kraken"}, ""},
+	}
+	// The probe spans every week and month bucket the run touches, not the run itself.
+	wantLo := time.Date(2014, 7, 28, 0, 0, 0, 0, time.UTC)
+	wantHi := time.Date(2017, 2, 1, 0, 0, 0, 0, time.UTC)
+	for _, tc := range cases {
+		probe := &fakeSourceProbe{sources: tc.stored}
+		err := refuseMixedBuckets(ctx, probe, tc.run, pair, from, to)
+		if !probe.from.Equal(wantLo) || !probe.to.Equal(wantHi) {
+			t.Errorf("%s: probe window = [%s, %s); want [%s, %s)", tc.name, probe.from, probe.to, wantLo, wantHi)
+		}
+		// Only the other VWAP kind is looked up, so a busy venue's own rows never widen the probe.
+		asked := strings.Join(probe.asked, ",")
+		if strings.Contains(asked, tc.run) || !strings.Contains(asked, ",") {
+			t.Errorf("%s: probe asked for %q; want the other VWAP kind only", tc.name, asked)
+		}
+		if wantOther := map[bool]string{true: "kraken", false: externalvendorcsv.SourceName}[!external.Lookup(tc.run).IncludeInVWAP]; !strings.Contains(asked, wantOther) {
+			t.Errorf("%s: probe asked for %q; want %s in the list", tc.name, asked, wantOther)
+		}
+		switch {
+		case tc.want == "" && err != nil:
+			t.Errorf("%s: err = %v, want nil", tc.name, err)
+		case tc.want != "" && !errors.Is(err, errBackfillMixedBuckets):
+			t.Errorf("%s: err = %v, want errBackfillMixedBuckets", tc.name, err)
+		case tc.want != "" && !strings.Contains(err.Error(), tc.want):
+			t.Errorf("%s: refusal does not name the stored series: %v", tc.name, err)
+		}
+	}
+	boom := errors.New("boom")
+	if err := refuseMixedBuckets(ctx, &fakeSourceProbe{err: boom}, "kraken", pair, from, to); !errors.Is(err, boom) {
+		t.Errorf("probe error not wrapped: %v", err)
+	}
+}
+
+// TestBucketSpan: the widened window covers the Monday week and the calendar month of both ends.
+func TestBucketSpan(t *testing.T) {
+	d := func(s string) time.Time {
+		t.Helper()
+		v, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	cases := []struct{ from, to, lo, hi string }{
+		// A Friday start; a Wednesday end: week floors on both sides, month floor only on the end.
+		{"2014-08-01T00:00:00Z", "2017-01-18T00:00:00Z", "2014-07-28T00:00:00Z", "2017-02-01T00:00:00Z"},
+		// -to on a month boundary: the last row (2016-12-31T23:59:59Z) is in week [12-26, 01-02) and December.
+		{"2014-08-05T23:59:59Z", "2017-01-01T00:00:00Z", "2014-08-01T00:00:00Z", "2017-01-02T00:00:00Z"},
+		// A Monday start on the 1st, a window inside one week: still the whole month.
+		{"2016-08-01T00:00:00Z", "2016-08-03T00:00:00Z", "2016-08-01T00:00:00Z", "2016-09-01T00:00:00Z"},
+		// A Sunday: week floor is the previous Monday.
+		{"2017-01-15T12:00:00Z", "2017-01-15T13:00:00Z", "2017-01-01T00:00:00Z", "2017-02-01T00:00:00Z"},
+	}
+	for _, tc := range cases {
+		lo, hi := bucketSpan(d(tc.from), d(tc.to))
+		if !lo.Equal(d(tc.lo)) || !hi.Equal(d(tc.hi)) {
+			t.Errorf("bucketSpan(%s, %s) = [%s, %s); want [%s, %s)", tc.from, tc.to, lo.Format(time.RFC3339), hi.Format(time.RFC3339), tc.lo, tc.hi)
+		}
+	}
+}
+
+type fakePreWalkProbe struct {
+	fakeTradeProbe
+	fakeSourceProbe
+}
+
+// TestRefuseStoredRows_AllowOverlapWaivesOnlyTheOverlapCheck: a vendor re-run over Kraken buckets is refused
+// even with -allow-overlap, which exists only so a window this command wrote can be rewritten.
+func TestRefuseStoredRows_AllowOverlapWaivesOnlyTheOverlapCheck(t *testing.T) {
+	xlm, _ := canonical.NewCryptoAsset("XLM")
+	usd, _ := canonical.NewFiatAsset("USD")
+	pair, err := canonical.NewPair(xlm, usd)
+	if err != nil {
+		t.Fatalf("NewPair: %v", err)
+	}
+	from := time.Date(2014, 8, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2017, 1, 18, 0, 0, 0, 0, time.UTC)
+	ctx := context.Background()
+	vendor := externalvendorcsv.SourceName
+
+	probe := &fakePreWalkProbe{
+		fakeTradeProbe:  fakeTradeProbe{first: from.Add(time.Hour), found: true},
+		fakeSourceProbe: fakeSourceProbe{sources: []string{vendor, "kraken"}},
+	}
+	if err := refuseStoredRows(ctx, probe, vendor, pair, from, to, false); !errors.Is(err, errBackfillOverlap) {
+		t.Errorf("without -allow-overlap: err = %v, want errBackfillOverlap first", err)
+	}
+	if err := refuseStoredRows(ctx, probe, vendor, pair, from, to, true); !errors.Is(err, errBackfillMixedBuckets) {
+		t.Errorf("with -allow-overlap: err = %v, want errBackfillMixedBuckets", err)
+	}
+	probe.fakeSourceProbe.sources = []string{vendor}
+	if err := refuseStoredRows(ctx, probe, vendor, pair, from, to, true); err != nil {
+		t.Errorf("re-run over own rows with -allow-overlap: err = %v, want nil", err)
+	}
+}
+
+// TestBuildBackfiller_VendorCSV: -file is the vendor source's only input and is refused elsewhere.
+func TestBuildBackfiller_VendorCSV(t *testing.T) {
+	if _, _, err := buildBackfiller("kraken", "XLM/USD", "x.csv"); err == nil || !strings.Contains(err.Error(), "-file applies only") {
+		t.Errorf("kraken with -file: err = %v", err)
+	}
+	if _, _, err := buildBackfiller(externalvendorcsv.SourceName, "XLM/USD", ""); err == nil || !strings.Contains(err.Error(), "requires -file") {
+		t.Errorf("vendor without -file: err = %v", err)
+	}
+	if _, _, err := buildBackfiller(externalvendorcsv.SourceName, "XLM/EUR", "x.csv"); err == nil || !strings.Contains(err.Error(), "only -pair XLM/USD") {
+		t.Errorf("vendor with XLM/EUR: err = %v", err)
+	}
+	b, pair, err := buildBackfiller(externalvendorcsv.SourceName, "XLM/USD", "x.csv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, ok := b.(*externalvendorcsv.Backfiller)
+	if !ok || v.Path != "x.csv" || pair.String() != "crypto:XLM/fiat:USD" {
+		t.Errorf("got %T %+v pair %s; want *vendorcsv.Backfiller{Path: x.csv} crypto:XLM/fiat:USD", b, b, pair)
+	}
 }
 
 // TestRefuseForeignRows_RefusesRowsTheRunWouldNotRewrite: -allow-overlap re-runs at the granularity that wrote the rows; a coarser rewrite is refused, naming the first such row.

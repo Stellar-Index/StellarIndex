@@ -1813,3 +1813,33 @@ func (s *Store) TradesInWindowOutside(ctx context.Context, source string, pair c
 	}
 	return n, first.Time.UTC(), nil
 }
+
+// TradeSourcesInWindow lists which of `sources` hold a stored row for pair in [from, to), sorted. The
+// candidate list is bound so the lookup walks trades_pair_source_ts_idx per source instead of every row
+// of the pair in the window.
+func (s *Store) TradeSourcesInWindow(ctx context.Context, pair canonical.Pair, from, to time.Time, sources []string) ([]string, error) {
+	const q = `
+        SELECT DISTINCT source
+          FROM trades
+         WHERE base_asset = $1::text AND quote_asset = $2::text
+           AND ts >= $3::timestamptz AND ts < $4::timestamptz
+           AND source = ANY(string_to_array($5, ','))
+         ORDER BY source`
+	rows, err := s.db.QueryContext(ctx, q, pair.Base.String(), pair.Quote.String(), from.UTC(), to.UTC(), strings.Join(sources, ","))
+	if err != nil {
+		return nil, fmt.Errorf("timescale: TradeSourcesInWindow (%s): %w", pair.String(), err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var src string
+		if err := rows.Scan(&src); err != nil {
+			return nil, fmt.Errorf("timescale: TradeSourcesInWindow (%s): %w", pair.String(), err)
+		}
+		out = append(out, src)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: TradeSourcesInWindow (%s): %w", pair.String(), err)
+	}
+	return out, nil
+}

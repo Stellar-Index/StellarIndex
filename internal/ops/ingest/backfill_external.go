@@ -22,6 +22,7 @@ import (
 	externalcoinbase "github.com/Stellar-Index/StellarIndex/internal/sources/external/coinbase"
 	externalkraken "github.com/Stellar-Index/StellarIndex/internal/sources/external/kraken"
 	externalpoloniex "github.com/Stellar-Index/StellarIndex/internal/sources/external/poloniex"
+	externalvendorcsv "github.com/Stellar-Index/StellarIndex/internal/sources/external/vendorcsv"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -36,8 +37,9 @@ const externalInsertBudget = 12 * time.Hour
 func backfillExternal(args []string) error {
 	fs := flag.NewFlagSet("backfill-external", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
-	source := fs.String("source", "", "Venue: binance | kraken | bitstamp | coinbase | poloniex_via_btc (required)")
+	source := fs.String("source", "", "Venue: binance | kraken | bitstamp | coinbase | poloniex_via_btc | coingecko_daily (required)")
 	pairSym := fs.String("pair", "", "Venue-native symbol, e.g. XLMUSDT / XLM/USD / xlmusd / XLM-USD (required)")
+	file := fs.String("file", "", "Owner-exported daily close CSV; only with -source coingecko_daily")
 	fromStr := fs.String("from", "", "Start time, RFC 3339 (required, e.g. 2024-01-01T00:00:00Z)")
 	toStr := fs.String("to", "", "End time, RFC 3339 (required, e.g. 2024-12-31T00:00:00Z)")
 	granStr := fs.String("granularity", "1h", "Candle granularity as a Go duration (1m / 15m / 1h / 4h / 1d / 1w)")
@@ -76,14 +78,14 @@ func backfillExternal(args []string) error {
 		return fmt.Errorf("parse -granularity %q: %w", *granStr, err)
 	}
 
-	backfiller, pair, err := buildBackfiller(*source, *pairSym)
+	backfiller, pair, err := buildBackfiller(*source, *pairSym, *file)
 	if err != nil {
 		return err
 	}
 	// Before the walk, which can take a day: the probe is cheap and the
 	// refusal is the common outcome for a window that reaches live data.
-	if !dryRun && !*allowOverlap {
-		if err := checkStoredOverlap(*cfgPath, *source, pair, from, to); err != nil {
+	if !dryRun {
+		if err := checkStoredOverlap(*cfgPath, *source, pair, from, to, *allowOverlap); err != nil {
 			return err
 		}
 	}
@@ -253,6 +255,91 @@ func refuseStoredOverlap(ctx context.Context, probe storedTradeProbe, source str
 		errBackfillOverlap, source, pair.String(), at, at)
 }
 
+// errBackfillMixedBuckets marks a run refused because a price rollup bucket would blend a vendor close into a VWAP.
+var errBackfillMixedBuckets = errors.New("backfill window would mix VWAP and non-VWAP sources in one bucket")
+
+// sourceSetProbe is the storage seam refuseMixedBuckets depends on.
+type sourceSetProbe interface {
+	TradeSourcesInWindow(ctx context.Context, pair canonical.Pair, from, to time.Time, sources []string) ([]string, error)
+}
+
+// refuseMixedBuckets keeps a vendor series and a VWAP-eligible series out of one price rollup bucket in
+// either direction: a bucket's `sources` is all that tells them apart, and the rollups would blend a
+// vendor close into a fill-derived VWAP. The probe covers every bucket the window touches, not the
+// window itself, because the week and month rollups extend past any run boundary.
+func refuseMixedBuckets(ctx context.Context, probe sourceSetProbe, source string, pair canonical.Pair, from, to time.Time) error {
+	lo, hi := bucketSpan(from, to)
+	runVWAP := external.Lookup(source).IncludeInVWAP
+	stored, err := probe.TradeSourcesInWindow(ctx, pair, lo, hi, sourcesOfVWAPKind(!runVWAP))
+	if err != nil {
+		return fmt.Errorf("backfill-external: %w", err)
+	}
+	for _, other := range stored {
+		if other == source || external.Lookup(other).IncludeInVWAP == runVWAP {
+			continue
+		}
+		return fmt.Errorf("backfill-external: %w: %s %s already has %s rows in a week or month bucket [-from, -to) touches (%s to %s); end the run at that series' bucket boundary",
+			errBackfillMixedBuckets, source, pair.String(), other, lo.Format(time.RFC3339), hi.Format(time.RFC3339))
+	}
+	return nil
+}
+
+// sourcesOfVWAPKind is the sorted registry subset whose IncludeInVWAP equals include.
+func sourcesOfVWAPKind(include bool) []string {
+	var names []string
+	for name, md := range external.Registry {
+		if md.IncludeInVWAP == include {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+// bucketSpan widens [from, to) to the coarsest price rollup buckets it touches: the Monday-aligned
+// week (Timescale's time_bucket('1 week') origin is a Monday) and the calendar month, neither of
+// which has a source filter.
+func bucketSpan(from, to time.Time) (lo, hi time.Time) {
+	last := to.UTC().Add(-time.Nanosecond)
+	lo = weekFloor(from)
+	if m := monthFloor(from); m.Before(lo) {
+		lo = m
+	}
+	hi = weekFloor(last).AddDate(0, 0, 7)
+	if m := monthFloor(last).AddDate(0, 1, 0); m.After(hi) {
+		hi = m
+	}
+	return lo, hi
+}
+
+func weekFloor(t time.Time) time.Time {
+	t = t.UTC()
+	d := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+	return d.AddDate(0, 0, -((int(d.Weekday()) + 6) % 7))
+}
+
+func monthFloor(t time.Time) time.Time {
+	t = t.UTC()
+	return time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, time.UTC)
+}
+
+// preWalkProbe is the storage seam refuseStoredRows depends on.
+type preWalkProbe interface {
+	storedTradeProbe
+	sourceSetProbe
+}
+
+// refuseStoredRows runs the pre-walk refusals. -allow-overlap waives only the overlap check: a re-run
+// of a vendor window is still a vendor window, so the mixed-bucket check always runs.
+func refuseStoredRows(ctx context.Context, probe preWalkProbe, source string, pair canonical.Pair, from, to time.Time, allowOverlap bool) error {
+	if !allowOverlap {
+		if err := refuseStoredOverlap(ctx, probe, source, pair, from, to); err != nil {
+			return err
+		}
+	}
+	return refuseMixedBuckets(ctx, probe, source, pair, from, to)
+}
+
 // errBackfillForeignRows marks an -allow-overlap run refused because the
 // window holds stored rows the run would not overwrite.
 var errBackfillForeignRows = errors.New("backfill window holds rows this run would not rewrite")
@@ -287,8 +374,8 @@ func walkedTo(to, resumeFrom time.Time, partial bool) time.Time {
 	return to
 }
 
-// checkStoredOverlap runs refuseStoredOverlap against the configured store.
-func checkStoredOverlap(cfgPath, source string, pair canonical.Pair, from, to time.Time) error {
+// checkStoredOverlap runs refuseStoredRows against the configured store.
+func checkStoredOverlap(cfgPath, source string, pair canonical.Pair, from, to time.Time, allowOverlap bool) error {
 	cfg, err := config.LoadWithEnv(cfgPath)
 	if err != nil {
 		return err
@@ -300,7 +387,7 @@ func checkStoredOverlap(cfgPath, source string, pair canonical.Pair, from, to ti
 		return fmt.Errorf("storage: %w", err)
 	}
 	defer func() { _ = store.Close() }()
-	return refuseStoredOverlap(ctx, store, source, pair, from, to)
+	return refuseStoredRows(ctx, store, source, pair, from, to, allowOverlap)
 }
 
 // windowPlan slices a fills walk into bounded spans of venue history.
@@ -531,7 +618,10 @@ func infraAbortError(trades []canonical.Trade, i int, n insertTally, err error) 
 }
 
 // buildBackfiller maps the -source flag to the venue's Backfiller, resolving the venue-native symbol via DefaultPairs; unknown sources or pairs return a clear error.
-func buildBackfiller(source, symbol string) (external.Backfiller, canonical.Pair, error) {
+func buildBackfiller(source, symbol, file string) (external.Backfiller, canonical.Pair, error) {
+	if file != "" && source != externalvendorcsv.SourceName {
+		return nil, canonical.Pair{}, fmt.Errorf("-file applies only to -source %s", externalvendorcsv.SourceName)
+	}
 	switch source {
 	case externalbinance.SourceName:
 		pm, err := externalbinance.DefaultPairs()
@@ -575,8 +665,10 @@ func buildBackfiller(source, symbol string) (external.Backfiller, canonical.Pair
 		return externalcoinbase.NewStreamer(pm), pair, nil
 	case externalpoloniex.SourceName:
 		return buildPoloniexBackfiller(symbol)
+	case externalvendorcsv.SourceName:
+		return buildVendorCSVBackfiller(symbol, file)
 	}
-	return nil, canonical.Pair{}, fmt.Errorf("unknown -source %q (supported: binance, kraken, bitstamp, coinbase, poloniex_via_btc)", source)
+	return nil, canonical.Pair{}, fmt.Errorf("unknown -source %q (supported: binance, kraken, bitstamp, coinbase, poloniex_via_btc, coingecko_daily)", source)
 }
 
 // buildPoloniexBackfiller wires the XLM/BTC x BTC/USD derivation. The BTC
@@ -606,6 +698,29 @@ func buildPoloniexBackfiller(symbol string) (external.Backfiller, canonical.Pair
 		return nil, canonical.Pair{}, unknownPairError(externalbitstamp.SourceName, "btcusd", pm)
 	}
 	return &externalpoloniex.Backfiller{BTCLeg: externalbitstamp.NewStreamer(pm), BTCPair: btcPair}, pair, nil
+}
+
+// buildVendorCSVBackfiller wires the owner-exported close file behind the one pair it carries.
+func buildVendorCSVBackfiller(symbol, file string) (external.Backfiller, canonical.Pair, error) {
+	if file == "" {
+		return nil, canonical.Pair{}, fmt.Errorf("-source %s requires -file", externalvendorcsv.SourceName)
+	}
+	if symbol != "XLM/USD" {
+		return nil, canonical.Pair{}, fmt.Errorf("-source %s supports only -pair XLM/USD, got %q", externalvendorcsv.SourceName, symbol)
+	}
+	xlm, err := canonical.NewCryptoAsset("XLM")
+	if err != nil {
+		return nil, canonical.Pair{}, err
+	}
+	usd, err := canonical.NewFiatAsset("USD")
+	if err != nil {
+		return nil, canonical.Pair{}, err
+	}
+	pair, err := canonical.NewPair(xlm, usd)
+	if err != nil {
+		return nil, canonical.Pair{}, err
+	}
+	return &externalvendorcsv.Backfiller{Path: file}, pair, nil
 }
 
 // unknownPairError prints the configured set so the operator can
