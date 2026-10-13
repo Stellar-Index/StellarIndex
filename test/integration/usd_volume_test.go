@@ -2014,23 +2014,34 @@ func TestXLMBaseRestamp_RederivesThroughTheLiveAnchor(t *testing.T) {
 	const higherGen = int64(9_000_000_000)
 	exec(t, `UPDATE trades SET usd_volume = 0.11111111, derive_generation = $2 WHERE source='sdex' AND ledger=$1`,
 		ledger["higher generation"], higherGen)
-	// NOT poisoned by hand: the insert path itself valued this one
-	// quote-side through the thin book (0.15 = 300/1e7 x the 5000 raw
-	// TOKEN/USDC vwap), which IS the pre-fd1860bd defect state.
-
 	// Sanity: the fixture really did land the states the test asserts on.
 	if got := readRow(t, ledger["already correct"]); got.usd == nil || *got.usd != wantAnchored {
 		t.Fatalf("fixture: the 'already correct' row is %v, want %s written by the insert path", got.usd, wantAnchored)
 	}
-	// The quote side really can price the declined pair — otherwise the
-	// "only the anchor" assertions below would pass vacuously.
-	quoteSide := readRow(t, ledger["declined, stored value"])
+	// The insert path leaves an XLM-leg DEX row unpriced once its anchor declines, so row 21's stale quote-side value
+	// (the state rows stamped before that rule carry) is taken from a control trade with no XLM leg: the thin book still
+	// prices it at ingest (0.15 = 300/1e7 x the 5000 raw TOKEN/USDC vwap), proving the quote side really can price the
+	// 4h minute — otherwise the "only the anchor" assertions below would pass vacuously.
+	other, err := c.NewClassicAsset("OTHER", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherToken, err := c.NewPair(other, token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	control := mkIntegrationTrade("sdex", 19, anchorTS.Add(4*time.Hour+time.Minute), otherToken, 100_000_000, 300)
+	if err := store.InsertTrade(ctx, control); err != nil {
+		t.Fatalf("InsertTrade control: %v", err)
+	}
+	quoteSide := readRow(t, control.Ledger)
 	if quoteSide.usd == nil {
-		t.Fatal("fixture: the thin TOKEN/USDC book did not price the 4h row — the 'only the anchor' assertions would be vacuous")
+		t.Fatal("fixture: the thin TOKEN/USDC book did not price the 4h control row — the 'only the anchor' assertions would be vacuous")
 	}
 	if *quoteSide.usd == wantAnchored {
 		t.Fatalf("fixture: the quote-side value %s coincides with the anchor value; pick amounts that differ", *quoteSide.usd)
 	}
+	exec(t, `UPDATE trades SET usd_volume = $2::numeric WHERE source='sdex' AND ledger=$1`, ledger["declined, stored value"], *quoteSide.usd)
 	exec(t, `UPDATE trades SET usd_volume = NULL WHERE source='sdex' AND ledger=$1`, ledger["declined, stored NULL"])
 
 	const gen = int64(1_756_400_000)
