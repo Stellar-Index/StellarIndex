@@ -22,7 +22,7 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [v0.113.0] — 2026-10-13
 
-21 commits since v0.112.0. No migrations. Two new ClickHouse tables (the entry index). No `pkg/*` break (`pkg/client` gains optional credit, price-provenance, vetted-ISIN and `detectors_partial` fields).
+25 commits since v0.112.0. No migrations. Two new ClickHouse tables (the entry index). No `pkg/*` break (`pkg/client` gains optional credit, price-provenance, vetted-ISIN and `detectors_partial` fields).
 
 ### Operator actions
 
@@ -44,6 +44,7 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 - **api:** vendor-only price buckets are skipped on the inception anchor and point-in-time VWAP, their volumes are blank on the wire, and non-VWAP sources stay out of the raw trade window (#3428).
 - **mev:** frozen XLM/USD-proxy minutes are excluded from the anchor and refused at ingest, anchor-valued notionals are flagged, and a stored `usd_volume` stamped inside a freeze is set aside (#3411, #3426, 9c4c6ccf8).
 - **freeze:** a lost `freeze_events` row is retried, counted and logged (#3422).
+- **clickhouse:** the entry-change ledger bounds are read in key order instead of aggregating every part, which was timing out the DEX TVL refresh (#3433).
 - **supply:** archived SAC balances stay served; only real removals are tombstoned (#3414).
 
 ### Changed
