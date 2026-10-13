@@ -195,3 +195,33 @@ tests:
   - eval_time: 150m
     alertname: stellarindex_verify_usd_volume_stale
     exp_alerts: []
+- interval: 1m
+  name: a last_run stamp older than 30 hours tickets stale
+  input_series:
+  - series: stellarindex_verify_usd_volume_last_run_unix{job="node_exporter",instance="r1:9100"}
+    values: 0x2000
+  alert_rule_test:
+  - eval_time: 29h
+    alertname: stellarindex_verify_usd_volume_stale
+    exp_alerts: []
+  - eval_time: 32h
+    alertname: stellarindex_verify_usd_volume_stale
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        team: stellarindex
+        component: usd-volume-coverage
+        job: node_exporter
+        instance: r1:9100
+      exp_annotations:
+        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/usd-volume-coverage-plan.md
+        summary: verify-usd-volume has not completed in 30 hours
+        description: |
+          No verify-usd-volume run has stamped last_run_unix in 30 hours, so
+          stellarindex_usd_volume_estimated_tier_high is reading a stale day
+          or nothing. Check `systemctl status verify-usd-volume.timer` and the
+          unit's journal; a failed run opens stellarindex_systemd_unit_failed
+          as well. Right after the first deploy this fires until the 05:12 UTC
+          run; `systemctl start verify-usd-volume.service` clears it.
+
+          Plan + measurements: docs/operations/usd-volume-coverage-plan.md
