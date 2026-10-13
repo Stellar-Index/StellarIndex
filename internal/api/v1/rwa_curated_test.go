@@ -155,6 +155,9 @@ func TestRWACurated_ServesTheCuratorsRowsApart(t *testing.T) {
 	if with.Curated.Assets != 2 || with.Curated.AlsoVerified != 1 {
 		t.Errorf("curated assets=%d also_verified=%d, want 2 and 1", with.Curated.Assets, with.Curated.AlsoVerified)
 	}
+	if with.Curated.Curator != "dune:stellar" || !strings.Contains(with.Curated.CuratorCredit, "Stellar Development Foundation") {
+		t.Errorf("curated curator/credit = %q/%q, want dune:stellar credited to its publisher", with.Curated.Curator, with.Curated.CuratorCredit)
+	}
 
 	var vume, eutbl *v1.RWAAsset
 	for i := range with.CuratedAssets {

@@ -156,6 +156,11 @@ func suppressScamIssuerPricing(d *AssetDetail) {
 	d.Change1hPct = nil
 	d.Change24hPct = nil
 	d.Change7dPct = nil
+	// Provenance belongs to the price: a withheld row credits no vendor and stamps no time for a number it refuses.
+	d.PriceAuthority = ""
+	d.PriceSources = nil
+	d.PriceAsOf = nil
+	d.PriceCredit = ""
 	// The last bucket of price_history_* IS the withheld price, and an all-time high is a USD
 	// price claim from the same CAGG, so both go with it; otherwise a null price_usd would
 	// sit beside a priced sparkline or an "ath" figure.

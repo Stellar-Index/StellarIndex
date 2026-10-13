@@ -60,6 +60,7 @@ func (r *FXHistoryReader) ListFXHistory(ctx context.Context, ticker string, from
 			Bucket:         q.Bucket,
 			RateUSDText:    q.RateUSDText,
 			InverseUSDText: q.InverseUSDText,
+			Source:         q.Source,
 		}
 	}
 	return out, nil
