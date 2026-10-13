@@ -31,10 +31,28 @@ type ConstantNAVBinding struct {
 // ConstantNAVReviewInterval is a quarter: a regime change is announced in reports quarterly at the shortest, and longer would serve a converted class at par for most of a year.
 const ConstantNAVReviewInterval = 90 * 24 * time.Hour
 
-// constantNAVDateLayout is the layout VerifiedOn and ReviewBy are
-// written in — a calendar date, because the issuer's page is read on a
-// day, not at an instant.
-const constantNAVDateLayout = "2006-01-02"
+// reviewDateLayout is the layout VerifiedOn and ReviewBy are written
+// in, for every hand-transcribed table — a calendar date, because the
+// issuer's page is read on a day, not at an instant.
+const reviewDateLayout = "2006-01-02"
+
+// reviewByDate derives ReviewBy from VerifiedOn, one interval later, in the same layout.
+func reviewByDate(verifiedOn string, interval time.Duration) (string, error) {
+	verified, err := time.Parse(reviewDateLayout, verifiedOn)
+	if err != nil {
+		return "", fmt.Errorf("VerifiedOn %q is not a %s date", verifiedOn, reviewDateLayout)
+	}
+	return verified.Add(interval).Format(reviewDateLayout), nil
+}
+
+// reviewDeadline is the start of a ReviewBy date, UTC; an unparseable date is the zero time so a hand-built binding fails closed as already due.
+func reviewDeadline(reviewBy string) time.Time {
+	t, err := time.Parse(reviewDateLayout, reviewBy)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}
 
 const (
 	franklinLuxIBIssuer = "GD5J73EKK5IYL5XS3FBTHHX7CZIYRP7QXDL57XFWGC2WVYWT326OBXRP"
@@ -85,9 +103,9 @@ func indexConstantNAV(bindings []ConstantNAVBinding) (constantNAVTable, error) {
 		byISIN: make(map[string]ConstantNAVBinding, len(bindings)),
 	}
 	for i, b := range bindings {
-		verified, err := time.Parse(constantNAVDateLayout, b.VerifiedOn)
+		reviewBy, err := reviewByDate(b.VerifiedOn, ConstantNAVReviewInterval)
 		if err != nil {
-			return constantNAVTable{}, fmt.Errorf("constant NAV binding %s: VerifiedOn %q is not a %s date", b.Code, b.VerifiedOn, constantNAVDateLayout)
+			return constantNAVTable{}, fmt.Errorf("constant NAV binding %s: %w", b.Code, err)
 		}
 		if norm, ok := upperASCII12(b.ISIN); !ok || norm != b.ISIN || !IsISIN(b.ISIN) {
 			return constantNAVTable{}, fmt.Errorf("constant NAV binding %s: ISIN %q is not a well-formed upper-case ISIN", b.Code, b.ISIN)
@@ -99,7 +117,7 @@ func indexConstantNAV(bindings []ConstantNAVBinding) (constantNAVTable, error) {
 		if prev, dup := t.byISIN[b.ISIN]; dup {
 			return constantNAVTable{}, fmt.Errorf("constant NAV binding %s: ISIN %s already bound to %s-%s", b.Code, b.ISIN, prev.Code, prev.Issuer)
 		}
-		b.ReviewBy = verified.Add(ConstantNAVReviewInterval).Format(constantNAVDateLayout)
+		b.ReviewBy = reviewBy
 		bindings[i] = b
 		t.byPair[key] = b
 		t.byISIN[b.ISIN] = b
@@ -107,13 +125,9 @@ func indexConstantNAV(bindings []ConstantNAVBinding) (constantNAVTable, error) {
 	return t, nil
 }
 
-// ReviewDeadline is the start of the ReviewBy date, UTC; an unparseable date returns the zero time so a hand-built binding fails closed as already due.
+// ReviewDeadline is the start of the ReviewBy date, UTC; zero when unparseable, so a hand-built binding fails closed as already due.
 func (b ConstantNAVBinding) ReviewDeadline() time.Time {
-	t, err := time.Parse(constantNAVDateLayout, b.ReviewBy)
-	if err != nil {
-		return time.Time{}
-	}
-	return t
+	return reviewDeadline(b.ReviewBy)
 }
 
 // ReviewDue reports whether the binding is strictly past its review deadline at now, so it stands through the exact instant ConstantNAVReviewInterval ends.

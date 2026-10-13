@@ -120,7 +120,7 @@ func FuzzQualify(f *testing.F) {
 		if !v.InSet {
 			return
 		}
-		if !rwa.CouldQualify(code, anchorType, anchorAsset) {
+		if !rwa.CouldQualify(code, iss, anchorType, anchorAsset) {
 			t.Fatalf("pre-filter refused a member: %+v -> %+v", c, v)
 		}
 		if strings.TrimSpace(code) == "" || strings.TrimSpace(iss) == "" || !bound {

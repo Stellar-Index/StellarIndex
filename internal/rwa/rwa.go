@@ -13,8 +13,9 @@
 // domain sibling) with a recognition tag and no scam tag. 128 of 130 issuers self-declaring
 // a real-world anchor were tagged malicious, so R2 alone is worthless.
 //
-// R4 REAL-WORLD INSTRUMENT: [BasisSep1Anchor], [BasisOracleFeed] or [BasisSep1ISIN], in
-// that order; never load-bearing alone, which keeps the code-keyed oracle basis safe.
+// R4 REAL-WORLD INSTRUMENT: [BasisSep1Anchor], [BasisOracleFeed], [BasisSep1ISIN] or
+// [BasisSep1ISINVetted], in that order; never load-bearing alone, which keeps the code-keyed
+// oracle basis safe.
 //
 // A failing asset is simply absent here; its own asset page still serves it.
 package rwa
@@ -39,6 +40,11 @@ const (
 	// BasisSep1ISIN: the bound entry's anchor_asset is a well-formed ISIN. Admits without a class;
 	// entitlement to the ISIN is left to R2 and R3, which an impersonator must defeat first.
 	BasisSep1ISIN = "sep1_isin_declaration"
+	// BasisSep1ISINVetted: the bound entry names its ISIN only in prose, so a maintainer
+	// transcribed it from the issuer's own SEP-1 into [VettedISINBindings] with the page it was
+	// read from and a review date. The same evidence as [BasisSep1ISIN] plus a human step; keyed
+	// on the exact pair, admits without a class, and R2 and R3 still stand in front of it.
+	BasisSep1ISINVetted = "sep1_isin_vetted"
 )
 
 // Reject names why a candidate is not in the set. Served on the aggregate so the surface states
@@ -219,6 +225,11 @@ func Qualify(c Candidate) Verdict {
 	if IsISIN(c.DeclaredAnchorAsset) {
 		return Verdict{InSet: true, Basis: BasisSep1ISIN, Recognition: recognition}
 	}
+	// The vetted table is that same evidence transcribed by hand for the exact pair; it comes
+	// after the live declaration so the issuer's own anchor_asset wins when both exist.
+	if _, ok := VettedISIN(c.Code, c.Issuer); ok {
+		return Verdict{InSet: true, Basis: BasisSep1ISINVetted, Recognition: recognition}
+	}
 	return Verdict{Reject: RejectNoInstrumentClaim}
 }
 
@@ -248,8 +259,14 @@ func isOracleRWACode(code string) bool {
 }
 
 // CouldQualify is the asset-side pre-filter for R4, never a decision; it must read every input Qualify's R4 arms read or it silently changes membership (TestCouldQualify_MatchesQualifyOnTheAssetSideInputs pins that).
-func CouldQualify(code, declaredAnchorType, declaredAnchorAsset string) bool {
-	return AnchorClass(declaredAnchorType) != "" ||
-		isOracleRWACode(code) ||
-		IsISIN(declaredAnchorAsset)
+func CouldQualify(code, issuer, declaredAnchorType, declaredAnchorAsset string) bool {
+	if AnchorClass(declaredAnchorType) != "" || isOracleRWACode(code) || IsISIN(declaredAnchorAsset) {
+		return true
+	}
+	// The two pair-keyed arms read the issuer, so the pre-filter must too or it drops them.
+	if _, ok := FundNAVTicker(code, issuer); ok {
+		return true
+	}
+	_, ok := VettedISIN(code, issuer)
+	return ok
 }

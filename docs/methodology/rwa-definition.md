@@ -174,7 +174,7 @@ paragraph that says why.
 ### R4 — Real-world instrument
 
 The asset is a real-world instrument rather than one of the issuer's
-other tokens, by one of three bases. The basis is served on every row so
+other tokens, by one of four bases. The basis is served on every row so
 a consumer can filter to the strength of evidence it needs. The arms are
 tried in the order below and the first to admit decides: a declared
 class yields the most informative row, so it wins over an oracle feed,
@@ -242,11 +242,25 @@ until this arm existed. Prose anchors such as `FOBXX`, `AU` or
 `US Treasury Notes` stay refused. Measured against the live SEP-1 corpus
 when it shipped, the arm admitted exactly those three assets.
 
+**`sep1_isin_vetted`** — the same evidence, transcribed by hand. Some
+issuer-bound entries name their ISIN only in `desc`, which the served
+tier does not keep, and declare neither `anchor_asset_type` nor
+`anchor_asset`; Bitbond's BB1 (ISIN DE000A2TR7Q2, a EUR bond) is the
+case. A maintainer reads the issuer's own SEP-1 and binds the ISIN to
+exactly that `(code, issuer)` in `rwa.VettedISINBindings`, with the page
+it was read from and the date, and the row serves all of it as
+`vetted_isin` with a review date one quarter out. The arm is tried last,
+so an issuer that later declares `anchor_asset` wins on its own
+declaration; it admits without a class; it keys on the exact pair, so
+the same code under any other issuer gets nothing from it; and R2 and
+R3 stand in front of it as they do for every arm. It is membership
+only: a vetted ISIN never prices anything.
+
 R4 does not care *how* R3 was satisfied. The
 [sibling route](#the-sibling-route-and-the-assumption-it-rests-on)
 supplies recognition and nothing else — no instrument claim comes with
 it — so a sibling-recognised issuer still has to pass one of these
-three arms on its own declaration, and the one-entity-per-domain
+four arms on its own declaration, and the one-entity-per-domain
 assumption that route rests on is stated there, not here. That is also
 why every R4 arm is a *self-declared* value: the gates are safe to read
 only because R2 and R3 already stand in front of them.

@@ -515,6 +515,9 @@ type RWAAsset struct {
 	// ISINCollision is present when anchor_asset is an ISIN that more than one issuer account
 	// declares. Informational only: it never changes membership, valuation or the reference.
 	ISINCollision *RWAISINCollision `json:"isin_collision,omitempty"`
+	// VettedISIN is the hand-transcribed binding that admitted this row under basis
+	// sep1_isin_vetted: the ISIN, the page it was read from and when it falls due for review.
+	VettedISIN *RWAVettedISIN `json:"vetted_isin,omitempty"`
 	// Valuation is the OBSERVED-MARKET-PRICE money, or the reason there is none.
 	Valuation RWAValuation `json:"valuation"`
 	// ReferenceValuation values the same float at the reference price: a claim about the
@@ -560,6 +563,22 @@ type RWAISINCollision struct {
 	ISIN string `json:"isin"`
 	// DeclaredByIssuers counts the distinct issuer accounts, this one included, declaring ISIN.
 	DeclaredByIssuers int `json:"declared_by_issuers"`
+}
+
+// RWAVettedISIN is the maintainer-transcribed ISIN binding behind a sep1_isin_vetted row; informational, like a collision.
+type RWAVettedISIN struct {
+	ISIN       string `json:"isin"`
+	Instrument string `json:"instrument"`
+	Source     string `json:"source"`
+	VerifiedOn string `json:"verified_on"`
+	ReviewBy   string `json:"review_by"`
+}
+
+func rwaVettedISINOf(b *rwa.VettedISINBinding) *RWAVettedISIN {
+	if b == nil {
+		return nil
+	}
+	return &RWAVettedISIN{ISIN: b.ISIN, Instrument: b.Instrument, Source: b.Source, VerifiedOn: b.VerifiedOn, ReviewBy: b.ReviewBy}
 }
 
 // RWAGroupTotal is one row of the per-class breakdown.
@@ -609,13 +628,15 @@ type rwaMember struct {
 	name        string
 	homeDomain  string
 	anchorAsset string
-	// isinCollision is set when anchorAsset is an ISIN another issuer account also declares.
+	// isinCollision is set when the claimed ISIN is one another issuer account also declares.
 	isinCollision *RWAISINCollision
-	basis         string
-	anchorClass   string
-	recognition   string
-	dirName       string
-	dirTags       []string
+	// vettedISIN is the hand-transcribed binding behind a rwa.BasisSep1ISINVetted admission.
+	vettedISIN  *rwa.VettedISINBinding
+	basis       string
+	anchorClass string
+	recognition string
+	dirName     string
+	dirTags     []string
 }
 
 // rwaMembership is one rebuild: the admitted set, the refusal tally over every candidate evaluated,
@@ -682,7 +703,7 @@ type rwaMembership struct {
 // Every input a requirement-4 arm reads must be passed (anchor asset too), or ISIN-only declarations are filtered before
 // [Server.admitClassicCandidates] sees them.
 func rwaCandidateFilter(c timescale.Sep1BoundCurrency) bool {
-	return rwa.CouldQualify(c.Code, c.AnchorAssetType, c.AnchorAsset)
+	return rwa.CouldQualify(c.Code, c.Issuer, c.AnchorAssetType, c.AnchorAsset)
 }
 
 // buildRWAMembership runs BOTH arms and returns the combined set; they are independent (SEP-1 by (code, issuer), directory by contract
@@ -826,13 +847,20 @@ func (s *Server) admitClassicCandidates(
 			issuers[c.Issuer] = struct{}{}
 		}
 		admitted[key] = struct{}{}
+		var vetted *rwa.VettedISINBinding
+		if v.Basis == rwa.BasisSep1ISINVetted {
+			if b, ok := rwa.VettedISIN(c.Code, c.Issuer); ok {
+				vetted = &b
+			}
+		}
 		out.members = append(out.members, rwaMember{
 			code:          c.Code,
 			issuer:        c.Issuer,
 			name:          c.Name,
 			homeDomain:    c.HomeDomain,
 			anchorAsset:   c.AnchorAsset,
-			isinCollision: rwaISINCollisionOf(c.AnchorAsset, isinDeclarers),
+			isinCollision: rwaISINCollisionOf(c, isinDeclarers),
+			vettedISIN:    vetted,
 			basis:         v.Basis,
 			anchorClass:   v.AnchorClass,
 			recognition:   v.Recognition,
@@ -847,7 +875,7 @@ func (s *Server) admitClassicCandidates(
 func rwaISINDeclarers(bound []timescale.Sep1BoundCurrency) map[string]int {
 	seen := map[string]map[string]struct{}{}
 	for _, c := range bound {
-		isin, ok := rwa.CanonicalISIN(c.AnchorAsset)
+		isin, ok := rwaClaimedISIN(c)
 		if !ok {
 			continue
 		}
@@ -865,12 +893,23 @@ func rwaISINDeclarers(bound []timescale.Sep1BoundCurrency) map[string]int {
 
 // rwaISINCollisionOf is the collision a row declaring anchorAsset carries, or nil when the ISIN
 // has a single declarer or is no ISIN.
-func rwaISINCollisionOf(anchorAsset string, declarers map[string]int) *RWAISINCollision {
-	isin, ok := rwa.CanonicalISIN(anchorAsset)
+func rwaISINCollisionOf(c timescale.Sep1BoundCurrency, declarers map[string]int) *RWAISINCollision {
+	isin, ok := rwaClaimedISIN(c)
 	if !ok || declarers[isin] < 2 {
 		return nil
 	}
 	return &RWAISINCollision{ISIN: isin, DeclaredByIssuers: declarers[isin]}
+}
+
+// rwaClaimedISIN is the ISIN a bound entry claims: its anchor_asset when that is one, else the hand-vetted binding for its exact pair.
+func rwaClaimedISIN(c timescale.Sep1BoundCurrency) (string, bool) {
+	if isin, ok := rwa.CanonicalISIN(c.AnchorAsset); ok {
+		return isin, true
+	}
+	if b, ok := rwa.VettedISIN(c.Code, c.Issuer); ok {
+		return b.ISIN, true
+	}
+	return "", false
 }
 
 // rwaMembershipRetryGap rate-limits rebuild ATTEMPTS: a failed rebuild leaves the entry stale, so without a gap a broken read becomes a
@@ -1168,7 +1207,7 @@ func rwaDefinition() RWADefinition {
 			"issuer-bound SEP-1 [[CURRENCIES]] entry served from the on-chain home_domain",
 			"issuer independently recognised in the curated account directory and not scam-flagged, " +
 				"or unflagged and bound by the same issuer-bound SEP-1 on the same domain as an account the directory recognises",
-			"real-world instrument by SEP-1 anchor_asset_type, by an ADR-0028 oracle feed, or by a well-formed ISIN in SEP-1 anchor_asset",
+			"real-world instrument by SEP-1 anchor_asset_type, by an ADR-0028 oracle feed, or by a well-formed ISIN in SEP-1 anchor_asset or the hand-vetted ISIN table",
 		},
 		ContractRequirements: []string{
 			"contract-issued token identified by its contract address",
@@ -1373,6 +1412,7 @@ func (s *Server) rwaAssetRows(m rwaMembership, rows map[string]AssetDetail) ([]R
 			Recognition:         mem.recognition,
 			AnchorAsset:         strings.TrimSpace(mem.anchorAsset),
 			ISINCollision:       mem.isinCollision,
+			VettedISIN:          rwaVettedISINOf(mem.vettedISIN),
 			Valuation:           rwaValuationOf(d),
 			CirculatingSupply:   d.CirculatingSupply,
 			// The asset's OWN scale: the reference valuation divides by it, and a constant would
