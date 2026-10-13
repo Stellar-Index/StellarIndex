@@ -753,6 +753,9 @@ func TestVWAPUSDFXResolver_DirectLegRefusesFrozenXLMMinutes(t *testing.T) {
 		if !strings.Contains(st.sql, "FROM freeze_events fe") || !strings.Contains(st.sql, "AND NOT EXISTS") {
 			t.Errorf("statement %d (%s) lacks the XLM/USD-proxy freeze exclusion:\n%s", i, form, st.sql)
 		}
+		if !strings.Contains(st.sql, "$6::text") {
+			t.Errorf("statement %d (%s) does not bind the SAC after the freshness floor:\n%s", i, form, st.sql)
+		}
 		if len(st.args) != 6 {
 			t.Fatalf("statement %d (%s) bound %d args, want 6 (freshness floor, then the SAC)", i, form, len(st.args))
 		}

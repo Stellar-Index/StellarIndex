@@ -2516,8 +2516,20 @@ func TestXLMLegVolume_TradeTimeNeverSpot(t *testing.T) {
 	}
 	mustSee(t, seen, fresh, anchor, stamped, quoted, sacLeg, late)
 
-	// The ingest resolver refuses the frozen minute on its direct leg: an XLM-base stamp written at the 30-min trade's time prices
-	// at the unfrozen 50-min anchor (0.3), never the frozen 0.4; with the freshness floor inside the freeze it prices nothing.
+	// A minute 38 min back (0.5) lies in the five minutes before frozen_at: the minute that tripped the detector, which stamps
+	// frozen_at only after it closed. It is refused with the frozen minutes, so the 50-min anchor still answers.
+	f.trade("sdex", 38*time.Minute, native, usdc, 10*unit, 5*unit, "5")
+	trigger := uint32(50_000_000 + f.nonce)
+	if _, err := db.ExecContext(f.ctx, `UPDATE trades SET usd_volume = 5, taker = 'GTAKER' WHERE ledger = $1`, trigger); err != nil {
+		t.Fatalf("stamp the triggering-minute trade: %v", err)
+	}
+	if _, err := db.ExecContext(f.ctx, `CALL refresh_continuous_aggregate('prices_1m', NULL, NULL)`); err != nil {
+		t.Fatalf("refresh prices_1m: %v", err)
+	}
+
+	// The ingest resolver refuses the frozen and triggering minutes on its direct leg: an XLM-base stamp written at the 30-min
+	// trade's time prices at the unfrozen 50-min anchor (0.3), never 0.4 or 0.5; with the freshness floor inside the freeze it
+	// prices nothing.
 	resolver, err := timescale.NewVWAPUSDFXResolver(f.store, timescale.VWAPUSDFXResolverOptions{
 		USDPegs:              []string{usdc.String()},
 		DisableSubstanceGate: true,
@@ -2530,7 +2542,7 @@ func TestXLMLegVolume_TradeTimeNeverSpot(t *testing.T) {
 		t.Fatalf("USDPriceAt(native) under the freeze: %v", err)
 	}
 	if !ok || !ratEq(t, rate, "0.3") {
-		t.Errorf("USDPriceAt(native) under the freeze = %q (ok=%v), want 0.3: the frozen 30-min minute is refused, the 50-min anchor answers", rate, ok)
+		t.Errorf("USDPriceAt(native) under the freeze = %q (ok=%v), want 0.3: the frozen 30-min and triggering 38-min minutes are refused, the 50-min anchor answers", rate, ok)
 	}
 	bounded, err := timescale.NewVWAPUSDFXResolver(f.store, timescale.VWAPUSDFXResolverOptions{
 		USDPegs:              []string{usdc.String()},

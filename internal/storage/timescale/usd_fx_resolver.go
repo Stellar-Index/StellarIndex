@@ -734,7 +734,7 @@ func directLegQuery(bounded, xlm bool) string {
 			sac = "$6::text"
 		}
 		q += `
-		   AND NOT ` + xlmUSDFreezeOverlap("bucket", "bucket", sac)
+		   AND NOT ` + xlmUSDFreezeOverlap("prices_1m.bucket", "prices_1m.bucket", sac)
 	}
 	return q + `
 		 ORDER BY bucket DESC, array_position($2::text[], quote_asset)

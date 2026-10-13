@@ -171,8 +171,9 @@ func TestTradeUSDVolume(t *testing.T) {
 		{"off-chain zero quote_amount", tr("binance", cexXLM, usd, 100_000_000, 0), nil, nil, ""},
 		{"on-chain zero quote_amount with spec", tr("soroswap", xlm, circle, 100_000_000, 0), withSAC, nil, ""},
 
-		// FX fallback for a non-pegged quote. 5,000 AQUA x $0.001.
-		{"FX fallback prices the quote", mkClassicDEXTrade(t, "soroswap", xlm, aqua, 50_000_000_000), nil, aquaOnly, "5.00000000"},
+		// A DEX trade with an XLM leg is priced off XLM or not at all: with no XLM/USD anchor the quote's own
+		// market (5,000 AQUA x $0.001) is never asked, since the counterparty can author it. The restamp fills it.
+		{"XLM leg without an XLM anchor stays NULL", mkClassicDEXTrade(t, "soroswap", xlm, aqua, 50_000_000_000), nil, aquaOnly, ""},
 		// A resolver call on every trade would double the insert hot-path cost.
 		{"pegged quote wins before the resolver", mkClassicDEXTrade(t, "soroswap", xlm, circle, 70_000_000), plain, panicFXResolver{}, "7.00000000"},
 		{"no resolver keeps NULL", mkClassicDEXTrade(t, "soroswap", xlm, aqua, 50_000_000_000), nil, nil, ""},
@@ -739,6 +740,43 @@ func TestTradeUSDVolumeChecked_ResolverErrorIsReturned(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A DEX trade with an XLM leg whose XLM/USD anchor declines stays unpriced: the quote tier is never asked, so a
+// counterparty-authorable market cannot value it. Off-chain sources keep the quote tier.
+func TestTradeUSDVolumeChecked_XLMLegDeclineNeverFallsThrough(t *testing.T) {
+	ctx := context.Background()
+	xlmSAC, err := canonical.NewSorobanAsset(canonical.XLMSacContractID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aqua, err := canonical.NewClassicAsset("AQUA", "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA")
+	if err != nil {
+		t.Fatal(err)
+	}
+	eur, err := canonical.NewFiatAsset("EUR")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The resolver answers nothing for XLM and fails for AQUA: a value or an error proves the quote tier ran.
+	quoteTierTrap := errForAssetResolver{prices: map[string]string{eur.String(): "1.08"}, failFor: map[string]bool{aqua.String(): true}}
+	for name, tr := range map[string]canonical.Trade{
+		"xlm base":  mkClassicDEXTrade(t, "soroswap", xlmSAC, aqua, 50_000_000_000),
+		"xlm quote": mkClassicDEXTrade(t, "soroswap", aqua, xlmSAC, 50_000_000_000),
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := tradeUSDVolumeChecked(ctx, tr, nil, quoteTierTrap)
+			if err != nil || got != nil {
+				t.Fatalf("got %v, err %v; want nil, nil: the XLM anchor declined and the quote tier must stay unasked", got, err)
+			}
+		})
+	}
+	t.Run("off-chain XLM trade keeps the quote tier", func(t *testing.T) {
+		got, err := tradeUSDVolumeChecked(ctx, volTrade(t, "kraken", canonical.NativeAsset(), eur, 10_000_000, 1_000_000), nil, quoteTierTrap)
+		if err != nil || got == nil {
+			t.Fatalf("got %v, err %v; want the fiat quote tier to value a CEX XLM/EUR trade", got, err)
+		}
+	})
 }
 
 func TestResolveUSDVolume_ErrorByGeneration(t *testing.T) {
