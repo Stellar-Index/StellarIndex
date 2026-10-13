@@ -1968,6 +1968,18 @@ type RWAISINCollision struct {
 	DeclaredByIssuers int `json:"declared_by_issuers"`
 }
 
+// RWAVettedISIN is the hand-vetted ISIN binding that admitted an asset under
+// the sep1_isin_vetted basis.
+type RWAVettedISIN struct {
+	ISIN       string `json:"isin"`
+	Instrument string `json:"instrument"`
+	Source     string `json:"source"`
+	VerifiedOn string `json:"verified_on"`
+	ReviewBy   string `json:"review_by"`
+	// ReviewDue is true once the review date has passed; the row is labelled, not withheld.
+	ReviewDue bool `json:"review_due,omitempty"`
+}
+
 // RWAAsset is one member of the set with the evidence that admitted it; identity is (Code, Issuer), as Code alone identifies nothing.
 type RWAAsset struct {
 	AssetID string `json:"asset_id"`
@@ -2002,6 +2014,9 @@ type RWAAsset struct {
 	// ISINCollision is set when AnchorAsset is an ISIN more than one
 	// issuer account declares. Informational: it never changes the row.
 	ISINCollision *RWAISINCollision `json:"isin_collision,omitempty"`
+	// VettedISIN is set when the asset was admitted under sep1_isin_vetted: the
+	// hand-vetted binding behind the ISIN. review_due flips once the review date passes.
+	VettedISIN *RWAVettedISIN `json:"vetted_isin,omitempty"`
 	// Valuation is the observed-market-price money, or the reason there
 	// is none; ReferenceValuation is the same float at the reference
 	// price. The two are separate bases and are never summed.
