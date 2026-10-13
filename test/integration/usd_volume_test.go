@@ -112,7 +112,7 @@ func TestUSDVolumeValueReconcile_ExactTierIdentity(t *testing.T) {
 	// (cmd/stellarindex-indexer/main.go), so these rows are valued by the
 	// production waterfall rather than a test-only shortcut.
 	const usdcAssetID = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
-	if err := timescale.InstallUSDVolumeResolution(store, []string{usdcAssetID}, nil); err != nil {
+	if err := timescale.InstallUSDVolumeResolution(store, []string{usdcAssetID}, nil, nil); err != nil {
 		t.Fatalf("InstallUSDVolumeResolution: %v", err)
 	}
 	spec, err := timescale.NewUSDVolumeQuoteSpec([]string{usdcAssetID}, nil)
@@ -248,7 +248,7 @@ func TestUSDVolumeRestamp_ExactTierRepair(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 
 	const usdcAssetID = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
-	if err := timescale.InstallUSDVolumeResolution(store, []string{usdcAssetID}, nil); err != nil {
+	if err := timescale.InstallUSDVolumeResolution(store, []string{usdcAssetID}, nil, nil); err != nil {
 		t.Fatalf("InstallUSDVolumeResolution: %v", err)
 	}
 	spec, err := timescale.NewUSDVolumeQuoteSpec([]string{usdcAssetID}, nil)
@@ -708,7 +708,7 @@ func TestXLMBaseRestampChunks_RestampsInsideACompressedChunk(t *testing.T) {
 	}
 	// The insert path's wiring, so the seeded rows are what production
 	// rows are.
-	if err := timescale.InstallUSDVolumeResolution(store, []string{usdcID}, nil); err != nil {
+	if err := timescale.InstallUSDVolumeResolution(store, []string{usdcID}, nil, nil); err != nil {
 		t.Fatalf("InstallUSDVolumeResolution: %v", err)
 	}
 
@@ -1112,7 +1112,7 @@ func TestExactTierRestampChunks_RestampsInsideACompressedChunk(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := timescale.InstallUSDVolumeResolution(store, []string{usdcID}, nil); err != nil {
+	if err := timescale.InstallUSDVolumeResolution(store, []string{usdcID}, nil, nil); err != nil {
 		t.Fatalf("InstallUSDVolumeResolution: %v", err)
 	}
 
@@ -1380,7 +1380,7 @@ func newMirrorRestampFixture(t *testing.T, ctx context.Context, usdcID string) *
 	t.Cleanup(func() { _ = store.Close() })
 	// The insert path's own wiring, so the seeded rows are what
 	// production rows are.
-	if err := timescale.InstallUSDVolumeResolution(store, []string{usdcID}, nil); err != nil {
+	if err := timescale.InstallUSDVolumeResolution(store, []string{usdcID}, nil, nil); err != nil {
 		t.Fatalf("InstallUSDVolumeResolution: %v", err)
 	}
 	cfgPath := filepath.Join(t.TempDir(), "stellarindex.toml")
@@ -1891,7 +1891,7 @@ func TestXLMBaseRestamp_RederivesThroughTheLiveAnchor(t *testing.T) {
 	// The blessed wiring every trade writer gets — NOT a hand-built
 	// resolver, so the re-derive runs against exactly the production
 	// resolution the insert path uses.
-	if err := timescale.InstallUSDVolumeResolution(store, []string{usdcID}, nil); err != nil {
+	if err := timescale.InstallUSDVolumeResolution(store, []string{usdcID}, nil, nil); err != nil {
 		t.Fatalf("InstallUSDVolumeResolution: %v", err)
 	}
 
@@ -2236,7 +2236,7 @@ func TestXLMBaseRestamp_SkipsARowMovedAfterThePlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := timescale.InstallUSDVolumeResolution(store, []string{usdcID}, nil); err != nil {
+	if err := timescale.InstallUSDVolumeResolution(store, []string{usdcID}, nil, nil); err != nil {
 		t.Fatalf("InstallUSDVolumeResolution: %v", err)
 	}
 

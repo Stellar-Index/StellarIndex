@@ -255,6 +255,7 @@ func run(cfgPath string, dryRun bool) error {
 		store,
 		cfg.Trades.USDPeggedClassicAssets,
 		cfg.Supply.SACWrappers,
+		cfg.PricingGuard.FiatPeggedClassicAssets,
 	); err != nil {
 		return err
 	}

@@ -1033,7 +1033,7 @@ func bulkStore(t *testing.T, ctx context.Context, dsn string, gen int64) *timesc
 	t.Cleanup(func() { _ = store.Close() })
 	store.SetDeriveGeneration(gen)
 	if err := timescale.InstallUSDVolumeResolution(store,
-		[]string{"USDC-" + bulkPegIssuer}, nil); err != nil {
+		[]string{"USDC-" + bulkPegIssuer}, nil, nil); err != nil {
 		t.Fatalf("InstallUSDVolumeResolution: %v", err)
 	}
 	return store
@@ -2348,7 +2348,7 @@ func TestUSDVolumeGenerationAwareNullPreservation(t *testing.T) {
 	// Higher-generation honest NULL (tier-3b de-poisoning): a gen-5 re-derive that legitimately computes NULL must CLEAR the
 	// value. reDeriveNullVolumeGuard needs resolution installed for a gen>0 NULL write; a no-pegs no-op install flips the
 	// flag.
-	if err := timescale.InstallUSDVolumeResolution(store, nil, nil); err != nil {
+	if err := timescale.InstallUSDVolumeResolution(store, nil, nil, nil); err != nil {
 		t.Fatalf("InstallUSDVolumeResolution: %v", err)
 	}
 	store.SetDeriveGeneration(5)

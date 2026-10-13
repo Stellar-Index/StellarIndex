@@ -153,7 +153,9 @@ type PricingGuardConfig struct {
 	// FiatPeggedClassicAssets maps a classic asset_key (CODE-ISSUER) to the ISO-4217 ticker the
 	// OPERATOR declares it 1:1-pegged to. Fills price_usd from fx_quotes with price_basis
 	// "declared_peg" only when no market price survives the gate. Validated at load (ADR-0010).
-	FiatPeggedClassicAssets map[string]string `toml:"fiat_pegged_classic_assets" doc:"Maps classic credit asset_keys (CODE-ISSUER) to the ISO-4217 fiat ticker the operator declares them 1:1-pegged to (e.g. AUDD-G… = \"AUD\"). The API fills the asset's listing/detail price_usd from the declared peg × current fiat→USD FX rate when no market-derived price survives the substance gate, stamped price_basis=\"declared_peg\" on the wire. Never overwrites a market-derived price. Empty disables the fill." default:"{}"`
+	// The trade path reads it too: a DEX trade with a declared leg stores usd_volume off the fiat
+	// rate while the leg holds within 2% of it (the usd_volume fiat-peg tier).
+	FiatPeggedClassicAssets map[string]string `toml:"fiat_pegged_classic_assets" doc:"Maps classic credit asset_keys (CODE-ISSUER) to the ISO-4217 fiat ticker the operator declares them 1:1-pegged to (e.g. AUDD-G… = \"AUD\"). The API fills the asset's listing/detail price_usd from the declared peg × current fiat→USD FX rate when no market-derived price survives the substance gate, stamped price_basis=\"declared_peg\" on the wire. Never overwrites a market-derived price. The trade path reads the same map: an on-chain DEX trade with a declared leg stores usd_volume = amount/10^7 × the fiat→USD rate while that leg's own on-chain USD price holds within 2% of the rate (docs/operations/sac-wrappers-and-usd-volume.md). Empty disables the fill." default:"{}"`
 }
 
 // validate rejects negative floors: always a typo, and treating it as "use default" would hide it.
