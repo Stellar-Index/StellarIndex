@@ -115,6 +115,7 @@ var subcommandClasses = map[string]subcommandClass{
 	"ch-census-rollup":             gate(),
 	"ch-cap67-movements":           gate(),
 	"ch-entry-history":             gate(),
+	"ch-entry-index":               gate(),
 	"ch-holders-rollup":            gate(),
 	"ch-creators-rollup":           gate(),
 	"ch-sponsors-rollup":           gate(),

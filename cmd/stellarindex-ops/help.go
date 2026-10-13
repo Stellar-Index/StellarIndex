@@ -52,6 +52,14 @@ Subcommands:
                           stellar.asset_entry_changes. Resumes from
                           stellar.entry_history_watermark. Without -write it
                           reports rows and field bytes per entry type.
+  ch-entry-index -ch-addr ADDR [-from N] [-to N] [-window N] [-floor-ledger N] [-lock-file PATH] [-heartbeat PATH] [-max-decode-errors N] [-write]
+                          Build the ledger index of classic-entry activity:
+                          stellar.account_entry_ledgers (account, role,
+                          ledger) and stellar.asset_entry_ledgers (asset,
+                          entry_type, ledger, change counts) from
+                          stellar.ledger_entry_changes. Resumes from the
+                          entry_index watermark; entry-index.timer runs it
+                          every 10 min. Without -write it only counts.
   ch-holders-rollup -ch-addr ADDR [-write]
                           Recompute every asset's top-500 holders board +
                           holder count into staging and atomically exchange

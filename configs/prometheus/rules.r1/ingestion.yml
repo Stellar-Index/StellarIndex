@@ -1017,6 +1017,31 @@ groups:
             same as heartbeat_stale — deliberate, so a failed run does not
             go invisible just because nothing is currently running.
 
+      # The entry index (stellar.account_entry_ledgers / asset_entry_ledgers) is
+      # what per-account and per-asset ledger walks read; a builder that stops
+      # (timer silent, lock wedged, watermark refusing a hole) leaves recent
+      # activity invisible there while the lake itself is complete. max() on both
+      # sides drops instance labels so the two gauges subtract; `or vector(0)`
+      # also catches a builder that never reported. The initial build keeps this
+      # firing until it catches up, which is the intended signal.
+      - alert: stellarindex_entry_index_lagging
+        expr: max(stellarindex_cursor_last_ledger{source="ledgerstream"}) - (max(stellarindex_ops_job_progress_cursor{ops_job="ch-entry-index"}) or vector(0)) > 20000
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: ingestion
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#entry-index-lagging
+          summary: "entry index trails the ledgerstream cursor by more than 20000 ledgers"
+          description: |
+            stellar.account_entry_ledgers / asset_entry_ledgers, built by
+            entry-index.timer every 10 min, are more than 20000 ledgers
+            behind the ledgerstream cursor for 30 min, or the builder has
+            never reported. Either the timer is silent, the builder is
+            refusing a window (lake hole, or no account_id below the
+            ec-floor), or the initial build is still catching up.
+
       # Whole-transaction skip counters (tx_read_errors, tx_event_read_errors,
       # entry_meta_unsupported) plus evicted_keys_unreadable (a ledger's evictions): each
       # means events or an entry walk vanished, indistinguishable downstream from an
