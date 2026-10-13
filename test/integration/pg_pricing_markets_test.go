@@ -1555,3 +1555,36 @@ func TestClosedVWAPAtOrBefore_SkipsVendorOnlyBuckets(t *testing.T) {
 		t.Errorf("VWAP = %q, want 0.5 from the fill, not the vendor close", at.VWAP)
 	}
 }
+
+func TestTradesInRange_SkipsVendorRows(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	db := store.DB()
+
+	usdcAsset, err := canonical.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pair, err := canonical.NewPair(canonical.NativeAsset(), usdcAsset)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Minute)
+	seedGrainTrade(t, ctx, db, 809, "coingecko_daily", now.Add(-30*time.Hour), pair.Base.String(), pair.Quote.String(), "10000000", "20000", "0.002")
+	seedGrainTrade(t, ctx, db, 810, "sdex", now.Add(-31*time.Hour), pair.Base.String(), pair.Quote.String(), "10", "5", "1")
+
+	trades, err := store.TradesInRange(ctx, pair, now.Add(-32*time.Hour), now.Add(-29*time.Hour), 100)
+	if err != nil {
+		t.Fatalf("TradesInRange: %v", err)
+	}
+	if len(trades) != 1 || trades[0].Source != "sdex" {
+		t.Fatalf("trades = %+v, want only the sdex fill; a vendor daily close is not a trade", trades)
+	}
+}

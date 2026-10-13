@@ -1402,6 +1402,7 @@ func tradeIsLaterInMarket(a, b canonical.Trade) bool {
 const MaxTradesInRangeLimit = 10000
 
 // TradesInRange returns the market's trades with ts in [from, to) in either stored direction, oriented as requested and ordered (ts, ledger) ASC; one direction alone is biased, so both are read.
+// Rows from non-VWAP sources (a vendor daily close, a derived series) are price points, not fills, and are left out.
 func (s *Store) TradesInRange(ctx context.Context, p canonical.Pair, from, to time.Time, limit int) ([]canonical.Trade, error) {
 	if limit <= 0 {
 		limit = 1000
@@ -1427,6 +1428,7 @@ func (s *Store) TradesInRange(ctx context.Context, p canonical.Pair, from, to ti
             AND quote_asset = $2
             AND ts         >= $3
             AND ts          < $4
+            AND NOT (source = ANY(string_to_array($6, ',')))
           ORDER BY ts DESC, ledger DESC, tx_hash DESC, op_index DESC, source DESC
           LIMIT $5)
         UNION ALL
@@ -1441,6 +1443,7 @@ func (s *Store) TradesInRange(ctx context.Context, p canonical.Pair, from, to ti
             AND quote_asset = $1
             AND ts         >= $3
             AND ts          < $4
+            AND NOT (source = ANY(string_to_array($6, ',')))
           ORDER BY ts DESC, ledger DESC, tx_hash DESC, op_index DESC, source DESC
           LIMIT $5)
         ORDER BY ts DESC, ledger DESC, tx_hash DESC, op_index DESC, source DESC
@@ -1448,7 +1451,7 @@ func (s *Store) TradesInRange(ctx context.Context, p canonical.Pair, from, to ti
     `
 	rows, err := s.db.QueryContext(ctx, q,
 		p.Base.String(), p.Quote.String(),
-		from.UTC(), to.UTC(), limit,
+		from.UTC(), to.UTC(), limit, nonVWAPSourcesArg(),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: TradesInRange: %w", err)
