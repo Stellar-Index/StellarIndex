@@ -602,8 +602,8 @@ func TestIncludeThinReleasesOwnThinProxyLeg(t *testing.T) {
 
 	status, body := fetch(t, url)
 	p := problemOf(t, status, body)
-	if p["title"] != "Price withheld" || !strings.HasSuffix(p["type"].(string), "/price-withheld") {
-		t.Errorf("default: %v / %v, want the unattributed withholding", p["title"], p["type"])
+	if p["title"] != "Price withheld — market too thin to aggregate" || !strings.HasSuffix(p["type"].(string), "/price-withheld") {
+		t.Errorf("default: %v / %v, want the thin peg leg withheld as this token's own market", p["title"], p["type"])
 	}
 
 	_, data := assertThinReleased(t, url, proxyTokenID)
@@ -660,7 +660,7 @@ func TestIncludeThinXLMCrossStaysGated(t *testing.T) {
 
 	defStatus, def := fetch(t, url)
 	p := problemOf(t, defStatus, def)
-	if p["title"] != "Price withheld" {
+	if p["title"] != "Price withheld — upstream leg withheld" {
 		t.Fatalf("control: default = %v, want withheld on the XLM leg: %s", p["title"], def)
 	}
 	opted := assertOptInIsNoop(t, ts.URL, "/v1/price?asset="+thinPegID+"&quote=fiat:USD")[0]
@@ -668,6 +668,25 @@ func TestIncludeThinXLMCrossStaysGated(t *testing.T) {
 		if strings.Contains(string(body), "substance") || strings.Contains(string(body), "thin_market") {
 			t.Errorf("the XLM leg's evidence reached the peg's response: %s", body)
 		}
+	}
+}
+
+// TestIncludeThinDeclaredPegOwnBookRetries: a declared peg's XLM book is its OWN market, so a
+// floor refusal there reads `substance` and the opt-in releases it, unlike the pivot case above.
+func TestIncludeThinDeclaredPegOwnBookRetries(t *testing.T) {
+	reader := newChokepointReader(nil).thinPair(thinPegID, "native")
+	reader.prices[thinPegID+"/native"] = "6.25000000000000"
+	reader.prices["native/fiat:USD"] = "0.16000000000000"
+	ts := thinServerWith(t, reader, withPegs(t, thinPegID))
+	url := ts.URL + "/v1/price?asset=" + thinPegID + "&quote=fiat:USD"
+
+	defStatus, def := fetch(t, url)
+	if p := problemOf(t, defStatus, def); p["title"] != "Price withheld — market too thin to aggregate" {
+		t.Fatalf("default title %v, want the substance title: %s", p["title"], def)
+	}
+	status, body := fetch(t, url+"&include_thin=true")
+	if status != http.StatusOK || reader.optedReads() == 0 {
+		t.Fatalf("include_thin: status %d, opted reads %d: %s", status, reader.optedReads(), body)
 	}
 }
 
@@ -687,7 +706,7 @@ func TestIncludeThinRetriesOnlyWithheld(t *testing.T) {
 			path: "/v1/price?asset=" + thinAssetID + "&quote=fiat:USD", retry: true,
 		},
 		{
-			name: "unattributed thin peg", reader: func() *chokepointReader { return proxyReader(nil) },
+			name: "thin peg leg", reader: func() *chokepointReader { return proxyReader(nil) },
 			configure: withPegs(t, thinPegID), path: "/v1/price?asset=" + proxyTokenID + "&quote=fiat:USD", retry: true,
 		},
 		{
@@ -702,7 +721,7 @@ func TestIncludeThinRetriesOnlyWithheld(t *testing.T) {
 		},
 		{
 			name: "flagged peg leg", reader: func() *chokepointReader { return proxyReader(flaggedScamGate(t)) },
-			configure: withPegs(t, thinPegID), path: "/v1/price?asset=" + proxyTokenID + "&quote=fiat:USD", title: "Price withheld",
+			configure: withPegs(t, thinPegID), path: "/v1/price?asset=" + proxyTokenID + "&quote=fiat:USD", title: "Price withheld — upstream leg withheld",
 		},
 		{
 			name: "not found", reader: func() *chokepointReader { return newChokepointReader(nil, thinAssetID) },

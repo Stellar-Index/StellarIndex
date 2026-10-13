@@ -39,6 +39,7 @@ func (withheldUSDReader) RecentClosedSnapshots(context.Context, canonical.Asset,
 const (
 	withheldTestAsset     = "AQUA-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA"
 	withheldTestPegIssuer = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+	withheldTestSecondPeg = "USDA-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 )
 
 // TestPopulatePriceUSD_WithheldIsNotAbsent pins the price producer's three outcomes: a withheld direct read must neither fall
@@ -72,11 +73,11 @@ func TestPopulatePriceUSD_WithheldIsNotAbsent(t *testing.T) {
 			wantReason: PriceWithheldScamIssuer,
 		},
 		{
-			name: "no direct market, proxy peg leg withheld",
+			name: "no direct market, own market via the peg withheld",
 			reader: withheldUSDReader{
 				viaPeg: {err: newPriceWithheld(PriceWithheldSubstance)},
 			},
-			wantReason: PriceWithheldUpstreamLeg,
+			wantReason: PriceWithheldSubstance,
 		},
 		{
 			name:   "never traded",
@@ -125,6 +126,80 @@ func TestPopulatePriceUSD_WithheldIsNotAbsent(t *testing.T) {
 	}
 }
 
+// TestPopulatePriceUSD_DeclaredPegWithheldReason: a declared peg is priced through its XLM book,
+// which is its OWN market, so a refusal there reads as the listing does (`substance` below the
+// floor, `unattributed` when the read stated nothing). Only the XLM/USD pivot behind it is a leg
+// beyond the asset's market, `upstream_leg`.
+func TestPopulatePriceUSD_DeclaredPegWithheldReason(t *testing.T) {
+	peg := mustAsset(t, withheldTestPegIssuer)
+	ownBook := withheldTestPegIssuer + "/" + canonical.NativeAsset().String()
+	pivot := canonical.NativeAsset().String() + "/" + defaultPriceQuote.String()
+	cases := []struct {
+		name   string
+		reader withheldUSDReader
+		want   PriceWithheldReason
+	}{
+		{
+			name:   "own XLM book below the floor",
+			reader: withheldUSDReader{ownBook: {err: newPriceWithheld(PriceWithheldSubstance)}},
+			want:   PriceWithheldSubstance,
+		},
+		{
+			name:   "own XLM book withheld without a reason",
+			reader: withheldUSDReader{ownBook: {err: ErrPriceWithheld}},
+			want:   PriceWithheldUnattributed,
+		},
+		{
+			name:   "XLM/USD pivot below the floor",
+			reader: withheldUSDReader{ownBook: {price: "6.25"}, pivot: {err: newPriceWithheld(PriceWithheldSubstance)}},
+			want:   PriceWithheldUpstreamLeg,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &Server{Options: Options{Prices: tc.reader, USDPeggedClassics: []canonical.Asset{peg}}}
+			var detail AssetDetail
+			s.populatePriceUSD(context.Background(), &detail, peg)
+			if detail.PriceUSD != nil || detail.PriceWithheldReason != tc.want {
+				t.Fatalf("price_usd=%v price_withheld_reason=%q, want nil and %q", detail.PriceUSD, detail.PriceWithheldReason, tc.want)
+			}
+		})
+	}
+}
+
+// TestWalkUSDPegs_WithheldReasonRank: when no peg serves, the walk reports the loudest reason
+// whatever the peg order: the asset's own market below the floor over a withheld peg leg over a
+// refusal that stated nothing.
+func TestWalkUSDPegs_WithheldReasonRank(t *testing.T) {
+	asset := mustAsset(t, withheldTestAsset)
+	pegA := mustAsset(t, withheldTestPegIssuer)
+	pegB := mustAsset(t, withheldTestSecondPeg)
+	viaA := asset.String() + "/" + pegA.String()
+	viaB := asset.String() + "/" + pegB.String()
+	flagged := newPriceWithheld(PriceWithheldScamIssuer)
+	thin := newPriceWithheld(PriceWithheldSubstance)
+	cases := []struct {
+		name   string
+		reader withheldUSDReader
+		want   PriceWithheldReason
+	}{
+		{"flagged then thin", withheldUSDReader{viaA: {err: flagged}, viaB: {err: thin}}, PriceWithheldSubstance},
+		{"thin then flagged", withheldUSDReader{viaA: {err: thin}, viaB: {err: flagged}}, PriceWithheldSubstance},
+		{"flagged peg only", withheldUSDReader{viaA: {err: flagged}}, PriceWithheldUpstreamLeg},
+		{"no stated reason", withheldUSDReader{viaA: {err: ErrPriceWithheld}}, PriceWithheldUnattributed},
+		{"unstated then flagged", withheldUSDReader{viaA: {err: ErrPriceWithheld}, viaB: {err: flagged}}, PriceWithheldUpstreamLeg},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &Server{Options: Options{Prices: tc.reader, USDPeggedClassics: []canonical.Asset{pegA, pegB}}}
+			_, _, ok, got := s.walkUSDPegs(context.Background(), asset, defaultPriceQuote)
+			if ok || got != tc.want {
+				t.Fatalf("ok=%v reason=%q, want false and %q", ok, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestDeclaredPegFillClearsWithheldReason: the reason describes a null
 // price_usd, so a producer that later fills the price must drop it.
 func TestDeclaredPegFillClearsWithheldReason(t *testing.T) {
@@ -150,6 +225,18 @@ func TestScamSuppressionStampsWithheldReason(t *testing.T) {
 	suppressScamIssuerPricing(&unpriced)
 	if unpriced.PriceWithheldReason != "" {
 		t.Fatalf("never-priced flagged asset stamped %q: nothing was withheld", unpriced.PriceWithheldReason)
+	}
+	// The asset's own flag outranks whatever the reader-side walk attributed to a peg leg.
+	walked := AssetDetail{PriceWithheldReason: PriceWithheldUpstreamLeg, IssuerDirectoryTags: []string{"scam"}}
+	suppressScamIssuerPricing(&walked)
+	if walked.PriceWithheldReason != PriceWithheldScamIssuer {
+		t.Fatalf("flagged issuer behind a walked reason stamped %q, want %q", walked.PriceWithheldReason, PriceWithheldScamIssuer)
+	}
+	// An unanswered directory lookup never overwrites a reason the walk already named.
+	unchecked := AssetDetail{PriceWithheldReason: PriceWithheldSubstance, issuerDirectoryUnchecked: true}
+	suppressScamIssuerPricing(&unchecked)
+	if unchecked.PriceWithheldReason != PriceWithheldSubstance {
+		t.Fatalf("unchecked lookup overwrote %q with %q", PriceWithheldSubstance, unchecked.PriceWithheldReason)
 	}
 }
 

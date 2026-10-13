@@ -1030,8 +1030,8 @@ func (s *Server) priceFallback(ctx context.Context, asset, quote canonical.Asset
 		return cross
 	}
 	// `withheld` separates "no price" from "one we decline to publish" (price-withheld vs not-found).
-	if withheld {
-		return fallbackResult{withheld: PriceWithheldUnattributed}
+	if withheld != "" {
+		return fallbackResult{withheld: withheld}
 	}
 	return fallbackResult{}
 }
@@ -1290,11 +1290,11 @@ func (s *Server) resolveUSDLeg(
 	if snap, srcs, _, _, ok := s.tryRedisVWAPFallback(ctx, asset, usd); ok {
 		return snap, srcs, canonical.Asset{}, true, true, false
 	}
-	snap, srcs, ok, withheld := s.tryStablecoinFiatProxy(ctx, asset, usd)
+	snap, srcs, ok, proxyWithheld := s.tryStablecoinFiatProxy(ctx, asset, usd)
 	if ok {
 		return snap, srcs, canonical.Asset{}, true, true, false
 	}
-	return PriceSnapshot{}, nil, canonical.Asset{}, false, false, withheld
+	return PriceSnapshot{}, nil, canonical.Asset{}, false, false, proxyWithheld != ""
 }
 
 // primaryFXSource is the forex worker's primary feed, credited for an entry with no Source.
@@ -1339,33 +1339,35 @@ type proxyPairGate interface {
 // ([Server.crossDeclaredPegThroughXLM]) and the declaration answers
 // only when the cross has nothing (a depeg is when they disagree), never via another declared peg. Snapshots are triangulated; sticky
 // `withheld` (ErrPriceWithheld) must not
-// collapse into not-found, and a refused declared-peg cross is withheld, not replaced by a flat 1.0.
-func (s *Server) tryStablecoinFiatProxy(ctx context.Context, asset, quote canonical.Asset) (PriceSnapshot, []string, bool, bool) {
+// collapse into not-found, and a refused declared-peg cross is withheld (`upstream_leg`), not replaced by a flat 1.0.
+func (s *Server) tryStablecoinFiatProxy(ctx context.Context, asset, quote canonical.Asset) (PriceSnapshot, []string, bool, PriceWithheldReason) {
 	// Self-peg: a `crypto:<STABLE>` ticker priced in the fiat it tracks (aggregate.FiatProxy); a
 	// depeg surfaces via divergence, not here. Runs only after the literal read missed, so an
 	// observed bucket still wins over the declaration.
 	if proxy, isStable := aggregate.FiatProxy(asset); isStable && proxy.Equal(quote) {
-		return s.declaredPegSnapshot(asset, quote), nil, true, false
+		return s.declaredPegSnapshot(asset, quote), nil, true, ""
 	}
-	// Returns before the walk carry withheld=false: no peg leg has been read yet.
+	// Returns before the walk carry no withheld reason: no peg leg has been read yet.
 	if quote.Type != canonical.AssetFiat || quote.Code != "USD" {
-		return PriceSnapshot{}, nil, false, false
+		return PriceSnapshot{}, nil, false, ""
 	}
 	if len(s.USDPeggedClassics) == 0 || s.Prices == nil {
-		return PriceSnapshot{}, nil, false, false
+		return PriceSnapshot{}, nil, false, ""
 	}
 	if s.isDeclaredUSDPeg(asset) {
-		snap, srcs, verdict := s.crossDeclaredPegThroughXLM(ctx, asset, quote)
+		snap, srcs, verdict, withheld := s.crossDeclaredPegThroughXLM(ctx, asset, quote)
 		switch verdict {
 		case pegXLMLegPriced:
-			return snap, srcs, true, false
+			return snap, srcs, true, ""
 		case pegXLMLegRefused:
-			return PriceSnapshot{}, nil, false, true
+			// The peg's own XLM book names its reason (`substance` below the floor, as the listing
+			// says); a withheld XLM/USD pivot lies beyond that market and reads `upstream_leg`.
+			return PriceSnapshot{}, nil, false, withheld
 		case pegXLMLegNoMarket, pegXLMLegReadFailed, pegXLMLegFlagged:
 		}
 		// No market priced this peg and none was refused: publish the declaration with nil sources
 		// (empty is not "single-sourced").
-		return s.declaredPegSnapshot(asset, quote), nil, true, false
+		return s.declaredPegSnapshot(asset, quote), nil, true, ""
 	}
 	snap, srcs, ok, withheld := s.walkUSDPegs(ctx, asset, quote)
 	if ok {
@@ -1389,7 +1391,7 @@ func (s *Server) isDeclaredUSDPeg(asset canonical.Asset) bool {
 // fiat:USD; a declared peg never reaches it.
 func (s *Server) walkUSDPegs(
 	ctx context.Context, asset, quote canonical.Asset,
-) (snapshot PriceSnapshot, sources []string, ok, withheld bool) {
+) (snapshot PriceSnapshot, sources []string, ok bool, withheld PriceWithheldReason) {
 	// Empty-proxy-pair gate. On a VWAP miss LatestPrice falls through to an UNBOUNDED last-trade
 	// scan, which a Soroban token that only trades vs XLM would pay once PER PEG. A probe ERROR falls
 	// through to LatestPrice so a blip never suppresses a real price.
@@ -1403,10 +1405,10 @@ func (s *Server) walkUSDPegs(
 		}
 		snap, srcs, _, err := s.Prices.LatestPrice(ctx, asset, peg)
 		if err != nil {
-			// A WITHHELD verdict is not a miss: record it and keep walking (a later peg may serve);
-			// if none does, the caller reports withheld rather than not-found.
+			// A WITHHELD verdict is not a miss. Walk on, a later peg may serve; if none does, the
+			// caller reports the loudest reason ([walkWithheldReason]) rather than not-found.
 			if errors.Is(err, ErrPriceWithheld) {
-				withheld = true
+				withheld = walkWithheldReason(withheld, err)
 			}
 			continue
 		}
@@ -1420,37 +1422,63 @@ func (s *Server) walkUSDPegs(
 	return PriceSnapshot{}, nil, false, withheld
 }
 
+// walkWithheldRank orders the reasons [Server.walkUSDPegs] reports when no peg serves: the asset's
+// own market below the floor outranks a withheld peg leg, which outranks a refusal that stated
+// no reason.
+var walkWithheldRank = map[PriceWithheldReason]int{
+	PriceWithheldUnattributed: 1,
+	PriceWithheldUpstreamLeg:  2,
+	PriceWithheldSubstance:    3,
+}
+
+// walkWithheldReason folds one refused peg read into the walk's running reason. The peg pair is
+// the asset's own market, so `substance` (as the listing says) and an unstated reason pass
+// through; any other cause (a flagged peg issuer, a refused cross) lies beyond it and is
+// `upstream_leg`.
+func walkWithheldReason(have PriceWithheldReason, err error) PriceWithheldReason {
+	got := priceWithheldReason(err)
+	if got != PriceWithheldSubstance && got != PriceWithheldUnattributed {
+		got = PriceWithheldUpstreamLeg
+	}
+	if walkWithheldRank[got] > walkWithheldRank[have] {
+		return got
+	}
+	return have
+}
+
 // crossDeclaredPegThroughXLM prices a declared USD peg via its XLM book, price(peg/XLM) x price(XLM/fiat:USD) in exact big.Rat (ADR-0003,
 // [crossThroughPivot]); a non-positive or missing leg is a miss.
 // The pivot is read direct, never via the Redis composite or stablecoin proxy (it would cancel to 1). Each native/SAC-quoted miss is an
 // unbounded last-trade scan, so it sits behind a
 // [proxyPairGate] probe. A withheld leg stops the spelling walk: the scam gate can't fire on a SAC base, so the SAC book would publish
-// the declined market. observed_at is the older leg's.
+// the declined market. observed_at is the older leg's. Beside pegXLMLegRefused travels the reason: the peg book's own, or
+// `upstream_leg` when the pivot was refused.
 func (s *Server) crossDeclaredPegThroughXLM(
 	ctx context.Context, asset, quote canonical.Asset,
-) (PriceSnapshot, []string, pegXLMLegVerdict) {
+) (PriceSnapshot, []string, pegXLMLegVerdict, PriceWithheldReason) {
 	xlm := canonical.NativeAsset()
 	if sameAsset(asset, xlm) {
-		return PriceSnapshot{}, nil, pegXLMLegNoMarket
+		return PriceSnapshot{}, nil, pegXLMLegNoMarket, ""
 	}
-	pegLeg, pegSources, verdict := s.readDeclaredPegXLMLeg(ctx, asset)
+	pegLeg, pegSources, verdict, withheld := s.readDeclaredPegXLMLeg(ctx, asset)
 	if verdict != pegXLMLegPriced {
-		return PriceSnapshot{}, nil, verdict
+		return PriceSnapshot{}, nil, verdict, withheld
 	}
 	xlmLeg, xlmSources, _, err := s.readPriceWithAliases(ctx, s.Prices, xlm, quote)
 	switch {
 	case errors.Is(err, ErrPriceWithheld):
-		return PriceSnapshot{}, nil, pegXLMLegRefused
+		// XLM/USD is the pivot's market, not the peg's own: whatever its reason, it is upstream.
+		return PriceSnapshot{}, nil, pegXLMLegRefused, PriceWithheldUpstreamLeg
 	case errors.Is(err, ErrPriceNotFound):
-		return PriceSnapshot{}, nil, pegXLMLegNoMarket
+		return PriceSnapshot{}, nil, pegXLMLegNoMarket, ""
 	case err != nil:
-		return PriceSnapshot{}, nil, pegXLMLegReadFailed
+		return PriceSnapshot{}, nil, pegXLMLegReadFailed, ""
 	}
 	// Both legs are RAW ratios; decimals-correct each before taking the product.
 	s.normalizeRawPriceSnapshot(&xlmLeg, xlm, quote)
 	price, ok := crossThroughPivot(pegLeg.Price, xlmLeg.Price)
 	if !ok {
-		return PriceSnapshot{}, nil, pegXLMLegNoMarket
+		return PriceSnapshot{}, nil, pegXLMLegNoMarket, ""
 	}
 	observedAt := pegLeg.ObservedAt
 	if xlmLeg.ObservedAt.Time().Before(observedAt.Time()) {
@@ -1468,7 +1496,7 @@ func (s *Server) crossDeclaredPegThroughXLM(
 		PriceType:     "vwap",
 		ObservedAt:    observedAt,
 		WindowSeconds: windowSeconds,
-	}, unionSources(pegSources, xlmSources), pegXLMLegPriced
+	}, unionSources(pegSources, xlmSources), pegXLMLegPriced, ""
 }
 
 // readDeclaredPegXLMLeg reads asset/XLM for [Server.crossDeclaredPegThroughXLM]: each peg spelling against each XLM alias; the walk
@@ -1479,16 +1507,16 @@ func (s *Server) crossDeclaredPegThroughXLM(
 // answers. Canonical-first order (SAC last).
 func (s *Server) readDeclaredPegXLMLeg(
 	ctx context.Context, asset canonical.Asset,
-) (PriceSnapshot, []string, pegXLMLegVerdict) {
+) (PriceSnapshot, []string, pegXLMLegVerdict, PriceWithheldReason) {
 	xlmForms := assetAliases(canonical.NativeAsset())
 	for _, base := range assetAliases(canonical.CanonicalAsset(asset)) {
-		snap, srcs, verdict := s.readPegXLMLegForSpelling(ctx, base, xlmForms)
+		snap, srcs, verdict, withheld := s.readPegXLMLegForSpelling(ctx, base, xlmForms)
 		if verdict != pegXLMLegNoMarket {
 			// Only "found nothing" reaches the next spelling.
-			return snap, srcs, verdict
+			return snap, srcs, verdict, withheld
 		}
 	}
-	return PriceSnapshot{}, nil, pegXLMLegNoMarket
+	return PriceSnapshot{}, nil, pegXLMLegNoMarket, ""
 }
 
 // pegXLMLegVerdict is what one read on the declared peg's XLM leg SAID: collapsing to ok=false would turn a refusal or broken read into
@@ -1508,8 +1536,8 @@ const (
 	// keys on the classic issuer,
 	// so its verdict stops a SAC spelling republishing that issuer's refused market.
 	pegXLMLegFlagged
-	// pegXLMLegRefused: any other ErrPriceWithheld (substance gate on the alias union, or no stated reason). The walk stops and the route
-	// withholds rather than print
+	// pegXLMLegRefused: any other ErrPriceWithheld (substance gate on the alias union, or no stated reason); the read's own
+	// [PriceWithheldReason] travels beside it. The walk stops and the route withholds rather than print
 	// the declaration over it; ranked above pegXLMLegFlagged so a mix fails closed.
 	pegXLMLegRefused
 	// pegXLMLegPriced: a snapshot was read; a stale snapshot is still priced.
@@ -1520,59 +1548,64 @@ const (
 // only condition to try the next spelling.
 // Among answering forms fresh beats stale (alias order alone would take an old `native` over a fresh SAC book: disjoint venue
 // populations), confined to one spelling.
-// A refusal or read failure on one XLM form does NOT stop this spelling; only when none priced does it decide.
+// A refusal or read failure on one XLM form does NOT stop this spelling; only when none priced does it decide. Among refusals a
+// stated reason outranks an unattributed one.
 func (s *Server) readPegXLMLegForSpelling(
 	ctx context.Context, base canonical.Asset, xlmForms []canonical.Asset,
-) (PriceSnapshot, []string, pegXLMLegVerdict) {
+) (PriceSnapshot, []string, pegXLMLegVerdict, PriceWithheldReason) {
 	var staleSnap PriceSnapshot
 	var staleSources []string
 	staleFound := false
 	spelling := pegXLMLegNoMarket
+	var refused PriceWithheldReason
 	for _, xlm := range xlmForms {
-		snap, srcs, stale, verdict := s.readPegXLMLegPair(ctx, base, xlm)
+		snap, srcs, stale, verdict, reason := s.readPegXLMLegPair(ctx, base, xlm)
 		if verdict != pegXLMLegPriced {
 			// Keep the loudest verdict: a refusal or failure outranks not-found.
 			spelling = max(spelling, verdict)
+			if verdict == pegXLMLegRefused && (refused == "" || refused == PriceWithheldUnattributed) {
+				refused = reason
+			}
 			continue
 		}
 		if !stale {
-			return snap, srcs, pegXLMLegPriced
+			return snap, srcs, pegXLMLegPriced, ""
 		}
 		if !staleFound {
 			staleSnap, staleSources, staleFound = snap, srcs, true
 		}
 	}
 	if staleFound {
-		return staleSnap, staleSources, pegXLMLegPriced
+		return staleSnap, staleSources, pegXLMLegPriced, ""
 	}
-	return PriceSnapshot{}, nil, spelling
+	return PriceSnapshot{}, nil, spelling, refused
 }
 
 // readPegXLMLegPair is one (peg spelling, XLM form) combination of the [Server.readDeclaredPegXLMLeg] walk; it must keep the
 // [pegXLMLegVerdict] distinct
-// (a flagged issuer, [PriceWithheldScamIssuer], is pegXLMLegFlagged; other ErrPriceWithheld is pegXLMLegRefused). A probe ERROR falls
-// through to the read so a blip never hides a price.
+// (a flagged issuer, [PriceWithheldScamIssuer], is pegXLMLegFlagged; other ErrPriceWithheld is pegXLMLegRefused, carrying the read's
+// own reason). A probe ERROR falls through to the read so a blip never hides a price.
 func (s *Server) readPegXLMLegPair(
 	ctx context.Context, base, xlm canonical.Asset,
-) (PriceSnapshot, []string, bool, pegXLMLegVerdict) {
+) (PriceSnapshot, []string, bool, pegXLMLegVerdict, PriceWithheldReason) {
 	if gate, wired := s.Prices.(proxyPairGate); wired {
 		if exists, gerr := gate.RecentClosedVWAP1mExists(ctx, base, xlm); gerr == nil && !exists {
-			return PriceSnapshot{}, nil, false, pegXLMLegNoMarket
+			return PriceSnapshot{}, nil, false, pegXLMLegNoMarket, ""
 		}
 	}
 	snap, srcs, stale, err := s.Prices.LatestPrice(ctx, base, xlm)
 	switch {
 	case errors.Is(err, ErrPriceWithheld) && priceWithheldReason(err) == PriceWithheldScamIssuer:
-		return PriceSnapshot{}, nil, false, pegXLMLegFlagged
+		return PriceSnapshot{}, nil, false, pegXLMLegFlagged, ""
 	case errors.Is(err, ErrPriceWithheld):
-		return PriceSnapshot{}, nil, false, pegXLMLegRefused
+		return PriceSnapshot{}, nil, false, pegXLMLegRefused, priceWithheldReason(err)
 	case errors.Is(err, ErrPriceNotFound):
-		return PriceSnapshot{}, nil, false, pegXLMLegNoMarket
+		return PriceSnapshot{}, nil, false, pegXLMLegNoMarket, ""
 	case err != nil:
-		return PriceSnapshot{}, nil, false, pegXLMLegReadFailed
+		return PriceSnapshot{}, nil, false, pegXLMLegReadFailed, ""
 	}
 	s.normalizeRawPriceSnapshot(&snap, base, xlm)
-	return snap, srcs, stale, pegXLMLegPriced
+	return snap, srcs, stale, pegXLMLegPriced, ""
 }
 
 // unionSources merges two legs' source sets (deduplicated, sorted): an audit of a crossed price
