@@ -161,19 +161,3 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 - **web:** USD volumes, SDEX KPIs, pair and DEX-source volume and TVL, network XLM figures, issuer volume and accounts wealth render from exact decimals, never doubles (#2966, #2967, #2969–#2973, #2975).
 - **web:** prose cut on the RWA and ledger pages (#2964, #2968).
-
-## [v0.108.0] — 2026-10-09
-
-31 commits since v0.107.0, mostly explorer charts and exact-decimal money on the web. No migrations, no `pkg/*` break.
-
-### Fixed
-
-- **wasmaudit:** defindex factory events are walked by their `DeFindexFactory` topic[0] prefix, so the replay gate admits defindex (#2962).
-- **api:** coverage `earliest`/`latest` come from the completeness verdict (#2938).
-- **ansible:** the exchangeratesapi block renders, gated on its vault key (#2941).
-
-### Changed
-
-- **web:** trade volume, pool reserves, protocol TVL, RWA history and the MEV feed rank, total and format with exact decimals, never doubles (#2958, #2959, #2960).
-- **web:** charts across ledger, transaction, network, contract, account, asset, market, MEV, status and source pages (#2951–#2957); prose walls cut (#2949, #2950).
-- **web:** SAC contract pages show the wrapped asset (#2947); the contracts page shows deployments per month and 90-day actives (#2946); breadcrumbs on every content page (#2942).
