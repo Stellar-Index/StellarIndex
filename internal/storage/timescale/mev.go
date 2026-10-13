@@ -13,14 +13,18 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/pgarray"
 )
 
+// mevStampMinute is the scanned trade's own minute, the newest the ingest stamp can have been priced from.
+const mevStampMinute = "date_trunc('minute', s.ts)"
+
 // tradesForArbScanQuery values each leg at stored usd_volume, else its XLM leg at the minute's XLM/USD anchor ([xlmUSDAnchorGridCTE]), so
 // NULL-usd SDEX cycles don't report "$0"; no anchor within xlmUSDAnchorMaxAge leaves it empty. The last column marks an
 // anchor-valued leg as estimated. $3 is the native-XLM SAC.
 //
-// A stored usd_volume is set aside when the trade has an XLM leg against a non-USD asset and its minute lies inside a recorded
-// XLM/USD-proxy freeze ([xlmUSDFreezeOverlap]): the ingest stamp reads the minute's rate with no freeze check, so it may carry the
-// frozen rate. The leg is then valued like an unstamped one, from the anchor (estimated) or not at all. An XLM/USD-proxy trade keeps
-// its stamp: its USD value is its own proxy leg, not the XLM rate.
+// A stored usd_volume is set aside when the trade has an XLM leg against a non-USD asset and a recorded XLM/USD-proxy freeze
+// ([xlmUSDFreezeOverlap]) overlaps the xlmUSDAnchorMaxAge before its minute: the ingest stamp reads the newest XLM/USD minute in that
+// window with no freeze check, so it may carry the frozen rate. The leg is then valued like an unstamped one, from the anchor
+// (estimated) or not at all. An XLM/USD-proxy trade keeps its stamp: its USD value is its own proxy leg, not the XLM rate. A stamp on a
+// non-XLM trade priced through the XLM bridge at ingest is not checked here.
 //
 //nolint:gosec // G202: fragments are constant SQL (helper output built from literals and $N placeholders); values bind via $N
 var tradesForArbScanQuery = `
@@ -42,7 +46,7 @@ var tradesForArbScanQuery = `
                    WHEN s.usd_volume IS NOT NULL
                     AND ((s.base_asset IN ('native', $3::text) AND s.quote_asset NOT IN (` + usdProxyQuotes + `))
                       OR (s.quote_asset IN ('native', $3::text) AND s.base_asset NOT IN (` + usdProxyQuotes + `)))
-                    AND ` + xlmUSDFreezeOverlap("date_trunc('minute', s.ts)", "$3::text") + `
+                    AND ` + xlmUSDFreezeOverlap(mevStampMinute+" - INTERVAL '"+xlmUSDAnchorMaxAge+"'", mevStampMinute, "$3::text") + `
                      THEN NULL
                    ELSE s.usd_volume
                  END AS usd_volume_trusted

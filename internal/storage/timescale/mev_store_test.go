@@ -159,11 +159,13 @@ func TestTradesForArbScanQueryShape(t *testing.T) {
 	if strings.Contains(q, mevXLMSAC) || !strings.Contains(q, "IN ('native', $3::text)") {
 		t.Errorf("the XLM-leg fallback must bind the native-XLM SAC at $3, not hard-code it:\n%s", q)
 	}
-	// A stored stamp inside a recorded XLM/USD-proxy freeze is set aside through the anchor's own freeze predicate, only when
-	// the XLM leg is against a non-USD asset; the value and the estimated flag both read the trusted column.
+	// A stored stamp is set aside through the anchor's own freeze predicate looking back xlmUSDAnchorMaxAge (the stamp may have
+	// read a minute that much older), only when the XLM leg is against a non-USD asset; the value and the estimated flag both
+	// read the trusted column.
 	flat := strings.Join(strings.Fields(q), " ")
 	for _, want := range []string{
-		strings.Join(strings.Fields(xlmUSDFreezeOverlap("date_trunc('minute', s.ts)", "$3::text")), " "),
+		strings.Join(strings.Fields(xlmUSDFreezeOverlap(mevStampMinute+" - INTERVAL '"+xlmUSDAnchorMaxAge+"'", mevStampMinute, "$3::text")), " "),
+		"OR fe.recovered_at > " + mevStampMinute + " - INTERVAL '" + xlmUSDAnchorMaxAge + "'))",
 		"s.usd_volume IS NOT NULL AND ((s.base_asset IN ('native', $3::text) AND s.quote_asset NOT IN (" + strings.Join(strings.Fields(usdProxyQuotes), " ") + "))",
 		"THEN NULL ELSE s.usd_volume END AS usd_volume_trusted",
 		"COALESCE((COALESCE( t.usd_volume_trusted, CASE",
