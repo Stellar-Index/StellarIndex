@@ -38,6 +38,36 @@ describe('MevFeed', () => {
       await screen.findByText('$9,007,199,254,740,993'),
     ).toBeInTheDocument();
   });
+
+  it('marks a lower-bound notional with \u2265 and an anchor-valued one as est.', async () => {
+    vi.mocked(apiGet).mockResolvedValue({
+      data: [
+        {
+          event_id: 'e3',
+          detected_at: '2026-09-10T00:00:00Z',
+          detected_at_ledger: 101,
+          kind: 'arbitrage',
+          tx_hashes: [],
+          accounts: [],
+          detail: {
+            notional_usd: '1234',
+            notional_usd_lower_bound: true,
+            notional_usd_estimated: true,
+          },
+          profit_usd: null,
+        },
+      ],
+    });
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MevFeed />
+      </QueryClientProvider>,
+    );
+    const notional = await screen.findByText(/\u2265 \$1,234/);
+    expect(notional).toHaveTextContent('est.');
+    expect(notional.title).toMatch(/lower bound/);
+    expect(notional.title).toMatch(/estimated/);
+  });
 });
 
 describe('mevCsvRow', () => {
@@ -61,6 +91,8 @@ describe('mevCsvRow', () => {
       assets: 'native USDC-GB',
       sources: '',
       notional_usd: '9007199254740993',
+      notional_usd_lower_bound: '',
+      notional_usd_estimated: '',
       profit_usd: '',
       accounts: 'GA',
       tx_hashes: 't1 t2',
