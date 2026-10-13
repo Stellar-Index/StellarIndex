@@ -154,11 +154,16 @@ func sacWatchedContractNeedles(watched map[string]string) ([]string, error) {
 	return needles, nil
 }
 
-// entryChangeLedgerBounds reads the append-log's [min, max] ledger from part metadata; not floored at a Soroban-activation constant
-// (integration fixtures write below it). NOT hole-safe: a reader that persists a cursor must bound itself with ledgerContiguityFrom.
+// entryChangeLedgerBounds reads the append-log's [min, max] ledger. An aggregate over the table scans every part (tens of
+// billions of rows) and blows the TVL refresh deadline; reading in primary-key order with LIMIT 1 from each end touches one
+// granule. Not floored at a Soroban-activation constant (integration fixtures write below it). NOT hole-safe: a reader that
+// persists a cursor must bound itself with ledgerContiguityFrom.
 func entryChangeLedgerBounds(ctx context.Context, conn driver.Conn) (uint32, uint32, error) {
 	var lo, hi uint32
-	const q = `SELECT min(ledger_seq), max(ledger_seq) FROM stellar.ledger_entry_changes`
+	const q = `SELECT min(ledger_seq), max(ledger_seq) FROM (
+		SELECT ledger_seq FROM stellar.ledger_entry_changes ORDER BY ledger_seq ASC LIMIT 1
+		UNION ALL
+		SELECT ledger_seq FROM stellar.ledger_entry_changes ORDER BY ledger_seq DESC LIMIT 1)`
 	if err := conn.QueryRow(ctx, q).Scan(&lo, &hi); err != nil {
 		return 0, 0, fmt.Errorf("clickhouse: read ledger_entry_changes ledger bounds: %w", err)
 	}
