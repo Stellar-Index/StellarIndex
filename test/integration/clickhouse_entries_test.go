@@ -2090,3 +2090,157 @@ func TestBlendPoolReserves_CurrentStateProjectionBoundsTheRead(t *testing.T) {
 			readerRead, legacyRead)
 	}
 }
+
+// Drives `ch-entry-index` via chops.Run on the real tier-1 DDL: a dry run writes nothing; -write fills both index tables
+// from one window, including the sponsor row found through the SQL base64-tail predicate, and advances the entry_index
+// watermark.
+func TestChEntryIndex_WriteFillsBothIndexes(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	addr := clickhouseAddr(t)
+	conn := dialClickHouse(t, ctx, "stellar")
+
+	// An isolated ledger range nothing else in the suite writes to.
+	const base = uint32(161_100_000)
+	const (
+		alice  = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7"
+		bob    = "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H"
+		issuer = "GCEZWKCA5VLDNRLN3RPRJMRZOX3Z6G5CHCGSNFHEYVXM3XOJMDS674JZ"
+		usdc   = "USDC-" + issuer
+	)
+	entryHistorySeedLedgers(t, ctx, addr, []uint32{base, base + 1, base + 2}, 1)
+
+	account := func(id string, balance, seq int64) xdr.LedgerEntry {
+		return xdr.LedgerEntry{Data: xdr.LedgerEntryData{Type: xdr.LedgerEntryTypeAccount, Account: &xdr.AccountEntry{
+			AccountId: xdr.MustAddress(id), Balance: xdr.Int64(balance), SeqNum: xdr.SequenceNumber(seq),
+			Thresholds: xdr.Thresholds{1, 0, 0, 0},
+		}}}
+	}
+	trustline := xdr.LedgerEntry{Data: xdr.LedgerEntryData{Type: xdr.LedgerEntryTypeTrustline, TrustLine: &xdr.TrustLineEntry{
+		AccountId: xdr.MustAddress(bob), Asset: xdr.MustNewCreditAsset("USDC", issuer).ToTrustLineAsset(),
+		Balance: 10, Limit: 1_000_000,
+	}}}
+	claimable := xdr.LedgerEntry{Data: xdr.LedgerEntryData{Type: xdr.LedgerEntryTypeClaimableBalance, ClaimableBalance: &xdr.ClaimableBalanceEntry{
+		BalanceId: xdr.ClaimableBalanceId{Type: xdr.ClaimableBalanceIdTypeClaimableBalanceIdTypeV0, V0: &xdr.Hash{2}},
+		Claimants: []xdr.Claimant{{Type: xdr.ClaimantTypeClaimantTypeV0, V0: &xdr.ClaimantV0{
+			Destination: xdr.MustAddress(alice), Predicate: xdr.ClaimPredicate{Type: xdr.ClaimPredicateTypeClaimPredicateUnconditional},
+		}}},
+		Asset: xdr.MustNewCreditAsset("USDC", issuer), Amount: 70,
+	}}}
+	sponsored := account(bob, 50, 1)
+	sponsored.Ext = xdr.LedgerEntryExt{V: 1, V1: &xdr.LedgerEntryExtensionV1{SponsoringId: xdr.MustAddressPtr(alice)}}
+
+	row := func(ledger uint32, change uint32, changeType, entryType, owner, asset string, e xdr.LedgerEntry) chstore.LedgerEntryChangeRow {
+		t.Helper()
+		k, err := e.LedgerKey()
+		if err != nil {
+			t.Fatalf("ledger key: %v", err)
+		}
+		r := chstore.LedgerEntryChangeRow{
+			LedgerSeq: ledger, CloseTime: time.Date(2027, 2, 10, 0, 0, 0, 0, time.UTC), TxHash: "ei" + strconv.FormatUint(uint64(ledger), 10),
+			OpIndex: 0, ChangeIndex: change, ChangeType: changeType, EntryType: entryType, AccountID: owner, Asset: asset,
+		}
+		if r.KeyXDR, err = xdr.MarshalBase64(k); err != nil {
+			t.Fatalf("marshal key: %v", err)
+		}
+		if r.EntryXDR, err = xdr.MarshalBase64(e); err != nil {
+			t.Fatalf("marshal entry: %v", err)
+		}
+		return r
+	}
+	src := []chstore.LedgerEntryChangeRow{
+		// base: alice's account changes (two changes, one owner row).
+		row(base, 0, "state", "account", alice, "", account(alice, 1000, 7)),
+		row(base, 1, "updated", "account", alice, "", account(alice, 900, 8)),
+		// base+1: bob opens a USDC trustline.
+		row(base+1, 0, "created", "trustline", bob, usdc, trustline),
+		// base+2: a claimable balance for alice, and bob's account sponsored by alice.
+		row(base+2, 0, "created", "claimable_balance", "", "", claimable),
+		row(base+2, 1, "updated", "account", bob, "", sponsored),
+	}
+	if _, err := chstore.InsertEntryChanges(ctx, addr, src, 0); err != nil {
+		t.Fatalf("seed ledger_entry_changes: %v", err)
+	}
+
+	run := func(write bool) {
+		t.Helper()
+		args := []string{
+			"ch-entry-index", "-ch-addr", addr,
+			"-from", strconv.FormatUint(uint64(base), 10), "-to", strconv.FormatUint(uint64(base+2), 10),
+		}
+		if write {
+			args = append(args, "-write")
+		}
+		if err := chops.Run(args); err != nil {
+			t.Fatalf("ch-entry-index (write=%v): %v", write, err)
+		}
+	}
+	count := func(table string) uint64 {
+		t.Helper()
+		var n uint64
+		if err := conn.QueryRow(ctx, `SELECT count() FROM stellar.`+table+` FINAL WHERE ledger BETWEEN ? AND ?`, base, base+2).Scan(&n); err != nil {
+			t.Fatalf("count %s: %v", table, err)
+		}
+		return n
+	}
+
+	run(false)
+	if a, s := count("account_entry_ledgers"), count("asset_entry_ledgers"); a+s != 0 {
+		t.Fatalf("dry run wrote %d account / %d asset rows, want none", a, s)
+	}
+	run(true)
+	run(true) // idempotent: the second window collapses on FINAL
+	if a, s := count("account_entry_ledgers"), count("asset_entry_ledgers"); a != 5 || s != 1 {
+		t.Fatalf("write run left %d account / %d asset rows, want 5 / 1", a, s)
+	}
+	type roleRow struct {
+		Account string
+		Role    string
+		Ledger  uint32
+	}
+	rows, err := conn.Query(ctx, `SELECT account, role, ledger FROM stellar.account_entry_ledgers FINAL WHERE ledger BETWEEN ? AND ? ORDER BY ledger, role, account`, base, base+2)
+	if err != nil {
+		t.Fatalf("read account index: %v", err)
+	}
+	defer rows.Close()
+	var got []roleRow
+	for rows.Next() {
+		var r roleRow
+		if err := rows.Scan(&r.Account, &r.Role, &r.Ledger); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		got = append(got, r)
+	}
+	raw := func(g string) string {
+		t.Helper()
+		b, err := strkey.Decode(strkey.VersionByteAccountID, g)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	want := []roleRow{
+		{raw(alice), "owner", base},
+		{raw(bob), "owner", base + 1},
+		{raw(bob), "owner", base + 2},
+		{raw(alice), "claimant", base + 2},
+		{raw(alice), "sponsor", base + 2},
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("account index rows = %+v, want %+v", got, want)
+	}
+	var created, updated, removed uint32
+	if err := conn.QueryRow(ctx, `SELECT n_created, n_updated, n_removed FROM stellar.asset_entry_ledgers FINAL WHERE asset = ? AND ledger = ?`, usdc, base+1).Scan(&created, &updated, &removed); err != nil {
+		t.Fatalf("read asset index: %v", err)
+	}
+	if created != 1 || updated != 0 || removed != 0 {
+		t.Fatalf("asset counts = %d/%d/%d, want 1/0/0", created, updated, removed)
+	}
+	wm, err := chstore.EntryIndexWatermark(ctx, addr)
+	if err != nil {
+		t.Fatalf("watermark: %v", err)
+	}
+	if wm != base+2 {
+		t.Fatalf("entry_index watermark = %d, want %d", wm, base+2)
+	}
+}

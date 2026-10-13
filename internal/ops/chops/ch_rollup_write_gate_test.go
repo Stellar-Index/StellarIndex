@@ -101,6 +101,7 @@ func TestBoardRollupUnitsPassWrite(t *testing.T) {
 		"creators-rollup.service.j2",
 		"sponsors-rollup.service.j2",
 		"cohort-rollup.service.j2",
+		"entry-index.service.j2",
 	} {
 		body := readRepoFile(t, "configs/ansible/roles/archival-node/templates/systemd/"+unit)
 		start := strings.Index(body, "ExecStart=")
@@ -234,6 +235,7 @@ func TestRollupUnitsCanWriteTheirLock(t *testing.T) {
 		{"creators-rollup.service.j2", creatorsRollupLockPath},
 		{"sponsors-rollup.service.j2", sponsorsRollupLockPath},
 		{"cohort-rollup.service.j2", cohortRollupLockPath},
+		{"entry-index.service.j2", entryIndexLockPath},
 	} {
 		t.Run(tc.unit, func(t *testing.T) {
 			unit := readRepoFile(t, "configs/ansible/roles/archival-node/templates/systemd/"+tc.unit)
@@ -275,6 +277,12 @@ func TestRollupCLIsSerializeOnTheirLock(t *testing.T) {
 			name: "ch-sponsors-rollup",
 			run: func(lockFile string) error {
 				return chSponsorsRollup([]string{"-write", "-lock-file", lockFile})
+			},
+		},
+		{
+			name: "ch-entry-index",
+			run: func(lockFile string) error {
+				return chEntryIndex([]string{"-write", "-lock-file", lockFile})
 			},
 		},
 		{

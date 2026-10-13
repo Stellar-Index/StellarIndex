@@ -1,0 +1,66 @@
+# systemd unit: entry index catch-up.
+#
+# Rendered by Ansible. Builds the ledger index of classic-entry activity —
+# stellar.account_entry_ledgers (account, role, ledger) and
+# stellar.asset_entry_ledgers (asset, entry_type, ledger, change counts) —
+# from stellar.ledger_entry_changes (deploy/clickhouse/entry_index.sql).
+#
+# Each run resumes from the entry_index watermark and walks forward in
+# 100k-ledger windows to the lake's contiguous tip, advancing the
+# watermark only for a window it proved complete. A second firing while
+# one runs exits at once on the flock. The index is what per-account and
+# per-asset ledger walks read, so the companion timer keeps it minutes
+# behind the lake rather than days.
+
+[Unit]
+Description=Stellar Index — entry index catch-up
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/deploy/clickhouse/entry_index.sql
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/entry-index
+EnvironmentFile=-/etc/default/stellarindex
+EnvironmentFile=-/etc/default/stellarindex-ops
+
+Environment=CH_ADDR=127.0.0.1:9300
+Environment=EXTRA_FLAGS=
+
+ExecStart=/usr/local/bin/stellarindex-ops ch-entry-index \
+  -ch-addr ${CH_ADDR} \
+  -write \
+  $EXTRA_FLAGS
+
+# De-privileged, same shape as the sibling oneshots.
+User=stellarindex
+Group=stellarindex
+
+ProtectSystem=strict
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+# The builder takes an exclusive flock under /var/lib/stellarindex before
+# it touches ClickHouse and writes its heartbeat textfile for the
+# ops-job alerts; ProtectSystem=strict leaves both directories read-only
+# unless they are listed here.
+ReadWritePaths=/var/lib/stellarindex /var/lib/node_exporter/textfile_collector
+
+# A steady-state run covers a few thousand ledgers in seconds. The ceiling
+# is sized for the initial build, which walks the whole lake in windows
+# and may run for hours; the heartbeat keeps the stall alerts armed
+# throughout, so a hung run is still caught long before this fires.
+TimeoutStartSec=12h
+
+# Host-level memory backstop on the CLIENT process, which holds at most
+# one flush of index rows; the GROUP BY memory is the ClickHouse server's.
+MemoryMax=4G
+MemorySwapMax=0
+# Batch-class weights: this must never starve galexie's captive core.
+CPUWeight=25
+IOWeight=25
+
+[Install]
+WantedBy=multi-user.target

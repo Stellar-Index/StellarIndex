@@ -212,29 +212,39 @@ func EntryHistoryWatermark(ctx context.Context, addr string) (uint32, error) {
 }
 
 func entryHistoryWatermarkOn(ctx context.Context, conn driver.Conn) (uint32, error) {
-	// max() collapses unmerged duplicates; the watermark only ever advances.
-	const q = `SELECT max(thru_ledger) FROM stellar.entry_history_watermark WHERE name = 'entry_history'`
+	return entryWatermarkOn(ctx, conn, entryHistoryWatermarkName)
+}
+
+const entryHistoryWatermarkName = "entry_history"
+
+// entryWatermarkOn reads one named row of stellar.entry_history_watermark; max() collapses unmerged duplicates since a watermark only ever advances.
+func entryWatermarkOn(ctx context.Context, conn driver.Conn, name string) (uint32, error) {
+	const q = `SELECT max(thru_ledger) FROM stellar.entry_history_watermark WHERE name = ?`
 	var wm uint32
-	if err := conn.QueryRow(ctx, q).Scan(&wm); err != nil {
+	if err := conn.QueryRow(ctx, q, name).Scan(&wm); err != nil {
 		if isSchemaAbsent(err) {
 			return 0, nil
 		}
-		return 0, fmt.Errorf("clickhouse: entry-history watermark: %w", err)
+		return 0, fmt.Errorf("clickhouse: %s watermark: %w", name, err)
 	}
 	return wm, nil
 }
 
 // SetEntryHistoryWatermark records completion through `thru` only for a proven, contiguous window (an unproven advance would lose history for good); a window at or below the watermark records nothing.
 func SetEntryHistoryWatermark(ctx context.Context, addr string, from, thru uint32, readTxLedgers uint64) error {
+	return advanceEntryWatermark(ctx, addr, entryHistoryWatermarkName, from, thru, readTxLedgers)
+}
+
+func advanceEntryWatermark(ctx context.Context, addr, name string, from, thru uint32, readTxLedgers uint64) error {
 	if from == 0 || thru < from {
-		return fmt.Errorf("clickhouse: entry-history watermark window [%d,%d] is not a ledger range (genesis is ledger 1)", from, thru)
+		return fmt.Errorf("clickhouse: %s watermark window [%d,%d] is not a ledger range (genesis is ledger 1)", name, from, thru)
 	}
 	conn, err := openRead(ctx, addr)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = conn.Close() }()
-	wm, err := entryHistoryWatermarkOn(ctx, conn)
+	wm, err := entryWatermarkOn(ctx, conn, name)
 	if err != nil {
 		return err
 	}
@@ -246,7 +256,7 @@ func SetEntryHistoryWatermark(ctx context.Context, addr string, from, thru uint3
 	}
 	present, err := windowLedgersPresent(ctx, conn, from, thru)
 	if err != nil {
-		return fmt.Errorf("clickhouse: entry-history window [%d,%d] contiguity: %w", from, thru, err)
+		return fmt.Errorf("clickhouse: %s window [%d,%d] contiguity: %w", name, from, thru, err)
 	}
 	if want := uint64(thru-from) + 1; present != want {
 		return fmt.Errorf("%w: [%d,%d] holds %d of %d ledgers", ErrEntryHistoryHole, from, thru, present, want)
@@ -254,9 +264,9 @@ func SetEntryHistoryWatermark(ctx context.Context, addr string, from, thru uint3
 	if err := entryHistoryWindowCovered(ctx, conn, from, thru, readTxLedgers); err != nil {
 		return err
 	}
-	const q = `INSERT INTO stellar.entry_history_watermark (name, thru_ledger) VALUES ('entry_history', ?)`
-	if err := conn.Exec(ctx, q, thru); err != nil {
-		return fmt.Errorf("clickhouse: set entry-history watermark %d: %w", thru, err)
+	const q = `INSERT INTO stellar.entry_history_watermark (name, thru_ledger) VALUES (?, ?)`
+	if err := conn.Exec(ctx, q, name, thru); err != nil {
+		return fmt.Errorf("clickhouse: set %s watermark %d: %w", name, thru, err)
 	}
 	return nil
 }

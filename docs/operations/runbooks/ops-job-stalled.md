@@ -5,7 +5,7 @@ status: draft
 severity: P3
 ---
 
-# Runbook — `stellarindex_ops_job_heartbeat_stale` / `stellarindex_ops_job_no_progress` / `stellarindex_ops_job_run_failed`
+# Runbook — `stellarindex_ops_job_heartbeat_stale` / `stellarindex_ops_job_no_progress` / `stellarindex_ops_job_run_failed` / `stellarindex_entry_index_lagging`
 
 ## At a glance
 
@@ -349,6 +349,30 @@ record why, because the range is then knowingly un-backfilled.
 - Do not delete the textfile to silence `heartbeat_stale` while the
   window is still meant to be backfilled — that converts a visible hole
   into an invisible one, which is the state this alert exists to end.
+
+## Entry index lagging
+
+`stellarindex_entry_index_lagging` fires when the ledger `ch-entry-index`
+has built through (its heartbeat's `progress_cursor`) trails the
+ledgerstream cursor by more than 20,000 ledgers for 30 minutes, or when
+the job has never reported at all. The index backs per-account and
+per-asset ledger walks, so a stall hides recent activity there while the
+lake stays complete.
+
+1. Is the timer alive? `systemctl list-timers entry-index.timer` and
+   `journalctl -u entry-index.service -n 50`.
+2. A refused window names its reason: `is not contiguous` (lake hole;
+   wait for `ch-backfill`), `skips ledgers below it` (a manual `-from`
+   above the watermark; re-run without `-from`), or `lacks
+   ledger_entry_changes coverage` (rows below the ec-floor carry no
+   `account_id`; set `-floor-ledger <ec-floor>` through `EXTRA_FLAGS` in
+   `/etc/default/entry-index`).
+3. The initial build fires this alert until it catches up. That is
+   progress, not a stall, as long as `progress_cursor` keeps rising
+   between runs.
+4. Re-derive one window by hand after a lake repair:
+   `stellarindex-ops ch-entry-index -ch-addr 127.0.0.1:9300 -from <l> -to <l> -write`.
+   Rows collapse on merge; the watermark never moves down.
 
 ## Related
 

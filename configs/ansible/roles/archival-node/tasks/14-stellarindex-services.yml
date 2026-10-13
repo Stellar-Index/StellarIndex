@@ -1131,6 +1131,8 @@
     - creators-rollup.timer
     - sponsors-rollup.service
     - sponsors-rollup.timer
+    - entry-index.service
+    - entry-index.timer
     - cohort-rollup.service
     - cohort-rollup.timer
     - census-rollup.service
@@ -1189,6 +1191,7 @@
     - holders-rollup.timer
     - creators-rollup.timer
     - sponsors-rollup.timer
+    - entry-index.timer
     - cohort-rollup.timer
     - census-rollup.timer
     - compute-completeness.timer

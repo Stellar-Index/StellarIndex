@@ -1456,6 +1456,33 @@ CREATE TABLE IF NOT EXISTS stellar.entry_history_watermark
 ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY name;
 
+-- ── account_entry_ledgers / asset_entry_ledgers — the entry index: which ledgers an account
+-- (by role) or an asset has classic-entry activity in; no payload. Built by
+-- `stellarindex-ops ch-entry-index` (deploy/clickhouse/entry_index.sql carries the runbook).
+
+CREATE TABLE IF NOT EXISTS stellar.account_entry_ledgers
+(
+    account FixedString(32),
+    role    Enum8('owner' = 1, 'claimant' = 2, 'sponsor' = 3),
+    ledger  UInt32
+)
+ENGINE = ReplacingMergeTree
+PARTITION BY intDiv(ledger, 10000000)
+ORDER BY (account, role, ledger);
+
+CREATE TABLE IF NOT EXISTS stellar.asset_entry_ledgers
+(
+    asset      String,
+    entry_type LowCardinality(String),
+    ledger     UInt32,
+    n_created  UInt32,
+    n_updated  UInt32,
+    n_removed  UInt32
+)
+ENGINE = ReplacingMergeTree
+PARTITION BY intDiv(ledger, 10000000)
+ORDER BY (asset, entry_type, ledger);
+
 -- ── trades_by_account — PG trades re-keyed account-first (ADR-0048 serve-by-query-shape) ──
 -- One row per (account, trade): the taker, plus the maker when it is a different account.
 -- Populated by `ch-rebuild -write -sdex -trades-by-account` (no CH trades table to hang an MV on);
