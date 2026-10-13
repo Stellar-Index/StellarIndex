@@ -368,9 +368,9 @@ func TestObserver_DecodeRejectsForeignBalanceShapes(t *testing.T) {
 	}
 }
 
-// TestObserver_EvictedBalanceIsObservedAsRemoval pins, through the real dispatcher, that a SAC balance archived by TTL lapse
-// (in no transaction meta) is seen as a removal; otherwise the last write stands forever and served SAC supply stays above truth.
-func TestObserver_EvictedBalanceIsObservedAsRemoval(t *testing.T) {
+// TestObserver_EvictedPersistentBalanceStaysServed pins, through the real dispatcher, that a persistent SAC balance archived by
+// TTL lapse (in no transaction meta) is NOT observed as a removal: it is restorable and still owed, so the served balance stands.
+func TestObserver_EvictedPersistentBalanceStaysServed(t *testing.T) {
 	const assetKey = "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 	o, err := NewObserver(map[string]string{cSAC: assetKey})
 	if err != nil {
@@ -384,9 +384,34 @@ func TestObserver_EvictedBalanceIsObservedAsRemoval(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProcessLedger: %v", err)
 	}
+	if len(evs) != 0 {
+		t.Fatalf("the archived persistent SAC balance produced %d observations, want 0 — "+
+			"an archived entry is restorable; the lake and the token's total_supply still count it", len(evs))
+	}
+	if n := o.UnknownValShapeDrops(); n != 0 {
+		t.Errorf("archived entry counted as %d unknown-shape drops, want 0", n)
+	}
+}
+
+// TestObserver_EvictedTemporaryBalanceIsRemoved pins that a TEMPORARY entry's eviction is a real removal: core deletes it, so the
+// balance must leave the served supply at the eviction ledger.
+func TestObserver_EvictedTemporaryBalanceIsRemoved(t *testing.T) {
+	const assetKey = "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+	o, err := NewObserver(map[string]string{cSAC: assetKey})
+	if err != nil {
+		t.Fatalf("NewObserver: %v", err)
+	}
+	d := dispatcher.New()
+	d.AddEntryDecoder(o)
+
+	lcm := evictionLedger(63_500_000, []xdr.LedgerKey{evictedTemporaryBalanceKey(t, cSAC, gHolder)})
+	evs, err := d.ProcessLedger(lcm, evictionPassphrase)
+	if err != nil {
+		t.Fatalf("ProcessLedger: %v", err)
+	}
 	if len(evs) != 1 {
-		t.Fatalf("the evicted SAC balance produced %d observations, want 1 — "+
-			"an archived entry that is never observed stays in the served supply forever", len(evs))
+		t.Fatalf("the evicted temporary SAC balance produced %d observations, want 1 — "+
+			"a deleted entry that is never observed stays in the served supply forever", len(evs))
 	}
 	obs, ok := evs[0].(Observation)
 	if !ok {
@@ -394,7 +419,7 @@ func TestObserver_EvictedBalanceIsObservedAsRemoval(t *testing.T) {
 	}
 	if !obs.IsRemoval {
 		t.Error("eviction observed with IsRemoval=false — the read path only excludes removals, " +
-			"so the archived balance would keep counting toward supply")
+			"so the deleted balance would keep counting toward supply")
 	}
 	if obs.Balance == nil || obs.Balance.Sign() != 0 {
 		t.Errorf("eviction observed with balance %v, want 0", obs.Balance)
@@ -467,7 +492,15 @@ func TestObserver_RestoreAfterEvictionReturnsTheBalance(t *testing.T) {
 
 const evictionPassphrase = "Test SDF Network ; September 2015"
 
-// evictedBalanceKey is the ledger key core reports when a SAC balance
+// evictedTemporaryBalanceKey is evictedBalanceKey for a temporary entry, which core deletes rather than archives.
+func evictedTemporaryBalanceKey(t *testing.T, contract string, holder string) xdr.LedgerKey {
+	t.Helper()
+	k := evictedBalanceKey(t, contract, holder)
+	k.ContractData.Durability = xdr.ContractDataDurabilityTemporary
+	return k
+}
+
+// evictedBalanceKey is the ledger key core reports when a persistent SAC balance
 // entry's TTL lapses and it is archived out of the live state.
 func evictedBalanceKey(t *testing.T, contract string, holder string) xdr.LedgerKey {
 	t.Helper()

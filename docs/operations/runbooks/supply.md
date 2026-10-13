@@ -277,19 +277,16 @@ below is the generic path.
       ```
       **A `full_history` row with `lake_verified_through` NULL has not
       been fixed**, whatever its `min_ledger_seen` says: it was written
-      before migration 0183, by a binary that neither verified the lake
-      nor, before 2026-07-28, filtered TTL-archived balances (PHO's
-      +157 %). Re-seed it. Only a row with `lake_verified_through` set is
+      before migration 0183, by a binary that did not verify the lake.
+      Re-seed it. Only a row with `lake_verified_through` set is
       evidence: the pass proved `stellar.ledgers` contiguous and
-      hash-linked through that ledger before emitting anything, resolved
-      the TTL of every watched key, and wrote `holders_retracted`
-      tombstones for the removed and archived holders. On such a row,
-      `min_ledger_seen` well below 62,000,000 is the evidence the floor
-      was reached; a high `min_ledger_seen` means the scan found nothing
-      old, which is a different (real) finding. The binary does not stamp
-      a wrapper's row when it could not check the TTL of every watched
-      key, or when the wrapper matched no Balance entry; the pass exits
-      non-zero instead.
+      hash-linked through that ledger before emitting anything and wrote
+      `holders_retracted` tombstones for the removed holders. On such a
+      row, `min_ledger_seen` well below 62,000,000 is the evidence the
+      floor was reached; a high `min_ledger_seen` means the scan found
+      nothing old, which is a different (real) finding. The binary does
+      not stamp a wrapper's row when the wrapper matched no Balance
+      entry; the pass exits non-zero instead.
 - [ ] **Re-seed from the complete append-log.** Dry-run first, per the
       convention; the full-history scan reads
       `stellar.ledger_entry_changes` (complete to genesis) instead of
@@ -310,19 +307,17 @@ below is the generic path.
       reduced to the `ops_job="supply-seed-sac-balances"` heartbeat.
       The printed `sum=<stroops>` per contract should rise by the
       dormant pool holding; that delta is what the gauge was showing.
-      An error naming `no stellar.ttl_live_until row` means this host's
-      TTL projection is not backfilled: run Step 2 of
-      `deploy/clickhouse/ttl_live_until.sql`, then re-run. Do not work
-      around it, because keeping those keys would re-seed archived
-      balances as live. An error naming `lake is not intact over the
+      An error naming `lake is not intact over the
       range it would reduce` names the first missing or mis-linked
       ledger: nothing was written. Heal it (`ch-live-catchup` near the
       tip, `ch-backfill` below it) and re-run; a hole lets the seed elect
       a superseded balance as current. `matched no Balance entry` names a
       `[supply.sac_wrappers]` contract id that found nothing; check it.
-      A holder whose entry was removed or TTL-archived is written as a
-      zero-balance tombstone at the removal or archival ledger and is
-      counted as `retracted=`, not as a holder. The tombstone supersedes
+      A holder whose entry was removed is written as a zero-balance
+      tombstone at the removal ledger and is counted as `retracted=`,
+      not as a holder. An archived (TTL-lapsed) persistent entry is
+      seeded live: it is restorable and the token still owes it, the
+      same rule the lake and the live observer apply. The tombstone supersedes
       any row an earlier pass seeded for that holder, so a re-seed clears
       phantom rows without a DELETE. If an earlier pass of the same
       source seeded more holders than this pass re-seeded and retracted

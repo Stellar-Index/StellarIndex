@@ -37,7 +37,7 @@ type SACBalanceSeedProvenance struct {
 	// intact before a full_history pass emitted anything (migration 0183).
 	// Required for full_history: the source label alone is not evidence.
 	LakeVerifiedThrough *uint32
-	// HoldersRetracted counts the removed / TTL-archived holders written as
+	// HoldersRetracted counts the removed holders written as
 	// tombstones; nil only on rows read back from before migration 0183.
 	HoldersRetracted *int
 	SeededAt         time.Time

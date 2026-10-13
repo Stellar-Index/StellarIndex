@@ -476,6 +476,15 @@ func TestProcessLedger_EvictedKeysReachTheEntryDecoders(t *testing.T) {
 			"a balance written earlier in this same ledger would win the last-writer-wins upsert "+
 			"and the eviction would be discarded", evicted.IntraLedgerSeq, maxTxSeq)
 	}
+	if !evicted.Evicted {
+		t.Error("evicted change not flagged Evicted; a decoder could not tell an archived persistent entry from a real removal")
+	}
+	for i := range spy.seen {
+		if spy.seen[i].Evicted && spy.seen[i].Change.Type != xdr.LedgerEntryChangeTypeLedgerEntryRemoved {
+			t.Errorf("transaction-phase change %d (tx_hash=%q) flagged Evicted; only the evicted-keys walk sets it",
+				i, spy.seen[i].TxHash)
+		}
+	}
 }
 
 // TestProcessLedger_NoEvictionsEmitsNothingExtra is the negative half: a ledger with an empty
