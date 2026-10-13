@@ -290,11 +290,6 @@ func (r *capReader) AssetMovementsBackfilledThru(ctx context.Context) (uint32, e
 	return 0, nil
 }
 
-func (r *capReader) AssetEntryChanges(ctx context.Context, _ string, _ int, _ clickhouse.AssetEntryChangeCursor, _ uint32) ([]clickhouse.AssetEntryChange, error) {
-	r.probe.record(ctx)
-	return nil, nil
-}
-
 func (r *capReader) EntryHistoryCoverage(ctx context.Context) (uint32, uint32, error) {
 	r.probe.record(ctx)
 	return 1, 0, nil

@@ -5,17 +5,26 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strconv"
-	"strings"
+	"slices"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// AssetEntryChangeEntry is one change in GET /v1/assets/{asset_id}/entry-changes; Amount is a decimal string of stroops (ADR-0003), absent for roles holding no balance.
+// assetEntryTypes are the entry types the asset feed asks the entry index for; offers are left out (an order book
+// is not asset history). The index lists trustline changes only, so the feed is a lower bound until the
+// claimable-balance and liquidity-pool legs are indexed.
+var assetEntryTypes = []string{"trustline", "claimable_balance", "liquidity_pool"}
+
+// assetEntryOfferRoles are the projector roles an offer yields; the feed drops them.
+var assetEntryOfferRoles = []string{"selling", "buying"}
+
+// AssetEntryChangeEntry is one change in GET /v1/assets/{asset_id}/entry-changes; Amount is a decimal string of
+// stroops (ADR-0003), the entry's balance of the asset after the change, absent on a pool's own row.
 type AssetEntryChangeEntry struct {
 	Ledger          uint32          `json:"ledger"`
 	LedgerCloseTime string          `json:"ledger_close_time"`
+	IntraLedgerSeq  uint32          `json:"intra_ledger_seq"`
 	TxHash          string          `json:"tx_hash"`
 	OpIndex         int32           `json:"op_index"`
 	ChangeIndex     uint32          `json:"change_index"`
@@ -28,19 +37,18 @@ type AssetEntryChangeEntry struct {
 	Entry           json.RawMessage `json:"entry"`
 }
 
-// AssetEntryChangesView is the wire response for GET /v1/assets/{asset_id}/entry-changes.
+// AssetEntryChangesView is one page of GET /v1/assets/{asset_id}/entry-changes.
 type AssetEntryChangesView struct {
 	Asset         string                  `json:"asset"`
 	Changes       []AssetEntryChangeEntry `json:"changes"`
 	NextCursor    string                  `json:"next_cursor,omitempty"`
 	ThroughLedger uint32                  `json:"through_ledger"`
-	// LowerBound is true until the derive is verified from the lake's first
-	// ledger: older pages may end before the asset's first entry change.
-	LowerBound   bool   `json:"lower_bound"`
-	CoverageNote string `json:"coverage_note"`
+	LowerBound    bool                    `json:"lower_bound"`
+	CoverageNote  string                  `json:"coverage_note"`
 }
 
-// AssetEntryChanges serves GET /v1/assets/{asset_id}/entry-changes newest first from stellar.asset_entry_changes, ceilinged at the ch-entry-history watermark so no half-derived ledger shows.
+// AssetEntryChanges serves GET /v1/assets/{asset_id}/entry-changes: the asset's trustline, claimable-balance and
+// liquidity-pool changes newest first, located through the entry index and decoded from the lake on read.
 func (h *Handler) AssetEntryChanges(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)
@@ -60,37 +68,52 @@ func (h *Handler) AssetEntryChanges(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// The watermark is the page's ceiling; without it no page is provably whole.
-	wm, backfilledThru, err := h.Reader.EntryHistoryCoverage(ctx)
+	wm, err := h.Reader.EntryIndexWatermark(ctx)
 	if err != nil {
 		h.assetEntryChangesError(w, r, ctx, err, asset)
 		return
 	}
-	out := AssetEntryChangesView{Asset: asset, Changes: []AssetEntryChangeEntry{}, ThroughLedger: wm}
-	if wm > 0 {
-		rows, err := h.Reader.AssetEntryChanges(ctx, asset, limit, cur, wm)
-		if err != nil {
-			h.assetEntryChangesError(w, r, ctx, err, asset)
-			return
-		}
-		for _, row := range rows {
-			e, err := assetEntryChangeEntry(row)
-			if err != nil {
-				h.Logger.Error("explorer AssetEntryChanges bad fields JSON", "err", err, "asset", asset, "ledger", row.Ledger)
-				h.WriteProblem(w, r, "https://api.stellarindex.io/errors/internal", "Internal error", http.StatusInternalServerError, "")
-				return
-			}
-			out.Changes = append(out.Changes, e)
-		}
-		if len(rows) == limit {
-			last := rows[len(rows)-1]
-			out.NextCursor = fmt.Sprintf("%d.%s.%d.%d.%s", last.Ledger, last.TxHash, last.OpIndex, last.ChangeIndex, last.Role)
-		}
+	if wm == 0 {
+		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/entry-index-not-built", "Entry changes not yet derived",
+			http.StatusServiceUnavailable, "the entry index has not been built on this deployment yet; retry later")
+		return
 	}
-	// An unresolved SAC id keys no rows, so the empty page is not an answer.
-	out.LowerBound = lookupFailed || backfilledThru == 0
-	out.CoverageNote = assetEntryChangesNote(wm, out.LowerBound, lookupFailed)
+	page, err := h.assetEntryPage(ctx, asset, limit, cur, wm)
+	if err != nil {
+		h.assetEntryChangesError(w, r, ctx, err, asset)
+		return
+	}
+	changes, err := assetEntryChangeEntries(page.rows)
+	if err != nil {
+		h.assetEntryChangesError(w, r, ctx, err, asset)
+		return
+	}
+	partial := page.lowerBound || (cur.IsSet() && cur.Ledger > wm)
+	out := AssetEntryChangesView{
+		Asset: asset, Changes: changes, NextCursor: page.next, ThroughLedger: wm, LowerBound: true,
+		CoverageNote: assetEntryChangesNote(wm, partial, lookupFailed),
+	}
 	h.writeJSONAt(w, out, h.movementsStale(ctx, wm), lookupFailed, time.Time{})
+}
+
+// assetEntryPage walks the asset's indexed ledgers and keeps the projector's asset rows other than an offer's.
+func (h *Handler) assetEntryPage(ctx context.Context, asset string, limit int, cur clickhouse.AssetEntryChangeCursor, wm uint32) (entryPage[clickhouse.AssetEntryChange], error) {
+	src := entryPageSource[clickhouse.AssetEntryChange]{
+		ledgers: func(ctx context.Context, ceiling uint32) ([]uint32, error) {
+			return h.Reader.AssetEntryLedgers(ctx, asset, assetEntryTypes, ceiling, entryLedgerBatch)
+		},
+		stream: h.Reader.StreamEntryChangesForLedgers,
+		keep: func(out []clickhouse.AssetEntryChange, _ []clickhouse.AccountEntryChange, rows []clickhouse.AssetEntryChange) []clickhouse.AssetEntryChange {
+			for _, a := range rows {
+				if a.Asset == asset && !slices.Contains(assetEntryOfferRoles, a.Role) {
+					out = append(out, a)
+				}
+			}
+			return out
+		},
+		key: assetEntryKey,
+	}
+	return walkEntryPage(ctx, src, limit, cur, wm)
 }
 
 func (h *Handler) assetEntryChangesError(w http.ResponseWriter, r *http.Request, ctx context.Context, err error, asset string) {
@@ -107,77 +130,39 @@ func (h *Handler) assetEntryChangesError(w http.ResponseWriter, r *http.Request,
 	h.WriteProblem(w, r, "https://api.stellarindex.io/errors/internal", "Internal error", http.StatusInternalServerError, "")
 }
 
-func assetEntryChangeEntry(row clickhouse.AssetEntryChange) (AssetEntryChangeEntry, error) {
-	entry := json.RawMessage(row.Fields)
-	if !json.Valid(entry) {
-		return AssetEntryChangeEntry{}, fmt.Errorf("fields is not JSON")
+func assetEntryChangeEntries(rows []clickhouse.AssetEntryChange) ([]AssetEntryChangeEntry, error) {
+	out := make([]AssetEntryChangeEntry, 0, len(rows))
+	for _, a := range rows {
+		entry := json.RawMessage(a.Fields)
+		if !json.Valid(entry) {
+			return nil, fmt.Errorf("ledger %d change %s/%d/%d: fields is not JSON", a.Ledger, a.TxHash, a.OpIndex, a.ChangeIndex)
+		}
+		e := AssetEntryChangeEntry{
+			Ledger: a.Ledger, LedgerCloseTime: a.CloseTime.UTC().Format(time.RFC3339), IntraLedgerSeq: a.IntraLedgerSeq,
+			TxHash: a.TxHash, OpIndex: a.OpIndex, ChangeIndex: a.ChangeIndex, Role: a.Role, EntryType: a.EntryType,
+			ChangeType: a.ChangeType, Changed: a.Changed, Account: a.Account, Entry: entry,
+		}
+		if e.Changed == nil {
+			e.Changed = []string{}
+		}
+		if a.Balance != nil {
+			e.Amount = a.Balance.String()
+		}
+		out = append(out, e)
 	}
-	e := AssetEntryChangeEntry{
-		Ledger:          row.Ledger,
-		LedgerCloseTime: row.CloseTime.UTC().Format(time.RFC3339),
-		TxHash:          row.TxHash,
-		OpIndex:         row.OpIndex,
-		ChangeIndex:     row.ChangeIndex,
-		Role:            row.Role,
-		EntryType:       row.EntryType,
-		ChangeType:      row.ChangeType,
-		Changed:         row.Changed,
-		Account:         row.Account,
-		Entry:           entry,
-	}
-	if e.Changed == nil {
-		e.Changed = []string{}
-	}
-	// An offer's buying side and a pool's own row carry no balance of the asset.
-	if row.Role != "buying" && row.Role != "pool" && row.Balance != nil {
-		e.Amount = row.Balance.String()
-	}
-	return e, nil
+	return out, nil
 }
 
-func assetEntryChangesNote(wm uint32, lowerBound, lookupFailed bool) string {
-	switch {
-	case lookupFailed:
-		return "the asset's contract could not be resolved to a classic asset; this page may be incomplete"
-	case wm == 0:
-		return "entry history has not been derived on this deployment; no changes can be shown"
-	case lowerBound:
-		return fmt.Sprintf("entry changes through ledger %d; the derive is not yet verified from the lake's first ledger, so older history may be missing", wm)
-	default:
-		return fmt.Sprintf("every trustline, offer and claimable-balance change for this asset through ledger %d", wm)
+func assetEntryChangesNote(wm uint32, partial, lookupFailed bool) string {
+	note := fmt.Sprintf("trustline, claimable-balance and liquidity-pool changes of this asset, decoded from the ledger-entry-change "+
+		"lake through ledger %d; offers are not served here; the entry index lists trustline changes only, so a "+
+		"claimable-balance or liquidity-pool change appears only in a ledger where a trustline of the asset also changed; "+
+		"ledgers %d to %d carry the earlier intra_ledger_seq numbering", wm, entryChangesOldNumberingFrom, entryChangesOldNumberingThru)
+	if lookupFailed {
+		note += "; the contract could not be resolved to a classic asset, so this page may be incomplete"
 	}
-}
-
-// parseEntryChangeCursor reads "ledger.tx_hash.op_index.change_index.role".
-// op_index is -1 for tx-level changes and tx_hash is empty for upgrade-level ones.
-func (h *Handler) parseEntryChangeCursor(w http.ResponseWriter, r *http.Request) (clickhouse.AssetEntryChangeCursor, bool) {
-	raw := r.URL.Query().Get("cursor")
-	if raw == "" {
-		return clickhouse.AssetEntryChangeCursor{}, true
+	if partial {
+		note += "; this page is partial: follow next_cursor"
 	}
-	bad := func() (clickhouse.AssetEntryChangeCursor, bool) {
-		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/invalid-cursor",
-			"Invalid cursor", http.StatusBadRequest,
-			"cursor must be an opaque value returned in a prior next_cursor")
-		return clickhouse.AssetEntryChangeCursor{}, false
-	}
-	parts := strings.Split(raw, ".")
-	if len(parts) != 5 || parts[4] == "" {
-		return bad()
-	}
-	ledger, err := strconv.ParseUint(parts[0], 10, 32)
-	if err != nil || ledger == 0 {
-		return bad()
-	}
-	opIdx, err := strconv.ParseInt(parts[2], 10, 32)
-	if err != nil || opIdx < -1 {
-		return bad()
-	}
-	changeIdx, err := strconv.ParseUint(parts[3], 10, 32)
-	if err != nil {
-		return bad()
-	}
-	return clickhouse.AssetEntryChangeCursor{
-		Ledger: uint32(ledger), TxHash: parts[1], OpIndex: int32(opIdx), ChangeIndex: uint32(changeIdx), Role: parts[4],
-	}, true
+	return note
 }

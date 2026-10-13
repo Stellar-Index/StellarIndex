@@ -348,10 +348,6 @@ func (s *stubExplorerReader) AssetMovementsBackfilledThru(context.Context) (uint
 	return 0, s.err
 }
 
-func (s *stubExplorerReader) AssetEntryChanges(context.Context, string, int, clickhouse.AssetEntryChangeCursor, uint32) ([]clickhouse.AssetEntryChange, error) {
-	return nil, s.err
-}
-
 func (s *stubExplorerReader) EntryHistoryCoverage(context.Context) (uint32, uint32, error) {
 	return 0, 0, s.err
 }
