@@ -122,3 +122,23 @@ func TestPublicRoutes_MatchOpenAPISecurityNone(t *testing.T) {
 		t.Errorf("handlePublic routes != spec security:[] ops\n got: %v\nwant: %v", got, want)
 	}
 }
+
+// TestTrailingSlashRedirectCarriesCORS: the trailing-slash 308 must carry Access-Control-Allow-Origin, otherwise browsers kill
+// the cross-origin redirect and every trailing-slash API URL is as dead as the 404 it prevents.
+func TestTrailingSlashRedirectCarriesCORS(t *testing.T) {
+	s := New(Options{
+		CORS: middleware.CORS(middleware.CORSOptions{
+			AllowedOrigins: []string{"https://stellarindex.io"},
+		}),
+	})
+	req := httptest.NewRequest(http.MethodGet, "/v1/assets/native/", nil)
+	req.Header.Set("Origin", "https://stellarindex.io")
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusPermanentRedirect {
+		t.Fatalf("status = %d, want 308", rec.Code)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "https://stellarindex.io" {
+		t.Fatalf("Access-Control-Allow-Origin = %q on the 308 — browsers kill this redirect (S-009)", got)
+	}
+}
