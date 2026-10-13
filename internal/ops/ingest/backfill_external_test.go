@@ -14,6 +14,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	externalkraken "github.com/Stellar-Index/StellarIndex/internal/sources/external/kraken"
+	externalvendorcsv "github.com/Stellar-Index/StellarIndex/internal/sources/external/vendorcsv"
 )
 
 // fakeTradeInserter is a DB-free tradeInserter that fails on the listed TxHash keys (or every insert once infra=true,
@@ -344,6 +345,83 @@ type fakeForeignProbe struct {
 func (f *fakeForeignProbe) TradesInWindowOutside(_ context.Context, _ string, _ canonical.Pair, _, to time.Time, keep []canonical.Trade) (int64, time.Time, error) {
 	f.to, f.keep = to, keep
 	return f.n, f.first, f.err
+}
+
+type fakeSourceProbe struct {
+	sources  []string
+	err      error
+	from, to time.Time
+}
+
+func (f *fakeSourceProbe) TradeSourcesInWindow(_ context.Context, _ canonical.Pair, from, to time.Time) ([]string, error) {
+	f.from, f.to = from, to
+	return f.sources, f.err
+}
+
+// TestRefuseMixedBuckets: a vendor series never shares a pair window with a VWAP-eligible series, whichever one is being written.
+func TestRefuseMixedBuckets(t *testing.T) {
+	xlm, _ := canonical.NewCryptoAsset("XLM")
+	usd, _ := canonical.NewFiatAsset("USD")
+	pair, err := canonical.NewPair(xlm, usd)
+	if err != nil {
+		t.Fatalf("NewPair: %v", err)
+	}
+	from := time.Date(2014, 8, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2017, 1, 18, 0, 0, 0, 0, time.UTC)
+	ctx := context.Background()
+	cases := []struct {
+		name   string
+		run    string
+		stored []string
+		want   string // substring of the refusal; "" means allowed
+	}{
+		{"vendor into empty window", externalvendorcsv.SourceName, nil, ""},
+		{"vendor re-run over itself", externalvendorcsv.SourceName, []string{externalvendorcsv.SourceName}, ""},
+		{"vendor beside poloniex (both non-VWAP)", externalvendorcsv.SourceName, []string{"poloniex_via_btc"}, ""},
+		{"vendor into kraken rows", externalvendorcsv.SourceName, []string{"kraken"}, "already has kraken rows"},
+		{"kraken into vendor rows", "kraken", []string{"coingecko_daily"}, "already has coingecko_daily rows"},
+		{"kraken over kraken", "kraken", []string{"kraken"}, ""},
+	}
+	for _, tc := range cases {
+		probe := &fakeSourceProbe{sources: tc.stored}
+		err := refuseMixedBuckets(ctx, probe, tc.run, pair, from, to)
+		if !probe.from.Equal(from) || !probe.to.Equal(to) {
+			t.Errorf("%s: probe window = [%s, %s)", tc.name, probe.from, probe.to)
+		}
+		switch {
+		case tc.want == "" && err != nil:
+			t.Errorf("%s: err = %v, want nil", tc.name, err)
+		case tc.want != "" && !errors.Is(err, errBackfillMixedBuckets):
+			t.Errorf("%s: err = %v, want errBackfillMixedBuckets", tc.name, err)
+		case tc.want != "" && !strings.Contains(err.Error(), tc.want):
+			t.Errorf("%s: refusal does not name the stored series: %v", tc.name, err)
+		}
+	}
+	boom := errors.New("boom")
+	if err := refuseMixedBuckets(ctx, &fakeSourceProbe{err: boom}, "kraken", pair, from, to); !errors.Is(err, boom) {
+		t.Errorf("probe error not wrapped: %v", err)
+	}
+}
+
+// TestBuildBackfiller_VendorCSV: -file is the vendor source's only input and is refused elsewhere.
+func TestBuildBackfiller_VendorCSV(t *testing.T) {
+	if _, _, err := buildBackfiller("kraken", "XLM/USD", "x.csv"); err == nil || !strings.Contains(err.Error(), "-file applies only") {
+		t.Errorf("kraken with -file: err = %v", err)
+	}
+	if _, _, err := buildBackfiller(externalvendorcsv.SourceName, "XLM/USD", ""); err == nil || !strings.Contains(err.Error(), "requires -file") {
+		t.Errorf("vendor without -file: err = %v", err)
+	}
+	if _, _, err := buildBackfiller(externalvendorcsv.SourceName, "XLM/EUR", "x.csv"); err == nil || !strings.Contains(err.Error(), "only -pair XLM/USD") {
+		t.Errorf("vendor with XLM/EUR: err = %v", err)
+	}
+	b, pair, err := buildBackfiller(externalvendorcsv.SourceName, "XLM/USD", "x.csv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, ok := b.(*externalvendorcsv.Backfiller)
+	if !ok || v.Path != "x.csv" || pair.String() != "crypto:XLM/fiat:USD" {
+		t.Errorf("got %T %+v pair %s; want *vendorcsv.Backfiller{Path: x.csv} crypto:XLM/fiat:USD", b, b, pair)
+	}
 }
 
 // TestRefuseForeignRows_RefusesRowsTheRunWouldNotRewrite: -allow-overlap re-runs at the granularity that wrote the rows; a coarser rewrite is refused, naming the first such row.

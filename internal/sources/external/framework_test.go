@@ -61,7 +61,7 @@ func TestIsOnChain_Partition(t *testing.T) {
 		// FX
 		"massive": true, "exchangeratesapi": true,
 		// aggregators
-		"coingecko": true, "coinmarketcap": true, "cryptocompare": true,
+		"coingecko": true, "coinmarketcap": true, "cryptocompare": true, "coingecko_daily": true,
 		// sovereign anchor
 		"ecb": true,
 		// Ethereum oracle (JSON-RPC), not Stellar
@@ -94,6 +94,24 @@ func TestRegistry_TiingoIsReferenceOnly(t *testing.T) {
 	}
 	if IsOnChain("tiingo") {
 		t.Error("IsOnChain(tiingo) = true; it is an off-chain vendor API")
+	}
+}
+
+// A vendor's daily close replayed from a file is a history-only reference series: credited,
+// weightless, off-chain, never polled and never a VWAP input.
+func TestRegistry_CoinGeckoDailyIsHistoryOnly(t *testing.T) {
+	m, ok := Registry["coingecko_daily"]
+	if !ok {
+		t.Fatal("coingecko_daily missing from Registry")
+	}
+	if m.Class != ClassAggregator || m.IncludeInVWAP || m.DefaultWeight != 0 || m.Paid || m.Credit != "CoinGecko" {
+		t.Errorf("coingecko_daily = %+v; want ClassAggregator, IncludeInVWAP false, DefaultWeight 0, Paid false, Credit CoinGecko", m)
+	}
+	if m.OracleResolution != 0 || !m.BackfillAvailable {
+		t.Errorf("coingecko_daily = %+v; want OracleResolution 0 (never polled) and BackfillAvailable true", m)
+	}
+	if IsOnChain("coingecko_daily") {
+		t.Error("IsOnChain(coingecko_daily) = true; it is an off-chain vendor series")
 	}
 }
 
