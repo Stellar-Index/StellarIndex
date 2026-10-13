@@ -1858,7 +1858,13 @@ export interface paths {
          *     key encoding is unknown.
          *
          *     200 + empty array when nothing's been detected or the reader
-         *     isn't wired (feature-gated, like /v1/lending/pools).
+         *     isn't wired (feature-gated, like /v1/lending/pools). An empty or
+         *     short page is only "quiet" when `flags.detectors_partial` is
+         *     absent: it is set when the detection worker has not completed a
+         *     run within 15 minutes, when its last run could not resolve every
+         *     intra-ledger tx order from the lake (so `sandwich` and
+         *     `oracle_sandwich` ran on a partial map or not at all), or when
+         *     the worker's heartbeat could not be read.
          */
         get: operations["listMevEvents"];
         put?: never;
@@ -7902,6 +7908,11 @@ export interface components {
              * @default false
              */
             under_review: boolean;
+            /**
+             * @description Set on `/v1/mev` when the aggregator's MEV detection worker has not completed a run within 15 minutes, when its last run could not resolve every intra-ledger tx order from the lake (the `sandwich` and `oracle_sandwich` detectors ran on a partial map or not at all), or when the worker's heartbeat could not be read. An empty or short feed under this flag is a detection gap, not a quiet network. Omitted when false.
+             * @default false
+             */
+            detectors_partial: boolean;
         };
         /**
          * @description Present on list endpoints when more rows exist beyond the
@@ -16920,7 +16931,7 @@ export interface operations {
                             quote_id?: string;
                             tx_hashes?: string[];
                             accounts?: string[];
-                            /** @description Pattern evidence: every kind carries assets, sources and a note, plus its own legs / roles / oracle refs / fills. `notional_usd` sums the legs' trade-time USD value; `notional_usd_lower_bound: true` means at least one leg had none and was left out, so the notional is a lower bound; `notional_usd_estimated: true` means at least one summed leg was valued at the newest unfrozen XLM/USD anchor minute within the hour before the trade rather than a stored trade-time USD volume (a stored volume is taken as stamped and is not re-checked against a freeze recorded after it); the key is absent on events detected before it existed, so absence is unknown, not false. */
+                            /** @description Pattern evidence: every kind carries assets, sources and a note, plus its own legs / roles / oracle refs / fills. `notional_usd` sums the legs' trade-time USD value; `notional_usd_lower_bound: true` means at least one leg had none and was left out, so the notional is a lower bound; `notional_usd_estimated: true` means at least one summed leg was valued at the newest unfrozen XLM/USD anchor minute within the hour before the trade rather than a stored trade-time USD volume; the key is absent on events detected before it existed, so absence is unknown, not false. */
                             detail?: Record<string, never>;
                             /** @description Reserved attacker-profit estimate; null for every kind (profit is not estimated, and trade notional is in detail.notional_usd). */
                             profit_usd?: string | null;

@@ -37,6 +37,12 @@ type TxOrderResolver interface {
 	TxIndexes(ctx context.Context, hashes []string) (map[string]uint32, error)
 }
 
+// Heartbeat records a completed detection run (nil is a no-op). full is false when the sandwich
+// detectors did not see every ordering hash: resolver unwired, lookup failed, or hashes missing.
+type Heartbeat interface {
+	Beat(ctx context.Context, full bool)
+}
+
 // StoredEvent is the persistence-ready Candidate; an alias of [domain.MEVStoredEvent].
 type StoredEvent = domain.MEVStoredEvent
 
@@ -134,6 +140,7 @@ type Worker struct {
 	window    time.Duration
 	scanLimit int
 	obs       Observer
+	heartbeat Heartbeat // optional
 }
 
 // Observer records per-run outcomes (nil is a no-op); Truncated fires once per input scan that hit ScanLimit.
@@ -158,6 +165,7 @@ type WorkerConfig struct {
 	Oracles   OracleScanner
 	Auctions  AuctionScanner
 	Order     TxOrderResolver
+	Heartbeat Heartbeat
 }
 
 // NewWorker builds a Worker. scanner + sink are required.
@@ -184,6 +192,7 @@ func NewWorker(scanner TradeScanner, sink Sink, cfg WorkerConfig) *Worker {
 		window:    cfg.Window,
 		scanLimit: cfg.ScanLimit,
 		obs:       obs,
+		heartbeat: cfg.Heartbeat,
 	}
 	if cfg.Order != nil {
 		w.SetOrder(cfg.Order)
@@ -209,7 +218,8 @@ func (w *Worker) RunOnce(ctx context.Context, now time.Time) (detected, inserted
 	cands = append(cands, DetectWashTrades(trades, usd)...)
 
 	oracles := w.scanOracles(ctx, since)
-	cands = append(cands, w.orderedCandidates(ctx, trades, usd, oracles)...)
+	ordered, full := w.orderedCandidates(ctx, trades, usd, oracles)
+	cands = append(cands, ordered...)
 	cands = append(cands, w.cascadeCandidates(ctx, since, oracles)...)
 	detected = len(cands)
 	for _, c := range cands {
@@ -228,6 +238,9 @@ func (w *Worker) RunOnce(ctx context.Context, now time.Time) (detected, inserted
 		}
 	}
 	w.obs.Run("ok", time.Since(start), detected, inserted)
+	if w.heartbeat != nil {
+		w.heartbeat.Beat(ctx, full)
+	}
 	if inserted > 0 {
 		w.logger.Info("mev: detection run", "detected", detected, "inserted", inserted, "scanned", len(trades))
 	}
@@ -298,26 +311,30 @@ func (w *Worker) scanOracles(ctx context.Context, since time.Time) []OracleRef {
 }
 
 // orderedCandidates runs the tx_index-dependent detectors (sandwich + oracle_sandwich) when a lake order resolver is wired; lookups are
-// prefiltered to OrderingTxHashes so the lake round-trip stays bounded.
-func (w *Worker) orderedCandidates(ctx context.Context, trades []canonical.Trade, usd []domain.MEVLegUSD, oracles []OracleRef) []Candidate {
+// prefiltered to OrderingTxHashes so the lake round-trip stays bounded. full reports whether every ordering hash was resolved: a
+// missing hash drops that tx from both detectors silently, so the caller surfaces it rather than this tick looking quiet.
+func (w *Worker) orderedCandidates(ctx context.Context, trades []canonical.Trade, usd []domain.MEVLegUSD, oracles []OracleRef) (cands []Candidate, full bool) {
 	orderPtr := w.order.Load()
 	if orderPtr == nil {
-		return nil
+		return nil, false
 	}
 	order := *orderPtr
 	hashes := OrderingTxHashes(trades, oracles)
 	if len(hashes) == 0 {
-		return nil
+		return nil, true
 	}
 	txIdx, err := order.TxIndexes(ctx, hashes)
 	if err != nil {
 		if ctx.Err() == nil {
 			w.logger.Warn("mev: lake tx-order lookup failed — skipping sandwich detectors this tick", "err", err, "hashes", len(hashes))
 		}
-		return nil
+		return nil, false
+	}
+	if len(txIdx) < len(hashes) {
+		w.logger.Warn("mev: lake tx-order lookup incomplete — sandwich detectors ran on a partial map", "missing", len(hashes)-len(txIdx), "hashes", len(hashes))
 	}
 	out := DetectSandwiches(trades, usd, txIdx)
-	return append(out, DetectOracleSandwiches(trades, usd, oracles, txIdx)...)
+	return append(out, DetectOracleSandwiches(trades, usd, oracles, txIdx)...), len(txIdx) >= len(hashes)
 }
 
 // cascadeCandidates runs the liquidation-cascade detector when an

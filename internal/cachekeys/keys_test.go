@@ -736,3 +736,15 @@ func TestAPIKeyIndex(t *testing.T) {
 		}
 	}
 }
+
+func TestMEVHeartbeat(t *testing.T) {
+	if got := cachekeys.MEVHeartbeat().String(); got != "mev:heartbeat" {
+		t.Errorf("key = %q, want mev:heartbeat", got)
+	}
+	if cachekeys.MEVHeartbeatTTL != 15*time.Minute {
+		t.Errorf("ttl = %v, want three 5-minute ticks", cachekeys.MEVHeartbeatTTL)
+	}
+	if cachekeys.MEVHeartbeatFull == cachekeys.MEVHeartbeatPartial {
+		t.Error("full and partial values collide")
+	}
+}

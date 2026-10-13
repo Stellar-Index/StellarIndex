@@ -599,3 +599,32 @@ func sortStrings(ss []string) {
 		}
 	}
 }
+
+// ─── MEV detection heartbeat ─────────────────────────────────────
+//
+// Wire shape: `mev:heartbeat`
+// Value: [MEVHeartbeatFull] when the last completed detection run had the lake tx-order resolver
+// (sandwich and oracle_sandwich detectors ran), [MEVHeartbeatPartial] when it ran without one.
+// Absence means no run completed within [MEVHeartbeatTTL]; /v1/mev reports both as
+// flags.detectors_partial.
+//
+// Writer: the aggregator's MEV worker at the end of each successful run. Reader: the API's
+// MEVPulse looker. TTL: [MEVHeartbeatTTL], three worker ticks, so one missed tick is not a gap.
+
+// MEVHeartbeatKey is the typed Redis key for the `mev:heartbeat` singleton.
+type MEVHeartbeatKey string
+
+// String returns the wire-format key.
+func (k MEVHeartbeatKey) String() string { return string(k) }
+
+// MEVHeartbeat returns the detection heartbeat key.
+func MEVHeartbeat() MEVHeartbeatKey { return MEVHeartbeatKey("mev:heartbeat") }
+
+// MEVHeartbeat values: whether the run had the tx-order resolver.
+const (
+	MEVHeartbeatFull    = "full"
+	MEVHeartbeatPartial = "partial"
+)
+
+// MEVHeartbeatTTL is the heartbeat's expiry: three 5-minute worker ticks.
+const MEVHeartbeatTTL = 15 * time.Minute

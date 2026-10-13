@@ -720,11 +720,16 @@ func run(cfgPath string, dryRun bool) error {
 	// reachable) sandwich / oracle-sandwich, which need the intra-ledger tx order only the
 	// ClickHouse lake carries (stellar.tx_hash_index). Idempotent via the dedup key, so
 	// overlapping windows are safe.
+	mevHeartbeat, err := mev.NewRedisHeartbeat(mev.HeartbeatOptions{Cache: rdb, Logger: logger.With("component", "mev")})
+	if err != nil {
+		return fmt.Errorf("mev heartbeat: %w", err)
+	}
 	mevCfg := mev.WorkerConfig{
-		Logger:   logger.With("component", "mev"),
-		Observer: mevObserver{},
-		Oracles:  store,
-		Auctions: store,
+		Logger:    logger.With("component", "mev"),
+		Observer:  mevObserver{},
+		Oracles:   store,
+		Auctions:  store,
+		Heartbeat: mevHeartbeat,
 	}
 	mevWorker := mev.NewWorker(store, store, mevCfg)
 	if addr := cfg.Storage.ClickHouseAddr; addr != "" {
