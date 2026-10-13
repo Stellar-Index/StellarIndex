@@ -185,6 +185,22 @@ func (downReader) EntryHistoryCoverage(context.Context) (uint32, uint32, error) 
 	return 0, 0, errLakeDown
 }
 
+func (downReader) EntryIndexWatermark(context.Context) (uint32, error) {
+	return 0, errLakeDown
+}
+
+func (downReader) AccountEntryLedgers(context.Context, string, []string, uint32, int) ([]uint32, error) {
+	return nil, errLakeDown
+}
+
+func (downReader) AssetEntryLedgers(context.Context, string, []string, uint32, int) ([]uint32, error) {
+	return nil, errLakeDown
+}
+
+func (downReader) StreamEntryChangesForLedgers(context.Context, []uint32, func(clickhouse.EntryHistorySourceRow) error) error {
+	return errLakeDown
+}
+
 func (downReader) Cap67MovementsWatermark(context.Context) (uint32, error) {
 	return 0, errLakeDown
 }
@@ -280,6 +296,7 @@ func lakeDownCases() []lakeDownCase {
 		{"AccountTransactions", "/v1/accounts/" + validTestAccount + "/transactions", acct, (*Handler).AccountTransactions},
 		{"AccountOperations", "/v1/accounts/" + validTestAccount + "/operations", acct, (*Handler).AccountOperations},
 		{"AccountMovements", "/v1/accounts/" + validTestAccount + "/movements", acct, (*Handler).AccountMovements},
+		{"AccountEntryChanges", "/v1/accounts/" + validTestAccount + "/entry-changes", acct, (*Handler).AccountEntryChanges},
 		{"AccountActivity", "/v1/accounts/" + validTestAccount + "/activity", acct, (*Handler).AccountActivity},
 		{"AccountCreators", "/v1/accounts/" + validTestAccount + "/creators", acct, (*Handler).AccountCreators},
 		{"AccountSponsors", "/v1/accounts/" + validTestAccount + "/sponsors", acct, (*Handler).AccountSponsors},
@@ -377,6 +394,7 @@ func TestExplorerReads_BoundedByReadTimeout(t *testing.T) {
 		{"AccountTransactions", "/v1/accounts/" + validTestAccount + "/transactions", map[string]string{"g_strkey": validTestAccount}, (*Handler).AccountTransactions},
 		{"AccountOperations", "/v1/accounts/" + validTestAccount + "/operations", map[string]string{"g_strkey": validTestAccount}, (*Handler).AccountOperations},
 		{"AccountMovements", "/v1/accounts/" + validTestAccount + "/movements", map[string]string{"g_strkey": validTestAccount}, (*Handler).AccountMovements},
+		{"AccountEntryChanges", "/v1/accounts/" + validTestAccount + "/entry-changes", map[string]string{"g_strkey": validTestAccount}, (*Handler).AccountEntryChanges},
 		{"AccountState", "/v1/accounts/" + validTestAccount, map[string]string{"g_strkey": validTestAccount}, (*Handler).AccountState},
 		{"AssetHolders", "/v1/assets/native/holders", map[string]string{"asset_id": "native"}, (*Handler).AssetHolders},
 		{"AssetEntryChanges", "/v1/assets/native/entry-changes", map[string]string{"asset_id": "native"}, (*Handler).AssetEntryChanges},

@@ -190,6 +190,14 @@ type ExplorerReader interface {
 	// EntryHistoryCoverage is the ch-entry-history derive watermark and the
 	// from-genesis backfill marker (0 = not derived / not verified).
 	EntryHistoryCoverage(ctx context.Context) (watermark, backfilledThru uint32, err error)
+	// EntryIndexWatermark is the ledger ch-entry-index has built the entry indexes through (0 = not built).
+	EntryIndexWatermark(ctx context.Context) (uint32, error)
+	// AccountEntryLedgers lists, newest first, the indexed ledgers at or below maxLedger for the raw account key.
+	AccountEntryLedgers(ctx context.Context, account string, roles []string, maxLedger uint32, limit int) ([]uint32, error)
+	// AssetEntryLedgers lists, newest first, the indexed ledgers at or below maxLedger for the asset.
+	AssetEntryLedgers(ctx context.Context, asset string, entryTypes []string, maxLedger uint32, limit int) ([]uint32, error)
+	// StreamEntryChangesForLedgers streams the listed ledgers' entry-change source rows in the projector's order.
+	StreamEntryChangesForLedgers(ctx context.Context, ledgers []uint32, fn func(clickhouse.EntryHistorySourceRow) error) error
 	// Cap67MovementsWatermark is the highest ledger the cap67 movement derive has completed
 	// through (0 when not provisioned). The movements merge floors its Postgres arm at watermark+1
 	// and ceilings the ClickHouse arm at the watermark: gap-free, no double count. Cached (~60s).

@@ -300,6 +300,26 @@ func (r *capReader) EntryHistoryCoverage(ctx context.Context) (uint32, uint32, e
 	return 1, 0, nil
 }
 
+func (r *capReader) EntryIndexWatermark(ctx context.Context) (uint32, error) {
+	r.probe.record(ctx)
+	return 1, nil
+}
+
+func (r *capReader) AccountEntryLedgers(ctx context.Context, _ string, _ []string, _ uint32, _ int) ([]uint32, error) {
+	r.probe.record(ctx)
+	return nil, nil
+}
+
+func (r *capReader) AssetEntryLedgers(ctx context.Context, _ string, _ []string, _ uint32, _ int) ([]uint32, error) {
+	r.probe.record(ctx)
+	return nil, nil
+}
+
+func (r *capReader) StreamEntryChangesForLedgers(ctx context.Context, _ []uint32, _ func(clickhouse.EntryHistorySourceRow) error) error {
+	r.probe.record(ctx)
+	return nil
+}
+
 // capPositions is a PositionsReader that shares the same probe — the positions
 // endpoint's lake dependency is Postgres (this seam), so its bounded context
 // arrives here rather than at capReader.

@@ -13016,6 +13016,123 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
+  /accounts/{g_strkey}/entry-changes:
+    get:
+      operationId: getAccountEntryChanges
+      x-stability: experimental
+      tags: [explorer]
+      summary: Every ledger-entry change an account took part in, newest first, decoded from the lake on read.
+      description: |
+        The account's ledger-entry history (`account`, `trustline`, `offer`,
+        `data` and `claimable_balance` entries), located through the entry
+        index (`stellar.account_entry_ledgers`, built by `ch-entry-index`)
+        and decoded from the lake's `ledger_entry_changes` on read. `role`
+        is `owner` (the entry belongs to the account), `claimant` (the
+        account is a claimant of a claimable balance) or `sponsor` (the
+        account sponsors the entry); `?role=` takes a comma-separated subset
+        and defaults to `owner,claimant`. `entry` is the decoded entry (its
+        last state for a removal) and `changed` names the fields an update
+        altered. `amount` is the entry's post-change balance of `asset` as an
+        integer string of stroops (ADR-0003); it is omitted on sponsor rows
+        and on entries without a balance.
+
+        ORDER AND PAGING: newest first by `(ledger, intra_ledger_seq)`, the
+        order the changes were applied; keyset-paged with `?cursor=` (echo
+        back `next_cursor`). Ledgers 39,000,000 to 53,999,999 carry an
+        earlier `intra_ledger_seq` numbering, named in `coverage_note`.
+
+        CEILING: the feed ends at `through_ledger`, the entry index's
+        watermark. Until the index is built on the deployment the route
+        answers 503 (`entry-index-not-built`).
+
+        LOWER BOUND: a page may end short of `limit` when the walk over a
+        sparse role hit its pass cap; it then carries `lower_bound` true and
+        a `next_cursor` that resumes below the last ledger walked, so a short
+        page is not the end of the account's history.
+      parameters:
+        - name: g_strkey
+          in: path
+          required: true
+          description: |
+            Account id, a 56-character G-strkey (SEP-23); an M-address
+            reads as its base account. Malformed strkeys return 400.
+          schema:
+            type: string
+        - { name: role, in: query, description: "Comma-separated subset of owner, claimant, sponsor (default owner,claimant). Unknown roles return 400.", schema: { type: string } }
+        - { name: limit, in: query, description: "Maximum changes to return (1-200, default 25). Out-of-range values return 400.", schema: { type: integer, minimum: 1, maximum: 200, default: 25 } }
+        - { name: cursor, in: query, description: Opaque keyset cursor from a prior response's next_cursor., schema: { type: string } }
+      responses:
+        "200":
+          description: The account's entry-change feed.
+          content:
+            application/json:
+              example:
+                data:
+                  account: GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
+                  roles: [owner, claimant]
+                  changes:
+                  - ledger: 64802900
+                    ledger_close_time: '2026-10-06T14:02:29Z'
+                    intra_ledger_seq: 17
+                    tx_hash: be8ac09cf011950987ae7c17badec336ccf24782a03f5573b1f982cb44c98f36
+                    op_index: 0
+                    change_index: 1
+                    role: owner
+                    entry_type: trustline
+                    change_type: updated
+                    changed: [balance]
+                    asset: USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
+                    amount: '1000000000000'
+                    entry: { balance: '1000000000000', limit: '9223372036854775807', flags: 1 }
+                  next_cursor: '64802900.be8ac09cf011950987ae7c17badec336ccf24782a03f5573b1f982cb44c98f36.0.1.owner'
+                  through_ledger: 64802921
+                  lower_bound: false
+                  coverage_note: entry changes where the account is owner or claimant, decoded from the ledger-entry-change lake through ledger 64802921; ledgers 39000000 to 53999999 carry the earlier intra_ledger_seq numbering
+                as_of: '2026-10-06T14:03:31Z'
+                flags:
+                  divergence_warning: false
+                  triangulated: false
+                  reduced_redundancy: false
+                  stale: false
+                  degraded: false
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [account, roles, changes, through_ledger, lower_bound, coverage_note]
+                        properties:
+                          account: { type: string }
+                          roles: { type: array, items: { type: string, enum: [owner, claimant, sponsor] } }
+                          changes:
+                            type: array
+                            items:
+                              type: object
+                              required: [ledger, ledger_close_time, intra_ledger_seq, tx_hash, op_index, change_index, role, entry_type, change_type, changed, entry]
+                              properties:
+                                ledger: { type: integer, format: int64 }
+                                ledger_close_time: { type: string, format: date-time }
+                                intra_ledger_seq: { type: integer, format: int64, description: "Position of the change within its ledger's apply order." }
+                                tx_hash: { type: string, description: "Empty for a change outside any transaction." }
+                                op_index: { type: integer, format: int32, description: "-1 for a transaction-level change (fee, sequence)." }
+                                change_index: { type: integer, format: int64 }
+                                role: { type: string, enum: [owner, claimant, sponsor] }
+                                entry_type: { type: string }
+                                change_type: { type: string }
+                                changed: { type: array, items: { type: string } }
+                                asset: { type: string, description: "The entry's asset (native, CODE-ISSUER); omitted for offers and data entries." }
+                                amount: { type: string, description: "Post-change balance of asset in stroops (ADR-0003); omitted on sponsor rows." }
+                                entry: { type: object, additionalProperties: true, description: "The decoded ledger entry." }
+                          next_cursor: { type: string }
+                          through_ledger: { type: integer, format: int64, description: "Newest ledger this feed may serve (the entry index watermark)." }
+                          lower_bound: { type: boolean, description: "True when the page stopped short of the account's older history; follow next_cursor." }
+                          coverage_note: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
   /accounts/{g_strkey}/movements:
     get:
       operationId: getAccountMovements

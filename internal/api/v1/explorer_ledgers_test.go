@@ -356,6 +356,22 @@ func (s *stubExplorerReader) EntryHistoryCoverage(context.Context) (uint32, uint
 	return 0, 0, s.err
 }
 
+func (s *stubExplorerReader) EntryIndexWatermark(context.Context) (uint32, error) {
+	return 0, s.err
+}
+
+func (s *stubExplorerReader) AccountEntryLedgers(context.Context, string, []string, uint32, int) ([]uint32, error) {
+	return nil, s.err
+}
+
+func (s *stubExplorerReader) AssetEntryLedgers(context.Context, string, []string, uint32, int) ([]uint32, error) {
+	return nil, s.err
+}
+
+func (s *stubExplorerReader) StreamEntryChangesForLedgers(context.Context, []uint32, func(clickhouse.EntryHistorySourceRow) error) error {
+	return s.err
+}
+
 // AccountSponsors mirrors the real reader's contract: a snapshot with no
 // covered span is not servable, however many board rows it carries.
 func (s *stubExplorerReader) AccountSponsors(_ context.Context, limit int, account string) (clickhouse.AccountSponsors, bool, error) {

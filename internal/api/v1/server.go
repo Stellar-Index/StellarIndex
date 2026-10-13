@@ -1311,6 +1311,7 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}/operations", s.explorerHandler.AccountOperations)
 	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}/movements", s.explorerHandler.AccountMovements)
 	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}/positions", s.explorerHandler.AccountPositions)
+	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}/entry-changes", s.explorerHandler.AccountEntryChanges)
 	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}/trades", s.explorerHandler.AccountTrades)
 	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}/activity", s.explorerHandler.AccountActivity)
 	// Sponsorship and account-creation graph for one account.
