@@ -1,9 +1,12 @@
 package freeze_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -613,6 +616,67 @@ func TestWriter_Mark_SinkErrorIsSwallowed(t *testing.T) {
 	if err := w.Mark(context.Background(), asset, quote, "",
 		anomaly.Decision{Action: anomaly.ActionFreeze}); err != nil {
 		t.Fatalf("Mark: sink error must not propagate, got: %v", err)
+	}
+}
+
+// TestWriter_Mark_SinkFailureIsRetriedCountedAndLogged: a sink that keeps failing is called twice, counted once on
+// op=record_freeze and logged at error, so a freeze_events row Redis has but SQL readers lack is never silent.
+func TestWriter_Mark_SinkFailureIsRetriedCountedAndLogged(t *testing.T) {
+	_, rdb := newRedis(t)
+	sink := &recordingSink{err: errExploded}
+	var buf bytes.Buffer
+	w, err := freeze.NewWriter(rdb, 0, freeze.WithEventSink(sink),
+		freeze.WithLogger(slog.New(slog.NewTextHandler(&buf, nil))))
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	asset, quote := nativeUSD(t)
+	counter := obs.AnomalyFreezeLadderWriteFailuresTotal.WithLabelValues("record_freeze")
+	before := testutil.ToFloat64(counter)
+	if err := w.Mark(context.Background(), asset, quote, "0.999500000000",
+		anomaly.Decision{Action: anomaly.ActionFreeze}); err != nil {
+		t.Fatalf("Mark: sink error must not propagate, got: %v", err)
+	}
+	if len(sink.calls) != 2 {
+		t.Fatalf("sink called %d times, want 2 (one retry)", len(sink.calls))
+	}
+	if got := testutil.ToFloat64(counter) - before; got != 1 {
+		t.Errorf("record_freeze failures rose by %v, want 1", got)
+	}
+	logged := buf.String()
+	for _, want := range []string{"level=ERROR", "op=record_freeze", asset.String(), errExploded.Error()} {
+		if !strings.Contains(logged, want) {
+			t.Errorf("error log lacks %q:\n%s", want, logged)
+		}
+	}
+}
+
+// TestWriter_Mark_SinkRetrySucceedsSilently: one transient sink failure is absorbed by the retry: two calls, nothing
+// counted, nothing logged.
+func TestWriter_Mark_SinkRetrySucceedsSilently(t *testing.T) {
+	_, rdb := newRedis(t)
+	sink := &recordingSink{err: errExploded, failN: 1}
+	var buf bytes.Buffer
+	w, err := freeze.NewWriter(rdb, 0, freeze.WithEventSink(sink),
+		freeze.WithLogger(slog.New(slog.NewTextHandler(&buf, nil))))
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	asset, quote := nativeUSD(t)
+	counter := obs.AnomalyFreezeLadderWriteFailuresTotal.WithLabelValues("record_freeze")
+	before := testutil.ToFloat64(counter)
+	if err := w.Mark(context.Background(), asset, quote, "0.999500000000",
+		anomaly.Decision{Action: anomaly.ActionFreeze}); err != nil {
+		t.Fatalf("Mark: %v", err)
+	}
+	if len(sink.calls) != 2 {
+		t.Fatalf("sink called %d times, want 2", len(sink.calls))
+	}
+	if got := testutil.ToFloat64(counter) - before; got != 0 {
+		t.Errorf("record_freeze failures rose by %v after a successful retry, want 0", got)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("a successful retry must not log, got:\n%s", buf.String())
 	}
 }
 

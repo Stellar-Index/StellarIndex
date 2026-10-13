@@ -267,11 +267,14 @@ groups:
           component: aggregator
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/freeze-lifecycle.md#stellarindex_anomaly_freeze_ladder_write_failures
-          summary: "Durable ADR-0019 freeze-ladder write failed on {{ $labels.op }} (P3)"
+          summary: "Durable ADR-0019 freeze write failed on {{ $labels.op }} (P3)"
           description: |
-            A durable freeze-ladder write (migration 0119) did not
-            land on call site `{{ $labels.op }}` (mark_hold|clear) in
-            the last 15 minutes. `mark_hold` failing is the dangerous
+            A durable freeze write (migration 0119) did not land on
+            call site `{{ $labels.op }}` (record_freeze|mark_hold|clear)
+            in the last 15 minutes, after one retry. `record_freeze`
+            failing means the freeze_events row itself is missing, so
+            every SQL reader (anchor exclusion, scans) treats the
+            minute as unfrozen. `mark_hold` failing is the ladder
             direction — the ladder was never recorded, so a Redis
             flush during this freeze would rehydrate nothing and an
             escalated pair would silently release. `clear` failing

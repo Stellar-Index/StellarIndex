@@ -505,10 +505,10 @@ func seedBoundedLabelSeries() {
 	for _, mode := range []string{"auto", "operator", "lapsed"} {
 		AnomalyFreezeReleasedTotal.WithLabelValues(mode)
 	}
-	// Durable-ladder write sites (migration 0119). Bounded set of two;
+	// Durable freeze-row and ladder write sites (migration 0119). Bounded set of three;
 	// seeded because this counter's whole purpose is to make a SILENT
 	// failure visible, and an absent series is itself a silence.
-	for _, op := range []string{"mark_hold", "clear"} {
+	for _, op := range []string{"record_freeze", "mark_hold", "clear"} {
 		AnomalyFreezeLadderWriteFailuresTotal.WithLabelValues(op)
 	}
 	// Privileged-mutation surfaces whose audit row can fail to land, enumerated at the six call
@@ -2403,11 +2403,11 @@ var AnomalyFreezeLadderRehydratedTotal = prometheus.NewCounter(
 	},
 )
 
-// AnomalyFreezeLadderWriteFailuresTotal counts durable ladder writes that did not land, by call site; `mark_hold` is the dangerous direction. Both labels are pre-seeded.
+// AnomalyFreezeLadderWriteFailuresTotal counts durable freeze-event row and ladder writes that did not land, by call site; `record_freeze` and `mark_hold` are the dangerous directions. All labels are pre-seeded.
 var AnomalyFreezeLadderWriteFailuresTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_anomaly_freeze_ladder_write_failures_total",
-		Help: "Durable freeze-ladder writes that did not land, by call site (mark_hold|clear). Sustained non-zero = the Redis-flush protection is inert.",
+		Help: "Durable freeze-event row and freeze-ladder writes that did not land, by call site (record_freeze|mark_hold|clear). Sustained non-zero = SQL readers miss the freeze and the Redis-flush protection is inert.",
 	},
 	[]string{"op"},
 )
