@@ -141,11 +141,14 @@ func suppressScamIssuerPricing(d *AssetDetail) {
 	if d == nil || !issuerPricingWithheld(d) {
 		return
 	}
-	if d.PriceUSD != nil {
+	flagged := pricingguard.IsDirectoryScamFlagged(d.IssuerDirectoryTags)
+	switch {
+	case flagged && (d.PriceUSD != nil || d.PriceWithheldReason != ""):
+		// The flag is this asset's own cause and overrides what a reader-side walk said: a
+		// fiat-quoted read misses the scam gate and folds the flag into `upstream_leg`.
+		d.PriceWithheldReason = PriceWithheldScamIssuer
+	case d.PriceUSD != nil:
 		d.PriceWithheldReason = PriceWithheldUnattributed
-		if pricingguard.IsDirectoryScamFlagged(d.IssuerDirectoryTags) {
-			d.PriceWithheldReason = PriceWithheldScamIssuer
-		}
 	}
 	d.PriceUSD = nil
 	d.MarketCapUSD = nil

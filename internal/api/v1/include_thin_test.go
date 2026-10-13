@@ -671,6 +671,25 @@ func TestIncludeThinXLMCrossStaysGated(t *testing.T) {
 	}
 }
 
+// TestIncludeThinDeclaredPegOwnBookRetries: a declared peg's XLM book is its OWN market, so a
+// floor refusal there reads `substance` and the opt-in releases it, unlike the pivot case above.
+func TestIncludeThinDeclaredPegOwnBookRetries(t *testing.T) {
+	reader := newChokepointReader(nil).thinPair(thinPegID, "native")
+	reader.prices[thinPegID+"/native"] = "6.25000000000000"
+	reader.prices["native/fiat:USD"] = "0.16000000000000"
+	ts := thinServerWith(t, reader, withPegs(t, thinPegID))
+	url := ts.URL + "/v1/price?asset=" + thinPegID + "&quote=fiat:USD"
+
+	defStatus, def := fetch(t, url)
+	if p := problemOf(t, defStatus, def); p["title"] != "Price withheld — market too thin to aggregate" {
+		t.Fatalf("default title %v, want the substance title: %s", p["title"], def)
+	}
+	status, body := fetch(t, url+"&include_thin=true")
+	if status != http.StatusOK || reader.optedReads() == 0 {
+		t.Fatalf("include_thin: status %d, opted reads %d: %s", status, reader.optedReads(), body)
+	}
+}
+
 // TestIncludeThinRetriesOnlyWithheld: the second pass runs only for a
 // substance-shaped withholding that recorded evidence.
 func TestIncludeThinRetriesOnlyWithheld(t *testing.T) {
