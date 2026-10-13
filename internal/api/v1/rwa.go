@@ -852,12 +852,6 @@ func (s *Server) admitClassicCandidates(
 			issuers[c.Issuer] = struct{}{}
 		}
 		admitted[key] = struct{}{}
-		var vetted *rwa.VettedISINBinding
-		if v.Basis == rwa.BasisSep1ISINVetted {
-			if b, ok := rwa.VettedISIN(c.Code, c.Issuer); ok {
-				vetted = &b
-			}
-		}
 		out.members = append(out.members, rwaMember{
 			code:          c.Code,
 			issuer:        c.Issuer,
@@ -865,7 +859,7 @@ func (s *Server) admitClassicCandidates(
 			homeDomain:    c.HomeDomain,
 			anchorAsset:   c.AnchorAsset,
 			isinCollision: rwaISINCollisionOf(c, isinDeclarers),
-			vettedISIN:    vetted,
+			vettedISIN:    rwaVettedBindingOf(v.Basis, c.Code, c.Issuer),
 			basis:         v.Basis,
 			anchorClass:   v.AnchorClass,
 			recognition:   v.Recognition,
@@ -873,6 +867,18 @@ func (s *Server) admitClassicCandidates(
 			dirTags:       e.Tags,
 		})
 	}
+}
+
+// rwaVettedBindingOf returns the hand-vetted binding behind a sep1_isin_vetted verdict, nil for any other basis.
+func rwaVettedBindingOf(basis, code, issuer string) *rwa.VettedISINBinding {
+	if basis != rwa.BasisSep1ISINVetted {
+		return nil
+	}
+	b, ok := rwa.VettedISIN(code, issuer)
+	if !ok {
+		return nil
+	}
+	return &b
 }
 
 // rwaISINDeclarers counts, per declared ISIN, the distinct issuer accounts declaring it across
