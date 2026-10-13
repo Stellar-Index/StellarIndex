@@ -407,8 +407,8 @@ func TestProcessLedger_emptyLedgerYieldsNoOutputs(t *testing.T) {
 }
 
 // TestProcessLedger_EvictedKeysReachTheEntryDecoders: TTL eviction removes an entry without any transaction touching
-// it and appears only in the evicted-keys list, which the tx-meta walk cannot see; without it an archived SAC
-// balance stands forever and served supply stays above the truth.
+// it and appears only in the evicted-keys list, which the tx-meta walk cannot see; without it a temporary entry
+// evicted there stays served, and only the Evicted flag lets a decoder tell an archived entry from a real removal.
 func TestProcessLedger_EvictedKeysReachTheEntryDecoders(t *testing.T) {
 	env, proc := mkEntryWalkTx(t, 0x55, true, nil, []xdr.LedgerEntryChange{accountBalanceChange(1000)})
 	lcm := mkEntryWalkLedger(4244,
@@ -475,6 +475,15 @@ func TestProcessLedger_EvictedKeysReachTheEntryDecoders(t *testing.T) {
 		t.Errorf("evicted change has IntraLedgerSeq %d <= the last transaction-phase change at %d: "+
 			"a balance written earlier in this same ledger would win the last-writer-wins upsert "+
 			"and the eviction would be discarded", evicted.IntraLedgerSeq, maxTxSeq)
+	}
+	if !evicted.Evicted {
+		t.Error("evicted change not flagged Evicted; a decoder could not tell an archived persistent entry from a real removal")
+	}
+	for i := range spy.seen {
+		if spy.seen[i].Evicted && spy.seen[i].TxHash != "" {
+			t.Errorf("transaction-phase change %d (tx_hash=%q) flagged Evicted; only the evicted-keys walk sets it",
+				i, spy.seen[i].TxHash)
+		}
 	}
 }
 

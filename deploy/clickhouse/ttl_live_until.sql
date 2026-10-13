@@ -59,7 +59,7 @@
 --
 -- Operator sequence (the reading binary REFUSES until the table exists): Step 1
 -- (table + MV) → Step 2 (windowed backfill) → Step 3 (verify) → deploy the
--- binaries → re-run `supply seed-sac-balances`.
+-- binaries.
 
 -- ── Step 1: create the projection + MV ───────────────────────────────────────
 -- The MV captures every LIVE ledger_entry_changes insert from the moment it
@@ -178,7 +178,7 @@ WHERE entry_type = 'ttl'
 -- ── ROLLBACK ─────────────────────────────────────────────────────────────────
 -- The projection is additive — nothing else writes or reads it — so rollback
 -- is a plain drop. BUT the reading binary hard-fails every TTL-liveness read
--- (SAC seed, soroswap pair-state) without the table, so dropping it must be
+-- (soroswap pair-state) without the table, so dropping it must be
 -- paired with rolling the binaries back to a build that still has the scan path:
 --   DROP TABLE IF EXISTS stellar.ttl_live_until_mv;
 --   DROP TABLE IF EXISTS stellar.ttl_live_until SYNC;

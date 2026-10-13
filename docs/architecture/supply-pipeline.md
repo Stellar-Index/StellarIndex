@@ -248,7 +248,7 @@ hypertable, PK `contract_id`). Each non-dry-run pass upserts `source`
 0183, `holders_retracted` and `lake_verified_through`. A `full_history` row is
 stamped only after the walk proved `stellar.ledgers` contiguous and hash-linked
 through `lake_verified_through`; one with that column NULL predates the check
-and the TTL-archival filter and is not evidence. On a verified row,
+and is not evidence. On a verified row,
 `min_ledger_seen` well below 62,000,000 proves the floor gap was reached. The
 table is audit-only — never read by `ClassicSupplyAt` /
 `SumSACBalancesAtOrBefore` / `Supply` — and separates "never full-history
@@ -459,7 +459,7 @@ the divergence alert cannot fire for a pair it is not evaluating.
 | Item | Inventory |
 |---|---|
 | `GlobalAssetView` has only `market_cap_usd` / `circulating_supply` (no ath / atl / change_24h_pct), and fills them for fiat only; crypto and stablecoin rely on the per-asset F2 fields | INV-1119 (blocked) |
-| The lake wrote persistent `contract_data` / `contract_code` evictions as `removed`; `emitEvictions` (`internal/storage/clickhouse/extract_entry_changes.go`) now keeps an archived entry current, since it stays restorable from the hot archive. Already-written lake rows still need repair, and current-state reads (seeds, lumen conservation) inherit the error until then | INV-2532 (in progress) |
+| The lake wrote persistent `contract_data` / `contract_code` evictions as `removed`; `emitEvictions` (`internal/storage/clickhouse/extract_entry_changes.go`) now keeps an archived entry current, since it stays restorable from the hot archive. The lake rows were repaired on 2026-10-11 and the served tier now counts archived SAC balances too (INV-2799); the eviction tombstones the old observer wrote on r1 await their own repair | INV-2532 (in progress), INV-2947 (open) |
 | Lumen conservation residual +119,100,885,352 stroops at ledger 64,767,268: the lake holds 11,910 XLM the network does not count. Candidate causes (evictions, a non-native SAC leak, the CAP-76 rule) are undiagnosed | INV-2533 (open) |
 
 ## ADR map

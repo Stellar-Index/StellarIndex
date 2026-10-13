@@ -901,9 +901,11 @@ func TestSACBalanceSeedProvenanceRoundTrip(t *testing.T) {
 	}
 }
 
-// TestSACEvictionFallsOutOfServedSupply is the served-money proof: LedgerCloseMeta with an evicted key, through the
-// dispatcher eviction phase, the sac_balances observer and InsertSACBalanceObservation, into SumSACBalancesAtOrBefore.
-func TestSACEvictionFallsOutOfServedSupply(t *testing.T) {
+// TestSACEvictionStaysInServedSupply is the served-money proof for the eviction policy: LedgerCloseMeta with an evicted
+// key, through the dispatcher eviction phase and the sac_balances observer, changes nothing in SumSACBalancesAtOrBefore.
+// A persistent entry core evicts (CAP-62) is archived, not destroyed: the holder still owns the balance and can restore
+// it, so the served tier keeps counting it, as the lake and the storage-derived Soroban-token path already do.
+func TestSACEvictionStaysInServedSupply(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
@@ -961,19 +963,16 @@ func TestSACEvictionFallsOutOfServedSupply(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProcessLedger(eviction): %v", err)
 	}
-	if len(evs) != 1 {
-		t.Fatalf("eviction ledger produced %d observations, want 1", len(evs))
+	if len(evs) != 0 {
+		t.Fatalf("eviction ledger produced %d observations, want 0: a persistent eviction is archival, not a removal: %+v", len(evs), evs)
 	}
-	persistSAC(t, ctx, store, evs[0].(sac_balances.Observation))
-
-	got := sumSAC(t, ctx, store, assetKey, restoreLedger)
-	if got.Sign() != 0 {
-		t.Fatalf("served SAC component after the eviction = %s, want 0 — the archived balance is still "+
-			"published as live supply and nothing will ever take it back out", got)
+	if got := sumSAC(t, ctx, store, assetKey, restoreLedger); got.Cmp(big.NewInt(1_000_000)) != 0 {
+		t.Fatalf("served SAC component after the eviction = %s, want 1000000 — an archived balance is still owned "+
+			"and restorable, so it stays in served supply", got)
 	}
 
-	// Archival is reversible: a restore must put the balance back, or the fix trades a permanent over-count for a permanent
-	// under-count. It is routed through the dispatcher's entry-change seam, as an ordinary apply-phase change.
+	// A restore comes back as an ordinary apply-phase change through the dispatcher's entry-change seam; it re-observes
+	// the same balance and leaves the served sum where it was.
 	restoreEvs, err := disp.RouteEntryChange(dispatcher.LedgerEntryChangeContext{
 		Ledger:         restoreLedger,
 		ClosedAt:       t0.Add(2 * time.Hour),
@@ -990,8 +989,7 @@ func TestSACEvictionFallsOutOfServedSupply(t *testing.T) {
 	persistSAC(t, ctx, store, restoreEvs[0].(sac_balances.Observation))
 
 	if got := sumSAC(t, ctx, store, assetKey, restoreLedger); got.Cmp(big.NewInt(1_000_000)) != 0 {
-		t.Fatalf("served SAC component after the restore = %s, want 1000000 — an entry brought back out "+
-			"of the archive is live state again", got)
+		t.Fatalf("served SAC component after the restore = %s, want 1000000 — a restore must not double-count", got)
 	}
 }
 

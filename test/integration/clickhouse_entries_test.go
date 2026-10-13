@@ -1096,14 +1096,13 @@ func TestClaimableSeed_WalkStaysBoundedAfterHighLedgerFixtures(t *testing.T) {
 	t.Logf("seed walk: %d windows in %s (budget %s)", windows, elapsed.Round(time.Millisecond), cbsWalkBudget)
 }
 
-// Both SAC seed readers: a watched Balance entry written at lastWrite whose TTL lapsed at liveUntil must return a
-// tombstone at liveUntil+1 with that ledger's close time, not at lastWrite where the seed's top-of-ledger upsert would
-// overwrite the genuine observation and zero the holder across [lastWrite, archival).
-func TestSACSeed_ArchivedHolderRetractedAtArchivalLedger(t *testing.T) {
+// Both SAC seed readers: a watched Balance entry whose TTL lapsed before the lake tip is an archived (evicted,
+// restorable) entry. It stays served at its last write, the policy the live sac_balances observer applies to evicted
+// keys, so neither reader may turn it into a tombstone.
+func TestSACSeed_ArchivedHolderStaysServed(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	addr := clickhouseAddr(t)
-	raw := dialClickHouse(t, ctx, "stellar")
 
 	const (
 		lastWrite = uint32(31_100_000)
@@ -1111,7 +1110,7 @@ func TestSACSeed_ArchivedHolderRetractedAtArchivalLedger(t *testing.T) {
 		tipLedger = uint32(31_300_000)
 		asset     = "ARCH:GAX5TXB5RYJNLBUR477PEXM4X75APK2PGMTN6KEFQSESGWFXEAKFSXJO"
 	)
-	archivalClose := time.Date(2025, 3, 1, 12, 0, 5, 0, time.UTC)
+	lastWriteClose := time.Date(2024, 11, 1, 0, 0, 0, 0, time.UTC)
 
 	sac, sacContract := fhSyntheticContractAddr(t, 0xE5)
 	holder, holderAddr := fhSyntheticAccountAddr(t, 0xE6)
@@ -1120,7 +1119,7 @@ func TestSACSeed_ArchivedHolderRetractedAtArchivalLedger(t *testing.T) {
 
 	rows := []chstore.LedgerEntryChangeRow{
 		{
-			LedgerSeq: lastWrite, CloseTime: time.Date(2024, 11, 1, 0, 0, 0, 0, time.UTC),
+			LedgerSeq: lastWrite, CloseTime: lastWriteClose,
 			TxHash: "arch-seed-it", OpIndex: 0, ChangeIndex: 0,
 			ChangeType: "created", EntryType: "contract_data", KeyXDR: keyXDR,
 			EntryXDR: fhEntryXDR(t, sacContract, balanceKey, fhI128Val(big.NewInt(5_000_000)), lastWrite),
@@ -1132,23 +1131,9 @@ func TestSACSeed_ArchivedHolderRetractedAtArchivalLedger(t *testing.T) {
 	if _, err := chstore.InsertEntryChanges(ctx, addr, rows, 0); err != nil {
 		t.Fatalf("InsertEntryChanges: %v", err)
 	}
-	lb, err := raw.PrepareBatch(ctx, `INSERT INTO stellar.ledgers (ledger_seq, close_time, ledger_hash, prev_hash, protocol_version)`)
-	if err != nil {
-		t.Fatalf("prepare ledgers: %v", err)
-	}
-	if err := lb.Append(liveUntil+1, archivalClose, fmt.Sprintf("%064d", liveUntil+1), "00", uint32(22)); err != nil {
-		t.Fatalf("append ledger: %v", err)
-	}
-	if err := lb.Send(); err != nil {
-		t.Fatalf("send ledgers: %v", err)
-	}
 
 	watched := map[string]string{sac: asset}
-	readers := map[string]func(context.Context, string, map[string]string, func(chstore.SACBalanceSeed) error) error{
-		"current-state": chstore.StreamSACBalanceSeeds,
-		"full-history":  sacFullHistoryUnverified,
-	}
-	for name, stream := range readers {
+	for name, stream := range sacSeedReaders() {
 		var got []chstore.SACBalanceSeed
 		if err := stream(ctx, addr, watched, func(s chstore.SACBalanceSeed) error {
 			if s.Holder == holder {
@@ -1159,25 +1144,21 @@ func TestSACSeed_ArchivedHolderRetractedAtArchivalLedger(t *testing.T) {
 			t.Fatalf("%s: %v", name, err)
 		}
 		if len(got) != 1 {
-			t.Fatalf("%s: emitted %d seeds for the archived holder, want 1 tombstone: %+v", name, len(got), got)
+			t.Fatalf("%s: emitted %d seeds for the archived holder, want 1 live balance: %+v", name, len(got), got)
 		}
 		s := got[0]
-		if !s.IsRemoval || s.Balance.Sign() != 0 {
-			t.Errorf("%s: emitted %+v, want an IsRemoval zero-balance tombstone", name, s)
+		if s.IsRemoval || s.Balance.Cmp(big.NewInt(5_000_000)) != 0 {
+			t.Errorf("%s: emitted %+v, want the last written balance 5000000 and no tombstone", name, s)
 		}
-		if s.LedgerSeq != liveUntil+1 {
-			t.Errorf("%s: tombstone LedgerSeq = %d, want archival ledger %d (not last write %d)", name, s.LedgerSeq, liveUntil+1, lastWrite)
-		}
-		if !s.CloseTime.Equal(archivalClose) {
-			t.Errorf("%s: tombstone CloseTime = %v, want %v from stellar.ledgers", name, s.CloseTime, archivalClose)
+		if s.LedgerSeq != lastWrite || !s.CloseTime.Equal(lastWriteClose) {
+			t.Errorf("%s: emitted at ledger %d / %v, want the last write %d / %v", name, s.LedgerSeq, s.CloseTime, lastWrite, lastWriteClose)
 		}
 	}
 }
 
-// TestSACSeed_UncoveredTTLRefuses: a watched Balance entry with no
-// stellar.ttl_live_until row (an unbackfilled projection) must fail both
-// readers — never be emitted as a live holder under a clean-looking pass.
-func TestSACSeed_UncoveredTTLRefuses(t *testing.T) {
+// TestSACSeed_UncoveredTTLStillEmits: TTL coverage is not a precondition of the seed. A watched Balance entry with no
+// stellar.ttl_live_until row is emitted as a live holder by both readers, with no coverage error.
+func TestSACSeed_UncoveredTTLStillEmits(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	addr := clickhouseAddr(t)
@@ -1202,24 +1183,28 @@ func TestSACSeed_UncoveredTTLRefuses(t *testing.T) {
 	}
 
 	watched := map[string]string{sac: asset}
-	readers := map[string]func(context.Context, string, map[string]string, func(chstore.SACBalanceSeed) error) error{
-		"current-state": chstore.StreamSACBalanceSeeds,
-		"full-history":  sacFullHistoryUnverified,
-	}
-	for name, stream := range readers {
-		var emitted int
+	for name, stream := range sacSeedReaders() {
+		var got []chstore.SACBalanceSeed
 		err := stream(ctx, addr, watched, func(s chstore.SACBalanceSeed) error {
 			if s.Holder == holder {
-				emitted++
+				got = append(got, s)
 			}
 			return nil
 		})
-		if err == nil || !strings.Contains(err.Error(), "no stellar.ttl_live_until row") {
-			t.Errorf("%s: err = %v, want the TTL-coverage refusal", name, err)
+		if err != nil {
+			t.Errorf("%s: err = %v, want nil (TTL coverage is not a seed precondition)", name, err)
 		}
-		if emitted != 0 {
-			t.Errorf("%s: emitted %d seeds for the uncovered holder, want 0", name, emitted)
+		if len(got) != 1 || got[0].IsRemoval || got[0].Balance.Cmp(big.NewInt(9_000_000)) != 0 {
+			t.Errorf("%s: emitted %+v, want one live 9000000 balance for the uncovered holder", name, got)
 		}
+	}
+}
+
+// sacSeedReaders names both SAC seed readers for the policy tests above.
+func sacSeedReaders() map[string]func(context.Context, string, map[string]string, func(chstore.SACBalanceSeed) error) error {
+	return map[string]func(context.Context, string, map[string]string, func(chstore.SACBalanceSeed) error) error{
+		"current-state": chstore.StreamSACBalanceSeeds,
+		"full-history":  sacFullHistoryUnverified,
 	}
 }
 

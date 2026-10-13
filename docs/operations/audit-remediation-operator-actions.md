@@ -129,8 +129,7 @@ Identity record: [credential-rotation.md §MinIO identity inventory](credential-
 ## Supply cross-check P3 on BLND / EURC / KALE / PHO (E4/N-F3)
 - [x] `supply seed-sac-balances -full-history` ran for all 38 assets. Verify per asset via
   `sac_balance_seed_provenance` (`source='full_history'`); `min_ledger_seen` is not a
-  success signal (archived balances are tombstoned, so it reports tip − 2,073,600).
-  Record per-asset outcomes of
+  success signal. Record per-asset outcomes of
   [runbooks/supply.md#stellarindex_supply_cross_check_divergence](runbooks/supply.md#stellarindex_supply_cross_check_divergence) here.
 
 ## Multi-region / HA (gated on hosts existing — P3)

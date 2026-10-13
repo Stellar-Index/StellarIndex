@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"log/slog"
 	"math/big"
 	"sort"
 	"strings"
@@ -28,18 +27,16 @@ type SACBalanceSeed struct {
 	AssetKey   string    // operator-mapped classic asset_key (CODE:ISSUER)
 	Holder     string    // balance owner strkey (G… / C… / …)
 	Balance    *big.Int  // current balance, stroops (i128 — never truncated, ADR-0003); zero when IsRemoval
-	LedgerSeq  uint32    // the entry's last-modified ledger; for a tombstone, the removal or archival ledger
+	LedgerSeq  uint32    // the entry's last-modified ledger; for a tombstone, the removal ledger
 	CloseTime  time.Time // close time of that ledger (UTC)
 
-	// IsRemoval marks a tombstone: the entry was removed or TTL-archived. Same meaning
-	// as the live observer's Observation.IsRemoval, so a served row retracts identically.
+	// IsRemoval marks a tombstone: the entry was removed. Same meaning as the live observer's
+	// Observation.IsRemoval, so a served row retracts identically. An archived (TTL-lapsed)
+	// persistent entry is NOT a tombstone: it is restorable and stays served, as the lake keeps it.
 	IsRemoval bool
-
-	// keyXDR is the base64 LedgerKey, kept so TTL liveness can be resolved before emission.
-	keyXDR string
 }
 
-// StreamSACBalanceSeeds invokes fn once per live Balance(Address) entry of a WATCHED SAC wrapper (TTL-classified, tombstones for removed or archived, corrupt XDR is a hard error); the FINAL scan is heavy, run under run-heavy-job.sh.
+// StreamSACBalanceSeeds invokes fn once per current Balance(Address) entry of a WATCHED SAC wrapper (tombstones for removed entries, archived ones stay live, corrupt XDR is a hard error); the FINAL scan is heavy, run under run-heavy-job.sh.
 func StreamSACBalanceSeeds(ctx context.Context, addr string, watched map[string]string, fn func(SACBalanceSeed) error) error {
 	if len(watched) == 0 {
 		return errors.New("clickhouse: StreamSACBalanceSeeds: empty watched SAC-wrapper set")
@@ -52,12 +49,6 @@ func StreamSACBalanceSeeds(ctx context.Context, addr string, watched map[string]
 	}
 	defer func() { _ = conn.Close() }()
 
-	// Liveness is judged at the lake's tip: this reader reconstructs current state.
-	_, asOfLedger, err := entryChangeLedgerBounds(ctx, conn)
-	if err != nil {
-		return err
-	}
-
 	const q = `SELECT key_xdr, entry_xdr, change_type, ledger_seq, close_time
 		FROM stellar.ledger_entries_current FINAL
 		WHERE entry_type = 'contract_data'`
@@ -67,32 +58,11 @@ func StreamSACBalanceSeeds(ctx context.Context, addr string, watched map[string]
 	}
 	defer func() { _ = rows.Close() }()
 
-	// Matched seeds are buffered in bounded batches so liveness can be resolved before
-	// emission; only watched Balance keys are held, keeping memory bounded.
-	return streamCurrentStateSeeds(ctx, conn, rows, watched, asOfLedger, fn)
+	return streamCurrentStateSeeds(rows, watched, fn)
 }
 
-// streamCurrentStateSeeds folds the scan into bounded batches, resolving liveness per batch.
-func streamCurrentStateSeeds(
-	ctx context.Context,
-	conn driver.Conn,
-	rows driver.Rows,
-	watched map[string]string,
-	asOfLedger uint32,
-	fn func(SACBalanceSeed) error,
-) error {
-	pending := make([]SACBalanceSeed, 0, ttlLivenessBatchSize)
-	flush := func() error {
-		if len(pending) == 0 {
-			return nil
-		}
-		if err := emitLiveSeeds(ctx, conn, pending, asOfLedger, fn); err != nil {
-			return err
-		}
-		pending = pending[:0]
-		return nil
-	}
-
+// streamCurrentStateSeeds emits each watched Balance row as it is scanned.
+func streamCurrentStateSeeds(rows driver.Rows, watched map[string]string, fn func(SACBalanceSeed) error) error {
 	for rows.Next() {
 		var (
 			keyXDR, entryXDR, changeType string
@@ -109,163 +79,11 @@ func streamCurrentStateSeeds(
 		if !matched {
 			continue
 		}
-		seed.keyXDR = keyXDR
-		pending = append(pending, seed)
-		if len(pending) >= ttlLivenessBatchSize {
-			if err := flush(); err != nil {
-				return err
-			}
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	return flush()
-}
-
-// emitLiveSeeds resolves each buffered seed's liveness and passes it to fn, retracting archived ones as tombstones at their archival
-// ledger. A key with no TTL row fails the pass; see resolveSACArchivals.
-func emitLiveSeeds(
-	ctx context.Context,
-	conn driver.Conn,
-	seeds []SACBalanceSeed,
-	asOfLedger uint32,
-	fn func(SACBalanceSeed) error,
-) error {
-	lastWrite := make(map[string]uint32, len(seeds))
-	for _, s := range seeds {
-		if !s.IsRemoval {
-			lastWrite[s.keyXDR] = s.LedgerSeq
-		}
-	}
-	archivals, err := resolveSACArchivals(ctx, conn, lastWrite, asOfLedger)
-	if err != nil {
-		return err
-	}
-	for _, s := range seeds {
-		if a, archived := archivals[s.keyXDR]; archived {
-			s.IsRemoval = true
-			s.Balance = big.NewInt(0)
-			s.LedgerSeq = a.ledger
-			s.CloseTime = a.closeTime.UTC()
-		}
-		if err := fn(s); err != nil {
+		if err := fn(seed); err != nil {
 			return err
 		}
 	}
-	return nil
-}
-
-// sacArchival is the ledger an archived entry left live state (liveUntil+1) and its close time.
-type sacArchival struct {
-	ledger    uint32
-	closeTime time.Time
-}
-
-// resolveSACArchivals maps each key of lastWrite whose TTL lapsed before asOfLedger to its archival ledger. The tombstone goes at the
-// ARCHIVAL ledger, never the last write: that would overwrite the real observation (seeds sit at timescale.SeedIntraLedgerSeq) and zero
-// the holder across [lastWrite, archival). Fails closed on a key with no TTL row; a live_until below the last write is stale TTL data, so
-// the key stays live.
-func resolveSACArchivals(ctx context.Context, conn driver.Conn, lastWrite map[string]uint32, asOfLedger uint32) (map[string]sacArchival, error) {
-	out := make(map[string]sacArchival)
-	if len(lastWrite) == 0 {
-		return out, nil
-	}
-	keys := make([]string, 0, len(lastWrite))
-	for k := range lastWrite {
-		keys = append(keys, k)
-	}
-	liveUntil, err := resolveTTLLiveUntil(ctx, conn, keys)
-	if err != nil {
-		return nil, err
-	}
-	archivedAt, err := sacArchivalLedgers(lastWrite, liveUntil, asOfLedger)
-	if err != nil {
-		return nil, err
-	}
-	ledgers := make([]uint32, 0, len(archivedAt))
-	for _, at := range archivedAt {
-		ledgers = append(ledgers, at)
-	}
-	closeTimes, err := ledgerCloseTimes(ctx, conn, ledgers)
-	if err != nil {
-		return nil, err
-	}
-	for k, at := range archivedAt {
-		ct, ok := closeTimes[at]
-		if !ok {
-			// Archival ledgers lie below the contiguous lake tip (ADR-0034); a missing row is a
-			// lake hole, and inventing an observed_at would be worse than stopping.
-			return nil, fmt.Errorf("clickhouse: sac seed: archival ledger %d has no stellar.ledgers row", at)
-		}
-		out[k] = sacArchival{ledger: at, closeTime: ct}
-	}
-	return out, nil
-}
-
-// errSACSeedTTLUnresolved: a watched Balance key has no stellar.ttl_live_until row.
-var errSACSeedTTLUnresolved = errors.New("clickhouse: sac seed: watched Balance entries have no stellar.ttl_live_until row")
-
-// sacArchivalLedgers maps each lapsed key to its archival ledger (live_until+1). A missing TTL row means the projection does not cover it
-// (e.g. skipped ttl_live_until.sql backfill); either guess would misstate supply, so the seed refuses.
-func sacArchivalLedgers(lastWrite, liveUntil map[string]uint32, asOfLedger uint32) (map[string]uint32, error) {
-	archivedAt := make(map[string]uint32)
-	var unresolved []string
-	for k, written := range lastWrite {
-		lu, ok := liveUntil[k]
-		if !ok {
-			unresolved = append(unresolved, k)
-			continue
-		}
-		if TTLVerdictAt(lu, asOfLedger) != TTLArchived || lu < written {
-			continue
-		}
-		archivedAt[k] = lu + 1 // lu < asOfLedger, so no overflow
-	}
-	if len(unresolved) > 0 {
-		sort.Strings(unresolved)
-		return nil, fmt.Errorf("%w: %d of %d key(s), first %s — complete the Step-2 backfill in deploy/clickhouse/ttl_live_until.sql and re-run",
-			errSACSeedTTLUnresolved, len(unresolved), len(lastWrite), unresolved[0])
-	}
-	return archivedAt, nil
-}
-
-// ledgerCloseTimes reads close times for seqs from stellar.ledgers in ttlLivenessBatchSize chunks; absent ledgers are omitted.
-func ledgerCloseTimes(ctx context.Context, conn driver.Conn, seqs []uint32) (map[uint32]time.Time, error) {
-	out := make(map[uint32]time.Time, len(seqs))
-	for start := 0; start < len(seqs); start += ttlLivenessBatchSize {
-		end := min(start+ttlLivenessBatchSize, len(seqs))
-		if err := ledgerCloseTimesBatch(ctx, conn, seqs[start:end], out); err != nil {
-			return nil, err
-		}
-	}
-	return out, nil
-}
-
-func ledgerCloseTimesBatch(ctx context.Context, conn driver.Conn, seqs []uint32, out map[uint32]time.Time) error {
-	const q = `SELECT ledger_seq, any(close_time)
-		FROM stellar.ledgers
-		WHERE ledger_seq IN (?)
-		GROUP BY ledger_seq`
-	rows, err := conn.Query(ctx, q, seqs)
-	if err != nil {
-		return fmt.Errorf("clickhouse: ledger close times: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		var (
-			seq uint32
-			ct  time.Time
-		)
-		if err := rows.Scan(&seq, &ct); err != nil {
-			return fmt.Errorf("clickhouse: ledger close times scan: %w", err)
-		}
-		out[seq] = ct
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("clickhouse: ledger close times stream: %w", err)
-	}
-	return nil
+	return rows.Err()
 }
 
 // StreamSACBalanceSeedsFullHistory is StreamSACBalanceSeeds over the raw ledger_entry_changes log, so dormant Balance entries written before the MV existed are seen; heavy (windowed by ledger), run under run-heavy-job.sh, never scheduled.
@@ -296,15 +114,6 @@ func StreamSACBalanceSeedsFullHistory(ctx context.Context, addr string, watched 
 	}))
 	if err != nil {
 		return SeedEvidence{}, err
-	}
-	// Liveness is judged at the walk's upper bound: the seed reconstructs state as of that ledger.
-	retracted, err := red.retractArchived(ctx, conn, ev.ToLedger)
-	if err != nil {
-		return SeedEvidence{}, err
-	}
-	if retracted > 0 {
-		slog.InfoContext(ctx, "sac seed: retracted archived contract_data entries",
-			"retracted", retracted, "distinct_keys", len(red.best), "as_of_ledger", ev.ToLedger)
 	}
 	return ev, red.emit(fn)
 }
@@ -528,30 +337,6 @@ func (r *sacSeedReducer) offer(keyXDR, entryXDR, changeType string, closeTime ti
 	}
 	r.best[keyXDR] = sacSeedWinner{order: ord, changeType: changeType, entryXDR: entryXDR, closeTime: closeTime}
 	return nil
-}
-
-// retractArchived replaces the winner of every key whose entry was ARCHIVED (TTL lapsed before asOfLedger) with a removal at the archival
-// ledger; call after the window walk and before emit, since the lake keeps an archived value forever. Only a positively resolved, lapsed
-// TTL retracts: an unresolved key fails the pass, since retracting a dormant-but-live balance would understate supply.
-func (r *sacSeedReducer) retractArchived(ctx context.Context, conn driver.Conn, asOfLedger uint32) (int, error) {
-	lastWrite := make(map[string]uint32, len(r.best))
-	for k, w := range r.best {
-		if w.changeType != "removed" {
-			lastWrite[k] = w.order.ledgerSeq
-		}
-	}
-	archivals, err := resolveSACArchivals(ctx, conn, lastWrite, asOfLedger)
-	if err != nil {
-		return 0, err
-	}
-	for k, a := range archivals {
-		r.best[k] = sacSeedWinner{
-			order:      lakeEntryChangeOrder{ledgerSeq: a.ledger},
-			changeType: "removed",
-			closeTime:  a.closeTime,
-		}
-	}
-	return len(archivals), nil
 }
 
 // emit decodes each key's final winner and hands survivors to fn in ascending key_xdr order (reproducible output). Only the final winner
