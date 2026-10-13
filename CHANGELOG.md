@@ -22,7 +22,7 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [v0.113.0] — 2026-10-13
 
-20 commits since v0.112.0. No migrations. Two new ClickHouse tables (the entry index). No `pkg/*` break (`pkg/client` gains optional credit, price-provenance, vetted-ISIN and `detectors_partial` fields).
+21 commits since v0.112.0. No migrations. Two new ClickHouse tables (the entry index). No `pkg/*` break (`pkg/client` gains optional credit, price-provenance, vetted-ISIN and `detectors_partial` fields).
 
 ### Operator actions
 
@@ -36,6 +36,7 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 - **api:** lone-vendor values are credited and fiat listing rows carry FX provenance (#3420); the peg walk's withheld reason is served instead of a bool (#3417); `/v1/mev` flags `detectors_partial` off a detection heartbeat (#3413).
 - **rwa:** a hand-vetted ISIN binding is the fourth classic basis (#3419).
+- **api:** fiat-to-fiat chart series and oracle prices fed by one licensed source carry its credit; a declared ISIN that contradicts a hand-vetted binding is refused (#3431).
 - **trades:** declared fiat-pegged legs are valued off the fiat rate within a 2% band (#3415).
 
 ### Fixed
