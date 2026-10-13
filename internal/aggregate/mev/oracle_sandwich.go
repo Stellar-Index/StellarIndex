@@ -4,6 +4,7 @@ import (
 	"strconv"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/domain"
 )
 
 // KindOracleSandwich is the mev_events.kind for trades bracketing an on-chain oracle update.
@@ -31,11 +32,12 @@ type oracleSandwichDetail struct {
 	Legs               []OrderedLeg `json:"legs"` // nearest before + after trades
 	NotionalUSD        string       `json:"notional_usd,omitempty"`
 	NotionalLowerBound bool         `json:"notional_usd_lower_bound,omitempty"`
+	NotionalEstimated  bool         `json:"notional_usd_estimated"`
 	Note               string       `json:"note"`
 }
 
 // DetectOracleSandwiches finds one account trading a pair touching the oracle's asset strictly before AND after the update's tx in one ledger (by tx_index); one candidate per (update, account). txIdx must cover trade and oracle tx hashes or detection silently degrades.
-func DetectOracleSandwiches(trades []canonical.Trade, usdVolume []string, oracles []OracleRef, txIdx map[string]uint32) []Candidate {
+func DetectOracleSandwiches(trades []canonical.Trade, usdVolume []domain.MEVLegUSD, oracles []OracleRef, txIdx map[string]uint32) []Candidate {
 	if len(txIdx) == 0 || len(oracles) == 0 {
 		return nil
 	}
@@ -66,7 +68,7 @@ func DetectOracleSandwiches(trades []canonical.Trade, usdVolume []string, oracle
 
 // oracleSandwichesForUpdate evaluates one oracle update against its
 // ledger's trades, emitting one candidate per bracketing account.
-func oracleSandwichesForUpdate(trades []canonical.Trade, usdVolume []string, txIdx map[string]uint32,
+func oracleSandwichesForUpdate(trades []canonical.Trade, usdVolume []domain.MEVLegUSD, txIdx map[string]uint32,
 	o OracleRef, oIdx uint32, ledgerTrades []int,
 ) []Candidate {
 	byTaker := map[string][]int{}
@@ -94,7 +96,7 @@ func oracleSandwichesForUpdate(trades []canonical.Trade, usdVolume []string, txI
 
 // buildOracleSandwichCandidate finds the taker's nearest trades on
 // each side of the oracle update and assembles the Candidate.
-func buildOracleSandwichCandidate(trades []canonical.Trade, usdVolume []string, txIdx map[string]uint32,
+func buildOracleSandwichCandidate(trades []canonical.Trade, usdVolume []domain.MEVLegUSD, txIdx map[string]uint32,
 	o OracleRef, oIdx uint32, taker string, idxs []int,
 ) (Candidate, bool) {
 	before, after := -1, -1
@@ -127,7 +129,7 @@ func buildOracleSandwichCandidate(trades []canonical.Trade, usdVolume []string, 
 		orderedLegFrom(trades[before], txIdx, "before"),
 		orderedLegFrom(trades[after], txIdx, "after"),
 	}
-	notional, lowerBound := sumUSD(usdVolume, involved)
+	notional, lowerBound, estimated := sumUSD(usdVolume, involved)
 	tb := trades[before]
 	c := Candidate{
 		Kind:               KindOracleSandwich,
@@ -144,6 +146,7 @@ func buildOracleSandwichCandidate(trades []canonical.Trade, usdVolume []string, 
 		Sources:            distinctSources(trades, involved),
 		NotionalUSD:        notional,
 		NotionalLowerBound: lowerBound,
+		NotionalEstimated:  estimated,
 		Dedup: KindOracleSandwich + ":" + o.TxHash + ":" + strconv.FormatUint(uint64(o.OpIndex), 10) +
 			":" + taker + ":" + normAsset(o.Asset),
 		Detail: oracleSandwichDetail{
@@ -157,6 +160,7 @@ func buildOracleSandwichCandidate(trades []canonical.Trade, usdVolume []string, 
 			Legs:               legs,
 			NotionalUSD:        notional,
 			NotionalLowerBound: lowerBound,
+			NotionalEstimated:  estimated,
 			Note:               oracleSandwichNote,
 		},
 	}

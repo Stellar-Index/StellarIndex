@@ -14,7 +14,8 @@ import (
 )
 
 // tradesForArbScanQuery values each leg at stored usd_volume, else its XLM leg at the minute's XLM/USD anchor ([xlmUSDAnchorGridCTE]), so
-// NULL-usd SDEX cycles don't report "$0"; no anchor within xlmUSDAnchorMaxAge leaves it empty. $3 is the native-XLM SAC.
+// NULL-usd SDEX cycles don't report "$0"; no anchor within xlmUSDAnchorMaxAge leaves it empty. The last column marks an
+// anchor-valued leg as estimated. $3 is the native-XLM SAC.
 //
 //nolint:gosec // G202: fragments are constant SQL (helper output built from literals and $N placeholders); values bind via $N
 var tradesForArbScanQuery = `
@@ -43,14 +44,15 @@ var tradesForArbScanQuery = `
                      THEN (t.quote_amount / 1e7::numeric) * xa.vwap
                    ELSE NULL
                  END
-               ))::text, '')
+               ))::text, ''),
+               t.usd_volume IS NULL
           FROM scan t
           ` + xlmUSDGridJoin("xa", "date_trunc('minute', t.ts)") + `
          ORDER BY t.ledger DESC, t.tx_hash DESC, t.op_index DESC
     `
 
-// TradesForArbScan returns the NEWEST `limit` on-chain trades (ledger > 0, with a taker) after `since`, ascending by (ledger, tx_hash, op_index), plus each trade's USD volume ("" when NULL).
-func (s *Store) TradesForArbScan(ctx context.Context, since time.Time, limit int) ([]canonical.Trade, []string, error) {
+// TradesForArbScan returns the NEWEST `limit` on-chain trades (ledger > 0, with a taker) after `since`, ascending by (ledger, tx_hash, op_index), plus each trade's USD value ("" when none; Estimated when it came from the XLM/USD anchor).
+func (s *Store) TradesForArbScan(ctx context.Context, since time.Time, limit int) ([]canonical.Trade, []domain.MEVLegUSD, error) {
 	if limit <= 0 {
 		limit = 50_000
 	}
@@ -62,19 +64,20 @@ func (s *Store) TradesForArbScan(ctx context.Context, since time.Time, limit int
 
 	var (
 		trades []canonical.Trade
-		usd    []string
+		usd    []domain.MEVLegUSD
 	)
 	for rows.Next() {
 		var (
 			t                     canonical.Trade
 			baseAsset, quoteAsset string
 			usdVol                string
+			estimated             bool
 		)
 		if err := rows.Scan(
 			&t.Source, &t.Ledger, &t.TxHash, &t.OpIndex, &t.Timestamp,
 			&baseAsset, &quoteAsset,
 			&t.BaseAmount, &t.QuoteAmount,
-			&t.Maker, &t.Taker, &usdVol,
+			&t.Maker, &t.Taker, &usdVol, &estimated,
 		); err != nil {
 			return nil, nil, fmt.Errorf("timescale: TradesForArbScan scan: %w", err)
 		}
@@ -92,7 +95,7 @@ func (s *Store) TradesForArbScan(ctx context.Context, since time.Time, limit int
 		}
 		t.Pair = pair
 		trades = append(trades, t)
-		usd = append(usd, usdVol)
+		usd = append(usd, domain.MEVLegUSD{Value: usdVol, Estimated: estimated && usdVol != ""})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, nil, fmt.Errorf("timescale: TradesForArbScan rows: %w", err)

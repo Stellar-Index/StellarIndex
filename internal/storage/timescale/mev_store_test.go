@@ -40,7 +40,7 @@ func TestTradesForArbScan_ValuesAndParallelUSDSlice(t *testing.T) {
 		cols: []string{
 			"source", "ledger", "tx_hash", "op_index", "ts",
 			"base_asset", "quote_asset", "base_amount", "quote_amount",
-			"maker", "taker", "usd",
+			"maker", "taker", "usd", "estimated",
 		},
 		// Delivered newest-first, as the DESC query returns them; the store
 		// must hand them to the detector ascending.
@@ -48,12 +48,13 @@ func TestTradesForArbScan_ValuesAndParallelUSDSlice(t *testing.T) {
 			{
 				"soroswap", int64(58_000_001), mevTxHashA, int64(4), ts,
 				mevUSDC, mevXLMSAC, "1250000", "1000000000",
-				"", "GTAKER", "",
+				"", "GTAKER", "", true,
 			},
 			{
+				// usd_volume NULL, anchor-valued: the scan marks the leg estimated.
 				"sdex", int64(58_000_001), mevTxHashA, int64(3), ts,
 				"native", mevUSDC, "1000000000", "1250000",
-				"GMAKER", "GTAKER", "12.50",
+				"GMAKER", "GTAKER", "12.50", true,
 			},
 		},
 	})
@@ -66,8 +67,8 @@ func TestTradesForArbScan_ValuesAndParallelUSDSlice(t *testing.T) {
 	if len(trades) != 2 || len(usd) != 2 {
 		t.Fatalf("got %d trades / %d usd entries, want 2 / 2", len(trades), len(usd))
 	}
-	if got := []string{usd[0], usd[1]}; !reflect.DeepEqual(got, []string{"12.50", ""}) {
-		t.Errorf("usd = %#v, want [12.50 \"\"] positionally paired with trades", got)
+	if want := []domain.MEVLegUSD{{Value: "12.50", Estimated: true}, {}}; !reflect.DeepEqual(usd, want) {
+		t.Errorf("usd = %#v, want %#v positionally paired with trades (anchor-valued leg estimated; a NULL anchor stays unpriced, not estimated)", usd, want)
 	}
 
 	first := trades[0]
@@ -111,7 +112,7 @@ func TestTradesForArbScan_ExplicitLimitIsBound(t *testing.T) {
 	store, conn := newScriptedStore(t, scriptedResult{cols: []string{
 		"source", "ledger", "tx_hash", "op_index", "ts",
 		"base_asset", "quote_asset", "base_amount", "quote_amount",
-		"maker", "taker", "usd",
+		"maker", "taker", "usd", "estimated",
 	}})
 	if _, _, err := store.TradesForArbScan(context.Background(), time.Now(), 250); err != nil {
 		t.Fatalf("TradesForArbScan: %v", err)
@@ -128,7 +129,7 @@ func TestTradesForArbScanQueryShape(t *testing.T) {
 	store, conn := newScriptedStore(t, scriptedResult{cols: []string{
 		"source", "ledger", "tx_hash", "op_index", "ts",
 		"base_asset", "quote_asset", "base_amount", "quote_amount",
-		"maker", "taker", "usd",
+		"maker", "taker", "usd", "estimated",
 	}})
 	if _, _, err := store.TradesForArbScan(context.Background(), time.Now(), 10); err != nil {
 		t.Fatalf("TradesForArbScan: %v", err)
@@ -168,12 +169,12 @@ func TestTradesForArbScan_UnparseableAssetIsAnError(t *testing.T) {
 		cols: []string{
 			"source", "ledger", "tx_hash", "op_index", "ts",
 			"base_asset", "quote_asset", "base_amount", "quote_amount",
-			"maker", "taker", "usd",
+			"maker", "taker", "usd", "estimated",
 		},
 		rows: [][]driver.Value{
 			{
 				"sdex", int64(1), mevTxHashA, int64(0), time.Now().UTC(),
-				"", mevUSDC, "1", "1", "", "GTAKER", "",
+				"", mevUSDC, "1", "1", "", "GTAKER", "", true,
 			},
 		},
 	})

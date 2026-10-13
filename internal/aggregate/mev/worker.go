@@ -14,7 +14,7 @@ import (
 
 // TradeScanner supplies recent on-chain trades with a taker; production is timescale.Store.TradesForArbScan.
 type TradeScanner interface {
-	TradesForArbScan(ctx context.Context, since time.Time, limit int) ([]canonical.Trade, []string, error)
+	TradesForArbScan(ctx context.Context, since time.Time, limit int) ([]canonical.Trade, []domain.MEVLegUSD, error)
 }
 
 // Sink persists a detected event; InsertMEVEvent is idempotent on StoredEvent.DedupKey (inserted=false if present) and a re-scan with a superset of legs replaces the stored evidence.
@@ -48,6 +48,7 @@ type arbDetail struct {
 	Legs               []Leg    `json:"legs"`
 	NotionalUSD        string   `json:"notional_usd,omitempty"`
 	NotionalLowerBound bool     `json:"notional_usd_lower_bound,omitempty"`
+	NotionalEstimated  bool     `json:"notional_usd_estimated"`
 	Note               string   `json:"note"`
 }
 
@@ -62,6 +63,7 @@ func storedFrom(c Candidate) (StoredEvent, error) {
 			NotionalUSD: c.NotionalUSD,
 
 			NotionalLowerBound: c.NotionalLowerBound,
+			NotionalEstimated:  c.NotionalEstimated,
 			Note:               "Atomic cyclic trade by one taker in a single transaction — an arbitrage signature. Detection is structural; profit is not estimated (leg direction is ambiguous in the served rows).",
 		}
 	}
@@ -257,7 +259,7 @@ func (w *Worker) Run(ctx context.Context, interval time.Duration) error {
 
 // scanTrades reads the window's newest scanLimit trades. A capped scan is reported and its oldest ledger dropped:
 // the cap may cut it mid-transaction, and a dropped leg can lift the single-venue leg-count rejection.
-func (w *Worker) scanTrades(ctx context.Context, since time.Time) ([]canonical.Trade, []string, error) {
+func (w *Worker) scanTrades(ctx context.Context, since time.Time) ([]canonical.Trade, []domain.MEVLegUSD, error) {
 	trades, usd, err := w.scanner.TradesForArbScan(ctx, since, w.scanLimit)
 	if err != nil || len(trades) < w.scanLimit {
 		return trades, usd, err
@@ -297,7 +299,7 @@ func (w *Worker) scanOracles(ctx context.Context, since time.Time) []OracleRef {
 
 // orderedCandidates runs the tx_index-dependent detectors (sandwich + oracle_sandwich) when a lake order resolver is wired; lookups are
 // prefiltered to OrderingTxHashes so the lake round-trip stays bounded.
-func (w *Worker) orderedCandidates(ctx context.Context, trades []canonical.Trade, usd []string, oracles []OracleRef) []Candidate {
+func (w *Worker) orderedCandidates(ctx context.Context, trades []canonical.Trade, usd []domain.MEVLegUSD, oracles []OracleRef) []Candidate {
 	orderPtr := w.order.Load()
 	if orderPtr == nil {
 		return nil

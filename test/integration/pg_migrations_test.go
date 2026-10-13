@@ -105,8 +105,8 @@ const (
 
 type mev0185Scanner struct{ trades []c.Trade }
 
-func (s mev0185Scanner) TradesForArbScan(context.Context, time.Time, int) ([]c.Trade, []string, error) {
-	return s.trades, make([]string, len(s.trades)), nil
+func (s mev0185Scanner) TradesForArbScan(context.Context, time.Time, int) ([]c.Trade, []domain.MEVLegUSD, error) {
+	return s.trades, make([]domain.MEVLegUSD, len(s.trades)), nil
 }
 
 type mev0185Oracles struct{ refs []mev.OracleRef }

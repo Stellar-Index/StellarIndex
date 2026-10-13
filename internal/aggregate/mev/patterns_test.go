@@ -344,7 +344,7 @@ func TestDetectWashTrades_SelfTrade(t *testing.T) {
 	trades := []canonical.Trade{
 		mkTrade(t, tOpt{tx: txA, maker: self, taker: self, base: "native", quote: usdc}),
 	}
-	got := DetectWashTrades(trades, []string{"12.34"})
+	got := DetectWashTrades(trades, usdLegs("12.34"))
 	if len(got) != 1 {
 		t.Fatalf("got %d candidates, want 1: %+v", len(got), got)
 	}

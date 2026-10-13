@@ -46,3 +46,11 @@ type MEVStoredEvent struct {
 	DedupKey   string
 	DetailJSON []byte
 }
+
+// MEVLegUSD is one trade's USD value as the MEV detectors see it. Value is ""
+// when the leg could not be priced; Estimated marks a value derived from the
+// XLM/USD anchor at the trade's minute rather than the trade's stored usd_volume.
+type MEVLegUSD struct {
+	Value     string
+	Estimated bool
+}
