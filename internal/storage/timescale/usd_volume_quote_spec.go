@@ -15,6 +15,11 @@ type USDVolumeQuoteSpec struct {
 	// supply package's "CODE:ISSUER"), so a Soroban-form quote resolves to its classic asset for
 	// the peg and decimals lookup.
 	sacToClassic map[string]string
+
+	// fiatPegs maps a classic "CODE-ISSUER" key to the ISO-4217 ticker the operator declared it
+	// 1:1-pegged to ([pricing_guard].fiat_pegged_classic_assets); SAC forms resolve through
+	// sacToClassic.
+	fiatPegs map[string]string
 }
 
 // NewUSDVolumeQuoteSpec composes the lookup from classicUSDPegs ("CODE-ISSUER" entries) and sacWrappers (SAC contract id to "CODE:ISSUER"); it errors on an unparseable classicUSDPegs entry.
@@ -75,4 +80,53 @@ func (s *USDVolumeQuoteSpec) QuoteUSDPegInfo(asset canonical.Asset) (decimals in
 // classicKey renders a classic Asset as "CODE-ISSUER", the form operators write in TOML.
 func classicKey(a canonical.Asset) string {
 	return a.Code + "-" + a.Issuer
+}
+
+// DeclareFiatPegs registers the operator's fiat-pegged classics ([pricing_guard].fiat_pegged_classic_assets) so
+// usdVolumeViaFiatPeg recognises them in classic and SAC form. Tickers are re-checked because the spec is also built
+// outside config loading; the SAC id comes from the network passphrase, not sac_wrappers.
+func (s *USDVolumeQuoteSpec) DeclareFiatPegs(pegs map[string]string) error {
+	for raw, ticker := range pegs {
+		asset, err := canonical.ParseAsset(raw)
+		if err != nil {
+			return fmt.Errorf("usd-volume spec: fiat peg %q: %w", raw, err)
+		}
+		if asset.Type != canonical.AssetClassic {
+			return fmt.Errorf("usd-volume spec: fiat peg %q must be a classic asset (got %s)", raw, asset.Type)
+		}
+		if !canonical.IsKnownFiat(ticker) {
+			return fmt.Errorf("usd-volume spec: fiat peg %q: unknown fiat ticker %q", raw, ticker)
+		}
+		sac, err := asset.SacContractID()
+		if err != nil {
+			return fmt.Errorf("usd-volume spec: fiat peg %q: SAC id: %w", raw, err)
+		}
+		if s.fiatPegs == nil {
+			s.fiatPegs = make(map[string]string, len(pegs))
+		}
+		if s.sacToClassic == nil {
+			s.sacToClassic = make(map[string]string, len(pegs))
+		}
+		key := classicKey(asset)
+		s.fiatPegs[key] = ticker
+		s.sacToClassic[sac] = key
+	}
+	return nil
+}
+
+// FiatPegInfo reports the fiat ticker a classic or SAC-form asset is declared 1:1-pegged to; ok=false (including a nil spec) for everything else.
+func (s *USDVolumeQuoteSpec) FiatPegInfo(asset canonical.Asset) (ticker string, ok bool) {
+	if s == nil {
+		return "", false
+	}
+	//exhaustive:ignore
+	switch asset.Type {
+	case canonical.AssetClassic:
+		ticker, ok = s.fiatPegs[classicKey(asset)]
+	case canonical.AssetSoroban:
+		if key, found := s.sacToClassic[asset.ContractID]; found {
+			ticker, ok = s.fiatPegs[key]
+		}
+	}
+	return ticker, ok
 }

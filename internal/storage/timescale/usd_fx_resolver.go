@@ -713,19 +713,22 @@ func directLegQuery(bounded bool) string {
 	`
 }
 
-// InstallUSDVolumeResolution wires BOTH usd_volume tiers (USDVolumeQuoteSpec and VWAPUSDFXResolver) onto a store in one call; every trade-writing process must install both.
-func InstallUSDVolumeResolution(store *Store, classicUSDPegs []string, sacWrappers map[string]string) error {
+// InstallUSDVolumeResolution wires BOTH usd_volume tiers (USDVolumeQuoteSpec and VWAPUSDFXResolver) onto a store in one call; every trade-writing process must install both. fiatPegs is [pricing_guard].fiat_pegged_classic_assets, read by the fiat-peg tier.
+func InstallUSDVolumeResolution(store *Store, classicUSDPegs []string, sacWrappers map[string]string, fiatPegs map[string]string) error {
 	if store == nil {
 		return errors.New("timescale: InstallUSDVolumeResolution: store is required")
 	}
 	// Set even on the no-pegs path below: reDeriveNullVolumeGuard checks "was Install called", so
 	// a no-pegs re-derive passes while one that forgot Install entirely is refused.
 	store.usdVolumeResolutionInstalled = true
-	if len(classicUSDPegs) == 0 {
+	if len(classicUSDPegs) == 0 && len(fiatPegs) == 0 {
 		return nil
 	}
 	spec, err := NewUSDVolumeQuoteSpec(classicUSDPegs, sacWrappers)
 	if err != nil {
+		return fmt.Errorf("usd-volume quote spec: %w", err)
+	}
+	if err := spec.DeclareFiatPegs(fiatPegs); err != nil {
 		return fmt.Errorf("usd-volume quote spec: %w", err)
 	}
 	store.SetUSDVolumeQuoteSpec(spec)

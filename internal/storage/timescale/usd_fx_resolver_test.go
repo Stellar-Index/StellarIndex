@@ -306,6 +306,7 @@ func TestInstallUSDVolumeResolution_InstallsBothTiers(t *testing.T) {
 		store,
 		[]string{usdcPeg},
 		map[string]string{},
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("InstallUSDVolumeResolution: %v", err)
@@ -322,8 +323,8 @@ func TestInstallUSDVolumeResolution_InstallsBothTiers(t *testing.T) {
 func TestInstallUSDVolumeResolution_EmptyPegsIsNoOp(t *testing.T) {
 	t.Parallel()
 	store := &Store{}
-	if err := InstallUSDVolumeResolution(store, nil, nil); err != nil {
-		t.Fatalf("InstallUSDVolumeResolution(no pegs): %v", err)
+	if err := InstallUSDVolumeResolution(store, nil, nil, nil); err != nil {
+		t.Fatalf("InstallUSDVolumeResolution(no pegs, nil): %v", err)
 	}
 	if store.usdVolumeQuoteSpec != nil || store.usdVolumeFXResolver != nil {
 		t.Error("no-config path should leave both tiers nil")
@@ -332,7 +333,7 @@ func TestInstallUSDVolumeResolution_EmptyPegsIsNoOp(t *testing.T) {
 
 func TestInstallUSDVolumeResolution_NilStore(t *testing.T) {
 	t.Parallel()
-	if err := InstallUSDVolumeResolution(nil, []string{"USDC-G..."}, nil); err == nil {
+	if err := InstallUSDVolumeResolution(nil, []string{"USDC-G..."}, nil, nil); err == nil {
 		t.Fatal("expected error when store is nil")
 	}
 }
@@ -693,5 +694,18 @@ func TestUSDPegForms_NormalisesColonSpelling(t *testing.T) {
 	}
 	if len(forms) != 2 || forms[0] != usdcClassicPeg || forms[1] != usdcSAC {
 		t.Errorf("usdPegForms(%q) = %q, want [%s %s]", colon, forms, usdcClassicPeg, usdcSAC)
+	}
+}
+
+// Fiat pegs alone still install both tiers: the fiat-peg tier needs the spec and the resolver.
+func TestInstallUSDVolumeResolution_FiatPegsOnlyInstallsBothTiers(t *testing.T) {
+	t.Parallel()
+	store := &Store{}
+	pegs := map[string]string{"EURC-GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2": "EUR"}
+	if err := InstallUSDVolumeResolution(store, nil, nil, pegs); err != nil {
+		t.Fatalf("InstallUSDVolumeResolution(fiat pegs): %v", err)
+	}
+	if store.usdVolumeQuoteSpec == nil || store.usdVolumeFXResolver == nil {
+		t.Error("fiat pegs should install both tiers")
 	}
 }

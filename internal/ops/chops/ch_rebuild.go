@@ -414,6 +414,7 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 		store,
 		cfg.Trades.USDPeggedClassicAssets,
 		cfg.Supply.SACWrappers,
+		cfg.PricingGuard.FiatPeggedClassicAssets,
 	); err != nil {
 		return err
 	}

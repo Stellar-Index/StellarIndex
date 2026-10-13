@@ -275,7 +275,7 @@ func TestRestampTradesChunk_RangePredicateIsPerChunk(t *testing.T) {
 			sizeResult(2), scriptedResult{cols: []string{"source"}}), // the scan: no candidates
 			append(lockGranted(), sizeResult(3))...)..., // compress_chunk
 	)
-	if err := InstallUSDVolumeResolution(store, []string{usdc}, nil); err != nil {
+	if err := InstallUSDVolumeResolution(store, []string{usdc}, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	c := TradeChunk{

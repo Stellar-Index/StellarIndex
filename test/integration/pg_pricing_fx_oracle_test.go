@@ -1715,7 +1715,7 @@ func TestVWAPUSDFXResolver_SubstanceGate(t *testing.T) {
 		tokenIssuer = "GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2"
 	)
 	usdcID := "USDC-" + usdcIssuer
-	if err := timescale.InstallUSDVolumeResolution(store, []string{usdcID}, nil); err != nil {
+	if err := timescale.InstallUSDVolumeResolution(store, []string{usdcID}, nil, nil); err != nil {
 		t.Fatalf("InstallUSDVolumeResolution: %v", err)
 	}
 	asset := func(code, issuer string) c.Asset {

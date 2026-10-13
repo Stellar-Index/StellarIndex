@@ -30,7 +30,7 @@ type USDVolumeFXResolver interface {
 // tradeUSDVolume returns the USD-equivalent volume as a NUMERIC string, or nil (NULL) if it cannot be converted cleanly. Tiers run by
 // EXACTNESS: pegs (trusted at insert, a depeg rewrites nothing) before estimated FX; anything else stays NULL, never over-claimed.
 // LOCKSTEP: [ClassifyUSDVolumeTier] mirrors this waterfall (legs, order, scale);
-// TestClassifyUSDVolumeTier_TracksTheWaterfall fails on drift.
+// TestExactTierUSDVolume_TracksTheWaterfall and TestClassifyUSDVolumeTier fail on drift.
 func tradeUSDVolume(ctx context.Context, t canonical.Trade, quoteSpec *USDVolumeQuoteSpec, fxResolver USDVolumeFXResolver) *string {
 	v, _ := tradeUSDVolumeChecked(ctx, t, quoteSpec, fxResolver)
 	return v
@@ -78,6 +78,9 @@ func tradeUSDVolumeChecked(ctx context.Context, t canonical.Trade, quoteSpec *US
 		if v, err := tradeUSDVolumeViaXLMQuoteAnchorFor(ctx, t, fxResolver); err != nil || v != nil {
 			return v, err
 		}
+	}
+	if v, err := usdVolumeViaFiatPeg(ctx, t, md, quoteSpec, fxResolver); err != nil || v != nil {
+		return v, err
 	}
 	if v, err := usdVolumeViaFX(ctx, t, md, fxResolver); err != nil || v != nil {
 		return v, err
@@ -150,6 +153,80 @@ func usdVolumeViaFX(ctx context.Context, t canonical.Trade, md external.Metadata
 	}
 	rendered := usdAmount.FloatString(8)
 	return &rendered, nil
+}
+
+// fiatPegToleranceBps is how far a declared leg's on-chain USD price may sit from the fiat rate before
+// usdVolumeViaFiatPeg declines: a 2% band holds a pegged asset's normal spread (EURC ran -96..+55 bps over 30 days
+// on the reference deployment) and rejects a depeg, which is a multi-percent move.
+const fiatPegToleranceBps = 200
+
+// usdVolumeViaFiatPeg values a DEX trade off a leg the operator declared 1:1-pegged to a fiat currency
+// ([USDVolumeQuoteSpec.DeclareFiatPegs]): amount/10^7 x the fiat->USD rate at trade time. It replaces only the
+// counterparty-authorable FX bridge for those legs, so it runs after the XLM anchors. The peg is honoured only while
+// the leg's own on-chain USD price sits within fiatPegToleranceBps of the fiat rate; a depeg, or a missing fiat rate,
+// falls through to the estimated FX tier, never above it. With no on-chain price to compare the declaration stands.
+func usdVolumeViaFiatPeg(ctx context.Context, t canonical.Trade, md external.Metadata, spec *USDVolumeQuoteSpec, r USDVolumeFXResolver) (*string, error) {
+	if r == nil || md.Subclass != external.SubclassDEX {
+		return nil, nil
+	}
+	legs := [2]struct {
+		asset  canonical.Asset
+		amount canonical.Amount
+	}{{t.Pair.Quote, t.QuoteAmount}, {t.Pair.Base, t.BaseAmount}}
+	for _, leg := range legs {
+		ticker, ok := spec.FiatPegInfo(leg.asset)
+		if !ok {
+			continue
+		}
+		amount := leg.amount.BigInt()
+		if amount == nil || amount.Sign() < 0 {
+			continue
+		}
+		fiatRate, ok, err := resolverRateAt(ctx, r, canonical.Asset{Type: canonical.AssetFiat, Code: ticker}, t.Timestamp)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			continue
+		}
+		onChain, ok, err := resolverRateAt(ctx, r, leg.asset, t.Timestamp)
+		if err != nil {
+			return nil, err
+		}
+		if ok && !withinBps(onChain, fiatRate, fiatPegToleranceBps) {
+			continue
+		}
+		usd := new(big.Rat).Mul(new(big.Rat).SetFrac(amount, scaleDenominator(stellarClassicDecimals)), fiatRate)
+		rendered := usd.FloatString(8)
+		return &rendered, nil
+	}
+	return nil, nil
+}
+
+// resolverRateAt parses one USDPriceAt answer into a positive rate; ok=false when the resolver declines or the
+// string is unusable, so callers treat both as "no rate".
+func resolverRateAt(ctx context.Context, r USDVolumeFXResolver, asset canonical.Asset, at time.Time) (*big.Rat, bool, error) {
+	s, ok, err := r.USDPriceAt(ctx, asset, at)
+	if err != nil {
+		return nil, false, err
+	}
+	if !ok || s == "" {
+		return nil, false, nil
+	}
+	rate, ok := new(big.Rat).SetString(s)
+	if !ok || rate.Sign() <= 0 {
+		return nil, false, nil
+	}
+	return rate, true, nil
+}
+
+// withinBps reports |a - b| * 10000 <= bps * b, exact in big.Rat.
+func withinBps(a, b *big.Rat, bps int64) bool {
+	diff := new(big.Rat).Sub(a, b)
+	diff.Abs(diff)
+	diff.Mul(diff, big.NewRat(10_000, 1))
+	bound := new(big.Rat).Mul(b, big.NewRat(bps, 1))
+	return diff.Cmp(bound) <= 0
 }
 
 // boundUSDVolume bounds every ESTIMATED on-chain tier. LEG CROSS-CHECK: the tier-3b token leg is attacker-writable, so the other leg is

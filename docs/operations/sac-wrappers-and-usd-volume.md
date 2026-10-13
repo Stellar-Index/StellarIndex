@@ -119,6 +119,28 @@ usd_pegged_classic_assets = [
 Trades quoted in USDx (or its SAC) are then priced `usd_volume = quote_amount /
 10^7`: new ones at insert, historical ones by the `usd-volume-restamp` run above.
 
+## Fiat-pegged classics on the trade path
+
+`[pricing_guard].fiat_pegged_classic_assets` (asset_key to ISO-4217 ticker) is
+the operator's declaration that a classic asset is 1:1-pegged to a fiat
+currency. The API already reads it for the `declared_peg` price fallback; the
+trade path reads the same map, so a DEX trade with a declared leg (classic or
+its SAC) is valued as `amount / 10^7 × fiat→USD rate` at trade time instead of
+through the counterparty-authorable FX bridge.
+
+The tier sits after the XLM anchors and before the estimated FX tier, and it
+honours the declaration only while the leg's own on-chain USD price is within
+200 bps (`fiatPegToleranceBps` in `internal/storage/timescale/trades.go`) of
+the fiat rate. A depeg or a missing fiat rate falls through to the FX tier,
+never above it; with no on-chain price to compare, the declaration stands. The
+value stays in the `estimated` reconcile tier, so `ClassifyUSDVolumeTier`, the
+exact restamp lane and `verify` are unchanged.
+
+Adding an asset is one line in the `[pricing_guard.fiat_pegged_classic_assets]`
+stanza; no replay. History already stamped through the FX tier differs from
+the peg value by at most the tolerance, and the estimated restamp lane
+re-derives it through the live waterfall if it is ever run.
+
 ## Pure-Soroban SEP-41 tokens (no USD-pegged quote at all)
 
 The paths above need the QUOTE asset to resolve to a USD-pegged classic. A
