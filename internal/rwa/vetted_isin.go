@@ -98,3 +98,19 @@ func VettedISINBindings() []VettedISINBinding {
 	copy(out, vettedISINBindings)
 	return out
 }
+
+// VettedISINConflict reports a live ISIN declaration that contradicts a hand-vetted binding: the bound pair
+// declaring another instrument, or another pair declaring the bound ISIN. A declaration that is not an ISIN
+// never conflicts.
+func VettedISINConflict(code, issuer, declaredAnchorAsset string) bool {
+	isin, ok := CanonicalISIN(declaredAnchorAsset)
+	if !ok {
+		return false
+	}
+	key := instrumentKey{code: strings.TrimSpace(code), issuer: strings.TrimSpace(issuer)}
+	if b, bound := vettedISINIndex.byPair[key]; bound && b.ISIN != isin {
+		return true
+	}
+	b, bound := vettedISINIndex.byISIN[isin]
+	return bound && (instrumentKey{code: b.Code, issuer: b.Issuer}) != key
+}

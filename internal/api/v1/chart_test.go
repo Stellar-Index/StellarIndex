@@ -2119,3 +2119,36 @@ func TestChartAll_DeniedGrainDoesNoRead(t *testing.T) {
 		t.Fatalf("store served %d 1m read(s) for a denied request", n)
 	}
 }
+
+// A fiat series fed by one licensed feed names it; one fed by on-chain venues names nothing.
+func TestChart_Fiat_CreditNamesTheOneFeed(t *testing.T) {
+	from := time.Now().UTC().Add(-24 * time.Hour)
+	d1 := from.Add(2 * time.Hour)
+	fx := &stubFXHistoryReader{points: []v1.FXQuotePoint{
+		{Bucket: d1, RateUSDText: "1.08", InverseUSDText: "0.92592592592592592593", Source: "ecb"},
+		{Bucket: d1.Add(24 * time.Hour), RateUSDText: "1.09", InverseUSDText: "0.91743119266055045872", Source: "ecb"},
+	}}
+	srv := v1.New(v1.Options{History: &stubHistoryReader{}, FXHistory: fx})
+	ts := httpTestServer(t, srv)
+	resp := mustGet(t, ts.URL+"/v1/chart?asset=fiat:EUR&quote=fiat:USD&timeframe=24h")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d want 200", resp.StatusCode)
+	}
+	var page struct {
+		Data v1.ChartSeries `json:"data"`
+	}
+	mustDecode(t, resp, &page)
+	if !strings.Contains(page.Data.Credit, "European Central Bank") {
+		t.Errorf("credit = %q, want the ECB named on an all-ECB series", page.Data.Credit)
+	}
+
+	fx.points[1].Source = "sdex"
+	resp = mustGet(t, ts.URL+"/v1/chart?asset=fiat:EUR&quote=fiat:USD&timeframe=24h")
+	var mixed struct {
+		Data v1.ChartSeries `json:"data"`
+	}
+	mustDecode(t, resp, &mixed)
+	if mixed.Data.Credit != "" {
+		t.Errorf("credit = %q, want none once an on-chain point joins the series", mixed.Data.Credit)
+	}
+}

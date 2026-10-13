@@ -73,14 +73,17 @@ func verifyUSDVolume(args []string) error {
 		lastRollups = rollups
 	}
 
-	// Stamped before the violation exit so a failing run still publishes its tiers.
-	if *textfile != "" {
-		body := renderVerifyUSDVolumeProm(end, lastRollups, violations, time.Now())
-		if werr := writeAtomic(*textfile, body); werr != nil {
+	return publishUSDVolumeRun(*textfile, end, lastRollups, violations, time.Now())
+}
+
+// publishUSDVolumeRun stamps the textfile before the violation exit so a failing run still
+// publishes its tiers.
+func publishUSDVolumeRun(textfile string, end time.Time, rollups map[timescale.USDVolumeTier]*usdVolumeTierRollup, violations int, now time.Time) error {
+	if textfile != "" {
+		if werr := writeAtomic(textfile, renderVerifyUSDVolumeProm(end, rollups, violations, now)); werr != nil {
 			return fmt.Errorf("verify-usd-volume: write textfile: %w", werr)
 		}
 	}
-
 	printUSDVolumeFooter(violations)
 	if violations > 0 {
 		return fmt.Errorf("verify-usd-volume: %d valuation violation(s) — see above", violations)
@@ -260,6 +263,9 @@ func classifyExactTierGroups(
 		r.unpricedRows += g.UnpricedRows
 		if v, vok := new(big.Rat).SetString(g.SumUSDVolume); vok {
 			r.sumUSD.Add(r.sumUSD, v)
+		} else {
+			parseErrs++
+			fmt.Fprintf(os.Stderr, "  UNPARSEABLE USD SUM %s %s/%s (usd=%q)\n", g.Source, g.BaseAsset, g.QuoteAsset, g.SumUSDVolume)
 		}
 
 		if !tier.Exact() || g.PricedRows < minRows {
@@ -329,6 +335,11 @@ func verifyUSDVolumeDay(
 		return 0, nil, err
 	}
 	violations = usdVolumeTotalViolations(violations, nb, parseErrs)
+	if len(groups) == 0 {
+		// A day with no trade groups at all judged nothing; a quiet pass here would hide a broken read.
+		fmt.Println("  EMPTY DAY: no trade groups at all — the check judged nothing")
+		violations++
+	}
 
 	printUSDVolumeTierTable(rollups)
 	fmt.Printf("  judged=%d of %d group(s) against an exact-tier identity\n", judged, len(groups))

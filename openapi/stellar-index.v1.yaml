@@ -21063,6 +21063,7 @@ components:
                 points:
                   type: array
                   items: { $ref: "#/components/schemas/HistoryPoint" }
+                credit: { type: string, description: "Vendor to credit when this value comes from one licensed off-chain feed (CoinGecko, CoinMarketCap, CCData, Tiingo, the ECB reference series, Massive FX); omitted for on-chain venues and oracles. The value is the vendor name, not attribution text; a vendor's required wording (Powered by CoinGecko, Data sourced by Tiingo) still applies wherever the number is displayed. A fiat series carries it only when every point comes from that one feed; a cross or a mix of feeds carries none." }
                 truncated:
                   type: boolean
                   description: |
@@ -22003,6 +22004,7 @@ components:
                 asset:     { type: string }
                 price:     { type: string }
                 timestamp: { type: string, format: date-time }
+                credit:    { type: string, description: "Vendor to credit when this value comes from one licensed off-chain feed (CoinGecko, CoinMarketCap, CCData, Tiingo, the ECB reference series, Massive FX); omitted for on-chain venues and oracles. The value is the vendor name, not attribution text; a vendor's required wording (Powered by CoinGecko, Data sourced by Tiingo) still applies wherever the number is displayed. Present on a fiat cross only when every leg comes from that one feed." }
               required: [asset, price, timestamp]
           required: [data]
 

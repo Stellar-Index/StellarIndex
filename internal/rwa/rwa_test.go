@@ -781,3 +781,24 @@ func TestQualify_VettedISINAdmitsOnlyItsOwnPair(t *testing.T) {
 		t.Fatalf("unrecognised BB1 admitted: %+v", v)
 	}
 }
+
+func TestVettedISINConflict(t *testing.T) {
+	const bb1 = "GD5J6HLF5666X4AZLTFTXLY46J5SW7EXRKBLEYPJP33S33MXZGV6CWFN"
+	cases := []struct {
+		code, issuer, declared string
+		want                   bool
+	}{
+		{"BB1", bb1, "DE000A2TR7Q2", false},
+		{"BB1", bb1, " de000a2tr7q2 ", false},
+		{"BB1", bb1, "US0378331005", true},
+		{"BB1", bb1, "Bitbond Finance Tokenized Bond 1", false},
+		{"BB1", "GAIMPOSTOR", "DE000A2TR7Q2", true},
+		{"FAKE", bb1, "DE000A2TR7Q2", true},
+		{"FAKE", "GAIMPOSTOR", "US0378331005", false},
+	}
+	for _, c := range cases {
+		if got := VettedISINConflict(c.code, c.issuer, c.declared); got != c.want {
+			t.Errorf("VettedISINConflict(%q, %q, %q) = %v, want %v", c.code, c.issuer, c.declared, got, c.want)
+		}
+	}
+}

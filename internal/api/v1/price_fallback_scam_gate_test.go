@@ -85,6 +85,9 @@ func TestPriceFallbackWithholdsScamFlaggedBase(t *testing.T) {
 	if strings.Contains(string(body), "0.00723") {
 		t.Errorf("the withheld price value leaked into the response body: %s", body)
 	}
+	if !strings.Contains(string(body), "scam_issuer") {
+		t.Errorf("body missing the scam_issuer reason: a withheld price must say why: %s", body)
+	}
 	if !strings.Contains(string(body), "errors/price-withheld") {
 		t.Errorf("body missing the price-withheld problem type — a withheld pair must not be "+
 			"reported as price-not-found (MSP-06): %s", body)
