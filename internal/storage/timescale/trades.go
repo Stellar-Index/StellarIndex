@@ -163,44 +163,51 @@ const fiatPegToleranceBps = 200
 // usdVolumeViaFiatPeg values a DEX trade off a leg the operator declared 1:1-pegged to a fiat currency
 // ([USDVolumeQuoteSpec.DeclareFiatPegs]): amount/10^7 x the fiat->USD rate at trade time. It replaces only the
 // counterparty-authorable FX bridge for those legs, so it runs after the XLM anchors. The peg is honoured only while
-// the leg's own on-chain USD price sits within fiatPegToleranceBps of the fiat rate; a depeg, or a missing fiat rate,
-// falls through to the estimated FX tier, never above it. With no on-chain price to compare the declaration stands.
+// the declared CLASSIC asset's on-chain USD price sits within fiatPegToleranceBps of the fiat rate: the classic form,
+// not the SAC the leg may carry, because the resolver links a SAC to its markets only through sac_wrappers. A depeg,
+// a missing on-chain price or a missing fiat rate declines, so the leg falls through to the estimated FX tier, never
+// above it. The value takes the FX tier's leg cross-check and single-leg cap ([boundUSDVolume]).
 func usdVolumeViaFiatPeg(ctx context.Context, t canonical.Trade, md external.Metadata, spec *USDVolumeQuoteSpec, r USDVolumeFXResolver) (*string, error) {
 	if r == nil || md.Subclass != external.SubclassDEX {
 		return nil, nil
 	}
-	legs := [2]struct {
-		asset  canonical.Asset
-		amount canonical.Amount
-	}{{t.Pair.Quote, t.QuoteAmount}, {t.Pair.Base, t.BaseAmount}}
-	for _, leg := range legs {
-		ticker, ok := spec.FiatPegInfo(leg.asset)
-		if !ok {
-			continue
+	quote, base := pegLeg{t.Pair.Quote, t.QuoteAmount}, pegLeg{t.Pair.Base, t.BaseAmount}
+	for _, pair := range [2][2]pegLeg{{quote, base}, {base, quote}} {
+		usd, err := fiatPegLegValue(ctx, spec, r, pair[0], pair[1], t.Timestamp)
+		if err != nil || usd != nil {
+			return usd, err
 		}
-		amount := leg.amount.BigInt()
-		if amount == nil || amount.Sign() < 0 {
-			continue
-		}
-		fiatRate, ok, err := resolverRateAt(ctx, r, canonical.Asset{Type: canonical.AssetFiat, Code: ticker}, t.Timestamp)
-		if err != nil {
-			return nil, err
-		}
-		if !ok {
-			continue
-		}
-		onChain, ok, err := resolverRateAt(ctx, r, leg.asset, t.Timestamp)
-		if err != nil {
-			return nil, err
-		}
-		if ok && !withinBps(onChain, fiatRate, fiatPegToleranceBps) {
-			continue
-		}
-		usd := new(big.Rat).Mul(new(big.Rat).SetFrac(amount, scaleDenominator(stellarClassicDecimals)), fiatRate)
-		rendered := usd.FloatString(8)
-		return &rendered, nil
 	}
 	return nil, nil
+}
+
+// pegLeg is one side of a DEX trade as usdVolumeViaFiatPeg sees it.
+type pegLeg struct {
+	asset  canonical.Asset
+	amount canonical.Amount
+}
+
+// fiatPegLegValue is one leg of usdVolumeViaFiatPeg: nil when the leg is undeclared or the gate declines.
+func fiatPegLegValue(ctx context.Context, spec *USDVolumeQuoteSpec, r USDVolumeFXResolver, declared, other pegLeg, at time.Time) (*string, error) {
+	classic, ticker, ok := spec.FiatPegInfo(declared.asset)
+	amount := declared.amount.BigInt()
+	if !ok || amount == nil || amount.Sign() < 0 {
+		return nil, nil
+	}
+	fiatRate, ok, err := resolverRateAt(ctx, r, canonical.Asset{Type: canonical.AssetFiat, Code: ticker}, at)
+	if err != nil || !ok {
+		return nil, err
+	}
+	onChain, ok, err := resolverRateAt(ctx, r, classic, at)
+	if err != nil || !ok || !withinBps(onChain, fiatRate, fiatPegToleranceBps) {
+		return nil, err
+	}
+	usd := new(big.Rat).Mul(new(big.Rat).SetFrac(amount, scaleDenominator(stellarClassicDecimals)), fiatRate)
+	if usd, err = boundUSDVolume(ctx, r, usd, other.asset, other.amount, stellarClassicDecimals, at); err != nil || usd == nil {
+		return nil, err
+	}
+	rendered := usd.FloatString(8)
+	return &rendered, nil
 }
 
 // resolverRateAt parses one USDPriceAt answer into a positive rate; ok=false when the resolver declines or the

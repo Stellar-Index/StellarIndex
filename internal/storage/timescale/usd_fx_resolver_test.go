@@ -324,7 +324,7 @@ func TestInstallUSDVolumeResolution_EmptyPegsIsNoOp(t *testing.T) {
 	t.Parallel()
 	store := &Store{}
 	if err := InstallUSDVolumeResolution(store, nil, nil, nil); err != nil {
-		t.Fatalf("InstallUSDVolumeResolution(no pegs, nil): %v", err)
+		t.Fatalf("InstallUSDVolumeResolution(no pegs): %v", err)
 	}
 	if store.usdVolumeQuoteSpec != nil || store.usdVolumeFXResolver != nil {
 		t.Error("no-config path should leave both tiers nil")
@@ -697,15 +697,16 @@ func TestUSDPegForms_NormalisesColonSpelling(t *testing.T) {
 	}
 }
 
-// Fiat pegs alone still install both tiers: the fiat-peg tier needs the spec and the resolver.
-func TestInstallUSDVolumeResolution_FiatPegsOnlyInstallsBothTiers(t *testing.T) {
+// Fiat pegs without a USD peg are refused: the depeg gate prices the declared leg through the resolver, which
+// prices nothing without a USD peg, so the tier would be silently dead.
+func TestInstallUSDVolumeResolution_FiatPegsNeedUSDPegs(t *testing.T) {
 	t.Parallel()
 	store := &Store{}
 	pegs := map[string]string{"EURC-GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2": "EUR"}
-	if err := InstallUSDVolumeResolution(store, nil, nil, pegs); err != nil {
-		t.Fatalf("InstallUSDVolumeResolution(fiat pegs): %v", err)
+	if err := InstallUSDVolumeResolution(store, nil, nil, pegs); err == nil {
+		t.Fatal("InstallUSDVolumeResolution(fiat pegs, no usd pegs) = nil, want an error")
 	}
-	if store.usdVolumeQuoteSpec == nil || store.usdVolumeFXResolver == nil {
-		t.Error("fiat pegs should install both tiers")
+	if store.usdVolumeQuoteSpec != nil || store.usdVolumeFXResolver != nil {
+		t.Error("a refused install must leave both tiers nil")
 	}
 }

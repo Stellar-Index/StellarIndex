@@ -128,18 +128,29 @@ trade path reads the same map, so a DEX trade with a declared leg (classic or
 its SAC) is valued as `amount / 10^7 × fiat→USD rate` at trade time instead of
 through the counterparty-authorable FX bridge.
 
-The tier sits after the XLM anchors and before the estimated FX tier, and it
-honours the declaration only while the leg's own on-chain USD price is within
-200 bps (`fiatPegToleranceBps` in `internal/storage/timescale/trades.go`) of
-the fiat rate. A depeg or a missing fiat rate falls through to the FX tier,
-never above it; with no on-chain price to compare, the declaration stands. The
-value stays in the `estimated` reconcile tier, so `ClassifyUSDVolumeTier`, the
-exact restamp lane and `verify` are unchanged.
+The tier sits after the XLM anchors and before the estimated FX tier. It
+honours the declaration only while the declared classic asset's own on-chain
+USD price is within 200 bps (`fiatPegToleranceBps` in
+`internal/storage/timescale/trades.go`) of the fiat rate; the classic form is
+priced even when the leg is the SAC, because the resolver links a SAC to its
+markets only through `[supply].sac_wrappers`. A depeg, a missing on-chain
+price or a missing fiat rate declines, and the leg falls through to the FX
+tier, never above it. The value takes the FX tier's leg cross-check and
+single-leg cap, and it stays in the `estimated` reconcile tier, so
+`ClassifyUSDVolumeTier`, the exact restamp lane and `verify` are unchanged.
+The tier needs `usd_pegged_classic_assets`: without a USD peg the resolver
+prices nothing, so `InstallUSDVolumeResolution` refuses fiat pegs on their own.
+
+AUDD and AUDR sit in the same map. The substance gate withholds their
+on-chain prices, so the tier declines them and they stay unvalued on the trade
+path as before; the day the gate admits one, that leg is valued like EURC.
 
 Adding an asset is one line in the `[pricing_guard.fiat_pegged_classic_assets]`
-stanza; no replay. History already stamped through the FX tier differs from
-the peg value by at most the tolerance, and the estimated restamp lane
-re-derives it through the live waterfall if it is ever run.
+stanza. The tier is forward-only: no restamp lane reaches it, so stored rows
+keep their FX-tier value. Where the declared leg was the quote, that value is
+within the 2% band of the peg value (the gate requires it); where it was the
+base, the old quote-priced value stands. Restating history needs a lane of its
+own.
 
 ## Pure-Soroban SEP-41 tokens (no USD-pegged quote at all)
 

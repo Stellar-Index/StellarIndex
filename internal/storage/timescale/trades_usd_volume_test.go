@@ -825,18 +825,29 @@ func TestTradeUSDVolume_FiatPeg(t *testing.T) {
 	}{
 		{"EURC quote inside the band", aquaForEURC, honoured, "27.00000000"},
 		{
-			"EURC SAC quote inside the band", volTrade(t, "soroswap", aqua, mustAsset(t, eurcSAC), 100_000_000, 250_000_000),
-			stubFXResolver{prices: map[string]string{"fiat:EUR": "1.08", eurcSAC: "1.075"}},
-			"27.00000000",
+			"EURC SAC quote is gated on the classic form's price", volTrade(t, "soroswap", aqua, mustAsset(t, eurcSAC), 100_000_000, 250_000_000),
+			honoured, "27.00000000",
 		},
 		{"EURC base leg", volTrade(t, "sdex", eurc, aqua, 250_000_000, 100_000_000), honoured, "27.00000000"},
 		{"zero EURC base is exactly 0", volTrade(t, "sdex", eurc, aqua, 0, 100_000_000), honoured, "0.00000000"},
-		{"no on-chain price keeps the declaration", aquaForEURC, stubFXResolver{prices: map[string]string{"fiat:EUR": "1.08"}}, "27.00000000"},
+		{"exactly 200 bps below the rate is inside", aquaForEURC, stubFXResolver{prices: map[string]string{"fiat:EUR": "1.08", eurcKey: "1.0584"}}, "27.00000000"},
+		{"exactly 200 bps above the rate is inside", aquaForEURC, stubFXResolver{prices: map[string]string{"fiat:EUR": "1.08", eurcKey: "1.1016"}}, "27.00000000"},
 		{
 			"PYUSD quote at the USD rate", volTrade(t, "sdex", aqua, pyusd, 100_000_000, 250_000_000),
 			stubFXResolver{prices: map[string]string{"fiat:USD": "1", pyusdKey: "1.0019"}},
 			"25.00000000",
 		},
+		{
+			"depegged quote declines, pegged base values the trade", volTrade(t, "sdex", eurc, pyusd, 250_000_000, 270_000_000),
+			stubFXResolver{prices: map[string]string{"fiat:EUR": "1.08", eurcKey: "1.075", "fiat:USD": "1", pyusdKey: "0.95"}},
+			"27.00000000",
+		},
+		{
+			"leg cross-check stores the smaller leg", aquaForEURC,
+			stubFXResolver{prices: map[string]string{"fiat:EUR": "1.08", eurcKey: "1.075", aquaID: "0.1"}},
+			"1.00000000",
+		},
+		{"single-leg cap refuses an uncross-checkable print", volTrade(t, "sdex", aqua, eurc, 100_000_000, 1_000_000_000_000_000), honoured, ""},
 		{"nil resolver stays NULL", aquaForEURC, nil, ""},
 		{"off-chain source ignores the declaration", volTrade(t, "binance", mustAsset(t, "crypto:XLM"), eurc, 100_000_000, 250_000_000), honoured, "2.68750000"},
 	}
@@ -852,14 +863,22 @@ func TestTradeUSDVolume_FiatPeg(t *testing.T) {
 		})
 	}
 
-	// A depeg or a missing fiat rate must produce exactly what the waterfall yields with no declaration.
-	for name, fx := range map[string]USDVolumeFXResolver{
-		"depeg falls through":             stubFXResolver{prices: map[string]string{"fiat:EUR": "1.08", eurcKey: "0.95", aquaID: "0.0001"}},
-		"missing fiat rate falls through": stubFXResolver{prices: map[string]string{eurcKey: "1.075", aquaID: "0.0001"}},
+	// Every decline must produce exactly what the waterfall yields with no declaration.
+	sacForEURC := volTrade(t, "soroswap", aqua, mustAsset(t, eurcSAC), 100_000_000, 250_000_000)
+	for name, tc := range map[string]struct {
+		tr canonical.Trade
+		fx USDVolumeFXResolver
+	}{
+		"depeg":                            {aquaForEURC, stubFXResolver{prices: map[string]string{"fiat:EUR": "1.08", eurcKey: "0.95", aquaID: "0.0001"}}},
+		"just outside the band below":      {aquaForEURC, stubFXResolver{prices: map[string]string{"fiat:EUR": "1.08", eurcKey: "1.058292"}}},
+		"just outside the band above":      {aquaForEURC, stubFXResolver{prices: map[string]string{"fiat:EUR": "1.08", eurcKey: "1.101708"}}},
+		"missing fiat rate":                {aquaForEURC, stubFXResolver{prices: map[string]string{eurcKey: "1.075", aquaID: "0.0001"}}},
+		"missing on-chain price":           {aquaForEURC, stubFXResolver{prices: map[string]string{"fiat:EUR": "1.08"}}},
+		"SAC priced only under its own id": {sacForEURC, stubFXResolver{prices: map[string]string{"fiat:EUR": "1.08", eurcSAC: "1.075"}}},
 	} {
-		t.Run(name, func(t *testing.T) {
-			got := tradeUSDVolume(ctx, aquaForEURC, spec, fx)
-			want := tradeUSDVolume(ctx, aquaForEURC, circleSpec(t, nil), fx)
+		t.Run(name+" falls through", func(t *testing.T) {
+			got := tradeUSDVolume(ctx, tc.tr, spec, tc.fx)
+			want := tradeUSDVolume(ctx, tc.tr, circleSpec(t, nil), tc.fx)
 			if (got == nil) != (want == nil) || (got != nil && *got != *want) {
 				t.Fatalf("got %v, want the undeclared value %v", got, want)
 			}
@@ -883,6 +902,41 @@ func TestTradeUSDVolume_FiatPeg(t *testing.T) {
 	})
 }
 
+func TestWithinBps(t *testing.T) {
+	t.Parallel()
+	rate := big.NewRat(108, 100)
+	for _, tc := range []struct {
+		a    string
+		want bool
+	}{{"1.08", true}, {"1.0584", true}, {"1.1016", true}, {"1.058292", false}, {"1.101708", false}} {
+		a, ok := new(big.Rat).SetString(tc.a)
+		if !ok {
+			t.Fatalf("SetString(%q)", tc.a)
+		}
+		if got := withinBps(a, rate, fiatPegToleranceBps); got != tc.want {
+			t.Errorf("withinBps(%s, 1.08, 200) = %t, want %t", tc.a, got, tc.want)
+		}
+	}
+}
+
+// A fiat-peg SAC resolves to its classic asset for the gate without becoming an exact USD-peg quote form.
+func TestFiatPegInfo_SACResolvesWithoutWideningUSDPegs(t *testing.T) {
+	t.Parallel()
+	spec := fiatPegSpec(t)
+	pyusd := mustAsset(t, pyusdKey)
+	pyusdSAC, err := pyusd.SacContractID()
+	if err != nil {
+		t.Fatalf("SacContractID: %v", err)
+	}
+	classic, ticker, ok := spec.FiatPegInfo(mustAsset(t, pyusdSAC))
+	if !ok || ticker != "USD" || classic.String() != pyusd.String() {
+		t.Fatalf("FiatPegInfo(PYUSD SAC) = (%s, %q, %t), want (%s, USD, true)", classic, ticker, ok, pyusd)
+	}
+	if _, ok := spec.QuoteUSDPegInfo(mustAsset(t, pyusdSAC)); ok {
+		t.Error("a fiat peg declared USD must not make its SAC an exact USD-peg quote")
+	}
+}
+
 func TestDeclareFiatPegs_Rejects(t *testing.T) {
 	t.Parallel()
 	for name, pegs := range map[string]map[string]string{
@@ -897,7 +951,7 @@ func TestDeclareFiatPegs_Rejects(t *testing.T) {
 		})
 	}
 	var nilSpec *USDVolumeQuoteSpec
-	if _, ok := nilSpec.FiatPegInfo(mustAsset(t, eurcKey)); ok {
+	if _, _, ok := nilSpec.FiatPegInfo(mustAsset(t, eurcKey)); ok {
 		t.Error("nil spec must not report a peg")
 	}
 }
