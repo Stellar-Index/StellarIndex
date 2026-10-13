@@ -2014,23 +2014,34 @@ func TestXLMBaseRestamp_RederivesThroughTheLiveAnchor(t *testing.T) {
 	const higherGen = int64(9_000_000_000)
 	exec(t, `UPDATE trades SET usd_volume = 0.11111111, derive_generation = $2 WHERE source='sdex' AND ledger=$1`,
 		ledger["higher generation"], higherGen)
-	// NOT poisoned by hand: the insert path itself valued this one
-	// quote-side through the thin book (0.15 = 300/1e7 x the 5000 raw
-	// TOKEN/USDC vwap), which IS the pre-fd1860bd defect state.
-
 	// Sanity: the fixture really did land the states the test asserts on.
 	if got := readRow(t, ledger["already correct"]); got.usd == nil || *got.usd != wantAnchored {
 		t.Fatalf("fixture: the 'already correct' row is %v, want %s written by the insert path", got.usd, wantAnchored)
 	}
-	// The quote side really can price the declined pair — otherwise the
-	// "only the anchor" assertions below would pass vacuously.
-	quoteSide := readRow(t, ledger["declined, stored value"])
+	// The insert path leaves an XLM-leg DEX row unpriced once its anchor declines, so row 21's stale quote-side value
+	// (the state rows stamped before that rule carry) is taken from a control trade with no XLM leg: the thin book still
+	// prices it at ingest (0.15 = 300/1e7 x the 5000 raw TOKEN/USDC vwap), proving the quote side really can price the
+	// 4h minute — otherwise the "only the anchor" assertions below would pass vacuously.
+	other, err := c.NewClassicAsset("OTHER", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherToken, err := c.NewPair(other, token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	control := mkIntegrationTrade("sdex", 19, anchorTS.Add(4*time.Hour+time.Minute), otherToken, 100_000_000, 300)
+	if err := store.InsertTrade(ctx, control); err != nil {
+		t.Fatalf("InsertTrade control: %v", err)
+	}
+	quoteSide := readRow(t, control.Ledger)
 	if quoteSide.usd == nil {
-		t.Fatal("fixture: the thin TOKEN/USDC book did not price the 4h row — the 'only the anchor' assertions would be vacuous")
+		t.Fatal("fixture: the thin TOKEN/USDC book did not price the 4h control row — the 'only the anchor' assertions would be vacuous")
 	}
 	if *quoteSide.usd == wantAnchored {
 		t.Fatalf("fixture: the quote-side value %s coincides with the anchor value; pick amounts that differ", *quoteSide.usd)
 	}
+	exec(t, `UPDATE trades SET usd_volume = $2::numeric WHERE source='sdex' AND ledger=$1`, ledger["declined, stored value"], *quoteSide.usd)
 	exec(t, `UPDATE trades SET usd_volume = NULL WHERE source='sdex' AND ledger=$1`, ledger["declined, stored NULL"])
 
 	const gen = int64(1_756_400_000)
@@ -2515,6 +2526,46 @@ func TestXLMLegVolume_TradeTimeNeverSpot(t *testing.T) {
 		}
 	}
 	mustSee(t, seen, fresh, anchor, stamped, quoted, sacLeg, late)
+
+	// A minute 38 min back (0.5) lies in the five minutes before frozen_at: the minute that tripped the detector, which stamps
+	// frozen_at only after it closed. It is refused with the frozen minutes, so the 50-min anchor still answers.
+	f.trade("sdex", 38*time.Minute, native, usdc, 10*unit, 5*unit, "5")
+	trigger := uint32(50_000_000 + f.nonce)
+	if _, err := db.ExecContext(f.ctx, `UPDATE trades SET usd_volume = 5, taker = 'GTAKER' WHERE ledger = $1`, trigger); err != nil {
+		t.Fatalf("stamp the triggering-minute trade: %v", err)
+	}
+	if _, err := db.ExecContext(f.ctx, `CALL refresh_continuous_aggregate('prices_1m', NULL, NULL)`); err != nil {
+		t.Fatalf("refresh prices_1m: %v", err)
+	}
+
+	// The ingest resolver refuses the frozen and triggering minutes on its direct leg: an XLM-base stamp written at the 30-min
+	// trade's time prices at the unfrozen 50-min anchor (0.3), never 0.4 or 0.5; with the freshness floor inside the freeze it
+	// prices nothing.
+	resolver, err := timescale.NewVWAPUSDFXResolver(f.store, timescale.VWAPUSDFXResolverOptions{
+		USDPegs:              []string{usdc.String()},
+		DisableSubstanceGate: true,
+	})
+	if err != nil {
+		t.Fatalf("NewVWAPUSDFXResolver: %v", err)
+	}
+	rate, ok, err := resolver.USDPriceAt(f.ctx, native, f.now.Add(-30*time.Minute))
+	if err != nil {
+		t.Fatalf("USDPriceAt(native) under the freeze: %v", err)
+	}
+	if !ok || !ratEq(t, rate, "0.3") {
+		t.Errorf("USDPriceAt(native) under the freeze = %q (ok=%v), want 0.3: the frozen 30-min and triggering 38-min minutes are refused, the 50-min anchor answers", rate, ok)
+	}
+	bounded, err := timescale.NewVWAPUSDFXResolver(f.store, timescale.VWAPUSDFXResolverOptions{
+		USDPegs:              []string{usdc.String()},
+		Freshness:            10 * time.Minute,
+		DisableSubstanceGate: true,
+	})
+	if err != nil {
+		t.Fatalf("NewVWAPUSDFXResolver(bounded): %v", err)
+	}
+	if rate, ok, err := bounded.USDPriceAt(f.ctx, native, f.now.Add(-30*time.Minute)); err != nil || ok {
+		t.Errorf("USDPriceAt(native) with only the frozen minute inside freshness = %q (ok=%v, err=%v), want no rate", rate, ok, err)
+	}
 }
 
 // mustSee fails when a scan omitted a ledger an assertion depends on, so a missing row cannot pass as "nothing wrong".

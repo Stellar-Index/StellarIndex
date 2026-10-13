@@ -3,9 +3,8 @@
 
 package timescale
 
-// The XLM/USD anchor: the one rate every read-side XLM-triangulated price is multiplied by. Every
-// renderer reads the same population through [xlmUSDAnchorMinutes], so the scalar, grid and
-// per-period shapes agree.
+// The XLM/USD anchor: the one rate every read-side XLM-triangulated price is multiplied by. Every renderer
+// reads the same population through [xlmUSDAnchorMinutes], so the scalar, grid and per-period shapes agree.
 //
 // Population: XLM in every alias form ([canonical.AssetAliases] order: native, crypto:XLM, the SAC)
 // against every USD proxy ([usdProxyQuotes]), in both stored directions (SDEX stores the sold asset
@@ -14,15 +13,16 @@ package timescale
 // recovered_at): a frozen rate anchors nothing, the newest unfrozen minute does, and a freeze longer
 // than [xlmUSDAnchorMaxAge] leaves every consumer (catalogue price and changes, sparklines,
 // transitive prices, Soroban volume, MEV legs) unpriced, as the max age already does for silence.
+// An open row (recovered_at NULL) excludes every later minute until [FreezeEventSink.MarkRecovered]
+// closes it; hold_until is the ladder deadline, not the freeze's end, and does not bound the predicate.
 //
 // Per minute and form the rate is the volume_usd-weighted mean of those rows, never the leg sums:
 // CEX amounts are scaled 1e8 and on-chain ones 1e7, so leg sums would weight a CEX row 10x.
 //
-// Across forms the first form (alias order) with a qualifying minute in the freshness window wins,
-// newest minute within it, matching the ingest resolver's alias loop ([VWAPUSDFXResolver.queryDB]).
-// SAC is last so a thin Soroban pool printing after a quiet SDEX minute cannot set the rate for the
-// whole catalogue. Within one form a lone dust row is still the minute's rate when nothing else
-// printed (per-row floor [directLegMinQuoteVolume]).
+// Across forms the first form (alias order) with a qualifying minute in the freshness window wins, newest
+// minute within it, matching the ingest resolver's alias loop ([VWAPUSDFXResolver.queryDB]). SAC is last so a
+// thin Soroban pool printing after a quiet SDEX minute cannot set the rate for the whole catalogue. Within one
+// form a lone dust row is still the minute's rate when nothing else printed (per-row floor [directLegMinQuoteVolume]).
 
 // xlmUSDAnchorMaxAge is the oldest XLM/USD minute a triangulated price may use, the ingest resolver's Freshness; past it the asset is
 // unpriced, never re-marked.
@@ -38,15 +38,21 @@ func xlmUSDAnchorForms(sac string) string {
 	return "'native', 'crypto:XLM', " + sac
 }
 
-// xlmUSDFreezeOverlap renders "a recorded XLM/USD-proxy freeze (ADR-0019) overlaps [from, bucket + 1 minute)": any XLM form, either
-// stored direction, open or recovered. The anchor population probes the minute itself (from = bucket); a read that judges a stored
-// stamp looks back xlmUSDAnchorMaxAge from it, the oldest minute the ingest resolver may have read when it stamped the row.
+// xlmUSDFreezeTriggerLookback extends a freeze back before frozen_at, the detector's wall clock, written a tick or more after the
+// anomalous minutes closed; the detector's hot window (orchestrator.DefaultWindows) is how far a steady-state trigger trails them.
+// A warm or cold-window trigger, or a catch-up after a stall, trails further: those minutes still anchor, flagged estimated.
+const xlmUSDFreezeTriggerLookback = "5 minutes"
+
+// xlmUSDFreezeOverlap renders "a recorded XLM/USD-proxy freeze (ADR-0019) overlaps [from, bucket + 1 minute +
+// xlmUSDFreezeTriggerLookback)": any XLM form, either stored direction, open or recovered. The anchor population probes the minute
+// itself (from = bucket); a read that judges a stored stamp looks back xlmUSDAnchorMaxAge from it, the oldest minute the ingest
+// resolver may have read when it stamped the row.
 func xlmUSDFreezeOverlap(from, bucket, sac string) string {
 	forms := xlmUSDAnchorForms(sac)
 	return `EXISTS (SELECT 1 FROM freeze_events fe
 		                  WHERE ((fe.asset_id IN (` + forms + `) AND fe.quote_id IN (` + usdProxyQuotes + `))
 		                     OR (fe.quote_id IN (` + forms + `) AND fe.asset_id IN (` + usdProxyQuotes + `)))
-		                    AND fe.frozen_at < ` + bucket + ` + INTERVAL '1 minute'
+		                    AND fe.frozen_at < ` + bucket + ` + INTERVAL '1 minute' + INTERVAL '` + xlmUSDFreezeTriggerLookback + `'
 		                    AND (fe.recovered_at IS NULL OR fe.recovered_at > ` + from + `))`
 }
 

@@ -710,3 +710,64 @@ func TestInstallUSDVolumeResolution_FiatPegsNeedUSDPegs(t *testing.T) {
 		t.Error("a refused install must leave both tiers nil")
 	}
 }
+
+// TestVWAPUSDFXResolver_DirectLegRefusesFrozenXLMMinutes pins that each XLM-form direct leg carries the XLM/USD-proxy freeze
+// subquery with the native SAC bound after the freshness floor, so the XLM-base anchor and the bridge's XLM leg never read a frozen
+// minute, and that a non-XLM leg carries neither.
+func TestVWAPUSDFXResolver_DirectLegRefusesFrozenXLMMinutes(t *testing.T) {
+	t.Parallel()
+	at := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
+	miss := scriptedResult{cols: []string{"bucket", "vwap"}}
+	store, conn := newScriptedStore(t,
+		miss, miss, miss, // native, crypto:XLM, SAC
+		scriptedResult{cols: []string{"bucket", "vwap"}, rows: [][]driver.Value{{at.Add(-2 * time.Minute), "0.00120000"}}}, // AQUA direct
+	)
+	r, err := NewVWAPUSDFXResolver(store, VWAPUSDFXResolverOptions{
+		USDPegs:              []string{usdcClassicPeg},
+		PegSACWrappers:       pegSACWrappersFixture,
+		DisableSubstanceGate: true,
+		Clock:                func() time.Time { return at },
+	})
+	if err != nil {
+		t.Fatalf("NewVWAPUSDFXResolver: %v", err)
+	}
+	if _, ok, err := r.USDPriceAt(context.Background(), canonical.NativeAsset(), at); err != nil || ok {
+		t.Fatalf("USDPriceAt(native) = ok %v, err %v; want a miss on every form", ok, err)
+	}
+	aqua, err := canonical.NewClassicAsset("AQUA", "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := r.USDPriceAt(context.Background(), aqua, at); err != nil || !ok {
+		t.Fatalf("USDPriceAt(AQUA) = ok %v, err %v; want the scripted direct hit", ok, err)
+	}
+
+	if len(conn.stmts) != 4 {
+		t.Fatalf("issued %d statements, want 4 (three XLM forms, one AQUA direct leg)", len(conn.stmts))
+	}
+	for i, form := range []string{"native", "crypto:XLM", canonical.XLMSacContractID} {
+		st := conn.stmts[i]
+		if got := st.arg(t, 1); got != form {
+			t.Errorf("statement %d bound base_asset %v, want %q", i, got, form)
+		}
+		if !strings.Contains(st.sql, "FROM freeze_events fe") || !strings.Contains(st.sql, "AND NOT EXISTS") {
+			t.Errorf("statement %d (%s) lacks the XLM/USD-proxy freeze exclusion:\n%s", i, form, st.sql)
+		}
+		if !strings.Contains(st.sql, "$6::text") {
+			t.Errorf("statement %d (%s) does not bind the SAC after the freshness floor:\n%s", i, form, st.sql)
+		}
+		if len(st.args) != 6 {
+			t.Fatalf("statement %d (%s) bound %d args, want 6 (freshness floor, then the SAC)", i, form, len(st.args))
+		}
+		if _, isTime := st.arg(t, 5).(time.Time); !isTime {
+			t.Errorf("statement %d (%s) $5 = %v, want the freshness floor", i, form, st.arg(t, 5))
+		}
+		if got := st.arg(t, 6); got != canonical.NativeSACContractID() {
+			t.Errorf("statement %d (%s) $6 = %v, want the native SAC", i, form, got)
+		}
+	}
+	last := conn.stmts[3]
+	if strings.Contains(last.sql, "freeze_events") || len(last.args) != 5 {
+		t.Errorf("AQUA direct leg carries a freeze check or %d args; want none and 5:\n%s", len(last.args), last.sql)
+	}
+}

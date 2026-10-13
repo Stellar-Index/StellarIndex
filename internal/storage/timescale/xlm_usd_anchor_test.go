@@ -41,7 +41,7 @@ func TestXLMUSDAnchor_PopulationIsAliasAndDirectionComplete(t *testing.T) {
 		"AND bucket <= now() - INTERVAL '1 minute'",
 		"volume_usd >= " + xlmUSDAnchorMinUSD,
 		"AND NOT EXISTS (SELECT 1 FROM freeze_events fe WHERE ((fe.asset_id IN (" + forms + ") AND fe.quote_id IN (" + usd + ")) OR " +
-			"(fe.quote_id IN (" + forms + ") AND fe.asset_id IN (" + usd + "))) AND fe.frozen_at < prices_1m.bucket + INTERVAL '1 minute' " +
+			"(fe.quote_id IN (" + forms + ") AND fe.asset_id IN (" + usd + "))) AND fe.frozen_at < prices_1m.bucket + INTERVAL '1 minute' + INTERVAL '5 minutes' " +
 			"AND (fe.recovered_at IS NULL OR fe.recovered_at > prices_1m.bucket))",
 	} {
 		if !strings.Contains(pop, want) {

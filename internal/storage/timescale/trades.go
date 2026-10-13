@@ -64,20 +64,8 @@ func tradeUSDVolumeChecked(ctx context.Context, t canonical.Trade, quoteSpec *US
 	if fxResolver == nil {
 		return nil, nil
 	}
-	// With XLM as the BASE leg, value the trade off that leg BEFORE pricing the quote: tier 3's
-	// token/XLM x XLM/USD bridge from prices_1m is counterparty-authorable, while XLM is a direct
-	// market nobody can author. XLM only: any other base resolves through the same poisonable bridge.
-	if isXLMAsset(t.Pair.Base) {
-		if v, err := usdVolumeViaXLMBaseAnchor(ctx, t, md.Subclass, fxResolver); err != nil || v != nil {
-			return v, err
-		}
-	}
-	// Same anchor when the pool stored XLM as the QUOTE leg: orientation is
-	// the pool's token order, so both sides of one economic swap must value alike.
-	if isXLMAsset(t.Pair.Quote) && !isXLMAsset(t.Pair.Base) {
-		if v, err := tradeUSDVolumeViaXLMQuoteAnchorFor(ctx, t, fxResolver); err != nil || v != nil {
-			return v, err
-		}
+	if v, handled, err := xlmLegUSDVolume(ctx, t, md, fxResolver); handled {
+		return v, err
 	}
 	if v, err := usdVolumeViaFiatPeg(ctx, t, md, quoteSpec, fxResolver); err != nil || v != nil {
 		return v, err
@@ -87,6 +75,34 @@ func tradeUSDVolumeChecked(ctx context.Context, t canonical.Trade, quoteSpec *US
 	}
 	// Tier 4: quote-side resolution declined, so try the XLM-base anchor.
 	return usdVolumeViaXLMBaseAnchor(ctx, t, md.Subclass, fxResolver)
+}
+
+// xlmLegUSDVolume values a trade off its XLM leg, whichever side the pool stored it on; handled is true when the caller returns
+// (v, err) as is: the anchor answered or failed, or a DEX trade with an XLM leg declined and stays unpriced.
+func xlmLegUSDVolume(ctx context.Context, t canonical.Trade, md external.Metadata, fxResolver USDVolumeFXResolver) (v *string, handled bool, err error) {
+	xlmBase, xlmQuote := isXLMAsset(t.Pair.Base), isXLMAsset(t.Pair.Quote)
+	// With XLM as the BASE leg, value the trade off that leg BEFORE pricing the quote: tier 3's
+	// token/XLM x XLM/USD bridge from prices_1m is counterparty-authorable, while XLM is a direct
+	// market nobody can author. XLM only: any other base resolves through the same poisonable bridge.
+	if xlmBase {
+		if v, err := usdVolumeViaXLMBaseAnchor(ctx, t, md.Subclass, fxResolver); err != nil || v != nil {
+			return v, true, err
+		}
+	}
+	// Same anchor when the pool stored XLM as the QUOTE leg: orientation is
+	// the pool's token order, so both sides of one economic swap must value alike.
+	if xlmQuote && !xlmBase {
+		if v, err := tradeUSDVolumeViaXLMQuoteAnchorFor(ctx, t, fxResolver); err != nil || v != nil {
+			return v, true, err
+		}
+	}
+	// A DEX trade with an XLM leg is priced off XLM or not at all: once that anchor declines (frozen or
+	// stale XLM/USD), the tiers below value it through the other asset's own market, which the
+	// counterparty can author, with no XLM cross-check left to bound it. The restamp fills it later.
+	if md.Subclass == external.SubclassDEX && (xlmBase || xlmQuote) {
+		return nil, true, nil
+	}
+	return nil, false, nil
 }
 
 // tradeUSDVolumeViaUSDBase is tier 2b: value off a USD-pegged BASE leg (usd = base_amount / 10^decimals); trusted like tiers 1/2, so it wins
