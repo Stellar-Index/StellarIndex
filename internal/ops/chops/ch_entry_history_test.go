@@ -10,6 +10,7 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/xdr"
 
+	"github.com/Stellar-Index/StellarIndex/internal/entryhistory"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
@@ -80,9 +81,9 @@ func ehRow(t *testing.T, op int32, change uint32, changeType string, key xdr.Led
 	}
 }
 
-func ehProject(t *testing.T, p *entryHistoryProjector, r clickhouse.EntryHistorySourceRow) ([]clickhouse.AccountEntryChange, []clickhouse.AssetEntryChange) {
+func ehProject(t *testing.T, p *entryhistory.Projector, r clickhouse.EntryHistorySourceRow) ([]clickhouse.AccountEntryChange, []clickhouse.AssetEntryChange) {
 	t.Helper()
-	acc, ast, err := p.project(r)
+	acc, ast, err := p.Project(r)
 	if err != nil {
 		t.Fatalf("project %s change %d: %v", r.ChangeType, r.ChangeIndex, err)
 	}
@@ -90,7 +91,7 @@ func ehProject(t *testing.T, p *entryHistoryProjector, r clickhouse.EntryHistory
 }
 
 func TestEntryHistoryProjector_FeeChargeIsAChangeWithItsFieldDiff(t *testing.T) {
-	p := newEntryHistoryProjector()
+	p := entryhistory.NewProjector()
 	pre, post := ehAccount(ehAlice, 1000, 7), ehAccount(ehAlice, 900, 8)
 
 	acc, ast := ehProject(t, p, ehRow(t, ehFeeOpIx, 0, "state", pre, &pre))
@@ -129,7 +130,7 @@ func TestEntryHistoryProjector_FeeChargeIsAChangeWithItsFieldDiff(t *testing.T) 
 func TestEntryHistoryProjector_UnmergedDuplicatesReDeriveIdenticalRows(t *testing.T) {
 	// The source is read without FINAL, so an unmerged duplicate arrives as
 	// state, state, updated, updated — both updates must pair with the pre-image.
-	p := newEntryHistoryProjector()
+	p := entryhistory.NewProjector()
 	pre, post := ehAccount(ehAlice, 1000, 7), ehAccount(ehAlice, 1000, 7)
 	post.Data.Account.HomeDomain = "example.com"
 	ehProject(t, p, ehRow(t, 0, 0, "state", pre, &pre))
@@ -147,7 +148,7 @@ func TestEntryHistoryProjector_UnmergedDuplicatesReDeriveIdenticalRows(t *testin
 }
 
 func TestEntryHistoryProjector_PreImageDoesNotLeakAcrossOperations(t *testing.T) {
-	p := newEntryHistoryProjector()
+	p := entryhistory.NewProjector()
 	pre, post := ehAccount(ehAlice, 1000, 7), ehAccount(ehAlice, 900, 7)
 	ehProject(t, p, ehRow(t, 0, 0, "state", pre, &pre))
 	acc, _ := ehProject(t, p, ehRow(t, 1, 1, "updated", post, &post))
@@ -162,7 +163,7 @@ func TestEntryHistoryProjector_TrustlineRemovalKeepsOwnerAndHolderAtZero(t *test
 	tl.Data.TrustLine.Limit = 5
 
 	t.Run("with pre-image", func(t *testing.T) {
-		p := newEntryHistoryProjector()
+		p := entryhistory.NewProjector()
 		ehProject(t, p, ehRow(t, 0, 0, "state", tl, &tl))
 		acc, ast := ehProject(t, p, ehRow(t, 0, 1, "removed", tl, nil))
 		ehAssertRemovedTrustline(t, acc, ast)
@@ -172,7 +173,7 @@ func TestEntryHistoryProjector_TrustlineRemovalKeepsOwnerAndHolderAtZero(t *test
 		}
 	})
 	t.Run("key only", func(t *testing.T) {
-		acc, ast := ehProject(t, newEntryHistoryProjector(), ehRow(t, 0, 1, "removed", tl, nil))
+		acc, ast := ehProject(t, entryhistory.NewProjector(), ehRow(t, 0, 1, "removed", tl, nil))
 		ehAssertRemovedTrustline(t, acc, ast)
 		if acc[0].Fields != "{}" {
 			t.Fatalf("fields = %s, want {} with no image", acc[0].Fields)
@@ -191,7 +192,7 @@ func ehAssertRemovedTrustline(t *testing.T, acc []clickhouse.AccountEntryChange,
 }
 
 func TestEntryHistoryProjector_RevokedSponsorStillSeesTheChange(t *testing.T) {
-	p := newEntryHistoryProjector()
+	p := entryhistory.NewProjector()
 	pre := ehSponsored(ehTrustline(ehBob, 10), ehAlice)
 	post := ehTrustline(ehBob, 10)
 	ehProject(t, p, ehRow(t, 0, 0, "state", pre, &pre))
@@ -219,7 +220,7 @@ func TestEntryHistoryProjector_OfferAndPoolFanOutToEveryAsset(t *testing.T) {
 		SellerId: xdr.MustAddress(ehAlice), OfferId: 9, Selling: usdc, Buying: xdr.MustNewNativeAsset(),
 		Amount: 50, Price: xdr.Price{N: 1, D: 2},
 	}}}
-	acc, ast := ehProject(t, newEntryHistoryProjector(), ehRow(t, 0, 0, "created", offer, &offer))
+	acc, ast := ehProject(t, entryhistory.NewProjector(), ehRow(t, 0, 0, "created", offer, &offer))
 	if len(acc) != 1 || acc[0].Role != "owner" || acc[0].Changed != nil {
 		t.Fatalf("offer account rows = %+v, want one owner row with no changed list", acc)
 	}
@@ -238,7 +239,7 @@ func TestEntryHistoryProjector_OfferAndPoolFanOutToEveryAsset(t *testing.T) {
 			ReserveA: 100, ReserveB: 200, TotalPoolShares: 300,
 		}},
 	}}}
-	acc, ast = ehProject(t, newEntryHistoryProjector(), ehRow(t, 0, 0, "created", pool, &pool))
+	acc, ast = ehProject(t, entryhistory.NewProjector(), ehRow(t, 0, 0, "created", pool, &pool))
 	if len(acc) != 0 {
 		t.Fatalf("pool account rows = %+v, want none", acc)
 	}
@@ -260,7 +261,7 @@ func TestEntryHistoryProjector_ClaimableBalanceReachesClaimantsAndSponsor(t *tes
 		}}},
 		Asset: xdr.MustNewCreditAsset("USDC", ehIssuer), Amount: 70,
 	}}}, ehAlice)
-	acc, ast := ehProject(t, newEntryHistoryProjector(), ehRow(t, 0, 0, "created", cb, &cb))
+	acc, ast := ehProject(t, entryhistory.NewProjector(), ehRow(t, 0, 0, "created", cb, &cb))
 	roles := map[string]string{}
 	for _, a := range acc {
 		roles[a.Role] = a.Account
