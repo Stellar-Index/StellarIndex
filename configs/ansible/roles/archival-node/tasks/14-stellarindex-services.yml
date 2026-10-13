@@ -1137,6 +1137,8 @@
     - census-rollup.timer
     - compute-completeness.service
     - compute-completeness.timer
+    - verify-usd-volume.service
+    - verify-usd-volume.timer
     - compute-completeness-sdex.service
     - compute-completeness-sdex.timer
     # compute-completeness-sep41 is installed with supply-verify-rollup below.
@@ -1190,6 +1192,7 @@
     - cohort-rollup.timer
     - census-rollup.timer
     - compute-completeness.timer
+    - verify-usd-volume.timer
     - compute-completeness-sdex.timer
     - verify-lake.timer
     - verify-network-state.timer

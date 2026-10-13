@@ -150,7 +150,8 @@ stanza. The tier is forward-only: no restamp lane reaches it, so stored rows
 keep their FX-tier value. Where the declared leg was the quote, that value is
 within the 2% band of the peg value (the gate requires it); where it was the
 base, the old quote-priced value stands. Restating history needs a lane of its
-own.
+own. Rows the FX tier left NULL, including SAC forms outside `sac_wrappers`, stay
+NULL.
 
 ## Pure-Soroban SEP-41 tokens (no USD-pegged quote at all)
 
