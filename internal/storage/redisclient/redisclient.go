@@ -33,6 +33,7 @@ func Build(cfg config.StorageConfig) redis.UniversalClient {
 			Password:         cfg.RedisPassword,
 			SentinelPassword: cfg.RedisPassword,
 			DisableIdentity:  true,
+			PipelinePoolSize: -1,
 		})
 	case cfg.RedisAddr != "":
 		c = redis.NewClient(&redis.Options{
@@ -44,6 +45,9 @@ func Build(cfg config.StorageConfig) redis.UniversalClient {
 			// count it as failed commands on every new connection.
 			DisableIdentity:          true,
 			MaintNotificationsConfig: &maintnotifications.Config{Mode: maintnotifications.ModeDisabled},
+			// One pool, as before go-redis 9.23: pipelines then honour MaxActiveConns, and the
+			// dedicated pool's first dial would run its handshake under the error hook.
+			PipelinePoolSize: -1,
 		})
 	default:
 		return nil
