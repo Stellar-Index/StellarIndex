@@ -32,9 +32,16 @@
 --   3. Build from the first ledger whose rows carry account_id (the ec-floor);
 --      the watermark's coverage proof refuses windows below it:
 --        stellarindex-ops ch-entry-index -ch-addr 127.0.0.1:9300 -write -floor-ledger <ec-floor>
---      then enable entry-index.timer, which resumes from the watermark every 10 min.
---   4. Re-derive one window below the watermark after a lake repair:
+--   4. Set EXTRA_FLAGS=-floor-ledger <ec-floor> in /etc/default/entry-index, then
+--        systemctl enable --now entry-index.timer
+--      ansible installs the units but never enables the timer: enabled before
+--      steps 2-4 it would fail every 10 minutes and re-scan its first window.
+--   5. Re-derive one window below the watermark after a lake repair:
 --        stellarindex-ops ch-entry-index -ch-addr 127.0.0.1:9300 -from <l> -to <l> -write
+--
+-- Sponsor rows cover entry sponsorship only (the sponsor in the entry's
+-- extension). An account that sponsors another account's SIGNERS appears in
+-- that account's extension, not the entry tail, and gets no sponsor row.
 
 CREATE TABLE IF NOT EXISTS stellar.account_entry_ledgers
 (

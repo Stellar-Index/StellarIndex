@@ -360,7 +360,11 @@ per-asset ledger walks, so a stall hides recent activity there while the
 lake stays complete.
 
 1. Is the timer alive? `systemctl list-timers entry-index.timer` and
-   `journalctl -u entry-index.service -n 50`.
+   `journalctl -u entry-index.service -n 50`. A deploy installs the units
+   but never enables the timer; `systemctl enable --now entry-index.timer`
+   is the last step of the runbook in `deploy/clickhouse/entry_index.sql`,
+   after the tables exist and `/etc/default/entry-index` carries the
+   ec-floor.
 2. A refused window names its reason: `is not contiguous` (lake hole;
    wait for `ch-backfill`), `skips ledgers below it` (a manual `-from`
    above the watermark; re-run without `-from`), or `lacks

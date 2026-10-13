@@ -188,15 +188,15 @@ var ErrEntryHistoryEntryChangeShortfall = errors.New("clickhouse: entry-history 
 // entryHistoryWindowCovered compares the tx-bearing ledgers the derive READ (non-empty tx_hash; seed rows carry none) with
 // stellar.ledgers. A lake-state check after the read would pass once a concurrent ch-backfill filled the window though the derive saw none
 // of those rows; only tx-bearing ledgers hold tx-scoped rows, so the counts compare as sets.
-func entryHistoryWindowCovered(ctx context.Context, conn driver.Conn, from, thru uint32, readTxLedgers uint64) error {
+func entryHistoryWindowCovered(ctx context.Context, conn driver.Conn, name string, from, thru uint32, readTxLedgers uint64) error {
 	const q = `SELECT uniqExact(ledger_seq) FROM stellar.ledgers WHERE ledger_seq BETWEEN ? AND ? AND tx_count > 0`
 	cov := ECWindowCoverage{From: from, To: thru, ECCoveredTxLedgers: readTxLedgers}
 	if err := conn.QueryRow(ctx, q, from, thru).Scan(&cov.TxLedgers); err != nil {
-		return fmt.Errorf("clickhouse: entry-history window [%d,%d] tx-bearing ledgers: %w", from, thru, err)
+		return fmt.Errorf("clickhouse: %s window [%d,%d] tx-bearing ledgers: %w", name, from, thru, err)
 	}
 	if missing := cov.Missing(); missing > 0 {
-		return fmt.Errorf("%w: [%d,%d] read entry changes for %d of %d tx-bearing ledgers",
-			ErrEntryHistoryEntryChangeShortfall, from, thru, readTxLedgers, cov.TxLedgers)
+		return fmt.Errorf("%w: %s [%d,%d] read entry changes for %d of %d tx-bearing ledgers",
+			ErrEntryHistoryEntryChangeShortfall, name, from, thru, readTxLedgers, cov.TxLedgers)
 	}
 	return nil
 }
@@ -252,16 +252,16 @@ func advanceEntryWatermark(ctx context.Context, addr, name string, from, thru ui
 		return nil
 	}
 	if wm > 0 && from > wm+1 {
-		return fmt.Errorf("%w: window [%d,%d] starts above watermark+1 (%d)", ErrEntryHistorySkippedPrefix, from, thru, wm+1)
+		return fmt.Errorf("%w: %s [%d,%d] starts above watermark+1 (%d)", ErrEntryHistorySkippedPrefix, name, from, thru, wm+1)
 	}
 	present, err := windowLedgersPresent(ctx, conn, from, thru)
 	if err != nil {
 		return fmt.Errorf("clickhouse: %s window [%d,%d] contiguity: %w", name, from, thru, err)
 	}
 	if want := uint64(thru-from) + 1; present != want {
-		return fmt.Errorf("%w: [%d,%d] holds %d of %d ledgers", ErrEntryHistoryHole, from, thru, present, want)
+		return fmt.Errorf("%w: %s [%d,%d] holds %d of %d ledgers", ErrEntryHistoryHole, name, from, thru, present, want)
 	}
-	if err := entryHistoryWindowCovered(ctx, conn, from, thru, readTxLedgers); err != nil {
+	if err := entryHistoryWindowCovered(ctx, conn, name, from, thru, readTxLedgers); err != nil {
 		return err
 	}
 	const q = `INSERT INTO stellar.entry_history_watermark (name, thru_ledger) VALUES (?, ?)`

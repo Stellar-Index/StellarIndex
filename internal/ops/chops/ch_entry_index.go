@@ -37,7 +37,7 @@ func chEntryIndex(args []string) error {
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
 	from := fs.Uint("from", 0, "first ledger (0 = resume from the watermark, or -floor-ledger on first run)")
 	to := fs.Uint("to", 0, "last ledger (inclusive; 0 = current contiguous lake tip). Always clamped down to the contiguous tip.")
-	window := fs.Uint("window", 100_000, "ledgers per build window")
+	window := fs.Uint("window", 10_000, "ledgers per build window (progress is reported once per window)")
 	floorLedger := fs.Uint("floor-ledger", 1, "first-run start when no watermark exists; clamped up to the lake's first ledger")
 	lockFile := fs.String("lock-file", entryIndexLockPath, "flock serialising concurrent -write runs")
 	heartbeat := fs.String("heartbeat", "", "ops-job heartbeat textfile path. Empty = "+opsutil.DefaultTextfileDir+"/ops_job_ch-entry-index.prom when that directory exists")
@@ -246,7 +246,8 @@ func (w *entryIndexWindow) decodeRoles(ctx context.Context, lo, hi uint32) error
 	})
 }
 
-// entryIndexRoleRows lists the claimant and sponsor rows one decoded entry contributes.
+// entryIndexRoleRows lists the claimant and sponsor rows one decoded entry contributes. Sponsor means the entry's own
+// sponsor; signer sponsorships (AccountEntryExtensionV2) are not indexed.
 func entryIndexRoleRows(e *xdr.LedgerEntry, ledger uint32) []clickhouse.EntryIndexAccountRow {
 	var rows []clickhouse.EntryIndexAccountRow
 	if cb, ok := e.Data.GetClaimableBalance(); ok {
